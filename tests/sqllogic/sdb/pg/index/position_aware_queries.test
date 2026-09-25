@@ -1,0 +1,457 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY pq_syn AS
+    split_text(case := 'lower') | expand_solr_synonyms('car => automobile, auto')
+    WITH (frequency, position)
+
+
+statement ok
+CREATE TABLE pq_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO pq_docs VALUES
+    (1, 'red automobile'),
+    (2, 'red auto'),
+    (3, 'red car'),
+    (4, 'blue car'),
+    (5, 'car red');
+
+
+statement ok
+CREATE INDEX pq_idx ON pq_docs USING inverted (id, body pq_syn)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pq_docs;
+
+
+query
+SELECT ts_lexize('pq_syn', 'red car') AS tokens;
+----
+tokens
+{red,auto,automobile}
+
+
+query
+EXPLAIN SELECT id FROM pq_idx WHERE body @@ plainto_tsquery('red car');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────╮
+│ Index: pq_idx                                             │
+│ Lookup: table                                             │
+│ Index Filter:                                             │
+│ ╭─ And ───────────────╮                                   │
+│ ╰──────────┬──────────╯                                   │
+│            ├─────────────────────────────╮                │
+│ ╭─ Terms ──┴──────────╮  ╭─ Or ──────────┴──────────────╮ │
+│ │ Field: body(string) │  │ Merge: max                   │ │
+│ │ Values: 'red'       │  ╰───────────────┬──────────────╯ │
+│ ╰─────────────────────╯  ╭─ Terms ───────┴──────────────╮ │
+│                          │ Field: body(string)          │ │
+│                          │ Values: 'auto', 'automobile' │ │
+│                          ╰──────────────────────────────╯ │
+│ Projections: id                                           │
+│ ~1 row                                                    │
+╰───────────────────────────────────────────────────────────╯
+
+
+query
+SELECT id FROM pq_idx WHERE body @@ plainto_tsquery('red car') ORDER BY id;
+----
+id
+1
+2
+3
+5
+
+
+query
+EXPLAIN SELECT id FROM pq_idx WHERE body @@ 'red car';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────╮
+│ Index: pq_idx                           │
+│ Lookup: table                           │
+│ Index Filter:                           │
+│ ╭─ Or ────────────────────────────────╮ │
+│ ╰──────────────────┬──────────────────╯ │
+│ ╭─ Terms ──────────┴──────────────────╮ │
+│ │ Field: body(string)                 │ │
+│ │ Values: 'auto', 'automobile', 'red' │ │
+│ ╰─────────────────────────────────────╯ │
+│ Projections: id                         │
+│ ~1 row                                  │
+╰─────────────────────────────────────────╯
+
+
+query
+SELECT id FROM pq_idx WHERE body @@ 'red car' ORDER BY id;
+----
+id
+1
+2
+3
+4
+5
+
+
+query
+EXPLAIN SELECT id, BM25(pq_idx.tableoid) FROM pq_idx WHERE body @@ 'red car';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────╮
+│ Index: pq_idx                                             │
+│ Lookup: table                                             │
+│ Index Filter:                                             │
+│ ╭─ Or ────────────────╮                                   │
+│ ╰──────────┬──────────╯                                   │
+│            ├─────────────────────────────╮                │
+│ ╭─ Terms ──┴──────────╮  ╭─ Or ──────────┴──────────────╮ │
+│ │ Field: body(string) │  │ Merge: max                   │ │
+│ │ Values: 'red'       │  ╰───────────────┬──────────────╯ │
+│ ╰─────────────────────╯  ╭─ Terms ───────┴──────────────╮ │
+│                          │ Field: body(string)          │ │
+│                          │ Values: 'auto', 'automobile' │ │
+│                          ╰──────────────────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75)                               │
+│ Projections: id, sdb_inverted_index_score                 │
+│ ~1 row                                                    │
+╰───────────────────────────────────────────────────────────╯
+
+
+query
+SELECT id, round(BM25(pq_idx.tableoid)::DOUBLE, 4) AS score FROM pq_idx WHERE body @@ 'red car' ORDER BY id;
+----
+id	score
+1	0.3495
+2	0.3495
+3	0.3495
+4	0.1748
+5	0.3495
+
+
+query
+EXPLAIN SELECT id FROM pq_idx WHERE body @@ ts_phrase('red car');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
+│ Index: pq_idx                                            │
+│ Lookup: table                                            │
+│ Index Filter:                                            │
+│ ╭─ Phrase ─────────────────────────────────────────────╮ │
+│ │ Field: body(string)                                  │ │
+│ │ Parts:                                               │ │
+│ │ Term:red(0, 0); Terms:['auto','automobile',](1, 1);  │ │
+│ ╰──────────────────────────────────────────────────────╯ │
+│ Projections: id                                          │
+│ ~1 row                                                   │
+╰──────────────────────────────────────────────────────────╯
+
+
+query
+SELECT id FROM pq_idx WHERE body @@ ts_phrase('red car') ORDER BY id;
+----
+id
+1
+2
+3
+
+
+query
+EXPLAIN SELECT id FROM pq_idx WHERE body @@ websearch_to_tsquery('red-car');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
+│ Index: pq_idx                                            │
+│ Lookup: table                                            │
+│ Index Filter:                                            │
+│ ╭─ Phrase ─────────────────────────────────────────────╮ │
+│ │ Field: body(string)                                  │ │
+│ │ Parts:                                               │ │
+│ │ Term:red(0, 0); Terms:['auto','automobile',](1, 1);  │ │
+│ ╰──────────────────────────────────────────────────────╯ │
+│ Projections: id                                          │
+│ ~1 row                                                   │
+╰──────────────────────────────────────────────────────────╯
+
+
+query
+SELECT id FROM pq_idx WHERE body @@ websearch_to_tsquery('red-car') ORDER BY id;
+----
+id
+1
+2
+3
+
+
+query
+EXPLAIN SELECT id FROM pq_idx WHERE body @@ websearch_to_tsquery('red car');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────╮
+│ Index: pq_idx                                             │
+│ Lookup: table                                             │
+│ Index Filter:                                             │
+│ ╭─ And ───────────────╮                                   │
+│ ╰──────────┬──────────╯                                   │
+│            ├─────────────────────────────╮                │
+│ ╭─ Terms ──┴──────────╮  ╭─ Or ──────────┴──────────────╮ │
+│ │ Field: body(string) │  │ Merge: max                   │ │
+│ │ Values: 'red'       │  ╰───────────────┬──────────────╯ │
+│ ╰─────────────────────╯  ╭─ Terms ───────┴──────────────╮ │
+│                          │ Field: body(string)          │ │
+│                          │ Values: 'auto', 'automobile' │ │
+│                          ╰──────────────────────────────╯ │
+│ Projections: id                                           │
+│ ~1 row                                                    │
+╰───────────────────────────────────────────────────────────╯
+
+
+query
+SELECT id FROM pq_idx WHERE body @@ websearch_to_tsquery('red car') ORDER BY id;
+----
+id
+1
+2
+3
+5
+
+
+query
+EXPLAIN SELECT id FROM pq_idx WHERE body @@ websearch_to_tsquery('car');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────╮
+│ Index: pq_idx                    │
+│ Lookup: table                    │
+│ Index Filter:                    │
+│ ╭─ Or ─────────────────────────╮ │
+│ │ Merge: max                   │ │
+│ ╰───────────────┬──────────────╯ │
+│ ╭─ Terms ───────┴──────────────╮ │
+│ │ Field: body(string)          │ │
+│ │ Values: 'auto', 'automobile' │ │
+│ ╰──────────────────────────────╯ │
+│ Projections: id                  │
+│ ~1 row                           │
+╰──────────────────────────────────╯
+
+
+query
+SELECT id FROM pq_idx WHERE body @@ websearch_to_tsquery('car') ORDER BY id;
+----
+id
+1
+2
+3
+4
+5
+
+
+query
+EXPLAIN SELECT id FROM pq_idx WHERE body @@ websearch_to_tsquery('"red car"');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
+│ Index: pq_idx                                            │
+│ Lookup: table                                            │
+│ Index Filter:                                            │
+│ ╭─ Phrase ─────────────────────────────────────────────╮ │
+│ │ Field: body(string)                                  │ │
+│ │ Parts:                                               │ │
+│ │ Term:red(0, 0); Terms:['auto','automobile',](1, 1);  │ │
+│ ╰──────────────────────────────────────────────────────╯ │
+│ Projections: id                                          │
+│ ~1 row                                                   │
+╰──────────────────────────────────────────────────────────╯
+
+
+query
+SELECT id FROM pq_idx WHERE body @@ websearch_to_tsquery('"red car"') ORDER BY id;
+----
+id
+1
+2
+3
+
+
+query
+EXPLAIN SELECT id FROM pq_idx WHERE body @@ ts_all(ts_tokenize(['red car']));
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────╮
+│ Index: pq_idx                                             │
+│ Lookup: table                                             │
+│ Index Filter:                                             │
+│ ╭─ And ───────────────╮                                   │
+│ ╰──────────┬──────────╯                                   │
+│            ├─────────────────────────────╮                │
+│ ╭─ Terms ──┴──────────╮  ╭─ Or ──────────┴──────────────╮ │
+│ │ Field: body(string) │  │ Merge: max                   │ │
+│ │ Values: 'red'       │  ╰───────────────┬──────────────╯ │
+│ ╰─────────────────────╯  ╭─ Terms ───────┴──────────────╮ │
+│                          │ Field: body(string)          │ │
+│                          │ Values: 'auto', 'automobile' │ │
+│                          ╰──────────────────────────────╯ │
+│ Projections: id                                           │
+│ ~1 row                                                    │
+╰───────────────────────────────────────────────────────────╯
+
+
+query
+SELECT id FROM pq_idx WHERE body @@ ts_all(ts_tokenize(['red car'])) ORDER BY id;
+----
+id
+1
+2
+3
+5
+
+
+query
+EXPLAIN SELECT id FROM pq_idx WHERE body @@ ts_any(ts_tokenize(['red', 'car']), 2);
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────╮
+│ Index: pq_idx                                             │
+│ Lookup: table                                             │
+│ Index Filter:                                             │
+│ ╭─ And ───────────────╮                                   │
+│ ╰──────────┬──────────╯                                   │
+│            ├─────────────────────────────╮                │
+│ ╭─ Terms ──┴──────────╮  ╭─ Or ──────────┴──────────────╮ │
+│ │ Field: body(string) │  │ Merge: max                   │ │
+│ │ Values: 'red'       │  ╰───────────────┬──────────────╯ │
+│ ╰─────────────────────╯  ╭─ Terms ───────┴──────────────╮ │
+│                          │ Field: body(string)          │ │
+│                          │ Values: 'auto', 'automobile' │ │
+│                          ╰──────────────────────────────╯ │
+│ Projections: id                                           │
+│ ~1 row                                                    │
+╰───────────────────────────────────────────────────────────╯
+
+
+query
+SELECT id FROM pq_idx WHERE body @@ ts_any(ts_tokenize(['red', 'car']), 2) ORDER BY id;
+----
+id
+1
+2
+3
+5
+
+
+query
+EXPLAIN SELECT id FROM pq_idx WHERE body @@ to_tsquery('red car');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────╮
+│ Index: pq_idx                           │
+│ Lookup: table                           │
+│ Index Filter:                           │
+│ ╭─ Or ────────────────────────────────╮ │
+│ ╰──────────────────┬──────────────────╯ │
+│ ╭─ Terms ──────────┴──────────────────╮ │
+│ │ Field: body(string)                 │ │
+│ │ Values: 'auto', 'automobile', 'red' │ │
+│ ╰─────────────────────────────────────╯ │
+│ Projections: id                         │
+│ ~1 row                                  │
+╰─────────────────────────────────────────╯
+
+
+query
+SELECT id FROM pq_idx WHERE body @@ to_tsquery('red car') ORDER BY id;
+----
+id
+1
+2
+3
+4
+5
+
+
+query
+EXPLAIN SELECT id FROM pq_idx WHERE body @@ to_tsquery('car');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────╮
+│ Index: pq_idx                    │
+│ Lookup: table                    │
+│ Index Filter:                    │
+│ ╭─ Or ─────────────────────────╮ │
+│ ╰───────────────┬──────────────╯ │
+│ ╭─ Terms ───────┴──────────────╮ │
+│ │ Field: body(string)          │ │
+│ │ Values: 'auto', 'automobile' │ │
+│ ╰──────────────────────────────╯ │
+│ Projections: id                  │
+│ ~1 row                           │
+╰──────────────────────────────────╯
+
+
+query
+SELECT id FROM pq_idx WHERE body @@ to_tsquery('car') ORDER BY id;
+----
+id
+1
+2
+3
+4
+5
+
+
+query
+EXPLAIN SELECT id, BM25(pq_idx.tableoid) FROM pq_idx WHERE body @@ to_tsquery('car');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: pq_idx                          │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Or ─────────────────────────╮       │
+│ │ Merge: max                   │       │
+│ ╰───────────────┬──────────────╯       │
+│ ╭─ Terms ───────┴──────────────╮       │
+│ │ Field: body(string)          │       │
+│ │ Values: 'auto', 'automobile' │       │
+│ ╰──────────────────────────────╯       │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+
+query
+SELECT id, round(BM25(pq_idx.tableoid)::DOUBLE, 4) AS score FROM pq_idx WHERE body @@ to_tsquery('car') ORDER BY id;
+----
+id	score
+1	0.1748
+2	0.1748
+3	0.1748
+4	0.1748
+5	0.1748
+
+
+query
+SELECT id, round(BM25(pq_idx.tableoid)::DOUBLE, 4) AS score FROM pq_idx WHERE body @@ plainto_tsquery('red car') ORDER BY id;
+----
+id	score
+1	0.3495
+2	0.3495
+3	0.3495
+5	0.3495
+
+
+statement ok
+DROP INDEX pq_idx;
+
+
+statement ok
+DROP TABLE pq_docs;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY pq_syn;

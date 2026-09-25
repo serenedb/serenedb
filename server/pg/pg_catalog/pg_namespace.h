@@ -38,6 +38,6 @@ struct PgNamespace {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgNamespace>::GetTableData();
+MaterializedData SystemTableSnapshot<PgNamespace>::GetTableData();
 
 }  // namespace sdb::pg

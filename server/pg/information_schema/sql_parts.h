@@ -39,6 +39,6 @@ struct SqlParts {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<SqlParts>::GetTableData();
+MaterializedData SystemTableSnapshot<SqlParts>::GetTableData();
 
 }  // namespace sdb::pg

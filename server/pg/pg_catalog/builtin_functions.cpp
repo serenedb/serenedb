@@ -32,10 +32,16 @@
 #include <duckdb/catalog/catalog_entry/window_function_catalog_entry.hpp>
 #include <duckdb/function/macro_function.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database_manager.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <vector>
+
+#include "pg/pg_types.h"
 
 namespace sdb::pg {
 namespace {
+
+static_assert(kMaxSystem == duckdb::DatabaseManager::FIRST_OID);
 
 template<typename Entry>
 void EmitSignatures(const Entry& entry, BuiltinFunction& row,
@@ -46,7 +52,7 @@ void EmitSignatures(const Entry& entry, BuiltinFunction& row,
     const auto& function = entry.functions.GetFunctionByOffset(offset);
     const auto& signature = function.GetSignature();
 
-    row.oid = ObjectId{next_oid++};
+    row.oid = next_oid++;
     row.return_type = function.GetReturnType();
     row.has_varargs = function.HasVarArgs();
     row.parameter_types.clear();
@@ -66,7 +72,7 @@ void EmitArguments(const Entry& entry, BuiltinFunction& row,
        ++offset) {
     const auto& function = entry.functions.GetFunctionByOffset(offset);
 
-    row.oid = ObjectId{next_oid++};
+    row.oid = next_oid++;
     row.return_type = duckdb::LogicalType::INVALID;
     row.has_varargs = function.HasVarArgs();
     row.parameter_types = function.GetArguments();
@@ -78,7 +84,7 @@ void EmitMacros(const duckdb::MacroCatalogEntry& entry, BuiltinFunction& row,
                 absl::FunctionRef<void(const BuiltinFunction&)> visitor,
                 uint64_t& next_oid) {
   for (const auto& macro : entry.macros) {
-    row.oid = ObjectId{next_oid++};
+    row.oid = next_oid++;
     row.return_type = macro->return_types.empty() ? duckdb::LogicalType::INVALID
                                                   : macro->return_types[0];
     row.has_varargs = false;
@@ -99,32 +105,30 @@ void VisitBuiltinFunctions(
   const auto collect = [&entries](duckdb::CatalogEntry& entry) {
     entries.emplace_back(entry);
   };
-  for (const auto& schema_name : {duckdb::Identifier::DefaultSchema(),
-                                  duckdb::Identifier{"pg_catalog"}}) {
-    auto schema = system_catalog.GetSchema(
-      context, schema_name, duckdb::OnEntryNotFound::RETURN_NULL);
+  const auto visit_schema = [&](duckdb::Catalog& catalog,
+                                const duckdb::Identifier& schema_name) {
+    auto schema = catalog.GetSchema(context, schema_name,
+                                    duckdb::OnEntryNotFound::RETURN_NULL);
     if (!schema) {
-      continue;
+      return;
     }
-    schema->Scan(context, duckdb::CatalogType::SCALAR_FUNCTION_ENTRY,
-                 [&](duckdb::CatalogEntry& entry) {
-                   if (entry.type != duckdb::CatalogType::TABLE_MACRO_ENTRY) {
-                     collect(entry);
-                   }
-                 });
-    schema->Scan(context, duckdb::CatalogType::TABLE_FUNCTION_ENTRY,
-                 [&](duckdb::CatalogEntry& entry) {
-                   if (entry.type != duckdb::CatalogType::MACRO_ENTRY) {
-                     collect(entry);
-                   }
-                 });
+    schema->Scan(context, duckdb::CatalogType::SCALAR_FUNCTION_ENTRY, collect);
+    schema->Scan(context, duckdb::CatalogType::TABLE_FUNCTION_ENTRY, collect);
     schema->Scan(context, duckdb::CatalogType::PRAGMA_FUNCTION_ENTRY, collect);
+  };
+  visit_schema(system_catalog, duckdb::Identifier::DefaultSchema());
+  visit_schema(system_catalog, duckdb::Identifier{"pg_catalog"});
+  auto& current_catalog =
+    duckdb::Catalog::GetCatalog(context, duckdb::Identifier::InvalidCatalog());
+  for (const auto& schema_name : {duckdb::Identifier{"pg_catalog"},
+                                  duckdb::Identifier{"information_schema"}}) {
+    visit_schema(current_catalog, schema_name);
   }
 
   std::ranges::sort(entries, [](const duckdb::CatalogEntry& lhs,
                                 const duckdb::CatalogEntry& rhs) {
-    const auto left_schema = lhs.ParentSchema().name.GetIdentifierName();
-    const auto right_schema = rhs.ParentSchema().name.GetIdentifierName();
+    const auto left_schema = lhs.ParentSchemaName().GetIdentifierName();
+    const auto right_schema = rhs.ParentSchemaName().GetIdentifierName();
     if (left_schema != right_schema) {
       return left_schema < right_schema;
     }
@@ -133,7 +137,7 @@ void VisitBuiltinFunctions(
     return left != right ? left < right : lhs.type < rhs.type;
   });
 
-  uint64_t next_oid = id::kFirstBuiltinFunction.id();
+  uint64_t next_oid = kFirstBuiltinFunction;
   for (auto ref : entries) {
     auto& entry = ref.get();
     BuiltinFunction row;
@@ -171,6 +175,7 @@ void VisitBuiltinFunctions(
         break;
     }
   }
+  SDB_ASSERT(next_oid <= kMaxSystem);
 }
 
 }  // namespace sdb::pg

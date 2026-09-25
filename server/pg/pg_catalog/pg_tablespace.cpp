@@ -20,8 +20,23 @@
 
 #include "pg/pg_catalog/pg_tablespace.h"
 
+#include "pg/pg_types.h"
+
 namespace sdb::pg {
 namespace {
+
+constexpr auto kSampleData = std::to_array<PgTablespace>({
+  {
+    .oid = 1663,
+    .spcname = "pg_default",
+    .spcowner = pg::kRootUser,
+  },
+  {
+    .oid = 1664,
+    .spcname = "pg_global",
+    .spcowner = pg::kRootUser,
+  },
+});
 
 constexpr uint64_t kNullMask = MaskFromNulls({
   GetIndex(&PgTablespace::spcacl),
@@ -32,25 +47,12 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 
 // TODO: emit user rows here once CREATE TABLESPACE is implemented.
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgTablespace>::GetTableData() {
-  const std::array<PgTablespace, 2> values{
-    PgTablespace{
-      .oid = 1663,
-      .spcname = "pg_default",
-      .spcowner = id::kRootUser.id(),
-    },
-    PgTablespace{
-      .oid = 1664,
-      .spcname = "pg_global",
-      .spcowner = id::kRootUser.id(),
-    },
-  };
-
-  auto result = CreateColumns<PgTablespace>(values.size());
-  for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, Roles());
+MaterializedData SystemTableSnapshot<PgTablespace>::GetTableData() {
+  auto result = CreateColumns<PgTablespace>(kSampleData.size());
+  for (size_t row = 0; row < kSampleData.size(); ++row) {
+    WriteData(result, kSampleData[row], kNullMask, row, Roles());
   }
-  return {std::move(result), values.size()};
+  return {std::move(result), kSampleData.size()};
 }
 
 }  // namespace sdb::pg

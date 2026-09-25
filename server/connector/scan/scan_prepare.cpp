@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/utils/assert.hpp>
 
 #include "connector/scan/scan_state.h"
@@ -44,10 +45,14 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
       }
       collector = g.collector->Get();
     }
-    g.queries[seg_idx] = g.filter->PrepareSegment(
-      (*g.reader)[seg_idx], {.collector = collector,
-                             .thread = collector != nullptr ? l.thread_slot : 0,
-                             .needs_terms = g.needs_terms});
+    const auto& segment = (*g.reader)[seg_idx];
+    const irs::PrepareContext ctx{
+      .collector = collector,
+      .thread = collector != nullptr ? l.thread_slot : 0,
+      .needs_terms = g.needs_terms};
+    g.queries[seg_idx] = g.vector_scorer == nullptr
+                           ? irs::PrepareMasked(*g.filter, segment, ctx)
+                           : g.filter->PrepareSegment(segment, ctx);
     work.prepare.store(SegmentWork::kReady, std::memory_order_release);
     work.prepare.notify_all();
     return *g.queries[seg_idx];
@@ -79,7 +84,7 @@ bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
     }
   }
   if (g.stats_barrier.Park(input)) {
-    g.metrics.parked.fetch_add(1, std::memory_order_relaxed);
+    l.parked_on = &g.stats_barrier;
     return false;
   }
   g.stats_barrier.Wait();

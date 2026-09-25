@@ -18,10 +18,9 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/algorithm/container.h>
-
 #include <algorithm>
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/search/fill/docs_mask.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "connector/full_scanner.h"
@@ -50,24 +49,6 @@ void OpenScanner(ScanGlobalState& g, ColScanLocalState& l) {
   l.scanner = slot.get();
 }
 
-duckdb::idx_t LiveRows(std::span<const irs::doc_id_t> dead, size_t& at,
-                       irs::doc_id_t first, irs::doc_id_t last,
-                       duckdb::SelectionVector& sel) {
-  duckdb::idx_t live = 0;
-  auto doc = first;
-  for (; at != dead.size() && dead[at] < last; ++at) {
-    SDB_ASSERT(dead[at] >= doc);
-    for (; doc != dead[at]; ++doc) {
-      sel.set_index(live++, doc - first);
-    }
-    ++doc;
-  }
-  for (; doc != last; ++doc) {
-    sel.set_index(live++, doc - first);
-  }
-  return live;
-}
-
 duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
                            duckdb::DataChunk& output) {
   auto& scanner = *l.scanner;
@@ -79,23 +60,22 @@ duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
     }
     const auto take = static_cast<duckdb::idx_t>(
       std::min<uint64_t>(STANDARD_VECTOR_SIZE, l.doc_end - l.doc_cursor));
-    const auto first =
-      irs::doc_limits::min() + static_cast<irs::doc_id_t>(l.doc_cursor);
-    const auto last = first + static_cast<irs::doc_id_t>(take);
-    while (l.dead_at != l.dead.size() && l.dead[l.dead_at] < first) {
-      ++l.dead_at;
-    }
     duckdb::idx_t produced;
-    if (l.dead_at != l.dead.size() && l.dead[l.dead_at] < last) {
+    if (l.has_mask) {
+      const auto first =
+        irs::doc_limits::min() + static_cast<irs::doc_id_t>(l.doc_cursor);
       l.live_sel.Initialize(l.live_sel_data);
-      const auto live = LiveRows(l.dead, l.dead_at, first, last, l.live_sel);
-      produced = scanner.Scan(l.doc_cursor, take, output, &l.live_sel, live);
+      const auto live =
+        l.mask.FillLive(first, static_cast<uint32_t>(take), l.live_sel.data());
+      produced = live == take ? scanner.Scan(l.doc_cursor, take, output)
+                              : scanner.Scan(l.doc_cursor, take, output,
+                                             &l.live_sel, live);
     } else {
       produced = scanner.Scan(l.doc_cursor, take, output);
     }
     l.doc_cursor += take;
     if (produced != 0) {
-      AccountAndWriteVirtualColumns(g, produced, nullptr, output);
+      WriteVirtualColumns(g, produced, nullptr, output);
       return produced;
     }
     output.Reset();
@@ -105,26 +85,12 @@ duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
 
 }  // namespace
 
-void BuildDeadRows(ScanGlobalState& g) {
-  const auto& reader = *g.reader;
-  g.dead_rows.resize(reader.size());
-  for (const auto seg : g.segment_order) {
-    const auto* mask = reader[seg].docs_mask();
-    if (mask == nullptr || mask->empty()) {
-      continue;
-    }
-    auto& dead = g.dead_rows[seg];
-    dead.assign(mask->begin(), mask->end());
-    absl::c_sort(dead);
-  }
-}
-
 void RunColScan(duckdb::ClientContext&, duckdb::TableFunctionInput&,
                 ScanGlobalState& g, ColScanLocalState& l,
                 duckdb::DataChunk& output) {
   if (!l.live_sel_data) {
-    l.live_sel_data =
-      duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
+    l.live_sel_data = duckdb::make_buffer<duckdb::SelectionData>(
+      STANDARD_VECTOR_SIZE + irs::doc_limits::kDocsSlack);
   }
   for (;;) {
     if (l.has_unit) {
@@ -133,32 +99,17 @@ void RunColScan(duckdb::ClientContext&, duckdb::TableFunctionInput&,
         output.SetChildCardinality(added);
         return;
       }
-      if (FinishUnit(g, l)) {
-        FinishSegments(g, 1);
-      }
+      FinishUnit(g, l);
     }
     if (!NextLiveUnit(g, l)) {
       break;
     }
     const auto& sub = (*g.reader)[l.unit.seg];
-    const auto docs = sub.docs_count();
-    if (l.unit.whole) {
-      l.doc_cursor = 0;
-      l.doc_end = docs;
-    } else {
-      l.doc_cursor =
-        std::min<uint64_t>(docs, uint64_t{l.unit.rg_begin} * g.rg_size);
-      l.doc_end = std::min<uint64_t>(docs, uint64_t{l.unit.rg_end} * g.rg_size);
-    }
-    l.dead = g.dead_rows[l.unit.seg];
-    if (l.unit.whole) {
-      l.dead_at = 0;
-    } else {
-      const auto from =
-        irs::doc_limits::min() + static_cast<irs::doc_id_t>(l.doc_cursor);
-      l.dead_at = static_cast<size_t>(
-        std::lower_bound(l.dead.begin(), l.dead.end(), from) - l.dead.begin());
-    }
+    const auto rows = g.RowsOf(l.unit);
+    l.doc_cursor = rows.begin;
+    l.doc_end = rows.end;
+    l.has_mask = sub.docs_mask() != nullptr;
+    l.mask = irs::fill::DocsMask{sub};
     OpenScanner(g, l);
   }
   output.SetChildCardinality(0);

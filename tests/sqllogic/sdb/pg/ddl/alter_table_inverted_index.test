@@ -115,12 +115,13 @@ id
 1
 
 
-# DROP a non-indexed column: the index is unaffected, and its INCLUDE column
-# stays bound to the right source. Dropping a column shifts the positions of
-# the ones after it, so a row inserted + refreshed post-drop must still project
-# extra2 -- not score, which moved into extra2's old slot -- through the index.
-statement ok
+# DROP a non-indexed column that sits before the indexed ones: refused, since
+# dropping it would shift the positions the index is bound to. Column and
+# index both stay.
+statement error
 ALTER TABLE ati_t2 DROP COLUMN tag;
+----
+db error: ERROR: Cannot drop this column: an index depends on a column after it!
 
 
 query
@@ -131,7 +132,7 @@ id
 
 
 statement count 1
-INSERT INTO ati_t2 VALUES (4, 'golf hotel', 40, 100);
+INSERT INTO ati_t2 VALUES (4, 'golf hotel', 'z', 40, 100);
 
 
 statement ok
@@ -154,10 +155,21 @@ ALTER TABLE ati_t2 ALTER COLUMN score TYPE BIGINT;
 statement error
 ALTER TABLE ati_t2 ALTER COLUMN body2 TYPE VARCHAR(100);
 ----
-db error: ERROR: cannot alter type of column "body2" because index "ati_idx2" depends on it; drop the index first
+db error: ERROR: Cannot change the type of this column: an index depends on it!
 
 
-# DROP the indexed column: the inverted index covering it is cascade-dropped.
+# DROP the indexed column: refused while the inverted index covers it. Drop the
+# index first, then the column goes.
+statement error
+ALTER TABLE ati_t2 DROP COLUMN body2;
+----
+db error: ERROR: Cannot drop this column: an index depends on it!
+
+
+statement ok
+DROP INDEX ati_idx2;
+
+
 statement ok
 ALTER TABLE ati_t2 DROP COLUMN body2;
 
@@ -190,8 +202,8 @@ DROP TEXT SEARCH DICTIONARY ati_dict;
 # An inverted index on a struct SUB-FIELD expression (e.g. (s['id']::INTEGER))
 # records the base struct column as a referenced dependency, so the index
 # covers it even though the column never appears directly. ADD / DROP / RENAME
-# FIELD and a whole-column type change are all rejected until the index is
-# dropped; dropping the struct column itself cascade-drops the expression index.
+# FIELD, a whole-column type change and dropping the struct column itself are
+# all rejected until the index is dropped.
 
 
 statement ok
@@ -210,31 +222,41 @@ CREATE INDEX ati_struct_idx ON ati_struct USING inverted((s['id']::INTEGER));
 statement error
 ALTER TABLE ati_struct ADD COLUMN s.k INTEGER;
 ----
-db error: ERROR: cannot alter type of column "s" because index "ati_struct_idx" depends on it; drop the index first
+db error: ERROR: Cannot change the type of this column: an index depends on it!
 
 
 # RENAME the indexed sub-field -- rejected.
 statement error
 ALTER TABLE ati_struct RENAME COLUMN s.id TO ident;
 ----
-db error: ERROR: cannot alter type of column "s" because index "ati_struct_idx" depends on it; drop the index first
+db error: ERROR: Cannot change the type of this column: an index depends on it!
 
 
 # DROP the indexed sub-field -- rejected.
 statement error
 ALTER TABLE ati_struct DROP COLUMN s.id;
 ----
-db error: ERROR: cannot alter type of column "s" because index "ati_struct_idx" depends on it; drop the index first
+db error: ERROR: Cannot change the type of this column: an index depends on it!
 
 
 # A whole-column type change is rejected for the same reason.
 statement error
 ALTER TABLE ati_struct ALTER COLUMN s TYPE STRUCT(id BIGINT, name VARCHAR);
 ----
-db error: ERROR: cannot alter type of column "s" because index "ati_struct_idx" depends on it; drop the index first
+db error: ERROR: Cannot change the type of this column: an index depends on it!
 
 
-# Dropping the whole struct column cascade-drops the expression index.
+# Dropping the whole struct column is refused too; after DROP INDEX it goes.
+statement error
+ALTER TABLE ati_struct DROP COLUMN s;
+----
+db error: ERROR: Cannot drop this column: an index depends on it!
+
+
+statement ok
+DROP INDEX ati_struct_idx;
+
+
 statement ok
 ALTER TABLE ati_struct DROP COLUMN s;
 

@@ -91,7 +91,7 @@ class NGramTokenizer final : public TypedTokenizer<NGramTokenizer>,
   }
 
   template<TokenLayout Layout, bool Plain, Kernel K, bool KnownAscii>
-  bool DoFill(duckdb::string_t value, TokenSink& sink);
+  IRS_ALIGN_HOT bool DoFill(duckdb::string_t value, TokenSink& sink);
 
  private:
   bool PlainFill() const noexcept {

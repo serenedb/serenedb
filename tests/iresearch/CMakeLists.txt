@@ -29,7 +29,9 @@ set(iresearch-tests_sources
     ./analysis/text/sentence_tests.cpp
     ./analysis/text/words_tests.cpp
     ./analysis/normalizing_tokenizer_tests.cpp
+    ./analysis/filter_tokens_tokenizer_tests.cpp
     ./analysis/geo_tokenizer_tests.cpp
+    ./analysis/html_strip_tokenizer_tests.cpp
     ./analysis/stemming_tokenizer_tests.cpp
     ./analysis/stopwords_tokenizer_tests.cpp
     ./analysis/solr_synonyms_tokenizer_tests.cpp

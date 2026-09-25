@@ -54,7 +54,7 @@ class Tokenizer : public irs::analysis::TypedTokenizer<Tokenizer> {
     return "NormTestAnalyzer";
   }
 
-  explicit Tokenizer(size_t count) : _count{count} {}
+  Tokenizer(size_t count, size_t stack) : _count{count}, _stack{stack} {}
 
   irs::TokenTraits Traits() const noexcept final {
     return {
@@ -69,7 +69,7 @@ class Tokenizer : public irs::analysis::TypedTokenizer<Tokenizer> {
     for (size_t n = 0; n < _count; ++n) {
       tests::EmitCopy<Layout>(
         sink, irs::ViewCast<irs::byte_type>(value),
-        static_cast<uint32_t>(n + 1),
+        static_cast<uint32_t>(n / _stack + 1),
         irs::Offs{0, static_cast<uint32_t>(value.size())});
     }
     return true;
@@ -77,15 +77,16 @@ class Tokenizer : public irs::analysis::TypedTokenizer<Tokenizer> {
 
  private:
   size_t _count;
+  size_t _stack;
 };
 
 class NormField final : public tests::Ifield {
  public:
-  NormField(std::string name, std::string value, size_t count)
+  NormField(std::string name, std::string value, size_t count, size_t stack = 1)
     : _name{std::move(name)},
       _id{FieldIdFor(_name)},
       _value{std::move(value)},
-      _analyzer{count} {}
+      _analyzer{count, stack} {}
 
   irs::field_id Id() const final { return _id; }
 
@@ -197,7 +198,7 @@ TEST_P(NormTestCase, CheckNorms) {
   auto opts = irs::tests::DefaultWriterOptions();
 
   // Create actual index
-  auto writer = open_writer(irs::kOmCreate, opts);
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   ASSERT_TRUE(Insert(*writer, doc0->indexed.begin(), doc0->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
@@ -265,6 +266,35 @@ TEST_P(NormTestCase, CheckNorms) {
   }
 }
 
+TEST_P(NormTestCase, StackedTokensCountOnce) {
+  constexpr std::string_view kName = "stacked";
+  const auto add = [&](tests::Document& doc, size_t count, size_t stack) {
+    doc.insert(
+      std::make_shared<NormField>(std::string{kName}, "x", count, stack));
+  };
+  tests::Document doc0;
+  add(doc0, 6, 3);
+  tests::Document doc1;
+  add(doc1, 5, 2);
+  tests::Document doc2;
+  add(doc2, 6, 3);
+  add(doc2, 4, 2);
+  tests::Document doc3;
+  add(doc3, 2048, 3);
+
+  auto writer = open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+  ASSERT_NE(nullptr, writer);
+  for (const auto* doc : {&doc0, &doc1, &doc2, &doc3}) {
+    ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
+  }
+  writer->RefreshCommit();
+
+  auto reader = open_reader(irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(1, reader.size());
+  AssertNormColumn<uint32_t>(reader[0], FieldIdFor(kName),
+                             {{1, 2}, {2, 3}, {3, 4}, {4, 683}});
+}
+
 TEST_P(NormTestCase, CheckNormsBatched) {
   const absl::flat_hash_map<std::string_view, uint32_t> seed_mapping{
     {"name", uint32_t{1}},
@@ -308,7 +338,7 @@ TEST_P(NormTestCase, CheckNormsBatched) {
   auto opts = irs::tests::DefaultWriterOptions();
 
   // Create actual index
-  auto writer = open_writer(irs::kOmCreate, opts);
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   for (const auto* d : docs) {
     ASSERT_TRUE(Insert(*writer, d->indexed.begin(), d->indexed.end()));
@@ -415,7 +445,7 @@ TEST_P(NormTestCase, CheckNormsCompaction) {
   auto opts = irs::tests::DefaultWriterOptions();
 
   // Create actual index
-  auto writer = open_writer(irs::kOmCreate, opts);
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   ASSERT_TRUE(Insert(*writer, doc0->indexed.begin(), doc0->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
@@ -664,7 +694,7 @@ TEST_P(NormTestCase, CheckNormsCompactionWithRemovals) {
   auto opts = irs::tests::DefaultWriterOptions();
 
   // Create actual index
-  auto writer = open_writer(irs::kOmCreate, opts);
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   ASSERT_TRUE(Insert(*writer, doc0->indexed.begin(), doc0->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));

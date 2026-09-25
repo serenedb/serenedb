@@ -51,7 +51,7 @@ namespace {
 
 using duckdb::ExplainNode;
 using irs::utils::downCast;
-using sdb::catalog::term_dict::Kind;
+using sdb::connector::term_dict::Kind;
 
 const Scorer* Explicit(const Scorer* scorer) noexcept {
   return IsConstScoreSingleton(scorer) ? nullptr : scorer;
@@ -113,7 +113,7 @@ std::string TermValue(bytes_view term, Kind kind) {
   if (kind == Kind::Bool) {
     return !term.empty() && term[0] ? "true" : "false";
   }
-  if (sdb::catalog::term_dict::IsNumeric(kind)) {
+  if (sdb::connector::term_dict::IsNumeric(kind)) {
     return DecodeNumericTerm(term);
   }
   return TermToString(term);
@@ -257,10 +257,10 @@ struct FilterPrinter {
   const FieldKindResolver& kind_of;
 
   std::string FieldName(field_id fid) const {
-    return name_of(sdb::catalog::ColumnId{fid});
+    return name_of(sdb::connector::ColumnId{fid});
   }
   Kind FieldKind(field_id fid) const {
-    return kind_of(sdb::catalog::ColumnId{fid});
+    return kind_of(sdb::connector::ColumnId{fid});
   }
 
   std::string PhraseParts(const ByPhrase& filter) const {
@@ -350,7 +350,7 @@ struct FilterPrinter {
       const auto kind = FieldKind(run.front().field);
       SDB_ASSERT(kind != Kind::Null || run.size() == 1);
       if (kind != Kind::Null || run.front().boost != kNoBoost ||
-          Explicit(run.front().scorer) != nullptr) {
+          Explicit(run.front().scorer)) {
         const std::string_view quote = kind == Kind::String ? "'" : "";
         leaves.attributes["Values"] = absl::StrJoin(
           run, ", ", [&](std::string* o, const TermClause& clause) {
@@ -380,7 +380,7 @@ struct FilterPrinter {
     }
     const auto& child = *filters.front();
     return child.type() == Type<All>::id() && child.GetBoost() == kNoBoost &&
-           child.GetScorer() == nullptr;
+           !child.GetScorer();
   }
 
   ExplainNode BuildBool(const BooleanFilter& filter) const {
@@ -484,9 +484,9 @@ struct FilterPrinter {
       const auto& f = downCast<const ByNestedFilter>(filter);
       auto& [parent, child, match, _] = f.options();
       ExplainNode node{"Nested"};
-      if (auto* range = std::get_if<Match>(&match); range != nullptr) {
+      if (auto* range = std::get_if<Match>(&match)) {
         node.attributes["Match"] = absl::StrCat(range->min, ", ", range->max);
-      } else if (std::get_if<irs::MatchProvider>(&match) != nullptr) {
+      } else if (std::get_if<irs::MatchProvider>(&match)) {
         node.attributes["Match"] = "<Predicate>";
       }
       node.children.push_back(Build(*child));
@@ -568,11 +568,11 @@ struct FilterPrinter {
   }
 };
 
-std::string IdentityField(sdb::catalog::ColumnId id) {
-  return absl::StrCat(static_cast<irs::field_id>(id));
+std::string IdentityField(sdb::connector::ColumnId id) {
+  return absl::StrCat(id);
 }
 
-Kind UnknownKind(sdb::catalog::ColumnId) { return Kind::Unsupported; }
+Kind UnknownKind(sdb::connector::ColumnId) { return Kind::Unsupported; }
 
 }  // namespace
 

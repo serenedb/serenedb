@@ -11,7 +11,7 @@ The `generate_sparse_ngrams` template indexes text for **substring search** — 
 
 It targets text where splitting on word boundaries does not help: source code, log lines, URLs, file paths, identifiers, serial numbers. For that kind of data a plain word tokenizer cannot answer "which rows contain `i=42`", and an [`generate_ngrams`](./generate_ngrams.md) dictionary that could do so would bloat the index with every overlapping window. `generate_sparse_ngrams` keeps the index compact by emitting only a small, carefully chosen set of variable-length grams, while still letting any substring query be answered exactly.
 
-**As a function:** `generate_sparse_ngrams(value, max_ngram_length := 16, covering := false)` — the value first, then the options in the order below. See [tokenizer functions](./index.md) for how a value, a list and a chain of calls behave.
+**As a function:** `generate_sparse_ngrams(value, max_ngram_length := 16, covering := false, min_ngram_length := 3, min_cutoff_length := 0)` — the value first, then the options in the order below. See [tokenizer functions](./index.md) for how a value, a list and a chain of calls behave.
 
 <SqlLogicTest id="sql/functions/search/tokenizers/generate_sparse_ngrams/function_form" />
 
@@ -30,6 +30,10 @@ A query then matches every row whose indexed grams contain all of the query's gr
 |---|---|---|---|
 | `COVERING` | boolean | `false` | Which side the dictionary serves. Leave `false` for the dictionary attached to the indexed column. Set `true` for the dictionary used to tokenize query strings, so their grams can be `AND`-ed together to find containing rows. |
 | `MAX_NGRAM_LENGTH` | integer | `16` | Largest gram length, in characters. It caps the grams the indexing side emits and bounds how long the querying side lets a covering gram grow, so a covering gram can come out shorter than the cap. Longer grams are more selective, so queries return fewer false candidates to verify, at the cost of a larger index. Values below `3` are rejected when the dictionary is created. |
+| `MIN_NGRAM_LENGTH` | integer | `3` | Smallest gram length, in characters. It changes the selection itself, not just a filter: gram boundaries are chosen over hashes of `MIN_NGRAM_LENGTH - 1` consecutive characters, so every gram spans at least `MIN_NGRAM_LENGTH` characters and the grams differ from the default ones. Values below `3`, or above `MAX_NGRAM_LENGTH`, are rejected. |
+| `MIN_CUTOFF_LENGTH` | integer | `0` | Drop the selected grams shorter than this, on both sides. `0` keeps every gram; otherwise it must lie between `MIN_NGRAM_LENGTH` and `MAX_NGRAM_LENGTH`. The grams that remain are exactly the ones selected without the cutoff, so the index shrinks while its long grams stay usable by queries. |
+
+The indexing and querying dictionaries must agree on `MIN_NGRAM_LENGTH` and `MIN_CUTOFF_LENGTH`, just as they agree on `MAX_NGRAM_LENGTH`. A gram depends only on the characters it spans, which is what keeps a cutoff safe: every gram a search fragment selects is also selected wherever that fragment occurs, and dropping the short ones on both sides only means fewer grams to require, never a missed row. A fragment whose grams are all below the cutoff has nothing left to require and has to be found with `LIKE` alone.
 
 The template supports the `FREQUENCY` and `NORM` [feature flags](../../../statements/create_text_search_dictionary/index.md#feature-flags), so `BM25()` can rank rows by how much of the query they contain; `NORM` requires `FREQUENCY`. `POSITION` and `OFFSET` are not supported: setting either fails when the dictionary is created. [`ts_offsets()`](../highlighting.md#ts_offsets) and [`ts_highlight()`](../highlighting.md#ts_highlight) still work over a `generate_sparse_ngrams` dictionary — with no offsets in the index they re-analyze the value at query time.
 
@@ -37,7 +41,7 @@ The template supports the `FREQUENCY` and `NORM` [feature flags](../../../statem
 
 Unlike [`generate_ngrams`](./generate_ngrams.md), which emits every sliding window in its length range, `generate_sparse_ngrams` picks a small set of variable-length grams that still let any substring query be answered. The `COVERING` option controls which set: the indexing side (`false`) stores enough grams to cover the value, while the querying side (`true`) emits only the few grams a search string must share with a row.
 
-The selection runs over hashes of adjacent character pairs, so every gram boundary falls between characters. A gram is a verbatim slice of the value: nothing is case-folded, accent-stripped or Unicode-normalized, and there is no locale or case option to change that. Lengths count codepoints, so a gram never cuts a multi-byte UTF-8 sequence in half and its term text is valid UTF-8 whenever the value is; input that is not valid UTF-8 is never rejected, character boundaries just fall back to a lead-byte walk. Every gram spans at least 3 characters, which is why shorter values produce nothing at all: `he` yields `{}` and `hel` yields `{hel}`, and the two-character `日本` yields `{}` even though it is 6 bytes. A search fragment shorter than 3 characters likewise has no grams to require, so it cannot be answered from the index at all and has to be found with `LIKE` alone.
+With the default `MIN_NGRAM_LENGTH` the selection runs over hashes of adjacent character pairs, so every gram boundary falls between characters. A gram is a verbatim slice of the value: nothing is case-folded, accent-stripped or Unicode-normalized, and there is no locale or case option to change that. Lengths count codepoints, so a gram never cuts a multi-byte UTF-8 sequence in half and its term text is valid UTF-8 whenever the value is; input that is not valid UTF-8 is never rejected, character boundaries just fall back to a lead-byte walk. Every gram spans at least `MIN_NGRAM_LENGTH` characters, 3 by default, which is why shorter values produce nothing at all: `he` yields `{}` and `hel` yields `{hel}`, and the two-character `日本` yields `{}` even though it is 6 bytes. A search fragment shorter than that likewise has no grams to require, so it cannot be answered from the index at all and has to be found with `LIKE` alone.
 
 | Input | Options | Tokens |
 |---|---|---|
@@ -81,6 +85,10 @@ The querying dictionary repeats the indexing dictionary's gram settings with `CO
 Lowering `MAX_NGRAM_LENGTH` caps how long a gram can grow. Here the longer `lo wo` gram the default keeps is dropped, yielding a smaller index at the cost of less selective queries:
 
 <SqlLogicTest id="sql/functions/search/tokenizers/generate_sparse_ngrams/example_006" />
+
+`MIN_CUTOFF_LENGTH` works from the other end: it keeps the selection and drops its short grams, which are the most frequent terms and the least selective ones. Of the twelve default grams of `hello world`, three reach four characters:
+
+<SqlLogicTest id="sql/functions/search/tokenizers/generate_sparse_ngrams/example_007" />
 
 ## See also
 

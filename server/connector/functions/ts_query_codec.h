@@ -44,6 +44,8 @@ inline constexpr duckdb::idx_t kTSQuerySlopChild = 3;
 inline constexpr duckdb::idx_t kTSQueryScorerChild = 4;
 inline constexpr duckdb::idx_t kTSQueryMergeChild = 5;
 
+bool TryCastExactInt64(const duckdb::Value& v, duckdb::Value& out);
+
 bool IsTSQueryStructType(const duckdb::LogicalType& type);
 
 enum class TSQueryMerge : uint8_t {

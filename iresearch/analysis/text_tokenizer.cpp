@@ -61,6 +61,8 @@ class UnicodeAnalyzerImpl final : public TypedTokenizer<UnicodeAnalyzerImpl<S>>,
   bool DoFill(duckdb::string_t raw, TokenSink& sink) {
     if constexpr (S == Options::Separate::Sentence) {
       segment::SentenceFillValue<Layout, C, A, KnownAscii>(sink, raw);
+    } else if constexpr (S == Options::Separate::Grapheme) {
+      segment::GraphemeFillValue<Layout, C, A, KnownAscii>(sink, raw);
     } else if constexpr (S == Options::Separate::Line ||
                          S == Options::Separate::Paragraph) {
       segment::LineFillValue<Layout, C, A, S == Options::Separate::Paragraph,
@@ -103,6 +105,8 @@ Tokenizer::ptr TextTokenizer::Make(Options options) {
     case Separate::Paragraph:
       return std::make_unique<UnicodeAnalyzerImpl<Separate::Paragraph>>(
         options);
+    case Separate::Grapheme:
+      return std::make_unique<UnicodeAnalyzerImpl<Separate::Grapheme>>(options);
   }
 }
 

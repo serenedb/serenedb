@@ -35,26 +35,25 @@
 #include <string_view>
 #include <vector>
 
-#include "catalog/entry.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog/cluster.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/otel.h"
 #include "network/http/common.h"
 #include "otel/schema_sql.h"
 #include "pg/connection_context.h"
+#include "pg/pg_types.h"
 
 namespace sdb::otel {
 namespace {
 
 class Creator {
  public:
-  Creator(std::string_view database, ObjectId database_id)
+  Creator(std::string_view database, duckdb::idx_t database_id)
     : _conn{irs::DuckDBEngine::Instance().CreateConnection()} {
     // The catalog layer reaches the role, database and transaction through
     // this; a bare DuckDB connection cannot resolve a SereneDB relation.
     auto ctx = std::make_shared<ConnectionContext>(
-      *_conn->context, irs::StaticStrings::kDefaultUser, id::kRootUser,
+      *_conn->context, irs::StaticStrings::kDefaultUser, pg::kRootUser,
       database, database_id, nullptr, 0, nullptr);
     ctx->MarkSystemWriter();
     connector::SereneDBClientState::Register(*_conn->context, std::move(ctx));
@@ -107,30 +106,29 @@ class Creator {
 }  // namespace
 
 void EnsureSchema(std::string_view database) {
-  const auto* entry = catalog::FindDatabase(nullptr, database);
-  if (entry == nullptr) {
+  auto entry = catalog::FindDatabase(database);
+  if (!entry) {
     // CREATE DATABASE has to run somewhere: the default database always
     // exists and every role may connect to it.
-    const auto* home =
-      catalog::FindDatabase(nullptr, irs::StaticStrings::kDefaultDatabase);
-    if (home == nullptr) {
+    auto home = catalog::FindDatabase(irs::StaticStrings::kDefaultDatabase);
+    if (!home) {
       SDB_WARN(STARTUP, "OpenTelemetry schema: default database not found");
       return;
     }
-    Creator bootstrap{home->name.GetIdentifierName(), catalog::IdOf(*home)};
+    Creator bootstrap{home->name.GetIdentifierName(), home->oid};
     if (!bootstrap.Run(absl::StrCat("CREATE DATABASE ",
                                     network::http::SqlIdentifier(database)))) {
       return;
     }
-    entry = catalog::FindDatabase(nullptr, database);
-    if (entry == nullptr) {
+    entry = catalog::FindDatabase(database);
+    if (!entry) {
       SDB_WARN(STARTUP, "OpenTelemetry schema: database '", database,
                "' not visible after CREATE DATABASE");
       return;
     }
     SDB_INFO(STARTUP, "OpenTelemetry database created: ", database);
   }
-  Creator creator{entry->name.GetIdentifierName(), catalog::IdOf(*entry)};
+  Creator creator{entry->name.GetIdentifierName(), entry->oid};
   if (creator.Exists()) {
     SDB_INFO(STARTUP, "OpenTelemetry schema already present in ", database);
     return;

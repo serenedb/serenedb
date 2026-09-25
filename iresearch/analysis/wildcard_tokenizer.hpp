@@ -61,6 +61,9 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   template<TokenLayout Layout, bool KnownAscii>
   bool DoFill(duckdb::string_t value, TokenSink& sink);
 
+  bool FillTokens(std::span<const duckdb::string_t> tokens, TokenSink& sink,
+                  FillCtx ctx) final;
+
   TokenTraits Traits() const noexcept final { return {.store = true}; }
 
   BlockTraits WantedBlockTraits() const noexcept final {
@@ -82,6 +85,8 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   auto& ngram() noexcept { return _ngram; }
 
  private:
+  template<TokenLayout Layout>
+  void EmitEncoded(TokenSink& sink, bool ascii);
   template<bool Identity, TokenLayout Layout>
   void EmitTerms(TokenSink& sink);
   template<bool Identity, TokenLayout Layout>

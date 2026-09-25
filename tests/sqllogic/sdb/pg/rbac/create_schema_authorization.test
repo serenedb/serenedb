@@ -1,0 +1,185 @@
+control substitution on
+
+# CREATE SCHEMA ... AUTHORIZATION role makes that role the owner instead of the
+# creator; the bare form names the schema after the role. Handing a schema to
+# another role follows the OWNER TO rule: the creator must be able to SET ROLE
+# to it. The role must exist, and CREATE SCHEMA without a name or AUTHORIZATION
+# is a parser error.
+#
+# Lore: vedernikoff can SET ROLE to mop but only INHERITs iceberg; babsky is
+# unrelated.
+
+statement ok
+DROP SCHEMA IF EXISTS csa_owned CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS csa_babsky CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS csa_mine CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS csa_self CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS csa_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS csa_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS csa_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS csa_babsky;
+
+
+statement ok
+CREATE ROLE csa_vedernikoff LOGIN PASSWORD 'csa_vedernikoff_pw';
+
+
+statement ok
+CREATE ROLE csa_mop;
+
+
+statement ok
+CREATE ROLE csa_iceberg;
+
+
+statement ok
+CREATE ROLE csa_babsky;
+
+
+statement ok
+GRANT csa_mop TO csa_vedernikoff;
+
+
+statement ok
+GRANT csa_iceberg TO csa_vedernikoff WITH SET FALSE, INHERIT TRUE;
+
+
+# Superuser: the named form, the bare form, IF NOT EXISTS on an existing schema.
+statement ok
+CREATE SCHEMA csa_owned AUTHORIZATION csa_mop;
+
+
+statement ok
+CREATE SCHEMA AUTHORIZATION csa_babsky;
+
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS csa_owned AUTHORIZATION csa_vedernikoff;
+
+
+query
+SELECT nspname, pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname LIKE 'csa_%' ORDER BY 1;
+----
+nspname	owner
+csa_babsky	csa_babsky
+csa_owned	csa_mop
+
+
+statement error
+CREATE SCHEMA csa_nobody AUTHORIZATION csa_ghost;
+----
+db error: ERROR: role "csa_ghost" does not exist
+
+
+statement error
+CREATE SCHEMA;
+----
+db error: ERROR: CREATE SCHEMA requires a schema name or AUTHORIZATION
+
+
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'csa_nobody';
+----
+n
+0
+
+
+statement ok
+GRANT CREATE ON DATABASE ${__DATABASE__} TO csa_vedernikoff;
+
+
+# A non-superuser may hand the schema to a role it can SET ROLE to.
+connection c_ved user=csa_vedernikoff password=csa_vedernikoff_pw
+statement ok
+CREATE SCHEMA csa_mine AUTHORIZATION csa_mop;
+
+
+# Not to a role it merely inherits from.
+connection c_ved2 user=csa_vedernikoff password=csa_vedernikoff_pw
+statement error
+CREATE SCHEMA csa_theirs AUTHORIZATION csa_iceberg;
+----
+db error: ERROR: must be able to SET ROLE "csa_iceberg"
+
+
+# Naming itself is always allowed.
+connection c_ved3 user=csa_vedernikoff password=csa_vedernikoff_pw
+statement ok
+CREATE SCHEMA csa_self AUTHORIZATION csa_vedernikoff;
+
+
+connection default
+query
+SELECT nspname, pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname LIKE 'csa_%' ORDER BY 1;
+----
+nspname	owner
+csa_babsky	csa_babsky
+csa_mine	csa_mop
+csa_owned	csa_mop
+csa_self	csa_vedernikoff
+
+
+# The owner rules the schema: babsky's schema is not vedernikoff's to drop.
+connection c_ved4 user=csa_vedernikoff password=csa_vedernikoff_pw
+statement error
+DROP SCHEMA csa_babsky;
+----
+db error: ERROR: must be owner of schema csa_babsky
+
+
+connection default
+statement ok
+DROP SCHEMA csa_owned;
+
+
+statement ok
+DROP SCHEMA csa_babsky;
+
+
+statement ok
+DROP SCHEMA csa_mine;
+
+
+statement ok
+DROP SCHEMA csa_self;
+
+
+statement ok
+REVOKE CREATE ON DATABASE ${__DATABASE__} FROM csa_vedernikoff;
+
+
+statement ok
+DROP ROLE csa_vedernikoff;
+
+
+statement ok
+DROP ROLE csa_mop;
+
+
+statement ok
+DROP ROLE csa_iceberg;
+
+
+statement ok
+DROP ROLE csa_babsky;

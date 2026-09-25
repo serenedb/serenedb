@@ -22,6 +22,8 @@
 
 #include <absl/strings/escaping.h>
 
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
@@ -33,8 +35,6 @@
 #include <utility>
 #include <vector>
 
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/table.h"
 #include "connector/duckdb_client_state.h"
 #include "otel/mapper.h"
 #include "otel/protobuf.h"
@@ -128,10 +128,13 @@ void BindTarget(duckdb::ClientContext& context, std::string_view table_name,
                 OtelBindData& data,
                 duckdb::vector<duckdb::LogicalType>& return_types,
                 duckdb::vector<duckdb::string>& names) {
-  auto& conn_ctx = GetSereneDBContext(context);
-  const auto* table = catalog::FindTableEntry(
-    &context, conn_ctx.GetDatabaseId(), kOtelSchema, table_name);
-  if (table == nullptr) {
+  auto table = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
+    context,
+    duckdb::QualifiedName{
+      duckdb::Identifier{GetSereneDBContext(context).GetDatabase()},
+      duckdb::Identifier{kOtelSchema}, duckdb::Identifier{table_name}},
+    duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!table) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("relation \"", kOtelSchema, ".", table_name,
                             "\" does not exist; create the OpenTelemetry "

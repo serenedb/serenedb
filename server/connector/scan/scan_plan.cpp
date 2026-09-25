@@ -40,39 +40,37 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/queries/hnsw_query.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
-#include "catalog/entry/duckdb_table_entry.h"
-#include "catalog/inverted_index.h"
-#include "catalog/table_options.h"
+#include "connector/column_id.h"
 #include "connector/index_source_factory.h"
 #include "connector/offsets_writer.hpp"
 #include "connector/scan/scan_state.h"
+#include "connector/term_dict.h"
 
 namespace sdb::connector {
 namespace {
 
-std::optional<duckdb::LogicalType> VirtualIndexColumnType(
-  catalog::ColumnId col_id) {
-  if (col_id == catalog::kInvertedIndexScoreId ||
-      col_id == catalog::kInvertedIndexTermScoreId) {
+std::optional<duckdb::LogicalType> VirtualIndexColumnType(ColumnId col_id) {
+  if (col_id == kInvertedIndexScoreId || col_id == kInvertedIndexTermScoreId) {
     return duckdb::LogicalType::FLOAT;
   }
-  if (col_id == catalog::kInvertedIndexOffsetsId) {
-    return catalog::MakeOffsetsType();
+  if (col_id == kInvertedIndexOffsetsId) {
+    return MakeOffsetsType();
   }
-  if (col_id == catalog::kInvertedIndexTermId) {
+  if (col_id == kInvertedIndexTermId) {
     return duckdb::LogicalType::VARCHAR;
   }
-  if (col_id == catalog::kInvertedIndexTermRawId) {
+  if (col_id == kInvertedIndexTermRawId) {
     return duckdb::LogicalType::BLOB;
   }
-  if (col_id == catalog::kInvertedIndexTermCountId) {
+  if (col_id == kInvertedIndexTermCountId) {
     return duckdb::LogicalType::INTEGER;
   }
-  if (col_id == catalog::kInvertedIndexTermFreqId) {
+  if (col_id == kInvertedIndexTermFreqId) {
     return duckdb::LogicalType::BIGINT;
   }
   return std::nullopt;
@@ -177,7 +175,7 @@ void WrapScoreRefsWithEmit(duckdb::unique_ptr<duckdb::Expression>& expr,
 
 void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
                       const duckdb::TableFilterSet& filters) {
-  const catalog::InvertedIndex* index_meta =
+  const catalog::InvertedIndexConfig* index_meta =
     bind_data.relation.IsInvertedIndex() ? &bind_data.relation.ScannedIndex()
                                          : nullptr;
   const auto score_emit = bind_data.score.vector
@@ -229,34 +227,39 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
       continue;
     }
     const auto col_id = bind_data.columns.ids[bind_index];
-    if (col_id == catalog::kInvertedIndexScoreId) {
+    if (col_id == kInvertedIndexScoreId) {
       push_score_filter(entry.Filter());
       continue;
     }
     const auto* info =
       index_meta ? index_meta->FindColumnInfo(col_id) : nullptr;
-    const bool index_stored = !index_meta || (info && info->IsStored());
+    const bool index_stored =
+      bind_data.relation.IsSearchTable() || (info && info->IsStored());
     if (!index_stored) {
       state.has_lookup_filter = true;
-    } else if (index_meta != nullptr || bind_data.relation.IsSearchTable()) {
+    } else {
       auto& cf = state.col_filters.emplace_back();
-      cf.field = static_cast<irs::field_id>(col_id.id());
+      cf.field = col_id;
       cf.filter = &entry.Filter();
-      cf.is_dynamic = duckdb::ExpressionFilter::ContainsInternalFunction(
-        *duckdb::ExpressionFilter::GetExpressionFilter(entry.Filter(),
-                                                       "BuildTableFilter")
-           .expr,
-        duckdb::DynamicFilterScalarFun::NAME);
-      cf.zonemap_only =
-        duckdb::ExpressionFilter::IsRootNonSelectivityOptionalFilter(
-          entry.Filter());
       const auto& expr = *duckdb::ExpressionFilter::GetExpressionFilter(
                             entry.Filter(), "BuildTableFilter")
                             .expr;
+      cf.is_dynamic = duckdb::ExpressionFilter::ContainsInternalFunction(
+        expr, duckdb::DynamicFilterScalarFun::NAME);
+      cf.zonemap_only =
+        duckdb::ExpressionFilter::IsRootNonSelectivityOptionalFilter(
+          entry.Filter());
       cf.null_check = DetectNullCheck(expr);
       cf.type = bind_data.columns.types[bind_index];
-      cf.not_null = MakeNotNullReplacement(entry.Filter(),
-                                           bind_data.columns.types[bind_index]);
+      if (proj_idx < state.projected_column_indexes.size()) {
+        const auto& column_index = state.projected_column_indexes[proj_idx];
+        if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
+          DecodeExtractPath(column_index, bind_data.columns.types[bind_index],
+                            cf.extract_path);
+          cf.type = column_index.GetScanType();
+        }
+      }
+      cf.not_null = MakeNotNullReplacement(entry.Filter(), cf.type);
     }
   }
 }
@@ -359,7 +362,7 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
   const auto num_bind_columns = bind_data.columns.ids.size();
   for (auto col_id : input.column_ids) {
     const auto proj = state.projected_columns.size();
-    if (col_id == catalog::kColumnIdentifierGeneratedPk) {
+    if (col_id == kColumnIdentifierGeneratedPk) {
       auto pk_type = GeneratedPkTypeOf(bind_data);
       if (!pk_type) {
         THROW_SQL_ERROR(
@@ -370,18 +373,18 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
       state.generated_pk_output_idx = proj;
       state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
       state.projected_types.push_back(std::move(*pk_type));
-    } else if (col_id == catalog::kColumnIdentifierTableOid) {
+    } else if (col_id == kColumnIdentifierTableOid) {
       state.tableoid_output_idx = proj;
-      state.tableoid_value = bind_data.RelationId().id();
+      state.tableoid_value = bind_data.RelationId();
       state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
       state.projected_types.push_back(duckdb::LogicalType::BIGINT);
     } else if (col_id ==
                  duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX ||
-               col_id == catalog::kColumnIdentifierPkRowNumber) {
+               col_id == kColumnIdentifierPkRowNumber) {
       const bool file_index =
         col_id == duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX;
       const auto spec = ViewPkSpecOf(bind_data);
-      if (!spec || !catalog::IsGlobPK(*spec)) {
+      if (!spec || !IsGlobPK(*spec)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
           ERR_MSG("column \"", file_index ? "file_index" : "row_number",
@@ -397,29 +400,14 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
       state.projected_types.push_back(duckdb::LogicalType::BOOLEAN);
       continue;
     } else if (col_id >= duckdb::VIRTUAL_COLUMN_START) {
-      SDB_ASSERT(!bind_data.IsViewBacked(),
-                 "virtual PK columns are not used for view-backed scans");
-      auto cat_idx =
-        catalog::SereneDBTableEntry::VirtualToPKColumnIndex(col_id);
-      SDB_ASSERT(cat_idx != duckdb::DConstants::INVALID_INDEX);
-      const auto& catalog_cols = bind_data.relation.table_entry->GetColumns();
-      SDB_ASSERT(cat_idx < catalog_cols.LogicalColumnCount());
-      const catalog::ColumnId catalog_col_id{
-        catalog_cols.GetColumn(duckdb::LogicalIndex(cat_idx)).CatalogOid()};
-      duckdb::idx_t bind_idx = duckdb::DConstants::INVALID_INDEX;
-      for (duckdb::idx_t i = 0; i < bind_data.columns.ids.size(); ++i) {
-        if (bind_data.columns.ids[i] == catalog_col_id) {
-          bind_idx = i;
-          break;
-        }
-      }
-      SDB_ASSERT(bind_idx != duckdb::DConstants::INVALID_INDEX);
-      state.projected_columns.push_back(bind_idx);
-      state.projected_types.push_back(bind_data.columns.types[bind_idx]);
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("projecting virtual column ", col_id,
+                " through an inverted-index scan is not supported"));
     } else if (col_id < num_bind_columns) {
       const auto catalog_col_id = bind_data.columns.ids[col_id];
       if (const auto virtual_type = VirtualIndexColumnType(catalog_col_id)) {
-        if (catalog_col_id == catalog::kInvertedIndexScoreId) {
+        if (catalog_col_id == kInvertedIndexScoreId) {
           state.score_output_idx = proj;
         }
         state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
@@ -461,6 +449,20 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
   if (input.filters && input.filters->HasFilters()) {
     BuildTableFilter(state, bind_data, *input.filters);
   }
+  if (bind_data.IsHnswScored()) {
+    if (state.has_lookup_filter ||
+        absl::c_any_of(state.col_filters,
+                       [](const auto& cf) { return !cf.is_score; })) {
+      irs::HnswRefuseFiltered();
+    }
+    if (!bind_data.score.top_k &&
+        bind_data.score.vector->radius == std::numeric_limits<float>::max()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("an hnsw vector index answers ORDER BY <distance> LIMIT k and "
+                "distance ranges, not a distance for every row"));
+    }
+  }
 }
 
 void ClassifyColumnstoreProjections(ScanGlobalState& state,
@@ -468,19 +470,19 @@ void ClassifyColumnstoreProjections(ScanGlobalState& state,
   if (state.generated_pk_output_idx != duckdb::DConstants::INVALID_INDEX) {
     state.cs_projections.emplace_back(
       irs::ColumnstoreProjection{.output_slot = state.generated_pk_output_idx,
-                                 .column_id = catalog::term_dict::kPKFieldId});
+                                 .column_id = term_dict::kPKFieldId});
   }
   if (state.row_number_output_idx != duckdb::DConstants::INVALID_INDEX) {
     state.cs_projections.emplace_back(irs::ColumnstoreProjection{
       .output_slot = state.row_number_output_idx,
-      .column_id = catalog::term_dict::kPKFieldId,
+      .column_id = term_dict::kPKFieldId,
       .extract_path = {"row_number"},
       .extract_scan_type = duckdb::LogicalType::BIGINT});
   }
   if (state.file_index_output_idx != duckdb::DConstants::INVALID_INDEX) {
     state.cs_projections.emplace_back(irs::ColumnstoreProjection{
       .output_slot = state.file_index_output_idx,
-      .column_id = catalog::term_dict::kPKFieldId,
+      .column_id = term_dict::kPKFieldId,
       .extract_path = {"file_index"},
       .extract_scan_type = duckdb::LogicalType::UBIGINT});
   }
@@ -502,8 +504,7 @@ void ClassifyColumnstoreProjections(ScanGlobalState& state,
         continue;
       }
       const auto col_id = bind_data.columns.ids[bind_col];
-      irs::ColumnstoreProjection cp{.output_slot = proj,
-                                    .column_id = col_id.id()};
+      irs::ColumnstoreProjection cp{.output_slot = proj, .column_id = col_id};
       if (proj < state.projected_column_indexes.size()) {
         const auto& column_index = state.projected_column_indexes[proj];
         if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
@@ -520,11 +521,6 @@ void ClassifyColumnstoreProjections(ScanGlobalState& state,
     }
     return;
   }
-  if (!bind_data.relation.IsInvertedIndex()) {
-    state.needs_lookup = state.has_real_column;
-    return;
-  }
-
   std::vector<std::string_view> path;
   for (duckdb::idx_t proj = 0; proj < state.projected_columns.size(); ++proj) {
     const auto bind_col = state.projected_columns[proj];
@@ -538,8 +534,7 @@ void ClassifyColumnstoreProjections(ScanGlobalState& state,
       if (!in_output(proj)) {
         continue;
       }
-      irs::ColumnstoreProjection cp{.output_slot = proj,
-                                    .column_id = col_id.id()};
+      irs::ColumnstoreProjection cp{.output_slot = proj, .column_id = col_id};
       if (info->store_values && proj < state.projected_column_indexes.size()) {
         const auto& column_index = state.projected_column_indexes[proj];
         if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
@@ -556,7 +551,7 @@ void ClassifyColumnstoreProjections(ScanGlobalState& state,
       continue;
     }
     if (in_output(proj) ||
-        (state.pushed_filters != nullptr &&
+        (state.pushed_filters &&
          state.pushed_filters->HasFilter(duckdb::ProjectionIndex{proj}))) {
       state.needs_lookup = true;
     } else {
@@ -587,15 +582,8 @@ ScanShape DecideShape(const ScanGlobalState& g, const ScanBindData& ss) {
   return ScanShape::Stream;
 }
 
-ScoreEmit ScoreEmitOf(const ScanGlobalState& g) noexcept {
-  return g.vector_scorer == nullptr ? ScoreEmit::Identity
-                                    : g.vector_scorer->score_emit;
-}
-
-void AccountAndWriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
-                                   duckdb::Vector* scores,
-                                   duckdb::DataChunk& output) {
-  g.produced_rows.fetch_add(num_rows, std::memory_order_relaxed);
+void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
+                         duckdb::Vector* scores, duckdb::DataChunk& output) {
   if (g.tableoid_output_idx != duckdb::DConstants::INVALID_INDEX) {
     auto* tableoid_data = duckdb::FlatVector::GetDataMutable<int64_t>(
       output.data[g.tableoid_output_idx]);
@@ -604,7 +592,7 @@ void AccountAndWriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
   if (!g.ScanScore()) {
     return;
   }
-  SDB_ASSERT(scores != nullptr);
+  SDB_ASSERT(scores);
   auto& score_out = output.data[g.score_output_idx];
   const auto emit = ScoreEmitOf(g);
   if (emit == ScoreEmit::Identity) {
@@ -623,8 +611,7 @@ void FetchLocalState::EnsureHitBatcher(const ScanGlobalState& g) {
   if (!hit_batcher) {
     hit_batcher = std::make_unique<irs::HitBatcher>(
       g.cs_projections,
-      g.needs_lookup ? catalog::term_dict::kPKFieldId
-                     : irs::field_limits::invalid(),
+      g.needs_lookup ? term_dict::kPKFieldId : irs::field_limits::invalid(),
       g.ScanScore());
   }
 }
@@ -671,7 +658,7 @@ void BuildOffsetsEntries(FetchLocalState& f,
                                      std::numeric_limits<size_t>::max());
   size_t k = 0;
   for (size_t i = 0; i < bd.columns.ids.size(); ++i) {
-    if (bd.columns.ids[i] == catalog::kInvertedIndexOffsetsId) {
+    if (bd.columns.ids[i] == kInvertedIndexOffsetsId) {
       ss_idx_at_bind[i] = k++;
     }
   }
@@ -685,7 +672,7 @@ void BuildOffsetsEntries(FetchLocalState& f,
     if (col_id >= bd.columns.ids.size()) {
       continue;
     }
-    if (bd.columns.ids[col_id] == catalog::kInvertedIndexOffsetsId) {
+    if (bd.columns.ids[col_id] == kInvertedIndexOffsetsId) {
       const auto ss_idx = ss_idx_at_bind[col_id];
       SDB_ASSERT(ss_idx < bd.offsets.requests.size());
       FieldEntry entry;
@@ -698,7 +685,7 @@ void BuildOffsetsEntries(FetchLocalState& f,
   }
 }
 
-duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
+duckdb::idx_t EmitReadyBatch(duckdb::ClientContext&, ScanGlobalState& g,
                              FetchLocalState& f, duckdb::DataChunk& output) {
   SDB_IF_FAILURE("SearchIncludeFetchFault") {
     if (!g.cs_projections.empty()) {
@@ -707,7 +694,7 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
   }
   f.pk_column = nullptr;
   const auto batch = f.hit_batcher->Emit(output);
-  if (batch.pk != nullptr) {
+  if (batch.pk) {
     SDB_IF_FAILURE("SearchPkFetchFault") {
       THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
     }
@@ -715,7 +702,7 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
     f.pk_column = batch.pk;
   }
   WriteChunkOffsets(f, g, batch.seg, batch.docs, output);
-  AccountAndWriteVirtualColumns(g, batch.count, batch.score_vec, output);
+  WriteVirtualColumns(g, batch.count, batch.score_vec, output);
   return batch.count;
 }
 
@@ -734,7 +721,6 @@ duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
   SDB_ASSERT(f.pk_column);
   const auto rows =
     f.index_source->Materialize(ctx, *f.pk_column, collected, output);
-  g.metrics.rows_looked_up.fetch_add(collected, std::memory_order_relaxed);
   return rows;
 }
 

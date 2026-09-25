@@ -22,9 +22,9 @@ The template name is unrelated to the `NORM` [feature flag](../../../statements/
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `LOCALE` | string | `''` | ICU locale for case conversion; omit for locale-independent simple case |
-| `CASE` | string | `'none'` | Case conversion: `'none'`, `'lower'`, `'upper'` |
+| `CASE` | string | `'none'` | Case conversion: `'none'`, `'lower'`, `'upper'`, `'fold'` |
 | `ACCENT` | boolean | `true` | Preserve accent marks (`false` folds them away) |
-| `FORM` | string | `'nfc'` | Unicode normalization form: `'nfc'`, `'nfkc'` |
+| `FORM` | string | `'nfc'` | Unicode normalization form: `'nfc'`, `'nfd'`, `'nfkc'`, `'nfkd'`, `'nfkc_cf'` |
 
 `LOCALE` is optional and affects nothing but case conversion — the normalization form and accent folding are locale-independent. A value ICU cannot parse is rejected with `Invalid locale "<value>" for option "locale"`. `CASE` and `FORM` accept their values case-insensitively, so `'Lower'` and `'NFKC'` also work.
 
@@ -51,6 +51,16 @@ Because two values collide only when their normalized forms are identical, a `no
 
 `FORM = 'nfkc'` adds compatibility decomposition on top of composition, so characters that are only presentational variants collapse to their plain equivalents: the ligature `ﬁ` becomes `fi`, fullwidth letters become ASCII, circled and superscript digits become plain digits, a no-break space becomes an ordinary space and `㍍` becomes `メートル`. `FORM = 'nfc'` leaves all of them alone. An all-ASCII value is unaffected by either form, since ASCII is invariant under both.
 
+### Decomposed forms
+
+`FORM = 'nfd'` and `FORM = 'nfkd'` are the decomposed counterparts of `'nfc'` and `'nfkc'`: every precomposed character is split into its base and combining marks, so `é` comes out as `e` followed by U+0301 and takes 3 bytes instead of 2. Use them when another system stores decomposed text and the terms must match it byte for byte. With `ACCENT = false` the marks are removed and the result stays decomposed, which for accented Latin text is the same as the composed result. All-ASCII values are unchanged.
+
+### Case folding
+
+`CASE = 'fold'` applies Unicode full case folding, the mapping Unicode defines for caseless matching. It is not the same as lowercasing: `ß` folds to `ss`, the ligature `ﬁ` to `fi`, and the final sigma `ς` to `σ`, so `STRASSE`, `Straße` and `strasse` all compare equal, where `CASE = 'lower'` would keep `straße` and `strasse` apart. Folding is locale-independent except for Turkish and Azerbaijani: with `LOCALE = 'tr_TR'` or `'az'` the dotted and dotless `i` fold the Turkic way, so `ISPARTA` becomes `ısparta`. Folding can make a token longer than its input, up to three times for Greek letters with a combining mark.
+
+`FORM = 'nfkc_cf'` is NFKC_Casefold, Unicode's recommended normalization for caseless identifier matching: NFKC, full case folding and the removal of default-ignorable characters in one step. It folds case by itself, so `CASE = 'none'` already produces lowercase-folded output — `ＦＵＬＬ Straße ﬁ` becomes `full strasse fi` — and `CASE = 'upper'` upper-cases the folded text. `CASE = 'lower'` changes it only in the rare scripts whose case folding maps to capitals, such as Cherokee. Non-ASCII values with this form always go through ICU.
+
 ### Case conversion and the locale
 
 `CASE = 'none'` does no case work at all, whatever the locale. When case conversion is on, every locale except Turkish/Azerbaijani, Lithuanian and Greek uses simple 1:1 Unicode mappings, which is observable: `straße` with `CASE = 'upper'` becomes `STRAßE`, and `ΟΔΟΣ` with `CASE = 'lower'` becomes `οδοσ` with a non-final sigma. Turkish/Azerbaijani and Lithuanian locales always use ICU's locale-tailored full casing, so with `LOCALE = 'tr_TR'` and `CASE = 'lower'` `ISPARTA` becomes `ısparta` and `İSTANBUL` becomes `istanbul`. A Greek locale uses it for values that contain non-ASCII, so `ΟΔΟΣ` with `LOCALE = 'el'` becomes `οδος`. `İ` (U+0130) splits the same way: the simple mappings and the Turkish/Azerbaijani tailoring both lowercase it to a plain `i`, so `İstanbul` becomes `istanbul`, while a Lithuanian locale — and a Greek locale on non-ASCII input — keeps the canonical dot above, leaving an `i` followed by a combining mark that only `ACCENT = false` removes.
@@ -66,6 +76,16 @@ Malformed UTF-8 is not rejected. Values that go through ICU — case conversion 
 Folding to upper case while keeping accent marks turns `café` into `CAFÉ`:
 
 <SqlLogicTest id="sql/functions/search/tokenizers/normalize_tokens/example_002" />
+
+### Caseless matching
+
+`CASE = 'fold'` makes `STRASSE` and `Straße` the same term:
+
+<SqlLogicTest id="sql/functions/search/tokenizers/normalize_tokens/fold" />
+
+`FORM = 'nfkc_cf'` folds case and compatibility variants together:
+
+<SqlLogicTest id="sql/functions/search/tokenizers/normalize_tokens/nfkc_cf" />
 
 ## See also
 

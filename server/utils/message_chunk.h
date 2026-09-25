@@ -48,7 +48,6 @@ class Chunk {
 
   size_t GetBegin() const { return _begin; }
   size_t GetEnd() const { return _end; }
-  size_t GetCapacity() const { return _capacity; }
 
   void AdjustEnd(size_t size) {
     _end += size;
@@ -78,12 +77,6 @@ class Chunk {
   size_t Size() const { return _end - _begin; }
 
   Chunk* Next() const { return _next; }
-
-  void FreeData() {
-    SDB_ASSERT(_data);
-    ::operator delete(_data, _capacity);
-    _data = nullptr;
-  }
 
   std::span<const uint8_t> Data(size_t end) const {
     return {_data + _begin, end - _begin};

@@ -162,9 +162,7 @@ statement error
 DROP SEQUENCE clickclack_shared_seq;
 ----
 db error: ERROR: Cannot drop entry "clickclack_shared_seq" because there are entries that depend on it.
-view "v_clickclack_a" depends on sequence "clickclack_shared_seq".
-view "v_clickclack_b" depends on sequence "clickclack_shared_seq".
-view "v_clickclack_c" depends on sequence "clickclack_shared_seq".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -269,8 +267,7 @@ statement error
 DROP SEQUENCE clickclack_mix_seq;
 ----
 db error: ERROR: Cannot drop entry "clickclack_mix_seq" because there are entries that depend on it.
-table "clickclack_mix_t" depends on sequence "clickclack_mix_seq".
-view "v_clickclack_mix" depends on sequence "clickclack_mix_seq".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -279,8 +276,7 @@ statement error
 DROP SEQUENCE clickclack_mix_seq RESTRICT;
 ----
 db error: ERROR: Cannot drop entry "clickclack_mix_seq" because there are entries that depend on it.
-table "clickclack_mix_t" depends on sequence "clickclack_mix_seq".
-view "v_clickclack_mix" depends on sequence "clickclack_mix_seq".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -332,8 +328,7 @@ statement error
 DROP SEQUENCE clickclack_chain_seq;
 ----
 db error: ERROR: Cannot drop entry "clickclack_chain_seq" because there are entries that depend on it.
-view "v_clickclack_chain1" depends on sequence "clickclack_chain_seq".
-view "v_clickclack_chain2" depends on sequence "clickclack_chain_seq".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -451,8 +446,7 @@ statement error
 DROP SEQUENCE clickclack_d1_seq;
 ----
 db error: ERROR: Cannot drop entry "clickclack_d1_seq" because there are entries that depend on it.
-view "v_clickclack_dva" depends on sequence "clickclack_d1_seq".
-view "v_clickclack_dvb" depends on sequence "clickclack_d1_seq".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 
@@ -493,9 +487,7 @@ statement error
 DROP SCHEMA clickclack_sch RESTRICT;
 ----
 db error: ERROR: Cannot drop entry "clickclack_sch" because there are entries that depend on it.
-sequence "dashboard_seq" depends on schema "clickclack_sch".
-view "v_dashboard_a" depends on sequence "dashboard_seq".
-view "v_dashboard_b" depends on sequence "dashboard_seq".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 

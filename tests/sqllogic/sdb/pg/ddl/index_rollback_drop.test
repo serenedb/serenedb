@@ -1,0 +1,150 @@
+# ROLLBACK of DROP INDEX. On main only the catalog half of the drop was
+# transactional and the physical index was removed straight away, so a rolled
+# back DROP INDEX left a UNIQUE index that no longer enforced anything. Here the
+# index is duckdb's and both halves roll back together: the entry comes back and
+# so does the key.
+
+statement ok
+CREATE TABLE ixdg_t (id INTEGER, rank INTEGER);
+
+
+statement ok
+INSERT INTO ixdg_t VALUES (1, 10), (2, 20);
+
+
+statement ok
+CREATE UNIQUE INDEX ixdg_rank_idx ON ixdg_t (rank);
+
+
+# The index enforces before the transaction, so the checks after it mean
+# something.
+statement error
+INSERT INTO ixdg_t VALUES (3, 10);
+----
+db error: ERROR: Duplicate key "rank: 10" violates unique constraint.
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP INDEX ixdg_rank_idx;
+
+
+statement ok
+ROLLBACK;
+
+
+# The catalog half of the drop is MVCC state, so the entry came back.
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ixdg_rank_idx';
+----
+n
+1
+
+
+# So did the physical half: the key is enforced again.
+statement error
+INSERT INTO ixdg_t VALUES (3, 10);
+----
+db error: ERROR: Duplicate key "rank: 10" violates unique constraint.
+
+
+query
+SELECT count(*) AS n FROM ixdg_t WHERE rank = 10;
+----
+n
+1
+
+
+# The relation itself is unharmed -- reads and writes still work.
+statement ok
+INSERT INTO ixdg_t VALUES (4, 40);
+
+
+query
+SELECT id FROM ixdg_t WHERE rank = 40;
+----
+id
+4
+
+
+query
+SELECT count(*) AS n FROM ixdg_t;
+----
+n
+3
+
+
+# The entry that came back is a real entry: it can be dropped again, and that
+# drop commits.
+statement ok
+DROP INDEX ixdg_rank_idx;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ixdg_rank_idx';
+----
+n
+0
+
+
+# The committed control, on a fresh relation: a DROP INDEX that commits takes
+# both halves, so the key stops being enforced -- the same observable end state
+# as the rolled-back drop above, which is precisely why the gap is invisible
+# without the count(*) on pg_class.
+statement ok
+CREATE TABLE ixdg_ok (id INTEGER, rank INTEGER);
+
+
+statement ok
+CREATE UNIQUE INDEX ixdg_ok_idx ON ixdg_ok (rank);
+
+
+statement ok
+INSERT INTO ixdg_ok VALUES (1, 10);
+
+
+statement error
+INSERT INTO ixdg_ok VALUES (2, 10);
+----
+db error: ERROR: Duplicate key "rank: 10" violates unique constraint.
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP INDEX ixdg_ok_idx;
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ixdg_ok_idx';
+----
+n
+0
+
+
+statement ok
+INSERT INTO ixdg_ok VALUES (2, 10);
+
+
+query
+SELECT count(*) AS n FROM ixdg_ok WHERE rank = 10;
+----
+n
+2
+
+
+statement ok
+DROP TABLE ixdg_t;
+
+
+statement ok
+DROP TABLE ixdg_ok;

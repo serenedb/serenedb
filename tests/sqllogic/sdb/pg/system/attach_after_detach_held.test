@@ -1,0 +1,113 @@
+control substitution on
+
+statement ok
+DETACH IF EXISTS aad;
+
+statement ok
+DETACH IF EXISTS aad_ro;
+
+statement ok
+ATTACH '${__TEST_DIR__}/aad.db' AS aad;
+
+statement ok
+CREATE OR REPLACE TABLE aad.main.docs(id INTEGER);
+
+statement ok
+INSERT INTO aad.main.docs VALUES (1), (2);
+
+
+connection holder
+statement ok
+BEGIN;
+
+
+connection holder
+query
+SELECT count(*) > 0 AS listed FROM duckdb_tables();
+----
+listed
+t
+
+
+connection default
+statement ok
+DETACH aad;
+
+
+connection default
+statement ok
+ATTACH '${__TEST_DIR__}/aad.db' AS aad;
+
+
+connection default
+query
+SELECT count(*) AS n FROM aad.main.docs;
+----
+n
+2
+
+
+connection default
+statement ok
+DETACH aad;
+
+
+connection default
+statement ok
+ATTACH '${__TEST_DIR__}/aad.db' AS aad (READ_ONLY);
+
+
+connection default
+query
+SELECT count(*) AS n FROM aad.main.docs;
+----
+n
+2
+
+
+connection default
+statement error read-only
+INSERT INTO aad.main.docs VALUES (3);
+
+
+connection default
+statement ok
+DETACH aad;
+
+
+connection default
+statement ok
+ATTACH '${__TEST_DIR__}/aad.db' AS aad;
+
+
+connection default
+statement ok
+INSERT INTO aad.main.docs VALUES (3);
+
+
+connection default
+statement ok
+DETACH aad;
+
+
+connection holder
+statement ok
+COMMIT;
+
+
+connection default
+statement ok
+ATTACH '${__TEST_DIR__}/aad.db' AS aad_ro (READ_ONLY);
+
+
+connection default
+query
+SELECT count(*) AS n FROM aad_ro.main.docs;
+----
+n
+3
+
+
+connection default
+statement ok
+DETACH aad_ro;

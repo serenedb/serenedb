@@ -36,7 +36,7 @@ connection s2
 statement error
 DROP TABLE ccd_rename;
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 # The refused drop left its connection usable.
@@ -86,7 +86,7 @@ connection s2
 statement error
 DROP TABLE ccd_comment;
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection s1
@@ -125,7 +125,7 @@ connection s2
 statement error
 DROP TABLE ccd_colcomment;
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection s1
@@ -163,7 +163,7 @@ connection s2
 statement error
 DROP TABLE ccd_renamecol;
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection s1
@@ -192,15 +192,14 @@ CREATE INDEX ccd_index_i ON ccd_index(a);
 
 
 connection s2
-statement error
+statement ok
 DROP TABLE ccd_index;
-----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
-
 
 connection s1
-statement ok
+statement error
 COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "ccd_index_i" has been deleted
 
 
 connection s1
@@ -209,12 +208,13 @@ SELECT relname FROM pg_class
 WHERE relname IN ('ccd_index', 'ccd_index_i') ORDER BY 1;
 ----
 relname
-ccd_index
-ccd_index_i
 
 
-statement ok
+statement error
 DROP TABLE ccd_index;
+----
+db error: ERROR: Table with name ccd_index does not exist!<slt:ignore>
+
 
 
 # --- ALTER INDEX ... SET ---
@@ -241,7 +241,7 @@ connection s2
 statement error
 DROP TABLE ccd_altidx CASCADE;
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection s1
@@ -277,7 +277,7 @@ connection s2
 statement error
 DROP TABLE ccd_grant;
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection s1
@@ -317,7 +317,7 @@ connection s2
 statement error
 DROP TABLE ccd_owner;
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection s1
@@ -349,7 +349,7 @@ connection s2
 statement error
 DROP ROLE ccd_victim;
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection s1
@@ -389,7 +389,7 @@ connection s2
 statement error
 DROP TABLE ccd_dropview CASCADE;
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection s1
@@ -443,7 +443,7 @@ connection s3
 statement error
 COMMENT ON TABLE ccd_late IS 'doomed';
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection s3
@@ -506,7 +506,7 @@ connection s5
 statement error
 ALTER ROLE ccd_gone NOSUPERUSER;
 ----
-db error: ERROR: could not serialize access due to concurrent delete of "ccd_gone"
+db error: ERROR: Attempting to write to database "sdb_cluster" in a transaction that has already modified database "<slt:ignore>" - a single transaction can only write to a single attached database.
 
 
 connection s5
@@ -595,7 +595,7 @@ connection s9
 statement error
 ALTER TABLE ccd_plain RENAME TO ccd_plain_x;
 ----
-db error: ERROR: could not serialize access due to concurrent DDL on the same object
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection s9

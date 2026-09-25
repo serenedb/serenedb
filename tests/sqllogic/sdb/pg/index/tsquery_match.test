@@ -1425,6 +1425,30 @@ SELECT a FROM tsq_idx WHERE b @@ websearch_to_tsquery('');
 ----
 a
 
+query
+SELECT a FROM tsq_idx WHERE b @@ websearch_to_tsquery('quick-brown') ORDER BY a;
+----
+a
+1
+
+query
+SELECT a FROM tsq_idx WHERE b @@ websearch_to_tsquery('brown-quick') ORDER BY a;
+----
+a
+
+query
+SELECT a FROM tsq_idx WHERE b @@ websearch_to_tsquery('quick-brown OR slow-grey') ORDER BY a;
+----
+a
+1
+3
+
+query
+SELECT a FROM tsq_idx WHERE b @@ websearch_to_tsquery('lazy -quick-brown') ORDER BY a;
+----
+a
+2
+
 # ----------------------------------------------------------------------
 # to_tsquery -- Lucene-style query string parsed by the iresearch Lucene
 # parser. Supports AND/OR/NOT (or &&/||/!), +/- modifiers, "quoted

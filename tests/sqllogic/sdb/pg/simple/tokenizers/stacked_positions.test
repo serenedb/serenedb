@@ -1,0 +1,348 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY sp_synonyms AS
+    split_text(case := 'lower') | expand_solr_synonyms('car, automobile, auto')
+    WITH (frequency, position)
+
+
+statement ok
+CREATE TABLE sp_cars (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO sp_cars VALUES
+    (1, 'a red car here'),
+    (2, 'red paint on a car'),
+    (3, 'the red automobile');
+
+
+statement ok
+CREATE INDEX sp_cars_idx ON sp_cars USING inverted (id, body sp_synonyms);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sp_cars;
+
+
+query
+SELECT id FROM sp_cars_idx WHERE body @@ ts_phrase('red car') ORDER BY id;
+----
+id
+1
+3
+
+
+query
+SELECT id FROM sp_cars_idx WHERE body @@ phraseto_tsquery('red auto') ORDER BY id;
+----
+id
+1
+3
+
+
+query
+SELECT id FROM sp_cars_idx WHERE body @@ websearch_to_tsquery('"red automobile"') ORDER BY id;
+----
+id
+1
+3
+
+
+query
+SELECT id FROM sp_cars_idx WHERE body @@ ts_phrase('car') ORDER BY id;
+----
+id
+1
+2
+3
+
+
+query
+SELECT id, BM25(sp_cars_idx.tableoid) > 0 AS scored FROM sp_cars_idx
+WHERE body @@ ts_phrase('car', slop := 1) ORDER BY id;
+----
+id	scored
+1	t
+2	t
+3	t
+
+
+query
+SELECT id, BM25(sp_cars_idx.tableoid) > 0 AS scored FROM sp_cars_idx
+WHERE body @@ ts_phrase('red car', slop := 1) ORDER BY id;
+----
+id	scored
+1	t
+3	t
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sp_synonyms_nopos AS
+    split_text(case := 'lower') | expand_solr_synonyms('car, automobile, auto')
+    WITH (frequency)
+
+
+statement ok
+CREATE TABLE sp_cars_nopos (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO sp_cars_nopos SELECT * FROM sp_cars;
+
+
+statement ok
+CREATE INDEX sp_cars_nopos_idx ON sp_cars_nopos USING inverted (id, body sp_synonyms_nopos);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sp_cars_nopos;
+
+
+query
+SELECT id, BM25(sp_cars_nopos_idx.tableoid) > 0 AS scored FROM sp_cars_nopos_idx
+WHERE body @@ ts_phrase('automobile') ORDER BY id;
+----
+id	scored
+1	t
+2	t
+3	t
+
+
+statement error
+SELECT id FROM sp_cars_nopos_idx WHERE body @@ ts_phrase('red car');
+----
+db error: ERROR: ts_phrase field should have Positions and Frequency features enabled for multi-term phrases
+HINT: Recreate the inverted index with both `Positions` and `Frequency` features attached to the column, or query with a single-term ts_phrase / ts_like.
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sp_oneway AS
+    split_text(case := 'lower') | expand_solr_synonyms('car => automobile, auto')
+    WITH (frequency, position)
+
+
+statement ok
+CREATE TABLE sp_oneway_cars (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO sp_oneway_cars VALUES (1, 'red car'), (2, 'the red automobile'), (3, 'blue car'), (4, 'red auto parts');
+
+
+statement ok
+CREATE INDEX sp_oneway_cars_idx ON sp_oneway_cars USING inverted (id, body sp_oneway);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sp_oneway_cars;
+
+
+query
+SELECT id FROM sp_oneway_cars_idx WHERE body @@ plainto_tsquery('red car') ORDER BY id;
+----
+id
+1
+2
+4
+
+
+query
+SELECT id FROM sp_oneway_cars_idx WHERE body @@ plainto_tsquery('red blue car') ORDER BY id;
+----
+id
+
+
+statement ok
+CREATE TABLE sp_any_cars (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO sp_any_cars VALUES (1, 'red car'), (2, 'blue car'), (3, 'just a car'), (4, 'red paint'), (5, 'red automobile');
+
+
+statement ok
+CREATE INDEX sp_any_cars_idx ON sp_any_cars USING inverted (id, body sp_oneway);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sp_any_cars;
+
+
+query
+SELECT id FROM sp_any_cars_idx WHERE body @@ ts_all(ts_tokenize(['red car'])) ORDER BY id;
+----
+id
+1
+5
+
+
+query
+SELECT id FROM sp_any_cars_idx WHERE body @@ ts_any(ts_tokenize(['red blue car']), 2) ORDER BY id;
+----
+id
+1
+2
+5
+
+
+query
+SELECT c.id, abs(c.s - r.s) < 1e-6 AS same
+FROM (SELECT id, BM25(sp_cars_idx.tableoid) AS s FROM sp_cars_idx WHERE body @@ 'car') c
+JOIN (SELECT id, BM25(sp_cars_idx.tableoid) AS s FROM sp_cars_idx WHERE body @@ 'red') r
+ON c.id = r.id
+ORDER BY c.id;
+----
+id	same
+1	t
+2	t
+3	t
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sp_grams AS
+    split_text(case := 'lower') | generate_ngrams(2, 3) | filter_tokens(min_length := 3)
+    WITH (frequency, position)
+
+
+statement ok
+CREATE TABLE sp_words (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO sp_words VALUES (1, 'search'), (2, 'research'), (3, 'seats and archery');
+
+
+statement ok
+CREATE INDEX sp_words_idx ON sp_words USING inverted (id, body sp_grams);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sp_words;
+
+
+query
+SELECT id FROM sp_words_idx WHERE body @@ ts_phrase('search') ORDER BY id;
+----
+id
+1
+2
+
+
+query
+SELECT id FROM sp_words_idx WHERE body @@ ts_phrase('sear') ORDER BY id;
+----
+id
+1
+2
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sp_stop AS
+    split_text(case := 'lower') | expand_solr_synonyms('a, alpha') | remove_stopwords(['a'])
+    WITH (frequency, position)
+
+
+statement ok
+CREATE TABLE sp_vitamins (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO sp_vitamins VALUES (1, 'vitamin a supplement'), (2, 'alpha vitamin');
+
+
+statement ok
+CREATE INDEX sp_vitamins_idx ON sp_vitamins USING inverted (id, body sp_stop);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sp_vitamins;
+
+
+query
+SELECT id FROM sp_vitamins_idx WHERE body @@ ts_phrase('vitamin alpha supplement') ORDER BY id;
+----
+id
+1
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sp_norm AS
+    split_text(case := 'lower') | expand_solr_synonyms('car, automobile, auto')
+    WITH (frequency, position, norm)
+
+
+statement ok
+CREATE TABLE sp_norm_cars (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO sp_norm_cars VALUES (1, 'a red car here'), (2, 'red automobile'), (3, 'red paint');
+
+
+statement ok
+CREATE INDEX sp_norm_cars_idx ON sp_norm_cars USING inverted (id, body sp_norm);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sp_norm_cars;
+
+
+query
+SELECT id, raw_dl(sp_norm_cars_idx.tableoid) AS dl FROM sp_norm_cars_idx
+WHERE body @@ ts_phrase('red') ORDER BY id;
+----
+id	dl
+1	4
+2	2
+3	2
+
+
+statement ok
+DROP TABLE sp_norm_cars CASCADE;
+
+
+statement ok
+DROP TABLE sp_vitamins CASCADE;
+
+
+statement ok
+DROP TABLE sp_words CASCADE;
+
+
+statement ok
+DROP TABLE sp_any_cars CASCADE;
+
+
+statement ok
+DROP TABLE sp_oneway_cars CASCADE;
+
+
+statement ok
+DROP TABLE sp_cars_nopos CASCADE;
+
+
+statement ok
+DROP TABLE sp_cars CASCADE;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY sp_norm;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY sp_stop;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY sp_grams;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY sp_oneway;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY sp_synonyms_nopos;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY sp_synonyms;

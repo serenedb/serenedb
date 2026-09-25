@@ -30,6 +30,8 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <numeric>
 
+#include "connector/column_id.h"
+
 namespace sdb::connector {
 
 duckdb::idx_t SourceColumns::operator()(std::string_view name) const {
@@ -46,7 +48,7 @@ void ViewIndexSourceBase::InitProjection(
   duckdb::ClientContext& context,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::ColumnId> bind_column_ids,
+  std::span<const ColumnId> bind_column_ids,
   absl::FunctionRef<duckdb::idx_t(std::string_view)> col_by_name,
   absl::FunctionRef<duckdb::LogicalType(duckdb::idx_t)> add_source_column) {
   _real_proj_slots.reserve(projected_columns.size());
@@ -60,10 +62,9 @@ void ViewIndexSourceBase::InitProjection(
     SDB_ASSERT(bind_col < bind_column_ids.size());
     duckdb::idx_t source_col;
     if (_fast_path.projection_columns.empty()) {
-      source_col = static_cast<duckdb::idx_t>(bind_column_ids[bind_col]);
+      source_col = bind_column_ids[bind_col];
     } else {
-      const auto view_col_idx =
-        static_cast<duckdb::idx_t>(bind_column_ids[bind_col]);
+      const auto view_col_idx = bind_column_ids[bind_col];
       SDB_ASSERT(view_col_idx < _fast_path.projection_columns.size());
       source_col = col_by_name(_fast_path.projection_columns[view_col_idx]);
     }
@@ -76,8 +77,8 @@ void ViewIndexSourceBase::InitProjection(
     if (_scratch_types[c] == _projected_types[c]) {
       continue;
     }
-    auto ref = duckdb::make_uniq<duckdb::BoundReferenceExpression>(
-      _scratch_types[c], static_cast<duckdb::idx_t>(c));
+    auto ref =
+      duckdb::make_uniq<duckdb::BoundReferenceExpression>(_scratch_types[c], c);
     auto cast_expr = duckdb::BoundCastExpression::AddCastToType(
       context, std::move(ref), _projected_types[c]);
     auto exec = duckdb::make_uniq<duckdb::ExpressionExecutor>(context);
@@ -106,7 +107,7 @@ std::span<const int64_t> ViewIndexSourceBase::SortRows(const duckdb::Vector& pk,
                                                        duckdb::idx_t count) {
   const auto* keys = duckdb::FlatVector::GetData<int64_t>(pk);
   _sort_perm.resize(count);
-  absl::c_iota(_sort_perm, duckdb::idx_t{0});
+  absl::c_iota(_sort_perm, 0);
   // Doc-id order already ascends for contiguous-insert base tables and
   // single-file views: the sortedness check skips the O(n log n) sort.
   if (std::is_sorted(keys, keys + count)) {
@@ -129,7 +130,7 @@ void ViewIndexSourceBase::SortFilesRows(const duckdb::Vector& pk,
   const auto* files = duckdb::FlatVector::GetData<uint64_t>(entries[0]);
   const auto* rows = duckdb::FlatVector::GetData<int64_t>(entries[1]);
   _sort_perm.resize(count);
-  absl::c_iota(_sort_perm, duckdb::idx_t{0});
+  absl::c_iota(_sort_perm, 0);
   // Skip the sort when (file, row) already ascends -- see SortRows.
   bool is_sorted = true;
   for (duckdb::idx_t k = 1; k < count; ++k) {
@@ -167,9 +168,8 @@ void ViewIndexSourceBase::AliasOutput(duckdb::DataChunk& output) {
 
 void ViewIndexSourceBase::RunCastPass(duckdb::DataChunk& output,
                                       duckdb::idx_t row_count) {
-  const bool has_cast =
-    std::any_of(_cast_executors.begin(), _cast_executors.end(),
-                [](const auto& e) { return e != nullptr; });
+  const bool has_cast = absl::c_any_of(
+    _cast_executors, [](const auto& e) { return static_cast<bool>(e); });
   if (!has_cast || row_count == 0) {
     return;
   }

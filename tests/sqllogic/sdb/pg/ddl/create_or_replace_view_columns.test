@@ -1,0 +1,176 @@
+# CREATE OR REPLACE VIEW / FUNCTION change the definition of the existing entry,
+# as in PostgreSQL: the oid, the dependents, the privileges and the comments
+# stay. A view may only be replaced by a query that keeps its columns (same
+# names and types, same order) and adds new ones at the end.
+
+statement ok
+CREATE TABLE corv_t (a INT, b TEXT, c INT);
+
+statement count 2
+INSERT INTO corv_t VALUES (1, 'x', 10), (0, 'y', 20);
+
+statement ok
+CREATE VIEW corv AS SELECT a, b FROM corv_t;
+
+statement ok
+COMMENT ON VIEW corv IS 'kept';
+
+statement ok
+CREATE VIEW corv_child AS SELECT a FROM corv;
+
+statement ok
+CREATE ROLE corv_reader;
+
+statement ok
+GRANT SELECT ON corv TO corv_reader;
+
+statement ok
+CREATE TABLE corv_before AS SELECT oid FROM pg_class WHERE relname = 'corv';
+
+statement error
+CREATE OR REPLACE VIEW corv AS SELECT a FROM corv_t;
+----
+db error: ERROR: cannot drop columns from view
+
+
+statement error
+CREATE OR REPLACE VIEW corv AS SELECT a, b AS bb FROM corv_t;
+----
+db error: ERROR: cannot change name of view column "b" to "bb"
+
+
+statement error
+CREATE OR REPLACE VIEW corv AS SELECT a, c AS b FROM corv_t;
+----
+db error: ERROR: cannot change data type of view column "b" from VARCHAR to INTEGER
+
+
+statement error
+CREATE OR REPLACE VIEW corv AS SELECT b, a FROM corv_t;
+----
+db error: ERROR: cannot change name of view column "a" to "b"
+
+
+statement error
+CREATE OR REPLACE VIEW corv_t AS SELECT 1 AS a;
+----
+db error: ERROR: Existing object corv_t is of type Table, trying to replace with type View
+
+
+# A refused replace leaves the view as it was.
+query
+SELECT a, b FROM corv ORDER BY a;
+----
+a	b
+0	y
+1	x
+
+# Columns appended at the end and a changed query body are fine.
+statement ok
+CREATE OR REPLACE VIEW corv AS SELECT a, b, c FROM corv_t WHERE a > 0;
+
+query
+SELECT a, b, c FROM corv;
+----
+a	b	c
+1	x	10
+
+# Same entry: same oid, comment and grant still attached.
+query
+SELECT c.oid = b.oid AS same_oid, comment
+FROM pg_class c, corv_before b, duckdb_views() v
+WHERE c.relname = 'corv' AND v.view_name = 'corv' AND v.database_name = current_database();
+----
+same_oid	comment
+t	kept
+
+query
+SELECT has_table_privilege('corv_reader', 'corv', 'SELECT') AS kept_grant;
+----
+kept_grant
+t
+
+# The dependent view was never dropped: it reads the new definition and still
+# blocks a RESTRICT drop of its base.
+query
+SELECT a FROM corv_child;
+----
+a
+1
+
+statement error
+DROP VIEW corv;
+----
+db error: ERROR: Cannot drop entry "corv" because there are entries that depend on it.
+view "corv_child" depends on view "corv".
+Use DROP...CASCADE to drop all dependents.
+
+
+# Functions: the replaced body keeps the entry and its comment.
+statement ok
+CREATE FUNCTION corv_f(x INT) AS x + 1;
+
+statement ok
+COMMENT ON FUNCTION corv_f IS 'fn kept';
+
+statement ok
+CREATE TABLE corv_f_before AS SELECT oid FROM pg_proc WHERE proname = 'corv_f';
+
+statement ok
+CREATE OR REPLACE FUNCTION corv_f(x INT) AS x + 2;
+
+query
+SELECT p.oid = b.oid AS same_oid, count(*) OVER () AS definitions
+FROM pg_proc p, corv_f_before b WHERE p.proname = 'corv_f';
+----
+same_oid	definitions
+t	1
+
+query
+SELECT DISTINCT comment FROM duckdb_functions()
+WHERE function_name = 'corv_f' AND database_name = current_database();
+----
+comment
+fn kept
+
+query
+SELECT corv_f(1) AS r;
+----
+r
+3
+
+# A function stays a function.
+statement error
+CREATE OR REPLACE PROCEDURE corv_f(x INT) AS x + 5;
+----
+db error: ERROR: cannot change routine kind
+
+
+# Recursion is not a dependency: a function may be redefined to call itself,
+# and nothing then blocks its drop.
+statement ok
+CREATE FUNCTION corv_down(n INT) AS n;
+
+statement ok
+CREATE OR REPLACE FUNCTION corv_down(n INT) AS CASE WHEN n <= 0 THEN 0 ELSE corv_down(n - 1) END;
+
+statement ok
+DROP FUNCTION corv_down(INT);
+
+statement ok
+DROP VIEW corv CASCADE;
+
+statement ok
+DROP FUNCTION corv_f(INT);
+
+statement ok
+DROP TABLE corv_t;
+
+statement ok
+DROP TABLE corv_before;
+
+statement ok
+DROP TABLE corv_f_before;
+
+statement ok
+DROP ROLE corv_reader;

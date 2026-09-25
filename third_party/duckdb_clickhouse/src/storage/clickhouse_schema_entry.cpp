@@ -325,6 +325,11 @@ optional_ptr<CatalogEntry> ClickHouseSchemaEntry::CreateType(CatalogTransaction 
 }
 
 void ClickHouseSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
+	if (info.type == AlterType::RENAME && info.GetCatalogType() == CatalogType::TABLE_ENTRY) {
+		RenameTableInfo rename(info.GetAlterEntryData(), info.Cast<RenameInfo>().new_name);
+		Alter(transaction, rename);
+		return;
+	}
 	if (info.type != AlterType::ALTER_TABLE) {
 		throw NotImplementedException("ClickHouse: only ALTER TABLE is supported");
 	}

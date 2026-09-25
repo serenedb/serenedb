@@ -98,7 +98,7 @@ CREATE TABLE shapes (id INTEGER, g GEOMETRY);
 statement error
 CREATE INDEX shapes_rtree ON shapes USING RTREE (g);
 ----
-db error: ERROR: access method "rtree" does not exist
+db error: ERROR: Unknown index type: rtree
 
 
 # Nothing rtree-shaped is registered at all -- not the pragmas, not the scan

@@ -51,6 +51,8 @@ set(IResearch_core_sources
     ./analysis/shingle_tokenizer.cpp
     ./analysis/sql_tokenizer.cpp
     ./analysis/wildcard_tokenizer.cpp
+    ./analysis/html_strip_tokenizer.cpp
+    ./analysis/filter_tokens_tokenizer.cpp
     ./error/error.cpp
     ./formats/column/col_reader.cpp
     ./formats/column/col_writer.cpp
@@ -78,6 +80,7 @@ set(IResearch_core_sources
     ./formats/ivf/ivf_reader.cpp
     ./formats/ivf/quantizer.cpp
     ./index/directory_reader.cpp
+    ./index/document_mask.cpp
     ./index/directory_reader_impl.cpp
     ./index/field_meta.cpp
     ./index/file_names.cpp
@@ -103,6 +106,7 @@ set(IResearch_core_sources
     ./search/scorers/root_window.cpp
     ./search/detail/collectors.cpp
     ./search/filters/filter.cpp
+    ./search/queries/docs_mask_query.cpp
     ./search/filters/term_filter.cpp
     ./search/filters/nested_filter.cpp
     ./search/filters/prefix_filter.cpp
@@ -133,7 +137,6 @@ set(IResearch_core_sources
     ./search/count/make_geo_contains.cpp
     ./search/count/make_geo_is_contained.cpp
     ./search/count/make_geo_distance.cpp
-    ./search/count/make_masked.cpp
     ./search/count/make_term_counts.cpp
     ./search/lead/make.cpp
     ./search/lead/make_hnsw.cpp
@@ -314,7 +317,6 @@ set(IResearch_core_sources
     ./search/top/make_geo_contains.cpp
     ./search/top/make_geo_is_contained.cpp
     ./search/top/make_geo_distance.cpp
-    ./search/top/make_masked.cpp
     ./search/top/make_pruned_posting.cpp
     ./search/top/make_fixed_phrase_pruned.cpp
     ./search/top/make_fixed_phrase_intervals_pruned.cpp
@@ -512,6 +514,7 @@ target_link_libraries(
     PUBLIC ${SIMD_LIBRARY_STATIC}
     PUBLIC ${FAISS_LIB}
     PUBLIC re2
+    PUBLIC roaring::roaring
     PUBLIC s2
     PUBLIC streamvbyte
     PUBLIC duckdb_static

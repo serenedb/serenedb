@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 
 #include <cstdint>
@@ -42,16 +41,6 @@
 
 namespace sdb::connector {
 namespace {
-
-bool TryCastExactInt64(const duckdb::Value& v, duckdb::Value& out) {
-  if (v.IsNull() || !v.type().IsNumeric() ||
-      !v.DefaultTryCastAs(duckdb::LogicalType::BIGINT, out, nullptr, true)) {
-    return false;
-  }
-  duckdb::Value back;
-  return out.DefaultTryCastAs(v.type(), back, nullptr, false) &&
-         duckdb::Value::NotDistinctFrom(back, v);
-}
 
 PhraseGap ParsePhraseGap(const duckdb::Value& val, std::string_view label,
                          std::string_view hint,
@@ -98,6 +87,57 @@ PhraseGap ParsePhraseGap(const duckdb::Value& val, std::string_view label,
           .max = static_cast<size_t>(raw) + 1};
 }
 
+using PositionedTokens = irs::ValueTokens<irs::TokenLayout::TermsPos>;
+
+void AppendTokenSlots(irs::ByPhraseOptions& options,
+                      const PositionedTokens& tokens, PhraseGap gap) {
+  const auto terms = tokens.terms();
+  const auto pos = tokens.pos();
+  for (size_t i = 0; i < terms.size();) {
+    const auto term = irs::AsBytesView(terms[i]);
+    size_t end = i + 1;
+    bool same = true;
+    for (; end < terms.size() && pos[end] == pos[i]; ++end) {
+      same = same && irs::AsBytesView(terms[end]) == term;
+    }
+    if (same) {
+      options.push_back<irs::ByTermOptions>(gap.min, gap.max).term = term;
+    } else {
+      auto& set = options.push_back<irs::TermSetOptions>(gap.min, gap.max);
+      for (size_t k = i; k < end; ++k) {
+        set.terms.emplace(irs::AsBytesView(terms[k]));
+      }
+    }
+    if (end < terms.size()) {
+      const size_t step = pos[end] - pos[i];
+      gap = {.min = step, .max = step};
+    }
+    i = end;
+  }
+}
+
+void AddPhrase(BoolTarget parent, const FilterContext& ctx,
+               const SearchColumnInfo& column_info,
+               irs::ByPhraseOptions&& options) {
+  const auto field_id =
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
+  if (options.size() == 1) {
+    if (const auto* set =
+          std::get_if<irs::TermSetOptions>(&options.begin()->part)) {
+      std::vector<irs::bstring> terms(set->terms.begin(), set->terms.end());
+      auto& node =
+        AddTermSet(MaybeNegated(parent, ctx, column_info), field_id, terms, 1);
+      node.SetMergeType(irs::ScoreMergeType::Max);
+      node.SetBoost(ctx.boost);
+      return;
+    }
+  }
+  auto& phrase = AddMaybeNegated<irs::ByPhrase>(parent, ctx, column_info);
+  phrase.SetBoost(ctx.boost);
+  *phrase.mutable_field_id() = field_id;
+  *phrase.mutable_options() = std::move(options);
+}
+
 }  // namespace
 
 void FromPhrase(BoolTarget filter, const FilterContext& ctx,
@@ -119,8 +159,7 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
 
   std::optional<int64_t> arg_slop;
   for (const auto& child : func.GetChildren()) {
-    if (!absl::EqualsIgnoreCase(child->GetAlias().GetIdentifierName(),
-                                "slop")) {
+    if (!(child->GetAlias() == "slop")) {
       continue;
     }
     int64_t slop_raw = 0;
@@ -144,20 +183,15 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
                              "`::slop(N)`, not both."));
   }
 
-  auto& phrase = AddMaybeNegated<irs::ByPhrase>(filter, ctx, column_info);
-  phrase.SetBoost(ctx.boost);
-  *phrase.mutable_field_id() =
-    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
-  auto* opts = phrase.mutable_options();
+  irs::ByPhraseOptions options;
   auto& analyzer = ctx.tokenizer;
   irs::ValueAnalyzer value_analyzer;
-  irs::ValueTokens tokens;
+  PositionedTokens tokens{analyzer.Traits()};
 
   std::optional<PhraseGap> pending_gap;
 
   for (size_t i = 0; i < func.GetChildren().size(); ++i) {
-    if (absl::EqualsIgnoreCase(
-          func.GetChildren()[i]->GetAlias().GetIdentifierName(), "slop")) {
+    if (func.GetChildren()[i]->GetAlias() == "slop") {
       continue;
     }
     const auto* const_val = TryGetConstant(*func.GetChildren()[i]);
@@ -170,19 +204,14 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
         const_val->type().id() == duckdb::LogicalTypeId::BLOB) {
       value_analyzer.Analyze(
         analyzer, const_val->GetValueUnsafe<duckdb::string_t>(), tokens);
-      for (const auto& tok : tokens.terms()) {
-        if (pending_gap) {
-          opts
-            ->push_back<irs::ByTermOptions>(pending_gap->min, pending_gap->max)
-            .term = irs::AsBytesView(tok);
-        } else {
-          opts->push_back<irs::ByTermOptions>().term = irs::AsBytesView(tok);
-        }
+      if (!tokens.terms().empty()) {
+        AppendTokenSlots(options, tokens,
+                         pending_gap.value_or(PhraseGap{1, 1}));
         pending_gap.reset();
       }
       continue;
     }
-    if (opts->empty()) {
+    if (options.empty()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("ts_phrase gap at argument ", i,
                               " must be preceded by a text pattern"),
@@ -202,7 +231,7 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
       ERR_MSG("ts_phrase ends with a gap; a text pattern must follow each gap"),
       ERR_HINT(kSyntaxHint));
   }
-  if (opts->empty()) {
+  if (options.empty()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_phrase text arguments produced no searchable terms"),
@@ -210,7 +239,7 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
                "all-stopword input). Provide at least one searchable term."));
   }
 
-  if (opts->size() > 1 &&
+  if (options.size() > 1 &&
       (column_info.tokenizer.features & irs::PhraseQuery::kRequiredFeatures) !=
         irs::PhraseQuery::kRequiredFeatures) {
     THROW_SQL_ERROR(
@@ -225,7 +254,7 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
   const auto slop =
     arg_slop ? static_cast<irs::PosAttr::value_t>(*arg_slop) : ctx.slop;
   if (slop > 0) {
-    for (const auto& info : *opts) {
+    for (const auto& info : options) {
       if (info.offs_min != info.offs_max) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -233,8 +262,9 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
           ERR_HINT("Use exact gaps (single INTEGER) with slop, or drop it."));
       }
     }
-    opts->set_slop(slop);
+    options.set_slop(slop);
   }
+  AddPhrase(filter, ctx, column_info, std::move(options));
 }
 
 namespace {
@@ -244,7 +274,7 @@ void EmitPhraseTokens(irs::ByPhraseOptions& options, const FilterContext& ctx,
                       std::string_view text, PhraseGap base_gap) {
   auto& analyzer = ctx.tokenizer;
   irs::ValueAnalyzer value_analyzer;
-  irs::ValueTokens tokens;
+  PositionedTokens tokens{analyzer.Traits()};
   if (!value_analyzer.Analyze(
         analyzer,
         duckdb::string_t{text.data(), static_cast<uint32_t>(text.size())},
@@ -253,14 +283,8 @@ void EmitPhraseTokens(irs::ByPhraseOptions& options, const FilterContext& ctx,
                     ERR_MSG("ts_phrase failed to analyse '", text, "'"),
                     ERR_HINT("The column's analyzer rejected the input text."));
   }
-  bool first = true;
-  for (const auto& tok : tokens.terms()) {
-    const PhraseGap g = first ? base_gap : PhraseGap{1, 1};
-    auto& part = options.push_back<irs::ByTermOptions>(g.min, g.max);
-    part.term = irs::AsBytesView(tok);
-    first = false;
-  }
-  if (first) {
+  AppendTokenSlots(options, tokens, base_gap);
+  if (tokens.terms().empty()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_phrase('", text, "') produced no tokens after analysis"),
@@ -279,13 +303,9 @@ void BuildFtsPhrase(BoolTarget parent, const FilterContext& ctx,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_phrase field is not VARCHAR"));
   }
-  auto& phrase = AddMaybeNegated<irs::ByPhrase>(parent, ctx, column_info);
-  *phrase.mutable_field_id() =
-    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
-  phrase.SetBoost(ctx.boost);
-  auto* opts = phrase.mutable_options();
-  EmitPhraseTokens(*opts, ctx, column_info, text, PhraseGap{});
-  if (opts->size() > 1 &&
+  irs::ByPhraseOptions options;
+  EmitPhraseTokens(options, ctx, column_info, text, PhraseGap{});
+  if (options.size() > 1 &&
       (column_info.tokenizer.features & irs::PhraseQuery::kRequiredFeatures) !=
         irs::PhraseQuery::kRequiredFeatures) {
     THROW_SQL_ERROR(
@@ -296,6 +316,7 @@ void BuildFtsPhrase(BoolTarget parent, const FilterContext& ctx,
                "`Frequency` features attached to the column, or query with a "
                "single-term ts_phrase / ts_like."));
   }
+  AddPhrase(parent, ctx, column_info, std::move(options));
 }
 
 PhraseGap ParsePhraseSeqGap(const duckdb::Expression& expr) {

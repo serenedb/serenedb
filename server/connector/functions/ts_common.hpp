@@ -41,12 +41,11 @@
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <magic_enum/magic_enum.hpp>
 
-#include "catalog/tokenizer.h"
 #include "connector/common.h"
 #include "connector/functions/ts_query_codec.h"
 #include "connector/search_filter_builder.hpp"
+#include "connector/term_dict.h"
 
-namespace sdb::catalog {}  // namespace sdb::catalog
 namespace sdb::connector {
 
 struct FilterContext {
@@ -179,11 +178,11 @@ void GetDoubleArg(const duckdb::Expression& expr, double& out, ArgError err);
 template<typename F>
 void WithNumericValue(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
                       F&& f) {
-  switch (catalog::term_dict::Classify(type_id)) {
-    case catalog::term_dict::Kind::NumericI32:
+  switch (term_dict::Classify(type_id)) {
+    case term_dict::Kind::NumericI32:
       f(value.GetValue<int32_t>());
       break;
-    case catalog::term_dict::Kind::NumericI64:
+    case term_dict::Kind::NumericI64:
       if (type_id == duckdb::LogicalTypeId::TIME_TZ) {
         f(TimeTzIndexTerm(value.GetValueUnsafe<int64_t>()));
       } else if (value.type().InternalType() == duckdb::PhysicalType::INT64) {
@@ -192,10 +191,10 @@ void WithNumericValue(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
         f(value.GetValue<int64_t>());
       }
       break;
-    case catalog::term_dict::Kind::NumericF32:
+    case term_dict::Kind::NumericF32:
       f(value.GetValue<float>());
       break;
-    case catalog::term_dict::Kind::NumericF64:
+    case term_dict::Kind::NumericF64:
       f(value.GetValue<double>());
       break;
     default:
@@ -221,6 +220,16 @@ void BuildFtsTerm(BoolTarget parent, const FilterContext& ctx,
 void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info, std::string_view text,
                     bool require_all);
+void BuildFtsWord(BoolTarget parent, const FilterContext& ctx,
+                  const SearchColumnInfo& column_info, std::string_view text);
+
+using TokenGroups = std::vector<std::vector<irs::bstring>>;
+
+void AppendTokenGroups(std::span<const duckdb::string_t> terms,
+                       std::span<const uint32_t> pos, TokenGroups& groups);
+void AddTokenGroups(BoolTarget parent, irs::field_id field, TokenGroups& groups,
+                    size_t min_match, irs::score_t boost,
+                    const irs::Scorer* scorer = nullptr);
 
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
                                               const duckdb::Expression& expr);

@@ -31,6 +31,7 @@
 #include <iresearch/analysis/text/normalize/normalize.hpp>
 #include <iresearch/analysis/text/sz/stringzilla.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
+#include <random>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -196,6 +197,14 @@ void CheckClassifyAndStripSafe() {
         ++failures;
         EXPECT_EQ(normalized, !denormalized) << "line: " << c.line;
       }
+      const std::string padded =
+        std::string(37, '.') + s + std::string(29, '.');
+      if (IsNormalized(padded, Form) !=
+          !irs::analysis::normalize::Denormalized<Form>(padded.data(),
+                                                        padded.size())) {
+        ++failures;
+        EXPECT_TRUE(false) << "padded, line: " << c.line;
+      }
       if (!irs::analysis::normalize::StripSafe<Form>(s.data(), s.size())) {
         continue;
       }
@@ -221,8 +230,102 @@ TEST(norm_stringzilla_test, classify_nfkc_and_strip_safe_conformance) {
   CheckClassifyAndStripSafe<sz_normal_form_nfkc_k>();
 }
 
+template<sz_normal_form_t Form>
+void CheckQuickCheckEveryCodepoint() {
+  constexpr std::string_view kAcute = "\xCC\x81";
+  size_t failures = 0;
+  std::string text;
+  for (uint32_t cp = 0; cp < 0x110000 && failures <= 20; ++cp) {
+    if (cp >= 0xD800 && cp <= 0xDFFF) {
+      continue;
+    }
+    irs::byte_type buf[irs::utf8_utils::kMaxCharSize];
+    const auto len = irs::utf8_utils::FromChar32(cp, buf);
+    const std::string_view c{reinterpret_cast<const char*>(buf), len};
+    const auto check = [&](std::string_view prefix, std::string_view suffix) {
+      text.assign(prefix);
+      text.append(c);
+      text.append(suffix);
+      if (IsNormalized(text, Form) ==
+          irs::analysis::normalize::Denormalized<Form>(text.data(),
+                                                       text.size())) {
+        ++failures;
+        EXPECT_TRUE(false) << "cp: " << std::hex << cp << " size: " << std::dec
+                           << text.size();
+      }
+    };
+    check({}, {});
+    check("e", {});
+    check({}, kAcute);
+    check("e", kAcute);
+    for (const size_t pad : {29, 30, 31, 61}) {
+      const std::string before(pad, '.');
+      check(before, std::string(40, '.'));
+      check(before, std::string(kAcute) + std::string(40, '.'));
+    }
+  }
+  EXPECT_EQ(0u, failures);
+}
+
+template<sz_normal_form_t Form>
+void CheckTwoByteStrip() {
+  using namespace irs::analysis::normalize;
+  const auto full = [](std::string_view in) {
+    std::string decomposed(Bound<Form>(in.size()), '\0');
+    decomposed.resize(Decompose<Form>(in, decomposed.data()));
+    std::string stripped;
+    StripNonspacingMarks(decomposed, stripped);
+    std::string composed(Bound<Form>(stripped.size()), '\0');
+    composed.resize(Compose<Form>(stripped, composed.data()));
+    return composed;
+  };
+  std::vector<std::string> pool = {"a", "e", "Z", " ", "1", "-"};
+  for (uint32_t cp = 0x80; cp < 0x800; ++cp) {
+    irs::byte_type buf[irs::utf8_utils::kMaxCharSize];
+    const auto len = irs::utf8_utils::FromChar32(cp, buf);
+    pool.emplace_back(reinterpret_cast<const char*>(buf), len);
+  }
+  std::mt19937_64 rng{11};
+  size_t failures = 0;
+  std::string out;
+  for (size_t round = 0; round < 100000 && failures <= 20; ++round) {
+    std::string text;
+    const size_t pieces = rng() % 8;
+    for (size_t k = 0; k < pieces; ++k) {
+      text += pool[rng() % pool.size()];
+    }
+    const auto result = StripTwoByte<Form>(text, out);
+    ASSERT_NE(StripResult::Unsupported, result);
+    const std::string_view fast =
+      result == StripResult::Stripped ? std::string_view{out} : text;
+    const auto expected = full(text);
+    if (fast != expected) {
+      ++failures;
+      EXPECT_EQ(expected, fast) << "round " << round;
+    }
+  }
+  EXPECT_EQ(0u, failures);
+  EXPECT_EQ(StripResult::Unsupported, StripTwoByte<Form>("a\xE4\xBB\x8A", out));
+  EXPECT_EQ(StripResult::Unsupported, StripTwoByte<Form>("\xC3", out));
+}
+
+TEST(norm_stringzilla_test, two_byte_strip_nfc_matches_round_trip) {
+  CheckTwoByteStrip<sz_normal_form_nfc_k>();
+}
+
+TEST(norm_stringzilla_test, two_byte_strip_nfkc_matches_round_trip) {
+  CheckTwoByteStrip<sz_normal_form_nfkc_k>();
+}
+
+TEST(norm_stringzilla_test, quick_check_nfc_every_codepoint) {
+  CheckQuickCheckEveryCodepoint<sz_normal_form_nfc_k>();
+}
+
+TEST(norm_stringzilla_test, quick_check_nfkc_every_codepoint) {
+  CheckQuickCheckEveryCodepoint<sz_normal_form_nfkc_k>();
+}
+
 TEST(norm_stringzilla_test, simd_backends_match_serial) {
-  const bool has_avx512 = irs::analysis::sz::HasAvx512();
   std::vector<bool> part1_cps(0x110000);
   const auto cases = LoadCases(part1_cps);
   ASSERT_FALSE(cases.empty());
@@ -246,11 +349,14 @@ TEST(norm_stringzilla_test, simd_backends_match_serial) {
             EXPECT_TRUE(false) << name << " diverges, line: " << c.line;
           }
         };
+        check_backend(irs::analysis::sz::Norm, "native");
+#ifdef __x86_64__
         check_backend(sz_utf8_norm_haswell, "haswell");
-        if (has_avx512) {
+        if (irs::analysis::sz::HasAvx512()) {
           check_backend(sz_utf8_norm_skylake, "skylake");
           check_backend(sz_utf8_norm_icelake, "icelake");
         }
+#endif
       }
     }
     if (failures > 20) {

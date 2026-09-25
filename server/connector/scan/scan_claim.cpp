@@ -52,6 +52,14 @@ irs::DocRange ScanGlobalState::RangeOf(const ScanUnit& unit) const noexcept {
                    : irs::doc_limits::min() + static_cast<irs::doc_id_t>(end)};
 }
 
+irs::doc_id_t ScanGlobalState::UnitSpan(const ScanUnit& unit) const noexcept {
+  if (unit.whole || (unit.rg_begin == 0 && !ordered &&
+                     segments[unit.seg].rg_count <= fold_rgs)) {
+    return 0;
+  }
+  return static_cast<irs::doc_id_t>(rg_size);
+}
+
 namespace {
 
 bool OrderKeyBefore(const ScanOrderKey& l, const ScanOrderKey& r,
@@ -348,6 +356,7 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
            !(constant_count && sub.live_docs_count() == sub.docs_count());
   };
   uint64_t parallel = 0;
+  uint64_t rgs = 0;
   for (uint32_t i = 0; i != g.live_segments; ++i) {
     const auto seg = g.segment_order[i];
     auto& work = g.Segment(seg);
@@ -355,12 +364,15 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
     work.claim.store(split ? SegmentWork::kSplit : SegmentWork::kWhole,
                      std::memory_order_relaxed);
     parallel += split ? work.rg_count : 1;
+    rgs += work.rg_count;
   }
   if (g.stats_stage) {
     parallel = std::max<uint64_t>(parallel, g.total_segments);
   }
   g.workers = static_cast<uint32_t>(std::clamp<uint64_t>(
     std::min(threads, parallel), 1, std::numeric_limits<uint32_t>::max()));
+  constexpr uint64_t kFoldSharers = 4;
+  g.fold_rgs = kFoldSharers * rgs / g.workers;
 
   if (ordered) {
     BuildOrderedHeap(g);

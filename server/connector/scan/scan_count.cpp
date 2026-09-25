@@ -55,9 +55,7 @@ void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
         auto* table = BeginVerify(l.col_verify, sub, g, l);
         auto plan = irs::count::MakeRoot(
           seg_query, {.table = table,
-                      .span = unit.whole || unit.rg_begin == 0
-                                ? irs::doc_id_t{0}
-                                : static_cast<irs::doc_id_t>(g.rg_size),
+                      .span = g.UnitSpan(unit),
                       .partial = true});
         EnsurePlanned(plan != nullptr);
         l.root = std::move(plan);

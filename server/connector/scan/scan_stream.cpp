@@ -66,9 +66,7 @@ void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
   l.hit_batcher->BeginSegment(seg_idx, seg.GetColReader(), g.client_context,
                               &l.filter_states, l.seg_cls.active);
   const auto& seg_query = EnsureSegmentQuery(g, l, seg_idx);
-  const auto span = l.unit.whole || (!g.Ordered() && l.unit.rg_begin == 0)
-                      ? irs::doc_id_t{0}
-                      : static_cast<irs::doc_id_t>(g.rg_size);
+  const auto span = g.UnitSpan(l.unit);
   l.scored = g.ScanScore();
   if (l.scored) {
     SDB_ENSURE(g.scorer_obj != nullptr,

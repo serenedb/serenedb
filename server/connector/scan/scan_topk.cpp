@@ -94,9 +94,7 @@ void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
        .table = table,
        .prune = g.prune_scorer != nullptr && g.stats_scorer == g.prune_scorer,
        .k = static_cast<uint32_t>(l.hit_slice.size()),
-       .span = unit.whole || unit.rg_begin == 0
-                 ? irs::doc_id_t{0}
-                 : static_cast<irs::doc_id_t>(g.rg_size)});
+       .span = g.UnitSpan(unit)});
     EnsurePlanned(plan != nullptr);
     l.root = std::move(plan);
     l.root_seg = unit.seg;

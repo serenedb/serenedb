@@ -215,6 +215,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   bool splittable = true;
   uint32_t workers = 1;
   uint64_t rg_size = 0;
+  uint64_t fold_rgs = 0;
   std::atomic_uint32_t worker_count{0};
 
   std::vector<uint32_t> segment_order;
@@ -282,6 +283,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   const ScanBindData& Bind() const noexcept { return *scan; }
   SegmentWork& Segment(uint32_t seg) noexcept { return segments[seg]; }
   irs::DocRange RangeOf(const ScanUnit& unit) const noexcept;
+  irs::doc_id_t UnitSpan(const ScanUnit& unit) const noexcept;
 };
 
 struct ScanLocalState : public duckdb::LocalTableFunctionState {

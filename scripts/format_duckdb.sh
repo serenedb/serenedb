@@ -3,10 +3,12 @@
 # duckdb's own scripts/format.py enforces) inside a docker container, so no
 # local clang-format-11 install is required.
 #
-# Covered submodules: duckdb, duckdb_avro, duckdb_httpfs, duckdb_iceberg,
-# duckdb_inet, duckdb_markdown, duckdb_postgres, database-connector. Also covers
-# duckdb_clickhouse, which is IN-TREE (part of this repo, not a submodule) --
-# its changed-file discovery and status use the main repo's git.
+# Covered submodules: duckdb, duckdb_avro, duckdb_azure, duckdb_httpfs,
+# duckdb_iceberg, duckdb_inet, duckdb_markdown, duckdb_postgres, duckdb_spatial,
+# database-connector. Also covers duckdb_clickhouse, which is IN-TREE (part of
+# this repo, not a submodule) -- its changed-file discovery and status use the
+# main repo's git. Each directory is formatted with its own .clang-format; one
+# without it (duckdb_azure) gets core duckdb's.
 #
 # Usage:
 #   scripts/format_duckdb.sh                # format files changed vs the
@@ -33,7 +35,7 @@ set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 THIRD_PARTY="$REPO_ROOT/third_party"
-SUBMODULES=(duckdb duckdb_avro duckdb_inet duckdb_markdown duckdb_httpfs duckdb_iceberg duckdb_postgres database-connector)
+SUBMODULES=(duckdb duckdb_avro duckdb_azure duckdb_inet duckdb_markdown duckdb_httpfs duckdb_iceberg duckdb_postgres duckdb_spatial database-connector)
 # In-tree directories (part of this repo, not submodules): their changed-file
 # discovery and status run against the MAIN repo, scoped to their path.
 INTREE=(duckdb_clickhouse)
@@ -247,12 +249,14 @@ cat >/tmp/one.sh <<'ONE'
 #!/bin/sh
 tmp="/tmp/formatted.\$\$"
 for f in "\$@"; do
+	lookup="\$f"
+	[ -e "\${f%%/*}/.clang-format" ] || lookup="duckdb/\${f##*/}"
 	case "\$f" in
 	*.cpp | *.hpp)
-		clang-format --style=file --sort-includes=0 "\$f" | sed '$PACK_FIXUP' >"\$tmp"
+		clang-format --style=file --sort-includes=0 --assume-filename="\$lookup" <"\$f" | sed '$PACK_FIXUP' >"\$tmp"
 		;;
 	*)
-		clang-format --style=file --sort-includes=0 "\$f" >"\$tmp"
+		clang-format --style=file --sort-includes=0 --assume-filename="\$lookup" <"\$f" >"\$tmp"
 		;;
 	esac
 	if ! cmp -s "\$tmp" "\$f"; then

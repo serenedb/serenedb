@@ -8,13 +8,14 @@ import DocCallout from "@site/src/components/DocCallout";
 
 AI functions call an external model provider from SQL. They cover three kinds of work:
 
-- **Text with a chat model**: [`ai_generate`](#ai_generate) answers a prompt, [`ai_classify`](#ai_classify) picks a label, [`ai_extract`](#ai_extract) pulls out a value or a JSON object, [`ai_filter`](#ai_filter) decides whether a condition holds, [`ai_translate`](#ai_translate) translates and [`ai_redact`](#ai_redact) masks personal information.
+- **Text with a chat model**: [`ai_generate`](#ai_generate) answers a prompt, [`ai_classify`](#ai_classify) picks a label, [`ai_classify_labels`](#ai_classify_labels) picks every label that applies, [`ai_extract`](#ai_extract) pulls out a value or a JSON object, [`ai_filter`](#ai_filter) decides whether a condition holds, [`ai_score`](#ai_score) rates how well a text meets criteria, [`ai_rerank`](#ai_rerank) rates how relevant a document is to a search query, [`ai_translate`](#ai_translate) translates and [`ai_redact`](#ai_redact) masks personal information.
+- **Aggregates with a chat model**: [`ai_agg`](#ai_agg) answers an instruction over all the values in a group, and [`ai_summarize_agg`](#ai_agg) summarizes them.
 - **Embeddings**: [`ai_embed`](#ai_embed) turns text into a vector for [vector search](../indexes/inverted/vector-search.md), and [`ai_similarity`](#ai_similarity) compares two texts by the cosine similarity of their embeddings.
 - **Typed decisions**: [`prompt_jev`](#prompt_jev) asks a Jev decision model a yes/no, multiple-choice or rating question and returns calibrated probabilities instead of prose.
 
 <DocCallout type="attention">
 
-Every AI function sends the text to the configured provider over the network. That costs money on hosted providers, the text leaves the server, and the text can steer the model's answer (prompt injection). `ai_redact` depends entirely on the model and is not a sufficient anonymization mechanism on its own.
+Every AI function sends the text to the configured provider over the network. That costs money on hosted providers, the text leaves the server, and the text can steer the model's answer ([prompt injection](#prompt-injection)). `ai_redact` depends entirely on the model and is not a sufficient anonymization mechanism on its own.
 
 </DocCallout>
 
@@ -53,13 +54,15 @@ The runnable examples on this page use a local Ollama server with the `all-minil
 | `base_url` | Base URL of the API. Defaults to `https://api.typesafe.ai`; point it at a Kev server to run locally. |
 | `model` | Model name. Defaults to `jev-latest`, which Kev also answers to. |
 
+A `base_url` that starts with `http://` sends the text and the API key unencrypted. The functions therefore refuse a secret whose `base_url` uses `http://` for a host other than `localhost`, `127.0.0.0/8` or `::1`. To use such an endpoint, for example a model server on your private network, run `SET sdb_ai_allow_insecure_endpoint = true`.
+
 ### Choosing the secret {#default-secret}
 
 Each call names its secret with `secret_name`. When it doesn't, the function uses the secret named by a setting, and fails if that setting is empty:
 
 | Setting | Used by |
 | :--- | :--- |
-| `sdb_ai_text_default_secret` | `ai_generate`, `ai_classify`, `ai_extract`, `ai_filter`, `ai_translate`, `ai_redact` |
+| `sdb_ai_text_default_secret` | `ai_generate`, `ai_classify`, `ai_classify_labels`, `ai_extract`, `ai_filter`, `ai_score`, `ai_rerank`, `ai_translate`, `ai_redact`, `ai_agg`, `ai_summarize_agg` |
 | `sdb_ai_embedding_default_secret` | `ai_embed`, `ai_similarity` |
 | `sdb_ai_jev_default_secret` | `prompt_jev` |
 
@@ -67,7 +70,7 @@ Each call names its secret with `secret_name`. When it doesn't, the function use
 
 ## Common parameters {#parameters}
 
-The text functions take the per-row text as their first argument, then their own arguments, then these optional named parameters:
+The text functions and aggregates take the per-row text and their own arguments, then these optional named parameters:
 
 | Parameter | Description |
 | :--- | :--- |
@@ -76,7 +79,15 @@ The text functions take the per-row text as their first argument, then their own
 | `temperature` | Sampling temperature. The default depends on the function: 0.7 for `ai_generate`, 0.3 for `ai_translate` and 0 for the others. |
 | `max_tokens` | Maximum number of tokens in the model's reply. Default 1024. |
 
-Every argument except the per-row text must be a constant. A `NULL` text returns `NULL` without a request.
+Every argument except the per-row text must be a constant. A `NULL` text returns `NULL` without a request. Except for `ai_generate`, rows with the same text share one request when they fall into the same batch (see [Performance](#performance)).
+
+A reply counts as a failed row when the model stopped at `max_tokens`, when the provider withheld or filtered it, or when the model asked to call a tool instead of answering. See [Errors, retries and quotas](#errors) for how failed rows are handled.
+
+### Text as data {#prompt-injection}
+
+Each function sends its instruction as the system message and the row text as a separate user message. The instruction tells the model to treat the text as data and never follow instructions that appear in it. `ai_classify`, `ai_classify_labels`, `ai_extract`, `ai_filter`, `ai_score` and `ai_rerank` also request a strict JSON schema, so a provider that supports structured outputs can only reply with an allowed label, a boolean, a score or the requested keys. The replies are checked as well: an unknown label makes `ai_classify` return `NULL` and fails the row in `ai_classify_labels`, and a score outside `[0, 1]` fails the row. Control characters other than tab, newline and carriage return are replaced by spaces before the text is sent.
+
+These measures make instructions hidden in the data less effective, but they can't rule them out.
 
 ## `ai_generate` {#ai_generate}
 
@@ -90,9 +101,19 @@ Every argument except the per-row text must be a constant. A `NULL` text returns
 
 ## `ai_classify` {#ai_classify}
 
-`ai_classify(text, categories)` returns the one label from the `VARCHAR[]` `categories` that best fits `text`. The labels must be unique and non-empty. A reply that matches no label, even case-insensitively, returns `NULL`:
+`ai_classify(text, categories)` returns the one label from `categories` that best fits `text`. The labels must be unique, ignoring case, and non-empty. A reply that matches no label, even case-insensitively, returns `NULL`:
 
 <SqlLogicTest id="sql/functions/ai_ollama/classify" />
+
+`categories` can also be a `STRUCT(label VARCHAR, description VARCHAR)[]` that tells the model what each label means. A description may be `NULL`:
+
+<SqlLogicTest id="sql/functions/ai_ollama/classify_descriptions" />
+
+## `ai_classify_labels` {#ai_classify_labels}
+
+`ai_classify_labels(text, categories)` returns every label from `categories` that applies to `text` as a `VARCHAR[]`, or an empty array when none applies. `categories` takes the same two forms as in [`ai_classify`](#ai_classify). A reply that contains a label outside the list, or the same label twice, fails the row:
+
+<SqlLogicTest id="sql/functions/ai_ollama/classify_labels" />
 
 ## `ai_extract` {#ai_extract}
 
@@ -110,6 +131,18 @@ When the second argument is a JSON object, each key names a field and each value
 
 <SqlLogicTest id="sql/functions/ai_ollama/filter" />
 
+## `ai_score` {#ai_score}
+
+`ai_score(text, criteria)` rates how well `text` satisfies `criteria` and returns a `DOUBLE` between 0, not at all, and 1, fully. A reply outside that range fails the row:
+
+<SqlLogicTest id="sql/functions/ai_ollama/score" />
+
+## `ai_rerank` {#ai_rerank}
+
+`ai_rerank(query, document)` rates how relevant `document` is to the search `query` and returns a `DOUBLE` between 0, not relevant, and 1, answers the query exactly. `query` must be a constant. Use it to reorder the top candidates of a cheaper search, such as [vector search](../indexes/inverted/vector-search.md):
+
+<SqlLogicTest id="sql/functions/ai_ollama/rerank" />
+
 ## `ai_translate` {#ai_translate}
 
 `ai_translate(text, target_language [, instructions])` translates `text` into `target_language`, given as a language name or a BCP-47 code. `instructions` adds guidance such as *"Use the polite form"*:
@@ -121,6 +154,16 @@ When the second argument is a JSON object, each key names a field and each value
 `ai_redact(text, categories [, replacement])` rewrites `text` with every occurrence of the listed kinds of personal information replaced by `replacement` (default `[REDACTED]`). An empty `categories` array stands for person names, email addresses, phone numbers, postal addresses, credit card numbers and IP addresses. Control characters other than tab, newline and carriage return are replaced by spaces before the text is sent.
 
 <SqlLogicTest id="sql/functions/ai_ollama/redact" hideResult />
+
+## `ai_agg` and `ai_summarize_agg` {#ai_agg}
+
+`ai_agg(text, instruction)` is an aggregate function. It answers `instruction` over the non-`NULL` values of `text` in each group and returns the answer as `VARCHAR`. `ai_summarize_agg(text)` returns a summary of the values instead. Both return `NULL` for a group without values. An `ORDER BY` inside the call sets the order in which the values are sent. `FILTER` and `DISTINCT` work as for any other aggregate:
+
+<SqlLogicTest id="sql/functions/ai_ollama/agg" />
+
+<SqlLogicTest id="sql/functions/ai_ollama/summarize_agg" hideResult />
+
+Besides the [common parameters](#parameters), both take `max_context_chars` (default 100000), the maximum number of characters of values sent in one request. A group with more text is split into parts, and each part is condensed into notes that keep what the instruction needs. The notes are then combined in further requests until they fit into one request. A value longer than the limit is split across parts. If condensing stops making the notes shorter, the group fails with an error that suggests raising `max_context_chars` or `max_tokens`.
 
 ## `ai_embed` {#ai_embed}
 
@@ -230,17 +273,31 @@ These settings apply to every AI function:
 | :--- | :--- | :--- |
 | `sdb_ai_throw_on_error` | `true` | When `false`, a row whose request fails returns `NULL` instead of failing the query. HTTP 401, 403, 404 and 422 always fail the query, because they mean a wrong key, endpoint, model or question. |
 | `sdb_ai_max_retries` | `3` | Retries after a connection error or HTTP 408, 429, 5xx or 529. |
-| `sdb_ai_retry_initial_delay_ms` | `500` | Delay before the first retry; each further retry doubles it. A `Retry-After` response header takes precedence. |
+| `sdb_ai_retry_initial_delay_ms` | `500` | Delay before the first retry; each further retry doubles it, up to 60 seconds. A `Retry-After` response header takes precedence, also up to 60 seconds. |
 | `sdb_ai_request_timeout` | `120` | Timeout of a single request, in seconds. |
-| `sdb_ai_max_concurrent_requests` | `16` | Requests one executing thread keeps in flight at once. Lower it for a local server that can't keep up. |
+| `sdb_ai_max_concurrent_requests` | `16` | Maximum threads an `AI_EVALUATE` step uses; each thread sends one request at a time. Lower it for a local server that can't keep up. See [Performance](#performance). |
 | `sdb_ai_max_api_calls_per_query` | `0` | Maximum requests a query may send. 0 = unlimited. |
 | `sdb_ai_max_output_tokens_per_query` | `0` | Maximum output tokens a query may consume, as reported by the provider. The check happens before each request, so requests already in flight can go over it. 0 = unlimited. |
 | `sdb_ai_throw_on_quota_exceeded` | `true` | When `false`, rows after a quota is exhausted return `NULL` instead of failing the query. |
-| `sdb_ai_embedding_max_batch_size` | `64` | Maximum texts per embeddings request. |
+| `sdb_ai_embedding_max_batch_size` | `100` | Maximum texts per embeddings request. |
+| `sdb_ai_allow_insecure_endpoint` | `false` | Allow `http://` endpoints on hosts other than localhost. See [Providers](#providers). |
 
 There is no input-token quota: the number of input tokens is only known to the provider.
 
 <SqlLogicTest id="sql/functions/ai_ollama/quota" />
+
+## Performance {#performance}
+
+An AI function spends almost all of its time waiting for the provider, so SereneDB spreads the requests over DuckDB's threads:
+
+- The optimizer moves AI calls in a `SELECT` list, a `WHERE` clause, `GROUP BY` keys and aggregate arguments into an `AI_EVALUATE` step, which appears in `EXPLAIN`. `AI_EVALUATE` first collects its input rows, then splits them into one batch per thread. Each thread sends the requests for its batch one after another and waits while each request runs. The number of threads is the smaller of the `threads` setting and `sdb_ai_max_concurrent_requests`, so raise both for a slow provider.
+- A batch never holds fewer rows than one request can carry: `ai_embed` and `ai_similarity` keep at least `sdb_ai_embedding_max_batch_size` rows together, and `prompt_jev` at least `batch_size` rows. Rows with the same text share a request only within a batch.
+- In a `WHERE` clause, the other conditions are checked first, so the rows they reject are never sent.
+- `AI_EVALUATE` reads all of its input before it returns the first row. In a query without `ORDER BY`, a constant `LIMIT` below 8192 is applied before the AI calls in the `SELECT` list, so `SELECT ai_generate(...) FROM t LIMIT 10` sends 10 requests. Calls in a `WHERE` clause under a `LIMIT` stay out of `AI_EVALUATE`: they run chunk by chunk, and the query stops sending requests once enough rows pass.
+- Calls inside `CASE`, `COALESCE`, `AND`, `OR` and `TRY` run only for the rows that reach them, so they stay where they are. They send their requests one after another from the thread that evaluates them.
+- `ai_agg` and `ai_summarize_agg` gather each group's values first, then spread the groups over the threads like other rows.
+
+<SqlLogicTest id="sql/functions/ai_ollama/explain" />
 
 ## End-to-end: semantic search
 

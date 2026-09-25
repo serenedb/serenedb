@@ -26,8 +26,7 @@
 #include <algorithm>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
-#include <iresearch/utils/pg/errcodes.hpp>
-#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <span>
 #include <string_view>
 #include <tuple>
@@ -114,12 +113,7 @@ std::string BuildBody(const ProviderConfig& cfg,
   }
   builder.end_array();
   builder.end_object();
-  std::string_view body;
-  if (builder.view().get(body) != simdjson::SUCCESS) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("failed to build OpenAI embeddings request body"));
-  }
-  return std::string{body};
+  return std::string{builder.view().value()};
 }
 
 }  // namespace
@@ -134,9 +128,10 @@ void NormalizeOpenAIConfig(ProviderConfig& cfg, const SecretConfig& secret) {
 void EmbedBatchOpenAI(Requester& requester, const ProviderConfig& cfg,
                       duckdb::Vector& texts, duckdb::idx_t count,
                       duckdb::Vector& result) {
+  SDB_ASSERT(cfg.max_batch != 0);
   const auto inputs = CollectInputs(texts, count, true, true);
   const auto& unique = inputs.texts;
-  const size_t batch = std::max<size_t>(1, cfg.max_batch);
+  const size_t batch = cfg.max_batch;
   std::vector<Embeddings> embeddings((unique.size() + batch - 1) / batch);
   requester.ForEach(embeddings.size(), [&](size_t b) {
     const auto chunk = std::span{unique}.subspan(
@@ -158,6 +153,8 @@ void EmbedBatchOpenAI(Requester& requester, const ProviderConfig& cfg,
       total += e->size();
     }
   }
+  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  duckdb::ListVector::SetListSize(result, 0);
   duckdb::ListVector::Reserve(result, total);
   auto* data = duckdb::FlatVector::GetDataMutable<float>(
     duckdb::ListVector::GetEntry(result));

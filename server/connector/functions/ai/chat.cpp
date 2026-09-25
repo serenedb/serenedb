@@ -20,12 +20,15 @@
 
 #include "connector/functions/ai/chat.h"
 
-#include <absl/algorithm/container.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <simdjson.h>
 
+#include <duckdb/common/types/value.hpp>
+#include <duckdb/function/function.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <tuple>
 
 #include "connector/functions/ai/common.h"
 #include "connector/functions/ai/provider_openai.h"
@@ -36,29 +39,23 @@ namespace {
 constexpr std::string_view kChatPath = "/v1/chat/completions";
 constexpr int32_t kDefaultMaxTokens = 1024;
 
-bool IsControl(char c) {
-  const auto u = static_cast<unsigned char>(c);
-  return (u < 0x20 && c != '\t' && c != '\n' && c != '\r') || u == 0x7F;
-}
-
-std::string_view View(simdjson::builder::string_builder& builder,
-                      std::string_view what) {
-  std::string_view out;
-  if (builder.view().get(out) != simdjson::SUCCESS) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("failed to build ", what));
-  }
-  return out;
-}
-
 }  // namespace
 
+void AddChatOptions(duckdb::FunctionSignature& signature) {
+  AddOption(signature, "model", duckdb::LogicalType::VARCHAR);
+  AddOption(signature, "secret_name", duckdb::LogicalType::VARCHAR);
+  AddOption(signature, "temperature", duckdb::LogicalType::DOUBLE);
+  AddOption(signature, "max_tokens", duckdb::LogicalType::INTEGER);
+}
+
 ChatConfig BindChat(duckdb::ClientContext& context, std::string_view fn,
-                    const std::optional<std::string>& model,
-                    const std::optional<std::string>& secret_name,
-                    const std::optional<duckdb::Value>& temperature,
-                    const std::optional<duckdb::Value>& max_tokens,
+                    std::span<duckdb::unique_ptr<duckdb::Expression>> options,
                     double default_temperature) {
+  const auto model = FoldString(context, *options[0], fn, "model");
+  const auto secret_name = FoldString(context, *options[1], fn, "secret_name");
+  const auto temperature =
+    FoldArgument(context, *options[2], fn, "temperature");
+  const auto max_tokens = FoldArgument(context, *options[3], fn, "max_tokens");
   const auto secret = LoadSecret(context, fn, secret_name,
                                  kTextDefaultSecretSetting, kOpenAISecretType);
   ChatConfig chat{
@@ -101,7 +98,7 @@ std::string StrictJsonSchema(std::string_view name, std::string_view properties,
     builder.escape_and_append_with_quotes(required[i]);
   }
   builder.append_raw(R"(],"additionalProperties":false}}})");
-  return std::string{View(builder, "a JSON schema response format")};
+  return std::string{builder.view().value()};
 }
 
 ChatTemplate MakeChatTemplate(const ChatConfig& cfg, std::string_view system) {
@@ -124,86 +121,67 @@ ChatTemplate MakeChatTemplate(const ChatConfig& cfg, std::string_view system) {
   }
   suffix.append_raw("}");
   return {
-    .prefix = std::string{View(prefix, "a chat completion request")},
-    .suffix = std::string{View(suffix, "a chat completion request")},
+    .prefix = std::string{prefix.view().value()},
+    .suffix = std::string{suffix.view().value()},
   };
 }
 
 std::string BuildChatBody(const ChatTemplate& chat, std::string_view user) {
-  std::string sanitized;
-  if (absl::c_any_of(user, IsControl)) {
-    sanitized = user;
-    absl::c_replace_if(sanitized, IsControl, ' ');
-    user = sanitized;
-  }
   simdjson::builder::string_builder builder(
     chat.prefix.size() + chat.suffix.size() + user.size() + 16);
   builder.append_raw(chat.prefix);
   builder.escape_and_append_with_quotes(user);
   builder.append_raw(chat.suffix);
-  return std::string{View(builder, "a chat completion request")};
+  return std::string{builder.view().value()};
 }
 
-ChatReply ParseChatReply(std::string_view fn, std::string_view body) {
+std::optional<std::string> Chat(Requester& requester, std::string_view fn,
+                                std::string_view body, int32_t max_tokens) {
+  const auto response = requester.Post(body);
+  if (!response) {
+    return std::nullopt;
+  }
   simdjson::dom::parser parser;
   simdjson::dom::element doc;
-  if (parser.parse(body.data(), body.size()).get(doc) != simdjson::SUCCESS) {
-    ThrowRowError(
-      absl::StrCat(fn, ": chat completion response is not valid JSON: ", body));
+  if (parser.parse(*response).get(doc) != simdjson::SUCCESS) {
+    ThrowRowError(absl::StrCat(
+      fn, ": chat completion response is not valid JSON: ", *response));
   }
-  ChatReply reply;
   if (uint64_t tokens = 0;
       doc["usage"]["completion_tokens"].get(tokens) == simdjson::SUCCESS) {
-    reply.output_tokens = tokens;
+    requester.AddOutputTokens(tokens);
   }
   simdjson::dom::element choice;
   if (doc["choices"].at(0).get(choice) != simdjson::SUCCESS) {
-    ThrowRowError(
-      absl::StrCat(fn, ": chat completion response has no 'choices': ", body));
+    ThrowRowError(absl::StrCat(
+      fn, ": chat completion response has no 'choices': ", *response));
   }
-  if (std::string_view content;
-      choice["message"]["content"].get(content) == simdjson::SUCCESS) {
-    reply.content = content;
-  }
+  std::string_view content;
+  std::ignore = choice["message"]["content"].get(content);
+  std::string_view finish;
   if (std::string_view refusal;
       choice["message"]["refusal"].get(refusal) == simdjson::SUCCESS &&
       !refusal.empty()) {
-    reply.content = refusal;
-    reply.reason = "refusal";
-    reply.finish = ChatFinish::Filtered;
-    return reply;
+    content = refusal;
+    finish = "refusal";
+  } else {
+    std::ignore = choice["finish_reason"].get(finish);
   }
-  if (std::string_view finish;
-      choice["finish_reason"].get(finish) == simdjson::SUCCESS) {
-    reply.reason = finish;
-    if (finish == "length") {
-      reply.finish = ChatFinish::Truncated;
-    } else if (finish == "content_filter") {
-      reply.finish = ChatFinish::Filtered;
-    } else if (finish == "tool_calls" || finish == "function_call") {
-      reply.finish = ChatFinish::Action;
-    }
+  if (finish == "length") {
+    ThrowRowError(absl::StrCat(fn, ": model reply was cut off at max_tokens (",
+                               max_tokens, ")"));
   }
-  return reply;
-}
-
-void CheckFinish(std::string_view fn, const ChatReply& reply,
-                 int32_t max_tokens) {
-  switch (reply.finish) {
-    case ChatFinish::Complete:
-      return;
-    case ChatFinish::Truncated:
-      ThrowRowError(absl::StrCat(
-        fn, ": model reply was cut off at max_tokens (", max_tokens, ")"));
-    case ChatFinish::Filtered:
-      ThrowRowError(absl::StrCat(
-        fn, ": provider withheld or filtered the reply (finish_reason '",
-        reply.reason, "'): ", reply.content));
-    case ChatFinish::Action:
-      ThrowRowError(absl::StrCat(fn, ": model stopped to call a tool (",
-                                 "finish_reason '", reply.reason,
-                                 "') instead of answering"));
+  if (finish == "refusal" || finish == "content_filter") {
+    ThrowRowError(absl::StrCat(
+      fn, ": provider withheld or filtered the reply (finish_reason '", finish,
+      "'): ", content));
   }
+  if (finish == "tool_calls" || finish == "function_call") {
+    ThrowRowError(absl::StrCat(fn, ": model stopped to call a tool (",
+                               "finish_reason '", finish,
+                               "') instead of answering"));
+  }
+  return std::string{absl::StripAsciiWhitespace(content)};
 }
 
 }  // namespace sdb::connector::ai

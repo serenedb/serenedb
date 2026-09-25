@@ -55,37 +55,23 @@ constexpr std::string_view kTypeSafeKeys[] = {"api_key", "base_url", "model"};
 
 constinit SettingRef gEmbeddingBatch{"sdb_ai_embedding_max_batch_size"};
 
-duckdb::unique_ptr<duckdb::BaseSecret> MakeSecret(
-  duckdb::CreateSecretInput& input, std::string_view type,
-  std::span<const std::string_view> keys) {
+duckdb::unique_ptr<duckdb::BaseSecret> CreateSecret(
+  duckdb::ClientContext&, duckdb::CreateSecretInput& input) {
   auto scope = input.scope;
   if (scope.empty()) {
-    scope.emplace_back(absl::StrCat(type, "://"));
+    scope.emplace_back(absl::StrCat(
+      duckdb::StringUtil::Lower(input.type.GetIdentifierName()), "://"));
   }
   auto secret = duckdb::make_uniq<duckdb::KeyValueSecret>(
     scope, input.type, input.provider, input.name);
-  for (const auto& named : input.options) {
-    auto key = duckdb::StringUtil::Lower(named.first);
-    if (std::ranges::find(keys, key) != keys.end()) {
-      secret->secret_map[duckdb::Identifier{key}] = named.second;
-    }
+  for (const auto& [key, value] : input.options) {
+    secret->secret_map[duckdb::Identifier{key}] = value;
   }
   secret->redact_keys = {"api_key"};
   return std::move(secret);
 }
 
-duckdb::unique_ptr<duckdb::BaseSecret> CreateOpenAISecret(
-  duckdb::ClientContext&, duckdb::CreateSecretInput& input) {
-  return MakeSecret(input, ai::kOpenAISecretType, kOpenAIKeys);
-}
-
-duckdb::unique_ptr<duckdb::BaseSecret> CreateTypeSafeSecret(
-  duckdb::ClientContext&, duckdb::CreateSecretInput& input) {
-  return MakeSecret(input, ai::kTypeSafeSecretType, kTypeSafeKeys);
-}
-
 void RegisterSecretType(duckdb::ExtensionLoader& loader, std::string_view name,
-                        duckdb::create_secret_function_t create,
                         std::span<const std::string_view> keys) {
   duckdb::SecretType type;
   type.name = duckdb::Identifier{name};
@@ -94,7 +80,8 @@ void RegisterSecretType(duckdb::ExtensionLoader& loader, std::string_view name,
   type.default_provider = "config";
   loader.RegisterSecretType(type);
 
-  duckdb::CreateSecretFunction fn = {std::string{name}, "config", create, {}};
+  duckdb::CreateSecretFunction fn = {
+    std::string{name}, "config", CreateSecret, {}};
   for (const auto key : keys) {
     fn.named_parameters[duckdb::Identifier{key}] = duckdb::LogicalType::VARCHAR;
   }
@@ -125,11 +112,13 @@ struct EmbeddingBindData final : public ai::AIFunctionData {
   }
 };
 
-duckdb::unique_ptr<duckdb::FunctionData> BindEmbedding(
-  duckdb::BindScalarFunctionInput& input, size_t model_index) {
+duckdb::unique_ptr<duckdb::FunctionData> EmbeddingBind(
+  duckdb::BindScalarFunctionInput& input) {
   auto& context = input.GetClientContext();
   auto& args = input.GetArguments();
   const auto fn = input.GetBoundFunction().GetName().GetIdentifierName();
+  const bool similarity = fn == "ai_similarity";
+  const size_t model_index = similarity ? 2 : 1;
   const auto model = ai::FoldString(context, *args[model_index], fn, "model");
   if (!model) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -145,7 +134,7 @@ duckdb::unique_ptr<duckdb::FunctionData> BindEmbedding(
 
   auto bind = duckdb::make_uniq<EmbeddingBindData>();
   bind->fn = fn;
-  bind->similarity = model_index == 2;
+  bind->similarity = similarity;
   bind->cfg.model = *model;
   if (dimensions) {
     const auto n = dimensions->GetValue<int32_t>();
@@ -161,23 +150,6 @@ duckdb::unique_ptr<duckdb::FunctionData> BindEmbedding(
   return bind;
 }
 
-duckdb::unique_ptr<duckdb::FunctionData> AIEmbedBind(
-  duckdb::BindScalarFunctionInput& input) {
-  return BindEmbedding(input, 1);
-}
-
-duckdb::unique_ptr<duckdb::FunctionData> AISimilarityBind(
-  duckdb::BindScalarFunctionInput& input) {
-  return BindEmbedding(input, 2);
-}
-
-void Embed(ai::Requester& requester, const ProviderConfig& cfg,
-           duckdb::DataChunk& args, duckdb::Vector& result) {
-  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-  duckdb::ListVector::SetListSize(result, 0);
-  ai::EmbedBatch(requester, cfg, args.data[0], args.size(), result);
-}
-
 void Similarity(ai::Requester& requester, const EmbeddingBindData& bind,
                 duckdb::DataChunk& args, duckdb::Vector& result) {
   const auto count = args.size();
@@ -187,9 +159,7 @@ void Similarity(ai::Requester& requester, const EmbeddingBindData& bind,
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   auto* out = duckdb::FlatVector::GetDataMutable<double>(result);
   auto& out_validity = duckdb::FlatVector::ValidityMutable(result);
-  for (duckdb::idx_t i = 0; i < count; i++) {
-    out_validity.SetInvalid(i);
-  }
+  out_validity.SetAllInvalid(count);
 
   std::vector<duckdb::idx_t> rows;
   duckdb::Vector texts{duckdb::LogicalType::VARCHAR, 2 * count};
@@ -212,8 +182,6 @@ void Similarity(ai::Requester& requester, const EmbeddingBindData& bind,
   const auto n = 2 * rows.size();
   duckdb::Vector embeddings{
     duckdb::LogicalType::LIST(duckdb::LogicalType::FLOAT), n};
-  embeddings.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-  duckdb::ListVector::SetListSize(embeddings, 0);
   ai::EmbedBatch(requester, bind.cfg, texts, n, embeddings);
 
   const auto* entries =
@@ -258,19 +226,15 @@ void EmbeddingBindData::Evaluate(ai::Requester& requester,
   if (similarity) {
     Similarity(requester, *this, args, result);
   } else {
-    Embed(requester, cfg, args, result);
+    ai::EmbedBatch(requester, cfg, args.data[0], args.size(), result);
   }
 }
 
 void AddEmbeddingOptions(duckdb::FunctionSignature& signature) {
   signature.AddParameter(duckdb::Identifier{"model"},
                          duckdb::LogicalType::VARCHAR);
-  signature.AddParameter(duckdb::Identifier{"secret_name"},
-                         duckdb::LogicalType::VARCHAR,
-                         duckdb::Value{duckdb::LogicalType::VARCHAR});
-  signature.AddParameter(duckdb::Identifier{"dimensions"},
-                         duckdb::LogicalType::INTEGER,
-                         duckdb::Value{duckdb::LogicalType::INTEGER});
+  ai::AddOption(signature, "secret_name", duckdb::LogicalType::VARCHAR);
+  ai::AddOption(signature, "dimensions", duckdb::LogicalType::INTEGER);
 }
 
 }  // namespace
@@ -278,43 +242,24 @@ void AddEmbeddingOptions(duckdb::FunctionSignature& signature) {
 void RegisterAIFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
 
-  RegisterSecretType(loader, ai::kOpenAISecretType, CreateOpenAISecret,
-                     kOpenAIKeys);
-  RegisterSecretType(loader, ai::kTypeSafeSecretType, CreateTypeSafeSecret,
-                     kTypeSafeKeys);
+  RegisterSecretType(loader, ai::kOpenAISecretType, kOpenAIKeys);
+  RegisterSecretType(loader, ai::kTypeSafeSecretType, kTypeSafeKeys);
 
-  duckdb::ScalarFunction ai_embed{
-    duckdb::Identifier{"ai_embed"},
-    {},
-    duckdb::LogicalType::LIST(duckdb::LogicalType::FLOAT),
-    ai::AIExecute,
-    AIEmbedBind,
-    nullptr,
-    ai::AIInitLocal,
-  };
+  auto ai_embed = ai::MakeAIFunction(
+    "ai_embed", duckdb::LogicalType::LIST(duckdb::LogicalType::FLOAT),
+    EmbeddingBind);
   ai_embed.GetSignature().AddParameter(duckdb::Identifier{"text"},
                                        duckdb::LogicalType::VARCHAR);
   AddEmbeddingOptions(ai_embed.GetSignature());
-  ai_embed.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-  ai_embed.SetFallible();
   loader.RegisterFunction(ai_embed);
 
-  duckdb::ScalarFunction ai_similarity{
-    duckdb::Identifier{"ai_similarity"},
-    {},
-    duckdb::LogicalType::DOUBLE,
-    ai::AIExecute,
-    AISimilarityBind,
-    nullptr,
-    ai::AIInitLocal,
-  };
+  auto ai_similarity = ai::MakeAIFunction(
+    "ai_similarity", duckdb::LogicalType::DOUBLE, EmbeddingBind);
   ai_similarity.GetSignature().AddParameter(duckdb::Identifier{"text1"},
                                             duckdb::LogicalType::VARCHAR);
   ai_similarity.GetSignature().AddParameter(duckdb::Identifier{"text2"},
                                             duckdb::LogicalType::VARCHAR);
   AddEmbeddingOptions(ai_similarity.GetSignature());
-  ai_similarity.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-  ai_similarity.SetFallible();
   loader.RegisterFunction(ai_similarity);
 
   ai::RegisterTextFunctions(loader);

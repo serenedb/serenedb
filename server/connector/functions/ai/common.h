@@ -27,6 +27,7 @@
 #include <duckdb/common/http_util.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/function/function.hpp>
+#include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context_state.hpp>
 #include <limits>
 #include <optional>
@@ -38,12 +39,10 @@
 namespace duckdb {
 
 class BoundAggregateExpression;
-class BoundFunctionExpression;
 class ClientContext;
 class DatabaseInstance;
 class DataChunk;
 class Expression;
-class ExpressionState;
 class ExtensionLoader;
 
 }  // namespace duckdb
@@ -185,12 +184,12 @@ struct AILocalState final : public duckdb::FunctionLocalState {
   Requester requester;
 };
 
-void AIExecute(duckdb::DataChunk& args, duckdb::ExpressionState& state,
-               duckdb::Vector& result);
+duckdb::ScalarFunction MakeAIFunction(std::string_view name,
+                                      duckdb::LogicalType type,
+                                      duckdb::bind_scalar_function_t bind);
 
-duckdb::unique_ptr<duckdb::FunctionLocalState> AIInitLocal(
-  duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression& expr,
-  duckdb::FunctionData* bind_data);
+void AddOption(duckdb::FunctionSignature& signature, std::string_view name,
+               const duckdb::LogicalType& type);
 
 bool IsAIAggregate(const duckdb::BoundAggregateExpression& aggregate);
 

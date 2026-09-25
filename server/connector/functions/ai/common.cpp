@@ -176,6 +176,24 @@ uint64_t RetryDelayMs(uint32_t initial_ms, uint32_t attempt,
                   kMaxRetryDelayMs);
 }
 
+void AIExecute(duckdb::DataChunk& args, duckdb::ExpressionState& state,
+               duckdb::Vector& result) {
+  state.expr.Cast<duckdb::BoundFunctionExpression>()
+    .BindInfo()
+    ->Cast<AIFunctionData>()
+    .Evaluate(duckdb::ExecuteFunctionState::GetFunctionState(state)
+                ->Cast<AILocalState>()
+                .requester,
+              args, result);
+}
+
+duckdb::unique_ptr<duckdb::FunctionLocalState> AIInitLocal(
+  duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression&,
+  duckdb::FunctionData* bind_data) {
+  return duckdb::make_uniq<AILocalState>(state.GetContext(),
+                                         bind_data->Cast<AIFunctionData>());
+}
+
 }  // namespace
 
 void ThrowRowError(std::string message) {
@@ -283,12 +301,7 @@ std::string JoinUrl(std::string_view base_url, std::string_view default_base,
 std::string ToJson(std::string_view text) {
   simdjson::builder::string_builder builder(text.size() + 8);
   builder.escape_and_append_with_quotes(text);
-  std::string_view out;
-  if (builder.view().get(out) != simdjson::SUCCESS) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("failed to serialize a JSON string"));
-  }
-  return std::string{out};
+  return std::string{builder.view().value()};
 }
 
 std::vector<Criterion> ParseCriteria(const duckdb::Value& value,
@@ -525,22 +538,24 @@ AILocalState::AILocalState(duckdb::ClientContext& context,
                            const AIFunctionData& bind)
   : requester{context, bind.GetEndpoint()} {}
 
-void AIExecute(duckdb::DataChunk& args, duckdb::ExpressionState& state,
-               duckdb::Vector& result) {
-  state.expr.Cast<duckdb::BoundFunctionExpression>()
-    .BindInfo()
-    ->Cast<AIFunctionData>()
-    .Evaluate(duckdb::ExecuteFunctionState::GetFunctionState(state)
-                ->Cast<AILocalState>()
-                .requester,
-              args, result);
+duckdb::ScalarFunction MakeAIFunction(std::string_view name,
+                                      duckdb::LogicalType type,
+                                      duckdb::bind_scalar_function_t bind) {
+  duckdb::ScalarFunction fn{duckdb::Identifier{name},
+                            {},
+                            std::move(type),
+                            AIExecute,
+                            bind,
+                            nullptr,
+                            AIInitLocal};
+  fn.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+  fn.SetFallible();
+  return fn;
 }
 
-duckdb::unique_ptr<duckdb::FunctionLocalState> AIInitLocal(
-  duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression&,
-  duckdb::FunctionData* bind_data) {
-  return duckdb::make_uniq<AILocalState>(state.GetContext(),
-                                         bind_data->Cast<AIFunctionData>());
+void AddOption(duckdb::FunctionSignature& signature, std::string_view name,
+               const duckdb::LogicalType& type) {
+  signature.AddParameter(duckdb::Identifier{name}, type, duckdb::Value{type});
 }
 
 }  // namespace sdb::connector::ai

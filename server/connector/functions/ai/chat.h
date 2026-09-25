@@ -21,7 +21,7 @@
 #pragma once
 
 #include <cstdint>
-#include <duckdb/common/types/value.hpp>
+#include <duckdb/common/unique_ptr.hpp>
 #include <optional>
 #include <span>
 #include <string>
@@ -30,9 +30,13 @@
 namespace duckdb {
 
 class ClientContext;
+class Expression;
+class FunctionSignature;
 
 }  // namespace duckdb
 namespace sdb::connector::ai {
+
+class Requester;
 
 struct ChatConfig {
   std::string url;
@@ -52,25 +56,10 @@ struct ChatTemplate {
   bool operator==(const ChatTemplate&) const = default;
 };
 
-enum class ChatFinish : uint8_t {
-  Complete,
-  Truncated,
-  Filtered,
-  Action,
-};
-
-struct ChatReply {
-  std::string content;
-  std::string reason;
-  ChatFinish finish = ChatFinish::Complete;
-  uint64_t output_tokens = 0;
-};
+void AddChatOptions(duckdb::FunctionSignature& signature);
 
 ChatConfig BindChat(duckdb::ClientContext& context, std::string_view fn,
-                    const std::optional<std::string>& model,
-                    const std::optional<std::string>& secret_name,
-                    const std::optional<duckdb::Value>& temperature,
-                    const std::optional<duckdb::Value>& max_tokens,
+                    std::span<duckdb::unique_ptr<duckdb::Expression>> options,
                     double default_temperature);
 
 std::string StrictJsonSchema(std::string_view name, std::string_view properties,
@@ -80,9 +69,7 @@ ChatTemplate MakeChatTemplate(const ChatConfig& cfg, std::string_view system);
 
 std::string BuildChatBody(const ChatTemplate& chat, std::string_view user);
 
-ChatReply ParseChatReply(std::string_view fn, std::string_view body);
-
-void CheckFinish(std::string_view fn, const ChatReply& reply,
-                 int32_t max_tokens);
+std::optional<std::string> Chat(Requester& requester, std::string_view fn,
+                                std::string_view body, int32_t max_tokens);
 
 }  // namespace sdb::connector::ai

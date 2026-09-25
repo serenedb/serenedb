@@ -35,6 +35,7 @@
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/operator/logical_aggregate.hpp>
 #include <duckdb/planner/operator/logical_filter.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <utility>
 
 #include "connector/functions/ai/ai_operator.h"
@@ -179,9 +180,7 @@ duckdb::unique_ptr<duckdb::BoundAggregateExpression> BindList(
   duckdb::ErrorData error;
   const auto best = binder.BindFunction(duckdb::Identifier{"list"},
                                         entry.functions, children, {}, error);
-  if (!best.IsValid()) {
-    error.Throw();
-  }
+  SDB_ASSERT(best.IsValid());
   auto list = binder.BindAggregateFunction(
     entry.functions.GetFunctionByOffset(best.GetIndex()), std::move(children),
     std::move(aggregate.GetFilterMutable()), aggregate.GetAggregateType());

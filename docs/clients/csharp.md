@@ -19,7 +19,7 @@ dotnet add package Npgsql
 ```csharp
 using Npgsql;
 
-var connString = "Host=localhost;Port=7890";
+var connString = "Host=localhost;Port=7890;Database=postgres;Username=postgres";
 var dataSource = NpgsqlDataSource.Create(connString);
 ```
 

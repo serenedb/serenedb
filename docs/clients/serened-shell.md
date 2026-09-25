@@ -71,6 +71,20 @@ You can also pipe a script via standard input:
 echo "SELECT 'piped' AS src;" | serened shell
 ```
 
+## Safe mode
+
+`--safe`, or `.safe_mode` inside a session, turns off everything that reaches outside the engine: file and network access from SQL (reading and writing files, `COPY`, attaching database files, remote URLs) and the dot commands `.shell`, `.system`, `.open`, `.read`, `.import`, `.output`, `.once`, `.cd` and `.log`. It also locks the configuration for the rest of the session. The built-in documentation keeps working, since it is part of the binary, so `serened shell --safe -c ".docs <topic>"` gives a script or an agent the docs and nothing else.
+
+To let a session read and write a few locations only, allow them first and switch safe mode on afterwards:
+
+```sql
+SET allow_persistent_secrets = false;
+SET allowed_directories = ['/data/in/', 'https://example.com/datasets/'];
+.safe_mode
+```
+
+Files under the listed directories and URL prefixes can be read and written; everything else fails with `file system operations are disabled by configuration`, and the list cannot be widened later. Turning off persistent secrets keeps the first remote read from loading stored secrets, which safe mode would refuse.
+
 ## Creating objects
 
 Unlike a server connection, the shell does not pre-select a default database. To create objects, first select a database with `USE` (or fully-qualify the name), otherwise SereneDB reports `Catalog Error: no schema has been selected to create in`:
@@ -359,7 +373,7 @@ one and `.docs --kind command` lists them all.
 | `.render_completion` | `on\|off` | Turn the display of completion suggestions on or off. |
 | `.render_errors` | `on\|off` | Turn the rendering of errors on or off. |
 | `.rows` | | Render query results row by row, the default. |
-| `.safe_mode` | | Enable safe mode. |
+| `.safe_mode` | | Enable [safe mode](#safe-mode) for the rest of the session. |
 | `.schema` | `?PATTERN?` | Show the `CREATE` statements matching `PATTERN`. |
 | `.separator` | `COL ?ROW?` | Change the column and row separators. |
 | `.shell` | `CMD ARGS...` | Run `CMD ARGS...` in a system shell. |
@@ -465,7 +479,7 @@ The interactive line editor takes these keys, which `.help shortcuts` also lists
 | Option                   | Description                                          |
 | :----------------------- | :--------------------------------------------------- |
 | `--readonly`             | Open the database read-only                          |
-| `--safe`                 | Enable safe-mode                                     |
+| `--safe`                 | Start in [safe mode](#safe-mode)                     |
 | `--storage-version=VER`  | Storage compatibility version for new database files |
 | `--unsigned`             | Allow loading unsigned extensions                    |
 | `--ui`                   | Launch a web interface via the `ui` extension        |

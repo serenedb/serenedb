@@ -31,13 +31,9 @@ Add it to your classpath, or include it as a Maven/Gradle dependency:
 ```java
 import java.sql.*;
 
-String url = "jdbc:postgresql://localhost:7890/_system";
+String url = "jdbc:postgresql://localhost:7890/postgres?user=postgres";
 Connection conn = DriverManager.getConnection(url);
 ```
-
-:::caution Known Issue
-The JDBC driver may report a `DateStyle` error on connect. This is a known compatibility issue — a fix is in progress.
-:::
 
 ## Create a table and insert data
 
@@ -86,6 +82,11 @@ CopyManager cm = new CopyManager((BaseConnection) conn);
 FileReader reader = new FileReader("movies.csv");
 cm.copyIn("COPY articles FROM STDIN WITH (FORMAT CSV, HEADER TRUE)", reader);
 ```
+
+## Differences from PostgreSQL
+
+- `conn.setSavepoint()` fails, because SereneDB has no `SAVEPOINT`.
+- `setFetchSize` works inside a transaction, as with PostgreSQL.
 
 ## Cleanup
 

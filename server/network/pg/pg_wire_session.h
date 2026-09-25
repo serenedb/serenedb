@@ -342,9 +342,11 @@ class PgWireSession final
   void RevalidatePlan(Statement& stmt);
   void DescribeStatement(Statement& stmt);
   void DescribePortal(Portal& portal);
-  void WriteResolvedRowDescription(duckdb::PreparedStatement& prepared,
-                                   duckdb::vector<duckdb::Value>* params,
-                                   std::span<const sdb::pg::VarFormat> formats);
+  void WriteResolvedRowDescription(
+    duckdb::PreparedStatement& prepared,
+    const duckdb::case_insensitive_map_t<duckdb::LogicalType>& hints,
+    duckdb::vector<duckdb::Value>* params,
+    std::span<const sdb::pg::VarFormat> formats);
   BindInfo ParseBindVars(std::string_view cursor, const Statement& stmt,
                          std::string_view statement_name);
 

@@ -663,3 +663,18 @@ def test_pg_cancel_backend_cancels_running_query():
     finally:
         admin.close()
         victim.close()
+
+
+def test_binary_parameters_after_an_untyped_null():
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+        assert c.execute("SELECT %s, %b::INTEGER", (None, 7)).fetchone() == (None, 7)
+        assert c.execute(
+            "SELECT * FROM (VALUES (%b::INTEGER, %s), (%b::INTEGER, %s)) t(a, b)",
+            (1, None, 2, None),
+        ).fetchall() == [(1, None), (2, None)]
+
+
+def test_binary_parameters_after_an_untyped_null_in_a_transaction():
+    with psycopg.connect(**conn_kwargs()) as c:
+        assert c.execute("SELECT %s, %b::INTEGER", (None, 7)).fetchone() == (None, 7)
+        c.rollback()

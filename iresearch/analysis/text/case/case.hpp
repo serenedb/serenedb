@@ -168,12 +168,90 @@ inline constexpr auto kTwoByteCase = [] {
   return table;
 }();
 
+struct ScriptBlock {
+  classify::Block bytes;
+  uint32_t prefix;
+};
+
+IRS_FORCE_INLINE inline bool IsScriptLead(byte_type b) noexcept {
+  return b == 0xC3 || (b & 0xFE) == 0xD0;
+}
+
 template<bool ToLower>
-size_t CaseConvertUtf8(std::string_view in, byte_type* dst) {
+IRS_FORCE_INLINE inline ScriptBlock ConvertScriptBlock(classify::Block b,
+                                                       uint32_t live) noexcept {
+  using classify::Block;
+  using classify::Cmp;
+  const Block zero{};
+  const Block prev = __builtin_shufflevector(
+    b, zero, 32, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+    18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30);
+  const Block next = __builtin_shufflevector(
+    b, zero, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+    20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32);
+  const auto bytes = [](Cmp c) IRS_FORCE_INLINE {
+    return std::bit_cast<Block>(c);
+  };
+  const Cmp ascii = std::bit_cast<Cmp>(b) >= int8_t{0};
+  const Cmp cont = (b & uint8_t{0xC0}) == uint8_t{0x80};
+  const Cmp next_cont = (next & uint8_t{0xC0}) == uint8_t{0x80};
+  const Cmp d0 = b == uint8_t{0xD0};
+  const Cmp d1 = b == uint8_t{0xD1};
+  const Cmp after_c3 = cont & (prev == uint8_t{0xC3});
+  const Cmp after_d0 = cont & (prev == uint8_t{0xD0});
+  const Cmp after_d1 = cont & (prev == uint8_t{0xD1});
+  const Block hi = b & uint8_t{0xF0};
+  const Block next_hi = next & uint8_t{0xF0};
+  Cmp irregular{};
+  Block delta{};
+  if constexpr (ToLower) {
+    delta += bytes((b - uint8_t{'A'}) <= uint8_t{25}) & uint8_t{0x20};
+    delta +=
+      bytes(after_c3 & (b <= uint8_t{0x9E}) & (b != uint8_t{0x97})) &
+      uint8_t{0x20};
+    delta += bytes(after_d0 & (hi == uint8_t{0x80})) & uint8_t{0x10};
+    delta += bytes(after_d0 & (hi == uint8_t{0x90})) & uint8_t{0x20};
+    delta += bytes(after_d0 & (hi == uint8_t{0xA0})) & uint8_t{0xE0};
+    delta +=
+      bytes(d0 & ((next_hi == uint8_t{0x80}) | (next_hi == uint8_t{0xA0}))) &
+      uint8_t{0x01};
+    delta += bytes(after_d1 & (b >= uint8_t{0xA0}) &
+                   ((b & uint8_t{0x01}) == uint8_t{0})) &
+             uint8_t{0x01};
+  } else {
+    delta += bytes((b - uint8_t{'a'}) <= uint8_t{25}) & uint8_t{0xE0};
+    delta += bytes(after_c3 & (b >= uint8_t{0xA0}) & (b <= uint8_t{0xBE}) &
+                   (b != uint8_t{0xB7})) &
+             uint8_t{0xE0};
+    irregular = after_c3 & (b == uint8_t{0xBF});
+    delta += bytes(after_d0 & (hi == uint8_t{0xB0})) & uint8_t{0xE0};
+    delta += bytes(after_d1 & (hi == uint8_t{0x80})) & uint8_t{0x20};
+    delta += bytes(after_d1 & (hi == uint8_t{0x90})) & uint8_t{0xF0};
+    delta += bytes(d1 & next_cont & (next_hi <= uint8_t{0x90})) & uint8_t{0xFF};
+    delta += bytes(after_d1 & (b >= uint8_t{0xA0}) &
+                   ((b & uint8_t{0x01}) != uint8_t{0})) &
+             uint8_t{0xFF};
+  }
+  const uint32_t lead =
+    classify::MoveMask(((b == uint8_t{0xC3}) | d0 | d1) & next_cont);
+  const uint32_t valid =
+    (classify::MoveMask(ascii | ((after_c3 | after_d0 | after_d1) & ~irregular)) |
+     lead) &
+    live;
+  auto prefix = static_cast<uint32_t>(std::countr_one(valid));
+  if (prefix != 0 && ((lead >> (prefix - 1)) & 1) != 0) {
+    --prefix;
+  }
+  return {b + delta, prefix};
+}
+
+template<bool ToLower>
+IRS_ALIGN_HOT size_t CaseConvertUtf8(std::string_view in, byte_type* dst) {
   static_assert(utf8_utils::kSimpleCaseMaxUtf8Growth <= 1);
   auto* out = dst;
   const auto* it = reinterpret_cast<const byte_type*>(in.data());
   const auto* end = it + in.size();
+  const bool scripts = in.size() >= classify::kClassifyBlock;
   while (it != end) {
     if (*it < 0x80) {
       if (static_cast<size_t>(end - it) < classify::kClassifyBlock) {
@@ -195,6 +273,17 @@ size_t CaseConvertUtf8(std::string_view in, byte_type* dst) {
       const auto ascii = std::countr_zero(high);
       it += ascii;
       out += ascii;
+    }
+    if (scripts && IsScriptLead(*it) &&
+        static_cast<size_t>(end - it) >= classify::kClassifyBlock) {
+      const auto [converted, prefix] =
+        ConvertScriptBlock<ToLower>(classify::Load(it), ~uint32_t{0});
+      if (prefix != 0) {
+        std::memcpy(out, &converted, sizeof converted);
+        it += prefix;
+        out += prefix;
+        continue;
+      }
     }
     if (*it >= 0xC2 && *it < 0xE0 && end - it >= 2 && (it[1] & 0xC0) == 0x80) {
       const uint16_t mapped =

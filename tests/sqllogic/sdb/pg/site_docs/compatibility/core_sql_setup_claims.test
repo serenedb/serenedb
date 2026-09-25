@@ -60,6 +60,102 @@ ALTER TABLE sc_ren RENAME COLUMN a TO a2;
 statement ok
 ALTER TABLE sc_ren RENAME TO sc_ren2;
 
+# --- ALTER TABLE columns and constraints ---
+
+statement ok
+CREATE TABLE sc_alter (a INTEGER, b INTEGER, c INTEGER);
+
+statement ok
+CREATE TABLE sc_alter_pk (a INTEGER, CONSTRAINT sc_alter_pk_key PRIMARY KEY (a));
+
+# ddl_alter: ADD COLUMN
+statement ok
+ALTER TABLE sc_alter ADD COLUMN d INTEGER;
+
+# ddl_alter: DROP COLUMN
+statement ok
+ALTER TABLE sc_alter DROP COLUMN d;
+
+# ddl_alter: ADD CHECK
+statement ok
+ALTER TABLE sc_alter ADD CHECK (a > 0);
+
+# ddl_alter: ADD CONSTRAINT
+statement ok
+ALTER TABLE sc_alter ADD CONSTRAINT sc_alter_chk CHECK (b > 0);
+
+statement ok
+ALTER TABLE sc_alter ADD CONSTRAINT sc_alter_uq UNIQUE (b);
+
+# ddl_alter: ADD FOREIGN KEY
+statement error
+ALTER TABLE sc_alter ADD FOREIGN KEY (a) REFERENCES sc_alter_pk (a);
+----
+db error: ERROR: unsupported constraint type in ALTER TABLE statement
+
+
+# ddl_alter: DROP CONSTRAINT
+statement ok
+ALTER TABLE sc_alter_pk DROP CONSTRAINT sc_alter_pk_key;
+
+# ddl_alter: ALTER COLUMN
+statement ok
+ALTER TABLE sc_alter ALTER COLUMN a SET NOT NULL;
+
+# ddl_alter: SET DEFAULT
+statement ok
+ALTER TABLE sc_alter ALTER COLUMN a SET DEFAULT 1;
+
+# ddl_alter: DROP DEFAULT
+statement ok
+ALTER TABLE sc_alter ALTER COLUMN a DROP DEFAULT;
+
+# ddl_alter: COLUMN TYPE
+statement ok
+ALTER TABLE sc_alter ALTER COLUMN c TYPE BIGINT;
+
+statement error
+ALTER TABLE sc_alter ALTER COLUMN a TYPE BIGINT;
+----
+db error: ERROR: Cannot change the type of a column that has a CHECK constraint specified
+
+
+# --- Index access methods and expressions ---
+
+statement ok
+CREATE TABLE sc_idx_kinds (a INTEGER, b INTEGER, t TEXT);
+
+# ddl_index: GIN
+statement error
+CREATE INDEX sc_idx_gin ON sc_idx_kinds USING gin (t);
+----
+db error: ERROR: Unknown index type: gin
+
+
+# ddl_index: BRIN
+statement error
+CREATE INDEX sc_idx_brin ON sc_idx_kinds USING brin (a);
+----
+db error: ERROR: Unknown index type: brin
+
+
+# ddl_index: Indexes on Expressions
+statement ok
+CREATE INDEX sc_idx_expr ON sc_idx_kinds ((a + b));
+
+# ddl_index: Partial Indexes (a plain partial UNIQUE index keys every row)
+statement ok
+CREATE TABLE sc_idx_part_u (a INTEGER);
+
+statement ok
+CREATE UNIQUE INDEX sc_idx_part_u_idx ON sc_idx_part_u (a) WHERE a > 5;
+
+statement error
+INSERT INTO sc_idx_part_u VALUES (1), (1);
+----
+db error: ERROR: PRIMARY KEY or UNIQUE constraint violation: duplicate key "1, false"
+
+
 # --- Data Manipulation ---
 
 statement ok

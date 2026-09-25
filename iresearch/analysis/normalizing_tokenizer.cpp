@@ -173,25 +173,30 @@ NormalizingTokenizer::NormalizingTokenizer(Options options)
   }
 }
 
+void NormalizingTokenizer::InitIcu() {
+  auto err = UErrorCode::U_ZERO_ERROR;
+  _normalizer = MakeNormalizer(_options.form, err);
+  _renormalizer = MakeNormalizer(
+    _options.form == NormForm::NfkcCf ? NormForm::Nfkc : _options.form, err);
+  if (!U_SUCCESS(err) || !_normalizer || !_renormalizer) {
+    THROW_SQL_ERROR(ERR_MSG("normalize_tokens: failed to create normalizer"));
+  }
+
+  if (!_options.accent) {
+    _transliterator = MakeStripTransliterator(_options.form, err);
+    if (!U_SUCCESS(err) || !_transliterator) {
+      THROW_SQL_ERROR(
+        ERR_MSG("normalize_tokens: failed to create transliterator"));
+    }
+  }
+}
+
 std::tuple<Case, bool, bool> NormalizingTokenizer::PrepareBatch(
   BlockTraits traits) {
   const bool casefold_form = _options.form == NormForm::NfkcCf;
-  if ((_case_path != CasePath::Fast || casefold_form) && !_normalizer) {
-    auto err = UErrorCode::U_ZERO_ERROR;
-    _normalizer = MakeNormalizer(_options.form, err);
-    _renormalizer =
-      MakeNormalizer(casefold_form ? NormForm::Nfkc : _options.form, err);
-    if (!U_SUCCESS(err) || !_normalizer || !_renormalizer) {
-      THROW_SQL_ERROR(ERR_MSG("normalize_tokens: failed to create normalizer"));
-    }
-
-    if (!_options.accent) {
-      _transliterator = MakeStripTransliterator(_options.form, err);
-      if (!U_SUCCESS(err) || !_transliterator) {
-        THROW_SQL_ERROR(
-          ERR_MSG("normalize_tokens: failed to create transliterator"));
-      }
-    }
+  if ((_case_path != CasePath::Fast || casefold_form) && !_normalizer)
+    [[unlikely]] {
+    InitIcu();
   }
   const Case convert = casefold_form && _options.case_convert == Case::None
                          ? Case::Lower

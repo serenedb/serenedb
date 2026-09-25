@@ -543,7 +543,7 @@ TEST_F(MultiDelimitedTokenizerTests, short_needle_oracle) {
     seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
     return static_cast<size_t>(seed >> 33);
   };
-  for (size_t needle_len = 2; needle_len <= 8; ++needle_len) {
+  for (size_t needle_len = 1; needle_len <= 8; ++needle_len) {
     for (size_t variant = 0; variant < 4; ++variant) {
       std::string needle;
       for (size_t i = 0; i < needle_len; ++i) {
@@ -559,6 +559,8 @@ TEST_F(MultiDelimitedTokenizerTests, short_needle_oracle) {
         for (size_t i = 0; i < len; ++i) {
           if (next() % 6 == 0) {
             v += needle;
+          } else if (next() % 16 == 0) {
+            v.append(next() % 400, 'x');
           } else {
             v += static_cast<char>('a' + next() % 3);
           }
@@ -607,10 +609,16 @@ TEST_F(MultiDelimitedTokenizerTests, many_single_char_delimiters_oracle) {
       delimiters.emplace_back(1, b);
     }
     auto stream = MultiDelimitedTokenizer::Make({.delimiters = delimiters});
+    const auto filler = static_cast<char>(
+      std::ranges::find(is_delim, false) - std::begin(is_delim));
     for (size_t iter = 0; iter < 40; ++iter) {
       std::string v;
       const size_t len = next() % 200;
       for (size_t i = 0; i < len; ++i) {
+        if (next() % 32 == 0) {
+          v.append(next() % 400, filler);
+          continue;
+        }
         v += static_cast<char>(next() % 4 == 0 ? next() % 256
                                                : 0x20 + next() % 0x60);
       }

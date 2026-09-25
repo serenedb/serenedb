@@ -107,6 +107,7 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
   size_t CaseBound(size_t size) const noexcept;
   template<Case C>
   size_t ConvertCase(std::string_view bytes, byte_type* out) const noexcept;
+  IRS_NO_INLINE void InitIcu();
 
   Options _options;
   icu::UnicodeString _udata;

@@ -336,15 +336,22 @@ void PipelineTokenizer::ChainSink::SettleParent() {
 }
 
 void PipelineTokenizer::ChainSink::AdvanceToParent(uint32_t parent) {
+  if (_out_layout == TokenLayout::Terms) {
+    while (true) {
+      while (_scan >= _src_run_end) {
+        NextSourceRun();
+      }
+      if (_scan++ == parent) {
+        return;
+      }
+    }
+  }
   SettleParent();
   while (true) {
     while (_scan >= _src_run_end) {
       NextSourceRun();
     }
-    uint32_t inc = 0;
-    if (_out_layout != TokenLayout::Terms) {
-      inc = _pos.Observe(*_src, _scan);
-    }
+    const uint32_t inc = _pos.Observe(*_src, _scan);
     if (_scan++ == parent) {
       _parent_inc = inc;
       _cp = ChildPos{_pos.Effective(inc)};

@@ -162,7 +162,24 @@ IRS_FORCE_INLINE inline bool BytesEqual(const byte_type* a, const byte_type* b,
   return true;
 }
 
-template<typename Verify, typename OnDelim>
+template<typename OnDelim>
+IRS_NO_INLINE size_t FindSparse(bytes_view data, bytes_view needle,
+                                size_t from, size_t since, OnDelim& on_delim) {
+  for (;;) {
+    const size_t hit = data.find(needle, from);
+    if (hit == bytes_view::npos) {
+      return hit;
+    }
+    on_delim(hit, needle.size());
+    const size_t end = hit + needle.size();
+    if (hit - since < classify::kClassifyBlock) {
+      return end;
+    }
+    from = since = end;
+  }
+}
+
+template<bool SparseFind, typename Verify, typename OnDelim>
 IRS_FORCE_INLINE void ForEachFirstLastMatch(bytes_view data, bytes_view needle,
                                             Verify&& verify,
                                             OnDelim&& on_delim) {
@@ -180,10 +197,20 @@ IRS_FORCE_INLINE void ForEachFirstLastMatch(bytes_view data, bytes_view needle,
     for (;;) {
       const size_t base =
         std::min(pos, last_start + 1 - classify::kClassifyBlock);
-      auto mask = (classify::ClassifyEqBlock(p + base, first) &
-                   classify::ClassifyEqBlock(p + base + n - 1, last)) &
-                  (~uint32_t{0} << (pos - base));
+      const uint32_t firsts = classify::ClassifyEqBlock(p + base, first) &
+                              (~uint32_t{0} << (pos - base));
+      if constexpr (SparseFind) {
+        if (firsts == 0) {
+          pos = FindSparse(data, needle, base + classify::kClassifyBlock, pos,
+                           on_delim);
+          if (pos > last_start) {
+            return;
+          }
+          continue;
+        }
+      }
       size_t next = base + classify::kClassifyBlock;
+      auto mask = firsts & classify::ClassifyEqBlock(p + base + n - 1, last);
       while (mask != 0) {
         const size_t at = base + std::countr_zero(mask);
         if (!verify(at)) {
@@ -230,7 +257,7 @@ struct OneStringFinder {
                                      OnDelim&& on_delim) const {
     const auto* p = data.data();
     const size_t size = data.size();
-    ForEachFirstLastMatch(
+    ForEachFirstLastMatch<true>(
       data, delim,
       [&](size_t at) IRS_FORCE_INLINE {
         if (at + sizeof(uint64_t) <= size) {
@@ -257,7 +284,7 @@ struct OneLongStringFinder {
                                      OnDelim&& on_delim) const {
     const auto* p = data.data();
     const size_t n = delim.size();
-    ForEachFirstLastMatch(
+    ForEachFirstLastMatch<false>(
       data, delim,
       [&](size_t at) IRS_FORCE_INLINE {
         return std::memcmp(p + at + 1, delim.data() + 1, n - 2) == 0;

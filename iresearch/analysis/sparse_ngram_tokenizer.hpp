@@ -81,11 +81,11 @@ class SparseNGramTokenizer final : public TypedTokenizer<SparseNGramTokenizer>,
 
   void EnsureScratch();
   template<bool Symbols, bool Generic>
-  bool Next(Cursor& ctx);
+  IRS_ALIGN_HOT bool Next(Cursor& ctx);
   template<bool Symbols, bool Generic>
   uint64_t FillHashes(Cursor& ctx);
   template<TokenLayout Layout, bool Detect, bool Generic>
-  bool FillBytes(duckdb::string_t value, TokenSink& sink);
+  IRS_ALIGN_HOT bool FillBytes(duckdb::string_t value, TokenSink& sink);
   template<TokenLayout Layout, bool Generic>
   bool FillSymbols(duckdb::string_t value, TokenSink& sink);
   template<bool Generic>

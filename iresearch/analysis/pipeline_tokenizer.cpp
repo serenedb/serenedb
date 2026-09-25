@@ -85,6 +85,7 @@ PipelineTokenizer::PipelineTokenizer(std::vector<Tokenizer::ptr> options) {
       _traits.unique &= traits.unique;
       _traits.offsets &= traits.offsets;
       _traits.stable &= traits.stable;
+      _traits.keeps_ascii &= traits.keeps_ascii;
       // Fan-out alone keeps the ramp: a child emitting dense positions has its
       // increments rebased onto the parent stream, and a parent that emits
       // nothing simply never commits. Only explicit child positions (stacked

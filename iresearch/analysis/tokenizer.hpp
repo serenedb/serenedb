@@ -219,8 +219,8 @@ class TypedTokenizer : public Tokenizer {
 
   constexpr std::tuple<> PrepareBatch(BlockTraits) { return {}; }
 
-  IRS_NO_INLINE IRS_ALIGN_HOT bool Fill(const duckdb::string_t& value,
-                                        TokenSink& sink, FillCtx ctx) final {
+  IRS_NO_INLINE bool Fill(const duckdb::string_t& value, TokenSink& sink,
+                          FillCtx ctx) final {
     auto* impl = static_cast<Impl*>(this);
     ctx.traits =
       ComputeValueTraits(value, impl->Impl::WantedBlockTraits(), ctx.traits);

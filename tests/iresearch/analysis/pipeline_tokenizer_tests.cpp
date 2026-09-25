@@ -322,6 +322,22 @@ TEST(pipeline_token_stream_test, many_tokenizers) {
   AssertPipeline(&pipe, data, expected);
 }
 
+TEST(pipeline_token_stream_test, keeps_ascii_requires_every_stage) {
+  const auto keeps = [](std::vector<irs::analysis::Tokenizer::ptr> stages) {
+    return irs::analysis::PipelineTokenizer{std::move(stages)}
+      .Traits()
+      .keeps_ascii;
+  };
+  std::vector<irs::analysis::Tokenizer::ptr> kept;
+  kept.emplace_back(MakeDelimiter(","));
+  kept.emplace_back(MakeNorm("en", irs::Case::Lower));
+  EXPECT_TRUE(keeps(std::move(kept)));
+  std::vector<irs::analysis::Tokenizer::ptr> lost;
+  lost.emplace_back(MakeDelimiter(","));
+  lost.emplace_back(MakeCollation("en_US.UTF-8"));
+  EXPECT_FALSE(keeps(std::move(lost)));
+}
+
 TEST(pipeline_token_stream_test, overlapping_ngrams) {
   auto ngram = MakeNGram(6, 7, /*preserve_original=*/false);
   auto ngram2 = MakeNGram(2, 3, /*preserve_original=*/false);

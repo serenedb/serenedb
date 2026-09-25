@@ -90,28 +90,36 @@ bool HasModel() {
 }
 
 const std::filesystem::path& FixtureDir() {
-  static const std::filesystem::path kDir = [] {
-    const auto dir =
-      std::filesystem::path{::testing::TempDir()} / "sdb_tokenizer_fuzz";
-    std::error_code ignored;
-    std::filesystem::remove_all(dir, ignored);
-    std::filesystem::create_directories(dir / "text_stopwords" / "en");
-    std::filesystem::create_directories(dir / "words");
-    {
-      std::ofstream out{dir / "stopwords.txt"};
-      out << "the\na\nan\nof\nand\nquick\n";
+  static const struct Fixture {
+    Fixture()
+      : dir{std::filesystem::path{::testing::TempDir()} /
+            ("sdb_tokenizer_fuzz_" + std::to_string(::getpid()))} {
+      std::error_code ignored;
+      std::filesystem::remove_all(dir, ignored);
+      std::filesystem::create_directories(dir / "text_stopwords" / "en");
+      std::filesystem::create_directories(dir / "words");
+      {
+        std::ofstream out{dir / "stopwords.txt"};
+        out << "the\na\nan\nof\nand\nquick\n";
+      }
+      {
+        std::ofstream out{dir / "words" / "list.txt"};
+        out << "the\na\nan\nof\nand\n";
+      }
+      {
+        std::ofstream out{dir / "text_stopwords" / "en" / "list.txt"};
+        out << "the\na\nof\nand\n";
+      }
     }
-    {
-      std::ofstream out{dir / "words" / "list.txt"};
-      out << "the\na\nan\nof\nand\n";
+
+    ~Fixture() {
+      std::error_code ignored;
+      std::filesystem::remove_all(dir, ignored);
     }
-    {
-      std::ofstream out{dir / "text_stopwords" / "en" / "list.txt"};
-      out << "the\na\nof\nand\n";
-    }
-    return dir;
-  }();
-  return kDir;
+
+    std::filesystem::path dir;
+  } kFixture;
+  return kFixture.dir;
 }
 
 std::string StopwordsFile() {

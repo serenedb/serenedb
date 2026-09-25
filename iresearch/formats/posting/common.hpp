@@ -302,16 +302,50 @@ IRS_FORCE_INLINE void VisitDocs(uint32_t size, Visitor&& visit) {
   }
 }
 
+template<size_t W>
+IRS_FORCE_INLINE uint32_t CountLess(const uint32_t* begin,
+                                    uint32_t value) noexcept {
+  using U32x8 = uint32_t __attribute__((vector_size(32)));
+  using I32x8 = int32_t __attribute__((vector_size(32)));
+  static_assert(W % 8 == 0);
+  const U32x8 target = U32x8{} + value;
+  I32x8 acc{};
+  for (size_t i = 0; i != W; i += 8) {
+    U32x8 v;
+    std::memcpy(&v, begin + i, sizeof(v));
+    acc += (I32x8)(v < target);
+  }
+  int32_t sum = 0;
+  for (size_t lane = 0; lane != 8; ++lane) {
+    sum += acc[lane];
+  }
+  return static_cast<uint32_t>(-sum);
+}
+
 template<size_t N, typename It, typename T, typename Cmp = std::less<>>
 IRS_FORCE_INLINE It BranchlessLowerBound(It begin, const T& value,
                                          Cmp&& compare = {}) {
   static_assert(std::has_single_bit(N));
-  for (size_t step = N / 2; step != 0; step /= 2) {
-    if (compare(begin[step], value)) {
-      begin += step;
+  constexpr size_t kWindow = 32;
+  if constexpr (N > kWindow && std::is_pointer_v<It> &&
+                std::is_same_v<std::remove_const_t<std::remove_pointer_t<It>>,
+                               uint32_t> &&
+                std::is_same_v<T, uint32_t> &&
+                std::is_same_v<std::remove_cvref_t<Cmp>, std::less<>>) {
+    for (size_t step = N / 2; step >= kWindow; step /= 2) {
+      if (begin[step - 1] < value) {
+        begin += step;
+      }
     }
+    return begin + CountLess<kWindow>(begin, value);
+  } else {
+    for (size_t step = N / 2; step != 0; step /= 2) {
+      if (compare(begin[step], value)) {
+        begin += step;
+      }
+    }
+    return begin + compare(*begin, value);
   }
-  return begin + compare(*begin, value);
 }
 
 template<typename FormatTraits, bool Freq, bool Pos, bool Offs>

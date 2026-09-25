@@ -233,6 +233,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   ABSL_CACHELINE_ALIGNED std::atomic_uint32_t next_segment{0};
   ABSL_CACHELINE_ALIGNED std::atomic_uint32_t done_segments{0};
   ABSL_CACHELINE_ALIGNED absl::Mutex ordered_mutex;
+  ABSL_CACHELINE_ALIGNED std::atomic_bool ordered_exhausted{false};
   std::vector<ScanOrderKey> ordered_heap;
 
   bool Ordered() const noexcept { return ordered; }

@@ -184,26 +184,35 @@ duckdb::shared_ptr<duckdb::DynamicFilterData> FindOrderDynamicFilter(
   return nullptr;
 }
 
-bool OrderPruned(const ScanGlobalState& g, const ScanOrderKey& best) {
+duckdb::Value OrderBound(const ScanGlobalState& g) {
   const auto& dyn = g.order_dynamic_filter;
-  if (!dyn || best.value.IsNull() ||
-      !dyn->initialized.load(std::memory_order_acquire)) {
-    return false;
+  if (!dyn || !dyn->initialized.load(std::memory_order_acquire)) {
+    return duckdb::Value{};
   }
   duckdb::lock_guard<duckdb::mutex> lock{dyn->lock};
-  return !duckdb::DynamicFilterData::CompareValue(dyn->comparison_type,
-                                                  dyn->constant, best.value);
+  return dyn->constant;
 }
 
-bool DropPruned(ScanGlobalState& g) {
+bool OrderPruned(const ScanGlobalState& g, const duckdb::Value& bound,
+                 const ScanOrderKey& best) {
+  return !bound.IsNull() && !best.value.IsNull() &&
+         !duckdb::DynamicFilterData::CompareValue(
+           g.order_dynamic_filter->comparison_type, bound, best.value);
+}
+
+bool DropPruned(ScanGlobalState& g, const duckdb::Value& bound) {
   auto& heap = g.ordered_heap;
-  if (!heap.empty() && OrderPruned(g, heap.front())) {
+  if (!heap.empty() && OrderPruned(g, bound, heap.front())) {
     std::erase_if(heap,
                   [](const ScanOrderKey& key) { return !key.value.IsNull(); });
     absl::c_make_heap(heap, HeapOrder(*g.Bind().scan_order));
   }
   return heap.empty();
 }
+
+std::unique_ptr<OrderedUnits> BuildSegmentOrderedUnits(
+  ScanGlobalState& g, SegmentWork& work, uint32_t seg,
+  duckdb::Value segment_key);
 
 void BuildOrderedHeap(ScanGlobalState& g) {
   const auto& order = *g.Bind().scan_order;
@@ -215,7 +224,9 @@ void BuildOrderedHeap(ScanGlobalState& g) {
       v = duckdb::RowGroupReorderer::RetrieveStat(
         column->MergedStatistics(), order.order_by, order.column_type);
     }
-    g.ordered_heap.push_back({seg, std::move(v)});
+    auto& work = g.Segment(seg);
+    work.ordered = BuildSegmentOrderedUnits(g, work, seg, std::move(v));
+    g.ordered_heap.push_back({seg, work.ordered->keys.front()});
   }
   absl::c_make_heap(g.ordered_heap, HeapOrder(order));
   g.ordered = true;
@@ -312,10 +323,15 @@ bool ClaimOrderedUnit(ScanGlobalState& g, ScanLocalState& l) {
   const auto heap_order = HeapOrder(*g.Bind().scan_order);
   auto& heap = g.ordered_heap;
   for (;;) {
+    if (g.ordered_exhausted.load(std::memory_order_relaxed)) {
+      return false;
+    }
+    const auto bound = OrderBound(g);
     ScanOrderKey head;
     {
       absl::MutexLock lock{&g.ordered_mutex};
-      if (DropPruned(g)) {
+      if (DropPruned(g, bound)) {
+        g.ordered_exhausted.store(true, std::memory_order_relaxed);
         return false;
       }
       absl::c_pop_heap(heap, heap_order);

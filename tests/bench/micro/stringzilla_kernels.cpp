@@ -20,9 +20,14 @@
 
 #include <benchmark/benchmark.h>
 #include <stringzilla/utf8_norm/serial.h>
+#include <stringzilla/utf8_wordbreaks/serial.h>
 #if defined(__x86_64__)
 #include <stringzilla/utf8_norm/icelake.h>
 #include <stringzilla/utf8_norm/skylake.h>
+#include <stringzilla/utf8_wordbreaks/haswell.h>
+#include <stringzilla/utf8_wordbreaks/icelake.h>
+#elif defined(__aarch64__)
+#include <stringzilla/utf8_wordbreaks/neon.h>
 #endif
 
 #include <algorithm>
@@ -32,6 +37,7 @@
 #include <iresearch/analysis/text/normalize/normalize.hpp>
 #include <iresearch/analysis/text/sz/stringzilla.hpp>
 #include <iresearch/analysis/text/words/split_by_non_alpha.hpp>
+#include <iresearch/analysis/text/words/unicode.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
 #include <random>
 #include <span>
@@ -285,6 +291,44 @@ void BmNonSpaceRuns512(benchmark::State& state, const Values& values) {
 }
 #endif
 
+duckdb::string_t View(const std::string& v) noexcept {
+  return {v.data(), static_cast<uint32_t>(v.size())};
+}
+
+void BmWords(benchmark::State& state, const Values& values) {
+  size_t segments = 0;
+  for (auto _ : state) {
+    for (const auto& v : values) {
+      words::ScanUnicode(View(v), [&](const words::Segment& seg) {
+        segments += seg.begin + seg.end;
+      });
+    }
+  }
+  benchmark::DoNotOptimize(segments);
+  SetBytes(state, values);
+}
+
+void BmWordsAscii(benchmark::State& state, const Values& values) {
+  const bool ascii = std::ranges::all_of(values, [](const std::string& v) {
+    return std::ranges::all_of(
+      v, [](char c) { return static_cast<uint8_t>(c) < 0x80; });
+  });
+  if (!ascii) {
+    state.SkipWithError("input is not ASCII");
+    return;
+  }
+  size_t segments = 0;
+  for (auto _ : state) {
+    for (const auto& v : values) {
+      words::ScanAscii(View(v), [&](const words::Segment& seg) {
+        segments += seg.begin + seg.end;
+      });
+    }
+  }
+  benchmark::DoNotOptimize(segments);
+  SetBytes(state, values);
+}
+
 void BmAlnumRuns(benchmark::State& state, const Values& values) {
   size_t runs = 0;
   for (auto _ : state) {
@@ -408,6 +452,13 @@ std::vector<Candidate> Candidates() {
     {"alnum", "icelake", BmSegments<sz_utf8_delimiters_icelake>, Isa::Icelake,
      true},
     {"alnum", "ours", BmAlnumRuns, Isa::Any, true},
+    {"words", "serial", BmSegments<sz_utf8_wordbreaks_serial>, Isa::Any, true},
+    {"words", "haswell", BmSegments<sz_utf8_wordbreaks_haswell>, Isa::Any,
+     true},
+    {"words", "icelake", BmSegments<sz_utf8_wordbreaks_icelake>, Isa::Icelake,
+     true},
+    {"words", "ours", BmWords, Isa::Any, true},
+    {"words", "ours_ascii", BmWordsAscii, Isa::Any, true},
     {"fold", "serial", BmFold<sz_utf8_uncased_fold_serial>, Isa::Any, false},
     {"fold", "haswell", BmFold<sz_utf8_uncased_fold_haswell>, Isa::Any, false},
     {"fold", "icelake", BmFold<sz_utf8_uncased_fold_icelake>, Isa::Icelake,
@@ -442,6 +493,10 @@ std::vector<Candidate> Candidates() {
     {"alnum", "serial", BmSegments<sz_utf8_delimiters_serial>, Isa::Any, true},
     {"alnum", "neon", BmSegments<sz_utf8_delimiters_neon>, Isa::Any, true},
     {"alnum", "ours", BmAlnumRuns, Isa::Any, true},
+    {"words", "serial", BmSegments<sz_utf8_wordbreaks_serial>, Isa::Any, true},
+    {"words", "neon", BmSegments<sz_utf8_wordbreaks_neon>, Isa::Any, true},
+    {"words", "ours", BmWords, Isa::Any, true},
+    {"words", "ours_ascii", BmWordsAscii, Isa::Any, true},
     {"fold", "serial", BmFold<sz_utf8_uncased_fold_serial>, Isa::Any, false},
     {"fold", "neon", BmFold<sz_utf8_uncased_fold_neon>, Isa::Any, false},
     {"norm", "serial", BmNorm<sz_utf8_norm_serial>, Isa::Any, false},

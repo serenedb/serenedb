@@ -120,13 +120,13 @@ inline ScoreBoundWriter::ptr PrepareScoreBoundWriter(ScorerPtr scorer,
 class PostingsWriterBase : public PostingsWriter {
  public:
   static constexpr std::string_view kDocFormatName =
-    "iresearch_10_postings_documents";
+    "iresearch_11_postings_documents";
   static constexpr std::string_view kDocExt = "doc";
   static constexpr std::string_view kPosFormatName =
-    "iresearch_10_postings_positions";
+    "iresearch_11_postings_positions";
   static constexpr std::string_view kPosExt = "pos";
   static constexpr std::string_view kPayFormatName =
-    "iresearch_10_postings_payloads";
+    "iresearch_11_postings_payloads";
   static constexpr std::string_view kPayExt = "pay";
 
   FieldStats EndField() final {
@@ -464,8 +464,7 @@ class PostingsWriterImpl final : public PostingsWriterBase {
   void BeginDocInTerm(doc_id_t doc, uint32_t freq, uint32_t docs_count,
                       PostingMeta& meta, bool has_freq);
 
-  // Buffer for block encoding (worst case)
-  uint32_t _enc_buf[std::max(doc_limits::kBlockSize, pos_limits::kBlockSize)];
+  uint32_t _enc_buf[FormatTraits::kEncWords];
   bool _volatile_attributes;
 };
 

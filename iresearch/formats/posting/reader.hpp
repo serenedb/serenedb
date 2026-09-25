@@ -219,7 +219,7 @@ void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, doc_id_t* docs,
       const uint64_t first = uint64_t{prev} + 1;
       SetBitRange(words, first, first + len);
     } else if (leaf.IsBitset()) {
-      OrBitsetAt(words, prev, leaf.bitset, leaf.words);
+      OrBitsetAt(words, uint64_t{prev} + 1, leaf.bitset, leaf.words);
     } else {
       static constexpr auto kBits = BitsRequired<uint64_t>();
       const auto* const data = docs + doc_limits::kBlockSize - len;
@@ -252,12 +252,8 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
   const IndexFeatures field_features, TermProvider provider, uint64_t* set,
   bool has_score_bounds) {
   constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
-  uint32_t enc_buf[doc_limits::kBlockSize];
-  doc_id_t docs[doc_limits::kBlockSize
-#ifdef __AVX2__
-                + 8  // placeholder for bitset materialize
-#endif
-  ];
+  alignas(64) uint32_t enc_buf[FormatTraits::kEncWords];
+  alignas(64) doc_id_t docs[doc_limits::kBlockSize + block_codec::kOutSlack];
   const bool has_freq =
     IndexFeatures::None != (field_features & IndexFeatures::Freq);
 

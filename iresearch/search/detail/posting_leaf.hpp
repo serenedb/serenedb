@@ -52,23 +52,20 @@ struct LeafShape {
   bool freqs = false;
   bool gather = false;
   bool cursor = false;
-  bool slack = false;
   bool enc = false;
   bool delta = false;
 };
 
-inline constexpr LeafShape kWindowShape{.slack = true, .delta = true};
+inline constexpr LeafShape kWindowShape{.enc = true, .delta = true};
 
 inline constexpr LeafShape kWindowScoredShape{
   .scored = true,
   .freqs = true,
-  .slack = true,
   .enc = true,
 };
 
 inline constexpr LeafShape kCursorShape{
   .cursor = true,
-  .slack = true,
   .delta = true,
 };
 
@@ -77,17 +74,17 @@ inline constexpr LeafShape kCursorScoredShape{
   .freqs = true,
   .gather = true,
   .cursor = true,
-  .slack = true,
   .delta = true,
 };
 
-inline constexpr LeafShape kProbeShape{.cursor = true};
+inline constexpr LeafShape kProbeShape{.cursor = true, .enc = true};
 
 inline constexpr LeafShape kProbeScoredShape{
   .defer = true,
   .freqs = true,
   .gather = true,
   .cursor = true,
+  .enc = true,
 };
 
 struct FreqLen {
@@ -510,9 +507,7 @@ class PostingLeaf {
   [[no_unique_address]] utils::Need<kEnc, EncBuf> _enc;
   [[no_unique_address]] utils::Need<Shape.freqs, FreqBuf> _freqs;
   [[no_unique_address]] utils::Need<Shape.gather, GatherBuf> _gather;
-  SlackBuf<doc_id_t, doc_limits::kBlockSize,
-           Shape.slack ? doc_limits::kDocsSlack : 0>
-    _docs;
+  DocsBuf _docs;
   IndexInput::ptr _in;
   doc_id_t _doc = doc_limits::invalid();
   doc_id_t _last = doc_limits::invalid();

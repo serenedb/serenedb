@@ -23,10 +23,6 @@
 
 #include "tests_shared.hpp"
 
-extern "C" {
-#include <simdbitpacking.h>
-}
-
 #include <array>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/bit_packing.hpp>
@@ -279,43 +275,6 @@ void VencodeFromArray(T expected_value, size_t expected_length) {
               std::distance((const irs::byte_type*)(buf), ptr));
   }
 }
-
-#ifdef IRESEARCH_SSE2
-
-template<size_t N>
-void ReadWriteBlockOptimized(const std::array<uint32_t, N>& source) {
-  static_assert(128 == N);
-  std::array<uint32_t, N> enc_dec_buf;
-  std::fill_n(enc_dec_buf.data(), N, std::numeric_limits<uint32_t>::max());
-
-  auto pack_block = [](const uint32_t* IRS_RESTRICT decoded,
-                       uint32_t* IRS_RESTRICT encoded,
-                       const uint32_t bits) noexcept {
-    ::simdpackwithoutmask(decoded, reinterpret_cast<__m128i*>(encoded), bits);
-    return bits;
-  };
-
-  auto unpack_block = [](uint32_t* decoded, const uint32_t* encoded,
-                         const uint32_t bits) noexcept {
-    ::simdunpack(reinterpret_cast<const __m128i*>(encoded), decoded, bits);
-  };
-
-  // write block
-  irs::bstring buf;
-  irs::BytesOutput out(buf);
-  irs::bitpack::write_block32(pack_block, out, source.data(),
-                              enc_dec_buf.data(), N);
-
-  // read block
-  BytesInput in(buf);
-  std::array<uint32_t, N> read;
-  irs::bitpack::read_block32(unpack_block, in, enc_dec_buf.data(), read.data(),
-                             N);
-
-  ASSERT_EQ(source, read);
-}
-
-#endif
 
 }  // namespace tests::detail
 
@@ -865,54 +824,3 @@ TEST(store_utils_tests, test_remapped_bytes_view) {
     ASSERT_EQ(26, in.Position());
   }
 }
-
-#ifdef IRESEARCH_SSE2
-
-TEST(store_utils_tests, read_write_block32_optimized) {
-  constexpr size_t kBlockSize = 128;
-
-  // distinct values
-  {
-    constexpr std::array<uint32_t, kBlockSize> kData = {
-      867377632, 904649657, 354461109, 576026921, 406163632, 168409093,
-      33485512,  611136354, 140275004, 654422173, 405770063, 390577167,
-      780047069, 438362754, 469076575, 916930378, 291775422, 169687154,
-      834852341, 811869909, 250897257, 852383167, 478986610, 257699679,
-      112290896, 648885334, 897578972, 235499871, 368212067, 20494714,
-      321165319, 993744046, 334855956, 339418651, 23411270,  486634346,
-      258313717, 319757878, 608722518, 331995880, 116102182, 801348392,
-      256163092, 332114117, 304988840, 917258980, 686173811, 948343613,
-      786828070, 319530963, 578518934, 881904875, 144381596, 948206742,
-      876042799, 636018099, 941670974, 795607349, 487169927, 365985618,
-      883623659, 853001164, 723334064, 582408314, 570539073, 863140586,
-      99184400,  621307734, 404880591, 544074242, 395871575, 383432524,
-      469395010, 462667762, 721641738, 306107286, 379618512, 17517346,
-      735771377, 147846584, 858436879, 499675853, 539719264, 842602895,
-      870115838, 236179208, 927978513, 657234182, 205163278, 100358377,
-      970958186, 277229354, 952603794, 234804978, 489958521, 378864765,
-      482550401, 587171069, 368374855, 835303649, 113016087, 220060336,
-      205821727, 794302091, 393689790, 18366964,  835940475, 988552545,
-      976790514, 736784554, 332759224, 951688629, 413866856, 245001983,
-      839481147, 575871539, 536021091, 313731186, 553136314, 291903625,
-      916491807, 629745928, 217677834, 787133498, 167330024, 793647012,
-      474689745, 228759450};
-    tests::detail::ReadWriteBlockOptimized(kData);
-  }
-
-  // all equal
-  {
-    std::array<uint32_t, kBlockSize> data;
-    std::fill_n(data.data(), kBlockSize, 5);
-    tests::detail::ReadWriteBlockOptimized(data);
-  }
-
-  // all except first are equal, dirty buffer
-  {
-    std::array<uint32_t, kBlockSize> data;
-    std::fill_n(data.data(), kBlockSize, 1);
-    data[0] = 1;
-    tests::detail::ReadWriteBlockOptimized(data);
-  }
-}
-
-#endif

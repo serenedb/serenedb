@@ -24,6 +24,7 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
+#include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/iterator_pos.hpp"
 #include "iresearch/formats/posting_meta.hpp"
@@ -160,9 +161,10 @@ class PostingsStream : public TermPostings {
     }
   }
 
-  ABSL_CACHELINE_ALIGNED uint32_t _enc_buf[doc_limits::kBlockSize];
+  ABSL_CACHELINE_ALIGNED uint32_t _enc_buf[IteratorTraits::kEncWords];
   [[no_unique_address]] ABSL_CACHELINE_ALIGNED utils::Need<
-    IteratorTraits::Frequency(), uint32_t[doc_limits::kBlockSize]> _freqs;
+    IteratorTraits::Frequency(),
+    SlackBuf<uint32_t, doc_limits::kBlockSize, block_codec::kOutSlack>> _freqs;
   DocsBuf _docs;
   IndexInput::ptr _doc_in;
   [[no_unique_address]] utils::Need<IteratorTraits::Position(), Position> _pos;

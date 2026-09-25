@@ -1115,6 +1115,70 @@ uint32_t PackedBlockSize(const byte_type* in, uint32_t len) noexcept {
          count16 * sizeof(uint16_t) + count32 * sizeof(uint32_t);
 }
 
+struct SizeShape {
+  uint16_t fixed = 0;
+  uint8_t bits = 0;
+  uint8_t per1 = 0;
+  uint8_t per2 = 0;
+  bool bitmap = false;
+};
+
+template<typename Encoding>
+inline constexpr auto kSizeShapes = [] {
+  std::array<SizeShape, 256> shapes{};
+  for (uint32_t token = 0; token != Code(Encoding::End); ++token) {
+    auto& s = shapes[token];
+    if (token < Code(Encoding::Pack)) {
+      constexpr uint16_t kSame[] = {1, 2, 3, 5};
+      if constexpr (std::is_same_v<Encoding, DeltaEncoding>) {
+        if (token == Code(DeltaEncoding::Bitset)) {
+          s = {.fixed = 2, .per1 = sizeof(uint64_t)};
+          continue;
+        }
+      }
+      s.fixed = kSame[token];
+      continue;
+    }
+    const auto shape = ShapeOf<Encoding>(token);
+    s.bits = static_cast<uint8_t>(shape.bits);
+    switch (shape.family) {
+      case Family::Pack:
+        s.fixed = 1;
+        break;
+      case Family::Patch16:
+        s.fixed = 2;
+        s.per1 = sizeof(uint16_t);
+        break;
+      case Family::Patch32:
+        s.fixed = 2;
+        s.per1 = sizeof(uint32_t);
+        break;
+      case Family::PatchMixed:
+        s.fixed = 3;
+        s.per1 = sizeof(uint16_t);
+        s.per2 = sizeof(uint32_t);
+        break;
+      case Family::PatchBitmap:
+        s.bitmap = true;
+        break;
+    }
+  }
+  return shapes;
+}();
+
+template<typename Encoding, uint32_t L>
+IRS_FORCE_INLINE uint32_t BlockBytes(const byte_type* in,
+                                     uint32_t len) noexcept {
+  const auto& s = kSizeShapes<Encoding>[in[0]];
+  if (s.bitmap) [[unlikely]] {
+    return PackedBlockSize<Encoding, L>(in, len);
+  }
+  return s.fixed + (len * s.bits + 7) / 8 + in[1] * uint32_t{s.per1} +
+         in[2] * uint32_t{s.per2};
+}
+
+static_assert(kOutSlack >= kPatchGroup);
+
 inline IRS_NO_INLINE void UnpackBits(uint32_t bits, const byte_type* in,
                                      uint32_t len, uint32_t* out) noexcept {
   ResolveByte<kMaxWidth + 1>(bits, [&]<uint32_t B>() IRS_FORCE_INLINE {
@@ -1178,10 +1242,10 @@ IRS_FORCE_INLINE const byte_type* DecodeBits(const byte_type* in, uint32_t len,
     Unpack<B, Add, Full, L>(packed, len, out);
     const auto* p = packed + PackedSize<L>(len, B);
     if constexpr (F == Family::Patch16 || F == Family::PatchMixed) {
-      p = PatchValues<B, uint16_t, L>(p, count16, out);
+      p = PatchValues<B, uint16_t, L, Full>(p, count16, len, out);
     }
     if constexpr (F == Family::Patch32 || F == Family::PatchMixed) {
-      p = PatchValues<B, uint32_t, L>(p, count32, out);
+      p = PatchValues<B, uint32_t, L, Full>(p, count32, len, out);
     }
     return p;
   }
@@ -1763,24 +1827,12 @@ IRS_NO_INLINE uint32_t EncodeDelta(const doc_id_t* docs, uint32_t len,
 }
 
 template<bool Full, uint32_t L>
-uint32_t DeltaSize(const byte_type* in, uint32_t len) noexcept {
+IRS_FORCE_INLINE uint32_t DeltaSize(const byte_type* in,
+                                    uint32_t len) noexcept {
   if constexpr (Full) {
     len = kBlockOf<L>;
   }
-  switch (static_cast<DeltaEncoding>(in[0])) {
-    case DeltaEncoding::Run:
-      return 1;
-    case DeltaEncoding::Same08:
-      return 2;
-    case DeltaEncoding::Same16:
-      return 3;
-    case DeltaEncoding::Same32:
-      return 5;
-    case DeltaEncoding::Bitset:
-      return 2 + in[1] * sizeof(uint64_t);
-    default:
-      return PackedBlockSize<DeltaEncoding, L>(in, len);
-  }
+  return BlockBytes<DeltaEncoding, L>(in, len);
 }
 
 inline uint32_t WriteSameValue(uint32_t value, byte_type* out) noexcept {
@@ -1857,22 +1909,41 @@ IRS_NO_INLINE uint32_t EncodeValues(const uint32_t* values, uint32_t len,
 }
 
 template<bool Full, uint32_t L>
-uint32_t ValuesSize(const byte_type* in, uint32_t len) noexcept {
+IRS_FORCE_INLINE uint32_t ValuesSize(const byte_type* in,
+                                     uint32_t len) noexcept {
   if constexpr (Full) {
     len = kBlockOf<L>;
   }
-  switch (static_cast<ValueEncoding>(in[0])) {
-    case ValueEncoding::One:
-      return 1;
-    case ValueEncoding::Same08:
-      return 2;
-    case ValueEncoding::Same16:
-      return 3;
-    case ValueEncoding::Same32:
-      return 5;
-    default:
-      return PackedBlockSize<ValueEncoding, L>(in, len);
+  return BlockBytes<ValueEncoding, L>(in, len);
+}
+
+template<typename Encoding, bool Full, uint32_t L>
+uint32_t PrefixSize(uint32_t token, uint32_t len) noexcept {
+  if constexpr (Full) {
+    len = kBlockOf<L>;
   }
+  if (token < Code(Encoding::Pack)) {
+    if constexpr (std::is_same_v<Encoding, DeltaEncoding>) {
+      if (token == Code(DeltaEncoding::Bitset)) {
+        return 2;
+      }
+    }
+    constexpr uint32_t kSame[] = {1, 2, 3, 5};
+    return kSame[token];
+  }
+  const auto shape = ShapeOf<Encoding>(token);
+  switch (shape.family) {
+    case Family::Pack:
+      return 1;
+    case Family::Patch16:
+    case Family::Patch32:
+      return 2;
+    case Family::PatchMixed:
+      return 3;
+    case Family::PatchBitmap:
+      return 2 + PackedSize<L>(len, shape.bits) + Layout<L>::kBitmapBytes;
+  }
+  SDB_UNREACHABLE();
 }
 
 template<uint32_t L>
@@ -1958,6 +2029,24 @@ struct BlockCodec {
   static uint32_t ValuesTailSize(const byte_type* in, uint32_t len) {
     SDB_ASSERT(1 <= len && len < kBlock);
     return ValuesSize<false, L>(in, len);
+  }
+
+  static uint32_t DeltaBlockPrefix(uint32_t token) {
+    return PrefixSize<DeltaEncoding, true, L>(token, kBlock);
+  }
+
+  static uint32_t DeltaTailPrefix(uint32_t token, uint32_t len) {
+    SDB_ASSERT(1 <= len && len < kBlock);
+    return PrefixSize<DeltaEncoding, false, L>(token, len);
+  }
+
+  static uint32_t ValuesBlockPrefix(uint32_t token) {
+    return PrefixSize<ValueEncoding, true, L>(token, kBlock);
+  }
+
+  static uint32_t ValuesTailPrefix(uint32_t token, uint32_t len) {
+    SDB_ASSERT(1 <= len && len < kBlock);
+    return PrefixSize<ValueEncoding, false, L>(token, len);
   }
 };
 

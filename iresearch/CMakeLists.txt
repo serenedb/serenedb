@@ -4,7 +4,6 @@ if(uring_FOUND)
     add_definitions(-DIRESEARCH_URING)
 endif()
 
-set(SIMD_LIBRARY_STATIC "simdcomp-static")
 set(FASTTEXT_LIBRARY_STATIC "fasttext-static")
 
 if(
@@ -511,12 +510,11 @@ target_link_libraries(
     PRIVATE simdutf
     PUBLIC iresearch-ofst
     PUBLIC ${FASTTEXT_LIBRARY_STATIC}
-    PUBLIC ${SIMD_LIBRARY_STATIC}
+    PUBLIC sse2neon
     PUBLIC ${FAISS_LIB}
     PUBLIC re2
     PUBLIC roaring::roaring
     PUBLIC s2
-    PUBLIC streamvbyte
     PUBLIC duckdb_static
     PRIVATE lz4_static
     PRIVATE stemmer-static

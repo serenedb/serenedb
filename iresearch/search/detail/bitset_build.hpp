@@ -81,7 +81,7 @@ struct OrBits {
 
   IRS_FORCE_INLINE void Bitset(uint64_t prev, const uint64_t* IRS_RESTRICT src,
                                uint32_t n, uint64_t) noexcept {
-    OrBlock(words, static_cast<int64_t>(prev) - kMin, src, n);
+    OrBlock(words, static_cast<int64_t>(prev + 1) - kMin, src, n);
   }
 
   IRS_FORCE_INLINE void Doc(size_t doc) noexcept {
@@ -106,7 +106,7 @@ struct ClearBits {
 
   IRS_FORCE_INLINE void Bitset(uint64_t prev, const uint64_t* IRS_RESTRICT src,
                                uint32_t n, uint64_t) noexcept {
-    ClearBlock(words, static_cast<int64_t>(prev) - kMin, src, n);
+    ClearBlock(words, static_cast<int64_t>(prev + 1) - kMin, src, n);
   }
 
   IRS_FORCE_INLINE void Doc(size_t doc) noexcept {
@@ -171,7 +171,7 @@ struct RetainBits {
     const auto last = max - kMin;
     Reach(first);
     words[at] &= keep | (~uint64_t{0} << (first % kBits));
-    RetainBlock(words, static_cast<int64_t>(prev) - kMin, src, n, last);
+    RetainBlock(words, static_cast<int64_t>(first), src, n, last);
     at = static_cast<uint32_t>(last / kBits);
     keep = (uint64_t{2} << (last % kBits)) - 1;
   }
@@ -256,7 +256,7 @@ class PostingReader {
     return *_in;
   }
 
-  uint32_t* Enc() noexcept { return EncOf<Input>(_enc); }
+  uint32_t* Enc() noexcept { return _enc.data; }
 
   doc_id_t* Docs() noexcept { return _buf; }
 
@@ -265,7 +265,7 @@ class PostingReader {
   IndexInput::ptr _owned;
   Input* _in = nullptr;
   DocsBuf _buf;
-  [[no_unique_address]] NeedEnc<Input> _enc;
+  EncBuf _enc;
 };
 
 template<typename Term, typename Sink, typename Input>

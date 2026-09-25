@@ -93,7 +93,7 @@ pk	label
 # LIMIT == non-NULL count -- used to return a NULL row in the tail.
 query
 SELECT pk, label FROM vec_n_idx
-  ORDER BY emb <-> [1.0, 0, 0]::FLOAT[3] LIMIT 3;
+  ORDER BY emb <-> [1.0, 0, 0]::FLOAT[3], pk LIMIT 3;
 ----
 pk	label
 1	unit-x
@@ -105,7 +105,7 @@ pk	label
 # vectors; the engine doesn't pad with NULL rows.
 query
 SELECT pk, label FROM vec_n_idx
-  ORDER BY emb <-> [1.0, 0, 0]::FLOAT[3] LIMIT 5;
+  ORDER BY emb <-> [1.0, 0, 0]::FLOAT[3], pk LIMIT 5;
 ----
 pk	label
 1	unit-x

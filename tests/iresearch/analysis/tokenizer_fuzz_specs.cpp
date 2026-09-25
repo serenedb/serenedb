@@ -25,6 +25,7 @@
 #include <fstream>
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/file_utils_ext.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <utility>
@@ -90,9 +91,22 @@ bool HasModel() {
 }
 
 const std::filesystem::path& FixtureDir() {
-  static const std::filesystem::path kDir = [] {
-    const auto dir =
-      std::filesystem::path{::testing::TempDir()} / "sdb_tokenizer_fuzz";
+  // Removes this process's fixture at exit; a per-process name cannot rely on
+  // the next run wiping it the way one shared name did.
+  struct Fixture {
+    std::filesystem::path dir;
+    ~Fixture() {
+      std::error_code ignored;
+      std::filesystem::remove_all(dir, ignored);
+    }
+  };
+  static const Fixture kFixture = [] {
+    // Per-process: the suite is sharded across concurrently running test
+    // processes, and every one of them wipes and rebuilds this directory. On a
+    // shared name they delete each other's fixture mid-run, which surfaces as
+    // "remove_stopwords: failed to load stopwords".
+    const auto dir = std::filesystem::path{::testing::TempDir()} /
+                     ("sdb_tokenizer_fuzz." + std::to_string(irs::GetPid()));
     std::error_code ignored;
     std::filesystem::remove_all(dir, ignored);
     std::filesystem::create_directories(dir / "text_stopwords" / "en");
@@ -109,9 +123,9 @@ const std::filesystem::path& FixtureDir() {
       std::ofstream out{dir / "text_stopwords" / "en" / "list.txt"};
       out << "the\na\nof\nand\n";
     }
-    return dir;
+    return Fixture{dir};
   }();
-  return kDir;
+  return kFixture.dir;
 }
 
 std::string StopwordsFile() {

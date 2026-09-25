@@ -22,10 +22,14 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
+#include <stringzilla/utf8_norm/serial.h>
+#if defined(__x86_64__)
 #include <stringzilla/utf8_norm/haswell.h>
 #include <stringzilla/utf8_norm/icelake.h>
-#include <stringzilla/utf8_norm/serial.h>
 #include <stringzilla/utf8_norm/skylake.h>
+#elif defined(__aarch64__)
+#include <stringzilla/utf8_norm/neon.h>
+#endif
 
 #include <fstream>
 #include <iresearch/analysis/text/normalize/normalize.hpp>
@@ -246,12 +250,14 @@ TEST(norm_stringzilla_test, simd_backends_match_serial) {
           }
         };
         check_backend(irs::analysis::sz::Norm, "native");
-#ifdef __x86_64__
+#if defined(__x86_64__)
         check_backend(sz_utf8_norm_haswell, "haswell");
         if (irs::analysis::sz::HasAvx512()) {
           check_backend(sz_utf8_norm_skylake, "skylake");
           check_backend(sz_utf8_norm_icelake, "icelake");
         }
+#elif defined(__aarch64__)
+        check_backend(sz_utf8_norm_neon, "neon");
 #endif
       }
     }

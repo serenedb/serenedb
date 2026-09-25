@@ -132,21 +132,26 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
       }
     }
 
+    [[maybe_unused]] const byte_type* at = nullptr;
+    if constexpr (InputType::kVolatileAlways) {
+      if (_left_in_list != 0) {
+        at = In().Current();
+      }
+    }
+
     for (;;) {
       if (_left_in_list == 0) {
         return _doc = doc_limits::eof();
       }
 
-      auto& in = In();
       const auto len = std::min(_left_in_list, kBlock);
       const auto base = _last;
-      const auto leaf =
-        FormatTraits128::ReadTailForFill(len, in, Enc(), _docs, base);
+      const auto leaf = ReadFill(at, len, base);
       _left_in_list -= len;
       _last = leaf.max;
 
       if (leaf.max < min) {
-        SkipFreqs(len);
+        SkipFreqsAfterFill(len);
         continue;
       }
 
@@ -155,7 +160,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
           if (base >= min) [[likely]] {
             const auto live = FormatTraits128::MaskLeaf<Clear>(
               leaf, base, len, min, max, mask, std::end(_docs));
-            SkipFreqs(len);
+            SkipFreqsAfterFill(len);
             if (live == 0) {
               continue;
             }
@@ -166,7 +171,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
         Materialize(leaf, base, len);
       }
 
-      SkipFreqs(len);
+      SkipFreqsAfterFill(len);
 
       const auto* const begin = Behind(end - len, end, min);
       if (leaf.max < max) {
@@ -223,16 +228,36 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
   }
 
  private:
+  IRS_FORCE_INLINE FormatTraits128::FillLeaf ReadFill(const byte_type*& at,
+                                                      uint32_t len,
+                                                      doc_id_t base) {
+    if constexpr (InputType::kVolatileAlways) {
+      return FormatTraits128::FillView(In(), at, len, Enc(), _docs, base,
+                                       len == this->_freq_len.value);
+    } else {
+      return FormatTraits128::ReadTailForFill(len, In(), Enc(), _docs, base);
+    }
+  }
+
+  IRS_FORCE_INLINE void SkipFreqsAfterFill(uint32_t len) {
+    if constexpr (!InputType::kVolatileAlways) {
+      SkipFreqs(len);
+    }
+  }
+
   void ReadLeaf() {
     const auto len = std::min(_left_in_list, kBlock);
     _leaf_base = _last;
-    _leaf =
-      FormatTraits128::ReadTailForFill(len, In(), Enc(), _docs, _leaf_base);
+    [[maybe_unused]] const byte_type* at = nullptr;
+    if constexpr (InputType::kVolatileAlways) {
+      at = In().Current();
+    }
+    _leaf = ReadFill(at, len, _leaf_base);
     _leaf.bitset = StableBitset(_leaf);
     _leaf_len = len;
     _left_in_list -= len;
     _last = _leaf.max;
-    SkipFreqs(len);
+    SkipFreqsAfterFill(len);
   }
 
   IRS_FORCE_INLINE bool Span(doc_id_t min, doc_id_t max, uint64_t& lo,

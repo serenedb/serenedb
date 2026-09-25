@@ -178,26 +178,50 @@ struct FormatTraits128 {
                                                    uint32_t* buf, uint32_t* out,
                                                    uint32_t prev) {
     SDB_ASSERT(1 <= len && len <= kBlock);
+    const auto* const begin = BeginDelta(in, buf, len == kBlock, len);
+    const byte_type* end;
+    const auto leaf = FillAt(len, begin, buf, out, prev, end);
+    End(in, begin, end);
+    return leaf;
+  }
+
+  IRS_FORCE_INLINE static FillLeaf FillView(BytesViewInput& view,
+                                            const byte_type*& at, uint32_t len,
+                                            uint32_t* buf, uint32_t* out,
+                                            uint32_t prev, bool freqs) {
+    const byte_type* end;
+    const auto leaf = FillAt(len, at, buf, out, prev, end);
+    if (freqs) {
+      end += Codec::ValuesBlockSize(end);
+    }
+    view.ReadStable(static_cast<uint64_t>(end - at));
+    at = end;
+    return leaf;
+  }
+
+  IRS_FORCE_INLINE static FillLeaf FillAt(uint32_t len, const byte_type* begin,
+                                          uint32_t* buf, uint32_t* out,
+                                          uint32_t prev,
+                                          const byte_type*& end) {
+    SDB_ASSERT(1 <= len && len <= kBlock);
     const bool full = len == kBlock;
-    const auto* const begin = BeginDelta(in, buf, full, len);
     const auto token = begin[0];
     if (token == block_codec::Code(block_codec::DeltaEncoding::Bitset)) {
       const uint32_t words = begin[1];
       const auto* const bitset = reinterpret_cast<const uint64_t*>(begin + 2);
-      End(in, begin, begin + 2 + words * sizeof(uint64_t));
+      end = begin + 2 + words * sizeof(uint64_t);
       return {bitset, words, BitsetMax(prev, bitset, words),
               FillLeaf::Kind::Bitset};
     }
     if (token == block_codec::Code(block_codec::DeltaEncoding::Run)) {
-      End(in, begin, begin + 1);
+      end = begin + 1;
       return {nullptr, 0, prev + len, FillLeaf::Kind::Run};
     }
     if (buf != nullptr && HoleToken(token)) {
       auto* const bitset = reinterpret_cast<uint64_t*>(buf);
       if (const auto span = HolesToBitset(begin, len, bitset); span != 0) {
-        End(in, begin,
-            begin + (full ? Codec::DeltaBlockSize(begin)
-                          : Codec::DeltaTailSize(begin, len)));
+        end = begin + (full ? Codec::DeltaBlockSize(begin)
+                            : Codec::DeltaTailSize(begin, len));
         return {bitset,
                 static_cast<uint32_t>((span + BitsRequired<uint64_t>() - 1) /
                                       BitsRequired<uint64_t>()),
@@ -205,9 +229,8 @@ struct FormatTraits128 {
       }
     }
     auto* const at = out + (kBlock - len);
-    End(in, begin,
-        full ? Codec::DecodeDeltaBlock(begin, prev, at)
-             : Codec::DecodeDeltaTail(begin, len, prev, at));
+    end = full ? Codec::DecodeDeltaBlock(begin, prev, at)
+               : Codec::DecodeDeltaTail(begin, len, prev, at);
     return {nullptr, 0, out[kBlock - 1], FillLeaf::Kind::Docs};
   }
 

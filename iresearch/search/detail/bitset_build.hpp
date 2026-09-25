@@ -193,6 +193,8 @@ struct RetainBits {
   }
 };
 
+inline constexpr uint64_t kFillPrefetch = 512;
+
 template<typename Input, typename Sink>
 void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
                  doc_id_t* IRS_RESTRICT docs, bool has_score_bounds,
@@ -205,10 +207,28 @@ void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
     SkipScoreBounds(has_score_bounds, in);
   }
 
+  [[maybe_unused]] const byte_type* at = nullptr;
+  if constexpr (Input::kVolatileAlways) {
+    at = in.Current();
+  }
+
   const auto read_leaf = [&]<size_t N>(uint32_t len,
                                        doc_id_t prev) IRS_FORCE_INLINE {
-    const auto leaf =
-      FormatTraits128::ReadTailForFill(len, in, enc, docs, prev);
+    const auto leaf = [&] IRS_FORCE_INLINE {
+      if constexpr (Input::kVolatileAlways) {
+        __builtin_prefetch(at + kFillPrefetch);
+        return FormatTraits128::FillView(
+          in, at, len, enc, docs, prev,
+          has_freq && len == doc_limits::kBlockSize);
+      } else {
+        const auto read =
+          FormatTraits128::ReadTailForFill(len, in, enc, docs, prev);
+        if (has_freq && len == doc_limits::kBlockSize) {
+          FormatTraits128::SkipBlock(in);
+        }
+        return read;
+      }
+    }();
     if (leaf.IsRun()) {
       sink.Run(prev, len);
     } else if (leaf.IsBitset()) {
@@ -223,9 +243,6 @@ void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
         VisitDocs<N>(len,
                      [&](uint32_t i) IRS_FORCE_INLINE { sink.Doc(data[i]); });
       }
-    }
-    if (has_freq && len == doc_limits::kBlockSize) {
-      FormatTraits128::SkipBlock(in);
     }
     return leaf.max;
   };

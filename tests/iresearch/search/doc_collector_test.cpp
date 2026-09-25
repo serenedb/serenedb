@@ -21,10 +21,12 @@
 #include <absl/algorithm/container.h>
 
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/search/count/root.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/types.hpp>
@@ -365,6 +367,232 @@ TEST_P(DocCollectorTestCase, test_execute_topk_term_filter) {
     ASSERT_TRUE(absl::c_is_sorted(std::span{results}.first(result_count),
                                   kScoreDescending));
   }
+}
+
+TEST_P(DocCollectorTestCase, test_execute_topk_skips_deleted) {
+  auto writer = open_writer(irs::kOmCreate);
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                WrapFactory);
+    const Document* doc;
+    while ((doc = gen.next())) {
+      ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
+    }
+    writer->RefreshCommit();
+  }
+
+  size_t before = 0;
+  {
+    auto reader =
+      irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
+    for (auto& segment : reader) {
+      before += segment.docs_count();
+    }
+  }
+  ASSERT_GT(before, 3);
+
+  constexpr std::string_view kRemoved[]{"A", "B", "C"};
+  for (const auto name : kRemoved) {
+    auto trx = writer->GetBatch();
+    auto removal = std::make_unique<irs::ByTerm>();
+    *removal->mutable_field_id() = kNameFieldId;
+    removal->mutable_options()->term = irs::ViewCast<irs::byte_type>(name);
+    trx.Remove(irs::Filter::ptr{std::move(removal)});
+    trx.Commit();
+  }
+  writer->RefreshCommit();
+
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
+  size_t live = 0;
+  for (auto& segment : reader) {
+    live += segment.live_docs_count();
+  }
+  ASSERT_EQ(before - std::size(kRemoved), live);
+
+  DocIdScorer scorer;
+  irs::All filter;
+  const size_t k = live + 8;
+
+  std::vector<irs::ScoreDoc> results(k);
+  const size_t count =
+    irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{results});
+
+  ASSERT_EQ(live, count);
+  for (size_t i = 0; i != std::min(count, k); ++i) {
+    auto masked = reader[results[i].segment_idx].MaskedDocs();
+    ASSERT_FALSE(masked.Contains(results[i].doc))
+      << "deleted doc " << results[i].doc << " reached the top-k";
+  }
+}
+
+TEST_P(DocCollectorTestCase, test_lead_all_walks_live_docs) {
+  auto writer = open_writer(irs::kOmCreate);
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                WrapFactory);
+    const Document* doc;
+    while ((doc = gen.next())) {
+      ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
+    }
+    writer->RefreshCommit();
+  }
+
+  constexpr std::string_view kRemoved[]{"A", "C", "D", "Q"};
+  for (const auto name : kRemoved) {
+    auto trx = writer->GetBatch();
+    auto removal = std::make_unique<irs::ByTerm>();
+    *removal->mutable_field_id() = kNameFieldId;
+    removal->mutable_options()->term = irs::ViewCast<irs::byte_type>(name);
+    trx.Remove(irs::Filter::ptr{std::move(removal)});
+    trx.Commit();
+  }
+  writer->RefreshCommit();
+
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
+  irs::All filter;
+  size_t walked = 0;
+  for (auto& segment : reader) {
+    ASSERT_LT(segment.live_docs_count(), segment.docs_count());
+    auto query = irs::PrepareMasked(filter, segment, {});
+    ASSERT_NE(nullptr, query);
+    auto lead = query->PlanLead({});
+    ASSERT_NE(nullptr, lead);
+
+    std::vector<irs::doc_id_t> expected;
+    auto live = segment.docs_iterator();
+    for (auto doc = live->Next(); !irs::doc_limits::eof(doc);
+         doc = live->Next()) {
+      expected.push_back(doc);
+    }
+    std::vector<irs::doc_id_t> actual;
+    for (auto doc = lead->Next(); !irs::doc_limits::eof(doc);
+         doc = lead->Next()) {
+      actual.push_back(doc);
+    }
+    ASSERT_EQ(expected, actual);
+    ASSERT_EQ(segment.live_docs_count(), actual.size());
+    walked += actual.size();
+  }
+  ASSERT_GT(walked, 0);
+}
+
+TEST_P(DocCollectorTestCase, test_count_negation_skips_deleted) {
+  auto writer = open_writer(irs::kOmCreate);
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                WrapFactory);
+    const Document* doc;
+    while ((doc = gen.next())) {
+      ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
+    }
+    writer->RefreshCommit();
+  }
+
+  auto by_name = [](std::string_view name) {
+    auto filter = std::make_unique<irs::ByTerm>();
+    *filter->mutable_field_id() = kNameFieldId;
+    filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(name);
+    return filter;
+  };
+
+  constexpr std::string_view kRemoved[]{"A", "C", "D", "Q"};
+  for (const auto name : kRemoved) {
+    auto trx = writer->GetBatch();
+    trx.Remove(irs::Filter::ptr{by_name(name)});
+    trx.Commit();
+  }
+  writer->RefreshCommit();
+
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
+  const std::vector<std::vector<std::string_view>> excluded{
+    {"B"}, {"B", "E"}, {"A", "B"}};
+  for (const auto& names : excluded) {
+    irs::BooleanFilter filter;
+    filter.Add(std::make_unique<irs::All>(), irs::Occur::Must);
+    for (const auto name : names) {
+      filter.Add(by_name(name), irs::Occur::MustNot);
+    }
+    size_t counted = 0;
+    for (auto& segment : reader) {
+      ASSERT_LT(segment.live_docs_count(), segment.docs_count());
+      auto query = irs::PrepareMasked(filter, segment, {});
+      ASSERT_NE(nullptr, query);
+
+      size_t expected = 0;
+      auto lead = query->PlanLead({});
+      ASSERT_NE(nullptr, lead);
+      while (!irs::doc_limits::eof(lead->Next())) {
+        ++expected;
+      }
+
+      auto count = query->PlanCount({});
+      ASSERT_NE(nullptr, count);
+      const auto actual =
+        count->Run(irs::doc_limits::min(), irs::doc_limits::eof());
+      ASSERT_EQ(expected, actual);
+      counted += actual;
+    }
+    const auto live_excluded =
+      static_cast<size_t>(absl::c_count_if(names, [&](auto name) {
+        return !absl::c_linear_search(kRemoved, name);
+      }));
+    ASSERT_EQ(reader.live_docs_count() - live_excluded, counted);
+  }
+}
+
+TEST_P(DocCollectorTestCase, test_count_all_skips_deleted) {
+  auto writer = open_writer(irs::kOmCreate);
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                WrapFactory);
+    const Document* doc;
+    while ((doc = gen.next())) {
+      ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
+    }
+    writer->RefreshCommit();
+  }
+
+  constexpr std::string_view kRemoved[]{"A", "C", "D", "Q"};
+  for (const auto name : kRemoved) {
+    auto trx = writer->GetBatch();
+    auto removal = std::make_unique<irs::ByTerm>();
+    *removal->mutable_field_id() = kNameFieldId;
+    removal->mutable_options()->term = irs::ViewCast<irs::byte_type>(name);
+    trx.Remove(irs::Filter::ptr{std::move(removal)});
+    trx.Commit();
+  }
+  writer->RefreshCommit();
+
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
+  irs::All filter;
+  size_t counted = 0;
+  for (auto& segment : reader) {
+    ASSERT_LT(segment.live_docs_count(), segment.docs_count());
+    auto query = irs::PrepareMasked(filter, segment, {});
+    ASSERT_NE(nullptr, query);
+
+    auto count = query->PlanCount({});
+    ASSERT_NE(nullptr, count);
+    ASSERT_EQ(segment.live_docs_count(),
+              count->Run(irs::doc_limits::min(), irs::doc_limits::eof()));
+
+    auto split = query->PlanCount({.partial = true});
+    ASSERT_NE(nullptr, split);
+    constexpr irs::doc_id_t kBounds[]{irs::doc_limits::min(), 3, 20,
+                                      irs::doc_limits::eof()};
+    uint64_t total = 0;
+    for (size_t i = 1; i != std::size(kBounds); ++i) {
+      total += split->Run(kBounds[i - 1], kBounds[i]);
+    }
+    total += split->Finish();
+    ASSERT_EQ(segment.live_docs_count(), total);
+    counted += total;
+  }
+  ASSERT_EQ(reader.live_docs_count(), counted);
 }
 
 TEST_P(DocCollectorTestCase, test_execute_topk_disjunction) {

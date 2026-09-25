@@ -500,9 +500,6 @@ statement ok
 DROP TABLE public.docs;
 
 
-statement ok
-DROP TEXT SEARCH DICTIONARY public.en;
-
 
 statement ok
 DROP SCHEMA s1 CASCADE;
@@ -510,3 +507,6 @@ DROP SCHEMA s1 CASCADE;
 
 statement ok
 DROP SCHEMA s2 CASCADE;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY public.en;

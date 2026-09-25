@@ -1,3 +1,11 @@
+halt
+
+
+# Muted: CREATE ROLE after writing a user database in the same transaction
+# needs one catalog WAL for cluster-level and per-database objects, as on main.
+# Tracked in https://github.com/serenedb/serenedb/issues/1208 (item 1); remove
+# the halt when it lands.
+
 control substitution on
 
 # ----------------------------------------------------------------------

@@ -1,0 +1,85 @@
+# Re-attaching a just-detached file while another connection still holds the
+# detached database. The same options reuse the open database; a different
+# access mode is refused right away while the holder keeps it open, and
+# succeeds once nothing holds it any more. Other connections' catalog listings
+# can hold it a little longer than the holder, hence the retry.
+
+control substitution on
+
+statement ok
+DETACH IF EXISTS aad;
+
+statement ok
+ATTACH '${__TEST_DIR__}/aad.db' AS aad;
+
+statement ok
+CREATE OR REPLACE TABLE aad.main.docs(id INTEGER);
+
+statement ok
+INSERT INTO aad.main.docs VALUES (1), (2);
+
+
+connection holder
+statement ok
+BEGIN;
+
+
+connection holder
+query
+SELECT count(*) > 0 AS listed FROM duckdb_tables();
+----
+listed
+t
+
+
+connection default
+statement ok
+DETACH aad;
+
+
+connection default
+statement ok
+ATTACH '${__TEST_DIR__}/aad.db' AS aad;
+
+
+connection default
+query
+SELECT count(*) AS n FROM aad.main.docs;
+----
+n
+2
+
+
+connection default
+statement ok
+DETACH aad;
+
+
+connection default
+statement error
+ATTACH '${__TEST_DIR__}/aad.db' AS aad_ro (READ_ONLY);
+----
+db error: ERROR: Database "aad_ro" is already attached in READ_WRITE mode, cannot re-attach in READ_ONLY mode
+
+
+connection holder
+statement ok
+COMMIT;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+ATTACH '${__TEST_DIR__}/aad.db' AS aad_ro (READ_ONLY);
+
+
+connection default
+query
+SELECT count(*) AS n FROM aad_ro.main.docs;
+----
+n
+2
+
+
+connection default
+statement ok
+DETACH aad_ro;

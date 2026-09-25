@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 
 #include <cstdint>
@@ -42,16 +41,6 @@
 
 namespace sdb::connector {
 namespace {
-
-bool TryCastExactInt64(const duckdb::Value& v, duckdb::Value& out) {
-  if (v.IsNull() || !v.type().IsNumeric() ||
-      !v.DefaultTryCastAs(duckdb::LogicalType::BIGINT, out, nullptr, true)) {
-    return false;
-  }
-  duckdb::Value back;
-  return out.DefaultTryCastAs(v.type(), back, nullptr, false) &&
-         duckdb::Value::NotDistinctFrom(back, v);
-}
 
 PhraseGap ParsePhraseGap(const duckdb::Value& val, std::string_view label,
                          std::string_view hint,
@@ -119,8 +108,7 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
 
   std::optional<int64_t> arg_slop;
   for (const auto& child : func.GetChildren()) {
-    if (!absl::EqualsIgnoreCase(child->GetAlias().GetIdentifierName(),
-                                "slop")) {
+    if (!(child->GetAlias() == "slop")) {
       continue;
     }
     int64_t slop_raw = 0;
@@ -156,8 +144,7 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
   std::optional<PhraseGap> pending_gap;
 
   for (size_t i = 0; i < func.GetChildren().size(); ++i) {
-    if (absl::EqualsIgnoreCase(
-          func.GetChildren()[i]->GetAlias().GetIdentifierName(), "slop")) {
+    if (func.GetChildren()[i]->GetAlias() == "slop") {
       continue;
     }
     const auto* const_val = TryGetConstant(*func.GetChildren()[i]);

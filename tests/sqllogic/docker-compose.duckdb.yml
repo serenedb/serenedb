@@ -32,6 +32,7 @@ services:
     environment:
       - BUILD_DIR
       - DUCKDB_SUITES
+      - DUCKDB_JOBS
       - HOME=/serenedb
       - LOG_DIR=/logs
       # out/ is what the workflow uploads as the job artifact; tests/sqllogic is not.

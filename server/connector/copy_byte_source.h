@@ -29,8 +29,23 @@
 #include <vector>
 
 #include "pg/copy_in_bridge.h"
+#include "server/utils/message_buffer.h"
 
 namespace sdb::connector {
+
+// Drain everything committed to `buffer` into `handle` as raw bytes, leaving
+// the buffer empty for the next chunk. Shared by the binary (PGCOPY) and text
+// COPY TO writers.
+inline void DrainToHandle(message::Buffer& buffer, duckdb::FileHandle& handle) {
+  auto chain = buffer.ReleaseChain();
+  for (auto* chunk = chain.head; chunk; chunk = chunk->Next()) {
+    const auto data = chunk->Data(chunk->GetEnd());
+    if (!data.empty()) {
+      handle.Write(const_cast<uint8_t*>(data.data()),
+                   static_cast<duckdb::idx_t>(data.size()));
+    }
+  }
+}
 
 // Zero-copy byte source for a COPY FROM stream: a decoder reads STRAIGHT out of
 // the source's current view. `View()` returns the bytes on hand (blocking /
@@ -46,7 +61,20 @@ struct ByteSource {
   virtual void Next(size_t n) = 0;
   // Copy exactly `len` bytes into `dst`, spanning views as needed. Returns the
   // number actually copied (< len only at premature EOF).
-  virtual size_t Fill(char* dst, size_t len) = 0;
+  size_t Fill(char* dst, size_t len) {
+    size_t done = 0;
+    while (done < len) {
+      auto v = View();
+      if (v.empty()) {
+        break;
+      }
+      const auto take = std::min(len - done, v.size());
+      std::memcpy(dst + done, v.data(), take);
+      done += take;
+      Next(take);
+    }
+    return done;
+  }
   // Block until EOF, releasing remaining bytes. Used after the last row to keep
   // the pg-stdin bridge in lock-step with the feeder until CopyDone.
   virtual void DrainToEof() = 0;
@@ -76,21 +104,6 @@ class BridgeByteSource final : public ByteSource {
     }
     _view.remove_prefix(n);
     _bridge.Consume(n);
-  }
-
-  size_t Fill(char* dst, size_t len) final {
-    size_t done = 0;
-    while (done < len) {
-      auto v = View();
-      if (v.empty()) {
-        break;  // premature EOF
-      }
-      const auto take = std::min(len - done, v.size());
-      std::memcpy(dst + done, v.data(), take);
-      done += take;
-      Next(take);
-    }
-    return done;
   }
 
   void DrainToEof() final {
@@ -126,21 +139,6 @@ class HandleByteSource final : public ByteSource {
   }
 
   void Next(size_t n) final { _view.remove_prefix(n); }
-
-  size_t Fill(char* dst, size_t len) final {
-    size_t done = 0;
-    while (done < len) {
-      auto v = View();
-      if (v.empty()) {
-        break;
-      }
-      const auto take = std::min(len - done, v.size());
-      std::memcpy(dst + done, v.data(), take);
-      done += take;
-      Next(take);
-    }
-    return done;
-  }
 
   void DrainToEof() final {
     _view = {};

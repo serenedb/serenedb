@@ -20,36 +20,63 @@
 
 #include "pg/pg_catalog/pg_default_acl.h"
 
-#include <iresearch/utils/down_cast.hpp>
+#include <algorithm>
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/role.h"
+#include "catalog/cluster.h"
 #include "pg/pg_catalog/fwd.h"
-#include "server/utils/app_server.h"
+#include "pg/pg_types.h"
 
 namespace sdb::pg {
+namespace {
+
+PgDefaultAcl::Defaclobjtype ObjType(duckdb::CatalogType type) {
+  switch (type) {
+    case duckdb::CatalogType::SEQUENCE_ENTRY:
+      return PgDefaultAcl::Defaclobjtype::Sequence;
+    case duckdb::CatalogType::MACRO_ENTRY:
+    case duckdb::CatalogType::TABLE_MACRO_ENTRY:
+      return PgDefaultAcl::Defaclobjtype::Function;
+    case duckdb::CatalogType::TYPE_ENTRY:
+      return PgDefaultAcl::Defaclobjtype::Type;
+    case duckdb::CatalogType::SCHEMA_ENTRY:
+      return PgDefaultAcl::Defaclobjtype::Schema;
+    default:
+      return PgDefaultAcl::Defaclobjtype::Relation;
+  }
+}
+
+}  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgDefaultAcl>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgDefaultAcl>::GetTableData() {
   std::vector<PgDefaultAcl> values;
   uint64_t oid = 1;
-  catalog::VisitRoles(
-    &_config.GetClientContext(), [&](const catalog::SereneDBRoleEntry& role) {
-      for (const auto& entry : role.DefaultAcls()) {
-        // defaclnamespace 0 == all schemas (the schema-less form).
-        const uint64_t ns = entry.schema.isSet() ? entry.schema.id() : 0;
-        values.push_back(PgDefaultAcl{
-          .oid = oid++,
-          .defaclrole = role.GetId().id(),
-          .defaclnamespace = ns,
-          .defaclobjtype =
-            static_cast<PgDefaultAcl::Defaclobjtype>(entry.objtype),
-          .defaclacl = {entry.acl},
-        });
+  auto& context = _context;
+  std::vector<duckdb::idx_t> schemas;
+  VisitSchemas(context, GetDatabase(), [&](duckdb::SchemaCatalogEntry& schema) {
+    schemas.emplace_back(schema.oid);
+  });
+  auto& cluster = catalog::ClusterOf(context);
+  auto database = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+                    .GetEntry(cluster.GetCatalogTransaction(context),
+                              GetDatabase().GetName());
+  if (database) {
+    for (const auto& entry : database->permissions.defaults) {
+      if (entry.scope != kInvalidOid &&
+          !std::ranges::contains(schemas, entry.scope)) {
+        continue;
       }
-    });
+      values.push_back(PgDefaultAcl{
+        .oid = oid++,
+        .defaclrole = entry.role,
+        .defaclnamespace = entry.scope,
+        .defaclobjtype = ObjType(entry.objtype),
+        .defaclacl = {entry.acl},
+      });
+    }
+  }
 
   auto result = CreateColumns<PgDefaultAcl>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

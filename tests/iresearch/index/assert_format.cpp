@@ -30,7 +30,6 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
-#include <iresearch/index/comparer.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/directory_reader_impl.hpp>
 #include <iresearch/index/field_meta.hpp>
@@ -105,18 +104,6 @@ bool Term::operator<(const Term& rhs) const {
                     rhs.value.size());
 }
 
-void Term::sort(const std::map<irs::doc_id_t, irs::doc_id_t>& docs) {
-  std::set<Posting> resorted_postings;
-
-  for (auto& posting : postings) {
-    resorted_postings.emplace(
-      docs.at(posting._id),
-      std::move(const_cast<tests::Posting&>(posting)._positions));
-  }
-
-  postings = std::move(resorted_postings);
-}
-
 Field::Field(irs::field_id id, irs::IndexFeatures index_features)
   : FieldMeta(id, index_features), stats{} {}
 
@@ -164,12 +151,6 @@ uint64_t Field::total_doc_freq() const {
   return value;
 }
 
-void Field::sort(const std::map<irs::doc_id_t, irs::doc_id_t>& docs) {
-  for (auto& term : terms) {
-    const_cast<tests::Term&>(term).sort(docs);
-  }
-}
-
 void ColumnValues::insert(irs::doc_id_t key, irs::bytes_view value) {
   ASSERT_TRUE(irs::doc_limits::valid(key));
   ASSERT_TRUE(!irs::doc_limits::eof(key));
@@ -179,16 +160,6 @@ void ColumnValues::insert(irs::doc_id_t key, irs::bytes_view value) {
   if (!res.second) {
     res.first->second.append(value.data(), value.size());
   }
-}
-
-void ColumnValues::sort(const std::map<irs::doc_id_t, irs::doc_id_t>& docs) {
-  std::map<irs::doc_id_t, irs::bstring> resorted_values;
-
-  for (auto& value : _values) {
-    resorted_values.emplace(docs.at(value.first), std::move(value.second));
-  }
-
-  _values = std::move(resorted_values);
 }
 
 void IndexSegment::compute_features() {}
@@ -336,40 +307,6 @@ void IndexSegment::insert_indexed(const Ifield& f) {
 
   if (has_offs) {
     field.stats.offs += last_offs_end;
-  }
-}
-
-void IndexSegment::sort(const irs::Comparer& comparator) {
-  if (_sort.empty()) {
-    return;
-  }
-
-  std::stable_sort(
-    _sort.begin(), _sort.end(), [&](const auto& lhs, const auto& rhs) {
-      return comparator.Compare(std::get<0>(lhs), std::get<0>(rhs)) < 0;
-    });
-
-  irs::doc_id_t new_doc_id = irs::doc_limits::min();
-  std::map<irs::doc_id_t, irs::doc_id_t> order;
-
-  for (auto& [_, doc, prev] : _sort) {
-    for (auto i = prev; i; --i) {
-      order[doc - i] = new_doc_id++;
-    }
-    order[doc] = new_doc_id++;
-  }
-  while (order.size() < this->doc_count()) {
-    order[static_cast<irs::doc_id_t>(order.size()) + 1] = new_doc_id++;
-    ASSERT_LE(order.size(), this->doc_count());
-  }
-  for (auto& field : _fields) {
-    field.second.sort(order);
-  }
-  for (auto& column : _columns) {
-    column.sort(order);
-  }
-  for (auto& [_, doc, __] : _sort) {
-    doc = order.at(doc);
   }
 }
 

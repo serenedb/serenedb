@@ -25,6 +25,7 @@
 #include <absl/strings/ascii.h>
 
 #include <duckdb/common/case_insensitive_map.hpp>
+#include <duckdb/common/identifier.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/logging/log_manager.hpp>
 #include <duckdb/logging/logger.hpp>

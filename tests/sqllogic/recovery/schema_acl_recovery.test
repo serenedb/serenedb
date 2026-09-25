@@ -1,0 +1,120 @@
+control substitution on
+
+# GRANT ON SCHEMA and ALTER SCHEMA OWNER TO are alters of the schema entry. They
+# must reach the WAL, survive a crash before any checkpoint, survive a checkpoint,
+# and leave the schema's contents reachable through the new version.
+
+statement ok
+CREATE ROLE sar_vedernikoff;
+
+statement ok
+CREATE ROLE sar_mop;
+
+statement ok
+CREATE SCHEMA sar_sch;
+
+statement ok
+CREATE TABLE sar_sch.t (id INTEGER);
+
+statement ok
+INSERT INTO sar_sch.t VALUES (1), (2);
+
+statement ok
+CREATE VIEW sar_sch.v AS SELECT id FROM sar_sch.t;
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA sar_sch TO sar_vedernikoff;
+
+statement ok
+ALTER SCHEMA sar_sch OWNER TO sar_mop;
+
+query
+SELECT pg_get_userbyid(nspowner) AS owner,
+       has_schema_privilege('sar_vedernikoff', 'sar_sch', 'USAGE') AS usage,
+       has_schema_privilege('sar_vedernikoff', 'sar_sch', 'CREATE') AS create_priv
+FROM pg_namespace WHERE nspname = 'sar_sch';
+----
+owner	usage	create_priv
+sar_mop	t	t
+
+query
+SELECT count(*) AS n FROM sar_sch.v;
+----
+n
+2
+
+# Crash with the alters only in the WAL.
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_wal_replay
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT pg_get_userbyid(nspowner) AS owner,
+       has_schema_privilege('sar_vedernikoff', 'sar_sch', 'USAGE') AS usage,
+       has_schema_privilege('sar_vedernikoff', 'sar_sch', 'CREATE') AS create_priv
+FROM pg_namespace WHERE nspname = 'sar_sch';
+----
+owner	usage	create_priv
+sar_mop	t	t
+
+connection after_wal_replay
+query
+SELECT count(*) AS n FROM sar_sch.v;
+----
+n
+2
+
+connection after_wal_replay
+statement ok
+REVOKE CREATE ON SCHEMA sar_sch FROM sar_vedernikoff;
+
+connection after_wal_replay
+statement ok
+CREATE TABLE sar_sch.t2 (id INTEGER);
+
+# Checkpoint, then crash: the schema version comes back from the database file.
+connection after_wal_replay
+statement ok
+CHECKPOINT;
+
+connection after_wal_replay
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_wal_replay
+statement error connection closed
+SELECT 1;
+
+connection after_checkpoint
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT pg_get_userbyid(nspowner) AS owner,
+       has_schema_privilege('sar_vedernikoff', 'sar_sch', 'USAGE') AS usage,
+       has_schema_privilege('sar_vedernikoff', 'sar_sch', 'CREATE') AS create_priv
+FROM pg_namespace WHERE nspname = 'sar_sch';
+----
+owner	usage	create_priv
+sar_mop	t	f
+
+connection after_checkpoint
+query
+SELECT table_name FROM information_schema.tables WHERE table_schema = 'sar_sch' ORDER BY table_name;
+----
+table_name
+t
+t2
+v
+
+connection after_checkpoint
+statement ok
+DROP SCHEMA sar_sch CASCADE;
+
+connection after_checkpoint
+statement ok
+DROP ROLE sar_vedernikoff;
+
+connection after_checkpoint
+statement ok
+DROP ROLE sar_mop;

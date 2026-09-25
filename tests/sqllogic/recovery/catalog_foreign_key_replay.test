@@ -1,0 +1,72 @@
+control substitution on
+
+# WAL replay of statements that rebind a table's foreign keys: an ALTER on the
+# referencing table, and a DROP of a referencing table, which rewrites the
+# referenced one. Replay runs outside any session, so the referenced table has
+# to be found in the table's own database.
+
+statement ok
+CREATE TABLE fkr_parent (id INTEGER PRIMARY KEY);
+
+statement ok
+CREATE TABLE fkr_child (id INTEGER, pid INTEGER REFERENCES fkr_parent (id));
+
+statement ok
+CREATE TABLE fkr_gone (id INTEGER, pid INTEGER REFERENCES fkr_parent (id));
+
+statement ok
+INSERT INTO fkr_parent VALUES (1), (2);
+
+statement ok
+INSERT INTO fkr_child VALUES (10, 1);
+
+statement ok
+ALTER TABLE fkr_child ALTER COLUMN id SET DEFAULT 0;
+
+statement ok
+DROP TABLE fkr_gone;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, pid FROM fkr_child;
+----
+id	pid
+10	1
+
+connection after_crash
+statement ok
+INSERT INTO fkr_child (pid) VALUES (2);
+
+connection after_crash
+query
+SELECT id, pid FROM fkr_child ORDER BY pid;
+----
+id	pid
+10	1
+0	2
+
+connection after_crash
+statement error (?i)foreign key
+INSERT INTO fkr_child VALUES (11, 99);
+
+connection after_crash
+query
+SELECT count(*) FROM pg_class WHERE relname = 'fkr_gone';
+----
+count
+0
+
+connection after_crash
+statement ok
+DROP TABLE fkr_child;
+
+connection after_crash
+statement ok
+DROP TABLE fkr_parent;

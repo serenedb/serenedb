@@ -197,10 +197,6 @@ class BooleanBuilder {
   uint64_t SumEstimate(
     const BooleanQuery::PreparedBucket& bucket) const noexcept;
 
-  void Drop(QueryBuilder::ptr query);
-
-  QueryBuilder::ptr DropAll();
-
   BooleanQuery::Clauses _clauses;
   const SubReader& _segment;
   IResourceManager& _memory;

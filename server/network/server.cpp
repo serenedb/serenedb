@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -35,9 +36,8 @@
 #include <memory>
 #include <utility>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/role.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/role.h"
 #include "network/connection.h"
 #include "network/credentials.h"
 #include "network/http/es/handlers.h"
@@ -127,12 +127,15 @@ namespace {
 class CatalogCredentialProvider final : public network::CredentialProvider {
  public:
   std::optional<network::Credential> LookupCredential(
-    std::string_view username) const override {
-    auto role = catalog::FindRole(nullptr, username);
-    if (!role) {
+    std::string_view username) const final {
+    auto& cluster = catalog::ClusterOf();
+    auto entry =
+      cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+        .GetEntry(cluster.LoginTransaction(), duckdb::Identifier{username});
+    if (!entry) {
       return std::nullopt;
     }
-    const auto stored = role->Password();
+    const auto& stored = entry->Cast<catalog::RoleCatalogEntry>().Password();
     if (stored.empty()) {
       return std::nullopt;
     }
@@ -350,7 +353,7 @@ void Server::AddListener(const network::ListenSpec& spec) {
     deps.ssl = ssl;
     deps.credentials = _credentials.get();
     deps.allow_cleartext_without_tls = false;
-    deps.require_tls = spec.RequireTls() && ssl != nullptr;
+    deps.require_tls = spec.RequireTls() && ssl;
     deps.cancel = &_cancel;
     deps.max_message_bytes = _max_message;
     deps.active = &_active;
@@ -358,7 +361,7 @@ void Server::AddListener(const network::ListenSpec& spec) {
     deps.max_connections = spec.max_connections.value_or(_max_connections);
     deps.auth_timeout = _auth_timeout;
     deps.proxy = spec.proxy;
-    if (ssl != nullptr) {
+    if (ssl) {
       acceptor = std::make_shared<network::Acceptor<
         network::pg::PgWireSession<network::SocketKind::MaybeTls>>>(
         *_pool, spec.endpoint, deps, opts);
@@ -396,7 +399,7 @@ void Server::AddListener(const network::ListenSpec& spec) {
   _acceptors.push_back(std::move(acceptor));
   SDB_INFO(GENERAL, "network listening on ", spec.url, " (",
            spec.endpoint.address().to_string(), ":", spec.endpoint.port(),
-           ssl != nullptr ? ", tls" : "", ")");
+           ssl ? ", tls" : "", ")");
 }
 
 void Server::StartIoPool() {
@@ -437,7 +440,7 @@ void Server::StartListeners() {
                   "': OpenTelemetry schema: ", error);
       }
     }
-    if (catalog::FindDatabase(nullptr, database) == nullptr) {
+    if (!catalog::FindDatabase(database)) {
       SDB_FATAL(GENERAL, "endpoint '", spec.url, "': database '", database,
                 "' does not exist");
     }

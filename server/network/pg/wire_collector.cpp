@@ -58,12 +58,12 @@ sdb::pg::SerializationContext CloneProto(
   return context;
 }
 
-class PgWireCollectorGlobalState : public duckdb::GlobalSinkState {
+class PgWireCollectorGlobalState final : public duckdb::GlobalSinkState {
  public:
   std::shared_ptr<WireSinkContext> ctx;
 };
 
-class PgWireCollectorLocalState : public duckdb::LocalSinkState {
+class PgWireCollectorLocalState final : public duckdb::LocalSinkState {
  public:
   // Parallel mode encodes into this; direct mode points sctx at the session's
   // _send instead and never touches it. Starts tiny: short queries seal one
@@ -81,7 +81,7 @@ class PgWireCollectorLocalState : public duckdb::LocalSinkState {
   bool initialized = false;
 };
 
-class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
+class PhysicalPgWireCollector final : public duckdb::PhysicalResultCollector {
  public:
   PhysicalPgWireCollector(duckdb::PhysicalPlan& physical_plan,
                           duckdb::PreparedStatementData& data,
@@ -238,7 +238,7 @@ class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
   void Seal(WireSinkContext& ctx, PgWireCollectorLocalState& lstate) const {
     lstate.sealed_total = lstate.buffer.TotalCommitted();
     auto chain = lstate.buffer.ReleaseChain();
-    if (chain.head != nullptr) {
+    if (chain.head) {
       ctx.PushChain(std::move(chain));
     }
   }
@@ -293,7 +293,8 @@ duckdb::unique_ptr<duckdb::PhysicalOperator> MakeWireCollector(
   ctx->context = context.shared_from_this();
   ctx->engaged = true;
   if (ctx->announce_rowdesc) {
-    WriteRowDescription(*ctx->send, data.types, data.names, ctx->formats);
+    WriteRowDescription(*ctx->send, context, data.types, data.names,
+                        ctx->formats);
   }
   auto& physical_plan = *data.physical_plan;
   auto& root = physical_plan.Root();

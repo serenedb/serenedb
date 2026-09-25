@@ -29,19 +29,19 @@ otel_traces_idx
 statement error
 ALTER TABLE otel_logs ADD COLUMN extra VARCHAR;
 ----
-db error: ERROR: ALTER TABLE ADD COLUMN on a search-backed table is not yet supported
+db error: ERROR: Unsupported alter type for catalog entry!
 
 
 statement error
 ALTER TABLE otel_logs DROP COLUMN body;
 ----
-db error: ERROR: ALTER TABLE DROP COLUMN on a search-backed table is not yet supported
+db error: ERROR: Unsupported alter type for catalog entry!
 
 
 statement error
 ALTER TABLE otel_logs ALTER COLUMN body TYPE TEXT;
 ----
-db error: ERROR: ALTER TABLE ALTER COLUMN TYPE on a search-backed table is not yet supported
+db error: ERROR: Unsupported alter type for catalog entry!
 
 
 statement ok
@@ -53,7 +53,7 @@ ALTER TABLE otel_logs_renamed RENAME TO otel_logs;
 statement error
 CREATE TABLE otel_probe_bad (a VARCHAR) WITH (storage = 'search', row_group_size = 1024);
 ----
-db error: ERROR: value for option "row_group_size" must be a multiple of the vector size 2048
+db error: ERROR: invalid value for parameter "row_group_size": "1024" (must be a positive multiple of the vector size 2048)
 
 
 statement ok

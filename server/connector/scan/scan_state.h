@@ -34,6 +34,7 @@
 #include <iresearch/index/index_source.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/index/table_filter_iterator.hpp>
+#include <iresearch/search/fill/docs_mask.hpp>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/types.hpp>
@@ -111,7 +112,6 @@ struct SegmentWork {
   }
 
   uint32_t rg_count = 0;
-  bool live = false;
   std::atomic_uint64_t rgs{0};
   std::atomic_uint32_t done_rgs{0};
   std::vector<ScanUnit> ordered_units;
@@ -128,8 +128,6 @@ class ScanBarrier {
     _total = total;
     _arrived.store(0, std::memory_order_relaxed);
   }
-
-  uint32_t Total() const noexcept { return _total; }
 
   bool Arrive() noexcept {
     return _arrived.fetch_add(1, std::memory_order_acq_rel) + 1 == _total;
@@ -161,7 +159,7 @@ struct ScanMetrics {
   std::atomic<uint64_t> parked{0};
 };
 
-struct ScanGlobalState : public duckdb::GlobalTableFunctionState {
+struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   const ScanBindData* scan = nullptr;
   duckdb::ClientContext* client_context = nullptr;
   const irs::IndexReader* reader = nullptr;
@@ -233,7 +231,6 @@ struct ScanGlobalState : public duckdb::GlobalTableFunctionState {
   std::atomic_uint32_t worker_count{0};
 
   std::vector<uint32_t> segment_order;
-  std::vector<std::vector<irs::doc_id_t>> dead_rows;
   std::unique_ptr<SegmentWork[]> segments;
   uint32_t live_segments = 0;
   std::atomic_uint32_t next_segment{0};
@@ -331,7 +328,7 @@ struct FetchLocalState {
   void EnsureHitBatcher(const ScanGlobalState& g);
 };
 
-struct CountLocalState : public ScanLocalState {
+struct CountLocalState final : public ScanLocalState {
   uint64_t local_count = 0;
   uint64_t local_emitted = 0;
   ColFilterVerify col_verify;
@@ -340,18 +337,18 @@ struct CountLocalState : public ScanLocalState {
   irs::doc_id_t root_end = 0;
 };
 
-struct ColScanLocalState : public ScanLocalState {
+struct ColScanLocalState final : public ScanLocalState {
   uint64_t doc_cursor = 0;
   uint64_t doc_end = 0;
   FullScanner* scanner = nullptr;
-  std::span<const irs::doc_id_t> dead;
-  size_t dead_at = 0;
+  irs::fill::DocsMask mask{nullptr, irs::doc_limits::eof()};
+  bool has_mask = false;
   std::vector<std::unique_ptr<FullScanner>> full_scanners;
   duckdb::buffer_ptr<duckdb::SelectionData> live_sel_data;
   duckdb::SelectionVector live_sel;
 };
 
-struct StreamLocalState : public ScanLocalState, FetchLocalState {
+struct StreamLocalState final : public ScanLocalState, FetchLocalState {
   irs::memory::managed_ptr<irs::memory::Managed> root;
   uint32_t root_seg = std::numeric_limits<uint32_t>::max();
   bool scored = false;
@@ -362,7 +359,7 @@ struct StreamLocalState : public ScanLocalState, FetchLocalState {
   bool started = false;
 };
 
-struct TopKLocalState : public ScanLocalState, FetchLocalState {
+struct TopKLocalState final : public ScanLocalState, FetchLocalState {
   std::span<irs::ScoreDoc> hit_slice;
   irs::ColumnArgsFetcher score_fetcher;
   std::optional<irs::LoserScoreCollector> collector;
@@ -416,11 +413,12 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
 duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
                             FetchLocalState& f, duckdb::DataChunk& output,
                             duckdb::idx_t collected);
-ScoreEmit ScoreEmitOf(const ScanGlobalState& g) noexcept;
+inline ScoreEmit ScoreEmitOf(const ScanGlobalState& g) noexcept {
+  return g.vector_scorer ? g.vector_scorer->score_emit : ScoreEmit::Identity;
+}
 
 void RunCountScan(duckdb::TableFunctionInput& input, ScanGlobalState& g,
                   CountLocalState& l, duckdb::DataChunk& output);
-void BuildDeadRows(ScanGlobalState& g);
 
 void RunColScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
                 ScanGlobalState& g, ColScanLocalState& l,

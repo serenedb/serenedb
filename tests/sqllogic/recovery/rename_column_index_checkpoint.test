@@ -1,0 +1,54 @@
+control substitution on
+
+# A column renamed under a unique index, then checkpointed: the checkpoint
+# writes the index definition with the new column name, so after a restart the
+# index binds again and still enforces uniqueness.
+
+statement ok
+CREATE TABLE rcc_t (a INTEGER, b INTEGER);
+
+statement ok
+CREATE UNIQUE INDEX rcc_i ON rcc_t (a);
+
+statement ok
+INSERT INTO rcc_t VALUES (1, 10), (2, 20);
+
+statement ok
+ALTER TABLE rcc_t RENAME COLUMN a TO c;
+
+statement ok
+CHECKPOINT;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT c, b FROM rcc_t ORDER BY c;
+----
+c	b
+1	10
+2	20
+
+connection after_crash
+statement error (?i)duplicate key
+INSERT INTO rcc_t VALUES (1, 30);
+
+connection after_crash
+statement ok
+INSERT INTO rcc_t VALUES (3, 30);
+
+connection after_crash
+query
+SELECT sql FROM duckdb_indexes() WHERE index_name = 'rcc_i';
+----
+sql
+CREATE UNIQUE INDEX rcc_i ON public.rcc_t(c);
+
+connection after_crash
+statement ok
+DROP TABLE rcc_t;

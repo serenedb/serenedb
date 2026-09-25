@@ -20,11 +20,10 @@
 
 #pragma once
 
+#include <duckdb/common/optional_ptr.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <expected>
 #include <magic_enum/magic_enum.hpp>
-
-#include "catalog/identifiers/object_id.h"
 
 namespace duckdb {
 
@@ -40,6 +39,50 @@ namespace pg {
 using ParamIndex = int16_t;
 
 inline constexpr uint64_t kInvalidOid = 0;
+
+// Postgres' PUBLIC pseudo-role. It is not a role id at all: 0 is the oid no
+// pg_authid row can carry, which is what lets an acl item name "everybody".
+inline constexpr duckdb::idx_t kPublicGrantee = 0;
+
+inline constexpr duckdb::idx_t kMinSystem = 1000000;
+
+inline constexpr duckdb::idx_t kPgCatalogSchema = 11;
+inline constexpr duckdb::idx_t kPgInformationSchema = kMinSystem + 3;
+inline constexpr duckdb::idx_t kPgPublicSchema = 2200;
+inline constexpr duckdb::idx_t kPgPostgresDatabase = 5;
+
+inline constexpr duckdb::idx_t kRootUser = kMinSystem;
+
+inline constexpr duckdb::idx_t kPgAmInverted = kMinSystem + 300;
+inline constexpr duckdb::idx_t kPgAmIresearch = kMinSystem + 301;
+inline constexpr duckdb::idx_t kPgAmSecondary = kMinSystem + 303;
+
+inline constexpr duckdb::idx_t kPgOpclassIvf = kMinSystem + 200;
+inline constexpr duckdb::idx_t kPgOpclassIncluded = kMinSystem + 201;
+inline constexpr duckdb::idx_t kPgOpclassHnsw = kMinSystem + 202;
+
+inline constexpr duckdb::idx_t kFirstSystemView = kMinSystem + 1000;
+inline constexpr duckdb::idx_t kFirstBuiltinFunction = kMinSystem + 10'000;
+
+inline constexpr uint64_t kKeyIndexOidBit = uint64_t{1} << 62;
+
+inline constexpr uint64_t KeyIndexOid(uint64_t relation_oid,
+                                      uint64_t constraint_position) {
+  return kKeyIndexOidBit | (constraint_position << 48) | relation_oid;
+}
+
+inline constexpr uint64_t kConstraintOidBit = uint64_t{1} << 61;
+
+inline constexpr uint64_t ConstraintOid(uint64_t relation_oid,
+                                        uint64_t constraint_position) {
+  return kConstraintOidBit | (constraint_position << 48) | relation_oid;
+}
+
+inline constexpr uint64_t kArrayTypeOidBit = uint64_t{1} << 31;
+
+inline constexpr uint64_t TypeArrayOid(uint64_t element_oid) {
+  return element_oid | kArrayTypeOidBit;
+}
 
 // Postgres stores date/time/timestamp from 2000-01-01
 inline constexpr int64_t kGapDays =
@@ -239,14 +282,14 @@ enum PgTypeOID : int32_t {
   kAnycompatiblemultirange = 4538,
   kPgBrinBloomSummary = 4600,
   kPgBrinMinmaxMultiSummary = 4601,
-  kVariant = id::kVariant.id(),
-  kVariantArray = id::kVariantArray.id(),
-  kTsquery = id::kTsquery.id(),
-  kTsqueryArray = id::kTsqueryArray.id(),
-  kUnion = id::kUnion.id(),
-  kUnionArray = id::kUnionArray.id(),
-  kGeometry = id::kGeometry.id(),
-  kGeometryArray = id::kGeometryArray.id(),
+  kVariant = kMinSystem + 100,
+  kVariantArray = kMinSystem + 101,
+  kTsquery = kMinSystem + 102,
+  kTsqueryArray = kMinSystem + 103,
+  kUnion = kMinSystem + 104,
+  kUnionArray = kMinSystem + 105,
+  kGeometry = kMinSystem + 106,
+  kGeometryArray = kMinSystem + 107,
 };
 
 // A column's pg_type identity for RowDescription: the type OID, typlen (the
@@ -257,8 +300,12 @@ struct PgTypeInfo {
   int16_t typlen;
   int32_t typmod;
 };
-PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array = false);
-int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array = false);
+PgTypeInfo Logical2Pg(const duckdb::LogicalType& type,
+                      duckdb::optional_ptr<duckdb::ClientContext> context,
+                      bool in_array = false);
+int32_t Type2Oid(const duckdb::LogicalType& type,
+                 duckdb::optional_ptr<duckdb::ClientContext> context,
+                 bool in_array = false);
 duckdb::LogicalType Oid2Type(int32_t oid, duckdb::ClientContext& context);
 
 std::string RegtypeOut(uint64_t oid);

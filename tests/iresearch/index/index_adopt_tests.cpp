@@ -61,8 +61,18 @@ class CountingDirectory : public tests::DirectoryMock {
     return it == _creates.end() ? 0 : it->second;
   }
 
+  bool sync(std::span<const std::string_view> files) noexcept final {
+    for (const auto file : files) {
+      _synced.emplace_back(file);
+    }
+    return tests::DirectoryMock::sync(files);
+  }
+
+  std::vector<std::string> TakeSynced() { return std::exchange(_synced, {}); }
+
  private:
   std::map<std::string, size_t> _creates;
+  std::vector<std::string> _synced;
 };
 
 class IndexAdoptTest : public TestBase {
@@ -92,7 +102,7 @@ class IndexAdoptTest : public TestBase {
     auto options = tests::EnsureWriterDb(tests::CsDefaultWriterOptions());
     options.cleanup_on_open = cleanup_on_open;
     options.segment_docs_max = segment_docs_max;
-    _writer = irs::IndexWriter::Make(*_dir, _codec, mode, options);
+    _writer = irs::IndexWriter::Make(*_dir, _codec, mode, std::move(options));
   }
 
   // Drops the Directory too, so no in-memory IndexFileRefs survive.
@@ -304,12 +314,72 @@ TEST_F(IndexAdoptTest, AdoptSegmentRepublishesFlushedRows) {
   for (const auto& meta_file : adopt) {
     ASSERT_TRUE(_writer->AdoptSegment(meta_file, _codec, /*tick=*/7));
   }
+  _dir->TakeSynced();
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count());
+  const auto synced = _dir->TakeSynced();
+  ASSERT_EQ(1, synced.size());
+  EXPECT_TRUE(synced.front().starts_with("pending_segments_"));
 
   // And they are genuinely durable now, not just live in this writer.
   Restart(/*cleanup_on_open=*/true);
   EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count());
+}
+
+TEST_F(IndexAdoptTest, AdoptedSegmentBesideACompactionIsNotResynced) {
+  Restart(false);
+
+  for (const auto* value : {"a", "b"}) {
+    auto trx = _writer->GetBatch(true);
+    ASSERT_TRUE(InsertDoc(trx, value));
+    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(_writer->RefreshCommit());
+  }
+
+  std::vector<std::string> adopt;
+  std::vector<std::string> adopted_files;
+  {
+    auto trx = _writer->GetBatch(true);
+    ASSERT_TRUE(InsertDoc(trx, "adopted"));
+    const auto flushed = trx.FlushAndFsync();
+    adopt = MetaFilesOf(flushed);
+    adopted_files = FilesOf(flushed);
+    trx.Abort();
+  }
+  ASSERT_EQ(1, adopt.size());
+
+  Restart(false);
+
+  static const auto kFullMerge = irs::index_utils::MakePolicy(
+    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
+  ASSERT_TRUE(_writer->Compact(kFullMerge));
+  ASSERT_TRUE(_writer->AdoptSegment(adopt.front(), _codec, 20));
+
+  _dir->TakeSynced();
+  ASSERT_TRUE(_writer->RefreshCommit());
+
+  const auto snapshot = _writer->GetSnapshot();
+  ASSERT_EQ(2, snapshot.size());
+  EXPECT_EQ(3, snapshot.live_docs_count());
+
+  std::vector<std::string> expected;
+  for (const auto& segment : snapshot.Meta().index_meta.segments) {
+    if (segment.filename != adopt.front()) {
+      expected.emplace_back(segment.filename);
+      expected.insert(expected.end(), segment.meta.files.begin(),
+                      segment.meta.files.end());
+    }
+  }
+  auto synced = _dir->TakeSynced();
+  ASSERT_FALSE(synced.empty());
+  EXPECT_TRUE(synced.back().starts_with("pending_segments_"));
+  synced.pop_back();
+  std::ranges::sort(expected);
+  std::ranges::sort(synced);
+  EXPECT_EQ(expected, synced);
+  for (const auto& file : adopted_files) {
+    EXPECT_EQ(synced.end(), std::ranges::find(synced, file));
+  }
 }
 
 TEST_F(IndexAdoptTest, AdoptSegmentTickOrdersAgainstRemoval) {
@@ -426,11 +496,15 @@ TEST_F(IndexAdoptTest, EarlyFlushedMetaIsWrittenOnce) {
   EXPECT_EQ(1, _dir->Creates(meta_file)) << "FlushAndFsync wrote it";
 
   ASSERT_TRUE(trx.Commit(/*last_tick=*/1));
+  _dir->TakeSynced();
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
 
   EXPECT_EQ(1, _dir->Creates(meta_file))
     << "the publish rewrote a meta that was already on disk unchanged";
+  const auto synced = _dir->TakeSynced();
+  ASSERT_EQ(1, synced.size());
+  EXPECT_TRUE(synced.front().starts_with("pending_segments_"));
 }
 
 // The skip above must not swallow this case: the meta genuinely changed.
@@ -448,6 +522,7 @@ TEST_F(IndexAdoptTest, MetaIsRewrittenWhenARemovalMasksTheSegment) {
     remover.Remove(ByName("doomed"));
     ASSERT_TRUE(remover.Commit(/*last_tick=*/2));
   }
+  _dir->TakeSynced();
   ASSERT_TRUE(_writer->RefreshCommit());
 
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
@@ -457,10 +532,16 @@ TEST_F(IndexAdoptTest, MetaIsRewrittenWhenARemovalMasksTheSegment) {
   ASSERT_EQ(1, _writer->GetSnapshot().size());
   const auto& published = _writer->GetSnapshot().begin()->Meta();
   EXPECT_GT(published.version, 0u) << "a masked segment must bump its version";
+
+  const auto snapshot = _writer->GetSnapshot();
+  const auto synced = _dir->TakeSynced();
+  ASSERT_EQ(2, synced.size());
+  EXPECT_EQ(snapshot.Meta().index_meta.segments.front().filename, synced[0]);
+  EXPECT_TRUE(synced[1].starts_with("pending_segments_"));
 }
 
 // The meta file needs its own ref: the segment reader pins meta.files only, and
-// unlike Import adoption does not create the file.
+// adoption does not create the file.
 TEST_F(IndexAdoptTest, AdoptedSegmentSurvivesCleanupBeforePublish) {
   std::vector<std::string> adopt;
   std::vector<std::string> data_files;
@@ -587,6 +668,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsSwapsInOneGeneration) {
   EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count())
     << "a flushed-but-unadopted segment must not be visible";
 
+  _dir->TakeSynced();
   ASSERT_TRUE(
     _writer->ReplaceSegments(Views(sources), Views(replacement), _codec));
   ASSERT_TRUE(_writer->RefreshCommit());
@@ -597,6 +679,9 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsSwapsInOneGeneration) {
   EXPECT_EQ(flushed.front().meta.name, after.front());
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count())
     << "the sources' rows are still reachable, so both halves were published";
+  const auto synced = _dir->TakeSynced();
+  ASSERT_EQ(1, synced.size());
+  EXPECT_TRUE(synced.front().starts_with("pending_segments_"));
 }
 
 // ReplaceSegments adopts at the floor, so every pending removal is eligible --
@@ -637,9 +722,9 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsAppliesPendingRemovals) {
 // The other half of the rule above: a removal a refresh has already consumed
 // is not pending any more, so nothing carries it to a later adoption by tick,
 // and the rebuilt segment would publish carrying the deleted row. Handing it to
-// ReplaceSegments queues it in the same critical section as the imports, so the
-// generation that adopts them already masks it -- there is no published state
-// where the row is back.
+// ReplaceSegments queues it in the same critical section as the incoming
+// segments, so the generation that adopts them already masks it -- there is no
+// published state where the row is back.
 TEST_F(IndexAdoptTest, ReplaceSegmentsAppliesRemovalsInTheAdoptGeneration) {
   Restart(/*cleanup_on_open=*/false);
 
@@ -671,6 +756,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsAppliesRemovalsInTheAdoptGeneration) {
   // Reissued into the swap itself rather than after it.
   auto removals = _writer->GetBatch();
   removals.Remove(ByName("doomed"));
+  _dir->TakeSynced();
   ASSERT_TRUE(_writer->ReplaceSegments(Views(sources), Views(replacement),
                                        _codec, &removals,
                                        /*removals_tick=*/30));
@@ -678,6 +764,13 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsAppliesRemovalsInTheAdoptGeneration) {
 
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count())
     << "the deleted row came back with the adopted segment";
+
+  const auto snapshot = _writer->GetSnapshot();
+  ASSERT_EQ(1, snapshot.size());
+  const auto synced = _dir->TakeSynced();
+  ASSERT_EQ(2, synced.size());
+  EXPECT_EQ(snapshot.Meta().index_meta.segments.front().filename, synced[0]);
+  EXPECT_TRUE(synced[1].starts_with("pending_segments_"));
 }
 
 // A source that is no longer in the index is what a concurrent DELETE of every
@@ -1046,6 +1139,127 @@ TEST_F(IndexAdoptTest, ABudgetedPolicySpendsItsBudgetAboveTheFloor) {
   EXPECT_EQ(2, stale) << "segments below the floor were consolidated";
   EXPECT_EQ(1, fresh) << "the segments above the floor did not consolidate";
   EXPECT_EQ(4, _writer->GetSnapshot().live_docs_count());
+}
+
+TEST_F(IndexAdoptTest,
+       AMetaRewrittenForADeleteIsSyncedBesideAPendingCompaction) {
+  for (const auto* value : {"merged_a", "merged_b", "untouched"}) {
+    auto trx = _writer->GetBatch(true);
+    ASSERT_TRUE(InsertDoc(trx, value));
+    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(_writer->RefreshCommit());
+  }
+  {
+    auto trx = _writer->GetBatch(true);
+    ASSERT_TRUE(InsertDoc(trx, "doomed"));
+    ASSERT_TRUE(InsertDoc(trx, "kept"));
+    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(_writer->RefreshCommit());
+  }
+  ASSERT_EQ(4, _writer->GetSnapshot().size());
+
+  {
+    auto trx = _writer->GetBatch(true);
+    ASSERT_TRUE(InsertDoc(trx, "in_flight"));
+    ASSERT_TRUE(trx.Commit(15));
+  }
+  ASSERT_TRUE(_writer->RefreshBegin());
+  ASSERT_EQ(irs::CompactionError::Pending,
+            _writer->Compact(BudgetedPolicy(2)).error);
+  _writer->RefreshCommit();
+
+  {
+    auto del = _writer->GetBatch();
+    del.Remove(ByName("doomed"));
+    ASSERT_TRUE(del.Commit(20));
+  }
+
+  _dir->TakeSynced();
+  ASSERT_TRUE(_writer->RefreshCommit());
+
+  const auto snapshot = _writer->GetSnapshot();
+  ASSERT_EQ(4, snapshot.size());
+  EXPECT_EQ(5, snapshot.live_docs_count());
+
+  const auto synced = _dir->TakeSynced();
+  size_t rewritten = 0;
+  for (const auto& segment : snapshot.Meta().index_meta.segments) {
+    if (segment.meta.docs_mask) {
+      ++rewritten;
+      EXPECT_NE(synced.end(), std::ranges::find(synced, segment.filename))
+        << segment.filename << " was written by this commit but never synced";
+    }
+  }
+  EXPECT_EQ(1, rewritten);
+}
+
+TEST_F(IndexAdoptTest, AFinishedCompactionRewrittenForADeleteIsSyncedOnce) {
+  constexpr size_t kDocs = 5000;
+  {
+    auto trx = _writer->GetBatch(true);
+    for (size_t i = 0; i != kDocs; ++i) {
+      ASSERT_TRUE(
+        InsertDoc(trx, i % 2 == 0 ? "even" : (i % 4 == 1 ? "one" : "three")));
+    }
+    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(_writer->RefreshCommit());
+  }
+  {
+    auto trx = _writer->GetBatch(true);
+    ASSERT_TRUE(InsertDoc(trx, "other"));
+    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(_writer->RefreshCommit());
+  }
+  ASSERT_EQ(2, _writer->GetSnapshot().size());
+
+  static const auto kFullMerge = irs::index_utils::MakePolicy(
+    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
+
+  bool removed = false;
+  const irs::MergeWriter::FlushProgress progress = [&] {
+    if (!removed) {
+      removed = true;
+      auto del = _writer->GetBatch();
+      del.Remove(ByName("even"));
+      EXPECT_TRUE(del.Commit(20));
+      EXPECT_TRUE(_writer->RefreshCommit());
+    }
+    return true;
+  };
+  ASSERT_EQ(irs::CompactionError::Ok,
+            _writer->Compact(kFullMerge, nullptr, nullptr, progress).error);
+  ASSERT_TRUE(removed) << "the progress callback never ran";
+
+  {
+    auto del = _writer->GetBatch();
+    del.Remove(ByName("one"));
+    ASSERT_TRUE(del.Commit(30));
+  }
+
+  _dir->TakeSynced();
+  ASSERT_TRUE(_writer->RefreshCommit());
+
+  const auto snapshot = _writer->GetSnapshot();
+  ASSERT_EQ(1, snapshot.size());
+  EXPECT_EQ(kDocs / 4 + 1, snapshot.live_docs_count());
+
+  const auto& compacted = snapshot.Meta().index_meta.segments.front();
+  ASSERT_NE(nullptr, compacted.meta.docs_mask);
+  EXPECT_EQ(1, compacted.meta.docs_mask_chain);
+  for (const auto& file : compacted.meta.files) {
+    EXPECT_FALSE(file.ends_with(".sm")) << file << " is a chain link";
+  }
+
+  auto synced = _dir->TakeSynced();
+  ASSERT_FALSE(synced.empty());
+  EXPECT_TRUE(synced.back().starts_with("pending_segments_"));
+  synced.pop_back();
+  std::vector<std::string> expected{compacted.meta.files.begin(),
+                                    compacted.meta.files.end()};
+  expected.emplace_back(compacted.filename);
+  std::ranges::sort(expected);
+  std::ranges::sort(synced);
+  EXPECT_EQ(expected, synced);
 }
 
 TEST_F(IndexAdoptTest, CompactionFloorRefusesWhileAMergeIsRunning) {

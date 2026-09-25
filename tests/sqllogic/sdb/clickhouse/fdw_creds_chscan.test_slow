@@ -103,20 +103,21 @@ SELECT count(*) FROM fc_passwd.chtest.vedernikoff;
 count
 6
 
-# An arbitrary credential-bearing key (sslpassword) is stored and shown verbatim
-# too -- there is no plain/secret allow-list anymore, the catalog is root-only.
-statement ok
+# An option the connector does not know is rejected at CREATE SERVER, like an
+# invalid option in postgres_fdw, and nothing is persisted.
+statement error
 CREATE SERVER fc_failclosed FOREIGN DATA WRAPPER clickhouse_fdw
   OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner',
            password 'pass word', sslpassword 'sup3r secret');
+----
+db error: ERROR: Unrecognized ClickHouse connection option "sslpassword"<slt:ignore>
+
 
 query
-SELECT array_to_string(srvoptions, ' ') LIKE '%sslpassword=sup3r secret%' AS visible,
-       array_to_string(srvoptions, ' ') LIKE '%database=chtest%' AS plain_visible
-FROM pg_foreign_server WHERE srvname = 'fc_failclosed';
+SELECT count(*) FROM pg_foreign_server WHERE srvname = 'fc_failclosed';
 ----
-visible	plain_visible
-t	t
+count
+0
 
 # ===== S: pg_foreign_server is superuser-only =====
 # Server OPTIONS carry credentials, so a plain non-superuser is refused, like
@@ -190,9 +191,6 @@ DROP SERVER fc_pwkey;
 
 statement ok
 DROP SERVER fc_passwd;
-
-statement ok
-DROP SERVER fc_failclosed;
 
 statement ok
 DROP SERVER fc_rbac;

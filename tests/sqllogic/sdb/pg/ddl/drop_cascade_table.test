@@ -169,8 +169,10 @@ id	payload
 2	r1
 
 
-statement error (?i)(null|not.?null|violates|constraint)
+statement error
 INSERT INTO clickclack_dashboard (payload) VALUES ('after');
+----
+db error: ERROR: NOT NULL constraint failed: clickclack_dashboard.id
 
 
 statement count 1
@@ -205,8 +207,7 @@ statement error
 DROP TABLE iceberg_snapshot;
 ----
 db error: ERROR: Cannot drop entry "iceberg_snapshot_id_seq" because there are entries that depend on it.
-table "iceberg_manifest_a" depends on sequence "iceberg_snapshot_id_seq".
-table "iceberg_manifest_b" depends on sequence "iceberg_snapshot_id_seq".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 

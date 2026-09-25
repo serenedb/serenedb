@@ -22,6 +22,7 @@
 #include <gtest/gtest.h>
 
 #include <duckdb/common/types.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
@@ -72,7 +73,8 @@ TEST(NetworkPgFrames, RowDescriptionSingleInt) {
   const std::vector<duckdb::LogicalType> types{duckdb::LogicalType::INTEGER};
   const std::vector<duckdb::Identifier> names{"answer"};
   const std::vector<sdb::pg::VarFormat> formats{};
-  WriteRowDescription(buf, types, names, formats);
+  auto connection = irs::DuckDBEngine::Instance().CreateConnection();
+  WriteRowDescription(buf, *connection->context, types, names, formats);
   const std::string bytes = Flatten(buf.Written());
   ASSERT_GE(bytes.size(), 7u);
   EXPECT_EQ(bytes[0], PQ_MSG_ROW_DESCRIPTION);

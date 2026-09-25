@@ -52,8 +52,6 @@
 namespace sdb::connector {
 namespace {
 
-constexpr std::string_view kListSeparator{"\x1E", 1};
-
 const duckdb::LogicalType& StringListType() {
   static const duckdb::LogicalType type = duckdb::LogicalType::UNION(
     {{"str", duckdb::LogicalType::VARCHAR},
@@ -160,6 +158,7 @@ using PooledTokenizer = std::unique_ptr<irs::analysis::Tokenizer, PoolDeleter>;
 struct TokenizerFunctionLocalState final : public duckdb::FunctionLocalState {
   PooledTokenizer wrapper;
   irs::TokenSink writer;
+  std::vector<duckdb::string_t> tokens;
 };
 
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitLocalState(
@@ -198,9 +197,9 @@ void TokenizeLists(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                    result);
 }
 
-void TokenizeJoinedLists(duckdb::DataChunk& args,
-                         duckdb::ExpressionState& state,
-                         duckdb::Vector& result) {
+void TokenizeTokenLists(duckdb::DataChunk& args,
+                        duckdb::ExpressionState& state,
+                        duckdb::Vector& result) {
   auto& local = LocalState(state);
   const auto count = static_cast<uint32_t>(args.size());
   auto& input = args.data[0];
@@ -213,58 +212,33 @@ void TokenizeJoinedLists(duckdb::DataChunk& args,
   const auto* members =
     duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(elements);
 
-  duckdb::Vector joined{duckdb::LogicalType::VARCHAR, count};
-  auto* slots = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(joined);
-  auto& present = duckdb::FlatVector::ValidityMutable(joined);
-
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   duckdb::ListVector::SetListSize(result, 0);
   ListTokenSink sink{
     result, duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result),
     duckdb::FlatVector::ValidityMutable(result), local.writer};
   sink.ResetRows(count);
-  for (uint32_t r = 0; r < count; ++r) {
-    const auto idx = lists.sel->get_index(r);
-    if (!lists.validity.RowIsValid(idx)) {
-      sink.SetNull(r);
-      present.SetInvalid(r);
-      continue;
-    }
-    const auto& entry = entries[idx];
-    size_t size = 0;
-    uint32_t n = 0;
-    for (duckdb::idx_t k = 0; k < entry.length; ++k) {
-      const auto m = elements.sel->get_index(entry.offset + k);
-      if (elements.validity.RowIsValid(m)) {
-        size += members[m].GetSize();
-        ++n;
-      }
-    }
-    if (n == 0) {
-      present.SetInvalid(r);
-      continue;
-    }
-    size += n - 1;
-    slots[r] = duckdb::StringVector::EmptyString(joined, size);
-    auto* out = slots[r].GetDataWriteable();
-    bool first = true;
-    for (duckdb::idx_t k = 0; k < entry.length; ++k) {
-      const auto m = elements.sel->get_index(entry.offset + k);
-      if (!elements.validity.RowIsValid(m)) {
+  auto& tokens = local.tokens;
+  sink.FillTokenLists(*local.wrapper, [&](auto&& fill) {
+    for (uint32_t r = 0; r < count; ++r) {
+      const auto idx = lists.sel->get_index(r);
+      if (!lists.validity.RowIsValid(idx)) {
+        sink.SetNull(r);
         continue;
       }
-      if (!first) {
-        *out++ = kListSeparator.front();
+      const auto& entry = entries[idx];
+      tokens.clear();
+      for (duckdb::idx_t k = 0; k < entry.length; ++k) {
+        const auto m = elements.sel->get_index(entry.offset + k);
+        if (elements.validity.RowIsValid(m)) {
+          tokens.push_back(members[m]);
+        }
       }
-      first = false;
-      std::memcpy(out, members[m].GetData(), members[m].GetSize());
-      out += members[m].GetSize();
+      if (!tokens.empty()) {
+        fill(r, std::span<const duckdb::string_t>{tokens});
+      }
     }
-    slots[r].Finalize();
-  }
-  duckdb::UnifiedVectorFormat values;
-  joined.ToUnifiedFormat(values);
-  sink.FillRows(*local.wrapper, joined, values, count);
+  });
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> Bind(
@@ -307,14 +281,9 @@ duckdb::unique_ptr<duckdb::FunctionData> Bind(
 
   pg::TokenizerConfigs children;
   if (wrapper) {
-    using namespace pg::tokenizer_options;
-    pg::Options nested;
-    const auto& base = list_input ? kDelimiterGroup : kKeywordGroup;
-    if (list_input) {
-      Put(nested, kDelimiter.name, duckdb::Value{std::string{kListSeparator}});
-    }
-    children.emplace_back(std::make_unique<irs::analysis::TokenizerConfig>(
-      pg::BuildStage(context, base.name, std::move(nested), {}, operation)));
+    children.emplace_back(
+      std::make_unique<irs::analysis::TokenizerConfig>(pg::BuildStage(
+        context, pg::tokenizer_options::kKeywordGroup.name, {}, {}, operation)));
   }
 
   auto config = pg::BuildStage(context, group.name, std::move(options),
@@ -332,7 +301,7 @@ duckdb::unique_ptr<duckdb::FunctionData> Bind(
   if (!list_input) {
     fn.SetFunctionCallback(TokenizeValues);
   } else if (wrapper) {
-    fn.SetFunctionCallback(TokenizeJoinedLists);
+    fn.SetFunctionCallback(TokenizeTokenLists);
   } else {
     fn.SetFunctionCallback(TokenizeLists);
   }

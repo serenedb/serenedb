@@ -88,6 +88,22 @@ class ListTokenSink final : public irs::TokenConsumer, public irs::RejectSink {
     Fill(tokenizer, source, values, count);
   }
 
+  template<typename ForEachRow>
+  void FillTokenLists(irs::analysis::Tokenizer& tokenizer,
+                      ForEachRow&& for_each_row) {
+    _rows = nullptr;
+    _row_ends = nullptr;
+    _reject_rows = true;
+    _values = nullptr;
+    _row = kNoRow;
+    _cursor = 0;
+    for_each_row([&](uint32_t row, std::span<const duckdb::string_t> tokens) {
+      tokenizer.FillTokens(tokens, irs::doc_limits::min() + row, _writer,
+                           {irs::TokenLayout::Terms, {}});
+    });
+    _writer.Finish();
+  }
+
   void Consume(irs::TokenBatch& batch, irs::DocRuns runs) final {
     auto& child = duckdb::ListVector::GetChildMutable(_result);
     const auto needed = _offset + batch.count;
@@ -97,7 +113,8 @@ class ListTokenSink final : public irs::TokenConsumer, public irs::RejectSink {
     }
     auto* out = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(child);
     const auto* data =
-      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(*_values);
+      _values ? duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(*_values)
+              : nullptr;
     uint32_t t = 0;
     for (const auto& run : runs) {
       const auto v = static_cast<uint32_t>(run.doc - irs::doc_limits::min());
@@ -106,14 +123,19 @@ class ListTokenSink final : public irs::TokenConsumer, public irs::RejectSink {
         _row = row;
         _entries[row].offset = _offset;
       }
-      const auto& value = data[_values->sel->get_index(v)];
-      const char* begin = value.GetData();
-      const char* end = begin + value.GetSize();
+      const char* begin = nullptr;
+      const char* end = nullptr;
+      if (data) {
+        const auto& value = data[_values->sel->get_index(v)];
+        begin = value.GetData();
+        end = begin + value.GetSize();
+      }
       for (uint32_t k = 0; k < run.ntokens; ++k) {
         const auto& term = batch.terms[t++];
         const char* bytes = term.GetData();
         const auto size = term.GetSize();
-        if (term.IsInlined() || (bytes >= begin && bytes + size <= end)) {
+        if (term.IsInlined() ||
+            (begin && bytes >= begin && bytes + size <= end)) {
           out[_offset++] = term;
         } else {
           out[_offset++] =

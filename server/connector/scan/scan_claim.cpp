@@ -38,17 +38,19 @@
 
 namespace sdb::connector {
 
+UnitRows ScanGlobalState::RowsOf(const ScanUnit& unit) const noexcept {
+  const uint64_t visible = irs::VisibleCount((*reader)[unit.seg].Meta());
+  return {.begin = std::min(visible, uint64_t{unit.rg_begin} * rg_size),
+          .end = std::min(visible, uint64_t{unit.rg_end} * rg_size)};
+}
+
 irs::DocRange ScanGlobalState::RangeOf(const ScanUnit& unit) const noexcept {
-  const auto& meta = (*reader)[unit.seg].Meta();
-  const uint64_t visible = irs::VisibleCount(meta);
-  const auto begin =
-    unit.whole ? 0 : std::min(visible, uint64_t{unit.rg_begin} * rg_size);
-  const auto end =
-    unit.whole ? visible : std::min(visible, uint64_t{unit.rg_end} * rg_size);
-  return {.begin = irs::doc_limits::min() + static_cast<irs::doc_id_t>(begin),
-          .end = end == meta.docs_count
-                   ? irs::doc_limits::eof()
-                   : irs::doc_limits::min() + static_cast<irs::doc_id_t>(end)};
+  const auto rows = RowsOf(unit);
+  return {
+    .begin = irs::doc_limits::min() + static_cast<irs::doc_id_t>(rows.begin),
+    .end = rows.end == (*reader)[unit.seg].Meta().docs_count
+             ? irs::doc_limits::eof()
+             : irs::doc_limits::min() + static_cast<irs::doc_id_t>(rows.end)};
 }
 
 irs::doc_id_t ScanGlobalState::UnitSpan(const ScanUnit& unit) const noexcept {
@@ -282,8 +284,6 @@ void TakeUnit(ScanLocalState& l, ScanUnit unit) {
   l.rg_units += unit.rg_end - unit.rg_begin;
 }
 
-void Exhaust(ScanLocalState& l) { l.units_exhausted = true; }
-
 bool ClaimRowGroups(ScanGlobalState& g, ScanLocalState& l, uint32_t seg) {
   auto& work = g.Segment(seg);
   auto begin = work.next_rg.load(std::memory_order_relaxed);
@@ -381,13 +381,6 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
     static_cast<uint64_t>(duckdb::TaskScheduler::QueryThreads(context));
 
   g.segments = std::make_unique<SegmentWork[]>(g.total_segments);
-  for (const auto seg : g.segment_order) {
-    auto& work = g.Segment(seg);
-    const uint64_t docs = irs::VisibleCount((*g.reader)[seg].Meta());
-    work.rg_count = static_cast<uint32_t>(
-      std::max<uint64_t>(1, (docs + g.rg_size - 1) / g.rg_size));
-    work.next_rg.store(0, std::memory_order_relaxed);
-  }
   g.live_segments = static_cast<uint32_t>(g.segment_order.size());
 
   g.split = !g.splittable
@@ -411,18 +404,17 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   const bool constant_count = g.shape == ScanShape::Count &&
                               g.col_filters.empty() && bind.search.filter &&
                               ConstantCount(*bind.search.filter);
-  const auto splittable = [&](uint32_t seg) {
-    const auto& sub = (*g.reader)[seg];
-    return g.split != SplitMode::Never &&
-           g.Segment(seg).rg_count > g.no_split_rgs &&
-           !(constant_count && sub.live_docs_count() == sub.docs_count());
-  };
   uint64_t parallel = 0;
   uint64_t rgs = 0;
-  for (uint32_t i = 0; i != g.live_segments; ++i) {
-    const auto seg = g.segment_order[i];
+  for (const auto seg : g.segment_order) {
     auto& work = g.Segment(seg);
-    const bool split = splittable(seg);
+    const auto& sub = (*g.reader)[seg];
+    const uint64_t docs = irs::VisibleCount(sub.Meta());
+    work.rg_count = static_cast<uint32_t>(
+      std::max<uint64_t>(1, (docs + g.rg_size - 1) / g.rg_size));
+    const bool split =
+      g.split != SplitMode::Never && work.rg_count > g.no_split_rgs &&
+      !(constant_count && sub.live_docs_count() == sub.docs_count());
     work.claim.store(split ? SegmentWork::kSplit : SegmentWork::kWhole,
                      std::memory_order_relaxed);
     parallel += split ? work.rg_count : 1;
@@ -450,7 +442,7 @@ bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l) {
     if (ClaimOrderedUnit(g, l)) {
       return true;
     }
-    Exhaust(l);
+    l.units_exhausted = true;
     return false;
   }
   if (g.split == SplitMode::Always) {
@@ -478,7 +470,7 @@ bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l) {
       g.next_segment.compare_exchange_strong(
         i, i + 1, std::memory_order_relaxed, std::memory_order_relaxed);
     }
-    Exhaust(l);
+    l.units_exhausted = true;
     return false;
   }
   if (l.current_seg != std::numeric_limits<uint32_t>::max() &&
@@ -506,7 +498,7 @@ bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l) {
   if (Join(g, l)) {
     return true;
   }
-  Exhaust(l);
+  l.units_exhausted = true;
   return false;
 }
 

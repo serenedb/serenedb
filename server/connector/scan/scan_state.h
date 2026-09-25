@@ -87,6 +87,11 @@ struct ScanUnit {
   bool whole = true;
 };
 
+struct UnitRows {
+  uint64_t begin = 0;
+  uint64_t end = 0;
+};
+
 struct ScanOrderKey {
   uint32_t id = 0;
   duckdb::Value value;
@@ -104,12 +109,12 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
   uint32_t rg_count = 0;
   std::atomic_uint32_t next_rg{0};
   std::atomic_uint32_t done_rgs{0};
-  std::vector<ScanUnit> ordered_units;
-  std::vector<duckdb::Value> ordered_keys;
-  uint32_t ordered_next = 0;
-  bool ordered_built = false;
   std::atomic_uint8_t claim{kUnclaimed};
   std::atomic_uint8_t prepare{kUnprepared};
+  bool ordered_built = false;
+  uint32_t ordered_next = 0;
+  std::vector<ScanUnit> ordered_units;
+  std::vector<duckdb::Value> ordered_keys;
 };
 
 class ScanBarrier {
@@ -274,6 +279,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
 
   const ScanBindData& Bind() const noexcept { return *scan; }
   SegmentWork& Segment(uint32_t seg) noexcept { return segments[seg]; }
+  UnitRows RowsOf(const ScanUnit& unit) const noexcept;
   irs::DocRange RangeOf(const ScanUnit& unit) const noexcept;
   irs::doc_id_t UnitSpan(const ScanUnit& unit) const noexcept;
 };

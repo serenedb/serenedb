@@ -82,3 +82,19 @@ FROM read_text('${__TEST_DIR__}/scan_metrics_stream.json');
 ----
 rows_scanned
 101666
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/scan_metrics_count.json');
+----
+row_groups_scanned
+4
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/scan_metrics_stream.json');
+----
+row_groups_scanned
+4

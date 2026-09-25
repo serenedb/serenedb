@@ -34,23 +34,17 @@
 namespace sdb::connector {
 namespace {
 
-uint64_t FirstRow(const ScanGlobalState& g, const ScanUnit& unit) noexcept {
-  return unit.whole ? 0 : uint64_t{unit.rg_begin} * g.rg_size;
-}
-
 bool Resumes(const ScanGlobalState& g, const StreamLocalState& l) noexcept {
-  return l.root_seg == l.unit.seg && FirstRow(g, l.unit) >= l.stop_row;
+  return l.root_seg == l.unit.seg && g.RowsOf(l.unit).begin >= l.stop_row;
 }
 
 void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
   const auto seg_idx = l.unit.seg;
   const auto& seg = (*g.reader)[seg_idx];
   const bool resume = Resumes(g, l);
-  const uint64_t seg_rows = irs::VisibleCount(seg.Meta());
-  l.next_row = FirstRow(g, l.unit);
-  l.stop_row = l.unit.whole ? seg_rows
-                            : std::min<uint64_t>(
-                                uint64_t{l.unit.rg_end} * g.rg_size, seg_rows);
+  const auto rows = g.RowsOf(l.unit);
+  l.next_row = rows.begin;
+  l.stop_row = rows.end;
   l.unit_done = false;
   l.started = true;
   if (resume) {

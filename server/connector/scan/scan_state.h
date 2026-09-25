@@ -87,12 +87,23 @@ struct ScanUnit {
   bool whole = true;
 };
 
+struct UnitRows {
+  uint64_t begin = 0;
+  uint64_t end = 0;
+};
+
 struct ScanOrderKey {
   uint32_t id = 0;
   duckdb::Value value;
 };
 
-struct SegmentWork {
+struct OrderedUnits {
+  std::vector<ScanUnit> units;
+  std::vector<duckdb::Value> keys;
+  uint32_t next = 0;
+};
+
+struct ABSL_CACHELINE_ALIGNED SegmentWork {
   static constexpr uint8_t kUnclaimed = 0;
   static constexpr uint8_t kWhole = 1;
   static constexpr uint8_t kSplit = 2;
@@ -101,25 +112,13 @@ struct SegmentWork {
   static constexpr uint8_t kPreparing = 1;
   static constexpr uint8_t kReady = 2;
 
-  static constexpr uint64_t Pack(uint32_t front, uint32_t back) noexcept {
-    return (uint64_t{back} << 32) | front;
-  }
-  static constexpr uint32_t Front(uint64_t packed) noexcept {
-    return static_cast<uint32_t>(packed);
-  }
-  static constexpr uint32_t Back(uint64_t packed) noexcept {
-    return static_cast<uint32_t>(packed >> 32);
-  }
-
   uint32_t rg_count = 0;
-  std::atomic_uint64_t rgs{0};
+  uint32_t run_end = 0;
+  std::atomic_uint32_t next_rg{0};
   std::atomic_uint32_t done_rgs{0};
-  std::vector<ScanUnit> ordered_units;
-  std::vector<duckdb::Value> ordered_keys;
-  uint32_t ordered_next = 0;
-  bool ordered_built = false;
   std::atomic_uint8_t claim{kUnclaimed};
   std::atomic_uint8_t prepare{kUnprepared};
+  std::unique_ptr<OrderedUnits> ordered;
 };
 
 class ScanBarrier {
@@ -141,22 +140,16 @@ class ScanBarrier {
 
   bool Park(duckdb::TableFunctionInput& input);
 
+  void Resume() const noexcept;
+
   void Wait();
 
  private:
   std::atomic_uint32_t _arrived{0};
   uint32_t _total = 0;
   std::atomic_bool _released{false};
+  std::atomic_int64_t _released_at{0};
   absl::Notification _notification;
-};
-
-struct ScanMetrics {
-  std::atomic<uint64_t> whole_units{0};
-  std::atomic<uint64_t> rg_units{0};
-  std::atomic<uint64_t> docs_visited{0};
-  std::atomic<uint64_t> rows_fetched{0};
-  std::atomic<uint64_t> rows_looked_up{0};
-  std::atomic<uint64_t> parked{0};
 };
 
 struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
@@ -198,10 +191,12 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     irs::NullCheckKind null_check = irs::NullCheckKind::None;
     duckdb::LogicalType type;
     duckdb::unique_ptr<duckdb::TableFilter> not_null;
+    std::vector<std::string_view> extract_path;
   };
   std::vector<ColFilter> col_filters;
   std::vector<duckdb::unique_ptr<duckdb::TableFilter>> emit_score_filters;
   duckdb::shared_ptr<duckdb::DynamicFilterData> score_dynamic_filter;
+  duckdb::shared_ptr<duckdb::DynamicFilterData> order_dynamic_filter;
   float score_static_floor = std::numeric_limits<float>::lowest();
   const irs::Scorer* prune_scorer = nullptr;
 
@@ -222,23 +217,24 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
 
   ScanShape shape = ScanShape::Stream;
   SplitMode split = SplitMode::Tail;
-  OrderMode order = OrderMode::SmallestFirst;
+  OrderMode order = OrderMode::LargestFirst;
   uint32_t no_split_rgs = 1;
   bool splittable = true;
   uint32_t workers = 1;
-  uint32_t unit_rgs = 1;
   uint64_t rg_size = 0;
+  uint64_t fold_rgs = 0;
   std::atomic_uint32_t worker_count{0};
 
   std::vector<uint32_t> segment_order;
   std::unique_ptr<SegmentWork[]> segments;
+  std::unique_ptr<std::atomic_uint32_t[]> joinable;
   uint32_t live_segments = 0;
-  std::atomic_uint32_t next_segment{0};
-  std::atomic_uint32_t next_steal{0};
   bool ordered = false;
-  absl::Mutex ordered_mutex;
+  ABSL_CACHELINE_ALIGNED std::atomic_uint32_t next_segment{0};
+  ABSL_CACHELINE_ALIGNED std::atomic_uint32_t done_segments{0};
+  ABSL_CACHELINE_ALIGNED absl::Mutex ordered_mutex;
+  ABSL_CACHELINE_ALIGNED std::atomic_bool ordered_exhausted{false};
   std::vector<ScanOrderKey> ordered_heap;
-  std::atomic_uint32_t done_segments{0};
 
   bool Ordered() const noexcept { return ordered; }
 
@@ -289,14 +285,13 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   };
   TopKState topk;
 
-  std::atomic<duckdb::idx_t> produced_rows{0};
-  ScanMetrics metrics;
-
   duckdb::idx_t MaxThreads() const final { return workers; }
 
   const ScanBindData& Bind() const noexcept { return *scan; }
   SegmentWork& Segment(uint32_t seg) noexcept { return segments[seg]; }
+  UnitRows RowsOf(const ScanUnit& unit) const noexcept;
   irs::DocRange RangeOf(const ScanUnit& unit) const noexcept;
+  irs::doc_id_t UnitSpan(const ScanUnit& unit) const noexcept;
 };
 
 struct ScanLocalState : public duckdb::LocalTableFunctionState {
@@ -307,12 +302,15 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   uint32_t classified_seg = std::numeric_limits<uint32_t>::max();
   irs::ColFilterClassification seg_cls;
   uint32_t current_seg = std::numeric_limits<uint32_t>::max();
-  bool owner = false;
+  uint32_t batch_next = 0;
+  uint32_t batch_end = 0;
+  uint32_t finished_segments = 0;
+  const ScanBarrier* parked_on = nullptr;
   bool has_unit = false;
   ScanUnit unit;
   bool units_exhausted = false;
-  uint64_t whole_units = 0;
   uint64_t rg_units = 0;
+  uint64_t produced_rows = 0;
 
   void Classify(ScanGlobalState& g, uint32_t seg);
 };
@@ -389,7 +387,6 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context);
 bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l);
 bool NextLiveUnit(ScanGlobalState& g, ScanLocalState& l);
 bool FinishUnit(ScanGlobalState& g, ScanLocalState& l);
-bool FinishSegments(ScanGlobalState& g, uint32_t count);
 
 void ClassifySegmentColFilters(const irs::SubReader& seg, ScanGlobalState& g,
                                irs::ColFilterStateCache& states,
@@ -399,9 +396,8 @@ irs::detail::TableFilter* BeginVerify(ColFilterVerify& verify,
                                       const irs::SubReader& seg,
                                       ScanGlobalState& g, ScanLocalState& l);
 
-void AccountAndWriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
-                                   duckdb::Vector* scores,
-                                   duckdb::DataChunk& output);
+void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
+                         duckdb::Vector* scores, duckdb::DataChunk& output);
 void WriteChunkOffsets(FetchLocalState& f, const ScanGlobalState& g,
                        uint32_t seg, std::span<const irs::doc_id_t> docs,
                        duckdb::DataChunk& output);

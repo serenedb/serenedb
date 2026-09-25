@@ -38,6 +38,7 @@
 #include <iresearch/formats/ivf/ivf_reader.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/boolean_rules.hpp>
+#include <iresearch/search/queries/hnsw_query.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -1087,8 +1088,11 @@ void IResearchPushdownComplexFilter(
     return;
   }
   TryClaimAnnRange(filters, get, bind_data, context);
-  if (filters.empty() || bind_data.IsHnswScored()) {
+  if (filters.empty()) {
     return;
+  }
+  if (bind_data.IsHnswScored()) {
+    irs::HnswRefuseFiltered();
   }
   TryClaimSearchFilter(filters, get, bind_data, context);
 }

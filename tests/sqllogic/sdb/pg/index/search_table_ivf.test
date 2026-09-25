@@ -86,3 +86,19 @@ QUERY PLAN
 │ Projections: id                             │
 │ ~4 rows                                     │
 ╰─────────────────────────────────────────────╯
+
+query
+SELECT id FROM v
+ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2;
+----
+id
+1
+4
+
+query
+SELECT id FROM v WHERE id > 1
+ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2;
+----
+id
+4
+3

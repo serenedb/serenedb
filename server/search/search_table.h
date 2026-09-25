@@ -135,6 +135,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   // compaction loops (search/task.h) drive a search table too.
   duckdb::idx_t GetId() const noexcept { return _table_id; }
   auto& GetTasksSettings() { return _maint_settings; }
+  void ApplyOptions(const catalog::SearchTableOptions& options);
 
   // Wake the compaction loop after a refresh produced new segments.
   void NudgeCompaction() noexcept {
@@ -188,7 +189,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
 
   // Synchronous maintenance for explicit VACUUM (REFRESH_* / COMPACT_*).
   void VacuumRefresh();
-  void VacuumCompact();
+  void VacuumCompact(uint32_t target_segments);
 
   [[nodiscard]] unsigned RegisterWriter() { return _writers.Register(); }
   void DeregisterWriter(unsigned slot) noexcept { _writers.Deregister(slot); }

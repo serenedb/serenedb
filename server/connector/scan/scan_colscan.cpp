@@ -75,7 +75,7 @@ duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
     }
     l.doc_cursor += take;
     if (produced != 0) {
-      AccountAndWriteVirtualColumns(g, produced, nullptr, output);
+      WriteVirtualColumns(g, produced, nullptr, output);
       return produced;
     }
     output.Reset();
@@ -99,23 +99,15 @@ void RunColScan(duckdb::ClientContext&, duckdb::TableFunctionInput&,
         output.SetChildCardinality(added);
         return;
       }
-      if (FinishUnit(g, l)) {
-        FinishSegments(g, 1);
-      }
+      FinishUnit(g, l);
     }
     if (!NextLiveUnit(g, l)) {
       break;
     }
     const auto& sub = (*g.reader)[l.unit.seg];
-    const auto docs = irs::VisibleCount(sub.Meta());
-    if (l.unit.whole) {
-      l.doc_cursor = 0;
-      l.doc_end = docs;
-    } else {
-      l.doc_cursor =
-        std::min<uint64_t>(docs, uint64_t{l.unit.rg_begin} * g.rg_size);
-      l.doc_end = std::min<uint64_t>(docs, uint64_t{l.unit.rg_end} * g.rg_size);
-    }
+    const auto rows = g.RowsOf(l.unit);
+    l.doc_cursor = rows.begin;
+    l.doc_end = rows.end;
     l.has_mask = sub.docs_mask() != nullptr;
     l.mask = irs::fill::DocsMask{sub};
     OpenScanner(g, l);

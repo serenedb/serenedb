@@ -128,15 +128,19 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
 
 }  // namespace
 
-void HnswRefuseFilter(const detail::TableFilter* table) {
-  if (table == nullptr) [[likely]] {
-    return;
-  }
+void HnswRefuseFiltered() {
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
     ERR_MSG("an hnsw vector index does not support filtered search: the graph "
             "walk cannot honour a predicate, so the filter would be silently "
             "dropped. Use an ivf vector index instead"));
+}
+
+void HnswRefuseFilter(const detail::TableFilter* table) {
+  if (table == nullptr) [[likely]] {
+    return;
+  }
+  HnswRefuseFiltered();
 }
 
 std::vector<ScoreDoc> HnswQuery::RunSearch() const {

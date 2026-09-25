@@ -226,8 +226,8 @@ extern "C" const duckdb::DefaultType* duckdb_external_types(
 
 ABSL_FLAG(uint64_t, cpu_threads, 0,
           "Executor pool size at process start. 0 = let server "
-          "auto-detect from cpu_count. The SQL-level `SET threads = N` "
-          "continues to win at runtime.");
+          "auto-detect from cpu_count. `SET GLOBAL threads = N` resizes the "
+          "pool at runtime.");
 
 ABSL_FLAG(uint32_t, recovery_replay_depth, 0,
           "Maximum WAL chunks in flight per inverted index during recovery "
@@ -270,8 +270,8 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
                          duckdb::Value::BOOLEAN(true));
   // DuckDB's own auto-detect uses std::thread::hardware_concurrency(), which
   // ignores cgroup CPU limits and would over-thread in a container. Pin it to
-  // our cgroup-aware logical core count when unset (SET threads=N still wins at
-  // runtime), and publish the resolved value into the flag.
+  // our cgroup-aware logical core count when unset, and publish the resolved
+  // value into the flag.
   auto threads = absl::GetFlag(FLAGS_cpu_threads);
   if (threads == 0) {
     threads = CountLogicalCores();

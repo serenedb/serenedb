@@ -34,6 +34,8 @@
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/parser/expression/constant_expression.hpp>
+#include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -217,6 +219,26 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
           row.relhasindex = indexed_relations.contains(table->oid);
           row.reltuples = count_store_rows(*table);
           row.relacl = {table->permissions.acl};
+          if (const auto* search =
+                dynamic_cast<const catalog::SearchTableEntry*>(table)) {
+            auto& strings = reloptions_storage.emplace_back();
+            auto& views = reloptions_views.emplace_back();
+            const auto info = search->GetInfo();
+            const auto& options = info->Cast<duckdb::CreateTableInfo>().options;
+            for (const auto name : catalog::kSearchTableOptions) {
+              if (const auto it = options.find(name); it != options.end()) {
+                strings.emplace_back(
+                  absl::StrCat(name, "=",
+                               it->second->Cast<duckdb::ConstantExpression>()
+                                 .GetValue()
+                                 .ToString()));
+              }
+            }
+            for (const auto& option : strings) {
+              views.emplace_back(option);
+            }
+            row.reloptions = views;
+          }
           values.emplace_back(std::move(row));
           return;
         }

@@ -85,6 +85,7 @@ PipelineTokenizer::PipelineTokenizer(std::vector<Tokenizer::ptr> options) {
       _traits.unique &= traits.unique;
       _traits.offsets &= traits.offsets;
       _traits.stable &= traits.stable;
+      _traits.keeps_ascii &= traits.keeps_ascii;
       // Fan-out alone keeps the ramp: a child emitting dense positions has its
       // increments rebased onto the parent stream, and a parent that emits
       // nothing simply never commits. Only explicit child positions (stacked
@@ -194,24 +195,29 @@ void PipelineTokenizer::ChainSink::PassThrough(TokenBatch& batch, DocRuns runs,
 template<TokenLayout L, bool Explicit>
 IRS_NO_INLINE void PipelineTokenizer::ChainSink::Compact(
   TokenBatch& batch, DocRuns runs, const uint64_t* valid) {
+  constexpr bool kPositions = Explicit && L != TokenLayout::Terms;
+  ChainPos pos = _pos;
   uint32_t dst = 0;
   uint32_t first = 0;
   for (size_t r = 0, n = runs.size(); r < n; ++r) {
     const auto run = runs[r];
     const uint32_t end = first + run.ntokens;
     const uint32_t run_dst = dst;
-    if constexpr (Explicit && L != TokenLayout::Terms) {
+    if constexpr (kPositions) {
       if (run.doc != _open_doc) {
-        _pos.Bind(_in_dense);
+        pos.Bind(_in_dense);
         _open_doc = run.doc;
       }
     }
     for (uint32_t i = first; i < end; ++i) {
       [[maybe_unused]] uint32_t inc = 1;
-      if constexpr (Explicit && L != TokenLayout::Terms) {
-        inc = _pos.Observe(batch, i);
+      if constexpr (kPositions) {
+        inc = pos.Observe(batch, i);
       }
       if (!IsValid(valid, i)) {
+        if constexpr (kPositions) {
+          pos.Skip(inc);
+        }
         continue;
       }
       if (dst != i) {
@@ -221,8 +227,8 @@ IRS_NO_INLINE void PipelineTokenizer::ChainSink::Compact(
           batch.offs_end[dst] = batch.offs_end[i];
         }
       }
-      if constexpr (Explicit && L != TokenLayout::Terms) {
-        batch.pos[dst] = _pos.Commit(inc);
+      if constexpr (kPositions) {
+        batch.pos[dst] = pos.Commit(pos.Effective(inc));
       }
       ++dst;
     }
@@ -230,6 +236,9 @@ IRS_NO_INLINE void PipelineTokenizer::ChainSink::Compact(
     first = end;
   }
   batch.count = dst;
+  if constexpr (kPositions) {
+    _pos = pos;
+  }
 }
 
 void PipelineTokenizer::ChainSink::ExpandBatch(TokenBatch& batch, DocRuns runs,
@@ -319,19 +328,36 @@ void PipelineTokenizer::ChainSink::RebaseRun(const TokenBatch& batch,
   }
 }
 
+void PipelineTokenizer::ChainSink::SettleParent() {
+  if (_cp._first) {
+    _pos.Skip(_parent_inc);
+    _cp._first = false;
+  }
+}
+
 void PipelineTokenizer::ChainSink::AdvanceToParent(uint32_t parent) {
+  if (_out_layout == TokenLayout::Terms) {
+    while (true) {
+      while (_scan >= _src_run_end) {
+        NextSourceRun();
+      }
+      if (_scan++ == parent) {
+        return;
+      }
+    }
+  }
+  SettleParent();
   while (true) {
     while (_scan >= _src_run_end) {
       NextSourceRun();
     }
-    uint32_t inc = 1;
-    if (_out_layout != TokenLayout::Terms) {
-      inc = _pos.Observe(*_src, _scan);
-    }
+    const uint32_t inc = _pos.Observe(*_src, _scan);
     if (_scan++ == parent) {
-      _cp = ChildPos{inc};
+      _parent_inc = inc;
+      _cp = ChildPos{_pos.Effective(inc)};
       return;
     }
+    _pos.Skip(inc);
   }
 }
 
@@ -343,13 +369,14 @@ void PipelineTokenizer::ChainSink::NextSourceRun() {
 }
 
 void PipelineTokenizer::ChainSink::FinishSourceBatch(bool tail_open) {
+  SettleParent();
   const uint32_t count = _src->count;
   while (_scan < count) {
     while (_scan >= _src_run_end) {
       NextSourceRun();
     }
     if (_out_layout != TokenLayout::Terms) {
-      _pos.Observe(*_src, _scan);
+      _pos.Skip(_pos.Observe(*_src, _scan));
     }
     ++_scan;
   }
@@ -387,15 +414,17 @@ IRS_NO_INLINE void PipelineTokenizer::ChainSink::Deliver(
       _out->EmitTerms<L, Stable>(_value, batch, first, run.ntokens,
                                  HasDrop ? valid : nullptr);
     } else {
+      ChainPos chain = _pos;
       for (uint32_t i = first; i < end; ++i) {
-        const uint32_t inc = _pos.Observe(batch, i);
+        const uint32_t inc = chain.Observe(batch, i);
         if constexpr (HasDrop) {
           if (!IsValid(valid, i)) {
+            chain.Skip(inc);
             continue;
           }
         }
         const auto term = batch.terms[i];
-        const uint32_t pos = _pos.Commit(inc);
+        const uint32_t pos = chain.Commit(chain.Effective(inc));
         if constexpr (Stable) {
           if constexpr (L == TokenLayout::TermsPos) {
             _out->Emit<L>(term, pos);
@@ -413,6 +442,7 @@ IRS_NO_INLINE void PipelineTokenizer::ChainSink::Deliver(
           }
         }
       }
+      _pos = chain;
     }
     if (!open_after) {
       CloseSource();
@@ -454,6 +484,8 @@ void PipelineTokenizer::Fill(const duckdb::UnifiedVectorFormat& fmt,
     BindLinks(sink, ctx.layout, true);
   }
   auto& input = _chain == 0 ? sink : _head->writer;
+  auto* const input_rejects = input.BindRejects(sink.Rejects());
+  Finally unbind = [&]() noexcept { input.BindRejects(input_rejects); };
   const auto* data =
     duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
   ctx.traits = ComputeBlockTraits(fmt, count, data, _wanted_traits, ctx.traits);

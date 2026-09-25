@@ -32,12 +32,16 @@
 #include <duckdb/catalog/catalog_entry/window_function_catalog_entry.hpp>
 #include <duckdb/function/macro_function.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database_manager.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <vector>
 
 #include "pg/pg_types.h"
 
 namespace sdb::pg {
 namespace {
+
+static_assert(kMaxSystem == duckdb::DatabaseManager::FIRST_OID);
 
 template<typename Entry>
 void EmitSignatures(const Entry& entry, BuiltinFunction& row,
@@ -171,6 +175,7 @@ void VisitBuiltinFunctions(
         break;
     }
   }
+  SDB_ASSERT(next_oid <= kMaxSystem);
 }
 
 }  // namespace sdb::pg

@@ -220,6 +220,16 @@ void BuildFtsTerm(BoolTarget parent, const FilterContext& ctx,
 void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info, std::string_view text,
                     bool require_all);
+void BuildFtsWord(BoolTarget parent, const FilterContext& ctx,
+                  const SearchColumnInfo& column_info, std::string_view text);
+
+using TokenGroups = std::vector<std::vector<irs::bstring>>;
+
+void AppendTokenGroups(std::span<const duckdb::string_t> terms,
+                       std::span<const uint32_t> pos, TokenGroups& groups);
+void AddTokenGroups(BoolTarget parent, irs::field_id field, TokenGroups& groups,
+                    size_t min_match, irs::score_t boost,
+                    const irs::Scorer* scorer = nullptr);
 
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
                                               const duckdb::Expression& expr);

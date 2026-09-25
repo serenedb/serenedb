@@ -74,6 +74,39 @@ void FillHashesCp(const byte_type* data, const byte_type* end,
   }
 }
 
+template<typename Unit>
+IRS_FORCE_INLINE uint32_t HashWindow(const Unit* units, size_t window) {
+  uint64_t a = uint64_t{units[0]} * kMul1 + uint64_t{units[1]} * kMul2;
+  for (size_t k = 2; k < window; ++k) {
+    a = a * kMul1 + uint64_t{units[k]} * kMul2;
+  }
+  return a + (~a >> 47);
+}
+
+uint64_t FillWindowHashes(const char* data, size_t count, size_t window,
+                          uint32_t* out) {
+  const auto* units = reinterpret_cast<const uint8_t*>(data);
+  uint64_t acc = 0;
+  for (size_t j = 0; j < count; ++j) {
+    acc |= units[j];
+    out[j] = HashWindow(units + j, window);
+  }
+  return acc;
+}
+
+void FillWindowHashesCp(const byte_type* data, const byte_type* end,
+                        const uint32_t* bounds, size_t count, size_t window,
+                        std::vector<uint32_t>& units, uint32_t* out) {
+  units.resize(count + window - 1);
+  for (size_t k = 0; k < units.size(); ++k) {
+    const auto* it = data + bounds[k];
+    units[k] = utf8_utils::ToChar32(it, end);
+  }
+  for (size_t j = 0; j < count; ++j) {
+    out[j] = HashWindow(units.data() + j, window);
+  }
+}
+
 using FillHashesFn = uint64_t (*)(const char*, size_t, uint32_t*);
 
 FillHashesFn ResolveFillHashes() {
@@ -96,6 +129,11 @@ Tokenizer::ptr SparseNGramTokenizer::Make(Options opts) {
 SparseNGramTokenizer::SparseNGramTokenizer(Options options)
   : _options(options) {
   _options.max_ngram_length = std::max<size_t>(_options.max_ngram_length, 3);
+  _options.min_ngram_length =
+    std::clamp<size_t>(_options.min_ngram_length, 3, _options.max_ngram_length);
+  _window = _options.min_ngram_length - 1;
+  _generic =
+    _window != 2 || _options.min_cutoff_length > _options.min_ngram_length;
 }
 
 void SparseNGramTokenizer::EnsureScratch() {
@@ -107,25 +145,38 @@ void SparseNGramTokenizer::EnsureScratch() {
   _hashes.resize(kBatch);
 }
 
-template<bool Symbols>
+template<bool Symbols, bool Generic>
 uint64_t SparseNGramTokenizer::FillHashes(Cursor& ctx) {
-  const size_t end = std::min(ctx.units - 1, ctx.pos + kBatch);
+  const size_t window = Window<Generic>();
+  const size_t end = std::min(ctx.units - window + 1, ctx.pos + kBatch);
   uint64_t acc = 0;
   if constexpr (Symbols) {
-    FillHashesCp(ctx.data.data(), ctx.data.data() + ctx.data.size(),
-                 _bounds.data() + ctx.pos, end - ctx.pos, _hashes.data());
+    if constexpr (Generic) {
+      FillWindowHashesCp(ctx.data.data(), ctx.data.data() + ctx.data.size(),
+                         _bounds.data() + ctx.pos, end - ctx.pos, window,
+                         _units, _hashes.data());
+    } else {
+      FillHashesCp(ctx.data.data(), ctx.data.data() + ctx.data.size(),
+                   _bounds.data() + ctx.pos, end - ctx.pos, _hashes.data());
+    }
   } else {
     const auto* data = reinterpret_cast<const char*>(ctx.data.data());
-    acc = kFillHashes(data + ctx.pos, end - ctx.pos, _hashes.data());
+    if constexpr (Generic) {
+      acc =
+        FillWindowHashes(data + ctx.pos, end - ctx.pos, window, _hashes.data());
+    } else {
+      acc = kFillHashes(data + ctx.pos, end - ctx.pos, _hashes.data());
+    }
   }
   ctx.hash_base = ctx.pos;
   ctx.hash_end = end;
   return acc;
 }
 
-template<bool Symbols>
+template<bool Symbols, bool Generic>
 bool SparseNGramTokenizer::Next(Cursor& ctx) {
-  const size_t pos_end = ctx.units >= 2 ? ctx.units - 1 : 0;
+  const size_t window = Window<Generic>();
+  const size_t pos_end = ctx.units >= window ? ctx.units - window + 1 : 0;
   HashAndPos* const base = _stack.data();
   HashAndPos* const limit = base + _stack.size();
   HashAndPos* top = base + ctx.top;
@@ -136,7 +187,7 @@ bool SparseNGramTokenizer::Next(Cursor& ctx) {
   while (out == pending) {
     if (ctx.pos < pos_end) {
       if (ctx.pos >= ctx.hash_end) {
-        FillHashes<Symbols>(ctx);
+        FillHashes<Symbols, Generic>(ctx);
       }
       const uint32_t* hashes = _hashes.data() - ctx.hash_base;
       const size_t end_i = std::min(pos_end, ctx.hash_end);
@@ -146,11 +197,11 @@ bool SparseNGramTokenizer::Next(Cursor& ctx) {
       const size_t stop_i = std::min(end_i, ctx.pos + (room - depth) / 2);
       if (_options.covering) {
         for (size_t i = ctx.pos; i < stop_i; ++i) {
-          StepCovering(base, top, head, out, i, hashes[i]);
+          StepCovering<Generic>(base, top, head, out, i, hashes[i]);
         }
       } else {
         for (size_t i = ctx.pos; i < stop_i; ++i) {
-          StepAll(base, limit, top, out, i, hashes[i]);
+          StepAll<Generic>(base, limit, top, out, i, hashes[i]);
         }
       }
       SDB_ASSERT(top <= limit);
@@ -160,9 +211,9 @@ bool SparseNGramTokenizer::Next(Cursor& ctx) {
       }
     } else if (_options.covering && top - (base + head) > 1) {
       while (top - (base + head) > 1) {
-        const size_t last = top[-1].pos + 2;
+        const size_t last = top[-1].pos + window;
         --top;
-        Emit(out, top[-1].pos, last);
+        Emit<Generic>(out, top[-1].pos, last);
       }
     } else {
       break;
@@ -174,23 +225,25 @@ bool SparseNGramTokenizer::Next(Cursor& ctx) {
   return ctx.pending_size != 0;
 }
 
+template<bool Generic>
 void SparseNGramTokenizer::StepAll(HashAndPos* base, HashAndPos* limit,
                                    HashAndPos*& top, EmitKSlot*& out, size_t i,
                                    uint32_t hash) const {
-  const size_t min_pos = i + 2 - std::min(i + 2, _options.max_ngram_length);
+  const size_t end = i + Window<Generic>();
+  const size_t min_pos = end - std::min(end, _options.max_ngram_length);
   while (top != base && hash > top[-1].hash) {
     if (top[-1].pos < min_pos) {
       top = base;
       break;
     }
-    Emit(out, top[-1].pos, i + 2);
+    Emit<Generic>(out, top[-1].pos, end);
     while (top - base > 1 && top[-1].hash == top[-2].hash) {
       --top;
     }
     --top;
   }
   if (top != base && top[-1].pos >= min_pos) {
-    Emit(out, top[-1].pos, i + 2);
+    Emit<Generic>(out, top[-1].pos, end);
   }
   *top++ = {hash, static_cast<uint32_t>(i)};
   if (top == limit) [[unlikely]] {
@@ -204,12 +257,15 @@ void SparseNGramTokenizer::StepAll(HashAndPos* base, HashAndPos* limit,
   }
 }
 
+template<bool Generic>
 void SparseNGramTokenizer::StepCovering(HashAndPos* base, HashAndPos*& top,
                                         size_t& head, EmitKSlot*& out, size_t i,
                                         uint32_t hash) const {
+  const size_t window = Window<Generic>();
   HashAndPos* live = base + head;
-  if (top - live > 1 && i - live->pos + 3 >= _options.max_ngram_length) {
-    Emit(out, live->pos, live[1].pos + 2);
+  if (top - live > 1 &&
+      i - live->pos + window + 1 >= _options.max_ngram_length) {
+    Emit<Generic>(out, live->pos, live[1].pos + window);
     if (++head >= kHeadSlack) {
       std::memmove(base, base + head,
                    static_cast<size_t>(top - (base + head)) * sizeof *base);
@@ -220,11 +276,11 @@ void SparseNGramTokenizer::StepCovering(HashAndPos* base, HashAndPos*& top,
   }
   while (top != live && hash > top[-1].hash) {
     if (live->hash == top[-1].hash) {
-      Emit(out, top[-1].pos, i + 2);
+      Emit<Generic>(out, top[-1].pos, i + window);
       while (top - live > 1) {
-        const size_t last = top[-1].pos + 2;
+        const size_t last = top[-1].pos + window;
         --top;
-        Emit(out, top[-1].pos, last);
+        Emit<Generic>(out, top[-1].pos, last);
       }
     }
     --top;
@@ -237,9 +293,10 @@ void SparseNGramTokenizer::StepCovering(HashAndPos* base, HashAndPos*& top,
   *top++ = {hash, static_cast<uint32_t>(i)};
 }
 
-template<TokenLayout Layout, bool Detect>
+template<TokenLayout Layout, bool Detect, bool Generic>
 bool SparseNGramTokenizer::FillBytes(duckdb::string_t raw, TokenSink& sink) {
   const size_t size = raw.GetSize();
+  const size_t window = Window<Generic>();
   const EmitKSlot* const pending = _pending.data();
   Cursor ctx{.data = {reinterpret_cast<const byte_type*>(raw.GetData()), size},
              .units = size};
@@ -248,15 +305,23 @@ bool SparseNGramTokenizer::FillBytes(duckdb::string_t raw, TokenSink& sink) {
       if (!classify::IsAsciiValue(raw.GetData(), size)) {
         return false;
       }
-    } else if (size >= 2) {
-      const uint64_t bytes = FillHashes<false>(ctx) | ctx.data.back();
+    } else if (size >= window) {
+      uint64_t bytes = FillHashes<false, Generic>(ctx);
+      if constexpr (Generic) {
+        for (size_t k = size - window + 1; k < size; ++k) {
+          bytes |= ctx.data[k];
+        }
+      } else {
+        bytes |= ctx.data.back();
+      }
       if ((bytes & 0x80) != 0) {
         return false;
       }
     }
   }
-  const size_t stop = _options.covering ? kNoStop : (size >= 2 ? size - 1 : 0);
-  while (Next<false>(ctx)) {
+  const size_t stop =
+    _options.covering ? kNoStop : (size >= window ? size - window + 1 : 0);
+  while (Next<false, Generic>(ctx)) {
     sink.EmitK<Layout>(ctx.pending_size, ctx.data.data(),
                        ctx.data.data() + ctx.data.size(),
                        [&](size_t j) IRS_FORCE_INLINE { return pending[j]; });
@@ -267,7 +332,7 @@ bool SparseNGramTokenizer::FillBytes(duckdb::string_t raw, TokenSink& sink) {
   return true;
 }
 
-template<TokenLayout Layout>
+template<TokenLayout Layout, bool Generic>
 bool SparseNGramTokenizer::FillSymbols(duckdb::string_t raw, TokenSink& sink) {
   const size_t size = raw.GetSize();
   const EmitKSlot* const pending = _pending.data();
@@ -275,7 +340,7 @@ bool SparseNGramTokenizer::FillSymbols(duckdb::string_t raw, TokenSink& sink) {
   const size_t units = classify::BuildUtf8CpBounds(data, size, true, _bounds);
   Cursor ctx{.data = {data, size}, .units = units};
   const uint32_t* const bounds = _bounds.data();
-  while (Next<true>(ctx)) {
+  while (Next<true, Generic>(ctx)) {
     sink.EmitK<Layout>(ctx.pending_size, ctx.data.data(),
                        ctx.data.data() + ctx.data.size(),
                        [&](size_t j) IRS_FORCE_INLINE {
@@ -286,15 +351,15 @@ bool SparseNGramTokenizer::FillSymbols(duckdb::string_t raw, TokenSink& sink) {
   return true;
 }
 
-template<TokenLayout Layout, bool KnownAscii>
+template<TokenLayout Layout, bool KnownAscii, bool Generic>
 bool SparseNGramTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
   EnsureScratch();
   if constexpr (KnownAscii) {
-    return FillBytes<Layout, false>(raw, sink);
-  } else if (FillBytes<Layout, true>(raw, sink)) {
+    return FillBytes<Layout, false, Generic>(raw, sink);
+  } else if (FillBytes<Layout, true, Generic>(raw, sink)) {
     return true;
   } else {
-    return FillSymbols<Layout>(raw, sink);
+    return FillSymbols<Layout, Generic>(raw, sink);
   }
 }
 

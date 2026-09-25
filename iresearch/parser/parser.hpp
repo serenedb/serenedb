@@ -61,7 +61,7 @@ struct ParserContext {
   irs::BooleanFilter* current_root;
   irs::analysis::Tokenizer* tokenizer;
   irs::ValueAnalyzer value_analyzer;
-  irs::ValueTokens<> value_tokens;
+  irs::ValueTokens<irs::TokenLayout::TermsPos> value_tokens;
   std::string error_message;
   Modifier last_mod{Modifier::None};
   bool strict_field = false;
@@ -76,7 +76,10 @@ struct ParserContext {
 
   ParserContext(irs::BooleanFilter& root, irs::field_id field_id,
                 irs::analysis::Tokenizer& tokenizer)
-    : default_field_id(field_id), current_root{&root}, tokenizer{&tokenizer} {}
+    : default_field_id(field_id),
+      current_root{&root},
+      tokenizer{&tokenizer},
+      value_tokens{tokenizer.Traits()} {}
 
   // A clause is held back until the connector after it has been read, which
   // is what decides where it goes: `AND` makes both of the clauses it joins
@@ -109,8 +112,30 @@ struct ParserContext {
     const auto tokens = Tokens(text);
     if (tokens.size() > 1) {
       auto& several = Build<irs::BooleanFilter>();
-      for (const auto& token : tokens) {
-        AddTermTo(several, irs::Occur::Should, irs::AsBytesView(token));
+      const auto pos = value_tokens.pos();
+      const bool one_position = pos.front() == pos.back();
+      if (one_position) {
+        several.SetMergeType(irs::ScoreMergeType::Max);
+      }
+      for (size_t i = 0; i < tokens.size();) {
+        size_t end = i + 1;
+        while (end < tokens.size() && pos[end] == pos[i]) {
+          ++end;
+        }
+        auto* node = &several;
+        if (end - i > 1 && !one_position) {
+          auto stacked = std::make_unique<irs::BooleanFilter>();
+          stacked->SetMergeType(irs::ScoreMergeType::Max);
+          node = stacked.get();
+          several.Add(std::move(stacked), irs::Occur::Should);
+        }
+        for (size_t k = i; k < end; ++k) {
+          AddTermTo(*node, irs::Occur::Should, irs::AsBytesView(tokens[k]));
+        }
+        if (node != &several) {
+          SetThreshold(*node, 1);
+        }
+        i = end;
       }
       SetThreshold(several, 1);
       return several;

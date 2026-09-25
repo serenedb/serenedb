@@ -41,6 +41,7 @@ class KeywordTokenizer : public analysis::TypedTokenizer<KeywordTokenizer>,
       .keyword = true,
       .offsets = true,
       .stable = true,
+      .keeps_ascii = true,
     };
   }
 

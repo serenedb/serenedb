@@ -52,14 +52,46 @@ struct FormSpec<sz_normal_form_nfc_k> {
   static constexpr sz_normal_form_t kDecomposed = sz_normal_form_nfd_k;
   static constexpr classify::ByteRange kQcRanges[] = {
     Range(0xCC, 0xCD), Range(0xD6, 0xD9), Range(0xDB, 0xDD),
-    Range(0xDF, 0xE3), Range(0xEA, 0xEA), Range(0xEF, 0xF0)};
-  static constexpr uint8_t kPairLeads[] = {0xCE, 0xD2};
+    Range(0xDF, 0xE1), Range(0xEA, 0xEA), Range(0xEF, 0xEF)};
+  static constexpr uint8_t kPairLeads[] = {0xCE, 0xD2, 0xE2, 0xE3, 0xF0};
   static constexpr classify::ByteRange kStripRanges[] = {
     Range(0xC3, 0xC8), Range(0xCC, 0xD3), Range(0xD6, 0xD9), Range(0xDB, 0xE3),
     Range(0xEA, 0xED), Range(0xEF, 0xF0), Range(0xF3, 0xF3)};
-  static constexpr bool PairIsUnsafeByte(uint8_t lead, uint8_t next) {
+  IRS_FORCE_INLINE static constexpr bool PairIsUnsafeByte(uint8_t lead,
+                                                          uint8_t next,
+                                                          uint8_t third) {
     if (lead == 0xCE) {
       return next == 0x87;
+    }
+    if (lead == 0xE2) {
+      switch (next) {
+        case 0x80:
+          return third <= 0x81;
+        case 0x83:
+          return (third >= 0x90 && third <= 0x9C) || third == 0xA1 ||
+                 (third >= 0xA5 && third <= 0xB0);
+        case 0x84:
+          return third == 0xA6 || third == 0xAA || third == 0xAB;
+        case 0x8C:
+          return third == 0xA9 || third == 0xAA;
+        case 0xAB:
+          return third == 0x9C;
+        case 0xB3:
+          return third >= 0xAF && third <= 0xB1;
+        case 0xB5:
+          return third == 0xBF;
+        case 0xB7:
+          return third >= 0xA0;
+        default:
+          return false;
+      }
+    }
+    if (lead == 0xE3) {
+      return (next == 0x80 && third >= 0xAA && third <= 0xAF) ||
+             (next == 0x82 && (third == 0x99 || third == 0x9A));
+    }
+    if (lead == 0xF0) {
+      return next < 0x9F || next == 0xAF;
     }
     return next >= 0x83 && next <= 0x89;
   }
@@ -76,7 +108,9 @@ struct FormSpec<sz_normal_form_nfkc_k> {
   static constexpr classify::ByteRange kStripRanges[] = {
     Range(0xC2, 0xC8), Range(0xCA, 0xD3), Range(0xD6, 0xD9), Range(0xDB, 0xE3),
     Range(0xEA, 0xED), Range(0xEF, 0xF0), Range(0xF3, 0xF3)};
-  static constexpr bool PairIsUnsafeByte(uint8_t lead, uint8_t next) {
+  IRS_FORCE_INLINE static constexpr bool PairIsUnsafeByte(uint8_t lead,
+                                                          uint8_t next,
+                                                          uint8_t) {
     if (lead == 0xCE) {
       return next == 0x84 || next == 0x85 || next == 0x87;
     }
@@ -117,23 +151,37 @@ inline bool PairIsUnsafe(const char* data, size_t n, size_t pos) noexcept {
   if (pos + 1 >= n) {
     return true;
   }
-  return FormSpec<Form>::PairIsUnsafeByte(static_cast<uint8_t>(data[pos]),
-                                          static_cast<uint8_t>(data[pos + 1]));
+  return FormSpec<Form>::PairIsUnsafeByte(
+    static_cast<uint8_t>(data[pos]), static_cast<uint8_t>(data[pos + 1]),
+    pos + 2 < n ? static_cast<uint8_t>(data[pos + 2]) : uint8_t{0});
 }
 
 template<sz_normal_form_t Form>
-IRS_FORCE_INLINE inline uint32_t SuspiciousMask(const char* data, size_t n,
+inline constexpr auto kLeadClasses = [] {
+  classify::NibbleClasses set;
+  for (const auto [lo, span] : FormSpec<Form>::kQcRanges) {
+    for (int b = lo; b <= lo + span; ++b) {
+      set.Add(static_cast<byte_type>(b), 0);
+    }
+  }
+  for (const uint8_t lead : FormSpec<Form>::kPairLeads) {
+    set.Add(lead, 1);
+  }
+  return set;
+}();
+
+template<sz_normal_form_t Form>
+IRS_FORCE_INLINE inline uint32_t SuspiciousMask(classify::Block block,
+                                                const char* data, size_t n,
                                                 size_t base) noexcept {
-  const auto* block = reinterpret_cast<const byte_type*>(data) + base;
-  uint32_t suspicious =
-    classify::ClassifyAnyInRangeBlock(block, FormSpec<Form>::kQcRanges);
-  classify::VisitSetBits(
-    classify::ClassifyAnyEqBlock(block, FormSpec<Form>::kPairLeads),
-    [&](uint32_t k) {
-      if (PairIsUnsafe<Form>(data, n, base + k)) {
-        suspicious |= uint32_t{1} << k;
-      }
-    });
+  static_assert(kLeadClasses<Form>.Blockable());
+  auto [suspicious, pairs] =
+    classify::ClassifyNibbleClassesBlock(block, kLeadClasses<Form>);
+  classify::VisitSetBits(pairs, [&](uint32_t k) {
+    if (PairIsUnsafe<Form>(data, n, base + k)) {
+      suspicious |= uint32_t{1} << k;
+    }
+  });
   return suspicious;
 }
 
@@ -148,6 +196,80 @@ inline size_t ContextStart(const char* data, size_t i) noexcept {
   return i;
 }
 
+IRS_FORCE_INLINE inline size_t SkipAscii(const char* data, size_t n,
+                                         size_t i) noexcept {
+  const auto* bytes = reinterpret_cast<const byte_type*>(data);
+  constexpr size_t kBlock = classify::kClassifyBlock;
+  while (i + 4 * kBlock <= n &&
+         classify::MoveMask(
+           std::bit_cast<classify::Cmp>(
+             (classify::Load(bytes + i) | classify::Load(bytes + i + kBlock)) |
+             (classify::Load(bytes + i + 2 * kBlock) |
+              classify::Load(bytes + i + 3 * kBlock))) < 0) == 0) {
+    i += 4 * kBlock;
+  }
+  while (i + 2 * kBlock <= n &&
+         classify::MoveMask(std::bit_cast<classify::Cmp>(
+                              classify::Load(bytes + i) |
+                              classify::Load(bytes + i + kBlock)) < 0) == 0) {
+    i += 2 * kBlock;
+  }
+  return i;
+}
+
+struct SuspiciousBlock {
+  size_t pos;
+  uint32_t mask;
+};
+
+template<sz_normal_form_t Form>
+IRS_NO_INLINE SuspiciousBlock NextSuspiciousBlock(const char* data, size_t n,
+                                                  size_t i) noexcept {
+  const auto* bytes = reinterpret_cast<const byte_type*>(data);
+  while (i + classify::kClassifyBlock <= n) {
+    const auto block = classify::Load(bytes + i);
+    if (classify::MoveMask(std::bit_cast<classify::Cmp>(block) < 0) == 0) {
+      i = SkipAscii(data, n, i + classify::kClassifyBlock);
+      continue;
+    }
+    const uint32_t suspicious = SuspiciousMask<Form>(block, data, n, i);
+    if (suspicious != 0) {
+      return {i, suspicious};
+    }
+    i += classify::kClassifyBlock;
+  }
+  return {i, 0};
+}
+
+template<sz_normal_form_t Form>
+inline bool SuspiciousLead(const char* data, size_t n, size_t pos) noexcept {
+  const uint8_t cls = kLeadClassOf<Form>[static_cast<uint8_t>(data[pos])];
+  return cls == kLeadSuspicious ||
+         (cls == kLeadPair && PairIsUnsafe<Form>(data, n, pos));
+}
+
+template<sz_normal_form_t Form>
+inline size_t SafeStarterAfter(const char* data, size_t n,
+                               size_t pos) noexcept {
+  const auto* bytes = reinterpret_cast<const byte_type*>(data);
+  constexpr size_t kBlock = classify::kClassifyBlock;
+  for (; pos + kBlock <= n; pos += kBlock) {
+    const auto block = classify::Load(bytes + pos);
+    const uint32_t safe =
+      ~classify::MoveMask((block & uint8_t{0xC0}) == uint8_t{0x80}) &
+      ~SuspiciousMask<Form>(block, data, n, pos);
+    if (safe != 0) {
+      return pos + std::countr_zero(safe);
+    }
+  }
+  for (; pos < n; ++pos) {
+    if ((bytes[pos] & 0xC0) != 0x80 && !SuspiciousLead<Form>(data, n, pos)) {
+      return pos;
+    }
+  }
+  return n;
+}
+
 }  // namespace detail
 
 template<sz_normal_form_t Form>
@@ -160,35 +282,57 @@ constexpr size_t Bound(size_t n) noexcept {
 template<sz_normal_form_t Form>
 inline bool Denormalized(const char* data, size_t n) noexcept {
   using namespace detail;
+  const auto* bytes = reinterpret_cast<const byte_type*>(data);
   size_t i = 0;
   while (i + classify::kClassifyBlock <= n) {
-    if (SuspiciousMask<Form>(data, n, i) == 0) {
-      i += classify::kClassifyBlock;
-      continue;
+    const auto [pos, suspicious] = NextSuspiciousBlock<Form>(data, n, i);
+    i = pos;
+    if (suspicious == 0) {
+      break;
     }
-    size_t end = i + classify::kClassifyBlock;
-    while (end + classify::kClassifyBlock <= n &&
-           SuspiciousMask<Form>(data, n, end) != 0) {
-      end += classify::kClassifyBlock;
-    }
-    while (end < n && (static_cast<uint8_t>(data[end]) & 0xC0) == 0x80) {
-      ++end;
-    }
-    const size_t start = ContextStart(data, i);
-    if (sz_utf8_find_denormalized_serial(data + start, end - start, Form) !=
-        nullptr) {
+    const auto offset = static_cast<uint32_t>(std::countr_zero(suspicious));
+    const size_t first = i + offset;
+    const uint32_t continuation = classify::MoveMask(
+      (classify::Load(bytes + i) & uint8_t{0xC0}) == uint8_t{0x80});
+    const uint32_t after = static_cast<uint32_t>(~uint64_t{0} << (offset + 1));
+    const uint32_t safe = ~continuation & ~suspicious & after;
+    const size_t end =
+      safe != 0 ? i + std::countr_zero(safe)
+                : SafeStarterAfter<Form>(data, n, i + classify::kClassifyBlock);
+    const size_t start = ContextStart(data, first);
+    if (sz::SegmentDenormalized(data + start, end - start, Form)) {
       return true;
     }
     i = end;
   }
-  for (size_t j = i; j < n; ++j) {
-    const uint8_t cls = kLeadClassOf<Form>[static_cast<uint8_t>(data[j])];
-    if (cls == kLeadSuspicious ||
-        (cls == kLeadPair && PairIsUnsafe<Form>(data, n, j))) {
-      const size_t start = ContextStart(data, i);
-      return sz_utf8_find_denormalized_serial(data + start, n - start, Form) !=
-             nullptr;
+  if (i == n) {
+    return false;
+  }
+  const bool whole = n >= classify::kClassifyBlock;
+  SDB_ASSERT(whole || i == 0);
+  const size_t base = whole ? n - classify::kClassifyBlock : 0;
+  const auto tail =
+    whole ? classify::Load(bytes + base) : classify::LoadPadded(bytes, n);
+  const uint32_t live =
+    whole ? ~uint32_t{0} << (i - base) : classify::LowBits(n);
+  if ((classify::MoveMask(std::bit_cast<classify::Cmp>(tail) < 0) & live) ==
+      0) {
+    return false;
+  }
+  uint32_t suspicious = SuspiciousMask<Form>(tail, data, n, base) & live;
+  const uint32_t starters =
+    ~classify::MoveMask((tail & uint8_t{0xC0}) == uint8_t{0x80}) & ~suspicious &
+    live;
+  while (suspicious != 0) {
+    const auto offset = static_cast<uint32_t>(std::countr_zero(suspicious));
+    const uint32_t safe =
+      starters & static_cast<uint32_t>(~uint64_t{0} << (offset + 1));
+    const size_t end = safe != 0 ? base + std::countr_zero(safe) : n;
+    const size_t start = ContextStart(data, base + offset);
+    if (sz::SegmentDenormalized(data + start, end - start, Form)) {
+      return true;
     }
+    suspicious &= static_cast<uint32_t>(~uint64_t{0} << (end - base));
   }
   return false;
 }
@@ -197,11 +341,16 @@ template<sz_normal_form_t Form>
 inline bool StripSafe(const char* data, size_t n) noexcept {
   const auto* bytes = reinterpret_cast<const byte_type*>(data);
   size_t i = 0;
-  for (; i + classify::kClassifyBlock <= n; i += classify::kClassifyBlock) {
+  while (i + classify::kClassifyBlock <= n) {
+    i = detail::SkipAscii(data, n, i);
+    if (i + classify::kClassifyBlock > n) {
+      break;
+    }
     if (classify::ClassifyAnyInRangeBlock(
           bytes + i, detail::FormSpec<Form>::kStripRanges) != 0) {
       return false;
     }
+    i += classify::kClassifyBlock;
   }
   for (; i < n; ++i) {
     if (detail::kStripUnsafeLeadOf<Form>[bytes[i]]) {
@@ -223,5 +372,14 @@ inline size_t Decompose(std::string_view in, char* out) noexcept {
 }
 
 void StripNonspacingMarks(std::string_view in, std::string& out);
+
+enum class StripResult : uint8_t {
+  Unchanged,
+  Stripped,
+  Unsupported,
+};
+
+template<sz_normal_form_t Form>
+StripResult StripTwoByte(std::string_view in, std::string& out);
 
 }  // namespace irs::analysis::normalize

@@ -178,13 +178,13 @@ void ShingleTokenizer::StoreBlob(TokenSink& sink, uint32_t n) {
 }
 
 template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent>
-void ShingleTokenizer::EmitRuns(duckdb::string_t raw, TokenSink& sink,
+void ShingleTokenizer::EmitRuns(const duckdb::string_t* raw, TokenSink& sink,
                                 uint32_t n, bool no_shingles) {
   const auto* const tok = _sub->tokens.terms().data();
   const auto* const tpos = _sub->tokens.pos().data();
   const auto emit_unigram = [&](uint32_t i, uint32_t pos) {
     const auto& term = tok[i];
-    sink.Emit<Layout>(raw, term.GetData(),
+    sink.Emit<Layout>(raw ? *raw : term, term.GetData(),
                       static_cast<uint32_t>(term.GetSize()), pos);
   };
 
@@ -274,11 +274,8 @@ void ShingleTokenizer::EmitRuns(duckdb::string_t raw, TokenSink& sink,
 
 template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
          bool StoreTokens>
-bool ShingleTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
-  if (!DrainBase(raw)) {
-    return false;
-  }
-
+void ShingleTokenizer::EmitBaseTokens(const duckdb::string_t* raw,
+                                      TokenSink& sink) {
   const uint32_t n = static_cast<uint32_t>(_sub->tokens.terms().size());
   const bool no_shingles = n < _min;
   if (!no_shingles) {
@@ -290,7 +287,26 @@ bool ShingleTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
   if constexpr (StoreTokens) {
     StoreBlob(sink, n);
   }
+}
+
+template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
+         bool StoreTokens>
+bool ShingleTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
+  if (!DrainBase(raw)) {
+    return false;
+  }
+  EmitBaseTokens<Layout, OutputUnigrams, HasFrequent, StoreTokens>(&raw, sink);
   return true;
+}
+
+bool ShingleTokenizer::FillTokens(std::span<const duckdb::string_t> tokens,
+                                  TokenSink& sink, FillCtx ctx) {
+  return DispatchFill(*this, ctx.layout, ctx.traits,
+                      [&](auto layout_tag, auto... tags) IRS_FORCE_INLINE {
+                        _sub->tokens.Assign(tokens);
+                        EmitBaseTokens<layout_tag(), tags()...>(nullptr, sink);
+                        return true;
+                      });
 }
 
 template class TypedTokenizer<ShingleTokenizer>;

@@ -1,0 +1,39 @@
+# DOCS_TEST: function_form
+
+# DOCS_TEST_BODY
+
+query
+SELECT strip_html('<p>Hello <b>World</b></p><script>ignored()</script>') AS tokens;
+----
+tokens
+{Hello,World}
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY html_text AS
+    strip_html() | split_text(case := 'lower')
+    WITH (frequency, position, offset);
+
+query
+SELECT ts_lexize('html_text', '<h1>Title</h1><p>Some <em>body</em> text</p>');
+----
+ts_lexize
+{title,some,body,text}
+
+# DOCS_TEST: join_inline_tags
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY html_joined_text AS
+    strip_html(join_inline_tags := true) | split_text(case := 'lower')
+    WITH (frequency, position, offset);
+
+query
+SELECT ts_lexize('html_joined_text', '<p>Caf&eacute; <b>au</b> lait, s<i>up</i>er!</p>');
+----
+ts_lexize
+{café,au,lait,super}

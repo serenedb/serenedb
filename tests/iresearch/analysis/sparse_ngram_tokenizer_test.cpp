@@ -225,8 +225,12 @@ struct RefGram {
   bool operator==(const RefGram&) const = default;
 };
 
-uint32_t RefHash(uint32_t a0, uint32_t a1) {
-  const uint64_t a = a0 * 0xc6a4a7935bd1e995ULL + a1 * 0x228876a7198b743ULL;
+uint32_t RefHash(const uint32_t* units, size_t window) {
+  uint64_t a = uint64_t{units[0]} * 0xc6a4a7935bd1e995ULL +
+               uint64_t{units[1]} * 0x228876a7198b743ULL;
+  for (size_t k = 2; k < window; ++k) {
+    a = a * 0xc6a4a7935bd1e995ULL + uint64_t{units[k]} * 0x228876a7198b743ULL;
+  }
   return static_cast<uint32_t>(a + (~a >> 47));
 }
 
@@ -252,31 +256,35 @@ RefUnits RefSplitUnits(const std::string& s) {
 }
 
 std::vector<RefGram> RefSparseGrams(const std::string& s, size_t max_len,
-                                    bool covering) {
+                                    bool covering, size_t min_len = 3,
+                                    size_t cutoff = 0) {
   struct Entry {
     uint32_t hash;
     uint32_t pos;
   };
+  const size_t w = min_len - 1;
   const RefUnits units = RefSplitUnits(s);
   std::vector<RefGram> out;
   std::vector<Entry> stack;
   size_t head = 0;
   const auto emit = [&](size_t b, size_t e) {
-    out.push_back({units.offsets[b], units.offsets[e]});
+    if (e - b >= cutoff) {
+      out.push_back({units.offsets[b], units.offsets[e]});
+    }
   };
   const size_t nunits = units.values.size();
-  const size_t positions = nunits >= 2 ? nunits - 1 : 0;
+  const size_t positions = nunits >= w ? nunits - w + 1 : 0;
   for (size_t i = 0; i < positions; ++i) {
-    const Entry p{RefHash(units.values[i], units.values[i + 1]),
+    const Entry p{RefHash(units.values.data() + i, w),
                   static_cast<uint32_t>(i)};
     if (!covering) {
-      const size_t min_pos = i + 2 - std::min(i + 2, max_len);
+      const size_t min_pos = i + w - std::min(i + w, max_len);
       while (!stack.empty() && p.hash > stack.back().hash) {
         if (stack.back().pos < min_pos) {
           stack.clear();
           break;
         }
-        emit(stack.back().pos, i + 2);
+        emit(stack.back().pos, i + w);
         while (stack.size() > 1 &&
                stack.back().hash == stack[stack.size() - 2].hash) {
           stack.pop_back();
@@ -284,20 +292,20 @@ std::vector<RefGram> RefSparseGrams(const std::string& s, size_t max_len,
         stack.pop_back();
       }
       if (!stack.empty() && stack.back().pos >= min_pos) {
-        emit(stack.back().pos, i + 2);
+        emit(stack.back().pos, i + w);
       }
       stack.push_back(p);
       continue;
     }
-    if (stack.size() - head > 1 && i - stack[head].pos + 3 >= max_len) {
-      emit(stack[head].pos, stack[head + 1].pos + 2);
+    if (stack.size() - head > 1 && i - stack[head].pos + w + 1 >= max_len) {
+      emit(stack[head].pos, stack[head + 1].pos + w);
       ++head;
     }
     while (stack.size() > head && p.hash > stack.back().hash) {
       if (stack[head].hash == stack.back().hash) {
-        emit(stack.back().pos, i + 2);
+        emit(stack.back().pos, i + w);
         while (stack.size() - head > 1) {
-          const size_t last = stack.back().pos + 2;
+          const size_t last = stack.back().pos + w;
           stack.pop_back();
           emit(stack.back().pos, last);
         }
@@ -312,7 +320,7 @@ std::vector<RefGram> RefSparseGrams(const std::string& s, size_t max_len,
   }
   if (covering) {
     while (stack.size() - head > 1) {
-      const size_t last = stack.back().pos + 2;
+      const size_t last = stack.back().pos + w;
       stack.pop_back();
       emit(stack.back().pos, last);
     }
@@ -379,6 +387,78 @@ TEST(sparse_ngram_tokenizer_test, long_inputs_match_reference) {
           got.push_back({t.start, t.end});
         }
         ASSERT_EQ(RefSparseGrams(v, max_len, covering), got);
+      }
+    }
+  }
+}
+
+TEST(sparse_ngram_tokenizer_test, min_length_and_cutoff_match_reference) {
+  const std::vector<std::string> values = {
+    "",
+    "for",
+    "hello world",
+    RandomText(3000, "ab", 11),
+    RandomText(3000, "abcdefgh ", 12),
+    RandomText(3000, std::string_view{"\x01\x7f\x80\xff xyz09", 10}, 13),
+    "日本語のテキストを分割する、"
+    "日本語のテキストを分割する",
+    std::string(500, 'z'),
+  };
+  for (const size_t min_len : {size_t{3}, size_t{4}, size_t{5}, size_t{7}}) {
+    for (const size_t cutoff : {size_t{0}, min_len, min_len + 2}) {
+      for (const bool covering : {false, true}) {
+        for (const size_t max_len : {size_t{8}, size_t{16}, size_t{200}}) {
+          if (max_len < min_len || cutoff > max_len) {
+            continue;
+          }
+          auto stream = irs::analysis::SparseNGramTokenizer::Make(
+            {.max_ngram_length = max_len,
+             .covering = covering,
+             .min_ngram_length = min_len,
+             .min_cutoff_length = cutoff});
+          for (const auto& v : values) {
+            SCOPED_TRACE(testing::Message()
+                         << "min=" << min_len << " cutoff=" << cutoff
+                         << " covering=" << covering << " max=" << max_len
+                         << " size=" << v.size());
+            const auto tokens = CollectWithOffsets(*stream, v);
+            std::vector<RefGram> got;
+            got.reserve(tokens.size());
+            for (const auto& t : tokens) {
+              ASSERT_EQ(v.substr(t.start, t.end - t.start), t.term);
+              got.push_back({t.start, t.end});
+            }
+            ASSERT_EQ(RefSparseGrams(v, max_len, covering, min_len, cutoff),
+                      got);
+          }
+        }
+      }
+    }
+  }
+}
+
+TEST(sparse_ngram_tokenizer_test, min_length_covering_subset_of_all) {
+  const std::string code =
+    "for (size_t i = 0; i < n; ++i) { sum += data[i] * data[i]; }";
+  for (const size_t min_len : {size_t{4}, size_t{5}}) {
+    auto all_stream = irs::analysis::SparseNGramTokenizer::Make(
+      {.max_ngram_length = 16, .min_ngram_length = min_len});
+    auto cover_stream = irs::analysis::SparseNGramTokenizer::Make(
+      {.max_ngram_length = 16, .covering = true, .min_ngram_length = min_len});
+    const auto all_terms = tests::AnalyzeTerms(*all_stream, code);
+    ASSERT_TRUE(all_terms.has_value());
+    const std::set<std::string> all{all_terms->begin(), all_terms->end()};
+    for (size_t begin = 0; begin < code.size(); ++begin) {
+      for (size_t len = min_len; begin + len <= code.size(); ++len) {
+        const auto part = code.substr(begin, len);
+        const auto grams = tests::AnalyzeTerms(*cover_stream, part);
+        ASSERT_TRUE(grams.has_value());
+        for (const auto& gram : *grams) {
+          ASSERT_GE(gram.size(), min_len);
+          ASSERT_TRUE(all.contains(gram))
+            << "min=" << min_len << " covering gram '" << gram
+            << "' of substring '" << part << "' missing from index grams";
+        }
       }
     }
   }

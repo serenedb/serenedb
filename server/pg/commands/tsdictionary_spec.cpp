@@ -559,6 +559,38 @@ class SpecCompiler {
       });
   }
 
+  std::string CompilePredicate(const OptionGroup& group,
+                               const duckdb::LambdaExpression& lambda) {
+    std::string error;
+    const auto params = lambda.ExtractColumnRefExpressions(error);
+    if (!error.empty() || params.size() != 1) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG(group.name, "(): the lambda takes exactly one parameter"),
+        ERR_HINT(group.name, "(lambda x: length(x) > 2)"));
+    }
+    const auto& param =
+      params.front().get().Cast<duckdb::ColumnRefExpression>().GetColumnName();
+    auto body = lambda.Right().Copy();
+    const bool param_is_input =
+      absl::EqualsIgnoreCase(param.GetIdentifierName(), kInput);
+    RejectPlaceholders(*body, /*reject_input=*/!param_is_input);
+    if (IsParameterRef(*body, param)) {
+      return std::string{kInput};
+    }
+    SubstituteParameter(*body, param);
+    if (!ReferencesInput(*body)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG(group.name, "(): the lambda \"", lambda.ToString(),
+                "\" does not use its parameter"),
+        ERR_HINT("the parameter is the token being tested, as in "
+                 "lambda x: length(x) > 2"));
+    }
+    RejectNestedAnalyzers(*body);
+    return body->ToString();
+  }
+
   // The value the stage analyzes is passed as the call's first argument.
   Stage CompileSqlCall(const duckdb::FunctionExpression& fn) {
     const auto& name = fn.GetQualifiedName().Name();
@@ -607,6 +639,11 @@ class SpecCompiler {
         stage.children.emplace_back(CompileChain(value));
         continue;
       }
+      if (positional < flat.size() &&
+          flat[positional].type == OptionInfo::Type::Lambda &&
+          value.GetExpressionClass() != duckdb::ExpressionClass::LAMBDA) {
+        ++positional;
+      }
       if (positional == flat.size()) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                         ERR_MSG(group.name, "() takes at most ", flat.size(),
@@ -636,6 +673,21 @@ class SpecCompiler {
         ERR_MSG(group.name, "(): option \"", name, "\" given more than once"));
     }
     given.emplace_back(name);
+    const auto flat = group.FlatOptions();
+    const auto info = absl::c_find_if(
+      flat, [&](const OptionInfo& option) { return option.name == name; });
+    if (info != flat.end() && info->type == OptionInfo::Type::Lambda) {
+      if (value.GetExpressionClass() != duckdb::ExpressionClass::LAMBDA) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG(group.name, "(): option \"", name, "\" must be a lambda"),
+          ERR_HINT(group.name, "(lambda x: length(x) > 2)"));
+      }
+      stage.options.emplace_back(
+        std::string{name}, duckdb::Value{CompilePredicate(
+                             group, value.Cast<duckdb::LambdaExpression>())});
+      return;
+    }
     if (value.GetExpressionClass() == duckdb::ExpressionClass::COLUMN_REF ||
         value.GetExpressionClass() == duckdb::ExpressionClass::PARAMETER) {
       THROW_SQL_ERROR(
@@ -711,6 +763,10 @@ std::string RenderDefault(const OptionInfo& info) {
 std::vector<std::string> Parameters(const OptionGroup& group) {
   std::vector<std::string> params;
   for (const auto& info : group.FlatOptions()) {
+    if (info.type == OptionInfo::Type::Lambda) {
+      params.emplace_back("lambda x: <predicate>");
+      continue;
+    }
     if (info.IsRequired()) {
       params.emplace_back(info.name);
       continue;
@@ -730,8 +786,15 @@ std::string Signature(const OptionGroup& group) {
 
 std::string FunctionSignature(const OptionGroup& group) {
   auto params = Parameters(group);
+  const auto lambda = absl::c_find(params, "lambda x: <predicate>");
+  if (lambda == params.end()) {
+    params.insert(params.begin(), "value");
+    return absl::StrCat(group.function, "(", absl::StrJoin(params, ", "), ")");
+  }
+  params.erase(lambda);
   params.insert(params.begin(), "value");
-  return absl::StrCat(group.function, "(", absl::StrJoin(params, ", "), ")");
+  return absl::StrCat(group.function, "(", absl::StrJoin(params, ", "), ") or ",
+                      group.function, "(value, lambda x: <predicate>)");
 }
 
 void AppendDescriptions(std::string& out, std::span<const OptionInfo> options) {

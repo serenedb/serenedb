@@ -247,6 +247,11 @@ class IndexWriter : private util::Noncopyable {
       return _writer.WithTokens(std::forward<Args>(args)...);
     }
 
+    template<typename... Args>
+    bool WithEntryTokens(Args&&... args) const {
+      return _writer.WithEntryTokens(std::forward<Args>(args)...);
+    }
+
 #ifdef SDB_GTEST
     SegmentWriter& Writer() noexcept { return _writer; }
 #endif

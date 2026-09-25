@@ -324,6 +324,29 @@ const std::vector<std::string>& MarkupCorpus() {
   return corpus;
 }
 
+const std::vector<std::string>& ProseMarkupCorpus() {
+  static const auto corpus = [] {
+    const char* words[] = {"lorem",       "ipsum", "dolor",     "sit",
+                           "caf&eacute;", "amet",  "don&#39;t", "sed",
+                           "elit",        "&amp;", "&nbsp;",    "tempor"};
+    const char* tags[] = {
+      "<p>",  "</p>",  "<a href=\"/x?a=1&amp;b=2\">", "</a>",   "<b>", "</b>",
+      "<em>", "</em>", "<span class=\"note\">",       "</span>"};
+    std::vector<std::string> out;
+    out.reserve(kValues);
+    for (size_t i = 0; i < kValues; ++i) {
+      std::string v;
+      for (size_t w = 0; w < 24; ++w) {
+        v += words[(i * 7 + w * 5) % 12];
+        v += (i + w) % 3 == 0 ? tags[(i * 3 + w * 7) % 10] : " ";
+      }
+      out.push_back(std::move(v));
+    }
+    return out;
+  }();
+  return corpus;
+}
+
 const std::vector<std::string>& HardTagCorpus() {
   static const auto corpus = [] {
     const char* words[] = {"data", "text", "node", "item", "cell"};
@@ -873,6 +896,35 @@ Tokenizer::ptr MakeNormNfkcAccent() {
   return NormalizingTokenizer::Make(std::move(opts));
 }
 
+Tokenizer::ptr MakeNormLower() {
+  NormalizingTokenizer::Options opts;
+  opts.locale = icu::Locale::createFromName("en");
+  opts.case_convert = Case::Lower;
+  return NormalizingTokenizer::Make(std::move(opts));
+}
+
+Tokenizer::ptr MakeNormFold() {
+  NormalizingTokenizer::Options opts;
+  opts.locale = icu::Locale::createFromName("en");
+  opts.fold = true;
+  return NormalizingTokenizer::Make(std::move(opts));
+}
+
+Tokenizer::ptr MakeNormNfd() {
+  NormalizingTokenizer::Options opts;
+  opts.locale = icu::Locale::createFromName("en");
+  opts.case_convert = Case::Lower;
+  opts.form = NormForm::Nfd;
+  return NormalizingTokenizer::Make(std::move(opts));
+}
+
+Tokenizer::ptr MakeNormNfkcCf() {
+  NormalizingTokenizer::Options opts;
+  opts.locale = icu::Locale::createFromName("en");
+  opts.form = NormForm::NfkcCf;
+  return NormalizingTokenizer::Make(std::move(opts));
+}
+
 Tokenizer::ptr MakeCollation() {
   CollationTokenizer::Options opts;
   opts.locale = icu::Locale::createFromName("de");
@@ -1083,6 +1135,11 @@ Tokenizer::ptr MakeMultiDelimiterMixed8() {
     {", ", "; ", ": ", " - ", " | ", "\t", "--", "\r\n"});
 }
 
+Tokenizer::ptr MakeMultiDelimiterChars12() {
+  return MakeMultiDelimiterFrom(
+    {",", ";", "|", "\t", ":", ".", "!", "?", "/", "\\", "#", "&"});
+}
+
 Tokenizer::ptr MakeMultiDelimiter() {
   MultiDelimitedTokenizer::Options opts;
   opts.delimiters.emplace_back(reinterpret_cast<const byte_type*>(","), 1);
@@ -1116,6 +1173,31 @@ Tokenizer::ptr MakeSplitNonAlpha() {
 }
 Tokenizer::ptr MakeSplitNonAlphaLower() {
   return SplitByNonAlphaTokenizer::Make({.case_convert = Case::Lower});
+}
+using SplitChars = SplitByNonAlphaTokenizer::Options::Chars;
+Tokenizer::ptr MakeSplitNonAlphaBytes() {
+  return SplitByNonAlphaTokenizer::Make({.chars = SplitChars::AsciiBytes});
+}
+Tokenizer::ptr MakeSplitNonAlphaBytesLower() {
+  return SplitByNonAlphaTokenizer::Make(
+    {.case_convert = Case::Lower, .chars = SplitChars::AsciiBytes});
+}
+Tokenizer::ptr MakeSplitNonAlphaAlnum() {
+  return SplitByNonAlphaTokenizer::Make({.chars = SplitChars::Alnum});
+}
+Tokenizer::ptr MakeSplitNonAlphaAlnumLower() {
+  return SplitByNonAlphaTokenizer::Make(
+    {.case_convert = Case::Lower, .chars = SplitChars::Alnum});
+}
+Tokenizer::ptr MakeSplitNonAlphaLetters() {
+  return SplitByNonAlphaTokenizer::Make({.chars = SplitChars::Letters});
+}
+Tokenizer::ptr MakeSplitNonAlphaWhitespace() {
+  return SplitByNonAlphaTokenizer::Make({.chars = SplitChars::Whitespace});
+}
+Tokenizer::ptr MakeSplitNonAlphaWhitespaceLower() {
+  return SplitByNonAlphaTokenizer::Make(
+    {.case_convert = Case::Lower, .chars = SplitChars::Whitespace});
 }
 
 Tokenizer::ptr MakePathHierarchy() { return PathHierarchyTokenizer::Make({}); }
@@ -1219,11 +1301,26 @@ Tokenizer::ptr MakeSparseNGramCovering() {
   return SparseNGramTokenizer::Make({.covering = true});
 }
 
+Tokenizer::ptr MakeSparseNGramMin4() {
+  return SparseNGramTokenizer::Make({.min_ngram_length = 4});
+}
+
+Tokenizer::ptr MakeSparseNGramCutoff5() {
+  return SparseNGramTokenizer::Make({.min_cutoff_length = 5});
+}
+
 Tokenizer::ptr MakeWildcard() {
   return WildcardTokenizer::Make({}, tests::Cache());
 }
 
 Tokenizer::ptr MakeText() { return TextTokenizer::Make({}); }
+
+Tokenizer::ptr MakeTextGrapheme() {
+  return TextTokenizer::Make(
+    {.separate = TextTokenizer::Options::Separate::Grapheme,
+     .accept = TextTokenizer::Options::Accept::Graphic,
+     .convert = Case::None});
+}
 
 Tokenizer::ptr MakeIcuText() {
   return IcuTextTokenizer::Make(
@@ -1375,6 +1472,53 @@ Tokenizer::ptr MakePipelineSegStop() {
   return std::make_unique<PipelineTokenizer>(std::move(subs));
 }
 
+Tokenizer::ptr MakePipelineSegThen(Tokenizer::ptr stage) {
+  std::vector<Tokenizer::ptr> subs;
+  subs.push_back(TextTokenizer::Make({.convert = irs::Case::Lower}));
+  subs.push_back(std::move(stage));
+  return std::make_unique<PipelineTokenizer>(std::move(subs));
+}
+
+Tokenizer::ptr MakePipelineSegLength() {
+  return MakePipelineSegThen(
+    FilterTokensTokenizer::Make({.min_length = 2, .max_length = 6}));
+}
+
+Tokenizer::ptr MakePipelineSegLengthLambda() {
+  return MakePipelineSegThen(FilterTokensTokenizer::Make(
+    {.predicate = "length(input) BETWEEN 2 AND 6"}));
+}
+
+Tokenizer::ptr MakePipelineSegLengthSql() {
+  return MakePipelineSegThen(SqlTokenizer::Make(
+    {.expression = "CASE WHEN length(input) BETWEEN 2 AND 6 THEN input END"}));
+}
+
+Tokenizer::ptr MakePipelineSegStopLambda() {
+  return MakePipelineSegThen(FilterTokensTokenizer::Make(
+    {.predicate = "input NOT IN ('the', 'and', 'of', 'a')"}));
+}
+
+Tokenizer::ptr MakeHtmlStrip() { return HtmlStripTokenizer::Make({}); }
+
+Tokenizer::ptr MakeHtmlStripJoin() {
+  return HtmlStripTokenizer::Make({.join_inline_tags = true});
+}
+
+Tokenizer::ptr MakePipelineHtmlSplit() {
+  std::vector<Tokenizer::ptr> subs;
+  subs.push_back(HtmlStripTokenizer::Make({}));
+  subs.push_back(SplitByNonAlphaTokenizer::Make({.case_convert = Case::Lower}));
+  return std::make_unique<PipelineTokenizer>(std::move(subs));
+}
+
+Tokenizer::ptr MakePipelineHtmlText() {
+  std::vector<Tokenizer::ptr> subs;
+  subs.push_back(HtmlStripTokenizer::Make({}));
+  subs.push_back(TextTokenizer::Make({}));
+  return std::make_unique<PipelineTokenizer>(std::move(subs));
+}
+
 Tokenizer::ptr MakePipelineT2Norm() { return MakePipelineT2RewriteImpl(false); }
 Tokenizer::ptr MakePipelineT2Stem() { return MakePipelineT2RewriteImpl(true); }
 
@@ -1423,6 +1567,26 @@ BENCHMARK_CAPTURE(BM_Fill, norm_unicode, &MakeNorm, &TextUnicodeCorpus)
   ->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_Fill, norm_cyrillic, &MakeNorm, &TextCyrillicCorpus)
   ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, norm_lower, &MakeNormLower, &WordCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, norm_lower_accent, &MakeNormLower, &AccentCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, norm_lower_cyrillic, &MakeNormLower,
+                  &TextCyrillicCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, norm_fold, &MakeNormFold, &WordCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, norm_fold_accent, &MakeNormFold, &AccentCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, norm_fold_cyrillic, &MakeNormFold,
+                  &TextCyrillicCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, norm_nfd_accent, &MakeNormNfd, &AccentCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, norm_nfkc_cf, &MakeNormNfkcCf, &WordCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, norm_nfkc_cf_accent, &MakeNormNfkcCf, &AccentCorpus)
+  ->Unit(benchmark::kMillisecond);
 TOKENIZER_BENCH(collation, MakeCollation, WordCorpus);
 TOKENIZER_BENCH(geojson_point, MakeGeoJsonPoint, GeoJsonPointCorpus);
 TOKENIZER_BENCH(geojson_point_wkb, MakeGeoJsonPointWkb, GeoWkbPointCorpus);
@@ -1467,6 +1631,12 @@ TOKENIZER_BENCH(multi_delimiter_tags_hard, MakeMultiDelimiterTagsHard,
                 HardTagCorpus);
 TOKENIZER_BENCH(multi_delimiter_mixed8, MakeMultiDelimiterMixed8,
                 MixedSepProseCorpus);
+BENCHMARK_CAPTURE(BM_Fill, multi_delimiter_chars12, &MakeMultiDelimiterChars12,
+                  &CsvCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, multi_delimiter_chars12_prose,
+                  &MakeMultiDelimiterChars12, &MixedSepProseCorpus)
+  ->Unit(benchmark::kMillisecond);
 TOKENIZER_BENCH(pattern, MakePattern, TextCorpus);
 BENCHMARK_CAPTURE(BM_Fill, pattern_char, &MakePatternChar, &CsvCorpus)
   ->Unit(benchmark::kMillisecond);
@@ -1485,6 +1655,47 @@ BENCHMARK_CAPTURE(BM_Fill, split_non_alpha, &MakeSplitNonAlpha, &TextCorpus)
   ->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_Fill, split_non_alpha_lower, &MakeSplitNonAlphaLower,
                   &TextCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, split_non_alpha_ascii_bytes, &MakeSplitNonAlphaBytes,
+                  &TextCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, split_non_alpha_ascii_bytes_lower,
+                  &MakeSplitNonAlphaBytesLower, &TextCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, split_non_alpha_cjk, &MakeSplitNonAlpha, &CjkCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, split_non_alpha_ascii_bytes_cjk,
+                  &MakeSplitNonAlphaBytes, &CjkCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, split_non_alpha_ascii_bytes_lower_cyrillic,
+                  &MakeSplitNonAlphaBytesLower, &TextCyrillicCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, split_non_alpha_alnum, &MakeSplitNonAlphaAlnum,
+                  &TextCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, split_non_alpha_alnum_lower,
+                  &MakeSplitNonAlphaAlnumLower, &TextCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, split_non_alpha_alnum_cjk, &MakeSplitNonAlphaAlnum,
+                  &CjkCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, split_non_alpha_alnum_lower_cyrillic,
+                  &MakeSplitNonAlphaAlnumLower, &TextCyrillicCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, split_non_alpha_letters, &MakeSplitNonAlphaLetters,
+                  &TextCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, split_non_alpha_whitespace,
+                  &MakeSplitNonAlphaWhitespace, &TextCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, split_non_alpha_whitespace_lower,
+                  &MakeSplitNonAlphaWhitespaceLower, &TextCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, split_non_alpha_whitespace_cjk,
+                  &MakeSplitNonAlphaWhitespace, &CjkCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, split_non_alpha_whitespace_lower_cyrillic,
+                  &MakeSplitNonAlphaWhitespaceLower, &TextCyrillicCorpus)
   ->Unit(benchmark::kMillisecond);
 TOKENIZER_BENCH(path_hierarchy, MakePathHierarchy, PathCorpus);
 TOKENIZER_BENCH(path_hierarchy_reverse, MakePathHierarchyReverse, PathCorpus);
@@ -1517,12 +1728,27 @@ BENCHMARK_CAPTURE(BM_Fill, sparse_ngram_long, &MakeSparseNGram, &LongTextCorpus)
 BENCHMARK_CAPTURE(BM_Fill, sparse_ngram_long_covering, &MakeSparseNGramCovering,
                   &LongTextCorpus)
   ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, sparse_ngram_min4, &MakeSparseNGramMin4, &TextCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, sparse_ngram_cutoff5, &MakeSparseNGramCutoff5,
+                  &TextCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, sparse_ngram_long_min4, &MakeSparseNGramMin4,
+                  &LongTextCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, sparse_ngram_cjk, &MakeSparseNGram, &CjkCorpus)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_Fill, sparse_ngram_cjk_min4, &MakeSparseNGramMin4,
+                  &CjkCorpus)
+  ->Unit(benchmark::kMillisecond);
 TOKENIZER_BENCH(wildcard, MakeWildcard, TextCorpus);
 BENCHMARK_CAPTURE(BM_Fill, wildcard_unicode, &MakeWildcard, &TextUnicodeCorpus)
   ->Unit(benchmark::kMillisecond);
 TOKENIZER_BENCH(text, MakeText, TextCorpus);
 BENCHMARK_CAPTURE(BM_Fill, text_unicode, &MakeText, &TextUnicodeCorpus)
   ->Unit(benchmark::kMillisecond);
+TOKENIZER_BENCH(text_grapheme, MakeTextGrapheme, TextCorpus);
+TOKENIZER_BENCH(text_grapheme_cjk, MakeTextGrapheme, CjkCorpus);
 TOKENIZER_BENCH(icu_text, MakeIcuText, TextCorpus);
 BENCHMARK_CAPTURE(BM_Fill, icu_text_unicode, &MakeIcuText, &TextUnicodeCorpus)
   ->Unit(benchmark::kMillisecond);
@@ -1536,6 +1762,22 @@ TOKENIZER_BENCH(pipeline_text_en_seglower, MakePipelineTextSegLower,
                 TextCorpus);
 TOKENIZER_BENCH(pipeline_seg_ngram, MakePipelineSegNGram, TextCorpus);
 TOKENIZER_BENCH(pipeline_seg_stop, MakePipelineSegStop, TextCorpus);
+TOKENIZER_BENCH(pipeline_seg_length, MakePipelineSegLength, TextCorpus);
+TOKENIZER_BENCH(pipeline_seg_length_lambda, MakePipelineSegLengthLambda,
+                TextCorpus);
+TOKENIZER_BENCH(pipeline_seg_length_sql, MakePipelineSegLengthSql, TextCorpus);
+TOKENIZER_BENCH(pipeline_seg_stop_lambda, MakePipelineSegStopLambda,
+                TextCorpus);
+BENCHMARK_CAPTURE(BM_Fill, pipeline_seg_length_cyrillic, &MakePipelineSegLength,
+                  &TextCyrillicCorpus)
+  ->Unit(benchmark::kMillisecond);
+TOKENIZER_BENCH(strip_html, MakeHtmlStrip, MarkupCorpus);
+TOKENIZER_BENCH(strip_html_join, MakeHtmlStripJoin, MarkupCorpus);
+TOKENIZER_BENCH(strip_html_prose, MakeHtmlStrip, ProseMarkupCorpus);
+TOKENIZER_BENCH(strip_html_join_prose, MakeHtmlStripJoin, ProseMarkupCorpus);
+TOKENIZER_BENCH(pipeline_strip_html_split, MakePipelineHtmlSplit, MarkupCorpus);
+TOKENIZER_BENCH(pipeline_strip_html_text, MakePipelineHtmlText,
+                ProseMarkupCorpus);
 BENCHMARK_CAPTURE(BM_Fill, pipeline_t2coll, &MakePipelineT2Coll, &CsvCorpus)
   ->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_Fill, pipeline_text_en_unicode, &MakePipelineText,

@@ -222,7 +222,7 @@ class CountAgainst {
     const auto begin = prev + 1;
     if (begin >= _min && begin + uint64_t{n} * kBits <= _max) [[likely]] {
       _total +=
-        CountBlock(_set->Words(), static_cast<int64_t>(prev) - kMin, src, n);
+        CountBlock(_set->Words(), static_cast<int64_t>(begin) - kMin, src, n);
       return;
     }
     const auto* const live = _set->Words();

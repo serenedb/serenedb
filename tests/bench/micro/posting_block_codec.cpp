@@ -24,10 +24,7 @@
 
 #include <array>
 #include <iresearch/formats/posting/block_codec.hpp>
-#include <iresearch/formats/posting/format_block_128.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/bytes_output.hpp>
+#include <iresearch/formats/posting/common.hpp>
 #include <map>
 #include <random>
 #include <utility>
@@ -90,7 +87,7 @@ void CheckDocsBlock(Guards<Codec>& guards,
              "docs size, len ", len);
   auto* in = guards.in.Bytes(size + bc::kInSlack);
   std::memcpy(in, encoded, size);
-  auto* out = guards.out.Values(Codec::kBlock + bc::kOutSlack);
+  auto* out = guards.out.Values(len + bc::kOutSlack);
   const auto* end = full ? Codec::DecodeDeltaBlock(in, prev, out)
                          : Codec::DecodeDeltaTail(in, len, prev, out);
   SDB_VERIFY(end == in + size, "docs end, len ", len, " token ",
@@ -121,7 +118,7 @@ void CheckValuesBlock(Guards<Codec>& guards,
              "values size, len ", len);
   auto* in = guards.in.Bytes(size + bc::kInSlack);
   std::memcpy(in, encoded, size);
-  auto* out = guards.out.Values(Codec::kBlock);
+  auto* out = guards.out.Values(len + bc::kOutSlack);
   const auto* end = full ? Codec::DecodeValuesBlock(in, out)
                          : Codec::DecodeValuesTail(in, len, out);
   SDB_VERIFY(end == in + size, "values end, len ", len, " token ",
@@ -434,19 +431,6 @@ irs::doc_id_t ListPrev(uint32_t block, irs::doc_id_t prev) {
   return block * Codec::kBlock % kListDocs == 0 ? 0 : prev;
 }
 
-irs::bstring Collect(irs::MemoryOutput& out) {
-  out.stream.Flush();
-  irs::bstring bytes;
-  irs::BytesOutput sink{bytes};
-  out.file >> sink;
-  bytes.resize(bytes.size() + kSlack);
-  return bytes;
-}
-
-struct Current {
-  static constexpr uint32_t kBlock = bc::kBlock;
-};
-
 template<typename Codec>
 irs::bstring EncodeDocs(const std::vector<irs::doc_id_t>& docs) {
   constexpr uint32_t kN = Codec::kBlock;
@@ -475,36 +459,6 @@ irs::bstring EncodeDocs(const std::vector<irs::doc_id_t>& docs) {
   return bytes;
 }
 
-template<>
-irs::bstring EncodeDocs<Current>(const std::vector<irs::doc_id_t>& docs) {
-  const auto blocks = static_cast<uint32_t>(docs.size() / kBlock);
-  irs::MemoryOutput current{irs::IResourceManager::gNoop};
-  alignas(64) std::array<uint32_t, kBlock> block;
-  alignas(64) std::array<uint32_t, kBlock> scratch;
-  irs::doc_id_t prev = 0;
-  for (uint32_t b = 0; b != blocks; ++b) {
-    const auto* first = docs.data() + b * kBlock;
-    prev = ListPrev<Current>(b, prev);
-    std::copy_n(first, kBlock, block.data());
-    irs::FormatTraits128::WriteBlockDelta(current.stream, block.data(), prev,
-                                          scratch.data());
-    prev = first[kBlock - 1];
-  }
-  auto bytes = Collect(current);
-  irs::BytesViewInput in{irs::bytes_view{bytes}};
-  irs::DocsBuf out;
-  prev = 0;
-  for (uint32_t b = 0; b != blocks; ++b) {
-    const auto* first = docs.data() + b * kBlock;
-    prev = ListPrev<Current>(b, prev);
-    irs::FormatTraits128::ReadBlockDelta(in, scratch.data(), out.data(), prev);
-    SDB_VERIFY(std::equal(first, first + kBlock, out.data()),
-               "current docs, block ", b);
-    prev = first[kBlock - 1];
-  }
-  return bytes;
-}
-
 template<typename Codec>
 irs::bstring EncodeValues(const std::vector<uint32_t>& values) {
   constexpr uint32_t kN = Codec::kBlock;
@@ -522,29 +476,6 @@ irs::bstring EncodeValues(const std::vector<uint32_t>& values) {
     const auto* first = values.data() + b * kN;
     p = Codec::DecodeValuesBlock(p, out.data());
     SDB_VERIFY(std::equal(first, first + kN, out.data()), "values, block ", b);
-  }
-  return bytes;
-}
-
-template<>
-irs::bstring EncodeValues<Current>(const std::vector<uint32_t>& values) {
-  const auto blocks = static_cast<uint32_t>(values.size() / kBlock);
-  irs::MemoryOutput current{irs::IResourceManager::gNoop};
-  alignas(64) std::array<uint32_t, kBlock> block;
-  alignas(64) std::array<uint32_t, kBlock> scratch;
-  for (uint32_t b = 0; b != blocks; ++b) {
-    std::copy_n(values.data() + b * kBlock, kBlock, block.data());
-    irs::FormatTraits128::WriteBlock(current.stream, block.data(),
-                                     scratch.data());
-  }
-  auto bytes = Collect(current);
-  irs::BytesViewInput in{irs::bytes_view{bytes}};
-  std::array<uint32_t, kBlock> out;
-  for (uint32_t b = 0; b != blocks; ++b) {
-    const auto* first = values.data() + b * kBlock;
-    irs::FormatTraits128::ReadBlock(in, scratch.data(), out.data());
-    SDB_VERIFY(std::equal(first, first + kBlock, out.data()),
-               "current values, block ", b);
   }
   return bytes;
 }
@@ -660,27 +591,6 @@ void BmDocs(benchmark::State& state) {
                                          &Codec::DeltaBlockSize);
 }
 
-void BmDocsCurrent(benchmark::State& state) {
-  const auto shape = static_cast<DocShape>(state.range(0));
-  const auto values = static_cast<uint32_t>(state.range(1));
-  const auto blocks = values / kBlock;
-  const auto& encoded = CachedDocs<Current>(shape, values);
-  irs::BytesViewInput in{irs::bytes_view{encoded}};
-  irs::DocsBuf out;
-  alignas(64) std::array<uint32_t, kBlock> scratch;
-  for (auto _ : state) {
-    in.Seek(0);
-    irs::doc_id_t prev = 0;
-    for (uint32_t b = 0; b != blocks; ++b) {
-      irs::FormatTraits128::ReadBlockDelta(in, scratch.data(), out.data(),
-                                           ListPrev<Current>(b, prev));
-      prev = out[kBlock - 1];
-    }
-    benchmark::DoNotOptimize(prev);
-  }
-  Report(state, encoded.size(), values);
-}
-
 template<typename Codec>
 void DecodeValueBlocks(benchmark::State& state, const irs::bstring& encoded,
                        uint32_t values) {
@@ -700,35 +610,11 @@ void DecodeValueBlocks(benchmark::State& state, const irs::bstring& encoded,
                                          &Codec::ValuesBlockSize);
 }
 
-void DecodeValueBlocksCurrent(benchmark::State& state,
-                              const irs::bstring& encoded, uint32_t values) {
-  const auto blocks = values / kBlock;
-  irs::BytesViewInput in{irs::bytes_view{encoded}};
-  alignas(64) std::array<uint32_t, kBlock> out;
-  alignas(64) std::array<uint32_t, kBlock> scratch;
-  for (auto _ : state) {
-    in.Seek(0);
-    for (uint32_t b = 0; b != blocks; ++b) {
-      irs::FormatTraits128::ReadBlock(in, scratch.data(), out.data());
-    }
-    benchmark::DoNotOptimize(out);
-    benchmark::ClobberMemory();
-  }
-  Report(state, encoded.size(), values);
-}
-
 template<typename Codec>
 void BmFreqs(benchmark::State& state) {
   const auto values = static_cast<uint32_t>(state.range(1));
   DecodeValueBlocks<Codec>(
     state, CachedFreqs<Codec>(static_cast<FreqShape>(state.range(0)), values),
-    values);
-}
-
-void BmFreqsCurrent(benchmark::State& state) {
-  const auto values = static_cast<uint32_t>(state.range(1));
-  DecodeValueBlocksCurrent(
-    state, CachedFreqs<Current>(static_cast<FreqShape>(state.range(0)), values),
     values);
 }
 
@@ -738,14 +624,6 @@ void BmPositions(benchmark::State& state) {
   DecodeValueBlocks<Codec>(
     state,
     CachedPositions<Codec>(static_cast<PosShape>(state.range(0)), values),
-    values);
-}
-
-void BmPositionsCurrent(benchmark::State& state) {
-  const auto values = static_cast<uint32_t>(state.range(1));
-  DecodeValueBlocksCurrent(
-    state,
-    CachedPositions<Current>(static_cast<PosShape>(state.range(0)), values),
     values);
 }
 
@@ -795,13 +673,10 @@ void PosShapes(benchmark::internal::Benchmark* b) {
 BENCHMARK(BmDocs128)->Apply(DocShapes);
 BENCHMARK(BmDocs256)->Apply(DocShapes);
 BENCHMARK(BmDocs256Portable)->Apply(DocShapes);
-BENCHMARK(BmDocsCurrent)->Apply(DocShapes);
 BENCHMARK(BmFreqs128)->Apply(FreqShapes);
 BENCHMARK(BmFreqs256)->Apply(FreqShapes);
-BENCHMARK(BmFreqsCurrent)->Apply(FreqShapes);
 BENCHMARK(BmPositions128)->Apply(PosShapes);
 BENCHMARK(BmPositions256)->Apply(PosShapes);
-BENCHMARK(BmPositionsCurrent)->Apply(PosShapes);
 
 constexpr uint32_t kEncodeValues = 1024 * kBlock;
 
@@ -823,26 +698,6 @@ void BmEncodeDocs(benchmark::State& state) {
   state.SetItemsProcessed(state.iterations() * kEncodeValues);
 }
 
-void BmEncodeDocsCurrent(benchmark::State& state) {
-  const auto docs =
-    MakeDocs(static_cast<DocShape>(state.range(0)), kEncodeValues);
-  alignas(64) std::array<uint32_t, kBlock> block;
-  alignas(64) std::array<uint32_t, kBlock> scratch;
-  for (auto _ : state) {
-    irs::MemoryOutput out{irs::IResourceManager::gNoop};
-    irs::doc_id_t prev = 0;
-    for (uint32_t b = 0; b != kEncodeValues / kBlock; ++b) {
-      const auto* first = docs.data() + b * kBlock;
-      std::copy_n(first, kBlock, block.data());
-      irs::FormatTraits128::WriteBlockDelta(out.stream, block.data(), prev,
-                                            scratch.data());
-      prev = first[kBlock - 1];
-    }
-    benchmark::DoNotOptimize(out.stream.Position());
-  }
-  state.SetItemsProcessed(state.iterations() * kEncodeValues);
-}
-
 template<typename Codec>
 void EncodeValueBlocks(benchmark::State& state,
                        const std::vector<uint32_t>& values) {
@@ -857,41 +712,15 @@ void EncodeValueBlocks(benchmark::State& state,
   state.SetItemsProcessed(state.iterations() * kEncodeValues);
 }
 
-void EncodeValueBlocksCurrent(benchmark::State& state,
-                              const std::vector<uint32_t>& values) {
-  alignas(64) std::array<uint32_t, kBlock> block;
-  alignas(64) std::array<uint32_t, kBlock> scratch;
-  for (auto _ : state) {
-    irs::MemoryOutput out{irs::IResourceManager::gNoop};
-    for (uint32_t b = 0; b != kEncodeValues / kBlock; ++b) {
-      std::copy_n(values.data() + b * kBlock, kBlock, block.data());
-      irs::FormatTraits128::WriteBlock(out.stream, block.data(),
-                                       scratch.data());
-    }
-    benchmark::DoNotOptimize(out.stream.Position());
-  }
-  state.SetItemsProcessed(state.iterations() * kEncodeValues);
-}
-
 template<typename Codec>
 void BmEncodeFreqs(benchmark::State& state) {
   EncodeValueBlocks<Codec>(
     state, MakeFreqs(static_cast<FreqShape>(state.range(0)), kEncodeValues));
 }
 
-void BmEncodeFreqsCurrent(benchmark::State& state) {
-  EncodeValueBlocksCurrent(
-    state, MakeFreqs(static_cast<FreqShape>(state.range(0)), kEncodeValues));
-}
-
 template<typename Codec>
 void BmEncodePositions(benchmark::State& state) {
   EncodeValueBlocks<Codec>(
-    state, MakePositions(static_cast<PosShape>(state.range(0)), kEncodeValues));
-}
-
-void BmEncodePositionsCurrent(benchmark::State& state) {
-  EncodeValueBlocksCurrent(
     state, MakePositions(static_cast<PosShape>(state.range(0)), kEncodeValues));
 }
 
@@ -916,13 +745,10 @@ void BmEncodePositions256(benchmark::State& state) {
 
 BENCHMARK(BmEncodeDocs128)->DenseRange(0, 5);
 BENCHMARK(BmEncodeDocs256)->DenseRange(0, 5);
-BENCHMARK(BmEncodeDocsCurrent)->DenseRange(0, 5);
 BENCHMARK(BmEncodeFreqs128)->DenseRange(0, 4);
 BENCHMARK(BmEncodeFreqs256)->DenseRange(0, 4);
-BENCHMARK(BmEncodeFreqsCurrent)->DenseRange(0, 4);
 BENCHMARK(BmEncodePositions128)->DenseRange(0, 5);
 BENCHMARK(BmEncodePositions256)->DenseRange(0, 5);
-BENCHMARK(BmEncodePositionsCurrent)->DenseRange(0, 5);
 
 constexpr uint32_t kTails = 1024;
 
@@ -987,38 +813,6 @@ void BmTailDocs(benchmark::State& state) {
   ReportTails(state, size, len);
 }
 
-void BmTailDocsCurrent(benchmark::State& state) {
-  const auto len = static_cast<uint32_t>(state.range(0));
-  const auto docs = MakeTails(len, static_cast<uint32_t>(state.range(1)), true);
-  irs::MemoryOutput current{irs::IResourceManager::gNoop};
-  alignas(64) std::array<uint32_t, kBlock> block;
-  alignas(64) std::array<uint32_t, kBlock> scratch;
-  for (uint32_t t = 0; t != kTails; ++t) {
-    std::copy_n(docs.data() + t * len, len, block.data());
-    irs::FormatTraits128::WriteTailDelta(len, current.stream, block.data(), 0,
-                                         scratch.data());
-  }
-  const auto bytes = Collect(current);
-  irs::BytesViewInput in{irs::bytes_view{bytes}};
-  irs::DocsBuf out;
-  for (uint32_t t = 0; t != kTails; ++t) {
-    irs::FormatTraits128::ReadTailDelta(len, in, scratch.data(), out.data(), 0);
-    SDB_VERIFY(std::equal(out.begin() + kBlock - len, out.begin() + kBlock,
-                          docs.data() + t * len),
-               "current tail docs ", t);
-  }
-  for (auto _ : state) {
-    in.Seek(0);
-    for (uint32_t t = 0; t != kTails; ++t) {
-      irs::FormatTraits128::ReadTailDelta(len, in, scratch.data(), out.data(),
-                                          0);
-    }
-    benchmark::DoNotOptimize(out);
-    benchmark::ClobberMemory();
-  }
-  ReportTails(state, bytes.size() - kSlack, len);
-}
-
 template<typename Codec>
 void BmTailValues(benchmark::State& state) {
   const auto len = static_cast<uint32_t>(state.range(0));
@@ -1051,38 +845,6 @@ void BmTailValues(benchmark::State& state) {
   ReportTails(state, size, len);
 }
 
-void BmTailValuesCurrent(benchmark::State& state) {
-  const auto len = static_cast<uint32_t>(state.range(0));
-  const auto values =
-    MakeTails(len, static_cast<uint32_t>(state.range(1)), false);
-  irs::MemoryOutput current{irs::IResourceManager::gNoop};
-  alignas(64) std::array<uint32_t, kBlock> block;
-  alignas(64) std::array<uint32_t, kBlock> scratch;
-  for (uint32_t t = 0; t != kTails; ++t) {
-    std::copy_n(values.data() + t * len, len, block.data());
-    irs::FormatTraits128::WriteTail(len, current.stream, block.data(),
-                                    scratch.data());
-  }
-  const auto bytes = Collect(current);
-  irs::BytesViewInput in{irs::bytes_view{bytes}};
-  alignas(64) std::array<uint32_t, kBlock> out;
-  for (uint32_t t = 0; t != kTails; ++t) {
-    irs::FormatTraits128::ReadTail(len, in, scratch.data(), out.data());
-    SDB_VERIFY(std::equal(out.begin() + kBlock - len, out.begin() + kBlock,
-                          values.data() + t * len),
-               "current tail values ", t);
-  }
-  for (auto _ : state) {
-    in.Seek(0);
-    for (uint32_t t = 0; t != kTails; ++t) {
-      irs::FormatTraits128::ReadTail(len, in, scratch.data(), out.data());
-    }
-    benchmark::DoNotOptimize(out);
-    benchmark::ClobberMemory();
-  }
-  ReportTails(state, bytes.size() - kSlack, len);
-}
-
 template<typename Codec>
 void BmEncodeTailDocs(benchmark::State& state) {
   const auto len = static_cast<uint32_t>(state.range(0));
@@ -1093,23 +855,6 @@ void BmEncodeTailDocs(benchmark::State& state) {
       benchmark::DoNotOptimize(
         Codec::EncodeDeltaTail(docs.data() + t * len, len, 0, block.data()));
     }
-  }
-  state.SetItemsProcessed(state.iterations() * kTails * len);
-}
-
-void BmEncodeTailDocsCurrent(benchmark::State& state) {
-  const auto len = static_cast<uint32_t>(state.range(0));
-  const auto docs = MakeTails(len, static_cast<uint32_t>(state.range(1)), true);
-  alignas(64) std::array<uint32_t, kBlock> block;
-  alignas(64) std::array<uint32_t, kBlock> scratch;
-  for (auto _ : state) {
-    irs::MemoryOutput out{irs::IResourceManager::gNoop};
-    for (uint32_t t = 0; t != kTails; ++t) {
-      std::copy_n(docs.data() + t * len, len, block.data());
-      irs::FormatTraits128::WriteTailDelta(len, out.stream, block.data(), 0,
-                                           scratch.data());
-    }
-    benchmark::DoNotOptimize(out.stream.Position());
   }
   state.SetItemsProcessed(state.iterations() * kTails * len);
 }
@@ -1125,24 +870,6 @@ void BmEncodeTailValues(benchmark::State& state) {
       benchmark::DoNotOptimize(
         Codec::EncodeValuesTail(values.data() + t * len, len, block.data()));
     }
-  }
-  state.SetItemsProcessed(state.iterations() * kTails * len);
-}
-
-void BmEncodeTailValuesCurrent(benchmark::State& state) {
-  const auto len = static_cast<uint32_t>(state.range(0));
-  const auto values =
-    MakeTails(len, static_cast<uint32_t>(state.range(1)), false);
-  alignas(64) std::array<uint32_t, kBlock> block;
-  alignas(64) std::array<uint32_t, kBlock> scratch;
-  for (auto _ : state) {
-    irs::MemoryOutput out{irs::IResourceManager::gNoop};
-    for (uint32_t t = 0; t != kTails; ++t) {
-      std::copy_n(values.data() + t * len, len, block.data());
-      irs::FormatTraits128::WriteTail(len, out.stream, block.data(),
-                                      scratch.data());
-    }
-    benchmark::DoNotOptimize(out.stream.Position());
   }
   state.SetItemsProcessed(state.iterations() * kTails * len);
 }
@@ -1171,13 +898,9 @@ void TailShapes(benchmark::internal::Benchmark* b) {
 
 BENCHMARK(BmTailDocs256)->Apply(TailShapes);
 BENCHMARK(BmTailDocs256Portable)->Apply(TailShapes);
-BENCHMARK(BmTailDocsCurrent)->Apply(TailShapes);
 BENCHMARK(BmTailValues256)->Apply(TailShapes);
-BENCHMARK(BmTailValuesCurrent)->Apply(TailShapes);
 BENCHMARK(BmEncodeTailDocs256)->Apply(TailShapes);
-BENCHMARK(BmEncodeTailDocsCurrent)->Apply(TailShapes);
 BENCHMARK(BmEncodeTailValues256)->Apply(TailShapes);
-BENCHMARK(BmEncodeTailValuesCurrent)->Apply(TailShapes);
 
 constexpr uint32_t kDensityDocs = 4096 * 256;
 

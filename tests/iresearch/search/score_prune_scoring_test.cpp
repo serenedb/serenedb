@@ -574,7 +574,7 @@ TEST(score_prune_bound_type_test, reported_bound_types) {
 // TOP_100 reports over an index with score bounds.
 TEST_P(ScorePruneScoringTestCase, PruningIsTaken) {
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
-  auto reader = CreateLargeIndex(scorer, 10);
+  auto reader = CreateLargeIndex(scorer, 40);
   constexpr size_t k = 10;
 
   auto reached = [&](const irs::Filter& filter, bool prune) {

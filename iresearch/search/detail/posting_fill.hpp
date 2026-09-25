@@ -258,9 +258,9 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
       return std::max<doc_id_t>(max, _leaf_base + 1);
     }
     if (_leaf.IsBitset()) {
-      cursor.And(lo, hi,
-                 static_cast<int64_t>(min) - static_cast<int64_t>(_leaf_base),
-                 _leaf.bitset, _leaf.words);
+      cursor.And(
+        lo, hi, static_cast<int64_t>(min) - static_cast<int64_t>(_leaf_base) - 1,
+        _leaf.bitset, _leaf.words);
       return InLeafFrom(max);
     }
     const auto* const end = std::cend(_docs);
@@ -276,12 +276,12 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
     }
     if (_leaf.IsBitset()) {
       const auto total = uint32_t{_leaf.words} * kBits;
-      auto bit = target > _leaf_base ? target - _leaf_base : uint32_t{1};
+      auto bit = target > _leaf_base ? target - _leaf_base - 1 : uint32_t{0};
       while (bit < total) {
         const auto word = bit / kBits;
         const auto bits = _leaf.bitset[word] & (~uint64_t{0} << (bit % kBits));
         if (bits != 0) {
-          return static_cast<doc_id_t>(_leaf_base + word * kBits +
+          return static_cast<doc_id_t>(_leaf_base + 1 + word * kBits +
                                        std::countr_zero(bits));
         }
         bit = (word + 1) * kBits;

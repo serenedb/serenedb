@@ -147,6 +147,10 @@ class TermCount : public Root {
     if (from_start && to_end) {
       return count;
     }
+    if (count == 1) {
+      const auto doc = doc_limits::min() + _posting.state.cookie.doc_delta;
+      return min <= doc && doc < max;
+    }
     const auto above = from_start ? count : Rank(min);
     const auto below = to_end ? 0 : Rank(max);
     SDB_ASSERT(above >= below);

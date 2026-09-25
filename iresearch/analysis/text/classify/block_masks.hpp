@@ -45,6 +45,12 @@
   __attribute__((target("avx512f,avx512bw,avx512vl,bmi,bmi2")))
 #endif
 
+#if defined(_MSC_VER) && !defined(__clang__)
+#define IRS_ALIGN_HOT
+#else
+#define IRS_ALIGN_HOT __attribute__((aligned(64)))
+#endif
+
 namespace irs::analysis::classify {
 
 #if defined(__x86_64__)

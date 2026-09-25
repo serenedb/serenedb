@@ -85,8 +85,8 @@ class CaseRuns {
 };
 
 template<TokenLayout Layout, Case C, bool KeepNonAscii, typename Classify>
-void SplitRunsFill(duckdb::string_t raw, TokenSink& sink,
-                   Classify&& classify_block) {
+IRS_ALIGN_HOT void SplitRunsFill(duckdb::string_t raw, TokenSink& sink,
+                                 Classify&& classify_block) {
   const char* const base = raw.GetData();
   const size_t size = raw.GetSize();
   const char* const limit = base + size;

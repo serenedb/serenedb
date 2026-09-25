@@ -219,8 +219,8 @@ class TypedTokenizer : public Tokenizer {
 
   constexpr std::tuple<> PrepareBatch(BlockTraits) { return {}; }
 
-  IRS_NO_INLINE bool Fill(const duckdb::string_t& value, TokenSink& sink,
-                          FillCtx ctx) final {
+  IRS_NO_INLINE IRS_ALIGN_HOT bool Fill(const duckdb::string_t& value,
+                                        TokenSink& sink, FillCtx ctx) final {
     auto* impl = static_cast<Impl*>(this);
     ctx.traits =
       ComputeValueTraits(value, impl->Impl::WantedBlockTraits(), ctx.traits);
@@ -231,9 +231,9 @@ class TypedTokenizer : public Tokenizer {
                         });
   }
 
-  IRS_NO_INLINE void Fill(const duckdb::UnifiedVectorFormat& fmt,
-                          uint32_t count, doc_id_t first_doc, TokenSink& sink,
-                          FillCtx ctx) final {
+  IRS_NO_INLINE IRS_ALIGN_HOT void Fill(const duckdb::UnifiedVectorFormat& fmt,
+                                        uint32_t count, doc_id_t first_doc,
+                                        TokenSink& sink, FillCtx ctx) final {
     auto* impl = static_cast<Impl*>(this);
     SDB_ASSERT(!impl->Impl::Traits().keyword || impl->Impl::Traits().unique);
     const auto* data =

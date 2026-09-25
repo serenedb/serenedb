@@ -138,7 +138,13 @@ void ScatteredField::Reset(const FieldInverter& field) {
   }
   const auto nocc = PrefixSums();
   SDB_ASSERT(nocc == field.Log().Size());
-  field.VisitLog([&](const auto& log) { Scatter(log, nocc); });
+  field.VisitLog([&](const auto& log) {
+    if (log.Refs().Size() != 0) {
+      Scatter<true>(log, nocc);
+    } else {
+      Scatter<false>(log, nocc);
+    }
+  });
 }
 
 void ScatteredField::FoldDuplicateTerms(
@@ -342,6 +348,51 @@ uint32_t** ScatteredField::AssignBlocks(ManagedVector<uint32_t*>& col,
 }
 
 template<typename Log>
+IRS_FORCE_INLINE bool ScatteredField::ScatterEntry(
+  const Log& log, const LogEntry& entry, uint32_t ntokens, doc_id_t doc,
+  uint32_t** docs, [[maybe_unused]] uint32_t** positions,
+  [[maybe_unused]] uint32_t** offs_start,
+  [[maybe_unused]] uint32_t** offs_end) {
+  constexpr bool kPos = Log::kLayout != TokenLayout::Terms;
+  constexpr bool kOffs = Log::kLayout == TokenLayout::TermsPosOffs;
+  if (entry.count != ntokens) [[unlikely]] {
+    return false;
+  }
+  auto* const cursors = _s->cursors.data();
+  const auto* ids = log.EntryIds().data() + entry.begin;
+  [[maybe_unused]] const uint32_t* starts = nullptr;
+  [[maybe_unused]] const uint32_t* ends = nullptr;
+  if constexpr (kOffs) {
+    starts = log.EntryOffsStart().data() + entry.begin;
+    ends = log.EntryOffsEnd().data() + entry.begin;
+  }
+  const auto emit = [&](auto&& pos_of) IRS_FORCE_INLINE {
+    for (uint32_t j = 0; j != entry.count; ++j) {
+      const auto c = cursors[ids[j]]++;
+      Put(docs, c, doc);
+      if constexpr (kPos) {
+        Put(positions, c, pos_of(j));
+      }
+      if constexpr (kOffs) {
+        Put(offs_start, c, starts[j]);
+        Put(offs_end, c, ends[j]);
+      }
+    }
+  };
+  if constexpr (kPos) {
+    if (log.EntryPosDense()) {
+      emit([](uint32_t j) { return j + 1; });
+    } else {
+      const auto* pos = log.EntryPos().data() + entry.begin;
+      emit([pos](uint32_t j) { return pos[j]; });
+    }
+  } else {
+    emit([](uint32_t) { return uint32_t{0}; });
+  }
+  return true;
+}
+
+template<bool kRefs, typename Log>
 void ScatteredField::Scatter(const Log& log, uint64_t nocc) {
   constexpr auto kLayout = Log::kLayout;
   constexpr bool kPos = kLayout != TokenLayout::Terms;
@@ -399,28 +450,14 @@ void ScatteredField::Scatter(const Log& log, uint64_t nocc) {
     }
   }();
 
-  const auto entries = log.Entries();
-  const auto entry_ids = log.EntryIds();
-  const auto entry_pos = [&] {
-    if constexpr (kPos) {
-      return log.EntryPos();
+  auto refs = [&] {
+    if constexpr (kRefs) {
+      return LogColumnReader{log.Refs(), field};
     } else {
       return std::monostate{};
     }
   }();
-  [[maybe_unused]] bool entry_pos_dense = true;
-  if constexpr (kPos) {
-    entry_pos_dense = log.EntryPosDense();
-  }
-  const auto entry_offs = [&] {
-    if constexpr (kOffs) {
-      return std::pair{log.EntryOffsStart(), log.EntryOffsEnd()};
-    } else {
-      return std::monostate{};
-    }
-  }();
-  LogColumnReader refs{log.Refs(), field};
-  uint64_t refs_consumed = 0;
+  [[maybe_unused]] uint64_t refs_consumed = 0;
 
   LogColumnReader doc_tokens{log.DocTokens(), field};
   const uint64_t doc_slots = log.DocTokens().Size();
@@ -431,36 +468,15 @@ void ScatteredField::Scatter(const Log& log, uint64_t nocc) {
     for (uint32_t k = 0; k < run.ndocs; ++k, ++doc_idx) {
       const doc_id_t doc = run.first_doc + k;
       const uint32_t ntokens = doc_tokens.Read();
-      if (log.DocRef(doc_idx)) {
-        const auto& entry = entries[refs.Read()];
-        if (entry.count != ntokens) [[unlikely]] {
+      if constexpr (kRefs) {
+        if (log.DocRef(doc_idx)) {
+          if (ScatterEntry<Log>(log, log.Entries()[refs.Read()], ntokens, doc,
+                                docs, positions, offs_start, offs_end)) {
+            ++refs_consumed;
+            continue;
+          }
           ThrowDesyncedLog(field, "reference disagrees with its entry");
         }
-        ++refs_consumed;
-        const auto* ids = entry_ids.data() + entry.begin;
-        const auto emit_entry = [&](auto&& pos_of) IRS_FORCE_INLINE {
-          for (uint32_t j = 0; j != entry.count; ++j) {
-            const auto c = cursors[ids[j]]++;
-            Put(docs, c, doc);
-            if constexpr (kPos) {
-              Put(positions, c, pos_of(j));
-            }
-            if constexpr (kOffs) {
-              Put(offs_start, c, entry_offs.first[entry.begin + j]);
-              Put(offs_end, c, entry_offs.second[entry.begin + j]);
-            }
-          }
-        };
-        if constexpr (kPos) {
-          if (entry_pos_dense) {
-            emit_entry([](uint32_t j) { return j + 1; });
-          } else {
-            emit_entry([&](uint32_t j) { return entry_pos[entry.begin + j]; });
-          }
-        } else {
-          emit_entry([](uint32_t) { return uint32_t{0}; });
-        }
-        continue;
       }
       consumed += ntokens;
       [[maybe_unused]] uint32_t offs = 0;

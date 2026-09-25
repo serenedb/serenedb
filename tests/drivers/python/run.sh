@@ -80,7 +80,7 @@ if [[ "${SDB_DRV_DEBUG:-false}" == "true" ]]; then
 else
 	pytest_args=(-q)
 fi
-for extra in test_copy test_shell_copy test_psql_mode test_pgwire_raw test_search_params test_dictionary_chains test_otel_api; do
+for extra in test_copy test_shell_copy test_psql_mode test_pgwire_raw test_search_params test_dictionary_chains test_otel_api test_http_session; do
 	test_file="${SCRIPT_DIR}/${extra}.py"
 	[[ -f "$test_file" ]] || continue
 	echo "[python][$extra] running"

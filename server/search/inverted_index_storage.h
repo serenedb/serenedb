@@ -21,6 +21,8 @@
 
 #pragma once
 
+#include <absl/base/thread_annotations.h>
+#include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
@@ -36,6 +38,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "catalog/inverted_index.h"
@@ -179,25 +182,23 @@ class InvertedIndexStorage final
 
   // One REINDEX at a time per index, across all connections: claim the
   // storage for the whole refresh (observe -> delta/rebuild -> publish).
-  // Fail-fast, never waits -- a losing claimant reports "already in
-  // progress".
-  struct ReindexClaim {
-    explicit ReindexClaim(InvertedIndexStorage& storage) noexcept
-      : _storage{&storage},
-        _claimed{!storage._reindex_in_flight.exchange(
-          true, std::memory_order_acq_rel)} {}
-    ~ReindexClaim() {
-      if (_claimed) {
-        _storage->_reindex_in_flight.store(false, std::memory_order_release);
-      }
-    }
-    ReindexClaim(const ReindexClaim&) = delete;
-    ReindexClaim& operator=(const ReindexClaim&) = delete;
-    bool Claimed() const noexcept { return _claimed; }
+  class [[nodiscard]] ReindexClaim {
+   public:
+    static ReindexClaim TryAcquire(InvertedIndexStorage& storage);
+    static ReindexClaim Acquire(InvertedIndexStorage& storage,
+                                absl::FunctionRef<bool()> cancelled,
+                                absl::Duration poll);
+    ReindexClaim(ReindexClaim&& other) noexcept
+      : _storage{std::exchange(other._storage, nullptr)} {}
+    ReindexClaim& operator=(ReindexClaim&&) = delete;
+    ~ReindexClaim();
+    bool Claimed() const noexcept { return _storage != nullptr; }
 
    private:
+    explicit ReindexClaim(InvertedIndexStorage* storage) noexcept
+      : _storage{storage} {}
+
     InvertedIndexStorage* _storage;
-    bool _claimed;
   };
 
   void StoreInvertedIndexSnapshot(
@@ -322,7 +323,10 @@ class InvertedIndexStorage final
   std::unique_ptr<irs::Directory> _dir;
   std::unique_ptr<irs::Scorer> _topk_scorer;
   std::shared_ptr<irs::IndexWriter> _writer;
-  std::atomic<bool> _reindex_in_flight{false};
+  absl::Mutex _reindex_mutex;
+  absl::CondVar _reindex_cv;
+  bool _reindex_in_flight ABSL_GUARDED_BY(_reindex_mutex) = false;
+  uint32_t _reindex_waiters ABSL_GUARDED_BY(_reindex_mutex) = 0;
   TasksSettings _tasks_settings;
   absl::Mutex _refresh_mutex;
 

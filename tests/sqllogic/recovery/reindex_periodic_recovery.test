@@ -140,13 +140,8 @@ count
 # A manual REINDEX runs its passes with the CALLER's session settings, so
 # the session-scope guessing is enough to land v2 -- unlike the tick, which
 # has no caller and stays gated on the GLOBAL.
-#
-# Retried: reindex_interval stays at 100ms here (the failing ticks are the
-# point of the case), and one index allows one reindex at a time  - so retry
-# in case of conflict. We need only to ensure final index state here - so we don't
-# care if this particular reindex reindexed something or not.
 connection e2_after
-statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+statement ok
 CALL serenedb_reindex('rpr_ice_idx');
 
 connection e2_after

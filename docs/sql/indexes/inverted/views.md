@@ -105,6 +105,10 @@ The postings are a snapshot; the source moves on. `REINDEX INDEX <name>` runs **
 
 A pass always compares against the source's **current committed state** — for a catalog-attached Iceberg table it forces a fresh table load even inside the server's `max_table_staleness` window. That is what makes `REINDEX` a freshness barrier: when it returns, everything committed before it is searchable. It requires the `MAINTAIN` privilege on the view (the same class as `VACUUM`).
 
+A pass reads the source in a transaction of its own, not the caller's. Inside an explicit transaction it still sees every commit made before it started, and it never sees the caller's own uncommitted writes to the source. The index itself must be committed: an index created in the same, still-open transaction cannot be refreshed yet.
+
+Only one pass runs per index at a time. A `REINDEX` that finds another pass running — manual or [automatic](#automatic-refresh) — waits for it to finish and then runs its own pass against the source as it is at that moment. While it waits, `pg_stat_progress_create_index` shows it with `command = 'REINDEX'` and phase `waiting for running reindex`; it can be cancelled during the wait. If the source changes while a pass is running, the pass is repeated automatically.
+
 <SqlLogicTest id="sql/indexes/inverted/views/reindex_setup" />
 
 Add a file behind the view's glob and refresh:

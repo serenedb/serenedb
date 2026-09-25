@@ -112,9 +112,8 @@ CREATE INDEX vrs_stmt_idx ON vrs_v USING inverted(id, body vrs_en) WITH (compact
 statement count 1
 INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vrs_t VALUES (6, 'restart number six');
 
-# Retried because a straggling tick may still hold the claim, and unasserted
-# because a tick that got there first reports up_to_date.
-statement ok retry 200 backoff 250ms
+# Unasserted because a tick that got there first reports up_to_date.
+statement ok
 SELECT * FROM serenedb_reindex('vrs_idx');
 
 query

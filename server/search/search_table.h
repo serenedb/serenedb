@@ -188,8 +188,7 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // One index build per shard, across all connections: what makes the
   // two-generation accounting safe to reuse, and what keeps two builds from
   // each rewriting the table at once. Fail-fast; a losing claimant reports
-  // that a build is already running. Mirrors
-  // InvertedIndexStorage::ReindexClaim.
+  // that a build is already running.
   class [[nodiscard]] BuildClaim {
    public:
     explicit BuildClaim(SearchTable& table) noexcept

@@ -280,9 +280,9 @@ duckdb::unique_ptr<duckdb::FunctionData> Bind(
 
   pg::TokenizerConfigs children;
   if (wrapper) {
-    children.emplace_back(
-      std::make_unique<irs::analysis::TokenizerConfig>(pg::BuildStage(
-        context, pg::tokenizer_options::kKeywordGroup.name, {}, {}, operation)));
+    children.emplace_back(std::make_unique<irs::analysis::TokenizerConfig>(
+      pg::BuildStage(context, pg::tokenizer_options::kKeywordGroup.name, {}, {},
+                     operation)));
   }
 
   auto config = pg::BuildStage(context, group.name, std::move(options),

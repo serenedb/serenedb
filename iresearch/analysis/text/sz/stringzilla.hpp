@@ -45,7 +45,12 @@
 
 #include <cstddef>
 
+#include "iresearch/analysis/text/classify/block_masks.hpp"
+
 namespace irs::analysis::sz {
+
+using SegmentFn = sz_size_t (*)(sz_cptr_t, sz_size_t, sz_size_t*, sz_size_t*,
+                                sz_size_t, sz_size_t*);
 
 #ifdef __x86_64__
 inline bool HasAvx512() noexcept {
@@ -104,10 +109,22 @@ inline size_t Norm(const char* in, size_t n, sz_normal_form_t form,
 
 inline constexpr size_t kFoldGrowth = 3;
 
+#ifdef __x86_64__
+inline constexpr size_t kSerialFoldBytes = 32;
+inline constexpr size_t kSerialFoldBytesAvx512 = 6;
+#endif
+
 inline size_t Fold(const char* in, size_t n, char* out) noexcept {
 #ifdef __x86_64__
   if (HasAvx512()) {
+    if (n < kSerialFoldBytesAvx512 &&
+        (n == 0 || static_cast<uint8_t>(in[0]) < 0xE0)) {
+      return sz_utf8_uncased_fold_serial(in, n, out);
+    }
     return sz_utf8_uncased_fold_icelake(in, n, out);
+  }
+  if (n < kSerialFoldBytes) {
+    return sz_utf8_uncased_fold_serial(in, n, out);
   }
   return sz_utf8_uncased_fold_haswell(in, n, out);
 #elif defined(__aarch64__)
@@ -148,11 +165,33 @@ inline size_t Newlines(const char* text, size_t length, size_t* offsets,
     text, length, offsets, lengths, capacity, consumed);
 }
 
-inline size_t Graphemes(const char* text, size_t length, size_t* starts,
-                        size_t* lengths, size_t capacity,
-                        size_t* consumed) noexcept {
-  return Dispatch<sz_utf8_graphemes_haswell, sz_utf8_graphemes_icelake>(
-    text, length, starts, lengths, capacity, consumed);
+inline constexpr size_t kSerialGraphemeBytes = 16;
+
+inline bool HasFourByteLead(const char* text, size_t length) noexcept {
+  const auto* bytes = reinterpret_cast<const byte_type*>(text);
+  size_t i = 0;
+  for (; i + classify::kClassifyBlock <= length;
+       i += classify::kClassifyBlock) {
+    if (classify::MoveMask(classify::Load(bytes + i) >= uint8_t{0xF0}) != 0) {
+      return true;
+    }
+  }
+  for (; i < length; ++i) {
+    if (bytes[i] >= 0xF0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+inline SegmentFn GraphemesFor(const char* text, size_t length) noexcept {
+  if (length < kSerialGraphemeBytes) {
+    return sz_utf8_graphemes_serial;
+  }
+  if (HasAvx512() && HasFourByteLead(text, length)) {
+    return sz_utf8_graphemes_icelake;
+  }
+  return sz_utf8_graphemes_haswell;
 }
 #elif defined(__aarch64__)
 inline size_t Sentences(const char* text, size_t length, size_t* starts,
@@ -169,11 +208,8 @@ inline size_t Newlines(const char* text, size_t length, size_t* offsets,
                                consumed);
 }
 
-inline size_t Graphemes(const char* text, size_t length, size_t* starts,
-                        size_t* lengths, size_t capacity,
-                        size_t* consumed) noexcept {
-  return sz_utf8_graphemes_neon(text, length, starts, lengths, capacity,
-                                consumed);
+inline SegmentFn GraphemesFor(const char*, size_t) noexcept {
+  return sz_utf8_graphemes_neon;
 }
 #else
 inline size_t Sentences(const char* text, size_t length, size_t* starts,
@@ -190,11 +226,8 @@ inline size_t Newlines(const char* text, size_t length, size_t* offsets,
                                  consumed);
 }
 
-inline size_t Graphemes(const char* text, size_t length, size_t* starts,
-                        size_t* lengths, size_t capacity,
-                        size_t* consumed) noexcept {
-  return sz_utf8_graphemes_serial(text, length, starts, lengths, capacity,
-                                  consumed);
+inline SegmentFn GraphemesFor(const char*, size_t) noexcept {
+  return sz_utf8_graphemes_serial;
 }
 #endif
 

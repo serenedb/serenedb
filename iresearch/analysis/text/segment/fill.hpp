@@ -220,11 +220,12 @@ IRS_NO_INLINE IRS_ALIGN_HOT void GraphemeFillValue(TokenSink& sink,
       }
     }
   } else {
-    ForEachSzMatch(sz::Graphemes, data, n, [&](size_t begin, size_t end) {
-      EmitTrimmedSegment<Layout, C, A, false>(sink, data, n,
-                                              static_cast<uint32_t>(begin),
-                                              static_cast<uint32_t>(end));
-    });
+    ForEachSzMatch(sz::GraphemesFor(data, n), data, n,
+                   [&](size_t begin, size_t end) {
+                     EmitTrimmedSegment<Layout, C, A, false>(
+                       sink, data, n, static_cast<uint32_t>(begin),
+                       static_cast<uint32_t>(end));
+                   });
   }
 }
 

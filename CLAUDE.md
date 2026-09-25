@@ -16,7 +16,10 @@ page in the same change, following the **Documentation** section of
 
 ## Formatting
 
-Never format by hand: run the tools and commit what they produce.
+serenedb's own code and the duckdb submodules are never formatted by hand: run
+the tools below and commit what they produce. Other submodules have no
+formatter set up; there, match the surrounding code by hand, and never run a
+formatter over their files.
 
 - serenedb's own code: `.clang-format` through pre-commit (see `CONTRIBUTING.md`).
 - The DuckDB fork, from `third_party/duckdb`, in this order:

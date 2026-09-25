@@ -1,6 +1,5 @@
 ---
 title: Data Types
-slug: /sql/data_types
 split: headings
 ---
 
@@ -83,15 +82,15 @@ When used in a table with ART indexes (either via explicit indexes or primary ke
 
 Struct with `LIST`s:
 
-<SqlLogicTest id="sql/data_types/overview/example_001" />
+<SqlLogicTest id="sql/data_types/index/example_001" />
 
 `MAP` with `LIST` values:
 
-<SqlLogicTest id="sql/data_types/overview/example_002" />
+<SqlLogicTest id="sql/data_types/index/example_002" />
 
 A list of `STRUCT`s:
 
-<SqlLogicTest id="sql/data_types/overview/example_003" />
+<SqlLogicTest id="sql/data_types/index/example_003" />
 
 ## Performance Implications
 

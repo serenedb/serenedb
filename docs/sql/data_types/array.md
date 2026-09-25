@@ -11,7 +11,7 @@ An `ARRAY` column stores fixed-sized arrays. All fields in the column must have 
 
 Arrays can be used to store vectors such as [word embeddings](https://en.wikipedia.org/wiki/Word_embedding) or image embeddings.
 
-To store variable-length lists, use the [`LIST` type](../data_types/list.md). See the [data types overview](../data_types/overview.md) for a comparison between nested data types.
+To store variable-length lists, use the [`LIST` type](../data_types/list.md). See the [data types overview](../data_types/index.md) for a comparison between nested data types.
 
 <DocCallout type="tip">
 The `ARRAY` type in PostgreSQL allows variable-length fields. SereneDB's `ARRAY` type is fixed-length.

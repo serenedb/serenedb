@@ -146,7 +146,7 @@ fn_rows AS (
   FROM named
   WHERE CASE WHEN starts_with(page, 'sql/functions/')
                   OR (starts_with(page, 'sql/data_types/')
-                      AND page <> 'sql/data_types/overview.md')
+                      AND page <> 'sql/data_types/index.md')
              THEN headers[1] IN ('Function', 'Aggregate', 'Name')
              ELSE headers[1] IN ('Function', 'Aggregate')
                   AND starts_with(page, 'data_import_and_export/') END
@@ -201,7 +201,7 @@ FROM d WHERE starts_with(page, 'sql/statements/create_text_search_dictionary/') 
    AND page <> 'sql/statements/create_text_search_dictionary/index.md'
 UNION ALL
 SELECT 'type', bare, name, summary, aliases, path, page, NULL, breadcrumb
-FROM named WHERE page = 'sql/data_types/overview.md' AND first_header = 'Name'
+FROM named WHERE page = 'sql/data_types/index.md' AND first_header = 'Name'
 UNION ALL
 SELECT 'setting', bare, name, summary, aliases, path, page, NULL, breadcrumb
 FROM named WHERE page = 'configuration/overview.md' AND first_header = 'Name'

@@ -143,6 +143,12 @@ def collect(docs_dir: pathlib.Path, snippets: dict, report) -> list[Unit]:
             continue
         rel = path.relative_to(docs_dir).as_posix()
         meta, body = split_frontmatter(path.read_text(encoding="utf-8"))
+        if meta.get("draft") == "true":
+            continue
+        if "slug" in meta:
+            errors.append(f"{rel}: frontmatter key 'slug' is not supported, links to the site follow the path "
+                          f"(name the page index.md to serve its folder)")
+            continue
         title = meta.get("title") or path.stem
         split = meta.get("split")
         if split not in SPLIT_MODES:

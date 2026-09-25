@@ -255,9 +255,8 @@ TEST_F(DocsIndex, ResolveLinkOpensSiteUrlsAndPathsWithoutExtension) {
   EXPECT_EQ(path(ResolveLink(
               Db(), "https://serenedb.com/docs/sql/functions/search/scoring")),
             "sql/functions/search/scoring.md#Relevance_Scoring");
-  EXPECT_TRUE(
-    path(ResolveLink(Db(), "https://serenedb.com/docs/sql/data_types"))
-      .starts_with("sql/data_types/overview.md#"));
+  EXPECT_EQ(path(ResolveLink(Db(), "https://serenedb.com/docs/sql/data_types")),
+            "sql/data_types/index.md#Data_Types");
   EXPECT_EQ(path(ResolveLink(Db(), "sql/functions/search/scoring")),
             "sql/functions/search/scoring.md#Relevance_Scoring");
   EXPECT_EQ(path(ResolveLink(Db(), "scoring.md")),
@@ -358,8 +357,8 @@ TEST(DocsObjects, EncodingRoundTrips) {
      .signature = "BIGINT",
      .summary = "Signed\teight-byte\ninteger \\N",
      .aliases = "INT8, LONG",
-     .path = "sql/data_types/overview.md#Data_Types",
-     .page = "sql/data_types/overview.md",
+     .path = "sql/data_types/index.md#Data_Types",
+     .page = "sql/data_types/index.md",
      .category = std::nullopt,
      .breadcrumb = ""},
     {.kind = "function",
@@ -396,7 +395,7 @@ TEST(DocsRender, ResolvesRelativeDocLinks) {
 TEST(DocsRender, ResolvesLinksFromSectionsWithSlashes) {
   const auto out = connector::RenderMarkdown(
     "see [arr](../../sql/data_types/array.md)", 0, /*color=*/false,
-    "sql/data_types/overview.md#Data_Types#Nested_/_Composite_Types");
+    "sql/data_types/index.md#Data_Types#Nested_/_Composite_Types");
   EXPECT_NE(out.find("(sql/data_types/array.md)"), std::string::npos) << out;
 }
 

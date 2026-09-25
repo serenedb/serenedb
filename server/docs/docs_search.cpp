@@ -1029,7 +1029,7 @@ std::optional<Entry> ResolveLink(duckdb::DatabaseInstance& db,
     if (!page.ends_with(".md") && !page.ends_with(".mdx")) {
       const auto stem = absl::StripSuffix(page, "/");
       for (const std::string_view suffix :
-           {".md", ".mdx", "/index.md", "/index.mdx", "/overview.md"}) {
+           {".md", ".mdx", "/index.md", "/index.mdx"}) {
         if (auto entry = resolve(absl::StrCat(stem, suffix))) {
           return entry;
         }

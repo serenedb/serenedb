@@ -66,7 +66,7 @@ db error: ERROR: relation "index_t" does not exist<slt:ignore>
 
 
 query
-SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid AND pg_class.relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname = 'sdb_docs');
+SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid;
 ----
 indexname
 index_t
@@ -83,7 +83,7 @@ CREATE TEXT SEARCH DICTIONARY test_english AS
     split_text() | normalize_tokens('en_US.UTF-8', accent := false);
 
 query
-SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid AND pg_class.relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname = 'sdb_docs');
+SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid;
 ----
 indexname
 
@@ -97,7 +97,7 @@ CREATE INDEX index_t ON t USING inverted(r test_english);
 
 
 query
-SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid AND pg_class.relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname = 'sdb_docs');
+SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid;
 ----
 indexname
 index_t
@@ -108,7 +108,7 @@ DROP TABLE t;
 
 
 query
-SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indrelid = pg_class.oid AND pg_class.relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname = 'sdb_docs');
+SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indrelid = pg_class.oid;
 ----
 indexname
 
@@ -162,7 +162,7 @@ oid	relname	relkind
 
 
 query
-select indexrelid, indrelid FROM pg_index WHERE indrelid NOT IN (SELECT oid FROM pg_class WHERE relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'sdb_docs'))
+select indexrelid, indrelid FROM pg_index
 ----
 indexrelid	indrelid
 <slt:ignore>	<slt:ignore>
@@ -173,7 +173,7 @@ DROP INDEX test_index;
 
 
 query
-SELECT indexrelid, indrelid FROM pg_index WHERE indrelid NOT IN (SELECT oid FROM pg_class WHERE relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'sdb_docs'))
+SELECT indexrelid, indrelid FROM pg_index
 ----
 indexrelid	indrelid
 
@@ -199,7 +199,7 @@ oid	relname	relkind
 
 
 query
-SELECT indexrelid, indrelid FROM pg_index WHERE indrelid NOT IN (SELECT oid FROM pg_class WHERE relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'sdb_docs'))
+SELECT indexrelid, indrelid FROM pg_index
 ----
 indexrelid	indrelid
 

@@ -80,22 +80,43 @@ std::optional<duckdb::TableIndex> SingleReferencedTableIndex(
   return *bindings.begin();
 }
 
-connector::ColumnId ResolveColumnId(duckdb::ColumnBinding binding,
-                                    const connector::ScanBindData& bind_data,
-                                    const duckdb::LogicalGet& get) {
+std::optional<duckdb::column_t> PrimaryColumn(duckdb::ColumnBinding binding,
+                                              const duckdb::LogicalGet& get) {
   if (binding.table_index != get.table_index) {
-    return connector::kInvalidColumnId;
+    return std::nullopt;
   }
   const auto col_idx = binding.column_index.GetIndex();
   const auto& column_ids = get.GetColumnIds();
   if (col_idx >= column_ids.size() || !column_ids[col_idx].HasPrimaryIndex()) {
+    return std::nullopt;
+  }
+  return column_ids[col_idx].GetPrimaryIndex();
+}
+
+connector::ColumnId ResolveColumnId(duckdb::ColumnBinding binding,
+                                    const connector::ScanBindData& bind_data,
+                                    const duckdb::LogicalGet& get) {
+  const auto phys = PrimaryColumn(binding, get);
+  if (!phys || *phys >= bind_data.columns.ids.size()) {
     return connector::kInvalidColumnId;
   }
-  const auto phys = column_ids[col_idx].GetPrimaryIndex();
-  if (phys >= bind_data.columns.ids.size()) {
-    return connector::kInvalidColumnId;
+  return bind_data.columns.ids[*phys];
+}
+
+connector::ColumnId ColumnIdByName(const connector::ScanBindData& bind_data,
+                                   std::string_view name) {
+  if (bind_data.view) {
+    const auto& names = bind_data.view->column_names;
+    const auto it = absl::c_find(names, name);
+    return it == names.end()
+             ? connector::kInvalidColumnId
+             : static_cast<connector::ColumnId>(it - names.begin());
   }
-  return bind_data.columns.ids[phys];
+  const auto& columns = bind_data.relation.table_entry->GetColumns();
+  const duckdb::Identifier key{name};
+  return columns.ColumnExists(key) ? static_cast<connector::ColumnId>(
+                                       columns.GetColumn(key).Logical().index)
+                                   : connector::kInvalidColumnId;
 }
 
 std::vector<connector::ColumnId> BuildProjectedColumnIds(
@@ -316,10 +337,8 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
       return column_info;
     };
 
-  connector::ColumnGetter getter =
-    [&](const duckdb::BoundColumnRefExpression& ref)
+  const auto index_field = [&](connector::ColumnId col_id)
     -> std::optional<connector::SearchColumnInfo> {
-    const auto col_id = ResolveColumnId(ref.Binding(), bind_data, get);
     if (col_id == connector::kInvalidColumnId) {
       return std::nullopt;
     }
@@ -332,6 +351,22 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
       return std::nullopt;
     }
     return make_info(config.TermField(col_id), info, std::move(type), col_id);
+  };
+
+  connector::FieldSetGetter field_set = [&](std::string_view name) {
+    return index_field(ColumnIdByName(bind_data, name));
+  };
+
+  connector::ColumnGetter getter =
+    [&](const duckdb::BoundColumnRefExpression& ref)
+    -> std::optional<connector::SearchColumnInfo> {
+    if (PrimaryColumn(ref.Binding(), get) ==
+        connector::kColumnIdentifierTableOid) {
+      return connector::SearchColumnInfo{
+        .logical_type = duckdb::LogicalType::BIGINT,
+        .index_fields = &field_set};
+    }
+    return index_field(ResolveColumnId(ref.Binding(), bind_data, get));
   };
 
   connector::ExpressionGetter expr_getter = [&](const duckdb::Expression& expr)

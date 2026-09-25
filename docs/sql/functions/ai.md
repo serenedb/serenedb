@@ -46,7 +46,7 @@ The runnable examples below use a local Ollama server running the `all-minilm` m
 | `base_url` | Base URL of an OpenAI-compatible server. Omit for OpenAI itself. |
 | `embeddings_path` | Path of the embeddings endpoint, if it differs from the default. |
 
-## `ai_embed` {#ai_embed}
+## `ai_embed(text, model, secret_name)` {#ai_embed}
 
 `ai_embed(text, model, secret_name)` sends `text` to the embedding `model` of the provider named by `secret_name` and returns the embedding as a `FLOAT[]`. The vector's length is the model's embedding dimension — 384 for `all-minilm`:
 

@@ -541,7 +541,18 @@ Parse a single Lucene-style query string into a `TSQUERY`.
 | `(a b)` | Grouping. |
 | `a^N` | Boost `a`'s relevance contribution by factor `N`. |
 
-These combine freely. Despite the PostgreSQL-compatible name, this builds a SereneDB inverted-index query, not a PostgreSQL `tsquery`; the queries operate on the single column on the left of `@@` (there is no `field:term` scoping).
+These combine freely. Despite the PostgreSQL-compatible name, this builds a SereneDB inverted-index query, not a PostgreSQL `tsquery`.
+
+A column on the left of `@@` names the field, so every term in the query searches it and a `field:term` prefix is rejected. To let the query choose its own fields, put the relation's `tableoid` on the left instead — the same handle [`BM25`](./scoring.md) takes. The operand then means "this index" rather than "this field", and every term must name one:
+
+```sql
+SELECT id FROM docs_idx d
+WHERE d.tableoid @@ to_tsquery('title:fox OR body:dog');
+```
+
+This is the only way to express one boolean spanning several fields: `title @@ q OR body @@ q` builds two independent queries, so an exclusion in `q` is scoped to whichever field matched it, while the form above excludes across the whole row. A bare term is an error here, since it has no field to search.
+
+A prefix on a group applies to every term inside it, so `title:(fox OR dog)` searches `title` for both. A term inside the group can still name its own field: in `title:(fox body:dog cat)` only `dog` searches `body`, and `cat` searches `title` again. A field never reaches past the group it was named in.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -835,7 +846,7 @@ Elasticsearch features without a direct SereneDB equivalent, and what to use ins
 | [`minimum_should_match`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-minimum-should-match.html) percentage / negative / combination forms | integer count only ([`ts_any`](#ts_any), [`ts_compound`](#ts_compound)) |
 | [`fuzziness: AUTO`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-fuzzy-query.html) | one-argument [`ts_levenshtein`](#ts_levenshtein) auto-picks a distance by term length |
 | `max_expansions` (fuzzy / prefix expansion cap) | fuzzy: [`sdb_levenshtein_max_terms`](../../indexes/inverted/maintenance.md#session-settings) (session-level, per segment, default `64`); prefix: no cap |
-| [`multi_match`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-multi-match-query.html) / `combined_fields` / `field:term` scoping | single-column `@@`; compose multiple predicates with `OR` |
+| [`multi_match`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-multi-match-query.html) / `combined_fields` / `field:term` scoping | `tableoid @@` [`to_tsquery`](#to_tsquery) with `field:term` prefixes, or one `@@` per column combined with `OR` |
 | [`constant_score`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-constant-score-query.html) | none; `ORDER BY` a literal, or `raw_boost` (see [Ranking](../../indexes/inverted/ranking.md)) |
 | [`boosting`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-boosting-query.html) (`negative_boost`) | none; raise a clause with [`^`](#a--factor-boost) or exclude with [`!!`](#-a-not) |
 | [`match_phrase_prefix`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-match-query-phrase-prefix.html) / `match_bool_prefix` | combine [`ts_phrase`](#ts_phrase) with [`ts_starts_with`](#ts_starts_with) |

@@ -22,8 +22,6 @@
 
 namespace sdb::docs {
 
-std::span<const Doc> GetDocs() { return {}; }
-
-std::string_view GetDocsHash() { return "disabled"; }
+[[gnu::weak]] std::span<const Doc> GetDocs() { return {}; }
 
 }  // namespace sdb::docs

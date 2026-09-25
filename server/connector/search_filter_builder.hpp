@@ -39,6 +39,11 @@
 
 namespace sdb::connector {
 
+struct SearchColumnInfo;
+
+using FieldSetGetter =
+  absl::AnyInvocable<std::optional<SearchColumnInfo>(std::string_view) const>;
+
 // `field_id` is the unified iresearch field id: both a plain indexed column's
 // id (`ColumnId`) and an indexed expression's id come from
 // `catalog::NextId()` / `NextNIds()` (single global tick allocator), so a
@@ -57,6 +62,7 @@ struct SearchColumnInfo {
   duckdb::LogicalType logical_type;
   catalog::ColumnTokenizer tokenizer;
   std::optional<uint32_t> levenshtein_max_terms;
+  const FieldSetGetter* index_fields = nullptr;
 };
 
 // Resolves a DuckDB bound column reference (by table_index + column_index,

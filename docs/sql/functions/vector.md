@@ -31,8 +31,10 @@ Every vector argument must be a fixed-size float array — `FLOAT[3]`, `FLOAT[76
 | [`a <+> b`](#distance-operators) | L1 | lower = closer | Indexed distance, equivalent to `l1_distance`. |
 | [`a <=> b`](#distance-operators) | cosine | lower = closer | Indexed distance, equivalent to `cosine_distance`. |
 | [`a <#> b`](#distance-operators) | ip | lower = closer | Indexed distance, equivalent to `negative_inner_product`. |
-| [`l2_norm(a)`](#norms) · [`l1_norm(a)`](#norms) | — | — | Vector magnitude (L2 / L1). |
-| [`l2_normalize(a)`](#norms) · [`l1_normalize(a)`](#norms) | — | — | Scale to a unit vector (L2 / L1). |
+| [`l2_norm(a)`](#norms) | L2 | — | Vector magnitude. |
+| [`l1_norm(a)`](#norms) | L1 | — | Vector magnitude. |
+| [`l2_normalize(a)`](#norms) | L2 | — | Scale to a unit vector. |
+| [`l1_normalize(a)`](#norms) | L1 | — | Scale to a unit vector. |
 
 ## Choosing a metric {#choosing-a-metric}
 
@@ -182,8 +184,10 @@ Inner product (`<#>`, `ip` index) — the operator returns the *negative* dot pr
 
 | Function | Operand | Returns |
 | :--- | :--- | :--- |
-| `l2_norm(a)` · `l1_norm(a)` | `FLOAT[N]` | scalar magnitude |
-| `l2_normalize(a)` · `l1_normalize(a)` | `FLOAT[N]` | `FLOAT[N]` unit vector |
+| `l2_norm(a)` | `FLOAT[N]` | scalar magnitude under the L2 norm |
+| `l1_norm(a)` | `FLOAT[N]` | scalar magnitude under the L1 norm |
+| `l2_normalize(a)` | `FLOAT[N]` | `FLOAT[N]` unit vector under the L2 norm |
+| `l1_normalize(a)` | `FLOAT[N]` | `FLOAT[N]` unit vector under the L1 norm |
 
 <SqlLogicTest id="sql/functions/full_text_search/l2_norm" />
 

@@ -1284,9 +1284,8 @@ skipif postgres
 > +--------------+----------------+-------------+
 > | SCHEMA | simple_dict    | [NULL]      |
 > | public       | otel_body_dict | [NULL]      |
-> | sdb_docs     | tokenizer      | [NULL]      |
 > +--------------+----------------+-------------+
-> (3 rows)
+> (2 rows)
 
 # serened's text-search model is just dictionaries (CREATE TEXT SEARCH
 # DICTIONARY -> pg_ts_dict). PG ships configurations/parsers/templates

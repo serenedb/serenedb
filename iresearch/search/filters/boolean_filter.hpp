@@ -188,4 +188,6 @@ class BooleanFilter final : public FilterWithType<BooleanFilter> {
   ScoreMergeType _merge_type = ScoreMergeType::Sum;
 };
 
+bool ContainsNegation(Filter& filter);
+
 }  // namespace irs

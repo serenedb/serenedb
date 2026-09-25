@@ -20,8 +20,13 @@
 
 #pragma once
 
+#include <filesystem>
+#include <optional>
+
 namespace sdb::docs {
 
-void LoadEmbeddedDocs();
+bool BuildEmbeddedIndex(const std::filesystem::path& out);
+
+std::optional<int> RunDocsBootstrap();
 
 }  // namespace sdb::docs

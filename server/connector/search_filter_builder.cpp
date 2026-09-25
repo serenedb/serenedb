@@ -1573,8 +1573,10 @@ void FromTSQueryMatch(BoolTarget filter, const FilterContext& ctx,
   // (e.g. `content->>'host'`) on the field side. FindColumnInfoForExpr
   // handles both, peeling any cast wrappers; the TSQuery cast is peeled
   // up-front by UnwrapTSQueryCast.
-  const auto* left_info = FindColumnInfoForExpr(ctx, UnwrapTSQueryCast(lhs));
-  const auto* right_info = FindColumnInfoForExpr(ctx, UnwrapTSQueryCast(rhs));
+  const auto* left_info =
+    FindColumnInfoForExpr(ctx, UnwrapTSQueryCast(lhs), true);
+  const auto* right_info =
+    FindColumnInfoForExpr(ctx, UnwrapTSQueryCast(rhs), true);
   if (left_info && right_info) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1592,6 +1594,10 @@ void FromTSQueryMatch(BoolTarget filter, const FilterContext& ctx,
                "inverted(<col>) if none exists."));
   }
   const auto& expr = left_info ? rhs : lhs;
+  if (column_info->index_fields) {
+    BuildTSQuery(filter, ctx, *column_info, expr);
+    return;
+  }
   auto* tokenizer = column_info->tokenizer.analyzer.get();
   if (!tokenizer) {
     THROW_SQL_ERROR(
@@ -1774,9 +1780,11 @@ UnwrappedField UnwrapFieldCast(const duckdb::Expression& expr) {
 }
 
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
-                                              const duckdb::Expression& expr) {
+                                              const duckdb::Expression& expr,
+                                              bool whole_index) {
   if (const auto* col_ref = TryGetColumnRef(expr)) {
-    return FindColumnRefInfo(ctx, *col_ref);
+    const auto* info = FindColumnRefInfo(ctx, *col_ref);
+    return info && (whole_index || !info->index_fields) ? info : nullptr;
   }
 
   const auto unwrapped = UnwrapFieldCast(expr);

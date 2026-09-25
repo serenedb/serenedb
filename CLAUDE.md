@@ -14,6 +14,23 @@ C++ style. This file only flags traps that aren't in there.
 page in the same change, following the **Documentation** section of
 `CONTRIBUTING.md`, and say in your summary which page you added or updated.
 
+## Formatting
+
+Never format by hand: run the tools and commit what they produce.
+
+- serenedb's own code: `.clang-format` through pre-commit (see `CONTRIBUTING.md`).
+- The DuckDB fork, from `third_party/duckdb`, in this order:
+  1. `./scripts/parser/build_grammar.sh` -- the PEG grammar and transformer;
+     `make generate-files` does not regenerate the parser, so this goes first.
+  2. `make generate-files` -- settings, serialization, enum_util, functions,
+     metrics and storage info, then formats the tree.
+
+  Commit regenerated artifacts separately from the change that caused them
+  (`regen: ...`), as upstream does.
+- Then, from the repo root, `./scripts/format_duckdb.sh` -- clang-format 11.0.1
+  (in docker) over the changed files of every duckdb submodule and
+  `duckdb_clickhouse`, each with its own `.clang-format`.
+
 ## Before writing tests
 
 - Sqllogic: read a sibling `.test` first. Control directives, retry patterns,

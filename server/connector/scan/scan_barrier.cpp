@@ -42,7 +42,7 @@ void ScanBarrier::Release(duckdb::TableFunctionInput& input) {
 }
 
 bool ScanBarrier::Park(duckdb::TableFunctionInput& input) {
-  constexpr auto kSpin = std::chrono::microseconds{50};
+  constexpr auto kSpin = std::chrono::microseconds{250};
   const auto deadline = std::chrono::steady_clock::now() + kSpin;
   while (!Released() && std::chrono::steady_clock::now() < deadline) {
     std::this_thread::yield();

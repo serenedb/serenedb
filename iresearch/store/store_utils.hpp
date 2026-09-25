@@ -155,6 +155,8 @@ class BytesViewInput : public IndexInput {
       _readahead{other._readahead == Readahead::Off ? Readahead::Off
                                                     : Readahead::Probe} {}
 
+  IRS_FORCE_INLINE const byte_type* Current() const noexcept { return _pos; }
+
   IRS_FORCE_INLINE const byte_type* ReadStable(uint64_t count) noexcept final {
     const auto* begin = _pos;
     _pos = begin + count;

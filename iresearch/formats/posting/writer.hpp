@@ -269,8 +269,7 @@ class PostingsWriter final {
   // Whether the current term armed the skip writer (it does at its first
   // block fill).
   bool _skip_armed{false};
-  // Buffer for block encoding (worst case)
-  uint32_t _enc_buf[std::max(doc_limits::kBlockSize, pos_limits::kBlockSize)];
+  uint32_t _enc_buf[FormatTraits128::kEncWords];
   bool _volatile_attributes;
 };
 

@@ -12,7 +12,6 @@
 * [simdjson](https://github.com/simdjson/simdjson)
 * [simdutf](https://github.com/simdutf/simdutf) (Apache 2.0 or MIT)
 * [ada](https://github.com/ada-url/ada) (Apache 2.0 or MIT)
-* [streamvbyte](https://github.com/lemire/streamvbyte)
 * [tcmalloc](https://github.com/google/tcmalloc)
 * [fast_float](https://github.com/fastfloat/fast_float)
 * [Apache Avro](https://github.com/apache/avro)
@@ -62,7 +61,6 @@
 
 * [Google Test](https://github.com/google/googletest)
 * [re2](https://github.com/google/re2)
-* [simdcomp](https://github.com/fast-pack/simdcomp)
 * [snappy](https://github.com/google/snappy)
 * [snowball](https://github.com/snowballstem/snowball) (vendored as its generated C distribution, [serenedb/libstemmer_c](https://github.com/serenedb/libstemmer_c))
 * [zstd](https://github.com/facebook/zstd) (BSD + GPLv2 dual license)

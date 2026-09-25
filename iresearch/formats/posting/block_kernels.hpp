@@ -402,9 +402,9 @@ void UnpackHorizontalDelta(const byte_type* IRS_RESTRICT in, uint32_t len,
 
 inline constexpr uint32_t kPatchGroup = 4;
 
-template<uint32_t B, typename Entry, uint32_t L = kLanes>
+template<uint32_t B, typename Entry, uint32_t L = kLanes, bool Full = false>
 IRS_FORCE_INLINE void PatchGroup(const byte_type* IRS_RESTRICT p,
-                                 uint32_t count,
+                                 uint32_t count, uint32_t spare,
                                  uint32_t* IRS_RESTRICT out) noexcept {
   for (uint32_t k = 0; k != kPatchGroup; ++k) {
     const auto* entry = p + k * sizeof(Entry);
@@ -422,7 +422,11 @@ IRS_FORCE_INLINE void PatchGroup(const byte_type* IRS_RESTRICT p,
       slot = e & (kBlockOf<L> - 1);
       high = e >> kSlotBitsOf<L>;
     }
-    out[slot] += k < count ? high << B : 0;
+    if constexpr (Full) {
+      out[slot] += k < count ? high << B : 0;
+    } else {
+      out[k < count ? slot : spare + k] += high << B;
+    }
   }
 }
 
@@ -663,14 +667,14 @@ inline IRS_FORCE_INLINE void ScanDocs16(doc_id_t* docs,
   }
 }
 
-template<uint32_t B, typename Entry, uint32_t L = kLanes>
+template<uint32_t B, typename Entry, uint32_t L = kLanes, bool Full = false>
 IRS_FORCE_INLINE const byte_type* PatchValues(
-  const byte_type* IRS_RESTRICT p, uint32_t count,
+  const byte_type* IRS_RESTRICT p, uint32_t count, uint32_t spare,
   uint32_t* IRS_RESTRICT out) noexcept {
   static_assert(B < kMaxWidth);
-  PatchGroup<B, Entry, L>(p, count, out);
+  PatchGroup<B, Entry, L, Full>(p, count, spare, out);
   for (uint32_t i = kPatchGroup; i < count; i += kPatchGroup) {
-    PatchGroup<B, Entry, L>(p + i * sizeof(Entry), count - i, out);
+    PatchGroup<B, Entry, L, Full>(p + i * sizeof(Entry), count - i, spare, out);
   }
   return p + count * sizeof(Entry);
 }

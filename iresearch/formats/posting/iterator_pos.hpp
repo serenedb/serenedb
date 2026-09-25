@@ -124,6 +124,7 @@ class PositionImpl final : public PosAttr {
       throw IoError("failed to reopen positions input");
     }
 
+    _pos_view = IteratorTraits::View(*_pos_in);
     _cookie.pos_file_pointer = state.term_state->pos_start;
     _cookie.pend_pos = state.term_state->pos_offset;
     irs::utils::downCast<InputType>(*_pos_in).Seek(state.term_state->pos_start);
@@ -143,6 +144,7 @@ class PositionImpl final : public PosAttr {
         throw IoError("failed to reopen payload input");
       }
 
+      _pay_view = IteratorTraits::View(*_pay_in);
       _cookie.pay_file_pointer = state.term_state->pay_start;
       irs::utils::downCast<InputType>(*_pay_in).Seek(
         state.term_state->pay_start);
@@ -213,19 +215,55 @@ class PositionImpl final : public PosAttr {
     }
   }
 
-  void ReadBlock() {
-    IteratorTraits::ReadBlock(*_pos_in, _enc_buf, _pos_deltas);
+  template<typename Input>
+  IRS_FORCE_INLINE void ReadBlock(Input& pos, Input* pay) {
+    IteratorTraits::ReadBlock(pos, _enc_buf, _pos_deltas);
     if constexpr (IteratorTraits::Offset()) {
-      IteratorTraits::ReadBlock(*_pay_in, _enc_buf, _offs_start_deltas);
-      IteratorTraits::ReadBlock(*_pay_in, _enc_buf, _offs_lengths);
+      IteratorTraits::ReadBlock(*pay, _enc_buf, _offs_start_deltas);
+      IteratorTraits::ReadBlock(*pay, _enc_buf, _offs_lengths);
+    }
+  }
+
+  void ReadBlock() {
+    if (_pos_view != nullptr && (!IteratorTraits::Offset() || PayView()))
+      [[likely]] {
+      ReadBlock<BytesViewInput>(*_pos_view, PayView());
+    } else {
+      ReadBlock<IndexInput>(*_pos_in, PayIn());
+    }
+  }
+
+  template<typename Input>
+  IRS_FORCE_INLINE static void SkipBlock(Input& pos, Input* pay) {
+    IteratorTraits::SkipBlock(pos);
+    if constexpr (IteratorTraits::Offset()) {
+      IteratorTraits::SkipBlock(*pay);
+      IteratorTraits::SkipBlock(*pay);
     }
   }
 
   void SkipBlock() {
-    IteratorTraits::SkipBlock(*_pos_in);
+    if (_pos_view != nullptr && (!IteratorTraits::Offset() || PayView()))
+      [[likely]] {
+      SkipBlock<BytesViewInput>(*_pos_view, PayView());
+    } else {
+      SkipBlock<IndexInput>(*_pos_in, PayIn());
+    }
+  }
+
+  IRS_FORCE_INLINE BytesViewInput* PayView() const noexcept {
     if constexpr (IteratorTraits::Offset()) {
-      IteratorTraits::SkipBlock(*_pay_in);
-      IteratorTraits::SkipBlock(*_pay_in);
+      return _pay_view;
+    } else {
+      return nullptr;
+    }
+  }
+
+  IRS_FORCE_INLINE IndexInput* PayIn() const noexcept {
+    if constexpr (IteratorTraits::Offset()) {
+      return _pay_in.get();
+    } else {
+      return nullptr;
     }
   }
 
@@ -250,7 +288,9 @@ class PositionImpl final : public PosAttr {
   uint64_t _buf_pos = doc_limits::kBlockSize;  // position in pos_deltas_
   Cookie _cookie;
   IndexInput::ptr _pos_in;
+  BytesViewInput* _pos_view = nullptr;
   [[no_unique_address]] ForOffset<IndexInput::ptr> _pay_in;
+  [[no_unique_address]] ForOffset<BytesViewInput*> _pay_view{};
   [[no_unique_address]] ForOffset<OffsAttr> _offs;
 };
 

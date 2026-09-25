@@ -200,14 +200,14 @@ void CheckDocs(const std::vector<irs::doc_id_t>& docs, irs::doc_id_t prev,
   ASSERT_LE(size, Codec::kMaxBlockBytes);
   EXPECT_EQ(size, full ? Codec::DeltaBlockSize(encoded.data())
                        : Codec::DeltaTailSize(encoded.data(), len));
-  std::vector<irs::doc_id_t> out(Codec::kBlock + bc::kOutSlack);
+  std::vector<irs::doc_id_t> out(len + bc::kOutSlack);
   const auto* end =
     full ? Codec::DecodeDeltaBlock(encoded.data(), prev, out.data())
          : Codec::DecodeDeltaTail(encoded.data(), len, prev, out.data());
   EXPECT_EQ(encoded.data() + size, end);
   out.resize(len);
   EXPECT_EQ(docs, out) << "len " << len << " token " << uint32_t{encoded[0]};
-  std::vector<irs::doc_id_t> portable(Codec::kBlock + bc::kOutSlack);
+  std::vector<irs::doc_id_t> portable(len + bc::kOutSlack);
   const auto* portable_end =
     full ? bc::kDeltaBlockDecoders<Codec::kLanes, false>[encoded[0]](
              encoded.data(), prev, portable.data())
@@ -231,7 +231,7 @@ void CheckValues(const std::vector<uint32_t>& values,
   ASSERT_LE(size, Codec::kMaxBlockBytes);
   EXPECT_EQ(size, full ? Codec::ValuesBlockSize(encoded.data())
                        : Codec::ValuesTailSize(encoded.data(), len));
-  std::vector<uint32_t> out(Codec::kBlock);
+  std::vector<uint32_t> out(len + bc::kOutSlack);
   const auto* end =
     full ? Codec::DecodeValuesBlock(encoded.data(), out.data())
          : Codec::DecodeValuesTail(encoded.data(), len, out.data());

@@ -25,6 +25,10 @@
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/function/compression_function.hpp>
 #include <duckdb/main/config.hpp>
+#include <duckdb/planner/expression/bound_operator_expression.hpp>
+#include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <duckdb/planner/filter/expression_filter.hpp>
+#include <duckdb/planner/table_filter_state.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <filesystem>
 #include <functional>
@@ -852,6 +856,46 @@ TEST_F(ColCodecsTest, DictionaryCompletedByPartialScansIsCached) {
   for (const auto& key : keys) {
     EXPECT_TRUE(cached(key)) << key;
   }
+}
+
+TEST_F(ColCodecsTest, GatherFilterReleasesPassedSegments) {
+  const auto& value = kLowCardinalityWithNulls;
+  constexpr uint64_t kRows = 40000;
+  irs::MemoryDirectory dir{};
+  Write(dir, duckdb::CompressionType::COMPRESSION_DICT_LZ4, {}, kRows, 4096,
+        value);
+  irs::ColReader r{dir, std::string{kSeg}, Db()};
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  ASSERT_GT(col->DataBlocks().size(), 4u);
+  auto expr = duckdb::make_uniq<duckdb::BoundOperatorExpression>(
+    duckdb::ExpressionType::OPERATOR_IS_NOT_NULL, duckdb::LogicalType::BOOLEAN);
+  expr->GetChildrenMutable().push_back(
+    duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+      duckdb::LogicalType::VARCHAR, 0));
+  const duckdb::ExpressionFilter filter{std::move(expr)};
+  duckdb::Connection con{_db};
+  auto filter_state = duckdb::TableFilterState::Initialize(*con.context, filter);
+  auto state = col->InitScan(r.Ctx());
+  uint64_t kept = 0;
+  for (uint64_t anchor = 0; anchor < kRows; anchor += STANDARD_VECTOR_SIZE) {
+    const auto span = std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+    duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+    for (duckdb::idx_t i = 0; i < span; ++i) {
+      sel.set_index(i, i);
+    }
+    duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+    kept += col->GatherFilter(state, anchor, span, sel, span, filter,
+                              *filter_state, irs::NullCheckKind::None, out);
+    EXPECT_LE(state.segments.size(), 2u) << "window at row " << anchor;
+    EXPECT_LE(state.st.previous_states.size(), 1u)
+      << "window at row " << anchor;
+  }
+  uint64_t expected = 0;
+  for (uint64_t g = 0; g < kRows; ++g) {
+    expected += value(g).has_value() ? 1 : 0;
+  }
+  EXPECT_EQ(kept, expected);
 }
 
 TEST_F(ColCodecsTest, MappedFileUnalignedBlocks) {

@@ -51,7 +51,8 @@ using ai::ProviderConfig;
 constexpr std::string_view kOpenAIKeys[] = {
   "api_key", "base_url", "model", "chat_path", "embeddings_path",
 };
-constexpr std::string_view kTypeSafeKeys[] = {"api_key", "base_url", "model"};
+constexpr std::string_view kTypeSafeKeys[] = {"api_key", "base_url", "model",
+                                              "path"};
 
 constinit SettingRef gEmbeddingBatch{"sdb_ai_embedding_max_batch_size"};
 
@@ -97,10 +98,7 @@ struct EmbeddingBindData final : public ai::AIFunctionData {
     return {.fn = fn, .url = cfg.url, .api_key = cfg.api_key};
   }
 
-  size_t BatchSize() const final { return cfg.max_batch; }
-
-  void Evaluate(ai::Requester& requester, duckdb::DataChunk& args,
-                duckdb::Vector& result) const final;
+  std::unique_ptr<ai::AIWork> Start(duckdb::DataChunk& args) const final;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<EmbeddingBindData>(*this);
@@ -150,84 +148,102 @@ duckdb::unique_ptr<duckdb::FunctionData> EmbeddingBind(
   return bind;
 }
 
-void Similarity(ai::Requester& requester, const EmbeddingBindData& bind,
-                duckdb::DataChunk& args, duckdb::Vector& result) {
-  const auto count = args.size();
-  auto left = args.data[0].Values<duckdb::string_t>();
-  auto right = args.data[1].Values<duckdb::string_t>();
-
-  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-  auto* out = duckdb::FlatVector::GetDataMutable<double>(result);
-  auto& out_validity = duckdb::FlatVector::ValidityMutable(result);
-  out_validity.SetAllInvalid(count);
-
-  std::vector<duckdb::idx_t> rows;
-  duckdb::Vector texts{duckdb::LogicalType::VARCHAR, 2 * count};
-  auto* text_data = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(texts);
-  for (duckdb::idx_t i = 0; i < count; i++) {
-    auto l = left[i];
-    auto r = right[i];
-    if (!l.IsValid() || !r.IsValid() || l.GetValue().GetSize() == 0 ||
-        r.GetValue().GetSize() == 0) {
-      continue;
+class SimilarityWork final : public ai::AIWork {
+ public:
+  SimilarityWork(const EmbeddingBindData& bind, duckdb::DataChunk& args)
+    : _bind{bind},
+      _count{args.size()},
+      _texts{duckdb::LogicalType::VARCHAR, 2 * args.size()} {
+    auto left = args.data[0].Values<duckdb::string_t>();
+    auto right = args.data[1].Values<duckdb::string_t>();
+    auto* text_data =
+      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(_texts);
+    for (duckdb::idx_t i = 0; i < _count; i++) {
+      auto l = left[i];
+      auto r = right[i];
+      if (!l.IsValid() || !r.IsValid() || l.GetValue().GetSize() == 0 ||
+          r.GetValue().GetSize() == 0) {
+        continue;
+      }
+      text_data[2 * _rows.size()] = l.GetValue();
+      text_data[2 * _rows.size() + 1] = r.GetValue();
+      _rows.push_back(i);
     }
-    text_data[2 * rows.size()] = l.GetValue();
-    text_data[2 * rows.size() + 1] = r.GetValue();
-    rows.push_back(i);
-  }
-  if (rows.empty()) {
-    return;
+    if (!_rows.empty()) {
+      _embed = ai::StartEmbedding(bind.cfg, _texts, 2 * _rows.size());
+      requests = std::move(_embed->requests);
+    }
   }
 
-  const auto n = 2 * rows.size();
-  duckdb::Vector embeddings{
-    duckdb::LogicalType::LIST(duckdb::LogicalType::FLOAT), n};
-  ai::EmbedBatch(requester, bind.cfg, texts, n, embeddings);
-
-  const auto* entries =
-    duckdb::FlatVector::GetData<duckdb::list_entry_t>(embeddings);
-  const auto& validity = duckdb::FlatVector::Validity(embeddings);
-  const auto* data = duckdb::FlatVector::GetData<float>(
-    duckdb::ListVector::GetEntry(embeddings));
-  for (size_t k = 0; k != rows.size(); ++k) {
-    const auto a = 2 * k;
-    const auto b = a + 1;
-    if (!validity.RowIsValid(a) || !validity.RowIsValid(b)) {
-      continue;
-    }
-    if (entries[a].length != entries[b].length) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
-        ERR_MSG(bind.fn, ": embeddings have different dimensions (",
-                entries[a].length, " and ", entries[b].length, ")"));
-    }
-    double dot = 0;
-    double norm_a = 0;
-    double norm_b = 0;
-    for (duckdb::idx_t d = 0; d < entries[a].length; d++) {
-      const double x = data[entries[a].offset + d];
-      const double y = data[entries[b].offset + d];
-      dot += x * y;
-      norm_a += x * x;
-      norm_b += y * y;
-    }
-    if (norm_a == 0 || norm_b == 0) {
-      continue;
-    }
-    out[rows[k]] =
-      std::clamp(dot / (std::sqrt(norm_a) * std::sqrt(norm_b)), -1.0, 1.0);
-    out_validity.SetValid(rows[k]);
+  void Advance(ai::Requester& requester) final {
+    _embed->requests = std::move(requests);
+    _embed->Advance(requester);
+    requests = std::move(_embed->requests);
   }
-}
 
-void EmbeddingBindData::Evaluate(ai::Requester& requester,
-                                 duckdb::DataChunk& args,
-                                 duckdb::Vector& result) const {
+  void Finish(duckdb::Vector& result) final {
+    result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+    auto* out = duckdb::FlatVector::GetDataMutable<double>(result);
+    auto& out_validity = duckdb::FlatVector::ValidityMutable(result);
+    out_validity.SetAllInvalid(_count);
+    if (_rows.empty()) {
+      return;
+    }
+
+    duckdb::Vector embeddings{
+      duckdb::LogicalType::LIST(duckdb::LogicalType::FLOAT), 2 * _rows.size()};
+    _embed->Finish(embeddings);
+
+    const auto* entries =
+      duckdb::FlatVector::GetData<duckdb::list_entry_t>(embeddings);
+    const auto& validity = duckdb::FlatVector::Validity(embeddings);
+    const auto* data = duckdb::FlatVector::GetData<float>(
+      duckdb::ListVector::GetEntry(embeddings));
+    for (size_t k = 0; k != _rows.size(); ++k) {
+      const auto a = 2 * k;
+      const auto b = a + 1;
+      if (!validity.RowIsValid(a) || !validity.RowIsValid(b)) {
+        continue;
+      }
+      if (entries[a].length != entries[b].length) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
+          ERR_MSG(_bind.fn, ": embeddings have different dimensions (",
+                  entries[a].length, " and ", entries[b].length, ")"));
+      }
+      double dot = 0;
+      double norm_a = 0;
+      double norm_b = 0;
+      for (duckdb::idx_t d = 0; d < entries[a].length; d++) {
+        const double x = data[entries[a].offset + d];
+        const double y = data[entries[b].offset + d];
+        dot += x * y;
+        norm_a += x * x;
+        norm_b += y * y;
+      }
+      if (norm_a == 0 || norm_b == 0) {
+        continue;
+      }
+      out[_rows[k]] =
+        std::clamp(dot / (std::sqrt(norm_a) * std::sqrt(norm_b)), -1.0, 1.0);
+      out_validity.SetValid(_rows[k]);
+    }
+  }
+
+ private:
+  const EmbeddingBindData& _bind;
+  duckdb::idx_t _count;
+  duckdb::Vector _texts;
+  std::vector<duckdb::idx_t> _rows;
+  std::unique_ptr<ai::AIWork> _embed;
+};
+
+std::unique_ptr<ai::AIWork> EmbeddingBindData::Start(
+  duckdb::DataChunk& args) const {
   if (similarity) {
-    Similarity(requester, *this, args, result);
-  } else {
-    ai::EmbedBatch(requester, cfg, args.data[0], args.size(), result);
+    return std::make_unique<SimilarityWork>(*this, args);
   }
+  return ai::StartEmbedding(cfg, args.data[0], args.size());
 }
 
 void AddEmbeddingOptions(duckdb::FunctionSignature& signature) {

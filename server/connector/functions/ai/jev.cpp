@@ -334,6 +334,16 @@ std::vector<Question> ParseJsonQuestions(std::string_view json) {
   return questions;
 }
 
+uint64_t JevOutputTokens(std::string_view body) {
+  simdjson::dom::parser parser;
+  simdjson::dom::element doc;
+  uint64_t tokens = 0;
+  if (parser.parse(body.data(), body.size()).get(doc) == simdjson::SUCCESS) {
+    std::ignore = doc["usage"]["output_tokens"].get(tokens);
+  }
+  return tokens;
+}
+
 struct JevBindData final : public AIFunctionData {
   std::string url;
   std::string api_key;
@@ -344,13 +354,13 @@ struct JevBindData final : public AIFunctionData {
   size_t batch_size = 1;
 
   Endpoint GetEndpoint() const final {
-    return {.fn = kFn, .url = url, .api_key = api_key};
+    return {.fn = kFn,
+            .url = url,
+            .api_key = api_key,
+            .output_tokens = JevOutputTokens};
   }
 
-  size_t BatchSize() const final { return batch_size; }
-
-  void Evaluate(Requester& requester, duckdb::DataChunk& args,
-                duckdb::Vector& result) const final;
+  std::unique_ptr<AIWork> Start(duckdb::DataChunk& args) const final;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<JevBindData>(*this);
@@ -421,7 +431,8 @@ duckdb::unique_ptr<duckdb::FunctionData> JevBind(
 
   const auto secret = LoadSecret(context, kFn, secret_name,
                                  kJevDefaultSecretSetting, kTypeSafeSecretType);
-  bind->url = JoinUrl(secret.base_url, kDefaultBaseUrl, kPath);
+  bind->url = JoinUrl(secret.base_url, kDefaultBaseUrl,
+                      secret.path.empty() ? kPath : secret.path);
   bind->api_key = secret.api_key;
   bind->model = model                   ? *model
                 : !secret.model.empty() ? secret.model
@@ -588,16 +599,9 @@ duckdb::Value ParseAnswer(const Question& question,
      duckdb::Value::DOUBLE(confidence)});
 }
 
-void RunBatch(const JevBindData& bind, Requester& requester,
-              std::span<const std::string_view> states,
-              std::span<duckdb::Value> outputs) {
-  auto response = requester.Send(BuildBody(bind, states));
-  if (response.status == 422 && states.size() > 1) {
-    const auto half = states.size() / 2;
-    RunBatch(bind, requester, states.first(half), outputs.first(half));
-    RunBatch(bind, requester, states.subspan(half), outputs.subspan(half));
-    return;
-  }
+void ParseBatch(const JevBindData& bind, Requester& requester,
+                Response response, std::span<const std::string_view> states,
+                std::span<duckdb::Value> outputs) {
   const auto body = requester.Accept(std::move(response));
   if (!body) {
     return;
@@ -606,10 +610,6 @@ void RunBatch(const JevBindData& bind, Requester& requester,
   simdjson::dom::element doc;
   if (parser.parse(*body).get(doc) != simdjson::SUCCESS) {
     ThrowRowError(absl::StrCat(kFn, ": response is not valid JSON: ", *body));
-  }
-  if (uint64_t tokens = 0;
-      doc["usage"]["output_tokens"].get(tokens) == simdjson::SUCCESS) {
-    requester.AddOutputTokens(tokens);
   }
   simdjson::dom::element answers;
   if (doc["answers"].get(answers) != simdjson::SUCCESS) {
@@ -631,21 +631,54 @@ void RunBatch(const JevBindData& bind, Requester& requester,
   }
 }
 
-void JevBindData::Evaluate(Requester& requester, duckdb::DataChunk& args,
-                           duckdb::Vector& result) const {
-  const auto inputs = CollectInputs(args.data[0], args.size(), true, false);
-  const auto& texts = inputs.texts;
+class JevWork final : public AIWork {
+ public:
+  JevWork(const JevBindData& bind, duckdb::DataChunk& args)
+    : _bind{bind},
+      _inputs{CollectInputs(args.data[0], args.size(), true, false)},
+      _outputs(_inputs.texts.size()) {
+    const auto n = _inputs.texts.size();
+    for (size_t begin = 0; begin < n; begin += bind.batch_size) {
+      Queue(begin, std::min(bind.batch_size, n - begin));
+    }
+  }
 
-  std::vector<duckdb::Value> outputs(texts.size(),
-                                     duckdb::Value{result.GetType()});
-  requester.ForEach(
-    (texts.size() + batch_size - 1) / batch_size, [&](size_t b) {
-      const auto begin = b * batch_size;
-      const auto size = std::min(batch_size, texts.size() - begin);
-      RunBatch(*this, requester, std::span{texts}.subspan(begin, size),
-               std::span{outputs}.subspan(begin, size));
+  void Advance(Requester& requester) final {
+    auto current = std::exchange(requests, {});
+    auto batches = std::exchange(_batches, {});
+    requester.ForEach(current.size(), [&](size_t k) {
+      const auto [begin, size] = batches[k];
+      if (current[k].response.status == 422 && size > 1) {
+        Queue(begin, size / 2);
+        Queue(begin + size / 2, size - size / 2);
+        return;
+      }
+      ParseBatch(_bind, requester, std::move(current[k].response),
+                 std::span{_inputs.texts}.subspan(begin, size),
+                 std::span{_outputs}.subspan(begin, size));
     });
-  SetOutputs(result, inputs, outputs);
+  }
+
+  void Finish(duckdb::Vector& result) final {
+    SetOutputs(result, _inputs, _outputs);
+  }
+
+ private:
+  void Queue(size_t begin, size_t size) {
+    requests.push_back(
+      {.body =
+         BuildBody(_bind, std::span{_inputs.texts}.subspan(begin, size))});
+    _batches.emplace_back(begin, size);
+  }
+
+  const JevBindData& _bind;
+  Inputs _inputs;
+  std::vector<duckdb::Value> _outputs;
+  std::vector<std::pair<size_t, size_t>> _batches;
+};
+
+std::unique_ptr<AIWork> JevBindData::Start(duckdb::DataChunk& args) const {
+  return std::make_unique<JevWork>(*this, args);
 }
 
 }  // namespace

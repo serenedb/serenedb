@@ -37,6 +37,7 @@ class FunctionSignature;
 namespace sdb::connector::ai {
 
 class Requester;
+struct Response;
 
 struct ChatConfig {
   std::string url;
@@ -69,7 +70,9 @@ ChatTemplate MakeChatTemplate(const ChatConfig& cfg, std::string_view system);
 
 std::string BuildChatBody(const ChatTemplate& chat, std::string_view user);
 
+uint64_t ChatOutputTokens(std::string_view body);
+
 std::optional<std::string> Chat(Requester& requester, std::string_view fn,
-                                std::string_view body, int32_t max_tokens);
+                                Response response, int32_t max_tokens);
 
 }  // namespace sdb::connector::ai

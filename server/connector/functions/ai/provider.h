@@ -22,11 +22,12 @@
 
 #include <cstdint>
 #include <duckdb/common/types/vector.hpp>
+#include <memory>
 #include <string>
 
 namespace sdb::connector::ai {
 
-class Requester;
+class AIWork;
 struct SecretConfig;
 
 enum class ProviderType {
@@ -46,8 +47,8 @@ struct ProviderConfig {
 
 void NormalizeProviderConfig(ProviderConfig& cfg, const SecretConfig& secret);
 
-void EmbedBatch(Requester& requester, const ProviderConfig& cfg,
-                duckdb::Vector& texts, duckdb::idx_t count,
-                duckdb::Vector& result);
+std::unique_ptr<AIWork> StartEmbedding(const ProviderConfig& cfg,
+                                       duckdb::Vector& texts,
+                                       duckdb::idx_t count);
 
 }  // namespace sdb::connector::ai

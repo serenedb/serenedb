@@ -22,6 +22,7 @@
 
 #include <iresearch/utils/system_compiler.hpp>
 
+#include "connector/functions/ai/common.h"
 #include "connector/functions/ai/provider_openai.h"
 
 namespace sdb::connector::ai {
@@ -36,13 +37,12 @@ void NormalizeProviderConfig(ProviderConfig& cfg, const SecretConfig& secret) {
   }
 }
 
-void EmbedBatch(Requester& requester, const ProviderConfig& cfg,
-                duckdb::Vector& texts, duckdb::idx_t count,
-                duckdb::Vector& result) {
+std::unique_ptr<AIWork> StartEmbedding(const ProviderConfig& cfg,
+                                       duckdb::Vector& texts,
+                                       duckdb::idx_t count) {
   switch (cfg.type) {
     case ProviderType::OpenAI:
-      EmbedBatchOpenAI(requester, cfg, texts, count, result);
-      break;
+      return StartEmbeddingOpenAI(cfg, texts, count);
     default:
       SDB_UNREACHABLE();
   }

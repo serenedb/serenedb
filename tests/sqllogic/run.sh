@@ -641,11 +641,6 @@ launch_biglake() {
 	export ICEBERG_SERVER_OPTIONS="warehouse 'bl://projects/${BIGLAKE_PROJECT}/catalogs/${BIGLAKE_CATALOG}', endpoint 'https://biglake.googleapis.com/iceberg/v1/restcatalog', secret 'iceberg_ci_catalog'"
 }
 
-# Launches an Ollama server and pulls a small embedding model. Ollama exposes
-# an OpenAI-compatible API at /v1/embeddings on port 11434, which ai_embed()
-# targets via a SECRET of TYPE openai with a custom base_url. The pulled
-# model determines the embedding dimension; pick the smallest one that's
-# still useful so the first run stays under ~30s in CI.
 launch_ollama() {
 	local prefix
 	prefix="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"

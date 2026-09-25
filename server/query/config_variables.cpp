@@ -496,9 +496,9 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_ai_max_concurrent_requests",
       {
         LogicalTypeId::UBIGINT,
-        "Maximum number of threads an AI_EVALUATE step uses. Each thread "
-        "sends one AI provider request at a time, and the threads setting "
-        "also limits the count. Default: 16.",
+        "Maximum number of AI provider requests an AI_EVALUATE step, or one "
+        "call outside it, has in flight. Requests run on DuckDB's async I/O "
+        "threads (async_threads). Default: 16.",
         [] { return duckdb::Value::UBIGINT(16); },
         RejectZero<"sdb_ai_max_concurrent_requests">,
       },

@@ -180,6 +180,55 @@ statement error prompt_jev: request to 'http://127.0.0.1:9/v1/systemone' failed
 SELECT prompt_jev('x', 'q');
 
 statement ok
+CREATE OR REPLACE SECRET ai_dead_path_${__DATABASE__} (
+  TYPE openai,
+  base_url 'http://127.0.0.1:9/v1beta/openai',
+  chat_path '/chat/completions',
+  model 'm'
+);
+
+statement error ai_generate: request to 'http://127.0.0.1:9/v1beta/openai/chat/completions' failed
+SELECT ai_generate('x', secret_name := 'ai_dead_path_${__DATABASE__}');
+
+statement ok
+CREATE OR REPLACE SECRET ai_dead_full_${__DATABASE__} (
+  TYPE openai,
+  base_url 'http://127.0.0.1:9/api/v1/chat/completions/',
+  model 'm'
+);
+
+statement error ai_generate: request to 'http://127.0.0.1:9/api/v1/chat/completions' failed
+SELECT ai_generate('x', secret_name := 'ai_dead_full_${__DATABASE__}');
+
+statement ok
+CREATE OR REPLACE SECRET ai_dead_embeddings_${__DATABASE__} (
+  TYPE openai,
+  base_url 'http://127.0.0.1:9/api/v1/embeddings'
+);
+
+statement error ai_embed: request to 'http://127.0.0.1:9/api/v1/embeddings' failed
+SELECT ai_embed('x', 'm', 'ai_dead_embeddings_${__DATABASE__}');
+
+statement ok
+CREATE OR REPLACE SECRET jev_dead_path_${__DATABASE__} (
+  TYPE typesafe,
+  base_url 'http://127.0.0.1:9/gateway',
+  path '/typesafe/v1/systemone'
+);
+
+statement error prompt_jev: request to 'http://127.0.0.1:9/gateway/typesafe/v1/systemone' failed
+SELECT prompt_jev('x', 'q', secret_name := 'jev_dead_path_${__DATABASE__}');
+
+statement ok
+CREATE OR REPLACE SECRET jev_dead_full_${__DATABASE__} (
+  TYPE typesafe,
+  base_url 'http://127.0.0.1:9/proxy/systemone'
+);
+
+statement error prompt_jev: request to 'http://127.0.0.1:9/proxy/systemone' failed
+SELECT prompt_jev('x', 'q', secret_name := 'jev_dead_full_${__DATABASE__}');
+
+statement ok
 SET sdb_ai_throw_on_error = false;
 
 statement ok

@@ -116,6 +116,79 @@ std::string BuildBody(const ProviderConfig& cfg,
   return std::string{builder.view().value()};
 }
 
+class EmbeddingWork final : public AIWork {
+ public:
+  EmbeddingWork(const ProviderConfig& cfg, duckdb::Vector& texts,
+                duckdb::idx_t count)
+    : _batch{cfg.max_batch},
+      _count{count},
+      _inputs{CollectInputs(texts, count, true, true)} {
+    SDB_ASSERT(_batch != 0);
+    _embeddings.resize((_inputs.texts.size() + _batch - 1) / _batch);
+    for (size_t b = 0; b != _embeddings.size(); ++b) {
+      requests.push_back({.body = BuildBody(cfg, Batch(b))});
+    }
+  }
+
+  void Advance(Requester& requester) final {
+    requester.ForEach(requests.size(), [&](size_t b) {
+      if (auto body = requester.Accept(std::move(requests[b].response))) {
+        _embeddings[b] = ParseEmbeddings(*body, Batch(b).size());
+      }
+    });
+    requests.clear();
+  }
+
+  void Finish(duckdb::Vector& result) final {
+    size_t total = 0;
+    for (const auto slot : _inputs.slots) {
+      if (const auto* e = Embedding(slot)) {
+        total += e->size();
+      }
+    }
+    result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+    duckdb::ListVector::SetListSize(result, 0);
+    duckdb::ListVector::Reserve(result, total);
+    auto* data = duckdb::FlatVector::GetDataMutable<float>(
+      duckdb::ListVector::GetEntry(result));
+    auto* entries =
+      duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
+    auto& validity = duckdb::FlatVector::ValidityMutable(result);
+    size_t offset = 0;
+    for (duckdb::idx_t i = 0; i < _count; i++) {
+      const auto* e = Embedding(_inputs.slots[i]);
+      if (e == nullptr) {
+        entries[i] = {0, 0};
+        validity.SetInvalid(i);
+        continue;
+      }
+      entries[i] = {offset, e->size()};
+      validity.SetValid(i);
+      std::copy(e->begin(), e->end(), data + offset);
+      offset += e->size();
+    }
+    duckdb::ListVector::SetListSize(result, offset);
+  }
+
+ private:
+  std::span<const std::string_view> Batch(size_t b) const {
+    return std::span{_inputs.texts}.subspan(
+      b * _batch, std::min(_batch, _inputs.texts.size() - b * _batch));
+  }
+
+  const std::vector<float>* Embedding(size_t slot) const {
+    if (slot == Inputs::kNone || _embeddings[slot / _batch].empty()) {
+      return nullptr;
+    }
+    return &_embeddings[slot / _batch][slot % _batch];
+  }
+
+  size_t _batch;
+  duckdb::idx_t _count;
+  Inputs _inputs;
+  std::vector<Embeddings> _embeddings;
+};
+
 }  // namespace
 
 void NormalizeOpenAIConfig(ProviderConfig& cfg, const SecretConfig& secret) {
@@ -125,56 +198,10 @@ void NormalizeOpenAIConfig(ProviderConfig& cfg, const SecretConfig& secret) {
   cfg.api_key = secret.api_key;
 }
 
-void EmbedBatchOpenAI(Requester& requester, const ProviderConfig& cfg,
-                      duckdb::Vector& texts, duckdb::idx_t count,
-                      duckdb::Vector& result) {
-  SDB_ASSERT(cfg.max_batch != 0);
-  const auto inputs = CollectInputs(texts, count, true, true);
-  const auto& unique = inputs.texts;
-  const size_t batch = cfg.max_batch;
-  std::vector<Embeddings> embeddings((unique.size() + batch - 1) / batch);
-  requester.ForEach(embeddings.size(), [&](size_t b) {
-    const auto chunk = std::span{unique}.subspan(
-      b * batch, std::min(batch, unique.size() - b * batch));
-    if (auto body = requester.Post(BuildBody(cfg, chunk))) {
-      embeddings[b] = ParseEmbeddings(*body, chunk.size());
-    }
-  });
-  auto embedding = [&](size_t slot) -> const std::vector<float>* {
-    if (slot == Inputs::kNone || embeddings[slot / batch].empty()) {
-      return nullptr;
-    }
-    return &embeddings[slot / batch][slot % batch];
-  };
-
-  size_t total = 0;
-  for (const auto slot : inputs.slots) {
-    if (const auto* e = embedding(slot)) {
-      total += e->size();
-    }
-  }
-  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-  duckdb::ListVector::SetListSize(result, 0);
-  duckdb::ListVector::Reserve(result, total);
-  auto* data = duckdb::FlatVector::GetDataMutable<float>(
-    duckdb::ListVector::GetEntry(result));
-  auto* entries =
-    duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
-  auto& validity = duckdb::FlatVector::ValidityMutable(result);
-  size_t offset = 0;
-  for (duckdb::idx_t i = 0; i < count; i++) {
-    const auto* e = embedding(inputs.slots[i]);
-    if (e == nullptr) {
-      entries[i] = {0, 0};
-      validity.SetInvalid(i);
-      continue;
-    }
-    entries[i] = {offset, e->size()};
-    validity.SetValid(i);
-    std::copy(e->begin(), e->end(), data + offset);
-    offset += e->size();
-  }
-  duckdb::ListVector::SetListSize(result, offset);
+std::unique_ptr<AIWork> StartEmbeddingOpenAI(const ProviderConfig& cfg,
+                                             duckdb::Vector& texts,
+                                             duckdb::idx_t count) {
+  return std::make_unique<EmbeddingWork>(cfg, texts, count);
 }
 
 }  // namespace sdb::connector::ai

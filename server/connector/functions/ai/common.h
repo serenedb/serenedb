@@ -20,7 +20,9 @@
 
 #pragma once
 
+#include <absl/base/thread_annotations.h>
 #include <absl/functional/function_ref.h>
+#include <absl/synchronization/mutex.h>
 
 #include <atomic>
 #include <cstdint>
@@ -29,7 +31,9 @@
 #include <duckdb/function/function.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context_state.hpp>
+#include <exception>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -64,6 +68,7 @@ struct SecretConfig {
   std::string model;
   std::string chat_path;
   std::string embeddings_path;
+  std::string path;
 };
 
 std::optional<duckdb::Value> FoldArgument(duckdb::ClientContext& context,
@@ -128,6 +133,7 @@ struct Endpoint {
   std::string_view fn;
   std::string_view url;
   std::string_view api_key;
+  uint64_t (*output_tokens)(std::string_view body) = nullptr;
 };
 
 class Requester {
@@ -137,12 +143,6 @@ class Requester {
   Response Send(std::string_view body);
 
   std::optional<std::string> Accept(Response response) const;
-
-  std::optional<std::string> Post(std::string_view body) {
-    return Accept(Send(body));
-  }
-
-  void AddOutputTokens(uint64_t tokens);
 
   void ForEach(size_t n, absl::FunctionRef<void(size_t)> fn);
 
@@ -156,6 +156,7 @@ class Requester {
   std::string _fn;
   std::string _url;
   duckdb::HTTPHeaders _headers;
+  uint64_t (*_output_tokens)(std::string_view body);
   duckdb::shared_ptr<AIQueryUsage> _usage;
   duckdb::unique_ptr<duckdb::HTTPParams> _params;
   duckdb::unique_ptr<duckdb::HTTPClient> _client;
@@ -168,15 +169,58 @@ class Requester {
   bool _throw_on_quota;
 };
 
+struct AIRequest {
+  std::string body;
+  Response response;
+};
+
+class AIWork {
+ public:
+  virtual ~AIWork() = default;
+
+  virtual void Advance(Requester& requester) = 0;
+
+  virtual void Finish(duckdb::Vector& result) = 0;
+
+  std::vector<AIRequest> requests;
+};
+
 class AIFunctionData : public duckdb::FunctionData {
  public:
   virtual Endpoint GetEndpoint() const = 0;
 
-  virtual size_t BatchSize() const { return 1; }
-
-  virtual void Evaluate(Requester& requester, duckdb::DataChunk& args,
-                        duckdb::Vector& result) const = 0;
+  virtual std::unique_ptr<AIWork> Start(duckdb::DataChunk& args) const = 0;
 };
+
+class Fetch {
+ public:
+  Fetch(duckdb::ClientContext& context, std::vector<Endpoint> endpoints)
+    : _context{context}, _endpoints{std::move(endpoints)} {}
+
+  void Add(AIRequest& request, size_t endpoint) {
+    _requests.emplace_back(&request, endpoint);
+  }
+
+  size_t Size() const noexcept { return _requests.size(); }
+
+  void Run();
+
+  void Rethrow();
+
+ private:
+  duckdb::ClientContext& _context;
+  std::vector<Endpoint> _endpoints;
+  std::vector<std::pair<AIRequest*, size_t>> _requests;
+  std::atomic_size_t _next = 0;
+  std::atomic_bool _stop = false;
+  absl::Mutex _mutex;
+  std::exception_ptr _error ABSL_GUARDED_BY(_mutex);
+};
+
+size_t MaxConcurrentRequests(duckdb::ClientContext& context);
+
+void RunWork(duckdb::ClientContext& context, Requester& requester,
+             const Endpoint& endpoint, AIWork& work);
 
 struct AILocalState final : public duckdb::FunctionLocalState {
   AILocalState(duckdb::ClientContext& context, const AIFunctionData& bind);

@@ -169,11 +169,13 @@ struct TextBindData final : public AIFunctionData {
   std::vector<std::string> keys;
 
   Endpoint GetEndpoint() const final {
-    return {.fn = spec->name, .url = chat.url, .api_key = chat.api_key};
+    return {.fn = spec->name,
+            .url = chat.url,
+            .api_key = chat.api_key,
+            .output_tokens = ChatOutputTokens};
   }
 
-  void Evaluate(Requester& requester, duckdb::DataChunk& args,
-                duckdb::Vector& result) const final;
+  std::unique_ptr<AIWork> Start(duckdb::DataChunk& args) const final;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<TextBindData>(*this);
@@ -564,22 +566,43 @@ duckdb::Value Interpret(const TextBindData& bind, std::string_view text) {
   SDB_UNREACHABLE();
 }
 
-void TextBindData::Evaluate(Requester& requester, duckdb::DataChunk& args,
-                            duckdb::Vector& result) const {
-  const auto inputs =
-    CollectInputs(args.data[spec->input_second ? 1 : 0], args.size(),
-                  spec->kind != TextKind::Generate, false);
-
-  std::vector<duckdb::Value> outputs(inputs.texts.size(),
-                                     duckdb::Value{result.GetType()});
-  requester.ForEach(inputs.texts.size(), [&](size_t k) {
-    if (const auto reply =
-          Chat(requester, spec->name, BuildChatBody(body, inputs.texts[k]),
-               chat.max_tokens)) {
-      outputs[k] = Interpret(*this, *reply);
+class TextWork final : public AIWork {
+ public:
+  TextWork(const TextBindData& bind, duckdb::DataChunk& args)
+    : _bind{bind},
+      _inputs{CollectInputs(args.data[bind.spec->input_second ? 1 : 0],
+                            args.size(), bind.spec->kind != TextKind::Generate,
+                            false)},
+      _outputs(_inputs.texts.size()) {
+    requests.reserve(_inputs.texts.size());
+    for (const auto text : _inputs.texts) {
+      requests.push_back({.body = BuildChatBody(bind.body, text)});
     }
-  });
-  SetOutputs(result, inputs, outputs);
+  }
+
+  void Advance(Requester& requester) final {
+    requester.ForEach(requests.size(), [&](size_t k) {
+      if (const auto reply =
+            Chat(requester, _bind.spec->name, std::move(requests[k].response),
+                 _bind.chat.max_tokens)) {
+        _outputs[k] = Interpret(_bind, *reply);
+      }
+    });
+    requests.clear();
+  }
+
+  void Finish(duckdb::Vector& result) final {
+    SetOutputs(result, _inputs, _outputs);
+  }
+
+ private:
+  const TextBindData& _bind;
+  Inputs _inputs;
+  std::vector<duckdb::Value> _outputs;
+};
+
+std::unique_ptr<AIWork> TextBindData::Start(duckdb::DataChunk& args) const {
+  return std::make_unique<TextWork>(*this, args);
 }
 
 duckdb::LogicalType SecondType(Second type) {

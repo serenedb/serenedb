@@ -31,6 +31,8 @@
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/execution/physical_operator.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
+#include <duckdb/parallel/async_result.hpp>
+#include <duckdb/parallel/pipeline.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <memory>
@@ -39,23 +41,14 @@
 #include <vector>
 
 #include "connector/functions/ai/common.h"
-#include "query/config.h"
 
 namespace sdb::connector::ai {
 namespace {
-
-constinit SettingRef gConcurrency{"sdb_ai_max_concurrent_requests"};
 
 enum class EvaluateOrder : uint8_t {
   Unordered,
   Serial,
   Batch,
-};
-
-struct Morsel {
-  duckdb::idx_t chunk;
-  duckdb::idx_t offset;
-  duckdb::idx_t count;
 };
 
 class EvaluateGlobalState final : public duckdb::GlobalSinkState {
@@ -81,9 +74,27 @@ class EvaluateSourceState final : public duckdb::GlobalSourceState {
  public:
   duckdb::idx_t MaxThreads() final { return max_threads; }
 
-  std::vector<Morsel> morsels;
+  duckdb::idx_t chunks = 0;
   std::atomic_size_t next = 0;
   duckdb::idx_t max_threads = 1;
+  size_t free_slots = 0;
+};
+
+class FetchAsyncTask final : public duckdb::AsyncTask {
+ public:
+  FetchAsyncTask(std::shared_ptr<Fetch> fetch, EvaluateSourceState& source)
+    : _fetch{std::move(fetch)}, _source{source} {}
+
+  void Execute() final {
+    _fetch->Run();
+    duckdb::annotated_lock_guard<duckdb::annotated_mutex> guard{_source.lock};
+    ++_source.free_slots;
+    _source.UnblockTasks();
+  }
+
+ private:
+  std::shared_ptr<Fetch> _fetch;
+  EvaluateSourceState& _source;
 };
 
 struct Call {
@@ -103,6 +114,7 @@ struct Call {
   Requester requester;
   duckdb::ExpressionExecutor executor;
   duckdb::DataChunk args;
+  std::unique_ptr<AIWork> work;
 };
 
 class EvaluateLocalSource final : public duckdb::LocalSourceState {
@@ -110,6 +122,8 @@ class EvaluateLocalSource final : public duckdb::LocalSourceState {
   std::vector<std::unique_ptr<Call>> calls;
   duckdb::DataChunk rows;
   duckdb::idx_t batch_index = 0;
+  bool active = false;
+  std::shared_ptr<Fetch> fetch;
 };
 
 class PhysicalAIEvaluate final : public duckdb::PhysicalOperator {
@@ -272,32 +286,16 @@ duckdb::SinkFinalizeType PhysicalAIEvaluate::Finalize(
 duckdb::unique_ptr<duckdb::GlobalSourceState>
 PhysicalAIEvaluate::GetGlobalSourceState(duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<EvaluateSourceState>();
+  state->free_slots = MaxConcurrentRequests(context);
   const auto& rows = sink_state->Cast<EvaluateGlobalState>().rows;
   if (!rows || rows->Count() == 0) {
     return state;
   }
-  const auto threads = std::clamp<duckdb::idx_t>(
-    gConcurrency.Int(context), 1,
+  state->chunks = rows->ChunkCount();
+  state->max_threads = std::min<duckdb::idx_t>(
+    state->chunks,
     std::max<duckdb::idx_t>(
       1, duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads()));
-  duckdb::idx_t size = (rows->Count() + threads - 1) / threads;
-  for (const auto& call : _calls) {
-    size = std::max<duckdb::idx_t>(size,
-                                   call->Cast<duckdb::BoundFunctionExpression>()
-                                     .BindInfo()
-                                     ->Cast<AIFunctionData>()
-                                     .BatchSize());
-  }
-  duckdb::DataChunk chunk;
-  rows->InitializeScanChunk(chunk);
-  for (duckdb::idx_t c = 0; c < rows->ChunkCount(); c++) {
-    rows->FetchChunk(c, chunk);
-    for (duckdb::idx_t offset = 0; offset < chunk.size(); offset += size) {
-      state->morsels.push_back(
-        {c, offset, std::min(size, chunk.size() - offset)});
-    }
-  }
-  state->max_threads = std::min<duckdb::idx_t>(state->morsels.size(), threads);
   return state;
 }
 
@@ -314,27 +312,75 @@ PhysicalAIEvaluate::GetLocalSourceState(duckdb::ExecutionContext& context,
 }
 
 duckdb::SourceResultType PhysicalAIEvaluate::GetDataInternal(
-  duckdb::ExecutionContext&, duckdb::DataChunk& chunk,
+  duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSourceInput& input) const {
   auto& source = input.global_state.Cast<EvaluateSourceState>();
   auto& state = input.local_state.Cast<EvaluateLocalSource>();
-  const auto m = source.next.fetch_add(1, std::memory_order_relaxed);
-  if (m >= source.morsels.size()) {
-    return duckdb::SourceResultType::FINISHED;
+  if (state.fetch) {
+    const auto fetch = std::move(state.fetch);
+    fetch->Rethrow();
+    for (const auto& call : state.calls) {
+      if (!call->work->requests.empty()) {
+        call->work->Advance(call->requester);
+      }
+    }
+  } else if (!state.active) {
+    const auto c = source.next.fetch_add(1, std::memory_order_relaxed);
+    if (c >= source.chunks) {
+      return duckdb::SourceResultType::FINISHED;
+    }
+    state.batch_index = c;
+    sink_state->Cast<EvaluateGlobalState>().rows->FetchChunk(c, state.rows);
+    for (const auto& call : state.calls) {
+      call->args.Reset();
+      call->executor.Execute(state.rows, call->args);
+      call->work = call->bind.Start(call->args);
+    }
+    state.active = true;
   }
-  const auto& morsel = source.morsels[m];
-  state.batch_index = m;
-  sink_state->Cast<EvaluateGlobalState>().rows->FetchChunk(morsel.chunk,
-                                                           state.rows);
-  chunk.Slice(state.rows, morsel.offset, morsel.offset + morsel.count);
-  chunk.SetChildCardinality(morsel.count);
+
+  std::vector<Endpoint> endpoints;
+  for (const auto& call : state.calls) {
+    endpoints.push_back(call->bind.GetEndpoint());
+  }
+  auto fetch = std::make_shared<Fetch>(context.client, std::move(endpoints));
+  for (size_t c = 0; c != state.calls.size(); ++c) {
+    for (auto& request : state.calls[c]->work->requests) {
+      fetch->Add(request, c);
+    }
+  }
+  if (fetch->Size() != 0) {
+    size_t slots = 0;
+    {
+      duckdb::annotated_lock_guard<duckdb::annotated_mutex> guard{source.lock};
+      if (source.free_slots == 0) {
+        return source.BlockSource(input.interrupt_state);
+      }
+      if (!source.CanBlock()) {
+        return duckdb::SourceResultType::FINISHED;
+      }
+      slots = std::min(source.free_slots, fetch->Size());
+      source.free_slots -= slots;
+    }
+    duckdb::vector<duckdb::unique_ptr<duckdb::AsyncTask>> tasks;
+    for (size_t i = 0; i != slots; ++i) {
+      tasks.push_back(duckdb::make_uniq<FetchAsyncTask>(fetch, source));
+    }
+    state.fetch = std::move(fetch);
+    duckdb::AsyncResult{std::move(tasks), duckdb::TaskSchedulerType::ASYNC}
+      .ScheduleTasks(input.interrupt_state, context.pipeline->executor);
+    return duckdb::SourceResultType::BLOCKED;
+  }
+
+  const auto count = state.rows.size();
+  chunk.Slice(state.rows, 0, count);
+  chunk.SetChildCardinality(count);
   for (size_t c = 0; c != state.calls.size(); ++c) {
     auto& call = *state.calls[c];
-    call.args.Reset();
-    call.executor.Execute(chunk, call.args);
-    call.bind.Evaluate(call.requester, call.args,
-                       chunk.data[_input_types.size() + c]);
+    call.work->Finish(chunk.data[_input_types.size() + c]);
+    call.work.reset();
   }
+  state.active = false;
   return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
 }
 

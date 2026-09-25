@@ -31,8 +31,8 @@ inline constexpr std::string_view kOpenAIDefaultBaseUrl =
 
 void NormalizeOpenAIConfig(ProviderConfig& cfg, const SecretConfig& secret);
 
-void EmbedBatchOpenAI(Requester& requester, const ProviderConfig& cfg,
-                      duckdb::Vector& texts, duckdb::idx_t count,
-                      duckdb::Vector& result);
+std::unique_ptr<AIWork> StartEmbeddingOpenAI(const ProviderConfig& cfg,
+                                             duckdb::Vector& texts,
+                                             duckdb::idx_t count);
 
 }  // namespace sdb::connector::ai

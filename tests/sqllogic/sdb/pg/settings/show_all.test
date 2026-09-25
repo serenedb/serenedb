@@ -289,7 +289,7 @@ sdb_ai_embedding_default_secret	(empty)	Name of the openai secret used by ai_emb
 sdb_ai_embedding_max_batch_size	100	Maximum number of texts ai_embed and ai_similarity send in one embeddings request. Default: 100.
 sdb_ai_jev_default_secret	(empty)	Name of the typesafe secret used by prompt_jev when the call does not pass secret_name. Default: '' (no default).
 sdb_ai_max_api_calls_per_query	0	Maximum number of AI provider requests a single query may send. 0 = unlimited. Default: 0.
-sdb_ai_max_concurrent_requests	16	Maximum number of threads an AI_EVALUATE step uses. Each thread sends one AI provider request at a time, and the threads setting also limits the count. Default: 16.
+sdb_ai_max_concurrent_requests	16	Maximum number of AI provider requests an AI_EVALUATE step, or one call outside it, has in flight. Requests run on DuckDB's async I/O threads (async_threads). Default: 16.
 sdb_ai_max_output_tokens_per_query	0	Maximum number of output tokens, as reported by the provider, a single query may consume; checked before each request, so requests already in flight may exceed it. 0 = unlimited. Default: 0.
 sdb_ai_max_retries	3	How many times an AI provider request is retried after a connection error or HTTP 408, 429, 5xx or 529. Default: 3.
 sdb_ai_request_timeout	120	Timeout of a single AI provider request, in seconds. Default: 120.
@@ -643,7 +643,7 @@ sdb_ai_embedding_default_secret	(empty)	Name of the openai secret used by ai_emb
 sdb_ai_embedding_max_batch_size	100	Maximum number of texts ai_embed and ai_similarity send in one embeddings request. Default: 100.
 sdb_ai_jev_default_secret	(empty)	Name of the typesafe secret used by prompt_jev when the call does not pass secret_name. Default: '' (no default).
 sdb_ai_max_api_calls_per_query	0	Maximum number of AI provider requests a single query may send. 0 = unlimited. Default: 0.
-sdb_ai_max_concurrent_requests	16	Maximum number of threads an AI_EVALUATE step uses. Each thread sends one AI provider request at a time, and the threads setting also limits the count. Default: 16.
+sdb_ai_max_concurrent_requests	16	Maximum number of AI provider requests an AI_EVALUATE step, or one call outside it, has in flight. Requests run on DuckDB's async I/O threads (async_threads). Default: 16.
 sdb_ai_max_output_tokens_per_query	0	Maximum number of output tokens, as reported by the provider, a single query may consume; checked before each request, so requests already in flight may exceed it. 0 = unlimited. Default: 0.
 sdb_ai_max_retries	3	How many times an AI provider request is retried after a connection error or HTTP 408, 429, 5xx or 529. Default: 3.
 sdb_ai_request_timeout	120	Timeout of a single AI provider request, in seconds. Default: 120.

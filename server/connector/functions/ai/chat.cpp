@@ -135,26 +135,32 @@ std::string BuildChatBody(const ChatTemplate& chat, std::string_view user) {
   return std::string{builder.view().value()};
 }
 
+uint64_t ChatOutputTokens(std::string_view body) {
+  simdjson::dom::parser parser;
+  simdjson::dom::element doc;
+  uint64_t tokens = 0;
+  if (parser.parse(body.data(), body.size()).get(doc) == simdjson::SUCCESS) {
+    std::ignore = doc["usage"]["completion_tokens"].get(tokens);
+  }
+  return tokens;
+}
+
 std::optional<std::string> Chat(Requester& requester, std::string_view fn,
-                                std::string_view body, int32_t max_tokens) {
-  const auto response = requester.Post(body);
-  if (!response) {
+                                Response response, int32_t max_tokens) {
+  const auto body = requester.Accept(std::move(response));
+  if (!body) {
     return std::nullopt;
   }
   simdjson::dom::parser parser;
   simdjson::dom::element doc;
-  if (parser.parse(*response).get(doc) != simdjson::SUCCESS) {
+  if (parser.parse(*body).get(doc) != simdjson::SUCCESS) {
     ThrowRowError(absl::StrCat(
-      fn, ": chat completion response is not valid JSON: ", *response));
-  }
-  if (uint64_t tokens = 0;
-      doc["usage"]["completion_tokens"].get(tokens) == simdjson::SUCCESS) {
-    requester.AddOutputTokens(tokens);
+      fn, ": chat completion response is not valid JSON: ", *body));
   }
   simdjson::dom::element choice;
   if (doc["choices"].at(0).get(choice) != simdjson::SUCCESS) {
-    ThrowRowError(absl::StrCat(
-      fn, ": chat completion response has no 'choices': ", *response));
+    ThrowRowError(
+      absl::StrCat(fn, ": chat completion response has no 'choices': ", *body));
   }
   std::string_view content;
   std::ignore = choice["message"]["content"].get(content);

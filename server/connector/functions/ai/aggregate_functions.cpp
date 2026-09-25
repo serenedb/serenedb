@@ -82,11 +82,13 @@ struct AggBindData final : public AIFunctionData {
   size_t max_context = 0;
 
   Endpoint GetEndpoint() const final {
-    return {.fn = fn, .url = chat.url, .api_key = chat.api_key};
+    return {.fn = fn,
+            .url = chat.url,
+            .api_key = chat.api_key,
+            .output_tokens = ChatOutputTokens};
   }
 
-  void Evaluate(Requester& requester, duckdb::DataChunk& args,
-                duckdb::Vector& result) const final;
+  std::unique_ptr<AIWork> Start(duckdb::DataChunk& args) const final;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<AggBindData>(*this);
@@ -270,41 +272,40 @@ struct Group {
 struct Task {
   size_t group;
   bool final;
-  std::string body;
   std::optional<std::string> output;
 };
 
-void Reduce(const AggBindData& bind, Requester& requester,
-            std::vector<Group>& groups) {
-  for (size_t level = 0;; ++level) {
-    std::vector<Task> tasks;
+class AggWork final : public AIWork {
+ public:
+  explicit AggWork(const AggBindData& bind) : _bind{bind} {}
+
+  void Plan() {
     for (size_t g = 0; g != groups.size(); ++g) {
       auto& group = groups[g];
       if (group.values.empty()) {
         continue;
       }
-      const auto parts = Pack(group.values, bind.max_context);
+      const auto parts = Pack(group.values, _bind.max_context);
       const bool final = parts.size() <= 1;
       for (const auto& part : parts) {
-        tasks.push_back({
-          .group = g,
-          .final = final,
-          .body = BuildChatBody(final ? bind.final_body : bind.partial_body,
-                                Message(group.size, part)),
-        });
+        _tasks.push_back({.group = g, .final = final});
+        requests.push_back(
+          {.body = BuildChatBody(final ? _bind.final_body : _bind.partial_body,
+                                 Message(group.size, part))});
       }
     }
-    if (tasks.empty()) {
-      return;
-    }
-    requester.ForEach(tasks.size(), [&](size_t k) {
-      tasks[k].output =
-        Chat(requester, bind.fn, tasks[k].body, bind.chat.max_tokens);
+  }
+
+  void Advance(Requester& requester) final {
+    requester.ForEach(requests.size(), [&](size_t k) {
+      _tasks[k].output =
+        Chat(requester, _bind.fn, std::move(requests[k].response),
+             _bind.chat.max_tokens);
     });
 
     std::vector<std::vector<std::string>> notes(groups.size());
     std::vector<bool> failed(groups.size());
-    for (auto& task : tasks) {
+    for (auto& task : _tasks) {
       auto& group = groups[task.group];
       if (!task.output) {
         failed[task.group] = true;
@@ -331,11 +332,11 @@ void Reduce(const AggBindData& bind, Requester& requester,
       for (const auto& note : notes[g]) {
         after += note.size();
       }
-      if (after >= before || level + 1 >= kMaxLevels) {
+      if (after >= before || _level + 1 >= kMaxLevels) {
         group.values.clear();
         if (requester.ThrowOnError()) {
           ThrowRowError(
-            absl::StrCat(bind.fn,
+            absl::StrCat(_bind.fn,
                          ": condensing the group made no progress; raise "
                          "\"max_context_chars\" or \"max_tokens\""));
         }
@@ -344,35 +345,51 @@ void Reduce(const AggBindData& bind, Requester& requester,
       group.notes = std::move(notes[g]);
       group.values.assign(group.notes.begin(), group.notes.end());
     }
+    ++_level;
+    requests.clear();
+    _tasks.clear();
+    Plan();
   }
-}
 
-void AggBindData::Evaluate(Requester& requester, duckdb::DataChunk& args,
-                           duckdb::Vector& result) const {
+  void Finish(duckdb::Vector& result) final {
+    result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+    for (size_t g = 0; g != groups.size(); ++g) {
+      const auto& answer = groups[g].answer;
+      result.SetValue(g, answer ? duckdb::Value{*answer}
+                                : duckdb::Value{duckdb::LogicalType::VARCHAR});
+    }
+  }
+
+  std::vector<std::vector<std::string>> texts;
+  std::vector<Group> groups;
+
+ private:
+  const AggBindData& _bind;
+  std::vector<Task> _tasks;
+  size_t _level = 0;
+};
+
+std::unique_ptr<AIWork> AggBindData::Start(duckdb::DataChunk& args) const {
+  auto work = std::make_unique<AggWork>(*this);
   const auto count = args.size();
-  std::vector<std::vector<std::string>> texts(count);
-  std::vector<Group> groups(count);
+  work->texts.resize(count);
+  work->groups.resize(count);
   for (duckdb::idx_t g = 0; g < count; g++) {
     const auto list = args.data[0].GetValue(g);
     if (list.IsNull()) {
       continue;
     }
+    auto& texts = work->texts[g];
     for (const auto& value : duckdb::ListValue::GetChildren(list)) {
       if (!value.IsNull()) {
-        texts[g].push_back(duckdb::StringValue::Get(value));
+        texts.push_back(duckdb::StringValue::Get(value));
       }
     }
-    groups[g].size = texts[g].size();
-    groups[g].values.assign(texts[g].begin(), texts[g].end());
+    work->groups[g].size = texts.size();
+    work->groups[g].values.assign(texts.begin(), texts.end());
   }
-  Reduce(*this, requester, groups);
-
-  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-  for (duckdb::idx_t g = 0; g < count; g++) {
-    const auto& answer = groups[g].answer;
-    result.SetValue(g, answer ? duckdb::Value{*answer}
-                              : duckdb::Value{duckdb::LogicalType::VARCHAR});
-  }
+  work->Plan();
+  return work;
 }
 
 void AggFinalize(duckdb::Vector& states,
@@ -387,14 +404,17 @@ void AggFinalize(duckdb::Vector& states,
                         ? duckdb::ConstantVector::GetData<AggState*>(states)
                         : duckdb::FlatVector::GetData<AggState*>(states);
 
-  std::vector<Group> groups(constant ? 1 : count);
+  AggWork work{bind};
+  auto& groups = work.groups;
+  groups.resize(constant ? 1 : count);
   for (size_t g = 0; g != groups.size(); ++g) {
     if (const auto* values = data[g]->values) {
       groups[g].size = values->size();
       groups[g].values.assign(values->begin(), values->end());
     }
   }
-  Reduce(bind, requester, groups);
+  work.Plan();
+  RunWork(bind.context, requester, bind.GetEndpoint(), work);
 
   if (constant) {
     result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);

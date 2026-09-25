@@ -387,15 +387,21 @@ TEST_F(AIFunctionsTest, RequestsSpreadOverThreads) {
     return Reply{200, ChatReply("ok", "stop", 1)};
   });
   Start();
-  Run("SET threads = 4");
+  Run("SET threads = 1");
   const std::string sql =
-    "SELECT count(ai_generate(v, secret_name := 'chat')) FROM (VALUES ('a'), "
-    "('b'), ('c'), ('d')) t(v)";
-  EXPECT_EQ(Run(sql)->GetValue(0, 0).GetValue<int64_t>(), 4);
-  EXPECT_GE(peak.load(), 2);
+    "SELECT ai_generate(v, secret_name := 'chat') FROM (VALUES ('a'), ('b'), "
+    "('c'), ('d')) t(v)";
+  EXPECT_EQ(Run(sql)->RowCount(), 4);
+  EXPECT_EQ(peak.load(), 4);
+  peak = 0;
+  EXPECT_EQ(Run("SELECT CASE WHEN v <> 'x' THEN ai_generate(v, secret_name := "
+                "'chat') END FROM (VALUES ('a'), ('b'), ('c'), ('d')) t(v)")
+              ->RowCount(),
+            4);
+  EXPECT_EQ(peak.load(), 4);
   peak = 0;
   Run("SET sdb_ai_max_concurrent_requests = 1");
-  EXPECT_EQ(Run(sql)->GetValue(0, 0).GetValue<int64_t>(), 4);
+  EXPECT_EQ(Run(sql)->RowCount(), 4);
   EXPECT_EQ(peak.load(), 1);
 }
 

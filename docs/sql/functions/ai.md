@@ -23,7 +23,7 @@ Every AI function sends the text to the configured provider over the network. Th
 
 The functions read the provider's endpoint and API key from a [secret](../statements/create_secret/index.md). There are two secret types:
 
-- **`TYPE openai`** is used by every `ai_*` function. It names the OpenAI wire protocol, not a vendor, so it reaches OpenAI itself, any hosted provider with an OpenAI-compatible endpoint (for example Google Gemini through `base_url 'https://generativelanguage.googleapis.com/v1beta/openai'`), and locally hosted models served by [Ollama](https://ollama.com/), vLLM, LM Studio, LiteLLM or llama.cpp.
+- **`TYPE openai`** is used by every `ai_*` function. It names the OpenAI wire protocol, not a vendor, so it reaches OpenAI itself, any hosted provider with an OpenAI-compatible endpoint, such as OpenRouter or Google Gemini (see [endpoint URLs](#endpoint-urls)), and locally hosted models served by [Ollama](https://ollama.com/), vLLM, LM Studio, LiteLLM or llama.cpp.
 - **`TYPE typesafe`** is used by `prompt_jev`. It reaches the hosted [TypeSafe](https://typesafe.ai/) Jev API, or a self-hosted [Kev](https://github.com/jaredpalmer/kev) server, which serves the same API from open models.
 
 For OpenAI itself, an `api_key` is all you need:
@@ -53,8 +53,58 @@ The runnable examples on this page use a local Ollama server with the `all-minil
 | `api_key` | TypeSafe API key. Omit for a Kev server started without `KEV_API_KEY`. |
 | `base_url` | Base URL of the API. Defaults to `https://api.typesafe.ai`; point it at a Kev server to run locally. |
 | `model` | Model name. Defaults to `jev-latest`, which Kev also answers to. |
+| `path` | Path of the System One endpoint, if it differs from `/v1/systemone`, for example behind a gateway. |
 
 A `base_url` that starts with `http://` sends the text and the API key unencrypted. The functions therefore refuse a secret whose `base_url` uses `http://` for a host other than `localhost`, `127.0.0.0/8` or `::1`. To use such an endpoint, for example a model server on your private network, run `SET sdb_ai_allow_insecure_endpoint = true`.
+
+### Endpoint URLs {#endpoint-urls}
+
+A function sends its request to `base_url` followed by the endpoint path:
+
+- `chat_path`, or `/v1/chat/completions`, for the chat functions;
+- `embeddings_path`, or `/v1/embeddings`, for `ai_embed` and `ai_similarity`;
+- `path`, or `/v1/systemone`, for `prompt_jev`.
+
+If `base_url` already ends with the last segment of that path, it is used as is. So you can also give a full endpoint URL such as `https://openrouter.ai/api/v1/chat/completions`, but that secret then serves only that one endpoint.
+
+Providers usually publish a base URL that already ends in a version, the form OpenAI SDKs expect. If that version is `/v1`, drop it from `base_url`: the default paths add it back. OpenRouter publishes `https://openrouter.ai/api/v1`, so its secret uses `https://openrouter.ai/api`. OpenRouter model IDs start with the upstream provider. A `model` argument picks a different model for one call:
+
+```sql
+CREATE SECRET openrouter (
+    TYPE openai,
+    base_url 'https://openrouter.ai/api',
+    api_key '⟨sk-or-...⟩',
+    model 'openai/gpt-4o-mini'
+);
+
+SELECT ai_classify(
+    'The package arrived broken.', ['complaint', 'praise', 'question'],
+    secret_name := 'openrouter'
+) AS kind;
+
+SELECT ai_generate(
+    'Explain columnar storage in one sentence.',
+    model := 'anthropic/claude-haiku-4.5',
+    secret_name := 'openrouter'
+) AS answer;
+
+SELECT array_length(
+    ai_embed('vector search', 'openai/text-embedding-3-small', 'openrouter'), 1
+) AS dims;
+```
+
+Otherwise, keep the published base URL and give the paths without the version. Google Gemini publishes `https://generativelanguage.googleapis.com/v1beta/openai`:
+
+```sql
+CREATE SECRET gemini (
+    TYPE openai,
+    base_url 'https://generativelanguage.googleapis.com/v1beta/openai',
+    chat_path '/chat/completions',
+    embeddings_path '/embeddings',
+    api_key '⟨...⟩',
+    model 'gemini-2.5-flash'
+);
+```
 
 ### Choosing the secret {#default-secret}
 
@@ -275,7 +325,7 @@ These settings apply to every AI function:
 | `sdb_ai_max_retries` | `3` | Retries after a connection error or HTTP 408, 429, 5xx or 529. |
 | `sdb_ai_retry_initial_delay_ms` | `500` | Delay before the first retry; each further retry doubles it, up to 60 seconds. A `Retry-After` response header takes precedence, also up to 60 seconds. |
 | `sdb_ai_request_timeout` | `120` | Timeout of a single request, in seconds. |
-| `sdb_ai_max_concurrent_requests` | `16` | Maximum threads an `AI_EVALUATE` step uses; each thread sends one request at a time. Lower it for a local server that can't keep up. See [Performance](#performance). |
+| `sdb_ai_max_concurrent_requests` | `16` | Maximum requests an `AI_EVALUATE` step, or a call outside it, has in flight. Lower it for a local server that can't keep up. See [Performance](#performance). |
 | `sdb_ai_max_api_calls_per_query` | `0` | Maximum requests a query may send. 0 = unlimited. |
 | `sdb_ai_max_output_tokens_per_query` | `0` | Maximum output tokens a query may consume, as reported by the provider. The check happens before each request, so requests already in flight can go over it. 0 = unlimited. |
 | `sdb_ai_throw_on_quota_exceeded` | `true` | When `false`, rows after a quota is exhausted return `NULL` instead of failing the query. |
@@ -288,14 +338,15 @@ There is no input-token quota: the number of input tokens is only known to the p
 
 ## Performance {#performance}
 
-An AI function spends almost all of its time waiting for the provider, so SereneDB spreads the requests over DuckDB's threads:
+An AI function spends almost all of its time waiting for the provider, so SereneDB sends the requests the way DuckDB reads remote files: as tasks on DuckDB's async I/O threads, while the query's own threads do other work.
 
-- The optimizer moves AI calls in a `SELECT` list, a `WHERE` clause, `GROUP BY` keys and aggregate arguments into an `AI_EVALUATE` step, which appears in `EXPLAIN`. `AI_EVALUATE` first collects its input rows, then splits them into one batch per thread. Each thread sends the requests for its batch one after another and waits while each request runs. The number of threads is the smaller of the `threads` setting and `sdb_ai_max_concurrent_requests`, so raise both for a slow provider.
-- A batch never holds fewer rows than one request can carry: `ai_embed` and `ai_similarity` keep at least `sdb_ai_embedding_max_batch_size` rows together, and `prompt_jev` at least `batch_size` rows. Rows with the same text share a request only within a batch.
+- The optimizer moves AI calls in a `SELECT` list, a `WHERE` clause, `GROUP BY` keys and aggregate arguments into an `AI_EVALUATE` step, which appears in `EXPLAIN`. `AI_EVALUATE` first collects its input rows, then works through them in chunks of up to 2048 rows. It sends a chunk's requests as tasks and releases the query thread until the answers arrive.
+- One `AI_EVALUATE` step has at most `sdb_ai_max_concurrent_requests` requests in flight, whatever the `threads` setting and whether or not the query keeps its row order. The `async_threads` setting, by default twice the number of CPU cores, also limits them.
+- Rows of a chunk that have the same text share one request. `ai_embed` and `ai_similarity` send up to `sdb_ai_embedding_max_batch_size` texts per request, and `prompt_jev` up to `batch_size` rows.
 - In a `WHERE` clause, the other conditions are checked first, so the rows they reject are never sent.
 - `AI_EVALUATE` reads all of its input before it returns the first row. In a query without `ORDER BY`, a constant `LIMIT` below 8192 is applied before the AI calls in the `SELECT` list, so `SELECT ai_generate(...) FROM t LIMIT 10` sends 10 requests. Calls in a `WHERE` clause under a `LIMIT` stay out of `AI_EVALUATE`: they run chunk by chunk, and the query stops sending requests once enough rows pass.
-- Calls inside `CASE`, `COALESCE`, `AND`, `OR` and `TRY` run only for the rows that reach them, so they stay where they are. They send their requests one after another from the thread that evaluates them.
-- `ai_agg` and `ai_summarize_agg` gather each group's values first, then spread the groups over the threads like other rows.
+- Calls inside `CASE`, `COALESCE`, `AND`, `OR` and `TRY` run only for the rows that reach them, so they stay where they are. The thread that evaluates them sends a chunk's requests as tasks, up to `sdb_ai_max_concurrent_requests` at a time, and waits for them.
+- `ai_agg` and `ai_summarize_agg` gather each group's values first, then send the groups' requests like other rows.
 
 <SqlLogicTest id="sql/functions/ai_ollama/explain" />
 

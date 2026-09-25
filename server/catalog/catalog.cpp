@@ -75,6 +75,7 @@
 #include "connector/duckdb_physical_search_truncate.h"
 #include "connector/duckdb_physical_search_update.h"
 #include "connector/primary_key.h"
+#include "connector/scan/scan_bind.h"
 #include "connector/view_index_bind.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
@@ -192,6 +193,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   auto& insert = planner.Make<connector::SereneDBSearchInsert>(
     *entry, op.types, op.estimated_cardinality, op.return_chunk);
   insert.children.emplace_back(*plan);
+  connector::ShareScanPayloads(*plan);
   return insert;
 }
 
@@ -223,6 +225,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   auto& insert = planner.Make<connector::SereneDBSearchInsert>(
     std::move(op.info), op.estimated_cardinality);
   insert.children.emplace_back(plan);
+  connector::ShareScanPayloads(plan);
   return insert;
 }
 
@@ -249,6 +252,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
     *entry, op.columns, std::move(op.expressions), op.types,
     op.estimated_cardinality, op.return_chunk);
   update.children.emplace_back(plan);
+  connector::ShareScanPayloads(plan);
   return update;
 }
 

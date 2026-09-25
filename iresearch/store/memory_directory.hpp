@@ -101,6 +101,8 @@ class MemoryFile : public container_utils::RawBlockVector<16, 8> {
 class MemoryIndexInput final : public IndexInput {
  public:
   explicit MemoryIndexInput(const MemoryFile& file) noexcept : _file{&file} {}
+  explicit MemoryIndexInput(std::shared_ptr<const MemoryFile> file) noexcept
+    : _file{file.get()}, _owner{std::move(file)} {}
 
   const byte_type* ReadStable(uint64_t count) noexcept final;
   const byte_type* ReadStable(uint64_t offset, uint64_t count) noexcept final;
@@ -190,7 +192,8 @@ class MemoryIndexInput final : public IndexInput {
     return std::distance(_begin, _end);
   }
 
-  const MemoryFile* _file;        // underline file
+  const MemoryFile* _file;  // underline file
+  std::shared_ptr<const MemoryFile> _owner;
   const byte_type* _buf{};        // current buffer
   const byte_type* _begin{_buf};  // current position
   const byte_type* _end{_buf};    // end of the valid bytes
@@ -262,12 +265,11 @@ class MemoryDirectory final : public Directory {
   friend class SingleInstanceLock;
 
   using FilesAllocator = ManagedTypedAllocator<
-    std::pair<const std::string, std::unique_ptr<MemoryFile>>>;
+    std::pair<const std::string, std::shared_ptr<MemoryFile>>>;
   using FileMap = absl::flat_hash_map<
-    std::string, std::unique_ptr<MemoryFile>,
+    std::string, std::shared_ptr<MemoryFile>,
     absl::container_internal::hash_default_hash<std::string>,
-    absl::container_internal::hash_default_eq<std::string>,
-    FilesAllocator>;  // unique_ptr because of rename
+    absl::container_internal::hash_default_eq<std::string>, FilesAllocator>;
   using LockMap = absl::flat_hash_set<std::string>;
 
   DirectoryAttributes _attrs;

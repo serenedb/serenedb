@@ -9,6 +9,8 @@ import DocCallout from "@site/src/components/DocCallout";
 
 If you are coming from Elasticsearch or OpenSearch, most search features map onto SereneDB's [inverted index](./index.md) and plain SQL. This page maps the concepts side by side; each Elasticsearch feature links to its reference. The biggest shift is that **search and analytics are both just SQL** — you filter with `@@` and aggregate with `GROUP BY` in the same query, against the same database that holds your relational data.
 
+Existing Elasticsearch clients can also talk to SereneDB directly: the [Elasticsearch API](../../../clients/elasticsearch-api.md) serves index, document and search requests for a subset of the Query DSL.
+
 ## Key differences
 
 | Aspect | Elasticsearch | SereneDB |
@@ -79,7 +81,7 @@ The detailed mapping from each Elasticsearch query to the specific SereneDB func
 |---|:---:|---|
 | [Tokenizers](https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis-tokenizers.html) | ✅ | [`split_text`](../../functions/search/tokenizers/split_text.md), [`generate_ngrams`](../../functions/search/tokenizers/generate_ngrams.md), [`split_text_csv`](../../functions/search/tokenizers/split_text_csv.md), [`split_text_icu`](../../functions/search/tokenizers/split_text_icu.md), … [templates](./text-analysis.md) |
 | [Token filters](https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis-tokenfilters.html) (lowercase / stemming / stopwords) | ✅ | [`split_text`](../../functions/search/tokenizers/split_text.md) template options + [`stem_words`](../../functions/search/tokenizers/stem_words.md) / [`remove_stopwords`](../../functions/search/tokenizers/remove_stopwords.md) templates |
-| [Accent folding](https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis-asciifolding-tokenfilter.html) | ✅ | [`accent = false`](../../functions/search/tokenizers/split_text.md) |
+| [Accent folding](https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis-asciifolding-tokenfilter.html) | ✅ | [`normalize_tokens(locale, accent := false)`](../../functions/search/tokenizers/normalize_tokens.md) |
 | [n-gram](https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis-ngram-tokenizer.html) / [edge n-gram](https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis-edgengram-tokenizer.html) | ✅ | [`generate_ngrams`](../../functions/search/tokenizers/generate_ngrams.md) (`mode = 'only_prefix'` for edge n-grams), [`generate_sparse_ngrams`](../../functions/search/tokenizers/generate_sparse_ngrams.md) |
 | [Shingles](https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis-shingle-tokenfilter.html) | ✅ | [`generate_shingles`](../../functions/search/tokenizers/generate_shingles.md) wraps another template and emits word n-grams |
 | [Synonyms](https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis-synonym-tokenfilter.html) | ✅ | [`expand_solr_synonyms`](../../functions/search/tokenizers/expand_solr_synonyms.md), [`expand_wordnet_synonyms`](../../functions/search/tokenizers/expand_wordnet_synonyms.md) |
@@ -179,7 +181,7 @@ Aggregates run **over the inverted index itself** — `GROUP BY` and aggregate f
 | Elasticsearch | SereneDB | Notes |
 |---|:---:|---|
 | [Create / delete index](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-create-index.html) | ✅ | [`CREATE INDEX … USING inverted`](../../statements/create_index/inverted.md) / [`DROP INDEX`](../../statements/drop/index.md) |
-| [Reindex](https://www.elastic.co/guide/en/elasticsearch/reference/current/docs-reindex.html) | ✅ | [`DROP INDEX`](../../statements/drop/index.md) + [`CREATE INDEX`](../../statements/create_index/inverted.md) |
+| [Reindex](https://www.elastic.co/guide/en/elasticsearch/reference/current/docs-reindex.html) | ✅ | [`REINDEX INDEX`](./views.md#refreshing-the-index) for indexes over views, files and lakes; an index on a table follows its writes |
 | [Refresh](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-refresh.html) | ✅ | [`VACUUM (REFRESH_TABLE)`](../../statements/vacuum/index.md) ([Maintenance](./maintenance.md)) |
 | [Force merge](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-forcemerge.html) | ✅ | [`VACUUM (COMPACT_TABLE)`](../../statements/vacuum/index.md) |
 | [Aliases](https://www.elastic.co/guide/en/elasticsearch/reference/current/aliases.html) | ✅ | Use a [view](../../statements/create_view/index.md) |

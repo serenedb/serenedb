@@ -74,8 +74,9 @@ inline size_t Norm(const char* in, size_t n, sz_normal_form_t form,
 #endif
 }
 
-[[gnu::noinline]] inline bool SegmentDenormalized(
-  const char* segment, size_t length, sz_normal_form_t form) noexcept {
+IRS_NO_INLINE inline bool SegmentDenormalized(const char* segment,
+                                              size_t length,
+                                              sz_normal_form_t form) noexcept {
   const auto* begin = reinterpret_cast<const sz_u8_t*>(segment);
   const auto* end = begin + length;
   if (form == sz_normal_form_nfc_k || form == sz_normal_form_nfkc_k) {

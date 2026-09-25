@@ -178,8 +178,8 @@ IRS_FORCE_INLINE inline bool IsScriptLead(byte_type b) noexcept {
 }
 
 template<bool ToLower>
-IRS_FORCE_INLINE inline ScriptBlock ConvertScriptBlock(classify::Block b,
-                                                       uint32_t live) noexcept {
+IRS_FORCE_INLINE inline ScriptBlock ConvertScriptBlock(
+  classify::Block b) noexcept {
   using classify::Block;
   using classify::Cmp;
   const Block zero{};
@@ -233,10 +233,9 @@ IRS_FORCE_INLINE inline ScriptBlock ConvertScriptBlock(classify::Block b,
   const uint32_t lead =
     classify::MoveMask(((b == uint8_t{0xC3}) | d0 | d1) & next_cont);
   const uint32_t valid =
-    (classify::MoveMask(ascii |
-                        ((after_c3 | after_d0 | after_d1) & ~irregular)) |
-     lead) &
-    live;
+    classify::MoveMask(ascii |
+                       ((after_c3 | after_d0 | after_d1) & ~irregular)) |
+    lead;
   auto prefix = static_cast<uint32_t>(std::countr_one(valid));
   if (prefix != 0 && ((lead >> (prefix - 1)) & 1) != 0) {
     --prefix;
@@ -276,7 +275,7 @@ IRS_ALIGN_HOT size_t CaseConvertUtf8(std::string_view in, byte_type* dst) {
     if (scripts && IsScriptLead(*it) &&
         static_cast<size_t>(end - it) >= classify::kClassifyBlock) {
       const auto [converted, prefix] =
-        ConvertScriptBlock<ToLower>(classify::Load(it), ~uint32_t{0});
+        ConvertScriptBlock<ToLower>(classify::Load(it));
       if (prefix != 0) {
         std::memcpy(out, &converted, sizeof converted);
         it += prefix;

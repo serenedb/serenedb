@@ -100,21 +100,6 @@ IRS_FORCE_INLINE inline WordBridgeMasks ClassifyWordBridgeBlock(
   return ClassifyWordBridge(classify::Load(block));
 }
 
-struct WordSpaceMasks {
-  uint32_t word;
-  uint32_t alpha;
-  uint32_t digit;
-  uint32_t space;
-};
-
-IRS_FORCE_INLINE inline WordSpaceMasks ClassifyWordSpaceBlock(
-  const byte_type* block) noexcept {
-  const auto b = classify::Load(block);
-  const auto c = detail::WordCmpsOf(b);
-  return {classify::MoveMask(c.word), classify::MoveMask(c.alpha),
-          classify::MoveMask(c.digit), classify::MoveMask(b == ' ')};
-}
-
 struct WordSegmentMasks {
   uint32_t word;
   uint32_t alpha;

@@ -216,7 +216,7 @@ struct ClassMasks {
 };
 
 IRS_FORCE_INLINE inline ClassMasks ClassifyNibbleClassesBlock(
-  const byte_type* block, const NibbleClasses& set) noexcept {
+  Block block, const NibbleClasses& set) noexcept {
   SDB_ASSERT(set.Blockable());
 #if defined(__AVX2__)
   const auto lo = _mm256_broadcastsi128_si256(
@@ -224,8 +224,7 @@ IRS_FORCE_INLINE inline ClassMasks ClassifyNibbleClassesBlock(
   const auto hi = _mm256_broadcastsi128_si256(
     _mm_load_si128(reinterpret_cast<const __m128i*>(set.hi.data())));
   const auto nibble = _mm256_set1_epi8(0x0F);
-  const auto bytes =
-    _mm256_loadu_si256(reinterpret_cast<const __m256i*>(block));
+  const auto bytes = std::bit_cast<__m256i>(block);
   const auto classes = _mm256_and_si256(
     _mm256_shuffle_epi8(lo, _mm256_and_si256(bytes, nibble)),
     _mm256_shuffle_epi8(hi,
@@ -242,10 +241,11 @@ IRS_FORCE_INLINE inline ClassMasks ClassifyNibbleClassesBlock(
   const auto hi =
     _mm_load_si128(reinterpret_cast<const __m128i*>(set.hi.data()));
   const auto nibble = _mm_set1_epi8(0x0F);
+  const auto halves = std::bit_cast<std::array<__m128i, 2>>(block);
   ClassMasks out{0, 0};
-  for (size_t half = 0; half < kClassifyBlock; half += sizeof(__m128i)) {
-    const auto bytes =
-      _mm_loadu_si128(reinterpret_cast<const __m128i*>(block + half));
+  for (size_t k = 0; k < halves.size(); ++k) {
+    const auto bytes = halves[k];
+    const size_t half = k * sizeof(__m128i);
     const auto classes = _mm_and_si128(
       _mm_shuffle_epi8(lo, _mm_and_si128(bytes, nibble)),
       _mm_shuffle_epi8(hi, _mm_and_si128(_mm_srli_epi16(bytes, 4), nibble)));

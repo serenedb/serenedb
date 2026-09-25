@@ -307,15 +307,15 @@ IRS_TARGET_AVX512 IRS_FORCE_INLINE void ForEachNonSpaceRun512(
   for (; base < size; base += kBlock) {
     const size_t left = size - base;
     const auto* p = data + base;
-    const bool full = left >= kBlock + 2;
+    const bool whole = left >= kBlock + 2;
     const __m512i v0 =
-      full ? _mm512_loadu_si512(p) : detail::Load64UpTo(p, left);
+      whole ? _mm512_loadu_si512(p) : detail::Load64UpTo(p, left);
     uint64_t space = detail::AsciiSpaceBits64(v0);
     if constexpr (!KnownAscii) {
       if (_mm512_movepi8_mask(v0) != 0) {
-        const __m512i v1 = full ? _mm512_loadu_si512(p + 1)
-                                : detail::Load64UpTo(p + 1, left - 1);
-        const __m512i v2 = full
+        const __m512i v1 = whole ? _mm512_loadu_si512(p + 1)
+                                 : detail::Load64UpTo(p + 1, left - 1);
+        const __m512i v2 = whole
                              ? _mm512_loadu_si512(p + 2)
                              : detail::Load64UpTo(p + 2, left - 1 - (left > 1));
         const auto wide = detail::WideSpaceBits64(v0, v1, v2) | carry;
@@ -323,7 +323,7 @@ IRS_TARGET_AVX512 IRS_FORCE_INLINE void ForEachNonSpaceRun512(
         carry = static_cast<uint64_t>(wide >> 64);
       }
     }
-    if (space != 0 || !full) {
+    if (space != 0 || !whole) {
       on_block(base,
                std::bit_cast<classify::Block>(_mm512_castsi512_si256(v0)));
       on_block(

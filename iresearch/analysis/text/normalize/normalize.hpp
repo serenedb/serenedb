@@ -171,9 +171,9 @@ inline constexpr auto kLeadClasses = [] {
 }();
 
 template<sz_normal_form_t Form>
-IRS_FORCE_INLINE inline uint32_t SuspiciousMaskOf(const byte_type* block,
-                                                  const char* data, size_t n,
-                                                  size_t base) noexcept {
+IRS_FORCE_INLINE inline uint32_t SuspiciousMask(classify::Block block,
+                                                const char* data, size_t n,
+                                                size_t base) noexcept {
   static_assert(kLeadClasses<Form>.Blockable());
   auto [suspicious, pairs] =
     classify::ClassifyNibbleClassesBlock(block, kLeadClasses<Form>);
@@ -183,13 +183,6 @@ IRS_FORCE_INLINE inline uint32_t SuspiciousMaskOf(const byte_type* block,
     }
   });
   return suspicious;
-}
-
-template<sz_normal_form_t Form>
-IRS_FORCE_INLINE inline uint32_t SuspiciousMask(const char* data, size_t n,
-                                                size_t base) noexcept {
-  return SuspiciousMaskOf<Form>(reinterpret_cast<const byte_type*>(data) + base,
-                                data, n, base);
 }
 
 inline size_t ContextStart(const char* data, size_t i) noexcept {
@@ -239,7 +232,7 @@ IRS_NO_INLINE SuspiciousBlock NextSuspiciousBlock(const char* data, size_t n,
       i = SkipAscii(data, n, i + classify::kClassifyBlock);
       continue;
     }
-    const uint32_t suspicious = SuspiciousMask<Form>(data, n, i);
+    const uint32_t suspicious = SuspiciousMask<Form>(block, data, n, i);
     if (suspicious != 0) {
       return {i, suspicious};
     }
@@ -264,7 +257,7 @@ inline size_t SafeStarterAfter(const char* data, size_t n,
     const auto block = classify::Load(bytes + pos);
     const uint32_t safe =
       ~classify::MoveMask((block & uint8_t{0xC0}) == uint8_t{0x80}) &
-      ~SuspiciousMask<Form>(data, n, pos);
+      ~SuspiciousMask<Form>(block, data, n, pos);
     if (safe != 0) {
       return pos + std::countr_zero(safe);
     }
@@ -315,28 +308,18 @@ inline bool Denormalized(const char* data, size_t n) noexcept {
   if (i == n) {
     return false;
   }
-  alignas(classify::kClassifyBlock) byte_type padded[classify::kClassifyBlock];
-  const byte_type* block;
-  size_t base;
-  uint32_t live;
-  if (n >= classify::kClassifyBlock) {
-    base = n - classify::kClassifyBlock;
-    block = bytes + base;
-    live = ~uint32_t{0} << (i - base);
-  } else {
-    SDB_ASSERT(i == 0);
-    const auto loaded = classify::LoadPadded(bytes, n);
-    std::memcpy(padded, &loaded, sizeof padded);
-    block = padded;
-    base = 0;
-    live = classify::LowBits(n);
-  }
-  const auto tail = classify::Load(block);
+  const bool whole = n >= classify::kClassifyBlock;
+  SDB_ASSERT(whole || i == 0);
+  const size_t base = whole ? n - classify::kClassifyBlock : 0;
+  const auto tail =
+    whole ? classify::Load(bytes + base) : classify::LoadPadded(bytes, n);
+  const uint32_t live =
+    whole ? ~uint32_t{0} << (i - base) : classify::LowBits(n);
   if ((classify::MoveMask(std::bit_cast<classify::Cmp>(tail) < 0) & live) ==
       0) {
     return false;
   }
-  uint32_t suspicious = SuspiciousMaskOf<Form>(block, data, n, base) & live;
+  uint32_t suspicious = SuspiciousMask<Form>(tail, data, n, base) & live;
   const uint32_t starters =
     ~classify::MoveMask((tail & uint8_t{0xC0}) == uint8_t{0x80}) & ~suspicious &
     live;

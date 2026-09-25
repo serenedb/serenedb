@@ -282,14 +282,6 @@ bool NormalizingTokenizer::FastUnicodeEmit(const duckdb::string_t& raw,
     F == NormForm::Nfkc ? sz_normal_form_nfkc_k : sz_normal_form_nfc_k;
   const char* data = raw.GetData();
   const uint32_t size = raw.GetSize();
-  if (classify::IsAsciiEarlyOut(data, size)) {
-    if constexpr (C == Case::None) {
-      sink.template Emit<Layout>(raw);
-    } else {
-      sink.template EmitCaseConverted<Layout, C == Case::Lower>(raw);
-    }
-    return true;
-  }
   std::string_view bytes{data, size};
   bool compose = false;
   if constexpr (!Accent) {
@@ -345,14 +337,6 @@ bool NormalizingTokenizer::DecomposedEmit(const duckdb::string_t& raw,
     F == NormForm::Nfkd ? sz_normal_form_nfkc_k : sz_normal_form_nfc_k;
   const char* data = raw.GetData();
   const uint32_t size = raw.GetSize();
-  if (classify::IsAsciiValue(data, size)) {
-    if constexpr (C == Case::None) {
-      sink.template Emit<Layout>(raw);
-    } else {
-      sink.template EmitCaseConverted<Layout, C == Case::Lower>(raw);
-    }
-    return true;
-  }
   std::string_view bytes{data, size};
   bool decomposed = false;
   if constexpr (!Accent) {
@@ -394,38 +378,40 @@ bool NormalizingTokenizer::DecomposedEmit(const duckdb::string_t& raw,
 template<TokenLayout Layout, Case C, bool Accent, bool KnownAscii,
          typename Sink>
 bool NormalizingTokenizer::DoFill(const duckdb::string_t& raw, Sink& sink) {
-  if constexpr (KnownAscii) {
-    if constexpr (C == Case::None) {
-      sink.template Emit<Layout>(raw);
-    } else {
-      sink.template EmitCaseConverted<Layout, C == Case::Lower>(raw);
-    }
-    return true;
-  } else {
-    if (_options.form == NormForm::NfkcCf) {
-      if (_options.case_convert == Case::None) {
-        return UnicodeEmit<Layout, Case::None, Accent>(raw, sink);
-      }
-      return UnicodeEmit<Layout, C, Accent>(raw, sink);
-    }
-    if constexpr (C != Case::None) {
-      if (_case_path != CasePath::Fast) {
+  if constexpr (!KnownAscii) {
+    if (_case_path == CasePath::Icu ||
+        !classify::IsAsciiEarlyOut(raw.GetData(), raw.GetSize())) {
+      if (_options.form == NormForm::NfkcCf) {
+        if (_options.case_convert == Case::None) {
+          return UnicodeEmit<Layout, Case::None, Accent>(raw, sink);
+        }
         return UnicodeEmit<Layout, C, Accent>(raw, sink);
       }
+      if constexpr (C != Case::None) {
+        if (_case_path != CasePath::Fast) {
+          return UnicodeEmit<Layout, C, Accent>(raw, sink);
+        }
+      }
+      switch (_options.form) {
+        case NormForm::Nfkc:
+          return FastUnicodeEmit<Layout, C, Accent, NormForm::Nfkc>(raw, sink);
+        case NormForm::Nfd:
+          return DecomposedEmit<Layout, C, Accent, NormForm::Nfd>(raw, sink);
+        case NormForm::Nfkd:
+          return DecomposedEmit<Layout, C, Accent, NormForm::Nfkd>(raw, sink);
+        case NormForm::Nfc:
+        case NormForm::NfkcCf:
+          break;
+      }
+      return FastUnicodeEmit<Layout, C, Accent, NormForm::Nfc>(raw, sink);
     }
-    switch (_options.form) {
-      case NormForm::Nfkc:
-        return FastUnicodeEmit<Layout, C, Accent, NormForm::Nfkc>(raw, sink);
-      case NormForm::Nfd:
-        return DecomposedEmit<Layout, C, Accent, NormForm::Nfd>(raw, sink);
-      case NormForm::Nfkd:
-        return DecomposedEmit<Layout, C, Accent, NormForm::Nfkd>(raw, sink);
-      case NormForm::Nfc:
-      case NormForm::NfkcCf:
-        break;
-    }
-    return FastUnicodeEmit<Layout, C, Accent, NormForm::Nfc>(raw, sink);
   }
+  if constexpr (C == Case::None) {
+    sink.template Emit<Layout>(raw);
+  } else {
+    sink.template EmitCaseConverted<Layout, C == Case::Lower>(raw);
+  }
+  return true;
 }
 
 template class TypedTokenizer<NormalizingTokenizer>;

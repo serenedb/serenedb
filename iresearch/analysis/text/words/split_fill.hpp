@@ -84,9 +84,9 @@ class CaseRuns {
   casing::AsciiFoldRing<C == Case::Lower> _ring;
 };
 
-template<TokenLayout Layout, Case C, bool KeepNonAscii, typename Classify>
-IRS_ALIGN_HOT void SplitRunsFill(duckdb::string_t raw, TokenSink& sink,
-                                 Classify&& classify_block) {
+template<TokenLayout Layout, Case C, bool KeepNonAscii>
+IRS_NO_INLINE IRS_ALIGN_HOT void SplitByNonAlphaFill(duckdb::string_t raw,
+                                                     TokenSink& sink) {
   const char* const base = raw.GetData();
   const size_t size = raw.GetSize();
   const char* const limit = base + size;
@@ -94,9 +94,8 @@ IRS_ALIGN_HOT void SplitRunsFill(duckdb::string_t raw, TokenSink& sink,
   if constexpr (C == Case::None) {
     classify::ForEachRun(
       bytes, size,
-      [&](const byte_type* block) IRS_FORCE_INLINE {
-        return classify_block(classify::Load(block), block);
-      },
+      [](const byte_type* block)
+        IRS_FORCE_INLINE { return ClassifyAlnumBlock<KeepNonAscii>(block); },
       [&](size_t begin, size_t end) IRS_FORCE_INLINE {
         sink.EmitSlice<Layout>(
           base, limit,
@@ -110,7 +109,7 @@ IRS_ALIGN_HOT void SplitRunsFill(duckdb::string_t raw, TokenSink& sink,
     bytes, size,
     [&](const byte_type* block) IRS_FORCE_INLINE {
       const auto b = classify::Load(block);
-      const uint32_t mask = classify_block(b, block);
+      const uint32_t mask = ClassifyAlnum<KeepNonAscii>(b);
       if (mask == ~uint32_t{0}) {
         return mask;
       }
@@ -126,14 +125,6 @@ IRS_ALIGN_HOT void SplitRunsFill(duckdb::string_t raw, TokenSink& sink,
       return mask;
     },
     [&](size_t begin, size_t end) IRS_FORCE_INLINE { runs(begin, end); });
-}
-
-template<TokenLayout Layout, Case C, bool KeepNonAscii>
-void SplitByNonAlphaFill(duckdb::string_t raw, TokenSink& sink) {
-  SplitRunsFill<Layout, C, KeepNonAscii>(
-    raw, sink, [](classify::Block b, const byte_type*) IRS_FORCE_INLINE {
-      return ClassifyAlnum<KeepNonAscii>(b);
-    });
 }
 
 template<TokenLayout Layout, Case C, bool KnownAscii>

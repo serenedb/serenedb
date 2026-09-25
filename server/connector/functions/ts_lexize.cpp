@@ -207,12 +207,7 @@ void TsLexizeFunctionDynamic(duckdb::DataChunk& args,
     for (size_t i = 0; i < rows.size(); ++i) {
       sel.set_index(i, texts.sel->get_index(rows[i]));
     }
-    duckdb::UnifiedVectorFormat group;
-    group.sel = &sel;
-    group.data = texts.data;
-    group.physical_type = texts.physical_type;
-    group.validity = texts.validity;
-    sink.FillGroup(*tokenizer, args.data[1], group,
+    sink.FillGroup(*tokenizer, args.data[1], SliceFormat(texts, sel),
                    static_cast<uint32_t>(rows.size()), rows.data(), true);
   }
 }
@@ -264,12 +259,7 @@ void TsLexizeArrayFunctionDynamic(duckdb::DataChunk& args,
         owners.push_back(r);
       }
     }
-    duckdb::UnifiedVectorFormat group;
-    group.sel = &sel;
-    group.data = elements.data;
-    group.physical_type = elements.physical_type;
-    group.validity = elements.validity;
-    sink.FillGroup(*tokenizer, child, group,
+    sink.FillGroup(*tokenizer, child, SliceFormat(elements, sel),
                    static_cast<uint32_t>(owners.size()), owners.data(), false);
   }
 }

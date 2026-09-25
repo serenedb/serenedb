@@ -71,8 +71,8 @@ class ListTokenSink final : public irs::TokenConsumer, public irs::RejectSink {
   void FillElements(irs::analysis::Tokenizer& tokenizer,
                     const duckdb::Vector& source,
                     const duckdb::UnifiedVectorFormat& values, uint32_t count,
-                    const uint32_t* rows, const uint32_t* row_ends) {
-    _rows = rows;
+                    const uint32_t* row_ends) {
+    _rows = nullptr;
     _row_ends = row_ends;
     _reject_rows = false;
     Fill(tokenizer, source, values, count);
@@ -197,6 +197,16 @@ class ListTokenSink final : public irs::TokenConsumer, public irs::RejectSink {
   bool _reject_rows = true;
 };
 
+inline duckdb::UnifiedVectorFormat SliceFormat(
+  const duckdb::UnifiedVectorFormat& fmt, const duckdb::SelectionVector& sel) {
+  duckdb::UnifiedVectorFormat slice;
+  slice.sel = &sel;
+  slice.data = fmt.data;
+  slice.physical_type = fmt.physical_type;
+  slice.validity = fmt.validity;
+  return slice;
+}
+
 inline void TokenizeRows(irs::analysis::Tokenizer& tokenizer,
                          irs::TokenSink& writer, const duckdb::Vector& input,
                          duckdb::idx_t count, duckdb::Vector& result) {
@@ -259,78 +269,45 @@ inline void TokenizeListRows(irs::analysis::Tokenizer& tokenizer,
   sink.ResetRows(rows);
 
   std::vector<uint32_t> ends(rows);
-  bool canonical = true;
+  bool contiguous = true;
   duckdb::idx_t first = 0;
-  duckdb::idx_t next = 0;
-  bool started = false;
-  for (uint32_t r = 0; r < rows; ++r) {
-    const auto idx = lists.sel->get_index(r);
-    if (!lists.validity.RowIsValid(idx)) {
-      sink.SetNull(r);
-      ends[r] = static_cast<uint32_t>(next - first);
-      continue;
-    }
-    const auto& entry = entries[idx];
-    if (!started) {
-      first = next = entry.offset;
-      started = true;
-    }
-    canonical &= entry.offset == next;
-    next = entry.offset + entry.length;
-    ends[r] = static_cast<uint32_t>(next - first);
-  }
-  if (!started) {
-    return;
-  }
-  if (canonical) {
-    duckdb::SelectionVector sel;
-    duckdb::UnifiedVectorFormat range;
-    range.sel = elements.sel;
-    range.data = elements.data;
-    range.physical_type = elements.physical_type;
-    range.validity = elements.validity;
-    if (first != 0) {
-      sel.Initialize(next - first);
-      for (duckdb::idx_t k = first; k < next; ++k) {
-        sel.set_index(k - first, elements.sel->get_index(k));
-      }
-      range.sel = &sel;
-    }
-    sink.FillElements(tokenizer, child, range,
-                      static_cast<uint32_t>(next - first), nullptr,
-                      ends.data());
-    return;
-  }
-  std::vector<uint32_t> owners;
-  duckdb::SelectionVector sel;
   duckdb::idx_t total = 0;
   for (uint32_t r = 0; r < rows; ++r) {
     const auto idx = lists.sel->get_index(r);
     if (lists.validity.RowIsValid(idx)) {
-      total += entries[idx].length;
+      const auto& entry = entries[idx];
+      if (total == 0) {
+        first = entry.offset;
+      }
+      contiguous &= entry.length == 0 || entry.offset == first + total;
+      total += entry.length;
+    } else {
+      sink.SetNull(r);
     }
+    ends[r] = static_cast<uint32_t>(total);
   }
-  sel.Initialize(total);
-  owners.reserve(total);
+  if (total == 0) {
+    return;
+  }
+  if (contiguous && first == 0) {
+    sink.FillElements(tokenizer, child, elements, static_cast<uint32_t>(total),
+                      ends.data());
+    return;
+  }
+  duckdb::SelectionVector sel{total};
+  duckdb::idx_t k = 0;
   for (uint32_t r = 0; r < rows; ++r) {
     const auto idx = lists.sel->get_index(r);
     if (!lists.validity.RowIsValid(idx)) {
       continue;
     }
     const auto& entry = entries[idx];
-    for (duckdb::idx_t k = 0; k < entry.length; ++k) {
-      sel.set_index(owners.size(), elements.sel->get_index(entry.offset + k));
-      owners.push_back(r);
+    for (auto j = entry.offset; j < entry.offset + entry.length; ++j) {
+      sel.set_index(k++, elements.sel->get_index(j));
     }
   }
-  duckdb::UnifiedVectorFormat gathered;
-  gathered.sel = &sel;
-  gathered.data = elements.data;
-  gathered.physical_type = elements.physical_type;
-  gathered.validity = elements.validity;
-  sink.FillElements(tokenizer, child, gathered,
-                    static_cast<uint32_t>(owners.size()), owners.data(),
-                    nullptr);
+  sink.FillElements(tokenizer, child, SliceFormat(elements, sel),
+                    static_cast<uint32_t>(total), ends.data());
 }
 
 }  // namespace sdb::connector

@@ -2046,6 +2046,20 @@ void RejectSlopOnNonPhrase(const FilterContext& ctx) {
   }
 }
 
+void RejectWholeIndexOperand(const SearchColumnInfo& column_info,
+                             std::string_view what) {
+  if (column_info.index_fields) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(what,
+              " needs a column operand: a whole-index operand takes only "
+              "to_tsquery"),
+      ERR_HINT("Name the fields in to_tsquery, e.g. tableoid @@ "
+               "to_tsquery('title:fox OR body:dog'), or put an indexed column "
+               "on the left of @@."));
+  }
+}
+
 void BuildTSQueryValue(BoolTarget parent, const FilterContext& ctx,
                        const SearchColumnInfo& column_info,
                        const duckdb::Value& value) {
@@ -2056,6 +2070,9 @@ void BuildTSQueryValue(BoolTarget parent, const FilterContext& ctx,
   }
   const auto structured =
     TryParseStructuredTSQueryText(parts->text, ctx.client_context);
+  if (!structured) {
+    RejectWholeIndexOperand(column_info, "a bare string");
+  }
   // Only a modifier needs the clauses named afterwards, so only a modifier
   // pays for the node that names them.
   const bool scoped =
@@ -2182,6 +2199,7 @@ void BuildTSQuery(BoolTarget parent, const FilterContext& ctx,
       return;
     }
     RejectSlopOnNonPhrase(ctx);
+    RejectWholeIndexOperand(column_info, "a bare string");
     if (val.type().id() == duckdb::LogicalTypeId::VARCHAR ||
         val.type().id() == duckdb::LogicalTypeId::BLOB) {
       BuildFtsTokens(parent, ctx, column_info, duckdb::StringValue::Get(val),
@@ -2210,6 +2228,14 @@ void BuildTSQuery(BoolTarget parent, const FilterContext& ctx,
   // ignores ctx.slop) is rejected to avoid silently dropping the budget.
   if (op != TSQueryOp::Phrase && op != TSQueryOp::PhraseToTsquery) {
     RejectSlopOnNonPhrase(ctx);
+  }
+
+  constexpr TSQueryOp kWholeIndexOps[] = {TSQueryOp::ToTSQuery, TSQueryOp::Or,
+                                          TSQueryOp::And, TSQueryOp::Not,
+                                          TSQueryOp::Boost};
+  if (op != TSQueryOp::Unknown && !absl::c_linear_search(kWholeIndexOps, op)) {
+    RejectWholeIndexOperand(column_info,
+                            func.Function().GetName().GetIdentifierName());
   }
 
   switch (op) {

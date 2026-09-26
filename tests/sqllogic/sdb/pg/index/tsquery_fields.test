@@ -153,6 +153,25 @@ count
 0
 
 query
+SELECT a FROM tsf_idx WHERE tableoid @@ (to_tsquery('title:fox') || to_tsquery('body:runs')) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsf_idx WHERE tableoid @@ (to_tsquery('title:(fox OR dog)') && !! to_tsquery('body:runs')) ORDER BY a;
+----
+a
+1
+
+query
+SELECT a FROM tsf_idx WHERE tableoid @@ (to_tsquery('title:fox') ^ 2.0) ORDER BY a;
+----
+a
+1
+
+query
 SELECT count(*) FROM tsf_idx WHERE tableoid = 'tsf'::regclass;
 ----
 count
@@ -198,6 +217,30 @@ statement error
 SELECT a FROM tsf_idx WHERE tableoid @@ to_tsquery('fn:or(fox)');
 ----
 db error: ERROR: every term must name a field: there is no default field<slt:ignore>
+
+
+statement error
+SELECT a FROM tsf_idx WHERE tableoid @@ plainto_tsquery('fox');
+----
+db error: ERROR: plainto_tsquery needs a column operand: a whole-index operand takes only to_tsquery<slt:ignore>
+
+
+statement error
+SELECT a FROM tsf_idx WHERE tableoid @@ ts_phrase('fox');
+----
+db error: ERROR: ts_phrase needs a column operand: a whole-index operand takes only to_tsquery<slt:ignore>
+
+
+statement error
+SELECT a FROM tsf_idx WHERE tableoid @@ 'fox'::tsquery;
+----
+db error: ERROR: a bare string needs a column operand: a whole-index operand takes only to_tsquery<slt:ignore>
+
+
+statement error
+SELECT a FROM tsf_idx WHERE tableoid @@ (to_tsquery('title:fox') || plainto_tsquery('dog'));
+----
+db error: ERROR: plainto_tsquery needs a column operand: a whole-index operand takes only to_tsquery<slt:ignore>
 
 
 # A field named inside a group applies to its own term only; the group's field

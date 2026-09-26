@@ -550,7 +550,7 @@ SELECT id FROM docs_idx d
 WHERE d.tableoid @@ to_tsquery('title:fox OR body:dog');
 ```
 
-This is the only way to express one boolean spanning several fields: `title @@ q OR body @@ q` builds two independent queries, so an exclusion in `q` is scoped to whichever field matched it, while the form above excludes across the whole row. A bare term is an error here, since it has no field to search.
+This is the only way to express one boolean spanning several fields: `title @@ q OR body @@ q` builds two independent queries, so an exclusion in `q` is scoped to whichever field matched it, while the form above excludes across the whole row. A bare term is an error here, since it has no field to search. Only `to_tsquery` takes this operand, on its own or combined with `||`, `&&`, `!!` and `^`. Every other constructor searches a single field, so it needs a column on the left.
 
 A prefix on a group applies to every term inside it, so `title:(fox OR dog)` searches `title` for both. A term inside the group can still name its own field: in `title:(fox body:dog cat)` only `dog` searches `body`, and `cat` searches `title` again. A field never reaches past the group it was named in.
 

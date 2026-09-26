@@ -188,6 +188,8 @@ class PruneLeafBase {
   };
 
  public:
+  static constexpr bool kDefaultInit = true;
+
   PruneLeafBase()
     : _skip{doc_limits::kBlockSize, doc_limits::kSkipSize, true} {}
 

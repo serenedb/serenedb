@@ -40,6 +40,7 @@ namespace irs::detail {
 
 inline constexpr bool kFoldOnlyWhenSmaller = false;
 
+inline constexpr double kCostBlock = 128.0;
 inline constexpr double kSparseProbeCost = 0.3;
 inline constexpr double kLeafProbeCost = 1.0;
 inline constexpr double kErasedProbeCost = 1.2;

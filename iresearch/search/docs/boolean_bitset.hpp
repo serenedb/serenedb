@@ -53,7 +53,7 @@ class BooleanBitset : public Root {
     auto word = words[w] & (~uint64_t{0} << (lo % kBits));
     const auto last = static_cast<uint32_t>((hi - 1) / kBits);
     uint32_t n = 0;
-    for (;; word = words[++w]) {
+    [[clang::code_align(64)]] for (;; word = words[++w]) {
       if (w == last) [[unlikely]] {
         if (const auto tail = hi % kBits; tail != 0) {
           word &= (uint64_t{1} << tail) - 1;

@@ -317,9 +317,38 @@ class PostingReader {
   [[no_unique_address]] NeedEnc<Input> _enc;
 };
 
+template<typename Term, typename Input>
+void PrefetchTerms(std::span<const Term> terms, PostingReader<Input>& r) {
+  const PostingMeta* first = nullptr;
+  for (const auto& term : terms) {
+    const auto& meta = CookieOf(term);
+    if (meta.docs_count > 1 && meta.inline_size == 0) {
+      first = &meta;
+      break;
+    }
+  }
+  if (first == nullptr) {
+    return;
+  }
+  auto& in = r.In();
+  if (in.Resident(first->doc_start, file_utils::kPage)) {
+    return;
+  }
+  for (const auto& term : terms) {
+    const auto& meta = CookieOf(term);
+    if (meta.docs_count <= 1 || meta.inline_size != 0) {
+      continue;
+    }
+    in.Prefetch(meta.doc_start, meta.docs_count > doc_limits::kBlockSize
+                                  ? uint64_t{meta.doc_delta}
+                                  : file_utils::kPage);
+  }
+}
+
 template<typename Term, typename Sink, typename Input>
 void ReadTerms(std::span<const Term> terms, const TermReader* field,
                PostingReader<Input>& r, Sink& sink) {
+  PrefetchTerms(terms, r);
   for (size_t i = 0; i != terms.size(); ++i) {
     const auto& meta = CookieOf(terms[i]);
     SDB_ASSERT(meta.docs_count != 0);

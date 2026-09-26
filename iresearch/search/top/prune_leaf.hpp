@@ -299,6 +299,65 @@ class PruneLeafBase {
     visit(docs, len, Scores() + (docs - std::begin(_docs)));
   }
 
+  template<typename Visitor>
+  void ForEachBlock(doc_id_t max, Visitor&& visit) {
+    if (_doc >= max) [[unlikely]] {
+      return;
+    }
+    RepositionForWindow(_doc);
+
+    SDB_ASSERT(_left_in_leaf < doc_limits::kBlockSize);
+    doc_id_t last = *(std::end(_docs) - 1);
+    {
+      const auto count = _left_in_leaf + 1;
+      if (last >= max) {
+        _left_in_leaf = count;
+        goto tail;
+      }
+      if (count == doc_limits::kBlockSize) {
+        goto full;
+      }
+      visit(std::end(_docs) - count, count);
+    }
+
+    for (;;) {
+      if (_left_in_list == 0) [[unlikely]] {
+        _left_in_leaf = 0;
+        goto done;
+      }
+      ReadLeaf(last);
+      last = *(std::end(_docs) - 1);
+      if (last >= max || _left_in_leaf != doc_limits::kBlockSize) {
+        goto tail;
+      }
+    full:
+      visit(std::begin(_docs), doc_limits::kBlockSize);
+    }
+
+  tail: {
+    auto* const begin = std::end(_docs) - _left_in_leaf;
+    auto* const end = FirstNotBelow(begin, max);
+    _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - end);
+    if (end != begin) {
+      visit(begin, static_cast<uint32_t>(end - begin));
+    }
+  }
+
+  done:
+    if (_left_in_leaf != 0) {
+      _doc = *(std::end(_docs) - _left_in_leaf);
+      --_left_in_leaf;
+    } else {
+      _doc = doc_limits::eof();
+    }
+  }
+
+  template<typename Visitor>
+  void ForEachScoredBlock(doc_id_t max, Visitor&& visit) {
+    ForEachBlock(max, [&](doc_id_t* docs, uint32_t len)
+                        IRS_FORCE_INLINE { Emit(docs, len, visit); });
+  }
+
   IRS_FORCE_INLINE score_t* Scores() noexcept {
     static_assert(sizeof(score_t) == sizeof(_enc.data[0]));
     return reinterpret_cast<score_t*>(std::begin(_enc.data));

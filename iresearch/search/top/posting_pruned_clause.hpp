@@ -32,8 +32,8 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
   using Base::_cursor;
   using Base::_doc;
   using Base::_docs;
+  using Base::_enc;
   using Base::_freqs;
-  using Base::_left_in_leaf;
   using Base::_left_in_list;
   using Base::_len;
   using Base::_max_in_leaf;
@@ -42,7 +42,6 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
   using Base::_recipe;
   using Base::_upper_bound;
   using Base::In;
-  using Base::ReadLeaf;
 
  public:
   using Base::MaxScore;
@@ -53,8 +52,9 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                IndexFeatures layout, const SubReader& segment,
                const TermReader& field, const detail::ScoreArgs& args) {
+    _index = kBlock - 1;
+    _packed = true;
     if (Base::PrepareCommon(meta, doc_in, layout, segment, field, args)) {
-      _left_in_leaf = 0;
       _doc = doc_limits::min() + meta.doc_delta;
     }
   }
@@ -73,11 +73,14 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
     if (upper_bound >= target) {
       return upper_bound;
     }
-    _left_in_list = _cursor.Seek(target, In());
-    _left_in_leaf = 0;
-    _needs_reposition = true;
-    _doc = _cursor.Landing().doc;
+    const auto left = _cursor.Seek(target, In());
     _upper_bound = _cursor.UpperBound();
+    if (_needs_reposition || target > _max_in_leaf) {
+      _left_in_list = left;
+      _needs_reposition = true;
+      _max_in_leaf = doc_limits::invalid();
+      _doc = _cursor.Landing().doc;
+    }
     return _upper_bound;
   }
 
@@ -97,34 +100,97 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot) noexcept {
     SDB_ASSERT(slot < kScoreBlock);
-    _gather[slot] = _freqs.data[doc_limits::kBlockSize - _left_in_leaf - 1];
+    _gather[slot] = _freqs.data[_index];
   }
+
+  uint32_t TakeReads() noexcept { return std::exchange(_reads, 0); }
 
   IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) {
     if (target <= _doc) [[unlikely]] {
       return _doc;
     }
-    if (_left_in_leaf != 0 && target <= _max_in_leaf) [[likely]] {
-      return _doc = TakeFrom(target);
+    if (target <= _max_in_leaf) [[likely]] {
+      return _doc = Find(target);
     }
     return ProbeSlow(target);
   }
 
  private:
-  IRS_FORCE_INLINE doc_id_t TakeFrom(doc_id_t target) noexcept {
-    if (_len == doc_limits::kBlockSize) [[likely]] {
-      const auto* const it =
-        BranchlessLowerBound<doc_limits::kBlockSize>(std::begin(_docs), target);
-      _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - it) - 1;
-      return *it;
-    }
-    for (;;) {
-      const auto doc = *(std::end(_docs) - _left_in_leaf);
-      --_left_in_leaf;
-      if (target <= doc) {
-        return doc;
+  static constexpr uint32_t kBlock = doc_limits::kBlockSize;
+  static constexpr auto kBits = BitsRequired<uint64_t>();
+
+  IRS_FORCE_INLINE doc_id_t Find(doc_id_t target) noexcept {
+    if (_packed) [[likely]] {
+      if (_len == kBlock) [[likely]] {
+        const auto* const it =
+          BranchlessLowerBound<kBlock>(std::begin(_docs), target);
+        _index = static_cast<uint32_t>(it - std::begin(_docs));
+        return *it;
+      }
+      for (auto i = _at;; ++i) {
+        if (target <= _docs[i]) {
+          _at = i;
+          _index = i;
+          return _docs[i];
+        }
       }
     }
+    return FindMasked(target);
+  }
+
+  IRS_NO_INLINE doc_id_t FindMasked(doc_id_t target) noexcept {
+    const auto first = _base + 1;
+    if (target < first) {
+      target = first;
+    }
+    if (_run) {
+      _index = kBlock - _len + (target - first);
+      return target;
+    }
+    auto bit = static_cast<uint64_t>(target) - first;
+    for (auto w = bit / kBits; w != _words; ++w) {
+      const auto word = _bitset[w] & (~uint64_t{0} << (bit % kBits));
+      if (word != 0) {
+        const auto tz = static_cast<uint32_t>(std::countr_zero(word));
+        for (; _prefix_word != w; ++_prefix_word) {
+          _prefix_bits +=
+            static_cast<uint32_t>(std::popcount(_bitset[_prefix_word]));
+        }
+        _index = kBlock - _len + _prefix_bits +
+                 static_cast<uint32_t>(
+                   std::popcount(_bitset[w] & ((uint64_t{1} << tz) - 1)));
+        return static_cast<doc_id_t>(first + w * kBits + tz);
+      }
+      bit = (w + 1) * kBits;
+    }
+    return doc_limits::eof();
+  }
+
+  void ReadFill(doc_id_t prev) {
+    ++_reads;
+    auto& in = In();
+    const auto len = std::min(_left_in_list, kBlock);
+    const auto leaf = FormatTraits128::ReadTailForFill(len, in, _enc.data,
+                                                       nullptr, _docs, prev);
+    _left_in_list -= len;
+    _bitset = leaf.bitset;
+    if constexpr (!InputType::kVolatileAlways) {
+      if (leaf.IsBitset()) {
+        std::memcpy(std::begin(_docs), leaf.bitset,
+                    size_t{leaf.words} * sizeof(uint64_t));
+        _bitset = reinterpret_cast<const uint64_t*>(std::begin(_docs));
+      }
+    }
+    FormatTraits128::ReadTail(len, in, _enc.data, _freqs.data);
+    _base = prev;
+    _max_in_leaf = leaf.max;
+    _len = len;
+    _at = kBlock - len;
+    _words = leaf.words;
+    _prefix_word = 0;
+    _prefix_bits = 0;
+    _run = leaf.IsRun();
+    _packed = !leaf.Maskable();
   }
 
   doc_id_t SeekToBlock(doc_id_t target) {
@@ -136,8 +202,8 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
       return upper_bound;
     }
     _left_in_list = _cursor.Seek(target, In());
-    _left_in_leaf = 0;
     _needs_reposition = true;
+    _max_in_leaf = doc_limits::invalid();
     _upper_bound = _cursor.UpperBound();
     return _upper_bound;
   }
@@ -147,43 +213,43 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
       if (const auto span = _max_in_leaf - _base;
           target - _max_in_leaf <= span || target <= _upper_bound) [[likely]] {
         if (_left_in_list == 0) [[unlikely]] {
-          _left_in_leaf = 0;
           return _doc = doc_limits::eof();
         }
-        ReadLeaf(_max_in_leaf);
+        ReadFill(_max_in_leaf);
         if (target <= _max_in_leaf) [[likely]] {
-          return _doc = TakeFrom(target);
+          return _doc = Find(target);
         }
       }
     }
     if (_cursor.UpperBound() < target) [[unlikely]] {
-      if (!doc_limits::eof(SeekToBlock(target))) {
-        _doc = _cursor.Landing().doc;
-      }
+      SeekToBlock(target);
     }
-    if (_left_in_leaf == 0) [[unlikely]] {
+    if (_needs_reposition) {
       if (_left_in_list == 0) [[unlikely]] {
         return _doc = doc_limits::eof();
       }
       Base::Reposition();
-      ReadLeaf(_doc);
+      ReadFill(_doc);
     }
-    for (;;) {
-      while (_left_in_leaf != 0) {
-        const auto doc = *(std::end(_docs) - _left_in_leaf);
-        --_left_in_leaf;
-        if (target <= doc) {
-          return _doc = doc;
-        }
-      }
+    while (_max_in_leaf < target) {
       if (_left_in_list == 0) [[unlikely]] {
         return _doc = doc_limits::eof();
       }
-      ReadLeaf(*(std::end(_docs) - 1));
+      ReadFill(_max_in_leaf);
     }
+    return _doc = Find(target);
   }
 
   ABSL_CACHELINE_ALIGNED uint32_t _gather[kScoreBlock]{};
+  const uint64_t* _bitset = nullptr;
+  uint64_t _prefix_word = 0;
+  uint32_t _words = 0;
+  uint32_t _at = kBlock;
+  uint32_t _index = kBlock - 1;
+  uint32_t _prefix_bits = 0;
+  uint32_t _reads = 0;
+  bool _run = false;
+  bool _packed = true;
 };
 
 }  // namespace irs::top

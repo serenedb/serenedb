@@ -1,5 +1,8 @@
 control substitution on
 
+statement ok
+SET sdb_ai_allow_insecure_endpoint = true;
+
 # DOCS_TEST: secret
 
 # DOCS_TEST_RAW
@@ -30,6 +33,13 @@ SELECT array_length(ai_embed('space exploration', '${OLLAMA_MODEL}', 'local_ai_$
 ----
 dims
 384
+
+query
+SELECT abs(list_sum(list_transform(e, lambda x: x * x)) - 1) < 0.01 AS unit_length
+FROM (SELECT ai_embed('space exploration', '${OLLAMA_MODEL}', 'local_ai_${__DATABASE__}') AS e) t;
+----
+unit_length
+t
 
 # DOCS_TEST: embed_null
 
@@ -102,3 +112,541 @@ WHERE name IS NOT NULL;
 statement ok
 CREATE INDEX catalog_idx ON catalog
     USING inverted (id, name, embedding ivf (metric = 'cosine'));
+
+# DOCS_TEST: similarity
+
+# DOCS_TEST_RAW
+#| SELECT ai_similarity('cat', 'kitten', 'all-minilm', 'local_ai')
+#|      > ai_similarity('cat', 'spreadsheet', 'all-minilm', 'local_ai') AS closer;
+#| ----
+#| closer
+#| t
+
+# DOCS_TEST_BODY
+
+query
+SELECT ai_similarity('cat', 'kitten', '${OLLAMA_MODEL}', 'local_ai_${__DATABASE__}')
+     > ai_similarity('cat', 'spreadsheet', '${OLLAMA_MODEL}', 'local_ai_${__DATABASE__}') AS closer;
+----
+closer
+t
+
+query
+SELECT ai_similarity('same text', 'same text', '${OLLAMA_MODEL}', 'local_ai_${__DATABASE__}') > 0.99 AS same,
+       ai_similarity('cat', NULL, '${OLLAMA_MODEL}', 'local_ai_${__DATABASE__}') IS NULL AS null_input;
+----
+same	null_input
+t	t
+
+query
+SELECT ai_similarity('cat', 'kitten', '${OLLAMA_MODEL}', 'local_ai_${__DATABASE__}') > 0.5 AS related,
+       ai_similarity('cat', 'spreadsheet', '${OLLAMA_MODEL}', 'local_ai_${__DATABASE__}') < 0.5 AS unrelated;
+----
+related	unrelated
+t	t
+
+# DOCS_TEST: chat_secret
+
+# DOCS_TEST_RAW
+#| CREATE SECRET local_chat (
+#|     TYPE openai,
+#|     base_url 'http://localhost:11434',
+#|     model 'qwen2.5:0.5b'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE SECRET local_chat_${__DATABASE__} (
+    TYPE openai,
+    base_url 'http://${OLLAMA_HOST}:${OLLAMA_PORT}',
+    model '${OLLAMA_CHAT_MODEL}'
+);
+
+# DOCS_TEST: generate
+
+# DOCS_TEST_RAW
+#| SELECT ai_generate('What is 2 + 2? Reply with just the number.',
+#|                    secret_name := 'local_chat') AS answer;
+#| ----
+#| answer
+#| 4
+
+# DOCS_TEST_BODY
+
+query
+SELECT ai_generate('What is 2 + 2? Reply with just the number.',
+                   secret_name := 'local_chat_${__DATABASE__}') LIKE '%4%' AS answered;
+----
+answered
+t
+
+# DOCS_TEST: generate_system_prompt
+
+# DOCS_TEST_RAW
+#| SELECT ai_generate('Explain what a B-tree is.',
+#|                    system_prompt := 'You are a database expert. Answer in one sentence.',
+#|                    secret_name := 'local_chat') AS answer;
+
+# DOCS_TEST_BODY
+
+query
+SELECT length(ai_generate('Explain what a B-tree is.',
+                          system_prompt := 'You are a database expert. Answer in one sentence.',
+                          secret_name := 'local_chat_${__DATABASE__}')) > 0 AS answered;
+----
+answered
+t
+
+statement ok
+CREATE TABLE reviews (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+INSERT INTO reviews VALUES
+    (1, 'Great value, works perfectly.'),
+    (2, 'Broke after two days, terrible.'),
+    (3, NULL),
+    (4, 'Absolutely love it!');
+
+# DOCS_TEST: classify
+
+# DOCS_TEST_RAW
+#| SELECT id, ai_classify(body, ['positive', 'negative', 'neutral'],
+#|                        secret_name := 'local_chat') AS sentiment
+#| FROM reviews
+#| ORDER BY id;
+#| ----
+#| id	sentiment
+#| 1	positive
+#| 2	negative
+#| 3	NULL
+#| 4	positive
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) FILTER (WHERE s IN ('positive', 'negative', 'neutral')) AS labelled,
+       count(*) FILTER (WHERE s IS NULL) AS unlabelled,
+       count(*) FILTER (WHERE s = CASE id WHEN 2 THEN 'negative' ELSE 'positive' END) >= 2 AS mostly_right
+FROM (
+    SELECT id, ai_classify(body, ['positive', 'negative', 'neutral'],
+                           secret_name := 'local_chat_${__DATABASE__}') AS s
+    FROM reviews
+    WHERE body IS NOT NULL
+) t;
+----
+labelled	unlabelled	mostly_right
+3	0	t
+
+query
+SELECT ai_classify(NULL, ['positive', 'negative'], secret_name := 'local_chat_${__DATABASE__}') IS NULL AS is_null;
+----
+is_null
+t
+
+# DOCS_TEST: extract
+
+# DOCS_TEST_RAW
+#| SELECT ai_extract('The package arrived late and was damaged.', 'the main complaint',
+#|                   secret_name := 'local_chat') AS complaint;
+#| ----
+#| complaint
+#| late
+
+# DOCS_TEST_BODY
+
+query
+SELECT length(ai_extract('The package arrived late and was damaged.', 'the main complaint',
+                         secret_name := 'local_chat_${__DATABASE__}')) > 0 AS extracted;
+----
+extracted
+t
+
+# DOCS_TEST: extract_schema
+
+# DOCS_TEST_RAW
+#| SELECT ai_extract('John Smith, 42, lives in Berlin.',
+#|                   '{"name": "full name", "age": "age in years", "city": "city of residence"}',
+#|                   secret_name := 'local_chat') AS person;
+#| ----
+#| person
+#| {"name":"John Smith","age":"42","city":"Berlin"}
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_keys(p) AS keys, typeof(p) AS type,
+       p->>'age' LIKE '%42%' AS age, p->>'city' ILIKE '%berlin%' AS city
+FROM (
+    SELECT ai_extract('John Smith, 42, lives in Berlin.',
+                      '{"name": "full name", "age": "age in years", "city": "city of residence"}',
+                      secret_name := 'local_chat_${__DATABASE__}') AS p
+) t;
+----
+keys	type	age	city
+{name,age,city}	JSON	t	t
+
+# DOCS_TEST: filter
+
+# DOCS_TEST_RAW
+#| SELECT id, body
+#| FROM reviews
+#| WHERE ai_filter(body, 'the customer is unhappy', secret_name := 'local_chat');
+#| ----
+#| id	body
+#| 2	Broke after two days, terrible.
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) FILTER (WHERE f IS NOT NULL) AS decided, count(*) FILTER (WHERE f IS NULL) AS skipped
+FROM (
+    SELECT ai_filter(body, 'the customer is unhappy', secret_name := 'local_chat_${__DATABASE__}') AS f
+    FROM reviews
+) t;
+----
+decided	skipped
+3	1
+
+# DOCS_TEST: translate
+
+# DOCS_TEST_RAW
+#| SELECT ai_translate('Hello, world!', 'French', secret_name := 'local_chat') AS french;
+#| ----
+#| french
+#| Bonjour, monde !
+
+# DOCS_TEST_BODY
+
+query
+SELECT length(ai_translate('Hello, world!', 'French', secret_name := 'local_chat_${__DATABASE__}')) > 0 AS translated;
+----
+translated
+t
+
+# DOCS_TEST: redact
+
+# DOCS_TEST_RAW
+#| SELECT ai_redact('Purchase was done by customer John Doe with email test@test.org',
+#|                  ['email', 'name'], secret_name := 'local_chat') AS redacted;
+
+# DOCS_TEST_BODY
+
+query
+SELECT length(ai_redact('Purchase was done by customer John Doe with email test@test.org',
+                        ['email', 'name'], secret_name := 'local_chat_${__DATABASE__}')) > 0 AS redacted;
+----
+redacted
+t
+
+# DOCS_TEST: classify_descriptions
+
+# DOCS_TEST_RAW
+#| SELECT id, ai_classify(body, [{label: 'praise', description: 'the customer is satisfied'},
+#|                               {label: 'complaint', description: 'the customer reports a problem'}],
+#|                        secret_name := 'local_chat') AS kind
+#| FROM reviews
+#| ORDER BY id;
+#| ----
+#| id	kind
+#| 1	praise
+#| 2	complaint
+#| 3	NULL
+#| 4	praise
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) FILTER (WHERE k IN ('praise', 'complaint')) AS labelled
+FROM (
+    SELECT ai_classify(body, [{label: 'praise', description: 'the customer is satisfied'},
+                              {label: 'complaint', description: 'the customer reports a problem'}],
+                       secret_name := 'local_chat_${__DATABASE__}') AS k
+    FROM reviews
+    WHERE body IS NOT NULL
+) t;
+----
+labelled
+3
+
+# DOCS_TEST: classify_labels
+
+# DOCS_TEST_RAW
+#| SELECT id, ai_classify_labels(body, ['price', 'quality', 'durability'],
+#|                               secret_name := 'local_chat') AS topics
+#| FROM reviews
+#| ORDER BY id;
+#| ----
+#| id	topics
+#| 1	{price,quality}
+#| 2	{quality}
+#| 3	NULL
+#| 4	{quality}
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) FILTER (WHERE list_has_all(['price', 'quality', 'durability'], l)) AS valid
+FROM (
+    SELECT ai_classify_labels(body, ['price', 'quality', 'durability'],
+                              secret_name := 'local_chat_${__DATABASE__}') AS l
+    FROM reviews
+    WHERE body IS NOT NULL
+) t;
+----
+valid
+3
+
+# DOCS_TEST: score
+
+# DOCS_TEST_RAW
+#| SELECT id, ai_score(body, 'the review is positive about the product',
+#|                     secret_name := 'local_chat') AS score
+#| FROM reviews
+#| ORDER BY id;
+#| ----
+#| id	score
+#| 1	1
+#| 2	0
+#| 3	NULL
+#| 4	1
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) FILTER (WHERE s BETWEEN 0 AND 1) AS scored,
+       avg(s) FILTER (WHERE id <> 2) > 0.5 AS positive_high,
+       max(s) FILTER (WHERE id = 2) < 0.5 AS negative_low
+FROM (
+    SELECT id, ai_score(body, 'the review is positive about the product',
+                        secret_name := 'local_chat_${__DATABASE__}') AS s
+    FROM reviews
+    WHERE body IS NOT NULL
+) t;
+----
+scored	positive_high	negative_low
+3	t	t
+
+# DOCS_TEST: rerank
+
+# DOCS_TEST_RAW
+#| SELECT id, body
+#| FROM reviews
+#| WHERE body IS NOT NULL
+#| ORDER BY ai_rerank('product stopped working', body, secret_name := 'local_chat') DESC
+#| LIMIT 2;
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) FILTER (WHERE r BETWEEN 0 AND 1) AS ranked
+FROM (
+    SELECT ai_rerank('product stopped working', body,
+                     secret_name := 'local_chat_${__DATABASE__}') AS r
+    FROM reviews
+    WHERE body IS NOT NULL
+) t;
+----
+ranked
+3
+
+# DOCS_TEST: agg
+
+# DOCS_TEST_RAW
+#| SELECT ai_agg(body, 'What do customers like most? Answer in one sentence.',
+#|               secret_name := 'local_chat') AS answer
+#| FROM reviews;
+#| ----
+#| answer
+#| Customers like to have a great value and work perfectly.
+
+# DOCS_TEST_BODY
+
+query
+SELECT length(ai_agg(body, 'What do customers like most? Answer in one sentence.',
+                     secret_name := 'local_chat_${__DATABASE__}')) > 0 AS answered
+FROM reviews;
+----
+answered
+t
+
+query
+SELECT ai_agg(body, 'q', secret_name := 'local_chat_${__DATABASE__}') IS NULL AS empty
+FROM reviews
+WHERE body IS NULL;
+----
+empty
+t
+
+# DOCS_TEST: summarize_agg
+
+# DOCS_TEST_RAW
+#| SELECT ai_summarize_agg(body, secret_name := 'local_chat' ORDER BY id) AS summary
+#| FROM reviews;
+
+# DOCS_TEST_BODY
+
+query
+SELECT length(ai_summarize_agg(body, secret_name := 'local_chat_${__DATABASE__}' ORDER BY id)) > 0 AS summarized
+FROM reviews;
+----
+summarized
+t
+
+# DOCS_TEST: explain
+
+# DOCS_TEST_RAW
+#| EXPLAIN SELECT id, ai_classify(body, ['positive', 'negative'],
+#|                                secret_name := 'local_chat') AS sentiment
+#| FROM reviews;
+#| ----
+#| QUERY PLAN
+#| ╭─ PROJECTION ────────────╮
+#| │ Projections: id,        │
+#| │              sentiment  │
+#| │ ~4 rows                 │
+#| ╰────────────┬────────────╯
+#| ╭─ AI_EVALUATE ───────────╮
+#| │ Calls: ai_classify      │
+#| │ ~4 rows                 │
+#| ╰────────────┬────────────╯
+#| ╭─ SEQ_SCAN ─┴────────────╮
+#| │ Table: reviews          │
+#| │ Type: Sequential Scan   │
+#| │ Projections: id, body   │
+#| │ ~4 rows                 │
+#| ╰─────────────────────────╯
+
+# DOCS_TEST_BODY
+
+query
+EXPLAIN SELECT id, ai_classify(body, ['positive', 'negative'],
+                               secret_name := 'local_chat_${__DATABASE__}') AS sentiment
+FROM reviews;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────╮
+│ Projections: id,        │
+│              sentiment  │
+│ ~4 rows                 │
+╰────────────┬────────────╯
+╭─ AI_EVALUATE ───────────╮
+│ Calls: ai_classify      │
+│ ~4 rows                 │
+╰────────────┬────────────╯
+╭─ SEQ_SCAN ─┴────────────╮
+│ Table: reviews          │
+│ Type: Sequential Scan   │
+│ Projections: id, body   │
+│ ~4 rows                 │
+╰─────────────────────────╯
+
+# DOCS_TEST: default_secret
+
+# DOCS_TEST_RAW
+#| SET sdb_ai_text_default_secret = 'local_chat';
+#|
+#| SELECT ai_translate('Good morning', 'German') AS german;
+
+# DOCS_TEST_BODY
+
+statement ok
+SET sdb_ai_text_default_secret = 'local_chat_${__DATABASE__}';
+
+query
+SELECT length(ai_translate('Good morning', 'German')) > 0 AS translated;
+----
+translated
+t
+
+# DOCS_TEST: quota
+
+# DOCS_TEST_RAW
+#| SET sdb_ai_max_api_calls_per_query = 2;
+#| SET sdb_ai_throw_on_quota_exceeded = false;
+#|
+#| SELECT count(*) FILTER (WHERE s IS NULL) AS skipped
+#| FROM (SELECT ai_classify(body, ['positive', 'negative'], secret_name := 'local_chat') AS s
+#|       FROM reviews WHERE body IS NOT NULL) t;
+#| ----
+#| skipped
+#| 1
+
+# DOCS_TEST_BODY
+
+statement ok
+SET sdb_ai_max_api_calls_per_query = 2;
+
+statement error query exceeded sdb_ai_max_api_calls_per_query
+SELECT ai_classify(body, ['positive', 'negative'], secret_name := 'local_chat_${__DATABASE__}')
+FROM reviews WHERE body IS NOT NULL;
+
+statement ok
+SET sdb_ai_throw_on_quota_exceeded = false;
+
+query
+SELECT count(*) FILTER (WHERE s IS NULL) AS skipped
+FROM (SELECT ai_classify(body, ['positive', 'negative'], secret_name := 'local_chat_${__DATABASE__}') AS s
+      FROM reviews WHERE body IS NOT NULL) t;
+----
+skipped
+1
+
+statement ok
+RESET sdb_ai_max_api_calls_per_query;
+
+statement ok
+RESET sdb_ai_throw_on_quota_exceeded;
+
+statement error returned HTTP 404
+SELECT ai_generate('x', model := 'no-such-model', secret_name := 'local_chat_${__DATABASE__}');
+
+statement error model reply was cut off at max_tokens \(1\)
+SELECT ai_generate('Count from 1 to 50, separated by commas.', max_tokens := 1,
+                   secret_name := 'local_chat_${__DATABASE__}');
+
+statement ok
+SET sdb_ai_max_concurrent_requests = 1;
+
+statement ok
+SET sdb_ai_max_output_tokens_per_query = 1;
+
+statement error query exceeded sdb_ai_max_output_tokens_per_query \(1\)
+SELECT ai_classify(body, ['positive', 'negative'], secret_name := 'local_chat_${__DATABASE__}')
+FROM reviews WHERE body IS NOT NULL;
+
+statement ok
+SET sdb_ai_throw_on_quota_exceeded = false;
+
+query
+SELECT count(*) FILTER (WHERE s IS NULL) AS skipped
+FROM (SELECT ai_classify(body, ['positive', 'negative'], secret_name := 'local_chat_${__DATABASE__}') AS s
+      FROM reviews WHERE body IS NOT NULL) t;
+----
+skipped
+2
+
+statement ok
+RESET sdb_ai_max_output_tokens_per_query;
+
+statement ok
+RESET sdb_ai_throw_on_quota_exceeded;
+
+statement ok
+RESET sdb_ai_max_concurrent_requests;
+
+statement ok
+SET sdb_ai_throw_on_error = false;
+
+query
+SELECT ai_generate('Count from 1 to 50, separated by commas.', max_tokens := 1,
+                   secret_name := 'local_chat_${__DATABASE__}') IS NULL AS cut;
+----
+cut
+t
+
+statement error returned HTTP 404
+SELECT ai_generate('x', model := 'no-such-model', secret_name := 'local_chat_${__DATABASE__}');
+
+statement ok
+RESET sdb_ai_throw_on_error;

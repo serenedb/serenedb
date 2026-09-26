@@ -38,10 +38,10 @@
 #include "connector/duckdb_storage_extension.h"
 #include "connector/duckdb_tokenizer_function.h"
 #include "connector/duckdb_vacuum_function.h"
+#include "connector/functions/ai/ai.h"
 #include "connector/functions/array.h"
 #include "connector/functions/catalog_introspect.h"
 #include "connector/functions/duckdb_aliases.h"
-#include "connector/functions/embedding/embedding.h"
 #include "connector/functions/encode_key.h"
 #include "connector/functions/es.h"
 #include "connector/functions/inout.h"
@@ -348,7 +348,7 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   connector::RegisterVectorFunctions(db);
 
-  connector::RegisterEmbeddingFunctions(db);
+  connector::RegisterAIFunctions(db);
 
   connector::RegisterSereneDBOptimizers(db);
 

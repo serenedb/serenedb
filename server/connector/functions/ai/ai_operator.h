@@ -20,19 +20,36 @@
 
 #pragma once
 
-#include "connector/functions/embedding/provider.h"
+#include <duckdb/planner/operator/logical_extension_operator.hpp>
+#include <string>
 
-namespace duckdb {
+namespace sdb::connector::ai {
 
-class DatabaseInstance;
-}
+class LogicalAIEvaluate final : public duckdb::LogicalExtensionOperator {
+ public:
+  LogicalAIEvaluate(
+    duckdb::TableIndex table_index,
+    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> calls);
 
-namespace sdb::connector::embedding {
+  duckdb::vector<duckdb::ColumnBinding> GetColumnBindings() final;
 
-void NormalizeOpenAIConfig(duckdb::DatabaseInstance& db, ProviderConfig& cfg);
+  duckdb::vector<duckdb::TableIndex> GetTableIndex() const final;
 
-void EmbedBatchOpenAI(duckdb::DatabaseInstance& db, const ProviderConfig& cfg,
-                      duckdb::Vector& texts, duckdb::idx_t count,
-                      duckdb::Vector& result);
+  duckdb::PhysicalOperator& CreatePlan(
+    duckdb::ClientContext& context,
+    duckdb::PhysicalPlanGenerator& planner) final;
 
-}  // namespace sdb::connector::embedding
+  void Serialize(duckdb::Serializer& serializer) const final;
+
+  bool SupportSerialization() const final { return false; }
+
+  std::string GetName() const final;
+
+ protected:
+  void ResolveTypes() final;
+
+ private:
+  duckdb::TableIndex _table_index;
+};
+
+}  // namespace sdb::connector::ai

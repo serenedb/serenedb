@@ -24,11 +24,13 @@ Currently, the following secret types are available:
 | `http`        | HTTP and HTTPS                 |
 | `huggingface` | Hugging Face                   |
 | `iceberg`     | Iceberg REST Catalog           |
+| `openai`      | OpenAI-compatible model API, used by the [AI functions](../sql/functions/ai.md#providers) |
 | `postgres`    | PostgreSQL                     |
 | `r2`          | Cloudflare R2                  |
 | `s3`          | AWS S3                         |
+| `typesafe`    | TypeSafe Jev or a local Kev server, used by [`ai_system1`](../sql/functions/ai.md#ai_system1) |
 
-Per-cloud guides cover how to obtain each kind of credential and which one fits your deployment: [Google Cloud credentials](./google_cloud_credentials.md) (`gcs`, and `iceberg` targeting BigLake), [AWS credentials](./aws_credentials.md) (`s3`, and the S3 Tables / Glue catalogs), and [Azure credentials](./azure_credentials.md) (`azure`). For `iceberg` secrets in general — every supported catalog authentication method, and when to use which — see [Iceberg catalog authentication](./iceberg_authentication.md). The remaining types are single-credential and documented where they are used: [`r2`](../cookbook/network_cloud_storage/cloudflare_r2_import.md), [`http`](../cookbook/network_cloud_storage/http_import.md), `huggingface`, and `postgres`.
+Per-cloud guides cover how to obtain each kind of credential and which one fits your deployment: [Google Cloud credentials](./google_cloud_credentials.md) (`gcs`, and `iceberg` targeting BigLake), [AWS credentials](./aws_credentials.md) (`s3`, and the S3 Tables / Glue catalogs), and [Azure credentials](./azure_credentials.md) (`azure`). For `iceberg` secrets in general — every supported catalog authentication method, and when to use which — see [Iceberg catalog authentication](./iceberg_authentication.md). The remaining types are single-credential and documented where they are used: [`r2`](../cookbook/network_cloud_storage/cloudflare_r2_import.md), [`http`](../cookbook/network_cloud_storage/http_import.md), `huggingface`, and `postgres`. The [`openai` and `typesafe`](../sql/functions/ai.md#providers) secrets are refused when their `base_url` uses plain `http://` for a host other than localhost, unless `sdb_ai_allow_insecure_endpoint` is on.
 
 For each type, there are one or more “secret providers” that specify how the secret is created. Secrets can also have an optional scope, which is a file path prefix that the secret applies to. When fetching a secret for a path, the secret scopes are compared to the path, returning the matching secret for the path. In the case of multiple matching secrets, the longest prefix is chosen.
 

@@ -1,0 +1,661 @@
+control substitution on
+
+statement ok
+CREATE OR REPLACE SECRET ai_dead_${__DATABASE__} (
+  TYPE openai,
+  base_url 'http://127.0.0.1:9',
+  model 'm'
+);
+
+statement ok
+CREATE OR REPLACE SECRET ai_dead_no_model_${__DATABASE__} (
+  TYPE openai,
+  base_url 'http://127.0.0.1:9'
+);
+
+statement ok
+CREATE OR REPLACE SECRET jev_dead_${__DATABASE__} (
+  TYPE typesafe,
+  base_url 'http://127.0.0.1:9'
+);
+
+query
+SELECT
+  ai_generate(NULL, secret_name := 'ai_dead_${__DATABASE__}') IS NULL AS g,
+  ai_classify(NULL, ['a', 'b'], secret_name := 'ai_dead_${__DATABASE__}') IS NULL AS c,
+  ai_extract(NULL, 'x', secret_name := 'ai_dead_${__DATABASE__}') IS NULL AS e,
+  ai_filter(NULL, 'x', secret_name := 'ai_dead_${__DATABASE__}') IS NULL AS f,
+  ai_translate(NULL, 'French', secret_name := 'ai_dead_${__DATABASE__}') IS NULL AS t,
+  ai_redact(NULL, [], secret_name := 'ai_dead_${__DATABASE__}') IS NULL AS r,
+  ai_embed(NULL, 'm', 'ai_dead_${__DATABASE__}') IS NULL AS em,
+  ai_similarity('a', NULL, 'm', 'ai_dead_${__DATABASE__}') IS NULL AS s1,
+  ai_similarity('', 'b', 'm', 'ai_dead_${__DATABASE__}') IS NULL AS s2,
+  ai_system1(NULL, 'q', secret_name := 'jev_dead_${__DATABASE__}') IS NULL AS j;
+----
+g	c	e	f	t	r	em	s1	s2	j
+t	t	t	t	t	t	t	t	t	t
+
+query
+SELECT
+  typeof(ai_generate(NULL, secret_name := 'ai_dead_${__DATABASE__}')) AS g,
+  typeof(ai_classify(NULL, ['a', 'b'], secret_name := 'ai_dead_${__DATABASE__}')) AS c,
+  typeof(ai_extract(NULL, 'the city', secret_name := 'ai_dead_${__DATABASE__}')) AS e,
+  typeof(ai_extract(NULL, '{"city": "the city"}', secret_name := 'ai_dead_${__DATABASE__}')) AS es,
+  typeof(ai_filter(NULL, 'x', secret_name := 'ai_dead_${__DATABASE__}')) AS f,
+  typeof(ai_embed(NULL, 'm', 'ai_dead_${__DATABASE__}')) AS em,
+  typeof(ai_similarity(NULL, NULL, 'm', 'ai_dead_${__DATABASE__}')) AS s;
+----
+g	c	e	es	f	em	s
+VARCHAR	VARCHAR	VARCHAR	JSON	BOOLEAN	FLOAT[]	DOUBLE
+
+query
+SELECT
+  typeof(ai_system1(NULL, 'q', secret_name := 'jev_dead_${__DATABASE__}')) AS noul,
+  typeof(ai_system1(NULL, 'q', choice := ['a', 'b'], secret_name := 'jev_dead_${__DATABASE__}')) AS choice,
+  typeof(ai_system1(NULL, 'q', score := ['low', 'high'], secret_name := 'jev_dead_${__DATABASE__}')) AS score;
+----
+noul	choice	score
+DOUBLE	STRUCT(choice VARCHAR, probabilities STRUCT("value" VARCHAR, probability DOUBLE)[], confidence DOUBLE)	STRUCT(score DOUBLE, probabilities STRUCT("index" INTEGER, "value" VARCHAR, probability DOUBLE)[], confidence DOUBLE)
+
+query
+SELECT typeof(ai_system1(
+  NULL,
+  questions := {
+    refund: {type: 'noul', instructions: 'Does this request a refund?'},
+    category: {type: 'choice', instructions: 'Classify it.', criteria: ['billing', 'other']}
+  },
+  secret_name := 'jev_dead_${__DATABASE__}'
+)) AS t;
+----
+t
+STRUCT(refund DOUBLE, category STRUCT(choice VARCHAR, probabilities STRUCT("value" VARCHAR, probability DOUBLE)[], confidence DOUBLE))
+
+query
+SELECT typeof(ai_system1(
+  NULL,
+  questions := '{"urgency": {"type": "score", "instructions": {"question": "How urgent?"}, "criteria": ["low", {"label": "high", "why": "outage"}]}}'::JSON,
+  secret_name := 'jev_dead_${__DATABASE__}'
+)) AS t;
+----
+t
+STRUCT(urgency STRUCT(score DOUBLE, probabilities STRUCT("index" INTEGER, "value" VARCHAR, probability DOUBLE)[], confidence DOUBLE))
+
+statement error ai_system1: requires instructions
+SELECT ai_system1('x', secret_name := 'jev_dead_${__DATABASE__}');
+
+statement error ai_system1: "choice", "score", and "noul" cannot be combined
+SELECT ai_system1('x', 'q', choice := ['a', 'b'], score := ['c', 'd'], secret_name := 'jev_dead_${__DATABASE__}');
+
+statement error ai_system1: requires at least two criteria for type "choice"
+SELECT ai_system1('x', 'q', choice := ['a'], secret_name := 'jev_dead_${__DATABASE__}');
+
+statement error ai_system1: requires at least two criteria for type "score"
+SELECT ai_system1('x', 'q', score := ['a'], secret_name := 'jev_dead_${__DATABASE__}');
+
+statement error ai_system1: supports at most 10 criteria for type "score"
+SELECT ai_system1('x', 'q', score := ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11'], secret_name := 'jev_dead_${__DATABASE__}');
+
+statement error ai_system1: Noul criteria require exactly the labels "true" and "false"
+SELECT ai_system1('x', 'q', noul := ['yes', 'no'], secret_name := 'jev_dead_${__DATABASE__}');
+
+statement error ai_system1: criteria labels must be unique
+SELECT ai_system1('x', 'q', choice := ['a', 'a'], secret_name := 'jev_dead_${__DATABASE__}');
+
+statement error ai_system1: criteria labels must not be empty
+SELECT ai_system1('x', 'q', choice := [{label: '', description: 'd'}, {label: 'b', description: NULL}], secret_name := 'jev_dead_${__DATABASE__}');
+
+statement error ai_system1: "questions" cannot be combined
+SELECT ai_system1('x', 'q', questions := {a: {type: 'noul', instructions: 'q'}}, secret_name := 'jev_dead_${__DATABASE__}');
+
+statement error ai_system1: "batch_size" cannot be combined with "questions"
+SELECT ai_system1('x', questions := {a: {type: 'noul', instructions: 'q'}}, batch_size := 2, secret_name := 'jev_dead_${__DATABASE__}');
+
+statement error ai_system1: "batch_size" must be between 1 and 64
+SELECT ai_system1('x', 'q', batch_size := 65, secret_name := 'jev_dead_${__DATABASE__}');
+
+statement error ai_system1: unknown question type "maybe"
+SELECT ai_system1('x', questions := {a: {type: 'maybe', instructions: 'q'}}, secret_name := 'jev_dead_${__DATABASE__}');
+
+statement error ai_system1: "questions" must be a STRUCT or a JSON object
+SELECT ai_system1('x', questions := '[1, 2]', secret_name := 'jev_dead_${__DATABASE__}');
+
+statement error ai_system1: "instructions" parameter must be a constant value
+SELECT ai_system1('x', v, secret_name := 'jev_dead_${__DATABASE__}') FROM (VALUES ('q')) t(v);
+
+statement error ai_classify: "categories" parameter must be a constant value
+SELECT ai_classify('x', [v], secret_name := 'ai_dead_${__DATABASE__}') FROM (VALUES ('q')) t(v);
+
+statement error ai_classify: "categories" must not be empty
+SELECT ai_classify('x', [], secret_name := 'ai_dead_${__DATABASE__}');
+
+statement error ai_classify: "categories" labels must be unique
+SELECT ai_classify('x', ['a', 'a'], secret_name := 'ai_dead_${__DATABASE__}');
+
+statement error ai_generate: "max_tokens" must be a positive integer
+SELECT ai_generate('x', secret_name := 'ai_dead_${__DATABASE__}', max_tokens := 0);
+
+statement error ai_generate: "temperature" must be a non-negative number
+SELECT ai_generate('x', secret_name := 'ai_dead_${__DATABASE__}', temperature := 'nan'::DOUBLE);
+
+statement error ai_classify: "temperature" must be a non-negative number
+SELECT ai_classify('x', ['a', 'b'], secret_name := 'ai_dead_${__DATABASE__}', temperature := 'inf'::DOUBLE);
+
+statement error ai_agg: "temperature" must be a non-negative number
+SELECT ai_agg(v, 'q', secret_name := 'ai_dead_${__DATABASE__}', temperature := -1) FROM (VALUES ('x')) t(v);
+
+statement error out of range
+SET sdb_ai_max_api_calls_per_query = 4294967296;
+
+statement error out of range
+SET sdb_ai_max_output_tokens_per_query = 4294967296;
+
+statement error out of range
+SET sdb_ai_max_retries = 4294967296;
+
+statement error out of range
+SET sdb_ai_retry_initial_delay_ms = 4294967296;
+
+statement error out of range
+SET sdb_ai_request_timeout = 4294967296;
+
+statement error out of range
+SET sdb_ai_max_concurrent_requests = 4294967296;
+
+statement error out of range
+SET sdb_ai_embedding_max_batch_size = 4294967296;
+
+statement error out of range
+SET sdb_ai_max_retries = -1;
+
+statement error ai_embed: "dimensions" must be a non-negative integer
+SELECT ai_embed('x', 'm', 'ai_dead_${__DATABASE__}', dimensions := -1);
+
+statement error ai_generate: no secret given
+SELECT ai_generate('x');
+
+statement error ai_generate: secret 'ai_missing' not found
+SELECT ai_generate('x', secret_name := 'ai_missing');
+
+statement error ai_generate: secret '.*' has type 'typesafe', expected 'openai'
+SELECT ai_generate('x', secret_name := 'jev_dead_${__DATABASE__}');
+
+statement error ai_system1: secret '.*' has type 'openai', expected 'typesafe'
+SELECT ai_system1('x', 'q', secret_name := 'ai_dead_${__DATABASE__}');
+
+statement error ai_generate: no model given
+SELECT ai_generate('x', secret_name := 'ai_dead_no_model_${__DATABASE__}');
+
+statement ok
+SET sdb_ai_text_default_secret = 'jev_dead_${__DATABASE__}';
+
+statement error ai_generate: secret '.*' has type 'typesafe', expected 'openai'
+SELECT ai_generate('x');
+
+statement ok
+SET sdb_ai_embedding_default_secret = 'ai_missing';
+
+statement error ai_embed: secret 'ai_missing' not found
+SELECT ai_embed('x', 'm');
+
+statement ok
+SET sdb_ai_system1_default_secret = 'ai_dead_${__DATABASE__}';
+
+statement error ai_system1: secret '.*' has type 'openai', expected 'typesafe'
+SELECT ai_system1('x', 'q');
+
+statement ok
+SET sdb_ai_text_default_secret = 'ai_dead_${__DATABASE__}';
+
+statement ok
+SET sdb_ai_embedding_default_secret = 'ai_dead_${__DATABASE__}';
+
+statement ok
+SET sdb_ai_system1_default_secret = 'jev_dead_${__DATABASE__}';
+
+query
+SELECT
+  ai_generate(NULL) IS NULL AS g,
+  ai_embed(NULL, 'm') IS NULL AS e,
+  ai_system1(NULL, 'q') IS NULL AS j;
+----
+g	e	j
+t	t	t
+
+statement ok
+SET sdb_ai_max_retries = 0;
+
+statement error ai_generate: request to 'http://127.0.0.1:9/v1/chat/completions' failed
+SELECT ai_generate('x');
+
+statement error ai_system1: request to 'http://127.0.0.1:9/v1/systemone' failed
+SELECT ai_system1('x', 'q');
+
+statement ok
+SET sdb_ai_max_api_calls_per_query = 4294967295;
+
+statement ok
+SET sdb_ai_max_output_tokens_per_query = 4294967295;
+
+statement ok
+SET sdb_ai_retry_initial_delay_ms = 4294967295;
+
+statement ok
+SET sdb_ai_request_timeout = 4294967295;
+
+statement ok
+SET sdb_ai_max_concurrent_requests = 4294967295;
+
+statement ok
+SET sdb_ai_embedding_max_batch_size = 4294967295;
+
+statement error ai_generate: request to 'http://127.0.0.1:9/v1/chat/completions' failed
+SELECT ai_generate(v) FROM (VALUES ('a'), ('b')) t(v);
+
+statement error ai_embed: request to 'http://127.0.0.1:9/v1/embeddings' failed
+SELECT ai_embed(v, 'm') FROM (VALUES ('a'), ('b')) t(v);
+
+statement ok
+RESET sdb_ai_max_output_tokens_per_query;
+
+statement ok
+RESET sdb_ai_request_timeout;
+
+statement ok
+RESET sdb_ai_max_concurrent_requests;
+
+statement ok
+RESET sdb_ai_embedding_max_batch_size;
+
+statement ok
+SET sdb_ai_retry_initial_delay_ms = 1;
+
+statement ok
+SET sdb_ai_max_retries = 5;
+
+statement ok
+SET sdb_ai_max_api_calls_per_query = 2;
+
+statement error ai_generate: query exceeded sdb_ai_max_api_calls_per_query \(2\)
+SELECT ai_generate('x');
+
+statement ok
+RESET sdb_ai_max_api_calls_per_query;
+
+statement ok
+RESET sdb_ai_retry_initial_delay_ms;
+
+statement ok
+SET sdb_ai_max_retries = 0;
+
+statement ok
+CREATE OR REPLACE SECRET ai_rotate_${__DATABASE__} (
+  TYPE openai,
+  base_url 'http://127.0.0.1:9',
+  model 'm'
+);
+
+statement ok
+PREPARE ai_rotate AS SELECT ai_generate('x', secret_name := 'ai_rotate_${__DATABASE__}');
+
+statement error ai_generate: request to 'http://127.0.0.1:9/v1/chat/completions' failed
+EXECUTE ai_rotate;
+
+statement ok
+CREATE OR REPLACE SECRET ai_rotate_${__DATABASE__} (
+  TYPE openai,
+  base_url 'http://127.0.0.1:9/rotated',
+  model 'm'
+);
+
+statement error ai_generate: request to 'http://127.0.0.1:9/rotated/v1/chat/completions' failed
+EXECUTE ai_rotate;
+
+statement ok
+DEALLOCATE ai_rotate;
+
+statement ok
+PREPARE ai_default AS SELECT ai_generate('x');
+
+statement error ai_generate: request to 'http://127.0.0.1:9/v1/chat/completions' failed
+EXECUTE ai_default;
+
+statement ok
+SET sdb_ai_text_default_secret = 'jev_dead_${__DATABASE__}';
+
+statement error ai_generate: secret '.*' has type 'typesafe', expected 'openai'
+EXECUTE ai_default;
+
+statement ok
+SET sdb_ai_text_default_secret = 'ai_dead_${__DATABASE__}';
+
+statement ok
+DEALLOCATE ai_default;
+
+statement ok
+CREATE OR REPLACE SECRET ai_dead_path_${__DATABASE__} (
+  TYPE openai,
+  base_url 'http://127.0.0.1:9/v1beta/openai',
+  chat_path '/chat/completions',
+  model 'm'
+);
+
+statement error ai_generate: request to 'http://127.0.0.1:9/v1beta/openai/chat/completions' failed
+SELECT ai_generate('x', secret_name := 'ai_dead_path_${__DATABASE__}');
+
+statement ok
+CREATE OR REPLACE SECRET ai_dead_full_${__DATABASE__} (
+  TYPE openai,
+  base_url 'http://127.0.0.1:9/api/v1/chat/completions/',
+  model 'm'
+);
+
+statement error ai_generate: request to 'http://127.0.0.1:9/api/v1/chat/completions' failed
+SELECT ai_generate('x', secret_name := 'ai_dead_full_${__DATABASE__}');
+
+statement ok
+CREATE OR REPLACE SECRET ai_dead_embeddings_${__DATABASE__} (
+  TYPE openai,
+  base_url 'http://127.0.0.1:9/api/v1/embeddings'
+);
+
+statement error ai_embed: request to 'http://127.0.0.1:9/api/v1/embeddings' failed
+SELECT ai_embed('x', 'm', 'ai_dead_embeddings_${__DATABASE__}');
+
+statement ok
+CREATE OR REPLACE SECRET jev_dead_path_${__DATABASE__} (
+  TYPE typesafe,
+  base_url 'http://127.0.0.1:9/gateway',
+  path '/typesafe/v1/systemone'
+);
+
+statement error ai_system1: request to 'http://127.0.0.1:9/gateway/typesafe/v1/systemone' failed
+SELECT ai_system1('x', 'q', secret_name := 'jev_dead_path_${__DATABASE__}');
+
+statement ok
+CREATE OR REPLACE SECRET jev_dead_full_${__DATABASE__} (
+  TYPE typesafe,
+  base_url 'http://127.0.0.1:9/proxy/systemone'
+);
+
+statement error ai_system1: request to 'http://127.0.0.1:9/proxy/systemone' failed
+SELECT ai_system1('x', 'q', secret_name := 'jev_dead_full_${__DATABASE__}');
+
+statement ok
+SET sdb_ai_throw_on_error = false;
+
+statement ok
+CREATE TABLE ai_rows (id INTEGER, body VARCHAR);
+
+statement ok
+INSERT INTO ai_rows VALUES (1, 'a'), (2, NULL), (3, 'c');
+
+query
+SELECT
+  count(*) FILTER (WHERE g IS NULL) AS g_null,
+  count(*) FILTER (WHERE e IS NULL) AS e_null,
+  count(*) FILTER (WHERE j IS NULL) AS j_null
+FROM (
+  SELECT ai_generate(body) AS g, ai_embed(body, 'm') AS e, ai_system1(body, 'q') AS j
+  FROM ai_rows
+) t;
+----
+g_null	e_null	j_null
+3	3	3
+
+query
+SELECT
+  ai_classify(body, ['a', 'b']) IS NULL AS c,
+  ai_classify_labels(body, ['a', 'b']) IS NULL AS cl,
+  ai_extract(body, 'the city') IS NULL AS e,
+  ai_filter(body, 'x') IS NULL AS f,
+  ai_translate(body, 'German') IS NULL AS t,
+  ai_redact(body, ['email']) IS NULL AS r,
+  ai_score(body, 'x') IS NULL AS s,
+  ai_rerank('q', body) IS NULL AS rr,
+  ai_similarity(body, 'y', 'm') IS NULL AS sim
+FROM ai_rows
+WHERE id = 1;
+----
+c	cl	e	f	t	r	s	rr	sim
+t	t	t	t	t	t	t	t	t
+
+query
+SELECT ai_agg(body, 'q') IS NULL AS a, ai_summarize_agg(body) IS NULL AS s FROM ai_rows;
+----
+a	s
+t	t
+
+statement error invalid value for parameter "sdb_ai_max_concurrent_requests"
+SET sdb_ai_max_concurrent_requests = 0;
+
+statement error invalid value for parameter "sdb_ai_request_timeout"
+SET sdb_ai_request_timeout = 0;
+
+statement error invalid value for parameter "sdb_ai_embedding_max_batch_size"
+SET sdb_ai_embedding_max_batch_size = 0;
+
+query
+SELECT
+  typeof(ai_classify_labels(NULL, ['a', 'b'])) AS l,
+  typeof(ai_classify(NULL, [{label: 'a', description: 'first'}, {label: 'b', description: NULL}])) AS d,
+  typeof(ai_score(NULL, 'helpful')) AS s,
+  typeof(ai_rerank('query', NULL)) AS r,
+  ai_classify_labels(NULL, ['a', 'b']) IS NULL AS ln,
+  ai_rerank('query', NULL) IS NULL AS rn,
+  ai_embed('', 'm') IS NULL AS en;
+----
+l	d	s	r	ln	rn	en
+VARCHAR[]	VARCHAR	DOUBLE	DOUBLE	t	t	t
+
+query
+SELECT
+  typeof(ai_agg(body, 'q')) AS a,
+  ai_agg(body, 'q') IS NULL AS an,
+  ai_summarize_agg(body) IS NULL AS sn
+FROM ai_rows
+WHERE id > 10;
+----
+a	an	sn
+VARCHAR	t	t
+
+statement error ai_agg: "instruction" must not be NULL or empty
+SELECT ai_agg(body, NULL) FROM ai_rows;
+
+statement error ai_summarize_agg: "max_context_chars" must be a positive integer
+SELECT ai_summarize_agg(body, max_context_chars := 0) FROM ai_rows;
+
+statement error ai_classify_labels: "categories" must not be empty
+SELECT ai_classify_labels('x', []);
+
+statement ok
+CREATE OR REPLACE SECRET ai_far_${__DATABASE__} (
+  TYPE openai,
+  base_url 'http://example.invalid',
+  model 'm'
+);
+
+statement error ai_generate: secret '.*' uses the insecure endpoint 'http://example.invalid'
+SELECT ai_generate(NULL, secret_name := 'ai_far_${__DATABASE__}');
+
+statement ok
+CREATE OR REPLACE SECRET ai_url_${__DATABASE__} (TYPE openai, base_url 'http://127.0.0.1@example.invalid', model 'm');
+
+statement error insecure endpoint
+SELECT ai_generate(NULL, secret_name := 'ai_url_${__DATABASE__}');
+
+statement ok
+CREATE OR REPLACE SECRET ai_url_${__DATABASE__} (TYPE openai, base_url 'http://example.invalid?@127.0.0.1', model 'm');
+
+statement error insecure endpoint
+SELECT ai_generate(NULL, secret_name := 'ai_url_${__DATABASE__}');
+
+statement ok
+CREATE OR REPLACE SECRET ai_url_${__DATABASE__} (TYPE openai, base_url 'http://example.invalid#@localhost', model 'm');
+
+statement error insecure endpoint
+SELECT ai_generate(NULL, secret_name := 'ai_url_${__DATABASE__}');
+
+statement ok
+CREATE OR REPLACE SECRET ai_url_${__DATABASE__} (TYPE openai, base_url 'http://localhost.example.invalid', model 'm');
+
+statement error insecure endpoint
+SELECT ai_generate(NULL, secret_name := 'ai_url_${__DATABASE__}');
+
+statement ok
+CREATE OR REPLACE SECRET ai_url_${__DATABASE__} (TYPE openai, base_url 'http://127.0.0.1.example.invalid', model 'm');
+
+statement error insecure endpoint
+SELECT ai_generate(NULL, secret_name := 'ai_url_${__DATABASE__}');
+
+statement ok
+CREATE OR REPLACE SECRET ai_url1_${__DATABASE__} (TYPE openai, base_url 'HTTP://LOCALHOST:9', model 'm');
+
+statement ok
+CREATE OR REPLACE SECRET ai_url2_${__DATABASE__} (TYPE openai, base_url 'http://[::1]:9', model 'm');
+
+statement ok
+CREATE OR REPLACE SECRET ai_url3_${__DATABASE__} (TYPE openai, base_url 'http://127.1:9', model 'm');
+
+statement ok
+CREATE OR REPLACE SECRET ai_url4_${__DATABASE__} (TYPE openai, base_url 'https://example.invalid', model 'm');
+
+query
+SELECT
+  ai_generate(NULL, secret_name := 'ai_url1_${__DATABASE__}') IS NULL AS upper,
+  ai_generate(NULL, secret_name := 'ai_url2_${__DATABASE__}') IS NULL AS ipv6,
+  ai_generate(NULL, secret_name := 'ai_url3_${__DATABASE__}') IS NULL AS short,
+  ai_generate(NULL, secret_name := 'ai_url4_${__DATABASE__}') IS NULL AS tls;
+----
+upper	ipv6	short	tls
+t	t	t	t
+
+statement ok
+SET sdb_ai_allow_insecure_endpoint = true;
+
+query
+SELECT ai_generate(NULL, secret_name := 'ai_far_${__DATABASE__}') IS NULL AS n;
+----
+n
+t
+
+statement ok
+PREPARE ai_far AS SELECT ai_generate(NULL, secret_name := 'ai_far_${__DATABASE__}') IS NULL AS n;
+
+query
+EXECUTE ai_far;
+----
+n
+t
+
+statement ok
+RESET sdb_ai_allow_insecure_endpoint;
+
+statement error ai_generate: secret '.*' uses the insecure endpoint 'http://example.invalid'
+EXECUTE ai_far;
+
+statement ok
+DEALLOCATE ai_far;
+
+statement ok
+SET sdb_ai_max_api_calls_per_query = 1;
+
+statement ok
+SET sdb_ai_max_concurrent_requests = 1;
+
+query
+SELECT count(ai_classify(v, ['a', 'b'])) AS n FROM (VALUES ('x'), ('x')) t(v);
+----
+n
+0
+
+statement error sdb_ai_max_api_calls_per_query
+SELECT count(ai_classify(v, ['a', 'b'])) AS n FROM (VALUES ('x'), ('y')) t(v);
+
+statement ok
+RESET sdb_ai_max_api_calls_per_query;
+
+statement ok
+RESET sdb_ai_max_concurrent_requests;
+
+query
+EXPLAIN SELECT id, ai_generate(body) FROM ai_rows;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────╮
+│ Projections: id, #2   │
+│ ~3 rows               │
+╰───────────┬───────────╯
+╭─ AI_EVALUATE ─────────╮
+│ Calls: ai_generate    │
+│ ~3 rows               │
+╰───────────┬───────────╯
+╭─ SEQ_SCAN ┴───────────╮
+│ Table: ai_rows        │
+│ Type: Sequential Scan │
+│ Projections: id, body │
+│ ~3 rows               │
+╰───────────────────────╯
+
+query
+EXPLAIN SELECT id FROM ai_rows WHERE body <> 'c' AND ai_filter(body, 'x');
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────╮
+│ Projections: #1            │
+│ ~1 row                     │
+╰──────────────┬─────────────╯
+╭─ FILTER ─────┴─────────────╮
+│ Expression: #2             │
+│ ~1 row                     │
+╰──────────────┬─────────────╯
+╭─ AI_EVALUATE ┴─────────────╮
+│ Calls: ai_filter           │
+│ ~1 row                     │
+╰──────────────┬─────────────╯
+╭─ SEQ_SCAN ───┴─────────────╮
+│ Table: ai_rows             │
+│ Type: Sequential Scan      │
+│ Projections: body, id      │
+│ Column Filter: body != 'c' │
+│ ~1 row                     │
+╰────────────────────────────╯
+
+query
+EXPLAIN SELECT id, CASE WHEN id = 1 THEN ai_generate(body) END FROM ai_rows;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                │
+│ id,                                                                                         │
+│ CASE  WHEN ((id = 1)) THEN (ai_generate(body, NULL, NULL, NULL, NULL, NULL)) ELSE NULL END  │
+│ ~3 rows                                                                                     │
+╰──────────────────────────────────────────────┬──────────────────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────────────────┴──────────────────────────────────────────────╮
+│ Table: ai_rows                                                                              │
+│ Type: Sequential Scan                                                                       │
+│ Projections: id, body                                                                       │
+│ ~3 rows                                                                                     │
+╰─────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT ai_agg(body, 'q') FROM ai_rows;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────╮
+│ Projections: ai_agg(body) │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ AI_EVALUATE ─────────────╮
+│ Calls: ai_agg             │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ UNGROUPED_AGGREGATE ─────╮
+│ Aggregates: list(#0)      │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ SEQ_SCAN ──┴─────────────╮
+│ Table: ai_rows            │
+│ Type: Sequential Scan     │
+│ Projections: body         │
+│ ~3 rows                   │
+╰───────────────────────────╯

@@ -32,6 +32,7 @@ add_executable(
     scorer_bounds_test.cpp
     serializer_binary_test.cpp
     serializer_test.cpp
+    connector/ai_functions_test.cpp
     connector/copy_in_bridge_test.cpp
     connector/index_lifecycle_test.cpp
     connector/pg_progress_registry_test.cpp

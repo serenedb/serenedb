@@ -138,6 +138,9 @@ ICEBERG_REST_CONTAINER_NAME=""
 ICEBERG_REST_LOG_FILE=""
 OLLAMA_CONTAINER_NAME=""
 OLLAMA_LOG_FILE=""
+KEV_CONTAINER_NAME=""
+KEV_LOG_FILE=""
+KEV_IMAGE="serenedb-test-kev:09ff745d52a0"
 POSTGRES_CONTAINER_NAME=""
 POSTGRES_LOG_FILE=""
 CLICKHOUSE_CONTAINER_NAME=""
@@ -318,6 +321,20 @@ cleanup_ollama() {
 	fi
 }
 
+cleanup_kev() {
+	if [[ -n "$KEV_CONTAINER_NAME" ]]; then
+		local name="$KEV_CONTAINER_NAME"
+		KEV_CONTAINER_NAME=""
+		report_failed_container "$name" "Kev"
+		if [[ -n "$KEV_LOG_FILE" ]]; then
+			echo "Saving Kev logs to ${KEV_LOG_FILE}..."
+			docker logs "$name" >"${KEV_LOG_FILE}" 2>&1 || true
+		fi
+		echo "Stopping Kev container..."
+		docker rm -fv "$name" >/dev/null 2>&1 || true
+	fi
+}
+
 cleanup_postgres() {
 	if [[ -n "$POSTGRES_CONTAINER_NAME" ]]; then
 		local name="$POSTGRES_CONTAINER_NAME"
@@ -350,6 +367,7 @@ cleanup_all() {
 	cleanup_cancel_pid
 	cleanup_iceberg_rest
 	cleanup_ollama
+	cleanup_kev
 	cleanup_postgres
 	cleanup_clickhouse
 	cleanup_minio
@@ -623,17 +641,13 @@ launch_biglake() {
 	export ICEBERG_SERVER_OPTIONS="warehouse 'bl://projects/${BIGLAKE_PROJECT}/catalogs/${BIGLAKE_CATALOG}', endpoint 'https://biglake.googleapis.com/iceberg/v1/restcatalog', secret 'iceberg_ci_catalog'"
 }
 
-# Launches an Ollama server and pulls a small embedding model. Ollama exposes
-# an OpenAI-compatible API at /v1/embeddings on port 11434, which ai_embed()
-# targets via a SECRET of TYPE openai with a custom base_url. The pulled
-# model determines the embedding dimension; pick the smallest one that's
-# still useful so the first run stays under ~30s in CI.
 launch_ollama() {
 	local prefix
 	prefix="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
 	OLLAMA_CONTAINER_NAME="${prefix}-serenedb-test-ollama-$$"
 	OLLAMA_LOG_FILE="${LOG_DIR:-/tmp}/${OLLAMA_CONTAINER_NAME}.log"
 	export OLLAMA_MODEL="${OLLAMA_MODEL:-all-minilm}"
+	export OLLAMA_CHAT_MODEL="${OLLAMA_CHAT_MODEL:-qwen2.5:0.5b}"
 
 	local network_args=()
 	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
@@ -671,10 +685,62 @@ launch_ollama() {
 		sleep 1
 	done
 
-	echo "Pulling model '$OLLAMA_MODEL'..."
+	echo "Pulling models '$OLLAMA_MODEL' and '$OLLAMA_CHAT_MODEL'..."
 	docker exec "$OLLAMA_CONTAINER_NAME" ollama pull "$OLLAMA_MODEL"
+	docker exec "$OLLAMA_CONTAINER_NAME" ollama pull "$OLLAMA_CHAT_MODEL"
 
-	echo "Ollama running (host=$OLLAMA_HOST, port=$OLLAMA_PORT, model=$OLLAMA_MODEL)."
+	echo "Ollama running (host=$OLLAMA_HOST, port=$OLLAMA_PORT, model=$OLLAMA_MODEL, chat model=$OLLAMA_CHAT_MODEL)."
+	echo
+}
+
+launch_kev() {
+	local prefix
+	prefix="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
+	KEV_CONTAINER_NAME="${prefix}-serenedb-test-kev-$$"
+	KEV_LOG_FILE="${LOG_DIR:-/tmp}/${KEV_CONTAINER_NAME}.log"
+
+	if ! docker image inspect "$KEV_IMAGE" >/dev/null 2>&1; then
+		echo "Building $KEV_IMAGE..."
+		docker build -t "$KEV_IMAGE" "${SCRIPT_DIR}/fixtures/kev"
+	fi
+
+	local network_args=()
+	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
+		network_args=(--network "$COMPOSE_NETWORK")
+		export KEV_HOST="$KEV_CONTAINER_NAME"
+		export KEV_PORT=8009
+	else
+		if [[ -z "$TEST_NETWORK" ]]; then
+			TEST_NETWORK="${prefix}-serenedb-test-net-$$"
+			docker network create "$TEST_NETWORK" >/dev/null
+		fi
+		KEV_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
+		network_args=(--network "$TEST_NETWORK" -p "$KEV_PORT:8009")
+		export KEV_HOST="localhost"
+		export KEV_PORT
+	fi
+
+	echo "Starting Kev (host=$KEV_HOST, port=$KEV_PORT)..."
+	docker run -d \
+		--name "$KEV_CONTAINER_NAME" \
+		"${network_args[@]}" \
+		"$KEV_IMAGE"
+
+	echo "Waiting for Kev to be ready..."
+	for i in $(seq 1 180); do
+		if docker exec "$KEV_CONTAINER_NAME" \
+			python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8009/v1/models')" >/dev/null 2>&1; then
+			echo "Kev is ready."
+			break
+		fi
+		if [[ $i -eq 180 ]]; then
+			echo "ERROR: Kev failed to start within 180 seconds"
+			exit 1
+		fi
+		sleep 1
+	done
+
+	echo "Kev running (host=$KEV_HOST, port=$KEV_PORT)."
 	echo
 }
 
@@ -879,7 +945,7 @@ PY
 launch_external() {
 	shopt -s globstar
 	local pattern test_files f
-	local needs_s3=false needs_iceberg=false needs_ollama=false needs_postgres=false needs_clickhouse=false needs_azure=false
+	local needs_s3=false needs_iceberg=false needs_ollama=false needs_kev=false needs_postgres=false needs_clickhouse=false needs_azure=false
 	local needs_iceberg_fixture=false
 	local -a misnamed=()
 	for pattern in "${tests[@]}"; do
@@ -900,13 +966,14 @@ launch_external() {
 			# package RTA, which has no docker -- exclude it. An external-service
 			# suffix on a plain .test is a mistake; fail loudly instead of
 			# letting the service launch blow up later.
-			*_s3.test | *_iceberg.test | *_ollama.test | *_pgscan.test | *_chscan.test | *_azure.test)
+			*_s3.test | *_iceberg.test | *_ollama.test | *_kev.test | *_pgscan.test | *_chscan.test | *_azure.test)
 				misnamed+=("$f")
 				;;
 			*_s3.test_slow) needs_s3=true ;;
 			*_azure.test_slow) needs_azure=true ;;
 			*_iceberg.test_slow) needs_iceberg=true ;;
 			*_ollama.test_slow) needs_ollama=true ;;
+			*_kev.test_slow) needs_kev=true ;;
 			*_pgscan.test_slow) needs_postgres=true ;;
 			*_chscan.test_slow) needs_clickhouse=true ;;
 			esac
@@ -982,6 +1049,9 @@ launch_external() {
 	fi
 	if [[ "$needs_ollama" == "true" ]]; then
 		launch_ollama
+	fi
+	if [[ "$needs_kev" == "true" ]]; then
+		launch_kev
 	fi
 	if [[ "$needs_postgres" == "true" ]]; then
 		launch_postgres

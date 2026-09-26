@@ -1,6 +1,9 @@
 control substitution on
 
 statement ok
+SET sdb_ai_allow_insecure_endpoint = true;
+
+statement ok
 CREATE OR REPLACE SECRET ollama_${__DATABASE__} (
   TYPE openai,
   base_url 'http://${OLLAMA_HOST}:${OLLAMA_PORT}',
@@ -9,10 +12,10 @@ CREATE OR REPLACE SECRET ollama_${__DATABASE__} (
 
 
 query
-SELECT array_length(ai_embed('', '${OLLAMA_MODEL}', 'ollama_${__DATABASE__}'));
+SELECT ai_embed('', '${OLLAMA_MODEL}', 'ollama_${__DATABASE__}') IS NULL;
 ----
-array_length
-384
+?column?
+t
 
 
 query

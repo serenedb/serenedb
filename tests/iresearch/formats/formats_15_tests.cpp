@@ -350,6 +350,7 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
       irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq);
     EXPECT_EQ(expected_has_score_bounds, stats.has_score_bounds);
     writer.Encode(*out, posting_meta);
+    out->WriteData(posting_meta.inline_data, posting_meta.inline_size);
     writer.End();
   }
 
@@ -371,6 +372,8 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
 
   irs::PostingMeta read_meta;
   begin += reader->decode(begin, features, read_meta);
+  std::memcpy(read_meta.inline_data, begin, read_meta.inline_size);
+  begin += read_meta.inline_size;
 
   {
     EXPECT_EQ(posting_meta.docs_count, read_meta.docs_count);

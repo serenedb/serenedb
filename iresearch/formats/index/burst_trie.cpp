@@ -525,6 +525,7 @@ class FieldWriter::Impl {
   FstBuffer* _fst_buf;         // pimpl buffer used for building FST for fields
   VolatileByteRef _last_term;  // last pushed term
   std::vector<size_t> _prefixes;
+  bstring _inline;
   const uint32_t _min_block_size;
   const uint32_t _max_block_size;
   const bool _compaction;
@@ -547,6 +548,7 @@ void FieldWriter::Impl::WriteBlock(size_t prefix, size_t begin, size_t end,
   Block::BlockIndex index;
 
   _pw.BeginBlock();
+  _stats.stream.WriteV64(_inline.size());
 
   for (; begin < end; ++begin) {
     auto& e = _stack[begin];
@@ -563,7 +565,9 @@ void FieldWriter::Impl::WriteBlock(size_t prefix, size_t begin, size_t end,
     _suffix.stream.WriteData(data.data() + prefix, suf_size);
 
     if (EntryType::Term == type) {
-      _pw.Encode(_stats.stream, e.Term());
+      const auto& term = e.Term();
+      _pw.Encode(_stats.stream, term);
+      _inline.append(term.inline_data, term.inline_size);
     } else {
       SDB_ASSERT(EntryType::Block == type);
 
@@ -842,7 +846,12 @@ void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
   SDB_ASSERT(stats == fst_stats);
 #endif
 
+  const uint64_t inline_offset = _blocks_out->Position();
+  _blocks_out->WriteData(_inline.data(), _inline.size());
+  _inline.clear();
+
   const uint64_t body_offset = _blocks_out->Position();
+  _blocks_out->WriteV64(inline_offset);
   WriteStr(*_blocks_out, min_term);
   WriteStr(*_blocks_out, max_term);
   const bool ok = immutable_byte_fst::Write(fst, *_blocks_out, fst_stats);
@@ -889,7 +898,18 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
   bool HasScoreBounds() const noexcept final { return _has_score_bounds; }
 
+  uint64_t InlineOffset() const noexcept { return _inline_offset; }
+  const byte_type* InlineRegion() const noexcept { return _inline_region; }
+
   void LoadFromMeta(field_id id, const TermDictMeta& meta, DataInput& in);
+
+ protected:
+  void MapInlineRegion(const TermDictMeta& meta, IndexInput& in) {
+    if (const auto size = meta.body_offset - _inline_offset; size != 0) {
+      in.Seek(_inline_offset);
+      _inline_region = in.ReadStable(size);
+    }
+  }
 
  private:
   FieldMeta _field;
@@ -897,6 +917,8 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
   bstring _max_term;
   uint64_t _terms_count{};
   uint64_t _doc_count{};
+  uint64_t _inline_offset{};
+  const byte_type* _inline_region{};
   bool _has_score_bounds{};
   FreqAttr _freq;
 };
@@ -908,6 +930,7 @@ void TermReaderBase::LoadFromMeta(field_id id, const TermDictMeta& meta,
   _field.index_features = meta.features;
   _terms_count = meta.term_count;
   _doc_count = meta.doc_count;
+  _inline_offset = in.ReadV64();
   _min_term = ReadString<bstring>(in);
   _max_term = ReadString<bstring>(in);
   const auto total =
@@ -1032,7 +1055,8 @@ class BlockIterator : util::Noncopyable {
   void ScanToBlock(uint64_t ptr);
 
   // read attributes
-  void LoadData(const FieldMeta& meta, PostingMeta& state, PostingsReader& pr);
+  void LoadData(const TermReaderBase& field, PostingMeta& state,
+                PostingsReader& pr);
 
  private:
   struct DataBlock : util::Noncopyable {
@@ -1113,6 +1137,8 @@ class BlockIterator : util::Noncopyable {
   DataBlock _suffix;  // suffix data block
   DataBlock _stats;   // stats data block
   PostingMeta _state;
+  IndexInput* _in{};
+  uint64_t _inline_next{};
   size_t _suffix_length{};  // last matched suffix length
   const byte_type* _suffix_begin{};
   const byte_type* _suffix_start{};
@@ -1197,7 +1223,9 @@ void BlockIterator::Load(IndexInput& in) {
 #ifdef SDB_DEV
   _stats.end = _stats.begin + block_size;
 #endif
+  _inline_next = vread<uint64_t>(_stats.begin);
   _stats.AssertBlockBoundaries();
+  _in = &in;
 
   _cur_end = in.Position();
   _cur_ent = 0;
@@ -1472,7 +1500,7 @@ void BlockIterator::ScanToBlock(uint64_t start) {
   SDB_ASSERT(false);
 }
 
-void BlockIterator::LoadData(const FieldMeta& meta, PostingMeta& state,
+void BlockIterator::LoadData(const TermReaderBase& field, PostingMeta& state,
                              PostingsReader& pr) {
   SDB_ASSERT(EntryType::Term == _cur_type);
 
@@ -1487,9 +1515,23 @@ void BlockIterator::LoadData(const FieldMeta& meta, PostingMeta& state,
     state = _state;
   }
 
+  const auto features = field.meta().index_features;
+  uint64_t inline_at = 0;
   for (; _cur_stats_ent < _term_count; ++_cur_stats_ent) {
-    _stats.begin += pr.decode(_stats.begin, meta.index_features, state);
+    _stats.begin += pr.decode(_stats.begin, features, state);
     _stats.AssertBlockBoundaries();
+    inline_at = _inline_next;
+    _inline_next += state.inline_size;
+  }
+
+  if (state.inline_size != 0) {
+    if (const auto* region = field.InlineRegion()) {
+      std::memcpy(state.inline_data, region + inline_at, state.inline_size);
+    } else {
+      SDB_ASSERT(_in != nullptr);
+      _in->Seek(field.InlineOffset() + inline_at);
+      _in->ReadData(state.inline_data, state.inline_size);
+    }
   }
 
   _state = state;
@@ -1538,14 +1580,14 @@ class TermIteratorBase {
 
   const PostingMeta& Cookie() const {
     SDB_ASSERT(_cur_block);
-    _cur_block->LoadData(_field->meta(), _posting_meta, *_postings);
+    _cur_block->LoadData(*_field, _posting_meta, *_postings);
     return _posting_meta;
   }
 
   TermPostings::ptr Postings(IndexFeatures features) const {
     const auto& field_meta = _field->meta();
     if (_cur_block) {
-      _cur_block->LoadData(field_meta, _posting_meta, *_postings);
+      _cur_block->LoadData(*_field, _posting_meta, *_postings);
     }
     return _postings->Postings(field_meta.index_features, features,
                                _posting_meta, _field->HasScoreBounds());
@@ -2659,7 +2701,7 @@ bool SingleTermLookup<FST>::seek(bytes_view term) {
   cur_block.Load(*_terms_in);
 
   if (SeekResult::Found == cur_block.ScanToTerm(term, [](auto, auto) {})) {
-    cur_block.LoadData(_field->meta(), _meta, *_postings);
+    cur_block.LoadData(*_field, _meta, *_postings);
     return true;
   }
 
@@ -2707,6 +2749,7 @@ class FieldReader::Impl {
       }
       _body_offset = meta.body_offset;
       _body_end = blocks_in.Position();
+      MapInlineRegion(meta, blocks_in);
     }
 
     uint64_t BodyOffset() const noexcept { return _body_offset; }
@@ -2789,7 +2832,7 @@ class FieldReader::Impl {
 
     void PrefetchBlocks() const noexcept {
       const auto size =
-        std::min(_body_offset - _blocks_begin, kMaxBlocksPrefetch);
+        std::min(InlineOffset() - _blocks_begin, kMaxBlocksPrefetch);
       if (size == 0) {
         return;
       }

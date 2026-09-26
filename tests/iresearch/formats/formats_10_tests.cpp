@@ -428,6 +428,7 @@ TEST_P(Format10TestCase, postings_read_write) {
 
       // write attributes to out
       writer.Encode(*out, meta0);
+      out->WriteData(meta0.inline_data, meta0.inline_size);
     }
     // write postings for term1
     {
@@ -436,6 +437,7 @@ TEST_P(Format10TestCase, postings_read_write) {
 
       // write attributes to out
       writer.Encode(*out, meta1);
+      out->WriteData(meta1.inline_data, meta1.inline_size);
     }
 
     ASSERT_NE(0, meta0.inline_size);
@@ -471,6 +473,8 @@ TEST_P(Format10TestCase, postings_read_write) {
     // read term0 attributes
     {
       begin += reader.decode(begin, field.index_features, read_meta);
+      std::memcpy(read_meta.inline_data, begin, read_meta.inline_size);
+      begin += read_meta.inline_size;
 
       // check PostingMeta
       {
@@ -493,6 +497,8 @@ TEST_P(Format10TestCase, postings_read_write) {
     // read term1 attributes
     {
       begin += reader.decode(begin, field.index_features, read_meta);
+      std::memcpy(read_meta.inline_data, begin, read_meta.inline_size);
+      begin += read_meta.inline_size;
 
       // check PostingMeta
       {

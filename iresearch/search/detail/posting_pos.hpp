@@ -52,6 +52,7 @@ class PostingPos {
   using Position = PositionImpl<PosTraits>;
 
   static constexpr bool kOffsets = Offs;
+  static constexpr bool kDefaultInit = true;
 
   PostingPos() : _skip{doc_limits::kBlockSize, doc_limits::kSkipSize} {}
 

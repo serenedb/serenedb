@@ -42,6 +42,10 @@ struct ABSL_CACHELINE_ALIGNED GatherBuf {
   uint32_t data[doc_limits::kBlockSize]{};
 };
 
+struct HoleBuf {
+  uint64_t data[FormatTraits128::kHoleWords];
+};
+
 template<typename InputType>
 using NeedEnc = utils::Need<!InputType::kVolatileAlways, EncBuf>;
 

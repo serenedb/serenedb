@@ -54,9 +54,10 @@ struct LeafShape {
   bool cursor = false;
   bool enc = false;
   bool delta = false;
+  bool holes = false;
 };
 
-inline constexpr LeafShape kWindowShape{.enc = true, .delta = true};
+inline constexpr LeafShape kWindowShape{.delta = true, .holes = true};
 
 inline constexpr LeafShape kWindowScoredShape{
   .scored = true,
@@ -77,14 +78,13 @@ inline constexpr LeafShape kCursorScoredShape{
   .delta = true,
 };
 
-inline constexpr LeafShape kProbeShape{.cursor = true, .enc = true};
+inline constexpr LeafShape kProbeShape{.cursor = true};
 
 inline constexpr LeafShape kProbeScoredShape{
   .defer = true,
   .freqs = true,
   .gather = true,
   .cursor = true,
-  .enc = true,
 };
 
 struct FreqLen {
@@ -104,6 +104,8 @@ struct LeafCursor {
 template<typename InputType, LeafShape Shape>
 class PostingLeaf {
  public:
+  static constexpr bool kDefaultInit = true;
+
   PostingLeaf() = default;
 
   PostingLeaf(const PostingLeaf&) = delete;
@@ -170,6 +172,14 @@ class PostingLeaf {
   IRS_FORCE_INLINE uint32_t* Enc() noexcept {
     if constexpr (kEnc) {
       return _enc.data;
+    } else {
+      return nullptr;
+    }
+  }
+
+  IRS_FORCE_INLINE uint64_t* Holes() noexcept {
+    if constexpr (Shape.holes) {
+      return _holes.data;
     } else {
       return nullptr;
     }
@@ -495,7 +505,7 @@ class PostingLeaf {
     auto& in = In();
     const auto len = std::min(_left_in_list, kBlock);
     const auto leaf =
-      FormatTraits128::ReadTailForFill(len, in, Enc(), _docs, prev);
+      FormatTraits128::ReadTailForFill(len, in, Enc(), Holes(), _docs, prev);
     _left_in_list -= len;
     const auto* const bitset = StableBitset(leaf);
     TakeFreqs(len);
@@ -505,6 +515,7 @@ class PostingLeaf {
   }
 
   [[no_unique_address]] utils::Need<kEnc, EncBuf> _enc;
+  [[no_unique_address]] utils::Need<Shape.holes, HoleBuf> _holes;
   [[no_unique_address]] utils::Need<Shape.freqs, FreqBuf> _freqs;
   [[no_unique_address]] utils::Need<Shape.gather, GatherBuf> _gather;
   DocsBuf _docs;

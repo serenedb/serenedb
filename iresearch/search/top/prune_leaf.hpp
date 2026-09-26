@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/base/internal/endian.h>
+
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -29,9 +31,9 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
+#include "iresearch/formats/posting/block_index.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/format_block_128.hpp"
-#include "iresearch/formats/posting/skip_list.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
@@ -50,148 +52,17 @@ namespace irs::top {
 template<typename InputType, bool Standalone>
 class PruneLeafBase {
  protected:
-  using BoundTraits = IteratorTraitsImpl<FormatTraits128, true, false, false>;
-
   class NoBoundSource final : public ScoreBoundSource {
    public:
     Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
     void Read(DataInput& in, size_t size) final { in.Skip(size); }
-  };
-
-  class BoundReadSkip {
-   public:
-    explicit BoundReadSkip(bool) : _skip_levels{}, _skip_scores{} {
-      std::fill(std::begin(_skip_scores), std::end(_skip_scores),
-                std::numeric_limits<score_t>::max());
-      Disable();
-    }
-
-    BoundReadSkip(BoundReadSkip&&) = delete;
-    BoundReadSkip& operator=(BoundReadSkip&&) = delete;
-
-    void SetBoundScorer(ScoreFunction func,
-                        ScoreBoundSource::ptr source) noexcept {
-      _bound_func = std::move(func);
-      _bound_source = std::move(source);
-    }
-
-    void SetLayout(SkipLayout layout) noexcept { _layout = layout; }
-
-    void SetSkipBoundsBelow(doc_id_t max) noexcept { _skip_bounds_below = max; }
-    doc_id_t SkipBoundsBelow() const noexcept { return _skip_bounds_below; }
-
-    score_t& Threshold() noexcept { return _threshold; }
-
-    void Disable() noexcept { _back->doc = doc_limits::eof(); }
-
-    void Enable(const PostingMeta& state) noexcept {
-      SDB_ASSERT(state.docs_count > doc_limits::kBlockSize);
-      CopyState<BoundTraits>(_skip_levels[0], state);
-      SDB_ASSERT(doc_limits::eof(_back->doc));
-      _back->doc = doc_limits::invalid();
-    }
-
-    void Init(size_t num_levels, score_t max_score) {
-      SDB_ASSERT(0 < num_levels && num_levels <= doc_limits::kMaxSkipLevels);
-      _back = _skip_levels + (num_levels - 1);
-      _back_score = _skip_scores + (num_levels - 1);
-      _global_max_score = max_score;
-    }
-
-    IRS_FORCE_INLINE bool IsLess(size_t level, doc_id_t target) const noexcept {
-      if constexpr (Standalone) {
-        return _skip_levels[level].doc < target ||
-               _skip_scores[level] <= _threshold;
-      } else {
-        return _skip_levels[level].doc < target;
-      }
-    }
-
-    IRS_FORCE_INLINE bool IsLessThanUpperBound(doc_id_t target) const noexcept {
-      if constexpr (Standalone) {
-        return _back->doc < target || *_back_score <= _threshold;
-      } else {
-        return _back->doc < target;
-      }
-    }
-
-    IRS_FORCE_INLINE void MoveDown(size_t level) noexcept {
-      CopyState<BoundTraits>(_skip_levels[level], _prev_skip);
-    }
-
-    IRS_FORCE_INLINE void Read(size_t level, InputType& in) {
-      auto& next = _skip_levels[level];
-      CopyState<BoundTraits>(_prev_skip, next);
-      ReadDocState(next, in, _layout);
-      if (_skip_bounds_below != 0 && next.doc < _skip_bounds_below)
-        [[unlikely]] {
-        SkipBounds(in);
-      } else {
-        _skip_scores[level] = ReadBound(in);
-      }
-    }
-
-    void Seal(size_t level) {
-      auto& next = _skip_levels[level];
-      CopyState<BoundTraits>(_prev_skip, next);
-      next.doc = doc_limits::eof();
-      _skip_scores[level] = std::numeric_limits<score_t>::max();
-    }
-
-    IRS_FORCE_INLINE size_t AdjustLevel(size_t level) const noexcept {
-      if constexpr (Standalone) {
-        while (level != 0 &&
-               _skip_levels[level].doc >= _skip_levels[level - 1].doc) {
-          --level;
-        }
-      }
-      return level;
-    }
-
-    IRS_FORCE_INLINE doc_id_t UpperBound() const noexcept { return _back->doc; }
-
-    IRS_FORCE_INLINE score_t ReadBound(IndexInput& in) {
-      const auto size = in.ReadByte();
-      _bound_source->Read(in, size);
-      return _bound_func.Score();
-    }
-
-    IRS_FORCE_INLINE void SkipBounds(InputType& in) {
-      SkipScoreBounds(true, in);
-    }
-
-    SkipState& State() noexcept { return _prev_skip; }
-
-    IRS_FORCE_INLINE score_t MaxScore(doc_id_t doc) const noexcept {
-      const score_t* score = _back_score;
-      for (const SkipState* level = _back; level >= _skip_levels;
-           --level, --score) {
-        if (level->doc >= doc) {
-          return *score;
-        }
-      }
-      return _global_max_score;
-    }
-
-   private:
-    SkipState _skip_levels[doc_limits::kMaxSkipLevels];
-    score_t _skip_scores[doc_limits::kMaxSkipLevels];
-    SkipState* _back = _skip_levels;
-    score_t* _back_score = _skip_scores;
-    score_t _global_max_score = std::numeric_limits<score_t>::max();
-    SkipState _prev_skip;
-    ScoreFunction _bound_func;
-    ScoreBoundSource::ptr _bound_source;
-    score_t _threshold = std::numeric_limits<score_t>::lowest();
-    doc_id_t _skip_bounds_below = 0;
-    SkipLayout _layout;
+    void Set(uint32_t, uint32_t) noexcept final {}
   };
 
  public:
   static constexpr bool kDefaultInit = true;
 
-  PruneLeafBase()
-    : _skip{doc_limits::kBlockSize, doc_limits::kSkipSize, true} {}
+  PruneLeafBase() = default;
 
   PruneLeafBase(const PruneLeafBase&) = delete;
   PruneLeafBase& operator=(const PruneLeafBase&) = delete;
@@ -205,14 +76,13 @@ class PruneLeafBase {
     SDB_ASSERT(args.scorer != nullptr);
     SDB_ASSERT(args.fetcher != nullptr);
     SDB_ASSERT(FeaturesHaveFreq(layout));
-    _skip.Reader().SetLayout(ToSkipLayout(layout));
     _fetcher = args.fetcher;
     _recipe = {&segment, &field, args};
     _provider.freq.value = _freqs.data;
 
     auto source = args.scorer->PrepareScoreBoundSource();
     if (source) {
-      auto bound = args.scorer->PrepareScorer({
+      _bound_func = args.scorer->PrepareScorer({
         .segment = segment,
         .field = field.meta(),
         .doc_attrs = *source,
@@ -220,11 +90,11 @@ class PruneLeafBase {
         .stats = args.stats,
         .boost = args.boost,
       });
-      _skip.Reader().SetBoundScorer(std::move(bound), std::move(source));
+      _bound_source = std::move(source);
     } else {
-      _skip.Reader().SetBoundScorer(
-        ScoreFunction::Constant(std::numeric_limits<score_t>::max()),
-        std::make_unique<NoBoundSource>());
+      _bound_func =
+        ScoreFunction::Constant(std::numeric_limits<score_t>::max());
+      _bound_source = std::make_unique<NoBoundSource>();
     }
 
     _score = args.scorer->PrepareScorer({
@@ -235,6 +105,13 @@ class PruneLeafBase {
       .stats = args.stats,
       .boost = args.boost,
     });
+
+    _cursor.Disarm();
+    _cached.fill(kNoBlock);
+    _cached_run = kNoBlock;
+    _root_score = std::numeric_limits<score_t>::max();
+    _threshold = std::numeric_limits<score_t>::lowest();
+    _upper_bound = doc_limits::eof();
 
     if (meta.docs_count == 1) {
       *(std::end(_docs) - 1) = doc_limits::min() + meta.doc_delta;
@@ -255,45 +132,103 @@ class PruneLeafBase {
     _left_in_list = meta.docs_count;
 
     if (meta.docs_count > doc_limits::kBlockSize) {
-      _skip.Reader().Enable(meta);
-      PrepareSkip(meta.doc_start + meta.doc_delta, meta.docs_count);
+      _cursor.Arm(meta, BlockIndexShapeOf(layout, true));
+      _cursor.Load(in);
+      _root_score = BoundScore(_cursor.Index().Root());
       _upper_bound = doc_limits::invalid();
     } else if (meta.docs_count < doc_limits::kBlockSize) {
-      _skip.Reader().SkipBounds(in);
+      const auto size = in.ReadByte();
+      _bound_source->Read(in, size);
+      _root_score = _bound_func.Score();
     }
     return false;
   }
 
   doc_id_t Value() const noexcept { return _doc; }
 
-  score_t MaxScore(doc_id_t doc) noexcept {
-    return _skip.Reader().MaxScore(doc);
-  }
-
-  void SetSkipBoundsBelow(doc_id_t max) noexcept {
-    _skip.Reader().SetSkipBoundsBelow(max);
+  score_t MaxScore(doc_id_t doc) {
+    if (!_cursor.Armed()) {
+      return _root_score;
+    }
+    const auto& index = _cursor.Index();
+    const auto n = index.Size();
+    const auto b = _cursor.Block();
+    if (b == n) {
+      return _root_score;
+    }
+    if (doc <= index.Last(b)) [[likely]] {
+      return BlockScore(b);
+    }
+    const auto e = index.Find(b, doc);
+    if (e == n) {
+      return _root_score;
+    }
+    if (e - b < kMaxScoreBlocks) {
+      auto score = BlockScore(b);
+      for (auto k = b + 1; k <= e; ++k) {
+        score = std::max(score, BlockScore(k));
+      }
+      return score;
+    }
+    const auto r = b / BlockIndex::kRun;
+    if (e / BlockIndex::kRun == r) {
+      return RunScore(r);
+    }
+    return _root_score;
   }
 
  protected:
+  static constexpr uint32_t kNoBlock = std::numeric_limits<uint32_t>::max();
+  static constexpr uint32_t kMaxScoreBlocks = 8;
+  static constexpr uint32_t kCachedBlocks = 8;
+
   IRS_FORCE_INLINE InputType& In() const noexcept {
     return irs::utils::downCast<InputType>(*_in);
   }
 
-  void PrepareSkip(uint64_t skip_offs, uint32_t docs_count) {
-    std::unique_ptr<InputType> skip_in{
-      irs::utils::downCast<InputType>(In().Dup().release())};
-    if (!skip_in) [[unlikely]] {
-      throw IoError{"failed to duplicate document input"};
+  score_t BoundScore(const byte_type* bound) {
+    _bound_source->Set(absl::little_endian::Load32(bound),
+                       absl::little_endian::Load32(bound + sizeof(uint32_t)));
+    return _bound_func.Score();
+  }
+
+  score_t BlockScore(uint32_t k) {
+    const auto slot = k % kCachedBlocks;
+    if (_cached[slot] != k) {
+      _cached[slot] = k;
+      _cached_scores[slot] = BoundScore(_cursor.Index().Bound(k));
     }
-    skip_in->Seek(skip_offs);
-    const auto global_max_score = _skip.Reader().ReadBound(*skip_in);
-    _skip.Prepare(std::move(skip_in), docs_count);
-    const auto num_levels = _skip.NumLevels();
-    if (num_levels == 0 || num_levels > doc_limits::kMaxSkipLevels)
-      [[unlikely]] {
-      throw IndexError{"invalid number of skip levels"};
+    return _cached_scores[slot];
+  }
+
+  score_t RunScore(uint32_t r) {
+    if (_cached_run != r) {
+      _cached_run = r;
+      _run_score = BoundScore(_cursor.Index().RunBound(r));
     }
-    _skip.Reader().Init(num_levels, global_max_score);
+    return _run_score;
+  }
+
+  uint32_t SeekCursor(doc_id_t target) {
+    if constexpr (Standalone) {
+      const auto& index = _cursor.Index();
+      const auto n = index.Size();
+      auto b = index.Find(_cursor.Block(), target);
+      while (b != n) {
+        const auto r = b / BlockIndex::kRun;
+        if (RunScore(r) <= _threshold) {
+          b = std::min(n, (r + 1) * BlockIndex::kRun);
+          continue;
+        }
+        if (BlockScore(b) > _threshold) {
+          break;
+        }
+        ++b;
+      }
+      return _cursor.MoveTo(b);
+    } else {
+      return _cursor.Seek(target, In());
+    }
   }
 
   IRS_FORCE_INLINE void Reposition() {
@@ -301,27 +236,21 @@ class PruneLeafBase {
       return;
     }
     _needs_reposition = false;
-    auto& state = _skip.Reader().State();
-    if (state.doc_ptr != 0) [[likely]] {
-      In().Seek(state.doc_ptr);
-    }
+    const auto& state = _cursor.Landing();
+    In().Seek(state.doc_ptr);
     _doc = state.doc;
   }
 
   doc_id_t SeekToBlock(doc_id_t target) {
-    if (_skip.NumLevels() == 0) [[unlikely]] {
+    if (!_cursor.Armed()) [[unlikely]] {
       return doc_limits::eof();
     }
-    auto& reader = _skip.Reader();
-    const auto upper_bound = reader.UpperBound();
+    const auto upper_bound = _cursor.UpperBound();
     if (upper_bound >= target) {
       return upper_bound;
     }
-    const auto below = reader.SkipBoundsBelow();
-    reader.SetSkipBoundsBelow(std::max(below, target));
-    const auto left = _skip.Seek(target);
-    reader.SetSkipBoundsBelow(below);
-    _upper_bound = reader.UpperBound();
+    const auto left = SeekCursor(target);
+    _upper_bound = _cursor.UpperBound();
     if (_needs_reposition || target > _max_in_leaf) {
       _left_in_list = left;
       _left_in_leaf = 0;
@@ -335,10 +264,8 @@ class PruneLeafBase {
       return;
     }
     _needs_reposition = false;
-    auto& state = _skip.Reader().State();
-    if (state.doc_ptr != 0) [[likely]] {
-      In().Seek(state.doc_ptr);
-    }
+    const auto& state = _cursor.Landing();
+    In().Seek(state.doc_ptr);
     ReadLeaf(state.doc);
     const auto* const first =
       FirstNotBelow(std::end(_docs) - _left_in_leaf, min);
@@ -408,7 +335,15 @@ class PruneLeafBase {
   ScoreFunction _score;
   detail::LeafProvider _provider;
   detail::LeafRecipe _recipe;
-  SkipReader<BoundReadSkip, InputType> _skip;
+  BlockCursor _cursor;
+  ScoreFunction _bound_func;
+  ScoreBoundSource::ptr _bound_source;
+  std::array<uint32_t, kCachedBlocks> _cached;
+  std::array<score_t, kCachedBlocks> _cached_scores;
+  uint32_t _cached_run = kNoBlock;
+  score_t _run_score = 0;
+  score_t _root_score = std::numeric_limits<score_t>::max();
+  score_t _threshold = std::numeric_limits<score_t>::lowest();
   doc_id_t _doc = 0;
   uint32_t _left_in_leaf = 0;
   uint32_t _len = 0;

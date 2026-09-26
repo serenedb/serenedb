@@ -28,12 +28,12 @@ template<typename InputType>
 class PostingPrunedLead : public PruneLeafBase<InputType, false> {
   using Base = PruneLeafBase<InputType, false>;
 
+  using Base::_cursor;
   using Base::_doc;
   using Base::_docs;
   using Base::_left_in_leaf;
   using Base::_left_in_list;
   using Base::_needs_reposition;
-  using Base::_skip;
   using Base::_upper_bound;
   using Base::Emit;
   using Base::ReadLeaf;
@@ -78,10 +78,10 @@ class PostingPrunedLead : public PruneLeafBase<InputType, false> {
     if (target <= _doc) [[unlikely]] {
       return _doc;
     }
-    if (_skip.Reader().IsLessThanUpperBound(target)) [[unlikely]] {
+    if (_cursor.UpperBound() < target) [[unlikely]] {
       Base::SeekToBlock(target);
       if (_needs_reposition) {
-        _doc = _skip.Reader().State().doc;
+        _doc = _cursor.Landing().doc;
       }
     }
     if (_left_in_leaf == 0) [[unlikely]] {

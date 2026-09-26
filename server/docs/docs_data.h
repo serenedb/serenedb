@@ -34,6 +34,4 @@ struct Doc {
 
 std::span<const Doc> GetDocs();
 
-std::string_view GetDocsHash();
-
 }  // namespace sdb::docs

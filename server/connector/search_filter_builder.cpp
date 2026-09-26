@@ -504,6 +504,9 @@ bool IsStrictComparisonShape(const duckdb::Expression& expr) {
   return false;
 }
 
+const SearchColumnInfo* FindColumnRefInfo(
+  const FilterContext& ctx, const duckdb::BoundColumnRefExpression& ref);
+
 namespace {
 
 // UNKNOWN exactly on NULL operands; false for shapes whose null behavior
@@ -1569,12 +1572,18 @@ bool TryDispatchTokenizeCast(BoolTarget parent, const FilterContext& ctx,
 void FromTSQueryMatch(BoolTarget filter, const FilterContext& ctx,
                       const duckdb::Expression& lhs,
                       const duckdb::Expression& rhs) {
-  // `@@` accepts either a bare column reference or a JSON-path expression
-  // (e.g. `content->>'host'`) on the field side. FindColumnInfoForExpr
-  // handles both, peeling any cast wrappers; the TSQuery cast is peeled
-  // up-front by UnwrapTSQueryCast.
-  const auto* left_info = FindColumnInfoForExpr(ctx, UnwrapTSQueryCast(lhs));
-  const auto* right_info = FindColumnInfoForExpr(ctx, UnwrapTSQueryCast(rhs));
+  const auto operand_info =
+    [&](const duckdb::Expression& side) -> const SearchColumnInfo* {
+    const auto& operand = UnwrapTSQueryCast(side);
+    if (operand.GetExpressionClass() ==
+        duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+      return FindColumnRefInfo(
+        ctx, operand.Cast<duckdb::BoundColumnRefExpression>());
+    }
+    return FindColumnInfoForExpr(ctx, operand);
+  };
+  const auto* left_info = operand_info(lhs);
+  const auto* right_info = operand_info(rhs);
   if (left_info && right_info) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1592,6 +1601,10 @@ void FromTSQueryMatch(BoolTarget filter, const FilterContext& ctx,
                "inverted(<col>) if none exists."));
   }
   const auto& expr = left_info ? rhs : lhs;
+  if (column_info->index_fields) {
+    BuildTSQuery(filter, ctx, *column_info, expr);
+    return;
+  }
   auto* tokenizer = column_info->tokenizer.analyzer.get();
   if (!tokenizer) {
     THROW_SQL_ERROR(
@@ -1776,7 +1789,8 @@ UnwrappedField UnwrapFieldCast(const duckdb::Expression& expr) {
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
                                               const duckdb::Expression& expr) {
   if (const auto* col_ref = TryGetColumnRef(expr)) {
-    return FindColumnRefInfo(ctx, *col_ref);
+    const auto* info = FindColumnRefInfo(ctx, *col_ref);
+    return info && !info->index_fields ? info : nullptr;
   }
 
   const auto unwrapped = UnwrapFieldCast(expr);

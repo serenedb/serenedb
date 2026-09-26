@@ -3,7 +3,7 @@ title: Nested Functions
 split: headings
 ---
 
-There are five [nested data types](../../sql/data_types/overview.md#nested--composite-types):
+There are five [nested data types](../../sql/data_types/index.md#nested--composite-types):
 
 | Name     | Type page                                       | Functions page                                      |
 | -------- | ----------------------------------------------- | --------------------------------------------------- |

@@ -27,15 +27,19 @@
 #include <deque>
 #include <exception>
 #include <functional>
+#include <iresearch/formats/formats.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/utils/crash_handler.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/remap_executable.hpp>
+#include <string>
 #include <utility>
 
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
 #include "docs/docs_loader.h"
+#include "docs/docs_shell_backend.h"
 #include "duckdb_shell.hpp"
 #include "network/pg/hba.h"
 #include "network/server.h"
@@ -151,7 +155,9 @@ int RunServer(int argc, char** argv) {
     background.OpenDelays();
     search.start();
     up_search = true;
-    docs::LoadEmbeddedDocs();
+    if (const auto bootstrapped = docs::RunDocsBootstrap()) {
+      return *bootstrapped;
+    }
     // Accept connections only once the indexes are loaded and loops are
     // running.
     network.StartListeners();
@@ -181,6 +187,7 @@ int RunServer(int argc, char** argv) {
 int RunSubcommand(int argc, char* argv[],
                   duckdb_shell::ShellSubcommand subcommand) {
   argv[1] = argv[0];
+  docs::RegisterShellDocsBackend();
   return duckdb_shell::Run(argc - 1, argv + 1, subcommand);
 }
 
@@ -190,8 +197,9 @@ extern "C" void json_object_seed(size_t seed);
 
 int main(int argc, char* argv[]) {
   json_object_seed(0);
+  irs::formats::Init();
+  irs::InitOptimizeRules();
   if (argc >= 2 && std::strcmp(argv[1], "shell") == 0) {
-    // Pure duckdb shell -- manages its own DuckDB instance, no SDB_*.
     return RunSubcommand(argc, argv, duckdb_shell::ShellSubcommand::SHELL);
   }
   if (argc >= 2 && std::strcmp(argv[1], "psql") == 0) {

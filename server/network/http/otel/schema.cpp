@@ -55,7 +55,6 @@ class Creator {
     auto ctx = std::make_shared<ConnectionContext>(
       *_conn->context, irs::StaticStrings::kDefaultUser, pg::kRootUser,
       database, database_id, nullptr, 0, nullptr);
-    ctx->MarkSystemWriter();
     connector::SereneDBClientState::Register(*_conn->context, std::move(ctx));
     _conn->context->session_user =
       std::string{irs::StaticStrings::kDefaultUser};

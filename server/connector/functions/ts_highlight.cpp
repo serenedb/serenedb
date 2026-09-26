@@ -30,9 +30,9 @@
 #include <cmath>
 #include <cstdint>
 #include <duckdb/common/constants.hpp>
-#include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
+#include <duckdb/common/vector_operations/binary_executor.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
 #include <duckdb/function/function_binder.hpp>
@@ -491,49 +491,30 @@ duckdb::string_t RenderPassages(duckdb::Vector& result, std::string_view doc,
 void RenderChunk(HighlightState& state, duckdb::DataChunk& args,
                  const highlight::HighlightOptions& opts,
                  duckdb::Vector& result) {
-  const auto count = args.size();
-
-  auto docs = args.data[0].Values<duckdb::string_t>();
-  duckdb::UnifiedVectorFormat list_format;
-  args.data[1].ToUnifiedFormat(count, list_format);
-  const auto* list_entries =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(list_format);
-
-  auto& list_child = duckdb::ListVector::GetEntry(args.data[1]);
-  const auto child_size = duckdb::ListVector::GetListSize(args.data[1]);
   duckdb::UnifiedVectorFormat child_format;
-  list_child.ToUnifiedFormat(child_size, child_format);
+  duckdb::ListVector::GetChild(args.data[1]).ToUnifiedFormat(child_format);
   const auto* child_data =
     duckdb::UnifiedVectorFormat::GetData<int32_t>(child_format);
 
-  auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
-  auto* result_data =
-    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
+  duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::list_entry_t,
+                                  duckdb::string_t>(
+    args.data[0], args.data[1], result, args.size(),
+    [&](duckdb::string_t doc_value, duckdb::list_entry_t hits) {
+      const auto doc = AsView(doc_value);
+      const HitsView view{hits, child_format, child_data};
+      ValidateHits(doc, view);
 
-  for (size_t i = 0; i < count; ++i) {
-    auto doc_value = docs[i];
-    const auto list_idx = list_format.sel->get_index(i);
-    if (!doc_value.IsValid() || !list_format.validity.RowIsValid(list_idx)) {
-      result_validity.SetInvalid(i);
-      continue;
-    }
-    const auto doc = AsView(doc_value.GetValue());
-    const HitsView view{list_entries[list_idx], child_format, child_data};
-    ValidateHits(doc, view);
+      if (opts.highlight_all) {
+        return RenderHighlightAll(result, doc, view, opts);
+      }
 
-    if (opts.highlight_all) {
-      result_data[i] = RenderHighlightAll(result, doc, view, opts);
-      continue;
-    }
+      auto passages = GetPassages(*state.sentence_iter, state.utext, doc, view,
+                                  opts.max_fragments, state.passages);
 
-    auto passages = GetPassages(*state.sentence_iter, state.utext, doc, view,
-                                opts.max_fragments, state.passages);
-
-    result_data[i] =
-      passages.empty()
-        ? RenderPrefix(result, doc, state, opts.max_words)
-        : RenderPassages(result, doc, state, passages, view, opts);
-  }
+      return passages.empty()
+               ? RenderPrefix(result, doc, state, opts.max_words)
+               : RenderPassages(result, doc, state, passages, view, opts);
+    });
 }
 
 // POSTINGS form: doc + LIST<INTEGER> offsets [+ options]. Sugar forms
@@ -543,7 +524,6 @@ void TsHighlightOffsets(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   auto& local_state = duckdb::ExecuteFunctionState::GetFunctionState(state)
                         ->Cast<TsHighlightLocalState>();
   auto& bind = GetBindData(state);
-  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   RenderChunk(local_state.state, args, bind.options, result);
 }
 

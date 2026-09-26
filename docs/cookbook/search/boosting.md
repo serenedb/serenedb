@@ -21,7 +21,7 @@ Every query below returns just `id` and `title`, so each change reads as rows tr
 
 ## Weight one field above another
 
-There is no `field:term` syntax in SereneDB. You write one `@@` clause per column and combine them with `OR`, then boost the clause that matters. Search "refund" and the page that only mentions it in the body edges ahead of the page actually titled "refund and returns": the two matches score close together and a title hit does not win on its own, which is the whole reason to reach for a boost.
+Write one `@@` clause per column and combine them with `OR`, then boost the clause that matters. Search "refund" and the page that only mentions it in the body edges ahead of the page actually titled "refund and returns": the two matches score close together and a title hit does not win on its own, which is the whole reason to reach for a boost.
 
 <SqlLogicTest id="cookbook/search/boosting/example_001" />
 

@@ -36,6 +36,9 @@ struct ToolArgs {
   std::optional<std::string> query;
   std::optional<std::string> path;
   std::optional<std::string> prefix;
+  std::optional<std::string> kind;
+  std::optional<std::string> name;
+  std::optional<std::string> sql;
   std::optional<int64_t> limit;
 };
 

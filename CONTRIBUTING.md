@@ -44,6 +44,34 @@ Additional build presets are defined in `CMakePresets.json`:
 - `clangd` -- RelWithDebInfo build (`build_clangd/`), works well with the clangd language server in VSCode
 - `bench` -- Release build (`build_bench/`), static linking, production-like performance
 
+### The embedded documentation index
+
+`docs/` is compiled into the binary together with a prebuilt search index of it.
+The read-only `sdb_docs` functions and the shell's `.docs` read that image straight
+from the binary, so the server indexes nothing at startup and leaves nothing in the
+datadir.
+
+The index cannot be produced from the sources the way the documentation text is,
+because building it needs the indexer that lives in the server being built. So
+the build does it in two passes:
+
+1. `serened-docs-bootstrap` links the same server with an empty index.
+2. `serened-docs-bootstrap <datadir> --build_docs_index=<out>` boots it on a
+   throwaway datadir, indexes the documentation, writes the index files and a
+   layout file naming their column and field ids to `<out>`, then exits before
+   any listener is started.
+3. `scripts/generate_docs_index.py` packs that directory with `#embed`, so the
+   generated translation unit stays a few hundred bytes whatever the index
+   weighs.
+4. `serened` links the generated unit.
+
+Every step is an ordinary build dependency -- the index is rebuilt whenever the
+bootstrap binary changes, which includes every change to `docs/`. So the image
+always matches the documentation compiled in beside it, and there is nothing to
+keep in sync by hand. It also means an edit anywhere in the server re-runs the
+whole chain. To skip it, configure with `-DSDB_EMBEDDED_DOCS=OFF`: that build
+carries no documentation, so `.docs` and `sdb_docs` have nothing to read.
+
 ### Launch
 
 ```bash

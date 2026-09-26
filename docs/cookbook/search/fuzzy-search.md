@@ -86,7 +86,7 @@ Require a prefix before applying fuzzy matching — useful for autocomplete:
 | *transpositions* | boolean | `true` | Count transpositions as single edit |
 | *prefix* | string | `''` | Required prefix before fuzzy matching |
 
-The number of dictionary terms the predicate expands to is capped by the [`sdb_levenshtein_max_terms`](../../sql/indexes/inverted/maintenance.md#session-settings) session setting (default `64`, per index segment), keeping the terms closest to the query. `SET sdb_levenshtein_max_terms = 0` matches every term within the edit distance.
+The number of dictionary terms the predicate expands to is capped by the [`sdb_levenshtein_max_terms`](../../sql/indexes/inverted/maintenance.md#session-settings) session setting (default `50`, per index segment), keeping the terms closest to the query. `SET sdb_levenshtein_max_terms = 0` matches every term within the edit distance.
 
 ## N-gram matching with `ts_ngram`
 

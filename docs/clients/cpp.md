@@ -22,7 +22,7 @@ sudo apt install libpqxx-dev
 #include <pqxx/pqxx>
 
 int main() {
-    pqxx::connection conn("host=localhost port=7890");
+    pqxx::connection conn("host=localhost port=7890 dbname=postgres user=postgres");
 ```
 
 ## Create a table and insert data

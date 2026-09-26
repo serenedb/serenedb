@@ -68,6 +68,29 @@ When different buckets need different credentials, give each secret a `SCOPE` â€
 
 <SqlLogicTest id="configuration/aws_credentials/example_scope" />
 
+## Keeping keys out of scripts
+
+A key written into a `CREATE SECRET` statement ends up wherever the statement does: a script, a shell history, a notebook. Read it from the environment instead.
+
+In `serened shell`, `getenv()` works inside the statement:
+
+```sql
+CREATE SECRET (
+    TYPE s3,
+    KEY_ID getenv('AWS_ACCESS_KEY_ID'),
+    SECRET getenv('AWS_SECRET_ACCESS_KEY'),
+    REGION 'us-east-1'
+);
+```
+
+A server has no `getenv()`. From psql 15 or newer, read the variables on the client with `\getenv` and interpolate them:
+
+```sql
+\getenv key_id AWS_ACCESS_KEY_ID
+\getenv secret AWS_SECRET_ACCESS_KEY
+CREATE SECRET (TYPE s3, KEY_ID :'key_id', SECRET :'secret', REGION 'us-east-1');
+```
+
 ## Putting a credential to work
 
 To attach an S3 Tables or Glue Iceberg catalog with the secret, see [Iceberg catalog authentication](./iceberg_authentication.md#aws-sigv4-s3-tables-and-glue). To read and write plain files, see [S3 Import](../cookbook/network_cloud_storage/s3_import.md), [S3 Export](../cookbook/network_cloud_storage/s3_export.md), and [S3 Iceberg Import](../cookbook/network_cloud_storage/s3_iceberg_import.md).

@@ -6,7 +6,7 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-SereneDB implements the SQL dialect of PostgreSQL. While we are able to syntactically parse any PostgreSQL-compliant statement, not all underlying functionality is implemented yet.
+SereneDB implements the SQL dialect of PostgreSQL. Not every PostgreSQL statement parses, and not all underlying functionality is implemented yet. Among the statements that fail to parse are `SAVEPOINT`, `DECLARE ... CURSOR` and `FETCH`, `SELECT ... FOR UPDATE`, `FETCH FIRST`, identity columns, `CREATE DOMAIN`, unlogged tables, materialized views, `CREATE EXTENSION`, `CREATE INDEX CONCURRENTLY` and PL/pgSQL function bodies; SQL-language functions work. `LISTEN`, `NOTIFY` and `UNLISTEN` parse and answer that they are not supported yet.
 
 This page gives a non-exhaustive overview of currently supported core SQL functionality, followed by the [behavioral differences](#behavioral-differences-from-postgresql) where SereneDB intentionally diverges from PostgreSQL. SereneDB strives for full PostgreSQL compatibility, and most features not currently supported will be added over time.
 
@@ -35,14 +35,14 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 |--------------------|---------------|--------------------------------------------------------------|
 | ADD COLUMN         | Yes           |  |
 | DROP COLUMN        | Yes           |  |
-| ADD CHECK          | No            | See [issue](https://github.com/serenedb/serenedb/issues/206) |
-| ADD CONSTRAINT     | No            | See [issue](https://github.com/serenedb/serenedb/issues/206) |
-| ADD FOREIGN KEY    | No            | See [issue](https://github.com/serenedb/serenedb/issues/206) |
-| DROP CONSTRAINT    | No            | See [issue](https://github.com/serenedb/serenedb/issues/206) |
-| ALTER COLUMN       | Partial       | `TYPE` is supported; `SET`/`DROP DEFAULT` and `SET NOT NULL` are not. See [issue](https://github.com/serenedb/serenedb/issues/206) |
-| SET DEFAULT        | No            | See [issue](https://github.com/serenedb/serenedb/issues/206) |
-| DROP DEFAULT       | No            | See [issue](https://github.com/serenedb/serenedb/issues/206) |
-| COLUMN TYPE        | Yes           |  |
+| ADD CHECK          | Yes           |                                                              |
+| ADD CONSTRAINT     | Yes           | `CHECK`, `UNIQUE` and `PRIMARY KEY` constraints; not `FOREIGN KEY` |
+| ADD FOREIGN KEY    | No            | Fails with `unsupported constraint type in ALTER TABLE statement` |
+| DROP CONSTRAINT    | Yes           |                                                              |
+| ALTER COLUMN       | Yes           | `TYPE`, `SET`/`DROP DEFAULT` and `SET NOT NULL` |
+| SET DEFAULT        | Yes           |                                                              |
+| DROP DEFAULT       | Yes           |                                                              |
+| COLUMN TYPE        | Yes           | Not on a column that has a `CHECK` constraint |
 | RENAME COLUMN      | Yes           |  |
 | RENAME TO          | Yes           |  |
 
@@ -68,8 +68,8 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Multicolumn Indexes     | Yes           |  |
 | Ordered Indexes         | Yes           |  |
 | Unique Indexes          | Yes           |                                                    |
-| Indexes on Expressions  | No            |                                                    |
-| Partial Indexes         | Partial       | [Inverted indexes](../sql/statements/create_index/inverted.md#partial-indexes) only; plain indexes reject `WHERE` |
+| Indexes on Expressions  | Yes           |                                                    |
+| Partial Indexes         | Partial       | [Inverted indexes](../sql/statements/create_index/inverted.md#partial-indexes) honor `WHERE`. A plain index accepts it but still indexes every row, keyed on the value and on whether the predicate holds, so a partial `UNIQUE` index also rejects duplicates outside its predicate |
 
 ### Misc
 | Feature                    | Support State | Details                                         |
@@ -866,28 +866,23 @@ Therefore, there are several instances where PostgreSQL throws an error while Se
 
 ### Case Sensitivity for Quoted Identifiers
 
-PostgreSQL is case-insensitive. The way PostgreSQL achieves case insensitivity is by lowercasing unquoted identifiers within SQL, whereas quoting preserves case, e.g., the following command creates a table named `mytable` but tries to query for `MyTaBLe` because quotes preserve the case.
+PostgreSQL lowercases unquoted identifiers and keeps the case of quoted ones. A SereneDB server does the same, so the following command creates a table named `mytable`, and the query for `"MyTaBLe"` fails because quotes keep the case:
 
 <SqlLogicTest id="sql/dialect/postgresql_compatibility/example_005" />
 
-PostgreSQL does not only treat quoted identifiers as case-sensitive; it treats all identifiers as case-sensitive, e.g., this also does not work:
+The rule works both ways: a table created with a quoted name is not found under an unquoted one.
 
 <SqlLogicTest id="sql/dialect/postgresql_compatibility/example_006" />
 
-Therefore, case-insensitivity in PostgreSQL only works if you never use quoted identifiers with different cases.
+Case insensitivity therefore only works if you never quote identifiers with different cases. Column names follow the same rule; aliases inside one query, such as the output columns of a subquery, match regardless of case.
 
-For SereneDB, this behavior was problematic when interfacing with other tools (e.g., Parquet, Pandas) that are case-sensitive by default – since all identifiers would be lowercased all the time.
-Therefore, SereneDB achieves case insensitivity by making identifiers fully case insensitive throughout the system but [_preserving their case_](./keywords_and_identifiers.md#rules-for-case-sensitivity).
-
-In SereneDB, the scripts above complete successfully:
+`serened shell` keeps DuckDB's behavior instead: identifiers are case-insensitive everywhere, even when quoted, and keep the case they were created with. A server session gets the same with the [`preserve_identifier_case` option](../configuration/overview.md), under which the scripts above complete successfully:
 
 <SqlLogicTest id="sql/dialect/postgresql_compatibility/preserved_case_tables/example_007" />
 
-PostgreSQL's behavior of lowercasing identifiers is accessible using the [`preserve_identifier_case` option](../configuration/overview.md#local-configuration-options):
+A server runs with `preserve_identifier_case = false`, which stores unquoted names in lowercase:
 
 <SqlLogicTest id="sql/dialect/postgresql_compatibility/example_008" />
-
-However, the case insensitive matching in the system for identifiers cannot be turned off.
 
 ### Using Double Equality Sign for Comparison
 

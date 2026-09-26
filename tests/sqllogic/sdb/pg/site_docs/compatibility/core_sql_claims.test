@@ -61,46 +61,6 @@ CREATE TABLE ddl_create_t10 (a INT, EXCLUDE USING gist (a WITH =));
 statement error
 SELECT ctid FROM ddl_create_t11;
 
-# ddl_alter: ADD COLUMN
-statement error
-ALTER TABLE ddl_alter_t ADD COLUMN c INTEGER;
-
-# ddl_alter: DROP COLUMN
-statement error
-ALTER TABLE ddl_alter_t DROP COLUMN b;
-
-# ddl_alter: ADD CHECK
-statement error
-ALTER TABLE ddl_alter_t ADD CHECK (a > 0);
-
-# ddl_alter: ADD CONSTRAINT
-statement error
-ALTER TABLE ddl_alter_t ADD CONSTRAINT ddl_alter_chk CHECK (a > 0);
-
-# ddl_alter: ADD FOREIGN KEY
-statement error
-ALTER TABLE ddl_alter_t ADD FOREIGN KEY (a) REFERENCES ddl_alter_t (a);
-
-# ddl_alter: DROP CONSTRAINT
-statement error
-ALTER TABLE ddl_alter_c DROP CONSTRAINT ddl_alter_pk;
-
-# ddl_alter: ALTER COLUMN
-statement error
-ALTER TABLE ddl_alter_t ALTER COLUMN a SET NOT NULL;
-
-# ddl_alter: SET DEFAULT
-statement error
-ALTER TABLE ddl_alter_t ALTER COLUMN a SET DEFAULT 0;
-
-# ddl_alter: DROP DEFAULT
-statement error
-ALTER TABLE ddl_alter_t ALTER COLUMN a DROP DEFAULT;
-
-# ddl_alter: COLUMN TYPE
-statement error
-ALTER TABLE ddl_alter_t ALTER COLUMN a TYPE BIGINT;
-
 # ddl_priv: CREATE ROLE
 # Roles are cluster-global and both engine passes share one server, so the
 # create must be idempotent across passes.
@@ -163,30 +123,6 @@ statement error
 ALTER TABLE ddl_priv_rls_t ENABLE ROW LEVEL SECURITY;
 ----
 db error: ERROR: Pragma Function with name serenedb_alter_table_row_security does not exist!<slt:ignore>
-
-
-# ddl_index: GIN
-statement error
-CREATE INDEX ddl_index_gin ON ddl_index_base USING gin (t);
-----
-db error: ERROR: Table with name ddl_index_base does not exist!
-Did you mean "<slt:ignore>"?
-
-
-# ddl_index: BRIN
-statement error
-CREATE INDEX ddl_index_brin ON ddl_index_base USING brin (a);
-----
-db error: ERROR: Table with name ddl_index_base does not exist!
-Did you mean "<slt:ignore>"?
-
-
-# ddl_index: Indexes on Expressions
-statement error
-CREATE INDEX ddl_index_expr ON ddl_index_base ((a + b));
-----
-db error: ERROR: Table with name ddl_index_base does not exist!
-Did you mean "<slt:ignore>"?
 
 
 # ddl_misc: CREATE SCHEMA

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import argparse
 from builtins import tuple
-import hashlib
 import pathlib
 import re
 import sys
@@ -12,7 +11,9 @@ DELIMITER = "sdbdoc"
 EXTENSIONS = {".md", ".mdx"}
 
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n", re.S)
-IMPORT_RE = re.compile(r"^\s*(import|export)\s.*$")
+MDX_ESM_RE = re.compile(
+    r"^(import\s.+\sfrom\s+['\"]|import\s+['\"]|export\s+(const|default|function|let|var)\b)")
+FENCE_RE = re.compile(r"^\s*(```|~~~)")
 COMPONENT_OPEN_RE = re.compile(r"^\s*<([A-Z][A-Za-z.]*)(\s[^>]*)?>\s*$")
 COMPONENT_CLOSE_RE = re.compile(r"^\s*</([A-Z][A-Za-z.]*)>\s*$")
 COMPONENT_SELF_CLOSING_RE = re.compile(r"<[A-Z][A-Za-z.]*(\s[^>]*)?/>")
@@ -20,6 +21,8 @@ HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 EMPTY_DIV_RE = re.compile(r"^\s*<div\s[^>]*>\s*</div>\s*$")
 WRAPPER_TAG_RE = re.compile(r"</?(details|summary)>")
 JSX_STYLE_RE = re.compile(r"\s*style=\{\{[^}]*\}\}")
+ADMONITION_OPEN_RE = re.compile(r"^:::(\w+)(?:[ \t]+(.*\S))?[ \t]*$")
+ADMONITION_CLOSE_RE = re.compile(r"^:::[ \t]*$")
 # "## Setup {#setup}" -> "## Setup". #{1,6} is one to six literal hashes (the
 # heading level); \{ and \} are literal braces; [^}]* is anything up to the
 # closing brace. Group 1 is the heading without the anchor.
@@ -42,10 +45,28 @@ def split_frontmatter(text: str) -> tuple[dict[str, str], str]:
 def clean(body: str) -> str:
     out = []
     depth = 0
+    quote = False
+    fence = False
     for line in HTML_COMMENT_RE.sub("", body).split("\n"):
-        if IMPORT_RE.match(line) or EMPTY_DIV_RE.match(line):
+        if FENCE_RE.match(line):
+            fence = not fence
+        elif fence:
+            out.append(f"> {line}".rstrip() if quote else line.rstrip())
             continue
-        if COMPONENT_OPEN_RE.match(line):
+        elif MDX_ESM_RE.match(line) or EMPTY_DIV_RE.match(line):
+            continue
+        if not quote and (match := ADMONITION_OPEN_RE.match(line)):
+            label = match.group(1).capitalize()
+            if match.group(2):
+                label += ": " + match.group(2)
+            out += [f"> **{label}**", ">"]
+            quote = True
+            continue
+        if quote and ADMONITION_CLOSE_RE.match(line):
+            out.append("")
+            quote = False
+            continue
+        if COMPONENT_OPEN_RE.match(line) and not line.rstrip().endswith("/>"):
             depth += 1
             continue
         if COMPONENT_CLOSE_RE.match(line):
@@ -59,7 +80,7 @@ def clean(body: str) -> str:
             line = line.strip()
         if line.strip() in ("", ">"):
             line = ""
-        out.append(line.rstrip())
+        out.append(f"> {line}".rstrip() if quote else line.rstrip())
     # Removing lines leaves holes: squeeze blank runs, trim blank edges, then
     # end with exactly one newline unless nothing is left at all.
     text = BLANK_RUN_RE.sub("\n\n", "\n".join(out)).strip("\n")
@@ -130,6 +151,12 @@ def collect(docs_dir: pathlib.Path, snippets: dict, report) -> list[Unit]:
             continue
         rel = path.relative_to(docs_dir).as_posix()
         meta, body = split_frontmatter(path.read_text(encoding="utf-8"))
+        if meta.get("draft") == "true":
+            continue
+        if "slug" in meta:
+            errors.append(f"{rel}: frontmatter key 'slug' is not supported, links to the site follow the path "
+                          f"(name the page index.md to serve its folder)")
+            continue
         title = meta.get("title") or path.stem
         split = meta.get("split")
         if split not in SPLIT_MODES:
@@ -151,17 +178,16 @@ def collect(docs_dir: pathlib.Path, snippets: dict, report) -> list[Unit]:
     return units
 
 
-def digest(units: list[Unit]) -> str:
-    h = hashlib.sha256()
-    for unit in units:
-        for field in unit.fields():
-            h.update(field.encode("utf-8"))
-            h.update(b"\0")
-    return h.hexdigest()
-
-
 def raw(text: str) -> str:
     return f'R"{DELIMITER}({text}){DELIMITER}"'
+
+
+def human_size(size: int) -> str:
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KiB"
+    return f"{size / (1024 * 1024):.1f} MiB"
 
 
 def render(units: list[Unit]) -> str:
@@ -176,8 +202,6 @@ def render(units: list[Unit]) -> str:
     else:
         out += ["", "std::span<const Doc> GetDocs() { return {}; }"]
     out += [
-        "",
-        f'std::string_view GetDocsHash() {{ return "{digest(units)}"; }}',
         "",
         "}  // namespace sdb::docs",
         "",
@@ -216,8 +240,10 @@ def main() -> None:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(render(units), encoding="utf-8")
     pages = len({u.path.split("#", 1)[0] for u in units})
+    size = sum(len(field.encode("utf-8")) for u in units for field in u.fields())
     report_snippets(report)
-    print(f"generated {args.output}: {pages} pages, {len(units)} rows, {report.inlined} snippets")
+    print(f"generated {args.output}: {pages} pages, {len(units)} rows, {report.inlined} snippets, "
+          f"{human_size(size)} ({size} bytes) of embedded text")
 
 
 if __name__ == "__main__":

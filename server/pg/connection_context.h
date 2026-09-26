@@ -98,9 +98,6 @@ class ConnectionContext final : public query::Transaction {
   // serenedb mutators that emitted them.
   bool IsStorageConnection() const noexcept { return _storage_connection; }
 
-  bool IsSystemWriter() const noexcept { return _system_writer; }
-  void MarkSystemWriter() noexcept { _system_writer = true; }
-
   void SetEffectiveRole(duckdb::idx_t role) { _effective_role_id = role; }
   void SetSessionRole(duckdb::idx_t role) {
     _session_role_id = role;
@@ -169,7 +166,6 @@ class ConnectionContext final : public query::Transaction {
   duckdb::idx_t _session_role_id;
   duckdb::idx_t _effective_role_id;
   bool _storage_connection = false;
-  bool _system_writer = false;
   pg::CopyInBridge* _copy_in_bridge = nullptr;
   std::string* _response_sink = nullptr;
   const otel::DecodedMetrics* _otel_metrics = nullptr;

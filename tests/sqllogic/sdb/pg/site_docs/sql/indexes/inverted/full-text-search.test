@@ -32,6 +32,26 @@ a	b
 1	quick brown fox jumps over lazy dog
 2	quick red fox jumps over lazy dog
 
+# DOCS_TEST: inspect_plan
+
+# DOCS_TEST_BODY
+
+query
+EXPLAIN SELECT a FROM sentences_idx WHERE b @@ 'fox';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────╮
+│ Index: sentences_idx │
+│ Lookup: table        │
+│ Index Filter:        │
+│ ╭─ Term ───────────╮ │
+│ │ Field: b(string) │ │
+│ │ Value: fox       │ │
+│ ╰──────────────────╯ │
+│ Projections: a       │
+│ ~1 row               │
+╰──────────────────────╯
+
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY

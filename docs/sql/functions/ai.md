@@ -46,7 +46,7 @@ The runnable examples below use a local Ollama server running the `all-minilm` m
 | `base_url` | Base URL of an OpenAI-compatible server. Omit for OpenAI itself. |
 | `embeddings_path` | Path of the embeddings endpoint, if it differs from the default. |
 
-## `ai_embed` {#ai_embed}
+## `ai_embed(text, model, secret_name)` {#ai_embed}
 
 `ai_embed(text, model, secret_name)` sends `text` to the embedding `model` of the provider named by `secret_name` and returns the embedding as a `FLOAT[]`. The vector's length is the model's embedding dimension — 384 for `all-minilm`:
 
@@ -90,12 +90,12 @@ Embed each row once, store the vector in a fixed-size `FLOAT[N]` column and buil
 
 <SqlLogicTest id="sql/functions/ai_ollama/build_index" />
 
-Then embed the query text at search time and rank by vector distance — the embedding model maps semantically related words close together:
+Then embed the query text at search time and rank by vector distance — the embedding model maps semantically related words close together. The index uses the cosine metric, so rank with its operator `<=>`; another operator would compute distances without the index:
 
 ```sql
 SELECT id, name
 FROM catalog_idx
-ORDER BY embedding <-> ai_embed('tropical fruit', 'all-minilm', 'local_ai')::FLOAT[384]
+ORDER BY embedding <=> ai_embed('tropical fruit', 'all-minilm', 'local_ai')::FLOAT[384]
 LIMIT 3;
 ```
 

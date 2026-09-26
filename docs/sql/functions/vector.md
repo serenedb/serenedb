@@ -31,8 +31,10 @@ Every vector argument must be a fixed-size float array — `FLOAT[3]`, `FLOAT[76
 | [`a <+> b`](#distance-operators) | L1 | lower = closer | Indexed distance, equivalent to `l1_distance`. |
 | [`a <=> b`](#distance-operators) | cosine | lower = closer | Indexed distance, equivalent to `cosine_distance`. |
 | [`a <#> b`](#distance-operators) | ip | lower = closer | Indexed distance, equivalent to `negative_inner_product`. |
-| [`l2_norm(a)`](#norms) · [`l1_norm(a)`](#norms) | — | — | Vector magnitude (L2 / L1). |
-| [`l2_normalize(a)`](#norms) · [`l1_normalize(a)`](#norms) | — | — | Scale to a unit vector (L2 / L1). |
+| [`l2_norm(a)`](#norms) | L2 | — | Vector magnitude. |
+| [`l1_norm(a)`](#norms) | L1 | — | Vector magnitude. |
+| [`l2_normalize(a)`](#norms) | L2 | — | Scale to a unit vector. |
+| [`l1_normalize(a)`](#norms) | L1 | — | Scale to a unit vector. |
 
 ## Choosing a metric {#choosing-a-metric}
 
@@ -182,8 +184,10 @@ Inner product (`<#>`, `ip` index) — the operator returns the *negative* dot pr
 
 | Function | Operand | Returns |
 | :--- | :--- | :--- |
-| `l2_norm(a)` · `l1_norm(a)` | `FLOAT[N]` | scalar magnitude |
-| `l2_normalize(a)` · `l1_normalize(a)` | `FLOAT[N]` | `FLOAT[N]` unit vector |
+| `l2_norm(a)` | `FLOAT[N]` | scalar magnitude under the L2 norm |
+| `l1_norm(a)` | `FLOAT[N]` | scalar magnitude under the L1 norm |
+| `l2_normalize(a)` | `FLOAT[N]` | `FLOAT[N]` unit vector under the L2 norm |
+| `l1_normalize(a)` | `FLOAT[N]` | `FLOAT[N]` unit vector under the L1 norm |
 
 <SqlLogicTest id="sql/functions/full_text_search/l2_norm" />
 
@@ -208,7 +212,7 @@ Elasticsearch [kNN search](https://www.elastic.co/guide/en/elasticsearch/referen
 | [`knn`](https://www.elastic.co/guide/en/elasticsearch/reference/current/knn-search.html) query (`k`, `num_candidates`) | [`ORDER BY emb <-> $q LIMIT k`](#knn) |
 | [`knn`](https://www.elastic.co/guide/en/elasticsearch/reference/current/knn-search.html) with `filter` | a `WHERE` clause beside the `ORDER BY` ([Hybrid Search](../indexes/inverted/hybrid-search.md)) |
 
-**Notable differences.** SereneDB adds a Manhattan metric ([`<+>`](#distance-operators) / [`l1_distance`](#l1_distance)) that Elasticsearch lacks, while Elasticsearch's `l_inf` / Hamming (binary-vector) similarities have no SereneDB equivalent. Cluster count ([`nlist`](../indexes/inverted/vector-search.md)) and vector compression ([`quant`](../indexes/inverted/vector-search.md#quantization)) are set at index build time, while [`sdb_nprobe`](../indexes/inverted/maintenance.md#session-settings) — SereneDB's analogue of `num_candidates` — and [`sdb_rerank_factor`](../indexes/inverted/maintenance.md#session-settings) tune recall per session.
+**Notable differences.** SereneDB adds a Manhattan metric ([`<+>`](#distance-operators) / [`l1_distance`](#l1_distance)) that Elasticsearch lacks, while Elasticsearch's `l_inf` / Hamming (binary-vector) similarities have no SereneDB equivalent. Cluster count ([`nlist`](../indexes/inverted/vector-search.md)) and vector compression ([`quant`](../indexes/inverted/vector-search.md#quantization)) are set at index build time, while [`sdb_ivf_search_nprobe`](../indexes/inverted/maintenance.md#session-settings) — SereneDB's analogue of `num_candidates` — and [`sdb_rerank_factor`](../indexes/inverted/maintenance.md#session-settings) tune recall per session.
 
 ## See also
 

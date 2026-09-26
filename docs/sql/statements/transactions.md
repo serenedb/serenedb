@@ -26,7 +26,7 @@ To commit a transaction, run:
 
 <SqlLogicTest id="sql/statements/transactions/example_002" />
 
-If you are not in an active transaction, the `COMMIT` statement will fail.
+If you are not in an active transaction, `COMMIT` does nothing and warns `there is no transaction in progress`, as in PostgreSQL.
 
 ### Rolling Back a Transaction
 
@@ -40,7 +40,9 @@ You can also use the abort command, which has an identical behavior:
 
 <SqlLogicTest id="sql/statements/transactions/example_004" />
 
-If you are not in an active transaction, the `ROLLBACK` and `ABORT` statements will fail.
+If you are not in an active transaction, `ROLLBACK` and `ABORT` do nothing and warn `there is no transaction in progress`.
+
+A statement that fails inside a transaction aborts the whole transaction: every later statement answers `current transaction is aborted, commands ignored until end of transaction block` until `ROLLBACK` (a `COMMIT` then rolls back as well). There are no savepoints, so no part of the transaction can be kept.
 
 ## Multi-Statement Transactions
 
@@ -50,7 +52,12 @@ When multiple SQL statements are submitted together (e.g., separated by semicolo
 
 SereneDB's concurrency model guarantees snapshot isolation. Transactions that violate this isolation level are aborted.
 
-Using [PostgreSQL's transaction isolation levels](https://www.postgresql.org/docs/current/transaction-iso.html), SereneDB guarantees _repeatable reads_.
+Two of [PostgreSQL's transaction isolation levels](https://www.postgresql.org/docs/current/transaction-iso.html) exist:
+
+-   `REPEATABLE READ`, the default: the transaction reads one snapshot from its first statement to its end.
+-   `READ COMMITTED`: each statement sees the data committed before it started, until the transaction writes. From its first `INSERT`, `UPDATE` or `DELETE` on, the transaction keeps one snapshot to its end, so its own uncommitted rows stay consistent.
+
+Pick one with `BEGIN ISOLATION LEVEL READ COMMITTED`. `SERIALIZABLE` is refused with `transaction isolation level "serializable" is not supported`.
 
 ## Example
 

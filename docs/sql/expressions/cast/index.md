@@ -15,7 +15,7 @@ Casting can occur either implicitly or explicitly. The syntax described here per
 
 ## Explicit Casting
 
-The standard SQL syntax for explicit casting is `CAST(expr AS TYPENAME)`, where `TYPENAME` is a name (or alias) of one of [SereneDB's data types](../../../sql/data_types/overview.md). SereneDB also supports the shorthand `expr::TYPENAME`, which is also present in PostgreSQL.
+The standard SQL syntax for explicit casting is `CAST(expr AS TYPENAME)`, where `TYPENAME` is a name (or alias) of one of [SereneDB's data types](../../../sql/data_types/index.md). SereneDB also supports the shorthand `expr::TYPENAME`, which is also present in PostgreSQL.
 
 <SqlLogicTest id="sql/expressions/cast/index/example_001" />
 

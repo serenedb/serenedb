@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 MARKER_RE = re.compile(r"^\s*#\s+DOCS_TEST:\s*([A-Za-z0-9_.-]+)\s*$")
 BODY_RE = re.compile(r"^\s*#\s+DOCS_TEST_BODY\s*$")
+END_RE = re.compile(r"^\s*#\s+DOCS_TEST_END\s*$")
 RAW_RE = re.compile(r"^\s*#\s+DOCS_TEST_RAW\s*$")
 RAW_LINE_RE = re.compile(r"^\s*#\|( ?)(.*)$")
 HEADER_RE = re.compile(r"^(query|statement)\b", re.I)
@@ -59,7 +60,8 @@ def _after_gap(lines, index):
 
 def _header_result(header):
     if header.lower().startswith("statement"):
-        return header[len("statement") :].strip() or "ok"
+        tail = header[len("statement") :].strip()
+        return tail if tail.lower().startswith("error") else "ok"
     tail = header[len("query") :].strip()
     return tail if tail.lower().startswith("error") else ""
 
@@ -112,8 +114,10 @@ def parse_test_file(text):
     if not markers or not any(BODY_RE.match(line) for line in lines):
         return {}
     bounds = [line for line, _ in markers[1:]] + [len(lines)]
+    ends = [i for i, line in enumerate(lines) if END_RE.match(line)]
     snippets = {}
     for (marker_line, name), bound in zip(markers, bounds):
+        bound = next((end for end in ends if marker_line < end < bound), bound)
         region = lines[marker_line + 1 : bound]
         body_index = _find(region, 0, BODY_RE)
         if body_index == -1:

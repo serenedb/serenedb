@@ -1,0 +1,217 @@
+hash-threshold 100
+
+# `to_tsquery` names one field: the one `@@` is applied to. A whole-index
+# operand -- the relation's `tableoid` -- lets the query name its own fields
+# instead, so one boolean can span several columns.
+
+statement ok
+CREATE TABLE tsf (a INTEGER PRIMARY KEY, title VARCHAR, body VARCHAR, tag VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tsf_text AS
+    split_text(case := 'lower', break := 'alpha')
+    WITH (frequency, position);
+
+statement ok
+CREATE INDEX tsf_idx ON tsf USING inverted(title tsf_text, body tsf_text, tag);
+
+statement ok
+INSERT INTO tsf VALUES (1, 'quick fox', 'lazy dog sleeps', 'animals');
+
+statement ok
+INSERT INTO tsf VALUES (2, 'lazy dog', 'quick fox runs', 'animals');
+
+statement ok
+INSERT INTO tsf VALUES (3, 'slow turtle', 'nothing here', 'reptiles');
+
+statement ok
+VACUUM (REFRESH_TABLE) tsf;
+
+# ----------------------------------------------------------------------
+# A column operand still pins the field, and a prefix is refused.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM tsf_idx WHERE title @@ to_tsquery('fox') ORDER BY a;
+----
+a
+1
+
+statement error
+SELECT a FROM tsf_idx WHERE title @@ to_tsquery('body:fox');
+----
+db error: ERROR: to_tsquery parse error: field prefixes need a whole-index operand<slt:ignore>
+
+
+statement error
+SELECT a FROM tsf_idx WHERE title @@ to_tsquery('title:fox');
+----
+db error: ERROR: to_tsquery parse error: field prefixes need a whole-index operand<slt:ignore>
+
+
+# ----------------------------------------------------------------------
+# tableoid: the field comes from the query.
+# ----------------------------------------------------------------------
+
+# Scoping to one field matches the column operand exactly.
+query
+SELECT a FROM tsf_idx WHERE tableoid @@ to_tsquery('title:fox') ORDER BY a;
+----
+a
+1
+
+query
+SELECT a FROM tsf_idx WHERE tableoid @@ to_tsquery('body:fox') ORDER BY a;
+----
+a
+2
+
+query
+SELECT a FROM tsf_idx WHERE tableoid @@ to_tsquery('title:fox OR body:fox') ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsf_idx WHERE tableoid @@ to_tsquery('title:dog AND body:fox') ORDER BY a;
+----
+a
+2
+
+# A group inherits the field of its prefix.
+query
+SELECT a FROM tsf_idx WHERE tableoid @@ to_tsquery('title:(quick OR slow)') ORDER BY a;
+----
+a
+1
+3
+
+# The scope ends with the clause: `dog` here is body's, not title's.
+query
+SELECT a FROM tsf_idx WHERE tableoid @@ to_tsquery('title:fox body:dog') ORDER BY a;
+----
+a
+1
+
+# A keyword column is matched verbatim, not analyzed.
+query
+SELECT a FROM tsf_idx WHERE tableoid @@ to_tsquery('tag:reptiles') ORDER BY a;
+----
+a
+3
+
+query
+SELECT count(*) FROM tsf_idx WHERE tableoid = 'tsf'::regclass;
+----
+count
+3
+
+query
+SELECT count(*) FROM tsf_idx WHERE tableoid IN ('tsf'::regclass);
+----
+count
+3
+
+query
+SELECT a FROM tsf_idx WHERE title @@ to_tsquery('fox') AND tableoid = 'tsf'::regclass ORDER BY a;
+----
+a
+1
+
+query
+SELECT count(*) FROM tsf_idx WHERE tableoid = 0;
+----
+count
+0
+
+# ----------------------------------------------------------------------
+# Errors
+# ----------------------------------------------------------------------
+
+# Every term needs a field: the operand is the whole index, so a bare term has
+# nowhere to go.
+statement error
+SELECT a FROM tsf_idx WHERE tableoid @@ to_tsquery('fox');
+----
+db error: ERROR: every term must name a field: there is no default field<slt:ignore>
+
+
+statement error
+SELECT a FROM tsf_idx WHERE tableoid @@ to_tsquery('title:fox OR dog');
+----
+db error: ERROR: every term must name a field: there is no default field<slt:ignore>
+
+
+# A field named inside a group applies to its own term only; the group's field
+# picks up again after it.
+query
+SELECT a FROM tsf_idx WHERE tableoid @@ to_tsquery('title:(body:runs fox)') ORDER BY a;
+----
+a
+1
+2
+
+# A field named inside a group ends with the group.
+statement error
+SELECT a FROM tsf_idx WHERE tableoid @@ to_tsquery('(title:dog body:sleeps) turtle');
+----
+db error: ERROR: every term must name a field: there is no default field<slt:ignore>
+
+
+# A name that is not an indexed column of this relation.
+statement error
+SELECT a FROM tsf_idx WHERE tableoid @@ to_tsquery('nosuch:fox');
+----
+db error: ERROR: to_tsquery parse error: unknown field 'nosuch'<slt:ignore>
+
+
+# A column that exists but carries no term dictionary.
+statement error
+SELECT a FROM tsf_idx WHERE tableoid @@ to_tsquery('a:1');
+----
+db error: ERROR: to_tsquery parse error: unknown field 'a'<slt:ignore>
+
+
+statement ok
+DROP TABLE tsf;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tsf_synonyms AS
+    split_text(case := 'lower') | expand_solr_synonyms('car, automobile, auto')
+    WITH (frequency, position);
+
+statement ok
+CREATE TABLE tsf_cars (id INTEGER PRIMARY KEY, title VARCHAR, body VARCHAR);
+
+statement ok
+INSERT INTO tsf_cars VALUES (1, 'one', 'a red car here'), (2, 'two', 'red paint on a car'), (3, 'three', 'the red automobile');
+
+statement ok
+CREATE INDEX tsf_cars_idx ON tsf_cars USING inverted (id, title tsf_text, body tsf_synonyms);
+
+statement ok
+VACUUM (REFRESH_TABLE) tsf_cars;
+
+query
+SELECT id FROM tsf_cars_idx WHERE tableoid @@ to_tsquery('body:auto') ORDER BY id;
+----
+id
+1
+2
+3
+
+query
+SELECT c.id, abs(c.s - r.s) < 1e-6 AS same
+FROM (SELECT id, BM25(tsf_cars_idx.tableoid) AS s FROM tsf_cars_idx WHERE tableoid @@ to_tsquery('body:car')) c
+JOIN (SELECT id, BM25(tsf_cars_idx.tableoid) AS s FROM tsf_cars_idx WHERE tableoid @@ to_tsquery('body:red')) r
+ON c.id = r.id
+ORDER BY c.id;
+----
+id	same
+1	t
+2	t
+3	t
+
+statement ok
+DROP TABLE tsf_cars;

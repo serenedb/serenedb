@@ -73,7 +73,8 @@ The build-time half: which text search dictionary the content column is analyzed
 | Parameter | Type | Default | Meaning |
 | :--- | :--- | :--- | :--- |
 | `dictionary_name` | `str` | `"langchain_fts_dict"` | Name of the dictionary created for the content column. |
-| `dictionary_options` | `str` | `"template = 'segmentation', case = 'lower', frequency = true, position = true, norm = true"` | Options for `CREATE TEXT SEARCH DICTIONARY`. See [The text search dictionary](#dictionary). |
+| `dictionary_expression` | `str` | `"split_text(case := 'lower') WITH (frequency, position, norm)"` | The analyzer expression after `CREATE TEXT SEARCH DICTIONARY ... AS`. See [The text search dictionary](#dictionary). |
+| `dictionary_options` | `str` | `"template = 'segmentation', case = 'lower', frequency = true, position = true, norm = true"` | The same dictionary as the option list of servers before 26.09.2, used only when the server rejects `dictionary_expression`. |
 
 Pass it to [`init_vectorstore_table()`](./engine.md#init_vectorstore_table) as `hybrid_index_config=`, or to [`apply_hybrid_search_index()`](./indexes.md#apply_hybrid_search_index) as `index_config=`. Both default to `HybridIndexConfig()` when a combined index is requested without one.
 
@@ -159,13 +160,13 @@ The lexical branch scores with `BM25`, which needs term frequencies recorded in 
 
 Because this is settled when the index is built, changing it later means rebuilding: drop the dictionary, then re-create the index with the new config.
 
-If you customize `dictionary_options`, keep these:
+If you customize `dictionary_expression`, keep these flags in its `WITH` clause:
 
-| Option | Needed for |
+| Flag | Needed for |
 | :--- | :--- |
-| `frequency = true` | Any relevance scoring at all |
-| `position = true` | Phrase and proximity queries |
-| `norm = true` | The language-model scorers |
+| `frequency` | Any relevance scoring at all |
+| `position` | Phrase and proximity queries |
+| `norm` | The language-model scorers |
 
 See [Text Analysis](../../sql/indexes/inverted/text-analysis.md) for the available templates and options, and [Scoring](../../sql/functions/search/scoring.md) for the scorers.
 

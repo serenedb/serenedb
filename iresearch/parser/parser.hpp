@@ -20,9 +20,15 @@
 
 #pragma once
 
+#include <absl/strings/str_cat.h>
+
+#include <algorithm>
+#include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "iresearch/analysis/token_attributes.hpp"
@@ -56,15 +62,26 @@ enum class Modifier {
 };
 
 struct ParserContext {
+  struct Field {
+    irs::field_id id{irs::field_limits::invalid()};
+    irs::analysis::Tokenizer* tokenizer{nullptr};
+  };
+
+  class FieldProvider {
+   public:
+    virtual ~FieldProvider() = default;
+
+    virtual bool Resolve(std::string_view name, Field& out) const = 0;
+  };
+
   irs::field_id default_field_id{irs::field_limits::invalid()};
-  std::string_view default_field_name;
+  const FieldProvider* fields{nullptr};
   irs::BooleanFilter* current_root;
   irs::analysis::Tokenizer* tokenizer;
   irs::ValueAnalyzer value_analyzer;
-  irs::ValueTokens<irs::TokenLayout::TermsPos> value_tokens;
+  std::optional<irs::ValueTokens<irs::TokenLayout::TermsPos>> value_tokens;
   std::string error_message;
   Modifier last_mod{Modifier::None};
-  bool strict_field = false;
   size_t fuzzy_max_terms = 50;
 
   irs::ByPhrase* phrase{nullptr};
@@ -76,10 +93,7 @@ struct ParserContext {
 
   ParserContext(irs::BooleanFilter& root, irs::field_id field_id,
                 irs::analysis::Tokenizer& tokenizer)
-    : default_field_id(field_id),
-      current_root{&root},
-      tokenizer{&tokenizer},
-      value_tokens{tokenizer.Traits()} {}
+    : default_field_id(field_id), current_root{&root}, tokenizer{&tokenizer} {}
 
   // A clause is held back until the connector after it has been read, which
   // is what decides where it goes: `AND` makes both of the clauses it joins
@@ -88,9 +102,9 @@ struct ParserContext {
   // moved.
   void AddClause(Conjunction conj) {
     Place(conj == Conjunction::And);
-    _pending = std::move(_built);
-    _pending_mod = last_mod;
-    _pending_and = conj == Conjunction::And;
+    _list = {.pending = std::move(_built),
+             .pending_mod = last_mod,
+             .pending_and = conj == Conjunction::And};
   }
 
   // The last clause of a list has no connector after it, so it is placed on
@@ -112,7 +126,7 @@ struct ParserContext {
     const auto tokens = Tokens(text);
     if (tokens.size() > 1) {
       auto& several = Build<irs::BooleanFilter>();
-      const auto pos = value_tokens.pos();
+      const auto pos = value_tokens->pos();
       const bool one_position = pos.front() == pos.back();
       if (one_position) {
         several.SetMergeType(irs::ScoreMergeType::Max);
@@ -141,7 +155,7 @@ struct ParserContext {
       return several;
     }
     auto& f = Build<irs::ByTerm>();
-    *f.mutable_field_id() = default_field_id;
+    *f.mutable_field_id() = FieldId();
     f.mutable_options()->term =
       tokens.empty() ? irs::bytes_view{text} : irs::AsBytesView(tokens.front());
     return f;
@@ -149,7 +163,7 @@ struct ParserContext {
 
   irs::ByRegexp& AddRegex(std::string_view value) {
     auto& f = Build<irs::ByRegexp>();
-    *f.mutable_field_id() = default_field_id;
+    *f.mutable_field_id() = FieldId();
     f.mutable_options()->pattern = irs::ViewCast<irs::byte_type>(value);
     return f;
   }
@@ -158,20 +172,15 @@ struct ParserContext {
   // to is only known once the modifier before it has been read. The clause
   // the enclosing list was holding back waits with it.
   irs::BooleanFilter& BeginGroup() {
-    _open.emplace_back(std::move(_pending), _pending_mod, _pending_and,
-                       std::make_unique<irs::BooleanFilter>());
-    _pending = {};
-    _pending_mod = Modifier::None;
-    _pending_and = false;
+    _open.push_back({.outer = std::exchange(_list, {}),
+                     .node = std::make_unique<irs::BooleanFilter>()});
     return *_open.back().node;
   }
 
   irs::Filter& EndGroup(irs::Filter* parent_root) {
     EndClauseList();
     auto& open = _open.back();
-    _pending = std::move(open.pending);
-    _pending_mod = open.pending_mod;
-    _pending_and = open.pending_and;
+    _list = std::move(open.outer);
     auto& node = *open.node;
     _built = std::move(open.node);
     _open.pop_back();
@@ -179,20 +188,52 @@ struct ParserContext {
     return node;
   }
 
-  // A named field is read where the default field is: there is nothing here
-  // that maps a name to a field of the index, so the name is only checked.
   bool CheckField(std::string_view name) {
-    if (strict_field && name != default_field_name) {
-      error_message =
-        "field-prefix in strict-field mode must match the default field";
+    if (!fields) {
+      error_message = "field prefixes need a whole-index operand";
       return false;
     }
+    Field field;
+    if (!fields->Resolve(name, field)) {
+      error_message = absl::StrCat("unknown field '", name, "'");
+      return false;
+    }
+    _list.field = field;
     return true;
+  }
+
+  Field CurrentField() const noexcept {
+    if (irs::field_limits::valid(_list.field.id)) {
+      return _list.field;
+    }
+    const auto groups = _open | std::views::reverse;
+    const auto group = std::ranges::find_if(groups, [](const OpenGroup& open) {
+      return irs::field_limits::valid(open.outer.field.id);
+    });
+    return group == groups.end() ? Field{} : group->outer.field;
+  }
+
+  irs::field_id FieldId() {
+    if (const auto field = CurrentField(); irs::field_limits::valid(field.id)) {
+      return field.id;
+    }
+    if (!irs::field_limits::valid(default_field_id)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("every term must name a field: there is no default field"),
+        ERR_HINT("Write field:term, e.g. title:foo OR body:bar."));
+    }
+    return default_field_id;
+  }
+
+  irs::analysis::Tokenizer* FieldTokenizer() const noexcept {
+    const auto field = CurrentField();
+    return irs::field_limits::valid(field.id) ? field.tokenizer : tokenizer;
   }
 
   void BeginPhrase() {
     auto& f = Build<irs::ByPhrase>();
-    *f.mutable_field_id() = default_field_id;
+    *f.mutable_field_id() = FieldId();
     phrase = &f;
     offs_min = 0;
     offs_max = 0;
@@ -278,7 +319,7 @@ struct ParserContext {
 
   void BeginNGram(float threshold) {
     auto& f = Build<irs::ByNGramSimilarity>();
-    *f.mutable_field_id() = default_field_id;
+    *f.mutable_field_id() = FieldId();
     f.mutable_options()->threshold = threshold;
     ngram = &f;
   }
@@ -297,7 +338,7 @@ struct ParserContext {
 
   irs::ByPrefix& AddPrefix(std::string_view value) {
     auto& f = Build<irs::ByPrefix>();
-    *f.mutable_field_id() = default_field_id;
+    *f.mutable_field_id() = FieldId();
     SDB_ASSERT(!value.empty() && value.back() == '*');
     value.remove_suffix(1);
     f.mutable_options()->term = Normalize(value);
@@ -306,7 +347,7 @@ struct ParserContext {
 
   irs::ByWildcard& AddWildcard(std::string_view value) {
     auto& f = Build<irs::ByWildcard>();
-    *f.mutable_field_id() = default_field_id;
+    *f.mutable_field_id() = FieldId();
     const auto wildcard = FindPattern(value);
     auto pattern = Normalize(value.substr(0, wildcard));
     pattern.append(Pattern(value.substr(wildcard)));
@@ -317,7 +358,7 @@ struct ParserContext {
   irs::ByRange& AddRange(std::string_view min_val, std::string_view max_val,
                          bool inc_min, bool inc_max) {
     auto& f = Build<irs::ByRange>();
-    *f.mutable_field_id() = default_field_id;
+    *f.mutable_field_id() = FieldId();
     auto& range = f.mutable_options()->range;
     if (min_val == "*") {
       range.min_type = irs::BoundType::Unbounded;
@@ -417,23 +458,28 @@ struct ParserContext {
   // `AND` binds both of the clauses it joins, so the one held back is
   // required if either the connector before it or the one after it was `AND`.
   void Place(bool next_is_and) {
-    if (_pending) {
-      current_root->Add(std::move(_pending),
-                        BucketOf(_pending_mod, _pending_and || next_is_and));
+    if (_list.pending) {
+      current_root->Add(
+        std::move(_list.pending),
+        BucketOf(_list.pending_mod, _list.pending_and || next_is_and));
     }
   }
 
-  struct OpenGroup {
+  struct ClauseList {
     irs::Filter::ptr pending;
-    Modifier pending_mod;
-    bool pending_and;
+    Modifier pending_mod{Modifier::None};
+    bool pending_and = false;
+    Field field;
+  };
+
+  struct OpenGroup {
+    ClauseList outer;
     std::unique_ptr<irs::BooleanFilter> node;
   };
 
+  ClauseList _list;
+  const irs::analysis::Tokenizer* _tokens_for{nullptr};
   irs::Filter::ptr _built;
-  irs::Filter::ptr _pending;
-  Modifier _pending_mod{Modifier::None};
-  bool _pending_and = false;
   std::vector<OpenGroup> _open;
 
   void AddTermTo(irs::BooleanFilter& node, irs::Occur occur,
@@ -443,9 +489,8 @@ struct ParserContext {
 
   void AddTermTo(irs::BooleanFilter& node, irs::Occur occur,
                  irs::bytes_view word) {
-    node.Add(
-      irs::TermClause{.field = default_field_id, .term = irs::bstring{word}},
-      occur);
+    node.Add(irs::TermClause{.field = FieldId(), .term = irs::bstring{word}},
+             occur);
   }
 
   void RequirePair(std::string_view name) {
@@ -516,12 +561,20 @@ struct ParserContext {
   }
 
   std::span<const duckdb::string_t> Tokens(const irs::bstring& text) {
+    auto* analyzer = FieldTokenizer();
+    if (!analyzer) {
+      return {};
+    }
+    if (analyzer != _tokens_for) {
+      value_tokens.emplace(analyzer->Traits());
+      _tokens_for = analyzer;
+    }
     value_analyzer.Analyze(
-      *tokenizer,
+      *analyzer,
       duckdb::string_t{reinterpret_cast<const char*>(text.data()),
                        static_cast<uint32_t>(text.size())},
-      value_tokens);
-    return value_tokens.terms();
+      *value_tokens);
+    return value_tokens->terms();
   }
 
   irs::bstring Analyze(std::string_view word) {
@@ -601,7 +654,7 @@ struct ParserContext {
 
   irs::ByEditDistance& AddFuzzyTerm(irs::bstring value, int distance) {
     auto& f = Build<irs::ByEditDistance>();
-    *f.mutable_field_id() = default_field_id;
+    *f.mutable_field_id() = FieldId();
     f.mutable_options()->term = std::move(value);
     f.mutable_options()->max_distance = static_cast<uint8_t>(distance);
     f.mutable_options()->max_terms = fuzzy_max_terms;

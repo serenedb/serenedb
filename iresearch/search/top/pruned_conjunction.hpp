@@ -114,16 +114,17 @@ class PrunedConjunction : public Root {
         const uint64_t range = last - doc + 1;
         _others.TakeReads();
         if (!ScoreFirstPays(bucket) && ++bucket.ticks < bucket.interval) {
-          doc = DocFirst(doc, last, std::numeric_limits<score_t>::max(),
-                         collector);
+          doc =
+            DocFirst(doc, last, std::numeric_limits<score_t>::max(), collector);
           bucket.doc_reads = bucket.doc_reads / 2 + _others.TakeReads();
           bucket.doc_range = bucket.doc_range / 2 + range;
           continue;
         }
         FlushBatch(collector);
-        const auto seen = ScoreFirst(last, collector);
+        const auto [seen, dropped] = ScoreFirst(last, others_max, collector);
         bucket.sf_seen = bucket.sf_seen / 2 + seen;
-        bucket.sf_dropped = bucket.sf_dropped / 2 + _others.TakeDropped();
+        bucket.sf_dropped =
+          bucket.sf_dropped / 2 + dropped + _others.TakeDropped();
         bucket.sf_reads = bucket.sf_reads / 2 + _others.TakeReads();
         bucket.sf_range = bucket.sf_range / 2 + range;
         if (bucket.ticks != 0) {
@@ -135,7 +136,7 @@ class PrunedConjunction : public Root {
         doc = _lead.Value();
         continue;
       }
-      ScoreFirst(last, collector);
+      ScoreFirst(last, others_max, collector);
       doc = _lead.Value();
     }
     if constexpr (kDocFirst) {
@@ -175,45 +176,52 @@ class PrunedConjunction : public Root {
     }
     const auto doc_reads = bucket.doc_reads * bucket.sf_range;
     const auto sf_reads = bucket.sf_reads * bucket.doc_range;
-    return doc_reads > sf_reads &&
-           (doc_reads - sf_reads) * kDocsPerSavedRead >=
-             bucket.sf_seen * bucket.doc_range;
+    return doc_reads > sf_reads && (doc_reads - sf_reads) * kDocsPerSavedRead >=
+                                     bucket.sf_seen * bucket.doc_range;
   }
 
-  uint32_t ScoreFirst(doc_id_t last, LoserScoreCollector& collector) {
+  std::pair<uint32_t, uint32_t> ScoreFirst(doc_id_t last, score_t others_max,
+                                           LoserScoreCollector& collector) {
     auto threshold = collector.ScoreThreshold();
     uint32_t seen = 0;
-    _lead.ForEachScoredBlock(
-      last + 1, [&](doc_id_t* docs, uint32_t len, score_t* scores) {
-        if constexpr (kExcludes) {
-          len = irs::detail::ExcludeBlock(_excludes, docs, scores, len);
-        }
-        seen += len;
-        for (uint32_t off = 0; off < len; off += kChunk) {
-          const auto n = std::min<uint32_t>(kChunk, len - off);
+    uint32_t dropped = 0;
+    _lead.ForEachScoredBlock(last + 1, [&](doc_id_t* docs, uint32_t len,
+                                           score_t* scores) {
+      if constexpr (kExcludes) {
+        if (const auto required = threshold - others_max; required > 0) {
           const auto kept =
-            _others.Apply(docs + off, scores + off, n, threshold);
-          if (kept != 0) {
-            _admit.AddDocs(collector, docs + off, kept, scores + off);
-            threshold = collector.ScoreThreshold();
-          }
+            irs::detail::FilterScores(docs, scores, len, required);
+          dropped += len - kept;
+          seen += len - kept;
+          len = kept;
         }
-      });
-    return seen;
+        len = irs::detail::ExcludeBlock(_excludes, docs, scores, len);
+      }
+      seen += len;
+      for (uint32_t off = 0; off < len; off += kChunk) {
+        const auto n = std::min<uint32_t>(kChunk, len - off);
+        const auto kept = _others.Apply(docs + off, scores + off, n, threshold);
+        if (kept != 0) {
+          _admit.AddDocs(collector, docs + off, kept, scores + off);
+          threshold = collector.ScoreThreshold();
+        }
+      }
+    });
+    return {seen, dropped};
   }
 
   doc_id_t DocFirst(doc_id_t doc, doc_id_t last, score_t stop,
                     LoserScoreCollector& collector) {
     [[clang::code_align(64)]] while (doc <= last) {
-      if (const auto probe = _others.Probe(doc); probe != doc) {
-        doc = _lead.Seek(probe);
-        continue;
-      }
       if constexpr (kExcludes) {
         if (irs::detail::IsExcluded(_excludes, doc)) {
           doc = _lead.Next();
           continue;
         }
+      }
+      if (const auto probe = _others.Probe(doc); probe != doc) {
+        doc = _lead.Seek(probe);
+        continue;
       }
       _batch.docs[_batch.size] = doc;
       _batch.freqs[_batch.size] = _lead.Freq();

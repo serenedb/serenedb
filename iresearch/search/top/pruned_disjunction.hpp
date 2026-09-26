@@ -313,6 +313,9 @@ class PrunedDisjunction : public Root {
   }
 
   bool DensePromotion(size_t first, bool single) const noexcept {
+    if constexpr (kExcludes) {
+      return false;
+    }
     const double postings = _postings * irs::detail::kWindowDocs / _docs_count;
     if (!single) {
       return postings >= kDenseWindowPostings;

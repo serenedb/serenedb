@@ -23,7 +23,6 @@
 #include <algorithm>
 #include <bit>
 
-#include "iresearch/formats/posting/skip_list.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/store/data_input.hpp"

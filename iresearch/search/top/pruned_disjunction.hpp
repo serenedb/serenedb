@@ -389,7 +389,7 @@ class PrunedDisjunction : public Root {
         if (_has_non_essential) {
           View<doc_id_t> cand_docs{docs, len};
           View<score_t> cand_scores{scores, len};
-          ProcessNonEssential(cand_docs, cand_scores, max);
+          ProcessNonEssential(cand_docs, cand_scores);
           len = static_cast<uint32_t>(cand_docs.count);
         } else {
           _num_candidates += len;
@@ -431,7 +431,7 @@ class PrunedDisjunction : public Root {
     const auto count = DrainCandidates(min);
     View<doc_id_t> cand_docs{_cand_docs, count};
     View<score_t> cand_scores{_cand_scores, count};
-    ProcessNonEssential(cand_docs, cand_scores, max);
+    ProcessNonEssential(cand_docs, cand_scores);
     if (cand_docs.count != 0) {
       _admit.AddDocs(collector, _cand_docs, cand_docs.count, _cand_scores);
     }
@@ -470,7 +470,7 @@ class PrunedDisjunction : public Root {
   }
 
   template<typename Docs, typename Scores>
-  void ProcessNonEssential(Docs& cand_docs, Scores& cand_scores, doc_id_t max) {
+  void ProcessNonEssential(Docs& cand_docs, Scores& cand_scores) {
     const auto candidates = static_cast<uint32_t>(cand_docs.size());
     if (candidates == 0) {
       return;
@@ -496,8 +496,7 @@ class PrunedDisjunction : public Root {
         }
       }
       Observe(entry, candidates, cand_docs.size());
-      entry.leaf.ScoreCandidates(cand_docs, cand_scores, i >= _first_required,
-                                 max);
+      entry.leaf.ScoreCandidates(cand_docs, cand_scores, i >= _first_required);
     }
   }
 

@@ -157,6 +157,11 @@ class BytesViewInput : public IndexInput {
 
   IRS_FORCE_INLINE const byte_type* Current() const noexcept { return _pos; }
 
+  IRS_FORCE_INLINE const byte_type* At(uint64_t offset) const noexcept {
+    SDB_ASSERT(offset <= _data.size());
+    return _data.data() + offset;
+  }
+
   IRS_FORCE_INLINE const byte_type* ReadStable(uint64_t count) noexcept final {
     const auto* begin = _pos;
     _pos = begin + count;

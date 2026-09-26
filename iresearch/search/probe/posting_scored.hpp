@@ -24,7 +24,6 @@
 #include <bit>
 #include <vector>
 
-#include "iresearch/formats/posting/skip_list.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"

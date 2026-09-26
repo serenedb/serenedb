@@ -76,10 +76,8 @@ struct FreqScorer : irs::ScorerBase<void> {
     return irs::ScoreFunction::Make<FreqScorerContext>(freq);
   }
 
-  irs::ScoreBoundWriter::ptr PrepareScoreBoundWriter(
-    size_t max_levels) const final {
-    return std::make_unique<irs::FreqNormWriter<irs::kScoreBoundMaxFreq>>(
-      max_levels);
+  irs::ScoreBoundWriter::ptr PrepareScoreBoundWriter() const final {
+    return std::make_unique<irs::FreqNormWriter<irs::kScoreBoundMaxFreq>>();
   }
 
   irs::ScoreBoundSource::ptr PrepareScoreBoundSource() const final {

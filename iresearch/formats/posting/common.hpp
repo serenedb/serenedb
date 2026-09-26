@@ -75,25 +75,6 @@ struct PosGroup {
   }
 };
 
-template<typename IteratorTraits>
-IRS_FORCE_INLINE void CopyState(SkipState& to, const SkipState& from) noexcept {
-  if constexpr (IteratorTraits::Offset()) {
-    to = from;
-  } else {
-    to.doc_ptr = from.doc_ptr;
-    to.doc = from.doc;
-    if constexpr (IteratorTraits::Position()) {
-      to.pos_offset = from.pos_offset;
-      to.pos_ptr = from.pos_ptr;
-    }
-  }
-}
-
-// What a skip level holds beyond the document and where its block starts:
-// a position pointer when the field has positions, a payload pointer beside
-// it when the field has offsets, and a position offset closing the level.
-// Which of them are there is the field's own answer and the same for every
-// level and every term, so it is read once where the leaf is built.
 struct SkipLayout {
   bool pos = false;
   bool offs = false;
@@ -108,56 +89,6 @@ IRS_FORCE_INLINE constexpr SkipLayout ToSkipLayout(
 IRS_FORCE_INLINE constexpr bool FeaturesHaveFreq(
   IndexFeatures features) noexcept {
   return IndexFeatures::None != (features & IndexFeatures::Freq);
-}
-
-// A level of a field whose positions the leaf never reads. What the field
-// wrote for the streams it does not touch is stepped over, not parsed: the
-// copy traits of every such leaf carry neither pointer out of a level, so
-// accumulating them would be writing state nothing reads back.
-template<typename Input>
-IRS_FORCE_INLINE void ReadDocState(SkipState& state, Input& in,
-                                   SkipLayout layout) {
-  state.doc = in.ReadV32();
-  state.doc_ptr += in.ReadV64();
-  if (layout.pos) {
-    in.SkipV64();
-    if (layout.offs) {
-      in.SkipV64();
-    }
-    in.Skip(sizeof(uint16_t));
-  }
-}
-
-// A level of a field the leaf does read positions out of. Such a leaf is
-// built only on a field that has them, so the position pointer is not a
-// question -- `Offs` is whether this leaf decodes the payloads beside them,
-// and `has_pay` whether the field wrote a pointer to step over either way.
-template<bool Offs, typename Input>
-IRS_FORCE_INLINE void ReadPosState(SkipState& state, Input& in, bool has_pay) {
-  state.doc = in.ReadV32();
-  state.doc_ptr += in.ReadV64();
-  state.pos_ptr += in.ReadV64();
-  if (has_pay) {
-    if constexpr (Offs) {
-      state.pay_ptr += in.ReadV64();
-    } else {
-      in.SkipV64();
-    }
-  }
-  state.pos_offset = static_cast<uint16_t>(in.ReadI16());
-}
-
-template<typename IteratorTraits>
-IRS_FORCE_INLINE void CopyState(SkipState& to,
-                                const PostingMeta& from) noexcept {
-  to.doc_ptr = from.doc_start;
-  if constexpr (IteratorTraits::Position()) {
-    to.pos_ptr = from.pos_start;
-    if constexpr (IteratorTraits::Offset()) {
-      to.pay_ptr = from.pay_start;
-    }
-    to.pos_offset = from.pos_offset;
-  }
 }
 
 // TODO(mbkkt) Make it overloads
@@ -314,14 +245,13 @@ IRS_FORCE_INLINE uint32_t CountLess(const uint32_t* begin,
   for (size_t i = 0; i != W; i += 32) {
 #ifdef __AVX2__
     const __m256i bias = _mm256_set1_epi32(std::numeric_limits<int32_t>::min());
-    const __m256i target = _mm256_xor_si256(
-      _mm256_set1_epi32(static_cast<int32_t>(value)), bias);
+    const __m256i target =
+      _mm256_xor_si256(_mm256_set1_epi32(static_cast<int32_t>(value)), bias);
     const auto less = [&](size_t j) IRS_FORCE_INLINE {
       return _mm256_cmpgt_epi32(
-        target,
-        _mm256_xor_si256(
-          _mm256_loadu_si256(reinterpret_cast<const __m256i*>(begin + j)),
-          bias));
+        target, _mm256_xor_si256(_mm256_loadu_si256(
+                                   reinterpret_cast<const __m256i*>(begin + j)),
+                                 bias));
     };
     const __m256i low = _mm256_packs_epi32(less(i), less(i + 8));
     const __m256i high = _mm256_packs_epi32(less(i + 16), less(i + 24));

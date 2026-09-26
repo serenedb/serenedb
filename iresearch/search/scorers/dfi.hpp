@@ -72,7 +72,7 @@ class DFI final : public irs::ScorerBase<DFI, DFIStats> {
     return IndexFeatures::Freq | IndexFeatures::Norm;
   }
 
-  ScoreBoundWriter::ptr PrepareScoreBoundWriter(size_t max_levels) const final;
+  ScoreBoundWriter::ptr PrepareScoreBoundWriter() const final;
 
   ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
 

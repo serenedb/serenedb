@@ -230,8 +230,8 @@ bool DFI::equals(const Scorer& other) const noexcept {
   return p._measure == _measure;
 }
 
-ScoreBoundWriter::ptr DFI::PrepareScoreBoundWriter(size_t max_levels) const {
-  return std::make_unique<FreqNormWriter<kScoreBoundMinNorm>>(max_levels);
+ScoreBoundWriter::ptr DFI::PrepareScoreBoundWriter() const {
+  return std::make_unique<FreqNormWriter<kScoreBoundMinNorm>>();
 }
 
 ScoreBoundSource::ptr DFI::PrepareScoreBoundSource() const {

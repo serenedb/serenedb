@@ -34,7 +34,6 @@
 #include "iresearch/search/detail/enc_buf.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/search/detail/posting_skip.hpp"
-#include "iresearch/search/detail/skip_walk.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -176,7 +175,7 @@ class PostingBatch {
 
   void ArmWalk(const PostingMeta& meta, IndexFeatures layout, bool bounds) {
     if (meta.docs_count > kBlock) {
-      _walk.Arm(meta, SkipShapeOf(layout, bounds));
+      _walk.Arm(meta, BlockIndexShapeOf(layout, bounds));
     }
   }
 
@@ -240,7 +239,7 @@ class PostingBatch {
   [[no_unique_address]] utils::Need<!Scored, FreqLen> _freq_len;
   [[no_unique_address]] utils::Need<Scored, LeafScore> _score;
   [[no_unique_address]] utils::Need<Scored, LeafProvider> _provider;
-  SkipWalk<InputType> _walk;
+  BlockCursor _walk;
 };
 
 }  // namespace irs::detail

@@ -156,22 +156,19 @@ class PruneLeafBase {
     if (doc <= index.Last(b)) [[likely]] {
       return BlockScore(b);
     }
-    const auto e = index.Find(b, doc);
-    if (e == n) {
-      return _root_score;
+    const auto limit = std::min(n, b + kMaxScoreBlocks) - 1;
+    if (doc > index.Last(limit) && limit + 1 != n) {
+      const auto r = b / BlockIndex::kRun;
+      return doc <= index.RunLast(r) ? RunScore(r) : _root_score;
     }
-    if (e - b < kMaxScoreBlocks) {
-      auto score = BlockScore(b);
-      for (auto k = b + 1; k <= e; ++k) {
-        score = std::max(score, BlockScore(k));
+    auto score = BlockScore(b);
+    for (auto k = b + 1; k <= limit; ++k) {
+      score = std::max(score, BlockScore(k));
+      if (doc <= index.Last(k)) {
+        break;
       }
-      return score;
     }
-    const auto r = b / BlockIndex::kRun;
-    if (e / BlockIndex::kRun == r) {
-      return RunScore(r);
-    }
-    return _root_score;
+    return score;
   }
 
  protected:

@@ -27,13 +27,14 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
+#include "iresearch/formats/posting/block_index.hpp"
 #include "iresearch/formats/posting/common.hpp"
+#include "iresearch/formats/posting/doc_input.hpp"
 #include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
-#include "iresearch/search/detail/skip_walk.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -52,23 +53,21 @@ struct LeafShape {
   bool freqs = false;
   bool gather = false;
   bool cursor = false;
-  bool slack = false;
   bool enc = false;
   bool delta = false;
+  bool holes = false;
 };
 
-inline constexpr LeafShape kWindowShape{.slack = true, .delta = true};
+inline constexpr LeafShape kWindowShape{.delta = true, .holes = true};
 
 inline constexpr LeafShape kWindowScoredShape{
   .scored = true,
   .freqs = true,
-  .slack = true,
   .enc = true,
 };
 
 inline constexpr LeafShape kCursorShape{
   .cursor = true,
-  .slack = true,
   .delta = true,
 };
 
@@ -77,7 +76,6 @@ inline constexpr LeafShape kCursorScoredShape{
   .freqs = true,
   .gather = true,
   .cursor = true,
-  .slack = true,
   .delta = true,
 };
 
@@ -107,6 +105,8 @@ struct LeafCursor {
 template<typename InputType, LeafShape Shape>
 class PostingLeaf {
  public:
+  static constexpr bool kDefaultInit = true;
+
   PostingLeaf() = default;
 
   PostingLeaf(const PostingLeaf&) = delete;
@@ -178,6 +178,14 @@ class PostingLeaf {
     }
   }
 
+  IRS_FORCE_INLINE uint64_t* Holes() noexcept {
+    if constexpr (Shape.holes) {
+      return _holes.data;
+    } else {
+      return nullptr;
+    }
+  }
+
   IRS_FORCE_INLINE score_t* Scores() noexcept {
     static_assert(Shape.enc && sizeof(score_t) == sizeof(uint32_t));
     return reinterpret_cast<score_t*>(_enc.data);
@@ -215,12 +223,8 @@ class PostingLeaf {
 
   void OpenInput(const PostingMeta& meta, const IndexInput& doc_in,
                  bool bounds) {
-    _in = doc_in.Reopen();
-    if (!_in) [[unlikely]] {
-      throw IoError{"failed to reopen document input"};
-    }
+    _in = OpenDocInput(meta, doc_in);
     auto& in = In();
-    in.Seek(meta.doc_start);
     LimitDocReadahead(in, meta);
     if (meta.docs_count < kBlock) {
       SkipScoreBounds(bounds, in);
@@ -230,7 +234,7 @@ class PostingLeaf {
 
   void ArmWalk(const PostingMeta& meta, IndexFeatures layout, bool bounds) {
     if (meta.docs_count > kBlock) {
-      _walk.Arm(meta, SkipShapeOf(layout, bounds));
+      _walk.Arm(meta, BlockIndexShapeOf(layout, bounds));
       if constexpr (Shape.cursor) {
         _cursor.upper_bound = doc_limits::invalid();
       }
@@ -239,7 +243,7 @@ class PostingLeaf {
 
   IRS_FORCE_INLINE bool Armed() const noexcept { return _walk.Armed(); }
 
-  IRS_FORCE_INLINE SkipWalk<InputType>& Walk() noexcept { return _walk; }
+  IRS_FORCE_INLINE BlockCursor& Walk() noexcept { return _walk; }
 
   IRS_NO_INLINE void Land(doc_id_t min) {
     auto& walk = Walk();
@@ -471,12 +475,11 @@ class PostingLeaf {
       }
     }
 
-    const auto left = _walk.Seek(target, *_in);
+    _left_in_list = _walk.Seek(target, *_in);
     _cursor.upper_bound = _walk.UpperBound();
-    if (left == 0) [[unlikely]] {
+    if (_left_in_list == 0) [[unlikely]] {
       return false;
     }
-    _left_in_list = left;
     In().Seek(_walk.Landing().doc_ptr);
     read(_walk.Landing().doc);
     return target <= _last;
@@ -498,7 +501,7 @@ class PostingLeaf {
     auto& in = In();
     const auto len = std::min(_left_in_list, kBlock);
     const auto leaf =
-      FormatTraits128::ReadTailForFill(len, in, Enc(), _docs, prev);
+      FormatTraits128::ReadTailForFill(len, in, Enc(), Holes(), _docs, prev);
     _left_in_list -= len;
     const auto* const bitset = StableBitset(leaf);
     TakeFreqs(len);
@@ -508,11 +511,10 @@ class PostingLeaf {
   }
 
   [[no_unique_address]] utils::Need<kEnc, EncBuf> _enc;
+  [[no_unique_address]] utils::Need<Shape.holes, HoleBuf> _holes;
   [[no_unique_address]] utils::Need<Shape.freqs, FreqBuf> _freqs;
   [[no_unique_address]] utils::Need<Shape.gather, GatherBuf> _gather;
-  SlackBuf<doc_id_t, doc_limits::kBlockSize,
-           Shape.slack ? doc_limits::kDocsSlack : 0>
-    _docs;
+  DocsBuf _docs;
   IndexInput::ptr _in;
   doc_id_t _doc = doc_limits::invalid();
   doc_id_t _last = doc_limits::invalid();
@@ -524,7 +526,7 @@ class PostingLeaf {
     _provider;
   [[no_unique_address]] utils::Need<Shape.defer, LeafRecipe> _recipe;
   [[no_unique_address]] utils::Need<Shape.cursor, LeafCursor> _cursor;
-  SkipWalk<InputType> _walk;
+  BlockCursor _walk;
 };
 
 }  // namespace irs::detail

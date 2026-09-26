@@ -494,7 +494,7 @@ TEST_P(ScorePruneScoringTestCase, PruningIsTakenForBoundedScorers) {
 // needs a fix for negative scores first.
 TEST_P(ScorePruneScoringTestCase, IndriDirichletClaimsNoBounds) {
   const irs::IndriDirichlet scorer{2000.f};
-  EXPECT_EQ(nullptr, scorer.PrepareScoreBoundWriter(4));
+  EXPECT_EQ(nullptr, scorer.PrepareScoreBoundWriter());
   EXPECT_EQ(nullptr, scorer.PrepareScoreBoundSource());
 
   auto reader = CreateLargeIndex(scorer, 10);
@@ -532,10 +532,10 @@ TEST(score_prune_bound_type_test, reported_bound_types) {
               scorer.Compatible(min_norm));
     EXPECT_FALSE(scorer.Compatible(none));
     if (expected == irs::Scorer::ScoreBoundType::None) {
-      EXPECT_EQ(nullptr, scorer.PrepareScoreBoundWriter(4));
+      EXPECT_EQ(nullptr, scorer.PrepareScoreBoundWriter());
       EXPECT_EQ(nullptr, scorer.PrepareScoreBoundSource());
     } else {
-      EXPECT_NE(nullptr, scorer.PrepareScoreBoundWriter(4));
+      EXPECT_NE(nullptr, scorer.PrepareScoreBoundWriter());
       EXPECT_NE(nullptr, scorer.PrepareScoreBoundSource());
     }
   };
@@ -574,7 +574,7 @@ TEST(score_prune_bound_type_test, reported_bound_types) {
 // TOP_100 reports over an index with score bounds.
 TEST_P(ScorePruneScoringTestCase, PruningIsTaken) {
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
-  auto reader = CreateLargeIndex(scorer, 10);
+  auto reader = CreateLargeIndex(scorer, 40);
   constexpr size_t k = 10;
 
   auto reached = [&](const irs::Filter& filter, bool prune) {
@@ -673,7 +673,7 @@ TEST_P(ScorePruneScoringTestCase, FilteredAntiCorrelatedKeepsLowScorers) {
   ASSERT_NE(nullptr, filter);
 
   // 1. Identify the top scorers with a brute-force (unpruned) pass.
-  constexpr size_t kReject = 150;  // > kBlockSize (128): rejects > a full block
+  constexpr size_t kReject = 270;
   std::vector<irs::ScoreDoc> top(kReject);
   const auto df =
     irs::ExecuteTopK(reader, *filter, scorer, kReject, false, std::span{top});

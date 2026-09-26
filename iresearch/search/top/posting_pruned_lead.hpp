@@ -28,18 +28,21 @@ template<typename InputType>
 class PostingPrunedLead : public PruneLeafBase<InputType, false> {
   using Base = PruneLeafBase<InputType, false>;
 
+  using Base::_base;
+  using Base::_cursor;
   using Base::_doc;
   using Base::_docs;
+  using Base::_freqs;
   using Base::_left_in_leaf;
   using Base::_left_in_list;
+  using Base::_max_in_leaf;
   using Base::_needs_reposition;
-  using Base::_skip;
-  using Base::_upper_bound;
-  using Base::Emit;
+  using Base::_provider;
+  using Base::_score;
   using Base::ReadLeaf;
-  using Base::RepositionForWindow;
 
  public:
+  using Base::ForEachScoredBlock;
   using Base::MaxScore;
   using Base::Value;
 
@@ -59,7 +62,18 @@ class PostingPrunedLead : public PruneLeafBase<InputType, false> {
     Prepare(meta, doc_in, layout, segment, field, args);
   }
 
-  doc_id_t BlockLast() const noexcept { return *(std::end(_docs) - 1); }
+  doc_id_t BlockLast() {
+    Base::SeekToBlock(_doc);
+    return *(std::end(_docs) - 1);
+  }
+
+  doc_id_t SpanLast(uint32_t blocks) {
+    if (blocks > 1 && _cursor.Armed()) {
+      const auto& index = _cursor.Index();
+      return index.Last(std::min(index.Size(), _cursor.Block() + blocks) - 1);
+    }
+    return *(std::end(_docs) - 1);
+  }
 
   IRS_FORCE_INLINE doc_id_t Next() {
     if (_left_in_leaf == 0) [[unlikely]] {
@@ -74,14 +88,53 @@ class PostingPrunedLead : public PruneLeafBase<InputType, false> {
     return _doc;
   }
 
-  doc_id_t Seek(doc_id_t target) {
+  IRS_FORCE_INLINE doc_id_t Seek(doc_id_t target) {
     if (target <= _doc) [[unlikely]] {
       return _doc;
     }
-    if (_skip.Reader().IsLessThanUpperBound(target)) [[unlikely]] {
+    if (_left_in_leaf != 0 && target <= _max_in_leaf) [[likely]] {
+      return _doc = Scan(target);
+    }
+    return SeekSlow(target);
+  }
+
+  IRS_FORCE_INLINE uint32_t Freq() const noexcept {
+    return _freqs.data[doc_limits::kBlockSize - _left_in_leaf - 1];
+  }
+
+  void ScoreFreqs(uint32_t* freqs, score_t* scores, uint32_t count) {
+    _provider.freq.value = freqs;
+    if (count == kScoreBlock) {
+      _score.ScoreBlock(scores);
+    } else {
+      _score.Score(scores, static_cast<scores_size_t>(count));
+    }
+    _provider.freq.value = _freqs.data;
+  }
+
+ private:
+  IRS_FORCE_INLINE doc_id_t Scan(doc_id_t target) noexcept {
+    for (auto left = _left_in_leaf;; --left) {
+      const auto doc = *(std::end(_docs) - left);
+      if (target <= doc) {
+        _left_in_leaf = left - 1;
+        return doc;
+      }
+    }
+  }
+
+  IRS_NO_INLINE doc_id_t SeekSlow(doc_id_t target) {
+    if (!_needs_reposition && _left_in_list != 0 &&
+        target - _max_in_leaf <= _max_in_leaf - _base) {
+      ReadLeaf(_max_in_leaf);
+      if (target <= _max_in_leaf) [[likely]] {
+        return _doc = Scan(target);
+      }
+    }
+    if (_cursor.UpperBound() < target) [[unlikely]] {
       Base::SeekToBlock(target);
       if (_needs_reposition) {
-        _doc = _skip.Reader().State().doc;
+        _doc = _cursor.Landing().doc;
       }
     }
     if (_left_in_leaf == 0) [[unlikely]] {
@@ -103,59 +156,6 @@ class PostingPrunedLead : public PruneLeafBase<InputType, false> {
         return _doc = doc_limits::eof();
       }
       ReadLeaf(*(std::end(_docs) - 1));
-    }
-  }
-
-  template<typename Visitor>
-  void ForEachScoredBlock(doc_id_t max, Visitor&& visit) {
-    if (_doc >= max) [[unlikely]] {
-      return;
-    }
-    RepositionForWindow(_doc);
-
-    SDB_ASSERT(_left_in_leaf < doc_limits::kBlockSize);
-    doc_id_t last = *(std::end(_docs) - 1);
-    {
-      const auto count = _left_in_leaf + 1;
-      if (last >= max) {
-        _left_in_leaf = count;
-        goto tail;
-      }
-      if (count == doc_limits::kBlockSize) {
-        goto full;
-      }
-      Emit(std::end(_docs) - count, count, visit);
-    }
-
-    for (;;) {
-      if (_left_in_list == 0) [[unlikely]] {
-        _left_in_leaf = 0;
-        goto done;
-      }
-      ReadLeaf(last);
-      last = *(std::end(_docs) - 1);
-      if (last >= max || _left_in_leaf != doc_limits::kBlockSize) {
-        goto tail;
-      }
-    full:
-      Emit(std::begin(_docs), doc_limits::kBlockSize, visit);
-    }
-
-  tail: {
-    auto* const begin = std::end(_docs) - _left_in_leaf;
-    auto* const end = this->FirstNotBelow(begin, max);
-    _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - end);
-    if (end != begin) {
-      Emit(begin, static_cast<uint32_t>(end - begin), visit);
-    }
-  }
-
-  done:
-    if (_left_in_leaf != 0) {
-      _doc = *(std::end(_docs) - _left_in_leaf);
-      --_left_in_leaf;
-    } else {
-      _doc = doc_limits::eof();
     }
   }
 };

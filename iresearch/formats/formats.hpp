@@ -26,19 +26,9 @@
 #include <absl/functional/function_ref.h>
 
 #include "iresearch/formats/column/norm_reader.hpp"
+#include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
-
-namespace duckdb {
-
-class DatabaseInstance;
-class Deserializer;
-class Serializer;
-
-}  // namespace duckdb
-#include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
@@ -50,9 +40,18 @@ class Serializer;
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/automaton_decl.hpp"
+#include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_info.hpp"
 
+namespace duckdb {
+
+class DatabaseInstance;
+class Deserializer;
+class Serializer;
+
+}  // namespace duckdb
 namespace irs {
 
 struct SegmentMeta;

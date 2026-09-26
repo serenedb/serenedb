@@ -48,7 +48,7 @@ class RawTF final : public irs::ScorerBase<RawTF, void> {
     return IndexFeatures::Freq;
   }
 
-  ScoreBoundWriter::ptr PrepareScoreBoundWriter(size_t max_levels) const final;
+  ScoreBoundWriter::ptr PrepareScoreBoundWriter() const final;
 
   ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
 

@@ -20,13 +20,12 @@
 
 #pragma once
 
-#include <simdfor.h>
-
 #include <array>
 #include <cstring>
 #include <duckdb/storage/arena_allocator.hpp>
 #include <span>
 
+#include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/utils/bit_packing.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/resource_manager.hpp"
@@ -43,7 +42,10 @@ class PackedU32Column : util::Noncopyable {
 
  public:
   static constexpr size_t kBlockValues = 1024;
-  static constexpr size_t kSimdValues = 128;
+  static constexpr size_t kSimdValues = block_codec::kWideBlock;
+  static constexpr uint32_t kRawBits = 32;
+
+  static_assert(kBlockValues % kSimdValues == 0);
 
   PackedU32Column(duckdb::ArenaAllocator& arena, IResourceManager& rm) noexcept
     : _arena{&arena}, _packed{ManagedTypedAllocator<PackedBlock>{rm}} {}
@@ -112,11 +114,7 @@ class PackedU32Column : util::Noncopyable {
     std::span<const uint32_t> Next() noexcept {
       if (_block < _col->_packed.size()) {
         const auto& blk = _col->_packed[_block++];
-        const auto* src = reinterpret_cast<const __m128i*>(blk.data);
-        for (size_t base = 0; base < kBlockValues; base += kSimdValues) {
-          simdunpackFOR(blk.base, src, _buf.data() + base, blk.bits);
-          src += blk.bits;
-        }
+        Unpack(blk, _buf.data());
         return {_buf.data(), kBlockValues};
       }
       if (!_tail_read && _col->_tail != _col->_staging) {
@@ -128,8 +126,34 @@ class PackedU32Column : util::Noncopyable {
     }
 
    private:
+    static void Unpack(const PackedBlock& blk, uint32_t* out) noexcept {
+      if (blk.bits == 0) {
+        std::fill_n(out, kBlockValues, blk.base);
+        return;
+      }
+      if (blk.bits == kRawBits) {
+        std::memcpy(out, blk.data, kBlockValues * sizeof(uint32_t));
+        return;
+      }
+      const auto* src = reinterpret_cast<const byte_type*>(blk.data);
+      const block_codec::U32x8 base = block_codec::U32x8{} + blk.base;
+      block_codec::ResolveByte<block_codec::kMaxWidth + 1>(
+        blk.bits, [&]<uint32_t B>() IRS_FORCE_INLINE {
+          for (size_t at = 0; at != kBlockValues; at += kSimdValues) {
+            block_codec::WideRows<B>(
+              src, [&]<uint32_t S>(block_codec::U32x8 v) IRS_FORCE_INLINE {
+                v += base;
+                std::memcpy(out + at + S * block_codec::kWideLanes, &v,
+                            sizeof(v));
+              });
+            src += block_codec::PackedSize<block_codec::kWideLanes>(
+              kSimdValues, B);
+          }
+        });
+    }
+
     const PackedU32Column* _col;
-    alignas(16) std::array<uint32_t, kBlockValues> _buf;
+    alignas(32) std::array<uint32_t, kBlockValues> _buf;
     size_t _block = 0;
     bool _tail_read = false;
   };
@@ -181,14 +205,25 @@ class PackedU32Column : util::Noncopyable {
     }
     const auto bits = packed::Maxbits32(mx - mn);
     const uint32_t* out = nullptr;
-    if (bits) {
-      const auto bytes = packed::BytesRequired32(kBlockValues, bits);
-      auto* buf = Alloc16(bytes);
-      auto* dst = reinterpret_cast<__m128i*>(buf);
-      for (size_t base = 0; base < kBlockValues; base += kSimdValues) {
-        simdpackFOR(mn, _staging + base, dst, bits);
-        dst += bits;
+    if (bits == kRawBits) {
+      auto* buf = Alloc16(kBlockValues * sizeof(uint32_t));
+      std::memcpy(buf, _staging, kBlockValues * sizeof(uint32_t));
+      out = buf;
+    } else if (bits != 0) {
+      auto* buf = Alloc16(packed::BytesRequired32(kBlockValues, bits));
+      for (size_t i = 0; i != kBlockValues; ++i) {
+        _staging[i] -= mn;
       }
+      auto* dst = reinterpret_cast<byte_type*>(buf);
+      block_codec::ResolveByte<block_codec::kMaxWidth + 1>(
+        bits, [&]<uint32_t B>() IRS_FORCE_INLINE {
+          for (size_t at = 0; at != kBlockValues; at += kSimdValues) {
+            block_codec::PackVertical<B, block_codec::kWideLanes, false>(
+              _staging + at, dst);
+            dst += block_codec::PackedSize<block_codec::kWideLanes>(
+              kSimdValues, B);
+          }
+        });
       out = buf;
     }
     _packed.push_back({out, bits, mn});

@@ -27,6 +27,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/common.hpp"
+#include "iresearch/formats/posting/doc_input.hpp"
 #include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -34,7 +35,6 @@
 #include "iresearch/search/detail/enc_buf.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/search/detail/posting_skip.hpp"
-#include "iresearch/search/detail/skip_walk.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -132,6 +132,7 @@ template<typename InputType, bool Scored>
 class PostingBatch {
  public:
   static constexpr uint32_t kBlock = doc_limits::kBlockSize;
+  static constexpr bool kDefaultInit = true;
 
   doc_id_t Last() const noexcept { return _last; }
 
@@ -160,12 +161,8 @@ class PostingBatch {
 
   void OpenInput(const PostingMeta& meta, const IndexInput& doc_in,
                  bool bounds) {
-    _in = doc_in.Reopen();
-    if (!_in) [[unlikely]] {
-      throw IoError{"failed to reopen document input"};
-    }
+    _in = OpenDocInput(meta, doc_in);
     auto& in = In();
-    in.Seek(meta.doc_start);
     LimitDocReadahead(in, meta);
     if (meta.docs_count < kBlock) {
       SkipScoreBounds(bounds, in);
@@ -175,7 +172,7 @@ class PostingBatch {
 
   void ArmWalk(const PostingMeta& meta, IndexFeatures layout, bool bounds) {
     if (meta.docs_count > kBlock) {
-      _walk.Arm(meta, SkipShapeOf(layout, bounds));
+      _walk.Arm(meta, BlockIndexShapeOf(layout, bounds));
     }
   }
 
@@ -239,7 +236,7 @@ class PostingBatch {
   [[no_unique_address]] utils::Need<!Scored, FreqLen> _freq_len;
   [[no_unique_address]] utils::Need<Scored, LeafScore> _score;
   [[no_unique_address]] utils::Need<Scored, LeafProvider> _provider;
-  SkipWalk<InputType> _walk;
+  BlockCursor _walk;
 };
 
 }  // namespace irs::detail

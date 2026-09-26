@@ -159,18 +159,31 @@ inline size_t PostingsReaderBase::decode(const byte_type* in,
              IndexFeatures::None ==
                (features & (IndexFeatures::Pos | IndexFeatures::Offs)));
 
-  posting_meta.docs_count = vread<uint32_t>(p);
+  const auto head = vread<uint32_t>(p);
+  posting_meta.docs_count = head >> 1;
   if (IndexFeatures::None != (features & IndexFeatures::Freq)) {
     posting_meta.freq = posting_meta.docs_count + vread<uint32_t>(p);
   }
 
-  posting_meta.doc_start += vread<uint64_t>(p);
+  if ((head & 1) != 0) {
+    const auto size = *p++;
+    SDB_ASSERT(size != 0 && size <= PostingMeta::kInlineBytes);
+    posting_meta.inline_size = size;
+    std::memcpy(posting_meta.inline_data, p, size);
+    p += size;
+  } else {
+    posting_meta.inline_size = 0;
+    posting_meta.doc_start += vread<uint64_t>(p);
+  }
   if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
-    posting_meta.pos_start += vread<uint64_t>(p);
+    const auto pos_delta = vread<uint64_t>(p);
+    posting_meta.pos_start += pos_delta;
     if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
       posting_meta.pay_start += vread<uint64_t>(p);
     }
-    posting_meta.pos_offset = *p++;
+    const auto pos_offset = vread<uint32_t>(p);
+    posting_meta.pos_offset =
+      pos_delta == 0 ? posting_meta.pos_offset + pos_offset : pos_offset;
   } else if (IndexFeatures::None != (features & IndexFeatures::Vec)) {
     posting_meta.pay_start += vread<uint64_t>(p);
     posting_meta.pos_offset = *p++;
@@ -212,14 +225,30 @@ class PostingsReaderImpl final : public PostingsReaderBase {
 template<typename FieldTraits>
 void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, doc_id_t* docs,
                   uint32_t* enc_buf, uint64_t* words) {
+  auto* const view = FieldTraits::View(doc_in);
+  const byte_type* at = view != nullptr ? view->Current() : nullptr;
+  uint64_t holes[FieldTraits::kHoleWords];
   auto read_leaf = [&]<size_t N>(uint32_t len, doc_id_t prev) IRS_FORCE_INLINE {
-    const auto leaf =
-      FieldTraits::ReadTailForFill(len, doc_in, enc_buf, docs, prev);
+    const auto leaf = [&] IRS_FORCE_INLINE {
+      if (view != nullptr) [[likely]] {
+        return FieldTraits::FillView(
+          *view, at, len, holes, docs, prev,
+          FieldTraits::Frequency() && len == doc_limits::kBlockSize);
+      }
+      const auto read =
+        FieldTraits::ReadTailForFill(len, doc_in, enc_buf, holes, docs, prev);
+      if constexpr (FieldTraits::Frequency()) {
+        if (len == doc_limits::kBlockSize) {
+          FieldTraits::SkipBlock(doc_in);
+        }
+      }
+      return read;
+    }();
     if (leaf.IsRun()) {
       const uint64_t first = uint64_t{prev} + 1;
       SetBitRange(words, first, first + len);
     } else if (leaf.IsBitset()) {
-      OrBitsetAt(words, prev, leaf.bitset, leaf.words);
+      OrBitsetAt(words, uint64_t{prev} + 1, leaf.bitset, leaf.words);
     } else {
       static constexpr auto kBits = BitsRequired<uint64_t>();
       const auto* const data = docs + doc_limits::kBlockSize - len;
@@ -227,11 +256,6 @@ void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, doc_id_t* docs,
         const size_t offset = data[i];
         SetBit(words[offset / kBits], offset % kBits);
       });
-    }
-    if constexpr (FieldTraits::Frequency()) {
-      if (len == doc_limits::kBlockSize) {
-        FieldTraits::SkipBlock(doc_in);
-      }
     }
     return leaf.max;
   };
@@ -252,12 +276,8 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
   const IndexFeatures field_features, TermProvider provider, uint64_t* set,
   bool has_score_bounds) {
   constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
-  uint32_t enc_buf[doc_limits::kBlockSize];
-  doc_id_t docs[doc_limits::kBlockSize
-#ifdef __AVX2__
-                + 8  // placeholder for bitset materialize
-#endif
-  ];
+  alignas(64) uint32_t enc_buf[FormatTraits::kEncWords];
+  alignas(64) doc_id_t docs[doc_limits::kBlockSize + block_codec::kOutSlack];
   const bool has_freq =
     IndexFeatures::None != (field_features & IndexFeatures::Freq);
 
@@ -276,21 +296,27 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
     const auto& term_state = *meta;
 
     if (term_state.docs_count > 1) {
-      doc_in->Seek(term_state.doc_start);
-      SDB_ASSERT(!doc_in->IsEOF());
-      if (term_state.docs_count < doc_limits::kBlockSize) {
-        SkipScoreBounds(has_score_bounds, *doc_in);
-      }
-      SDB_ASSERT(!doc_in->IsEOF());
-
-      if (has_freq) {
-        using FieldTraits = IteratorTraits<true, false, false>;
-        BitUnionImpl<FieldTraits>(*doc_in, term_state.docs_count, docs, enc_buf,
-                                  set);
+      const auto read = [&](IndexInput& in) {
+        if (term_state.docs_count < doc_limits::kBlockSize) {
+          SkipScoreBounds(has_score_bounds, in);
+        }
+        SDB_ASSERT(!in.IsEOF());
+        if (has_freq) {
+          using FieldTraits = IteratorTraits<true, false, false>;
+          BitUnionImpl<FieldTraits>(in, term_state.docs_count, docs, enc_buf,
+                                    set);
+        } else {
+          using FieldTraits = IteratorTraits<false, false, false>;
+          BitUnionImpl<FieldTraits>(in, term_state.docs_count, docs, enc_buf,
+                                    set);
+        }
+      };
+      if (term_state.inline_size != 0) {
+        BytesViewInput in{term_state.Inline()};
+        read(in);
       } else {
-        using FieldTraits = IteratorTraits<false, false, false>;
-        BitUnionImpl<FieldTraits>(*doc_in, term_state.docs_count, docs, enc_buf,
-                                  set);
+        doc_in->Seek(term_state.doc_start);
+        read(*doc_in);
       }
 
       count += term_state.docs_count;

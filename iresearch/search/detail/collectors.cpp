@@ -93,6 +93,7 @@ void ExpandedSlotsCollector::Finish(StatsArena& stats) {
   const auto field = _counters.TotalField();
   auto* const slot = Mutable(_stats);
   Terms merged;
+  std::vector<const Terms::value_type*> ordered;
   for (size_t i = 0; i != _expanded_size; ++i) {
     merged.clear();
     for (uint32_t t = 0; t != threads; ++t) {
@@ -102,8 +103,15 @@ void ExpandedSlotsCollector::Finish(StatsArena& stats) {
         one.total_term_freq += counter.total_term_freq;
       }
     }
-    for (const auto& [term, counter] : merged) {
-      _scorer->collect(slot, &field, &counter);
+    ordered.clear();
+    for (const auto& entry : merged) {
+      ordered.push_back(&entry);
+    }
+    absl::c_sort(ordered, [](const auto* lhs, const auto* rhs) {
+      return lhs->first < rhs->first;
+    });
+    for (const auto* entry : ordered) {
+      _scorer->collect(slot, &field, &entry->second);
     }
   }
 }

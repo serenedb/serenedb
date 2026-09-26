@@ -71,7 +71,7 @@ class TFIDF final : public irs::ScorerBase<TFIDF, TFIDFStats> {
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 
-  ScoreBoundWriter::ptr PrepareScoreBoundWriter(size_t max_levels) const final;
+  ScoreBoundWriter::ptr PrepareScoreBoundWriter() const final;
 
   ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
 

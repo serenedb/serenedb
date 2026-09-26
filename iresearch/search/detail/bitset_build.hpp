@@ -81,7 +81,7 @@ struct OrBits {
 
   IRS_FORCE_INLINE void Bitset(uint64_t prev, const uint64_t* IRS_RESTRICT src,
                                uint32_t n, uint64_t) noexcept {
-    OrBlock(words, static_cast<int64_t>(prev) - kMin, src, n);
+    OrBlock(words, static_cast<int64_t>(prev + 1) - kMin, src, n);
   }
 
   IRS_FORCE_INLINE void Doc(size_t doc) noexcept {
@@ -106,7 +106,7 @@ struct ClearBits {
 
   IRS_FORCE_INLINE void Bitset(uint64_t prev, const uint64_t* IRS_RESTRICT src,
                                uint32_t n, uint64_t) noexcept {
-    ClearBlock(words, static_cast<int64_t>(prev) - kMin, src, n);
+    ClearBlock(words, static_cast<int64_t>(prev + 1) - kMin, src, n);
   }
 
   IRS_FORCE_INLINE void Doc(size_t doc) noexcept {
@@ -171,7 +171,7 @@ struct RetainBits {
     const auto last = max - kMin;
     Reach(first);
     words[at] &= keep | (~uint64_t{0} << (first % kBits));
-    RetainBlock(words, static_cast<int64_t>(prev) - kMin, src, n, last);
+    RetainBlock(words, static_cast<int64_t>(first), src, n, last);
     at = static_cast<uint32_t>(last / kBits);
     keep = (uint64_t{2} << (last % kBits)) - 1;
   }
@@ -193,22 +193,46 @@ struct RetainBits {
   }
 };
 
+inline constexpr uint64_t kFillPrefetch = 512;
+inline constexpr uint64_t kFillLine = 64;
+
 template<typename Input, typename Sink>
 void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
-                 doc_id_t* IRS_RESTRICT docs, bool has_score_bounds,
-                 bool has_freq, Sink& sink) {
+                 uint64_t* IRS_RESTRICT holes, doc_id_t* IRS_RESTRICT docs,
+                 bool has_score_bounds, bool has_freq, Sink& sink) {
   SDB_ASSERT(meta.docs_count > 1);
 
-  in.Seek(meta.doc_start);
-  LimitDocReadahead(in, meta);
   if (meta.docs_count < doc_limits::kBlockSize) {
     SkipScoreBounds(has_score_bounds, in);
   }
 
+  [[maybe_unused]] const byte_type* at = nullptr;
+  [[maybe_unused]] const byte_type* fetched = nullptr;
+  if constexpr (Input::kVolatileAlways) {
+    at = in.Current();
+    fetched = at;
+  }
+
   const auto read_leaf = [&]<size_t N>(uint32_t len,
                                        doc_id_t prev) IRS_FORCE_INLINE {
-    const auto leaf =
-      FormatTraits128::ReadTailForFill(len, in, enc, docs, prev);
+    const auto leaf = [&] IRS_FORCE_INLINE {
+      if constexpr (Input::kVolatileAlways) {
+        for (const auto* const ahead = at + kFillPrefetch; fetched < ahead;
+             fetched += kFillLine) {
+          __builtin_prefetch(fetched);
+        }
+        return FormatTraits128::FillView(
+          in, at, len, holes, docs, prev,
+          has_freq && len == doc_limits::kBlockSize);
+      } else {
+        const auto read =
+          FormatTraits128::ReadTailForFill(len, in, enc, holes, docs, prev);
+        if (has_freq && len == doc_limits::kBlockSize) {
+          FormatTraits128::SkipBlock(in);
+        }
+        return read;
+      }
+    }();
     if (leaf.IsRun()) {
       sink.Run(prev, len);
     } else if (leaf.IsBitset()) {
@@ -219,13 +243,17 @@ void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
         for (uint32_t i = 0; i != len; ++i) {
           sink.Doc(data[i]);
         }
+      } else if constexpr (N == doc_limits::kBlockSize) {
+        constexpr uint32_t kHalf = N / 2;
+        VisitDocs<kHalf>(
+          kHalf, [&](uint32_t i) IRS_FORCE_INLINE { sink.Doc(data[i]); });
+        VisitDocs<kHalf>(kHalf, [&](uint32_t i) IRS_FORCE_INLINE {
+          sink.Doc(data[kHalf + i]);
+        });
       } else {
         VisitDocs<N>(len,
                      [&](uint32_t i) IRS_FORCE_INLINE { sink.Doc(data[i]); });
       }
-    }
-    if (has_freq && len == doc_limits::kBlockSize) {
-      FormatTraits128::SkipBlock(in);
     }
     return leaf.max;
   };
@@ -258,13 +286,32 @@ class PostingReader {
 
   uint32_t* Enc() noexcept { return EncOf<Input>(_enc); }
 
+  uint64_t* Holes() noexcept { return _holes.data; }
+
   doc_id_t* Docs() noexcept { return _buf; }
+
+  template<typename Sink>
+  void Read(const PostingMeta& meta, bool has_score_bounds, bool has_freq,
+            Sink& sink) {
+    if (meta.inline_size != 0) {
+      BytesViewInput in{meta.Inline()};
+      ReadPosting(meta, in, Enc(), Holes(), Docs(), has_score_bounds, has_freq,
+                  sink);
+      return;
+    }
+    auto& in = In();
+    in.Seek(meta.doc_start);
+    LimitDocReadahead(in, meta);
+    ReadPosting(meta, in, Enc(), Holes(), Docs(), has_score_bounds, has_freq,
+                sink);
+  }
 
  private:
   const IndexInput* _doc;
   IndexInput::ptr _owned;
   Input* _in = nullptr;
   DocsBuf _buf;
+  HoleBuf _holes;
   [[no_unique_address]] NeedEnc<Input> _enc;
 };
 
@@ -279,8 +326,7 @@ void ReadTerms(std::span<const Term> terms, const TermReader* field,
       continue;
     }
     const auto& own = FieldOf(terms[i], field);
-    ReadPosting(meta, r.In(), r.Enc(), r.Docs(), BoundsOf(own), FreqOf(own),
-                sink);
+    r.Read(meta, BoundsOf(own), FreqOf(own), sink);
   }
 }
 

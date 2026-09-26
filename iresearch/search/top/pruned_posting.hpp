@@ -37,15 +37,17 @@ template<typename InputType, typename Excludes, typename Table>
 class PrunedPosting : public Root, public PruneLeafBase<InputType, true> {
   using Base = PruneLeafBase<InputType, true>;
 
+  using Base::_cursor;
   using Base::_doc;
   using Base::_docs;
   using Base::_left_in_leaf;
   using Base::_left_in_list;
   using Base::_max_in_leaf;
-  using Base::_skip;
+  using Base::_threshold;
   using Base::Emit;
   using Base::In;
   using Base::ReadLeaf;
+  using Base::SeekCursor;
 
  public:
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
@@ -79,7 +81,7 @@ class PrunedPosting : public Root, public PruneLeafBase<InputType, true> {
       if (len != 0) {
         _admit.AddDocs(collector, docs, len, scores);
       }
-      _skip.Reader().Threshold() = collector.ScoreThreshold();
+      _threshold = collector.ScoreThreshold();
     };
 
     if (_left_in_list == 0 && _left_in_leaf == 0) {
@@ -104,16 +106,14 @@ class PrunedPosting : public Root, public PruneLeafBase<InputType, true> {
         if (target >= max) {
           break;
         }
-        if (target > _skip.Reader().UpperBound()) {
-          _left_in_list = _skip.Seek(target);
-          auto& state = _skip.Reader().State();
-          if (state.doc_ptr != 0) [[likely]] {
-            In().Seek(state.doc_ptr);
-          }
-          last = state.doc;
+        if (target > _cursor.UpperBound()) {
+          _left_in_list = SeekCursor(target);
           if (_left_in_list == 0) {
             break;
           }
+          const auto& state = _cursor.Landing();
+          In().Seek(state.doc_ptr);
+          last = state.doc;
         }
         ReadLeaf(last);
       }

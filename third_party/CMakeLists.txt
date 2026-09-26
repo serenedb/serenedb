@@ -252,14 +252,7 @@ set(BENCHMARK_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
 add_subdirectory(benchmark)
 
 ################################################################################
-### streamvbyte library
-################################################################################
-
-sdb_update_module(${GIT_EXECUTABLE} "streamvbyte" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE")
-add_subdirectory(streamvbyte)
-
-################################################################################
-### sse2neon library -- need this after abseil and highway, but before simdcomp
+### sse2neon library -- need this after abseil and highway
 ################################################################################
 
 add_library(sse2neon INTERFACE)
@@ -310,13 +303,6 @@ target_link_libraries(
     iresearch-ofst
     PUBLIC absl::flat_hash_set absl::flat_hash_map
 )
-
-################################################################################
-### SIMDCOMP library
-################################################################################
-
-# TODO(mbkkt) make it submodule
-add_subdirectory(simdcomp)
 
 ################################################################################
 ### fastText library

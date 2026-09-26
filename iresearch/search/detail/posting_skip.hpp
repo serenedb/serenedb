@@ -22,16 +22,16 @@
 
 #include <cstdint>
 
+#include "iresearch/formats/posting/block_index.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
-#include "iresearch/search/detail/skip_walk.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
 
 template<typename InputType>
-bool StepToLive(SkipWalk<InputType>& walk, InputType& in, doc_id_t live,
-                uint32_t& left, doc_id_t& last) {
+bool StepToLive(BlockCursor& walk, InputType& in, doc_id_t live, uint32_t& left,
+                doc_id_t& last) {
   if (live - last <= doc_limits::kBlockSize || !walk.Armed()) {
     return true;
   }

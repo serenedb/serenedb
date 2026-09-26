@@ -76,6 +76,8 @@ class PrunedPosting : public Root, public PruneLeafBase<InputType, true> {
     const auto emit = [&](doc_id_t* IRS_RESTRICT docs, uint32_t len,
                           score_t* IRS_RESTRICT scores) IRS_FORCE_INLINE {
       if constexpr (kExcludes) {
+        len = irs::detail::FilterScores(docs, scores, len,
+                                        collector.ScoreThreshold());
         len = irs::detail::ExcludeBlock(_excludes, docs, scores, len);
       }
       if (len != 0) {

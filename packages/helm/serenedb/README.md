@@ -87,7 +87,7 @@ lifetime to the release.
 | `resources` | `{}` | Recommended: requests = limits, >= 2 CPU / 4Gi |
 | `terminationGracePeriodSeconds` | `120` | Graceful-shutdown budget |
 | `podSecurityContext` | `fsGroup: 0` | Image uses group-0-writable datadir (OpenShift-friendly) |
-| `containerSecurityContext` | non-root, no caps | Drops all capabilities; NUMA pinning in the entrypoint no-ops without `SYS_NICE` |
+| `containerSecurityContext` | uid 999, non-root, no caps | Drops all capabilities; NUMA pinning in the entrypoint no-ops without `SYS_NICE` |
 | `automountServiceAccountToken` | `false` | |
 | `updateStrategy.type` | `RollingUpdate` | |
 | `readinessProbe` / `livenessProbe` / `startupProbe` | enabled | `pg_isready`-based; startup probe is lenient because the listener binds only after indexes load |

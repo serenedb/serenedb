@@ -45,6 +45,8 @@ EXPOSE 7890
 
 COPY entrypoint.sh /entrypoint.sh
 
-USER serenedb
+# Numeric uid:gid (the serenedb user) so Kubernetes can verify runAsNonRoot;
+# a named USER makes the kubelet refuse the container.
+USER 999:999
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["serened"]

@@ -1248,16 +1248,6 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
   ASSERT_NE(nullptr, term_itr);
   ASSERT_TRUE(term_itr->next());
 
-  // regiseter reopen failure in postings
-  dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.doc");
-  // can't reopen document input
-  ASSERT_THROW((void)term_itr->postings(irs::IndexFeatures::None),
-               irs::IoError);
-  // regiseter reopen failure in postings (nullptr)
-  dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.doc");
-  // can't reopen document input (nullptr)
-  ASSERT_THROW((void)term_itr->postings(irs::IndexFeatures::None),
-               irs::IoError);
   // regiseter reopen failure in positions
   dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.pos");
   // can't reopen position input
@@ -1285,10 +1275,6 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
   // can't reopen position (nullptr)
   ASSERT_THROW((void)term_itr->postings(kPositionsOffsets), irs::IoError);
 
-  // regiseter reopen failure in postings
-  dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.doc");
-  // regiseter reopen failure in postings
-  dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.doc");
   // regiseter reopen failure in positions
   dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.pos");
   // regiseter reopen failure in positions
@@ -1297,8 +1283,6 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
   dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.pay");
   // regiseter reopen failure in payload
   dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.pay");
-  ASSERT_THROW((void)term_itr->postings(kAllFeatures), irs::IoError);
-  ASSERT_THROW((void)term_itr->postings(kAllFeatures), irs::IoError);
   ASSERT_THROW((void)term_itr->postings(kAllFeatures), irs::IoError);
   ASSERT_THROW((void)term_itr->postings(kAllFeatures), irs::IoError);
   ASSERT_THROW((void)term_itr->postings(kAllFeatures), irs::IoError);

@@ -29,9 +29,12 @@
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/storage/statistics/stats_writer.hpp>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <span>
+#include <tuple>
 #include <type_traits>
+#include <utility>
 
 #include "iresearch/formats/column/codecs/fsst_codec.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -44,58 +47,50 @@ using duckdb::BitpackingPrimitives;
 using duckdb::idx_t;
 using duckdb::string_t;
 
-constexpr size_t kSampleBytes = 64 * 1024;
-constexpr size_t kSampleWindows = 4;
 constexpr double kPlainWinsBelow = 0.9;
 constexpr uint64_t kDedupMinRepeat = 2;
+constexpr uint64_t kEstimateEvery = 64;
+constexpr uint64_t kLz4MaxRatio = 255;
+constexpr double kFsstFirstRatio = 0.5;
+constexpr double kDrift = 1.25;
+constexpr uint64_t kDriftMinFraction = 4;
+constexpr double kLevelStepGain = 0.02;
 
-struct Sample {
-  std::vector<std::string_view> entries;
-  uint64_t bytes = 0;
+constexpr uint8_t kLz4Fast[] = {1};
+constexpr uint8_t kLz4Ladder[] = {1, 4, 9};
+constexpr uint8_t kZstdLadder[] = {1, 3, 6, 9, 12};
+constexpr uint8_t kZxcFastLookups[] = {1, 3, 5};
+constexpr uint8_t kZxcLadder[] = {1, 3, 5, 7};
+constexpr uint8_t kNoLevel[] = {0};
+
+struct LeafPlan {
+  ByteCodec leaf;
+  std::span<const uint8_t> ladder;
 };
 
-Sample MakeSample(const StringAccumulator& acc) {
-  Sample out;
-  if (acc.entry_bytes <= kSampleBytes) {
-    out.entries = acc.entries;
-    out.bytes = acc.entry_bytes;
-    return out;
-  }
-  const auto n = acc.entries.size();
-  constexpr auto kWindowBytes = kSampleBytes / kSampleWindows;
-  for (size_t w = 0; w < kSampleWindows; ++w) {
-    const auto end = n * (w + 1) / kSampleWindows;
-    uint64_t taken = 0;
-    for (auto i = n * w / kSampleWindows; i < end && taken < kWindowBytes;
-         ++i) {
-      out.entries.push_back(acc.entries[i]);
-      taken += acc.entries[i].size();
-    }
-    out.bytes += taken;
-  }
-  return out;
-}
+constexpr LeafPlan kSpeedPlan[] = {{ByteCodec::Lz4, kLz4Fast}};
+constexpr LeafPlan kBalancedPlan[] = {{ByteCodec::Fsst, kNoLevel},
+                                      {ByteCodec::Lz4, kLz4Ladder},
+                                      {ByteCodec::Zxc, kZxcFastLookups}};
+constexpr LeafPlan kSizePlan[] = {{ByteCodec::Fsst, kNoLevel},
+                                  {ByteCodec::Lz4, kLz4Ladder},
+                                  {ByteCodec::Zstd, kZstdLadder},
+                                  {ByteCodec::Zxc, kZxcLadder}};
 
-std::span<const ByteCodec> AutoLeaves(AutoObjective objective,
-                                      Shape shape) noexcept {
-  static constexpr ByteCodec kSpeed[] = {ByteCodec::Lz4};
-  static constexpr ByteCodec kBalanced[] = {ByteCodec::Fsst, ByteCodec::Lz4};
-  static constexpr ByteCodec kSizeDedup[] = {ByteCodec::Fsst, ByteCodec::Lz4,
-                                             ByteCodec::Zstd, ByteCodec::Zxc};
-  static constexpr ByteCodec kSizePlain[] = {ByteCodec::Fsst, ByteCodec::Lz4,
-                                             ByteCodec::Zstd, ByteCodec::Zxc};
+std::span<const LeafPlan> PlanFor(AutoObjective objective) noexcept {
   switch (objective) {
     case AutoObjective::Speed:
-      return kSpeed;
+      return kSpeedPlan;
     case AutoObjective::Size:
-      if (shape == Shape::Dedup) {
-        return kSizeDedup;
-      }
-      return kSizePlain;
+      return kSizePlan;
     case AutoObjective::Balanced:
       break;
   }
-  return kBalanced;
+  return kBalancedPlan;
+}
+
+constexpr size_t Index(ByteCodec leaf) noexcept {
+  return static_cast<size_t>(leaf);
 }
 
 uint64_t Packed(uint64_t count, uint32_t max_value) noexcept {
@@ -134,318 +129,78 @@ uint32_t Lcp(std::string_view a, std::string_view b) noexcept {
   return static_cast<uint32_t>(i);
 }
 
-std::string Concat(const Sample& sample) {
-  std::string out;
-  out.reserve(sample.bytes);
-  for (const auto sv : sample.entries) {
-    out.append(sv);
-  }
-  return out;
-}
+struct DedupScratch {
+  std::vector<uint32_t> epoch;
+  std::vector<uint32_t> local;
+  uint32_t current = 0;
+};
+
+struct Segment {
+  StringChoice choice{};
+  uint8_t level = 0;
+  uint64_t begin = 0;
+  uint64_t rows = 0;
+  uint64_t entries = 0;
+  uint64_t nulls = 0;
+  uint64_t input = 0;
+  uint32_t max_len = 0;
+  std::string head;
+  std::string data;
+  std::optional<duckdb::BaseStatistics> stats;
+
+  uint64_t Size() const noexcept { return head.size() + data.size(); }
+};
 
 template<ByteCodec C>
-double BlobRatio(const Sample& sample, uint8_t level) {
-  if (sample.bytes == 0) {
-    return 1.0;
-  }
-  const auto raw = Concat(sample);
-  LeafCompressor<C> compressor{level};
-  std::string out(Leaf<C>::Bound(raw.size()), '\0');
-  const auto n =
-    compressor.Compress(raw.data(), raw.size(), out.data(), out.size());
-  return static_cast<double>(n) / static_cast<double>(raw.size());
-}
-
-double FsstRatio(std::span<const std::string_view> ordered, uint64_t raw) {
-  if (raw == 0) {
-    return 1.0;
-  }
-  std::vector<std::string_view> suffixes;
-  suffixes.reserve(ordered.size());
-  std::string_view prev;
-  for (const auto sv : ordered) {
-    suffixes.push_back(sv.substr(Lcp(prev, sv)));
-    prev = sv;
-  }
-  FsstEncoder encoder;
-  std::string out;
-  std::vector<uint32_t> lengths;
-  encoder.Encode(suffixes, out, lengths);
-  const auto bytes = out.size() + encoder.SymbolTable().size();
-  return static_cast<double>(bytes) / static_cast<double>(raw);
-}
-
-double FsstRatio(const Sample& sample, Shape shape) {
-  if (shape == Shape::Plain) {
-    return FsstRatio(sample.entries, sample.bytes);
-  }
-  auto sorted = sample.entries;
-  std::sort(sorted.begin(), sorted.end());
-  return FsstRatio(sorted, sample.bytes);
-}
-
-double BlobRatio(const Sample& sample, ByteCodec leaf, uint8_t level) {
-  switch (leaf) {
-    case ByteCodec::Lz4:
-      return BlobRatio<ByteCodec::Lz4>(sample, level);
-    case ByteCodec::Zstd:
-      return BlobRatio<ByteCodec::Zstd>(sample, level);
-    case ByteCodec::Zxc:
-      return BlobRatio<ByteCodec::Zxc>(sample, level);
-    case ByteCodec::Fsst:
-      break;
-  }
-  return 1.0;
-}
-
-double Ratio(const Sample& sample, StringChoice choice, uint8_t level) {
-  if (choice.leaf == ByteCodec::Fsst) {
-    return FsstRatio(sample, choice.shape);
-  }
-  return BlobRatio(sample, choice.leaf, level);
-}
-
-constexpr uint64_t kEstimateEvery = 64;
-
-uint64_t EstimateWithRatio(const StringAccumulator& acc, StringChoice choice,
-                           double ratio, uint32_t target) noexcept {
-  const bool dedup = choice.shape == Shape::Dedup;
-  const bool fsst = choice.leaf == ByteCodec::Fsst;
-  const auto entry_count = dedup ? acc.entries.size() + 1 : acc.row_count;
-  const auto payload = dedup ? acc.entry_bytes : acc.raw_bytes;
-  const auto frames =
-    payload / (fsst ? kFsstFrameRawBytes : kFrameRawBytes) + 1;
-  const auto lengths = Packed(entry_count, acc.max_len);
-  const auto body =
-    frames * kFrameMetaSize + lengths + (fsst ? lengths : 0) +
-    CodesBytes(choice.shape, acc.row_count, acc.entries.size(), acc.runs) +
-    static_cast<uint64_t>(static_cast<double>(payload) * ratio);
-  return body + (body / target + 1) * kHeaderSize;
-}
-
-template<ByteCodec C>
-class Sealer {
+class Encoder {
  public:
   static constexpr bool kFsst = C == ByteCodec::Fsst;
 
-  Sealer(const StringAccumulator& acc, Shape shape, double ratio,
-         const ColCodecParams& params, const duckdb::LogicalType& type)
-    : _acc{acc},
-      _shape{shape},
-      _target{params.segment_target},
-      _level{params.compression_level},
-      _ratio{ratio},
-      _stats{type},
-      _type{type} {
+  Encoder(const StringAccumulator& acc, const duckdb::LogicalType& type,
+          RatioHistory* history, DedupScratch& dedup)
+    : _acc{acc}, _stats{type}, _type{type}, _history{history}, _dedup{dedup} {
     if constexpr (kFsst) {
       _codec.emplace();
     } else {
-      _codec.emplace(params.compression_level);
+      _codec.emplace(uint8_t{0});
     }
-    _epoch.assign(acc.entries.size(), 0);
-    _local.assign(acc.entries.size(), 0);
   }
 
-  void Run(SegmentSink sink) {
-    for (uint64_t row = 0; row < _acc.row_count; ++row) {
-      AddRow(row);
-      if (_rows % kEstimateEvery == 0 && Estimate() >= _target) {
-        Seal(sink);
-      }
-    }
-    Seal(sink);
-  }
-
- private:
-  uint32_t FirstEntry() const noexcept {
-    return _shape == Shape::Dedup ? 1 : 0;
-  }
-
-  void PushCode(uint32_t code) {
-    if (_rows == 0 || code != _last_code) {
-      ++_runs;
-    }
-    _last_code = code;
-    _codes.push_back(code);
-  }
-
-  void AddRow(uint64_t row) {
-    const auto code = _acc.codes[row];
-    if (code == 0) {
-      _stats.SetHasNull();
-      if (_shape == Shape::Dedup) {
-        PushCode(0);
-      } else {
-        AppendEntry({});
-      }
-      ++_rows;
-      return;
-    }
-    const auto sv = _acc.entries[code - 1];
-    if (_shape == Shape::Plain) {
-      _stats.Update(string_t{sv.data(), static_cast<uint32_t>(sv.size())});
-      AppendEntry(sv);
-      ++_rows;
-      return;
-    }
-    if (_epoch[code - 1] != _segment_epoch) {
-      _epoch[code - 1] = _segment_epoch;
-      _local[code - 1] = static_cast<uint32_t>(_entries.size()) + 1;
-      _stats.Update(string_t{sv.data(), static_cast<uint32_t>(sv.size())});
-      AppendEntry(sv);
-    }
-    PushCode(_local[code - 1]);
-    ++_rows;
-  }
-
-  void AppendEntry(std::string_view sv) {
-    _entries.push_back(sv);
-    _max_len = std::max<uint32_t>(_max_len, static_cast<uint32_t>(sv.size()));
-    _raw += sv.size();
+  void Begin(Shape shape, uint8_t level, uint64_t begin) {
+    _shape = shape;
+    _level = level;
+    _next = begin;
     if constexpr (!kFsst) {
-      if (_frame_entries != 0 && _frame.size() + sv.size() > kFrameRawBytes) {
-        CloseFrame();
+      _codec->SetLevel(level);
+    }
+    _data.clear();
+    if (shape == Shape::Dedup) {
+      if (_dedup.epoch.size() != _acc.entries.size()) {
+        _dedup.epoch.assign(_acc.entries.size(), 0);
+        _dedup.local.assign(_acc.entries.size(), 0);
       }
-      if (_frame_entries == 0) {
-        _frame_first =
-          FirstEntry() + static_cast<uint32_t>(_entries.size()) - 1;
+      ++_dedup.current;
+    }
+  }
+
+  uint64_t Cut(uint32_t target) {
+    while (_next < _acc.row_count) {
+      AddRow(_next++);
+      if (_rows % kEstimateEvery == 0 && Estimate() >= target) {
+        break;
       }
-      _frame.append(sv);
-      ++_frame_entries;
+    }
+    return _next;
+  }
+
+  void AddUntil(uint64_t end) {
+    while (_next < end) {
+      AddRow(_next++);
     }
   }
 
-  void CloseFrame() {
-    const auto bound = Leaf<C>::Bound(_frame.size());
-    const auto comp_off = _data.size();
-    _data.resize(comp_off + bound);
-    const auto n = _codec->Compress(_frame.data(), _frame.size(),
-                                    _data.data() + comp_off, bound);
-    _data.resize(comp_off + n);
-    _frames.push_back(
-      FrameMeta{_frame_first, static_cast<uint32_t>(_frame.size()),
-                static_cast<uint32_t>(comp_off), static_cast<uint32_t>(n)});
-    _closed_raw += _frame.size();
-    _closed_comp += n;
-    _frame.clear();
-    _frame_entries = 0;
-  }
-
-  uint64_t Estimate() const noexcept {
-    const auto entry_count = _entries.size() + FirstEntry();
-    const auto ratio = _closed_raw != 0 ? static_cast<double>(_closed_comp) /
-                                            static_cast<double>(_closed_raw)
-                                        : _ratio;
-    uint64_t est = kHeaderSize + Packed(entry_count, _max_len) +
-                   CodesBytes(_shape, _rows, _entries.size(), _runs);
-    if constexpr (kFsst) {
-      est += Packed(entry_count, _max_len) +
-             (_raw / kFsstFrameRawBytes + 1) * kFrameMetaSize +
-             static_cast<uint64_t>(static_cast<double>(_raw) * ratio);
-    } else {
-      est += (_frames.size() + 1) * kFrameMetaSize + _data.size() +
-             static_cast<uint64_t>(static_cast<double>(_frame.size()) * ratio);
-    }
-    return est;
-  }
-
-  static uint64_t PrefixKey(std::string_view sv, size_t skip) noexcept {
-    char buf[8] = {};
-    if (sv.size() > skip) {
-      std::memcpy(buf, sv.data() + skip,
-                  std::min<size_t>(sv.size() - skip, sizeof buf));
-    }
-    return absl::big_endian::Load64(buf);
-  }
-
-  void SortEntries() {
-    const auto n = static_cast<uint32_t>(_entries.size());
-    size_t common = _entries.empty() ? 0 : _entries[0].size();
-    for (uint32_t i = 1; i < n && common != 0; ++i) {
-      common = std::min<size_t>(common, Lcp(_entries[0], _entries[i]));
-    }
-    _order.resize(n);
-    for (uint32_t i = 0; i < n; ++i) {
-      _order[i] = {PrefixKey(_entries[i], common), i};
-    }
-    std::sort(_order.begin(), _order.end(),
-              [&](const std::pair<uint64_t, uint32_t>& a,
-                  const std::pair<uint64_t, uint32_t>& b) {
-                if (a.first != b.first) {
-                  return a.first < b.first;
-                }
-                return _entries[a.second] < _entries[b.second];
-              });
-    _remap.assign(n + 1, 0);
-    _sorted.resize(n);
-    for (uint32_t pos = 0; pos < n; ++pos) {
-      _remap[_order[pos].second + 1] = pos + 1;
-      _sorted[pos] = _entries[_order[pos].second];
-    }
-    _entries.swap(_sorted);
-    for (auto& code : _codes) {
-      code = _remap[code];
-    }
-  }
-
-  void EncodeFsst() {
-    if (_shape == Shape::Dedup) {
-      SortEntries();
-    }
-    _suffixes.clear();
-    _lcps.clear();
-    _frames.clear();
-    std::string_view prev;
-    uint64_t frame_raw = 0;
-    uint64_t frame_first = 0;
-    for (size_t i = 0; i < _entries.size(); ++i) {
-      const auto sv = _entries[i];
-      uint32_t lcp = Lcp(prev, sv);
-      if (frame_raw != 0 && frame_raw + sv.size() > kFsstFrameRawBytes) {
-        _frames.push_back(FrameMeta{static_cast<uint32_t>(frame_first),
-                                    static_cast<uint32_t>(frame_raw), 0, 0});
-        frame_raw = 0;
-        frame_first = i;
-      }
-      if ((i - frame_first) % kChainRestart == 0) {
-        lcp = 0;
-      }
-      _lcps.push_back(lcp);
-      _suffixes.push_back(sv.substr(lcp));
-      frame_raw += sv.size();
-      prev = sv;
-    }
-    if (!_entries.empty()) {
-      _frames.push_back(FrameMeta{static_cast<uint32_t>(frame_first),
-                                  static_cast<uint32_t>(frame_raw), 0, 0});
-    }
-    _codec->Encode(_suffixes, _data, _entry_lengths);
-    size_t off = 0;
-    size_t next = 0;
-    for (size_t f = 0; f < _frames.size(); ++f) {
-      const auto end =
-        f + 1 < _frames.size() ? _frames[f + 1].first_entry : _entries.size();
-      _frames[f].comp_off = static_cast<uint32_t>(off);
-      for (; next < end; ++next) {
-        off += _entry_lengths[next];
-      }
-      _frames[f].comp_len = static_cast<uint32_t>(off - _frames[f].comp_off);
-      _frames[f].first_entry += FirstEntry();
-    }
-    _max_enc = 0;
-    for (const auto len : _entry_lengths) {
-      _max_enc = std::max(_max_enc, len);
-    }
-    _max_lcp = 0;
-    for (const auto lcp : _lcps) {
-      _max_lcp = std::max(_max_lcp, lcp);
-    }
-  }
-
-  void Seal(SegmentSink sink) {
-    if (_rows == 0) {
-      return;
-    }
+  void Finish(Segment& out) {
+    SDB_ASSERT(_rows != 0);
     std::string_view symtab;
     if constexpr (kFsst) {
       EncodeFsst();
@@ -571,18 +326,27 @@ class Sealer {
     if (!symtab.empty()) {
       std::memcpy(base + h.off_symtab, symtab.data(), symtab.size());
     }
+    if constexpr (kFsst) {
+      auto& hist = History();
+      hist.raw += _raw;
+      hist.comp += _data.size() + symtab.size();
+    }
 
     auto stats = duckdb::BaseStatistics::CreateEmpty(_type);
     _stats.Merge(stats);
-    const std::string_view parts[] = {_bytes, _data};
-    sink(std::move(stats), _rows, parts);
+    out.choice = StringChoice{_shape, C};
+    out.level = _level;
+    out.begin = _next - _rows;
+    out.rows = _rows;
+    out.entries = _entries.size();
+    out.nulls = _nulls;
+    out.input = _input;
+    out.max_len = _max_len;
+    out.stats.emplace(std::move(stats));
+    out.head.swap(_bytes);
+    out.data.swap(_data);
 
-    if constexpr (kFsst) {
-      _closed_raw += _raw;
-      _closed_comp += _data.size() + symtab.size();
-    }
     _stats.Clear();
-    ++_segment_epoch;
     _codes.clear();
     _entries.clear();
     _entry_lengths.clear();
@@ -592,21 +356,219 @@ class Sealer {
     _runs = 0;
     _raw = 0;
     _max_len = 0;
+    _nulls = 0;
+    _input = 0;
+  }
+
+ private:
+  uint32_t FirstEntry() const noexcept {
+    return _shape == Shape::Dedup ? 1 : 0;
+  }
+
+  RatioHistory& History() noexcept {
+    return _history[static_cast<size_t>(_shape)];
+  }
+
+  double Ratio() const noexcept {
+    const auto& hist = _history[static_cast<size_t>(_shape)];
+    if (hist.raw != 0) {
+      return static_cast<double>(hist.comp) / static_cast<double>(hist.raw);
+    }
+    return kFsst ? kFsstFirstRatio : 1.0;
+  }
+
+  void PushCode(uint32_t code) {
+    if (_rows == 0 || code != _last_code) {
+      ++_runs;
+    }
+    _last_code = code;
+    _codes.push_back(code);
+  }
+
+  void AddRow(uint64_t row) {
+    const auto code = _acc.codes[row];
+    if (code == 0) {
+      _stats.SetHasNull();
+      ++_nulls;
+      if (_shape == Shape::Dedup) {
+        PushCode(0);
+      } else {
+        AppendEntry({});
+      }
+      ++_rows;
+      return;
+    }
+    const auto sv = _acc.entries[code - 1];
+    _input += sv.size();
+    if (_shape == Shape::Plain) {
+      _stats.Update(string_t{sv.data(), static_cast<uint32_t>(sv.size())});
+      AppendEntry(sv);
+      ++_rows;
+      return;
+    }
+    if (_dedup.epoch[code - 1] != _dedup.current) {
+      _dedup.epoch[code - 1] = _dedup.current;
+      _dedup.local[code - 1] = static_cast<uint32_t>(_entries.size()) + 1;
+      _stats.Update(string_t{sv.data(), static_cast<uint32_t>(sv.size())});
+      AppendEntry(sv);
+    }
+    PushCode(_dedup.local[code - 1]);
+    ++_rows;
+  }
+
+  void AppendEntry(std::string_view sv) {
+    _entries.push_back(sv);
+    _max_len = std::max<uint32_t>(_max_len, static_cast<uint32_t>(sv.size()));
+    _raw += sv.size();
+    if constexpr (!kFsst) {
+      if (_frame_entries != 0 && _frame.size() + sv.size() > kFrameRawBytes) {
+        CloseFrame();
+      }
+      if (_frame_entries == 0) {
+        _frame_first =
+          FirstEntry() + static_cast<uint32_t>(_entries.size()) - 1;
+      }
+      _frame.append(sv);
+      ++_frame_entries;
+    }
+  }
+
+  void CloseFrame() {
+    const auto bound = Leaf<C>::Bound(_frame.size());
+    const auto comp_off = _data.size();
+    _data.resize(comp_off + bound);
+    const auto n = _codec->Compress(_frame.data(), _frame.size(),
+                                    _data.data() + comp_off, bound);
+    _data.resize(comp_off + n);
+    _frames.push_back(
+      FrameMeta{_frame_first, static_cast<uint32_t>(_frame.size()),
+                static_cast<uint32_t>(comp_off), static_cast<uint32_t>(n)});
+    auto& hist = History();
+    hist.raw += _frame.size();
+    hist.comp += n;
+    _frame.clear();
+    _frame_entries = 0;
+  }
+
+  uint64_t Estimate() const noexcept {
+    const auto entry_count = _entries.size() + FirstEntry();
+    const auto ratio = Ratio();
+    uint64_t est = kHeaderSize + Packed(entry_count, _max_len) +
+                   CodesBytes(_shape, _rows, _entries.size(), _runs);
+    if constexpr (kFsst) {
+      est += Packed(entry_count, _max_len) +
+             (_raw / kFsstFrameRawBytes + 1) * kFrameMetaSize +
+             static_cast<uint64_t>(static_cast<double>(_raw) * ratio);
+    } else {
+      est += (_frames.size() + 1) * kFrameMetaSize + _data.size() +
+             static_cast<uint64_t>(static_cast<double>(_frame.size()) * ratio);
+    }
+    return est;
+  }
+
+  static uint64_t PrefixKey(std::string_view sv, size_t skip) noexcept {
+    char buf[8] = {};
+    if (sv.size() > skip) {
+      std::memcpy(buf, sv.data() + skip,
+                  std::min<size_t>(sv.size() - skip, sizeof buf));
+    }
+    return absl::big_endian::Load64(buf);
+  }
+
+  void SortEntries() {
+    const auto n = static_cast<uint32_t>(_entries.size());
+    size_t common = _entries.empty() ? 0 : _entries[0].size();
+    for (uint32_t i = 1; i < n && common != 0; ++i) {
+      common = std::min<size_t>(common, Lcp(_entries[0], _entries[i]));
+    }
+    _order.resize(n);
+    for (uint32_t i = 0; i < n; ++i) {
+      _order[i] = {PrefixKey(_entries[i], common), i};
+    }
+    std::sort(_order.begin(), _order.end(),
+              [&](const std::pair<uint64_t, uint32_t>& a,
+                  const std::pair<uint64_t, uint32_t>& b) {
+                if (a.first != b.first) {
+                  return a.first < b.first;
+                }
+                return _entries[a.second] < _entries[b.second];
+              });
+    _remap.assign(n + 1, 0);
+    _sorted.resize(n);
+    for (uint32_t pos = 0; pos < n; ++pos) {
+      _remap[_order[pos].second + 1] = pos + 1;
+      _sorted[pos] = _entries[_order[pos].second];
+    }
+    _entries.swap(_sorted);
+    for (auto& code : _codes) {
+      code = _remap[code];
+    }
+  }
+
+  void EncodeFsst() {
+    if (_shape == Shape::Dedup) {
+      SortEntries();
+    }
+    _suffixes.clear();
+    _lcps.clear();
+    _frames.clear();
+    std::string_view prev;
+    uint64_t frame_raw = 0;
+    uint64_t frame_first = 0;
+    for (size_t i = 0; i < _entries.size(); ++i) {
+      const auto sv = _entries[i];
+      uint32_t lcp = Lcp(prev, sv);
+      if (frame_raw != 0 && frame_raw + sv.size() > kFsstFrameRawBytes) {
+        _frames.push_back(FrameMeta{static_cast<uint32_t>(frame_first),
+                                    static_cast<uint32_t>(frame_raw), 0, 0});
+        frame_raw = 0;
+        frame_first = i;
+      }
+      if ((i - frame_first) % kChainRestart == 0) {
+        lcp = 0;
+      }
+      _lcps.push_back(lcp);
+      _suffixes.push_back(sv.substr(lcp));
+      frame_raw += sv.size();
+      prev = sv;
+    }
+    if (!_entries.empty()) {
+      _frames.push_back(FrameMeta{static_cast<uint32_t>(frame_first),
+                                  static_cast<uint32_t>(frame_raw), 0, 0});
+    }
+    _codec->Encode(_suffixes, _data, _entry_lengths);
+    size_t off = 0;
+    size_t next = 0;
+    for (size_t f = 0; f < _frames.size(); ++f) {
+      const auto end =
+        f + 1 < _frames.size() ? _frames[f + 1].first_entry : _entries.size();
+      _frames[f].comp_off = static_cast<uint32_t>(off);
+      for (; next < end; ++next) {
+        off += _entry_lengths[next];
+      }
+      _frames[f].comp_len = static_cast<uint32_t>(off - _frames[f].comp_off);
+      _frames[f].first_entry += FirstEntry();
+    }
+    _max_enc = 0;
+    for (const auto len : _entry_lengths) {
+      _max_enc = std::max(_max_enc, len);
+    }
+    _max_lcp = 0;
+    for (const auto lcp : _lcps) {
+      _max_lcp = std::max(_max_lcp, lcp);
+    }
   }
 
   const StringAccumulator& _acc;
-  Shape _shape;
-  uint32_t _target;
-  uint8_t _level;
-  double _ratio;
+  Shape _shape = Shape::Dedup;
+  uint8_t _level = 0;
+  uint64_t _next = 0;
   using Codec = std::conditional_t<kFsst, FsstEncoder, LeafCompressor<C>>;
   std::optional<Codec> _codec;
   duckdb::StatsWriter<string_t> _stats;
   duckdb::LogicalType _type;
-
-  std::vector<uint32_t> _epoch;
-  std::vector<uint32_t> _local;
-  uint32_t _segment_epoch = 1;
+  RatioHistory* _history;
+  DedupScratch& _dedup;
 
   std::vector<std::string_view> _entries;
   std::vector<uint32_t> _codes;
@@ -615,6 +577,8 @@ class Sealer {
   uint32_t _last_code = 0;
   uint64_t _raw = 0;
   uint32_t _max_len = 0;
+  uint64_t _nulls = 0;
+  uint64_t _input = 0;
 
   std::string _frame;
   uint32_t _frame_first = 0;
@@ -635,8 +599,258 @@ class Sealer {
   std::vector<uint32_t> _run_values;
   std::vector<uint32_t> _run_ends;
   std::string _bytes;
-  uint64_t _closed_raw = 0;
-  uint64_t _closed_comp = 0;
+};
+
+class SegmentWriter {
+ public:
+  SegmentWriter(const StringAccumulator& acc, std::optional<StringChoice> named,
+                const ColCodecParams& params, const duckdb::LogicalType& type,
+                StringTuning& tuning)
+    : _acc{acc},
+      _named{named},
+      _params{params},
+      _type{type},
+      _tuning{tuning},
+      _fixed{params.compression_level} {}
+
+  SealOutcome Run(SegmentSink sink) {
+    SealOutcome outcome{.sealed = true};
+    uint64_t row = 0;
+    bool first = true;
+    while (row < _acc.row_count) {
+      const auto cutter = Cutter();
+      auto* seg = Acquire();
+      const auto end = With(cutter.choice.leaf, [&](auto& enc) {
+        enc.Begin(cutter.choice.shape, cutter.level, row);
+        const auto stop = enc.Cut(_params.segment_target);
+        enc.Finish(*seg);
+        return stop;
+      });
+      if (!_named) {
+        const bool drift = !first && Drifted(*seg);
+        if (first || drift) {
+          seg = Calibrate(seg, row, end, !_tuning.levels_tuned || drift);
+        }
+        if (first && seg->Size() > PlainStorageBytes(*seg)) {
+          Release(seg);
+          return {};
+        }
+      }
+      outcome.all_dedup =
+        outcome.all_dedup && seg->choice.shape == Shape::Dedup;
+      const std::string_view parts[] = {seg->head, seg->data};
+      sink(seg->choice, std::move(*seg->stats), seg->rows, parts);
+      Release(seg);
+      row = end;
+      first = false;
+    }
+    return outcome;
+  }
+
+ private:
+  struct Pick {
+    StringChoice choice;
+    uint8_t level;
+  };
+
+  Pick Cutter() const noexcept {
+    if (_named) {
+      return {*_named, _params.compression_level};
+    }
+    if (_tuning.choice) {
+      return {*_tuning.choice, _tuning.level[Index(_tuning.choice->leaf)]};
+    }
+    const bool repeats = _acc.entries.size() * kDedupMinRepeat <=
+                         _acc.row_count - _acc.null_count;
+    return {{repeats ? Shape::Dedup : Shape::Plain, ByteCodec::Lz4},
+            Ladder(ByteCodec::Lz4)[0]};
+  }
+
+  std::span<const uint8_t> Ladder(ByteCodec leaf) const noexcept {
+    if (leaf != ByteCodec::Fsst && _params.compression_level != 0) {
+      return _fixed;
+    }
+    for (const auto& plan : PlanFor(_params.objective)) {
+      if (plan.leaf == leaf) {
+        return plan.ladder;
+      }
+    }
+    return kNoLevel;
+  }
+
+  Segment* Calibrate(Segment* cut, uint64_t begin, uint64_t end,
+                     bool retune) {
+    _live.clear();
+    _live.push_back(cut);
+    const auto base = Ladder(ByteCodec::Lz4)[0];
+    auto* dedup = Trial({Shape::Dedup, ByteCodec::Lz4}, base, begin, end);
+    Segment* plain = nullptr;
+    if (PlainMayWin(*dedup)) {
+      plain = Trial({Shape::Plain, ByteCodec::Lz4}, base, begin, end);
+    }
+    const auto shape =
+      plain && PlainWins(*dedup, *plain) ? Shape::Plain : Shape::Dedup;
+    auto* best = shape == Shape::Dedup ? dedup : plain;
+    if (cut->choice.shape == shape && cut->Size() < best->Size()) {
+      best = cut;
+    }
+    auto chosen = ByteCodec::Lz4;
+    auto chosen_bytes = std::numeric_limits<uint64_t>::max();
+    for (const auto& plan : PlanFor(_params.objective)) {
+      const auto ladder = Ladder(plan.leaf);
+      auto& tuned = _tuning.level[Index(plan.leaf)];
+      size_t rung = 0;
+      if (!retune) {
+        const auto it = std::find(ladder.begin(), ladder.end(), tuned);
+        rung = it == ladder.end() ? 0 : static_cast<size_t>(it - ladder.begin());
+      }
+      auto* cur = Trial({shape, plan.leaf}, ladder[rung], begin, end);
+      if (retune) {
+        while (rung + 1 < ladder.size()) {
+          auto* next =
+            Trial({shape, plan.leaf}, ladder[rung + 1], begin, end);
+          if (next->Size() < best->Size()) {
+            best = next;
+          }
+          if (static_cast<double>(next->Size()) >
+              static_cast<double>(cur->Size()) * (1.0 - kLevelStepGain)) {
+            break;
+          }
+          cur = next;
+          ++rung;
+        }
+      }
+      tuned = ladder[rung];
+      if (cur->Size() < best->Size()) {
+        best = cur;
+      }
+      if (cur->Size() < chosen_bytes) {
+        chosen_bytes = cur->Size();
+        chosen = plan.leaf;
+      }
+    }
+    _tuning.levels_tuned = true;
+    _tuning.choice = StringChoice{shape, chosen};
+    _tuning.bytes_per_input =
+      cut->input == 0 ? 0
+                      : static_cast<double>(chosen_bytes) /
+                          static_cast<double>(cut->input);
+    for (auto* seg : _live) {
+      if (seg != best) {
+        Release(seg);
+      }
+    }
+    _live.clear();
+    return best;
+  }
+
+  Segment* Trial(StringChoice choice, uint8_t level, uint64_t begin,
+                 uint64_t end) {
+    for (auto* seg : _live) {
+      if (seg->choice.shape == choice.shape &&
+          seg->choice.leaf == choice.leaf && seg->level == level &&
+          seg->begin == begin && seg->rows == end - begin) {
+        return seg;
+      }
+    }
+    auto* seg = Acquire();
+    With(choice.leaf, [&](auto& enc) {
+      enc.Begin(choice.shape, level, begin);
+      enc.AddUntil(end);
+      enc.Finish(*seg);
+      return end;
+    });
+    _live.push_back(seg);
+    return seg;
+  }
+
+  static bool Repeats(const Segment& dedup) noexcept {
+    return dedup.entries * kDedupMinRepeat <= dedup.rows - dedup.nulls;
+  }
+
+  static bool PlainMayWin(const Segment& dedup) noexcept {
+    const auto floor = kHeaderSize + Packed(dedup.rows, dedup.max_len) +
+                       dedup.input / kLz4MaxRatio;
+    if (Repeats(dedup)) {
+      return static_cast<double>(floor) <
+             static_cast<double>(dedup.Size()) * kPlainWinsBelow;
+    }
+    return floor <= dedup.Size();
+  }
+
+  static bool PlainWins(const Segment& dedup, const Segment& plain) noexcept {
+    if (Repeats(dedup)) {
+      return static_cast<double>(plain.Size()) <
+             static_cast<double>(dedup.Size()) * kPlainWinsBelow;
+    }
+    return plain.Size() <= dedup.Size();
+  }
+
+  bool Drifted(const Segment& seg) const noexcept {
+    if (seg.input == 0 || _tuning.bytes_per_input == 0 ||
+        seg.Size() * kDriftMinFraction < _params.segment_target) {
+      return false;
+    }
+    const auto ratio =
+      static_cast<double>(seg.Size()) / static_cast<double>(seg.input);
+    return ratio > _tuning.bytes_per_input * kDrift ||
+           ratio * kDrift < _tuning.bytes_per_input;
+  }
+
+  static uint64_t PlainStorageBytes(const Segment& seg) noexcept {
+    return kHeaderSize + seg.input + seg.rows * sizeof(int32_t);
+  }
+
+  template<typename F>
+  uint64_t With(ByteCodec leaf, F&& f) {
+    switch (leaf) {
+      case ByteCodec::Lz4:
+        return f(Get<ByteCodec::Lz4>());
+      case ByteCodec::Zstd:
+        return f(Get<ByteCodec::Zstd>());
+      case ByteCodec::Zxc:
+        return f(Get<ByteCodec::Zxc>());
+      case ByteCodec::Fsst:
+        return f(Get<ByteCodec::Fsst>());
+    }
+    SDB_UNREACHABLE();
+  }
+
+  template<ByteCodec C>
+  Encoder<C>& Get() {
+    auto& slot = std::get<std::optional<Encoder<C>>>(_encoders);
+    if (!slot) {
+      slot.emplace(_acc, _type, _tuning.history[Index(C)], _dedup);
+    }
+    return *slot;
+  }
+
+  Segment* Acquire() {
+    if (_free.empty()) {
+      return _pool.emplace_back(std::make_unique<Segment>()).get();
+    }
+    auto* seg = _free.back();
+    _free.pop_back();
+    return seg;
+  }
+
+  void Release(Segment* seg) { _free.push_back(seg); }
+
+  const StringAccumulator& _acc;
+  std::optional<StringChoice> _named;
+  const ColCodecParams& _params;
+  const duckdb::LogicalType& _type;
+  StringTuning& _tuning;
+  uint8_t _fixed[1];
+  DedupScratch _dedup;
+  std::tuple<std::optional<Encoder<ByteCodec::Lz4>>,
+             std::optional<Encoder<ByteCodec::Zstd>>,
+             std::optional<Encoder<ByteCodec::Zxc>>,
+             std::optional<Encoder<ByteCodec::Fsst>>>
+    _encoders;
+  std::vector<std::unique_ptr<Segment>> _pool;
+  std::vector<Segment*> _free;
+  std::vector<Segment*> _live;
 };
 
 }  // namespace
@@ -679,72 +893,13 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
   row_count += count;
 }
 
-PricedChoice Price(const StringAccumulator& acc, StringChoice choice,
-                   const ColCodecParams& params) {
-  const auto ratio = Ratio(MakeSample(acc), choice, params.compression_level);
-  return {choice, EstimateWithRatio(acc, choice, ratio, params.segment_target),
-          ratio};
-}
-
-PricedChoice ChooseAuto(const StringAccumulator& acc,
-                        const ColCodecParams& params) {
-  const auto sample = MakeSample(acc);
-  std::optional<double> blob[kByteCodecCount];
-  PricedChoice best[2];
-  for (const auto shape : {Shape::Dedup, Shape::Plain}) {
-    auto& b = best[static_cast<size_t>(shape)];
-    b = {{shape, ByteCodec::Lz4}, std::numeric_limits<uint64_t>::max(), 1.0};
-    for (const auto leaf : AutoLeaves(params.objective, shape)) {
-      double ratio;
-      if (leaf == ByteCodec::Fsst) {
-        ratio = FsstRatio(sample, shape);
-      } else {
-        auto& cached = blob[static_cast<size_t>(leaf)];
-        if (!cached) {
-          cached = BlobRatio(sample, leaf, params.compression_level);
-        }
-        ratio = *cached;
-      }
-      const auto bytes = EstimateWithRatio(acc, StringChoice{shape, leaf},
-                                           ratio, params.segment_target);
-      if (bytes < b.bytes) {
-        b = {{shape, leaf}, bytes, ratio};
-      }
-    }
-  }
-  const auto& dedup = best[static_cast<size_t>(Shape::Dedup)];
-  const auto& plain = best[static_cast<size_t>(Shape::Plain)];
-  const bool repeats =
-    acc.entries.size() * kDedupMinRepeat <= acc.row_count - acc.null_count;
-  if (!repeats) {
-    return plain.bytes <= dedup.bytes ? plain : dedup;
-  }
-  if (static_cast<double>(plain.bytes) <
-      static_cast<double>(dedup.bytes) * kPlainWinsBelow) {
-    return plain;
-  }
-  return dedup;
-}
-
-void SealSegments(const StringAccumulator& acc, const PricedChoice& priced,
-                  const ColCodecParams& params, const duckdb::LogicalType& type,
-                  SegmentSink sink) {
+SealOutcome SealSegments(const StringAccumulator& acc,
+                         std::optional<StringChoice> named,
+                         const ColCodecParams& params,
+                         const duckdb::LogicalType& type, StringTuning& tuning,
+                         SegmentSink sink) {
   SDB_ASSERT(acc.codes.size() == acc.row_count);
-  const auto shape = priced.choice.shape;
-  switch (priced.choice.leaf) {
-    case ByteCodec::Lz4:
-      Sealer<ByteCodec::Lz4>{acc, shape, priced.ratio, params, type}.Run(sink);
-      return;
-    case ByteCodec::Zstd:
-      Sealer<ByteCodec::Zstd>{acc, shape, priced.ratio, params, type}.Run(sink);
-      return;
-    case ByteCodec::Zxc:
-      Sealer<ByteCodec::Zxc>{acc, shape, priced.ratio, params, type}.Run(sink);
-      return;
-    case ByteCodec::Fsst:
-      Sealer<ByteCodec::Fsst>{acc, shape, priced.ratio, params, type}.Run(sink);
-      return;
-  }
+  return SegmentWriter{acc, named, params, type, tuning}.Run(sink);
 }
 
 }  // namespace irs::codecs

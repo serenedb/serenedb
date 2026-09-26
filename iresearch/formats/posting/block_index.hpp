@@ -70,21 +70,32 @@ class BlockIndex {
     return static_cast<uint32_t>(-offset & (sizeof(uint32_t) - 1));
   }
 
+  static constexpr uint32_t EndBytes(uint8_t flags) noexcept {
+    return (flags & kWideEnd) != 0 ? sizeof(uint32_t) : sizeof(uint16_t);
+  }
+
+  static constexpr uint32_t GroupBytes(uint8_t flags) noexcept {
+    return (flags & kWideGroup) != 0 ? sizeof(uint64_t) : sizeof(uint32_t);
+  }
+
+  static constexpr uint32_t LandingBytes(BlockIndexShape shape,
+                                         uint8_t flags) noexcept {
+    auto bytes = EndBytes(flags);
+    if (shape.pos) {
+      bytes += GroupBytes(flags) + sizeof(uint16_t);
+      if (shape.offs) {
+        bytes += GroupBytes(flags);
+      }
+    }
+    return bytes;
+  }
+
   static uint64_t Bytes(uint32_t blocks, BlockIndexShape shape,
                         uint8_t flags) noexcept {
     SDB_ASSERT(blocks != 0);
     const uint64_t n = blocks;
-    const uint64_t m = n - 1;
     const uint64_t r = Runs(blocks);
-    const uint64_t end = (flags & kWideEnd) != 0 ? 4 : 2;
-    const uint64_t group = (flags & kWideGroup) != 0 ? 8 : 4;
-    uint64_t bytes = 4 * (n + r) + end * m;
-    if (shape.pos) {
-      bytes += (group + 2) * m;
-      if (shape.offs) {
-        bytes += group * m;
-      }
-    }
+    uint64_t bytes = 4 * (n + r) + LandingBytes(shape, flags) * (n - 1);
     if (shape.bounds) {
       bytes += kBoundBytes * (1 + n + r);
     }
@@ -96,34 +107,24 @@ class BlockIndex {
     SDB_ASSERT(blocks != 0);
     SDB_ASSERT(reinterpret_cast<uintptr_t>(data) % sizeof(uint32_t) == 0);
     const uint64_t n = blocks;
-    const uint64_t m = n - 1;
     const uint64_t r = Runs(blocks);
     _blocks = blocks;
     _wide_end = (flags & kWideEnd) != 0;
     _wide_group = (flags & kWideGroup) != 0;
-    const uint64_t group = _wide_group ? 8 : 4;
+    _landing_bytes = LandingBytes(shape, flags);
+    _group_at = EndBytes(flags);
+    _index_at = _group_at + GroupBytes(flags);
+    _pay_at = _index_at + sizeof(uint16_t);
     if (shape.bounds) {
       _root = data;
       data += kBoundBytes;
     }
     _last = reinterpret_cast<const uint32_t*>(data);
     _run_last = _last + n;
-    auto* p = data + 4 * (n + r);
-    _end = p;
-    p += (_wide_end ? 4 : 2) * m;
-    if (shape.pos) {
-      _pos_group = p;
-      p += group * m;
-      _pos_index = p;
-      p += 2 * m;
-      if (shape.offs) {
-        _pay_group = p;
-        p += group * m;
-      }
-    }
+    _landing = data + 4 * (n + r);
     if (shape.bounds) {
-      _bound = p;
-      _run_bound = p + kBoundBytes * n;
+      _bound = _landing + uint64_t{_landing_bytes} * (n - 1);
+      _run_bound = _bound + kBoundBytes * n;
     }
   }
 
@@ -134,22 +135,25 @@ class BlockIndex {
   doc_id_t Last(uint32_t k) const noexcept { return _last[k]; }
 
   uint64_t End(uint32_t k) const noexcept {
-    return _wide_end ? absl::little_endian::Load32(_end + 4 * k)
-                     : absl::little_endian::Load16(_end + 2 * k);
+    const auto* p = Landing(k);
+    return _wide_end ? absl::little_endian::Load32(p)
+                     : absl::little_endian::Load16(p);
   }
 
   uint64_t PosGroup(uint32_t k) const noexcept {
-    return _wide_group ? absl::little_endian::Load64(_pos_group + 8 * k)
-                       : absl::little_endian::Load32(_pos_group + 4 * k);
+    const auto* p = Landing(k) + _group_at;
+    return _wide_group ? absl::little_endian::Load64(p)
+                       : absl::little_endian::Load32(p);
   }
 
   uint32_t PosIndex(uint32_t k) const noexcept {
-    return absl::little_endian::Load16(_pos_index + 2 * k);
+    return absl::little_endian::Load16(Landing(k) + _index_at);
   }
 
   uint64_t PayGroup(uint32_t k) const noexcept {
-    return _wide_group ? absl::little_endian::Load64(_pay_group + 8 * k)
-                       : absl::little_endian::Load32(_pay_group + 4 * k);
+    const auto* p = Landing(k) + _pay_at;
+    return _wide_group ? absl::little_endian::Load64(p)
+                       : absl::little_endian::Load32(p);
   }
 
   const byte_type* Bound(uint32_t k) const noexcept {
@@ -209,16 +213,21 @@ class BlockIndex {
  private:
   static constexpr uint32_t kWindow = 64;
 
+  const byte_type* Landing(uint32_t k) const noexcept {
+    return _landing + size_t{_landing_bytes} * k;
+  }
+
   const byte_type* _root = nullptr;
   const uint32_t* _last = nullptr;
   const uint32_t* _run_last = nullptr;
-  const byte_type* _end = nullptr;
-  const byte_type* _pos_group = nullptr;
-  const byte_type* _pos_index = nullptr;
-  const byte_type* _pay_group = nullptr;
+  const byte_type* _landing = nullptr;
   const byte_type* _bound = nullptr;
   const byte_type* _run_bound = nullptr;
   uint32_t _blocks = 0;
+  uint32_t _landing_bytes = 0;
+  uint32_t _group_at = 0;
+  uint32_t _index_at = 0;
+  uint32_t _pay_at = 0;
   bool _wide_end = false;
   bool _wide_group = false;
 };
@@ -418,30 +427,26 @@ class BlockIndexWriter {
       out.WriteU32(_last[std::min(n, (i + 1) * BlockIndex::kRun) - 1]);
     }
     const bool wide_end = (flags & BlockIndex::kWideEnd) != 0;
+    const bool wide_group = (flags & BlockIndex::kWideGroup) != 0;
+    const auto group = [&](uint64_t value) {
+      if (wide_group) {
+        out.WriteU64(value);
+      } else {
+        out.WriteU32(static_cast<uint32_t>(value));
+      }
+    };
     for (uint32_t k = 0; k != m; ++k) {
       if (wide_end) {
         out.WriteU32(static_cast<uint32_t>(_end[k]));
       } else {
         out.WriteU16(static_cast<uint16_t>(_end[k]));
       }
-    }
-    const bool wide_group = (flags & BlockIndex::kWideGroup) != 0;
-    const auto groups = [&](const std::vector<uint64_t>& values) {
-      for (uint32_t k = 0; k != m; ++k) {
-        if (wide_group) {
-          out.WriteU64(values[k]);
-        } else {
-          out.WriteU32(static_cast<uint32_t>(values[k]));
-        }
-      }
-    };
-    if (shape.pos) {
-      groups(_pos_group);
-      for (uint32_t k = 0; k != m; ++k) {
+      if (shape.pos) {
+        group(_pos_group[k]);
         out.WriteU16(_pos_index[k]);
-      }
-      if (shape.offs) {
-        groups(_pay_group);
+        if (shape.offs) {
+          group(_pay_group[k]);
+        }
       }
     }
     if (shape.bounds) {

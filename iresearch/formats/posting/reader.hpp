@@ -139,12 +139,22 @@ inline size_t PostingsReader::decode(const byte_type* in,
              IndexFeatures::None ==
                (features & (IndexFeatures::Pos | IndexFeatures::Offs)));
 
-  posting_meta.docs_count = vread<uint32_t>(p);
+  const auto head = vread<uint32_t>(p);
+  posting_meta.docs_count = head >> 1;
   if (IndexFeatures::None != (features & IndexFeatures::Freq)) {
     posting_meta.freq = posting_meta.docs_count + vread<uint32_t>(p);
   }
 
-  posting_meta.doc_start += vread<uint64_t>(p);
+  if ((head & 1) != 0) {
+    const auto size = *p++;
+    SDB_ASSERT(size != 0 && size <= PostingMeta::kInlineBytes);
+    posting_meta.inline_size = size;
+    std::memcpy(posting_meta.inline_data, p, size);
+    p += size;
+  } else {
+    posting_meta.inline_size = 0;
+    posting_meta.doc_start += vread<uint64_t>(p);
+  }
   if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
     const auto pos_delta = vread<uint64_t>(p);
     posting_meta.pos_start += pos_delta;

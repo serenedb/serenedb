@@ -38,7 +38,6 @@ namespace irs {
 
 class DataOutput;
 struct IndexReader;
-class IndexOutput;
 struct SubReader;
 struct ScorerOptions;
 struct NormProvider;
@@ -92,7 +91,7 @@ struct ScoreBoundWriter {
 
   virtual void Update() = 0;
 
-  virtual void WriteRoot(size_t level, IndexOutput& out) = 0;
+  virtual void WriteRoot(size_t level, DataOutput& out) = 0;
   virtual void Take(size_t level, uint32_t* out) = 0;
 
   virtual byte_type SizeRoot(size_t level) = 0;

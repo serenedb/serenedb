@@ -29,6 +29,7 @@
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/block_index.hpp"
 #include "iresearch/formats/posting/common.hpp"
+#include "iresearch/formats/posting/doc_input.hpp"
 #include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -222,12 +223,8 @@ class PostingLeaf {
 
   void OpenInput(const PostingMeta& meta, const IndexInput& doc_in,
                  bool bounds) {
-    _in = doc_in.Reopen();
-    if (!_in) [[unlikely]] {
-      throw IoError{"failed to reopen document input"};
-    }
+    _in = OpenDocInput(meta, doc_in);
     auto& in = In();
-    in.Seek(meta.doc_start);
     LimitDocReadahead(in, meta);
     if (meta.docs_count < kBlock) {
       SkipScoreBounds(bounds, in);

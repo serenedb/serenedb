@@ -31,6 +31,7 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -260,6 +261,7 @@ class PostingsWriter final {
   void EndTerm(PostingMeta& meta);
   void PrepareWriters(const FieldProperties& meta);
   void FlushTailDoc();
+  void AppendTailDoc(BytesOutput& out);
   void FlushTailPos();
   void FlushTailPay();
   void WritePosBlock();
@@ -297,6 +299,7 @@ class PostingsWriter final {
   }
 
   BlockIndexWriter _index;
+  bstring _tail;
   PostingMeta _last_state;    // Last final term state
   bitset _docs;               // Set of all processed documents
   IndexOutput::ptr _doc_out;  // Postings (doc + freq)
@@ -401,13 +404,21 @@ inline void PostingsWriter::Encode(BufferedOutput& out,
   SDB_ASSERT(!_features.HasVector() ||
              (!_features.HasPosition() && !_features.HasOffset()));
 
-  out.WriteV32(meta.docs_count);
+  const bool inlined = meta.inline_size != 0;
+  SDB_ASSERT(meta.docs_count <= std::numeric_limits<uint32_t>::max() / 2);
+  out.WriteV32(meta.docs_count << 1 | static_cast<uint32_t>(inlined));
   if (_features.HasFrequency()) {
     SDB_ASSERT(meta.freq >= meta.docs_count);
     out.WriteV32(meta.freq - meta.docs_count);
   }
 
-  out.WriteV64(meta.doc_start - _last_state.doc_start);
+  const auto doc_start = _last_state.doc_start;
+  if (inlined) {
+    out.WriteByte(meta.inline_size);
+    out.WriteData(meta.inline_data, meta.inline_size);
+  } else {
+    out.WriteV64(meta.doc_start - doc_start);
+  }
   if (_features.HasPosition()) {
     const uint64_t pos_delta = meta.pos_start - _last_state.pos_start;
     out.WriteV64(pos_delta);
@@ -428,6 +439,9 @@ inline void PostingsWriter::Encode(BufferedOutput& out,
   }
 
   _last_state = meta;
+  if (inlined) {
+    _last_state.doc_start = doc_start;
+  }
 }
 
 inline void PostingsWriter::BeginTerm(PostingMeta& meta) {
@@ -449,24 +463,27 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
     return;  // no documents to write
   }
 
+  meta.inline_size = 0;
   const bool has_skip_list = doc_limits::kBlockSize < meta.docs_count;
-  auto write_max_score = [&](size_t level) {
-    ApplyToWriter([&](auto& writer) {
-      const uint8_t size = writer.SizeRoot(level);
-      _doc_out->WriteByte(size);
-    });
-    ApplyToWriter([&](auto& writer) { writer.WriteRoot(level, *_doc_out); });
-  };
 
   if (1 == meta.docs_count) {
     meta.doc_delta = _doc.docs[0] - doc_limits::min();
-  } else {
-    if (meta.docs_count < doc_limits::kBlockSize) {
-      write_max_score(0);
+  } else if (meta.docs_count < doc_limits::kBlockSize) {
+    _tail.clear();
+    BytesOutput out{_tail};
+    ApplyToWriter([&](auto& writer) {
+      out.WriteByte(writer.SizeRoot(0));
+      writer.WriteRoot(0, out);
+    });
+    AppendTailDoc(out);
+    if (_tail.size() <= PostingMeta::kInlineBytes) {
+      meta.inline_size = static_cast<uint8_t>(_tail.size());
+      std::memcpy(meta.inline_data, _tail.data(), _tail.size());
+    } else {
+      _doc_out->WriteData(_tail.data(), _tail.size());
     }
-    if ((meta.docs_count & (doc_limits::kBlockSize - 1)) != 0) {
-      FlushTailDoc();
-    }
+  } else if ((meta.docs_count & (doc_limits::kBlockSize - 1)) != 0) {
+    FlushTailDoc();
   }
 
   if (has_skip_list) {
@@ -503,6 +520,16 @@ inline void PostingsWriter::FlushTailDoc() {
                                   _enc_buf);
   if (_features.HasFrequency()) {
     FormatTraits128::WriteTail(tail, *_doc_out, _doc.freqs, _enc_buf);
+  }
+}
+
+inline void PostingsWriter::AppendTailDoc(BytesOutput& out) {
+  const auto tail = _doc.size;
+  SDB_ASSERT(tail != 0);
+  FormatTraits128::WriteTailDelta(tail, out, _doc.docs, _doc.block_last,
+                                  _enc_buf);
+  if (_features.HasFrequency()) {
+    FormatTraits128::WriteTail(tail, out, _doc.freqs, _enc_buf);
   }
 }
 

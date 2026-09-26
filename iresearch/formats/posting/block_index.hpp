@@ -270,6 +270,14 @@ class BlockCursor {
   const BlockIndex& Index() const noexcept { return _index; }
 
   template<typename Input>
+  const BlockIndex& Loaded(Input& in) {
+    if (_pending) [[unlikely]] {
+      Load(in);
+    }
+    return _index;
+  }
+
+  template<typename Input>
   uint32_t Seek(doc_id_t target, Input& in) {
     if (_pending) [[unlikely]] {
       Load(in);

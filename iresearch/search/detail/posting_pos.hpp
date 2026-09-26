@@ -101,6 +101,20 @@ class PostingPos {
 
   Position& Positions() noexcept { return _pos; }
 
+  const BlockIndex* Blocks() {
+    if constexpr (Bounds) {
+      if (_cursor.Armed()) {
+        return &_cursor.Loaded(In());
+      }
+    }
+    return nullptr;
+  }
+
+  uint32_t LeafBlock() const noexcept {
+    SDB_ASSERT(_left_in_list < _docs_count);
+    return (_docs_count - _left_in_list - 1) / doc_limits::kBlockSize;
+  }
+
   IRS_FORCE_INLINE doc_id_t Next() {
     if (_left_in_leaf == 0) [[unlikely]] {
       if (_left_in_list == 0) [[unlikely]] {

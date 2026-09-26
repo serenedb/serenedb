@@ -64,7 +64,7 @@ class ScoreBoundWriterImpl final : public ScoreBoundWriter {
     _producer.Produce(_levels.front());
   }
 
-  void WriteRoot(size_t level, IndexOutput& out) final {
+  void WriteRoot(size_t level, DataOutput& out) final {
     SDB_ASSERT(level < _levels.size());
     auto& entry = _levels[level];
     Producer::Write(entry, out);

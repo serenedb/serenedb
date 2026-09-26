@@ -26,6 +26,7 @@
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/formats/posting/common.hpp"
+#include "iresearch/formats/posting/doc_input.hpp"
 #include "iresearch/formats/posting/iterator_pos.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/iterators.hpp"
@@ -62,13 +63,9 @@ class PostingsStream : public TermPostings {
       _left_in_leaf = 1;
       _max_in_leaf = doc;
     } else {
-      _doc_in = doc_in.Reopen();
-      if (!_doc_in) [[unlikely]] {
-        throw IoError{"failed to reopen document input"};
-      }
+      _doc_in = OpenDocInput(meta, doc_in);
 
       auto& in = In();
-      in.Seek(meta.doc_start);
       // A term short enough to have no skip list carries its score bound
       // ahead of the one block it does have; a longer one carries it past
       // the blocks, where nothing reading forward ever reaches it.

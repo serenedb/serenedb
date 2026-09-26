@@ -37,7 +37,9 @@ namespace irs {
 namespace {
 
 bool SamePosting(const PostingMeta& l, const PostingMeta& r) noexcept {
-  return l.doc_start == r.doc_start && l.docs_count > 1 && r.docs_count > 1;
+  return l.doc_start == r.doc_start && l.docs_count > 1 && r.docs_count > 1 &&
+         l.pos_start == r.pos_start && l.pos_offset == r.pos_offset &&
+         l.Inline() == r.Inline();
 }
 
 bool SameStats(const detail::StatsRecord& lhs,

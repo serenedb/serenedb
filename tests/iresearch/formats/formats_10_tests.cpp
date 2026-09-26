@@ -124,7 +124,10 @@ class Format10TestCase : public tests::FormatTestCase {
         // check PostingMeta
         {
           ASSERT_EQ(posting_meta.docs_count, read_meta.docs_count);
-          ASSERT_EQ(posting_meta.doc_start, read_meta.doc_start);
+          ASSERT_EQ(posting_meta.Inline(), read_meta.Inline());
+          if (posting_meta.inline_size == 0) {
+            ASSERT_EQ(posting_meta.doc_start, read_meta.doc_start);
+          }
           ASSERT_EQ(posting_meta.pos_start, read_meta.pos_start);
           ASSERT_EQ(posting_meta.pay_start, read_meta.pay_start);
           ASSERT_EQ(posting_meta.pos_offset, read_meta.pos_offset);
@@ -444,8 +447,8 @@ TEST_P(Format10TestCase, postings_read_write) {
       writer->Encode(*out, meta1);
     }
 
-    // check doc positions for term0 & term1
-    ASSERT_LT(meta0.doc_start, meta1.doc_start);
+    ASSERT_NE(0, meta0.inline_size);
+    ASSERT_NE(0, meta1.inline_size);
 
     // finish writing
     writer->End();
@@ -482,7 +485,7 @@ TEST_P(Format10TestCase, postings_read_write) {
       // check PostingMeta
       {
         ASSERT_EQ(meta0.docs_count, read_meta.docs_count);
-        ASSERT_EQ(meta0.doc_start, read_meta.doc_start);
+        ASSERT_EQ(meta0.Inline(), read_meta.Inline());
         ASSERT_EQ(meta0.pos_start, read_meta.pos_start);
         ASSERT_EQ(meta0.pay_start, read_meta.pay_start);
         ASSERT_EQ(meta0.pos_offset, read_meta.pos_offset);
@@ -504,7 +507,7 @@ TEST_P(Format10TestCase, postings_read_write) {
       // check PostingMeta
       {
         ASSERT_EQ(meta1.docs_count, read_meta.docs_count);
-        ASSERT_EQ(meta1.doc_start, read_meta.doc_start);
+        ASSERT_EQ(meta1.Inline(), read_meta.Inline());
         ASSERT_EQ(meta1.pos_start, read_meta.pos_start);
         ASSERT_EQ(meta1.pay_start, read_meta.pay_start);
         ASSERT_EQ(meta1.pos_offset, read_meta.pos_offset);

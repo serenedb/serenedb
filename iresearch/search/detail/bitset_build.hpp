@@ -201,8 +201,6 @@ void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
                  bool has_score_bounds, bool has_freq, Sink& sink) {
   SDB_ASSERT(meta.docs_count > 1);
 
-  in.Seek(meta.doc_start);
-  LimitDocReadahead(in, meta);
   if (meta.docs_count < doc_limits::kBlockSize) {
     SkipScoreBounds(has_score_bounds, in);
   }
@@ -279,6 +277,22 @@ class PostingReader {
 
   doc_id_t* Docs() noexcept { return _buf; }
 
+  template<typename Sink>
+  void Read(const PostingMeta& meta, bool has_score_bounds, bool has_freq,
+            Sink& sink) {
+    if (meta.inline_size != 0) {
+      BytesViewInput in{meta.Inline()};
+      ReadPosting(meta, in, Enc(), Holes(), Docs(), has_score_bounds, has_freq,
+                  sink);
+      return;
+    }
+    auto& in = In();
+    in.Seek(meta.doc_start);
+    LimitDocReadahead(in, meta);
+    ReadPosting(meta, in, Enc(), Holes(), Docs(), has_score_bounds, has_freq,
+                sink);
+  }
+
  private:
   const IndexInput* _doc;
   IndexInput::ptr _owned;
@@ -299,8 +313,7 @@ void ReadTerms(std::span<const Term> terms, const TermReader* field,
       continue;
     }
     const auto& own = FieldOf(terms[i], field);
-    ReadPosting(meta, r.In(), r.Enc(), r.Holes(), r.Docs(), BoundsOf(own),
-                FreqOf(own), sink);
+    r.Read(meta, BoundsOf(own), FreqOf(own), sink);
   }
 }
 

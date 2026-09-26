@@ -159,12 +159,22 @@ inline size_t PostingsReaderBase::decode(const byte_type* in,
              IndexFeatures::None ==
                (features & (IndexFeatures::Pos | IndexFeatures::Offs)));
 
-  posting_meta.docs_count = vread<uint32_t>(p);
+  const auto head = vread<uint32_t>(p);
+  posting_meta.docs_count = head >> 1;
   if (IndexFeatures::None != (features & IndexFeatures::Freq)) {
     posting_meta.freq = posting_meta.docs_count + vread<uint32_t>(p);
   }
 
-  posting_meta.doc_start += vread<uint64_t>(p);
+  if ((head & 1) != 0) {
+    const auto size = *p++;
+    SDB_ASSERT(size != 0 && size <= PostingMeta::kInlineBytes);
+    posting_meta.inline_size = size;
+    std::memcpy(posting_meta.inline_data, p, size);
+    p += size;
+  } else {
+    posting_meta.inline_size = 0;
+    posting_meta.doc_start += vread<uint64_t>(p);
+  }
   if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
     const auto pos_delta = vread<uint64_t>(p);
     posting_meta.pos_start += pos_delta;
@@ -286,21 +296,27 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
     const auto& term_state = *meta;
 
     if (term_state.docs_count > 1) {
-      doc_in->Seek(term_state.doc_start);
-      SDB_ASSERT(!doc_in->IsEOF());
-      if (term_state.docs_count < doc_limits::kBlockSize) {
-        SkipScoreBounds(has_score_bounds, *doc_in);
-      }
-      SDB_ASSERT(!doc_in->IsEOF());
-
-      if (has_freq) {
-        using FieldTraits = IteratorTraits<true, false, false>;
-        BitUnionImpl<FieldTraits>(*doc_in, term_state.docs_count, docs, enc_buf,
-                                  set);
+      const auto read = [&](IndexInput& in) {
+        if (term_state.docs_count < doc_limits::kBlockSize) {
+          SkipScoreBounds(has_score_bounds, in);
+        }
+        SDB_ASSERT(!in.IsEOF());
+        if (has_freq) {
+          using FieldTraits = IteratorTraits<true, false, false>;
+          BitUnionImpl<FieldTraits>(in, term_state.docs_count, docs, enc_buf,
+                                    set);
+        } else {
+          using FieldTraits = IteratorTraits<false, false, false>;
+          BitUnionImpl<FieldTraits>(in, term_state.docs_count, docs, enc_buf,
+                                    set);
+        }
+      };
+      if (term_state.inline_size != 0) {
+        BytesViewInput in{term_state.Inline()};
+        read(in);
       } else {
-        using FieldTraits = IteratorTraits<false, false, false>;
-        BitUnionImpl<FieldTraits>(*doc_in, term_state.docs_count, docs, enc_buf,
-                                  set);
+        doc_in->Seek(term_state.doc_start);
+        read(*doc_in);
       }
 
       count += term_state.docs_count;

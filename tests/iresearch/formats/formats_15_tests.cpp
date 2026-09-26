@@ -365,7 +365,10 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
 
   {
     EXPECT_EQ(posting_meta.docs_count, read_meta.docs_count);
-    EXPECT_EQ(posting_meta.doc_start, read_meta.doc_start);
+    EXPECT_EQ(posting_meta.Inline(), read_meta.Inline());
+    if (posting_meta.inline_size == 0) {
+      EXPECT_EQ(posting_meta.doc_start, read_meta.doc_start);
+    }
     EXPECT_EQ(posting_meta.pos_start, read_meta.pos_start);
     EXPECT_EQ(posting_meta.pay_start, read_meta.pay_start);
     EXPECT_EQ(posting_meta.pos_offset, read_meta.pos_offset);
@@ -713,6 +716,15 @@ INSTANTIATE_TEST_SUITE_P(Format15Test, FormatTestCaseWithEncryption,
 
 TEST_P(Format15TestCase, SingletonPostings) {
   static constexpr size_t kCount = 1;
+  ASSERT_TRUE(kCount < GetPostingsBlockSize());
+
+  const auto docs = GenerateDocs(kCount, 50.f, 14.f, 1);
+
+  AssertStressPostings(docs);
+}
+
+TEST_P(Format15TestCase, InlinePostings) {
+  static constexpr size_t kCount = 5;
   ASSERT_TRUE(kCount < GetPostingsBlockSize());
 
   const auto docs = GenerateDocs(kCount, 50.f, 14.f, 1);

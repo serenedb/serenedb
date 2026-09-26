@@ -57,7 +57,8 @@ struct FormatTraits128 {
     out.WriteData(bytes, Codec::EncodeDeltaBlock(in, prev, bytes));
   }
 
-  IRS_FORCE_INLINE static void WriteTailDelta(uint32_t len, BufferedOutput& out,
+  template<typename Output>
+  IRS_FORCE_INLINE static void WriteTailDelta(uint32_t len, Output& out,
                                               const uint32_t* in, uint32_t prev,
                                               uint32_t* buf) {
     SDB_ASSERT(1 <= len && len < kBlock);
@@ -78,7 +79,8 @@ struct FormatTraits128 {
     return Codec::EncodeValuesBlock(in, reinterpret_cast<byte_type*>(buf));
   }
 
-  IRS_FORCE_INLINE static void WriteTail(uint32_t len, BufferedOutput& out,
+  template<typename Output>
+  IRS_FORCE_INLINE static void WriteTail(uint32_t len, Output& out,
                                          const uint32_t* in, uint32_t* buf) {
     SDB_ASSERT(1 <= len && len < kBlock);
     auto* const bytes = reinterpret_cast<byte_type*>(buf);
@@ -345,7 +347,6 @@ struct FormatTraits128 {
   static constexpr uint32_t kHoleWords = 8;
 
  private:
-
   IRS_FORCE_INLINE static bool HoleToken(uint32_t token) noexcept {
     using block_codec::Code;
     using block_codec::DeltaEncoding;
@@ -395,8 +396,8 @@ struct FormatTraits128 {
     while (i != count16 || j != count32) {
       uint32_t slot;
       uint32_t high;
-      if (j == count32 ||
-          (i != count16 && p[i * sizeof(uint16_t)] < wide[j * sizeof(uint32_t)])) {
+      if (j == count32 || (i != count16 && p[i * sizeof(uint16_t)] <
+                                             wide[j * sizeof(uint32_t)])) {
         slot = p[i * sizeof(uint16_t)];
         high = p[i * sizeof(uint16_t) + 1];
         ++i;

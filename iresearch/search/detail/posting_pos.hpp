@@ -26,6 +26,7 @@
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/block_index.hpp"
 #include "iresearch/formats/posting/common.hpp"
+#include "iresearch/formats/posting/doc_input.hpp"
 #include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting/iterator_pos.hpp"
 #include "iresearch/formats/posting_meta.hpp"
@@ -70,12 +71,8 @@ class PostingPos {
       _left_in_leaf = 1;
       _max_in_leaf = doc;
     } else {
-      _in = doc_in.Reopen();
-      if (!_in) [[unlikely]] {
-        throw IoError{"failed to reopen document input"};
-      }
+      _in = OpenDocInput(meta, doc_in);
       auto& in = In();
-      in.Seek(meta.doc_start);
       LimitDocReadahead(in, meta);
       if (meta.docs_count < doc_limits::kBlockSize) {
         SkipScoreBounds(Bounds, in);

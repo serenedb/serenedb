@@ -175,16 +175,16 @@ std::vector<Row> Rows(std::vector<T> items) {
 }
 
 std::vector<Row> ProduceDocs(duckdb::DatabaseInstance& db, const Args&,
-                             const Claim& claim, Columns columns) {
+                             const Claim& claim, Content content) {
   if (claim.paths.empty()) {
-    return Rows(ListPrefix(db, claim.prefix.value_or(""), false, columns));
+    return Rows(ListPrefix(db, claim.prefix.value_or(""), false, content));
   }
   auto paths = claim.paths;
   absl::c_sort(paths);
   paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
   std::vector<Row> rows;
   for (const auto& path : paths) {
-    if (auto entry = EntryAt(db, path, columns)) {
+    if (auto entry = EntryAt(db, path, content)) {
       rows.emplace_back(std::move(*entry));
     }
   }
@@ -192,14 +192,14 @@ std::vector<Row> ProduceDocs(duckdb::DatabaseInstance& db, const Args&,
 }
 
 std::vector<Row> ProduceObjects(duckdb::DatabaseInstance& db, const Args&,
-                                const Claim&, Columns) {
+                                const Claim&, Content) {
   return Rows(Objects(db));
 }
 
 std::vector<Row> ProduceSearch(duckdb::DatabaseInstance& db, const Args& args,
-                               const Claim&, Columns) {
+                               const Claim&, Content) {
   std::string error;
-  auto hits = Search(db, args.text, args.limit, Columns{}, error);
+  auto hits = Search(db, args.text, args.limit, Content::Omit, error);
   if (!error.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("sdb_docs.search: ", error));
@@ -208,7 +208,7 @@ std::vector<Row> ProduceSearch(duckdb::DatabaseInstance& db, const Args& args,
 }
 
 std::vector<Row> ProduceObject(duckdb::DatabaseInstance& db, const Args& args,
-                               const Claim&, Columns) {
+                               const Claim&, Content) {
   if (auto objects = FindObjects(db, args.text, args.kind); !objects.empty()) {
     return Rows(std::move(objects));
   }
@@ -219,7 +219,7 @@ std::vector<Row> ProduceObject(duckdb::DatabaseInstance& db, const Args& args,
 }
 
 using Produce = std::vector<Row> (*)(duckdb::DatabaseInstance&, const Args&,
-                                     const Claim&, Columns);
+                                     const Claim&, Content);
 
 struct Table {
   std::string_view name;
@@ -332,7 +332,7 @@ duckdb::Value EntryCell(duckdb::DatabaseInstance& db, const Entry& entry,
     case Column::Markdown:
       return Text(Markdown(entry));
     case Column::Snippet: {
-      const auto full = EntryAt(db, entry.path, Columns{.content = true});
+      const auto full = EntryAt(db, entry.path, Content::Include);
       return Text(Snippet(
         duckdb::markdown_utils::MarkdownToText(full ? full->content : ""),
         kSnippetChars));
@@ -354,12 +354,14 @@ duckdb::Value Cell(duckdb::DatabaseInstance& db, const Row& row,
   return EntryCell(db, std::get<Entry>(row), column);
 }
 
-Columns Needed(std::span<const Column> columns) {
+Content Needed(std::span<const Column> columns) {
   const auto wants = [&](Column column) {
     return absl::c_linear_search(columns, column);
   };
-  return {.content = wants(Column::Content) || wants(Column::Markdown) ||
-                     wants(Column::ContentText)};
+  return wants(Column::Content) || wants(Column::Markdown) ||
+             wants(Column::ContentText)
+           ? Content::Include
+           : Content::Omit;
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> Bind(

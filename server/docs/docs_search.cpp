@@ -320,7 +320,7 @@ irs::Filter::ptr PathPrefix(const Layout& layout, std::string_view prefix) {
 class EntryFetcher {
  public:
   EntryFetcher(const irs::SubReader& segment, const Layout& layout,
-               Columns columns) {
+               Content content) {
     const auto* col_reader = segment.GetColReader();
     if (!col_reader) {
       return;
@@ -334,7 +334,7 @@ class EntryFetcher {
     };
     if (!open(layout.path, _path) || !open(layout.title, _title) ||
         !open(layout.breadcrumb, _breadcrumb) ||
-        (columns.content && !open(layout.content, _content))) {
+        (content == Content::Include && !open(layout.content, _content))) {
       _path.reset();
     }
   }
@@ -374,7 +374,7 @@ class EntryFetcher {
 
 template<typename Fn>
 void ForEachMatch(const DocsIndex& index, const irs::Filter& filter,
-                  Columns columns, Fn&& fn) {
+                  Content content, Fn&& fn) {
   for (const auto& segment : index.Reader()) {
     auto query = filter.PrepareSegment(segment, {});
     if (!query || irs::QueryBuilder::IsEmpty(*query)) {
@@ -391,7 +391,7 @@ void ForEachMatch(const DocsIndex& index, const irs::Filter& filter,
     } else {
       live.emplace(std::move(node), docs_count, irs::fill::DocsMask{segment});
     }
-    EntryFetcher fetcher{segment, index.Fields(), columns};
+    EntryFetcher fetcher{segment, index.Fields(), content};
     if (!fetcher.Valid()) {
       continue;
     }
@@ -406,10 +406,10 @@ void ForEachMatch(const DocsIndex& index, const irs::Filter& filter,
 
 template<typename Keep>
 std::vector<Entry> CollectMatches(const DocsIndex& index,
-                                  const irs::Filter& filter, Columns columns,
+                                  const irs::Filter& filter, Content content,
                                   Keep keep) {
   std::vector<Entry> out;
-  ForEachMatch(index, filter, columns,
+  ForEachMatch(index, filter, content,
                [&](EntryFetcher& fetcher, irs::doc_id_t doc) {
                  if (!keep(fetcher.Path(doc))) {
                    return;
@@ -662,7 +662,7 @@ irs::Filter::ptr Compile(std::string_view query, const DocsIndex& index,
 }
 
 std::vector<Entry> RunScored(const DocsIndex& index, const irs::Filter& filter,
-                             size_t limit, Columns columns) {
+                             size_t limit, Content content) {
   const auto& reader = index.Reader();
   const auto scorer = irs::BM25::Make({});
   const size_t capacity = std::max<size_t>(reader.live_docs_count(), 1);
@@ -680,7 +680,7 @@ std::vector<Entry> RunScored(const DocsIndex& index, const irs::Filter& filter,
   const auto fetcher = [&](uint32_t segment) -> EntryFetcher& {
     auto& slot = fetchers[segment];
     if (!slot) {
-      slot.emplace(reader[segment], index.Fields(), columns);
+      slot.emplace(reader[segment], index.Fields(), content);
     }
     return *slot;
   };
@@ -720,9 +720,9 @@ std::vector<Entry> RunScored(const DocsIndex& index, const irs::Filter& filter,
 }
 
 std::optional<Entry> ExactPath(const DocsIndex& index, std::string_view path,
-                               Columns columns) {
+                               Content content) {
   auto exact =
-    CollectMatches(index, *PathTerm(index.Fields(), path), columns,
+    CollectMatches(index, *PathTerm(index.Fields(), path), content,
                    [&](std::string_view found) { return found == path; });
   if (exact.empty()) {
     return std::nullopt;
@@ -731,13 +731,13 @@ std::optional<Entry> ExactPath(const DocsIndex& index, std::string_view path,
 }
 
 std::optional<Entry> PageEntry(const DocsIndex& index, std::string_view path,
-                               Columns columns) {
-  if (auto exact = ExactPath(index, path, columns)) {
+                               Content content) {
+  if (auto exact = ExactPath(index, path, content)) {
     return exact;
   }
   const auto page = absl::StrCat(path, "#");
   auto titles = CollectMatches(index, *PathPrefix(index.Fields(), page),
-                               columns, [&](std::string_view found) {
+                               content, [&](std::string_view found) {
                                  return found.find('#', page.size()) ==
                                         std::string_view::npos;
                                });
@@ -794,13 +794,13 @@ size_t Occurrences(std::string_view text, std::string_view needle) {
 }
 
 std::vector<Entry> Literal(const DocsIndex& index, std::string_view text,
-                           size_t limit, Columns columns) {
+                           size_t limit, Content content) {
   const auto needle = absl::StripAsciiWhitespace(text);
   std::vector<Entry> hits;
   if (needle.empty()) {
     return hits;
   }
-  ForEachMatch(index, *PathPrefix(index.Fields(), ""), Columns{.content = true},
+  ForEachMatch(index, *PathPrefix(index.Fields(), ""), Content::Include,
                [&](EntryFetcher& fetcher, irs::doc_id_t doc) {
                  auto entry = fetcher.Fetch(doc);
                  if (!entry) {
@@ -824,7 +824,7 @@ std::vector<Entry> Literal(const DocsIndex& index, std::string_view text,
   if (hits.size() > limit) {
     hits.resize(limit);
   }
-  if (!columns.content) {
+  if (content == Content::Omit) {
     for (auto& hit : hits) {
       hit.content.clear();
     }
@@ -834,7 +834,7 @@ std::vector<Entry> Literal(const DocsIndex& index, std::string_view text,
 
 std::vector<Entry> KnownFirst(const DocsIndex& index, std::string_view query,
                               std::vector<Entry> hits, size_t limit,
-                              Columns columns) {
+                              Content content) {
   std::vector<Entry> known;
   const auto listed = [&](std::string_view path) {
     return absl::c_any_of(
@@ -844,7 +844,7 @@ std::vector<Entry> KnownFirst(const DocsIndex& index, std::string_view query,
     if (listed(object.path)) {
       continue;
     }
-    if (auto entry = ExactPath(index, object.path, columns)) {
+    if (auto entry = ExactPath(index, object.path, content)) {
       known.push_back(std::move(*entry));
     }
   }
@@ -952,26 +952,26 @@ std::optional<Entry> FindByPath(duckdb::DatabaseInstance& db,
     return std::nullopt;
   }
   return WithIndex(db, [&](const DocsIndex& index) {
-    return PageEntry(index, path, Columns{.content = true});
+    return PageEntry(index, path, Content::Include);
   });
 }
 
 std::optional<Entry> ResolveLink(duckdb::DatabaseInstance& db,
                                  std::string_view link, std::string_view base,
-                                 Columns columns) {
+                                 Content content) {
   const auto route = SiteRoute(absl::StripAsciiWhitespace(link));
   link = route;
   if (link.empty() || connector::IsExternal(link)) {
     return std::nullopt;
   }
   return WithIndex(db, [&](const DocsIndex& index) -> std::optional<Entry> {
-    if (auto exact = ExactPath(index, link, columns)) {
+    if (auto exact = ExactPath(index, link, content)) {
       return exact;
     }
     for (auto parent = link.rfind('#');
          parent != std::string_view::npos && parent != link.find('#');
          parent = link.rfind('#', parent - 1)) {
-      if (auto ancestor = ExactPath(index, link.substr(0, parent), columns)) {
+      if (auto ancestor = ExactPath(index, link.substr(0, parent), content)) {
         return ancestor;
       }
     }
@@ -996,7 +996,7 @@ std::optional<Entry> ResolveLink(duckdb::DatabaseInstance& db,
         int best_rank = 3;
         for (const auto& section : SortedByPath(CollectMatches(
                index, *PathPrefix(index.Fields(), absl::StrCat(at, "#")),
-               Columns{}, [](std::string_view) { return true; }))) {
+               Content::Omit, [](std::string_view) { return true; }))) {
           const auto slug = Slug(section.title);
           const auto title = absl::AsciiStrToLower(section.title);
           const int rank = slug == wanted                               ? 0
@@ -1009,12 +1009,12 @@ std::optional<Entry> ResolveLink(duckdb::DatabaseInstance& db,
           }
         }
         if (best) {
-          if (auto entry = ExactPath(index, *best, columns)) {
+          if (auto entry = ExactPath(index, *best, content)) {
             return entry;
           }
         }
       }
-      return PageEntry(index, at, columns);
+      return PageEntry(index, at, content);
     };
     if (auto entry = resolve(page)) {
       return entry;
@@ -1032,7 +1032,7 @@ std::optional<Entry> ResolveLink(duckdb::DatabaseInstance& db,
       "/", std::string_view{page}.substr(page.find_last_of('/') + 1));
     std::vector<std::string> pages;
     for (const auto& entry : CollectMatches(
-           index, *PathPrefix(index.Fields(), ""), Columns{},
+           index, *PathPrefix(index.Fields(), ""), Content::Omit,
            [&](std::string_view found) {
              return found.substr(0, found.find('#')).ends_with(file);
            })) {
@@ -1049,7 +1049,7 @@ std::optional<Entry> ResolveLink(duckdb::DatabaseInstance& db,
 }
 
 std::vector<Entry> Lookup(duckdb::DatabaseInstance& db, std::string_view name,
-                          Columns columns) {
+                          Content content) {
   if (name.empty()) {
     return {};
   }
@@ -1071,7 +1071,7 @@ std::vector<Entry> Lookup(duckdb::DatabaseInstance& db, std::string_view name,
       }
       return absl::StartsWithIgnoreCase(entry.title, word) ? 2 : 3;
     };
-    auto hits = CollectMatches(index, *filter, Columns{},
+    auto hits = CollectMatches(index, *filter, Content::Omit,
                                [](std::string_view) { return true; });
     if (hits.empty()) {
       return hits;
@@ -1082,9 +1082,9 @@ std::vector<Entry> Lookup(duckdb::DatabaseInstance& db, std::string_view name,
     }
     std::erase_if(hits,
                   [&](const Entry& entry) { return rank(entry) != best; });
-    if (columns.content) {
+    if (content == Content::Include) {
       for (auto& hit : hits) {
-        if (auto full = ExactPath(index, hit.path, columns)) {
+        if (auto full = ExactPath(index, hit.path, content)) {
           hit = std::move(*full);
         }
       }
@@ -1216,10 +1216,10 @@ std::vector<std::string> CompleteName(duckdb::DatabaseInstance& db,
 
 std::vector<Entry> ListPrefix(duckdb::DatabaseInstance& db,
                               std::string_view prefix, bool pages_only,
-                              Columns columns) {
+                              Content content) {
   return WithIndex(db, [&](const DocsIndex& index) {
     return SortedByPath(
-      CollectMatches(index, *PathPrefix(index.Fields(), prefix), columns,
+      CollectMatches(index, *PathPrefix(index.Fields(), prefix), content,
                      [&](std::string_view path) {
                        return !pages_only || HeadingDepth(path) <= 1;
                      }));
@@ -1231,11 +1231,11 @@ std::vector<Entry> Children(duckdb::DatabaseInstance& db,
   const auto depth = HeadingDepth(path);
   const auto page = absl::StrCat(path, "#");
   return WithIndex(db, [&](const DocsIndex& index) {
-    return SortedByPath(CollectMatches(index, *PathPrefix(index.Fields(), page),
-                                       Columns{}, [&](std::string_view found) {
-                                         return HeadingDepth(found) ==
-                                                depth + 1;
-                                       }));
+    return SortedByPath(
+      CollectMatches(index, *PathPrefix(index.Fields(), page), Content::Omit,
+                     [&](std::string_view found) {
+                       return HeadingDepth(found) == depth + 1;
+                     }));
   });
 }
 
@@ -1264,7 +1264,7 @@ std::vector<std::string> ListPaths(duckdb::DatabaseInstance& db,
                                    std::string_view prefix) {
   return WithIndex(db, [&](const DocsIndex& index) {
     std::vector<std::string> paths;
-    ForEachMatch(index, *PathPrefix(index.Fields(), prefix), Columns{},
+    ForEachMatch(index, *PathPrefix(index.Fields(), prefix), Content::Omit,
                  [&](EntryFetcher& fetcher, irs::doc_id_t doc) {
                    paths.emplace_back(fetcher.Path(doc));
                  });
@@ -1274,31 +1274,31 @@ std::vector<std::string> ListPaths(duckdb::DatabaseInstance& db,
 }
 
 std::optional<Entry> EntryAt(duckdb::DatabaseInstance& db,
-                             std::string_view path, Columns columns) {
+                             std::string_view path, Content content) {
   return WithIndex(db, [&](const DocsIndex& index) {
-    return ExactPath(index, path, columns);
+    return ExactPath(index, path, content);
   });
 }
 
 std::vector<Entry> Search(duckdb::DatabaseInstance& db, std::string_view query,
-                          size_t limit, Columns columns, std::string& error) {
+                          size_t limit, Content content, std::string& error) {
   return WithIndex(db, [&](const DocsIndex& index) {
     std::vector<Entry> hits;
     if (const auto filter = Compile(query, index, error)) {
-      hits = RunScored(index, *filter, limit, columns);
+      hits = RunScored(index, *filter, limit, content);
     } else if (error.empty()) {
-      hits = Literal(index, query, limit, columns);
+      hits = Literal(index, query, limit, content);
     }
     if (hits.empty() && error.empty() && query.contains('_')) {
       const auto words = absl::StrReplaceAll(query, {{"_", " "}});
       if (const auto filter = Compile(words, index, error)) {
-        hits = RunScored(index, *filter, limit, columns);
+        hits = RunScored(index, *filter, limit, content);
       }
     }
     if (!error.empty()) {
       return hits;
     }
-    return KnownFirst(index, query, std::move(hits), limit, columns);
+    return KnownFirst(index, query, std::move(hits), limit, content);
   });
 }
 
@@ -1310,8 +1310,7 @@ std::vector<Entry> Candidates(duckdb::DatabaseInstance& db,
     const std::span<const irs::field_id> all{text};
     for (const auto fields : {all.first(1), all}) {
       if (const auto filter = Similar(name, *tokenizer, fields)) {
-        if (auto hits =
-              RunScored(index, *filter, limit, Columns{.content = true});
+        if (auto hits = RunScored(index, *filter, limit, Content::Include);
             !hits.empty()) {
           return hits;
         }

@@ -45,8 +45,9 @@ struct Entry {
   double score = 0.0;
 };
 
-struct Columns {
-  bool content = false;
+enum class Content : bool {
+  Omit,
+  Include,
 };
 
 struct Object {
@@ -86,7 +87,7 @@ std::string Snippet(std::string_view text, size_t limit);
 void Publish(duckdb::DatabaseInstance& db, std::vector<IndexBlob> image);
 
 std::optional<Entry> EntryAt(duckdb::DatabaseInstance& db,
-                             std::string_view path, Columns columns);
+                             std::string_view path, Content content);
 
 std::optional<Entry> FindByPath(duckdb::DatabaseInstance& db,
                                 std::string_view path);
@@ -94,10 +95,10 @@ std::optional<Entry> FindByPath(duckdb::DatabaseInstance& db,
 std::optional<Entry> ResolveLink(duckdb::DatabaseInstance& db,
                                  std::string_view link,
                                  std::string_view base = {},
-                                 Columns columns = {});
+                                 Content content = Content::Omit);
 
 std::vector<Entry> Lookup(duckdb::DatabaseInstance& db, std::string_view name,
-                          Columns columns = {});
+                          Content content = Content::Omit);
 
 std::vector<Object> Objects(duckdb::DatabaseInstance& db,
                             std::string_view kind = {});
@@ -112,7 +113,7 @@ std::vector<std::string> CompleteName(duckdb::DatabaseInstance& db,
 
 std::vector<Entry> ListPrefix(duckdb::DatabaseInstance& db,
                               std::string_view prefix, bool pages_only,
-                              Columns columns = {});
+                              Content content = Content::Omit);
 
 std::vector<Entry> Children(duckdb::DatabaseInstance& db,
                             std::string_view path);
@@ -124,7 +125,7 @@ std::vector<std::string> CompletePath(duckdb::DatabaseInstance& db,
                                       std::string_view prefix, size_t limit);
 
 std::vector<Entry> Search(duckdb::DatabaseInstance& db, std::string_view query,
-                          size_t limit, Columns columns, std::string& error);
+                          size_t limit, Content content, std::string& error);
 
 std::vector<Entry> Candidates(duckdb::DatabaseInstance& db,
                               std::string_view name, size_t limit);

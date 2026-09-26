@@ -194,7 +194,7 @@ TEST_F(DocsIndex, SearchPutsTheNamedObjectFirst) {
 
 TEST_F(DocsIndex, SearchFindsSymbolsAndSplitIdentifiers) {
   std::string error;
-  const auto symbol = Search(Db(), "@@", 5, {.content = true}, error);
+  const auto symbol = Search(Db(), "@@", 5, Content::Include, error);
   ASSERT_FALSE(symbol.empty());
   EXPECT_TRUE(symbol.front().content.contains("@@"));
   EXPECT_FALSE(Search(Db(), "max_threads", 5, {}, error).empty());
@@ -203,7 +203,7 @@ TEST_F(DocsIndex, SearchFindsSymbolsAndSplitIdentifiers) {
 
 TEST_F(DocsIndex, SearchMatchesSymbolsInTextNotInMarkup) {
   std::string error;
-  const auto hits = Search(Db(), "##", 5, {.content = true}, error);
+  const auto hits = Search(Db(), "##", 5, Content::Include, error);
   ASSERT_FALSE(hits.empty());
   EXPECT_TRUE(absl::c_all_of(hits, [](const Entry& entry) {
     return entry.title.contains("##") ||

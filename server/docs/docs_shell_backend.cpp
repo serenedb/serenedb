@@ -385,7 +385,7 @@ std::vector<Choice> NameChoices(duckdb::DatabaseInstance& db,
       }
     }
     if (choices.empty()) {
-      choices = EntryChoices(Lookup(db, name, {.content = true}));
+      choices = EntryChoices(Lookup(db, name, Content::Include));
     }
   }
   return choices;
@@ -567,7 +567,7 @@ class Session {
       if (similar.empty()) {
         std::string error;
         if (auto hits = Search(*request.instance, term, kMaxCandidates,
-                               Columns{.content = true}, error);
+                               Content::Include, error);
             !hits.empty()) {
           out = Menu(request,
                      absl::StrCat("Documentation matching '",
@@ -740,8 +740,8 @@ class Session {
   bool RenderSearch(const duckdb_shell::DocsRequest& request,
                     std::string_view query, std::string& out) {
     std::string error;
-    const auto hits = Search(*request.instance, query, kMaxCandidates,
-                             Columns{.content = true}, error);
+    const auto hits =
+      Search(*request.instance, query, kMaxCandidates, Content::Include, error);
     if (!error.empty()) {
       out = absl::StrCat("Could not search for '", query, "': ", error, "\n");
       return false;

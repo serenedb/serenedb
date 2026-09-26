@@ -86,47 +86,43 @@ bool IsExternal(std::string_view href) {
 std::string AbsoluteLinks(std::string_view markdown,
                           std::string_view base_path) {
   const auto page = base_path.substr(0, base_path.find('#'));
-  std::string out;
-  out.reserve(markdown.size());
   bool fenced = false;
-  for (const std::string_view line : absl::StrSplit(markdown, '\n')) {
-    if (!out.empty()) {
-      out.push_back('\n');
-    }
-    if (absl::StripLeadingAsciiWhitespace(line).starts_with("```")) {
-      fenced = !fenced;
-    }
-    if (fenced) {
-      out.append(line);
-      continue;
-    }
-    size_t from = 0;
-    for (auto at = line.find("](", from); at != std::string_view::npos;
-         at = line.find("](", from)) {
-      const auto start = at + 2;
-      const auto end = line.find_first_of(") \t", start);
-      if (end == std::string_view::npos || line[end] != ')') {
-        break;
+  return absl::StrJoin(
+    absl::StrSplit(markdown, '\n'), "\n",
+    [&](std::string* out, std::string_view line) {
+      if (absl::StripLeadingAsciiWhitespace(line).starts_with("```")) {
+        fenced = !fenced;
       }
-      const auto href = line.substr(start, end - start);
-      std::string target;
-      if (href.starts_with('#')) {
-        target = absl::StrCat(page, href);
-      } else if (!IsExternal(href)) {
-        if (auto resolved = ResolveHref(base_path, href); !resolved.empty()) {
-          const auto hash = href.find('#');
-          target = hash == std::string_view::npos
-                     ? std::move(resolved)
-                     : absl::StrCat(resolved, href.substr(hash));
+      if (fenced) {
+        out->append(line);
+        return;
+      }
+      size_t from = 0;
+      for (auto at = line.find("](", from); at != std::string_view::npos;
+           at = line.find("](", from)) {
+        const auto start = at + 2;
+        const auto end = line.find_first_of(") \t", start);
+        if (end == std::string_view::npos || line[end] != ')') {
+          break;
         }
+        const auto href = line.substr(start, end - start);
+        std::string target;
+        if (href.starts_with('#')) {
+          target = absl::StrCat(page, href);
+        } else if (!IsExternal(href)) {
+          if (auto resolved = ResolveHref(base_path, href); !resolved.empty()) {
+            const auto hash = href.find('#');
+            target = hash == std::string_view::npos
+                       ? std::move(resolved)
+                       : absl::StrCat(resolved, href.substr(hash));
+          }
+        }
+        out->append(line.substr(from, start - from));
+        out->append(target.empty() ? href : std::string_view{target});
+        from = end;
       }
-      out.append(line.substr(from, start - from));
-      out.append(target.empty() ? href : std::string_view{target});
-      from = end;
-    }
-    out.append(line.substr(from));
-  }
-  return out;
+      out->append(line.substr(from));
+    });
 }
 
 namespace {
@@ -463,12 +459,7 @@ void Prefix(std::string& out, std::string_view body, std::string_view first,
 }
 
 std::string WithoutBlankLines(std::string_view body) {
-  std::string out;
-  for (const std::string_view line :
-       absl::StrSplit(body, '\n', absl::SkipEmpty())) {
-    absl::StrAppend(&out, line, "\n");
-  }
-  return out;
+  return absl::StrJoin(absl::StrSplit(body, '\n', absl::SkipEmpty()), "\n");
 }
 
 using Document = std::unique_ptr<cmark_node, decltype(&cmark_node_free)>;
@@ -499,7 +490,7 @@ class Renderer {
       _links{links} {}
 
   std::string Blocks(cmark_node* parent, int32_t width,
-                     std::string_view text_style) const {
+                     std::string_view text_style) {
     std::string out;
     if (_depth >= kMaxNesting) {
       WrapRuns(out, {{.text = FlatText(parent), .style = text_style}}, width);
@@ -515,8 +506,7 @@ class Renderer {
   }
 
  private:
-  void Number(std::vector<Run>& runs, size_t begin,
-              std::string_view href) const {
+  void Number(std::vector<Run>& runs, size_t begin, std::string_view href) {
     MarkdownLink link;
     if (IsExternal(href)) {
       link.url = href;
@@ -557,18 +547,12 @@ class Renderer {
   }
 
   void Inlines(std::vector<Run>& runs, cmark_node* parent,
-               std::string_view style, bool targets) const {
+               std::string_view style, bool targets) {
     if (_depth >= kMaxNesting) {
       runs.push_back({.text = FlatText(parent), .style = style});
       return;
     }
     ++_depth;
-    InlineChildren(runs, parent, style, targets);
-    --_depth;
-  }
-
-  void InlineChildren(std::vector<Run>& runs, cmark_node* parent,
-                      std::string_view style, bool targets) const {
     for (auto* node = cmark_node_first_child(parent); node;
          node = cmark_node_next(node)) {
       switch (cmark_node_get_type(node)) {
@@ -612,10 +596,11 @@ class Renderer {
           break;
       }
     }
+    --_depth;
   }
 
   void Block(std::string& out, cmark_node* node, int32_t width,
-             std::string_view text_style) const {
+             std::string_view text_style) {
     switch (cmark_node_get_type(node)) {
       case CMARK_NODE_PARAGRAPH: {
         std::vector<Run> runs;
@@ -694,7 +679,7 @@ class Renderer {
   }
 
   void List(std::string& out, cmark_node* list, int32_t width,
-            std::string_view text_style) const {
+            std::string_view text_style) {
     const bool ordered = cmark_node_get_list_type(list) == CMARK_ORDERED_LIST;
     const bool tight = cmark_node_get_list_tight(list) != 0;
     auto number = std::max(cmark_node_get_list_start(list), 1) - 1;
@@ -715,7 +700,7 @@ class Renderer {
     }
   }
 
-  void Table(std::string& out, cmark_node* table, int32_t width) const {
+  void Table(std::string& out, cmark_node* table, int32_t width) {
     struct Cell {
       std::vector<Run> runs;
       std::string plain;
@@ -800,11 +785,13 @@ class Renderer {
         out.push_back('\n');
       }
     };
-    std::string rule;
-    for (const auto column : widths) {
-      absl::StrAppend(&rule, "+", std::string(column + 2, '-'));
-    }
-    rule.push_back('+');
+    const auto rule =
+      absl::StrCat("+",
+                   absl::StrJoin(widths, "+",
+                                 [](std::string* cell, size_t column) {
+                                   cell->append(column + 2, '-');
+                                 }),
+                   "+");
     const auto rule_line = [&] {
       Emit(out, _s.layout, rule);
       out.push_back('\n');
@@ -822,7 +809,7 @@ class Renderer {
   bool _color;
   std::string_view _base_path;
   MarkdownLinks* _links;
-  mutable size_t _depth = 0;
+  size_t _depth = 0;
 };
 
 }  // namespace
@@ -830,7 +817,7 @@ class Renderer {
 std::string RenderMarkdown(std::string_view markdown, int32_t width, bool color,
                            std::string_view base_path, MarkdownLinks* links) {
   const auto root = Parse(markdown);
-  const Renderer renderer{color, base_path, links};
+  Renderer renderer{color, base_path, links};
   const auto out = renderer.Blocks(root.get(), width, {});
   std::string squeezed;
   squeezed.reserve(out.size());

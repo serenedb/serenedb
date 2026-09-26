@@ -1139,15 +1139,14 @@ Object ObjectFromFields(ObjectRow fields) {
 std::string EncodeObjects(std::span<const Object> objects) {
   std::string out;
   for (const auto& object : objects) {
-    bool first = true;
-    for (const auto& field : ObjectFields(object)) {
-      if (!first) {
-        out.push_back('\t');
-      }
-      first = false;
-      out.append(field ? EscapeField(*field) : std::string{kNull});
-    }
-    out.push_back('\n');
+    absl::StrAppend(
+      &out,
+      absl::StrJoin(
+        ObjectFields(object), "\t",
+        [](std::string* line, const std::optional<std::string_view>& field) {
+          line->append(field ? EscapeField(*field) : std::string{kNull});
+        }),
+      "\n");
   }
   return out;
 }

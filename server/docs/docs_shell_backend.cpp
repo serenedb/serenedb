@@ -39,6 +39,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <set>
 #include <shell_docs.hpp>
 #include <string>
@@ -141,21 +142,14 @@ std::string Numbered(size_t n) { return absl::StrCat(n, ". "); }
 
 std::string Item(std::string_view marker,
                  std::initializer_list<std::string> lines) {
-  std::string out{marker};
-  const std::string indent(marker.size(), ' ');
-  bool first = true;
-  for (const auto& line : lines) {
-    if (line.empty()) {
-      continue;
-    }
-    if (!first) {
-      absl::StrAppend(&out, "\\\n", indent);
-    }
-    out.append(line);
-    first = false;
-  }
-  out.push_back('\n');
-  return out;
+  auto present = lines | std::views::filter([](const std::string& line) {
+                   return !line.empty();
+                 });
+  return absl::StrCat(
+    marker,
+    absl::StrJoin(present.begin(), present.end(),
+                  absl::StrCat("\\\n", std::string(marker.size(), ' '))),
+    "\n");
 }
 
 std::string Brief(std::string_view marker, const Choice& choice) {
@@ -723,30 +717,23 @@ class Session {
 
   std::string RenderAll(const duckdb_shell::DocsRequest& request,
                         const std::vector<Choice>& choices) {
-    std::string out;
+    std::vector<std::string> parts;
     std::vector<Choice> listed;
     for (const auto& choice : choices) {
-      std::optional<std::string> rendered;
       if (choice.directory) {
         auto under = DirectoryChoices(*request.instance, choice.path);
-        rendered = Render(
-          request, Listing(UnderHeading(choice.path), under, listed.size()));
+        parts.push_back(Render(
+          request, Listing(UnderHeading(choice.path), under, listed.size())));
         absl::c_move(under, std::back_inserter(listed));
-      } else {
-        rendered = RenderChoice(request, choice, nullptr);
+      } else if (auto rendered = RenderChoice(request, choice, nullptr)) {
+        parts.push_back(std::move(*rendered));
       }
-      if (!rendered) {
-        continue;
-      }
-      if (!out.empty()) {
-        absl::StrAppend(&out, "\n", Render(request, "---"), "\n");
-      }
-      out.append(*rendered);
     }
     if (!listed.empty()) {
       _list = std::move(listed);
     }
-    return out;
+    return absl::StrJoin(parts,
+                         absl::StrCat("\n", Render(request, "---"), "\n"));
   }
 
   bool RenderSearch(const duckdb_shell::DocsRequest& request,

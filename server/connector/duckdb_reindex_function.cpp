@@ -33,7 +33,6 @@
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/permissions.hpp>
-#include <duckdb/common/exception.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/multi_file/multi_file_states.hpp>
 #include <duckdb/common/string_util.hpp>
@@ -79,7 +78,6 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <stdexcept>
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
@@ -107,17 +105,11 @@
 namespace sdb::connector {
 namespace {
 
-constexpr std::string_view kSourceMovedSubtype = "REINDEX_SOURCE_MOVED";
 constexpr absl::Duration kClaimPoll = absl::Milliseconds(100);
 
-struct SourceMovedError : std::runtime_error {
-  using std::runtime_error::runtime_error;
-};
-
 [[noreturn]] void ThrowSourceMoved() {
-  throw duckdb::Exception({{"error_subtype", std::string{kSourceMovedSubtype}}},
-                          duckdb::ExceptionType::TRANSACTION,
-                          "REINDEX delta: the source moved during the pass");
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+                  ERR_MSG("REINDEX delta: the source moved during the pass"));
 }
 
 enum class ReindexAction {
@@ -251,8 +243,7 @@ class PassConnection {
   // resolved against the view's CURRENT names, persisted predicate), so it
   // survives renames and ALTER INDEX SET. Throws on failure.
   void RunPass(const ReindexTarget& target,
-               duckdb::unique_ptr<SereneDBCreateIndexInfo> info,
-               std::string_view what) {
+               duckdb::unique_ptr<SereneDBCreateIndexInfo> info) {
     info->index_type = "inverted";
     const auto& view_info = *target.view_info;
     for (const auto col : target.index->column_ids) {
@@ -279,14 +270,9 @@ class PassConnection {
     statement->info = std::move(info);
     auto result = _conn.Query(std::move(statement));
     if (result->HasError()) {
-      const auto& extra = result->GetErrorObject().ExtraInfo();
-      if (const auto it = extra.find("error_subtype");
-          it != extra.end() && it->second == kSourceMovedSubtype) {
-        throw SourceMovedError{result->GetError()};
-      }
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                      ERR_MSG("REINDEX ", what, " of \"", target.name,
-                              "\" failed: ", result->GetError()));
+      SDB_DEBUG(SEARCH, "REINDEX pass for index \"", target.name,
+                "\" failed: ", result->GetError());
+      result->GetErrorObject().Throw();
     }
   }
 
@@ -893,7 +879,7 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
   info->manifest = std::move(manifest_next);
   // The narrowed bind would claim a single-file pk: carry the REAL type.
   info->generated_pk_type = src.fast_path.GeneratedPkType();
-  pass_conn.RunPass(target, std::move(info), "delta");
+  pass_conn.RunPass(target, std::move(info));
 }
 
 // A committed remove-all, then the plain CREATE INDEX pipeline over the
@@ -914,7 +900,7 @@ void RunFullRebuild(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
   PassConnection pass_conn{context, conn_ctx, target};
   auto info = duckdb::make_uniq<SereneDBCreateIndexInfo>();
   info->source_index = target.index->name;
-  pass_conn.RunPass(target, std::move(info), "rebuild");
+  pass_conn.RunPass(target, std::move(info));
 }
 
 // Diff the listing, then delta or full rebuild. Stat regime diffs on stat
@@ -1043,6 +1029,7 @@ ReindexOutcome RunClaimed(
     return {ReindexAction::UpToDate, 0, 0, 0, 0};
   }
   src->files = ListSourceFiles(*src->list);
+  SDB_WAIT_ON_FAILURE("pause_reindex_before_pass");
   if (src->iceberg_list) {
     if (manifest->version && src->version &&
         !SnapshotIsAncestor(*src->iceberg_list, manifest->version)) {
@@ -1149,9 +1136,12 @@ ReindexOutcome RunManualReindex(duckdb::ClientContext& context,
     }
     try {
       return RunClaimed(session.Context(), session.Conn(), current, storage);
-    } catch (const SourceMovedError& ex) {
+    } catch (const irs::SqlException& ex) {
+      if (ex.error().errcode != ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE) {
+        throw;
+      }
       SDB_DEBUG(SEARCH, "reindex \"", name, "\" attempt ", attempt,
-                " retried: ", ex.what());
+                " retried: ", ex.message());
     }
   }
 }
@@ -1329,11 +1319,12 @@ absl::StatusOr<bool> RunReindexTick(duckdb::DatabaseInstance& db,
     const auto outcome =
       RunClaimed(session.Context(), session.Conn(), target, storage);
     return outcome.action != ReindexAction::UpToDate;
-  } catch (const SourceMovedError& ex) {
-    SDB_DEBUG(SEARCH, "periodic reindex of Search index '", index_id,
-              "' retried: ", ex.what());
-    return true;
   } catch (const irs::SqlException& ex) {
+    if (ex.error().errcode == ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE) {
+      SDB_DEBUG(SEARCH, "periodic reindex of Search index '", index_id,
+                "' retried: ", ex.message());
+      return true;
+    }
     if (ex.error().errcode == ERRCODE_UNDEFINED_OBJECT) {
       return false;
     }

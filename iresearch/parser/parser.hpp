@@ -281,8 +281,30 @@ struct ParserContext {
 
   void AddPhraseTerm(std::string_view word) {
     const auto text = Unescape(word);
-    for (const auto& token : Tokens(text)) {
-      Emplace<irs::ByTermOptions>().term = irs::AsBytesView(token);
+    const auto tokens = Tokens(text);
+    if (tokens.empty()) {
+      return;
+    }
+    const auto pos = value_tokens->pos();
+    for (size_t i = 0; i < tokens.size();) {
+      const auto term = irs::AsBytesView(tokens[i]);
+      size_t end = i + 1;
+      bool same = true;
+      for (; end < tokens.size() && pos[end] == pos[i]; ++end) {
+        same = same && irs::AsBytesView(tokens[end]) == term;
+      }
+      if (same) {
+        Emplace<irs::ByTermOptions>().term = term;
+      } else {
+        auto& set = Emplace<irs::TermSetOptions>().terms;
+        for (size_t k = i; k < end; ++k) {
+          set.emplace(irs::AsBytesView(tokens[k]));
+        }
+      }
+      if (end < tokens.size()) {
+        offs_min = offs_max = pos[end] - pos[i];
+      }
+      i = end;
     }
   }
 

@@ -23,6 +23,7 @@
 
 #include <array>
 #include <cstdint>
+#include <iresearch/analysis/solr_synonyms_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
@@ -34,9 +35,12 @@
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/string.hpp>
+#include <iterator>
 #include <string>
 #include <thread>
 #include <vector>
+
+#include "test_resources.hpp"
 
 namespace {
 
@@ -1991,6 +1995,56 @@ TEST_F(LuceneParserTest, PhraseWithFuzzyPart) {
   const auto& phrase =
     irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
   EXPECT_EQ(2, phrase.options().size());
+}
+
+namespace {
+
+std::vector<std::string> SetTerms(
+  const irs::ByPhraseOptions::PhrasePart& part) {
+  std::vector<std::string> terms;
+  absl::c_transform(
+    std::get<irs::TermSetOptions>(part).terms, std::back_inserter(terms),
+    [](const irs::bstring& term) {
+      return std::string{irs::ViewCast<char>(irs::bytes_view{term})};
+    });
+  return terms;
+}
+
+}  // namespace
+
+TEST_F(LuceneParserTest, PhraseStacksSynonymsAtOnePosition) {
+  const auto synonyms = irs::analysis::SolrSynonymsTokenizer::Make(
+    {.synonyms_text = "car, automobile, auto"}, tests::Cache());
+  ctx.tokenizer = synonyms.get();
+  ASSERT_TRUE(irs::ParseQuery(ctx, "\"red car\""));
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& phrase =
+    irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
+  ASSERT_EQ(2, phrase.options().size());
+  const auto& red = *phrase.options().begin();
+  EXPECT_EQ("red", irs::ViewCast<char>(irs::bytes_view{
+                     std::get<irs::ByTermOptions>(red.part).term}));
+  const auto& car = *std::next(phrase.options().begin());
+  EXPECT_EQ(1, car.offs_min);
+  EXPECT_EQ(1, car.offs_max);
+  EXPECT_EQ((std::vector<std::string>{"auto", "automobile", "car"}),
+            SetTerms(car.part));
+}
+
+TEST_F(LuceneParserTest, FnOrderedStacksSynonymsAtOnePosition) {
+  const auto synonyms = irs::analysis::SolrSynonymsTokenizer::Make(
+    {.synonyms_text = "car, automobile, auto"}, tests::Cache());
+  ctx.tokenizer = synonyms.get();
+  ASSERT_TRUE(irs::ParseQuery(ctx, "fn:ordered(red car)"));
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& phrase =
+    irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
+  ASSERT_EQ(2, phrase.options().size());
+  const auto& car = *std::next(phrase.options().begin());
+  EXPECT_EQ(1, car.offs_min);
+  EXPECT_EQ(irs::ParserContext::kAnyGap, car.offs_max);
+  EXPECT_EQ((std::vector<std::string>{"auto", "automobile", "car"}),
+            SetTerms(car.part));
 }
 
 // What the flexible parser adds: a minimum match, comparison bounds, and the

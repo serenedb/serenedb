@@ -33,6 +33,7 @@
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/prune_leaves.hpp"
+#include "iresearch/search/top/pruned_clause.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -153,7 +154,9 @@ class PrunedConjunction : public Root {
   static constexpr uint32_t kMaxInterval = 256;
   static constexpr uint32_t kScoreFirstEvidence = 128;
   static constexpr uint64_t kDocsPerSavedRead = 32;
-  static constexpr bool kDocFirst = requires(Lead& lead) { lead.Freq(); };
+  static constexpr bool kDocFirst = requires(Lead& lead) {
+    lead.Freq();
+  } && !std::is_same_v<typename Others::LeafType, ErasedClause>;
 
   struct Bucket {
     uint64_t sf_range = 0;

@@ -194,6 +194,7 @@ struct RetainBits {
 };
 
 inline constexpr uint64_t kFillPrefetch = 512;
+inline constexpr uint64_t kFillLine = 64;
 
 template<typename Input, typename Sink>
 void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
@@ -206,15 +207,20 @@ void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
   }
 
   [[maybe_unused]] const byte_type* at = nullptr;
+  [[maybe_unused]] const byte_type* fetched = nullptr;
   if constexpr (Input::kVolatileAlways) {
     at = in.Current();
+    fetched = at;
   }
 
   const auto read_leaf = [&]<size_t N>(uint32_t len,
                                        doc_id_t prev) IRS_FORCE_INLINE {
     const auto leaf = [&] IRS_FORCE_INLINE {
       if constexpr (Input::kVolatileAlways) {
-        __builtin_prefetch(at + kFillPrefetch);
+        for (const auto* const ahead = at + kFillPrefetch; fetched < ahead;
+             fetched += kFillLine) {
+          __builtin_prefetch(fetched);
+        }
         return FormatTraits128::FillView(
           in, at, len, holes, docs, prev,
           has_freq && len == doc_limits::kBlockSize);
@@ -237,6 +243,13 @@ void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
         for (uint32_t i = 0; i != len; ++i) {
           sink.Doc(data[i]);
         }
+      } else if constexpr (N == doc_limits::kBlockSize) {
+        constexpr uint32_t kHalf = N / 2;
+        VisitDocs<kHalf>(
+          kHalf, [&](uint32_t i) IRS_FORCE_INLINE { sink.Doc(data[i]); });
+        VisitDocs<kHalf>(kHalf, [&](uint32_t i) IRS_FORCE_INLINE {
+          sink.Doc(data[kHalf + i]);
+        });
       } else {
         VisitDocs<N>(len,
                      [&](uint32_t i) IRS_FORCE_INLINE { sink.Doc(data[i]); });

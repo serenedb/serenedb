@@ -185,9 +185,8 @@ bool LMJelinekMercer::equals(const Scorer& other) const noexcept {
   return p._lambda == _lambda;
 }
 
-ScoreBoundWriter::ptr LMJelinekMercer::PrepareScoreBoundWriter(
-  size_t max_levels) const {
-  return std::make_unique<FreqNormWriter<kScoreBoundDivNorm>>(max_levels);
+ScoreBoundWriter::ptr LMJelinekMercer::PrepareScoreBoundWriter() const {
+  return std::make_unique<FreqNormWriter<kScoreBoundDivNorm>>();
 }
 
 ScoreBoundSource::ptr LMJelinekMercer::PrepareScoreBoundSource() const {

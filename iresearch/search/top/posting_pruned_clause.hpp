@@ -29,6 +29,7 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
   using Base = PruneLeafBase<InputType, false>;
 
   using Base::_base;
+  using Base::_cursor;
   using Base::_doc;
   using Base::_docs;
   using Base::_freqs;
@@ -39,8 +40,8 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
   using Base::_needs_reposition;
   using Base::_provider;
   using Base::_recipe;
-  using Base::_skip;
   using Base::_upper_bound;
+  using Base::In;
   using Base::ReadLeaf;
 
  public:
@@ -65,22 +66,18 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
   }
 
   doc_id_t AdvanceBlock(doc_id_t target) {
-    if (_skip.NumLevels() == 0) [[unlikely]] {
+    if (!_cursor.Armed()) [[unlikely]] {
       return doc_limits::eof();
     }
-    auto& reader = _skip.Reader();
-    const auto upper_bound = reader.UpperBound();
+    const auto upper_bound = _cursor.UpperBound();
     if (upper_bound >= target) {
       return upper_bound;
     }
-    const auto below = reader.SkipBoundsBelow();
-    reader.SetSkipBoundsBelow(std::max(below, target));
-    _left_in_list = _skip.Seek(target);
-    reader.SetSkipBoundsBelow(below);
+    _left_in_list = _cursor.Seek(target, In());
     _left_in_leaf = 0;
     _needs_reposition = true;
-    _doc = reader.State().doc;
-    _upper_bound = reader.UpperBound();
+    _doc = _cursor.Landing().doc;
+    _upper_bound = _cursor.UpperBound();
     return _upper_bound;
   }
 
@@ -131,21 +128,17 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
   }
 
   doc_id_t SeekToBlock(doc_id_t target) {
-    if (_skip.NumLevels() == 0) [[unlikely]] {
+    if (!_cursor.Armed()) [[unlikely]] {
       return doc_limits::eof();
     }
-    auto& reader = _skip.Reader();
-    const auto upper_bound = reader.UpperBound();
+    const auto upper_bound = _cursor.UpperBound();
     if (upper_bound >= target) {
       return upper_bound;
     }
-    const auto below = reader.SkipBoundsBelow();
-    reader.SetSkipBoundsBelow(std::max(below, target));
-    _left_in_list = _skip.Seek(target);
-    reader.SetSkipBoundsBelow(below);
+    _left_in_list = _cursor.Seek(target, In());
     _left_in_leaf = 0;
     _needs_reposition = true;
-    _upper_bound = reader.UpperBound();
+    _upper_bound = _cursor.UpperBound();
     return _upper_bound;
   }
 
@@ -163,9 +156,9 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
         }
       }
     }
-    if (_skip.Reader().IsLessThanUpperBound(target)) [[unlikely]] {
+    if (_cursor.UpperBound() < target) [[unlikely]] {
       if (!doc_limits::eof(SeekToBlock(target))) {
-        _doc = _skip.Reader().State().doc;
+        _doc = _cursor.Landing().doc;
       }
     }
     if (_left_in_leaf == 0) [[unlikely]] {

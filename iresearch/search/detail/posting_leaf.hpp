@@ -27,13 +27,13 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
+#include "iresearch/formats/posting/block_index.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
-#include "iresearch/search/detail/skip_walk.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -237,7 +237,7 @@ class PostingLeaf {
 
   void ArmWalk(const PostingMeta& meta, IndexFeatures layout, bool bounds) {
     if (meta.docs_count > kBlock) {
-      _walk.Arm(meta, SkipShapeOf(layout, bounds));
+      _walk.Arm(meta, BlockIndexShapeOf(layout, bounds));
       if constexpr (Shape.cursor) {
         _cursor.upper_bound = doc_limits::invalid();
       }
@@ -246,7 +246,7 @@ class PostingLeaf {
 
   IRS_FORCE_INLINE bool Armed() const noexcept { return _walk.Armed(); }
 
-  IRS_FORCE_INLINE SkipWalk<InputType>& Walk() noexcept { return _walk; }
+  IRS_FORCE_INLINE BlockCursor& Walk() noexcept { return _walk; }
 
   IRS_NO_INLINE void Land(doc_id_t min) {
     auto& walk = Walk();
@@ -478,12 +478,11 @@ class PostingLeaf {
       }
     }
 
-    const auto left = _walk.Seek(target, *_in);
+    _left_in_list = _walk.Seek(target, *_in);
     _cursor.upper_bound = _walk.UpperBound();
-    if (left == 0) [[unlikely]] {
+    if (_left_in_list == 0) [[unlikely]] {
       return false;
     }
-    _left_in_list = left;
     In().Seek(_walk.Landing().doc_ptr);
     read(_walk.Landing().doc);
     return target <= _last;
@@ -530,7 +529,7 @@ class PostingLeaf {
     _provider;
   [[no_unique_address]] utils::Need<Shape.defer, LeafRecipe> _recipe;
   [[no_unique_address]] utils::Need<Shape.cursor, LeafCursor> _cursor;
-  SkipWalk<InputType> _walk;
+  BlockCursor _walk;
 };
 
 }  // namespace irs::detail

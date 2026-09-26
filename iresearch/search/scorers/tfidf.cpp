@@ -172,13 +172,13 @@ ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
   });
 }
 
-ScoreBoundWriter::ptr TFIDF::PrepareScoreBoundWriter(size_t max_levels) const {
+ScoreBoundWriter::ptr TFIDF::PrepareScoreBoundWriter() const {
   if (_normalize) {
     SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::DivNorm);
-    return std::make_unique<FreqNormWriter<kScoreBoundDivNorm>>(max_levels);
+    return std::make_unique<FreqNormWriter<kScoreBoundDivNorm>>();
   }
   SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::MaxFreq);
-  return std::make_unique<FreqNormWriter<kScoreBoundMaxFreq>>(max_levels);
+  return std::make_unique<FreqNormWriter<kScoreBoundMaxFreq>>();
 }
 
 ScoreBoundSource::ptr TFIDF::PrepareScoreBoundSource() const {

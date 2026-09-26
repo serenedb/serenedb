@@ -29,6 +29,7 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
   using Base = PruneLeafBase<InputType, false>;
 
   using Base::_base;
+  using Base::_cursor;
   using Base::_doc;
   using Base::_docs;
   using Base::_enc;
@@ -41,7 +42,6 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
   using Base::_needs_reposition;
   using Base::_provider;
   using Base::_score;
-  using Base::_skip;
   using Base::_upper_bound;
   using Base::Emit;
   using Base::In;
@@ -51,7 +51,6 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
  public:
   using Base::MaxScore;
   using Base::SeekToBlock;
-  using Base::SetSkipBoundsBelow;
   using Base::Value;
 
   PostingPrunedDisj() = default;
@@ -75,10 +74,10 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
     if (target <= _doc) [[unlikely]] {
       return _doc;
     }
-    if (_skip.Reader().IsLessThanUpperBound(target)) [[unlikely]] {
+    if (_cursor.UpperBound() < target) [[unlikely]] {
       SeekToBlock(target);
       if (_needs_reposition) {
-        _doc = _skip.Reader().State().doc;
+        _doc = _cursor.Landing().doc;
       }
     }
     if (_left_in_leaf == 0) [[unlikely]] {
@@ -199,33 +198,28 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
 
   template<typename DocsBuffer, typename ScoresBuffer>
   void ScoreCandidates(DocsBuffer& cand_docs, ScoresBuffer& cand_scores,
-                       bool required, doc_id_t window_max) {
-    ScoreCandidatesImpl<false>(cand_docs, cand_scores, cand_scores, required,
-                               window_max);
+                       bool required) {
+    ScoreCandidatesImpl<false>(cand_docs, cand_scores, cand_scores, required);
   }
 
   template<typename DocsBuffer, typename ScoresBuffer, typename MatchesBuffer>
   void ScoreCandidates(DocsBuffer& cand_docs, ScoresBuffer& cand_scores,
-                       MatchesBuffer& cand_matches, bool required,
-                       doc_id_t window_max) {
-    ScoreCandidatesImpl<true>(cand_docs, cand_scores, cand_matches, required,
-                              window_max);
+                       MatchesBuffer& cand_matches, bool required) {
+    ScoreCandidatesImpl<true>(cand_docs, cand_scores, cand_matches, required);
   }
 
   template<bool Counted, typename DocsBuffer, typename ScoresBuffer,
            typename MatchesBuffer>
   void ScoreCandidatesImpl(DocsBuffer& cand_docs, ScoresBuffer& cand_scores,
                            [[maybe_unused]] MatchesBuffer& cand_matches,
-                           bool required, doc_id_t window_max) {
+                           bool required) {
     SDB_ASSERT(!cand_docs.empty());
     size_t out = 0;
-    SetSkipBoundsBelow(window_max);
 
     const size_t cand_count = cand_docs.size();
     const doc_id_t max = cand_docs[cand_count - 1] + 1;
 
     if (_doc >= max) [[unlikely]] {
-      SetSkipBoundsBelow(0);
       if (required) {
         cand_docs.resize(0);
         cand_scores.resize(0);
@@ -322,17 +316,15 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
       }
       {
         const doc_id_t next_cand = cand_docs[cand_idx];
-        if (next_cand > _skip.Reader().UpperBound()) {
-          _left_in_list = _skip.Seek(next_cand);
+        if (next_cand > _cursor.UpperBound()) {
+          _left_in_list = _cursor.Seek(next_cand, In());
           _needs_reposition = false;
-          auto& state = _skip.Reader().State();
-          if (state.doc_ptr != 0) [[likely]] {
-            In().Seek(state.doc_ptr);
-          }
           if (_left_in_list == 0) {
             _left_in_leaf = 0;
             goto cand_done;
           }
+          const auto& state = _cursor.Landing();
+          In().Seek(state.doc_ptr);
           ReadLeaf(state.doc);
         } else {
           ReadLeaf(*(std::end(_docs) - 1));
@@ -370,7 +362,6 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
       _doc = doc_limits::eof();
     }
     _provider.freq.value = _freqs.data;
-    SetSkipBoundsBelow(0);
     if (required) {
       cand_docs.resize(out);
       cand_scores.resize(out);

@@ -494,7 +494,7 @@ TEST_P(ScorePruneScoringTestCase, PruningIsTakenForBoundedScorers) {
 // needs a fix for negative scores first.
 TEST_P(ScorePruneScoringTestCase, IndriDirichletClaimsNoBounds) {
   const irs::IndriDirichlet scorer{2000.f};
-  EXPECT_EQ(nullptr, scorer.PrepareScoreBoundWriter(4));
+  EXPECT_EQ(nullptr, scorer.PrepareScoreBoundWriter());
   EXPECT_EQ(nullptr, scorer.PrepareScoreBoundSource());
 
   auto reader = CreateLargeIndex(scorer, 10);
@@ -532,10 +532,10 @@ TEST(score_prune_bound_type_test, reported_bound_types) {
               scorer.Compatible(min_norm));
     EXPECT_FALSE(scorer.Compatible(none));
     if (expected == irs::Scorer::ScoreBoundType::None) {
-      EXPECT_EQ(nullptr, scorer.PrepareScoreBoundWriter(4));
+      EXPECT_EQ(nullptr, scorer.PrepareScoreBoundWriter());
       EXPECT_EQ(nullptr, scorer.PrepareScoreBoundSource());
     } else {
-      EXPECT_NE(nullptr, scorer.PrepareScoreBoundWriter(4));
+      EXPECT_NE(nullptr, scorer.PrepareScoreBoundWriter());
       EXPECT_NE(nullptr, scorer.PrepareScoreBoundSource());
     }
   };

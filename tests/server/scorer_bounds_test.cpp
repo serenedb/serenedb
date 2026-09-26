@@ -48,7 +48,7 @@ void CheckAlternative() {
 
   const bool bounded = irs::BoundTypeOf(own) != BoundType::None;
 
-  EXPECT_EQ(bounded, static_cast<bool>(scorer->PrepareScoreBoundWriter(4)));
+  EXPECT_EQ(bounded, static_cast<bool>(scorer->PrepareScoreBoundWriter()));
   EXPECT_EQ(bounded, static_cast<bool>(scorer->PrepareScoreBoundSource()));
   EXPECT_EQ(bounded, scorer->Compatible(own));
 

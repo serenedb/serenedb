@@ -906,8 +906,7 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
  protected:
   void MapInlineRegion(const TermDictMeta& meta, IndexInput& in) {
     if (const auto size = meta.body_offset - _inline_offset; size != 0) {
-      in.Seek(_inline_offset);
-      _inline_region = in.ReadStable(size);
+      _inline_region = in.ReadStable(_inline_offset, size);
     }
   }
 

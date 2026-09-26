@@ -673,7 +673,7 @@ TEST_P(ScorePruneScoringTestCase, FilteredAntiCorrelatedKeepsLowScorers) {
   ASSERT_NE(nullptr, filter);
 
   // 1. Identify the top scorers with a brute-force (unpruned) pass.
-  constexpr size_t kReject = 150;  // > kBlockSize (128): rejects > a full block
+  constexpr size_t kReject = 270;
   std::vector<irs::ScoreDoc> top(kReject);
   const auto df =
     irs::ExecuteTopK(reader, *filter, scorer, kReject, false, std::span{top});

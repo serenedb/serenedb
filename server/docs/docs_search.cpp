@@ -320,8 +320,7 @@ irs::Filter::ptr PathPrefix(const Layout& layout, std::string_view prefix) {
 class EntryFetcher {
  public:
   EntryFetcher(const irs::SubReader& segment, const Layout& layout,
-               Columns columns)
-    : _columns{columns} {
+               Columns columns) {
     const auto* col_reader = segment.GetColReader();
     if (!col_reader) {
       return;
@@ -335,8 +334,7 @@ class EntryFetcher {
     };
     if (!open(layout.path, _path) || !open(layout.title, _title) ||
         !open(layout.breadcrumb, _breadcrumb) ||
-        ((columns.content || columns.content_text) &&
-         !open(layout.content, _content))) {
+        (columns.content && !open(layout.content, _content))) {
       _path.reset();
     }
   }
@@ -356,13 +354,7 @@ class EntryFetcher {
                 .title = Read(_title, doc),
                 .breadcrumb = Read(_breadcrumb, doc)};
     if (_content) {
-      auto content = Read(_content, doc);
-      if (_columns.content_text) {
-        entry.content_text = duckdb::markdown_utils::MarkdownToText(content);
-      }
-      if (_columns.content) {
-        entry.content = std::move(content);
-      }
+      entry.content = Read(_content, doc);
     }
     return entry;
   }
@@ -374,7 +366,6 @@ class EntryFetcher {
     return std::string{irs::ViewCast<char>(reader->FetchDoc(doc))};
   }
 
-  Columns _columns;
   Reader _path;
   Reader _title;
   Reader _breadcrumb;
@@ -819,9 +810,9 @@ std::vector<Entry> Literal(const DocsIndex& index, std::string_view text,
                  if (in_title == 0 && !entry->content.contains(needle)) {
                    return;
                  }
-                 entry->content_text =
-                   duckdb::markdown_utils::MarkdownToText(entry->content);
-                 const auto in_body = Occurrences(entry->content_text, needle);
+                 const auto in_body = Occurrences(
+                   duckdb::markdown_utils::MarkdownToText(entry->content),
+                   needle);
                  if (in_title + in_body > 0) {
                    entry->score = static_cast<double>(10 * in_title + in_body);
                    hits.push_back(std::move(*entry));
@@ -833,11 +824,8 @@ std::vector<Entry> Literal(const DocsIndex& index, std::string_view text,
   if (hits.size() > limit) {
     hits.resize(limit);
   }
-  for (auto& hit : hits) {
-    if (!columns.content_text) {
-      hit.content_text.clear();
-    }
-    if (!columns.content) {
+  if (!columns.content) {
+    for (auto& hit : hits) {
       hit.content.clear();
     }
   }
@@ -1094,7 +1082,7 @@ std::vector<Entry> Lookup(duckdb::DatabaseInstance& db, std::string_view name,
     }
     std::erase_if(hits,
                   [&](const Entry& entry) { return rank(entry) != best; });
-    if (columns.content || columns.content_text) {
+    if (columns.content) {
       for (auto& hit : hits) {
         if (auto full = ExactPath(index, hit.path, columns)) {
           hit = std::move(*full);
@@ -1323,7 +1311,7 @@ std::vector<Entry> Candidates(duckdb::DatabaseInstance& db,
     for (const auto fields : {all.first(1), all}) {
       if (const auto filter = Similar(name, *tokenizer, fields)) {
         if (auto hits =
-              RunScored(index, *filter, limit, Columns{.content_text = true});
+              RunScored(index, *filter, limit, Columns{.content = true});
             !hits.empty()) {
           return hits;
         }

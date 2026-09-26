@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <markdown_utils.hpp>
 #include <ranges>
 #include <string>
 #include <string_view>
@@ -202,10 +203,11 @@ TEST_F(DocsIndex, SearchFindsSymbolsAndSplitIdentifiers) {
 
 TEST_F(DocsIndex, SearchMatchesSymbolsInTextNotInMarkup) {
   std::string error;
-  const auto hits = Search(Db(), "##", 5, {.content_text = true}, error);
+  const auto hits = Search(Db(), "##", 5, {.content = true}, error);
   ASSERT_FALSE(hits.empty());
   EXPECT_TRUE(absl::c_all_of(hits, [](const Entry& entry) {
-    return entry.title.contains("##") || entry.content_text.contains("##");
+    return entry.title.contains("##") ||
+           duckdb::markdown_utils::MarkdownToText(entry.content).contains("##");
   }));
   EXPECT_TRUE(error.empty()) << error;
 }

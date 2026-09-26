@@ -37,6 +37,7 @@
 #include <initializer_list>
 #include <iterator>
 #include <map>
+#include <markdown_utils.hpp>
 #include <memory>
 #include <optional>
 #include <ranges>
@@ -229,7 +230,7 @@ std::string RenderCard(const duckdb_shell::DocsRequest& request,
 Choice EntryChoice(const Entry& entry) {
   return {.title = entry.title,
           .breadcrumb = entry.breadcrumb,
-          .body = entry.content_text,
+          .body = duckdb::markdown_utils::MarkdownToText(entry.content),
           .path = entry.path};
 }
 
@@ -384,7 +385,7 @@ std::vector<Choice> NameChoices(duckdb::DatabaseInstance& db,
       }
     }
     if (choices.empty()) {
-      choices = EntryChoices(Lookup(db, name, {.content_text = true}));
+      choices = EntryChoices(Lookup(db, name, {.content = true}));
     }
   }
   return choices;
@@ -566,7 +567,7 @@ class Session {
       if (similar.empty()) {
         std::string error;
         if (auto hits = Search(*request.instance, term, kMaxCandidates,
-                               Columns{.content_text = true}, error);
+                               Columns{.content = true}, error);
             !hits.empty()) {
           out = Menu(request,
                      absl::StrCat("Documentation matching '",
@@ -740,7 +741,7 @@ class Session {
                     std::string_view query, std::string& out) {
     std::string error;
     const auto hits = Search(*request.instance, query, kMaxCandidates,
-                             Columns{.content_text = true}, error);
+                             Columns{.content = true}, error);
     if (!error.empty()) {
       out = absl::StrCat("Could not search for '", query, "': ", error, "\n");
       return false;

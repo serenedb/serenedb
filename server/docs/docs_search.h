@@ -42,13 +42,11 @@ struct Entry {
   std::string title;
   std::string breadcrumb;
   std::string content;
-  std::string content_text;
   double score = 0.0;
 };
 
 struct Columns {
   bool content = false;
-  bool content_text = false;
 };
 
 struct Object {

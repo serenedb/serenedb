@@ -48,6 +48,7 @@
 #include <iresearch/utils/system_compiler.hpp>
 #include <iterator>
 #include <limits>
+#include <markdown_utils.hpp>
 #include <optional>
 #include <span>
 #include <string>
@@ -327,12 +328,14 @@ duckdb::Value EntryCell(duckdb::DatabaseInstance& db, const Entry& entry,
     case Column::Content:
       return Text(entry.content);
     case Column::ContentText:
-      return Text(entry.content_text);
+      return Text(duckdb::markdown_utils::MarkdownToText(entry.content));
     case Column::Markdown:
       return Text(Markdown(entry));
     case Column::Snippet: {
-      const auto full = EntryAt(db, entry.path, Columns{.content_text = true});
-      return Text(Snippet(full ? full->content_text : "", kSnippetChars));
+      const auto full = EntryAt(db, entry.path, Columns{.content = true});
+      return Text(Snippet(
+        duckdb::markdown_utils::MarkdownToText(full ? full->content : ""),
+        kSnippetChars));
     }
     case Column::Score:
       return duckdb::Value::DOUBLE(entry.score);
@@ -355,8 +358,8 @@ Columns Needed(std::span<const Column> columns) {
   const auto wants = [&](Column column) {
     return absl::c_linear_search(columns, column);
   };
-  return {.content = wants(Column::Content) || wants(Column::Markdown),
-          .content_text = wants(Column::ContentText)};
+  return {.content = wants(Column::Content) || wants(Column::Markdown) ||
+                     wants(Column::ContentText)};
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> Bind(

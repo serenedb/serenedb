@@ -46,6 +46,15 @@ FROM (
 in_range
 t
 
+query
+SELECT ai_system1('Please refund my order, it never arrived.', 'Does this request a refund?',
+                  secret_name := 'local_jev_${__DATABASE__}') > 0.5 AS refund,
+       ai_system1('The new dashboard looks great, thanks!', 'Does this request a refund?',
+                  secret_name := 'local_jev_${__DATABASE__}') < 0.5 AS no_refund;
+----
+refund	no_refund
+t	t
+
 # DOCS_TEST: choice
 
 # DOCS_TEST_RAW
@@ -68,7 +77,9 @@ query
 SELECT (routing).choice AS choice,
        len((routing).probabilities) AS options,
        abs(list_sum(list_transform((routing).probabilities, lambda p: p.probability)) - 1) < 0.01 AS sums_to_one,
-       (routing).confidence BETWEEN 0 AND 1 AS confidence_in_range
+       (routing).confidence BETWEEN 0 AND 1 AS confidence_in_range,
+       (routing).confidence > 0.5 AS confident,
+       (routing).probabilities[1].value = 'billing' AND (routing).probabilities[1].probability > 0.5 AS billing_likely
 FROM (
     SELECT ai_system1(
         'I was charged twice for last month and the invoice does not match.',
@@ -78,8 +89,8 @@ FROM (
     ) AS routing
 ) t;
 ----
-choice	options	sums_to_one	confidence_in_range
-billing	3	t	t
+choice	options	sums_to_one	confidence_in_range	confident	billing_likely
+billing	3	t	t	t	t
 
 # DOCS_TEST: choice_descriptions
 
@@ -149,6 +160,20 @@ FROM (
 score_in_range	indexes	levels
 t	{0,1,2}	{low,medium,high}
 
+query
+SELECT (severe).score >= 1 AS severe, (severe).score > (minor).score AS ordered
+FROM (
+    SELECT ai_system1('The product is unusable and we are considering cancelling.',
+                      'Rate the severity of this message.', score := ['low', 'medium', 'high'],
+                      secret_name := 'local_jev_${__DATABASE__}') AS severe,
+           ai_system1('There is a small typo in the footer of the pricing page.',
+                      'Rate the severity of this message.', score := ['low', 'medium', 'high'],
+                      secret_name := 'local_jev_${__DATABASE__}') AS minor
+) t;
+----
+severe	ordered
+t	t
+
 # DOCS_TEST: questions
 
 # DOCS_TEST_RAW
@@ -176,9 +201,9 @@ t	{0,1,2}	{low,medium,high}
 # DOCS_TEST_BODY
 
 query
-SELECT (answer).refund BETWEEN 0 AND 1 AS refund_ok,
+SELECT (answer).refund > 0.5 AS refund_ok,
        (answer).category.choice IN ('billing', 'technical', 'other') AS category_ok,
-       (answer).urgency.score BETWEEN 0 AND 2 AS urgency_ok
+       (answer).urgency.score BETWEEN 1 AND 2 AS urgency_ok
 FROM (
     SELECT ai_system1(
         'Please refund my order, it never arrived. The app keeps crashing too.',
@@ -290,15 +315,16 @@ routed	skipped
 
 query
 SELECT count(*) FILTER (WHERE problem BETWEEN 0 AND 1) AS answered,
-       count(*) FILTER (WHERE problem IS NULL) AS skipped
+       count(*) FILTER (WHERE problem IS NULL) AS skipped,
+       min(problem) FILTER (WHERE id <= 2) > max(problem) FILTER (WHERE id = 4) AS problems_first
 FROM (
-    SELECT ai_system1(body, 'Does this message report a problem?',
-                      batch_size := 1, secret_name := 'local_jev_${__DATABASE__}') AS problem
+    SELECT id, ai_system1(body, 'Does this message report a problem?',
+                          batch_size := 1, secret_name := 'local_jev_${__DATABASE__}') AS problem
     FROM support_messages
 ) t;
 ----
-answered	skipped
-3	1
+answered	skipped	problems_first
+3	1	t
 
 statement error ai_system1: requires at least two criteria for type "choice"
 SELECT ai_system1('x', 'q', choice := ['only'], secret_name := 'local_jev_${__DATABASE__}');

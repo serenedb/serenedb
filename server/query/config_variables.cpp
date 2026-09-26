@@ -423,8 +423,9 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::BOOLEAN,
         "When true, a row whose AI function request fails fails the query; "
-        "when false, that row returns NULL. Authentication, not-found and "
-        "validation (422) errors always fail the query. Default: true.",
+        "when false, that row returns NULL. Authentication, not-found, "
+        "validation (422) and exhausted-quota (429 insufficient_quota) errors "
+        "always fail the query. Default: true.",
         [] { return duckdb::Value::BOOLEAN(true); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
@@ -443,73 +444,73 @@ constexpr std::pair<std::string_view, VariableDescription>
     {
       "sdb_ai_max_api_calls_per_query",
       {
-        LogicalTypeId::UBIGINT,
+        LogicalTypeId::UINTEGER,
         "Maximum number of AI provider requests a single query may send. "
         "0 = unlimited. Default: 0.",
-        [] { return duckdb::Value::UBIGINT(0); },
+        [] { return duckdb::Value::UINTEGER(0); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
     },
     {
       "sdb_ai_max_output_tokens_per_query",
       {
-        LogicalTypeId::UBIGINT,
+        LogicalTypeId::UINTEGER,
         "Maximum number of output tokens, as reported by the provider, a "
         "single query may consume; checked before each request, so requests "
         "already in flight may exceed it. 0 = unlimited. Default: 0.",
-        [] { return duckdb::Value::UBIGINT(0); },
+        [] { return duckdb::Value::UINTEGER(0); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
     },
     {
       "sdb_ai_max_retries",
       {
-        LogicalTypeId::UBIGINT,
+        LogicalTypeId::UINTEGER,
         "How many times an AI provider request is retried after a connection "
         "error or HTTP 408, 429, 5xx or 529. Default: 3.",
-        [] { return duckdb::Value::UBIGINT(3); },
+        [] { return duckdb::Value::UINTEGER(3); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
     },
     {
       "sdb_ai_retry_initial_delay_ms",
       {
-        LogicalTypeId::UBIGINT,
+        LogicalTypeId::UINTEGER,
         "Delay before the first AI provider retry, in milliseconds; each "
         "further retry doubles it, up to 60 seconds. A Retry-After response "
         "header overrides it, up to 60 "
         "seconds. Default: 500.",
-        [] { return duckdb::Value::UBIGINT(500); },
+        [] { return duckdb::Value::UINTEGER(500); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
     },
     {
       "sdb_ai_request_timeout",
       {
-        LogicalTypeId::UBIGINT,
+        LogicalTypeId::UINTEGER,
         "Timeout of a single AI provider request, in seconds. Default: 120.",
-        [] { return duckdb::Value::UBIGINT(120); },
+        [] { return duckdb::Value::UINTEGER(120); },
         RejectZero<"sdb_ai_request_timeout">,
       },
     },
     {
       "sdb_ai_max_concurrent_requests",
       {
-        LogicalTypeId::UBIGINT,
+        LogicalTypeId::UINTEGER,
         "Maximum number of AI provider requests an AI_EVALUATE step, or one "
         "call outside it, has in flight. Requests run on DuckDB's async I/O "
         "threads (async_threads). Default: 16.",
-        [] { return duckdb::Value::UBIGINT(16); },
+        [] { return duckdb::Value::UINTEGER(16); },
         RejectZero<"sdb_ai_max_concurrent_requests">,
       },
     },
     {
       "sdb_ai_embedding_max_batch_size",
       {
-        LogicalTypeId::UBIGINT,
+        LogicalTypeId::UINTEGER,
         "Maximum number of texts ai_embed and ai_similarity send in one "
         "embeddings request. Default: 100.",
-        [] { return duckdb::Value::UBIGINT(100); },
+        [] { return duckdb::Value::UINTEGER(100); },
         RejectZero<"sdb_ai_embedding_max_batch_size">,
       },
     },

@@ -64,8 +64,9 @@ struct EmbeddingBindData final : public AIFunctionData {
   }
 };
 
-Embeddings ParseEmbeddings(std::string_view fn, std::string_view body,
+Embeddings ParseEmbeddings(const EmbeddingBindData& bind, std::string_view body,
                            size_t expected) {
+  const std::string_view fn = bind.endpoint.fn;
   simdjson::dom::parser parser;
   simdjson::dom::element doc;
   if (parser.parse(body.data(), body.size()).get(doc) != simdjson::SUCCESS) {
@@ -101,6 +102,16 @@ Embeddings ParseEmbeddings(std::string_view fn, std::string_view body,
                     absl::StrCat("response 'data[", position - 1,
                                  "].embedding' is not an array"),
                     body);
+    }
+    if (values.size() == 0 ||
+        (bind.dimensions != 0 && values.size() != bind.dimensions)) {
+      ThrowBadReply(
+        fn,
+        absl::StrCat(
+          "response 'data[", position - 1, "].embedding' has ", values.size(),
+          " values, expected ",
+          bind.dimensions == 0 ? "at least 1" : absl::StrCat(bind.dimensions)),
+        body);
     }
     auto& embedding = embeddings[index];
     embedding.reserve(values.size());
@@ -144,30 +155,17 @@ std::string BuildBody(const EmbeddingBindData& bind,
   return std::string{builder.view().value()};
 }
 
-class EmbeddingWork : public AIWork {
+class EmbeddingWork : public BatchWork {
  public:
   EmbeddingWork(const EmbeddingBindData& bind, duckdb::Vector texts,
                 duckdb::idx_t count)
     : _bind{bind},
       _texts{std::move(texts)},
       _count{count},
-      _inputs{CollectInputs(_texts, count, true, true)} {
+      _inputs{CollectInputs(_texts, count, true, true)},
+      _embeddings(_inputs.texts.size()) {
     SDB_ASSERT(_bind.max_batch != 0);
-    _embeddings.resize((_inputs.texts.size() + _bind.max_batch - 1) /
-                       _bind.max_batch);
-    for (size_t b = 0; b != _embeddings.size(); ++b) {
-      requests.push_back({.body = BuildBody(_bind, Batch(b))});
-    }
-  }
-
-  void Advance(Requester& requester) final {
-    requester.ForEach(requests.size(), [&](size_t b) {
-      if (auto body = requester.Accept(std::move(requests[b].response))) {
-        _embeddings[b] =
-          ParseEmbeddings(_bind.endpoint.fn, *body, Batch(b).size());
-      }
-    });
-    requests.clear();
+    QueueBatches(_inputs.texts.size(), _bind.max_batch);
   }
 
   void Finish(duckdb::Vector& result) override {
@@ -204,25 +202,30 @@ class EmbeddingWork : public AIWork {
  protected:
   const std::vector<float>* Embedding(duckdb::idx_t row) const {
     const auto slot = _inputs.slots[row];
-    if (slot == Inputs::kNone || _embeddings[slot / _bind.max_batch].empty()) {
+    if (slot == Inputs::kNone || _embeddings[slot].empty()) {
       return nullptr;
     }
-    return &_embeddings[slot / _bind.max_batch][slot % _bind.max_batch];
+    return &_embeddings[slot];
   }
 
  private:
-  std::span<const std::string_view> Batch(size_t b) const {
-    return std::span{_inputs.texts}.subspan(
-      b * _bind.max_batch,
-      std::min<size_t>(_bind.max_batch,
-                       _inputs.texts.size() - b * _bind.max_batch));
+  std::string Body(size_t begin, size_t size) const final {
+    return BuildBody(_bind, std::span{_inputs.texts}.subspan(begin, size));
+  }
+
+  void Parse(Requester& requester, Response response, size_t begin,
+             size_t size) final {
+    if (const auto body = requester.Accept(std::move(response))) {
+      std::ranges::move(ParseEmbeddings(_bind, *body, size),
+                        _embeddings.begin() + begin);
+    }
   }
 
   const EmbeddingBindData& _bind;
   duckdb::Vector _texts;
   duckdb::idx_t _count;
   Inputs _inputs;
-  std::vector<Embeddings> _embeddings;
+  Embeddings _embeddings;
 };
 
 class SimilarityWork final : public EmbeddingWork {
@@ -321,6 +324,7 @@ duckdb::unique_ptr<duckdb::FunctionData> EmbeddingBind(
     bind->dimensions = static_cast<uint32_t>(n);
   }
   bind->max_batch = gEmbeddingBatch.Int(context);
+  RebindEachExecution(input);
   return bind;
 }
 

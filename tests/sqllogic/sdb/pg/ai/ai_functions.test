@@ -134,6 +134,39 @@ SELECT ai_classify('x', ['a', 'a'], secret_name := 'ai_dead_${__DATABASE__}');
 statement error ai_generate: "max_tokens" must be a positive integer
 SELECT ai_generate('x', secret_name := 'ai_dead_${__DATABASE__}', max_tokens := 0);
 
+statement error ai_generate: "temperature" must be a non-negative number
+SELECT ai_generate('x', secret_name := 'ai_dead_${__DATABASE__}', temperature := 'nan'::DOUBLE);
+
+statement error ai_classify: "temperature" must be a non-negative number
+SELECT ai_classify('x', ['a', 'b'], secret_name := 'ai_dead_${__DATABASE__}', temperature := 'inf'::DOUBLE);
+
+statement error ai_agg: "temperature" must be a non-negative number
+SELECT ai_agg(v, 'q', secret_name := 'ai_dead_${__DATABASE__}', temperature := -1) FROM (VALUES ('x')) t(v);
+
+statement error out of range
+SET sdb_ai_max_api_calls_per_query = 4294967296;
+
+statement error out of range
+SET sdb_ai_max_output_tokens_per_query = 4294967296;
+
+statement error out of range
+SET sdb_ai_max_retries = 4294967296;
+
+statement error out of range
+SET sdb_ai_retry_initial_delay_ms = 4294967296;
+
+statement error out of range
+SET sdb_ai_request_timeout = 4294967296;
+
+statement error out of range
+SET sdb_ai_max_concurrent_requests = 4294967296;
+
+statement error out of range
+SET sdb_ai_embedding_max_batch_size = 4294967296;
+
+statement error out of range
+SET sdb_ai_max_retries = -1;
+
 statement error ai_embed: "dimensions" must be a non-negative integer
 SELECT ai_embed('x', 'm', 'ai_dead_${__DATABASE__}', dimensions := -1);
 
@@ -151,6 +184,24 @@ SELECT ai_system1('x', 'q', secret_name := 'ai_dead_${__DATABASE__}');
 
 statement error ai_generate: no model given
 SELECT ai_generate('x', secret_name := 'ai_dead_no_model_${__DATABASE__}');
+
+statement ok
+SET sdb_ai_text_default_secret = 'jev_dead_${__DATABASE__}';
+
+statement error ai_generate: secret '.*' has type 'typesafe', expected 'openai'
+SELECT ai_generate('x');
+
+statement ok
+SET sdb_ai_embedding_default_secret = 'ai_missing';
+
+statement error ai_embed: secret 'ai_missing' not found
+SELECT ai_embed('x', 'm');
+
+statement ok
+SET sdb_ai_system1_default_secret = 'ai_dead_${__DATABASE__}';
+
+statement error ai_system1: secret '.*' has type 'openai', expected 'typesafe'
+SELECT ai_system1('x', 'q');
 
 statement ok
 SET sdb_ai_text_default_secret = 'ai_dead_${__DATABASE__}';
@@ -178,6 +229,107 @@ SELECT ai_generate('x');
 
 statement error ai_system1: request to 'http://127.0.0.1:9/v1/systemone' failed
 SELECT ai_system1('x', 'q');
+
+statement ok
+SET sdb_ai_max_api_calls_per_query = 4294967295;
+
+statement ok
+SET sdb_ai_max_output_tokens_per_query = 4294967295;
+
+statement ok
+SET sdb_ai_retry_initial_delay_ms = 4294967295;
+
+statement ok
+SET sdb_ai_request_timeout = 4294967295;
+
+statement ok
+SET sdb_ai_max_concurrent_requests = 4294967295;
+
+statement ok
+SET sdb_ai_embedding_max_batch_size = 4294967295;
+
+statement error ai_generate: request to 'http://127.0.0.1:9/v1/chat/completions' failed
+SELECT ai_generate(v) FROM (VALUES ('a'), ('b')) t(v);
+
+statement error ai_embed: request to 'http://127.0.0.1:9/v1/embeddings' failed
+SELECT ai_embed(v, 'm') FROM (VALUES ('a'), ('b')) t(v);
+
+statement ok
+RESET sdb_ai_max_output_tokens_per_query;
+
+statement ok
+RESET sdb_ai_request_timeout;
+
+statement ok
+RESET sdb_ai_max_concurrent_requests;
+
+statement ok
+RESET sdb_ai_embedding_max_batch_size;
+
+statement ok
+SET sdb_ai_retry_initial_delay_ms = 1;
+
+statement ok
+SET sdb_ai_max_retries = 5;
+
+statement ok
+SET sdb_ai_max_api_calls_per_query = 2;
+
+statement error ai_generate: query exceeded sdb_ai_max_api_calls_per_query \(2\)
+SELECT ai_generate('x');
+
+statement ok
+RESET sdb_ai_max_api_calls_per_query;
+
+statement ok
+RESET sdb_ai_retry_initial_delay_ms;
+
+statement ok
+SET sdb_ai_max_retries = 0;
+
+statement ok
+CREATE OR REPLACE SECRET ai_rotate_${__DATABASE__} (
+  TYPE openai,
+  base_url 'http://127.0.0.1:9',
+  model 'm'
+);
+
+statement ok
+PREPARE ai_rotate AS SELECT ai_generate('x', secret_name := 'ai_rotate_${__DATABASE__}');
+
+statement error ai_generate: request to 'http://127.0.0.1:9/v1/chat/completions' failed
+EXECUTE ai_rotate;
+
+statement ok
+CREATE OR REPLACE SECRET ai_rotate_${__DATABASE__} (
+  TYPE openai,
+  base_url 'http://127.0.0.1:9/rotated',
+  model 'm'
+);
+
+statement error ai_generate: request to 'http://127.0.0.1:9/rotated/v1/chat/completions' failed
+EXECUTE ai_rotate;
+
+statement ok
+DEALLOCATE ai_rotate;
+
+statement ok
+PREPARE ai_default AS SELECT ai_generate('x');
+
+statement error ai_generate: request to 'http://127.0.0.1:9/v1/chat/completions' failed
+EXECUTE ai_default;
+
+statement ok
+SET sdb_ai_text_default_secret = 'jev_dead_${__DATABASE__}';
+
+statement error ai_generate: secret '.*' has type 'typesafe', expected 'openai'
+EXECUTE ai_default;
+
+statement ok
+SET sdb_ai_text_default_secret = 'ai_dead_${__DATABASE__}';
+
+statement ok
+DEALLOCATE ai_default;
 
 statement ok
 CREATE OR REPLACE SECRET ai_dead_path_${__DATABASE__} (
@@ -250,6 +402,29 @@ FROM (
 g_null	e_null	j_null
 3	3	3
 
+query
+SELECT
+  ai_classify(body, ['a', 'b']) IS NULL AS c,
+  ai_classify_labels(body, ['a', 'b']) IS NULL AS cl,
+  ai_extract(body, 'the city') IS NULL AS e,
+  ai_filter(body, 'x') IS NULL AS f,
+  ai_translate(body, 'German') IS NULL AS t,
+  ai_redact(body, ['email']) IS NULL AS r,
+  ai_score(body, 'x') IS NULL AS s,
+  ai_rerank('q', body) IS NULL AS rr,
+  ai_similarity(body, 'y', 'm') IS NULL AS sim
+FROM ai_rows
+WHERE id = 1;
+----
+c	cl	e	f	t	r	s	rr	sim
+t	t	t	t	t	t	t	t	t
+
+query
+SELECT ai_agg(body, 'q') IS NULL AS a, ai_summarize_agg(body) IS NULL AS s FROM ai_rows;
+----
+a	s
+t	t
+
 statement error invalid value for parameter "sdb_ai_max_concurrent_requests"
 SET sdb_ai_max_concurrent_requests = 0;
 
@@ -303,6 +478,58 @@ statement error ai_generate: secret '.*' uses the insecure endpoint 'http://exam
 SELECT ai_generate(NULL, secret_name := 'ai_far_${__DATABASE__}');
 
 statement ok
+CREATE OR REPLACE SECRET ai_url_${__DATABASE__} (TYPE openai, base_url 'http://127.0.0.1@example.invalid', model 'm');
+
+statement error insecure endpoint
+SELECT ai_generate(NULL, secret_name := 'ai_url_${__DATABASE__}');
+
+statement ok
+CREATE OR REPLACE SECRET ai_url_${__DATABASE__} (TYPE openai, base_url 'http://example.invalid?@127.0.0.1', model 'm');
+
+statement error insecure endpoint
+SELECT ai_generate(NULL, secret_name := 'ai_url_${__DATABASE__}');
+
+statement ok
+CREATE OR REPLACE SECRET ai_url_${__DATABASE__} (TYPE openai, base_url 'http://example.invalid#@localhost', model 'm');
+
+statement error insecure endpoint
+SELECT ai_generate(NULL, secret_name := 'ai_url_${__DATABASE__}');
+
+statement ok
+CREATE OR REPLACE SECRET ai_url_${__DATABASE__} (TYPE openai, base_url 'http://localhost.example.invalid', model 'm');
+
+statement error insecure endpoint
+SELECT ai_generate(NULL, secret_name := 'ai_url_${__DATABASE__}');
+
+statement ok
+CREATE OR REPLACE SECRET ai_url_${__DATABASE__} (TYPE openai, base_url 'http://127.0.0.1.example.invalid', model 'm');
+
+statement error insecure endpoint
+SELECT ai_generate(NULL, secret_name := 'ai_url_${__DATABASE__}');
+
+statement ok
+CREATE OR REPLACE SECRET ai_url1_${__DATABASE__} (TYPE openai, base_url 'HTTP://LOCALHOST:9', model 'm');
+
+statement ok
+CREATE OR REPLACE SECRET ai_url2_${__DATABASE__} (TYPE openai, base_url 'http://[::1]:9', model 'm');
+
+statement ok
+CREATE OR REPLACE SECRET ai_url3_${__DATABASE__} (TYPE openai, base_url 'http://127.1:9', model 'm');
+
+statement ok
+CREATE OR REPLACE SECRET ai_url4_${__DATABASE__} (TYPE openai, base_url 'https://example.invalid', model 'm');
+
+query
+SELECT
+  ai_generate(NULL, secret_name := 'ai_url1_${__DATABASE__}') IS NULL AS upper,
+  ai_generate(NULL, secret_name := 'ai_url2_${__DATABASE__}') IS NULL AS ipv6,
+  ai_generate(NULL, secret_name := 'ai_url3_${__DATABASE__}') IS NULL AS short,
+  ai_generate(NULL, secret_name := 'ai_url4_${__DATABASE__}') IS NULL AS tls;
+----
+upper	ipv6	short	tls
+t	t	t	t
+
+statement ok
 SET sdb_ai_allow_insecure_endpoint = true;
 
 query
@@ -312,7 +539,22 @@ n
 t
 
 statement ok
+PREPARE ai_far AS SELECT ai_generate(NULL, secret_name := 'ai_far_${__DATABASE__}') IS NULL AS n;
+
+query
+EXECUTE ai_far;
+----
+n
+t
+
+statement ok
 RESET sdb_ai_allow_insecure_endpoint;
+
+statement error ai_generate: secret '.*' uses the insecure endpoint 'http://example.invalid'
+EXECUTE ai_far;
+
+statement ok
+DEALLOCATE ai_far;
 
 statement ok
 SET sdb_ai_max_api_calls_per_query = 1;

@@ -119,6 +119,8 @@ Endpoint LoadEndpoint(duckdb::ClientContext& context, std::string_view fn,
                       const std::optional<std::string>& secret_name,
                       const Api& api);
 
+void RebindEachExecution(duckdb::BindScalarFunctionInput& input);
+
 [[noreturn]] void ThrowRowError(std::string message);
 
 [[noreturn]] void ThrowBadReply(std::string_view fn, std::string_view problem,
@@ -133,7 +135,7 @@ std::string JsonArray(const Range& values) {
   for (const auto& value : values) {
     absl::StrAppend(&out, std::exchange(comma, ","), ToJson(value));
   }
-  out += "]";
+  absl::StrAppend(&out, "]");
   return out;
 }
 
@@ -222,6 +224,24 @@ class AIWork {
   virtual void Finish(duckdb::Vector& result) = 0;
 
   std::vector<AIRequest> requests;
+};
+
+class BatchWork : public AIWork {
+ public:
+  void Advance(Requester& requester) final;
+
+ protected:
+  void QueueBatches(size_t n, size_t batch_size);
+
+  virtual std::string Body(size_t begin, size_t size) const = 0;
+
+  virtual void Parse(Requester& requester, Response response, size_t begin,
+                     size_t size) = 0;
+
+ private:
+  void Queue(size_t begin, size_t size);
+
+  std::vector<std::pair<size_t, size_t>> _batches;
 };
 
 class AIFunctionData : public duckdb::FunctionData {

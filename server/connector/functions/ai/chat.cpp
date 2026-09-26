@@ -24,6 +24,7 @@
 #include <absl/strings/str_cat.h>
 #include <simdjson.h>
 
+#include <cmath>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/function/function.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -70,6 +71,11 @@ ChatConfig BindChat(duckdb::ClientContext& context, std::string_view fn,
     .max_tokens =
       max_tokens ? max_tokens->GetValue<int32_t>() : kDefaultMaxTokens,
   };
+  if (!std::isfinite(chat.temperature) || chat.temperature < 0) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(fn, ": \"temperature\" must be a non-negative number"));
+  }
   if (chat.max_tokens <= 0) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(fn, ": \"max_tokens\" must be a positive integer"));
@@ -158,9 +164,11 @@ std::optional<std::string> Chat(Requester& requester, std::string_view fn,
                                max_tokens, ")"));
   }
   if (finish == "refusal" || finish == "content_filter") {
-    ThrowRowError(absl::StrCat(
-      fn, ": provider withheld or filtered the reply (finish_reason '", finish,
-      "'): ", content));
+    ThrowBadReply(fn,
+                  absl::StrCat("provider withheld or filtered the reply "
+                               "(finish_reason '",
+                               finish, "')"),
+                  content);
   }
   if (finish == "tool_calls" || finish == "function_call") {
     ThrowRowError(absl::StrCat(fn, ": model stopped to call a tool (",

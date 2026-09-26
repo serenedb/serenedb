@@ -20,6 +20,7 @@
 
 #include "connector/functions/ai/ai_operator.h"
 
+#include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 
 #include <algorithm>
@@ -143,14 +144,13 @@ class PhysicalAIEvaluate final : public duckdb::PhysicalOperator {
     const final {
     duckdb::InsertionOrderPreservingMap<std::string> result;
     std::string calls;
+    std::string_view separator;
     for (const auto& call : _calls) {
-      if (!calls.empty()) {
-        calls += "\n";
-      }
-      calls += call->Cast<duckdb::BoundFunctionExpression>()
-                 .Function()
-                 .GetName()
-                 .GetIdentifierName();
+      absl::StrAppend(&calls, std::exchange(separator, "\n"),
+                      call->Cast<duckdb::BoundFunctionExpression>()
+                        .Function()
+                        .GetName()
+                        .GetIdentifierName());
     }
     result["Calls"] = calls;
     SetEstimatedCardinality(result, estimated_cardinality);

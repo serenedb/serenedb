@@ -25,7 +25,7 @@ End-to-end demos that show what SereneDB does, against real data, in scripts you
 | [demo4](demo4/) | **Hybrid vector + FTS** -- one index with BM25 and HNSW cosine ANN; vector top-K, range search, text+vector hybrid | Qdrant dbpedia-entities (~100k abstracts, 1536-dim OpenAI embeddings) |
 | [demo5](demo5/) | **Self-embedding semantic search** -- `ai_embed(...)` at ingest and query time against any OpenAI-compatible endpoint | neuralwork/arxiver (arXiv ML abstracts, Gemini 3072-dim embeddings) |
 | [demo6](demo6/) | **Code search + statistics with sparse ngrams** -- GitHub-style substring + fuzzy code search via the `sparse_ngram` tokenizer, BM25 over statements, per-problem runtime/memory statistics aggregated from index INCLUDE columns | UNION ALL views over open-r1/codeforces + deepmind/code_contests (~15k problems) and ~45k accepted submissions (open-r1 `selected_accepted`), all CC-BY-4.0 |
-| [demo7](demo7/) | **Support-ticket triage with `prompt_jev`** -- yes/no, choice and score questions over a table column, several questions per request stored in a table, the same SQL against a local Kev server, the hosted TypeSafe API or Jev on OpenRouter | 16 support tickets inserted by `bootstrap.sql` |
+| [demo7](demo7/) | **Support tickets triaged as they arrive with `ai_system1`** -- a stored generated column asks yes/no, choice and score questions on every `INSERT`, an `UPDATE` re-triages only rewritten tickets, a new column is filled in place for one plan, and queries read the stored answers without requests; the same SQL against a local Kev server, the hosted TypeSafe API or Jev on OpenRouter | 16 support tickets inserted by `demo.sql` |
 
 ## Running a demo
 

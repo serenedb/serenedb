@@ -126,16 +126,18 @@ The text functions and aggregates take the per-row text and their own arguments,
 | :--- | :--- |
 | `model` | Chat model to use. Defaults to the secret's `model`. |
 | `secret_name` | Name of the `openai` secret. Defaults to `sdb_ai_text_default_secret`. |
-| `temperature` | Sampling temperature. The default depends on the function: 0.7 for `ai_generate`, 0.3 for `ai_translate` and 0 for the others. |
+| `temperature` | Sampling temperature, a finite number of at least 0. The default depends on the function: 0.7 for `ai_generate`, 0.3 for `ai_translate` and 0 for the others. |
 | `max_tokens` | Maximum number of tokens in the model's reply. Default 1024. |
 
 Every argument except the per-row text must be a constant. A `NULL` text returns `NULL` without a request. Except for `ai_generate`, rows with the same text share one request when they fall into the same batch (see [Performance](#performance)).
+
+A prepared statement binds its scalar AI calls again on every `EXECUTE`, so it picks up a replaced secret and the current settings. `ai_agg` and `ai_summarize_agg` keep the secret and settings they had at `PREPARE` time.
 
 A reply counts as a failed row when the model stopped at `max_tokens`, when the provider withheld or filtered it, or when the model asked to call a tool instead of answering. See [Errors, retries and quotas](#errors) for how failed rows are handled.
 
 ### Text as data {#prompt-injection}
 
-Each function sends its instruction as the system message and the row text as a separate user message. The instruction tells the model to treat the text as data and never follow instructions that appear in it. `ai_classify`, `ai_classify_labels`, `ai_extract`, `ai_filter`, `ai_score` and `ai_rerank` also request a strict JSON schema, so a provider that supports structured outputs can only reply with an allowed label, a boolean, a score or the requested keys. The replies are checked as well: an unknown label makes `ai_classify` return `NULL` and fails the row in `ai_classify_labels`, and a score outside `[0, 1]` fails the row. Control characters other than tab, newline and carriage return are replaced by spaces before the text is sent.
+Each function sends its instruction as the system message and the row text as a separate user message. The instruction tells the model to treat the text as data and never follow instructions that appear in it. `ai_classify`, `ai_classify_labels`, `ai_extract`, `ai_filter`, `ai_score` and `ai_rerank` also request a strict JSON schema, so a provider that supports structured outputs can only reply with an allowed label, a boolean, a score or the requested keys. The replies are checked as well: an unknown label makes `ai_classify` return `NULL` and fails the row in `ai_classify_labels`, and a score outside `[0, 1]` fails the row.
 
 These measures make instructions hidden in the data less effective, but they can't rule them out.
 
@@ -213,7 +215,7 @@ When the second argument is a JSON object, each key names a field and each value
 
 <SqlLogicTest id="sql/functions/ai_ollama/summarize_agg" hideResult />
 
-Besides the [common parameters](#parameters), both take `max_context_chars` (default 100000), the maximum number of characters of values sent in one request. A group with more text is split into parts, and each part is condensed into notes that keep what the instruction needs. The notes are then combined in further requests until they fit into one request. A value longer than the limit is split across parts. If condensing stops making the notes shorter, the group fails with an error that suggests raising `max_context_chars` or `max_tokens`.
+Besides the [common parameters](#parameters), both take `max_context_chars` (default 100000), the maximum size in bytes of the UTF-8 values sent in one request. A group with more text is split into parts, and each part is condensed into notes that keep what the instruction needs. The notes are then combined in further requests until they fit into one request. A value longer than the limit is split across parts, at character boundaries. If condensing stops making the notes shorter, the group fails with an error that suggests raising `max_context_chars` or `max_tokens`.
 
 ## `ai_embed` {#ai_embed}
 
@@ -230,9 +232,9 @@ A `NULL` `text` returns `NULL`, so rows without text are simply skipped:
 | `text` | The text to embed. `NULL` yields `NULL`. |
 | `model` | The provider's embedding model name, for example `'all-minilm'` or `'text-embedding-3-small'`. |
 | `secret_name` | Name of the `openai` secret. Defaults to `sdb_ai_embedding_default_secret`. |
-| `dimensions` | Requested vector size, for models that can shorten their embeddings (such as OpenAI's `text-embedding-3-*`). 0 or omitted keeps the native size. |
+| `dimensions` | Requested vector size, for models that can shorten their embeddings (such as OpenAI's `text-embedding-3-*`). 0 or omitted keeps the native size. A reply of any other size fails the row. |
 
-**Returns** a variable-length `FLOAT[]`. To store embeddings in an [IVF vector column](../indexes/inverted/vector-search.md), which requires a *fixed* size, cast to `FLOAT[N]` with the model's dimension, for example `ai_embed(...)::FLOAT[384]`. Every stored row and the query vector must use the **same model and dimension**, or the index and the distance comparisons will not line up.
+**Returns** a variable-length `FLOAT[]`. An empty embedding in the reply fails the row. To store embeddings in an [IVF vector column](../indexes/inverted/vector-search.md), which requires a *fixed* size, cast to `FLOAT[N]` with the model's dimension, for example `ai_embed(...)::FLOAT[384]`. Every stored row and the query vector must use the **same model and dimension**, or the index and the distance comparisons will not line up.
 
 ### Choosing a model
 
@@ -248,7 +250,7 @@ Check your provider's documentation for the exact dimension and use it as the `N
 
 ### Performance
 
-Each `ai_embed` call is a network request to the provider, so **embed documents once at write time** and store the vectors; only the *query* text is embedded at search time. Rows are sent in batches of up to `sdb_ai_embedding_max_batch_size` texts per request. Embedding a column is just a `SELECT`, and `NULL`s pass through and are easy to count or filter:
+Each `ai_embed` call is a network request to the provider, so **embed documents once at write time** and store the vectors; only the *query* text is embedded at search time. Rows are sent in batches of up to `sdb_ai_embedding_max_batch_size` texts per request. If the provider rejects a batch of several texts with HTTP 400, 413 or 422, for example because one text is longer than the model accepts, the batch is split in half and sent again, down to single texts, so only the rejected texts fail. Embedding a column is just a `SELECT`, and `NULL`s pass through and are easy to count or filter:
 
 <SqlLogicTest id="sql/functions/ai_ollama/embed_table" />
 
@@ -307,7 +309,7 @@ A `score` question rates the text on an ordered scale:
 
 ### Batching {#ai_system1_batch}
 
-A single-question call packs up to `batch_size` rows (1 to 64, default 32) into one request. Packing sends fewer requests, but the model sees several rows at once, so answers can drift compared with asking about each row alone. Set `batch_size := 1` for strict per-row isolation. If the provider rejects a packed request as invalid (HTTP 422, for example because the batch is too long), the batch is split in half and retried, down to single rows. `questions` calls always send one request per row.
+A single-question call packs up to `batch_size` rows (1 to 64, default 32) into one request. Packing sends fewer requests, but the model sees several rows at once, so answers can drift compared with asking about each row alone. Set `batch_size := 1` for strict per-row isolation. If the provider rejects a packed request (HTTP 400, 413 or 422, for example because the batch is too long), the batch is split in half and retried, down to single rows. `questions` calls always send one request per row.
 
 <SqlLogicTest id="sql/functions/ai_kev/table" />
 
@@ -331,8 +333,8 @@ These settings apply to every AI function:
 
 | Setting | Default | Description |
 | :--- | :--- | :--- |
-| `sdb_ai_throw_on_error` | `true` | When `false`, a row whose request fails returns `NULL` instead of failing the query. HTTP 401, 403, 404 and 422 always fail the query, because they mean a wrong key, endpoint, model or question. |
-| `sdb_ai_max_retries` | `3` | Retries after a connection error or HTTP 408, 429, 5xx or 529. |
+| `sdb_ai_throw_on_error` | `true` | When `false`, a row whose request fails returns `NULL` instead of failing the query. HTTP 401, 403, 404 and 422 always fail the query, because they mean a wrong key, endpoint, model or question. So does HTTP 429 with the error type or code `insufficient_quota`, which means the account's quota is used up. |
+| `sdb_ai_max_retries` | `3` | Retries after a connection error or HTTP 408, 429, 5xx or 529. A 429 with `insufficient_quota` isn't retried. Retries count toward `sdb_ai_max_api_calls_per_query`. |
 | `sdb_ai_retry_initial_delay_ms` | `500` | Delay before the first retry; each further retry doubles it, up to 60 seconds. A `Retry-After` response header takes precedence, also up to 60 seconds. |
 | `sdb_ai_request_timeout` | `120` | Timeout of a single request, in seconds. |
 | `sdb_ai_max_concurrent_requests` | `16` | Maximum requests an `AI_EVALUATE` step, or a call outside it, has in flight. Lower it for a local server that can't keep up. See [Performance](#performance). |

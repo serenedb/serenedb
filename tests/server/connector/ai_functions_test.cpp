@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <simdjson.h>
 
@@ -28,6 +29,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -107,6 +109,45 @@ simdjson::dom::element Parse(simdjson::dom::parser& parser,
   return element;
 }
 
+std::string Content(std::string_view body, size_t message) {
+  simdjson::dom::parser parser;
+  std::string_view content;
+  EXPECT_EQ(parser.parse(body.data(), body.size())["messages"]
+              .at(message)["content"]
+              .get(content),
+            simdjson::SUCCESS)
+    << body;
+  return std::string{content};
+}
+
+bool IsPartial(std::string_view body) {
+  return Content(body, 0).starts_with("You condense");
+}
+
+struct InFlight {
+  int Enter() {
+    const auto current = ++now;
+    for (auto seen = peak.load(); current > seen;) {
+      if (peak.compare_exchange_weak(seen, current)) {
+        break;
+      }
+    }
+    return current;
+  }
+
+  void Leave() { --now; }
+
+  std::atomic_int now = 0;
+  std::atomic_int peak = 0;
+};
+
+template<typename Fn>
+std::chrono::steady_clock::duration Timed(Fn&& fn) {
+  const auto start = std::chrono::steady_clock::now();
+  fn();
+  return std::chrono::steady_clock::now() - start;
+}
+
 class AIFunctionsTest : public ::testing::Test {
  protected:
   AIFunctionsTest() : _db{nullptr}, _conn{_db} {
@@ -124,11 +165,11 @@ class AIFunctionsTest : public ::testing::Test {
 
   void Start() {
     _harness = std::make_unique<test::HttpServerHarness>(_router);
-    const auto url = absl::StrCat("http://127.0.0.1:", _harness->server.port());
-    Run(absl::StrCat("CREATE SECRET chat (TYPE openai, base_url '", url,
+    _url = absl::StrCat("http://127.0.0.1:", _harness->server.port());
+    Run(absl::StrCat("CREATE SECRET chat (TYPE openai, base_url '", _url,
                      "', model 'm')"));
     Run(
-      absl::StrCat("CREATE SECRET jev (TYPE typesafe, base_url '", url, "')"));
+      absl::StrCat("CREATE SECRET jev (TYPE typesafe, base_url '", _url, "')"));
     Run("SET sdb_ai_retry_initial_delay_ms = 1");
   }
 
@@ -150,7 +191,7 @@ class AIFunctionsTest : public ::testing::Test {
     auto result = Run(absl::StrCat("EXPLAIN ", sql));
     std::string plan;
     for (duckdb::idx_t i = 0; i < result->RowCount(); i++) {
-      plan += result->GetValue(1, i).ToString();
+      absl::StrAppend(&plan, result->GetValue(1, i).ToString());
     }
     size_t count = 0;
     for (auto pos = plan.find(needle); pos != std::string::npos;
@@ -162,6 +203,7 @@ class AIFunctionsTest : public ::testing::Test {
 
   network::HttpRouter _router;
   std::unique_ptr<test::HttpServerHarness> _harness;
+  std::string _url;
   duckdb::DuckDB _db;
   duckdb::Connection _conn;
 };
@@ -373,17 +415,11 @@ TEST_F(AIFunctionsTest, JevUnprocessableRowFailsQuery) {
 }
 
 TEST_F(AIFunctionsTest, RequestsSpreadOverThreads) {
-  std::atomic_int in_flight = 0;
-  std::atomic_int peak = 0;
+  InFlight flight;
   Mock(kChat, [&](std::string_view) {
-    const auto now = ++in_flight;
-    for (auto seen = peak.load(); now > seen;) {
-      if (peak.compare_exchange_weak(seen, now)) {
-        break;
-      }
-    }
+    flight.Enter();
     std::this_thread::sleep_for(std::chrono::milliseconds{300});
-    --in_flight;
+    flight.Leave();
     return Reply{200, ChatReply("ok", "stop", 1)};
   });
   Start();
@@ -392,37 +428,30 @@ TEST_F(AIFunctionsTest, RequestsSpreadOverThreads) {
     "SELECT ai_generate(v, secret_name := 'chat') FROM (VALUES ('a'), ('b'), "
     "('c'), ('d')) t(v)";
   EXPECT_EQ(Run(sql)->RowCount(), 4);
-  EXPECT_EQ(peak.load(), 4);
-  peak = 0;
+  EXPECT_EQ(flight.peak.load(), 4);
+  flight.peak = 0;
   EXPECT_EQ(Run("SELECT CASE WHEN v <> 'x' THEN ai_generate(v, secret_name := "
                 "'chat') END FROM (VALUES ('a'), ('b'), ('c'), ('d')) t(v)")
               ->RowCount(),
             4);
-  EXPECT_EQ(peak.load(), 4);
-  peak = 0;
+  EXPECT_EQ(flight.peak.load(), 4);
+  flight.peak = 0;
   Run("SET sdb_ai_max_concurrent_requests = 1");
   EXPECT_EQ(Run(sql)->RowCount(), 4);
-  EXPECT_EQ(peak.load(), 1);
+  EXPECT_EQ(flight.peak.load(), 1);
 }
 
 TEST_F(AIFunctionsTest, ParallelSourcesKeepConcurrency) {
-  std::atomic_int in_flight = 0;
-  std::atomic_int peak = 0;
+  InFlight flight;
   std::atomic_int busy = 0;
   std::atomic_int total = 0;
   Mock(kChat, [&](std::string_view) {
-    const auto now = ++in_flight;
-    for (auto seen = peak.load(); now > seen;) {
-      if (peak.compare_exchange_weak(seen, now)) {
-        break;
-      }
-    }
     ++total;
-    if (now >= 2) {
+    if (flight.Enter() >= 2) {
       ++busy;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds{2});
-    --in_flight;
+    flight.Leave();
     return Reply{200, ChatReply("ok", "stop", 1)};
   });
   Start();
@@ -432,7 +461,7 @@ TEST_F(AIFunctionsTest, ParallelSourcesKeepConcurrency) {
     "SELECT count(ai_generate(range::VARCHAR, secret_name := 'chat')) FROM "
     "range(4096)");
   EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 4096);
-  EXPECT_LE(peak.load(), 4);
+  EXPECT_LE(flight.peak.load(), 4);
   EXPECT_GE(busy.load() * 4, total.load() * 3)
     << busy.load() << " of " << total.load();
 }
@@ -483,10 +512,7 @@ TEST_F(AIFunctionsTest, CheapPredicatesAndLimitCutRequests) {
 
 TEST_F(AIFunctionsTest, EvaluateKeepsInputOrder) {
   Mock(kChat, [](std::string_view body) {
-    simdjson::dom::parser parser;
-    const auto text =
-      std::string_view{Parse(parser, body)["messages"].at(1)["content"]};
-    return Reply{200, ChatReply(text, "stop", 1)};
+    return Reply{200, ChatReply(Content(body, 1), "stop", 1)};
   });
   Start();
   for (const auto* threads : {"4", "1"}) {
@@ -516,10 +542,7 @@ TEST_F(AIFunctionsTest, AggregateRewriteMatchesFinalize) {
   EXPECT_TRUE(result->GetValue(1, 1).IsNull());
   auto bodies = mock.Bodies();
   ASSERT_EQ(bodies.size(), 1);
-  simdjson::dom::parser parser;
-  EXPECT_EQ(
-    std::string_view{Parse(parser, bodies[0])["messages"].at(1)["content"]},
-    R"({"group_size":2,"values":["b","a"]})");
+  EXPECT_EQ(Content(bodies[0], 1), R"({"group_size":2,"values":["b","a"]})");
 
   result = Run(
     "SELECT ai_agg(v, 'q', secret_name := 'chat') OVER () FROM (VALUES ('a'), "
@@ -527,9 +550,7 @@ TEST_F(AIFunctionsTest, AggregateRewriteMatchesFinalize) {
   EXPECT_EQ(result->GetValue(0, 1).ToString(), "summary");
   bodies = mock.Bodies();
   ASSERT_GE(bodies.size(), 2);
-  simdjson::dom::parser window_parser;
-  EXPECT_EQ(std::string_view{Parse(window_parser, bodies.back())["messages"].at(
-              1)["content"]},
+  EXPECT_EQ(Content(bodies.back(), 1),
             R"({"group_size":2,"values":["a","b"]})");
 }
 
@@ -603,6 +624,484 @@ TEST_F(AIFunctionsTest, CancelWhileRequestsWait) {
   EXPECT_TRUE(result->HasError());
   auto after = Run("SELECT 1");
   EXPECT_EQ(after->GetValue(0, 0).GetValue<int32_t>(), 1);
+}
+
+TEST_F(AIFunctionsTest, RateLimitRetriesThenFailsRow) {
+  auto& mock = Mock(kChat, [](std::string_view) {
+    return Reply{
+      429, R"({"error":{"message":"Rate limit reached","type":"requests"}})",
+      "retry-after: 0\r\n"};
+  });
+  Start();
+  Run("SET sdb_ai_max_retries = 2");
+  const std::string sql = "SELECT ai_generate('x', secret_name := 'chat')";
+  ExpectError(sql, "returned HTTP 429: [requests] Rate limit reached");
+  EXPECT_EQ(mock.Bodies().size(), 3);
+  Run("SET sdb_ai_throw_on_error = false");
+  EXPECT_TRUE(Run(sql)->GetValue(0, 0).IsNull());
+  EXPECT_EQ(mock.Bodies().size(), 6);
+  Run("SET sdb_ai_max_retries = 0");
+  EXPECT_TRUE(Run(sql)->GetValue(0, 0).IsNull());
+  EXPECT_EQ(mock.Bodies().size(), 7);
+}
+
+TEST_F(AIFunctionsTest, RetryBackoffDoubles) {
+  std::atomic_int calls = 0;
+  Mock(kChat, [&](std::string_view) -> Reply {
+    switch (calls++) {
+      case 0:
+      case 1:
+        return {503, R"({"error":"busy"})"};
+      case 3:
+        return {429, R"({"error":"slow down"})",
+                "Retry-After: Wed, 21 Oct 2015 07:28:00 GMT\r\n"};
+      default:
+        return {200, ChatReply("ok", "stop", 1)};
+    }
+  });
+  Start();
+  Run("SET sdb_ai_retry_initial_delay_ms = 100");
+  auto query = [&] { Run("SELECT ai_generate('x', secret_name := 'chat')"); };
+  EXPECT_GE(Timed(query), std::chrono::milliseconds{300});
+  const auto date = Timed(query);
+  EXPECT_GE(date, std::chrono::milliseconds{100});
+  EXPECT_LT(date, std::chrono::seconds{10});
+  EXPECT_EQ(calls.load(), 5);
+}
+
+TEST_F(AIFunctionsTest, CancelDuringRetryAfter) {
+  Mock(kChat, [](std::string_view) {
+    return Reply{429, R"({"error":"slow down"})", "Retry-After: 3600\r\n"};
+  });
+  Start();
+  Run("SET sdb_ai_throw_on_error = false");
+  std::thread cancel{[&] {
+    std::this_thread::sleep_for(std::chrono::milliseconds{200});
+    _conn.Interrupt();
+  }};
+  duckdb::unique_ptr<duckdb::MaterializedQueryResult> result;
+  const auto elapsed = Timed([&] {
+    result = _conn.Query("SELECT ai_generate('x', secret_name := 'chat')");
+  });
+  cancel.join();
+  EXPECT_TRUE(result->HasError());
+  EXPECT_LT(elapsed, std::chrono::seconds{5});
+  EXPECT_EQ(Run("SELECT 1")->GetValue(0, 0).GetValue<int32_t>(), 1);
+}
+
+TEST_F(AIFunctionsTest, RetriesStayWithinConcurrency) {
+  InFlight flight;
+  std::mutex mutex;
+  std::set<std::string> seen;
+  auto& mock = Mock(kChat, [&](std::string_view body) -> Reply {
+    flight.Enter();
+    std::this_thread::sleep_for(std::chrono::milliseconds{20});
+    flight.Leave();
+    std::lock_guard lock{mutex};
+    if (seen.emplace(body).second) {
+      return {429, R"({"error":"slow down"})", "Retry-After: 0\r\n"};
+    }
+    return {200, ChatReply("ok", "stop", 1)};
+  });
+  Start();
+  Run("SET sdb_ai_max_concurrent_requests = 2");
+  auto result = Run(
+    "SELECT count(ai_generate(range::VARCHAR, secret_name := 'chat')) FROM "
+    "range(8)");
+  EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 8);
+  EXPECT_LE(flight.peak.load(), 2);
+  EXPECT_EQ(mock.Bodies().size(), 16);
+}
+
+TEST_F(AIFunctionsTest, RetriesCountTowardCallQuota) {
+  auto& mock = Mock(
+    kChat, [](std::string_view) { return Reply{503, R"({"error":"busy"})"}; });
+  Start();
+  Run("SET sdb_ai_max_retries = 5");
+  Run("SET sdb_ai_max_api_calls_per_query = 2");
+  ExpectError("SELECT ai_generate('x', secret_name := 'chat')",
+              "sdb_ai_max_api_calls_per_query (2)");
+  EXPECT_EQ(mock.Bodies().size(), 2);
+}
+
+TEST_F(AIFunctionsTest, ExhaustedProviderQuotaFailsAtOnce) {
+  auto& mock = Mock(kChat, [](std::string_view) {
+    return Reply{
+      429,
+      R"({"error":{"message":"You exceeded your current quota","type":"insufficient_quota","code":"insufficient_quota"}})"};
+  });
+  Start();
+  Run("SET sdb_ai_throw_on_error = false");
+  ExpectError(
+    "SELECT ai_generate('x', secret_name := 'chat')",
+    "returned HTTP 429: [insufficient_quota] You exceeded your current quota");
+  EXPECT_EQ(mock.Bodies().size(), 1);
+}
+
+TEST_F(AIFunctionsTest, OutputTokenQuotaBoundsInFlight) {
+  auto& mock = Mock(kChat, [](std::string_view) {
+    std::this_thread::sleep_for(std::chrono::milliseconds{50});
+    return Reply{200, ChatReply("ok", "stop", 1)};
+  });
+  Start();
+  Run("SET sdb_ai_max_concurrent_requests = 4");
+  Run("SET sdb_ai_max_output_tokens_per_query = 1");
+  Run("SET sdb_ai_throw_on_quota_exceeded = false");
+  auto result = Run(
+    "SELECT count(ai_generate(range::VARCHAR, secret_name := 'chat')) FROM "
+    "range(64)");
+  const auto sent = mock.Bodies().size();
+  EXPECT_GE(sent, 1);
+  EXPECT_LE(sent, 4);
+  EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), sent);
+}
+
+TEST_F(AIFunctionsTest, OutputTokenQuotaCountsSystem1) {
+  auto& mock = Mock(kSystemOne, [](std::string_view) {
+    return Reply{
+      200,
+      R"({"answers":{"answer":{"noul":0.9}},"usage":{"input_tokens":1,"output_tokens":5}})"};
+  });
+  Start();
+  Run("SET sdb_ai_max_concurrent_requests = 1");
+  Run("SET sdb_ai_max_output_tokens_per_query = 5");
+  ExpectError(
+    "SELECT ai_system1(v, 'q', batch_size := 1, secret_name := 'jev') FROM "
+    "(VALUES ('a'), ('b'), ('c')) t(v)",
+    "sdb_ai_max_output_tokens_per_query (5)");
+  EXPECT_EQ(mock.Bodies().size(), 1);
+}
+
+TEST_F(AIFunctionsTest, UnreportedUsageNeverTrips) {
+  auto& mock = Mock(kChat, [](std::string_view) {
+    return Reply{
+      200,
+      R"({"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]})"};
+  });
+  Start();
+  Run("SET sdb_ai_max_concurrent_requests = 1");
+  Run("SET sdb_ai_max_output_tokens_per_query = 1");
+  auto result = Run(
+    "SELECT count(ai_generate(range::VARCHAR, secret_name := 'chat')) FROM "
+    "range(3)");
+  EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 3);
+  EXPECT_EQ(mock.Bodies().size(), 3);
+}
+
+TEST_F(AIFunctionsTest, ContextLengthErrorFailsOnlyLongRows) {
+  auto& mock = Mock(kChat, [](std::string_view body) {
+    if (Content(body, 1).size() > 100) {
+      return Reply{
+        400,
+        R"({"error":{"message":"This model's maximum context length is 16 tokens","type":"invalid_request_error","code":"context_length_exceeded"}})"};
+    }
+    return Reply{200, ChatReply("ok", "stop", 1)};
+  });
+  Start();
+  auto long_rows = [&] {
+    return absl::c_count_if(mock.Bodies(), [](const std::string& body) {
+      return Content(body, 1).size() > 100;
+    });
+  };
+  const std::string sql =
+    "SELECT v, ai_generate(v, secret_name := 'chat') FROM (VALUES ('short'), "
+    "(repeat('x', 1000))) t(v) ORDER BY length(v)";
+  ExpectError(sql,
+              "returned HTTP 400: [invalid_request_error] This model's "
+              "maximum context length is 16 tokens");
+  EXPECT_EQ(long_rows(), 1);
+  Run("SET sdb_ai_throw_on_error = false");
+  auto result = Run(sql);
+  EXPECT_EQ(result->GetValue(1, 0).ToString(), "ok");
+  EXPECT_TRUE(result->GetValue(1, 1).IsNull());
+  EXPECT_EQ(long_rows(), 2);
+}
+
+TEST_F(AIFunctionsTest, EmbeddingBatchSplitsAroundOversizedText) {
+  auto& mock = Mock(kEmbeddings, [](std::string_view body) -> Reply {
+    simdjson::dom::parser parser;
+    std::string data;
+    for (auto input : Parse(parser, body)["input"].get_array()) {
+      if (std::string_view{input}.size() > 100) {
+        return {
+          400,
+          R"({"error":{"message":"input is too long","type":"invalid_request_error"}})"};
+      }
+      absl::StrAppend(&data, data.empty() ? "" : ",", R"({"embedding":[1,0]})");
+    }
+    return {200, absl::StrCat(R"({"data":[)", data, "]}")};
+  });
+  Start();
+  Run("SET sdb_ai_embedding_max_batch_size = 4");
+  const std::string sql =
+    "SELECT ai_embed(v, 'm', 'chat') IS NULL FROM (VALUES ('a'), ('b'), "
+    "(repeat('x', 1000)), ('c')) t(v) ORDER BY v";
+  ExpectError(sql, "returned HTTP 400: [invalid_request_error] input is too");
+  Run("SET sdb_ai_throw_on_error = false");
+  const auto before = mock.Bodies().size();
+  auto result = Run(sql);
+  for (duckdb::idx_t i = 0; i != 4; ++i) {
+    EXPECT_EQ(result->GetValue(0, i).GetValue<bool>(), i == 3) << i;
+  }
+  const auto bodies = mock.Bodies();
+  std::vector<size_t> sizes;
+  for (size_t i = before; i != bodies.size(); ++i) {
+    simdjson::dom::parser parser;
+    sizes.push_back(Parse(parser, bodies[i])["input"].get_array().size());
+  }
+  std::ranges::sort(sizes);
+  EXPECT_EQ(sizes, (std::vector<size_t>{1, 1, 2, 2, 4}));
+}
+
+TEST_F(AIFunctionsTest, EmbeddingReplyMustMatchDimensions) {
+  std::atomic_bool empty = false;
+  Mock(kEmbeddings, [&](std::string_view) {
+    return Reply{200, empty ? R"({"data":[{"embedding":[]}]})"
+                            : R"({"data":[{"embedding":[1,0]}]})"};
+  });
+  Start();
+  const std::string sql =
+    "SELECT ai_embed(v, 'm', 'chat', dimensions := 3) FROM (VALUES ('a')) t(v)";
+  ExpectError(sql, "has 2 values, expected 3");
+  empty = true;
+  ExpectError("SELECT ai_embed(v, 'm', 'chat') FROM (VALUES ('a')) t(v)",
+              "has 0 values, expected at least 1");
+  Run("SET sdb_ai_throw_on_error = false");
+  EXPECT_TRUE(Run(sql)->GetValue(0, 0).IsNull());
+}
+
+TEST_F(AIFunctionsTest, AggregateRespectsContextBudget) {
+  auto& mock = Mock(kChat, [](std::string_view body) {
+    return Reply{200, ChatReply(IsPartial(body) ? "n" : "done", "stop", 1)};
+  });
+  Start();
+  auto result = Run(
+    "SELECT ai_agg(v, 'q', max_context_chars := 25, secret_name := 'chat') "
+    "FROM (SELECT repeat(range::VARCHAR, 10) AS v FROM range(6))");
+  EXPECT_EQ(result->GetValue(0, 0).ToString(), "done");
+  const auto bodies = mock.Bodies();
+  ASSERT_EQ(bodies.size(), 4);
+  size_t partials = 0;
+  for (const auto& body : bodies) {
+    if (!IsPartial(body)) {
+      continue;
+    }
+    ++partials;
+    simdjson::dom::parser parser;
+    const auto message = Content(body, 1);
+    size_t chars = 0;
+    for (auto value : Parse(parser, message)["values"].get_array()) {
+      chars += std::string_view{value}.size();
+    }
+    EXPECT_EQ(chars, 20) << message;
+  }
+  EXPECT_EQ(partials, 3);
+}
+
+TEST_F(AIFunctionsTest, AggregateCutsOnCharacterBoundaries) {
+  constexpr std::string_view kEmoji = "\xF0\x9F\x98\x80";
+  auto& mock = Mock(kChat, [](std::string_view body) {
+    return Reply{200, ChatReply(IsPartial(body) ? "" : "done", "stop", 1)};
+  });
+  Start();
+  auto result = Run(absl::StrCat(
+    "SELECT ai_agg(v, 'q', max_context_chars := 2, secret_name := 'chat') "
+    "FROM (VALUES ('",
+    kEmoji, kEmoji, kEmoji, "')) t(v)"));
+  EXPECT_EQ(result->GetValue(0, 0).ToString(), "done");
+  size_t partials = 0;
+  for (const auto& body : mock.Bodies()) {
+    if (IsPartial(body)) {
+      ++partials;
+      EXPECT_EQ(Content(body, 1), absl::StrCat(R"({"group_size":1,"values":[")",
+                                               kEmoji, R"("]})"));
+    }
+  }
+  EXPECT_EQ(partials, 3);
+}
+
+TEST_F(AIFunctionsTest, AggregateStopsWithoutProgress) {
+  Mock(kChat, [](std::string_view body) {
+    return Reply{200, ChatReply(IsPartial(body) ? std::string(50, 'n') : "done",
+                                "stop", 1)};
+  });
+  Start();
+  const std::string sql =
+    "SELECT ai_agg(v, 'q', max_context_chars := 15, secret_name := 'chat') "
+    "FROM (SELECT repeat('a', 10) AS v FROM range(3))";
+  ExpectError(sql, "condensing the group made no progress");
+  Run("SET sdb_ai_throw_on_error = false");
+  EXPECT_TRUE(Run(sql)->GetValue(0, 0).IsNull());
+}
+
+TEST_F(AIFunctionsTest, MaximalIntegerSettings) {
+  Mock(kChat,
+       [](std::string_view) { return Reply{200, ChatReply("ok", "stop", 1)}; });
+  Mock(kEmbeddings, [](std::string_view) {
+    return Reply{200, R"({"data":[{"embedding":[1,0]}]})"};
+  });
+  Start();
+  for (const auto* name :
+       {"sdb_ai_max_api_calls_per_query", "sdb_ai_max_output_tokens_per_query",
+        "sdb_ai_max_retries", "sdb_ai_retry_initial_delay_ms",
+        "sdb_ai_request_timeout", "sdb_ai_max_concurrent_requests",
+        "sdb_ai_embedding_max_batch_size"}) {
+    Run(absl::StrCat("SET ", name, " = 4294967295"));
+  }
+  EXPECT_EQ(Run("SELECT ai_generate('x', secret_name := 'chat')")
+              ->GetValue(0, 0)
+              .ToString(),
+            "ok");
+  EXPECT_EQ(Run("SELECT len(ai_embed(v, 'm', 'chat')) FROM (VALUES ('a')) t(v)")
+              ->GetValue(0, 0)
+              .GetValue<int64_t>(),
+            2);
+}
+
+TEST_F(AIFunctionsTest, RequestTimeoutFailsRow) {
+  Mock(kChat, [](std::string_view) {
+    std::this_thread::sleep_for(std::chrono::seconds{3});
+    return Reply{200, ChatReply("ok", "stop", 1)};
+  });
+  Start();
+  Run("SET sdb_ai_request_timeout = 1");
+  Run("SET sdb_ai_max_retries = 0");
+  const std::string sql = "SELECT ai_generate('x', secret_name := 'chat')";
+  EXPECT_LT(Timed([&] { ExpectError(sql, "/v1/chat/completions' failed: "); }),
+            std::chrono::milliseconds{2500});
+  Run("SET sdb_ai_throw_on_error = false");
+  EXPECT_TRUE(Run(sql)->GetValue(0, 0).IsNull());
+}
+
+TEST_F(AIFunctionsTest, ThrowOnErrorCoversEveryFunction) {
+  for (const auto path : {kChat, kEmbeddings, kSystemOne}) {
+    Mock(path, [](std::string_view) { return Reply{200, "not json"}; });
+  }
+  Start();
+  for (const auto* call : {
+         "ai_generate(v, secret_name := 'chat')",
+         "ai_classify(v, ['a', 'b'], secret_name := 'chat')",
+         "ai_classify_labels(v, ['a', 'b'], secret_name := 'chat')",
+         "ai_extract(v, 'the city', secret_name := 'chat')",
+         "ai_filter(v, 'x', secret_name := 'chat')",
+         "ai_translate(v, 'German', secret_name := 'chat')",
+         "ai_redact(v, ['email'], secret_name := 'chat')",
+         "ai_score(v, 'x', secret_name := 'chat')",
+         "ai_rerank('q', v, secret_name := 'chat')",
+         "ai_embed(v, 'm', 'chat')",
+         "ai_similarity(v, v, 'm', 'chat')",
+         "ai_system1(v, 'q', secret_name := 'jev')",
+         "ai_agg(v, 'q', secret_name := 'chat')",
+         "ai_summarize_agg(v, secret_name := 'chat')",
+       }) {
+    const auto sql =
+      absl::StrCat("SELECT ", call, " IS NULL FROM (VALUES ('x')) t(v)");
+    Run("SET sdb_ai_throw_on_error = true");
+    ExpectError(sql, "not valid JSON");
+    Run("SET sdb_ai_throw_on_error = false");
+    EXPECT_TRUE(Run(sql)->GetValue(0, 0).GetValue<bool>()) << call;
+  }
+}
+
+TEST_F(AIFunctionsTest, ThrowOnErrorKeepsQuotaErrors) {
+  Mock(kChat,
+       [](std::string_view) { return Reply{200, ChatReply("ok", "stop", 1)}; });
+  Start();
+  Run("SET sdb_ai_throw_on_error = false");
+  Run("SET sdb_ai_max_concurrent_requests = 1");
+  Run("SET sdb_ai_max_api_calls_per_query = 1");
+  ExpectError(
+    "SELECT ai_generate(v, secret_name := 'chat') FROM (VALUES ('a'), ('b')) "
+    "t(v)",
+    "sdb_ai_max_api_calls_per_query (1)");
+}
+
+TEST_F(AIFunctionsTest, AsyncThreadsZeroStillSends) {
+  Mock(kChat,
+       [](std::string_view) { return Reply{200, ChatReply("ok", "stop", 1)}; });
+  Start();
+  Run("SET threads = 1");
+  Run("SET async_threads = 0");
+  for (const auto* select :
+       {"ai_generate(v, secret_name := 'chat')",
+        "CASE WHEN v <> '' THEN ai_generate(v, secret_name := 'chat') END"}) {
+    auto result = Run(absl::StrCat("SELECT count(", select,
+                                   ") FROM (VALUES ('a'), ('b')) t(v)"));
+    EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 2) << select;
+  }
+}
+
+TEST_F(AIFunctionsTest, PreparedStatementsRebind) {
+  auto ok = [](std::string_view) {
+    return Reply{200, ChatReply("ok", "stop", 1)};
+  };
+  auto& first = Mock(kChat, ok);
+  auto& second = Mock("/v2/chat/completions", ok);
+  auto& embeddings = Mock(kEmbeddings, [](std::string_view body) {
+    simdjson::dom::parser parser;
+    std::string data;
+    for (size_t i = 0, n = Parse(parser, body)["input"].get_array().size();
+         i != n; ++i) {
+      absl::StrAppend(&data, i == 0 ? "" : ",", R"({"embedding":[1,0]})");
+    }
+    return Reply{200, absl::StrCat(R"({"data":[)", data, "]}")};
+  });
+  Start();
+  auto execute = [](duckdb::PreparedStatement& statement) {
+    duckdb::vector<duckdb::Value> values;
+    return statement.Execute(values, false);
+  };
+  auto succeed = [&](duckdb::PreparedStatement& statement) {
+    auto result = execute(statement);
+    EXPECT_FALSE(result->HasError()) << result->GetError();
+  };
+
+  auto generate =
+    _conn.Prepare("SELECT ai_generate('x', secret_name := 'chat')");
+  ASSERT_FALSE(generate->HasError()) << generate->GetError();
+  succeed(*generate);
+  Run(absl::StrCat("CREATE OR REPLACE SECRET chat (TYPE openai, base_url '",
+                   _url, "', chat_path '/v2/chat/completions', model 'm')"));
+  succeed(*generate);
+  EXPECT_EQ(first.Bodies().size(), 1);
+  EXPECT_EQ(second.Bodies().size(), 1);
+
+  auto embed = _conn.Prepare(
+    "SELECT count(ai_embed(v, 'm', 'chat')) FROM (VALUES ('a'), ('b'), ('c'), "
+    "('d')) t(v)");
+  ASSERT_FALSE(embed->HasError()) << embed->GetError();
+  succeed(*embed);
+  EXPECT_EQ(embeddings.Bodies().size(), 1);
+  Run("SET sdb_ai_embedding_max_batch_size = 1");
+  succeed(*embed);
+  EXPECT_EQ(embeddings.Bodies().size(), 5);
+
+  Run(
+    "CREATE SECRET far (TYPE openai, base_url 'http://example.invalid', "
+    "model 'm')");
+  Run("SET sdb_ai_allow_insecure_endpoint = true");
+  auto far = _conn.Prepare("SELECT ai_generate(NULL, secret_name := 'far')");
+  ASSERT_FALSE(far->HasError()) << far->GetError();
+  succeed(*far);
+  Run("SET sdb_ai_allow_insecure_endpoint = false");
+  auto result = execute(*far);
+  ASSERT_TRUE(result->HasError());
+  EXPECT_NE(result->GetError().find("insecure endpoint"), std::string::npos)
+    << result->GetError();
+}
+
+TEST_F(AIFunctionsTest, ControlCharactersAreEscaped) {
+  auto& mock = Mock(kChat, [](std::string_view) {
+    return Reply{200, ChatReply("ok", "stop", 1)};
+  });
+  Start();
+  Run("SELECT ai_generate('a' || chr(1) || 'b', secret_name := 'chat')");
+  const auto bodies = mock.Bodies();
+  ASSERT_EQ(bodies.size(), 1);
+  EXPECT_NE(bodies[0].find(R"("a\u0001b")"), std::string::npos) << bodies[0];
+  EXPECT_EQ(Content(bodies[0], 1), std::string_view("a\x01"
+                                                    "b",
+                                                    3));
 }
 
 }  // namespace

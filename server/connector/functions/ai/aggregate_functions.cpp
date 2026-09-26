@@ -211,11 +211,20 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> AggInitLocal(
 using Part = std::vector<std::string_view>;
 
 size_t Utf8Cut(std::string_view text, size_t limit) {
+  auto continues = [&](size_t i) {
+    return (static_cast<unsigned char>(text[i]) & 0xC0) == 0x80;
+  };
   auto end = limit;
-  while (end > 0 && (static_cast<unsigned char>(text[end]) & 0xC0) == 0x80) {
+  while (end > 0 && continues(end)) {
     --end;
   }
-  return end == 0 ? limit : end;
+  if (end == 0) {
+    end = limit;
+    while (end < text.size() && continues(end)) {
+      ++end;
+    }
+  }
+  return end;
 }
 
 std::vector<Part> Pack(std::span<const std::string_view> values,
@@ -234,6 +243,9 @@ std::vector<Part> Pack(std::span<const std::string_view> values,
     while (value.size() > budget) {
       flush();
       const auto cut = Utf8Cut(value, budget);
+      if (cut == value.size()) {
+        break;
+      }
       parts.push_back({value.substr(0, cut)});
       value.remove_prefix(cut);
     }

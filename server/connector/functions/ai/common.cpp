@@ -20,6 +20,7 @@
 
 #include "connector/functions/ai/common.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
@@ -28,6 +29,7 @@
 #include <simdjson.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/types/value.hpp>
@@ -39,6 +41,7 @@
 #include <duckdb/main/secret/secret.hpp>
 #include <duckdb/main/secret/secret_manager.hpp>
 #include <duckdb/parallel/task_executor.hpp>
+#include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -94,8 +97,22 @@ bool IsRetryable(uint16_t status) {
   }
 }
 
-int FatalErrorCode(uint16_t status) {
-  switch (status) {
+bool IsQuotaExhausted(std::string_view body) {
+  simdjson::dom::parser parser;
+  simdjson::dom::element error;
+  if (parser.parse(body.data(), body.size())["error"].get(error) !=
+      simdjson::SUCCESS) {
+    return false;
+  }
+  return absl::c_any_of(std::array{"code", "type"}, [&](const char* key) {
+    std::string_view value;
+    return error[key].get(value) == simdjson::SUCCESS &&
+           value == "insufficient_quota";
+  });
+}
+
+int FatalErrorCode(const Response& response) {
+  switch (response.status) {
     case 401:
     case 403:
       return ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION;
@@ -103,9 +120,16 @@ int FatalErrorCode(uint16_t status) {
       return ERRCODE_UNDEFINED_OBJECT;
     case 422:
       return ERRCODE_INVALID_PARAMETER_VALUE;
+    case 429:
+      return IsQuotaExhausted(response.body) ? ERRCODE_INSUFFICIENT_RESOURCES
+                                             : 0;
     default:
       return 0;
   }
+}
+
+bool IsBatchRejection(uint16_t status) {
+  return status == 400 || status == 413 || status == 422;
 }
 
 [[noreturn]] void ThrowInterrupted() {
@@ -146,10 +170,7 @@ std::string JoinUrl(std::string url, std::string_view path) {
   if (url.ends_with(absl::StrCat("/", path.substr(path.rfind('/') + 1)))) {
     return url;
   }
-  if (!path.empty() && path.front() != '/') {
-    url.push_back('/');
-  }
-  url.append(path);
+  absl::StrAppend(&url, path.empty() || path.starts_with('/') ? "" : "/", path);
   return url;
 }
 
@@ -331,6 +352,12 @@ Endpoint LoadEndpoint(duckdb::ClientContext& context, std::string_view fn,
   };
 }
 
+void RebindEachExecution(duckdb::BindScalarFunctionInput& input) {
+  if (input.HasBinder()) {
+    input.GetBinder().SetAlwaysRequireRebind();
+  }
+}
+
 std::string ToJson(std::string_view text) {
   simdjson::builder::string_builder builder(text.size() + 8);
   builder.escape_and_append_with_quotes(text);
@@ -390,7 +417,7 @@ std::string CriteriaObject(std::span<const Criterion> criteria) {
       &out, std::exchange(comma, ","), ToJson(criterion.label), ":",
       criterion.description ? ToJson(*criterion.description) : "null");
   }
-  out += "}";
+  absl::StrAppend(&out, "}");
   return out;
 }
 
@@ -550,7 +577,8 @@ Response Requester::Send(std::string_view body) {
       }
       return response;
     }
-    if (!IsRetryable(response.status) || attempt >= _max_retries) {
+    if (!IsRetryable(response.status) || FatalErrorCode(response) != 0 ||
+        attempt >= _max_retries) {
       return response;
     }
     Sleep(RetryDelayMs(_retry_delay_ms, attempt, retry_after));
@@ -571,7 +599,7 @@ std::optional<std::string> Requester::Accept(Response response) const {
   auto message =
     absl::StrCat(_endpoint.fn, ": '", _endpoint.url, "' returned HTTP ",
                  response.status, ": ", ProviderError(response.body));
-  if (const auto code = FatalErrorCode(response.status); code != 0) {
+  if (const auto code = FatalErrorCode(response); code != 0) {
     THROW_SQL_ERROR(ERR_CODE(code), ERR_MSG(message));
   }
   ThrowRowError(std::move(message));
@@ -588,6 +616,31 @@ void Requester::ForEach(size_t n, absl::FunctionRef<void(size_t)> fn) {
       }
     }
   }
+}
+
+void BatchWork::QueueBatches(size_t n, size_t batch_size) {
+  for (size_t begin = 0; begin < n; begin += batch_size) {
+    Queue(begin, std::min(batch_size, n - begin));
+  }
+}
+
+void BatchWork::Queue(size_t begin, size_t size) {
+  requests.push_back({.body = Body(begin, size)});
+  _batches.emplace_back(begin, size);
+}
+
+void BatchWork::Advance(Requester& requester) {
+  auto current = std::exchange(requests, {});
+  auto batches = std::exchange(_batches, {});
+  requester.ForEach(current.size(), [&](size_t k) {
+    const auto [begin, size] = batches[k];
+    if (size > 1 && IsBatchRejection(current[k].response.status)) {
+      Queue(begin, size / 2);
+      Queue(begin + size / 2, size - size / 2);
+      return;
+    }
+    Parse(requester, std::move(current[k].response), begin, size);
+  });
 }
 
 void Fetch::Run() {

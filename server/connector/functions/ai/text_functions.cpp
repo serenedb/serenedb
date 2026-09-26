@@ -337,6 +337,7 @@ duckdb::unique_ptr<duckdb::FunctionData> TextBind(
     absl::StrAppend(&system, kDataRule);
   }
   bind->body = MakeChatTemplate(bind->endpoint.model, bind->chat, system);
+  RebindEachExecution(input);
   return bind;
 }
 

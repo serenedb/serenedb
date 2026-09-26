@@ -245,11 +245,13 @@ void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
         }
       } else if constexpr (N == doc_limits::kBlockSize) {
         constexpr uint32_t kHalf = N / 2;
+        alignas(64) doc_id_t half[kHalf];
+        std::memcpy(half, data, sizeof(half));
         VisitDocs<kHalf>(
-          kHalf, [&](uint32_t i) IRS_FORCE_INLINE { sink.Doc(data[i]); });
-        VisitDocs<kHalf>(kHalf, [&](uint32_t i) IRS_FORCE_INLINE {
-          sink.Doc(data[kHalf + i]);
-        });
+          kHalf, [&](uint32_t i) IRS_FORCE_INLINE { sink.Doc(half[i]); });
+        std::memcpy(half, data + kHalf, sizeof(half));
+        VisitDocs<kHalf>(
+          kHalf, [&](uint32_t i) IRS_FORCE_INLINE { sink.Doc(half[i]); });
       } else {
         VisitDocs<N>(len,
                      [&](uint32_t i) IRS_FORCE_INLINE { sink.Doc(data[i]); });

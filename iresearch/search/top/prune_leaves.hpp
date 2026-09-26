@@ -66,6 +66,18 @@ class PruneLeaves {
 
   size_t size() const noexcept { return _leaves.size(); }
 
+  uint32_t TakeDropped() noexcept { return std::exchange(_dropped, 0); }
+
+  uint32_t TakeReads() noexcept {
+    uint32_t reads = 0;
+    if constexpr (requires(Leaf& leaf) { leaf.TakeReads(); }) {
+      for (auto& leaf : _leaves) {
+        reads += leaf.TakeReads();
+      }
+    }
+    return reads;
+  }
+
   doc_id_t AdvanceTo(doc_id_t min) {
     doc_id_t end = doc_limits::eof();
     for (auto& leaf : _leaves) {
@@ -92,13 +104,55 @@ class PruneLeaves {
     return total;
   }
 
+  IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) {
+    auto* leaf = _leaves.begin();
+    const auto* const end = _leaves.end();
+    do {
+      if (const auto probe = leaf->Probe(target); probe != target) {
+        return probe;
+      }
+    } while (++leaf != end);
+    return target;
+  }
+
+  IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot) {
+    for (auto& leaf : _leaves) {
+      leaf.FetchScoreArgs(slot);
+    }
+  }
+
+  void Fetch(const doc_id_t* docs, uint32_t len) {
+    if (len == kScoreBlock) {
+      _fetcher.FetchScoreBlock(
+        std::span<const doc_id_t, kScoreBlock>{docs, kScoreBlock});
+    } else {
+      _fetcher.Fetch(std::span<const doc_id_t>{docs, len});
+    }
+  }
+
+  void Score(score_t* scores, uint32_t len) {
+    if (len == kScoreBlock) {
+      for (auto& scorer : _scorers) {
+        scorer.template ScoreBlock<ScoreMergeType::Sum>(scores);
+      }
+    } else {
+      for (auto& scorer : _scorers) {
+        scorer.template Score<ScoreMergeType::Sum>(
+          scores, static_cast<scores_size_t>(len));
+      }
+    }
+  }
+
   uint32_t Apply(doc_id_t* IRS_RESTRICT docs, score_t* IRS_RESTRICT scores,
                  uint32_t len, score_t threshold) {
     const auto count = _leaves.size();
     uint32_t fetched = 0;
     for (size_t i = 0; i != count && len != 0; ++i) {
       if (const auto required = threshold - _suffix[i]; required > 0) {
-        len = irs::detail::FilterScores(docs, scores, len, required);
+        const auto kept =
+          irs::detail::FilterScores(docs, scores, len, required);
+        _dropped += len - kept;
+        len = kept;
         if (len == 0) {
           break;
         }
@@ -142,6 +196,7 @@ class PruneLeaves {
   irs::containers::Fixed<score_t, N> _remaining;
   irs::containers::Fixed<score_t, N> _suffix;
   irs::containers::Fixed<uint32_t, N> _order;
+  uint32_t _dropped = 0;
 };
 
 }  // namespace irs::top

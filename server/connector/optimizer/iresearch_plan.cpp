@@ -80,15 +80,15 @@ std::optional<duckdb::TableIndex> SingleReferencedTableIndex(
   return *bindings.begin();
 }
 
-std::optional<duckdb::column_t> PrimaryColumn(duckdb::ColumnBinding binding,
-                                              const duckdb::LogicalGet& get) {
+duckdb::column_t PrimaryColumn(duckdb::ColumnBinding binding,
+                               const duckdb::LogicalGet& get) {
   if (binding.table_index != get.table_index) {
-    return std::nullopt;
+    return duckdb::DConstants::INVALID_INDEX;
   }
   const auto col_idx = binding.column_index.GetIndex();
   const auto& column_ids = get.GetColumnIds();
   if (col_idx >= column_ids.size() || !column_ids[col_idx].HasPrimaryIndex()) {
-    return std::nullopt;
+    return duckdb::DConstants::INVALID_INDEX;
   }
   return column_ids[col_idx].GetPrimaryIndex();
 }
@@ -97,10 +97,8 @@ connector::ColumnId ResolveColumnId(duckdb::ColumnBinding binding,
                                     const connector::ScanBindData& bind_data,
                                     const duckdb::LogicalGet& get) {
   const auto phys = PrimaryColumn(binding, get);
-  if (!phys || *phys >= bind_data.columns.ids.size()) {
-    return connector::kInvalidColumnId;
-  }
-  return bind_data.columns.ids[*phys];
+  return phys < bind_data.columns.ids.size() ? bind_data.columns.ids[phys]
+                                             : connector::kInvalidColumnId;
 }
 
 connector::ColumnId ColumnIdByName(const connector::ScanBindData& bind_data,

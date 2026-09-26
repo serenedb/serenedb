@@ -232,10 +232,11 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
                                                       uint32_t len,
                                                       doc_id_t base) {
     if constexpr (InputType::kVolatileAlways) {
-      return FormatTraits128::FillView(In(), at, len, Enc(), _docs, base,
-                                       len == this->_freq_len.value);
+      return FormatTraits128::FillView(In(), at, len, this->Holes(), _docs,
+                                       base, len == this->_freq_len.value);
     } else {
-      return FormatTraits128::ReadTailForFill(len, In(), Enc(), _docs, base);
+      return FormatTraits128::ReadTailForFill(len, In(), Enc(), this->Holes(),
+                                              _docs, base);
     }
   }
 

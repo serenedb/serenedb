@@ -70,7 +70,7 @@ class ExcludeCosts {
     const double c = _candidates;
     const double s = static_cast<double>(std::max<uint64_t>(span, 1));
     const double n = static_cast<double>(std::max<doc_id_t>(docs_count, 1));
-    const double block = static_cast<double>(doc_limits::kBlockSize);
+    const double block = kCostBlock;
     const double blocks = c / block;
     const bool per_doc = use == ExcludeUse::PerDoc;
     const double touched =

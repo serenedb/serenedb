@@ -32,6 +32,9 @@
 
 namespace irs::containers {
 
+template<typename T>
+inline constexpr bool kDefaultInit = requires { requires T::kDefaultInit; };
+
 template<typename T, size_t N = 0>
 class Fixed {
  public:
@@ -47,7 +50,7 @@ class Fixed {
   Fixed(size_t size, Init&& init) {
     SDB_ASSERT(size == N);
     for (size_t i = 0; i != N; ++i) {
-      init(_data[i], i);
+      init(_data.values[i], i);
     }
   }
 
@@ -60,45 +63,53 @@ class Fixed {
 
   template<typename... Args>
   explicit Fixed(std::piecewise_construct_t, Args&&... args)
-    : _data{std::make_from_tuple<T>(std::forward<Args>(args))...} {
+    : _data{{std::make_from_tuple<T>(std::forward<Args>(args))...}} {
     static_assert(sizeof...(Args) == N);
   }
 
   Fixed(Fixed&&) = delete;
   Fixed& operator=(Fixed&&) = delete;
 
-  T* data() noexcept { return _data.data(); }
-  const T* data() const noexcept { return _data.data(); }
+  T* data() noexcept { return _data.values.data(); }
+  const T* data() const noexcept { return _data.values.data(); }
 
   static constexpr size_t size() noexcept { return N; }
   static constexpr bool empty() noexcept { return N == 0; }
 
   T& operator[](size_t i) noexcept {
     SDB_ASSERT(i < N);
-    return _data[i];
+    return _data.values[i];
   }
   const T& operator[](size_t i) const noexcept {
     SDB_ASSERT(i < N);
-    return _data[i];
+    return _data.values[i];
   }
 
-  T& front() noexcept { return _data.front(); }
-  const T& front() const noexcept { return _data.front(); }
+  T& front() noexcept { return _data.values.front(); }
+  const T& front() const noexcept { return _data.values.front(); }
 
-  T& back() noexcept { return _data.back(); }
-  const T& back() const noexcept { return _data.back(); }
+  T& back() noexcept { return _data.values.back(); }
+  const T& back() const noexcept { return _data.values.back(); }
 
-  T* begin() noexcept { return _data.data(); }
-  T* end() noexcept { return _data.data() + N; }
-  const T* begin() const noexcept { return _data.data(); }
-  const T* end() const noexcept { return _data.data() + N; }
+  T* begin() noexcept { return _data.values.data(); }
+  T* end() noexcept { return _data.values.data() + N; }
+  const T* begin() const noexcept { return _data.values.data(); }
+  const T* end() const noexcept { return _data.values.data() + N; }
 
  private:
+  struct Zeroed {
+    std::array<T, N> values{};
+  };
+
+  struct Raw {
+    std::array<T, N> values;
+  };
+
   template<typename Args, size_t... I>
   Fixed(std::piecewise_construct_t, Args&& args, std::index_sequence<I...>)
-    : _data{std::make_from_tuple<T>(args(I))...} {}
+    : _data{{std::make_from_tuple<T>(args(I))...}} {}
 
-  std::array<T, N> _data{};
+  std::conditional_t<kDefaultInit<T>, Raw, Zeroed> _data;
 };
 
 template<typename T>
@@ -122,7 +133,11 @@ class Fixed<T, 0> {
     size_t built = 0;
     try {
       while (built != size) {
-        std::construct_at(data + built);
+        if constexpr (kDefaultInit<T>) {
+          ::new (static_cast<void*>(data + built)) T;
+        } else {
+          std::construct_at(data + built);
+        }
         ++built;
         init(data[built - 1], built - 1);
       }

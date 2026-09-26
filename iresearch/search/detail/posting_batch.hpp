@@ -132,6 +132,7 @@ template<typename InputType, bool Scored>
 class PostingBatch {
  public:
   static constexpr uint32_t kBlock = doc_limits::kBlockSize;
+  static constexpr bool kDefaultInit = true;
 
   doc_id_t Last() const noexcept { return _last; }
 

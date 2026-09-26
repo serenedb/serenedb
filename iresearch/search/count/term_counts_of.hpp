@@ -44,8 +44,8 @@ class TermCountsOf : public TermCounts {
     if (term.docs_count == 1) {
       sink.Doc(doc_limits::min() + term.doc_delta);
     } else {
-      ReadPosting(term, _reader.In(), _reader.Enc(), _reader.Docs(), _bounds,
-                  FeaturesHaveFreq(_layout), sink);
+      ReadPosting(term, _reader.In(), _reader.Enc(), _reader.Holes(),
+                  _reader.Docs(), _bounds, FeaturesHaveFreq(_layout), sink);
     }
     return sink.Total();
   }

@@ -175,22 +175,24 @@ struct FormatTraits128 {
 
   template<typename InputType>
   IRS_FORCE_INLINE static FillLeaf ReadTailForFill(uint32_t len, InputType& in,
-                                                   uint32_t* buf, uint32_t* out,
+                                                   uint32_t* buf,
+                                                   uint64_t* holes,
+                                                   uint32_t* out,
                                                    uint32_t prev) {
     SDB_ASSERT(1 <= len && len <= kBlock);
     const auto* const begin = BeginDelta(in, buf, len == kBlock, len);
     const byte_type* end;
-    const auto leaf = FillAt(len, begin, buf, out, prev, end);
+    const auto leaf = FillAt(len, begin, holes, out, prev, end);
     End(in, begin, end);
     return leaf;
   }
 
   IRS_FORCE_INLINE static FillLeaf FillView(BytesViewInput& view,
                                             const byte_type*& at, uint32_t len,
-                                            uint32_t* buf, uint32_t* out,
+                                            uint64_t* holes, uint32_t* out,
                                             uint32_t prev, bool freqs) {
     const byte_type* end;
-    const auto leaf = FillAt(len, at, buf, out, prev, end);
+    const auto leaf = FillAt(len, at, holes, out, prev, end);
     if (freqs) {
       end += Codec::ValuesBlockSize(end);
     }
@@ -200,7 +202,7 @@ struct FormatTraits128 {
   }
 
   IRS_FORCE_INLINE static FillLeaf FillAt(uint32_t len, const byte_type* begin,
-                                          uint32_t* buf, uint32_t* out,
+                                          uint64_t* holes, uint32_t* out,
                                           uint32_t prev,
                                           const byte_type*& end) {
     SDB_ASSERT(1 <= len && len <= kBlock);
@@ -217,8 +219,8 @@ struct FormatTraits128 {
       end = begin + 1;
       return {nullptr, 0, prev + len, FillLeaf::Kind::Run};
     }
-    if (buf != nullptr && HoleToken(token)) {
-      auto* const bitset = reinterpret_cast<uint64_t*>(buf);
+    if (holes != nullptr && HoleToken(token)) {
+      auto* const bitset = holes;
       if (const auto span = HolesToBitset(begin, len, bitset); span != 0) {
         end = begin + (full ? Codec::DeltaBlockSize(begin)
                             : Codec::DeltaTailSize(begin, len));
@@ -340,8 +342,9 @@ struct FormatTraits128 {
     }
   }
 
+  static constexpr uint32_t kHoleWords = 8;
+
  private:
-  static constexpr uint32_t kMaxHoleWords = 128;
 
   IRS_FORCE_INLINE static bool HoleToken(uint32_t token) noexcept {
     using block_codec::Code;
@@ -379,7 +382,7 @@ struct FormatTraits128 {
     const uint64_t span = len + holes;
     constexpr auto kBits = BitsRequired<uint64_t>();
     const auto words = static_cast<uint32_t>((span + kBits - 1) / kBits);
-    if (words > kMaxHoleWords) {
+    if (words > kHoleWords) {
       return 0;
     }
     std::fill_n(bitset, words, ~uint64_t{0});

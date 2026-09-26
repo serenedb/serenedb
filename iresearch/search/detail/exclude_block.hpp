@@ -42,11 +42,19 @@ IRS_FORCE_INLINE uint32_t ExcludeBlock(Excludes& excludes,
                                        doc_id_t* IRS_RESTRICT docs,
                                        score_t* IRS_RESTRICT scores,
                                        uint32_t len) {
-  if (len == 0 || excludes.Probe(docs[0]) > docs[len - 1]) {
+  if (len == 0) {
     return len;
   }
-  uint32_t kept = 0;
-  for (uint32_t i = 0; i != len; ++i) {
+  const auto next = excludes.Probe(docs[0]);
+  if (next > docs[len - 1]) {
+    return len;
+  }
+  uint32_t i = 0;
+  while (docs[i] < next) {
+    ++i;
+  }
+  uint32_t kept = i;
+  for (; i != len; ++i) {
     const auto doc = docs[i];
     docs[kept] = doc;
     scores[kept] = scores[i];

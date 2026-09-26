@@ -197,8 +197,8 @@ inline constexpr uint64_t kFillPrefetch = 512;
 
 template<typename Input, typename Sink>
 void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
-                 doc_id_t* IRS_RESTRICT docs, bool has_score_bounds,
-                 bool has_freq, Sink& sink) {
+                 uint64_t* IRS_RESTRICT holes, doc_id_t* IRS_RESTRICT docs,
+                 bool has_score_bounds, bool has_freq, Sink& sink) {
   SDB_ASSERT(meta.docs_count > 1);
 
   in.Seek(meta.doc_start);
@@ -218,11 +218,11 @@ void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
       if constexpr (Input::kVolatileAlways) {
         __builtin_prefetch(at + kFillPrefetch);
         return FormatTraits128::FillView(
-          in, at, len, enc, docs, prev,
+          in, at, len, holes, docs, prev,
           has_freq && len == doc_limits::kBlockSize);
       } else {
         const auto read =
-          FormatTraits128::ReadTailForFill(len, in, enc, docs, prev);
+          FormatTraits128::ReadTailForFill(len, in, enc, holes, docs, prev);
         if (has_freq && len == doc_limits::kBlockSize) {
           FormatTraits128::SkipBlock(in);
         }
@@ -273,7 +273,9 @@ class PostingReader {
     return *_in;
   }
 
-  uint32_t* Enc() noexcept { return _enc.data; }
+  uint32_t* Enc() noexcept { return EncOf<Input>(_enc); }
+
+  uint64_t* Holes() noexcept { return _holes.data; }
 
   doc_id_t* Docs() noexcept { return _buf; }
 
@@ -282,7 +284,8 @@ class PostingReader {
   IndexInput::ptr _owned;
   Input* _in = nullptr;
   DocsBuf _buf;
-  EncBuf _enc;
+  HoleBuf _holes;
+  [[no_unique_address]] NeedEnc<Input> _enc;
 };
 
 template<typename Term, typename Sink, typename Input>
@@ -296,8 +299,8 @@ void ReadTerms(std::span<const Term> terms, const TermReader* field,
       continue;
     }
     const auto& own = FieldOf(terms[i], field);
-    ReadPosting(meta, r.In(), r.Enc(), r.Docs(), BoundsOf(own), FreqOf(own),
-                sink);
+    ReadPosting(meta, r.In(), r.Enc(), r.Holes(), r.Docs(), BoundsOf(own),
+                FreqOf(own), sink);
   }
 }
 

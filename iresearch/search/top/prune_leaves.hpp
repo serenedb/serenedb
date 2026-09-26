@@ -40,6 +40,8 @@ namespace irs::top {
 template<typename Leaf, size_t N = 0>
 class PruneLeaves {
  public:
+  using LeafType = Leaf;
+
   template<typename Init>
   PruneLeaves(ColumnArgsFetcher& fetcher, size_t size, Init&& init)
     : _fetcher{fetcher},

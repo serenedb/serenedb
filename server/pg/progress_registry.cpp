@@ -41,6 +41,8 @@ std::string_view ProgressCommandName(ProgressCommand command) {
       return "ANALYZE";
     case ProgressCommand::Vacuum:
       return "VACUUM";
+    case ProgressCommand::Reindex:
+      return "REINDEX";
   }
   return "";
 }
@@ -99,6 +101,14 @@ std::string_view ProgressPhaseName(ProgressCommand command, int64_t phase) {
           return "initializing";
         case progress_phase::Vacuum::VacuumingIndexes:
           return "vacuuming indexes";
+      }
+      return "";
+    case ProgressCommand::Reindex:
+      switch (static_cast<progress_phase::Reindex>(phase)) {
+        case progress_phase::Reindex::WaitingForReindex:
+          return "waiting for running reindex";
+        case progress_phase::Reindex::Refreshing:
+          return "refreshing index";
       }
       return "";
     default:

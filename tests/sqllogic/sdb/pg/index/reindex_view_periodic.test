@@ -114,22 +114,21 @@ id	body
 
 # D5: manual REINDEX racing live ticks -- a lost claim on either side must
 # not error out the server or double-apply. The loop side skips quietly; a
-# manual statement colliding with a tick reports "in progress" and the
-# retry runs it again between ticks -- content must converge regardless.
+# manual statement waits for the tick -- content must converge regardless.
 statement count 1
 COPY (SELECT 5 AS id, 'pudge races the cron' AS body)
 TO '${__TEST_DIR__}/rvp_glob/f4.parquet' (FORMAT PARQUET);
 
-statement ok retry 100 backoff 250ms
+statement ok
 CALL serenedb_reindex('rvp_idx');
 
-statement ok retry 100 backoff 250ms
+statement ok
 CALL serenedb_reindex('rvp_idx');
 
-statement ok retry 100 backoff 250ms
+statement ok
 CALL serenedb_reindex('rvp_idx');
 
-query ok retry 400 backoff 250ms
+query
 SELECT count(*) FROM rvp_idx;
 ----
 count

@@ -71,9 +71,9 @@ Each operation comes in a family scoped to a single index, a table, a schema, a 
 
 Recompute statistics after large changes in data distribution so that [relevance scores](./ranking.md) and planning stay accurate.
 
-## Rebuilding
+## Refreshing view-backed indexes
 
-A [view- or external-data-backed index](./views.md) is a static snapshot taken at `CREATE INDEX` time — it does not track later changes to its source. To pick up new data, rebuild it with `DROP INDEX` followed by `CREATE INDEX`.
+A [view- or external-data-backed index](./views.md) does not track changes to its source as they happen. Run `REINDEX INDEX <name>` to bring it up to date, or set the `reindex_interval` option to do that on a schedule. See [Refreshing the index](./views.md#refreshing-the-index).
 
 ## Schema changes on an indexed table
 

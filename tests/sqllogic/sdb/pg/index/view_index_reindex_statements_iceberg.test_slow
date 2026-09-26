@@ -104,20 +104,17 @@ id
 statement ok
 ALTER INDEX vrs_idx SET (reindex_interval=0);
 
-# Switching the interval off stops new ticks, but one already running still
-# holds the claim: drain it before the insert, so the reindex below is the
-# statement that reports the delta.
-statement ok retry 200 backoff 250ms
-SELECT * FROM serenedb_reindex('vrs_idx');
+# Make sure no background reindex is running - disabling it on existing index makes test flaky
+# as setting interval to 0 may let one last reindex to run and we cant reliably exclude it here.
+statement ok
+CREATE INDEX vrs_stmt_idx ON vrs_v USING inverted(id, body vrs_en) WITH (compaction_interval=0);
 
 statement count 1
 INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vrs_t VALUES (6, 'restart number six');
 
-query
+# Unasserted because a tick that got there first reports up_to_date.
+statement ok
 SELECT * FROM serenedb_reindex('vrs_idx');
-----
-action	files_added	files_changed	files_removed	files_rescanned
-delta	1	0	0	0
 
 query
 SELECT id FROM vrs_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
@@ -137,8 +134,17 @@ SELECT count(*) FROM (
 count
 0
 
+query
+SELECT * FROM serenedb_reindex('vrs_stmt_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
 statement ok
 DROP INDEX vrs_idx;
+
+statement ok
+DROP INDEX vrs_stmt_idx;
 
 statement ok
 DROP VIEW vrs_v;

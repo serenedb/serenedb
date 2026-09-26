@@ -1302,7 +1302,7 @@ inline constexpr SystemView kExternalViews[] = {
           S.tuples_processed AS tuples_done,
           0::BIGINT AS partitions_total,
           0::BIGINT AS partitions_done
-      FROM sdb_progress S WHERE S.command = 'CREATE INDEX')"},
+      FROM sdb_progress S WHERE S.command IN ('CREATE INDEX', 'REINDEX'))"},
 
   {"pg_catalog", "pg_stat_progress_basebackup",
    R"(SELECT

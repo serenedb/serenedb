@@ -83,6 +83,10 @@ class LeafCompressor<ByteCodec::Lz4> {
   explicit LeafCompressor(uint8_t level) noexcept
     : _level{EffectiveLevel<ByteCodec::Lz4>(level)} {}
 
+  void SetLevel(uint8_t level) noexcept {
+    _level = EffectiveLevel<ByteCodec::Lz4>(level);
+  }
+
   size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 
  private:
@@ -95,6 +99,10 @@ class LeafCompressor<ByteCodec::Zstd> {
   explicit LeafCompressor(uint8_t level)
     : _level{EffectiveLevel<ByteCodec::Zstd>(level)},
       _ctx{utils::MakeZstdCCtx()} {}
+
+  void SetLevel(uint8_t level) noexcept {
+    _level = EffectiveLevel<ByteCodec::Zstd>(level);
+  }
 
   size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 
@@ -111,6 +119,10 @@ class LeafCompressor<ByteCodec::Zxc> {
 
   LeafCompressor(const LeafCompressor&) = delete;
   LeafCompressor& operator=(const LeafCompressor&) = delete;
+
+  void SetLevel(uint8_t level) noexcept {
+    _level = EffectiveLevel<ByteCodec::Zxc>(level);
+  }
 
   size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 

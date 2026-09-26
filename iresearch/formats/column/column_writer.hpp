@@ -37,6 +37,11 @@
 #include "iresearch/types.hpp"
 
 namespace irs {
+namespace codecs {
+
+struct StringTuning;
+
+}  // namespace codecs
 
 class ColWriter;
 
@@ -51,6 +56,8 @@ class ColumnWriter final {
                bool skip_validity, uint32_t row_group_size,
                duckdb::CompressionType forced, bool hyperloglog,
                ColCodecParams codec_params);
+
+  ~ColumnWriter();
 
   ColumnWriter(const ColumnWriter&) = delete;
   ColumnWriter& operator=(const ColumnWriter&) = delete;
@@ -97,8 +104,7 @@ class ColumnWriter final {
     duckdb::idx_t& out_score);
 
   bool SealString(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
-                  duckdb::CompressionType forced,
-                  std::vector<ColumnBlockMeta>& sink,
+                  duckdb::CompressionType forced, ColumnMeta& meta,
                   bool& nulls_covered_by_data);
 
   void Compress(const duckdb::CompressionFunction& picked,
@@ -156,6 +162,7 @@ class ColumnWriter final {
   duckdb::Vector _hll_hashes{duckdb::LogicalType::HASH, nullptr};
   int64_t _variant_min_shred_size = -1;
   duckdb::LogicalType _force_variant_shredding;
+  std::unique_ptr<codecs::StringTuning> _string_tuning;
   ColumnMeta _meta;
 };
 

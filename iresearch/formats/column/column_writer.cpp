@@ -232,8 +232,7 @@ duckdb::optional_ptr<const duckdb::CompressionFunction> ColumnWriter::PickCodec(
 
 bool ColumnWriter::SealString(const duckdb::LogicalType& type,
                               std::span<WriteChunk> chunks,
-                              duckdb::CompressionType forced,
-                              std::vector<ColumnBlockMeta>& sink,
+                              duckdb::CompressionType forced, ColumnMeta& meta,
                               bool& nulls_covered_by_data) {
   auto& db = WriteCtx().Database();
   const auto& config = duckdb::DBConfig::GetConfig(db);
@@ -249,37 +248,31 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
   for (auto& c : chunks) {
     acc.Add(c.data);
   }
-  codecs::PricedChoice priced;
-  if (named) {
-    priced = codecs::Price(acc, *named, _codec_params);
-  } else {
-    priced = codecs::ChooseAuto(acc, _codec_params);
-    const uint64_t uncompressed_bytes =
-      acc.raw_bytes + acc.row_count * sizeof(int32_t);
-    if (uncompressed_bytes + codecs::kHeaderSize + codecs::kFrameMetaSize <
-        priced.bytes) {
-      duckdb::unique_ptr<duckdb::AnalyzeState> state;
-      duckdb::idx_t score = 0;
-      auto fn = PickCodec(
-        type, chunks, duckdb::CompressionType::COMPRESSION_AUTO, state, score);
-      if (score + codecs::kHeaderSize + codecs::kFrameMetaSize < priced.bytes) {
-        nulls_covered_by_data =
-          fn->validity == duckdb::CompressionValidity::NO_VALIDITY_REQUIRED;
-        Compress(*fn, std::move(state), type, chunks, sink);
-        return true;
-      }
-    }
+  codecs::StringTuning nested_tuning;
+  if (&meta == &_meta && !_string_tuning) {
+    _string_tuning = std::make_unique<codecs::StringTuning>();
   }
-  const auto& codec = *codecs::ColCodecs::Get(
-    codecs::ColCodecs::TypeOf(priced.choice), duckdb::PhysicalType::VARCHAR);
+  auto& tuning = &meta == &_meta ? *_string_tuning : nested_tuning;
   auto& out = Out();
-  codecs::SealSegments(acc, priced, _codec_params, type,
-                       [&](duckdb::BaseStatistics stats, uint64_t rows,
-                           std::span<const std::string_view> parts) {
-                         CaptureBlock(db, codec, std::move(stats), rows, parts,
-                                      out, sink);
-                       });
-  nulls_covered_by_data = priced.choice.shape == codecs::Shape::Dedup;
+  const auto outcome = codecs::SealSegments(
+    acc, named, _codec_params, type, tuning,
+    [&](codecs::StringChoice choice, duckdb::BaseStatistics stats,
+        uint64_t rows, std::span<const std::string_view> parts) {
+      const auto& codec = *codecs::ColCodecs::Get(
+        codecs::ColCodecs::TypeOf(choice), duckdb::PhysicalType::VARCHAR);
+      CaptureBlock(db, codec, std::move(stats), rows, parts, out, meta.data);
+    });
+  if (outcome.sealed) {
+    nulls_covered_by_data = outcome.all_dedup;
+    return true;
+  }
+  duckdb::unique_ptr<duckdb::AnalyzeState> state;
+  duckdb::idx_t score = 0;
+  auto fn = PickCodec(type, chunks, duckdb::CompressionType::COMPRESSION_AUTO,
+                      state, score);
+  nulls_covered_by_data =
+    fn->validity == duckdb::CompressionValidity::NO_VALIDITY_REQUIRED;
+  Compress(*fn, std::move(state), type, chunks, meta.data);
   return true;
 }
 
@@ -590,7 +583,7 @@ void ColumnWriter::SealColumn(const duckdb::LogicalType& type,
 
   bool nulls_covered_by_data = false;
   if (type.InternalType() != duckdb::PhysicalType::VARCHAR ||
-      !SealString(type, chunks, forced, meta.data, nulls_covered_by_data)) {
+      !SealString(type, chunks, forced, meta, nulls_covered_by_data)) {
     duckdb::unique_ptr<duckdb::AnalyzeState> data_state;
     duckdb::idx_t score = 0;
     auto data_fn = PickCodec(type, chunks, forced, data_state, score);
@@ -640,6 +633,8 @@ ColumnWriter::ColumnWriter(ColWriter& owner, field_id id,
     _hll_auto = true;
   }
 }
+
+ColumnWriter::~ColumnWriter() = default;
 
 WriteChunk& ColumnWriter::OpenChunk() {
   if (_staged_chunks != 0 &&

@@ -43,8 +43,10 @@
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <limits>
 #include <optional>
 #include <random>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -123,8 +125,10 @@ class ColCodecsTest : public TestBase {
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     ASSERT_EQ(col->RowCount(), rows);
-    for (const auto& block : col->DataBlocks()) {
-      EXPECT_EQ(block.codec->type, Written(codec));
+    if (codec != duckdb::CompressionType::COMPRESSION_AUTO) {
+      for (const auto& block : col->DataBlocks()) {
+        EXPECT_EQ(block.codec->type, Written(codec));
+      }
     }
 
     {
@@ -206,6 +210,47 @@ class ColCodecsTest : public TestBase {
     irs::MemoryDirectory dir{};
     Write(dir, codec, params, rows, rg_size, value);
     Verify(dir, codec, rows, value);
+  }
+
+  uint64_t ColumnBytes(irs::Directory& dir) {
+    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    const auto* col = r.Column(kField);
+    EXPECT_NE(col, nullptr);
+    uint64_t bytes = 0;
+    for (const auto& block : col->DataBlocks()) {
+      bytes += block.byte_size;
+    }
+    if (const auto* validity = col->Validity()) {
+      for (const auto& block : validity->DataBlocks()) {
+        bytes += block.byte_size;
+      }
+    }
+    return bytes;
+  }
+
+  std::vector<std::pair<duckdb::CompressionType, std::string>> BlockLevels(
+    irs::Directory& dir) {
+    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    const auto* col = r.Column(kField);
+    EXPECT_NE(col, nullptr);
+    std::vector<std::pair<duckdb::CompressionType, std::string>> levels;
+    irs::ReadContext ctx{r};
+    irs::BlockWindow window{};
+    uint64_t row = 0;
+    for (const auto& block : col->DataBlocks()) {
+      std::string level;
+      if (irs::codecs::ColCodecs::Get(block.codec->type,
+                                      duckdb::PhysicalType::VARCHAR)) {
+        window = col->Locate(row, window);
+        auto seg = col->OpenSegment(window.block, ctx);
+        auto info = seg->GetCompressionFunction().get_segment_info(
+          duckdb::QueryContext{}, *seg);
+        level = info["level"];
+      }
+      levels.emplace_back(block.codec->type, std::move(level));
+      row += block.tuple_count;
+    }
+    return levels;
   }
 
   duckdb::DuckDB _db;
@@ -604,52 +649,231 @@ const Value kWordSoup = [](uint64_t g) -> std::optional<std::string> {
 
 }  // namespace
 
-TEST_F(ColCodecsTest, EstimateTracksSealedSize) {
+TEST_F(ColCodecsTest, NamedCodecSealsEverySegment) {
   using irs::codecs::ByteCodec;
   using irs::codecs::Shape;
-  struct Corpus {
-    const char* name;
-    const Value* value;
-    uint64_t rows;
-  };
-  const Corpus corpora[] = {
-    {"low-cardinality", &kLowCardinalityWithNulls, 40000},
-    {"unique-short", &kUniqueShort, 40000},
-    {"word-soup", &kWordSoup, 20000},
-    {"long-text", &kLongTextWithNulls, 3000},
-  };
   const irs::codecs::StringChoice choices[] = {
     {Shape::Dedup, ByteCodec::Fsst}, {Shape::Dedup, ByteCodec::Lz4},
     {Shape::Dedup, ByteCodec::Zstd}, {Shape::Dedup, ByteCodec::Zxc},
     {Shape::Plain, ByteCodec::Fsst}, {Shape::Plain, ByteCodec::Lz4},
     {Shape::Plain, ByteCodec::Zstd}, {Shape::Plain, ByteCodec::Zxc},
   };
+  const auto chunks = Chunks(20000, kWordSoup);
+  for (const auto choice : choices) {
+    irs::codecs::StringAccumulator acc{choice.shape == Shape::Dedup};
+    for (const auto& c : chunks) {
+      acc.Add(*c);
+    }
+    irs::codecs::StringTuning tuning;
+    uint64_t segments = 0;
+    uint64_t rows = 0;
+    const auto outcome = irs::codecs::SealSegments(
+      acc, choice, irs::ColCodecParams{.segment_target = 16 * 1024},
+      duckdb::LogicalType::VARCHAR, tuning,
+      [&](irs::codecs::StringChoice sealed, duckdb::BaseStatistics,
+          uint64_t count, std::span<const std::string_view>) {
+        EXPECT_EQ(sealed.shape, choice.shape);
+        EXPECT_EQ(sealed.leaf, choice.leaf);
+        ++segments;
+        rows += count;
+      });
+    EXPECT_TRUE(outcome.sealed);
+    EXPECT_EQ(outcome.all_dedup, choice.shape == Shape::Dedup);
+    EXPECT_GT(segments, 1u);
+    EXPECT_EQ(rows, 20000u);
+    EXPECT_FALSE(tuning.choice.has_value());
+  }
+}
+
+TEST_F(ColCodecsTest, AutoChoosesPerSegment) {
+  using irs::codecs::Shape;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 11 == 0) {
+      return std::nullopt;
+    }
+    if (g < 20000) {
+      return Pseudo(g, 24);
+    }
+    return "status-" + std::to_string(g % 4);
+  };
+  const auto chunks = Chunks(60000, value);
+  irs::codecs::StringAccumulator acc{true};
+  for (const auto& c : chunks) {
+    acc.Add(*c);
+  }
+  irs::codecs::StringTuning tuning;
+  std::vector<Shape> shapes;
+  const auto outcome = irs::codecs::SealSegments(
+    acc, std::nullopt, irs::ColCodecParams{.segment_target = 16 * 1024},
+    duckdb::LogicalType::VARCHAR, tuning,
+    [&](irs::codecs::StringChoice choice, duckdb::BaseStatistics, uint64_t,
+        std::span<const std::string_view>) { shapes.push_back(choice.shape); });
+  ASSERT_TRUE(outcome.sealed);
+  ASSERT_GT(shapes.size(), 2u);
+  EXPECT_EQ(shapes.front(), Shape::Plain);
+  EXPECT_EQ(shapes.back(), Shape::Dedup);
+  EXPECT_FALSE(outcome.all_dedup);
+  ASSERT_TRUE(tuning.choice.has_value());
+  EXPECT_EQ(tuning.choice->shape, Shape::Dedup);
+
+  RoundTrip(duckdb::CompressionType::COMPRESSION_AUTO,
+            {.segment_target = 16 * 1024}, 60000, DEFAULT_ROW_GROUP_SIZE,
+            value);
+}
+
+TEST_F(ColCodecsTest, AutoIsNoLargerThanItsCandidates) {
+  using duckdb::CompressionType;
+  struct Arm {
+    irs::AutoObjective objective;
+    std::vector<CompressionType> candidates;
+  };
+  const Arm arms[] = {
+    {irs::AutoObjective::Balanced,
+     {CompressionType::COMPRESSION_DICT_FSST, CompressionType::COMPRESSION_FSST,
+      CompressionType::COMPRESSION_DICT_LZ4, CompressionType::COMPRESSION_LZ4,
+      CompressionType::COMPRESSION_DICT_ZXC, CompressionType::COMPRESSION_ZXC}},
+    {irs::AutoObjective::Size,
+     {CompressionType::COMPRESSION_DICT_FSST, CompressionType::COMPRESSION_FSST,
+      CompressionType::COMPRESSION_DICT_LZ4, CompressionType::COMPRESSION_LZ4,
+      CompressionType::COMPRESSION_DICT_ZXC, CompressionType::COMPRESSION_ZXC,
+      CompressionType::COMPRESSION_DICT_ZSTD,
+      CompressionType::COMPRESSION_ZSTD}},
+  };
+  struct Corpus {
+    const char* name;
+    const Value* value;
+    uint64_t rows;
+  };
+  const Corpus corpora[] = {
+    {"low-cardinality", &kLowCardinalityWithNulls, 30000},
+    {"unique-short", &kUniqueShort, 30000},
+    {"word-soup", &kWordSoup, 30000},
+    {"long-text", &kLongTextWithNulls, 3000},
+  };
   for (const auto& corpus : corpora) {
-    const auto chunks = Chunks(corpus.rows, *corpus.value);
-    for (const auto choice : choices) {
-      irs::codecs::StringAccumulator acc{choice.shape == Shape::Dedup};
-      for (const auto& c : chunks) {
-        acc.Add(*c);
+    for (const auto& arm : arms) {
+      irs::MemoryDirectory auto_dir{};
+      Write(auto_dir, CompressionType::COMPRESSION_AUTO,
+            {.objective = arm.objective}, corpus.rows, 16384, *corpus.value);
+      const auto auto_bytes = ColumnBytes(auto_dir);
+      auto best = std::numeric_limits<uint64_t>::max();
+      for (const auto codec : arm.candidates) {
+        irs::MemoryDirectory dir{};
+        Write(dir, codec, {}, corpus.rows, 16384, *corpus.value);
+        best = std::min(best, ColumnBytes(dir));
       }
-      const irs::ColCodecParams params{};
-      const auto priced = irs::codecs::Price(acc, choice, params);
-      uint64_t sealed = 0;
-      irs::codecs::SealSegments(acc, priced, params,
-                                duckdb::LogicalType::VARCHAR,
-                                [&](duckdb::BaseStatistics, uint64_t,
-                                    std::span<const std::string_view> parts) {
-                                  for (const auto part : parts) {
-                                    sealed += part.size();
-                                  }
-                                });
-      ASSERT_GT(sealed, 0u);
-      const double error = std::fabs(static_cast<double>(priced.bytes) -
-                                     static_cast<double>(sealed)) /
-                           static_cast<double>(sealed);
-      EXPECT_LE(error, 0.25)
-        << corpus.name << " shape " << static_cast<int>(choice.shape)
-        << " leaf " << static_cast<int>(choice.leaf) << " estimate "
-        << priced.bytes << " sealed " << sealed;
+      EXPECT_LE(auto_bytes, best + best / 8)
+        << corpus.name << " objective " << static_cast<int>(arm.objective)
+        << " auto " << auto_bytes << " best named " << best;
+    }
+  }
+}
+
+TEST_F(ColCodecsTest, AutoLevelsComeFromTheLadders) {
+  using duckdb::CompressionType;
+  const std::set<std::string> lz4{"1", "4", "9"};
+  const std::set<std::string> zstd{"1", "3", "6", "9", "12"};
+  const std::set<std::string> zxc_balanced{"1", "3", "5"};
+  const std::set<std::string> zxc_size{"1", "3", "5", "7"};
+  const std::pair<const char*, const Value*> corpora[] = {
+    {"low-cardinality", &kLowCardinalityWithNulls},
+    {"unique-short", &kUniqueShort},
+    {"word-soup", &kWordSoup},
+    {"long-text", &kLongTextWithNulls},
+  };
+  for (const auto objective :
+       {irs::AutoObjective::Balanced, irs::AutoObjective::Size}) {
+    const bool size = objective == irs::AutoObjective::Size;
+    for (const auto& [name, value] : corpora) {
+      irs::MemoryDirectory dir{};
+      Write(dir, CompressionType::COMPRESSION_AUTO,
+            {.segment_target = 16 * 1024, .objective = objective}, 6000, 2048,
+            *value);
+      for (const auto& [type, level] : BlockLevels(dir)) {
+        const auto label = std::string{name} + " " +
+                           duckdb::CompressionTypeToString(type) + " level " +
+                           level;
+        switch (type) {
+          case CompressionType::COMPRESSION_LZ4:
+          case CompressionType::COMPRESSION_DICT_LZ4:
+            EXPECT_TRUE(lz4.contains(level)) << label;
+            break;
+          case CompressionType::COMPRESSION_COL_ZSTD:
+          case CompressionType::COMPRESSION_DICT_ZSTD:
+            EXPECT_TRUE(size) << label;
+            EXPECT_TRUE(zstd.contains(level)) << label;
+            break;
+          case CompressionType::COMPRESSION_ZXC:
+          case CompressionType::COMPRESSION_DICT_ZXC:
+            EXPECT_TRUE((size ? zxc_size : zxc_balanced).contains(level))
+              << label;
+            break;
+          case CompressionType::COMPRESSION_COL_FSST:
+          case CompressionType::COMPRESSION_COL_DICT_FSST:
+            EXPECT_EQ(level, "0") << label;
+            break;
+          default:
+            EXPECT_TRUE(type == CompressionType::COMPRESSION_UNCOMPRESSED ||
+                        type == CompressionType::COMPRESSION_CONSTANT)
+              << label;
+        }
+      }
+    }
+  }
+}
+
+TEST_F(ColCodecsTest, AutoLevelsFollowTheData) {
+  using duckdb::CompressionType;
+  const auto levels = [&](const Value& value, uint64_t rows) {
+    irs::MemoryDirectory dir{};
+    Write(dir, CompressionType::COMPRESSION_AUTO,
+          {.segment_target = 64 * 1024, .objective = irs::AutoObjective::Size},
+          rows, DEFAULT_ROW_GROUP_SIZE, value);
+    std::set<std::string> out;
+    for (const auto& [type, level] : BlockLevels(dir)) {
+      if (!level.empty() && level != "0") {
+        out.insert(level);
+      }
+    }
+    return out;
+  };
+  const Value vocabulary = [](uint64_t g) -> std::optional<std::string> {
+    std::mt19937_64 rng{g * 0x9E3779B97F4A7C15ULL + 7};
+    std::string s;
+    for (int k = 0; k < 40; ++k) {
+      const auto w = rng() % 3000;
+      const auto word = w * w / 3000;
+      std::mt19937_64 letters{word + 1};
+      for (uint64_t c = 0; c < 3 + word % 8; ++c) {
+        s.push_back(static_cast<char>('a' + letters() % 26));
+      }
+      s.push_back(' ');
+    }
+    return s;
+  };
+  const auto noise = levels(kLongTextWithNulls, 3000);
+  EXPECT_TRUE(noise.empty() || noise == std::set<std::string>{"1"});
+  const auto text = levels(vocabulary, 8000);
+  ASSERT_FALSE(text.empty());
+  EXPECT_NE(text, std::set<std::string>{"1"});
+}
+
+TEST_F(ColCodecsTest, FixedLevelPinsAutoLevels) {
+  using duckdb::CompressionType;
+  for (const auto objective :
+       {irs::AutoObjective::Balanced, irs::AutoObjective::Size}) {
+    irs::MemoryDirectory dir{};
+    Write(dir, CompressionType::COMPRESSION_AUTO,
+          {.compression_level = 5,
+           .segment_target = 16 * 1024,
+           .objective = objective},
+          8000, 2048, kWordSoup);
+    for (const auto& [type, level] : BlockLevels(dir)) {
+      if (level.empty() || type == CompressionType::COMPRESSION_COL_FSST ||
+          type == CompressionType::COMPRESSION_COL_DICT_FSST) {
+        continue;
+      }
+      EXPECT_EQ(level, "5") << duckdb::CompressionTypeToString(type);
     }
   }
 }
@@ -678,6 +902,7 @@ TEST_F(ColCodecsTest, AutoObjectivePicksTheLeaf) {
     CompressionType::COMPRESSION_LZ4, CompressionType::COMPRESSION_DICT_LZ4,
     CompressionType::COMPRESSION_COL_FSST,
     CompressionType::COMPRESSION_COL_DICT_FSST,
+    CompressionType::COMPRESSION_ZXC, CompressionType::COMPRESSION_DICT_ZXC,
     CompressionType::COMPRESSION_UNCOMPRESSED};
   struct Corpus {
     const char* name;

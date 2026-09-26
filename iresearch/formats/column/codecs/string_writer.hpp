@@ -39,10 +39,22 @@
 
 namespace irs::codecs {
 
-struct PricedChoice {
-  StringChoice choice;
-  uint64_t bytes;
-  double ratio;
+struct RatioHistory {
+  uint64_t raw = 0;
+  uint64_t comp = 0;
+};
+
+struct StringTuning {
+  std::optional<StringChoice> choice;
+  double bytes_per_input = 0;
+  bool levels_tuned = false;
+  uint8_t level[kByteCodecCount]{};
+  RatioHistory history[kByteCodecCount][2]{};
+};
+
+struct SealOutcome {
+  bool sealed = false;
+  bool all_dedup = true;
 };
 
 class StringAccumulator {
@@ -65,18 +77,15 @@ class StringAccumulator {
   bool _dedup;
 };
 
-PricedChoice Price(const StringAccumulator& acc, StringChoice choice,
-                   const ColCodecParams& params);
-
-PricedChoice ChooseAuto(const StringAccumulator& acc,
-                        const ColCodecParams& params);
-
 using SegmentSink =
-  absl::FunctionRef<void(duckdb::BaseStatistics stats, uint64_t rows,
+  absl::FunctionRef<void(StringChoice choice, duckdb::BaseStatistics stats,
+                         uint64_t rows,
                          std::span<const std::string_view> parts)>;
 
-void SealSegments(const StringAccumulator& acc, const PricedChoice& priced,
-                  const ColCodecParams& params, const duckdb::LogicalType& type,
-                  SegmentSink sink);
+SealOutcome SealSegments(const StringAccumulator& acc,
+                         std::optional<StringChoice> named,
+                         const ColCodecParams& params,
+                         const duckdb::LogicalType& type, StringTuning& tuning,
+                         SegmentSink sink);
 
 }  // namespace irs::codecs

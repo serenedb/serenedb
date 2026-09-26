@@ -263,7 +263,12 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
       }
       {
         const doc_id_t next_cand = cand_docs[cand_idx];
-        if (next_cand > _cursor.UpperBound()) {
+        if (const auto next = _cursor.Block() + 1;
+            next_cand > _cursor.UpperBound() && next < _cursor.Index().Size() &&
+            next_cand <= _cursor.Index().Last(next)) {
+          _cursor.MoveTo(next);
+          ReadLeaf(*(std::end(_docs) - 1));
+        } else if (next_cand > _cursor.UpperBound()) {
           _left_in_list = _cursor.Seek(next_cand, In());
           _needs_reposition = false;
           if (_left_in_list == 0) {

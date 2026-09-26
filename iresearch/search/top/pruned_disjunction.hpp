@@ -65,7 +65,11 @@ class PrunedDisjunction : public Root {
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
       _admit{table},
       _docs_count{static_cast<double>(std::max<doc_id_t>(1, docs))},
-      _docs_end{std::max<doc_id_t>(1, docs)} {}
+      _docs_end{std::max<doc_id_t>(1, docs)} {
+    for (const auto& entry : _entries) {
+      _postings += entry.cost;
+    }
+  }
 
   PrunedDisjunction(PrunedDisjunction&&) = delete;
   PrunedDisjunction& operator=(PrunedDisjunction&&) = delete;
@@ -262,8 +266,12 @@ class PrunedDisjunction : public Root {
   static constexpr double kDecodeCost = 0.2;
   static constexpr double kCallCost = 15;
   static constexpr double kDenseSecond = 2;
+  static constexpr double kDenseWindowPostings = 96;
+  static constexpr double kDenseSinglePostings = 400;
+  static constexpr double kSingleSurvival = 0.75;
   static constexpr double kPromoteGain = 0.75;
   static constexpr uint32_t kSampleEvery = 32;
+  static constexpr uint32_t kSingleSampleEvery = 4;
   static constexpr uint64_t kMinCandidates = doc_limits::kBlockSize;
   static constexpr uint64_t kSurvivalWindow = 16 * doc_limits::kBlockSize;
 
@@ -304,12 +312,22 @@ class PrunedDisjunction : public Root {
            kDenseSecond * _docs_count;
   }
 
-  double Cost(double fill, size_t first, double scale,
-              double windows) const noexcept {
+  bool DensePromotion(size_t first, bool single) const noexcept {
+    const double postings = _postings * irs::detail::kWindowDocs / _docs_count;
+    if (!single) {
+      return postings >= kDenseWindowPostings;
+    }
+    return postings >= kDenseSinglePostings &&
+           _promote_ticks % kSingleSampleEvery != 0 &&
+           Survival(*_sorted[first - 1]) >= kSingleSurvival;
+  }
+
+  double Cost(double fill, size_t first, double scale, double windows,
+              bool single) const noexcept {
     if (first == 0) {
       return fill * (1 + kAdmitCost);
     }
-    double cost = fill * (1 + kDrainCost);
+    double cost = fill * (1 + (single ? kAdmitCost : kDrainCost));
     for (size_t i = 0; i != first; ++i) {
       const auto& entry = *_sorted[i];
       const double probes = fill * Survival(entry);
@@ -322,7 +340,8 @@ class PrunedDisjunction : public Root {
 
   bool Promote(doc_id_t span) noexcept {
     const size_t scored = _first_essential;
-    if (!WindowPath(scored)) {
+    const bool single = _sorted.size() - scored == 1;
+    if (!WindowPath(scored) && !DensePromotion(scored, single)) {
       return false;
     }
     const double scale = static_cast<double>(span) / _docs_count;
@@ -331,11 +350,14 @@ class PrunedDisjunction : public Root {
     for (size_t i = scored; i != _sorted.size(); ++i) {
       fill += _sorted[i]->cost * scale;
     }
-    double best = Cost(fill, scored, scale, windows) * kPromoteGain;
+    double best = Cost(fill, scored, scale, windows, single) * kPromoteGain;
     for (size_t first = scored; first != 0;) {
       --first;
+      if (_sorted[first]->max_score == 0) {
+        break;
+      }
       fill += _sorted[first]->cost * scale;
-      const double cost = Cost(fill, first, scale, windows);
+      const double cost = Cost(fill, first, scale, windows, false);
       if (cost < best) {
         best = cost;
         _first_essential = first;
@@ -520,6 +542,7 @@ class PrunedDisjunction : public Root {
   [[no_unique_address]] Admit<Table> _admit;
   const double _docs_count;
   const doc_id_t _docs_end;
+  double _postings = 0;
   uint32_t _promote_ticks = 0;
   doc_id_t _exhaustive_windows = kExhaustiveWindowsMin;
 };

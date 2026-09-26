@@ -415,7 +415,6 @@ inline void PostingsWriter::Encode(BufferedOutput& out,
   const auto doc_start = _last_state.doc_start;
   if (inlined) {
     out.WriteByte(meta.inline_size);
-    out.WriteData(meta.inline_data, meta.inline_size);
   } else {
     out.WriteV64(meta.doc_start - doc_start);
   }

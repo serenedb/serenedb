@@ -149,8 +149,6 @@ inline size_t PostingsReader::decode(const byte_type* in,
     const auto size = *p++;
     SDB_ASSERT(size != 0 && size <= PostingMeta::kInlineBytes);
     posting_meta.inline_size = size;
-    std::memcpy(posting_meta.inline_data, p, size);
-    p += size;
   } else {
     posting_meta.inline_size = 0;
     posting_meta.doc_start += vread<uint64_t>(p);

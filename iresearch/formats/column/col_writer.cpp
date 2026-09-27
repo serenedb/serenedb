@@ -56,6 +56,8 @@ void SerializeNormColumn(duckdb::BinarySerializer& s,
                   obj.WriteProperty(2, "sum", p.sum);
                   obj.WriteProperty(3, "non_zero_count", p.non_zero_count);
                   obj.WriteProperty(4, "file_offset", p.file_offset);
+                  obj.WritePropertyWithDefault<uint32_t>(5, "exceptions",
+                                                         p.exceptions, 0);
                 });
               });
 }

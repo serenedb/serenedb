@@ -723,10 +723,12 @@ class SegmentWriter {
     _live.clear();
     _live.push_back(cut);
     const auto base = Ladder(ByteCodec::Lz4)[0];
-    auto* dedup = Trial({Shape::Dedup, ByteCodec::Lz4}, base, begin, end);
+    const bool wide = !retune && _tuning.wide[Index(ByteCodec::Lz4)];
+    auto* dedup =
+      Trial({Shape::Dedup, ByteCodec::Lz4}, base, begin, end, wide);
     Segment* plain = nullptr;
     if (PlainMayWin(*dedup)) {
-      plain = Trial({Shape::Plain, ByteCodec::Lz4}, base, begin, end);
+      plain = Trial({Shape::Plain, ByteCodec::Lz4}, base, begin, end, wide);
     }
     const auto shape =
       plain && PlainWins(*dedup, *plain) ? Shape::Plain : Shape::Dedup;
@@ -744,7 +746,9 @@ class SegmentWriter {
         const auto it = std::find(ladder.begin(), ladder.end(), tuned);
         rung = it == ladder.end() ? 0 : static_cast<size_t>(it - ladder.begin());
       }
-      auto* cur = Trial({shape, plan.leaf}, ladder[rung], begin, end);
+      auto& wide_frames = _tuning.wide[Index(plan.leaf)];
+      auto* cur = Trial({shape, plan.leaf}, ladder[rung], begin, end,
+                        !retune && wide_frames);
       if (retune) {
         while (rung + 1 < ladder.size()) {
           auto* next =
@@ -761,13 +765,12 @@ class SegmentWriter {
         }
       }
       tuned = ladder[rung];
-      if (plan.leaf != ByteCodec::Fsst) {
+      if (retune && plan.leaf != ByteCodec::Fsst) {
         auto* wide = Trial({shape, plan.leaf}, tuned, begin, end, true);
-        const bool use_wide =
+        wide_frames =
           static_cast<double>(wide->Size()) <
           static_cast<double>(cur->Size()) * (1.0 - kWideFramesGain);
-        _tuning.wide[Index(plan.leaf)] = use_wide;
-        if (use_wide) {
+        if (wide_frames) {
           cur = wide;
         }
       }

@@ -2968,7 +2968,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCommandLoop() {
             SQL_ERROR_DATA(ERR_CODE(ERRCODE_PROTOCOL_VIOLATION),
                            ERR_MSG("invalid frontend message type ",
                                    static_cast<int>(type))));
-          co_await this->Flush();
           co_return {};
       }
     } catch (const std::exception& exception) {

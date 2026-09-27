@@ -276,6 +276,8 @@ bool ColWriter::Commit(uint64_t target_row,
           });
         });
     }
+    footer.WriteProperty<uint64_t>(kColFieldFileId, "file_id",
+                                   NewColFileId());
   });
   _out.reset();
   _committed = true;

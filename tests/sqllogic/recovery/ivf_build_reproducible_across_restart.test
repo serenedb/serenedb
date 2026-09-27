@@ -1,0 +1,79 @@
+control substitution on
+
+# An IVF index built from the same rows is the same index in every server
+# process. The build samples its centroid training rows with a fixed seed, but
+# the generator was absl's, which mixes a per-process salt from OS entropy into
+# every seeded generator: each process trained on another sample, got other
+# clusters, fed the rotation training its rows in another order, and stored a
+# basis that differed in the last bits. The projected distances then moved by a
+# few ulps from one process to the next, enough to flip a 4th-decimal rounding
+# in inverted_index_ivf_panorama.test.
+#
+# The first index is built, checkpointed and read back after a crash; the second
+# is built from the same rows by the restarted process. Every projected distance
+# has to match exactly.
+
+statement ok
+CREATE TABLE ivf_rep_a (pk INTEGER PRIMARY KEY, emb FLOAT[64]);
+
+statement ok
+CREATE INDEX ivf_rep_a_idx ON ivf_rep_a USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO ivf_rep_a
+SELECT i, list_transform(range(64), j -> (sin(i * 0.7 + j * 1.3) / (j + 1))::FLOAT)::FLOAT[64]
+FROM range(2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ivf_rep_a;
+
+statement ok
+CHECKPOINT;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+# --- server restarts here ---
+
+connection after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+connection after
+statement ok
+CREATE TABLE ivf_rep_b (pk INTEGER PRIMARY KEY, emb FLOAT[64]);
+
+connection after
+statement ok
+CREATE INDEX ivf_rep_b_idx ON ivf_rep_b USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
+
+connection after
+statement ok
+INSERT INTO ivf_rep_b
+SELECT i, list_transform(range(64), j -> (sin(i * 0.7 + j * 1.3) / (j + 1))::FLOAT)::FLOAT[64]
+FROM range(2000) t(i);
+
+connection after
+statement ok
+VACUUM (REFRESH_TABLE) ivf_rep_b;
+
+connection after
+statement ok
+SET sdb_ivf_search_nprobe = 1000;
+
+connection after
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE a.d <> b.d) AS differing FROM
+  (SELECT pk, emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] AS d
+     FROM ivf_rep_a_idx ORDER BY d LIMIT 200) a
+  JOIN
+  (SELECT pk, emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] AS d
+     FROM ivf_rep_b_idx ORDER BY d LIMIT 200) b
+  USING (pk);
+----
+n	differing
+200	0

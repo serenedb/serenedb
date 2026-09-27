@@ -32,6 +32,7 @@
 
 #include <algorithm>
 #include <array>
+#include <ctime>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/object_cache.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
@@ -50,7 +51,9 @@
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/span_directory.hpp>
+#include <iresearch/store/directory.hpp>
+#include <iresearch/store/directory_attributes.hpp>
+#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -193,10 +196,81 @@ bool OfKind(const Object& object, std::string_view kind) {
   return kind.empty() || absl::EqualsIgnoreCase(object.kind, kind);
 }
 
+class SpanDirectory final : public irs::Directory {
+ public:
+  SpanDirectory(std::span<const IndexFile> files,
+                const irs::ResourceManagementOptions& resource_manager) noexcept
+    : Directory{resource_manager}, _files{files} {}
+
+  irs::IndexInput::ptr open(std::string_view name,
+                            irs::IOAdvice) const noexcept final {
+    const auto* file = Find(name);
+    if (!file) {
+      return nullptr;
+    }
+    try {
+      return std::make_unique<irs::BytesViewInput>(
+        irs::bytes_view{file->bytes.data(), file->bytes.size()});
+    } catch (...) {
+      return nullptr;
+    }
+  }
+
+  bool exists(bool& result, std::string_view name) const noexcept final {
+    result = std::ranges::contains(_files, name, &IndexFile::name);
+    return true;
+  }
+
+  bool length(uint64_t& result, std::string_view name) const noexcept final {
+    const auto* file = Find(name);
+    if (!file) {
+      return false;
+    }
+    result = file->bytes.size();
+    return true;
+  }
+
+  bool visit(const visitor_f& visitor) const final {
+    return absl::c_all_of(
+      _files, [&](const IndexFile& file) { return visitor(file.name); });
+  }
+
+  irs::DirectoryAttributes& attributes() noexcept final { return _attributes; }
+
+  irs::IndexOutput::ptr create(std::string_view) noexcept final {
+    return nullptr;
+  }
+
+  irs::IndexLock::ptr make_lock(std::string_view) noexcept final {
+    return nullptr;
+  }
+
+  bool mtime(std::time_t&, std::string_view) const noexcept final {
+    return false;
+  }
+
+  bool remove(std::string_view) noexcept final { return false; }
+
+  bool rename(std::string_view, std::string_view) noexcept final {
+    return false;
+  }
+
+  bool sync(std::span<const std::string_view>) noexcept final { return true; }
+
+ private:
+  const IndexFile* Find(std::string_view name) const noexcept {
+    const auto it = std::ranges::find(_files, name, &IndexFile::name);
+    return it == _files.end() ? nullptr : &*it;
+  }
+
+  std::span<const IndexFile> _files;
+  irs::DirectoryAttributes _attributes;
+};
+
 class EmbeddedIndex {
  public:
   EmbeddedIndex(duckdb::DatabaseInstance& db, std::span<const IndexFile> files)
-    : _dir{Views(files), kResourceManager},
+    : _dir{files, kResourceManager},
       _reader{_dir, irs::formats::Get("1_5simd"), Options(db)} {}
 
   const irs::DirectoryReader& Reader() const noexcept { return _reader; }
@@ -204,22 +278,13 @@ class EmbeddedIndex {
  private:
   static inline const irs::ResourceManagementOptions kResourceManager;
 
-  static irs::SpanDirectory::Files Views(std::span<const IndexFile> files) {
-    irs::SpanDirectory::Files views;
-    for (const auto& file : files) {
-      views.emplace(file.name,
-                    irs::bytes_view{file.bytes.data(), file.bytes.size()});
-    }
-    return views;
-  }
-
   static irs::IndexReaderOptions Options(duckdb::DatabaseInstance& db) {
     irs::IndexReaderOptions options;
     options.db = &db;
     return options;
   }
 
-  irs::SpanDirectory _dir;
+  SpanDirectory _dir;
   irs::DirectoryReader _reader;
 };
 

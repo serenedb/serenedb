@@ -69,7 +69,6 @@ set(iresearch-tests_sources
     ./store/directory_test_case.cpp
     ./store/directory_cleaner_tests.cpp
     ./store/memory_index_output_tests.cpp
-    ./store/span_directory_tests.cpp
     ./store/store_utils_tests.cpp
     ./index/doc_generator.cpp
     ./index/assert_format.cpp

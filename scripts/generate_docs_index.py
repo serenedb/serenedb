@@ -11,8 +11,7 @@ files it left behind.
 The bytes come in through #embed, so nothing is transliterated: the generated
 file is a few hundred bytes of directives rather than a multiple of the index
 size, and there is no escaping to get wrong. irs::byte_type is uint8_t, so
-#embed's integer list initialises the arrays with no narrowing and no cast,
-and irs::SpanDirectory lends them out without copying.
+#embed's integer list initialises the arrays with no narrowing and no cast.
 """
 
 from __future__ import annotations

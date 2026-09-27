@@ -535,6 +535,7 @@ launch_iceberg_rest() {
 		-e "CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO"
 		-e "CATALOG_S3_ENDPOINT=http://${MINIO_CONTAINER_NAME}:9000"
 		-e "CATALOG_S3_PATH__STYLE__ACCESS=true"
+		-e "CATALOG_URI=jdbc:sqlite:/tmp/iceberg_catalog.db?journal_mode=WAL&busy_timeout=30000"
 	)
 
 	echo "Starting iceberg-rest (port=$ICEBERG_REST_PORT)..."

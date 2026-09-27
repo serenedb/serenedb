@@ -22,9 +22,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 
 #include "iresearch/utils/zstd_context.hpp"
 
+union LZ4_stream_u;
+union LZ4_streamHC_u;
+struct ZSTD_CDict_s;
+struct ZSTD_DDict_s;
 struct zxc_cctx_s;
 struct zxc_dctx_s;
 
@@ -82,15 +87,28 @@ class LeafCompressor<ByteCodec::Lz4> {
  public:
   explicit LeafCompressor(uint8_t level) noexcept
     : _level{EffectiveLevel<ByteCodec::Lz4>(level)} {}
+  ~LeafCompressor();
+
+  LeafCompressor(const LeafCompressor&) = delete;
+  LeafCompressor& operator=(const LeafCompressor&) = delete;
 
   void SetLevel(uint8_t level) noexcept {
     _level = EffectiveLevel<ByteCodec::Lz4>(level);
+    _dictionary = false;
   }
+
+  void LoadDictionary(std::string_view dictionary, size_t frame_bytes);
+  void ClearDictionary() noexcept { _dictionary = false; }
 
   size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 
  private:
   uint8_t _level;
+  bool _dictionary = false;
+  LZ4_stream_u* _dict = nullptr;
+  LZ4_stream_u* _work = nullptr;
+  LZ4_streamHC_u* _hc_dict = nullptr;
+  LZ4_streamHC_u* _hc_work = nullptr;
 };
 
 template<>
@@ -99,16 +117,25 @@ class LeafCompressor<ByteCodec::Zstd> {
   explicit LeafCompressor(uint8_t level)
     : _level{EffectiveLevel<ByteCodec::Zstd>(level)},
       _ctx{utils::MakeZstdCCtx()} {}
+  ~LeafCompressor();
+
+  LeafCompressor(const LeafCompressor&) = delete;
+  LeafCompressor& operator=(const LeafCompressor&) = delete;
 
   void SetLevel(uint8_t level) noexcept {
     _level = EffectiveLevel<ByteCodec::Zstd>(level);
+    ClearDictionary();
   }
+
+  void LoadDictionary(std::string_view dictionary, size_t frame_bytes);
+  void ClearDictionary() noexcept;
 
   size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 
  private:
   uint8_t _level;
   utils::ZstdCCtxPtr _ctx;
+  ZSTD_CDict_s* _cdict = nullptr;
 };
 
 template<>
@@ -122,13 +149,19 @@ class LeafCompressor<ByteCodec::Zxc> {
 
   void SetLevel(uint8_t level) noexcept {
     _level = EffectiveLevel<ByteCodec::Zxc>(level);
+    _dictionary = {};
   }
+
+  void LoadDictionary(std::string_view dictionary, size_t frame_bytes);
+  void ClearDictionary() noexcept { _dictionary = {}; }
 
   size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 
  private:
   uint8_t _level;
   zxc_cctx_s* _ctx;
+  zxc_cctx_s* _block_ctx = nullptr;
+  std::string_view _dictionary;
 };
 
 template<ByteCodec C>
@@ -137,16 +170,29 @@ class LeafDecompressor;
 template<>
 class LeafDecompressor<ByteCodec::Lz4> {
  public:
+  void SetDictionary(std::string_view dictionary) noexcept {
+    _dictionary = dictionary;
+  }
+
   bool Decompress(const char* src, size_t size, char* dst,
                   size_t raw_size) noexcept;
   size_t DecompressPrefix(const char* src, size_t size, char* dst, size_t want,
                           size_t raw_size) noexcept;
+
+ private:
+  std::string_view _dictionary;
 };
 
 template<>
 class LeafDecompressor<ByteCodec::Zstd> {
  public:
   LeafDecompressor() : _ctx{utils::MakeZstdDCtx()} {}
+  ~LeafDecompressor();
+
+  LeafDecompressor(const LeafDecompressor&) = delete;
+  LeafDecompressor& operator=(const LeafDecompressor&) = delete;
+
+  void SetDictionary(std::string_view dictionary);
 
   bool Decompress(const char* src, size_t size, char* dst,
                   size_t raw_size) noexcept;
@@ -155,6 +201,9 @@ class LeafDecompressor<ByteCodec::Zstd> {
 
  private:
   utils::ZstdDCtxPtr _ctx;
+  ZSTD_DDict_s* _ddict = nullptr;
+  std::string_view _loaded;
+  bool _use = false;
 };
 
 template<>
@@ -166,6 +215,8 @@ class LeafDecompressor<ByteCodec::Zxc> {
   LeafDecompressor(const LeafDecompressor&) = delete;
   LeafDecompressor& operator=(const LeafDecompressor&) = delete;
 
+  void SetDictionary(std::string_view dictionary) noexcept;
+
   bool Decompress(const char* src, size_t size, char* dst,
                   size_t raw_size) noexcept;
   size_t DecompressPrefix(const char* src, size_t size, char* dst, size_t want,
@@ -173,6 +224,8 @@ class LeafDecompressor<ByteCodec::Zxc> {
 
  private:
   zxc_dctx_s* _ctx;
+  zxc_dctx_s* _block_ctx = nullptr;
+  std::string_view _dictionary;
 };
 
 }  // namespace irs::codecs

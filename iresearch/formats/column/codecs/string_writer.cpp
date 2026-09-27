@@ -55,6 +55,7 @@ constexpr double kFsstFirstRatio = 0.5;
 constexpr double kDrift = 1.25;
 constexpr uint64_t kDriftMinFraction = 4;
 constexpr double kLevelStepGain = 0.02;
+constexpr double kWideFramesGain = 0.03;
 
 constexpr uint8_t kLz4Fast[] = {1};
 constexpr uint8_t kLz4Ladder[] = {1, 4, 9};
@@ -76,6 +77,20 @@ constexpr LeafPlan kSizePlan[] = {{ByteCodec::Fsst, kNoLevel},
                                   {ByteCodec::Lz4, kLz4Ladder},
                                   {ByteCodec::Zstd, kZstdLadder},
                                   {ByteCodec::Zxc, kZxcLadder}};
+
+struct FrameShape {
+  size_t frame;
+  size_t dictionary;
+};
+
+template<ByteCodec C>
+constexpr FrameShape ShapeOf() noexcept {
+  if constexpr (C == ByteCodec::Zstd) {
+    return {kZstdDictionaryFrameBytes, kFrameDictionaryBytes};
+  } else {
+    return {kDictionaryFrameBytes, kFrameDictionaryBytes};
+  }
+}
 
 std::span<const LeafPlan> PlanFor(AutoObjective objective) noexcept {
   switch (objective) {
@@ -138,6 +153,7 @@ struct DedupScratch {
 struct Segment {
   StringChoice choice{};
   uint8_t level = 0;
+  bool wide = false;
   uint64_t begin = 0;
   uint64_t rows = 0;
   uint64_t entries = 0;
@@ -166,13 +182,16 @@ class Encoder {
     }
   }
 
-  void Begin(Shape shape, uint8_t level, uint64_t begin) {
+  void Begin(Shape shape, uint8_t level, bool wide, uint64_t begin) {
     _shape = shape;
     _level = level;
+    _wide = wide;
     _next = begin;
     if constexpr (!kFsst) {
       _codec->SetLevel(level);
+      _layout = wide ? FrameShape{kFrameRawBytes, 0} : ShapeOf<C>();
     }
+    _dictionary.clear();
     _data.clear();
     if (shape == Shape::Dedup) {
       if (_dedup.epoch.size() != _acc.entries.size()) {
@@ -236,6 +255,7 @@ class Encoder {
     h.row_count = static_cast<uint32_t>(_rows);
     h.entry_count = static_cast<uint32_t>(entry_count);
     h.frame_count = static_cast<uint32_t>(_frames.size());
+    h.flags = !_dictionary.empty() && _frames.size() > 1 ? kFrameDictionary : 0;
     h.raw_bytes = _raw;
 
     CodesEncoding codes_encoding = CodesEncoding::Bitpack;
@@ -336,6 +356,7 @@ class Encoder {
     _stats.Merge(stats);
     out.choice = StringChoice{_shape, C};
     out.level = _level;
+    out.wide = _wide;
     out.begin = _next - _rows;
     out.rows = _rows;
     out.entries = _entries.size();
@@ -352,6 +373,10 @@ class Encoder {
     _entry_lengths.clear();
     _frames.clear();
     _data.clear();
+    _dictionary.clear();
+    if constexpr (!kFsst) {
+      _codec->ClearDictionary();
+    }
     _rows = 0;
     _runs = 0;
     _raw = 0;
@@ -421,7 +446,7 @@ class Encoder {
     _max_len = std::max<uint32_t>(_max_len, static_cast<uint32_t>(sv.size()));
     _raw += sv.size();
     if constexpr (!kFsst) {
-      if (_frame_entries != 0 && _frame.size() + sv.size() > kFrameRawBytes) {
+      if (_frame_entries != 0 && _frame.size() + sv.size() > FrameLimit()) {
         CloseFrame();
       }
       if (_frame_entries == 0) {
@@ -446,8 +471,17 @@ class Encoder {
     auto& hist = History();
     hist.raw += _frame.size();
     hist.comp += n;
+    if (_frames.size() == 1 && _layout.dictionary != 0 && !_frame.empty()) {
+      _dictionary.swap(_frame);
+      _codec->LoadDictionary(_dictionary, _layout.frame);
+    }
     _frame.clear();
     _frame_entries = 0;
+  }
+
+  size_t FrameLimit() const noexcept {
+    return _frames.empty() && _layout.dictionary != 0 ? _layout.dictionary
+                                                      : _layout.frame;
   }
 
   uint64_t Estimate() const noexcept {
@@ -580,7 +614,10 @@ class Encoder {
   uint64_t _nulls = 0;
   uint64_t _input = 0;
 
+  bool _wide = false;
+  FrameShape _layout{kFrameRawBytes, 0};
   std::string _frame;
+  std::string _dictionary;
   uint32_t _frame_first = 0;
   uint32_t _frame_entries = 0;
   std::vector<FrameMeta> _frames;
@@ -621,7 +658,7 @@ class SegmentWriter {
       const auto cutter = Cutter();
       auto* seg = Acquire();
       const auto end = With(cutter.choice.leaf, [&](auto& enc) {
-        enc.Begin(cutter.choice.shape, cutter.level, row);
+        enc.Begin(cutter.choice.shape, cutter.level, cutter.wide, row);
         const auto stop = enc.Cut(_params.segment_target);
         enc.Finish(*seg);
         return stop;
@@ -651,19 +688,22 @@ class SegmentWriter {
   struct Pick {
     StringChoice choice;
     uint8_t level;
+    bool wide;
   };
 
   Pick Cutter() const noexcept {
     if (_named) {
-      return {*_named, _params.compression_level};
+      return {*_named, _params.compression_level, false};
     }
     if (_tuning.choice) {
-      return {*_tuning.choice, _tuning.level[Index(_tuning.choice->leaf)]};
+      const auto leaf = Index(_tuning.choice->leaf);
+      return {*_tuning.choice, _tuning.level[leaf], _tuning.wide[leaf]};
     }
     const bool repeats = _acc.entries.size() * kDedupMinRepeat <=
                          _acc.row_count - _acc.null_count;
     return {{repeats ? Shape::Dedup : Shape::Plain, ByteCodec::Lz4},
-            Ladder(ByteCodec::Lz4)[0]};
+            Ladder(ByteCodec::Lz4)[0],
+            false};
   }
 
   std::span<const uint8_t> Ladder(ByteCodec leaf) const noexcept {
@@ -721,6 +761,16 @@ class SegmentWriter {
         }
       }
       tuned = ladder[rung];
+      if (plan.leaf != ByteCodec::Fsst) {
+        auto* wide = Trial({shape, plan.leaf}, tuned, begin, end, true);
+        const bool use_wide =
+          static_cast<double>(wide->Size()) <
+          static_cast<double>(cur->Size()) * (1.0 - kWideFramesGain);
+        _tuning.wide[Index(plan.leaf)] = use_wide;
+        if (use_wide) {
+          cur = wide;
+        }
+      }
       if (cur->Size() < best->Size()) {
         best = cur;
       }
@@ -745,17 +795,18 @@ class SegmentWriter {
   }
 
   Segment* Trial(StringChoice choice, uint8_t level, uint64_t begin,
-                 uint64_t end) {
+                 uint64_t end, bool wide = false) {
     for (auto* seg : _live) {
       if (seg->choice.shape == choice.shape &&
           seg->choice.leaf == choice.leaf && seg->level == level &&
-          seg->begin == begin && seg->rows == end - begin) {
+          seg->wide == wide && seg->begin == begin &&
+          seg->rows == end - begin) {
         return seg;
       }
     }
     auto* seg = Acquire();
     With(choice.leaf, [&](auto& enc) {
-      enc.Begin(choice.shape, level, begin);
+      enc.Begin(choice.shape, level, wide, begin);
       enc.AddUntil(end);
       enc.Finish(*seg);
       return end;

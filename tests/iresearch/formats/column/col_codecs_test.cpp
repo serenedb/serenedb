@@ -253,6 +253,26 @@ class ColCodecsTest : public TestBase {
     return levels;
   }
 
+  std::vector<std::string> SegmentInfo(irs::Directory& dir,
+                                       const std::string& key) {
+    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    const auto* col = r.Column(kField);
+    EXPECT_NE(col, nullptr);
+    std::vector<std::string> values;
+    irs::ReadContext ctx{r};
+    irs::BlockWindow window{};
+    uint64_t row = 0;
+    for (const auto& block : col->DataBlocks()) {
+      window = col->Locate(row, window);
+      auto seg = col->OpenSegment(window.block, ctx);
+      auto info = seg->GetCompressionFunction().get_segment_info(
+        duckdb::QueryContext{}, *seg);
+      values.emplace_back(info[key]);
+      row += block.tuple_count;
+    }
+    return values;
+  }
+
   duckdb::DuckDB _db;
 };
 
@@ -570,6 +590,50 @@ TEST_F(ColCodecsTest, DictionaryLargerThanAFrame) {
   };
   RoundTrip(duckdb::CompressionType::COMPRESSION_DICT_ZSTD, {}, 20000,
             DEFAULT_ROW_GROUP_SIZE, value);
+}
+
+TEST_F(ColCodecsTest, LaterFramesUseTheFirstFrameAsDictionary) {
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 11 == 0) {
+      return std::nullopt;
+    }
+    return "request /api/v1/items/" + std::to_string(g % 700) + " took " +
+           std::to_string(g % 97) + "ms " + Pseudo(g % 50, 40);
+  };
+  constexpr uint64_t kRows = 20000;
+  for (const auto codec : {duckdb::CompressionType::COMPRESSION_DICT_LZ4,
+                           duckdb::CompressionType::COMPRESSION_LZ4,
+                           duckdb::CompressionType::COMPRESSION_DICT_ZSTD,
+                           duckdb::CompressionType::COMPRESSION_DICT_ZXC,
+                           duckdb::CompressionType::COMPRESSION_ZXC}) {
+    for (const uint8_t level : {uint8_t{0}, uint8_t{9}}) {
+      SCOPED_TRACE(testing::Message() << static_cast<int>(codec) << " level "
+                                      << static_cast<int>(level));
+      irs::MemoryDirectory dir{};
+      Write(dir, codec, {.compression_level = level}, kRows,
+            DEFAULT_ROW_GROUP_SIZE, value);
+      const auto dictionaries = SegmentInfo(dir, "dictionary");
+      EXPECT_NE(std::find(dictionaries.begin(), dictionaries.end(),
+                          "first_frame"),
+                dictionaries.end());
+      Verify(dir, codec, kRows, value);
+
+      irs::ColReader r{dir, std::string{kSeg}, Db()};
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      irs::ColumnReader::PointReader cursor{r, *col};
+      duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
+      for (uint64_t g = kRows; g-- > 0;) {
+        if (g % 53 != 0 && g + 1 != kRows) {
+          continue;
+        }
+        duckdb::FlatVector::ValidityMutable(out).Reset();
+        EXPECT_EQ(cursor.FetchRow(g, out, 0), value(g).has_value())
+          << "row " << g;
+        ExpectRow(out, 0, g, value);
+      }
+    }
+  }
 }
 
 TEST_F(ColCodecsTest, ConstantAndEmptyStrings) {

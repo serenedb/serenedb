@@ -399,7 +399,7 @@ launch_s3() {
 		"${network_args[@]}" \
 		-e "MINIO_ROOT_USER=$MINIO_ACCESS_KEY" \
 		-e "MINIO_ROOT_PASSWORD=$MINIO_SECRET_KEY" \
-		pgsty/minio:latest server /data
+		pgsty/minio:latest server /data --console-address :9001
 
 	echo "Waiting for MinIO to be ready..."
 	for i in $(seq 1 30); do

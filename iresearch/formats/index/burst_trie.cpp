@@ -846,12 +846,8 @@ void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
   SDB_ASSERT(stats == fst_stats);
 #endif
 
-  const uint64_t inline_offset = _blocks_out->Position();
-  _blocks_out->WriteData(_inline.data(), _inline.size());
-  _inline.clear();
-
   const uint64_t body_offset = _blocks_out->Position();
-  _blocks_out->WriteV64(inline_offset);
+  _blocks_out->WriteV64(_inline.size());
   WriteStr(*_blocks_out, min_term);
   WriteStr(*_blocks_out, max_term);
   const bool ok = immutable_byte_fst::Write(fst, *_blocks_out, fst_stats);
@@ -859,6 +855,8 @@ void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
     throw IndexError{
       absl::StrCat("Failed to write term index for field id ", id)};
   }
+  _blocks_out->WriteData(_inline.data(), _inline.size());
+  _inline.clear();
 
   TermDictMeta meta;
   meta.features = props.index_features;
@@ -899,14 +897,16 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
   bool HasScoreBounds() const noexcept final { return _has_score_bounds; }
 
   uint64_t InlineOffset() const noexcept { return _inline_offset; }
+  uint64_t InlineEnd() const noexcept { return _inline_offset + _inline_size; }
   const byte_type* InlineRegion() const noexcept { return _inline_region; }
 
   void LoadFromMeta(field_id id, const TermDictMeta& meta, DataInput& in);
 
  protected:
-  void MapInlineRegion(const TermDictMeta& meta, IndexInput& in) {
-    if (const auto size = meta.body_offset - _inline_offset; size != 0) {
-      _inline_region = in.ReadStable(_inline_offset, size);
+  void MapInlineRegion(IndexInput& in) {
+    _inline_offset = in.Position();
+    if (_inline_size != 0) {
+      _inline_region = in.ReadStable(_inline_offset, _inline_size);
     }
   }
 
@@ -917,6 +917,7 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
   uint64_t _terms_count{};
   uint64_t _doc_count{};
   uint64_t _inline_offset{};
+  uint64_t _inline_size{};
   const byte_type* _inline_region{};
   bool _has_score_bounds{};
   FreqAttr _freq;
@@ -929,7 +930,7 @@ void TermReaderBase::LoadFromMeta(field_id id, const TermDictMeta& meta,
   _field.index_features = meta.features;
   _terms_count = meta.term_count;
   _doc_count = meta.doc_count;
-  _inline_offset = in.ReadV64();
+  _inline_size = in.ReadV64();
   _min_term = ReadString<bstring>(in);
   _max_term = ReadString<bstring>(in);
   const auto total =
@@ -2747,8 +2748,8 @@ class FieldReader::Impl {
           absl::StrCat("Failed to read term index for field id ", id)};
       }
       _body_offset = meta.body_offset;
-      _body_end = blocks_in.Position();
-      MapInlineRegion(meta, blocks_in);
+      MapInlineRegion(blocks_in);
+      _body_end = InlineEnd();
     }
 
     uint64_t BodyOffset() const noexcept { return _body_offset; }
@@ -2831,7 +2832,7 @@ class FieldReader::Impl {
 
     void PrefetchBlocks() const noexcept {
       const auto size =
-        std::min(InlineOffset() - _blocks_begin, kMaxBlocksPrefetch);
+        std::min(_body_offset - _blocks_begin, kMaxBlocksPrefetch);
       if (size == 0) {
         return;
       }

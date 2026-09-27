@@ -89,7 +89,7 @@ inline constexpr uint32_t kInSlack = 16;
 inline constexpr uint32_t kOutSlack = 16;
 
 struct EncodeOptions {
-  uint32_t bitset_margin_percent = 28;
+  uint32_t bitset_margin_percent = 60;
   uint32_t bitmap_margin_percent = 25;
   uint32_t min_patch_saving = 1;
   bool patch16 = true;

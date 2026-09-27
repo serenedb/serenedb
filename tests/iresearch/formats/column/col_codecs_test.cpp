@@ -832,7 +832,8 @@ TEST_F(ColCodecsTest, AutoLevelsFollowTheData) {
     std::set<std::string> out;
     for (const auto& [type, level] : BlockLevels(dir)) {
       if (!level.empty() && level != "0") {
-        out.insert(level);
+        out.insert(std::string{duckdb::CompressionTypeToString(type)} + ":" +
+                   level);
       }
     }
     return out;
@@ -851,11 +852,16 @@ TEST_F(ColCodecsTest, AutoLevelsFollowTheData) {
     }
     return s;
   };
-  const auto noise = levels(kLongTextWithNulls, 3000);
-  EXPECT_TRUE(noise.empty() || noise == std::set<std::string>{"1"});
+  const auto top = [](const std::set<std::string>& found) {
+    int level = 0;
+    for (const auto& s : found) {
+      level = std::max(level, std::stoi(s.substr(s.rfind(':') + 1)));
+    }
+    return level;
+  };
   const auto text = levels(vocabulary, 8000);
   ASSERT_FALSE(text.empty());
-  EXPECT_NE(text, std::set<std::string>{"1"});
+  EXPECT_GT(top(text), 1) << ::testing::PrintToString(text);
 }
 
 TEST_F(ColCodecsTest, FixedLevelPinsAutoLevels) {

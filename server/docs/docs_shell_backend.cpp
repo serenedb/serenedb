@@ -215,13 +215,13 @@ std::string RenderCard(const duckdb_shell::DocsRequest& request,
   auto markdown =
     absl::StrCat(Header(object.path, object.breadcrumb), "# ",
                  connector::EscapeMarkdown(object.signature), "\n\n");
-  if (object.summary) {
-    absl::StrAppend(&markdown, *object.summary, "\n\n");
+  if (!object.summary.empty()) {
+    absl::StrAppend(&markdown, object.summary, "\n\n");
   }
   absl::StrAppend(&markdown, "Kind: ", connector::EscapeMarkdown(object.kind));
-  if (object.aliases) {
+  if (!object.aliases.empty()) {
     absl::StrAppend(&markdown,
-                    ". Aliases: ", connector::EscapeMarkdown(*object.aliases));
+                    ". Aliases: ", connector::EscapeMarkdown(object.aliases));
   }
   absl::StrAppend(&markdown, ".\n");
   return Render(request, markdown, object.path);
@@ -237,7 +237,7 @@ Choice EntryChoice(const Entry& entry) {
 Choice ObjectChoice(const Object& object) {
   return {.title = absl::StrCat(object.signature, " (", object.kind, ")"),
           .breadcrumb = object.breadcrumb,
-          .body = object.summary.value_or(""),
+          .body = object.summary,
           .path = object.path,
           .object = object};
 }

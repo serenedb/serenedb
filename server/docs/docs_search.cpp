@@ -141,8 +141,6 @@ Layout ReadLayout(std::span<const IndexFile> files) {
   return layout;
 }
 
-constexpr std::string_view kNull = "\\N";
-
 std::string EscapeField(std::string_view text) {
   std::string out;
   out.reserve(text.size());
@@ -235,10 +233,8 @@ class DocsIndex final : public duckdb::ObjectCacheEntry {
     _objects = ReadObjects(files);
     for (size_t i = 0; i < _objects.size(); ++i) {
       _by_name[absl::AsciiStrToLower(_objects[i].name)].push_back(i);
-      if (const auto& aliases = _objects[i].aliases) {
-        for (const auto alias : Aliases(*aliases)) {
-          _by_name[absl::AsciiStrToLower(alias)].push_back(i);
-        }
+      for (const auto alias : Aliases(_objects[i].aliases)) {
+        _by_name[absl::AsciiStrToLower(alias)].push_back(i);
       }
     }
     irs::SpanDirectory::Files views;
@@ -1093,35 +1089,22 @@ std::vector<Entry> Lookup(duckdb::DatabaseInstance& db, std::string_view name,
   });
 }
 
-std::array<std::optional<std::string_view>, kObjectFields> ObjectFields(
-  const Object& object) {
-  const auto nullable = [](const std::optional<std::string>& text) {
-    return text ? std::optional<std::string_view>{*text} : std::nullopt;
-  };
-  return {object.kind,
-          object.name,
-          object.signature,
-          nullable(object.summary),
-          nullable(object.aliases),
-          object.path,
-          object.page,
-          nullable(object.category),
-          object.breadcrumb};
+std::array<std::string_view, kObjectFields> ObjectFields(const Object& object) {
+  return {object.kind,    object.name,     object.signature,
+          object.summary, object.aliases,  object.path,
+          object.page,    object.category, object.breadcrumb};
 }
 
 Object ObjectFromFields(ObjectRow fields) {
-  const auto text = [&](size_t i) {
-    return std::move(fields[i]).value_or(std::string{});
-  };
-  return {.kind = text(0),
-          .name = text(1),
-          .signature = text(2),
+  return {.kind = std::move(fields[0]),
+          .name = std::move(fields[1]),
+          .signature = std::move(fields[2]),
           .summary = std::move(fields[3]),
           .aliases = std::move(fields[4]),
-          .path = text(5),
-          .page = text(6),
+          .path = std::move(fields[5]),
+          .page = std::move(fields[6]),
           .category = std::move(fields[7]),
-          .breadcrumb = text(8)};
+          .breadcrumb = std::move(fields[8])};
 }
 
 std::string EncodeObjects(std::span<const Object> objects) {
@@ -1129,11 +1112,10 @@ std::string EncodeObjects(std::span<const Object> objects) {
   for (const auto& object : objects) {
     absl::StrAppend(
       &out,
-      absl::StrJoin(
-        ObjectFields(object), "\t",
-        [](std::string* line, const std::optional<std::string_view>& field) {
-          line->append(field ? EscapeField(*field) : std::string{kNull});
-        }),
+      absl::StrJoin(ObjectFields(object), "\t",
+                    [](std::string* line, std::string_view field) {
+                      line->append(EscapeField(field));
+                    }),
       "\n");
   }
   return out;
@@ -1149,11 +1131,7 @@ std::vector<Object> DecodeObjects(std::string_view text) {
                       ERR_MSG("malformed ", kObjectsFile, " line: ", line));
     }
     ObjectRow row;
-    for (size_t i = 0; i < row.size(); ++i) {
-      if (fields[i] != kNull) {
-        row[i] = UnescapeField(fields[i]);
-      }
-    }
+    absl::c_transform(fields, row.begin(), UnescapeField);
     objects.push_back(ObjectFromFields(std::move(row)));
   }
   return objects;
@@ -1197,11 +1175,7 @@ std::vector<std::string> CompleteName(duckdb::DatabaseInstance& db,
         continue;
       }
       offer(object.name);
-      if (object.aliases) {
-        for (const auto alias : Aliases(*object.aliases)) {
-          offer(alias);
-        }
-      }
+      absl::c_for_each(Aliases(object.aliases), offer);
     }
     absl::c_for_each(extra, offer);
     std::ranges::stable_sort(names, {}, [](const std::string& name) {

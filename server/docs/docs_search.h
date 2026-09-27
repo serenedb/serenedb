@@ -54,20 +54,19 @@ struct Object {
   std::string kind;
   std::string name;
   std::string signature;
-  std::optional<std::string> summary;
-  std::optional<std::string> aliases;
+  std::string summary;
+  std::string aliases;
   std::string path;
   std::string page;
-  std::optional<std::string> category;
+  std::string category;
   std::string breadcrumb;
 };
 
 inline constexpr size_t kObjectFields = 9;
 
-std::array<std::optional<std::string_view>, kObjectFields> ObjectFields(
-  const Object& object);
+std::array<std::string_view, kObjectFields> ObjectFields(const Object& object);
 
-using ObjectRow = std::array<std::optional<std::string>, kObjectFields>;
+using ObjectRow = std::array<std::string, kObjectFields>;
 
 Object ObjectFromFields(ObjectRow fields);
 std::string EncodeObjects(std::span<const Object> objects);

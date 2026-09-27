@@ -282,9 +282,9 @@ duckdb::Value Text(std::string_view text) {
   return duckdb::Value{std::string{text}};
 }
 
-duckdb::Value Nullable(const std::optional<std::string>& text) {
-  return text ? duckdb::Value{*text}
-              : duckdb::Value{duckdb::LogicalType::VARCHAR};
+duckdb::Value Nullable(const std::string& text) {
+  return text.empty() ? duckdb::Value{duckdb::LogicalType::VARCHAR}
+                      : duckdb::Value{text};
 }
 
 duckdb::Value ObjectCell(const Object& object, Column column) {

@@ -88,12 +88,8 @@ ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::BinaryDeserializer& d,
   const auto file_offset = d.ReadProperty<uint64_t>(2, "file_offset");
   const auto byte_size = d.ReadProperty<uint64_t>(3, "byte_size");
   auto stats = d.ReadProperty<duckdb::BaseStatistics>(4, "statistics");
-  const duckdb::CompressionFunction* codec =
-    codecs::GetCodec(compression_type, physical);
-  if (!codec) {
-    auto& cfg = duckdb::DBConfig::GetConfig(d.Get<duckdb::DatabaseInstance&>());
-    codec = cfg.TryGetCompressionFunction(compression_type, physical).get();
-  }
+  const auto* codec = codecs::GetCodec(d.Get<duckdb::DatabaseInstance&>(),
+                                       compression_type, physical);
   if (!codec) [[unlikely]] {
     throw IndexError{absl::StrCat(
       "Column block uses compression ", static_cast<uint32_t>(compression_type),
@@ -332,8 +328,7 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
 
   ReadContext::CacheSlot slot;
   if (_touched && duckdb::IsSereneDBCompressionType(codec.type)) {
-    slot = {.key = DictionaryCacheKey(w.block),
-            .touched = &_touched[w.block]};
+    slot = {.key = DictionaryCacheKey(w.block), .touched = &_touched[w.block]};
   }
   auto handle = ctx.RegisterColBlock(m.file_offset, byte_size, std::move(slot));
   auto segment = std::make_unique<duckdb::ColumnSegment>(
@@ -780,10 +775,9 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta,
   switch (meta.type.id()) {
     case duckdb::LogicalTypeId::VARIANT:
       SDB_ASSERT(children.empty());
-      col = std::make_unique<VariantColumnReader>(meta.id, std::move(meta.type),
-                                                  std::move(validity),
-                                                  std::move(meta.variant_rgs),
-                                                  file_id);
+      col = std::make_unique<VariantColumnReader>(
+        meta.id, std::move(meta.type), std::move(validity),
+        std::move(meta.variant_rgs), file_id);
       break;
     case duckdb::LogicalTypeId::UNION:
     case duckdb::LogicalTypeId::STRUCT:

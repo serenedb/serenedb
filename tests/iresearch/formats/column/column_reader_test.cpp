@@ -1244,6 +1244,157 @@ std::vector<duckdb::Value> ScanVariantAll(const irs::ColumnReader& col,
   return out;
 }
 
+void WriteViaSql(duckdb::DatabaseInstance& db, irs::Directory& dir,
+                 std::string_view segment, irs::field_id id,
+                 const duckdb::LogicalType& type, const std::string& sql,
+                 uint32_t rg_size, std::vector<duckdb::Value>& expected) {
+  irs::ColWriter w{dir, segment, db};
+  auto& cw = w.OpenColumn(id, type, /*skip_validity=*/false, rg_size);
+  duckdb::Connection con{db};
+  auto result = con.Query(sql);
+  ASSERT_FALSE(result->HasError()) << result->GetError();
+  while (auto chunk = result->Fetch()) {
+    if (chunk->size() == 0) {
+      continue;
+    }
+    ASSERT_EQ(chunk->data[0].GetType(), type);
+    cw.Append(chunk->data[0], chunk->size());
+    for (duckdb::idx_t k = 0; k < chunk->size(); ++k) {
+      expected.emplace_back(chunk->GetValue(0, k));
+    }
+  }
+  w.Commit(0);
+}
+
+std::vector<duckdb::Value> ScanValues(const irs::ColumnReader& col,
+                                      irs::ReadContext& ctx) {
+  auto state = col.InitScan(ctx);
+  std::vector<duckdb::Value> out;
+  const auto total = col.RowCount();
+  out.reserve(total);
+  uint64_t pos = 0;
+  while (pos < total) {
+    const auto take =
+      std::min<duckdb::idx_t>(total - pos, STANDARD_VECTOR_SIZE);
+    duckdb::Vector result{col.Type(), STANDARD_VECTOR_SIZE};
+    col.Scan(state, result, take);
+    for (duckdb::idx_t k = 0; k < take; ++k) {
+      out.emplace_back(result.GetValue(k));
+    }
+    pos += take;
+  }
+  return out;
+}
+
+void ExpectGathered(const irs::ColumnReader& col, irs::ReadContext& ctx,
+                    const std::vector<duckdb::Value>& expected,
+                    const Rows& rows, bool whole_output) {
+  auto state = col.InitScan(ctx);
+  duckdb::Vector result{col.Type(), STANDARD_VECTOR_SIZE};
+  irs::column_internal::GatherRows(col, state, rows, result, 0, whole_output);
+  for (size_t i = 0; i < rows.size(); ++i) {
+    const auto& want = expected[rows[i]];
+    const auto got = result.GetValue(i);
+    EXPECT_EQ(want.IsNull(), got.IsNull()) << "row " << rows[i];
+    if (!want.IsNull()) {
+      EXPECT_EQ(want.ToString(), got.ToString()) << "row " << rows[i];
+    }
+  }
+}
+
+uint64_t ElementCount(const std::vector<duckdb::Value>& values) {
+  uint64_t n = 0;
+  for (const auto& v : values) {
+    if (!v.IsNull()) {
+      n += duckdb::ListValue::GetChildren(v).size();
+    }
+  }
+  return n;
+}
+
+TEST_F(ColumnReaderTest, RepeatedMapsAreStoredOnce) {
+  const auto type = duckdb::LogicalType::MAP(duckdb::LogicalType::VARCHAR,
+                                             duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "mseg", 40, type,
+              "SELECT CASE WHEN i % 11 = 0 THEN NULL WHEN i % 17 = 0 THEN "
+              "map([], [])::MAP(VARCHAR, VARCHAR) ELSE MAP {'service': 'svc-' "
+              "|| (i // 997 % 7), 'host': 'h-' || (i % 13), 'env': 'prod'} END "
+              "FROM range(20000) t(i)",
+              4096, expected);
+  ASSERT_EQ(expected.size(), 20000u);
+
+  irs::ColReader r{dir, "mseg", Db()};
+  const auto* col = r.Column(40);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), 20000u);
+  ASSERT_NE(col->Child(), nullptr);
+  EXPECT_LT(col->Child()->RowCount() * 10, ElementCount(expected));
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{0, 1, 2, 11, 17, 4095, 4096, 4097, 9000, 13000, 19999}},
+                 false);
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{8200, 8201, 8205, 8250, 8300, 9000, 10000}}, true);
+}
+
+TEST_F(ColumnReaderTest, RepeatedListsGatherAndSkip) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "lseg", 41, type,
+              "SELECT CASE WHEN i % 9 = 0 THEN NULL ELSE ['a' || (i % 5), 'b' "
+              "|| (i % 3), repeat('x', (i % 4) * 20)] END FROM range(12000) "
+              "t(i)",
+              1024, expected);
+  irs::ColReader r{dir, "lseg", Db()};
+  const auto* col = r.Column(41);
+  ASSERT_NE(col, nullptr);
+  EXPECT_LT(col->Child()->RowCount() * 10, ElementCount(expected));
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  Rows sparse;
+  for (uint64_t g = 3; g < 12000; g += 97) {
+    sparse.v.push_back(g);
+  }
+  ExpectGathered(*col, r.Ctx(), expected, sparse, false);
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{5000, 5001, 5002, 5003, 5100, 6000, 7000}}, true);
+}
+
+TEST_F(ColumnReaderTest, RepeatedNestedLists) {
+  const auto type = duckdb::LogicalType::LIST(
+    duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT));
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "nseg", 42, type,
+              "SELECT CASE WHEN i % 13 = 0 THEN NULL ELSE [[i % 3, i % 2], "
+              "[i % 4], []] END FROM range(9000) t(i)",
+              2048, expected);
+  irs::ColReader r{dir, "nseg", Db()};
+  const auto* col = r.Column(42);
+  ASSERT_NE(col, nullptr);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{1, 2, 13, 2047, 2048, 2049, 4500, 8999}}, false);
+}
+
+TEST_F(ColumnReaderTest, UniqueListsKeepEveryRow) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "useg", 43, type,
+              "SELECT CASE WHEN i % 7 = 0 THEN NULL ELSE ['u' || i, 'v' || (i "
+              "* 31)] END FROM range(10000) t(i)",
+              4096, expected);
+  irs::ColReader r{dir, "useg", Db()};
+  const auto* col = r.Column(43);
+  ASSERT_NE(col, nullptr);
+  EXPECT_EQ(col->Child()->RowCount(), ElementCount(expected));
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected, Rows{{1, 7, 8, 4096, 9999}}, false);
+}
+
 // VARIANT, shredding disabled: many unshredded row groups round-trip.
 TEST_F(ColumnReaderTest, VariantRoundTripUnshredded) {
   SetShreddingSize(Db(), -1);

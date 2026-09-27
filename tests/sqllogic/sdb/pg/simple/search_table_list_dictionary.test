@@ -1,0 +1,68 @@
+statement ok
+CREATE TABLE list_dict (a INTEGER PRIMARY KEY, attrs MAP(VARCHAR, VARCHAR), tags VARCHAR[], nested INTEGER[][])
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO list_dict SELECT a,
+  CASE WHEN a % 11 = 0 THEN NULL WHEN a % 17 = 0 THEN map([], [])::MAP(VARCHAR, VARCHAR) ELSE MAP {'service': 'svc-' || (a // 997 % 7), 'host': 'h-' || (a % 13)} END,
+  CASE WHEN a % 9 = 0 THEN NULL ELSE ['t' || (a % 5), 'u' || (a % 3)] END,
+  CASE WHEN a % 13 = 0 THEN NULL ELSE [[a % 3, a % 2], [a % 4], []] END
+FROM range(20000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) list_dict;
+
+query
+SELECT count(*) FROM list_dict
+WHERE attrs IS DISTINCT FROM (CASE WHEN a % 11 = 0 THEN NULL WHEN a % 17 = 0 THEN map([], [])::MAP(VARCHAR, VARCHAR) ELSE MAP {'service': 'svc-' || (a // 997 % 7), 'host': 'h-' || (a % 13)} END)
+   OR tags IS DISTINCT FROM (CASE WHEN a % 9 = 0 THEN NULL ELSE ['t' || (a % 5), 'u' || (a % 3)] END)
+   OR nested IS DISTINCT FROM (CASE WHEN a % 13 = 0 THEN NULL ELSE [[a % 3, a % 2], [a % 4], []] END);
+----
+count
+0
+
+query
+SELECT attrs::VARCHAR AS attrs, tags::VARCHAR AS tags, nested::VARCHAR AS nested FROM list_dict WHERE a = 12345;
+----
+attrs	tags	nested
+{service=svc-5, host=h-8}	[t0, u0]	[[0, 1], [1], []]
+
+query
+SELECT count(*) FROM list_dict WHERE element_at(attrs, 'service') = ['svc-3'];
+----
+count
+2558
+
+statement ok
+INSERT INTO list_dict SELECT a,
+  CASE WHEN a % 11 = 0 THEN NULL ELSE MAP {'service': 'svc-' || (a // 997 % 7), 'host': 'h-' || (a % 13)} END,
+  ['t' || (a % 5)],
+  [[a % 3]]
+FROM range(20000, 30000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) list_dict;
+
+statement ok
+VACUUM (COMPACT_TABLE) list_dict;
+
+query
+SELECT count(*) FROM list_dict
+WHERE a < 20000 AND (attrs IS DISTINCT FROM (CASE WHEN a % 11 = 0 THEN NULL WHEN a % 17 = 0 THEN map([], [])::MAP(VARCHAR, VARCHAR) ELSE MAP {'service': 'svc-' || (a // 997 % 7), 'host': 'h-' || (a % 13)} END)
+   OR tags IS DISTINCT FROM (CASE WHEN a % 9 = 0 THEN NULL ELSE ['t' || (a % 5), 'u' || (a % 3)] END)
+   OR nested IS DISTINCT FROM (CASE WHEN a % 13 = 0 THEN NULL ELSE [[a % 3, a % 2], [a % 4], []] END));
+----
+count
+0
+
+query
+SELECT count(*) FROM list_dict
+WHERE a >= 20000 AND (attrs IS DISTINCT FROM (CASE WHEN a % 11 = 0 THEN NULL ELSE MAP {'service': 'svc-' || (a // 997 % 7), 'host': 'h-' || (a % 13)} END)
+   OR tags IS DISTINCT FROM ['t' || (a % 5)]
+   OR nested IS DISTINCT FROM [[a % 3]]);
+----
+count
+0
+
+statement ok
+DROP TABLE list_dict;

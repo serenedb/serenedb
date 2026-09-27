@@ -33,6 +33,7 @@
 #include <duckdb/storage/table/scan_state.hpp>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -115,12 +116,21 @@ struct ColumnMeta {
   std::vector<VariantRgMeta> variant_rgs;
   duckdb::shared_ptr<duckdb::HyperLogLog> hyperloglog;
   uint64_t write_list_running = 0;
+  uint64_t write_list_distinct = 0;
 };
 
 void SerializeColumnMeta(duckdb::Serializer& s, const ColumnMeta& meta);
 ColumnMeta DeserializeColumnMeta(duckdb::Deserializer& d);
 
 struct VariantScanState;
+
+struct ListDictionary {
+  uint64_t begin = 0;
+  uint64_t end = 0;
+  uint64_t ends_pos = 0;
+  uint64_t elems_pos = 0;
+  std::optional<duckdb::Vector> lists;
+};
 
 class ColumnReader {
  public:
@@ -157,6 +167,7 @@ class ColumnReader {
     bool initialized = false;
     duckdb::SelectionVector sel;
     std::unique_ptr<VectorScratch> list_offsets;
+    std::unique_ptr<ListDictionary> list_dict;
   };
 
   virtual ~ColumnReader() = default;

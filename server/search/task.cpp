@@ -239,6 +239,11 @@ std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
         return yaclib::MakeFuture(false);
       }
       SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
+      SDB_WAIT_ON_FAILURE("pause_compaction_run");
+      if (idx->GetTasksSettings().compaction_interval_msec == 0) {
+        engine.ReleaseCompaction();
+        return yaclib::MakeFuture(false);
+      }
       auto policy = MakeTierPolicy(idx->GetTasksSettings(), small);
       return DoCompaction(std::move(idx), std::move(policy), engine);
     }));

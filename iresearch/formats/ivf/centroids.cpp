@@ -21,7 +21,7 @@
 #include "iresearch/formats/ivf/centroids.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/random/random.h>
+#include <absl/random/internal/pcg_engine.h>
 
 #include <algorithm>
 #include <array>
@@ -91,8 +91,7 @@ std::vector<float> GatherTrainingSample(const ColumnReader& vector_column,
                                         ReadContext& ctx, uint64_t n_train,
                                         uint32_t seed) {
   std::vector<float> sample(static_cast<size_t>(n_train) * d);
-  // TODO(codeworse): replace with PCG
-  absl::InsecureBitGen rng(std::seed_seq{seed});
+  absl::random_internal::pcg64_2018_engine rng{seed};
   uint64_t seen = 0;
   const auto reservoir_sink = [&](uint64_t /*first*/, duckdb::idx_t n,
                                   const float* data,
@@ -123,7 +122,7 @@ std::vector<float> GatherTrainingSample(const ColumnReader& vector_column,
   } else {
     std::vector<size_t> order(n_seg);
     std::iota(order.begin(), order.end(), size_t{0});
-    absl::InsecureBitGen seg_rng(std::seed_seq{seed});
+    absl::random_internal::pcg64_2018_engine seg_rng{seed};
     std::shuffle(order.begin(), order.end(), seg_rng);
 
     ColumnReader::VectorScratch scratch{vector_column.Type()};
@@ -224,9 +223,7 @@ void ForEachGroup(std::span<const size_t> ids, size_t n_groups, Fn&& fn) {
 
 void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
            size_t d, std::span<size_t> ids, const BuildSettings& settings) {
-  const std::vector<float> rotation =
-    MakeRotation(static_cast<uint32_t>(d), kTrainSeed);
-  const float* rot = rotation.data();
+  std::vector<float> rotation;
   struct CentroidsEntry {
     size_t parent;
     std::span<float> sample;
@@ -251,7 +248,7 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
           settings.metric, entry.sample.data(), sample_size,
           /*k=*/1, static_cast<uint32_t>(d), kTrainSeed,
           static_cast<uint32_t>(kLeafClusterIters),
-          static_cast<uint32_t>(kClusterRedos), ClusteringAlgo::Auto, rot);
+          static_cast<uint32_t>(kClusterRedos), ClusteringAlgo::Auto, nullptr);
         nodes.emplace_back(CentroidsBuilder::Node{
           .centroids = std::move(centroids), .children = {0}, .leafs = 1});
       }
@@ -259,8 +256,12 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
       continue;
     }
     const size_t n_clusters = settings.Fanout(sample_size);
-    auto centroids = BuildAndSplit(entry.sample, d, entry.ids, n_clusters,
-                                   settings.metric, settings.niter, rot);
+    if (rotation.empty()) {
+      rotation = MakeRotation(static_cast<uint32_t>(d), kTrainSeed);
+    }
+    auto centroids =
+      BuildAndSplit(entry.sample, d, entry.ids, n_clusters, settings.metric,
+                    settings.niter, rotation.data());
     size_t n_built = centroids.size() / d;
 
     if (n_built == 1) {

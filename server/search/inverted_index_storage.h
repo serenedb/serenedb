@@ -81,6 +81,7 @@ struct WalCursor {
 // never reissued.
 void RemoveDroppedStorageDir(const std::filesystem::path& path,
                              size_t parent_levels);
+bool CreateStorageDir(const std::filesystem::path& path, std::error_code& ec);
 
 // Physical representation of a search index (InvertedIndex). Owns the
 // iresearch writer/reader and all mutable index state; lives in the

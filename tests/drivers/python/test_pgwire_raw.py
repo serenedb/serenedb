@@ -427,6 +427,19 @@ def test_fast_path_function_call_rejected_gracefully(conn):
     assert rows(m2) and rows(m2)[0].endswith(b"1")
 
 
+def test_invalid_message_type_is_fatal_then_closed():
+    c = WireConn()
+    try:
+        c.send("z")
+        t, p = c.read_msg()
+        assert t == "E", (t, p)
+        assert b"SFATAL\0" in p and b"C08P01\0" in p, p
+        c.sock.settimeout(5)
+        assert c.sock.recv(1) == b""
+    finally:
+        c.sock.close()
+
+
 def test_set_local_revert_not_reported(conn):
     # PG emits GUC ParameterStatus only at ReadyForQuery, after the implicit
     # block commit reverts a SET LOCAL -- so a set-then-reverted SET LOCAL nets

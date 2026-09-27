@@ -224,9 +224,7 @@ void ForEachGroup(std::span<const size_t> ids, size_t n_groups, Fn&& fn) {
 
 void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
            size_t d, std::span<size_t> ids, const BuildSettings& settings) {
-  const std::vector<float> rotation =
-    MakeRotation(static_cast<uint32_t>(d), kTrainSeed);
-  const float* rot = rotation.data();
+  std::vector<float> rotation;
   struct CentroidsEntry {
     size_t parent;
     std::span<float> sample;
@@ -251,7 +249,7 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
           settings.metric, entry.sample.data(), sample_size,
           /*k=*/1, static_cast<uint32_t>(d), kTrainSeed,
           static_cast<uint32_t>(kLeafClusterIters),
-          static_cast<uint32_t>(kClusterRedos), ClusteringAlgo::Auto, rot);
+          static_cast<uint32_t>(kClusterRedos), ClusteringAlgo::Auto, nullptr);
         nodes.emplace_back(CentroidsBuilder::Node{
           .centroids = std::move(centroids), .children = {0}, .leafs = 1});
       }
@@ -259,8 +257,12 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
       continue;
     }
     const size_t n_clusters = settings.Fanout(sample_size);
-    auto centroids = BuildAndSplit(entry.sample, d, entry.ids, n_clusters,
-                                   settings.metric, settings.niter, rot);
+    if (rotation.empty()) {
+      rotation = MakeRotation(static_cast<uint32_t>(d), kTrainSeed);
+    }
+    auto centroids =
+      BuildAndSplit(entry.sample, d, entry.ids, n_clusters, settings.metric,
+                    settings.niter, rotation.data());
     size_t n_built = centroids.size() / d;
 
     if (n_built == 1) {

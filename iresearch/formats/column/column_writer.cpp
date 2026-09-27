@@ -201,7 +201,7 @@ class ListKeys {
              uint64_t offset_b, uint64_t length) const {
     const auto& a = _chunks[chunk_a];
     const auto& b = _chunks[chunk_b];
-    for (size_t l = 0; l < a.size(); ++l) {
+    for (size_t l = a.size(); l-- > 0;) {
       for (uint64_t k = 0; k < length; ++k) {
         if (!a[l].Equal(offset_a + k, b[l], offset_b + k)) {
           return false;
@@ -252,9 +252,10 @@ class ListKeys {
         const auto& x = *reinterpret_cast<const duckdb::string_t*>(At(e));
         const auto& y =
           *reinterpret_cast<const duckdb::string_t*>(other.At(f));
-        return x.GetSize() == y.GetSize() &&
-               (x.GetData() == y.GetData() ||
-                std::memcmp(x.GetData(), y.GetData(), x.GetSize()) == 0);
+        if (!x.IsInlined() && x.GetData() == y.GetData()) {
+          return x.GetSize() == y.GetSize();
+        }
+        return x == y;
       }
       return std::memcmp(At(e), other.At(f), width) == 0;
     }

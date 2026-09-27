@@ -20,6 +20,8 @@
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 
+#define LZ4_STATIC_LINKING_ONLY
+#define LZ4_HC_STATIC_LINKING_ONLY
 #define ZSTD_STATIC_LINKING_ONLY
 
 #include <lz4.h>
@@ -151,16 +153,13 @@ void LeafCompressor<ByteCodec::Lz4>::LoadDictionary(std::string_view dictionary,
   if (_level <= 1) {
     if (!_dict) {
       _dict = LZ4_createStream();
-      _work = LZ4_createStream();
-      SDB_ENSURE(_dict && _work, "lz4: cannot create a dictionary stream");
+      SDB_ENSURE(_dict, "lz4: cannot create a dictionary stream");
     }
     LZ4_loadDict(_dict, dictionary.data(), size);
   } else {
     if (!_hc_dict) {
       _hc_dict = LZ4_createStreamHC();
-      _hc_work = LZ4_createStreamHC();
-      SDB_ENSURE(_hc_dict && _hc_work,
-                 "lz4: cannot create a dictionary stream");
+      SDB_ENSURE(_hc_dict, "lz4: cannot create a dictionary stream");
     }
     LZ4_resetStreamHC_fast(_hc_dict, _level);
     LZ4_loadDictHC(_hc_dict, dictionary.data(), size);
@@ -175,18 +174,33 @@ size_t LeafCompressor<ByteCodec::Lz4>::Compress(const char* src, size_t size,
   const auto src_size = static_cast<int>(size);
   const auto dst_capacity = static_cast<int>(capacity);
   int n = 0;
-  if (!_dictionary) {
-    n = _level <= 1
-          ? LZ4_compress_default(src, dst, src_size, dst_capacity)
-          : LZ4_compress_HC(src, dst, src_size, dst_capacity, _level);
-  } else if (_level <= 1) {
-    LZ4_resetStream_fast(_work);
-    LZ4_attach_dictionary(_work, _dict);
-    n = LZ4_compress_fast_continue(_work, src, dst, src_size, dst_capacity, 1);
+  if (_level <= 1) {
+    if (!_work) {
+      _work = LZ4_createStream();
+      SDB_ENSURE(_work, "lz4: cannot create a compression stream");
+    }
+    if (_dictionary) {
+      LZ4_resetStream_fast(_work);
+      LZ4_attach_dictionary(_work, _dict);
+      n = LZ4_compress_fast_continue(_work, src, dst, src_size, dst_capacity,
+                                     1);
+    } else {
+      n = LZ4_compress_fast_extState_fastReset(_work, src, dst, src_size,
+                                               dst_capacity, 1);
+    }
   } else {
-    LZ4_resetStreamHC_fast(_hc_work, _level);
-    LZ4_attach_HC_dictionary(_hc_work, _hc_dict);
-    n = LZ4_compress_HC_continue(_hc_work, src, dst, src_size, dst_capacity);
+    if (!_hc_work) {
+      _hc_work = LZ4_createStreamHC();
+      SDB_ENSURE(_hc_work, "lz4: cannot create a compression stream");
+    }
+    if (_dictionary) {
+      LZ4_resetStreamHC_fast(_hc_work, _level);
+      LZ4_attach_HC_dictionary(_hc_work, _hc_dict);
+      n = LZ4_compress_HC_continue(_hc_work, src, dst, src_size, dst_capacity);
+    } else {
+      n = LZ4_compress_HC_extStateHC_fastReset(_hc_work, src, dst, src_size,
+                                               dst_capacity, _level);
+    }
   }
   SDB_ENSURE(n > 0, "lz4 compression failed");
   return static_cast<size_t>(n);

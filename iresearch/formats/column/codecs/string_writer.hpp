@@ -49,6 +49,7 @@ struct StringTuning {
   double bytes_per_input = 0;
   bool levels_tuned = false;
   uint8_t level[kByteCodecCount]{};
+  bool wide[kByteCodecCount]{};
   RatioHistory history[kByteCodecCount][2]{};
 };
 

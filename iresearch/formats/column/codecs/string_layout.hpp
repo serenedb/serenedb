@@ -41,6 +41,10 @@ inline constexpr size_t kHeaderSize = 72;
 inline constexpr size_t kFrameMetaSize = 16;
 inline constexpr size_t kFrameRawBytes = 64 * 1024;
 inline constexpr size_t kFsstFrameRawBytes = 16 * 1024;
+inline constexpr size_t kFrameDictionaryBytes = 32 * 1024;
+inline constexpr size_t kDictionaryFrameBytes = 16 * 1024;
+inline constexpr size_t kZstdDictionaryFrameBytes = 32 * 1024;
+inline constexpr uint8_t kFrameDictionary = 1;
 inline constexpr uint32_t kChainRestart = 16;
 inline constexpr duckdb::idx_t kGroup =
   duckdb::BitpackingPrimitives::BITPACKING_ALGORITHM_GROUP_SIZE;
@@ -62,6 +66,7 @@ struct Header {
   uint8_t codes_encoding;
   uint8_t run_width;
   uint8_t lcp_width;
+  uint8_t flags;
   uint32_t row_count;
   uint32_t entry_count;
   uint32_t frame_count;
@@ -105,6 +110,7 @@ struct Header {
     h.off_data = Load<uint32_t>(p + 52);
     h.data_size = Load<uint32_t>(p + 56);
     h.lcp_width = Load<uint8_t>(p + 60);
+    h.flags = Load<uint8_t>(p + 61);
     h.raw_bytes = Load<uint64_t>(p + 64);
     const bool rle =
       h.codes_encoding == static_cast<uint8_t>(CodesEncoding::Rle);
@@ -118,6 +124,8 @@ struct Header {
         h.codes_encoding <= static_cast<uint8_t>(CodesEncoding::Rle) &&
         h.code_width <= 32 && h.length_width <= 32 && h.run_width <= 32 &&
         h.lcp_width <= 32 &&
+        (h.flags == 0 || (h.flags == kFrameDictionary && h.frame_count > 1 &&
+                          h.codec != static_cast<uint8_t>(ByteCodec::Fsst))) &&
         static_cast<uint64_t>(h.off_data) + h.data_size <= segment_size &&
         h.off_frames + static_cast<uint64_t>(h.frame_count) * kFrameMetaSize <=
           h.off_lengths &&
@@ -162,7 +170,7 @@ struct Header {
     Store<uint32_t>(off_data, p + 52);
     Store<uint32_t>(data_size, p + 56);
     Store<uint8_t>(lcp_width, p + 60);
-    Store<uint8_t>(0, p + 61);
+    Store<uint8_t>(flags, p + 61);
     Store<uint16_t>(0, p + 62);
     Store<uint64_t>(raw_bytes, p + 64);
   }

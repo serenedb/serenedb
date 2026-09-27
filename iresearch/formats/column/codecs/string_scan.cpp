@@ -412,20 +412,44 @@ struct ScanState final : duckdb::SegmentScanState {
     }
   }
 
+  bool FrameDictionary() const noexcept {
+    return header.flags == kFrameDictionary;
+  }
+
+  std::string_view DictionaryFor(uint32_t f) const noexcept {
+    if (f == 0 || !FrameDictionary()) {
+      return {};
+    }
+    return {heap + frame_off[0], frames[0].raw_len};
+  }
+
   void DecodeFrame(uint32_t f) {
     SDB_ASSERT(!decoded[f]);
+    if (f != 0 && FrameDictionary() && !decoded[0]) {
+      DecodeFrame(0);
+    }
     const auto& m = frames[f];
     const auto end = FrameEnd(f);
     char* out = heap + frame_off[f];
     switch (static_cast<ByteCodec>(header.codec)) {
       case ByteCodec::Lz4:
-        DecodeBlobFrame(*lz4, m, end, out);
+        if (f > 1 && FrameDictionary()) {
+          const auto dictionary = DictionaryFor(f);
+          char* staging = Window(dictionary);
+          lz4->SetDictionary({staging - dictionary.size(), dictionary.size()});
+          DecodeBlobFrame(*lz4, m, end, out, staging);
+        } else {
+          lz4->SetDictionary(DictionaryFor(f));
+          DecodeBlobFrame(*lz4, m, end, out, out);
+        }
         break;
       case ByteCodec::Zstd:
-        DecodeBlobFrame(*zstd, m, end, out);
+        zstd->SetDictionary(DictionaryFor(f));
+        DecodeBlobFrame(*zstd, m, end, out, out);
         break;
       case ByteCodec::Zxc:
-        DecodeBlobFrame(*zxc, m, end, out);
+        zxc->SetDictionary(DictionaryFor(f));
+        DecodeBlobFrame(*zxc, m, end, out, out);
         break;
       case ByteCodec::Fsst:
         DecodeFsstFrame(m, end, out);
@@ -437,14 +461,29 @@ struct ScanState final : duckdb::SegmentScanState {
     }
   }
 
+  char* Window(std::string_view dictionary) {
+    if (!window) {
+      uint32_t largest = 0;
+      for (uint32_t f = 1; f < frames.size(); ++f) {
+        largest = std::max(largest, frames[f].raw_len);
+      }
+      window = duckdb::make_unsafe_uniq_array<char>(dictionary.size() + largest);
+      std::memcpy(window.get(), dictionary.data(), dictionary.size());
+    }
+    return window.get() + dictionary.size();
+  }
+
   template<typename Decompressor>
   void DecodeBlobFrame(Decompressor& d, const FrameMeta& m, uint32_t end,
-                       char* out) {
+                       char* out, char* staging) {
     SDB_ENSURE(
       d.Decompress(
         reinterpret_cast<const char*>(base + header.off_data) + m.comp_off,
-        m.comp_len, out, m.raw_len),
+        m.comp_len, staging, m.raw_len),
       "col codec: corrupted frame");
+    if (staging != out) {
+      std::memcpy(out, staging, m.raw_len);
+    }
     uint64_t off = 0;
     for (uint32_t e = m.first_entry; e < end; ++e) {
       const auto len = length_reader.At(e);
@@ -898,6 +937,7 @@ struct ScanState final : duckdb::SegmentScanState {
   std::vector<uint64_t> frame_off;
   std::vector<uint8_t> decoded;
   size_t decoded_count = 0;
+  duckdb::unsafe_unique_array<char> window;
   std::vector<uint32_t> group_base;
   std::vector<uint8_t> group_decoded;
   std::vector<uint32_t> group_enc_off;
@@ -1077,6 +1117,11 @@ struct FetchCache final : duckdb::SegmentScanState {
   size_t capacity = 0;
   duckdb::unsafe_unique_array<char> raw;
   std::vector<uint32_t> offsets;
+  bool dictionary_ready = false;
+  size_t dictionary_capacity = 0;
+  uint32_t dictionary_size = 0;
+  duckdb::unsafe_unique_array<char> dictionary;
+  char* frame_data = nullptr;
   std::optional<LeafDecompressor<ByteCodec::Lz4>> lz4;
   std::optional<LeafDecompressor<ByteCodec::Zstd>> zstd;
   std::optional<LeafDecompressor<ByteCodec::Zxc>> zxc;
@@ -1086,15 +1131,46 @@ struct FetchCache final : duckdb::SegmentScanState {
 
   template<typename Decompressor>
   void Decode(Decompressor& d, const FrameMeta& f, const Header& h,
-              const_data_ptr_t base, size_t want) {
+              const_data_ptr_t base, size_t want, bool with_dictionary) {
     SDB_ENSURE(static_cast<uint64_t>(f.comp_off) + f.comp_len <= h.data_size,
                "col codec: corrupted frame table");
+    if (with_dictionary && !dictionary_ready) {
+      const auto f0 = FrameMeta::Load(base + h.off_frames);
+      SDB_ENSURE(static_cast<uint64_t>(f0.comp_off) + f0.comp_len <=
+                   h.data_size,
+                 "col codec: corrupted frame table");
+      const size_t need = static_cast<size_t>(f0.raw_len) + f.raw_len;
+      if (dictionary_capacity < need) {
+        dictionary_capacity = std::max<size_t>(need, 1);
+        dictionary = duckdb::make_unsafe_uniq_array<char>(dictionary_capacity);
+      }
+      d.SetDictionary({});
+      SDB_ENSURE(
+        d.Decompress(
+          reinterpret_cast<const char*>(base + h.off_data) + f0.comp_off,
+          f0.comp_len, dictionary.get(), f0.raw_len),
+        "col codec: corrupted frame");
+      dictionary_size = f0.raw_len;
+      dictionary_ready = true;
+    }
+    if (with_dictionary && dictionary_capacity < dictionary_size + f.raw_len) {
+      dictionary_capacity = dictionary_size + f.raw_len;
+      auto grown = duckdb::make_unsafe_uniq_array<char>(dictionary_capacity);
+      std::memcpy(grown.get(), dictionary.get(), dictionary_size);
+      dictionary = std::move(grown);
+    }
+    d.SetDictionary(with_dictionary
+                      ? std::string_view{dictionary.get(), dictionary_size}
+                      : std::string_view{});
+    frame_data =
+      with_dictionary ? dictionary.get() + dictionary_size : raw.get();
     const auto* src =
       reinterpret_cast<const char*>(base + h.off_data) + f.comp_off;
     const size_t got =
       want == f.raw_len
-        ? (d.Decompress(src, f.comp_len, raw.get(), f.raw_len) ? f.raw_len : 0)
-        : d.DecompressPrefix(src, f.comp_len, raw.get(), want, f.raw_len);
+        ? (d.Decompress(src, f.comp_len, frame_data, f.raw_len) ? f.raw_len
+                                                                : 0)
+        : d.DecompressPrefix(src, f.comp_len, frame_data, want, f.raw_len);
     SDB_ENSURE(got >= want, "col codec: corrupted frame");
     decoded = std::min<size_t>(got, f.raw_len);
   }
@@ -1109,6 +1185,7 @@ FetchCache& CacheFor(duckdb::ColumnFetchState& state,
   if (cache.segment != &segment) {
     cache.segment = &segment;
     cache.frame = std::numeric_limits<uint32_t>::max();
+    cache.dictionary_ready = false;
     cache.fsst.reset();
   }
   return cache;
@@ -1237,31 +1314,32 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
   const size_t want = offset + len;
   if (cache.decoded < want) {
     const size_t target = cache.hits > 1 ? f.raw_len : want;
+    const bool with_dictionary = h.flags == kFrameDictionary && lo != 0;
     switch (static_cast<ByteCodec>(h.codec)) {
       case ByteCodec::Lz4:
         if (!cache.lz4) {
           cache.lz4.emplace();
         }
-        cache.Decode(*cache.lz4, f, h, base, target);
+        cache.Decode(*cache.lz4, f, h, base, target, with_dictionary);
         break;
       case ByteCodec::Zstd:
         if (!cache.zstd) {
           cache.zstd.emplace();
         }
-        cache.Decode(*cache.zstd, f, h, base, target);
+        cache.Decode(*cache.zstd, f, h, base, target, with_dictionary);
         break;
       case ByteCodec::Zxc:
         if (!cache.zxc) {
           cache.zxc.emplace();
         }
-        cache.Decode(*cache.zxc, f, h, base, target);
+        cache.Decode(*cache.zxc, f, h, base, target, with_dictionary);
         break;
       case ByteCodec::Fsst:
         SDB_UNREACHABLE();
     }
   }
   out[result_idx] = duckdb::StringVector::AddStringOrBlob(
-    result, cache.raw.get() + offset, len);
+    result, cache.frame_data + offset, len);
 }
 
 duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
@@ -1295,6 +1373,9 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   info["runs"] = absl::StrCat(h.run_count);
   info["entries"] = absl::StrCat(h.entry_count);
   info["frames"] = absl::StrCat(h.frame_count);
+  if (h.flags == kFrameDictionary) {
+    info["dictionary"] = "first_frame";
+  }
   info["raw_bytes"] = absl::StrCat(h.raw_bytes);
   info["data_bytes"] = absl::StrCat(h.data_size);
   return info;

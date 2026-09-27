@@ -391,11 +391,9 @@ void ForEachMatch(const DocsIndex& index, const irs::Filter& filter,
     if (!fetcher.Valid()) {
       continue;
     }
-    const auto last = irs::doc_limits::min() + docs_count;
-    for (auto doc = irs::doc_limits::min(); doc < last; ++doc) {
-      if (live->Contains(doc)) {
-        fn(fetcher, doc);
-      }
+    for (auto doc = live->Probe(irs::doc_limits::min());
+         !irs::doc_limits::eof(doc); doc = live->Probe(doc + 1)) {
+      fn(fetcher, doc);
     }
   }
 }
@@ -417,10 +415,14 @@ std::vector<Entry> CollectMatches(const DocsIndex& index,
   return out;
 }
 
+std::vector<Entry> CollectMatches(const DocsIndex& index,
+                                  const irs::Filter& filter, Content content) {
+  return CollectMatches(index, filter, content,
+                        [](std::string_view) { return true; });
+}
+
 std::vector<Entry> SortedByPath(std::vector<Entry> hits) {
-  absl::c_sort(hits, [](const Entry& lhs, const Entry& rhs) {
-    return lhs.path < rhs.path;
-  });
+  std::ranges::sort(hits, {}, &Entry::path);
   return hits;
 }
 
@@ -667,9 +669,8 @@ std::vector<Entry> RunScored(const DocsIndex& index, const irs::Filter& filter,
                                         /*score_prune=*/false, std::span{hits});
 
   hits.resize(std::min(matched, capacity));
-  absl::c_sort(hits, [](const irs::ScoreDoc& lhs, const irs::ScoreDoc& rhs) {
-    return std::tie(lhs.segment_idx, lhs.doc) <
-           std::tie(rhs.segment_idx, rhs.doc);
+  std::ranges::sort(hits, {}, [](const irs::ScoreDoc& hit) {
+    return std::tie(hit.segment_idx, hit.doc);
   });
 
   std::vector<std::optional<EntryFetcher>> fetchers(reader.size());
@@ -754,6 +755,53 @@ std::string Slug(std::string_view title) {
     }
   }
   return slug;
+}
+
+std::optional<std::string> SectionForAnchor(const DocsIndex& index,
+                                            std::string_view page,
+                                            std::string_view anchor) {
+  if (anchor.empty()) {
+    return std::nullopt;
+  }
+  const auto wanted = absl::AsciiStrToLower(anchor);
+  const auto call = absl::StrCat(wanted, "(");
+  std::optional<std::string> best;
+  int best_rank = 3;
+  for (const auto& section : SortedByPath(CollectMatches(
+         index, *PathPrefix(index.Fields(), absl::StrCat(page, "#")),
+         Content::Omit))) {
+    const auto slug = Slug(section.title);
+    const auto title = absl::AsciiStrToLower(section.title);
+    const int rank = slug == wanted                               ? 0
+                     : title == wanted || title.starts_with(call) ? 1
+                     : slug.starts_with(wanted)                   ? 2
+                                                                  : 3;
+    if (rank < best_rank) {
+      best_rank = rank;
+      best = section.path;
+    }
+  }
+  return best;
+}
+
+std::optional<std::string> OnlyPageNamed(const DocsIndex& index,
+                                         std::string_view page) {
+  const auto file = absl::StrCat("/", page.substr(page.find_last_of('/') + 1));
+  std::vector<std::string> pages;
+  for (const auto& entry :
+       CollectMatches(index, *PathPrefix(index.Fields(), ""), Content::Omit,
+                      [&](std::string_view found) {
+                        return found.substr(0, found.find('#')).ends_with(file);
+                      })) {
+    auto owner = entry.path.substr(0, entry.path.find('#'));
+    if (!absl::c_linear_search(pages, owner)) {
+      pages.push_back(std::move(owner));
+    }
+  }
+  if (pages.size() != 1) {
+    return std::nullopt;
+  }
+  return std::move(pages.front());
 }
 
 std::vector<Object> NamedObjects(const DocsIndex& index, std::string_view name,
@@ -985,29 +1033,9 @@ std::optional<Entry> ResolveLink(duckdb::DatabaseInstance& db,
       return std::nullopt;
     }
     const auto resolve = [&](std::string_view at) -> std::optional<Entry> {
-      if (!anchor.empty()) {
-        const auto wanted = absl::AsciiStrToLower(anchor);
-        const auto call = absl::StrCat(wanted, "(");
-        std::optional<std::string> best;
-        int best_rank = 3;
-        for (const auto& section : SortedByPath(CollectMatches(
-               index, *PathPrefix(index.Fields(), absl::StrCat(at, "#")),
-               Content::Omit, [](std::string_view) { return true; }))) {
-          const auto slug = Slug(section.title);
-          const auto title = absl::AsciiStrToLower(section.title);
-          const int rank = slug == wanted                               ? 0
-                           : title == wanted || title.starts_with(call) ? 1
-                           : slug.starts_with(wanted)                   ? 2
-                                                                        : 3;
-          if (rank < best_rank) {
-            best_rank = rank;
-            best = section.path;
-          }
-        }
-        if (best) {
-          if (auto entry = ExactPath(index, *best, content)) {
-            return entry;
-          }
+      if (const auto section = SectionForAnchor(index, at, anchor)) {
+        if (auto entry = ExactPath(index, *section, content)) {
+          return entry;
         }
       }
       return PageEntry(index, at, content);
@@ -1024,21 +1052,8 @@ std::optional<Entry> ResolveLink(duckdb::DatabaseInstance& db,
         }
       }
     }
-    const auto file = absl::StrCat(
-      "/", std::string_view{page}.substr(page.find_last_of('/') + 1));
-    std::vector<std::string> pages;
-    for (const auto& entry : CollectMatches(
-           index, *PathPrefix(index.Fields(), ""), Content::Omit,
-           [&](std::string_view found) {
-             return found.substr(0, found.find('#')).ends_with(file);
-           })) {
-      auto owner = entry.path.substr(0, entry.path.find('#'));
-      if (!absl::c_linear_search(pages, owner)) {
-        pages.push_back(std::move(owner));
-      }
-    }
-    if (pages.size() == 1) {
-      return resolve(pages.front());
+    if (const auto only = OnlyPageNamed(index, page)) {
+      return resolve(*only);
     }
     return std::nullopt;
   });
@@ -1067,8 +1082,7 @@ std::vector<Entry> Lookup(duckdb::DatabaseInstance& db, std::string_view name,
       }
       return absl::StartsWithIgnoreCase(entry.title, word) ? 2 : 3;
     };
-    auto hits = CollectMatches(index, *filter, Content::Omit,
-                               [](std::string_view) { return true; });
+    auto hits = CollectMatches(index, *filter, Content::Omit);
     if (hits.empty()) {
       return hits;
     }

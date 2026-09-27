@@ -258,11 +258,7 @@ struct BindData final : duckdb::TableFunctionData {
   Claim claim;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
-    auto copy = duckdb::make_uniq<BindData>();
-    copy->table = table;
-    copy->args = args;
-    copy->claim = claim;
-    return std::move(copy);
+    return duckdb::make_uniq<BindData>(*this);
   }
 
   bool Equals(const duckdb::FunctionData& other) const final {

@@ -43,6 +43,7 @@
 #include <ranges>
 #include <set>
 #include <shell_docs.hpp>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -313,8 +314,7 @@ std::vector<Choice> DirectoryChoices(duckdb::DatabaseInstance& db,
 
 std::string NameKey(std::string_view name) {
   auto key = absl::AsciiStrToLower(absl::StripAsciiWhitespace(name));
-  absl::c_replace(key, ' ', '_');
-  absl::c_replace(key, '-', '_');
+  absl::c_replace_if(key, [](char c) { return c == ' ' || c == '-'; }, '_');
   return key;
 }
 
@@ -432,6 +432,52 @@ std::vector<std::string> Names(duckdb::DatabaseInstance& db,
   return CompleteName(db, prefix, kind, kMaxCompletions, places);
 }
 
+struct Options {
+  bool search = false;
+  bool list = false;
+  bool all = false;
+  std::string kind;
+  std::string term;
+  bool url = false;
+};
+
+std::optional<Options> ParseOptions(std::span<const std::string> args,
+                                    std::string& out) {
+  Options options;
+  while (!args.empty() && (args.front() == "--" || IsFlag(args.front()))) {
+    const std::string_view flag = args.front();
+    args = args.subspan(1);
+    if (flag == "--") {
+      break;
+    }
+    if (flag == "-s" || flag == "--search") {
+      options.search = true;
+      break;
+    }
+    if (flag == "--kind") {
+      if (args.empty()) {
+        out = "Usage: .docs --kind KIND ?NAME?\n";
+        return std::nullopt;
+      }
+      options.kind = args.front();
+      args = args.subspan(1);
+    } else if (flag == "--list") {
+      options.list = true;
+    } else if (flag == "--all") {
+      options.all = true;
+    } else {
+      out = absl::StrCat("Unknown option: ", flag,
+                         "\n\nUsage: .docs ?--search|--list|--all|--kind KIND? "
+                         "?NAME|PATH|NUMBER?\n");
+      return std::nullopt;
+    }
+  }
+  const auto input = absl::StrJoin(args, " ");
+  options.term = SiteRoute(input);
+  options.url = options.term != input;
+  return options;
+}
+
 class Session {
  public:
   bool Run(const duckdb_shell::DocsRequest& request, std::string& out) {
@@ -442,44 +488,11 @@ class Session {
         "-DSDB_EMBEDDED_DOCS=ON to enable .docs.\n";
       return false;
     }
-    auto args = request.args;
-
-    bool search = false;
-    bool list = false;
-    bool all = false;
-    std::string kind;
-    while (!args.empty() && (args.front() == "--" || IsFlag(args.front()))) {
-      const auto flag = args.front();
-      args.erase(args.begin());
-      if (flag == "--") {
-        break;
-      }
-      if (flag == "-s" || flag == "--search") {
-        search = true;
-        break;
-      }
-      if (flag == "--kind") {
-        if (args.empty()) {
-          out = "Usage: .docs --kind KIND ?NAME?\n";
-          return false;
-        }
-        kind = args.front();
-        args.erase(args.begin());
-      } else if (flag == "--list") {
-        list = true;
-      } else if (flag == "--all") {
-        all = true;
-      } else {
-        out =
-          absl::StrCat("Unknown option: ", flag,
-                       "\n\nUsage: .docs ?--search|--list|--all|--kind KIND? "
-                       "?NAME|PATH|NUMBER?\n");
-        return false;
-      }
+    const auto options = ParseOptions(request.args, out);
+    if (!options) {
+      return false;
     }
-    const auto input = absl::StrJoin(args, " ");
-    const auto term = SiteRoute(input);
-    const bool url = term != input;
+    const auto& [search, list, all, kind, term, url] = *options;
 
     if (list) {
       const auto hits =
@@ -566,13 +579,10 @@ class Session {
       }
       if (similar.empty()) {
         std::string error;
-        if (auto hits = Search(*request.instance, term, kMaxCandidates,
-                               Content::Include, error);
+        if (const auto hits = Search(*request.instance, term, kMaxCandidates,
+                                     Content::Include, error);
             !hits.empty()) {
-          out = Menu(request,
-                     absl::StrCat("Documentation matching '",
-                                  connector::EscapeMarkdown(term), "':"),
-                     EntryChoices(hits));
+          out = MatchingMenu(request, term, hits);
           return true;
         }
         if (words) {
@@ -644,11 +654,8 @@ class Session {
       return ListItems(term);
     }
     if (!list && kind.empty() && term.empty()) {
-      std::vector<std::string> sections;
-      for (const auto& [name, count] : TopSections(db)) {
-        sections.push_back(name);
-      }
-      return with_flags(sections);
+      return with_flags(TopSections(db) | std::views::keys |
+                        std::ranges::to<std::vector<std::string>>());
     }
     if (list || (kind.empty() && LooksLikePath(term))) {
       return with_flags(CompletePath(db, term, kMaxCompletions));
@@ -751,11 +758,17 @@ class Session {
         absl::StrCat("Nothing in the documentation matches '", query, "'.\n");
       return false;
     }
-    out = Menu(request,
-               absl::StrCat("Documentation matching '",
-                            connector::EscapeMarkdown(query), "':"),
-               EntryChoices(hits));
+    out = MatchingMenu(request, query, hits);
     return true;
+  }
+
+  std::string MatchingMenu(const duckdb_shell::DocsRequest& request,
+                           std::string_view query,
+                           const std::vector<Entry>& hits) {
+    return Menu(request,
+                absl::StrCat("Documentation matching '",
+                             connector::EscapeMarkdown(query), "':"),
+                EntryChoices(hits));
   }
 
   std::string RenderCandidates(const duckdb_shell::DocsRequest& request,

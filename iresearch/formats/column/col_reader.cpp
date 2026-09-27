@@ -20,6 +20,7 @@
 
 #include "iresearch/formats/column/col_reader.hpp"
 
+#include <absl/random/random.h>
 #include <absl/strings/str_cat.h>
 
 #include <cstdio>
@@ -28,9 +29,10 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
 #include <duckdb/main/database.hpp>
-#include <duckdb/storage/object_cache.hpp>
+#include <limits>
 #include <map>
 #include <utility>
+#include <vector>
 
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
@@ -159,17 +161,13 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
   duckdb::BinaryDeserializer deserializer{*fin};
   deserializer.Set<duckdb::DatabaseInstance&>(db);
   deserializer.Begin();
+  std::vector<ColumnMeta> metas;
   deserializer.ReadList(
     kFooterSlotColumns, "columns",
     [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
       list.ReadObject([&](duckdb::Deserializer& obj) {
-        auto meta = DeserializeColumnMeta(obj);
+        auto& meta = metas.emplace_back(DeserializeColumnMeta(obj));
         CheckColumnMetaRanges(meta, footer_offset);
-        auto col = ColumnReader::Make(std::move(meta));
-        const auto id = col->Id();
-        const bool ok = _by_id.emplace(id, col.get()).second;
-        SDB_ENSURE(ok, ".col footer: duplicate column field_id ", id);
-        _columns.push_back(std::move(col));
       });
     });
   deserializer.ReadList(
@@ -189,18 +187,28 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
         _norm_readers.push_back(std::move(nr));
       });
     });
+  auto file_id =
+    deserializer.ReadPropertyWithExplicitDefault<uint64_t>(
+      kFooterSlotFileId, "file_id", 0);
   deserializer.End();
+  if (file_id == 0) {
+    file_id = NewColFileId();
+  }
+  for (auto& meta : metas) {
+    auto col = ColumnReader::Make(std::move(meta), file_id);
+    const auto id = col->Id();
+    const bool ok = _by_id.emplace(id, col.get()).second;
+    SDB_ENSURE(ok, ".col footer: duplicate column field_id ", id);
+    _columns.push_back(std::move(col));
+  }
 }
 
-ColReader::~ColReader() {
-  const auto db = _db->weak_from_this().lock();
-  if (!db) {
-    return;
-  }
-  auto& cache = db->GetObjectCache();
-  for (const auto& column : _columns) {
-    column->DropDictionaryCache(cache);
-  }
+ColReader::~ColReader() = default;
+
+uint64_t NewColFileId() {
+  absl::BitGen gen;
+  return absl::Uniform<uint64_t>(absl::IntervalClosed, gen, 1,
+                                 std::numeric_limits<uint64_t>::max());
 }
 
 const ColumnReader* ColReader::Column(field_id id) const noexcept {

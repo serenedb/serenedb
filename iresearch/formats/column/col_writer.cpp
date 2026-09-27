@@ -272,6 +272,8 @@ bool ColWriter::Commit(uint64_t target_row,
                            SerializeNormColumn(obj, *norm_columns[i]);
                          });
                        });
+  serializer.WriteProperty<uint64_t>(kFooterSlotFileId, "file_id",
+                                     NewColFileId());
   serializer.End();
   _out->WriteU64(footer_offset);
   format_utils::WriteFooter(*_out);

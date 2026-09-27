@@ -397,7 +397,7 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
     forced != duckdb::CompressionType::COMPRESSION_AUTO
       ? forced
       : duckdb::Settings::Get<duckdb::ForceCompressionSetting>(config);
-  const auto named = codecs::ColCodecs::Choice(forced_method);
+  const auto named = codecs::ChoiceOf(forced_method);
   if (!named && forced_method != duckdb::CompressionType::COMPRESSION_AUTO) {
     return false;
   }
@@ -415,8 +415,8 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
     acc, named, _codec_params, type, tuning,
     [&](codecs::StringChoice choice, duckdb::BaseStatistics stats,
         uint64_t rows, std::span<const std::string_view> parts) {
-      const auto& codec = *codecs::ColCodecs::Get(
-        codecs::ColCodecs::TypeOf(choice), duckdb::PhysicalType::VARCHAR);
+      const auto& codec = *codecs::GetCodec(codecs::TypeOf(choice),
+                                            duckdb::PhysicalType::VARCHAR);
       CaptureBlock(db, codec, std::move(stats), rows, parts, out, meta.data);
     });
   if (outcome.sealed) {

@@ -29,13 +29,11 @@
 
 namespace irs::codecs {
 
-struct ColCodecs {
-  static const duckdb::CompressionFunction* Get(duckdb::CompressionType type,
-                                                duckdb::PhysicalType physical);
+const duckdb::CompressionFunction* GetCodec(duckdb::CompressionType type,
+                                            duckdb::PhysicalType physical);
 
-  static std::optional<StringChoice> Choice(duckdb::CompressionType type);
+std::optional<StringChoice> ChoiceOf(duckdb::CompressionType type);
 
-  static duckdb::CompressionType TypeOf(StringChoice choice) noexcept;
-};
+duckdb::CompressionType TypeOf(StringChoice choice) noexcept;
 
 }  // namespace irs::codecs

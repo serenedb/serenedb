@@ -24,8 +24,8 @@
 
 namespace irs::codecs {
 
-const duckdb::CompressionFunction* ColCodecs::Get(
-  duckdb::CompressionType type, duckdb::PhysicalType physical) {
+const duckdb::CompressionFunction* GetCodec(duckdb::CompressionType type,
+                                            duckdb::PhysicalType physical) {
   if (physical != duckdb::PhysicalType::VARCHAR ||
       !duckdb::IsSereneDBCompressionType(type)) {
     return nullptr;
@@ -33,7 +33,7 @@ const duckdb::CompressionFunction* ColCodecs::Get(
   return &StringScanFunction(type);
 }
 
-std::optional<StringChoice> ColCodecs::Choice(duckdb::CompressionType type) {
+std::optional<StringChoice> ChoiceOf(duckdb::CompressionType type) {
   switch (type) {
     case duckdb::CompressionType::COMPRESSION_DICT_LZ4:
       return StringChoice{Shape::Dedup, ByteCodec::Lz4};
@@ -59,7 +59,7 @@ std::optional<StringChoice> ColCodecs::Choice(duckdb::CompressionType type) {
   }
 }
 
-duckdb::CompressionType ColCodecs::TypeOf(StringChoice choice) noexcept {
+duckdb::CompressionType TypeOf(StringChoice choice) noexcept {
   switch (choice.leaf) {
     case ByteCodec::Lz4:
       return choice.shape == Shape::Plain

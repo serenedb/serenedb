@@ -89,7 +89,7 @@ ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::BinaryDeserializer& d,
   const auto byte_size = d.ReadProperty<uint64_t>(3, "byte_size");
   auto stats = d.ReadProperty<duckdb::BaseStatistics>(4, "statistics");
   const duckdb::CompressionFunction* codec =
-    codecs::ColCodecs::Get(compression_type, physical);
+    codecs::GetCodec(compression_type, physical);
   if (!codec) {
     auto& cfg = duckdb::DBConfig::GetConfig(d.Get<duckdb::DatabaseInstance&>());
     codec = cfg.TryGetCompressionFunction(compression_type, physical).get();
@@ -216,21 +216,11 @@ ColumnReader::ScanState& ColumnReader::ScanState::operator=(ScanState&&) =
   default;
 ColumnReader::ScanState::~ScanState() = default;
 
-namespace {
-
-uint64_t NextCacheScope() noexcept {
-  static std::atomic<uint64_t> next{1};
-  return next.fetch_add(1, std::memory_order_relaxed);
-}
-
-}  // namespace
-
 ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
                            std::vector<ColumnBlockMeta> segments,
                            std::unique_ptr<ColumnReader> validity,
                            std::vector<std::unique_ptr<ColumnReader>> children)
   : _id{id},
-    _cache_scope{NextCacheScope()},
     _type{std::move(type)},
     _segments{std::move(segments)},
     _validity{std::move(validity)},
@@ -254,20 +244,8 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
   FinishStats(std::move(stats));
 }
 
-void ColumnReader::DropDictionaryCache(duckdb::ObjectCache& cache) const {
-  if (_type.InternalType() == duckdb::PhysicalType::VARCHAR) {
-    for (size_t block = 0; block < _segments.size(); ++block) {
-      if (duckdb::IsSereneDBCompressionType(_segments[block].codec->type)) {
-        cache.Delete(codecs::DictionaryCacheKey(_cache_scope, block));
-      }
-    }
-  }
-  if (_validity) {
-    _validity->DropDictionaryCache(cache);
-  }
-  for (const auto& child : _children) {
-    child->DropDictionaryCache(cache);
-  }
+std::string ColumnReader::DictionaryCacheKey(size_t block) const {
+  return codecs::DictionaryCacheKey(_file_id, _segments[block].file_offset);
 }
 
 bool ColumnReader::NullsInData() const noexcept {
@@ -354,7 +332,7 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
 
   ReadContext::CacheSlot slot;
   if (_touched && duckdb::IsSereneDBCompressionType(codec.type)) {
-    slot = {.key = codecs::DictionaryCacheKey(_cache_scope, w.block),
+    slot = {.key = DictionaryCacheKey(w.block),
             .touched = &_touched[w.block]};
   }
   auto handle = ctx.RegisterColBlock(m.file_offset, byte_size, std::move(slot));
@@ -776,7 +754,8 @@ void ColumnReader::SkipRows(ScanState& s, duckdb::idx_t count) const {
   }
 }
 
-std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta) {
+std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta,
+                                                 uint64_t file_id) {
   std::unique_ptr<ColumnReader> validity;
   if (absl::c_any_of(meta.validity, [](const ColumnBlockMeta& m) {
         return m.codec->type != duckdb::CompressionType::COMPRESSION_EMPTY;
@@ -788,12 +767,13 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta) {
       nullptr,
       {},
     });
+    validity->_file_id = file_id;
   }
 
   std::vector<std::unique_ptr<ColumnReader>> children;
   children.reserve(meta.children.size());
   for (auto& c : meta.children) {
-    children.push_back(Make(std::move(c)));
+    children.push_back(Make(std::move(c), file_id));
   }
 
   std::unique_ptr<ColumnReader> col;
@@ -802,7 +782,8 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta) {
       SDB_ASSERT(children.empty());
       col = std::make_unique<VariantColumnReader>(meta.id, std::move(meta.type),
                                                   std::move(validity),
-                                                  std::move(meta.variant_rgs));
+                                                  std::move(meta.variant_rgs),
+                                                  file_id);
       break;
     case duckdb::LogicalTypeId::UNION:
     case duckdb::LogicalTypeId::STRUCT:
@@ -833,6 +814,7 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta) {
       break;
   }
   col->_hyperloglog = std::move(meta.hyperloglog);
+  col->_file_id = file_id;
   return col;
 }
 

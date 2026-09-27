@@ -170,7 +170,8 @@ class ColumnReader {
 
   virtual ~ColumnReader() = default;
 
-  static std::unique_ptr<ColumnReader> Make(ColumnMeta&& meta);
+  static std::unique_ptr<ColumnReader> Make(ColumnMeta&& meta,
+                                            uint64_t file_id);
 
   field_id Id() const noexcept { return _id; }
   const duckdb::LogicalType& Type() const noexcept { return _type; }
@@ -232,8 +233,7 @@ class ColumnReader {
     return Open(BlockWindow{rg, _offsets[rg], _offsets[rg + 1]}, ctx);
   }
 
-  uint64_t CacheScope() const noexcept { return _cache_scope; }
-  void DropDictionaryCache(duckdb::ObjectCache& cache) const;
+  std::string DictionaryCacheKey(size_t block) const;
 
   ScanState InitScan(ReadContext& ctx) const {
     return InitScan(
@@ -354,7 +354,7 @@ class ColumnReader {
   }
 
   field_id _id;
-  uint64_t _cache_scope;
+  uint64_t _file_id = 0;
   mutable std::unique_ptr<std::atomic<bool>[]> _touched;
   duckdb::LogicalType _type;
   std::vector<ColumnBlockMeta> _segments;

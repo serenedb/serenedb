@@ -68,8 +68,8 @@ struct Rows2 {
 };
 
 duckdb::CompressionType Written(duckdb::CompressionType codec) {
-  if (const auto choice = irs::codecs::ColCodecs::Choice(codec)) {
-    return irs::codecs::ColCodecs::TypeOf(*choice);
+  if (const auto choice = irs::codecs::ChoiceOf(codec)) {
+    return irs::codecs::TypeOf(*choice);
   }
   return codec;
 }
@@ -239,8 +239,8 @@ class ColCodecsTest : public TestBase {
     uint64_t row = 0;
     for (const auto& block : col->DataBlocks()) {
       std::string level;
-      if (irs::codecs::ColCodecs::Get(block.codec->type,
-                                      duckdb::PhysicalType::VARCHAR)) {
+      if (irs::codecs::GetCodec(block.codec->type,
+                                duckdb::PhysicalType::VARCHAR)) {
         window = col->Locate(row, window);
         auto seg = col->OpenSegment(window.block, ctx);
         auto info = seg->GetCompressionFunction().get_segment_info(
@@ -1046,7 +1046,7 @@ TEST_F(ColCodecsTest, DecodedDictionaryIsCachedAcrossScans) {
     ASSERT_NE(col, nullptr);
     ASSERT_GT(col->DataBlocks().size(), 1u);
     for (size_t b = 0; b < col->DataBlocks().size(); ++b) {
-      keys.push_back(irs::codecs::DictionaryCacheKey(col->CacheScope(), b));
+      keys.push_back(col->DictionaryCacheKey(b));
       EXPECT_FALSE(cached(keys.back()));
     }
     scan_all(r, *col);
@@ -1105,10 +1105,20 @@ TEST_F(ColCodecsTest, DecodedDictionaryIsCachedAcrossScans) {
         i += take;
       }
     }
+    scan_all(r, *col);
+    for (const auto& key : keys) {
+      EXPECT_TRUE(cached(key)) << key;
+    }
   }
-  for (const auto& key : keys) {
-    EXPECT_FALSE(cached(key)) << key;
+  irs::ColReader reopened{dir, std::string{kSeg}, Db()};
+  const auto* col = reopened.Column(kField);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->DataBlocks().size(), keys.size());
+  for (size_t b = 0; b < keys.size(); ++b) {
+    EXPECT_EQ(col->DictionaryCacheKey(b), keys[b]);
+    EXPECT_TRUE(cached(keys[b])) << keys[b];
   }
+  scan_all(reopened, *col);
 }
 
 TEST_F(ColCodecsTest, DictionaryCompletedByPartialScansIsCached) {
@@ -1124,7 +1134,7 @@ TEST_F(ColCodecsTest, DictionaryCompletedByPartialScansIsCached) {
   ASSERT_GT(col->DataBlocks().size(), 1u);
   std::vector<std::string> keys;
   for (size_t b = 0; b < col->DataBlocks().size(); ++b) {
-    keys.push_back(irs::codecs::DictionaryCacheKey(col->CacheScope(), b));
+    keys.push_back(col->DictionaryCacheKey(b));
   }
   const auto cached = [&](const std::string& key) {
     return cache.Get<irs::codecs::DecodedDictionary>(key) != nullptr;

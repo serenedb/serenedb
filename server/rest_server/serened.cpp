@@ -38,7 +38,7 @@
 
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
-#include "docs/docs_loader.h"
+#include "docs/docs_bootstrap.h"
 #include "docs/docs_shell_backend.h"
 #include "duckdb_shell.hpp"
 #include "network/pg/hba.h"

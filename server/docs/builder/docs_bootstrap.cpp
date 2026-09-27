@@ -18,12 +18,14 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "docs/docs_bootstrap.h"
+
 #include <absl/flags/flag.h>
 
 #include <cstdlib>
 #include <string>
 
-#include "docs/docs_loader.h"
+#include "docs/builder/docs_loader.h"
 
 ABSL_FLAG(std::string, build_docs_index, "",
           "Index the embedded documentation into this directory and exit, "

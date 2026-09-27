@@ -65,6 +65,10 @@ the build does it in two passes:
    weighs.
 4. `serened` links the generated unit.
 
+The code behind the first two steps lives in `server/docs/builder/`: the
+documentation corpus, the indexer and the `--build_docs_index` flag. None of it
+is linked into `serened`.
+
 Every step is an ordinary build dependency -- the index is rebuilt whenever the
 bootstrap binary changes, which includes every change to `docs/`. So the image
 always matches the documentation compiled in beside it, and there is nothing to

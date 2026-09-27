@@ -35,7 +35,7 @@
 #include <vector>
 
 #include "connector/functions/markdown_render.h"
-#include "docs/docs_data.h"
+#include "docs/builder/docs_data.h"
 #include "docs/docs_index_data.h"
 #include "docs/docs_search.h"
 

@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "docs/docs_loader.h"
+#include "docs/builder/docs_loader.h"
 
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
@@ -51,7 +51,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "connector/duckdb_client_state.h"
-#include "docs/docs_data.h"
+#include "docs/builder/docs_data.h"
 #include "docs/docs_index_data.h"
 #include "docs/docs_search.h"
 #include "pg/connection_context.h"

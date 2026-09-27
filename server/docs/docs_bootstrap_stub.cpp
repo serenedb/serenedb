@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "docs/docs_loader.h"
+#include "docs/docs_bootstrap.h"
 
 namespace sdb::docs {
 

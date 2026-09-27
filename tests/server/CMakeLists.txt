@@ -41,13 +41,13 @@ add_executable(
     connector/writer_generations_test.cpp
 )
 
-target_link_libraries(serenedb-tests PUBLIC sereneserver gtest)
+target_link_libraries(
+    serenedb-tests
+    PUBLIC sereneserver gtest serene_docs_corpus
+)
 
 if(SDB_EMBEDDED_DOCS)
-    target_link_libraries(
-        serenedb-tests
-        PUBLIC serene_docs_corpus serene_docs_index
-    )
+    target_link_libraries(serenedb-tests PUBLIC serene_docs_index)
 endif()
 
 target_compile_definitions(

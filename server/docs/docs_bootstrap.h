@@ -18,10 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "docs/builder/docs_data.h"
+#pragma once
+
+#include <optional>
 
 namespace sdb::docs {
 
-std::span<const Doc> GetDocs() { return {}; }
+std::optional<int> RunDocsBootstrap();
 
 }  // namespace sdb::docs

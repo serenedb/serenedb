@@ -191,7 +191,7 @@ def human_size(size: int) -> str:
 
 
 def render(units: list[Unit]) -> str:
-    out = ['#include "docs/docs_data.h"', "", "namespace sdb::docs {"]
+    out = ['#include "docs/builder/docs_data.h"', "", "namespace sdb::docs {"]
     if units:
         out += ["namespace {", "", "constexpr Doc kDocs[] = {"]
         for u in units:

@@ -47,8 +47,6 @@
 #include <iresearch/search/fill/docs_mask.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
-#include <iresearch/search/filters/levenshtein_filter.hpp>
-#include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
@@ -74,8 +72,8 @@ namespace sdb::docs {
 namespace {
 
 constexpr std::string_view kIndexKey = "sdb_docs_index";
-constexpr size_t kFuzzyTerms = 50;
 constexpr std::string_view kEllipsis = "\xE2\x80\xA6";
+constexpr std::string_view kSpaces = " \t\n\v\f\r";
 
 struct Column {
   irs::field_id stored = irs::field_limits::invalid();
@@ -477,73 +475,59 @@ std::vector<Entry> SortedByPath(std::vector<Entry> hits) {
   return hits;
 }
 
-std::vector<irs::bstring> Analyze(irs::analysis::Tokenizer& tokenizer,
-                                  std::string_view text) {
+std::vector<std::string> Analyze(irs::analysis::Tokenizer& tokenizer,
+                                 std::string_view text) {
   irs::ValueAnalyzer analyzer;
   irs::ValueTokens<> tokens;
   analyzer.Analyze(
     tokenizer,
     duckdb::string_t{text.data(), static_cast<uint32_t>(text.size())}, tokens);
-  return tokens.terms() | std::views::transform([](const auto& token) {
-           return irs::bstring{irs::AsBytesView(token)};
-         }) |
+  return tokens.terms() | std::views::transform(&duckdb::string_t::GetString) |
          std::ranges::to<std::vector>();
 }
 
-void OptimizeScored(irs::Filter::ptr& filter,
-                    std::span<const irs::field_id> fields) {
-  irs::OptimizeContext optimize_ctx;
-  optimize_ctx.scored = true;
-  optimize_ctx.analyzed_fields.insert(fields.begin(), fields.end());
-  irs::Optimize(filter, optimize_ctx);
-}
-
-irs::Filter::ptr AnyTerm(irs::field_id field, std::vector<irs::bstring> terms) {
-  if (terms.empty()) {
-    return nullptr;
+irs::Filter::ptr OptimizeScored(irs::Filter::ptr filter,
+                                std::span<const irs::field_id> fields) {
+  if (filter) {
+    irs::OptimizeContext optimize_ctx;
+    optimize_ctx.scored = true;
+    optimize_ctx.analyzed_fields.insert(fields.begin(), fields.end());
+    irs::Optimize(filter, optimize_ctx);
   }
-  auto any = std::make_unique<irs::BooleanFilter>();
-  for (auto& term : terms) {
-    any->Add(irs::TermClause{.field = field, .term = std::move(term)},
-             irs::Occur::Should);
-  }
-  any->SetMinShouldMatch(1);
-  return any;
-}
-
-irs::Filter::ptr Similar(std::string_view name,
-                         irs::analysis::Tokenizer& tokenizer,
-                         std::span<const irs::field_id> fields) {
-  auto any = std::make_unique<irs::BooleanFilter>();
-  for (const std::string_view word :
-       absl::StrSplit(name, ' ', absl::SkipEmpty())) {
-    auto tokens = Analyze(tokenizer, word);
-    const auto term = tokens.size() == 1
-                        ? std::move(tokens.front())
-                        : irs::bstring{irs::ViewCast<irs::byte_type>(word)};
-    for (const auto field : fields) {
-      auto prefix = std::make_unique<irs::ByPrefix>();
-      *prefix->mutable_field_id() = field;
-      prefix->mutable_options()->term = term;
-      any->Add(std::move(prefix), irs::Occur::Should);
-
-      auto fuzzy = std::make_unique<irs::ByEditDistance>();
-      *fuzzy->mutable_field_id() = field;
-      auto& options = *fuzzy->mutable_options();
-      options.term = term;
-      options.max_distance = 1;
-      options.max_terms = kFuzzyTerms;
-      options.with_transpositions = true;
-      any->Add(std::move(fuzzy), irs::Occur::Should);
-    }
-  }
-  if (any->Size(irs::Occur::Should) == 0) {
-    return nullptr;
-  }
-  any->SetMinShouldMatch(1);
-  irs::Filter::ptr filter = std::move(any);
-  OptimizeScored(filter, fields);
   return filter;
+}
+
+std::string Escaped(std::string_view word) {
+  std::string out;
+  out.reserve(2 * word.size());
+  for (const char c : word) {
+    if (absl::ascii_isascii(static_cast<unsigned char>(c))) {
+      out.push_back('\\');
+    }
+    out.push_back(c);
+  }
+  return out;
+}
+
+template<typename Range>
+std::string JoinEscaped(const Range& words) {
+  return absl::StrJoin(words, " ", [](std::string* out, std::string_view word) {
+    out->append(Escaped(word));
+  });
+}
+
+std::string AnyWord(std::string_view text) {
+  return JoinEscaped(
+    absl::StrSplit(text, absl::ByAnyChar(kSpaces), absl::SkipEmpty()));
+}
+
+std::string Similar(std::string_view name) {
+  return absl::StrJoin(
+    absl::StrSplit(name, absl::ByAnyChar(kSpaces), absl::SkipEmpty()), " ",
+    [](std::string* out, std::string_view word) {
+      const auto term = Escaped(word);
+      absl::StrAppend(out, term, "* ", term, "~1");
+    });
 }
 
 class DocsFields final : public irs::ParserContext::FieldProvider {
@@ -619,12 +603,13 @@ bool LooksLikeLucene(std::string_view query) {
   return false;
 }
 
-std::unique_ptr<irs::BooleanFilter> Parse(std::string_view query,
-                                          const DocsIndex& index) {
+std::unique_ptr<irs::BooleanFilter> Parse(
+  std::string_view query, const DocsIndex& index,
+  std::span<const irs::field_id> fields) {
   const auto tokenizer = DocsTokenizer();
   const DocsFields provider{*tokenizer, index.Fields()};
   auto root = std::make_unique<irs::BooleanFilter>();
-  for (const auto field : index.Fields().Text()) {
+  for (const auto field : fields) {
     auto branch = std::make_unique<irs::BooleanFilter>();
     auto& branch_ref = *branch;
     root->Add(std::move(branch), irs::Occur::Should);
@@ -643,71 +628,46 @@ std::unique_ptr<irs::BooleanFilter> Parse(std::string_view query,
   return root;
 }
 
-std::unique_ptr<irs::BooleanFilter> Words(std::string_view text,
-                                          const DocsIndex& index) {
+std::string Words(std::string_view text) {
   const auto ordered = Analyze(*DocsTokenizer(), text);
   auto terms = ordered;
   absl::c_sort(terms);
   terms.erase(std::unique(terms.begin(), terms.end()), terms.end());
   auto kept = terms;
-  std::erase_if(kept, [](const irs::bstring& term) {
-    const auto word = irs::ViewCast<char>(irs::bytes_view{term});
+  std::erase_if(kept, [](const std::string& word) {
     return word.size() < 2 || absl::c_linear_search(kStopwords, word);
   });
   if (kept.empty()) {
     kept = std::move(terms);
   }
-  if (kept.empty()) {
-    return nullptr;
+  auto query = JoinEscaped(kept);
+  for (const auto& word : kept) {
+    if (const auto stem = Stem(word); stem.size() >= 4) {
+      absl::StrAppend(&query, " ", Escaped(stem), "*^", kStemBoost);
+    }
   }
-  auto root = std::make_unique<irs::BooleanFilter>();
-  for (const auto field : index.Fields().Text()) {
-    root->Add(AnyTerm(field, kept), irs::Occur::Should);
-    for (const auto& term : kept) {
-      const auto stem = Stem(irs::ViewCast<char>(irs::bytes_view{term}));
-      if (stem.size() < 4) {
-        continue;
-      }
-      auto prefix = std::make_unique<irs::ByPrefix>();
-      *prefix->mutable_field_id() = field;
-      prefix->mutable_options()->term = irs::ViewCast<irs::byte_type>(stem);
-      prefix->SetBoost(kStemBoost);
-      root->Add(std::move(prefix), irs::Occur::Should);
-    }
-    if (ordered.size() < 2) {
-      continue;
-    }
-    auto phrase = std::make_unique<irs::ByPhrase>();
-    *phrase->mutable_field_id() = field;
-    for (const auto& term : ordered) {
-      phrase->mutable_options()->push_back<irs::ByTermOptions>().term = term;
-    }
-    phrase->SetBoost(kPhraseBoost);
-    root->Add(std::move(phrase), irs::Occur::Should);
+  if (ordered.size() >= 2) {
+    absl::StrAppend(&query, " \"", JoinEscaped(ordered), "\"^", kPhraseBoost);
   }
-  root->SetMinShouldMatch(1);
-  return root;
+  return query;
 }
 
 irs::Filter::ptr Compile(std::string_view query, const DocsIndex& index,
                          std::string& error) {
-  auto root = LooksLikeLucene(query) ? Parse(query, index) : nullptr;
-  if (root && irs::ContainsNegation(*root)) {
-    error =
-      "exclusion (-term or NOT) is not supported here yet: the documentation "
-      "is searched as three separate fields, so an exclusion would only apply "
-      "to the field it matched in";
-    return nullptr;
+  const auto fields = index.Fields().Text();
+  if (LooksLikeLucene(query)) {
+    if (auto root = Parse(query, index, fields)) {
+      if (irs::ContainsNegation(*root)) {
+        error =
+          "exclusion (-term or NOT) is not supported here yet: the "
+          "documentation is searched as three separate fields, so an "
+          "exclusion would only apply to the field it matched in";
+        return nullptr;
+      }
+      return OptimizeScored(std::move(root), fields);
+    }
   }
-  if (!root) {
-    root = Words(query, index);
-  }
-  if (!root) {
-    return nullptr;
-  }
-  irs::Filter::ptr filter = std::move(root);
-  OptimizeScored(filter, index.Fields().Text());
-  return filter;
+  return OptimizeScored(Parse(Words(query), index, fields), fields);
 }
 
 std::vector<Entry> RunScored(const DocsIndex& index, const irs::Filter& filter,
@@ -963,8 +923,7 @@ std::string Markdown(const Entry& entry) {
 
 std::string Snippet(std::string_view text, size_t limit) {
   auto flat = absl::StrJoin(
-    absl::StrSplit(text, absl::ByAnyChar(" \t\n\v\f\r"), absl::SkipEmpty()),
-    " ");
+    absl::StrSplit(text, absl::ByAnyChar(kSpaces), absl::SkipEmpty()), " ");
   const auto* begin = reinterpret_cast<const irs::byte_type*>(flat.data());
   const auto* end = begin + flat.size();
   const auto* cut = begin;
@@ -1100,9 +1059,8 @@ std::vector<Entry> Lookup(duckdb::DatabaseInstance& db, std::string_view name,
     return {};
   }
   return WithIndex(db, [&](const DocsIndex& index) {
-    const auto& layout = index.Fields();
-    const auto filter =
-      AnyTerm(layout.title.terms, Analyze(*DocsTokenizer(), name));
+    const irs::field_id title[] = {index.Fields().title.terms};
+    const auto filter = Parse(AnyWord(name), index, title);
     if (!filter) {
       return std::vector<Entry>{};
     }
@@ -1280,11 +1238,12 @@ std::vector<Entry> Search(duckdb::DatabaseInstance& db, std::string_view query,
 std::vector<Entry> Candidates(duckdb::DatabaseInstance& db,
                               std::string_view name, size_t limit) {
   return WithIndex(db, [&](const DocsIndex& index) {
-    const auto tokenizer = DocsTokenizer();
+    const auto query = Similar(name);
     const auto text = index.Fields().Text();
     const std::span<const irs::field_id> all{text};
     for (const auto fields : {all.first(1), all}) {
-      if (const auto filter = Similar(name, *tokenizer, fields)) {
+      if (const auto filter =
+            OptimizeScored(Parse(query, index, fields), fields)) {
         if (auto hits = RunScored(index, *filter, limit, Content::Include);
             !hits.empty()) {
           return hits;

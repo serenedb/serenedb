@@ -21,6 +21,7 @@
 #include "iresearch/formats/column/column_writer.hpp"
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/hash/hash.h>
 
 #include <algorithm>
 #include <cstring>
@@ -44,6 +45,7 @@
 #include <duckdb/storage/table/variant_column_data.hpp>
 #include <limits>
 #include <memory>
+#include <string_view>
 #include <utility>
 
 #include "iresearch/formats/column/codecs/registry.hpp"
@@ -214,14 +216,20 @@ class ListKeys {
     duckdb::UnifiedVectorFormat format;
     bool strings = false;
     bool validity_only = false;
+    bool flat = false;
+    bool all_valid = false;
     duckdb::idx_t width = 0;
 
+    duckdb::idx_t Index(uint64_t e) const {
+      return flat ? e : format.sel->get_index(e);
+    }
+
     bool Valid(uint64_t e) const {
-      return format.validity.RowIsValid(format.sel->get_index(e));
+      return all_valid || format.validity.RowIsValid(Index(e));
     }
 
     const duckdb::data_t* At(uint64_t e) const {
-      return format.data + format.sel->get_index(e) * width;
+      return format.data + Index(e) * width;
     }
 
     uint64_t Hash(uint64_t e) const {
@@ -233,7 +241,13 @@ class ListKeys {
       }
       if (strings) {
         const auto& s = *reinterpret_cast<const duckdb::string_t*>(At(e));
-        return duckdb::Hash(s.GetData(), s.GetSize());
+        if (s.IsInlined()) {
+          uint64_t words[2];
+          std::memcpy(words, &s, sizeof(words));
+          return duckdb::CombineHash(duckdb::MurmurHash64(words[0]),
+                                     duckdb::MurmurHash64(words[1]));
+        }
+        return absl::HashOf(std::string_view{s.GetData(), s.GetSize()});
       }
       return duckdb::Hash(reinterpret_cast<const char*>(At(e)), width);
     }
@@ -270,6 +284,8 @@ class ListKeys {
                       duckdb::idx_t count, bool validity_only) {
     auto& leaf = leaves.emplace_back();
     vec.ToUnifiedFormat(count, leaf.format);
+    leaf.flat = !leaf.format.sel->IsSet();
+    leaf.all_valid = leaf.format.validity.AllValid();
     leaf.validity_only = validity_only;
     if (validity_only) {
       return;
@@ -401,7 +417,13 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
   if (!named && forced_method != duckdb::CompressionType::COMPRESSION_AUTO) {
     return false;
   }
-  codecs::StringAccumulator acc{!named || named->shape == codecs::Shape::Dedup};
+  codecs::StringAccumulator acc{!named ||
+                                named->shape == codecs::Shape::Dedup};
+  uint64_t rows = 0;
+  for (const auto& c : chunks) {
+    rows += c.count;
+  }
+  acc.Reserve(rows);
   for (auto& c : chunks) {
     acc.Add(c.data);
   }

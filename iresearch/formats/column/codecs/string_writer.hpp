@@ -62,6 +62,7 @@ class StringAccumulator {
  public:
   explicit StringAccumulator(bool dedup) noexcept : _dedup{dedup} {}
 
+  void Reserve(uint64_t rows);
   void Add(const duckdb::Vector& input);
 
   uint64_t row_count = 0;
@@ -76,6 +77,8 @@ class StringAccumulator {
 
  private:
   bool _dedup;
+  uint32_t _last_code = 0;
+  duckdb::string_t _last;
 };
 
 using SegmentSink =

@@ -16,9 +16,10 @@ def _run(*args: str) -> subprocess.CompletedProcess:
 
 def test_index_embedding_prints_every_file_by_size(tmp_path: Path) -> None:
     index = tmp_path / "index"
-    index.mkdir()
-    sizes = {"small": 10, "large": 3 * 1024 * 1024 // 2, "medium": 2048}
+    sizes = {"docs/small": 10, "docs/large": 3 * 1024 * 1024 // 2,
+             "objects/medium": 2048}
     for name, size in sizes.items():
+        (index / name).parent.mkdir(parents=True, exist_ok=True)
         (index / name).write_bytes(b"x" * size)
     out = tmp_path / "docs_index_data.cpp"
     r = _run(str(SCRIPTS / "generate_docs_index.py"), str(index), str(out))
@@ -27,8 +28,21 @@ def test_index_embedding_prints_every_file_by_size(tmp_path: Path) -> None:
     assert lines[0] == (f"embedded docs index: 3 files, 1.5 MiB "
                         f"({sum(sizes.values())} bytes) -> {out}")
     assert [line.split() for line in lines[1:]] == [
-        ["large", "1.5", "MiB"], ["medium", "2.0", "KiB"], ["small", "10", "B"]]
-    assert "#embed" in out.read_text()
+        ["docs/large", "1.5", "MiB"], ["objects/medium", "2.0", "KiB"],
+        ["docs/small", "10", "B"]]
+    generated = out.read_text()
+    assert "#embed" in generated
+    assert "GetDocsIndex()" in generated and "GetObjectsIndex()" in generated
+
+
+def test_index_embedding_needs_both_indexes(tmp_path: Path) -> None:
+    index = tmp_path / "index"
+    (index / "docs").mkdir(parents=True)
+    (index / "docs" / "segments_1").write_bytes(b"x")
+    r = _run(str(SCRIPTS / "generate_docs_index.py"), str(index),
+             str(tmp_path / "docs_index_data.cpp"))
+    assert r.returncode == 1
+    assert "no index files under" in r.stderr and "objects" in r.stderr
 
 
 def test_docs_generation_reports_the_embedded_text(tmp_path: Path) -> None:

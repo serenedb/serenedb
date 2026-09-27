@@ -22,6 +22,7 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/escaping.h>
 #include <absl/strings/match.h>
+#include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
 #include <gtest/gtest.h>
@@ -219,6 +220,20 @@ TEST_F(DocsIndex, SearchMatchesWordForms) {
   EXPECT_TRUE(absl::c_any_of(hits, [](const Entry& entry) {
     return entry.path.contains("highlighting.md");
   }));
+}
+
+TEST_F(DocsIndex, SearchKeepsAPossessiveWhole) {
+  std::string error;
+  const auto hits = Search(Db(), "map's", 50, Content::Include, error);
+  ASSERT_FALSE(hits.empty());
+  for (const auto& hit : hits) {
+    EXPECT_TRUE(absl::StrContainsIgnoreCase(
+      absl::StrCat(hit.title, " ", hit.breadcrumb, " ",
+                   duckdb::markdown_utils::MarkdownToText(hit.content)),
+      "map's"))
+      << hit.path;
+  }
+  EXPECT_TRUE(error.empty()) << error;
 }
 
 TEST_F(DocsIndex, CallSyntaxNamesTheObject) {

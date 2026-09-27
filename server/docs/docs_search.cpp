@@ -641,7 +641,9 @@ std::string_view Stem(std::string_view word) {
     "ate",    "ies",   "es",   "ed",  "s",    "e"};
   for (const auto suffix : kSuffixes) {
     if (word.size() >= suffix.size() + 4 && word.ends_with(suffix)) {
-      return word.substr(0, word.size() - suffix.size());
+      const auto stem = word.substr(0, word.size() - suffix.size());
+      const auto last = static_cast<unsigned char>(stem.back());
+      return absl::ascii_isalnum(last) || last >= 0x80 ? stem : word;
     }
   }
   return word;

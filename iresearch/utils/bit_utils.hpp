@@ -123,7 +123,13 @@ IRS_FORCE_INLINE constexpr void SetBit(T& value, size_t bit) noexcept {
 template<typename T>
 IRS_FORCE_INLINE constexpr void UnsetBit(T& value, size_t bit) noexcept {
   static_assert(std::is_unsigned_v<T>);
-  value &= ~(T(1) << bit);
+  auto mask = T(1) << bit;
+  if !consteval {
+    if (!__builtin_constant_p(bit)) {
+      asm("" : "+r"(mask));
+    }
+  }
+  value &= ~mask;
 }
 
 template<typename T>

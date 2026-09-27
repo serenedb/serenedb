@@ -1,0 +1,68 @@
+control substitution on
+
+# A transaction on another connection that touched an attached postgres catalog
+# keeps a REPEATABLE READ session open on it until the transaction ends. DETACH
+# only removes the name, so dropping the remote database is refused while that
+# transaction is open, and goes through once it ends. In the suite the touching
+# transaction is another test's catalog-wide listing (duckdb_tables(),
+# information_schema, ...), which opens that session on every attached postgres
+# catalog; this is what made tstz_pushdown_pgscan's cleanup DROP DATABASE flaky.
+# Here the holder reads only its own catalog, so it does not do the same to
+# other tests.
+#
+# It lives in the recovery tree for a server of its own: on the shared server,
+# another test's statement that listed every catalog while this one's was
+# attached would trip over what this test breaks.
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pgdda_${__DATABASE__} (TYPE postgres);
+
+statement ok
+CALL postgres_execute('pgdda_${__DATABASE__}', 'CREATE DATABASE ddadb_${__DATABASE__}', use_transaction := false);
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=ddadb_${__DATABASE__} user=${PGUSER}' AS pgdd_${__DATABASE__} (TYPE postgres);
+
+statement ok
+CREATE TABLE pgdd_${__DATABASE__}.public.t (id INTEGER);
+
+
+connection holder
+statement ok
+BEGIN;
+
+
+connection holder
+query
+SELECT count(*) AS n FROM pgdd_${__DATABASE__}.public.t;
+----
+n
+0
+
+
+connection default
+statement ok
+DETACH pgdd_${__DATABASE__};
+
+
+connection default
+statement error
+CALL postgres_execute('pgdda_${__DATABASE__}', 'DROP DATABASE ddadb_${__DATABASE__}', use_transaction := false);
+----
+db error: ERROR: Failed to execute query "DROP DATABASE ddadb_<slt:ignore>": ERROR:  database "ddadb_<slt:ignore>" is being accessed by other users<slt:ignore>
+
+
+connection holder
+statement ok
+COMMIT;
+
+
+# Other connections' listings can still hold the catalog for a moment.
+connection default
+statement ok retry 12 backoff 1s
+CALL postgres_execute('pgdda_${__DATABASE__}', 'DROP DATABASE ddadb_${__DATABASE__}', use_transaction := false);
+
+
+connection default
+statement ok
+DETACH pgdda_${__DATABASE__};

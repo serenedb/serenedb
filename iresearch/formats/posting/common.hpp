@@ -218,22 +218,18 @@ inline IRS_FORCE_INLINE void AndNotBitsetAt(uint64_t* IRS_RESTRICT dst,
 
 template<size_t N, typename Visitor>
 IRS_FORCE_INLINE void VisitDocs(uint32_t size, Visitor&& visit) {
-  if constexpr (N == std::dynamic_extent) {
-    for (uint32_t i = 0; i != size; ++i) {
-      visit(i);
+  static constexpr uint32_t kChains = 8;
+  const uint32_t count =
+    N == std::dynamic_extent ? size : static_cast<uint32_t>(N);
+  const uint32_t slice = count / kChains;
+  uint32_t i = 0;
+  for (; i != slice; ++i) {
+    for (uint32_t chain = 0; chain != kChains; ++chain) {
+      visit(i + chain * slice);
     }
-  } else {
-    static constexpr size_t kChains = 8;
-    static constexpr size_t kSlice = N / kChains;
-    uint32_t i = 0;
-    for (; i != kSlice; ++i) {
-      for (uint32_t chain = 0; chain != kChains; ++chain) {
-        visit(i + chain * kSlice);
-      }
-    }
-    for (i *= kChains; i != N; ++i) {
-      visit(i);
-    }
+  }
+  for (i *= kChains; i != count; ++i) {
+    visit(i);
   }
 }
 

@@ -20,10 +20,13 @@
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 
+#define ZSTD_STATIC_LINKING_ONLY
+
 #include <lz4.h>
 #include <lz4hc.h>
 #include <zstd.h>
 #include <zxc_buffer.h>
+#include <zxc_constants.h>
 
 #include <limits>
 
@@ -53,13 +56,42 @@ LeafCompressor<ByteCodec::Zxc>::LeafCompressor(uint8_t level)
   SDB_ENSURE(_ctx, "zxc: cannot create a compression context");
 }
 
-LeafCompressor<ByteCodec::Zxc>::~LeafCompressor() { zxc_free_cctx(_ctx); }
+namespace {
+
+std::string_view ZxcDictionary(std::string_view dictionary) noexcept {
+  return dictionary.size() > ZXC_DICT_SIZE_MAX
+           ? dictionary.substr(dictionary.size() - ZXC_DICT_SIZE_MAX)
+           : dictionary;
+}
+
+}  // namespace
+
+LeafCompressor<ByteCodec::Zxc>::~LeafCompressor() {
+  zxc_free_cctx(_ctx);
+  zxc_free_cctx(_block_ctx);
+}
+
+void LeafCompressor<ByteCodec::Zxc>::LoadDictionary(std::string_view dictionary,
+                                                    size_t /*frame_bytes*/) {
+  _dictionary = ZxcDictionary(dictionary);
+}
 
 size_t LeafCompressor<ByteCodec::Zxc>::Compress(const char* src, size_t size,
                                                 char* dst, size_t capacity) {
   zxc_compress_opts_t opts{};
   opts.level = _level;
-  const auto n = zxc_compress_cctx(_ctx, src, size, dst, capacity, &opts);
+  if (_dictionary.empty() || size > ZXC_BLOCK_SIZE_MAX) {
+    const auto n = zxc_compress_cctx(_ctx, src, size, dst, capacity, &opts);
+    SDB_ENSURE(n > 0, "zxc compression failed: ", n);
+    return static_cast<size_t>(n);
+  }
+  if (!_block_ctx) {
+    _block_ctx = zxc_create_cctx(nullptr);
+    SDB_ENSURE(_block_ctx, "zxc: cannot create a compression context");
+  }
+  opts.dict = _dictionary.data();
+  opts.dict_size = _dictionary.size();
+  const auto n = zxc_compress_block(_block_ctx, src, size, dst, capacity, &opts);
   SDB_ENSURE(n > 0, "zxc compression failed: ", n);
   return static_cast<size_t>(n);
 }
@@ -68,12 +100,34 @@ LeafDecompressor<ByteCodec::Zxc>::LeafDecompressor() : _ctx{zxc_create_dctx()} {
   SDB_ENSURE(_ctx, "zxc: cannot create a decompression context");
 }
 
-LeafDecompressor<ByteCodec::Zxc>::~LeafDecompressor() { zxc_free_dctx(_ctx); }
+LeafDecompressor<ByteCodec::Zxc>::~LeafDecompressor() {
+  zxc_free_dctx(_ctx);
+  zxc_free_dctx(_block_ctx);
+}
+
+void LeafDecompressor<ByteCodec::Zxc>::SetDictionary(
+  std::string_view dictionary) noexcept {
+  _dictionary = ZxcDictionary(dictionary);
+}
 
 bool LeafDecompressor<ByteCodec::Zxc>::Decompress(const char* src, size_t size,
                                                   char* dst,
                                                   size_t raw_size) noexcept {
-  const auto n = zxc_decompress_dctx(_ctx, src, size, dst, raw_size, nullptr);
+  if (_dictionary.empty() || raw_size > ZXC_BLOCK_SIZE_MAX) {
+    const auto n = zxc_decompress_dctx(_ctx, src, size, dst, raw_size, nullptr);
+    return n >= 0 && static_cast<size_t>(n) == raw_size;
+  }
+  if (!_block_ctx) {
+    _block_ctx = zxc_create_dctx();
+    if (!_block_ctx) {
+      return false;
+    }
+  }
+  zxc_decompress_opts_t opts{};
+  opts.dict = _dictionary.data();
+  opts.dict_size = _dictionary.size();
+  const auto n =
+    zxc_decompress_block_safe(_block_ctx, src, size, dst, raw_size, &opts);
   return n >= 0 && static_cast<size_t>(n) == raw_size;
 }
 
@@ -83,23 +137,83 @@ size_t LeafDecompressor<ByteCodec::Zxc>::DecompressPrefix(
   return Decompress(src, size, dst, raw_size) ? raw_size : 0;
 }
 
+LeafCompressor<ByteCodec::Lz4>::~LeafCompressor() {
+  LZ4_freeStream(_dict);
+  LZ4_freeStream(_work);
+  LZ4_freeStreamHC(_hc_dict);
+  LZ4_freeStreamHC(_hc_work);
+}
+
+void LeafCompressor<ByteCodec::Lz4>::LoadDictionary(std::string_view dictionary,
+                                                    size_t /*frame_bytes*/) {
+  SDB_ASSERT(dictionary.size() <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
+  const auto size = static_cast<int>(dictionary.size());
+  if (_level <= 1) {
+    if (!_dict) {
+      _dict = LZ4_createStream();
+      _work = LZ4_createStream();
+      SDB_ENSURE(_dict && _work, "lz4: cannot create a dictionary stream");
+    }
+    LZ4_loadDict(_dict, dictionary.data(), size);
+  } else {
+    if (!_hc_dict) {
+      _hc_dict = LZ4_createStreamHC();
+      _hc_work = LZ4_createStreamHC();
+      SDB_ENSURE(_hc_dict && _hc_work,
+                 "lz4: cannot create a dictionary stream");
+    }
+    LZ4_resetStreamHC_fast(_hc_dict, _level);
+    LZ4_loadDictHC(_hc_dict, dictionary.data(), size);
+  }
+  _dictionary = true;
+}
+
 size_t LeafCompressor<ByteCodec::Lz4>::Compress(const char* src, size_t size,
                                                 char* dst, size_t capacity) {
   SDB_ASSERT(size <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
   SDB_ASSERT(capacity <= std::numeric_limits<int>::max());
-  const int n = _level <= 1
-                  ? LZ4_compress_default(src, dst, static_cast<int>(size),
-                                         static_cast<int>(capacity))
-                  : LZ4_compress_HC(src, dst, static_cast<int>(size),
-                                    static_cast<int>(capacity), _level);
+  const auto src_size = static_cast<int>(size);
+  const auto dst_capacity = static_cast<int>(capacity);
+  int n = 0;
+  if (!_dictionary) {
+    n = _level <= 1
+          ? LZ4_compress_default(src, dst, src_size, dst_capacity)
+          : LZ4_compress_HC(src, dst, src_size, dst_capacity, _level);
+  } else if (_level <= 1) {
+    LZ4_resetStream_fast(_work);
+    LZ4_attach_dictionary(_work, _dict);
+    n = LZ4_compress_fast_continue(_work, src, dst, src_size, dst_capacity, 1);
+  } else {
+    LZ4_resetStreamHC_fast(_hc_work, _level);
+    LZ4_attach_HC_dictionary(_hc_work, _hc_dict);
+    n = LZ4_compress_HC_continue(_hc_work, src, dst, src_size, dst_capacity);
+  }
   SDB_ENSURE(n > 0, "lz4 compression failed");
   return static_cast<size_t>(n);
+}
+
+LeafCompressor<ByteCodec::Zstd>::~LeafCompressor() { ClearDictionary(); }
+
+void LeafCompressor<ByteCodec::Zstd>::ClearDictionary() noexcept {
+  ZSTD_freeCDict(_cdict);
+  _cdict = nullptr;
+}
+
+void LeafCompressor<ByteCodec::Zstd>::LoadDictionary(
+  std::string_view dictionary, size_t frame_bytes) {
+  ClearDictionary();
+  _cdict = ZSTD_createCDict_advanced(
+    dictionary.data(), dictionary.size(), ZSTD_dlm_byRef, ZSTD_dct_rawContent,
+    ZSTD_getCParams(_level, frame_bytes, dictionary.size()), ZSTD_defaultCMem);
+  SDB_ENSURE(_cdict, "zstd: cannot create a compression dictionary");
 }
 
 size_t LeafCompressor<ByteCodec::Zstd>::Compress(const char* src, size_t size,
                                                  char* dst, size_t capacity) {
   const auto n =
-    ZSTD_compressCCtx(_ctx.get(), dst, capacity, src, size, _level);
+    _cdict
+      ? ZSTD_compress_usingCDict(_ctx.get(), dst, capacity, src, size, _cdict)
+      : ZSTD_compressCCtx(_ctx.get(), dst, capacity, src, size, _level);
   SDB_ENSURE(!ZSTD_isError(n),
              "zstd compression failed: ", ZSTD_getErrorName(n));
   return n;
@@ -112,8 +226,13 @@ bool LeafDecompressor<ByteCodec::Lz4>::Decompress(const char* src, size_t size,
       raw_size > static_cast<size_t>(std::numeric_limits<int>::max())) {
     return false;
   }
-  const int n = LZ4_decompress_safe(src, dst, static_cast<int>(size),
-                                    static_cast<int>(raw_size));
+  const int n =
+    _dictionary.empty()
+      ? LZ4_decompress_safe(src, dst, static_cast<int>(size),
+                            static_cast<int>(raw_size))
+      : LZ4_decompress_safe_usingDict(
+          src, dst, static_cast<int>(size), static_cast<int>(raw_size),
+          _dictionary.data(), static_cast<int>(_dictionary.size()));
   return n >= 0 && static_cast<size_t>(n) == raw_size;
 }
 
@@ -125,16 +244,46 @@ size_t LeafDecompressor<ByteCodec::Lz4>::DecompressPrefix(
       raw_size > static_cast<size_t>(std::numeric_limits<int>::max())) {
     return 0;
   }
-  const int n = LZ4_decompress_safe_partial(src, dst, static_cast<int>(size),
-                                            static_cast<int>(want),
-                                            static_cast<int>(raw_size));
+  const int n =
+    _dictionary.empty()
+      ? LZ4_decompress_safe_partial(src, dst, static_cast<int>(size),
+                                    static_cast<int>(want),
+                                    static_cast<int>(raw_size))
+      : LZ4_decompress_safe_partial_usingDict(
+          src, dst, static_cast<int>(size), static_cast<int>(want),
+          static_cast<int>(raw_size), _dictionary.data(),
+          static_cast<int>(_dictionary.size()));
   return n >= 0 && static_cast<size_t>(n) >= want ? static_cast<size_t>(n) : 0;
+}
+
+LeafDecompressor<ByteCodec::Zstd>::~LeafDecompressor() {
+  ZSTD_freeDDict(_ddict);
+}
+
+void LeafDecompressor<ByteCodec::Zstd>::SetDictionary(
+  std::string_view dictionary) {
+  _use = !dictionary.empty();
+  if (!_use || (dictionary.data() == _loaded.data() &&
+                dictionary.size() == _loaded.size())) {
+    return;
+  }
+  ZSTD_freeDDict(_ddict);
+  _ddict = nullptr;
+  _loaded = {};
+  _ddict = ZSTD_createDDict_advanced(dictionary.data(), dictionary.size(),
+                                     ZSTD_dlm_byRef, ZSTD_dct_rawContent,
+                                     ZSTD_defaultCMem);
+  SDB_ENSURE(_ddict, "zstd: cannot create a decompression dictionary");
+  _loaded = dictionary;
 }
 
 bool LeafDecompressor<ByteCodec::Zstd>::Decompress(const char* src, size_t size,
                                                    char* dst,
                                                    size_t raw_size) noexcept {
-  const auto n = ZSTD_decompressDCtx(_ctx.get(), dst, raw_size, src, size);
+  const auto n =
+    _use ? ZSTD_decompress_usingDDict(_ctx.get(), dst, raw_size, src, size,
+                                      _ddict)
+         : ZSTD_decompressDCtx(_ctx.get(), dst, raw_size, src, size);
   return !ZSTD_isError(n) && n == raw_size;
 }
 

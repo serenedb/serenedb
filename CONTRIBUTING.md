@@ -57,12 +57,13 @@ the build does it in two passes:
 
 1. `serened-docs-bootstrap` links the same server with an empty index.
 2. `serened-docs-bootstrap <datadir> --build_docs_index=<out>` boots it on a
-   throwaway datadir, indexes the documentation, writes the index files and a
-   layout file naming their column and field ids to `<out>`, then exits before
+   throwaway datadir, indexes the documentation and the catalog of the objects
+   it documents, and writes them to `<out>/docs` and `<out>/objects`, each
+   with a layout file naming its column and field ids. It then exits before
    any listener is started.
-3. `scripts/generate_docs_index.py` packs that directory with `#embed`, so the
-   generated translation unit stays a few hundred bytes whatever the index
-   weighs.
+3. `scripts/generate_docs_index.py` packs both directories with `#embed`, so
+   the generated translation unit stays a few hundred bytes whatever the
+   indexes weigh.
 4. `serened` links the generated unit.
 
 The code behind the first two steps lives in `server/docs/builder/`: the

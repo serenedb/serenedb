@@ -21,10 +21,7 @@
 #include "docs/docs_search.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/container/flat_hash_map.h>
-#include <absl/container/flat_hash_set.h>
 #include <absl/strings/ascii.h>
-#include <absl/strings/escaping.h>
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
@@ -56,7 +53,8 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/store/span_directory.hpp>
-#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -96,49 +94,89 @@ struct Layout {
   }
 };
 
-Layout ReadLayout(std::span<const IndexFile> files) {
-  const auto file = absl::c_find_if(
-    files, [](const IndexFile& file) { return file.name == kLayoutFile; });
-  if (file == files.end()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("the documentation index carries no ", kLayoutFile));
-  }
-  constexpr std::array<std::pair<std::string_view, Column Layout::*>, 5>
-    kColumns{{{"path", &Layout::path},
-              {"title", &Layout::title},
-              {"breadcrumb", &Layout::breadcrumb},
-              {"content", &Layout::content},
-              {"content_text", &Layout::content_text}}};
-  Layout layout;
-  const std::string_view text{reinterpret_cast<const char*>(file->bytes.data()),
-                              file->bytes.size()};
-  for (const std::string_view line :
-       absl::StrSplit(text, '\n', absl::SkipEmpty())) {
-    const std::vector<std::string_view> parts = absl::StrSplit(line, ' ');
-    const auto slot = absl::c_find_if(
-      kColumns, [&](const auto& column) { return column.first == parts[0]; });
-    Column column;
-    if (slot == kColumns.end() || parts.size() < 2 || parts.size() > 3 ||
-        (parts[1] != "-" && !absl::SimpleAtoi(parts[1], &column.stored)) ||
-        (parts.size() == 3 && !absl::SimpleAtoi(parts[2], &column.terms))) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                      ERR_MSG("malformed ", kLayoutFile, " line: ", line));
+constexpr std::array<std::string_view, 9> kObjectColumns{
+  "kind", "name", "signature", "summary",   "aliases",
+  "path", "page", "category",  "breadcrumb"};
+
+struct ObjectLayout {
+  std::array<irs::field_id, kObjectColumns.size()> stored;
+  irs::field_id names = irs::field_limits::invalid();
+  irs::field_id kind = irs::field_limits::invalid();
+};
+
+class LayoutColumns {
+ public:
+  explicit LayoutColumns(std::span<const IndexFile> files) {
+    const auto file = absl::c_find_if(
+      files, [](const IndexFile& file) { return file.name == kLayoutFile; });
+    if (file == files.end()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INTERNAL_ERROR),
+        ERR_MSG("the documentation index carries no ", kLayoutFile));
     }
-    layout.*(slot->second) = column;
+    const std::string_view text{
+      reinterpret_cast<const char*>(file->bytes.data()), file->bytes.size()};
+    for (const std::string_view line :
+         absl::StrSplit(text, '\n', absl::SkipEmpty())) {
+      const std::vector<std::string_view> parts = absl::StrSplit(line, ' ');
+      Column column;
+      if (parts.size() < 2 || parts.size() > 3 ||
+          (parts[1] != "-" && !absl::SimpleAtoi(parts[1], &column.stored)) ||
+          (parts.size() == 3 && !absl::SimpleAtoi(parts[2], &column.terms))) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                        ERR_MSG("malformed ", kLayoutFile, " line: ", line));
+      }
+      _columns.emplace(parts[0], column);
+    }
   }
-  for (const auto& [name, member] : kColumns) {
-    const auto& column = layout.*member;
-    if (member != &Layout::content_text &&
-        !irs::field_limits::valid(column.stored)) {
+
+  irs::field_id Stored(std::string_view name) const {
+    const auto id = Find(name).stored;
+    if (!irs::field_limits::valid(id)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                       ERR_MSG(kLayoutFile, " names no column '", name, "'"));
     }
-    if (member != &Layout::content && !irs::field_limits::valid(column.terms)) {
+    return id;
+  }
+
+  irs::field_id Terms(std::string_view name) const {
+    const auto id = Find(name).terms;
+    if (!irs::field_limits::valid(id)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                       ERR_MSG(kLayoutFile, " names no terms for '", name, "'"));
     }
+    return id;
   }
+
+ private:
+  Column Find(std::string_view name) const {
+    const auto it = _columns.find(name);
+    return it == _columns.end() ? Column{} : it->second;
+  }
+
+  irs::containers::FlatHashMap<std::string_view, Column> _columns;
+};
+
+Layout ReadLayout(std::span<const IndexFile> files) {
+  const LayoutColumns columns{files};
+  const auto both = [&](std::string_view name) {
+    return Column{.stored = columns.Stored(name), .terms = columns.Terms(name)};
+  };
+  return {.path = both("path"),
+          .title = both("title"),
+          .breadcrumb = both("breadcrumb"),
+          .content = {.stored = columns.Stored("content")},
+          .content_text = {.terms = columns.Terms("content_text")}};
+}
+
+ObjectLayout ReadObjectLayout(std::span<const IndexFile> files) {
+  const LayoutColumns columns{files};
+  ObjectLayout layout;
+  absl::c_transform(
+    kObjectColumns, layout.stored.begin(),
+    [&](std::string_view name) { return columns.Stored(name); });
+  layout.names = columns.Terms("names");
+  layout.kind = columns.Terms("kind");
   return layout;
 }
 
@@ -157,73 +195,51 @@ bool OfKind(const Object& object, std::string_view kind) {
   return kind.empty() || absl::EqualsIgnoreCase(object.kind, kind);
 }
 
-std::vector<Object> ReadObjects(std::span<const IndexFile> files) {
-  const auto file = absl::c_find_if(
-    files, [](const IndexFile& file) { return file.name == kObjectsFile; });
-  if (file == files.end()) {
-    return {};
-  }
-  return DecodeObjects(
-    {reinterpret_cast<const char*>(file->bytes.data()), file->bytes.size()});
-}
-
 class DocsIndex final : public duckdb::ObjectCacheEntry {
  public:
-  DocsIndex(duckdb::DatabaseInstance& db, std::vector<IndexBlob> blobs = {})
-    : _blobs{std::move(blobs)} {
-    irs::log::SetLogger(&db.GetLogManager().GlobalLogger());
-    std::vector<IndexFile> owned;
-    for (const auto& blob : _blobs) {
-      owned.push_back(
-        {.name = blob.name,
-         .bytes = {reinterpret_cast<const std::uint8_t*>(blob.bytes.data()),
-                   blob.bytes.size()}});
-    }
-    const std::span<const IndexFile> files =
-      _blobs.empty() ? GetDocsIndex() : std::span<const IndexFile>{owned};
-    _layout = ReadLayout(files);
-    _objects = ReadObjects(files);
-    for (size_t i = 0; i < _objects.size(); ++i) {
-      _by_name[absl::AsciiStrToLower(_objects[i].name)].push_back(i);
-      for (const auto alias : Aliases(_objects[i].aliases)) {
-        _by_name[absl::AsciiStrToLower(alias)].push_back(i);
-      }
-    }
+  explicit DocsIndex(duckdb::DatabaseInstance& db)
+    : _layout{ReadLayout(GetDocsIndex())},
+      _object_layout{ReadObjectLayout(GetObjectsIndex())},
+      _docs{Open(db, GetDocsIndex())},
+      _objects{Open(db, GetObjectsIndex())} {}
+
+  static std::string ObjectType() { return std::string{kIndexKey}; }
+  std::string GetObjectType() final { return ObjectType(); }
+  duckdb::optional_idx GetEstimatedCacheMemory() const final { return {}; }
+
+  const irs::DirectoryReader& Reader() const noexcept { return _docs.reader; }
+  const Layout& Fields() const noexcept { return _layout; }
+  const irs::DirectoryReader& ObjectReader() const noexcept {
+    return _objects.reader;
+  }
+  const ObjectLayout& ObjectFields() const noexcept { return _object_layout; }
+
+ private:
+  struct Opened {
+    std::unique_ptr<irs::SpanDirectory> dir;
+    irs::DirectoryReader reader;
+  };
+
+  static Opened Open(duckdb::DatabaseInstance& db,
+                     std::span<const IndexFile> files) {
     irs::SpanDirectory::Files views;
     for (const auto& file : files) {
       views.emplace(file.name,
                     irs::bytes_view{file.bytes.data(), file.bytes.size()});
     }
     static const irs::ResourceManagementOptions kResourceManager;
-    _dir =
+    auto dir =
       std::make_unique<irs::SpanDirectory>(std::move(views), kResourceManager);
     irs::IndexReaderOptions options;
     options.db = &db;
-    _reader =
-      irs::DirectoryReader{*_dir, irs::formats::Get("1_5simd"), options};
+    irs::DirectoryReader reader{*dir, irs::formats::Get("1_5simd"), options};
+    return {.dir = std::move(dir), .reader = std::move(reader)};
   }
 
-  static std::string ObjectType() { return std::string{kIndexKey}; }
-  std::string GetObjectType() final { return ObjectType(); }
-  duckdb::optional_idx GetEstimatedCacheMemory() const final { return {}; }
-
-  const irs::DirectoryReader& Reader() const noexcept { return _reader; }
-  const Layout& Fields() const noexcept { return _layout; }
-  std::span<const Object> Catalog() const noexcept { return _objects; }
-
-  std::span<const size_t> Named(std::string_view key) const {
-    const auto it = _by_name.find(key);
-    return it == _by_name.end() ? std::span<const size_t>{}
-                                : std::span<const size_t>{it->second};
-  }
-
- private:
-  std::vector<IndexBlob> _blobs;
   Layout _layout;
-  std::vector<Object> _objects;
-  absl::flat_hash_map<std::string, std::vector<size_t>> _by_name;
-  std::unique_ptr<irs::SpanDirectory> _dir;
-  irs::DirectoryReader _reader;
+  ObjectLayout _object_layout;
+  Opened _docs;
+  Opened _objects;
 };
 
 irs::analysis::Tokenizer::ptr DocsTokenizer() {
@@ -231,14 +247,10 @@ irs::analysis::Tokenizer::ptr DocsTokenizer() {
 }
 
 duckdb::shared_ptr<DocsIndex> AcquireIndex(duckdb::DatabaseInstance& db) {
-  auto& cache = db.GetObjectCache();
-  if (auto index = cache.Get<DocsIndex>(std::string{kIndexKey})) {
-    return index;
-  }
   if (GetDocsIndex().empty()) {
     return nullptr;
   }
-  return cache.GetOrCreate<DocsIndex>(std::string{kIndexKey}, db);
+  return db.GetObjectCache().GetOrCreate<DocsIndex>(std::string{kIndexKey}, db);
 }
 
 template<typename Body>
@@ -251,18 +263,26 @@ auto WithIndex(duckdb::DatabaseInstance& db, Body&& body)
   return body(*index);
 }
 
-irs::Filter::ptr PathTerm(const Layout& layout, std::string_view path) {
+irs::Filter::ptr Term(irs::field_id field, std::string_view term) {
   auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field_id() = layout.path.terms;
-  filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(path);
+  *filter->mutable_field_id() = field;
+  filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
   return filter;
 }
 
-irs::Filter::ptr PathPrefix(const Layout& layout, std::string_view prefix) {
+irs::Filter::ptr Prefix(irs::field_id field, std::string_view prefix) {
   auto filter = std::make_unique<irs::ByPrefix>();
-  *filter->mutable_field_id() = layout.path.terms;
+  *filter->mutable_field_id() = field;
   filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(prefix);
   return filter;
+}
+
+irs::Filter::ptr PathTerm(const Layout& layout, std::string_view path) {
+  return Term(layout.path.terms, path);
+}
+
+irs::Filter::ptr PathPrefix(const Layout& layout, std::string_view prefix) {
+  return Prefix(layout.path.terms, prefix);
 }
 
 class EntryFetcher {
@@ -320,10 +340,51 @@ class EntryFetcher {
   Reader _content;
 };
 
-template<typename Fn>
-void ForEachMatch(const DocsIndex& index, const irs::Filter& filter,
-                  Content content, Fn&& fn) {
-  for (const auto& segment : index.Reader()) {
+class ObjectFetcher {
+ public:
+  ObjectFetcher(const irs::SubReader& segment, const ObjectLayout& layout) {
+    const auto* col_reader = segment.GetColReader();
+    if (!col_reader) {
+      return;
+    }
+    for (size_t i = 0; i < _columns.size(); ++i) {
+      const auto* stored = segment.Column(layout.stored[i]);
+      if (!stored) {
+        return;
+      }
+      _columns[i].emplace(*col_reader, *stored);
+    }
+    _valid = true;
+  }
+
+  bool Valid() const noexcept { return _valid; }
+
+  Object Fetch(irs::doc_id_t doc) {
+    const auto text = [&](size_t i) {
+      return std::string{irs::ViewCast<char>(_columns[i]->FetchDoc(doc))};
+    };
+    return {.kind = text(0),
+            .name = text(1),
+            .signature = text(2),
+            .summary = text(3),
+            .aliases = text(4),
+            .path = text(5),
+            .page = text(6),
+            .category = text(7),
+            .breadcrumb = text(8)};
+  }
+
+ private:
+  std::array<std::optional<irs::ColumnReader::BlobPointReader>,
+             kObjectColumns.size()>
+    _columns;
+  bool _valid = false;
+};
+
+template<typename MakeFetcher, typename Fn>
+void ForEachMatchIn(const irs::DirectoryReader& reader,
+                    const irs::Filter& filter, MakeFetcher&& make, Fn&& fn) {
+  for (const auto& segment : reader) {
     auto query = filter.PrepareSegment(segment, {});
     if (!query || irs::QueryBuilder::IsEmpty(*query)) {
       continue;
@@ -339,7 +400,7 @@ void ForEachMatch(const DocsIndex& index, const irs::Filter& filter,
     } else {
       live.emplace(std::move(node), docs_count, irs::fill::DocsMask{segment});
     }
-    EntryFetcher fetcher{segment, index.Fields(), content};
+    auto fetcher = make(segment);
     if (!fetcher.Valid()) {
       continue;
     }
@@ -348,6 +409,34 @@ void ForEachMatch(const DocsIndex& index, const irs::Filter& filter,
       fn(fetcher, doc);
     }
   }
+}
+
+template<typename Fn>
+void ForEachMatch(const DocsIndex& index, const irs::Filter& filter,
+                  Content content, Fn&& fn) {
+  ForEachMatchIn(
+    index.Reader(), filter,
+    [&](const irs::SubReader& segment) {
+      return EntryFetcher{segment, index.Fields(), content};
+    },
+    std::forward<Fn>(fn));
+}
+
+std::vector<Object> MatchingObjects(const DocsIndex& index,
+                                    const irs::Filter& filter) {
+  std::vector<Object> objects;
+  ForEachMatchIn(
+    index.ObjectReader(), filter,
+    [&](const irs::SubReader& segment) {
+      return ObjectFetcher{segment, index.ObjectFields()};
+    },
+    [&](ObjectFetcher& fetcher, irs::doc_id_t doc) {
+      objects.push_back(fetcher.Fetch(doc));
+    });
+  std::ranges::sort(objects, {}, [](const Object& object) {
+    return std::tie(object.kind, object.name, object.signature, object.path);
+  });
+  return objects;
 }
 
 template<typename Keep>
@@ -758,22 +847,13 @@ std::optional<std::string> OnlyPageNamed(const DocsIndex& index,
 
 std::vector<Object> NamedObjects(const DocsIndex& index, std::string_view name,
                                  std::string_view kind) {
-  const auto catalog = index.Catalog();
   const auto wanted = absl::StripAsciiWhitespace(kind);
-  std::vector<size_t> matches;
-  for (const auto i : index.Named(
-         absl::AsciiStrToLower(absl::StripAsciiWhitespace(CallName(name))))) {
-    if (OfKind(catalog[i], wanted)) {
-      matches.push_back(i);
-    }
-  }
-  absl::c_sort(matches);
-  matches.erase(std::unique(matches.begin(), matches.end()), matches.end());
-  std::vector<Object> found;
-  found.reserve(matches.size());
-  for (const auto i : matches) {
-    found.push_back(catalog[i]);
-  }
+  auto found = MatchingObjects(
+    index,
+    *Term(index.ObjectFields().names,
+          absl::AsciiStrToLower(absl::StripAsciiWhitespace(CallName(name)))));
+  std::erase_if(found,
+                [&](const Object& object) { return !OfKind(object, wanted); });
   std::ranges::sort(found, {}, [](const Object& object) {
     return std::tie(object.kind, object.path, object.signature);
   });
@@ -864,11 +944,7 @@ std::vector<Entry> KnownFirst(const DocsIndex& index, std::string_view query,
 
 }  // namespace
 
-void Publish(duckdb::DatabaseInstance& db, std::vector<IndexBlob> image) {
-  db.GetObjectCache().Put(
-    std::string{kIndexKey},
-    duckdb::make_shared_ptr<DocsIndex>(db, std::move(image)));
-}
+void CheckLayout(std::span<const IndexFile> files) { ReadLayout(files); }
 
 std::string Markdown(const Entry& entry) {
   if (absl::StartsWith(absl::StripLeadingAsciiWhitespace(entry.content),
@@ -1055,66 +1131,13 @@ std::vector<Entry> Lookup(duckdb::DatabaseInstance& db, std::string_view name,
   });
 }
 
-std::array<std::string_view, kObjectFields> ObjectFields(const Object& object) {
-  return {object.kind,    object.name,     object.signature,
-          object.summary, object.aliases,  object.path,
-          object.page,    object.category, object.breadcrumb};
-}
-
-Object ObjectFromFields(ObjectRow fields) {
-  return {.kind = std::move(fields[0]),
-          .name = std::move(fields[1]),
-          .signature = std::move(fields[2]),
-          .summary = std::move(fields[3]),
-          .aliases = std::move(fields[4]),
-          .path = std::move(fields[5]),
-          .page = std::move(fields[6]),
-          .category = std::move(fields[7]),
-          .breadcrumb = std::move(fields[8])};
-}
-
-std::string EncodeObjects(std::span<const Object> objects) {
-  std::string out;
-  for (const auto& object : objects) {
-    absl::StrAppend(
-      &out,
-      absl::StrJoin(ObjectFields(object), "\t",
-                    [](std::string* line, std::string_view field) {
-                      line->append(absl::Utf8SafeCEscape(field));
-                    }),
-      "\n");
-  }
-  return out;
-}
-
-std::vector<Object> DecodeObjects(std::string_view text) {
-  std::vector<Object> objects;
-  for (const std::string_view line :
-       absl::StrSplit(text, '\n', absl::SkipEmpty())) {
-    const std::vector<std::string_view> fields = absl::StrSplit(line, '\t');
-    ObjectRow row;
-    bool valid = fields.size() == row.size();
-    for (size_t i = 0; valid && i < row.size(); ++i) {
-      valid = absl::CUnescape(fields[i], &row[i]);
-    }
-    if (!valid) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                      ERR_MSG("malformed ", kObjectsFile, " line: ", line));
-    }
-    objects.push_back(ObjectFromFields(std::move(row)));
-  }
-  return objects;
-}
-
 std::vector<Object> Objects(duckdb::DatabaseInstance& db,
                             std::string_view kind) {
   return WithIndex(db, [&](const DocsIndex& index) {
-    const auto wanted = absl::StripAsciiWhitespace(kind);
-    std::vector<Object> objects;
-    absl::c_copy_if(
-      index.Catalog(), std::back_inserter(objects),
-      [&](const Object& object) { return OfKind(object, wanted); });
-    return objects;
+    const auto field = index.ObjectFields().kind;
+    const auto wanted = absl::AsciiStrToLower(absl::StripAsciiWhitespace(kind));
+    return MatchingObjects(
+      index, *(wanted.empty() ? Prefix(field, "") : Term(field, wanted)));
   });
 }
 
@@ -1132,14 +1155,16 @@ std::vector<std::string> CompleteName(duckdb::DatabaseInstance& db,
   return WithIndex(db, [&](const DocsIndex& index) {
     const auto wanted = absl::StripAsciiWhitespace(kind);
     std::vector<std::string> names;
-    absl::flat_hash_set<std::string> seen;
+    irs::containers::FlatHashSet<std::string> seen;
     const auto offer = [&](std::string_view name) {
       if (absl::StartsWithIgnoreCase(name, prefix) &&
           seen.insert(absl::AsciiStrToLower(name)).second) {
         names.emplace_back(name);
       }
     };
-    for (const auto& object : index.Catalog()) {
+    for (const auto& object :
+         MatchingObjects(index, *Prefix(index.ObjectFields().names,
+                                        absl::AsciiStrToLower(prefix)))) {
       if (!OfKind(object, wanted)) {
         continue;
       }

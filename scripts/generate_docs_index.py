@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Emit a translation unit that embeds a prebuilt iresearch directory.
+"""Emit a translation unit that embeds the prebuilt iresearch directories.
 
 The documentation index cannot be produced from the sources the way
 generate_docs.py produces the documentation text: building it needs the
-indexer, which lives in the server being built. So the directory is produced
-by `serened-docs-bootstrap <datadir> --build_docs_index=<dir>`, and this script
-only references the files it left behind.
+indexer, which lives in the server being built. So `serened-docs-bootstrap
+<datadir> --build_docs_index=<dir>` writes the page index to <dir>/docs and
+the object catalog to <dir>/objects, and this script only references the
+files it left behind.
 
 The bytes come in through #embed, so nothing is transliterated: the generated
 file is a few hundred bytes of directives rather than a multiple of the index
@@ -29,7 +30,15 @@ def human_size(size: int) -> str:
     return f"{size / (1024 * 1024):.1f} MiB"
 
 
-def emit(files: list[tuple[pathlib.Path, bytes]]) -> str:
+INDEXES = (
+    ("docs", "kDocs", "GetDocsIndex"),
+    ("objects", "kObjects", "GetObjectsIndex"),
+)
+
+Index = tuple[str, str, list[tuple[pathlib.Path, bytes]]]
+
+
+def emit(indexes: list[Index]) -> str:
     lines = [
         '#include "docs/docs_index_data.h"',
         "",
@@ -43,34 +52,38 @@ def emit(files: list[tuple[pathlib.Path, bytes]]) -> str:
         '#pragma clang diagnostic ignored "-Wc23-extensions"',
         "",
     ]
-    for i, (path, data) in enumerate(files):
-        digest = hashlib.sha256(data).hexdigest()
-        lines.append(f"// {path.name} ({len(data)} bytes, sha256 {digest})")
-        if not data:
-            lines.append("")
-            continue
+    number = 0
+    tables = []
+    for array, _, files in indexes:
+        entries = []
+        for path, data in files:
+            digest = hashlib.sha256(data).hexdigest()
+            lines.append(f"// {path.parent.name}/{path.name} "
+                         f"({len(data)} bytes, sha256 {digest})")
+            if not data:
+                lines.append("")
+                entries.append(f'  {{"{path.name}", {{}}}},')
+                continue
+            lines += [
+                f"constexpr std::uint8_t kFile{number}[] = {{",
+                f'#embed "{path}"',
+                "};",
+                "",
+            ]
+            entries.append(f'  {{"{path.name}", kFile{number}}},')
+            number += 1
+        tables.append((array, entries))
+
+    lines += ["#pragma clang diagnostic pop", ""]
+    for array, entries in tables:
+        lines += [f"constexpr IndexFile {array}[] = {{", *entries, "};", ""]
+    lines += ["}  // namespace", ""]
+    for array, accessor, _ in indexes:
         lines += [
-            f"constexpr std::uint8_t kFile{i}[] = {{",
-            f'#embed "{path}"',
-            "};",
+            f"std::span<const IndexFile> {accessor}() {{ return {array}; }}",
             "",
         ]
-
-    lines += [
-        "#pragma clang diagnostic pop",
-        "",
-        "constexpr IndexFile kIndex[] = {",
-    ]
-    for i, (path, data) in enumerate(files):
-        value = f"kFile{i}" if data else "{}"
-        lines.append(f'  {{"{path.name}", {value}}},')
-    lines += ["};", "", "}  // namespace", ""]
-    lines += [
-        "std::span<const IndexFile> GetDocsIndex() { return kIndex; }",
-        "",
-        "}  // namespace sdb::docs",
-        "",
-    ]
+    lines += ["}  // namespace sdb::docs", ""]
     return "\n".join(lines)
 
 
@@ -87,31 +100,42 @@ def main() -> int:
         ),
     )
     parser.add_argument("directory", type=pathlib.Path,
-                        help="iresearch directory to embed")
+                        help="directory holding the docs/ and objects/ "
+                             "iresearch directories to embed")
     parser.add_argument("output", type=pathlib.Path)
     args = parser.parse_args()
 
-    files = (
-        [
-            (path.resolve(), path.read_bytes())
-            for path in sorted(args.directory.iterdir())
-            if path.is_file()
-        ]
-        if args.directory.is_dir()
-        else []
-    )
-    if not files:
-        print(f"no index files under {str(args.directory)!r}", file=sys.stderr)
-        return 1
+    indexes: list[Index] = []
+    for name, array, accessor in INDEXES:
+        directory = args.directory / name
+        files = (
+            [
+                (path.resolve(), path.read_bytes())
+                for path in sorted(directory.iterdir())
+                if path.is_file()
+            ]
+            if directory.is_dir()
+            else []
+        )
+        if not files:
+            print(f"no index files under {str(directory)!r}", file=sys.stderr)
+            return 1
+        indexes.append((array, accessor, files))
 
-    total = sum(len(d) for _, d in files)
+    listed = [
+        (f"{path.parent.name}/{path.name}", data)
+        for _, _, files in indexes
+        for path, data in files
+    ]
+    total = sum(len(data) for _, data in listed)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(emit(files))
-    print(f"embedded docs index: {len(files)} files, {human_size(total)} "
+    args.output.write_text(emit(indexes))
+    print(f"embedded docs index: {len(listed)} files, {human_size(total)} "
           f"({total} bytes) -> {args.output}")
-    width = max(len(path.name) for path, _ in files)
-    for path, data in sorted(files, key=lambda file: len(file[1]), reverse=True):
-        print(f"  {path.name:<{width}}  {human_size(len(data)):>10}")
+    width = max(len(name) for name, _ in listed)
+    for name, data in sorted(listed, key=lambda item: len(item[1]),
+                             reverse=True):
+        print(f"  {name:<{width}}  {human_size(len(data)):>10}")
     return 0
 
 

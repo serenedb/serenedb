@@ -20,6 +20,7 @@
 
 #include "docs/builder/docs_loader.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
 #include <absl/time/time.h>
@@ -40,8 +41,8 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/static_strings.hpp>
+#include <iterator>
 #include <memory>
-#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -53,7 +54,6 @@
 #include "connector/duckdb_client_state.h"
 #include "docs/builder/docs_data.h"
 #include "docs/docs_index_data.h"
-#include "docs/docs_search.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
 #include "search/search_table.h"
@@ -64,6 +64,7 @@ namespace {
 
 constexpr std::string_view kSchema = "sdb_docs_build";
 constexpr std::string_view kTable = "sdb_docs_build.docs";
+constexpr std::string_view kObjectsTable = "sdb_docs_build.objects";
 constexpr size_t kInsertBatch = 32;
 
 constexpr std::string_view kStripLinksToken = "@striplinks@";
@@ -93,6 +94,22 @@ CREATE INDEX docs_fts ON sdb_docs_build.docs USING inverted (
   breadcrumb sdb_docs_build.tokenizer,
   (md_to_text(content)) sdb_docs_build.tokenizer,
   path);
+
+CREATE TABLE sdb_docs_build.objects (
+  kind TEXT,
+  name TEXT,
+  signature TEXT,
+  summary TEXT,
+  aliases TEXT,
+  path TEXT,
+  page TEXT,
+  category TEXT,
+  breadcrumb TEXT,
+  names TEXT[]
+) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+CREATE INDEX objects_names ON sdb_docs_build.objects USING inverted (
+  names, kind);
 )sql";
 
 constexpr std::string_view kObjectsSql = R"sql(
@@ -215,8 +232,14 @@ FROM commands
 ORDER BY kind, name, signature, path
 )sql";
 
-std::optional<std::vector<IndexBlob>> ExportImage(
-  duckdb::ClientContext& context, std::string_view database);
+struct IndexBlob {
+  std::string name;
+  std::string bytes;
+};
+
+std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
+                                   std::string_view database,
+                                   std::string_view table);
 
 class Loader {
  public:
@@ -246,18 +269,24 @@ class Loader {
     });
   }
 
-  std::optional<std::vector<IndexBlob>> Build() {
+  std::vector<IndexBlob> Build() {
     if (!Run(Sql(kBuildSql)) || !Insert() ||
-        !Run(absl::StrCat("VACUUM (REFRESH_TABLE) ", kTable))) {
-      return std::nullopt;
+        !Run(absl::StrCat("VACUUM (REFRESH_TABLE) ", kTable)) ||
+        !Run(absl::StrCat(
+          "INSERT INTO ", kObjectsTable,
+          " SELECT *, list_filter(list_prepend(lower(name), "
+          "list_transform(string_split(coalesce(aliases, ''), ','), "
+          "part -> lower(trim(part)))), term -> term <> '') FROM (",
+          Sql(kObjectsSql), ")")) ||
+        !Run(absl::StrCat("VACUUM (REFRESH_TABLE) ", kObjectsTable))) {
+      return {};
     }
-    auto objects = Catalog();
-    auto image = ExportImage(*_conn->context, _ctx->GetDatabase());
-    if (!objects || !image) {
-      return std::nullopt;
+    auto image = ExportImage(*_conn->context, _ctx->GetDatabase(), "docs");
+    auto objects = ExportImage(*_conn->context, _ctx->GetDatabase(), "objects");
+    if (image.empty() || objects.empty()) {
+      return {};
     }
-    image->push_back(
-      {.name = std::string{kObjectsFile}, .bytes = std::move(*objects)});
+    absl::c_move(objects, std::back_inserter(image));
     return image;
   }
 
@@ -273,27 +302,6 @@ class Loader {
 
  private:
   static constexpr size_t kInsertColumns = 4;
-
-  std::optional<std::string> Catalog() {
-    auto result = _conn->Query(Sql(kObjectsSql));
-    if (result->HasError()) {
-      SDB_WARN(GENERAL,
-               "embedded docs: object catalog failed: ", result->GetError());
-      return std::nullopt;
-    }
-    std::vector<Object> objects;
-    objects.reserve(result->RowCount());
-    for (size_t row = 0; row < result->RowCount(); ++row) {
-      ObjectRow fields;
-      for (size_t column = 0; column < fields.size(); ++column) {
-        if (const auto value = result->GetValue(column, row); !value.IsNull()) {
-          fields[column] = duckdb::StringValue::Get(value);
-        }
-      }
-      objects.push_back(ObjectFromFields(std::move(fields)));
-    }
-    return EncodeObjects(objects);
-  }
 
   duckdb::unique_ptr<duckdb::PreparedStatement> PrepareInsert(size_t rows) {
     std::string sql = absl::StrCat("INSERT INTO ", kTable, " VALUES ");
@@ -350,20 +358,20 @@ class Loader {
   std::shared_ptr<ConnectionContext> _ctx;
 };
 
-std::optional<std::vector<IndexBlob>> BuildImage() {
+std::vector<IndexBlob> BuildImage() {
   const auto database =
     catalog::FindDatabase(irs::StaticStrings::kDefaultDatabase);
   if (!database) {
     SDB_ERROR(STARTUP,
               "cannot build the docs index: default database not found");
-    return std::nullopt;
+    return {};
   }
   const std::string_view name = database->name.GetIdentifierName();
   const auto begin = std::chrono::steady_clock::now();
   try {
     Loader loader{name, database->oid};
     auto image = loader.Build();
-    if (image) {
+    if (!image.empty()) {
       SDB_INFO(STARTUP, "embedded docs indexed in database \"", name, "\" in ",
                absl::FormatDuration(
                  absl::FromChrono(std::chrono::steady_clock::now() - begin)));
@@ -372,7 +380,7 @@ std::optional<std::vector<IndexBlob>> BuildImage() {
   } catch (const std::exception& e) {
     SDB_ERROR(STARTUP, "cannot build the docs index in database \"", name,
               "\": ", e.what());
-    return std::nullopt;
+    return {};
   }
 }
 
@@ -398,37 +406,37 @@ std::string DescribeLayout(const catalog::SearchTableEntry& table) {
   return layout;
 }
 
-std::optional<std::vector<IndexBlob>> ExportImage(
-  duckdb::ClientContext& context, std::string_view database) {
-  std::optional<std::vector<IndexBlob>> image;
+std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
+                                   std::string_view database,
+                                   std::string_view table_name) {
+  std::vector<IndexBlob> image;
   context.RunFunctionInTransaction([&] {
     const auto entry = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
       context,
       duckdb::QualifiedName{duckdb::Identifier{database},
                             duckdb::Identifier{kSchema},
-                            duckdb::Identifier{"docs"}},
+                            duckdb::Identifier{table_name}},
       duckdb::OnEntryNotFound::RETURN_NULL);
     const auto* table =
       dynamic_cast<const catalog::SearchTableEntry*>(entry.get());
     if (!table) {
-      SDB_ERROR(STARTUP, "cannot build the docs index: ", kTable,
-                " is not a search table in the catalog");
+      SDB_ERROR(STARTUP, "cannot build the docs index: ", kSchema, ".",
+                table_name, " is not a search table in the catalog");
       return;
     }
     const auto store = search::SearchTable::GetPath(
       table->ParentCatalog().GetAttached().oid,
       table->ParentSchema(context).oid, table->oid);
-    std::vector<IndexBlob> blobs;
     for (const auto& file : std::filesystem::directory_iterator{store}) {
       if (file.is_regular_file()) {
-        blobs.push_back(
-          {.name = file.path().filename().string(),
+        image.push_back(
+          {.name =
+             absl::StrCat(table_name, "/", file.path().filename().string()),
            .bytes = utils::file_utils::Slurp(file.path().string())});
       }
     }
-    blobs.push_back(
-      {.name = std::string{kLayoutFile}, .bytes = DescribeLayout(*table)});
-    image = std::move(blobs);
+    image.push_back({.name = absl::StrCat(table_name, "/", kLayoutFile),
+                     .bytes = DescribeLayout(*table)});
   });
   return image;
 }
@@ -442,10 +450,11 @@ bool WriteImage(std::span<const IndexBlob> image,
                 "a new or empty directory");
       return false;
     }
-    std::filesystem::create_directories(out);
     size_t bytes = 0;
     for (const auto& blob : image) {
-      utils::file_utils::Spit((out / blob.name).string(), blob.bytes);
+      const auto path = out / blob.name;
+      std::filesystem::create_directories(path.parent_path());
+      utils::file_utils::Spit(path.string(), blob.bytes);
       bytes += blob.bytes.size();
     }
     SDB_INFO(STARTUP, "docs index written to ", out.string(), ": ",
@@ -462,7 +471,7 @@ bool WriteImage(std::span<const IndexBlob> image,
 
 bool BuildEmbeddedIndex(const std::filesystem::path& out) {
   const auto image = BuildImage();
-  return image && WriteImage(*image, out);
+  return !image.empty() && WriteImage(image, out);
 }
 
 }  // namespace sdb::docs

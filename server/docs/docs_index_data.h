@@ -22,24 +22,19 @@
 
 #include <cstdint>
 #include <span>
-#include <string>
 #include <string_view>
 
 namespace sdb::docs {
 
 inline constexpr std::string_view kLayoutFile = "sdb_docs.layout";
-inline constexpr std::string_view kObjectsFile = "sdb_docs.objects";
 
 struct IndexFile {
   std::string_view name;
   std::span<const std::uint8_t> bytes;
 };
 
-struct IndexBlob {
-  std::string name;
-  std::string bytes;
-};
-
 std::span<const IndexFile> GetDocsIndex();
+
+std::span<const IndexFile> GetObjectsIndex();
 
 }  // namespace sdb::docs

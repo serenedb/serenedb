@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <array>
 #include <cstddef>
 #include <optional>
 #include <span>
@@ -62,17 +61,6 @@ struct Object {
   std::string breadcrumb;
 };
 
-inline constexpr size_t kObjectFields = 9;
-
-std::array<std::string_view, kObjectFields> ObjectFields(const Object& object);
-
-using ObjectRow = std::array<std::string, kObjectFields>;
-
-Object ObjectFromFields(ObjectRow fields);
-std::string EncodeObjects(std::span<const Object> objects);
-
-std::vector<Object> DecodeObjects(std::string_view text);
-
 std::size_t HeadingDepth(std::string_view path);
 
 std::string_view CallName(std::string_view term);
@@ -83,7 +71,7 @@ std::string Markdown(const Entry& entry);
 
 std::string Snippet(std::string_view text, size_t limit);
 
-void Publish(duckdb::DatabaseInstance& db, std::vector<IndexBlob> image);
+void CheckLayout(std::span<const IndexFile> files);
 
 std::optional<Entry> EntryAt(duckdb::DatabaseInstance& db,
                              std::string_view path, Content content);

@@ -35,6 +35,7 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <exception>
 #include <initializer_list>
+#include <iresearch/utils/log.hpp>
 #include <iterator>
 #include <map>
 #include <markdown_utils.hpp>
@@ -842,6 +843,7 @@ void RegisterShellDocsBackend() {
      .load =
        [](duckdb::ClientContext& context) {
          auto& db = duckdb::DatabaseInstance::GetDatabase(context);
+         irs::log::SetLogger(&db.GetLogManager().GlobalLogger());
          connector::RegisterMarkdownRenderFunctions(db);
          RegisterDocsFunctions(db);
          duckdb::ExtensionLoader::RefreshSearchPath(context);

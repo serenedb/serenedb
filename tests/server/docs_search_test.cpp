@@ -32,6 +32,7 @@
 #include <ranges>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 #include "connector/functions/markdown_render.h"
@@ -331,24 +332,26 @@ TEST_F(DocsIndex, EmbeddedIndexCompressesItsText) {
 }
 
 TEST_F(DocsIndex, LayoutMustNameTheTermsOfEveryIndexedColumn) {
-  std::vector<IndexBlob> image;
-  for (const auto& file : GetDocsIndex()) {
-    std::string bytes{reinterpret_cast<const char*>(file.bytes.data()),
-                      file.bytes.size()};
-    if (file.name == kLayoutFile) {
-      std::vector<std::string> lines = absl::StrSplit(bytes, '\n');
-      for (auto& line : lines) {
-        if (line.starts_with("title ")) {
-          line = line.substr(0, line.rfind(' '));
-        }
-      }
-      bytes = absl::StrJoin(lines, "\n");
+  const auto files = GetDocsIndex();
+  const auto embedded = absl::c_find_if(
+    files, [](const IndexFile& file) { return file.name == kLayoutFile; });
+  ASSERT_NE(embedded, files.end());
+  std::vector<std::string> lines = absl::StrSplit(
+    std::string_view{reinterpret_cast<const char*>(embedded->bytes.data()),
+                     embedded->bytes.size()},
+    '\n');
+  for (auto& line : lines) {
+    if (line.starts_with("title ")) {
+      line = line.substr(0, line.rfind(' '));
     }
-    image.push_back(
-      {.name = std::string{file.name}, .bytes = std::move(bytes)});
   }
+  const auto layout = absl::StrJoin(lines, "\n");
+  const IndexFile file{
+    .name = kLayoutFile,
+    .bytes = {reinterpret_cast<const std::uint8_t*>(layout.data()),
+              layout.size()}};
   try {
-    Publish(Db(), std::move(image));
+    CheckLayout({&file, 1});
     FAIL() << "a layout without the title terms was accepted";
   } catch (const std::exception& e) {
     EXPECT_NE(std::string_view{e.what()}.find("names no terms for 'title'"),
@@ -362,33 +365,33 @@ TEST_F(DocsIndex, NameCompletionHonoursKindAndLimit) {
   EXPECT_TRUE(CompleteName(Db(), "date_tr", "type", 40).empty());
 }
 
-TEST(DocsObjects, EncodingRoundTrips) {
-  const std::vector<Object> objects{
-    {.kind = "type",
-     .name = "BIGINT",
-     .signature = "BIGINT",
-     .summary = "Signed\teight-byte\ninteger \\N",
-     .aliases = "INT8, LONG",
-     .path = "sql/data_types/index.md#Data_Types",
-     .page = "sql/data_types/index.md"},
-    {.kind = "function",
-     .name = "abs",
-     .signature = "abs('x') -> \"y\"",
-     .path = "sql/functions/math.md#abs(x)",
-     .page = "sql/functions/math.md",
-     .category = "math",
-     .breadcrumb = "Math Functions \xC2\xB7 Zahlen"},
-  };
-  const auto decoded = DecodeObjects(EncodeObjects(objects));
-  ASSERT_EQ(decoded.size(), objects.size());
-  for (size_t i = 0; i < objects.size(); ++i) {
-    EXPECT_EQ(ObjectFields(decoded[i]), ObjectFields(objects[i]));
-  }
+TEST_F(DocsIndex, ObjectsComeBackWhole) {
+  const auto types = FindObjects(Db(), "BIGINT", "type");
+  ASSERT_EQ(types.size(), 1U);
+  EXPECT_EQ(types[0].signature, "BIGINT");
+  EXPECT_FALSE(types[0].summary.empty());
+  EXPECT_TRUE(types[0].aliases.contains("INT8"));
+  EXPECT_EQ(types[0].page, "sql/data_types/index.md");
+  EXPECT_TRUE(types[0].path.starts_with(types[0].page));
+  EXPECT_TRUE(types[0].category.empty());
+
+  const auto functions = FindObjects(Db(), "abs", "function");
+  ASSERT_FALSE(functions.empty());
+  EXPECT_EQ(functions[0].category, "numeric");
+  EXPECT_FALSE(functions[0].breadcrumb.empty());
 }
 
-TEST(DocsObjects, DecodingRejectsAMalformedEscape) {
-  EXPECT_ANY_THROW(
-    DecodeObjects("type\tBIGINT\tBIGINT\tbad \\q\t\tpath\tpage\t\t\n"));
+TEST_F(DocsIndex, ObjectsListInCatalogOrder) {
+  const auto all = Objects(Db());
+  ASSERT_FALSE(all.empty());
+  EXPECT_TRUE(std::ranges::is_sorted(all, {}, [](const Object& object) {
+    return std::tie(object.kind, object.name, object.signature, object.path);
+  }));
+  const auto types = Objects(Db(), "Type");
+  ASSERT_FALSE(types.empty());
+  EXPECT_EQ(static_cast<size_t>(absl::c_count_if(
+              all, [](const Object& object) { return object.kind == "type"; })),
+            types.size());
 }
 
 TEST(DocsPaths, HeadingDepthCountsUnescapedHashes) {

@@ -21,7 +21,6 @@
 #include "network/http/mcp/tools.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/container/flat_hash_map.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
@@ -35,6 +34,7 @@
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/materialized_query_result.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -363,7 +363,7 @@ yaclib::Task<ToolResult> DescribeObject(RequestContext& ctx,
     co_return Error(
       absl::StrCat("describe_object failed: ", bodies->GetError()));
   }
-  absl::flat_hash_map<std::string, size_t> body_rows;
+  irs::containers::FlatHashMap<std::string, size_t> body_rows;
   for (size_t row = 0; row < bodies->RowCount(); ++row) {
     body_rows.emplace(Cell(*bodies, "path", row), row);
   }

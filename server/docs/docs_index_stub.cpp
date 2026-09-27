@@ -24,4 +24,6 @@ namespace sdb::docs {
 
 [[gnu::weak]] std::span<const IndexFile> GetDocsIndex() { return {}; }
 
+[[gnu::weak]] std::span<const IndexFile> GetObjectsIndex() { return {}; }
+
 }  // namespace sdb::docs

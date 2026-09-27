@@ -655,6 +655,7 @@ launch_ollama() {
 	docker run -d \
 		--name "$OLLAMA_CONTAINER_NAME" \
 		"${network_args[@]}" \
+		-v serenedb-test-ollama:/root/.ollama \
 		ollama/ollama:latest
 
 	echo "Waiting for Ollama to be ready..."
@@ -671,8 +672,13 @@ launch_ollama() {
 		sleep 1
 	done
 
-	echo "Pulling model '$OLLAMA_MODEL'..."
-	docker exec "$OLLAMA_CONTAINER_NAME" ollama pull "$OLLAMA_MODEL"
+	if ! docker exec "$OLLAMA_CONTAINER_NAME" ollama show "$OLLAMA_MODEL" >/dev/null 2>&1; then
+		echo "Pulling model '$OLLAMA_MODEL'..."
+		if ! docker exec "$OLLAMA_CONTAINER_NAME" ollama pull "$OLLAMA_MODEL"; then
+			echo "ERROR: could not pull Ollama model '$OLLAMA_MODEL'"
+			exit 1
+		fi
+	fi
 
 	echo "Ollama running (host=$OLLAMA_HOST, port=$OLLAMA_PORT, model=$OLLAMA_MODEL)."
 	echo

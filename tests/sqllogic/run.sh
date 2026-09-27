@@ -723,7 +723,7 @@ launch_postgres() {
 	echo "Waiting for postgres to be ready..."
 	for i in $(seq 1 60); do
 		if docker exec "$POSTGRES_CONTAINER_NAME" \
-			pg_isready -U postgres >/dev/null 2>&1; then
+			pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1; then
 			echo "postgres is ready."
 			break
 		fi

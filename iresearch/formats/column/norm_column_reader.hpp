@@ -62,9 +62,6 @@ class NormColumnReader final {
             _pointers[rg].byte_size};
   }
 
-  size_t Stream(size_t rg, const byte_type* from,
-                size_t advised) const noexcept;
-
   uint8_t ByteSize(size_t rg) const noexcept {
     SDB_ASSERT(rg < _pointers.size());
     return _pointers[rg].byte_size;

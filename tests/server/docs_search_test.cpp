@@ -373,17 +373,22 @@ TEST(DocsObjects, EncodingRoundTrips) {
      .page = "sql/data_types/index.md"},
     {.kind = "function",
      .name = "abs",
-     .signature = "abs(x)",
+     .signature = "abs('x') -> \"y\"",
      .path = "sql/functions/math.md#abs(x)",
      .page = "sql/functions/math.md",
      .category = "math",
-     .breadcrumb = "Math Functions"},
+     .breadcrumb = "Math Functions \xC2\xB7 Zahlen"},
   };
   const auto decoded = DecodeObjects(EncodeObjects(objects));
   ASSERT_EQ(decoded.size(), objects.size());
   for (size_t i = 0; i < objects.size(); ++i) {
     EXPECT_EQ(ObjectFields(decoded[i]), ObjectFields(objects[i]));
   }
+}
+
+TEST(DocsObjects, DecodingRejectsAMalformedEscape) {
+  EXPECT_ANY_THROW(
+    DecodeObjects("type\tBIGINT\tBIGINT\tbad \\q\t\tpath\tpage\t\t\n"));
 }
 
 TEST(DocsPaths, HeadingDepthCountsUnescapedHashes) {

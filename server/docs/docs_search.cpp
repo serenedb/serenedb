@@ -24,6 +24,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 #include <absl/strings/ascii.h>
+#include <absl/strings/escaping.h>
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
@@ -139,55 +140,6 @@ Layout ReadLayout(std::span<const IndexFile> files) {
     }
   }
   return layout;
-}
-
-std::string EscapeField(std::string_view text) {
-  std::string out;
-  out.reserve(text.size());
-  for (const auto c : text) {
-    switch (c) {
-      case '\\':
-        out.append("\\\\");
-        break;
-      case '\t':
-        out.append("\\t");
-        break;
-      case '\n':
-        out.append("\\n");
-        break;
-      case '\r':
-        out.append("\\r");
-        break;
-      default:
-        out.push_back(c);
-    }
-  }
-  return out;
-}
-
-std::string UnescapeField(std::string_view text) {
-  std::string out;
-  out.reserve(text.size());
-  for (size_t i = 0; i < text.size(); ++i) {
-    if (text[i] != '\\' || i + 1 == text.size()) {
-      out.push_back(text[i]);
-      continue;
-    }
-    switch (text[++i]) {
-      case 't':
-        out.push_back('\t');
-        break;
-      case 'n':
-        out.push_back('\n');
-        break;
-      case 'r':
-        out.push_back('\r');
-        break;
-      default:
-        out.push_back(text[i]);
-    }
-  }
-  return out;
 }
 
 std::vector<std::string_view> Aliases(std::string_view aliases) {
@@ -1128,7 +1080,7 @@ std::string EncodeObjects(std::span<const Object> objects) {
       &out,
       absl::StrJoin(ObjectFields(object), "\t",
                     [](std::string* line, std::string_view field) {
-                      line->append(EscapeField(field));
+                      line->append(absl::Utf8SafeCEscape(field));
                     }),
       "\n");
   }
@@ -1140,12 +1092,15 @@ std::vector<Object> DecodeObjects(std::string_view text) {
   for (const std::string_view line :
        absl::StrSplit(text, '\n', absl::SkipEmpty())) {
     const std::vector<std::string_view> fields = absl::StrSplit(line, '\t');
-    if (fields.size() != kObjectFields) {
+    ObjectRow row;
+    bool valid = fields.size() == row.size();
+    for (size_t i = 0; valid && i < row.size(); ++i) {
+      valid = absl::CUnescape(fields[i], &row[i]);
+    }
+    if (!valid) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                       ERR_MSG("malformed ", kObjectsFile, " line: ", line));
     }
-    ObjectRow row;
-    absl::c_transform(fields, row.begin(), UnescapeField);
     objects.push_back(ObjectFromFields(std::move(row)));
   }
   return objects;

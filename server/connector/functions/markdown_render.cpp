@@ -44,16 +44,15 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utf8proc_wrapper.hpp>
+#include <utility>
 #include <vector>
 
 namespace sdb::connector {
 
 std::string ResolveHref(std::string_view base_path, std::string_view href) {
-  auto target = href;
-  if (const auto hash = target.find('#'); hash != std::string_view::npos) {
-    target = target.substr(0, hash);
-  }
+  const auto target = href.substr(0, href.find('#'));
   if (!target.ends_with(".md") && !target.ends_with(".mdx")) {
     return {};
   }
@@ -341,6 +340,21 @@ void WrapRuns(std::string& out, const std::vector<Run>& runs, int32_t width) {
   }
 }
 
+std::string_view TokenStyle(duckdb::SimplifiedTokenType type, const Style& s) {
+  switch (type) {
+    case duckdb::SimplifiedTokenType::SIMPLIFIED_TOKEN_KEYWORD:
+      return s.keyword;
+    case duckdb::SimplifiedTokenType::SIMPLIFIED_TOKEN_STRING_CONSTANT:
+      return s.literal;
+    case duckdb::SimplifiedTokenType::SIMPLIFIED_TOKEN_NUMERIC_CONSTANT:
+      return s.number;
+    case duckdb::SimplifiedTokenType::SIMPLIFIED_TOKEN_COMMENT:
+      return s.comment;
+    default:
+      return {};
+  }
+}
+
 std::string HighlightSql(const std::string& code, const Style& s) {
   std::vector<duckdb::SimplifiedToken> tokens;
   try {
@@ -367,24 +381,7 @@ std::string HighlightSql(const std::string& code, const Style& s) {
       continue;
     }
     const std::string_view span{code.data() + start, end - start};
-    std::string_view style;
-    switch (tokens[i].type) {
-      case duckdb::SimplifiedTokenType::SIMPLIFIED_TOKEN_KEYWORD:
-        style = s.keyword;
-        break;
-      case duckdb::SimplifiedTokenType::SIMPLIFIED_TOKEN_STRING_CONSTANT:
-        style = s.literal;
-        break;
-      case duckdb::SimplifiedTokenType::SIMPLIFIED_TOKEN_NUMERIC_CONSTANT:
-        style = s.number;
-        break;
-      case duckdb::SimplifiedTokenType::SIMPLIFIED_TOKEN_COMMENT:
-        style = s.comment;
-        break;
-      default:
-        break;
-    }
-    Emit(out, style, span);
+    Emit(out, TokenStyle(tokens[i].type, s), span);
   }
   return out;
 }
@@ -439,6 +436,10 @@ int32_t Narrower(int32_t width, size_t by) {
                     : std::max<int32_t>(width - static_cast<int32_t>(by), 1);
 }
 
+size_t Capped(int32_t width, int32_t cap) {
+  return static_cast<size_t>(width <= 0 ? cap : std::min(width, cap));
+}
+
 void Prefix(std::string& out, std::string_view body, std::string_view first,
             std::string_view rest, std::string_view blank) {
   while (body.ends_with('\n')) {
@@ -447,14 +448,10 @@ void Prefix(std::string& out, std::string_view body, std::string_view first,
   if (body.empty()) {
     return;
   }
-  bool is_first = true;
+  auto lead = first;
   for (const std::string_view line : absl::StrSplit(body, '\n')) {
-    if (line.empty()) {
-      absl::StrAppend(&out, blank, "\n");
-    } else {
-      absl::StrAppend(&out, is_first ? first : rest, line, "\n");
-    }
-    is_first = false;
+    const auto head = std::exchange(lead, rest);
+    absl::StrAppend(&out, line.empty() ? blank : head, line, "\n");
   }
 }
 
@@ -534,8 +531,8 @@ class Renderer {
     link.label = std::string{absl::StripAsciiWhitespace(link.label)};
     auto& links = _links->links;
     const auto same = absl::c_find_if(links, [&](const MarkdownLink& other) {
-      return other.page == link.page && other.anchor == link.anchor &&
-             other.url == link.url;
+      return std::tie(other.page, other.anchor, other.url) ==
+             std::tie(link.page, link.anchor, link.url);
     });
     const auto number =
       _links->first + static_cast<size_t>(same - links.begin());
@@ -653,20 +650,14 @@ class Renderer {
         List(out, node, width, text_style);
         out.push_back('\n');
         return;
-      case CMARK_NODE_THEMATIC_BREAK: {
-        const auto span =
-          static_cast<size_t>(width <= 0 ? kDefaultWidth : width);
-        Emit(out, _s.rule,
-             std::string(std::min<size_t>(span, kDefaultWidth), '-'));
+      case CMARK_NODE_THEMATIC_BREAK:
+        Emit(out, _s.rule, std::string(Capped(width, kDefaultWidth), '-'));
         out.append("\n\n");
         return;
-      }
-      case CMARK_NODE_HTML_BLOCK: {
-        const std::vector<Run> runs{{.text = Literal(node)}};
-        WrapRuns(out, runs, width);
+      case CMARK_NODE_HTML_BLOCK:
+        WrapRuns(out, {{.text = Literal(node)}}, width);
         out.push_back('\n');
         return;
-      }
       default:
         break;
     }
@@ -739,8 +730,7 @@ class Renderer {
         floors[i] = std::max(floors[i], LongestWordWidth(row[i].plain));
       }
     }
-    const auto budget = static_cast<size_t>(
-      width <= 0 ? kMaxTableWidth : std::min(width, kMaxTableWidth));
+    const auto budget = Capped(width, kMaxTableWidth);
     size_t total = 1;
     for (const auto column : widths) {
       total += column + 3;

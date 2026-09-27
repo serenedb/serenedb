@@ -250,7 +250,7 @@ class PgWireSession final
   yaclib::Task<StartupOutcome> NegotiateStartup(StartupRequest& startup);
   // Register the cancel token, emplace the task, and start the cpu coroutine on
   // a duck worker. Returns its future for Run to join.
-  yaclib::Future<> SpawnSession();
+  yaclib::Future<> SpawnSession() noexcept;
   // The steady recv pump: socket read -> _recv -> wake the worker (or the
   // copy-gate while a COPY FROM STDIN feeder owns the consumer role).
   yaclib::Task<> PumpRecv();
@@ -290,6 +290,8 @@ class PgWireSession final
   // on the DuckDB scheduler. Prologue (SetupConnection + startup burst) ->
   // command loop -> teardown. Never runs on an io thread.
   yaclib::Future<> SessionMain();
+  yaclib::Task<> ServeSession();
+  void TeardownSession() noexcept;
   // The post-bring-up command loop: assemble one frame, dispatch it, resolve
   // sync points. Runs until Terminate / EOF / a fatal frame.
   yaclib::Task<> RunCommandLoop();

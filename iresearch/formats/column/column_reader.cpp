@@ -87,12 +87,8 @@ ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::Deserializer& d,
   const auto file_offset = d.ReadProperty<uint64_t>(2, "file_offset");
   const auto byte_size = d.ReadProperty<uint64_t>(3, "byte_size");
   auto stats = d.ReadProperty<duckdb::BaseStatistics>(4, "statistics");
-  const duckdb::CompressionFunction* codec =
-    codecs::GetCodec(compression_type, physical);
-  if (!codec) {
-    auto& cfg = duckdb::DBConfig::GetConfig(d.Get<duckdb::DatabaseInstance&>());
-    codec = cfg.TryGetCompressionFunction(compression_type, physical).get();
-  }
+  const auto* codec = codecs::GetCodec(d.Get<duckdb::DatabaseInstance&>(),
+                                       compression_type, physical);
   SDB_ENSURE(codec, "ColumnReader: missing compression function for codec ",
              static_cast<uint8_t>(compression_type));
   return ColumnBlockMeta{std::move(stats), tuple_count, file_offset, byte_size,

@@ -20,17 +20,22 @@
 
 #include "iresearch/formats/column/codecs/registry.hpp"
 
+#include <duckdb/main/config.hpp>
+
 #include "iresearch/formats/column/codecs/string_scan.hpp"
 
 namespace irs::codecs {
 
-const duckdb::CompressionFunction* GetCodec(duckdb::CompressionType type,
+const duckdb::CompressionFunction* GetCodec(duckdb::DatabaseInstance& db,
+                                            duckdb::CompressionType type,
                                             duckdb::PhysicalType physical) {
-  if (physical != duckdb::PhysicalType::VARCHAR ||
-      !duckdb::IsSereneDBCompressionType(type)) {
-    return nullptr;
+  if (physical == duckdb::PhysicalType::VARCHAR &&
+      duckdb::IsSereneDBCompressionType(type)) {
+    return &StringScanFunction(type);
   }
-  return &StringScanFunction(type);
+  return duckdb::DBConfig::GetConfig(db)
+    .TryGetCompressionFunction(type, physical)
+    .get();
 }
 
 std::optional<StringChoice> ChoiceOf(duckdb::CompressionType type) {

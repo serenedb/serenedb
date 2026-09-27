@@ -415,7 +415,7 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
     acc, named, _codec_params, type, tuning,
     [&](codecs::StringChoice choice, duckdb::BaseStatistics stats,
         uint64_t rows, std::span<const std::string_view> parts) {
-      const auto& codec = *codecs::GetCodec(codecs::TypeOf(choice),
+      const auto& codec = *codecs::GetCodec(db, codecs::TypeOf(choice),
                                             duckdb::PhysicalType::VARCHAR);
       CaptureBlock(db, codec, std::move(stats), rows, parts, out, meta.data);
     });

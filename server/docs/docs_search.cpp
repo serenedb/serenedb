@@ -195,51 +195,60 @@ bool OfKind(const Object& object, std::string_view kind) {
   return kind.empty() || absl::EqualsIgnoreCase(object.kind, kind);
 }
 
-class DocsIndex final : public duckdb::ObjectCacheEntry {
+class EmbeddedIndex {
  public:
-  explicit DocsIndex(duckdb::DatabaseInstance& db)
-    : _layout{ReadLayout(GetDocsIndex())},
-      _object_layout{ReadObjectLayout(GetObjectsIndex())},
-      _docs{Open(db, GetDocsIndex())},
-      _objects{Open(db, GetObjectsIndex())} {}
+  EmbeddedIndex(duckdb::DatabaseInstance& db, std::span<const IndexFile> files)
+    : _dir{Views(files), kResourceManager},
+      _reader{_dir, irs::formats::Get("1_5simd"), Options(db)} {}
 
-  static std::string ObjectType() { return std::string{kIndexKey}; }
-  std::string GetObjectType() final { return ObjectType(); }
-  duckdb::optional_idx GetEstimatedCacheMemory() const final { return {}; }
-
-  const irs::DirectoryReader& Reader() const noexcept { return _docs.reader; }
-  const Layout& Fields() const noexcept { return _layout; }
-  const irs::DirectoryReader& ObjectReader() const noexcept {
-    return _objects.reader;
-  }
-  const ObjectLayout& ObjectFields() const noexcept { return _object_layout; }
+  const irs::DirectoryReader& Reader() const noexcept { return _reader; }
 
  private:
-  struct Opened {
-    std::unique_ptr<irs::SpanDirectory> dir;
-    irs::DirectoryReader reader;
-  };
+  static inline const irs::ResourceManagementOptions kResourceManager;
 
-  static Opened Open(duckdb::DatabaseInstance& db,
-                     std::span<const IndexFile> files) {
+  static irs::SpanDirectory::Files Views(std::span<const IndexFile> files) {
     irs::SpanDirectory::Files views;
     for (const auto& file : files) {
       views.emplace(file.name,
                     irs::bytes_view{file.bytes.data(), file.bytes.size()});
     }
-    static const irs::ResourceManagementOptions kResourceManager;
-    auto dir =
-      std::make_unique<irs::SpanDirectory>(std::move(views), kResourceManager);
-    irs::IndexReaderOptions options;
-    options.db = &db;
-    irs::DirectoryReader reader{*dir, irs::formats::Get("1_5simd"), options};
-    return {.dir = std::move(dir), .reader = std::move(reader)};
+    return views;
   }
 
+  static irs::IndexReaderOptions Options(duckdb::DatabaseInstance& db) {
+    irs::IndexReaderOptions options;
+    options.db = &db;
+    return options;
+  }
+
+  irs::SpanDirectory _dir;
+  irs::DirectoryReader _reader;
+};
+
+class DocsIndex final : public duckdb::ObjectCacheEntry {
+ public:
+  explicit DocsIndex(duckdb::DatabaseInstance& db)
+    : _layout{ReadLayout(GetDocsIndex())},
+      _object_layout{ReadObjectLayout(GetObjectsIndex())},
+      _docs{db, GetDocsIndex()},
+      _objects{db, GetObjectsIndex()} {}
+
+  static std::string ObjectType() { return std::string{kIndexKey}; }
+  std::string GetObjectType() final { return ObjectType(); }
+  duckdb::optional_idx GetEstimatedCacheMemory() const final { return {}; }
+
+  const irs::DirectoryReader& Reader() const noexcept { return _docs.Reader(); }
+  const Layout& Fields() const noexcept { return _layout; }
+  const irs::DirectoryReader& ObjectReader() const noexcept {
+    return _objects.Reader();
+  }
+  const ObjectLayout& ObjectFields() const noexcept { return _object_layout; }
+
+ private:
   Layout _layout;
   ObjectLayout _object_layout;
-  Opened _docs;
-  Opened _objects;
+  EmbeddedIndex _docs;
+  EmbeddedIndex _objects;
 };
 
 irs::analysis::Tokenizer::ptr DocsTokenizer() {
@@ -285,32 +294,45 @@ irs::Filter::ptr PathPrefix(const Layout& layout, std::string_view prefix) {
   return Prefix(layout.path.terms, prefix);
 }
 
+using BlobReader = irs::ColumnReader::BlobPointReader;
+
+const irs::ColReader& ColumnStore(const irs::SubReader& segment) {
+  const auto* store = segment.GetColReader();
+  if (!store) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("the documentation index has a segment with no columns"));
+  }
+  return *store;
+}
+
+const irs::ColumnReader& StoredColumn(const irs::SubReader& segment,
+                                      irs::field_id id) {
+  const auto* column = segment.Column(id);
+  if (!column) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("the documentation index has no stored column ", id));
+  }
+  return *column;
+}
+
 class EntryFetcher {
  public:
   EntryFetcher(const irs::SubReader& segment, const Layout& layout,
-               Content content) {
-    const auto* col_reader = segment.GetColReader();
-    if (!col_reader) {
-      return;
-    }
-    const auto open = [&](const Column& column, Reader& reader) {
-      if (const auto* stored = segment.Column(column.stored)) {
-        reader.emplace(*col_reader, *stored);
-        return true;
-      }
-      return false;
-    };
-    if (!open(layout.path, _path) || !open(layout.title, _title) ||
-        !open(layout.breadcrumb, _breadcrumb) ||
-        (content == Content::Include && !open(layout.content, _content))) {
-      _path.reset();
+               Content content)
+    : _path{ColumnStore(segment), StoredColumn(segment, layout.path.stored)},
+      _title{ColumnStore(segment), StoredColumn(segment, layout.title.stored)},
+      _breadcrumb{ColumnStore(segment),
+                  StoredColumn(segment, layout.breadcrumb.stored)} {
+    if (content == Content::Include) {
+      _content.emplace(ColumnStore(segment),
+                       StoredColumn(segment, layout.content.stored));
     }
   }
 
-  bool Valid() const noexcept { return _path.has_value(); }
-
   std::string_view Path(irs::doc_id_t doc) {
-    return irs::ViewCast<char>(_path->FetchDoc(doc));
+    return irs::ViewCast<char>(_path.FetchDoc(doc));
   }
 
   std::optional<Entry> Fetch(irs::doc_id_t doc) {
@@ -322,46 +344,31 @@ class EntryFetcher {
                 .title = Read(_title, doc),
                 .breadcrumb = Read(_breadcrumb, doc)};
     if (_content) {
-      entry.content = Read(_content, doc);
+      entry.content = Read(*_content, doc);
     }
     return entry;
   }
 
  private:
-  using Reader = std::optional<irs::ColumnReader::BlobPointReader>;
-
-  static std::string Read(Reader& reader, irs::doc_id_t doc) {
-    return std::string{irs::ViewCast<char>(reader->FetchDoc(doc))};
+  static std::string Read(BlobReader& reader, irs::doc_id_t doc) {
+    return std::string{irs::ViewCast<char>(reader.FetchDoc(doc))};
   }
 
-  Reader _path;
-  Reader _title;
-  Reader _breadcrumb;
-  Reader _content;
+  BlobReader _path;
+  BlobReader _title;
+  BlobReader _breadcrumb;
+  std::optional<BlobReader> _content;
 };
 
 class ObjectFetcher {
  public:
-  ObjectFetcher(const irs::SubReader& segment, const ObjectLayout& layout) {
-    const auto* col_reader = segment.GetColReader();
-    if (!col_reader) {
-      return;
-    }
-    for (size_t i = 0; i < _columns.size(); ++i) {
-      const auto* stored = segment.Column(layout.stored[i]);
-      if (!stored) {
-        return;
-      }
-      _columns[i].emplace(*col_reader, *stored);
-    }
-    _valid = true;
-  }
-
-  bool Valid() const noexcept { return _valid; }
+  ObjectFetcher(const irs::SubReader& segment, const ObjectLayout& layout)
+    : _columns(Open(segment, layout,
+                    std::make_index_sequence<kObjectColumns.size()>{})) {}
 
   Object Fetch(irs::doc_id_t doc) {
     const auto text = [&](size_t i) {
-      return std::string{irs::ViewCast<char>(_columns[i]->FetchDoc(doc))};
+      return std::string{irs::ViewCast<char>(_columns[i].FetchDoc(doc))};
     };
     return {.kind = text(0),
             .name = text(1),
@@ -375,10 +382,16 @@ class ObjectFetcher {
   }
 
  private:
-  std::array<std::optional<irs::ColumnReader::BlobPointReader>,
-             kObjectColumns.size()>
-    _columns;
-  bool _valid = false;
+  using Columns = std::array<BlobReader, kObjectColumns.size()>;
+
+  template<size_t... I>
+  static Columns Open(const irs::SubReader& segment, const ObjectLayout& layout,
+                      std::index_sequence<I...>) {
+    return {BlobReader{ColumnStore(segment),
+                       StoredColumn(segment, layout.stored[I])}...};
+  }
+
+  Columns _columns;
 };
 
 template<typename MakeFetcher, typename Fn>
@@ -401,9 +414,6 @@ void ForEachMatchIn(const irs::DirectoryReader& reader,
       live.emplace(std::move(node), docs_count, irs::fill::DocsMask{segment});
     }
     auto fetcher = make(segment);
-    if (!fetcher.Valid()) {
-      continue;
-    }
     for (auto doc = live->Probe(irs::doc_limits::min());
          !irs::doc_limits::eof(doc); doc = live->Probe(doc + 1)) {
       fn(fetcher, doc);
@@ -730,11 +740,8 @@ std::vector<Entry> RunScored(const DocsIndex& index, const irs::Filter& filter,
   std::vector<Ranked> ranked;
   ranked.reserve(hits.size());
   for (const auto& hit : hits) {
-    auto& source = fetcher(hit.segment_idx);
-    if (!source.Valid()) {
-      continue;
-    }
-    if (const auto path = source.Path(hit.doc); !path.empty()) {
+    if (const auto path = fetcher(hit.segment_idx).Path(hit.doc);
+        !path.empty()) {
       ranked.push_back({.path = std::string{path}, .hit = &hit});
     }
   }

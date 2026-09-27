@@ -25,10 +25,10 @@ BEGIN;
 
 connection holder
 query
-SELECT count(*) > 0 AS listed FROM duckdb_tables();
+SELECT count(*) AS n FROM rds.main.docs;
 ----
-listed
-t
+n
+2
 
 
 connection default

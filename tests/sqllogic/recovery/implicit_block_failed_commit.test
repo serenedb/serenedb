@@ -1,0 +1,34 @@
+# A COMMIT that fails at commit time inside a multi-statement simple Query.
+# duckdb has already cleared the transaction when the failure surfaces, so the
+# implicit block the batch opened has nothing left to roll back. That rollback
+# used to throw "no transaction active" from inside the error handler, which
+# ended the session task silently and left the client waiting forever. The
+# client gets the commit error instead, and the connection stays usable.
+#
+# debug_force_commit_failure is process-global, so this lives in the recovery
+# tree.
+
+statement ok
+CREATE TABLE ifc (a INTEGER);
+
+statement ok
+SET debug_force_commit_failure = true;
+
+connection victim
+statement error
+INSERT INTO ifc VALUES (1); COMMIT
+----
+db error: ERROR: Failed to commit: Forced commit failure (debug_force_commit_failure)
+
+
+connection default
+statement ok
+SET debug_force_commit_failure = false;
+
+
+connection victim
+query
+SELECT count(*) AS n FROM ifc;
+----
+n
+0

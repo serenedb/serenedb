@@ -909,6 +909,13 @@ class SegmentWriter {
 
 }  // namespace
 
+void StringAccumulator::Reserve(uint64_t rows) {
+  codes.reserve(rows);
+  if (!_dedup) {
+    entries.reserve(rows);
+  }
+}
+
 void StringAccumulator::Add(const duckdb::Vector& input) {
   duckdb::UnifiedVectorFormat vdata;
   input.ToUnifiedFormat(vdata);
@@ -924,11 +931,21 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
       ++null_count;
       continue;
     }
-    const std::string_view sv{strings[idx].GetData(), strings[idx].GetSize()};
+    const auto& value = strings[idx];
+    const std::string_view sv{value.GetData(), value.GetSize()};
     raw_bytes += sv.size();
+    if (_dedup && _last_code != 0 && value == _last) {
+      if (codes.back() != _last_code) {
+        ++runs;
+      }
+      codes.push_back(_last_code);
+      continue;
+    }
     const auto next = static_cast<uint32_t>(entries.size() + 1);
     if (_dedup) {
       const auto [it, inserted] = dedup.try_emplace(sv, next);
+      _last = value;
+      _last_code = it->second;
       if (codes.empty() || codes.back() != it->second) {
         ++runs;
       }

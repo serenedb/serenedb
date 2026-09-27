@@ -101,16 +101,13 @@ void SkipScoreBounds(bool has_score_bounds, Input& in) {
   }
 }
 
-inline constexpr uint64_t kDocsPerSkipByte = 4;
 inline constexpr uint64_t kPosBytesPerFreq = 3;
 
 template<typename Input>
 void LimitDocReadahead(Input& in, const PostingMeta& meta) noexcept {
-  const uint64_t blocks =
-    meta.docs_count > doc_limits::kBlockSize
-      ? uint64_t{meta.doc_delta} + meta.docs_count / kDocsPerSkipByte
-      : 0;
-  in.LimitReadahead(meta.doc_start + blocks + file_utils::kPage);
+  in.LimitReadahead(meta.doc_start + (meta.docs_count > doc_limits::kBlockSize
+                                        ? uint64_t{meta.doc_delta}
+                                        : file_utils::kPage));
 }
 
 template<typename Input>

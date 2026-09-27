@@ -234,6 +234,8 @@ class BlockIndex {
 
 class BlockCursor {
  public:
+  static constexpr uint64_t kPrefetchBytes = 4 * file_utils::kPage;
+
   void Arm(const PostingMeta& meta, BlockIndexShape shape) noexcept {
     SDB_ASSERT(meta.docs_count > doc_limits::kBlockSize);
     _doc_start = meta.doc_start;
@@ -304,11 +306,17 @@ class BlockCursor {
     const auto blocks = BlockIndex::Blocks(_docs_count);
     const auto pad = BlockIndex::Pad(_offs + 1);
     if (in.GetType() == DataInput::Type::BytesViewInput) {
-      const auto* const p = static_cast<const BytesViewInput&>(in).At(_offs);
+      const auto& view = static_cast<const BytesViewInput&>(in);
+      const auto* const p = view.At(_offs);
+      const auto flags = p[0];
+      const auto extent = 1 + pad + BlockIndex::Bytes(blocks, _shape, flags);
+      if (extent > kPrefetchBytes && !view.Resident(_offs + extent - 1, 1)) {
+        view.Prefetch(_offs, extent);
+      }
       const auto* const data = p + 1 + pad;
       if (reinterpret_cast<uintptr_t>(data) % sizeof(uint32_t) == 0)
         [[likely]] {
-        _index.Reset(data, blocks, _shape, p[0]);
+        _index.Reset(data, blocks, _shape, flags);
         return;
       }
     }

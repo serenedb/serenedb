@@ -12,6 +12,8 @@ Search tables (`WITH (storage = 'search')`) and the `INCLUDE`d columns of an inv
 
 A stored column is written in **row groups** of `row_group_size` rows (122,880 by default, see [row-group size](./maintenance.md#performance)). Each row group is compressed into one or more **segments**; a segment is the unit a scan decodes and a filter prunes with its zonemap.
 
+A list or map column stores each distinct value of a row group once: a row keeps a code for its value, and only the distinct values' elements reach the element column. Columns whose values repeat, such as attribute maps shared by every record of the same resource, shrink by their repeat factor, and a scan hands each vector of such a column out as a dictionary over its distinct values, so an expression over the column can run once per distinct value. A row group whose lists are almost all distinct skips the dictionary and keeps one entry per row.
+
 Unlike a transactional table, whose segments must fit a fixed 256 KiB block, a columnstore segment can be as long as its codec needs. The `.col` codecs use that freedom: they seal a segment after the vector whose estimated encoded size crosses the table's `segment_target` (256 KiB by default), never rewinding to fit, so a long string only makes its segment longer.
 
 ## Codecs

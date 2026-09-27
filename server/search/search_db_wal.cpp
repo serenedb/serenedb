@@ -47,6 +47,8 @@
 #include <utility>
 #include <vector>
 
+#include "search/inverted_index_storage.h"
+
 namespace sdb::search {
 namespace {
 
@@ -450,7 +452,7 @@ void SearchDbWal::EnsureActiveSegmentLocked(uint64_t first_tick) {
     return;
   }
   std::error_code ec;
-  std::filesystem::create_directories(_wal_dir, ec);
+  CreateStorageDir(_wal_dir, ec);
   SDB_ENSURE(!ec, "create wal dir '", _wal_dir.string(), "': ", ec.message());
   auto seg_path = _wal_dir / SegmentName(first_tick);
   std::error_code exists_ec;
@@ -564,7 +566,7 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
 SearchDbWal::ChunkWriter SearchDbWal::NewChunkWriter(duckdb::idx_t table_id) {
   auto dir = ChunkDir(table_id);
   std::error_code ec;
-  std::filesystem::create_directories(dir, ec);
+  CreateStorageDir(dir, ec);
   SDB_ENSURE(!ec, "create chunk dir '", dir.string(), "': ", ec.message());
 
   uint64_t seg_id;

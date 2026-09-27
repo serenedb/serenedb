@@ -60,6 +60,7 @@ target_include_directories(
     SYSTEM
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fsst
 )
+add_bench(col_codecs_real)
 add_bench(ascii_probe)
 add_bench(vector_access)
 add_bench(crc32c)

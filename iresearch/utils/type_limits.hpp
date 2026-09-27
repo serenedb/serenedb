@@ -51,7 +51,7 @@ constexpr bool valid(doc_id_t id) noexcept { return invalid() != id; }
 inline constexpr uint32_t kBlockSize = 256;
 inline constexpr uint32_t kSkipSize = 32;
 inline constexpr uint32_t kBoundLevels = 3;
-inline constexpr uint32_t kDocsSlack = 8;
+inline constexpr uint32_t kDocsSlack = 16;
 inline constexpr uint32_t kScoresSlack = 8;
 inline constexpr uint32_t kMinCapacity = kBlockSize;
 

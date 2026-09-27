@@ -45,8 +45,11 @@ namespace irs::block_codec {
 #ifdef __AVX2__
 #define IRS_BLOCK_CODEC_AVX512 \
   __attribute__((target("avx512f,avx512vl,avx512bw,avx512dq")))
+#define IRS_BLOCK_CODEC_VBMI2 \
+  __attribute__((target("avx512f,avx512vl,avx512bw,avx512dq,avx512vbmi2")))
 #else
 #define IRS_BLOCK_CODEC_AVX512
+#define IRS_BLOCK_CODEC_VBMI2
 #endif
 
 enum class DeltaEncoding : byte_type {
@@ -83,7 +86,7 @@ enum class ValueEncoding : byte_type {
 };
 
 inline constexpr uint32_t kInSlack = 16;
-inline constexpr uint32_t kOutSlack = 8;
+inline constexpr uint32_t kOutSlack = 16;
 
 struct EncodeOptions {
   uint32_t bitset_margin_percent = 28;
@@ -1292,20 +1295,29 @@ inline IRS_FORCE_INLINE doc_id_t* MaterializeBits(doc_id_t offset,
 #endif
 }
 
+#ifdef __AVX2__
+inline IRS_FORCE_INLINE IRS_BLOCK_CODEC_AVX512 __m512i OpaqueZero() noexcept {
+  __m512i zero = _mm512_setzero_si512();
+  asm("" : "+v"(zero));
+  return zero;
+}
+#endif
+
 inline IRS_FORCE_INLINE IRS_BLOCK_CODEC_AVX512 doc_id_t* MaterializeWord16(
   doc_id_t offset, uint64_t word, doc_id_t* out) noexcept {
 #ifdef __AVX2__
+  static_assert(kOutSlack >= 16);
   const __m512i lanes =
     _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+  const __m512i zero = OpaqueZero();
   for (uint32_t q = 0; q != 4; ++q) {
     const auto mask = static_cast<__mmask16>(word >> (16 * q));
-    const auto count = static_cast<uint32_t>(std::popcount(mask));
-    const __m512i docs = _mm512_maskz_compress_epi32(
-      mask, _mm512_add_epi32(
-              lanes, _mm512_set1_epi32(static_cast<int>(offset + 16 * q))));
-    _mm512_mask_storeu_epi32(
-      out, static_cast<__mmask16>((uint32_t{1} << count) - 1), docs);
-    out += count;
+    _mm512_storeu_si512(
+      out, _mm512_mask_compress_epi32(
+             zero, mask,
+             _mm512_add_epi32(
+               lanes, _mm512_set1_epi32(static_cast<int>(offset + 16 * q)))));
+    out += std::popcount(mask);
   }
   return out;
 #else
@@ -1325,6 +1337,94 @@ inline IRS_FORCE_INLINE IRS_BLOCK_CODEC_AVX512 const byte_type* DecodeBitset16(
   }
   SDB_ASSERT(p == out + len);
   return bits + words * sizeof(uint64_t);
+}
+
+#ifdef __AVX2__
+template<uint32_t Q>
+inline IRS_FORCE_INLINE IRS_BLOCK_CODEC_VBMI2 void StoreDocs64(
+  doc_id_t* out, __m512i positions, __m512i base) noexcept {
+  _mm512_storeu_si512(
+    out + 16 * Q,
+    _mm512_add_epi32(
+      _mm512_cvtepu8_epi32(_mm512_extracti32x4_epi32(positions, Q)), base));
+}
+
+template<uint32_t G>
+inline IRS_FORCE_INLINE IRS_BLOCK_CODEC_VBMI2 doc_id_t* MaterializeWord64(
+  doc_id_t offset, uint64_t word, doc_id_t* out) noexcept {
+  static_assert(kOutSlack >= 16);
+  const __m512i positions = _mm512_mask_compress_epi8(
+    OpaqueZero(), word,
+    _mm512_set_epi8(63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51, 50, 49,
+                    48, 47, 46, 45, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34,
+                    33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19,
+                    18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2,
+                    1, 0));
+  const __m512i base = _mm512_set1_epi32(static_cast<int>(offset));
+  const auto count = static_cast<uint32_t>(std::popcount(word));
+  StoreDocs64<0>(out, positions, base);
+  if (G > 1 || count > 16) {
+    StoreDocs64<1>(out, positions, base);
+  }
+  if (G > 2 || count > 32) {
+    StoreDocs64<2>(out, positions, base);
+  }
+  if (G > 3 || count > 48) {
+    StoreDocs64<3>(out, positions, base);
+  }
+  return out + count;
+}
+
+template<uint32_t G>
+IRS_FORCE_INLINE IRS_BLOCK_CODEC_VBMI2 const byte_type* DecodeBitsetWords64(
+  const byte_type* in, uint32_t len, doc_id_t prev, doc_id_t* out) noexcept {
+  const uint32_t words = in[1];
+  const auto* bits = in + 2;
+  auto* p = out;
+  const auto* const end = out + len + kOutSlack;
+  uint32_t w = 0;
+  const auto word = [&] IRS_FORCE_INLINE {
+    return absl::little_endian::Load64(bits + w * sizeof(uint64_t));
+  };
+  for (; w != words && end - p >= 16 * G; ++w) {
+    p =
+      MaterializeWord64<G>(prev + 1 + w * BitsRequired<uint64_t>(), word(), p);
+  }
+  for (; w != words; ++w) {
+    p =
+      MaterializeWord64<1>(prev + 1 + w * BitsRequired<uint64_t>(), word(), p);
+  }
+  SDB_ASSERT(p == out + len);
+  return bits + words * sizeof(uint64_t);
+}
+#endif
+
+inline IRS_FORCE_INLINE IRS_BLOCK_CODEC_VBMI2 const byte_type* DecodeBitset64(
+  const byte_type* in, uint32_t len, doc_id_t prev, doc_id_t* out) noexcept {
+#ifdef __AVX2__
+  constexpr uint32_t kSparse = 10;
+  constexpr uint32_t kMedium = 24;
+  const uint32_t words = in[1];
+  if (len <= kSparse * words) {
+    return DecodeBitsetWords64<1>(in, len, prev, out);
+  }
+  if (len <= kMedium * words) {
+    return DecodeBitsetWords64<2>(in, len, prev, out);
+  }
+  return DecodeBitsetWords64<4>(in, len, prev, out);
+#else
+  return DecodeBitset16(in, len, prev, out);
+#endif
+}
+
+inline IRS_NO_INLINE IRS_BLOCK_CODEC_VBMI2 const byte_type* DecodeBitsetBlock64(
+  const byte_type* in, doc_id_t prev, doc_id_t* out) noexcept {
+  return DecodeBitset64(in, kWideBlock, prev, out);
+}
+
+inline IRS_NO_INLINE IRS_BLOCK_CODEC_VBMI2 const byte_type* DecodeBitsetTail64(
+  const byte_type* in, uint32_t len, doc_id_t prev, doc_id_t* out) noexcept {
+  return DecodeBitset64(in, len, prev, out);
 }
 
 template<uint32_t Token, bool Full, uint32_t L, bool Wide = false>
@@ -1437,36 +1537,40 @@ consteval bool WideTail(uint32_t token) noexcept {
   return shape.family == Family::Pack && shape.bits <= kMaxPackGroupBits;
 }
 
-template<uint32_t Token, uint32_t L, bool Wide>
+template<uint32_t Token, uint32_t L, bool Wide, bool Bytes>
 consteval DeltaBlockDecoder DeltaBlockDecoderOf() noexcept {
-  if constexpr (Wide && Token >= Code(DeltaEncoding::Bitset)) {
+  if constexpr (Bytes && Token == Code(DeltaEncoding::Bitset)) {
+    return &DecodeBitsetBlock64;
+  } else if constexpr (Wide && Token >= Code(DeltaEncoding::Bitset)) {
     return &DecodeDeltaBlockTokenAvx512<Token>;
   } else {
     return &DecodeDeltaBlockToken<Token, L>;
   }
 }
 
-template<uint32_t Token, uint32_t L, bool Wide>
+template<uint32_t Token, uint32_t L, bool Wide, bool Bytes>
 consteval DeltaTailDecoder DeltaTailDecoderOf() noexcept {
-  if constexpr (Wide && WideTail(Token)) {
+  if constexpr (Bytes && Token == Code(DeltaEncoding::Bitset)) {
+    return &DecodeBitsetTail64;
+  } else if constexpr (Wide && WideTail(Token)) {
     return &DecodeDeltaTailTokenAvx512<Token>;
   } else {
     return &DecodeDeltaToken<Token, false, L>;
   }
 }
 
-template<uint32_t L, bool Wide>
+template<uint32_t L, bool Wide, bool Bytes = false>
 inline constexpr auto kDeltaBlockDecoders =
   []<uint32_t... Token>(std::integer_sequence<uint32_t, Token...>) {
     return std::array<DeltaBlockDecoder, sizeof...(Token)>{
-      DeltaBlockDecoderOf<Token, L, Wide>()...};
+      DeltaBlockDecoderOf<Token, L, Wide, Bytes>()...};
   }(std::make_integer_sequence<uint32_t, Code(DeltaEncoding::End)>{});
 
-template<uint32_t L, bool Wide>
+template<uint32_t L, bool Wide, bool Bytes = false>
 inline constexpr auto kDeltaTailDecoders =
   []<uint32_t... Token>(std::integer_sequence<uint32_t, Token...>) {
     return std::array<DeltaTailDecoder, sizeof...(Token)>{
-      DeltaTailDecoderOf<Token, L, Wide>()...};
+      DeltaTailDecoderOf<Token, L, Wide, Bytes>()...};
   }(std::make_integer_sequence<uint32_t, Code(DeltaEncoding::End)>{});
 
 struct DeltaDecoders {
@@ -1474,10 +1578,10 @@ struct DeltaDecoders {
   const DeltaTailDecoder* tails;
 };
 
-template<bool Wide>
+template<bool Wide, bool Bytes = false>
 inline constexpr DeltaDecoders kWideDeltaDecodersOf{
-  .blocks = kDeltaBlockDecoders<kWideLanes, Wide>.data(),
-  .tails = kDeltaTailDecoders<kWideLanes, Wide>.data(),
+  .blocks = kDeltaBlockDecoders<kWideLanes, Wide, Bytes>.data(),
+  .tails = kDeltaTailDecoders<kWideLanes, Wide, Bytes>.data(),
 };
 
 inline const DeltaDecoders kWideDeltaDecoders = [] {
@@ -1486,6 +1590,9 @@ inline const DeltaDecoders kWideDeltaDecoders = [] {
   if (__builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512vl") &&
       __builtin_cpu_supports("avx512bw") &&
       __builtin_cpu_supports("avx512dq")) {
+    if (__builtin_cpu_supports("avx512vbmi2")) {
+      return kWideDeltaDecodersOf<true, true>;
+    }
     return kWideDeltaDecodersOf<true>;
   }
 #endif

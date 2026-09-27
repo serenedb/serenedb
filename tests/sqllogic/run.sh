@@ -379,7 +379,6 @@ launch_s3() {
 	export MINIO_SECRET_KEY="minioadmin"
 	export MINIO_BUCKET="testbucket"
 	export MINIO_PORT
-	MINIO_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
 
 	local network_args=()
 	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
@@ -389,17 +388,21 @@ launch_s3() {
 	else
 		TEST_NETWORK="${PREFIX}-serenedb-test-net-$$"
 		docker network create "$TEST_NETWORK" >/dev/null
-		network_args=(--network "$TEST_NETWORK" -p "$MINIO_PORT:9000")
+		network_args=(--network "$TEST_NETWORK" -p 9000)
 		export MINIO_HOST="localhost"
 	fi
 
-	echo "Starting MinIO (host=$MINIO_HOST, port=$MINIO_PORT)..."
+	echo "Starting MinIO (host=$MINIO_HOST)..."
 	docker run -d \
 		--name "$MINIO_CONTAINER_NAME" \
 		"${network_args[@]}" \
 		-e "MINIO_ROOT_USER=$MINIO_ACCESS_KEY" \
 		-e "MINIO_ROOT_PASSWORD=$MINIO_SECRET_KEY" \
 		pgsty/minio:latest server /data --console-address :9001
+	if [[ -z "${COMPOSE_NETWORK:-}" ]]; then
+		MINIO_PORT=$(docker port "$MINIO_CONTAINER_NAME" 9000/tcp | head -1 | sed 's/.*://')
+	fi
+	echo "MinIO port: $MINIO_PORT"
 
 	echo "Waiting for MinIO to be ready..."
 	for i in $(seq 1 30); do
@@ -443,17 +446,20 @@ launch_azure() {
 		host="$AZURITE_CONTAINER_NAME"
 		port=10000
 	else
-		port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
 		host="localhost"
-		docker_args+=(-p "${port}:10000")
+		docker_args+=(-p 10000)
 	fi
 
-	echo "Starting Azurite (host=$host, port=$port)..."
+	echo "Starting Azurite (host=$host)..."
 	# --skipApiVersionCheck: the vendored Azure SDK may speak a service API
 	# version newer than the Azurite image knows.
 	docker run "${docker_args[@]}" \
 		mcr.microsoft.com/azure-storage/azurite \
 		azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
+	if [[ -z "${COMPOSE_NETWORK:-}" ]]; then
+		port=$(docker port "$AZURITE_CONTAINER_NAME" 10000/tcp | head -1 | sed 's/.*://')
+	fi
+	echo "Azurite port: $port"
 
 	export AZURITE_CONNECTION_STRING="DefaultEndpointsProtocol=http;AccountName=${account};AccountKey=${key};BlobEndpoint=http://${host}:${port}/${account};"
 
@@ -518,12 +524,10 @@ launch_iceberg_rest() {
 		export ICEBERG_REST_HOST="$ICEBERG_REST_CONTAINER_NAME"
 		export ICEBERG_REST_PORT=8181
 	else
-		ICEBERG_REST_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
 		export ICEBERG_REST_HOST="localhost"
 		export ICEBERG_REST_PORT
-		docker_args+=(--network "$TEST_NETWORK" -p "${ICEBERG_REST_PORT}:8181")
+		docker_args+=(--network "$TEST_NETWORK" -p 8181)
 	fi
-	export ICEBERG_REST_URL="http://${ICEBERG_REST_HOST}:${ICEBERG_REST_PORT}"
 
 	# S3 warehouse on MinIO. Both containers share the network above, so the
 	# catalog reaches MinIO via container name on its internal port.
@@ -538,9 +542,14 @@ launch_iceberg_rest() {
 		-e "CATALOG_URI=jdbc:sqlite:/tmp/iceberg_catalog.db?journal_mode=WAL&busy_timeout=30000"
 	)
 
-	echo "Starting iceberg-rest (port=$ICEBERG_REST_PORT)..."
+	echo "Starting iceberg-rest..."
 	docker run "${docker_args[@]}" "${catalog_env[@]}" \
 		apache/iceberg-rest-fixture:1.10.1
+	if [[ -z "${COMPOSE_NETWORK:-}" ]]; then
+		ICEBERG_REST_PORT=$(docker port "$ICEBERG_REST_CONTAINER_NAME" 8181/tcp | head -1 | sed 's/.*://')
+	fi
+	export ICEBERG_REST_URL="http://${ICEBERG_REST_HOST}:${ICEBERG_REST_PORT}"
+	echo "iceberg-rest port: $ICEBERG_REST_PORT"
 
 	echo "Waiting for iceberg-rest to be ready..."
 	for i in $(seq 1 60); do
@@ -646,18 +655,21 @@ launch_ollama() {
 			TEST_NETWORK="${prefix}-serenedb-test-net-$$"
 			docker network create "$TEST_NETWORK" >/dev/null
 		fi
-		OLLAMA_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
-		network_args=(--network "$TEST_NETWORK" -p "$OLLAMA_PORT:11434")
+		network_args=(--network "$TEST_NETWORK" -p 11434)
 		export OLLAMA_HOST="localhost"
 		export OLLAMA_PORT
 	fi
 
-	echo "Starting Ollama (host=$OLLAMA_HOST, port=$OLLAMA_PORT)..."
+	echo "Starting Ollama (host=$OLLAMA_HOST)..."
 	docker run -d \
 		--name "$OLLAMA_CONTAINER_NAME" \
 		"${network_args[@]}" \
 		-v serenedb-test-ollama:/root/.ollama \
 		ollama/ollama:latest
+	if [[ -z "${COMPOSE_NETWORK:-}" ]]; then
+		OLLAMA_PORT=$(docker port "$OLLAMA_CONTAINER_NAME" 11434/tcp | head -1 | sed 's/.*://')
+	fi
+	echo "Ollama port: $OLLAMA_PORT"
 
 	echo "Waiting for Ollama to be ready..."
 	for i in $(seq 1 60); do
@@ -705,21 +717,24 @@ launch_postgres() {
 			TEST_NETWORK="${prefix}-serenedb-test-net-$$"
 			docker network create "$TEST_NETWORK" >/dev/null
 		fi
-		PGPORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
-		network_args=(--network "$TEST_NETWORK" -p "$PGPORT:5432")
+		network_args=(--network "$TEST_NETWORK" -p 5432)
 		export PGHOST="localhost"
 		export PGPORT
 	fi
 	export PGUSER=postgres
 	export PGDATABASE=postgres
 
-	echo "Starting postgres (host=$PGHOST, port=$PGPORT)..."
+	echo "Starting postgres (host=$PGHOST)..."
 	docker run -d \
 		--name "$POSTGRES_CONTAINER_NAME" \
 		"${network_args[@]}" \
 		-e POSTGRES_HOST_AUTH_METHOD=trust \
 		-e POSTGRES_DB=postgres \
 		postgres:18.3
+	if [[ -z "${COMPOSE_NETWORK:-}" ]]; then
+		PGPORT=$(docker port "$POSTGRES_CONTAINER_NAME" 5432/tcp | head -1 | sed 's/.*://')
+	fi
+	echo "postgres port: $PGPORT"
 
 	echo "Waiting for postgres to be ready..."
 	for i in $(seq 1 60); do
@@ -779,14 +794,13 @@ launch_clickhouse() {
 			TEST_NETWORK="${prefix}-serenedb-test-net-$$"
 			docker network create "$TEST_NETWORK" >/dev/null
 		fi
-		CHPORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
-		network_args=(--network "$TEST_NETWORK" -p "$CHPORT:9000")
+		network_args=(--network "$TEST_NETWORK" -p 9000)
 		export CHHOST="localhost"
 		export CHPORT
 	fi
 	export CHUSER=default
 
-	echo "Starting clickhouse (host=$CHHOST, port=$CHPORT)..."
+	echo "Starting clickhouse (host=$CHHOST)..."
 	# CLICKHOUSE_SKIP_USER_SETUP opens the `default` user to all networks with no
 	# password (the image otherwise locks it to localhost, rejecting serened's
 	# host-side connection). Env-var auth, analogous to postgres's
@@ -801,6 +815,10 @@ launch_clickhouse() {
 		--health-retries 3 \
 		--health-start-period 60s \
 		"$CLICKHOUSE_IMAGE"
+	if [[ -z "${COMPOSE_NETWORK:-}" ]]; then
+		CHPORT=$(docker port "$CLICKHOUSE_CONTAINER_NAME" 9000/tcp | head -1 | sed 's/.*://')
+	fi
+	echo "clickhouse port: $CHPORT"
 
 	echo "Waiting for clickhouse to be ready..."
 	for i in $(seq 1 60); do

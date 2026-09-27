@@ -25,8 +25,10 @@
 #include <array>
 #include <iresearch/formats/posting/block_codec.hpp>
 #include <iresearch/formats/posting/common.hpp>
+#include <iresearch/search/detail/bitset_build.hpp>
 #include <map>
 #include <random>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -1107,6 +1109,162 @@ void DensityFillArgs(benchmark::internal::Benchmark* b) {
 }
 
 BENCHMARK(BmDensityFill256)->Apply(DensityFillArgs);
+
+enum class GapShape : uint8_t {
+  Geometric,
+  Mixed,
+};
+
+constexpr uint32_t kBiasDocs = 1024 * bc::Codec256::kBlock;
+
+const std::vector<irs::doc_id_t>& CachedGapDocs(GapShape shape,
+                                                uint32_t mean_x10) {
+  static std::map<std::pair<GapShape, uint32_t>, std::vector<irs::doc_id_t>>
+    cache;
+  auto it = cache.find({shape, mean_x10});
+  if (it != cache.end()) {
+    return it->second;
+  }
+  std::mt19937 rng{600 + mean_x10 * 2 + static_cast<uint32_t>(shape)};
+  const double mean = mean_x10 / 10.0;
+  const double near = shape == GapShape::Mixed ? std::max(1.0, mean / 2) : mean;
+  const double far = (mean - 0.9 * near) / 0.1;
+  const auto draw = [&](double m) {
+    return 1 + std::geometric_distribution<uint32_t>{1.0 / m}(rng);
+  };
+  std::vector<irs::doc_id_t> docs(kBiasDocs);
+  irs::doc_id_t doc = 0;
+  for (auto& d : docs) {
+    doc += shape == GapShape::Mixed && rng() % 10 == 0 ? draw(far) : draw(near);
+    d = doc;
+  }
+  return cache.emplace(std::pair{shape, mean_x10}, std::move(docs))
+    .first->second;
+}
+
+bc::EncodeOptions BiasOptions(uint32_t variant) {
+  switch (variant) {
+    case 0:
+      return {.bitset = false};
+    case 1:
+      return {};
+    default:
+      return {.bitset_margin_percent = 1'000'000};
+  }
+}
+
+const irs::bstring& CachedBias(GapShape shape, uint32_t mean_x10,
+                               uint32_t variant) {
+  using Codec = bc::Codec256;
+  constexpr uint32_t kN = Codec::kBlock;
+  static std::map<std::tuple<GapShape, uint32_t, uint32_t>, irs::bstring> cache;
+  auto it = cache.find({shape, mean_x10, variant});
+  if (it != cache.end()) {
+    return it->second;
+  }
+  const auto& docs = CachedGapDocs(shape, mean_x10);
+  const auto options = BiasOptions(variant);
+  irs::bstring bytes;
+  std::array<irs::byte_type, Codec::kMaxBlockBytes> block;
+  irs::doc_id_t prev = 0;
+  for (uint32_t b = 0; b != kBiasDocs / kN; ++b) {
+    bytes.append(block.data(),
+                 Codec::EncodeDeltaBlock(docs.data() + b * kN, prev,
+                                         block.data(), options));
+    prev = docs[b * kN + kN - 1];
+  }
+  bytes.append(kSlack, 0);
+  const auto* p = bytes.data();
+  std::array<irs::doc_id_t, kN + bc::kOutSlack> out;
+  prev = 0;
+  for (uint32_t b = 0; b != kBiasDocs / kN; ++b) {
+    p = Codec::DecodeDeltaBlock(p, prev, out.data());
+    SDB_VERIFY(std::equal(out.begin(), out.begin() + kN, docs.data() + b * kN),
+               "bias block ", b);
+    prev = out[kN - 1];
+  }
+  return cache.emplace(std::tuple{shape, mean_x10, variant}, std::move(bytes))
+    .first->second;
+}
+
+void BmBiasDecode(benchmark::State& state) {
+  using Codec = bc::Codec256;
+  constexpr uint32_t kN = Codec::kBlock;
+  const auto shape = static_cast<GapShape>(state.range(0));
+  const auto mean_x10 = static_cast<uint32_t>(state.range(1));
+  const auto& encoded =
+    CachedBias(shape, mean_x10, static_cast<uint32_t>(state.range(2)));
+  alignas(64) std::array<irs::doc_id_t, kN + bc::kOutSlack> out;
+  for (auto _ : state) {
+    const auto* p = encoded.data();
+    irs::doc_id_t prev = 0;
+    for (uint32_t b = 0; b != kBiasDocs / kN; ++b) {
+      p = Codec::DecodeDeltaBlock(p, prev, out.data());
+      prev = out[kN - 1];
+    }
+    benchmark::DoNotOptimize(prev);
+  }
+  Report(state, encoded.size(), kBiasDocs);
+  CountPatches<bc::DeltaEncoding, Codec>(state, encoded, kBiasDocs / kN,
+                                         &Codec::DeltaBlockSize);
+}
+
+template<typename Sink>
+void BmBiasSink(benchmark::State& state) {
+  using Codec = bc::Codec256;
+  constexpr auto kBits = irs::BitsRequired<uint64_t>();
+  const auto shape = static_cast<GapShape>(state.range(0));
+  const auto mean_x10 = static_cast<uint32_t>(state.range(1));
+  const auto& encoded =
+    CachedBias(shape, mean_x10, static_cast<uint32_t>(state.range(2)));
+  const auto& docs = CachedGapDocs(shape, mean_x10);
+  constexpr bool kClear = std::is_same_v<Sink, irs::detail::ClearBits>;
+  std::vector<uint64_t> words(docs.back() / kBits + 2 * Codec::kBlock,
+                              kClear ? ~uint64_t{0} : 0);
+  irs::PostingMeta meta;
+  meta.docs_count = kBiasDocs;
+  irs::detail::HoleBuf holes;
+  irs::DocsBuf buf;
+  for (auto _ : state) {
+    irs::BytesViewInput in{
+      irs::bytes_view{encoded.data(), encoded.size() - kSlack}};
+    Sink sink{words.data()};
+    irs::detail::ReadPosting(meta, in, nullptr, holes.data, buf.data(), false,
+                             false, sink);
+    benchmark::DoNotOptimize(words.data());
+    benchmark::ClobberMemory();
+  }
+  uint64_t set = 0;
+  for (const auto word : words) {
+    set += std::popcount(word);
+  }
+  SDB_VERIFY(set == (kClear ? words.size() * kBits - kBiasDocs : kBiasDocs),
+             "bias sink sets ", set);
+  Report(state, encoded.size(), kBiasDocs);
+}
+
+void BmBiasSet(benchmark::State& state) {
+  BmBiasSink<irs::detail::OrBits>(state);
+}
+
+void BmBiasClear(benchmark::State& state) {
+  BmBiasSink<irs::detail::ClearBits>(state);
+}
+
+void BiasArgs(benchmark::internal::Benchmark* b) {
+  for (const int shape : {0, 1}) {
+    for (const int mean_x10 :
+         {12, 15, 20, 25, 30, 40, 50, 60, 80, 100, 120, 160, 200, 250, 320}) {
+      for (const int variant : {0, 1, 2}) {
+        b->Args({shape, mean_x10, variant});
+      }
+    }
+  }
+}
+
+BENCHMARK(BmBiasDecode)->Apply(BiasArgs);
+BENCHMARK(BmBiasSet)->Apply(BiasArgs);
+BENCHMARK(BmBiasClear)->Apply(BiasArgs);
 
 }  // namespace
 

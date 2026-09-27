@@ -187,6 +187,40 @@ std::vector<irs::doc_id_t> MakeDocs(std::mt19937& rng, uint32_t len,
 template<typename Codec>
 using Buffer = std::array<irs::byte_type, Codec::kMaxBlockBytes + kSlack>;
 
+std::vector<bc::DeltaDecoders> SupportedWideDecoders() {
+  std::vector<bc::DeltaDecoders> decoders;
+#ifdef __AVX2__
+  __builtin_cpu_init();
+  if (__builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512vl") &&
+      __builtin_cpu_supports("avx512bw") &&
+      __builtin_cpu_supports("avx512dq")) {
+    decoders.push_back(bc::kWideDeltaDecodersOf<true>);
+    if (__builtin_cpu_supports("avx512vbmi2")) {
+      decoders.push_back(bc::kWideDeltaDecodersOf<true, true>);
+    }
+  }
+#endif
+  return decoders;
+}
+
+template<typename Codec>
+void CheckWideDocs(const std::vector<irs::doc_id_t>& docs, irs::doc_id_t prev,
+                   const irs::byte_type* encoded, uint32_t size) {
+  static const auto kDecoders = SupportedWideDecoders();
+  const auto len = static_cast<uint32_t>(docs.size());
+  const bool full = len == Codec::kBlock;
+  for (const auto& decoders : kDecoders) {
+    std::vector<irs::doc_id_t> out(len + bc::kOutSlack);
+    const auto* end =
+      full ? decoders.blocks[encoded[0]](encoded, prev, out.data())
+           : decoders.tails[encoded[0]](encoded, len, prev, out.data());
+    EXPECT_EQ(encoded + size, end);
+    out.resize(len);
+    EXPECT_EQ(docs, out) << "wide, len " << len << " token "
+                         << uint32_t{encoded[0]};
+  }
+}
+
 template<typename Codec>
 void CheckDocs(const std::vector<irs::doc_id_t>& docs, irs::doc_id_t prev,
                const bc::EncodeOptions& options) {
@@ -217,6 +251,9 @@ void CheckDocs(const std::vector<irs::doc_id_t>& docs, irs::doc_id_t prev,
   portable.resize(len);
   EXPECT_EQ(docs, portable)
     << "portable, len " << len << " token " << uint32_t{encoded[0]};
+  if constexpr (Codec::kLanes == bc::kWideLanes) {
+    CheckWideDocs<Codec>(docs, prev, encoded.data(), size);
+  }
 }
 
 template<typename Codec>

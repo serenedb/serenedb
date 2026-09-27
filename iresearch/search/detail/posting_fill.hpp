@@ -350,12 +350,11 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
                                          const doc_id_t* end, doc_id_t min,
                                          uint64_t* IRS_RESTRICT mask,
                                          Write&& write) noexcept {
-    VisitDocs<std::dynamic_extent>(
-      static_cast<uint32_t>(end - begin), [&](uint32_t i) IRS_FORCE_INLINE {
-        const size_t offset = begin[i] - min;
-        Mark<Clear>(mask[offset / kBits], offset % kBits);
-        write(offset);
-      });
+    for (; begin != end; ++begin) {
+      const size_t offset = *begin - min;
+      Mark<Clear>(mask[offset / kBits], offset % kBits);
+      write(offset);
+    }
   }
 
   template<bool Clear, typename Write>
@@ -364,9 +363,16 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
                                                     doc_id_t min, doc_id_t max,
                                                     uint64_t* IRS_RESTRICT mask,
                                                     Write&& write) noexcept {
-    const auto* const until = std::lower_bound(begin, end, max);
-    MarkRange<Clear>(begin, until, min, mask, write);
-    return until;
+    for (; begin != end; ++begin) {
+      const auto doc = *begin;
+      if (doc >= max) {
+        break;
+      }
+      const size_t offset = doc - min;
+      Mark<Clear>(mask[offset / kBits], offset % kBits);
+      write(offset);
+    }
+    return begin;
   }
 
   template<bool Clear, typename Write>

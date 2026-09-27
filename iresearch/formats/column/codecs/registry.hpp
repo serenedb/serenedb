@@ -29,7 +29,8 @@
 
 namespace irs::codecs {
 
-const duckdb::CompressionFunction* GetCodec(duckdb::CompressionType type,
+const duckdb::CompressionFunction* GetCodec(duckdb::DatabaseInstance& db,
+                                            duckdb::CompressionType type,
                                             duckdb::PhysicalType physical);
 
 std::optional<StringChoice> ChoiceOf(duckdb::CompressionType type);

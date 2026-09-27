@@ -239,8 +239,7 @@ class ColCodecsTest : public TestBase {
     uint64_t row = 0;
     for (const auto& block : col->DataBlocks()) {
       std::string level;
-      if (irs::codecs::GetCodec(block.codec->type,
-                                duckdb::PhysicalType::VARCHAR)) {
+      if (duckdb::IsSereneDBCompressionType(block.codec->type)) {
         window = col->Locate(row, window);
         auto seg = col->OpenSegment(window.block, ctx);
         auto info = seg->GetCompressionFunction().get_segment_info(

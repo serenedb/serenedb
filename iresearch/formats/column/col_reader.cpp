@@ -104,9 +104,14 @@ NormColumnMeta DeserializeNormMetas(duckdb::BinaryDeserializer& d, field_id id,
         p.sum = obj.ReadProperty<uint64_t>(2, "sum");
         p.non_zero_count = obj.ReadProperty<uint64_t>(3, "non_zero_count");
         p.file_offset = obj.ReadProperty<uint64_t>(4, "file_offset");
+        p.exceptions =
+          obj.ReadPropertyWithExplicitDefault<uint32_t>(5, "exceptions", 0);
         SDB_ENSURE(p.byte_size == 1 || p.byte_size == 2 || p.byte_size == 4,
                    ".col reader: norm byte_size on column id ", id, ": ",
                    p.byte_size);
+        SDB_ENSURE(p.exceptions == 0 || p.byte_size == 1,
+                   ".col reader: norm exceptions on column id ", id,
+                   " with byte_size ", p.byte_size);
         meta.row_groups.push_back(p);
       });
     });
@@ -119,7 +124,10 @@ NormColumnMeta DeserializeNormMetas(duckdb::BinaryDeserializer& d, field_id id,
   for (uint64_t rg = 0; rg < groups; ++rg) {
     const auto& p = meta.row_groups[rg];
     const auto rows = std::min(rgs, meta.row_count - rg * rgs);
-    SDB_ENSURE(p.file_offset + rows * p.byte_size <= footer_offset,
+    SDB_ENSURE(p.exceptions <= rows &&
+                 p.file_offset + rows * p.byte_size +
+                     uint64_t{p.exceptions} * kNormExceptionBytes <=
+                   footer_offset,
                ".col reader: norm data on column id ", id,
                " out of range (offset ", p.file_offset, ")");
   }

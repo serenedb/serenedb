@@ -45,6 +45,7 @@ class NormColumnReader final {
     uint64_t row_count;
     size_t rg;
     uint8_t byte_size;
+    std::span<const byte_type> exceptions;
   };
 
   NormColumnReader(field_id id, NormColumnMeta meta, IndexInput& in);
@@ -58,8 +59,12 @@ class NormColumnReader final {
 
   RgInfo Rg(size_t rg) const noexcept {
     SDB_ASSERT(rg < _pointers.size());
-    return {_spans[rg], rg * _rg_rows, RowGroupRowCount(rg), rg,
-            _pointers[rg].byte_size};
+    return {.bytes = _spans[rg],
+            .first_row = rg * _rg_rows,
+            .row_count = RowGroupRowCount(rg),
+            .rg = rg,
+            .byte_size = _pointers[rg].byte_size,
+            .exceptions = _exceptions[rg]};
   }
 
   uint8_t ByteSize(size_t rg) const noexcept {
@@ -67,6 +72,7 @@ class NormColumnReader final {
     return _pointers[rg].byte_size;
   }
   bool UniformByteSize() const noexcept { return _uniform_byte_size; }
+  bool HasExceptions() const noexcept { return _has_exceptions; }
   // Groups are uniform, so only the last one is short.
   uint64_t RowGroupRowCount(size_t rg) const noexcept {
     SDB_ASSERT(rg < _pointers.size());
@@ -81,6 +87,15 @@ class NormColumnReader final {
     SDB_ASSERT(rg < _spans.size());
     return _spans[rg];
   }
+  std::span<const byte_type> RowGroupExtent(size_t rg) const noexcept {
+    SDB_ASSERT(rg < _spans.size());
+    return {_spans[rg].data(), _spans[rg].size() + _exceptions[rg].size()};
+  }
+
+  void Decode(size_t rg, uint32_t* values) const noexcept;
+
+  static uint32_t Exception(std::span<const byte_type> exceptions,
+                            uint64_t row) noexcept;
 
   RgInfo Locate(uint64_t row_pos) const noexcept {
     SDB_ASSERT(row_pos < _total_row_count);
@@ -93,12 +108,14 @@ class NormColumnReader final {
   field_id _id;
   std::vector<NormRowGroupMeta> _pointers;
   std::vector<std::span<const byte_type>> _spans;
+  std::vector<std::span<const byte_type>> _exceptions;
   std::vector<byte_type> _owned;
   uint64_t _rg_rows = 1;
   uint64_t _total_row_count = 0;
   uint64_t _total_sum = 0;
   uint64_t _total_non_zero = 0;
   bool _uniform_byte_size = true;
+  bool _has_exceptions = false;
 };
 
 // Decode one stored value from a row-group's raw bytes.

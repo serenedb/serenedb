@@ -108,7 +108,7 @@ class NormReaderBase : public NormReader {
     }
     if (!Test(_probed_at + _rg)) {
       Set(_probed_at + _rg);
-      const auto span = _column->RowGroupBytes(_rg);
+      const auto span = _column->RowGroupExtent(_rg);
       const auto* at = At(docs[0], width);
       if (file_utils::IsResident(
             at, static_cast<size_t>(span.data() + span.size() - at))) {
@@ -160,7 +160,7 @@ class NormReaderBase : public NormReader {
       return;
     }
     _dense = true;
-    const auto span = _column->RowGroupBytes(_rg);
+    const auto span = _column->RowGroupExtent(_rg);
     const auto* at = At(docs[0], width);
     file_utils::Prefetch(at,
                          static_cast<size_t>(span.data() + span.size() - at));
@@ -173,7 +173,7 @@ class NormReaderBase : public NormReader {
     uint64_t budget = file_utils::kMaxReadahead;
     for (const auto count = _column->RowGroupCount(); rg < count && budget != 0;
          ++rg) {
-      const auto span = _column->RowGroupBytes(rg);
+      const auto span = _column->RowGroupExtent(rg);
       budget -= std::min<uint64_t>(budget, span.size());
       if (Test(rg)) {
         continue;
@@ -237,8 +237,42 @@ class NormReaderBase : public NormReader {
     return count;
   }
 
+  template<size_t N>
+  IRS_FORCE_INLINE void Patch(std::span<const doc_id_t, N> docs,
+                              uint32_t* IRS_RESTRICT values) const noexcept {
+    if (_exceptions.empty()) {
+      return;
+    }
+    bool escaped = false;
+    for (size_t i = 0; i != docs.size(); ++i) {
+      escaped |= values[i] == kNormEscape;
+    }
+    if (escaped) [[unlikely]] {
+      PatchEscapes(docs.data(), values, docs.size());
+    }
+  }
+
+  IRS_NO_INLINE void PatchEscapes(const doc_id_t* docs, uint32_t* values,
+                                  size_t n) const noexcept {
+    for (size_t i = 0; i != n; ++i) {
+      if (values[i] == kNormEscape) {
+        values[i] =
+          NormColumnReader::Exception(_exceptions, docs[i] - _exceptions_base);
+      }
+    }
+  }
+
+  IRS_FORCE_INLINE uint32_t Patch(doc_id_t doc, uint32_t value) const noexcept {
+    if (value == kNormEscape && !_exceptions.empty()) [[unlikely]] {
+      return NormColumnReader::Exception(_exceptions, doc - _exceptions_base);
+    }
+    return value;
+  }
+
   const NormColumnReader* _column;
   const byte_type* _bytes = nullptr;
+  std::span<const byte_type> _exceptions;
+  doc_id_t _exceptions_base = doc_limits::min();
   size_t _rg = 0;
   bool _rg_done = false;
   bool _dense = false;
@@ -297,7 +331,7 @@ class DynamicNormWidth {
   uint8_t _width = 0;
 };
 
-template<typename Width>
+template<typename Width, bool Escapes>
 class SingleRgNormReader : public NormReaderBase {
  public:
   explicit SingleRgNormReader(const NormColumnReader& column) noexcept
@@ -307,6 +341,9 @@ class SingleRgNormReader : public NormReaderBase {
     _width.Set(column.ByteSize(0));
     _bytes =
       column.RowGroupBytes(0).data() - size_t{_width.Get()} * doc_limits::min();
+    if constexpr (Escapes) {
+      _exceptions = column.Rg(0).exceptions;
+    }
   }
 
   void Get(std::span<const doc_id_t> docs,
@@ -316,12 +353,19 @@ class SingleRgNormReader : public NormReaderBase {
     SDB_ASSERT(absl::c_is_sorted(docs));
     Touched(docs.data(), docs.size(), _width.Get());
     _width.Read(_bytes, docs, values.data());
+    if constexpr (Escapes) {
+      Patch(docs, values.data());
+    }
   }
 
   uint32_t Get(doc_id_t doc) noexcept final {
     SDB_ASSERT(doc >= doc_limits::min());
     Touched(&doc, 1, _width.Get());
-    return _width.At(_bytes, doc);
+    if constexpr (Escapes) {
+      return Patch(doc, _width.At(_bytes, doc));
+    } else {
+      return _width.At(_bytes, doc);
+    }
   }
 
   void GetScoreBlock(std::span<const doc_id_t, kScoreBlock> docs,
@@ -329,6 +373,9 @@ class SingleRgNormReader : public NormReaderBase {
     SDB_ASSERT(absl::c_is_sorted(docs));
     Touched(docs.data(), docs.size(), _width.Get());
     _width.Read(_bytes, docs, values.data());
+    if constexpr (Escapes) {
+      Patch(docs, values.data());
+    }
   }
 
   void GetPostingBlock(
@@ -337,13 +384,16 @@ class SingleRgNormReader : public NormReaderBase {
     SDB_ASSERT(absl::c_is_sorted(docs));
     Touched(docs.data(), docs.size(), _width.Get());
     _width.Read(_bytes, docs, values.data());
+    if constexpr (Escapes) {
+      Patch(docs, values.data());
+    }
   }
 
  private:
   [[no_unique_address]] Width _width;
 };
 
-template<typename Width>
+template<typename Width, bool Escapes>
 class WindowedNormReader : public NormReaderBase {
  public:
   explicit WindowedNormReader(const NormColumnReader& column) noexcept
@@ -363,6 +413,9 @@ class WindowedNormReader : public NormReaderBase {
     if (InWindow(docs)) [[likely]] {
       Touched(docs.data(), docs.size(), _width.Get());
       _width.Read(_bytes, docs, values.data());
+      if constexpr (Escapes) {
+        Patch(docs, values.data());
+      }
       return;
     }
     Split(docs.data(), values.data(), docs.size());
@@ -374,7 +427,11 @@ class WindowedNormReader : public NormReaderBase {
       Position(Locate(doc));
     }
     Touched(&doc, 1, _width.Get());
-    return _width.At(_bytes, doc);
+    if constexpr (Escapes) {
+      return Patch(doc, _width.At(_bytes, doc));
+    } else {
+      return _width.At(_bytes, doc);
+    }
   }
 
   void GetScoreBlock(std::span<const doc_id_t, kScoreBlock> docs,
@@ -383,6 +440,9 @@ class WindowedNormReader : public NormReaderBase {
     if (InWindow(docs)) [[likely]] {
       Touched(docs.data(), docs.size(), _width.Get());
       _width.Read(_bytes, docs, values.data());
+      if constexpr (Escapes) {
+        Patch(docs, values.data());
+      }
       return;
     }
     Split(docs.data(), values.data(), kScoreBlock);
@@ -395,6 +455,9 @@ class WindowedNormReader : public NormReaderBase {
     if (InWindow(docs)) [[likely]] {
       Touched(docs.data(), docs.size(), _width.Get());
       _width.Read(_bytes, docs, values.data());
+      if constexpr (Escapes) {
+        Patch(docs, values.data());
+      }
       return;
     }
     Split(docs.data(), values.data(), kPostingBlock);
@@ -420,6 +483,10 @@ class WindowedNormReader : public NormReaderBase {
     _rg_end_doc = static_cast<doc_id_t>(_rg_first_doc + info.row_count);
     _bytes =
       info.bytes.data() - static_cast<size_t>(_width.Get()) * _rg_first_doc;
+    if constexpr (Escapes) {
+      _exceptions = info.exceptions;
+      _exceptions_base = _rg_first_doc;
+    }
     _rg = info.rg;
     Entered();
   }
@@ -435,8 +502,11 @@ class WindowedNormReader : public NormReaderBase {
         ++j;
       }
       Touched(docs + i, j - i, _width.Get());
-      _width.Read(_bytes, std::span<const doc_id_t>{docs + i, j - i},
-                  values + i);
+      const std::span<const doc_id_t> run{docs + i, j - i};
+      _width.Read(_bytes, run, values + i);
+      if constexpr (Escapes) {
+        Patch(run, values + i);
+      }
       i = j;
     }
   }
@@ -446,15 +516,18 @@ class WindowedNormReader : public NormReaderBase {
   [[no_unique_address]] Width _width;
 };
 
-template<uint8_t ByteSize>
-using MultiRgNormReader = WindowedNormReader<StaticNormWidth<ByteSize>>;
+template<uint8_t ByteSize, bool Escapes>
+using MultiRgNormReader =
+  WindowedNormReader<StaticNormWidth<ByteSize>, Escapes>;
 
-using MixedRgNormReader = WindowedNormReader<DynamicNormWidth>;
+template<bool Escapes>
+using MixedRgNormReader = WindowedNormReader<DynamicNormWidth, Escapes>;
 
-template<bool Single, uint8_t ByteSize>
+template<bool Single, uint8_t ByteSize, bool Escapes>
 using FixedRgNormReader =
-  std::conditional_t<Single, SingleRgNormReader<StaticNormWidth<ByteSize>>,
-                     MultiRgNormReader<ByteSize>>;
+  std::conditional_t<Single,
+                     SingleRgNormReader<StaticNormWidth<ByteSize>, Escapes>,
+                     MultiRgNormReader<ByteSize, Escapes>>;
 
 inline memory::managed_ptr<NormReader> MakePersistedNormReader(
   const NormColumnReader& column) {
@@ -462,19 +535,29 @@ inline memory::managed_ptr<NormReader> MakePersistedNormReader(
   SDB_ASSERT(row_groups > 0);
 
   if (!column.UniformByteSize()) {
-    return memory::make_managed<MixedRgNormReader>(column);
+    if (column.HasExceptions()) {
+      return memory::make_managed<MixedRgNormReader<true>>(column);
+    }
+    return memory::make_managed<MixedRgNormReader<false>>(column);
   }
 
   return ResolveBool(
     row_groups == 1, [&]<bool Single>() -> memory::managed_ptr<NormReader> {
       switch (const auto byte_size = column.ByteSize(0)) {
         case 1:
-          return memory::make_managed<FixedRgNormReader<Single, 1>>(column);
+          if (column.HasExceptions()) {
+            return memory::make_managed<FixedRgNormReader<Single, 1, true>>(
+              column);
+          }
+          return memory::make_managed<FixedRgNormReader<Single, 1, false>>(
+            column);
         case 2:
-          return memory::make_managed<FixedRgNormReader<Single, 2>>(column);
+          return memory::make_managed<FixedRgNormReader<Single, 2, false>>(
+            column);
         default:
           SDB_ASSERT(byte_size == 4);
-          return memory::make_managed<FixedRgNormReader<Single, 4>>(column);
+          return memory::make_managed<FixedRgNormReader<Single, 4, false>>(
+            column);
       }
     });
 }

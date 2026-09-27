@@ -32,12 +32,17 @@ namespace irs {
 class IndexOutput;
 class NormColumnWriter;
 
+inline constexpr uint32_t kNormEscape = 255;
+inline constexpr uint32_t kNormExceptionShare = 256;
+inline constexpr size_t kNormExceptionBytes = 2 * sizeof(uint32_t);
+
 struct NormRowGroupMeta {
   uint8_t byte_size = 0;
   uint32_t max = 0;
   uint64_t sum = 0;
   uint64_t non_zero_count = 0;
   uint64_t file_offset = 0;
+  uint32_t exceptions = 0;
 };
 
 struct NormColumnMeta {
@@ -55,13 +60,7 @@ class NormColumnWriter final {
 
   void Append(uint64_t target_row, uint32_t value);
 
-  // Bulk-append `count` raw norm values stored as `byte_size`-byte little-
-  // endian in `src`, starting at `target_row`. Decodes into the same
-  // uint32_t `_pending` buffer that `Append` uses; per-row stats updates
-  // (max/sum/non_zero) and row-group flushes are batched per call instead
-  // of paid once per row. `byte_size` must be 1, 2, or 4.
-  void AppendBytes(uint64_t target_row, const byte_type* src, size_t count,
-                   uint8_t byte_size);
+  void AppendValues(uint64_t target_row, std::span<const uint32_t> values);
 
   void PadTo(uint64_t target);
 

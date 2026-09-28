@@ -118,7 +118,7 @@ void EmitColumnsForTable(const duckdb::TableCatalogEntry& table,
   }
 
   for (const auto& col : columns.Logical()) {
-    auto type_oid = Type2Oid(col.Type(), &context);
+    auto type_oid = Type2Oid(col.Type());
     auto phys = GetPhysicalInfo(type_oid);
 
     auto generated = PgAttribute::Attgenerated::None;
@@ -166,7 +166,7 @@ void EmitStructColumns(Oid relid, const duckdb::LogicalType& row_type,
   const auto& children = duckdb::StructType::GetChildTypes(row_type);
   for (size_t i = 0; i < children.size(); ++i) {
     auto& child_type = children[i].second;
-    auto type_oid = Type2Oid(child_type, &context);
+    auto type_oid = Type2Oid(child_type);
     auto phys = GetPhysicalInfo(type_oid);
     PgAttribute row{
       .attrelid = relid,

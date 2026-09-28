@@ -75,7 +75,7 @@ bool TypeIsComplete(const duckdb::LogicalType& type) {
 }
 
 Oid BuiltinArgOid(const duckdb::LogicalType& type) {
-  return TypeIsComplete(type) ? static_cast<Oid>(Type2Oid(type, nullptr))
+  return TypeIsComplete(type) ? static_cast<Oid>(Type2Oid(type))
                               : static_cast<Oid>(PgTypeOID::kUnknown);
 }
 
@@ -117,7 +117,7 @@ MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
       // prorettype: first return type (or 0 if not specified).
       Oid rettype = 0;
       if (!macro->return_types.empty()) {
-        rettype = Type2Oid(macro->return_types[0], &context);
+        rettype = Type2Oid(macro->return_types[0]);
       }
 
       // Build argument types from macro->types (one per parameter).
@@ -127,7 +127,7 @@ MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
         if (param_type.id() == duckdb::LogicalTypeId::UNKNOWN) {
           argtypes.push_back(0);
         } else {
-          argtypes.emplace_back(Type2Oid(param_type, &context));
+          argtypes.emplace_back(Type2Oid(param_type));
         }
       }
 

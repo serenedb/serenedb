@@ -568,14 +568,14 @@ void NumNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 void PgTypeofFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                       duckdb::Vector& result) {
   auto oid = static_cast<int64_t>(
-    pg::Type2Oid(args.data[0].GetType(), &state.GetContext()));
+    pg::Type2Oid(args.data[0].GetType()));
   result.Reference(duckdb::Value::BIGINT(oid), duckdb::count_t(args.size()));
 }
 
 duckdb::unique_ptr<duckdb::Expression> BindPgTypeof(
   duckdb::FunctionBindExpressionInput& input) {
   auto oid = static_cast<int64_t>(
-    pg::Type2Oid(input.children[0]->GetReturnType(), &input.context));
+    pg::Type2Oid(input.children[0]->GetReturnType()));
   auto val = duckdb::Value::BIGINT(oid);
   val.Reinterpret(pg::REGTYPE());
   return duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(val));

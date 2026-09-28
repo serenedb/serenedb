@@ -91,15 +91,13 @@ MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
   // which is the only key a foreign key may reference.
   const auto referenced_index =
     [](const duckdb::TableCatalogEntry& referenced) -> Oid {
-    const auto& constraints = referenced.GetConstraints();
-    for (size_t position = 0; position != constraints.size(); ++position) {
-      if (constraints[position]->type != duckdb::ConstraintType::UNIQUE) {
+    for (const auto& constraint : referenced.GetConstraints()) {
+      if (constraint->type != duckdb::ConstraintType::UNIQUE) {
         continue;
       }
-      const auto& unique =
-        constraints[position]->Cast<duckdb::UniqueConstraint>();
+      const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
       if (unique.IsPrimaryKey()) {
-        return KeyIndexOid(referenced.oid, position);
+        return unique.index_oid;
       }
     }
     return 0;
@@ -146,9 +144,7 @@ MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
         };
       };
 
-      const auto& constraints = table.GetConstraints();
-      for (size_t position = 0; position != constraints.size(); ++position) {
-        const auto& constraint = constraints[position];
+      for (const auto& constraint : table.GetConstraints()) {
         // One row per foreign key, on the table that states it, as postgres
         // has it -- the referenced table's reciprocal entry is not a row.
         if (constraint->type == duckdb::ConstraintType::FOREIGN_KEY &&
@@ -157,9 +153,8 @@ MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
           continue;
         }
         conname_storage.emplace_back(ConstraintName(table, *constraint));
-        auto row =
-          base(PgConstraint::Contype::Check, ConstraintOid(table.oid, position),
-               conname_storage.back());
+        auto row = base(PgConstraint::Contype::Check, constraint->oid,
+                        conname_storage.back());
         if (constraint->type == duckdb::ConstraintType::CHECK) {
           conbin_storage.push_back(
             constraint->Cast<duckdb::CheckConstraint>().expression->ToString());
@@ -171,7 +166,7 @@ MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
             row.contype = unique.IsPrimaryKey()
                             ? PgConstraint::Contype::PrimaryKey
                             : PgConstraint::Contype::Unique;
-            row.conindid = KeyIndexOid(relid, position);
+            row.conindid = unique.index_oid;
             conkey_storage.emplace_back(KeyConstraintAttnums(table, unique));
             break;
           }

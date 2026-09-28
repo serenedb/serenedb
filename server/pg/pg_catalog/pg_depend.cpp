@@ -150,13 +150,11 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext& context,
   VisitEntries<duckdb::TableMacroCatalogEntry>(context, database, in_schema);
 
   for (const auto* table : tables) {
-    const auto& constraints = table->GetConstraints();
-    for (size_t position = 0; position != constraints.size(); ++position) {
-      if (constraints[position]->type != duckdb::ConstraintType::FOREIGN_KEY) {
+    for (const auto& constraint : table->GetConstraints()) {
+      if (constraint->type != duckdb::ConstraintType::FOREIGN_KEY) {
         continue;
       }
-      const auto& fk =
-        constraints[position]->Cast<duckdb::ForeignKeyConstraint>();
+      const auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
       if (fk.info.type == duckdb::ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE) {
         continue;
       }
@@ -166,7 +164,7 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext& context,
       const auto& target =
         referenced == tables_by_name.end() ? *table : *referenced->second;
       for (const auto key : fk.info.pk_keys) {
-        emit(Oid{PgConstraint::kId}, ConstraintOid(table->oid, position), 0,
+        emit(Oid{PgConstraint::kId}, fk.oid, 0,
              Oid{PgClass::kId}, target.oid, static_cast<int32_t>(key.index + 1),
              PgDepend::Deptype::Normal);
       }

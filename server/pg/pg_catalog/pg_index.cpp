@@ -121,13 +121,11 @@ MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
   const auto emit_keys = [&](bool primary) {
     VisitEntries<duckdb::TableCatalogEntry>(
       context, GetDatabase(), [&](const duckdb::TableCatalogEntry& table) {
-        const auto& constraints = table.GetConstraints();
-        for (size_t position = 0; position != constraints.size(); ++position) {
-          if (constraints[position]->type != duckdb::ConstraintType::UNIQUE) {
+        for (const auto& constraint : table.GetConstraints()) {
+          if (constraint->type != duckdb::ConstraintType::UNIQUE) {
             continue;
           }
-          const auto& unique =
-            constraints[position]->Cast<duckdb::UniqueConstraint>();
+          const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
           if (unique.IsPrimaryKey() != primary) {
             continue;
           }
@@ -135,7 +133,7 @@ MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
           auto natts = static_cast<int16_t>(indkey.size());
           indkey_storage.push_back(std::move(indkey));
           values.push_back({
-            .indexrelid = KeyIndexOid(table.oid, position),
+            .indexrelid = unique.index_oid,
             .indrelid = table.oid,
             .indnatts = natts,
             .indnkeyatts = natts,

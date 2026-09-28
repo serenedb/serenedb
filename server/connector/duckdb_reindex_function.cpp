@@ -1015,13 +1015,8 @@ ReindexOutcome RunReindex(duckdb::ClientContext& context,
   std::optional<Source> src;
   if (manifest) {
     src = ResolveSource(context, target);
-    if (!src) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-                      ERR_MSG("REINDEX of \"", name,
-                              "\": the source of the view cannot be resolved"));
-    }
   }
-  // No manifest (external-pk index): full rebuild.
+  // No manifest (external-pk index) or no observable source: full rebuild.
   if (!src) {
     RunFullRebuild(context, conn_ctx, target, *storage);
     return {};

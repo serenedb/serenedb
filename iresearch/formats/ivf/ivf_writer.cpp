@@ -20,7 +20,6 @@
 
 #include "iresearch/formats/ivf/ivf_writer.hpp"
 
-#include <absl/random/internal/pcg_engine.h>
 #include <absl/random/random.h>
 
 #include <algorithm>
@@ -97,7 +96,7 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
 
   std::vector<float> train;
   size_t train_seen = 0;
-  absl::random_internal::pcg64_2018_engine train_rng{kTrainSeed};
+  absl::InsecureBitGen train_rng(std::seed_seq{kTrainSeed});
 
   std::vector<uint32_t> doc_cluster;
   doc_cluster.reserve(rows);

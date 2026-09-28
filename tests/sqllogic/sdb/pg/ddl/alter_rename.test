@@ -200,7 +200,7 @@ db error: ERROR: Macro Function with name nonexistent does not exist!
 statement error
 ALTER TABLE pudge RENAME TO invoker;
 ----
-db error: ERROR: Could not rename "pudge" to ""invoker"": another entry with this name already exists!
+db error: ERROR: Could not rename "pudge" to "invoker": another entry with this name already exists!
 
 
 statement error

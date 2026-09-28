@@ -146,8 +146,8 @@ class PackedU32Column : util::Noncopyable {
                 std::memcpy(out + at + S * block_codec::kWideLanes, &v,
                             sizeof(v));
               });
-            src += block_codec::PackedSize<block_codec::kWideLanes>(
-              kSimdValues, B);
+            src +=
+              block_codec::PackedSize<block_codec::kWideLanes>(kSimdValues, B);
           }
         });
     }
@@ -220,8 +220,8 @@ class PackedU32Column : util::Noncopyable {
           for (size_t at = 0; at != kBlockValues; at += kSimdValues) {
             block_codec::PackVertical<B, block_codec::kWideLanes, false>(
               _staging + at, dst);
-            dst += block_codec::PackedSize<block_codec::kWideLanes>(
-              kSimdValues, B);
+            dst +=
+              block_codec::PackedSize<block_codec::kWideLanes>(kSimdValues, B);
           }
         });
       out = buf;

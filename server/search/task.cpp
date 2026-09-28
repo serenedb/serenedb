@@ -87,7 +87,7 @@ bool ShouldStop() noexcept {
 // Background compaction policy (the TieredMergePolicy analog), built per
 // target from its WITH-configured settings. `small` reduces the merge byte
 // budget when the global slot gate is nearly full so the pool keeps draining
-// under occupancy backpressure. VACUUM keeps CompactionCount{SIZE_MAX}.
+// under occupancy backpressure.
 irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings,
                                      bool small) {
   irs::index_utils::CompactionTier tier;
@@ -96,7 +96,7 @@ irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings,
   tier.floor_segment_bytes = settings.compaction_floor_segment_bytes;
   if (small) {
     tier.max_segments_bytes =
-      std::min(tier.max_segments_bytes, size_t{512} << 20);
+      std::max(2 * tier.floor_segment_bytes, tier.max_segments_bytes / 2);
   }
   return irs::index_utils::MakePolicy(tier);
 }

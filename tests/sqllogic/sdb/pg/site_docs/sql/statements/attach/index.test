@@ -26,7 +26,7 @@ CREATE TABLE tbl2 AS SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__SUITE_DIR__}/db25.csv';
+ATTACH '${__TEST_DIR__}/db25.csv';
 
 # DOCS_TEST: example_002
 
@@ -39,7 +39,7 @@ statement ok
 DETACH IF EXISTS db15;
 
 statement ok
-ATTACH '${__SUITE_DIR__}/db15.csv' AS db15;
+ATTACH '${__TEST_DIR__}/db15.csv' AS db15;
 
 # DOCS_TEST: example_003
 
@@ -50,7 +50,7 @@ statement ok
 DETACH IF EXISTS db17;
 
 statement ok
-ATTACH '${__SUITE_DIR__}/db17.db' AS db17;
+ATTACH '${__TEST_DIR__}/db17.db' AS db17;
 
 statement ok
 CREATE TABLE db17.items AS SELECT 1 AS id, 'alpha' AS name;
@@ -64,7 +64,7 @@ DETACH db17;
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__SUITE_DIR__}/db17.db' AS db16 (READ_ONLY);
+ATTACH '${__TEST_DIR__}/db17.db' AS db16 (READ_ONLY);
 
 statement ok
 DETACH db16;
@@ -77,7 +77,7 @@ DETACH db16;
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__SUITE_DIR__}/db26.csv' (BLOCK_SIZE 16_384);
+ATTACH '${__TEST_DIR__}/db26.csv' (BLOCK_SIZE 16_384);
 
 # DOCS_TEST: example_005
 
@@ -87,7 +87,7 @@ ATTACH '${__SUITE_DIR__}/db26.csv' (BLOCK_SIZE 16_384);
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__SUITE_DIR__}/db27.csv' (ROW_GROUP_SIZE 2048);
+ATTACH '${__TEST_DIR__}/db27.csv' (ROW_GROUP_SIZE 2048);
 
 # DOCS_TEST: example_006
 
@@ -97,7 +97,7 @@ ATTACH '${__SUITE_DIR__}/db27.csv' (ROW_GROUP_SIZE 2048);
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__SUITE_DIR__}/db28.csv' (RECOVERY_MODE no_wal_writes);
+ATTACH '${__TEST_DIR__}/db28.csv' (RECOVERY_MODE no_wal_writes);
 
 # DOCS_TEST: example_008
 
@@ -107,7 +107,7 @@ ATTACH '${__SUITE_DIR__}/db28.csv' (RECOVERY_MODE no_wal_writes);
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH IF NOT EXISTS '${__SUITE_DIR__}/db29.csv';
+ATTACH IF NOT EXISTS '${__TEST_DIR__}/db29.csv';
 
 # DOCS_TEST: example_009
 
@@ -117,7 +117,7 @@ ATTACH IF NOT EXISTS '${__SUITE_DIR__}/db29.csv';
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH IF NOT EXISTS '${__SUITE_DIR__}/db15b.csv' AS db15;
+ATTACH IF NOT EXISTS '${__TEST_DIR__}/db15b.csv' AS db15;
 
 # DOCS_TEST: example_010
 
@@ -127,7 +127,7 @@ ATTACH IF NOT EXISTS '${__SUITE_DIR__}/db15b.csv' AS db15;
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH OR REPLACE '${__SUITE_DIR__}/db15c.csv' AS db15;
+ATTACH OR REPLACE '${__TEST_DIR__}/db15c.csv' AS db15;
 
 # DOCS_TEST: example_011
 
@@ -181,7 +181,7 @@ statement ok
 DETACH IF EXISTS db18;
 
 statement ok
-ATTACH '${__SUITE_DIR__}/db18.duckdb' AS db18;
+ATTACH '${__TEST_DIR__}/db18.duckdb' AS db18;
 
 statement ok
 CREATE TABLE db18.stations AS SELECT * FROM (VALUES
@@ -203,13 +203,13 @@ statement ok
 DETACH IF EXISTS db19;
 
 statement ok
-ATTACH '${__SUITE_DIR__}/db18.duckdb' AS db19;
+ATTACH '${__TEST_DIR__}/db18.duckdb' AS db19;
 
 statement ok
 DETACH db19;
 
 statement ok
-ATTACH '${__SUITE_DIR__}/db18.duckdb' AS db19 (READ_ONLY);
+ATTACH '${__TEST_DIR__}/db18.duckdb' AS db19 (READ_ONLY);
 
 # DOCS_TEST: example_016
 
@@ -220,7 +220,7 @@ statement ok
 DETACH IF EXISTS db18;
 
 statement ok
-ATTACH '${__SUITE_DIR__}/db18b.duckdb' AS db18;
+ATTACH '${__TEST_DIR__}/db18b.duckdb' AS db18;
 
 statement ok
 CREATE TABLE db18.stations AS SELECT * FROM (VALUES
@@ -239,13 +239,13 @@ DETACH db18;
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__SUITE_DIR__}/db18b.duckdb' AS db19;
+ATTACH '${__TEST_DIR__}/db18b.duckdb' AS db19;
 
 statement ok
 DETACH db19;
 
 statement ok
-ATTACH '${__SUITE_DIR__}/db18b.duckdb' AS db19 (READ_ONLY);
+ATTACH '${__TEST_DIR__}/db18b.duckdb' AS db19 (READ_ONLY);
 
 # DOCS_TEST: example_017
 
@@ -255,7 +255,7 @@ ATTACH '${__SUITE_DIR__}/db18b.duckdb' AS db19 (READ_ONLY);
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__SUITE_DIR__}/db30.csv' (STORAGE_VERSION 'v1.2.0');
+ATTACH '${__TEST_DIR__}/db30.csv' (STORAGE_VERSION 'v1.2.0');
 
 # DOCS_TEST: example_018
 
@@ -268,7 +268,7 @@ statement ok
 DETACH IF EXISTS db20;
 
 statement ok
-ATTACH '${__SUITE_DIR__}/db20.csv' AS db20 (ENCRYPTION_KEY 'secret_key');
+ATTACH '${__TEST_DIR__}/db20.csv' AS db20 (ENCRYPTION_KEY 'secret_key');
 
 statement ok
 DETACH db20;
@@ -284,7 +284,7 @@ statement ok
 DETACH IF EXISTS db20;
 
 statement ok
-ATTACH '${__SUITE_DIR__}/db20b.csv' AS db20 (ENCRYPTION_KEY 'secret_key', ENCRYPTION_CIPHER 'CTR');
+ATTACH '${__TEST_DIR__}/db20b.csv' AS db20 (ENCRYPTION_KEY 'secret_key', ENCRYPTION_CIPHER 'CTR');
 
 statement ok
 DETACH db20;

@@ -9,7 +9,7 @@ DETACH DATABASE IF EXISTS dbcase;
 
 
 statement ok
-ATTACH '${__SUITE_DIR__}/dbcase.duckdb' AS dbcase;
+ATTACH '${__TEST_DIR__}/dbcase.duckdb' AS dbcase;
 
 
 statement ok

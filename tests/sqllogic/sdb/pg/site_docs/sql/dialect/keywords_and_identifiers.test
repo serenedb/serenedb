@@ -27,7 +27,7 @@ DETACH IF EXISTS db91;
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__SUITE_DIR__}/db91.db' AS db91;
+ATTACH '${__TEST_DIR__}/db91.db' AS db91;
 
 statement ok
 USE db91;

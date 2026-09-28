@@ -27,7 +27,7 @@ DETACH IF EXISTS db10;
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '${__SUITE_DIR__}/db9.db' AS db9;
+ATTACH '${__TEST_DIR__}/db9.db' AS db9;
 
 statement ok
 CREATE TABLE db9.tbl AS SELECT 42 AS x, 3 AS y;
@@ -36,7 +36,7 @@ statement ok
 CREATE MACRO db9.two_x_plus_y(x, y) AS 2 * x + y;
 
 statement ok
-ATTACH '${__SUITE_DIR__}/db10.db' AS db10;
+ATTACH '${__TEST_DIR__}/db10.db' AS db10;
 
 skipif pg-wire-extended
 statement ok

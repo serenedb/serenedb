@@ -18,7 +18,7 @@ CREATE TABLE local_t(x INTEGER);
 
 
 statement ok
-ATTACH '${__SUITE_DIR__}/db71.duckdb' AS db71;
+ATTACH '${__TEST_DIR__}/db71.duckdb' AS db71;
 
 
 statement ok

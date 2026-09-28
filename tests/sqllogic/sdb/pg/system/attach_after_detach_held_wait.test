@@ -7,7 +7,7 @@ statement ok
 DETACH IF EXISTS aadw_other;
 
 statement ok
-ATTACH '${__SUITE_DIR__}/aadw.db' AS aadw;
+ATTACH '${__TEST_DIR__}/aadw.db' AS aadw;
 
 statement ok
 CREATE OR REPLACE TABLE aadw.main.docs(id INTEGER);
@@ -36,7 +36,7 @@ DETACH aadw;
 
 connection attacher
 statement async ok
-ATTACH '${__SUITE_DIR__}/aadw.db' AS aadw_other;
+ATTACH '${__TEST_DIR__}/aadw.db' AS aadw_other;
 
 
 connection holder
@@ -62,7 +62,7 @@ DETACH aadw_other;
 
 connection default
 statement ok
-ATTACH '${__SUITE_DIR__}/aadw.db' AS aadw (READ_ONLY);
+ATTACH '${__TEST_DIR__}/aadw.db' AS aadw (READ_ONLY);
 
 
 connection holder
@@ -85,7 +85,7 @@ DETACH aadw;
 
 connection attacher
 statement async ok
-ATTACH '${__SUITE_DIR__}/aadw.db' AS aadw;
+ATTACH '${__TEST_DIR__}/aadw.db' AS aadw;
 
 
 connection holder
@@ -113,7 +113,7 @@ BEGIN;
 
 connection default
 statement ok
-ATTACH '${__SUITE_DIR__}/aadw.db' AS aadw;
+ATTACH '${__TEST_DIR__}/aadw.db' AS aadw;
 
 
 connection default
@@ -123,7 +123,7 @@ DETACH aadw;
 
 connection default
 statement error Unique file handle conflict: Cannot attach "aadw_other" - the database file ".*aadw\.db" is in the process of being detached
-ATTACH '${__SUITE_DIR__}/aadw.db' AS aadw_other;
+ATTACH '${__TEST_DIR__}/aadw.db' AS aadw_other;
 
 
 connection default
@@ -133,7 +133,7 @@ ROLLBACK;
 
 connection default
 statement ok
-ATTACH '${__SUITE_DIR__}/aadw.db' AS aadw_other;
+ATTACH '${__TEST_DIR__}/aadw.db' AS aadw_other;
 
 
 connection default

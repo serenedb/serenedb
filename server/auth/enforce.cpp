@@ -129,6 +129,21 @@ bool Unowned(const duckdb::CatalogEntry& entry) {
   return entry.permissions.owner == pg::kInvalidOid;
 }
 
+bool IsSchemaMember(CatalogType type) {
+  switch (type) {
+    case CatalogType::TABLE_ENTRY:
+    case CatalogType::VIEW_ENTRY:
+    case CatalogType::SEQUENCE_ENTRY:
+    case CatalogType::MACRO_ENTRY:
+    case CatalogType::TABLE_MACRO_ENTRY:
+    case CatalogType::TYPE_ENTRY:
+    case CatalogType::INDEX_ENTRY:
+      return true;
+    default:
+      return false;
+  }
+}
+
 CatalogType DefaultObjType(LogicalOperatorType type) {
   switch (type) {
     case LogicalOperatorType::LOGICAL_CREATE_SEQUENCE:
@@ -189,6 +204,7 @@ class Enforcer {
       return;
     }
     _props.RegisterDBRead(catalog::ClusterOf(_context), _context);
+    CheckSchemaUsage();
     CheckResolved();
     CheckReturning();
     if (_file_copy) {
@@ -716,6 +732,33 @@ class Enforcer {
              .Can(CatalogType::TABLE_ENTRY, view.permissions,
                   AclMode::Select)) {
         Denied(view);
+      }
+    }
+  }
+
+  void CheckSchemaUsage() {
+    const auto& resolved = _props.resolved_entries;
+    std::vector<bool> in_view(resolved.size());
+    for (const auto& scope : _props.view_scopes) {
+      for (auto i = scope.resolved_begin;
+           i < scope.resolved_end && i < resolved.size(); ++i) {
+        in_view[i] = true;
+      }
+    }
+    irs::containers::FlatHashSet<const duckdb::CatalogEntry*> checked;
+    for (size_t i = 0; i < resolved.size(); ++i) {
+      const auto& entry = *resolved[i];
+      if (in_view[i] || !IsSchemaMember(entry.type) || Unowned(entry) ||
+          entry.ParentCatalog().IsSystemCatalog()) {
+        continue;
+      }
+      const auto& schema = entry.ParentSchema(_context);
+      if (schema.internal || !checked.insert(&schema).second) {
+        continue;
+      }
+      if (!_caller_closure.Can(CatalogType::SCHEMA_ENTRY, schema.permissions,
+                               AclMode::Usage)) {
+        Denied(schema);
       }
     }
   }

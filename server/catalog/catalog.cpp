@@ -335,6 +335,14 @@ void SereneDBCatalog::Initialize(bool load_builtin) {
     {duckdb::Identifier{irs::StaticStrings::kPublic}}, duckdb::Identifier()));
   info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
   info.permissions.owner = pg::kRootUser;
+  info.permissions.acl = {
+    {.grantee = pg::kRootUser,
+     .grantor = pg::kRootUser,
+     .privs = duckdb::AclMode::Usage | duckdb::AclMode::Create},
+    {.grantee = pg::kPublicGrantee,
+     .grantor = pg::kRootUser,
+     .privs = duckdb::AclMode::Usage},
+  };
   info.oid = pg::kPgPublicSchema;
   CreateSchema(data, info);
   MountSystemSchemas(*this);

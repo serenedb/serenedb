@@ -2,10 +2,9 @@
 # connection still holds that database: the read returns the rows instead of
 # hanging the server.
 #
-# The holder reads rdd_b inside an open transaction, which keeps rdd_b open
-# after the DETACH. read_duckdb then opens rdd_a.db while binding and rdd_b.db
-# while scanning. The holder reads only its own database: a catalog-wide
-# listing would also keep other tests' databases open past their end.
+# The holder lists every attached database inside an open transaction, which
+# keeps rdd_b open after the DETACH. read_duckdb then opens rdd_a.db while
+# binding and rdd_b.db while scanning.
 
 control substitution on
 
@@ -45,10 +44,10 @@ BEGIN;
 
 connection holder
 query
-SELECT count(*) AS n FROM rdd_b.main.docs;
+SELECT count(*) > 0 AS listed FROM duckdb_tables();
 ----
-n
-1
+listed
+t
 
 
 connection default

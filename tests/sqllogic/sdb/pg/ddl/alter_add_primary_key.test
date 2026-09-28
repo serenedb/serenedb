@@ -233,6 +233,8 @@ statement error
 ALTER TABLE pk_idx ADD PRIMARY KEY (a);
 ----
 db error: ERROR: Cannot alter entry "pk_idx" because there are entries that depend on it.
+index "pk_idx_b" depends on table "pk_idx".
+Drop the dependent entries first and recreate them after the change.
 
 
 statement ok

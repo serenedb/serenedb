@@ -186,8 +186,6 @@ class Limiter {
  public:
   void Reset(size_t permits);
 
-  bool TryAcquire();
-
   bool AcquireFor(absl::Duration timeout);
 
   void Release();
@@ -207,8 +205,6 @@ class AIQuery final : public duckdb::ClientContextState {
     duckdb::HTTPHeaders headers;
   };
 
-  explicit AIQuery(duckdb::ClientContext& context);
-
   static AIQuery& Get(duckdb::ClientContext& context);
 
   void QueryBegin(duckdb::ClientContext& context) final;
@@ -224,8 +220,6 @@ class AIQuery final : public duckdb::ClientContextState {
   void AddOutputTokens(uint64_t tokens) {
     _output_tokens.fetch_add(tokens, std::memory_order_relaxed);
   }
-
-  void ForEach(size_t n, absl::FunctionRef<void(size_t)> fn) const;
 
   Settings settings;
   Limiter limiter;
@@ -245,8 +239,6 @@ struct AIExecution {
   duckdb::ClientContext& context;
   AIQuery& query;
   const AIQuery::Target& target;
-
-  bool Stopped() const;
 };
 
 struct Response {
@@ -265,9 +257,7 @@ class Replies {
 
   bool Ok(size_t k) const;
 
-  void ForEach(absl::FunctionRef<void(size_t)> fn) const {
-    _exec.query.ForEach(_responses.size(), fn);
-  }
+  void ForEach(absl::FunctionRef<void(size_t)> fn) const;
 
   bool ThrowOnError() const noexcept {
     return _exec.query.settings.throw_on_error;
@@ -332,8 +322,6 @@ class BatchWork : public ScalarWork {
     size_t size = 0;
     bool probe = false;
   };
-
-  void Queue(size_t begin, size_t size);
 
   std::vector<Batch> _batches;
   Verdict _verdict = Verdict::Unknown;

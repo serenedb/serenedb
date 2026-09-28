@@ -43,7 +43,6 @@
 #include "gtest/gtest.h"
 #include "network/http/common.h"
 #include "network/http/handler.h"
-#include "network/pg/protocol_state.h"
 #include "query/config.h"
 
 using namespace sdb;
@@ -1241,35 +1240,6 @@ TEST_F(AIFunctionsTest, ControlCharactersAreEscaped) {
   EXPECT_EQ(Content(bodies[0], 1), std::string_view("a\x01"
                                                     "b",
                                                     3));
-}
-
-TEST_F(AIFunctionsTest, ClosingPendingStopsRequests) {
-  std::atomic_int calls = 0;
-  auto& mock = Mock(kChat, [&](std::string_view) {
-    ++calls;
-    std::this_thread::sleep_for(std::chrono::milliseconds{2});
-    return Reply{200, ChatReply("ok", "stop", 1)};
-  });
-  Start();
-  Run("SET threads = 2");
-  Run("SET sdb_ai_max_concurrent_requests = 4");
-  network::pg::ClosingPending pending{
-    _conn.PendingQuery(
-      "SELECT count(ai_generate(range::VARCHAR, secret_name := 'chat')) FROM "
-      "range(16384)"),
-    *_conn.context};
-  ASSERT_FALSE(pending->HasError()) << pending->GetError();
-  for (int i = 0; i != 500 && calls.load() < 16; ++i) {
-    std::this_thread::sleep_for(std::chrono::milliseconds{10});
-  }
-  ASSERT_GE(calls.load(), 16);
-  const auto before = mock.Bodies().size();
-  pending.Reset();
-  const auto after = mock.Bodies().size();
-  EXPECT_LE(after - before, 8);
-  EXPECT_LT(after, 16384 - 2048);
-  EXPECT_FALSE(_conn.context->IsInterrupted());
-  EXPECT_EQ(Run("SELECT 1")->GetValue(0, 0).GetValue<int32_t>(), 1);
 }
 
 TEST_F(AIFunctionsTest, CancelWithoutAsyncThreads) {

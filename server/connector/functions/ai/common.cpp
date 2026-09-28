@@ -133,21 +133,6 @@ bool IsBatchRejection(uint16_t status) {
   return status == 400 || status == 413 || status == 422;
 }
 
-bool IsRowError(const std::exception_ptr& error) {
-  try {
-    std::rethrow_exception(error);
-  } catch (const irs::SqlException& e) {
-    return e.error().errcode == ERRCODE_EXTERNAL_ROUTINE_EXCEPTION;
-  } catch (...) {
-    return false;
-  }
-}
-
-[[noreturn]] void ThrowInterrupted() {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_QUERY_CANCELED),
-                  ERR_MSG("canceling statement due to user request"));
-}
-
 std::string_view UrlHost(std::string_view url) {
   if (const auto pos = url.find("://"); pos != std::string_view::npos) {
     url.remove_prefix(pos + 3);
@@ -288,22 +273,9 @@ Endpoint ResolveEndpoint(duckdb::ClientContext& context,
   return endpoint;
 }
 
-class Permit {
- public:
-  explicit Permit(Limiter& limiter) : _limiter{limiter} {}
-  Permit(const Permit&) = delete;
-  Permit& operator=(const Permit&) = delete;
-  ~Permit() { _limiter.Release(); }
-
- private:
-  Limiter& _limiter;
-};
-
 class Sender {
  public:
   explicit Sender(const AIExecution& exec) : _exec{exec} {}
-  Sender(const Sender&) = delete;
-  Sender& operator=(const Sender&) = delete;
 
   ~Sender() {
     if (_client) {
@@ -320,9 +292,7 @@ class Sender {
     const auto& settings = _exec.query.settings;
     Response response;
     for (uint32_t attempt = 0;; ++attempt) {
-      if (_exec.Stopped()) {
-        ThrowInterrupted();
-      }
+      _exec.context.InterruptCheck();
       if (!_exec.query.ReserveCall(endpoint.fn)) {
         return {.skipped = true};
       }
@@ -386,9 +356,7 @@ class Sender {
       std::chrono::steady_clock::now() + std::chrono::milliseconds{ms};
     for (auto now = std::chrono::steady_clock::now(); now < deadline;
          now = std::chrono::steady_clock::now()) {
-      if (_exec.Stopped()) {
-        ThrowInterrupted();
-      }
+      _exec.context.InterruptCheck();
       std::this_thread::sleep_for(std::min<std::chrono::steady_clock::duration>(
         deadline - now, std::chrono::milliseconds{50}));
     }
@@ -399,8 +367,7 @@ class Sender {
   simdjson::dom::parser _parser;
 };
 
-class FetchState {
- public:
+struct FetchState {
   FetchState(const AIExecution& exec, AIWork& work, std::span<Response> out)
     : exec{exec},
       work{work},
@@ -409,14 +376,14 @@ class FetchState {
       token{scheduler.CreateProducer()} {}
 
   bool Stop() const {
-    return stop.load(std::memory_order_relaxed) || exec.Stopped();
+    return stop.load(std::memory_order_relaxed) || exec.context.IsInterrupted();
   }
 
   bool Pending() const {
     return next.load(std::memory_order_relaxed) < out.size();
   }
 
-  void SendOne(Sender& sender) {
+  void SendOne(Sender& sender) noexcept {
     const auto k = next.fetch_add(1, std::memory_order_relaxed);
     if (k >= out.size()) {
       return;
@@ -431,8 +398,7 @@ class FetchState {
       Fail(std::current_exception());
       return;
     }
-    if (response.error &&
-        (exec.query.settings.throw_on_error || !IsRowError(response.error))) {
+    if (response.error && exec.query.settings.throw_on_error) {
       Fail(response.error);
     }
   }
@@ -490,28 +456,29 @@ class FetchState {
   std::exception_ptr error ABSL_GUARDED_BY(mutex);
 };
 
-void Schedule(const duckdb::shared_ptr<FetchState>& state,
-              std::unique_ptr<Sender> sender);
-
 class FetchTask final : public duckdb::Task {
  public:
   FetchTask(duckdb::shared_ptr<FetchState> state,
             std::unique_ptr<Sender> sender)
     : _state{std::move(state)}, _sender{std::move(sender)} {}
 
+  static void Schedule(const duckdb::shared_ptr<FetchState>& state,
+                       std::unique_ptr<Sender> sender) {
+    state->scheduler.ScheduleTask(
+      *state->token,
+      duckdb::make_shared_ptr<FetchTask>(state, std::move(sender)),
+      duckdb::TaskSchedulerType::ASYNC);
+  }
+
   duckdb::TaskExecutionResult Execute(
     duckdb::TaskExecutionMode) noexcept final {
     auto& state = *_state;
+    auto& limiter = state.exec.query.limiter;
     try {
       if (!state.Stop() && state.Pending() &&
-          state.exec.query.limiter.TryAcquire()) {
-        {
-          Permit permit{state.exec.query.limiter};
-          if (!_sender) {
-            _sender = std::make_unique<Sender>(state.exec);
-          }
-          state.SendOne(*_sender);
-        }
+          limiter.AcquireFor(absl::ZeroDuration())) {
+        state.SendOne(*_sender);
+        limiter.Release();
         if (!state.Stop() && state.Pending()) {
           Schedule(_state, std::move(_sender));
           return duckdb::TaskExecutionResult::TASK_FINISHED;
@@ -532,13 +499,6 @@ class FetchTask final : public duckdb::Task {
   std::unique_ptr<Sender> _sender;
 };
 
-void Schedule(const duckdb::shared_ptr<FetchState>& state,
-              std::unique_ptr<Sender> sender) {
-  state->scheduler.ScheduleTask(
-    *state->token, duckdb::make_shared_ptr<FetchTask>(state, std::move(sender)),
-    duckdb::TaskSchedulerType::ASYNC);
-}
-
 void TopUp(const duckdb::shared_ptr<FetchState>& state) {
   auto& s = *state;
   const auto remaining =
@@ -547,29 +507,27 @@ void TopUp(const duckdb::shared_ptr<FetchState>& state) {
   absl::MutexLock lock{&s.mutex};
   while (s.helpers + 1 < remaining &&
          s.helpers < s.exec.query.limiter.Available()) {
-    Schedule(state, nullptr);
+    FetchTask::Schedule(state, std::make_unique<Sender>(s.exec));
     ++s.helpers;
   }
 }
 
 void Fetch(const AIExecution& exec, AIWork& work, std::span<Response> out) {
   auto state = duckdb::make_shared_ptr<FetchState>(exec, work, out);
+  auto& limiter = exec.query.limiter;
   {
     absl::Cleanup join = [&] { state->Join(); };
     Sender sender{exec};
     while (!state->Stop() && state->Pending()) {
       TopUp(state);
-      if (!exec.query.limiter.AcquireFor(absl::Milliseconds(50))) {
-        continue;
+      if (limiter.AcquireFor(absl::Milliseconds(50))) {
+        state->SendOne(sender);
+        limiter.Release();
       }
-      Permit permit{exec.query.limiter};
-      state->SendOne(sender);
     }
   }
   state->Rethrow();
-  if (exec.Stopped()) {
-    ThrowInterrupted();
-  }
+  exec.context.InterruptCheck();
 }
 
 AIExecution Execution(duckdb::ClientContext& context, const EndpointRef& ref) {
@@ -752,15 +710,6 @@ void Limiter::Reset(size_t permits) {
   _available = permits;
 }
 
-bool Limiter::TryAcquire() {
-  absl::MutexLock lock{&_mutex};
-  if (_available == 0) {
-    return false;
-  }
-  --_available;
-  return true;
-}
-
 bool Limiter::AcquireFor(absl::Duration timeout) {
   absl::MutexLock lock{&_mutex};
   if (!_mutex.AwaitWithTimeout(
@@ -783,11 +732,8 @@ size_t Limiter::Available() {
   return _available;
 }
 
-AIQuery::AIQuery(duckdb::ClientContext& context) { Begin(context); }
-
 AIQuery& AIQuery::Get(duckdb::ClientContext& context) {
-  auto& query =
-    *context.registered_state->GetOrCreate<AIQuery>("sdb_ai_query", context);
+  auto& query = *context.registered_state->GetOrCreate<AIQuery>("sdb_ai_query");
   if (!query._active.load(std::memory_order_acquire)) {
     query.Begin(context);
   }
@@ -873,20 +819,18 @@ bool AIQuery::ReserveCall(std::string_view fn) {
   return false;
 }
 
-void AIQuery::ForEach(size_t n, absl::FunctionRef<void(size_t)> fn) const {
-  for (size_t i = 0; i != n; ++i) {
+void Replies::ForEach(absl::FunctionRef<void(size_t)> fn) const {
+  for (size_t k = 0; k != _responses.size(); ++k) {
     try {
-      fn(i);
+      fn(k);
     } catch (const irs::SqlException& e) {
-      if (settings.throw_on_error ||
+      if (ThrowOnError() ||
           e.error().errcode != ERRCODE_EXTERNAL_ROUTINE_EXCEPTION) {
         throw;
       }
     }
   }
 }
-
-bool AIExecution::Stopped() const { return context.IsInterrupted(); }
 
 bool Replies::Ok(size_t k) const {
   const auto& response = _responses[k];
@@ -928,12 +872,9 @@ void BatchWork::Decode(size_t k, simdjson::dom::element reply,
 
 void BatchWork::QueueBatches(size_t n, size_t batch_size) {
   for (size_t begin = 0; begin < n; begin += batch_size) {
-    Queue(begin, std::min(batch_size, n - begin));
+    _batches.push_back(
+      {.begin = begin, .size = std::min(batch_size, n - begin)});
   }
-}
-
-void BatchWork::Queue(size_t begin, size_t size) {
-  _batches.push_back({.begin = begin, .size = size});
 }
 
 void BatchWork::Advance(const Replies& replies) {
@@ -957,8 +898,10 @@ void BatchWork::Advance(const Replies& replies) {
         _rejected = status;
         _batches.push_back({.probe = true});
       }
-      Queue(batch.begin, batch.size / 2);
-      Queue(batch.begin + batch.size / 2, batch.size - batch.size / 2);
+      const auto half = batch.size / 2;
+      _batches.push_back({.begin = batch.begin, .size = half});
+      _batches.push_back(
+        {.begin = batch.begin + half, .size = batch.size - half});
       return;
     }
     replies.Ok(k);

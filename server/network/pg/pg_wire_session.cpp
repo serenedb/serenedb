@@ -523,7 +523,8 @@ void PgWireSession<Kind>::SendStartupBurst() {
 }
 
 template<SocketKind Kind>
-ClosingPending PgWireSession<Kind>::PendingQueryEnsured(
+duckdb::unique_ptr<duckdb::PendingQueryResult>
+PgWireSession<Kind>::PendingQueryEnsured(
   duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values,
   std::shared_ptr<WireSinkContext> wire) {
   if (prepared.GetStatementType() == duckdb::StatementType::COPY_STATEMENT &&
@@ -553,8 +554,7 @@ ClosingPending PgWireSession<Kind>::PendingQueryEnsured(
     // Streaming can't engage here anyway: DDL/DML are FORCE_MATERIALIZED, and
     // the describe path reads only types/names without fetching. false keeps
     // result cleanup eager instead of leaving an open streaming result.
-    return {prepared.PendingQuery(values, /*allow_stream_result=*/false),
-            *_conn->context};
+    return prepared.PendingQuery(values, /*allow_stream_result=*/false);
   }
   // Arm the collector hook for this execution. allow_stream_result=false
   // routes through the get_result_collector hook (only consulted when not
@@ -566,11 +566,12 @@ ClosingPending PgWireSession<Kind>::PendingQueryEnsured(
   _client_state->wire_sink = std::move(wire);
   auto pending = prepared.PendingQuery(values, /*allow_stream_result=*/false);
   _client_state->wire_sink.reset();
-  return {std::move(pending), *_conn->context};
+  return pending;
 }
 
 template<SocketKind Kind>
-ClosingPending PgWireSession<Kind>::PendingStatementEnsured(
+duckdb::unique_ptr<duckdb::PendingQueryResult>
+PgWireSession<Kind>::PendingStatementEnsured(
   duckdb::unique_ptr<duckdb::SQLStatement> statement,
   const std::shared_ptr<WireSinkContext>& wire) {
   StagePendingCopyProgress(*_client_state, *_connection_ctx, *statement);
@@ -592,7 +593,7 @@ ClosingPending PgWireSession<Kind>::PendingStatementEnsured(
       _connection_ctx->MarkStatementDml();
     }
   }
-  return {std::move(pending), *_conn->context};
+  return pending;
 }
 
 template<SocketKind Kind>

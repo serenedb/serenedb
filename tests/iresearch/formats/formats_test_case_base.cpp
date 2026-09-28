@@ -35,6 +35,7 @@
 #include <iresearch/formats/index/burst_trie.hpp>
 #include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/index/idx_writer.hpp>
+#include <iresearch/formats/index_meta_writer.hpp>
 #include <iresearch/formats/segment_meta_reader.hpp>
 #include <iresearch/formats/segment_meta_writer.hpp>
 #include <iresearch/index/index_meta.hpp>
@@ -1413,8 +1414,8 @@ TEST_P(FormatTestCase, format_utils_footer) {
     crc.process_bytes(data.data(), data.size());
     ASSERT_EQ(42, value);
     ASSERT_EQ(data.size(), data_size);
-    ASSERT_EQ(data.size(), footer.data_size);
-    ASSERT_EQ(crc.checksum(), footer.data_crc32c);
+    ASSERT_EQ(data.size(), footer.data_len);
+    ASSERT_EQ(crc.checksum(), footer.data_expected_crc32c);
   };
 
   write("file", kData);
@@ -1473,6 +1474,33 @@ TEST_P(FormatTestCase, format_utils_footer_damaged) {
 
   write("empty", {});
   ASSERT_THROW(read("empty"), irs::IndexError);
+}
+
+TEST_P(FormatTestCase, index_meta_rejects_other_storage_version) {
+  using Writer = irs::IndexMetaWriterImpl;
+
+  const auto read = [&](uint64_t gen, uint64_t version) {
+    const auto name = Writer::FileName(gen);
+    {
+      auto out = dir().create(name);
+      ASSERT_NE(nullptr, out);
+      irs::format_utils::WriteFooter(*out, [&](duckdb::Serializer& meta) {
+        meta.WriteProperty<uint64_t>(Writer::kFieldStorageVersion,
+                                     "storage_version", version);
+        meta.WriteProperty<uint64_t>(Writer::kFieldSegCounter, "seg_counter",
+                                     0);
+        meta.WriteList(Writer::kFieldSegments, "segments", 0,
+                       [](duckdb::Serializer::List&, duckdb::idx_t) {});
+      });
+    }
+    irs::IndexMeta meta;
+    irs::GetIndexMetaReader()->read(dir(), meta, name);
+  };
+
+  const auto current = static_cast<uint64_t>(duckdb::kIResearchStorageVersion);
+  ASSERT_NO_THROW(read(1, current));
+  ASSERT_THROW(read(2, current + 1), irs::IndexError);
+  ASSERT_THROW(read(3, current - 1), irs::IndexError);
 }
 
 }  // namespace tests

@@ -91,11 +91,12 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
             meta.has_score_bounds =
               obj.ReadProperty<bool>(6, "has_score_bounds");
             meta.body_offset = obj.ReadProperty<uint64_t>(7, "body_offset");
-            meta.norm = obj.ReadProperty<uint64_t>(8, "norm");
+            meta.norm = obj.ReadPropertyWithExplicitDefault<uint64_t>(
+              8, "norm", field_limits::invalid());
             _impl->term_dicts.emplace_back(id, std::move(meta));
           });
         });
-      footer.ReadList(
+      footer.ReadOptionalList(
         kFooterSlotIvf, "ivf",
         [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
           list.ReadObject([&](duckdb::Deserializer& obj) {
@@ -120,7 +121,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
             _impl->ann_by_id.emplace(id, idx);
           });
         });
-      footer.ReadList(
+      footer.ReadOptionalList(
         kFooterSlotHnsw, "hnsw",
         [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
           list.ReadObject([&](duckdb::Deserializer& obj) {

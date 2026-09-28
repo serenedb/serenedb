@@ -36,8 +36,8 @@ namespace format_utils {
 inline constexpr uint64_t kTrailerLen = 2 * sizeof(uint32_t);
 
 struct Footer {
-  uint64_t data_size = 0;
-  uint32_t data_crc32c = 0;
+  uint64_t data_len = 0;
+  uint32_t data_expected_crc32c = 0;
 };
 
 void WriteFooter(IndexOutput& out,

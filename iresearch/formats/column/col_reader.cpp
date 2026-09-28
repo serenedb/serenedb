@@ -154,7 +154,7 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
             _columns.push_back(std::move(col));
           });
         });
-      footer.ReadList(
+      footer.ReadOptionalList(
         kFooterSlotNormColumns, "norm_columns",
         [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
           list.ReadObject([&](duckdb::Deserializer& obj) {

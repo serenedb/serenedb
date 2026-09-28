@@ -105,7 +105,7 @@ inline uint64_t ReadLink(IndexInput& in, std::string_view file,
       meta_in.ReadProperty<uint64_t>(SegmentMetaWriterImpl::kFieldByteSize,
                                      "byte_size");
     });
-  CheckMaskSize(mask_size, footer.data_size, file);
+  CheckMaskSize(mask_size, footer.data_len, file);
 
   return mask_size;
 }
@@ -147,7 +147,7 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
       size = meta_in.ReadProperty<uint64_t>(
         SegmentMetaWriterImpl::kFieldByteSize, "byte_size");
     });
-  CheckMaskSize(mask_size, footer.data_size, filename);
+  CheckMaskSize(mask_size, footer.data_len, filename);
 
   if (mask_size == 0 && !parents.empty()) [[unlikely]] {
     throw IndexError{absl::StrCat("Corrupted document mask chain of '", name,

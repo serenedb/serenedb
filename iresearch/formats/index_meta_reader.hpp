@@ -87,6 +87,15 @@ inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
   std::vector<uint32_t> invisible;
   format_utils::ReadFooter(
     *in, filename, [&](duckdb::Deserializer& meta_in, uint64_t) {
+      const auto version = meta_in.ReadProperty<uint64_t>(
+        IndexMetaWriterImpl::kFieldStorageVersion, "storage_version");
+      if (version != static_cast<uint64_t>(duckdb::kIResearchStorageVersion))
+        [[unlikely]] {
+        throw IndexError{absl::StrCat(
+          "Index meta '", filename, "' has storage version ", version,
+          ", this build reads storage version ",
+          static_cast<uint64_t>(duckdb::kIResearchStorageVersion))};
+      }
       cnt = meta_in.ReadProperty<uint64_t>(
         IndexMetaWriterImpl::kFieldSegCounter, "seg_counter");
       meta_in.ReadList(

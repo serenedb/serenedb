@@ -26,10 +26,13 @@
 
 namespace duckdb {
 
+inline constexpr StorageVersion kIResearchStorageVersion =
+  StorageVersion::SERENEDB_V1;
+
 inline SerializationOptions VersionStorageOptions() {
   SerializationOptions opts;
   opts.storage_compatibility =
-    StorageCompatibility::FromIndex(StorageVersion::SERENEDB_V1);
+    StorageCompatibility::FromIndex(kIResearchStorageVersion);
   return opts;
 }
 

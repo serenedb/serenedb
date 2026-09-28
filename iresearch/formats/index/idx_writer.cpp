@@ -142,33 +142,38 @@ void IdxWriter::Commit() {
           obj.WriteProperty<bool>(6, "has_score_bounds",
                                   e.meta.has_score_bounds);
           obj.WriteProperty<uint64_t>(7, "body_offset", e.meta.body_offset);
-          obj.WriteProperty<uint64_t>(8, "norm", e.meta.norm);
+          obj.WritePropertyWithDefault<uint64_t>(8, "norm", e.meta.norm,
+                                                 field_limits::invalid());
         });
       });
-    footer.WriteList(
-      kFooterSlotIvf, "ivf", _impl->ivf_entries.size(),
-      [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-        const auto& e = _impl->ivf_entries[i];
-        list.WriteObject([&](duckdb::Serializer& obj) {
-          obj.WriteProperty<uint64_t>(0, "id", e.id);
-          obj.WriteProperty<uint64_t>(1, "tree_offset", e.meta.tree_offset);
-          obj.WriteProperty<uint64_t>(2, "tree_byte_size",
-                                      e.meta.tree_byte_size);
-          obj.WriteProperty<uint64_t>(3, "stats_offset", e.meta.stats_offset);
-          obj.WriteProperty<uint64_t>(4, "stats_byte_size",
-                                      e.meta.stats_byte_size);
+    if (!_impl->ivf_entries.empty()) {
+      footer.WriteList(
+        kFooterSlotIvf, "ivf", _impl->ivf_entries.size(),
+        [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+          const auto& e = _impl->ivf_entries[i];
+          list.WriteObject([&](duckdb::Serializer& obj) {
+            obj.WriteProperty<uint64_t>(0, "id", e.id);
+            obj.WriteProperty<uint64_t>(1, "tree_offset", e.meta.tree_offset);
+            obj.WriteProperty<uint64_t>(2, "tree_byte_size",
+                                        e.meta.tree_byte_size);
+            obj.WriteProperty<uint64_t>(3, "stats_offset", e.meta.stats_offset);
+            obj.WriteProperty<uint64_t>(4, "stats_byte_size",
+                                        e.meta.stats_byte_size);
+          });
         });
-      });
-    footer.WriteList(
-      kFooterSlotHnsw, "hnsw", _impl->hnsw_entries.size(),
-      [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-        const auto& e = _impl->hnsw_entries[i];
-        list.WriteObject([&](duckdb::Serializer& obj) {
-          obj.WriteProperty<uint64_t>(0, "id", e.id);
-          obj.WriteProperty<uint64_t>(1, "offset", e.meta.offset);
-          obj.WriteProperty<uint64_t>(2, "byte_size", e.meta.byte_size);
+    }
+    if (!_impl->hnsw_entries.empty()) {
+      footer.WriteList(
+        kFooterSlotHnsw, "hnsw", _impl->hnsw_entries.size(),
+        [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+          const auto& e = _impl->hnsw_entries[i];
+          list.WriteObject([&](duckdb::Serializer& obj) {
+            obj.WriteProperty<uint64_t>(0, "id", e.id);
+            obj.WriteProperty<uint64_t>(1, "offset", e.meta.offset);
+            obj.WriteProperty<uint64_t>(2, "byte_size", e.meta.byte_size);
+          });
         });
-      });
+    }
   });
   _impl->out.reset();
 }

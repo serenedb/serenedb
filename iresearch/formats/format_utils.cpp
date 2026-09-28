@@ -68,36 +68,37 @@ Footer ReadFooter(
     throw IndexError{absl::StrCat("footer: '", name, "' of ", length,
                                   " bytes is too short for a trailer")};
   }
-  const uint64_t trailer = length - kTrailerLen;
-  in.Seek(trailer);
-  const auto crc32c = static_cast<uint32_t>(in.ReadI32());
-  const auto size = static_cast<uint32_t>(in.ReadI32());
-  if (size > trailer) {
+  const uint64_t trailer_offset = length - kTrailerLen;
+  in.Seek(trailer_offset);
+  const auto footer_expected_crc32c = static_cast<uint32_t>(in.ReadI32());
+  const auto footer_len = static_cast<uint32_t>(in.ReadI32());
+  if (footer_len > trailer_offset) {
     throw IndexError{absl::StrCat("footer: '", name, "' of ", length,
-                                  " bytes claims a footer of ", size,
+                                  " bytes claims a footer of ", footer_len,
                                   " bytes")};
   }
-  Footer footer{.data_size = trailer - size};
-  bstring owned;
-  const auto* data = in.ReadStable(footer.data_size, size);
-  if (data == nullptr) {
-    owned.resize(size);
-    in.ReadData(footer.data_size, owned.data(), size);
-    data = owned.data();
+  Footer footer{.data_len = trailer_offset - footer_len};
+  bstring footer_buf;
+  const auto* footer_data = in.ReadStable(footer.data_len, footer_len);
+  if (!footer_data) {
+    footer_buf.resize(footer_len);
+    in.ReadData(footer.data_len, footer_buf.data(), footer_len);
+    footer_data = footer_buf.data();
   }
-  Crc32c crc;
-  crc.process_bytes(data, size);
-  if (crc.checksum() != crc32c) {
+  Crc32c footer_actual_crc32c;
+  footer_actual_crc32c.process_bytes(footer_data, footer_len);
+  if (footer_actual_crc32c.checksum() != footer_expected_crc32c) {
     throw IndexError{
       absl::StrCat("footer: '", name, "' does not match its checksum")};
   }
-  duckdb::MemoryStream stream{const_cast<byte_type*>(data), size};
+  duckdb::MemoryStream stream{const_cast<byte_type*>(footer_data), footer_len};
   duckdb::BinaryDeserializer deserializer{stream};
   deserializer.Begin();
-  footer.data_crc32c = deserializer.ReadPropertyWithExplicitDefault<uint32_t>(
-    kFieldDataCrc32c, "data_crc32c", 0);
+  footer.data_expected_crc32c =
+    deserializer.ReadPropertyWithExplicitDefault<uint32_t>(kFieldDataCrc32c,
+                                                           "data_crc32c", 0);
   deserializer.ReadObject(kFieldMeta, "meta", [&](duckdb::Deserializer& meta) {
-    read(meta, footer.data_size);
+    read(meta, footer.data_len);
   });
   deserializer.End();
   return footer;

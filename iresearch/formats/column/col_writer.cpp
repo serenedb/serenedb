@@ -251,13 +251,15 @@ bool ColWriter::Commit(uint64_t target_row,
                          SerializeColumnMeta(obj, _columns[i]->Meta());
                        });
                      });
-    footer.WriteList(kFooterSlotNormColumns, "norm_columns",
-                     norm_columns.size(),
-                     [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                       list.WriteObject([&](duckdb::Serializer& obj) {
-                         SerializeNormColumn(obj, *norm_columns[i]);
+    if (!norm_columns.empty()) {
+      footer.WriteList(kFooterSlotNormColumns, "norm_columns",
+                       norm_columns.size(),
+                       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+                         list.WriteObject([&](duckdb::Serializer& obj) {
+                           SerializeNormColumn(obj, *norm_columns[i]);
+                         });
                        });
-                     });
+    }
   });
   _out.reset();
   _committed = true;

@@ -22,6 +22,7 @@
 
 #include <absl/status/status.h>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -30,21 +31,15 @@
 // them.
 namespace sdb::search {
 
-// Maintenance cadence, read by the background loops. The writebuffer_*/version
-// fields are only meaningful for inverted indexes; search tables leave them
-// defaulted.
+// Maintenance cadence, read by the background loops while an ALTER rewrites it.
 struct TasksSettings {
-  size_t cleanup_interval_step{};
-  size_t refresh_interval_msec{};
-  size_t compaction_interval_msec{};
-  size_t reindex_interval_msec{};
-  size_t compaction_max_segments{};
-  size_t compaction_max_segments_bytes{};
-  size_t compaction_floor_segment_bytes{};
-  uint32_t version{};
-  size_t writebuffer_active{};
-  size_t writebuffer_idle{};
-  size_t writebuffer_size_max{};
+  std::atomic_size_t cleanup_interval_step{};
+  std::atomic_size_t refresh_interval_msec{};
+  std::atomic_size_t compaction_interval_msec{};
+  std::atomic_size_t reindex_interval_msec{};
+  std::atomic_size_t compaction_max_segments{};
+  std::atomic_size_t compaction_max_segments_bytes{};
+  std::atomic_size_t compaction_floor_segment_bytes{};
 };
 
 enum class RefreshResult {

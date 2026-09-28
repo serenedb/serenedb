@@ -498,6 +498,10 @@ void InvertedIndexEntry::OnDrop() {
 void InvertedIndexEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   if (prev_entry.type == duckdb::CatalogType::INVALID) {
     OnDrop();
+  } else if (const auto* prev =
+               dynamic_cast<const InvertedIndexEntry*>(&prev_entry);
+             prev && _storage) {
+    _storage->ApplyOptions(ResolveSettings(prev->options));
   }
   duckdb::DuckIndexEntry::Rollback(prev_entry);
 }

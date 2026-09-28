@@ -359,10 +359,16 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   // identifier the bind appends. Position i is column_ids[i] -- nothing here
   // may reorder or widen it.
   state->columns.reserve(_info->column_ids.size());
+  const auto* table = _relation.type == duckdb::CatalogType::TABLE_ENTRY
+                        ? &_relation.Cast<duckdb::TableCatalogEntry>()
+                        : nullptr;
   for (size_t chunk_idx = 0; chunk_idx < _info->column_ids.size();
        ++chunk_idx) {
-    state->columns.emplace_back(_info->column_ids[chunk_idx],
-                                _info->scan_types[chunk_idx], chunk_idx);
+    const auto position = _info->column_ids[chunk_idx];
+    const auto id = table ? TableColumnId(table->GetColumns().GetColumn(
+                              duckdb::LogicalIndex(position)))
+                          : ColumnId{position};
+    state->columns.emplace_back(id, _info->scan_types[chunk_idx], chunk_idx);
   }
   state->pk_base_col_idx = state->columns.size();
 

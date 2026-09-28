@@ -157,10 +157,10 @@ TableRowIdIndexSource::TableRowIdIndexSource(
   id_to_pos.reserve(columns.LogicalColumnCount());
   duckdb::idx_t pos = 0;
   for (const auto& col : columns.Logical()) {
-    if (ColumnId{col.Oid()} == kGeneratedPKId) {
+    if (TableColumnId(col) == kGeneratedPKId) {
       continue;
     }
-    id_to_pos.emplace(col.Oid(), pos++);
+    id_to_pos.emplace(TableColumnId(col), pos++);
   }
   InitProjection(
     context, projected_columns, projected_types, bind_column_ids,

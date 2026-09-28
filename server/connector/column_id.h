@@ -24,6 +24,7 @@
 
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/types.hpp>
+#include <duckdb/parser/column_definition.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <string>
@@ -36,6 +37,11 @@ namespace sdb::connector {
 using ColumnId = irs::field_id;
 
 inline constexpr ColumnId kInvalidColumnId = irs::field_limits::invalid();
+
+inline ColumnId TableColumnId(const duckdb::ColumnDefinition& column) {
+  return column.CatalogOid() != 0 ? ColumnId{column.CatalogOid()}
+                                  : ColumnId{column.Oid()};
+}
 
 // Real column ids are duckdb catalog oids and view column positions, all far
 // below the threshold; every id above it names a synthetic column no relation

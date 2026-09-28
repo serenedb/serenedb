@@ -126,6 +126,27 @@ bool DispatchValueKind(duckdb::LogicalTypeId kind, F&& f) {
 
 }  // namespace
 
+std::optional<SearchSinkInsertBaseImpl::DictionaryValues>
+SearchSinkInsertBaseImpl::DictionaryOf(const duckdb::Vector& vec) {
+  switch (vec.GetVectorType()) {
+    case duckdb::VectorType::CONSTANT_VECTOR:
+      return DictionaryValues{&vec, {}, 1};
+    case duckdb::VectorType::DICTIONARY_VECTOR: {
+      static constexpr duckdb::idx_t kMaxDictionarySize = 20000;
+      const auto size = duckdb::DictionaryVector::DictionarySize(vec);
+      const auto& id = duckdb::DictionaryVector::DictionaryId(vec);
+      if (!size.IsValid() || id.empty() ||
+          size.GetIndex() >= kMaxDictionarySize) {
+        return std::nullopt;
+      }
+      return DictionaryValues{&duckdb::DictionaryVector::Child(vec), id,
+                              static_cast<uint32_t>(size.GetIndex())};
+    }
+    default:
+      return std::nullopt;
+  }
+}
+
 template<typename Func>
 void SearchSinkInsertBaseImpl::InvertField(const Field& field, Func&& func) {
   if (!_document->WithField(field.Id(), field.GetIndexFeatures(),
@@ -144,6 +165,51 @@ void SearchSinkInsertBaseImpl::InvertTokens(const Field& field,
     THROW_SQL_ERROR(ERR_MSG("Failed to insert field ", field.Id(),
                             " into IResearch document"));
   }
+}
+
+template<typename Func>
+void SearchSinkInsertBaseImpl::InvertEntryTokens(const Field& field,
+                                                 Func&& func) {
+  if (!_document->WithEntryTokens(field.Id(), field.GetIndexFeatures(),
+                                  std::forward<Func>(func))) {
+    THROW_SQL_ERROR(ERR_MSG("Failed to insert field ", field.Id(),
+                            " into IResearch document"));
+  }
+}
+
+bool SearchSinkInsertBaseImpl::InvertDictionary(
+  const Field& field, const DictionaryValues& dict,
+  const duckdb::UnifiedVectorFormat& fmt, uint32_t count,
+  irs::doc_id_t first_doc) {
+  bool known = false;
+  InvertField(field, [&](irs::FieldInverter& fld) {
+    known = fld.HasDictionary(dict.id, dict.size);
+    return true;
+  });
+  if (!known) {
+    if (2 * count <
+        std::min<uint32_t>(dict.size, uint32_t{STANDARD_VECTOR_SIZE})) {
+      return false;
+    }
+    duckdb::UnifiedVectorFormat values;
+    dict.values->ToUnifiedFormat(values);
+    if (field.keyword) {
+      InvertField(field, [&](irs::FieldInverter& fld) {
+        return fld.InvertKeywordDictionary(dict.id, values, dict.size);
+      });
+    } else {
+      InvertEntryTokens(field, [&](irs::FieldInverter& fld, irs::TokenSink& w) {
+        fld.Configure(field.GetTokens().Traits());
+        fld.BeginDictionary(dict.id, dict.size);
+        field.GetTokens().Fill(values, dict.size, irs::doc_limits::min(), w,
+                               {fld.Layout()});
+      });
+    }
+  }
+  InvertField(field, [&](irs::FieldInverter& fld) {
+    return fld.InvertDictionaryRows(fmt, count, first_doc);
+  });
+  return true;
 }
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
@@ -202,6 +268,7 @@ void SearchSinkInsertBaseImpl::FinishColumnBlocks(const Field& null_field) {
 
 void SearchSinkInsertBaseImpl::WriteAnalyzedColumn(const Field& field,
                                                    const Field& null_field,
+                                                   const duckdb::Vector& vec,
                                                    duckdb::idx_t count) {
   SDB_ASSERT(!field.keyword);
 
@@ -213,10 +280,14 @@ void SearchSinkInsertBaseImpl::WriteAnalyzedColumn(const Field& field,
     _store_appender.Bind(*this, *store_writer);
   }
   auto* store_sink = store_writer ? &_store_appender : nullptr;
+  const auto dict = store_writer ? std::nullopt : DictionaryOf(vec);
   WriteColumnBlock(
     null_field, count,
     [&](const duckdb::UnifiedVectorFormat& fmt, uint32_t n,
         irs::doc_id_t first_doc) {
+      if (dict && InvertDictionary(field, *dict, fmt, n, first_doc)) {
+        return;
+      }
       InvertTokens(
         field, store_sink, [&](irs::FieldInverter& fld, irs::TokenSink& w) {
           fld.Configure(field.GetTokens().Traits());
@@ -237,6 +308,7 @@ void SearchSinkInsertBaseImpl::WriteKeywordColumn(const Field& field,
                          ? EnsureBlobColumnWriter(field.store_column)
                          : nullptr;
   const bool flat = vec.GetVectorType() == duckdb::VectorType::FLAT_VECTOR;
+  const auto dict = DictionaryOf(vec);
 
   WriteColumnBlock(
     null_field, count,
@@ -254,6 +326,9 @@ void SearchSinkInsertBaseImpl::WriteKeywordColumn(const Field& field,
             return true;
           });
         }
+      }
+      if (dict && InvertDictionary(field, *dict, fmt, n, first_doc)) {
+        return;
       }
       InvertField(field, [&](irs::FieldInverter& fld) {
         return fld.InvertKeywordBlock(fmt, n, first_doc);
@@ -654,7 +729,7 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
       if (_field.keyword) {
         WriteKeywordColumn(_field, _null_field, vec, count);
       } else {
-        WriteAnalyzedColumn(_field, _null_field, count);
+        WriteAnalyzedColumn(_field, _null_field, vec, count);
       }
       return;
     }

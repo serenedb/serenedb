@@ -20,6 +20,7 @@
 
 #include "search/search_table.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -121,10 +122,18 @@ SearchTable::SearchTable(duckdb::idx_t db_id, duckdb::idx_t schema_id,
   }
   RebuildConfig();
   OpenWriter();
+  ApplyOptions(options);
+}
 
+void SearchTable::ApplyOptions(const catalog::SearchTableOptions& options) {
   _maint_settings.refresh_interval_msec = options.refresh_interval_ms;
   _maint_settings.compaction_interval_msec = options.compaction_interval_ms;
   _maint_settings.cleanup_interval_step = options.cleanup_interval_step;
+  _maint_settings.compaction_max_segments = options.compaction_max_segments;
+  _maint_settings.compaction_max_segments_bytes =
+    options.compaction_max_segments_bytes;
+  _maint_settings.compaction_floor_segment_bytes =
+    options.compaction_floor_segment_bytes;
 }
 
 SearchTable::~SearchTable() {
@@ -417,17 +426,44 @@ void SearchTable::VacuumRefresh() {
   CleanupUnsafe();
 }
 
-void SearchTable::VacuumCompact() {
-  static const auto kFullMerge = irs::index_utils::MakePolicy(
-    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
+void SearchTable::VacuumCompact(uint32_t target_segments) {
   static const irs::MergeWriter::FlushProgress kProgress = [] { return true; };
+  const auto target = std::max<uint32_t>(1, target_segments);
+  const auto field_options = Config();
   RefreshResult code = RefreshResult::Undefined;
   RefreshUnsafe(/*wait=*/true, nullptr, code);
-  bool empty = false;
-  const auto field_options = Config();
-  CompactUnsafe(kFullMerge, kProgress, empty, field_options.get());
-  if (!empty) {
+  for (size_t pass = 0; pass < 8; ++pass) {
+    std::vector<std::vector<std::string>> buckets(target);
+    {
+      const auto snapshot = _writer->GetSnapshot();
+      if (snapshot.size() <= target) {
+        break;
+      }
+      for (size_t i = 0; i < snapshot.size(); ++i) {
+        buckets[i % target].emplace_back(snapshot[i].Meta().name);
+      }
+    }
+    bool merged = false;
+    for (auto& names : buckets) {
+      const irs::CompactionPolicy bucket =
+        [&names](irs::Compaction& candidates, const irs::IndexReader& reader,
+                 const irs::CompactingSegments& busy) {
+          for (size_t i = 0; i < reader.size(); ++i) {
+            const auto& segment = reader[i];
+            const auto& name = segment.Meta().name;
+            if (!busy.contains(name) && absl::c_linear_search(names, name)) {
+              candidates.emplace_back(&segment);
+            }
+          }
+        };
+      bool empty = false;
+      CompactUnsafe(bucket, kProgress, empty, field_options.get());
+      merged |= !empty;
+    }
     RefreshUnsafe(/*wait=*/true, nullptr, code);
+    if (!merged) {
+      break;
+    }
   }
   CleanupUnsafe();
 }

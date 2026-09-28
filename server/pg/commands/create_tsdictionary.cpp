@@ -21,6 +21,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/escaping.h>
+#include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
 #include <unicode/locid.h>
@@ -30,7 +31,9 @@
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
+#include <iresearch/analysis/filter_tokens_tokenizer.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
+#include <iresearch/analysis/html_strip_tokenizer.hpp>
 #include <iresearch/analysis/icu_text_tokenizer.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/multi_delimited_tokenizer.hpp>
@@ -282,7 +285,16 @@ class CreateTSDictionaryOptions : public OptionsParser {
   irs::analysis::NormalizingTokenizer::Options BuildNormalizing() {
     irs::analysis::NormalizingTokenizer::Options opts;
     opts.locale = ResolveLocale<tokenizer_options::kNormLocale>();
-    opts.case_convert = ResolveEnum<tokenizer_options::kCase, irs::Case>();
+    const std::string convert = Value<tokenizer_options::kNormCase>();
+    if (absl::EqualsIgnoreCase(convert, tokenizer_options::kFoldCase)) {
+      opts.fold = true;
+      opts.case_convert = irs::Case::Lower;
+    } else {
+      const auto parsed =
+        magic_enum::enum_cast<irs::Case>(convert, magic_enum::case_insensitive);
+      SDB_ASSERT(parsed.has_value());
+      opts.case_convert = *parsed;
+    }
     opts.accent = Value<tokenizer_options::kAccent>();
     opts.form =
       ResolveEnum<tokenizer_options::kForm, irs::analysis::NormForm>();
@@ -349,6 +361,22 @@ class CreateTSDictionaryOptions : public OptionsParser {
     irs::analysis::SparseNGramTokenizer::Options opts;
     opts.max_ngram_length = Value<tokenizer_options::kMaxNGramLength>();
     opts.covering = Value<tokenizer_options::kCovering>();
+    opts.min_ngram_length =
+      static_cast<size_t>(Value<tokenizer_options::kMinNGramLength>());
+    opts.min_cutoff_length =
+      static_cast<size_t>(Value<tokenizer_options::kMinCutoffLength>());
+    if (opts.max_ngram_length < opts.min_ngram_length) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("\"max_ngram_length\" must be >= \"min_ngram_length\""));
+    }
+    if (opts.min_cutoff_length != 0 &&
+        (opts.min_cutoff_length < opts.min_ngram_length ||
+         opts.min_cutoff_length > opts.max_ngram_length)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("\"min_cutoff_length\" must be between "
+                              "\"min_ngram_length\" and \"max_ngram_length\""));
+    }
     return opts;
   }
 
@@ -367,7 +395,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
       } else if (separate && *separate != Opts::Separate::Word &&
                  *separate != Opts::Separate::None) {
         opts.separate = *separate;
-        opts.accept = Opts::Accept::Any;
+        opts.accept = *separate == Opts::Separate::Grapheme
+                        ? Opts::Accept::Graphic
+                        : Opts::Accept::Any;
       } else {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("invalid value in \"break\" parameter"),
@@ -432,6 +462,29 @@ class CreateTSDictionaryOptions : public OptionsParser {
   irs::analysis::SplitByNonAlphaTokenizer::Options BuildSplitByNonAlpha() {
     irs::analysis::SplitByNonAlphaTokenizer::Options opts;
     opts.case_convert = ResolveEnum<tokenizer_options::kCase, irs::Case>();
+    opts.chars =
+      ResolveEnum<tokenizer_options::kNonAlphaBreak,
+                  irs::analysis::SplitByNonAlphaTokenizer::Options::Chars>();
+    return opts;
+  }
+
+  irs::analysis::HtmlStripTokenizer::Options BuildHtmlStrip() {
+    irs::analysis::HtmlStripTokenizer::Options opts;
+    opts.join_inline_tags = Value<tokenizer_options::kJoinInlineTags>();
+    return opts;
+  }
+
+  irs::analysis::FilterTokensTokenizer::Options BuildFilterTokens() {
+    irs::analysis::FilterTokensTokenizer::Options opts;
+    opts.predicate = Value<tokenizer_options::kPredicate>();
+    opts.min_length =
+      static_cast<size_t>(Value<tokenizer_options::kMinLength>());
+    opts.max_length =
+      static_cast<size_t>(Value<tokenizer_options::kMaxLength>());
+    if (opts.max_length != 0 && opts.max_length < opts.min_length) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("\"max_length\" must be >= \"min_length\""));
+    }
     return opts;
   }
 
@@ -616,6 +669,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
         {SolrSynonymsTokenizer::type_name(), &Build<&Self::BuildSolrSynonyms>},
         {WordnetSynonymsTokenizer::type_name(),
          &Build<&Self::BuildWordnetSynonyms>},
+        {HtmlStripTokenizer::type_name(), &Build<&Self::BuildHtmlStrip>},
+        {FilterTokensTokenizer::type_name(), &Build<&Self::BuildFilterTokens>},
       };
     const auto it = kBuilders.find(type);
     SDB_ASSERT(it != kBuilders.end());

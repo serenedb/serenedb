@@ -103,6 +103,16 @@ class ValueTokens final : public TokenConsumer, public StoreSink {
     _val_end = _val_begin ? _val_begin + size : nullptr;
   }
 
+  void Assign(std::span<const duckdb::string_t> terms)
+    requires(L == TokenLayout::TermsPos)
+  {
+    Discard();
+    _terms.assign(terms.begin(), terms.end());
+    const auto ordinals = std::views::iota(
+      uint32_t{1}, uint32_t{1} + static_cast<uint32_t>(terms.size()));
+    _pos.assign(ordinals.begin(), ordinals.end());
+  }
+
   void Discard() noexcept {
     _terms.clear();
     _store.clear();

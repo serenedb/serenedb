@@ -32,12 +32,16 @@
 #include <duckdb/catalog/catalog_entry/window_function_catalog_entry.hpp>
 #include <duckdb/function/macro_function.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database_manager.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <vector>
 
 #include "pg/pg_types.h"
 
 namespace sdb::pg {
 namespace {
+
+static_assert(kMaxSystem == duckdb::DatabaseManager::FIRST_OID);
 
 template<typename Entry>
 void EmitSignatures(const Entry& entry, BuiltinFunction& row,
@@ -101,19 +105,20 @@ void VisitBuiltinFunctions(
   const auto collect = [&entries](duckdb::CatalogEntry& entry) {
     entries.emplace_back(entry);
   };
+  const auto scan = [&](duckdb::SchemaCatalogEntry& schema) {
+    schema.Scan(context, duckdb::CatalogType::SCALAR_FUNCTION_ENTRY, collect);
+    schema.Scan(context, duckdb::CatalogType::TABLE_FUNCTION_ENTRY, collect);
+    schema.Scan(context, duckdb::CatalogType::PRAGMA_FUNCTION_ENTRY, collect);
+  };
   const auto visit_schema = [&](duckdb::Catalog& catalog,
                                 const duckdb::Identifier& schema_name) {
     auto schema = catalog.GetSchema(context, schema_name,
                                     duckdb::OnEntryNotFound::RETURN_NULL);
-    if (!schema) {
-      return;
+    if (schema) {
+      scan(*schema);
     }
-    schema->Scan(context, duckdb::CatalogType::SCALAR_FUNCTION_ENTRY, collect);
-    schema->Scan(context, duckdb::CatalogType::TABLE_FUNCTION_ENTRY, collect);
-    schema->Scan(context, duckdb::CatalogType::PRAGMA_FUNCTION_ENTRY, collect);
   };
-  visit_schema(system_catalog, duckdb::Identifier::DefaultSchema());
-  visit_schema(system_catalog, duckdb::Identifier{"pg_catalog"});
+  system_catalog.ScanSchemas(context, scan);
   auto& current_catalog =
     duckdb::Catalog::GetCatalog(context, duckdb::Identifier::InvalidCatalog());
   for (const auto& schema_name : {duckdb::Identifier{"pg_catalog"},
@@ -171,6 +176,7 @@ void VisitBuiltinFunctions(
         break;
     }
   }
+  SDB_ASSERT(next_oid <= kMaxSystem);
 }
 
 }  // namespace sdb::pg

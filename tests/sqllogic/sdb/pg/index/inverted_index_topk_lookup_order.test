@@ -60,14 +60,9 @@ id
 3
 
 
-query
+query error an hnsw vector index does not support filtered search
 SELECT id, label FROM v_tko_idx WHERE label <> 'b'
   ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 3;
-----
-id	label
-1	a
-3	c
-4	d
 
 
 statement ok

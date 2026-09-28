@@ -1,0 +1,149 @@
+control substitution on
+
+statement ok
+DETACH IF EXISTS aadw;
+
+statement ok
+DETACH IF EXISTS aadw_other;
+
+statement ok
+ATTACH '${__TEST_DIR__}/aadw.db' AS aadw;
+
+statement ok
+CREATE OR REPLACE TABLE aadw.main.docs(id INTEGER);
+
+statement ok
+INSERT INTO aadw.main.docs VALUES (1), (2);
+
+
+connection holder
+statement ok
+BEGIN;
+
+
+connection holder
+query
+SELECT count(*) > 0 AS listed FROM duckdb_tables();
+----
+listed
+t
+
+
+connection default
+statement ok
+DETACH aadw;
+
+
+connection attacher
+statement async ok
+ATTACH '${__TEST_DIR__}/aadw.db' AS aadw_other;
+
+
+connection holder
+statement ok
+COMMIT;
+
+
+wait
+
+
+connection default
+query
+SELECT count(*) AS n FROM aadw_other.main.docs;
+----
+n
+2
+
+
+connection default
+statement ok
+DETACH aadw_other;
+
+
+connection default
+statement ok
+ATTACH '${__TEST_DIR__}/aadw.db' AS aadw (READ_ONLY);
+
+
+connection holder
+statement ok
+BEGIN;
+
+
+connection holder
+query
+SELECT count(*) AS n FROM aadw.main.docs;
+----
+n
+2
+
+
+connection default
+statement ok
+DETACH aadw;
+
+
+connection attacher
+statement async ok
+ATTACH '${__TEST_DIR__}/aadw.db' AS aadw;
+
+
+connection holder
+statement ok
+COMMIT;
+
+
+wait
+
+
+connection default
+statement ok
+INSERT INTO aadw.main.docs VALUES (3);
+
+
+connection default
+statement ok
+DETACH aadw;
+
+
+connection default
+statement ok
+BEGIN;
+
+
+connection default
+statement ok
+ATTACH '${__TEST_DIR__}/aadw.db' AS aadw;
+
+
+connection default
+statement ok
+DETACH aadw;
+
+
+connection default
+statement error Unique file handle conflict: Cannot attach "aadw_other" - the database file ".*aadw\.db" is in the process of being detached
+ATTACH '${__TEST_DIR__}/aadw.db' AS aadw_other;
+
+
+connection default
+statement ok
+ROLLBACK;
+
+
+connection default
+statement ok
+ATTACH '${__TEST_DIR__}/aadw.db' AS aadw_other;
+
+
+connection default
+query
+SELECT count(*) AS n FROM aadw_other.main.docs;
+----
+n
+3
+
+
+connection default
+statement ok
+DETACH aadw_other;

@@ -45,6 +45,7 @@ inline constexpr uint64_t kInvalidOid = 0;
 inline constexpr duckdb::idx_t kPublicGrantee = 0;
 
 inline constexpr duckdb::idx_t kMinSystem = 1000000;
+inline constexpr duckdb::idx_t kMaxSystem = 2000000;
 
 inline constexpr duckdb::idx_t kPgCatalogSchema = 11;
 inline constexpr duckdb::idx_t kPgInformationSchema = kMinSystem + 3;

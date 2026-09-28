@@ -30,8 +30,6 @@
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
-#include <iresearch/formats/formats.hpp>
-#include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -58,9 +56,6 @@ ABSL_DECLARE_FLAG(bool, skip_search_recovery);
 namespace sdb::search {
 
 SearchEngine::SearchEngine() : _dir_feature{DatabasePathFeature::instance()} {
-  irs::formats::Init();
-  irs::InitOptimizeRules();
-
   gInstance = this;
 }
 

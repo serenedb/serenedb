@@ -31,6 +31,9 @@ struct SearchTableOptions {
   uint32_t cleanup_interval_step{1};
   uint32_t row_group_size{122880};
   uint64_t segment_memory_max{268435456};
+  uint32_t compaction_max_segments{10};
+  uint64_t compaction_max_segments_bytes{5368709120};
+  uint64_t compaction_floor_segment_bytes{2097152};
   std::string optimize_top_k;
 
   bool operator==(const SearchTableOptions& rhs) const = default;

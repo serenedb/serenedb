@@ -49,7 +49,9 @@ class DelimitedTokenizer final : public TypedTokenizer<DelimitedTokenizer>,
   static ptr Make(Options opts);
 
   explicit DelimitedTokenizer(std::string_view delimiter);
-  TokenTraits Traits() const noexcept final { return {.offsets = true}; }
+  TokenTraits Traits() const noexcept final {
+    return {.offsets = true, .keeps_ascii = true};
+  }
 
   auto PrepareBatch(BlockTraits) const { return std::tuple{_mode}; }
 

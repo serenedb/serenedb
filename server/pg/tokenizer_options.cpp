@@ -20,6 +20,8 @@
 
 #include "pg/tokenizer_options.h"
 
+#include <absl/strings/match.h>
+
 #include <filesystem>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -55,6 +57,13 @@ void CheckCase(std::string_view option, std::string_view value) {
   CheckEnumValue<irs::Case>(option, value, kCase);
 }
 
+void CheckNormCase(std::string_view option, std::string_view value) {
+  if (absl::EqualsIgnoreCase(value, kFoldCase)) {
+    return;
+  }
+  CheckEnumValue<irs::Case>(option, value, kNormCase);
+}
+
 void CheckForm(std::string_view option, std::string_view value) {
   CheckEnumValue<irs::analysis::NormForm>(option, value, kForm);
 }
@@ -62,6 +71,11 @@ void CheckForm(std::string_view option, std::string_view value) {
 void CheckMode(std::string_view option, std::string_view value) {
   CheckEnumValue<irs::analysis::NGramTokenizer::NGramMode>(option, value,
                                                            kMode);
+}
+
+void CheckNonAlphaBreak(std::string_view option, std::string_view value) {
+  CheckEnumValue<irs::analysis::SplitByNonAlphaTokenizer::Options::Chars>(
+    option, value, kNonAlphaBreak);
 }
 
 void CheckThreshold(std::string_view option, double value) {
@@ -91,6 +105,21 @@ void CheckMaxNGramLength(std::string_view option, int value) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("\"", option, "\" must be at least 3"),
                     ERR_HINT(kMaxNGramLength.description));
+  }
+}
+
+void CheckMinNGramLength(std::string_view option, int value) {
+  if (value < 3) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("\"", option, "\" must be at least 3"),
+                    ERR_HINT(kMinNGramLength.description));
+  }
+}
+
+void CheckLength(std::string_view option, int value) {
+  if (value < 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("\"", option, "\" must not be negative"));
   }
 }
 

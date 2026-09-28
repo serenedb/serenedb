@@ -94,9 +94,7 @@ void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
        .table = table,
        .prune = g.prune_scorer != nullptr && g.stats_scorer == g.prune_scorer,
        .k = static_cast<uint32_t>(l.hit_slice.size()),
-       .span = unit.whole || unit.rg_begin == 0
-                 ? irs::doc_id_t{0}
-                 : static_cast<irs::doc_id_t>(g.rg_size)});
+       .span = g.UnitSpan(unit)});
     EnsurePlanned(plan != nullptr);
     l.root = std::move(plan);
     l.root_seg = unit.seg;
@@ -203,7 +201,6 @@ void AppendBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
     duckdb::VectorOperations::Copy(*l.pk_column, *pk, count, 0, appended);
   }
   appended += count;
-  g.metrics.rows_fetched.fetch_add(count, std::memory_order_relaxed);
   tmp.Reset();
 }
 
@@ -315,7 +312,6 @@ void BuildAnswer(duckdb::ClientContext& ctx, ScanGlobalState& g,
       batch.Reset();
       CopyFetched(g, fetched, batch, fu.count, 0);
       const auto rows = l.index_source->Materialize(ctx, pk, fu.count, batch);
-      g.metrics.rows_looked_up.fetch_add(fu.count, std::memory_order_relaxed);
       const auto survivors = l.index_source->Survivors();
       for (duckdb::idx_t i = 0; i < rows; ++i) {
         row_answer.push_back(fu.first + static_cast<uint32_t>(survivors[i]));
@@ -403,16 +399,12 @@ void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
     return;
   }
   if (!l.published) {
-    uint32_t finished = 0;
     while (NextLiveUnit(g, l)) {
       CollectUnit(g, l);
-      finished += static_cast<uint32_t>(FinishUnit(g, l));
+      FinishUnit(g, l);
     }
     PublishHits(g, l);
     l.published = true;
-    if (finished != 0) {
-      FinishSegments(g, finished);
-    }
     t.published.fetch_add(1, std::memory_order_acq_rel);
   }
   if (!t.merge_barrier.Released()) {
@@ -425,7 +417,7 @@ void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
       t.merge_barrier.Release(input);
     } else {
       if (t.merge_barrier.Park(input)) {
-        g.metrics.parked.fetch_add(1, std::memory_order_relaxed);
+        l.parked_on = &t.merge_barrier;
         return;
       }
       if (!t.merge_barrier.Released()) {

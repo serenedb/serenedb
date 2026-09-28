@@ -18,12 +18,15 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "docs/docs_data.h"
+#pragma once
+
+namespace duckdb {
+
+class DatabaseInstance;
+}
 
 namespace sdb::docs {
 
-std::span<const Doc> GetDocs() { return {}; }
-
-std::string_view GetDocsHash() { return "disabled"; }
+void RegisterDocsFunctions(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::docs

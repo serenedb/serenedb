@@ -1,0 +1,100 @@
+statement ok
+CREATE TABLE tfc_src AS
+SELECT i,
+       CASE WHEN i % 5 = 0 THEN NULL
+            WHEN i % 7 = 0 THEN ''
+            ELSE 'Word' || i::VARCHAR || ' extraordinarily_long_token_' || i::VARCHAR END AS s
+FROM range(1, 5001) t(i);
+
+query
+SELECT count(*) FILTER (WHERE split_text(s) IS NULL) AS nulls,
+       count(*) FILTER (WHERE len(split_text(s)) = 0) AS empties,
+       count(*) FILTER (WHERE s <> '' AND split_text(s) IS DISTINCT FROM string_split(s, ' ')) AS mismatched
+FROM tfc_src;
+----
+nulls	empties	mismatched
+1000	572	0
+
+query
+SELECT count(*) AS rows, count(DISTINCT split_text(t.c)) AS distinct_results, min(split_text(t.c)) AS tokens
+FROM range(3000) r, (SELECT 'Quick brown extraordinarily_long_token' AS c) t;
+----
+rows	distinct_results	tokens
+3000	1	{Quick,brown,extraordinarily_long_token}
+
+statement ok
+CREATE TABLE tfc_lists AS
+SELECT i,
+       CASE WHEN i % 11 = 0 THEN NULL
+            WHEN i % 13 = 0 THEN []::VARCHAR[]
+            ELSE ['Alpha' || i::VARCHAR, NULL, 'beta extraordinarily_long_token_' || i::VARCHAR] END AS l
+FROM range(1, 5001) t(i);
+
+query
+SELECT count(*) AS mismatched FROM tfc_lists
+WHERE split_text(l) IS DISTINCT FROM
+      CASE WHEN l IS NULL THEN NULL
+           ELSE flatten(list_transform(list_filter(l, x -> x IS NOT NULL), x -> string_split(x, ' '))) END;
+----
+mismatched
+0
+
+query
+SELECT count(*) AS mismatched FROM (SELECT * FROM tfc_lists WHERE i % 2 = 0)
+WHERE split_text(l) IS DISTINCT FROM
+      CASE WHEN l IS NULL THEN NULL
+           ELSE flatten(list_transform(list_filter(l, x -> x IS NOT NULL), x -> string_split(x, ' '))) END;
+----
+mismatched
+0
+
+query
+SELECT generate_shingles(['a', 'b', 'c']) AS shingles,
+       generate_shingles([NULL]::VARCHAR[]) AS only_null,
+       generate_shingles(NULL::VARCHAR[]) IS NULL AS null_list,
+       generate_shingles(['a', NULL, 'b']) AS null_member;
+----
+shingles	only_null	null_list	null_member
+{a,"a b",b,"b c",c}	{}	t	{a,"a b",b}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tfc_lower AS split_text(case := 'lower');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tfc_upper AS split_text(case := 'upper');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tfc_skip AS (lambda x: nullif(lower(x), 'skip'));
+
+query
+SELECT d, ts_lexize(d, s) AS tokens
+FROM (VALUES (1, 'tfc_lower', 'Ab Cd'), (2, 'tfc_upper', 'Ab Cd'), (3, NULL, 'x'), (4, 'tfc_lower', NULL),
+             (5, 'tfc_skip', 'SKIP'), (6, 'tfc_skip', 'keep'), (7, 'tfc_upper', 'ef')) t(k, d, s)
+ORDER BY k;
+----
+d	tokens
+tfc_lower	{ab,cd}
+tfc_upper	{AB,CD}
+NULL	NULL
+tfc_lower	NULL
+tfc_skip	NULL
+tfc_skip	{keep}
+tfc_upper	{EF}
+
+query
+SELECT d, ts_lexize(d, l) AS tokens
+FROM (VALUES (1, 'tfc_skip', ['Ab', 'SKIP', NULL, 'Cd']), (2, 'tfc_upper', ['ab', 'cd']),
+             (3, 'tfc_lower', NULL), (4, 'tfc_lower', []::VARCHAR[])) t(k, d, l)
+ORDER BY k;
+----
+d	tokens
+tfc_skip	{ab,cd}
+tfc_upper	{AB,CD}
+tfc_lower	NULL
+tfc_lower	{}
+
+query
+SELECT ts_lexize('tfc_skip', ['Ab', 'SKIP', 'Cd']) AS tokens, ts_lexize('tfc_skip', 'SKIP') IS NULL AS rejected;
+----
+tokens	rejected
+{ab,cd}	t

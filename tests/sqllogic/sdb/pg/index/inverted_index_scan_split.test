@@ -2,8 +2,7 @@
 # segments only (`never`), row-group units from the first claim (`always`) and
 # the tail protocol (`tail`), single-threaded and with several workers. One
 # 300000-row INSERT makes a three-row-group segment; a second INSERT makes a
-# small one; compaction is off so they stay apart. Hosted under recovery/
-# because `threads` is instance-wide.
+# small one; compaction is off so they stay apart.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY sp_en AS split_text_csv(' ')

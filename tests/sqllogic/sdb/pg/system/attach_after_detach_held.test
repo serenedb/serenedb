@@ -1,13 +1,10 @@
-# Re-attaching a just-detached file while another connection still holds the
-# detached database. The same options reuse the open database; a different
-# access mode is refused right away while the holder keeps it open, and
-# succeeds once nothing holds it any more. Other connections' catalog listings
-# can hold it a little longer than the holder, hence the retry.
-
 control substitution on
 
 statement ok
 DETACH IF EXISTS aad;
+
+statement ok
+DETACH IF EXISTS aad_ro;
 
 statement ok
 ATTACH '${__TEST_DIR__}/aad.db' AS aad;
@@ -56,10 +53,41 @@ DETACH aad;
 
 
 connection default
-statement error
-ATTACH '${__TEST_DIR__}/aad.db' AS aad_ro (READ_ONLY);
+statement ok
+ATTACH '${__TEST_DIR__}/aad.db' AS aad (READ_ONLY);
+
+
+connection default
+query
+SELECT count(*) AS n FROM aad.main.docs;
 ----
-db error: ERROR: Database "aad_ro" is already attached in READ_WRITE mode, cannot re-attach in READ_ONLY mode
+n
+2
+
+
+connection default
+statement error read-only
+INSERT INTO aad.main.docs VALUES (3);
+
+
+connection default
+statement ok
+DETACH aad;
+
+
+connection default
+statement ok
+ATTACH '${__TEST_DIR__}/aad.db' AS aad;
+
+
+connection default
+statement ok
+INSERT INTO aad.main.docs VALUES (3);
+
+
+connection default
+statement ok
+DETACH aad;
 
 
 connection holder
@@ -68,7 +96,7 @@ COMMIT;
 
 
 connection default
-statement ok retry 40 backoff 250ms
+statement ok
 ATTACH '${__TEST_DIR__}/aad.db' AS aad_ro (READ_ONLY);
 
 
@@ -77,7 +105,7 @@ query
 SELECT count(*) AS n FROM aad_ro.main.docs;
 ----
 n
-2
+3
 
 
 connection default

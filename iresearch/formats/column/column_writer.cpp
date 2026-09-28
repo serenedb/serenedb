@@ -624,6 +624,29 @@ class ListIngest {
 
 namespace {
 
+void SetInvalidRows(duckdb::Vector& vec, duckdb::idx_t begin,
+                    duckdb::idx_t count) {
+  auto& validity = duckdb::FlatVector::ValidityMutable(vec);
+  validity.EnsureWritable();
+  for (duckdb::idx_t i = 0; i < count; ++i) {
+    validity.SetInvalidUnsafe(begin + i);
+  }
+  switch (vec.GetType().InternalType()) {
+    case duckdb::PhysicalType::STRUCT:
+      for (auto& field : duckdb::StructVector::GetEntries(vec)) {
+        SetInvalidRows(field, begin, count);
+      }
+      break;
+    case duckdb::PhysicalType::ARRAY: {
+      const auto size = duckdb::ArrayType::GetSize(vec.GetType());
+      SetInvalidRows(duckdb::ArrayVector::GetChildMutable(vec), begin * size,
+                     count * size);
+    } break;
+    default:
+      break;
+  }
+}
+
 bool VariantShreddingEnabled(int64_t minimum_size, uint64_t row_count) {
   if (minimum_size == -1) {
     return false;
@@ -1180,11 +1203,7 @@ void ColumnWriter::PadNestedNulls(uint64_t count) {
     const auto take = std::min<duckdb::idx_t>(
       {static_cast<duckdb::idx_t>(count - off),
        duckdb::idx_t{STANDARD_VECTOR_SIZE} - back.count, rg_room});
-    auto& validity = duckdb::FlatVector::ValidityMutable(back.data);
-    validity.EnsureWritable();
-    for (duckdb::idx_t i = 0; i < take; ++i) {
-      validity.SetInvalidUnsafe(back.count + i);
-    }
+    SetInvalidRows(back.data, back.count, take);
     if (_list_ingest) {
       _list_ingest->Begin(_meta.write_list_distinct, _meta.write_list_running);
       _list_ingest->AddNulls(take);

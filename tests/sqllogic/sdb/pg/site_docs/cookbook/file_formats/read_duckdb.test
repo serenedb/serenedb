@@ -6,7 +6,7 @@ statement ok
 DETACH IF EXISTS db1;
 
 statement ok
-ATTACH '${__TEST_DIR__}/db1.duckdb' AS db1;
+ATTACH '${__SUITE_DIR__}/db1.duckdb' AS db1;
 
 statement ok
 DROP TABLE IF EXISTS db1.region;
@@ -29,7 +29,7 @@ DETACH db1;
 # DOCS_TEST_BODY
 
 query ok
-FROM read_duckdb('${__TEST_DIR__}/db1.duckdb', table_name = 'region');
+FROM read_duckdb('${__SUITE_DIR__}/db1.duckdb', table_name = 'region');
 ----
 r_regionkey	r_name
 0	AFRICA
@@ -51,7 +51,7 @@ statement ok
 DETACH IF EXISTS db2;
 
 statement ok
-ATTACH '${__TEST_DIR__}/db2.duckdb' AS db2;
+ATTACH '${__SUITE_DIR__}/db2.duckdb' AS db2;
 
 statement ok
 DROP TABLE IF EXISTS db2.region;
@@ -70,7 +70,7 @@ DETACH db2;
 
 query ok
 SELECT r_regionkey, r_name
-FROM read_duckdb('${__TEST_DIR__}/db2.duckdb', table_name = 'region');
+FROM read_duckdb('${__SUITE_DIR__}/db2.duckdb', table_name = 'region');
 ----
 r_regionkey	r_name
 0	AFRICA
@@ -88,7 +88,7 @@ statement ok
 DETACH IF EXISTS db3_2;
 
 statement ok
-ATTACH '${__TEST_DIR__}/db3_1.duckdb' AS db3_1;
+ATTACH '${__SUITE_DIR__}/db3_1.duckdb' AS db3_1;
 
 statement ok
 DROP TABLE IF EXISTS db3_1.numbers;
@@ -106,7 +106,7 @@ statement ok
 DETACH db3_1;
 
 statement ok
-ATTACH '${__TEST_DIR__}/db3_2.duckdb' AS db3_2;
+ATTACH '${__SUITE_DIR__}/db3_2.duckdb' AS db3_2;
 
 statement ok
 DROP TABLE IF EXISTS db3_2.numbers;
@@ -123,7 +123,7 @@ DETACH db3_2;
 # DOCS_TEST_BODY
 
 query ? rowsort
-SELECT x FROM read_duckdb('${__TEST_DIR__}/db3_*.duckdb', table_name = 'numbers');
+SELECT x FROM read_duckdb('${__SUITE_DIR__}/db3_*.duckdb', table_name = 'numbers');
 ----
 x
 42
@@ -135,7 +135,7 @@ statement ok
 DETACH IF EXISTS db4;
 
 statement ok
-ATTACH '${__TEST_DIR__}/db4.duckdb' AS db4;
+ATTACH '${__SUITE_DIR__}/db4.duckdb' AS db4;
 
 statement ok
 DROP TABLE IF EXISTS db4.numbers;
@@ -152,7 +152,7 @@ DETACH db4;
 # DOCS_TEST_BODY
 
 query ok
-FROM read_duckdb('${__TEST_DIR__}/db4.duckdb');
+FROM read_duckdb('${__SUITE_DIR__}/db4.duckdb');
 ----
 x
 43
@@ -163,7 +163,7 @@ statement ok
 DETACH IF EXISTS db5;
 
 statement ok
-ATTACH '${__TEST_DIR__}/db5.duckdb' AS db5;
+ATTACH '${__SUITE_DIR__}/db5.duckdb' AS db5;
 
 statement ok
 DROP TABLE IF EXISTS db5.numbers;
@@ -180,7 +180,7 @@ DETACH db5;
 # DOCS_TEST_BODY
 
 query ok
-SELECT #1 AS "my-2" FROM '${__TEST_DIR__}/db5.duckdb';
+SELECT #1 AS "my-2" FROM '${__SUITE_DIR__}/db5.duckdb';
 ----
 my-2
 43

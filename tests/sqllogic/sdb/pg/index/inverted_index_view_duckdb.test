@@ -11,7 +11,7 @@ statement ok
 DETACH IF EXISTS db6;
 
 statement ok
-ATTACH '${__TEST_DIR__}/db6.db' AS db6;
+ATTACH '${__SUITE_DIR__}/db6.db' AS db6;
 
 
 statement ok
@@ -34,7 +34,7 @@ statement ok
 DETACH IF EXISTS db7_a;
 
 statement ok
-ATTACH '${__TEST_DIR__}/db7_a.db' AS db7_a;
+ATTACH '${__SUITE_DIR__}/db7_a.db' AS db7_a;
 
 
 statement ok
@@ -56,7 +56,7 @@ statement ok
 DETACH IF EXISTS db7_b;
 
 statement ok
-ATTACH '${__TEST_DIR__}/db7_b.db' AS db7_b;
+ATTACH '${__SUITE_DIR__}/db7_b.db' AS db7_b;
 
 
 statement ok
@@ -81,12 +81,12 @@ CREATE TEXT SEARCH DICTIONARY view_duckdb_en AS
 
 statement ok
 CREATE VIEW v_single AS
-SELECT * FROM read_duckdb('${__TEST_DIR__}/db6.db', table_name='docs');
+SELECT * FROM read_duckdb('${__SUITE_DIR__}/db6.db', table_name='docs');
 
 
 statement ok
 CREATE VIEW v_glob AS
-SELECT * FROM read_duckdb('${__TEST_DIR__}/db7_*.db', table_name='docs');
+SELECT * FROM read_duckdb('${__SUITE_DIR__}/db7_*.db', table_name='docs');
 
 
 query
@@ -146,7 +146,7 @@ statement ok
 DETACH IF EXISTS db6;
 
 statement ok retry 40 backoff 250ms
-ATTACH '${__TEST_DIR__}/db6.db' AS db6;
+ATTACH '${__SUITE_DIR__}/db6.db' AS db6;
 
 
 statement ok

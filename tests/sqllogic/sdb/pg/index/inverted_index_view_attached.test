@@ -13,7 +13,7 @@ DETACH DATABASE IF EXISTS db172;
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/db172.duckdb' AS db172;
+ATTACH '${__SUITE_DIR__}/db172.duckdb' AS db172;
 
 
 statement ok
@@ -201,7 +201,7 @@ db error: ERROR: materialising real columns from this view-backed inverted index
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/db172.duckdb' AS db172;
+ATTACH '${__SUITE_DIR__}/db172.duckdb' AS db172;
 
 statement ok
 CREATE TABLE att_bump(a INT);

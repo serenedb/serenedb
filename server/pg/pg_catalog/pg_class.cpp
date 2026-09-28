@@ -323,20 +323,18 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
   // as for any index. Primary keys first so the rows stay grouped.
   for (const auto primary : {true, false}) {
     for (const auto& [schema_id, table] : tables) {
-      const auto& constraints = table->GetConstraints();
-      for (size_t position = 0; position != constraints.size(); ++position) {
-        if (constraints[position]->type != duckdb::ConstraintType::UNIQUE) {
+      for (const auto& constraint : table->GetConstraints()) {
+        if (constraint->type != duckdb::ConstraintType::UNIQUE) {
           continue;
         }
-        const auto& unique =
-          constraints[position]->Cast<duckdb::UniqueConstraint>();
+        const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
         if (unique.IsPrimaryKey() != primary) {
           continue;
         }
         auto& names = primary ? pk_index_names : uq_index_names;
         names.emplace_back(ConstraintName(*table, unique));
-        auto row = MakeBaseRow(schema_id, KeyIndexOid(table->oid, position),
-                               names.back(), table->permissions.owner);
+        auto row = MakeBaseRow(schema_id, unique.index_oid, names.back(),
+                               table->permissions.owner);
         row.relkind = PgClass::Relkind::Index;
         row.relnatts =
           static_cast<int16_t>(KeyConstraintAttnums(*table, unique).size());

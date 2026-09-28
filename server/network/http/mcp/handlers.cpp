@@ -59,9 +59,18 @@ enum class RpcCode : int {
 };
 
 constexpr std::string_view kInstructions =
-  "SereneDB documentation server. search_docs finds documentation sections "
-  "by relevance; read_doc returns a whole page or one section as Markdown "
-  "with its SQL examples; list_docs lists the available pages.";
+  "SereneDB documentation server. list_objects enumerates every documented "
+  "function, statement, tokenizer, type, setting, index type and dot command; "
+  "describe_object returns everything documented under one name. Check them "
+  "before writing SereneDB-specific SQL: Postgres tsvector functions "
+  "(to_tsvector, ts_rank, setweight, ts_headline) are not available, and "
+  "while @@ and to_tsquery exist, to_tsquery reads Lucene syntax "
+  "(foo AND bar*) rather than Postgres syntax (foo & bar:*). search_docs "
+  "finds documentation sections by relevance from keywords, a question or a "
+  "pasted error; read_doc returns a whole page or one section as Markdown "
+  "with its SQL examples and follows any link found in it; list_docs lists "
+  "the available pages. check_sql plans a statement against this server "
+  "without running it, so check the SQL you write before handing it over.";
 
 // --- Wire shapes; field names are the JSON keys ------------------------------
 

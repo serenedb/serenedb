@@ -1,0 +1,98 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(5) t(i)) TO '${__TEST_DIR__}/rcw_1.parquet' (FORMAT parquet);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rcw_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE VIEW rcw_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rcw_*.parquet');
+
+statement ok
+CREATE INDEX rcw_idx ON rcw_v USING inverted(id, body rcw_en);
+
+statement ok
+SET sdb_faults = 'pause_reindex_claimed';
+
+connection holder
+statement async ok
+SELECT * FROM serenedb_reindex('rcw_idx');
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT phase FROM pg_stat_progress_create_index WHERE command = 'REINDEX' AND index_relid = 'rcw_idx'::regclass;
+----
+phase
+refreshing index
+
+connection canceled
+statement async error canceling
+SELECT * FROM serenedb_reindex('rcw_idx');
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM pg_stat_progress_create_index
+WHERE command = 'REINDEX' AND index_relid = 'rcw_idx'::regclass AND phase = 'waiting for running reindex';
+----
+count
+1
+
+statement ok
+SELECT pg_cancel_backend(pid) FROM pg_stat_progress_create_index
+WHERE command = 'REINDEX' AND index_relid = 'rcw_idx'::regclass AND phase = 'waiting for running reindex';
+
+query ok retry 40 backoff 250ms
+SELECT phase FROM pg_stat_progress_create_index WHERE command = 'REINDEX' AND index_relid = 'rcw_idx'::regclass;
+----
+phase
+refreshing index
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(5, 8) t(i)) TO '${__TEST_DIR__}/rcw_2.parquet' (FORMAT parquet);
+
+connection waiter
+statement async ok
+SELECT * FROM serenedb_reindex('rcw_idx');
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM pg_stat_progress_create_index
+WHERE command = 'REINDEX' AND index_relid = 'rcw_idx'::regclass AND phase = 'waiting for running reindex';
+----
+count
+1
+
+statement ok
+SET sdb_faults = '-pause_reindex_claimed';
+
+wait
+
+query
+SELECT count(*) FROM rcw_idx WHERE body @@ ts_phrase('doc');
+----
+count
+8
+
+query
+SELECT count(*) FROM pg_stat_progress_create_index WHERE command = 'REINDEX' AND index_relid = 'rcw_idx'::regclass;
+----
+count
+0
+
+query
+SELECT * FROM serenedb_reindex('rcw_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement ok
+DROP INDEX rcw_idx;
+
+statement ok
+DROP VIEW rcw_v;

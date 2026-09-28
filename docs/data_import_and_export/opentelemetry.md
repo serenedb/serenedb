@@ -20,14 +20,14 @@ Add an HTTP listener with the `otel` API and SereneDB serves the three OTLP
 export endpoints directly — no collector component to install:
 
 ```bash
-serened ./data --listen 'postgres://0.0.0.0:5432,http://0.0.0.0:4318?api=otel'
+serened ./data --listen 'postgres://0.0.0.0:7890,http://0.0.0.0:4318?api=otel'
 ```
 
 By default the tables live in the default database. `db=` puts the listener
 — and with it the OTel schema — in another one, created if it does not exist:
 
 ```bash
-serened ./data --listen 'postgres://0.0.0.0:5432,http://0.0.0.0:4318?api=otel&db=telemetry'
+serened ./data --listen 'postgres://0.0.0.0:7890,http://0.0.0.0:4318?api=otel&db=telemetry'
 ```
 
 | Endpoint | Accepts | Writes to |
@@ -271,9 +271,11 @@ WHERE metric_name @@ 'http.server.request_count'
 GROUP BY 1, 2 ORDER BY 1, 2;
 ```
 
-Use `@@` rather than `=` when you want a term lookup. A plain `=` on a
-non-primary-key column is a columnstore `Column Filter` — correct, but it reads
-the column instead of the term dictionary.
+On a column indexed without a dictionary, such as `service_name` or
+`severity_text`, a plain `=` is served by the index exactly like `@@`. On an
+analyzed column such as `body`, `=` compares the whole value as a columnstore
+`Column Filter`: correct, but it reads the column instead of the index. Use
+`@@` to search those.
 
 ## Visibility
 
@@ -288,9 +290,9 @@ VACUUM (REFRESH_TABLE) otel_logs;
 ## Schema evolution
 
 A search table's schema is fixed. `ALTER TABLE ADD COLUMN`, `DROP COLUMN` and
-`ALTER COLUMN TYPE` are rejected, and an inverted index can only be created
-while the table is still empty. To change the schema, create a new table with
-`CREATE TABLE ... AS SELECT`, switch writers to it, and rename.
+`ALTER COLUMN TYPE` are rejected; an inverted index can still be added later,
+and it indexes the rows already in the table. To change the schema, create a
+new table with `CREATE TABLE ... AS SELECT`, switch writers to it, and rename.
 
 Re-running the DDL is safe — every statement is `IF NOT EXISTS`, including on
 a table that already holds rows. Startup checks for the schema before running

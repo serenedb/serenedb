@@ -27,9 +27,13 @@
 #include <absl/strings/numbers.h>
 #include <simdjson.h>
 
+#include <duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp>
+#include <duckdb/common/optional.hpp>
+#include <duckdb/common/vector_operations/binary_executor.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -253,50 +257,18 @@ void JsonInFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 // -> operator (index / field) -- ported from PgJsonExtractIndex/Field
 // ---------------------------------------------------------------------------
 
-namespace {
-
-// Replacement for BinaryExecutor::ExecuteWithNulls<TA, TB, TR>(left, right,
-// result, count, fn) which was removed upstream. `fn` returns string_t and sets
-// the validity bit via the supplied callback when the extracted JSON value is
-// missing.
-template<typename TA, typename TB, typename FN>
-void JsonBinaryExecuteWithNulls(duckdb::Vector& left, duckdb::Vector& right,
-                                duckdb::Vector& result, duckdb::idx_t count,
-                                FN&& fn) {
-  auto lhs = left.Values<TA>();
-  auto rhs = right.Values<TB>();
-  auto* result_ptr =
-    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
-  auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
-  for (duckdb::idx_t i = 0; i < count; i++) {
-    auto l = lhs[i];
-    auto r = rhs[i];
-    if (!l.IsValid() || !r.IsValid()) {
-      result_validity.SetInvalid(i);
-      continue;
-    }
-    bool valid = true;
-    result_ptr[i] = fn(l.GetValue(), r.GetValue(), valid);
-    if (!valid) {
-      result_validity.SetInvalid(i);
-    }
-  }
-}
-
-}  // namespace
-
 // json -> int  (returns JSON)
 void JsonExtractIndexFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                               duckdb::Vector& result) {
-  JsonBinaryExecuteWithNulls<duckdb::string_t, int64_t>(
+  duckdb::BinaryExecutor::Execute<duckdb::string_t, int64_t, duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
-    [&](duckdb::string_t json, int64_t index, bool& valid) -> duckdb::string_t {
+    [&](duckdb::string_t json,
+        int64_t index) -> duckdb::optional<duckdb::string_t> {
       JsonParser parser;
       parser.PrepareJson({json.GetData(), json.GetSize()});
       auto str = parser.ExtractByIndex<JsonOutputType::JSON>(index);
       if (str.empty() && !str.data()) {
-        valid = false;
-        return duckdb::string_t{};
+        return duckdb::nullopt;
       }
       return duckdb::StringVector::AddString(result, str.data(), str.size());
     });
@@ -305,17 +277,17 @@ void JsonExtractIndexFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 // json -> text  (returns JSON)
 void JsonExtractFieldFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                               duckdb::Vector& result) {
-  JsonBinaryExecuteWithNulls<duckdb::string_t, duckdb::string_t>(
+  duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
+                                  duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
-    [&](duckdb::string_t json, duckdb::string_t field,
-        bool& valid) -> duckdb::string_t {
+    [&](duckdb::string_t json,
+        duckdb::string_t field) -> duckdb::optional<duckdb::string_t> {
       JsonParser parser;
       parser.PrepareJson({json.GetData(), json.GetSize()});
       auto str = parser.ExtractByField<JsonOutputType::JSON>(
         {field.GetData(), field.GetSize()});
       if (str.empty() && !str.data()) {
-        valid = false;
-        return duckdb::string_t{};
+        return duckdb::nullopt;
       }
       return duckdb::StringVector::AddString(result, str.data(), str.size());
     });
@@ -329,15 +301,15 @@ void JsonExtractFieldFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 void JsonExtractIndexTextFunction(duckdb::DataChunk& args,
                                   duckdb::ExpressionState&,
                                   duckdb::Vector& result) {
-  JsonBinaryExecuteWithNulls<duckdb::string_t, int64_t>(
+  duckdb::BinaryExecutor::Execute<duckdb::string_t, int64_t, duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
-    [&](duckdb::string_t json, int64_t index, bool& valid) -> duckdb::string_t {
+    [&](duckdb::string_t json,
+        int64_t index) -> duckdb::optional<duckdb::string_t> {
       JsonParser parser;
       parser.PrepareJson({json.GetData(), json.GetSize()});
       auto str = parser.ExtractByIndex<JsonOutputType::TEXT>(index);
       if (str.empty() && !str.data()) {
-        valid = false;
-        return duckdb::string_t{};
+        return duckdb::nullopt;
       }
       return duckdb::StringVector::AddString(result, str.data(), str.size());
     });
@@ -347,17 +319,17 @@ void JsonExtractIndexTextFunction(duckdb::DataChunk& args,
 void JsonExtractFieldTextFunction(duckdb::DataChunk& args,
                                   duckdb::ExpressionState&,
                                   duckdb::Vector& result) {
-  JsonBinaryExecuteWithNulls<duckdb::string_t, duckdb::string_t>(
+  duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
+                                  duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
-    [&](duckdb::string_t json, duckdb::string_t field,
-        bool& valid) -> duckdb::string_t {
+    [&](duckdb::string_t json,
+        duckdb::string_t field) -> duckdb::optional<duckdb::string_t> {
       JsonParser parser;
       parser.PrepareJson({json.GetData(), json.GetSize()});
       auto str = parser.ExtractByField<JsonOutputType::TEXT>(
         {field.GetData(), field.GetSize()});
       if (str.empty() && !str.data()) {
-        valid = false;
-        return duckdb::string_t{};
+        return duckdb::nullopt;
       }
       return duckdb::StringVector::AddString(result, str.data(), str.size());
     });
@@ -723,6 +695,23 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
       extract_string_set.AddFunction(f);
     }
     loader.RegisterFunction(extract_string_set);
+  }
+
+  for (const auto& [source_name, alias] :
+       {std::pair{"json_array", "json_build_array"},
+        std::pair{"json_object", "json_build_object"}}) {
+    auto entry = loader.TryGetFunction(duckdb::Identifier{source_name});
+    if (!entry) {
+      continue;
+    }
+    auto& source = entry->Cast<duckdb::ScalarFunctionCatalogEntry>();
+    auto functions = source.functions;
+    functions.SetName(duckdb::Identifier{alias});
+    duckdb::CreateScalarFunctionInfo info{std::move(functions)};
+    info.descriptions = source.descriptions;
+    info.alias_of = source.name;
+    info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
+    loader.RegisterFunction(std::move(info));
   }
 }
 

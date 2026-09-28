@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import os
 import fcntl
+import pty
+import re
+import select
+import struct
 import subprocess
+import termios
+import time
 import uuid
 from pathlib import Path
 
@@ -1034,3 +1040,589 @@ def test_pset_combines_with_other_flags() -> None:
               "-c", "SELECT NULL::TEXT, 'x';"])
     assert r.returncode == 0, r.stderr
     assert "NULL|x" in r.stdout
+
+
+# ---- .docs (embedded documentation) ---------------------------------------
+
+def _docs_shell(arg: str) -> subprocess.CompletedProcess:
+    r = _run_shell(["-c", f".docs {arg}".rstrip()])
+    if "carries no documentation index" in (r.stdout + r.stderr):
+        pytest.skip("build has no embedded documentation index")
+    return r
+
+
+def _has_docs_index() -> bool:
+    r = _run_shell(["-c", ".docs"])
+    return "carries no documentation index" not in (r.stdout + r.stderr)
+
+
+def test_docs_without_an_index_says_so() -> None:
+    r = _run_shell(["-c", ".docs"])
+    if _has_docs_index():
+        pytest.skip("build carries a documentation index")
+    assert r.returncode != 0
+    assert "SDB_EMBEDDED_DOCS=ON" in (r.stdout + r.stderr)
+
+
+def _docs_search_paths(out: str) -> list[str]:
+    prefix = ".docs "
+    return [line.strip()[len(prefix):]
+            for line in out.splitlines() if line.strip().startswith(prefix)]
+
+
+def test_docs_appears_in_help() -> None:
+    r = _run_shell(["-c", ".help"])
+    assert r.returncode == 0, r.stderr
+    assert ".docs" in r.stdout
+
+
+def test_docs_index_lists_sections() -> None:
+    r = _docs_shell("")
+    assert r.returncode == 0, r.stderr
+    assert "SereneDB documentation" in r.stdout
+    assert "sql (" in r.stdout
+    assert "like .docs how do I highlight matches, to search every page" in r.stdout
+
+
+def test_docs_renders_a_page_with_its_sections() -> None:
+    r = _docs_shell("sql/indexes/index.md")
+    assert r.returncode == 0, r.stderr
+    assert "path: sql/indexes/index.md#Indexes" in r.stdout
+    assert "Sections" in r.stdout
+    assert ".docs sql/indexes/index.md#Indexes#Index_Types" in r.stdout
+
+
+def test_docs_looks_up_an_object_by_name() -> None:
+    r = _docs_shell("BM25")
+    assert r.returncode == 0, r.stderr
+    assert "BM25(tableoid" in r.stdout
+
+
+def _docs_session(*commands: str) -> subprocess.CompletedProcess:
+    r = subprocess.run(
+        [SERENED_BIN, "shell"],
+        input="".join(f"{command}\n" for command in commands),
+        capture_output=True, text=True, timeout=20.0,
+        env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
+    )
+    if "carries no documentation index" in (r.stdout + r.stderr):
+        pytest.skip("build has no embedded documentation index")
+    return r
+
+
+def test_docs_several_matches_print_a_numbered_menu() -> None:
+    r = _docs_shell("date_trunc")
+    assert r.returncode == 0, r.stderr
+    assert "'date_trunc' matches" in r.stdout
+    assert "\n1. date_trunc(" in r.stdout
+    assert "\n2. date_trunc(" in r.stdout
+    assert "path: " not in r.stdout
+
+
+def test_docs_number_opens_an_item_of_the_last_list() -> None:
+    r = _docs_session(".docs date_trunc", ".docs 2")
+    assert r.returncode == 0, r.stderr
+    assert "path: sql/functions/" in r.stdout
+
+
+def test_docs_number_walks_into_a_page_section() -> None:
+    r = _docs_session(".docs sql/indexes/index.md", ".docs 1")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.count("path: sql/indexes/index.md#Indexes") >= 2
+
+
+def test_docs_all_renders_every_match() -> None:
+    r = _docs_shell("--all date_trunc")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.count("path: sql/functions/") >= 2
+
+
+def test_docs_all_numbers_its_listings_as_one_list() -> None:
+    r = _docs_session(".docs --all search", ".docs 36")
+    assert r.returncode == 0, r.stderr
+    under = r.stdout.index("Documentation under 'sql/functions/search':")
+    assert "\n36. " in r.stdout[under:]
+    assert "path: sql/functions/search/" in r.stdout[under:].split("\n36. ")[1]
+
+
+def test_docs_a_directory_name_lists_its_pages() -> None:
+    r = _docs_shell("functions")
+    assert r.returncode == 0, r.stderr
+    assert "Documentation under 'sql/functions'" in r.stdout
+    assert ".docs sql/functions/date.md" in r.stdout
+
+
+def test_docs_a_page_name_offers_every_page_of_that_name() -> None:
+    r = _docs_shell("geometry")
+    assert r.returncode == 0, r.stderr
+    assert ".docs sql/functions/geometry.md" in r.stdout
+    assert ".docs sql/data_types/geometry.md" in r.stdout
+
+
+def test_docs_a_page_documenting_an_object_is_listed_once() -> None:
+    r = _docs_shell("union")
+    assert r.returncode == 0, r.stderr
+    page = ".docs sql/statements/create_text_search_dictionary/union.md#union"
+    assert r.stdout.count(page) == 1
+
+
+_SHELL_PAGE = "clients/serened-shell.md"
+
+
+def _docs_link(prefix: str) -> str:
+    r = _docs_shell(_SHELL_PAGE)
+    assert r.returncode == 0, r.stderr
+    lines = r.stdout.splitlines()
+    assert "Links" in lines
+    links = lines[lines.index("Links") + 1:]
+    return next(item.split(".")[0].strip()
+                for item, target in zip(links, links[1:])
+                if target.strip().startswith(prefix))
+
+
+def test_docs_numbers_links_and_follows_them() -> None:
+    number = _docs_link(".docs clients/serened-psql.md")
+    r = _docs_session(f".docs {_SHELL_PAGE}", f".docs {number}")
+    assert r.returncode == 0, r.stderr
+    assert "path: clients/serened-psql.md" in r.stdout
+
+
+def test_docs_follows_a_link_to_the_heading_it_names() -> None:
+    number = _docs_link(".docs sql/functions/docs.md#")
+    r = _docs_session(f".docs {_SHELL_PAGE}", f".docs {number}")
+    assert r.returncode == 0, r.stderr
+    assert any(line.startswith("path: sql/functions/docs.md#")
+               and line.endswith("#The_object_catalog")
+               for line in r.stdout.splitlines()), r.stdout
+
+
+def test_docs_an_external_link_prints_its_url() -> None:
+    number = _docs_link("https://serenedb.com/docs/")
+    r = _docs_session(f".docs {_SHELL_PAGE}", f".docs {number}")
+    assert r.returncode == 0, r.stderr
+    assert "https://serenedb.com/docs/" in r.stdout.splitlines()
+
+
+def test_docs_a_section_lists_its_subsections() -> None:
+    r = _docs_shell("sql")
+    assert r.returncode == 0, r.stderr
+    assert ".docs sql/functions" in [line.strip()
+                                     for line in r.stdout.splitlines()]
+    assert ".docs sql/functions/date.md" not in r.stdout
+
+
+def test_docs_a_one_page_subsection_is_listed_as_its_page() -> None:
+    r = _docs_shell("query_syntax")
+    assert r.returncode == 0, r.stderr
+    assert re.search(r"\d+\. Set Operations", r.stdout), r.stdout
+    assert not re.search(r"\d+\. setops/", r.stdout), r.stdout
+
+
+def test_docs_a_one_page_section_opens_its_page() -> None:
+    r = _docs_shell("setops")
+    assert r.returncode == 0, r.stderr
+    assert "path: sql/query_syntax/setops/index.md" in r.stdout
+
+
+def test_docs_headings_wrap_to_the_width() -> None:
+    if not _has_docs_index():
+        pytest.skip("build has no embedded documentation index")
+    r = _run_shell(["-c", ".maxwidth 50", "-c", ".docs"])
+    assert r.returncode == 0, r.stderr
+    heading = r.stdout.splitlines()
+    assert "SereneDB documentation" in heading
+    assert max(len(line) for line in heading) <= 50, heading
+
+
+def test_docs_a_dot_command_renders_its_card() -> None:
+    r = _docs_shell(".timer")
+    assert r.returncode == 0, r.stderr
+    assert ".timer on|off" in r.stdout
+    assert "Kind: command" in r.stdout
+
+
+_TERMINAL_ESCAPES = re.compile(
+    r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\r")
+
+
+class _Terminal:
+    def __init__(self, home: Path, columns: int) -> None:
+        self.raw = ""
+        self._pid, self._fd = pty.fork()
+        if self._pid == 0:
+            env = {**os.environ, "TERM": "xterm-256color", "HOME": str(home),
+                   "DUCKDB_PAGER": "echo PAGER_USED; cat"}
+            env.pop("NO_COLOR", None)
+            os.execve(SERENED_BIN,
+                      [SERENED_BIN, "shell", "-dark-mode", "--no-init"], env)
+        fcntl.ioctl(self._fd, termios.TIOCSWINSZ,
+                    struct.pack("HHHH", 40, columns, 0, 0))
+        self.read_until(".help")
+
+    def read_until(self, text: str, timeout: float = 30.0) -> str:
+        raw = b""
+        deadline = time.monotonic() + timeout
+        while True:
+            self.raw = raw.decode("utf-8", "replace")
+            seen = _TERMINAL_ESCAPES.sub("", self.raw)
+            if text in seen:
+                return seen
+            remaining = deadline - time.monotonic()
+            assert remaining > 0, f"{text!r} never appeared in {seen!r}"
+            ready, _, _ = select.select([self._fd], [], [], remaining)
+            if ready:
+                chunk = os.read(self._fd, 65536)
+                assert chunk, f"the shell exited before {text!r}: {seen!r}"
+                raw += chunk
+
+    def send(self, keys: str, until: str) -> str:
+        os.write(self._fd, keys.encode())
+        return self.read_until(until)
+
+    def close(self) -> None:
+        try:
+            os.write(self._fd, b"\x03.quit\r")
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if os.waitpid(self._pid, os.WNOHANG) != (0, 0):
+                    return
+                time.sleep(0.1)
+            os.kill(self._pid, 9)
+            os.waitpid(self._pid, 0)
+        finally:
+            os.close(self._fd)
+
+
+def _open_terminal(home: Path, columns: int):
+    if not _has_docs_index():
+        pytest.skip("build has no embedded documentation index")
+    terminal = _Terminal(home, columns)
+    try:
+        yield terminal
+    finally:
+        terminal.close()
+
+
+@pytest.fixture
+def docs_terminal(tmp_path: Path):
+    yield from _open_terminal(tmp_path, 160)
+
+
+@pytest.fixture
+def narrow_docs_terminal(tmp_path: Path):
+    yield from _open_terminal(tmp_path, 80)
+
+
+def test_docs_opens_a_list_in_the_completion_menu(docs_terminal) -> None:
+    out = docs_terminal.send(".docs date_trunc\r",
+                             until="3. date_trunc(part, timestamptz)")
+    assert "'date_trunc' matches 3 entries:" in out
+    assert "1. date_trunc(part, date) (function)" in out
+    assert "Open one with .docs <number>." not in out
+    assert ".docs 1" in out
+    docs_terminal.send("\x1b[B", until=".docs 2")
+    docs_terminal.send("\r", until="path: sql/functions/timestamp.md")
+
+
+def test_docs_esc_closes_the_menu(docs_terminal) -> None:
+    docs_terminal.send(".docs date_trunc\r",
+                       until="3. date_trunc(part, timestamptz)")
+    docs_terminal.send("\x1b", until=".docs")
+    out = docs_terminal.send("\r", until="SereneDB documentation")
+    assert "path: sql/functions/date.md" not in out
+
+
+def _select_first_table(terminal: _Terminal) -> None:
+    terminal.send("SELECT * FROM narr", until="FROM narr")
+    time.sleep(0.3)
+    terminal.send("\t", until="narrow_beta")
+    time.sleep(0.3)
+    terminal.send("\t", until="FROM narrow_alpha")
+
+
+def _two_tables(terminal: _Terminal) -> None:
+    terminal.send("ATTACH ':memory:' AS nd;\r", until="AS nd;")
+    terminal.send("USE nd;\r", until="USE nd;")
+    terminal.send("CREATE TABLE narrow_alpha (alpha_col INTEGER);\r",
+                  until="narrow_alpha (alpha_col INTEGER);")
+    terminal.send("CREATE TABLE narrow_beta (beta_col INTEGER);\r",
+                  until="narrow_beta (beta_col INTEGER);")
+
+
+def test_sql_completion_accepts_the_selection_on_typing(docs_terminal) -> None:
+    _two_tables(docs_terminal)
+    _select_first_table(docs_terminal)
+    out = docs_terminal.send("x", until="narrow_alphax")
+    assert "narrx" not in out
+
+
+def test_sql_completion_accepts_the_selection_on_arrows(docs_terminal) -> None:
+    _two_tables(docs_terminal)
+    _select_first_table(docs_terminal)
+    os.write(docs_terminal._fd, b"\x1b[B")
+    time.sleep(0.3)
+    out = docs_terminal.send(";\r", until="alpha_col")
+    assert "beta_col" not in out
+
+
+def test_esc_prefix_still_reads_as_alt(docs_terminal) -> None:
+    docs_terminal.send("SELECT 1 AS abc", until="AS abc")
+    os.write(docs_terminal._fd, b"\x1b")
+    time.sleep(0.3)
+    out = docs_terminal.send("bx", until="ASx abc")
+    assert "abcb" not in out
+
+
+def test_docs_menu_does_not_swallow_typed_ahead_input(docs_terminal) -> None:
+    out = docs_terminal.send(
+        ".docs date_trunc\rSELECT 'typed' || '_ahead' AS v;\r",
+        until="typed_ahead")
+    assert "'date_trunc' matches" in out
+
+
+def test_docs_writes_no_escapes_into_an_output_file(docs_terminal,
+                                                    tmp_path: Path) -> None:
+    target = tmp_path / "docs.txt"
+    docs_terminal.send(f".output {target}\r", until=f".output {target}")
+    docs_terminal.send(".docs sql/indexes/index.md\r",
+                       until=".docs sql/indexes/index.md")
+    docs_terminal.send(".output\rSELECT 'writ' || 'ten' AS done;\r",
+                       until="written")
+    text = target.read_text()
+    assert "path: sql/indexes/index.md" in text
+    assert "\x1b" not in text
+
+
+def test_docs_a_long_menu_scrolls_to_the_selection(docs_terminal) -> None:
+    docs_terminal.send(".docs --kind setting\r", until=".docs 1")
+    out = docs_terminal.send("\x1b[C" * 60, until=".docs 61")
+    assert re.search(r"(^|\s)61\. ", out), out
+
+
+def test_docs_typing_a_number_narrows_the_menu(docs_terminal) -> None:
+    docs_terminal.send(".docs date_trunc\r",
+                       until="3. date_trunc(part, timestamptz)")
+    out = docs_terminal.send("2", until="2. date_trunc(part, timestamp)")
+    assert "1. date_trunc(part, date)" not in out
+    assert "3. date_trunc(part, timestamptz)" not in out
+    docs_terminal.send("\r", until="path: sql/functions/timestamp.md")
+
+
+def test_docs_backspace_widens_a_narrowed_menu(docs_terminal) -> None:
+    docs_terminal.send(".docs date_trunc\r",
+                       until="3. date_trunc(part, timestamptz)")
+    docs_terminal.send("2", until="2. date_trunc(part, timestamp)")
+    out = docs_terminal.send("\x7f", until="3. date_trunc(part, timestamptz)")
+    assert "1. date_trunc(part, date)" in out
+
+
+def test_docs_arrows_move_through_the_menu_grid(narrow_docs_terminal) -> None:
+    out = narrow_docs_terminal.send(".docs\r", until="11. sql (")
+    assert "1. benchmarks (" in out
+    for key, buffer in [("\x1b[B", ".docs 3"), ("\x1b[C", ".docs 4"),
+                        ("\x1b[A", ".docs 2"), ("\x1b[D", ".docs 1")]:
+        narrow_docs_terminal.send(key, until=buffer)
+    narrow_docs_terminal.send("\r", until="Documentation under 'benchmarks':")
+
+
+def test_docs_contents_fit_a_narrow_terminal(narrow_docs_terminal) -> None:
+    out = narrow_docs_terminal.send(".docs\r", until="11. sql (")
+    assert "PAGER_USED" not in out
+    lines = out.splitlines()
+    start = lines.index("SereneDB documentation")
+    end = next(i for i, line in enumerate(lines)
+               if line.startswith("1. benchmarks ("))
+    assert max(len(line) for line in lines[start:end]) <= 80, lines[start:end]
+
+
+def test_docs_hyperlinks_do_not_widen_a_page(narrow_docs_terminal) -> None:
+    out = narrow_docs_terminal.send(
+        ".docs clients/serened-psql.md#serened_psql#Dot_commands\r",
+        until=".docs clients/serened-shell.md#serened_shell#Dot_commands")
+    assert ("\x1b]8;;https://serenedb.com/docs/clients/serened-shell"
+            "#dot-commands\x1b\\") in narrow_docs_terminal.raw
+    assert "PAGER_USED" not in out
+
+
+def test_docs_tab_after_docs_lists_the_sections(docs_terminal) -> None:
+    out = docs_terminal.send(".docs \t", until="compatibility")
+    assert "cookbook" in out
+    assert "sql" in out
+
+
+def test_docs_tab_after_kind_lists_every_kind(docs_terminal) -> None:
+    docs_terminal.send(".docs --kind ", until=".docs --kind")
+    out = docs_terminal.send("\t", until="index_type")
+    for kind in ["command", "function", "setting", "statement", "tokenizer",
+                 "type"]:
+        assert kind in out
+
+
+def test_docs_tab_completes_names_flags_and_paths(docs_terminal) -> None:
+    for typed, completed in [(".docs date_tr", ".docs date_trunc"),
+                             (".docs --kind setting thre",
+                              ".docs --kind setting threads"),
+                             (".docs --kind ty", ".docs --kind type "),
+                             (".docs sql/functions/dat",
+                              "sql/functions/datepart.md")]:
+        docs_terminal.send(f"\x15{typed}", until=typed)
+        docs_terminal.send("\t", until=completed)
+
+
+def test_docs_number_without_a_list_fails() -> None:
+    r = _docs_shell("2")
+    assert r.returncode != 0
+    assert "Nothing to open yet" in (r.stdout + r.stderr)
+
+
+def test_docs_browses_a_section() -> None:
+    r = _docs_shell("cookbook")
+    assert r.returncode == 0, r.stderr
+    assert "Documentation under 'cookbook'" in r.stdout
+    assert ".docs cookbook/" in r.stdout
+
+
+def test_docs_list_flag_emits_paths() -> None:
+    r = _docs_shell("--list sql/functions/search/")
+    assert r.returncode == 0, r.stderr
+    lines = [line for line in r.stdout.splitlines() if line.strip()]
+    assert lines
+    for line in lines:
+        assert line.startswith("sql/functions/search/")
+
+
+def test_docs_search_flag_returns_pasteable_paths() -> None:
+    r = _docs_shell("--search phrase search")
+    assert r.returncode == 0, r.stderr
+    assert "Documentation matching 'phrase search'" in r.stdout
+    first = next(line for line in r.stdout.splitlines() if line.startswith("1. "))
+    assert "phrase" in first.lower(), first
+    assert re.search(r"\n +\.docs sql/", r.stdout), r.stdout
+
+
+def test_docs_unknown_name_offers_candidates_and_fails() -> None:
+    r = _docs_shell("to_tsvector")
+    assert r.returncode != 0
+    out = r.stdout + r.stderr
+    assert "Closest matches" in out
+    assert ".docs " in out
+
+
+@pytest.mark.parametrize("typo", ["tsvecto", "vacum", "hnws"])
+def test_docs_typo_still_finds_candidates(typo: str) -> None:
+    r = _docs_shell(typo)
+    assert r.returncode != 0
+    out = r.stdout + r.stderr
+    assert "Closest matches" in out
+    assert ".docs " in out
+
+
+def test_docs_search_is_identical_connected_and_offline() -> None:
+    offline = _docs_shell("--search bm25 scoring")
+    connected = _run(_conn_args() + ["-c", ".docs --search bm25 scoring"])
+    assert connected.stdout == offline.stdout
+    assert connected.returncode == offline.returncode
+
+
+@pytest.mark.parametrize("query", [
+    "inverted index",
+    "vacuum",
+    "bm25 scoring",
+    "text search dictionary",
+    "index",
+])
+def test_docs_search_matches_the_server_ranking(query: str) -> None:
+    local = _docs_shell(f"--search {query}")
+    assert local.returncode == 0, local.stderr
+    remote = f"SELECT path FROM sdb_docs.search(''{query}'', 10)"
+    served = _run(_conn_args() + [
+        "-t", "-A", "-c",
+        f"SELECT path FROM postgres_query('{_kw()['dbname']}', '{remote}')"])
+    assert served.returncode == 0, served.stderr
+    expected = [line.strip() for line in served.stdout.splitlines()
+                if line.strip()]
+    assert _docs_search_paths(local.stdout) == expected
+
+
+def test_docs_search_reads_unparsable_text_as_words() -> None:
+    r = _docs_shell("--search @@ operator")
+    assert r.returncode == 0, r.stderr
+    assert "Documentation matching '@@ operator':" in r.stdout
+
+
+def test_docs_answers_a_question_with_its_search_results() -> None:
+    r = _docs_shell("how do I create an inverted index?")
+    assert r.returncode == 0, r.stderr
+    assert "Documentation matching 'how do I create an inverted index?':" in r.stdout
+    assert "sql/indexes/inverted/" in r.stdout
+
+
+def test_docs_finds_the_page_of_a_pasted_error() -> None:
+    r = _docs_shell("Only one scorer function is allowed per inverted index")
+    assert r.returncode == 0, r.stderr
+    first = next(line for line in r.stdout.splitlines() if line.startswith("1. "))
+    assert "Relevance Scoring" in first
+
+
+def test_docs_reads_a_call_as_its_name() -> None:
+    call = _docs_shell("date_trunc(ts, 'day')")
+    name = _docs_shell("date_trunc")
+    assert call.returncode == 0, call.stderr
+    assert call.stdout.replace("date_trunc(ts, day )", "date_trunc") == name.stdout
+
+
+def test_docs_question_mark_shows_the_index() -> None:
+    assert _docs_shell("?").stdout == _docs_shell("").stdout
+
+
+def test_docs_opens_a_pasted_site_url() -> None:
+    r = _docs_shell("https://serenedb.com/docs/sql/indexes#index-types")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.startswith("path: sql/indexes/index.md#Indexes#Index_Types\n")
+    site = _docs_shell("https://serenedb.com/docs/sql/functions/search/scoring")
+    assert site.stdout == _docs_shell("sql/functions/search/scoring.md").stdout
+    assert _docs_shell("sql/functions/search/scoring").stdout == site.stdout
+
+
+def test_docs_searches_operators_instead_of_reading_them_as_options() -> None:
+    r = _docs_shell("->>")
+    assert r.returncode == 0, r.stderr
+    assert "Unknown option" not in (r.stdout + r.stderr)
+    assert "Documentation matching '->>':" in r.stdout
+
+
+def test_docs_search_refuses_exclusion() -> None:
+    r = _docs_shell("--search +fox -red")
+    assert r.returncode != 0
+    assert "exclusion" in (r.stdout + r.stderr)
+
+
+def test_docs_rejects_unknown_option() -> None:
+    r = _docs_shell("--nope")
+    assert r.returncode != 0
+    assert "Unknown option" in (r.stdout + r.stderr)
+
+
+def test_docs_emits_no_escapes_without_a_tty() -> None:
+    r = _docs_shell("sql/functions/search/scoring.md")
+    assert r.returncode == 0, r.stderr
+    assert "\x1b" not in r.stdout
+
+
+def test_docs_wraps_table_cells_instead_of_truncating() -> None:
+    r = _docs_shell("sql/functions/aggregates/index.md")
+    assert r.returncode == 0, r.stderr
+    assert "approx_count_distinct(x)" in r.stdout
+    assert "\N{HORIZONTAL ELLIPSIS}" not in r.stdout
+
+
+def test_docs_shell_and_psql_modes_agree_byte_for_byte() -> None:
+    if not _has_docs_index():
+        pytest.skip("build has no embedded documentation index")
+    k = _kw()
+    shell = _run_shell(["-c", ".docs sql/indexes/index.md"])
+    psql = _run(["-h", k["host"], "-p", k["port"], "-U", k["user"],
+                 "-d", k["dbname"], "-c", ".docs sql/indexes/index.md"])
+    assert shell.returncode == 0, shell.stderr
+    assert psql.returncode == 0, psql.stderr
+    assert shell.stdout == psql.stdout

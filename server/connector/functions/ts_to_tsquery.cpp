@@ -26,6 +26,8 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
+#include <optional>
+#include <vector>
 
 #include "ts_common.hpp"
 
@@ -234,12 +236,34 @@ void FromTsqueryPhrase(BoolTarget parent, const FilterContext& ctx,
   EmitPhraseSeq(parent, ctx, column_info, seq);
 }
 
+class IndexFields final : public irs::ParserContext::FieldProvider {
+ public:
+  explicit IndexFields(const FieldSetGetter& fields) : _fields{&fields} {}
+
+  bool Resolve(std::string_view name,
+               irs::ParserContext::Field& out) const final {
+    auto info = (*_fields)(name);
+    if (!info) {
+      return false;
+    }
+    out = {.id = PickPerKindFieldId(*info, duckdb::LogicalTypeId::VARCHAR),
+           .tokenizer = info->tokenizer.analyzer.get()};
+    _held.push_back(std::move(*info));
+    return true;
+  }
+
+ private:
+  const FieldSetGetter* _fields;
+  mutable std::vector<SearchColumnInfo> _held;
+};
+
 void FromToTsquery(BoolTarget parent, const FilterContext& ctx,
                    const SearchColumnInfo& column_info,
                    const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
-    "Example: to_tsquery('field:foo AND bar*'). Lucene syntax: "
-    "AND/OR/NOT, +/-, prefix/wildcard/regex, ranges, ^N, ~N.";
+    "Example: to_tsquery('foo AND bar*'). Lucene syntax: "
+    "AND/OR/NOT, +/-, prefix/wildcard/regex, ranges, ^N, ~N. A field prefix "
+    "(name:term) needs a whole-index operand: tableoid @@ to_tsquery(...).";
   SDB_ASSERT(func.GetChildren().size() == 1);
   std::string text;
   GetVarcharArg(*func.GetChildren()[0], text, {"to_tsquery text", kSyntaxHint});
@@ -248,7 +272,11 @@ void FromToTsquery(BoolTarget parent, const FilterContext& ctx,
   irs::ParserContext parser_ctx{
     root, PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
     ctx.tokenizer};
-  parser_ctx.strict_field = true;
+  std::optional<IndexFields> provider;
+  if (column_info.index_fields) {
+    provider.emplace(*column_info.index_fields);
+    parser_ctx.fields = &*provider;
+  }
   parser_ctx.fuzzy_max_terms =
     column_info.levenshtein_max_terms.value_or(ctx.levenshtein_max_terms);
   if (!irs::ParseQuery(parser_ctx, text)) {

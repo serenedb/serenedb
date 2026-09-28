@@ -61,7 +61,7 @@ Pruning engages only when all of the following hold; otherwise the query still r
 - the scorer **matches the one named in `optimize_top_k` exactly** (a different scorer falls back to a full scan);
 - the filter is a single term or an `OR` of terms (not a phrase, `AND` or `NOT`).
 
-You can confirm pruning is active in the query plan — `EXPLAIN` shows `Top: k, optimized` on the scan (`Top: k, offset n, optimized` when the query has an `OFFSET`); the scan returns the answer rows already ranked, so no separate `TOP_N` operator sits above it. The [`sdb_disable_top_k_optimization` and `sdb_scored_terms_limit` session settings](./maintenance.md#session-settings) tune this at query time.
+You can confirm pruning is active in the query plan — `EXPLAIN` shows `Top: k, optimized` on the scan (`Top: k, offset n, optimized` when the query has an `OFFSET`); the scan returns the answer rows already ranked, so no separate `TOP_N` operator sits above it. The [`sdb_disable_top_k_optimization` session setting](./maintenance.md#session-settings) turns it off at query time.
 
 ## Tie-breaking
 

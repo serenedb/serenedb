@@ -18,10 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "docs/docs_index_data.h"
 
 namespace sdb::docs {
 
-void LoadEmbeddedDocs();
+[[gnu::weak]] std::span<const IndexFile> GetDocsIndex() { return {}; }
+
+[[gnu::weak]] std::span<const IndexFile> GetObjectsIndex() { return {}; }
 
 }  // namespace sdb::docs

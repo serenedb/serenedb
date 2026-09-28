@@ -142,7 +142,6 @@ struct InvertedIndexConfig final : irs::IndexFieldOptions {
 
   const InvertedIndexField* FindEntry(irs::field_id field_id) const noexcept;
   irs::field_id TermField(irs::field_id column_id) const noexcept;
-  std::vector<irs::field_id> TermFields(irs::field_id column_id) const;
   irs::field_id ColumnOf(irs::field_id field_id) const noexcept;
   const InvertedIndexField* FindColumnInfo(
     irs::field_id column_id) const noexcept {

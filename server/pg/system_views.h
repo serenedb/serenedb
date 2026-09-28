@@ -28,7 +28,6 @@ struct SystemView {
   std::string_view schema;
   std::string_view name;
   std::string_view sql;
-  bool superuser_only = false;
 };
 
 // TODO(mkornaukhov) write queries in separate sql file
@@ -80,8 +79,7 @@ inline constexpr SystemView kExternalViews[] = {
           setconfig AS useconfig
       FROM pg_authid LEFT JOIN pg_db_role_setting s
       ON (pg_authid.oid = setrole AND setdatabase = 0)
-      WHERE rolcanlogin)",
-   /*superuser_only=*/true},
+      WHERE rolcanlogin)"},
 
   {"pg_catalog", "pg_group",
    R"(SELECT

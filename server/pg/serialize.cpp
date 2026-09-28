@@ -1806,6 +1806,19 @@ IRS_FORCE_INLINE bool EmitArrayElems(SerializationContext& ctx, const RUVF& cv,
   return has_null;
 }
 
+int32_t DynamicElementOid(SerializationContext& context,
+                          const duckdb::LogicalType& type) {
+  const auto info = type.AuxInfo();
+  if (!info) {
+    return Type2Oid(type, context.client, false);
+  }
+  auto [it, inserted] = context.element_oids.try_emplace(info.get(), 0);
+  if (inserted) {
+    it->second = Type2Oid(type, context.client, false);
+  }
+  return it->second;
+}
+
 template<typename Core, int32_t ElementOID, VarFormat Format,
          WrapContext InContainer>
 struct OneDimArrayCore {
@@ -1849,7 +1862,7 @@ struct OneDimArrayCore {
     } else {
       int32_t element_oid;
       if constexpr (ElementOID == kDynamicOid) {
-        element_oid = Type2Oid(child_vdata.logical_type, context.client, false);
+        element_oid = DynamicElementOid(context, child_vdata.logical_type);
       } else {
         element_oid = ElementOID;
       }
@@ -1894,14 +1907,14 @@ void FlattenArray(SerializationContext& context, const RUVF& vdata,
                ? &duckdb::ArrayType::GetChildType(*leaf)
                : &duckdb::ListType::GetChildType(*leaf);
     }
-    leaf_oid = Type2Oid(*leaf, context.client, false);
+    leaf_oid = DynamicElementOid(context, *leaf);
     return;
   }
   const auto child_lid = child_vdata.logical_type.id();
   if (child_lid != duckdb::LogicalTypeId::ARRAY &&
       child_lid != duckdb::LogicalTypeId::LIST &&
       child_lid != duckdb::LogicalTypeId::MAP) {
-    leaf_oid = Type2Oid(child_vdata.logical_type, context.client, false);
+    leaf_oid = DynamicElementOid(context, child_vdata.logical_type);
     has_null |= EmitArrayElems<Core, VarFormat::Binary>(
       context, child_vdata, array_offset, array_size);
     return;
@@ -2012,7 +2025,7 @@ struct MultiDimArrayCore {
         // PG sends an empty array as ndim=0 with no dimension descriptors.
         int32_t leaf_oid;
         if constexpr (ElementOID == kDynamicOid) {
-          leaf_oid = Type2Oid(*t, context.client, false);
+          leaf_oid = DynamicElementOid(context, *t);
         } else {
           leaf_oid = ElementOID;
         }
@@ -2383,6 +2396,7 @@ void FillContext(const Config& config, SerializationContext& context) {
   context.client = &config.GetClientContext();
   // types_cache stays lazy (GetSerializersCache); record results only.
   context.types_cache.reset();
+  context.element_oids.clear();
 }
 
 SerializationFunction GetSerialization(const duckdb::LogicalType& type,

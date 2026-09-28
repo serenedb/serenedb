@@ -27,6 +27,7 @@
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
 
@@ -87,6 +88,8 @@ struct SerializationContext {
   std::unique_ptr<icu::TimeZone> time_zone;
   duckdb::shared_ptr<const duckdb::ZoneLUT> zone_lut;
   std::unique_ptr<TypesSerializationCache> types_cache;
+  irs::containers::FlatHashMap<const duckdb::ExtraTypeInfo*, int32_t>
+    element_oids;
   std::vector<duckdb::RecursiveUnifiedVectorFormat> decoded;
 };
 

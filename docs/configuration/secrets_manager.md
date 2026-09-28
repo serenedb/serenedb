@@ -39,7 +39,7 @@ Secrets can be **temporary** or **persistent**. Temporary secrets are used by de
 
 ### Secret Providers
 
-To create a secret, a **Secret Provider** needs to be used. A Secret Provider is a mechanism through which a secret is generated. To illustrate this, for the `S3` secret type, SereneDB currently supports two providers: `CONFIG` and `credential_chain`. The `CONFIG` provider requires the user to pass all configuration information into the `CREATE SECRET`, whereas the `credential_chain` provider will automatically try to fetch credentials. When no Secret Provider is specified, the `CONFIG` provider is used.
+To create a secret, a **Secret Provider** needs to be used. A Secret Provider is a mechanism through which a secret is generated. To illustrate this, the `S3` secret type supports the `CONFIG` provider, which takes all configuration information in the `CREATE SECRET` statement. When no Secret Provider is specified, the `CONFIG` provider is used. The S3 `credential_chain` provider, which fetches credentials automatically, needs DuckDB's `aws` extension and is not available in SereneDB; the Azure `credential_chain` provider is. See [AWS Credentials](aws_credentials.md) for the ways to authenticate to S3.
 
 ### Temporary Secrets
 

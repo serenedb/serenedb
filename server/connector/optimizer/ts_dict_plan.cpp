@@ -1593,19 +1593,6 @@ bool IsCompilableAcceptorOn(irs::Filter& filter, irs::field_id field) {
   return IsAcceptorTreeOn(filter, field) && filter.CompileTermPredicate();
 }
 
-bool ContainsNegation(irs::Filter& filter) {
-  if (filter.type() == irs::Type<irs::BooleanFilter>::id() &&
-      irs::utils::downCast<irs::BooleanFilter>(filter).Size(
-        irs::Occur::MustNot) != 0) {
-    return true;
-  }
-  bool found = false;
-  filter.VisitChildren([&](irs::Filter::ptr& child, bool) {
-    found = found || (child && ContainsNegation(*child));
-  });
-  return found;
-}
-
 // Dry-runs every WHERE conjunct: it must reference the scan, claim into
 // the index, and (in multi-key mode) route to exactly one non-nullable
 // enumerated field as a seekable acceptor. A single-key conjunct on the
@@ -1997,7 +1984,7 @@ class TsDictFilterClaim {
         continue;
       }
       auto one = ClaimConjunct(_filters[i], _term_getter, _term_expr_getter);
-      if (!one || (_multi_term[i] && ContainsNegation(*one))) {
+      if (!one || (_multi_term[i] && irs::ContainsNegation(*one))) {
         if (mandatory) {
           ThrowUnclaimableTsDictConjunct(EnumeratedFieldCount());
         }

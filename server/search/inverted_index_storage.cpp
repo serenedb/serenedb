@@ -325,6 +325,43 @@ void InvertedIndexStorage::ApplyOptions(
   _writer->Options(segment_options);
 }
 
+auto InvertedIndexStorage::ReindexClaim::TryAcquire(
+  InvertedIndexStorage& storage) -> ReindexClaim {
+  absl::MutexLock lock{&storage._reindex_mutex};
+  if (storage._reindex_in_flight || storage._reindex_waiters != 0) {
+    return ReindexClaim{nullptr};
+  }
+  storage._reindex_in_flight = true;
+  return ReindexClaim{&storage};
+}
+
+auto InvertedIndexStorage::ReindexClaim::Acquire(
+  InvertedIndexStorage& storage, absl::FunctionRef<bool()> cancelled,
+  absl::Duration poll) -> ReindexClaim {
+  absl::MutexLock lock{&storage._reindex_mutex};
+  ++storage._reindex_waiters;
+  absl::Cleanup leave = [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS noexcept {
+    --storage._reindex_waiters;
+  };
+  while (storage._reindex_in_flight) {
+    if (storage._reindex_cv.WaitWithTimeout(&storage._reindex_mutex, poll) &&
+        cancelled()) {
+      return ReindexClaim{nullptr};
+    }
+  }
+  storage._reindex_in_flight = true;
+  return ReindexClaim{&storage};
+}
+
+InvertedIndexStorage::ReindexClaim::~ReindexClaim() {
+  if (!_storage) {
+    return;
+  }
+  absl::MutexLock lock{&_storage->_reindex_mutex};
+  _storage->_reindex_in_flight = false;
+  _storage->_reindex_cv.SignalAll();
+}
+
 void InvertedIndexStorage::Refresh(
   const irs::ProgressReportCallback& progress) {
   RefreshResult code = RefreshResult::Undefined;

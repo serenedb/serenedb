@@ -61,6 +61,13 @@ def role():
         _drop_role(conn, database)
 
 
+@pytest.fixture()
+def http_conn():
+    conn = http.client.HTTPConnection(HOST, PORT, timeout=30)
+    yield conn
+    conn.close()
+
+
 def session_user(conn: http.client.HTTPConnection, auth: str) -> tuple[int, str]:
     conn.request("GET", "/_test/session_user", headers={"Authorization": auth})
     response = conn.getresponse()
@@ -68,34 +75,31 @@ def session_user(conn: http.client.HTTPConnection, auth: str) -> tuple[int, str]
     return response.status, body
 
 
-def test_each_request_runs_as_the_role_it_authenticated_as(role):
-    conn = http.client.HTTPConnection(HOST, PORT, timeout=30)
-    try:
-        answers = []
-        sockets = []
-        for auth in (SUPERUSER_AUTH, ROLE_AUTH, SUPERUSER_AUTH, ROLE_AUTH, ROLE_AUTH):
-            answers.append(session_user(conn, auth))
-            sockets.append(conn.sock)
-        assert answers == [
-            (200, SUPERUSER_NAME),
-            (200, role),
-            (200, SUPERUSER_NAME),
-            (200, role),
-            (200, role),
-        ]
-        assert all(s is sockets[0] for s in sockets)
-    finally:
-        conn.close()
+def test_each_request_runs_as_the_role_it_authenticated_as(role, http_conn):
+    answers = []
+    sockets = []
+    for auth in (SUPERUSER_AUTH, ROLE_AUTH, SUPERUSER_AUTH, ROLE_AUTH, ROLE_AUTH):
+        answers.append(session_user(http_conn, auth))
+        sockets.append(http_conn.sock)
+    assert answers == [
+        (200, SUPERUSER_NAME),
+        (200, role),
+        (200, SUPERUSER_NAME),
+        (200, role),
+        (200, role),
+    ]
+    assert all(s is sockets[0] for s in sockets)
 
 
-def test_a_rejected_request_does_not_change_the_session_role(role):
-    conn = http.client.HTTPConnection(HOST, PORT, timeout=30)
-    try:
-        assert session_user(conn, ROLE_AUTH) == (200, role)
-        wrong = "Basic " + base64.b64encode(f"{ROLE}:wrong".encode()).decode()
-        status, _ = session_user(conn, wrong)
-        assert status == 401
-        assert session_user(conn, SUPERUSER_AUTH) == (200, SUPERUSER_NAME)
-        assert session_user(conn, ROLE_AUTH) == (200, role)
-    finally:
-        conn.close()
+def test_a_rejected_request_does_not_change_the_session_role(role, http_conn):
+    wrong = "Basic " + base64.b64encode(f"{ROLE}:wrong".encode()).decode()
+    answers = []
+    for auth in (ROLE_AUTH, wrong, SUPERUSER_AUTH, ROLE_AUTH):
+        status, body = session_user(http_conn, auth)
+        answers.append((status, body) if status == 200 else (status,))
+    assert answers == [
+        (200, role),
+        (401,),
+        (200, SUPERUSER_NAME),
+        (200, role),
+    ]

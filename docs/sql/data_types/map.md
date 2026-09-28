@@ -9,7 +9,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 `MAP`s must have a single type for all keys, and a single type for all values. Keys and values can be any type, and the type of the keys does not need to match the type of the values (e.g., a `MAP` of `VARCHAR` to `INT` is valid). `MAP`s may not have duplicate keys. `MAP`s return `NULL` if a key is not found rather than throwing an error as structs do.
 
-In contrast, `STRUCT`s must have string keys, but each value may have a different type. See the [data types overview](../../sql/data_types/overview.md) for a comparison between nested data types.
+In contrast, `STRUCT`s must have string keys, but each value may have a different type. See the [data types overview](../../sql/data_types/index.md) for a comparison between nested data types.
 
 To construct a `MAP`, use the bracket syntax preceded by the `MAP` keyword.
 

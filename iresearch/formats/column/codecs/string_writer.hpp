@@ -48,6 +48,7 @@ struct StringTuning {
   std::optional<StringChoice> choice;
   double bytes_per_input = 0;
   bool levels_tuned = false;
+  uint64_t last_distinct = 0;
   uint8_t level[kByteCodecCount]{};
   bool wide[kByteCodecCount]{};
   RatioHistory history[kByteCodecCount][2]{};
@@ -62,7 +63,7 @@ class StringAccumulator {
  public:
   explicit StringAccumulator(bool dedup) noexcept : _dedup{dedup} {}
 
-  void Reserve(uint64_t rows);
+  void Reserve(uint64_t rows, uint64_t distinct);
   void Add(const duckdb::Vector& input);
 
   uint64_t row_count = 0;

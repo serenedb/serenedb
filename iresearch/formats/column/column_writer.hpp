@@ -37,11 +37,6 @@
 #include "iresearch/types.hpp"
 
 namespace irs {
-namespace codecs {
-
-struct StringTuning;
-
-}  // namespace codecs
 
 class ColWriter;
 
@@ -162,7 +157,6 @@ class ColumnWriter final {
   duckdb::Vector _hll_hashes{duckdb::LogicalType::HASH, nullptr};
   int64_t _variant_min_shred_size = -1;
   duckdb::LogicalType _force_variant_shredding;
-  std::unique_ptr<codecs::StringTuning> _string_tuning;
   ColumnMeta _meta;
 };
 

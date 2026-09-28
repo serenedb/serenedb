@@ -69,7 +69,6 @@
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <functional>
-#include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -882,21 +881,8 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
   pass_conn.RunPass(target, std::move(info));
 }
 
-// A committed remove-all, then the plain CREATE INDEX pipeline over the
-// live index -- the pass's docs commit above the remove. Readers see an
-// empty index until the pass lands; a died rebuild leaves it empty and
-// the version mismatch relaunches.
 void RunFullRebuild(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
-                    const ReindexTarget& target,
-                    search::InvertedIndexStorage& storage) {
-  auto trx = storage.GetTransaction();
-  trx.Remove(std::make_shared<irs::All>());
-  trx.RegisterFlush();
-  if (!trx.Commit(search::TickDomain::Instance().Next(trx.GetQueries() + 1))) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("REINDEX of \"", target.name,
-                            "\": failed to commit the remove-all"));
-  }
+                    const ReindexTarget& target) {
   PassConnection pass_conn{context, conn_ctx, target};
   auto info = duckdb::make_uniq<SereneDBCreateIndexInfo>();
   info->source_index = target.index->name;
@@ -936,7 +922,7 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
     return {ReindexAction::Delta, files.added, files.changed, files.removed,
             static_cast<int64_t>(files.scan.size()) - files.added};
   }
-  RunFullRebuild(context, conn_ctx, target, storage);
+  RunFullRebuild(context, conn_ctx, target);
   return {ReindexAction::Rebuild, files.added, files.changed, files.removed,
           static_cast<int64_t>(src.files.size())};
 }
@@ -1015,12 +1001,12 @@ ReindexOutcome RunClaimed(
   }
   // No manifest (external-pk index) or no observable source: full rebuild.
   if (!src) {
-    RunFullRebuild(context, conn_ctx, target, *storage);
+    RunFullRebuild(context, conn_ctx, target);
     return {};
   }
   if (manifest->version && manifest->entries.empty() &&
       storage->GetInvertedIndexSnapshot()->reader.live_docs_count() > 0) {
-    RunFullRebuild(context, conn_ctx, target, *storage);
+    RunFullRebuild(context, conn_ctx, target);
     return {};
   }
   if (src->version && src->version == manifest->version) {
@@ -1035,7 +1021,7 @@ ReindexOutcome RunClaimed(
         !SnapshotIsAncestor(*src->iceberg_list, manifest->version)) {
       // The indexed snapshot left the table's history: deletes may have
       // been UNDONE, invisible to any seq diff. Only a rebuild converges.
-      RunFullRebuild(context, conn_ctx, target, *storage);
+      RunFullRebuild(context, conn_ctx, target);
       return {ReindexAction::Rebuild, 0, 0, 0,
               static_cast<int64_t>(src->files.size())};
     }

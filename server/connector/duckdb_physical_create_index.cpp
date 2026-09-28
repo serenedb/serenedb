@@ -55,6 +55,7 @@
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <duckdb/transaction/undo_buffer.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -343,6 +344,18 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     return state;
   }
   state->index_storage = storage;
+  if (extras && extras->Pass() == ReindexPass::Rebuild) {
+    auto trx = storage->GetTransaction();
+    trx.Remove(std::make_shared<irs::All>());
+    trx.RegisterFlush();
+    if (!trx.Commit(
+          search::TickDomain::Instance().Next(trx.GetQueries() + 1))) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INTERNAL_ERROR),
+        ERR_MSG("REINDEX of \"", extras->source_index.GetIdentifierName(),
+                "\": failed to commit the remove-all"));
+    }
+  }
 
   state->table_id = _relation.oid;
   // One slot per entry of info.column_ids, in that order, then the row

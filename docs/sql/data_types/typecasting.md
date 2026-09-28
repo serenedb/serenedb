@@ -5,6 +5,7 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import DocCallout from "@site/src/components/DocCallout";
+import useBaseUrl from "@docusaurus/useBaseUrl";
 
 Typecasting is an operation that converts a value in one particular data type to the closest corresponding value in another data type.
 Like other SQL engines, SereneDB supports both implicit and explicit typecasting.
@@ -37,7 +38,7 @@ Values of a particular data type cannot always be cast to any arbitrary target d
 The following matrix describes which conversions are supported.
 When implicit casting is allowed, it implies that explicit casting is also possible.
 
-<img alt="Typecasting matrix" src="/images/typecasting-matrix.png"/>
+<img alt="Typecasting matrix" src={useBaseUrl("/images/typecasting-matrix.png")}/>
 
 Even though a casting operation is supported based on the source and target data type, it does not necessarily mean the cast operation will succeed at runtime.
 

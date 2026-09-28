@@ -4,8 +4,9 @@ split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
+import useBaseUrl from "@docusaurus/useBaseUrl";
 
-Below is a collection of tips to help when attempting to import complex CSV files. In the examples, we use the <a href="/files/docs/flights.csv" download>`flights.csv`</a> file.
+Below is a collection of tips to help when attempting to import complex CSV files. In the examples, we use the <a href={useBaseUrl("/files/docs/flights.csv")} download>`flights.csv`</a> file.
 
 ## Override the Header Flag if the Header Is Not Correctly Detected
 

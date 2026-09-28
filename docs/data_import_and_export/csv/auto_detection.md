@@ -4,6 +4,7 @@ split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
+import useBaseUrl from "@docusaurus/useBaseUrl";
 
 When using `read_csv`, the system tries to automatically infer how to read the CSV file using the CSV sniffer.
 This step is necessary because CSV files are not self-describing and come in many different dialects. The auto-detection works roughly as follows:
@@ -72,7 +73,7 @@ The following dialects are considered for automatic dialect detection.
 
 <!-- markdownlint-enable MD056 -->
 
-Consider the example file <a href="/files/docs/flights.csv" download>`flights.csv`</a>:
+Consider the example file <a href={useBaseUrl("/files/docs/flights.csv")} download>`flights.csv`</a>:
 
 ```csv
 FlightDate|UniqueCarrier|OriginCityName|DestCityName
@@ -113,7 +114,7 @@ The type detection works by attempting to convert the values in each column to t
 </div>
 
 Everything can be cast to `VARCHAR`, therefore, this type has the lowest priority meaning that all columns are converted to `VARCHAR` as a fallback if they cannot be cast to anything else.
-In <a href="/files/docs/flights.csv" download>`flights.csv`</a> the `FlightDate` column will be cast to a `DATE`, while the other columns will be cast to `VARCHAR`.
+In <a href={useBaseUrl("/files/docs/flights.csv")} download>`flights.csv`</a> the `FlightDate` column will be cast to a `DATE`, while the other columns will be cast to `VARCHAR`.
 
 The set of candidate types that should be considered by the CSV reader can be specified explicitly using the [`auto_type_candidates`](../../data_import_and_export/csv/overview.md#auto_type_candidates-details) option. `VARCHAR` as the fallback type will always be considered as a candidate type whether you specify it or not.
 
@@ -151,7 +152,7 @@ The `sniff_csv()` function's `Column` field returns a struct with column names a
 
 ## Header Detection
 
-Header detection works by checking if the candidate header row deviates from the other rows in the file in terms of types. For example, in <a href="/files/docs/flights.csv" download>`flights.csv`</a>, we can see that the header row consists of only `VARCHAR` columns – whereas the values contain a `DATE` value for the `FlightDate` column. As such – the system defines the first row as the header row and extracts the column names from the header row.
+Header detection works by checking if the candidate header row deviates from the other rows in the file in terms of types. For example, in <a href={useBaseUrl("/files/docs/flights.csv")} download>`flights.csv`</a>, we can see that the header row consists of only `VARCHAR` columns – whereas the values contain a `DATE` value for the `FlightDate` column. As such – the system defines the first row as the header row and extracts the column names from the header row.
 
 In files that do not have a header row, the column names are generated as `column0`, `column1`, etc.
 

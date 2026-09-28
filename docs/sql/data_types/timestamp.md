@@ -9,6 +9,7 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import DocCallout from "@site/src/components/DocCallout";
+import useBaseUrl from "@docusaurus/useBaseUrl";
 
 Timestamps represent points in time. As such, they combine [`DATE`](../../sql/data_types/date.md) and [`TIME`](../../sql/data_types/time.md) information.
 They can be created using the type name followed by a string formatted according to the ISO 8601 format, `YYYY-MM-DD hh:mm:ss[.zzzzzzzzz][+-TT[:tt]]`, which is also the format we use in this documentation. Decimal places beyond the supported precision are ignored.
@@ -98,12 +99,12 @@ An instant is a point in absolute time, usually given as a count of some time in
 
 Binning is a common practice with continuous data: A range of possible values is broken up into contiguous subsets and the binning operation maps actual values to the _bin_ they fall into. _Temporal binning_ is simply applying this practice to instants; for example, by binning instants into years, months and days.
 
-<img src="/images/blog/timezones/tz-instants-light.svg"
+<img src={useBaseUrl("/images/blog/timezones/tz-instants-light.svg")}
      alt="Time Zone Instants at the Epoch"
      width="600"
      className="lightmode-img"
      />
-<img src="/images/blog/timezones/tz-instants-dark.svg"
+<img src={useBaseUrl("/images/blog/timezones/tz-instants-dark.svg")}
      alt="Time Zone Instants at the Epoch"
      width="600"
      className="darkmode-img"
@@ -114,12 +115,12 @@ For most tasks, the calendar will just be the widely used Gregorian calendar,
 but time zones apply locale-specific rules and can vary widely.
 For example, here is what binning for the `'America/Los_Angeles'` time zone looks like near the epoch:
 
-<img src="/images/blog/timezones/tz-timezone-light.svg"
+<img src={useBaseUrl("/images/blog/timezones/tz-timezone-light.svg")}
      alt="Two Time Zones at the Epoch"
      width="600"
      className="lightmode-img"
      />
-<img src="/images/blog/timezones/tz-timezone-dark.svg"
+<img src={useBaseUrl("/images/blog/timezones/tz-timezone-dark.svg")}
      alt="Two Time Zones at the Epoch"
      width="600"
      className="darkmode-img"
@@ -129,12 +130,12 @@ The most common temporal binning problem occurs when daylight saving time change
 The example below contains a daylight saving time change where the "hour" bin is two hours long.
 To distinguish the two hours, another range of bins containing the offset from UTC is needed:
 
-<img src="/images/blog/timezones/tz-daylight-light.svg"
+<img src={useBaseUrl("/images/blog/timezones/tz-daylight-light.svg")}
      alt="Two Time Zones at a Daylight Savings Time transition"
      width="600"
      className="lightmode-img"
      />
-<img src="/images/blog/timezones/tz-daylight-dark.svg"
+<img src={useBaseUrl("/images/blog/timezones/tz-daylight-dark.svg")}
      alt="Two Time Zones at a Daylight Savings Time transition"
      width="600"
      className="darkmode-img"

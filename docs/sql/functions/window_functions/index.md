@@ -8,6 +8,7 @@ import RailroadSource from './diagram.js';
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import DocCallout from "@site/src/components/DocCallout";
+import useBaseUrl from "@docusaurus/useBaseUrl";
 
 <!-- markdownlint-disable MD001 -->
 
@@ -48,7 +49,7 @@ Compute the percentage of the total `amount` of sales per `region` for each row:
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram" />
 
-Window functions can only be used in the `SELECT` clause. To share `OVER` specifications between functions, use the statement's [`WINDOW` clause](../../../sql/query_syntax/window/index.md) and use the `OVER ⟨window_name⟩`{:.language-sql .highlight} syntax.
+Window functions can only be used in the `SELECT` clause. To share `OVER` specifications between functions, use the statement's [`WINDOW` clause](../../../sql/query_syntax/window/index.md) and use the `OVER ⟨window_name⟩` syntax.
 
 ## General-Purpose Window Functions
 
@@ -256,8 +257,8 @@ or as a number of _groups_ (sets of rows with the same sort value).
 The full syntax is shown in the diagram at the top of the page,
 and this diagram visually illustrates computation environment:
 
-<img src="/images/framing-light.png" alt="The Window Computation Environment" title="Figure 1: The Window Computation Environment" className="lightmode-img" />
-<img src="/images/framing-dark.png" alt="The Window Computation Environment" title="Figure 1: The Window Computation Environment" className="darkmode-img" />
+<img src={useBaseUrl("/images/framing-light.png")} alt="The Window Computation Environment" title="Figure 1: The Window Computation Environment" className="lightmode-img" />
+<img src={useBaseUrl("/images/framing-dark.png")} alt="The Window Computation Environment" title="Figure 1: The Window Computation Environment" className="darkmode-img" />
 
 ### Partition and Ordering
 
@@ -309,7 +310,7 @@ Here is a simple `ROW` frame query, using an aggregate function:
 
 This query computes the `sum` of each point and the points on either side of it:
 
-<img src="/images/blog/windowing/moving-sum.jpg" alt="Moving SUM of three values" title="Figure 2: A moving SUM of three values"/>
+<img src={useBaseUrl("/images/blog/windowing/moving-sum.jpg")} alt="Moving SUM of three values" title="Figure 2: A moving SUM of three values"/>
 
 Notice that at the edge of the partition, there are only two values added together.
 This is because frames are cropped to the edge of the partition.

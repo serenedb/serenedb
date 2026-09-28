@@ -7,7 +7,7 @@ statement ok
 DETACH IF EXISTS aad_ro;
 
 statement ok
-ATTACH '${__TEST_DIR__}/aad.db' AS aad;
+ATTACH '${__SUITE_DIR__}/aad.db' AS aad;
 
 statement ok
 CREATE OR REPLACE TABLE aad.main.docs(id INTEGER);
@@ -36,7 +36,7 @@ DETACH aad;
 
 connection default
 statement ok
-ATTACH '${__TEST_DIR__}/aad.db' AS aad;
+ATTACH '${__SUITE_DIR__}/aad.db' AS aad;
 
 
 connection default
@@ -54,7 +54,7 @@ DETACH aad;
 
 connection default
 statement ok
-ATTACH '${__TEST_DIR__}/aad.db' AS aad (READ_ONLY);
+ATTACH '${__SUITE_DIR__}/aad.db' AS aad (READ_ONLY);
 
 
 connection default
@@ -77,7 +77,7 @@ DETACH aad;
 
 connection default
 statement ok
-ATTACH '${__TEST_DIR__}/aad.db' AS aad;
+ATTACH '${__SUITE_DIR__}/aad.db' AS aad;
 
 
 connection default
@@ -97,7 +97,7 @@ COMMIT;
 
 connection default
 statement ok
-ATTACH '${__TEST_DIR__}/aad.db' AS aad_ro (READ_ONLY);
+ATTACH '${__SUITE_DIR__}/aad.db' AS aad_ro (READ_ONLY);
 
 
 connection default

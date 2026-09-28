@@ -176,7 +176,7 @@ statement ok
 DETACH DATABASE IF EXISTS refmt_ext;
 
 statement ok
-ATTACH '${__TEST_DIR__}/refmt_ext.duckdb' AS refmt_ext;
+ATTACH '${__SUITE_DIR__}/refmt_ext.duckdb' AS refmt_ext;
 
 statement ok
 CREATE OR REPLACE TABLE refmt_ext.t (id INTEGER, body TEXT);

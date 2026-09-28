@@ -346,6 +346,13 @@ cleanup_clickhouse() {
 	fi
 }
 
+cleanup_suite_dir() {
+	if [[ -n "$OWNED_SUITE_DIR" ]]; then
+		rm -rf "$OWNED_SUITE_DIR"
+		OWNED_SUITE_DIR=""
+	fi
+}
+
 cleanup_all() {
 	cleanup_cancel_pid
 	cleanup_iceberg_rest
@@ -355,6 +362,7 @@ cleanup_all() {
 	cleanup_minio
 	cleanup_azure
 	cleanup_test_network
+	cleanup_suite_dir
 }
 
 trap cleanup_all EXIT
@@ -364,6 +372,16 @@ trap cleanup_all EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
+
+OWNED_SUITE_DIR=""
+if [[ -z "${SLT_SUITE_DIR:-}" ]]; then
+	SLT_SUITE_DIR=$(mktemp -d)
+	OWNED_SUITE_DIR="$SLT_SUITE_DIR"
+	if [[ -n "${SLT_TEST_DIR_SHARED:-}" ]]; then
+		chmod 0777 "$SLT_SUITE_DIR"
+	fi
+	export SLT_SUITE_DIR
+fi
 
 launch_s3() {
 	# Preset connection env (the recovery compose provides MinIO as a

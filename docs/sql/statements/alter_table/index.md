@@ -126,8 +126,8 @@ Or:
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_021" />
 
-The `DROP [COLUMN]` clause can be used to remove a column from a table. Note that columns can only be removed if they do not have any indexes that rely on them. This includes any indexes created as part of a `PRIMARY KEY` or `UNIQUE` constraint. Columns that are part of multi-column check constraints cannot be dropped either.
-If you attempt to drop a column with an index on it, SereneDB returns a `Catalog Error` reporting that the column is referenced by that index or constraint.
+The `DROP [COLUMN]` clause can be used to remove a column from a table. As in PostgreSQL, every index created with `CREATE INDEX` that uses the column (as a key, in an indexed expression or in its `WHERE` predicate) is dropped along with it. A column cannot be removed while an index created as part of a `PRIMARY KEY` or `UNIQUE` constraint relies on it, or while any remaining index uses a column that comes after it. Columns that are part of multi-column check constraints cannot be dropped either.
+In those cases SereneDB returns a `Catalog Error` reporting that an index or constraint depends on the column.
 
 ## `[SET [DATA]] TYPE`
 

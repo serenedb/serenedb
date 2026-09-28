@@ -218,17 +218,19 @@ db error: ERROR: Could not rename "deadinside" to "pudge": another entry with th
 statement error
 ALTER TABLE pudge RENAME TO pudge;
 ----
-db error: ERROR: Cannot alter entry "pudge" because there are entries that depend on it.
+db error: ERROR: Could not rename "pudge" to "pudge": another entry with this name already exists!
 
 
-# A rename to the entry's own name is a plain alter for duckdb (CatalogSet::AlterEntry
-# only enters the rename path when the name changes), so it succeeds where PG
-# answers "relation already exists".
-statement ok
+statement error
 ALTER VIEW pudge_view RENAME TO pudge_view;
+----
+db error: ERROR: Could not rename "pudge_view" to "pudge_view": another entry with this name already exists!
 
-statement ok
+
+statement error
 ALTER FUNCTION clickclack RENAME TO clickclack;
+----
+db error: ERROR: Could not rename "clickclack" to "clickclack": another entry with this name already exists!
 
 
 statement error

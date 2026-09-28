@@ -199,7 +199,7 @@ connection s1
 statement error
 COMMIT;
 ----
-db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "ccd_index_i" has been deleted
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "ccd_index" has been deleted
 
 
 connection s1

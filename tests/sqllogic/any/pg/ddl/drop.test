@@ -18,7 +18,6 @@ BEGIN ATOMIC
 END;
 
 
-skipif serenedb
 statement error
 DROP TABLE deadinside;
 ----
@@ -26,32 +25,17 @@ db error: ERROR: "deadinside" is not a table
 HINT: Use DROP INDEX to remove an index.
 
 
-skipif postgres
-statement error
-DROP TABLE deadinside;
-----
-db error: ERROR: Table with name deadinside does not exist!
-Did you mean "<slt:ignore>"?
-
-
-skipif serenedb
 statement error
 DROP TABLE IF EXISTS deadinside;
 ----
 db error: ERROR: "deadinside" is not a table
 HINT: Use DROP INDEX to remove an index.
-
-
-skipif postgres
-statement ok
-DROP TABLE IF EXISTS deadinside;
 
 
 statement error
 DROP INDEX pudge;
 
 
-skipif serenedb # TODO(mbkkt) DuckDB lookups concrete type
 statement error
 DROP INDEX IF EXISTS pudge;
 ----
@@ -63,7 +47,6 @@ statement error
 DROP VIEW pudge;
 
 
-skipif serenedb # TODO(mbkkt) DuckDB lookups concrete type
 statement error
 DROP VIEW IF EXISTS pudge;
 ----
@@ -75,7 +58,6 @@ statement error
 DROP VIEW deadinside;
 
 
-skipif serenedb # TODO(mbkkt) DuckDB lookups concrete type
 statement error
 DROP VIEW IF EXISTS deadinside;
 ----

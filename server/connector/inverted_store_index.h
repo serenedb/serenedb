@@ -81,6 +81,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
     duckdb::IndexLock& l, duckdb::DataChunk& chunk, duckdb::Vector& row_ids,
     duckdb::optional_ptr<duckdb::SelectionVector> deleted_sel,
     duckdb::optional_ptr<duckdb::SelectionVector> non_deleted_sel) final;
+  bool RemovalNeedsColumnValues() const final { return false; }
 
   void OnReplayRange(duckdb::idx_t commit_offset) final {
     _replay_commit_offset = commit_offset;

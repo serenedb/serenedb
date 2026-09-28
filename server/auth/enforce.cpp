@@ -1312,9 +1312,6 @@ class Enforcer {
 
 void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
                  duckdb::Binder& binder, duckdb::LogicalOperator& plan) {
-  if (connection.IsStorageConnection()) {
-    return;
-  }
   Enforcer{context, connection, binder, plan}.Run();
 }
 

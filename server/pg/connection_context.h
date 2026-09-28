@@ -92,12 +92,6 @@ class ConnectionContext final : public query::Transaction {
   // moves the session role (and resets the effective role to it); the resets
   // restore the login role. Whether SHOW role reports 'none' vs a name is
   // carried by the `role` GUC's own value, not tracked here.
-  // A connection that speaks storage rather than catalog: the data store's own,
-  // which issues the index builds an ART over existing rows needs a physical
-  // plan for. Its statements must reach duckdb's native catalog paths, not the
-  // serenedb mutators that emitted them.
-  bool IsStorageConnection() const noexcept { return _storage_connection; }
-
   void SetEffectiveRole(duckdb::idx_t role) { _effective_role_id = role; }
   void SetSessionRole(duckdb::idx_t role) {
     _session_role_id = role;
@@ -165,7 +159,6 @@ class ConnectionContext final : public query::Transaction {
   const duckdb::idx_t _login_role_id;
   duckdb::idx_t _session_role_id;
   duckdb::idx_t _effective_role_id;
-  bool _storage_connection = false;
   pg::CopyInBridge* _copy_in_bridge = nullptr;
   std::string* _response_sink = nullptr;
   const otel::DecodedMetrics* _otel_metrics = nullptr;

@@ -44,9 +44,10 @@ enum class Shape : uint8_t {
   ListUnique,
   MapRepeated,
   MapUnique,
+  StructRepeated,
 };
 
-constexpr size_t kShapes = 4;
+constexpr size_t kShapes = 5;
 constexpr irs::field_id kField = 0;
 constexpr std::string_view kSeg = "bench_seg";
 
@@ -79,11 +80,18 @@ std::string ValueSql(Shape shape) {
     case Shape::MapUnique:
       return "map_from_entries(list_transform(range(8), lambda k: {'key': "
              "'attribute.' || k, 'value': 'v' || i || '-' || k}))";
+    case Shape::StructRepeated:
+      return "{'tags': " + ValueSql(Shape::ListRepeated) +
+             ", 'attrs': " + ValueSql(Shape::MapRepeated) + "}";
   }
   return {};
 }
 
 std::string EmptySql(Shape shape) {
+  if (shape == Shape::StructRepeated) {
+    return "{'tags': []::VARCHAR[], 'attrs': map([], [])::MAP(VARCHAR, "
+           "VARCHAR)}";
+  }
   if (shape == Shape::MapRepeated || shape == Shape::MapUnique) {
     return "map([], [])::MAP(VARCHAR, VARCHAR)";
   }
@@ -122,13 +130,23 @@ const Data& GetData(Shape shape) {
   return *slot;
 }
 
-void Write(irs::Directory& dir, const Data& data) {
+void Write(irs::Directory& dir, const Data& data, uint64_t gap = 0) {
   irs::ColWriter w{dir, kSeg, CsDb()};
   auto& cw = w.OpenColumn(kField, data.type);
-  for (const auto& chunk : data.chunks) {
-    cw.Append(chunk->data[0], chunk->size());
+  uint64_t row = 0;
+  for (size_t i = 0; i < data.chunks.size(); ++i) {
+    const auto& chunk = data.chunks[i];
+    if (gap == 0) {
+      cw.Append(chunk->data[0], chunk->size());
+    } else {
+      if (i % 3 == 0) {
+        row += gap;
+      }
+      cw.Append(row, chunk->data[0], chunk->size());
+    }
+    row += chunk->size();
   }
-  w.Commit(Rows());
+  w.Commit(row);
 }
 
 struct Seg {
@@ -185,18 +203,26 @@ struct RowSpan {
   uint64_t operator[](size_t i) const noexcept { return p[i]; }
 };
 
-void WriteSeal(benchmark::State& state, Shape shape) {
+void WriteSealGap(benchmark::State& state, Shape shape, uint64_t gap) {
   const auto& data = GetData(shape);
   uint64_t bytes = 0;
   for (auto _ : state) {
     irs::MemoryDirectory dir{};
-    Write(dir, data);
+    Write(dir, data, gap);
     bytes = DirBytes(dir);
     benchmark::DoNotOptimize(&dir);
   }
   state.counters["bytes"] = static_cast<double>(bytes);
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) *
                           static_cast<int64_t>(Rows()));
+}
+
+void WriteSeal(benchmark::State& state, Shape shape) {
+  WriteSealGap(state, shape, 0);
+}
+
+void WriteSealSparse(benchmark::State& state, Shape shape) {
+  WriteSealGap(state, shape, 1500);
 }
 
 void FullScan(benchmark::State& state, Shape shape) {
@@ -252,9 +278,13 @@ void SparseGather(benchmark::State& state, Shape shape) {
     ->UseRealTime();                                            \
   BENCHMARK_CAPTURE(fn, map_unique, Shape::MapUnique)           \
     ->Unit(benchmark::kMillisecond)                             \
+    ->UseRealTime();                                            \
+  BENCHMARK_CAPTURE(fn, struct_repeated, Shape::StructRepeated) \
+    ->Unit(benchmark::kMillisecond)                             \
     ->UseRealTime()
 
 NESTED_CASES(WriteSeal);
+NESTED_CASES(WriteSealSparse);
 NESTED_CASES(FullScan);
 NESTED_CASES(SparseGather);
 

@@ -18,9 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <duckdb.hpp>
+#include <duckdb/common/enum_util.hpp>
+#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/function/compression_function.hpp>
@@ -1357,5 +1360,46 @@ TEST_F(ColCodecsTest, MappedFileNumericCodecsUnaligned) {
     EXPECT_EQ(duckdb::FlatVector::GetData<int64_t>(o_rle)[0],
               static_cast<int64_t>(g / 50));
     EXPECT_EQ(p_bp.FetchRow(g, o_bp, 0), g % 6 != 0);
+  }
+}
+
+TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
+  const std::pair<duckdb::CompressionType, std::string_view> names[] = {
+    {duckdb::CompressionType::COMPRESSION_DICT_LZ4, "DICT_LZ4"},
+    {duckdb::CompressionType::COMPRESSION_DICT_ZSTD, "DICT_ZSTD"},
+    {duckdb::CompressionType::COMPRESSION_LZ4, "LZ4"},
+    {duckdb::CompressionType::COMPRESSION_COL_DICT_FSST, "DICT_FSST"},
+    {duckdb::CompressionType::COMPRESSION_COL_FSST, "FSST"},
+    {duckdb::CompressionType::COMPRESSION_DICT_ZXC, "DICT_ZXC"},
+    {duckdb::CompressionType::COMPRESSION_ZXC, "ZXC"},
+    {duckdb::CompressionType::COMPRESSION_COL_ZSTD, "ZSTD"},
+  };
+  const auto listed = duckdb::ListCompressionTypes();
+  EXPECT_EQ(
+    listed.size(),
+    static_cast<size_t>(duckdb::CompressionType::COMPRESSION_COUNT) +
+      std::size(names));
+  for (const auto& [type, name] : names) {
+    SCOPED_TRACE(name);
+    EXPECT_TRUE(duckdb::IsSereneDBCompressionType(type));
+    EXPECT_EQ(duckdb::EnumUtil::ToString(type), name);
+    EXPECT_EQ(duckdb::CompressionTypeToString(type), name);
+    EXPECT_NE(std::ranges::find(listed, name), listed.end());
+  }
+  const std::pair<std::string_view, duckdb::CompressionType> parsed[] = {
+    {"dict_lz4", duckdb::CompressionType::COMPRESSION_DICT_LZ4},
+    {"dict_zstd", duckdb::CompressionType::COMPRESSION_DICT_ZSTD},
+    {"lz4", duckdb::CompressionType::COMPRESSION_LZ4},
+    {"dict_zxc", duckdb::CompressionType::COMPRESSION_DICT_ZXC},
+    {"zxc", duckdb::CompressionType::COMPRESSION_ZXC},
+    {"dict_fsst", duckdb::CompressionType::COMPRESSION_DICT_FSST},
+    {"fsst", duckdb::CompressionType::COMPRESSION_FSST},
+    {"zstd", duckdb::CompressionType::COMPRESSION_ZSTD},
+  };
+  for (const auto& [name, type] : parsed) {
+    SCOPED_TRACE(name);
+    EXPECT_EQ(duckdb::EnumUtil::FromString<duckdb::CompressionType>(
+                std::string{name}),
+              type);
   }
 }

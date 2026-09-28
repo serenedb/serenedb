@@ -420,19 +420,19 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
   }
   codecs::StringAccumulator acc{!named ||
                                 named->shape == codecs::Shape::Dedup};
+  if (!meta.write_string_tuning) {
+    meta.write_string_tuning = std::make_shared<codecs::StringTuning>();
+  }
+  auto& tuning = *meta.write_string_tuning;
   uint64_t rows = 0;
   for (const auto& c : chunks) {
     rows += c.count;
   }
-  acc.Reserve(rows);
+  acc.Reserve(rows, tuning.last_distinct);
   for (auto& c : chunks) {
     acc.Add(c.data);
   }
-  codecs::StringTuning nested_tuning;
-  if (&meta == &_meta && !_string_tuning) {
-    _string_tuning = std::make_unique<codecs::StringTuning>();
-  }
-  auto& tuning = &meta == &_meta ? *_string_tuning : nested_tuning;
+  tuning.last_distinct = acc.entries.size();
   auto& out = Out();
   const auto outcome = codecs::SealSegments(
     acc, named, _codec_params, type, tuning,

@@ -19,6 +19,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/strings/str_cat.h>
+#include <brotli/decode.h>
+#include <brotli/encode.h>
 #include <gtest/gtest.h>
 #include <lz4frame.h>
 #include <zlib.h>
@@ -394,7 +396,41 @@ std::string Zxc(std::string_view in) {
   return out;
 }
 
+std::string Brotli(std::string_view in) {
+  std::string out(BrotliEncoderMaxCompressedSize(in.size()), '\0');
+  size_t size = out.size();
+  EXPECT_TRUE(BrotliEncoderCompress(
+    BROTLI_DEFAULT_QUALITY, BROTLI_DEFAULT_WINDOW, BROTLI_MODE_GENERIC,
+    in.size(), reinterpret_cast<const uint8_t*>(in.data()), &size,
+    reinterpret_cast<uint8_t*>(out.data())));
+  out.resize(size);
+  return out;
+}
+
+std::string Unbrotli(std::string_view in) {
+  auto* state = BrotliDecoderCreateInstance(nullptr, nullptr, nullptr);
+  std::string out;
+  std::array<uint8_t, 8192> block;
+  size_t avail_in = in.size();
+  const auto* next_in = reinterpret_cast<const uint8_t*>(in.data());
+  auto rc = BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT;
+  while (rc == BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT) {
+    size_t avail_out = block.size();
+    uint8_t* next_out = block.data();
+    rc = BrotliDecoderDecompressStream(state, &avail_in, &next_in, &avail_out,
+                                       &next_out, nullptr);
+    out.append(reinterpret_cast<const char*>(block.data()),
+               block.size() - avail_out);
+  }
+  EXPECT_EQ(rc, BROTLI_DECODER_RESULT_SUCCESS);
+  BrotliDecoderDestroyInstance(state);
+  return out;
+}
+
 std::string Encode(std::string_view coding, std::string_view in) {
+  if (coding == "br") {
+    return Brotli(in);
+  }
   if (coding == "gzip") {
     return Gzip(in);
   }
@@ -408,6 +444,9 @@ std::string Encode(std::string_view coding, std::string_view in) {
 }
 
 std::string Decode(std::string_view coding, std::string_view in) {
+  if (coding == "br") {
+    return Unbrotli(in);
+  }
   if (coding == "gzip") {
     return Gunzip(in);
   }
@@ -420,8 +459,8 @@ std::string Decode(std::string_view coding, std::string_view in) {
   return Unzxc(in);
 }
 
-constexpr std::array<std::string_view, 4> kCodings{"gzip", "zstd", "lz4",
-                                                   "zxc"};
+constexpr std::array<std::string_view, 5> kCodings{"gzip", "zstd", "lz4", "zxc",
+                                                   "br"};
 
 std::string DecodeAll(std::string_view body, std::string_view field,
                       size_t max_bytes = size_t{64} << 20) {
@@ -465,6 +504,9 @@ TEST(NetworkHttpCompression, NegotiatePrefersServerOrder) {
   EXPECT_EQ(token("gzip, zxc, lz4"), "gzip");
   EXPECT_EQ(token("zxc, lz4"), "zxc");
   EXPECT_EQ(token("*"), "zstd");
+  EXPECT_EQ(token("br"), "br");
+  EXPECT_EQ(token("gzip, deflate, br"), "br");
+  EXPECT_EQ(token("gzip, br, zstd"), "zstd");
   EXPECT_EQ(token("*;q=0, gzip"), "gzip");
   // A coding the client did not list is not acceptable on its own.
   EXPECT_EQ(token("zstd;q=0"), "identity");
@@ -478,15 +520,15 @@ TEST(NetworkHttpCompression, NegotiatePrefersServerOrder) {
   // Nothing we encode: the body still goes out, uncompressed.
   EXPECT_EQ(token(""), "identity");
   EXPECT_EQ(token("identity"), "identity");
-  EXPECT_EQ(token("br"), "identity");
-  EXPECT_EQ(token("gzip;q=0, zstd;q=0, lz4;q=0, zxc;q=0"), "identity");
+  EXPECT_EQ(token("compress"), "identity");
+  EXPECT_EQ(token("gzip;q=0, zstd;q=0, lz4;q=0, zxc;q=0, br;q=0"), "identity");
 }
 
 // The client ruled out every coding we have AND the uncompressed form, so
 // there is no representation left to send.
 TEST(NetworkHttpCompression, NegotiateNotAcceptable) {
   for (const auto* header :
-       {"identity;q=0", "*;q=0", "br, identity;q=0, *;q=0"}) {
+       {"identity;q=0", "*;q=0", "compress, identity;q=0, *;q=0"}) {
     EXPECT_EQ(NegotiateContentCoding(header).acceptance,
               Acceptance::NotAcceptable)
       << header;
@@ -513,7 +555,7 @@ TEST(NetworkHttpCompression, UnacceptableAndMalformedGetStatusCodes) {
   EXPECT_TRUE(malformed.Has("HTTP/1.1 400")) << malformed.head;
 
   // A coding we do not have is ordinary negotiation, not an error.
-  const auto unknown = Split(harness.Get("/large", "br"));
+  const auto unknown = Split(harness.Get("/large", "compress"));
   EXPECT_TRUE(unknown.Has("HTTP/1.1 200"));
   EXPECT_FALSE(unknown.Has("Content-Encoding"));
   EXPECT_EQ(unknown.body, kLarge);
@@ -551,7 +593,7 @@ TEST(NetworkHttpCompression, IdentityWhenNotAcceptedOrSmall) {
   EXPECT_FALSE(plain.Has("Content-Encoding"));
   EXPECT_EQ(plain.body, kLarge);
 
-  const auto unsupported = Split(harness.Get("/large", "br"));
+  const auto unsupported = Split(harness.Get("/large", "compress"));
   EXPECT_FALSE(unsupported.Has("Content-Encoding"));
   EXPECT_EQ(unsupported.body, kLarge);
 
@@ -564,7 +606,7 @@ TEST(NetworkHttpCompression, IdentityWhenNotAcceptedOrSmall) {
 // encoded bytes are never fed back through the encoder.
 TEST(NetworkHttpCompression, IncompressibleBodyStaysIdentity) {
   Harness harness;
-  for (const auto* coding : {"gzip", "zstd", "lz4", "zxc"}) {
+  for (const auto* coding : {"gzip", "zstd", "lz4", "zxc", "br"}) {
     const auto response = Split(harness.Get("/noise", coding));
     EXPECT_TRUE(response.Has("HTTP/1.1 200")) << coding;
     EXPECT_FALSE(response.Has("Content-Encoding")) << coding;
@@ -618,8 +660,8 @@ TEST(NetworkHttpCompression, ParseContentEncoding) {
   EXPECT_EQ(tokens("GZIP"), std::vector<std::string_view>{"gzip"});
   EXPECT_EQ(tokens("gzip, identity, zstd"),
             (std::vector<std::string_view>{"gzip", "zstd"}));
-  EXPECT_FALSE(ParseContentEncoding("br").has_value());
-  EXPECT_FALSE(ParseContentEncoding("gzip, br").has_value());
+  EXPECT_FALSE(ParseContentEncoding("compress").has_value());
+  EXPECT_FALSE(ParseContentEncoding("gzip, compress").has_value());
 }
 
 TEST(NetworkHttpCompression, DecodeContentEveryCoding) {
@@ -686,7 +728,7 @@ TEST(NetworkHttpCompression, RequestAndResponseCodings) {
 
 TEST(NetworkHttpCompression, RequestBodyErrors) {
   Harness harness;
-  const auto unknown = Split(harness.Post(kLarge, "br"));
+  const auto unknown = Split(harness.Post(kLarge, "compress"));
   EXPECT_TRUE(unknown.Has("HTTP/1.1 415")) << unknown.head;
   for (const auto coding : kCodings) {
     const auto corrupt = Split(harness.Post(kNoise, coding));
@@ -702,7 +744,7 @@ TEST(NetworkHttpCompression, EarlyErrorKeepsConnectionUsable) {
          std::tuple<std::string_view, std::string_view, std::string_view>, 3>{
          {{"", "gzip;q=huh", "400"},
           {"", "identity;q=0", "406"},
-          {"br", "", "415"}}}) {
+          {"compress", "", "415"}}}) {
     const auto raw = harness.Send(absl::StrCat(
       Harness::PostRequest(kLarge, content_encoding, accept_encoding,
                            /*keep_alive=*/true),
@@ -743,4 +785,20 @@ TEST(NetworkHttpCompression, DecodedBodyOverBodyLimit) {
   Harness harness;
   const auto response = Split(harness.Post(Zstd(zeros), "zstd"));
   EXPECT_TRUE(response.Has("HTTP/1.1 413")) << response.head;
+}
+
+TEST(NetworkHttpCompression, BrotliBothDirections) {
+  Harness harness;
+  const auto fixed = Split(harness.Get("/large", "br"));
+  EXPECT_TRUE(fixed.Has("Content-Encoding: br"));
+  EXPECT_EQ(Unbrotli(fixed.body), kLarge);
+
+  const auto chunked = Split(harness.Get("/chunked", "br"));
+  EXPECT_TRUE(chunked.Has("Transfer-Encoding: chunked"));
+  EXPECT_TRUE(chunked.Has("Content-Encoding: br"));
+  EXPECT_EQ(Unbrotli(chunked.body), kLarge);
+
+  const auto echo = Split(harness.Post(Brotli(kLarge), "br", "br"));
+  EXPECT_TRUE(echo.Has("Content-Encoding: br"));
+  EXPECT_EQ(Unbrotli(echo.body), kLarge);
 }

@@ -13,11 +13,12 @@ that asks for none is answered uncompressed.
 | Coding | Token | Notes |
 |---|---|---|
 | Zstandard | `zstd` | best ratio, and fast; the default pick |
+| Brotli | `br` | supported by every modern browser; compresses at quality 5 |
 | gzip | `gzip` | zlib-ng; understood by every HTTP client and browser |
 | ZXC | `zxc` | [serenedb/zxc](https://github.com/serenedb/zxc), the fastest decode; not an IANA-registered coding, so only clients that opt in ask for it |
 | LZ4 frame | `lz4` | fastest to compress; same caveat as `zxc` |
 
-Server preference is the order above: `zstd`, `gzip`, `zxc`, `lz4`. It picks
+Server preference is the order above: `zstd`, `br`, `gzip`, `zxc`, `lz4`. It picks
 between codings the client accepts equally — the client's own `q` weights come
 first, so `Accept-Encoding: gzip;q=1.0, zstd;q=0.1` answers gzip.
 
@@ -49,13 +50,13 @@ the same size limit as an uncompressed one (64 MiB).
 
 | `Accept-Encoding` | Response |
 |---|---|
-| absent, empty, or asking only for codings we do not have (`br`) | `200`, uncompressed |
+| absent, empty, or asking only for codings we do not have (`compress`) | `200`, uncompressed |
 | `identity;q=0` or `*;q=0`, with no coding we have left acceptable | `406 Not Acceptable` — nothing can be sent |
 | a weight that is not a qvalue (`gzip;q=huh`, `gzip;q=2`, `gzip;q=nan`) | `400 Bad Request` |
 
 | `Content-Encoding` | Response |
 |---|---|
-| a coding we do not have (`br`), or more than two codings | `415 Unsupported Media Type` |
+| a coding we do not have (`compress`), or more than two codings | `415 Unsupported Media Type` |
 | a body that is corrupt or truncated for its coding | `400 Bad Request` |
 | a body that decompresses past the body size limit | `413 Content Too Large` |
 

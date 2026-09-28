@@ -9,6 +9,7 @@ target_sources(
         http/auth.cpp
         http/common.cpp
         http/router.cpp
+        http/routes.cpp
         http/h1_codec.cpp
         http/response_writer.cpp
         http/es/common.cpp

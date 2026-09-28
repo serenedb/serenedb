@@ -1388,82 +1388,58 @@ class CatCountHandler final : public HttpHandler {
 
 }  // namespace
 
-void Register(HttpRouter& router) {
-  router.Add(HttpMethod::Get, "/", std::make_unique<RootHandler>());
-  router.Add(HttpMethod::Head, "/", std::make_unique<RootHandler>());
-  router.Add(HttpMethod::Get, "/_cluster/health",
-             std::make_unique<HealthHandler>());
-  router.Add(HttpMethod::Get, "/_cat/indices",
-             std::make_unique<CatIndicesHandler>());
-  router.Add(HttpMethod::Get, "/_cat/count",
-             std::make_unique<CatCountHandler>());
-  router.Add(HttpMethod::Post, "/_bulk", std::make_unique<BulkHandler>());
-  router.Add(HttpMethod::Put, "/_bulk", std::make_unique<BulkHandler>());
-  router.Add(HttpMethod::Get, "/_nodes/stats",
-             std::make_unique<NodesStatsHandler>());
-  router.Add(HttpMethod::Get, "/_nodes/stats/:metric",
-             std::make_unique<NodesStatsHandler>());
-  router.Add(HttpMethod::Put, "/_cluster/settings",
-             std::make_unique<ClusterSettingsHandler>());
-  router.Add(HttpMethod::Get, "/_cluster/settings",
-             std::make_unique<ClusterSettingsHandler>());
-  router.Add(HttpMethod::Get, "/_cluster/health/:index",
-             std::make_unique<HealthHandler>());
-  router.Add(HttpMethod::Get, "/_stats", std::make_unique<IndexStatsHandler>());
-  router.Add(HttpMethod::Get, "/:index/_stats",
-             std::make_unique<IndexStatsHandler>());
-  router.Add(HttpMethod::Get, "/:index/_stats/:metric",
-             std::make_unique<IndexStatsHandler>());
-  router.Add(HttpMethod::Post, "/_forcemerge",
-             std::make_unique<ForceMergeHandler>());
-  router.Add(HttpMethod::Post, "/:index/_forcemerge",
-             std::make_unique<ForceMergeHandler>());
-  router.Add(HttpMethod::Post, "/_refresh", std::make_unique<RefreshHandler>());
-  router.Add(HttpMethod::Get, "/_refresh", std::make_unique<RefreshHandler>());
-  router.Add(HttpMethod::Put, "/:index",
-             std::make_unique<CreateIndexHandler>());
-  router.Add(HttpMethod::Delete, "/:index",
-             std::make_unique<DeleteIndexHandler>());
-  router.Add(HttpMethod::Head, "/:index",
-             std::make_unique<IndexExistsHandler>());
-  router.Add(HttpMethod::Get, "/:index", std::make_unique<IndexInfoHandler>());
-  router.Add(HttpMethod::Get, "/:index/_mapping",
-             std::make_unique<MappingHandler>());
-  router.Add(HttpMethod::Post, "/:index/_bulk",
-             std::make_unique<BulkHandler>());
-  router.Add(HttpMethod::Put, "/:index/_bulk", std::make_unique<BulkHandler>());
-  router.Add(HttpMethod::Post, "/:index/_doc", std::make_unique<DocHandler>());
-  router.Add(HttpMethod::Post, "/:index/_doc/:id",
-             std::make_unique<DocHandler>());
-  router.Add(HttpMethod::Put, "/:index/_doc/:id",
-             std::make_unique<DocHandler>());
-  router.Add(HttpMethod::Get, "/:index/_doc/:id",
-             std::make_unique<GetDocHandler>());
-  router.Add(HttpMethod::Head, "/:index/_doc/:id",
-             std::make_unique<ExistsDocHandler>());
-  router.Add(HttpMethod::Get, "/:index/_source/:id",
-             std::make_unique<GetSourceHandler>());
-  router.Add(HttpMethod::Get, "/:index/_mget", std::make_unique<MgetHandler>());
-  router.Add(HttpMethod::Post, "/:index/_mget",
-             std::make_unique<MgetHandler>());
-  router.Add(HttpMethod::Post, "/:index/_refresh",
-             std::make_unique<RefreshHandler>());
-  router.Add(HttpMethod::Get, "/:index/_refresh",
-             std::make_unique<RefreshHandler>());
-  router.Add(HttpMethod::Get, "/:index/_count",
-             std::make_unique<CountHandler>());
-  router.Add(HttpMethod::Post, "/:index/_count",
-             std::make_unique<CountHandler>());
-  router.Add(HttpMethod::Get, "/:index/_search",
-             std::make_unique<SearchHandler>());
-  router.Add(HttpMethod::Post, "/:index/_search",
-             std::make_unique<SearchHandler>());
-  router.Add(HttpMethod::Get, "/_search/scroll",
-             std::make_unique<ScrollHandler>());
-  router.Add(HttpMethod::Post, "/_search/scroll",
-             std::make_unique<ScrollHandler>());
-  router.Add(HttpMethod::Delete, "/_search/scroll",
-             std::make_unique<ClearScrollHandler>());
+std::unique_ptr<HttpHandler> Make(Endpoint endpoint) {
+  switch (endpoint) {
+    case Endpoint::Root:
+      return std::make_unique<RootHandler>();
+    case Endpoint::Health:
+      return std::make_unique<HealthHandler>();
+    case Endpoint::CatIndices:
+      return std::make_unique<CatIndicesHandler>();
+    case Endpoint::CatCount:
+      return std::make_unique<CatCountHandler>();
+    case Endpoint::Bulk:
+      return std::make_unique<BulkHandler>();
+    case Endpoint::NodesStats:
+      return std::make_unique<NodesStatsHandler>();
+    case Endpoint::ClusterSettings:
+      return std::make_unique<ClusterSettingsHandler>();
+    case Endpoint::IndexStats:
+      return std::make_unique<IndexStatsHandler>();
+    case Endpoint::ForceMerge:
+      return std::make_unique<ForceMergeHandler>();
+    case Endpoint::Refresh:
+      return std::make_unique<RefreshHandler>();
+    case Endpoint::CreateIndex:
+      return std::make_unique<CreateIndexHandler>();
+    case Endpoint::DeleteIndex:
+      return std::make_unique<DeleteIndexHandler>();
+    case Endpoint::IndexExists:
+      return std::make_unique<IndexExistsHandler>();
+    case Endpoint::IndexInfo:
+      return std::make_unique<IndexInfoHandler>();
+    case Endpoint::Mapping:
+      return std::make_unique<MappingHandler>();
+    case Endpoint::Doc:
+      return std::make_unique<DocHandler>();
+    case Endpoint::GetDoc:
+      return std::make_unique<GetDocHandler>();
+    case Endpoint::ExistsDoc:
+      return std::make_unique<ExistsDocHandler>();
+    case Endpoint::GetSource:
+      return std::make_unique<GetSourceHandler>();
+    case Endpoint::Mget:
+      return std::make_unique<MgetHandler>();
+    case Endpoint::Count:
+      return std::make_unique<CountHandler>();
+    case Endpoint::Search:
+      return std::make_unique<SearchHandler>();
+    case Endpoint::Scroll:
+      return std::make_unique<ScrollHandler>();
+    case Endpoint::ClearScroll:
+      return std::make_unique<ClearScrollHandler>();
+  }
+  SDB_UNREACHABLE();
 }
 
 }  // namespace sdb::network::http::es

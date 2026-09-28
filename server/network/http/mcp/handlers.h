@@ -20,10 +20,18 @@
 
 #pragma once
 
-#include "network/http/router.h"
+#include <cstdint>
+#include <memory>
+
+#include "network/http/handler.h"
 
 namespace sdb::network::http::mcp {
 
-void Register(HttpRouter& router);
+enum class Endpoint : uint8_t {
+  Rpc,
+  MethodNotAllowed,
+};
+
+std::unique_ptr<HttpHandler> Make(Endpoint endpoint);
 
 }  // namespace sdb::network::http::mcp

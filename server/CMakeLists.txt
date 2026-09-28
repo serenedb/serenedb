@@ -34,6 +34,8 @@ target_link_libraries(
         zstd::zstd
         lz4_static
         zxc::zxc_lib
+        brotlienc
+        brotlidec
 )
 
 target_include_directories(

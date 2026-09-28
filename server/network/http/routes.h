@@ -20,24 +20,25 @@
 
 #pragma once
 
-#include <cstdint>
 #include <memory>
+#include <span>
+#include <string_view>
 
 #include "network/http/handler.h"
+#include "network/http/router.h"
+#include "network/listen_spec.h"
 
-namespace sdb::network::http::test {
+namespace sdb::network::http {
 
-// Synthetic transport-test endpoints under /_test/ (echo, ping, bytes, fuzz,
-// status) used by functional + performance tests. Gated behind a flag; never
-// enabled in production; not part of any standard API.
-enum class Endpoint : uint8_t {
-  Echo,
-  Ping,
-  Bytes,
-  Fuzz,
-  Status,
+struct Route {
+  HttpApi api;
+  HttpMethod method;
+  std::string_view pattern;
+  std::unique_ptr<HttpHandler> (*make)();
 };
 
-std::unique_ptr<HttpHandler> Make(Endpoint endpoint);
+std::span<const Route> Routes();
 
-}  // namespace sdb::network::http::test
+void AddRoutes(HttpRouter& router, std::span<const HttpApi> apis);
+
+}  // namespace sdb::network::http

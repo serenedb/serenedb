@@ -34,6 +34,7 @@
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <memory>
 #include <optional>
 #include <protozero/pbf_writer.hpp>
@@ -61,7 +62,6 @@ using network::HttpHandler;
 using network::HttpHeader;
 using network::HttpMethod;
 using network::HttpRequest;
-using network::HttpRouter;
 using network::RequestContext;
 using network::http::FlattenBody;
 using network::http::HttpResponseWriter;
@@ -359,13 +359,16 @@ class ExportHandler final : public HttpHandler {
 
 }  // namespace
 
-void RegisterHandlers(HttpRouter& router) {
-  router.Add(HttpMethod::Post, "/v1/logs",
-             std::make_unique<ExportHandler<LogsSignal>>());
-  router.Add(HttpMethod::Post, "/v1/traces",
-             std::make_unique<ExportHandler<TracesSignal>>());
-  router.Add(HttpMethod::Post, "/v1/metrics",
-             std::make_unique<ExportHandler<MetricsSignal>>());
+std::unique_ptr<network::HttpHandler> Make(Endpoint endpoint) {
+  switch (endpoint) {
+    case Endpoint::Logs:
+      return std::make_unique<ExportHandler<LogsSignal>>();
+    case Endpoint::Traces:
+      return std::make_unique<ExportHandler<TracesSignal>>();
+    case Endpoint::Metrics:
+      return std::make_unique<ExportHandler<MetricsSignal>>();
+  }
+  SDB_UNREACHABLE();
 }
 
 }  // namespace sdb::otel

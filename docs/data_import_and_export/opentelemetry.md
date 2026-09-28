@@ -101,7 +101,7 @@ Both decoders feed the same mapper, and the conformance fixtures ship as an
 row shape arrives twice, once per decoder.
 
 Request bodies may be compressed with any coding the HTTP listener supports —
-`gzip` (the collector's default), `zstd`, `lz4` or `zxc`; see
+`gzip` (the collector's default), `zstd`, `br`, `lz4` or `zxc`; see
 [HTTP Compression](../configuration/http_compression.md). An unsupported
 `Content-Encoding` answers `415`, and a corrupt compressed body `400`, both
 before the payload is decoded.

@@ -39,6 +39,7 @@
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/index_reader_options.hpp>
 #include <iresearch/index/iterators.hpp>
@@ -60,6 +61,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
+#include <limits>
 #include <markdown_utils.hpp>
 #include <memory>
 #include <optional>
@@ -380,6 +382,38 @@ const irs::ColumnReader& StoredColumn(const irs::SubReader& segment,
   return *column;
 }
 
+class BlobScanner {
+ public:
+  BlobScanner(const irs::ColReader& store, const irs::ColumnReader& column)
+    : _ctx{store}, _column{&column}, _state{column.InitScan(_ctx)} {}
+
+  irs::bytes_view FetchDoc(irs::doc_id_t doc) {
+    const auto row = static_cast<uint64_t>(doc) - irs::doc_limits::min();
+    if (row != _row) {
+      if (const auto cursor = _column->GatherCursor(_state); row > cursor) {
+        _column->Skip(_state, row - cursor);
+      }
+      duckdb::FlatVector::ValidityMutable(_buf).Reset();
+      _column->Scan(_state, _buf, 1);
+      _row = row;
+    }
+    if (duckdb::FlatVector::IsNull(_buf, 0)) {
+      return {};
+    }
+    const auto& value = duckdb::FlatVector::GetData<duckdb::string_t>(_buf)[0];
+    return {reinterpret_cast<const irs::byte_type*>(value.GetData()),
+            value.GetSize()};
+  }
+
+ private:
+  irs::ReadContext _ctx;
+  const irs::ColumnReader* _column;
+  irs::ColumnReader::ScanState _state;
+  duckdb::Vector _buf{duckdb::LogicalType::BLOB, 1};
+  uint64_t _row = std::numeric_limits<uint64_t>::max();
+};
+
+template<typename Reader>
 class EntryFetcher {
  public:
   EntryFetcher(const irs::SubReader& segment, const Layout& layout,
@@ -413,15 +447,17 @@ class EntryFetcher {
   }
 
  private:
-  static std::string Read(BlobReader& reader, irs::doc_id_t doc) {
+  static std::string Read(Reader& reader, irs::doc_id_t doc) {
     return std::string{irs::ViewCast<char>(reader.FetchDoc(doc))};
   }
 
-  BlobReader _path;
-  BlobReader _title;
-  BlobReader _breadcrumb;
-  std::optional<BlobReader> _content;
+  Reader _path;
+  Reader _title;
+  Reader _breadcrumb;
+  std::optional<Reader> _content;
 };
+
+using EntryScanner = EntryFetcher<BlobScanner>;
 
 class ObjectFetcher {
  public:
@@ -445,13 +481,13 @@ class ObjectFetcher {
   }
 
  private:
-  using Columns = std::array<BlobReader, kObjectColumns.size()>;
+  using Columns = std::array<BlobScanner, kObjectColumns.size()>;
 
   template<size_t... I>
   static Columns Open(const irs::SubReader& segment, const ObjectLayout& layout,
                       std::index_sequence<I...>) {
-    return {BlobReader{ColumnStore(segment),
-                       StoredColumn(segment, layout.stored[I])}...};
+    return {BlobScanner{ColumnStore(segment),
+                        StoredColumn(segment, layout.stored[I])}...};
   }
 
   Columns _columns;
@@ -490,7 +526,7 @@ void ForEachMatch(const DocsIndex& index, const irs::Filter& filter,
   ForEachMatchIn(
     index.Reader(), filter,
     [&](const irs::SubReader& segment) {
-      return EntryFetcher{segment, index.Fields(), content};
+      return EntryScanner{segment, index.Fields(), content};
     },
     std::forward<Fn>(fn));
 }
@@ -518,7 +554,7 @@ std::vector<Entry> CollectMatches(const DocsIndex& index,
                                   Keep keep) {
   std::vector<Entry> out;
   ForEachMatch(index, filter, content,
-               [&](EntryFetcher& fetcher, irs::doc_id_t doc) {
+               [&](EntryScanner& fetcher, irs::doc_id_t doc) {
                  if (!keep(fetcher.Path(doc))) {
                    return;
                  }
@@ -751,8 +787,8 @@ std::vector<Entry> RunScored(const DocsIndex& index, const irs::Filter& filter,
     return std::tie(hit.segment_idx, hit.doc);
   });
 
-  std::vector<std::optional<EntryFetcher>> fetchers(reader.size());
-  const auto fetcher = [&](uint32_t segment) -> EntryFetcher& {
+  std::vector<std::optional<EntryFetcher<BlobReader>>> fetchers(reader.size());
+  const auto fetcher = [&](uint32_t segment) -> EntryFetcher<BlobReader>& {
     auto& slot = fetchers[segment];
     if (!slot) {
       slot.emplace(reader[segment], index.Fields(), content);
@@ -911,7 +947,7 @@ std::vector<Entry> Literal(const DocsIndex& index, std::string_view text,
     return hits;
   }
   ForEachMatch(index, *PathPrefix(index.Fields(), ""), Content::Include,
-               [&](EntryFetcher& fetcher, irs::doc_id_t doc) {
+               [&](EntryScanner& fetcher, irs::doc_id_t doc) {
                  auto entry = fetcher.Fetch(doc);
                  if (!entry) {
                    return;
@@ -1265,7 +1301,7 @@ std::vector<std::string> ListPaths(duckdb::DatabaseInstance& db,
   return WithIndex(db, [&](const DocsIndex& index) {
     std::vector<std::string> paths;
     ForEachMatch(index, *PathPrefix(index.Fields(), prefix), Content::Omit,
-                 [&](EntryFetcher& fetcher, irs::doc_id_t doc) {
+                 [&](EntryScanner& fetcher, irs::doc_id_t doc) {
                    paths.emplace_back(fetcher.Path(doc));
                  });
     absl::c_sort(paths);

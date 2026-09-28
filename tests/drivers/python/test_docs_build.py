@@ -129,3 +129,165 @@ def test_docs_generation_turns_admonitions_into_quotes(tmp_path: Path) -> None:
             "> **Note: Keep `this` title**\n>\n> Body line.\n>\n"
             "> | a | b |\n> | --- | --- |\n> | 1 | 2 |\n\n"
             '> **Caution**\n>\n> Careful.\n)sdbdoc"') in out.read_text()
+
+
+def _generate_page(tmp_path: Path, body: str,
+                   tests_dir: Path = REPO / "tests" / "sqllogic") -> str:
+    """The generated source for a docs tree of one page holding body."""
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "page.md").write_text(
+        "---\ntitle: Page\nsplit: page\n---\n" + body, encoding="utf-8")
+    out = tmp_path / "docs_data.cpp"
+    r = _run(str(SCRIPTS / "generate_docs.py"), str(docs), str(out),
+             "--tests-dir", str(tests_dir))
+    assert r.returncode == 0, r.stderr
+    return out.read_text()
+
+
+def test_docs_generation_drops_div_wrappers_but_keeps_what_they_hold(
+        tmp_path: Path) -> None:
+    generated = _generate_page(
+        tmp_path,
+        "Intro.\n\n"
+        '<div className="docs-table-properties">\n\n'
+        "| Name | Type |\n| --- | --- |\n| `id` | `INTEGER` |\n\n"
+        "</div>\n\n"
+        '<div className="docs-spacer"></div>\n\n'
+        "<div>\nLoose text.\n</div>\n\n"
+        '```html\n<div className="kept">code</div>\n```\n')
+    assert ('R"sdbdoc(Intro.\n\n'
+            "| Name | Type |\n| --- | --- |\n| `id` | `INTEGER` |\n\n"
+            "Loose text.\n\n"
+            '```html\n<div className="kept">code</div>\n```\n)sdbdoc"'
+            ) in generated
+
+
+def test_docs_generation_turns_doc_callouts_into_quotes(
+        tmp_path: Path) -> None:
+    site_docs = tmp_path / "tests" / "sdb" / "pg" / "site_docs"
+    site_docs.mkdir(parents=True)
+    (site_docs / "callout.test").write_text(
+        "# DOCS_TEST: example\n\n# DOCS_TEST_BODY\n\n"
+        "query\nSELECT 1 AS n;\n----\nn\n1\n\n"
+        "# DOCS_TEST_END\n",
+        encoding="utf-8")
+    generated = _generate_page(
+        tmp_path,
+        'import DocCallout from "@site/src/components/DocCallout";\n\n'
+        '<DocCallout type="attention">\n\n'
+        "First paragraph.\n\n\nSecond paragraph.\n\n"
+        "</DocCallout>\n\n"
+        '<DocCallout type="tip" title="Forgot the password?">\n'
+        "Reset it with `ALTER ROLE`.\n"
+        "</DocCallout>\n\n"
+        '<DocCallout type="bestPractice">\n'
+        "    Indented, with <code>code</code> in it.\n"
+        "</DocCallout>\n\n"
+        '<DocCallout type="pin">\n- one\n- two\n</DocCallout>\n\n'
+        '<DocCallout type="note">\n\nRun it:\n\n'
+        '<SqlLogicTest id="callout/example" />\n\n'
+        "</DocCallout>\n\n"
+        ":::note\nOld style.\n:::\n",
+        tmp_path / "tests")
+    assert ('R"sdbdoc('
+            "> **Attention**\n>\n> First paragraph.\n>\n> Second paragraph.\n\n"
+            "> **Forgot the password?**\n>\n> Reset it with `ALTER ROLE`.\n\n"
+            "> **Best practice**\n>\n> Indented, with `code` in it.\n\n"
+            "> **Note**\n>\n> - one\n> - two\n\n"
+            "> **Note**\n>\n> Run it:\n>\n"
+            "> ```sql\n> SELECT 1 AS n;\n> ```\n>\n> ```\n> n\n> 1\n> ```\n\n"
+            '> **Note**\n>\n> Old style.\n)sdbdoc"') in generated
+
+
+def test_docs_generation_links_each_image_once(tmp_path: Path) -> None:
+    generated = _generate_page(
+        tmp_path,
+        "Before.\n\n"
+        '<img src={useBaseUrl("/images/plan-light.svg")} alt="Query plan" '
+        'width="600" className="lightmode-img"/>\n'
+        '<img src={useBaseUrl("/images/plan-dark.svg")} alt="Query plan" '
+        'width="600" className="darkmode-img"/>\n\n'
+        '<img src="/images/zones-light.svg"\n'
+        '     alt="Two [time] zones"\n'
+        '     class="lightmode-img"\n'
+        "     />\n"
+        '<img src="/images/zones-dark.svg"\n'
+        '     alt="Two [time] zones"\n'
+        '     class="darkmode-img"\n'
+        "     />\n\n"
+        '<img src={require("@site/static/images/matrix.png").default} '
+        'title="Cast matrix"/>\n\n'
+        '<img src="https://example.com/logo.png">\n\n'
+        '```html\n<img src="/images/kept.png" alt="code"/>\n```\n')
+    assert ('R"sdbdoc(Before.\n\n'
+            "[Image: Query plan](https://serenedb.com/docs/images/plan-light.svg)\n\n"
+            "[Image: Two \\[time\\] zones]"
+            "(https://serenedb.com/docs/images/zones-light.svg)\n\n"
+            "[Image: Cast matrix](https://serenedb.com/docs/images/matrix.png)\n\n"
+            "[Image: logo.png](https://example.com/logo.png)\n\n"
+            '```html\n<img src="/images/kept.png" alt="code"/>\n```\n)sdbdoc"'
+            ) in generated
+
+
+def test_docs_generation_turns_inline_html_into_markdown(
+        tmp_path: Path) -> None:
+    generated = _generate_page(
+        tmp_path,
+        "Download <a href={useBaseUrl(\"/files/docs/flights.csv\")} download>"
+        "`flights.csv`</a> or <a href=\"/files/docs/todos.json\" download>"
+        "todos</a>.\n"
+        'Read the <a href="https://example.com/guide">guide</a>, stored '
+        "<strong>unencrypted</strong>, <em>really</em>.\n"
+        "Plain <code>'...'</code> quotes; as code: `<a href=\"x\">y</a>`.\n"
+        "Tick: <code>a`b</code>.\n"
+        "Tags as code: <code>&lt;em&gt;x&lt;/em&gt;</code>, "
+        '<a href="#x"><code>&lt;/a&gt;</code></a>, '
+        "<code>`a` &lt;b&gt;</code>.\n\n"
+        "| Operator | Example |\n| --- | --- |\n"
+        '| <a href="#concat"><code>a &#124;&#124; b</code></a> '
+        "| <code>'x' &#124;&#124; 'y'</code> |\n\n"
+        "## Concatenation {#concat}\n")
+    assert ('R"sdbdoc(Download '
+            "[`flights.csv`](https://serenedb.com/docs/files/docs/flights.csv)"
+            " or [todos](https://serenedb.com/docs/files/docs/todos.json).\n"
+            "Read the [guide](https://example.com/guide), stored "
+            "**unencrypted**, *really*.\n"
+            "Plain `'...'` quotes; as code: `<a href=\"x\">y</a>`.\n"
+            "Tick: ``a`b``.\n"
+            "Tags as code: `<em>x</em>`, [`</a>`](#x), `` `a` <b> ``.\n\n"
+            "| Operator | Example |\n| --- | --- |\n"
+            "| [`a \\|\\| b`](#concat) | `'x' \\|\\| 'y'` |\n\n"
+            '## Concatenation\n)sdbdoc"') in generated
+
+
+# Markup of the site that the shell would print as it is written: an HTML tag
+# or a JSX component, a JSX attribute, a heading id or an admonition fence.
+SITE_MARKUP_RE = re.compile(
+    r"</?[A-Za-z][\w.-]*(?=[\s/>]|$)|useBaseUrl\(|className=|\{#[^}]*\}"
+    r"|^(> ?)*:::")
+CODE_SPAN_RE = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
+FENCE_RE = re.compile(r"^(>\s?)*\s*(```|~~~)")
+
+
+def test_docs_corpus_keeps_no_site_markup() -> None:
+    """Every page as it is embedded holds no site markup outside code. The
+    cases above cover what the generator converts; this catches a page that
+    writes something it does not know yet."""
+    sys.path.insert(0, str(SCRIPTS))
+    import generate_docs
+    import sqllogic_snippets
+    units = generate_docs.collect(
+        REPO / "docs", sqllogic_snippets.load(REPO / "tests" / "sqllogic"),
+        sqllogic_snippets.Report())
+    leaks = set()
+    for unit in units:
+        fenced = False
+        for line in unit.content.split("\n"):
+            if FENCE_RE.match(line):
+                fenced = not fenced
+            elif not fenced and SITE_MARKUP_RE.search(
+                    CODE_SPAN_RE.sub("", line)):
+                leaks.add(f"{unit.path.split('#', 1)[0]}: {line}")
+    assert units
+    assert not leaks, sorted(leaks)[:5]

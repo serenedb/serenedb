@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 from builtins import tuple
+import html
 import pathlib
 import re
 import sys
@@ -9,6 +10,10 @@ import sqllogic_snippets
 
 DELIMITER = "sdbdoc"
 EXTENSIONS = {".md", ".mdx"}
+# Where the site serves the docs, as kDocsSite in
+# server/docs/docs_shell_backend.cpp. The site's static files (images and
+# downloads) are served under it too: that is what useBaseUrl() resolves to.
+DOCS_SITE = "https://serenedb.com/docs"
 
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n", re.S)
 MDX_ESM_RE = re.compile(
@@ -18,11 +23,40 @@ COMPONENT_OPEN_RE = re.compile(r"^\s*<([A-Z][A-Za-z.]*)(\s[^>]*)?>\s*$")
 COMPONENT_CLOSE_RE = re.compile(r"^\s*</([A-Z][A-Za-z.]*)>\s*$")
 COMPONENT_SELF_CLOSING_RE = re.compile(r"<[A-Z][A-Za-z.]*(\s[^>]*)?/>")
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
-EMPTY_DIV_RE = re.compile(r"^\s*<div\s[^>]*>\s*</div>\s*$")
+# A line holding only <div ...>, </div> or an empty <div ...></div>: the
+# wrappers and spacers the site styles a page with. What a wrapper holds (a
+# table, say) is Markdown and stays.
+DIV_LINE_RE = re.compile(r"^\s*(<div(\s[^>]*)?>(\s*</div>)?|</div>)\s*$")
 WRAPPER_TAG_RE = re.compile(r"</?(details|summary)>")
 JSX_STYLE_RE = re.compile(r"\s*style=\{\{[^}]*\}\}")
 ADMONITION_OPEN_RE = re.compile(r"^:::(\w+)(?:[ \t]+(.*\S))?[ \t]*$")
 ADMONITION_CLOSE_RE = re.compile(r"^:::[ \t]*$")
+CALLOUT_OPEN_RE = re.compile(r"^\s*<DocCallout(\s[^>]*)?>\s*$")
+CALLOUT_CLOSE_RE = re.compile(r"^\s*</DocCallout>\s*$")
+# The label the site's DocCallout shows for a type when it has no title
+# (serene_site: docusaurus/src/components/DocCallout); any other type shows
+# "Note".
+CALLOUT_LABELS = {
+    "info": "Info", "tip": "Tip", "attention": "Attention", "bestPractice": "Best practice"}
+# One attribute of a JSX tag: name="value", name='value' or name={expression}.
+# A bare name such as download has no value and is not matched.
+JSX_ATTR_RE = re.compile(r"""([A-Za-z][\w:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|\{([^}]*)\})""")
+# The {expression} the site uses for a static file: useBaseUrl("/images/a.png")
+# or require("@site/static/images/a.png").default. Group 1 is the path.
+ASSET_CALL_RE = re.compile(r"""^\s*(?:useBaseUrl|require)\(\s*["']([^"']*)["']\s*\)(?:\.default)?\s*$""")
+IMG_OPEN_RE = re.compile(r"^\s*<img\s")
+# A whole <img ...> or <img .../> tag, its lines joined. Group 1 is the
+# attributes.
+IMG_TAG_RE = re.compile(r"^\s*<img\s([^>]*?)/?>\s*$")
+LINK_TAG_RE = re.compile(r"<a\s([^>]*)>(.*?)</a>")
+STRONG_TAG_RE = re.compile(r"<strong>\s*(.*?)\s*</strong>")
+EM_TAG_RE = re.compile(r"<em>\s*(.*?)\s*</em>")
+# Code as a page writes it, whichever starts first: a Markdown code span (a run
+# of backticks, then anything up to a run of the same length) or a <code> tag
+# (group 2 is what it holds). Tags inside a code span are text and stay.
+CODE_RE = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)|<code>(.*?)</code>")
+HIDDEN_SPAN_RE = re.compile(r"\0(\d+)\0")
+BACKTICKS_RE = re.compile(r"`+")
 # "## Setup {#setup}" -> "## Setup". #{1,6} is one to six literal hashes (the
 # heading level); \{ and \} are literal braces; [^}]* is anything up to the
 # closing brace. Group 1 is the heading without the anchor.
@@ -42,29 +76,139 @@ def split_frontmatter(text: str) -> tuple[dict[str, str], str]:
     return meta, text[match.end():]
 
 
+def jsx_attrs(tag: str) -> dict[str, str]:
+    """The attributes of a JSX tag. An {expression} that names a static file
+    (useBaseUrl or require) gives its path, any other expression nothing."""
+    attrs = {}
+    for name, double, single, expression in JSX_ATTR_RE.findall(tag):
+        if expression:
+            call = ASSET_CALL_RE.match(expression)
+            attrs[name] = call.group(1) if call else ""
+        else:
+            attrs[name] = double or single
+    return attrs
+
+
+def site_url(path: str) -> str:
+    """Where a link or image of a page points once the site has resolved it.
+    The server only links .md pages itself, so a static file needs the full
+    URL to reach the shell's Links list."""
+    path = path.removeprefix("@site/static")
+    if path.startswith("/") and not path.startswith("//"):
+        return DOCS_SITE + path
+    return path
+
+
+def image_line(tag: str) -> str:
+    """An <img> tag as a link to the image: a terminal cannot show it, but the
+    text around it may refer to it, and the link opens it. The dark-theme twin
+    of a light/dark pair is the same picture: it gives the empty string and its
+    line is dropped. Anything but a whole tag is returned as it is."""
+    match = IMG_TAG_RE.match(tag)
+    if not match:
+        return tag
+    attrs = jsx_attrs(match.group(1))
+    if "darkmode-img" in (attrs.get("className") or attrs.get("class") or "").split():
+        return ""
+    src = attrs.get("src", "")
+    label = attrs.get("alt") or attrs.get("title") or src.rsplit("/", 1)[-1] or "image"
+    label = "Image: " + label.replace("[", "\\[").replace("]", "\\]")
+    return f"[{label}]({site_url(src)})" if src else label
+
+
+def code_span(text: str, table: bool) -> str:
+    """text as a Markdown code span. In a table row a | would end the cell,
+    so it is escaped; GFM drops the backslash again."""
+    if table:
+        text = text.replace("|", "\\|")
+    ticks = "`" * (max(map(len, BACKTICKS_RE.findall(text)), default=0) + 1)
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{ticks}{pad}{text}{pad}{ticks}"
+
+
+def markdown_link(match: re.Match) -> str:
+    href = jsx_attrs(match.group(1)).get("href")
+    return f"[{match.group(2)}]({site_url(href)})" if href else match.group(2)
+
+
+def inline_markdown(line: str) -> str:
+    """The inline HTML the pages use (<a>, <code>, <strong>, <em>) as Markdown:
+    the shell prints HTML as it is written. Code is set aside first, a <code>
+    tag already turned into a code span, so the other rules never touch what
+    code shows and a page can still show a tag as code."""
+    if "<" not in line:
+        return line
+    table = line.lstrip().startswith("|")
+    spans = []
+
+    def hide(match: re.Match) -> str:
+        code = match.group(2)
+        spans.append(match.group(0) if code is None else code_span(html.unescape(code), table))
+        return f"\0{len(spans) - 1}\0"
+
+    line = CODE_RE.sub(hide, line)
+    line = STRONG_TAG_RE.sub(lambda m: f"**{m.group(1)}**" if m.group(1) else "", line)
+    line = EM_TAG_RE.sub(lambda m: f"*{m.group(1)}*" if m.group(1) else "", line)
+    line = LINK_TAG_RE.sub(markdown_link, line)
+    # What was set aside came from the line as the page wrote it, so it holds
+    # no placeholder and one pass puts everything back.
+    return HIDDEN_SPAN_RE.sub(lambda m: spans[int(m.group(1))], line)
+
+
 def clean(body: str) -> str:
     out = []
     depth = 0
-    quote = False
+    # What the lines are quoted for: None, "admonition" (:::note ... :::) or
+    # "callout" (<DocCallout> ... </DocCallout>, at component depth callout).
+    quote = None
+    callout = 0
     fence = False
+    image = []
     for line in HTML_COMMENT_RE.sub("", body).split("\n"):
         if FENCE_RE.match(line):
             fence = not fence
         elif fence:
             out.append(f"> {line}".rstrip() if quote else line.rstrip())
             continue
-        elif MDX_ESM_RE.match(line) or EMPTY_DIV_RE.match(line):
+        elif MDX_ESM_RE.match(line) or DIV_LINE_RE.match(line):
             continue
+        elif image and not line.strip():
+            # No tag spans a blank line: what was collected is not an <img>
+            # tag and goes on as text.
+            out += [f"> {part}" if quote else part for part in image]
+            image = []
+        elif image or IMG_OPEN_RE.match(line):
+            # An <img> tag may run over several lines: collect them up to its
+            # ">".
+            image.append(line.strip())
+            if not line.rstrip().endswith(">"):
+                continue
+            line, image = image_line(" ".join(image)), []
+            if not line:
+                continue
         if not quote and (match := ADMONITION_OPEN_RE.match(line)):
             label = match.group(1).capitalize()
             if match.group(2):
                 label += ": " + match.group(2)
             out += [f"> **{label}**", ">"]
-            quote = True
+            quote = "admonition"
             continue
-        if quote and ADMONITION_CLOSE_RE.match(line):
+        if not quote and (match := CALLOUT_OPEN_RE.match(line)) and not line.rstrip().endswith("/>"):
+            # The same quote as an admonition, under the label the site shows.
+            attrs = jsx_attrs(match.group(1) or "")
+            label = attrs.get("title") or CALLOUT_LABELS.get(attrs.get("type"), "Note")
+            out += [f"> **{label}**", ">"]
+            depth += 1
+            quote, callout = "callout", depth
+            continue
+        if (quote == "admonition" and ADMONITION_CLOSE_RE.match(line)) or (
+                quote == "callout" and depth == callout and CALLOUT_CLOSE_RE.match(line)):
+            while out[-1] == ">":
+                out.pop()
             out.append("")
-            quote = False
+            if quote == "callout":
+                depth -= 1
+            quote = None
             continue
         if COMPONENT_OPEN_RE.match(line) and not line.rstrip().endswith("/>"):
             depth += 1
@@ -75,12 +219,18 @@ def clean(body: str) -> str:
         line = COMPONENT_SELF_CLOSING_RE.sub("", line)
         line = WRAPPER_TAG_RE.sub("", line)
         line = JSX_STYLE_RE.sub("", line)
+        line = inline_markdown(line)
         line = HEADING_ANCHOR_RE.sub(r"\1", line)
         if depth > 0:
             line = line.strip()
         if line.strip() in ("", ">"):
             line = ""
-        out.append(f"> {line}".rstrip() if quote else line.rstrip())
+        if not quote:
+            out.append(line.rstrip())
+        elif line or out[-1] != ">":
+            # One ">" line stands for any run of blank lines in a quote.
+            out.append(f"> {line}".rstrip())
+    out += [f"> {part}" if quote else part for part in image]
     # Removing lines leaves holes: squeeze blank runs, trim blank edges, then
     # end with exactly one newline unless nothing is left at all.
     text = BLANK_RUN_RE.sub("\n\n", "\n".join(out)).strip("\n")

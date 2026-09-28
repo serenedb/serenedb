@@ -288,6 +288,12 @@ CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compre
 db error: ERROR: Compression option must be written as name = value, got 'compression_level'
 
 
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level = 3, compression_level = 4)) WITH (storage = 'search');
+----
+db error: ERROR: Compression option compression_level is specified more than once
+
+
 # Rejections on INCLUDE columns, through the string form.
 statement ok
 CREATE TABLE lvl_incl_bad (pk INTEGER PRIMARY KEY, body TEXT, p TEXT)
@@ -351,3 +357,33 @@ db error: ERROR: Column "w": compression 'dict_zstd' is only available on search
 
 statement ok
 DROP TABLE lvl_plain;
+
+statement error
+CREATE TEMP TABLE lvl_temp (a INTEGER, v TEXT USING COMPRESSION dict_lz4);
+----
+db error: ERROR: Can't compress column "v" using compression type 'DICT_LZ4', that type is only available on SereneDB tables
+
+
+statement error
+CREATE TEMP TABLE lvl_temp (a INTEGER, v TEXT USING COMPRESSION zstd(compression_level = 3));
+----
+db error: ERROR: Can't set compression_level on column "v", compression options are only available on SereneDB tables
+
+
+statement ok
+CREATE TEMP TABLE lvl_temp (a INTEGER, v TEXT USING COMPRESSION zstd);
+
+statement error
+ALTER TABLE lvl_temp ADD COLUMN w TEXT USING COMPRESSION dict_zstd;
+----
+db error: ERROR: Can't compress column "w" using compression type 'DICT_ZSTD', that type is only available on SereneDB tables
+
+
+statement error
+ALTER TABLE lvl_temp ADD COLUMN w TEXT USING COMPRESSION zstd(compression_level = 3);
+----
+db error: ERROR: Can't set compression_level on column "w", compression options are only available on SereneDB tables
+
+
+statement ok
+DROP TABLE lvl_temp;

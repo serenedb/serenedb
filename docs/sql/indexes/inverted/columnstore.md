@@ -53,7 +53,7 @@ On an inverted index, an `INCLUDE`d column takes the same names, with the same o
 
 An index on a search table has no columnstore of its own: its `INCLUDE`d columns are the table's, and a codec named there applies to the table's column, overriding the column's own `USING COMPRESSION` for the segments written while the index exists. Dropping the index hands the column back to its own declaration.
 
-The global `force_compression` setting applies to search tables as it does to transactional ones: it wins over `auto` and loses to a codec named on the column. A codec that cannot encode the column's type, or a columnstore-only codec on a transactional table, is rejected at `CREATE TABLE` / `ALTER TABLE`.
+The global `force_compression` setting applies to search tables as it does to transactional ones: it wins over `auto` and loses to a codec named on the column. A codec that cannot encode the column's type, or a columnstore-only codec or a `compression_level` on a transactional or temporary table, is rejected at `CREATE TABLE` / `ALTER TABLE`.
 
 ## Table options
 

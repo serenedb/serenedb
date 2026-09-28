@@ -15,4 +15,4 @@ This writes `cities.json` with one JSON object per line. Reading the file back s
 
 <SqlLogicTest id="data_import_and_export/json/writing_json/example_002" />
 
-See the [`COPY` statement](../../sql/statements/copy/index.md#copy--to) for more information.
+See the [`COPY` statement](../../sql/statements/copy/index.md#copy-to) for more information.

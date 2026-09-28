@@ -37,19 +37,19 @@ Targeting a specific table, optionally with a column list, is also accepted and 
 
 SereneDB extends `VACUUM` with options that maintain [inverted indexes](../create_index/index.md). A statement takes **at most one** of these options, and an extension option cannot be combined with standard options such as `ANALYZE`. The options fall into three families.
 
-### Refreshing — `REFRESH_*`
+### Refreshing — `REFRESH_*` {#refreshing-refresh_}
 
 Inverted indexes are eventually consistent: rows you `INSERT`, `UPDATE` or `DELETE` may not be visible to queries until the index is refreshed. `REFRESH_*` publishes pending writes to readers. After writing to an indexed table, refresh it so the new rows become searchable:
 
 <SqlLogicTest id="sql/statements/vacuum/index/example_007" />
 
-### Compacting — `COMPACT_*`
+### Compacting — `COMPACT_*` {#compacting-compact_}
 
 `COMPACT_*` merges index segments to reclaim space and keep queries fast. It does not change query results:
 
 <SqlLogicTest id="sql/statements/vacuum/index/example_008" />
 
-### Recomputing statistics — `RECOMPUTE_STATS_*`
+### Recomputing statistics — `RECOMPUTE_STATS_*` {#recomputing-statistics-recompute_stats_}
 
 `RECOMPUTE_STATS_*` recomputes the index statistics used for relevance scoring and planning:
 
@@ -84,7 +84,7 @@ The `vacuum_rebuild_indexes` setting that governs index rebuilds is fixed at sta
 ## Reclaiming Space
 
 The `VACUUM` statement does not reclaim space.
-To reclaim space, use the `CHECKPOINT` statement or compact the database by creating a fresh copy with the [`COPY FROM DATABASE` statement](../copy/index.md#copy-from-database--to).
+To reclaim space, use the `CHECKPOINT` statement or compact the database by creating a fresh copy with the [`COPY FROM DATABASE` statement](../copy/index.md#copy-from-database-to).
 
 ## Syntax
 

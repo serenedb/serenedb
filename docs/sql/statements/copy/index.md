@@ -55,7 +55,7 @@ Copy only the schema (catalog elements) but not any data:
 
 `COPY` moves data between SereneDB and external files. `COPY ... FROM` imports data into SereneDB from an external file. `COPY ... TO` writes data from SereneDB to an external file. The `COPY` command can be used for `CSV`, `PARQUET` and `JSON` files.
 
-## `COPY ... FROM`
+## `COPY ... FROM` {#copy-from}
 
 `COPY ... FROM` imports data from an external file into an existing table. The data is appended to whatever data is in the table already. The amount of columns inside the file must match the amount of columns in the table `tbl`, and the contents of the columns must be convertible to the column types of the table. In case this is not possible, an error will be thrown.
 
@@ -115,7 +115,7 @@ To ensure compatibility with PostgreSQL, SereneDB accepts `COPY ... FROM` statem
 
 </DocCallout>
 
-## `COPY ... TO`
+## `COPY ... TO` {#copy-to}
 
 `COPY ... TO` exports data from SereneDB to an external CSV, Parquet, JSON or BLOB file. It has mostly the same set of options as `COPY ... FROM`, however, in the case of `COPY ... TO` the options specify how the file should be written to disk. Any file created by `COPY ... TO` can be copied back into the database by using `COPY ... FROM` with a similar set of options.
 
@@ -173,7 +173,7 @@ Expressions may be used for options as well. Copy to a file using a format store
 
 <SqlLogicTest id="sql/statements/copy/index/example_035" />
 
-### `COPY ... TO` Options
+### `COPY ... TO` Options {#copy-to-options}
 
 Zero or more copy options may be provided as a part of the copy operation. The `WITH` specifier is optional, but if any options are specified, the parentheses are required. Parameter values can be passed in with or without wrapping in single quotes. Arbitrary expressions may be used for parameter values.
 
@@ -208,7 +208,7 @@ To ensure compatibility with PostgreSQL, SereneDB accepts `COPY ... TO` statemen
 <SqlLogicTest id="sql/statements/copy/index/example_036" />
 </DocCallout>
 
-## `COPY FROM DATABASE ... TO`
+## `COPY FROM DATABASE ... TO` {#copy-from-database-to}
 
 The `COPY FROM DATABASE ... TO` statement copies the entire content from one attached database to another attached database. This includes the schema, including constraints, indexes, sequences, macros and the data itself.
 

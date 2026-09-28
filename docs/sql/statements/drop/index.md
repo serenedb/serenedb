@@ -98,4 +98,4 @@ To check this, use the following `PRAGMA` and check the number of `free_blocks` 
 
 <SqlLogicTest id="sql/statements/drop/index/example_013" />
 
-To reclaim space after dropping a table, use the `CHECKPOINT` statement or compact the database by creating a fresh copy with the [`COPY FROM DATABASE` statement](../copy/index.md#copy-from-database--to).
+To reclaim space after dropping a table, use the `CHECKPOINT` statement or compact the database by creating a fresh copy with the [`COPY FROM DATABASE` statement](../copy/index.md#copy-from-database-to).

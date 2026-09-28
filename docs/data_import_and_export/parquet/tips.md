@@ -49,7 +49,7 @@ The `ROW_GROUPS_PER_FILE` parameter creates a new Parquet file if the current on
 <SqlLogicTest id="data_import_and_export/parquet/tips/example_004" />
 
 <DocCallout type="tip">
-If multiple threads are active, the number of row groups in a file may slightly exceed the specified number of row groups to limit the amount of locking – similarly to the behavior of [`FILE_SIZE_BYTES`](../../sql/statements/copy#copy--to-options).
+If multiple threads are active, the number of row groups in a file may slightly exceed the specified number of row groups to limit the amount of locking – similarly to the behavior of [`FILE_SIZE_BYTES`](../../sql/statements/copy#copy-to-options).
 However, if `PER_THREAD_OUTPUT` is set, only one thread writes to each file, and it becomes accurate again.
 </DocCallout>
 

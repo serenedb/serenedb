@@ -76,13 +76,13 @@ The table below shows the available mathematical functions.
 | [`gamma(x)`](#gammax)                                                  | Interpolation of the factorial of `x - 1`. Fractional inputs are allowed.                                                                                                                      |
 | [`gcd(x, y)`](#gcdx-y)                                                 | Computes the greatest common divisor of `x` and `y`.                                                                                                                                           |
 | [`greatest_common_divisor(x, y)`](#greatest_common_divisorx-y)         | Computes the greatest common divisor of `x` and `y`.                                                                                                                                           |
-| [`greatest(x1, x2, ...)`](#greatestx1-x2-)                             | Selects the largest value.                                                                                                                                                                     |
+| [`greatest(x1, x2, ...)`](#greatestx1-x2)                              | Selects the largest value.                                                                                                                                                                     |
 | [`isfinite(x)`](#isfinitex)                                            | Returns true if the floating point value is finite, false otherwise.                                                                                                                           |
 | [`isinf(x)`](#isinfx)                                                  | Returns true if the floating point value is infinite, false otherwise.                                                                                                                         |
 | [`isnan(x)`](#isnanx)                                                  | Returns true if the floating point value is not a number, false otherwise.                                                                                                                     |
 | [`lcm(x, y)`](#lcmx-y)                                                 | Computes the least common multiple of `x` and `y`.                                                                                                                                             |
 | [`least_common_multiple(x, y)`](#least_common_multiplex-y)             | Computes the least common multiple of `x` and `y`.                                                                                                                                             |
-| [`least(x1, x2, ...)`](#leastx1-x2-)                                   | Selects the smallest value.                                                                                                                                                                    |
+| [`least(x1, x2, ...)`](#leastx1-x2)                                    | Selects the smallest value.                                                                                                                                                                    |
 | [`lgamma(x)`](#lgammax)                                                | Computes the log of the `gamma` function.                                                                                                                                                      |
 | [`ln(x)`](#lnx)                                                        | Computes the natural logarithm of `x`.                                                                                                                                                         |
 | [`log(x)`](#logx)                                                      | Computes the base-10 logarithm of `x`.                                                                                                                                                         |
@@ -276,7 +276,7 @@ Computes the greatest common divisor of `x` and `y`.
 
 <SqlLogicTest id="sql/functions/numeric/greatest_common_divisor" />
 
-#### `greatest(x1, x2, ...)`
+#### `greatest(x1, x2, ...)` {#greatestx1-x2}
 
 Selects the largest value.
 
@@ -312,7 +312,7 @@ Computes the least common multiple of `x` and `y`.
 
 <SqlLogicTest id="sql/functions/numeric/least_common_multiple" />
 
-#### `least(x1, x2, ...)`
+#### `least(x1, x2, ...)` {#leastx1-x2}
 
 Selects the smallest value.
 

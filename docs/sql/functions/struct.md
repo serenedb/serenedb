@@ -12,16 +12,16 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 | [`struct.entry`](#structentry)                                               | Dot notation that serves as an alias for `struct_extract` from named `STRUCT`s.                                          |
 | [`struct[entry]`](#structentry)                                              | Bracket notation that serves as an alias for `struct_extract` from named `STRUCT`s.                                      |
 | [`struct[idx]`](#structidx)                                                  | Bracket notation that serves as an alias for `struct_extract` from unnamed `STRUCT`s (tuples), using an index (1-based). |
-| [`row(any, ...)`](#rowany-)                                                  | Create an unnamed `STRUCT` (tuple) containing the argument values.                                                       |
+| [`row(any, ...)`](#rowany)                                                   | Create an unnamed `STRUCT` (tuple) containing the argument values.                                                       |
 | [`struct_concat(structs...)`](#struct_concatstructs)                         | Merge the multiple `structs` into a single `STRUCT`.                                                                     |
 | [`struct_contains(struct, entry)`](#struct_containsstruct-entry)             | Check if the `STRUCT` contains the specified entry.                                                                      |
 | [`struct_extract(struct, 'entry')`](#struct_extractstruct-entry)             | Extract the named entry from the `STRUCT`.                                                                               |
 | [`struct_extract(struct, idx)`](#struct_extractstruct-idx)                   | Extract the entry from an unnamed `STRUCT` (tuple) using an index (1-based).                                             |
 | [`struct_extract_at(struct, idx)`](#struct_extract_atstruct-idx)             | Extract the entry from a `STRUCT` (tuple) using an index (1-based).                                                      |
-| [`struct_insert(struct, name := any, ...)`](#struct_insertstruct-name--any-) | Add field(s) to an existing `STRUCT`.                                                                                    |
-| [`struct_pack(name := any, ...)`](#struct_packname--any-)                    | Create a `STRUCT` containing the argument values. The entry name will be the bound variable name.                        |
+| [`struct_insert(struct, name := any, ...)`](#struct_insertstruct-name-any)   | Add field(s) to an existing `STRUCT`.                                                                                    |
+| [`struct_pack(name := any, ...)`](#struct_packname-any)                      | Create a `STRUCT` containing the argument values. The entry name will be the bound variable name.                        |
 | [`struct_position(struct, entry)`](#struct_positionstruct-entry)             | Return the index of the entry within the `STRUCT` (1-based), or `NULL` if not found.                                     |
-| [`struct_update(struct, name := any, ...)`](#struct_updatestruct-name--any-) | Add or update field(s) of an existing `STRUCT`.                                                                          |
+| [`struct_update(struct, name := any, ...)`](#struct_updatestruct-name-any)   | Add or update field(s) of an existing `STRUCT`.                                                                          |
 | [`struct_values(struct)`](#struct_valuesstruct)                              | Return the values of a `STRUCT` as an unnamed `STRUCT` (tuple).                                                          |
 
 #### `struct.entry`
@@ -42,7 +42,7 @@ Bracket notation that serves as an alias for `struct_extract` from unnamed `STRU
 
 <SqlLogicTest id="sql/functions/struct/structidx" />
 
-#### `row(any, ...)`
+#### `row(any, ...)` {#rowany}
 
 Create an unnamed `STRUCT` (tuple) containing the argument values.
 
@@ -78,13 +78,13 @@ Extract the entry from a `STRUCT` (tuple) using an index (1-based).
 
 <SqlLogicTest id="sql/functions/struct/struct_extract_at" />
 
-#### `struct_insert(struct, name := any, ...)`
+#### `struct_insert(struct, name := any, ...)` {#struct_insertstruct-name-any}
 
 Add field(s) to an existing `STRUCT`.
 
 <SqlLogicTest id="sql/functions/struct/struct_insert" />
 
-#### `struct_pack(name := any, ...)`
+#### `struct_pack(name := any, ...)` {#struct_packname-any}
 
 Create a `STRUCT` containing the argument values. The entry name will be the bound variable name.
 
@@ -96,7 +96,7 @@ Return the index of the entry within the `STRUCT` (1-based), or `NULL` if not fo
 
 <SqlLogicTest id="sql/functions/struct/struct_position" />
 
-#### `struct_update(struct, name := any, ...)`
+#### `struct_update(struct, name := any, ...)` {#struct_updatestruct-name-any}
 
 Add or update field(s) of an existing `STRUCT`.
 

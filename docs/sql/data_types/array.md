@@ -19,7 +19,7 @@ The `ARRAY` type in PostgreSQL allows variable-length fields. SereneDB's `ARRAY`
 
 ## Creating Arrays
 
-Arrays can be created using the [`array_value(expr, ...)` function](../../sql/functions/array.md#array_valuearg-).
+Arrays can be created using the [`array_value(expr, ...)` function](../../sql/functions/array.md#array_valuearg).
 
 Construct with the `array_value` function:
 

@@ -98,7 +98,7 @@ To change the AES mode to [CTR](https://en.wikipedia.org/wiki/Block_cipher_mode_
 SereneDB's encryption does not yet meet the official [NIST requirements](https://csrc.nist.gov/projects/cryptographic-standards-and-guidelines).
 </DocCallout>
 
-## Remote files (HTTP / S3)
+## Remote files (HTTP / S3) {#remote-files-http-s3}
 
 `ATTACH` supports HTTP and S3 endpoints. For these, it creates a read-only connection by default. Therefore, the following two commands are equivalent:
 

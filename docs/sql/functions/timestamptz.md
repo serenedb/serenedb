@@ -199,7 +199,7 @@ The table below shows the ICU scalar functions for `TIMESTAMP WITH TIME ZONE` va
 
 </div>
 
-#### `date_part([part, ...], timestamptz)`
+#### `date_part([part, ...], timestamptz)` {#date_partpart-list-timestamptz}
 
 <div className="docs-table-properties">
 

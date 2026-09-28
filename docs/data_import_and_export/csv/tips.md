@@ -37,7 +37,7 @@ The `union_by_name` option can be used to unify the schema of files that have di
 
 <SqlLogicTest id="data_import_and_export/csv/tips/example_005" />
 
-To load data into _an existing table_ where the table has more columns than the CSV file, you can use the [`INSERT INTO ... BY NAME` clause](../../sql/statements/insert/index.md#insert-into--by-name):
+To load data into _an existing table_ where the table has more columns than the CSV file, you can use the [`INSERT INTO ... BY NAME` clause](../../sql/statements/insert/index.md#insert-into-by-name):
 
 <SqlLogicTest id="data_import_and_export/csv/tips/example_006" />
 

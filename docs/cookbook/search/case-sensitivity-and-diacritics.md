@@ -62,11 +62,11 @@ The `exact_dict` uses `ACCENT = true`, preserving diacritics:
 
 Different use cases call for different normalization. Here are common patterns:
 
-### Search-friendly (case + accent insensitive)
+### Search-friendly (case + accent insensitive) {#search-friendly-case-accent-insensitive}
 
 <SqlLogicTest id="cookbook/search/case-sensitivity-and-diacritics/example_009" />
 
-### Identifier matching (case + accent sensitive)
+### Identifier matching (case + accent sensitive) {#identifier-matching-case-accent-sensitive}
 
 <SqlLogicTest id="cookbook/search/case-sensitivity-and-diacritics/example_010" />
 

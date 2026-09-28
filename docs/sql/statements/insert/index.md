@@ -49,7 +49,7 @@ Each column not present in the explicit or implicit column list will be filled w
 
 If the expression for any column is not of the correct data type, automatic type conversion will be attempted.
 
-### `INSERT INTO ... [BY POSITION]`
+### `INSERT INTO ... [BY POSITION]` {#insert-into-by-position}
 
 The order that values are inserted into the columns of the table is determined by the order that the columns were declared in.
 That is, the values supplied by the `VALUES` clause or query are associated with the column list left-to-right.
@@ -72,7 +72,7 @@ Adding `BY POSITION` results in the same behavior:
 
 This will insert `5` into `b` and `42` into `a`.
 
-### `INSERT INTO ... BY NAME`
+### `INSERT INTO ... BY NAME` {#insert-into-by-name}
 
 Using the `BY NAME` modifier, the names of the column list of the `SELECT` statement are matched against the column names of the table to determine the order that values should be inserted into the table. This allows inserting even in cases when the order of the columns in the table differs from the order of the values in the `SELECT` statement or certain columns are missing.
 

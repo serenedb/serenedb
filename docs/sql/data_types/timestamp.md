@@ -1,6 +1,5 @@
 ---
 blurb: Timestamps represent points in time.
-layout: docu
 redirect_from:
     - /docs/preview/sql/data_types/timestamp
     - /docs/stable/sql/data_types/timestamp
@@ -52,7 +51,7 @@ Despite the name, a `TIMESTAMP WITH TIME ZONE` does not store time zone informat
 The corresponding `TIMESTAMP WITHOUT TIME ZONE` stores the same `INT64`, but arithmetic, binning and string formatting follow the straightforward rules of Coordinated Universal Time (UTC) without offsets or time zones. Accordingly, `TIMESTAMP`s could be interpreted as UTC timestamps, but more commonly they are used to represent _local_ observations of time recorded in an unspecified time zone, and operations on these types can be interpreted as simply manipulating tuple fields following nominal temporal logic.
 It is a common data cleaning problem to disambiguate such observations, which may also be stored in raw strings without time zone specification or UTC offsets, into unambiguous `TIMESTAMP WITH TIME ZONE` instants. One possible solution to this is to append UTC offsets to strings, followed by an explicit cast to `TIMESTAMP WITH TIME ZONE`. Alternatively, a `TIMESTAMP WITHOUT TIME ZONE` may be created first and then be combined with a time zone specification to obtain a time zone aware `TIMESTAMP WITH TIME ZONE`.
 
-## Conversion between Strings and Naïve / Time Zone-Aware Timestamps
+## Conversion between Strings and Naïve / Time Zone-Aware Timestamps {#conversion-between-strings-and-naïve-time-zone-aware-timestamps}
 
 The conversion between strings _without_ UTC offsets or IANA time zone names and `WITHOUT TIME ZONE` types is unambiguous and straightforward.
 The conversion between strings _with_ UTC offsets or time zone names and `WITH TIME ZONE` types is also unambiguous.

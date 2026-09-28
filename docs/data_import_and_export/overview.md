@@ -54,7 +54,7 @@ Alternatively, use the [`read_csv` function](../data_import_and_export/csv/overv
 
 <SqlLogicTest id="data_import_and_export/overview/example_003" />
 
-Or use the [`COPY` statement](../sql/statements/copy/index.md#copy--from):
+Or use the [`COPY` statement](../sql/statements/copy/index.md#copy-from):
 
 <SqlLogicTest id="data_import_and_export/overview/example_004" />
 
@@ -62,7 +62,7 @@ It is also possible to read data directly from **compressed CSV files** (e.g., c
 
 <SqlLogicTest id="data_import_and_export/overview/example_005" />
 
-SereneDB can create a table from the loaded data using the [`CREATE TABLE ... AS SELECT` statement](../sql/statements/create_table/index.md#create-table--as-select-ctas):
+SereneDB can create a table from the loaded data using the [`CREATE TABLE ... AS SELECT` statement](../sql/statements/create_table/index.md#create-table-as-select-ctas):
 
 <SqlLogicTest id="data_import_and_export/overview/example_006" />
 
@@ -78,7 +78,7 @@ Alternatively, use the [`read_parquet` function](../data_import_and_export/parqu
 
 <SqlLogicTest id="data_import_and_export/overview/example_008" />
 
-Or use the [`COPY` statement](../sql/statements/copy/index.md#copy--from):
+Or use the [`COPY` statement](../sql/statements/copy/index.md#copy-from):
 
 <SqlLogicTest id="data_import_and_export/overview/example_009" />
 
@@ -94,7 +94,7 @@ Alternatively, use the [`read_json_auto` function](../data_import_and_export/jso
 
 <SqlLogicTest id="data_import_and_export/overview/example_011" />
 
-Or use the [`COPY` statement](../sql/statements/copy/index.md#copy--from):
+Or use the [`COPY` statement](../sql/statements/copy/index.md#copy-from):
 
 <SqlLogicTest id="data_import_and_export/overview/example_012" />
 

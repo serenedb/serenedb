@@ -40,7 +40,7 @@ The table below shows all the built-in general-purpose data types. The alternati
 
 Implicit and explicit typecasting is possible between numerous types, see the [Typecasting](../../sql/data_types/typecasting.md) page for details.
 
-## Nested / Composite Types
+## Nested / Composite Types {#nested-composite-types}
 
 SereneDB supports five nested data types: `ARRAY`, `LIST`, `MAP`, `STRUCT` and `UNION`. Each supports different use cases and has a different structure.
 

@@ -158,13 +158,13 @@ For example:
 
 <SqlLogicTest id="sql/statements/alter_table/struct_insert/example_024" />
 
-#### `ALTER TABLE` with `ADD COLUMN` / `DROP COLUMN` / `RENAME COLUMN`
+#### `ALTER TABLE` with `ADD COLUMN` / `DROP COLUMN` / `RENAME COLUMN` {#alter-table-with-add-column-drop-column-rename-column}
 
 SereneDB `ALTER TABLE` supports the
 [`ADD COLUMN`, `DROP COLUMN` and `RENAME COLUMN` clauses](../../data_types/struct.md#updating-the-schema)
 to update the sub-schema of a `STRUCT`.
 
-## `SET` / `DROP DEFAULT`
+## `SET` / `DROP DEFAULT` {#set-drop-default}
 
 The `SET DEFAULT` clause changes the default value of a column:
 
@@ -186,7 +186,7 @@ A primary key can also span multiple columns:
 
 The statement fails if the table already has a primary key, if an index depends on the table or if the existing data would violate the new constraint (duplicate or `NULL` values in the key columns).
 
-## `SET` / `RESET` (Table Options)
+## `SET` / `RESET` (Table Options) {#set-reset-table-options}
 
 <DocCallout type="tip">
 The `SET` and `RESET` table-option clauses are not yet supported in SereneDB.

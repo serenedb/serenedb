@@ -18,7 +18,7 @@ For storing fixed-length lists, SereneDB uses the [`ARRAY` type](../../sql/data_
 
 ## Creating Lists
 
-Lists can be created using the [`list_value(expr, ...)`](../../sql/functions/list.md#list_valuearg-) function or the equivalent bracket notation `[expr, ...]`. The expressions can be constants or arbitrary expressions. To create a list from a table column, use the [`list`](../../sql/functions/aggregates/index.md#general-aggregate-functions) aggregate function.
+Lists can be created using the [`list_value(expr, ...)`](../../sql/functions/list.md#list_valuearg) function or the equivalent bracket notation `[expr, ...]`. The expressions can be constants or arbitrary expressions. To create a list from a table column, use the [`list`](../../sql/functions/aggregates/index.md#general-aggregate-functions) aggregate function.
 
 List of integers:
 

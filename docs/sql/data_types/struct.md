@@ -74,7 +74,7 @@ The `struct_extract` function is also equivalent. This returns 1:
 
 <SqlLogicTest id="sql/data_types/struct/example_012" />
 
-### `unnest` / `STRUCT.*`
+### `unnest` / `STRUCT.*` {#unnest-struct}
 
 Rather than retrieving a single key from a struct, the `unnest` special function can be used to retrieve all keys from a struct as separate columns.
 This is particularly useful when a prior operation creates a struct of unknown shape, or if a query must handle any potential struct keys:

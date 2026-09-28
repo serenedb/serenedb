@@ -531,6 +531,33 @@ TEST_F(AIFunctionsTest, TopNDefersAICalls) {
   }
 }
 
+TEST_F(AIFunctionsTest, TopNUnderFilterAndJoinKeepsBindings) {
+  Mock(kChat, [](std::string_view body) {
+    return Reply{200, ChatReply(Content(body, 1), "stop", 1)};
+  });
+  Start();
+  auto none = Run(
+    "SELECT count(*), string_agg(c, ',') FROM (SELECT id, k, ai_generate(v, "
+    "secret_name := 'chat') AS c FROM (SELECT 1 AS id, range AS k, "
+    "range::VARCHAR AS v FROM range(3)) t ORDER BY k LIMIT 2) s WHERE s.id > "
+    "1000");
+  EXPECT_EQ(none->GetValue(0, 0).GetValue<int64_t>(), 0);
+  EXPECT_TRUE(none->GetValue(1, 0).IsNull());
+  constexpr std::string_view kTop =
+    "(SELECT id, k, ai_generate(v, secret_name := 'chat') AS c FROM (SELECT "
+    "range AS id, range AS k, range::VARCHAR AS v FROM range(3)) t ORDER BY k "
+    "LIMIT 2) s";
+  auto one = Run(absl::StrCat("SELECT count(*), string_agg(c, ',') FROM ", kTop,
+                              " WHERE s.id >= 1"));
+  EXPECT_EQ(one->GetValue(0, 0).GetValue<int64_t>(), 1);
+  EXPECT_EQ(one->GetValue(1, 0).ToString(), "1");
+  auto joined = Run(absl::StrCat(
+    "SELECT count(*), string_agg(c, ',' ORDER BY c) FROM range(3) u JOIN ",
+    kTop, " ON u.range = s.id"));
+  EXPECT_EQ(joined->GetValue(0, 0).GetValue<int64_t>(), 2);
+  EXPECT_EQ(joined->GetValue(1, 0).ToString(), "0,1");
+}
+
 TEST_F(AIFunctionsTest, AndConjunctsRunLazily) {
   auto& mock = Mock(kChat, [](std::string_view body) {
     const bool first = absl::StrContains(Content(body, 0), "first");
@@ -1278,6 +1305,78 @@ TEST_F(AIFunctionsTest, PrepareAfterExhaustedQuota) {
   duckdb::vector<duckdb::Value> values;
   auto result = prepared->Execute(values, false);
   ASSERT_FALSE(result->HasError()) << result->GetError();
+}
+
+TEST_F(AIFunctionsTest, JevBatchWithBadAnswerFailsWhole) {
+  Mock(kSystemOne, [](std::string_view) {
+    return Reply{
+      200,
+      R"({"answers":{"r0":{"noul":0.1},"r1":{"noul":1.5},"r2":{"noul":0.3}}})"};
+  });
+  Start();
+  Run("SET sdb_ai_throw_on_error = false");
+  auto result = Run(
+    "SELECT ai_system1(body, 'Q?', batch_size := 3, secret_name := 'jev') "
+    "FROM (VALUES ('a'), ('b'), ('c')) v(body)");
+  ASSERT_EQ(result->RowCount(), 3);
+  for (duckdb::idx_t i = 0; i != 3; ++i) {
+    EXPECT_TRUE(result->GetValue(0, i).IsNull()) << i;
+  }
+}
+
+TEST_F(AIFunctionsTest, ClassifyMatchesPunctuatedLabels) {
+  Mock(kChat, [](std::string_view body) {
+    return Reply{
+      200, ChatReply(Content(body, 1) == "x" ? R"({\"category\":\"U.S.\"})"
+                                             : R"(\"EU\".)",
+                     "stop", 1)};
+  });
+  Start();
+  auto result = Run(
+    "SELECT ai_classify('x', ['U.S.', 'EU'], secret_name := 'chat'), "
+    "ai_classify('y', ['U.S.', 'EU'], secret_name := 'chat')");
+  EXPECT_EQ(result->GetValue(0, 0).ToString(), "U.S.");
+  EXPECT_EQ(result->GetValue(1, 0).ToString(), "EU");
+}
+
+TEST_F(AIFunctionsTest, ExtractReturnsNonStringResult) {
+  Mock(kChat, [](std::string_view) {
+    return Reply{200, ChatReply(R"({\"result\":42})", "stop", 1)};
+  });
+  Start();
+  auto result = Run(
+    "SELECT ai_extract('x', 'the number', secret_name := "
+    "'chat')");
+  EXPECT_EQ(result->GetValue(0, 0).ToString(), "42");
+}
+
+TEST_F(AIFunctionsTest, DuplicateKeysFail) {
+  Start();
+  ExpectError(
+    R"(SELECT ai_system1('x', questions := '{"q": {"instructions": "a"}, "Q": {"instructions": "b"}}', secret_name := 'jev'))",
+    "defined twice");
+  ExpectError(
+    R"(SELECT ai_extract('x', '{"city": "a", "city": "b"}', secret_name := 'chat'))",
+    "defined twice");
+}
+
+TEST_F(AIFunctionsTest, FailuresStopTheRound) {
+  std::atomic_int status = 401;
+  auto& mock = Mock(kChat, [&](std::string_view) {
+    return Reply{status.load(), R"({"error":"nope"})"};
+  });
+  Start();
+  Run("SET sdb_ai_max_concurrent_requests = 4");
+  constexpr std::string_view kQuery =
+    "SELECT count(ai_generate(range::VARCHAR, secret_name := 'chat')) FROM "
+    "range(2048)";
+  ExpectError(std::string{kQuery}, "returned HTTP 401");
+  EXPECT_LE(mock.Bodies().size(), 8);
+  status = 500;
+  Run("SET sdb_ai_max_retries = 1");
+  const auto before = mock.Bodies().size();
+  ExpectError(std::string{kQuery}, "returned HTTP 500");
+  EXPECT_LE(mock.Bodies().size() - before, 16);
 }
 
 }  // namespace

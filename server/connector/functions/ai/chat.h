@@ -53,8 +53,6 @@ struct ChatConfig {
 struct ChatTemplate {
   std::string prefix;
   std::string suffix;
-
-  bool operator==(const ChatTemplate&) const = default;
 };
 
 void AddChatOptions(duckdb::FunctionSignature& signature);

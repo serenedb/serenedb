@@ -203,7 +203,7 @@ When the second argument is a JSON object, each key names a field and each value
 
 ## `ai_redact` {#ai_redact}
 
-`ai_redact(text, categories [, replacement])` rewrites `text` with every occurrence of the listed kinds of personal information replaced by `replacement` (default `[REDACTED]`). An empty `categories` array stands for person names, email addresses, phone numbers, postal addresses, credit card numbers and IP addresses. Control characters other than tab, newline and carriage return are replaced by spaces before the text is sent.
+`ai_redact(text, categories [, replacement])` rewrites `text` with every occurrence of the listed kinds of personal information replaced by `replacement` (default `[REDACTED]`). An empty `categories` array stands for person names, email addresses, phone numbers, postal addresses, credit card numbers and IP addresses.
 
 <SqlLogicTest id="sql/functions/ai_ollama/redact" hideResult />
 
@@ -232,9 +232,9 @@ A `NULL` `text` returns `NULL`, so rows without text are simply skipped:
 | `text` | The text to embed. `NULL` yields `NULL`. |
 | `model` | The provider's embedding model name, for example `'all-minilm'` or `'text-embedding-3-small'`. |
 | `secret_name` | Name of the `openai` secret. Defaults to `sdb_ai_embedding_default_secret`. |
-| `dimensions` | Requested vector size, for models that can shorten their embeddings (such as OpenAI's `text-embedding-3-*`). 0 or omitted keeps the native size. A reply of any other size fails the row. |
+| `dimensions` | Requested vector size, for models that can shorten their embeddings (such as OpenAI's `text-embedding-3-*`). 0 or omitted keeps the native size. A reply with an embedding of any other size fails every row of that request. |
 
-**Returns** a variable-length `FLOAT[]`. An empty embedding in the reply fails the row. To store embeddings in an [IVF vector column](../indexes/inverted/vector-search.md), which requires a *fixed* size, cast to `FLOAT[N]` with the model's dimension, for example `ai_embed(...)::FLOAT[384]`. Every stored row and the query vector must use the **same model and dimension**, or the index and the distance comparisons will not line up.
+**Returns** a variable-length `FLOAT[]`. An empty embedding in a reply fails every row of that request. To store embeddings in an [IVF vector column](../indexes/inverted/vector-search.md), which requires a *fixed* size, cast to `FLOAT[N]` with the model's dimension, for example `ai_embed(...)::FLOAT[384]`. Every stored row and the query vector must use the **same model and dimension**, or the index and the distance comparisons will not line up.
 
 ### Choosing a model
 
@@ -250,7 +250,7 @@ Check your provider's documentation for the exact dimension and use it as the `N
 
 ### Performance
 
-Each `ai_embed` call is a network request to the provider, so **embed documents once at write time** and store the vectors; only the *query* text is embedded at search time. Rows are sent in batches of up to `sdb_ai_embedding_max_batch_size` texts per request. If the provider rejects a batch of several texts with HTTP 400, 413 or 422, for example because one text is longer than the model accepts, the batch is split in half and sent again, down to single texts, so only the rejected texts fail. On the first HTTP 400 or 422, one extra request with the single text `x` checks whether the provider rejects every request, for example because of the `dimensions` value; if it does, the rejected batches fail without further splitting. Embedding a column is just a `SELECT`, and `NULL`s pass through and are easy to count or filter:
+Each `ai_embed` call is a network request to the provider, so **embed documents once at write time** and store the vectors; only the *query* text is embedded at search time. Rows are sent in batches of up to `sdb_ai_embedding_max_batch_size` texts per request. If the provider rejects a batch of several texts with HTTP 400, 413 or 422, for example because one text is longer than the model accepts, the batch is split in half and sent again, down to single texts, so only the rejected texts fail. A single text rejected with HTTP 422 fails the query, like any other 422. On the first HTTP 400 or 422, one extra request with the single text `x` checks whether the provider rejects every request, for example because of the `dimensions` value; if it does, the rejected batches fail without further splitting. Embedding a column is just a `SELECT`, and `NULL`s pass through and are easy to count or filter:
 
 <SqlLogicTest id="sql/functions/ai_ollama/embed_table" />
 
@@ -359,7 +359,9 @@ An AI function spends almost all of its time waiting for the provider, so each c
 - In a query without `ORDER BY`, a constant `LIMIT` below 8192 is applied before the AI calls in the `SELECT` list, so `SELECT ai_generate(...) FROM t LIMIT 10` sends 10 requests. With `ORDER BY ... LIMIT`, AI calls that the sort doesn't use run only on the rows that remain after the `LIMIT`.
 - Calls inside `CASE`, `COALESCE`, `AND`, `OR` and `TRY` run only for the rows that reach them.
 - `ai_agg` and `ai_summarize_agg` gather each group's values first, then send the requests of all groups in a chunk together.
-- Cancelling a query or closing a cursor stops new requests at once. Requests already in flight finish, or give up after `sdb_ai_request_timeout`.
+- Cancelling a query or disconnecting stops new requests at once. Requests already in flight finish, or give up after `sdb_ai_request_timeout`.
+- A request that fails the query, such as a wrong API key, or any failed request while `sdb_ai_throw_on_error` is `true`, stops the requests of its chunk that were not sent yet.
+- A client that fetches rows in pages, for example JDBC with `setFetchSize`, runs AI calls only for the chunks it has fetched, so closing its cursor early sends no more requests.
 
 ## End-to-end: semantic search
 

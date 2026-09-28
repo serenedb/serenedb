@@ -26,7 +26,6 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/function/scalar_function.hpp>
-#include <duckdb/main/client_context.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>

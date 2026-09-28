@@ -225,6 +225,11 @@ void BindExtract(TextBindData& bind, duckdb::BoundScalarFunction& fn,
       schema.size() != 0) {
     std::string properties = "{";
     for (auto field : schema) {
+      if (absl::c_linear_search(bind.keys, field.key)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG(bind.spec->name, ": key \"", field.key,
+                                "\" is defined twice"));
+      }
       std::string_view text;
       const auto description =
         field.value.get_string().get(text) == simdjson::SUCCESS
@@ -386,10 +391,12 @@ duckdb::Value ClassifyReply(const TextBindData& bind, std::string_view text) {
       element.get_string().get(category) == simdjson::SUCCESS) {
     text = category;
   }
-  if (const auto* label = MatchLabel(bind, Unquote(text))) {
-    return duckdb::Value{*label};
+  const auto* label = MatchLabel(bind, absl::StripAsciiWhitespace(text));
+  if (label == nullptr) {
+    label = MatchLabel(bind, Unquote(text));
   }
-  return duckdb::Value{duckdb::LogicalType::VARCHAR};
+  return label ? duckdb::Value{*label}
+               : duckdb::Value{duckdb::LogicalType::VARCHAR};
 }
 
 duckdb::Value ClassifyLabelsReply(const TextBindData& bind,
@@ -466,9 +473,10 @@ duckdb::Value ExtractReply(const TextBindData& bind, std::string_view text) {
       return duckdb::Value{duckdb::LogicalType::VARCHAR};
     }
     std::string_view result;
-    if (element.get_string().get(result) == simdjson::SUCCESS) {
-      text = absl::StripAsciiWhitespace(result);
+    if (element.get_string().get(result) != simdjson::SUCCESS) {
+      return duckdb::Value{simdjson::minify(element)};
     }
+    text = absl::StripAsciiWhitespace(result);
   }
   if (text.empty() || absl::EqualsIgnoreCase(Unquote(text), "NONE")) {
     return duckdb::Value{duckdb::LogicalType::VARCHAR};

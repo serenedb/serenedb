@@ -26,7 +26,6 @@
 
 #include <cmath>
 #include <duckdb/common/types/value.hpp>
-#include <duckdb/function/function.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <tuple>

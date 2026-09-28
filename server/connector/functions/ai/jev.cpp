@@ -26,6 +26,7 @@
 #include <absl/strings/substitute.h>
 #include <simdjson.h>
 
+#include <algorithm>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/function/scalar_function.hpp>
@@ -372,8 +373,12 @@ duckdb::unique_ptr<duckdb::FunctionData> JevBind(
     bind->questions = questions->type().id() == duckdb::LogicalTypeId::STRUCT
                         ? ParseStructQuestions(*questions)
                         : ParseJsonQuestions(questions->ToString());
+    absl::flat_hash_set<std::string> keys;
     duckdb::child_list_t<duckdb::LogicalType> children;
     for (const auto& question : bind->questions) {
+      if (!keys.insert(absl::AsciiStrToLower(question.key)).second) {
+        Fail(absl::StrCat("question \"", question.key, "\" is defined twice"));
+      }
       children.emplace_back(duckdb::Identifier{question.key},
                             AnswerType(question.type));
     }
@@ -565,25 +570,28 @@ duckdb::Value ParseAnswer(const Question& question,
 }
 
 void ParseBatch(const JevBindData& bind, simdjson::dom::element reply,
-                std::string_view raw, size_t states,
-                std::span<duckdb::Value> outputs) {
+                std::string_view raw, std::span<duckdb::Value> outputs) {
   simdjson::dom::element answers;
   if (reply["answers"].get(answers) != simdjson::SUCCESS) {
     ThrowBadReply(kFn, "response has no \"answers\"", raw);
   }
-  for (size_t k = 0; k != states; ++k) {
+  std::vector<duckdb::Value> parsed;
+  parsed.reserve(outputs.size());
+  for (size_t k = 0; k != outputs.size(); ++k) {
     if (bind.multi) {
       std::vector<duckdb::Value> fields;
       fields.reserve(bind.questions.size());
       for (const auto& question : bind.questions) {
         fields.push_back(ParseAnswer(question, answers, question.key, raw));
       }
-      outputs[k] = duckdb::Value::STRUCT(bind.type, std::move(fields));
+      parsed.push_back(duckdb::Value::STRUCT(bind.type, std::move(fields)));
     } else {
-      outputs[k] = ParseAnswer(bind.questions.front(), answers,
-                               states == 1 ? kSingleKey : RowKey(k), raw);
+      parsed.push_back(ParseAnswer(bind.questions.front(), answers,
+                                   outputs.size() == 1 ? kSingleKey : RowKey(k),
+                                   raw));
     }
   }
+  std::ranges::move(parsed, outputs.begin());
 }
 
 class JevWork final : public BatchWork {
@@ -614,8 +622,7 @@ class JevWork final : public BatchWork {
 
   void DecodeBatch(size_t begin, size_t size, simdjson::dom::element reply,
                    std::string_view raw) final {
-    ParseBatch(_bind, reply, raw, size,
-               std::span{_outputs}.subspan(begin, size));
+    ParseBatch(_bind, reply, raw, std::span{_outputs}.subspan(begin, size));
   }
 
   const JevBindData& _bind;

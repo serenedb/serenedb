@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/container/flat_hash_map.h>
-#include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
@@ -148,8 +147,7 @@ std::string_view UrlHost(std::string_view url) {
 }
 
 bool IsLoopbackHost(std::string_view host) {
-  return absl::EqualsIgnoreCase(host, "localhost") || host == "::1" ||
-         host == "[::1]" ||
+  return absl::EqualsIgnoreCase(host, "localhost") || host == "[::1]" ||
          (host.starts_with("127.") &&
           host.find_first_not_of("0123456789.") == std::string_view::npos);
 }
@@ -199,6 +197,22 @@ std::string ProviderError(std::string_view body) {
     }
   }
   return ReadableText(body);
+}
+
+[[noreturn]] void ThrowReplyError(const Endpoint& endpoint,
+                                  const Response& response) {
+  if (response.status == 0) {
+    ThrowRowError(absl::StrCat(endpoint.fn, ": request to '", endpoint.url,
+                               "' failed: ", ReadableText(response.body)));
+  }
+  auto message =
+    absl::StrCat(endpoint.fn, ": '", endpoint.url, "' returned HTTP ",
+                 response.status, ": ", ProviderError(response.body));
+  if (const auto code = FatalErrorCode(response.status, response.body);
+      code != 0) {
+    THROW_SQL_ERROR(ERR_CODE(code), ERR_MSG(message));
+  }
+  ThrowRowError(std::move(message));
 }
 
 uint64_t RetryDelayMs(uint32_t initial_ms, uint32_t attempt,
@@ -389,17 +403,24 @@ struct FetchState {
       return;
     }
     auto& response = out[k];
+    const auto& settings = exec.query.settings;
     try {
       response = sender.Send(
         work.Body(k), [&](simdjson::dom::element reply, std::string_view raw) {
           work.Decode(k, reply, raw);
         });
+      if (response.error) {
+        if (settings.throw_on_error) {
+          std::rethrow_exception(response.error);
+        }
+      } else if (!response.skipped && !IsSuccess(response.status) &&
+                 !IsBatchRejection(response.status) &&
+                 (settings.throw_on_error ||
+                  FatalErrorCode(response.status, response.body) != 0)) {
+        ThrowReplyError(exec.target.endpoint, response);
+      }
     } catch (...) {
       Fail(std::current_exception());
-      return;
-    }
-    if (response.error && exec.query.settings.throw_on_error) {
-      Fail(response.error);
     }
   }
 
@@ -516,7 +537,10 @@ void Fetch(const AIExecution& exec, AIWork& work, std::span<Response> out) {
   auto state = duckdb::make_shared_ptr<FetchState>(exec, work, out);
   auto& limiter = exec.query.limiter;
   {
-    absl::Cleanup join = [&] { state->Join(); };
+    absl::Cleanup join = [&] {
+      state->stop.store(true, std::memory_order_relaxed);
+      state->Join();
+    };
     Sender sender{exec};
     while (!state->Stop() && state->Pending()) {
       TopUp(state);
@@ -735,7 +759,10 @@ size_t Limiter::Available() {
 AIQuery& AIQuery::Get(duckdb::ClientContext& context) {
   auto& query = *context.registered_state->GetOrCreate<AIQuery>("sdb_ai_query");
   if (!query._active.load(std::memory_order_acquire)) {
-    query.Begin(context);
+    absl::MutexLock lock{&query._mutex};
+    if (!query._active.load(std::memory_order_relaxed)) {
+      query.Begin(context);
+    }
   }
   return query;
 }
@@ -755,14 +782,14 @@ void AIQuery::Begin(duckdb::ClientContext& context) {
   _calls.store(0, std::memory_order_relaxed);
   _output_tokens.store(0, std::memory_order_relaxed);
   limiter.Reset(settings.concurrency);
-  {
-    absl::MutexLock lock{&_mutex};
-    _targets.clear();
-  }
+  _targets.clear();
   _active.store(true, std::memory_order_release);
 }
 
-void AIQuery::QueryBegin(duckdb::ClientContext& context) { Begin(context); }
+void AIQuery::QueryBegin(duckdb::ClientContext& context) {
+  absl::MutexLock lock{&_mutex};
+  Begin(context);
+}
 
 void AIQuery::QueryEnd(duckdb::ClientContext&) {
   _active.store(false, std::memory_order_release);
@@ -782,7 +809,6 @@ const AIQuery::Target& AIQuery::Resolve(duckdb::ClientContext& context,
                      .InitializeParameters(context, target->endpoint.url);
   target->params->retries = 0;
   target->params->timeout = settings.timeout;
-  target->params->timeout_usec = 0;
   target->headers.Insert("Content-Type", "application/json");
   target->headers.Insert("X-SereneDB-AI-Function", target->endpoint.fn);
   if (!target->endpoint.api_key.empty()) {
@@ -843,19 +869,7 @@ bool Replies::Ok(size_t k) const {
   if (IsSuccess(response.status)) {
     return true;
   }
-  const auto& endpoint = _exec.target.endpoint;
-  if (response.status == 0) {
-    ThrowRowError(absl::StrCat(endpoint.fn, ": request to '", endpoint.url,
-                               "' failed: ", ReadableText(response.body)));
-  }
-  auto message =
-    absl::StrCat(endpoint.fn, ": '", endpoint.url, "' returned HTTP ",
-                 response.status, ": ", ProviderError(response.body));
-  if (const auto code = FatalErrorCode(response.status, response.body);
-      code != 0) {
-    THROW_SQL_ERROR(ERR_CODE(code), ERR_MSG(message));
-  }
-  ThrowRowError(std::move(message));
+  ThrowReplyError(_exec.target.endpoint, response);
 }
 
 std::string BatchWork::Body(size_t k) const {

@@ -1,11 +1,6 @@
 \timing on
-\if :{?jev_secret}
-\else
-\set jev_secret kev
-\endif
 
-SET sdb_ai_system1_default_secret = :'jev_secret';
-SET sdb_ai_max_concurrent_requests = 1;
+SET sdb_ai_system1_default_secret = 'openrouter';
 
 \echo === [S1] the first tickets arrive: the INSERT triages every row it writes ===
 INSERT INTO tickets (id, customer, plan, opened_at, subject, body) VALUES
@@ -77,8 +72,7 @@ RETURNING id, subject, round(triage.refund, 3) AS refund;
 ALTER TABLE tickets ADD COLUMN churn_risk DOUBLE;
 
 UPDATE tickets
-SET churn_risk = ai_system1(body, 'Is this customer at risk of leaving for another vendor?',
-                            batch_size := 1)
+SET churn_risk = ai_system1(body, 'Is this customer at risk of leaving for another vendor?')
 WHERE plan = 'enterprise';
 
 SELECT id, customer, subject, round(churn_risk, 3) AS churn_risk

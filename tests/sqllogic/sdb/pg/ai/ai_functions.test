@@ -615,6 +615,9 @@ QUERY PLAN
 │ ~1 row                                       │
 ╰──────────────────────────────────────────────╯
 
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
 query
 EXPLAIN SELECT id, ai_generate(body) FROM ai_rows ORDER BY id LIMIT 2;
 ----
@@ -625,24 +628,8 @@ QUERY PLAN
 │ ai_generate(body, NULL, NULL, NULL, NULL, NULL)  │
 │ ~2 rows                                          │
 ╰─────────────────────────┬────────────────────────╯
-╭─ PROJECTION ────────────┴────────────────────────╮
-│ Projections:                                     │
-│ CAST(#0 AS INTEGER),                             │
-│ __internal_decompress_string(#1)                 │
-│ ~3 rows                                          │
-╰─────────────────────────┬────────────────────────╯
 ╭─ ORDER_BY ──────────────┴────────────────────────╮
 │ Order By: ai_rows.id ASC                         │
-│ ~3 rows                                          │
-╰─────────────────────────┬────────────────────────╯
-╭─ PROJECTION ────────────┴────────────────────────╮
-│ Projections:                                     │
-│ CAST(#0 AS TINYINT),                             │
-│ __internal_compress_string_utinyint(#1)          │
-│ ~3 rows                                          │
-╰─────────────────────────┬────────────────────────╯
-╭─ PROJECTION ────────────┴────────────────────────╮
-│ Projections: id, body                            │
 │ ~3 rows                                          │
 ╰─────────────────────────┬────────────────────────╯
 ╭─ HASH_JOIN ─────────────┴────────────────────────╮
@@ -651,17 +638,12 @@ QUERY PLAN
 │ ~3 rows                                          │
 ╰─────────────────────────┬────────────────────────╯
                           ├─────────────────────────────────────────────╮
-╭─ SEQ_SCAN ──────────────┴────────────────────────╮  ╭─ PROJECTION ────┴─────────────────╮
-│ Table: ai_rows                                   │  │ Projections: CAST(#0 AS TINYINT), │
-│ Type: Sequential Scan                            │  │              #1                   │
+╭─ SEQ_SCAN ──────────────┴────────────────────────╮  ╭─ TOP_N ─────────┴─────────────────╮
+│ Table: ai_rows                                   │  │ Top: 2                            │
+│ Type: Sequential Scan                            │  │ Order By: ai_rows.id ASC          │
 │ Projections: id, body                            │  │ ~2 rows                           │
 │ ~3 rows                                          │  ╰─────────────────┬─────────────────╯
-╰──────────────────────────────────────────────────╯  ╭─ TOP_N ─────────┴─────────────────╮
-                                                      │ Top: 2                            │
-                                                      │ Order By: ai_rows.id ASC          │
-                                                      │ ~2 rows                           │
-                                                      ╰─────────────────┬─────────────────╯
-                                                      ╭─ SEQ_SCAN ──────┴─────────────────╮
+╰──────────────────────────────────────────────────╯  ╭─ SEQ_SCAN ──────┴─────────────────╮
                                                       │ Table: ai_rows                    │
                                                       │ Type: Sequential Scan             │
                                                       │ Projections: id                   │
@@ -669,6 +651,9 @@ QUERY PLAN
                                                       │ optional: Dynamic Filter (id < ?) │
                                                       │ ~3 rows                           │
                                                       ╰───────────────────────────────────╯
+
+statement ok
+RESET disabled_optimizers;
 
 query
 SELECT id, ai_generate(body) IS NULL AS g FROM ai_rows ORDER BY id LIMIT 2;

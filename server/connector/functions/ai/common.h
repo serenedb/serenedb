@@ -225,7 +225,8 @@ class AIQuery final : public duckdb::ClientContextState {
   Limiter limiter;
 
  private:
-  void Begin(duckdb::ClientContext& context);
+  void Begin(duckdb::ClientContext& context)
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
 
   std::atomic_uint64_t _calls = 0;
   std::atomic_uint64_t _output_tokens = 0;

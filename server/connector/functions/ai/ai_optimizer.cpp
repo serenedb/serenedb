@@ -103,8 +103,13 @@ void Rebind(duckdb::unique_ptr<duckdb::Expression>& expr,
 }
 
 void DeferTopN(duckdb::unique_ptr<duckdb::LogicalOperator>& slot,
-               duckdb::Binder& binder) {
+               duckdb::Binder& binder, const duckdb::LogicalOperator* parent) {
   auto& topn = slot->Cast<duckdb::LogicalTopN>();
+  if (!topn.projection_map.empty() &&
+      (parent == nullptr ||
+       parent->type != duckdb::LogicalOperatorType::LOGICAL_PROJECTION)) {
+    return;
+  }
   std::vector<duckdb::LogicalProjection*> renames;
   auto* child = topn.children[0].get();
   while (IsRename(*child)) {
@@ -203,6 +208,9 @@ void DeferTopN(duckdb::unique_ptr<duckdb::LogicalOperator>& slot,
   topn.projection_map.clear();
   if (topn.has_estimated_cardinality) {
     upper->SetEstimatedCardinality(topn.estimated_cardinality);
+    for (auto* rename : renames) {
+      rename->SetEstimatedCardinality(topn.estimated_cardinality);
+    }
   }
   upper->children[0] = std::move(slot);
   if (renames.empty()) {
@@ -215,18 +223,18 @@ void DeferTopN(duckdb::unique_ptr<duckdb::LogicalOperator>& slot,
 }
 
 void Defer(duckdb::unique_ptr<duckdb::LogicalOperator>& op,
-           duckdb::Binder& binder) {
+           duckdb::Binder& binder, const duckdb::LogicalOperator* parent) {
   for (auto& child : op->children) {
-    Defer(child, binder);
+    Defer(child, binder, op.get());
   }
   if (op->type == duckdb::LogicalOperatorType::LOGICAL_TOP_N) {
-    DeferTopN(op, binder);
+    DeferTopN(op, binder, parent);
   }
 }
 
 void DeferAICalls(duckdb::OptimizerExtensionInput& input,
                   duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
-  Defer(plan, input.optimizer.binder);
+  Defer(plan, input.optimizer.binder, nullptr);
 }
 
 void FilterBeforeAICalls(duckdb::LogicalOperator& op) {

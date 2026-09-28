@@ -28,7 +28,6 @@
 #include <duckdb/common/vector/constant_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/function/aggregate_function.hpp>
-#include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>

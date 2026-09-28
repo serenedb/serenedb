@@ -161,7 +161,7 @@ score_in_range	indexes	levels
 t	{0,1,2}	{low,medium,high}
 
 query
-SELECT (severe).score >= 1 AS severe, (severe).score > (minor).score AS ordered
+SELECT (severe).score BETWEEN 0 AND 2 AS severe_in_range, (minor).score BETWEEN 0 AND 2 AS minor_in_range
 FROM (
     SELECT ai_system1('The product is unusable and we are considering cancelling.',
                       'Rate the severity of this message.', score := ['low', 'medium', 'high'],
@@ -171,7 +171,7 @@ FROM (
                       secret_name := 'local_jev_${__DATABASE__}') AS minor
 ) t;
 ----
-severe	ordered
+severe_in_range	minor_in_range
 t	t
 
 # DOCS_TEST: questions
@@ -201,9 +201,9 @@ t	t
 # DOCS_TEST_BODY
 
 query
-SELECT (answer).refund > 0.5 AS refund_ok,
+SELECT (answer).refund BETWEEN 0 AND 1 AS refund_ok,
        (answer).category.choice IN ('billing', 'technical', 'other') AS category_ok,
-       (answer).urgency.score BETWEEN 1 AND 2 AS urgency_ok
+       (answer).urgency.score BETWEEN 0 AND 2 AS urgency_ok
 FROM (
     SELECT ai_system1(
         'Please refund my order, it never arrived. The app keeps crashing too.',

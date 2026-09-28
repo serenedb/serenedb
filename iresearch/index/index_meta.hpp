@@ -34,7 +34,6 @@
 
 namespace irs {
 
-class Format;
 class IndexWriter;
 
 struct SegmentInfo {
@@ -63,7 +62,6 @@ static_assert(std::is_nothrow_move_assignable_v<SegmentInfo>);
 struct SegmentMeta : SegmentInfo {
   bool operator==(const SegmentMeta& rhs) const {
     return SegmentInfo::operator==(rhs) && files == rhs.files &&
-           codec == rhs.codec &&
            (docs_mask == rhs.docs_mask ||
             (docs_mask && rhs.docs_mask && *docs_mask == *rhs.docs_mask)) &&
            docs_mask_size == rhs.docs_mask_size &&
@@ -71,7 +69,6 @@ struct SegmentMeta : SegmentInfo {
   }
 
   std::vector<std::string> files;
-  std::shared_ptr<const Format> codec;
   std::shared_ptr<const DocumentMask> docs_mask;
   uint64_t docs_mask_size = 0;
   uint32_t docs_mask_chain = 0;

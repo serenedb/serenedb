@@ -22,74 +22,43 @@
 
 #include "formats.hpp"
 
-#include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/utils/hash_utils.hpp"
-#include "iresearch/utils/register.hpp"
-#include "iresearch/utils/type_limits.hpp"
+#include "iresearch/formats/index_meta_reader.hpp"
+#include "iresearch/formats/index_meta_writer.hpp"
+#include "iresearch/formats/posting/format_block_128.hpp"
+#include "iresearch/formats/posting/reader.hpp"
+#include "iresearch/formats/posting/writer.hpp"
+#include "iresearch/formats/segment_meta_reader.hpp"
+#include "iresearch/formats/segment_meta_writer.hpp"
 
 namespace irs {
-namespace {
 
-class FormatRegister
-  : public TaggedGenericRegister<std::string_view, Format::ptr (*)(),
-                                 std::string_view, FormatRegister> {};
-
-}  // namespace
-
-Format::ptr formats::Get(std::string_view name,
-                         bool load_library /*= true*/) noexcept {
-  try {
-    auto* factory = FormatRegister::instance().get(name, load_library);
-
-    return factory ? factory() : nullptr;
-  } catch (...) {
-    SDB_ERROR(IRESEARCH, "Caught exception while getting a format instance");
-  }
-
-  return nullptr;
+IndexMetaWriter::ptr MakeIndexMetaWriter() {
+  return std::make_unique<IndexMetaWriterImpl>();
 }
 
-bool formats::Visit(const std::function<bool(std::string_view)>& visitor) {
-  return FormatRegister::instance().visit(
-    [&](const FormatRegister::key_type& name) { return visitor(name); });
+IndexMetaReader::ptr GetIndexMetaReader() {
+  static IndexMetaReaderImpl gInstance;
+  return memory::to_managed<IndexMetaReader>(gInstance);
 }
 
-FormatRegistrar::FormatRegistrar(const TypeInfo& type, Format::ptr (*factory)(),
-                                 const char* source /*= nullptr*/) {
-  const auto source_view =
-    source ? std::string_view{source} : std::string_view{};
+SegmentMetaWriter::ptr GetSegmentMetaWriter() {
+  static SegmentMetaWriterImpl gInstance;
+  return memory::to_managed<SegmentMetaWriter>(gInstance);
+}
 
-  auto entry = FormatRegister::instance().set(
-    type.name(), factory, IsNull(source_view) ? nullptr : &source_view);
+SegmentMetaReader::ptr GetSegmentMetaReader() {
+  static SegmentMetaReaderImpl gInstance;
+  return memory::to_managed<SegmentMetaReader>(gInstance);
+}
 
-  _registered = entry.second;
+PostingsWriter::ptr MakePostingsWriter(bool compaction,
+                                       IResourceManager& resource_manager) {
+  return std::make_unique<PostingsWriterImpl<FormatTraits128>>(
+    compaction, resource_manager);
+}
 
-  if (!_registered && factory != entry.first) {
-    const auto* registered_source = FormatRegister::instance().tag(type.name());
-
-    if (source && registered_source) {
-      SDB_WARN(IRESEARCH,
-               "type name collision detected while registering format, "
-               "ignoring: type '",
-               type.name(), "' from ", source, ", previously from ",
-               *registered_source);
-    } else if (source) {
-      SDB_WARN(IRESEARCH,
-               "type name collision detected while registering format, "
-               "ignoring: type '",
-               type.name(), "' from ", source);
-    } else if (registered_source) {
-      SDB_WARN(IRESEARCH,
-               "type name collision detected while registering format, "
-               "ignoring: type '",
-               type.name(), "', previously from ", *registered_source);
-    } else {
-      SDB_WARN(IRESEARCH,
-               "type name collision detected while registering format, "
-               "ignoring: type '",
-               type.name(), "'");
-    }
-  }
+PostingsReader::ptr MakePostingsReader() {
+  return std::make_unique<PostingsReaderImpl<FormatTraits128>>();
 }
 
 }  // namespace irs

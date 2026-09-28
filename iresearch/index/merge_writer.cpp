@@ -601,8 +601,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
                  IResourceManager& rm, IdxWriter& idx,
                  std::span<const BasicTermReader* const> extra) {
   auto field_writer = std::make_unique<burst_trie::FieldWriter>(
-    meta.codec->get_postings_writer(/*compaction=*/true, rm),
-    /*compaction=*/true, rm);
+    MakePostingsWriter(/*compaction=*/true, rm), /*compaction=*/true, rm);
   field_writer->SetIdxWriter(idx);
   field_writer->prepare(flush_state);
 
@@ -713,8 +712,6 @@ auto MergeWriter::Flush(SegmentMeta& segment,
                         const FlushProgress& progress /*= {}*/,
                         const AnnBuildEnv* env /*= nullptr*/)
   -> yaclib::Future<bool> {
-  SDB_ASSERT(segment.codec);
-
   bool result = false;
   Finally segment_invalidator = [&result, &segment]() noexcept {
     if (!result) [[unlikely]] {

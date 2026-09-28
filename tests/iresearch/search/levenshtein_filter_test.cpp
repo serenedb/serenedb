@@ -1183,7 +1183,5 @@ TEST_P(ByEditDistanceTestCase, max_merge_is_kept_whole_in_a_sum_parent) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(by_edit_distance_test, ByEditDistanceTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values(tests::FormatInfo{
-                                              "1_5simd"})),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          ByEditDistanceTestCase::to_string);

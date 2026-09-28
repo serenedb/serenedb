@@ -38,7 +38,6 @@
 namespace bench {
 
 struct BenchConfig {
-  std::string_view format_name = "1_5simd";
   std::string_view scorer = "bm25";
   std::string_view scorer_options = R"({})";
   std::string_view tokenizer = "text";
@@ -86,7 +85,7 @@ struct EmitResult {
 
 class Executor {
  public:
-  explicit Executor(std::string_view path, const BenchConfig& config = {});
+  explicit Executor(std::string_view path);
 
   size_t ExecuteTopK(size_t k, std::string_view query);
   size_t ExecuteTopKWithCount(size_t k, std::string_view query);
@@ -127,7 +126,6 @@ class Executor {
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};
   irs::analysis::Tokenizer::ptr _tokenizer;
-  irs::Format::ptr _format;
   irs::MMapDirectory _dir;
   irs::DirectoryReader _reader;
 };

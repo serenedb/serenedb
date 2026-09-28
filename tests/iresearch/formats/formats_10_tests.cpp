@@ -53,10 +53,7 @@ class Format10TestCase : public tests::FormatTestCase {
     auto dir = get_directory(*this);
 
     // attributes for term
-    auto codec = get_codec();
-    ASSERT_NE(nullptr, codec);
-    auto writer =
-      codec->get_postings_writer(false, irs::IResourceManager::gNoop);
+    auto writer = irs::MakePostingsWriter(false, irs::IResourceManager::gNoop);
     ASSERT_NE(nullptr, writer);
     irs::PostingMeta posting_meta;
 
@@ -108,7 +105,7 @@ class Format10TestCase : public tests::FormatTestCase {
       const auto tmp = irs::ReadString<std::string>(*in);
 
       // prepare reader
-      auto reader = codec->get_postings_reader();
+      auto reader = irs::MakePostingsReader();
       ASSERT_NE(nullptr, reader);
       reader->prepare(*in, state, field.index_features);
 
@@ -248,10 +245,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
 
   // docs & attributes for term0
   const std::vector<std::pair<irs::doc_id_t, uint32_t>> docs1{{6, 10}};
-
-  auto codec = get_codec();
-  ASSERT_NE(nullptr, codec);
-  auto writer = codec->get_postings_writer(false, irs::IResourceManager::gNoop);
+  auto writer = irs::MakePostingsWriter(false, irs::IResourceManager::gNoop);
   irs::PostingMeta meta0, meta1;
 
   // write postings
@@ -330,7 +324,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     ASSERT_FALSE(!in);
 
     // prepare reader
-    auto reader = codec->get_postings_reader();
+    auto reader = irs::MakePostingsReader();
     ASSERT_NE(nullptr, reader);
     reader->prepare(*in, state, field.index_features);
 
@@ -402,10 +396,7 @@ TEST_P(Format10TestCase, postings_read_write) {
   // docs & attributes for term1
   const std::vector<std::pair<irs::doc_id_t, uint32_t>> docs1{
     {2, 10}, {7, 10}, {9, 10}, {19, 10}};
-
-  auto codec = get_codec();
-  ASSERT_NE(nullptr, codec);
-  auto writer = codec->get_postings_writer(false, irs::IResourceManager::gNoop);
+  auto writer = irs::MakePostingsWriter(false, irs::IResourceManager::gNoop);
   ASSERT_NE(nullptr, writer);
   irs::PostingMeta meta0, meta1;  // must be destroyed before writer
 
@@ -464,7 +455,7 @@ TEST_P(Format10TestCase, postings_read_write) {
     ASSERT_FALSE(!in);
 
     // prepare reader
-    auto reader = codec->get_postings_reader();
+    auto reader = irs::MakePostingsReader();
     ASSERT_NE(nullptr, reader);
     reader->prepare(*in, state, field.index_features);
 
@@ -524,9 +515,7 @@ TEST_P(Format10TestCase, postings_read_write) {
 }
 
 TEST_P(Format10TestCase, postings_writer_reuse) {
-  auto codec = get_codec();
-  ASSERT_NE(nullptr, codec);
-  auto writer = codec->get_postings_writer(false, irs::IResourceManager::gNoop);
+  auto writer = irs::MakePostingsWriter(false, irs::IResourceManager::gNoop);
   ASSERT_NE(nullptr, writer);
 
   std::vector<std::pair<irs::doc_id_t, uint32_t>> docs0;
@@ -750,8 +739,8 @@ TEST_P(Format10TestCase, ires336) {
     irs::IdxWriter idx{*dir, segment_name,
                        ::irs::DuckDBEngine::Instance().instance()};
     irs::burst_trie::FieldWriter fw{
-      get_codec()->get_postings_writer(/*compaction=*/true,
-                                       irs::IResourceManager::gNoop),
+      irs::MakePostingsWriter(/*compaction=*/true,
+                              irs::IResourceManager::gNoop),
       /*compaction=*/true, irs::IResourceManager::gNoop};
     fw.SetIdxWriter(idx);
     fw.prepare(flush_state);
@@ -764,7 +753,7 @@ TEST_P(Format10TestCase, ires336) {
   meta.name = segment_name;
 
   irs::IdxReader idx_reader{*dir, segment_name};
-  irs::burst_trie::FieldReader fr_obj{get_codec()->get_postings_reader(),
+  irs::burst_trie::FieldReader fr_obj{irs::MakePostingsReader(),
                                       irs::IResourceManager::gNoop};
   auto* fr = &fr_obj;
   fr->prepare(
@@ -931,10 +920,8 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
       field.index_features = features;
       auto dir = get_directory(*this);
 
-      auto codec = get_codec();
-      ASSERT_NE(nullptr, codec);
       auto writer =
-        codec->get_postings_writer(false, irs::IResourceManager::gNoop);
+        irs::MakePostingsWriter(false, irs::IResourceManager::gNoop);
       ASSERT_NE(nullptr, writer);
       irs::PostingMeta posting_meta;
 
@@ -977,7 +964,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
         ASSERT_FALSE(!in);
         const auto tmp = irs::ReadString<std::string>(*in);
 
-        auto reader = codec->get_postings_reader();
+        auto reader = irs::MakePostingsReader();
         ASSERT_NE(nullptr, reader);
         reader->prepare(*in, state, field.index_features);
 
@@ -1082,8 +1069,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 static const auto kTestValues =
-  ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                     ::testing::Values(tests::FormatInfo{"1_5simd"}));
+  ::testing::Combine(::testing::ValuesIn(kTestDirs));
 
 // 1.0 specific tests
 INSTANTIATE_TEST_SUITE_P(Format10Test, Format10TestCase, kTestValues,

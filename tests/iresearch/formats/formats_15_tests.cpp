@@ -311,9 +311,7 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
                                 irs::ScorerPtr scorer,
                                 irs::IndexFeatures features) {
   EXPECT_TRUE(scorer);
-  auto codec = get_codec();
-  EXPECT_NE(nullptr, codec);
-  auto writer = codec->get_postings_writer(false, irs::IResourceManager::gNoop);
+  auto writer = irs::MakePostingsWriter(false, irs::IResourceManager::gNoop);
   EXPECT_NE(nullptr, writer);
   irs::PostingMeta posting_meta;
 
@@ -354,7 +352,7 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
   EXPECT_FALSE(!in);
   [[maybe_unused]] const auto tmp = irs::ReadString<std::string>(*in);
 
-  auto reader = codec->get_postings_reader();
+  auto reader = irs::MakePostingsReader();
   EXPECT_NE(nullptr, reader);
   reader->prepare(*in, state, features);
 
@@ -683,9 +681,6 @@ void Format15TestCase::AssertStressPostings(DocsView docs) {
   AssertPostings(docs, kOffs, kOffs);
 }
 
-static const auto kTestFormats =
-  ::testing::Values(tests::FormatInfo{"1_5simd"});
-
 static const auto kTestDirs =
   ::testing::ValuesIn(tests::GetDirectories<tests::kTypesAll>());
 
@@ -695,11 +690,11 @@ static const auto kTestDirsWithoutEncryption =
 static const auto kTestDirsWithEncryption =
   ::testing::ValuesIn(tests::GetDirectories<tests::kTypesAllRot13>());
 
-static const auto kTestValues = ::testing::Combine(kTestDirs, kTestFormats);
+static const auto kTestValues = ::testing::Combine(kTestDirs);
 static const auto kTestValuesWithoutEncryption =
-  ::testing::Combine(kTestDirsWithoutEncryption, kTestFormats);
+  ::testing::Combine(kTestDirsWithoutEncryption);
 static const auto kTestValuesWithEncryption =
-  ::testing::Combine(kTestDirsWithEncryption, kTestFormats);
+  ::testing::Combine(kTestDirsWithEncryption);
 
 // Generic tests
 using tests::FormatTestCase;

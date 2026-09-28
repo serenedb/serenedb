@@ -124,9 +124,8 @@ irs::IndexWriterOptions MakeWriterOptions() {
 // in order, so doc_id N corresponds to kCorpus[N-min_doc_id].
 irs::DirectoryReader BuildIndex(irs::Directory& dir,
                                 std::vector<std::string>& names_out) {
-  auto format = irs::formats::Get("1_5simd");
   auto writer =
-    irs::IndexWriter::Make(dir, format, irs::kOmCreate, MakeWriterOptions());
+    irs::IndexWriter::Make(dir, irs::kOmCreate, MakeWriterOptions());
 
   TextField body;
 
@@ -215,7 +214,6 @@ int main() {
   auto& engine = irs::DuckDBEngine::Instance();
   engine.Initialize();
 
-  irs::formats::Init();
   irs::InitOptimizeRules();
 
   // Nested scope so reader/dir destruct before DuckDBEngine::Shutdown tears

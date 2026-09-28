@@ -285,24 +285,15 @@ struct IndexMetaReader : memory::Managed {
                     MetaPayloadReader payload = {}) = 0;
 };
 
-class Format {
- public:
-  using ptr = std::shared_ptr<const Format>;
+IndexMetaWriter::ptr MakeIndexMetaWriter();
+IndexMetaReader::ptr GetIndexMetaReader();
 
-  virtual ~Format() = default;
+SegmentMetaWriter::ptr GetSegmentMetaWriter();
+SegmentMetaReader::ptr GetSegmentMetaReader();
 
-  virtual IndexMetaWriter::ptr get_index_meta_writer() const = 0;
-  virtual IndexMetaReader::ptr get_index_meta_reader() const = 0;
-
-  virtual SegmentMetaWriter::ptr get_segment_meta_writer() const = 0;
-  virtual SegmentMetaReader::ptr get_segment_meta_reader() const = 0;
-
-  virtual PostingsWriter::ptr get_postings_writer(
-    bool compaction, IResourceManager& resource_manager) const = 0;
-  virtual PostingsReader::ptr get_postings_reader() const = 0;
-
-  virtual TypeInfo::type_id type() const noexcept = 0;
-};
+PostingsWriter::ptr MakePostingsWriter(bool compaction,
+                                       IResourceManager& resource_manager);
+PostingsReader::ptr MakePostingsReader();
 
 struct FlushState {
   Directory* const dir{};
@@ -322,41 +313,5 @@ struct ReaderState {
   ScorerPtr scorer = nullptr;
   IdxReader* idx = nullptr;
 };
-
-void FormatBlock128Init();
-
-namespace formats {
-
-// Find a format by name, or nullptr if not found
-// indirect call to <class>::make(...)
-// NOTE: make(...) MUST be defined in CPP to ensire proper code scope
-Format::ptr Get(std::string_view name, bool load_library = true) noexcept;
-
-// For static lib reference all known formats in lib
-// no explicit call of fn is required, existence of fn is sufficient.
-inline void Init() { FormatBlock128Init(); }
-
-// Visit all loaded formats, terminate early if visitor returns false.
-bool Visit(const std::function<bool(std::string_view)>& visitor);
-
-}  // namespace formats
-class FormatRegistrar {
- public:
-  FormatRegistrar(const TypeInfo& type, Format::ptr (*factory)(),
-                  const char* source = nullptr);
-
-  explicit operator bool() const noexcept { return _registered; }
-
- private:
-  bool _registered;
-};
-
-#define REGISTER_FORMAT_IMPL(format_name, line, source)    \
-  static ::irs::FormatRegistrar format_registrar##_##line( \
-    ::irs::Type<format_name>::get(), &format_name::make, source)
-#define REGISTER_FORMAT_EXPANDER(format_name, file, line) \
-  REGISTER_FORMAT_IMPL(format_name, line, file ":" IRS_TO_STRING(line))
-#define REGISTER_FORMAT(format_name) \
-  REGISTER_FORMAT_EXPANDER(format_name, __FILE__, __LINE__)
 
 }  // namespace irs

@@ -42,9 +42,8 @@ class DirectoryReader final : public IndexReader {
   DirectoryReader& operator=(DirectoryReader&&) noexcept = default;
 
   // Create an index reader over the specified directory
-  // if codec == nullptr then use the latest file for all known codecs
   explicit DirectoryReader(
-    const Directory& dir, Format::ptr codec = nullptr,
+    const Directory& dir,
     const IndexReaderOptions& opts = IndexReaderOptions{});
   explicit DirectoryReader(
     std::shared_ptr<const DirectoryReaderImpl>&& impl) noexcept;
@@ -81,7 +80,6 @@ class DirectoryReader final : public IndexReader {
 
   size_t size() const final;
 
-  // Open a new instance based on the latest file for the specified codec
   // this call will attempt to reuse segments from the existing reader
   DirectoryReader Reopen() const;
 

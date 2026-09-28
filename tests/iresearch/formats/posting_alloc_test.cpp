@@ -151,11 +151,9 @@ TEST_P(PostingAllocTestCase, doc_iterator_construction_bytes) {
   EXPECT_LT(per_iterator, 64u * 1024u);
 }
 
-INSTANTIATE_TEST_SUITE_P(
-  posting_alloc_test, PostingAllocTestCase,
-  ::testing::Combine(
-    ::testing::Values(&tests::Directory<&tests::MemoryDirectory>),
-    ::testing::Values(tests::FormatInfo{"1_5simd"})),
-  PostingAllocTestCase::to_string);
+INSTANTIATE_TEST_SUITE_P(posting_alloc_test, PostingAllocTestCase,
+                         ::testing::Combine(::testing::Values(
+                           &tests::Directory<&tests::MemoryDirectory>)),
+                         PostingAllocTestCase::to_string);
 
 }  // namespace

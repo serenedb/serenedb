@@ -28,7 +28,6 @@
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
-  irs::formats::Init();
   irs::InitOptimizeRules();
   irs::DuckDBEngine::Instance().Initialize(
     &sdb::connector::RegisterConfigVariables);

@@ -272,8 +272,7 @@ class SpanDirectory final : public irs::Directory {
 class EmbeddedIndex {
  public:
   EmbeddedIndex(duckdb::DatabaseInstance& db, std::span<const IndexFile> files)
-    : _dir{files, kResourceManager},
-      _reader{_dir, irs::formats::Get("1_5simd"), Options(db)} {}
+    : _dir{files, kResourceManager}, _reader{_dir, Options(db)} {}
 
   const irs::DirectoryReader& Reader() const noexcept { return _reader; }
 

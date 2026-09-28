@@ -181,9 +181,8 @@ irs::IndexWriterOptions MakeWriterOptions() {
 irs::DirectoryReader BuildIndex(irs::Directory& dir,
                                 const std::vector<GeoEntry>& docs,
                                 std::vector<std::string>& names_out) {
-  auto format = irs::formats::Get("1_5simd");
   auto writer =
-    irs::IndexWriter::Make(dir, format, irs::kOmCreate, MakeWriterOptions());
+    irs::IndexWriter::Make(dir, irs::kOmCreate, MakeWriterOptions());
 
   GeoField geo;
 
@@ -270,8 +269,6 @@ int main() {
   // Bracket the process-wide duckdb::DuckDB lifetime; Db() reads it back.
   auto& engine = irs::DuckDBEngine::Instance();
   engine.Initialize();
-
-  irs::formats::Init();
 
   // Nested scope so reader/dir destruct before DuckDBEngine::Shutdown tears
   // down the duckdb::DuckDB they were dispatching through.

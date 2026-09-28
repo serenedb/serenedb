@@ -109,118 +109,29 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
 
 namespace {
 
-IndexFileRefs::ref_t LoadNewestIndexMeta(IndexMeta& meta, const Directory& dir,
-                                         Format::ptr& codec) noexcept {
-  // if a specific codec was specified
-  if (codec) {
-    try {
-      auto reader = codec->get_index_meta_reader();
+IndexFileRefs::ref_t LoadNewestIndexMeta(IndexMeta& meta,
+                                         const Directory& dir) noexcept {
+  try {
+    auto reader = GetIndexMetaReader();
 
-      if (!reader) {
+    IndexFileRefs::ref_t ref;
+    std::string filename;
+
+    // ensure have a valid ref to a filename
+    while (!ref) {
+      const bool index_exists = reader->last_segments_file(dir, filename);
+
+      if (!index_exists) {
         return nullptr;
       }
 
-      IndexFileRefs::ref_t ref;
-      std::string filename;
-
-      // ensure have a valid ref to a filename
-      while (!ref) {
-        const bool index_exists = reader->last_segments_file(dir, filename);
-
-        if (!index_exists) {
-          return nullptr;
-        }
-
-        ref = directory_utils::Reference(const_cast<Directory&>(dir), filename);
-      }
-
-      SDB_ASSERT(ref);
-      reader->read(dir, meta, *ref);
-
-      return ref;
-    } catch (const std::exception& e) {
-      SDB_ERROR(
-        IRESEARCH,
-        absl::StrCat("Caught exception while reading index meta with codec ''",
-                     codec->type()().name(), "', error '", e.what(), "'"));
-      return nullptr;
-    } catch (...) {
-      SDB_ERROR(
-        IRESEARCH,
-        absl::StrCat("Caught exception while reading index meta with codec ''",
-                     codec->type()().name(), "'"));
-
-      return nullptr;
-    }
-  }
-
-  std::vector<std::string_view> codecs;
-  auto visitor = [&codecs](std::string_view name) -> bool {
-    codecs.emplace_back(name);
-    return true;
-  };
-
-  if (!formats::Visit(visitor)) {
-    return nullptr;
-  }
-
-  struct {
-    std::time_t mtime;
-    IndexMetaReader::ptr reader;
-    IndexFileRefs::ref_t ref;
-    Format::ptr codec;
-  } newest;
-
-  newest.mtime = (std::numeric_limits<time_t>::min)();
-
-  try {
-    for (const std::string_view name : codecs) {
-      auto candidate = formats::Get(name);
-
-      if (!candidate) {
-        continue;  // try the next codec
-      }
-
-      auto reader = candidate->get_index_meta_reader();
-
-      if (!reader) {
-        continue;  // try the next codec
-      }
-
-      IndexFileRefs::ref_t ref;
-      std::string filename;
-
-      // ensure have a valid ref to a filename
-      while (!ref) {
-        const bool index_exists = reader->last_segments_file(dir, filename);
-
-        if (!index_exists) {
-          break;  // try the next codec
-        }
-
-        ref = directory_utils::Reference(const_cast<Directory&>(dir), filename);
-      }
-
-      // initialize to a value that will never pass 'if' below (to make valgrind
-      // happy)
-      std::time_t mtime = std::numeric_limits<std::time_t>::min();
-
-      if (ref && dir.mtime(mtime, *ref) && mtime > newest.mtime) {
-        newest.mtime = std::move(mtime);
-        newest.reader = std::move(reader);
-        newest.ref = std::move(ref);
-        newest.codec = std::move(candidate);
-      }
+      ref = directory_utils::Reference(const_cast<Directory&>(dir), filename);
     }
 
-    if (!newest.reader || !newest.ref) {
-      return nullptr;
-    }
+    SDB_ASSERT(ref);
+    reader->read(dir, meta, *ref);
 
-    codec = std::move(newest.codec);
-    newest.reader->read(dir, meta, *(newest.ref));
-
-    return newest.ref;
+    return ref;
   } catch (const std::exception& e) {
     SDB_ERROR(IRESEARCH,
               absl::StrCat(
@@ -237,39 +148,33 @@ IndexFileRefs::ref_t LoadNewestIndexMeta(IndexMeta& meta, const Directory& dir,
 }  // namespace
 
 DirectoryReaderImpl::DirectoryReaderImpl(const Directory& dir,
-                                         Format::ptr codec,
                                          const IndexReaderOptions& opts,
                                          DirectoryMeta&& meta,
                                          ReadersType&& readers)
-  : DirectoryReaderImpl{Init{dir, meta, readers}, dir,
-                        std::move(codec),         opts,
-                        std::move(meta),          std::move(readers)} {}
+  : DirectoryReaderImpl{Init{dir, meta, readers}, dir, opts, std::move(meta),
+                        std::move(readers)} {}
 
 DirectoryReaderImpl::DirectoryReaderImpl(Init&& init, const Directory& dir,
-                                         Format::ptr&& codec,
                                          const IndexReaderOptions& opts,
                                          DirectoryMeta&& meta,
                                          ReadersType&& readers)
   : CompositeReaderImpl{std::move(readers), init.live_docs_count,
                         init.docs_count},
     _dir{dir},
-    _codec{std::move(codec)},
     _file_refs{std::move(init.file_refs)},
     _meta{std::move(meta)},
     _opts{opts},
     _column_stats{std::move(init.column_stats)} {}
 
 std::shared_ptr<const DirectoryReaderImpl> DirectoryReaderImpl::Open(
-  const Directory& dir, const IndexReaderOptions& opts, Format::ptr codec,
+  const Directory& dir, const IndexReaderOptions& opts,
   const std::shared_ptr<const DirectoryReaderImpl>& cached) {
   IndexMeta index_meta;
-  auto meta_file_ref = LoadNewestIndexMeta(index_meta, dir, codec);
+  auto meta_file_ref = LoadNewestIndexMeta(index_meta, dir);
 
   if (!meta_file_ref) {
     throw IndexNotFound{};
   }
-
-  SDB_ASSERT(codec);
 
   if (cached && cached->_meta.index_meta == index_meta) {
     return cached;  // no changes to refresh
@@ -322,7 +227,7 @@ std::shared_ptr<const DirectoryReaderImpl> DirectoryReaderImpl::Open(
   }
 
   return std::make_shared<DirectoryReaderImpl>(
-    dir, std::move(codec), opts,
+    dir, opts,
     DirectoryMeta{.filename = *meta_file_ref,
                   .index_meta = std::move(index_meta)},
     std::move(readers));

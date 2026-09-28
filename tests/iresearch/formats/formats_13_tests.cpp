@@ -66,9 +66,7 @@ TEST_P(Format13TestCase, open_10_with_13) {
 
   // write segment with format10
   {
-    auto codec = irs::formats::Get("1_5simd");
-    ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir(), codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -79,10 +77,7 @@ TEST_P(Format13TestCase, open_10_with_13) {
   }
 
   // check index
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-  auto index =
-    irs::DirectoryReader(dir(), codec, irs::tests::DefaultReaderOptions());
+  auto index = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
   ASSERT_TRUE(index);
   ASSERT_EQ(1, index->size());
   ASSERT_EQ(1, index->docs_count());
@@ -126,9 +121,7 @@ TEST_P(Format13TestCase, formats_13) {
 
   // write segment with format10
   {
-    auto codec = irs::formats::Get("1_5simd");
-    ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir(), codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -140,9 +133,7 @@ TEST_P(Format13TestCase, formats_13) {
 
   // write segment with format13
   {
-    auto codec = irs::formats::Get("1_5simd");
-    ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir(), codec, irs::kOmAppend,
+    auto writer = irs::IndexWriter::Make(dir(), irs::kOmAppend,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -153,8 +144,7 @@ TEST_P(Format13TestCase, formats_13) {
   }
 
   // check index
-  auto index =
-    irs::DirectoryReader(dir(), nullptr, irs::tests::DefaultReaderOptions());
+  auto index = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
   ASSERT_TRUE(index);
   ASSERT_EQ(2, index->size());
   ASSERT_EQ(2, index->docs_count());
@@ -220,8 +210,7 @@ TEST_P(Format13TestCase, formats_13) {
 static constexpr auto kTestDirs =
   tests::GetDirectories<tests::kTypesAllRot13>();
 static const auto kTestValues =
-  ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                     ::testing::Values(tests::FormatInfo{"1_5simd"}));
+  ::testing::Combine(::testing::ValuesIn(kTestDirs));
 
 // 1.3 specific tests
 INSTANTIATE_TEST_SUITE_P(Format13Test, Format13TestCase, kTestValues,

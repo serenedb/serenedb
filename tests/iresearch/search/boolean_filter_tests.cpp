@@ -5122,8 +5122,7 @@ TEST_P(BooleanFilterTestCase, excluded_only_child_is_discarded) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(boolean_filter_test, BooleanFilterTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5simd")),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          BooleanFilterTestCase::to_string);
 
 }  // namespace tests

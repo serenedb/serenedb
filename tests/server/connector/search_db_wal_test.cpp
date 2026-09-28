@@ -133,11 +133,8 @@ SearchDbWal::AdoptReplayCallback NoAdopts() {
   return [](uint64_t, duckdb::idx_t, const SearchDbWal::SegmentRef&) {};
 }
 
-// A recorded segment as the write path would hand it over: the name of the
-// segment's own meta file plus the codec that reads it.
 SearchDbWal::SegmentRef MakeSegmentRef(std::string name) {
-  return SearchDbWal::SegmentRef{.meta_file = name + ".0.sm",
-                                 .codec = "1_5simd"};
+  return SearchDbWal::SegmentRef{.meta_file = name + ".0.sm"};
 }
 
 // Replay hooks: every shard exists and nothing is durable yet (committed 0).
@@ -150,10 +147,6 @@ SearchDbWal::ShardCommittedFn CommittedAll(uint64_t tick) {
 
 class SearchDbWalTest : public ::testing::Test {
  protected:
-  // A SEGMENT op records its codec by name, so the registry has to be up for
-  // the name to resolve back to a codec.
-  static void SetUpTestCase() { irs::formats::Init(); }
-
   void SetUp() override {
     _fs = duckdb::FileSystem::CreateLocal();
     const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
@@ -763,10 +756,7 @@ TEST_F(SearchDbWalTest, SegmentRoundTrip) {
   const auto& [tick, table_id, recovered] = got.segments[0];
   EXPECT_EQ(tick, 1u);
   EXPECT_EQ(table_id, 5u);
-  // The record names the segment's own meta file and the codec that reads it --
-  // every other field lives in that file, so there is nothing else to compare.
   EXPECT_EQ(recovered.meta_file, ref.meta_file);
-  EXPECT_EQ(recovered.codec, ref.codec);
 }
 
 // One op can carry every segment a bulk worker flushed, which is the normal

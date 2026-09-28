@@ -456,7 +456,7 @@ class FormatTestCase : public IndexTestBase {
   }
 
   void AssertNoDirectoryArtifacts(
-    const irs::Directory& dir, const irs::Format& codec,
+    const irs::Directory& dir,
     const std::unordered_set<std::string>& expect_additional = {});
 };
 

@@ -418,10 +418,8 @@ int main() {
   engine.Initialize();
 
   // Initialize subsystems (required once per process).
-  irs::formats::Init();
   irs::InitOptimizeRules();
 
-  auto format = irs::formats::Get("1_5simd");
   auto scorer = irs::BM25::Make(irs::BM25::Options{});
   auto tokenizer =
     irs::analysis::TextTokenizer::Make(irs::analysis::TextTokenizer::Options{});
@@ -434,8 +432,7 @@ int main() {
                               0)](irs::field_id) -> irs::field_id {
     return next->fetch_add(1, std::memory_order_relaxed);
   };
-  auto writer =
-    irs::IndexWriter::Make(dir, format, irs::kOmCreate, std::move(options));
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
 
   BuildIndex(*writer);
 

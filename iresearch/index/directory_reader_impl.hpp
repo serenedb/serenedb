@@ -36,23 +36,19 @@ class DirectoryReaderImpl final
   : public CompositeReaderImpl<std::vector<SegmentReader>> {
  public:
   // open a new directory reader
-  // if codec == nullptr then use the latest file for all known codecs
   // if cached != nullptr then try to reuse its segments
   static std::shared_ptr<const DirectoryReaderImpl> Open(
-    const Directory& dir, const IndexReaderOptions& opts, Format::ptr codec,
+    const Directory& dir, const IndexReaderOptions& opts,
     const std::shared_ptr<const DirectoryReaderImpl>& cached);
 
-  DirectoryReaderImpl(const Directory& dir, Format::ptr codec,
-                      const IndexReaderOptions& opts, DirectoryMeta&& meta,
-                      ReadersType&& readers);
+  DirectoryReaderImpl(const Directory& dir, const IndexReaderOptions& opts,
+                      DirectoryMeta&& meta, ReadersType&& readers);
 
   const Directory& Dir() const noexcept { return _dir; }
 
   const DirectoryMeta& Meta() const noexcept { return _meta; }
 
   const IndexReaderOptions& Options() const noexcept { return _opts; }
-
-  const Format::ptr& Codec() const noexcept { return _codec; }
 
   const duckdb::BaseStatistics* GetColumnStats(field_id field) const noexcept {
     const auto it = _column_stats.find(field);
@@ -62,12 +58,11 @@ class DirectoryReaderImpl final
  private:
   struct Init;
 
-  DirectoryReaderImpl(Init&& init, const Directory& dir, Format::ptr&& codec,
+  DirectoryReaderImpl(Init&& init, const Directory& dir,
                       const IndexReaderOptions& opts, DirectoryMeta&& meta,
                       ReadersType&& readers);
 
   const Directory& _dir;
-  Format::ptr _codec;
   FileRefs _file_refs;
   DirectoryMeta _meta;
   IndexReaderOptions _opts;

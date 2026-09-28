@@ -175,7 +175,6 @@ double CompactionScore(const CompactionCandidate& compaction,
 SegmentMetaWriter::ptr PrepareFlush(IndexSegment& segment,
                                     bool increment_version) {
   auto& meta = segment.meta;
-  SDB_ASSERT(meta.codec);
   SDB_ASSERT(meta.byte_size);  // Ensure segment size is estimated
   SDB_ASSERT(segment.meta.docs_mask_size <= segment.meta.byte_size);
 
@@ -187,7 +186,7 @@ SegmentMetaWriter::ptr PrepareFlush(IndexSegment& segment,
     meta.version += uint64_t{increment_version};
   }
 
-  return meta.codec->get_segment_meta_writer();
+  return GetSegmentMetaWriter();
 }
 
 }  // namespace

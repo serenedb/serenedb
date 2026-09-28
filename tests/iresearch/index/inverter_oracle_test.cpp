@@ -121,12 +121,9 @@ TEST(InverterOracleTest, WriteDeterministicIndex) {
   std::filesystem::remove_all(out_dir);
   std::filesystem::create_directories(out_dir);
 
-  auto codec = formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
   FSDirectory dir{out_dir};
-  auto writer = IndexWriter::Make(dir, codec, kOmCreate,
-                                  irs::tests::DefaultWriterOptions());
+  auto writer =
+    IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
 
   constexpr field_id kText = 1;

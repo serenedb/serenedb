@@ -96,15 +96,6 @@ inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
       list.ReadObject([&](duckdb::Deserializer& obj) {
         segment.filename = obj.ReadProperty<std::string>(
           IndexMetaWriterImpl::kSegmentFieldFilename, "filename");
-        auto codec = obj.ReadProperty<std::string>(
-          IndexMetaWriterImpl::kSegmentFieldCodec, "codec");
-        segment.meta.codec = formats::Get(codec);
-
-        if (!segment.meta.codec) [[unlikely]] {
-          throw IndexError{absl::StrCat("Unknown codec '", codec,
-                                        "' of segment '", segment.filename,
-                                        "', path: ", filename)};
-        }
         invisible_count = obj.ReadPropertyWithExplicitDefault<uint32_t>(
           IndexMetaWriterImpl::kSegmentFieldInvisibleCount, "invisible_count",
           0);
@@ -122,9 +113,7 @@ inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
   }
 
   for (size_t i = 0; auto& segment : segments) {
-    auto reader = segment.meta.codec->get_segment_meta_reader();
-
-    reader->read(dir, segment.meta, segment.filename);
+    GetSegmentMetaReader()->read(dir, segment.meta, segment.filename);
 
     if (const auto count = invisible[i++]; count != 0) {
       auto& info = segment.meta;

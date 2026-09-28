@@ -33,10 +33,8 @@
 using namespace irs;
 
 TEST(index_meta_tests, memory_directory_read_write_15) {
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
   irs::MemoryDirectory dir;
-  auto writer = codec->get_index_meta_writer();
+  auto writer = irs::MakeIndexMetaWriter();
 
   // check that there are no files in a directory
   std::vector<std::string> files;
@@ -77,7 +75,7 @@ TEST(index_meta_tests, memory_directory_read_write_15) {
   {
     std::string segments_file;
 
-    auto reader = codec->get_index_meta_reader();
+    auto reader = irs::GetIndexMetaReader();
     const bool index_exists = reader->last_segments_file(dir, segments_file);
 
     ASSERT_TRUE(index_exists);
@@ -91,15 +89,12 @@ TEST(index_meta_tests, memory_directory_read_write_15) {
 }
 
 TEST(index_meta_tests, invisible_count_round_trip) {
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
   irs::MemoryDirectory dir;
 
   auto make_segment = [&](std::string_view name, irs::doc_id_t visible_end) {
     irs::IndexSegment segment;
     segment.meta.name = name;
     segment.meta.version = 1;
-    segment.meta.codec = codec;
     segment.meta.docs_count = 10;
     segment.meta.byte_size = 42;
     segment.meta.visible_end = visible_end;
@@ -111,8 +106,7 @@ TEST(index_meta_tests, invisible_count_round_trip) {
     }());
     segment.meta.live_docs_count =
       segment.meta.docs_count - irs::RemovalCount(segment.meta);
-    codec->get_segment_meta_writer()->Write(dir, segment.filename,
-                                            segment.meta);
+    irs::GetSegmentMetaWriter()->Write(dir, segment.filename, segment.meta);
     return segment;
   };
 
@@ -124,12 +118,12 @@ TEST(index_meta_tests, invisible_count_round_trip) {
 
   std::string filename;
   std::string tmp_filename;
-  auto writer = codec->get_index_meta_writer();
+  auto writer = irs::MakeIndexMetaWriter();
   ASSERT_TRUE(writer->prepare(dir, meta_orig, tmp_filename, filename));
   ASSERT_TRUE(writer->commit());
 
   irs::IndexMeta meta_read;
-  codec->get_index_meta_reader()->read(dir, meta_read, filename);
+  irs::GetIndexMetaReader()->read(dir, meta_read, filename);
   ASSERT_EQ(2, meta_read.segments.size());
 
   const auto& tailed = meta_read.segments[0].meta;
@@ -187,11 +181,9 @@ TEST(index_meta_tests, last_generation) {
     ASSERT_FALSE(!out);
   }
 
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
   std::string last_seg_file;
 
-  auto reader = codec->get_index_meta_reader();
+  auto reader = irs::GetIndexMetaReader();
   const bool index_exists = reader->last_segments_file(dir, last_seg_file);
   const std::string expected_seg_file = "segments_" + std::to_string(max);
 

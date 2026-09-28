@@ -311,8 +311,6 @@ constexpr std::string_view kEuroparlFallbackPath =
 
 using bench_sloppy::kFieldId;
 
-constexpr std::string_view kFormatName = "1_5simd";
-
 constexpr int kRepetitions = 5;
 
 // Number of documents in the synthetic skewed corpus.
@@ -359,22 +357,12 @@ constexpr irs::PosAttr::value_t kSlopValues[] = {1, 2, 5};
 struct Corpus {
   std::filesystem::path dir_path;
   std::unique_ptr<irs::MMapDirectory> dir;
-  irs::Format::ptr format;
   irs::DirectoryReader reader;
 };
 
 [[noreturn]] void Die(const char* msg) {
   std::fprintf(stderr, "sloppy_phrase_vs_disjunction bench: %s\n", msg);
   std::abort();
-}
-
-// Registers formats exactly once across all corpora.
-void EnsureRegistered() {
-  static const bool once = [] {
-    irs::formats::Init();
-    return true;
-  }();
-  (void)once;
 }
 
 std::filesystem::path ResolveDataPath() {
@@ -400,13 +388,6 @@ Corpus BuildIndex() {
   std::filesystem::remove_all(tmp_root);
   std::filesystem::create_directories(tmp_root);
 
-  EnsureRegistered();
-
-  auto format = irs::formats::Get(std::string{kFormatName});
-  if (!format) {
-    Die("format 1_5simd not registered");
-  }
-
   auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
 
   irs::IndexWriterOptions writer_opts;
@@ -414,8 +395,8 @@ Corpus BuildIndex() {
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
-  auto writer = irs::IndexWriter::Make(*dir, format, irs::kOmCreate,
-                                       std::move(writer_opts));
+  auto writer =
+    irs::IndexWriter::Make(*dir, irs::kOmCreate, std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -447,10 +428,9 @@ Corpus BuildIndex() {
 
   irs::IndexReaderOptions reader_opts;
   reader_opts.db = db;
-  auto rdr = irs::DirectoryReader{*dir, format, reader_opts};
+  auto rdr = irs::DirectoryReader{*dir, reader_opts};
   return Corpus{.dir_path = std::move(tmp_root),
                 .dir = std::move(dir),
-                .format = std::move(format),
                 .reader = std::move(rdr)};
 }
 
@@ -464,13 +444,6 @@ Corpus BuildSyntheticIndex() {
   std::filesystem::remove_all(tmp_root);
   std::filesystem::create_directories(tmp_root);
 
-  EnsureRegistered();
-
-  auto format = irs::formats::Get(std::string{kFormatName});
-  if (!format) {
-    Die("format 1_5simd not registered");
-  }
-
   auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
 
   irs::IndexWriterOptions writer_opts;
@@ -478,8 +451,8 @@ Corpus BuildSyntheticIndex() {
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
-  auto writer = irs::IndexWriter::Make(*dir, format, irs::kOmCreate,
-                                       std::move(writer_opts));
+  auto writer =
+    irs::IndexWriter::Make(*dir, irs::kOmCreate, std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -515,10 +488,9 @@ Corpus BuildSyntheticIndex() {
 
   irs::IndexReaderOptions reader_opts;
   reader_opts.db = db;
-  auto rdr = irs::DirectoryReader{*dir, format, reader_opts};
+  auto rdr = irs::DirectoryReader{*dir, reader_opts};
   return Corpus{.dir_path = std::move(tmp_root),
                 .dir = std::move(dir),
-                .format = std::move(format),
                 .reader = std::move(rdr)};
 }
 
@@ -532,13 +504,6 @@ Corpus BuildDense3Index() {
   std::filesystem::remove_all(tmp_root);
   std::filesystem::create_directories(tmp_root);
 
-  EnsureRegistered();
-
-  auto format = irs::formats::Get(std::string{kFormatName});
-  if (!format) {
-    Die("format 1_5simd not registered");
-  }
-
   auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
 
   irs::IndexWriterOptions writer_opts;
@@ -546,8 +511,8 @@ Corpus BuildDense3Index() {
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
-  auto writer = irs::IndexWriter::Make(*dir, format, irs::kOmCreate,
-                                       std::move(writer_opts));
+  auto writer =
+    irs::IndexWriter::Make(*dir, irs::kOmCreate, std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -579,10 +544,9 @@ Corpus BuildDense3Index() {
 
   irs::IndexReaderOptions reader_opts;
   reader_opts.db = db;
-  auto rdr = irs::DirectoryReader{*dir, format, reader_opts};
+  auto rdr = irs::DirectoryReader{*dir, reader_opts};
   return Corpus{.dir_path = std::move(tmp_root),
                 .dir = std::move(dir),
-                .format = std::move(format),
                 .reader = std::move(rdr)};
 }
 
@@ -593,13 +557,6 @@ Corpus BuildAllSameIndex() {
   std::filesystem::remove_all(tmp_root);
   std::filesystem::create_directories(tmp_root);
 
-  EnsureRegistered();
-
-  auto format = irs::formats::Get(std::string{kFormatName});
-  if (!format) {
-    Die("format 1_5simd not registered");
-  }
-
   auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
 
   irs::IndexWriterOptions writer_opts;
@@ -607,8 +564,8 @@ Corpus BuildAllSameIndex() {
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
-  auto writer = irs::IndexWriter::Make(*dir, format, irs::kOmCreate,
-                                       std::move(writer_opts));
+  auto writer =
+    irs::IndexWriter::Make(*dir, irs::kOmCreate, std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -640,10 +597,9 @@ Corpus BuildAllSameIndex() {
 
   irs::IndexReaderOptions reader_opts;
   reader_opts.db = db;
-  auto rdr = irs::DirectoryReader{*dir, format, reader_opts};
+  auto rdr = irs::DirectoryReader{*dir, reader_opts};
   return Corpus{.dir_path = std::move(tmp_root),
                 .dir = std::move(dir),
-                .format = std::move(format),
                 .reader = std::move(rdr)};
 }
 
@@ -658,13 +614,6 @@ Corpus BuildFarApartIndex() {
   std::filesystem::remove_all(tmp_root);
   std::filesystem::create_directories(tmp_root);
 
-  EnsureRegistered();
-
-  auto format = irs::formats::Get(std::string{kFormatName});
-  if (!format) {
-    Die("format 1_5simd not registered");
-  }
-
   auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
 
   irs::IndexWriterOptions writer_opts;
@@ -672,8 +621,8 @@ Corpus BuildFarApartIndex() {
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
-  auto writer = irs::IndexWriter::Make(*dir, format, irs::kOmCreate,
-                                       std::move(writer_opts));
+  auto writer =
+    irs::IndexWriter::Make(*dir, irs::kOmCreate, std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -711,10 +660,9 @@ Corpus BuildFarApartIndex() {
 
   irs::IndexReaderOptions reader_opts2;
   reader_opts2.db = db;
-  auto rdr2 = irs::DirectoryReader{*dir, format, reader_opts2};
+  auto rdr2 = irs::DirectoryReader{*dir, reader_opts2};
   return Corpus{.dir_path = std::move(tmp_root),
                 .dir = std::move(dir),
-                .format = std::move(format),
                 .reader = std::move(rdr2)};
 }
 

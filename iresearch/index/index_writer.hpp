@@ -429,16 +429,14 @@ class IndexWriter : private util::Noncopyable {
 
   CompactionResult Compact(const CompactionPolicy& policy,
                            const IndexFieldOptions* field_options = nullptr,
-                           Format::ptr codec = nullptr,
                            const MergeWriter::FlushProgress& progress = {});
 
   auto CompactAsync(const CompactionPolicy& policy,
-                    const IndexFieldOptions* field_options, Format::ptr codec,
+                    const IndexFieldOptions* field_options,
                     const MergeWriter::FlushProgress& progress,
                     const AnnBuildEnv* env) -> yaclib::Future<CompactionResult>;
 
-  bool AdoptSegment(std::string_view meta_file, const Format::ptr& codec,
-                    uint64_t tick);
+  bool AdoptSegment(std::string_view meta_file, uint64_t tick);
 
   class [[nodiscard]] CompactionFloorGuard : private util::Noncopyable {
    public:
@@ -469,17 +467,14 @@ class IndexWriter : private util::Noncopyable {
 
   CompactionFloorGuard ArmCompactionFloor();
 
-  const Format::ptr& Codec() const noexcept { return _codec; }
-
   uint64_t CurrentSegmentId() const noexcept;
 
   bool ReplaceSegments(std::span<const std::string_view> replaced,
                        std::span<const std::string_view> adopted_metas,
-                       const Format::ptr& codec,
                        Transaction* removals = nullptr,
                        uint64_t removals_tick = writer_limits::kMinTick);
 
-  static IndexWriter::ptr Make(Directory& dir, Format::ptr codec, OpenMode mode,
+  static IndexWriter::ptr Make(Directory& dir, OpenMode mode,
                                IndexWriterOptions opts = {});
 
   void Options(const SegmentOptions& opts) noexcept { _segment_limits = opts; }
@@ -508,8 +503,7 @@ class IndexWriter : private util::Noncopyable {
 
   IndexWriter(ConstructToken, IndexLock::ptr&& lock,
               IndexFileRefs::ref_t&& lock_file_ref, Directory& dir,
-              Format::ptr codec, size_t segment_pool_size,
-              const SegmentOptions& segment_limits,
+              size_t segment_pool_size, const SegmentOptions& segment_limits,
               PayloadWriter&& meta_payload_writer,
               std::shared_ptr<const DirectoryReaderImpl>&& committed_reader);
 
@@ -799,7 +793,6 @@ class IndexWriter : private util::Noncopyable {
   const AnnBuildEnv* _ann_env = nullptr;
   std::shared_ptr<const IndexFieldOptions> _field_options;
   PayloadWriter _meta_payload_writer;
-  Format::ptr _codec;
   absl::Mutex _commit_lock;
   struct {
     std::recursive_mutex lock;

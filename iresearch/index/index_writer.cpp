@@ -1378,22 +1378,19 @@ void IndexWriter::SegmentContext::Commit(uint64_t commit_queries,
 
 IndexWriter::IndexWriter(
   ConstructToken, IndexLock::ptr&& lock, IndexFileRefs::ref_t&& lock_file_ref,
-  Directory& dir, Format::ptr codec, size_t segment_pool_size,
+  Directory& dir, size_t segment_pool_size,
   const SegmentOptions& segment_limits, PayloadWriter&& meta_payload_writer,
   std::shared_ptr<const DirectoryReaderImpl>&& committed_reader)
   : _meta_payload_writer{std::move(meta_payload_writer)},
-    _codec{std::move(codec)},
     _dir{dir},
     _committed_reader{std::move(committed_reader)},
     _segment_limits{segment_limits},
     _segment_writer_pool{segment_pool_size},
     _seg_counter{_committed_reader->Meta().index_meta.seg_counter},
     _last_gen{_committed_reader->Meta().index_meta.gen},
-    _writer{_codec->get_index_meta_writer()},
+    _writer{MakeIndexMetaWriter()},
     _write_lock{std::move(lock)},
     _write_lock_file_ref{std::move(lock_file_ref)} {
-  SDB_ASSERT(_codec);
-
   _topk_scorer = _committed_reader->Options().scorer;
   if (_topk_scorer) {
     _score_bound_features |= _topk_scorer->GetIndexFeatures();
@@ -1449,8 +1446,8 @@ void IndexWriter::Clear(uint64_t tick) {
   _compacting.segments.clear();
 }
 
-IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
-                                   OpenMode mode, IndexWriterOptions options) {
+IndexWriter::ptr IndexWriter::Make(Directory& dir, OpenMode mode,
+                                   IndexWriterOptions options) {
   SDB_ENSURE(options.db != nullptr,
              "IndexWriterOptions::db must be set; iresearch indexes require a "
              "duckdb::DatabaseInstance");
@@ -1473,7 +1470,7 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
   DirectoryMeta meta;
 
   {
-    auto reader = codec->get_index_meta_reader();
+    auto reader = GetIndexMetaReader();
     const bool index_exists = reader->last_segments_file(dir, meta.filename);
 
     if (kOmCreate == mode ||
@@ -1496,7 +1493,7 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
     }
   }
 
-  auto reader = [](Directory& dir, Format::ptr codec, DirectoryMeta&& meta,
+  auto reader = [](Directory& dir, DirectoryMeta&& meta,
                    const IndexReaderOptions& opts) {
     const auto& segments = meta.index_meta.segments;
 
@@ -1510,12 +1507,12 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
     }
 
     return std::make_shared<const DirectoryReaderImpl>(
-      dir, std::move(codec), opts, std::move(meta), std::move(readers));
-  }(dir, codec, std::move(meta), options.reader_options);
+      dir, opts, std::move(meta), std::move(readers));
+  }(dir, std::move(meta), options.reader_options);
 
   auto writer = std::make_shared<IndexWriter>(
     ConstructToken{}, std::move(lock), std::move(lock_ref), dir,
-    std::move(codec), options.segment_pool_size, SegmentOptions{options},
+    options.segment_pool_size, SegmentOptions{options},
     std::move(options.meta_payload_writer), std::move(reader));
   writer->_db = options.db;
   writer->_ann_env = options.ann_env;
@@ -1574,15 +1571,9 @@ uint64_t IndexWriter::CurrentSegmentId() const noexcept {
 
 auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
                                const IndexFieldOptions* field_options,
-                               Format::ptr codec,
                                const MergeWriter::FlushProgress& progress,
                                const AnnBuildEnv* env)
   -> yaclib::Future<CompactionResult> {
-  if (!codec) {
-    // use default codec if not specified
-    codec = _codec;
-  }
-
   Compaction candidates;
   const auto run_id = reinterpret_cast<uintptr_t>(&candidates);
 
@@ -1689,8 +1680,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   CompactionResult result{candidates.size(), CompactionError::Fail};
 
   IndexSegment compaction_segment;
-  compaction_segment.meta.codec = codec;  // Should use new codec
-  compaction_segment.meta.version = 0;    // Reset version for new segment
+  compaction_segment.meta.version = 0;  // Reset version for new segment
   // Increment active meta
   compaction_segment.meta.name = FileName(NextSegmentId());
 
@@ -1839,24 +1829,16 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
 
 CompactionResult IndexWriter::Compact(
   const CompactionPolicy& policy, const IndexFieldOptions* field_options,
-  Format::ptr codec, const MergeWriter::FlushProgress& progress) {
-  return GetReady(CompactAsync(policy, field_options, std::move(codec),
-                               progress,
+  const MergeWriter::FlushProgress& progress) {
+  return GetReady(CompactAsync(policy, field_options, progress,
                                /*env=*/nullptr));
 }
 
-bool IndexWriter::AdoptSegment(std::string_view meta_file,
-                               const Format::ptr& codec, uint64_t tick) {
-  if (codec == nullptr) {
-    SDB_WARN(IRESEARCH, "Cannot adopt segment meta '", meta_file,
-             "': unresolvable codec");
-    return false;
-  }
+bool IndexWriter::AdoptSegment(std::string_view meta_file, uint64_t tick) {
   IndexSegment segment;
   segment.filename = meta_file;
-  segment.meta.codec = codec;
   try {
-    codec->get_segment_meta_reader()->read(_dir, segment.meta, meta_file);
+    GetSegmentMetaReader()->read(_dir, segment.meta, meta_file);
   } catch (const std::exception& e) {
     SDB_WARN(IRESEARCH, "Cannot adopt segment meta '", meta_file,
              "': ", e.what());
@@ -1925,12 +1907,8 @@ IndexWriter::CompactionFloorGuard IndexWriter::ArmCompactionFloor() {
 
 bool IndexWriter::ReplaceSegments(
   std::span<const std::string_view> replaced,
-  std::span<const std::string_view> adopted_metas, const Format::ptr& codec,
-  Transaction* removals, uint64_t removals_tick) {
-  if (codec == nullptr) {
-    SDB_WARN(IRESEARCH, "Cannot replace segments: unresolvable codec");
-    return false;
-  }
+  std::span<const std::string_view> adopted_metas, Transaction* removals,
+  uint64_t removals_tick) {
   if (replaced.empty() && adopted_metas.empty()) {
     return true;
   }
@@ -1979,10 +1957,8 @@ bool IndexWriter::ReplaceSegments(
   for (const auto meta_file : adopted_metas) {
     Adopted entry;
     entry.segment.filename = meta_file;
-    entry.segment.meta.codec = codec;
     try {
-      codec->get_segment_meta_reader()->read(_dir, entry.segment.meta,
-                                             meta_file);
+      GetSegmentMetaReader()->read(_dir, entry.segment.meta, meta_file);
     } catch (const std::exception& e) {
       SDB_WARN(IRESEARCH, "Cannot replace with segment meta '", meta_file,
                "': ", e.what());
@@ -2127,7 +2103,7 @@ IndexWriter::ActiveSegmentContext IndexWriter::GetSegmentContext(
   std::shared_ptr<SegmentContext> segment_ctx = _segment_writer_pool.emplace(
     _dir,
     [this] {
-      SegmentMeta meta{.codec = _codec};
+      SegmentMeta meta;
       meta.name = FileName(NextSegmentId());
       return meta;
     },
@@ -2284,9 +2260,8 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     SDB_ASSERT(readers.size() == committed_reader.size());
     if (info.reopen_reader) {
       auto new_reader = std::make_shared<const DirectoryReaderImpl>(
-        committed_reader.Dir(), committed_reader.Codec(),
-        committed_reader.Options(), DirectoryMeta{committed_reader.Meta()},
-        std::move(readers));
+        committed_reader.Dir(), committed_reader.Options(),
+        DirectoryMeta{committed_reader.Meta()}, std::move(readers));
       std::atomic_store_explicit(&_committed_reader, std::move(new_reader),
                                  std::memory_order_release);
     }
@@ -2361,7 +2336,7 @@ void IndexWriter::ApplyFlush(PendingContext&& context) {
   to_commit.filename = std::move(index_meta_file);
   // Assemble directory reader
   _pending_state.commit = std::make_shared<const DirectoryReaderImpl>(
-    dir, _codec, _committed_reader->Options(), std::move(to_commit),
+    dir, _committed_reader->Options(), std::move(to_commit),
     std::move(context.readers));
   SDB_ASSERT(context.ctx);
   static_cast<PendingBase&>(_pending_state) = std::move(context);

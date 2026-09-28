@@ -7435,9 +7435,7 @@ TEST_P(PhraseFilterTestCase, sequential_negation_regression) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(phrase_filter_test, PhraseFilterTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values(tests::FormatInfo{
-                                              "1_5simd"})),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          PhraseFilterTestCase::to_string);
 
 TEST_P(PhraseFilterTestCase, sloppy_phrase_two_terms) {

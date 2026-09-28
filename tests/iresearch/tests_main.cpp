@@ -212,7 +212,6 @@ int TestEnv::initialize(int argc, char* argv[]) {
   ::testing::AddGlobalTestEnvironment(new IterationTracker());
   ::testing::InitGoogleTest(&gArgc, gArgv);
 
-  irs::formats::Init();
   irs::InitOptimizeRules();
 
   return RUN_ALL_TESTS();

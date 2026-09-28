@@ -112,13 +112,12 @@ FileRefs GetRefs(const Directory& dir, const SegmentMeta& meta) {
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   const Directory& dir, const SegmentMeta& meta,
   const IndexReaderOptions& options) {
-  SDB_ASSERT(meta.codec);
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_refs = GetRefs(dir, meta);
   reader->_data = std::make_shared<ColumnData>();
   reader->_data->Open(dir, meta, options);
   reader->_field_reader = std::make_shared<burst_trie::FieldReader>(
-    meta.codec->get_postings_reader(), *dir.ResourceManager().readers);
+    MakePostingsReader(), *dir.ResourceManager().readers);
   if (options.index) {
     reader->_field_reader->prepare(ReaderState{
       .dir = &dir,

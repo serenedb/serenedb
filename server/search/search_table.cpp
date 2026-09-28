@@ -159,7 +159,6 @@ void SearchTable::OpenWriter() {
     }
   }
 
-  auto codec = irs::formats::Get("1_5simd");
   const bool reopen = path_exists && !_is_new;
   const auto open_mode =
     reopen ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
@@ -191,8 +190,7 @@ void SearchTable::OpenWriter() {
     _last_committed_tick = in.ReadProperty<uint64_t>(kFieldTick, "tick");
   };
 
-  _writer =
-    irs::IndexWriter::Make(*_dir, codec, open_mode, std::move(writer_options));
+  _writer = irs::IndexWriter::Make(*_dir, open_mode, std::move(writer_options));
 
   auto& db_manager =
     duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
@@ -377,8 +375,8 @@ auto SearchTable::CompactUnsafeAsync(
   try {
     // iresearch serializes Compact against refresh/DML internally, so a long
     // merge never blocks the refresh chain.
-    const auto res = co_await _writer->CompactAsync(policy, field_options,
-                                                    nullptr, progress, env);
+    const auto res =
+      co_await _writer->CompactAsync(policy, field_options, progress, env);
     if (!res) {
       result = absl::InternalError(
         absl::StrCat("compaction failed for search table ", GetTableId()));

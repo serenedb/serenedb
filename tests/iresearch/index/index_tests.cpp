@@ -318,37 +318,20 @@ REGISTER_ATTRIBUTE(IncompatibleAttribute);
 
 std::string IndexTestBase::to_string(
   const testing::TestParamInfo<index_test_context>& info) {
-  auto [factory, codec] = info.param;
+  auto [factory] = info.param;
 
-  std::string str = (*factory)(nullptr).second;
-  if (codec.codec) {
-    str += "___";
-    str += codec.codec;
-  }
-
-  return str;
+  return (*factory)(nullptr).second;
 }
 
 std::shared_ptr<irs::Directory> IndexTestBase::get_directory(
   const TestBase& ctx) const {
-  dir_param_f factory;
-  std::tie(factory, std::ignore) = GetParam();
+  auto [factory] = GetParam();
 
   return (*factory)(&ctx).first;
 }
 
-irs::Format::ptr IndexTestBase::get_codec() const {
-  tests::FormatInfo info;
-  std::tie(std::ignore, info) = GetParam();
-
-  return irs::formats::Get(info.codec);
-}
-
 irs::doc_id_t IndexTestBase::GetPostingsBlockSize() const {
-  if (get_codec()->type()().name().contains("avx")) {
-    return 256;
-  }
-  return 128;
+  return irs::doc_limits::kBlockSize;
 }
 
 void IndexTestBase::AssertSnapshotEquality(const irs::IndexWriter& writer) {
@@ -469,8 +452,8 @@ class IndexTestCase : public tests::IndexTestBase {
       AssertSnapshotEquality(*writer);  // create initial empty segment
 
       {
-        auto reader = irs::DirectoryReader(dir(), codec(),
-                                           irs::tests::DefaultReaderOptions());
+        auto reader =
+          irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
         ASSERT_EQ(0, reader.size());
         ASSERT_EQ(0, reader.docs_count());
         ASSERT_EQ(0, reader.live_docs_count());
@@ -485,8 +468,8 @@ class IndexTestCase : public tests::IndexTestBase {
       }
 
       {
-        auto reader = irs::DirectoryReader(dir(), codec(),
-                                           irs::tests::DefaultReaderOptions());
+        auto reader =
+          irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
         ASSERT_EQ(1, reader.size());
         ASSERT_EQ(2, reader.docs_count());
         ASSERT_EQ(2, reader.live_docs_count());
@@ -513,8 +496,8 @@ class IndexTestCase : public tests::IndexTestBase {
 
       // should be empty after clear
       {
-        auto reader = irs::DirectoryReader(dir(), codec(),
-                                           irs::tests::DefaultReaderOptions());
+        auto reader =
+          irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
         ASSERT_EQ(0, reader.size());
         ASSERT_EQ(0, reader.docs_count());
         ASSERT_EQ(0, reader.live_docs_count());
@@ -533,8 +516,8 @@ class IndexTestCase : public tests::IndexTestBase {
 
       // should be empty after commit (no new files or uncomited changes)
       {
-        auto reader = irs::DirectoryReader(dir(), codec(),
-                                           irs::tests::DefaultReaderOptions());
+        auto reader =
+          irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
         ASSERT_EQ(0, reader.size());
         ASSERT_EQ(0, reader.docs_count());
         ASSERT_EQ(0, reader.live_docs_count());
@@ -552,10 +535,10 @@ class IndexTestCase : public tests::IndexTestBase {
     // test creation of an empty writer
     {
       irs::MemoryDirectory dir;
-      auto writer = irs::IndexWriter::Make(dir, codec(), irs::kOmCreate,
+      auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
       ASSERT_THROW(
-        irs::DirectoryReader(dir, nullptr, irs::tests::DefaultReaderOptions()),
+        irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()),
         irs::IndexNotFound);  // throws due to missing index
 
       {
@@ -581,7 +564,7 @@ class IndexTestCase : public tests::IndexTestBase {
       }
 
       auto reader =
-        irs::DirectoryReader(dir, nullptr, irs::tests::DefaultReaderOptions());
+        irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
       ASSERT_EQ(0, reader.size());
       ASSERT_EQ(0, reader.docs_count());
       ASSERT_EQ(0, reader.live_docs_count());
@@ -634,7 +617,7 @@ class IndexTestCase : public tests::IndexTestBase {
 
     auto& expected_index = index();
     auto actual_reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_FALSE(!actual_reader);
     ASSERT_EQ(1, actual_reader.size());
     ASSERT_EQ(expected_index.size(), actual_reader.size());
@@ -780,11 +763,11 @@ class IndexTestCase : public tests::IndexTestBase {
   void OpenWriterCheckLock() {
     {
       // open writer
-      auto writer = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
+      auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
       ASSERT_NE(nullptr, writer);
       // can't open another writer at the same time on the same directory
-      ASSERT_THROW(irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
+      ASSERT_THROW(irs::IndexWriter::Make(dir(), irs::kOmCreate,
                                           irs::tests::DefaultWriterOptions()),
                    irs::LockObtainFailed);
       ASSERT_EQ(0, writer->BufferedDocs());
@@ -792,7 +775,7 @@ class IndexTestCase : public tests::IndexTestBase {
 
     {
       // open writer
-      auto writer = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
+      auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
       ASSERT_NE(nullptr, writer);
 
@@ -800,7 +783,7 @@ class IndexTestCase : public tests::IndexTestBase {
       AssertSnapshotEquality(*writer);
       irs::DirectoryCleaner::clean(dir());
       // can't open another writer at the same time on the same directory
-      ASSERT_THROW(irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
+      ASSERT_THROW(irs::IndexWriter::Make(dir(), irs::kOmCreate,
                                           irs::tests::DefaultWriterOptions()),
                    irs::LockObtainFailed);
       ASSERT_EQ(0, writer->BufferedDocs());
@@ -808,7 +791,7 @@ class IndexTestCase : public tests::IndexTestBase {
 
     {
       // open writer
-      auto writer = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
+      auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
       ASSERT_NE(nullptr, writer);
 
@@ -819,15 +802,15 @@ class IndexTestCase : public tests::IndexTestBase {
       // open writer with NOLOCK hint
       auto options0 = irs::tests::DefaultWriterOptions();
       options0.lock_repository = false;
-      auto writer0 = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
-                                            std::move(options0));
+      auto writer0 =
+        irs::IndexWriter::Make(dir(), irs::kOmCreate, std::move(options0));
       ASSERT_NE(nullptr, writer0);
 
       // can open another writer at the same time on the same directory
       auto options1 = irs::tests::DefaultWriterOptions();
       options1.lock_repository = false;
-      auto writer1 = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
-                                            std::move(options1));
+      auto writer1 =
+        irs::IndexWriter::Make(dir(), irs::kOmCreate, std::move(options1));
       ASSERT_NE(nullptr, writer1);
 
       ASSERT_EQ(0, writer0->BufferedDocs());
@@ -838,14 +821,14 @@ class IndexTestCase : public tests::IndexTestBase {
       // open writer with NOLOCK hint
       auto options0 = irs::tests::DefaultWriterOptions();
       options0.lock_repository = false;
-      auto writer0 = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
-                                            std::move(options0));
+      auto writer0 =
+        irs::IndexWriter::Make(dir(), irs::kOmCreate, std::move(options0));
       ASSERT_NE(nullptr, writer0);
 
       // can open another writer at the same time on the same directory and
       // acquire lock
       auto writer1 =
-        irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate | irs::kOmAppend,
+        irs::IndexWriter::Make(dir(), irs::kOmCreate | irs::kOmAppend,
                                irs::tests::DefaultWriterOptions());
       ASSERT_NE(nullptr, writer1);
 
@@ -857,14 +840,14 @@ class IndexTestCase : public tests::IndexTestBase {
       // open writer with NOLOCK hint
       auto options0 = irs::tests::DefaultWriterOptions();
       options0.lock_repository = false;
-      auto writer0 = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
-                                            std::move(options0));
+      auto writer0 =
+        irs::IndexWriter::Make(dir(), irs::kOmCreate, std::move(options0));
       ASSERT_NE(nullptr, writer0);
       writer0->RefreshCommit();
 
       // can open another writer at the same time on the same directory and
       // acquire lock
-      auto writer1 = irs::IndexWriter::Make(dir(), codec(), irs::kOmAppend,
+      auto writer1 = irs::IndexWriter::Make(dir(), irs::kOmAppend,
                                             irs::tests::DefaultWriterOptions());
       ASSERT_NE(nullptr, writer1);
 
@@ -875,17 +858,17 @@ class IndexTestCase : public tests::IndexTestBase {
 
   void WriterCheckOpenModes() {
     // APPEND to nonexisting index, shoud fail
-    ASSERT_THROW(irs::IndexWriter::Make(dir(), codec(), irs::kOmAppend,
+    ASSERT_THROW(irs::IndexWriter::Make(dir(), irs::kOmAppend,
                                         irs::tests::DefaultWriterOptions()),
                  irs::FileNotFound);
     // read index in empty directory, should fail
-    ASSERT_THROW((irs::DirectoryReader(dir(), codec(),
-                                       irs::tests::DefaultReaderOptions())),
-                 irs::IndexNotFound);
+    ASSERT_THROW(
+      (irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions())),
+      irs::IndexNotFound);
 
     // create empty index
     {
-      auto writer = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
+      auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
 
       writer->RefreshCommit();
@@ -894,8 +877,8 @@ class IndexTestCase : public tests::IndexTestBase {
 
     // read empty index, it should not fail
     {
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
+      auto reader =
+        irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
       ASSERT_EQ(0, reader.live_docs_count());
       ASSERT_EQ(0, reader.docs_count());
       ASSERT_EQ(0, reader.size());
@@ -904,7 +887,7 @@ class IndexTestCase : public tests::IndexTestBase {
 
     // append to index
     {
-      auto writer = irs::IndexWriter::Make(dir(), codec(), irs::kOmAppend,
+      auto writer = irs::IndexWriter::Make(dir(), irs::kOmAppend,
                                            irs::tests::DefaultWriterOptions());
       tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                   &tests::GenericJsonFieldFactory);
@@ -919,8 +902,8 @@ class IndexTestCase : public tests::IndexTestBase {
 
     // read index, it should not fail
     {
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
+      auto reader =
+        irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
       ASSERT_EQ(1, reader.live_docs_count());
       ASSERT_EQ(1, reader.docs_count());
       ASSERT_EQ(1, reader.size());
@@ -930,7 +913,7 @@ class IndexTestCase : public tests::IndexTestBase {
     // append to index
     {
       auto writer =
-        irs::IndexWriter::Make(dir(), codec(), irs::kOmAppend | irs::kOmCreate,
+        irs::IndexWriter::Make(dir(), irs::kOmAppend | irs::kOmCreate,
                                irs::tests::DefaultWriterOptions());
       tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                   &tests::GenericJsonFieldFactory);
@@ -945,8 +928,8 @@ class IndexTestCase : public tests::IndexTestBase {
 
     // read index, it should not fail
     {
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
+      auto reader =
+        irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
       ASSERT_EQ(2, reader.live_docs_count());
       ASSERT_EQ(2, reader.docs_count());
       ASSERT_EQ(2, reader.size());
@@ -968,7 +951,7 @@ class IndexTestCase : public tests::IndexTestBase {
     const tests::Document* doc1 = gen.next();
     const tests::Document* doc2 = gen.next();
 
-    auto writer = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -985,8 +968,8 @@ class IndexTestCase : public tests::IndexTestBase {
 
     // check index, 1 document in 1 segment
     {
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
+      auto reader =
+        irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
       ASSERT_EQ(1, reader.live_docs_count());
       ASSERT_EQ(1, reader.docs_count());
       ASSERT_EQ(1, reader.size());
@@ -998,8 +981,8 @@ class IndexTestCase : public tests::IndexTestBase {
     ASSERT_EQ(0, writer->BufferedDocs());
     // check index, 2 documents in 2 segments
     {
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
+      auto reader =
+        irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
       ASSERT_EQ(2, reader.live_docs_count());
       ASSERT_EQ(2, reader.docs_count());
       ASSERT_EQ(2, reader.size());
@@ -1008,8 +991,8 @@ class IndexTestCase : public tests::IndexTestBase {
 
     // check documents
     {
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
+      auto reader =
+        irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
 
       // segment #1
       {
@@ -1056,7 +1039,7 @@ class IndexTestCase : public tests::IndexTestBase {
     const tests::Document* doc3 = gen.next();
 
     {
-      auto writer = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
+      auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
 
       ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -1067,9 +1050,9 @@ class IndexTestCase : public tests::IndexTestBase {
         writer->RefreshBegin());  // try to begin already opened transaction
 
       // index still does not exist
-      ASSERT_THROW((irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions())),
-                   irs::IndexNotFound);
+      ASSERT_THROW(
+        (irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions())),
+        irs::IndexNotFound);
 
       writer->RefreshAbort();  // rollback transaction
       writer->RefreshAbort();  // does nothing
@@ -1080,8 +1063,8 @@ class IndexTestCase : public tests::IndexTestBase {
 
       // check index, it should be empty
       {
-        auto reader = irs::DirectoryReader(dir(), codec(),
-                                           irs::tests::DefaultReaderOptions());
+        auto reader =
+          irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
         ASSERT_EQ(0, reader.live_docs_count());
         ASSERT_EQ(0, reader.docs_count());
         ASSERT_EQ(0, reader.size());
@@ -1091,7 +1074,7 @@ class IndexTestCase : public tests::IndexTestBase {
 
     // test rolled-back index can still be opened after directory cleaner run
     {
-      auto writer = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
+      auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
       ASSERT_TRUE(InsertWithName(*writer, *doc2));
       ASSERT_TRUE(writer->RefreshBegin());  // prepare for commit tx #1
@@ -1115,8 +1098,8 @@ class IndexTestCase : public tests::IndexTestBase {
       ASSERT_EQ(file_count_before,
                 file_count);  // ensure rolled back file refs were released
 
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
+      auto reader =
+        irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
       ASSERT_EQ(1, reader.size());
       auto& segment = reader[0];  // assume 0 is id of first/only segment
       auto* column = segment.Column(kNameColumnId);
@@ -1155,7 +1138,7 @@ class IndexTestCase : public tests::IndexTestBase {
     const tests::Document* doc1 = gen.next();
     const tests::Document* doc2 = gen.next();
     const tests::Document* doc3 = gen.next();
-    auto writer = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     {
       auto ctx = writer->GetBatch();
@@ -1181,7 +1164,7 @@ class IndexTestCase : public tests::IndexTestBase {
     writer->RefreshCommit();
     // should be only one live doc - doc3
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     ASSERT_EQ(1, segment.live_docs_count());
@@ -1313,7 +1296,7 @@ class IndexTestCase : public tests::IndexTestBase {
 
     // write docs with empty terms
     {
-      auto writer = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
+      auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
       // doc0: empty, nullptr
       {
@@ -1336,8 +1319,8 @@ class IndexTestCase : public tests::IndexTestBase {
 
     // check fields with empty terms
     {
-      auto reader = irs::DirectoryReader(dir(), nullptr,
-                                         irs::tests::DefaultReaderOptions());
+      auto reader =
+        irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
       ASSERT_EQ(1, reader.size());
       auto& segment = reader[0];
 
@@ -1397,7 +1380,7 @@ class IndexTestCase : public tests::IndexTestBase {
 
     // create empty index
     {
-      auto writer = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
+      auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
 
       writer->RefreshCommit();
@@ -1416,9 +1399,8 @@ class IndexTestCase : public tests::IndexTestBase {
       const tests::Document* doc3 = gen.next();
       const tests::Document* doc4 = gen.next();
 
-      auto writer =
-        irs::IndexWriter::Make(override_dir, codec(), irs::kOmAppend,
-                               irs::tests::DefaultWriterOptions());
+      auto writer = irs::IndexWriter::Make(override_dir, irs::kOmAppend,
+                                           irs::tests::DefaultWriterOptions());
 
       ASSERT_TRUE(InsertWithName(*writer, *doc1));
       ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -1444,9 +1426,8 @@ class IndexTestCase : public tests::IndexTestBase {
       const tests::Document* doc3 = gen.next();
       const tests::Document* doc4 = gen.next();
 
-      auto writer =
-        irs::IndexWriter::Make(override_dir, codec(), irs::kOmAppend,
-                               irs::tests::DefaultWriterOptions());
+      auto writer = irs::IndexWriter::Make(override_dir, irs::kOmAppend,
+                                           irs::tests::DefaultWriterOptions());
 
       ASSERT_TRUE(InsertWithName(*writer, *doc1));
       ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -1457,8 +1438,8 @@ class IndexTestCase : public tests::IndexTestBase {
 
     // check index, it should be empty
     {
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
+      auto reader =
+        irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
       ASSERT_EQ(0, reader.live_docs_count());
       ASSERT_EQ(0, reader.docs_count());
       ASSERT_EQ(0, reader.size());
@@ -1697,7 +1678,7 @@ TEST_P(IndexTestCase, reopen_reader_after_writer_is_closed) {
     reader1 = writer->GetSnapshot();
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir(), nullptr, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions()));
     tests::AssertSnapshotEquality(writer->GetSnapshot(), reader0->Reopen());
     tests::AssertSnapshotEquality(writer->GetSnapshot(), reader1->Reopen());
     ASSERT_EQ(1, reader1.size());
@@ -1714,7 +1695,7 @@ TEST_P(IndexTestCase, reopen_reader_after_writer_is_closed) {
     ASSERT_EQ(2, reader2.live_docs_count());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir(), nullptr, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions()));
     tests::AssertSnapshotEquality(writer->GetSnapshot(), reader0->Reopen());
     tests::AssertSnapshotEquality(writer->GetSnapshot(), reader1->Reopen());
     tests::AssertSnapshotEquality(writer->GetSnapshot(), reader2->Reopen());
@@ -1724,8 +1705,7 @@ TEST_P(IndexTestCase, reopen_reader_after_writer_is_closed) {
   auto check_reader = [&](irs::DirectoryReader reader) {
     reader = reader0->Reopen();
     tests::AssertSnapshotEquality(
-      reader,
-      irs::DirectoryReader(dir(), nullptr, irs::tests::DefaultReaderOptions()));
+      reader, irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions()));
     EXPECT_EQ(2, reader.size());
     EXPECT_FALSE(reader.Meta().filename.empty());
     EXPECT_EQ(2, reader.docs_count());
@@ -1793,7 +1773,7 @@ TEST_P(IndexTestCase, writer_begin_clear_empty_index) {
   const tests::Document* doc1 = gen.next();
 
   {
-    auto writer = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -1804,8 +1784,8 @@ TEST_P(IndexTestCase, writer_begin_clear_empty_index) {
 
     // check index, it should be empty
     {
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
+      auto reader =
+        irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
       ASSERT_EQ(0, reader.live_docs_count());
       ASSERT_EQ(0, reader.docs_count());
       ASSERT_EQ(0, reader.size());
@@ -1821,7 +1801,7 @@ TEST_P(IndexTestCase, writer_begin_clear) {
   const tests::Document* doc1 = gen.next();
 
   {
-    auto writer = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -1832,8 +1812,8 @@ TEST_P(IndexTestCase, writer_begin_clear) {
 
     // check index, it should not be empty
     {
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
+      auto reader =
+        irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
       ASSERT_EQ(1, reader.live_docs_count());
       ASSERT_EQ(1, reader.docs_count());
       ASSERT_EQ(1, reader.size());
@@ -1851,8 +1831,8 @@ TEST_P(IndexTestCase, writer_begin_clear) {
 
     // check index, it should be empty
     {
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
+      auto reader =
+        irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
       ASSERT_EQ(0, reader.live_docs_count());
       ASSERT_EQ(0, reader.docs_count());
       ASSERT_EQ(0, reader.size());
@@ -1869,7 +1849,7 @@ TEST_P(IndexTestCase, writer_commit_cleanup_interleaved) {
 
   {
     tests::CallbackDirectory synced_dir(dir(), clean);
-    auto writer = irs::IndexWriter::Make(synced_dir, codec(), irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(synced_dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     const auto* doc1 = gen.next();
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -1877,8 +1857,8 @@ TEST_P(IndexTestCase, writer_commit_cleanup_interleaved) {
     AssertSnapshotEquality(*writer);
 
     // check index, it should contain expected number of docs
-    auto reader = irs::DirectoryReader(synced_dir, codec(),
-                                       irs::tests::DefaultReaderOptions());
+    auto reader =
+      irs::DirectoryReader(synced_dir, irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.live_docs_count());
     ASSERT_EQ(1, reader.docs_count());
     ASSERT_NE(reader.begin(), reader.end());
@@ -1892,7 +1872,7 @@ TEST_P(IndexTestCase, writer_commit_clear) {
   const tests::Document* doc1 = gen.next();
 
   {
-    auto writer = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -1903,8 +1883,8 @@ TEST_P(IndexTestCase, writer_commit_clear) {
 
     // check index, it should not be empty
     {
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
+      auto reader =
+        irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
       ASSERT_EQ(1, reader.live_docs_count());
       ASSERT_EQ(1, reader.docs_count());
       ASSERT_EQ(1, reader.size());
@@ -1917,8 +1897,8 @@ TEST_P(IndexTestCase, writer_commit_clear) {
 
     // check index, it should be empty
     {
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
+      auto reader =
+        irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
       ASSERT_EQ(0, reader.live_docs_count());
       ASSERT_EQ(0, reader.docs_count());
       ASSERT_EQ(0, reader.size());
@@ -2079,7 +2059,7 @@ TEST_P(IndexTestCase, concurrent_add_mt) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader.size() == 1 ||
                 reader.size() ==
                   2);  // can be 1 if thread0 finishes before thread1 starts
@@ -2146,7 +2126,7 @@ TEST_P(IndexTestCase, concurrent_add_remove_mt) {
       "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W",
       "X", "Y", "Z", "~", "!", "@", "#", "$", "%"};
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(
       reader.size() == 1 || reader.size() == 2 ||
       reader.size() ==
@@ -2259,7 +2239,7 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
     thread.join();
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     /* FIXME TODO add once segment_context will not block flush_all()
     ASSERT_EQ(0, reader.docs_count());
     ASSERT_EQ(0, reader.live_docs_count());
@@ -2312,7 +2292,7 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
     thread.join();
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.docs_count());
     ASSERT_EQ(2, reader.live_docs_count());
   }
@@ -2376,7 +2356,7 @@ TEST_P(IndexTestCase, document_context) {
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->RefreshCommit();
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     EXPECT_EQ(3, reader.docs_count());
     EXPECT_EQ(2, reader.live_docs_count());
@@ -2425,7 +2405,7 @@ TEST_P(IndexTestCase, document_context) {
     thread1.join();
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -2495,7 +2475,7 @@ TEST_P(IndexTestCase, document_context) {
     // removal
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -2571,7 +2551,7 @@ TEST_P(IndexTestCase, document_context) {
     // commit doc replace
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -2611,7 +2591,7 @@ TEST_P(IndexTestCase, document_context) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -2652,7 +2632,7 @@ TEST_P(IndexTestCase, document_context) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -2698,7 +2678,7 @@ TEST_P(IndexTestCase, document_context) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -2753,7 +2733,7 @@ TEST_P(IndexTestCase, document_context) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -2811,7 +2791,7 @@ TEST_P(IndexTestCase, document_context) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size());
 
     {
@@ -2867,7 +2847,7 @@ TEST_P(IndexTestCase, document_context) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -2911,7 +2891,7 @@ TEST_P(IndexTestCase, document_context) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -2973,7 +2953,7 @@ TEST_P(IndexTestCase, document_context) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size());
 
     {
@@ -3035,7 +3015,7 @@ TEST_P(IndexTestCase, document_context) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -3085,7 +3065,7 @@ TEST_P(IndexTestCase, document_context) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -3148,7 +3128,7 @@ TEST_P(IndexTestCase, document_context) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size());
     EXPECT_EQ(3, reader.docs_count());
     EXPECT_EQ(2, reader.live_docs_count());
@@ -3226,7 +3206,7 @@ TEST_P(IndexTestCase, document_context) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     EXPECT_EQ(2 + kWordSize, reader.docs_count());
     EXPECT_EQ(2, reader.live_docs_count());
@@ -3296,7 +3276,7 @@ TEST_P(IndexTestCase, document_context) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size());
 
     {
@@ -3362,7 +3342,7 @@ TEST_P(IndexTestCase, document_context) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size());
 
     {
@@ -3525,7 +3505,7 @@ TEST_P(IndexTestCase, document_context) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size());
 
     {
@@ -3915,7 +3895,7 @@ TEST_P(IndexTestCase, doc_removal) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -3945,7 +3925,7 @@ TEST_P(IndexTestCase, doc_removal) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -3976,7 +3956,7 @@ TEST_P(IndexTestCase, doc_removal) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -4007,7 +3987,7 @@ TEST_P(IndexTestCase, doc_removal) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -4038,7 +4018,7 @@ TEST_P(IndexTestCase, doc_removal) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -4071,7 +4051,7 @@ TEST_P(IndexTestCase, doc_removal) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -4108,7 +4088,7 @@ TEST_P(IndexTestCase, doc_removal) {
       *writer);  // new document mask with 'doc2','doc3' created
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -4143,7 +4123,7 @@ TEST_P(IndexTestCase, doc_removal) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -4176,7 +4156,7 @@ TEST_P(IndexTestCase, doc_removal) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size());
 
     {
@@ -4231,7 +4211,7 @@ TEST_P(IndexTestCase, doc_removal) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size());
 
     {
@@ -4300,7 +4280,7 @@ TEST_P(IndexTestCase, doc_removal) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(3, reader.size());
 
     {
@@ -4434,7 +4414,7 @@ TEST_P(IndexTestCase, doc_update) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     EXPECT_EQ(reader.size(), 2);
     EXPECT_EQ(reader.live_docs_count(), 2);
   }
@@ -4451,7 +4431,7 @@ TEST_P(IndexTestCase, doc_update) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -4481,7 +4461,7 @@ TEST_P(IndexTestCase, doc_update) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -4512,7 +4492,7 @@ TEST_P(IndexTestCase, doc_update) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -4545,7 +4525,7 @@ TEST_P(IndexTestCase, doc_update) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size());
 
     {
@@ -4599,7 +4579,7 @@ TEST_P(IndexTestCase, doc_update) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -4639,7 +4619,7 @@ TEST_P(IndexTestCase, doc_update) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -4672,7 +4652,7 @@ TEST_P(IndexTestCase, doc_update) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size()) << reader.live_docs_count();
 
     {
@@ -4724,7 +4704,7 @@ TEST_P(IndexTestCase, doc_update) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -4763,7 +4743,7 @@ TEST_P(IndexTestCase, doc_update) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size());
 
     {
@@ -4816,7 +4796,7 @@ TEST_P(IndexTestCase, doc_update) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -4856,7 +4836,7 @@ TEST_P(IndexTestCase, doc_update) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size());
 
     {
@@ -4911,7 +4891,7 @@ TEST_P(IndexTestCase, doc_update) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -4955,7 +4935,7 @@ TEST_P(IndexTestCase, doc_update) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size());
 
     {
@@ -5060,7 +5040,7 @@ TEST_P(IndexTestCase, doc_update) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     ASSERT_EQ(5, segment.docs_count());
@@ -5116,8 +5096,7 @@ TEST_P(IndexTestCase, refresh_reader) {
   }
 
   // refreshable reader
-  auto reader =
-    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+  auto reader = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
 
   // validate state
   {
@@ -5472,8 +5451,7 @@ TEST_P(IndexTestCase, segment_column_user_system) {
   std::unordered_set<std::string_view> expected_name = {"A", "B"};
 
   // validate segment
-  auto reader =
-    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+  auto reader = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
   auto& segment = reader[0];           // assume 0 is id of first/only segment
   ASSERT_EQ(3, segment.docs_count());  // total count of documents
@@ -5613,8 +5591,8 @@ TEST_P(IndexTestCase, concurrent_compaction) {
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
-  auto reader = irs::DirectoryReader(this->dir(), codec(),
-                                     irs::tests::DefaultReaderOptions());
+  auto reader =
+    irs::DirectoryReader(this->dir(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
 
   ASSERT_EQ(names.size(), reader.docs_count());
@@ -5741,8 +5719,8 @@ TEST_P(IndexTestCase, concurrent_compaction_dedicated_commit) {
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
-  auto reader = irs::DirectoryReader(this->dir(), codec(),
-                                     irs::tests::DefaultReaderOptions());
+  auto reader =
+    irs::DirectoryReader(this->dir(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
 
   ASSERT_EQ(names.size(), reader.docs_count());
@@ -5871,8 +5849,8 @@ TEST_P(IndexTestCase, concurrent_compaction_two_phase_dedicated_commit) {
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
-  auto reader = irs::DirectoryReader(this->dir(), codec(),
-                                     irs::tests::DefaultReaderOptions());
+  auto reader =
+    irs::DirectoryReader(this->dir(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
 
   ASSERT_EQ(names.size(), reader.docs_count());
@@ -5986,8 +5964,7 @@ TEST_P(IndexTestCase, concurrent_compaction_cleanup) {
   AssertSnapshotEquality(*writer);
   irs::DirectoryCleaner::clean(dir());
 
-  auto reader =
-    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+  auto reader = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
 
   ASSERT_EQ(names.size(), reader.docs_count());
@@ -6096,9 +6073,9 @@ TEST_P(IndexTestCase, compact_single_segment) {
     ASSERT_EQ(
       2,
       irs::DirectoryCleaner::clean(dir()));  // segments_1 + stale segment meta
-    ASSERT_EQ(1, irs::DirectoryReader(this->dir(), codec(),
-                                      irs::tests::DefaultReaderOptions())
-                   .size());
+    ASSERT_EQ(
+      1, irs::DirectoryReader(this->dir(), irs::tests::DefaultReaderOptions())
+           .size());
 
     // get number of files in 1st segment
     count = 0;
@@ -6120,10 +6097,10 @@ TEST_P(IndexTestCase, compact_single_segment) {
     tests::index_t expected;
     expected.emplace_back();
     expected.back().insert(*doc2);
-    tests::AssertIndex(this->dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(this->dir(), expected, kAllFeatures);
 
-    auto reader = irs::DirectoryReader(this->dir(), codec(),
-                                       irs::tests::DefaultReaderOptions());
+    auto reader =
+      irs::DirectoryReader(this->dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
 
     // assume 0 is 'merged' segment
@@ -6277,10 +6254,10 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     expected.emplace_back();
     expected.back().insert(*doc1);
     expected.back().insert(*doc2);
-    tests::AssertIndex(this->dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(this->dir(), expected, kAllFeatures);
 
-    auto reader = irs::DirectoryReader(this->dir(), codec(),
-                                       irs::tests::DefaultReaderOptions());
+    auto reader =
+      irs::DirectoryReader(this->dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(3, reader.size());
 
     // assume 0 is 'segment 3'
@@ -6437,10 +6414,10 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     expected.back().insert(*doc3);
     expected.emplace_back();
     expected.back().insert(*doc4);
-    tests::AssertIndex(this->dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(this->dir(), expected, kAllFeatures);
 
-    auto reader = irs::DirectoryReader(this->dir(), codec(),
-                                       irs::tests::DefaultReaderOptions());
+    auto reader =
+      irs::DirectoryReader(this->dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(3, reader.size());
 
     // assume 0 is 'segment 2'
@@ -6588,10 +6565,10 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     expected.back().insert(*doc1);
     expected.back().insert(*doc2);
     expected.back().insert(*doc3);
-    tests::AssertIndex(this->dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(this->dir(), expected, kAllFeatures);
 
-    auto reader = irs::DirectoryReader(this->dir(), codec(),
-                                       irs::tests::DefaultReaderOptions());
+    auto reader =
+      irs::DirectoryReader(this->dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
 
     // assume 0 is 'merged segment'
@@ -6736,10 +6713,10 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     expected.back().insert(*doc2);
     expected.back().insert(*doc3);
     expected.back().insert(*doc4);
-    tests::AssertIndex(this->dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(this->dir(), expected, kAllFeatures);
 
-    auto reader = irs::DirectoryReader(this->dir(), codec(),
-                                       irs::tests::DefaultReaderOptions());
+    auto reader =
+      irs::DirectoryReader(this->dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
 
     // assume 0 is 'merged segment'
@@ -6851,7 +6828,7 @@ TEST_P(IndexTestCase, segment_compact_clear_commit) {
     AssertSnapshotEquality(*writer);  // commit transaction
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(0, reader.size());
   }
 
@@ -6882,7 +6859,7 @@ TEST_P(IndexTestCase, segment_compact_clear_commit) {
     AssertSnapshotEquality(*writer);  // commit transaction
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(0, reader.size());
   }
 
@@ -6919,7 +6896,7 @@ TEST_P(IndexTestCase, segment_compact_clear_commit) {
     AssertSnapshotEquality(*writer);  // commit transaction
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(0, reader.size());
   }
 
@@ -6951,7 +6928,7 @@ TEST_P(IndexTestCase, segment_compact_clear_commit) {
     AssertSnapshotEquality(*writer);  // commit transaction
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(0, reader.size());
   }
 }
@@ -7063,10 +7040,10 @@ TEST_P(IndexTestCase, segment_compact_commit) {
     expected.emplace_back();
     expected.back().insert(*doc1);
     expected.back().insert(*doc2);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
 
     // assume 0 is merged segment
@@ -7153,10 +7130,10 @@ TEST_P(IndexTestCase, segment_compact_commit) {
     expected.emplace_back();
     expected.back().insert(*doc3);
     expected.back().insert(*doc4);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size());
 
     // assume 0 is merged segment
@@ -7269,10 +7246,10 @@ TEST_P(IndexTestCase, segment_compact_commit) {
     expected.back().insert(*doc3);
     expected.back().insert(*doc4);
     expected.back().insert(*doc5);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(2, reader.size());
 
@@ -7412,10 +7389,9 @@ TEST_P(IndexTestCase, compact_check_compacting_segments) {
     doc = gen.next();
     expected.back().insert(*doc);
   }
-  tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+  tests::AssertIndex(dir(), expected, kAllFeatures);
 
-  auto reader =
-    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+  auto reader = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(segments_count / 2, reader.size());
 
   std::string expected_name = "A";
@@ -7580,10 +7556,10 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected.emplace_back();
     expected.back().insert(*doc1);
     expected.back().insert(*doc2);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(2, reader.live_docs_count());
 
@@ -7693,10 +7669,10 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected.emplace_back();
     expected.back().insert(*doc1);
     expected.back().insert(*doc2);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size());
     ASSERT_EQ(4, reader.live_docs_count());
 
@@ -7838,10 +7814,10 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected.emplace_back();
     expected.back().insert(*doc5);
     expected.back().insert(*doc6);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(3, reader.size());
     ASSERT_EQ(6, reader.live_docs_count());
@@ -7997,10 +7973,10 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected.back().insert(*doc1);
     expected.back().insert(*doc2);
     expected.back().insert(*doc3);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(2, reader.live_docs_count());
@@ -8137,10 +8113,10 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected.back().insert(*doc2);
     expected.back().insert(*doc3);
     expected.back().insert(*doc4);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(2, reader.live_docs_count());
@@ -8272,10 +8248,10 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected.back().insert(*doc2);
     expected.back().insert(*doc3);
     expected.back().insert(*doc4);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
     {
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
+      auto reader =
+        irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
       ASSERT_TRUE(reader);
       ASSERT_EQ(1, reader.size());
       ASSERT_EQ(2, reader.live_docs_count());
@@ -8588,10 +8564,10 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected.back().insert(*doc2);
     expected.back().insert(*doc3);
     expected.back().insert(*doc4);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(1, reader.size());  // should be one compacted segment
     ASSERT_EQ(3, reader.live_docs_count());
@@ -8686,10 +8662,10 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected.back().insert(*doc4);
     expected.emplace_back();
     expected.back().insert(*doc5);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(2, reader.size());
     ASSERT_EQ(3, reader.live_docs_count());
@@ -8855,10 +8831,10 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected.back().insert(*doc2);
     expected.back().insert(*doc3);
     expected.back().insert(*doc4);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(2, reader.size());
     ASSERT_EQ(3, reader.live_docs_count());
@@ -9041,10 +9017,10 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected.back().insert(*doc2);
     expected.emplace_back();
     expected.back().insert(*doc5);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(2, reader.size());
     ASSERT_EQ(3, reader.live_docs_count());
@@ -9104,21 +9080,19 @@ TEST_P(IndexTestCase, compact_progress) {
   // test default progress (false)
   {
     irs::MemoryDirectory dir;
-    auto writer = irs::IndexWriter::Make(dir, get_codec(), irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->RefreshCommit();  // create segment0
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, get_codec(),
-                           irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();  // create segment1
 
     auto reader = writer->GetSnapshot();
     tests::AssertSnapshotEquality(
-      reader, irs::DirectoryReader(dir, get_codec(),
-                                   irs::tests::DefaultReaderOptions()));
+      reader, irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     ASSERT_EQ(2, reader.size());
     ASSERT_EQ(1, reader[0].docs_count());
@@ -9126,11 +9100,9 @@ TEST_P(IndexTestCase, compact_progress) {
 
     irs::MergeWriter::FlushProgress progress;
 
-    ASSERT_TRUE(writer->Compact(policy, /*field_options=*/nullptr, get_codec(),
-                                progress));
+    ASSERT_TRUE(writer->Compact(policy, /*field_options=*/nullptr, progress));
     writer->RefreshCommit();  // write compacted segment
-    reader = irs::DirectoryReader(dir, get_codec(),
-                                  irs::tests::DefaultReaderOptions());
+    reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
 
     tests::AssertSnapshotEquality(writer->GetSnapshot(), reader);
 
@@ -9141,21 +9113,19 @@ TEST_P(IndexTestCase, compact_progress) {
   // test always-false progress
   {
     irs::MemoryDirectory dir;
-    auto writer = irs::IndexWriter::Make(dir, get_codec(), irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->RefreshCommit();  // create segment0
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, get_codec(),
-                           irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();  // create segment1
 
     auto reader = writer->GetSnapshot();
     tests::AssertSnapshotEquality(
-      reader, irs::DirectoryReader(dir, get_codec(),
-                                   irs::tests::DefaultReaderOptions()));
+      reader, irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     ASSERT_EQ(2, reader.size());
     ASSERT_EQ(1, reader[0].docs_count());
@@ -9163,13 +9133,11 @@ TEST_P(IndexTestCase, compact_progress) {
 
     irs::MergeWriter::FlushProgress progress = []() -> bool { return false; };
 
-    ASSERT_FALSE(writer->Compact(policy, /*field_options=*/nullptr, get_codec(),
-                                 progress));
+    ASSERT_FALSE(writer->Compact(policy, /*field_options=*/nullptr, progress));
     writer->RefreshCommit();  // write compacted segment
     reader = writer->GetSnapshot();
     tests::AssertSnapshotEquality(
-      reader, irs::DirectoryReader(dir, get_codec(),
-                                   irs::tests::DefaultReaderOptions()));
+      reader, irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     ASSERT_EQ(2, reader.size());
     ASSERT_EQ(1, reader[0].docs_count());
@@ -9183,7 +9151,7 @@ TEST_P(IndexTestCase, compact_progress) {
   // test always-true progress
   {
     irs::MemoryDirectory dir;
-    auto writer = irs::IndexWriter::Make(dir, get_codec(), irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
 
     for (size_t size = 0; size < max_docs; ++size) {
@@ -9192,15 +9160,13 @@ TEST_P(IndexTestCase, compact_progress) {
     writer->RefreshCommit();  // create segment0
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, get_codec(),
-                           irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     for (size_t size = 0; size < max_docs; ++size) {
       ASSERT_TRUE(InsertWithName(*writer, *doc2));
     }
     writer->RefreshCommit();  // create segment1
-    auto reader = irs::DirectoryReader(dir, get_codec(),
-                                       irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     tests::AssertSnapshotEquality(writer->GetSnapshot(), reader);
 
     ASSERT_EQ(2, reader.size());
@@ -9213,13 +9179,11 @@ TEST_P(IndexTestCase, compact_progress) {
       return true;
     };
 
-    ASSERT_TRUE(writer->Compact(policy, /*field_options=*/nullptr, get_codec(),
-                                progress));
+    ASSERT_TRUE(writer->Compact(policy, /*field_options=*/nullptr, progress));
     writer->RefreshCommit();  // write compacted segment
     reader = writer->GetSnapshot();
     tests::AssertSnapshotEquality(
-      reader, irs::DirectoryReader(dir, get_codec(),
-                                   irs::tests::DefaultReaderOptions()));
+      reader, irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(2 * max_docs, reader[0].docs_count());
@@ -9233,7 +9197,7 @@ TEST_P(IndexTestCase, compact_progress) {
   for (size_t i = 1; i < progress_call_count; ++i) {
     size_t call_count = i;
     irs::MemoryDirectory dir;
-    auto writer = irs::IndexWriter::Make(dir, get_codec(), irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     for (size_t size = 0; size < max_docs; ++size) {
       ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -9241,15 +9205,13 @@ TEST_P(IndexTestCase, compact_progress) {
     writer->RefreshCommit();  // create segment0
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, get_codec(),
-                           irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     for (size_t size = 0; size < max_docs; ++size) {
       ASSERT_TRUE(InsertWithName(*writer, *doc2));
     }
     writer->RefreshCommit();  // create segment0
-    auto reader = irs::DirectoryReader(dir, get_codec(),
-                                       irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     tests::AssertSnapshotEquality(writer->GetSnapshot(), reader);
 
     ASSERT_EQ(2, reader.size());
@@ -9260,12 +9222,10 @@ TEST_P(IndexTestCase, compact_progress) {
       return --call_count;
     };
 
-    ASSERT_FALSE(writer->Compact(policy, /*field_options=*/nullptr, get_codec(),
-                                 progress));
+    ASSERT_FALSE(writer->Compact(policy, /*field_options=*/nullptr, progress));
     writer->RefreshCommit();  // write compacted segment
 
-    reader = irs::DirectoryReader(dir, get_codec(),
-                                  irs::tests::DefaultReaderOptions());
+    reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     tests::AssertSnapshotEquality(writer->GetSnapshot(), reader);
 
     ASSERT_EQ(2, reader.size());
@@ -9313,7 +9273,7 @@ TEST_P(IndexTestCase, segment_compact) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(0, reader.size());
   }
 
@@ -9331,7 +9291,7 @@ TEST_P(IndexTestCase, segment_compact) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(0, reader.size());
   }
 
@@ -9359,10 +9319,10 @@ TEST_P(IndexTestCase, segment_compact) {
     tests::index_t expected;
     expected.emplace_back();
     expected.back().insert(*doc3);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -9403,10 +9363,10 @@ TEST_P(IndexTestCase, segment_compact) {
     tests::index_t expected;
     expected.emplace_back();
     expected.back().insert(*doc3);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     const auto* column = segment.Column(kNameColumnId);
@@ -9449,10 +9409,10 @@ TEST_P(IndexTestCase, segment_compact) {
     tests::index_t expected;
     expected.emplace_back();
     expected.back().insert(*doc3);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];           // assume 0 is id of first/only segment
     ASSERT_EQ(1, segment.docs_count());  // total count of documents
@@ -9495,10 +9455,10 @@ TEST_P(IndexTestCase, segment_compact) {
     tests::index_t expected;
     expected.emplace_back();
     expected.back().insert(*doc3);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];           // assume 0 is id of first/only segment
     ASSERT_EQ(1, segment.docs_count());  // total count of documents
@@ -9545,8 +9505,8 @@ TEST_P(IndexTestCase, segment_compact) {
     AssertSnapshotEquality(*writer);
 
     {
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
+      auto reader =
+        irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
       ASSERT_EQ(1, reader.size());
       auto& segment = reader[0];  // assume 0 is id of first/only segment
       ASSERT_EQ(1, segment.docs_count());  // total count of documents
@@ -9570,8 +9530,8 @@ TEST_P(IndexTestCase, segment_compact) {
     AssertSnapshotEquality(*writer);
 
     {
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
+      auto reader =
+        irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
       ASSERT_EQ(1, reader.size());
       auto& segment = reader[0];  // assume 0 is id of first/only segment
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
@@ -9583,8 +9543,8 @@ TEST_P(IndexTestCase, segment_compact) {
     AssertSnapshotEquality(*writer);
 
     {
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
+      auto reader =
+        irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
       ASSERT_EQ(1, reader.size());
       auto& segment = reader[0];  // assume 0 is id of first/only segment
       ASSERT_EQ(1, segment.docs_count());  // total count of documents
@@ -9616,10 +9576,10 @@ TEST_P(IndexTestCase, segment_compact) {
     expected.emplace_back();
     expected.back().insert(*doc2);
     expected.back().insert(*doc4);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];           // assume 0 is id of first/only segment
     ASSERT_EQ(2, segment.docs_count());  // total count of documents
@@ -9665,10 +9625,10 @@ TEST_P(IndexTestCase, segment_compact) {
     expected.emplace_back();
     expected.back().insert(*doc2);
     expected.back().insert(*doc4);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];           // assume 0 is id of first/only segment
     ASSERT_EQ(2, segment.docs_count());  // total count of documents
@@ -9716,10 +9676,10 @@ TEST_P(IndexTestCase, segment_compact) {
     expected.emplace_back();
     expected.back().insert(*doc2);
     expected.back().insert(*doc4);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];           // assume 0 is id of first/only segment
     ASSERT_EQ(2, segment.docs_count());  // total count of documents
@@ -9767,10 +9727,10 @@ TEST_P(IndexTestCase, segment_compact) {
     expected.emplace_back();
     expected.back().insert(*doc2);
     expected.back().insert(*doc4);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];           // assume 0 is id of first/only segment
     ASSERT_EQ(2, segment.docs_count());  // total count of documents
@@ -9823,10 +9783,10 @@ TEST_P(IndexTestCase, segment_compact) {
     expected.back().insert(*doc2);
     expected.back().insert(*doc4);
     expected.back().insert(*doc6);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];           // assume 0 is id of first/only segment
     ASSERT_EQ(3, segment.docs_count());  // total count of documents
@@ -9882,10 +9842,10 @@ TEST_P(IndexTestCase, segment_compact) {
     expected.back().insert(*doc2);
     expected.back().insert(*doc4);
     expected.back().insert(*doc6);
-    tests::AssertIndex(dir(), codec(), expected, kAllFeatures);
+    tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];           // assume 0 is id of first/only segment
     ASSERT_EQ(3, segment.docs_count());  // total count of documents
@@ -9950,7 +9910,7 @@ TEST_P(IndexTestCase, segment_compact) {
 
     // validate merged segment
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];           // assume 0 is id of first/only segment
     ASSERT_EQ(6, segment.docs_count());  // total count of documents
@@ -10033,7 +9993,7 @@ TEST_P(IndexTestCase, segment_compact) {
 
     // validate merged segment
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];           // assume 0 is id of first/only segment
     ASSERT_EQ(6, segment.docs_count());  // total count of documents
@@ -10122,7 +10082,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size());  // 1+(2|3)
 
     // check 1st segment
@@ -10196,7 +10156,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size());
 
     {
@@ -10271,7 +10231,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     std::unordered_set<std::string_view> expected_name = {"A", "B"};
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     ASSERT_EQ(expected_name.size(),
@@ -10313,7 +10273,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size());
 
     {
@@ -10391,7 +10351,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     std::unordered_set<std::string_view> expected_name = {"A", "E"};
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     ASSERT_EQ(expected_name.size(),
@@ -10439,7 +10399,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size());
 
     {
@@ -10521,7 +10481,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     std::unordered_set<std::string_view> expected_name = {"A", "C"};
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     ASSERT_EQ(expected_name.size(),
@@ -10570,7 +10530,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size());
 
     {
@@ -10697,7 +10657,7 @@ TEST_P(IndexTestCase, segment_options) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
 
     // check only segment
@@ -10742,7 +10702,7 @@ TEST_P(IndexTestCase, segment_options) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size());  // 1+2
 
     // check 1st segment
@@ -10811,7 +10771,7 @@ TEST_P(IndexTestCase, segment_options) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(2, reader.size());  // 1+2
 
     // check 1st segment
@@ -10891,7 +10851,7 @@ TEST_P(IndexTestCase, segment_options) {
     AssertSnapshotEquality(*writer);
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_NE(nullptr, reader);
     ASSERT_EQ(1, reader.size());
 
@@ -11114,7 +11074,7 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment) {
   AssertSnapshotEquality(*writer);
   {
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(0, reader.size());
     // file removal should pass for all files (especially valid for
     // Microsoft Windows)
@@ -11178,7 +11138,7 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment_compaction) {
   AssertSnapshotEquality(*writer);
   {
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(0, reader.size());
     // file removal should pass for all files (especially valid for
     // Microsoft Windows)
@@ -11277,7 +11237,7 @@ TEST_P(IndexTestCase, ensure_no_empty_norms_written) {
 
   {
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = (*reader)[0];
     ASSERT_EQ(3, segment.docs_count());
@@ -11303,61 +11263,13 @@ TEST_P(IndexTestCase, ensure_no_empty_norms_written) {
 
 class IndexTestCase11 : public tests::IndexTestBase {};
 
-TEST_P(IndexTestCase11, compact_old_format) {
-  tests::JsonDocGenerator gen(
-    resource("simple_sequential.json"),
-    [](tests::Document& doc, const std::string& name,
-       const tests::JsonDocGenerator::JsonValue& data) {
-      if (data.is_string()) {
-        auto field = std::make_shared<tests::StringField>(name, data.str);
-        field->id = FieldIdFor(name);
-        doc.insert(std::move(field));
-      }
-    });
-  const tests::Document* doc1 = gen.next();
-  const tests::Document* doc2 = gen.next();
-
-  auto validate_codec = [&](auto codec, size_t size) {
-    auto reader =
-      irs::DirectoryReader(dir(), nullptr, irs::tests::DefaultReaderOptions());
-    ASSERT_NE(nullptr, reader);
-    ASSERT_EQ(size, reader.size());
-    ASSERT_EQ(size, reader.Meta().index_meta.segments.size());
-    for (auto& meta : reader.Meta().index_meta.segments) {
-      ASSERT_EQ(codec, meta.meta.codec);
-    }
-  };
-
-  auto writer_options = irs::tests::DefaultWriterOptions();
-  auto writer = open_writer(irs::kOmCreate, std::move(writer_options));
-  // 1st segment
-  ASSERT_TRUE(InsertWithName(*writer, *doc1));
-  writer->RefreshCommit();
-  AssertSnapshotEquality(*writer);
-  validate_codec(codec(), 1);
-  // 2nd segment
-  ASSERT_TRUE(InsertWithName(*writer, *doc2));
-  writer->RefreshCommit();
-  AssertSnapshotEquality(*writer);
-  validate_codec(codec(), 2);
-  // compact
-  auto old_codec = irs::formats::Get("1_5simd");
-  irs::index_utils::CompactionCount compact_all;
-  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all),
-                              /*field_options=*/nullptr, old_codec));
-  writer->RefreshCommit();
-  AssertSnapshotEquality(*writer);
-  validate_codec(old_codec, 1);
-}
-
 namespace {
 
-std::optional<std::string> ReadMetaPayload(const irs::Format& codec,
-                                           const irs::Directory& dir,
+std::optional<std::string> ReadMetaPayload(const irs::Directory& dir,
                                            const irs::DirectoryReader& reader) {
   std::optional<std::string> payload;
   irs::IndexMeta meta;
-  codec.get_index_meta_reader()->read(
+  irs::GetIndexMetaReader()->read(
     dir, meta, reader.Meta().filename, [&](duckdb::Deserializer& in) {
       payload = in.ReadProperty<std::string>(0, "payload");
     });
@@ -11399,8 +11311,8 @@ TEST_P(IndexTestCase11, clean_writer_with_payload) {
 
   {
     auto reader =
-      irs::DirectoryReader(dir(), nullptr, irs::tests::DefaultReaderOptions());
-    ASSERT_EQ(input_payload, ReadMetaPayload(*codec(), dir(), reader));
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+    ASSERT_EQ(input_payload, ReadMetaPayload(dir(), reader));
   }
   uint64_t expected_tick = 42;
 
@@ -11409,8 +11321,8 @@ TEST_P(IndexTestCase11, clean_writer_with_payload) {
   writer->Clear(expected_tick);
   {
     auto reader =
-      irs::DirectoryReader(dir(), nullptr, irs::tests::DefaultReaderOptions());
-    ASSERT_EQ(input_payload, ReadMetaPayload(*codec(), dir(), reader));
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+    ASSERT_EQ(input_payload, ReadMetaPayload(dir(), reader));
     ASSERT_EQ(payload_committed_tick, expected_tick);
   }
 }
@@ -11428,9 +11340,9 @@ TEST_P(IndexTestCase11, initial_two_phase_commit_no_payload) {
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
-  auto reader = irs::DirectoryReader(directory, nullptr,
-                                     irs::tests::DefaultReaderOptions());
-  ASSERT_FALSE(ReadMetaPayload(*codec(), dir(), reader).has_value());
+  auto reader =
+    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
+  ASSERT_FALSE(ReadMetaPayload(dir(), reader).has_value());
 
   // no changes
   writer->RefreshCommit();
@@ -11449,9 +11361,9 @@ TEST_P(IndexTestCase11, initial_commit_no_payload) {
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
-  auto reader = irs::DirectoryReader(directory, nullptr,
-                                     irs::tests::DefaultReaderOptions());
-  ASSERT_FALSE(ReadMetaPayload(*codec(), dir(), reader).has_value());
+  auto reader =
+    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
+  ASSERT_FALSE(ReadMetaPayload(dir(), reader).has_value());
 
   // no changes
   writer->RefreshCommit();
@@ -11489,9 +11401,9 @@ TEST_P(IndexTestCase11, initial_two_phase_commit_payload) {
   AssertSnapshotEquality(*writer);
   ASSERT_EQ(0, payload_calls_count);
 
-  auto reader = irs::DirectoryReader(directory, nullptr,
-                                     irs::tests::DefaultReaderOptions());
-  ASSERT_EQ(input_payload, ReadMetaPayload(*codec(), dir(), reader));
+  auto reader =
+    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(input_payload, ReadMetaPayload(dir(), reader));
 
   // no changes
   writer->RefreshCommit();
@@ -11525,9 +11437,9 @@ TEST_P(IndexTestCase11, initial_commit_payload) {
   AssertSnapshotEquality(*writer);
   ASSERT_EQ(0, payload_committed_tick);
 
-  auto reader = irs::DirectoryReader(directory, nullptr,
-                                     irs::tests::DefaultReaderOptions());
-  ASSERT_EQ(input_payload, ReadMetaPayload(*codec(), dir(), reader));
+  auto reader =
+    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(input_payload, ReadMetaPayload(dir(), reader));
 
   // no changes
   payload_calls_count = 0;
@@ -11560,9 +11472,9 @@ TEST_P(IndexTestCase11, commit_payload) {
   ASSERT_TRUE(writer->RefreshBegin());  // initial commit
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
-  auto reader = irs::DirectoryReader(directory, nullptr,
-                                     irs::tests::DefaultReaderOptions());
-  ASSERT_EQ(input_payload, ReadMetaPayload(*codec(), dir(), reader));
+  auto reader =
+    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(input_payload, ReadMetaPayload(dir(), reader));
 
   ASSERT_FALSE(
     writer->RefreshBegin());  // transaction hasn't been started, no changes
@@ -11618,7 +11530,7 @@ TEST_P(IndexTestCase11, commit_payload) {
     {
       auto new_reader = reader.Reopen();
       ASSERT_NE(reader, new_reader);
-      ASSERT_EQ(input_payload, ReadMetaPayload(*codec(), dir(), new_reader));
+      ASSERT_EQ(input_payload, ReadMetaPayload(dir(), new_reader));
       reader = new_reader;
     }
   }
@@ -11666,8 +11578,7 @@ TEST_P(IndexTestCase11, commit_payload) {
     {
       auto new_reader = reader.Reopen();
       ASSERT_EQ(reader, new_reader);
-      ASSERT_EQ(committed_payload,
-                ReadMetaPayload(*codec(), dir(), new_reader));
+      ASSERT_EQ(committed_payload, ReadMetaPayload(dir(), new_reader));
     }
   }
 
@@ -11714,8 +11625,8 @@ TEST_P(IndexTestCase11, partial_commit_masks_tail_as_bound) {
 
   ASSERT_TRUE(writer->RefreshCommit({.tick = kVisibleTick}));
 
-  auto reader = irs::DirectoryReader(directory, nullptr,
-                                     irs::tests::DefaultReaderOptions());
+  auto reader =
+    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
 
   auto& segment = reader[0];
@@ -11751,7 +11662,7 @@ TEST_P(IndexTestCase11, partial_commit_completion_syncs_only_index_meta) {
   auto* doc2 = gen.next();
 
   SyncRecorder recorder{directory};
-  auto writer = irs::IndexWriter::Make(recorder, codec(), irs::kOmCreate,
+  auto writer = irs::IndexWriter::Make(recorder, irs::kOmCreate,
                                        irs::tests::DefaultWriterOptions());
 
   constexpr uint64_t kVisibleTick = 10;
@@ -11781,8 +11692,8 @@ TEST_P(IndexTestCase11, partial_commit_completion_syncs_only_index_meta) {
 
   std::string partial_meta;
   {
-    auto reader = irs::DirectoryReader(directory, nullptr,
-                                       irs::tests::DefaultReaderOptions());
+    auto reader =
+      irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(2, reader[0].live_docs_count());
     ASSERT_EQ(1, irs::InvisibleCount(reader[0].Meta()));
@@ -11795,8 +11706,8 @@ TEST_P(IndexTestCase11, partial_commit_completion_syncs_only_index_meta) {
   ASSERT_EQ(1, recorder.synced.size());
   ASSERT_TRUE(recorder.synced.front().starts_with("pending_segments_"));
 
-  auto reader = irs::DirectoryReader(directory, nullptr,
-                                     irs::tests::DefaultReaderOptions());
+  auto reader =
+    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(3, reader[0].live_docs_count());
   ASSERT_FALSE(irs::HasInvisible(reader[0].Meta()));
@@ -11814,7 +11725,7 @@ TEST_P(IndexTestCase11, partial_commit_completion_rewrites_grown_mask) {
   auto* doc2 = gen.next();
 
   SyncRecorder recorder{directory};
-  auto writer = irs::IndexWriter::Make(recorder, codec(), irs::kOmCreate,
+  auto writer = irs::IndexWriter::Make(recorder, irs::kOmCreate,
                                        irs::tests::DefaultWriterOptions());
 
   constexpr uint64_t kVisibleTick = 10;
@@ -11845,8 +11756,8 @@ TEST_P(IndexTestCase11, partial_commit_completion_rewrites_grown_mask) {
 
   std::string partial_meta;
   {
-    auto reader = irs::DirectoryReader(directory, nullptr,
-                                       irs::tests::DefaultReaderOptions());
+    auto reader =
+      irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     partial_meta = reader.Meta().index_meta.segments[0].filename;
   }
@@ -11860,8 +11771,8 @@ TEST_P(IndexTestCase11, partial_commit_completion_rewrites_grown_mask) {
   recorder.synced.clear();
   ASSERT_TRUE(writer->RefreshCommit());
 
-  auto reader = irs::DirectoryReader(directory, nullptr,
-                                     irs::tests::DefaultReaderOptions());
+  auto reader =
+    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(3, reader[0].docs_count());
   ASSERT_EQ(2, reader[0].live_docs_count());
@@ -11884,7 +11795,7 @@ TEST_P(IndexTestCase11, partial_commit_retried_after_failed_sync_syncs_data) {
   auto* doc2 = gen.next();
 
   SyncRecorder recorder{directory};
-  auto writer = irs::IndexWriter::Make(recorder, codec(), irs::kOmCreate,
+  auto writer = irs::IndexWriter::Make(recorder, irs::kOmCreate,
                                        irs::tests::DefaultWriterOptions());
 
   constexpr uint64_t kVisibleTick = 10;
@@ -11916,8 +11827,8 @@ TEST_P(IndexTestCase11, partial_commit_retried_after_failed_sync_syncs_data) {
   recorder.synced.clear();
   ASSERT_TRUE(writer->RefreshCommit());
 
-  auto reader = irs::DirectoryReader(directory, nullptr,
-                                     irs::tests::DefaultReaderOptions());
+  auto reader =
+    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(3, reader[0].live_docs_count());
   const auto& segment = reader.Meta().index_meta.segments[0];
@@ -11979,8 +11890,8 @@ TEST_P(IndexTestCase11, partial_commit_tail_survives_reopen) {
     ASSERT_TRUE(writer->RefreshCommit());
   }
 
-  auto reader = irs::DirectoryReader(directory, nullptr,
-                                     irs::tests::DefaultReaderOptions());
+  auto reader =
+    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
   ASSERT_EQ(2, reader.size());
   ASSERT_EQ(4, reader.docs_count());
   ASSERT_EQ(3, reader.live_docs_count());
@@ -12038,8 +11949,8 @@ TEST_P(IndexTestCase11, partial_commit_tail_compacts_after_reopen) {
     irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
   ASSERT_TRUE(writer->RefreshCommit());
 
-  auto reader = irs::DirectoryReader(directory, nullptr,
-                                     irs::tests::DefaultReaderOptions());
+  auto reader =
+    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(3, reader[0].docs_count());
   ASSERT_EQ(3, reader[0].live_docs_count());
@@ -12107,8 +12018,8 @@ TEST_P(IndexTestCase11, docs_mask_small_never_chains) {
     ASSERT_EQ(i + 1, mask->Count()) << "after removing " << removed[i];
   }
 
-  auto reader = irs::DirectoryReader(directory, nullptr,
-                                     irs::tests::DefaultReaderOptions());
+  auto reader =
+    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(4, reader[0].Meta().docs_count);
   ASSERT_EQ(1, reader[0].live_docs_count());
@@ -12194,8 +12105,8 @@ TEST_P(IndexTestCase11, docs_mask_chain_grows_unbounded) {
     ASSERT_EQ(round + 1, mask_chain()) << "after round " << round;
   }
 
-  auto reader = irs::DirectoryReader(directory, nullptr,
-                                     irs::tests::DefaultReaderOptions());
+  auto reader =
+    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(kDocs, reader[0].Meta().docs_count);
   ASSERT_NE(nullptr, reader[0].docs_mask());
@@ -12273,8 +12184,8 @@ TEST_P(IndexTestCase11, docs_mask_chain_file_lifecycle) {
 
   // The compaction folded the mask into the rewritten segment, so what is left
   // carries no mask at all -- and it dropped exactly the removed documents.
-  auto reader = irs::DirectoryReader(directory, nullptr,
-                                     irs::tests::DefaultReaderOptions());
+  auto reader =
+    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(nullptr, reader[0].docs_mask());
   ASSERT_EQ(reader[0].docs_count(), reader[0].live_docs_count());
@@ -12318,8 +12229,8 @@ TEST_P(IndexTestCase11, partial_commit_segment_is_fenced_from_compaction) {
   ASSERT_TRUE(writer->RefreshCommit({.tick = kVisibleTick}));
 
   {
-    auto reader = irs::DirectoryReader(directory, nullptr,
-                                       irs::tests::DefaultReaderOptions());
+    auto reader =
+      irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(irs::doc_limits::min() + 2, reader[0].Meta().visible_end);
   }
@@ -12381,8 +12292,8 @@ TEST_P(IndexTestCase11, testExternalGeneration) {
   ASSERT_TRUE(writer->RefreshBegin());
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
-  auto reader = irs::DirectoryReader(directory, nullptr,
-                                     irs::tests::DefaultReaderOptions());
+  auto reader =
+    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
   auto& segment = (*reader)[0];
   ASSERT_EQ(2, segment.docs_count());
@@ -12434,8 +12345,8 @@ TEST_P(IndexTestCase11, testExternalGenerationDifferentStart) {
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
   writer.reset();
-  auto reader = irs::DirectoryReader(directory, nullptr,
-                                     irs::tests::DefaultReaderOptions());
+  auto reader =
+    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
   if (dynamic_cast<irs::MemoryDirectory*>(&directory) == nullptr) {
     // MMapDirectory keeps payload files memory-mapped, so only the
     // non-mappable streams contribute to the file_descriptors counter;
@@ -12497,50 +12408,21 @@ TEST_P(IndexTestCase11, testExternalGenerationRemoveBeforeInsert) {
   ASSERT_TRUE(writer->RefreshBegin());
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
-  auto reader = irs::DirectoryReader(directory, nullptr,
-                                     irs::tests::DefaultReaderOptions());
+  auto reader =
+    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
   auto& segment = (*reader)[0];
   ASSERT_EQ(2, segment.docs_count());
   ASSERT_EQ(2, segment.live_docs_count());
 }
 
-// IndexTestCase14 is parametrized identically to IndexTestCase but targets
-// the format-14 codec. Format-14 is no longer registered (only "1_5simd"
-// is), so the tests below `GTEST_SKIP()` immediately. The fixture is kept
-// (with the IndexTestBase parametrization) so the test names still show up
-// in the runner's output and we have an obvious place to wire it back when
-// / if format-14 returns.
-class IndexTestCase14 : public IndexTestCase {};
-
-TEST_P(IndexTestCase14, write_field_with_multiple_stored_features) {
-  GTEST_SKIP() << "format-14 codec is no longer registered";
-}
-
-TEST_P(IndexTestCase14, compact_multiple_stored_features) {
-  GTEST_SKIP() << "format-14 codec is no longer registered";
-}
-
-TEST_P(IndexTestCase14, buffered_column_reopen) {
-  GTEST_SKIP() << "format-14 codec is no longer registered; the legacy "
-                  "ResourceManagementOptions::cached_columns counter and "
-                  "IndexReaderOptions::warmup_columns hook this test "
-                  "relied on are gone with the new columnstore";
-}
-
-static const auto kTestFormats =
-  ::testing::Values(tests::FormatInfo{"1_5simd"});
-
 static const auto kTestDirs =
   ::testing::ValuesIn(tests::GetDirectories<tests::kTypesDefaultRot13>());
 
-static const auto kTestValues = ::testing::Combine(kTestDirs, kTestFormats);
+static const auto kTestValues = ::testing::Combine(kTestDirs);
 
 INSTANTIATE_TEST_SUITE_P(index_test_11, IndexTestCase11, kTestValues,
                          IndexTestCase11::to_string);
-
-INSTANTIATE_TEST_SUITE_P(index_test_14, IndexTestCase14, kTestValues,
-                         IndexTestCase14::to_string);
 
 INSTANTIATE_TEST_SUITE_P(index_test_15, IndexTestCase, kTestValues,
                          IndexTestCase::to_string);

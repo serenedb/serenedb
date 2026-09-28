@@ -302,8 +302,6 @@ constexpr std::string_view kEuroparlFallbackPath =
 
 using bench_regexp::kFieldId;
 
-constexpr std::string_view kFormatName = "1_5simd";
-
 // Number of repetitions per benchmark. google benchmark uses these to
 // compute aggregate stats (mean, median, stddev, cv); ReportAggregates
 // suppresses per-repetition lines in the output.
@@ -312,7 +310,6 @@ constexpr int kRepetitions = 5;
 struct Corpus {
   std::filesystem::path dir_path;
   std::unique_ptr<irs::MMapDirectory> dir;
-  irs::Format::ptr format;
   irs::DirectoryReader reader;
 };
 
@@ -344,17 +341,10 @@ Corpus BuildIndex() {
   std::filesystem::remove_all(tmp_root);
   std::filesystem::create_directories(tmp_root);
 
-  irs::formats::Init();
-
-  auto format = irs::formats::Get(std::string{kFormatName});
-  if (!format) {
-    Die("format 1_5simd not registered");
-  }
-
   auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
 
-  auto writer = irs::IndexWriter::Make(*dir, format, irs::kOmCreate,
-                                       irs::IndexWriterOptions{});
+  auto writer =
+    irs::IndexWriter::Make(*dir, irs::kOmCreate, irs::IndexWriterOptions{});
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -385,10 +375,9 @@ Corpus BuildIndex() {
                "regexp_vs_wildcard bench: indexed %zu documents from %s\n",
                inserted, data_path.string().c_str());
 
-  auto rdr = irs::DirectoryReader{*dir, format};
+  auto rdr = irs::DirectoryReader{*dir};
   return Corpus{.dir_path = std::move(tmp_root),
                 .dir = std::move(dir),
-                .format = std::move(format),
                 .reader = std::move(rdr)};
 }
 

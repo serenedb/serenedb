@@ -81,8 +81,6 @@ class IndexAdoptTest : public TestBase {
     TestBase::SetUp();
     _path = test_dir() / "adopt";
     std::filesystem::create_directories(_path);
-    _codec = irs::formats::Get("1_5simd");
-    ASSERT_NE(nullptr, _codec);
     Open(irs::kOmCreate);
   }
 
@@ -102,7 +100,7 @@ class IndexAdoptTest : public TestBase {
     auto options = tests::EnsureWriterDb(tests::CsDefaultWriterOptions());
     options.cleanup_on_open = cleanup_on_open;
     options.segment_docs_max = segment_docs_max;
-    _writer = irs::IndexWriter::Make(*_dir, _codec, mode, std::move(options));
+    _writer = irs::IndexWriter::Make(*_dir, mode, std::move(options));
   }
 
   // Drops the Directory too, so no in-memory IndexFileRefs survive.
@@ -157,7 +155,6 @@ class IndexAdoptTest : public TestBase {
   }
 
   std::filesystem::path _path;
-  irs::Format::ptr _codec;
   std::unique_ptr<irs::MMapDirectory> _impl;
   std::unique_ptr<CountingDirectory> _dir;
   irs::IndexWriter::ptr _writer;
@@ -312,7 +309,7 @@ TEST_F(IndexAdoptTest, AdoptSegmentRepublishesFlushedRows) {
   ASSERT_EQ(0, _writer->GetSnapshot().live_docs_count());
 
   for (const auto& meta_file : adopt) {
-    ASSERT_TRUE(_writer->AdoptSegment(meta_file, _codec, /*tick=*/7));
+    ASSERT_TRUE(_writer->AdoptSegment(meta_file, /*tick=*/7));
   }
   _dir->TakeSynced();
   ASSERT_TRUE(_writer->RefreshCommit());
@@ -353,7 +350,7 @@ TEST_F(IndexAdoptTest, AdoptedSegmentBesideACompactionIsNotResynced) {
   static const auto kFullMerge = irs::index_utils::MakePolicy(
     irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
   ASSERT_TRUE(_writer->Compact(kFullMerge));
-  ASSERT_TRUE(_writer->AdoptSegment(adopt.front(), _codec, 20));
+  ASSERT_TRUE(_writer->AdoptSegment(adopt.front(), 20));
 
   _dir->TakeSynced();
   ASSERT_TRUE(_writer->RefreshCommit());
@@ -393,7 +390,7 @@ TEST_F(IndexAdoptTest, AdoptSegmentTickOrdersAgainstRemoval) {
 
   Restart(/*cleanup_on_open=*/false);
   for (const auto& meta_file : adopt) {
-    ASSERT_TRUE(_writer->AdoptSegment(meta_file, _codec, /*tick=*/10));
+    ASSERT_TRUE(_writer->AdoptSegment(meta_file, /*tick=*/10));
   }
   {
     // Removal below the adopted tick: the segment is newer, so it survives.
@@ -428,8 +425,8 @@ TEST_F(IndexAdoptTest, AdoptTickDecidesRemovalMasking) {
 
   Restart(/*cleanup_on_open=*/false);
   // One removal at tick 20; one segment below it, one above.
-  ASSERT_TRUE(_writer->AdoptSegment(before.front(), _codec, /*tick=*/19));
-  ASSERT_TRUE(_writer->AdoptSegment(after.front(), _codec, /*tick=*/21));
+  ASSERT_TRUE(_writer->AdoptSegment(before.front(), /*tick=*/19));
+  ASSERT_TRUE(_writer->AdoptSegment(after.front(), /*tick=*/21));
   {
     auto trx = _writer->GetBatch();
     trx.Remove(ByName("target"));
@@ -475,8 +472,8 @@ TEST_F(IndexAdoptTest, AdoptTickFollowsManifestPositionNotRecordTick) {
   ASSERT_EQ(2, queries);
   ASSERT_EQ(1, queries_before_segment);
   const uint64_t first_tick = kMaxTick - queries;
-  ASSERT_TRUE(_writer->AdoptSegment(adopt.front(), _codec,
-                                    first_tick + queries_before_segment));
+  ASSERT_TRUE(
+    _writer->AdoptSegment(adopt.front(), first_tick + queries_before_segment));
   ASSERT_TRUE(trx.Commit(kMaxTick));
   ASSERT_TRUE(_writer->RefreshCommit());
 
@@ -557,7 +554,7 @@ TEST_F(IndexAdoptTest, AdoptedSegmentSurvivesCleanupBeforePublish) {
   ASSERT_FALSE(data_files.empty());
 
   Restart(/*cleanup_on_open=*/false);
-  ASSERT_TRUE(_writer->AdoptSegment(adopt.front(), _codec, /*tick=*/7));
+  ASSERT_TRUE(_writer->AdoptSegment(adopt.front(), /*tick=*/7));
 
   // Before the commit that publishes it.
   irs::directory_utils::RemoveAllUnreferenced(*_dir);
@@ -567,34 +564,6 @@ TEST_F(IndexAdoptTest, AdoptedSegmentSurvivesCleanupBeforePublish) {
     EXPECT_TRUE(Exists(file)) << file << " was reclaimed before publish";
   }
 
-  ASSERT_TRUE(_writer->RefreshCommit());
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
-}
-
-// Only a null codec is rejected: one that resolves but differs from this
-// writer's is legal, since segments carry their own as in the index meta.
-TEST_F(IndexAdoptTest, AdoptSegmentRejectsUnresolvableCodec) {
-  std::vector<std::string> adopt;
-  {
-    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    ASSERT_TRUE(InsertDoc(trx, "kept"));
-    adopt = MetaFilesOf(trx.FlushAndFsync());
-    trx.Abort();
-  }
-  ASSERT_EQ(1, adopt.size());
-
-  Restart(/*cleanup_on_open=*/false);
-  // What formats::Get hands back for a name this build no longer knows.
-  EXPECT_FALSE(_writer->AdoptSegment(adopt.front(), nullptr, /*tick=*/1));
-
-  _writer->RefreshCommit();
-  EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count())
-    << "a rejected segment was published anyway";
-
-  // The rejection is local to that segment -- the writer stays usable.
-  auto trx = _writer->GetBatch();
-  ASSERT_TRUE(InsertDoc(trx, "after"));
-  ASSERT_TRUE(trx.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
 }
@@ -669,8 +638,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsSwapsInOneGeneration) {
     << "a flushed-but-unadopted segment must not be visible";
 
   _dir->TakeSynced();
-  ASSERT_TRUE(
-    _writer->ReplaceSegments(Views(sources), Views(replacement), _codec));
+  ASSERT_TRUE(_writer->ReplaceSegments(Views(sources), Views(replacement)));
   ASSERT_TRUE(_writer->RefreshCommit());
 
   // One generation: sources gone, replacement in, in the same published meta.
@@ -711,8 +679,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsAppliesPendingRemovals) {
 
   // Adopted at the floor, so the pending removal is above it and must reach
   // the replacement.
-  ASSERT_TRUE(
-    _writer->ReplaceSegments(Views(sources), Views(replacement), _codec));
+  ASSERT_TRUE(_writer->ReplaceSegments(Views(sources), Views(replacement)));
   ASSERT_TRUE(_writer->RefreshCommit());
 
   EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count())
@@ -758,7 +725,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsAppliesRemovalsInTheAdoptGeneration) {
   removals.Remove(ByName("doomed"));
   _dir->TakeSynced();
   ASSERT_TRUE(_writer->ReplaceSegments(Views(sources), Views(replacement),
-                                       _codec, &removals,
+                                       &removals,
                                        /*removals_tick=*/30));
   ASSERT_TRUE(_writer->RefreshCommit());
 
@@ -796,8 +763,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsToleratesAVanishedSource) {
   // One source still in the index, one gone.
   std::vector<std::string> replaced = sources;
   replaced.emplace_back("_ffffffff");
-  ASSERT_TRUE(
-    _writer->ReplaceSegments(Views(replaced), Views(replacement), _codec));
+  ASSERT_TRUE(_writer->ReplaceSegments(Views(replaced), Views(replacement)));
   ASSERT_TRUE(_writer->RefreshCommit());
 
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
@@ -1227,7 +1193,7 @@ TEST_F(IndexAdoptTest, AFinishedCompactionRewrittenForADeleteIsSyncedOnce) {
     return true;
   };
   ASSERT_EQ(irs::CompactionError::Ok,
-            _writer->Compact(kFullMerge, nullptr, nullptr, progress).error);
+            _writer->Compact(kFullMerge, nullptr, progress).error);
   ASSERT_TRUE(removed) << "the progress callback never ran";
 
   {
@@ -1289,7 +1255,7 @@ TEST_F(IndexAdoptTest, CompactionFloorRefusesWhileAMergeIsRunning) {
     }
     return true;
   };
-  ASSERT_TRUE(_writer->Compact(kFullMerge, nullptr, nullptr, progress));
+  ASSERT_TRUE(_writer->Compact(kFullMerge, nullptr, progress));
   ASSERT_TRUE(attempted) << "the progress callback never ran";
   EXPECT_FALSE(held) << "armed a floor while a merge was in flight";
 
@@ -1326,8 +1292,7 @@ TEST_F(IndexAdoptTest, ReplaceBeforeAbortSurvivesCleanup) {
   const auto files = FilesOf(flushed);
 
   // The order the build uses: reference through adoption, then abort.
-  ASSERT_TRUE(
-    _writer->ReplaceSegments(Views(sources), Views(replacement), _codec));
+  ASSERT_TRUE(_writer->ReplaceSegments(Views(sources), Views(replacement)));
   build.Abort();
   irs::directory_utils::RemoveAllUnreferenced(*_dir);
 
@@ -1368,8 +1333,7 @@ TEST_F(IndexAdoptTest, AbortBeforeReplaceLosesTheFilesToCleanup) {
        "ordering note in search_table_backfill.cpp can be dropped";
   // And the swap correctly refuses rather than adopting a segment whose files
   // are gone.
-  EXPECT_FALSE(
-    _writer->ReplaceSegments(Views(sources), Views(replacement), _codec));
+  EXPECT_FALSE(_writer->ReplaceSegments(Views(sources), Views(replacement)));
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count())
     << "the original row must still be there";
 }

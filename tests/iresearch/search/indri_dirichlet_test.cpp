@@ -155,8 +155,7 @@ TEST_P(IndriDirichletIndexTest, scores_are_finite) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(indri_dirichlet_test, IndriDirichletIndexTest,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5simd")),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          IndriDirichletIndexTest::to_string);
 
 }  // namespace

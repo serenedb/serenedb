@@ -123,15 +123,14 @@ const CachedIndex& IndexOf(size_t num_terms) {
   }
 
   auto* db = &irs::DuckDBEngine::Instance().instance();
-  auto codec = irs::formats::Get("1_5simd");
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
   writer_opts.column_options = [](irs::field_id) -> irs::ColumnOptions {
     return {};
   };
-  auto writer = irs::IndexWriter::Make(*cached.dir, codec, irs::kOmCreate,
-                                       std::move(writer_opts));
+  auto writer =
+    irs::IndexWriter::Make(*cached.dir, irs::kOmCreate, std::move(writer_opts));
 
   KeywordField field{.id = kKwFieldId};
   {
@@ -146,7 +145,7 @@ const CachedIndex& IndexOf(size_t num_terms) {
   writer->RefreshCommit();
 
   cached.reader =
-    irs::DirectoryReader{*cached.dir, codec, irs::IndexReaderOptions{.db = db}};
+    irs::DirectoryReader{*cached.dir, irs::IndexReaderOptions{.db = db}};
   return cached;
 }
 
@@ -835,7 +834,6 @@ BENCHMARK(OrRegexpsFusedWalk)
 }  // namespace
 
 int main(int argc, char** argv) {
-  irs::formats::Init();
   irs::DuckDBEngine::Instance().Initialize();
 
   benchmark::Initialize(&argc, argv);

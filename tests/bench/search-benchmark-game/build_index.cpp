@@ -63,8 +63,6 @@ int main(int argc, const char* argv[]) {
 
     SCOPED_TIMER("Total indexing time");
 
-    irs::formats::Init();
-
     struct IndexAllFields : bench::IBatchHandler {
       bench::Document doc;
       void operator()(std::vector<std::string>& buf,

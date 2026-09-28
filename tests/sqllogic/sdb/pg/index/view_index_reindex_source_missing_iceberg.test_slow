@@ -5,8 +5,8 @@ control substitution on
 # takes the full rebuild. The rebuild used to commit a remove-all before its
 # pass bound the view; the pass then failed to bind and the index stayed empty
 # -- on every periodic tick, for as long as the catalog was missing (a foreign
-# server that failed to re-attach at boot). The remove-all now commits only
-# once the pass reads the source.
+# server that failed to re-attach at boot). The pass now commits the
+# remove-all itself, once it has bound the view.
 
 statement ok retry 20 backoff 250ms
 ${ICEBERG_BOOTSTRAP}

@@ -39,6 +39,8 @@
 namespace irs {
 
 class ColWriter;
+class ListIngest;
+struct ListParts;
 
 struct WriteChunk {
   duckdb::Vector data;
@@ -127,6 +129,9 @@ class ColumnWriter final {
                 uint64_t row_count, bool skip_validity,
                 duckdb::CompressionType forced, ColumnMeta& meta);
 
+  void SealListParts(const duckdb::LogicalType& type, ListParts& parts,
+                     duckdb::CompressionType forced, ColumnMeta& meta);
+
   void SealVariant(const duckdb::LogicalType& type,
                    std::span<WriteChunk> chunks, uint64_t row_count,
                    bool skip_validity, duckdb::CompressionType forced,
@@ -157,6 +162,7 @@ class ColumnWriter final {
   duckdb::Vector _hll_hashes{duckdb::LogicalType::HASH, nullptr};
   int64_t _variant_min_shred_size = -1;
   duckdb::LogicalType _force_variant_shredding;
+  std::unique_ptr<ListIngest> _list_ingest;
   ColumnMeta _meta;
 };
 

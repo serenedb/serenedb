@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cstddef>
+#include <duckdb/main/materialized_query_result.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <memory>
 #include <string>
@@ -122,6 +123,20 @@ class FuzzHandler final : public HttpHandler {
   }
 };
 
+class SessionUserHandler final : public HttpHandler {
+ public:
+  yaclib::Task<> Handle(RequestContext& context, const HttpRequest&,
+                        http::HttpResponseWriter& writer) override {
+    auto result = co_await context.RunQuery("SELECT current_user", false);
+    if (result->HasError()) {
+      writer.Error(HttpStatus::InternalError, "query_failed");
+    } else {
+      writer.Text(HttpStatus::Ok, result->GetValue(0, 0).ToString());
+    }
+    co_return {};
+  }
+};
+
 // GET /_test/status?code=NNN -> respond with that status (clamped 100..599).
 class StatusHandler final : public HttpHandler {
  public:
@@ -152,6 +167,8 @@ std::unique_ptr<HttpHandler> Make(Endpoint endpoint) {
       return std::make_unique<FuzzHandler>();
     case Endpoint::Status:
       return std::make_unique<StatusHandler>();
+    case Endpoint::SessionUser:
+      return std::make_unique<SessionUserHandler>();
   }
   SDB_UNREACHABLE();
 }

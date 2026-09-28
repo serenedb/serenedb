@@ -188,12 +188,11 @@ duckdb::Vector MakeSqlNullVector(duckdb::idx_t count) {
 
 class DuckDBSearchSinkWriterTest : public ::testing::Test {
  public:
-  static search::ColumnTokenizer AnalyzerProvider(irs::field_id) {
-    static catalog::Tokenizer gKeywordTokenizer(
-      ObjectId{12345}, {},
-      irs::analysis::TokenizerConfig{.config =
-                                       irs::KeywordTokenizer::Options{}});
-    auto tokenizer = gKeywordTokenizer.GetTokenizer(TestContext());
+  static catalog::ColumnTokenizer AnalyzerProvider(irs::field_id) {
+    static auto gKeywordTokenizer = std::make_shared<catalog::Tokenizer>(
+      search::Features{}, irs::analysis::TokenizerConfig{
+                            .config = irs::KeywordTokenizer::Options{}});
+    auto tokenizer = gKeywordTokenizer->Acquire(TestContext());
     return {.analyzer = std::move(tokenizer),
             .features = irs::IndexFeatures::None};
   }
@@ -242,8 +241,8 @@ TEST(PrimaryKeyTermTest, KeyTermMatchesStringEncoders) {
 }
 
 TEST(TokenizerPoolTest, ReturnedGeoLeaseIsUnbound) {
-  catalog::Tokenizer dict(
-    ObjectId{54321}, {},
+  auto dict = std::make_shared<catalog::Tokenizer>(
+    search::Features{},
     irs::analysis::TokenizerConfig{
       .config = irs::analysis::GeoJsonTokenizer::Options{}});
 
@@ -268,7 +267,7 @@ TEST(TokenizerPoolTest, ReturnedGeoLeaseIsUnbound) {
     return ok && consumer.count > 0;
   };
 
-  auto lease = dict.GetTokenizer(TestContext());
+  auto lease = dict->Acquire(TestContext());
   auto* instance = lease.get();
   ASSERT_TRUE(fill(*lease));
 
@@ -276,7 +275,7 @@ TEST(TokenizerPoolTest, ReturnedGeoLeaseIsUnbound) {
   ASSERT_FALSE(fill(*lease));
   lease.reset();
 
-  auto release = dict.GetTokenizer(TestContext());
+  auto release = dict->Acquire(TestContext());
   ASSERT_EQ(instance, release.get());
   ASSERT_TRUE(fill(*release));
 }
@@ -507,14 +506,13 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
   // fallback where null_field_id collapses onto the value field.
   constexpr irs::field_id kVarcharNullsFieldId = 100;
   constexpr irs::field_id kUnknownNullsFieldId = 101;
-  search::InvertedIndexEntryInfo varchar_entry;
+  catalog::InvertedIndexField varchar_entry;
   varchar_entry.null_field_id = kVarcharNullsFieldId;
-  search::InvertedIndexEntryInfo unknown_entry;
+  catalog::InvertedIndexField unknown_entry;
   unknown_entry.null_field_id = kUnknownNullsFieldId;
   EntryInfoProvider entry_provider =
     [varchar_field = col_id[0], unknown_field = col_id[1], &varchar_entry,
-     &unknown_entry](
-      irs::field_id id) -> const search::InvertedIndexEntryInfo* {
+     &unknown_entry](irs::field_id id) -> const catalog::InvertedIndexField* {
     if (id == varchar_field) {
       return &varchar_entry;
     }
@@ -755,7 +753,7 @@ void InsertOneVarcharRow(irs::IndexWriter& writer, std::string_view pk,
   DuckDBSearchSinkInsertWriter sink{
     trx, DuckDBSearchSinkWriterTest::AnalyzerProvider,
     std::array<connector::ColumnId, 1>{connector::ColumnId{1}}};
-  const std::vector<std::string_view> rk{pk};
+  const auto rk = KeyTerms({pk});
   auto pk_vec =
     MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT, {PkIdOf(pk)});
   sink.Init(1, PkChunk{.key_terms = rk, .column = &pk_vec});
@@ -774,7 +772,7 @@ void InsertTwoVarcharRows(irs::IndexWriter& writer, std::string_view pk_a,
   DuckDBSearchSinkInsertWriter sink{
     trx, DuckDBSearchSinkWriterTest::AnalyzerProvider,
     std::array<connector::ColumnId, 1>{connector::ColumnId{1}}};
-  const std::vector<std::string_view> rk{pk_a, pk_b};
+  const auto rk = KeyTerms({pk_a, pk_b});
   auto pk_vec = MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT,
                                            {PkIdOf(pk_a), PkIdOf(pk_b)});
   sink.Init(2, PkChunk{.key_terms = rk, .column = &pk_vec});

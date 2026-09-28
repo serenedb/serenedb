@@ -39,6 +39,7 @@
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
+#include <limits>
 #include <memory>
 #include <ranges>
 #include <span>
@@ -115,6 +116,14 @@ void RunSearchTableRecovery() {
     std::unique_ptr<connector::SearchSinkInsertBaseImpl> insert_sink;
     std::unique_ptr<connector::SearchSinkDeleteBaseImpl> delete_sink;
     uint64_t max_tick = 0;
+    // Segments to re-attach, each with the query count at its manifest
+    // position; the adopt tick needs the final count (see the finalize loop).
+    struct PendingAdopt {
+      std::string meta_file;
+      std::string codec;
+      uint64_t queries_before;
+    };
+    std::vector<PendingAdopt> adopts;
   };
 
   duckdb::Connection expr_conn(irs::DuckDBEngine::Instance().instance());
@@ -147,8 +156,10 @@ void RunSearchTableRecovery() {
     auto exists_of = [&](duckdb::idx_t table_id) {
       return shards.find(table_id) != shards.end();
     };
-    auto committed_of = [&](duckdb::idx_t table_id) {
-      return shards.find(table_id)->second.search->CommittedTick();
+    auto committed_of = [&](duckdb::idx_t table_id) -> uint64_t {
+      auto it = shards.find(table_id);
+      return it != shards.end() ? it->second.search->CommittedTick()
+                                : std::numeric_limits<uint64_t>::max();
     };
     auto ensure_ctx = [&](duckdb::idx_t table_id) -> ReplayCtx& {
       auto [cit, inserted] = ctxs.try_emplace(table_id);
@@ -201,8 +212,17 @@ void RunSearchTableRecovery() {
       ctx.trx.Remove(std::make_shared<irs::All>());
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
-    wal.Recover(exists_of, committed_of, replay, replay_delete,
-                replay_truncate);
+    // Re-attach the files the crashed process already flushed instead of
+    // re-indexing their rows. Only stashed here: the tick they adopt at needs
+    // the final query count, so the manifest position is all we can capture.
+    auto replay_adopt = [&](uint64_t tick, duckdb::idx_t table_id,
+                            const SearchDbWal::SegmentRef& ref) {
+      auto& ctx = ensure_ctx(table_id);
+      ctx.adopts.push_back({ref.meta_file, ref.codec, ctx.trx.GetQueries()});
+      ctx.max_tick = std::max(ctx.max_tick, tick);
+    };
+    wal.Recover(exists_of, committed_of, replay, replay_delete, replay_truncate,
+                replay_adopt);
 
     // Finalize each replayed shard outside Recover() so Commit()'s locking + GC
     // are safe.
@@ -210,6 +230,28 @@ void RunSearchTableRecovery() {
       // Release the insert Document (and the delete filter) before committing.
       ctx.insert_sink.reset();
       ctx.delete_sink.reset();
+      auto& info = shards.at(table_id);
+
+      // Adopt in this transaction's tick space, not at the record's tick: the
+      // commit rebases removal #k to `max_tick - queries + k`, so a segment
+      // reached after `m` removals belongs at `max_tick - queries + m`.
+      const uint64_t queries = ctx.trx.GetQueries();
+      SDB_FATAL_IF(SEARCH, ctx.max_tick <= queries,
+                   "search-table WAL recovery: tick ", ctx.max_tick,
+                   " cannot cover ", queries, " removals for table ", table_id);
+      const uint64_t first_tick = ctx.max_tick - queries;
+      for (const auto& pending : ctx.adopts) {
+        const uint64_t tick = first_tick + pending.queries_before;
+        // A durable record claims these documents: failing to reopen them is
+        // data loss, not something to skip.
+        const bool adopted =
+          info.search->AdoptSegment(pending.meta_file, pending.codec, tick);
+        SDB_FATAL_IF(SEARCH, !adopted,
+                     "search-table WAL recovery: failed to adopt segment '",
+                     pending.meta_file, "' for table ", table_id,
+                     " tick=", tick);
+      }
+
       // A failed commit during replay leaves the index inconsistent with the
       // durable WAL it was rebuilt from -- unrecoverable, so crash.
       const bool committed = ctx.trx.Commit(ctx.max_tick);
@@ -217,17 +259,18 @@ void RunSearchTableRecovery() {
                    "search-table WAL recovery: iresearch trx Commit failed for "
                    "table ",
                    table_id, " tick=", ctx.max_tick);
-      auto& info = shards.at(table_id);
       info.search->Commit();
       ++recovered_shards;
     }
 
     // Advance every shard -- including ones with no replayed records -- to the
     // recovered max tick, so an idle shard doesn't pin this database WAL's GC
-    // floor after recovery. Safe because recovery is single-threaded.
+    // floor after recovery. FinishRecovery is per-shard for the same reason:
+    // one that adopted nothing still has to reclaim what the crash left behind.
     const uint64_t db_max_tick = wal.CurrentTick();
     for (const auto& entry : shards) {
       wal.OnShardCommit(entry.first, db_max_tick);
+      entry.second.search->FinishRecovery();
     }
   }
 

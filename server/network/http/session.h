@@ -24,6 +24,7 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_split.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -35,7 +36,6 @@
 #include <duckdb/main/materialized_query_result.hpp>
 #include <duckdb/main/pending_query_result.hpp>
 #include <duckdb/main/prepared_statement.hpp>
-#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -166,8 +166,7 @@ class HttpSession final
   // --- RequestContext -------------------------------------------------------
   // First use sets up the full SereneDB client state (like pg-wire's
   // SetupConnection, minus the wire collector): server-side functions reach
-  // ConnectionContext through GetSereneDBContext. The user is whoever
-  // authenticated the request that first touched the connection.
+  // ConnectionContext through GetSereneDBContext.
   duckdb::Connection& Connection() final {
     if (!_conn) {
       const std::string_view dbname =
@@ -199,6 +198,7 @@ class HttpSession final
                                                _connection_ctx);
       _conn->context->session_user = std::string{user};
       connector::SetDefaultSearchPath(*_conn->context, dbname);
+      _conn_user = _user;
     }
     return *_conn;
   }
@@ -239,8 +239,10 @@ class HttpSession final
     }
   }
 
-  PreparedEntry& PreparedSlot(std::string_view key) final {
-    return _prepared[key];
+  PreparedEntry& PreparedSlot(PreparedSlotId slot) final {
+    const auto index = static_cast<size_t>(slot);
+    SDB_ASSERT(index < _prepared.size());
+    return _prepared[index];
   }
 
   std::string_view User() const final { return _user; }
@@ -328,6 +330,16 @@ class HttpSession final
   // duck-side: the request loop. Parse -> body -> auth -> route -> handler.
   yaclib::Future<> SessionMain();
 
+  void ReleaseConnection() {
+    {
+      absl::MutexLock lock{&_cancel_token->mu};
+      _cancel_token->ctx = nullptr;
+    }
+    _prepared = {};
+    _connection_ctx.reset();
+    _conn.reset();
+  }
+
   // Incremental llhttp feed over the recv channel. Returns the head event or
   // nullopt when the connection died mid-parse.
   yaclib::Task<std::optional<H1Event>> ReadHead();
@@ -369,8 +381,9 @@ class HttpSession final
   std::shared_ptr<ConnectionContext> _connection_ctx;
   // Statements prepared on _conn; declared after it so they are destroyed
   // first.
-  irs::containers::FlatHashMap<std::string, PreparedEntry> _prepared;
+  std::array<PreparedEntry, kPreparedSlots> _prepared;
   std::string _user;
+  std::string _conn_user;
 };
 
 template<SocketKind Kind>
@@ -690,6 +703,9 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
                    decoding.status != http::HttpStatus::None) {
           writer.Error(decoding.status, decoding.error);
         } else if (HttpHandler* handler = _router.Match(request)) {
+          if (_conn && _user != _conn_user) {
+            ReleaseConnection();
+          }
           try {
             co_await handler->Handle(*this, request, writer);
           } catch (const std::exception&) {

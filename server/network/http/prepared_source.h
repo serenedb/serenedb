@@ -40,6 +40,9 @@ inline std::optional<duckdb::ErrorData> EnsurePrepared(RequestContext& ctx,
   try {
     auto& connection = ctx.Connection();
     auto& context = *connection.context;
+    if (entry.statement != nullptr && entry.sql != sql) {
+      entry.statement.reset();
+    }
     if (entry.statement != nullptr) {
       bool stale = false;
       context.RunFunctionInTransaction([&] {
@@ -55,6 +58,7 @@ inline std::optional<duckdb::ErrorData> EnsurePrepared(RequestContext& ctx,
         return statement->GetErrorObject();
       }
       entry.statement = std::move(statement);
+      entry.sql = sql;
     }
   } catch (const std::exception& error) {
     return duckdb::ErrorData{error};

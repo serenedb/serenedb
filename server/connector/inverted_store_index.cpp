@@ -43,12 +43,12 @@
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/index_expression.hpp"
+#include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "search/inverted_index_storage.h"
 #include "search/scorer_options.h"
 #include "search/tick_domain.h"
-#include "server/utils/primary_key.h"
 
 namespace sdb::connector {
 namespace {
@@ -182,12 +182,10 @@ void InvertedStoreIndex::WriteChunk(DuckDBSearchSinkInsertWriter& writer,
     feed_rows->ToUnifiedFormat(count, row_fmt);
     const auto* row_data =
       duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(row_fmt);
-    std::vector<std::string> row_keys(count);
     std::vector<duckdb::string_t> key_views(count);
     for (duckdb::idx_t i = 0; i < count; ++i) {
-      primary_key::AppendSigned(row_keys[i],
-                                row_data[row_fmt.sel->get_index(i)]);
-      key_views[i] = duckdb::string_t{row_keys[i]};
+      key_views[i] =
+        primary_key::SignedKeyTerm(row_data[row_fmt.sel->get_index(i)]);
     }
     std::vector<ExpressionValue> values;
     values.reserve(keys.size());

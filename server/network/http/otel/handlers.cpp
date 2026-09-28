@@ -66,6 +66,7 @@ using network::HttpHandler;
 using network::HttpHeader;
 using network::HttpMethod;
 using network::HttpRequest;
+using network::PreparedSlotId;
 using network::RequestContext;
 using network::http::FlattenBody;
 using network::http::HttpResponseWriter;
@@ -196,10 +197,12 @@ InsertOutcome Failed(const duckdb::ErrorData& error) {
 template<typename Signal>
 yaclib::Task<InsertOutcome> RunSourceInsert(
   RequestContext& ctx, size_t target, const typename Signal::Request& request) {
+  static_assert(Signal::kSlots.size() == Signal::kTargets.size());
+  static_assert(Signal::kSources.size() == Signal::kTargets.size());
   using Request = const typename Signal::Request;
   const auto schema = ctx.Schema();
   const auto table = Signal::kTargets[target];
-  auto& entry = ctx.PreparedSlot(absl::StrCat(schema, ".", table));
+  auto& entry = ctx.PreparedSlot(Signal::kSlots[target]);
   if (auto error = network::EnsurePrepared(
         ctx, entry, InsertSql(schema, table, Signal::kSources[target]))) {
     co_return Failed(*error);
@@ -223,6 +226,8 @@ struct LogsSignal {
     connector::kOtelLogsTable};
   static constexpr std::array<std::string_view, 1> kSources{
     connector::kOtelSourceLogsFunction};
+  static constexpr std::array<PreparedSlotId, 1> kSlots{
+    PreparedSlotId::OtelLogs};
 
   static void Decode(std::string_view raw, bool protobuf,
                      simdjson::ondemand::parser& parser, Request& out) {
@@ -241,6 +246,8 @@ struct TracesSignal {
     connector::kOtelTracesTable};
   static constexpr std::array<std::string_view, 1> kSources{
     connector::kOtelSourceTracesFunction};
+  static constexpr std::array<PreparedSlotId, 1> kSlots{
+    PreparedSlotId::OtelTraces};
 
   static void Decode(std::string_view raw, bool protobuf,
                      simdjson::ondemand::parser& parser, Request& out) {
@@ -259,6 +266,13 @@ struct MetricsSignal {
   static constexpr std::string_view kRejectedField = "rejectedDataPoints";
   static constexpr auto& kTargets = connector::kOtelMetricTables;
   static constexpr auto& kSources = connector::kOtelSourceMetricsFunctions;
+  static constexpr std::array<PreparedSlotId, 5> kSlots{
+    PreparedSlotId::OtelMetricsGauge,
+    PreparedSlotId::OtelMetricsSum,
+    PreparedSlotId::OtelMetricsHistogram,
+    PreparedSlotId::OtelMetricsExponentialHistogram,
+    PreparedSlotId::OtelMetricsSummary,
+  };
 
   static void Decode(std::string_view raw, bool protobuf,
                      simdjson::ondemand::parser& parser, Request& out) {

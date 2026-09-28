@@ -140,7 +140,7 @@ class BulkHandler final : public HttpHandler {
     }
     const auto start = std::chrono::steady_clock::now();
 
-    auto& entry = ctx.PreparedSlot(absl::StrCat("es_bulk:", index));
+    auto& entry = ctx.PreparedSlot(PreparedSlotId::EsBulk);
     if (auto error = EnsurePrepared(
           ctx, entry,
           absl::StrCat("INSERT INTO \"es\".", SqlIdentifier(index),

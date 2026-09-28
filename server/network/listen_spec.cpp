@@ -140,7 +140,9 @@ void ApplyParam(ListenSpec& spec, std::string_view key,
                                 }),
                   ")");
       }
-      spec.apis.push_back(it->second);
+      if (!absl::c_linear_search(spec.apis, it->second)) {
+        spec.apis.push_back(it->second);
+      }
     }
   } else if (key == "db") {
     if (!is_http) {

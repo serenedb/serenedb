@@ -22,19 +22,19 @@ with a fresh datadir, and also records the server CPU time.
 
 Single requests, per signal and size (tables truncated between runs):
 
-    tests/bench/otel/ingest.py --sizes 64k,1m,32m
+    scripts/perf/otel_ingest.py --sizes 64k,1m,32m
 
 Sustained ingestion (never truncated, fresh server per path): --total JSON in
 --chunk sized requests, cycling logs -> traces -> metrics:
 
-    tests/bench/otel/ingest.py --total 1g --chunk 32m
+    scripts/perf/otel_ingest.py --total 1g --chunk 32m
 
 --network lan|wan puts toxiproxy (docker) between the clients and serened, on
 both the HTTP and the pg port, with latency and a bandwidth cap in each
 direction; --latency-ms / --bandwidth-mbit override the preset. Setup and
 verification queries bypass it.
 
-    tests/bench/otel/ingest.py --total 1g --chunk 32m --network wan
+    scripts/perf/otel_ingest.py --total 1g --chunk 32m --network wan
 """
 
 import argparse
@@ -57,7 +57,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import psycopg2
 
-ROOT = pathlib.Path(__file__).resolve().parents[3]
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 CONFORMANCE = ROOT / "resources" / "otel" / "conformance"
 TICK_MS = 1000 / os.sysconf("SC_CLK_TCK")
 UNITS = {"k": 1024, "m": 1024 * 1024, "g": 1024 * 1024 * 1024}

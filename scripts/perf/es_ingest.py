@@ -19,7 +19,7 @@ Each tool reports its own time: curl's `%{time_total}` and psql's `\timing`.
 The harness starts its own serened on free ports with a fresh datadir per
 path, and also records the server CPU time.
 
-    tests/bench/es/ingest.py --total 512m --chunk 8m
+    scripts/perf/es_ingest.py --total 512m --chunk 8m
 """
 
 import argparse
@@ -42,7 +42,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import psycopg2
 
-ROOT = pathlib.Path(__file__).resolve().parents[3]
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 TICK_MS = 1000 / os.sysconf("SC_CLK_TCK")
 UNITS = {"k": 1024, "m": 1024 * 1024, "g": 1024 * 1024 * 1024}
 INDEX = "bench"

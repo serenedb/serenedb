@@ -22,6 +22,8 @@
 
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/common/unique_ptr.hpp>
+#include <magic_enum/magic_enum.hpp>
+#include <string>
 #include <yaclib/async/future.hpp>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/coro.hpp>
@@ -40,7 +42,22 @@ class PreparedStatement;
 }  // namespace duckdb
 namespace sdb::network {
 
+enum class PreparedSlotId : uint8_t {
+  OtelLogs,
+  OtelTraces,
+  OtelMetricsGauge,
+  OtelMetricsSum,
+  OtelMetricsHistogram,
+  OtelMetricsExponentialHistogram,
+  OtelMetricsSummary,
+  EsBulk,
+};
+
+inline constexpr size_t kPreparedSlots =
+  magic_enum::enum_count<PreparedSlotId>();
+
 struct PreparedEntry {
+  std::string sql;
   duckdb::unique_ptr<duckdb::PreparedStatement> statement;
 };
 
@@ -66,7 +83,7 @@ class RequestContext {
   RunPrepared(duckdb::PreparedStatement& statement) = 0;
   // A per-session slot for a statement prepared on Connection(); a handler
   // prepares into it once and re-executes it on later requests.
-  virtual PreparedEntry& PreparedSlot(std::string_view key) = 0;
+  virtual PreparedEntry& PreparedSlot(PreparedSlotId slot) = 0;
   virtual std::string_view Schema() const = 0;
   // Authenticated user; empty = trust/anonymous.
   virtual std::string_view User() const = 0;

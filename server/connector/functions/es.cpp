@@ -350,6 +350,7 @@ void CreateTextIndex(duckdb::ClientContext& context,
   const auto& storage = index_entry.Storage();
   SDB_ASSERT(storage);
   storage->StartTasks();
+  storage->TakeDeleteLog();
   storage->Refresh();
   storage->FinishCreation();
 }

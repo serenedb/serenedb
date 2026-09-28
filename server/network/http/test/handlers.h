@@ -36,6 +36,7 @@ enum class Endpoint : uint8_t {
   Bytes,
   Fuzz,
   Status,
+  SessionUser,
 };
 
 std::unique_ptr<HttpHandler> Make(Endpoint endpoint);

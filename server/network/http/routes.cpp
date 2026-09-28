@@ -20,8 +20,6 @@
 
 #include "network/http/routes.h"
 
-#include <absl/algorithm/container.h>
-
 #include <array>
 
 #include "network/http/es/handlers.h"
@@ -115,6 +113,8 @@ constexpr auto kRoutes = std::to_array<Route>({
   {HttpApi::Test, HttpMethod::Post, "/_test/fuzz", Make<test::Endpoint::Fuzz>},
   {HttpApi::Test, HttpMethod::Get, "/_test/status",
    Make<test::Endpoint::Status>},
+  {HttpApi::Test, HttpMethod::Get, "/_test/session_user",
+   Make<test::Endpoint::SessionUser>},
   {HttpApi::Mcp, HttpMethod::Post, "/_mcp", Make<mcp::Endpoint::Rpc>},
   {HttpApi::Mcp, HttpMethod::Get, "/_mcp",
    Make<mcp::Endpoint::MethodNotAllowed>},
@@ -135,9 +135,11 @@ constexpr auto kRoutes = std::to_array<Route>({
 std::span<const Route> Routes() { return kRoutes; }
 
 void AddRoutes(HttpRouter& router, std::span<const HttpApi> apis) {
-  for (const auto& route : kRoutes) {
-    if (absl::c_linear_search(apis, route.api)) {
-      router.Add(route.method, route.pattern, route.make());
+  for (const auto api : apis) {
+    for (const auto& route : kRoutes) {
+      if (route.api == api) {
+        router.Add(route.method, route.pattern, route.make());
+      }
     }
   }
 }

@@ -34,9 +34,9 @@
 
 #include "catalog/catalog.h"
 #include "connector/common.h"
+#include "connector/primary_key.h"
 #include "connector/term_dict.h"
 #include "search_remove_filter.hpp"
-#include "server/utils/primary_key.h"
 
 namespace sdb::connector {
 namespace {
@@ -981,19 +981,13 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                             uint64_t pk_base, duckdb::idx_t table_id,
                             duckdb::ClientContext& context) {
   const auto num_rows = chunk.size();
-  auto& scratch = sink.GetKeyScratch();
-  auto& row_keys = scratch.row_keys;
-  auto& key_views = scratch.key_views;
-  row_keys.resize(num_rows);
+  auto& key_views = sink.GetKeyScratch().key_views;
   key_views.clear();
   key_views.reserve(num_rows);
   duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
   auto* ids = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    auto& key = row_keys[row];
-    key.clear();
-    primary_key::AppendGenerated(key, pk_base + row);
-    key_views.emplace_back(key);
+    key_views.push_back(primary_key::GeneratedKeyTerm(pk_base + row));
     ids[row] = static_cast<int64_t>(pk_base + row);
   }
   WriteKeyedChunk(sink, chunk, column_ids, gen_pk, table_id, context);
@@ -1011,20 +1005,15 @@ void WriteRebuiltChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
   chunk.data[rowid_slot].ToUnifiedFormat(num_rows, rowids);
   const auto* rowid_data =
     duckdb::UnifiedVectorFormat::GetData<int64_t>(rowids);
-  auto& scratch = sink.GetKeyScratch();
-  auto& row_keys = scratch.row_keys;
-  auto& key_views = scratch.key_views;
-  row_keys.resize(num_rows);
+  auto& key_views = sink.GetKeyScratch().key_views;
   key_views.clear();
   key_views.reserve(num_rows);
   duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
   auto* ids = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     const auto rowid = rowid_data[rowids.sel->get_index(row)];
-    auto& key = row_keys[row];
-    key.clear();
-    primary_key::AppendGenerated(key, static_cast<uint64_t>(rowid));
-    key_views.emplace_back(key.data(), static_cast<uint32_t>(key.size()));
+    key_views.push_back(
+      primary_key::GeneratedKeyTerm(static_cast<uint64_t>(rowid)));
     ids[row] = rowid;
   }
   WriteKeyedChunk(sink, chunk, column_ids, gen_pk, table_id, context);

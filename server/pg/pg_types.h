@@ -55,7 +55,7 @@ inline constexpr duckdb::idx_t kPgPostgresDatabase = 5;
 inline constexpr duckdb::idx_t kRootUser = kMinSystem;
 
 inline constexpr duckdb::idx_t kPgAmInverted = kMinSystem + 300;
-inline constexpr duckdb::idx_t kPgAmIresearch = kMinSystem + 301;
+inline constexpr duckdb::idx_t kPgAmIResearch = kMinSystem + 301;
 inline constexpr duckdb::idx_t kPgAmSecondary = kMinSystem + 303;
 
 inline constexpr duckdb::idx_t kPgOpclassIvf = kMinSystem + 200;

@@ -20,6 +20,8 @@
 
 #include "network/http/common.h"
 
+#include <iresearch/utils/string_utils.hpp>
+
 namespace sdb::network::http {
 
 std::string SqlLiteral(std::string_view text) {
@@ -60,7 +62,7 @@ std::string FlattenBody(const message::SequenceView& body, size_t padding) {
   for (const auto buffer : body) {
     out.append(reinterpret_cast<const char*>(buffer.data()), buffer.size());
   }
-  out.append(padding, '\0');
+  irs::utils::StrAppend(out, padding);
   return out;
 }
 

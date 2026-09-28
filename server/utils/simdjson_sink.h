@@ -95,13 +95,11 @@ class JsonSource {
     return Read(_curr.get_uint64(), JsonType::number);
   }
   double ReadDouble() { return Read(_curr.get_double(), JsonType::number); }
-  std::string ReadString() {
-    return std::string{Read(_curr.get_string(), JsonType::string)};
-  }
   // Valid until the parser is destroyed or parses another document.
   std::string_view ReadStringView() {
     return Read(_curr.get_string(), JsonType::string);
   }
+  std::string ReadString() { return std::string{ReadStringView()}; }
 
   bool OnNullableBegin() { return !_curr.is_null().value(); }
 

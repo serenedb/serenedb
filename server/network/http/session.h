@@ -370,7 +370,7 @@ class HttpSession final
   H1Codec _codec;
 
   message::Buffer _dechunk{kReadBlock, kWireChunkMax};
-  std::optional<message::Buffer> _decoded;
+  message::Buffer _decoded{kReadBlock, kWireChunkMax};
 
   // Read-deadline phase for RecvLoop: idle (between requests, generous
   // keep-alive timeout) vs mid-request (strict header/body timeout).
@@ -562,13 +562,13 @@ auto HttpSession<Kind>::DecodeRequestBody(HttpRequest& request)
     return {};
   }
   try {
-    _decoded.emplace(kReadBlock, kWireChunkMax);
-    message::Writer out{*_decoded};
+    _decoded.Clear();
+    message::Writer out{_decoded};
     http::DecodeContent(
       request.body, *codings, [&](std::string_view part) { out.Write(part); },
       _codec.MaxBodyBytes());
     out.Commit(false);
-    request.body = _decoded->Written();
+    request.body = _decoded.Written();
     return {};
   } catch (const irs::SqlException& error) {
     switch (error.error().errcode) {
@@ -741,7 +741,6 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
       if (pinned_body != 0) {
         _recv.Consume(pinned_body);
       }
-      _decoded.reset();
       if (!keep_alive || SendBroken()) {
         break;
       }

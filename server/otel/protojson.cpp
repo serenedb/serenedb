@@ -138,7 +138,7 @@ template<ProtoJsonContext Context, typename T>
 void SerdeRead(Context ctx, T& out) {
   auto& src = ctx.io();
   if (src.Type() == JsonType::string) {
-    if (!absl::SimpleAtoi(src.ReadString(), &out)) {
+    if (!absl::SimpleAtoi(src.ReadStringView(), &out)) {
       Throw("an integer");
     }
     return;
@@ -171,7 +171,7 @@ void SerdeRead(Context ctx, bool& out) {
     out = src.ReadBool();
     return;
   }
-  const auto text = src.ReadString();
+  const auto text = src.ReadStringView();
   if (text != "true" && text != "false") {
     Throw("a boolean");
   }
@@ -185,7 +185,7 @@ void SerdeRead(Context ctx, double& out) {
     out = src.ReadDouble();
     return;
   }
-  const auto text = src.ReadString();
+  const auto text = src.ReadStringView();
   if (text == "NaN") {
     out = std::numeric_limits<double>::quiet_NaN();
   } else if (text == "Infinity") {
@@ -205,7 +205,7 @@ void SerdeRead(Context ctx, E& out) {
     out = static_cast<E>(src.ReadSignedInt64());
     return;
   }
-  const auto text = src.ReadString();
+  const auto text = src.ReadStringView();
   int32_t number = 0;
   if (absl::SimpleAtoi(text, &number)) {
     out = static_cast<E>(number);

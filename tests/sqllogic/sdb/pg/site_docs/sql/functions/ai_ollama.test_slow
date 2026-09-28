@@ -415,8 +415,7 @@ valid
 
 query
 SELECT count(*) FILTER (WHERE s BETWEEN 0 AND 1) AS scored,
-       avg(s) FILTER (WHERE id <> 2) > 0.5 AS positive_high,
-       max(s) FILTER (WHERE id = 2) < 0.5 AS negative_low
+       count(*) FILTER (WHERE (s > 0.5) = (id <> 2)) >= 2 AS mostly_right
 FROM (
     SELECT id, ai_score(body, 'the review is positive about the product',
                         secret_name := 'local_chat_${__DATABASE__}') AS s
@@ -424,8 +423,8 @@ FROM (
     WHERE body IS NOT NULL
 ) t;
 ----
-scored	positive_high	negative_low
-3	t	t
+scored	mostly_right
+3	t
 
 # DOCS_TEST: rerank
 

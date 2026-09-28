@@ -164,11 +164,12 @@ const TextSpec& FindSpec(std::string_view name) {
 struct TextBindData final : public AIFunctionData {
   const TextSpec* spec = nullptr;
   ChatConfig chat;
-  ChatTemplate body;
+  std::string system;
   std::vector<std::string> labels;
   std::vector<std::string> keys;
 
-  std::unique_ptr<AIWork> Start(duckdb::DataChunk& args) const final;
+  std::unique_ptr<ScalarWork> Start(const AIExecution& exec,
+                                    duckdb::DataChunk& args) const final;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<TextBindData>(*this);
@@ -177,7 +178,7 @@ struct TextBindData final : public AIFunctionData {
   bool Equals(const duckdb::FunctionData& other) const final {
     const auto& o = other.Cast<TextBindData>();
     return spec == o.spec && endpoint == o.endpoint && chat == o.chat &&
-           body == o.body && labels == o.labels && keys == o.keys;
+           system == o.system && labels == o.labels && keys == o.keys;
   }
 };
 
@@ -275,7 +276,7 @@ duckdb::unique_ptr<duckdb::FunctionData> TextBind(
   bind->chat = BindChat(context, spec.name, std::span{args}.subspan(index),
                         spec.temperature, bind->endpoint);
 
-  std::string system;
+  auto& system = bind->system;
   switch (spec.kind) {
     case TextKind::Generate:
       system = option.value_or(std::string{kDefaultSystemPrompt});
@@ -336,8 +337,6 @@ duckdb::unique_ptr<duckdb::FunctionData> TextBind(
   if (spec.kind != TextKind::Generate) {
     absl::StrAppend(&system, kDataRule);
   }
-  bind->body = MakeChatTemplate(bind->endpoint.model, bind->chat, system);
-  RebindEachExecution(input);
   return bind;
 }
 
@@ -525,29 +524,33 @@ duckdb::Value Interpret(const TextBindData& bind, std::string_view text) {
   SDB_UNREACHABLE();
 }
 
-class TextWork final : public AIWork {
+class TextWork final : public ScalarWork {
  public:
-  TextWork(const TextBindData& bind, duckdb::DataChunk& args)
+  TextWork(const TextBindData& bind, const AIExecution& exec,
+           duckdb::DataChunk& args)
     : _bind{bind},
+      _body{
+        MakeChatTemplate(exec.target.endpoint.model, bind.chat, bind.system)},
       _inputs{CollectInputs(args.data[bind.spec->input_second ? 1 : 0],
                             args.size(), bind.spec->kind != TextKind::Generate,
                             false)},
-      _outputs(_inputs.texts.size()) {
-    requests.reserve(_inputs.texts.size());
-    for (const auto text : _inputs.texts) {
-      requests.push_back({.body = BuildChatBody(bind.body, text)});
-    }
+      _outputs(_inputs.texts.size()) {}
+
+  size_t Size() const final { return _done ? 0 : _inputs.texts.size(); }
+
+  std::string Body(size_t k) const final {
+    return BuildChatBody(_body, _inputs.texts[k]);
   }
 
-  void Advance(Requester& requester) final {
-    requester.ForEach(requests.size(), [&](size_t k) {
-      if (const auto reply =
-            Chat(requester, _bind.spec->name, std::move(requests[k].response),
-                 _bind.chat.max_tokens)) {
-        _outputs[k] = Interpret(_bind, *reply);
-      }
-    });
-    requests.clear();
+  void Decode(size_t k, simdjson::dom::element reply,
+              std::string_view raw) final {
+    _outputs[k] = Interpret(
+      _bind, Chat(_bind.spec->name, reply, raw, _bind.chat.max_tokens));
+  }
+
+  void Advance(const Replies& replies) final {
+    replies.ForEach([&](size_t k) { replies.Ok(k); });
+    _done = true;
   }
 
   void Finish(duckdb::Vector& result) final {
@@ -556,12 +559,15 @@ class TextWork final : public AIWork {
 
  private:
   const TextBindData& _bind;
+  ChatTemplate _body;
   Inputs _inputs;
   std::vector<duckdb::Value> _outputs;
+  bool _done = false;
 };
 
-std::unique_ptr<AIWork> TextBindData::Start(duckdb::DataChunk& args) const {
-  return std::make_unique<TextWork>(*this, args);
+std::unique_ptr<ScalarWork> TextBindData::Start(const AIExecution& exec,
+                                                duckdb::DataChunk& args) const {
+  return std::make_unique<TextWork>(*this, exec, args);
 }
 
 duckdb::LogicalType ResultType(TextKind kind) {

@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <duckdb/main/pending_query_result.hpp>
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
@@ -242,26 +243,41 @@ struct BindInfo {
 class ClosingPending {
  public:
   ClosingPending() = default;
-  ClosingPending(duckdb::unique_ptr<duckdb::PendingQueryResult> pending)
-    : _pending{std::move(pending)} {}
+  ClosingPending(duckdb::unique_ptr<duckdb::PendingQueryResult> pending,
+                 duckdb::ClientContext& context)
+    : _pending{std::move(pending)},
+      _context{&context},
+      _query{ActiveQuery(context)} {}
   ClosingPending(ClosingPending&& other) noexcept = default;
   ClosingPending& operator=(ClosingPending&& other) noexcept {
     if (this != &other) {
       Reset();
       _pending = std::move(other._pending);
+      _context = other._context;
+      _query = other._query;
     }
     return *this;
   }
   ~ClosingPending() { Reset(); }
 
   void Reset() noexcept {
-    if (_pending) {
-      try {
-        _pending->Close();
-      } catch (...) {
-      }
-      _pending.reset();
+    if (!_pending) {
+      return;
     }
+    const bool abandon = _context && _query != duckdb::MAXIMUM_QUERY_ID &&
+                         ActiveQuery(*_context) == _query &&
+                         !_context->ExecutionIsFinished();
+    if (abandon) {
+      _context->Interrupt();
+    }
+    try {
+      _pending->Close();
+    } catch (...) {
+    }
+    if (abandon) {
+      _context->ClearInterrupt();
+    }
+    _pending.reset();
   }
 
   duckdb::PendingQueryResult* operator->() const { return _pending.get(); }
@@ -269,7 +285,15 @@ class ClosingPending {
   explicit operator bool() const { return _pending != nullptr; }
 
  private:
+  static duckdb::transaction_t ActiveQuery(duckdb::ClientContext& context) {
+    return context.transaction.HasActiveTransaction()
+             ? context.transaction.GetActiveQuery()
+             : duckdb::MAXIMUM_QUERY_ID;
+  }
+
   duckdb::unique_ptr<duckdb::PendingQueryResult> _pending;
+  duckdb::ClientContext* _context = nullptr;
+  duckdb::transaction_t _query = duckdb::MAXIMUM_QUERY_ID;
 };
 
 // A portal's execution lifecycle. The old started/exhausted bool pair only had

@@ -43,6 +43,7 @@
 #include "gtest/gtest.h"
 #include "network/http/common.h"
 #include "network/http/handler.h"
+#include "network/pg/protocol_state.h"
 #include "query/config.h"
 
 using namespace sdb;
@@ -52,8 +53,6 @@ namespace {
 constexpr std::string_view kChat = "/v1/chat/completions";
 constexpr std::string_view kEmbeddings = "/v1/embeddings";
 constexpr std::string_view kSystemOne = "/v1/systemone";
-constexpr std::string_view kTable =
-  "(SELECT range % 2 AS g, range::VARCHAR AS v FROM range(4)) t";
 
 struct Reply {
   int status = 200;
@@ -185,20 +184,6 @@ class AIFunctionsTest : public ::testing::Test {
     ASSERT_TRUE(result->HasError()) << sql;
     EXPECT_NE(result->GetError().find(needle), std::string::npos)
       << result->GetError();
-  }
-
-  size_t CountInPlan(const std::string& sql, std::string_view needle) {
-    auto result = Run(absl::StrCat("EXPLAIN ", sql));
-    std::string plan;
-    for (duckdb::idx_t i = 0; i < result->RowCount(); i++) {
-      absl::StrAppend(&plan, result->GetValue(1, i).ToString());
-    }
-    size_t count = 0;
-    for (auto pos = plan.find(needle); pos != std::string::npos;
-         pos = plan.find(needle, pos + needle.size())) {
-      ++count;
-    }
-    return count;
   }
 
   network::HttpRouter _router;
@@ -379,7 +364,7 @@ TEST_F(AIFunctionsTest, JevPackingSplitsOn422) {
   EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 3);
 
   const auto bodies = mock.Bodies();
-  ASSERT_EQ(bodies.size(), 3);
+  ASSERT_EQ(bodies.size(), 4);
   simdjson::dom::parser packed_parser;
   auto packed = Parse(packed_parser, bodies[0]);
   EXPECT_EQ(std::string_view{packed["model"]}, "jev-latest");
@@ -392,14 +377,21 @@ TEST_F(AIFunctionsTest, JevPackingSplitsOn422) {
   EXPECT_EQ(simdjson::minify(question["criteria"]),
             R"({"billing":"Invoices","sales":null})");
 
-  simdjson::dom::parser single_parser;
-  auto single = Parse(single_parser, bodies[1]);
-  EXPECT_EQ(std::string_view{single["state"]}, "a");
-  EXPECT_EQ(std::string_view{single["questions"]["answer"]["instructions"]},
-            "Which team?");
-
-  simdjson::dom::parser pair_parser;
-  EXPECT_EQ(Parse(pair_parser, bodies[2])["state"].get_object().size(), 2);
+  std::vector<std::string> states;
+  for (size_t i = 1; i != bodies.size(); ++i) {
+    simdjson::dom::parser parser;
+    auto doc = Parse(parser, bodies[i]);
+    std::string_view state;
+    if (doc["state"].get(state) == simdjson::SUCCESS) {
+      EXPECT_EQ(std::string_view{doc["questions"]["answer"]["instructions"]},
+                "Which team?");
+      states.emplace_back(state);
+    } else {
+      states.push_back(absl::StrCat(doc["state"].get_object().size()));
+    }
+  }
+  std::ranges::sort(states);
+  EXPECT_EQ(states, (std::vector<std::string>{"2", "a", "x"}));
 }
 
 TEST_F(AIFunctionsTest, JevUnprocessableRowFailsQuery) {
@@ -441,7 +433,7 @@ TEST_F(AIFunctionsTest, RequestsSpreadOverThreads) {
   EXPECT_EQ(flight.peak.load(), 1);
 }
 
-TEST_F(AIFunctionsTest, ParallelSourcesKeepConcurrency) {
+TEST_F(AIFunctionsTest, ThreadsShareQueryCap) {
   InFlight flight;
   std::atomic_int busy = 0;
   std::atomic_int total = 0;
@@ -455,43 +447,112 @@ TEST_F(AIFunctionsTest, ParallelSourcesKeepConcurrency) {
     return Reply{200, ChatReply("ok", "stop", 1)};
   });
   Start();
-  Run("SET threads = 2");
+  Run("SET threads = 4");
   Run("SET sdb_ai_max_concurrent_requests = 4");
+  for (const auto* call :
+       {"ai_generate(range::VARCHAR, secret_name := 'chat')",
+        "CASE WHEN range >= 0 THEN ai_generate(range::VARCHAR, secret_name := "
+        "'chat') END"}) {
+    flight.peak = 0;
+    busy = 0;
+    total = 0;
+    auto result =
+      Run(absl::StrCat("SELECT count(", call, ") FROM range(4096)"));
+    EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 4096) << call;
+    EXPECT_LE(flight.peak.load(), 4) << call;
+    EXPECT_GE(busy.load() * 4, total.load() * 3)
+      << call << ": " << busy.load() << " of " << total.load();
+  }
+}
+
+TEST_F(AIFunctionsTest, AsyncThreadsZeroKeepsConcurrency) {
+  InFlight flight;
+  Mock(kChat, [&](std::string_view) {
+    flight.Enter();
+    std::this_thread::sleep_for(std::chrono::milliseconds{2});
+    flight.Leave();
+    return Reply{200, ChatReply("ok", "stop", 1)};
+  });
+  Start();
+  Run("SET threads = 2");
+  Run("SET async_threads = 0");
   auto result = Run(
     "SELECT count(ai_generate(range::VARCHAR, secret_name := 'chat')) FROM "
     "range(4096)");
   EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 4096);
-  EXPECT_LE(flight.peak.load(), 4);
-  EXPECT_GE(busy.load() * 4, total.load() * 3)
-    << busy.load() << " of " << total.load();
+  EXPECT_GE(flight.peak.load(), 2);
 }
 
-TEST_F(AIFunctionsTest, EvaluateOperatorPlacement) {
-  Mock(kChat,
-       [](std::string_view) { return Reply{200, ChatReply("ok", "stop", 1)}; });
+TEST_F(AIFunctionsTest, TopNDefersAICalls) {
+  auto& mock = Mock(kChat, [](std::string_view body) {
+    if (Content(body, 0).starts_with("You rate how well")) {
+      return Reply{200, ChatReply(R"({\"score\":0.5})", "stop", 1)};
+    }
+    return Reply{200, ChatReply(Content(body, 1), "stop", 1)};
+  });
   Start();
-  auto plan = [&](std::string_view select, std::string_view rest = "") {
-    return CountInPlan(absl::StrCat(select, " FROM ", kTable, rest),
-                       "AI_EVALUATE");
+  constexpr std::string_view kRows =
+    "(SELECT range AS id, range::VARCHAR AS v FROM range(100)) t";
+  auto sent = [&](const std::string& sql) {
+    const auto before = mock.Bodies().size();
+    auto result = Run(sql);
+    return std::pair{mock.Bodies().size() - before, std::move(result)};
   };
-  EXPECT_EQ(plan("SELECT ai_generate(v, secret_name := 'chat')"), 1);
-  EXPECT_EQ(plan("SELECT ai_translate(ai_generate(v, secret_name := 'chat'), "
-                 "'de', secret_name := 'chat')"),
+  auto [by_id, result] =
+    sent(absl::StrCat("SELECT id, ai_generate(v, secret_name := 'chat') FROM ",
+                      kRows, " ORDER BY id LIMIT 3"));
+  EXPECT_EQ(by_id, 3);
+  EXPECT_EQ(result->GetValue(1, 2).ToString(), "2");
+  EXPECT_EQ(sent(absl::StrCat("SELECT ai_generate(v, secret_name := 'chat') "
+                              "FROM ",
+                              kRows, " ORDER BY length(v) DESC, id LIMIT 3"))
+              .first,
+            3);
+  EXPECT_EQ(sent(absl::StrCat("SELECT * FROM (SELECT id, ai_generate(v, "
+                              "secret_name := 'chat') AS g FROM ",
+                              kRows, ") s ORDER BY id LIMIT 3"))
+              .first,
+            3);
+  EXPECT_EQ(sent(absl::StrCat("SELECT ai_generate(v, secret_name := 'chat') "
+                              "FROM ",
+                              kRows,
+                              " ORDER BY ai_score(v, 'x', secret_name := "
+                              "'chat'), id LIMIT 3"))
+              .first,
+            103);
+  auto [filtered, rows] = sent(absl::StrCat(
+    "SELECT id, g FROM (SELECT id, ai_generate(v, secret_name := 'chat') AS g "
+    "FROM ",
+    kRows, " ORDER BY id LIMIT 5) s WHERE id % 2 = 0 ORDER BY id"));
+  EXPECT_EQ(filtered, 5);
+  ASSERT_EQ(rows->RowCount(), 3);
+  for (duckdb::idx_t i = 0; i != 3; ++i) {
+    EXPECT_EQ(rows->GetValue(0, i).GetValue<int64_t>(), int64_t(2 * i));
+    EXPECT_EQ(rows->GetValue(1, i).ToString(), absl::StrCat(2 * i));
+  }
+}
+
+TEST_F(AIFunctionsTest, AndConjunctsRunLazily) {
+  auto& mock = Mock(kChat, [](std::string_view body) {
+    const bool first = absl::StrContains(Content(body, 0), "first");
+    const bool match =
+      !first || Content(body, 1) == "0" || Content(body, 1) == "1";
+    return Reply{
+      200, ChatReply(match ? R"({\"match\":true})" : R"({\"match\":false})",
+                     "stop", 1)};
+  });
+  Start();
+  auto result = Run(
+    "SELECT count(*) FROM range(4) WHERE ai_filter(range::VARCHAR, 'first', "
+    "secret_name := 'chat') AND ai_filter(range::VARCHAR, 'second', "
+    "secret_name := 'chat')");
+  EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 2);
+  EXPECT_EQ(absl::c_count_if(mock.Bodies(),
+                             [](const std::string& body) {
+                               return absl::StrContains(Content(body, 0),
+                                                        "second");
+                             }),
             2);
-  EXPECT_EQ(plan("SELECT CASE WHEN g = 0 THEN ai_generate(v, secret_name := "
-                 "'chat') END"),
-            0);
-  EXPECT_EQ(
-    plan("SELECT v", " WHERE ai_filter(v, 'x', secret_name := 'chat') LIMIT 1"),
-    0);
-  EXPECT_EQ(
-    plan("SELECT g, ai_agg(v, 'q', secret_name := 'chat')", " GROUP BY g"), 1);
-  auto result = Run(absl::StrCat(
-    "SELECT CASE WHEN g = 0 THEN ai_generate(v, secret_name := 'chat') END AS "
-    "r FROM ",
-    kTable, " ORDER BY v"));
-  EXPECT_EQ(result->GetValue(0, 0).ToString(), "ok");
-  EXPECT_TRUE(result->GetValue(0, 1).IsNull());
 }
 
 TEST_F(AIFunctionsTest, CheapPredicatesAndLimitCutRequests) {
@@ -530,7 +591,7 @@ TEST_F(AIFunctionsTest, EvaluateKeepsInputOrder) {
   }
 }
 
-TEST_F(AIFunctionsTest, AggregateRewriteMatchesFinalize) {
+TEST_F(AIFunctionsTest, AggregateOrderAndWindow) {
   auto& mock = Mock(kChat, [](std::string_view) {
     return Reply{200, ChatReply("summary", "stop", 1)};
   });
@@ -850,7 +911,49 @@ TEST_F(AIFunctionsTest, EmbeddingBatchSplitsAroundOversizedText) {
     sizes.push_back(Parse(parser, bodies[i])["input"].get_array().size());
   }
   std::ranges::sort(sizes);
-  EXPECT_EQ(sizes, (std::vector<size_t>{1, 1, 2, 2, 4}));
+  EXPECT_EQ(sizes, (std::vector<size_t>{1, 1, 1, 2, 2, 4}));
+}
+
+TEST_F(AIFunctionsTest, UniformRejectionStopsSplitting) {
+  auto& mock = Mock(kEmbeddings, [](std::string_view) {
+    return Reply{
+      400,
+      R"({"error":{"message":"dimensions is not supported","type":"invalid_request_error"}})"};
+  });
+  Start();
+  Run("SET sdb_ai_embedding_max_batch_size = 8");
+  const std::string sql =
+    "SELECT count(ai_embed(range::VARCHAR, 'm', 'chat', dimensions := 3)) "
+    "FROM range(8)";
+  ExpectError(sql, "dimensions is not supported");
+  EXPECT_EQ(mock.Bodies().size(), 4);
+  Run("SET sdb_ai_throw_on_error = false");
+  EXPECT_EQ(Run(sql)->GetValue(0, 0).GetValue<int64_t>(), 0);
+  EXPECT_EQ(mock.Bodies().size(), 8);
+}
+
+TEST_F(AIFunctionsTest, SizeRejectionStillSplits) {
+  auto& mock = Mock(kSystemOne, [](std::string_view body) -> Reply {
+    simdjson::dom::parser parser;
+    auto doc = Parse(parser, body);
+    simdjson::dom::object state;
+    if (doc["state"].get_object().get(state) == simdjson::SUCCESS &&
+        state.size() > 2) {
+      return {422, R"({"detail":"state is too long"})"};
+    }
+    std::string answers;
+    for (auto question : doc["questions"].get_object()) {
+      absl::StrAppend(&answers, answers.empty() ? "" : ",", "\"", question.key,
+                      R"(":{"noul":0.9})");
+    }
+    return {200, absl::StrCat(R"({"answers":{)", answers, "}}")};
+  });
+  Start();
+  auto result = Run(
+    "SELECT count(r) FROM (SELECT ai_system1(range::VARCHAR, 'q', batch_size "
+    ":= 8, secret_name := 'jev') AS r FROM range(8))");
+  EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 8);
+  EXPECT_EQ(mock.Bodies().size(), 8);
 }
 
 TEST_F(AIFunctionsTest, EmbeddingReplyMustMatchDimensions) {
@@ -1031,12 +1134,17 @@ TEST_F(AIFunctionsTest, AsyncThreadsZeroStillSends) {
   }
 }
 
-TEST_F(AIFunctionsTest, PreparedStatementsRebind) {
+TEST_F(AIFunctionsTest, PreparedStatementsResolveAtExecution) {
   auto ok = [](std::string_view) {
     return Reply{200, ChatReply("ok", "stop", 1)};
   };
+  auto jev_ok = [](std::string_view) {
+    return Reply{200, R"({"answers":{"answer":{"noul":0.9}}})"};
+  };
   auto& first = Mock(kChat, ok);
   auto& second = Mock("/v2/chat/completions", ok);
+  auto& jev_first = Mock(kSystemOne, jev_ok);
+  auto& jev_second = Mock("/v2/systemone", jev_ok);
   auto& embeddings = Mock(kEmbeddings, [](std::string_view body) {
     simdjson::dom::parser parser;
     std::string data;
@@ -1056,15 +1164,46 @@ TEST_F(AIFunctionsTest, PreparedStatementsRebind) {
     EXPECT_FALSE(result->HasError()) << result->GetError();
   };
 
+  auto chat_secret = [&](std::string_view name, std::string_view path) {
+    Run(absl::StrCat("CREATE OR REPLACE SECRET ", name,
+                     " (TYPE openai, base_url '", _url, "', chat_path '", path,
+                     "', model 'm')"));
+  };
+
   auto generate =
     _conn.Prepare("SELECT ai_generate('x', secret_name := 'chat')");
   ASSERT_FALSE(generate->HasError()) << generate->GetError();
+  auto agg = _conn.Prepare(
+    "SELECT ai_agg(v, 'q', secret_name := 'chat') FROM (VALUES ('a')) t(v)");
+  ASSERT_FALSE(agg->HasError()) << agg->GetError();
   succeed(*generate);
-  Run(absl::StrCat("CREATE OR REPLACE SECRET chat (TYPE openai, base_url '",
-                   _url, "', chat_path '/v2/chat/completions', model 'm')"));
+  succeed(*agg);
+  chat_secret("chat", "/v2/chat/completions");
   succeed(*generate);
-  EXPECT_EQ(first.Bodies().size(), 1);
-  EXPECT_EQ(second.Bodies().size(), 1);
+  succeed(*agg);
+  EXPECT_EQ(first.Bodies().size(), 2);
+  EXPECT_EQ(second.Bodies().size(), 2);
+
+  auto system1 =
+    _conn.Prepare("SELECT ai_system1('x', 'q', secret_name := 'jev')");
+  ASSERT_FALSE(system1->HasError()) << system1->GetError();
+  succeed(*system1);
+  Run(absl::StrCat("CREATE OR REPLACE SECRET jev (TYPE typesafe, base_url '",
+                   _url, "', path '/v2/systemone')"));
+  succeed(*system1);
+  EXPECT_EQ(jev_first.Bodies().size(), 1);
+  EXPECT_EQ(jev_second.Bodies().size(), 1);
+
+  chat_secret("text_a", kChat);
+  chat_secret("text_b", "/v2/chat/completions");
+  Run("SET sdb_ai_text_default_secret = 'text_a'");
+  auto by_default = _conn.Prepare("SELECT ai_generate('x')");
+  ASSERT_FALSE(by_default->HasError()) << by_default->GetError();
+  succeed(*by_default);
+  Run("SET sdb_ai_text_default_secret = 'text_b'");
+  succeed(*by_default);
+  EXPECT_EQ(first.Bodies().size(), 3);
+  EXPECT_EQ(second.Bodies().size(), 3);
 
   auto embed = _conn.Prepare(
     "SELECT count(ai_embed(v, 'm', 'chat')) FROM (VALUES ('a'), ('b'), ('c'), "
@@ -1102,6 +1241,73 @@ TEST_F(AIFunctionsTest, ControlCharactersAreEscaped) {
   EXPECT_EQ(Content(bodies[0], 1), std::string_view("a\x01"
                                                     "b",
                                                     3));
+}
+
+TEST_F(AIFunctionsTest, ClosingPendingStopsRequests) {
+  std::atomic_int calls = 0;
+  auto& mock = Mock(kChat, [&](std::string_view) {
+    ++calls;
+    std::this_thread::sleep_for(std::chrono::milliseconds{2});
+    return Reply{200, ChatReply("ok", "stop", 1)};
+  });
+  Start();
+  Run("SET threads = 2");
+  Run("SET sdb_ai_max_concurrent_requests = 4");
+  network::pg::ClosingPending pending{
+    _conn.PendingQuery(
+      "SELECT count(ai_generate(range::VARCHAR, secret_name := 'chat')) FROM "
+      "range(16384)"),
+    *_conn.context};
+  ASSERT_FALSE(pending->HasError()) << pending->GetError();
+  for (int i = 0; i != 500 && calls.load() < 16; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds{10});
+  }
+  ASSERT_GE(calls.load(), 16);
+  const auto before = mock.Bodies().size();
+  pending.Reset();
+  const auto after = mock.Bodies().size();
+  EXPECT_LE(after - before, 8);
+  EXPECT_LT(after, 16384 - 2048);
+  EXPECT_FALSE(_conn.context->IsInterrupted());
+  EXPECT_EQ(Run("SELECT 1")->GetValue(0, 0).GetValue<int32_t>(), 1);
+}
+
+TEST_F(AIFunctionsTest, CancelWithoutAsyncThreads) {
+  Mock(kChat, [](std::string_view) {
+    std::this_thread::sleep_for(std::chrono::milliseconds{100});
+    return Reply{200, ChatReply("ok", "stop", 1)};
+  });
+  Start();
+  Run("SET threads = 1");
+  Run("SET async_threads = 0");
+  std::thread cancel{[&] {
+    std::this_thread::sleep_for(std::chrono::milliseconds{300});
+    _conn.Interrupt();
+  }};
+  duckdb::unique_ptr<duckdb::MaterializedQueryResult> result;
+  const auto elapsed = Timed([&] {
+    result = _conn.Query(
+      "SELECT ai_generate(range::VARCHAR, secret_name := 'chat') FROM "
+      "range(64)");
+  });
+  cancel.join();
+  EXPECT_TRUE(result->HasError());
+  EXPECT_LT(elapsed, std::chrono::seconds{5});
+  EXPECT_EQ(Run("SELECT 1")->GetValue(0, 0).GetValue<int32_t>(), 1);
+}
+
+TEST_F(AIFunctionsTest, PrepareAfterExhaustedQuota) {
+  Mock(kEmbeddings, [](std::string_view) {
+    return Reply{200, R"({"data":[{"embedding":[1,0]},{"embedding":[1,0]}]})"};
+  });
+  Start();
+  Run("SET sdb_ai_max_api_calls_per_query = 1");
+  Run("SELECT ai_similarity('a', 'b', 'm', 'chat')");
+  auto prepared = _conn.Prepare("SELECT ai_similarity('c', 'd', 'm', 'chat')");
+  ASSERT_FALSE(prepared->HasError()) << prepared->GetError();
+  duckdb::vector<duckdb::Value> values;
+  auto result = prepared->Execute(values, false);
+  ASSERT_FALSE(result->HasError()) << result->GetError();
 }
 
 }  // namespace

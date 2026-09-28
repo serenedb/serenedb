@@ -497,9 +497,10 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_ai_max_concurrent_requests",
       {
         LogicalTypeId::UINTEGER,
-        "Maximum number of AI provider requests an AI_EVALUATE step, or one "
-        "call outside it, has in flight. Requests run on DuckDB's async I/O "
-        "threads (async_threads). Default: 16.",
+        "Maximum number of AI provider requests a query has in flight, across "
+        "all of its AI calls and threads. Requests run on DuckDB's async I/O "
+        "threads (async_threads) and on the threads that evaluate the calls. "
+        "Default: 16.",
         [] { return duckdb::Value::UINTEGER(16); },
         RejectZero<"sdb_ai_max_concurrent_requests">,
       },

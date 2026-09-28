@@ -352,15 +352,15 @@ class PgWireSession final
   std::string_view UserName() const;
   bool SetupConnection();
   void SendStartupBurst();
-  duckdb::unique_ptr<duckdb::PendingQueryResult> PendingQueryEnsured(
-    duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values,
-    std::shared_ptr<WireSinkContext> wire);
+  ClosingPending PendingQueryEnsured(duckdb::PreparedStatement& prepared,
+                                     duckdb::vector<duckdb::Value>& values,
+                                     std::shared_ptr<WireSinkContext> wire);
   // Single-lifecycle variant for the simple protocol: bind and execution share
   // one duckdb query (and one transaction), so plan-held catalog references
   // stay valid end-to-end. RowDescription is written by the collector hook
   // (wire->announce_rowdesc), the only post-bind point that precedes task
   // start.
-  duckdb::unique_ptr<duckdb::PendingQueryResult> PendingStatementEnsured(
+  ClosingPending PendingStatementEnsured(
     duckdb::unique_ptr<duckdb::SQLStatement> statement,
     const std::shared_ptr<WireSinkContext>& wire);
   yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> DriveStatementToResult(

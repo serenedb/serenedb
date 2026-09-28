@@ -21,6 +21,7 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/substitute.h>
+#include <simdjson.h>
 
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -29,8 +30,6 @@
 #include <duckdb/function/aggregate_function.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-#include <duckdb/planner/expression/bound_aggregate_expression.hpp>
-#include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
@@ -71,16 +70,15 @@ constexpr std::string_view kAggPrompt =
   "You answer an instruction over a group of values taken from a SQL table. "
   "Instruction: $0.$1 Respond with the answer only.";
 
-struct AggBindData final : public AIFunctionData {
+struct AggBindData final : public duckdb::FunctionData {
   explicit AggBindData(duckdb::ClientContext& context) : context{context} {}
 
   duckdb::ClientContext& context;
+  EndpointRef endpoint;
   ChatConfig chat;
-  ChatTemplate final_body;
-  ChatTemplate partial_body;
+  std::string final_system;
+  std::string partial_system;
   size_t max_context = 0;
-
-  std::unique_ptr<AIWork> Start(duckdb::DataChunk& args) const final;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<AggBindData>(*this);
@@ -89,8 +87,8 @@ struct AggBindData final : public AIFunctionData {
   bool Equals(const duckdb::FunctionData& other) const final {
     const auto& o = other.Cast<AggBindData>();
     return endpoint == o.endpoint && chat == o.chat &&
-           final_body == o.final_body && partial_body == o.partial_body &&
-           max_context == o.max_context;
+           final_system == o.final_system &&
+           partial_system == o.partial_system && max_context == o.max_context;
   }
 };
 
@@ -191,10 +189,8 @@ duckdb::unique_ptr<duckdb::FunctionData> AggBind(
       ERR_MSG(name, ": \"max_context_chars\" must be a positive integer"));
   }
   bind->max_context = static_cast<size_t>(chars);
-  bind->final_body = MakeChatTemplate(bind->endpoint.model, bind->chat,
-                                      Prompt(summarize, false, instruction));
-  bind->partial_body = MakeChatTemplate(bind->endpoint.model, bind->chat,
-                                        Prompt(summarize, true, instruction));
+  bind->final_system = Prompt(summarize, false, instruction);
+  bind->partial_system = Prompt(summarize, true, instruction);
   while (args.size() > 1) {
     duckdb::Function::EraseArgument(fn, args, args.size() - 1);
   }
@@ -205,7 +201,7 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> AggInitLocal(
   const duckdb::BoundAggregateFunction&,
   duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
   const auto& bind = bind_data->Cast<AggBindData>();
-  return duckdb::make_uniq<AILocalState>(bind.context, bind);
+  return duckdb::make_uniq<AILocalState>(bind.context, bind.endpoint);
 }
 
 using Part = std::vector<std::string_view>;
@@ -274,12 +270,18 @@ struct Group {
 struct Task {
   size_t group;
   bool final;
+  Part part;
   std::optional<std::string> output;
 };
 
 class AggWork final : public AIWork {
  public:
-  explicit AggWork(const AggBindData& bind) : _bind{bind} {}
+  AggWork(const AggBindData& bind, const AIExecution& exec)
+    : _bind{bind},
+      _final{MakeChatTemplate(exec.target.endpoint.model, bind.chat,
+                              bind.final_system)},
+      _partial{MakeChatTemplate(exec.target.endpoint.model, bind.chat,
+                                bind.partial_system)} {}
 
   void Plan() {
     for (size_t g = 0; g != groups.size(); ++g) {
@@ -287,23 +289,30 @@ class AggWork final : public AIWork {
       if (group.values.empty()) {
         continue;
       }
-      const auto parts = Pack(group.values, _bind.max_context);
+      auto parts = Pack(group.values, _bind.max_context);
       const bool final = parts.size() <= 1;
-      for (const auto& part : parts) {
-        _tasks.push_back({.group = g, .final = final});
-        requests.push_back(
-          {.body = BuildChatBody(final ? _bind.final_body : _bind.partial_body,
-                                 Message(group.size, part))});
+      for (auto& part : parts) {
+        _tasks.push_back({.group = g, .final = final, .part = std::move(part)});
       }
     }
   }
 
-  void Advance(Requester& requester) final {
-    requester.ForEach(requests.size(), [&](size_t k) {
-      _tasks[k].output =
-        Chat(requester, _bind.endpoint.fn, std::move(requests[k].response),
-             _bind.chat.max_tokens);
-    });
+  size_t Size() const final { return _tasks.size(); }
+
+  std::string Body(size_t k) const final {
+    const auto& task = _tasks[k];
+    return BuildChatBody(task.final ? _final : _partial,
+                         Message(groups[task.group].size, task.part));
+  }
+
+  void Decode(size_t k, simdjson::dom::element reply,
+              std::string_view raw) final {
+    _tasks[k].output =
+      Chat(_bind.endpoint.fn, reply, raw, _bind.chat.max_tokens);
+  }
+
+  void Advance(const Replies& replies) final {
+    replies.ForEach([&](size_t k) { replies.Ok(k); });
 
     std::vector<std::vector<std::string>> notes(groups.size());
     std::vector<bool> failed(groups.size());
@@ -336,7 +345,7 @@ class AggWork final : public AIWork {
       }
       if (after >= before || _level + 1 >= kMaxLevels) {
         group.values.clear();
-        if (requester.ThrowOnError()) {
+        if (replies.ThrowOnError()) {
           ThrowRowError(
             absl::StrCat(_bind.endpoint.fn,
                          ": condensing the group made no progress; raise "
@@ -348,63 +357,33 @@ class AggWork final : public AIWork {
       group.values.assign(group.notes.begin(), group.notes.end());
     }
     ++_level;
-    requests.clear();
     _tasks.clear();
     Plan();
-  }
-
-  void Finish(duckdb::Vector& result) final {
-    result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-    for (size_t g = 0; g != groups.size(); ++g) {
-      const auto& answer = groups[g].answer;
-      result.SetValue(g, answer ? duckdb::Value{*answer}
-                                : duckdb::Value{duckdb::LogicalType::VARCHAR});
-    }
   }
 
   std::vector<Group> groups;
 
  private:
   const AggBindData& _bind;
+  ChatTemplate _final;
+  ChatTemplate _partial;
   std::vector<Task> _tasks;
   size_t _level = 0;
 };
-
-std::unique_ptr<AIWork> AggBindData::Start(duckdb::DataChunk& args) const {
-  auto work = std::make_unique<AggWork>(*this);
-  auto lists = args.data[0].Values<duckdb::VectorListType<duckdb::string_t>>();
-  work->groups.resize(args.size());
-  for (duckdb::idx_t g = 0; g < args.size(); g++) {
-    const auto list = lists[g];
-    if (!list.IsValid()) {
-      continue;
-    }
-    auto& group = work->groups[g];
-    for (const auto value : list.GetChildValues()) {
-      if (value.IsValid()) {
-        const auto& text = value.GetValue();
-        group.values.emplace_back(text.GetData(), text.GetSize());
-      }
-    }
-    group.size = group.values.size();
-  }
-  work->Plan();
-  return work;
-}
 
 void AggFinalize(duckdb::Vector& states,
                  duckdb::AggregateFinalizeInputData& input,
                  duckdb::Vector& result, duckdb::idx_t count,
                  duckdb::idx_t offset) {
   const auto& bind = input.bind_data->Cast<AggBindData>();
-  auto& requester = input.local_state->Cast<AILocalState>().requester;
+  const auto& exec = input.local_state->Cast<AILocalState>().exec;
   const bool constant =
     states.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR;
   auto* const* data = constant
                         ? duckdb::ConstantVector::GetData<AggState*>(states)
                         : duckdb::FlatVector::GetData<AggState*>(states);
 
-  AggWork work{bind};
+  AggWork work{bind, exec};
   auto& groups = work.groups;
   groups.resize(constant ? 1 : count);
   for (size_t g = 0; g != groups.size(); ++g) {
@@ -414,7 +393,7 @@ void AggFinalize(duckdb::Vector& states,
     }
   }
   work.Plan();
-  RunWork(bind.context, requester, bind.endpoint, work);
+  RunWork(exec, work);
 
   if (constant) {
     result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
@@ -438,24 +417,6 @@ void AggFinalize(duckdb::Vector& states,
 }
 
 }  // namespace
-bool IsAIAggregate(const duckdb::BoundAggregateExpression& aggregate) {
-  return dynamic_cast<const AggBindData*>(aggregate.BindInfo().get()) !=
-         nullptr;
-}
-
-duckdb::unique_ptr<duckdb::Expression> MakeAggregateReducer(
-  const duckdb::BoundAggregateExpression& aggregate,
-  duckdb::unique_ptr<duckdb::Expression> list) {
-  auto fn = MakeAIFunction(aggregate.Function().GetName().GetIdentifierName(),
-                           duckdb::LogicalType::VARCHAR, nullptr);
-  fn.GetSignature().AddParameter(list->GetReturnType());
-  fn.SetVolatile();
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> children;
-  children.push_back(std::move(list));
-  return duckdb::make_uniq<duckdb::BoundFunctionExpression>(
-    duckdb::BoundScalarFunction{fn}, std::move(children),
-    aggregate.BindInfo()->Copy());
-}
 
 void RegisterAggregateFunctions(duckdb::ExtensionLoader& loader) {
   for (const bool summarize : {false, true}) {

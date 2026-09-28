@@ -22,7 +22,6 @@
 
 #include <cstdint>
 #include <duckdb/common/unique_ptr.hpp>
-#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -34,11 +33,14 @@ class Expression;
 class FunctionSignature;
 
 }  // namespace duckdb
+namespace simdjson::dom {
+
+class element;
+
+}  // namespace simdjson::dom
 namespace sdb::connector::ai {
 
-class Requester;
-struct Endpoint;
-struct Response;
+struct EndpointRef;
 
 struct ChatConfig {
   double temperature = 0;
@@ -59,7 +61,7 @@ void AddChatOptions(duckdb::FunctionSignature& signature);
 
 ChatConfig BindChat(duckdb::ClientContext& context, std::string_view fn,
                     std::span<duckdb::unique_ptr<duckdb::Expression>> options,
-                    double default_temperature, Endpoint& endpoint);
+                    double default_temperature, EndpointRef& endpoint);
 
 std::string StrictJsonSchema(std::string_view name, std::string_view properties,
                              std::span<const std::string> required);
@@ -72,7 +74,7 @@ ChatTemplate MakeChatTemplate(std::string_view model, const ChatConfig& cfg,
 
 std::string BuildChatBody(const ChatTemplate& chat, std::string_view user);
 
-std::optional<std::string> Chat(Requester& requester, std::string_view fn,
-                                Response response, int32_t max_tokens);
+std::string Chat(std::string_view fn, simdjson::dom::element reply,
+                 std::string_view raw, int32_t max_tokens);
 
 }  // namespace sdb::connector::ai

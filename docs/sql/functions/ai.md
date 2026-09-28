@@ -131,7 +131,7 @@ The text functions and aggregates take the per-row text and their own arguments,
 
 Every argument except the per-row text must be a constant. A `NULL` text returns `NULL` without a request. Except for `ai_generate`, rows with the same text share one request when they fall into the same batch (see [Performance](#performance)).
 
-A prepared statement binds its scalar AI calls again on every `EXECUTE`, so it picks up a replaced secret and the current settings. `ai_agg` and `ai_summarize_agg` keep the secret and settings they had at `PREPARE` time.
+Each AI call looks up its secret and reads the settings when its query starts to run, so a prepared statement picks up a replaced secret and the current settings on every `EXECUTE`.
 
 A reply counts as a failed row when the model stopped at `max_tokens`, when the provider withheld or filtered it, or when the model asked to call a tool instead of answering. See [Errors, retries and quotas](#errors) for how failed rows are handled.
 
@@ -250,7 +250,7 @@ Check your provider's documentation for the exact dimension and use it as the `N
 
 ### Performance
 
-Each `ai_embed` call is a network request to the provider, so **embed documents once at write time** and store the vectors; only the *query* text is embedded at search time. Rows are sent in batches of up to `sdb_ai_embedding_max_batch_size` texts per request. If the provider rejects a batch of several texts with HTTP 400, 413 or 422, for example because one text is longer than the model accepts, the batch is split in half and sent again, down to single texts, so only the rejected texts fail. Embedding a column is just a `SELECT`, and `NULL`s pass through and are easy to count or filter:
+Each `ai_embed` call is a network request to the provider, so **embed documents once at write time** and store the vectors; only the *query* text is embedded at search time. Rows are sent in batches of up to `sdb_ai_embedding_max_batch_size` texts per request. If the provider rejects a batch of several texts with HTTP 400, 413 or 422, for example because one text is longer than the model accepts, the batch is split in half and sent again, down to single texts, so only the rejected texts fail. On the first HTTP 400 or 422, one extra request with the single text `x` checks whether the provider rejects every request, for example because of the `dimensions` value; if it does, the rejected batches fail without further splitting. Embedding a column is just a `SELECT`, and `NULL`s pass through and are easy to count or filter:
 
 <SqlLogicTest id="sql/functions/ai_ollama/embed_table" />
 
@@ -309,7 +309,7 @@ A `score` question rates the text on an ordered scale:
 
 ### Batching {#ai_system1_batch}
 
-A single-question call packs up to `batch_size` rows (1 to 64, default 32) into one request. Packing sends fewer requests, but the model sees several rows at once, so answers can drift compared with asking about each row alone. Set `batch_size := 1` for strict per-row isolation. If the provider rejects a packed request (HTTP 400, 413 or 422, for example because the batch is too long), the batch is split in half and retried, down to single rows. `questions` calls always send one request per row.
+A single-question call packs up to `batch_size` rows (1 to 64, default 32) into one request. Packing sends fewer requests, but the model sees several rows at once, so answers can drift compared with asking about each row alone. Set `batch_size := 1` for strict per-row isolation. If the provider rejects a packed request (HTTP 400, 413 or 422, for example because the batch is too long), the batch is split in half and retried, down to single rows. On the first HTTP 400 or 422, one extra request with the single state `x` checks whether the provider rejects the question itself; if it does, the rejected batches fail without further splitting. `questions` calls always send one request per row.
 
 <SqlLogicTest id="sql/functions/ai_kev/table" />
 
@@ -337,7 +337,7 @@ These settings apply to every AI function:
 | `sdb_ai_max_retries` | `3` | Retries after a connection error or HTTP 408, 429, 5xx or 529. A 429 with `insufficient_quota` isn't retried. Retries count toward `sdb_ai_max_api_calls_per_query`. |
 | `sdb_ai_retry_initial_delay_ms` | `500` | Delay before the first retry; each further retry doubles it, up to 60 seconds. A `Retry-After` response header takes precedence, also up to 60 seconds. |
 | `sdb_ai_request_timeout` | `120` | Timeout of a single request, in seconds. |
-| `sdb_ai_max_concurrent_requests` | `16` | Maximum requests an `AI_EVALUATE` step, or a call outside it, has in flight. Lower it for a local server that can't keep up. See [Performance](#performance). |
+| `sdb_ai_max_concurrent_requests` | `16` | Maximum requests a query has in flight, across all of its AI calls and threads. Lower it for a local server that can't keep up. See [Performance](#performance). |
 | `sdb_ai_max_api_calls_per_query` | `0` | Maximum requests a query may send. 0 = unlimited. |
 | `sdb_ai_max_output_tokens_per_query` | `0` | Maximum output tokens a query may consume, as reported by the provider. The check happens before each request, so requests already in flight can go over it. 0 = unlimited. |
 | `sdb_ai_throw_on_quota_exceeded` | `true` | When `false`, rows after a quota is exhausted return `NULL` instead of failing the query. |
@@ -350,17 +350,16 @@ There is no input-token quota: the number of input tokens is only known to the p
 
 ## Performance {#performance}
 
-An AI function spends almost all of its time waiting for the provider, so SereneDB sends the requests the way DuckDB reads remote files: as tasks on DuckDB's async I/O threads, while the query's own threads do other work.
+An AI function spends almost all of its time waiting for the provider, so each call sends the requests for a chunk of rows (up to 2048) at the same time and waits until they are answered.
 
-- The optimizer moves AI calls in a `SELECT` list, a `WHERE` clause, `GROUP BY` keys and aggregate arguments into an `AI_EVALUATE` step, which appears in `EXPLAIN`. `AI_EVALUATE` first collects its input rows, then works through them in chunks of up to 2048 rows. It sends a chunk's requests as tasks and releases the query thread until the answers arrive.
-- One `AI_EVALUATE` step has at most `sdb_ai_max_concurrent_requests` requests in flight, whatever the `threads` setting and whether or not the query keeps its row order. The `async_threads` setting, by default twice the number of CPU cores, also limits them.
+- The thread that evaluates the call sends requests itself, and tasks on DuckDB's async I/O threads send the rest. The thread waits without using the CPU, but it stays busy until the chunk's last answer arrives.
+- A query has at most `sdb_ai_max_concurrent_requests` requests in flight, across all of its AI calls and threads. The `async_threads` setting, by default twice the number of CPU cores, also limits them.
 - Rows of a chunk that have the same text share one request. `ai_embed` and `ai_similarity` send up to `sdb_ai_embedding_max_batch_size` texts per request, and `ai_system1` up to `batch_size` rows.
-- In a `WHERE` clause, the other conditions are checked first, so the rows they reject are never sent.
-- `AI_EVALUATE` reads all of its input before it returns the first row. In a query without `ORDER BY`, a constant `LIMIT` below 8192 is applied before the AI calls in the `SELECT` list, so `SELECT ai_generate(...) FROM t LIMIT 10` sends 10 requests. Calls in a `WHERE` clause under a `LIMIT` stay out of `AI_EVALUATE`: they run chunk by chunk, and the query stops sending requests once enough rows pass.
-- Calls inside `CASE`, `COALESCE`, `AND`, `OR` and `TRY` run only for the rows that reach them, so they stay where they are. The thread that evaluates them sends a chunk's requests as tasks, up to `sdb_ai_max_concurrent_requests` at a time, and waits for them.
-- `ai_agg` and `ai_summarize_agg` gather each group's values first, then send the groups' requests like other rows.
-
-<SqlLogicTest id="sql/functions/ai_ollama/explain" />
+- In a `WHERE` clause, conditions without AI calls are checked first, and conditions joined by `AND` are checked one after the other, so rows that one condition rejects are never sent to the next.
+- In a query without `ORDER BY`, a constant `LIMIT` below 8192 is applied before the AI calls in the `SELECT` list, so `SELECT ai_generate(...) FROM t LIMIT 10` sends 10 requests. With `ORDER BY ... LIMIT`, AI calls that the sort doesn't use run only on the rows that remain after the `LIMIT`.
+- Calls inside `CASE`, `COALESCE`, `AND`, `OR` and `TRY` run only for the rows that reach them.
+- `ai_agg` and `ai_summarize_agg` gather each group's values first, then send the requests of all groups in a chunk together.
+- Cancelling a query or closing a cursor stops new requests at once. Requests already in flight finish, or give up after `sdb_ai_request_timeout`.
 
 ## End-to-end: semantic search
 

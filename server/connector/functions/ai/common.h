@@ -24,6 +24,7 @@
 #include <absl/functional/function_ref.h>
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
+#include <absl/time/time.h>
 
 #include <atomic>
 #include <cstdint>
@@ -36,7 +37,6 @@
 #include <limits>
 #include <memory>
 #include <optional>
-#include <semaphore>
 #include <span>
 #include <string>
 #include <string_view>
@@ -45,7 +45,6 @@
 
 namespace duckdb {
 
-class BoundAggregateExpression;
 class ClientContext;
 class DatabaseInstance;
 class DataChunk;
@@ -53,6 +52,11 @@ class Expression;
 class ExtensionLoader;
 
 }  // namespace duckdb
+namespace simdjson::dom {
+
+class element;
+
+}  // namespace simdjson::dom
 namespace sdb::connector::ai {
 
 inline constexpr std::string_view kOpenAISecretType = "openai";
@@ -101,8 +105,15 @@ struct Endpoint {
   std::string api_key;
   std::string model;
   std::string_view usage_key;
+};
 
-  bool operator==(const Endpoint&) const = default;
+struct EndpointRef {
+  std::string fn;
+  const Api* api = nullptr;
+  std::optional<std::string> secret_name;
+  std::optional<std::string> model;
+
+  bool operator==(const EndpointRef&) const = default;
 };
 
 std::optional<duckdb::Value> FoldArgument(duckdb::ClientContext& context,
@@ -115,11 +126,7 @@ std::optional<std::string> FoldString(duckdb::ClientContext& context,
                                       std::string_view fn,
                                       std::string_view arg);
 
-Endpoint LoadEndpoint(duckdb::ClientContext& context, std::string_view fn,
-                      const std::optional<std::string>& secret_name,
-                      const Api& api);
-
-void RebindEachExecution(duckdb::BindScalarFunctionInput& input);
+void LoadEndpoint(duckdb::ClientContext& context, const EndpointRef& ref);
 
 [[noreturn]] void ThrowRowError(std::string message);
 
@@ -163,130 +170,190 @@ Inputs CollectInputs(duckdb::Vector& input, duckdb::idx_t count, bool dedup,
 void SetOutputs(duckdb::Vector& result, const Inputs& inputs,
                 std::span<const duckdb::Value> outputs);
 
-struct Response {
-  uint16_t status = 0;
-  std::string body;
-  bool skipped = false;
+struct Settings {
+  uint64_t max_calls = 0;
+  uint64_t max_output_tokens = 0;
+  uint32_t max_retries = 0;
+  uint32_t retry_delay_ms = 0;
+  uint32_t timeout = 0;
+  uint32_t concurrency = 1;
+  uint32_t embedding_batch = 1;
+  bool throw_on_error = true;
+  bool throw_on_quota = true;
 };
 
-class AIQueryUsage final : public duckdb::ClientContextState {
+class Limiter {
  public:
-  void QueryBegin(duckdb::ClientContext&) final;
+  void Reset(size_t permits);
 
-  std::atomic_uint64_t calls = 0;
-  std::atomic_uint64_t output_tokens = 0;
-};
+  bool TryAcquire();
 
-class Requester {
- public:
-  Requester(duckdb::ClientContext& context, const Endpoint& endpoint);
+  bool AcquireFor(absl::Duration timeout);
 
-  ~Requester();
+  void Release();
 
-  Response Send(std::string_view body);
-
-  std::optional<std::string> Accept(Response response) const;
-
-  void ForEach(size_t n, absl::FunctionRef<void(size_t)> fn);
-
-  bool ThrowOnError() const noexcept { return _throw_on_error; }
+  size_t Available();
 
  private:
-  bool ReserveCall();
-  void Sleep(uint64_t ms) const;
-
-  duckdb::ClientContext& _context;
-  const Endpoint& _endpoint;
-  duckdb::HTTPHeaders _headers;
-  duckdb::shared_ptr<AIQueryUsage> _usage;
-  duckdb::unique_ptr<duckdb::HTTPParams> _params;
-  duckdb::unique_ptr<duckdb::HTTPClient> _client;
-  uint64_t _max_calls;
-  uint64_t _max_output_tokens;
-  uint32_t _max_retries;
-  uint32_t _retry_delay_ms;
-  uint32_t _timeout;
-  bool _throw_on_error;
-  bool _throw_on_quota;
+  absl::Mutex _mutex;
+  size_t _available ABSL_GUARDED_BY(_mutex) = 0;
 };
 
-struct AIRequest {
+class AIQuery final : public duckdb::ClientContextState {
+ public:
+  struct Target {
+    Endpoint endpoint;
+    duckdb::unique_ptr<duckdb::HTTPParams> params;
+    duckdb::HTTPHeaders headers;
+  };
+
+  explicit AIQuery(duckdb::ClientContext& context);
+
+  static AIQuery& Get(duckdb::ClientContext& context);
+
+  void QueryBegin(duckdb::ClientContext& context) final;
+
+  using duckdb::ClientContextState::QueryEnd;
+
+  void QueryEnd(duckdb::ClientContext& context) final;
+
+  const Target& Resolve(duckdb::ClientContext& context, const EndpointRef& ref);
+
+  bool ReserveCall(std::string_view fn);
+
+  void AddOutputTokens(uint64_t tokens) {
+    _output_tokens.fetch_add(tokens, std::memory_order_relaxed);
+  }
+
+  void ForEach(size_t n, absl::FunctionRef<void(size_t)> fn) const;
+
+  Settings settings;
+  Limiter limiter;
+
+ private:
+  void Begin(duckdb::ClientContext& context);
+
+  std::atomic_uint64_t _calls = 0;
+  std::atomic_uint64_t _output_tokens = 0;
+  std::atomic_bool _active = false;
+  absl::Mutex _mutex;
+  std::vector<std::pair<EndpointRef, std::unique_ptr<Target>>> _targets
+    ABSL_GUARDED_BY(_mutex);
+};
+
+struct AIExecution {
+  duckdb::ClientContext& context;
+  AIQuery& query;
+  const AIQuery::Target& target;
+
+  bool Stopped() const;
+};
+
+struct Response {
+  uint16_t status = 0;
+  bool skipped = false;
   std::string body;
-  Response response;
+  std::exception_ptr error;
+};
+
+class Replies {
+ public:
+  Replies(const AIExecution& exec, std::span<const Response> responses)
+    : _exec{exec}, _responses{responses} {}
+
+  uint16_t Status(size_t k) const { return _responses[k].status; }
+
+  bool Ok(size_t k) const;
+
+  void ForEach(absl::FunctionRef<void(size_t)> fn) const {
+    _exec.query.ForEach(_responses.size(), fn);
+  }
+
+  bool ThrowOnError() const noexcept {
+    return _exec.query.settings.throw_on_error;
+  }
+
+ private:
+  const AIExecution& _exec;
+  std::span<const Response> _responses;
 };
 
 class AIWork {
  public:
   virtual ~AIWork() = default;
 
-  virtual void Advance(Requester& requester) = 0;
+  virtual size_t Size() const = 0;
 
-  virtual void Finish(duckdb::Vector& result) = 0;
+  virtual std::string Body(size_t k) const = 0;
 
-  std::vector<AIRequest> requests;
+  virtual void Decode(size_t k, simdjson::dom::element reply,
+                      std::string_view raw) = 0;
+
+  virtual void Advance(const Replies& replies) = 0;
 };
 
-class BatchWork : public AIWork {
+class ScalarWork : public AIWork {
  public:
-  void Advance(Requester& requester) final;
+  virtual void Finish(duckdb::Vector& result) = 0;
+};
+
+class BatchWork : public ScalarWork {
+ public:
+  size_t Size() const final { return _batches.size(); }
+
+  std::string Body(size_t k) const final;
+
+  void Decode(size_t k, simdjson::dom::element reply,
+              std::string_view raw) final;
+
+  void Advance(const Replies& replies) final;
 
  protected:
   void QueueBatches(size_t n, size_t batch_size);
 
-  virtual std::string Body(size_t begin, size_t size) const = 0;
+  virtual std::string BatchBody(size_t begin, size_t size) const = 0;
 
-  virtual void Parse(Requester& requester, Response response, size_t begin,
-                     size_t size) = 0;
+  virtual std::string ProbeBody() const = 0;
+
+  virtual void DecodeBatch(size_t begin, size_t size,
+                           simdjson::dom::element reply,
+                           std::string_view raw) = 0;
 
  private:
+  enum class Verdict : uint8_t {
+    Unknown,
+    Probing,
+    Content,
+    Request,
+  };
+
+  struct Batch {
+    size_t begin = 0;
+    size_t size = 0;
+    bool probe = false;
+  };
+
   void Queue(size_t begin, size_t size);
 
-  std::vector<std::pair<size_t, size_t>> _batches;
+  std::vector<Batch> _batches;
+  Verdict _verdict = Verdict::Unknown;
+  uint16_t _rejected = 0;
 };
+
+void RunWork(const AIExecution& exec, AIWork& work);
 
 class AIFunctionData : public duckdb::FunctionData {
  public:
-  virtual std::unique_ptr<AIWork> Start(duckdb::DataChunk& args) const = 0;
+  virtual std::unique_ptr<ScalarWork> Start(const AIExecution& exec,
+                                            duckdb::DataChunk& args) const = 0;
 
-  Endpoint endpoint;
+  EndpointRef endpoint;
 };
-
-class Fetch {
- public:
-  Fetch(duckdb::ClientContext& context, std::vector<const Endpoint*> endpoints,
-        std::counting_semaphore<>& permits)
-    : _context{context}, _endpoints{std::move(endpoints)}, _permits{permits} {}
-
-  void Add(AIRequest& request, size_t endpoint) {
-    _requests.emplace_back(&request, endpoint);
-  }
-
-  size_t Size() const noexcept { return _requests.size(); }
-
-  void Run();
-
-  void Rethrow();
-
- private:
-  duckdb::ClientContext& _context;
-  std::vector<const Endpoint*> _endpoints;
-  std::counting_semaphore<>& _permits;
-  std::vector<std::pair<AIRequest*, size_t>> _requests;
-  std::atomic_size_t _next = 0;
-  std::atomic_bool _stop = false;
-  absl::Mutex _mutex;
-  std::exception_ptr _error ABSL_GUARDED_BY(_mutex);
-};
-
-size_t MaxConcurrentRequests(duckdb::ClientContext& context);
-
-void RunWork(duckdb::ClientContext& context, Requester& requester,
-             const Endpoint& endpoint, AIWork& work);
 
 struct AILocalState final : public duckdb::FunctionLocalState {
-  AILocalState(duckdb::ClientContext& context, const AIFunctionData& bind);
+  AILocalState(duckdb::ClientContext& context, const EndpointRef& ref);
 
-  Requester requester;
+  AIExecution exec;
 };
 
 duckdb::ScalarFunction MakeAIFunction(std::string_view name,
@@ -295,12 +362,6 @@ duckdb::ScalarFunction MakeAIFunction(std::string_view name,
 
 void AddOption(duckdb::FunctionSignature& signature, std::string_view name,
                const duckdb::LogicalType& type);
-
-bool IsAIAggregate(const duckdb::BoundAggregateExpression& aggregate);
-
-duckdb::unique_ptr<duckdb::Expression> MakeAggregateReducer(
-  const duckdb::BoundAggregateExpression& aggregate,
-  duckdb::unique_ptr<duckdb::Expression> list);
 
 void RegisterEmbeddingFunctions(duckdb::ExtensionLoader& loader);
 

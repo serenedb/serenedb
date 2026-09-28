@@ -20,25 +20,21 @@
 
 #include <absl/algorithm/container.h>
 
-#include <duckdb/catalog/catalog.hpp>
-#include <duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp>
-#include <duckdb/function/function_binder.hpp>
+#include <algorithm>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
-#include <duckdb/optimizer/column_binding_replacer.hpp>
 #include <duckdb/optimizer/optimizer.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
 #include <duckdb/planner/binder.hpp>
-#include <duckdb/planner/expression/bound_aggregate_expression.hpp>
+#include <duckdb/planner/column_binding_map.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
-#include <duckdb/planner/operator/logical_aggregate.hpp>
-#include <duckdb/planner/operator/logical_filter.hpp>
-#include <iresearch/utils/assert.hpp>
+#include <duckdb/planner/operator/logical_projection.hpp>
+#include <duckdb/planner/operator/logical_top_n.hpp>
 #include <utility>
+#include <vector>
 
-#include "connector/functions/ai/ai_operator.h"
 #include "connector/functions/ai/common.h"
 
 namespace sdb::connector::ai {
@@ -60,219 +56,211 @@ bool HasAICall(const duckdb::Expression& expr) {
   return found;
 }
 
-bool IsConditional(const duckdb::Expression& expr) {
-  switch (expr.GetExpressionType()) {
-    case duckdb::ExpressionType::CASE_EXPR:
-    case duckdb::ExpressionType::OPERATOR_COALESCE:
-    case duckdb::ExpressionType::OPERATOR_TRY:
-    case duckdb::ExpressionType::CONJUNCTION_AND:
-    case duckdb::ExpressionType::CONJUNCTION_OR:
-      return true;
-    default:
-      return false;
+bool Deferrable(const duckdb::Expression& expr, bool& has_ai) {
+  if (IsAICall(expr)) {
+    has_ai = true;
+  } else if (expr.GetExpressionClass() ==
+               duckdb::ExpressionClass::BOUND_FUNCTION &&
+             expr.Cast<duckdb::BoundFunctionExpression>()
+                 .Function()
+                 .GetStability() == duckdb::FunctionStability::VOLATILE) {
+    return false;
+  } else if (expr.GetExpressionClass() ==
+               duckdb::ExpressionClass::BOUND_COLUMN_REF &&
+             expr.Cast<duckdb::BoundColumnRefExpression>().Depth() != 0) {
+    return false;
   }
+  bool ok = true;
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) {
+      ok = ok && Deferrable(child, has_ai);
+    });
+  return ok;
 }
 
-class Extractor {
- public:
-  explicit Extractor(duckdb::Binder& binder) : _binder{binder} {}
+bool IsRename(const duckdb::LogicalOperator& op) {
+  return op.type == duckdb::LogicalOperatorType::LOGICAL_PROJECTION &&
+         op.children[0]->type ==
+           duckdb::LogicalOperatorType::LOGICAL_PROJECTION &&
+         absl::c_all_of(op.expressions, [](const auto& expr) {
+           return expr->GetExpressionClass() ==
+                  duckdb::ExpressionClass::BOUND_COLUMN_REF;
+         });
+}
 
-  void Collect(duckdb::unique_ptr<duckdb::Expression>& expr) {
-    if (IsAICall(*expr)) {
-      const auto& children =
-        expr->Cast<duckdb::BoundFunctionExpression>().GetChildren();
-      if (absl::c_none_of(
-            children, [](const auto& child) { return HasAICall(*child); })) {
-        Replace(expr);
-        return;
+void Rebind(duckdb::unique_ptr<duckdb::Expression>& expr,
+            const duckdb::LogicalProjection& rename) {
+  duckdb::ExpressionIterator::VisitExpressionMutable<
+    duckdb::BoundColumnRefExpression>(
+    expr, [&](duckdb::BoundColumnRefExpression& ref, auto&) {
+      if (ref.Binding().table_index == rename.table_index) {
+        ref.BindingMutable() =
+          rename.expressions[ref.Binding().column_index.GetIndex()]
+            ->Cast<duckdb::BoundColumnRefExpression>()
+            .Binding();
       }
-    } else if (IsConditional(*expr)) {
-      return;
-    }
-    duckdb::ExpressionIterator::EnumerateChildren(
-      *expr,
-      [&](duckdb::unique_ptr<duckdb::Expression>& child) { Collect(child); });
-  }
-
-  bool Wrap(duckdb::unique_ptr<duckdb::LogicalOperator>& child) {
-    if (_calls.empty()) {
-      return false;
-    }
-    auto evaluate =
-      duckdb::make_uniq<LogicalAIEvaluate>(_table_index, std::move(_calls));
-    evaluate->children.push_back(std::move(child));
-    child = std::move(evaluate);
-    return true;
-  }
-
- private:
-  void Replace(duckdb::unique_ptr<duckdb::Expression>& expr) {
-    if (_calls.empty()) {
-      _table_index = _binder.GenerateTableIndex();
-    }
-    auto ref = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-      expr->GetAlias(), expr->GetReturnType(),
-      duckdb::ColumnBinding{_table_index,
-                            duckdb::ProjectionIndex{_calls.size()}});
-    _calls.push_back(std::move(expr));
-    expr = std::move(ref);
-  }
-
-  duckdb::Binder& _binder;
-  duckdb::TableIndex _table_index;
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> _calls;
-};
-
-bool ExtractCalls(duckdb::LogicalOperator& op, duckdb::Binder& binder) {
-  Extractor extractor{binder};
-  if (op.type == duckdb::LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
-    for (auto& group : op.Cast<duckdb::LogicalAggregate>().groups) {
-      extractor.Collect(group);
-    }
-  }
-  for (auto& expr : op.expressions) {
-    extractor.Collect(expr);
-  }
-  return extractor.Wrap(op.children[0]);
+    });
 }
 
-void EvaluateFilter(duckdb::LogicalFilter& filter, duckdb::Binder& binder) {
-  duckdb::LogicalFilter::SplitPredicates(filter.expressions);
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> kept;
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> below;
-  for (auto& expr : filter.expressions) {
-    (HasAICall(*expr) ? kept : below).push_back(std::move(expr));
+void DeferTopN(duckdb::unique_ptr<duckdb::LogicalOperator>& slot,
+               duckdb::Binder& binder) {
+  auto& topn = slot->Cast<duckdb::LogicalTopN>();
+  std::vector<duckdb::LogicalProjection*> renames;
+  auto* child = topn.children[0].get();
+  while (IsRename(*child)) {
+    renames.push_back(&child->Cast<duckdb::LogicalProjection>());
+    child = child->children[0].get();
   }
-  filter.expressions = std::move(kept);
-  if (filter.expressions.empty()) {
-    filter.expressions = std::move(below);
+  if (child->type != duckdb::LogicalOperatorType::LOGICAL_PROJECTION) {
     return;
   }
-  auto& child = filter.children[0];
-  const auto columns = child->GetColumnBindings().size();
-  if (!below.empty()) {
-    auto lower = duckdb::make_uniq<duckdb::LogicalFilter>();
-    lower->expressions = std::move(below);
-    lower->SetEstimatedCardinality(child->estimated_cardinality);
-    lower->children.push_back(std::move(child));
-    child = std::move(lower);
-  }
-  bool extracted = false;
-  while (ExtractCalls(filter, binder)) {
-    extracted = true;
-  }
-  if (extracted && filter.projection_map.empty()) {
-    for (auto index : duckdb::ProjectionIndex::GetIndexes(columns)) {
-      filter.projection_map.push_back(index);
+  auto& proj = child->Cast<duckdb::LogicalProjection>();
+
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> orders;
+  for (const auto& order : topn.orders) {
+    auto expr = order.expression->Copy();
+    for (const auto* rename : renames) {
+      Rebind(expr, *rename);
     }
+    orders.push_back(std::move(expr));
   }
-}
+  std::vector<bool> sorted(proj.expressions.size());
+  for (const auto& expr : orders) {
+    duckdb::ExpressionIterator::VisitExpression<
+      duckdb::BoundColumnRefExpression>(
+      *expr, [&](const duckdb::BoundColumnRefExpression& ref) {
+        if (ref.Binding().table_index == proj.table_index) {
+          sorted[ref.Binding().column_index.GetIndex()] = true;
+        }
+      });
+  }
+  std::vector<bool> moved(proj.expressions.size());
+  for (size_t i = 0; i != proj.expressions.size(); ++i) {
+    bool has_ai = false;
+    moved[i] = !sorted[i] && Deferrable(*proj.expressions[i], has_ai) && has_ai;
+  }
+  if (absl::c_none_of(moved, [](bool m) { return m; })) {
+    return;
+  }
 
-duckdb::unique_ptr<duckdb::BoundAggregateExpression> BindList(
-  duckdb::ClientContext& context, duckdb::BoundAggregateExpression& aggregate) {
-  auto& catalog = duckdb::Catalog::GetSystemCatalog(context);
-  auto& entry = catalog.GetEntry<duckdb::AggregateFunctionCatalogEntry>(
-    context, duckdb::QualifiedName(catalog.GetName(), DEFAULT_SCHEMA,
-                                   duckdb::Identifier{"list"}));
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> children;
-  children.push_back(std::move(aggregate.GetChildrenMutable()[0]));
-  duckdb::FunctionBinder binder{context};
-  duckdb::ErrorData error;
-  const auto best = binder.BindFunction(duckdb::Identifier{"list"},
-                                        entry.functions, children, {}, error);
-  SDB_ASSERT(best.IsValid());
-  auto list = binder.BindAggregateFunction(
-    entry.functions.GetFunctionByOffset(best.GetIndex()), std::move(children),
-    std::move(aggregate.GetFilterMutable()), aggregate.GetAggregateType());
-  list->GetOrderBysMutable() = std::move(aggregate.GetOrderBysMutable());
-  return list;
-}
-
-void RewriteAggregates(duckdb::unique_ptr<duckdb::LogicalOperator>& op,
-                       duckdb::LogicalOperator& root,
-                       duckdb::ClientContext& context, duckdb::Binder& binder) {
-  auto& aggregate = op->Cast<duckdb::LogicalAggregate>();
-  duckdb::TableIndex table_index;
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> reducers;
-  duckdb::ColumnBindingReplacer replacer;
-  for (size_t i = 0; i != aggregate.expressions.size(); ++i) {
-    auto& expr = aggregate.expressions[i];
-    if (expr->GetExpressionClass() !=
-          duckdb::ExpressionClass::BOUND_AGGREGATE ||
-        !IsAIAggregate(expr->Cast<duckdb::BoundAggregateExpression>())) {
+  const auto lower_index = binder.GenerateTableIndex();
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> lower;
+  std::vector<size_t> position(proj.expressions.size());
+  for (size_t i = 0; i != proj.expressions.size(); ++i) {
+    if (moved[i]) {
       continue;
     }
-    if (reducers.empty()) {
-      table_index = binder.GenerateTableIndex();
+    auto& expr = proj.expressions[i];
+    position[i] = lower.size();
+    auto ref = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+      expr->GetAlias(), expr->GetReturnType(),
+      duckdb::ColumnBinding{lower_index,
+                            duckdb::ProjectionIndex{lower.size()}});
+    lower.push_back(std::move(expr));
+    expr = std::move(ref);
+  }
+  duckdb::column_binding_map_t<size_t> passthrough;
+  for (size_t i = 0; i != proj.expressions.size(); ++i) {
+    if (!moved[i]) {
+      continue;
     }
-    auto& call = expr->Cast<duckdb::BoundAggregateExpression>();
-    auto list = BindList(context, call);
-    const duckdb::ColumnBinding binding{aggregate.aggregate_index,
-                                        duckdb::ProjectionIndex{i}};
-    replacer.replacement_bindings.emplace_back(
-      binding, duckdb::ColumnBinding{table_index,
-                                     duckdb::ProjectionIndex{reducers.size()}});
-    reducers.push_back(MakeAggregateReducer(
-      call, duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-              list->GetReturnType(), binding)));
-    expr = std::move(list);
-  }
-  if (reducers.empty()) {
-    return;
-  }
-  replacer.stop_operator = op.get();
-  replacer.VisitOperator(root);
-  auto evaluate =
-    duckdb::make_uniq<LogicalAIEvaluate>(table_index, std::move(reducers));
-  evaluate->children.push_back(std::move(op));
-  op = std::move(evaluate);
-}
-
-void Rewrite(duckdb::unique_ptr<duckdb::LogicalOperator>& op,
-             duckdb::LogicalOperator& root, duckdb::ClientContext& context,
-             duckdb::Binder& binder, bool under_limit) {
-  const auto type = op->type;
-  const bool streaming =
-    type == duckdb::LogicalOperatorType::LOGICAL_PROJECTION ||
-    type == duckdb::LogicalOperatorType::LOGICAL_FILTER;
-  for (auto& child : op->children) {
-    Rewrite(child, root, context, binder,
-            type == duckdb::LogicalOperatorType::LOGICAL_LIMIT ||
-              (under_limit && streaming));
-  }
-  switch (type) {
-    case duckdb::LogicalOperatorType::LOGICAL_PROJECTION:
-      if (!under_limit) {
-        while (ExtractCalls(*op, binder)) {
+    duckdb::ExpressionIterator::VisitExpressionMutable<
+      duckdb::BoundColumnRefExpression>(
+      proj.expressions[i], [&](duckdb::BoundColumnRefExpression& ref, auto&) {
+        const auto [it, inserted] =
+          passthrough.try_emplace(ref.Binding(), lower.size());
+        if (inserted) {
+          lower.push_back(duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+            ref.GetAlias(), ref.GetReturnType(), ref.Binding()));
         }
-      }
-      break;
-    case duckdb::LogicalOperatorType::LOGICAL_FILTER:
-      if (!under_limit) {
-        EvaluateFilter(op->Cast<duckdb::LogicalFilter>(), binder);
-      }
-      break;
-    case duckdb::LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY:
-      while (ExtractCalls(*op, binder)) {
-      }
-      RewriteAggregates(op, root, context, binder);
-      break;
-    default:
-      break;
+        ref.BindingMutable() = duckdb::ColumnBinding{
+          lower_index, duckdb::ProjectionIndex{it->second}};
+      });
+  }
+  for (size_t k = 0; k != orders.size(); ++k) {
+    duckdb::ExpressionIterator::VisitExpressionMutable<
+      duckdb::BoundColumnRefExpression>(
+      orders[k], [&](duckdb::BoundColumnRefExpression& ref, auto&) {
+        if (ref.Binding().table_index == proj.table_index) {
+          ref.BindingMutable() = duckdb::ColumnBinding{
+            lower_index, duckdb::ProjectionIndex{
+                           position[ref.Binding().column_index.GetIndex()]}};
+        }
+      });
+    topn.orders[k].expression = std::move(orders[k]);
+  }
+
+  auto chain = std::move(topn.children[0]);
+  auto upper =
+    renames.empty() ? std::move(chain) : std::move(renames.back()->children[0]);
+  auto low =
+    duckdb::make_uniq<duckdb::LogicalProjection>(lower_index, std::move(lower));
+  low->children.push_back(std::move(upper->children[0]));
+  if (low->children[0]->has_estimated_cardinality) {
+    low->SetEstimatedCardinality(low->children[0]->estimated_cardinality);
+  }
+  topn.children[0] = std::move(low);
+  topn.projection_map.clear();
+  if (topn.has_estimated_cardinality) {
+    upper->SetEstimatedCardinality(topn.estimated_cardinality);
+  }
+  upper->children[0] = std::move(slot);
+  if (renames.empty()) {
+    slot = std::move(upper);
+  } else {
+    renames.back()->children[0] = std::move(upper);
+    slot = std::move(chain);
+  }
+  slot->ResolveOperatorTypes();
+}
+
+void Defer(duckdb::unique_ptr<duckdb::LogicalOperator>& op,
+           duckdb::Binder& binder) {
+  for (auto& child : op->children) {
+    Defer(child, binder);
+  }
+  if (op->type == duckdb::LogicalOperatorType::LOGICAL_TOP_N) {
+    DeferTopN(op, binder);
   }
 }
 
-void OptimizeAICalls(duckdb::OptimizerExtensionInput& input,
-                     duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
-  Rewrite(plan, *plan, input.context, input.optimizer.binder, false);
+void DeferAICalls(duckdb::OptimizerExtensionInput& input,
+                  duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+  Defer(plan, input.optimizer.binder);
+}
+
+void FilterBeforeAICalls(duckdb::LogicalOperator& op) {
+  for (auto& child : op.children) {
+    FilterBeforeAICalls(*child);
+  }
+  if (op.type == duckdb::LogicalOperatorType::LOGICAL_FILTER &&
+      absl::c_any_of(op.expressions,
+                     [](const auto& expr) { return HasAICall(*expr); })) {
+    std::ranges::stable_partition(
+      op.expressions, [](const auto& expr) { return !expr->CanThrow(); });
+  }
+}
+
+void FilterBeforeAICalls(duckdb::OptimizerExtensionInput&,
+                         duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+  FilterBeforeAICalls(*plan);
 }
 
 }  // namespace
 
 void RegisterAIOptimizer(duckdb::DatabaseInstance& db) {
   duckdb::OptimizerExtension::Register(
-    db.config,
-    duckdb::OptimizerExtension{.optimize_function = &OptimizeAICalls});
+    db.config, duckdb::OptimizerExtension{
+                 .rule = &DeferAICalls,
+                 .anchor = duckdb::OptimizerType::TOP_N,
+                 .where = duckdb::OptimizerHookPosition::After,
+               });
+  duckdb::OptimizerExtension::Register(
+    db.config, duckdb::OptimizerExtension{
+                 .rule = &FilterBeforeAICalls,
+                 .anchor = duckdb::OptimizerType::REORDER_FILTER,
+                 .where = duckdb::OptimizerHookPosition::After,
+               });
 }
 
 }  // namespace sdb::connector::ai

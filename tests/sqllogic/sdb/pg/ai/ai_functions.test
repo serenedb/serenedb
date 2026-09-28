@@ -581,44 +581,101 @@ query
 EXPLAIN SELECT id, ai_generate(body) FROM ai_rows;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────╮
-│ Projections: id, #2   │
-│ ~3 rows               │
-╰───────────┬───────────╯
-╭─ AI_EVALUATE ─────────╮
-│ Calls: ai_generate    │
-│ ~3 rows               │
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: ai_rows        │
-│ Type: Sequential Scan │
-│ Projections: id, body │
-│ ~3 rows               │
-╰───────────────────────╯
+╭─ PROJECTION ─────────────────────────────────────╮
+│ Projections:                                     │
+│ id,                                              │
+│ ai_generate(body, NULL, NULL, NULL, NULL, NULL)  │
+│ ~3 rows                                          │
+╰─────────────────────────┬────────────────────────╯
+╭─ SEQ_SCAN ──────────────┴────────────────────────╮
+│ Table: ai_rows                                   │
+│ Type: Sequential Scan                            │
+│ Projections: id, body                            │
+│ ~3 rows                                          │
+╰──────────────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM ai_rows WHERE body <> 'c' AND ai_filter(body, 'x');
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────╮
-│ Projections: #1            │
-│ ~1 row                     │
-╰──────────────┬─────────────╯
-╭─ FILTER ─────┴─────────────╮
-│ Expression: #2             │
-│ ~1 row                     │
-╰──────────────┬─────────────╯
-╭─ AI_EVALUATE ┴─────────────╮
-│ Calls: ai_filter           │
-│ ~1 row                     │
-╰──────────────┬─────────────╯
-╭─ SEQ_SCAN ───┴─────────────╮
-│ Table: ai_rows             │
-│ Type: Sequential Scan      │
-│ Projections: body, id      │
-│ Column Filter: body != 'c' │
-│ ~1 row                     │
-╰────────────────────────────╯
+╭─ PROJECTION ─────────────────────────────────╮
+│ Projections: #1                              │
+│ ~1 row                                       │
+╰───────────────────────┬──────────────────────╯
+╭─ FILTER ──────────────┴──────────────────────╮
+│ Expression:                                  │
+│ ai_filter(body, 'x', NULL, NULL, NULL, NULL) │
+│ ~1 row                                       │
+╰───────────────────────┬──────────────────────╯
+╭─ SEQ_SCAN ────────────┴──────────────────────╮
+│ Table: ai_rows                               │
+│ Type: Sequential Scan                        │
+│ Projections: body, id                        │
+│ Column Filter: body != 'c'                   │
+│ ~1 row                                       │
+╰──────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id, ai_generate(body) FROM ai_rows ORDER BY id LIMIT 2;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────╮
+│ Projections:                                     │
+│ id,                                              │
+│ ai_generate(body, NULL, NULL, NULL, NULL, NULL)  │
+│ ~2 rows                                          │
+╰─────────────────────────┬────────────────────────╯
+╭─ PROJECTION ────────────┴────────────────────────╮
+│ Projections:                                     │
+│ CAST(#0 AS INTEGER),                             │
+│ __internal_decompress_string(#1)                 │
+│ ~3 rows                                          │
+╰─────────────────────────┬────────────────────────╯
+╭─ ORDER_BY ──────────────┴────────────────────────╮
+│ Order By: ai_rows.id ASC                         │
+│ ~3 rows                                          │
+╰─────────────────────────┬────────────────────────╯
+╭─ PROJECTION ────────────┴────────────────────────╮
+│ Projections:                                     │
+│ CAST(#0 AS TINYINT),                             │
+│ __internal_compress_string_utinyint(#1)          │
+│ ~3 rows                                          │
+╰─────────────────────────┬────────────────────────╯
+╭─ PROJECTION ────────────┴────────────────────────╮
+│ Projections: id, body                            │
+│ ~3 rows                                          │
+╰─────────────────────────┬────────────────────────╯
+╭─ HASH_JOIN ─────────────┴────────────────────────╮
+│ Join Type: SEMI                                  │
+│ Conditions: rowid = rowid                        │
+│ ~3 rows                                          │
+╰─────────────────────────┬────────────────────────╯
+                          ├─────────────────────────────────────────────╮
+╭─ SEQ_SCAN ──────────────┴────────────────────────╮  ╭─ PROJECTION ────┴─────────────────╮
+│ Table: ai_rows                                   │  │ Projections: CAST(#0 AS TINYINT), │
+│ Type: Sequential Scan                            │  │              #1                   │
+│ Projections: id, body                            │  │ ~2 rows                           │
+│ ~3 rows                                          │  ╰─────────────────┬─────────────────╯
+╰──────────────────────────────────────────────────╯  ╭─ TOP_N ─────────┴─────────────────╮
+                                                      │ Top: 2                            │
+                                                      │ Order By: ai_rows.id ASC          │
+                                                      │ ~2 rows                           │
+                                                      ╰─────────────────┬─────────────────╯
+                                                      ╭─ SEQ_SCAN ──────┴─────────────────╮
+                                                      │ Table: ai_rows                    │
+                                                      │ Type: Sequential Scan             │
+                                                      │ Projections: id                   │
+                                                      │ Column Filter:                    │
+                                                      │ optional: Dynamic Filter (id < ?) │
+                                                      │ ~3 rows                           │
+                                                      ╰───────────────────────────────────╯
+
+query
+SELECT id, ai_generate(body) IS NULL AS g FROM ai_rows ORDER BY id LIMIT 2;
+----
+id	g
+1	t
+2	t
 
 query
 EXPLAIN SELECT id, CASE WHEN id = 1 THEN ai_generate(body) END FROM ai_rows;
@@ -641,21 +698,13 @@ query
 EXPLAIN SELECT ai_agg(body, 'q') FROM ai_rows;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────╮
-│ Projections: ai_agg(body) │
-│ ~1 row                    │
-╰─────────────┬─────────────╯
-╭─ AI_EVALUATE ─────────────╮
-│ Calls: ai_agg             │
-│ ~1 row                    │
-╰─────────────┬─────────────╯
-╭─ UNGROUPED_AGGREGATE ─────╮
-│ Aggregates: list(#0)      │
-│ ~1 row                    │
-╰─────────────┬─────────────╯
-╭─ SEQ_SCAN ──┴─────────────╮
-│ Table: ai_rows            │
-│ Type: Sequential Scan     │
-│ Projections: body         │
-│ ~3 rows                   │
-╰───────────────────────────╯
+╭─ UNGROUPED_AGGREGATE ──╮
+│ Aggregates: ai_agg(#0) │
+│ ~1 row                 │
+╰────────────┬───────────╯
+╭─ SEQ_SCAN ─┴───────────╮
+│ Table: ai_rows         │
+│ Type: Sequential Scan  │
+│ Projections: body      │
+│ ~3 rows                │
+╰────────────────────────╯

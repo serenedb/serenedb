@@ -493,54 +493,6 @@ FROM reviews;
 summarized
 t
 
-# DOCS_TEST: explain
-
-# DOCS_TEST_RAW
-#| EXPLAIN SELECT id, ai_classify(body, ['positive', 'negative'],
-#|                                secret_name := 'local_chat') AS sentiment
-#| FROM reviews;
-#| ----
-#| QUERY PLAN
-#| ╭─ PROJECTION ────────────╮
-#| │ Projections: id,        │
-#| │              sentiment  │
-#| │ ~4 rows                 │
-#| ╰────────────┬────────────╯
-#| ╭─ AI_EVALUATE ───────────╮
-#| │ Calls: ai_classify      │
-#| │ ~4 rows                 │
-#| ╰────────────┬────────────╯
-#| ╭─ SEQ_SCAN ─┴────────────╮
-#| │ Table: reviews          │
-#| │ Type: Sequential Scan   │
-#| │ Projections: id, body   │
-#| │ ~4 rows                 │
-#| ╰─────────────────────────╯
-
-# DOCS_TEST_BODY
-
-query
-EXPLAIN SELECT id, ai_classify(body, ['positive', 'negative'],
-                               secret_name := 'local_chat_${__DATABASE__}') AS sentiment
-FROM reviews;
-----
-QUERY PLAN
-╭─ PROJECTION ────────────╮
-│ Projections: id,        │
-│              sentiment  │
-│ ~4 rows                 │
-╰────────────┬────────────╯
-╭─ AI_EVALUATE ───────────╮
-│ Calls: ai_classify      │
-│ ~4 rows                 │
-╰────────────┬────────────╯
-╭─ SEQ_SCAN ─┴────────────╮
-│ Table: reviews          │
-│ Type: Sequential Scan   │
-│ Projections: id, body   │
-│ ~4 rows                 │
-╰─────────────────────────╯
-
 # DOCS_TEST: default_secret
 
 # DOCS_TEST_RAW

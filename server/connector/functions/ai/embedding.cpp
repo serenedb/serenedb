@@ -37,21 +37,18 @@
 #include <vector>
 
 #include "connector/functions/ai/common.h"
-#include "query/config.h"
 
 namespace sdb::connector::ai {
 namespace {
 
 using Embeddings = std::vector<std::vector<float>>;
 
-constinit SettingRef gEmbeddingBatch{"sdb_ai_embedding_max_batch_size"};
-
 struct EmbeddingBindData final : public AIFunctionData {
   uint32_t dimensions = 0;
-  uint32_t max_batch = 0;
   bool similarity = false;
 
-  std::unique_ptr<AIWork> Start(duckdb::DataChunk& args) const final;
+  std::unique_ptr<ScalarWork> Start(const AIExecution& exec,
+                                    duckdb::DataChunk& args) const final;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<EmbeddingBindData>(*this);
@@ -60,27 +57,23 @@ struct EmbeddingBindData final : public AIFunctionData {
   bool Equals(const duckdb::FunctionData& other) const final {
     const auto& o = other.Cast<EmbeddingBindData>();
     return endpoint == o.endpoint && dimensions == o.dimensions &&
-           max_batch == o.max_batch && similarity == o.similarity;
+           similarity == o.similarity;
   }
 };
 
-Embeddings ParseEmbeddings(const EmbeddingBindData& bind, std::string_view body,
+Embeddings ParseEmbeddings(const EmbeddingBindData& bind,
+                           simdjson::dom::element reply, std::string_view raw,
                            size_t expected) {
   const std::string_view fn = bind.endpoint.fn;
-  simdjson::dom::parser parser;
-  simdjson::dom::element doc;
-  if (parser.parse(body.data(), body.size()).get(doc) != simdjson::SUCCESS) {
-    ThrowBadReply(fn, "response is not valid JSON", body);
-  }
   simdjson::dom::array data;
-  if (doc["data"].get_array().get(data) != simdjson::SUCCESS) {
-    ThrowBadReply(fn, "response has no 'data' array", body);
+  if (reply["data"].get_array().get(data) != simdjson::SUCCESS) {
+    ThrowBadReply(fn, "response has no 'data' array", raw);
   }
   if (data.size() != expected) {
     ThrowBadReply(fn,
                   absl::StrCat("response has ", data.size(),
                                " embeddings, expected ", expected),
-                  body);
+                  raw);
   }
 
   Embeddings embeddings(expected);
@@ -93,7 +86,7 @@ Embeddings ParseEmbeddings(const EmbeddingBindData& bind, std::string_view body,
       ThrowBadReply(fn,
                     absl::StrCat("response 'data[", position - 1, "].index' ",
                                  index, " is out of range or repeated"),
-                    body);
+                    raw);
     }
     seen[index] = true;
     simdjson::dom::array values;
@@ -101,7 +94,7 @@ Embeddings ParseEmbeddings(const EmbeddingBindData& bind, std::string_view body,
       ThrowBadReply(fn,
                     absl::StrCat("response 'data[", position - 1,
                                  "].embedding' is not an array"),
-                    body);
+                    raw);
     }
     if (values.size() == 0 ||
         (bind.dimensions != 0 && values.size() != bind.dimensions)) {
@@ -111,14 +104,14 @@ Embeddings ParseEmbeddings(const EmbeddingBindData& bind, std::string_view body,
           "response 'data[", position - 1, "].embedding' has ", values.size(),
           " values, expected ",
           bind.dimensions == 0 ? "at least 1" : absl::StrCat(bind.dimensions)),
-        body);
+        raw);
     }
     auto& embedding = embeddings[index];
     embedding.reserve(values.size());
     for (auto val : values) {
       double d = 0.0;
       if (val.get_double().get(d) != simdjson::SUCCESS) {
-        ThrowBadReply(fn, "embedding contains a non-numeric value", body);
+        ThrowBadReply(fn, "embedding contains a non-numeric value", raw);
       }
       embedding.push_back(static_cast<float>(d));
     }
@@ -126,16 +119,16 @@ Embeddings ParseEmbeddings(const EmbeddingBindData& bind, std::string_view body,
   return embeddings;
 }
 
-std::string BuildBody(const EmbeddingBindData& bind,
+std::string BuildBody(const EmbeddingBindData& bind, std::string_view model,
                       std::span<const std::string_view> texts) {
-  size_t total = 64 + bind.endpoint.model.size();
+  size_t total = 64 + model.size();
   for (const auto text : texts) {
     total += text.size() + 4;
   }
   simdjson::builder::string_builder builder(total);
   builder.start_object();
   builder.append_raw("\"model\":");
-  builder.escape_and_append_with_quotes(bind.endpoint.model);
+  builder.escape_and_append_with_quotes(model);
   if (bind.dimensions != 0) {
     builder.append_comma();
     builder.append_raw("\"dimensions\":");
@@ -157,15 +150,16 @@ std::string BuildBody(const EmbeddingBindData& bind,
 
 class EmbeddingWork : public BatchWork {
  public:
-  EmbeddingWork(const EmbeddingBindData& bind, duckdb::Vector texts,
-                duckdb::idx_t count)
+  EmbeddingWork(const EmbeddingBindData& bind, const AIExecution& exec,
+                duckdb::Vector texts, duckdb::idx_t count)
     : _bind{bind},
+      _model{exec.target.endpoint.model},
       _texts{std::move(texts)},
       _count{count},
       _inputs{CollectInputs(_texts, count, true, true)},
       _embeddings(_inputs.texts.size()) {
-    SDB_ASSERT(_bind.max_batch != 0);
-    QueueBatches(_inputs.texts.size(), _bind.max_batch);
+    SDB_ASSERT(exec.query.settings.embedding_batch != 0);
+    QueueBatches(_inputs.texts.size(), exec.query.settings.embedding_batch);
   }
 
   void Finish(duckdb::Vector& result) override {
@@ -209,19 +203,24 @@ class EmbeddingWork : public BatchWork {
   }
 
  private:
-  std::string Body(size_t begin, size_t size) const final {
-    return BuildBody(_bind, std::span{_inputs.texts}.subspan(begin, size));
+  std::string BatchBody(size_t begin, size_t size) const final {
+    return BuildBody(_bind, _model,
+                     std::span{_inputs.texts}.subspan(begin, size));
   }
 
-  void Parse(Requester& requester, Response response, size_t begin,
-             size_t size) final {
-    if (const auto body = requester.Accept(std::move(response))) {
-      std::ranges::move(ParseEmbeddings(_bind, *body, size),
-                        _embeddings.begin() + begin);
-    }
+  std::string ProbeBody() const final {
+    const std::string_view probe[] = {"x"};
+    return BuildBody(_bind, _model, probe);
+  }
+
+  void DecodeBatch(size_t begin, size_t size, simdjson::dom::element reply,
+                   std::string_view raw) final {
+    std::ranges::move(ParseEmbeddings(_bind, reply, raw, size),
+                      _embeddings.begin() + begin);
   }
 
   const EmbeddingBindData& _bind;
+  std::string_view _model;
   duckdb::Vector _texts;
   duckdb::idx_t _count;
   Inputs _inputs;
@@ -230,8 +229,10 @@ class EmbeddingWork : public BatchWork {
 
 class SimilarityWork final : public EmbeddingWork {
  public:
-  SimilarityWork(const EmbeddingBindData& bind, duckdb::DataChunk& args)
-    : EmbeddingWork{bind, Pairs(args), 2 * args.size()}, _pairs{args.size()} {}
+  SimilarityWork(const EmbeddingBindData& bind, const AIExecution& exec,
+                 duckdb::DataChunk& args)
+    : EmbeddingWork{bind, exec, Pairs(args), 2 * args.size()},
+      _pairs{args.size()} {}
 
   void Finish(duckdb::Vector& result) final {
     result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
@@ -288,13 +289,13 @@ class SimilarityWork final : public EmbeddingWork {
   duckdb::idx_t _pairs;
 };
 
-std::unique_ptr<AIWork> EmbeddingBindData::Start(
-  duckdb::DataChunk& args) const {
+std::unique_ptr<ScalarWork> EmbeddingBindData::Start(
+  const AIExecution& exec, duckdb::DataChunk& args) const {
   if (similarity) {
-    return std::make_unique<SimilarityWork>(*this, args);
+    return std::make_unique<SimilarityWork>(*this, exec, args);
   }
   return std::make_unique<EmbeddingWork>(
-    *this, duckdb::Vector::Ref(args.data[0]), args.size());
+    *this, exec, duckdb::Vector::Ref(args.data[0]), args.size());
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> EmbeddingBind(
@@ -302,17 +303,21 @@ duckdb::unique_ptr<duckdb::FunctionData> EmbeddingBind(
   auto& context = input.GetClientContext();
   const auto fn = input.GetBoundFunction().GetName().GetIdentifierName();
   const auto options = std::span{input.GetArguments()}.last(3);
-  const auto model = FoldString(context, *options[0], fn, "model");
+  auto model = FoldString(context, *options[0], fn, "model");
   if (!model) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(fn, ": \"model\" must not be NULL"));
   }
-  const auto secret_name = FoldString(context, *options[1], fn, "secret_name");
   const auto dimensions = FoldArgument(context, *options[2], fn, "dimensions");
 
   auto bind = duckdb::make_uniq<EmbeddingBindData>();
-  bind->endpoint = LoadEndpoint(context, fn, secret_name, kEmbeddingApi);
-  bind->endpoint.model = *model;
+  bind->endpoint = {
+    .fn = fn,
+    .api = &kEmbeddingApi,
+    .secret_name = FoldString(context, *options[1], fn, "secret_name"),
+    .model = std::move(model),
+  };
+  LoadEndpoint(context, bind->endpoint);
   bind->similarity = fn == "ai_similarity";
   if (dimensions) {
     const auto n = dimensions->GetValue<int32_t>();
@@ -323,8 +328,6 @@ duckdb::unique_ptr<duckdb::FunctionData> EmbeddingBind(
     }
     bind->dimensions = static_cast<uint32_t>(n);
   }
-  bind->max_batch = gEmbeddingBatch.Int(context);
-  RebindEachExecution(input);
   return bind;
 }
 

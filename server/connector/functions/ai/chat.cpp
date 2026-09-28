@@ -49,22 +49,17 @@ void AddChatOptions(duckdb::FunctionSignature& signature) {
 
 ChatConfig BindChat(duckdb::ClientContext& context, std::string_view fn,
                     std::span<duckdb::unique_ptr<duckdb::Expression>> options,
-                    double default_temperature, Endpoint& endpoint) {
-  const auto model = FoldString(context, *options[0], fn, "model");
-  const auto secret_name = FoldString(context, *options[1], fn, "secret_name");
+                    double default_temperature, EndpointRef& endpoint) {
+  endpoint = {
+    .fn = std::string{fn},
+    .api = &kChatApi,
+    .secret_name = FoldString(context, *options[1], fn, "secret_name"),
+    .model = FoldString(context, *options[0], fn, "model"),
+  };
   const auto temperature =
     FoldArgument(context, *options[2], fn, "temperature");
   const auto max_tokens = FoldArgument(context, *options[3], fn, "max_tokens");
-  endpoint = LoadEndpoint(context, fn, secret_name, kChatApi);
-  if (model) {
-    endpoint.model = *model;
-  }
-  if (endpoint.model.empty()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(fn, ": no model given"),
-                    ERR_HINT("Pass model := '<name>' or set the secret's "
-                             "model option."));
-  }
+  LoadEndpoint(context, endpoint);
   ChatConfig chat{
     .temperature =
       temperature ? temperature->GetValue<double>() : default_temperature,
@@ -133,20 +128,11 @@ std::string BuildChatBody(const ChatTemplate& chat, std::string_view user) {
   return std::string{builder.view().value()};
 }
 
-std::optional<std::string> Chat(Requester& requester, std::string_view fn,
-                                Response response, int32_t max_tokens) {
-  const auto body = requester.Accept(std::move(response));
-  if (!body) {
-    return std::nullopt;
-  }
-  simdjson::dom::parser parser;
-  simdjson::dom::element doc;
-  if (parser.parse(*body).get(doc) != simdjson::SUCCESS) {
-    ThrowBadReply(fn, "chat completion response is not valid JSON", *body);
-  }
+std::string Chat(std::string_view fn, simdjson::dom::element reply,
+                 std::string_view raw, int32_t max_tokens) {
   simdjson::dom::element choice;
-  if (doc["choices"].at(0).get(choice) != simdjson::SUCCESS) {
-    ThrowBadReply(fn, "chat completion response has no 'choices'", *body);
+  if (reply["choices"].at(0).get(choice) != simdjson::SUCCESS) {
+    ThrowBadReply(fn, "chat completion response has no 'choices'", raw);
   }
   std::string_view content;
   std::ignore = choice["message"]["content"].get(content);

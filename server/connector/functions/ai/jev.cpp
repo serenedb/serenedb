@@ -325,7 +325,8 @@ struct JevBindData final : public AIFunctionData {
   bool multi = false;
   size_t batch_size = 1;
 
-  std::unique_ptr<AIWork> Start(duckdb::DataChunk& args) const final;
+  std::unique_ptr<ScalarWork> Start(const AIExecution& exec,
+                                    duckdb::DataChunk& args) const final;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<JevBindData>(*this);
@@ -348,10 +349,14 @@ duckdb::unique_ptr<duckdb::FunctionData> JevBind(
   const auto score = FoldArgument(context, *args[4], kFn, "score");
   const auto questions = FoldArgument(context, *args[5], kFn, "questions");
   const auto batch_size = FoldArgument(context, *args[6], kFn, "batch_size");
-  const auto model = FoldString(context, *args[7], kFn, "model");
-  const auto secret_name = FoldString(context, *args[8], kFn, "secret_name");
 
   auto bind = duckdb::make_uniq<JevBindData>();
+  bind->endpoint = {
+    .fn = std::string{kFn},
+    .api = &kJevApi,
+    .secret_name = FoldString(context, *args[8], kFn, "secret_name"),
+    .model = FoldString(context, *args[7], kFn, "model"),
+  };
   const auto kinds =
     int{noul.has_value()} + int{choice.has_value()} + int{score.has_value()};
   if (questions) {
@@ -394,11 +399,7 @@ duckdb::unique_ptr<duckdb::FunctionData> JevBind(
     bind->type = AnswerType(type);
   }
 
-  bind->endpoint = LoadEndpoint(context, kFn, secret_name, kJevApi);
-  if (model) {
-    bind->endpoint.model = *model;
-  }
-  RebindEachExecution(input);
+  LoadEndpoint(context, bind->endpoint);
   input.GetBoundFunction().SetReturnType(bind->type);
   return bind;
 }
@@ -421,16 +422,16 @@ void AppendQuestion(simdjson::builder::string_builder& builder,
   builder.end_object();
 }
 
-std::string BuildBody(const JevBindData& bind,
+std::string BuildBody(const JevBindData& bind, std::string_view model,
                       std::span<const std::string_view> states) {
-  size_t total = 256 + bind.endpoint.model.size();
+  size_t total = 256 + model.size();
   for (const auto state : states) {
     total += state.size() + 256;
   }
   simdjson::builder::string_builder builder(total);
   builder.start_object();
   builder.append_raw("\"model\":");
-  builder.escape_and_append_with_quotes(bind.endpoint.model);
+  builder.escape_and_append_with_quotes(model);
   builder.append_comma();
   builder.append_raw("\"state\":");
   if (states.size() == 1) {
@@ -563,42 +564,34 @@ duckdb::Value ParseAnswer(const Question& question,
      duckdb::Value::DOUBLE(confidence)});
 }
 
-void ParseBatch(const JevBindData& bind, Requester& requester,
-                Response response, std::span<const std::string_view> states,
+void ParseBatch(const JevBindData& bind, simdjson::dom::element reply,
+                std::string_view raw, size_t states,
                 std::span<duckdb::Value> outputs) {
-  const auto body = requester.Accept(std::move(response));
-  if (!body) {
-    return;
-  }
-  simdjson::dom::parser parser;
-  simdjson::dom::element doc;
-  if (parser.parse(*body).get(doc) != simdjson::SUCCESS) {
-    ThrowBadReply(kFn, "response is not valid JSON", *body);
-  }
   simdjson::dom::element answers;
-  if (doc["answers"].get(answers) != simdjson::SUCCESS) {
-    ThrowBadReply(kFn, "response has no \"answers\"", *body);
+  if (reply["answers"].get(answers) != simdjson::SUCCESS) {
+    ThrowBadReply(kFn, "response has no \"answers\"", raw);
   }
-  for (size_t k = 0; k != states.size(); ++k) {
+  for (size_t k = 0; k != states; ++k) {
     if (bind.multi) {
       std::vector<duckdb::Value> fields;
       fields.reserve(bind.questions.size());
       for (const auto& question : bind.questions) {
-        fields.push_back(ParseAnswer(question, answers, question.key, *body));
+        fields.push_back(ParseAnswer(question, answers, question.key, raw));
       }
       outputs[k] = duckdb::Value::STRUCT(bind.type, std::move(fields));
     } else {
-      outputs[k] =
-        ParseAnswer(bind.questions.front(), answers,
-                    states.size() == 1 ? kSingleKey : RowKey(k), *body);
+      outputs[k] = ParseAnswer(bind.questions.front(), answers,
+                               states == 1 ? kSingleKey : RowKey(k), raw);
     }
   }
 }
 
 class JevWork final : public BatchWork {
  public:
-  JevWork(const JevBindData& bind, duckdb::DataChunk& args)
+  JevWork(const JevBindData& bind, const AIExecution& exec,
+          duckdb::DataChunk& args)
     : _bind{bind},
+      _model{exec.target.endpoint.model},
       _inputs{CollectInputs(args.data[0], args.size(), true, false)},
       _outputs(_inputs.texts.size()) {
     QueueBatches(_inputs.texts.size(), bind.batch_size);
@@ -609,24 +602,31 @@ class JevWork final : public BatchWork {
   }
 
  private:
-  std::string Body(size_t begin, size_t size) const final {
-    return BuildBody(_bind, std::span{_inputs.texts}.subspan(begin, size));
+  std::string BatchBody(size_t begin, size_t size) const final {
+    return BuildBody(_bind, _model,
+                     std::span{_inputs.texts}.subspan(begin, size));
   }
 
-  void Parse(Requester& requester, Response response, size_t begin,
-             size_t size) final {
-    ParseBatch(_bind, requester, std::move(response),
-               std::span{_inputs.texts}.subspan(begin, size),
+  std::string ProbeBody() const final {
+    const std::string_view probe[] = {"x"};
+    return BuildBody(_bind, _model, probe);
+  }
+
+  void DecodeBatch(size_t begin, size_t size, simdjson::dom::element reply,
+                   std::string_view raw) final {
+    ParseBatch(_bind, reply, raw, size,
                std::span{_outputs}.subspan(begin, size));
   }
 
   const JevBindData& _bind;
+  std::string_view _model;
   Inputs _inputs;
   std::vector<duckdb::Value> _outputs;
 };
 
-std::unique_ptr<AIWork> JevBindData::Start(duckdb::DataChunk& args) const {
-  return std::make_unique<JevWork>(*this, args);
+std::unique_ptr<ScalarWork> JevBindData::Start(const AIExecution& exec,
+                                               duckdb::DataChunk& args) const {
+  return std::make_unique<JevWork>(*this, exec, args);
 }
 
 }  // namespace

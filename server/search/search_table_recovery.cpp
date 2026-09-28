@@ -201,12 +201,6 @@ void RunSearchTableRecovery() {
       ctx.delete_sink->FinishImpl();
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
-    // TRUNCATE wipes the shard as of `tick`. Clear rolls back the open trx
-    // (discarding any pre-truncate replayed inserts -- superseded by the
-    // truncate) and drops on-disk published data <= tick; drop the sinks first
-    // so nothing pins the trx, then start a fresh trx. Post-truncate ops (in
-    // later records) lazily rebuild the sinks via ensure_ctx; if the truncate
-    // is last, Finalize commits the empty trx so the cleared state publishes.
     auto replay_truncate = [&](uint64_t tick, duckdb::idx_t table_id) {
       auto& ctx = ensure_ctx(table_id);
       ctx.trx.Remove(std::make_shared<irs::All>());

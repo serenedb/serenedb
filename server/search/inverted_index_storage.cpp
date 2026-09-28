@@ -56,8 +56,10 @@
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "query/transaction.h"
+#include "scheduler/background_scheduler.h"
 #include "search/scorer_options.h"
 #include "search/tick_domain.h"
+#include "server/utils/lifecycle.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
@@ -281,20 +283,27 @@ InvertedIndexStorage::InvertedIndexStorage(
 
 void RemoveDroppedStorageDir(const std::filesystem::path& path,
                              size_t parent_levels) {
-  std::error_code ec;
-  std::filesystem::remove_all(path, ec);
-  if (ec) {
-    SDB_WARN(GENERAL, "could not remove dropped storage '", path.string(),
-             "': ", ec.message());
-    return;
-  }
-  auto parent = path;
-  for (size_t level = 0; level < parent_levels; ++level) {
-    parent = parent.parent_path();
-    if (!std::filesystem::remove(parent, ec) || ec) {
+  auto remove = [path, parent_levels] {
+    std::error_code ec;
+    std::filesystem::remove_all(path, ec);
+    if (ec) {
+      SDB_WARN(GENERAL, "could not remove dropped storage '", path.string(),
+               "': ", ec.message());
       return;
     }
+    auto parent = path;
+    for (size_t level = 0; level < parent_levels; ++level) {
+      parent = parent.parent_path();
+      if (!std::filesystem::remove(parent, ec) || ec) {
+        return;
+      }
+    }
+  };
+  if (lifecycle::IsStopping() || BackgroundScheduler::instance().IsStopping()) {
+    remove();
+    return;
   }
+  BackgroundScheduler::instance().Run(std::move(remove)).Detach();
 }
 
 InvertedIndexStorage::~InvertedIndexStorage() {
@@ -374,7 +383,7 @@ void InvertedIndexStorage::CheckpointRefresh() {
                               /*for_checkpoint=*/true);
 }
 
-InvertedIndexStorage::Stats InvertedIndexStorage::UpdateStatsUnsafe(
+StoreStats InvertedIndexStorage::UpdateStatsUnsafe(
   InvertedIndexSnapshotPtr inverted_index_snapshot) const {
   auto stats = StoreStats::FromReader(inverted_index_snapshot->reader);
   stats.numBufferedDocs = _writer->BufferedDocs();

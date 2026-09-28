@@ -494,8 +494,7 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
       const uint64_t tick = c.Read<uint64_t>();
       max_tick = std::max(max_tick, tick);
       VisitSectionsOps(c, scratch, [&](uint64_t table_id, ParsedOp& op) {
-        const duckdb::idx_t tid{table_id};
-        const bool live = exists_of(tid) && tick > committed_of(tid);
+        const bool live = exists_of(table_id) && tick > committed_of(table_id);
         switch (op.kind) {
           case kKindInline: {
             if (!live) {
@@ -518,7 +517,7 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
             deser.End();
             VisitInlineSegments(
               *cdc, segments, [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
-                insert_cb(tick, tid, pk_base, chunk);
+                insert_cb(tick, table_id, pk_base, chunk);
               });
             break;
           }
@@ -527,18 +526,18 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
               // In manifest order, so the host can place each segment
               // relative to the deletes it has replayed so far.
               for (const auto& ref : op.segments) {
-                adopt_cb(tick, tid, ref);
+                adopt_cb(tick, table_id, ref);
               }
             }
             break;
           case kKindDelete:
             if (live) {
-              delete_cb(tick, tid, op.delete_pks);
+              delete_cb(tick, table_id, op.delete_pks);
             }
             break;
           case kKindTruncate:
             if (live) {
-              truncate_cb(tick, tid);
+              truncate_cb(tick, table_id);
             }
             break;
         }

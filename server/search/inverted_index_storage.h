@@ -92,8 +92,6 @@ void RemoveDroppedStorageDir(const std::filesystem::path& path,
 class InvertedIndexStorage final
   : public std::enable_shared_from_this<InvertedIndexStorage> {
  public:
-  using Stats = StoreStats;
-
   InvertedIndexStorage(duckdb::idx_t db_id, duckdb::idx_t schema_id,
                        duckdb::idx_t table_id, duckdb::idx_t index_id,
                        const catalog::InvertedIndexSettings& options,
@@ -182,7 +180,7 @@ class InvertedIndexStorage final
                                bool for_checkpoint = false);
 
   ResultWithTime CleanupUnsafe();
-  Stats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
+  StoreStats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
 
   void Refresh(const irs::ProgressReportCallback& progress = nullptr);
   // Refresh driven by the checkpoint barrier: the store WAL is about to be
@@ -195,7 +193,7 @@ class InvertedIndexStorage final
   // The database whose attachment holds this index's catalog entry.
   duckdb::idx_t GetDatabaseId() const noexcept { return _db_id; }
 
-  Stats GetStats() const {
+  StoreStats GetStats() const {
     return UpdateStatsUnsafe(GetInvertedIndexSnapshot());
   }
 

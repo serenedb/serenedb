@@ -153,6 +153,9 @@ statement error
 ALTER TABLE lina ADD PRIMARY KEY (a);
 ----
 db error: ERROR: Cannot alter entry "lina" because there are entries that depend on it.
+index "lina_a" depends on table "lina".
+index "lina_c" depends on table "lina".
+Drop the dependent entries first and recreate them after the change.
 
 
 statement ok

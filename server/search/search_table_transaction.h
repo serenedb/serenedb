@@ -52,7 +52,7 @@ struct SearchShardWrites {
 // commit logic.
 class SearchTableTransaction {
  public:
-  ~SearchTableTransaction() { ReleaseWriters(); }
+  ~SearchTableTransaction();
 
   // Registers this transaction as a writer of `shard`, once, before anything
   // reads the shard's index config -- so a rebuild that publishes a config can
@@ -74,8 +74,10 @@ class SearchTableTransaction {
     const std::shared_ptr<SearchTable>& shard,
     std::unique_ptr<irs::IndexWriter::Transaction> trx);
 
-  void AddReferences(const std::shared_ptr<SearchTable>& shard,
-                     std::vector<SearchDbWal::PendingChunk>&& chunks);
+  // The segments a bulk statement flushed + fsynced, for the WAL to reference
+  // instead of a second copy of the rows.
+  void AddSegments(const std::shared_ptr<SearchTable>& shard,
+                   std::vector<SearchDbWal::SegmentRef>&& segments);
 
   irs::IndexWriter::Transaction& EnsureSerialSearchTransaction(
     const std::shared_ptr<SearchTable>& shard,
@@ -125,6 +127,8 @@ class SearchTableTransaction {
   // record tick (the band top) -- the tick every shard's last trx commits at.
   uint64_t AppendCommit();
 
+  // Releases every writer registration this transaction holds. Idempotent, so
+  // Commit / Abort / the destructor can all call it.
   void ReleaseWriters() noexcept;
 
   irs::containers::NodeHashMap<duckdb::idx_t, SearchShardWrites> _writes;

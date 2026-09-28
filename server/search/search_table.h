@@ -91,8 +91,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
                                        duckdb::idx_t schema_id,
                                        duckdb::idx_t table_id);
   static std::filesystem::path GetWalPath(duckdb::idx_t db_id);
-  static std::filesystem::path GetChunkDir(duckdb::idx_t db_id,
-                                           duckdb::idx_t table_id);
 
   // A drop commits while readers may still hold this table; the destructor
   // removes the index dir and the WAL shard once the last of them lets go.
@@ -101,10 +99,26 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
     _dropped.store(true, std::memory_order_release);
   }
 
+  // `exclusive_segment` is required of a writer that will record its flushed
+  // segments in the WAL -- see irs::IndexWriter::GetBatch.
   irs::IndexWriter::Transaction GetTransaction(
     bool exclusive_segment = false) noexcept {
     return _writer->GetBatch(exclusive_segment);
   }
+
+  // Re-attach a segment this shard already flushed + fsynced, named by its meta
+  // file. `tick` must be in the adopting transaction's space -- it orders the
+  // segment against that transaction's removals. False == cannot be reopened.
+  bool AdoptSegment(std::string_view meta_file, std::string_view codec_name,
+                    uint64_t tick) {
+    return _writer->AdoptSegment(meta_file, irs::formats::Get(codec_name),
+                                 tick);
+  }
+
+  // Called once this shard's WAL has been replayed, to reclaim what the replay
+  // did not adopt (the writer was opened with cleanup suppressed). Promptness
+  // only: the refresh loop's periodic cleanup would get there a tick later.
+  void FinishRecovery() { CleanupUnsafe(); }
 
   irs::DirectoryReader GetDirectoryReader() noexcept {
     return _writer->GetSnapshot();
@@ -123,10 +137,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   }
 
   SearchDbWal& Wal() noexcept { return *_wal; }
-
-  SearchDbWal::ChunkWriter NewChunkWriter() {
-    return _wal->NewChunkWriter(GetTableId());
-  }
 
   uint64_t CommittedTick() const noexcept { return _last_committed_tick; }
 

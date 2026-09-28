@@ -35,9 +35,12 @@ add_executable(
     serializer_test.cpp
     connector/ai_functions_test.cpp
     connector/copy_in_bridge_test.cpp
+    connector/duckdb_search_filter_builder_test.cpp
+    connector/duckdb_search_sink_writer_test.cpp
     connector/index_lifecycle_test.cpp
     connector/pg_progress_registry_test.cpp
     connector/pg_serialize_array_test.cpp
+    connector/search_db_wal_test.cpp
     connector/ts_query_codec_test.cpp
     connector/writer_generations_test.cpp
 )

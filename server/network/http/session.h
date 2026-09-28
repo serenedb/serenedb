@@ -161,8 +161,7 @@ class HttpSession final
   // --- RequestContext -------------------------------------------------------
   // First use sets up the full SereneDB client state (like pg-wire's
   // SetupConnection, minus the wire collector): server-side functions reach
-  // ConnectionContext through GetSereneDBContext. The user is whoever
-  // authenticated the request that first touched the connection.
+  // ConnectionContext through GetSereneDBContext.
   duckdb::Connection& Connection() final {
     if (!_conn) {
       const std::string_view dbname =
@@ -203,6 +202,7 @@ class HttpSession final
         std::vector{default_paths});
       _conn->context->client_data->catalog_search_path->Set(
         std::move(default_paths), duckdb::CatalogSetPathType::SET_DIRECTLY);
+      _conn_user = _user;
     }
     return *_conn;
   }
@@ -302,6 +302,15 @@ class HttpSession final
   // duck-side: the request loop. Parse -> body -> auth -> route -> handler.
   yaclib::Future<> SessionMain();
 
+  void ReleaseConnection() {
+    {
+      absl::MutexLock lock{&_cancel_token->mu};
+      _cancel_token->ctx = nullptr;
+    }
+    _connection_ctx.reset();
+    _conn.reset();
+  }
+
   // Incremental llhttp feed over the recv channel. Returns the head event or
   // nullopt when the connection died mid-parse.
   yaclib::Task<std::optional<H1Event>> ReadHead();
@@ -334,6 +343,7 @@ class HttpSession final
   duckdb::unique_ptr<duckdb::Connection> _conn;
   std::shared_ptr<ConnectionContext> _connection_ctx;
   std::string _user;
+  std::string _conn_user;
 };
 
 template<SocketKind Kind>
@@ -595,6 +605,9 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
                      R"({"error":"unauthorized"})",
                      "WWW-Authenticate: Basic realm=\"serenedb\"\r\n");
       } else if (HttpHandler* handler = _router.Match(request)) {
+        if (_conn && _user != _conn_user) {
+          ReleaseConnection();
+        }
         try {
           co_await handler->Handle(*this, request, writer);
         } catch (const std::exception&) {

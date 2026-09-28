@@ -48,6 +48,8 @@ id
 statement ok
 DETACH pgtz_${__DATABASE__};
 
+statement ok
+CALL postgres_execute('pgtza_${__DATABASE__}', 'DROP DATABASE tzdb_${__DATABASE__}', use_transaction := false);
 
 statement ok
 DETACH pgtza_${__DATABASE__};

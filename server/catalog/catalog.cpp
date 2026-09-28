@@ -271,9 +271,10 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     auto where_copy = info.where_clause->Copy();
     const auto type = where_binder.Bind(where_copy)->return_type;
     if (type != duckdb::LogicalType::BOOLEAN) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
-                      ERR_MSG("argument of WHERE must be type boolean, not type ",
-                              type.ToString()));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+        ERR_MSG("argument of WHERE must be type boolean, not type ",
+                type.ToString()));
     }
   }
   if (inverted) {

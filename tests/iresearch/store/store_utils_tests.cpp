@@ -21,8 +21,6 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "tests_shared.hpp"
-
 #include <array>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/bit_packing.hpp>
@@ -31,6 +29,7 @@
 #include <iresearch/utils/bytes_utils.hpp>
 #include <unordered_set>
 
+#include "tests_shared.hpp"
 #include "utils/write_helpers.hpp"
 
 using namespace irs;

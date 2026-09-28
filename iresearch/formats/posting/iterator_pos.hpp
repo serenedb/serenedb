@@ -339,7 +339,7 @@ class PositionImpl final : public PosAttr {
     _offs_start_deltas;
   [[no_unique_address]] ForOffset<uint32_t[doc_limits::kBlockSize]>
     _offs_lengths;
-  uint32_t _freq = 0;      // length of the posting list for a document
+  uint32_t _freq = 0;  // length of the posting list for a document
   uint32_t _next = 0;
   uint32_t* _enc_buf;      // auxillary buffer to decode data
   uint64_t _pend_pos = 0;  // how many positions "behind" we are

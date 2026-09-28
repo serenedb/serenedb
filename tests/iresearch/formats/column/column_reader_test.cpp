@@ -1379,6 +1379,48 @@ TEST_F(ColumnReaderTest, RepeatedNestedLists) {
                  Rows{{1, 2, 13, 2047, 2048, 2049, 4500, 8999}}, false);
 }
 
+TEST_F(ColumnReaderTest, UniqueNestedListsKeepEveryRow) {
+  const auto type = duckdb::LogicalType::LIST(
+    duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT));
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "unseg", 47, type,
+              "SELECT CASE WHEN i % 11 = 0 THEN NULL ELSE [[i, i * 7], [], "
+              "[i % 5]] END FROM range(12000) t(i)",
+              4096, expected);
+  irs::ColReader r{dir, "unseg", Db()};
+  const auto* col = r.Column(47);
+  ASSERT_NE(col, nullptr);
+  EXPECT_EQ(col->Child()->RowCount(), ElementCount(expected));
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{0, 1, 11, 4095, 4096, 8191, 11999}}, false);
+}
+
+TEST_F(ColumnReaderTest, ListsInsideStructs) {
+  const auto type = duckdb::LogicalType::STRUCT(
+    {{"tags", duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)},
+     {"attrs", duckdb::LogicalType::MAP(duckdb::LogicalType::VARCHAR,
+                                        duckdb::LogicalType::VARCHAR)}});
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "sseg", 48, type,
+              "SELECT CASE WHEN i % 17 = 0 THEN NULL ELSE {'tags': CASE WHEN "
+              "i % 9 = 0 THEN NULL WHEN i < 10000 THEN ['t' || (i % 5), 'x'] "
+              "ELSE ['u' || i] END, 'attrs': map_from_entries(list_transform("
+              "range(3), lambda k: {'key': 'a' || k, 'value': CASE WHEN i < "
+              "10000 THEN 'v' || ((i // 50) % 7) ELSE 'w' || i || k END}))} "
+              "END FROM range(20000) t(i)",
+              4096, expected);
+  irs::ColReader r{dir, "sseg", Db()};
+  const auto* col = r.Column(48);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), 20000u);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{0, 1, 9, 17, 4095, 4096, 9999, 10000, 19999}}, false);
+}
+
 TEST_F(ColumnReaderTest, UniqueListsKeepEveryRow) {
   const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
   irs::MemoryDirectory dir{};
@@ -1393,6 +1435,64 @@ TEST_F(ColumnReaderTest, UniqueListsKeepEveryRow) {
   EXPECT_EQ(col->Child()->RowCount(), ElementCount(expected));
   ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
   ExpectGathered(*col, r.Ctx(), expected, Rows{{1, 7, 8, 4096, 9999}}, false);
+}
+
+TEST_F(ColumnReaderTest, RepeatedWideMapsAcrossRowGroups) {
+  const auto type = duckdb::LogicalType::MAP(duckdb::LogicalType::VARCHAR,
+                                             duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "wseg", 44, type,
+              "SELECT CASE WHEN i % 101 = 0 THEN NULL WHEN i % 13 = 0 THEN "
+              "map([], [])::MAP(VARCHAR, VARCHAR) ELSE map_from_entries("
+              "list_transform(range(8), lambda k: {'key': 'attribute.' || k, "
+              "'value': 'v' || ((i // 37) % 300) || '-' || k})) END "
+              "FROM range(30000) t(i)",
+              12288, expected);
+  irs::ColReader r{dir, "wseg", Db()};
+  const auto* col = r.Column(44);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), 30000u);
+  EXPECT_LT(col->Child()->RowCount(), ElementCount(expected) / 10);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{0, 1, 36, 37, 12287, 12288, 29999}}, false);
+}
+
+TEST_F(ColumnReaderTest, ListsLongerThanAVector) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "lseg", 45, type,
+              "SELECT CASE WHEN i % 9 = 0 THEN list_transform(range(3000 + i "
+              "% 5), lambda k: 'e' || k) WHEN i % 9 = 1 THEN NULL ELSE ['a' || (i "
+              "% 4), 'b'] END FROM range(20000) t(i)",
+              8192, expected);
+  irs::ColReader r{dir, "lseg", Db()};
+  const auto* col = r.Column(45);
+  ASSERT_NE(col, nullptr);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected, Rows{{0, 1, 2, 9, 8191, 19998}},
+                 false);
+}
+
+TEST_F(ColumnReaderTest, EmptyMapsOnly) {
+  const auto type = duckdb::LogicalType::MAP(duckdb::LogicalType::VARCHAR,
+                                             duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "eseg", 46, type,
+              "SELECT CASE WHEN i % 5 = 0 THEN NULL ELSE map([], "
+              "[])::MAP(VARCHAR, VARCHAR) END FROM range(10000) t(i)",
+              4096, expected);
+  irs::ColReader r{dir, "eseg", Db()};
+  const auto* col = r.Column(46);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), 10000u);
+  EXPECT_EQ(col->Child()->RowCount(), 0u);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected, Rows{{0, 1, 4095, 4096, 9999}},
+                 false);
 }
 
 // VARIANT, shredding disabled: many unshredded row groups round-trip.

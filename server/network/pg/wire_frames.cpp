@@ -121,6 +121,9 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
   const std::string_view subtype =
     subtype_it != extra.end() ? subtype_it->second : std::string_view{};
   if (error.Type() == duckdb::ExceptionType::CATALOG) {
+    if (subtype == "WRONG_OBJECT_TYPE") {
+      return ERRCODE_WRONG_OBJECT_TYPE;
+    }
     const auto kind_it = extra.find("type");
     const std::string_view kind =
       kind_it != extra.end() ? kind_it->second : std::string_view{};
@@ -555,6 +558,9 @@ irs::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
     if (absl::SimpleAtoi(it->second, &pos)) {
       data.cursorpos = pos + 1;
     }
+  }
+  if (auto it = error.ExtraInfo().find("hint"); it != error.ExtraInfo().end()) {
+    data.errhint = it->second;
   }
   return data;
 }

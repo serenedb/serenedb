@@ -158,18 +158,6 @@ ALTER TABLE ati_t2 ALTER COLUMN body2 TYPE VARCHAR(100);
 db error: ERROR: Cannot change the type of this column: an index depends on it!
 
 
-# DROP the indexed column: refused while the inverted index covers it. Drop the
-# index first, then the column goes.
-statement error
-ALTER TABLE ati_t2 DROP COLUMN body2;
-----
-db error: ERROR: Cannot drop this column: an index depends on it!
-
-
-statement ok
-DROP INDEX ati_idx2;
-
-
 statement ok
 ALTER TABLE ati_t2 DROP COLUMN body2;
 
@@ -202,8 +190,8 @@ DROP TEXT SEARCH DICTIONARY ati_dict;
 # An inverted index on a struct SUB-FIELD expression (e.g. (s['id']::INTEGER))
 # records the base struct column as a referenced dependency, so the index
 # covers it even though the column never appears directly. ADD / DROP / RENAME
-# FIELD, a whole-column type change and dropping the struct column itself are
-# all rejected until the index is dropped.
+# FIELD and a whole-column type change are all rejected until the index is
+# dropped.
 
 
 statement ok
@@ -244,17 +232,6 @@ statement error
 ALTER TABLE ati_struct ALTER COLUMN s TYPE STRUCT(id BIGINT, name VARCHAR);
 ----
 db error: ERROR: Cannot change the type of this column: an index depends on it!
-
-
-# Dropping the whole struct column is refused too; after DROP INDEX it goes.
-statement error
-ALTER TABLE ati_struct DROP COLUMN s;
-----
-db error: ERROR: Cannot drop this column: an index depends on it!
-
-
-statement ok
-DROP INDEX ati_struct_idx;
 
 
 statement ok

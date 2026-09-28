@@ -504,6 +504,9 @@ bool IsStrictComparisonShape(const duckdb::Expression& expr) {
   return false;
 }
 
+const SearchColumnInfo* FindColumnRefInfo(
+  const FilterContext& ctx, const duckdb::BoundColumnRefExpression& ref);
+
 namespace {
 
 // UNKNOWN exactly on NULL operands; false for shapes whose null behavior
@@ -1569,12 +1572,18 @@ bool TryDispatchTokenizeCast(BoolTarget parent, const FilterContext& ctx,
 void FromTSQueryMatch(BoolTarget filter, const FilterContext& ctx,
                       const duckdb::Expression& lhs,
                       const duckdb::Expression& rhs) {
-  // `@@` accepts either a bare column reference or a JSON-path expression
-  // (e.g. `content->>'host'`) on the field side. FindColumnInfoForExpr
-  // handles both, peeling any cast wrappers; the TSQuery cast is peeled
-  // up-front by UnwrapTSQueryCast.
-  const auto* left_info = FindColumnInfoForExpr(ctx, UnwrapTSQueryCast(lhs));
-  const auto* right_info = FindColumnInfoForExpr(ctx, UnwrapTSQueryCast(rhs));
+  const auto operand_info =
+    [&](const duckdb::Expression& side) -> const SearchColumnInfo* {
+    const auto& operand = UnwrapTSQueryCast(side);
+    if (operand.GetExpressionClass() ==
+        duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+      return FindColumnRefInfo(
+        ctx, operand.Cast<duckdb::BoundColumnRefExpression>());
+    }
+    return FindColumnInfoForExpr(ctx, operand);
+  };
+  const auto* left_info = operand_info(lhs);
+  const auto* right_info = operand_info(rhs);
   if (left_info && right_info) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1592,6 +1601,10 @@ void FromTSQueryMatch(BoolTarget filter, const FilterContext& ctx,
                "inverted(<col>) if none exists."));
   }
   const auto& expr = left_info ? rhs : lhs;
+  if (column_info->index_fields) {
+    BuildTSQuery(filter, ctx, *column_info, expr);
+    return;
+  }
   auto* tokenizer = column_info->tokenizer.analyzer.get();
   if (!tokenizer) {
     THROW_SQL_ERROR(
@@ -1776,7 +1789,8 @@ UnwrappedField UnwrapFieldCast(const duckdb::Expression& expr) {
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
                                               const duckdb::Expression& expr) {
   if (const auto* col_ref = TryGetColumnRef(expr)) {
-    return FindColumnRefInfo(ctx, *col_ref);
+    const auto* info = FindColumnRefInfo(ctx, *col_ref);
+    return info && !info->index_fields ? info : nullptr;
   }
 
   const auto unwrapped = UnwrapFieldCast(expr);
@@ -2032,6 +2046,20 @@ void RejectSlopOnNonPhrase(const FilterContext& ctx) {
   }
 }
 
+void RejectWholeIndexOperand(const SearchColumnInfo& column_info,
+                             std::string_view what) {
+  if (column_info.index_fields) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(what,
+              " needs a column operand: a whole-index operand takes only "
+              "to_tsquery"),
+      ERR_HINT("Name the fields in to_tsquery, e.g. tableoid @@ "
+               "to_tsquery('title:fox OR body:dog'), or put an indexed column "
+               "on the left of @@."));
+  }
+}
+
 void BuildTSQueryValue(BoolTarget parent, const FilterContext& ctx,
                        const SearchColumnInfo& column_info,
                        const duckdb::Value& value) {
@@ -2042,6 +2070,9 @@ void BuildTSQueryValue(BoolTarget parent, const FilterContext& ctx,
   }
   const auto structured =
     TryParseStructuredTSQueryText(parts->text, ctx.client_context);
+  if (!structured) {
+    RejectWholeIndexOperand(column_info, "a bare string");
+  }
   // Only a modifier needs the clauses named afterwards, so only a modifier
   // pays for the node that names them.
   const bool scoped =
@@ -2168,6 +2199,7 @@ void BuildTSQuery(BoolTarget parent, const FilterContext& ctx,
       return;
     }
     RejectSlopOnNonPhrase(ctx);
+    RejectWholeIndexOperand(column_info, "a bare string");
     if (val.type().id() == duckdb::LogicalTypeId::VARCHAR ||
         val.type().id() == duckdb::LogicalTypeId::BLOB) {
       BuildFtsTokens(parent, ctx, column_info, duckdb::StringValue::Get(val),
@@ -2196,6 +2228,14 @@ void BuildTSQuery(BoolTarget parent, const FilterContext& ctx,
   // ignores ctx.slop) is rejected to avoid silently dropping the budget.
   if (op != TSQueryOp::Phrase && op != TSQueryOp::PhraseToTsquery) {
     RejectSlopOnNonPhrase(ctx);
+  }
+
+  constexpr TSQueryOp kWholeIndexOps[] = {TSQueryOp::ToTSQuery, TSQueryOp::Or,
+                                          TSQueryOp::And, TSQueryOp::Not,
+                                          TSQueryOp::Boost};
+  if (op != TSQueryOp::Unknown && !absl::c_linear_search(kWholeIndexOps, op)) {
+    RejectWholeIndexOperand(column_info,
+                            func.Function().GetName().GetIdentifierName());
   }
 
   switch (op) {

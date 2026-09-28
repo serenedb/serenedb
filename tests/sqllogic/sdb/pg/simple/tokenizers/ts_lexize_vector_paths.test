@@ -1,0 +1,142 @@
+control substitution on
+
+# ts_lexize is driven by the DuckDB scalar executors, so its result depends on
+# the shape of the argument vectors rather than on one hand-rolled loop. This
+# file pins the shapes: a constant argument, a chunk that grows the result's
+# child vector many times, NULL rows and NULL elements mixed with live ones,
+# and rows arriving through a selection vector.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vp AS
+    split_text() | normalize_tokens('en_US.UTF-8', case := 'lower')
+
+
+statement ok
+CREATE TABLE vp_rows AS
+SELECT i, 'alpha beta gamma delta epsilon zeta eta theta' AS txt FROM range(3000) t(i)
+
+
+# A constant text argument is evaluated once and broadcast. Every row still
+# reports its own 8 tokens.
+
+query
+SELECT count(*), min(len(t)), max(len(t)), count(DISTINCT t::TEXT)
+FROM (SELECT ts_lexize('vp', 'alpha beta gamma') AS t FROM vp_rows);
+----
+count	min	max	count
+3000	3	3	1
+
+
+# One chunk produces far more tokens than the result's child vector starts
+# with, so the sink grows it repeatedly mid-chunk. Growth must preserve the
+# tokens already written for earlier rows: every row keeps all 8, and the
+# first and last tokens are still the right ones.
+
+query
+SELECT count(*), min(len(t)), max(len(t)),
+       bool_and(t[1] = 'alpha'), bool_and(t[8] = 'theta')
+FROM (SELECT ts_lexize('vp', txt) AS t FROM vp_rows);
+----
+count	min	max	bool_and	bool_and
+3000	8	8	t	t
+
+
+# The same for the array overload, which appends every element into one row.
+
+query
+SELECT count(*), min(len(t)), max(len(t)), bool_and(t[16] = 'theta')
+FROM (SELECT ts_lexize('vp', [txt, txt]) AS t FROM vp_rows);
+----
+count	min	max	bool_and
+3000	16	16	t
+
+
+# NULL rows yield NULL and consume no room in the child vector; the live rows
+# around them keep their own tokens.
+
+query
+SELECT count(*) FILTER (WHERE t IS NULL), count(*) FILTER (WHERE t IS NOT NULL),
+       bool_and(len(t) = 8) FILTER (WHERE t IS NOT NULL)
+FROM (SELECT ts_lexize('vp', CASE WHEN i % 3 = 0 THEN NULL ELSE txt END) AS t
+      FROM vp_rows);
+----
+count	count	bool_and
+1000	2000	t
+
+
+# A NULL element inside an array argument is skipped, not propagated.
+
+query
+SELECT ts_lexize('vp', ARRAY[NULL, 'alpha beta', NULL, 'gamma']::VARCHAR[]);
+----
+ts_lexize
+{alpha,beta,gamma}
+
+
+# An all-NULL array still yields an empty list rather than NULL.
+
+query
+SELECT ts_lexize('vp', ARRAY[NULL, NULL]::VARCHAR[]);
+----
+ts_lexize
+{}
+
+
+# Rows reaching the function through a selection vector (a filtered scan) are
+# tokenized against their own text, not their neighbours'.
+
+query
+SELECT count(*), bool_and(len(t) = 8)
+FROM (SELECT ts_lexize('vp', txt) AS t FROM vp_rows WHERE i % 7 = 0);
+----
+count	bool_and
+429	t
+
+
+# The dictionary name may also arrive as a column, which takes the per-row
+# lookup path. Two dictionaries in one chunk must not bleed into each other.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vp_upper AS
+    split_text() | normalize_tokens('en_US.UTF-8', case := 'upper')
+
+
+query
+SELECT d, count(*), bool_and(t[1] = expected)
+FROM (SELECT CASE WHEN i % 2 = 0 THEN 'vp' ELSE 'vp_upper' END AS d,
+             CASE WHEN i % 2 = 0 THEN 'alpha' ELSE 'ALPHA' END AS expected,
+             ts_lexize(CASE WHEN i % 2 = 0 THEN 'vp' ELSE 'vp_upper' END, txt) AS t
+      FROM vp_rows)
+GROUP BY d ORDER BY d;
+----
+d	count	bool_and
+vp	1500	t
+vp_upper	1500	t
+
+
+# The same per-row lookup for the array overload.
+
+query
+SELECT d, count(*), bool_and(len(t) = 16), bool_and(t[1] = expected)
+FROM (SELECT CASE WHEN i % 2 = 0 THEN 'vp' ELSE 'vp_upper' END AS d,
+             CASE WHEN i % 2 = 0 THEN 'alpha' ELSE 'ALPHA' END AS expected,
+             ts_lexize(CASE WHEN i % 2 = 0 THEN 'vp' ELSE 'vp_upper' END,
+                       [txt, txt]) AS t
+      FROM vp_rows)
+GROUP BY d ORDER BY d;
+----
+d	count	bool_and	bool_and
+vp	1500	t	t
+vp_upper	1500	t	t
+
+
+statement ok
+DROP TABLE vp_rows
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY vp_upper
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY vp

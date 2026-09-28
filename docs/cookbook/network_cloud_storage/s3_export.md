@@ -22,9 +22,7 @@ If you get an IO Error (`Connection error for HTTP HEAD`), configure the endpoin
 
 </DocCallout>
 
-Alternatively, retrieve the credentials automatically from the AWS credential chain:
-
-<SqlLogicTest id="cookbook/network_cloud_storage/export_s3/example_004" />
+SereneDB cannot read the AWS credential chain (`PROVIDER credential_chain`): that provider comes from DuckDB's `aws` extension, which is not built in. Pass keys as above, or use one of the other methods in [AWS Credentials](../../configuration/aws_credentials.md).
 
 Once the S3 credentials are configured, Parquet files can be written to S3 using the following command:
 

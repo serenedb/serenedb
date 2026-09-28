@@ -385,6 +385,7 @@ duckdb::IndexType InvertedStoreIndex::GetInvertedIndexType() {
   type.create_instance = &InvertedStoreIndex::Create;
   type.create_plan = &SereneDBCreateIndexPlan;
   type.defer_implicit_bind = true;
+  type.remaps_columns = true;
   return type;
 }
 

@@ -85,11 +85,12 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TsDictEstimation(
 
 const duckdb::ColumnDefinition* FindColumnById(
   const duckdb::TableCatalogEntry& entry, ColumnId col_id) {
-  const auto& columns = entry.GetColumns();
-  if (col_id >= columns.LogicalColumnCount()) {
-    return nullptr;
+  for (const auto& column : entry.GetColumns().Logical()) {
+    if (TableColumnId(column) == col_id) {
+      return &column;
+    }
   }
-  return &columns.GetColumn(duckdb::LogicalIndex{col_id});
+  return nullptr;
 }
 
 irs::DirectoryReader PinnedSearchReader(
@@ -112,7 +113,7 @@ duckdb::unique_ptr<ScanBindData> MakeTableScanBindData(
   data->lookup.label = std::move(lookup_label);
   data->search.snapshot = std::move(snapshot);
   for (const auto& column : table.GetColumns().Logical()) {
-    data->columns.ids.emplace_back(column.Oid());
+    data->columns.ids.emplace_back(TableColumnId(column));
     data->columns.types.emplace_back(column.Type());
   }
   return data;
@@ -237,7 +238,7 @@ void ScanBindData::IterateColumns(const ColumnVisitor& cb) const {
     return;
   }
   for (const auto& column : relation.table_entry->GetColumns().Logical()) {
-    cb(ColumnId{column.Oid()}, column.Type());
+    cb(TableColumnId(column), column.Type());
   }
 }
 

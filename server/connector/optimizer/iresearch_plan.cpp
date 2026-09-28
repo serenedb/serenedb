@@ -113,9 +113,9 @@ connector::ColumnId ColumnIdByName(const connector::ScanBindData& bind_data,
   }
   const auto& columns = bind_data.relation.table_entry->GetColumns();
   const duckdb::Identifier key{name};
-  return columns.ColumnExists(key) ? static_cast<connector::ColumnId>(
-                                       columns.GetColumn(key).Logical().index)
-                                   : connector::kInvalidColumnId;
+  return columns.ColumnExists(key)
+           ? connector::TableColumnId(columns.GetColumn(key))
+           : connector::kInvalidColumnId;
 }
 
 std::vector<connector::ColumnId> BuildProjectedColumnIds(

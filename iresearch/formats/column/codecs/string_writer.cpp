@@ -909,11 +909,15 @@ class SegmentWriter {
 
 }  // namespace
 
-void StringAccumulator::Reserve(uint64_t rows) {
+void StringAccumulator::Reserve(uint64_t rows, uint64_t distinct) {
   codes.reserve(rows);
   if (!_dedup) {
     entries.reserve(rows);
+    return;
   }
+  const auto expected = std::min(rows, distinct);
+  entries.reserve(expected);
+  dedup.reserve(expected);
 }
 
 void StringAccumulator::Add(const duckdb::Vector& input) {

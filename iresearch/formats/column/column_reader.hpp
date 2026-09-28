@@ -49,6 +49,11 @@ class ObjectCache;
 
 }  // namespace duckdb
 namespace irs {
+namespace codecs {
+
+struct StringTuning;
+
+}  // namespace codecs
 
 struct BlockWindow {
   size_t block = 0;
@@ -114,6 +119,7 @@ struct ColumnMeta {
   std::vector<VariantRgMeta> variant_rgs;
   duckdb::shared_ptr<duckdb::HyperLogLog> hyperloglog;
   uint64_t write_list_running = 0;
+  std::shared_ptr<codecs::StringTuning> write_string_tuning;
   uint64_t write_list_distinct = 0;
 };
 

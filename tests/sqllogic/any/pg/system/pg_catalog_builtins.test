@@ -1,0 +1,72 @@
+# Built-in functions and types answer to a pg_catalog qualifier, which is how
+# psql's backslash commands and most drivers spell them.
+
+query
+SELECT pg_catalog.concat_ws(', ', 'a', 'b') AS v;
+----
+v
+a, b
+
+
+query
+SELECT pg_catalog.array_to_string(ARRAY['a', 'b'], ',') AS v;
+----
+v
+a,b
+
+
+query
+SELECT pg_catalog.string_agg(x, ',' ORDER BY x) AS v FROM (VALUES ('b'), ('a')) t(x);
+----
+v
+a,b
+
+
+query
+SELECT pg_catalog.format('%I.%I', 'public', 't') AS v;
+----
+v
+public.t
+
+
+query
+SELECT pg_catalog.lower('ABC') AS v;
+----
+v
+abc
+
+
+query
+SELECT x FROM pg_catalog.generate_series(1, 2) AS g(x);
+----
+x
+1
+2
+
+
+query
+SELECT pg_catalog.pg_typeof('a'::pg_catalog.text) AS v;
+----
+v
+text
+
+
+query
+SELECT 1::pg_catalog.int4 + 1 AS v;
+----
+v
+2
+
+
+query
+SELECT CAST('*' AS pg_catalog.text) AS v;
+----
+v
+*
+
+
+query
+SELECT '23'::pg_catalog.oid AS v;
+----
+v
+23

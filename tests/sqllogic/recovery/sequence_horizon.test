@@ -15,17 +15,17 @@ SET sdb_faults = 'crash_on_packet';
 statement error connection closed
 SELECT 1;
 
-# The persisted horizon runs 32 past the last handout; a restart resumes
-# after it, burning the gap but never reusing a value.
+# duckdb logs the exact counter when the transaction commits, so a restart
+# resumes right after the last handout: no horizon, no gap, never a reuse.
 connection after_crash
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT nextval('gap_seq');
 ----
 nextval
-34
+2
 
-# setval is exact: it collapses the horizon to the written value, so a
-# restart resumes right after it with no gap.
+# setval is logged the same way, so a restart resumes right after the
+# written value.
 connection after_crash
 query ok
 SELECT setval('gap_seq', 100);

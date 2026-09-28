@@ -22,6 +22,7 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/queries/phrase_query.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
@@ -140,14 +141,23 @@ void ParseWebsearchQuery(std::string_view text,
     return;
   }
 
+  const auto type = column_info.logical_type.id();
+  const bool word_phrases =
+    (type == duckdb::LogicalTypeId::VARCHAR ||
+     type == duckdb::LogicalTypeId::BLOB) &&
+    (column_info.tokenizer.features & irs::PhraseQuery::kRequiredFeatures) ==
+      irs::PhraseQuery::kRequiredFeatures;
+
   auto emit_atom = [&](const WsToken& tok, BoolTarget into,
                        const FilterContext& c) {
     auto ac = c;
     ac.negated = c.negated ^ tok.negated;
     if (tok.kind == WsTokKind::Phrase) {
       BuildFtsPhrase(into, ac, column_info, tok.text);
+    } else if (word_phrases) {
+      BuildFtsWord(into, ac, column_info, tok.text);
     } else {
-      BuildFtsTokens(into, ac, column_info, tok.text, /*require_all=*/false);
+      BuildFtsTokens(into, ac, column_info, tok.text, /*require_all=*/true);
     }
   };
 

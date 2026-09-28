@@ -24,6 +24,7 @@
 #include <cctype>
 #include <duckdb.hpp>
 #include <format>
+#include <iresearch/analysis/text/case/case.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <unordered_map>
 
@@ -141,9 +142,18 @@ bool AllAscii(std::string_view value) noexcept {
     value, [](char c) { return static_cast<unsigned char>(c) >= 0x80; });
 }
 
-std::string Convert(std::string_view in, irs::Case convert) {
+std::string Convert(std::string_view in, irs::Case convert,
+                    bool unicode_case = false) {
   std::string out{in};
   if (convert == irs::Case::None) {
+    return out;
+  }
+  if (unicode_case && !AllAscii(in)) {
+    out.resize(irs::analysis::casing::CaseConvertUtf8Bound(in.size()));
+    auto* dst = reinterpret_cast<irs::byte_type*>(out.data());
+    out.resize(convert == irs::Case::Lower
+                 ? irs::analysis::casing::CaseConvertUtf8<true>(in, dst)
+                 : irs::analysis::casing::CaseConvertUtf8<false>(in, dst));
     return out;
   }
   for (auto& c : out) {
@@ -252,8 +262,9 @@ std::optional<std::vector<ModelToken>> ModelTokens(
           ++i;
         }
         if (i != begin) {
-          out.push_back(ModelToken{
-            Convert(value.substr(begin, i - begin), params.convert), pos++});
+          out.push_back(ModelToken{Convert(value.substr(begin, i - begin),
+                                           params.convert, params.unicode_case),
+                                   pos++});
         }
       }
       return out;

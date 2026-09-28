@@ -523,7 +523,8 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
     }
 
     SDB_ASSERT(norm_reader->RowCount() == src.reader->docs_count());
-    const bool has_mask = src.mask && !src.mask->empty();
+    const bool has_mask = HasRemovals(src.reader->Meta());
+    auto it_mask = src.reader->MaskedDocs();
     for (size_t rg = 0, rg_count = norm_reader->RowGroupCount(); rg < rg_count;
          ++rg) {
       const auto bytes = norm_reader->RowGroupBytes(rg);
@@ -547,7 +548,7 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
       for (size_t i = 0; i < n; ++i) {
         const auto src_doc =
           static_cast<doc_id_t>(rg_first_row + i + doc_limits::min());
-        if (src.mask->contains(src_doc)) {
+        if (it_mask.Contains(src_doc)) {
           flush_run(i);
           run_start = i + 1;
         }
@@ -666,7 +667,7 @@ bool ComputeDocMappingsAndFieldMeta(
       reader_ctx.remap.base_id = base_id;
       base_id += static_cast<doc_id_t>(docs_count);
     } else {
-      reader_ctx.remap.mask = reader.docs_mask();
+      reader_ctx.remap.mask = reader.MaskedDocs();
       base_id = ComputeDocIds(reader_ctx.remap.id_map, reader, base_id);
     }
     if (!doc_limits::valid(base_id)) {
@@ -693,7 +694,6 @@ void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
     sources.push_back(MergeSource{
       .reader = ctx.reader,
       .col_reader = ctx.reader->GetColReader(),
-      .mask = ctx.reader->docs_mask(),
       .alive_count = static_cast<uint64_t>(ctx.reader->live_docs_count()),
     });
   }

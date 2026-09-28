@@ -1,12 +1,4 @@
 # ALTER TABLE ... ADD PRIMARY KEY
-#
-# SereneDB enforces the primary key in the underlying store (see
-# Catalog::AddPrimaryKey). DuckCatalog would turn ADD PRIMARY KEY into a
-# CREATE INDEX over an ART; SereneDBCatalog::BindAlterAddIndex instead routes
-# it through the normal LOGICAL_ALTER dispatch, which mirrors the constraint to
-# the store table and records it (plus the implied NOT NULL) in the catalog.
-# Only ADD PRIMARY KEY is supported; ADD CONSTRAINT for UNIQUE / CHECK /
-# FOREIGN KEY is rejected (matching upstream DuckDB, which lacks them too).
 
 
 # ---------------------------------------------------------------------------
@@ -26,13 +18,17 @@ ALTER TABLE pk1 ADD PRIMARY KEY (i);
 
 
 # Uniqueness is enforced from this point on.
-statement error (?i)duplicate key
+statement error
 INSERT INTO pk1 VALUES (1, 30);
+----
+db error: ERROR: Duplicate key "i: 1" violates primary key constraint.
 
 
 # A PK column is implicitly NOT NULL.
-statement error (?i)not null constraint failed
+statement error
 INSERT INTO pk1 VALUES (NULL, 30);
+----
+db error: ERROR: NOT NULL constraint failed: pk1.i
 
 
 # Non-conflicting rows still insert, and earlier data is intact.
@@ -114,8 +110,10 @@ statement ok
 INSERT INTO pk_multi VALUES (1, 'x', 100), (1, 'y', 100);
 
 
-statement error (?i)duplicate key
+statement error
 INSERT INTO pk_multi VALUES (1, 'x', 999);
+----
+db error: ERROR: Duplicate key "a: 1, b: x" violates primary key constraint.
 
 
 query
@@ -141,8 +139,10 @@ statement ok
 INSERT INTO pk_empty VALUES (1, 'a');
 
 
-statement error (?i)duplicate key
+statement error
 INSERT INTO pk_empty VALUES (1, 'b');
+----
+db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
 
 
 # ---------------------------------------------------------------------------
@@ -157,8 +157,10 @@ statement ok
 INSERT INTO pk_dups VALUES (1), (1), (2);
 
 
-statement error (?i)data contains duplicates|duplicate
+statement error
 ALTER TABLE pk_dups ADD PRIMARY KEY (i);
+----
+db error: ERROR: Data contains duplicates on indexed column(s)
 
 
 # The table is unchanged -- no PK was recorded, duplicates are still allowed.
@@ -183,8 +185,10 @@ statement ok
 INSERT INTO pk_nulls VALUES (1), (NULL);
 
 
-statement error (?i)not null|null
+statement error
 ALTER TABLE pk_nulls ADD PRIMARY KEY (i);
+----
+db error: ERROR: NOT NULL constraint failed: PRIMARY_pk_nulls_i
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +198,7 @@ ALTER TABLE pk_nulls ADD PRIMARY KEY (i);
 statement error
 ALTER TABLE pk1 ADD PRIMARY KEY (j);
 ----
-db error: ERROR: multiple primary keys for table "pk1" are not allowed
+db error: ERROR: table "pk1" can have only one primary key: PRIMARY KEY(i)
 
 
 # ---------------------------------------------------------------------------
@@ -205,8 +209,10 @@ statement ok
 CREATE TABLE pk_badcol (i INTEGER);
 
 
-statement error (?i)does not have a column named|does not exist
+statement error
 ALTER TABLE pk_badcol ADD PRIMARY KEY (nope);
+----
+db error: ERROR: table "pk_badcol" does not have a column named "nope"
 
 
 # ---------------------------------------------------------------------------
@@ -223,8 +229,10 @@ statement ok
 CREATE INDEX pk_idx_b ON pk_idx (b);
 
 
-statement error (?i)cannot alter entry .* because there are entries that depend on it
+statement error
 ALTER TABLE pk_idx ADD PRIMARY KEY (a);
+----
+db error: ERROR: Cannot alter entry "pk_idx" because there are entries that depend on it.
 
 
 statement ok
@@ -235,8 +243,10 @@ statement ok
 ALTER TABLE pk_idx ADD PRIMARY KEY (a);
 
 
-statement error (?i)duplicate key
+statement error
 INSERT INTO pk_idx VALUES (1, 1), (1, 2);
+----
+db error: ERROR: PRIMARY KEY or UNIQUE constraint violation: duplicate key "1"
 
 
 # ---------------------------------------------------------------------------

@@ -5,7 +5,7 @@ CREATE TEXT SEARCH DICTIONARY kw_dict AS keyword() WITH (frequency);
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY ng_dict AS
-    generate_ngrams(2, 3, preserve_original := false)
+    generate_ngrams(2, 2, preserve_original := false)
     WITH (frequency, position);
 
 

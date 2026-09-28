@@ -18,6 +18,7 @@ BEGIN ATOMIC
 END;
 
 
+skipif serenedb
 statement error
 DROP TABLE deadinside;
 ----
@@ -25,11 +26,25 @@ db error: ERROR: "deadinside" is not a table
 HINT: Use DROP INDEX to remove an index.
 
 
+skipif postgres
+statement error
+DROP TABLE deadinside;
+----
+db error: ERROR: Table with name deadinside does not exist!
+Did you mean "<slt:ignore>"?
+
+
+skipif serenedb
 statement error
 DROP TABLE IF EXISTS deadinside;
 ----
 db error: ERROR: "deadinside" is not a table
 HINT: Use DROP INDEX to remove an index.
+
+
+skipif postgres
+statement ok
+DROP TABLE IF EXISTS deadinside;
 
 
 statement error

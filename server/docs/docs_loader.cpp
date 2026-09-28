@@ -41,13 +41,11 @@
 #include <string_view>
 #include <vector>
 
-#include "catalog/entry.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/identifiers/object_id.h"
-#include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog/cluster.h"
 #include "connector/duckdb_client_state.h"
 #include "docs/docs_data.h"
 #include "pg/connection_context.h"
+#include "pg/pg_types.h"
 
 namespace sdb::docs {
 namespace {
@@ -62,10 +60,10 @@ constexpr int kLayout = 12;
 constexpr size_t kInsertBatch = 32;
 class Loader {
  public:
-  Loader(std::string_view database, ObjectId database_id)
+  Loader(std::string_view database, duckdb::idx_t database_id)
     : _conn{irs::DuckDBEngine::Instance().CreateConnection()},
       _ctx{std::make_shared<ConnectionContext>(
-        *_conn->context, irs::StaticStrings::kDefaultUser, id::kRootUser,
+        *_conn->context, irs::StaticStrings::kDefaultUser, pg::kRootUser,
         database, database_id, nullptr, 0, nullptr)} {
     _ctx->MarkSystemWriter();
     connector::SereneDBClientState::Register(*_conn->context, _ctx);
@@ -163,8 +161,6 @@ class Loader {
            absl::StrCat("CREATE TABLE ", kMeta, " (hash TEXT, layout INTEGER)"),
            absl::StrCat("INSERT INTO ", kMeta, " VALUES ('", GetDocsHash(),
                         "', ", kLayout, ")"),
-           absl::StrCat("GRANT USAGE ON SCHEMA ",
-                        irs::StaticStrings::kDocsSchema, " TO PUBLIC"),
            absl::StrCat("GRANT SELECT ON ", kTable, " TO PUBLIC"),
            absl::StrCat("GRANT SELECT ON ", kMeta, " TO PUBLIC"),
          }) {
@@ -227,7 +223,7 @@ class Loader {
   std::shared_ptr<ConnectionContext> _ctx;
 };
 
-bool LoadInto(std::string_view database, ObjectId database_id) {
+bool LoadInto(std::string_view database, duckdb::idx_t database_id) {
   const auto begin = std::chrono::steady_clock::now();
   try {
     Loader loader{database, database_id};
@@ -263,13 +259,12 @@ void LoadEmbeddedDocs() {
              "embedded docs disabled (built with SDB_EMBEDDED_DOCS=OFF)");
     return;
   }
-  const auto* database =
-    catalog::FindDatabase(nullptr, irs::StaticStrings::kDefaultDatabase);
-  if (database == nullptr) {
+  auto database = catalog::FindDatabase(irs::StaticStrings::kDefaultDatabase);
+  if (!database) {
     SDB_WARN(GENERAL, "embedded docs: default database not found");
     return;
   }
-  LoadInto(database->name.GetIdentifierName(), catalog::IdOf(*database));
+  LoadInto(database->name.GetIdentifierName(), database->oid);
 }
 
 }  // namespace sdb::docs

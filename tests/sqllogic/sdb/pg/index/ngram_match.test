@@ -69,3 +69,33 @@ a
 
 statement ok
 DROP TABLE test_ngram;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY test_ngram_mixed_dict AS
+    generate_ngrams(2, 3)
+    WITH (frequency, position);
+
+statement ok
+CREATE TABLE test_ngram_mixed (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+CREATE INDEX test_ngram_mixed_idx ON test_ngram_mixed USING inverted(a, b test_ngram_mixed_dict);
+
+statement ok
+INSERT INTO test_ngram_mixed VALUES (1, 'hello');
+
+statement ok
+VACUUM (REFRESH_TABLE) test_ngram_mixed;
+
+statement error
+SELECT a FROM test_ngram_mixed_idx WHERE b @@ ts_ngram('hello');
+----
+db error: ERROR: ts_ngram needs a dictionary that emits one token per position
+HINT: Use a single n-gram size, such as generate_ngrams(2, 2). Tokens stacked at one position, from several n-gram sizes or from synonyms, cannot be matched by n-gram similarity.
+
+
+statement ok
+DROP TABLE test_ngram_mixed;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY test_ngram_mixed_dict;

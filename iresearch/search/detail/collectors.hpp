@@ -171,16 +171,9 @@ class PrepareCollector {
 
   detail::StatsRecord Record() const noexcept { return {_stats, _scorer}; }
 
-  void Retain(memory::managed_ptr<const memory::Managed> query) {
-    _retained.emplace_back(std::move(query));
-  }
-
  protected:
   const byte_type* _stats = nullptr;
   const Scorer* _scorer = nullptr;
-
- private:
-  std::vector<memory::managed_ptr<const memory::Managed>> _retained;
 };
 
 class FieldPrepareCollector : public PrepareCollector {

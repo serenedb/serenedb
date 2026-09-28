@@ -20,6 +20,8 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
+#include <absl/strings/match.h>
+#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_replace.h>
@@ -30,6 +32,7 @@
 #include <zlib.h>
 
 #include <bit>
+#include <chrono>
 #include <cstdio>
 #include <fstream>
 #include <functional>
@@ -46,6 +49,7 @@
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/serializer.hpp>
 #include <memory>
+#include <random>
 #include <span>
 #include <string>
 #include <vector>
@@ -55,6 +59,7 @@
 #include "index_builder.h"
 #include "insert_field.hpp"
 #include "search/filter_test_case_base.hpp"
+#include "search/search_fields.hpp"
 #include "server/utils/files.h"
 #include "server/utils/simdjson_sink.h"
 #include "tests_shared.hpp"
@@ -62,6 +67,25 @@
 namespace {
 
 inline constexpr irs::field_id kIdId = 1;
+inline constexpr irs::field_id kBucketId = 3;
+inline constexpr size_t kBucketCount = 1000;
+
+bool gBucketField = false;
+
+uint64_t Fnv1a(std::string_view value) noexcept {
+  uint64_t hash = 14695981039346656037ULL;
+  for (const char c : value) {
+    hash ^= static_cast<unsigned char>(c);
+    hash *= 1099511628211ULL;
+  }
+  return hash;
+}
+
+std::string BucketToken(size_t bucket) { return absl::StrCat("bkt", bucket); }
+
+size_t BucketOf(std::string_view id) noexcept {
+  return static_cast<size_t>(Fnv1a(id) % kBucketCount);
+}
 
 void DecodeMask(const uint64_t* mask, size_t mask_words, irs::doc_id_t base,
                 std::vector<irs::doc_id_t>& docs) {
@@ -543,6 +567,8 @@ std::vector<ParsedQuery> LoadQueries(const std::filesystem::path& path) {
 
 struct StoredIdBatchHandler : bench::IBatchHandler {
   bench::Document doc;
+  std::string token;
+  irs::tests::StringField bucket{.field_name = "bucket", .id = kBucketId};
 
   void operator()(std::vector<std::string>& buf,
                   irs::IndexWriter::Transaction& ctx) override {
@@ -553,13 +579,19 @@ struct StoredIdBatchHandler : bench::IBatchHandler {
       irs::tests::StoreFieldAt(*trx.GetColWriter(), kIdId, trx.DocId(),
                                doc.fields[0]);
       ::tests::InsertField(trx, doc.fields[1]);
+      if (gBucketField) {
+        token = BucketToken(BucketOf(doc.fields[0].text));
+        bucket.value = token;
+        ::tests::InsertField(trx, bucket);
+      }
     }
   }
 };
 
 void BuildIndex(const std::string& corpus_path,
                 const std::filesystem::path& index_dir,
-                const bench::BenchConfig& config) {
+                const bench::BenchConfig& config,
+                std::unique_ptr<bench::IndexBuilder>& out) {
   bench::IndexBuilderOptions builder_options{
     .batch_size = 100000,
     .indexer_threads = 1,
@@ -569,12 +601,13 @@ void BuildIndex(const std::string& corpus_path,
     .compact_all = true,
   };
 
-  bench::IndexBuilder builder{index_dir.string(), builder_options, config};
+  out = std::make_unique<bench::IndexBuilder>(index_dir.string(),
+                                              builder_options, config);
 
   std::ifstream file{corpus_path};
   ASSERT_TRUE(file.is_open()) << "Cannot open corpus: " << corpus_path;
 
-  builder.IndexFromStream(file, [] -> std::unique_ptr<bench::IBatchHandler> {
+  out->IndexFromStream(file, [] -> std::unique_ptr<bench::IBatchHandler> {
     return std::make_unique<StoredIdBatchHandler>();
   });
 }
@@ -659,6 +692,143 @@ std::vector<QueryResult> ExecuteAllQueries(
     results.emplace_back(std::move(r));
   }
   return results;
+}
+
+double gWarmupSeconds = 60.0;
+
+template<typename Segment>
+uint64_t MaskBytes(const Segment& segment) {
+  const auto* mask = segment.docs_mask();
+  if (mask == nullptr) {
+    return 0;
+  }
+  if constexpr (requires { mask->ByteSize(); }) {
+    return mask->ByteSize();
+  } else {
+    return mask->capacity() * (sizeof(irs::doc_id_t) + 1);
+  }
+}
+
+enum class BenchMode : uint8_t {
+  Count,
+  TopK,
+  TopKWithCount,
+};
+
+constexpr std::string_view kModeNames[] = {"count", "top_100", "top_100_count"};
+
+std::vector<BenchMode> gModes{BenchMode::Count, BenchMode::TopK,
+                              BenchMode::TopKWithCount};
+
+std::vector<BenchMode> ParseModes(std::string_view spec) {
+  std::vector<BenchMode> out;
+  for (const auto part : absl::StrSplit(spec, ',', absl::SkipEmpty())) {
+    for (size_t i = 0; i != std::size(kModeNames); ++i) {
+      if (part == kModeNames[i]) {
+        out.push_back(static_cast<BenchMode>(i));
+      }
+    }
+  }
+  return out;
+}
+
+size_t RunOne(bench::Executor& executor, BenchMode mode,
+              std::string_view query) {
+  switch (mode) {
+    case BenchMode::Count:
+      return executor.ExecuteCount(query);
+    case BenchMode::TopK:
+      return executor.ExecuteTopK(100, query);
+    case BenchMode::TopKWithCount:
+      return executor.ExecuteTopKWithCount(100, query);
+  }
+  return 0;
+}
+
+double Quantile(std::vector<double> values, double q) {
+  if (values.empty()) {
+    return 0.0;
+  }
+  absl::c_sort(values);
+  const auto at =
+    static_cast<size_t>(q * static_cast<double>(values.size() - 1) + 0.5);
+  return values[std::min(at, values.size() - 1)];
+}
+
+std::vector<double> TimeQueries(bench::Executor& executor, BenchMode mode,
+                                const std::vector<ParsedQuery>& queries,
+                                std::span<const size_t> selected, size_t runs,
+                                uint64_t& hits) {
+  std::vector<std::vector<double>> samples(selected.size());
+  std::vector<std::pair<uint32_t, uint32_t>> order;
+  order.reserve(selected.size() * runs);
+  for (uint32_t run = 0; run != runs; ++run) {
+    for (uint32_t at = 0; at != selected.size(); ++at) {
+      order.emplace_back(at, run);
+    }
+  }
+  std::mt19937_64 rng{42};
+  std::shuffle(order.begin(), order.end(), rng);
+
+  uint64_t total = 0;
+  for (const auto& [at, run] : order) {
+    const auto& query = queries[selected[at]].query;
+    const auto start = std::chrono::steady_clock::now();
+    total += RunOne(executor, mode, query);
+    const auto stop = std::chrono::steady_clock::now();
+    samples[at].push_back(
+      std::chrono::duration<double, std::milli>(stop - start).count());
+  }
+  hits = total;
+
+  std::vector<double> medians;
+  medians.reserve(selected.size());
+  for (auto& sample : samples) {
+    medians.push_back(Quantile(std::move(sample), 0.5));
+  }
+  return medians;
+}
+
+void WarmUp(bench::Executor& executor, const std::vector<ParsedQuery>& queries,
+            double seconds) {
+  volatile uint64_t sink = 0;
+  const auto deadline =
+    std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds);
+  do {
+    for (const auto& q : queries) {
+      sink += executor.ExecuteCount(q.query);
+      if (std::chrono::steady_clock::now() >= deadline) {
+        return;
+      }
+    }
+  } while (std::chrono::steady_clock::now() < deadline);
+}
+
+bool DeleteBuckets(irs::IndexWriter& writer, size_t from, size_t to) {
+  auto ctx = writer.GetBatch();
+  for (auto bucket = from; bucket != to; ++bucket) {
+    auto filter = std::make_unique<irs::ByTerm>();
+    *filter->mutable_field_id() = kBucketId;
+    const auto token = BucketToken(bucket);
+    filter->mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view{token});
+    std::shared_ptr<const irs::Filter> owned{std::move(filter)};
+    ctx.Remove(std::move(owned));
+  }
+  return ctx.Commit();
+}
+
+std::vector<size_t> ParseRatios(std::string_view spec) {
+  std::vector<size_t> out;
+  for (const auto part : absl::StrSplit(spec, ',', absl::SkipEmpty())) {
+    size_t value = 0;
+    if (absl::SimpleAtoi(part, &value) && value > 0 && value < kBucketCount) {
+      out.push_back(value);
+    }
+  }
+  absl::c_sort(out);
+  out.erase(std::unique(out.begin(), out.end()), out.end());
+  return out;
 }
 
 constexpr std::string_view kQueries[] = {
@@ -946,6 +1116,31 @@ class LoadTest : public TestBase {
     if (const char* gzip = std::getenv("GENERATE_GZIP"); gzip != nullptr) {
       gGzip = std::string_view{gzip} != "0";
     }
+    if (const char* ratios = std::getenv("DELETE_BENCH_RATIOS");
+        ratios != nullptr) {
+      gDeleteRatios = ParseRatios(ratios);
+      gBucketField = !gDeleteRatios.empty();
+    }
+    if (const char* runs = std::getenv("DELETE_BENCH_RUNS"); runs != nullptr) {
+      size_t value = 0;
+      if (absl::SimpleAtoi(runs, &value) && value != 0) {
+        gDeleteRuns = value;
+      }
+    }
+    if (const char* out = std::getenv("DELETE_BENCH_OUT"); out != nullptr) {
+      gDeleteOut = out;
+    }
+    if (const char* w = std::getenv("DELETE_BENCH_WARMUP"); w != nullptr) {
+      double value = 0;
+      if (absl::SimpleAtod(w, &value) && value >= 0) {
+        gWarmupSeconds = value;
+      }
+    }
+    if (const char* m = std::getenv("DELETE_BENCH_MODES"); m != nullptr) {
+      if (auto parsed = ParseModes(m); !parsed.empty()) {
+        gModes = std::move(parsed);
+      }
+    }
     if (!std::filesystem::exists(gCorpusPath)) {
       GTEST_SKIP() << "Path does not exist: " << gCorpusPath;
     }
@@ -954,12 +1149,17 @@ class LoadTest : public TestBase {
     if (std::filesystem::is_directory(gCorpusPath.c_str())) {
       index_dir = gCorpusPath;
       gDropIndex = false;
+      ASSERT_TRUE(gDeleteRatios.empty())
+        << "DELETE_BENCH_RATIOS needs a corpus file, not a prebuilt index";
     } else {
       gIndexDir = test_results_dir() / "LoadTest_index";
       std::filesystem::create_directories(gIndexDir);
-      BuildIndex(gCorpusPath, gIndexDir, gConfig);
+      BuildIndex(gCorpusPath, gIndexDir, gConfig, gBuilder);
       index_dir = gIndexDir.string();
       std::cout << absl::StrCat("Index directory: ", index_dir, "\n");
+    }
+    if (gDeleteRatios.empty()) {
+      gBuilder.reset();
     }
 
     if (const char* drop_index = std::getenv("DROP_INDEX");
@@ -975,6 +1175,7 @@ class LoadTest : public TestBase {
 
   static void TearDownTestSuite() {
     gExecutor.reset();
+    gBuilder.reset();
     if (gDropIndex && !gIndexDir.empty()) {
       std::filesystem::remove_all(gIndexDir);
     }
@@ -1122,11 +1323,126 @@ class LoadTest : public TestBase {
   static inline Mode gMode = Mode::Validate;
   static inline bool gGzip = false;
   static inline bool gDropIndex = true;
+  static inline std::unique_ptr<bench::IndexBuilder> gBuilder;
+  static inline std::vector<size_t> gDeleteRatios;
+  static inline size_t gDeleteRuns = 10;
+  static inline std::string gDeleteOut = "delete_bench.csv";
 
   std::FILE* _null_sink = nullptr;
 };
 
-TEST_F(LoadTest, WikiSmall) { RunAndValidate("wiki_small"); }
+TEST_F(LoadTest, WikiSmall) {
+  if (!gDeleteRatios.empty()) {
+    GTEST_SKIP() << "index carries the delete-bench bucket field";
+  }
+  RunAndValidate("wiki_small");
+}
+
+TEST_F(LoadTest, DeleteRatioLatency) {
+  if (gDeleteRatios.empty()) {
+    GTEST_SKIP() << "DELETE_BENCH_RATIOS not set";
+  }
+  ASSERT_NE(gBuilder, nullptr);
+
+  const auto queries_path =
+    resource("iresearch-load") / "wiki_small" / "queries.json";
+  ASSERT_TRUE(std::filesystem::exists(queries_path))
+    << "Queries file not found: " << queries_path;
+  const auto queries = LoadQueries(queries_path);
+  ASSERT_FALSE(queries.empty());
+
+  std::vector<size_t> all_idx;
+  std::vector<size_t> topk_idx;
+  all_idx.reserve(queries.size());
+  topk_idx.reserve(queries.size());
+  for (size_t i = 0; i != queries.size(); ++i) {
+    all_idx.push_back(i);
+    if (!absl::c_linear_search(queries[i].tags, kSkipTopK)) {
+      topk_idx.push_back(i);
+    }
+  }
+  ASSERT_FALSE(topk_idx.empty());
+
+  std::ofstream csv{gDeleteOut};
+  ASSERT_TRUE(csv.is_open()) << "Cannot write: " << gDeleteOut;
+  csv << "per_mille,mode,tag,queries,median_ms,p95_ms,docs,live_docs,segments,"
+         "mask_bytes,hits\n";
+
+  std::vector<size_t> steps{0};
+  steps.insert(steps.end(), gDeleteRatios.begin(), gDeleteRatios.end());
+
+  size_t deleted_upto = 0;
+  for (const auto per_mille : steps) {
+    if (per_mille != 0) {
+      const auto start = std::chrono::steady_clock::now();
+      ASSERT_TRUE(
+        DeleteBuckets(gBuilder->GetWriter(), deleted_upto, per_mille));
+      gBuilder->GetWriter().RefreshCommit();
+      deleted_upto = per_mille;
+      std::cout << absl::StrCat(
+        "deleted up to ", per_mille, " per-mille in ",
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
+          .count(),
+        " s\n");
+    }
+
+    gExecutor = std::make_unique<bench::Executor>(gIndexDir.string(), gConfig);
+    gExecutor->SetPrintSink(_null_sink);
+    const auto& reader = gExecutor->GetReader();
+    ASSERT_GT(reader.size(), 0);
+
+    uint64_t docs = 0;
+    uint64_t live = 0;
+    uint64_t mask_bytes = 0;
+    for (const auto& segment : reader) {
+      docs += segment.docs_count();
+      live += segment.live_docs_count();
+      mask_bytes += MaskBytes(segment);
+    }
+    ASSERT_GT(docs, 0);
+    const auto removed_pm = (docs - live) * 1000 / docs;
+    EXPECT_NEAR(static_cast<double>(removed_pm), static_cast<double>(per_mille),
+                5.0)
+      << "deleted fraction does not match the requested ratio";
+    std::cout << absl::StrCat("per_mille=", per_mille, " docs=", docs,
+                              " live=", live, " segments=", reader.size(),
+                              " mask_bytes=", mask_bytes, "\n");
+
+    WarmUp(*gExecutor, queries, gWarmupSeconds);
+
+    for (const auto mode : gModes) {
+      const auto& selected = mode == BenchMode::Count ? all_idx : topk_idx;
+      uint64_t hits = 0;
+      const auto medians =
+        TimeQueries(*gExecutor, mode, queries, selected, gDeleteRuns, hits);
+      const auto name = kModeNames[static_cast<size_t>(mode)];
+
+      auto emit = [&](std::string_view tag, const std::vector<double>& v) {
+        csv << per_mille << ',' << name << ',' << tag << ',' << v.size() << ','
+            << Quantile(v, 0.5) << ',' << Quantile(v, 0.95) << ',' << docs
+            << ',' << live << ',' << reader.size() << ',' << mask_bytes << ','
+            << hits << '\n';
+      };
+      emit("all", medians);
+
+      absl::flat_hash_map<std::string_view, std::vector<double>> by_tag;
+      for (size_t at = 0; at != selected.size(); ++at) {
+        for (const auto& tag : queries[selected[at]].tags) {
+          if (!absl::StrContains(tag, ':')) {
+            by_tag[tag].push_back(medians[at]);
+          }
+        }
+      }
+      for (const auto& [tag, v] : by_tag) {
+        emit(tag, v);
+      }
+      std::cout << absl::StrCat("  ", name, " median=", Quantile(medians, 0.5),
+                                " ms p95=", Quantile(medians, 0.95), " ms\n");
+    }
+    csv.flush();
+  }
+  std::cout << absl::StrCat("wrote ", gDeleteOut, "\n");
+}
 
 // Scores a document from first principles: the sum of the contributions of the
 // query terms that document contains. Holds one iterator per term and seeks

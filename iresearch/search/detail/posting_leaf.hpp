@@ -479,7 +479,7 @@ class PostingLeaf {
     _left_in_list = left;
     In().Seek(_walk.Landing().doc_ptr);
     read(_walk.Landing().doc);
-    return true;
+    return target <= _last;
   }
 
   IRS_FORCE_INLINE bool ReadToDelta(doc_id_t target) {

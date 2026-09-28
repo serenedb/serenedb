@@ -22,14 +22,13 @@
 
 #include <deque>
 #include <iresearch/utils/assert.hpp>
+#include <span>
 #include <string>
 #include <vector>
 
-#include "catalog/database.h"
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/role.h"
+#include "catalog/cluster.h"
+#include "catalog/entry/database.h"
+#include "catalog/entry/role.h"
 #include "pg/pg_catalog/fwd.h"
 #include "server/utils/app_server.h"
 
@@ -48,35 +47,38 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgDatabase>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgDatabase>::GetTableData() {
   std::vector<PgDatabase> values;
   // The name and the ACL of every row are views into the entry the walk read
   // them off, which the rows written after it still point at: an entry version
   // stays in its set's chain for as long as a transaction can see it.
-  catalog::VisitDatabases(
-    &_config.GetClientContext(), [&](const catalog::SereneDBDatabaseEntry& db) {
-      values.push_back(PgDatabase{
-        .oid = catalog::IdOf(db).id(),
-        .datname = db.name.GetIdentifierName(),
-        .datdba = db.permissions.owner,
-        .encoding = 6,  // UTF8
-        .datlocprovider = PgDatabase::Datlocprovider::Libc,
-        .datistemplate = false,
-        .datallowconn = true,
-        .dathasloginevt = false,
-        .datconnlimit = -1,
-        .datfrozenxid = 0,
-        .datminmxid = 0,
-        // pg_default; always 1663 (no CREATE TABLESPACE) and must be a real
-        // pg_tablespace oid -- \l inner-joins pg_tablespace and would otherwise
-        // drop the row. TODO: derive from a real tablespace once CREATE
-        // TABLESPACE exists.
-        .dattablespace = 1663,
-        .datcollate = "C.UTF-8",
-        .datctype = "C.UTF-8",
-        .datacl = {catalog::AclView{db.permissions.acl}},
-      });
-    });
+  auto& context = _context;
+  auto& cluster = catalog::ClusterOf(context);
+  cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+    .Scan(cluster.GetCatalogTransaction(context),
+          [&](duckdb::CatalogEntry& db) {
+            values.push_back(PgDatabase{
+              .oid = db.oid,
+              .datname = db.name.GetIdentifierName(),
+              .datdba = db.permissions.owner,
+              .encoding = 6,  // UTF8
+              .datlocprovider = PgDatabase::Datlocprovider::Libc,
+              .datistemplate = false,
+              .datallowconn = true,
+              .dathasloginevt = false,
+              .datconnlimit = -1,
+              .datfrozenxid = 0,
+              .datminmxid = 0,
+              // pg_default; always 1663 (no CREATE TABLESPACE) and must be a
+              // real pg_tablespace oid -- \l inner-joins pg_tablespace and
+              // would otherwise drop the row. TODO: derive from a real
+              // tablespace once CREATE TABLESPACE exists.
+              .dattablespace = 1663,
+              .datcollate = "C.UTF-8",
+              .datctype = "C.UTF-8",
+              .datacl = {std::span<const duckdb::AclItem>{db.permissions.acl}},
+            });
+          });
 
   auto result = CreateColumns<PgDatabase>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

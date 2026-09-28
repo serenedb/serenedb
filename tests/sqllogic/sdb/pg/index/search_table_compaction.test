@@ -1,0 +1,372 @@
+statement ok
+CREATE TABLE sc_on (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search')
+
+
+statement ok
+CREATE TABLE sc_off (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', compaction_interval = 0)
+
+
+query
+SELECT reloptions FROM pg_class WHERE relname = 'sc_on';
+----
+reloptions
+{refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152,row_group_size=122880,segment_memory_max=268435456}
+
+
+query
+SELECT reloptions FROM pg_class WHERE relname = 'sc_off';
+----
+reloptions
+{refresh_interval=1000,compaction_interval=0,cleanup_interval_step=1,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152,row_group_size=122880,segment_memory_max=268435456}
+
+
+statement ok
+INSERT INTO sc_on SELECT i, 'fox dog' FROM generate_series(1, 100) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_on
+
+
+statement ok
+INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(1, 100) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_off
+
+
+statement ok
+INSERT INTO sc_on SELECT i, 'fox dog' FROM generate_series(101, 200) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_on
+
+
+statement ok
+INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(101, 200) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_off
+
+
+statement ok
+INSERT INTO sc_on SELECT i, 'fox dog' FROM generate_series(201, 300) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_on
+
+
+statement ok
+INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(201, 300) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_off
+
+
+statement ok
+INSERT INTO sc_on SELECT i, 'fox dog' FROM generate_series(301, 400) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_on
+
+
+statement ok
+INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(301, 400) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_off
+
+
+statement ok
+INSERT INTO sc_on SELECT i, 'fox dog' FROM generate_series(401, 500) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_on
+
+
+statement ok
+INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(401, 500) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_off
+
+
+statement ok
+INSERT INTO sc_on SELECT i, 'fox dog' FROM generate_series(501, 600) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_on
+
+
+statement ok
+INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(501, 600) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_off
+
+
+query ok retry 60 backoff 500ms
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('sc_on') WHERE column_name = 'id';
+----
+segments
+1
+
+
+query
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('sc_off') WHERE column_name = 'id';
+----
+segments
+6
+
+
+statement ok
+ALTER TABLE sc_off SET (compaction_interval = 100)
+
+
+query
+SELECT reloptions FROM pg_class WHERE relname = 'sc_off';
+----
+reloptions
+{refresh_interval=1000,compaction_interval=100,cleanup_interval_step=1,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152,row_group_size=122880,segment_memory_max=268435456}
+
+
+query ok retry 60 backoff 500ms
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('sc_off') WHERE column_name = 'id';
+----
+segments
+1
+
+
+statement ok
+ALTER TABLE sc_off SET (compaction_interval = 0)
+
+
+statement ok
+INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(601, 700) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_off
+
+
+statement ok
+INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(701, 800) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_off
+
+
+statement ok
+INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(801, 900) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_off
+
+
+statement ok
+VACUUM (COMPACT_TABLE) sc_off
+
+
+query
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('sc_off') WHERE column_name = 'id';
+----
+segments
+1
+
+
+statement ok
+BEGIN
+
+
+statement ok
+ALTER TABLE sc_off SET (compaction_interval = 5000)
+
+
+statement ok
+ROLLBACK
+
+
+query
+SELECT reloptions FROM pg_class WHERE relname = 'sc_off';
+----
+reloptions
+{refresh_interval=1000,compaction_interval=0,cleanup_interval_step=1,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152,row_group_size=122880,segment_memory_max=268435456}
+
+
+statement ok
+ALTER TABLE sc_off RESET (compaction_interval)
+
+
+query
+SELECT reloptions FROM pg_class WHERE relname = 'sc_off';
+----
+reloptions
+{refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152,row_group_size=122880,segment_memory_max=268435456}
+
+
+statement error
+ALTER TABLE sc_off SET (row_group_size = 4096)
+----
+db error: ERROR: option "row_group_size" cannot be changed with ALTER TABLE
+
+
+statement error
+ALTER TABLE sc_off SET (bogus = 1)
+----
+db error: ERROR: unrecognized parameter "bogus"
+
+
+query
+SELECT count(*), sum(id) FROM sc_on;
+----
+count	sum
+600	180300
+
+
+query
+SELECT count(*), sum(id) FROM sc_off;
+----
+count	sum
+900	405450
+
+
+statement ok
+CREATE TABLE sc_tgt (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', compaction_interval = 0)
+
+
+statement ok
+INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(1, 100) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_tgt
+
+
+statement ok
+INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(101, 200) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_tgt
+
+
+statement ok
+INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(201, 300) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_tgt
+
+
+statement ok
+INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(301, 400) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_tgt
+
+
+statement ok
+INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(401, 500) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_tgt
+
+
+statement ok
+INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(501, 600) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_tgt
+
+
+statement ok
+INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(601, 700) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_tgt
+
+
+statement ok
+INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(701, 800) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_tgt
+
+
+query
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('sc_tgt') WHERE column_name = 'id';
+----
+segments
+8
+
+
+statement ok
+SET sdb_compact_target_segments = 3
+
+
+statement ok
+VACUUM (COMPACT_TABLE) sc_tgt
+
+
+query
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('sc_tgt') WHERE column_name = 'id';
+----
+segments
+3
+
+
+statement ok
+SET sdb_compact_target_segments = 5
+
+
+statement ok
+VACUUM (COMPACT_TABLE) sc_tgt
+
+
+query
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('sc_tgt') WHERE column_name = 'id';
+----
+segments
+3
+
+
+statement ok
+RESET sdb_compact_target_segments
+
+
+statement ok
+VACUUM (COMPACT_TABLE) sc_tgt
+
+
+query
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('sc_tgt') WHERE column_name = 'id';
+----
+segments
+1
+
+
+query
+SELECT count(*), sum(id) FROM sc_tgt;
+----
+count	sum
+800	320400

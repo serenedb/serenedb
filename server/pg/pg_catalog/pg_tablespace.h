@@ -39,6 +39,6 @@ struct PgTablespace {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgTablespace>::GetTableData();
+MaterializedData SystemTableSnapshot<PgTablespace>::GetTableData();
 
 }  // namespace sdb::pg

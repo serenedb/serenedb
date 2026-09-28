@@ -33,10 +33,8 @@
 #include <iresearch/utils/remap_executable.hpp>
 #include <utility>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/log/data_store.h"
-#include "catalog/log/duckdb_global_catalog.h"
-#include "catalog/log/store.h"
+#include "catalog/boot.h"
+#include "catalog/catalog.h"
 #include "docs/docs_loader.h"
 #include "duckdb_shell.hpp"
 #include "network/pg/hba.h"
@@ -75,8 +73,6 @@ int RunServer(int argc, char** argv) {
     //    own flags, runs validation, and sets its static gInstance
     //    pointer; Feature::instance() works from here on.
     DatabasePathFeature db_path;
-    catalog::CatalogStore store;
-    catalog::DataStore data_store;
     BackgroundScheduler background;
     search::SearchEngine search;
     Server network;
@@ -92,8 +88,7 @@ int RunServer(int argc, char** argv) {
     // afterwards still see a live SearchEngine. DuckDBEngine brackets all of
     // this from main(). The up_* flags let DOWN skip whatever never came UP
     // (start() threw).
-    bool up_data = false, up_background = false, up_catalog = false,
-         up_search = false, up_network = false;
+    bool up_background = false, up_search = false, up_network = false;
 
     absl::Cleanup down = [&]() noexcept {
       irs::CrashHandler::SetState("stopping");
@@ -133,36 +128,17 @@ int RunServer(int argc, char** argv) {
       if (up_background) {
         stop("background", [&] { background.stop(); });
       }
-      if (up_data) {
-        stop("data", [&] { data_store.Shutdown(); });
-      }
-      // Before the attachments close: the catalog log's lock lives on the
-      // global attachment's storage manager, and everything that could still
-      // append has stopped above.
-      stop("catalog log", [&] { catalog::CloseClusterCatalogWal(); });
       // The shutdown checkpoint of every attached database, taken here rather
       // than left to the DuckDB destructor in main(): an inverted index vetoes
-      // it unless it can read its definition, so the catalog below must still
-      // be up -- and the catalog must be down before that destructor, because
-      // its objects hold allocations of the allocator it takes with it.
+      // it unless it can read its definition.
       stop("storage", [&] { irs::DuckDBEngine::Instance().CloseDatabases(); });
-      if (up_catalog) {
-        stop("catalog", [&] { catalog::ShutdownCatalog(); });
-      }
     };
 
     irs::CrashHandler::SetState("starting");
-    store.Initialize(db_path.directory());
     network::pg::hba::SetHbaConfig(db_path.hbaConfigFile());
     background.start();
     up_background = true;
-    // Before InitCatalog: the per-database attaches it performs replay their
-    // data WALs into inverted indexes, and the bind contexts those indexes are
-    // built with live here.
-    data_store.Initialize();
-    up_data = true;
-    catalog::InitCatalog();
-    up_catalog = true;
+    catalog::InitCatalog(db_path.directory());
     // The io pool must be up before search.start(): the per-index refresh /
     // compaction loops co_await BackgroundScheduler::Delay(), which hosts its
     // timers on the io pool. Without it Delay() returns instantly and the loops
@@ -195,7 +171,8 @@ int RunServer(int argc, char** argv) {
     SDB_ERROR(GENERAL,
               "serened terminated because of an exception of unknown type");
   }
-  // Return non-zero -- main() will run DuckDBEngine::Shutdown() before exit.
+  // Return non-zero -- main() will run irs::DuckDBEngine::Shutdown() before
+  // exit.
   return EXIT_FAILURE;
 }
 

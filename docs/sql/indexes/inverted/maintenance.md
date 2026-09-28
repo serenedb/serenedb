@@ -27,7 +27,7 @@ A newly written row is not searchable until a refresh publishes it to readers. T
 
 ## Background intervals
 
-Three index `WITH` options control the background lifecycle (set at `CREATE INDEX`); `0` disables each:
+Three `WITH` options control the background lifecycle of an inverted index (set at `CREATE INDEX`) and of a search table (set at `CREATE TABLE … WITH (storage = 'search', …)`); `0` disables each:
 
 | Option | Default | Controls |
 |---|---|---|
@@ -36,6 +36,24 @@ Three index `WITH` options control the background lifecycle (set at `CREATE INDE
 | `cleanup_interval_step` | `1` | Commit ticks between cleanup passes |
 
 View-backed indexes have a fourth interval, `reindex_interval`, which re-scans the view's *source* for new, changed and removed data — see [Refreshing the index](./views.md#refreshing-the-index).
+
+## Background compaction
+
+Compaction is on by default, for inverted indexes and search tables alike: every `compaction_interval` milliseconds a background task merges segments of similar size into larger ones, so a table loaded in many small batches does not keep one segment per batch. Three more `WITH` options shape each merge:
+
+| Option | Default | Controls |
+|---|---|---|
+| `compaction_max_segments` | `10` | Segments merged by one background compaction |
+| `compaction_max_segments_bytes` | `5368709120` (5 GB) | Size budget of one background compaction |
+| `compaction_floor_segment_bytes` | `2097152` (2 MB) | Segments smaller than this count as equal-sized when choosing what to merge |
+
+The session settings of the same names hold the defaults a new index or search table takes.
+
+- **Disable** background compaction with `compaction_interval = 0`, in `WITH` at creation or later with `ALTER INDEX … SET` for an index and [`ALTER TABLE … SET`](../../statements/alter_table/index.md#set--reset-storage-options) for a search table. Segments are then merged only when you ask for it.
+- **Enable** it again, or change how often it runs, the same way with a non-zero interval. `RESET (compaction_interval)` returns to the session default. The change applies to the running background task at once.
+- **Compact manually** at any time, whether background compaction is enabled or not, with `VACUUM (COMPACT_INDEX)` or `VACUUM (COMPACT_TABLE)` — see [below](#manual-maintenance-with-vacuum).
+
+<SqlLogicTest id="sql/indexes/inverted/maintenance/example_006" />
 
 ## Manual maintenance with `VACUUM`
 
@@ -87,9 +105,10 @@ Beyond the per-index `WITH` options, a few **`sdb_`-prefixed session settings** 
 | `sdb_levenshtein_max_terms` | `64` | Maximum number of dictionary terms a fuzzy predicate ([`ts_levenshtein`](../../functions/search/full-text.md#ts_levenshtein)) expands to, per index segment. The terms closest to the query survive; the rest neither match nor contribute to scoring. Raise it for wide expansions, or set `0` to match every term within the edit distance. A predicate on a column that a `ts_dict_*` query enumerates is exempt, since there the terms are the result; other predicates in the same query keep the cap. |
 | `sdb_nprobe` | `8` | Number of IVF cluster lists scanned per [vector](./vector-search.md) kNN query (`ORDER BY <dist> LIMIT k`). Higher = better recall, slower queries. Does not affect range (`WHERE <dist> < r`) queries. |
 | `sdb_rerank_factor` | `4` | For a quantized (`quant` other than `none`) [vector](./vector-search.md#quantization) index, the candidate pool re-scored with exact distances is `sdb_rerank_factor * k`. Higher = better recall, slower queries; `0` disables reranking. Ignored for unquantized indexes. |
-| `sdb_scan_split` | `auto` | When an index scan splits a segment into row-group units across worker threads. `tail` claims whole segments while more segments remain than workers, then row groups of the remaining ones; `always` claims row groups from the first unit; `never` claims whole segments only. `auto` is `always` when the query has an `ORDER BY <column> LIMIT` scan order and `tail` otherwise. Meant for benchmarking and tests: whole-segment units run with no per-unit overhead, row-group units keep every core busy on one large segment. |
-| `sdb_scan_order` | `auto` | The order an index scan claims its units in. `smallest_first` leaves the large segments for the row-group tail; `largest_first` is plain largest-job-first over whole segments (with `sdb_scan_split = never` this reproduces a scan without row-group units); `order` is best-first by the `ORDER BY` column's row-group statistics when the query has a scan order, so the `TOP_N` bound tightens early. `auto` is `order` under a scan order and `smallest_first` otherwise. |
+| `sdb_scan_split` | `auto` | How an index scan shares a segment between worker threads. Each worker scans the row groups of a segment in order. `tail` gives every worker a segment of its own; only when no segment is left unclaimed does an idle worker join the segment with the most row groups left, so a segment is split across workers only at the end of the scan, when there are fewer segments than workers, or when one segment holds most of the data. `always` puts every worker on the same segment until all of its row groups are claimed; `never` scans each segment whole on one worker. `auto` is `always` when the query has an `ORDER BY <column> LIMIT` scan order and `tail` otherwise. Meant for benchmarking and tests. |
+| `sdb_scan_order` | `auto` | The order an index scan claims its segments in. `largest_first` and `smallest_first` order them by live document count; `order` is best-first by the `ORDER BY` column's row-group statistics when the query has a scan order, so the `TOP_N` bound tightens early. `auto` is `order` under a scan order and `largest_first` otherwise. |
 | `sdb_scan_no_split_row_groups` | `1` | A segment with at most this many row groups is always one unit of an index scan and is never split across workers. |
+| `sdb_compact_target_segments` | `1` | How many segments `VACUUM (COMPACT_*)` leaves in a search table. `0` or `1` merges every segment into one; a larger `N` splits the segments into `N` disjoint groups and merges each into one segment, so no single merge holds the whole table. A table with `N` segments or fewer is left as it is. |
 
 ```sql
 SET sdb_nprobe = 32;             -- scan more clusters for this session

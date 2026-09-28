@@ -1,0 +1,208 @@
+statement ok
+SET threads = 1000;
+
+
+query
+SHOW threads;
+----
+threads
+1000
+
+
+connection other
+query
+SELECT current_setting('threads')::BIGINT < 1000;
+----
+?column?
+t
+
+
+connection other
+statement ok
+SET threads = 2;
+
+
+connection other
+query
+SHOW threads;
+----
+threads
+2
+
+
+connection default
+query
+SHOW threads;
+----
+threads
+1000
+
+
+connection default
+statement ok
+SET SESSION threads = 3;
+
+
+connection default
+query
+SHOW threads;
+----
+threads
+3
+
+
+connection default
+statement ok
+BEGIN;
+
+
+connection default
+statement ok
+SET LOCAL threads = 1;
+
+
+connection default
+query
+SHOW threads;
+----
+threads
+1
+
+
+connection default
+query
+SELECT count(*) FROM generate_series(1, 100000);
+----
+count
+100000
+
+
+connection default
+statement ok
+COMMIT;
+
+
+connection default
+query
+SHOW threads;
+----
+threads
+3
+
+
+connection default
+statement ok
+BEGIN;
+
+
+connection default
+statement ok
+SET LOCAL threads = 1;
+
+
+connection default
+statement ok
+ROLLBACK;
+
+
+connection default
+query
+SHOW threads;
+----
+threads
+3
+
+
+connection default
+statement ok
+BEGIN;
+
+
+connection default
+statement ok
+SET threads = 5;
+
+
+connection default
+statement ok
+ROLLBACK;
+
+
+connection default
+query
+SHOW threads;
+----
+threads
+3
+
+
+connection default
+statement ok
+BEGIN;
+
+
+connection default
+statement ok
+SET threads = 5;
+
+
+connection default
+statement ok
+COMMIT;
+
+
+connection default
+query
+SHOW threads;
+----
+threads
+5
+
+
+connection default
+statement error
+SET threads = 0;
+----
+db error: ERROR: <slt:ignore>
+
+
+connection default
+skipif pg-wire-extended
+statement error
+SET LOCAL threads = 1;
+----
+db error: ERROR: SET LOCAL can only be used in transaction blocks
+
+
+connection default
+query
+SHOW threads;
+----
+threads
+5
+
+
+connection default
+statement ok
+RESET threads;
+
+
+connection default
+query
+SELECT current_setting('threads')::BIGINT < 1000;
+----
+?column?
+t
+
+
+connection other
+query
+SHOW threads;
+----
+threads
+2
+
+
+connection other
+statement ok
+RESET threads;

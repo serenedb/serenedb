@@ -21,7 +21,7 @@
 #pragma once
 
 #include <cstdint>
-#include <span>
+#include <duckdb/common/projection_index.hpp>
 
 namespace duckdb {
 
@@ -50,14 +50,13 @@ void RegisterReindexFunction(duckdb::DatabaseInstance& db);
 // every other file pre-open.
 void NarrowScanToDelta(duckdb::LogicalGet& leaf,
                        const SereneDBCreateIndexInfo& info,
-                       std::span<const uint64_t> vcols,
-                       uint64_t leaf_orig_size);
+                       duckdb::ProjectionIndex file_index_slot);
 
 // The delta pass's pk file element: docs are born with their manifest ids,
 // which are `file_index + delta_file_base` by construction -- patch the
 // backfill projection's file_index slot with the add.
 void AddDeltaFileBase(duckdb::Binder& binder, duckdb::LogicalProjection& proj,
-                      std::span<const uint64_t> vcols, uint64_t kept_size,
+                      duckdb::ProjectionIndex file_index_slot,
                       uint64_t delta_file_base);
 
 }  // namespace sdb::connector

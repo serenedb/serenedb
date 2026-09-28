@@ -21,13 +21,12 @@
 #pragma once
 
 #include <atomic>
+#include <duckdb/catalog/permissions.hpp>
 #include <iresearch/utils/pg/sql_error.hpp>
 #include <memory>
 #include <string_view>
 
-#include "catalog/fwd.h"
-#include "catalog/identifiers/object_id.h"
-#include "catalog/role.h"
+#include "catalog/entry/role.h"
 #include "query/transaction.h"
 #include "server/utils/message_buffer.h"
 
@@ -46,7 +45,7 @@ class CopyInBridge;
 // thrown) so the pg-wire path can write a fatal frame and the http path can
 // rethrow, each as it needs; test `role` (unset == failed).
 struct LoginCheck {
-  ObjectId role;
+  duckdb::idx_t role;
   bool superuser = false;
   irs::pg::SqlErrorData error;
 };
@@ -55,7 +54,7 @@ struct LoginCheck {
 // role exists -> may log in -> holds CONNECT on the target database
 // (superuser bypasses, as in PG's InitPostgres).
 LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
-                            const catalog::Permissions& perm);
+                            const duckdb::Permissions& perm);
 
 }  // namespace sdb::pg
 namespace sdb::network {
@@ -68,8 +67,8 @@ namespace sdb {
 class ConnectionContext final : public query::Transaction {
  public:
   ConnectionContext(duckdb::ClientContext& duckdb_ctx, std::string_view user,
-                    ObjectId role_id, std::string_view dbname,
-                    ObjectId database_id, message::Buffer* send_buffer,
+                    duckdb::idx_t role_id, std::string_view dbname,
+                    duckdb::idx_t database_id, message::Buffer* send_buffer,
                     int32_t backend_pid,
                     network::CancelRegistry* cancel_registry);
 
@@ -77,16 +76,14 @@ class ConnectionContext final : public query::Transaction {
 
   const std::string& user() const { return _user; }
   const std::string& GetDatabase() const { return _database_name; }
-  ObjectId GetDatabaseId() const { return _database_id; }
+  duckdb::idx_t GetDatabaseId() const { return _database_id; }
   int32_t GetBackendPid() const { return _backend_pid; }
 
   auto* GetCancelRegistry() const { return _cancel_registry; }
 
-  std::string GetCurrentSchema() const;
-
-  ObjectId GetRoleId() const { return _effective_role_id; }
-  ObjectId GetLoginRoleId() const { return _login_role_id; }
-  ObjectId GetSessionRoleId() const { return _session_role_id; }
+  duckdb::idx_t GetRoleId() const { return _effective_role_id; }
+  duckdb::idx_t GetLoginRoleId() const { return _login_role_id; }
+  duckdb::idx_t GetSessionRoleId() const { return _session_role_id; }
 
   std::string EffectiveUserName() const;
   std::string SessionUserName() const;
@@ -100,14 +97,12 @@ class ConnectionContext final : public query::Transaction {
   // plan for. Its statements must reach duckdb's native catalog paths, not the
   // serenedb mutators that emitted them.
   bool IsStorageConnection() const noexcept { return _storage_connection; }
-  void MarkStorageConnection() noexcept { _storage_connection = true; }
-  // The embedded docs loader: the one writer the read-only sdb_docs schema
-  // admits.
+
   bool IsSystemWriter() const noexcept { return _system_writer; }
   void MarkSystemWriter() noexcept { _system_writer = true; }
 
-  void SetEffectiveRole(ObjectId role) { _effective_role_id = role; }
-  void SetSessionRole(ObjectId role) {
+  void SetEffectiveRole(duckdb::idx_t role) { _effective_role_id = role; }
+  void SetSessionRole(duckdb::idx_t role) {
     _session_role_id = role;
     _effective_role_id = role;
   }
@@ -115,11 +110,6 @@ class ConnectionContext final : public query::Transaction {
     _session_role_id = _login_role_id;
     _effective_role_id = _login_role_id;
   }
-
-  // Set when this transaction writes a role, cleared when it ends. Its own
-  // uncommitted version is the one it has to read, so while this holds it
-  // neither uses nor fills the shared role-closure cache.
-  bool wrote_roles = false;
 
   auto* GetSendBuffer() const { return _send_buffer; }
 
@@ -147,19 +137,17 @@ class ConnectionContext final : public query::Transaction {
     }
   }
 
-  bool HasNotices() const {
-    return _notices.load(std::memory_order_relaxed) != nullptr;
-  }
+  bool HasNotices() const { return _notices.load(std::memory_order_relaxed); }
 
   template<typename Fn>
   void ConsumeNotices(Fn&& fn) {
     auto* node = _notices.exchange(nullptr, std::memory_order_acquire);
     NoticeNode* fifo = nullptr;
-    while (node != nullptr) {
+    while (node) {
       auto* next = std::exchange(node->next, fifo);
       fifo = std::exchange(node, next);
     }
-    while (fifo != nullptr) {
+    while (fifo) {
       fn(fifo->data);
       delete std::exchange(fifo, fifo->next);
     }
@@ -171,17 +159,17 @@ class ConnectionContext final : public query::Transaction {
     NoticeNode* next;
   };
 
-  bool _storage_connection = false;
-  bool _system_writer = false;
-  const int32_t _backend_pid;
   const std::string _user;
   const std::string _database_name;
-  const ObjectId _database_id;
+  const duckdb::idx_t _database_id;
+  const int32_t _backend_pid;
   network::CancelRegistry* const _cancel_registry;
   message::Buffer* const _send_buffer;
-  const ObjectId _login_role_id;
-  ObjectId _session_role_id;
-  ObjectId _effective_role_id;
+  const duckdb::idx_t _login_role_id;
+  duckdb::idx_t _session_role_id;
+  duckdb::idx_t _effective_role_id;
+  bool _storage_connection = false;
+  bool _system_writer = false;
   pg::CopyInBridge* _copy_in_bridge = nullptr;
   std::string* _response_sink = nullptr;
   const otel::DecodedMetrics* _otel_metrics = nullptr;

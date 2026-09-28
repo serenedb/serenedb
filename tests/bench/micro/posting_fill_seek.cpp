@@ -253,8 +253,8 @@ const Index& IndexOf(size_t docs, bool zipf = false) {
   opts.db = db;
   opts.reader_options.db = db;
   opts.column_options = [](irs::field_id) -> irs::ColumnOptions { return {}; };
-  auto writer =
-    irs::IndexWriter::Make(*index.dir, index.codec, irs::kOmCreate, opts);
+  auto writer = irs::IndexWriter::Make(*index.dir, index.codec, irs::kOmCreate,
+                                       std::move(opts));
 
   {
     auto trx = writer->GetBatch();

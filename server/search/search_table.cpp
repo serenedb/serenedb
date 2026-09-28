@@ -21,81 +21,79 @@
 #include "search/search_table.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/base/internal/endian.h>
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
 #include <chrono>
 #include <duckdb/common/file_system.hpp>
-#include <iresearch/formats/column/col_reader.hpp>
+#include <duckdb/common/serializer/deserializer.hpp>
+#include <duckdb/common/serializer/serializer.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/directory_utils.hpp>
-#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <mutex>
-#include <shared_mutex>
 #include <system_error>
 #include <utility>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
-#include "catalog/ddl/duckdb_catalog.h"
-#include "catalog/entry.h"
-#include "catalog/index.h"
-#include "catalog/inverted_index.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/scorer_options.h"
-#include "scheduler/background_scheduler.h"
+#include "connector/column_id.h"
 #include "search/inverted_index_storage.h"
+#include "search/scorer_options.h"
 #include "search/task.h"
 #include "server/utils/lifecycle.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
 
-std::filesystem::path SearchTable::GetPath(ObjectId db_id, ObjectId schema_id,
-                                           ObjectId table_id) {
-  SDB_ASSERT(db_id.isSet());
-  SDB_ASSERT(schema_id.isSet());
-  SDB_ASSERT(table_id.isSet());
+std::filesystem::path SearchTable::GetPath(duckdb::idx_t db_id,
+                                           duckdb::idx_t schema_id,
+                                           duckdb::idx_t table_id) {
+  SDB_ASSERT(db_id != 0);
+  SDB_ASSERT(schema_id != 0);
+  SDB_ASSERT(table_id != 0);
   // Same on-disk layout as an inverted index minus the trailing index level --
   // reuse its path generator with the index unset.
   // TODO(Dronplane): unify as generic SearchStorage with all common stuff
   return InvertedIndexStorage::GetPath(db_id, schema_id, table_id,
-                                       /*index_id=*/ObjectId{});
+                                       /*index_id=*/0);
 }
 
-std::filesystem::path SearchTable::GetWalPath(ObjectId db_id) {
-  SDB_ASSERT(db_id.isSet());
+std::filesystem::path SearchTable::GetWalPath(duckdb::idx_t db_id) {
+  SDB_ASSERT(db_id != 0);
   auto path = GetSearchEngine().GetPersistedPath(db_id);
   path /= "wal";
   return path;
 }
 
-std::shared_ptr<SearchTable> SearchTable::Create(
-  ObjectId db_id, ObjectId schema_id, ObjectId table_id, bool is_new,
-  const catalog::persistence::SearchTableOptions& options,
-  std::vector<catalog::ColumnId> pk_columns, CompressionByColumn compression) {
-  return std::make_shared<SearchTable>(db_id, schema_id, table_id, is_new,
-                                       options, std::move(pk_columns),
-                                       std::move(compression));
+std::filesystem::path SearchTable::GetChunkDir(duckdb::idx_t db_id,
+                                               duckdb::idx_t table_id) {
+  SDB_ASSERT(table_id != 0);
+  auto path = GetWalPath(db_id);
+  path /= "chunks";
+  path /= absl::StrCat(table_id);
+  return path;
 }
 
-SearchTable::CompressionByColumn SearchTable::DeclaredCompression(
+catalog::CompressionByColumn SearchTable::DeclaredCompression(
   const duckdb::ColumnList& columns) {
-  CompressionByColumn compression;
+  catalog::CompressionByColumn compression;
   for (const auto& column : columns.Logical()) {
     if (column.CompressionType() != duckdb::CompressionType::COMPRESSION_AUTO) {
-      compression.emplace(column.CatalogOid(), column.CompressionType());
+      compression.emplace(column.Oid(), column.CompressionType());
     }
   }
   return compression;
@@ -103,273 +101,39 @@ SearchTable::CompressionByColumn SearchTable::DeclaredCompression(
 
 namespace {
 
-// Each PRIMARY KEY column is term-indexed under its own column id so PK
-// predicates push down. That term field is the column id itself -- distinct
-// from the ids user indexes allocate, so it never collides. store_values is
-// off: the value is stored under the column id, not this term field.
-void BuildPkInto(catalog::InvertedIndex::Entries& entries,
-                 SearchTable::TermsByColumn& terms,
-                 const std::vector<catalog::ColumnId>& pk_columns) {
-  for (auto id : pk_columns) {
-    catalog::InvertedIndexEntryInfo info;
-    info.store_values = false;
-    info.indexed_term_dict = true;
-    const auto field_id = static_cast<irs::field_id>(id);
-    entries.emplace(field_id, info);
-    terms[id].push_back(field_id);
-  }
-}
-
-// Fold each of `index`'s plain-column entries into the merged config, keyed by
-// the index's own allocated term field_id so several indexes on one column get
-// independent posting lists. store_values is forced off (value stored under the
-// column id). Only genuinely term-indexed entries contribute to `terms`.
-void MergeIndexInto(catalog::InvertedIndex::Entries& entries,
-                    SearchTable::TermsByColumn& terms,
-                    const catalog::InvertedIndex& index) {
-  for (auto col_id : index.GetColumns()) {
-    const auto* entry = index.FindColumnInfo(col_id);
-    if (!entry) {
-      continue;
-    }
-    const auto term_field = index.TermFieldForColumn(col_id);
-    auto merged = *entry;
-    merged.store_values = false;
-    entries.insert_or_assign(term_field, merged);
-    if (merged.IsTermDict()) {
-      terms[col_id].push_back(term_field);
-    }
-  }
-  // Indexed expressions are synthetic and single-field: value + terms (and any
-  // IVF/JSON-leaf/norm sub-fields) live under the expression's own field id, so
-  // fold each entry verbatim and add nothing to `terms`.
-  for (const auto& key : index.ExpressionKeys()) {
-    if (const auto* entry = index.FindEntry(key.field_id)) {
-      entries.insert_or_assign(key.field_id, *entry);
-    }
-  }
-}
-
-// The iresearch encoding config the search writer asks for at flush/merge,
-// resolved from the merged config.
-class MergedFieldOptions final : public irs::IndexFieldOptions {
- public:
-  MergedFieldOptions(
-    std::shared_ptr<const catalog::InvertedIndex::Entries> entries,
-    std::shared_ptr<const SearchTable::CompressionByColumn> compression,
-    uint32_t rows_per_row_group)
-    : _entries{std::move(entries)}, _compression{std::move(compression)} {
-    row_group_size = rows_per_row_group;
-  }
-
-  irs::ColumnOptions GetColumnOptions(irs::field_id id) const final {
-    auto declared = duckdb::CompressionType::COMPRESSION_AUTO;
-    if (const auto it = _compression->find(catalog::ColumnId{id});
-        it != _compression->end()) {
-      declared = it->second;
-    }
-    const auto it = _entries->find(id);
-    if (it == _entries->end()) {
-      return {.compression = declared};
-    }
-    const auto& entry = it->second;
-    return {
-      .compression =
-        entry.compression == duckdb::CompressionType::COMPRESSION_AUTO
-          ? declared
-          : entry.compression,
-      // An IVF entry keys the merged config by its column id (the value
-      // column), not a per-index term field, so this attaches the ANN index to
-      // that column.
-      .ann_info = catalog::AnnInfoForEntry(id, entry),
-      .hyperloglog = entry.hyperloglog,
-    };
-  }
-
-  irs::field_id GetNormColumnId(irs::field_id id) const final {
-    const auto it = _entries->find(id);
-    SDB_ASSERT(it != _entries->end(),
-               "MergedFieldOptions::GetNormColumnId: unknown id ", id);
-    const auto& entry = it->second;
-    SDB_ASSERT(irs::field_limits::valid(entry.synthetic_column),
-               "MergedFieldOptions::GetNormColumnId: no norm reservation for "
-               "id ",
-               id);
-    return entry.synthetic_column;
-  }
-
- private:
-  std::shared_ptr<const catalog::InvertedIndex::Entries> _entries;
-  std::shared_ptr<const SearchTable::CompressionByColumn> _compression;
-};
-
-std::shared_ptr<const irs::IndexFieldOptions> MakeFieldOptions(
-  std::shared_ptr<const catalog::InvertedIndex::Entries> entries,
-  std::shared_ptr<const SearchTable::CompressionByColumn> compression,
-  uint32_t row_group_size) {
-  return std::make_shared<const MergedFieldOptions>(
-    std::move(entries), std::move(compression), row_group_size);
-}
+constexpr duckdb::field_id_t kFieldTick = 0;
 
 }  // namespace
 
-SearchTable::SearchTable(
-  ObjectId db_id, ObjectId schema_id, ObjectId table_id, bool is_new,
-  const catalog::persistence::SearchTableOptions& options,
-  std::vector<catalog::ColumnId> pk_columns, CompressionByColumn compression)
+SearchTable::SearchTable(duckdb::idx_t db_id, duckdb::idx_t schema_id,
+                         duckdb::idx_t table_id, bool is_new,
+                         const catalog::SearchTableOptions& options,
+                         catalog::CompressionByColumn compression)
   : _table_id{table_id},
     _db_id{db_id},
     _schema_id{schema_id},
     _is_new{is_new},
-    _pk_columns{std::move(pk_columns)},
-    _compression{
-      std::make_shared<const CompressionByColumn>(std::move(compression))},
     _segment_memory_max{options.segment_memory_max},
-    _row_group_size{options.row_group_size != 0
-                      ? options.row_group_size
-                      : static_cast<uint32_t>(DEFAULT_ROW_GROUP_SIZE)} {
-  catalog::InvertedIndex::Entries entries;
-  TermsByColumn terms;
-  BuildPkInto(entries, terms, _pk_columns);
-  _entries =
-    std::make_shared<const catalog::InvertedIndex::Entries>(std::move(entries));
-  _terms_by_column = std::make_shared<const TermsByColumn>(std::move(terms));
-  _field_options = MakeFieldOptions(_entries, _compression, _row_group_size);
-  if (options.topk_scorer) {
-    _topk_scorer = catalog::MakeScorer(*options.topk_scorer);
+    _row_group_size{options.row_group_size},
+    _compression{std::move(compression)} {
+  if (!options.optimize_top_k.empty()) {
+    _topk_options = ParseScorerExpression(nullptr, options.optimize_top_k);
+    _topk_scorer = MakeScorer(*_topk_options);
   }
+  RebuildConfig();
   OpenWriter();
+  ApplyOptions(options);
+}
 
+void SearchTable::ApplyOptions(const catalog::SearchTableOptions& options) {
   _maint_settings.refresh_interval_msec = options.refresh_interval_ms;
   _maint_settings.compaction_interval_msec = options.compaction_interval_ms;
   _maint_settings.cleanup_interval_step = options.cleanup_interval_step;
-}
-
-std::shared_ptr<const catalog::InvertedIndex::Entries>
-SearchTable::GetIndexConfig() const noexcept {
-  std::shared_lock lock(_table_lock);
-  return _entries;
-}
-
-std::shared_ptr<const SearchTable::TermsByColumn>
-SearchTable::GetTermsByColumn() const noexcept {
-  std::shared_lock lock(_table_lock);
-  return _terms_by_column;
-}
-
-std::shared_ptr<const irs::IndexFieldOptions> SearchTable::GetFieldOptions()
-  const noexcept {
-  std::shared_lock lock(_table_lock);
-  return _field_options;
-}
-
-catalog::TokenizerMap ResolveShardTokenizers(const SearchTable& shard,
-                                             duckdb::ClientContext* context) {
-  catalog::TokenizerMap dicts;
-  // Deliberately not the session overload of ResolveTokenizers: that resolves
-  // the database off the connection's SereneDB state, which WAL replay's bare
-  // duckdb::Connection does not have. The shard knows its own database.
-  auto& db_catalog = catalog::DatabaseCatalog(context, shard.GetDbId());
-  // Off the merged config, not the committed index list: MergeIndexConfig
-  // publishes a new index's fields before its entry commits, so the catalog
-  // would hide a dictionary that concurrent writers already have to emit.
-  const auto config = shard.GetIndexConfig();
-  for (const auto& [field_id, entry] : *config) {
-    if (!entry.HasTextDictionary()) {
-      continue;
-    }
-    dicts.try_emplace(
-      entry.text_dictionary,
-      catalog::FindTokenizerIn(context, db_catalog, entry.text_dictionary));
-  }
-  return dicts;
-}
-
-catalog::ColumnTokenizer SearchTable::GetTokenizer(
-  duckdb::ClientContext& context, irs::field_id field_id) const {
-  auto config = GetIndexConfig();
-  auto it = config->find(field_id);
-  if (it == config->end()) {
-    return {};  // not a merged-config field: the default string tokenizer
-  }
-  return catalog::TokenizerForEntry(
-    context, ResolveShardTokenizers(*this, &context), it->second);
-}
-
-unsigned SearchTable::RegisterWriter() { return _writers.Register(); }
-
-void SearchTable::DeregisterWriter(unsigned slot) noexcept {
-  _writers.Deregister(slot);
-}
-
-void SearchTable::DrainPriorWriters(absl::FunctionRef<bool()> cancelled) {
-  SDB_ASSERT(_build_in_flight.load(std::memory_order_acquire),
-             "DrainPriorWriters requires a held BuildClaim");
-  if (!_writers.Drain(cancelled, kWriterWaitPoll)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_QUERY_CANCELED),
-      ERR_MSG("canceled while waiting for write transactions "
-              "on search table ",
-              _table_id.id(), " that started before the index was declared"));
-  }
-}
-
-void SearchTable::OpenDeleteLog() {
-  absl::MutexLock lock{&_delete_log_mutex};
-  _delete_log.clear();
-  _delete_log_open.store(true, std::memory_order_release);
-}
-
-void SearchTable::AppendDeleteLog(std::span<const int64_t> rows) {
-  if (rows.empty()) {
-    return;
-  }
-  absl::MutexLock lock{&_delete_log_mutex};
-  // Re-test under the lock: the flag can drop between the caller's check and
-  // here, and a build that has closed the log is no longer draining it.
-  if (!_delete_log_open.load(std::memory_order_relaxed)) {
-    return;
-  }
-  _delete_log.insert(_delete_log.end(), rows.begin(), rows.end());
-}
-
-std::vector<int64_t> SearchTable::TakeDeleteLog() {
-  absl::MutexLock lock{&_delete_log_mutex};
-  return std::exchange(_delete_log, {});
-}
-
-void SearchTable::CloseDeleteLog() {
-  absl::MutexLock lock{&_delete_log_mutex};
-  _delete_log_open.store(false, std::memory_order_release);
-  _delete_log.clear();
-}
-
-void SearchTable::MergeIndexConfig(const catalog::InvertedIndex& index) {
-  std::unique_lock lock(_table_lock);
-  auto merged_entries =
-    std::make_shared<catalog::InvertedIndex::Entries>(*_entries);
-  auto merged_terms = std::make_shared<TermsByColumn>(*_terms_by_column);
-  MergeIndexInto(*merged_entries, *merged_terms, index);
-  _entries = std::move(merged_entries);
-  _terms_by_column = std::move(merged_terms);
-  _field_options = MakeFieldOptions(_entries, _compression, _row_group_size);
-}
-
-void SearchTable::RebuildIndexConfig(duckdb::ClientContext* context) {
-  catalog::InvertedIndex::Entries entries;
-  TermsByColumn terms;
-  BuildPkInto(entries, terms, _pk_columns);
-  for (const auto& index :
-       catalog::RelationInvertedIndexes(context, _schema_id, _table_id)) {
-    MergeIndexInto(entries, terms, catalog::InvertedInfo(*index));
-  }
-  auto next_entries =
-    std::make_shared<const catalog::InvertedIndex::Entries>(std::move(entries));
-  auto next_terms = std::make_shared<const TermsByColumn>(std::move(terms));
-  std::unique_lock lock(_table_lock);
-  _entries = std::move(next_entries);
-  _terms_by_column = std::move(next_terms);
-  _field_options = MakeFieldOptions(_entries, _compression, _row_group_size);
+  _maint_settings.compaction_max_segments = options.compaction_max_segments;
+  _maint_settings.compaction_max_segments_bytes =
+    options.compaction_max_segments_bytes;
+  _maint_settings.compaction_floor_segment_bytes =
+    options.compaction_floor_segment_bytes;
 }
 
 SearchTable::~SearchTable() {
@@ -378,17 +142,11 @@ SearchTable::~SearchTable() {
   if (!_dropped.load(std::memory_order_acquire)) {
     return;
   }
-  // Shutdown may already have torn the pool down; the removal then waits for
-  // boot's orphan sweep, exactly like a crash between the commit and here.
-  if (lifecycle::IsStopping() || BackgroundScheduler::instance().IsStopping()) {
-    return;
+  if (!lifecycle::IsStopping()) {
+    GetSearchEngine().GetDbWal(_db_id).DeregisterShard(_table_id);
   }
-  GetSearchEngine().GetDbWal(_db_id).DeregisterShard(_table_id);
-  BackgroundScheduler::instance()
-    .Run([index_dir = GetPath(_db_id, _schema_id, _table_id)] {
-      RemoveDroppedStorageDir(index_dir);
-    })
-    .Detach();
+  RemoveDroppedStorageDir(GetChunkDir(_db_id, _table_id), 2);
+  RemoveDroppedStorageDir(GetPath(_db_id, _schema_id, _table_id), 2);
 }
 
 void SearchTable::OpenWriter() {
@@ -400,21 +158,22 @@ void SearchTable::OpenWriter() {
     THROW_SQL_ERROR(ERR_MSG("Failed to check existence of path '",
                             path.string(),
                             "' while initializing search table for table ",
-                            GetTableId().id(), ": ", ec.message()));
+                            GetTableId(), ": ", ec.message()));
   }
   if (!path_exists) {
     std::filesystem::create_directories(path, ec);
     if (ec) {
       THROW_SQL_ERROR(ERR_MSG("Failed to create directory '", path.string(),
                               "' while initializing search table for table ",
-                              GetTableId().id(), ": ", ec.message()));
+                              GetTableId(), ": ", ec.message()));
     }
   }
 
   auto codec = irs::formats::Get("1_5simd");
+  const bool reopen = path_exists && !_is_new;
   const auto open_mode =
-    path_exists ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
-                : irs::OpenMode::kOmCreate;
+    reopen ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
+           : irs::OpenMode::kOmCreate;
 
   irs::ResourceManagementOptions resource_manager;
   _dir = std::make_unique<irs::MMapDirectory>(path, irs::DirectoryAttributes{},
@@ -422,12 +181,6 @@ void SearchTable::OpenWriter() {
 
   irs::IndexWriterOptions writer_options;
   writer_options.segment_memory_max = _segment_memory_max;
-  // A shard loaded from disk may hold flushed-but-unpublished segments the WAL
-  // references, so Make() must not unlink them; FinishRecovery cleans up once
-  // replay is done. A new shard's directory is empty, so it keeps the default.
-  writer_options.cleanup_on_open = _is_new;
-  // TODO(Dronplane): for now we rely on rocksdb (still present) lock
-  // But in future we need own server wide data dir lock.
   writer_options.lock_repository = false;
   writer_options.db = &irs::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;
@@ -435,45 +188,32 @@ void SearchTable::OpenWriter() {
     writer_options.reader_options.scorer = _topk_scorer.get();
   }
 
-  writer_options.meta_payload_provider = [this](uint64_t tick,
-                                                irs::bstring& out) {
+  writer_options.meta_payload_writer = [this](uint64_t tick,
+                                              duckdb::Serializer& out) {
     _last_committed_tick = std::max(_last_committed_tick, tick);
-    uint64_t tick_be = absl::big_endian::FromHost(_last_committed_tick);
-    out.append(reinterpret_cast<const irs::byte_type*>(&tick_be),
-               sizeof(tick_be));
-    return true;
+    out.WriteProperty<uint64_t>(kFieldTick, "tick", _last_committed_tick);
+  };
+  writer_options.meta_payload_reader = [this](duckdb::Deserializer& in) {
+    _last_committed_tick = in.ReadProperty<uint64_t>(kFieldTick, "tick");
   };
 
-  _writer = irs::IndexWriter::Make(*_dir, codec, open_mode, writer_options);
+  _writer =
+    irs::IndexWriter::Make(*_dir, codec, open_mode, std::move(writer_options));
 
-  if (path_exists) {
-    // Restore the durable commit tick from the last commit's meta payload.
-    auto reader = _writer->GetSnapshot();
-    auto payload = irs::GetPayload(reader.Meta().index_meta);
-    if (payload.size() >= sizeof(uint64_t)) {
-      _last_committed_tick = absl::big_endian::Load64(payload.data());
+  auto& db_manager =
+    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
+  const auto claim = [&](irs::field_id id) {
+    if (id <= connector::kMaxRealColumnIdValue) {
+      db_manager.ClaimOid(id);
     }
-
-    // Floor the id allocator (gCurrentTick / NextId) from this store's own
-    // field ids: it is in-memory and re-derived at boot only from LIVE catalog
-    // ids, so a dropped index's ids -- still occupying slots in this SHARED
-    // store -- could be re-issued to a new index and collide at merge. Scan
-    // BOTH term-dict field ids AND columnstore ids (one shared allocation
-    // pool). Skip reserved system fields (> kMaxRealColumnIdValue): they are
-    // not drawn from NextId, so flooring to them would exhaust the allocator.
-    const auto floor_from = [](irs::field_id id) {
-      if (id <= catalog::kMaxRealColumnIdValue) {
-        catalog::RestoreId(id);
-      }
-    };
-    for (const auto& segment : reader) {
-      for (const auto field : segment.field_ids()) {
-        floor_from(field);
-      }
-      if (const auto* col_reader = segment.GetColReader()) {
-        for (const auto& column : col_reader->Columns()) {
-          floor_from(column->Id());
-        }
+  };
+  for (const auto& segment : _writer->GetSnapshot()) {
+    for (const auto id : segment.field_ids()) {
+      claim(id);
+    }
+    if (const auto* columns = segment.GetColReader()) {
+      for (const auto& column : columns->Columns()) {
+        claim(column->Id());
       }
     }
   }
@@ -497,7 +237,7 @@ void SearchTable::StartTasks() {
 #ifdef SDB_DEV
   const bool already = _tasks_started.exchange(true);
   SDB_ASSERT(!already, "SearchTable::StartTasks called twice for table ",
-             GetTableId().id());
+             GetTableId());
 #endif
   // Launch this table's refresh + compaction loops on the shared background
   // scheduler. Called only after recovery or CREATE/CTAS finalize, so a
@@ -535,7 +275,7 @@ ResultWithTime SearchTable::RefreshUnsafe(
     }
   } catch (const std::exception& e) {
     result = absl::InternalError(absl::StrCat(
-      "refresh failed for search table ", GetTableId().id(), ": ", e.what()));
+      "refresh failed for search table ", GetTableId(), ": ", e.what()));
   }
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -548,12 +288,88 @@ ResultWithTime SearchTable::RefreshUnsafe(
   return {std::move(result), time_ms};
 }
 
-ResultWithTime SearchTable::CompactUnsafe(
-  const irs::CompactionPolicy& policy,
-  const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
-  const irs::IndexFieldOptions* field_options) {
-  return irs::GetReady(CompactUnsafeAsync(policy, progress, empty_compaction,
-                                          field_options, /*env=*/nullptr));
+StoreStats SearchTable::GetStats() const {
+  auto stats = StoreStats::FromReader(_writer->GetSnapshot());
+  stats.numBufferedDocs = _writer->BufferedDocs();
+  _maintenance.Fill(stats);
+  return stats;
+}
+
+void SearchTable::DrainPriorWriters(absl::FunctionRef<bool()> cancelled) {
+  SDB_ASSERT(_build_in_flight.load(std::memory_order_acquire),
+             "DrainPriorWriters requires a held BuildClaim");
+  if (!_writers.Drain(cancelled, kWriterWaitPoll)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_QUERY_CANCELED),
+      ERR_MSG("canceled while waiting for write transactions "
+              "on search table ",
+              _table_id, " that started before the index was declared"));
+  }
+}
+
+void SearchTable::OpenDeleteLog() {
+  absl::MutexLock lock{&_delete_log_mutex};
+  _delete_log.clear();
+  _delete_log_open.store(true, std::memory_order_release);
+}
+
+void SearchTable::AppendDeleteLog(std::span<const int64_t> rows) {
+  if (rows.empty()) {
+    return;
+  }
+  absl::MutexLock lock{&_delete_log_mutex};
+  if (!_delete_log_open.load(std::memory_order_relaxed)) {
+    return;
+  }
+  _delete_log.insert(_delete_log.end(), rows.begin(), rows.end());
+}
+
+std::vector<int64_t> SearchTable::TakeDeleteLog() {
+  absl::MutexLock lock{&_delete_log_mutex};
+  return std::exchange(_delete_log, {});
+}
+
+void SearchTable::CloseDeleteLog() {
+  absl::MutexLock lock{&_delete_log_mutex};
+  _delete_log_open.store(false, std::memory_order_release);
+  _delete_log.clear();
+}
+
+std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::Config()
+  const {
+  std::shared_lock lock(_table_lock);
+  return _config;
+}
+
+void SearchTable::RebuildConfig() {
+  auto merged = std::make_shared<catalog::InvertedIndexConfig>();
+  merged->pk = {.index_term = true, .column = catalog::PkColumnKind::None};
+  merged->top_k_scorer = _topk_options;
+  merged->row_group_size = _row_group_size;
+  merged->declared_compression = _compression;
+  for (const auto& index : _configs) {
+    for (const auto& [id, field] : index.config->fields) {
+      merged->fields.emplace(id, field);
+    }
+    merged->keys.insert(merged->keys.end(), index.config->keys.begin(),
+                        index.config->keys.end());
+  }
+  _config = std::move(merged);
+}
+
+void SearchTable::MergeIndexConfig(
+  duckdb::idx_t index_oid,
+  std::shared_ptr<const catalog::InvertedIndexConfig> config) {
+  std::unique_lock lock(_table_lock);
+  _configs.emplace_back(index_oid, std::move(config));
+  RebuildConfig();
+}
+
+void SearchTable::RemoveIndexConfig(duckdb::idx_t index_oid) {
+  std::unique_lock lock(_table_lock);
+  std::erase_if(
+    _configs, [&](const IndexConfig& index) { return index.oid == index_oid; });
+  RebuildConfig();
 }
 
 auto SearchTable::CompactUnsafeAsync(
@@ -564,26 +380,20 @@ auto SearchTable::CompactUnsafeAsync(
   const auto begin = std::chrono::steady_clock::now();
   empty_compaction = false;
   auto result = absl::OkStatus();
-  if (!policy) {
-    result = absl::InvalidArgumentError(absl::StrCat(
-      "unset compaction policy for search table ", GetTableId().id()));
-  } else {
-    try {
-      // iresearch serializes Compact against refresh/DML internally, so a long
-      // merge never blocks the refresh chain.
-      const auto res = co_await _writer->CompactAsync(policy, field_options,
-                                                      nullptr, progress, env);
-      if (!res) {
-        result = absl::InternalError(absl::StrCat(
-          "compaction failed for search table ", GetTableId().id()));
-      } else {
-        empty_compaction = (res.size == 0);  // nothing merged -> idle round
-      }
-    } catch (const std::exception& e) {
+  try {
+    // iresearch serializes Compact against refresh/DML internally, so a long
+    // merge never blocks the refresh chain.
+    const auto res = co_await _writer->CompactAsync(policy, field_options,
+                                                    nullptr, progress, env);
+    if (!res) {
       result = absl::InternalError(
-        absl::StrCat("consolidation failed for search table ",
-                     GetTableId().id(), ": ", e.what()));
+        absl::StrCat("compaction failed for search table ", GetTableId()));
+    } else {
+      empty_compaction = (res.size == 0);  // nothing merged -> idle round
     }
+  } catch (const std::exception& e) {
+    result = absl::InternalError(absl::StrCat(
+      "consolidation failed for search table ", GetTableId(), ": ", e.what()));
   }
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -593,16 +403,6 @@ auto SearchTable::CompactUnsafeAsync(
   co_return ResultWithTime{std::move(result), time_ms};
 }
 
-StoreStats SearchTable::GetStats() const {
-  if (!_writer) {
-    return {};
-  }
-  auto stats = StoreStats::FromReader(_writer->GetSnapshot());
-  stats.numBufferedDocs = _writer->BufferedDocs();
-  _maintenance.Fill(stats);
-  return stats;
-}
-
 ResultWithTime SearchTable::CleanupUnsafe() {
   const auto begin = std::chrono::steady_clock::now();
   auto result = absl::OkStatus();
@@ -610,7 +410,7 @@ ResultWithTime SearchTable::CleanupUnsafe() {
     irs::directory_utils::RemoveAllUnreferenced(*_dir);
   } catch (const std::exception& e) {
     result = absl::InternalError(absl::StrCat(
-      "cleanup failed for search table ", GetTableId().id(), ": ", e.what()));
+      "cleanup failed for search table ", GetTableId(), ": ", e.what()));
   }
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -626,17 +426,44 @@ void SearchTable::VacuumRefresh() {
   CleanupUnsafe();
 }
 
-void SearchTable::VacuumCompact() {
-  static const auto kFullMerge = irs::index_utils::MakePolicy(
-    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
+void SearchTable::VacuumCompact(uint32_t target_segments) {
   static const irs::MergeWriter::FlushProgress kProgress = [] { return true; };
+  const auto target = std::max<uint32_t>(1, target_segments);
+  const auto field_options = Config();
   RefreshResult code = RefreshResult::Undefined;
   RefreshUnsafe(/*wait=*/true, nullptr, code);
-  bool empty = false;
-  const auto field_options = GetFieldOptions();
-  CompactUnsafe(kFullMerge, kProgress, empty, field_options.get());
-  if (!empty) {
+  for (size_t pass = 0; pass < 8; ++pass) {
+    std::vector<std::vector<std::string>> buckets(target);
+    {
+      const auto snapshot = _writer->GetSnapshot();
+      if (snapshot.size() <= target) {
+        break;
+      }
+      for (size_t i = 0; i < snapshot.size(); ++i) {
+        buckets[i % target].emplace_back(snapshot[i].Meta().name);
+      }
+    }
+    bool merged = false;
+    for (auto& names : buckets) {
+      const irs::CompactionPolicy bucket =
+        [&names](irs::Compaction& candidates, const irs::IndexReader& reader,
+                 const irs::CompactingSegments& busy) {
+          for (size_t i = 0; i < reader.size(); ++i) {
+            const auto& segment = reader[i];
+            const auto& name = segment.Meta().name;
+            if (!busy.contains(name) && absl::c_linear_search(names, name)) {
+              candidates.emplace_back(&segment);
+            }
+          }
+        };
+      bool empty = false;
+      CompactUnsafe(bucket, kProgress, empty, field_options.get());
+      merged |= !empty;
+    }
     RefreshUnsafe(/*wait=*/true, nullptr, code);
+    if (!merged) {
+      break;
+    }
   }
   CleanupUnsafe();
 }

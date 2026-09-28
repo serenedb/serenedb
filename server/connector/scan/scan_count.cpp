@@ -54,11 +54,8 @@ void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
         const auto& seg_query = EnsureSegmentQuery(g, l, unit.seg);
         auto* table = BeginVerify(l.col_verify, sub, g, l);
         auto plan = irs::count::MakeRoot(
-          seg_query, {.table = table,
-                      .span = unit.whole || unit.rg_begin == 0
-                                ? irs::doc_id_t{0}
-                                : static_cast<irs::doc_id_t>(g.rg_size),
-                      .partial = true});
+          seg_query,
+          {.table = table, .span = g.UnitSpan(unit), .partial = true});
         EnsurePlanned(plan != nullptr);
         l.root = std::move(plan);
         l.root_seg = unit.seg;
@@ -67,9 +64,7 @@ void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
                          ->Run(range.begin, range.end);
       l.root_end = range.end;
     }
-    if (FinishUnit(g, l)) {
-      FinishSegments(g, 1);
-    }
+    FinishUnit(g, l);
   }
   FinishRoot(l);
   if (l.local_emitted >= l.local_count) {
@@ -79,7 +74,6 @@ void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
   const auto batch = std::min<duckdb::idx_t>(l.local_count - l.local_emitted,
                                              STANDARD_VECTOR_SIZE);
   output.SetChildCardinality(batch);
-  g.produced_rows.fetch_add(batch, std::memory_order_relaxed);
   l.local_emitted += batch;
 }
 

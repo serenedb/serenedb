@@ -21,19 +21,20 @@
 #pragma once
 
 #include <absl/functional/any_invocable.h>
+#include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 
 #include <atomic>
 #include <cstdint>
+#include <duckdb/common/typedefs.hpp>
 #include <filesystem>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/zstd_context.hpp>
 #include <memory>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include "catalog/identifiers/object_id.h"
 
 namespace duckdb {
 
@@ -48,31 +49,75 @@ namespace sdb::search {
 
 class SearchDbWal {
  public:
+  class PendingChunk {
+   public:
+    PendingChunk() = default;
+    PendingChunk(uint64_t seg_id, std::filesystem::path path)
+      : _seg_id(seg_id), _path(std::move(path)) {}
+    PendingChunk(PendingChunk&&) noexcept;
+    PendingChunk& operator=(PendingChunk&&) noexcept;
+    PendingChunk(const PendingChunk&) = delete;
+    PendingChunk& operator=(const PendingChunk&) = delete;
+    ~PendingChunk() { ReclaimIfUncommitted(); }
+
+    uint64_t SegId() const noexcept { return _seg_id; }
+
+    void MarkCommitted() noexcept { _committed = true; }
+
+   private:
+    void ReclaimIfUncommitted() noexcept;
+
+    uint64_t _seg_id = 0;
+    std::filesystem::path _path;
+    bool _committed = false;
+  };
+
+  class ChunkWriter {
+   public:
+    ChunkWriter(PendingChunk pending,
+                std::unique_ptr<duckdb::BufferedFileWriter> writer);
+    ChunkWriter(ChunkWriter&&) noexcept;
+    ChunkWriter& operator=(ChunkWriter&&) noexcept;
+    ChunkWriter(const ChunkWriter&) = delete;
+    ChunkWriter& operator=(const ChunkWriter&) = delete;
+    ~ChunkWriter();
+
+    uint64_t SegId() const noexcept { return _pending.SegId(); }
+
+    // Serialise + append one chunk with its generated-PK base `pk_base` (0 for
+    // explicit-PK shards) for replay PK reconstruction; buffered, no fsync.
+    // zstd-1 with raw fallback.
+    void Append(duckdb::DataChunk& chunk, uint64_t pk_base);
+
+    PendingChunk Finish();
+
+   private:
+    PendingChunk _pending;
+    std::unique_ptr<duckdb::BufferedFileWriter> _writer;
+    // Reused across Append() calls (Rewind keeps the backing buffer).
+    std::unique_ptr<duckdb::MemoryStream> _stream;
+    // Reused zstd context: created once, reset per Append (ZSTD_compressCCtx).
+    irs::utils::ZstdCCtxPtr _cctx;
+    // Reused zstd output buffer (grows to the high-water compressed size).
+    std::vector<uint8_t> _comp;
+  };
+
   // One inserted Sink chunk's generated-PK run: `count` rows keyed
-  // [base, base+count), base 0 for explicit-PK. Per Sink chunk, NOT per
-  // inline_data Chunk -- ColumnDataCollection coalesces partial appends, so its
-  // Chunks() boundaries don't line up.
+  // [base, base+count). Recorded per Sink chunk -- NOT per inline_data Chunk:
+  // ColumnDataCollection coalesces partial appends, so its Chunks() boundaries
+  // don't line up with the Sink chunks the bases are keyed to. base is 0 for
+  // explicit-PK.
   struct InlinePk {
     uint64_t base;
     uint64_t count;
-  };
-
-  // One iresearch segment flushed and fsynced before the commit record was
-  // written, so its rows are never written twice. The same pair iresearch's own
-  // index meta keeps per segment (index_meta_writer.hpp): the meta file holds
-  // every other field behind its own checksum. Ordering against the deletes
-  // around it comes from the op manifest, so no tick is recorded.
-  struct SegmentRef {
-    std::string meta_file;
-    std::string codec;
   };
 
   struct Op {
     // INLINE only: one entry per inserted Sink chunk, in append order.
     const duckdb::ColumnDataCollection* inline_data = nullptr;
     std::span<const InlinePk> inline_pks;
-    // SEGMENT: iresearch segments already flushed + fsynced for this op.
-    std::span<const SegmentRef> segments;
+    // REFERENCE: the bulk chunk files this op points at.
+    std::span<PendingChunk> reference_chunks;
     // DELETE: the encoded PK byte strings to remove (iresearch PK terms).
     std::span<const std::string> delete_pks;
 
@@ -81,32 +126,26 @@ class SearchDbWal {
 
   // One transaction's contribution for a single search shard
   struct ShardSection {
-    ObjectId table_id;
+    duckdb::idx_t table_id;
     std::span<const Op> ops;
   };
 
   using ReplayCallback =
-    absl::AnyInvocable<void(uint64_t tick, ObjectId table_id, uint64_t pk_base,
-                            duckdb::DataChunk& chunk) const>;
+    absl::AnyInvocable<void(uint64_t tick, duckdb::idx_t table_id,
+                            uint64_t pk_base, duckdb::DataChunk& chunk) const>;
 
   // Invoked once per DELETE op, in manifest order, with the encoded PK byte
   // strings to remove (views into the record buffer, valid for the call only).
   using DeleteReplayCallback =
-    absl::AnyInvocable<void(uint64_t tick, ObjectId table_id,
+    absl::AnyInvocable<void(uint64_t tick, duckdb::idx_t table_id,
                             std::span<const std::string_view> pks) const>;
 
-  // Invoked once per recorded segment, in manifest order. `tick` is the
-  // record's own, for the caller's high-water mark -- the tick to adopt at
-  // lives in the replay transaction's space (see RunSearchTableRecovery).
-  using AdoptReplayCallback = absl::AnyInvocable<void(
-    uint64_t tick, ObjectId table_id, const SegmentRef& ref) const>;
-
   using TruncateReplayCallback =
-    absl::AnyInvocable<void(uint64_t tick, ObjectId table_id) const>;
+    absl::AnyInvocable<void(uint64_t tick, duckdb::idx_t table_id) const>;
 
-  using ShardExistsFn = absl::AnyInvocable<bool(ObjectId table_id) const>;
+  using ShardExistsFn = absl::AnyInvocable<bool(duckdb::idx_t table_id) const>;
   using ShardCommittedFn =
-    absl::AnyInvocable<uint64_t(ObjectId table_id) const>;
+    absl::AnyInvocable<uint64_t(duckdb::idx_t table_id) const>;
 
   // Default central-segment seal threshold (16MB as common standart like
   // postgres or duckdb)
@@ -123,25 +162,27 @@ class SearchDbWal {
     return _tick.load(std::memory_order_relaxed);
   }
 
-  void RegisterShard(ObjectId table_id, uint64_t committed_tick);
-  void OnShardCommit(ObjectId table_id, uint64_t committed_tick);
-  void DeregisterShard(ObjectId table_id);
+  void RegisterShard(duckdb::idx_t table_id, uint64_t committed_tick);
+  void OnShardCommit(duckdb::idx_t table_id, uint64_t committed_tick);
+  void DeregisterShard(duckdb::idx_t table_id);
 
+  ChunkWriter NewChunkWriter(duckdb::idx_t table_id);
   // Reserves `tick_span` consecutive ticks under the append lock and writes one
   // record at the top of that band; returns the record tick (== base +
-  // tick_span).
+  // tick_span). Once the record is fsynced, marks every REFERENCE op's chunks
+  // committed -- they are now durably referenced and must outlive the txn.
   uint64_t AppendCommit(std::span<const ShardSection> sections,
                         uint64_t tick_span);
   uint64_t Recover(const ShardExistsFn& exists_of,
                    const ShardCommittedFn& committed_of,
                    const ReplayCallback& insert_cb,
                    const DeleteReplayCallback& delete_cb,
-                   const TruncateReplayCallback& truncate_cb,
-                   const AdoptReplayCallback& adopt_cb);
+                   const TruncateReplayCallback& truncate_cb);
 
  private:
   duckdb::FileSystem& _fs;
   std::filesystem::path _wal_dir;
+  std::filesystem::path _chunks_root;
 
   const uint64_t _seal_threshold;
 
@@ -149,12 +190,19 @@ class SearchDbWal {
   std::atomic<uint64_t> _tick{0};
   std::unique_ptr<duckdb::BufferedFileWriter> _active;
   uint64_t _active_first_tick = 0;
+  uint64_t _active_chunk_bytes = 0;
+
+  absl::Mutex _seg_mu;
+  irs::containers::FlatHashMap<uint64_t, uint64_t> _seg_ids;
 
   absl::Mutex _sub_mu;
   irs::containers::FlatHashMap<uint64_t, uint64_t> _committed;
 
   void EnsureActiveSegmentLocked(uint64_t first_tick);
   void WriteFrameLocked(const uint8_t* payload, uint64_t payload_size);
+  std::filesystem::path ChunkDir(uint64_t table_id) const {
+    return _chunks_root / absl::StrCat(table_id);
+  }
   uint64_t MinCommittedTick();
   void RunGc();
 };

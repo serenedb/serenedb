@@ -8,7 +8,7 @@ statement ok
 DETACH IF EXISTS rdh;
 
 statement ok
-ATTACH '${__TEST_DIR__}/rdh.db' AS rdh;
+ATTACH '${__SUITE_DIR__}/rdh.db' AS rdh;
 
 statement ok
 CREATE OR REPLACE TABLE rdh.main.docs(id INTEGER);
@@ -27,7 +27,7 @@ BEGIN;
 
 connection holder
 query
-SELECT count(*) AS n FROM read_duckdb('${__TEST_DIR__}/rdh.db', table_name='docs');
+SELECT count(*) AS n FROM read_duckdb('${__SUITE_DIR__}/rdh.db', table_name='docs');
 ----
 n
 2
@@ -35,7 +35,7 @@ n
 
 connection default
 query
-SELECT count(*) AS n FROM read_duckdb('${__TEST_DIR__}/rdh.db', table_name='docs');
+SELECT count(*) AS n FROM read_duckdb('${__SUITE_DIR__}/rdh.db', table_name='docs');
 ----
 n
 2

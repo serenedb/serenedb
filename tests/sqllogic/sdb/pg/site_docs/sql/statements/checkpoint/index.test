@@ -13,7 +13,7 @@ statement ok
 DETACH IF EXISTS db41;
 
 statement ok
-ATTACH '${__TEST_DIR__}/db41.db' AS db41;
+ATTACH '${__SUITE_DIR__}/db41.db' AS db41;
 
 # DOCS_TEST_BODY
 

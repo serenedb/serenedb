@@ -54,7 +54,7 @@ statement ok
 DETACH IF EXISTS db52;
 
 statement ok
-ATTACH '${__TEST_DIR__}/db51.duckdb' AS db52;
+ATTACH '${__SUITE_DIR__}/db51.duckdb' AS db52;
 
 statement ok
 DROP TABLE IF EXISTS db52.items;
@@ -67,7 +67,7 @@ DETACH db52;
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/db51.duckdb' AS db51 (READ_ONLY);
+ATTACH '${__SUITE_DIR__}/db51.duckdb' AS db51 (READ_ONLY);
 
 statement ok
 DETACH db51;

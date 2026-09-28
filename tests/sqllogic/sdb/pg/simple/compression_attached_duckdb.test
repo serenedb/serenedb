@@ -1,0 +1,68 @@
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/codecs_v13.duckdb' AS codecs_v13 (STORAGE_VERSION 'v1.3.0');
+
+
+statement error
+CREATE TABLE codecs_v13.main.t_fsst (v TEXT USING COMPRESSION fsst);
+----
+db error: ERROR: Can't compress using user-provided compression type 'FSST', that type is deprecated and only has decompress support
+
+
+statement error
+CREATE TABLE codecs_v13.main.t_lz4 (v TEXT USING COMPRESSION dict_lz4);
+----
+db error: ERROR: Can't compress column "v" using compression type 'DICT_LZ4', that type is only available on SereneDB tables
+
+
+statement error
+CREATE TABLE codecs_v13.main.t_level (v TEXT USING COMPRESSION zstd(compression_level = 3));
+----
+db error: ERROR: Can't set compression_level on column "v", compression options are only available on SereneDB tables
+
+
+statement ok
+CREATE TABLE codecs_v13.main.t_zstd (v TEXT USING COMPRESSION zstd);
+
+
+statement error
+ALTER TABLE codecs_v13.main.t_zstd ADD COLUMN w TEXT USING COMPRESSION lz4;
+----
+db error: ERROR: Can't compress column "w" using compression type 'LZ4', that type is only available on SereneDB tables
+
+
+statement error
+ALTER TABLE codecs_v13.main.t_zstd ADD COLUMN w TEXT USING COMPRESSION zstd(compression_level = 3);
+----
+db error: ERROR: Can't set compression_level on column "w", compression options are only available on SereneDB tables
+
+
+statement ok
+DETACH codecs_v13;
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/codecs_v11.duckdb' AS codecs_v11 (STORAGE_VERSION 'v1.1.0');
+
+
+statement ok
+CREATE TABLE codecs_v11.main.t_fsst (v TEXT USING COMPRESSION fsst);
+
+
+statement ok
+INSERT INTO codecs_v11.main.t_fsst VALUES ('alpha'), ('beta'), ('alpha');
+
+
+query T
+SELECT v FROM codecs_v11.main.t_fsst ORDER BY v;
+----
+v
+alpha
+alpha
+beta
+
+
+statement ok
+DETACH codecs_v11;

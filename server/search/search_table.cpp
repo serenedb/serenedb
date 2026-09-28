@@ -79,15 +79,6 @@ std::filesystem::path SearchTable::GetWalPath(duckdb::idx_t db_id) {
   return path;
 }
 
-std::filesystem::path SearchTable::GetChunkDir(duckdb::idx_t db_id,
-                                               duckdb::idx_t table_id) {
-  SDB_ASSERT(table_id != 0);
-  auto path = GetWalPath(db_id);
-  path /= "chunks";
-  path /= absl::StrCat(table_id);
-  return path;
-}
-
 catalog::CompressionByColumn SearchTable::DeclaredCompression(
   const duckdb::ColumnList& columns) {
   catalog::CompressionByColumn compression;
@@ -145,7 +136,6 @@ SearchTable::~SearchTable() {
   if (!lifecycle::IsStopping()) {
     GetSearchEngine().GetDbWal(_db_id).DeregisterShard(_table_id);
   }
-  RemoveDroppedStorageDir(GetChunkDir(_db_id, _table_id), 2);
   RemoveDroppedStorageDir(GetPath(_db_id, _schema_id, _table_id), 2);
 }
 
@@ -181,6 +171,10 @@ void SearchTable::OpenWriter() {
 
   irs::IndexWriterOptions writer_options;
   writer_options.segment_memory_max = _segment_memory_max;
+  // A shard loaded from disk may hold flushed-but-unpublished segments the WAL
+  // references, so Make() must not unlink them; FinishRecovery cleans up once
+  // replay is done. A new shard's directory is empty, so it keeps the default.
+  writer_options.cleanup_on_open = _is_new;
   writer_options.lock_repository = false;
   writer_options.db = &irs::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;

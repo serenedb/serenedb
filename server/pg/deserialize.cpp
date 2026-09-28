@@ -37,6 +37,7 @@
 #include <duckdb/common/types/time.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/types/uuid.hpp>
+#include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/map_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
@@ -1095,6 +1096,53 @@ bool DeserializeBinaryList(DeserializeContext& ctx, std::string_view data,
                          leaf_fn);
 }
 
+bool DeserializeBinaryFixedArray(DeserializeContext& ctx, std::string_view data,
+                                 duckdb::Vector& vec, duckdb::idx_t row) {
+  if (data.size() < 20) {
+    return false;
+  }
+  const auto& type = vec.GetType();
+  const auto size = duckdb::ArrayType::GetSize(type);
+  const auto& child_type = duckdb::ArrayType::GetChildType(type);
+  if (child_type.IsNested() &&
+      child_type.id() != duckdb::LogicalTypeId::STRUCT) {
+    return false;
+  }
+  const auto ndim = absl::big_endian::Load<int32_t>(data.data());
+  const auto count = absl::big_endian::Load<int32_t>(data.data() + 12);
+  if (ndim != 1 || count < 0 || static_cast<duckdb::idx_t>(count) != size) {
+    return false;
+  }
+  const auto leaf_fn =
+    GetDeserialization<VectorSink>(child_type, VarFormat::Binary);
+  if (leaf_fn == nullptr) {
+    return false;
+  }
+  auto& child = duckdb::ArrayVector::GetEntry(vec);
+  size_t offset = 20;
+  for (duckdb::idx_t i = 0; i < size; ++i) {
+    if (offset + 4 > data.size()) {
+      return false;
+    }
+    const auto len = absl::big_endian::Load<int32_t>(data.data() + offset);
+    offset += 4;
+    const auto index = row * size + i;
+    if (len == -1) {
+      duckdb::FlatVector::SetNull(child, index, true);
+      continue;
+    }
+    if (len < 0 || static_cast<size_t>(len) > data.size() - offset) {
+      return false;
+    }
+    VectorSink sink{child, index};
+    if (!leaf_fn(ctx, data.substr(offset, len), sink)) {
+      return false;
+    }
+    offset += len;
+  }
+  return offset == data.size();
+}
+
 // PG composite binary: int32 nfields, then per field int32 type_oid,
 // int32 len (-1 NULL), len bytes. The column type is authoritative; the wire
 // OIDs are ignored. Each field decodes into its own child vector at `row`.
@@ -1748,6 +1796,15 @@ struct ListText {
   }
 };
 
+struct FixedArrayBin {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
+    return NestedAdapter<Sink>::template Run<DeserializeBinaryFixedArray>(
+      ctx, data, sink);
+  }
+};
+
 struct StructBin {
   template<typename Sink>
   static bool Decode(DeserializeContext& ctx, std::string_view data,
@@ -1894,6 +1951,8 @@ DeserializationFunction<Sink> GetDeserialization(
       return SelectDecoder<BitBin, BitText, Sink>(binary);
     case LIST:
       return SelectDecoder<ListBin, ListText, Sink>(binary);
+    case ARRAY:
+      return SelectDecoder<FixedArrayBin, DefaultText, Sink>(binary);
     case STRUCT:
       if (IsInet(type)) {
         return SelectDecoder<InetBin, InetText, Sink>(binary);

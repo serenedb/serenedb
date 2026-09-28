@@ -152,6 +152,10 @@ class Statement {
   const duckdb::case_insensitive_map_t<duckdb::LogicalType>& TypeHints() const {
     return _type_hints;
   }
+  void SetParamOids(std::vector<int32_t> oids) {
+    _param_oids = std::move(oids);
+  }
+  const std::vector<int32_t>& ParamOids() const { return _param_oids; }
 
   // The result descriptor the client was last told (PG's
   // plansource->resultDesc). The extended protocol sends RowDescription only
@@ -220,6 +224,7 @@ class Statement {
   CatalogEpoch _epoch = 0;
   duckdb::unique_ptr<duckdb::SQLStatement> _source;
   duckdb::case_insensitive_map_t<duckdb::LogicalType> _type_hints;
+  std::vector<int32_t> _param_oids;
   duckdb::vector<duckdb::LogicalType> _described_types;
   duckdb::vector<duckdb::Identifier> _described_names;
   duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> _statements;

@@ -20,6 +20,7 @@
 
 #include "catalog/boot.h"
 
+#include <absl/flags/flag.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog_transaction.hpp>
@@ -32,6 +33,7 @@
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
+#include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <filesystem>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -45,6 +47,11 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/foreign_server.h"
 #include "storage_engine/search_engine.h"
+
+ABSL_FLAG(std::string, missing_database, "refuse",
+          "What boot does with a database whose data file is missing: "
+          "'refuse' (default) stops the server, 'skip' leaves it unattached, "
+          "'drop' removes it from the catalog.");
 
 namespace sdb::catalog {
 namespace {
@@ -139,17 +146,52 @@ void InitCatalog(std::string_view directory) {
   duckdb::AttachInfo cluster_info;
   cluster_info.name = duckdb::Identifier{ClusterCatalog::kDatabaseName};
   cluster_info.path = layout.ClusterFile();
+  std::error_code cluster_ec;
+  const bool fresh_cluster =
+    !std::filesystem::exists(cluster_info.path, cluster_ec);
   context.RunFunctionInTransaction([&] {
     Attach(context, cluster_info, ClusterCatalog::kStorageType,
            duckdb::AttachVisibility::HIDDEN);
   });
   auto& instance = irs::DuckDBEngine::Instance().instance();
   auto& cluster = ClusterOf(instance);
-  std::vector<duckdb::Identifier> names;
+  std::vector<std::pair<duckdb::Identifier, duckdb::idx_t>> databases;
   cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-    .Scan(cluster.LoginTransaction(),
-          [&](duckdb::CatalogEntry& entry) { names.emplace_back(entry.name); });
-  for (const auto& name : names) {
+    .Scan(cluster.LoginTransaction(), [&](duckdb::CatalogEntry& entry) {
+      databases.emplace_back(entry.name, entry.oid);
+    });
+  const auto missing_policy = absl::GetFlag(FLAGS_missing_database);
+  if (missing_policy != "refuse" && missing_policy != "skip" &&
+      missing_policy != "drop") {
+    SDB_FATAL(STARTUP, "--missing_database must be refuse, skip or drop, not '",
+              missing_policy, "'");
+  }
+  for (const auto& [name, oid] : databases) {
+    const auto file = layout.DatabaseFile(oid);
+    std::error_code ec;
+    if (!fresh_cluster && !std::filesystem::exists(file, ec)) {
+      if (missing_policy == "refuse") {
+        SDB_FATAL(STARTUP, "database '", name.GetIdentifierName(), "' (oid ",
+                  oid, ") cannot be opened: '", file,
+                  "' does not exist. Pass --missing_database=skip to leave it "
+                  "unattached or --missing_database=drop to remove it from "
+                  "the catalog.");
+      }
+      if (missing_policy == "skip") {
+        SDB_WARN(STARTUP, "database '", name.GetIdentifierName(),
+                 "' is not attached: '", file, "' does not exist");
+        continue;
+      }
+      SDB_WARN(STARTUP, "dropping database '", name.GetIdentifierName(),
+               "' from the catalog: '", file, "' does not exist");
+      context.RunFunctionInTransaction([&] {
+        duckdb::DropInfo drop;
+        drop.type = duckdb::CatalogType::DATABASE_ENTRY;
+        drop.SetName(name);
+        cluster.DropDatabase(cluster.GetCatalogTransaction(context), drop);
+      });
+      continue;
+    }
     duckdb::AttachInfo info;
     info.name = name;
     context.RunFunctionInTransaction([&] {

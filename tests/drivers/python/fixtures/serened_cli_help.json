@@ -336,6 +336,22 @@
           "categoryLabel": "Logging"
         }
       ]
+    },
+    {
+      "id": "server/catalog/boot.cpp",
+      "label": "server/catalog/boot.cpp",
+      "flags": [
+        {
+          "name": "missing_database",
+          "flag": "--missing_database",
+          "type": "",
+          "defaultValue": "refuse",
+          "description": "What boot does with a database whose data file is missing: 'refuse' (default) stops the server, 'skip' leaves it unattached, 'drop' removes it from the catalog.",
+          "source": "server/catalog/boot.cpp",
+          "category": "server/catalog/boot.cpp",
+          "categoryLabel": "server/catalog/boot.cpp"
+        }
+      ]
     }
   ]
 }

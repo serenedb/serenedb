@@ -256,10 +256,9 @@ class PgWireSession final
   yaclib::Task<> PumpRecv();
   // Each wraps the shared frame assembler (_frames) with its own wait:
   // NextFrame (RecvLoop startup phase: socket reads), AwaitFrame (SessionTask:
-  // park), FeedFrame (COPY feeder: gate wait).
+  // park).
   yaclib::Task<Frame> NextFrame(FrameKind kind, uint32_t max_len);
   yaclib::Task<Frame> AwaitFrame(FrameKind kind, uint32_t max_len);
-  yaclib::Task<Frame> FeedFrame(FrameKind kind, uint32_t max_len);
   void DrainNotices();
   void ReportChangedParameters();
   // At a sync point (client Sync, or the self-sync after a simple query):

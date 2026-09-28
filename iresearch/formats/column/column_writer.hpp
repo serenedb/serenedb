@@ -89,6 +89,7 @@ class ColumnWriter final {
   friend class ColWriter;
 
   void AppendDense(const duckdb::Vector& vec, duckdb::idx_t count);
+  void AppendList(const duckdb::Vector& vec, duckdb::idx_t count);
   void PadNestedNulls(uint64_t count);
   WriteChunk& OpenChunk();
 
@@ -97,12 +98,18 @@ class ColumnWriter final {
   duckdb::optional_ptr<const duckdb::CompressionFunction> PickCodec(
     const duckdb::LogicalType& codec_type, std::span<WriteChunk> chunks,
     duckdb::CompressionType forced,
-    duckdb::unique_ptr<duckdb::AnalyzeState>& out_state,
-    duckdb::idx_t& out_score);
+    duckdb::unique_ptr<duckdb::AnalyzeState>& out_state);
+
+  bool CompressData(const duckdb::LogicalType& type,
+                    std::span<WriteChunk> chunks,
+                    duckdb::CompressionType forced, ColumnMeta& meta);
 
   bool SealString(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
-                  duckdb::CompressionType forced, ColumnMeta& meta,
-                  bool& nulls_covered_by_data);
+                  duckdb::CompressionType forced, ColumnMeta& meta);
+
+  void SealLeafValidity(std::span<WriteChunk> chunks, uint64_t row_count,
+                        bool skip_validity, bool nulls_covered_by_data,
+                        ColumnMeta& meta);
 
   void Compress(const duckdb::CompressionFunction& picked,
                 duckdb::unique_ptr<duckdb::AnalyzeState> state,

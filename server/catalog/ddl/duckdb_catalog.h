@@ -97,6 +97,7 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   // rows gets none, so this catalog is the only one that can say a name is
   // taken -- and it has already said so by the time the build runs.
   bool OwnsIndexNames() const final { return true; }
+  bool SupportsSereneDBCompression() const final { return true; }
   void Initialize(bool load_builtin) final;
   // The context overload is the one that matters: CREATE DATABASE reaches here
   // with the statement that made it, and the new database's public schema is

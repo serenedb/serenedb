@@ -492,10 +492,8 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
         auto& pk_vec = chunk.data[gstate.pk_base_col_idx];
         auto pks = pk_vec.Values<int64_t>();
         for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-          auto& key = row_keys[row];
-          key.clear();
-          primary_key::AppendSigned(key, pks[row].GetValueUnsafe());
-          key_views.emplace_back(key.data(), static_cast<uint32_t>(key.size()));
+          key_views.push_back(
+            primary_key::SignedKeyTerm(pks[row].GetValueUnsafe()));
         }
       } break;
       case PkShape::Struct: {

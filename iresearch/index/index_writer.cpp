@@ -35,6 +35,7 @@
 #include <yaclib/coro/future.hpp>
 
 #include "iresearch/formats/format_utils.hpp"
+#include "iresearch/formats/index_meta_reader.hpp"
 #include "iresearch/index/directory_reader_impl.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -1475,15 +1476,10 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, OpenMode mode,
 
     if (kOmCreate == mode ||
         ((kOmCreate | kOmAppend) == mode && !index_exists)) {
-      // for OM_CREATE meta must be fully recreated, meta read only to get
-      // last version
       if (index_exists) {
-        // Try to read. It allows us to create writer against an index that's
-        // currently opened for searching
-        reader->read(dir, meta.index_meta, meta.filename);
-
+        meta.index_meta.gen = ParseGeneration(meta.filename);
+        meta.index_meta.seg_counter = MaxSegmentId(dir);
         meta.filename.clear();  // Empty index meta -> new index
-        meta.index_meta.segments.clear();
       }
     } else if (!index_exists) {
       throw FileNotFound{meta.filename};  // no segments file found

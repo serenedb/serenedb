@@ -39,7 +39,8 @@ class DirectoryReaderImpl final
   // if cached != nullptr then try to reuse its segments
   static std::shared_ptr<const DirectoryReaderImpl> Open(
     const Directory& dir, const IndexReaderOptions& opts,
-    const std::shared_ptr<const DirectoryReaderImpl>& cached);
+    const std::shared_ptr<const DirectoryReaderImpl>& cached,
+    MetaPayloadReader payload = {});
 
   DirectoryReaderImpl(const Directory& dir, const IndexReaderOptions& opts,
                       DirectoryMeta&& meta, ReadersType&& readers);

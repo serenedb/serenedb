@@ -109,8 +109,8 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
 
 namespace {
 
-IndexFileRefs::ref_t LoadNewestIndexMeta(IndexMeta& meta,
-                                         const Directory& dir) noexcept {
+IndexFileRefs::ref_t LoadNewestIndexMeta(IndexMeta& meta, const Directory& dir,
+                                         MetaPayloadReader payload) noexcept {
   try {
     auto reader = GetIndexMetaReader();
 
@@ -129,7 +129,7 @@ IndexFileRefs::ref_t LoadNewestIndexMeta(IndexMeta& meta,
     }
 
     SDB_ASSERT(ref);
-    reader->read(dir, meta, *ref);
+    reader->read(dir, meta, *ref, std::move(payload));
 
     return ref;
   } catch (const std::exception& e) {
@@ -168,9 +168,10 @@ DirectoryReaderImpl::DirectoryReaderImpl(Init&& init, const Directory& dir,
 
 std::shared_ptr<const DirectoryReaderImpl> DirectoryReaderImpl::Open(
   const Directory& dir, const IndexReaderOptions& opts,
-  const std::shared_ptr<const DirectoryReaderImpl>& cached) {
+  const std::shared_ptr<const DirectoryReaderImpl>& cached,
+  MetaPayloadReader payload) {
   IndexMeta index_meta;
-  auto meta_file_ref = LoadNewestIndexMeta(index_meta, dir);
+  auto meta_file_ref = LoadNewestIndexMeta(index_meta, dir, std::move(payload));
 
   if (!meta_file_ref) {
     throw IndexNotFound{};

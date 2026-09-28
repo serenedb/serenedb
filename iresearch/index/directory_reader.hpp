@@ -43,8 +43,8 @@ class DirectoryReader final : public IndexReader {
 
   // Create an index reader over the specified directory
   explicit DirectoryReader(
-    const Directory& dir,
-    const IndexReaderOptions& opts = IndexReaderOptions{});
+    const Directory& dir, const IndexReaderOptions& opts = IndexReaderOptions{},
+    MetaPayloadReader payload = {});
   explicit DirectoryReader(
     std::shared_ptr<const DirectoryReaderImpl>&& impl) noexcept;
   DirectoryReader(const DirectoryReader& other) noexcept;

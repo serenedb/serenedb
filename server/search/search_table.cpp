@@ -96,6 +96,10 @@ constexpr duckdb::field_id_t kFieldTick = 0;
 
 }  // namespace
 
+uint64_t SearchTable::ReadCommittedTick(duckdb::Deserializer& payload) {
+  return payload.ReadProperty<uint64_t>(kFieldTick, "tick");
+}
+
 SearchTable::SearchTable(duckdb::idx_t db_id, duckdb::idx_t schema_id,
                          duckdb::idx_t table_id, bool is_new,
                          const catalog::SearchTableOptions& options,
@@ -187,7 +191,7 @@ void SearchTable::OpenWriter() {
     out.WriteProperty<uint64_t>(kFieldTick, "tick", _last_committed_tick);
   };
   writer_options.meta_payload_reader = [this](duckdb::Deserializer& in) {
-    _last_committed_tick = in.ReadProperty<uint64_t>(kFieldTick, "tick");
+    _last_committed_tick = ReadCommittedTick(in);
   };
 
   _writer = irs::IndexWriter::Make(*_dir, open_mode, std::move(writer_options));

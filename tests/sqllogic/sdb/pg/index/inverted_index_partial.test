@@ -442,7 +442,33 @@ CREATE INDEX p_art ON goshandr_subscribers(x) WHERE live;
 statement error
 CREATE INDEX p_bad ON goshandr_subscribers USING inverted(label) WHERE label;
 ----
-db error: ERROR: Could not convert string '<slt:ignore>' to BOOL when casting from source column label
+db error: ERROR: argument of WHERE must be type boolean, not type VARCHAR
+
+
+statement error
+CREATE INDEX vmin_bad ON vmin USING inverted(label) WHERE label;
+----
+db error: ERROR: argument of WHERE must be type boolean, not type VARCHAR
+
+
+statement ok
+CREATE TABLE p_bad_empty (label TEXT, n INT);
+
+
+statement error
+CREATE INDEX p_bad_empty_inv ON p_bad_empty USING inverted(label) WHERE label;
+----
+db error: ERROR: argument of WHERE must be type boolean, not type VARCHAR
+
+
+statement error
+CREATE INDEX p_bad_empty_art ON p_bad_empty (n) WHERE n;
+----
+db error: ERROR: argument of WHERE must be type boolean, not type INTEGER
+
+
+statement ok
+DROP TABLE p_bad_empty;
 
 
 statement ok

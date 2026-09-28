@@ -69,34 +69,23 @@ std::unique_ptr<SegmentWriter> SegmentWriter::make(
 }
 
 size_t SegmentWriter::memory_active() const noexcept {
-  return _docs_context.MemoryActive() +
-         bitset::bits_to_words(_docs_mask.set.size()) * sizeof(bitset::word_t) +
+  return _docs_context.MemoryActive() + _docs_mask.ByteSize() +
          _fields.MemoryActive();
 }
 
 size_t SegmentWriter::memory_reserved() const noexcept {
   return sizeof(SegmentWriter) + _docs_context.MemoryReserved() +
-         _docs_mask.set.capacity() / BitsRequired<char>() +
-         _fields.MemoryReserved();
+         _docs_mask.ByteCapacity() + _fields.MemoryReserved();
 }
 
 bool SegmentWriter::remove(doc_id_t doc_id) noexcept {
   if (!doc_limits::valid(doc_id)) {
     return false;
   }
-  const auto doc = doc_id - doc_limits::min();
-  if (buffered_docs() <= doc) {
+  if (buffered_docs() <= doc_id - doc_limits::min()) {
     return false;
   }
-  if (_docs_mask.set.size() <= doc) {
-    if (_docs_mask.set.capacity() <= doc) {
-      _docs_mask.set.reserve(math::RoundupPower2(doc + 1));
-    }
-    _docs_mask.set.resize</*Reserve=*/false>(doc + 1);
-  }
-  const bool inserted = _docs_mask.set.try_set(doc);
-  _docs_mask.count += static_cast<size_t>(inserted);
-  return inserted;
+  return _docs_mask.Add(doc_id);
 }
 
 SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
@@ -110,9 +99,7 @@ SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
       options.resource_manager}},
     _db{DerefDb(options.db)},
     _fallback_field_options{options.field_options},
-    _ann_env{options.ann_env} {
-  _docs_mask.set = decltype(_docs_mask.set){{options.resource_manager}};
-}
+    _ann_env{options.ann_env} {}
 
 void SegmentWriter::FlushFields(FlushState& state,
                                 std::span<const BasicTermReader* const> extra) {
@@ -126,8 +113,7 @@ void SegmentWriter::FlushFields(FlushState& state,
   }
 }
 
-[[nodiscard]] DocMap SegmentWriter::flush(IndexSegment& segment,
-                                          DocsMask& docs_mask) {
+void SegmentWriter::flush(IndexSegment& segment, DocumentMask& docs_mask) {
   auto& meta = segment.meta;
 
   FlushState state{
@@ -173,16 +159,12 @@ void SegmentWriter::FlushFields(FlushState& state,
 
   idx.Commit();
 
-  SDB_ASSERT(_docs_mask.set.count() == _docs_mask.count);
   docs_mask = std::move(_docs_mask);
-  _docs_mask.count = 0;
 
   meta.docs_count = state.doc_count;
-  meta.live_docs_count = meta.docs_count - docs_mask.count;
+  meta.live_docs_count =
+    meta.docs_count - static_cast<doc_id_t>(docs_mask.Count());
   meta.files = _dir.FlushTracked(meta.byte_size);
-
-  // SegmentWriter writes posting lists in doc-order with no comparator.
-  return DocMap{};
 }
 
 void SegmentWriter::SetFieldOptions(
@@ -206,8 +188,7 @@ void SegmentWriter::ResetState() noexcept {
   _initialized = false;
   _dir.ClearTracked();
   _docs_context.Clear();
-  _docs_mask.set.clear();
-  _docs_mask.count = 0;
+  _docs_mask.Clear();
   _batch_first_doc_id = doc_limits::eof();
   _fields.Reset();
   _col_reader.reset();

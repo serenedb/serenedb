@@ -29,6 +29,7 @@
 #include <cstring>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <optional>
 #include <yaclib/async/run.hpp>
 #include <yaclib/async/wait.hpp>
 #include <yaclib/coro/await.hpp>
@@ -106,7 +107,6 @@ struct HnswRawDist {
 struct MergeDonor {
   const HnswIndex* index = nullptr;
   const SubReader* reader = nullptr;
-  const DocumentMask* mask = nullptr;
   uint64_t out_base = 0;
   uint64_t alive = 0;
 };
@@ -139,7 +139,6 @@ MergeDonor PickMergeDonor(std::span<const MergeSource> sources, field_id column,
     }
     best = MergeDonor{.index = &hnsw,
                       .reader = src.reader,
-                      .mask = src.mask,
                       .out_base = base,
                       .alive = src.alive_count};
   }
@@ -644,9 +643,10 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
 
   std::vector<uint32_t> remap(src_rows, kHnswInvalidNode);
   uint64_t rank = 0;
+  auto it_mask = donor.reader->MaskedDocs();
   for (size_t r = 0; r < src_rows; ++r) {
     const auto doc = static_cast<doc_id_t>(r) + doc_limits::min();
-    if (donor.mask != nullptr && donor.mask->contains(doc)) {
+    if (it_mask.Contains(doc)) {
       continue;
     }
     if (donor.out_base + rank >= rows) {

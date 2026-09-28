@@ -19,7 +19,7 @@ pip install "psycopg[binary]"
 ```python
 import psycopg
 
-conn = psycopg.connect("host=localhost port=7890 dbname=_system")
+conn = psycopg.connect("host=localhost port=7890 dbname=postgres user=postgres")
 ```
 
 ## Create a table and insert data
@@ -60,7 +60,7 @@ pip install psycopg2-binary
 ```python
 import psycopg2
 
-conn = psycopg2.connect("host=localhost port=7890 dbname=_system")
+conn = psycopg2.connect("host=localhost port=7890 dbname=postgres user=postgres")
 
 with conn.cursor() as cur:
     cur.execute(
@@ -75,6 +75,19 @@ with conn.cursor() as cur:
 ```python
 conn.close()
 ```
+
+## Differences from PostgreSQL
+
+- A `conn.transaction()` block inside another one fails, because the inner
+  block needs a savepoint and SereneDB has no `SAVEPOINT`. Keep one
+  transaction per unit of work.
+- Named cursors (`conn.cursor(name=...)`) fail, because `DECLARE ... CURSOR`
+  is not supported. Read large results with `cur.stream(query)` in psycopg 3,
+  or page through them with `LIMIT` and a key.
+- `LISTEN` and `NOTIFY` are not supported.
+- psycopg sends a Python list of floats as `DOUBLE[]`. Cast it to the column
+  type when you compare it with a vector column:
+  `ORDER BY embedding <-> %s::FLOAT[768]`.
 
 ## LangChain
 

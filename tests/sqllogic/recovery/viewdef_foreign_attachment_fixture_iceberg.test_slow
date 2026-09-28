@@ -1,0 +1,79 @@
+control substitution on
+
+statement ok
+CREATE OR REPLACE SECRET viewdef_ic_${__DATABASE__} (
+  TYPE S3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/'
+);
+
+
+statement ok
+SET s3_use_ssl=false;
+
+
+statement ok
+DETACH DATABASE IF EXISTS viewdef_ic_${__DATABASE__};
+
+statement ok
+ATTACH '${ICEBERG_WAREHOUSE}' AS viewdef_ic_${__DATABASE__} (
+  TYPE ICEBERG,
+  ENDPOINT '${ICEBERG_REST_URL}',
+  AUTHORIZATION_TYPE 'sigv4',
+  SIGV4_SERVICE 'custom',
+  SIGV4_REGION 'us-east-1',
+  SECRET 'viewdef_ic_${__DATABASE__}'
+);
+
+
+statement ok
+CREATE TABLE viewdef_t (id INT, name TEXT);
+
+statement ok
+CREATE VIEW "viewdef odd" (x) AS SELECT id FROM viewdef_t WHERE name = 'a';
+
+
+statement ok
+DROP SECRET viewdef_ic_${__DATABASE__};
+
+
+connection other user=postgres
+query
+SELECT table_name, view_definition
+FROM information_schema.views
+WHERE table_name LIKE 'viewdef%';
+----
+table_name	view_definition
+viewdef odd	SELECT id FROM viewdef_t WHERE ("name" = 'a');
+
+connection other user=postgres
+query
+SELECT viewname, definition FROM pg_views WHERE viewname LIKE 'viewdef%';
+----
+viewname	definition
+viewdef odd	SELECT id FROM viewdef_t WHERE ("name" = 'a');
+
+connection other user=postgres
+query
+SELECT relname, pg_get_viewdef(oid), pg_get_viewdef(oid, true)
+FROM pg_class
+WHERE relname LIKE 'viewdef%'
+ORDER BY relname;
+----
+relname	pg_get_viewdef	pg_get_viewdef
+viewdef odd	SELECT id FROM viewdef_t WHERE ("name" = 'a');	SELECT id FROM viewdef_t WHERE ("name" = 'a');
+viewdef_t	NULL	NULL
+
+
+statement ok
+DETACH DATABASE viewdef_ic_${__DATABASE__};
+
+statement ok
+DROP VIEW "viewdef odd";
+
+statement ok
+DROP TABLE viewdef_t;

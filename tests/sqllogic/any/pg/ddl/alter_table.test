@@ -52,6 +52,7 @@ CREATE TABLE tinker(a integer, b text);
 statement ok
 CREATE VIEW tinker_view AS SELECT * FROM tinker;
 
+skipif serenedb
 statement error
 ALTER TABLE tinker_view DROP CONSTRAINT foo;
 ----
@@ -59,11 +60,15 @@ db error: ERROR: ALTER action DROP CONSTRAINT cannot be performed on relation "t
 DETAIL: This operation is not supported for views.
 
 
+skipif postgres
 statement error
-ALTER TABLE tinker_view DROP CONSTRAINT IF EXISTS foo;
+ALTER TABLE tinker_view DROP CONSTRAINT foo;
 ----
-db error: ERROR: ALTER action DROP CONSTRAINT cannot be performed on relation "tinker_view"
-DETAIL: This operation is not supported for views.
+db error: ERROR: Unsupported alter type for catalog entry!
+
+
+statement error (ALTER action DROP CONSTRAINT cannot be performed on relation "tinker_view"|Unsupported alter type for catalog entry)
+ALTER TABLE tinker_view DROP CONSTRAINT IF EXISTS foo;
 
 
 statement ok

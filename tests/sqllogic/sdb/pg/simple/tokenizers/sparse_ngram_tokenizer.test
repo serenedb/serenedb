@@ -43,6 +43,41 @@ CREATE TEXT SEARCH DICTIONARY sng_err4 AS
 db error: ERROR: Unsupported index features are specified: 3
 
 
+# --- min_ngram_length below minimum ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY sng_err5 AS
+    generate_sparse_ngrams(min_ngram_length := 2)
+----
+db error: ERROR: "min_ngram_length" must be at least 3
+HINT: Minimum n-gram length (minimum 3); boundaries are chosen over hashes of (min_ngram_length - 1)-character windows
+
+
+# --- max_ngram_length below min_ngram_length ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY sng_err6 AS
+    generate_sparse_ngrams(4, min_ngram_length := 5)
+----
+db error: ERROR: "max_ngram_length" must be >= "min_ngram_length"
+
+
+# --- min_cutoff_length outside [min_ngram_length, max_ngram_length] ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY sng_err7 AS
+    generate_sparse_ngrams(8, min_cutoff_length := 9)
+----
+db error: ERROR: "min_cutoff_length" must be between "min_ngram_length" and "max_ngram_length"
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY sng_err8 AS
+    generate_sparse_ngrams(min_cutoff_length := -1)
+----
+db error: ERROR: "min_cutoff_length" must not be negative
+
+
 # SPARSE NGRAM TOKENIZER
 
 # --- Index side: all sparse ngrams ---
@@ -115,6 +150,79 @@ SELECT ts_lexize('code_grams_copy', 'for(int i=42');
 ----
 ts_lexize
 {for(i,"(int i=4",=42}
+
+
+# --- min_cutoff_length drops the short grams, keeping the rest in order ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY code_grams_cut AS
+    generate_sparse_ngrams(min_cutoff_length := 4)
+
+
+query
+SELECT ts_lexize('code_grams_cut', 'hello world');
+----
+ts_lexize
+{"lo w","lo wo",worl}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY code_grams_cut_covering AS
+    generate_sparse_ngrams(covering := true, min_cutoff_length := 4)
+
+
+query
+SELECT ts_lexize('code_grams_cut_covering', 'hello world');
+----
+ts_lexize
+{worl,"lo wo"}
+
+
+# --- min_ngram_length = 4: boundaries over 3-character windows ---
+
+query
+SELECT list_min(list_transform(
+    generate_sparse_ngrams('for(int i=42; i<n; ++i)', min_ngram_length := 4),
+    lambda x: length(x))) AS shortest;
+----
+shortest
+4
+
+
+query
+SELECT generate_sparse_ngrams('for', min_ngram_length := 4) AS grams;
+----
+grams
+{}
+
+
+query
+SELECT list_has_all(
+    generate_sparse_ngrams('for(int i=42; i<n; ++i) total += data[i];',
+                           min_ngram_length := 4),
+    generate_sparse_ngrams('int i=42; i<n', min_ngram_length := 4,
+                           covering := true)) AS contained;
+----
+contained
+t
+
+
+query
+SELECT list_has_all(
+    generate_sparse_ngrams('日本語のテキストを分割する', min_ngram_length := 4),
+    generate_sparse_ngrams('テキストを分', min_ngram_length := 4,
+                           covering := true)) AS contained;
+----
+contained
+t
+
+
+query
+SELECT generate_sparse_ngrams('hello world', min_ngram_length := 3) =
+       generate_sparse_ngrams('hello world') AS same;
+----
+same
+t
 
 
 # INVERTED INDEX + SUBSTRING SEARCH

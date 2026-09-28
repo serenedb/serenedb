@@ -26,7 +26,7 @@
 #include <memory>
 #include <vector>
 
-#include "connector/search_table_dispatch.h"
+#include "catalog/entry/search_table.h"
 
 namespace sdb::connector {
 
@@ -34,11 +34,12 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
  public:
   // `return_chunk` is RETURNING: the operator then hands back the rows as it
   // left them rather than their count, and `types` is the whole row.
-  SereneDBSearchUpdate(duckdb::PhysicalPlan& plan, SearchWriteTarget target,
-                       std::vector<duckdb::idx_t> pk_col_indices,
-                       std::vector<duckdb::PhysicalIndex> update_columns,
-                       duckdb::vector<duckdb::LogicalType> types,
-                       duckdb::idx_t estimated_cardinality, bool return_chunk);
+  SereneDBSearchUpdate(
+    duckdb::PhysicalPlan& plan, const catalog::SearchTableEntry& table,
+    duckdb::vector<duckdb::PhysicalIndex> columns,
+    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions,
+    duckdb::vector<duckdb::LogicalType> types,
+    duckdb::idx_t estimated_cardinality, bool return_chunk);
 
   bool IsSink() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
@@ -47,9 +48,10 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
                               duckdb::DataChunk& chunk,
                               duckdb::OperatorSinkInput& input) const final;
   duckdb::SinkFinalizeType Finalize(
-    duckdb::Pipeline& pipeline, duckdb::Event& event,
-    duckdb::ClientContext& context,
-    duckdb::OperatorSinkFinalizeInput& input) const final;
+    duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext&,
+    duckdb::OperatorSinkFinalizeInput&) const final {
+    return duckdb::SinkFinalizeType::READY;
+  }
 
   bool IsSource() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(
@@ -59,9 +61,9 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
     duckdb::OperatorSourceInput& input) const final;
 
  private:
-  SearchWriteTarget _target;
-  std::vector<duckdb::idx_t> _pk_col_indices;
-  std::vector<duckdb::PhysicalIndex> _update_columns;
+  const catalog::SearchTableEntry& _table;
+  duckdb::vector<duckdb::PhysicalIndex> _columns;
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> _expressions;
   bool _return_chunk = false;
 };
 

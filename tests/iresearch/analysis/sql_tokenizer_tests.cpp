@@ -20,6 +20,8 @@
 
 #include <duckdb.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
+#include <iresearch/analysis/ngram_tokenizer.hpp>
+#include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/sql_tokenizer.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
@@ -125,6 +127,29 @@ TEST(SqlTokenizerTest, emptyListAcceptsValueWithoutTokens) {
   auto terms = tests::AnalyzeTerms(*a, "a b c");
   ASSERT_TRUE(terms.has_value());
   ASSERT_TRUE(terms->empty());
+}
+
+TEST(SqlTokenizerTest, pipelineNullDropKeepsStackedPositions) {
+  std::vector<irs::analysis::Tokenizer::ptr> stages;
+  stages.emplace_back(irs::analysis::DelimitedTokenizer::Make(
+    irs::analysis::DelimitedTokenizer::Options{.delimiter = " "}));
+  stages.emplace_back(irs::analysis::NGramTokenizer::Make(
+    {.min_gram = 2, .max_gram = 3, .preserve_original = false}));
+  stages.emplace_back(SqlTokenizer::Make(
+    {.expression = "CASE WHEN length(input) >= 3 THEN input END"}));
+  irs::analysis::PipelineTokenizer pipe{std::move(stages)};
+  pipe.Bind(TestContext());
+  const auto tokens =
+    tests::Analyze(pipe, "search engine", irs::TokenLayout::TermsPos);
+  ASSERT_TRUE(tokens.has_value());
+  const std::vector<std::pair<std::string, uint32_t>> expected{
+    {"sea", 1}, {"ear", 2}, {"arc", 3}, {"rch", 4},
+    {"eng", 5}, {"ngi", 6}, {"gin", 7}, {"ine", 8}};
+  ASSERT_EQ(expected.size(), tokens->size());
+  for (size_t i = 0; i < expected.size(); ++i) {
+    EXPECT_EQ(expected[i].first, (*tokens)[i].term);
+    EXPECT_EQ(expected[i].second, (*tokens)[i].pos);
+  }
 }
 
 TEST(SqlTokenizerTest, columnFillMatchesPerValue) {

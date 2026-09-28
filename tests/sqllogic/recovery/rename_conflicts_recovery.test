@@ -1,0 +1,182 @@
+control substitution on
+
+# Renames that lose the write-write conflict or are rolled back must leave the
+# storage names, the dependent indexes and the physical index names exactly as
+# the winning or restored version has them; the WAL written afterwards and the
+# checkpoint must both replay.
+
+statement ok
+CREATE SCHEMA rcr;
+
+statement ok
+CREATE TABLE rcr.t (id INTEGER PRIMARY KEY, v INTEGER);
+
+statement ok
+CREATE INDEX rcr_t_v ON rcr.t (v);
+
+statement ok
+INSERT INTO rcr.t VALUES (1, 10), (2, 20);
+
+# Table rename: one wins, one loses, one is rolled back.
+connection s1
+statement ok
+BEGIN;
+
+connection s1
+statement ok
+ALTER TABLE rcr.t RENAME TO t2;
+
+connection s2
+statement error
+ALTER TABLE rcr.t RENAME TO t3;
+----
+db error: ERROR: Catalog write-write conflict on alter with "t"
+
+
+connection s1
+statement ok
+COMMIT;
+
+connection s2
+statement ok
+BEGIN;
+
+connection s2
+statement ok
+ALTER TABLE rcr.t2 RENAME TO t9;
+
+connection s2
+statement ok
+ROLLBACK;
+
+# Index rename: same three outcomes.
+connection s1
+statement ok
+BEGIN;
+
+connection s1
+statement ok
+ALTER INDEX rcr.rcr_t_v RENAME TO rcr_t_v2;
+
+connection s2
+statement error
+ALTER INDEX rcr.rcr_t_v RENAME TO rcr_t_v3;
+----
+db error: ERROR: Catalog write-write conflict on alter with "rcr_t_v"
+
+
+connection s1
+statement ok
+COMMIT;
+
+connection s2
+statement ok
+BEGIN;
+
+connection s2
+statement ok
+ALTER INDEX rcr.rcr_t_v2 RENAME TO rcr_t_v9;
+
+connection s2
+statement ok
+ROLLBACK;
+
+# Schema rename: same three outcomes.
+connection s1
+statement ok
+BEGIN;
+
+connection s1
+statement ok
+ALTER SCHEMA rcr RENAME TO rcr2;
+
+connection s2
+statement error
+ALTER SCHEMA rcr RENAME TO rcr3;
+----
+db error: ERROR: Catalog write-write conflict on alter with "rcr"
+
+
+connection s1
+statement ok
+COMMIT;
+
+connection s2
+statement ok
+BEGIN;
+
+connection s2
+statement ok
+ALTER SCHEMA rcr2 RENAME TO rcr9;
+
+connection s2
+statement ok
+ROLLBACK;
+
+connection s2
+statement ok
+INSERT INTO rcr2.t2 VALUES (3, 30);
+
+# Crash with everything only in the WAL.
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_wal_replay
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM rcr2.t2 WHERE v = 30;
+----
+id
+3
+
+connection after_wal_replay
+query
+SELECT schema_name, table_name, index_name FROM duckdb_indexes() WHERE schema_name LIKE 'rcr%' ORDER BY 3;
+----
+schema_name	table_name	index_name
+rcr2	t2	rcr_t_v2
+
+connection after_wal_replay
+statement ok
+DROP INDEX rcr2.rcr_t_v2;
+
+connection after_wal_replay
+statement ok
+CREATE INDEX rcr_t_v2 ON rcr2.t2 (v);
+
+# Checkpoint, then crash: everything comes back from the database file.
+connection after_wal_replay
+statement ok
+CHECKPOINT;
+
+connection after_wal_replay
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_wal_replay
+statement error connection closed
+SELECT 1;
+
+connection after_checkpoint
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM rcr2.t2;
+----
+n
+3
+
+connection after_checkpoint
+query
+SELECT id FROM rcr2.t2 WHERE v = 20;
+----
+id
+2
+
+connection after_checkpoint
+statement ok
+ALTER TABLE rcr2.t2 RENAME TO t;
+
+connection after_checkpoint
+statement ok
+DROP SCHEMA rcr2 CASCADE;

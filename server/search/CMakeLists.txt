@@ -5,6 +5,7 @@ target_sources(
         store_stats.cpp
         search_analyzer_impl.cpp
         search_db_wal.cpp
+        scorer_options.cpp
         search_table.cpp
         search_table_recovery.cpp
         search_table_transaction.cpp

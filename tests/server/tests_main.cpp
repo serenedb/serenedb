@@ -20,16 +20,18 @@
 
 #include <gtest/gtest.h>
 
+#include <iresearch/formats/formats.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 
-#include "catalog/entry.h"
 #include "query/config.h"
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
+  irs::formats::Init();
+  irs::InitOptimizeRules();
   irs::DuckDBEngine::Instance().Initialize(
     &sdb::connector::RegisterConfigVariables);
-  sdb::catalog::RegisterForeignCreateInfoDeserializer();
   const int rc = RUN_ALL_TESTS();
   irs::DuckDBEngine::Instance().CloseDatabases();
   irs::DuckDBEngine::Instance().Shutdown();

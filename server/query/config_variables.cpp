@@ -44,7 +44,7 @@
 #include <string_view>
 
 #include "auth/role_closure.h"
-#include "catalog/ddl/catalog.h"
+#include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/commands/rbac.h"
 #include "pg/connection_context.h"
@@ -554,11 +554,13 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_scan_split",
       {
         LogicalTypeId::VARCHAR,
-        "When an inverted-index scan splits a segment into row-group units: "
-        "'tail' claims whole segments while more remain than workers, then "
-        "row groups; 'always' claims row groups from the first unit; 'never' "
-        "claims whole segments only; 'auto' (default) is 'always' under an "
-        "ORDER BY scan order and 'tail' otherwise.",
+        "How an inverted-index scan shares a segment between workers: 'tail' "
+        "gives each worker its own segment and lets an idle worker join the "
+        "segment with the most row groups left only once no segment is "
+        "unclaimed; 'always' puts every worker on the same segment until it "
+        "is claimed; 'never' scans each segment whole on one worker; 'auto' "
+        "(default) is 'always' under an ORDER BY scan order and 'tail' "
+        "otherwise.",
         [] { return duckdb::Value{"auto"}; },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           const auto mode = value.ToString();
@@ -578,12 +580,12 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_scan_order",
       {
         LogicalTypeId::VARCHAR,
-        "The order an inverted-index scan claims its units in: "
-        "'smallest_first' and 'largest_first' order segments by live "
-        "document count; 'order' is best-first by the ORDER BY column's "
-        "row-group statistics when the query has a scan order (and "
-        "'smallest_first' otherwise); 'auto' (default) is 'order' under a "
-        "scan order and 'smallest_first' otherwise.",
+        "The order an inverted-index scan claims its segments in: "
+        "'smallest_first' and 'largest_first' order them by live document "
+        "count; 'order' is best-first by the ORDER BY column's row-group "
+        "statistics when the query has a scan order (and 'largest_first' "
+        "otherwise); 'auto' (default) is 'order' under a scan order and "
+        "'largest_first' otherwise.",
         [] { return duckdb::Value{"auto"}; },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           const auto mode = value.ToString();
@@ -618,6 +620,19 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_compact_target_segments",
+      {
+        LogicalTypeId::UINTEGER,
+        "How many segments VACUUM (COMPACT_*) leaves in a search table. 0 or "
+        "1 (default) merges every segment into one; a larger N splits the "
+        "segments into N disjoint groups, merges each group into one segment "
+        "and stops there, so no single merge holds the whole table. A table "
+        "with N segments or fewer is left as it is. Default 1.",
+        [] { return duckdb::Value::UINTEGER(1); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
       kRowGroupSizeSetting,
       {
         LogicalTypeId::UINTEGER,
@@ -643,9 +658,10 @@ constexpr std::pair<std::string_view, VariableDescription>
       kRefreshIntervalSetting,
       {
         LogicalTypeId::UINTEGER,
-        "Background refresh interval (ms) for newly created inverted indexes. "
-        "Per-index WITH (refresh_interval = ...) overrides. 0 disables the "
-        "refresh task. Default: 1000.",
+        "Background refresh interval (ms) for newly created inverted indexes "
+        "and search tables. WITH (refresh_interval = ...) overrides it per "
+        "index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. "
+        "0 disables the refresh task. Default: 1000.",
         [] { return duckdb::Value::UINTEGER(1000); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
@@ -670,8 +686,10 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::UINTEGER,
         "Background compaction interval (ms) for newly created inverted "
-        "indexes. Per-index WITH (compaction_interval = ...) overrides. "
-        "0 disables the compaction task. Default: 1000.",
+        "indexes and search tables. WITH (compaction_interval = ...) "
+        "overrides it per index or table, ALTER INDEX / ALTER TABLE ... SET "
+        "changes it later. 0 disables background compaction; VACUUM "
+        "(COMPACT_*) still merges on demand. Default: 1000.",
         [] { return duckdb::Value::UINTEGER(1000); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
@@ -681,9 +699,9 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::UINTEGER,
         "Number of commit ticks between background unreferenced-file cleanup "
-        "passes for newly created inverted indexes. Per-index WITH "
-        "(cleanup_interval_step = ...) overrides. 0 disables cleanup. "
-        "Default: 1.",
+        "passes for newly created inverted indexes and search tables. WITH "
+        "(cleanup_interval_step = ...) overrides it per index or table. 0 "
+        "disables cleanup. Default: 1.",
         [] { return duckdb::Value::UINTEGER(1); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
@@ -711,7 +729,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "...) overrides. Default 268435456 (256MB).",
         [] {
           return duckdb::Value::UBIGINT(
-            catalog::InvertedIndexOptions{}.segment_memory_max);
+            catalog::InvertedIndexSettings{}.segment_memory_max);
         },
         RejectZero<"segment_memory_max">,
       },
@@ -742,12 +760,12 @@ constexpr std::pair<std::string_view, VariableDescription>
       kCompactionMaxSegmentsSetting,
       {
         LogicalTypeId::UINTEGER,
-        "Maximum inverted-index segments merged by one background compaction. "
-        "Per-index WITH (compaction_max_segments = ...) overrides. "
-        "Default 10.",
+        "Maximum segments of an inverted index or search table merged by one "
+        "background compaction. WITH (compaction_max_segments = ...) "
+        "overrides it per index or table. Default 10.",
         [] {
           return duckdb::Value::UINTEGER(
-            catalog::InvertedIndexOptions{}.compaction_max_segments);
+            catalog::InvertedIndexSettings{}.compaction_max_segments);
         },
         RejectZero<"compaction_max_segments">,
       },
@@ -756,12 +774,13 @@ constexpr std::pair<std::string_view, VariableDescription>
       kCompactionMaxSegmentsBytesSetting,
       {
         LogicalTypeId::UBIGINT,
-        "Byte budget of one background inverted-index compaction (the tier "
-        "target size). Per-index WITH (compaction_max_segments_bytes = ...) "
-        "overrides. Default 5368709120 (5GB).",
+        "Byte budget of one background compaction of an inverted index or "
+        "search table (the tier target size). WITH "
+        "(compaction_max_segments_bytes = ...) overrides it per index or "
+        "table. Default 5368709120 (5GB).",
         [] {
           return duckdb::Value::UBIGINT(
-            catalog::InvertedIndexOptions{}.compaction_max_segments_bytes);
+            catalog::InvertedIndexSettings{}.compaction_max_segments_bytes);
         },
         RejectZero<"compaction_max_segments_bytes">,
       },
@@ -770,13 +789,13 @@ constexpr std::pair<std::string_view, VariableDescription>
       kCompactionFloorSegmentBytesSetting,
       {
         LogicalTypeId::UBIGINT,
-        "Inverted-index segments below this size count as equal-sized for "
-        "compaction candidate selection. Per-index WITH "
-        "(compaction_floor_segment_bytes = ...) overrides. Default 2097152 "
-        "(2MB).",
+        "Segments of an inverted index or search table below this size count "
+        "as equal-sized for compaction candidate selection. WITH "
+        "(compaction_floor_segment_bytes = ...) overrides it per index or "
+        "table. Default 2097152 (2MB).",
         [] {
           return duckdb::Value::UBIGINT(
-            catalog::InvertedIndexOptions{}.compaction_floor_segment_bytes);
+            catalog::InvertedIndexSettings{}.compaction_floor_segment_bytes);
         },
         RejectZero<"compaction_floor_segment_bytes">,
       },
@@ -1019,6 +1038,17 @@ void RegisterConfigVariables(duckdb::DBConfig& config) {
   for (const auto& [name, desc] : kVariableDescription) {
     TryRegister(config, name, desc);
   }
+}
+
+duckdb::Value ValidateSetting(duckdb::ClientContext& context,
+                              std::string_view name,
+                              const duckdb::Value& value) {
+  duckdb::ExtensionOption option;
+  duckdb::DBConfig::GetConfig(context).TryGetExtensionOption(std::string{name},
+                                                             option);
+  auto result = value.CastAs(context, option.type);
+  option.set_function(context, duckdb::SetScope::AUTOMATIC, result);
+  return result;
 }
 
 }  // namespace connector

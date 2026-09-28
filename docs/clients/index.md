@@ -33,6 +33,14 @@ Use SereneDB applications, or connect with any PostgreSQL-compatible client or d
 |---|---|---|---|
 | LangChain (Python) | `langchain-serenedb` | Vector store: embeddings, metadata filtering, hybrid BM25 + vector retrieval | [Guide](./langchain-serenedb/index.md) |
 
+## Elasticsearch clients
+
+Elasticsearch clients and tools connect over HTTP to the subset of the Elasticsearch REST API that SereneDB serves.
+
+| Client | Version | Support | Guide |
+|---|---|---|---|
+| `elasticsearch` (Python) | 8.19, 9.5 | Partial | [Guide](./elasticsearch-api.md) |
+
 ## Tools
 
 SereneDB also ships its own command-line clients inside the `serened` binary: [`serened psql`](./serened-psql.md), a PostgreSQL-compatible client for a running server, and [`serened shell`](./serened-shell.md), a local shell for querying database files directly.

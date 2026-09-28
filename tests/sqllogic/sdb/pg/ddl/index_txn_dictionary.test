@@ -1,0 +1,109 @@
+statement ok
+CREATE TABLE itd_t (id INTEGER, body TEXT);
+
+
+statement ok
+INSERT INTO itd_t VALUES (1, 'quick brown fox');
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY itd_text AS
+    split_text(case := 'lower', break := 'alpha')
+    WITH (frequency, position);
+
+
+statement ok
+CREATE INDEX itd_idx ON itd_t USING inverted (id, body itd_text);
+
+
+statement ok
+INSERT INTO itd_t VALUES (2, 'lazy brown dog');
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) itd_t;
+
+
+query
+SELECT id FROM itd_idx WHERE body @@ ts_phrase('brown') ORDER BY id;
+----
+id
+1
+2
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY itd_fresh_text AS
+    split_text(case := 'lower', break := 'alpha')
+    WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE itd_fresh (id INTEGER, body TEXT);
+
+
+statement ok
+CREATE INDEX itd_fresh_idx ON itd_fresh USING inverted (id, body itd_fresh_text);
+
+
+statement ok
+INSERT INTO itd_fresh VALUES (1, 'quick brown fox');
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) itd_fresh;
+
+
+query
+SELECT id FROM itd_fresh_idx WHERE body @@ ts_phrase('fox');
+----
+id
+1
+
+
+statement ok
+INSERT INTO itd_fresh VALUES (2, 'red fox');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) itd_fresh;
+
+
+query
+SELECT id FROM itd_fresh_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id
+1
+2
+
+
+statement ok
+DROP TABLE itd_fresh;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY itd_fresh_text;
+
+
+statement ok
+DROP TABLE itd_t;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY itd_text;

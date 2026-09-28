@@ -54,7 +54,7 @@ The `generate_ngrams` template emits overlapping character n-grams, which power 
 
 <SqlLogicTest id="sql/indexes/inverted/text-analysis/example_003" />
 
-Further tokenizing templates — `generate_sparse_ngrams`, `split_text_csv` / `split_by_delimiters`, `split_text_icu`, `split_by_non_alpha`, `split_by_pattern`, `expand_path`, `generate_wildcard_ngrams`, `generate_shingles`, `sql` — are listed in the [`CREATE TEXT SEARCH DICTIONARY` reference](../../statements/create_text_search_dictionary/index.md).
+Further tokenizing templates — `generate_sparse_ngrams`, `split_text_csv` / `split_by_delimiters`, `split_text_icu`, `split_by_non_alpha`, `split_by_pattern`, `expand_path`, `generate_wildcard_ngrams`, `generate_shingles`, `sql` — are listed in the [`CREATE TEXT SEARCH DICTIONARY` reference](../../statements/create_text_search_dictionary/index.md). For HTML input, put [`strip_html`](../../functions/search/tokenizers/strip_html.md) in front of the tokenizer, as in `strip_html() | split_text(case := 'lower')`: it drops the markup and keeps offsets pointing into the original value.
 
 ## Normalization
 
@@ -67,6 +67,8 @@ Normalization rewrites tokens so that equivalent forms collapse together. Each n
 **Stop words** drop high-frequency words that carry little meaning:
 
 <SqlLogicTest id="sql/indexes/inverted/text-analysis/example_005" />
+
+**Token filtering** drops tokens outside a range of lengths, such as one-letter words or long hashes, or tokens an SQL lambda rejects, with [`filter_tokens`](../../functions/search/tokenizers/filter_tokens.md): `split_text() | filter_tokens(lambda x: x NOT LIKE 'http%', min_length := 2, max_length := 40)`.
 
 **Accent folding** maps accented characters to their ASCII base so `café` matches `cafe`. It is the `normalize_tokens` stage's job — `normalize_tokens('en_US.UTF-8', accent := false)` folds accents away, and without that stage they are preserved:
 

@@ -142,6 +142,14 @@ SELECT generate_shingles([]::VARCHAR[], 2, 2, store_tokens := false) AS empty_li
 empty_list	emptied	kept
 {}	{}	{"",2062,62}
 
+query
+SELECT list_transform(generate_shingles(['"q"', 'x'], 2, 2, store_tokens := false), x -> hex(x::BLOB)) AS quoted,
+       list_transform(generate_shingles(['a' || chr(30) || 'b', 'c'], 2, 2, store_tokens := false), x -> hex(x::BLOB)) AS separator,
+       generate_wildcard_ngrams(['search', NULL, 'engine'], 3) = list_concat(generate_wildcard_ngrams('search', 3), generate_wildcard_ngrams('engine', 3)) AS wildcard;
+----
+quoted	separator	wildcard
+{227122,2271222078,78}	{611E62,611E622063,63}	t
+
 # A NULL list yields NULL, for both wrappers; an empty list yields no terms.
 
 query

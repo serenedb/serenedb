@@ -28,7 +28,7 @@ A point needs no covering, so `encode_geopoint` emits only ancestor terms: one p
 
 Geo dictionaries support no [feature flags](../../../statements/create_text_search_dictionary/index.md#feature-flags) — `FREQUENCY`, `POSITION`, `NORM` and `OFFSET` are all rejected at `CREATE TEXT SEARCH DICTIONARY` — and no text options such as `CASE` or `LOCALE` apply.
 
-A value that does not parse simply produces no terms: invalid JSON, a value that is not the expected object or array, a missing or non-numeric coordinate field, or an array whose length is not exactly 2. At index time such a row is indexed without geo terms and no error is raised.
+A value that does not parse simply produces no terms: invalid JSON, a value that is not the expected object or array, a missing or non-numeric coordinate field, or an array whose length is not exactly 2. At index time such a row is indexed without geo terms and no error is raised; called as a function, `encode_geopoint` returns `NULL` for it.
 
 ### When to use `encode_geopoint` vs `encode_geojson`
 

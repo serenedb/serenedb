@@ -20,6 +20,9 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 | Field | Value |
 |---|---|
 | Host | `localhost:7890` |
+| Database | `postgres` |
+| User | `postgres` |
+| Password | leave empty for a local server; otherwise the [role password](../security/client_authentication.md) |
 | TLS/SSL Mode | disable |
 
 5. Click **Save & test**

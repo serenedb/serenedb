@@ -199,6 +199,8 @@ class PipelineTokenizer final : public Tokenizer, private util::Noncopyable {
     void RebaseRun(const TokenBatch& batch, uint32_t first, uint32_t end,
                    uint32_t parent);
 
+    void SettleParent();
+
     void AdvanceToParent(uint32_t parent);
 
     void NextSourceRun();
@@ -261,6 +263,7 @@ class PipelineTokenizer final : public Tokenizer, private util::Noncopyable {
     TokenLayout _out_layout{};
     doc_id_t _open_doc = 0;
     uint32_t _cur_parent = 0;
+    uint32_t _parent_inc = 0;
     uint32_t _scan = 0;
     uint32_t _src_run = 0;
     uint32_t _src_run_end = 0;

@@ -1,0 +1,143 @@
+# GRANT and REVOKE ... ON ALL TABLES | SEQUENCES | FUNCTIONS IN SCHEMA apply to
+# every object of that kind the schema holds when the statement runs, as in
+# PostgreSQL: tables and views under TABLES, sequences on their own, functions
+# under FUNCTIONS. Objects created afterwards are not covered. Idempotent and
+# self-cleaning.
+
+statement ok
+DROP SCHEMA IF EXISTS gais CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS gais_empty CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS gais_reader;
+
+
+statement ok
+CREATE ROLE gais_reader;
+
+
+statement ok
+CREATE SCHEMA gais;
+
+
+statement ok
+CREATE TABLE gais.t(a INTEGER);
+
+
+statement ok
+CREATE VIEW gais.v AS SELECT a FROM gais.t;
+
+
+statement ok
+CREATE SEQUENCE gais.s;
+
+
+statement ok
+CREATE FUNCTION gais.f(x int) RETURNS int LANGUAGE sql AS 'SELECT $1 + 1';
+
+
+statement ok
+GRANT SELECT ON ALL TABLES IN SCHEMA gais TO gais_reader;
+
+
+# The table and the view took the grant; the sequence is not a table.
+query
+SELECT c.relname, e
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace,
+LATERAL unnest(c.relacl::text[]) AS e
+WHERE n.nspname = 'gais' AND e LIKE 'gais_reader=%'
+ORDER BY c.relname;
+----
+relname	e
+t	gais_reader=r/postgres
+v	gais_reader=r/postgres
+
+
+statement ok
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA gais TO gais_reader;
+
+
+query
+SELECT c.relname, e
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace,
+LATERAL unnest(c.relacl::text[]) AS e
+WHERE n.nspname = 'gais' AND c.relkind = 'S' AND e LIKE 'gais_reader=%'
+ORDER BY c.relname;
+----
+relname	e
+s	gais_reader=U/postgres
+
+
+statement ok
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA gais TO gais_reader;
+
+
+query
+SELECT p.proname, e
+FROM pg_proc p, LATERAL unnest(p.proacl::text[]) AS e
+WHERE p.proname = 'f' AND e LIKE 'gais_reader=%';
+----
+proname	e
+f	gais_reader=X/postgres
+
+
+# A table created after the bulk grant is not covered by it.
+statement ok
+CREATE TABLE gais.later(a INTEGER);
+
+
+query
+SELECT count(*)
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace,
+LATERAL unnest(c.relacl::text[]) AS e
+WHERE n.nspname = 'gais' AND c.relname = 'later' AND e LIKE 'gais_reader=%';
+----
+count
+0
+
+
+statement ok
+REVOKE SELECT ON ALL TABLES IN SCHEMA gais FROM gais_reader;
+
+
+query
+SELECT count(*)
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace,
+LATERAL unnest(c.relacl::text[]) AS e
+WHERE n.nspname = 'gais' AND c.relkind <> 'S' AND e LIKE 'gais_reader=%';
+----
+count
+0
+
+
+# A schema with nothing of the kind is a no-op, an unknown schema an error.
+statement ok
+CREATE SCHEMA gais_empty;
+
+
+statement ok
+GRANT SELECT ON ALL TABLES IN SCHEMA gais_empty TO gais_reader;
+
+
+statement error
+GRANT SELECT ON ALL TABLES IN SCHEMA gais_nope TO gais_reader;
+
+
+statement ok
+DROP SCHEMA gais CASCADE;
+
+
+statement ok
+DROP SCHEMA gais_empty CASCADE;
+
+
+statement ok
+DROP ROLE gais_reader;

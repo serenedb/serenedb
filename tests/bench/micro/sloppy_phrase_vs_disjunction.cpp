@@ -414,8 +414,8 @@ Corpus BuildIndex() {
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
-  auto writer =
-    irs::IndexWriter::Make(*dir, format, irs::kOmCreate, writer_opts);
+  auto writer = irs::IndexWriter::Make(*dir, format, irs::kOmCreate,
+                                       std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -478,8 +478,8 @@ Corpus BuildSyntheticIndex() {
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
-  auto writer =
-    irs::IndexWriter::Make(*dir, format, irs::kOmCreate, writer_opts);
+  auto writer = irs::IndexWriter::Make(*dir, format, irs::kOmCreate,
+                                       std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -546,8 +546,8 @@ Corpus BuildDense3Index() {
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
-  auto writer =
-    irs::IndexWriter::Make(*dir, format, irs::kOmCreate, writer_opts);
+  auto writer = irs::IndexWriter::Make(*dir, format, irs::kOmCreate,
+                                       std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -607,8 +607,8 @@ Corpus BuildAllSameIndex() {
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
-  auto writer =
-    irs::IndexWriter::Make(*dir, format, irs::kOmCreate, writer_opts);
+  auto writer = irs::IndexWriter::Make(*dir, format, irs::kOmCreate,
+                                       std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -672,8 +672,8 @@ Corpus BuildFarApartIndex() {
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
-  auto writer =
-    irs::IndexWriter::Make(*dir, format, irs::kOmCreate, writer_opts);
+  auto writer = irs::IndexWriter::Make(*dir, format, irs::kOmCreate,
+                                       std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }

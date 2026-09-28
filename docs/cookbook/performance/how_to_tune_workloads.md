@@ -101,7 +101,7 @@ Note that it is not a primary design goal for SereneDB to quickly execute many s
 
 ## Querying Remote Files
 
-SereneDB uses synchronous IO when reading remote files. This means that each SereneDB thread can make at most one HTTP request at a time. If a query must make many small requests over the network, increasing SereneDB's [`threads` setting](../../configuration/pragmas.md#threads) to larger than the total number of CPU cores (approx. 2-5 times CPU cores) can improve parallelism and performance.
+SereneDB uses synchronous IO when reading remote files. This means that each SereneDB thread can make at most one HTTP request at a time. If a query must make many small requests over the network, growing SereneDB's thread pool with [`SET GLOBAL threads`](../../sql/statements/set/index.md#threads) to larger than the total number of CPU cores (approx. 2-5 times CPU cores) can improve parallelism and performance.
 
 ### Avoid Reading Unnecessary Data
 

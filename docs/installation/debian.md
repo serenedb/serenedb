@@ -32,25 +32,19 @@ Your server is running. Continue with the [Quick Start](../quick-start.md) to co
 
 ## Connect from another machine
 
-By default SereneDB listens on `127.0.0.1` and accepts connections only from the same server. To allow remote clients, add the `--server_endpoints` flag to the service with a systemd drop-in:
-
-```sh
-sudo systemctl edit serenedb
-```
-
-In the editor that opens, add:
+By default SereneDB listens on `127.0.0.1` and accepts connections only from the same server. The service reads its flags from `/etc/serenedb/serened.conf`. To allow remote clients, change the `--listen` line there:
 
 ```ini
-[Service]
-ExecStart=
-ExecStart=/usr/bin/serened --server_endpoints=pgsql+tcp://0.0.0.0:7890
+--listen=postgres://0.0.0.0:7890
 ```
 
-The empty `ExecStart=` line clears the original command before setting the new one. Save and restart:
+`--listen` takes every endpoint in one comma-separated value, so keep any other endpoint in the same line. Then restart the service:
 
 ```sh
 sudo systemctl restart serenedb
 ```
+
+Remote logins need a password: the `postgres` role has none and is accepted only from the local machine. Set one before connecting from elsewhere, as [Security](../security/index.md) describes.
 
 <DocCallout type="attention">
 This exposes SereneDB on every network interface. Put a firewall in front of it on a public network.

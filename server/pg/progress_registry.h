@@ -45,6 +45,7 @@ enum class ProgressCommand : int64_t {
   CreateTableAs,
   Analyze,
   Vacuum,
+  Reindex,
 };
 
 enum class ProgressIoType : int64_t {
@@ -78,6 +79,11 @@ enum class Analyze : int64_t {
 enum class Vacuum : int64_t {
   Initializing = 0,
   VacuumingIndexes = 2,
+};
+
+enum class Reindex : int64_t {
+  WaitingForReindex = 1,
+  Refreshing = 2,
 };
 
 }  // namespace progress_phase

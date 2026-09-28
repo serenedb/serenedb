@@ -127,7 +127,14 @@ def test_ping(conn):
 def test_tools_list(conn):
     tools = rpc(conn, "tools/list")["result"]["tools"]
     names = [t["name"] for t in tools]
-    assert names == ["search_docs", "read_doc", "list_docs"]
+    assert names == [
+        "search_docs",
+        "read_doc",
+        "list_docs",
+        "list_objects",
+        "describe_object",
+        "check_sql",
+    ]
     for tool in tools:
         assert tool["description"]
         assert tool["inputSchema"]["type"] == "object"
@@ -218,9 +225,49 @@ def test_read_doc_whole_page_doc(conn):
     assert text.startswith("path: cookbook/search/autocomplete.md\n\n# Autocomplete\n")
 
 
-def test_read_doc_split_page_has_no_bare_row(conn):
+def test_read_doc_page_path_opens_its_title_row(conn):
     text, is_error = call_tool(conn, "read_doc", {"path": "sql/functions/search/scoring.md"})
-    assert is_error and "sql/functions/search/scoring.md" in text
+    assert not is_error
+    assert text.startswith("path: sql/functions/search/scoring.md#Relevance_Scoring\n")
+
+
+def test_read_doc_follows_anchors_and_relative_links(conn):
+    for path in ("sql/functions/search/full-text.md#ts_levenshtein",
+                 "./full-text.md#ts_levenshtein"):
+        text, is_error = call_tool(conn, "read_doc", {"path": path})
+        assert not is_error, text
+        first = text.split("\n", 1)[0]
+        assert first.startswith("path: sql/functions/search/full-text.md#"), first
+        assert "ts_levenshtein(" in first
+    text, is_error = call_tool(
+        conn, "read_doc", {"path": "sql/indexes/inverted/maintenance.md#session-settings"})
+    assert not is_error and text.split("\n", 1)[0].endswith("#Session_settings")
+
+
+def test_read_doc_opens_site_urls_and_paths_without_extension(conn):
+    for path in ("https://serenedb.com/docs/sql/indexes#index-types",
+                 "sql/indexes#index-types"):
+        text, is_error = call_tool(conn, "read_doc", {"path": path})
+        assert not is_error, text
+        assert text.startswith("path: sql/indexes/index.md#Indexes#Index_Types\n"), text
+    text, is_error = call_tool(
+        conn, "read_doc", {"path": "https://duckdb.org/docs/sql/indexes"})
+    assert is_error
+
+
+def test_read_doc_rewrites_links_to_paths_it_accepts(conn):
+    text, is_error = call_tool(
+        conn, "read_doc", {"path": "sql/functions/search/full-text.md#ts_levenshtein"})
+    assert not is_error
+    assert "](sql/indexes/inverted/maintenance.md#session-settings)" in text
+    assert "](../" not in text and "](./" not in text
+
+
+def test_read_doc_cuts_a_long_page_and_lists_its_sections(conn):
+    text, is_error = call_tool(conn, "read_doc", {"path": "configuration/overview.md"})
+    assert not is_error
+    assert "(Cut at " in text
+    assert "\nconfiguration/overview.md#Configuration#" in text
 
 
 def test_read_doc_unknown_path(conn):
@@ -228,11 +275,12 @@ def test_read_doc_unknown_path(conn):
     assert is_error and "nope/missing.md" in text
 
 
-def test_read_doc_unknown_heading(conn):
+def test_read_doc_unknown_heading_falls_back_to_its_section(conn):
     text, is_error = call_tool(
         conn, "read_doc", {"path": "sql/functions/search/scoring.md#Relevance_Scoring#Nope"}
     )
-    assert is_error and "Nope" in text
+    assert not is_error
+    assert text.startswith("path: sql/functions/search/scoring.md#Relevance_Scoring\n")
 
 
 def test_list_docs(conn):
@@ -255,3 +303,156 @@ def test_list_docs_sections(conn):
     assert lines[0] == "sql/functions/search/scoring.md#Relevance_Scoring - Relevance Scoring"
     assert "sql/functions/search/scoring.md#Relevance_Scoring#Scorer_Functions - Scorer Functions (Relevance Scoring)" in lines
     assert len(lines) > 5
+
+
+def test_list_objects_by_kind(conn):
+    text, is_error = call_tool(conn, "list_objects", {"kind": "index_type"})
+    assert not is_error
+    lines = sorted(text.split("\n"))
+    assert len(lines) == 2
+    assert lines[0].startswith("art - ")
+    assert lines[1].startswith("inverted - ")
+
+
+def test_list_objects_all_kinds_are_labelled(conn):
+    text, is_error = call_tool(conn, "list_objects", {})
+    assert not is_error
+    lines = text.split("\n")
+    assert len(lines) > 400
+    kinds = {"function", "statement", "tokenizer", "type", "setting", "index_type", "command"}
+    seen = set()
+    for line in lines:
+        for kind in kinds:
+            if f"({kind})" in line:
+                seen.add(kind)
+    assert seen == kinds
+
+
+def test_list_objects_unknown_kind(conn):
+    text, is_error = call_tool(conn, "list_objects", {"kind": "nonesuch"})
+    assert is_error and "Known kinds" in text
+
+
+def test_describe_object(conn):
+    text, is_error = call_tool(conn, "describe_object", {"name": "ts_phrase"})
+    assert not is_error
+    assert text.startswith("ts_phrase(")
+    assert "(function)" in text.split("\n")[0]
+    assert "path: sql/functions/search/full-text.md#" in text
+
+
+def test_describe_object_reports_every_kind(conn):
+    text, is_error = call_tool(conn, "describe_object", {"name": "VARCHAR"})
+    assert not is_error
+    headers = [
+        line for line in text.split("\n") if line.endswith(("(function)", "(type)"))
+    ]
+    assert len(headers) == 2
+    assert "\n---\n" in text
+
+
+def test_describe_object_is_case_insensitive(conn):
+    text, is_error = call_tool(conn, "describe_object", {"name": "TS_PHRASE"})
+    assert not is_error and text.startswith("ts_phrase(")
+
+
+def test_describe_object_unknown_suggests(conn):
+    text, is_error = call_tool(conn, "describe_object", {"name": "to_tsvector"})
+    assert is_error
+    assert "No documented object named: to_tsvector" in text
+
+
+def test_describe_object_unknown_lists_the_pages_mentioning_it(conn):
+    text, is_error = call_tool(conn, "describe_object", {"name": "to_tsvector"})
+    assert is_error
+    assert "The documentation mentions it here" in text
+    assert "\n  compatibility/" in text
+
+
+def test_describe_object_reports_what_only_the_server_knows(conn):
+    text, is_error = call_tool(conn, "describe_object", {"name": "azure_account_name"})
+    assert not is_error
+    assert "The server has it, undocumented:" in text
+    assert "azure_account_name VARCHAR" in text and "(setting)" in text
+    text, is_error = call_tool(conn, "describe_object", {"name": "date_trunc()"})
+    assert not is_error and text.startswith("date_trunc(")
+
+
+def test_describe_object_reads_macros_the_docs_miss(conn):
+    text, is_error = call_tool(conn, "describe_object", {"name": "pg_size_pretty"})
+    assert not is_error
+    assert "The server has it, undocumented:" in text
+    assert "pg_size_pretty(bytes) (macro)" in text
+
+
+def test_describe_object_prints_the_summary_of_a_table_row(conn):
+    text, is_error = call_tool(conn, "describe_object", {"name": "max_memory"})
+    assert not is_error
+    assert text.startswith("max_memory (setting)\npath: configuration/overview.md#")
+    assert "The maximum memory of the system" in text
+    assert "configuration options that can be used" not in text
+
+
+def test_check_sql_plans_without_running(conn):
+    text, is_error = call_tool(conn, "check_sql", {"sql": "SELECT 1 AS one"})
+    assert not is_error and text.startswith("Valid. The plan:\n")
+    text, is_error = call_tool(conn, "check_sql", {"sql": "SELECT ';' AS semi;"})
+    assert not is_error and text.startswith("Valid.")
+
+
+def test_check_sql_reports_the_server_error(conn):
+    text, is_error = call_tool(conn, "check_sql", {"sql": "SELEC 1"})
+    assert not is_error
+    assert text.startswith("Invalid: Parser Error")
+    assert "LINE 1: SELEC 1" in text
+
+
+def test_check_sql_refuses_what_it_would_run(conn):
+    for sql in ("SELECT 1; SELECT 2", "EXPLAIN ANALYZE SELECT 1"):
+        text, is_error = call_tool(conn, "check_sql", {"sql": sql})
+        assert is_error and text.startswith("check_sql:"), text
+
+
+def test_search_docs_reads_questions_and_pasted_errors(conn):
+    for query in ("How do I create an inverted index?",
+                  "Alias: `base64` (see Catalog Error: x)",
+                  "SELECT * FROM t WHERE body @@ 'fox'"):
+        text, is_error = call_tool(conn, "search_docs", {"query": query})
+        assert not is_error and text.startswith("[1] "), (query, text)
+
+
+def test_describe_object_unknown_lists_similar(conn):
+    text, is_error = call_tool(conn, "describe_object", {"name": "phrase"})
+    assert is_error
+    assert "Maybe you meant:" in text
+    assert "ts_phrase(" in text
+
+
+def test_describe_object_resolves_aliases(conn):
+    text, is_error = call_tool(conn, "describe_object", {"name": "INT8"})
+    assert not is_error
+    assert "BIGINT (type)" in text
+
+
+def test_describe_object_by_kind(conn):
+    text, is_error = call_tool(
+        conn, "describe_object", {"name": "VARCHAR", "kind": "type"}
+    )
+    assert not is_error
+    headers = [
+        line for line in text.split("\n") if line.endswith(("(function)", "(type)"))
+    ]
+    assert headers and all(line.endswith("(type)") for line in headers)
+
+
+def test_describe_object_unknown_in_kind(conn):
+    text, is_error = call_tool(
+        conn, "describe_object", {"name": "ts_phrase", "kind": "type"}
+    )
+    assert is_error
+    assert "No documented type named: ts_phrase" in text
+
+
+def test_describe_object_empty_name(conn):
+    text, is_error = call_tool(conn, "describe_object", {"name": "   "})
+    assert is_error and "name" in text

@@ -24,16 +24,25 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/status/statusor.h>
 #include <absl/strings/str_cat.h>
+#include <absl/time/time.h>
 
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/multi_file/multi_file_states.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/function/function_binder.hpp>
 #include <duckdb/function/pragma_function.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/comparison_expression.hpp>
@@ -46,10 +55,8 @@
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/parser/parser.hpp>
-#include <duckdb/parser/query_node/delete_query_node.hpp>
 #include <duckdb/parser/query_node/select_node.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
-#include <duckdb/parser/statement/delete_statement.hpp>
 #include <duckdb/parser/statement/select_statement.hpp>
 #include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/parser/tableref/column_data_ref.hpp>
@@ -61,35 +68,35 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
+#include <functional>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "auth/role_closure.h"
-#include "catalog/ddl/duckdb_catalog.h"
-#include "catalog/duckdb_primary_key.h"
-#include "catalog/entry.h"
-#include "catalog/entry/duckdb_index_entry.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/entry/duckdb_view_entry.h"
-#include "catalog/index.h"
-#include "catalog/inverted_index.h"
-#include "catalog/log/store.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/rest/catalog_entry/table/iceberg_table_entry.hpp"
+#include "catalog/catalog.h"
+#include "catalog/cluster.h"
+#include "catalog/entry/inverted_index.h"
+#include "catalog/entry/role.h"
 #include "catalog/rest/iceberg_catalog.hpp"
-#include "catalog/role.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/file_manifest.h"
+#include "connector/inverted_store_index.h"
+#include "connector/primary_key.h"
 #include "connector/search_remove_filter.hpp"
+#include "connector/search_sink_writer.hpp"
+#include "connector/term_dict.h"
 #include "connector/view_fast_path.h"
 #include "core/deletes/iceberg_equality_delete.hpp"
 #include "pg/connection_context.h"
+#include "pg/progress_registry.h"
 #include "planning/iceberg_multi_file_list.hpp"
 #include "search/inverted_index_storage.h"
 #include "search/task.h"
@@ -97,6 +104,13 @@
 
 namespace sdb::connector {
 namespace {
+
+constexpr absl::Duration kClaimPoll = absl::Milliseconds(100);
+
+[[noreturn]] void ThrowSourceMoved() {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+                  ERR_MSG("REINDEX delta: the source moved during the pass"));
+}
 
 enum class ReindexAction {
   UpToDate,
@@ -129,10 +143,13 @@ struct ReindexTarget {
   std::string name;
   std::string database;
   std::string schema;
-  ObjectId database_id;
-  std::shared_ptr<const catalog::Index> index;
+  duckdb::idx_t database_id;
+  // Every pass reads the index's configuration and its storage off the entry,
+  // which owns both.
+  duckdb::optional_ptr<const catalog::InvertedIndexEntry> index;
   duckdb::unique_ptr<duckdb::CreateViewInfo> view_info;
   std::string relation_name;
+  duckdb::idx_t relation_id = 0;
 };
 
 // Resolution plus every REINDEX precondition error.
@@ -148,43 +165,57 @@ ReindexTarget ResolveTarget(duckdb::ClientContext& context,
   ReindexTarget target;
   target.name = name;
   target.database = catalog_p.empty() ? conn_ctx.GetDatabase() : catalog_p;
-  target.schema = schema_p.empty() ? conn_ctx.GetCurrentSchema() : schema_p;
-  target.database_id = catalog::FindDatabaseId(&context, target.database);
-  if (!target.database_id.isSet()) {
+  auto database = duckdb::Catalog::GetCatalogEntry(
+    context, duckdb::Identifier{target.database});
+  if (!database) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
       ERR_MSG("database \"", target.database, "\" does not exist"));
   }
-  const auto schema_id =
-    catalog::FindSchemaId(&context, target.database_id, target.schema);
-  const auto* index_entry =
-    schema_id.isSet()
-      ? catalog::Find<catalog::SereneDBIndexEntry>(&context, schema_id, name)
-      : nullptr;
-  if (!index_entry || !index_entry->IsInverted()) {
+  target.database_id = database->GetOid();
+  const duckdb::Identifier database_name{target.database};
+  auto index_entry = duckdb::Catalog::GetEntry(
+    context,
+    duckdb::EntryLookupInfo{
+      duckdb::CatalogType::INDEX_ENTRY,
+      duckdb::QualifiedName{database_name, duckdb::Identifier{schema_p},
+                            duckdb::Identifier{name}}},
+    duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!index_entry ||
+      index_entry->Cast<duckdb::IndexCatalogEntry>().index_type != "inverted") {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("index \"", name, "\" does not exist"));
   }
-  target.index = index_entry->DefinitionPtr();
-  const auto* view = catalog::Find<catalog::SereneDBViewEntry>(
-    &context, target.index->GetParentId(), target.index->GetRelationId());
-  if (!view) {
+  target.index = &index_entry->Cast<catalog::InvertedIndexEntry>();
+  target.schema = target.index->ParentSchemaName().GetIdentifierName();
+  // Views and tables share one catalog set, so the type has to be checked
+  // rather than assumed from the lookup that found the entry.
+  auto relation = duckdb::Catalog::GetEntry(
+    context,
+    duckdb::EntryLookupInfo{
+      duckdb::CatalogType::VIEW_ENTRY,
+      duckdb::QualifiedName{database_name, target.index->ParentSchemaName(),
+                            target.index->GetTableName()}},
+    duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!relation || relation->type != duckdb::CatalogType::VIEW_ENTRY) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("REINDEX is only supported for view-backed inverted indexes"));
   }
+  auto& view = relation->Cast<duckdb::ViewCatalogEntry>();
   // PG semantics: REINDEX needs MAINTAIN (same as VACUUM). Enforced here --
   // the passes run on internal connections and reach no other gate.
   if (!auth::ClosureFor(&context, conn_ctx.GetRoleId())
-         ->Can(duckdb::CatalogType::TABLE_ENTRY, view->permissions,
-               catalog::AclMode::Maintain)) {
+         ->Can(duckdb::CatalogType::TABLE_ENTRY, view.permissions,
+               duckdb::AclMode::Maintain)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     ERR_MSG("permission denied for index \"", name, "\""));
   }
-  target.relation_name = view->name.GetIdentifierName();
+  target.relation_name = view.name.GetIdentifierName();
+  target.relation_id = view.oid;
   target.view_info =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateViewInfo>(
-      view->GetInfo());
+      view.GetInfo());
   return target;
 }
 
@@ -212,31 +243,25 @@ class PassConnection {
   // resolved against the view's CURRENT names, persisted predicate), so it
   // survives renames and ALTER INDEX SET. Throws on failure.
   void RunPass(const ReindexTarget& target,
-               duckdb::unique_ptr<SereneDBCreateIndexInfo> info,
-               std::string_view what) {
+               duckdb::unique_ptr<SereneDBCreateIndexInfo> info) {
     info->index_type = "inverted";
-    const auto& inverted = catalog::InvertedInfo(*target.index);
     const auto& view_info = *target.view_info;
-    SDB_ASSERT(info->parsed_expressions.empty());
-    for (const auto col : target.index->GetReferencedColumns()) {
-      if (col.id() >= view_info.names.size()) {
+    for (const auto col : target.index->column_ids) {
+      if (col >= view_info.names.size()) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
           ERR_MSG("REINDEX of \"", target.name,
-                  "\": the view no longer has the column at position ",
-                  col.id(),
+                  "\": the view no longer has the column at position ", col,
                   " the index references; drop and recreate the "
                   "index"));
       }
-      info->parsed_expressions.push_back(
-        duckdb::make_uniq<duckdb::ColumnRefExpression>(
-          view_info.names[col.id()]));
+      auto column =
+        duckdb::make_uniq<duckdb::ColumnRefExpression>(view_info.names[col]);
+      info->expressions.emplace_back(column->Copy());
+      info->parsed_expressions.emplace_back(std::move(column));
     }
-    if (const auto* predicate = inverted.Predicate()) {
-      auto exprs =
-        duckdb::Parser::ParseExpressionList(predicate->pretty_printed);
-      SDB_ASSERT(exprs.size() == 1);
-      info->where_clause = std::move(exprs[0]);
+    if (const auto predicate = target.index->where_clause.get()) {
+      info->where_clause = predicate->Copy();
     }
     info->table = duckdb::Identifier{target.relation_name};
     info->SetSchema(duckdb::Identifier{target.schema});
@@ -245,9 +270,9 @@ class PassConnection {
     statement->info = std::move(info);
     auto result = _conn.Query(std::move(statement));
     if (result->HasError()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                      ERR_MSG("REINDEX ", what, " of \"", target.name,
-                              "\" failed: ", result->GetError()));
+      SDB_DEBUG(SEARCH, "REINDEX pass for index \"", target.name,
+                "\" failed: ", result->GetError());
+      result->GetErrorObject().Throw();
     }
   }
 
@@ -262,24 +287,60 @@ class PassConnection {
   std::shared_ptr<ConnectionContext> _ctx;
 };
 
-// The condition runs as a real `DELETE FROM <index> WHERE ...` plan: the
-// index's own scan evaluates the rows, the sink removes the matched
-// (file, row) pks. False = the query cannot run (rescan is the fallback).
-bool RunPkScanRemoves(duckdb::ClientContext& context,
-                      ConnectionContext& conn_ctx, const ReindexTarget& target,
-                      duckdb::unique_ptr<duckdb::ParsedExpression> condition) {
+bool CollectDeadRowPks(duckdb::ClientContext& context,
+                       ConnectionContext& conn_ctx, const ReindexTarget& target,
+                       duckdb::unique_ptr<duckdb::ParsedExpression> condition,
+                       std::vector<std::string>& pks) {
   // Statement object, no SQL text: values travel verbatim.
-  auto statement = duckdb::make_uniq<duckdb::DeleteStatement>();
+  auto select = duckdb::make_uniq<duckdb::SelectNode>();
+  select->select_list.emplace_back(
+    duckdb::make_uniq<duckdb::ColumnRefExpression>(
+      duckdb::Identifier{"file_index"}));
+  select->select_list.emplace_back(
+    duckdb::make_uniq<duckdb::ColumnRefExpression>(
+      duckdb::Identifier{"row_number"}));
   auto table = duckdb::make_uniq<duckdb::BaseTableRef>();
   table->SetQualifiedName(duckdb::Identifier{target.database},
                           duckdb::Identifier{target.schema},
                           duckdb::Identifier{target.name});
-  statement->node->table = std::move(table);
-  statement->node->condition = std::move(condition);
-  // PlanDelete admits the index target only on an internal connection.
+  select->from_table = std::move(table);
+  select->where_clause = std::move(condition);
+  auto statement = duckdb::make_uniq<duckdb::SelectStatement>();
+  statement->node = std::move(select);
   PassConnection pass{context, conn_ctx, target};
   auto result = pass.Query(std::move(statement));
-  return !result->HasError();
+  const auto failed = [&](std::string_view error) {
+    // The caller demotes to a full rescan either way; without this the reason
+    // is invisible, and a road that cannot be planned looks like one that
+    // simply had nothing to remove.
+    SDB_WARN(SEARCH, "reindex \"", target.name,
+             "\": removing dead rows by key failed, falling back to a rescan: ",
+             error);
+    return false;
+  };
+  if (result->HasError()) {
+    return failed(result->GetError());
+  }
+  for (;;) {
+    auto chunk = result->Fetch();
+    if (result->HasError()) {
+      return failed(result->GetError());
+    }
+    if (!chunk || chunk->size() == 0) {
+      break;
+    }
+    for (duckdb::idx_t row = 0; row < chunk->size(); ++row) {
+      const auto file = chunk->GetValue(0, row);
+      const auto row_number = chunk->GetValue(1, row);
+      if (file.IsNull() || row_number.IsNull()) {
+        continue;
+      }
+      auto pk = primary_key::PkFilePrefix(file.GetValue<uint64_t>());
+      primary_key::AppendSigned(pk, row_number.GetValue<int64_t>());
+      pks.emplace_back(std::move(pk));
+    }
+  }
+  return true;
 }
 
 // Delete kind 3 -- equality deletes (iceberg): covered files group by
@@ -358,9 +419,8 @@ std::vector<EqRow> ParseEqRows(
     uint64_t pos = source - columns.begin();
     if (!fast_path.projection_columns.empty()) {
       const auto name = source->name.GetIdentifierName();
-      const auto it = absl::c_find_if(
-        fast_path.projection_columns,
-        [&](const auto& p) { return duckdb::StringUtil::CIEquals(p, name); });
+      const auto it = absl::c_find_if(fast_path.projection_columns,
+                                      [&](const auto& p) { return p == name; });
       if (it == fast_path.projection_columns.end()) {
         return std::nullopt;
       }
@@ -576,11 +636,12 @@ duckdb::unique_ptr<duckdb::ParsedExpression> BuildFileScope(
 bool RunEqualityRemoves(duckdb::ClientContext& context,
                         ConnectionContext& conn_ctx,
                         const ReindexTarget& target, const Source& src,
-                        IcebergObserve& observe) {
+                        IcebergObserve& observe,
+                        std::vector<std::string>& pks) {
   observe.EnsureDeletesProcessed();
   const auto& view_info = *target.view_info;
   if (absl::c_any_of(view_info.names, [](const duckdb::Identifier& name) {
-        return absl::EqualsIgnoreCase(name.GetIdentifierName(), "file_index");
+        return name == "file_index";
       })) {
     // A real view column shadows the flat pk half the file scope binds by:
     // no eq road, the covered files rescan instead.
@@ -600,9 +661,10 @@ bool RunEqualityRemoves(duckdb::ClientContext& context,
   if (branches.empty()) {
     return true;
   }
-  return RunPkScanRemoves(
+  return CollectDeadRowPks(
     context, conn_ctx, target,
-    CombineExprs(duckdb::ExpressionType::CONJUNCTION_OR, std::move(branches)));
+    CombineExprs(duckdb::ExpressionType::CONJUNCTION_OR, std::move(branches)),
+    pks);
 }
 
 // Every eq-covered file demotes to remove-and-rescan (its masks drop --
@@ -670,9 +732,9 @@ std::shared_ptr<SearchRemovePrefixFilter> BuildDeletedFilesRemove(
   }
   absl::c_sort(del_files);
   auto remove =
-    std::make_shared<SearchRemovePrefixFilter>(catalog::term_dict::kPKFieldId);
+    std::make_shared<SearchRemovePrefixFilter>(term_dict::kPKFieldId);
   for (const auto id : del_files) {
-    remove->AddFile(catalog::duckdb_primary_key::PkFilePrefix(id));
+    remove->AddFile(primary_key::PkFilePrefix(id));
   }
   return remove;
 }
@@ -696,10 +758,10 @@ std::shared_ptr<SearchRemovePrefixFilter> BuildMaskRemove(
     return a->file_id < b->file_id;
   });
   auto remove =
-    std::make_shared<SearchRemovePrefixFilter>(catalog::term_dict::kPKFieldId);
+    std::make_shared<SearchRemovePrefixFilter>(term_dict::kPKFieldId);
   for (const auto* mask : masks) {
     remove->AddFileRows(
-      catalog::duckdb_primary_key::PkFilePrefix(mask->file_id),
+      primary_key::PkFilePrefix(mask->file_id),
       mask->dv.empty() ? MakeRowsCursor(mask->rows) : MakeDvCursor(mask->dv));
   }
   return remove;
@@ -741,11 +803,12 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
               Observe& observe, const search::FileManifest& manifest,
               search::InvertedIndexStorage& storage) {
   constexpr bool kIceberg = std::is_same_v<Observe, IcebergObserve>;
+  std::vector<std::string> eq_pks;
   if constexpr (kIceberg) {
     // Kind 3 first: a group with no road demotes its covered files into
     // kind 1's input.
     if (!observe.eq_covered.empty() &&
-        !RunEqualityRemoves(context, conn_ctx, target, src, observe)) {
+        !RunEqualityRemoves(context, conn_ctx, target, src, observe, eq_pks)) {
       DemoteEqCoveredToRescan(src, files, observe);
     }
   }
@@ -761,13 +824,21 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
   // above them (the pass transactions pull domain ticks). A crash between
   // the two loses the removed rows until the next tick: the manifest
   // version only moves at the end, so the tick re-runs the delta.
-  if (file_removes || mask_removes) {
+  if (file_removes || mask_removes || !eq_pks.empty()) {
     auto trx = storage.GetTransaction();
     if (file_removes) {
       trx.Remove(std::move(file_removes));
     }
     if (mask_removes) {
       trx.Remove(std::move(mask_removes));
+    }
+    if (!eq_pks.empty()) {
+      SearchSinkDeleteBaseImpl remover{trx};
+      remover.InitImpl(eq_pks.size());
+      for (const auto& pk : eq_pks) {
+        remover.DeleteRowImpl(pk);
+      }
+      remover.FinishImpl();
     }
     trx.RegisterFlush();
     if (!trx.Commit(
@@ -799,7 +870,7 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
   // CREATE INDEX; Finalize publishes manifest_next.
   PassConnection pass_conn{context, conn_ctx, target};
   auto info = duckdb::make_uniq<SereneDBCreateIndexInfo>();
-  info->source_index = target.index->GetId();
+  info->source_index = target.index->name;
   info->delta_file_base = file_base;
   info->delta_files.reserve(files.scan.size());
   for (const auto& file : files.scan) {
@@ -808,7 +879,7 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
   info->manifest = std::move(manifest_next);
   // The narrowed bind would claim a single-file pk: carry the REAL type.
   info->generated_pk_type = src.fast_path.GeneratedPkType();
-  pass_conn.RunPass(target, std::move(info), "delta");
+  pass_conn.RunPass(target, std::move(info));
 }
 
 // A committed remove-all, then the plain CREATE INDEX pipeline over the
@@ -828,8 +899,8 @@ void RunFullRebuild(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
   }
   PassConnection pass_conn{context, conn_ctx, target};
   auto info = duckdb::make_uniq<SereneDBCreateIndexInfo>();
-  info->source_index = target.index->GetId();
-  pass_conn.RunPass(target, std::move(info), "rebuild");
+  info->source_index = target.index->name;
+  pass_conn.RunPass(target, std::move(info));
 }
 
 // Diff the listing, then delta or full rebuild. Stat regime diffs on stat
@@ -860,8 +931,7 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
   }
   // Delta needs the view's support (recorded at fast-path resolution) and
   // pk terms (term-less indexes take the rebuild road).
-  const auto& options = catalog::InvertedInfo(*target.index).GetOptions();
-  if (src.fast_path.supports_delta && options.pk_term) {
+  if (src.fast_path.supports_delta && target.index->Config()->pk.index_term) {
     RunDelta(context, conn_ctx, target, src, files, observe, manifest, storage);
     return {ReindexAction::Delta, files.added, files.changed, files.removed,
             static_cast<int64_t>(files.scan.size()) - files.added};
@@ -876,22 +946,22 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
 std::optional<Source> ResolveSource(duckdb::ClientContext& context,
                                     const ReindexTarget& target) {
   Source src;
-  auto fp = ResolveViewFastPath(
-    context, *target.view_info,
-    catalog::InvertedInfo(*target.index).GetOptions().key_columns);
+  auto fp =
+    ResolveViewFastPath(context, *target.view_info,
+                        catalog::ParseKeyColumns(target.index->options));
   if (!fp) {
     return std::nullopt;
   }
   switch (fp->pk_spec) {
-    case catalog::PkSpec::FileRowNumber:
-    case catalog::PkSpec::FileIndexPlusRowNumber:
-    case catalog::PkSpec::FileOffset:
-    case catalog::PkSpec::FileIndexPlusOffset:
+    case PkSpec::FileRowNumber:
+    case PkSpec::FileIndexPlusRowNumber:
+    case PkSpec::FileOffset:
+    case PkSpec::FileIndexPlusOffset:
       break;
-    case catalog::PkSpec::DuckDBRowId:
-    case catalog::PkSpec::FileIndexPlusDuckDBRowId:
-    case catalog::PkSpec::ExternalPostgresCtid:
-    case catalog::PkSpec::ExternalColumnKey:
+    case PkSpec::DuckDBRowId:
+    case PkSpec::FileIndexPlusDuckDBRowId:
+    case PkSpec::ExternalPostgresCtid:
+    case PkSpec::ExternalColumnKey:
       return std::nullopt;
   }
   if (fp->catalog_ref) {
@@ -933,27 +1003,11 @@ std::optional<Source> ResolveSource(duckdb::ClientContext& context,
   return src;
 }
 
-// resolve + claim -> observe -> plan (up_to_date / delta / rebuild) ->
-// execute. TF / PRAGMA / REINDEX statement / periodic tick all run this.
-ReindexOutcome RunReindex(duckdb::ClientContext& context,
-                          const std::string& name, const std::string& schema_p,
-                          const std::string& catalog_p) {
-  auto& conn_ctx = GetSereneDBContext(context);
-  const auto target =
-    ResolveTarget(context, conn_ctx, name, schema_p, catalog_p);
-  const auto storage =
-    catalog::InvertedStorageOf(target.database_id, target.index->GetId());
-  if (!storage) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("index \"", name, "\" does not exist"));
-  }
-  search::InvertedIndexStorage::ReindexClaim claim{*storage};
-  if (!claim.Claimed()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_OBJECT_IN_USE),
-      ERR_MSG("REINDEX of \"", name, "\" is already in progress"));
-  }
-
+ReindexOutcome RunClaimed(
+  duckdb::ClientContext& context, ConnectionContext& conn_ctx,
+  const ReindexTarget& target,
+  const std::shared_ptr<search::InvertedIndexStorage>& storage) {
+  SDB_WAIT_ON_FAILURE("pause_reindex_claimed");
   const auto manifest = storage->GetFileManifest();
   std::optional<Source> src;
   if (manifest) {
@@ -975,6 +1029,7 @@ ReindexOutcome RunReindex(duckdb::ClientContext& context,
     return {ReindexAction::UpToDate, 0, 0, 0, 0};
   }
   src->files = ListSourceFiles(*src->list);
+  SDB_WAIT_ON_FAILURE("pause_reindex_before_pass");
   if (src->iceberg_list) {
     if (manifest->version && src->version &&
         !SnapshotIsAncestor(*src->iceberg_list, manifest->version)) {
@@ -995,7 +1050,103 @@ ReindexOutcome RunReindex(duckdb::ClientContext& context,
                     observe);
 }
 
-struct ReindexBindData : public duckdb::FunctionData {
+class ReindexSession {
+ public:
+  using NoticeSink = std::function<void(irs::pg::SqlErrorData&)>;
+
+  ReindexSession(duckdb::DatabaseInstance& db, std::string_view user,
+                 duckdb::idx_t role_id, const std::string& database,
+                 duckdb::idx_t database_id, int32_t backend_pid,
+                 NoticeSink sink)
+    : _conn{db},
+      _ctx{std::make_shared<ConnectionContext>(*_conn.context, user, role_id,
+                                               database, database_id, nullptr,
+                                               backend_pid, nullptr)},
+      _sink{std::move(sink)} {
+    SereneDBClientState::Register(*_conn.context, _ctx);
+    _conn.context->session_user = user;
+  }
+  ~ReindexSession() {
+    _ctx->ConsumeNotices([&](auto& notice) { _sink(notice); });
+  }
+  ReindexSession(const ReindexSession&) = delete;
+  ReindexSession& operator=(const ReindexSession&) = delete;
+
+  duckdb::ClientContext& Context() { return *_conn.context; }
+  ConnectionContext& Conn() { return *_ctx; }
+  void Begin() { _conn.BeginTransaction(); }
+
+ private:
+  duckdb::Connection _conn;
+  std::shared_ptr<ConnectionContext> _ctx;
+  NoticeSink _sink;
+};
+
+ReindexOutcome RunManualReindex(duckdb::ClientContext& context,
+                                const std::string& name,
+                                const std::string& schema_p,
+                                const std::string& catalog_p) {
+  auto& conn_ctx = GetSereneDBContext(context);
+  const auto target =
+    ResolveTarget(context, conn_ctx, name, schema_p, catalog_p);
+  const auto storage = target.index->Storage();
+  if (!storage) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("index \"", name, "\" does not exist"));
+  }
+  pg::ProgressMetrics* progress = nullptr;
+  if (auto client_state = context.registered_state->Get<SereneDBClientState>(
+        kSereneDBClientStateKey);
+      client_state && client_state->progress_source) {
+    progress = &client_state->Progress();
+    progress->SetCommand(pg::ProgressCommand::Reindex);
+    progress->SetPhase(pg::progress_phase::Reindex::WaitingForReindex);
+    pg::ProgressMetrics::Set(progress->relid,
+                             static_cast<int64_t>(target.relation_id));
+    pg::ProgressMetrics::Set(progress->current_relid,
+                             static_cast<int64_t>(target.index->oid));
+  }
+  const auto claim = search::InvertedIndexStorage::ReindexClaim::Acquire(
+    *storage, [&] { return context.IsInterrupted(); }, kClaimPoll);
+  if (!claim.Claimed()) {
+    context.InterruptCheck();
+  }
+  SDB_ASSERT(claim.Claimed());
+  if (progress) {
+    progress->SetPhase(pg::progress_phase::Reindex::Refreshing);
+  }
+  for (uint64_t attempt = 1;; ++attempt) {
+    context.InterruptCheck();
+    ReindexSession session{
+      *context.db,
+      conn_ctx.user(),
+      conn_ctx.GetRoleId(),
+      target.database,
+      target.database_id,
+      conn_ctx.GetBackendPid(),
+      [&](auto& notice) { conn_ctx.AddNotice(std::move(notice)); }};
+    session.Context().config.user_settings = context.config.user_settings;
+    session.Begin();
+    const auto current =
+      ResolveTarget(session.Context(), session.Conn(), target.name,
+                    target.schema, target.database);
+    if (current.index->Storage() != storage) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("index \"", name, "\" does not exist"));
+    }
+    try {
+      return RunClaimed(session.Context(), session.Conn(), current, storage);
+    } catch (const irs::SqlException& ex) {
+      if (ex.error().errcode != ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE) {
+        throw;
+      }
+      SDB_DEBUG(SEARCH, "reindex \"", name, "\" attempt ", attempt,
+                " retried: ", ex.message());
+    }
+  }
+}
+
+struct ReindexBindData final : public duckdb::FunctionData {
   std::string name;
   std::string schema;
   std::string catalog;
@@ -1035,7 +1186,7 @@ duckdb::unique_ptr<duckdb::FunctionData> ReindexBind(
   return data;
 }
 
-struct ReindexGlobalState : public duckdb::GlobalTableFunctionState {
+struct ReindexGlobalState final : public duckdb::GlobalTableFunctionState {
   bool done = false;
 };
 
@@ -1053,7 +1204,7 @@ void ReindexExecute(duckdb::ClientContext& context,
   }
   auto& bind = input.bind_data->Cast<ReindexBindData>();
   const auto outcome =
-    RunReindex(context, bind.name, bind.schema, bind.catalog);
+    RunManualReindex(context, bind.name, bind.schema, bind.catalog);
   output.SetValue(0, 0, duckdb::Value(ActionName(outcome.action)));
   output.SetValue(1, 0, duckdb::Value::BIGINT(outcome.files_added));
   output.SetValue(2, 0, duckdb::Value::BIGINT(outcome.files_changed));
@@ -1068,84 +1219,113 @@ void ReindexPragma(duckdb::ClientContext& context,
   ReindexBindData args;
   FillReindexArgs(args, parameters.values);
   // PRAGMA / REINDEX statement form: silent, PG-style.
-  RunReindex(context, args.name, args.schema, args.catalog);
+  RunManualReindex(context, args.name, args.schema, args.catalog);
 }
 
-// ReindexLoop tick: one REINDEX on an internal session impersonating the
-// relation OWNER (the identity a manual owner-run REINDEX has). Quiet
-// outcomes return OK -- vanished index/owner, claim lost to a manual run.
+// The attachment an id names. The reindex loop is handed the id its index was
+// registered under and runs with no session, so the name is not in hand.
+duckdb::shared_ptr<duckdb::AttachedDatabase> FindAttachedById(
+  duckdb::DatabaseInstance& db, duckdb::idx_t database_id) {
+  for (auto& attached : duckdb::DatabaseManager::Get(db).GetDatabases()) {
+    if (attached->oid == database_id) {
+      return attached;
+    }
+  }
+  return nullptr;
+}
+
+// SDB_RBAC_DISABLED. The identity the periodic refresh runs under while
+// permission checks are inert; the root role, as a manual owner-run REINDEX
+// would be.
+constexpr const char* kReindexStubUser = "postgres";
+
+// ReindexLoop tick: one REINDEX on an internal session. Quiet outcomes return
+// OK -- vanished index, claim lost to a manual run.
 absl::StatusOr<bool> RunReindexTick(duckdb::DatabaseInstance& db,
-                                    ObjectId database_id, ObjectId index_id) {
+                                    duckdb::idx_t database_id,
+                                    duckdb::idx_t index_id) {
   try {
-    std::string database_name;
+    const auto attached = FindAttachedById(db, database_id);
+    if (!attached) {
+      return false;
+    }
+    const std::string database_name = attached->GetName().GetIdentifierName();
+    // SDB_RBAC_DISABLED. The tick resolved the relation's owner role and ran
+    // under its name. Impersonation only ever mattered for permission checks,
+    // and every check answers "allowed" until the RBAC phase -- so the name now
+    // reaches nothing but notices and the log, while a role that had gone
+    // missing failed the whole tick. Restore the lookup when enforcement lands.
+    const std::string_view user = kReindexStubUser;
+
     std::string index_name;
     std::string schema_name;
-    std::string user;
-    ObjectId owner_id;
+    duckdb::idx_t owner_id = 0;
+    std::shared_ptr<search::InvertedIndexStorage> storage;
     {
-      // Names and the owner resolve off the attachment through a system
-      // transaction: the session below impersonates the owner, which is not
-      // known yet.
-      const auto attached = catalog::TryStoreDatabase(database_id);
-      if (!attached) {
+      duckdb::Connection conn{db};
+      conn.BeginTransaction();
+      auto& catalog = attached->GetCatalog().Cast<catalog::SereneDBCatalog>();
+      const auto trx = catalog.GetCatalogTransaction(*conn.context);
+      auto index =
+        catalog.FindIn<duckdb::DuckIndexEntry>(conn.context.get(), index_id);
+      if (!index || index->index_type != "inverted") {
         return false;
       }
-      database_name = attached->GetName().GetIdentifierName();
-      auto& db_catalog =
-        attached->GetCatalog().Cast<catalog::SereneDBCatalog>();
-      const auto* index = catalog::FindIn<catalog::SereneDBIndexEntry>(
-        nullptr, db_catalog, index_id);
-      if (!index || !index->IsInverted()) {
-        return false;
-      }
-      const auto& def = index->Definition();
-      index_name = def.GetName();
-      const auto trx = duckdb::CatalogTransaction::GetSystemTransaction(db);
-      const auto schema =
-        db_catalog.TryGetSchemaEntryById(trx, def.GetParentId());
+      index_name = index->name.GetIdentifierName();
+      // The index names its relation, and duckdb keeps both halves of that
+      // name in step with a rename.
+      const duckdb::Identifier schema_ident = index->GetSchemaName();
+      auto schema = catalog.GetSchema(trx, schema_ident,
+                                      duckdb::OnEntryNotFound::RETURN_NULL);
       const auto relation =
-        catalog::LookupEntryById(trx, db_catalog, def.GetRelationId());
-      if (!schema || !relation) {
+        schema ? schema->GetEntry(trx, duckdb::CatalogType::TABLE_ENTRY,
+                                  index->GetTableName())
+               : nullptr;
+      if (!relation || relation->type != duckdb::CatalogType::VIEW_ENTRY) {
         return false;
       }
-      schema_name = schema->name.GetIdentifierName();
-      owner_id = ObjectId{relation->permissions.owner};
-      const auto* owner = catalog::FindRole(nullptr, owner_id);
-      if (!owner) {
-        // Surface it: skipping quietly would look like a healthy loop.
-        return absl::NotFoundError(
-          absl::StrCat("owner role of \"", relation->name.GetIdentifierName(),
-                       "\" no longer exists; the periodic refresh cannot "
-                       "impersonate it"));
+      schema_name = schema_ident.GetIdentifierName();
+      // Ownership itself is real (pg_class.relowner asserts it), so the id is
+      // carried through.
+      owner_id = relation->permissions.owner;
+      storage = index->Cast<catalog::InvertedIndexEntry>().Storage();
+      if (!storage || storage->GetTasksSettings().reindex_interval_msec == 0) {
+        return false;
       }
-      user = owner->GetName();
     }
-
-    duckdb::Connection conn{db};
-    auto ctx = std::make_shared<ConnectionContext>(
-      *conn.context, user, owner_id, database_name, database_id, nullptr,
-      /*backend_pid=*/0, nullptr);
-    SereneDBClientState::Register(*conn.context, ctx);
-    conn.context->session_user = user;
+    const auto claim =
+      search::InvertedIndexStorage::ReindexClaim::TryAcquire(*storage);
+    if (!claim.Claimed()) {
+      return false;
+    }
     // The tick is this session's client: every notice (its own and the
     // passes' forwarded ones) terminates in the server log.
-    absl::Cleanup drain = [&] {
-      ctx->ConsumeNotices([&](auto& notice) {
-        SDB_INFO(SEARCH, "reindex \"", index_name, "\": ", notice.errmsg);
-      });
-    };
-    // duckdb catalog lookups during the observe (object-store secrets)
-    // require an active transaction. Never committed: the connection's
-    // teardown rolls it back.
-    conn.BeginTransaction();
-
+    ReindexSession session{db,
+                           user,
+                           owner_id,
+                           database_name,
+                           database_id,
+                           /*backend_pid=*/0,
+                           [&](auto& notice) {
+                             SDB_INFO(SEARCH, "reindex \"", index_name,
+                                      "\": ", notice.errmsg);
+                           }};
+    session.Begin();
+    const auto target = ResolveTarget(session.Context(), session.Conn(),
+                                      index_name, schema_name, database_name);
+    if (target.index->Storage() != storage) {
+      return false;
+    }
     const auto outcome =
-      RunReindex(*conn.context, index_name, schema_name, database_name);
+      RunClaimed(session.Context(), session.Conn(), target, storage);
     return outcome.action != ReindexAction::UpToDate;
   } catch (const irs::SqlException& ex) {
-    if (ex.error().errcode == ERRCODE_OBJECT_IN_USE ||
-        ex.error().errcode == ERRCODE_UNDEFINED_OBJECT) {
-      // A manual REINDEX holds the claim / the index vanished mid-tick.
+    if (ex.error().errcode == ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE) {
+      SDB_DEBUG(SEARCH, "periodic reindex of Search index '", index_id,
+                "' retried: ", ex.message());
+      return true;
+    }
+    if (ex.error().errcode == ERRCODE_UNDEFINED_OBJECT) {
       return false;
     }
     return absl::InternalError(ex.message());
@@ -1158,10 +1338,18 @@ absl::StatusOr<bool> RunReindexTick(duckdb::DatabaseInstance& db,
 
 void NarrowScanToDelta(duckdb::LogicalGet& leaf,
                        const SereneDBCreateIndexInfo& info,
-                       std::span<const uint64_t> vcols,
-                       uint64_t leaf_orig_size) {
+                       duckdb::ProjectionIndex file_index_slot) {
   SDB_ASSERT(leaf.bind_data);
   auto& mfbd = leaf.bind_data->Cast<duckdb::MultiFileBindData>();
+  if (const auto* iceberg_list =
+        dynamic_cast<const duckdb::IcebergMultiFileList*>(
+          mfbd.file_list.get())) {
+    const auto& snapshot = iceberg_list->GetSnapshot().snapshot;
+    const int64_t bound = snapshot ? snapshot->snapshot_id : 0;
+    if (bound != info.manifest->version) {
+      ThrowSourceMoved();
+    }
+  }
   irs::containers::FlatHashMap<std::string_view, uint64_t> id_by_path;
   id_by_path.reserve(info.manifest->entries.size());
   for (const auto& [id, entry] : info.manifest->entries) {
@@ -1178,10 +1366,7 @@ void NarrowScanToDelta(duckdb::LogicalGet& leaf,
     SDB_ASSERT(it != id_by_path.end() && it->second >= info.delta_file_base);
     const auto ordinal = it->second - info.delta_file_base;
     if (ordinal >= files.size() || files[ordinal].path != path) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_OBJECT_IN_USE),
-        ERR_MSG("REINDEX delta: the source listing moved during the pass; "
-                "retried on the next tick"));
+      ThrowSourceMoved();
     }
     in_children.push_back(duckdb::make_uniq<duckdb::BoundConstantExpression>(
       duckdb::Value::UBIGINT(ordinal)));
@@ -1189,47 +1374,35 @@ void NarrowScanToDelta(duckdb::LogicalGet& leaf,
   // First-file stats don't describe the narrowed scan; without this the
   // optimizer folds partial-index predicates from them.
   mfbd.initial_reader.reset();
-  for (size_t i = 0; i < vcols.size(); ++i) {
-    if (vcols[i] == duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX) {
-      leaf.table_filters.PushFilter(
-        duckdb::ProjectionIndex(leaf_orig_size + i),
-        duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(in_expr)));
-      return;
-    }
-  }
-  SDB_ASSERT(false);
+  leaf.table_filters.PushFilter(
+    file_index_slot,
+    duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(in_expr)));
 }
 
 void AddDeltaFileBase(duckdb::Binder& binder, duckdb::LogicalProjection& proj,
-                      std::span<const uint64_t> vcols, uint64_t kept_size,
+                      duckdb::ProjectionIndex file_index_slot,
                       uint64_t delta_file_base) {
-  for (size_t i = 0; i < vcols.size(); ++i) {
-    if (vcols[i] != duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX) {
-      continue;
-    }
-    auto& slot = proj.expressions[kept_size + i];
-    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> args;
-    args.push_back(std::move(slot));
-    args.push_back(duckdb::make_uniq<duckdb::BoundConstantExpression>(
-      duckdb::Value::UBIGINT(delta_file_base)));
-    duckdb::FunctionBinder function_binder{binder};
-    duckdb::ErrorData error;
-    slot = function_binder.BindScalarFunction(
-      duckdb::Identifier{DEFAULT_SCHEMA}, duckdb::Identifier{"+"},
-      std::move(args), error, true);
-    SDB_ASSERT(slot, error.Message());
-    return;
-  }
-  SDB_ASSERT(false);
+  auto& slot = proj.expressions[file_index_slot.GetIndex()];
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> args;
+  args.emplace_back(std::move(slot));
+  args.emplace_back(duckdb::make_uniq<duckdb::BoundConstantExpression>(
+    duckdb::Value::UBIGINT(delta_file_base)));
+  duckdb::FunctionBinder function_binder{binder};
+  duckdb::ErrorData error;
+  slot = function_binder.BindScalarFunction(duckdb::Identifier{DEFAULT_SCHEMA},
+                                            duckdb::Identifier{"+"},
+                                            std::move(args), error, true);
+  SDB_ASSERT(slot, error.Message());
 }
 
 void RegisterReindexFunction(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader(db, "serenedb");
 
   // `db` outlives the loops: SearchEngine::stop() joins them first.
-  search::SetReindexRunner([&db](ObjectId database_id, ObjectId index_id) {
-    return RunReindexTick(db, database_id, index_id);
-  });
+  search::SetReindexRunner(
+    [&db](duckdb::idx_t database_id, duckdb::idx_t index_id) {
+      return RunReindexTick(db, database_id, index_id);
+    });
 
   duckdb::TableFunction func("serenedb_reindex", {}, ReindexExecute,
                              ReindexBind, ReindexInitGlobal);

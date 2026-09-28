@@ -8,13 +8,13 @@ target_sources(
         es.cpp
         inout.cpp
         json.cpp
+        markdown_render.cpp
         math.cpp
         otel.cpp
         string.cpp
         system.cpp
         minhash.cpp
         search.cpp
-        sequence.cpp
         tokenizer_functions.cpp
         ts_anyall.cpp
         ts_between.cpp
@@ -37,4 +37,9 @@ target_sources(
         embedding/embedding.cpp
         embedding/provider.cpp
         embedding/provider_openai.cpp
+)
+
+target_link_libraries(
+    sereneserver
+    PRIVATE libcmark-gfm-extensions_static libcmark-gfm_static
 )

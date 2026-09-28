@@ -40,12 +40,6 @@ struct DBConfig;
 
 }  // namespace duckdb
 namespace sdb {
-namespace catalog {
-
-class VirtualTable;
-class VirtualTableSnapshot;
-
-}  // namespace catalog
 
 enum class ByteaOutput : uint8_t {
   Hex,
@@ -114,7 +108,6 @@ class Config {
     return _client_ctx;
   }
 
-  std::vector<std::string> GetSearchPath() const;
   int8_t GetExtraFloatDigits() const;
   ByteaOutput GetByteaOutput() const;
   std::string GetTimeZone() const;
@@ -146,7 +139,9 @@ class Config {
   void OnSet(std::string_view name, bool is_local, duckdb::Value old_value,
              const duckdb::Value* new_value);
 
-  void SetSetting(std::string_view key, std::string value, bool is_local);
+  void SetSetting(std::string_view key, std::string value, bool) {
+    SetInternal(key, std::move(value));
+  }
 
   // Same as SetSetting but routes through DuckDB's SET pipeline, so type
   // casting and the option's set_callback run as if the client had issued a
@@ -190,6 +185,10 @@ class Config {
 namespace connector {
 
 void RegisterConfigVariables(duckdb::DBConfig& config);
+
+duckdb::Value ValidateSetting(duckdb::ClientContext& context,
+                              std::string_view name,
+                              const duckdb::Value& value);
 
 }  // namespace connector
 }  // namespace sdb

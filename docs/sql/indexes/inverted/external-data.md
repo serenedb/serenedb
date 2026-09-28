@@ -129,15 +129,7 @@ A few combinations are rejected at materialization time and fall back to the sta
 
 ## Freshness
 
-An external-data index is a **static snapshot** of the postings at `CREATE INDEX` time; it does not track changes to the files. When the underlying data changes, rebuild the index:
-
-<SqlLogicTest id="cookbook/search/indexing-external-data/example_006" />
-
-<DocCallout type="tip">
-
-Incremental refresh of external-data indexes — picking up new and changed files without a full rebuild — is on the roadmap. For now, rebuild to pick up changes.
-
-</DocCallout>
+An external-data index holds a snapshot of the postings; it does not follow changes to the files on its own. `REINDEX INDEX <name>` brings it up to date in one pass, indexing only the files that appeared, changed or disappeared behind a glob and only the snapshot difference of an Iceberg table. The `reindex_interval` index option runs the same pass on a timer. See [Refreshing the index](./views.md#refreshing-the-index) for what each source supports.
 
 Materialized column *values* are read live from the current files, so counts and scores reflect the build-time snapshot while a materialized column reflects the file as it is now (a row removed from the source materializes as `NULL`).
 

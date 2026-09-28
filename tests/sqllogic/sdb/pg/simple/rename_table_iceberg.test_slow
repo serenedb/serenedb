@@ -1,0 +1,77 @@
+control substitution on
+
+# ALTER TABLE ... RENAME TO on a table of an attached Iceberg REST catalog
+# renames it in the catalog. Secret, attach alias and namespace are scoped by
+# ${__DATABASE__} because iceberg-rest is shared by parallel tests.
+
+
+statement ok
+CREATE OR REPLACE SECRET iceberg_${__DATABASE__} (
+  TYPE S3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/'
+);
+
+
+statement ok
+SET s3_use_ssl=false;
+
+
+statement ok
+DETACH DATABASE IF EXISTS iceberg_${__DATABASE__};
+
+
+statement ok
+ATTACH '${ICEBERG_WAREHOUSE}' AS iceberg_${__DATABASE__} (
+  TYPE ICEBERG,
+  ENDPOINT '${ICEBERG_REST_URL}',
+  AUTHORIZATION_TYPE 'none'
+);
+
+
+statement ok
+CREATE SCHEMA iceberg_${__DATABASE__}.${__DATABASE__};
+
+
+statement ok
+CREATE TABLE iceberg_${__DATABASE__}.${__DATABASE__}.pudge (id INTEGER, handle VARCHAR);
+
+
+statement ok
+INSERT INTO iceberg_${__DATABASE__}.${__DATABASE__}.pudge VALUES (1, 'clickclack'), (2, 'deadinside');
+
+
+statement ok
+ALTER TABLE iceberg_${__DATABASE__}.${__DATABASE__}.pudge RENAME TO pudge_mid;
+
+
+query
+SELECT id, handle FROM iceberg_${__DATABASE__}.${__DATABASE__}.pudge_mid ORDER BY id;
+----
+id	handle
+1	clickclack
+2	deadinside
+
+
+statement error
+SELECT id FROM iceberg_${__DATABASE__}.${__DATABASE__}.pudge;
+
+
+statement ok
+DROP TABLE iceberg_${__DATABASE__}.${__DATABASE__}.pudge_mid;
+
+
+statement ok
+DROP SCHEMA iceberg_${__DATABASE__}.${__DATABASE__};
+
+
+statement ok
+DETACH DATABASE iceberg_${__DATABASE__};
+
+
+statement ok
+DROP SECRET iceberg_${__DATABASE__};

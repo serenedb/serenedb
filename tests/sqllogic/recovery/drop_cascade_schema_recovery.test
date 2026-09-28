@@ -37,7 +37,7 @@ INSERT INTO ml_haven.ml_papers VALUES (1, 'survives');
 
 
 statement ok
-SET sdb_faults = 'crash_on_drop';
+SET sdb_faults = 'crash_after_commit';
 
 
 statement error (?i)connection closed|server closed|terminat|reset|EOF

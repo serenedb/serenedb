@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/str_cat.h>
 #include <s2/s2latlng.h>
 
 #include <algorithm>
@@ -60,6 +61,7 @@
 #include <utility>
 #include <vector>
 
+#include "connector/column_id.h"
 #include "connector/functions/search.h"
 #include "connector/search_filter_builder.hpp"
 #include "gtest/gtest.h"
@@ -84,8 +86,8 @@ duckdb::ClientContext& TestContext() {
 // outside `[1, kMaxRealIdValue]` (the real-column range) and outside the
 // {PK, score, offsets} synthetics so it can never collide with anything
 // the catalog or filter machinery might allocate.
-constexpr catalog::ColumnId kTestTokenizerColumnId =
-  catalog::ColumnId{catalog::kMaxRealColumnIdValue + 4};
+constexpr connector::ColumnId kTestTokenizerColumnId =
+  connector::ColumnId{connector::kMaxRealColumnIdValue + 4};
 
 // ---------------------------------------------------------------------------
 // Plan capture: the production MakeSearchFilter runs from an OptimizerExtension
@@ -150,9 +152,9 @@ struct ColumnSpec {
   uint64_t null_field = 0;
 };
 
-using AnalyzerProvider = std::function<catalog::ColumnTokenizer(uint64_t)>;
+using AnalyzerProvider = std::function<search::ColumnTokenizer(uint64_t)>;
 
-catalog::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
+search::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
   static catalog::Tokenizer gKeywordTokenizer(
     ObjectId{12345}, {},
     irs::analysis::TokenizerConfig{.config = irs::KeywordTokenizer::Options{}});
@@ -162,7 +164,7 @@ catalog::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
 }
 
 template<irs::IndexFeatures Features>
-catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
+search::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
   static catalog::Tokenizer gKeywordTokenizer(
     ObjectId{12346}, {},
     irs::analysis::TokenizerConfig{.config =
@@ -171,12 +173,12 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
   return {.analyzer = std::move(tokenizer), .features = Features};
 }
 
-catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
+search::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
   return SegmentationAnalyzerProviderBase<irs::IndexFeatures::Pos |
                                           irs::IndexFeatures::Freq>(id);
 }
 
-[[maybe_unused]] catalog::ColumnTokenizer NGramAnalyzerProvider(uint64_t) {
+[[maybe_unused]] search::ColumnTokenizer NgramAnalyzerProvider(uint64_t) {
   irs::analysis::NGramTokenizer::Options ngram_opts{
     .min_gram = 2,
     .max_gram = 2,
@@ -191,7 +193,7 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
           .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq};
 }
 
-[[maybe_unused]] catalog::ColumnTokenizer WildcardTokenizerProvider(uint64_t) {
+[[maybe_unused]] search::ColumnTokenizer WildcardTokenizerProvider(uint64_t) {
   irs::analysis::WildcardTokenizer::Options wildcard_opts{
     .base_analyzer = std::make_unique<irs::analysis::TokenizerConfig>(
       irs::analysis::TokenizerConfig{.config =
@@ -209,7 +211,7 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
   };
 }
 
-[[maybe_unused]] catalog::ColumnTokenizer GeoJsonTokenizerProvider(uint64_t) {
+[[maybe_unused]] search::ColumnTokenizer GeoJsonTokenizerProvider(uint64_t) {
   static catalog::Tokenizer gGeoTokenizer(
     ObjectId{12349}, {},
     irs::analysis::TokenizerConfig{
@@ -324,7 +326,7 @@ irs::bstring ExpectedTerm(const T& value) {
 }
 
 std::string ScorerName(const irs::Scorer* scorer) {
-  if (scorer == nullptr) {
+  if (!scorer) {
     return "none";
   }
   return scorer == &irs::ForceConstScore() ? "const" : "other";
@@ -805,19 +807,17 @@ class SearchFilterBuilderTest : public ::testing::Test {
         const auto name = [&]() -> std::string {
           if (type == irs::Type<irs::BooleanFilter>::id()) {
             const auto& node = irs::utils::downCast<irs::BooleanFilter>(f);
-            return "Boolean(mm=" + std::to_string(node.MinShouldMatch()) + ")";
+            return absl::StrCat("Boolean(mm=", node.MinShouldMatch(), ")");
           }
           if (type == irs::Type<irs::ByRange>::id()) {
-            return "ByRange(f=" +
-                   std::to_string(
-                     irs::utils::downCast<irs::ByRange>(f).field_id()) +
-                   ")";
+            return absl::StrCat(
+              "ByRange(f=", irs::utils::downCast<irs::ByRange>(f).field_id(),
+              ")");
           }
           if (type == irs::Type<irs::ByGranularRange>::id()) {
-            return "ByGranularRange(f=" +
-                   std::to_string(
-                     irs::utils::downCast<irs::ByGranularRange>(f).field_id()) +
-                   ")";
+            return absl::StrCat(
+              "ByGranularRange(f=",
+              irs::utils::downCast<irs::ByGranularRange>(f).field_id(), ")");
           }
           return std::string{f.type()().name()};
         }();
@@ -827,14 +827,13 @@ class SearchFilterBuilderTest : public ::testing::Test {
           for (const auto occur : irs::kAllOccur) {
             for (const auto& clause : node.Terms(occur)) {
               out.append((depth + 1) * 2, ' ');
-              out += "Term(occur=" + std::to_string(irs::OccurIndex(occur)) +
-                     ", f=" + std::to_string(clause.field) +
-                     ", boost=" + std::to_string(clause.boost) +
-                     ", scorer=" + ScorerName(clause.scorer) + ")\n";
+              absl::StrAppend(&out, "Term(occur=", irs::OccurIndex(occur),
+                              ", f=", clause.field, ", boost=", clause.boost,
+                              ", scorer=", ScorerName(clause.scorer), ")\n");
             }
             for (const auto& child : node.Filters(occur)) {
               out.append((depth + 1) * 2, ' ');
-              out += "occur=" + std::to_string(irs::OccurIndex(occur)) + "\n";
+              absl::StrAppend(&out, "occur=", irs::OccurIndex(occur), "\n");
               self(*child, out, depth + 2);
             }
           }
@@ -5242,6 +5241,19 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchPhrase) {
   AssertFilter(
     expected,
     "SELECT * FROM foo WHERE b @@ websearch_to_tsquery('\"quick brown\"')",
+    columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchHyphenatedWord) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::BooleanFilter expected;
+  auto and_group = AddConjunction(expected);
+  AddPhraseFilter(and_group, 1, {"wi", "fi"});
+  AddTermFilter<std::string_view>(and_group, 1, std::string_view{"router"});
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE b @@ websearch_to_tsquery('wi-fi router')",
     columns, true, SegmentationAnalyzerProvider);
 }
 

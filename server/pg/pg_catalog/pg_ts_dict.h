@@ -40,6 +40,6 @@ struct PgTsDict {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgTsDict>::GetTableData();
+MaterializedData SystemTableSnapshot<PgTsDict>::GetTableData();
 
 }  // namespace sdb::pg

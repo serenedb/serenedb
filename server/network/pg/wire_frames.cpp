@@ -124,6 +124,9 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
     if (subtype == "WRONG_OBJECT_TYPE") {
       return ERRCODE_WRONG_OBJECT_TYPE;
     }
+    if (subtype == "UNSUPPORTED") {
+      return ERRCODE_FEATURE_NOT_SUPPORTED;
+    }
     const auto kind_it = extra.find("type");
     const std::string_view kind =
       kind_it != extra.end() ? kind_it->second : std::string_view{};

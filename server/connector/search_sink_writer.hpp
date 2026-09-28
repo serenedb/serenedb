@@ -31,6 +31,7 @@
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
@@ -102,7 +103,7 @@ class SearchSinkInsertBaseImpl {
     irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
     EntryInfoProvider&& entry_info_provider, PkPolicy pk_policy = {},
     std::vector<IndexedExpression>&& indexed_exprs = {},
-    std::shared_ptr<const catalog::InvertedIndexConfig> config = {});
+    const catalog::InvertedIndexConfig* config = nullptr);
 
   void InitImpl(size_t batch_size, const PkChunk& pk = {},
                 irs::CommitOnFlush* commit_on_flush = nullptr);
@@ -113,8 +114,13 @@ class SearchSinkInsertBaseImpl {
   void AppendToColumn(irs::field_id field_id, const duckdb::LogicalType& type,
                       const duckdb::Vector& vec, duckdb::idx_t count);
 
-  std::vector<irs::field_id> TermFieldsForColumn(ColumnId column) const {
-    return _config ? _config->TermFields(column) : std::vector<irs::field_id>{};
+  std::span<const irs::field_id> TermFieldsForColumn(
+    ColumnId column) const noexcept {
+    const auto it = _terms_by_column.find(column);
+    if (it == _terms_by_column.end()) {
+      return {};
+    }
+    return it->second;
   }
 
   std::span<const IndexedExpression> IndexedExpressions() const noexcept {
@@ -129,11 +135,7 @@ class SearchSinkInsertBaseImpl {
     _document.reset();
   }
 
-  struct KeyScratch {
-    std::vector<std::string> row_keys;
-    std::vector<duckdb::string_t> key_views;
-  };
-  KeyScratch& GetKeyScratch() noexcept { return _key_scratch; }
+  std::vector<duckdb::string_t>& KeyTerms() noexcept { return _key_terms; }
 
  protected:
   struct Field {
@@ -285,9 +287,10 @@ class SearchSinkInsertBaseImpl {
 
   duckdb::RecursiveUnifiedVectorFormat _vec_fmt;
   StoreAppender _store_appender;
-  KeyScratch _key_scratch;
+  std::vector<duckdb::string_t> _key_terms;
   std::vector<IndexedExpression> _indexed_expressions;
-  std::shared_ptr<const catalog::InvertedIndexConfig> _config;
+  irs::containers::FlatHashMap<ColumnId, std::vector<irs::field_id>>
+    _terms_by_column;
 
   std::vector<duckdb::string_t> _json_bool_terms;
   std::vector<double> _json_nums;

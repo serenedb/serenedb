@@ -229,9 +229,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     }
   }
 
-  // Shared, and it stays the one object: the providers below build the
-  // hyperloglog and IVF columns off the per-column options, which only this
-  // object answers -- a copy rebuilds them and loses them.
   duckdb::optional_ptr<const duckdb::IndexCatalogEntry> created;
   duckdb::idx_t created_id;
   const auto extras = Extras();
@@ -450,7 +447,6 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   }
 
   PkChunk pk;
-  auto& row_keys = lstate->row_keys;
   auto& key_views = lstate->key_views;
   key_views.clear();
   if (gstate.pk_column == connector::PkColumnKind::Has) {
@@ -483,9 +479,6 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     }
   }
   if (gstate.pk_term) {
-    if (row_keys.size() < num_rows) {
-      row_keys.resize(num_rows);
-    }
     key_views.reserve(num_rows);
     switch (gstate.pk_shape) {
       case PkShape::Single: {
@@ -507,6 +500,10 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
         duckdb::UnifiedVectorFormat row_fmt;
         chunk.data[base + 1].ToUnifiedFormat(num_rows, row_fmt);
         auto* rows = duckdb::UnifiedVectorFormat::GetData<int64_t>(row_fmt);
+        auto& row_keys = lstate->row_keys;
+        if (row_keys.size() < num_rows) {
+          row_keys.resize(num_rows);
+        }
         for (duckdb::idx_t row = 0; row < num_rows; ++row) {
           auto& key = row_keys[row];
           key.clear();

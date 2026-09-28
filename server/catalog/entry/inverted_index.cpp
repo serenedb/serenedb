@@ -329,18 +329,6 @@ irs::field_id InvertedIndexConfig::TermField(
   return it == keys.end() ? column_id : it->field_id;
 }
 
-std::vector<irs::field_id> InvertedIndexConfig::TermFields(
-  irs::field_id column_id) const {
-  std::vector<irs::field_id> result;
-  for (const auto& key : keys) {
-    const auto* entry = FindEntry(key.field_id);
-    if (key.column_id == column_id && entry && entry->IsTermDict()) {
-      result.emplace_back(key.field_id);
-    }
-  }
-  return result;
-}
-
 irs::field_id InvertedIndexConfig::ColumnOf(
   irs::field_id field_id) const noexcept {
   const auto it = absl::c_find_if(keys, [&](const InvertedIndexKey& key) {

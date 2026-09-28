@@ -300,9 +300,7 @@ int64_t EvalOptionalLimit(duckdb::ClientContext& context,
 
 std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   duckdb::ClientContext& context, const duckdb::Expression& tsquery_expr,
-  ColumnId column_id,
-  const duckdb::optional_ptr<const catalog::TokenizerCatalogEntry>&
-    dict_tokenizer) {
+  ColumnId column_id, const catalog::TokenizerRef& dict_tokenizer) {
   static constexpr duckdb::idx_t kSyntheticTableIdx = 0;
   static constexpr duckdb::idx_t kSyntheticColumnIdx = 0;
 
@@ -368,11 +366,9 @@ duckdb::unique_ptr<duckdb::FunctionData> OffsetsStandaloneBind(
                     ERR_MSG("ts_offsets(): dict must not be NULL"));
   }
 
-  const duckdb::optional_ptr<const catalog::TokenizerCatalogEntry> dict =
-    duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
-      context, duckdb::QualifiedName::Parse(dict_name),
-      duckdb::OnEntryNotFound::RETURN_NULL)
-      .get();
+  auto dict = duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
+    context, duckdb::QualifiedName::Parse(dict_name),
+    duckdb::OnEntryNotFound::RETURN_NULL);
   if (!dict) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -380,9 +376,9 @@ duckdb::unique_ptr<duckdb::FunctionData> OffsetsStandaloneBind(
   }
 
   auto bind = duckdb::make_uniq<OffsetsBindData>();
-  bind->dict_tokenizer = dict;
+  bind->dict_tokenizer = dict->GetTokenizer();
   bind->stored_filter = BuildFilterFromTSQuery(
-    context, *arguments[2], kStandaloneSyntheticColumnId, dict);
+    context, *arguments[2], kStandaloneSyntheticColumnId, bind->dict_tokenizer);
   constexpr size_t kDefaultOffsetsLimit = 1 << 12;
   bind->limit = kDefaultOffsetsLimit;
   if (arguments.size() == 4) {

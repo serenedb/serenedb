@@ -25,7 +25,6 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
-#include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/index/typed_terms.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -216,14 +215,25 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
   EntryInfoProvider&& entry_info_provider, PkPolicy pk_policy,
   std::vector<IndexedExpression>&& indexed_exprs,
-  std::shared_ptr<const catalog::InvertedIndexConfig> config)
+  const catalog::InvertedIndexConfig* config)
   : _tokenizer_provider{std::move(tokenizer_provider)},
     _entry_info_provider{std::move(entry_info_provider)},
     _trx{&trx},
     _pk_policy{pk_policy},
-    _indexed_expressions{std::move(indexed_exprs)},
-    _config{std::move(config)} {
+    _indexed_expressions{std::move(indexed_exprs)} {
   _pk_field.PrepareForKeywordStringValue(term_dict::kPKFieldId);
+  if (!config) {
+    return;
+  }
+  for (const auto& key : config->keys) {
+    if (!irs::field_limits::valid(key.column_id)) {
+      continue;
+    }
+    const auto* entry = config->FindEntry(key.field_id);
+    if (entry && entry->IsTermDict()) {
+      _terms_by_column[key.column_id].push_back(key.field_id);
+    }
+  }
 }
 
 void SearchSinkInsertBaseImpl::EmitPkTerms(
@@ -893,7 +903,7 @@ void SearchSinkInsertBaseImpl::Field::PrepareForStringValue(
   index_features = column_analyzer.features;
   SDB_ASSERT(column_analyzer.analyzer);
   string_analyzer = column_analyzer.analyzer.get();
-  keyword = string_analyzer->type() == irs::Type<irs::KeywordTokenizer>::id();
+  keyword = string_analyzer->Traits().keyword;
   const bool has_store = keyword || string_analyzer->Traits().store;
   store_column =
     has_store ? column_analyzer.tokenizer_column : irs::field_limits::invalid();
@@ -962,7 +972,7 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
     },
     std::move(entry_of),
     PkPolicy{.index_term = true, .column = catalog::PkColumnKind::None},
-    std::move(indexed_exprs), std::move(config));
+    std::move(indexed_exprs), config.get());
 }
 
 namespace {
@@ -972,7 +982,7 @@ void WriteKeyedChunk(SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
                      const duckdb::Vector& gen_pk, duckdb::idx_t table_id,
                      duckdb::ClientContext& context) {
   const auto num_rows = chunk.size();
-  sink.InitImpl(num_rows, PkChunk{.key_terms = sink.GetKeyScratch().key_views});
+  sink.InitImpl(num_rows, PkChunk{.key_terms = sink.KeyTerms()});
   const auto write_column = [&](ColumnId col_id,
                                 const duckdb::LogicalType& type,
                                 const duckdb::Vector& vec) {
@@ -1003,13 +1013,13 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                             uint64_t pk_base, duckdb::idx_t table_id,
                             duckdb::ClientContext& context) {
   const auto num_rows = chunk.size();
-  auto& key_views = sink.GetKeyScratch().key_views;
-  key_views.clear();
-  key_views.reserve(num_rows);
+  auto& key_terms = sink.KeyTerms();
+  key_terms.clear();
+  key_terms.reserve(num_rows);
   duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
   auto* ids = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    key_views.push_back(primary_key::GeneratedKeyTerm(pk_base + row));
+    key_terms.push_back(primary_key::GeneratedKeyTerm(pk_base + row));
     ids[row] = static_cast<int64_t>(pk_base + row);
   }
   WriteKeyedChunk(sink, chunk, column_ids, gen_pk, table_id, context);
@@ -1027,14 +1037,14 @@ void WriteRebuiltChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
   chunk.data[rowid_slot].ToUnifiedFormat(num_rows, rowids);
   const auto* rowid_data =
     duckdb::UnifiedVectorFormat::GetData<int64_t>(rowids);
-  auto& key_views = sink.GetKeyScratch().key_views;
-  key_views.clear();
-  key_views.reserve(num_rows);
+  auto& key_terms = sink.KeyTerms();
+  key_terms.clear();
+  key_terms.reserve(num_rows);
   duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
   auto* ids = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     const auto rowid = rowid_data[rowids.sel->get_index(row)];
-    key_views.push_back(
+    key_terms.push_back(
       primary_key::GeneratedKeyTerm(static_cast<uint64_t>(rowid)));
     ids[row] = rowid;
   }

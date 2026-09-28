@@ -52,8 +52,8 @@
 namespace sdb::connector {
 namespace {
 
-duckdb::optional_ptr<const catalog::TokenizerCatalogEntry> LookupTokenizerDict(
-  duckdb::ClientContext& context, std::string_view dict_name) {
+catalog::TokenizerRef LookupTokenizerDict(duckdb::ClientContext& context,
+                                          std::string_view dict_name) {
   auto dict = duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
     context, duckdb::QualifiedName::Parse(std::string{dict_name}),
     duckdb::OnEntryNotFound::RETURN_NULL);
@@ -62,16 +62,16 @@ duckdb::optional_ptr<const catalog::TokenizerCatalogEntry> LookupTokenizerDict(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("text search dictionary \"", dict_name, "\" does not exist"));
   }
-  return dict.get();
+  return dict->GetTokenizer();
 }
 
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
-  duckdb::ClientContext& ctx, const catalog::TokenizerCatalogEntry& dict) {
+  duckdb::ClientContext& ctx, const catalog::Tokenizer& dict) {
   return dict.Acquire(ctx);
 }
 
 catalog::Tokenizer::TokenizerWrapper AcquireTextTokenizer(
-  duckdb::ClientContext& ctx, const catalog::TokenizerCatalogEntry& dict,
+  duckdb::ClientContext& ctx, const catalog::Tokenizer& dict,
   std::string_view dict_name) {
   auto tokenizer = AcquireTokenizer(ctx, dict);
   const auto output = tokenizer->Traits().output;
@@ -92,9 +92,7 @@ struct DynamicCtx {
 };
 
 struct TsLexizeBindData final : public duckdb::FunctionData {
-  std::variant<DynamicCtx,
-               duckdb::optional_ptr<const catalog::TokenizerCatalogEntry>>
-    state;
+  std::variant<DynamicCtx, catalog::TokenizerRef> state;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<TsLexizeBindData>(*this);
@@ -113,8 +111,7 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitTsLexizeLocalState(
   duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression& expr,
   duckdb::FunctionData* bind_data) {
   auto& dict =
-    std::get<duckdb::optional_ptr<const catalog::TokenizerCatalogEntry>>(
-      bind_data->Cast<TsLexizeBindData>().state);
+    std::get<catalog::TokenizerRef>(bind_data->Cast<TsLexizeBindData>().state);
   auto local = duckdb::make_uniq<TsLexizeLocalState>();
   local->wrapper = AcquireTokenizer(state.GetContext(), *dict);
   return local;

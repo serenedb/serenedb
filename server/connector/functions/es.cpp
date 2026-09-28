@@ -627,6 +627,7 @@ struct EsWriteBindData final : duckdb::TableFunctionData {
   std::string index;
   std::string id;
   std::string body;
+  bool from_side_channel = false;
   irs::containers::FlatHashMap<std::string, size_t> field_columns;
   size_t id_column = 0;
   size_t source_column = 0;
@@ -635,15 +636,11 @@ struct EsWriteBindData final : duckdb::TableFunctionData {
 // The function's output schema IS the target table's schema, so the handler's
 // `INSERT INTO "es"."<index>" SELECT * FROM es_*(...)` lines up by position.
 duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
-  duckdb::ClientContext& context, const duckdb::Value& index_arg,
+  duckdb::ClientContext& context, std::string index,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::string>& names) {
   auto data = duckdb::make_uniq<EsWriteBindData>();
-  if (index_arg.IsNull()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("index name cannot be NULL"));
-  }
-  data->index = index_arg.GetValue<std::string>();
+  data->index = std::move(index);
 
   auto table = FindEsTable(context, data->index);
   if (!table) {
@@ -665,6 +662,18 @@ duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
     ++i;
   }
   return data;
+}
+
+duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
+  duckdb::ClientContext& context, const duckdb::Value& index_arg,
+  duckdb::vector<duckdb::LogicalType>& return_types,
+  duckdb::vector<duckdb::string>& names) {
+  if (index_arg.IsNull()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("index name cannot be NULL"));
+  }
+  return BindWriteTarget(context, index_arg.GetValue<std::string>(),
+                         return_types, names);
 }
 
 [[noreturn]] void ThrowFieldParseError(std::string_view index,
@@ -994,13 +1003,36 @@ duckdb::unique_ptr<duckdb::FunctionData> EsBulkBind(
   return data;
 }
 
+duckdb::unique_ptr<duckdb::FunctionData> EsBulkSourceBind(
+  duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
+  duckdb::vector<duckdb::LogicalType>& return_types,
+  duckdb::vector<duckdb::string>& names) {
+  auto data = BindWriteTarget(context, input.inputs[0], return_types, names);
+  data->from_side_channel = true;
+  return data;
+}
+
 void EsBulkExecute(duckdb::ClientContext& context,
                    duckdb::TableFunctionInput& input,
                    duckdb::DataChunk& output) {
   auto& state = input.global_state->Cast<EsBulkState>();
   auto& data = input.bind_data->Cast<EsWriteBindData>();
-  const std::string_view body = data.body;
-  std::string* sink = GetSereneDBContext(context).GetResponseSink();
+  const auto* request =
+    data.from_side_channel
+      ? GetSereneDBContext(context).GetSideChannel<const EsBulkInput>()
+      : nullptr;
+  if (data.from_side_channel && request == nullptr) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("es_bulk_source can only be called by the "
+                            "Elasticsearch _bulk endpoint"));
+  }
+  const std::string_view body =
+    request != nullptr ? request->body : std::string_view{data.body};
+  std::string* sink = request != nullptr ? request->items : nullptr;
+  if (body.empty() && state.line == 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("no requests added"));
+  }
 
   auto parse_line = [&](std::string_view text,
                         simdjson::ondemand::document& doc) {
@@ -1222,6 +1254,11 @@ void RegisterEsFunctions(duckdb::DatabaseInstance& db) {
                                                 {kVarchar, kVarchar},
                                                 EsBulkExecute,
                                                 EsBulkBind,
+                                                EsBulkState::Init});
+  loader.RegisterFunction(duckdb::TableFunction{"es_bulk_source",
+                                                {kVarchar},
+                                                EsBulkExecute,
+                                                EsBulkSourceBind,
                                                 EsBulkState::Init});
   loader.RegisterFunction(duckdb::TableFunction{"es_refresh",
                                                 {kVarchar},

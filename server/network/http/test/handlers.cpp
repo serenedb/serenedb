@@ -27,6 +27,7 @@
 #include <charconv>
 #include <cstddef>
 #include <duckdb/main/materialized_query_result.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -154,15 +155,22 @@ class StatusHandler final : public HttpHandler {
 
 }  // namespace
 
-void Register(HttpRouter& router) {
-  router.Add(HttpMethod::Post, "/_test/echo", std::make_unique<EchoHandler>());
-  router.Add(HttpMethod::Get, "/_test/ping", std::make_unique<PingHandler>());
-  router.Add(HttpMethod::Get, "/_test/bytes", std::make_unique<BytesHandler>());
-  router.Add(HttpMethod::Post, "/_test/fuzz", std::make_unique<FuzzHandler>());
-  router.Add(HttpMethod::Get, "/_test/status",
-             std::make_unique<StatusHandler>());
-  router.Add(HttpMethod::Get, "/_test/session_user",
-             std::make_unique<SessionUserHandler>());
+std::unique_ptr<HttpHandler> Make(Endpoint endpoint) {
+  switch (endpoint) {
+    case Endpoint::Echo:
+      return std::make_unique<EchoHandler>();
+    case Endpoint::Ping:
+      return std::make_unique<PingHandler>();
+    case Endpoint::Bytes:
+      return std::make_unique<BytesHandler>();
+    case Endpoint::Fuzz:
+      return std::make_unique<FuzzHandler>();
+    case Endpoint::Status:
+      return std::make_unique<StatusHandler>();
+    case Endpoint::SessionUser:
+      return std::make_unique<SessionUserHandler>();
+  }
+  SDB_UNREACHABLE();
 }
 
 }  // namespace sdb::network::http::test

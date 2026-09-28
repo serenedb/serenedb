@@ -252,7 +252,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
     // FileHandle (and its per-field memcpy) entirely. Binary COPY opens stdin
     // once (single-pass), so nothing else reads the handle, and the session has
     // already sent CopyInResponse.
-    auto* bridge = conn.GetCopyInBridge();
+    auto* bridge = conn.GetSideChannel<pg::CopyInBridge>();
     if (!bridge) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

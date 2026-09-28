@@ -88,8 +88,6 @@ struct SerializationContext {
   std::unique_ptr<icu::TimeZone> time_zone;
   duckdb::shared_ptr<const duckdb::ZoneLUT> zone_lut;
   std::unique_ptr<TypesSerializationCache> types_cache;
-  irs::containers::FlatHashMap<const duckdb::ExtraTypeInfo*, int32_t>
-    element_oids;
   std::vector<duckdb::RecursiveUnifiedVectorFormat> decoded;
 };
 

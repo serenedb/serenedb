@@ -65,20 +65,6 @@ inline constexpr duckdb::idx_t kPgOpclassHnsw = kMinSystem + 202;
 inline constexpr duckdb::idx_t kFirstSystemView = kMinSystem + 1000;
 inline constexpr duckdb::idx_t kFirstBuiltinFunction = kMinSystem + 10'000;
 
-inline constexpr uint64_t kKeyIndexOidBit = uint64_t{1} << 62;
-
-inline constexpr uint64_t KeyIndexOid(uint64_t relation_oid,
-                                      uint64_t constraint_position) {
-  return kKeyIndexOidBit | (constraint_position << 48) | relation_oid;
-}
-
-inline constexpr uint64_t kConstraintOidBit = uint64_t{1} << 61;
-
-inline constexpr uint64_t ConstraintOid(uint64_t relation_oid,
-                                        uint64_t constraint_position) {
-  return kConstraintOidBit | (constraint_position << 48) | relation_oid;
-}
-
 inline constexpr uint64_t kArrayTypeOidBit = uint64_t{1} << 31;
 
 inline constexpr uint64_t TypeArrayOid(uint64_t element_oid) {
@@ -301,12 +287,8 @@ struct PgTypeInfo {
   int16_t typlen;
   int32_t typmod;
 };
-PgTypeInfo Logical2Pg(const duckdb::LogicalType& type,
-                      duckdb::optional_ptr<duckdb::ClientContext> context,
-                      bool in_array = false);
-int32_t Type2Oid(const duckdb::LogicalType& type,
-                 duckdb::optional_ptr<duckdb::ClientContext> context,
-                 bool in_array = false);
+PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array = false);
+int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array = false);
 duckdb::LogicalType Oid2Type(int32_t oid, duckdb::ClientContext& context);
 
 std::string RegtypeOut(uint64_t oid);

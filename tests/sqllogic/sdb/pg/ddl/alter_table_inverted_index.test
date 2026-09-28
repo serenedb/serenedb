@@ -115,13 +115,8 @@ id
 1
 
 
-# DROP a non-indexed column that sits before the indexed ones: refused, since
-# dropping it would shift the positions the index is bound to. Column and
-# index both stay.
-statement error
+statement ok
 ALTER TABLE ati_t2 DROP COLUMN tag;
-----
-db error: ERROR: Cannot drop this column: an index depends on a column after it!
 
 
 query
@@ -132,7 +127,7 @@ id
 
 
 statement count 1
-INSERT INTO ati_t2 VALUES (4, 'golf hotel', 'z', 40, 100);
+INSERT INTO ati_t2 VALUES (4, 'golf hotel', 40, 100);
 
 
 statement ok
@@ -262,3 +257,104 @@ STRUCT(a INTEGER, b INTEGER)
 
 statement ok
 DROP TABLE ati_struct;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ati_tx_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE ati_tx(id INTEGER PRIMARY KEY, a TEXT, b TEXT, c INTEGER);
+
+
+statement ok
+CREATE INDEX ati_tx_a ON ati_tx USING inverted(a ati_tx_dict);
+
+
+statement ok
+CREATE INDEX ati_tx_b ON ati_tx USING inverted(b ati_tx_dict) INCLUDE (c);
+
+
+statement count 1
+INSERT INTO ati_tx VALUES (1, 'alpha', 'bravo', 10);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE ati_tx DROP COLUMN a;
+
+
+statement count 1
+INSERT INTO ati_tx VALUES (2, 'charlie', 20);
+
+
+statement ok
+ROLLBACK;
+
+
+statement count 1
+INSERT INTO ati_tx VALUES (3, 'delta', 'echo', 30);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ati_tx;
+
+
+query
+SELECT id FROM ati_tx_a WHERE a @@ ts_phrase('delta');
+----
+id
+3
+
+
+query
+SELECT id, c FROM ati_tx_b WHERE b @@ ts_phrase('echo');
+----
+id	c
+3	30
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE ati_tx DROP COLUMN a;
+
+
+statement count 1
+INSERT INTO ati_tx VALUES (4, 'foxtrot', 40);
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ati_tx;
+
+
+query
+SELECT id, c FROM ati_tx_b WHERE b @@ ts_phrase('foxtrot');
+----
+id	c
+4	40
+
+
+statement error
+SELECT id FROM ati_tx_a;
+----
+db error: ERROR: Table with name ati_tx_a does not exist!<slt:ignore>
+
+
+statement ok
+DROP TABLE ati_tx;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ati_tx_dict;

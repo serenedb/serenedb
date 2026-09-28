@@ -79,6 +79,23 @@ void SetAllNull(duckdb::Vector& out_vec, duckdb::idx_t at, duckdb::idx_t n) {
 
 }  // namespace
 
+const irs::ColumnReader* DirectExtractLeaf(
+  const irs::ColumnReader& column, std::span<const std::string_view> path,
+  const duckdb::LogicalType& scan_type) {
+  const auto* leaf = &column;
+  for (const auto field : path) {
+    if (leaf->Type().id() != duckdb::LogicalTypeId::STRUCT) {
+      return nullptr;
+    }
+    const auto idx = FindStructFieldIndex(leaf->Type(), field);
+    if (idx >= leaf->StructFieldCount()) {
+      return nullptr;
+    }
+    leaf = &leaf->StructField(idx);
+  }
+  return leaf->Type() == scan_type ? leaf : nullptr;
+}
+
 void ExtractBinding::Bind(const irs::ColumnReader& column,
                           irs::ReadContext& ctx,
                           std::span<const std::string_view> path,

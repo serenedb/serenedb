@@ -20,6 +20,7 @@
 
 #include "catalog/entry/search_table.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
@@ -30,6 +31,7 @@
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/planner/binder.hpp>
@@ -97,14 +99,19 @@ SearchTableOptions ResolveOptions(const WithOptions& options) {
   const auto get = [&](std::string_view name) {
     return FindConstant(options, name)->GetValue().GetValue<uint32_t>();
   };
+  const auto get64 = [&](std::string_view name) {
+    return FindConstant(options, name)->GetValue().GetValue<uint64_t>();
+  };
   SearchTableOptions result{
     .refresh_interval_ms = get(kRefreshIntervalSetting),
     .compaction_interval_ms = get(kCompactionIntervalSetting),
     .cleanup_interval_step = get(kCleanupIntervalStepSetting),
     .row_group_size = get(kRowGroupSizeSetting),
-    .segment_memory_max = FindConstant(options, kSegmentMemoryMaxSetting)
-                            ->GetValue()
-                            .GetValue<uint64_t>(),
+    .segment_memory_max = get64(kSegmentMemoryMaxSetting),
+    .compaction_max_segments = get(kCompactionMaxSegmentsSetting),
+    .compaction_max_segments_bytes = get64(kCompactionMaxSegmentsBytesSetting),
+    .compaction_floor_segment_bytes =
+      get64(kCompactionFloorSegmentBytesSetting),
   };
   if (const auto constant = FindConstant(options, kOptimizeTopKSetting)) {
     result.optimize_top_k = constant->GetValue().GetValue<std::string>();
@@ -354,6 +361,10 @@ void SearchTableEntry::OnDrop() { _storage->MarkDropped(); }
 void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   if (prev_entry.type == duckdb::CatalogType::INVALID) {
     OnDrop();
+    return;
+  }
+  if (const auto* prev = dynamic_cast<const SearchTableEntry*>(&prev_entry)) {
+    _storage->ApplyOptions(prev->_options);
   }
 }
 
@@ -391,6 +402,12 @@ duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
   set(kRowGroupSizeSetting, duckdb::Value::UINTEGER(_options.row_group_size));
   set(kSegmentMemoryMaxSetting,
       duckdb::Value::UBIGINT(_options.segment_memory_max));
+  set(kCompactionMaxSegmentsSetting,
+      duckdb::Value::UINTEGER(_options.compaction_max_segments));
+  set(kCompactionMaxSegmentsBytesSetting,
+      duckdb::Value::UBIGINT(_options.compaction_max_segments_bytes));
+  set(kCompactionFloorSegmentBytesSetting,
+      duckdb::Value::UBIGINT(_options.compaction_floor_segment_bytes));
   if (!_options.optimize_top_k.empty()) {
     set(kOptimizeTopKSetting, duckdb::Value{_options.optimize_top_k});
   }
@@ -411,6 +428,64 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::Copy(
   auto result = duckdb::make_uniq<SearchTableEntry>(
     catalog, ParentSchema(context), *bound,
     catalog.GetCatalogTransaction(context), _storage);
+  return result;
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
+  duckdb::ClientContext& context, duckdb::AlterInfo& info) {
+  if (info.type != duckdb::AlterType::ALTER_TABLE) {
+    return duckdb::TableCatalogEntry::AlterEntry(context, info);
+  }
+  auto& alter = info.Cast<duckdb::AlterTableInfo>();
+  if (alter.alter_table_type != duckdb::AlterTableType::SET_TABLE_OPTIONS &&
+      alter.alter_table_type != duckdb::AlterTableType::RESET_TABLE_OPTIONS) {
+    return duckdb::TableCatalogEntry::AlterEntry(context, info);
+  }
+  const auto require_alterable = [](std::string_view name) {
+    if (absl::c_contains(kSearchTableMaintenanceSettings, name)) {
+      return;
+    }
+    if (absl::c_contains(kSearchTableOptions, name)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("option \"", name, "\" cannot be changed with ALTER TABLE"));
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("unrecognized parameter \"", name, "\""));
+  };
+  auto create = GetInfo();
+  auto& options = create->Cast<duckdb::CreateTableInfo>().options;
+  if (alter.alter_table_type == duckdb::AlterTableType::SET_TABLE_OPTIONS) {
+    for (const auto& [name, expr] :
+         alter.Cast<duckdb::SetTableOptionsInfo>().table_options) {
+      require_alterable(name);
+      if (!expr ||
+          expr->GetExpressionType() != duckdb::ExpressionType::VALUE_CONSTANT) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("option \"", name, "\" expects a constant value"));
+      }
+      options[name] = duckdb::make_uniq<duckdb::ConstantExpression>(
+        connector::ValidateSetting(
+          context, name, expr->Cast<duckdb::ConstantExpression>().GetValue()));
+    }
+  } else {
+    for (const auto& identifier :
+         alter.Cast<duckdb::ResetTableOptionsInfo>().table_options) {
+      const auto& name = identifier.GetIdentifierName();
+      require_alterable(name);
+      duckdb::Value value;
+      context.TryGetCurrentSetting(name, value);
+      options[name] =
+        duckdb::make_uniq<duckdb::ConstantExpression>(std::move(value));
+    }
+  }
+  auto binder = duckdb::Binder::CreateBinder(context);
+  auto bound = binder->BindCreateTableInfo(std::move(create));
+  auto result = duckdb::make_uniq<SearchTableEntry>(
+    catalog, ParentSchema(context), *bound,
+    catalog.GetCatalogTransaction(context), _storage);
+  _storage->ApplyOptions(result->_options);
   return result;
 }
 

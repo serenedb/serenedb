@@ -436,4 +436,16 @@ QueryBuilder::ptr BooleanFilter::PrepareSegment(
   return builder.Finish();
 }
 
+bool ContainsNegation(Filter& filter) {
+  if (filter.type() == Type<BooleanFilter>::id() &&
+      utils::downCast<BooleanFilter>(filter).Size(Occur::MustNot) != 0) {
+    return true;
+  }
+  bool found = false;
+  filter.VisitChildren([&](Filter::ptr& child, bool) {
+    found = found || (child && ContainsNegation(*child));
+  });
+  return found;
+}
+
 }  // namespace irs

@@ -99,7 +99,7 @@ FROM articles_idx          -- the index, by name
 WHERE body @@ 'search';    -- @@ match on an indexed column
 ```
 
-A `TSQUERY` predicate (`@@`, `ST_*`, range functions) only resolves **against an inverted-indexed column inside the index relation** — issuing it against the base table raises an error. The exception is [vector ANN](./vector-search.md): an `ORDER BY emb <-> $q LIMIT k` is routed through the IVF index automatically whether you select from the index or the base table.
+A `TSQUERY` predicate (`@@`, `ST_*`, range functions) only resolves **against an inverted-indexed column inside the index relation** — issuing it against the base table raises an error. [Vector kNN](./vector-search.md) reads the index the same way: `ORDER BY emb <-> $q LIMIT k` against the base table still answers, but from a full scan of the table.
 
 <DocCallout type="tip">
 
@@ -120,7 +120,7 @@ See [What to Index](./modeling.md) for choosing indexed vs. `INCLUDE`d columns, 
 An inverted index can be built over a base **table** or a **view**:
 
 - **Base tables** use the table's `PRIMARY KEY` as row identity, and the background refresh tracks inserts, updates and deletes.
-- **Views** let you index data the database does not own a primary copy of — including [external Parquet/CSV/JSON files](./external-data.md) on disk or S3. A view-backed index is a static snapshot.
+- **Views** let you index data the database does not own a primary copy of — including [external Parquet/CSV/JSON files](./external-data.md) on disk or S3. A view-backed index holds a snapshot of its source that `REINDEX INDEX` or the `reindex_interval` option refreshes; see [Refreshing the index](./views.md#refreshing-the-index).
 
 <SqlLogicTest id="sql/indexes/inverted/index/example_005" />
 

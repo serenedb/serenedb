@@ -79,24 +79,14 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   template<typename Func>
   bool WithTokens(field_id id, IndexFeatures index_features, StoreSink* store,
                   Func&& func) {
-    auto* slot = Field(id, index_features);
-    if (!slot) [[unlikely]] {
-      return false;
-    }
-    if (!_token_sink) {
-      _token_sink = std::make_unique<TokenSink>(Allocator());
-    }
-    TokensTarget target{*this, *slot};
-    _token_sink->Discard();
-    _token_sink->Bind(target, store);
-    try {
-      func(*slot, *_token_sink);
-      _token_sink->Finish();
-    } catch (...) {
-      _token_sink->Discard();
-      throw;
-    }
-    return _valid;
+    return WithTarget<TokensTarget>(id, index_features, store,
+                                    std::forward<Func>(func));
+  }
+
+  template<typename Func>
+  bool WithEntryTokens(field_id id, IndexFeatures index_features, Func&& func) {
+    return WithTarget<EntriesTarget>(id, index_features, nullptr,
+                                     std::forward<Func>(func));
   }
 
   duckdb::Allocator& Allocator() const noexcept { return _fields.Allocator(); }
@@ -194,6 +184,29 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     return true;
   }
 
+  template<typename Target, typename Func>
+  bool WithTarget(field_id id, IndexFeatures index_features, StoreSink* store,
+                  Func&& func) {
+    auto* slot = Field(id, index_features);
+    if (!slot) [[unlikely]] {
+      return false;
+    }
+    if (!_token_sink) {
+      _token_sink = std::make_unique<TokenSink>(Allocator());
+    }
+    Target target{*this, *slot};
+    _token_sink->Discard();
+    _token_sink->Bind(target, store);
+    try {
+      func(*slot, *_token_sink);
+      _token_sink->Finish();
+    } catch (...) {
+      _token_sink->Discard();
+      throw;
+    }
+    return _valid;
+  }
+
   struct TokensTarget final : TokenConsumer {
     TokensTarget(SegmentWriter& writer, FieldInverter& slot) noexcept
       : writer{&writer}, slot{&slot} {}
@@ -201,6 +214,20 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     void Consume(TokenBatch& batch, DocRuns runs) final {
       writer->WithSlot(*slot, [&](FieldInverter& fld) {
         return fld.InvertBlock(batch, runs);
+      });
+    }
+
+    SegmentWriter* writer;
+    FieldInverter* slot;
+  };
+
+  struct EntriesTarget final : TokenConsumer {
+    EntriesTarget(SegmentWriter& writer, FieldInverter& slot) noexcept
+      : writer{&writer}, slot{&slot} {}
+
+    void Consume(TokenBatch& batch, DocRuns runs) final {
+      writer->WithSlot(*slot, [&](FieldInverter& fld) {
+        return fld.AppendEntries(batch, runs);
       });
     }
 

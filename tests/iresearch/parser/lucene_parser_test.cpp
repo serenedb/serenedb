@@ -18,10 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <gtest/gtest.h>
 
 #include <array>
 #include <cstdint>
+#include <iresearch/analysis/solr_synonyms_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
@@ -33,17 +35,15 @@
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/string.hpp>
+#include <iterator>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include "test_resources.hpp"
+
 namespace {
 
-// Default field id used by the test fixture's ParserContext. The parser no
-// longer maps the `field:` prefix to per-field ids (fields are
-// catalog-allocated post-rewrite), so every emitted filter carries the
-// context's default field id regardless of any literal field name in the query
-// string.
 constexpr irs::field_id kFieldId = 1;
 
 const irs::BooleanFilter& AsBoolean(const irs::Filter& f) {
@@ -134,20 +134,30 @@ void AssertRange(const irs::Filter& f, irs::field_id field,
   }
 }
 
+class AnyField final : public irs::ParserContext::FieldProvider {
+ public:
+  explicit AnyField(irs::analysis::Tokenizer& tokenizer)
+    : _tokenizer{&tokenizer} {}
+
+  bool Resolve(std::string_view, irs::ParserContext::Field& out) const final {
+    out = {.id = kFieldId, .tokenizer = _tokenizer};
+    return true;
+  }
+
+ private:
+  irs::analysis::Tokenizer* _tokenizer;
+};
+
 class LuceneParserTest : public ::testing::Test {
  protected:
   irs::BooleanFilter root;
   irs::analysis::Tokenizer::ptr tokenizer{irs::analysis::TextTokenizer::Make(
     irs::analysis::TextTokenizer::Options{})};
+  AnyField any_field{*tokenizer};
 
   irs::ParserContext ctx{root, kFieldId, *tokenizer};
 
-  LuceneParserTest() {
-    // strict_field tests pin the prefix to "content"; tracking the name
-    // alongside `default_field_id` lets the parser accept a redundant
-    // `content:` prefix and reject any other.
-    ctx.default_field_name = "content";
-  }
+  LuceneParserTest() { ctx.fields = &any_field; }
 
   const irs::Clauses& Optional() const {
     return root.Bucket(irs::Occur::Should);
@@ -186,53 +196,48 @@ TEST_F(LuceneParserTest, WildcardQuery) {
   AssertWildcard(*Optional().filters[0], kFieldId, "h%llo");
 }
 
-// strict_field=true: a field-prefix is rejected unless it exactly
-// matches the default field. The SQL `to_tsquery(...)` embed flips
-// this on because the column is already pinned by the enclosing @@
-// predicate -- a different field would silently miss because indexed
-// fields are mangled by column id, not user-facing name.
-TEST_F(LuceneParserTest, StrictField_AllowsBareTerm) {
-  ctx.strict_field = true;
+TEST_F(LuceneParserTest, ColumnOperand_AllowsBareTerm) {
+  ctx.fields = nullptr;
   ASSERT_TRUE(irs::ParseQuery(ctx, "hello"));
   ASSERT_EQ(1, Optional().size());
   ASSERT_EQ(1, Optional().terms.size());
   AssertTerm(Optional().terms[0], kFieldId, "hello");
 }
 
-TEST_F(LuceneParserTest, StrictField_AllowsPhrase) {
-  ctx.strict_field = true;
+TEST_F(LuceneParserTest, ColumnOperand_AllowsPhrase) {
+  ctx.fields = nullptr;
   ASSERT_TRUE(irs::ParseQuery(ctx, "\"hello world\""));
   ASSERT_EQ(1, Optional().size());
   ASSERT_EQ(1, Optional().filters.size());
   AssertPhrase(*Optional().filters[0], kFieldId);
 }
 
-TEST_F(LuceneParserTest, StrictField_AllowsBoolean) {
-  ctx.strict_field = true;
+TEST_F(LuceneParserTest, ColumnOperand_AllowsBoolean) {
+  ctx.fields = nullptr;
   ASSERT_TRUE(irs::ParseQuery(ctx, "hello AND world"));
 }
 
-TEST_F(LuceneParserTest, StrictField_AllowsMatchingFieldPrefix) {
-  // Same-name prefix is redundant but not wrong -- accept it.
-  ctx.strict_field = true;
-  ASSERT_TRUE(irs::ParseQuery(ctx, "content:hello"));
-  ASSERT_EQ(1, Optional().size());
-  ASSERT_EQ(1, Optional().terms.size());
-  AssertTerm(Optional().terms[0], kFieldId, "hello");
+TEST_F(LuceneParserTest, ColumnOperand_RejectsPrefixNamingItsOwnField) {
+  ctx.fields = nullptr;
+  ASSERT_FALSE(irs::ParseQuery(ctx, "content:hello"));
+  ASSERT_NE(ctx.error_message.find("field prefixes need a whole-index operand"),
+            std::string::npos)
+    << "got: " << ctx.error_message;
 }
 
-TEST_F(LuceneParserTest, StrictField_AllowsMatchingFieldInBoolean) {
-  ctx.strict_field = true;
-  ASSERT_TRUE(irs::ParseQuery(ctx, "hello AND content:world"));
+TEST_F(LuceneParserTest,
+       ColumnOperand_RejectsPrefixNamingItsOwnFieldInBoolean) {
+  ctx.fields = nullptr;
+  ASSERT_FALSE(irs::ParseQuery(ctx, "hello AND content:world"));
+  ASSERT_NE(ctx.error_message.find("field prefixes"), std::string::npos)
+    << "got: " << ctx.error_message;
 }
 
-TEST_F(LuceneParserTest, StrictField_RejectsDifferentFieldPrefix) {
-  ctx.strict_field = true;
+TEST_F(LuceneParserTest, ColumnOperand_RejectsDifferentFieldPrefix) {
+  ctx.fields = nullptr;
   ASSERT_FALSE(irs::ParseQuery(ctx, "title:hello"));
-  ASSERT_NE(
-    ctx.error_message.find("field-prefix in strict-field mode must match the "
-                           "default field"),
-    std::string::npos)
+  ASSERT_NE(ctx.error_message.find("field prefixes need a whole-index operand"),
+            std::string::npos)
     << "got: " << ctx.error_message;
   // Failed parse leaves no clauses on the root.
   ASSERT_EQ(0, Optional().size());
@@ -240,19 +245,95 @@ TEST_F(LuceneParserTest, StrictField_RejectsDifferentFieldPrefix) {
   ASSERT_EQ(0, Excluded().size());
 }
 
-TEST_F(LuceneParserTest, StrictField_RejectsDifferentFieldInBoolean) {
-  // Mismatched prefix anywhere in the tree is rejected, not just at the top.
-  ctx.strict_field = true;
+TEST_F(LuceneParserTest, ColumnOperand_RejectsDifferentFieldInBoolean) {
+  ctx.fields = nullptr;
   ASSERT_FALSE(irs::ParseQuery(ctx, "hello AND title:world"));
-  ASSERT_NE(ctx.error_message.find("field-prefix"), std::string::npos)
+  ASSERT_NE(ctx.error_message.find("field prefixes"), std::string::npos)
     << "got: " << ctx.error_message;
 }
 
-TEST_F(LuceneParserTest, StrictField_RejectsDifferentFieldInGroup) {
-  ctx.strict_field = true;
+TEST_F(LuceneParserTest, ColumnOperand_RejectsDifferentFieldInGroup) {
+  ctx.fields = nullptr;
   ASSERT_FALSE(irs::ParseQuery(ctx, "(foo OR title:bar)"));
-  ASSERT_NE(ctx.error_message.find("field-prefix"), std::string::npos)
+  ASSERT_NE(ctx.error_message.find("field prefixes"), std::string::npos)
     << "got: " << ctx.error_message;
+}
+
+TEST_F(LuceneParserTest, NoDefaultField_AllowsScopedTerms) {
+  ctx.default_field_id = irs::field_limits::invalid();
+  ASSERT_TRUE(irs::ParseQuery(ctx, "title:foo OR body:(bar baz)"));
+}
+
+class NamedFields final : public irs::ParserContext::FieldProvider {
+ public:
+  static constexpr irs::field_id kTitle = 101;
+  static constexpr irs::field_id kBody = 102;
+
+  explicit NamedFields(irs::analysis::Tokenizer& tokenizer)
+    : _tokenizer{&tokenizer} {}
+
+  bool Resolve(std::string_view name,
+               irs::ParserContext::Field& out) const final {
+    if (name != "title" && name != "body") {
+      return false;
+    }
+    out = {.id = name == "title" ? kTitle : kBody, .tokenizer = _tokenizer};
+    return true;
+  }
+
+ private:
+  irs::analysis::Tokenizer* _tokenizer;
+};
+
+irs::field_id FieldOf(const irs::Clauses& clauses, std::string_view term) {
+  const auto it = absl::c_find_if(clauses.terms, [&](const auto& clause) {
+    return irs::ViewCast<char>(irs::bytes_view{clause.term}) == term;
+  });
+  return it == clauses.terms.end() ? irs::field_limits::invalid() : it->field;
+}
+
+TEST_F(LuceneParserTest, NestedFieldRestoresTheGroupField) {
+  NamedFields named{*tokenizer};
+  ctx.fields = &named;
+  ASSERT_TRUE(irs::ParseQuery(ctx, "title:(foo body:bar baz)"));
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& group = SubOptional(*Optional().filters[0]);
+  EXPECT_EQ(NamedFields::kTitle, FieldOf(group, "foo"));
+  EXPECT_EQ(NamedFields::kBody, FieldOf(group, "bar"));
+  EXPECT_EQ(NamedFields::kTitle, FieldOf(group, "baz"));
+}
+
+TEST_F(LuceneParserTest, FieldDoesNotLeakOutOfItsGroup) {
+  NamedFields named{*tokenizer};
+  ctx.fields = &named;
+  ASSERT_TRUE(irs::ParseQuery(ctx, "(a body:b) c"));
+  EXPECT_EQ(kFieldId, FieldOf(Optional(), "c"));
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& group = SubOptional(*Optional().filters[0]);
+  EXPECT_EQ(kFieldId, FieldOf(group, "a"));
+  EXPECT_EQ(NamedFields::kBody, FieldOf(group, "b"));
+}
+
+TEST_F(LuceneParserTest, GroupFieldSurvivesAnInnerGroup) {
+  NamedFields named{*tokenizer};
+  ctx.fields = &named;
+  ASSERT_TRUE(irs::ParseQuery(ctx, "title:(a (b body:c) d) e"));
+  EXPECT_EQ(kFieldId, FieldOf(Optional(), "e"));
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& outer = SubOptional(*Optional().filters[0]);
+  EXPECT_EQ(NamedFields::kTitle, FieldOf(outer, "a"));
+  EXPECT_EQ(NamedFields::kTitle, FieldOf(outer, "d"));
+  ASSERT_EQ(1, outer.filters.size());
+  const auto& inner = SubOptional(*outer.filters[0]);
+  EXPECT_EQ(NamedFields::kTitle, FieldOf(inner, "b"));
+  EXPECT_EQ(NamedFields::kBody, FieldOf(inner, "c"));
+}
+
+TEST_F(LuceneParserTest, NoDefaultField_RejectsBareTerm) {
+  ctx.default_field_id = irs::field_limits::invalid();
+  EXPECT_ANY_THROW(irs::ParseQuery(ctx, "foo"));
+  EXPECT_ANY_THROW(irs::ParseQuery(ctx, "title:foo OR bar"));
+  EXPECT_ANY_THROW(irs::ParseQuery(ctx, "title:(foo) \"bar baz\""));
 }
 
 TEST_F(LuceneParserTest, BoostedTerm) {
@@ -1916,6 +1997,56 @@ TEST_F(LuceneParserTest, PhraseWithFuzzyPart) {
   EXPECT_EQ(2, phrase.options().size());
 }
 
+namespace {
+
+std::vector<std::string> SetTerms(
+  const irs::ByPhraseOptions::PhrasePart& part) {
+  std::vector<std::string> terms;
+  absl::c_transform(
+    std::get<irs::TermSetOptions>(part).terms, std::back_inserter(terms),
+    [](const irs::bstring& term) {
+      return std::string{irs::ViewCast<char>(irs::bytes_view{term})};
+    });
+  return terms;
+}
+
+}  // namespace
+
+TEST_F(LuceneParserTest, PhraseStacksSynonymsAtOnePosition) {
+  const auto synonyms = irs::analysis::SolrSynonymsTokenizer::Make(
+    {.synonyms_text = "car, automobile, auto"}, tests::Cache());
+  ctx.tokenizer = synonyms.get();
+  ASSERT_TRUE(irs::ParseQuery(ctx, "\"red car\""));
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& phrase =
+    irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
+  ASSERT_EQ(2, phrase.options().size());
+  const auto& red = *phrase.options().begin();
+  EXPECT_EQ("red", irs::ViewCast<char>(irs::bytes_view{
+                     std::get<irs::ByTermOptions>(red.part).term}));
+  const auto& car = *std::next(phrase.options().begin());
+  EXPECT_EQ(1, car.offs_min);
+  EXPECT_EQ(1, car.offs_max);
+  EXPECT_EQ((std::vector<std::string>{"auto", "automobile", "car"}),
+            SetTerms(car.part));
+}
+
+TEST_F(LuceneParserTest, FnOrderedStacksSynonymsAtOnePosition) {
+  const auto synonyms = irs::analysis::SolrSynonymsTokenizer::Make(
+    {.synonyms_text = "car, automobile, auto"}, tests::Cache());
+  ctx.tokenizer = synonyms.get();
+  ASSERT_TRUE(irs::ParseQuery(ctx, "fn:ordered(red car)"));
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& phrase =
+    irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
+  ASSERT_EQ(2, phrase.options().size());
+  const auto& car = *std::next(phrase.options().begin());
+  EXPECT_EQ(1, car.offs_min);
+  EXPECT_EQ(irs::ParserContext::kAnyGap, car.offs_max);
+  EXPECT_EQ((std::vector<std::string>{"auto", "automobile", "car"}),
+            SetTerms(car.part));
+}
+
 // What the flexible parser adds: a minimum match, comparison bounds, and the
 // `fn:` family.
 
@@ -2159,7 +2290,6 @@ ParseOutcome ParseOnce(std::string_view query) {
   auto tokenizer =
     irs::analysis::TextTokenizer::Make(irs::analysis::TextTokenizer::Options{});
   irs::ParserContext ctx{root, kFieldId, *tokenizer};
-  ctx.default_field_name = "content";
   try {
     return irs::ParseQuery(ctx, query) ? ParseOutcome::Accepted
                                        : ParseOutcome::Rejected;

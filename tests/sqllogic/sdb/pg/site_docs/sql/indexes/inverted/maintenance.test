@@ -64,3 +64,25 @@ ORDER BY indexname;
 indexname
 logs_idx
 my_logs_pkey
+
+# DOCS_TEST: example_006
+
+statement ok
+CREATE TABLE my_events (id INTEGER PRIMARY KEY, msg VARCHAR) WITH (storage = 'search');
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER INDEX logs_idx SET (compaction_interval = 0);
+
+statement ok
+ALTER TABLE my_events SET (compaction_interval = 0);
+
+statement ok
+VACUUM (COMPACT_TABLE) my_events;
+
+statement ok
+ALTER TABLE my_events RESET (compaction_interval);
+
+statement ok
+ALTER INDEX logs_idx RESET (compaction_interval);

@@ -87,7 +87,7 @@ Root::ptr Make(const HnswQuery& query, const Context& ctx) {
   HnswRefuseFilter(ctx.table);
   auto hits = query.RunSearch();
   if (hits.empty()) {
-    return {};
+    return MakeEmpty();
   }
   const auto record = query.Stats(ScoredOf(ctx));
   const irs::detail::ScoreArgs args{.scorer = record.scorer,

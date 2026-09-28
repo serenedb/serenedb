@@ -35,3 +35,33 @@ SELECT normalize_tokens(['Café', 'ÉCOLE'], 'en_US.UTF-8', case := 'lower', acc
 ----
 tokens
 {cafe,ecole}
+
+# DOCS_TEST: fold
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY norm_fold AS
+    normalize_tokens(case := 'fold');
+
+query
+SELECT ts_lexize('norm_fold', 'STRASSE') = ts_lexize('norm_fold', 'Straße') AS same;
+----
+same
+t
+
+query
+SELECT ts_lexize('norm_fold', 'Straße');
+----
+ts_lexize
+{strasse}
+
+# DOCS_TEST: nfkc_cf
+
+# DOCS_TEST_BODY
+
+query
+SELECT normalize_tokens(['ＦＵＬＬ Straße ﬁ', '①'], form := 'nfkc_cf') AS tokens;
+----
+tokens
+{"full strasse fi",1}

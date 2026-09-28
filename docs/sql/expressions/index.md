@@ -1,6 +1,5 @@
 ---
 title: Expressions
-slug: /sql/expressions
 split: headings
 ---
 

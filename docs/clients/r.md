@@ -21,7 +21,9 @@ library(DBI)
 
 con <- dbConnect(RPostgres::Postgres(),
     host = "localhost",
-    port = 7890
+    port = 7890,
+    dbname = "postgres",
+    user = "postgres"
 )
 ```
 

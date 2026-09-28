@@ -49,6 +49,7 @@
 #include "connector/inverted_store_index.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
+#include "query/config.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 
@@ -505,7 +506,9 @@ void DispatchInverted(duckdb::ClientContext& context,
       if (action == Action::Refresh) {
         search->VacuumRefresh();  // commit pending inserts + reclaim files
       } else {
-        search->VacuumCompact();  // + merge segments
+        static constinit SettingRef gTargetSegments{
+          "sdb_compact_target_segments"};
+        search->VacuumCompact(gTargetSegments.Int(context));
       }
     }
   }

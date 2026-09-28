@@ -117,7 +117,8 @@ class OptionsParser {
   T EraseOptionOrDefault() {
     constexpr bool kIsBool = Info.type == OptionInfo::Type::Boolean;
     constexpr bool kIsString = Info.type == OptionInfo::Type::String ||
-                               Info.type == OptionInfo::Type::StringList;
+                               Info.type == OptionInfo::Type::StringList ||
+                               Info.type == OptionInfo::Type::Lambda;
     if (const auto option = EraseOption(Info, !kIsBool)) {
       if constexpr (kIsBool) {
         if (!*option) {

@@ -269,7 +269,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   if (info.where_clause) {
     duckdb::IndexBinder where_binder(binder, binder.context);
     auto where_copy = info.where_clause->Copy();
-    const auto type = where_binder.Bind(where_copy)->return_type;
+    const auto type = where_binder.Bind(where_copy)->GetReturnType();
     if (type != duckdb::LogicalType::BOOLEAN) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_DATATYPE_MISMATCH),

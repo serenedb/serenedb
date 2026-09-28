@@ -868,6 +868,21 @@ std::string Slug(std::string_view title) {
   return slug;
 }
 
+// A slug with each run of '-' made one and none at either end: the id the
+// site pins for a heading, such as copy-from for "COPY ... FROM" (copy--from).
+std::string SquashDashes(std::string_view slug) {
+  std::string squashed;
+  for (const auto c : slug) {
+    if (c != '-' || (!squashed.empty() && squashed.back() != '-')) {
+      squashed.push_back(c);
+    }
+  }
+  if (!squashed.empty() && squashed.back() == '-') {
+    squashed.pop_back();
+  }
+  return squashed;
+}
+
 std::optional<std::string> SectionForAnchor(const DocsIndex& index,
                                             std::string_view page,
                                             std::string_view anchor) {
@@ -875,18 +890,23 @@ std::optional<std::string> SectionForAnchor(const DocsIndex& index,
     return std::nullopt;
   }
   const auto wanted = absl::AsciiStrToLower(anchor);
+  const auto squashed = SquashDashes(wanted);
   const auto call = absl::StrCat(wanted, "(");
   std::optional<std::string> best;
-  int best_rank = 3;
+  int best_rank = 4;
   for (const auto& section : SortedByPath(CollectMatches(
          index, *PathPrefix(index.Fields(), absl::StrCat(page, "#")),
          Content::Omit))) {
     const auto slug = Slug(section.title);
     const auto title = absl::AsciiStrToLower(section.title);
-    const int rank = slug == wanted                               ? 0
-                     : title == wanted || title.starts_with(call) ? 1
-                     : slug.starts_with(wanted)                   ? 2
-                                                                  : 3;
+    // An exact slug beats a squashed one: date_partpart-timestamp is the slug
+    // of date_part(part, timestamp) and the squashed slug of
+    // date_part([part, ...], timestamp).
+    const int rank = slug == wanted                                        ? 0
+                     : !squashed.empty() && SquashDashes(slug) == squashed ? 1
+                     : title == wanted || title.starts_with(call)          ? 2
+                     : slug.starts_with(wanted)                            ? 3
+                                                                           : 4;
     if (rank < best_rank) {
       best_rank = rank;
       best = section.path;

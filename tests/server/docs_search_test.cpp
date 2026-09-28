@@ -261,6 +261,13 @@ TEST_F(DocsIndex, ResolveLinkFollowsPagesAnchorsAndRelativeLinks) {
               "sql/functions/search/full-text.md#Full")),
             settings);
   EXPECT_EQ(path(ResolveLink(Db(), "./full-text.md#ts_levenshtein")), fuzzy);
+  const auto copy_from =
+    path(ResolveLink(Db(), "sql/statements/copy/index.md#copy-from"));
+  EXPECT_TRUE(copy_from.ends_with("#COPY_..._FROM")) << copy_from;
+  const auto copy_database = path(
+    ResolveLink(Db(), "sql/statements/copy/index.md#copy-from-database-to"));
+  EXPECT_TRUE(copy_database.ends_with("#COPY_FROM_DATABASE_..._TO"))
+    << copy_database;
   EXPECT_FALSE(ResolveLink(Db(), "no/such/page.md").has_value());
 }
 

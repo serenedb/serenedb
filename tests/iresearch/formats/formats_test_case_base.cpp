@@ -41,6 +41,7 @@
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/crc.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/resource_manager.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -1109,11 +1110,17 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
                                       irs::SegmentMetaWriterImpl::kFormatExt);
       auto in = dir().open(file, irs::IOAdvice::NORMAL);
       EXPECT_NE(nullptr, in);
-      duckdb::BinaryDeserializer meta_in{*in};
-      meta_in.Begin();
-      EXPECT_NE(0, irs::ReadMaskSize(meta_in));
-      auto parents = irs::ReadParents(meta_in);
-      irs::ReadFiles(meta_in, files);
+      std::vector<uint64_t> parents;
+      irs::format_utils::ReadFooter(
+        *in, file, [&](duckdb::Deserializer& meta_in, uint64_t) {
+          EXPECT_NE(0, irs::ReadMaskSize(meta_in));
+          parents = irs::ReadParents(meta_in);
+          irs::ReadFiles(meta_in, files);
+          meta_in.ReadProperty<uint32_t>(
+            irs::SegmentMetaWriterImpl::kFieldDocsCount, "docs_count");
+          meta_in.ReadProperty<uint64_t>(
+            irs::SegmentMetaWriterImpl::kFieldByteSize, "byte_size");
+        });
       return parents;
     };
 
@@ -1165,7 +1172,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
   }
 }
 
-TEST_P(FormatTestCase, segment_meta_ignores_unknown_fields) {
+TEST_P(FormatTestCase, segment_meta_rejects_unknown_fields) {
   using Writer = irs::SegmentMetaWriterImpl;
 
   irs::SegmentMeta meta;
@@ -1181,19 +1188,18 @@ TEST_P(FormatTestCase, segment_meta_ignores_unknown_fields) {
       dir().create(irs::FileName(meta.name, meta.version, Writer::kFormatExt));
     ASSERT_NE(nullptr, out);
 
-    duckdb::BinarySerializer meta_out{*out, duckdb::VersionStorageOptions()};
-    meta_out.Begin();
-    meta_out.WriteList(Writer::kFieldFiles, "files", meta.files.size(),
-                       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                         list.WriteElement<std::string>(meta.files[i]);
-                       });
-    meta_out.WriteProperty<uint32_t>(Writer::kFieldDocsCount, "docs_count",
-                                     meta.docs_count);
-    meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize, "byte_size",
-                                     meta.byte_size);
-    meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize + 1,
-                                     "from_the_future", 123);
-    meta_out.End();
+    irs::format_utils::WriteFooter(*out, [&](duckdb::Serializer& meta_out) {
+      meta_out.WriteList(Writer::kFieldFiles, "files", meta.files.size(),
+                         [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+                           list.WriteElement<std::string>(meta.files[i]);
+                         });
+      meta_out.WriteProperty<uint32_t>(Writer::kFieldDocsCount, "docs_count",
+                                       meta.docs_count);
+      meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize, "byte_size",
+                                       meta.byte_size);
+      meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize + 1,
+                                       "from_the_future", 123);
+    });
   }
 
   irs::SegmentMeta read_meta;
@@ -1201,16 +1207,9 @@ TEST_P(FormatTestCase, segment_meta_ignores_unknown_fields) {
   read_meta.version = meta.version;
 
   auto reader = irs::GetSegmentMetaReader();
-  reader->read(dir(), read_meta,
-               irs::FileName<irs::SegmentMetaWriter>(read_meta));
-  ASSERT_EQ(meta.name, read_meta.name);
-  ASSERT_EQ(meta.version, read_meta.version);
-  ASSERT_EQ(meta.docs_count, read_meta.docs_count);
-  ASSERT_EQ(meta.live_docs_count, read_meta.live_docs_count);
-  ASSERT_EQ(meta.byte_size, read_meta.byte_size);
-  ASSERT_EQ(meta.files, read_meta.files);
-  ASSERT_EQ(nullptr, read_meta.docs_mask);
-  ASSERT_EQ(0, read_meta.docs_mask_chain);
+  ASSERT_THROW(reader->read(dir(), read_meta,
+                            irs::FileName<irs::SegmentMetaWriter>(read_meta)),
+               duckdb::SerializationException);
 }
 
 TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
@@ -1253,47 +1252,47 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
                    std::string_view mask,
                    std::initializer_list<uint64_t> parents, bool files) {
     auto out = create(name, version);
-    duckdb::BinarySerializer meta_out{*out, duckdb::VersionStorageOptions()};
-    meta_out.Begin();
-    meta_out.WritePropertyWithDefault<uint64_t>(Writer::kFieldMaskSize,
-                                                "mask_size", mask.size(), 0);
-    if (parents.size() != 0) {
-      meta_out.WriteList(Writer::kFieldParents, "parents", parents.size(),
-                         [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                           list.WriteElement<uint64_t>(parents.begin()[i]);
-                         });
-    }
-    if (files) {
-      meta_out.WriteList(Writer::kFieldFiles, "files", 1,
-                         [](duckdb::Serializer::List& list, duckdb::idx_t) {
-                           list.WriteElement<std::string>("file1");
-                         });
-    }
-    meta_out.WriteProperty<uint32_t>(Writer::kFieldDocsCount, "docs_count",
-                                     100);
-    meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize, "byte_size", 42);
-    meta_out.End();
     if (!mask.empty()) {
       out->WriteData(reinterpret_cast<const irs::byte_type*>(mask.data()),
                      mask.size());
     }
+    irs::format_utils::WriteFooter(*out, [&](duckdb::Serializer& meta_out) {
+      meta_out.WritePropertyWithDefault<uint64_t>(Writer::kFieldMaskSize,
+                                                  "mask_size", mask.size(), 0);
+      if (parents.size() != 0) {
+        meta_out.WriteList(
+          Writer::kFieldParents, "parents", parents.size(),
+          [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+            list.WriteElement<uint64_t>(parents.begin()[i]);
+          });
+      }
+      if (files) {
+        meta_out.WriteList(Writer::kFieldFiles, "files", 1,
+                           [](duckdb::Serializer::List& list, duckdb::idx_t) {
+                             list.WriteElement<std::string>("file1");
+                           });
+      }
+      meta_out.WriteProperty<uint32_t>(Writer::kFieldDocsCount, "docs_count",
+                                       100);
+      meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize, "byte_size", 42);
+    });
   };
 
   constexpr irs::byte_type kPad[8]{};
 
-  // the mask would start inside the metadata
+  // the mask size disagrees with the data before the footer
   {
-    auto out = create("mask_past_end", 1);
-    duckdb::BinarySerializer meta_out{*out, duckdb::VersionStorageOptions()};
-    meta_out.Begin();
-    meta_out.WriteProperty<uint64_t>(Writer::kFieldMaskSize, "mask_size", 1000);
-    meta_out.WriteProperty<uint32_t>(Writer::kFieldDocsCount, "docs_count",
-                                     100);
-    meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize, "byte_size", 42);
-    meta_out.End();
+    auto out = create("mask_size_mismatch", 1);
     out->WriteData(kPad, sizeof kPad);
+    irs::format_utils::WriteFooter(*out, [](duckdb::Serializer& meta_out) {
+      meta_out.WriteProperty<uint64_t>(Writer::kFieldMaskSize, "mask_size",
+                                       1000);
+      meta_out.WriteProperty<uint32_t>(Writer::kFieldDocsCount, "docs_count",
+                                       100);
+      meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize, "byte_size", 42);
+    });
   }
-  rejected("mask_past_end", 1, "overlaps the metadata");
+  rejected("mask_size_mismatch", 1, "differs from the data size");
 
   // the mask is not a bitmap at all
   write("not_a_bitmap", 1, "garbage!", {}, true);
@@ -1339,28 +1338,28 @@ TEST_P(FormatTestCase, segment_meta_derives_from_listed_links) {
     compressed.add(doc);
     std::string blob(compressed.getSizeInBytes(), 0);
     compressed.write(blob.data());
-    duckdb::BinarySerializer meta_out{*out, duckdb::VersionStorageOptions()};
-    meta_out.Begin();
-    meta_out.WriteProperty<uint64_t>(Writer::kFieldMaskSize, "mask_size",
-                                     blob.size());
-    if (parents.size() != 0) {
-      meta_out.WriteList(Writer::kFieldParents, "parents", parents.size(),
-                         [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                           list.WriteElement<uint64_t>(parents.begin()[i]);
-                         });
-    }
-    if (files) {
-      meta_out.WriteList(Writer::kFieldFiles, "files", 1,
-                         [](duckdb::Serializer::List& list, duckdb::idx_t) {
-                           list.WriteElement<std::string>("file1");
-                         });
-    }
-    meta_out.WriteProperty<uint32_t>(Writer::kFieldDocsCount, "docs_count",
-                                     100);
-    meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize, "byte_size", 42);
-    meta_out.End();
     out->WriteData(reinterpret_cast<const irs::byte_type*>(blob.data()),
                    blob.size());
+    irs::format_utils::WriteFooter(*out, [&](duckdb::Serializer& meta_out) {
+      meta_out.WriteProperty<uint64_t>(Writer::kFieldMaskSize, "mask_size",
+                                       blob.size());
+      if (parents.size() != 0) {
+        meta_out.WriteList(
+          Writer::kFieldParents, "parents", parents.size(),
+          [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+            list.WriteElement<uint64_t>(parents.begin()[i]);
+          });
+      }
+      if (files) {
+        meta_out.WriteList(Writer::kFieldFiles, "files", 1,
+                           [](duckdb::Serializer::List& list, duckdb::idx_t) {
+                             list.WriteElement<std::string>("file1");
+                           });
+      }
+      meta_out.WriteProperty<uint32_t>(Writer::kFieldDocsCount, "docs_count",
+                                       100);
+      meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize, "byte_size", 42);
+    });
   };
 
   write(1, 1, {}, true);
@@ -1387,327 +1386,93 @@ TEST_P(FormatTestCase, segment_meta_derives_from_listed_links) {
             meta.files);
 }
 
-TEST_P(FormatTestCase, format_utils_checksum) {
-  {
-    auto stream = dir().create("file");
+TEST_P(FormatTestCase, format_utils_footer) {
+  constexpr std::string_view kData = "segment data";
+  const auto write = [&](std::string_view name, std::string_view data) {
+    auto stream = dir().create(name);
     ASSERT_NE(nullptr, stream);
-    irs::format_utils::WriteHeader(*stream, "test", 42);
-    irs::format_utils::WriteFooter(*stream);
-  }
-
-  {
-    auto stream = dir().open("file", irs::IOAdvice::NORMAL);
-    ASSERT_NE(nullptr, stream);
-
-    int64_t expected_checksum;
-    {
-      auto dup = stream->Dup();
-      ASSERT_NE(nullptr, dup);
-      expected_checksum = dup->Checksum(dup->Length() - sizeof(int64_t));
+    if (!data.empty()) {
+      stream->WriteData(reinterpret_cast<const irs::byte_type*>(data.data()),
+                        data.size());
     }
-
-    ASSERT_EQ(expected_checksum, irs::format_utils::Checksum(*stream));
-  }
-
-  {
-    auto stream = dir().create("empty_file");
-    ASSERT_NE(nullptr, stream);
-  }
-
-  {
-    auto stream = dir().open("empty_file", irs::IOAdvice::NORMAL);
-    ASSERT_NE(nullptr, stream);
-    ASSERT_THROW(irs::format_utils::Checksum(*stream), irs::IndexError);
-  }
-}
-
-TEST_P(FormatTestCase, format_utils_header_footer) {
-  {
-    auto stream = dir().create("file");
-    ASSERT_NE(nullptr, stream);
-    irs::format_utils::WriteHeader(*stream, "test", 42);
-    irs::format_utils::WriteFooter(*stream);
-  }
-
-  {
-    auto stream = dir().open("file", irs::IOAdvice::NORMAL);
-    ASSERT_NE(nullptr, stream);
-
-    int64_t expected_checksum;
-    {
-      auto dup = stream->Dup();
-      ASSERT_NE(nullptr, dup);
-      expected_checksum = dup->Checksum(dup->Length() - sizeof(int64_t));
-    }
-
-    irs::format_utils::CheckHeader(*stream, "test", 42);
-    ASSERT_EQ(expected_checksum,
-              irs::format_utils::CheckFooter(*stream, expected_checksum));
-  }
-
-  {
-    auto stream = dir().open("file", irs::IOAdvice::NORMAL);
-    ASSERT_NE(nullptr, stream);
-    irs::format_utils::CheckHeader(*stream, "test", 42);
-    ASSERT_THROW(irs::format_utils::CheckFooter(*stream, 0), irs::IndexError);
-  }
-
-  {
-    auto stream = dir().open("file", irs::IOAdvice::NORMAL);
-    ASSERT_NE(nullptr, stream);
-    ASSERT_THROW(irs::format_utils::CheckHeader(*stream, "invalid", 42),
-                 irs::IndexError);
-  }
-
-  {
-    auto stream = dir().open("file", irs::IOAdvice::NORMAL);
-    ASSERT_NE(nullptr, stream);
-    ASSERT_THROW(irs::format_utils::CheckHeader(*stream, "test", 43),
-                 irs::IndexError);
-  }
-
-  {
-    auto stream = dir().create("empty_file");
-    ASSERT_NE(nullptr, stream);
-  }
-
-  {
-    auto stream = dir().open("empty_file", irs::IOAdvice::NORMAL);
-    ASSERT_NE(nullptr, stream);
-    ASSERT_THROW(irs::format_utils::CheckHeader(*stream, "invalid", 42),
-                 irs::IndexError);
-  }
-}
-
-TEST_P(FormatTestCaseWithEncryption, read_zero_block_encryption) {
-  if (!supports_encryption()) {
-    return;
-  }
-
-  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                              &tests::GenericJsonFieldFactory);
-
-  const tests::Document* doc1 = gen.next();
-
-  // replace encryption
-  ASSERT_NE(nullptr, dir().attributes().encryption());
-
-  // write segment with format10
-  {
-    auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
-    ASSERT_NE(nullptr, writer);
-
-    ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
-
-    ASSERT_TRUE(writer->RefreshCommit());
-    AssertSnapshotEquality(*writer);
-  }
-
-  // replace encryption
-  dir().attributes() =
-    irs::DirectoryAttributes{std::make_unique<tests::Rot13Encryption>(6)};
-
-  // can't open encrypted index without encryption
-  ASSERT_THROW(irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions()),
-               irs::IndexError);
-}
-
-TEST_P(FormatTestCaseWithEncryption, fields_read_write_wrong_encryption) {
-  if (!supports_encryption()) {
-    return;
-  }
-
-  // create sorted && unsorted terms
-  typedef std::set<irs::bytes_view> SortedTermsT;
-  typedef std::vector<irs::bytes_view> UnsortedTermsT;
-  SortedTermsT sorted_terms;
-  UnsortedTermsT unsorted_terms;
-
-  tests::JsonDocGenerator gen(
-    resource("fst_prefixes.json"),
-    [&sorted_terms, &unsorted_terms](
-      tests::Document& doc, const std::string& name,
-      const tests::JsonDocGenerator::JsonValue& data) {
-      doc.insert(std::make_shared<tests::StringField>(name, data.str));
-
-      auto ref = irs::ViewCast<irs::byte_type>(
-        (doc.indexed.end() - 1).as<tests::StringField>().value());
-      sorted_terms.emplace(ref);
-      unsorted_terms.emplace_back(ref);
+    irs::format_utils::WriteFooter(*stream, [](duckdb::Serializer& meta) {
+      meta.WriteProperty<uint32_t>(0, "value", 42);
     });
+  };
+  const auto read = [&](std::string_view name, std::string_view data) {
+    auto stream = dir().open(name, irs::IOAdvice::NORMAL);
+    ASSERT_NE(nullptr, stream);
+    uint32_t value = 0;
+    uint64_t data_size = 0;
+    const auto footer = irs::format_utils::ReadFooter(
+      *stream, name, [&](duckdb::Deserializer& meta, uint64_t size) {
+        value = meta.ReadProperty<uint32_t>(0, "value");
+        data_size = size;
+      });
+    irs::Crc32c crc;
+    crc.process_bytes(data.data(), data.size());
+    ASSERT_EQ(42, value);
+    ASSERT_EQ(data.size(), data_size);
+    ASSERT_EQ(data.size(), footer.data_size);
+    ASSERT_EQ(crc.checksum(), footer.data_crc32c);
+  };
 
-  // define field
-  constexpr irs::field_id kFieldId = 1;
-  irs::FieldMeta field;
-  field.id = kFieldId;
-  field.norm = 5;
+  write("file", kData);
+  read("file", kData);
 
-  ASSERT_NE(nullptr, dir().attributes().encryption());
-
-  // write fields
-  {
-    irs::FlushState state{
-      .dir = &dir(),
-      .name = "segment_name",
-      .doc_count = 100,
-    };
-
-    // should use sorted terms on write
-    tests::FormatTestCase::Terms<SortedTermsT::iterator> terms(
-      sorted_terms.begin(), sorted_terms.end());
-    tests::MockTermReader term_reader{
-      terms, irs::FieldMeta{field.id, field.index_features},
-      (sorted_terms.empty() ? irs::bytes_view{} : *sorted_terms.begin()),
-      (sorted_terms.empty() ? irs::bytes_view{} : *sorted_terms.rbegin())};
-
-    irs::IdxWriter idx{dir(), "segment_name",
-                       ::irs::DuckDBEngine::Instance().instance()};
-    irs::burst_trie::FieldWriter writer{
-      irs::MakePostingsWriter(/*compaction=*/false,
-                              irs::IResourceManager::gNoop),
-      /*compaction=*/false, irs::IResourceManager::gNoop};
-    writer.SetIdxWriter(idx);
-    writer.prepare(state);
-    writer.write(term_reader);
-    writer.end();
-    idx.Commit();
-  }
-
-  irs::SegmentMeta meta;
-  meta.name = "segment_name";
-
-  // Open-with-wrong-cipher / open-encrypted-without-cipher must throw:
-  // `IdxReader` opens the `.idx` and consults
-  // `dir.attributes().encryption()`, so the failure surfaces from
-  // `IdxReader` construction (`FieldReader::prepare` then reads
-  // already-decrypted bytes from that stream).
-
-  // can't open encrypted index without encryption
-  dir().attributes() = irs::DirectoryAttributes{nullptr};
-  ASSERT_THROW(irs::IdxReader(dir(), "segment_name"), irs::IndexError);
-
-  // can't open encrypted index with wrong encryption
-  dir().attributes() =
-    irs::DirectoryAttributes{std::make_unique<tests::Rot13Encryption>(6)};
-  ASSERT_THROW(irs::IdxReader(dir(), "segment_name"), irs::IndexError);
+  write("no_data", {});
+  read("no_data", {});
 }
 
-TEST_P(FormatTestCaseWithEncryption, open_ecnrypted_with_wrong_encryption) {
-  if (!supports_encryption()) {
-    return;
-  }
-
-  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                              &tests::GenericJsonFieldFactory);
-
-  const tests::Document* doc1 = gen.next();
-
-  ASSERT_NE(nullptr, dir().attributes().encryption());
-
+TEST_P(FormatTestCase, format_utils_footer_damaged) {
   {
-    auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
-    ASSERT_NE(nullptr, writer);
-
-    ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
-
-    ASSERT_TRUE(writer->RefreshCommit());
-    AssertSnapshotEquality(*writer);
+    auto stream = dir().create("file");
+    ASSERT_NE(nullptr, stream);
+    stream->WriteU64(7);
+    irs::format_utils::WriteFooter(*stream, [](duckdb::Serializer& meta) {
+      meta.WriteProperty<uint32_t>(0, "value", 42);
+    });
   }
 
-  // can't open encrypted index with wrong encryption
-  dir().attributes() =
-    irs::DirectoryAttributes{std::make_unique<tests::Rot13Encryption>(6)};
-  ASSERT_THROW(irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions()),
-               irs::IndexError);
-}
-
-TEST_P(FormatTestCaseWithEncryption, open_ecnrypted_with_non_encrypted) {
-  if (!supports_encryption()) {
-    return;
-  }
-
-  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                              &tests::GenericJsonFieldFactory);
-
-  const tests::Document* doc1 = gen.next();
-
-  ASSERT_NE(nullptr, dir().attributes().encryption());
-
+  irs::bstring bytes;
   {
-    auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
-    ASSERT_NE(nullptr, writer);
-
-    ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
-
-    ASSERT_TRUE(writer->RefreshCommit());
-    AssertSnapshotEquality(*writer);
+    auto stream = dir().open("file", irs::IOAdvice::NORMAL);
+    ASSERT_NE(nullptr, stream);
+    bytes.resize(stream->Length());
+    stream->ReadData(0, bytes.data(), bytes.size());
   }
 
-  // remove encryption
-  dir().attributes() = irs::DirectoryAttributes{nullptr};
-
-  // can't open encrypted index without encryption
-  ASSERT_THROW(irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions()),
-               irs::IndexError);
-}
-
-TEST_P(FormatTestCaseWithEncryption, open_non_ecnrypted_with_encrypted) {
-  if (!supports_encryption()) {
-    return;
-  }
-
-  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                              &tests::GenericJsonFieldFactory);
-
-  const tests::Document* doc1 = gen.next();
-
-  dir().attributes() = irs::DirectoryAttributes{nullptr};
-
-  // write segment with format11
-  {
-    auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
-    ASSERT_NE(nullptr, writer);
-
-    ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
-
-    ASSERT_TRUE(writer->RefreshCommit());
-    AssertSnapshotEquality(*writer);
-  }
-
-  // add cipher
-  dir().attributes() =
-    irs::DirectoryAttributes{std::make_unique<tests::Rot13Encryption>(7)};
-
-  // check index
-  auto index = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
-  ASSERT_TRUE(index);
-  ASSERT_EQ(1, index->size());
-  ASSERT_EQ(1, index->docs_count());
-  ASSERT_EQ(1, index->live_docs_count());
-
-  // check segment 0
-  {
-    auto& segment = index[0];
-    ASSERT_EQ(1, segment.size());
-    ASSERT_EQ(1, segment.docs_count());
-    ASSERT_EQ(1, segment.live_docs_count());
-
-    auto terms = segment.field(tests::FieldIdFor("same"));
-    ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator();
-    ASSERT_TRUE(term_itr->next());
-
-    size_t hits = 0;
-    for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
-         !irs::doc_limits::eof(docs_itr->Next());) {
-      ++hits;
+  const auto write = [&](std::string_view name, irs::bytes_view data) {
+    auto stream = dir().create(name);
+    ASSERT_NE(nullptr, stream);
+    if (!data.empty()) {
+      stream->WriteData(data.data(), data.size());
     }
-    ASSERT_EQ(1, hits);
-  }
+  };
+  const auto read = [&](std::string_view name) {
+    auto stream = dir().open(name, irs::IOAdvice::NORMAL);
+    ASSERT_NE(nullptr, stream);
+    irs::format_utils::ReadFooter(*stream, name,
+                                  [](duckdb::Deserializer& meta, uint64_t) {
+                                    meta.ReadProperty<uint32_t>(0, "value");
+                                  });
+  };
+
+  auto flipped = bytes;
+  flipped[sizeof(uint64_t)] ^= 1;
+  write("flipped", flipped);
+  ASSERT_THROW(read("flipped"), irs::IndexError);
+
+  auto long_footer = bytes;
+  long_footer[long_footer.size() - 1] = 0xFF;
+  write("long_footer", long_footer);
+  ASSERT_THROW(read("long_footer"), irs::IndexError);
+
+  write("truncated", irs::bytes_view{bytes}.substr(0, bytes.size() - 1));
+  ASSERT_THROW(read("truncated"), irs::IndexError);
+
+  write("empty", {});
+  ASSERT_THROW(read("empty"), irs::IndexError);
 }
 
 }  // namespace tests
@@ -1715,8 +1480,7 @@ TEST_P(FormatTestCaseWithEncryption, open_non_ecnrypted_with_encrypted) {
 // --- columns_* coverage -------------------------------------------------
 // `irs::ColWriter` (one `.col` file per segment, independent of
 // the per-format codec) is the column-data substrate the tests below
-// exercise. The two `FormatTestCaseWithEncryption` columnstore tests are
-// GTEST_SKIP'd pending the encryption follow-up.
+// exercise.
 
 namespace {
 
@@ -4079,14 +3843,6 @@ TEST_P(FormatTestCase, columns_issue700) {
       }
     }
   }
-}
-
-TEST_P(FormatTestCaseWithEncryption, columnstore_read_write_wrong_encryption) {
-  GTEST_SKIP() << "columnstore encryption not yet supported";
-}
-
-TEST_P(FormatTestCaseWithEncryption, write_zero_block_encryption) {
-  GTEST_SKIP() << "columnstore encryption not yet supported";
 }
 
 }  // namespace tests

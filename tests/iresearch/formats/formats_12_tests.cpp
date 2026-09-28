@@ -36,7 +36,6 @@ inline constexpr irs::field_id kNameId = tests::FieldIdFor("name");
 inline constexpr irs::field_id kSameId = tests::FieldIdFor("same");
 
 using tests::FormatTestCase;
-using tests::FormatTestCaseWithEncryption;
 
 bool InsertWithName(irs::IndexWriter& writer, const tests::Document& doc) {
   auto ctx = writer.GetBatch();
@@ -57,7 +56,7 @@ bool InsertWithName(irs::IndexWriter& writer, const tests::Document& doc) {
   return true;
 }
 
-class Format12TestCase : public FormatTestCaseWithEncryption {};
+class Format12TestCase : public FormatTestCase {};
 
 TEST_P(Format12TestCase, open_10_with_12) {
   tests::JsonDocGenerator gen(resource("simple_sequential.json"),
@@ -208,8 +207,7 @@ TEST_P(Format12TestCase, formats_12) {
   }
 }
 
-static constexpr auto kTestDirs =
-  tests::GetDirectories<tests::kTypesAllRot13>();
+static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 static const auto kTestValues =
   ::testing::Combine(::testing::ValuesIn(kTestDirs));
 

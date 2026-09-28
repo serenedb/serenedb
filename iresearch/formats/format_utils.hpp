@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
 #include <absl/strings/str_cat.h>
 
 #include "iresearch/error/error.hpp"
@@ -30,49 +31,24 @@
 #include "iresearch/store/data_output.hpp"
 
 namespace irs {
-
-void ValidateFooter(IndexInput& in);
-
 namespace format_utils {
 
-constexpr int32_t kFormatMagic = 0x3fd76c17;
-constexpr int32_t kFooterMagic = -kFormatMagic;
-constexpr uint32_t kFooterLen = 2 * sizeof(int32_t) + sizeof(int64_t);
+inline constexpr uint64_t kTrailerLen = 2 * sizeof(uint32_t);
 
-void WriteHeader(IndexOutput& out, std::string_view format);
+struct Footer {
+  uint64_t data_size = 0;
+  uint32_t data_crc32c = 0;
+};
 
-void WriteHeader(IndexOutput& out, std::string_view format, int32_t ver);
+void WriteFooter(IndexOutput& out,
+                 absl::FunctionRef<void(duckdb::Serializer&)> write);
 
-void WriteFooter(IndexOutput& out);
-
-size_t HeaderLength(std::string_view format) noexcept;
-
-void CheckHeader(DataInput& in, std::string_view format);
-
-void CheckHeader(DataInput& in, std::string_view format, int32_t ver);
-
-inline int64_t ReadChecksum(IndexInput& in) {
-  in.Seek(in.Length() - kFooterLen);
-  ValidateFooter(in);
-  return in.ReadI64();
-}
-
-inline int64_t CheckFooter(IndexInput& in, int64_t checksum) {
-  ValidateFooter(in);
-
-  if (checksum != in.ReadI64()) {
-    throw IndexError{absl::StrCat(
-      "while checking footer, error: invalid checksum '", checksum, "'")};
-  }
-
-  return checksum;
-}
-
-int64_t Checksum(const IndexInput& in);
+Footer ReadFooter(
+  IndexInput& in, std::string_view name,
+  absl::FunctionRef<void(duckdb::Deserializer&, uint64_t)> read);
 
 void PrepareOutput(std::string& str, IndexOutput::ptr& out,
-                   const FlushState& state, std::string_view ext,
-                   std::string_view format);
+                   const FlushState& state, std::string_view ext);
 
 }  // namespace format_utils
 

@@ -139,7 +139,6 @@ set(iresearch-tests_sources
     ./utils/wkb_parser_test.cpp
     ./utils/automaton_test.cpp
     ./utils/bitvector_tests.cpp
-    ./utils/encryption_test.cpp
     ./utils/container_utils_tests.cpp
     ./utils/crc_test.cpp
     ./utils/file_utils_tests.cpp

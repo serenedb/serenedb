@@ -32,11 +32,7 @@
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
-#include "iresearch/store/directory_attributes.hpp"
-#include "iresearch/utils/encryption.hpp"
-#include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
-#include "iresearch/utils/serialization.hpp"
 
 namespace irs {
 namespace {
@@ -66,7 +62,6 @@ struct IdxWriter::Impl {
   Directory* dir;
   std::string filename;
   duckdb::DatabaseInstance* db;
-  Encryption::Stream::ptr cipher;
   IndexOutput::ptr out;
   std::vector<IvfCentroidEntry> ivf_entries;
   std::vector<HnswEntry> hnsw_entries;
@@ -91,27 +86,11 @@ void IdxWriter::EnsureOut() {
   if (_impl->out) {
     return;
   }
-  auto out = _impl->dir->create(_impl->filename);
-  if (!out) {
+  _impl->out = _impl->dir->create(_impl->filename);
+  if (!_impl->out) {
     throw IoError{
       absl::StrCat("Failed to create index file, path: ", _impl->filename)};
   }
-  format_utils::WriteHeader(*out, kIdxFormatName, kIdxFormatVersion);
-  auto* enc = _impl->dir->attributes().encryption();
-  bstring enc_header;
-  const bool encrypted =
-    Encrypt(_impl->filename, *out, enc, enc_header, _impl->cipher);
-  SDB_ENSURE(!encrypted || (_impl->cipher && _impl->cipher->block_size()),
-             "IdxWriter::EnsureOut: Encrypt returned true but cipher / "
-             "block_size() is null for ",
-             _impl->filename);
-  if (encrypted) {
-    const auto blocks_in_buffer = math::DivCeil64(kDefaultEncryptionBufferSize,
-                                                  _impl->cipher->block_size());
-    out = IndexOutput::ptr{
-      new EncryptedOutput{std::move(out), *_impl->cipher, blocks_in_buffer}};
-  }
-  _impl->out = std::move(out);
 }
 
 IndexOutput& IdxWriter::BlocksOut() {
@@ -145,72 +124,57 @@ void IdxWriter::Commit() {
 
   EnsureOut();
 
-  const uint64_t footer_offset = _impl->out->Position();
-
-  duckdb::BinarySerializer serializer{*_impl->out,
-                                      duckdb::VersionStorageOptions()};
-  serializer.Begin();
-  serializer.WriteList(
-    kFooterSlotTermDict, "term_dict", _impl->term_dict_entries.size(),
-    [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-      const auto& e = _impl->term_dict_entries[i];
-      list.WriteObject([&](duckdb::Serializer& obj) {
-        obj.WriteProperty<uint64_t>(0, "id", e.id);
-        obj.WriteProperty<uint32_t>(1, "features",
-                                    static_cast<uint32_t>(e.meta.features));
-        obj.WriteProperty<uint64_t>(2, "term_count", e.meta.term_count);
-        obj.WriteProperty<uint64_t>(3, "doc_count", e.meta.doc_count);
-        obj.WriteProperty<uint64_t>(4, "total_doc_freq", e.meta.total_doc_freq);
-        obj.WriteProperty<uint64_t>(5, "total_term_freq",
-                                    e.meta.total_term_freq);
-        obj.WriteProperty<bool>(6, "has_score_bounds", e.meta.has_score_bounds);
-        obj.WriteProperty<uint64_t>(7, "body_offset", e.meta.body_offset);
-        obj.WriteProperty<uint64_t>(8, "norm", e.meta.norm);
+  format_utils::WriteFooter(*_impl->out, [&](duckdb::Serializer& footer) {
+    footer.WriteList(
+      kFooterSlotTermDict, "term_dict", _impl->term_dict_entries.size(),
+      [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+        const auto& e = _impl->term_dict_entries[i];
+        list.WriteObject([&](duckdb::Serializer& obj) {
+          obj.WriteProperty<uint64_t>(0, "id", e.id);
+          obj.WriteProperty<uint32_t>(1, "features",
+                                      static_cast<uint32_t>(e.meta.features));
+          obj.WriteProperty<uint64_t>(2, "term_count", e.meta.term_count);
+          obj.WriteProperty<uint64_t>(3, "doc_count", e.meta.doc_count);
+          obj.WriteProperty<uint64_t>(4, "total_doc_freq",
+                                      e.meta.total_doc_freq);
+          obj.WriteProperty<uint64_t>(5, "total_term_freq",
+                                      e.meta.total_term_freq);
+          obj.WriteProperty<bool>(6, "has_score_bounds",
+                                  e.meta.has_score_bounds);
+          obj.WriteProperty<uint64_t>(7, "body_offset", e.meta.body_offset);
+          obj.WriteProperty<uint64_t>(8, "norm", e.meta.norm);
+        });
       });
-    });
-  serializer.WriteList(
-    kFooterSlotIvf, "ivf", _impl->ivf_entries.size(),
-    [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-      const auto& e = _impl->ivf_entries[i];
-      list.WriteObject([&](duckdb::Serializer& obj) {
-        obj.WriteProperty<uint64_t>(0, "id", e.id);
-        obj.WriteProperty<uint64_t>(1, "tree_offset", e.meta.tree_offset);
-        obj.WriteProperty<uint64_t>(2, "tree_byte_size", e.meta.tree_byte_size);
-        obj.WriteProperty<uint64_t>(3, "stats_offset", e.meta.stats_offset);
-        obj.WriteProperty<uint64_t>(4, "stats_byte_size",
-                                    e.meta.stats_byte_size);
+    footer.WriteList(
+      kFooterSlotIvf, "ivf", _impl->ivf_entries.size(),
+      [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+        const auto& e = _impl->ivf_entries[i];
+        list.WriteObject([&](duckdb::Serializer& obj) {
+          obj.WriteProperty<uint64_t>(0, "id", e.id);
+          obj.WriteProperty<uint64_t>(1, "tree_offset", e.meta.tree_offset);
+          obj.WriteProperty<uint64_t>(2, "tree_byte_size",
+                                      e.meta.tree_byte_size);
+          obj.WriteProperty<uint64_t>(3, "stats_offset", e.meta.stats_offset);
+          obj.WriteProperty<uint64_t>(4, "stats_byte_size",
+                                      e.meta.stats_byte_size);
+        });
       });
-    });
-  serializer.WriteList(
-    kFooterSlotHnsw, "hnsw", _impl->hnsw_entries.size(),
-    [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-      const auto& e = _impl->hnsw_entries[i];
-      list.WriteObject([&](duckdb::Serializer& obj) {
-        obj.WriteProperty<uint64_t>(0, "id", e.id);
-        obj.WriteProperty<uint64_t>(1, "offset", e.meta.offset);
-        obj.WriteProperty<uint64_t>(2, "byte_size", e.meta.byte_size);
+    footer.WriteList(
+      kFooterSlotHnsw, "hnsw", _impl->hnsw_entries.size(),
+      [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+        const auto& e = _impl->hnsw_entries[i];
+        list.WriteObject([&](duckdb::Serializer& obj) {
+          obj.WriteProperty<uint64_t>(0, "id", e.id);
+          obj.WriteProperty<uint64_t>(1, "offset", e.meta.offset);
+          obj.WriteProperty<uint64_t>(2, "byte_size", e.meta.byte_size);
+        });
       });
-    });
-  serializer.End();
-
-  IndexOutput* trailer_out = _impl->out.get();
-  IndexOutput::ptr raw_out;
-  if (_impl->cipher) {
-    auto& enc_out = static_cast<EncryptedOutput&>(*_impl->out);
-    enc_out.Flush();
-    raw_out = enc_out.Release();
-    _impl->out = std::move(raw_out);
-    trailer_out = _impl->out.get();
-  }
-  trailer_out->WriteU64(footer_offset);
-  format_utils::WriteFooter(*trailer_out);
+  });
   _impl->out.reset();
-  _impl->cipher.reset();
 }
 
 void IdxWriter::Rollback() noexcept {
   _impl->out.reset();
-  _impl->cipher.reset();
   _impl->ivf_entries.clear();
   _impl->hnsw_entries.clear();
   _impl->term_dict_entries.clear();

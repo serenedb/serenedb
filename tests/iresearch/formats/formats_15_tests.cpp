@@ -329,7 +329,7 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
     EXPECT_FALSE(!out);
     irs::WriteStr(*out, std::string_view("file_header"));
 
-    writer->Prepare(*out, state);
+    writer->Prepare(state);
     writer->BeginField(irs::FieldProperties{.index_features = features});
 
     TestPostings it{docs, features};
@@ -354,7 +354,7 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
 
   auto reader = irs::MakePostingsReader();
   EXPECT_NE(nullptr, reader);
-  reader->prepare(*in, state, features);
+  reader->prepare(state, features);
 
   irs::bstring in_data(in->Length() - in->Position(), 0);
   in->ReadData(&in_data[0], in_data.size());
@@ -682,29 +682,14 @@ void Format15TestCase::AssertStressPostings(DocsView docs) {
 }
 
 static const auto kTestDirs =
-  ::testing::ValuesIn(tests::GetDirectories<tests::kTypesAll>());
-
-static const auto kTestDirsWithoutEncryption =
   ::testing::ValuesIn(tests::GetDirectories<tests::kTypesDefault>());
 
-static const auto kTestDirsWithEncryption =
-  ::testing::ValuesIn(tests::GetDirectories<tests::kTypesAllRot13>());
-
 static const auto kTestValues = ::testing::Combine(kTestDirs);
-static const auto kTestValuesWithoutEncryption =
-  ::testing::Combine(kTestDirsWithoutEncryption);
-static const auto kTestValuesWithEncryption =
-  ::testing::Combine(kTestDirsWithEncryption);
 
 // Generic tests
 using tests::FormatTestCase;
 INSTANTIATE_TEST_SUITE_P(Format15Test, FormatTestCase, kTestValues,
                          FormatTestCase::to_string);
-
-using tests::FormatTestCaseWithEncryption;
-INSTANTIATE_TEST_SUITE_P(Format15Test, FormatTestCaseWithEncryption,
-                         kTestValuesWithEncryption,
-                         FormatTestCaseWithEncryption::to_string);
 
 // 1.5 specific tests
 
@@ -781,8 +766,7 @@ TEST_P(Format15TestCase, VeryLongPostings) {
   AssertStressPostings(docs);
 }
 
-INSTANTIATE_TEST_SUITE_P(Format15Test, Format15TestCase,
-                         kTestValuesWithoutEncryption,
+INSTANTIATE_TEST_SUITE_P(Format15Test, Format15TestCase, kTestValues,
                          Format15TestCase::to_string);
 
 }  // namespace

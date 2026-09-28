@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <duckdb/common/serializer/deserializer.hpp>
+
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/stream.hpp"
@@ -32,7 +34,7 @@ namespace irs {
 
 inline void PrepareInput(std::string& str, IndexInput::ptr& in, IOAdvice advice,
                          const ReaderState& state, std::string_view ext,
-                         std::string_view format) {
+                         uint32_t block_size) {
   SDB_ASSERT(!in);
   irs::FileName(str, state.meta->name, ext);
   in = state.dir->open(str, advice);
@@ -41,7 +43,16 @@ inline void PrepareInput(std::string& str, IndexInput::ptr& in, IOAdvice advice,
     throw IoError{absl::StrCat("Failed to open file, path: ", str)};
   }
 
-  format_utils::CheckHeader(*in, format);
+  format_utils::ReadFooter(
+    *in, str, [&](duckdb::Deserializer& footer, uint64_t) {
+      const auto stored = footer.ReadProperty<uint32_t>(
+        PostingsWriterBase::kFooterSlotBlockSize, "block_size");
+      if (stored != block_size) {
+        throw IndexError{absl::StrCat(
+          "While preparing postings reader, error: '", str,
+          "' has block size '", stored, "', expected '", block_size, "'")};
+      }
+    });
 }
 
 inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
@@ -66,8 +77,7 @@ class PostingsReaderBase : public PostingsReader {
     return bytes;
   }
 
-  void prepare(DataInput& in, const ReaderState& state,
-               IndexFeatures features) final;
+  void prepare(const ReaderState& state, IndexFeatures features) final;
 
   size_t decode(const byte_type* in, IndexFeatures field_features,
                 PostingMeta& state) final;
@@ -77,18 +87,14 @@ class PostingsReaderBase : public PostingsReader {
   }
 
  protected:
-  explicit PostingsReaderBase(size_t block_size) noexcept
-    : _block_size{block_size} {}
-
   ScorerPtr _scorer;
   IndexInput::ptr _doc_in;
   IndexInput::ptr _pos_in;
   IndexInput::ptr _pay_in;
-  size_t _block_size;
   doc_id_t _docs_count = 0;
 };
 
-inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
+inline void PostingsReaderBase::prepare(const ReaderState& state,
                                         IndexFeatures features) {
   std::string buf;
 
@@ -98,52 +104,19 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
 
   // prepare document input
   PrepareInput(buf, _doc_in, IOAdvice::RANDOM, state,
-               PostingsWriterBase::kDocExt, PostingsWriterBase::kDocFormatName);
-
-  // Since terms doc postings too large
-  //  it is too costly to verify checksum of
-  //  the entire file. Here we perform cheap
-  //  error detection which could recognize
-  //  some forms of corruption.
-  format_utils::ReadChecksum(*_doc_in);
+               PostingsWriterBase::kDocExt, doc_limits::kBlockSize);
   _doc_in->EnableReadahead();
 
   if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
-    /* prepare positions input */
     PrepareInput(buf, _pos_in, IOAdvice::RANDOM, state,
-                 PostingsWriterBase::kPosExt,
-                 PostingsWriterBase::kPosFormatName);
-
-    // Since terms pos postings too large
-    // it is too costly to verify checksum of
-    // the entire file. Here we perform cheap
-    // error detection which could recognize
-    // some forms of corruption.
-    format_utils::ReadChecksum(*_pos_in);
+                 PostingsWriterBase::kPosExt, pos_limits::kBlockSize);
     _pos_in->EnableReadahead();
   }
 
   if (needs_pay) {
     PrepareInput(buf, _pay_in, IOAdvice::RANDOM, state,
-                 PostingsWriterBase::kPayExt,
-                 PostingsWriterBase::kPayFormatName);
-
-    // Since terms pos postings too large
-    // it is too costly to verify checksum of
-    // the entire file. Here we perform cheap
-    // error detection which could recognize
-    // some forms of corruption.
-    format_utils::ReadChecksum(*_pay_in);
+                 PostingsWriterBase::kPayExt, pos_limits::kBlockSize);
     _pay_in->EnableReadahead();
-  }
-
-  const uint64_t block_size = in.ReadV32();
-
-  if (block_size != _block_size) {
-    throw IndexError{
-      absl::StrCat("while preparing postings_reader, error: "
-                   "invalid block size '",
-                   block_size, "', expected '", _block_size, "'")};
   }
 
   _scorer = state.scorer;
@@ -176,7 +149,8 @@ inline size_t PostingsReaderBase::decode(const byte_type* in,
     posting_meta.pos_offset = *p++;
   }
 
-  if (1 == posting_meta.docs_count || _block_size < posting_meta.docs_count) {
+  if (1 == posting_meta.docs_count ||
+      doc_limits::kBlockSize < posting_meta.docs_count) {
     posting_meta.doc_delta = vread<uint32_t>(p);
   }
 
@@ -189,8 +163,6 @@ class PostingsReaderImpl final : public PostingsReaderBase {
  public:
   template<bool Freq, bool Pos, bool Offs>
   using IteratorTraits = IteratorTraitsImpl<FormatTraits, Freq, Pos, Offs>;
-
-  PostingsReaderImpl() noexcept : PostingsReaderBase{doc_limits::kBlockSize} {}
 
   size_t BitUnion(IndexFeatures field, TermProvider provider, uint64_t* set,
                   bool has_score_bounds) final;

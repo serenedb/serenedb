@@ -2643,11 +2643,6 @@ TEST(index_death_test_formats_15, fails_in_length) {
 }
 
 TEST(index_death_test_formats_15, columnstore_reopen_fail) {
-  // Reader-side failures on the columnstore file.
-  //
-  // OPEN failure on `_1.col` -- the segment reader's columnstore probe
-  // (`ColReader::Reader` -> `OpenAndCheckHeader`) calls
-  // `dir.open("_1.col")` and turns nullptr into `irs::IoError`.
   constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
                                               irs::IndexFeatures::Pos |
                                               irs::IndexFeatures::Offs;

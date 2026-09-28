@@ -71,7 +71,7 @@ class Format10TestCase : public tests::FormatTestCase {
       irs::WriteStr(*out, std::string_view("file_header"));
 
       // prepare writer
-      writer->Prepare(*out, state);
+      writer->Prepare(state);
 
       writer->BeginField(field);
 
@@ -107,7 +107,7 @@ class Format10TestCase : public tests::FormatTestCase {
       // prepare reader
       auto reader = irs::MakePostingsReader();
       ASSERT_NE(nullptr, reader);
-      reader->prepare(*in, state, field.index_features);
+      reader->prepare(state, field.index_features);
 
       irs::bstring in_data(in->Length() - in->Position(), 0);
       in->ReadData(&in_data[0], in_data.size());
@@ -261,7 +261,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     ASSERT_FALSE(!out);
 
     // prepare writer
-    writer->Prepare(*out, state);
+    writer->Prepare(state);
 
     // begin field
     writer->BeginField(field);
@@ -326,7 +326,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     // prepare reader
     auto reader = irs::MakePostingsReader();
     ASSERT_NE(nullptr, reader);
-    reader->prepare(*in, state, field.index_features);
+    reader->prepare(state, field.index_features);
 
     irs::bstring in_data(in->Length() - in->Position(), 0);
     in->ReadData(&in_data[0], in_data.size());
@@ -413,7 +413,7 @@ TEST_P(Format10TestCase, postings_read_write) {
     ASSERT_FALSE(!out);
 
     // prepare writer
-    writer->Prepare(*out, state);
+    writer->Prepare(state);
 
     // begin field
     writer->BeginField(field);
@@ -457,7 +457,7 @@ TEST_P(Format10TestCase, postings_read_write) {
     // prepare reader
     auto reader = irs::MakePostingsReader();
     ASSERT_NE(nullptr, reader);
-    reader->prepare(*in, state, field.index_features);
+    reader->prepare(state, field.index_features);
 
     irs::bstring in_data(in->Length() - in->Position(), 0);
     in->ReadData(&in_data[0], in_data.size());
@@ -553,7 +553,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->Prepare(*out, state);
+    writer->Prepare(state);
     writer->BeginField(field);
     irs::PostingMeta meta;
     writer->Write(docs, meta);
@@ -583,7 +583,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->Prepare(*out, state);
+    writer->Prepare(state);
     writer->BeginField(field);
     irs::PostingMeta meta;
     writer->Write(docs, meta);
@@ -612,7 +612,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->Prepare(*out, state);
+    writer->Prepare(state);
     writer->BeginField(field);
     irs::PostingMeta meta;
     writer->Write(docs, meta);
@@ -641,7 +641,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->Prepare(*out, state);
+    writer->Prepare(state);
     writer->BeginField(field);
     irs::PostingMeta meta;
     writer->Write(docs, meta);
@@ -669,7 +669,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->Prepare(*out, state);
+    writer->Prepare(state);
     writer->BeginField(field);
     irs::PostingMeta meta;
     writer->Write(docs, meta);
@@ -695,7 +695,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->Prepare(*out, state);
+    writer->Prepare(state);
     writer->BeginField(field);
     irs::PostingMeta meta;
     writer->Write(docs, meta);
@@ -938,7 +938,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
         ASSERT_FALSE(!out);
         irs::WriteStr(*out, std::string_view("file_header"));
 
-        writer->Prepare(*out, state);
+        writer->Prepare(state);
         writer->BeginField(field);
 
         {
@@ -966,7 +966,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
 
         auto reader = irs::MakePostingsReader();
         ASSERT_NE(nullptr, reader);
-        reader->prepare(*in, state, field.index_features);
+        reader->prepare(state, field.index_features);
 
         irs::bstring in_data(in->Length() - in->Position(), 0);
         in->ReadData(&in_data[0], in_data.size());

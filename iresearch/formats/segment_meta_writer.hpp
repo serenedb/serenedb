@@ -136,31 +136,30 @@ inline void SegmentMetaWriterImpl::Write(Directory& dir, std::string& meta_file,
     throw IoError{absl::StrCat("failed to create file, path: ", meta_file)};
   }
 
-  duckdb::BinarySerializer meta_out{*out, duckdb::VersionStorageOptions()};
-  meta_out.Begin();
-  meta_out.WritePropertyWithDefault<uint64_t>(kFieldMaskSize, "mask_size",
-                                              mask_size, 0);
-  if (!parents.empty()) {
-    meta_out.WriteList(kFieldParents, "parents", parents.size(),
-                       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                         list.WriteElement<uint64_t>(parents[i]);
-                       });
-  }
-  if (!append) {
-    meta_out.WriteList(kFieldFiles, "files", files.size(),
-                       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                         list.WriteElement<std::string>(files[i]);
-                       });
-  }
-  meta_out.WriteProperty<uint32_t>(kFieldDocsCount, "docs_count",
-                                   meta.docs_count);
-  meta_out.WriteProperty<uint64_t>(kFieldByteSize, "byte_size",
-                                   size_without_mask);
-  meta_out.End();
-
   if (has_mask) {
     WriteDocumentMask(*out, compressed, mask_size);
   }
+
+  format_utils::WriteFooter(*out, [&](duckdb::Serializer& meta_out) {
+    meta_out.WritePropertyWithDefault<uint64_t>(kFieldMaskSize, "mask_size",
+                                                mask_size, 0);
+    if (!parents.empty()) {
+      meta_out.WriteList(kFieldParents, "parents", parents.size(),
+                         [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+                           list.WriteElement<uint64_t>(parents[i]);
+                         });
+    }
+    if (!append) {
+      meta_out.WriteList(kFieldFiles, "files", files.size(),
+                         [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+                           list.WriteElement<std::string>(files[i]);
+                         });
+    }
+    meta_out.WriteProperty<uint32_t>(kFieldDocsCount, "docs_count",
+                                     meta.docs_count);
+    meta_out.WriteProperty<uint64_t>(kFieldByteSize, "byte_size",
+                                     size_without_mask);
+  });
 
   meta.files = std::move(files);
   meta.docs_mask_size = chain_bytes + mask_size;

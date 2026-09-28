@@ -47,7 +47,6 @@
 #include "iresearch/utils/automaton.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/containers/monotonic_buffer.hpp"
-#include "iresearch/utils/encryption.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/memory.hpp"
@@ -740,7 +739,7 @@ void FieldWriter::Impl::prepare(const FlushState& state) {
 
   _blocks_out = &_idx->BlocksOut();
 
-  _pw->Prepare(*_blocks_out, state);
+  _pw->Prepare(state);
 
   _suffix.Reset();
   _stats.Reset();
@@ -2650,13 +2649,12 @@ void FieldReader::Impl::prepare(const ReaderState& state) {
                entries.size(), " entries but `.idx` body stream is null");
     return;
   }
-  _terms_in->Seek(state.idx->BodyStart());
 
   IndexFeatures features = IndexFeatures::None;
   for (const auto& [id, meta] : entries) {
     features = features | meta.features;
   }
-  _pr->prepare(*_terms_in, state, features);
+  _pr->prepare(state, features);
 
   _sorted_ids.reserve(entries.size());
   for (const auto& [id, meta] : entries) {

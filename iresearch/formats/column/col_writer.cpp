@@ -82,7 +82,6 @@ void ColWriter::EnsureOut() {
     throw IoError{
       absl::StrCat("col writer: cannot create .col file: ", _filename)};
   }
-  format_utils::WriteHeader(*_out, kFormatName, kFormatVersion);
   _write_ctx = std::make_unique<WriteContext>(*_db, *_out);
 }
 
@@ -245,25 +244,21 @@ bool ColWriter::Commit(uint64_t target_row,
       norm_columns.push_back(nw.get());
     }
   }
-  const uint64_t footer_offset = _out->Position();
-  duckdb::BinarySerializer serializer{*_out, duckdb::VersionStorageOptions()};
-  serializer.Begin();
-  serializer.WriteList(kFooterSlotColumns, "columns", _columns.size(),
-                       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                         list.WriteObject([&](duckdb::Serializer& obj) {
-                           SerializeColumnMeta(obj, _columns[i]->Meta());
-                         });
+  format_utils::WriteFooter(*_out, [&](duckdb::Serializer& footer) {
+    footer.WriteList(kFooterSlotColumns, "columns", _columns.size(),
+                     [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+                       list.WriteObject([&](duckdb::Serializer& obj) {
+                         SerializeColumnMeta(obj, _columns[i]->Meta());
                        });
-  serializer.WriteList(kFooterSlotNormColumns, "norm_columns",
-                       norm_columns.size(),
-                       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                         list.WriteObject([&](duckdb::Serializer& obj) {
-                           SerializeNormColumn(obj, *norm_columns[i]);
-                         });
+                     });
+    footer.WriteList(kFooterSlotNormColumns, "norm_columns",
+                     norm_columns.size(),
+                     [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+                       list.WriteObject([&](duckdb::Serializer& obj) {
+                         SerializeNormColumn(obj, *norm_columns[i]);
                        });
-  serializer.End();
-  _out->WriteU64(footer_offset);
-  format_utils::WriteFooter(*_out);
+                     });
+  });
   _out.reset();
   _committed = true;
   return true;

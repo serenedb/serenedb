@@ -39,7 +39,7 @@ class SortedIndexStressTestCase : public tests::IndexTestBase {};
 constexpr const char kSortedReason[] = "sorted-index not supported";
 
 const auto kTestValuesSorted = ::testing::Combine(
-  ::testing::ValuesIn(tests::GetDirectories<tests::kTypesDefaultRot13>()));
+  ::testing::ValuesIn(tests::GetDirectories<tests::kTypesDefault>()));
 
 }  // namespace
 

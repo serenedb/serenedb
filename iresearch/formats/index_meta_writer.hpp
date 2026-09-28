@@ -87,9 +87,7 @@ inline bool IndexMetaWriterImpl::prepare(Directory& dir, IndexMeta& meta,
       absl::StrCat("Failed to create file, path: ", pending_filename)};
   }
 
-  {
-    duckdb::BinarySerializer meta_out{*out, duckdb::VersionStorageOptions()};
-    meta_out.Begin();
+  format_utils::WriteFooter(*out, [&](duckdb::Serializer& meta_out) {
     meta_out.WriteProperty<uint64_t>(kFieldSegCounter, "seg_counter",
                                      meta.seg_counter);
     meta_out.WriteList(kFieldSegments, "segments", meta.segments.size(),
@@ -109,9 +107,7 @@ inline bool IndexMetaWriterImpl::prepare(Directory& dir, IndexMeta& meta,
       meta_out.WriteObject(kFieldPayload, "payload",
                            [&](duckdb::Serializer& obj) { payload(obj); });
     }
-
-    meta_out.End();
-  }  // Important to close output here
+  });
 
   // Only noexcept operations below
   _dir = &dir;

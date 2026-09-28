@@ -359,8 +359,6 @@ set(IResearch_core_sources
     ./store/store_utils.cpp
     ./utils/attributes.cpp
     ./utils/automaton_utils.cpp
-    ./utils/encryption.cpp
-    ./utils/ctr_encryption.cpp
     ./utils/directory_utils.cpp
     ./utils/mmap_utils.cpp
     ./utils/index_utils.cpp

@@ -47,8 +47,6 @@ namespace irs {
 class ColumnReader;
 class NormColumnReader;
 
-inline constexpr std::string_view kFormatName = "iresearch_col";
-inline constexpr int32_t kFormatVersion = 0;
 inline constexpr std::string_view kFormatExt = "col";
 
 inline constexpr duckdb::field_id_t kFooterSlotColumns = 100;

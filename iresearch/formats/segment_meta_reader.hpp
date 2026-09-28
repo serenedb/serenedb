@@ -37,32 +37,31 @@ struct SegmentMetaReaderImpl : public SegmentMetaReader {
             std::string_view filename) final;
 };
 
-inline uint64_t ReadMaskSize(duckdb::BinaryDeserializer& meta_in) {
+inline uint64_t ReadMaskSize(duckdb::Deserializer& meta_in) {
   return meta_in.ReadPropertyWithExplicitDefault<uint64_t>(
     SegmentMetaWriterImpl::kFieldMaskSize, "mask_size", 0);
 }
 
-inline DocumentMask ReadDocumentMask(IndexInput& in, uint64_t mask_size,
-                                     std::string_view file) {
-  const auto length = in.Length();
-
-  if (mask_size > length - in.Position()) [[unlikely]] {
-    throw IndexError{absl::StrCat(
-      "Corrupted segment meta, path: ", file, ", mask size(", mask_size,
-      ") overlaps the metadata in a file of ", length, " byte(s)")};
+inline void CheckMaskSize(uint64_t mask_size, uint64_t data_size,
+                          std::string_view file) {
+  if (mask_size != data_size) [[unlikely]] {
+    throw IndexError{
+      absl::StrCat("Corrupted segment meta, path: ", file, ", mask size(",
+                   mask_size, ") differs from the data size(", data_size, ")")};
   }
+}
 
-  const auto offset = length - mask_size;
-  if (const auto* data = in.ReadVolatile(offset, mask_size)) {
+inline DocumentMask ReadDocumentMask(IndexInput& in, uint64_t mask_size) {
+  if (const auto* data = in.ReadVolatile(0, mask_size)) {
     return DocumentMask::Read(reinterpret_cast<const char*>(data), mask_size);
   }
   bstring blob(mask_size, 0);
-  in.ReadData(offset, blob.data(), mask_size);
+  in.ReadData(0, blob.data(), mask_size);
   return DocumentMask::Read(reinterpret_cast<const char*>(blob.data()),
                             blob.size());
 }
 
-inline bool ReadFiles(duckdb::BinaryDeserializer& meta_in,
+inline bool ReadFiles(duckdb::Deserializer& meta_in,
                       std::vector<std::string>& files) {
   bool present = false;
   meta_in.ReadOptionalList(
@@ -74,7 +73,7 @@ inline bool ReadFiles(duckdb::BinaryDeserializer& meta_in,
   return present;
 }
 
-inline std::vector<uint64_t> ReadParents(duckdb::BinaryDeserializer& meta_in) {
+inline std::vector<uint64_t> ReadParents(duckdb::Deserializer& meta_in) {
   std::vector<uint64_t> parents;
   meta_in.ReadOptionalList(
     SegmentMetaWriterImpl::kFieldParents, "parents",
@@ -86,19 +85,27 @@ inline std::vector<uint64_t> ReadParents(duckdb::BinaryDeserializer& meta_in) {
 
 inline uint64_t ReadLink(IndexInput& in, std::string_view file,
                          std::vector<std::string>& files, bool& has_files) {
-  duckdb::BinaryDeserializer meta_in{in};
-  meta_in.Begin();
-  const auto mask_size = ReadMaskSize(meta_in);
-  ReadParents(meta_in);
+  uint64_t mask_size = 0;
+  const auto footer = format_utils::ReadFooter(
+    in, file, [&](duckdb::Deserializer& meta_in, uint64_t) {
+      mask_size = ReadMaskSize(meta_in);
+      ReadParents(meta_in);
 
-  if (ReadFiles(meta_in, files)) {
-    if (has_files) [[unlikely]] {
-      throw IndexError{
-        absl::StrCat("Corrupted document mask chain, path: ", file,
-                     ", a second link carries the segment file list")};
-    }
-    has_files = true;
-  }
+      if (ReadFiles(meta_in, files)) {
+        if (has_files) [[unlikely]] {
+          throw IndexError{
+            absl::StrCat("Corrupted document mask chain, path: ", file,
+                         ", a second link carries the segment file list")};
+        }
+        has_files = true;
+      }
+
+      meta_in.ReadProperty<uint32_t>(SegmentMetaWriterImpl::kFieldDocsCount,
+                                     "docs_count");
+      meta_in.ReadProperty<uint64_t>(SegmentMetaWriterImpl::kFieldByteSize,
+                                     "byte_size");
+    });
+  CheckMaskSize(mask_size, footer.data_size, file);
 
   return mask_size;
 }
@@ -124,16 +131,23 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
     throw IoError{absl::StrCat("Failed to open file, path: ", filename)};
   }
 
-  duckdb::BinaryDeserializer meta_in{*in};
-  meta_in.Begin();
-  const auto mask_size = ReadMaskSize(meta_in);
-  const auto parents = ReadParents(meta_in);
+  uint64_t mask_size = 0;
+  std::vector<uint64_t> parents;
   std::vector<std::string> files;
-  bool has_files = ReadFiles(meta_in, files);
-  const auto docs_count = meta_in.ReadProperty<uint32_t>(
-    SegmentMetaWriterImpl::kFieldDocsCount, "docs_count");
-  const auto size = meta_in.ReadProperty<uint64_t>(
-    SegmentMetaWriterImpl::kFieldByteSize, "byte_size");
+  bool has_files = false;
+  uint32_t docs_count = 0;
+  uint64_t size = 0;
+  const auto footer = format_utils::ReadFooter(
+    *in, filename, [&](duckdb::Deserializer& meta_in, uint64_t) {
+      mask_size = ReadMaskSize(meta_in);
+      parents = ReadParents(meta_in);
+      has_files = ReadFiles(meta_in, files);
+      docs_count = meta_in.ReadProperty<uint32_t>(
+        SegmentMetaWriterImpl::kFieldDocsCount, "docs_count");
+      size = meta_in.ReadProperty<uint64_t>(
+        SegmentMetaWriterImpl::kFieldByteSize, "byte_size");
+    });
+  CheckMaskSize(mask_size, footer.data_size, filename);
 
   if (mask_size == 0 && !parents.empty()) [[unlikely]] {
     throw IndexError{absl::StrCat("Corrupted document mask chain of '", name,
@@ -146,7 +160,7 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
   uint32_t docs_mask_chain = 0;
 
   if (mask_size != 0) {
-    auto builder = ReadDocumentMask(*in, mask_size, filename);
+    auto builder = ReadDocumentMask(*in, mask_size);
     docs_mask_size = mask_size;
     docs_mask_chain = 1;
 
@@ -176,7 +190,7 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
                                       name, "', maskless link: ", file)};
       }
 
-      builder.Merge(ReadDocumentMask(*mask_in, link_size, file));
+      builder.Merge(ReadDocumentMask(*mask_in, link_size));
 
       docs_mask_size += link_size;
       ++docs_mask_chain;

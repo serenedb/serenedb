@@ -356,8 +356,6 @@ class FormatTestCase : public IndexTestBase {
     bool _has_pos;
   };
 
-  bool supports_encryption() const noexcept { return true; }
-
   bool supports_columnstore_headers() const noexcept { return true; }
 
   template<typename It>
@@ -459,8 +457,6 @@ class FormatTestCase : public IndexTestBase {
     const irs::Directory& dir,
     const std::unordered_set<std::string>& expect_additional = {});
 };
-
-class FormatTestCaseWithEncryption : public FormatTestCase {};
 
 }  // namespace tests
 namespace irs {

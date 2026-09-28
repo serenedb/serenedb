@@ -103,8 +103,7 @@ struct PostingsWriter {
   };
 
   virtual ~PostingsWriter() = default;
-  // out - corresponding terms stream
-  virtual void Prepare(IndexOutput& out, const FlushState& state) = 0;
+  virtual void Prepare(const FlushState& state) = 0;
   virtual void BeginField(const FieldProperties& meta) = 0;
   virtual void SetTermPayloadWriter(TermPayloadWriter*) {}
   virtual void Write(TermPostings& docs, PostingMeta& meta) = 0;
@@ -154,10 +153,8 @@ struct PostingsReader {
 
   virtual PostingsHandles Handles() const noexcept = 0;
 
-  // in - corresponding stream
   // features - the set of features available for segment
-  virtual void prepare(DataInput& in, const ReaderState& state,
-                       IndexFeatures features) = 0;
+  virtual void prepare(const ReaderState& state, IndexFeatures features) = 0;
 
   // Parses input block "in" and populate "attrs" collection with
   // attributes.

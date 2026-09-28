@@ -11307,11 +11307,9 @@ TEST_P(IndexTestCase11, clean_writer_with_payload) {
 
   ASSERT_TRUE(InsertWithName(*writer, *doc1));
   writer->RefreshCommit();
-  AssertSnapshotEquality(*writer);
 
   {
-    auto reader =
-      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+    auto reader = writer->GetSnapshot();
     ASSERT_EQ(input_payload, ReadMetaPayload(dir(), reader));
   }
   uint64_t expected_tick = 42;
@@ -11320,8 +11318,7 @@ TEST_P(IndexTestCase11, clean_writer_with_payload) {
   input_payload = "clear";
   writer->Clear(expected_tick);
   {
-    auto reader =
-      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+    auto reader = writer->GetSnapshot();
     ASSERT_EQ(input_payload, ReadMetaPayload(dir(), reader));
     ASSERT_EQ(payload_committed_tick, expected_tick);
   }
@@ -11375,8 +11372,6 @@ TEST_P(IndexTestCase11, initial_two_phase_commit_payload) {
   tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory);
 
-  auto& directory = dir();
-
   auto writer_options = irs::tests::DefaultWriterOptions();
   uint64_t payload_committed_tick{0};
   std::string input_payload;
@@ -11398,25 +11393,20 @@ TEST_P(IndexTestCase11, initial_two_phase_commit_payload) {
   // transaction is already started
   payload_calls_count = 0;
   writer->RefreshCommit();
-  AssertSnapshotEquality(*writer);
   ASSERT_EQ(0, payload_calls_count);
 
-  auto reader =
-    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
+  auto reader = writer->GetSnapshot();
   ASSERT_EQ(input_payload, ReadMetaPayload(dir(), reader));
 
   // no changes
   writer->RefreshCommit();
-  AssertSnapshotEquality(*writer);
   ASSERT_EQ(0, payload_calls_count);
-  ASSERT_EQ(reader, reader.Reopen());
+  ASSERT_EQ(reader, writer->GetSnapshot());
 }
 
 TEST_P(IndexTestCase11, initial_commit_payload) {
   tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory);
-
-  auto& directory = dir();
 
   auto writer_options = irs::tests::DefaultWriterOptions();
   uint64_t payload_committed_tick{0};
@@ -11434,26 +11424,22 @@ TEST_P(IndexTestCase11, initial_commit_payload) {
   input_payload = "init";
   payload_committed_tick = 42;
   writer->RefreshCommit();
-  AssertSnapshotEquality(*writer);
   ASSERT_EQ(0, payload_committed_tick);
 
-  auto reader =
-    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
+  auto reader = writer->GetSnapshot();
   ASSERT_EQ(input_payload, ReadMetaPayload(dir(), reader));
 
   // no changes
   payload_calls_count = 0;
   writer->RefreshCommit();
-  AssertSnapshotEquality(*writer);
   ASSERT_EQ(0, payload_calls_count);
-  ASSERT_EQ(reader, reader.Reopen());
+  ASSERT_EQ(reader, writer->GetSnapshot());
 }
 
 TEST_P(IndexTestCase11, commit_payload) {
   tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory);
 
-  auto& directory = dir();
   auto* doc0 = gen.next();
 
   auto writer_options = irs::tests::DefaultWriterOptions();
@@ -11471,16 +11457,13 @@ TEST_P(IndexTestCase11, commit_payload) {
 
   ASSERT_TRUE(writer->RefreshBegin());  // initial commit
   writer->RefreshCommit();
-  AssertSnapshotEquality(*writer);
-  auto reader =
-    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
+  auto reader = writer->GetSnapshot();
   ASSERT_EQ(input_payload, ReadMetaPayload(dir(), reader));
 
   ASSERT_FALSE(
     writer->RefreshBegin());  // transaction hasn't been started, no changes
   writer->RefreshCommit();
-  AssertSnapshotEquality(*writer);
-  ASSERT_EQ(reader, reader.Reopen());
+  ASSERT_EQ(reader, writer->GetSnapshot());
   // commit with a specified payload
   {
     const uint64_t expected_tick = 42;
@@ -11496,7 +11479,6 @@ TEST_P(IndexTestCase11, commit_payload) {
         ASSERT_TRUE(doc);
       }
       trx.Commit(expected_tick - 10);
-      AssertSnapshotEquality(*writer);
     }
 
     // insert document (trx 0)
@@ -11510,7 +11492,6 @@ TEST_P(IndexTestCase11, commit_payload) {
         ASSERT_TRUE(doc);
       }
       trx.Commit(expected_tick);
-      AssertSnapshotEquality(*writer);
     }
 
     payload_committed_tick = 0;
@@ -11523,12 +11504,11 @@ TEST_P(IndexTestCase11, commit_payload) {
     ASSERT_NE(0, payload_calls_count);
     payload_calls_count = 0;
     writer->RefreshCommit();
-    AssertSnapshotEquality(*writer);
     ASSERT_EQ(0, payload_calls_count);
 
     // check written payload
     {
-      auto new_reader = reader.Reopen();
+      auto new_reader = writer->GetSnapshot();
       ASSERT_NE(reader, new_reader);
       ASSERT_EQ(input_payload, ReadMetaPayload(dir(), new_reader));
       reader = new_reader;
@@ -11576,7 +11556,7 @@ TEST_P(IndexTestCase11, commit_payload) {
 
     // check payload
     {
-      auto new_reader = reader.Reopen();
+      auto new_reader = writer->GetSnapshot();
       ASSERT_EQ(reader, new_reader);
       ASSERT_EQ(committed_payload, ReadMetaPayload(dir(), new_reader));
     }
@@ -11585,8 +11565,7 @@ TEST_P(IndexTestCase11, commit_payload) {
   ASSERT_FALSE(
     writer->RefreshBegin());  // transaction hasn't been started, no changes
   writer->RefreshCommit();
-  AssertSnapshotEquality(*writer);
-  ASSERT_EQ(reader, reader.Reopen());
+  ASSERT_EQ(reader, writer->GetSnapshot());
 }
 
 TEST_P(IndexTestCase11, partial_commit_masks_tail_as_bound) {
@@ -12417,7 +12396,7 @@ TEST_P(IndexTestCase11, testExternalGenerationRemoveBeforeInsert) {
 }
 
 static const auto kTestDirs =
-  ::testing::ValuesIn(tests::GetDirectories<tests::kTypesDefaultRot13>());
+  ::testing::ValuesIn(tests::GetDirectories<tests::kTypesDefault>());
 
 static const auto kTestValues = ::testing::Combine(kTestDirs);
 

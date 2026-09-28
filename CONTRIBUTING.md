@@ -192,6 +192,17 @@ SQL examples are backed by sqllogic tests, so an example that stops working fail
 - Import the component once per page with `import SqlLogicTest from "@site/src/components/SqlLogicTest";`, and pass `hideResult` to render the query without its output.
 - An `id` that matches no marker renders **nothing** -- no error, no warning, just a missing example. Grep for the marker after you write the tag.
 
+## Search index file compatibility
+
+Every file an iresearch segment writes (`segments_N`, `.sm`, `.doc`, `.pos`, `.pay`, `.idx`, `.col`) has one layout: the file's data from offset 0, then a footer (a `BinarySerializer` object holding `data_crc32c` and the file's own fields), then 8 bytes with the footer's CRC32C and its length. `format_utils::WriteFooter` writes it and `format_utils::ReadFooter` reads it and checks the footer checksum; no file carries a header or a version. Keep files readable across releases:
+
+- **New field:** optional with a default, written with `WritePropertyWithDefault` and read with `ReadPropertyWithDefault` or `ReadPropertyWithExplicitDefault`. When older releases must read files that use it, gate the write with `ShouldSerialize(StorageVersion::...)` and write the older form otherwise.
+- **Removed field:** read it with `ReadDeletedProperty`.
+- **Never** reuse a field id, change a default, or change what an existing field means.
+- **New data layout** (block encoding, term dictionary, ...): select it with a new field, and keep reading the old layout while it is supported.
+- **Every field is read:** `ReadFooter` checks the end of the object, so every reader of a file reads all of its footer (`segments_N` is read with its payload reader).
+- **Breaking compatibility** is a deliberate choice, made in its own PR and listed in the release notes. The first break records in `segments_N` the storage version the index was written for (absent means `SERENEDB_V1`), and releases refuse indexes older than the lowest version they read.
+
 ## VSCode Setup
 
 ### Profile

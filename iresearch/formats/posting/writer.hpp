@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <duckdb/common/serializer/serializer.hpp>
+
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/formats.hpp"
@@ -119,15 +121,10 @@ inline ScoreBoundWriter::ptr PrepareScoreBoundWriter(ScorerPtr scorer,
 //                          ^                       ^       (level 0 skip point)
 class PostingsWriterBase : public PostingsWriter {
  public:
-  static constexpr std::string_view kDocFormatName =
-    "iresearch_10_postings_documents";
   static constexpr std::string_view kDocExt = "doc";
-  static constexpr std::string_view kPosFormatName =
-    "iresearch_10_postings_positions";
   static constexpr std::string_view kPosExt = "pos";
-  static constexpr std::string_view kPayFormatName =
-    "iresearch_10_postings_payloads";
   static constexpr std::string_view kPayExt = "pay";
+  static constexpr duckdb::field_id_t kFooterSlotBlockSize = 100;
 
   FieldStats EndField() final {
     if (_features.HasVector() && _term_pay != nullptr) {
@@ -151,10 +148,20 @@ class PostingsWriterBase : public PostingsWriter {
     _last_state.clear();
   }
 
-  void Prepare(IndexOutput& out, const FlushState& state) final;
+  void Prepare(const FlushState& state) final;
   void Encode(BufferedOutput& out, const PostingMeta& state) final;
 
  protected:
+  static void WriteDocFooter(duckdb::Serializer& footer) {
+    footer.WriteProperty<uint32_t>(kFooterSlotBlockSize, "block_size",
+                                   doc_limits::kBlockSize);
+  }
+
+  static void WritePosFooter(duckdb::Serializer& footer) {
+    footer.WriteProperty<uint32_t>(kFooterSlotBlockSize, "block_size",
+                                   pos_limits::kBlockSize);
+  }
+
   explicit PostingsWriterBase(IResourceManager& rm)
     : _skip{doc_limits::kBlockSize, doc_limits::kSkipSize, rm} {}
 
@@ -290,20 +297,19 @@ inline void PostingsWriterBase::WriteSkip(size_t level,
   }
 }
 
-inline void PostingsWriterBase::Prepare(IndexOutput& out,
-                                        const FlushState& state) {
+inline void PostingsWriterBase::Prepare(const FlushState& state) {
   SDB_ASSERT(state.dir);
   SDB_ASSERT(!IsNull(state.name));
 
   std::string name;
 
   // Prepare document stream
-  format_utils::PrepareOutput(name, _doc_out, state, kDocExt, kDocFormatName);
+  format_utils::PrepareOutput(name, _doc_out, state, kDocExt);
 
   if (IndexFeatures::None != (state.index_features & IndexFeatures::Pos)) {
     // Prepare proximity stream
     _pos.Reset();
-    format_utils::PrepareOutput(name, _pos_out, state, kPosExt, kPosFormatName);
+    format_utils::PrepareOutput(name, _pos_out, state, kPosExt);
   }
 
   // The ".pay" stream holds position-level offsets (IndexFeatures::Offs) and/or
@@ -316,12 +322,10 @@ inline void PostingsWriterBase::Prepare(IndexOutput& out,
     _pay.Reset();
   }
   if (has_offs || has_vec) {
-    format_utils::PrepareOutput(name, _pay_out, state, kPayExt, kPayFormatName);
+    format_utils::PrepareOutput(name, _pay_out, state, kPayExt);
   }
 
   _skip.Prepare(doc_limits::kMaxSkipLevels, state.doc_count);
-
-  out.WriteV32(_skip.Skip0());  // Write postings block size
 
   _writer = PrepareScoreBoundWriter(state.scorer, doc_limits::kMaxSkipLevels);
   _norms = state.norms;
@@ -640,14 +644,14 @@ void PostingsWriterImpl<FormatTraits>::AddPosition(uint32_t pos) {
 
 template<typename FormatTraits>
 void PostingsWriterImpl<FormatTraits>::End() {
-  format_utils::WriteFooter(*_doc_out);
+  format_utils::WriteFooter(*_doc_out, WriteDocFooter);
   _doc_out.reset();  // ensure stream is closed
 
   if (_pos_out) {
     if (_pos.size != 0) {
       FlushTailPos();
     }
-    format_utils::WriteFooter(*_pos_out);
+    format_utils::WriteFooter(*_pos_out, WritePosFooter);
     _pos_out.reset();  // ensure stream is closed
   } else {
     SDB_ASSERT(_pos.size == 0);
@@ -659,7 +663,7 @@ void PostingsWriterImpl<FormatTraits>::End() {
     if (_pay.size != 0) {
       FlushTailPay();
     }
-    format_utils::WriteFooter(*_pay_out);
+    format_utils::WriteFooter(*_pay_out, WritePosFooter);
     _pay_out.reset();  // ensure stream is closed
   } else {
     SDB_ASSERT(_pay.size == 0);

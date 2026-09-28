@@ -82,35 +82,37 @@ inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
     throw IoError{absl::StrCat("Failed to open file, path: ", filename)};
   }
 
-  duckdb::BinaryDeserializer meta_in{*in};
-  meta_in.Begin();
-  const auto cnt = meta_in.ReadProperty<uint64_t>(
-    IndexMetaWriterImpl::kFieldSegCounter, "seg_counter");
+  uint64_t cnt = 0;
   std::vector<IndexSegment> segments;
   std::vector<uint32_t> invisible;
-  meta_in.ReadList(
-    IndexMetaWriterImpl::kFieldSegments, "segments",
-    [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
-      auto& segment = segments.emplace_back();
-      auto& invisible_count = invisible.emplace_back();
-      list.ReadObject([&](duckdb::Deserializer& obj) {
-        segment.filename = obj.ReadProperty<std::string>(
-          IndexMetaWriterImpl::kSegmentFieldFilename, "filename");
-        invisible_count = obj.ReadPropertyWithExplicitDefault<uint32_t>(
-          IndexMetaWriterImpl::kSegmentFieldInvisibleCount, "invisible_count",
-          0);
-      });
+  format_utils::ReadFooter(
+    *in, filename, [&](duckdb::Deserializer& meta_in, uint64_t) {
+      cnt = meta_in.ReadProperty<uint64_t>(
+        IndexMetaWriterImpl::kFieldSegCounter, "seg_counter");
+      meta_in.ReadList(
+        IndexMetaWriterImpl::kFieldSegments, "segments",
+        [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
+          auto& segment = segments.emplace_back();
+          auto& invisible_count = invisible.emplace_back();
+          list.ReadObject([&](duckdb::Deserializer& obj) {
+            segment.filename = obj.ReadProperty<std::string>(
+              IndexMetaWriterImpl::kSegmentFieldFilename, "filename");
+            invisible_count = obj.ReadPropertyWithExplicitDefault<uint32_t>(
+              IndexMetaWriterImpl::kSegmentFieldInvisibleCount,
+              "invisible_count", 0);
+          });
+        });
+      if (payload) {
+        const bool present = meta_in.OnOptionalPropertyBegin(
+          IndexMetaWriterImpl::kFieldPayload, "payload");
+        if (present) {
+          meta_in.OnObjectBegin();
+          payload(meta_in);
+          meta_in.OnObjectEnd();
+        }
+        meta_in.OnOptionalPropertyEnd(present);
+      }
     });
-  if (payload) {
-    const bool present = meta_in.OnOptionalPropertyBegin(
-      IndexMetaWriterImpl::kFieldPayload, "payload");
-    if (present) {
-      meta_in.OnObjectBegin();
-      payload(meta_in);
-      meta_in.OnObjectEnd();
-    }
-    meta_in.OnOptionalPropertyEnd(present);
-  }
 
   for (size_t i = 0; auto& segment : segments) {
     GetSegmentMetaReader()->read(dir, segment.meta, segment.filename);

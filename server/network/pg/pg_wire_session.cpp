@@ -2188,8 +2188,7 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
   oids.reserve(param_count);
   for (uint16_t i = 0; i < param_count; ++i) {
     oids.emplace_back(
-      sdb::pg::Type2Oid(ResolveExpectedType(prepared.data->value_map, i),
-                        &_connection_ctx->GetClientContext()));
+      sdb::pg::Type2Oid(ResolveExpectedType(prepared.data->value_map, i)));
   }
   WriteParameterDescription(this->_send, oids);
 

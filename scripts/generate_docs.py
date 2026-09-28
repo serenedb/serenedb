@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 import argparse
 from builtins import tuple
+import collections
 import html
 import pathlib
+import posixpath
 import re
 import sys
 
@@ -61,6 +63,13 @@ BACKTICKS_RE = re.compile(r"`+")
 # heading level); \{ and \} are literal braces; [^}]* is anything up to the
 # closing brace. Group 1 is the heading without the anchor.
 HEADING_ANCHOR_RE = re.compile(r"^(#{1,6}\s.*?)\s*\{#[^}]*\}\s*$")
+# The same heading, split into its text (group 1) and its id (group 2).
+PINNED_HEADING_RE = re.compile(r"^#{1,6}\s+(.*?)\s*\{#([^}]*)\}\s*$")
+# A link with an anchor, "](../copy/index.md#copy-to)": group 1 is the page
+# (empty for one on the same page), group 2 the anchor.
+ANCHOR_LINK_RE = re.compile(r"\]\(([^)\s#]*)#([^)\s]+)\)")
+# A fence, also one quoted by an admonition or a callout.
+QUOTED_FENCE_RE = re.compile(r"^(>\s?)*\s*(```|~~~)")
 BLANK_RUN_RE = re.compile(r"\n{3,}")
 
 
@@ -237,6 +246,72 @@ def clean(body: str) -> str:
     return text + "\n" if text else ""
 
 
+def shell_slug(title: str) -> str:
+    """Slug() in server/docs/docs_search.cpp, what the shell matches a link's
+    anchor against: ASCII letters and digits lowercased, "-", "_" and
+    non-ASCII bytes kept, a space made "-", anything else dropped."""
+    slug = bytearray()
+    for byte in title.encode("utf-8"):
+        if byte >= 0x80 or chr(byte).isalnum() or chr(byte) in "-_":
+            slug.append(ord(chr(byte).lower()) if byte < 0x80 else byte)
+        elif byte == ord(" "):
+            slug.append(ord("-"))
+    return slug.decode("utf-8")
+
+
+def pinned_slugs(body: str) -> dict[str, str]:
+    """Each heading id the page pins, "{#copy-from}", mapped to the shell's
+    slug of that heading's title, "copy--from". An id is left out when
+    another heading on the page has the same slug ("a || b" and "a && b" are
+    both a--b): the shell would open the first of them."""
+    slugs = {}
+    seen = collections.Counter()
+    fence = False
+    for line in body.split("\n"):
+        if FENCE_RE.match(line):
+            fence = not fence
+        elif not fence and (match := HEADING_RE.match(line)):
+            pinned = PINNED_HEADING_RE.match(line)
+            slug = shell_slug(plain_heading(inline_markdown(pinned.group(1) if pinned else match.group(2))))
+            seen[slug] += 1
+            if pinned:
+                slugs[pinned.group(2)] = slug
+    return {pin: slug for pin, slug in slugs.items() if seen[slug] == 1}
+
+
+def linked_page(page: str, target: str, pages: dict) -> "str | None":
+    """The page of pages a link from page to target opens, trying the
+    suffixes the shell tries, or None for a link outside the docs."""
+    if not target:
+        return page
+    if "://" in target or target.startswith(("/", "mailto:")):
+        return None
+    path = posixpath.normpath(posixpath.join(posixpath.dirname(page), target))
+    candidates = [path] + [path + suffix for suffix in (".md", ".mdx", "/index.md", "/index.mdx")]
+    return next((candidate for candidate in candidates if candidate in pages), None)
+
+
+def follow_pinned_ids(page: str, content: str, pinned: dict[str, dict[str, str]]) -> str:
+    """Points each link to a pinned heading id at the shell's slug of that
+    heading. clean() strips the ids, and the shell finds a section only by the
+    slug of its title, so #copy-from would open the top of the page (or,
+    by its slug prefix, "COPY FROM DATABASE ... TO") instead of "COPY ...
+    FROM"."""
+    def follow(match: re.Match) -> str:
+        target, anchor = match.groups()
+        slug = pinned.get(linked_page(page, target, pinned) or "", {}).get(anchor)
+        return f"]({target}#{slug})" if slug else match.group(0)
+
+    lines = content.split("\n")
+    fence = False
+    for i, line in enumerate(lines):
+        if QUOTED_FENCE_RE.match(line):
+            fence = not fence
+        elif not fence:
+            lines[i] = ANCHOR_LINK_RE.sub(follow, line)
+    return "\n".join(lines)
+
+
 SPLIT_MODES = ("headings", "page")
 HEADING_RE = re.compile(r"^(#{1,6}) (.*)$")
 # Inline formatting that must not leak into keys and titles: `code`, **bold**,
@@ -296,6 +371,10 @@ def split_units(page: str, title: str, body: str) -> list[Unit]:
 def collect(docs_dir: pathlib.Path, snippets: dict, report) -> list[Unit]:
     units = []
     errors = []
+    # Every page is cleaned first: a link is pointed at a heading id only
+    # once the page pinning it is read.
+    pages = []
+    pinned = {}
     for path in sorted(docs_dir.rglob("*")):
         if not path.is_file() or path.suffix not in EXTENSIONS:
             continue
@@ -312,7 +391,11 @@ def collect(docs_dir: pathlib.Path, snippets: dict, report) -> list[Unit]:
         if split not in SPLIT_MODES:
             errors.append(f"{rel}: frontmatter key 'split' must be one of {', '.join(SPLIT_MODES)} (got {split!r})")
             continue
-        content = clean(sqllogic_snippets.inline(body, snippets, rel, report))
+        body = sqllogic_snippets.inline(body, snippets, rel, report)
+        pinned[rel] = pinned_slugs(body)
+        pages.append((rel, title, split, clean(body)))
+    for rel, title, split, content in pages:
+        content = follow_pinned_ids(rel, content, pinned)
         page_units = split_units(rel, title, content) if split == "headings" else [Unit(rel, title, "", content)]
         seen = set()
         for unit in page_units:

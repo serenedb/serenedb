@@ -257,8 +257,41 @@ def test_docs_generation_turns_inline_html_into_markdown(
             "Tick: ``a`b``.\n"
             "Tags as code: `<em>x</em>`, [`</a>`](#x), `` `a` <b> ``.\n\n"
             "| Operator | Example |\n| --- | --- |\n"
-            "| [`a \\|\\| b`](#concat) | `'x' \\|\\| 'y'` |\n\n"
+            "| [`a \\|\\| b`](#concatenation) | `'x' \\|\\| 'y'` |\n\n"
             '## Concatenation\n)sdbdoc"') in generated
+
+
+def test_docs_generation_points_links_at_the_shells_slug_of_a_pinned_id(
+        tmp_path: Path) -> None:
+    """The shell finds a section by the slug of its title and never sees the
+    heading ids the site pins, so a link to one is pointed at that slug."""
+    docs = tmp_path / "docs"
+    (docs / "copy").mkdir(parents=True)
+    (docs / "copy" / "index.md").write_text(
+        "---\ntitle: COPY\nsplit: headings\n---\n"
+        "## `COPY ... FROM` {#copy-from}\n\nFrom.\n\n"
+        "## `COPY FROM DATABASE ... TO` {#copy-from-database-to}\n\nTo.\n\n"
+        "## `a || b` {#a-b-or}\n\n## `a && b` {#a-b-and}\n\n"
+        "See [OR](#a-b-or) and [FROM](#copy-from).\n", encoding="utf-8")
+    (docs / "page.md").write_text(
+        "---\ntitle: Page\nsplit: page\n---\n"
+        "[FROM](copy/index.md#copy-from), "
+        "[TO](./copy#copy-from-database-to), "
+        "[other](copy/index.md#database), "
+        "[site](https://serenedb.com/docs/copy#copy-from).\n\n"
+        "```md\n[code](copy/index.md#copy-from)\n```\n", encoding="utf-8")
+    out = tmp_path / "docs_data.cpp"
+    r = _run(str(SCRIPTS / "generate_docs.py"), str(docs), str(out),
+             "--tests-dir", str(REPO / "tests" / "sqllogic"))
+    assert r.returncode == 0, r.stderr
+    generated = out.read_text()
+    # "a || b" and "a && b" are both a--b to the shell: that link stays.
+    assert "See [OR](#a-b-or) and [FROM](#copy--from).\n" in generated
+    assert ("[FROM](copy/index.md#copy--from), "
+            "[TO](./copy#copy-from-database--to), "
+            "[other](copy/index.md#database), "
+            "[site](https://serenedb.com/docs/copy#copy-from).\n\n"
+            "```md\n[code](copy/index.md#copy-from)\n```\n") in generated
 
 
 # Markup of the site that the shell would print as it is written: an HTML tag
@@ -291,3 +324,30 @@ def test_docs_corpus_keeps_no_site_markup() -> None:
                 leaks.add(f"{unit.path.split('#', 1)[0]}: {line}")
     assert units
     assert not leaks, sorted(leaks)[:5]
+
+
+def test_docs_corpus_links_pinned_ids_to_sections() -> None:
+    """A link to a pinned heading id is pointed at the shell's slug of that
+    heading, so each such slug must be the slug of one of the page's
+    sections as the shell holds them."""
+    sys.path.insert(0, str(SCRIPTS))
+    import generate_docs
+    import sqllogic_snippets
+    units = generate_docs.collect(
+        REPO / "docs", sqllogic_snippets.load(REPO / "tests" / "sqllogic"),
+        sqllogic_snippets.Report())
+    sections = {}
+    for unit in units:
+        if "#" in unit.path:
+            page = unit.path.split("#", 1)[0]
+            sections.setdefault(page, set()).add(
+                generate_docs.shell_slug(unit.title))
+    missing = []
+    for page, slugs in sections.items():
+        _, body = generate_docs.split_frontmatter(
+            (REPO / "docs" / page).read_text(encoding="utf-8"))
+        for pin, slug in generate_docs.pinned_slugs(body).items():
+            if slug not in slugs:
+                missing.append(f"{page}#{pin}: {slug}")
+    assert sections
+    assert not missing, missing[:5]

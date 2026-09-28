@@ -217,7 +217,7 @@ When the second argument is a JSON object, each key names a field and each value
 
 Besides the [common parameters](#parameters), both take `max_context_chars` (default 100000), the maximum size in bytes of the UTF-8 values sent in one request. A group with more text is split into parts, and each part is condensed into notes that keep what the instruction needs. The notes are then combined in further requests until they fit into one request. A value longer than the limit is split across parts, at character boundaries. If condensing stops making the notes shorter, the group fails with an error that suggests raising `max_context_chars` or `max_tokens`.
 
-## `ai_embed` {#ai_embed}
+## `ai_embed(text, model, secret_name)` {#ai_embed}
 
 `ai_embed(text, model [, secret_name] [, dimensions])` sends `text` to the embedding `model` and returns the embedding as a `FLOAT[]`. The vector's length is the model's embedding dimension, 384 for `all-minilm`:
 
@@ -367,12 +367,12 @@ Embed each row once, store the vector in a fixed-size `FLOAT[N]` column and buil
 
 <SqlLogicTest id="sql/functions/ai_ollama/build_index" />
 
-Then embed the query text at search time and rank by vector distance. The embedding model maps semantically related words close together:
+Then embed the query text at search time and rank by vector distance — the embedding model maps semantically related words close together. The index uses the cosine metric, so rank with its operator `<=>`; another operator would compute distances without the index:
 
 ```sql
 SELECT id, name
 FROM catalog_idx
-ORDER BY embedding <-> ai_embed('tropical fruit', 'all-minilm', 'local_ai')::FLOAT[384]
+ORDER BY embedding <=> ai_embed('tropical fruit', 'all-minilm', 'local_ai')::FLOAT[384]
 LIMIT 3;
 ```
 

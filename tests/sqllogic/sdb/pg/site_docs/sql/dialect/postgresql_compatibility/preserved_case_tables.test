@@ -4,6 +4,8 @@ statement ok
 SET preserve_identifier_case = true;
 
 # DOCS_TEST_RAW
+#| SET preserve_identifier_case = true;
+#|
 #| CREATE TABLE MyOtheRTaBLe (x INTEGER);
 #|
 #| SELECT * FROM "MyOtheRTaBLe";

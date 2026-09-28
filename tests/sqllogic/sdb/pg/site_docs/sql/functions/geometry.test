@@ -110,6 +110,14 @@ SELECT ST_AsText(ST_GeomFromText('POINT(1 2)')) AS geom;
 geom
 POINT (1 2)
 
+# DOCS_TEST: st_geomfromtext_ignore_invalid
+# DOCS_TEST_BODY
+query
+SELECT ST_GeomFromText('POINT(1', ignore_invalid := true) IS NULL AS skipped;
+----
+skipped
+t
+
 # DOCS_TEST: st_geomfromgeojson
 # DOCS_TEST_BODY
 query
@@ -551,6 +559,46 @@ SELECT ST_AsText(ST_Affine('POINT(1 1)'::GEOMETRY, 2, 0, 0, 2, 1, 1)) AS geom;
 ----
 geom
 POINT (3 3)
+
+# DOCS_TEST: st_translate
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_Translate('LINESTRING(0 0,1 1)'::GEOMETRY, 5, -2)) AS geom;
+----
+geom
+LINESTRING (5 -2, 6 -1)
+
+# DOCS_TEST: st_scale
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_Scale('POINT(1 1)'::GEOMETRY, 2, 3)) AS xy, ST_AsText(ST_Scale('POINT Z(1 2 3)'::GEOMETRY, 2, 2, 2)) AS xyz;
+----
+xy	xyz
+POINT (2 3)	POINT Z (2 4 6)
+
+# DOCS_TEST: st_transscale
+# DOCS_TEST_BODY
+query
+SELECT ST_AsText(ST_TransScale('POINT(1 1)'::GEOMETRY, 1, 2, 2, 3)) AS geom;
+----
+geom
+POINT (4 9)
+
+# DOCS_TEST: st_rotate
+# DOCS_TEST_BODY
+query
+WITH r AS (SELECT ST_Rotate('POINT(1 0)'::GEOMETRY, pi() / 2) AS g) SELECT round(ST_X(g), 9) AS x, round(ST_Y(g), 9) AS y FROM r;
+----
+x	y
+0	1
+
+# DOCS_TEST: st_rotate_axes
+# DOCS_TEST_BODY
+query
+WITH r AS (SELECT ST_RotateX('POINT Z(0 1 0)'::GEOMETRY, pi() / 2) AS gx, ST_RotateY('POINT Z(1 0 0)'::GEOMETRY, pi() / 2) AS gy, ST_RotateZ('POINT Z(1 0 0)'::GEOMETRY, pi() / 2) AS gz) SELECT round(ST_Z(gx), 9) AS x_axis_z, round(ST_Z(gy), 9) AS y_axis_z, round(ST_Y(gz), 9) AS z_axis_y FROM r;
+----
+x_axis_z	y_axis_z	z_axis_y
+1	-1	1
 
 # DOCS_TEST: st_removerepeatedpoints
 # DOCS_TEST_BODY

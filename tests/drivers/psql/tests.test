@@ -1184,9 +1184,8 @@ skipif postgres
 > | inverted | real[]     | [NULL]       | ivf            | no       |
 > | inverted | text       | [NULL]       | otel_body_dict | no       |
 > | inverted | text       | [NULL]       | simple_dict    | no       |
-> | inverted | text       | [NULL]       | tokenizer      | no       |
 > +----------+------------+--------------+----------------+----------+
-> (6 rows)
+> (5 rows)
 
 # AM-pattern form: scopes by access-method name.
 skipif postgres
@@ -1201,9 +1200,8 @@ skipif postgres
 > | inverted | real[]     | [NULL]       | ivf            | no       |
 > | inverted | text       | [NULL]       | otel_body_dict | no       |
 > | inverted | text       | [NULL]       | simple_dict    | no       |
-> | inverted | text       | [NULL]       | tokenizer      | no       |
 > +----------+------------+--------------+----------------+----------+
-> (6 rows)
+> (5 rows)
 
 # AM + type-pattern form: scopes to a single input type within the AM.
 skipif postgres
@@ -1215,9 +1213,8 @@ skipif postgres
 > +----------+------------+--------------+----------------+----------+
 > | inverted | text       | [NULL]       | otel_body_dict | no       |
 > | inverted | text       | [NULL]       | simple_dict    | no       |
-> | inverted | text       | [NULL]       | tokenizer      | no       |
 > +----------+------------+--------------+----------------+----------+
-> (3 rows)
+> (2 rows)
 
 # serened doesn't model operator classes/families/operators/support;
 # its `secondary` and `inverted` AMs dispatch implicitly.
@@ -1284,9 +1281,8 @@ skipif postgres
 > +--------------+----------------+-------------+
 > | SCHEMA | simple_dict    | [NULL]      |
 > | public       | otel_body_dict | [NULL]      |
-> | sdb_docs     | tokenizer      | [NULL]      |
 > +--------------+----------------+-------------+
-> (3 rows)
+> (2 rows)
 
 # serened's text-search model is just dictionaries (CREATE TEXT SEARCH
 # DICTIONARY -> pg_ts_dict). PG ships configurations/parsers/templates

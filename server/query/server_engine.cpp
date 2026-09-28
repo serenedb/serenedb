@@ -46,6 +46,7 @@
 #include "connector/functions/es.h"
 #include "connector/functions/inout.h"
 #include "connector/functions/json.h"
+#include "connector/functions/markdown_render.h"
 #include "connector/functions/math.h"
 #include "connector/functions/otel.h"
 #include "connector/functions/search.h"
@@ -57,6 +58,7 @@
 #include "connector/pg_logical_types.h"
 #include "connector/scan/scan_function.h"
 #include "connector/system_table_scan.h"
+#include "docs/docs_functions.h"
 #include "pg/commands/rbac.h"
 #include "pg/pg_catalog/pg_statistic.h"
 #include "pg/system_catalog.h"
@@ -327,6 +329,10 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterOtelFunctions(db);
 
   connector::RegisterCatalogIntrospectFunctions(db);
+
+  connector::RegisterMarkdownRenderFunctions(db);
+
+  docs::RegisterDocsFunctions(db);
 
   connector::RegisterDuckDBAliases(db);
 

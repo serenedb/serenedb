@@ -8,6 +8,7 @@ target_sources(
         es.cpp
         inout.cpp
         json.cpp
+        markdown_render.cpp
         math.cpp
         otel.cpp
         string.cpp
@@ -41,4 +42,9 @@ target_sources(
         ai/embedding.cpp
         ai/jev.cpp
         ai/text_functions.cpp
+)
+
+target_link_libraries(
+    sereneserver
+    PRIVATE libcmark-gfm-extensions_static libcmark-gfm_static
 )

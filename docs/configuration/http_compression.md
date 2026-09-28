@@ -17,8 +17,10 @@ that asks for none is answered uncompressed.
 | gzip | `gzip` | zlib-ng; understood by every HTTP client and browser |
 | ZXC | `zxc` | [serenedb/zxc](https://github.com/serenedb/zxc), the fastest decode; not an IANA-registered coding, so only clients that opt in ask for it |
 | LZ4 frame | `lz4` | fastest to compress; same caveat as `zxc` |
+| Snappy | `snappy` | the raw block format, as Prometheus remote write sends it; a body is compressed or decompressed whole, so a streamed response is sent only once it is complete |
 
-Server preference is the order above: `zstd`, `br`, `gzip`, `zxc`, `lz4`. It picks
+Server preference is the order above: `zstd`, `br`, `gzip`, `zxc`, `lz4`,
+`snappy`. It picks
 between codings the client accepts equally — the client's own `q` weights come
 first, so `Accept-Encoding: gzip;q=1.0, zstd;q=0.1` answers gzip.
 

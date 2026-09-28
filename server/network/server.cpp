@@ -299,6 +299,7 @@ void Server::AddUnixListener(const network::ListenSpec& spec) {
     deps.max_connections = spec.max_connections.value_or(_max_connections);
     deps.cors_origins = _cors_origins;
     deps.database = spec.database;
+    deps.schema = spec.schema;
     deps.proxy = spec.proxy;
     acceptor = std::make_shared<
       network::Acceptor<network::HttpSession<network::SocketKind::Unix>>>(
@@ -366,6 +367,7 @@ void Server::AddListener(const network::ListenSpec& spec) {
     deps.max_connections = spec.max_connections.value_or(_max_connections);
     deps.cors_origins = _cors_origins;
     deps.database = spec.database;
+    deps.schema = spec.schema;
     deps.proxy = spec.proxy;
     if (ssl != nullptr) {
       acceptor = std::make_shared<
@@ -417,7 +419,10 @@ void Server::StartListeners() {
                                         ? irs::StaticStrings::kDefaultDatabase
                                         : spec.database;
     if (absl::c_linear_search(spec.apis, network::HttpApi::Otel)) {
-      if (const auto status = otel::EnsureSchema(database); !status.ok()) {
+      const std::string_view schema =
+        spec.schema.empty() ? std::string_view{"public"} : spec.schema;
+      if (const auto status = otel::EnsureSchema(database, schema);
+          !status.ok()) {
         SDB_FATAL(GENERAL, "endpoint '", spec.url,
                   "': OpenTelemetry schema: ", status.message());
       }

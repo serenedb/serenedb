@@ -92,6 +92,7 @@ struct HttpServerContext {
   std::string_view cors_origins;
   // The database sessions connect to; empty means the default database.
   std::string database;
+  std::string schema;
   // HAProxy PROXY-protocol preface policy (off / optional / require); never
   // set on an https listener (the header precedes the TLS handshake).
   ProxyMode proxy = ProxyMode::Off;
@@ -126,6 +127,7 @@ class HttpSession final
       _max_conn{ctx.max_connections},
       _cors_origins{ctx.cors_origins},
       _database{ctx.database},
+      _schema{ctx.schema},
       _proxy{ctx.proxy} {}
 
   HttpSession(HttpServerContext& ctx, IoExecutor& exec)
@@ -141,6 +143,7 @@ class HttpSession final
       _max_conn{ctx.max_connections},
       _cors_origins{ctx.cors_origins},
       _database{ctx.database},
+      _schema{ctx.schema},
       _proxy{ctx.proxy} {}
 
   // Run is the session's sole owner: it grabs the one shared_from_this, starts
@@ -241,6 +244,10 @@ class HttpSession final
   }
 
   std::string_view User() const final { return _user; }
+
+  std::string_view Schema() const final {
+    return _schema.empty() ? std::string_view{"public"} : _schema;
+  }
 
  private:
   yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>> Drive(
@@ -346,6 +353,7 @@ class HttpSession final
   uint32_t _max_conn = 0;
   std::string_view _cors_origins;
   std::string_view _database;
+  std::string_view _schema;
   ProxyMode _proxy = ProxyMode::Off;
   H1Codec _codec;
 

@@ -23,11 +23,12 @@ export endpoints directly — no collector component to install:
 serened ./data --listen 'postgres://0.0.0.0:7890,http://0.0.0.0:4318?api=otel'
 ```
 
-By default the tables live in the default database. `db=` puts the listener
-— and with it the OTel schema — in another one, created if it does not exist:
+By default the tables live in the `public` schema of the default database.
+`db=` puts the listener — and with it the OTel tables — in another database,
+and `schema=` in another schema; both are created if they do not exist:
 
 ```bash
-serened ./data --listen 'postgres://0.0.0.0:7890,http://0.0.0.0:4318?api=otel&db=telemetry'
+serened ./data --listen 'postgres://0.0.0.0:7890,http://0.0.0.0:4318?api=otel&db=telemetry&schema=otel'
 ```
 
 | Endpoint | Accepts | Writes to |
@@ -66,9 +67,9 @@ hot attribute paths — apply it before the first start; startup leaves an
 existing schema alone. All seven tables must exist, each with every shipped
 column in its shipped type: extra columns are left `NULL`, but a missing table,
 or a missing or retyped column, stops the server at startup with a message
-naming the database and the column. Fix the table, or leave that database
-alone and start with the built-in schema in a new one: `db=` on the listener
-creates it, e.g. `--listen='http://0.0.0.0:4318?api=otel&db=otel'`.
+naming the database, the schema and the column. Fix the table, or leave it
+alone and start with the built-in schema somewhere new: `db=` or `schema=` on
+the listener creates it, e.g. `--listen='http://0.0.0.0:4318?api=otel&schema=otel'`.
 
 A table dropped or changed after startup fails each export to it with `500`:
 `the OpenTelemetry schema is missing: …` for a dropped table, and
@@ -101,7 +102,7 @@ Both decoders feed the same mapper, and the conformance fixtures ship as an
 row shape arrives twice, once per decoder.
 
 Request bodies may be compressed with any coding the HTTP listener supports —
-`gzip` (the collector's default), `zstd`, `br`, `lz4` or `zxc`; see
+`gzip` (the collector's default), `zstd`, `br`, `lz4`, `zxc` or `snappy`; see
 [HTTP Compression](../configuration/http_compression.md). An unsupported
 `Content-Encoding` answers `415`, and a corrupt compressed body `400`, both
 before the payload is decoded.

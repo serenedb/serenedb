@@ -41,6 +41,7 @@
 #include "network/http/es/common.h"
 #include "network/http/es/dsl.h"
 #include "network/http/handler.h"
+#include "network/http/prepared_source.h"
 #include "pg/connection_context.h"
 
 namespace sdb::network::http::es {
@@ -139,18 +140,25 @@ class BulkHandler final : public HttpHandler {
     }
     const auto start = std::chrono::steady_clock::now();
 
-    // es_bulk fills the items array through the side channel while the
-    // INSERT runs (serenedb INSERT has no RETURNING). The sink is on the
-    // ConnectionContext that RunQuery drives through.
-    auto& sdb_ctx = connector::GetSereneDBContext(*ctx.Connection().context);
+    auto& entry = ctx.PreparedSlot(absl::StrCat("es_bulk:", index));
+    if (auto error = EnsurePrepared(
+          ctx, entry,
+          absl::StrCat("INSERT INTO \"es\".", SqlIdentifier(index),
+                       " SELECT * FROM es_bulk_source(", SqlLiteral(index),
+                       ")"))) {
+      WriteSqlError(writer, *error, index);
+      co_return {};
+    }
     std::string items;
-    sdb_ctx.SetResponseSink(&items);
-    const absl::Cleanup clear_sink = [&] { sdb_ctx.SetResponseSink(nullptr); };
-
-    const auto sql = absl::StrCat("INSERT INTO \"es\".", SqlIdentifier(index),
-                                  " SELECT * FROM es_bulk(", SqlLiteral(index),
-                                  ", ", SqlLiteral(body), ")");
-    if (!co_await RunSql(ctx, sql, writer, index, /*writes=*/true)) {
+    const connector::EsBulkInput input{.body = body, .items = &items};
+    auto& connection = connector::GetSereneDBContext(*ctx.Connection().context);
+    connection.SetSideChannel(&input);
+    const absl::Cleanup clear = [&] {
+      connection.SetSideChannel<const connector::EsBulkInput>(nullptr);
+    };
+    auto result = co_await ctx.RunPrepared(*entry.statement);
+    if (result->HasError()) {
+      WriteSqlError(writer, result->GetErrorObject(), index);
       co_return {};
     }
     if (!co_await MaybeRefresh(ctx, request, index, writer)) {

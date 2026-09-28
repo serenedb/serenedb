@@ -29,7 +29,22 @@
 #include "catalog/entry/role.h"
 #include "query/transaction.h"
 #include "server/utils/message_buffer.h"
+#include "server/utils/pointer_union.h"
 
+namespace sdb::otel {
+
+struct LogRecord;
+struct Span;
+struct Metric;
+template<typename Record>
+struct ExportRequest;
+
+}  // namespace sdb::otel
+namespace sdb::connector {
+
+struct EsBulkInput;
+
+}  // namespace sdb::connector
 namespace sdb::pg {
 
 class CopyInBridge;
@@ -58,6 +73,11 @@ class CancelRegistry;
 }
 
 namespace sdb {
+
+using SideChannel =
+  PointerUnion<pg::CopyInBridge, otel::ExportRequest<otel::LogRecord>,
+               otel::ExportRequest<otel::Span>,
+               otel::ExportRequest<otel::Metric>, connector::EsBulkInput>;
 
 class ConnectionContext final : public query::Transaction {
  public:
@@ -105,11 +125,15 @@ class ConnectionContext final : public query::Transaction {
 
   auto* GetSendBuffer() const { return _send_buffer; }
 
-  auto* GetCopyInBridge() const { return _copy_in_bridge; }
-  void SetCopyInBridge(pg::CopyInBridge* bridge) { _copy_in_bridge = bridge; }
+  template<typename T>
+  void SetSideChannel(T* value) {
+    _side_channel.Set(value);
+  }
 
-  auto* GetResponseSink() const { return _response_sink; }
-  void SetResponseSink(std::string* sink) { _response_sink = sink; }
+  template<typename T>
+  T* GetSideChannel() const {
+    return _side_channel.Get<T>();
+  }
 
   // Notices are an intrusive MPSC stack (Strand-style): producers on any
   // thread CAS-push; the single consumer exchanges the head out and reverses
@@ -155,8 +179,7 @@ class ConnectionContext final : public query::Transaction {
   duckdb::idx_t _session_role_id;
   duckdb::idx_t _effective_role_id;
   bool _storage_connection = false;
-  pg::CopyInBridge* _copy_in_bridge = nullptr;
-  std::string* _response_sink = nullptr;
+  SideChannel _side_channel;
   std::atomic<NoticeNode*> _notices{nullptr};
 };
 

@@ -17,6 +17,13 @@ target_sources(
         http/es/handlers.cpp
         http/mcp/handlers.cpp
         http/compression.cpp
+        http/codecs/brotli.cpp
+        http/codecs/codec.cpp
+        http/codecs/gzip.cpp
+        http/codecs/lz4.cpp
+        http/codecs/snappy.cpp
+        http/codecs/zstd.cpp
+        http/codecs/zxc.cpp
         http/otel/handlers.cpp
         http/otel/schema.cpp
         http/mcp/tools.cpp
@@ -34,3 +41,9 @@ target_sources(
 )
 
 target_link_libraries(sereneserver PUBLIC ada::ada simdutf::simdutf re2::re2)
+
+set_source_files_properties(
+    http/codecs/snappy.cpp
+    TARGET_DIRECTORY sereneserver
+    PROPERTIES COMPILE_OPTIONS -fno-rtti
+)

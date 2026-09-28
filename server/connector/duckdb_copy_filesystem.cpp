@@ -76,7 +76,7 @@ ConnectionPlumbing GetPlumbing(duckdb::FileOpener* opener,
       ERR_MSG("COPY ", path,
               " requires a PG wire connection (transport not attached)"));
   }
-  return {conn.GetCopyInBridge(), send, *state};
+  return {conn.GetSideChannel<pg::CopyInBridge>(), send, *state};
 }
 
 }  // namespace

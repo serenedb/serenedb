@@ -263,6 +263,9 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
   if (_ctas_info) {
     SDB_IF_FAILURE("crash_before_commit") { SDB_IMMEDIATE_ABORT(); }
   }
+  if (gstate.table_lock.owns_lock()) {
+    gstate.table_lock.unlock();
+  }
   return duckdb::SinkFinalizeType::READY;
 }
 

@@ -874,3 +874,9 @@ CREATE TABLE IF NOT EXISTS otel_logs ("timestamp" TIMESTAMP_NS NOT NULL) WITH (s
 
 statement ok
 CREATE INDEX IF NOT EXISTS otel_logs_idx ON otel_logs USING inverted ("timestamp", body otel_body_dict);
+
+statement error OpenTelemetry source functions can only be called by the OTLP/HTTP endpoint
+SELECT * FROM otel_source_logs('public');
+
+statement error OpenTelemetry source functions can only be called by the OTLP/HTTP endpoint
+INSERT INTO otel_metrics_sum SELECT * FROM otel_source_metrics_sum('public');

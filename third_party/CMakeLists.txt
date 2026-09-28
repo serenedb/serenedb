@@ -152,6 +152,8 @@ add_subdirectory(zlib-ng)
 # For compatibility
 add_library(ZLIB::ZLIB ALIAS zlib-ng)
 set(ZLIB_FOUND ON CACHE BOOL "" FORCE)
+set(ZLIB_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/zlib-ng" CACHE PATH "" FORCE)
+set(ZLIB_LIBRARY zlib-ng CACHE STRING "" FORCE)
 
 ################################################################################
 ## BOOST

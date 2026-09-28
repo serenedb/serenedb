@@ -42,13 +42,17 @@
 #include <string>
 #include <string_view>
 
+#include "connector/duckdb_client_state.h"
 #include "connector/functions/otel.h"
 #include "network/http/common.h"
 #include "network/http/handler.h"
+#include "network/http/otel/schema.h"
+#include "network/http/prepared_source.h"
 #include "network/pg/wire_frames.h"
 #include "otel/model.h"
 #include "otel/protobuf.h"
 #include "otel/protojson.h"
+#include "pg/connection_context.h"
 #include "pg/sql_utils.h"
 
 // Endpoint paths, response shapes and status codes follow the OTLP/HTTP spec:
@@ -190,49 +194,21 @@ InsertOutcome Failed(const duckdb::ErrorData& error) {
 }
 
 template<typename Signal>
-std::optional<duckdb::ErrorData> EnsurePrepared(RequestContext& ctx,
-                                                size_t target,
-                                                network::PreparedEntry& entry) {
-  using Box = connector::OtelRequestBox<typename Signal::Request>;
-  try {
-    auto& connection = ctx.Connection();
-    auto& context = *connection.context;
-    if (entry.statement != nullptr) {
-      bool stale = false;
-      context.RunFunctionInTransaction([&] {
-        stale = entry.statement->data->RequireRebind(context, nullptr);
-      });
-      if (stale) {
-        entry.statement.reset();
-      }
-    }
-    if (entry.statement == nullptr) {
-      auto box = duckdb::make_shared_ptr<Box>();
-      auto statement = connection.Prepare(Signal::Insert(target, box));
-      if (statement->HasError()) {
-        // Not cached: the schema may appear later.
-        return statement->GetErrorObject();
-      }
-      entry.statement = std::move(statement);
-      entry.info = std::move(box);
-    }
-  } catch (const std::exception& error) {
-    return duckdb::ErrorData{error};
-  }
-  return std::nullopt;
-}
-
-template<typename Signal>
 yaclib::Task<InsertOutcome> RunSourceInsert(
   RequestContext& ctx, size_t target, const typename Signal::Request& request) {
-  using Box = connector::OtelRequestBox<typename Signal::Request>;
-  auto& entry = ctx.PreparedSlot(Signal::kTargets[target]);
-  if (auto error = EnsurePrepared<Signal>(ctx, target, entry)) {
+  using Request = const typename Signal::Request;
+  const auto schema = ctx.Schema();
+  const auto table = Signal::kTargets[target];
+  auto& entry = ctx.PreparedSlot(absl::StrCat(schema, ".", table));
+  if (auto error = network::EnsurePrepared(
+        ctx, entry, InsertSql(schema, table, Signal::kSources[target]))) {
     co_return Failed(*error);
   }
-  auto& box = static_cast<Box&>(*entry.info);
-  box.request = &request;
-  const absl::Cleanup clear = [&] { box.request = nullptr; };
+  auto& connection = connector::GetSereneDBContext(*ctx.Connection().context);
+  connection.SetSideChannel(&request);
+  const absl::Cleanup clear = [&] {
+    connection.SetSideChannel<Request>(nullptr);
+  };
   auto result = co_await ctx.RunPrepared(*entry.statement);
   if (!result->HasError()) {
     co_return InsertOutcome{};
@@ -245,6 +221,8 @@ struct LogsSignal {
   static constexpr std::string_view kRejectedField = "rejectedLogRecords";
   static constexpr std::array<std::string_view, 1> kTargets{
     connector::kOtelLogsTable};
+  static constexpr std::array<std::string_view, 1> kSources{
+    connector::kOtelSourceLogsFunction};
 
   static void Decode(std::string_view raw, bool protobuf,
                      simdjson::ondemand::parser& parser, Request& out) {
@@ -254,10 +232,6 @@ struct LogsSignal {
       ParseLogsRequest(raw, parser, out, /*padded=*/true);
     }
   }
-
-  static auto Insert(size_t, duckdb::shared_ptr<connector::OtelLogsBox> box) {
-    return connector::OtelLogsInsert(std::move(box));
-  }
 };
 
 struct TracesSignal {
@@ -265,6 +239,8 @@ struct TracesSignal {
   static constexpr std::string_view kRejectedField = "rejectedSpans";
   static constexpr std::array<std::string_view, 1> kTargets{
     connector::kOtelTracesTable};
+  static constexpr std::array<std::string_view, 1> kSources{
+    connector::kOtelSourceTracesFunction};
 
   static void Decode(std::string_view raw, bool protobuf,
                      simdjson::ondemand::parser& parser, Request& out) {
@@ -274,10 +250,6 @@ struct TracesSignal {
       ParseTracesRequest(raw, parser, out, /*padded=*/true);
     }
   }
-
-  static auto Insert(size_t, duckdb::shared_ptr<connector::OtelTracesBox> box) {
-    return connector::OtelTracesInsert(std::move(box));
-  }
 };
 
 // One payload feeds five tables; it is decoded once and each table's insert
@@ -286,6 +258,7 @@ struct MetricsSignal {
   using Request = ExportMetricsRequest;
   static constexpr std::string_view kRejectedField = "rejectedDataPoints";
   static constexpr auto& kTargets = connector::kOtelMetricTables;
+  static constexpr auto& kSources = connector::kOtelSourceMetricsFunctions;
 
   static void Decode(std::string_view raw, bool protobuf,
                      simdjson::ondemand::parser& parser, Request& out) {
@@ -294,11 +267,6 @@ struct MetricsSignal {
     } else {
       ParseMetricsRequest(raw, parser, out, /*padded=*/true);
     }
-  }
-
-  static auto Insert(size_t target,
-                     duckdb::shared_ptr<connector::OtelMetricsBox> box) {
-    return connector::OtelMetricsInsert(target, std::move(box));
   }
 };
 

@@ -31,11 +31,6 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-#include <duckdb/parser/parser.hpp>
-#include <duckdb/parser/query_node/select_node.hpp>
-#include <duckdb/parser/statement/insert_statement.hpp>
-#include <duckdb/parser/statement/select_statement.hpp>
-#include <duckdb/parser/tableref/table_function_ref.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
@@ -61,19 +56,19 @@ struct TargetColumns {
   irs::containers::FlatHashMap<std::string, size_t> columns;
 };
 
-void BindTarget(duckdb::ClientContext& context, std::string_view table_name,
-                TargetColumns& data,
+void BindTarget(duckdb::ClientContext& context, std::string_view schema_name,
+                std::string_view table_name, TargetColumns& data,
                 duckdb::vector<duckdb::LogicalType>& return_types,
                 duckdb::vector<duckdb::string>& names) {
   auto table = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
     context,
     duckdb::QualifiedName{
       duckdb::Identifier{GetSereneDBContext(context).GetDatabase()},
-      duckdb::Identifier{kOtelSchema}, duckdb::Identifier{table_name}},
+      duckdb::Identifier{schema_name}, duckdb::Identifier{table_name}},
     duckdb::OnEntryNotFound::RETURN_NULL);
   if (!table) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", kOtelSchema, ".", table_name,
+                    ERR_MSG("relation \"", schema_name, ".", table_name,
                             "\" does not exist; create the OpenTelemetry "
                             "schema first"));
   }
@@ -129,8 +124,8 @@ static_assert(kOtelMetricTables[3] ==
               schema::kMetricsExponentialHistogram.name);
 static_assert(kOtelMetricTables[4] == schema::kMetricsSummary.name);
 
-// otel_source_<signal>(): the rows of the request in its statement's
-// OtelRequestBox. It is bound inline, not registered, so SQL cannot call it.
+// otel_source_<signal>(schema): the rows of the request the HTTP handler put in
+// the connection's side channel; without one it returns no rows.
 // Bind carries no data -- only the target's columns -- so each
 // INSERT ... SELECT * FROM otel_source_*() is prepared once per connection and
 // re-executed per request. The scan writes the decoded model straight into
@@ -179,7 +174,7 @@ constexpr void Expect() {
 }
 
 struct SourceBindData final : duckdb::TableFunctionData {
-  const duckdb::TableFunctionInfo* box = nullptr;
+  const void* request = nullptr;
   // Output column of each schema column.
   std::vector<duckdb::idx_t> slots;
   std::shared_ptr<const void> parsed;
@@ -361,12 +356,12 @@ duckdb::LogicalType Expected(const schema::Column& column) {
 
 template<typename Source>
 duckdb::unique_ptr<SourceBindData> BindSource(
-  duckdb::ClientContext& context,
+  duckdb::ClientContext& context, std::string_view schema_name,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::string>& names) {
   constexpr const auto& table = schema::TableOf(typename Source::Column{});
   TargetColumns target;
-  BindTarget(context, table.name, target, return_types, names);
+  BindTarget(context, schema_name, table.name, target, return_types, names);
   auto data = duckdb::make_uniq<SourceBindData>();
   data->slots.reserve(table.columns.size());
   for (const auto& column : table.columns) {
@@ -375,14 +370,14 @@ duckdb::unique_ptr<SourceBindData> BindSource(
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_TABLE_DEFINITION),
         ERR_MSG("invalid OpenTelemetry schema: column \"", column.name,
-                "\" of \"", kOtelSchema, ".", table.name, "\" is missing"));
+                "\" of \"", schema_name, ".", table.name, "\" is missing"));
     }
     const auto& actual = return_types[it->second];
     if (!Matches(actual, column)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_TABLE_DEFINITION),
         ERR_MSG("invalid OpenTelemetry schema: column \"", column.name,
-                "\" of \"", kOtelSchema, ".", table.name, "\" is ",
+                "\" of \"", schema_name, ".", table.name, "\" is ",
                 actual.ToString(), ", expected ", Expected(column).ToString()));
     }
     data->slots.push_back(it->second);
@@ -510,8 +505,6 @@ struct LogsSource {
   using Column = schema::LogsColumn;
   using Request = otel::ExportLogsRequest;
 
-  static constexpr std::string_view kTable = schema::kLogs.name;
-
   template<Column C>
   static void Put(Out& out, const Cursor& cursor, const Record& record) {
     using enum Column;
@@ -569,8 +562,6 @@ struct TracesSource {
   using Cursor = RecordCursor<Record>;
   using Column = schema::TracesColumn;
   using Request = otel::ExportTracesRequest;
-
-  static constexpr std::string_view kTable = schema::kTraces.name;
 
   template<Column C>
   static void Put(Out& out, const Cursor& cursor, const Record& span) {
@@ -675,8 +666,6 @@ struct MetricsSource {
   using Cursor = PointCursor<MetricShape>;
   using Column = typename MetricShape::Column;
   using Request = otel::ExportMetricsRequest;
-
-  static constexpr std::string_view kTable = schema::TableOf(Column{}).name;
 
   template<Column C>
   static void Put(Out& out, const Cursor& cursor,
@@ -838,17 +827,21 @@ struct SourceState final : duckdb::GlobalTableFunctionState {
   typename Source::Cursor cursor{nullptr};
 
   static duckdb::unique_ptr<duckdb::GlobalTableFunctionState> Init(
-    duckdb::ClientContext&, duckdb::TableFunctionInitInput& input) {
+    duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
+    using Request = const typename Source::Request;
     auto state = duckdb::make_uniq<SourceState>();
     const auto& data = input.bind_data->Cast<SourceBindData>();
     const auto* request =
-      data.box == nullptr
-        ? nullptr
-        : static_cast<const OtelRequestBox<typename Source::Request>*>(data.box)
-            ->request;
-    if (request != nullptr) {
-      state->cursor = typename Source::Cursor{request};
+      data.request != nullptr
+        ? static_cast<Request*>(data.request)
+        : GetSereneDBContext(context).GetSideChannel<Request>();
+    if (request == nullptr) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("OpenTelemetry source functions can only be called by the "
+                "OTLP/HTTP endpoint"));
     }
+    state->cursor = typename Source::Cursor{request};
     return state;
   }
 };
@@ -858,9 +851,12 @@ duckdb::unique_ptr<duckdb::FunctionData> SourceBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::string>& names) {
-  auto data = BindSource<Source>(context, return_types, names);
-  data->box = input.info.get();
-  return data;
+  if (input.inputs[0].IsNull()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("schema name cannot be NULL"));
+  }
+  return BindSource<Source>(context, input.inputs[0].GetValue<std::string>(),
+                            return_types, names);
 }
 
 template<typename Source>
@@ -878,29 +874,6 @@ void SourceExecute(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
     }
   }
   output.SetCardinality(row);
-}
-
-template<typename Source>
-duckdb::unique_ptr<duckdb::SQLStatement> SourceInsert(
-  std::string_view name,
-  duckdb::shared_ptr<OtelRequestBox<typename Source::Request>> box) {
-  duckdb::Parser parser;
-  parser.ParseQuery(absl::StrCat("INSERT INTO ", kOtelSchema, ".",
-                                 Source::kTable, " SELECT * FROM ", name,
-                                 "()"));
-  auto statement = std::move(parser.statements[0]);
-  auto& insert = statement->Cast<duckdb::InsertStatement>();
-  auto& select =
-    insert.node->select_statement->node->Cast<duckdb::SelectNode>();
-  auto& source = select.from_table->Cast<duckdb::TableFunctionRef>();
-
-  auto function = duckdb::make_shared_ptr<duckdb::TableFunction>(
-    duckdb::Identifier{std::string{name}},
-    duckdb::vector<duckdb::LogicalType>{}, SourceExecute<Source>,
-    SourceBind<Source>, SourceState<Source>::Init);
-  function->function_info = std::move(box);
-  source.inline_function = std::move(function);
-  return statement;
 }
 
 void Decode(std::string_view wire, bool protobuf,
@@ -937,7 +910,6 @@ struct ParsedPayload {
   std::string wire;
   simdjson::ondemand::parser parser;
   Request request;
-  OtelRequestBox<Request> box;
 };
 
 template<typename Source>
@@ -945,7 +917,7 @@ duckdb::unique_ptr<duckdb::FunctionData> ParseBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::string>& names) {
-  auto data = BindSource<Source>(context, return_types, names);
+  auto data = BindSource<Source>(context, kOtelSchema, return_types, names);
   const bool protobuf = ReadProtobufArgument(input.inputs);
   auto parsed = std::make_shared<ParsedPayload<typename Source::Request>>();
   parsed->wire = ReadBodyArgument(input.inputs[0]);
@@ -956,44 +928,12 @@ duckdb::unique_ptr<duckdb::FunctionData> ParseBind(
   parsed->wire.append(otel::kJsonPadding, '\0');
   Decode(std::string_view{parsed->wire.data(), size}, protobuf, parsed->parser,
          parsed->request);
-  parsed->box.request = &parsed->request;
-  data->box = &parsed->box;
+  data->request = &parsed->request;
   data->parsed = std::move(parsed);
   return data;
 }
 
 }  // namespace
-
-duckdb::unique_ptr<duckdb::SQLStatement> OtelLogsInsert(
-  duckdb::shared_ptr<OtelLogsBox> box) {
-  return SourceInsert<LogsSource>("otel_source_logs", std::move(box));
-}
-
-duckdb::unique_ptr<duckdb::SQLStatement> OtelTracesInsert(
-  duckdb::shared_ptr<OtelTracesBox> box) {
-  return SourceInsert<TracesSource>("otel_source_traces", std::move(box));
-}
-
-duckdb::unique_ptr<duckdb::SQLStatement> OtelMetricsInsert(
-  size_t table, duckdb::shared_ptr<OtelMetricsBox> box) {
-  switch (table) {
-    case 0:
-      return SourceInsert<MetricsSource<GaugeSource>>(
-        "otel_source_metrics_gauge", std::move(box));
-    case 1:
-      return SourceInsert<MetricsSource<SumSource>>("otel_source_metrics_sum",
-                                                    std::move(box));
-    case 2:
-      return SourceInsert<MetricsSource<HistogramSource>>(
-        "otel_source_metrics_histogram", std::move(box));
-    case 3:
-      return SourceInsert<MetricsSource<ExponentialHistogramSource>>(
-        "otel_source_metrics_exponential_histogram", std::move(box));
-    default:
-      return SourceInsert<MetricsSource<SummarySource>>(
-        "otel_source_metrics_summary", std::move(box));
-  }
-}
 
 void RegisterOtelFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
@@ -1008,6 +948,23 @@ void RegisterOtelFunctions(duckdb::DatabaseInstance& db) {
                               ParseBind<Source>, SourceState<Source>::Init});
     }
   };
+
+  const auto source = [&]<typename Source>(std::string_view name) {
+    loader.RegisterFunction(duckdb::TableFunction{
+      duckdb::Identifier{std::string{name}},
+      duckdb::vector<duckdb::LogicalType>{duckdb::LogicalType::VARCHAR},
+      SourceExecute<Source>, SourceBind<Source>, SourceState<Source>::Init});
+  };
+  source.operator()<LogsSource>(kOtelSourceLogsFunction);
+  source.operator()<TracesSource>(kOtelSourceTracesFunction);
+  source.operator()<MetricsSource<GaugeSource>>(kOtelSourceMetricsFunctions[0]);
+  source.operator()<MetricsSource<SumSource>>(kOtelSourceMetricsFunctions[1]);
+  source.operator()<MetricsSource<HistogramSource>>(
+    kOtelSourceMetricsFunctions[2]);
+  source.operator()<MetricsSource<ExponentialHistogramSource>>(
+    kOtelSourceMetricsFunctions[3]);
+  source.operator()<MetricsSource<SummarySource>>(
+    kOtelSourceMetricsFunctions[4]);
 
   add.operator()<LogsSource>("otel_parse_logs");
   add.operator()<TracesSource>("otel_parse_traces");

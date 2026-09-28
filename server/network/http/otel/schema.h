@@ -22,6 +22,7 @@
 
 #include <absl/status/status.h>
 
+#include <string>
 #include <string_view>
 
 namespace sdb::otel {
@@ -30,6 +31,9 @@ namespace sdb::otel {
 // indexes in it when they are missing, and checks that the tables match the
 // built-in schema. Called at startup for every listener that serves
 // ?api=otel, so the first export lands in a schema that exists and fits.
-absl::Status EnsureSchema(std::string_view database);
+absl::Status EnsureSchema(std::string_view database, std::string_view schema);
+
+std::string InsertSql(std::string_view schema, std::string_view table,
+                      std::string_view source);
 
 }  // namespace sdb::otel

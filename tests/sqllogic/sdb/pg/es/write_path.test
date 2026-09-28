@@ -90,6 +90,9 @@ SELECT count(*) FROM es.slt_es_w;
 count
 3
 
+statement error es_bulk_source can only be called by the Elasticsearch _bulk endpoint
+INSERT INTO es.slt_es_w SELECT * FROM es_bulk_source('slt_es_w');
+
 query
 CALL es_drop_index('slt_es_w');
 ----

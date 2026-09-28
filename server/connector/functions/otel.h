@@ -21,9 +21,7 @@
 #pragma once
 
 #include <array>
-#include <duckdb/function/table_function.hpp>
 #include <duckdb/main/database.hpp>
-#include <duckdb/parser/sql_statement.hpp>
 #include <string_view>
 
 #include "otel/model.h"
@@ -50,21 +48,14 @@ namespace sdb::connector {
 // promoted columns to its own DDL without breaking the INSERT.
 void RegisterOtelFunctions(duckdb::DatabaseInstance& db);
 
-template<typename Request>
-struct OtelRequestBox final : duckdb::TableFunctionInfo {
-  const Request* request = nullptr;
+inline constexpr std::string_view kOtelSourceLogsFunction = "otel_source_logs";
+inline constexpr std::string_view kOtelSourceTracesFunction =
+  "otel_source_traces";
+inline constexpr std::array<std::string_view, 5> kOtelSourceMetricsFunctions{
+  "otel_source_metrics_gauge",     "otel_source_metrics_sum",
+  "otel_source_metrics_histogram", "otel_source_metrics_exponential_histogram",
+  "otel_source_metrics_summary",
 };
-
-using OtelLogsBox = OtelRequestBox<otel::ExportLogsRequest>;
-using OtelTracesBox = OtelRequestBox<otel::ExportTracesRequest>;
-using OtelMetricsBox = OtelRequestBox<otel::ExportMetricsRequest>;
-
-duckdb::unique_ptr<duckdb::SQLStatement> OtelLogsInsert(
-  duckdb::shared_ptr<OtelLogsBox> box);
-duckdb::unique_ptr<duckdb::SQLStatement> OtelTracesInsert(
-  duckdb::shared_ptr<OtelTracesBox> box);
-duckdb::unique_ptr<duckdb::SQLStatement> OtelMetricsInsert(
-  size_t table, duckdb::shared_ptr<OtelMetricsBox> box);
 
 inline constexpr std::string_view kOtelSchema = "public";
 inline constexpr std::string_view kOtelLogsTable = "otel_logs";

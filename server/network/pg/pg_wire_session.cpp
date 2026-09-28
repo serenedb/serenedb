@@ -1528,7 +1528,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   _client_state->copy_stdin_open_count = 0;
   _client_state->copy_stdin_done = false;
   sdb::pg::CopyInBridge bridge;
-  _connection_ctx->SetCopyInBridge(&bridge);
+  _connection_ctx->SetSideChannel(&bridge);
   _feeder_done.store(false, std::memory_order_relaxed);
   _copy_route.store(true, std::memory_order_release);
   // CopyInResponse's column count: the explicit COPY column list, else the
@@ -1578,7 +1578,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
     co_await this->_task->Park();
   }
   _copy_route.store(false, std::memory_order_release);
-  _connection_ctx->SetCopyInBridge(nullptr);
+  _connection_ctx->SetSideChannel<sdb::pg::CopyInBridge>(nullptr);
   if (error) {
     std::rethrow_exception(error);
   }

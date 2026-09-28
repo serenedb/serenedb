@@ -46,16 +46,19 @@ namespace {
 
 class Creator {
  public:
-  Creator(std::string_view database, duckdb::idx_t database_id)
-    : _conn{connector::MakeSystemConnection(database, database_id).conn} {}
+  Creator(std::string_view database, duckdb::idx_t database_id,
+          std::string_view schema = "public")
+    : _conn{connector::MakeSystemConnection(database, database_id).conn},
+      _schema{schema} {}
 
   // A search table cannot gain an index once it holds rows, so re-running the
   // DDL over an existing schema is not just wasteful, it fails. Presence of
   // the logs table is the marker that the schema is already there.
   bool Exists() {
-    auto result = _conn->Query(absl::StrCat(
-      "SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = '",
-      connector::kOtelLogsTable, "'"));
+    auto result = _conn->Query(
+      absl::StrCat("SELECT 1 FROM pg_tables WHERE schemaname = ",
+                   network::http::SqlLiteral(_schema), " AND tablename = ",
+                   network::http::SqlLiteral(connector::kOtelLogsTable)));
     return !result->HasError() && result->RowCount() == 1;
   }
 
@@ -69,6 +72,11 @@ class Creator {
   }
 
   bool Create() {
+    const auto schema = network::http::SqlIdentifier(_schema);
+    if (!Run(absl::StrCat("CREATE SCHEMA IF NOT EXISTS ", schema)) ||
+        !Run(absl::StrCat("SET search_path TO ", schema))) {
+      return false;
+    }
     for (const auto statement : kSchemaStatements) {
       if (!Run(std::string{statement})) {
         return false;
@@ -78,17 +86,18 @@ class Creator {
   }
 
   absl::Status Check() {
-    std::vector<duckdb::unique_ptr<duckdb::SQLStatement>> inserts;
-    inserts.push_back(connector::OtelLogsInsert(
-      duckdb::make_shared_ptr<connector::OtelLogsBox>()));
-    inserts.push_back(connector::OtelTracesInsert(
-      duckdb::make_shared_ptr<connector::OtelTracesBox>()));
+    std::vector<std::string> inserts{
+      InsertSql(_schema, connector::kOtelLogsTable,
+                connector::kOtelSourceLogsFunction),
+      InsertSql(_schema, connector::kOtelTracesTable,
+                connector::kOtelSourceTracesFunction),
+    };
     for (size_t i = 0; i < connector::kOtelMetricTables.size(); ++i) {
-      inserts.push_back(connector::OtelMetricsInsert(
-        i, duckdb::make_shared_ptr<connector::OtelMetricsBox>()));
+      inserts.push_back(InsertSql(_schema, connector::kOtelMetricTables[i],
+                                  connector::kOtelSourceMetricsFunctions[i]));
     }
-    for (auto& insert : inserts) {
-      auto prepared = _conn->Prepare(std::move(insert));
+    for (const auto& insert : inserts) {
+      auto prepared = _conn->Prepare(insert);
       if (prepared->HasError()) {
         return absl::FailedPreconditionError(
           prepared->GetErrorObject().RawMessage());
@@ -99,11 +108,19 @@ class Creator {
 
  private:
   std::unique_ptr<duckdb::Connection> _conn;
+  std::string _schema;
 };
 
 }  // namespace
 
-absl::Status EnsureSchema(std::string_view database) {
+std::string InsertSql(std::string_view schema, std::string_view table,
+                      std::string_view source) {
+  return absl::StrCat("INSERT INTO ", network::http::SqlIdentifier(schema), ".",
+                      network::http::SqlIdentifier(table), " SELECT * FROM ",
+                      source, "(", network::http::SqlLiteral(schema), ")");
+}
+
+absl::Status EnsureSchema(std::string_view database, std::string_view schema) {
   auto entry = catalog::FindDatabase(database);
   if (!entry) {
     // CREATE DATABASE has to run somewhere: the default database always
@@ -125,11 +142,13 @@ absl::Status EnsureSchema(std::string_view database) {
     }
     SDB_INFO(STARTUP, "OpenTelemetry database created: ", database);
   }
-  Creator creator{entry->name.GetIdentifierName(), entry->oid};
+  Creator creator{entry->name.GetIdentifierName(), entry->oid, schema};
   if (creator.Exists()) {
-    SDB_INFO(STARTUP, "OpenTelemetry schema already present in ", database);
+    SDB_INFO(STARTUP, "OpenTelemetry schema already present in ", database, ".",
+             schema);
   } else if (creator.Create()) {
-    SDB_INFO(STARTUP, "OpenTelemetry schema created in ", database);
+    SDB_INFO(STARTUP, "OpenTelemetry schema created in ", database, ".",
+             schema);
   }
   auto status = creator.Check();
   if (status.ok()) {
@@ -138,8 +157,8 @@ absl::Status EnsureSchema(std::string_view database) {
   return absl::FailedPreconditionError(absl::StrCat(
     "database '", database,
     "' does not match the built-in schema: ", status.message(),
-    ". Fix the table, or start with the built-in schema in a new database: "
-    "set db=<new database> on the ?api=otel listener, e.g. "
+    ". Fix the table, or start with the built-in schema elsewhere: set "
+    "db=<new database> or schema=<new schema> on the ?api=otel listener, e.g. "
     "--listen='http://0.0.0.0:4318?api=otel&db=otel'"));
 }
 

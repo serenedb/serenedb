@@ -23,6 +23,7 @@
 #include <brotli/encode.h>
 #include <gtest/gtest.h>
 #include <lz4frame.h>
+#include <snappy.h>
 #include <zlib.h>
 #include <zstd.h>
 #include <zxc.h>
@@ -427,7 +428,22 @@ std::string Unbrotli(std::string_view in) {
   return out;
 }
 
+std::string Snappy(std::string_view in) {
+  std::string out;
+  snappy::Compress(in.data(), in.size(), &out);
+  return out;
+}
+
+std::string Unsnappy(std::string_view in) {
+  std::string out;
+  EXPECT_TRUE(snappy::Uncompress(in.data(), in.size(), &out));
+  return out;
+}
+
 std::string Encode(std::string_view coding, std::string_view in) {
+  if (coding == "snappy") {
+    return Snappy(in);
+  }
   if (coding == "br") {
     return Brotli(in);
   }
@@ -444,6 +460,9 @@ std::string Encode(std::string_view coding, std::string_view in) {
 }
 
 std::string Decode(std::string_view coding, std::string_view in) {
+  if (coding == "snappy") {
+    return Unsnappy(in);
+  }
   if (coding == "br") {
     return Unbrotli(in);
   }
@@ -459,8 +478,8 @@ std::string Decode(std::string_view coding, std::string_view in) {
   return Unzxc(in);
 }
 
-constexpr std::array<std::string_view, 5> kCodings{"gzip", "zstd", "lz4", "zxc",
-                                                   "br"};
+constexpr std::array<std::string_view, 6> kCodings{"gzip", "zstd", "lz4",
+                                                   "zxc",  "br",   "snappy"};
 
 std::string DecodeAll(std::string_view body, std::string_view field,
                       size_t max_bytes = size_t{64} << 20) {
@@ -507,6 +526,8 @@ TEST(NetworkHttpCompression, NegotiatePrefersServerOrder) {
   EXPECT_EQ(token("br"), "br");
   EXPECT_EQ(token("gzip, deflate, br"), "br");
   EXPECT_EQ(token("gzip, br, zstd"), "zstd");
+  EXPECT_EQ(token("snappy"), "snappy");
+  EXPECT_EQ(token("lz4, snappy"), "lz4");
   EXPECT_EQ(token("*;q=0, gzip"), "gzip");
   // A coding the client did not list is not acceptable on its own.
   EXPECT_EQ(token("zstd;q=0"), "identity");
@@ -606,7 +627,7 @@ TEST(NetworkHttpCompression, IdentityWhenNotAcceptedOrSmall) {
 // encoded bytes are never fed back through the encoder.
 TEST(NetworkHttpCompression, IncompressibleBodyStaysIdentity) {
   Harness harness;
-  for (const auto* coding : {"gzip", "zstd", "lz4", "zxc", "br"}) {
+  for (const auto* coding : {"gzip", "zstd", "lz4", "zxc", "br", "snappy"}) {
     const auto response = Split(harness.Get("/noise", coding));
     EXPECT_TRUE(response.Has("HTTP/1.1 200")) << coding;
     EXPECT_FALSE(response.Has("Content-Encoding")) << coding;
@@ -801,4 +822,19 @@ TEST(NetworkHttpCompression, BrotliBothDirections) {
   const auto echo = Split(harness.Post(Brotli(kLarge), "br", "br"));
   EXPECT_TRUE(echo.Has("Content-Encoding: br"));
   EXPECT_EQ(Unbrotli(echo.body), kLarge);
+}
+
+TEST(NetworkHttpCompression, SnappyBothDirections) {
+  Harness harness;
+  const auto fixed = Split(harness.Get("/large", "snappy"));
+  EXPECT_TRUE(fixed.Has("Content-Encoding: snappy"));
+  EXPECT_EQ(Unsnappy(fixed.body), kLarge);
+
+  const auto chunked = Split(harness.Get("/chunked", "snappy"));
+  EXPECT_TRUE(chunked.Has("Content-Encoding: snappy"));
+  EXPECT_EQ(Unsnappy(chunked.body), kLarge);
+
+  const auto echo = Split(harness.Post(Snappy(kLarge), "snappy", "snappy"));
+  EXPECT_TRUE(echo.Has("Content-Encoding: snappy"));
+  EXPECT_EQ(Unsnappy(echo.body), kLarge);
 }

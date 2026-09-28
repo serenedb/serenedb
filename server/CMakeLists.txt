@@ -36,6 +36,7 @@ target_link_libraries(
         zxc::zxc_lib
         brotlienc
         brotlidec
+        snappy
 )
 
 target_include_directories(

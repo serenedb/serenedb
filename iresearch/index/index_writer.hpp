@@ -305,16 +305,9 @@ class IndexWriter : private util::Noncopyable {
       if (segment == nullptr) {
         return true;
       }
-      if (_tick_source) {
-        return CommitImpl(_tick_source(_queries + 1));
-      }
       const auto first_tick =
         _writer->_tick.fetch_add(_queries, std::memory_order_relaxed);
       return CommitImpl(first_tick + _queries);
-    }
-
-    void SetTickSource(std::function<uint64_t(uint64_t)> source) noexcept {
-      _tick_source = std::move(source);
     }
 
     bool FlushAndCommit() noexcept {
@@ -399,7 +392,6 @@ class IndexWriter : private util::Noncopyable {
     ActiveSegmentContext _active;
     uint64_t _queries{0};
     std::shared_ptr<const IndexFieldOptions> _field_options;
-    std::function<uint64_t(uint64_t)> _tick_source;
     bool _exclusive_segment{false};
   };
   static_assert(std::is_nothrow_move_constructible_v<Transaction>);

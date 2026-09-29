@@ -632,6 +632,44 @@ cache_size
 10
 
 
+connection conn2
+query
+SELECT nextval('seq_cache');
+----
+nextval
+11
+
+
+query
+SELECT min(v) AS lo, max(v) AS hi, count(*) AS n
+FROM (SELECT nextval('seq_cache') AS v FROM generate_series(1, 25)) AS s;
+----
+lo	hi	n
+3	37	25
+
+
+query
+SELECT currval('seq_cache');
+----
+currval
+37
+
+
+connection conn2
+query
+SELECT currval('seq_cache');
+----
+currval
+11
+
+
+query
+SELECT nextval('seq_cache');
+----
+nextval
+38
+
+
 statement ok
 CREATE SEQUENCE seq_nocache;
 

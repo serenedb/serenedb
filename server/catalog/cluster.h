@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <duckdb/catalog/catalog_set.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
@@ -49,13 +50,15 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   std::string GetCatalogType() final { return kStorageType; }
 
   bool UsesCatalogLog() const final { return true; }
-  duckdb::optional_ptr<duckdb::WriteAheadLog> CatalogLog() final {
-    return _catalog_log.get();
+  duckdb::shared_ptr<duckdb::WriteAheadLog> CatalogLog() final {
+    return _catalog_log;
   }
   duckdb::Catalog& ReplayUseCatalog(duckdb::ClientContext& context,
                                     duckdb::idx_t catalog_oid) final;
   void OnCatalogLogPrepared() final;
   void OnCatalogLogDecided() final;
+  void BeginCatalogLogCommit() final;
+  void EndCatalogLogCommit() final;
   void OpenCatalogLog(duckdb::unique_ptr<duckdb::WriteAheadLog> log,
                       bool compactable);
   void MaybeCompactCatalogLog();
@@ -111,7 +114,8 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   bool IsLive(const Artifact& artifact);
   bool HoldsPreparedBatch(duckdb::idx_t oid, duckdb::idx_t generation);
 
-  duckdb::unique_ptr<duckdb::WriteAheadLog> _catalog_log;
+  duckdb::shared_ptr<duckdb::WriteAheadLog> _catalog_log;
+  std::atomic_size_t _commits_in_flight{0};
   bool _compactable = false;
   duckdb::idx_t _live_bytes = 0;
   std::mutex _artifacts_mutex;

@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_set.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
@@ -61,7 +62,7 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   }
 
   bool UsesCatalogLog() const final { return true; }
-  duckdb::optional_ptr<duckdb::WriteAheadLog> CatalogLog() final;
+  duckdb::shared_ptr<duckdb::WriteAheadLog> CatalogLog() final;
 
   void Initialize(bool load_builtin) final;
 
@@ -151,6 +152,9 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
 
   void DropForeignServer(duckdb::CatalogTransaction transaction,
                          duckdb::DropInfo& info);
+
+ private:
+  std::atomic_bool _detached{false};
 };
 
 }  // namespace sdb::catalog

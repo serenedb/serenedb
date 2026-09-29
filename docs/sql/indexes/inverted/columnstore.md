@@ -57,7 +57,7 @@ The global `force_compression` setting applies to search tables as it does to tr
 
 ## Table options
 
-Three `WITH` options of a search table tune the columnstore codecs. All are fixed at `CREATE TABLE`.
+Three `WITH` options of a search table tune the columnstore codecs. [`ALTER TABLE … SET`](../../statements/alter_table/index.md#set--reset-storage-options) changes them later, as [`ALTER COLUMN … SET COMPRESSION`](../../statements/alter_table/index.md#alter-column--set-compression) changes a column's codec; either applies to the segments written afterwards, and compaction rewrites the older ones.
 
 | Option | Default | Effect |
 | :--- | :--- | :--- |

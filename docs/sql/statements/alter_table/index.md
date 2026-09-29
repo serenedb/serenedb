@@ -222,11 +222,25 @@ The `ADD CONSTRAINT` clause adds a `CHECK`, `UNIQUE` or `PRIMARY KEY` constraint
 
 ## `SET` / `RESET` storage options
 
-For a table created with `WITH (storage = 'search')`, `SET (option = value, …)` changes the background maintenance options it was created with, and `RESET (option, …)` returns them to the current session defaults. These options can be changed: `refresh_interval`, `compaction_interval`, `cleanup_interval_step`, `compaction_max_segments`, `compaction_max_segments_bytes` and `compaction_floor_segment_bytes` (see [Background compaction](../../indexes/inverted/maintenance.md#background-compaction)). A change reaches the table's background tasks at once and is undone if its transaction rolls back. `row_group_size`, `segment_memory_max` and `optimize_top_k` are fixed at `CREATE TABLE`. The current values are listed in `pg_class.reloptions`.
+For a table created with `WITH (storage = 'search')`, `SET (option = value, …)` changes the options it was created with, and `RESET (option, …)` returns them to their defaults.
+
+The background maintenance options are `refresh_interval`, `compaction_interval`, `cleanup_interval_step`, `compaction_max_segments`, `compaction_max_segments_bytes` and `compaction_floor_segment_bytes` (see [Background compaction](../../indexes/inverted/maintenance.md#background-compaction)); `RESET` returns them to the current session defaults. A change reaches the table's background tasks at once, including a shorter `refresh_interval` or `compaction_interval` while the task is waiting out the old one, and is undone if its transaction rolls back.
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_036" />
 
-`SET` and `RESET` of storage options are supported only for search tables.
+The codec options are `compression_objective`, `compression_level` and `segment_target` (see [Columnstore storage and compression](../../indexes/inverted/columnstore.md)); `RESET` returns them to `'balanced'`, per-column tuning and 262144 bytes. They apply to the segments written after the change, by refreshes and by compaction; existing segments keep their encoding until compaction rewrites them, so `VACUUM (COMPACT_TABLE)` converts the whole table.
+
+<SqlLogicTest id="sql/statements/alter_table/index/example_037" />
+
+`row_group_size`, `segment_memory_max` and `optimize_top_k` are fixed at `CREATE TABLE`. An inverted index on the table does not prevent the change. The current values are listed in `pg_class.reloptions`. `SET` and `RESET` of storage options are supported only for search tables.
+
+## `ALTER COLUMN … SET COMPRESSION`
+
+`SET COMPRESSION codec`, optionally with `(compression_level = N)`, changes the codec a column is written with, as `USING COMPRESSION` sets it in `CREATE TABLE`; `SET COMPRESSION DEFAULT` returns the column to automatic selection. The same codecs and levels are accepted as at creation: the columnstore codecs (`dict_lz4`, `dict_zstd`, `lz4`, `dict_fsst`, `fsst`, `zxc`, …) only on search tables, and a level only on codecs that take one.
+
+<SqlLogicTest id="sql/statements/alter_table/index/example_038" />
+
+The change applies to data written afterwards and is undone if its transaction rolls back. On a search table it applies to the segments written after it, and compaction rewrites the older ones; a codec that an inverted index names for the column through `INCLUDE` keeps precedence while that index exists. On a transactional table it applies from the next checkpoint. In a database file with a DuckDB storage version it fails at commit, because DuckDB cannot read the change back from the file's log (see [DuckDB files](../attach/duckdb.md)).
 
 ## Limitations
 

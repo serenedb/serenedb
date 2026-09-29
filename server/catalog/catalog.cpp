@@ -390,16 +390,33 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateForeignServer(
 
 void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
                             duckdb::AlterInfo& info) {
-  if (info.type == duckdb::AlterType::ALTER_TABLE && transaction.context &&
-      info.Cast<duckdb::AlterTableInfo>().alter_table_type ==
-        duckdb::AlterTableType::ADD_COLUMN) {
-    const auto table = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
-      *transaction.context, info.GetQualifiedName(),
-      duckdb::OnEntryNotFound::RETURN_NULL);
-    CheckColumnCompression(info.Cast<duckdb::AddColumnInfo>().new_column,
-                           dynamic_cast<const SearchTableEntry*>(table.get())
-                             ? TableEngine::Search
-                             : TableEngine::Transactional);
+  if (info.type == duckdb::AlterType::ALTER_TABLE && transaction.context) {
+    const auto alter_type =
+      info.Cast<duckdb::AlterTableInfo>().alter_table_type;
+    const bool add = alter_type == duckdb::AlterTableType::ADD_COLUMN;
+    const bool set_compression =
+      alter_type == duckdb::AlterTableType::SET_COLUMN_COMPRESSION;
+    const auto table = add || set_compression
+                         ? duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
+                             *transaction.context, info.GetQualifiedName(),
+                             duckdb::OnEntryNotFound::RETURN_NULL)
+                         : nullptr;
+    const auto engine = dynamic_cast<const SearchTableEntry*>(table.get())
+                          ? TableEngine::Search
+                          : TableEngine::Transactional;
+    if (add) {
+      CheckColumnCompression(info.Cast<duckdb::AddColumnInfo>().new_column,
+                             engine);
+    }
+    const auto* set = set_compression
+                        ? &info.Cast<duckdb::SetColumnCompressionInfo>()
+                        : nullptr;
+    if (set && table && table->ColumnExists(set->column_name)) {
+      auto column = table->GetColumn(set->column_name).Copy();
+      column.SetCompressionType(set->compression_type);
+      column.SetCompressionLevel(set->compression_level);
+      CheckColumnCompression(column, engine);
+    }
   }
   const auto type = info.GetCatalogType();
   if (type == duckdb::CatalogType::SCHEMA_ENTRY &&

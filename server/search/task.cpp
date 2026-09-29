@@ -302,13 +302,30 @@ yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
                   " loop");
         break;
       }
-      const auto interval = ToDuration(get_interval_ms(*idx));
-      const bool enabled = interval > Clock::duration::zero();
+      auto interval = ToDuration(get_interval_ms(*idx));
       idx.reset();
 
-      const auto delay =
-        enabled ? interval + interval * stretch : kDisabledPoll;
-      co_await s.Delay(delay);
+      auto waited = Clock::duration::zero();
+      bool enabled = interval > Clock::duration::zero();
+      for (;;) {
+        const auto delay =
+          enabled ? interval + interval * stretch : kDisabledPoll;
+        if (waited >= delay) {
+          break;
+        }
+        const auto slice = std::min(delay - waited, kDisabledPoll);
+        co_await s.Delay(slice);
+        waited += slice;
+        if (ShouldStop() || !enabled) {
+          break;
+        }
+        auto target = weak.lock();
+        if (!target) {
+          break;
+        }
+        interval = ToDuration(get_interval_ms(*target));
+        enabled = interval > Clock::duration::zero();
+      }
       if (ShouldStop()) {
         break;
       }
@@ -354,13 +371,16 @@ template<class Storage>
 yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak) {
   return IntervalLoop(
     std::move(weak), "refresh",
-    [](Storage& idx) { return idx.GetTasksSettings().refresh_interval_msec; },
+    [](Storage& idx) {
+      return idx.GetTasksSettings().refresh_interval_msec.load();
+    },
     [cleanup_count = size_t{0}](const std::weak_ptr<Storage>& target) mutable {
       auto idx = target.lock();
       if (!idx) {
         return LoopTick::kNeutral;
       }
-      const auto cleanup_step = idx->GetTasksSettings().cleanup_interval_step;
+      const auto cleanup_step =
+        idx->GetTasksSettings().cleanup_interval_step.load();
       const bool stale = idx->StalePressure() >= kStalePressureCleanup;
       const bool periodic = cleanup_step && ++cleanup_count >= cleanup_step;
       const bool run_cleanup = stale || periodic;
@@ -485,7 +505,7 @@ yaclib::Future<> ReindexLoop(std::weak_ptr<InvertedIndexStorage> weak) {
   return IntervalLoop(
     std::move(weak), "reindex",
     [](InvertedIndexStorage& idx) {
-      return idx.GetTasksSettings().reindex_interval_msec;
+      return idx.GetTasksSettings().reindex_interval_msec.load();
     },
     [](const std::weak_ptr<InvertedIndexStorage>& target) {
       if (!g_reindex_runner) {

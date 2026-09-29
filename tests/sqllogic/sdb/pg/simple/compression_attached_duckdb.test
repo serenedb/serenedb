@@ -39,6 +39,31 @@ ALTER TABLE codecs_v13.main.t_zstd ADD COLUMN w TEXT USING COMPRESSION zstd(comp
 db error: ERROR: Can't set compression_level on column "w", compression options are only available on SereneDB tables
 
 
+statement error
+ALTER TABLE codecs_v13.main.t_zstd ALTER COLUMN v SET COMPRESSION dict_lz4;
+----
+db error: ERROR: Can't compress column "v" using compression type 'DICT_LZ4', that type is only available on SereneDB tables
+
+
+statement error
+ALTER TABLE codecs_v13.main.t_zstd ALTER COLUMN v SET COMPRESSION zstd(compression_level = 3);
+----
+db error: ERROR: Can't set compression_level on column "v", compression options are only available on SereneDB tables
+
+
+statement error
+ALTER TABLE codecs_v13.main.t_zstd ALTER COLUMN v SET COMPRESSION uncompressed;
+----
+db error: ERROR: Failed to commit: Cannot write SET_COLUMN_COMPRESSION to a database file with DuckDB storage version v1.3.0
+
+
+query
+SELECT sql FROM duckdb_tables() WHERE database_name = 'codecs_v13' AND table_name = 't_zstd';
+----
+sql
+CREATE TABLE t_zstd(v VARCHAR USING COMPRESSION ZSTD);
+
+
 statement ok
 DETACH codecs_v13;
 

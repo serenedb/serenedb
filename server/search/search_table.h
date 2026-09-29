@@ -152,6 +152,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   duckdb::idx_t GetId() const noexcept { return _table_id; }
   auto& GetTasksSettings() { return _maint_settings; }
   void ApplyOptions(const catalog::SearchTableOptions& options);
+  void SetDeclaredCompression(catalog::CompressionByColumn compression);
 
   // Wake the compaction loop after a refresh produced new segments.
   void NudgeCompaction() noexcept {

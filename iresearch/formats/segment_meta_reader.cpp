@@ -207,10 +207,7 @@ void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
       ") is out of range for ", mask_count, " masked document(s)")};
   }
 
-  // ...........................................................................
   // all operations below are noexcept
-  // ...........................................................................
-
   meta.name = std::move(name);
   meta.version = segment_version;
   meta.docs_count = docs_count;

@@ -20,6 +20,7 @@
 
 #include "connector/duckdb_physical_search_insert.h"
 
+#include <atomic>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -67,6 +68,8 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   duckdb::vector<duckdb::LogicalType> chunk_types;
   std::shared_ptr<catalog::SequenceCounter> generated_pk_seq;
   std::shared_lock<std::shared_mutex> table_lock;
+
+  std::atomic<bool> has_local_state = false;
 
   std::mutex combine_mu;
   duckdb::idx_t insert_count = 0;
@@ -275,7 +278,9 @@ SereneDBSearchInsert::GetLocalSinkState(
     return lstate;
   }
 
-  lstate->bulk = context.pipeline && context.pipeline->GetMaxThreads() > 1;
+  lstate->bulk =
+    gstate->has_local_state.exchange(true, std::memory_order_relaxed) ||
+    (context.pipeline && context.pipeline->GetMaxThreads() > 1);
   if (_return_chunk) {
     lstate->returned.emplace(context.client, GetTypes());
   }

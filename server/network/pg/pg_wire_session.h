@@ -250,7 +250,7 @@ class PgWireSession final
   yaclib::Task<StartupOutcome> NegotiateStartup(StartupRequest& startup);
   // Register the cancel token, emplace the task, and start the cpu coroutine on
   // a duck worker. Returns its future for Run to join.
-  yaclib::Future<> SpawnSession();
+  yaclib::Future<> SpawnSession() noexcept;
   // The steady recv pump: socket read -> _recv -> wake the worker (or the
   // copy-gate while a COPY FROM STDIN feeder owns the consumer role).
   yaclib::Task<> PumpRecv();

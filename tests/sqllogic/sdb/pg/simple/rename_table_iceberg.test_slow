@@ -62,7 +62,58 @@ SELECT id FROM iceberg_${__DATABASE__}.${__DATABASE__}.pudge;
 
 
 statement ok
-DROP TABLE iceberg_${__DATABASE__}.${__DATABASE__}.pudge_mid;
+DETACH DATABASE IF EXISTS iceberg2_${__DATABASE__};
+
+
+statement ok
+ATTACH '${ICEBERG_WAREHOUSE}' AS iceberg2_${__DATABASE__} (
+  TYPE ICEBERG,
+  ENDPOINT '${ICEBERG_REST_URL}',
+  AUTHORIZATION_TYPE 'none'
+);
+
+
+statement ok
+CREATE TABLE iceberg2_${__DATABASE__}.${__DATABASE__}.pudge_late (id INTEGER);
+
+
+query
+SELECT count(*) FROM iceberg_${__DATABASE__}.${__DATABASE__}.pudge_late;
+----
+count
+0
+
+
+statement ok
+DROP TABLE iceberg2_${__DATABASE__}.${__DATABASE__}.pudge_late;
+
+
+statement ok
+ALTER TABLE iceberg_${__DATABASE__}.${__DATABASE__}.pudge_mid RENAME TO pudge_late;
+
+
+query
+SELECT id, handle FROM iceberg_${__DATABASE__}.${__DATABASE__}.pudge_late ORDER BY id;
+----
+id	handle
+1	clickclack
+2	deadinside
+
+
+query
+SELECT id, handle FROM iceberg2_${__DATABASE__}.${__DATABASE__}.pudge_late ORDER BY id;
+----
+id	handle
+1	clickclack
+2	deadinside
+
+
+statement ok
+DETACH DATABASE iceberg2_${__DATABASE__};
+
+
+statement ok
+DROP TABLE iceberg_${__DATABASE__}.${__DATABASE__}.pudge_late;
 
 
 statement ok

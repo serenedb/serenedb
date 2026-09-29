@@ -4399,6 +4399,26 @@ TEST_P(DirectoryTestCase, directory_size) {
   }
 }
 
+TEST_P(DirectoryTestCase, checksum_covers_bytes_since_previous_call) {
+  auto out = _dir->create("checksum");
+  ASSERT_FALSE(!out);
+
+  const std::vector<irs::byte_type> data(100000, 7);
+  out->WriteData(data.data(), data.size());
+  irs::Crc32c data_crc;
+  data_crc.process_bytes(data.data(), data.size());
+  EXPECT_EQ(data_crc.checksum(), out->Checksum());
+
+  const std::string_view footer{"footer"};
+  out->WriteData(reinterpret_cast<const irs::byte_type*>(footer.data()),
+                 footer.size());
+  irs::Crc32c footer_crc;
+  footer_crc.process_bytes(footer.data(), footer.size());
+  EXPECT_EQ(footer_crc.checksum(), out->Checksum());
+
+  EXPECT_EQ(irs::Crc32c{}.checksum(), out->Checksum());
+}
+
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(directory_test, DirectoryTestCase,

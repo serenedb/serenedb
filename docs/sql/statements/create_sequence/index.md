@@ -85,6 +85,12 @@ You may also view the current number from the sequence. Note that the `nextval` 
 
 <SqlLogicTest id="sql/statements/create_sequence/currval/example_015" />
 
+### Caching Values
+
+`CACHE` makes a sequence reserve that many values at a time, so a busy sequence syncs its reservation once per block instead of every 32 values:
+
+<SqlLogicTest id="sql/statements/create_sequence/cache/example_019" />
+
 ## Syntax
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram" />
@@ -99,6 +105,7 @@ After a sequence is created, you use the function `nextval` to operate on the se
 
 | Name                  | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | :-------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cache`               | The optional clause `CACHE cache` specifies how many values the sequence reserves at a time. The minimum and default value is 1. Unlike PostgreSQL, where each session caches its own block, the block is shared, so values are still handed out in order across sessions. |
 | `CYCLE` or `NO CYCLE` | The `CYCLE` option allows the sequence to wrap around when the `maxvalue` or `minvalue` has been reached by an ascending or descending sequence respectively. If the limit is reached, the next number generated will be the `minvalue` or `maxvalue`, respectively. If `NO CYCLE` is specified, any calls to `nextval` after the sequence has reached its maximum value will return an error. If neither `CYCLE` nor `NO CYCLE` are specified, `NO CYCLE` is the default. |
 | `increment`           | The optional clause `INCREMENT BY increment` specifies which value is added to the current sequence value to create a new value. A positive value will make an ascending sequence, a negative one a descending sequence. The default value is 1.                                                                                                                                                                                                                           |
 | `maxvalue`            | The optional clause `MAXVALUE maxvalue` determines the maximum value for the sequence. If this clause is not supplied or `NO MAXVALUE` is specified, then default values will be used. The defaults are 2^63 - 1 and -1 for ascending and descending sequences, respectively.                                                                                                                                                                                              |
@@ -113,7 +120,7 @@ Sequences are based on `BIGINT` arithmetic, so the range cannot exceed the range
 
 ## Limitations
 
-A sequence makes its values durable ahead of handing them out, 32 steps at a time, as PostgreSQL does. After a crash, `nextval` resumes past the last durable value, so up to 32 values can be skipped, but no value is handed out twice. `setval` is durable when it returns.
+A sequence makes its values durable ahead of handing them out, 32 steps at a time (or `CACHE` steps, when that is larger), as PostgreSQL does. After a crash, `nextval` resumes past the last durable value, so up to that many values can be skipped, but no value is handed out twice. `setval` is durable when it returns.
 
 When a table column uses a sequence as its `DEFAULT`, the column keeps a dependency on that sequence. The default can be changed with `ALTER TABLE ... ALTER COLUMN ... SET DEFAULT` — here it is reset to `NULL`, so subsequent rows no longer draw from the sequence:
 

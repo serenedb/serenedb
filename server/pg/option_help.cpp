@@ -62,7 +62,8 @@ void FormatGroup(std::string& out, const OptionGroup& group, int indent) {
     } else {
       switch (opt.type) {
         case OptionInfo::Type::String:
-        case OptionInfo::Type::StringList: {
+        case OptionInfo::Type::StringList:
+        case OptionInfo::Type::Lambda: {
           auto str = std::get<std::string_view>(opt.default_value);
           if (!str.empty()) {
             absl::StrAppend(&out, " [default: ", str, "]");

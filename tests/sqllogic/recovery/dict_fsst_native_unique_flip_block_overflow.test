@@ -1,8 +1,6 @@
 # The same cut-sizing bug as dict_fsst_unique_flip_block_overflow.test, pinned to the NATIVE modes.
 # A default-storage attach leaves allow_plus false, so `committed` starts at PLAIN and every cut goes
-# through CutPlain/WriteNative -- the path the original abort came from. The sibling test attaches
-# with STORAGE_VERSION 'serenedb_v1', which sets allow_plus and lets the cleaved modes compete, so it
-# does not pin this configuration.
+# through CutPlain/WriteNative -- the path the original abort came from.
 #
 # While every row is unique the plain layout is FSST_ONLY, which stores no selection buffer -- row i
 # is entry i. The first duplicate forces DICT_FSST, adding a bitpacked row->entry index for every row

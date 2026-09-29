@@ -198,8 +198,7 @@ TEST_P(IdfIndexTest, scores_field_without_frequency) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(idf_test, IdfIndexTest,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5simd")),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          IdfIndexTest::to_string);
 
 }  // namespace

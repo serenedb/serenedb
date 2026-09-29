@@ -1,0 +1,613 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY es_words AS split_text_csv(' ')
+  WITH (frequency, position)
+
+
+statement ok
+CREATE TABLE es (id INT PRIMARY KEY, ts BIGINT, r BIGINT, name TEXT, body TEXT)
+
+
+statement ok
+CREATE INDEX es_idx ON es USING inverted (id, body es_words)
+  INCLUDE (ts, r, name) WITH (compaction_interval = 0)
+
+
+statement ok
+CREATE TABLE ess (id INT PRIMARY KEY, ts BIGINT, r BIGINT, name TEXT, body TEXT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+      row_group_size = 4096)
+
+
+statement ok
+CREATE INDEX ess_idx ON ess USING inverted (body es_words)
+
+
+statement ok
+INSERT INTO es
+SELECT i, i, (i * 7919) % 100003, 'prefix__' || lpad(i::text, 8, '0'),
+  'fox' || (i % 7) || CASE WHEN i % 1000 = 0 THEN ' rare' ELSE '' END
+FROM generate_series(1, 40960) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) es
+
+
+statement ok
+INSERT INTO ess
+SELECT i, i, (i * 7919) % 100003, 'prefix__' || lpad(i::text, 8, '0'),
+  'fox' || (i % 7) || CASE WHEN i % 1000 = 0 THEN ' rare' ELSE '' END
+FROM generate_series(1, 40960) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ess
+
+
+statement ok
+INSERT INTO es
+SELECT i, i, (i * 7919) % 100003, 'prefix__' || lpad(i::text, 8, '0'),
+  'fox' || (i % 7) || CASE WHEN i % 1000 = 0 THEN ' rare' ELSE '' END
+FROM generate_series(40961, 61440) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) es
+
+
+statement ok
+INSERT INTO ess
+SELECT i, i, (i * 7919) % 100003, 'prefix__' || lpad(i::text, 8, '0'),
+  'fox' || (i % 7) || CASE WHEN i % 1000 = 0 THEN ' rare' ELSE '' END
+FROM generate_series(40961, 61440) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ess
+
+
+statement ok
+INSERT INTO es
+SELECT i, NULL, (i * 7919) % 100003, 'prefix__' || lpad(i::text, 8, '0'),
+  'fox' || (i % 7) || CASE WHEN i % 1000 = 0 THEN ' rare' ELSE '' END
+FROM generate_series(61441, 65536) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) es
+
+
+statement ok
+INSERT INTO ess
+SELECT i, NULL, (i * 7919) % 100003, 'prefix__' || lpad(i::text, 8, '0'),
+  'fox' || (i % 7) || CASE WHEN i % 1000 = 0 THEN ' rare' ELSE '' END
+FROM generate_series(61441, 65536) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ess
+
+
+statement ok
+INSERT INTO es
+SELECT i, i, (i * 7919) % 100003, 'prefix__' || lpad(i::text, 8, '0'),
+  'fox' || (i % 7) || CASE WHEN i % 1000 = 0 THEN ' rare' ELSE '' END
+FROM generate_series(65537, 73728) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) es
+
+
+statement ok
+INSERT INTO ess
+SELECT i, i, (i * 7919) % 100003, 'prefix__' || lpad(i::text, 8, '0'),
+  'fox' || (i % 7) || CASE WHEN i % 1000 = 0 THEN ' rare' ELSE '' END
+FROM generate_series(65537, 73728) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ess
+
+
+statement ok
+SET threads = 1
+
+
+query
+SELECT id FROM es_idx WHERE body @@ 'fox3' ORDER BY ts DESC LIMIT 5;
+----
+id
+73727
+73720
+73713
+73706
+73699
+
+
+query
+SELECT id FROM es_idx WHERE body @@ 'fox3' ORDER BY ts LIMIT 5;
+----
+id
+3
+10
+17
+24
+31
+
+
+query
+SELECT id FROM es_idx WHERE body @@ 'fox3' ORDER BY ts DESC LIMIT 3 OFFSET 4;
+----
+id
+73699
+73692
+73685
+
+
+query
+SELECT ts FROM es_idx WHERE body @@ 'fox3' ORDER BY ts DESC NULLS FIRST LIMIT 3;
+----
+ts
+NULL
+NULL
+NULL
+
+
+query
+SELECT id FROM es_idx WHERE body @@ 'rare' ORDER BY ts DESC LIMIT 5;
+----
+id
+73000
+72000
+71000
+70000
+69000
+
+
+query
+SELECT count(*) AS n, count(ts) AS with_ts
+FROM (SELECT ts FROM es_idx WHERE body @@ 'rare' ORDER BY ts DESC LIMIT 80) x;
+----
+n	with_ts
+73	69
+
+
+query
+SELECT name FROM es_idx WHERE body @@ 'fox3' ORDER BY name DESC LIMIT 3;
+----
+name
+prefix__00073727
+prefix__00073720
+prefix__00073713
+
+
+query
+SELECT name FROM es_idx WHERE body @@ 'fox3' ORDER BY name LIMIT 3;
+----
+name
+prefix__00000003
+prefix__00000010
+prefix__00000017
+
+
+query
+SELECT r FROM es_idx WHERE body @@ 'fox3' ORDER BY r DESC LIMIT 3;
+----
+r
+100002
+99999
+99985
+
+
+query
+SELECT r FROM es_idx WHERE body @@ 'fox3' ORDER BY r LIMIT 3;
+----
+r
+13
+16
+30
+
+
+statement ok
+SET threads = 8
+
+
+query
+SELECT id FROM es_idx WHERE body @@ 'fox3' ORDER BY ts DESC LIMIT 5;
+----
+id
+73727
+73720
+73713
+73706
+73699
+
+
+query
+SELECT id FROM es_idx WHERE body @@ 'fox3' ORDER BY ts LIMIT 5;
+----
+id
+3
+10
+17
+24
+31
+
+
+query
+SELECT id FROM es_idx WHERE body @@ 'fox3' ORDER BY ts DESC LIMIT 3 OFFSET 4;
+----
+id
+73699
+73692
+73685
+
+
+query
+SELECT ts FROM es_idx WHERE body @@ 'fox3' ORDER BY ts DESC NULLS FIRST LIMIT 3;
+----
+ts
+NULL
+NULL
+NULL
+
+
+query
+SELECT id FROM es_idx WHERE body @@ 'rare' ORDER BY ts DESC LIMIT 5;
+----
+id
+73000
+72000
+71000
+70000
+69000
+
+
+query
+SELECT count(*) AS n, count(ts) AS with_ts
+FROM (SELECT ts FROM es_idx WHERE body @@ 'rare' ORDER BY ts DESC LIMIT 80) x;
+----
+n	with_ts
+73	69
+
+
+query
+SELECT name FROM es_idx WHERE body @@ 'fox3' ORDER BY name DESC LIMIT 3;
+----
+name
+prefix__00073727
+prefix__00073720
+prefix__00073713
+
+
+query
+SELECT name FROM es_idx WHERE body @@ 'fox3' ORDER BY name LIMIT 3;
+----
+name
+prefix__00000003
+prefix__00000010
+prefix__00000017
+
+
+query
+SELECT r FROM es_idx WHERE body @@ 'fox3' ORDER BY r DESC LIMIT 3;
+----
+r
+100002
+99999
+99985
+
+
+query
+SELECT r FROM es_idx WHERE body @@ 'fox3' ORDER BY r LIMIT 3;
+----
+r
+13
+16
+30
+
+
+statement ok
+SET threads = 1
+
+
+query
+SELECT id FROM ess WHERE body @@ 'fox3' ORDER BY ts DESC LIMIT 5;
+----
+id
+73727
+73720
+73713
+73706
+73699
+
+
+query
+SELECT id FROM ess WHERE body @@ 'fox3' ORDER BY ts LIMIT 5;
+----
+id
+3
+10
+17
+24
+31
+
+
+query
+SELECT id FROM ess WHERE body @@ 'fox3' ORDER BY ts DESC LIMIT 3 OFFSET 4;
+----
+id
+73699
+73692
+73685
+
+
+query
+SELECT ts FROM ess WHERE body @@ 'fox3' ORDER BY ts DESC NULLS FIRST LIMIT 3;
+----
+ts
+NULL
+NULL
+NULL
+
+
+query
+SELECT id FROM ess WHERE body @@ 'rare' ORDER BY ts DESC LIMIT 5;
+----
+id
+73000
+72000
+71000
+70000
+69000
+
+
+query
+SELECT count(*) AS n, count(ts) AS with_ts
+FROM (SELECT ts FROM ess WHERE body @@ 'rare' ORDER BY ts DESC LIMIT 80) x;
+----
+n	with_ts
+73	69
+
+
+query
+SELECT name FROM ess WHERE body @@ 'fox3' ORDER BY name DESC LIMIT 3;
+----
+name
+prefix__00073727
+prefix__00073720
+prefix__00073713
+
+
+query
+SELECT name FROM ess WHERE body @@ 'fox3' ORDER BY name LIMIT 3;
+----
+name
+prefix__00000003
+prefix__00000010
+prefix__00000017
+
+
+query
+SELECT r FROM ess WHERE body @@ 'fox3' ORDER BY r DESC LIMIT 3;
+----
+r
+100002
+99999
+99985
+
+
+query
+SELECT r FROM ess WHERE body @@ 'fox3' ORDER BY r LIMIT 3;
+----
+r
+13
+16
+30
+
+
+statement ok
+SET threads = 8
+
+
+query
+SELECT id FROM ess WHERE body @@ 'fox3' ORDER BY ts DESC LIMIT 5;
+----
+id
+73727
+73720
+73713
+73706
+73699
+
+
+query
+SELECT id FROM ess WHERE body @@ 'fox3' ORDER BY ts LIMIT 5;
+----
+id
+3
+10
+17
+24
+31
+
+
+query
+SELECT id FROM ess WHERE body @@ 'fox3' ORDER BY ts DESC LIMIT 3 OFFSET 4;
+----
+id
+73699
+73692
+73685
+
+
+query
+SELECT ts FROM ess WHERE body @@ 'fox3' ORDER BY ts DESC NULLS FIRST LIMIT 3;
+----
+ts
+NULL
+NULL
+NULL
+
+
+query
+SELECT id FROM ess WHERE body @@ 'rare' ORDER BY ts DESC LIMIT 5;
+----
+id
+73000
+72000
+71000
+70000
+69000
+
+
+query
+SELECT count(*) AS n, count(ts) AS with_ts
+FROM (SELECT ts FROM ess WHERE body @@ 'rare' ORDER BY ts DESC LIMIT 80) x;
+----
+n	with_ts
+73	69
+
+
+query
+SELECT name FROM ess WHERE body @@ 'fox3' ORDER BY name DESC LIMIT 3;
+----
+name
+prefix__00073727
+prefix__00073720
+prefix__00073713
+
+
+query
+SELECT name FROM ess WHERE body @@ 'fox3' ORDER BY name LIMIT 3;
+----
+name
+prefix__00000003
+prefix__00000010
+prefix__00000017
+
+
+query
+SELECT r FROM ess WHERE body @@ 'fox3' ORDER BY r DESC LIMIT 3;
+----
+r
+100002
+99999
+99985
+
+
+query
+SELECT r FROM ess WHERE body @@ 'fox3' ORDER BY r LIMIT 3;
+----
+r
+13
+16
+30
+
+
+statement ok
+SET sdb_scan_split = 'never'
+
+
+query
+SELECT id FROM ess WHERE body @@ 'fox3' ORDER BY ts DESC LIMIT 5;
+----
+id
+73727
+73720
+73713
+73706
+73699
+
+
+query
+SELECT id FROM ess WHERE body @@ 'fox3' ORDER BY ts LIMIT 5;
+----
+id
+3
+10
+17
+24
+31
+
+
+query
+SELECT id FROM ess WHERE body @@ 'fox3' ORDER BY ts DESC LIMIT 3 OFFSET 4;
+----
+id
+73699
+73692
+73685
+
+
+query
+SELECT ts FROM ess WHERE body @@ 'fox3' ORDER BY ts DESC NULLS FIRST LIMIT 3;
+----
+ts
+NULL
+NULL
+NULL
+
+
+query
+SELECT id FROM ess WHERE body @@ 'rare' ORDER BY ts DESC LIMIT 5;
+----
+id
+73000
+72000
+71000
+70000
+69000
+
+
+query
+SELECT count(*) AS n, count(ts) AS with_ts
+FROM (SELECT ts FROM ess WHERE body @@ 'rare' ORDER BY ts DESC LIMIT 80) x;
+----
+n	with_ts
+73	69
+
+
+query
+SELECT name FROM ess WHERE body @@ 'fox3' ORDER BY name DESC LIMIT 3;
+----
+name
+prefix__00073727
+prefix__00073720
+prefix__00073713
+
+
+query
+SELECT name FROM ess WHERE body @@ 'fox3' ORDER BY name LIMIT 3;
+----
+name
+prefix__00000003
+prefix__00000010
+prefix__00000017
+
+
+query
+SELECT r FROM ess WHERE body @@ 'fox3' ORDER BY r DESC LIMIT 3;
+----
+r
+100002
+99999
+99985
+
+
+query
+SELECT r FROM ess WHERE body @@ 'fox3' ORDER BY r LIMIT 3;
+----
+r
+13
+16
+30
+
+
+statement ok
+RESET sdb_scan_split
+
+
+statement ok
+RESET threads

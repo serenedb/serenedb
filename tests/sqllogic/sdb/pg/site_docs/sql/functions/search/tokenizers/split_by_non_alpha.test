@@ -1,0 +1,23 @@
+# DOCS_TEST: ascii_bytes
+
+# DOCS_TEST_BODY
+
+query
+SELECT split_by_non_alpha('Grüße, Welt! 北京123', break := 'ascii_bytes') AS tokens;
+----
+tokens
+{Grüße,Welt,北京123}
+
+# DOCS_TEST: break_modes
+
+# DOCS_TEST_BODY
+
+query
+SELECT split_by_non_alpha('Grüße, Welt! 北京123 foo—bar abc_42', break := 'ascii') AS ascii,
+       split_by_non_alpha('Grüße, Welt! 北京123 foo—bar abc_42', break := 'ascii_bytes') AS ascii_bytes,
+       split_by_non_alpha('Grüße, Welt! 北京123 foo—bar abc_42', break := 'alnum') AS alnum,
+       split_by_non_alpha('Grüße, Welt! 北京123 foo—bar abc_42', break := 'letters') AS letters,
+       split_by_non_alpha('Grüße, Welt! 北京123 foo—bar abc_42', break := 'whitespace') AS whitespace;
+----
+ascii	ascii_bytes	alnum	letters	whitespace
+{Gr,e,Welt,123,foo,bar,abc,42}	{Grüße,Welt,北京123,foo—bar,abc,42}	{Grüße,Welt,北京123,foo,bar,abc,42}	{Grüße,Welt,北京,foo,bar,abc}	{"Grüße,",Welt!,北京123,foo—bar,abc_42}

@@ -280,7 +280,7 @@ void ScorePruneTestCase::AssertTermFilter(const irs::Scorer& scorer,
   *filter.mutable_field_id() = kFieldId;
 
   auto reader = irs::DirectoryReader{
-    dir(), codec(),
+    dir(),
     irs::IndexReaderOptions{.scorer = &scorer,
                             .db = &::irs::DuckDBEngine::Instance().instance()}};
   ASSERT_NE(nullptr, reader);
@@ -307,7 +307,7 @@ void ScorePruneTestCase::AssertConjunctionFilter(const irs::Scorer& scorer,
   static const irs::field_id kFieldId = tests::FieldIdFor("name");
 
   auto reader = irs::DirectoryReader{
-    dir(), codec(),
+    dir(),
     irs::IndexReaderOptions{.scorer = &scorer,
                             .db = &::irs::DuckDBEngine::Instance().instance()}};
   ASSERT_NE(nullptr, reader);
@@ -341,7 +341,7 @@ void ScorePruneTestCase::AssertDisjunctionFilter(const irs::Scorer& scorer,
   static const irs::field_id kFieldId = tests::FieldIdFor("name");
 
   auto reader = irs::DirectoryReader{
-    dir(), codec(),
+    dir(),
     irs::IndexReaderOptions{.scorer = &scorer,
                             .db = &::irs::DuckDBEngine::Instance().instance()}};
   ASSERT_NE(nullptr, reader);
@@ -516,8 +516,7 @@ TEST_P(ScorePruneTestCase, TermFilterBM04) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 static const auto kTestValues =
-  ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                     ::testing::Values(tests::FormatInfo{"1_5simd"}));
+  ::testing::Combine(::testing::ValuesIn(kTestDirs));
 
 INSTANTIATE_TEST_SUITE_P(ScorePruneTest, ScorePruneTestCase, kTestValues,
                          ScorePruneTestCase::to_string);

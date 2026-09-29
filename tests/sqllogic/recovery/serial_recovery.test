@@ -83,11 +83,8 @@ id	task
 5	updated_resume_for_mop
 
 
-# Critical: the next INSERT must not collide with a persisted row. The durable
-# horizon runs a log-ahead (32 values, PG's SEQ_LOG_VALS) past the last id handed
-# out, and a crash burns whatever is left of it -- so the ids resume above 105
-# rather than at 106, which is the guarantee that matters: the on-disk
-# high-water always covers any base previously handed out.
+# Critical: the next INSERT must not collide with a persisted row. After a crash
+# a sequence resumes at the last persisted value plus one, so there is no gap.
 connection after_crash
 statement count 1
 INSERT INTO kostya_iceberg_only_jira (task) VALUES ('mop_recruiter_replied');
@@ -99,7 +96,7 @@ SELECT id FROM kostya_iceberg_only_jira
   WHERE task = 'mop_recruiter_replied';
 ----
 id
-138
+106
 
 
 # Multi-row insert post-recovery.
@@ -117,10 +114,10 @@ SELECT id, task FROM kostya_iceberg_only_jira
   WHERE id > 105 ORDER BY id;
 ----
 id	task
-138	mop_recruiter_replied
-139	iceberg_specs_skim_again
-140	reread_solid_principles
-141	mop_round2_scheduled
+106	mop_recruiter_replied
+107	iceberg_specs_skim_again
+108	reread_solid_principles
+109	mop_round2_scheduled
 
 
 # A second crash should leave the same property: post-crash inserts continue
@@ -151,7 +148,7 @@ SELECT id FROM kostya_iceberg_only_jira
   WHERE task = 'mop_offer_letter_arrived';
 ----
 id
-171
+110
 
 
 connection after_crash_2

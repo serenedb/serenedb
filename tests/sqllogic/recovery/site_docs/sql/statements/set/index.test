@@ -79,3 +79,22 @@ RESET GLOBAL default_order;
 
 statement ok
 RESET GLOBAL threads;
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+statement ok
+BEGIN TRANSACTION;
+
+statement ok
+SET LOCAL threads = 2;
+
+query
+SHOW threads;
+----
+threads
+2
+
+statement ok
+COMMIT;

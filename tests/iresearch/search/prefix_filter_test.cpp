@@ -153,7 +153,7 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
     irs::Scorer* score = &bm25;
     irs::IndexWriterOptions opts;
     opts.reader_options.db = &::irs::DuckDBEngine::Instance().instance();
-    if (codec()->type()().name().starts_with("1_5simd") && score_prune) {
+    if (score_prune) {
       opts.reader_options.scorer = score;
     }
     const auto reader_options = opts.reader_options;
@@ -497,9 +497,7 @@ TEST_P(PrefixFilterTestCase, by_prefix_no_collector) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(prefix_filter_test, PrefixFilterTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values(tests::FormatInfo{
-                                              "1_5simd"})),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          PrefixFilterTestCase::to_string);
 
 }  // namespace

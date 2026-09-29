@@ -33,9 +33,6 @@
 
 namespace sdb::connector {
 
-// something that never match user created fields id.
-constexpr inline std::string_view kPkFieldName{"\x00", 1};
-
 class SearchRemoveFilter : public irs::Filter, public irs::lead::Node {
  public:
   SearchRemoveFilter(size_t batch_size, irs::field_id pk_field_id)

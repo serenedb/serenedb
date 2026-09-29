@@ -1,0 +1,337 @@
+# serenedb-only (needs concurrent non-superuser password sessions): a schema
+# privilege changed in one transaction is not in force for another session
+# until it commits, whichever way the enforcer reaches the schema. By name is
+# the CatalogSet's own snapshot walk. Through a table (OWNER TO checks the new
+# owner's CREATE on the table's schema) it used to read whatever version was
+# newest, committed or not, so a pending GRANT was already honoured and a
+# pending REVOKE already enforced. Now the table resolves its schema with the
+# reader's transaction, like any other catalog lookup.
+#
+# Lore: vedernikoff owns the ledger and its schema; bob is the intern who is
+# handed the ledger once, and only once the grant is real.
+
+
+statement ok
+DROP SCHEMA IF EXISTS xsai_s CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS xsai_bob;
+
+
+statement ok
+DROP ROLE IF EXISTS xsai_owner;
+
+
+statement ok
+CREATE ROLE xsai_owner LOGIN PASSWORD 'xsai_owner_pw';
+
+
+statement ok
+CREATE ROLE xsai_bob LOGIN PASSWORD 'xsai_bob_pw';
+
+
+statement ok
+GRANT xsai_bob TO xsai_owner;
+
+
+statement ok
+CREATE SCHEMA xsai_s;
+
+
+statement ok
+ALTER SCHEMA xsai_s OWNER TO xsai_owner;
+
+
+statement ok
+CREATE TABLE xsai_s.t (id int);
+
+
+statement ok
+ALTER TABLE xsai_s.t OWNER TO xsai_owner;
+
+
+statement ok
+INSERT INTO xsai_s.t VALUES (1), (2);
+
+
+# ---- (1) A pending GRANT is not honoured on the table path.
+connection default
+statement ok
+BEGIN;
+
+
+connection default
+statement ok
+GRANT CREATE ON SCHEMA xsai_s TO xsai_bob;
+
+
+connection c_owner user=xsai_owner password=xsai_owner_pw
+statement error
+ALTER TABLE xsai_s.t OWNER TO xsai_bob;
+----
+db error: ERROR: permission denied for schema xsai_s
+
+
+connection c_owner user=xsai_owner password=xsai_owner_pw
+query
+SELECT has_schema_privilege('xsai_bob', 'xsai_s', 'CREATE') AS bob_create;
+----
+bob_create
+f
+
+
+connection default
+statement ok
+COMMIT;
+
+
+connection c_owner user=xsai_owner password=xsai_owner_pw
+statement ok
+ALTER TABLE xsai_s.t OWNER TO xsai_bob;
+
+
+connection default
+query
+SELECT pg_get_userbyid(c.relowner) AS owner
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'xsai_s' AND c.relname = 't';
+----
+owner
+xsai_bob
+
+
+connection default
+statement ok
+ALTER TABLE xsai_s.t OWNER TO xsai_owner;
+
+
+# ---- (2) A pending REVOKE on the schema and an OWNER TO on a table in it are
+# two writers of the same dependency edge (table -> schema), so the second is
+# refused as a write-write conflict and nothing of it lands; the ROLLBACK of the
+# first leaves the committed grant in place.
+connection default
+statement ok
+BEGIN;
+
+
+connection default
+statement ok
+REVOKE CREATE ON SCHEMA xsai_s FROM xsai_bob;
+
+
+connection c_owner user=xsai_owner password=xsai_owner_pw
+statement error
+ALTER TABLE xsai_s.t OWNER TO xsai_bob;
+----
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
+
+
+connection default
+statement ok
+ROLLBACK;
+
+
+connection default
+query
+SELECT pg_get_userbyid(c.relowner) AS owner,
+       has_schema_privilege('xsai_bob', 'xsai_s', 'CREATE') AS bob_create
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'xsai_s' AND c.relname = 't';
+----
+owner	bob_create
+xsai_owner	t
+
+
+connection c_owner user=xsai_owner password=xsai_owner_pw
+statement ok
+ALTER TABLE xsai_s.t OWNER TO xsai_bob;
+
+
+connection default
+statement ok
+ALTER TABLE xsai_s.t OWNER TO xsai_owner;
+
+
+connection default
+statement ok
+REVOKE CREATE ON SCHEMA xsai_s FROM xsai_bob;
+
+
+# ---- (3) The writer's own transaction sees its own version on the table path;
+# a ROLLBACK takes the grant and the transfer back together.
+connection c_owner user=xsai_owner password=xsai_owner_pw
+statement ok
+BEGIN;
+
+
+connection c_owner user=xsai_owner password=xsai_owner_pw
+statement ok
+GRANT CREATE ON SCHEMA xsai_s TO xsai_bob;
+
+
+connection c_owner user=xsai_owner password=xsai_owner_pw
+statement ok
+ALTER TABLE xsai_s.t OWNER TO xsai_bob;
+
+
+connection c_bob user=xsai_bob password=xsai_bob_pw
+query
+SELECT has_schema_privilege('xsai_bob', 'xsai_s', 'CREATE') AS bob_create;
+----
+bob_create
+f
+
+
+connection c_bob user=xsai_bob password=xsai_bob_pw
+statement error
+CREATE TABLE xsai_s.t_bob (id int);
+----
+db error: ERROR: permission denied for schema xsai_s
+
+
+connection c_owner user=xsai_owner password=xsai_owner_pw
+statement ok
+ROLLBACK;
+
+
+connection default
+query
+SELECT pg_get_userbyid(c.relowner) AS owner,
+       has_schema_privilege('xsai_bob', 'xsai_s', 'CREATE') AS bob_create
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'xsai_s' AND c.relname = 't';
+----
+owner	bob_create
+xsai_owner	f
+
+
+connection c_owner user=xsai_owner password=xsai_owner_pw
+statement ok
+BEGIN;
+
+
+connection c_owner user=xsai_owner password=xsai_owner_pw
+statement ok
+GRANT CREATE ON SCHEMA xsai_s TO xsai_bob;
+
+
+connection c_owner user=xsai_owner password=xsai_owner_pw
+statement ok
+ALTER TABLE xsai_s.t OWNER TO xsai_bob;
+
+
+connection c_owner user=xsai_owner password=xsai_owner_pw
+statement ok
+COMMIT;
+
+
+connection c_bob user=xsai_bob password=xsai_bob_pw
+statement ok
+CREATE TABLE xsai_s.t_bob (id int);
+
+
+connection default
+query
+SELECT pg_get_userbyid(c.relowner) AS owner, c.relname
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'xsai_s' AND c.relkind = 'r' ORDER BY 2;
+----
+owner	relname
+xsai_bob	t
+xsai_bob	t_bob
+
+
+# ---- (4) The reader's snapshot: a transaction bob opened (and used) before
+# the GRANT committed is still refused, and allowed once it ends. The snapshot
+# is taken by the first statement that touches the catalog, not by BEGIN.
+connection default
+statement ok
+REVOKE CREATE ON SCHEMA xsai_s FROM xsai_bob;
+
+
+connection c_bob user=xsai_bob password=xsai_bob_pw
+statement ok
+BEGIN;
+
+
+connection c_bob user=xsai_bob password=xsai_bob_pw
+query
+SELECT count(*) AS n FROM xsai_s.t_bob;
+----
+n
+0
+
+
+connection default
+statement ok
+GRANT CREATE ON SCHEMA xsai_s TO xsai_bob;
+
+
+connection c_bob user=xsai_bob password=xsai_bob_pw
+statement error
+CREATE TABLE xsai_s.t_bob2 (id int);
+----
+db error: ERROR: permission denied for schema xsai_s
+
+
+connection c_bob user=xsai_bob password=xsai_bob_pw
+statement ok
+ROLLBACK;
+
+
+connection c_bob user=xsai_bob password=xsai_bob_pw
+statement ok
+CREATE TABLE xsai_s.t_bob2 (id int);
+
+
+# ---- (5) The owner's pending alter holds the schema against the superuser too.
+connection c_owner user=xsai_owner password=xsai_owner_pw
+statement ok
+BEGIN;
+
+
+connection c_owner user=xsai_owner password=xsai_owner_pw
+statement ok
+REVOKE CREATE ON SCHEMA xsai_s FROM xsai_bob;
+
+
+connection default
+statement error
+GRANT USAGE ON SCHEMA xsai_s TO xsai_bob;
+----
+db error: ERROR: Catalog write-write conflict on alter with "xsai_s"
+
+
+connection c_owner user=xsai_owner password=xsai_owner_pw
+statement ok
+COMMIT;
+
+
+connection default
+statement ok
+GRANT USAGE ON SCHEMA xsai_s TO xsai_bob;
+
+
+connection default
+query
+SELECT has_schema_privilege('xsai_bob', 'xsai_s', 'CREATE') AS bob_create,
+       has_schema_privilege('xsai_bob', 'xsai_s', 'USAGE') AS bob_usage;
+----
+bob_create	bob_usage
+f	t
+
+
+connection default
+statement ok
+DROP SCHEMA xsai_s CASCADE;
+
+
+connection default
+statement ok
+DROP ROLE xsai_bob;
+
+
+connection default
+statement ok
+DROP ROLE xsai_owner;

@@ -15,7 +15,7 @@ control substitution on
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/cwnt.db' AS w (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', ROW_GROUP_SIZE 1048576);
+ATTACH '${__TEST_DIR__}/cwnt.db' AS w (TYPE duckdb, STORAGE_VERSION 'serenedb_latest', ROW_GROUP_SIZE 1048576);
 
 
 statement ok
@@ -76,7 +76,7 @@ SELECT 1;
 
 connection after_crash
 statement ok
-ATTACH '${__TEST_DIR__}/cwnt.db' AS w (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', ROW_GROUP_SIZE 1048576);
+ATTACH '${__TEST_DIR__}/cwnt.db' AS w (TYPE duckdb, STORAGE_VERSION 'serenedb_latest', ROW_GROUP_SIZE 1048576);
 
 
 # compression now runs for the first time, over rows the WAL handed back

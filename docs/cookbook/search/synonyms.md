@@ -51,7 +51,7 @@ The [`expand_wordnet_synonyms`](../../sql/functions/search/tokenizers/expand_wor
 
 <SqlLogicTest id="cookbook/search/synonyms/example_005" />
 
-The catch is that WordNet only knows the words in its map. A word with no sense is dropped, not passed through, so `ts_lexize` returns an empty list for it and that word becomes unsearchable. Load the full WordNet database when you want broad coverage, or reach for solr when you would rather hand-write a few groups and keep every other word intact.
+WordNet only knows the words in its map. A word with no sense passes through unchanged, so `ts_lexize` returns the word itself and it stays searchable as written; only the words the map knows meet their synonyms. Load the full WordNet database when you want broad coverage, or reach for solr when you would rather hand-write a few groups.
 
 <SqlLogicTest id="cookbook/search/synonyms/example_006" />
 

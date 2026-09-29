@@ -6,7 +6,7 @@ add_compile_warnings_flags()
 
 add_executable(serened rest_server/serened.cpp)
 
-target_link_libraries(serened sereneserver duckdb_shell_static)
+target_link_libraries(serened serene_docs_shell)
 
 ################################################################################
 ## installation
@@ -30,6 +30,13 @@ target_link_libraries(
         serene
         llhttp
         duckdb_static
+        ZLIB::ZLIB
+        zstd::zstd
+        lz4_static
+        zxc::zxc_lib
+        brotlienc
+        brotlidec
+        snappy
 )
 
 target_include_directories(

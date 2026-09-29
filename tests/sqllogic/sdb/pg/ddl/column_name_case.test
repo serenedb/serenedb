@@ -81,8 +81,11 @@ AA	a
 statement ok
 CREATE INDEX mishustin_case_ix ON mishustin_case ("a");
 
-statement ok
+statement error
 ALTER TABLE mishustin_case DROP COLUMN "a";
+----
+db error: ERROR: Cannot drop this column: an index depends on it!
+
 
 query
 SELECT attname FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
@@ -90,6 +93,7 @@ WHERE c.relname = 'mishustin_case' AND a.attnum > 0 ORDER BY a.attnum;
 ----
 attname
 AA
+a
 b
 B
 

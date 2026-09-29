@@ -23,7 +23,7 @@
 
 #pragma once
 
-#include <iresearch/formats/formats.hpp>
+#include <iresearch/formats/term_reader.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <unordered_set>
 
@@ -237,9 +237,8 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
                  size_t skip = 0,
                  irs::automaton_table_matcher* matcher = nullptr);
 
-void AssertIndex(const irs::Directory& dir, irs::Format::ptr codec,
-                 const index_t& index, irs::IndexFeatures features,
-                 size_t skip = 0,
+void AssertIndex(const irs::Directory& dir, const index_t& index,
+                 irs::IndexFeatures features, size_t skip = 0,
                  irs::automaton_table_matcher* matcher = nullptr);
 
 }  // namespace tests

@@ -53,6 +53,7 @@ struct OptionInfo {
     Double,
     Character,
     StringList,
+    Lambda,
   };
 
   template<typename T>
@@ -60,6 +61,7 @@ struct OptionInfo {
 
   struct ListTag {};
   struct RequiredListTag {};
+  struct LambdaTag {};
 
   template<typename T>
   static consteval Type GetType() {
@@ -131,6 +133,12 @@ struct OptionInfo {
                        std::string_view desc)
     : name{name}, type{Type::StringList}, description{desc} {}
 
+  consteval OptionInfo(std::string_view name, LambdaTag, std::string_view desc)
+    : name{name},
+      type{Type::Lambda},
+      description{desc},
+      default_value{std::string_view{}} {}
+
   bool IsRequired() const {
     return std::holds_alternative<std::monostate>(default_value);
   }
@@ -151,7 +159,8 @@ struct OptionInfo {
 
   template<Type V>
   using CppType = std::conditional_t<
-    V == Type::String || V == Type::StringList, std::string,
+    V == Type::String || V == Type::StringList || V == Type::Lambda,
+    std::string,
     std::conditional_t<
       V == Type::Boolean, bool,
       std::conditional_t<V == Type::Integer, int,
@@ -171,6 +180,8 @@ struct OptionInfo {
         return "character";
       case Type::StringList:
         return "list";
+      case Type::Lambda:
+        return "lambda";
     }
   }
 
@@ -188,6 +199,8 @@ struct OptionInfo {
       case Type::String:
       case Type::StringList:
         return absl::StrCat(operation, " ", name, " must be a string");
+      case Type::Lambda:
+        return absl::StrCat(operation, " ", name, " must be a lambda");
     }
   }
 };

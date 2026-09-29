@@ -35,7 +35,7 @@ FILE_PREFIX = f"/tmp/pgsp_{RUN}"
 FAULT_ROWS = 20_000
 POLL_ROWS = 400_000
 
-COPY_FROM_FAULT = "pause_sst_sink_mid_copy"
+COPY_FROM_FAULT = "pause_copy_from_mid_stream"
 COPY_TO_FAULT = "pause_copy_to_mid_stream"
 CTAS_FAULT = "pause_ctas_mid_ingest"
 CREATE_INDEX_FAULT = "pause_create_index_mid_build"

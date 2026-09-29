@@ -590,8 +590,6 @@ void AssertSeek(const irs::SubReader& segment,
   ASSERT_TRUE(irs::doc_limits::eof(expected_docs->Value()));
   ASSERT_TRUE(irs::doc_limits::eof(seq_docs->Next()));
   ASSERT_TRUE(irs::doc_limits::eof(seek_docs->Next()));
-
-  // FIXME(gnusi): check BitUnion
 }
 
 void AssertTerm(irs::TermIterator& expected_term,
@@ -842,11 +840,10 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
   }
 }
 
-void AssertIndex(const irs::Directory& dir, irs::Format::ptr codec,
-                 const index_t& expected_index, irs::IndexFeatures features,
-                 size_t skip, irs::automaton_table_matcher* matcher) {
-  auto reader =
-    irs::DirectoryReader(dir, codec, ::irs::tests::DefaultReaderOptions());
+void AssertIndex(const irs::Directory& dir, const index_t& expected_index,
+                 irs::IndexFeatures features, size_t skip,
+                 irs::automaton_table_matcher* matcher) {
+  auto reader = irs::DirectoryReader(dir, ::irs::tests::DefaultReaderOptions());
   ASSERT_NE(nullptr, reader);
 
   AssertIndex(reader.GetImpl(), expected_index, features, skip, matcher);

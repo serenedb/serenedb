@@ -31,7 +31,6 @@
 #include <string>
 #include <vector>
 
-#include "catalog/identifiers/object_id.h"
 #include "search/search_db_wal.h"
 
 namespace sdb::search {
@@ -123,6 +122,6 @@ struct LocalTableChangesEntry {
 };
 
 using LocalTableChanges =
-  irs::containers::FlatHashMap<ObjectId, LocalTableChangesEntry>;
+  irs::containers::FlatHashMap<duckdb::idx_t, LocalTableChangesEntry>;
 
 }  // namespace sdb::search

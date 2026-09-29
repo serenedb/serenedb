@@ -1516,9 +1516,7 @@ TEST_P(NGramSimilarityFilterTestCase, negation_regression) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(ngram_similarity_test, NGramSimilarityFilterTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values(tests::FormatInfo{
-                                              "1_5simd"})),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          NGramSimilarityFilterTestCase::to_string);
 
 }  // namespace tests

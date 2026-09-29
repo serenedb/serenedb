@@ -137,14 +137,14 @@ connection default
 statement error
 GRANT SELECT ON FOREIGN SERVER fp_srv TO fp_other;
 ----
-db error: ERROR: invalid privilege type SELECT for foreign server<slt:ignore>
+db error: ERROR: invalid privilege type SELECT<slt:ignore>
 
 
 # GRANT USAGE on a nonexistent server blames the server.
 statement error
 GRANT USAGE ON FOREIGN SERVER fp_nope TO fp_other;
 ----
-db error: ERROR: foreign server "fp_nope" does not exist<slt:ignore>
+db error: ERROR: server "fp_nope" does not exist<slt:ignore>
 
 
 # ===== the superuser can always drop, regardless of owner =====

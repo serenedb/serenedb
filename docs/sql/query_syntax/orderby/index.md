@@ -28,7 +28,7 @@ See examples below.
 ## `NULL` Order Modifier
 
 By default, SereneDB sorts `ASC` and `NULLS LAST`, i.e., the values are sorted in ascending order and `NULL` values are placed last.
-This is identical to the default sort order of PostgreSQL.
+For ascending order this matches PostgreSQL. For `DESC` it does not: PostgreSQL places `NULL` values first there, while SereneDB still places them last. Write `NULLS FIRST` or `NULLS LAST` in queries ported from PostgreSQL, or set `default_null_order` to `NULLS_LAST_ON_ASC_FIRST_ON_DESC` for PostgreSQL's order.
 The default sort order can be changed with the following configuration options.
 
 Use the `default_null_order` option to change the default `NULL` sorting order to either `NULLS_FIRST`, `NULLS_LAST`, `NULLS_FIRST_ON_ASC_LAST_ON_DESC` or `NULLS_LAST_ON_ASC_FIRST_ON_DESC`:

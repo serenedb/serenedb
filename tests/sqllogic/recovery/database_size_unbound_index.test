@@ -1,0 +1,44 @@
+control substitution on
+
+# pg_database_size adds up every store table with its indexes and binds the
+# ones still unbound, which after a restart is every secondary index the
+# checkpoint wrote. Binding looks the table up by name, so it has to run after
+# the walk over the table set has let go of that set: it used to run inside the
+# walk, and the statement hung on the set's own lock.
+
+statement ok
+CREATE TABLE dsu_t(id INTEGER, v VARCHAR);
+
+statement ok
+CREATE INDEX dsu_i ON dsu_t(id);
+
+statement ok
+INSERT INTO dsu_t SELECT i, 'v' || i FROM range(1000) t(i);
+
+statement ok
+CHECKPOINT;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT pg_database_size(current_database()) > 0 AS sized;
+----
+sized
+t
+
+connection after_crash
+query
+SELECT count(*) FROM dsu_t WHERE id = 500;
+----
+count
+1
+
+connection after_crash
+statement ok
+DROP TABLE dsu_t;

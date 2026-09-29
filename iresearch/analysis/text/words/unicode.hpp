@@ -278,6 +278,7 @@ enum class Tier : uint8_t {
   None = 0,
   Word,
   Space,
+  Single,
   Excluded,
 };
 
@@ -302,38 +303,57 @@ inline constexpr uint8_t kSegAlpha = 2;
 inline constexpr uint8_t kSegDigit = 4;
 
 template<typename Flush>
-IRS_FORCE_INLINE inline WbState ConsumeWordSpaceRuns(const byte_type* b,
-                                                     Tier tier, size_t& i,
-                                                     size_t& seg_start,
-                                                     uint8_t& cur,
-                                                     Flush&& flush) {
-  const auto m = ClassifyWordSpaceBlock(b + i);
-  const auto limit =
-    static_cast<uint32_t>(std::countr_zero(~(m.word | m.space)));
+IRS_FORCE_INLINE inline WbState ConsumeWordSpaceRuns(
+  const byte_type* b, size_t n, Tier tier, size_t& i, size_t& seg_start,
+  uint8_t& cur, Flush&& flush) {
+  const bool full = n - i >= classify::kClassifyBlock;
+  const auto m = ClassifyWordSegments(
+    full ? classify::Load(b + i) : classify::LoadPadded(b + i, n - i),
+    full ? ~uint32_t{0} : classify::LowBits(n - i));
+  const auto limit = static_cast<uint32_t>(
+    std::countr_zero(~(m.word | m.space | m.single | (m.single2 << 1))));
+  SDB_ASSERT(limit != 0);
   auto open = tier;
   uint32_t pos = 0;
   while (pos < limit) {
-    const bool is_word = ((m.word >> pos) & 1u) != 0;
-    const auto run = is_word ? Tier::Word : Tier::Space;
-    if (run != open) {
+    Tier run;
+    uint32_t len;
+    if (((m.word >> pos) & 1u) != 0) {
+      run = Tier::Word;
+      len = static_cast<uint32_t>(std::countr_one(m.word >> pos));
+    } else if (((m.space >> pos) & 1u) != 0) {
+      run = Tier::Space;
+      len = static_cast<uint32_t>(std::countr_one(m.space >> pos));
+    } else {
+      run = Tier::Single;
+      len = 1 + ((m.single2 >> pos) & 1u);
+    }
+    if (run != open || run == Tier::Single) {
       flush(i + pos, cur);
       seg_start = i + pos;
-      cur = 0;
+      cur = run == Tier::Single && len == 2 ? kSegNonAscii : uint8_t{0};
       open = run;
     }
-    const auto len = static_cast<uint32_t>(
-      std::countr_one((is_word ? m.word : m.space) >> pos));
-    if (is_word) {
+    if (run == Tier::Word) {
       const uint32_t rm =
         (len >= classify::kClassifyBlock ? ~0u : ((1u << len) - 1)) << pos;
       cur |= ((m.alpha & rm) != 0 ? kSegAlpha : uint8_t{0}) |
-             ((m.digit & rm) != 0 ? kSegDigit : uint8_t{0});
+             ((m.digit & rm) != 0 ? kSegDigit : uint8_t{0}) |
+             ((m.wide & rm) != 0 ? kSegNonAscii : uint8_t{0});
     }
     pos += len;
   }
   i += limit;
-  return open == Tier::Word ? AsciiWordState(kWbClass[b[i - 1]])
-                            : WbState::WSeg;
+  const byte_type last = b[i - 1];
+  switch (open) {
+    case Tier::Word:
+      return last >= 0x80 ? WbState::ALetter : AsciiWordState(kWbClass[last]);
+    case Tier::Space:
+      return WbState::WSeg;
+    default:
+      return last >= 0x80 ? WbState::Other
+                          : BaseState(static_cast<WbProp>(kWbAsciiProp[last]));
+  }
 }
 
 }  // namespace detail
@@ -375,10 +395,11 @@ IRS_FORCE_INLINE void ScanUnicode(duckdb::string_t value, Emit&& emit) {
     if (byte < 0x80) [[likely]] {
       const auto tier = detail::kTierClass[std::to_underlying(state)];
       if ((IsWordClass(kWbClass[byte]) || byte == ' ') &&
-          tier != detail::Tier::Excluded && n - i >= classify::kClassifyBlock) {
+          tier != detail::Tier::Excluded) {
         SDB_ASSERT(pending == kNoPending);
         zwj = false;
-        state = detail::ConsumeWordSpaceRuns(b, tier, i, seg_start, cur, flush);
+        state =
+          detail::ConsumeWordSpaceRuns(b, n, tier, i, seg_start, cur, flush);
         continue;
       }
       cls = detail::kWbAsciiProp[byte];
@@ -386,6 +407,16 @@ IRS_FORCE_INLINE void ScanUnicode(duckdb::string_t value, Emit&& emit) {
                 : cls == kNumeric ? kSegDigit
                                   : uint8_t{0};
     } else {
+      if (i + 1 < n && IsWideLetter(byte, b[i + 1])) {
+        const auto tier = detail::kTierClass[std::to_underlying(state)];
+        if (tier != detail::Tier::Excluded) {
+          SDB_ASSERT(pending == kNoPending);
+          zwj = false;
+          state =
+            detail::ConsumeWordSpaceRuns(b, n, tier, i, seg_start, cur, flush);
+          continue;
+        }
+      }
       const auto* p = b + i;
       const uint32_t cp = utf8_utils::ToChar32(p, b + n);
       cp_len = static_cast<size_t>(p - (b + i));

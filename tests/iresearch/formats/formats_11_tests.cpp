@@ -36,7 +36,6 @@ inline constexpr irs::field_id kNameId = tests::FieldIdFor("name");
 inline constexpr irs::field_id kSameId = tests::FieldIdFor("same");
 
 using tests::FormatTestCase;
-using tests::FormatTestCaseWithEncryption;
 
 bool InsertWithName(irs::IndexWriter& writer, const tests::Document& doc) {
   auto ctx = writer.GetBatch();
@@ -57,7 +56,7 @@ bool InsertWithName(irs::IndexWriter& writer, const tests::Document& doc) {
   return true;
 }
 
-class Format11TestCase : public FormatTestCaseWithEncryption {};
+class Format11TestCase : public FormatTestCase {};
 
 TEST_P(Format11TestCase, open_10_with_11) {
   tests::JsonDocGenerator gen(resource("simple_sequential.json"),
@@ -67,9 +66,7 @@ TEST_P(Format11TestCase, open_10_with_11) {
 
   // write segment with format10
   {
-    auto codec = irs::formats::Get("1_5simd");
-    ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir(), codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -80,10 +77,7 @@ TEST_P(Format11TestCase, open_10_with_11) {
   }
 
   // check index
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-  auto index =
-    irs::DirectoryReader(dir(), codec, irs::tests::DefaultReaderOptions());
+  auto index = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
   ASSERT_TRUE(index);
   ASSERT_EQ(1, index->size());
   ASSERT_EQ(1, index->docs_count());
@@ -127,9 +121,7 @@ TEST_P(Format11TestCase, formats_11) {
 
   // write segment with format10
   {
-    auto codec = irs::formats::Get("1_5simd");
-    ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir(), codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -141,9 +133,7 @@ TEST_P(Format11TestCase, formats_11) {
 
   // write segment with format11
   {
-    auto codec = irs::formats::Get("1_5simd");
-    ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir(), codec, irs::kOmAppend,
+    auto writer = irs::IndexWriter::Make(dir(), irs::kOmAppend,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -154,8 +144,7 @@ TEST_P(Format11TestCase, formats_11) {
   }
 
   // check index
-  auto index =
-    irs::DirectoryReader(dir(), nullptr, irs::tests::DefaultReaderOptions());
+  auto index = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
   ASSERT_TRUE(index);
   ASSERT_EQ(2, index->size());
   ASSERT_EQ(2, index->docs_count());
@@ -218,11 +207,9 @@ TEST_P(Format11TestCase, formats_11) {
   }
 }
 
-static constexpr auto kTestDirs =
-  tests::GetDirectories<tests::kTypesAllRot13>();
+static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 static const auto kTestValues =
-  ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                     ::testing::Values(tests::FormatInfo{"1_5simd"}));
+  ::testing::Combine(::testing::ValuesIn(kTestDirs));
 
 // 1.1 specific tests
 INSTANTIATE_TEST_SUITE_P(Format11Test, Format11TestCase, kTestValues,

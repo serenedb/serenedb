@@ -177,8 +177,7 @@ TEST_P(DFIIndexTest, scores_nonnegative_and_only_fire_above_expected) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(dfi_test, DFIIndexTest,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5simd")),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          DFIIndexTest::to_string);
 
 }  // namespace

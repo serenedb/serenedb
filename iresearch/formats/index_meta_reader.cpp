@@ -52,7 +52,7 @@ bool LastFile(const Directory& dir, std::string& out) {
     const uint64_t gen = ParseGeneration(name);
 
     if (gen > max_gen) {
-      out = std::move(name);
+      out = name;
       max_gen = gen;
     }
     return true;  // continue iteration

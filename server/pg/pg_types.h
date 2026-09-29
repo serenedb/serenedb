@@ -44,8 +44,8 @@ inline constexpr uint64_t kInvalidOid = 0;
 // pg_authid row can carry, which is what lets an acl item name "everybody".
 inline constexpr duckdb::idx_t kPublicGrantee = 0;
 
-inline constexpr duckdb::idx_t kMinSystem = 1000000;
-inline constexpr duckdb::idx_t kMaxSystem = 2000000;
+inline constexpr duckdb::idx_t kMinSystem = 16384;
+inline constexpr duckdb::idx_t kMaxSystem = 65536;
 
 inline constexpr duckdb::idx_t kPgCatalogSchema = 11;
 inline constexpr duckdb::idx_t kPgInformationSchema = kMinSystem + 3;

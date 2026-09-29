@@ -49,6 +49,7 @@
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression_binder/table_function_binder.hpp>
 #include <duckdb/planner/tableref/bound_at_clause.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
@@ -364,6 +365,9 @@ std::optional<ViewFastPath> ResolveTableSource(
         body.has_limit);
     }
   }
+  SDB_IF_FAILURE("view_index_source_lookup") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
   auto entry = retriever.GetEntry(
     duckdb::EntryLookupInfo{duckdb::CatalogType::TABLE_ENTRY, name},
     duckdb::OnEntryNotFound::RETURN_NULL);
@@ -564,6 +568,9 @@ namespace {
 
 duckdb::unique_ptr<duckdb::FunctionData> BindCatalogSource(
   duckdb::ClientContext& context, const ViewFastPath& fp) {
+  SDB_IF_FAILURE("view_index_source_lookup") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
   auto& entry =
     duckdb::Catalog::GetEntry(
       context, duckdb::CatalogType::TABLE_ENTRY,

@@ -24,13 +24,18 @@
 #include <cstdint>
 #include <deque>
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/checksum.hpp>
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <iresearch/utils/serialization.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -874,6 +879,116 @@ TEST_F(SearchDbWalTest, SegmentRecordGcdWithoutTouchingSegmentFiles) {
     rolled.OnShardCommit(duckdb::idx_t{5}, 2);
     EXPECT_FALSE(std::filesystem::exists(SegPath(1)));
   }
+}
+
+constexpr auto kStorageVersion =
+  static_cast<uint64_t>(duckdb::kIResearchStorageVersion);
+
+void AppendRecord(
+  const std::filesystem::path& path, uint64_t storage_version, uint64_t tick,
+  const std::function<void(duckdb::BinarySerializer&)>& fields) {
+  duckdb::MemoryStream payload;
+  {
+    duckdb::BinarySerializer record{payload};
+    record.Begin();
+    record.WriteProperty<uint64_t>(0, "storage_version", storage_version);
+    record.WriteProperty<uint64_t>(1, "tick", tick);
+    fields(record);
+    record.End();
+  }
+  const uint64_t size = payload.GetPosition();
+  const uint64_t checksum = duckdb::Checksum(payload.GetData(), size);
+  std::filesystem::create_directories(path.parent_path());
+  std::ofstream out{path, std::ios::binary | std::ios::app};
+  out.write(reinterpret_cast<const char*>(&size), sizeof(size));
+  out.write(reinterpret_cast<const char*>(&checksum), sizeof(checksum));
+  out.write(reinterpret_cast<const char*>(payload.GetData()),
+            static_cast<std::streamsize>(size));
+}
+
+void NoSections(duckdb::BinarySerializer& record) {
+  record.WriteList(2, "sections", 0,
+                   [](duckdb::BinarySerializer::List&, duckdb::idx_t) {});
+}
+
+std::string ErrorOf(const std::function<void()>& run) {
+  try {
+    run();
+  } catch (const std::exception& e) {
+    return e.what();
+  }
+  return {};
+}
+
+TEST_F(SearchDbWalTest, RecordStartsWithItsStorageVersionAndTick) {
+  AppendRecord(SegPath(1), kStorageVersion, 7, NoSections);
+  SearchDbWal wal(Fs(), _dir);
+  EXPECT_EQ(wal.CurrentTick(), 7u);
+  Collected got;
+  EXPECT_EQ(wal.Recover(AllExist(), CommittedAll(0), MakeCollector(got),
+                        NoDeletes(), NoTruncates(), NoAdopts()),
+            7u);
+  EXPECT_TRUE(got.chunks.empty());
+}
+
+TEST_F(SearchDbWalTest, RecordWithAnotherStorageVersionIsRefused) {
+  AppendRecord(SegPath(1), kStorageVersion + 1, 1, NoSections);
+  const auto error = ErrorOf([&] { SearchDbWal wal(Fs(), _dir); });
+  EXPECT_NE(error.find("cannot be read"), std::string::npos) << error;
+  EXPECT_NE(error.find("storage version"), std::string::npos) << error;
+  EXPECT_TRUE(std::filesystem::exists(SegPath(1)));
+}
+
+TEST_F(SearchDbWalTest, RecordWithAnUnknownFieldIsRefused) {
+  AppendRecord(
+    SegPath(1), kStorageVersion, 1, [](duckdb::BinarySerializer& record) {
+      NoSections(record);
+      record.WriteProperty<bool>(3, "added_by_a_newer_release", true);
+    });
+  SearchDbWal wal(Fs(), _dir);
+  EXPECT_EQ(wal.CurrentTick(), 1u);
+  Collected got;
+  const auto error = ErrorOf([&] {
+    wal.Recover(AllExist(), CommittedAll(0), MakeCollector(got), NoDeletes(),
+                NoTruncates(), NoAdopts());
+  });
+  EXPECT_NE(error.find("cannot be read"), std::string::npos) << error;
+  EXPECT_NE(error.find("expected end of object"), std::string::npos) << error;
+}
+
+TEST_F(SearchDbWalTest, RecordWithAnUnknownOpKindIsRefused) {
+  AppendRecord(
+    SegPath(1), kStorageVersion, 1, [](duckdb::BinarySerializer& record) {
+      record.WriteList(
+        2, "sections", 1,
+        [](duckdb::BinarySerializer::List& sections, duckdb::idx_t) {
+          sections.WriteObject([](duckdb::BinarySerializer& section) {
+            section.WriteProperty<uint64_t>(0, "table_id", 5);
+            section.WriteList(
+              1, "ops", 1,
+              [](duckdb::BinarySerializer::List& ops, duckdb::idx_t) {
+                ops.WriteObject([](duckdb::BinarySerializer& op) {
+                  op.WriteProperty<uint8_t>(0, "kind", 9);
+                });
+              });
+          });
+        });
+    });
+  SearchDbWal wal(Fs(), _dir);
+  Collected got;
+  const auto error = ErrorOf([&] {
+    wal.Recover(AllExist(), CommittedAll(0), MakeCollector(got), NoDeletes(),
+                NoTruncates(), NoAdopts());
+  });
+  EXPECT_NE(error.find("unknown op kind 9"), std::string::npos) << error;
+}
+
+TEST_F(SearchDbWalTest, GcKeepsASegmentItCannotRead) {
+  SearchDbWal wal(Fs(), _dir);
+  wal.RegisterShard(duckdb::idx_t{5}, 0);
+  AppendRecord(SegPath(1), kStorageVersion + 1, 1, NoSections);
+  wal.OnShardCommit(duckdb::idx_t{5}, 10);
+  EXPECT_TRUE(std::filesystem::exists(SegPath(1)));
 }
 
 }  // namespace

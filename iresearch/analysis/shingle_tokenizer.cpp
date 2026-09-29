@@ -162,7 +162,9 @@ void ShingleTokenizer::BuildTables(uint32_t n) {
 void ShingleTokenizer::StoreBlob(TokenSink& sink, uint32_t n) {
   const auto tok = _sub->tokens.terms();
   const auto tpos = _sub->tokens.pos();
-  _blob.clear();
+  if (!sink.ContinuesDoc()) {
+    _blob.clear();
+  }
   const auto write_fillers = [&](uint32_t k) {
     for (; k != 0; --k) {
       WriteToken(_filler, _blob);

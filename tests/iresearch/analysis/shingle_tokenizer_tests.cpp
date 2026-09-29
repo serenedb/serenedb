@@ -267,6 +267,58 @@ class EmitThenFailTokenizer final
   }
 };
 
+using DocValues = std::vector<std::pair<irs::doc_id_t, std::string>>;
+using DocStore = std::pair<irs::doc_id_t, std::vector<std::string>>;
+
+struct DocFill {
+  std::vector<std::pair<std::string, uint32_t>> tokens;
+  std::vector<DocStore> stores;
+};
+
+class StoreCalls final : public irs::StoreSink {
+ public:
+  explicit StoreCalls(DocFill& out) noexcept : _out{&out} {}
+
+  void OnStore(irs::doc_id_t doc, irs::bytes_view blob) final {
+    _out->stores.emplace_back(doc, DecodeStore(blob));
+  }
+
+ private:
+  DocFill* _out;
+};
+
+DocFill FillDocs(ShingleTokenizer& analyzer, const DocValues& values) {
+  DocFill out;
+  const auto collect = [&](irs::TokenBatch& batch,
+                           std::span<const irs::DocRun> runs) {
+    uint32_t tok = 0;
+    for (const auto& run : runs) {
+      for (uint32_t j = 0; j < run.ntokens; ++j, ++tok) {
+        const auto& t = batch.terms[tok];
+        out.tokens.emplace_back(std::string{t.GetData(), t.GetSize()},
+                                batch.pos[tok]);
+      }
+    }
+  };
+  tests::FnTokenSink sink{irs::TokenLayout::TermsPos, collect};
+  StoreCalls store{out};
+  sink.writer.Bind(sink, &store);
+  for (const auto& [doc, value] : values) {
+    analyzer.Fill(tests::ToStringT(value), doc, sink.writer, {sink.layout});
+  }
+  sink.writer.Finish();
+  return out;
+}
+
+DocValues OneDocEach(const DocValues& values) {
+  DocValues out;
+  irs::doc_id_t doc = irs::doc_limits::min();
+  for (const auto& entry : values) {
+    out.emplace_back(doc++, entry.second);
+  }
+  return out;
+}
+
 }  // namespace
 
 TEST(ShingleTokenizerTest, traits) {
@@ -766,6 +818,55 @@ TEST(ShingleTokenizerTest, failed_base_fill_does_not_leak_into_next_value) {
     "w1", Shingle({"w1", "w2"}), "w2", Shingle({"w2", "w3"}), "w3",
   };
   EXPECT_EQ(expected, Emit(analyzer, "w1 w2 w3"));
+}
+
+TEST(ShingleTokenizerTest, each_doc_stores_its_own_stream) {
+  auto analyzer = MakeAnalyzer(2, 2, true);
+  const auto got = FillDocs(analyzer, {{1, "a b"}, {2, ""}, {3, "c"}});
+  const std::vector<DocStore> expected{{1, {"a", "b"}}, {2, {}}, {3, {"c"}}};
+  EXPECT_EQ(expected, got.stores);
+}
+
+TEST(ShingleTokenizerTest, fills_of_one_doc_store_one_stream) {
+  auto analyzer = MakeAnalyzer(2, 3, true);
+  const DocValues values{{7, "quick brown fox"},
+                         {7, ""},
+                         {7, "lonely"},
+                         {7, "a b c d"},
+                         {8, "one two"}};
+  const auto got = FillDocs(analyzer, values);
+  EXPECT_EQ(FillDocs(analyzer, OneDocEach(values)).tokens, got.tokens);
+  const std::vector<DocStore> expected{
+    {7, {"quick", "brown", "fox", "lonely", "a", "b", "c", "d"}},
+    {8, {"one", "two"}}};
+  EXPECT_EQ(expected, got.stores);
+}
+
+TEST(ShingleTokenizerTest, fills_of_one_doc_keep_fillers_per_value) {
+  ShingleTokenizer analyzer{std::make_unique<StopwordTokenizer>(),
+                            {
+                              .min_shingle_size = 2,
+                              .max_shingle_size = 2,
+                              .output_unigrams = true,
+                            }};
+  const auto got = FillDocs(analyzer, {{7, "quick the brown"}, {7, "the fox"}});
+  const std::vector<DocStore> expected{
+    {7, {"quick", "_", "brown", "_", "fox"}}};
+  EXPECT_EQ(expected, got.stores);
+}
+
+TEST(ShingleTokenizerTest, failed_fill_keeps_the_doc_stream) {
+  ShingleTokenizer analyzer{std::make_unique<EmitThenFailTokenizer>(),
+                            {
+                              .min_shingle_size = 2,
+                              .max_shingle_size = 2,
+                              .output_unigrams = true,
+                            }};
+  const DocValues values{{3, "w1 w2"}, {3, "poison"}, {3, "w3"}};
+  const auto got = FillDocs(analyzer, values);
+  EXPECT_EQ(FillDocs(analyzer, OneDocEach(values)).tokens, got.tokens);
+  const std::vector<DocStore> expected{{3, {"w1", "w2", "w3"}}};
+  EXPECT_EQ(expected, got.stores);
 }
 
 TEST(ShingleTokenizerTest, memory_usage_accounts_scratch) {

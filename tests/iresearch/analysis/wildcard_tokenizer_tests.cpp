@@ -120,6 +120,73 @@ std::vector<irs::bstring> FillTokens(irs::analysis::WildcardTokenizer& stream,
   return out;
 }
 
+using DocValues = std::vector<std::pair<irs::doc_id_t, std::string>>;
+
+struct DocStores {
+  std::vector<irs::bstring> terms;
+  std::vector<std::pair<irs::doc_id_t, irs::bstring>> stores;
+};
+
+class StoreCalls final : public irs::StoreSink {
+ public:
+  explicit StoreCalls(DocStores& out) noexcept : _out{&out} {}
+
+  void OnStore(irs::doc_id_t doc, irs::bytes_view blob) final {
+    _out->stores.emplace_back(doc, irs::bstring{blob});
+  }
+
+ private:
+  DocStores* _out;
+};
+
+DocStores FillDocs(irs::analysis::WildcardTokenizer& stream,
+                   const DocValues& values) {
+  DocStores out;
+  const auto collect = [&](irs::TokenBatch& batch,
+                           std::span<const irs::DocRun> runs) {
+    uint32_t tok = 0;
+    for (const auto& run : runs) {
+      for (uint32_t j = 0; j < run.ntokens; ++j, ++tok) {
+        const auto& t = batch.terms[tok];
+        out.terms.emplace_back(
+          reinterpret_cast<const irs::byte_type*>(t.GetData()), t.GetSize());
+      }
+    }
+  };
+  tests::FnTokenSink sink{irs::TokenLayout::Terms, collect};
+  StoreCalls store{out};
+  sink.writer.Bind(sink, &store);
+  for (const auto& [doc, value] : values) {
+    stream.Fill(tests::ToStringT(value), doc, sink.writer, {sink.layout});
+  }
+  sink.writer.Finish();
+  return out;
+}
+
+DocStores AnalyzeEach(irs::analysis::WildcardTokenizer& stream,
+                      const DocValues& values) {
+  DocStores out;
+  for (const auto& [doc, value] : values) {
+    irs::ValueAnalyzer analyzer;
+    irs::ValueTokens tokens;
+    if (!analyzer.Analyze(stream, tests::ToStringT(value), tokens)) {
+      continue;
+    }
+    for (const auto& t : tokens.terms()) {
+      out.terms.emplace_back(irs::AsBytesView(t));
+    }
+    if (tokens.store().empty()) {
+      continue;
+    }
+    if (!out.stores.empty() && out.stores.back().first == doc) {
+      out.stores.back().second.append(tokens.store());
+    } else {
+      out.stores.emplace_back(doc, irs::bstring{tokens.store()});
+    }
+  }
+  return out;
+}
+
 void AssertFillsMatchPull(size_t ngram_size, std::string_view base_delimiter,
                           const std::vector<std::string>& values) {
   auto pull_stream = MakeWildcard(ngram_size, base_delimiter);
@@ -284,6 +351,38 @@ TEST(wildcard_tokenizer_tests, base_fill_failure_leaves_no_residue) {
   }
   ASSERT_FALSE(sink.store().empty());
   ASSERT_EQ(expected.store(), sink.store());
+}
+
+TEST(wildcard_tokenizer_tests, fills_of_one_doc_store_one_blob) {
+  auto stream = MakeWildcard(3, " ");
+  auto per_value = MakeWildcard(3, " ");
+  const DocValues values = {{7, "search alpha"},
+                            {7, ""},
+                            {7, "caf\xc3\xa9"},
+                            {7, std::string(40, 'z')},
+                            {7, "research"},
+                            {8, "beta"},
+                            {9, ""}};
+
+  const auto expected = AnalyzeEach(*per_value, values);
+  ASSERT_EQ(2U, expected.stores.size());
+  const auto got = FillDocs(*stream, values);
+  ASSERT_EQ(expected.terms, got.terms);
+  ASSERT_EQ(expected.stores, got.stores);
+}
+
+TEST(wildcard_tokenizer_tests, failed_fill_keeps_the_doc_store) {
+  irs::analysis::WildcardTokenizer stream{
+    std::make_unique<FlakyBaseTokenizer>(), 3};
+  irs::analysis::WildcardTokenizer per_value{
+    std::make_unique<FlakyBaseTokenizer>(), 3};
+  const DocValues values = {{3, "okey"}, {3, "fail"}, {3, "done"}, {4, "fail"}};
+
+  const auto expected = AnalyzeEach(per_value, values);
+  ASSERT_EQ(1U, expected.stores.size());
+  const auto got = FillDocs(stream, values);
+  ASSERT_EQ(expected.terms, got.terms);
+  ASSERT_EQ(expected.stores, got.stores);
 }
 
 TEST(wildcard_tokenizer_tests, memory_usage_accounts_scratch) {

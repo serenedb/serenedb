@@ -86,9 +86,9 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
 
  private:
   template<TokenLayout Layout>
-  void EmitEncoded(TokenSink& sink, bool ascii);
+  void EmitEncoded(TokenSink& sink, size_t from, bool ascii);
   template<bool Identity, TokenLayout Layout>
-  void EmitTerms(TokenSink& sink);
+  void EmitTerms(TokenSink& sink, size_t from);
   template<bool Identity, TokenLayout Layout>
   void EmitTermGrams(TokenSink& sink, const byte_type* term, uint32_t size);
 

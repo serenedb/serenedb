@@ -443,10 +443,10 @@ void SearchSinkInsertBaseImpl::WriteListBatch(const Field& field,
                              ? EnsureBlobColumnWriter(field.store_column)
                              : nullptr;
       if (store_writer) {
-        _row_store_appender.Bind(*this, *store_writer);
+        _store_appender.Bind(*this, *store_writer);
       }
       InvertTokens(
-        field, store_writer ? &_row_store_appender : nullptr,
+        field, store_writer ? &_store_appender : nullptr,
         [&](irs::FieldInverter& fld, irs::TokenSink& w) {
           fld.Configure(traits);
           const auto layout = fld.Layout();
@@ -454,9 +454,6 @@ void SearchSinkInsertBaseImpl::WriteListBatch(const Field& field,
             field.string_analyzer->Fill(data[child_idx], doc, w, {layout});
           });
         });
-      if (store_writer) {
-        _row_store_appender.Flush();
-      }
     }
   } else if constexpr (ChildKind == duckdb::LogicalTypeId::BOOLEAN) {
     const auto* data = duckdb::UnifiedVectorFormat::GetData<bool>(child_fmt);
@@ -524,10 +521,8 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
       fld.Configure(jpf.string_field.GetTokens().Traits());
       const auto str_layout = fld.Layout();
       irs::analysis::ForEachValidRow(
-        fmt, static_cast<uint32_t>(count),
-        [&](uint32_t i, uint32_t sel_idx) {
+        fmt, static_cast<uint32_t>(count), [&](uint32_t i, uint32_t sel_idx) {
           const irs::doc_id_t doc = first_doc + i;
-          bool wrote_string_blob = false;
           const auto& cell_string =
             duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(
               fmt)[sel_idx];
@@ -550,33 +545,18 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
                   auto s = json_doc.get_string();
                   if (s.error() == simdjson::SUCCESS) {
                     const std::string_view value = s.value_unsafe();
-                    bool ok = true;
+                    const auto size = static_cast<uint32_t>(value.size());
+                    const duckdb::string_t term{value.data(), size};
                     if (jpf.string_field.keyword) {
-                      w.BeginValue(doc, static_cast<uint32_t>(value.size()));
-                      w.Emit<irs::TokenLayout::Terms>(
-                        value.data(), static_cast<uint32_t>(value.size()));
+                      w.BeginValue(doc, size);
+                      w.Emit<irs::TokenLayout::Terms>(value.data(), size);
                       w.EndValue();
-                    } else {
-                      ok = jpf.string_field.string_analyzer->Fill(
-                        duckdb::string_t{value.data(),
-                                         static_cast<uint32_t>(value.size())},
-                        doc, w, {str_layout});
-                    }
-                    if (store_writer) {
-                      if (jpf.string_field.keyword) {
-                        AppendBlobAt(
-                          *store_writer, doc,
-                          duckdb::string_t{
-                            value.data(), static_cast<uint32_t>(value.size())});
-                        wrote_string_blob = true;
-                      } else {
-                        // Store-producing analyzers delivered through OnStore
-                        // above; everyone else falls through to the empty-blob
-                        // backfill.
-                        wrote_string_blob =
-                          ok &&
-                          jpf.string_field.string_analyzer->Traits().store;
+                      if (store_writer) {
+                        AppendBlobAt(*store_writer, doc, term);
                       }
+                    } else {
+                      jpf.string_field.string_analyzer->Fill(term, doc, w,
+                                                             {str_layout});
                     }
                   }
                 } break;
@@ -610,15 +590,6 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
                   break;
               }
             }
-          }
-          if (store_writer && !wrote_string_blob) {
-            AppendBlobAt(*store_writer, doc, duckdb::string_t{});
-          }
-          return true;
-        },
-        [&](uint32_t i) {
-          if (store_writer) {
-            AppendBlobAt(*store_writer, first_doc + i, duckdb::string_t{});
           }
           return true;
         });

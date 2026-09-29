@@ -80,8 +80,11 @@ class Transaction : public Config {
   // commit's exact store-WAL position; std::nullopt on the fallback path where
   // the transaction did not commit the store database, in which case no
   // recovery cursor is recorded. Idempotent -- a no-op once the staged
-  // transactions have been committed (or when there were none).
-  void CommitSearch(std::optional<search::WalCursor> cursor) noexcept;
+  // transactions have been committed (or when there were none). With
+  // `database`, only that database's indexes commit: the cursor is a position
+  // in its WAL.
+  void CommitSearch(std::optional<search::WalCursor> cursor,
+                    std::optional<duckdb::idx_t> database = std::nullopt) noexcept;
 
   void Commit();
 

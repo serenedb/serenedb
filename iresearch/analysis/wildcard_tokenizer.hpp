@@ -112,4 +112,6 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   bool _base_stable = false;
 };
 
+extern template class TypedTokenizer<WildcardTokenizer>;
+
 }  // namespace irs::analysis

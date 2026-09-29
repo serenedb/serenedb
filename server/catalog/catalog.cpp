@@ -278,6 +278,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   }
   if (info.where_clause) {
     auto where_binder_owner = duckdb::Binder::CreateBinder(binder.context);
+    duckdb::vector<duckdb::ColumnIndex> column_ids;
     auto* where_bind = &binder;
     if (table.type == duckdb::CatalogType::TABLE_ENTRY &&
         table.Cast<duckdb::TableCatalogEntry>().IsDuckTable()) {
@@ -288,7 +289,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         names.push_back(column.Name());
         types.push_back(column.Type());
       }
-      duckdb::vector<duckdb::ColumnIndex> column_ids;
       where_binder_owner->bind_context.AddBaseTable(
         duckdb::TableIndex(0), duckdb::Identifier(), names, types, column_ids,
         table.Cast<duckdb::TableCatalogEntry>());

@@ -236,6 +236,7 @@ class TypedTokenizer : public Tokenizer {
                              doc_id_t doc, TokenSink& sink, FillCtx ctx) final {
     auto* impl = static_cast<Impl*>(this);
     impl->BeginRow();
+    bool filled = false;
     for (const auto& value : values) {
       const auto traits =
         ComputeValueTraits(value, impl->Impl::WantedBlockTraits(), ctx.traits);
@@ -249,9 +250,12 @@ class TypedTokenizer : public Tokenizer {
       if (!ok) [[unlikely]] {
         sink.RejectValue();
       }
+      filled |= ok;
       sink.EndValue();
     }
-    impl->EndRow(sink);
+    if (filled) {
+      impl->EndRow(sink);
+    }
   }
 
   IRS_NO_INLINE bool Fill(const duckdb::string_t& value, TokenSink& sink,

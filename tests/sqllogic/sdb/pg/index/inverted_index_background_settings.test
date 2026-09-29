@@ -91,6 +91,9 @@ statement ok
 ALTER INDEX ibc_idx SET (compaction_interval = 100);
 
 
+sleep 2s
+
+
 statement ok
 ROLLBACK;
 
@@ -178,6 +181,31 @@ INSERT INTO sbs SELECT g, 'common' FROM generate_series(6, 10) g;
 
 
 sleep 3s
+
+
+query
+SELECT count(*) FROM sbs;
+----
+count
+5
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE sbs SET (refresh_interval = 100);
+
+
+sleep 2s
+
+
+statement ok
+ROLLBACK;
+
+
+sleep 1s
 
 
 query

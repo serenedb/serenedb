@@ -50,7 +50,9 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/primary_key.h"
+#include "pg/connection_context.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
@@ -483,7 +485,15 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
       return duckdb::CatalogEntry::AlterEntry(transaction, info);
   }
   if (_storage) {
-    _storage->ApplyOptions(ResolveSettings(new_options));
+    auto settings = ResolveSettings(new_options);
+    if (auto* connection = connector::GetSereneDBContextPtr(context)) {
+      connection->DeferToCommit(
+        [storage = _storage, settings = std::move(settings)] {
+          storage->ApplyOptions(settings);
+        });
+    } else {
+      _storage->ApplyOptions(settings);
+    }
   }
   return result;
 }
@@ -517,10 +527,6 @@ void InvertedIndexEntry::OnDrop() {
 void InvertedIndexEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   if (prev_entry.type == duckdb::CatalogType::INVALID) {
     OnDrop();
-  } else if (const auto* prev =
-               dynamic_cast<const InvertedIndexEntry*>(&prev_entry);
-             prev && _storage) {
-    _storage->ApplyOptions(ResolveSettings(prev->options));
   }
   duckdb::DuckIndexEntry::Rollback(prev_entry);
 }

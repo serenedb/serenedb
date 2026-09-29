@@ -53,8 +53,10 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/inverted_index.h"
 #include "connector/column_id.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/primary_key.h"
 #include "connector/scan/scan_bind.h"
+#include "pg/connection_context.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 #include "search/scorer_options.h"
@@ -374,10 +376,6 @@ void SearchTableEntry::OnDrop() {
 void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   if (prev_entry.type == duckdb::CatalogType::INVALID) {
     OnDrop();
-    return;
-  }
-  if (const auto* prev = dynamic_cast<const SearchTableEntry*>(&prev_entry)) {
-    _storage->ApplyOptions(prev->_options);
   }
 }
 
@@ -498,7 +496,13 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
   auto result = duckdb::make_uniq<SearchTableEntry>(
     catalog, ParentSchema(context), *bound,
     catalog.GetCatalogTransaction(context), _storage);
-  _storage->ApplyOptions(result->_options);
+  if (auto* connection = connector::GetSereneDBContextPtr(context)) {
+    connection->DeferToCommit([storage = _storage, options = result->_options] {
+      storage->ApplyOptions(options);
+    });
+  } else {
+    _storage->ApplyOptions(result->_options);
+  }
   return result;
 }
 

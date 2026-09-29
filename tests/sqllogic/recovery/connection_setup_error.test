@@ -1,10 +1,43 @@
-# A connection whose setup on the duck worker throws gets the error as a FATAL
-# and is closed. The throw used to end the session task silently: nothing sent
-# the buffered authentication reply or closed the socket, the auth deadline was
-# already cancelled, and the client waited forever.
+# A connection whose startup throws gets the error as a FATAL and is closed,
+# wherever the throw is: in startup or authentication on the io thread, or in
+# the setup on the duck worker. The setup throw used to end the session task
+# silently: nothing sent the buffered authentication reply or closed the
+# socket, the auth deadline was already cancelled, and the client waited
+# forever. The io-thread throws closed the socket without telling the client
+# why.
 #
 # Failure points are process-global, so this lives in the recovery tree, where
 # each test has a server of its own.
+
+statement ok
+SET sdb_faults = 'negotiate_throw';
+
+connection broken_negotiate
+statement error
+SELECT 1;
+----
+db error: FATAL: intentional debug error
+
+
+connection default
+statement ok
+SET sdb_faults = '-negotiate_throw';
+
+
+statement ok
+SET sdb_faults = 'authenticate_throw';
+
+connection broken_auth
+statement error
+SELECT 1;
+----
+db error: FATAL: intentional debug error
+
+
+connection default
+statement ok
+SET sdb_faults = '-authenticate_throw';
+
 
 statement ok
 SET sdb_faults = 'setup_connection_throw';

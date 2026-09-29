@@ -866,6 +866,9 @@ void PgWireSession<Kind>::WriteCommandTag(
 
 template<SocketKind Kind>
 yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
+  SDB_IF_FAILURE("authenticate_throw") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
   CapturePeerAddress();
 
   // Consult the HBA ruleset first: it decides trust / reject / which method,
@@ -2565,20 +2568,23 @@ yaclib::Task<bool> PgWireSession<Kind>::Negotiate() {
   // --auth_timeout, else close. Cancelled on every exit. The handler holds a
   // self, so a fire racing teardown is harmless.
   absl::Cleanup deadline_guard = [this] { _deadline.cancel(); };
-  if (_auth_timeout.count() > 0) {
-    _deadline.expires_after(_auth_timeout);
-    _deadline.async_wait(
-      [self = this->shared_from_this()](const asio_ns::error_code& ec) {
-        if (!ec) {
-          self->_socket.Close();
-        }
-      });
-  }
-  if (!co_await this->ReadProxyPreface(_proxy)) {
-    co_return false;
-  }
-  // TODO: ssl handshake can be here, but there's no always ssl in pg-wire
   try {
+    SDB_IF_FAILURE("negotiate_throw") {
+      THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+    }
+    if (_auth_timeout.count() > 0) {
+      _deadline.expires_after(_auth_timeout);
+      _deadline.async_wait(
+        [self = this->shared_from_this()](const asio_ns::error_code& ec) {
+          if (!ec) {
+            self->_socket.Close();
+          }
+        });
+    }
+    if (!co_await this->ReadProxyPreface(_proxy)) {
+      co_return false;
+    }
+    // TODO: ssl handshake can be here, but there's no always ssl in pg-wire
     StartupRequest startup;
     if (co_await NegotiateStartup(startup) == StartupOutcome::Close) {
       co_return false;
@@ -2651,10 +2657,13 @@ yaclib::Task<bool> PgWireSession<Kind>::Negotiate() {
       co_await this->Flush();
       co_return false;
     }
-  } catch (const std::exception&) {
-    co_return false;
+    co_return true;
+  } catch (const std::exception& exception) {
+    SDB_ERROR(GENERAL, "pg connection startup failed: ", exception.what());
+    WriteFatalResponse(this->_send, ToSqlError(exception));
   }
-  co_return true;
+  co_await this->Flush();
+  co_return false;
 }
 
 template<SocketKind Kind>

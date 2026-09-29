@@ -47,6 +47,7 @@
 #include <string>
 
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
 #include "connector/primary_key.h"
@@ -299,6 +300,11 @@ IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
 }
 
 ColumnTokenizer IndexTokenizers::Acquire(irs::field_id field_id) const {
+  return Acquire(field_id, *_context);
+}
+
+ColumnTokenizer IndexTokenizers::Acquire(irs::field_id field_id,
+                                         duckdb::ClientContext& context) const {
   const auto it = _fields.find(field_id);
   if (it == _fields.end()) {
     return {};
@@ -309,9 +315,19 @@ ColumnTokenizer IndexTokenizers::Acquire(irs::field_id field_id) const {
               std::make_unique<irs::KeywordTokenizer>().release(),
               Tokenizer::Deleter{}}};
   }
-  return {.analyzer = field.tokenizer->Acquire(*_context),
+  return {.analyzer = field.tokenizer->Acquire(context),
           .features = field.features,
           .tokenizer_column = field.tokenizer_column};
+}
+
+IndexTokenizers::Bound IndexTokenizers::AcquireAll(
+  duckdb::ClientContext& context) const {
+  Bound bound;
+  bound.reserve(_fields.size());
+  for (const auto& [field_id, field] : _fields) {
+    bound.emplace(field_id, Acquire(field_id, context));
+  }
+  return bound;
 }
 
 irs::field_id InvertedIndexConfig::FindFieldIdByExpression(
@@ -488,6 +504,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::Copy(
 
 void InvertedIndexEntry::OnDrop() {
   if (_storage) {
+    ClusterOf(catalog.GetDatabase())
+      .NoteDroppedArtifact(duckdb::CatalogType::INDEX_ENTRY, catalog.GetOid(),
+                           oid, {_storage->Path()});
     _storage->MarkDropped();
   }
   if (_search_table) {

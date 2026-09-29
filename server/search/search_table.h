@@ -98,6 +98,9 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);
   }
+  std::filesystem::path Path() const {
+    return GetPath(_db_id, _schema_id, GetTableId());
+  }
 
   // `exclusive_segment` is required of a writer that will record its flushed
   // segments in the WAL -- see irs::IndexWriter::GetBatch.

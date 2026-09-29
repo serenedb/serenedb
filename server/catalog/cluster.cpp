@@ -20,13 +20,21 @@
 
 #include "catalog/cluster.h"
 
+#include <absl/algorithm/container.h>
+
+#include <algorithm>
 #include <cstdlib>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/exception.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
+#include <duckdb/parser/parsed_data/drop_info.hpp>
+#include <duckdb/storage/checkpoint_manager.hpp>
+#include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -34,26 +42,268 @@
 #include <iresearch/utils/static_strings.hpp>
 #include <string_view>
 
+#include "catalog/boot.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
 #include "network/credentials.h"
 #include "pg/pg_types.h"
+#include "search/inverted_index_storage.h"
 
 namespace sdb::catalog {
 namespace {
 
 constexpr std::string_view kRootRole = "postgres";
+constexpr duckdb::idx_t kCompactionFloor = duckdb::idx_t{1} << 20;
 
 }  // namespace
 
-void ClusterCatalog::FinalizeLoad(
-  duckdb::optional_ptr<duckdb::ClientContext> context) {
-  duckdb::DuckCatalog::FinalizeLoad(context);
-  if (!context) {
+duckdb::Catalog& ClusterCatalog::ReplayUseCatalog(
+  duckdb::ClientContext& context, duckdb::idx_t catalog_oid) {
+  duckdb::optional_ptr<duckdb::CatalogEntry> database;
+  GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+    .Scan(GetCatalogTransaction(context), [&](duckdb::CatalogEntry& entry) {
+      if (entry.oid == catalog_oid) {
+        database = entry;
+      }
+    });
+  if (!database) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                    ERR_MSG("the catalog log names database ", catalog_oid,
+                            ", which it never created"));
+  }
+  return AttachDatabaseCatalog(context, database->name, catalog_oid);
+}
+
+void ClusterCatalog::OpenCatalogLog(
+  duckdb::unique_ptr<duckdb::WriteAheadLog> log, bool compactable) {
+  _catalog_log = std::move(log);
+  _compactable = compactable;
+  _live_bytes = GetAttached().GetStorageManager().GetWALSize();
+}
+
+void ClusterCatalog::OnCatalogLogPrepared() {
+  SDB_IF_FAILURE("crash_before_catalog_commit") { SDB_IMMEDIATE_ABORT(); }
+  SDB_IF_FAILURE("catalog_append_fails") {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                    ERR_MSG("catalog log: could not append the transaction"));
+  }
+}
+
+void ClusterCatalog::OnCatalogLogDecided() {
+  SDB_IF_FAILURE("crash_after_catalog_before_data") { SDB_IMMEDIATE_ABORT(); }
+  SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
+}
+
+void ClusterCatalog::MaybeCompactCatalogLog() {
+  if (!_compactable || !_catalog_log) {
     return;
   }
-  const auto transaction = GetCatalogTransaction(*context);
+  bool force = false;
+  SDB_IF_FAILURE("compact_inside_ddl") { force = true; }
+  SDB_IF_FAILURE("compact_inside_drop") { force = true; }
+  auto& storage = GetAttached().GetStorageManager();
+  const auto threshold =
+    force ? 0 : std::max<duckdb::idx_t>(kCompactionFloor, 2 * _live_bytes);
+  if (storage.GetWALSize() < threshold) {
+    return;
+  }
+  auto lock = storage.GetWALLock();
+  if (storage.GetWALSize() < threshold) {
+    return;
+  }
+  try {
+    CompactCatalogLog();
+  } catch (const std::exception& e) {
+    SDB_WARN(GENERAL, "catalog log rewrite failed: ", e.what());
+  }
+}
+
+void ClusterCatalog::CompactCatalogLog() {
+  auto& storage = GetAttached().GetStorageManager();
+  auto& fs = duckdb::FileSystem::Get(GetAttached());
+  const auto path = _catalog_log->GetPath();
+  const auto rewrite_path = path + ".rewrite";
+  fs.TryRemoveFile(rewrite_path);
+  duckdb::idx_t size = 0;
+  {
+    duckdb::WriteAheadLog rewrite{storage, rewrite_path};
+    duckdb::WriteCatalogEntries(rewrite, *this);
+    for (const auto& db :
+         duckdb::DatabaseManager::Get(GetDatabase()).GetDatabases()) {
+      auto& catalog = db->GetCatalog();
+      if (catalog.GetCatalogType() == SereneDBCatalog::kStorageType) {
+        duckdb::WriteCatalogEntries(rewrite,
+                                    catalog.Cast<duckdb::DuckCatalog>());
+      }
+    }
+    {
+      const std::filesystem::path root{ClusterLayout(GetAttached()).directory};
+      std::lock_guard guard{_artifacts_mutex};
+      std::erase_if(_artifacts, [&](const Artifact& artifact) {
+        if (!artifact.drop && IsLive(artifact)) {
+          return true;
+        }
+        return absl::c_none_of(artifact.paths, [&](const std::string& path) {
+          std::error_code ec;
+          return std::filesystem::exists(root / path, ec) ||
+                 std::filesystem::exists(
+                   search::DroppedStoragePath(root / path), ec);
+        });
+      });
+      for (const auto& artifact : _artifacts) {
+        rewrite.WriteArtifact(artifact.type, artifact.catalog_oid, artifact.oid,
+                              artifact.paths);
+      }
+    }
+    duckdb::DatabaseManager::Get(GetDatabase())
+      .RetainPrepared(
+        [&](const duckdb::hugeint_t& txid,
+            const duckdb::vector<std::pair<duckdb::idx_t, duckdb::idx_t>>&
+              participants) {
+          const bool pending =
+            absl::c_any_of(participants, [&](const auto& participant) {
+              return HoldsPreparedBatch(participant.first, participant.second);
+            });
+          if (pending) {
+            rewrite.WriteCommitPrepared(txid, participants);
+          }
+          return pending;
+        });
+    rewrite.Flush();
+    size = rewrite.GetTotalWritten();
+  }
+  fs.MoveFile(rewrite_path, path);
+  _catalog_log = duckdb::make_uniq<duckdb::WriteAheadLog>(
+    storage, path, size, duckdb::WALInitState::UNINITIALIZED);
+  _live_bytes = size;
+}
+
+namespace {
+
+duckdb::vector<std::string> RelativePaths(
+  const std::filesystem::path& root,
+  const std::vector<std::filesystem::path>& paths) {
+  duckdb::vector<std::string> relative;
+  for (const auto& path : paths) {
+    relative.push_back(path.lexically_relative(root).string());
+  }
+  return relative;
+}
+
+}  // namespace
+
+void ClusterCatalog::NoteDroppedArtifact(
+  duckdb::CatalogType type, duckdb::idx_t catalog_oid, duckdb::idx_t oid,
+  const std::vector<std::filesystem::path>& paths) {
+  const std::filesystem::path root{ClusterLayout(GetAttached()).directory};
+  std::lock_guard guard{_artifacts_mutex};
+  if (!_catalog_log) {
+    _replayed_drops.insert(oid);
+    return;
+  }
+  _artifacts.push_back(
+    {type, catalog_oid, oid, RelativePaths(root, paths), true});
+}
+
+void ClusterCatalog::LogArtifact(
+  duckdb::CatalogType type, duckdb::idx_t catalog_oid, duckdb::idx_t oid,
+  const std::vector<std::filesystem::path>& paths, bool drop) {
+  if (!_catalog_log) {
+    return;
+  }
+  const std::filesystem::path root{ClusterLayout(GetAttached()).directory};
+  auto relative = RelativePaths(root, paths);
+  {
+    auto lock = GetAttached().GetStorageManager().GetWALLock();
+    _catalog_log->WriteArtifact(type, catalog_oid, oid, relative);
+    _catalog_log->GroupSync(_catalog_log->FlushAppendNoSync());
+  }
+  std::lock_guard guard{_artifacts_mutex};
+  _artifacts.push_back({type, catalog_oid, oid, std::move(relative), drop});
+}
+
+void ClusterCatalog::ReplayArtifact(duckdb::CatalogType type,
+                                    duckdb::idx_t catalog_oid,
+                                    duckdb::idx_t oid,
+                                    duckdb::vector<std::string> paths) {
+  GetDatabase().GetDatabaseManager().ClaimOid(oid);
+  std::lock_guard guard{_artifacts_mutex};
+  _artifacts.push_back({type, catalog_oid, oid, std::move(paths), true});
+}
+
+bool ClusterCatalog::HoldsPreparedBatch(duckdb::idx_t oid,
+                                        duckdb::idx_t generation) {
+  bool exists = false;
+  GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+    .Scan([&](duckdb::CatalogEntry& entry) {
+      exists = exists || entry.oid == oid;
+    });
+  if (!exists) {
+    return false;
+  }
+  for (const auto& db :
+       duckdb::DatabaseManager::Get(GetDatabase()).GetDatabases()) {
+    if (db->oid != oid || !db->HasStorageManager() ||
+        db->GetStorageManager().InMemory()) {
+      continue;
+    }
+    return db->GetStorageManager().GetBlockManager().GetCheckpointIteration() <=
+           generation;
+  }
+  return true;
+}
+
+bool ClusterCatalog::IsLive(const Artifact& artifact) {
+  bool live = false;
+  if (artifact.type == duckdb::CatalogType::DATABASE_ENTRY) {
+    GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+      .Scan([&](duckdb::CatalogEntry& entry) {
+        live = live || entry.oid == artifact.oid;
+      });
+    return live;
+  }
+  bool attached = false;
+  for (const auto& db :
+       duckdb::DatabaseManager::Get(GetDatabase()).GetDatabases()) {
+    auto& catalog = db->GetCatalog();
+    if (db->oid != artifact.catalog_oid ||
+        catalog.GetCatalogType() != SereneDBCatalog::kStorageType) {
+      continue;
+    }
+    attached = true;
+    live = live || catalog.Cast<SereneDBCatalog>().FindEntryById(
+                     nullptr, artifact.type, artifact.oid);
+  }
+  return live || !attached;
+}
+
+void ClusterCatalog::ResolveArtifacts() {
+  const std::filesystem::path root{ClusterLayout(GetAttached()).directory};
+  std::lock_guard guard{_artifacts_mutex};
+  for (const auto& artifact : _artifacts) {
+    for (const auto& path : artifact.paths) {
+      std::error_code ec;
+      std::filesystem::remove_all(search::DroppedStoragePath(root / path), ec);
+    }
+    if (_replayed_drops.contains(artifact.oid) || IsLive(artifact)) {
+      continue;
+    }
+    for (const auto& path : artifact.paths) {
+      std::error_code ec;
+      std::filesystem::remove_all(root / path, ec);
+      if (ec) {
+        SDB_WARN(STARTUP, "could not remove '", (root / path).string(),
+                 "' of dropped object ", artifact.oid, ": ", ec.message());
+      }
+    }
+  }
+  _artifacts.clear();
+  _replayed_drops.clear();
+}
+
+void ClusterCatalog::Bootstrap(duckdb::ClientContext& context) {
+  const auto transaction = GetCatalogTransaction(context);
   const duckdb::Identifier root{kRootRole};
   if (!GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
          .GetEntry(transaction, root)) {
@@ -144,6 +394,11 @@ void ClusterCatalog::DropDatabase(duckdb::CatalogTransaction transaction,
                                   duckdb::DropInfo& info) {
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
+  if (auto entry = GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+                     .GetEntry(transaction, info.GetQualifiedName().Name())) {
+    LogArtifact(duckdb::CatalogType::DATABASE_ENTRY, GetAttached().oid,
+                entry->oid, DatabaseArtifacts(GetAttached(), entry->oid), true);
+  }
   duckdb::DuckCatalog::DropDatabase(transaction, info);
 }
 

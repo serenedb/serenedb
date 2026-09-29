@@ -80,7 +80,7 @@ const irs::AnnBuildEnv& AnnBuildEnv() {
 }
 
 void SearchEngine::start() {
-  InitInvertedIndexes();
+  StartInvertedIndexTasks();
   if (!absl::GetFlag(FLAGS_skip_search_recovery)) {
     RunSearchTableRecovery();
   }

@@ -25,8 +25,13 @@
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
+#include <duckdb/storage/write_ahead_log.hpp>
+#include <filesystem>
+#include <mutex>
 #include <string>
 #include <string_view>
+#include <unordered_set>
+#include <vector>
 
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
@@ -43,6 +48,29 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
 
   std::string GetCatalogType() final { return kStorageType; }
 
+  bool UsesCatalogLog() const final { return true; }
+  duckdb::optional_ptr<duckdb::WriteAheadLog> CatalogLog() final {
+    return _catalog_log.get();
+  }
+  duckdb::Catalog& ReplayUseCatalog(duckdb::ClientContext& context,
+                                    duckdb::idx_t catalog_oid) final;
+  void OnCatalogLogPrepared() final;
+  void OnCatalogLogDecided() final;
+  void OpenCatalogLog(duckdb::unique_ptr<duckdb::WriteAheadLog> log,
+                      bool compactable);
+  void MaybeCompactCatalogLog();
+
+  void LogArtifact(duckdb::CatalogType type, duckdb::idx_t catalog_oid,
+                   duckdb::idx_t oid,
+                   const std::vector<std::filesystem::path>& paths, bool drop);
+  void NoteDroppedArtifact(duckdb::CatalogType type, duckdb::idx_t catalog_oid,
+                           duckdb::idx_t oid,
+                           const std::vector<std::filesystem::path>& paths);
+  void ReplayArtifact(duckdb::CatalogType type, duckdb::idx_t catalog_oid,
+                      duckdb::idx_t oid,
+                      duckdb::vector<std::string> paths) final;
+  void ResolveArtifacts();
+
   duckdb::unique_ptr<duckdb::InCatalogEntry> MakeRoleEntry(
     duckdb::CreateRoleInfo& info) final {
     return duckdb::make_uniq<RoleCatalogEntry>(*this, info);
@@ -52,7 +80,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
     return duckdb::make_uniq<DatabaseCatalogEntry>(*this, info);
   }
 
-  void FinalizeLoad(duckdb::optional_ptr<duckdb::ClientContext> context) final;
+  void Bootstrap(duckdb::ClientContext& context);
   void Alter(duckdb::CatalogTransaction transaction,
              duckdb::AlterInfo& info) final;
 
@@ -69,6 +97,26 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
     duckdb::CatalogTransaction transaction, duckdb::CreateDatabaseInfo& info);
   void DropDatabase(duckdb::CatalogTransaction transaction,
                     duckdb::DropInfo& info);
+
+ private:
+  struct Artifact {
+    duckdb::CatalogType type;
+    duckdb::idx_t catalog_oid;
+    duckdb::idx_t oid;
+    duckdb::vector<std::string> paths;
+    bool drop;
+  };
+
+  void CompactCatalogLog();
+  bool IsLive(const Artifact& artifact);
+  bool HoldsPreparedBatch(duckdb::idx_t oid, duckdb::idx_t generation);
+
+  duckdb::unique_ptr<duckdb::WriteAheadLog> _catalog_log;
+  bool _compactable = false;
+  duckdb::idx_t _live_bytes = 0;
+  std::mutex _artifacts_mutex;
+  std::vector<Artifact> _artifacts;
+  std::unordered_set<duckdb::idx_t> _replayed_drops;
 };
 
 ClusterCatalog& ClusterOf(duckdb::ClientContext& context);

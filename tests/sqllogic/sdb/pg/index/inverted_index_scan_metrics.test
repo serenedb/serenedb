@@ -89,7 +89,7 @@ SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_s
 FROM read_text('${__TEST_DIR__}/scan_metrics_count.json');
 ----
 row_groups_scanned
-4
+64
 
 
 query
@@ -97,4 +97,4 @@ SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_s
 FROM read_text('${__TEST_DIR__}/scan_metrics_stream.json');
 ----
 row_groups_scanned
-4
+64

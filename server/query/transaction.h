@@ -24,9 +24,12 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <optional>
+#include <span>
+#include <vector>
 #include <yaclib/async/future.hpp>
 
 #include "catalog/catalog.h"
+#include "connector/duckdb_sink_writer_base.h"
 #include "query/config.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table_transaction.h"
@@ -122,14 +125,40 @@ class Transaction : public Config {
 
   void Destroy() noexcept;
 
+  struct SearchSlot {
+    std::unique_ptr<irs::IndexWriter::Transaction> transaction;
+    std::unique_ptr<connector::DuckDBSinkIndexWriter> writer;
+  };
+
+  SearchSlot& EnsureIndexSlot(
+    duckdb::idx_t index_id,
+    std::shared_ptr<search::InvertedIndexStorage> storage,
+    std::shared_ptr<const catalog::InvertedIndexConfig> config,
+    size_t slot = 0);
+
   irs::IndexWriter::Transaction& EnsureIndexTransaction(
     duckdb::idx_t index_id,
     std::shared_ptr<search::InvertedIndexStorage> storage,
-    std::shared_ptr<const catalog::InvertedIndexConfig> config);
+    std::shared_ptr<const catalog::InvertedIndexConfig> config) {
+    return *EnsureIndexSlot(index_id, std::move(storage), std::move(config))
+              .transaction;
+  }
+
+  std::span<SearchSlot> IndexSlots(duckdb::idx_t index_id) {
+    const auto it = _search_transactions.find(index_id);
+    if (it == _search_transactions.end()) {
+      return {};
+    }
+    return it->second.slots;
+  }
 
   void RegisterSearchFlush() noexcept {
     for (auto& [index_id, entry] : _search_transactions) {
-      entry.transaction->RegisterFlush();
+      for (auto& slot : entry.slots) {
+        if (slot.transaction) {
+          slot.transaction->RegisterFlush();
+        }
+      }
     }
   }
 
@@ -140,7 +169,7 @@ class Transaction : public Config {
   bool IsStableSnapshot() const;
 
   struct SearchTransaction {
-    std::unique_ptr<irs::IndexWriter::Transaction> transaction;
+    std::vector<SearchSlot> slots;
     std::shared_ptr<search::InvertedIndexStorage> storage;
   };
 

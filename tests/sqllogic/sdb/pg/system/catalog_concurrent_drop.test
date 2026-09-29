@@ -473,11 +473,6 @@ DROP TABLE ccd_pin;
 
 
 # --- the same direction for a role ---
-#
-# Roles live in their own attachment, which starts its transaction the first
-# time a statement touches it -- after the drop, here. duckdb's own conflict
-# check cannot see the loss from that read view, so the install refuses the
-# resurrection itself and names the object.
 
 statement ok
 CREATE TABLE ccd_rolepin(a INTEGER);
@@ -506,7 +501,7 @@ connection s5
 statement error
 ALTER ROLE ccd_gone NOSUPERUSER;
 ----
-db error: ERROR: Attempting to write to database "sdb_cluster" in a transaction that has already modified database "<slt:ignore>" - a single transaction can only write to a single attached database.
+db error: ERROR: Catalog write-write conflict on alter with "ccd_gone"
 
 
 connection s5

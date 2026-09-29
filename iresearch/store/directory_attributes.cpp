@@ -25,7 +25,7 @@
 
 namespace irs {
 
-DirectoryAttributes::DirectoryAttributes(std::unique_ptr<irs::Encryption> enc)
-  : _enc{std::move(enc)}, _refs{std::make_unique<IndexFileRefs>()} {}
+DirectoryAttributes::DirectoryAttributes()
+  : _refs{std::make_unique<IndexFileRefs>()} {}
 
 }  // namespace irs

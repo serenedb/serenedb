@@ -296,9 +296,6 @@ void RebuildGroup(duckdb::ClientContext& context,
   for (auto& slice : slices) {
     adopted.insert(adopted.end(), slice->adopted.begin(), slice->adopted.end());
   }
-  // Every replacement may be empty (a group whose rows were all deleted), so
-  // the codec comes from the writer rather than from the flushed set.
-  const auto& codec = shard.Codec();
 
   // Parks the build with this group read and flushed but not yet swapped in --
   // the window every mid-build delete has to survive, and the only one where
@@ -313,7 +310,7 @@ void RebuildGroup(duckdb::ClientContext& context,
   const bool swapped =
     shard.SwapWithDrainedDeletes([&](std::vector<int64_t> rowids) {
       StageDeletes(deletes, std::move(rowids));
-      return shard.ReplaceSegments(replaced, adopted, codec, &deletes,
+      return shard.ReplaceSegments(replaced, adopted, &deletes,
                                    shard.Wal().CurrentTick());
     });
   // Need explicit call here so on Publish we don't have pending transactions.

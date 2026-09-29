@@ -302,15 +302,12 @@ class PipelineTokenizer final : public Tokenizer, private util::Noncopyable {
   bool _bound_column = false;
 };
 
-template<typename Context>
-void SerdeWrite(Context ctx, const PipelineTokenizer::Options& o) {
-  irs::utils::WriteTupleOrObject(ctx, std::tie(o.children));
+inline auto SerdeFields(PipelineTokenizer::Options& options) {
+  return std::tie(options.children);
 }
 
-template<typename Context>
-void SerdeRead(Context ctx, PipelineTokenizer::Options& o) {
-  auto refs = std::tie(o.children);
-  irs::utils::ReadTupleOrObject(ctx, refs);
+inline auto SerdeFields(const PipelineTokenizer::Options& options) {
+  return std::tie(options.children);
 }
 
 }  // namespace irs::analysis

@@ -160,7 +160,7 @@ class BoostQueryTestCase : public tests::IndexTestBase {
     writer->RefreshCommit();
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     EXPECT_EQ(1, reader.size());
     return reader;
   }
@@ -302,8 +302,7 @@ TEST_P(BoostQueryTestCase, OptimizerPreservesMixedDistinct) {
   insert("alpha beta");
   insert("gamma delta epsilon");
   writer->RefreshCommit();
-  auto reader =
-    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+  auto reader = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
 
   auto build = [] {
     auto root = std::make_unique<irs::BooleanFilter>();
@@ -336,8 +335,7 @@ TEST_P(BoostQueryTestCase, OptimizerPreservesMixedDistinct) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(boost_query_test, BoostQueryTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5simd")),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          BoostQueryTestCase::to_string);
 
 }  // namespace

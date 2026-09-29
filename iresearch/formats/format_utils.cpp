@@ -22,143 +22,118 @@
 
 #include "format_utils.hpp"
 
+#include <absl/strings/str_cat.h>
+
+#include <duckdb/common/error_data.hpp>
+#include <duckdb/common/exception.hpp>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
+#include <limits>
+
+#include "iresearch/error/error.hpp"
 #include "iresearch/index/file_names.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/crc.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
-namespace irs {
-
-void ValidateFooter(IndexInput& in) {
-  const int64_t remain = in.Length() - in.Position();
-
-  if (remain != format_utils::kFooterLen) {
-    throw IndexError{absl::StrCat(
-      "While validating footer, error: invalid position '", remain, "'")};
-  }
-
-  const int32_t magic = in.ReadI32();
-
-  if (magic != format_utils::kFooterMagic) {
-    throw IndexError{absl::StrCat(
-      "While validating footer, error: invalid magic number '", magic, "'")};
-  }
-
-  const int32_t alg_id = in.ReadI32();
-
-  if (alg_id != 0) {
-    throw IndexError{absl::StrCat(
-      "While validating footer, error: invalid algorithm '", alg_id, "'")};
-  }
-}
-
-namespace format_utils {
-
-void WriteHeader(IndexOutput& out, std::string_view format) {
-  out.WriteU32(kFormatMagic);
-  WriteStr(out, format);
-}
-
-// TODO(mbkkt) maybe ver is uint32_t
-void WriteHeader(IndexOutput& out, std::string_view format, int32_t ver) {
-  WriteHeader(out, format);
-  out.WriteU32(ver);
-}
-
-void WriteFooter(IndexOutput& out) {
-  out.WriteU32(kFooterMagic);
-  out.WriteU32(0);
-  // TODO(mbkkt) checksum is uint32_t
-  //  But maybe I should investigate more about not crc32c approaches
-  out.WriteU64(out.Checksum());
-}
-
+namespace irs::format_utils {
 namespace {
 
-size_t HeaderLengthNoVersion(std::string_view format) noexcept {
-  return sizeof(int32_t) + bytes_io<uint64_t>::vsize(format.size()) +
-         format.size();
+constexpr duckdb::field_id_t kFieldDataCrc32c = 0;
+constexpr duckdb::field_id_t kFieldMeta = 1;
+
+void WriteFooterImpl(IndexOutput& out, const FooterWriter* write) {
+  const uint32_t data_crc32c = out.Checksum();
+  duckdb::MemoryStream footer;
+  duckdb::BinarySerializer serializer{footer};
+  serializer.Begin();
+  serializer.WritePropertyWithDefault<uint32_t>(kFieldDataCrc32c, "data_crc32c",
+                                                data_crc32c, 0);
+  if (write != nullptr) {
+    serializer.WriteObject(kFieldMeta, "meta", *write);
+  }
+  serializer.End();
+  const auto size = footer.GetPosition();
+  SDB_ENSURE(size <= std::numeric_limits<uint32_t>::max(), "footer of ", size,
+             " bytes does not fit its 32-bit length");
+  out.WriteData(footer.GetData(), size);
+  out.WriteU32(out.Checksum());
+  out.WriteU32(static_cast<uint32_t>(size));
 }
 
-void CheckHeaderImpl(DataInput& in, std::string_view req_format,
-                     size_t expected) {
-  const ptrdiff_t left = in.Length() - in.Position();
-
-  if (left < 0) {
-    throw IllegalState{"Header has invalid length."};
+Footer ReadFooterImpl(IndexInput& in, std::string_view name,
+                      const FooterReader* read) {
+  const uint64_t length = in.Length();
+  if (length < kTrailerLen) {
+    throw IndexError{absl::StrCat("footer: '", name, "' of ", length,
+                                  " bytes is too short for a trailer")};
   }
-
-  if (static_cast<size_t>(left) < expected) {
-    throw IndexError{absl::StrCat("While checking header, error: only '", left,
-                                  "' bytes left out of '", expected, "'")};
+  const uint64_t trailer_offset = length - kTrailerLen;
+  in.Seek(trailer_offset);
+  const auto footer_expected_crc32c = static_cast<uint32_t>(in.ReadI32());
+  const auto footer_len = static_cast<uint32_t>(in.ReadI32());
+  if (footer_len > trailer_offset) {
+    throw IndexError{absl::StrCat("footer: '", name, "' of ", length,
+                                  " bytes claims a footer of ", footer_len,
+                                  " bytes")};
   }
-
-  const int32_t magic = in.ReadI32();
-
-  if (kFormatMagic != magic) {
-    throw IndexError{absl::StrCat(
-      "While checking header, error: invalid magic '", magic, "'")};
+  Footer footer{.data_len = trailer_offset - footer_len};
+  bstring footer_buf;
+  const auto* footer_data = in.ReadStable(footer.data_len, footer_len);
+  if (!footer_data) {
+    footer_buf.resize(footer_len);
+    in.ReadData(footer.data_len, footer_buf.data(), footer_len);
+    footer_data = footer_buf.data();
   }
-
-  const auto format = ReadString<std::string>(in);
-
-  if (req_format != format) {
+  Crc32c footer_actual_crc32c;
+  footer_actual_crc32c.process_bytes(footer_data, footer_len);
+  if (footer_actual_crc32c.checksum() != footer_expected_crc32c) {
     throw IndexError{
-      absl::StrCat("While checking header, error: format mismatch '", format,
-                   "' != '", req_format, "'")};
+      absl::StrCat("footer: '", name, "' does not match its checksum")};
   }
+  duckdb::MemoryStream stream{const_cast<byte_type*>(footer_data), footer_len};
+  duckdb::BinaryDeserializer deserializer{stream};
+  try {
+    deserializer.Begin();
+    footer.data_expected_crc32c =
+      deserializer.ReadPropertyWithExplicitDefault<uint32_t>(kFieldDataCrc32c,
+                                                             "data_crc32c", 0);
+    if (read != nullptr) {
+      deserializer.ReadObject(kFieldMeta, "meta",
+                              [&](duckdb::BinaryDeserializer& meta) {
+                                (*read)(meta, footer.data_len);
+                              });
+    }
+    deserializer.End();
+  } catch (const duckdb::SerializationException& e) {
+    throw IndexError{
+      absl::StrCat("footer: '", name,
+                   "' cannot be read: ", duckdb::ErrorData{e}.RawMessage(),
+                   "; it was written by a newer release of SereneDB")};
+  }
+  return footer;
 }
 
 }  // namespace
 
-size_t HeaderLength(std::string_view format) noexcept {
-  return HeaderLengthNoVersion(format) + sizeof(int32_t);
+void WriteFooter(IndexOutput& out) { WriteFooterImpl(out, nullptr); }
+
+void WriteFooter(IndexOutput& out, FooterWriter write) {
+  WriteFooterImpl(out, &write);
 }
 
-void CheckHeader(DataInput& in, std::string_view req_format) {
-  CheckHeaderImpl(in, req_format, HeaderLengthNoVersion(req_format));
+Footer ReadFooter(IndexInput& in, std::string_view name) {
+  return ReadFooterImpl(in, name, nullptr);
 }
 
-void CheckHeader(DataInput& in, std::string_view req_format, int32_t req_ver) {
-  CheckHeaderImpl(in, req_format, HeaderLength(req_format));
-
-  const int32_t ver = in.ReadI32();
-
-  if (ver != req_ver) {
-    throw IndexError{absl::StrCat(
-      "While checking header, error: invalid version '", ver, "'")};
-  }
-}
-
-int64_t Checksum(const IndexInput& in) {
-  auto* stream = &in;
-
-  const auto length = stream->Length();
-
-  if (length < sizeof(uint64_t)) {
-    throw IndexError{
-      absl::StrCat("failed to read checksum from a file of size ", length)};
-  }
-
-  IndexInput::ptr dup;
-  if (0 != in.Position()) {
-    dup = in.Dup();
-
-    if (!dup) {
-      SDB_ERROR(IRESEARCH, "failed to duplicate input");
-
-      throw IoError{"failed to duplicate input"};
-    }
-
-    dup->Seek(0);
-    stream = dup.get();
-  }
-
-  SDB_ASSERT(0 == stream->Position());
-  return stream->Checksum(length - sizeof(uint64_t));
+Footer ReadFooter(IndexInput& in, std::string_view name, FooterReader read) {
+  return ReadFooterImpl(in, name, &read);
 }
 
 void PrepareOutput(std::string& str, IndexOutput::ptr& out,
-                   const FlushState& state, std::string_view ext,
-                   std::string_view format) {
+                   const FlushState& state, std::string_view ext) {
   SDB_ASSERT(!out);
 
   FileName(str, state.name, ext);
@@ -167,9 +142,6 @@ void PrepareOutput(std::string& str, IndexOutput::ptr& out,
   if (!out) {
     throw IoError{absl::StrCat("Failed to create file, path: ", str)};
   }
-
-  WriteHeader(*out, format);
 }
 
-}  // namespace format_utils
-}  // namespace irs
+}  // namespace irs::format_utils

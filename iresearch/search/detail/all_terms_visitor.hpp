@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "iresearch/formats/formats.hpp"
+#include "iresearch/formats/term_reader.hpp"
 #include "iresearch/search/detail/multiterm_collector.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/queries/multiterm_state.hpp"

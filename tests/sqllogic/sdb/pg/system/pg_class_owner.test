@@ -1,7 +1,6 @@
 # Verifies pg_class.relowner is the root user oid for every relkind and that
 # catalog views joining on relowner resolve to the root user name. RBAC isn't
-# implemented yet, so every relation is owned by kRootUser (oid 1000000,
-# rolname 'postgres'). These tests guard against accidental regressions where
+# implemented yet, so every relation is owned by kRootUser. These tests guard against accidental regressions where
 # relowner would carry a different id (e.g. GetParentId instead of an owner).
 
 statement ok
@@ -20,12 +19,11 @@ statement ok
 CREATE SEQUENCE vedernikoff_seq
 
 
-# Root user lives at oid 1000000 with rolname 'postgres'.
 query
 SELECT oid, rolname FROM pg_authid WHERE rolname = 'postgres'
 ----
 oid	rolname
-1000000	postgres
+16384	postgres
 
 
 # pg_class.relowner is kRootUser for every relkind (table, index, view).
@@ -35,9 +33,9 @@ WHERE relname IN ('vedernikoff_clickclack', 'vedernikoff_idx', 'vedernikoff_view
 ORDER BY relname
 ----
 relname	relowner
-vedernikoff_clickclack	1000000
-vedernikoff_idx	1000000
-vedernikoff_view	1000000
+vedernikoff_clickclack	16384
+vedernikoff_idx	16384
+vedernikoff_view	16384
 
 
 # pg_tables.tableowner = pg_get_userbyid(relowner) -> 'postgres'.

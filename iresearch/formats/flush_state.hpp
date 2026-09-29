@@ -20,17 +20,29 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/posting/format_block_128.hpp"
+#pragma once
 
-#include "iresearch/formats/formats_impl.hpp"
+#include <cstddef>
+#include <string_view>
+
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/index_reader_options.hpp"
 
 namespace irs {
-namespace {
 
-using FormatBlock128 = FormatImpl<FormatTraits128>;
+struct Directory;
+struct NormProvider;
 
-}  // namespace
-
-void FormatBlock128Init() { REGISTER_FORMAT(FormatBlock128); }
+struct FlushState {
+  Directory* const dir{};
+  // In-flight norm reader source (SegmentWriter during initial flush,
+  // null during merge). Posting writers consult it to read per-doc norms
+  // for score bounds while the segment is still being written.
+  const NormProvider* norms{};
+  const std::string_view name;  // segment name
+  ScorerPtr scorer = nullptr;
+  const size_t doc_count;
+  IndexFeatures index_features{IndexFeatures::None};
+};
 
 }  // namespace irs

@@ -244,9 +244,8 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
                "bulk sink thread with rows but no flushed segment");
     segments.reserve(flushed.size());
     for (const auto& segment : flushed) {
-      segments.push_back(search::SearchDbWal::SegmentRef{
-        .meta_file = segment.filename,
-        .codec = std::string{segment.meta.codec->type()().name()}});
+      segments.push_back(
+        search::SearchDbWal::SegmentRef{.meta_file = segment.filename});
     }
   }
 

@@ -112,15 +112,4 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   bool _base_stable = false;
 };
 
-template<typename Context>
-void SerdeWrite(Context ctx, const WildcardTokenizer::Options& o) {
-  irs::utils::WriteTupleOrObject(ctx, std::tie(o.base_analyzer, o.ngram_size));
-}
-
-template<typename Context>
-void SerdeRead(Context ctx, WildcardTokenizer::Options& o) {
-  auto refs = std::tie(o.base_analyzer, o.ngram_size);
-  irs::utils::ReadTupleOrObject(ctx, refs);
-}
-
 }  // namespace irs::analysis

@@ -24,9 +24,12 @@ services:
   tests:
     image: ${BUILD_IMAGE}
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    group_add:
+      - "${DOCKER_SOCK_GID:-999}"
     volumes:
       - "${WORKSPACE}:/serenedb"
       - "${WORKSPACE}/out/logs:/logs"
+      - /var/run/docker.sock:/var/run/docker.sock
     env_file:
       - "${WORKSPACE}/docker.env"
     environment:

@@ -117,15 +117,12 @@ class UnionTokenizer final : public Tokenizer, private util::Noncopyable {
   std::unique_ptr<SubSink> _sub_sink;
 };
 
-template<typename Context>
-void SerdeWrite(Context ctx, const UnionTokenizer::Options& o) {
-  irs::utils::WriteTupleOrObject(ctx, std::tie(o.children));
+inline auto SerdeFields(UnionTokenizer::Options& options) {
+  return std::tie(options.children);
 }
 
-template<typename Context>
-void SerdeRead(Context ctx, UnionTokenizer::Options& o) {
-  auto refs = std::tie(o.children);
-  irs::utils::ReadTupleOrObject(ctx, refs);
+inline auto SerdeFields(const UnionTokenizer::Options& options) {
+  return std::tie(options.children);
 }
 
 }  // namespace irs::analysis

@@ -42,8 +42,6 @@
 
 namespace duckdb {
 
-class Serializer;
-class Deserializer;
 class CompressionFunction;
 
 }  // namespace duckdb
@@ -115,8 +113,8 @@ struct ColumnMeta {
   uint64_t write_list_running = 0;
 };
 
-void SerializeColumnMeta(duckdb::Serializer& s, const ColumnMeta& meta);
-ColumnMeta DeserializeColumnMeta(duckdb::Deserializer& d);
+void SerializeColumnMeta(duckdb::BinarySerializer& s, const ColumnMeta& meta);
+ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d);
 
 struct VariantScanState;
 

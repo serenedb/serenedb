@@ -26,10 +26,9 @@
 #include <algorithm>
 #include <chrono>
 #include <duckdb/common/file_system.hpp>
-#include <duckdb/common/serializer/deserializer.hpp>
-#include <duckdb/common/serializer/serializer.hpp>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/store/directory_attributes.hpp>
@@ -96,6 +95,10 @@ constexpr duckdb::field_id_t kFieldTick = 0;
 
 }  // namespace
 
+uint64_t SearchTable::ReadCommittedTick(duckdb::BinaryDeserializer& payload) {
+  return payload.ReadProperty<uint64_t>(kFieldTick, "tick");
+}
+
 SearchTable::SearchTable(duckdb::idx_t db_id, duckdb::idx_t schema_id,
                          duckdb::idx_t table_id, bool is_new,
                          const catalog::SearchTableOptions& options,
@@ -159,7 +162,6 @@ void SearchTable::OpenWriter() {
     }
   }
 
-  auto codec = irs::formats::Get("1_5simd");
   const bool reopen = path_exists && !_is_new;
   const auto open_mode =
     reopen ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
@@ -183,16 +185,15 @@ void SearchTable::OpenWriter() {
   }
 
   writer_options.meta_payload_writer = [this](uint64_t tick,
-                                              duckdb::Serializer& out) {
+                                              duckdb::BinarySerializer& out) {
     _last_committed_tick = std::max(_last_committed_tick, tick);
     out.WriteProperty<uint64_t>(kFieldTick, "tick", _last_committed_tick);
   };
-  writer_options.meta_payload_reader = [this](duckdb::Deserializer& in) {
-    _last_committed_tick = in.ReadProperty<uint64_t>(kFieldTick, "tick");
+  writer_options.meta_payload_reader = [this](duckdb::BinaryDeserializer& in) {
+    _last_committed_tick = ReadCommittedTick(in);
   };
 
-  _writer =
-    irs::IndexWriter::Make(*_dir, codec, open_mode, std::move(writer_options));
+  _writer = irs::IndexWriter::Make(*_dir, open_mode, std::move(writer_options));
 
   auto& db_manager =
     duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
@@ -377,8 +378,8 @@ auto SearchTable::CompactUnsafeAsync(
   try {
     // iresearch serializes Compact against refresh/DML internally, so a long
     // merge never blocks the refresh chain.
-    const auto res = co_await _writer->CompactAsync(policy, field_options,
-                                                    nullptr, progress, env);
+    const auto res =
+      co_await _writer->CompactAsync(policy, field_options, progress, env);
     if (!res) {
       result = absl::InternalError(
         absl::StrCat("compaction failed for search table ", GetTableId()));

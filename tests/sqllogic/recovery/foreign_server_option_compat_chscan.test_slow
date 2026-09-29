@@ -1,0 +1,85 @@
+control substitution on
+
+
+statement ok
+SET sdb_faults = 'foreign_server_without_database_option';
+
+
+statement ok
+CREATE SERVER ch_older FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+SET sdb_faults = 'foreign_server_with_unknown_option';
+
+
+statement ok
+CREATE SERVER ch_newer FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SELECT (SELECT count(*) FROM ch_older.vedernikoff) AS older,
+       (SELECT count(*) FROM ch_newer.vedernikoff) AS newer;
+----
+older	newer
+6	6
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT srvname, 'database=chtest' = ANY(srvoptions) AS has_database,
+       'option_from_a_newer_release=on' = ANY(srvoptions) AS has_newer_option
+  FROM pg_foreign_server WHERE srvname IN ('ch_newer', 'ch_older') ORDER BY srvname;
+----
+srvname	has_database	has_newer_option
+ch_newer	t	t
+ch_older	f	f
+
+
+connection after_crash
+query
+SELECT count(*) FROM ch_older.chtest.vedernikoff;
+----
+count
+6
+
+
+connection after_crash
+statement error vedernikoff
+SELECT count(*) FROM ch_older.vedernikoff;
+
+
+connection after_crash
+statement error ch_newer
+SELECT count(*) FROM ch_newer.chtest.vedernikoff;
+
+
+connection after_crash
+statement ok
+DROP SERVER ch_newer;
+
+
+connection after_crash
+query
+SELECT srvname FROM pg_foreign_server WHERE srvname IN ('ch_newer', 'ch_older') ORDER BY srvname;
+----
+srvname
+ch_older

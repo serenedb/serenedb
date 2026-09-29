@@ -39,12 +39,17 @@ struct Footer {
   uint32_t data_expected_crc32c = 0;
 };
 
-void WriteFooter(IndexOutput& out,
-                 absl::FunctionRef<void(duckdb::BinarySerializer&)> write);
+using FooterWriter = absl::FunctionRef<void(duckdb::BinarySerializer&)>;
+using FooterReader =
+  absl::FunctionRef<void(duckdb::BinaryDeserializer&, uint64_t)>;
 
-Footer ReadFooter(
-  IndexInput& in, std::string_view name,
-  absl::FunctionRef<void(duckdb::BinaryDeserializer&, uint64_t)> read);
+void WriteFooter(IndexOutput& out);
+
+void WriteFooter(IndexOutput& out, FooterWriter write);
+
+Footer ReadFooter(IndexInput& in, std::string_view name);
+
+Footer ReadFooter(IndexInput& in, std::string_view name, FooterReader read);
 
 void PrepareOutput(std::string& str, IndexOutput::ptr& out,
                    const FlushState& state, std::string_view ext);

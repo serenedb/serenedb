@@ -23,6 +23,7 @@
 
 #include <gtest/gtest.h>
 
+#include <duckdb/common/serializer/binary_serializer.hpp>
 #include <iresearch/formats/flush_state.hpp>
 #include <iresearch/formats/format_utils.hpp>
 #include <iresearch/formats/index/burst_trie.hpp>
@@ -1066,12 +1067,14 @@ TEST_P(Format10TestCase, postings_reject_unknown_footer_field) {
     {
       auto out = dir->create(absl::StrCat(name, ".doc"));
       EXPECT_NE(nullptr, out);
-      irs::format_utils::WriteFooter(
-        *out, [&](duckdb::BinarySerializer& footer) {
-          if (unknown_field) {
+      if (unknown_field) {
+        irs::format_utils::WriteFooter(
+          *out, [](duckdb::BinarySerializer& footer) {
             footer.WriteProperty<uint32_t>(0, "layout", 1);
-          }
-        });
+          });
+      } else {
+        irs::format_utils::WriteFooter(*out);
+      }
     }
     std::string message;
     try {

@@ -112,7 +112,9 @@ void SerializeBlockMetas(duckdb::BinarySerializer& s, duckdb::field_id_t id,
 void SerializeColumnMeta(duckdb::BinarySerializer& s, const ColumnMeta& meta) {
   s.WriteProperty(0, "id", meta.id);
   s.WriteProperty(1, "type", meta.type);
-  SerializeBlockMetas(s, 2, "data", meta.data);
+  if (!meta.data.empty()) {
+    SerializeBlockMetas(s, 2, "data", meta.data);
+  }
   if (!meta.validity.empty()) {
     SerializeBlockMetas(s, 3, "validity", meta.validity);
   }
@@ -153,7 +155,7 @@ ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d) {
   d.ReadProperty(1, "type", meta.type);
   const auto stats_physical = meta.type.InternalType();
   d.Set<const duckdb::LogicalType&>(meta.type);
-  d.ReadList(
+  d.ReadOptionalList(
     2, "data", [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
       list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
         meta.data.push_back(DeserializeColumnBlockMeta(obj, stats_physical));

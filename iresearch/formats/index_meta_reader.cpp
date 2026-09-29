@@ -90,7 +90,7 @@ void Read(const Directory& dir, IndexMeta& meta, std::string_view filename,
                                       " and cannot be read: ", error)};
       }
       cnt = meta_in.ReadProperty<uint64_t>(kFieldSegCounter, "seg_counter");
-      meta_in.ReadList(
+      meta_in.ReadOptionalList(
         kFieldSegments, "segments",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
           auto& segment = segments.emplace_back();

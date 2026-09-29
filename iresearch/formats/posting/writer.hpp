@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <duckdb/common/serializer/binary_serializer.hpp>
-
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/flush_state.hpp"
@@ -624,15 +622,14 @@ inline void PostingsWriter::AddPosition(uint32_t pos) {
 }
 
 inline void PostingsWriter::End() {
-  constexpr auto kNoFields = [](duckdb::BinarySerializer&) {};
-  format_utils::WriteFooter(*_doc_out, kNoFields);
+  format_utils::WriteFooter(*_doc_out);
   _doc_out.reset();  // ensure stream is closed
 
   if (_pos_out) {
     if (_pos.size != 0) {
       FlushTailPos();
     }
-    format_utils::WriteFooter(*_pos_out, kNoFields);
+    format_utils::WriteFooter(*_pos_out);
     _pos_out.reset();  // ensure stream is closed
   } else {
     SDB_ASSERT(_pos.size == 0);
@@ -644,7 +641,7 @@ inline void PostingsWriter::End() {
     if (_pay.size != 0) {
       FlushTailPay();
     }
-    format_utils::WriteFooter(*_pay_out, kNoFields);
+    format_utils::WriteFooter(*_pay_out);
     _pay_out.reset();  // ensure stream is closed
   } else {
     SDB_ASSERT(_pay.size == 0);

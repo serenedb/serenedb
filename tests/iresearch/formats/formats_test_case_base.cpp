@@ -1489,8 +1489,6 @@ TEST_P(FormatTestCase, index_meta_reads_its_storage_version_range) {
         meta.WriteProperty<uint64_t>(im::kFieldStorageVersion,
                                      "storage_version", version);
         meta.WriteProperty<uint64_t>(im::kFieldSegCounter, "seg_counter", 0);
-        meta.WriteList(im::kFieldSegments, "segments", 0,
-                       [](duckdb::BinarySerializer::List&, duckdb::idx_t) {});
       });
     }
     try {

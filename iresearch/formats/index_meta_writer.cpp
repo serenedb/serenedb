@@ -73,18 +73,20 @@ bool IndexMetaWriter::prepare(Directory& dir, IndexMeta& meta,
       static_cast<uint64_t>(duckdb::StorageVersion::SERENEDB_LATEST));
     meta_out.WriteProperty<uint64_t>(index_meta::kFieldSegCounter,
                                      "seg_counter", meta.seg_counter);
-    meta_out.WriteList(
-      index_meta::kFieldSegments, "segments", meta.segments.size(),
-      [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-        const auto& segment = meta.segments[i];
-        list.WriteObject([&](duckdb::BinarySerializer& obj) {
-          obj.WriteProperty<std::string>(index_meta::kSegmentFieldFilename,
-                                         "filename", segment.filename);
-          obj.WritePropertyWithDefault<uint32_t>(
-            index_meta::kSegmentFieldInvisibleCount, "invisible_count",
-            InvisibleCount(segment.meta), 0);
+    if (!meta.segments.empty()) {
+      meta_out.WriteList(
+        index_meta::kFieldSegments, "segments", meta.segments.size(),
+        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+          const auto& segment = meta.segments[i];
+          list.WriteObject([&](duckdb::BinarySerializer& obj) {
+            obj.WriteProperty<std::string>(index_meta::kSegmentFieldFilename,
+                                           "filename", segment.filename);
+            obj.WritePropertyWithDefault<uint32_t>(
+              index_meta::kSegmentFieldInvisibleCount, "invisible_count",
+              InvisibleCount(segment.meta), 0);
+          });
         });
-      });
+    }
     if (_payload) {
       meta_out.WriteObject(
         index_meta::kFieldPayload, "payload",

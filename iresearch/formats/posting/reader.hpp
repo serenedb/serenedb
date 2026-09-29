@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <duckdb/common/serializer/binary_deserializer.hpp>
-
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/format_block_128.hpp"
@@ -47,8 +45,7 @@ inline void PrepareInput(std::string& str, IndexInput::ptr& in, IOAdvice advice,
     throw IoError{absl::StrCat("Failed to open file, path: ", str)};
   }
 
-  format_utils::ReadFooter(*in, str,
-                           [](duckdb::BinaryDeserializer&, uint64_t) {});
+  format_utils::ReadFooter(*in, str);
 }
 
 inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;

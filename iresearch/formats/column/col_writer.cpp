@@ -248,13 +248,15 @@ bool ColWriter::Commit(uint64_t target_row,
     }
   }
   format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& footer) {
-    footer.WriteList(
-      kColFieldColumns, "columns", _columns.size(),
-      [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-        list.WriteObject([&](duckdb::BinarySerializer& obj) {
-          SerializeColumnMeta(obj, _columns[i]->Meta());
+    if (!_columns.empty()) {
+      footer.WriteList(
+        kColFieldColumns, "columns", _columns.size(),
+        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+          list.WriteObject([&](duckdb::BinarySerializer& obj) {
+            SerializeColumnMeta(obj, _columns[i]->Meta());
+          });
         });
-      });
+    }
     if (!norm_columns.empty()) {
       footer.WriteList(
         kColFieldNormColumns, "norm_columns", norm_columns.size(),

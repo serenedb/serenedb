@@ -110,12 +110,9 @@ NormColumnMeta DeserializeNormMetas(duckdb::BinaryDeserializer& d, field_id id,
         meta.row_groups.push_back(p);
       });
     });
-  if (meta.row_groups.empty()) {
-    return meta;
-  }
   const uint64_t groups = meta.row_groups.size();
   const uint64_t rgs = meta.row_group_size;
-  SDB_ENSURE(rgs != 0 && meta.row_count > (groups - 1) * rgs &&
+  SDB_ENSURE(groups != 0 && rgs != 0 && meta.row_count > (groups - 1) * rgs &&
                meta.row_count <= groups * rgs,
              ".col reader: norm column id ", id, " holds ", meta.row_count,
              " rows across ", groups, " row groups of ", rgs);
@@ -142,7 +139,7 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
     *fin, FileName(segment_name),
     [&](duckdb::BinaryDeserializer& footer, uint64_t data_size) {
       footer.Set<duckdb::DatabaseInstance&>(db);
-      footer.ReadList(
+      footer.ReadOptionalList(
         kColFieldColumns, "columns",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
           list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
@@ -162,9 +159,6 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
             const auto id =
               static_cast<field_id>(obj.ReadProperty<uint64_t>(0, "id"));
             auto meta = DeserializeNormMetas(obj, id, data_size);
-            if (meta.row_groups.empty()) {
-              return;
-            }
             auto nr = std::make_unique<NormColumnReader>(id, std::move(meta),
                                                          _ctx.In());
             const bool ok = _norm_by_id.emplace(id, nr.get()).second;

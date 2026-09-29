@@ -45,17 +45,16 @@ namespace {
 constexpr duckdb::field_id_t kFieldDataCrc32c = 0;
 constexpr duckdb::field_id_t kFieldMeta = 1;
 
-}  // namespace
-
-void WriteFooter(IndexOutput& out,
-                 absl::FunctionRef<void(duckdb::BinarySerializer&)> write) {
+void WriteFooterImpl(IndexOutput& out, const FooterWriter* write) {
   const uint32_t data_crc32c = out.Checksum();
   duckdb::MemoryStream footer;
   duckdb::BinarySerializer serializer{footer, duckdb::VersionStorageOptions()};
   serializer.Begin();
   serializer.WritePropertyWithDefault<uint32_t>(kFieldDataCrc32c, "data_crc32c",
                                                 data_crc32c, 0);
-  serializer.WriteObject(kFieldMeta, "meta", write);
+  if (write != nullptr) {
+    serializer.WriteObject(kFieldMeta, "meta", *write);
+  }
   serializer.End();
   const auto size = footer.GetPosition();
   SDB_ENSURE(size <= std::numeric_limits<uint32_t>::max(), "footer of ", size,
@@ -65,9 +64,8 @@ void WriteFooter(IndexOutput& out,
   out.WriteU32(static_cast<uint32_t>(size));
 }
 
-Footer ReadFooter(
-  IndexInput& in, std::string_view name,
-  absl::FunctionRef<void(duckdb::BinaryDeserializer&, uint64_t)> read) {
+Footer ReadFooterImpl(IndexInput& in, std::string_view name,
+                      const FooterReader* read) {
   const uint64_t length = in.Length();
   if (length < kTrailerLen) {
     throw IndexError{absl::StrCat("footer: '", name, "' of ", length,
@@ -103,9 +101,12 @@ Footer ReadFooter(
     footer.data_expected_crc32c =
       deserializer.ReadPropertyWithExplicitDefault<uint32_t>(kFieldDataCrc32c,
                                                              "data_crc32c", 0);
-    deserializer.ReadObject(
-      kFieldMeta, "meta",
-      [&](duckdb::BinaryDeserializer& meta) { read(meta, footer.data_len); });
+    if (read != nullptr) {
+      deserializer.ReadObject(kFieldMeta, "meta",
+                              [&](duckdb::BinaryDeserializer& meta) {
+                                (*read)(meta, footer.data_len);
+                              });
+    }
     deserializer.End();
   } catch (const duckdb::SerializationException& e) {
     throw IndexError{
@@ -114,6 +115,22 @@ Footer ReadFooter(
                    "; it was written by a newer release of SereneDB")};
   }
   return footer;
+}
+
+}  // namespace
+
+void WriteFooter(IndexOutput& out) { WriteFooterImpl(out, nullptr); }
+
+void WriteFooter(IndexOutput& out, FooterWriter write) {
+  WriteFooterImpl(out, &write);
+}
+
+Footer ReadFooter(IndexInput& in, std::string_view name) {
+  return ReadFooterImpl(in, name, nullptr);
+}
+
+Footer ReadFooter(IndexInput& in, std::string_view name, FooterReader read) {
+  return ReadFooterImpl(in, name, &read);
 }
 
 void PrepareOutput(std::string& str, IndexOutput::ptr& out,

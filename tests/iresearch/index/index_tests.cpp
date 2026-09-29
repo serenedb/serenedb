@@ -28,7 +28,9 @@
 
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
+#include <iresearch/formats/format_utils.hpp>
 #include <iresearch/formats/index_meta_reader.hpp>
+#include <iresearch/formats/index_meta_writer.hpp>
 #include <iresearch/formats/segment_meta_reader.hpp>
 #include <iresearch/formats/segment_meta_writer.hpp>
 #include <iresearch/index/field_meta.hpp>
@@ -44,6 +46,7 @@
 #include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/fstext/fst_table_matcher.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <iresearch/utils/serialization.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <iresearch/utils/vector.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
@@ -11567,6 +11570,93 @@ TEST_P(IndexTestCase11, commit_payload) {
     writer->RefreshBegin());  // transaction hasn't been started, no changes
   writer->RefreshCommit();
   ASSERT_EQ(reader, writer->GetSnapshot());
+}
+
+TEST_P(IndexTestCase11, reader_of_payload_needs_payload_reader) {
+  auto writer_options = irs::tests::DefaultWriterOptions();
+  writer_options.meta_payload_writer = [](uint64_t,
+                                          duckdb::BinarySerializer& out) {
+    out.WriteProperty<std::string>(0, "payload", "value");
+  };
+  auto writer = open_writer(irs::kOmCreate, std::move(writer_options));
+  writer->RefreshCommit();
+
+  size_t reads = 0;
+  auto payload_reader = [&] {
+    return irs::MetaPayloadReader{[&](duckdb::BinaryDeserializer& in) {
+      EXPECT_EQ("value", in.ReadProperty<std::string>(0, "payload"));
+      ++reads;
+    }};
+  };
+
+  ASSERT_THROW(
+    (irs::DirectoryReader{dir(), irs::tests::DefaultReaderOptions()}),
+    irs::IndexError);
+
+  irs::DirectoryReader reader{dir(), irs::tests::DefaultReaderOptions(),
+                              payload_reader()};
+  ASSERT_EQ(1, reads);
+  ASSERT_THROW(reader.Reopen(), irs::IndexError);
+  ASSERT_EQ(reader, reader.Reopen(payload_reader()));
+  ASSERT_EQ(2, reads);
+}
+
+TEST_P(IndexTestCase11, create_over_unreadable_index) {
+  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                              &tests::GenericJsonFieldFactory);
+  const auto* doc1 = gen.next();
+  const auto* doc2 = gen.next();
+
+  std::string old_segment;
+  {
+    auto writer = open_writer(irs::kOmCreate);
+    ASSERT_TRUE(InsertWithName(*writer, *doc1));
+    writer->RefreshCommit();
+    auto snapshot = writer->GetSnapshot();
+    ASSERT_EQ(1, snapshot.size());
+    old_segment = snapshot[0].Meta().name;
+  }
+
+  std::string old_meta;
+  ASSERT_TRUE(irs::index_meta::LastFile(dir(), old_meta));
+  {
+    auto out = dir().create(old_meta);
+    ASSERT_NE(nullptr, out);
+    irs::format_utils::WriteFooter(*out, [](duckdb::BinarySerializer& meta) {
+      meta.WriteProperty<uint64_t>(
+        irs::index_meta::kFieldStorageVersion, "storage_version",
+        static_cast<uint64_t>(duckdb::kIResearchStorageVersion) + 1);
+    });
+  }
+
+  ASSERT_THROW(
+    (irs::DirectoryReader{dir(), irs::tests::DefaultReaderOptions()}),
+    irs::IndexError);
+  ASSERT_THROW(open_writer(irs::kOmAppend), irs::IndexError);
+  ASSERT_THROW(open_writer(irs::kOmCreate | irs::kOmAppend), irs::IndexError);
+  {
+    std::string meta;
+    ASSERT_TRUE(irs::index_meta::LastFile(dir(), meta));
+    ASSERT_EQ(old_meta, meta);
+    irs::IndexMeta index_meta;
+    ASSERT_THROW(irs::index_meta::Read(dir(), index_meta, meta),
+                 irs::IndexError);
+  }
+
+  auto writer = open_writer(irs::kOmCreate);
+  ASSERT_TRUE(InsertWithName(*writer, *doc2));
+  writer->RefreshCommit();
+
+  std::string new_meta;
+  ASSERT_TRUE(irs::index_meta::LastFile(dir(), new_meta));
+  EXPECT_LT(irs::index_meta::ParseGeneration(old_meta),
+            irs::index_meta::ParseGeneration(new_meta));
+
+  auto reader = irs::DirectoryReader{dir(), irs::tests::DefaultReaderOptions()};
+  ASSERT_EQ(1, reader.size());
+  ASSERT_EQ(1, reader.docs_count());
+  EXPECT_NE(old_segment, reader[0].Meta().name);
+  AssertSnapshotEquality(*writer);
 }
 
 TEST_P(IndexTestCase11, partial_commit_masks_tail_as_bound) {

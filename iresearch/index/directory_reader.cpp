@@ -82,12 +82,12 @@ size_t DirectoryReader::size() const { return _impl->size(); }
 
 const DirectoryMeta& DirectoryReader::Meta() const { return _impl->Meta(); }
 
-DirectoryReader DirectoryReader::Reopen() const {
+DirectoryReader DirectoryReader::Reopen(MetaPayloadReader payload) const {
   // make a copy
   auto impl = std::atomic_load_explicit(&_impl, std::memory_order_acquire);
 
-  return DirectoryReader{
-    DirectoryReaderImpl::Open(impl->Dir(), impl->Options(), std::move(impl))};
+  return DirectoryReader{DirectoryReaderImpl::Open(
+    impl->Dir(), impl->Options(), std::move(impl), std::move(payload))};
 }
 
 }  // namespace irs

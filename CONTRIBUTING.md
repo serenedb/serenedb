@@ -202,7 +202,7 @@ Every file an iresearch segment writes (`segments_N`, `.sm`, `.doc`, `.pos`, `.p
 - **Removed field:** read it with `ReadDeletedProperty`.
 - **Never** reuse a field id, change a default, or change what an existing field means.
 - **New data layout** (block encoding, term dictionary, ...): select it with a new field, and keep reading the old layout while it is supported.
-- **Every field is read:** `ReadFooter` checks the end of the object, so every reader of a file reads all of its footer (`segments_N` is read with its payload reader).
+- **Every field is read:** `ReadFooter` checks the end of the object, so every reader of a file reads all of its footer (`segments_N` is read with its payload reader, `DirectoryReader` and `DirectoryReader::Reopen` take one, and an index with a payload but no reader is refused).
 - **Breaking compatibility:** add a new value to DuckDB's `StorageVersion` and point `duckdb::kIResearchStorageVersion` at it. `segments_N` records that version as its first field and is read only when it matches, so older binaries refuse every index directory written after the change and the new binary refuses every one written before it. Do it in its own PR and list it in the release notes. The footer trailer and the leading `storage_version` field of `segments_N` never change.
 
 ## VSCode Setup

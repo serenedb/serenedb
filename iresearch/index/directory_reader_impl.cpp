@@ -111,37 +111,25 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
 namespace {
 
 IndexFileRefs::ref_t LoadNewestIndexMeta(IndexMeta& meta, const Directory& dir,
-                                         MetaPayloadReader payload) noexcept {
-  try {
-    IndexFileRefs::ref_t ref;
-    std::string filename;
+                                         MetaPayloadReader payload) {
+  IndexFileRefs::ref_t ref;
+  std::string filename;
 
-    // ensure have a valid ref to a filename
-    while (!ref) {
-      const bool index_exists = index_meta::LastFile(dir, filename);
+  // ensure have a valid ref to a filename
+  while (!ref) {
+    const bool index_exists = index_meta::LastFile(dir, filename);
 
-      if (!index_exists) {
-        return nullptr;
-      }
-
-      ref = directory_utils::Reference(const_cast<Directory&>(dir), filename);
+    if (!index_exists) {
+      return nullptr;
     }
 
-    SDB_ASSERT(ref);
-    index_meta::Read(dir, meta, *ref, std::move(payload));
-
-    return ref;
-  } catch (const std::exception& e) {
-    SDB_ERROR(IRESEARCH,
-              absl::StrCat(
-                "Caught exception while loading the newest index meta, error '",
-                e.what(), "'"));
-  } catch (...) {
-    SDB_ERROR(IRESEARCH,
-              "Caught exception while loading the newest index meta");
+    ref = directory_utils::Reference(const_cast<Directory&>(dir), filename);
   }
 
-  return nullptr;
+  SDB_ASSERT(ref);
+  index_meta::Read(dir, meta, *ref, std::move(payload));
+
+  return ref;
 }
 
 }  // namespace

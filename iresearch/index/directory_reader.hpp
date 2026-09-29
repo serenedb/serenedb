@@ -82,7 +82,7 @@ class DirectoryReader final : public IndexReader {
   size_t size() const final;
 
   // this call will attempt to reuse segments from the existing reader
-  DirectoryReader Reopen() const;
+  DirectoryReader Reopen(MetaPayloadReader payload = {}) const;
 
   const std::shared_ptr<const DirectoryReaderImpl>& GetImpl() const noexcept {
     return _impl;

@@ -20,6 +20,7 @@
 
 #include "catalog/boot.h"
 
+#include <absl/container/flat_hash_set.h>
 #include <absl/flags/flag.h>
 #include <absl/strings/str_cat.h>
 
@@ -66,6 +67,7 @@ constexpr const char* kDatabaseDir = "engine_duckdb";
 struct MissingDatabases {
   bool fresh_cluster = false;
   std::string policy;
+  absl::flat_hash_set<duckdb::idx_t> missing;
   std::vector<duckdb::Identifier> skipped;
   std::vector<duckdb::Identifier> dropped;
 };
@@ -89,6 +91,29 @@ duckdb::unique_ptr<duckdb::TransactionManager> MakeClusterTransactionManager(
 const DataDirectory& Layout(duckdb::AttachedDatabase& db) {
   return static_cast<const DataDirectory&>(
     *db.GetStorageExtension()->storage_info);
+}
+
+void ApplyMissingDatabasePolicy(duckdb::AttachedDatabase& cluster,
+                                const duckdb::Identifier& name,
+                                duckdb::idx_t oid) {
+  const auto file = Layout(cluster).DatabaseFile(oid);
+  const auto& policy = gMissingDatabases.policy;
+  if (policy == "refuse") {
+    SDB_FATAL(STARTUP, "database '", name.GetIdentifierName(), "' (oid ", oid,
+              ") cannot be opened: '", file,
+              "' does not exist. Pass --missing_database=skip to leave it "
+              "unattached or --missing_database=drop to remove it from "
+              "the catalog.");
+  }
+  if (policy == "skip") {
+    SDB_WARN(STARTUP, "database '", name.GetIdentifierName(),
+             "' is not attached: '", file, "' does not exist");
+    gMissingDatabases.skipped.push_back(name);
+  } else {
+    SDB_WARN(STARTUP, "dropping database '", name.GetIdentifierName(),
+             "' from the catalog: '", file, "' does not exist");
+    gMissingDatabases.dropped.push_back(name);
+  }
 }
 
 }  // namespace
@@ -135,23 +160,7 @@ duckdb::Catalog& AttachDatabaseCatalog(duckdb::ClientContext& context,
   auto visibility = duckdb::AttachVisibility::SHOWN;
   std::error_code ec;
   if (!gMissingDatabases.fresh_cluster && !std::filesystem::exists(file, ec)) {
-    const auto& policy = gMissingDatabases.policy;
-    if (policy == "refuse") {
-      SDB_FATAL(STARTUP, "database '", name.GetIdentifierName(), "' (oid ", oid,
-                ") cannot be opened: '", file,
-                "' does not exist. Pass --missing_database=skip to leave it "
-                "unattached or --missing_database=drop to remove it from "
-                "the catalog.");
-    }
-    if (policy == "skip") {
-      SDB_WARN(STARTUP, "database '", name.GetIdentifierName(),
-               "' is not attached: '", file, "' does not exist");
-      gMissingDatabases.skipped.push_back(name);
-    } else {
-      SDB_WARN(STARTUP, "dropping database '", name.GetIdentifierName(),
-               "' from the catalog: '", file, "' does not exist");
-      gMissingDatabases.dropped.push_back(name);
-    }
+    gMissingDatabases.missing.insert(oid);
     info.path = IN_MEMORY_PATH;
     visibility = duckdb::AttachVisibility::HIDDEN;
   }
@@ -225,6 +234,9 @@ void InitCatalog(std::string_view directory) {
   for (const auto& [name, oid] : databases) {
     context.RunFunctionInTransaction(
       [&] { AttachDatabaseCatalog(context, name, oid); });
+    if (gMissingDatabases.missing.contains(oid)) {
+      ApplyMissingDatabasePolicy(cluster.GetAttached(), name, oid);
+    }
   }
   auto& manager = duckdb::DatabaseManager::Get(instance);
   for (const auto& db : manager.GetDatabases()) {

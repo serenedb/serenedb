@@ -90,6 +90,15 @@ TEST(ListenSpec, MultipleCommaSeparated) {
   EXPECT_EQ(specs[1].apis[0], network::HttpApi::Es);
 }
 
+TEST(ListenSpec, HttpRepeatedApiListedOnce) {
+  const auto specs =
+    Parse({"http://127.0.0.1:9200?api=es&api=otel&api=es&api=otel"});
+  ASSERT_EQ(specs.size(), 1u);
+  ASSERT_EQ(specs[0].apis.size(), 2u);
+  EXPECT_EQ(specs[0].apis[0], network::HttpApi::Es);
+  EXPECT_EQ(specs[0].apis[1], network::HttpApi::Otel);
+}
+
 TEST(ListenSpec, HttpDatabaseParam) {
   const auto specs = Parse({"http://127.0.0.1:4318?api=otel&db=telemetry"});
   ASSERT_EQ(specs.size(), 1u);

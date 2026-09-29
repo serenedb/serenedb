@@ -307,7 +307,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
     // pg-stdin: borrow the recv-buffer view the bridge already holds; skip the
     // FileHandle entirely. Text COPY opens stdin once (single-pass), so nothing
     // else reads the handle, and the session has already sent CopyInResponse.
-    auto* bridge = conn.GetCopyInBridge();
+    auto* bridge = conn.GetSideChannel<pg::CopyInBridge>();
     if (!bridge) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

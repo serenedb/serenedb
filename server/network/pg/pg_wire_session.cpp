@@ -432,16 +432,7 @@ bool PgWireSession<Kind>::SetupConnection() {
     };
 
   _conn->context->session_user = std::string{UserName()};
-  std::vector<duckdb::CatalogSearchEntry> default_paths{
-    duckdb::CatalogSearchEntry{duckdb::Identifier{DatabaseName()},
-                               duckdb::Identifier{"$user"}},
-    duckdb::CatalogSearchEntry{duckdb::Identifier{DatabaseName()},
-                               duckdb::Identifier{"public"}},
-  };
-  _conn->context->client_data->catalog_search_path->SetDefaultPaths(
-    std::vector{default_paths});
-  _conn->context->client_data->catalog_search_path->Set(
-    std::move(default_paths), duckdb::CatalogSetPathType::SET_DIRECTLY);
+  connector::SetDefaultSearchPath(*_conn->context, DatabaseName());
 
   _connection_ctx->SetSetting("session_authorization", std::string{UserName()},
                               false);
@@ -1537,7 +1528,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   _client_state->copy_stdin_open_count = 0;
   _client_state->copy_stdin_done = false;
   sdb::pg::CopyInBridge bridge;
-  _connection_ctx->SetCopyInBridge(&bridge);
+  _connection_ctx->SetSideChannel(&bridge);
   _feeder_done.store(false, std::memory_order_relaxed);
   _copy_route.store(true, std::memory_order_release);
   // CopyInResponse's column count: the explicit COPY column list, else the
@@ -1587,7 +1578,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
     co_await this->_task->Park();
   }
   _copy_route.store(false, std::memory_order_release);
-  _connection_ctx->SetCopyInBridge(nullptr);
+  _connection_ctx->SetSideChannel<sdb::pg::CopyInBridge>(nullptr);
   if (error) {
     std::rethrow_exception(error);
   }

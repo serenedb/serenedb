@@ -140,7 +140,9 @@ void ApplyParam(ListenSpec& spec, std::string_view key,
                                 }),
                   ")");
       }
-      spec.apis.push_back(it->second);
+      if (!absl::c_linear_search(spec.apis, it->second)) {
+        spec.apis.push_back(it->second);
+      }
     }
   } else if (key == "db") {
     if (!is_http) {
@@ -149,6 +151,15 @@ void ApplyParam(ListenSpec& spec, std::string_view key,
     spec.database = PercentDecode(value);
     if (spec.database.empty()) {
       SDB_FATAL(GENERAL, "empty 'db' in endpoint '", url, "'");
+    }
+  } else if (key == "schema") {
+    if (!is_http) {
+      SDB_FATAL(GENERAL, "'schema' is only valid on an http endpoint '", url,
+                "'");
+    }
+    spec.schema = PercentDecode(value);
+    if (spec.schema.empty()) {
+      SDB_FATAL(GENERAL, "empty 'schema' in endpoint '", url, "'");
     }
   } else if (key == "mode") {
     if (!is_unix) {

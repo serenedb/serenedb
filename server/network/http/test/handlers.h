@@ -20,13 +20,25 @@
 
 #pragma once
 
-#include "network/http/router.h"
+#include <cstdint>
+#include <memory>
+
+#include "network/http/handler.h"
 
 namespace sdb::network::http::test {
 
 // Synthetic transport-test endpoints under /_test/ (echo, ping, bytes, fuzz,
 // status) used by functional + performance tests. Gated behind a flag; never
 // enabled in production; not part of any standard API.
-void Register(HttpRouter& router);
+enum class Endpoint : uint8_t {
+  Echo,
+  Ping,
+  Bytes,
+  Fuzz,
+  Status,
+  SessionUser,
+};
+
+std::unique_ptr<HttpHandler> Make(Endpoint endpoint);
 
 }  // namespace sdb::network::http::test

@@ -20,19 +20,10 @@
 
 #pragma once
 
-#include "connector/functions/embedding/provider.h"
+#include <duckdb/main/database.hpp>
 
-namespace duckdb {
+namespace sdb::connector {
 
-class DatabaseInstance;
-}
+void RegisterAIFunctions(duckdb::DatabaseInstance& db);
 
-namespace sdb::connector::embedding {
-
-void NormalizeOpenAIConfig(duckdb::DatabaseInstance& db, ProviderConfig& cfg);
-
-void EmbedBatchOpenAI(duckdb::DatabaseInstance& db, const ProviderConfig& cfg,
-                      duckdb::Vector& texts, duckdb::idx_t count,
-                      duckdb::Vector& result);
-
-}  // namespace sdb::connector::embedding
+}  // namespace sdb::connector

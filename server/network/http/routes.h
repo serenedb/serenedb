@@ -20,36 +20,25 @@
 
 #pragma once
 
-#include <duckdb/common/types/vector.hpp>
-#include <string>
+#include <memory>
+#include <span>
 #include <string_view>
 
-namespace duckdb {
+#include "network/http/handler.h"
+#include "network/http/router.h"
+#include "network/listen_spec.h"
 
-class DatabaseInstance;
-}
+namespace sdb::network::http {
 
-namespace sdb::connector::embedding {
-
-enum class ProviderType {
-  OpenAI,
+struct Route {
+  HttpApi api;
+  HttpMethod method;
+  std::string_view pattern;
+  std::unique_ptr<HttpHandler> (*make)();
 };
 
-struct ProviderConfig {
-  ProviderType type = ProviderType::OpenAI;
-  std::string model;
-  std::string api_key;
-  std::string base_url;
-  std::string embeddings_path;
-  std::string auth_header;
-};
+std::span<const Route> Routes();
 
-ProviderType ResolveProviderType(std::string_view protocol);
+void AddRoutes(HttpRouter& router, std::span<const HttpApi> apis);
 
-void NormalizeProviderConfig(duckdb::DatabaseInstance& db, ProviderConfig& cfg);
-
-void EmbedBatch(duckdb::DatabaseInstance& db, const ProviderConfig& cfg,
-                duckdb::Vector& texts, duckdb::idx_t count,
-                duckdb::Vector& result);
-
-}  // namespace sdb::connector::embedding
+}  // namespace sdb::network::http

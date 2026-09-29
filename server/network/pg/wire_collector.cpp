@@ -135,7 +135,7 @@ class PhysicalPgWireCollector final : public duckdb::PhysicalResultCollector {
       ctx.rows.fetch_add(take, std::memory_order_relaxed);
       ctx.direct_committed.store(out.TotalCommitted(),
                                  std::memory_order_release);
-      if (start + take < chunk.size()) {
+      if (start + take < chunk.size() || sent + take == budget) {
         ctx.page_offset = start + take;
         ctx.BlockSink(input.interrupt_state);
         return duckdb::SinkResultType::BLOCKED;

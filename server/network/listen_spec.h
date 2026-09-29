@@ -98,6 +98,7 @@ struct ListenSpec {
   // http only: the database this listener's sessions work in (the OTel
   // schema is created there); empty means the default database.
   std::string database;
+  std::string schema;
 
   std::optional<int> backlog;
   std::optional<bool> reuseport;

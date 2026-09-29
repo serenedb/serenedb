@@ -107,8 +107,11 @@ class MockPostingsField final : public irs::TermReader {
   irs::SeekTermIterator::ptr iterator() const final {
     return irs::SeekTermIterator::empty();
   }
+  irs::SeekTermIterator::ptr iterator(const irs::RegexpAcceptor&) const final {
+    return irs::SeekTermIterator::empty();
+  }
   irs::SeekTermIterator::ptr iterator(
-    const irs::automaton_table_matcher&) const final {
+    const irs::LevenshteinAcceptor&) const final {
     return irs::SeekTermIterator::empty();
   }
   void ReadDocs(irs::bytes_view, Acceptor) const final {}

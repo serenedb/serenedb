@@ -32,6 +32,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
 #include <iresearch/index/column_info.hpp>
+#include <iresearch/search/detail/pattern_cache.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -678,6 +679,29 @@ constexpr std::pair<std::string_view, VariableDescription>
                                     value.ToString(), "\""));
           }
         },
+      },
+    },
+    {
+      "sdb_pattern_cache_size",
+      {
+        LogicalTypeId::UBIGINT,
+        "Bytes of compiled search patterns (`ts_regexp`, `ts_like`, LIKE and "
+        "fused alternations over an inverted index) kept across queries, so "
+        "a pattern is compiled once per server rather than once per query. "
+        "The least recently used patterns are dropped first; a pattern in use "
+        "by a running query stays alive until it finishes. 0 disables the "
+        "cache. Server-global. Default 67108864 (64MB).",
+        [] {
+          return duckdb::Value::UBIGINT(irs::PatternCache::kDefaultCapacity);
+        },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          irs::PatternCache::Instance().SetCapacity(value.GetValue<uint64_t>());
+        },
+        [](duckdb::ClientContext&, duckdb::SetScope) {
+          irs::PatternCache::Instance().SetCapacity(
+            irs::PatternCache::kDefaultCapacity);
+        },
+        duckdb::SetScope::GLOBAL,
       },
     },
     {

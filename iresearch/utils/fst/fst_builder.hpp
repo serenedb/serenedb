@@ -22,9 +22,12 @@
 
 #pragma once
 
-#include <fst/vector-fst.h>
+#include <absl/hash/hash.h>
 
-#include "iresearch/utils/fstext/fst_states_map.hpp"
+#include <vector>
+
+#include "iresearch/utils/fst/fst_states_map.hpp"
+#include "iresearch/utils/fst/fst_string_weight.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
@@ -66,7 +69,7 @@ class FstBuilder : util::Noncopyable {
     SDB_ASSERT(_last.empty() || _last < in);
 
     if (in.empty()) {
-      _start_out = fst::Times(_start_out, out);
+      _start_out = Times(_start_out, out);
       return;
     }
 
@@ -88,7 +91,7 @@ class FstBuilder : util::Noncopyable {
 
     const bool is_final = _last.size() != size || pref != (size + 1);
 
-    decltype(fst::DivideLeft(out, out)) output = out;
+    bytes_view output = out;
 
     for (size_t i = 1; i < pref; ++i) {
       State& s = _states[i];
@@ -98,24 +101,20 @@ class FstBuilder : util::Noncopyable {
 
       auto& last_out = p.arcs.back().out;
 
-      if (last_out != weight_t::One()) {
-        auto prefix = fst::Plus(last_out, output);
-        const auto suffix = fst::DivideLeft(last_out, prefix);
-        output = fst::DivideLeft(output, prefix);
+      if (!last_out.Empty()) {
+        const auto prefix = Plus(last_out, output);
+        const auto suffix = DivideLeft(last_out, prefix);
+        output = DivideLeft(output, prefix);
 
         for (Arc& a : s.arcs) {
-          a.out = fst::Times(suffix, a.out);
+          a.out = Times(suffix, a.out);
         }
 
         if (s.final) {
-          s.out = fst::Times(suffix, s.out);
+          s.out = Times(suffix, s.out);
         }
 
-        if constexpr (std::is_same_v<decltype(prefix), irs::bytes_view>) {
-          last_out.Resize(prefix.size());
-        } else {
-          last_out = std::move(prefix);
-        }
+        last_out.Resize(prefix.size());
       }
     }
 
@@ -130,13 +129,13 @@ class FstBuilder : util::Noncopyable {
       {
         State& s = _states[pref - 1];
         SDB_ASSERT(!s.arcs.empty() && s.arcs.back().label == in[pref - 1]);
-        s.arcs.back().out = std::move(output);
+        s.arcs.back().out = output;
       }
     } else {
       State& s = _states[size];
       SDB_ASSERT(s.arcs.size());
       SDB_ASSERT(s.arcs.back().label == in[pref - 1]);
-      s.arcs.back().out = fst::Times(s.arcs.back().out, output);
+      s.arcs.back().out = Times(s.arcs.back().out, output);
     }
 
     _last = in;
@@ -172,13 +171,13 @@ class FstBuilder : util::Noncopyable {
 
     // initialize final state
     _fst.AddState();
-    _fst.SetFinal(kFinal, weight_t::One());
+    _fst.SetFinal(kFinal, weight_t{});
 
     // reset stats
     _stats = {};
     _stats.num_states = 1;
     _stats.num_arcs = 0;
-    _stats(weight_t::One());
+    _stats(weight_t{});
 
     _states.clear();
     _states_map.reset();
@@ -204,7 +203,7 @@ class FstBuilder : util::Noncopyable {
       stateid_t id;
     };
     label_t label;
-    weight_t out{weight_t::One()};
+    weight_t out;
   };
 
   struct State : private util::Noncopyable {
@@ -215,7 +214,7 @@ class FstBuilder : util::Noncopyable {
 
     void clear() noexcept {
       arcs.clear();
-      out = weight_t::One();
+      out.Clear();
       final = false;
     }
 
@@ -228,7 +227,7 @@ class FstBuilder : util::Noncopyable {
     }
 
     std::vector<Arc> arcs;
-    weight_t out{weight_t::One()};
+    weight_t out;
     bool final{false};
   };
 
@@ -236,21 +235,20 @@ class FstBuilder : util::Noncopyable {
 
   struct StateEqual {
     bool operator()(const State& lhs, stateid_t rhs, const fst_t& fst) const {
-      if (lhs.arcs.size() != fst.NumArcs(rhs)) {
+      const auto rhs_arcs = fst.Arcs(rhs);
+      if (lhs.arcs.size() != rhs_arcs.size()) {
         return false;
       }
 
-      fst::ArcIterator<fst_t> rhs_arc(fst, rhs);
-
+      auto rhs_arc = rhs_arcs.begin();
       for (auto& lhs_arc : lhs.arcs) {
-        if (lhs_arc != rhs_arc.Value()) {
+        if (lhs_arc != *rhs_arc) {
           return false;
         }
 
-        rhs_arc.Next();
+        ++rhs_arc;
       }
 
-      SDB_ASSERT(rhs_arc.Done());
       return true;
     }
   };
@@ -266,9 +264,7 @@ class FstBuilder : util::Noncopyable {
 
       template<typename H>
       friend H AbslHashValue(H h, const Impl& impl) {
-        for (fst::ArcIterator<fst_t> it{impl.fst, impl.id}; !it.Done();
-             it.Next()) {
-          const arc_t& arc = it.Value();
+        for (const arc_t& arc : impl.fst.Arcs(impl.id)) {
           h = H::combine(std::move(h), arc.ilabel, arc.nextstate,
                          arc.weight.Impl());
         }
@@ -294,7 +290,7 @@ class FstBuilder : util::Noncopyable {
       }
 
       for (const Arc& a : s.arcs) {
-        fst.EmplaceArc(id, a.label, a.label, a.out, a.id);
+        fst.EmplaceArc(id, a.label, a.out, a.id);
         (*_stats)(a.out);
       }
 
@@ -309,7 +305,7 @@ class FstBuilder : util::Noncopyable {
   };
 
   using states_map = FstStatesMap<fst_t, State, StateEmplace, StateHash,
-                                  StateEqual, fst::kNoStateId>;
+                                  StateEqual, fst_t::kNoStateId>;
 
   void add_states(size_t size) {
     // reserve size + 1 for root state

@@ -47,7 +47,6 @@
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/tfidf.hpp>
 #include <iresearch/search/scorers/unscored.hpp>
-#include <iresearch/utils/automaton_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
 #include "filter_test_case_base.hpp"
@@ -2376,7 +2375,8 @@ const irs::AutomatonFilter* FusedOf(const irs::Filter::ptr& filter) {
 }
 
 bool FusedAccepts(const irs::AutomatonFilter& fused, std::string_view term) {
-  return bool(irs::Accept(fused.options().compiled->acceptor, B(term)));
+  const auto predicate = fused.options().source->Predicate();
+  return predicate && predicate->Accepts(B(term));
 }
 
 irs::ByRange& AddRange(irs::BooleanFilter& root, irs::Occur occur,
@@ -3349,7 +3349,7 @@ TEST(AndAcceptorFusion_test, fuses_same_field_acceptors) {
   const auto* fused = FusedOf(filter);
   ASSERT_NE(nullptr, fused);
   EXPECT_EQ(kFieldTestField, fused->field_id());
-  EXPECT_EQ(irs::bstring{B("ax%&%le")}, fused->options().pattern);
+  EXPECT_EQ(irs::bstring{B("%le&ax%")}, fused->options().pattern);
   EXPECT_TRUE(FusedAccepts(*fused, "axle"));
   EXPECT_TRUE(FusedAccepts(*fused, "axolotle"));
   EXPECT_FALSE(FusedAccepts(*fused, "apple"));
@@ -3405,12 +3405,38 @@ TEST(AndAcceptorFusion_test, levenshtein_driver_bails) {
   Append<irs::ByEditDistance>(*root, irs::Occur::Must, kFieldTestField, "apple")
     .mutable_options()
     ->max_distance = 1;
+  Append<irs::ByEditDistance>(*root, irs::Occur::Must, kFieldTestField, "berry")
+    .mutable_options()
+    ->max_distance = 1;
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.fuse_acceptor_intersections = true});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(*filter);
+  const auto filters = node.Filters(irs::Occur::Must);
+  ASSERT_EQ(2, filters.size());
+  EXPECT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(),
+            filters[0]->type());
+}
+
+TEST(AndAcceptorFusion_test, levenshtein_yields_driver_to_automaton) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  Append<irs::ByEditDistance>(*root, irs::Occur::Must, kFieldTestField, "apple")
+    .mutable_options()
+    ->max_distance = 1;
   Append<irs::ByWildcard>(*root, irs::Occur::Must, kFieldTestField, "%le");
 
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {.fuse_acceptor_intersections = true});
 
-  EXPECT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_EQ(irs::bstring{B("%le&apple~")}, fused->options().pattern);
+  EXPECT_TRUE(FusedAccepts(*fused, "apple"));
+  EXPECT_TRUE(FusedAccepts(*fused, "aple"));
+  EXPECT_FALSE(FusedAccepts(*fused, "axle"));
+  EXPECT_FALSE(FusedAccepts(*fused, "apply"));
 }
 
 TEST(AndAcceptorFusion_test, levenshtein_predicate_fuses) {

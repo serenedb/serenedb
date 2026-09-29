@@ -174,6 +174,8 @@ Match indexed tokens against a regular expression.
 
 **How it works.** The pattern is applied to each indexed term and a row matches when any term matches. Because terms are stored in their analyzed form (lower-cased by the dictionary in our setup), write the pattern against that form — `ts_regexp('QUICK')` finds nothing, but the inline flag `ts_regexp('(?i)QUICK')` does (in `'perl'` mode). The `'posix'` dialect is handy for bracket-class patterns such as `gr[ae]y`.
 
+A pattern's size never changes its answer: a long alternation — hundreds of generated names, synonyms or term lists — returns exactly the terms it matches, only more slowly past the point where the index can no longer prune the dictionary with it. A pattern is compiled once and reused by later queries; [`sdb_pattern_cache_size`](../../../configuration/overview.md#search-and-indexing) bounds how much compiled state the server keeps.
+
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
 | `body @@ ts_regexp('qu.*ck')` | `1`, `2` | `quick` matches the Perl pattern. |

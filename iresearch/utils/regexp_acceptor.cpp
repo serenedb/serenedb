@@ -1,0 +1,630 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "iresearch/utils/regexp_acceptor.hpp"
+
+#include <algorithm>
+#include <atomic>
+#include <memory>
+#include <new>
+#include <string>
+#include <vector>
+
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/log.hpp"
+#include "iresearch/utils/utf8_utils.hpp"
+#include "iresearch/utils/wildcard_utils.hpp"
+#include "re2/prog.h"
+#include "re2/regexp.h"
+#include "re2/walker-inl.h"
+
+namespace irs {
+namespace {
+
+using ParseFlags = re2::Regexp::ParseFlags;
+
+// RE2's compiler expands every rune range into strict UTF-8 byte sequences
+// except the one range `[0x80, Runemax]`, which `Add_80_10ffff` deliberately
+// widens to `[C2-DF][80-BF] | [E0-EF][80-BF]{2} | [F0-F4][80-BF]{3}` -- so an
+// overlong `E0 80 80` and an above-U+10FFFF `F4 90 80 80` match. iresearch's
+// model widens `.` in exactly that way only when the class is *full* (see
+// `AnyCodePoint`); a partial class expands strictly, range by range.
+// Splitting the range below Runemax into two class nodes is what keeps RE2 off
+// the wide path, and it is a narrowing: RE2 then rejects the ill-formed
+// sequences it accepts today.
+constexpr re2::Rune kWideRangeLo = 0x80;
+constexpr re2::Rune kBmpMax = 0xFFFF;
+
+re2::Regexp* SplitAtBmp(re2::CharClassBuilder& low, ParseFlags flags) {
+  re2::CharClassBuilder high;
+  high.AddRange(kBmpMax + 1, re2::Runemax);
+  re2::Regexp* subs[]{re2::Regexp::NewCharClass(low.GetCharClass(), flags),
+                      re2::Regexp::NewCharClass(high.GetCharClass(), flags)};
+  return re2::Regexp::AlternateNoFactor(subs, 2, flags);
+}
+
+re2::Regexp* NarrowCharClass(re2::Regexp* re, ParseFlags flags) {
+  auto* cc = re->cc();
+  if (!cc || cc->empty() || cc->full()) {
+    return re->Incref();
+  }
+  const auto* last = cc->end() - 1;
+  if (last->hi != re2::Runemax || last->lo > kWideRangeLo) {
+    return re->Incref();
+  }
+  re2::CharClassBuilder low;
+  for (auto* it = cc->begin(); it != cc->end(); ++it) {
+    low.AddRange(it->lo, std::min(it->hi, kBmpMax));
+  }
+  return SplitAtBmp(low, flags);
+}
+
+// `(?s).` sets `DotNL`, which parses to `kRegexpAnyChar` rather than to the
+// `[^\n]` class `.` gives -- and RE2 compiles that straight onto the wide
+// path. It is the same range and it takes the same split.
+re2::Regexp* NarrowAnyChar(ParseFlags flags) {
+  re2::CharClassBuilder low;
+  low.AddRange(0, kBmpMax);
+  return SplitAtBmp(low, flags);
+}
+
+// Rebuilds the parsed tree with the whole-term reading of the empty-width
+// operators, which is not the one RE2's own compiler gives them: a term is
+// matched from its first byte to its last, so an anchor constrains nothing
+// wherever it sits, and RE2 would make `a$b` unmatchable instead. Character
+// classes are narrowed to the strict
+// UTF-8 model (see `NarrowCharClass`); everything else is left to RE2's
+// compiler, which is the whole point of going through a `Regexp` tree rather
+// than an automaton of our own.
+class RegexpRewriter : public re2::Regexp::Walker<re2::Regexp*> {
+ public:
+  bool HasError() const noexcept { return _error; }
+
+  re2::Regexp* PostVisit(re2::Regexp* re, re2::Regexp* /*parent_arg*/,
+                         re2::Regexp* /*pre_arg*/, re2::Regexp** child_args,
+                         int nchild_args) override {
+    const auto flags = static_cast<ParseFlags>(re->parse_flags());
+    switch (re->op()) {
+      case re2::kRegexpBeginLine:
+      case re2::kRegexpEndLine:
+      case re2::kRegexpBeginText:
+      case re2::kRegexpEndText:
+      // The first and last byte of a term are always word boundaries, and a
+      // term has no interior the tokenizer would put a boundary in.
+      case re2::kRegexpWordBoundary:
+      case re2::kRegexpHaveMatch:
+        Release(child_args, nchild_args);
+        return Empty(flags);
+
+      // `\B` cannot be modelled without splitting every state by whether the
+      // previous byte was a word character. Underapproximating is the safer
+      // direction for a search engine.
+      case re2::kRegexpNoWordBoundary:
+        Release(child_args, nchild_args);
+        return re2::Regexp::Alternate(nullptr, 0, flags);
+
+      case re2::kRegexpStar:
+        SDB_ASSERT(nchild_args == 1);
+        return re2::Regexp::Star(child_args[0], flags);
+      case re2::kRegexpPlus:
+        SDB_ASSERT(nchild_args == 1);
+        return re2::Regexp::Plus(child_args[0], flags);
+      case re2::kRegexpQuest:
+        SDB_ASSERT(nchild_args == 1);
+        return re2::Regexp::Quest(child_args[0], flags);
+      case re2::kRegexpRepeat:
+        // `Simplify()` rewrites every `{n,m}` into the three above.
+        SDB_ASSERT(false);
+        _error = true;
+        Release(child_args, nchild_args);
+        return Empty(flags);
+
+      case re2::kRegexpConcat:
+        return re2::Regexp::Concat(child_args, nchild_args, flags);
+      case re2::kRegexpAlternate:
+        return re2::Regexp::Alternate(child_args, nchild_args, flags);
+
+      case re2::kRegexpCharClass:
+        SDB_ASSERT(nchild_args == 0);
+        return NarrowCharClass(re, flags);
+      case re2::kRegexpAnyChar:
+        SDB_ASSERT(nchild_args == 0);
+        return NarrowAnyChar(flags);
+
+      // Acceptance does not depend on where the groups are.
+      case re2::kRegexpCapture:
+        SDB_ASSERT(nchild_args == 1);
+        return child_args[0];
+
+      default:
+        SDB_ASSERT(nchild_args == 0);
+        Release(child_args, nchild_args);
+        return re->Incref();
+    }
+  }
+
+  re2::Regexp* ShortVisit(re2::Regexp* re,
+                          re2::Regexp* /*parent_arg*/) override {
+    _error = true;
+    return Empty(static_cast<ParseFlags>(re->parse_flags()));
+  }
+
+  // The walk hands the same result to two positions when a node repeats, and
+  // these results are owning references.
+  re2::Regexp* Copy(re2::Regexp* arg) override { return arg->Incref(); }
+
+ private:
+  static re2::Regexp* Empty(ParseFlags flags) {
+    return re2::Regexp::Concat(nullptr, 0, flags);
+  }
+
+  static void Release(re2::Regexp** args, int count) {
+    for (int i = 0; i != count; ++i) {
+      args[i]->Decref();
+    }
+  }
+
+  bool _error{false};
+};
+
+// The wildcard dialect is compiled in RE2's Latin-1 encoding, where runes *are*
+// bytes: a literal byte of the pattern is that byte, and `_` / `%` spell out
+// iresearch's UTF-8 model byte by byte -- the loose one, overlongs and
+// surrogates included. A wildcard pattern
+// is arbitrary bytes, which is why it cannot go through a regexp source string
+// at all.
+constexpr auto kWildcardFlags =
+  static_cast<ParseFlags>(static_cast<int>(re2::Regexp::Latin1) |
+                          static_cast<int>(re2::Regexp::OneLine) |
+                          static_cast<int>(re2::Regexp::ClassNL));
+
+re2::Regexp* ByteClass(uint32_t lo, uint32_t hi) {
+  re2::CharClassBuilder cc;
+  cc.AddRange(static_cast<re2::Rune>(lo), static_cast<re2::Rune>(hi));
+  return re2::Regexp::NewCharClass(cc.GetCharClass(), kWildcardFlags);
+}
+
+re2::Regexp* AnyCodePoint() {
+  const auto sequence = [](uint32_t lo, uint32_t hi, int continuations) {
+    re2::Regexp* subs[utf8_utils::kMaxCharSize];
+    subs[0] = ByteClass(lo, hi);
+    for (int i = 0; i != continuations; ++i) {
+      subs[i + 1] = ByteClass(0x80, 0xBF);
+    }
+    return re2::Regexp::Concat(subs, continuations + 1, kWildcardFlags);
+  };
+  re2::Regexp* alts[]{ByteClass(0x00, 0x7F), sequence(0xC2, 0xDF, 1),
+                      sequence(0xE0, 0xEF, 2), sequence(0xF0, 0xF4, 3)};
+  return re2::Regexp::AlternateNoFactor(alts, 4, kWildcardFlags);
+}
+
+re2::Regexp* WildcardTree(bytes_view pattern) {
+  std::vector<re2::Regexp*> parts;
+  parts.reserve(pattern.size());
+  bool escaped = false;
+  for (const auto c : pattern) {
+    if (escaped) {
+      parts.emplace_back(ByteClass(c, c));
+      escaped = false;
+      continue;
+    }
+    switch (c) {
+      case WildcardMatch::kAnyStr:
+        parts.emplace_back(re2::Regexp::Star(AnyCodePoint(), kWildcardFlags));
+        break;
+      case WildcardMatch::kAnyChr:
+        parts.emplace_back(AnyCodePoint());
+        break;
+      case WildcardMatch::kEscape:
+        escaped = true;
+        break;
+      default:
+        parts.emplace_back(ByteClass(c, c));
+        break;
+    }
+  }
+  return re2::Regexp::Concat(parts.data(), static_cast<int>(parts.size()),
+                             kWildcardFlags);
+}
+
+re2::Regexp* RegexpTree(bytes_view pattern, RegexpSyntax syntax) {
+  const absl::string_view sv{reinterpret_cast<const char*>(pattern.data()),
+                             pattern.size()};
+  // The two dialects a term regexp is offered: Perl and POSIX ERE.
+  const auto flags = syntax == RegexpSyntax::Perl
+                       ? re2::Regexp::LikePerl
+                       : (re2::Regexp::ClassNL | re2::Regexp::OneLine);
+
+  re2::RegexpStatus status;
+  re2::Regexp* parsed = re2::Regexp::Parse(sv, flags, &status);
+  if (!parsed) {
+    SDB_ERROR(IRESEARCH, "RE2 regexp parse error: ", status.Text());
+    return nullptr;
+  }
+  re2::Regexp* simple = parsed->Simplify();
+  parsed->Decref();
+  if (!simple) {
+    return nullptr;
+  }
+
+  RegexpRewriter rewriter;
+  re2::Regexp* re = rewriter.Walk(simple, nullptr);
+  simple->Decref();
+  if (re && (rewriter.HasError() || rewriter.stopped_early())) {
+    SDB_ERROR(IRESEARCH, "RE2 regexp too deep to rewrite");
+    re->Decref();
+    return nullptr;
+  }
+  return re;
+}
+
+#ifdef SDB_DEV
+// Determinizations since process start, so a dev-build test can pin how often
+// one happens. Debug-only: nothing in the system reads it.
+std::atomic_size_t kBuilds{0};
+#endif
+
+}  // namespace
+
+#ifdef SDB_DEV
+size_t RegexpAcceptor::Builds() noexcept {
+  return kBuilds.load(std::memory_order_relaxed);
+}
+
+size_t RegexpAcceptor::Rows() const {
+  std::lock_guard lock{_mutex};
+  return _rows.size();
+}
+#endif
+
+RegexpAcceptor::RegexpAcceptor(bytes_view pattern, RegexpSyntax syntax,
+                               int64_t max_mem, size_t max_dfa_mem)
+  : _max_dfa_mem{max_dfa_mem} {
+  Compile(pattern, syntax, false, max_mem);
+}
+
+RegexpAcceptor::RegexpAcceptor(WildcardTag, bytes_view pattern, int64_t max_mem,
+                               size_t max_dfa_mem)
+  : _max_dfa_mem{max_dfa_mem} {
+  Compile(pattern, RegexpSyntax::Perl, true, max_mem);
+}
+
+RegexpAcceptor::~RegexpAcceptor() = default;
+
+void RegexpAcceptor::Compile(bytes_view pattern, RegexpSyntax syntax,
+                             bool wildcard, int64_t max_mem) {
+#ifdef SDB_DEV
+  kBuilds.fetch_add(1, std::memory_order_relaxed);
+#endif
+  re2::Regexp* re =
+    wildcard ? WildcardTree(pattern) : RegexpTree(pattern, syntax);
+  if (re) {
+    _prog.reset(re->CompileToProg(max_mem));
+    re->Decref();
+    if (!_prog) {
+      SDB_ERROR(IRESEARCH, "RE2 regexp did not compile within ", max_mem,
+                " bytes");
+    }
+  }
+
+  {
+    std::lock_guard lock{_mutex};
+    if (_prog) {
+      _prog->set_anchor_end(true);
+      _classes = static_cast<uint32_t>(_prog->bytemap_range());
+      SDB_ASSERT(_classes != 0);
+      std::copy(_prog->bytemap(), _prog->bytemap() + _bytemap.size(),
+                _bytemap.begin());
+      for (int label = kMaxLabel; label >= 0; --label) {
+        _representative[_bytemap[label]] = static_cast<uint8_t>(label);
+      }
+    } else {
+      _classes = 1;
+    }
+
+    _dead = AllocateLocked(0);
+    _dead->dead = true;
+    _unknown = AllocateLocked(0);
+    _unknown->unknown = true;
+    _unknown->lo = 0;
+    _unknown->hi = kMaxLabel;
+    _unknown->loop.fill(~bitset::word_t{0});
+    for (uint32_t c = 0; c != _classes; ++c) {
+      _dead->Next()[c].store(_dead, std::memory_order_relaxed);
+      _unknown->Next()[c].store(_unknown, std::memory_order_relaxed);
+    }
+    _dead->built.store(true, std::memory_order_relaxed);
+    _unknown->built.store(true, std::memory_order_relaxed);
+
+    if (!_prog) {
+      _start = _dead;
+      return;
+    }
+
+    _index.assign(static_cast<size_t>(_prog->size()), 0);
+    _queue.clear();
+    AddToQueue(_queue, _index, _stack, _prog->start());
+    _start = InternLocked(_queue);
+
+    std::vector<Row*> pending;
+    if (!_start->dead && !_start->unknown) {
+      pending.push_back(const_cast<Row*>(_start));
+    }
+    for (size_t built = 0; !pending.empty() && built != kFloodRows;) {
+      Row* row = pending.back();
+      pending.pop_back();
+      if (row->built.load(std::memory_order_relaxed)) {
+        continue;
+      }
+      BuildLocked(row);
+      ++built;
+      for (uint32_t c = 0; c != _classes; ++c) {
+        auto* target =
+          const_cast<Row*>(row->Next()[c].load(std::memory_order_relaxed));
+        if (!target->built.load(std::memory_order_relaxed)) {
+          pending.push_back(target);
+        }
+      }
+    }
+  }
+
+  for (State state = _start; _lower.size() != kMaxBoundLength;) {
+    if (state->accept || state->unknown) {
+      break;
+    }
+    uint32_t lo;
+    uint32_t hi;
+    if (!LiveRange(state, lo, hi)) {
+      break;
+    }
+    _lower.push_back(static_cast<byte_type>(lo));
+    state = Step(state, static_cast<byte_type>(lo));
+  }
+}
+
+RegexpAcceptor::State RegexpAcceptor::StepSlow(State from, uint8_t c) const {
+  Build(const_cast<Row*>(from));
+  return from->Next()[c].load(std::memory_order_acquire);
+}
+
+void RegexpAcceptor::Build(Row* row) const {
+  std::lock_guard lock{_mutex};
+  BuildLocked(row);
+}
+
+void RegexpAcceptor::BuildLocked(Row* row) const {
+  if (row->built.load(std::memory_order_relaxed)) {
+    return;
+  }
+  SDB_ASSERT(_prog);
+  auto* next = row->Next();
+  for (uint32_t c = 0; c != _classes; ++c) {
+    const int label = _representative[c];
+    _queue.clear();
+    for (uint32_t i = 0; i != row->set_size; ++i) {
+      auto* ip = _prog->inst(row->set[i]);
+      if (ip->opcode() == re2::kInstByteRange && ip->Matches(label)) {
+        AddToQueue(_queue, _index, _stack, ip->out());
+      }
+    }
+    next[c].store(InternLocked(_queue), std::memory_order_release);
+  }
+  uint8_t lo = 1;
+  uint8_t hi = 0;
+  for (size_t label = 0; label <= kMaxLabel; ++label) {
+    const auto* target = next[_bytemap[label]].load(std::memory_order_relaxed);
+    if (target->dead) {
+      continue;
+    }
+    if (lo > hi) {
+      lo = static_cast<uint8_t>(label);
+    }
+    hi = static_cast<uint8_t>(label);
+    if (target == row) {
+      row->loop[bitset::word(label)] |= bitset::word_t{1} << bitset::bit(label);
+    }
+  }
+  row->lo = lo;
+  row->hi = hi;
+  row->built.store(true, std::memory_order_release);
+}
+
+RegexpAcceptor::State RegexpAcceptor::InternLocked(
+  const std::vector<int>& queue) const {
+  _canon.clear();
+  bool accept = false;
+  for (const int id : queue) {
+    const auto op = _prog->inst(id)->opcode();
+    if (op == re2::kInstByteRange) {
+      _canon.push_back(id);
+    } else if (op == re2::kInstMatch) {
+      _canon.push_back(id);
+      accept = true;
+    }
+  }
+  if (_canon.empty()) {
+    return _dead;
+  }
+  std::sort(_canon.begin(), _canon.end());
+  const std::string_view key{reinterpret_cast<const char*>(_canon.data()),
+                             _canon.size() * sizeof(int)};
+  if (const auto it = _rows.find(key); it != _rows.end()) {
+    return it->second;
+  }
+  if (_dfa_mem + RowBytes(_canon.size()) > _max_dfa_mem) {
+    return _unknown;
+  }
+  Row* row = AllocateLocked(_canon.size());
+  auto* set = const_cast<int*>(row->set);
+  std::copy(_canon.begin(), _canon.end(), set);
+  row->set_size = static_cast<uint32_t>(_canon.size());
+  row->accept = accept;
+  _rows.emplace(std::string_view{reinterpret_cast<const char*>(set),
+                                 _canon.size() * sizeof(int)},
+                row);
+  return row;
+}
+
+size_t RegexpAcceptor::RowBytes(size_t set_size) const noexcept {
+  const size_t bytes = sizeof(Row) +
+                       size_t{_classes} * sizeof(std::atomic<const Row*>) +
+                       set_size * sizeof(int);
+  return (bytes + alignof(Row) - 1) & ~(alignof(Row) - 1);
+}
+
+RegexpAcceptor::Row* RegexpAcceptor::AllocateLocked(size_t set_size) const {
+  const size_t bytes = RowBytes(set_size);
+  if (_chunk_used + bytes > _chunk_size) {
+    _chunk_size = std::max(kChunkBytes, bytes);
+    _chunks.emplace_back(std::make_unique<std::byte[]>(_chunk_size));
+    _chunk_used = 0;
+    _arena_bytes += _chunk_size;
+  }
+  auto* memory = _chunks.back().get() + _chunk_used;
+  _chunk_used += bytes;
+  _dfa_mem += bytes;
+  auto* row = new (memory) Row{};
+  auto* next = row->Next();
+  for (uint32_t c = 0; c != _classes; ++c) {
+    new (next + c) std::atomic<const Row*>{nullptr};
+  }
+  row->set = reinterpret_cast<const int*>(next + _classes);
+  return row;
+}
+
+void RegexpAcceptor::AddToQueue(std::vector<int>& queue,
+                                std::vector<uint32_t>& index,
+                                std::vector<int>& stack, int id) const {
+  constexpr uint32_t kSatisfied = re2::kEmptyBeginLine | re2::kEmptyEndLine |
+                                  re2::kEmptyBeginText | re2::kEmptyEndText |
+                                  re2::kEmptyWordBoundary;
+  stack.clear();
+  stack.push_back(id);
+  while (!stack.empty()) {
+    int current = stack.back();
+    stack.pop_back();
+    while (current != 0) {
+      const auto slot = index[current];
+      if (slot < queue.size() && queue[slot] == current) {
+        break;
+      }
+      index[current] = static_cast<uint32_t>(queue.size());
+      queue.push_back(current);
+      auto* ip = _prog->inst(current);
+      switch (ip->opcode()) {
+        case re2::kInstCapture:
+        case re2::kInstNop:
+          if (!ip->last()) {
+            stack.push_back(current + 1);
+          }
+          current = ip->out();
+          break;
+        case re2::kInstAltMatch:
+          current = current + 1;
+          break;
+        case re2::kInstEmptyWidth:
+          if (!ip->last()) {
+            stack.push_back(current + 1);
+          }
+          current = (ip->empty() & ~kSatisfied) != 0 ? 0 : ip->out();
+          break;
+        default:
+          current = ip->last() ? 0 : current + 1;
+          break;
+      }
+    }
+  }
+}
+
+size_t RegexpAcceptor::MemoryUsage() const {
+  std::lock_guard lock{_mutex};
+  size_t bytes =
+    sizeof(*this) + _lower.capacity() + _arena_bytes +
+    _rows.capacity() * (sizeof(std::string_view) + sizeof(Row*)) +
+    _index.capacity() * sizeof(uint32_t) +
+    (_queue.capacity() + _stack.capacity() + _canon.capacity()) * sizeof(int);
+  if (_prog) {
+    bytes += static_cast<size_t>(_prog->size()) * sizeof(re2::Prog::Inst);
+  }
+  return bytes;
+}
+
+bool RegexpAcceptor::Matches(bytes_view term) const {
+  if (_start->unknown) {
+    return Simulate(nullptr, term);
+  }
+  State state = _start;
+  for (size_t i = 0; i != term.size(); ++i) {
+    const State next = Step(state, term[i]);
+    if (next->unknown) [[unlikely]] {
+      return Simulate(state, term.substr(i));
+    }
+    if (next->dead) {
+      return false;
+    }
+    state = next;
+  }
+  return state->accept;
+}
+
+bool RegexpAcceptor::Simulate(State from, bytes_view rest) const {
+  struct Scratch {
+    std::vector<int> current;
+    std::vector<int> next;
+    std::vector<int> stack;
+    std::vector<uint32_t> current_index;
+    std::vector<uint32_t> next_index;
+  };
+  thread_local Scratch scratch;
+  const auto size = static_cast<size_t>(_prog->size());
+  if (scratch.current_index.size() < size) {
+    scratch.current_index.resize(size);
+    scratch.next_index.resize(size);
+  }
+  auto& current = scratch.current;
+  auto& next = scratch.next;
+  auto& current_index = scratch.current_index;
+  auto& next_index = scratch.next_index;
+  current.clear();
+  if (from == nullptr) {
+    AddToQueue(current, current_index, scratch.stack, _prog->start());
+  } else {
+    current.assign(from->set, from->set + from->set_size);
+  }
+  for (const auto label : rest) {
+    next.clear();
+    for (const int id : current) {
+      auto* ip = _prog->inst(id);
+      if (ip->opcode() == re2::kInstByteRange && ip->Matches(label)) {
+        AddToQueue(next, next_index, scratch.stack, ip->out());
+      }
+    }
+    if (next.empty()) {
+      return false;
+    }
+    std::swap(current, next);
+    std::swap(current_index, next_index);
+  }
+  return std::any_of(current.begin(), current.end(), [&](int id) {
+    return _prog->inst(id)->opcode() == re2::kInstMatch;
+  });
+}
+
+}  // namespace irs

@@ -38,8 +38,7 @@
 namespace irs {
 
 inline void PrepareInput(std::string& str, IndexInput::ptr& in, IOAdvice advice,
-                         const ReaderState& state, std::string_view ext,
-                         uint32_t block_size) {
+                         const ReaderState& state, std::string_view ext) {
   SDB_ASSERT(!in);
   irs::FileName(str, state.meta->name, ext);
   in = state.dir->open(str, advice);
@@ -48,16 +47,8 @@ inline void PrepareInput(std::string& str, IndexInput::ptr& in, IOAdvice advice,
     throw IoError{absl::StrCat("Failed to open file, path: ", str)};
   }
 
-  format_utils::ReadFooter(
-    *in, str, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
-      const auto stored = footer.ReadProperty<uint32_t>(
-        PostingsWriter::kFieldBlockSize, "block_size");
-      if (stored != block_size) {
-        throw IndexError{absl::StrCat(
-          "While preparing postings reader, error: '", str,
-          "' has block size '", stored, "', expected '", block_size, "'")};
-      }
-    });
+  format_utils::ReadFooter(*in, str,
+                           [](duckdb::BinaryDeserializer&, uint64_t) {});
 }
 
 inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
@@ -130,19 +121,18 @@ inline void PostingsReader::prepare(const ReaderState& state,
     (features & (IndexFeatures::Offs | IndexFeatures::Vec));
 
   // prepare document input
-  PrepareInput(buf, _doc_in, IOAdvice::RANDOM, state, PostingsWriter::kDocExt,
-               doc_limits::kBlockSize);
+  PrepareInput(buf, _doc_in, IOAdvice::RANDOM, state, PostingsWriter::kDocExt);
   _doc_in->EnableReadahead();
 
   if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
-    PrepareInput(buf, _pos_in, IOAdvice::RANDOM, state, PostingsWriter::kPosExt,
-                 pos_limits::kBlockSize);
+    PrepareInput(buf, _pos_in, IOAdvice::RANDOM, state,
+                 PostingsWriter::kPosExt);
     _pos_in->EnableReadahead();
   }
 
   if (needs_pay) {
-    PrepareInput(buf, _pay_in, IOAdvice::RANDOM, state, PostingsWriter::kPayExt,
-                 pos_limits::kBlockSize);
+    PrepareInput(buf, _pay_in, IOAdvice::RANDOM, state,
+                 PostingsWriter::kPayExt);
     _pay_in->EnableReadahead();
   }
 }

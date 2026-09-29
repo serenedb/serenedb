@@ -129,7 +129,6 @@ class PostingsWriter final {
   static constexpr std::string_view kDocExt = "doc";
   static constexpr std::string_view kPosExt = "pos";
   static constexpr std::string_view kPayExt = "pay";
-  static constexpr duckdb::field_id_t kFieldBlockSize = 0;
 
   struct FieldStats {
     bool has_score_bounds;
@@ -173,16 +172,6 @@ class PostingsWriter final {
   void End();
 
  private:
-  static void WriteDocFooter(duckdb::BinarySerializer& footer) {
-    footer.WriteProperty<uint32_t>(kFieldBlockSize, "block_size",
-                                   doc_limits::kBlockSize);
-  }
-
-  static void WritePosFooter(duckdb::BinarySerializer& footer) {
-    footer.WriteProperty<uint32_t>(kFieldBlockSize, "block_size",
-                                   pos_limits::kBlockSize);
-  }
-
   class Features {
    public:
     void Reset(IndexFeatures features) noexcept {
@@ -635,14 +624,15 @@ inline void PostingsWriter::AddPosition(uint32_t pos) {
 }
 
 inline void PostingsWriter::End() {
-  format_utils::WriteFooter(*_doc_out, WriteDocFooter);
+  constexpr auto kNoFields = [](duckdb::BinarySerializer&) {};
+  format_utils::WriteFooter(*_doc_out, kNoFields);
   _doc_out.reset();  // ensure stream is closed
 
   if (_pos_out) {
     if (_pos.size != 0) {
       FlushTailPos();
     }
-    format_utils::WriteFooter(*_pos_out, WritePosFooter);
+    format_utils::WriteFooter(*_pos_out, kNoFields);
     _pos_out.reset();  // ensure stream is closed
   } else {
     SDB_ASSERT(_pos.size == 0);
@@ -654,7 +644,7 @@ inline void PostingsWriter::End() {
     if (_pay.size != 0) {
       FlushTailPay();
     }
-    format_utils::WriteFooter(*_pay_out, WritePosFooter);
+    format_utils::WriteFooter(*_pay_out, kNoFields);
     _pay_out.reset();  // ensure stream is closed
   } else {
     SDB_ASSERT(_pay.size == 0);

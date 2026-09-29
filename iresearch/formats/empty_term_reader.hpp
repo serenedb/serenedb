@@ -46,8 +46,6 @@ class EmptyTermReader final : public irs::TermReader {
 
   void ReadDocs(bytes_view, Acceptor acceptor) const noexcept final {}
 
-  size_t BitUnion(CookieProvider, uint64_t*) const noexcept final { return 0; }
-
   const FieldMeta& meta() const noexcept final { return FieldMeta::kEmpty; }
 
   Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }

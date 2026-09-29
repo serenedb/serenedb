@@ -49,7 +49,6 @@ struct PostingsHandles {
 struct TermReader : public AttributeProvider {
   using ptr = std::unique_ptr<TermReader>;
   using Acceptor = absl::FunctionRef<bool(doc_id_t)>;
-  using CookieProvider = absl::FunctionRef<const PostingMeta*()>;
 
   // Returns an iterator over terms for a field.
   virtual SeekTermIterator::ptr iterator() const = 0;
@@ -72,14 +71,6 @@ struct TermReader : public AttributeProvider {
   // Returns an intersection of a specified automaton and term reader.
   virtual SeekTermIterator::ptr iterator(
     const automaton_table_matcher& matcher) const = 0;
-
-  // Evaluates a union of all docs denoted by cookies supplied via a
-  // speciified 'provider'. Each doc is represented by a bit in a
-  // specified 'bitset'.
-  // A number of bits set.
-  // It's up to the caller to allocate enough space for a bitset.
-  // This API is experimental.
-  virtual size_t BitUnion(CookieProvider provider, uint64_t* bitset) const = 0;
 
   virtual std::unique_ptr<IndexInput> ReopenPayload() const { return nullptr; }
 

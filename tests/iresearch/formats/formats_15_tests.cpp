@@ -113,7 +113,6 @@ class MockPostingsField final : public irs::TermReader {
   }
   void ReadDocs(irs::bytes_view, Acceptor) const final {}
   irs::PostingMeta Lookup(irs::bytes_view) const final { return {}; }
-  size_t BitUnion(CookieProvider, uint64_t*) const final { return 0; }
   const irs::FieldMeta& meta() const final { return _meta; }
   size_t size() const final { return 1; }
   uint64_t docs_count() const final { return _docs_count; }

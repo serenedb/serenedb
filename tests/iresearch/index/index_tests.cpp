@@ -1450,95 +1450,7 @@ class IndexTestCase : public tests::IndexTestBase {
       ASSERT_EQ(reader.begin(), reader.end());
     }
   }
-
-  void DocsBitUnion(irs::IndexFeatures features, size_t docs_count_per_term);
 };
-
-void IndexTestCase::DocsBitUnion(irs::IndexFeatures features,
-                                 size_t docs_count_per_term) {
-  tests::StringViewField field("0", features);
-  // Stable field id assigned for this fixture's lone "0" field so the
-  // reader-side `segment.field(id)` lookup matches what the writer registers.
-  constexpr irs::field_id kZeroFieldId = 100;
-  field.id = kZeroFieldId;
-  const auto docs_count = docs_count_per_term * 2 + 1;
-  std::vector<uint64_t> expected_a;
-  std::vector<uint64_t> expected_b;
-  constexpr auto kWordBits = irs::BitsRequired<uint64_t>();
-  const size_t num_words = (docs_count + kWordBits - 1) / kWordBits;
-  expected_a.resize(num_words, 0);
-  expected_b.resize(num_words, 0);
-  {
-    auto writer =
-      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
-
-    {
-      auto docs = writer->GetBatch();
-      for (size_t i = 1; i < docs_count; ++i) {
-        const std::string_view value = i % 2 ? "A" : "B";
-        if (value == "A") {
-          irs::SetBit(expected_a[i / kWordBits], i % kWordBits);
-        } else {
-          irs::SetBit(expected_b[i / kWordBits], i % kWordBits);
-        }
-        field.value(value);
-        ASSERT_TRUE(tests::InsertField(docs.Insert(), field));
-      }
-
-      field.value("C");
-      ASSERT_TRUE(tests::InsertField(docs.Insert(), field));
-      docs.Commit();
-    }
-
-    writer->RefreshCommit();
-    AssertSnapshotEquality(*writer);
-  }
-
-  auto reader = open_reader(irs::tests::DefaultReaderOptions());
-  ASSERT_NE(nullptr, reader);
-  ASSERT_EQ(1, reader->size());
-  auto& segment = (*reader)[0];
-  ASSERT_EQ(docs_count, segment.docs_count());
-  ASSERT_EQ(docs_count, segment.live_docs_count());
-
-  const auto* term_reader = segment.field(field.Id());
-  ASSERT_NE(nullptr, term_reader);
-  ASSERT_EQ(docs_count, term_reader->docs_count());
-  ASSERT_EQ(3, term_reader->size());
-  ASSERT_EQ("A", irs::ViewCast<char>(term_reader->min()));
-  ASSERT_EQ("C", irs::ViewCast<char>(term_reader->max()));
-  ASSERT_EQ(field.Id(), term_reader->meta().id);
-  ASSERT_EQ(field.GetIndexFeatures(), term_reader->meta().index_features);
-
-  irs::PostingMeta cookies[2];
-
-  auto term = term_reader->iterator();
-  ASSERT_TRUE(term->next());
-  ASSERT_EQ("A", irs::ViewCast<char>(term->value()));
-  cookies[0] = term->cookie();
-  ASSERT_TRUE(term->next());
-  cookies[1] = term->cookie();
-  ASSERT_EQ("B", irs::ViewCast<char>(term->value()));
-
-  auto cookie_provider =
-    [begin = std::begin(cookies),
-     end = std::end(cookies)]() mutable -> const irs::PostingMeta* {
-    if (begin != end) {
-      auto* cookie = begin;
-      ++begin;
-      return cookie;
-    }
-    return nullptr;
-  };
-
-  std::vector<size_t> actual_docs_ab(num_words);
-  // -1 as we exclude C term
-  ASSERT_EQ(docs_count - 1,
-            term_reader->BitUnion(cookie_provider, actual_docs_ab.data()));
-  for (size_t i = 0; i < num_words; ++i) {
-    ASSERT_EQ(expected_a[i] | expected_b[i], actual_docs_ab[i]);
-  }
-}
 
 TEST_P(IndexTestCase, s2sequence) {
   std::vector<std::string> sequence;
@@ -1992,28 +1904,6 @@ TEST_P(IndexTestCase, europarl_docs_big_automaton) {
     irs::automaton_table_matcher matcher(acceptor, true);
     assert_index(0, &matcher);
   }
-}
-
-TEST_P(IndexTestCase, docs_bit_union) {
-  // less than block
-  DocsBitUnion(irs::IndexFeatures::None, 63);
-  DocsBitUnion(irs::IndexFeatures::Freq, 63);
-
-  // exactly one block
-  DocsBitUnion(irs::IndexFeatures::None, 128);
-  DocsBitUnion(irs::IndexFeatures::Freq, 128);
-
-  // more than block
-  DocsBitUnion(irs::IndexFeatures::None, 135);
-  DocsBitUnion(irs::IndexFeatures::Freq, 135);
-
-  // exactly two blocks
-  DocsBitUnion(irs::IndexFeatures::None, 256);
-  DocsBitUnion(irs::IndexFeatures::Freq, 256);
-
-  // more than two blocks
-  DocsBitUnion(irs::IndexFeatures::None, 257);
-  DocsBitUnion(irs::IndexFeatures::Freq, 257);
 }
 
 TEST_P(IndexTestCase, monarch_eco_onthology) {

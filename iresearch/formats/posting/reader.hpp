@@ -79,10 +79,6 @@ class PostingsReader final {
   size_t decode(const byte_type* in, IndexFeatures field_features,
                 PostingMeta& state);
 
-  size_t BitUnion(IndexFeatures field_features,
-                  TermReader::CookieProvider provider, uint64_t* set,
-                  bool has_score_bounds);
-
   // One term's whole posting list as the write side reads it: front to back,
   // with the frequency and the positions the field stores. Nothing here
   // seeks, so no skip list is parsed. `required_features` narrows what is
@@ -167,101 +163,6 @@ inline size_t PostingsReader::decode(const byte_type* in,
 
   SDB_ASSERT(p >= in);
   return size_t(std::distance(in, p));
-}
-
-template<typename FieldTraits>
-void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, doc_id_t* docs,
-                  uint32_t* enc_buf, uint64_t* words) {
-  auto read_leaf = [&]<size_t N>(uint32_t len, doc_id_t prev) IRS_FORCE_INLINE {
-    const auto leaf =
-      FieldTraits::ReadTailForFill(len, doc_in, enc_buf, docs, prev);
-    if (leaf.IsRun()) {
-      const uint64_t first = uint64_t{prev} + 1;
-      SetBitRange(words, first, first + len);
-    } else if (leaf.IsBitset()) {
-      OrBitsetAt(words, prev, leaf.bitset, leaf.words);
-    } else {
-      static constexpr auto kBits = BitsRequired<uint64_t>();
-      const auto* const data = docs + doc_limits::kBlockSize - len;
-      VisitDocs<N>(len, [&](uint32_t i) IRS_FORCE_INLINE {
-        const size_t offset = data[i];
-        SetBit(words[offset / kBits], offset % kBits);
-      });
-    }
-    if constexpr (FieldTraits::Frequency()) {
-      if (len == doc_limits::kBlockSize) {
-        FieldTraits::SkipBlock(doc_in);
-      }
-    }
-    return leaf.max;
-  };
-
-  auto prev_doc = doc_limits::invalid();
-  for (auto blocks = docs_count / doc_limits::kBlockSize; blocks--;) {
-    prev_doc = read_leaf.template operator()<doc_limits::kBlockSize>(
-      doc_limits::kBlockSize, prev_doc);
-  }
-
-  if (const auto tail = docs_count % doc_limits::kBlockSize; tail != 0) {
-    read_leaf.template operator()<std::dynamic_extent>(tail, prev_doc);
-  }
-}
-
-inline size_t PostingsReader::BitUnion(const IndexFeatures field_features,
-                                       TermReader::CookieProvider provider,
-                                       uint64_t* set, bool has_score_bounds) {
-  constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
-  uint32_t enc_buf[doc_limits::kBlockSize];
-  doc_id_t docs[doc_limits::kBlockSize
-#ifdef __AVX2__
-                + 8  // placeholder for bitset materialize
-#endif
-  ];
-  const bool has_freq =
-    IndexFeatures::None != (field_features & IndexFeatures::Freq);
-
-  SDB_ASSERT(_doc_in);
-  auto doc_in = _doc_in->Reopen();
-
-  if (!doc_in) {
-    // implementation returned wrong pointer
-    SDB_ERROR(IRESEARCH, "Failed to reopen document input");
-
-    throw IoError("failed to reopen document input");
-  }
-
-  size_t count = 0;
-  while (const PostingMeta* meta = provider()) {
-    const auto& term_state = *meta;
-
-    if (term_state.docs_count > 1) {
-      doc_in->Seek(term_state.doc_start);
-      SDB_ASSERT(!doc_in->IsEOF());
-      if (term_state.docs_count < doc_limits::kBlockSize) {
-        SkipScoreBounds(has_score_bounds, *doc_in);
-      }
-      SDB_ASSERT(!doc_in->IsEOF());
-
-      if (has_freq) {
-        using FieldTraits = IteratorTraits<true, false, false>;
-        BitUnionImpl<FieldTraits>(*doc_in, term_state.docs_count, docs, enc_buf,
-                                  set);
-      } else {
-        using FieldTraits = IteratorTraits<false, false, false>;
-        BitUnionImpl<FieldTraits>(*doc_in, term_state.docs_count, docs, enc_buf,
-                                  set);
-      }
-
-      count += term_state.docs_count;
-    } else {
-      const doc_id_t doc = doc_limits::min() + term_state.doc_delta;
-      SetBit(set[doc / kBits], doc % kBits);
-
-      ++count;
-    }
-  }
-
-  return count;
 }
 
 template<typename FieldTraits, typename Factory>

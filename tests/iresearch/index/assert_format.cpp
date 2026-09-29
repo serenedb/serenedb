@@ -590,8 +590,6 @@ void AssertSeek(const irs::SubReader& segment,
   ASSERT_TRUE(irs::doc_limits::eof(expected_docs->Value()));
   ASSERT_TRUE(irs::doc_limits::eof(seq_docs->Next()));
   ASSERT_TRUE(irs::doc_limits::eof(seek_docs->Next()));
-
-  // FIXME(gnusi): check BitUnion
 }
 
 void AssertTerm(irs::TermIterator& expected_term,

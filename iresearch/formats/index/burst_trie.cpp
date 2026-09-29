@@ -2563,12 +2563,6 @@ class FieldReader::Impl {
       }
     }
 
-    size_t BitUnion(CookieProvider provider, uint64_t* set) const final {
-      SDB_ASSERT(_owner != nullptr);
-      return _owner->_pr.BitUnion(meta().index_features, provider, set,
-                                  HasScoreBounds());
-    }
-
     SeekTermIterator::ptr iterator(
       const automaton_table_matcher& matcher) const final {
       auto& acceptor = matcher.GetFst();

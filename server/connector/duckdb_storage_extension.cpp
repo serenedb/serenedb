@@ -74,7 +74,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   }
   // Every serenedb on-disk format sits behind our storage version, so a
   // duckdb-version database is unaffected by anything we change.
-  options.options.emplace("storage_version", duckdb::Value{"serenedb_v1"});
+  catalog::RequestSereneDBStorageVersion(options);
   return duckdb::make_uniq<catalog::SereneDBCatalog>(db);
 }
 
@@ -88,7 +88,7 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
 
 void RegisterSereneDBStorage(
   duckdb::DBConfig& config, duckdb::shared_ptr<catalog::DataDirectory> layout) {
-  auto extension = duckdb::make_shared_ptr<duckdb::StorageExtension>();
+  auto extension = duckdb::make_shared_ptr<catalog::SereneDBStorageExtension>();
   extension->attach = AttachSereneDB;
   extension->create_transaction_manager = CreateTransactionManager;
   extension->storage_info = std::move(layout);

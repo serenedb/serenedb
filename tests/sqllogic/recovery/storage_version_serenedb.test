@@ -117,3 +117,35 @@ ATTACH '${__TEST_DIR__}/sv_v1.db' AS sv_lowered (TYPE duckdb, STORAGE_VERSION 'v
 
 statement ok
 DETACH sv_verl;
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/sv_plain.db' AS sv_plain (TYPE duckdb, STORAGE_VERSION 'v2.0.0');
+
+
+statement ok
+CREATE TABLE sv_plain.t AS SELECT 7 AS x;
+
+
+statement ok
+DETACH sv_plain;
+
+
+statement error has storage version v2\.0\.0, which is not a SereneDB storage version
+ATTACH '${__TEST_DIR__}/sv_plain.db' AS sv_owned (TYPE serenedb);
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/sv_plain.db' AS sv_plain_again (TYPE duckdb);
+
+
+query
+SELECT tags::VARCHAR LIKE '%v2.0.0%' AS untouched, (SELECT x FROM sv_plain_again.t) AS x
+  FROM duckdb_databases(include_hidden := true) WHERE database_name = 'sv_plain_again';
+----
+untouched	x
+t	7
+
+
+statement ok
+DETACH sv_plain_again;

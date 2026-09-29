@@ -36,6 +36,8 @@
 #include <filesystem>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -57,6 +59,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachCluster(
   duckdb::ClientContext& context, duckdb::AttachedDatabase& db,
   const std::string& name, duckdb::AttachInfo& info,
   duckdb::AttachOptions& options) {
+  RequestSereneDBStorageVersion(options);
   return duckdb::make_uniq<ClusterCatalog>(db);
 }
 
@@ -75,6 +78,31 @@ const DataDirectory& Layout(duckdb::AttachedDatabase& db) {
 
 DataDirectory::DataDirectory(std::string directory_p)
   : directory{std::move(directory_p)} {}
+
+void SereneDBStorageExtension::OnLoadExistingDatabase(
+  duckdb::AttachedDatabase& db, duckdb::StorageVersion storage_version) {
+  if (duckdb::IsSereneDBStorageVersion(storage_version)) {
+    return;
+  }
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+    ERR_MSG(
+      "database file \"", db.GetStorageManager().GetDBPath(),
+      "\" has storage version ",
+      duckdb::StorageVersionInfo::GetStorageVersionString(storage_version),
+      ", which is not a SereneDB storage version"),
+    ERR_DETAIL("It was written by a release of SereneDB older than ",
+               duckdb::StorageVersionInfo::GetStorageVersionString(
+                 duckdb::SERENEDB_VERSION_LOWER),
+               ", or it is not a SereneDB database file."));
+}
+
+void RequestSereneDBStorageVersion(duckdb::AttachOptions& options) {
+  options.options.emplace(
+    "storage_version",
+    duckdb::Value{duckdb::StorageVersionInfo::GetStorageVersionString(
+      duckdb::SERENEDB_VERSION_DEFAULT)});
+}
 
 std::string DataDirectory::ClusterFile() const {
   return absl::StrCat(directory, "/", kCatalogDir, "/catalog.db");
@@ -107,7 +135,7 @@ void RemoveDatabaseFiles(duckdb::AttachedDatabase& cluster, duckdb::idx_t oid) {
 
 void RegisterClusterStorage(duckdb::DBConfig& config,
                             duckdb::shared_ptr<DataDirectory> layout) {
-  auto extension = duckdb::make_shared_ptr<duckdb::StorageExtension>();
+  auto extension = duckdb::make_shared_ptr<SereneDBStorageExtension>();
   extension->attach = AttachCluster;
   extension->create_transaction_manager = MakeClusterTransactionManager;
   extension->storage_info = std::move(layout);

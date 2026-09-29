@@ -567,6 +567,31 @@ TEST_F(IndexAdoptTest, AdoptedSegmentSurvivesCleanupBeforePublish) {
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
 }
 
+TEST_F(IndexAdoptTest, AdoptSegmentRejectsAnUnreadableMeta) {
+  std::vector<std::string> adopt;
+  {
+    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
+    ASSERT_TRUE(InsertDoc(trx, "kept"));
+    adopt = MetaFilesOf(trx.FlushAndFsync());
+    trx.Abort();
+  }
+  ASSERT_EQ(1, adopt.size());
+
+  Restart(/*cleanup_on_open=*/false);
+  ASSERT_NE(nullptr, _dir->create(adopt.front()));
+  EXPECT_FALSE(_writer->AdoptSegment(adopt.front(), /*tick=*/1));
+
+  _writer->RefreshCommit();
+  EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count())
+    << "a rejected segment was published anyway";
+
+  auto trx = _writer->GetBatch();
+  ASSERT_TRUE(InsertDoc(trx, "after"));
+  ASSERT_TRUE(trx.Commit());
+  ASSERT_TRUE(_writer->RefreshCommit());
+  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
+}
+
 // Eligibility, not promptness: reclaiming is the host's background cleanup, but
 // a file still holding a ref is invisible to it.
 TEST_F(IndexAdoptTest, AbortLeavesFlushedFilesUnreferenced) {

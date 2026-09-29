@@ -29,6 +29,7 @@
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/segment_meta_writer.hpp"
+#include "iresearch/utils/string_utils.hpp"
 
 namespace irs {
 
@@ -56,7 +57,8 @@ inline DocumentMask ReadDocumentMask(IndexInput& in, uint64_t mask_size,
   if (const auto* data = in.ReadVolatile(offset, mask_size)) {
     return DocumentMask::Read(reinterpret_cast<const char*>(data), mask_size);
   }
-  bstring blob(mask_size, 0);
+  bstring blob;
+  irs::utils::StrResize(blob, mask_size);
   in.ReadData(offset, blob.data(), mask_size);
   return DocumentMask::Read(reinterpret_cast<const char*>(blob.data()),
                             blob.size());
@@ -118,7 +120,7 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
 
   std::string name{segment_name};
 
-  auto in = dir.open(filename, IOAdvice::SEQUENTIAL);
+  auto in = dir.open(filename, IOAdvice::SEQUENTIAL | IOAdvice::READONCE);
 
   if (!in) [[unlikely]] {
     throw IoError{absl::StrCat("Failed to open file, path: ", filename)};
@@ -143,12 +145,10 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
 
   std::shared_ptr<DocumentMask> docs_mask;
   uint64_t docs_mask_size = 0;
-  uint32_t docs_mask_chain = 0;
 
   if (mask_size != 0) {
     auto builder = ReadDocumentMask(*in, mask_size, filename);
     docs_mask_size = mask_size;
-    docs_mask_chain = 1;
 
     std::vector<std::string> links;
     links.reserve(parents.size());
@@ -163,7 +163,7 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
 
       auto file = irs::FileName(name, link, SegmentMetaWriterImpl::kFormatExt);
 
-      auto mask_in = dir.open(file, IOAdvice::SEQUENTIAL);
+      auto mask_in = dir.open(file, IOAdvice::SEQUENTIAL | IOAdvice::READONCE);
 
       if (!mask_in) [[unlikely]] {
         throw IoError{absl::StrCat("Failed to open file, path: ", file)};
@@ -179,7 +179,6 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
       builder.Merge(ReadDocumentMask(*mask_in, link_size, file));
 
       docs_mask_size += link_size;
-      ++docs_mask_chain;
       links.emplace_back(std::move(file));
     }
 
@@ -208,7 +207,6 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
   meta.visible_end = doc_limits::eof();
   meta.docs_mask = std::move(docs_mask);
   meta.docs_mask_size = docs_mask_size;
-  meta.docs_mask_chain = docs_mask_chain;
   meta.byte_size = size + docs_mask_size;
   meta.files = std::move(files);
 }

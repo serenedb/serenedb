@@ -145,13 +145,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::ReopenReader(
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::UpdateMeta(
   const Directory& dir, const SegmentMeta& meta) const {
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
-  if (absl::c_equal(_refs, meta.files, [](const auto& ref, const auto& file) {
-        return *ref == file;
-      })) {
-    reader->_refs = _refs;
-  } else {
-    reader->_refs = GetRefs(dir, meta);
-  }
+  reader->_refs = GetRefs(dir, meta);
   reader->_field_reader = _field_reader;
   reader->_data = _data;
   return reader;

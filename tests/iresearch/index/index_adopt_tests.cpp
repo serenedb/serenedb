@@ -1245,7 +1245,6 @@ TEST_F(IndexAdoptTest, AFinishedCompactionRewrittenForADeleteIsSyncedOnce) {
 
   const auto& compacted = snapshot.Meta().index_meta.segments.front();
   ASSERT_NE(nullptr, compacted.meta.docs_mask);
-  EXPECT_EQ(1, compacted.meta.docs_mask_chain);
   for (const auto& file : compacted.meta.files) {
     EXPECT_FALSE(file.ends_with(".sm")) << file << " is a chain link";
   }

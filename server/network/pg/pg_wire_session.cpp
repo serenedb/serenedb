@@ -2788,7 +2788,7 @@ auto PgWireSession<Kind>::NegotiateStartup(StartupRequest& startup)
 }
 
 template<SocketKind Kind>
-yaclib::Future<> PgWireSession<Kind>::SpawnSession() {
+yaclib::Future<> PgWireSession<Kind>::SpawnSession() noexcept {
   this->_task = duckdb::make_shared_ptr<CpuResumer>(
     duckdb::TaskScheduler::GetScheduler(
       irs::DuckDBEngine::Instance().instance()),

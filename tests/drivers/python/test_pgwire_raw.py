@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import socket
 import struct
+import time
 
 import pytest
 from spec_loader import conn_kwargs
@@ -443,6 +444,25 @@ def test_invalid_message_type_is_fatal_then_closed():
         assert c.sock.recv(1) == b""
     finally:
         c.sock.close()
+
+
+def test_terminate_closes_a_client_that_is_not_reading(conn):
+    # pg_terminate_backend on a session whose client stopped reading mid-result:
+    # once the client reads again it gets the rest and then EOF. The stop used to
+    # share one wake with the session's last write, so the send writer finished
+    # that write, went back to waiting, and never closed the socket.
+    victim = WireConn()
+    try:
+        pid = int(first_field(victim.run("select pg_backend_pid()")))
+        victim.send("Q", _cstr("select repeat('x', 1000) from range(40000)"))
+        time.sleep(1)
+        assert "E" not in types(conn.run(f"select pg_terminate_backend({pid})"))
+        time.sleep(1)
+        victim.sock.settimeout(10)
+        while victim.sock.recv(1 << 20):
+            pass
+    finally:
+        victim.sock.close()
 
 
 def test_set_local_revert_not_reported(conn):

@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <exception>
 #include <iresearch/utils/serializer.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <memory>
 #include <optional>
 #include <string>
@@ -278,12 +279,14 @@ class MethodNotAllowedHandler final : public HttpHandler {
 
 // TODO: serve the conventional /mcp too; needs a way to keep an index named
 // 'mcp' reachable under ES's GET /:index at the same time.
-void Register(HttpRouter& router) {
-  router.Add(HttpMethod::Post, "/_mcp", std::make_unique<McpHandler>());
-  for (const auto method : {HttpMethod::Get, HttpMethod::Delete,
-                            HttpMethod::Put, HttpMethod::Head}) {
-    router.Add(method, "/_mcp", std::make_unique<MethodNotAllowedHandler>());
+std::unique_ptr<HttpHandler> Make(Endpoint endpoint) {
+  switch (endpoint) {
+    case Endpoint::Rpc:
+      return std::make_unique<McpHandler>();
+    case Endpoint::MethodNotAllowed:
+      return std::make_unique<MethodNotAllowedHandler>();
   }
+  SDB_UNREACHABLE();
 }
 
 }  // namespace sdb::network::http::mcp

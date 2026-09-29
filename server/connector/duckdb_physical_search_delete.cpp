@@ -173,4 +173,14 @@ duckdb::SourceResultType SereneDBSearchDelete::GetDataInternal(
   return duckdb::SourceResultType::FINISHED;
 }
 
+duckdb::SinkFinalizeType SereneDBSearchDelete::Finalize(
+  duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext&,
+  duckdb::OperatorSinkFinalizeInput& input) const {
+  auto& state = input.global_state.Cast<SearchTableDeleteState>();
+  if (state.table_lock.owns_lock()) {
+    state.table_lock.unlock();
+  }
+  return duckdb::SinkFinalizeType::READY;
+}
+
 }  // namespace sdb::connector

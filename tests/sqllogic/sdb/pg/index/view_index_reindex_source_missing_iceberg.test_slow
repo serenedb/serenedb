@@ -1,0 +1,65 @@
+control substitution on
+
+# A REINDEX whose source table cannot be resolved leaves the index as it is.
+# With the Iceberg catalog missing the source resolves to nothing and REINDEX
+# takes the full rebuild. The rebuild used to commit a remove-all before its
+# pass bound the view; the pass then failed to bind and the index stayed empty
+# -- on every periodic tick, for as long as the catalog was missing (a foreign
+# server that failed to re-attach at boot). The pass now commits the
+# remove-all itself, once it has bound the view.
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER vsm_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vsm_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE SCHEMA vsm_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE vsm_${__DATABASE__}.${__DATABASE__}.vsm_t (id INTEGER, body TEXT);
+
+statement count 3
+INSERT INTO vsm_${__DATABASE__}.${__DATABASE__}.vsm_t VALUES (1, 'pudge goes mid'), (2, 'pudge goes top'), (3, 'pudge goes bot');
+
+statement ok
+CREATE VIEW vsm_v AS SELECT * FROM vsm_${__DATABASE__}.${__DATABASE__}.vsm_t;
+
+statement ok
+CREATE INDEX vsm_idx ON vsm_v USING inverted(id, body vsm_en) WITH (compaction_interval=0);
+
+query
+SELECT count(*) AS n FROM vsm_idx WHERE body @@ ts_phrase('pudge');
+----
+n
+3
+
+statement ok
+DETACH vsm_${__DATABASE__};
+
+statement error Catalog "vsm_.*" does not exist
+REINDEX INDEX vsm_idx;
+
+statement ok
+VACUUM (REFRESH_INDEX) vsm_idx;
+
+query
+SELECT count(*) AS n FROM vsm_idx WHERE body @@ ts_phrase('pudge');
+----
+n
+3
+
+statement ok
+DROP INDEX vsm_idx;
+
+statement ok
+DROP VIEW vsm_v;
+
+statement ok
+DROP SERVER vsm_${__DATABASE__};

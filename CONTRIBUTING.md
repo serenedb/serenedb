@@ -214,9 +214,10 @@ Add a `serenedb_vN` only for a change that older releases would misread instead 
 
 ### Search index files
 
-Every file of an iresearch segment (`segments_N`, `.sm`, `.doc`, `.pos`, `.pay`, `.idx`, `.col`) is the file's data from offset 0, then a footer (a `BinarySerializer` object holding `data_crc32c` and the file's own fields), then 8 bytes with the footer's CRC32C and its length. `format_utils::WriteFooter` writes it; `format_utils::ReadFooter` checks the checksum and reads the footer. `segments_N` stores the storage version as its first field.
+Every file of an iresearch segment (`segments_N`, `.sm`, `.doc`, `.pos`, `.pay`, `.idx`, `.col`) is the file's data from offset 0, then a footer (a `BinarySerializer` object holding `data_crc32c` and the file's own fields in a `meta` object), then 8 bytes with the footer's CRC32C and its length. `format_utils::WriteFooter` writes it; `format_utils::ReadFooter` checks the checksum and reads the footer. Without a callback, neither side has a `meta` object, and a reader without a callback refuses a footer that has one. `segments_N` stores the storage version as its first field.
 
 - **Field ids:** every object numbers its fields from 0. Name them with `kField...` constants next to the file's writer (`index_meta::kFieldPayload`, `segment_meta::kFieldFiles`, ...), and read them through the same constants.
+- **Empty lists** are not written, and are read as optional (`ReadOptionalList`, `ReadOptionalObject`), unless the presence of the list itself means something (the file list of a `.sm`).
 - **Callbacks:** footer, list and payload callbacks take `duckdb::BinarySerializer&` and `duckdb::BinaryDeserializer&` (`BinarySerializer::List&` and `BinaryDeserializer::List&` for list elements), never the `Serializer` or `Deserializer` base or `auto&`, so every call into the serializer is direct.
 - **New data layout** (block encoding, term dictionary, ...): select it with a new field, and keep reading the old layout while it is supported.
 - **Every field is read:** `segments_N` is read with its payload reader. `DirectoryReader` and `DirectoryReader::Reopen` take one, and an index with a payload but no reader is refused.

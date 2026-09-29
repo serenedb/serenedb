@@ -1167,7 +1167,7 @@ class LoadTest : public TestBase {
       gDropIndex = std::string_view{drop_index} != "0";
     }
 
-    gExecutor = std::make_unique<bench::Executor>(index_dir, gConfig);
+    gExecutor = std::make_unique<bench::Executor>(index_dir);
     const auto& reader = gExecutor->GetReader();
     ASSERT_GT(reader.size(), 0);
     gIdMap = BuildDocIdMap(reader);
@@ -1386,7 +1386,7 @@ TEST_F(LoadTest, DeleteRatioLatency) {
         " s\n");
     }
 
-    gExecutor = std::make_unique<bench::Executor>(gIndexDir.string(), gConfig);
+    gExecutor = std::make_unique<bench::Executor>(gIndexDir.string());
     gExecutor->SetPrintSink(_null_sink);
     const auto& reader = gExecutor->GetReader();
     ASSERT_GT(reader.size(), 0);

@@ -773,6 +773,31 @@ def test_paged_one_row_at_a_time(conn):
     assert suspends == 10, suspends
 
 
+def test_paged_portal_stops_at_chunk_boundary(conn):
+    conn.run("drop sequence if exists smoke_page_seq")
+    assert "E" not in types(conn.run("create sequence smoke_page_seq"))
+    try:
+        conn.parse("", "SELECT nextval('smoke_page_seq') FROM range(4096)")
+        conn.bind("", "")
+        conn.execute("", max_rows=2048)
+        conn.send("H")
+        page = []
+        while True:
+            t, p = conn.read_msg()
+            page.append((t, p))
+            if t in ("s", "C", "E"):
+                break
+        assert len(rows(page)) == 2048 and page[-1][0] == "s", types(page)[-3:]
+        conn.send("C", b"P" + _cstr(""))
+        conn.sync()
+        m = conn.drain_to_ready()
+        assert "E" not in types(m), errors(m)
+        m = conn.run("SELECT currval('smoke_page_seq')")
+        assert first_field(m) == b"2048", first_field(m)
+    finally:
+        conn.run("drop sequence if exists smoke_page_seq")
+
+
 # --- portal lifetime: independent of the statement, scoped to the txn --------
 # PG/CockroachDB/pgwire-rs all bind a portal to a refcounted plan, NOT to the
 # prepared-statement entry, so Close/re-Parse of the statement leaves a bound

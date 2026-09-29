@@ -1,0 +1,85 @@
+control substitution on
+
+
+statement ok
+SET sdb_faults = 'tokenizer_config_without_last_option';
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY older_checkpointed AS generate_ngrams(2, 3, mode := 'only_prefix');
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY older_logged AS generate_ngrams(2, 3, mode := 'only_prefix');
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY current_logged AS generate_ngrams(2, 3, mode := 'only_prefix');
+
+
+query
+SELECT ts_lexize('older_checkpointed', 'abcd') = generate_ngrams('abcd', 2, 3, mode := 'only_prefix') AS checkpointed,
+       ts_lexize('older_logged', 'abcd') = generate_ngrams('abcd', 2, 3, mode := 'only_prefix') AS logged,
+       ts_lexize('current_logged', 'abcd') = generate_ngrams('abcd', 2, 3, mode := 'only_prefix') AS current;
+----
+checkpointed	logged	current
+t	t	t
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_crash
+query
+SELECT ts_lexize('older_checkpointed', 'abcd') = generate_ngrams('abcd', 2, 3) AS checkpointed,
+       ts_lexize('older_logged', 'abcd') = generate_ngrams('abcd', 2, 3) AS logged,
+       ts_lexize('current_logged', 'abcd') = generate_ngrams('abcd', 2, 3, mode := 'only_prefix') AS current;
+----
+checkpointed	logged	current
+t	t	t
+
+
+connection after_crash
+statement ok
+CHECKPOINT;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_second_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT ts_lexize('older_checkpointed', 'abcd') = generate_ngrams('abcd', 2, 3) AS checkpointed,
+       ts_lexize('older_logged', 'abcd') = generate_ngrams('abcd', 2, 3) AS logged,
+       ts_lexize('current_logged', 'abcd') = generate_ngrams('abcd', 2, 3, mode := 'only_prefix') AS current;
+----
+checkpointed	logged	current
+t	t	t

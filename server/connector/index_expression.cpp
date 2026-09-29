@@ -48,7 +48,6 @@
 #include <duckdb/planner/expression_iterator.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/serialization.hpp>
 #include <utility>
 
 #include "connector/column_id.h"
@@ -95,8 +94,7 @@ class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
 
 std::string SerializeBoundExpression(const duckdb::Expression& expr) {
   duckdb::MemoryStream stream;
-  duckdb::BinarySerializer::Serialize(expr, stream,
-                                      duckdb::VersionStorageOptions());
+  duckdb::BinarySerializer::Serialize(expr, stream);
   return std::string{reinterpret_cast<const char*>(stream.GetData()),
                      stream.GetPosition()};
 }

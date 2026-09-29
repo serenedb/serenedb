@@ -126,16 +126,14 @@ Command ParseCommand(std::string_view name) {
   return cmd;
 }
 
-Executor::Executor(std::string_view path, const BenchConfig& config)
+Executor::Executor(std::string_view path)
   : _scorer{irs::BM25::Make(irs::BM25::Options{})},
     _tokenizer{irs::analysis::TextTokenizer::Make(
       irs::analysis::TextTokenizer::Options{})},
-    _format{irs::formats::Get(config.format_name, false)},
     _dir{path},
     _reader{irs::DirectoryReader(
-      _dir, _format,
-      {.scorer = _scorer_ptr,
-       .db = &::irs::DuckDBEngine::Instance().instance()})} {}
+      _dir, {.scorer = _scorer_ptr,
+             .db = &::irs::DuckDBEngine::Instance().instance()})} {}
 
 size_t Executor::ExecuteTopK(size_t k, std::string_view query) {
   ResetResults(k);

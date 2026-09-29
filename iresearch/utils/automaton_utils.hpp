@@ -27,7 +27,7 @@
 #include "absl/strings/str_cat.h"
 #include "fst/closure.h"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/formats.hpp"
+#include "iresearch/formats/term_reader.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"

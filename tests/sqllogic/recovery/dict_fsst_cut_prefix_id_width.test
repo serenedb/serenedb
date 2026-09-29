@@ -28,7 +28,7 @@ control substitution on
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/dfpw.db' AS dfpw (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+ATTACH '${__TEST_DIR__}/dfpw.db' AS dfpw (TYPE duckdb, STORAGE_VERSION 'serenedb_latest');
 
 
 statement ok

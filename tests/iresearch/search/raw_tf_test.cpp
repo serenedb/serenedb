@@ -140,8 +140,7 @@ TEST_P(RawTfIndexTest, scores_match_freq) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(raw_tf_test, RawTfIndexTest,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5simd")),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          RawTfIndexTest::to_string);
 
 }  // namespace

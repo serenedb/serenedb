@@ -826,14 +826,12 @@ static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(column_existence_filter_test,
                          ColumnExistenceFilterTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5simd")),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          ColumnExistenceFilterTestCase::to_string);
 
 INSTANTIATE_TEST_SUITE_P(column_existence_long_filter_test,
                          ColumnExistenceLongFilterTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5simd")),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          ColumnExistenceLongFilterTestCase::to_string);
 
 }  // namespace

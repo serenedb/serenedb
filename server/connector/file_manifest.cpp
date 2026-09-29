@@ -26,8 +26,8 @@
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/multi_file/multi_file_states.hpp>
-#include <duckdb/common/serializer/deserializer.hpp>
-#include <duckdb/common/serializer/serializer.hpp>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -43,7 +43,7 @@
 
 namespace sdb::search {
 
-void FileManifest::Write(duckdb::Serializer& out) const {
+void FileManifest::Write(duckdb::BinarySerializer& out) const {
   SDB_IF_FAILURE("manifest_version_only") {
     irs::utils::WriteTuple(out, FileManifest{.version = version});
     return;
@@ -52,7 +52,7 @@ void FileManifest::Write(duckdb::Serializer& out) const {
 }
 
 std::shared_ptr<const FileManifest> FileManifest::Read(
-  duckdb::Deserializer& in) {
+  duckdb::BinaryDeserializer& in) {
   auto manifest = std::make_shared<FileManifest>();
   irs::utils::ReadTuple(in, *manifest);
   return manifest;

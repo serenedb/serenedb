@@ -14,7 +14,7 @@ control substitution on
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/cep.db' AS ce (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', ROW_GROUP_SIZE 1048576);
+ATTACH '${__TEST_DIR__}/cep.db' AS ce (TYPE duckdb, STORAGE_VERSION 'serenedb_latest', ROW_GROUP_SIZE 1048576);
 
 
 # --- special values, auto codec choice pinned per column ---
@@ -224,7 +224,7 @@ SET wal_autocheckpoint='512KB';
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/cep_auto.db' AS ca (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', ROW_GROUP_SIZE 1048576);
+ATTACH '${__TEST_DIR__}/cep_auto.db' AS ca (TYPE duckdb, STORAGE_VERSION 'serenedb_latest', ROW_GROUP_SIZE 1048576);
 
 
 statement ok

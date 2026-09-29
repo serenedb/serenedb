@@ -127,9 +127,8 @@ TEST_P(LevenshteinAutomatonIndexTestCase, test_lev_automaton) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(
-  levenshtein_automaton_index_test, LevenshteinAutomatonIndexTestCase,
-  ::testing::Combine(
-    ::testing::Values(&tests::Directory<&tests::MemoryDirectory>),
-    ::testing::Values(tests::FormatInfo{"1_5simd"})),
-  LevenshteinAutomatonIndexTestCase::to_string);
+INSTANTIATE_TEST_SUITE_P(levenshtein_automaton_index_test,
+                         LevenshteinAutomatonIndexTestCase,
+                         ::testing::Combine(::testing::Values(
+                           &tests::Directory<&tests::MemoryDirectory>)),
+                         LevenshteinAutomatonIndexTestCase::to_string);

@@ -26,7 +26,6 @@
 #include <span>
 #include <vector>
 
-#include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/ivf/centroids.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"

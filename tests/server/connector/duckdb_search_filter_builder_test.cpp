@@ -37,7 +37,6 @@
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/typed_terms.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
@@ -627,8 +626,6 @@ void CloseShouldBuckets(irs::BooleanFilter& node) {
 class SearchFilterBuilderTest : public ::testing::Test {
  public:
   SearchFilterBuilderTest() : _db(nullptr), _conn(_db) {}
-
-  static void SetUpTestCase() { irs::formats::Init(); }
 
   void SetUp() final {
     sdb::connector::RegisterSearchFunctions(*_db.instance);

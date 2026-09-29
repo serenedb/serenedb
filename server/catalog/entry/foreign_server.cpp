@@ -29,6 +29,7 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -91,6 +92,12 @@ duckdb::unique_ptr<duckdb::CreateInfo> ForeignServerCatalogEntry::GetInfo()
   info->version = _version;
   info->fdw_name = _fdw_name;
   info->options = _options;
+  SDB_IF_FAILURE("foreign_server_without_database_option") {
+    info->options.erase("database");
+  }
+  SDB_IF_FAILURE("foreign_server_with_unknown_option") {
+    info->options.emplace("option_from_a_newer_release", "on");
+  }
   info->comment = comment;
   info->tags = tags;
   return std::move(info);

@@ -27,12 +27,6 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/containers/monotonic_buffer.hpp"
 
-namespace duckdb {
-
-class Serializer;
-class Deserializer;
-
-}  // namespace duckdb
 namespace irs {
 
 class IndexOutput;
@@ -51,10 +45,6 @@ struct NormColumnMeta {
   uint64_t row_count = 0;
   std::vector<NormRowGroupMeta> row_groups;
 };
-
-void SerializeNormColumn(duckdb::Serializer& s, const NormColumnWriter& nw);
-NormColumnMeta DeserializeNormMetas(duckdb::Deserializer& d, field_id id,
-                                    uint64_t footer_offset);
 
 class NormColumnWriter final {
  public:

@@ -197,6 +197,8 @@ SQL examples are backed by sqllogic tests, so an example that stops working fail
 
 These rules cover everything SereneDB writes: database files and their write-ahead logs, the search-table WAL and search index directories.
 
+Files are not reproducible byte for byte, and making them so is not a goal. The same data and statements can write different bytes: hash tables iterate in a different order in every process, and parallel builds, checkpoints, refreshes and merges run in a different order every time. Compatibility is about what a reader gets back, so tests compare contents, never the bytes of a file.
+
 Only two places record a storage version, a `serenedb_vN` value of DuckDB's `StorageVersion`:
 
 - The headers of each database file (`engine_catalog/catalog.db`, `engine_duckdb/<oid>.db`). The file's write-ahead log and the database's search-table WAL follow it.

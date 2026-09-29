@@ -52,10 +52,12 @@ class RegexpAcceptor {
     std::array<bitset::word_t, kMaskWords> loop{};
     const int* set{nullptr};
     uint32_t set_size{0};
+    uint32_t context{0};
     std::atomic_bool built{false};
     bool accept{false};
     bool dead{false};
     bool unknown{false};
+    bool assertions{false};
     uint8_t lo{1};
     uint8_t hi{0};
 
@@ -167,11 +169,14 @@ class RegexpAcceptor {
   State StepSlow(State from, uint8_t c) const;
   void Build(Row* row) const;
   void BuildLocked(Row* row) const;
-  State InternLocked(const std::vector<int>& queue) const;
+  State InternLocked(const std::vector<int>& queue, uint32_t context) const;
   size_t RowBytes(size_t set_size) const noexcept;
   Row* AllocateLocked(size_t set_size) const;
   void AddToQueue(std::vector<int>& queue, std::vector<uint32_t>& index,
-                  std::vector<int>& stack, int id) const;
+                  std::vector<int>& stack, int id, uint32_t satisfied) const;
+  void Resolve(const int* set, uint32_t size, uint32_t satisfied,
+               std::vector<int>& queue, std::vector<uint32_t>& index,
+               std::vector<int>& stack) const;
   bool Simulate(State from, bytes_view rest) const;
 
   std::unique_ptr<re2::Prog> _prog;
@@ -195,6 +200,8 @@ class RegexpAcceptor {
   mutable std::vector<uint32_t> _index;
   mutable std::vector<int> _stack;
   mutable std::vector<int> _canon;
+  mutable std::vector<int> _resolved;
+  mutable std::vector<uint32_t> _resolved_index;
 };
 
 }  // namespace irs

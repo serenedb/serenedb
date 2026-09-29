@@ -176,6 +176,8 @@ Match indexed tokens against a regular expression.
 
 A pattern's size never changes its answer: a long alternation — hundreds of generated names, synonyms or term lists — returns exactly the terms it matches, only more slowly past the point where the index can no longer prune the dictionary with it. A pattern is compiled once and reused by later queries; [`sdb_pattern_cache_size`](../../../configuration/overview.md#search-and-indexing) bounds how much compiled state the server keeps.
 
+Anchors and word boundaries keep their RE2 meaning inside a term: `^` and `$` hold only at its ends (and, with `(?m)`, around line breaks), and `\b` and `\B` look at the characters on either side. Over whole values indexed with a `keyword()` dictionary, `ts_regexp('(?i)^(the\s+)?siemens\b.*')` matches `The Siemens AG` and `siemens financial services` but not `siemensland`.
+
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
 | `body @@ ts_regexp('qu.*ck')` | `1`, `2` | `quick` matches the Perl pattern. |

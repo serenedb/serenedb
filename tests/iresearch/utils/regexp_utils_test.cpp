@@ -1390,18 +1390,51 @@ TEST_F(RegexpUtilsTest, negated_single_char) {
   EXPECT_FALSE(Accepts(a, "bb"));
 }
 
-// Perl extensions whose whole-term reading the tree rewrite decides.
-
-TEST_F(RegexpUtilsTest, perl_word_boundary_negative_unsupported) {
-  // \B cannot be modelled without splitting every state by whether the
-  // previous byte was a word character, so it is under-approximated to the
-  // empty language: a pattern containing it selects nothing at all.
+TEST_F(RegexpUtilsTest, perl_word_boundary_negative) {
   auto a = FromPerl("foo\\Bbar");
-  EXPECT_FALSE(Accepts(a, "foobar"));
+  EXPECT_TRUE(Accepts(a, "foobar"));
   EXPECT_FALSE(Accepts(a, "foo"));
   EXPECT_FALSE(Accepts(a, "bar"));
   EXPECT_FALSE(Accepts(a, ""));
   EXPECT_FALSE(Accepts(a, "fooXbar"));
+  auto b = FromPerl("foo\\B.*");
+  EXPECT_TRUE(Accepts(b, "foobar"));
+  EXPECT_FALSE(Accepts(b, "foo bar"));
+  EXPECT_FALSE(Accepts(b, "foo"));
+}
+
+TEST_F(RegexpUtilsTest, perl_word_boundary_inside_term) {
+  for (const auto* pattern :
+       {"^(the\\s+)?siemens\\b.*", "(?i)^(the\\s+)?SIEMENS\\b.*"}) {
+    SCOPED_TRACE(pattern);
+    auto a = FromPerl(pattern);
+    ASSERT_TRUE(a.ok());
+    EXPECT_TRUE(Accepts(a, "siemens"));
+    EXPECT_TRUE(Accepts(a, "siemens financial services"));
+    EXPECT_TRUE(Accepts(a, "the siemens ag"));
+    EXPECT_TRUE(Accepts(a, "siemens-energy"));
+    EXPECT_FALSE(Accepts(a, "siemensland"));
+    EXPECT_FALSE(Accepts(a, "the siemens2"));
+    EXPECT_FALSE(Accepts(a, "thesiemens"));
+  }
+  auto c = FromPerl(".*\\bdata engineer\\b.*");
+  EXPECT_TRUE(Accepts(c, "senior data engineer"));
+  EXPECT_TRUE(Accepts(c, "data engineer, gcp"));
+  EXPECT_FALSE(Accepts(c, "bigdata engineer"));
+  EXPECT_FALSE(Accepts(c, "data engineering"));
+}
+
+TEST_F(RegexpUtilsTest, perl_anchors_inside_term) {
+  auto a = FromPerl("a$b");
+  ASSERT_TRUE(a.ok());
+  EXPECT_FALSE(Accepts(a, "ab"));
+  auto b = FromPerl("(?m)a$\\n^b");
+  ASSERT_TRUE(b.ok());
+  EXPECT_TRUE(Accepts(b, "a\nb"));
+  EXPECT_FALSE(Accepts(b, "ab"));
+  auto c = FromPerl("x^y");
+  ASSERT_TRUE(c.ok());
+  EXPECT_FALSE(Accepts(c, "xy"));
 }
 
 TEST_F(RegexpUtilsTest, perl_non_capturing_group) {
@@ -1858,6 +1891,15 @@ TEST_F(RegexpUtilsTest, dfa_budget_exhausted_stays_exact) {
     EXPECT_FALSE(Accepts(a, std::string(15, 'a')));
     EXPECT_FALSE(Accepts(a, BlowupMatch() + "c"));
     EXPECT_FALSE(Accepts(a, ""));
+    const irs::RegexpAcceptor w{
+      ToBytesView("(?i)^(the\\s+)?siemens\\b.*|.*\\bdata engineer\\b.*"),
+      irs::RegexpSyntax::Perl, irs::RegexpAcceptor::kDefaultMaxMem, budget};
+    ASSERT_TRUE(w.ok());
+    EXPECT_TRUE(Accepts(w, "The Siemens AG"));
+    EXPECT_TRUE(Accepts(w, "senior data engineer"));
+    EXPECT_FALSE(Accepts(w, "siemensland"));
+    EXPECT_FALSE(Accepts(w, "bigdata engineer"));
+    EXPECT_FALSE(Accepts(w, "data engineering"));
   }
 }
 

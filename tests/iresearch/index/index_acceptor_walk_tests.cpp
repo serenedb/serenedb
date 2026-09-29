@@ -450,10 +450,9 @@ TEST_P(AcceptorWalkIndexTestCase, wildcard_walk_matches_scan) {
 
 TEST_P(AcceptorWalkIndexTestCase, regexp_walk_past_the_row_budget) {
   constexpr std::string_view kPatterns[]{
-    "[ab]*a[ab]{15}",
-    ".*a.{12}",
-    "(.*e){3}.*",
-    "bur.*|.*tion|a.{4}s",
+    "[ab]*a[ab]{15}",      ".*a.{12}",
+    "(.*e){3}.*",          "bur.*|.*tion|a.{4}s",
+    ".*\\bur.*|.*on\\b.*", "(?i).*\\Bst\\B.*",
   };
   constexpr size_t kBudgets[]{1, 4096};
 
@@ -762,6 +761,22 @@ TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
     "\xC3\xA9t\xC3\xA9",
     "den%x",
     "%x",
+    "the siemens financial services",
+    "siemens",
+    "siemensland",
+    "the siemens ag",
+    "The Siemens AG",
+    "access point",
+    "accessories inc",
+    "the access group",
+    "senior data engineer",
+    "bigdata engineer",
+    "data engineering",
+    "Data Engineer, GCP",
+    "foobar",
+    "foo bar",
+    "a\nb",
+    "ab",
   };
 
   AddTerms(kTerms);
@@ -773,10 +788,32 @@ TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
   RE2::Options perl;
   perl.set_log_errors(false);
   constexpr std::string_view kPerl[]{
-    "bur.*",     ".*tion",    "b.rden",      "atl(as|antic)", "a.{4}s",
-    "(?i)bur.*", "(?i:t)ion", "b[^a-z]rden", "\\pL+",         "x|y|zz",
-    "(ab)*",     "",          "b\\w+n",      "gr[ae]y",       "gr.y",
-    "a.b",       "(?s)a.b",
+    "bur.*",
+    ".*tion",
+    "b.rden",
+    "atl(as|antic)",
+    "a.{4}s",
+    "(?i)bur.*",
+    "(?i:t)ion",
+    "b[^a-z]rden",
+    "\\pL+",
+    "x|y|zz",
+    "(ab)*",
+    "",
+    "b\\w+n",
+    "gr[ae]y",
+    "gr.y",
+    "a.b",
+    "(?s)a.b",
+    "(?i)^(the\\s+)?siemens\\b.*",
+    "^(the\\s+)?access\\b.*|^(the\\s+)?siemens financial services\\b.*",
+    ".*\\bdata engineer\\b.*",
+    "(?i).*\\bdata engineer\\b.*|.*\\bgcp\\b.*",
+    "foo\\Bbar",
+    "foo\\B.*",
+    "a$b",
+    "(?m)a$\\n^b",
+    "\\bbur\\w*",
   };
   for (const auto pattern : kPerl) {
     SCOPED_TRACE(testing::Message("Regexp: '") << pattern << "'");

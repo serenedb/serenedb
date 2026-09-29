@@ -31,7 +31,7 @@ Conditions joined by `AND` are checked one after another, and the rows one condi
 
 | Value | What moves |
 |---|---|
-| `never` | Nothing moves once any condition can fail. |
+| `never` | Nothing moves, even when no condition can fail. |
 | `safe` (default) | Conditions that can fail stay where they are; the conditions between them are ordered by cost. Errors are raised exactly as with `never`. |
 | `fast` | A condition that cannot fail may also move ahead of the ones that can, but a condition that came before one that can fail stays before it. A row that such a moved condition rejects never reaches the condition that can fail, so an error it would have raised on that row is skipped. |
 | `always` | Everything is ordered by cost, so a condition that can fail may run before the condition that guards it. |

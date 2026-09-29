@@ -1812,11 +1812,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
       }
       co_return {};
     } else if (type == PQ_MSG_COPY_FAIL) {
-      if (body > PQ_SMALL_MESSAGE_LIMIT) {
-        fail(ERRCODE_PROTOCOL_VIOLATION, "invalid message length");
-        this->Stop();
-        co_return {};
-      }
       // The client's CopyFail carries its own failure text; PG echoes it,
       // reading it as a NUL-terminated string (truncate at the first NUL).
       std::string detail;

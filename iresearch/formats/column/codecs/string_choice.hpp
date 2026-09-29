@@ -34,6 +34,8 @@ enum class Shape : uint8_t {
 struct StringChoice {
   Shape shape;
   ByteCodec leaf;
+
+  friend bool operator==(const StringChoice&, const StringChoice&) = default;
 };
 
 }  // namespace irs::codecs

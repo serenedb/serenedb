@@ -191,8 +191,8 @@ class ListKeys {
   void Clear() noexcept { _chunks.clear(); }
 
   uint64_t Hash(size_t chunk, uint64_t offset, uint64_t length) const {
-    uint64_t h = duckdb::Hash(reinterpret_cast<const char*>(&length),
-                              sizeof(length));
+    uint64_t h =
+      duckdb::Hash(reinterpret_cast<const char*>(&length), sizeof(length));
     for (const auto& leaf : _chunks[chunk]) {
       for (uint64_t e = offset; e < offset + length; ++e) {
         h = duckdb::CombineHash(h, leaf.Hash(e));
@@ -284,8 +284,8 @@ class ListKeys {
     }
     const auto physical = vec.GetType().InternalType();
     leaf.strings = physical == duckdb::PhysicalType::VARCHAR;
-    leaf.width = leaf.strings ? sizeof(duckdb::string_t)
-                              : duckdb::GetTypeIdSize(physical);
+    leaf.width =
+      leaf.strings ? sizeof(duckdb::string_t) : duckdb::GetTypeIdSize(physical);
   }
 
   std::vector<std::vector<Leaf>> _chunks;
@@ -463,7 +463,8 @@ class ListIngest {
         const auto n = static_cast<duckdb::idx_t>(
           std::min<uint64_t>(length - done, STANDARD_VECTOR_SIZE));
         const auto from = static_cast<duckdb::idx_t>(begin + done);
-        _elems.emplace_back(WriteChunk{duckdb::Vector{child, from, from + n}, n});
+        _elems.emplace_back(
+          WriteChunk{duckdb::Vector{child, from, from + n}, n});
         done += n;
       }
       return;
@@ -528,8 +529,8 @@ class ListIngest {
     if (r.length != entry.length) {
       return false;
     }
-    return entry.length == 0 || _keys.Equal(r.chunk, r.offset, kSource,
-                                            entry.offset, entry.length);
+    return entry.length == 0 ||
+           _keys.Equal(r.chunk, r.offset, kSource, entry.offset, entry.length);
   }
 
   void Store(const duckdb::Vector& child) {
@@ -538,8 +539,8 @@ class ListIngest {
       if (_elems.empty() ||
           _elems.back().count + _fresh[i].length > STANDARD_VECTOR_SIZE) {
         if (_elems.empty() || _elems.back().count != 0) {
-          _elems.push_back(WriteChunk{
-            duckdb::Vector{_child_type, STANDARD_VECTOR_SIZE}, 0});
+          _elems.push_back(
+            WriteChunk{duckdb::Vector{_child_type, STANDARD_VECTOR_SIZE}, 0});
         }
       }
       auto& target = _elems.back();
@@ -550,8 +551,8 @@ class ListIngest {
       while (i < _fresh.size() &&
              target.count + take + _fresh[i].length <= STANDARD_VECTOR_SIZE) {
         if (_fresh[i].rep != kNoRep) {
-          _reps[_fresh[i].rep] = ListRep{chunk, target.count + take,
-                                         _fresh[i].length};
+          _reps[_fresh[i].rep] =
+            ListRep{chunk, target.count + take, _fresh[i].length};
         }
         take += _fresh[i].length;
         ++i;
@@ -560,12 +561,12 @@ class ListIngest {
         const auto length = _fresh[i].length;
         for (uint64_t done = 0; done < length;) {
           if (_elems.back().count == STANDARD_VECTOR_SIZE) {
-            _elems.push_back(WriteChunk{
-              duckdb::Vector{_child_type, STANDARD_VECTOR_SIZE}, 0});
+            _elems.push_back(
+              WriteChunk{duckdb::Vector{_child_type, STANDARD_VECTOR_SIZE}, 0});
           }
           auto& part = _elems.back();
-          const auto n = std::min<uint64_t>(
-            length - done, STANDARD_VECTOR_SIZE - part.count);
+          const auto n = std::min<uint64_t>(length - done,
+                                            STANDARD_VECTOR_SIZE - part.count);
           Copy(child, part, _fresh[i].picked + done, n);
           done += n;
         }
@@ -768,8 +769,7 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
   if (!named && forced_method != duckdb::CompressionType::COMPRESSION_AUTO) {
     return CompressData(type, chunks, forced, meta);
   }
-  codecs::StringAccumulator acc{!named ||
-                                named->shape == codecs::Shape::Dedup};
+  codecs::StringAccumulator acc{!named || named->shape == codecs::Shape::Dedup};
   if (!meta.write_string_tuning) {
     meta.write_string_tuning = std::make_shared<codecs::StringTuning>();
   }
@@ -795,7 +795,8 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
   if (outcome.sealed) {
     return outcome.all_dedup;
   }
-  return CompressData(type, chunks, forced, meta);
+  return CompressData(type, chunks,
+                      duckdb::CompressionType::COMPRESSION_UNCOMPRESSED, meta);
 }
 
 void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
@@ -1152,8 +1153,8 @@ void ColumnWriter::AppendList(const duckdb::Vector& vec, duckdb::idx_t count) {
     const auto take = std::min(
       {count - off, duckdb::idx_t{STANDARD_VECTOR_SIZE} - back.count, rg_room});
     _list_ingest->Begin(_meta.write_list_distinct, _meta.write_list_running);
-    duckdb::FlatVector::ValidityMutable(back.data)
-      .CopySel(rows.validity, *rows.sel, off, back.count, take);
+    duckdb::FlatVector::ValidityMutable(back.data).CopySel(
+      rows.validity, *rows.sel, off, back.count, take);
     _list_ingest->Add(vec, off, take);
     back.count += take;
     duckdb::FlatVector::SetSize(back.data, back.count);

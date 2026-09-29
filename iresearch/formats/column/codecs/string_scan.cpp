@@ -275,7 +275,7 @@ struct ScanState final : duckdb::SegmentScanState {
   }
 
   uint64_t CacheBytes() const noexcept {
-    return header.raw_bytes +
+    return header.raw_bytes + group_heap_bytes +
            static_cast<uint64_t>(header.entry_count) * (sizeof(string_t) + 1);
   }
 
@@ -289,6 +289,10 @@ struct ScanState final : duckdb::SegmentScanState {
       Unpack(base + header.off_runs, header.run_count, header.run_width);
     SDB_ENSURE(!run_ends.empty() && run_ends.back() == header.row_count,
                "col codec: corrupted run ends");
+    SDB_ENSURE(
+      std::ranges::all_of(
+        run_values, [&](uint32_t code) { return code < header.entry_count; }),
+      "col codec: corrupted row codes");
   }
 
   bool Dedup() const noexcept {
@@ -467,7 +471,8 @@ struct ScanState final : duckdb::SegmentScanState {
       for (uint32_t f = 1; f < frames.size(); ++f) {
         largest = std::max(largest, frames[f].raw_len);
       }
-      window = duckdb::make_unsafe_uniq_array<char>(dictionary.size() + largest);
+      window =
+        duckdb::make_unsafe_uniq_array<char>(dictionary.size() + largest);
       std::memcpy(window.get(), dictionary.data(), dictionary.size());
     }
     return window.get() + dictionary.size();
@@ -558,6 +563,7 @@ struct ScanState final : duckdb::SegmentScanState {
                   uint64_t{length_reader.At(e)} * kFsstMaxExpansion;
     }
     capacity = std::max<uint64_t>(capacity, string_t::INLINE_LENGTH + 1);
+    group_heap_bytes += capacity;
     char* out = duckdb::StringVector::EmptyString(dictionary->data, capacity)
                   .GetDataWriteable();
     const auto* in = reinterpret_cast<const char*>(base + header.off_data);
@@ -942,6 +948,7 @@ struct ScanState final : duckdb::SegmentScanState {
   std::vector<uint8_t> group_decoded;
   std::vector<uint32_t> group_enc_off;
   std::vector<uint8_t> group_offsets_ready;
+  uint64_t group_heap_bytes = 0;
   std::string probe;
   std::string probe_prev;
   std::optional<LeafDecompressor<ByteCodec::Lz4>> lz4;
@@ -990,6 +997,12 @@ struct ScanState final : duckdb::SegmentScanState {
                 ((start - start_offset) * header.code_width) / 8;
     BitpackingPrimitives::UnPackBuffer<duckdb::sel_t>(
       duckdb::data_ptr_cast(sel->data()), src, decode_count, header.code_width);
+    const auto* codes = sel->data() + start_offset;
+    duckdb::sel_t max_code = 0;
+    for (idx_t i = 0; i < count; ++i) {
+      max_code = std::max(max_code, codes[i]);
+    }
+    SDB_ENSURE(max_code < header.entry_count, "col codec: corrupted row codes");
     return start_offset;
   }
 };
@@ -1126,6 +1139,9 @@ struct FetchCache final : duckdb::SegmentScanState {
   std::optional<LeafDecompressor<ByteCodec::Zstd>> zstd;
   std::optional<LeafDecompressor<ByteCodec::Zxc>> zxc;
   std::optional<FsstDecoder> fsst;
+  std::vector<uint32_t> fsst_group_base;
+  std::vector<uint32_t> fsst_known;
+  std::vector<uint64_t> fsst_offsets;
   std::string prev;
   std::string cur;
 
@@ -1136,20 +1152,19 @@ struct FetchCache final : duckdb::SegmentScanState {
                "col codec: corrupted frame table");
     if (with_dictionary && !dictionary_ready) {
       const auto f0 = FrameMeta::Load(base + h.off_frames);
-      SDB_ENSURE(static_cast<uint64_t>(f0.comp_off) + f0.comp_len <=
-                   h.data_size,
-                 "col codec: corrupted frame table");
+      SDB_ENSURE(
+        static_cast<uint64_t>(f0.comp_off) + f0.comp_len <= h.data_size,
+        "col codec: corrupted frame table");
       const size_t need = static_cast<size_t>(f0.raw_len) + f.raw_len;
       if (dictionary_capacity < need) {
         dictionary_capacity = std::max<size_t>(need, 1);
         dictionary = duckdb::make_unsafe_uniq_array<char>(dictionary_capacity);
       }
       d.SetDictionary({});
-      SDB_ENSURE(
-        d.Decompress(
-          reinterpret_cast<const char*>(base + h.off_data) + f0.comp_off,
-          f0.comp_len, dictionary.get(), f0.raw_len),
-        "col codec: corrupted frame");
+      SDB_ENSURE(d.Decompress(reinterpret_cast<const char*>(base + h.off_data) +
+                                f0.comp_off,
+                              f0.comp_len, dictionary.get(), f0.raw_len),
+                 "col codec: corrupted frame");
       dictionary_size = f0.raw_len;
       dictionary_ready = true;
     }
@@ -1168,8 +1183,7 @@ struct FetchCache final : duckdb::SegmentScanState {
       reinterpret_cast<const char*>(base + h.off_data) + f.comp_off;
     const size_t got =
       want == f.raw_len
-        ? (d.Decompress(src, f.comp_len, frame_data, f.raw_len) ? f.raw_len
-                                                                : 0)
+        ? (d.Decompress(src, f.comp_len, frame_data, f.raw_len) ? f.raw_len : 0)
         : d.DecompressPrefix(src, f.comp_len, frame_data, want, f.raw_len);
     SDB_ENSURE(got >= want, "col codec: corrupted frame");
     decoded = std::min<size_t>(got, f.raw_len);
@@ -1187,6 +1201,7 @@ FetchCache& CacheFor(duckdb::ColumnFetchState& state,
     cache.frame = std::numeric_limits<uint32_t>::max();
     cache.dictionary_ready = false;
     cache.fsst.reset();
+    cache.fsst_group_base.clear();
   }
   return cache;
 }
@@ -1253,12 +1268,41 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
     }
     PackedReader lcps{base + h.off_lcps, h.lcp_width};
     const auto* in = reinterpret_cast<const char*>(base + h.off_data);
-    const uint32_t restart =
-      f.first_entry + (entry - f.first_entry) / kChainRestart * kChainRestart;
-    uint64_t enc_off = f.comp_off;
-    for (uint32_t e = f.first_entry; e < restart; ++e) {
-      enc_off += lengths.At(e);
+    if (cache.fsst_group_base.empty()) {
+      cache.fsst_group_base.resize(h.frame_count + 1);
+      uint32_t groups = 0;
+      for (uint32_t i = 0; i < h.frame_count; ++i) {
+        const auto first =
+          FrameMeta::Load(frames + i * kFrameMetaSize).first_entry;
+        const auto end =
+          i + 1 < h.frame_count
+            ? FrameMeta::Load(frames + (i + 1) * kFrameMetaSize).first_entry
+            : h.entry_count;
+        SDB_ENSURE(end > first, "col codec: corrupted frame table");
+        cache.fsst_group_base[i] = groups;
+        groups += (end - first + kChainRestart - 1) / kChainRestart;
+      }
+      cache.fsst_group_base[h.frame_count] = groups;
+      cache.fsst_offsets.resize(groups);
+      cache.fsst_known.assign(h.frame_count, 0);
     }
+    const uint32_t group = (entry - f.first_entry) / kChainRestart;
+    const uint32_t restart = f.first_entry + group * kChainRestart;
+    auto* offsets = cache.fsst_offsets.data() + cache.fsst_group_base[lo];
+    auto& known = cache.fsst_known[lo];
+    if (known == 0) {
+      offsets[0] = f.comp_off;
+      known = 1;
+    }
+    for (; known <= group; ++known) {
+      const auto from = f.first_entry + (known - 1) * kChainRestart;
+      uint64_t off = offsets[known - 1];
+      for (uint32_t e = from; e < from + kChainRestart; ++e) {
+        off += lengths.At(e);
+      }
+      offsets[known] = off;
+    }
+    uint64_t enc_off = offsets[group];
     auto& prev = cache.prev;
     auto& cur = cache.cur;
     prev.clear();

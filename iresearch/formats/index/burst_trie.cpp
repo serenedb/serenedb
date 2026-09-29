@@ -27,6 +27,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <variant>
+#include <vector>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/basic_term_reader.hpp"
@@ -1998,7 +1999,6 @@ class AcceptorTermIterator : public SeekTermIterator,
   }
 
   void ResetRun() noexcept {
-    _changes.clear();
     _prev_len = 0;
     _prev_dead = kAlive;
   }
@@ -2012,40 +2012,24 @@ class AcceptorTermIterator : public SeekTermIterator,
     if (i > _prev_dead) {
       return false;
     }
-    while (!_changes.empty() && _changes.back().depth > i) {
-      _changes.pop_back();
+    if (_depth.size() <= n) [[unlikely]] {
+      _depth.resize(n + 1);
     }
-    if (!_changes.empty()) {
-      from = _changes.back().state;
+    auto* depth = _depth.data();
+    if (i != 0) {
+      from = depth[i];
     }
     _prev_suffix = suffix;
     _prev_len = static_cast<uint32_t>(n);
     _prev_dead = kAlive;
-    if constexpr (A::kCheapRuns) {
-      while (i != n) {
-        State moved{};
-        i += _a->StepRun(from, suffix + i, n - i, moved);
-        if (i == n) {
-          break;
-        }
-        if (!A::Alive(moved)) {
-          _prev_dead = static_cast<uint32_t>(i);
-          return false;
-        }
-        from = moved;
-        ++i;
-        _changes.push_back(Change{static_cast<uint32_t>(i), from});
+    for (; i != n; ++i) {
+      const State next = _a->Step(from, suffix[i]);
+      if (!A::Alive(next)) {
+        _prev_dead = static_cast<uint32_t>(i);
+        return false;
       }
-    } else {
-      for (; i != n; ++i) {
-        const State next = _a->Step(from, suffix[i]);
-        if (!A::Alive(next)) {
-          _prev_dead = static_cast<uint32_t>(i);
-          return false;
-        }
-        from = next;
-        _changes.push_back(Change{static_cast<uint32_t>(i + 1), from});
-      }
+      from = next;
+      depth[i + 1] = from;
     }
     _live = from;
     return true;
@@ -2104,16 +2088,11 @@ class AcceptorTermIterator : public SeekTermIterator,
 
   void RebuildLevels();
 
-  struct Change {
-    uint32_t depth;
-    State state;
-  };
-
   static constexpr uint32_t kAlive = std::numeric_limits<uint32_t>::max();
 
   const A* _a;
   irs::containers::SmallVector<Level, 8> _levels;
-  irs::containers::SmallVector<Change, 16> _changes;
+  std::vector<State> _depth;
   const byte_type* _prev_suffix{};
   uint32_t _prev_len{0};
   uint32_t _prev_dead{kAlive};

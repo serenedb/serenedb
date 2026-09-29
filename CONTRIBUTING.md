@@ -205,6 +205,30 @@ Every file an iresearch segment writes (`segments_N`, `.sm`, `.doc`, `.pos`, `.p
 - **Every field is read:** `ReadFooter` checks the end of the object, so every reader of a file reads all of its footer (`segments_N` is read with its payload reader, `DirectoryReader` and `DirectoryReader::Reopen` take one, and an index with a payload but no reader is refused).
 - **Breaking compatibility:** add a new value to DuckDB's `StorageVersion` and point `duckdb::kIResearchStorageVersion` at it. `segments_N` records that version as its first field and is read only when it matches, so older binaries refuse every index directory written after the change and the new binary refuses every one written before it. Do it in its own PR and list it in the release notes. The footer trailer and the leading `storage_version` field of `segments_N` never change.
 
+## Database file compatibility
+
+SereneDB's own database files (`engine_catalog/catalog.db`, `engine_duckdb/<oid>.db`) are DuckDB database files: two checksummed headers carry the storage version, and the checkpoint and every write-ahead log entry (`.wal`, plus the `.wal.checkpoint` and `.wal.recovery` files a checkpoint or a recovery writes beside it) are `BinarySerializer` objects with the field ids of `third_party/duckdb/src/include/duckdb/storage/serialization/*.json`. SereneDB creates its files at `SERENEDB_VERSION_DEFAULT`, raises older readable ones to it, and opens only files with a SereneDB storage version between `SERENEDB_VERSION_LOWER` and `SERENEDB_VERSION_UPPER` (`third_party/duckdb/src/include/duckdb/storage/storage_info.hpp`). Keep them readable across releases:
+
+- **New field:** a json member with a new id and a `default`. A file that leaves it at the default stays readable by older binaries; a file that uses it is refused by them, because the reader checks the end of every object. SereneDB fields need no `version`, since SereneDB always writes its files at `SERENEDB_VERSION_DEFAULT`.
+- **Removed field:** mark it deleted in the json, so it is read with `ReadDeletedProperty`.
+- **Never** reuse a field id, change a default, or change what an existing field means.
+- **Write-ahead log:** entries follow the database file's storage version. An entry that matches its checksum but cannot be read stops the database from opening instead of being dropped like a torn tail. The log header never gains a field; a framing change bumps `WAL_VERSION_NUMBER`.
+- **Breaking compatibility:** add `serenedb_vN` to `third_party/duckdb/src/storage/version_map.json` and run `scripts/generate_storage_info.py` there. `SERENEDB_LATEST` becomes the new value and `SERENEDB_VERSION_DEFAULT` and `SERENEDB_VERSION_UPPER` follow it, so SereneDB writes the new version and older binaries refuse those files. To stop reading the files of earlier releases, also point `SERENEDB_VERSION_LOWER` at the new value; the new binary then refuses to open or create files below it. A file SereneDB opens as its own must also carry a SereneDB storage version (`SereneDBStorageExtension::OnLoadExistingDatabase`). `duckdb::kIResearchStorageVersion` names its version explicitly and stays put: a search index directory is read only at exactly that version, so tying it to `SERENEDB_LATEST` would make every database file break refuse every search index. Do it in its own PR and list it in the release notes. Each break of a SereneDB format adds its own `StorageVersion` value; a value is never reused.
+
+### Serialized structs
+
+Blobs stored in catalog entries (tokenizer configs, the inverted index payload), the view-backed index manifest and the segment references of the search-table WAL are written with `irs::utils::WriteTuple` and read with `ReadTuple`. They store an aggregate as a `BinarySerializer` object whose field ids are the positions of its members:
+
+- **New member:** append it with a default member initializer. A member equal to its value in a value-initialized aggregate is not written, and a missing member reads that value, so older data reads the default and older binaries keep reading data that leaves it at the default.
+- **Removed member:** replace it with `irs::utils::Deleted<T>` of its old type. The position stays taken, and a stored value is read and dropped.
+- **Never** reorder members or change a member's type or meaning. Append variant alternatives and enum values; never reorder or remove them.
+- **Unknown member:** data that uses a member a binary does not know is refused, never misread.
+- A struct boost::pfr cannot reflect (one holding a `std::vector<std::unique_ptr<T>>`) declares `SerdeFields(value)` returning `std::tie` of its members, in declaration order.
+
+### Search-table WAL
+
+Each `.swal` frame is `[u64 size][u64 checksum][record]`. The record is a `BinarySerializer` object that starts with `storage_version` (`duckdb::kIResearchStorageVersion`) and `tick`, followed by its sections and their ops with their own field ids. A record with another storage version is refused, so bumping `kIResearchStorageVersion` refuses the index directories and their WAL together. Fields evolve by the rules above; the frame and the two leading fields never change.
+
 ## VSCode Setup
 
 ### Profile

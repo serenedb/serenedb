@@ -22,36 +22,42 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <duckdb/common/serializer/binary_deserializer.hpp>
-#include <duckdb/common/serializer/binary_serializer.hpp>
-#include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <iresearch/utils/serializer.hpp>
 #include <string_view>
 #include <utility>
+
+#include "catalog/persistence/blob.h"
 
 namespace sdb::catalog {
 
 std::string PackTokenizerConfig(const irs::analysis::TokenizerConfig& config) {
-  duckdb::MemoryStream stream;
-  duckdb::BinarySerializer serializer{stream};
-  irs::utils::WriteTuple(serializer, config);
-  return std::string{reinterpret_cast<const char*>(stream.GetData()),
-                     stream.GetPosition()};
+  return persistence::Pack(config);
+}
+
+irs::analysis::TokenizerConfig UnpackTokenizerConfig(std::string_view name,
+                                                     std::string_view bytes) {
+  return persistence::Unpack<irs::analysis::TokenizerConfig>(
+    "text search dictionary", name, bytes);
 }
 
 namespace {
 
-irs::analysis::TokenizerConfig UnpackTokenizerConfig(std::string_view bytes) {
-  duckdb::MemoryStream stream{
-    const_cast<duckdb::data_ptr_t>(
-      reinterpret_cast<duckdb::const_data_ptr_t>(bytes.data())),
-    bytes.size()};
-  duckdb::BinaryDeserializer deserializer{stream};
-  irs::analysis::TokenizerConfig config;
-  irs::utils::ReadTuple(deserializer, config);
-  return config;
+irs::analysis::TokenizerConfig WithoutLastOption(
+  const irs::analysis::TokenizerConfig& config) {
+  auto older = irs::analysis::Clone(config);
+  std::visit(
+    [](auto& options) {
+      auto fields = irs::utils::FieldsOf(options);
+      if constexpr (constexpr auto kCount = std::tuple_size_v<decltype(fields)>;
+                    kCount != 0) {
+        auto& last = std::get<kCount - 1>(fields);
+        last = std::remove_cvref_t<decltype(last)>{};
+      }
+    },
+    older.config);
+  return older;
 }
 
 }  // namespace
@@ -63,7 +69,8 @@ TokenizerCatalogEntry::TokenizerCatalogEntry(duckdb::Catalog& catalog,
                           info.GetQualifiedName().Name(), info.oid},
     _tokenizer{std::make_shared<Tokenizer>(
       search::Features{static_cast<irs::IndexFeatures>(info.features)},
-      UnpackTokenizerConfig(info.config))} {
+      UnpackTokenizerConfig(info.GetQualifiedName().Name().GetIdentifierName(),
+                            info.config))} {
   comment = info.comment;
   tags = info.tags;
   dependencies = info.dependencies;
@@ -102,6 +109,9 @@ duckdb::unique_ptr<duckdb::CreateInfo> TokenizerCatalogEntry::GetInfo() const {
   info->SetQualification(catalog.GetName(), ParentSchemaName());
   info->features = std::to_underlying(GetFeatures().GetIndexFeatures());
   info->config = PackTokenizerConfig(Config());
+  SDB_IF_FAILURE("tokenizer_config_without_last_option") {
+    info->config = PackTokenizerConfig(WithoutLastOption(Config()));
+  }
   info->comment = comment;
   info->tags = tags;
   info->dependencies = dependencies;

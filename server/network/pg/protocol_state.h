@@ -432,9 +432,7 @@ class ImplicitTxnState {
   // propagates to teardown.
   void Rollback() {
     _open = false;
-    if (_txn.HasActiveTransaction()) {
-      _txn.Rollback(nullptr);
-    }
+    _txn.Rollback(nullptr);
   }
 
  private:

@@ -11,7 +11,7 @@ AI functions call an external model provider from SQL. They cover three kinds of
 - **Text with a chat model**: [`ai_generate`](#ai_generate) answers a prompt, [`ai_classify`](#ai_classify) picks a label, [`ai_classify_labels`](#ai_classify_labels) picks every label that applies, [`ai_extract`](#ai_extract) pulls out a value or a JSON object, [`ai_filter`](#ai_filter) decides whether a condition holds, [`ai_score`](#ai_score) rates how well a text meets criteria, [`ai_rerank`](#ai_rerank) rates how relevant a document is to a search query, [`ai_translate`](#ai_translate) translates and [`ai_redact`](#ai_redact) masks personal information.
 - **Aggregates with a chat model**: [`ai_agg`](#ai_agg) answers an instruction over all the values in a group, and [`ai_summarize_agg`](#ai_agg) summarizes them.
 - **Embeddings**: [`ai_embed`](#ai_embed) turns text into a vector for [vector search](../indexes/inverted/vector-search.md), and [`ai_similarity`](#ai_similarity) compares two texts by the cosine similarity of their embeddings.
-- **Typed decisions**: [`ai_system1`](#ai_system1) asks a Jev decision model a yes/no, multiple-choice or rating question and returns calibrated probabilities instead of prose.
+- **Typed decisions**: [`ai_system_one`](#ai_system_one) asks a Jev decision model a yes/no, multiple-choice or rating question and returns calibrated probabilities instead of prose.
 
 <DocCallout type="attention">
 
@@ -24,7 +24,7 @@ Every AI function sends the text to the configured provider over the network. Th
 The functions read the provider's endpoint and API key from a [secret](../statements/create_secret/index.md). There are two secret types:
 
 - **`TYPE openai`** is used by every `ai_*` function. It names the OpenAI wire protocol, not a vendor, so it reaches OpenAI itself, any hosted provider with an OpenAI-compatible endpoint, such as OpenRouter or Google Gemini (see [endpoint URLs](#endpoint-urls)), and locally hosted models served by [Ollama](https://ollama.com/), vLLM, LM Studio, LiteLLM or llama.cpp.
-- **`TYPE typesafe`** is used by `ai_system1`. It reaches the hosted [TypeSafe](https://typesafe.ai/) Jev API, or a self-hosted [Kev](https://github.com/jaredpalmer/kev) server, which serves the same API from open models.
+- **`TYPE typesafe`** is used by `ai_system_one`. It reaches the hosted [TypeSafe](https://typesafe.ai/) Jev API, or a self-hosted [Kev](https://github.com/jaredpalmer/kev) server, which serves the same API from open models.
 
 For OpenAI itself, an `api_key` is all you need:
 
@@ -63,7 +63,7 @@ A function sends its request to `base_url` followed by the endpoint path:
 
 - `chat_path`, or `/v1/chat/completions`, for the chat functions;
 - `embeddings_path`, or `/v1/embeddings`, for `ai_embed` and `ai_similarity`;
-- `path`, or `/v1/systemone`, for `ai_system1`.
+- `path`, or `/v1/systemone`, for `ai_system_one`.
 
 If `base_url` already ends with the last segment of that path, it is used as is. So you can also give a full endpoint URL such as `https://openrouter.ai/api/v1/chat/completions`, but that secret then serves only that one endpoint.
 
@@ -114,7 +114,7 @@ Each call names its secret with `secret_name`. When it doesn't, the function use
 | :--- | :--- |
 | `sdb_ai_text_default_secret` | `ai_generate`, `ai_classify`, `ai_classify_labels`, `ai_extract`, `ai_filter`, `ai_score`, `ai_rerank`, `ai_translate`, `ai_redact`, `ai_agg`, `ai_summarize_agg` |
 | `sdb_ai_embedding_default_secret` | `ai_embed`, `ai_similarity` |
-| `sdb_ai_system1_default_secret` | `ai_system1` |
+| `sdb_ai_system_one_default_secret` | `ai_system_one` |
 
 <SqlLogicTest id="sql/functions/ai_ollama/default_secret" hideResult />
 
@@ -223,13 +223,13 @@ Besides the [common parameters](#parameters), both take `max_context_chars` (def
 
 <SqlLogicTest id="sql/functions/ai_ollama/embed_dim" />
 
-A `NULL` `text` returns `NULL`, so rows without text are simply skipped:
+A `NULL` or empty `text` returns `NULL` without a request, so rows without text are simply skipped:
 
 <SqlLogicTest id="sql/functions/ai_ollama/embed_null" />
 
 | Argument | Description |
 | :--- | :--- |
-| `text` | The text to embed. `NULL` yields `NULL`. |
+| `text` | The text to embed. `NULL` or an empty string yields `NULL`. |
 | `model` | The provider's embedding model name, for example `'all-minilm'` or `'text-embedding-3-small'`. |
 | `secret_name` | Name of the `openai` secret. Defaults to `sdb_ai_embedding_default_secret`. |
 | `dimensions` | Requested vector size, for models that can shorten their embeddings (such as OpenAI's `text-embedding-3-*`). 0 or omitted keeps the native size. A reply with an embedding of any other size fails every row of that request. |
@@ -262,13 +262,13 @@ Each `ai_embed` call is a network request to the provider, so **embed documents 
 
 For ranking many rows against one query, store the embeddings and use [vector search](../indexes/inverted/vector-search.md) instead; `ai_similarity` embeds both texts on every call.
 
-## `ai_system1` {#ai_system1}
+## `ai_system_one` {#ai_system_one}
 
-`ai_system1` asks a Jev decision model a closed question about a text and returns a typed answer: a probability, a choice from a fixed list, or a position on an ordered scale. It uses the [TypeSafe System One API](https://docs.typesafe.ai/), which a local [Kev](https://github.com/jaredpalmer/kev) server also serves.
+`ai_system_one` asks a Jev decision model a closed question about a text and returns a typed answer: a probability, a choice from a fixed list, or a position on an ordered scale. It uses the [TypeSafe System One API](https://docs.typesafe.ai/), which a local [Kev](https://github.com/jaredpalmer/kev) server also serves.
 
 ```sql
-ai_system1(input, instructions [, noul | choice | score] [, batch_size] [, model] [, secret_name])
-ai_system1(input, questions := ... [, model] [, secret_name])
+ai_system_one(input, instructions [, noul | choice | score] [, batch_size] [, model] [, secret_name])
+ai_system_one(input, questions := ... [, model] [, secret_name])
 ```
 
 `input` is the per-row text; every other argument must be a constant. The question type is set by which of `noul`, `choice` and `score` you pass. They can't be combined, and passing none asks a `noul` question.
@@ -297,7 +297,7 @@ A `score` question rates the text on an ordered scale:
 
 <SqlLogicTest id="sql/functions/ai_kev/score" />
 
-### Several questions at once {#ai_system1_questions}
+### Several questions at once {#ai_system_one_questions}
 
 `questions` asks several questions about the same text in one request and returns a `STRUCT` with one field per question, each in its type's shape above. Each question is a `STRUCT` with `type`, `instructions` and, for `choice` and `score`, `criteria`. `questions` can't be combined with `instructions`, `noul`, `choice`, `score` or `batch_size`.
 
@@ -307,7 +307,7 @@ A `score` question rates the text on an ordered scale:
 
 <SqlLogicTest id="sql/functions/ai_kev/questions_json" />
 
-### Batching {#ai_system1_batch}
+### Batching {#ai_system_one_batch}
 
 A single-question call packs up to `batch_size` rows (1 to 64, default 32) into one request. Packing sends fewer requests, but the model sees several rows at once, so answers can drift compared with asking about each row alone. Set `batch_size := 1` for strict per-row isolation. If the provider rejects a packed request (HTTP 400, 413 or 422, for example because the batch is too long), the batch is split in half and retried, down to single rows. On the first HTTP 400 or 422, one extra request with the single state `x` checks whether the provider rejects the question itself; if it does, the rejected batches fail without further splitting. `questions` calls always send one request per row.
 
@@ -315,11 +315,11 @@ A single-question call packs up to `batch_size` rows (1 to 64, default 32) into 
 
 <SqlLogicTest id="sql/functions/ai_kev/batch_size" hideResult />
 
-Because each call is a request, materialize results you reuse, for example in a table or a `MATERIALIZED` CTE, instead of calling `ai_system1` again.
+Because each call is a request, materialize results you reuse, for example in a table or a `MATERIALIZED` CTE, instead of calling `ai_system_one` again.
 
-### Classify rows as they are written {#ai_system1_on_write}
+### Classify rows as they are written {#ai_system_one_on_write}
 
-A stored generated column calls `ai_system1` when a row is inserted, and again when an `UPDATE` changes a column that its expression reads. The answer is stored with the row, so queries read it without sending requests, and an `UPDATE` of any other column sends none. The expression is bound when the table is created and by every statement that computes it, so pass `secret_name` in the expression instead of relying on `sdb_ai_system1_default_secret`:
+A stored generated column calls `ai_system_one` when a row is inserted, and again when an `UPDATE` changes a column that its expression reads. The answer is stored with the row, so queries read it without sending requests, and an `UPDATE` of any other column sends none. The expression is bound when the table is created and by every statement that computes it, so pass `secret_name` in the expression instead of relying on `sdb_ai_system_one_default_secret`:
 
 <SqlLogicTest id="sql/functions/ai_kev/generated_column" />
 
@@ -353,10 +353,10 @@ There is no input-token quota: the number of input tokens is only known to the p
 An AI function spends almost all of its time waiting for the provider, so each call sends the requests for a chunk of rows (up to 2048) at the same time and waits until they are answered.
 
 - The thread that evaluates the call sends requests itself, and tasks on DuckDB's async I/O threads send the rest. The thread waits without using the CPU, but it stays busy until the chunk's last answer arrives.
-- A query has at most `sdb_ai_max_concurrent_requests` requests in flight, across all of its AI calls and threads. The `async_threads` setting, by default twice the number of CPU cores, also limits them.
-- Rows of a chunk that have the same text share one request. `ai_embed` and `ai_similarity` send up to `sdb_ai_embedding_max_batch_size` texts per request, and `ai_system1` up to `batch_size` rows.
-- In a `WHERE` clause, conditions without AI calls are checked first, and conditions joined by `AND` are checked one after the other, so rows that one condition rejects are never sent to the next.
-- In a query without `ORDER BY`, a constant `LIMIT` below 8192 is applied before the AI calls in the `SELECT` list, so `SELECT ai_generate(...) FROM t LIMIT 10` sends 10 requests. With `ORDER BY ... LIMIT`, AI calls that the sort doesn't use run only on the rows that remain after the `LIMIT`.
+- A query has at most `sdb_ai_max_concurrent_requests` requests in flight, across all of its AI calls and threads. Besides the threads that evaluate the calls, it sends them from at most `async_threads` tasks, by default twice the number of CPU cores. With `async_threads = 0`, only the evaluating threads send requests.
+- Rows of a chunk that have the same text share one request. `ai_embed` and `ai_similarity` send up to `sdb_ai_embedding_max_batch_size` texts per request, and `ai_system_one` up to `batch_size` rows.
+- In a `WHERE` clause, conditions joined by `AND` are checked one after the other, so rows that one condition rejects are never sent to the next. Comparisons that are pushed into a table scan, such as a column compared with a constant, are checked before the AI calls; other conditions can be checked after them.
+- In a query without `ORDER BY`, a constant `LIMIT` below 8192 is applied before the AI calls in the `SELECT` list, so `SELECT ai_generate(...) FROM t LIMIT 10` sends 10 requests. With `ORDER BY ... LIMIT`, the AI calls in the `SELECT` list run for every row before the sort; to call them only for the rows that remain, sort and limit in a subquery: `SELECT ai_generate(body) FROM (SELECT body FROM t ORDER BY id LIMIT 10) s`.
 - Calls inside `CASE`, `COALESCE`, `AND`, `OR` and `TRY` run only for the rows that reach them.
 - `ai_agg` and `ai_summarize_agg` gather each group's values first, then send the requests of all groups in a chunk together.
 - Cancelling a query or disconnecting stops new requests at once. Requests already in flight finish, or give up after `sdb_ai_request_timeout`.

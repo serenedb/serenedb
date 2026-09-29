@@ -133,15 +133,15 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
     return *slot;
   };
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
-  ColCodecParams codec_params;
   if (field_options) {
     row_group_size = field_options->row_group_size;
-    codec_params = field_options->codec_params;
   }
   for (const auto& [field_id_v, first_col] : ordered_cols) {
     const auto opts = field_options
                         ? field_options->GetColumnOptions(field_id_v)
                         : ColumnOptions{};
+    const auto codec_params =
+      field_options ? field_options->CodecParams(opts) : ColCodecParams{};
 
     auto& cw =
       output.OpenColumn(field_id_v, first_col->Type(), opts.skip_validity,

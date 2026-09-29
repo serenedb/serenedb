@@ -148,10 +148,7 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
   if (_field_options) {
     opts = _field_options->GetColumnOptions(id);
     row_group_size = _field_options->row_group_size;
-    codec_params = _field_options->codec_params;
-    if (opts.compression_level != 0) {
-      codec_params.compression_level = opts.compression_level;
-    }
+    codec_params = _field_options->CodecParams(opts);
     if (_tier == WriteTier::Flush) {
       codec_params.objective = AutoObjective::Speed;
     }
@@ -308,8 +305,7 @@ bool ColWriter::Commit(uint64_t target_row,
           });
         });
     }
-    footer.WriteProperty<uint64_t>(kColFieldFileId, "file_id",
-                                   NewColFileId());
+    footer.WriteProperty<uint64_t>(kColFieldFileId, "file_id", NewColFileId());
   });
   _out.reset();
   _committed = true;

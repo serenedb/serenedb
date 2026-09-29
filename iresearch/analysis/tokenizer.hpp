@@ -182,6 +182,9 @@ class Tokenizer {
     sink.EndValue();
     return ok;
   }
+
+  virtual void FillRow(std::span<const duckdb::string_t> values, doc_id_t doc,
+                       TokenSink& sink, FillCtx ctx) = 0;
 };
 
 // The generic per-block preparation step: derive only the facts some
@@ -218,6 +221,38 @@ class TypedTokenizer : public Tokenizer {
   }
 
   constexpr std::tuple<> PrepareBatch(BlockTraits) { return {}; }
+
+  void BeginRow() noexcept {}
+
+  template<TokenLayout Layout, auto... Tags>
+  bool AppendValue(duckdb::string_t value, TokenSink& sink) {
+    return static_cast<Impl*>(this)->template DoFill<Layout, Tags...>(value,
+                                                                      sink);
+  }
+
+  void EndRow(TokenSink&) noexcept {}
+
+  IRS_NO_INLINE void FillRow(std::span<const duckdb::string_t> values,
+                             doc_id_t doc, TokenSink& sink, FillCtx ctx) final {
+    auto* impl = static_cast<Impl*>(this);
+    impl->BeginRow();
+    for (const auto& value : values) {
+      const auto traits =
+        ComputeValueTraits(value, impl->Impl::WantedBlockTraits(), ctx.traits);
+      sink.BeginValue(doc, value.GetSize());
+      const bool ok = DispatchFill(
+        *impl, ctx.layout, traits,
+        [&](auto layout_tag, auto... tags) IRS_FORCE_INLINE {
+          return impl->template AppendValue<layout_tag(), tags()...>(value,
+                                                                     sink);
+        });
+      if (!ok) [[unlikely]] {
+        sink.RejectValue();
+      }
+      sink.EndValue();
+    }
+    impl->EndRow(sink);
+  }
 
   IRS_NO_INLINE bool Fill(const duckdb::string_t& value, TokenSink& sink,
                           FillCtx ctx) final {

@@ -108,6 +108,16 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
                   FillCtx ctx) final;
 
  private:
+  friend class TypedTokenizer<ShingleTokenizer>;
+
+  void BeginRow() noexcept { _blob.clear(); }
+
+  template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
+           bool StoreTokens>
+  bool AppendValue(duckdb::string_t value, TokenSink& sink);
+
+  void EndRow(TokenSink& sink) { StoreBlob(sink); }
+
   IRS_FORCE_INLINE bool DrainBase(duckdb::string_t raw);
   template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
            bool StoreTokens>
@@ -118,7 +128,8 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
   template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent>
   IRS_FORCE_INLINE void EmitRuns(const duckdb::string_t* raw, TokenSink& sink,
                                  uint32_t n, bool no_shingles);
-  IRS_FORCE_INLINE void StoreBlob(TokenSink& sink, uint32_t n);
+  IRS_FORCE_INLINE void AppendBlob(uint32_t n);
+  void StoreBlob(TokenSink& sink);
 
   Tokenizer::ptr _analyzer;
   uint32_t _min;

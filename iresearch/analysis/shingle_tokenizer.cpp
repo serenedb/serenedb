@@ -159,12 +159,9 @@ void ShingleTokenizer::BuildTables(uint32_t n) {
   }
 }
 
-void ShingleTokenizer::StoreBlob(TokenSink& sink, uint32_t n) {
+void ShingleTokenizer::AppendBlob(uint32_t n) {
   const auto tok = _sub->tokens.terms();
   const auto tpos = _sub->tokens.pos();
-  if (!sink.ContinuesDoc()) {
-    _blob.clear();
-  }
   const auto write_fillers = [&](uint32_t k) {
     for (; k != 0; --k) {
       WriteToken(_filler, _blob);
@@ -176,7 +173,12 @@ void ShingleTokenizer::StoreBlob(TokenSink& sink, uint32_t n) {
     prev = tpos[i];
     WriteToken(AsBytesView(tok[i]), _blob);
   }
-  sink.Store(_blob);
+}
+
+void ShingleTokenizer::StoreBlob(TokenSink& sink) {
+  if (_store_tokens) {
+    sink.Store(_blob);
+  }
 }
 
 template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent>
@@ -287,7 +289,7 @@ void ShingleTokenizer::EmitBaseTokens(const duckdb::string_t* raw,
   EmitRuns<Layout, OutputUnigrams, HasFrequent>(raw, sink, n, no_shingles);
 
   if constexpr (StoreTokens) {
-    StoreBlob(sink, n);
+    AppendBlob(n);
   }
 }
 
@@ -297,7 +299,9 @@ bool ShingleTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
   if (!DrainBase(raw)) {
     return false;
   }
+  _blob.clear();
   EmitBaseTokens<Layout, OutputUnigrams, HasFrequent, StoreTokens>(&raw, sink);
+  StoreBlob(sink);
   return true;
 }
 
@@ -306,9 +310,22 @@ bool ShingleTokenizer::FillTokens(std::span<const duckdb::string_t> tokens,
   return DispatchFill(*this, ctx.layout, ctx.traits,
                       [&](auto layout_tag, auto... tags) IRS_FORCE_INLINE {
                         _sub->tokens.Assign(tokens);
+                        _blob.clear();
                         EmitBaseTokens<layout_tag(), tags()...>(nullptr, sink);
+                        StoreBlob(sink);
                         return true;
                       });
+}
+
+template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
+         bool StoreTokens>
+bool ShingleTokenizer::AppendValue(duckdb::string_t value, TokenSink& sink) {
+  if (!DrainBase(value)) {
+    return false;
+  }
+  EmitBaseTokens<Layout, OutputUnigrams, HasFrequent, StoreTokens>(&value,
+                                                                   sink);
+  return true;
 }
 
 template class TypedTokenizer<ShingleTokenizer>;

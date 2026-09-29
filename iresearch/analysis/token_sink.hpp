@@ -174,7 +174,6 @@ class TokenSink final : util::Noncopyable {
   void Bind(TokenConsumer& consumer, StoreSink* store) noexcept {
     SDB_ASSERT((_batch.count == 0 && _nruns == 0) ||
                (&consumer == _consumer && store == _store_consumer));
-    SDB_ASSERT(!_store_pending || store == _store_consumer);
     _consumer = &consumer;
     _store_consumer = store;
   }
@@ -189,17 +188,11 @@ class TokenSink final : util::Noncopyable {
   }
   RejectSink* Rejects() const noexcept { return _rejects; }
 
-  void BeginValue(doc_id_t doc, uint32_t value_size) {
-    _continues = doc == _doc;
-    if (!_continues) {
-      DeliverStore();
-    }
+  void BeginValue(doc_id_t doc, uint32_t value_size) noexcept {
     _doc = doc;
     _value_size = value_size;
     _run_start = _batch.count;
   }
-
-  bool ContinuesDoc() const noexcept { return _continues; }
 
   void EndValue() {
     SDB_ASSERT(_run_start != kOutsideValue);
@@ -214,18 +207,14 @@ class TokenSink final : util::Noncopyable {
 
   void Finish() {
     SDB_ASSERT(_run_start == kOutsideValue);
-    DeliverStore();
     if (_batch.count || _nruns) {
       _consumer->Consume(_batch, {{_runs, _nruns}});
       Reset();
     }
-    EndDocs();
   }
 
   void Discard() {
     _run_start = kOutsideValue;
-    _store_pending = false;
-    EndDocs();
     Reset();
   }
 
@@ -514,24 +503,11 @@ class TokenSink final : util::Noncopyable {
 
   void Store(bytes_view blob) {
     if (_store_consumer) {
-      _store = blob;
-      _store_pending = true;
+      _store_consumer->OnStore(_doc, blob);
     }
   }
 
  private:
-  void DeliverStore() {
-    if (_store_pending) {
-      _store_pending = false;
-      _store_consumer->OnStore(_doc, _store);
-    }
-  }
-
-  void EndDocs() noexcept {
-    _doc = doc_limits::invalid();
-    _continues = false;
-  }
-
   IRS_FORCE_INLINE byte_type* AllocateTerm(size_t size) {
     return _arena.Allocate(std::max(size, kTermViewSlack));
   }
@@ -680,13 +656,10 @@ class TokenSink final : util::Noncopyable {
   TokenConsumer* _consumer = &Noop();
   StoreSink* _store_consumer = nullptr;
   RejectSink* _rejects = nullptr;
-  bytes_view _store;
-  doc_id_t _doc = doc_limits::invalid();
+  doc_id_t _doc = 0;
   uint32_t _value_size = 0;
   uint32_t _nruns = 0;
   uint32_t _run_start = kOutsideValue;
-  bool _continues = false;
-  bool _store_pending = false;
 };
 
 }  // namespace irs

@@ -71,6 +71,13 @@ class PipelineTokenizer final : public Tokenizer, private util::Noncopyable {
   void Fill(const duckdb::UnifiedVectorFormat& fmt, uint32_t count,
             doc_id_t first_doc, TokenSink& sink, FillCtx ctx) final;
 
+  void FillRow(std::span<const duckdb::string_t> values, doc_id_t doc,
+               TokenSink& sink, FillCtx ctx) final {
+    for (const auto& value : values) {
+      Fill(value, doc, sink, ctx);
+    }
+  }
+
   void Bind(duckdb::ClientContext& ctx) final {
     for (auto& sub : _pipeline) {
       sub->Bind(ctx);

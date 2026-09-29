@@ -85,10 +85,20 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   auto& ngram() noexcept { return _ngram; }
 
  private:
+  friend class TypedTokenizer<WildcardTokenizer>;
+
+  void BeginRow() noexcept { _terms.clear(); }
+
+  template<TokenLayout Layout, bool KnownAscii>
+  bool AppendValue(duckdb::string_t value, TokenSink& sink);
+
+  void EndRow(TokenSink& sink) { StoreTerms(sink); }
+
   template<TokenLayout Layout>
   void EmitEncoded(TokenSink& sink, size_t from, bool ascii);
   template<bool Identity, TokenLayout Layout>
   void EmitTerms(TokenSink& sink, size_t from);
+  void StoreTerms(TokenSink& sink);
   template<bool Identity, TokenLayout Layout>
   void EmitTermGrams(TokenSink& sink, const byte_type* term, uint32_t size);
 

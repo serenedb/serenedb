@@ -110,20 +110,24 @@ std::tuple<bool> WildcardTokenizer::PrepareBatch(BlockTraits traits) {
 }
 
 template<TokenLayout Layout, bool KnownAscii>
-bool WildcardTokenizer::DoFill(duckdb::string_t raw, TokenSink& out) {
-  if (!out.ContinuesDoc()) {
-    _terms.clear();
-  }
+bool WildcardTokenizer::AppendValue(duckdb::string_t raw, TokenSink& out) {
   auto& consumer = _sub_sink->consumer;
   consumer.track_ascii = !(KnownAscii && _base_stable);
   if (!_sub_sink->analyzer.Analyze(*_analyzer, raw, consumer,
                                    BlockTraits{.ascii = KnownAscii})) {
-    if (!_terms.empty()) {
-      out.Store(_terms);
-    }
     return false;
   }
   EmitEncoded<Layout>(out, consumer.from, consumer.ascii);
+  return true;
+}
+
+template<TokenLayout Layout, bool KnownAscii>
+bool WildcardTokenizer::DoFill(duckdb::string_t raw, TokenSink& out) {
+  _terms.clear();
+  if (!AppendValue<Layout, KnownAscii>(raw, out)) {
+    return false;
+  }
+  StoreTerms(out);
   return true;
 }
 
@@ -131,10 +135,7 @@ bool WildcardTokenizer::FillTokens(std::span<const duckdb::string_t> tokens,
                                    TokenSink& sink, FillCtx ctx) {
   return DispatchFill(*this, ctx.layout, ctx.traits,
                       [&](auto layout_tag, auto ascii_tag) IRS_FORCE_INLINE {
-                        if (!sink.ContinuesDoc()) {
-                          _terms.clear();
-                        }
-                        const auto from = _terms.size();
+                        _terms.clear();
                         bool ascii = true;
                         for (const auto& term : tokens) {
                           AppendEncodedTerm(_terms, term);
@@ -143,22 +144,25 @@ bool WildcardTokenizer::FillTokens(std::span<const duckdb::string_t> tokens,
                                                term.GetData(), term.GetSize());
                           }
                         }
-                        EmitEncoded<layout_tag()>(sink, from, ascii);
+                        EmitEncoded<layout_tag()>(sink, 0, ascii);
+                        StoreTerms(sink);
                         return true;
                       });
 }
 
 template<TokenLayout Layout>
 void WildcardTokenizer::EmitEncoded(TokenSink& sink, size_t from, bool ascii) {
-  if (_terms.empty()) {
-    return;
-  }
   if (ascii) {
     EmitTerms<true, Layout>(sink, from);
   } else {
     EmitTerms<false, Layout>(sink, from);
   }
-  sink.Store(_terms);
+}
+
+void WildcardTokenizer::StoreTerms(TokenSink& sink) {
+  if (!_terms.empty()) {
+    sink.Store(_terms);
+  }
 }
 
 template<bool Identity, TokenLayout Layout>

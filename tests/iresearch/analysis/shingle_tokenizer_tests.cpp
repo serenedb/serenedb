@@ -267,28 +267,26 @@ class EmitThenFailTokenizer final
   }
 };
 
-using DocValues = std::vector<std::pair<irs::doc_id_t, std::string>>;
-using DocStore = std::pair<irs::doc_id_t, std::vector<std::string>>;
-
-struct DocFill {
+struct RowFill {
   std::vector<std::pair<std::string, uint32_t>> tokens;
-  std::vector<DocStore> stores;
+  std::vector<std::pair<irs::doc_id_t, irs::bstring>> stores;
 };
 
 class StoreCalls final : public irs::StoreSink {
  public:
-  explicit StoreCalls(DocFill& out) noexcept : _out{&out} {}
+  explicit StoreCalls(RowFill& out) noexcept : _out{&out} {}
 
   void OnStore(irs::doc_id_t doc, irs::bytes_view blob) final {
-    _out->stores.emplace_back(doc, DecodeStore(blob));
+    _out->stores.emplace_back(doc, irs::bstring{blob});
   }
 
  private:
-  DocFill* _out;
+  RowFill* _out;
 };
 
-DocFill FillDocs(ShingleTokenizer& analyzer, const DocValues& values) {
-  DocFill out;
+template<typename Fill>
+RowFill CollectFill(Fill&& fill) {
+  RowFill out;
   const auto collect = [&](irs::TokenBatch& batch,
                            std::span<const irs::DocRun> runs) {
     uint32_t tok = 0;
@@ -303,20 +301,39 @@ DocFill FillDocs(ShingleTokenizer& analyzer, const DocValues& values) {
   tests::FnTokenSink sink{irs::TokenLayout::TermsPos, collect};
   StoreCalls store{out};
   sink.writer.Bind(sink, &store);
-  for (const auto& [doc, value] : values) {
-    analyzer.Fill(tests::ToStringT(value), doc, sink.writer, {sink.layout});
-  }
+  fill(sink.writer, sink.layout);
   sink.writer.Finish();
   return out;
 }
 
-DocValues OneDocEach(const DocValues& values) {
-  DocValues out;
-  irs::doc_id_t doc = irs::doc_limits::min();
-  for (const auto& entry : values) {
-    out.emplace_back(doc++, entry.second);
+void AssertRowFillMatchesPerValue(ShingleTokenizer& analyzer,
+                                  const std::vector<std::string>& values,
+                                  const std::vector<std::string>& row_store) {
+  std::vector<duckdb::string_t> vals;
+  for (const auto& v : values) {
+    vals.push_back(tests::ToStringT(v));
   }
-  return out;
+  constexpr irs::doc_id_t kDoc = 7;
+  const auto per_value =
+    CollectFill([&](irs::TokenSink& w, irs::TokenLayout layout) {
+      for (const auto& v : vals) {
+        analyzer.Fill(v, kDoc, w, {layout});
+      }
+    });
+  const auto row = CollectFill([&](irs::TokenSink& w, irs::TokenLayout layout) {
+    analyzer.FillRow(vals, kDoc, w, {layout});
+  });
+  EXPECT_EQ(per_value.tokens, row.tokens);
+
+  irs::bstring joined;
+  for (const auto& [doc, blob] : per_value.stores) {
+    EXPECT_EQ(kDoc, doc);
+    joined += blob;
+  }
+  ASSERT_EQ(1U, row.stores.size());
+  EXPECT_EQ(kDoc, row.stores.front().first);
+  EXPECT_EQ(joined, row.stores.front().second);
+  EXPECT_EQ(row_store, DecodeStore(row.stores.front().second));
 }
 
 }  // namespace
@@ -820,53 +837,50 @@ TEST(ShingleTokenizerTest, failed_base_fill_does_not_leak_into_next_value) {
   EXPECT_EQ(expected, Emit(analyzer, "w1 w2 w3"));
 }
 
-TEST(ShingleTokenizerTest, each_doc_stores_its_own_stream) {
-  auto analyzer = MakeAnalyzer(2, 2, true);
-  const auto got = FillDocs(analyzer, {{1, "a b"}, {2, ""}, {3, "c"}});
-  const std::vector<DocStore> expected{{1, {"a", "b"}}, {2, {}}, {3, {"c"}}};
-  EXPECT_EQ(expected, got.stores);
-}
-
-TEST(ShingleTokenizerTest, fills_of_one_doc_store_one_stream) {
+TEST(ShingleTokenizerTest, fill_row_stores_the_whole_row_once) {
   auto analyzer = MakeAnalyzer(2, 3, true);
-  const DocValues values{{7, "quick brown fox"},
-                         {7, ""},
-                         {7, "lonely"},
-                         {7, "a b c d"},
-                         {8, "one two"}};
-  const auto got = FillDocs(analyzer, values);
-  EXPECT_EQ(FillDocs(analyzer, OneDocEach(values)).tokens, got.tokens);
-  const std::vector<DocStore> expected{
-    {7, {"quick", "brown", "fox", "lonely", "a", "b", "c", "d"}},
-    {8, {"one", "two"}}};
-  EXPECT_EQ(expected, got.stores);
+  AssertRowFillMatchesPerValue(
+    analyzer, {"quick brown fox", "", "lonely", "a b c d"},
+    {"quick", "brown", "fox", "lonely", "a", "b", "c", "d"});
 }
 
-TEST(ShingleTokenizerTest, fills_of_one_doc_keep_fillers_per_value) {
+TEST(ShingleTokenizerTest, fill_row_keeps_fillers_per_element) {
   ShingleTokenizer analyzer{std::make_unique<StopwordTokenizer>(),
                             {
                               .min_shingle_size = 2,
                               .max_shingle_size = 2,
                               .output_unigrams = true,
                             }};
-  const auto got = FillDocs(analyzer, {{7, "quick the brown"}, {7, "the fox"}});
-  const std::vector<DocStore> expected{
-    {7, {"quick", "_", "brown", "_", "fox"}}};
-  EXPECT_EQ(expected, got.stores);
+  AssertRowFillMatchesPerValue(analyzer, {"quick the brown", "the fox"},
+                               {"quick", "_", "brown", "_", "fox"});
 }
 
-TEST(ShingleTokenizerTest, failed_fill_keeps_the_doc_stream) {
+TEST(ShingleTokenizerTest, fill_row_drops_a_failed_element) {
   ShingleTokenizer analyzer{std::make_unique<EmitThenFailTokenizer>(),
                             {
                               .min_shingle_size = 2,
                               .max_shingle_size = 2,
                               .output_unigrams = true,
                             }};
-  const DocValues values{{3, "w1 w2"}, {3, "poison"}, {3, "w3"}};
-  const auto got = FillDocs(analyzer, values);
-  EXPECT_EQ(FillDocs(analyzer, OneDocEach(values)).tokens, got.tokens);
-  const std::vector<DocStore> expected{{3, {"w1", "w2", "w3"}}};
-  EXPECT_EQ(expected, got.stores);
+  AssertRowFillMatchesPerValue(analyzer, {"w1 w2", "poison", "w3"},
+                               {"w1", "w2", "w3"});
+}
+
+TEST(ShingleTokenizerTest, fill_row_without_store_tokens_stores_nothing) {
+  ShingleTokenizer analyzer{std::make_unique<WhitespaceTokenizer>(),
+                            {
+                              .min_shingle_size = 2,
+                              .max_shingle_size = 2,
+                              .output_unigrams = true,
+                              .store_tokens = false,
+                            }};
+  const std::vector<duckdb::string_t> vals{tests::ToStringT("quick brown"),
+                                           tests::ToStringT("fox")};
+  const auto row = CollectFill([&](irs::TokenSink& w, irs::TokenLayout layout) {
+    analyzer.FillRow(vals, 1, w, {layout});
+  });
+  EXPECT_FALSE(row.tokens.empty());
+  EXPECT_TRUE(row.stores.empty());
 }
 
 TEST(ShingleTokenizerTest, memory_usage_accounts_scratch) {

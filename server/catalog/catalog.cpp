@@ -85,7 +85,7 @@
 namespace sdb::catalog {
 namespace {
 
-constexpr uint64_t kPkSequenceCache = 65536;
+constexpr uint64_t kPkSequenceCache = uint64_t{1} << 20;
 
 }  // namespace
 
@@ -354,7 +354,10 @@ duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   return {};
 }
 
-duckdb::optional_ptr<duckdb::WriteAheadLog> SereneDBCatalog::CatalogLog() {
+duckdb::shared_ptr<duckdb::WriteAheadLog> SereneDBCatalog::CatalogLog() {
+  if (_detached.load(std::memory_order_acquire)) {
+    return nullptr;
+  }
   return ClusterOf(GetDatabase()).CatalogLog();
 }
 
@@ -380,6 +383,7 @@ void SereneDBCatalog::Initialize(bool load_builtin) {
 }
 
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
+  _detached.store(true, std::memory_order_release);
   std::vector<duckdb::Identifier> servers;
   GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)
     .Scan(

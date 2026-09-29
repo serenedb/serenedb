@@ -274,7 +274,7 @@ for shape in ${SHAPES}; do
 			if ! psql "${CONN}" -X -q -v ON_ERROR_STOP=1 \
 				-c "SET force_compression='dict_fsst';" \
 				-c "SET force_dict_fsst_mode='${mode}';" \
-				-c "ATTACH '${db_path}' AS ${alias} (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');" \
+				-c "ATTACH '${db_path}' AS ${alias} (TYPE duckdb, STORAGE_VERSION 'serenedb_latest');" \
 				>/dev/null 2>&1; then
 				status="attach_failed"
 				break

@@ -76,7 +76,35 @@ query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT nextval('cache_seq');
 ----
 nextval
-102
+133
+
+connection after_cache
+query ok
+SELECT nextval('cache_seq');
+----
+nextval
+134
+
+connection other_session
+query ok
+SELECT nextval('cache_seq');
+----
+nextval
+233
+
+connection other_session
+query ok
+SELECT currval('cache_seq');
+----
+currval
+233
+
+connection after_cache
+query ok
+SELECT currval('cache_seq');
+----
+currval
+134
 
 connection after_cache
 query ok

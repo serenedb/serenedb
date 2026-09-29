@@ -81,13 +81,13 @@ Using this sequence in an `INSERT` command:
 
 ### Selecting the Current Value
 
-You may also view the current number from the sequence. Note that the `nextval` function must have already been called before calling `currval`, otherwise a Serialization Error (`sequence is not yet defined in this session`) will be thrown.
+You may also view the current number from the sequence. `currval` returns the value `nextval` most recently returned in the current session, so the `nextval` function must have already been called in this session before calling `currval`, otherwise a Serialization Error (`sequence is not yet defined in this session`) will be thrown.
 
 <SqlLogicTest id="sql/statements/create_sequence/currval/example_015" />
 
 ### Caching Values
 
-`CACHE` makes a sequence reserve that many values at a time, so a busy sequence syncs its reservation once per block instead of every 32 values:
+`CACHE` makes each session take that many values at a time and hand them out from memory, as PostgreSQL does:
 
 <SqlLogicTest id="sql/statements/create_sequence/cache/example_019" />
 
@@ -105,7 +105,7 @@ After a sequence is created, you use the function `nextval` to operate on the se
 
 | Name                  | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | :-------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cache`               | The optional clause `CACHE cache` specifies how many values the sequence reserves at a time. The minimum and default value is 1. Unlike PostgreSQL, where each session caches its own block, the block is shared, so values are still handed out in order across sessions. |
+| `cache`               | The optional clause `CACHE cache` specifies how many sequence numbers each session takes at a time and keeps in memory for faster access. The minimum and default value is 1 (one value at a time, no cache). As in PostgreSQL, the cache belongs to the session: with a cache larger than 1, values handed out by different sessions interleave, and the values a session took but did not use are lost when it disconnects. |
 | `CYCLE` or `NO CYCLE` | The `CYCLE` option allows the sequence to wrap around when the `maxvalue` or `minvalue` has been reached by an ascending or descending sequence respectively. If the limit is reached, the next number generated will be the `minvalue` or `maxvalue`, respectively. If `NO CYCLE` is specified, any calls to `nextval` after the sequence has reached its maximum value will return an error. If neither `CYCLE` nor `NO CYCLE` are specified, `NO CYCLE` is the default. |
 | `increment`           | The optional clause `INCREMENT BY increment` specifies which value is added to the current sequence value to create a new value. A positive value will make an ascending sequence, a negative one a descending sequence. The default value is 1.                                                                                                                                                                                                                           |
 | `maxvalue`            | The optional clause `MAXVALUE maxvalue` determines the maximum value for the sequence. If this clause is not supplied or `NO MAXVALUE` is specified, then default values will be used. The defaults are 2^63 - 1 and -1 for ascending and descending sequences, respectively.                                                                                                                                                                                              |
@@ -120,7 +120,7 @@ Sequences are based on `BIGINT` arithmetic, so the range cannot exceed the range
 
 ## Limitations
 
-A sequence makes its values durable ahead of handing them out, 32 steps at a time (or `CACHE` steps, when that is larger), as PostgreSQL does. After a crash, `nextval` resumes past the last durable value, so up to that many values can be skipped, but no value is handed out twice. `setval` is durable when it returns.
+As in PostgreSQL, a sequence is made durable 32 values ahead of the values sessions have taken: the commit of a transaction whose values go past that point first writes the next position. A committed value is never handed out twice. After a crash, a sequence resumes after its last durable position, so up to 32 values, plus the values sessions had cached, can be skipped, and a value drawn by a transaction that never committed can be handed out again. `setval` is durable when it returns.
 
 When a table column uses a sequence as its `DEFAULT`, the column keeps a dependency on that sequence. The default can be changed with `ALTER TABLE ... ALTER COLUMN ... SET DEFAULT` — here it is reset to `NULL`, so subsequent rows no longer draw from the sequence:
 

@@ -95,6 +95,14 @@ void ClusterCatalog::OnCatalogLogDecided() {
   SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
 }
 
+void ClusterCatalog::BeginCatalogLogCommit() {
+  _commits_in_flight.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void ClusterCatalog::EndCatalogLogCommit() {
+  _commits_in_flight.fetch_sub(1, std::memory_order_acq_rel);
+}
+
 void ClusterCatalog::MaybeCompactCatalogLog() {
   if (!_compactable || !_catalog_log) {
     return;
@@ -109,7 +117,8 @@ void ClusterCatalog::MaybeCompactCatalogLog() {
     return;
   }
   auto lock = storage.GetWALLock();
-  if (storage.GetWALSize() < threshold) {
+  if (storage.GetWALSize() < threshold ||
+      _commits_in_flight.load(std::memory_order_acquire) > 0) {
     return;
   }
   try {
@@ -174,7 +183,7 @@ void ClusterCatalog::CompactCatalogLog() {
     size = rewrite.GetTotalWritten();
   }
   fs.MoveFile(rewrite_path, path);
-  _catalog_log = duckdb::make_uniq<duckdb::WriteAheadLog>(
+  _catalog_log = duckdb::make_shared_ptr<duckdb::WriteAheadLog>(
     storage, path, size, duckdb::WALInitState::UNINITIALIZED);
   _live_bytes = size;
 }

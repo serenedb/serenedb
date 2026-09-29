@@ -26,7 +26,6 @@
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/serialization.hpp>
 #include <iresearch/utils/serializer.hpp>
 #include <string>
 #include <string_view>
@@ -36,7 +35,7 @@ namespace sdb::catalog::persistence {
 template<typename T>
 std::string Pack(const T& value) {
   duckdb::MemoryStream stream;
-  duckdb::BinarySerializer serializer{stream, duckdb::VersionStorageOptions()};
+  duckdb::BinarySerializer serializer{stream};
   irs::utils::WriteTuple(serializer, value);
   return std::string{reinterpret_cast<const char*>(stream.GetData()),
                      stream.GetPosition()};

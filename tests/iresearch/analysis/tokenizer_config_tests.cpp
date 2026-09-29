@@ -27,7 +27,6 @@
 #include <functional>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <iresearch/utils/serialization.hpp>
 #include <string>
 #include <vector>
 
@@ -308,7 +307,7 @@ namespace {
 
 std::string Pack(const Cfg& cfg) {
   duckdb::MemoryStream stream;
-  duckdb::BinarySerializer serializer{stream, duckdb::VersionStorageOptions()};
+  duckdb::BinarySerializer serializer{stream};
   irs::utils::WriteTuple(serializer, cfg);
   return std::string{reinterpret_cast<const char*>(stream.GetData()),
                      stream.GetPosition()};

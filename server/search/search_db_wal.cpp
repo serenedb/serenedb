@@ -39,7 +39,6 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/serialization.hpp>
 #include <iresearch/utils/serializer.hpp>
 #include <limits>
 #include <string>
@@ -293,8 +292,7 @@ void WriteOp(duckdb::BinarySerializer& out, const SearchDbWal::Op& op,
       }
       data.Rewind();
       {
-        duckdb::BinarySerializer collection{data,
-                                            duckdb::VersionStorageOptions()};
+        duckdb::BinarySerializer collection{data};
         collection.Begin();
         op.inline_data->Serialize(collection);
         collection.End();
@@ -396,7 +394,7 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
   duckdb::MemoryStream payload;
   // Reused inline-CDC scratch across every INLINE op (Rewind keeps the buffer).
   duckdb::MemoryStream tmp;
-  duckdb::BinarySerializer record{payload, duckdb::VersionStorageOptions()};
+  duckdb::BinarySerializer record{payload};
   record.Begin();
   record.WriteProperty<uint64_t>(kRecordTick, "tick", tick);
   record.WriteList(

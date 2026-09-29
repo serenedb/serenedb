@@ -25,13 +25,13 @@
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/storage/storage_info.hpp>
 
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/log.hpp"
-#include "iresearch/utils/serialization.hpp"
 
 namespace irs {
 namespace {

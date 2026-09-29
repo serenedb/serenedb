@@ -27,7 +27,6 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
-#include <iresearch/utils/serialization.hpp>
 #include <iresearch/utils/serializer.hpp>
 #include <limits>
 #include <list>
@@ -51,7 +50,7 @@ template<typename T, typename Arg = irs::utils::detail::Empty>
 void RoundTrip(const T& in, const Arg& arg = {}) {
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+    duckdb::BinarySerializer sink{stream};
     WriteTuple(sink, in, arg);
   }
   stream.Rewind();
@@ -67,7 +66,7 @@ template<typename Target, typename Wire>
 std::string ReadError(const Wire& wire) {
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+    duckdb::BinarySerializer sink{stream};
     WriteTuple(sink, wire);
   }
   stream.Rewind();
@@ -218,7 +217,7 @@ TYPED_TEST(BinPrim, BareRoundTrip) {
   for (TypeParam v : Samples<TypeParam>()) {
     duckdb::MemoryStream stream;
     {
-      duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+      duckdb::BinarySerializer sink{stream};
       WriteTuple(sink, v);
     }
     stream.Rewind();
@@ -449,7 +448,7 @@ template<typename Target, typename Wire>
 Target ReadAs(const Wire& wire) {
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+    duckdb::BinarySerializer sink{stream};
     WriteTuple(sink, wire);
   }
   stream.Rewind();
@@ -462,7 +461,7 @@ Target ReadAs(const Wire& wire) {
 template<typename T>
 duckdb::idx_t SerializedSize(const T& value) {
   duckdb::MemoryStream stream;
-  duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+  duckdb::BinarySerializer sink{stream};
   WriteTuple(sink, value);
   return stream.GetPosition();
 }
@@ -528,7 +527,7 @@ TEST(BinFields, deleted_field_is_not_written) {
 TEST(BinFields, missing_fields_reset_a_reused_value) {
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+    duckdb::BinarySerializer sink{stream};
     WriteTuple(sink, F1{.a = 1});
   }
   stream.Rewind();

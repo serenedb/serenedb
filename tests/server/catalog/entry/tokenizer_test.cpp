@@ -23,7 +23,6 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
-#include <iresearch/utils/serialization.hpp>
 #include <iresearch/utils/serializer.hpp>
 #include <string>
 #include <variant>
@@ -72,7 +71,7 @@ struct ConfigWith {
 template<typename Config>
 std::string PackAs(const Config& config) {
   duckdb::MemoryStream stream;
-  duckdb::BinarySerializer serializer{stream, duckdb::VersionStorageOptions()};
+  duckdb::BinarySerializer serializer{stream};
   irs::utils::WriteTuple(serializer, config);
   return std::string{reinterpret_cast<const char*>(stream.GetData()),
                      stream.GetPosition()};

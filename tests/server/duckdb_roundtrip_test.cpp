@@ -27,7 +27,6 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
-#include <iresearch/utils/serialization.hpp>
 #include <iresearch/utils/serializer.hpp>
 #include <list>
 #include <magic_enum/magic_enum.hpp>
@@ -51,7 +50,7 @@ template<typename T, typename Arg = irs::utils::detail::Empty>
 void RoundTrip(const T& in, const Arg& arg = {}) {
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+    duckdb::BinarySerializer sink{stream};
     irs::utils::WriteTuple(sink, in, arg);
   }
   stream.Rewind();
@@ -67,7 +66,7 @@ template<typename T, typename Arg = irs::utils::detail::Empty>
 void RoundTripInto(const T& in, T& out, const Arg& arg = {}) {
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+    duckdb::BinarySerializer sink{stream};
     irs::utils::WriteTuple(sink, in, arg);
   }
   stream.Rewind();
@@ -350,7 +349,7 @@ TEST(DuckRoundTrip, write_invalid_enum_throws) {
     MyIntEnum v{};
   };
   duckdb::MemoryStream stream;
-  duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+  duckdb::BinarySerializer sink{stream};
   EXPECT_ANY_THROW(
     irs::utils::WriteTuple(sink, EnumField{static_cast<MyIntEnum>(999)}));
 }
@@ -439,7 +438,7 @@ TEST(DuckRoundTrip, narrow_payload_reads_defaults) {
 
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+    duckdb::BinarySerializer sink{stream};
     irs::utils::WriteTuple(sink, Narrow{.i = 42});
   }
   stream.Rewind();
@@ -449,7 +448,7 @@ TEST(DuckRoundTrip, narrow_payload_reads_defaults) {
 
   duckdb::MemoryStream wide;
   {
-    duckdb::BinarySerializer sink{wide, duckdb::VersionStorageOptions()};
+    duckdb::BinarySerializer sink{wide};
     irs::utils::WriteTuple(sink, Wide{.i = 42, .s = "new"});
   }
   wide.Rewind();
@@ -464,7 +463,7 @@ template<typename Dst, typename Src>
 std::string ReadTupleError(const Src& in) {
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+    duckdb::BinarySerializer sink{stream};
     irs::utils::WriteTuple(sink, in);
   }
   stream.Rewind();

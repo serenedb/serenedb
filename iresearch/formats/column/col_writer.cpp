@@ -37,7 +37,6 @@
 #include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
-#include "iresearch/utils/serialization.hpp"
 
 namespace irs {
 namespace {

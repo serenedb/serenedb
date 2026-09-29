@@ -21,19 +21,10 @@
 #pragma once
 
 #include <cstdint>
-#include <duckdb/common/serializer/serializer.hpp>
-#include <duckdb/common/storage_compatibility.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <string_view>
 
 namespace duckdb {
-
-inline SerializationOptions VersionStorageOptions() {
-  SerializationOptions opts;
-  opts.storage_compatibility =
-    StorageCompatibility::FromIndex(StorageVersion::SERENEDB_LATEST);
-  return opts;
-}
 
 inline std::string_view StorageVersionError(uint64_t version) {
   if (version > static_cast<uint64_t>(SERENEDB_VERSION_UPPER)) {

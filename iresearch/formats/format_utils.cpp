@@ -37,7 +37,6 @@
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/crc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
-#include "iresearch/utils/serialization.hpp"
 
 namespace irs::format_utils {
 namespace {
@@ -48,7 +47,7 @@ constexpr duckdb::field_id_t kFieldMeta = 1;
 void WriteFooterImpl(IndexOutput& out, const FooterWriter* write) {
   const uint32_t data_crc32c = out.Checksum();
   duckdb::MemoryStream footer;
-  duckdb::BinarySerializer serializer{footer, duckdb::VersionStorageOptions()};
+  duckdb::BinarySerializer serializer{footer};
   serializer.Begin();
   serializer.WritePropertyWithDefault<uint32_t>(kFieldDataCrc32c, "data_crc32c",
                                                 data_crc32c, 0);

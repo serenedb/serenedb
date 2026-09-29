@@ -26,6 +26,7 @@
 
 #include <string_view>
 
+#include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
@@ -545,7 +546,7 @@ struct FormatTraits128 {
       } break;
 
       case de_streamvbyte1234: {
-        const auto* const data = ReadDataDelta(type, in, buf);
+        const auto* const data = ReadDataPaddedDelta(type, in, buf);
         streamvbyte_decode(data, begin, len);
       } break;
       // case de_for_streamvbyte1234: {
@@ -553,7 +554,7 @@ struct FormatTraits128 {
       //   streamvbyte_for_decode(data, begin, len, prev);
       // } break;
       case de_delta_streamvbyte1234: {
-        const auto* const data = ReadDataDelta(type, in, buf);
+        const auto* const data = ReadDataPaddedDelta(type, in, buf);
         streamvbyte_delta_decode(data, begin, len, prev);
       } break;
 
@@ -651,7 +652,7 @@ struct FormatTraits128 {
       } break;
 
       case e_streamvbyte1234: {
-        const auto* const data = ReadData(type, in, buf);
+        const auto* const data = ReadDataPadded(type, in, buf);
         streamvbyte_decode(data, begin, len);
       } break;
 
@@ -1090,6 +1091,46 @@ struct FormatTraits128 {
     Encoding type, InputType& in, uint32_t* IRS_RESTRICT buf) {
     const auto size = Size(0, type, in);
     return ReadDataImpl(size, in, buf);
+  }
+
+  // streamvbyte's decoders load whole SIMD vectors, so they read (without
+  // using) up to STREAMVBYTE_PADDING bytes past the data they decode. That is
+  // documented behaviour and the caller has to keep those bytes readable, so
+  // only take a zero-copy pointer when the input still has them behind it.
+  //
+  // An input that hands out a pointer into a smaller window than the file --
+  // a memory-file bucket, a read buffer -- refuses, and we copy instead;
+  // kEncBufSize gives `buf` the same slack.
+  template<typename InputType>
+  IRS_FORCE_INLINE static const byte_type* ReadDataPaddedImpl(
+    uint32_t size, InputType& in, uint32_t* IRS_RESTRICT buf) {
+    if constexpr (InputType::kVolatileAlways) {
+      // The whole file is in memory and every index file ends with a footer of
+      // exactly STREAMVBYTE_PADDING bytes, so the padding is always in bounds.
+      static_assert(format_utils::kFooterLen >= STREAMVBYTE_PADDING);
+      SDB_ASSERT(in.Length() - in.Position() >= size + STREAMVBYTE_PADDING);
+      return in.ReadVolatile(size);
+    } else {
+      const auto pos = in.Position();
+      if (const auto* data = in.ReadVolatile(size + STREAMVBYTE_PADDING)) {
+        in.Seek(pos + size);
+        return data;
+      }
+      in.ReadData(reinterpret_cast<byte_type*>(buf), size);
+      return reinterpret_cast<byte_type*>(buf);
+    }
+  }
+
+  template<typename InputType>
+  IRS_FORCE_INLINE static const byte_type* ReadDataPaddedDelta(
+    DeltaEncoding type, InputType& in, uint32_t* IRS_RESTRICT buf) {
+    return ReadDataPaddedImpl(SizeDelta(type, in), in, buf);
+  }
+
+  template<typename InputType>
+  IRS_FORCE_INLINE static const byte_type* ReadDataPadded(
+    Encoding type, InputType& in, uint32_t* IRS_RESTRICT buf) {
+    return ReadDataPaddedImpl(Size(0, type, in), in, buf);
   }
 };
 

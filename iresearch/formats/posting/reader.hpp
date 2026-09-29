@@ -210,7 +210,7 @@ class PostingsReaderImpl final : public PostingsReaderBase {
 };
 
 template<typename FieldTraits>
-void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, doc_id_t* docs,
+void BitUnionImpl(IndexInput& doc_in, doc_id_t docs_count, doc_id_t* docs,
                   uint32_t* enc_buf, uint64_t* words) {
   auto read_leaf = [&]<size_t N>(uint32_t len, doc_id_t prev) IRS_FORCE_INLINE {
     const auto leaf =
@@ -252,7 +252,7 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
   const IndexFeatures field_features, TermProvider provider, uint64_t* set,
   bool has_score_bounds) {
   constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
-  uint32_t enc_buf[doc_limits::kBlockSize];
+  uint32_t enc_buf[kEncBufSize];
   doc_id_t docs[doc_limits::kBlockSize
 #ifdef __AVX2__
                 + 8  // placeholder for bitset materialize

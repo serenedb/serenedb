@@ -22,6 +22,7 @@
 
 #include <type_traits>
 
+#include "iresearch/formats/posting/common.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -29,7 +30,7 @@
 namespace irs::detail {
 
 struct ABSL_CACHELINE_ALIGNED EncBuf {
-  uint32_t data[doc_limits::kBlockSize];
+  uint32_t data[kEncBufSize];
 };
 
 struct ABSL_CACHELINE_ALIGNED FreqBuf {

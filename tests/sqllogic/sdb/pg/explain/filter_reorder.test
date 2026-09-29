@@ -1,0 +1,215 @@
+query
+SHOW filter_reorder;
+----
+filter_reorder
+safe
+
+
+statement ok
+CREATE TABLE filter_reorder_t (a INT, b INT, c INT, d INT, s TEXT);
+
+
+statement ok
+INSERT INTO filter_reorder_t SELECT i % 300, i % 7, i % 5, i % 3, (i % 300)::TEXT FROM generate_series(1, 1000) g(i);
+
+
+query
+EXPLAIN SELECT a FROM filter_reorder_t WHERE a <> b AND s::INTEGER <> a AND s || b::TEXT <> reverse(s) AND b <> c AND a::TINYINT <> d AND c <> d;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections: #0                                                                                                                                               │
+│ ~200 rows                                                                                                                                                     │
+╰───────────────────────────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────╯
+╭─ FILTER ──────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────╮
+│ Expression:                                                                                                                                                   │
+│ (a != b) AND (CAST(s AS INTEGER) != a) AND (b != c) AND ((s || CAST(b AS VARCHAR)) != reverse(s)) AND (CAST(CAST(a AS TINYINT) AS INTEGER) != d) AND (c != d) │
+│ ~200 rows                                                                                                                                                     │
+╰───────────────────────────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────╮
+│ Table: filter_reorder_t                                                                                                                                       │
+│ Type: Sequential Scan                                                                                                                                         │
+│ Projections: a, b, s, c, d                                                                                                                                    │
+│ ~1,000 rows                                                                                                                                                   │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+statement ok
+SET filter_reorder = 'never';
+
+
+query
+EXPLAIN SELECT a FROM filter_reorder_t WHERE a <> b AND s::INTEGER <> a AND s || b::TEXT <> reverse(s) AND b <> c AND a::TINYINT <> d AND c <> d;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections: #0                                                                                                                                               │
+│ ~200 rows                                                                                                                                                     │
+╰───────────────────────────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────╯
+╭─ FILTER ──────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────╮
+│ Expression:                                                                                                                                                   │
+│ (a != b) AND (CAST(s AS INTEGER) != a) AND ((s || CAST(b AS VARCHAR)) != reverse(s)) AND (b != c) AND (CAST(CAST(a AS TINYINT) AS INTEGER) != d) AND (c != d) │
+│ ~200 rows                                                                                                                                                     │
+╰───────────────────────────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────╮
+│ Table: filter_reorder_t                                                                                                                                       │
+│ Type: Sequential Scan                                                                                                                                         │
+│ Projections: a, b, s, c, d                                                                                                                                    │
+│ ~1,000 rows                                                                                                                                                   │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+statement ok
+SET filter_reorder = 'fast';
+
+
+query
+EXPLAIN SELECT a FROM filter_reorder_t WHERE a <> b AND s::INTEGER <> a AND s || b::TEXT <> reverse(s) AND b <> c AND a::TINYINT <> d AND c <> d;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections: #0                                                                                                                                               │
+│ ~200 rows                                                                                                                                                     │
+╰───────────────────────────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────╯
+╭─ FILTER ──────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────╮
+│ Expression:                                                                                                                                                   │
+│ (a != b) AND (b != c) AND (c != d) AND (CAST(s AS INTEGER) != a) AND ((s || CAST(b AS VARCHAR)) != reverse(s)) AND (CAST(CAST(a AS TINYINT) AS INTEGER) != d) │
+│ ~200 rows                                                                                                                                                     │
+╰───────────────────────────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────╮
+│ Table: filter_reorder_t                                                                                                                                       │
+│ Type: Sequential Scan                                                                                                                                         │
+│ Projections: a, b, s, c, d                                                                                                                                    │
+│ ~1,000 rows                                                                                                                                                   │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+statement ok
+SET filter_reorder = 'always';
+
+
+query
+EXPLAIN SELECT a FROM filter_reorder_t WHERE a <> b AND s::INTEGER <> a AND s || b::TEXT <> reverse(s) AND b <> c AND a::TINYINT <> d AND c <> d;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections: #0                                                                                                                                               │
+│ ~200 rows                                                                                                                                                     │
+╰───────────────────────────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────╯
+╭─ FILTER ──────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────╮
+│ Expression:                                                                                                                                                   │
+│ (a != b) AND (b != c) AND (c != d) AND (CAST(CAST(a AS TINYINT) AS INTEGER) != d) AND (CAST(s AS INTEGER) != a) AND ((s || CAST(b AS VARCHAR)) != reverse(s)) │
+│ ~200 rows                                                                                                                                                     │
+╰───────────────────────────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────╮
+│ Table: filter_reorder_t                                                                                                                                       │
+│ Type: Sequential Scan                                                                                                                                         │
+│ Projections: a, b, s, c, d                                                                                                                                    │
+│ ~1,000 rows                                                                                                                                                   │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+statement error
+SET filter_reorder = 'sometimes';
+----
+db error: ERROR: Enum value: unrecognized value "sometimes" for enum "FilterReorder"
+
+Candidates: "ALWAYS"
+
+
+statement ok
+RESET filter_reorder;
+
+
+statement error
+SELECT count(*) FROM range(1000) WHERE range < 100 AND range::TINYINT < range + 1;
+----
+db error: ERROR: Type INT64 with value 128 can't be cast because the value is out of range for the destination type INT8 when casting from source column range
+
+
+query
+SELECT count(*) FROM filter_reorder_t WHERE length(s) < length(b::TEXT || 'xx') AND a::TINYINT <> d;
+----
+count
+388
+
+
+statement ok
+SET filter_reorder = 'fast';
+
+
+query
+SELECT count(*) FROM range(1000) WHERE range < 100 AND range::TINYINT < range + 1;
+----
+count
+100
+
+
+query
+SELECT count(*) FROM filter_reorder_t WHERE length(s) < length(b::TEXT || 'xx') AND a::TINYINT <> d;
+----
+count
+388
+
+
+statement ok
+SET filter_reorder = 'always';
+
+
+statement error
+SELECT count(*) FROM filter_reorder_t WHERE length(s) < length(b::TEXT || 'xx') AND a::TINYINT <> d;
+----
+db error: ERROR: Type INT32 with value 128 can't be cast because the value is out of range for the destination type INT8 when casting from source column a
+
+
+statement ok
+RESET filter_reorder;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET filter_reorder = 'fast';
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SHOW filter_reorder;
+----
+filter_reorder
+safe
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET LOCAL filter_reorder = 'fast';
+
+
+query
+SELECT count(*) FROM range(1000) WHERE range < 100 AND range::TINYINT < range + 1;
+----
+count
+100
+
+
+statement ok
+COMMIT;
+
+
+query
+SHOW filter_reorder;
+----
+filter_reorder
+safe
+
+
+statement ok
+DROP TABLE filter_reorder_t;

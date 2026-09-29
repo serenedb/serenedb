@@ -25,6 +25,23 @@ In these cases, consider setting the [`preserve_insertion_order` configuration o
 
 This allows the system to re-order any results that do not contain `ORDER BY` clauses, potentially reducing memory usage.
 
+## Filter Conditions That Can Fail
+
+Conditions joined by `AND` are checked one after another, and the rows one condition rejects are never passed to the next, so SereneDB checks the cheapest ones first. Many conditions can raise an error at run time, though: arithmetic, which fails on overflow, a cast that can overflow (such as `BIGINT` to `SMALLINT`), `error()`, or a call to an external service. Moving one of those changes which rows it sees, and so whether the query fails. The `filter_reorder` option sets how far conditions may move around the ones that can fail:
+
+| Value | What moves |
+|---|---|
+| `never` | Nothing moves once any condition can fail. |
+| `safe` (default) | Conditions that can fail stay where they are; the conditions between them are ordered by cost. Errors are raised exactly as with `never`. |
+| `fast` | A condition that cannot fail may also move ahead of the ones that can, but a condition that came before one that can fail stays before it. A row that such a moved condition rejects never reaches the condition that can fail, so an error it would have raised on that row is skipped. |
+| `always` | Everything is ordered by cost, so a condition that can fail may run before the condition that guards it. |
+
+The order the rules start from is not always the written one: a comparison of a column with a constant that is not pushed into the table scan is checked after the other conditions. Set `fast` when a condition that can fail is expensive, so that the cheap conditions shrink the rows it runs on. In this query the cast to `TINYINT` fails from 128 on. With `safe` it runs first and the query fails; with `fast`, `range < 100` runs first:
+
+<SqlLogicTest id="cookbook/performance/how_to_tune_workloads/filter_reorder" />
+
+The option applies to the current session, like other `SET` options.
+
 ## Parallelism (Multi-Core Processing)
 
 ### The Effect of Row Groups on Parallelism
@@ -41,7 +58,7 @@ The [performance considerations when choosing `ROW_GROUP_SIZE` for Parquet files
 
 ### Too Many Threads
 
-Note that in certain cases SereneDB may launch _too many threads_ (e.g., due to HyperThreading), which can lead to slowdowns. In these cases, it’s worth manually limiting the number of threads using [`SET threads = X`](../../configuration/pragmas.md#threads).
+Note that in certain cases SereneDB may launch _too many threads_ (e.g., due to HyperThreading), which can lead to slowdowns. In these cases, it's worth manually limiting the number of threads using [`SET threads = X`](../../configuration/pragmas.md#threads).
 
 ## Larger-than-Memory Workloads (Out-of-Core Processing)
 
@@ -82,7 +99,7 @@ That said, there are some limitations at the moment:
 
 ## Profiling
 
-If your queries are not performing as well as expected, it’s worth studying their query plans:
+If your queries are not performing as well as expected, it's worth studying their query plans:
 
 - Use [`EXPLAIN`](../meta/explain.md) to print the physical query plan without running the query.
 - Use [`EXPLAIN ANALYZE`](./profiling.md#the-explain-analyze-statement) to run and profile the query. This will show the CPU time that each step in the query takes. Note that due to multi-threading, adding up the individual times will be larger than the total query processing time.
@@ -143,4 +160,4 @@ We run this script using three SereneDB prompts:
 | In-memory DB (compressed)   | `serened shell -cmd "ATTACH ':memory:' AS db (COMPRESS); USE db;"` |         0.55 s |
 | Persistent DB (compressed)  | `serened shell tpch-sf30.db`                                       |         0.56 s |
 
-We can observe that the compressed databases are about 8× faster compared to the uncompressed in-memory database.
+We can observe that the compressed databases are about 8x faster compared to the uncompressed in-memory database.

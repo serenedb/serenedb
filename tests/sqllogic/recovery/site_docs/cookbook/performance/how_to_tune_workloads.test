@@ -43,3 +43,16 @@ FROM sdb_external_file_cache();
 
 statement ok
 DETACH IF EXISTS db151;
+
+# DOCS_TEST: filter_reorder
+
+# DOCS_TEST_BODY
+
+statement ok
+SET filter_reorder = 'fast';
+
+query
+SELECT count(*) FROM range(1000) WHERE range < 100 AND range::TINYINT < range + 1;
+----
+count
+100

@@ -154,6 +154,7 @@ external_file_cache_remote_block_size	2097152	Block size in bytes for the extern
 external_threads	0	The number of external threads that work on DuckDB tasks.
 extra_float_digits	1	Sets the number of digits displayed for floating-point values.
 file_search_path	(empty)	A comma separated list of directories to search for input files
+filter_reorder	safe	How far filter reordering may move conjuncts that can throw: 'never' keeps the order once one can throw; 'safe' reorders only between them; 'fast' may move other conjuncts ahead of them, which can skip an error; 'always' orders by cost alone
 force_bitpacking_mode	AUTO	DEBUG SETTING: forces a specific bitpacking mode
 force_column_metadata_reuse	off	Force re-use of row group metadata on a column-level when checkpointing on older storage versions 6 and 7. This breaks storage backward-compatibility with older DuckDB versions.
 force_compression	auto	DEBUG SETTING: forces a specific compression method to be used
@@ -495,6 +496,7 @@ external_file_cache_remote_block_size	2097152	Block size in bytes for the extern
 external_threads	0	The number of external threads that work on DuckDB tasks.
 extra_float_digits	1	Sets the number of digits displayed for floating-point values.
 file_search_path	(empty)	A comma separated list of directories to search for input files
+filter_reorder	safe	How far filter reordering may move conjuncts that can throw: 'never' keeps the order once one can throw; 'safe' reorders only between them; 'fast' may move other conjuncts ahead of them, which can skip an error; 'always' orders by cost alone
 force_bitpacking_mode	AUTO	DEBUG SETTING: forces a specific bitpacking mode
 force_column_metadata_reuse	off	Force re-use of row group metadata on a column-level when checkpointing on older storage versions 6 and 7. This breaks storage backward-compatibility with older DuckDB versions.
 force_compression	auto	DEBUG SETTING: forces a specific compression method to be used

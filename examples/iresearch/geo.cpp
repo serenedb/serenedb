@@ -29,7 +29,6 @@
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/geo_filter.hpp>

@@ -177,6 +177,14 @@ class IndexFieldOptions {
   virtual ColumnOptions GetColumnOptions(field_id id) const = 0;
   virtual field_id GetNormColumnId(field_id id) const = 0;
 
+  ColCodecParams CodecParams(const ColumnOptions& options) const noexcept {
+    auto params = codec_params;
+    if (options.compression_level != 0) {
+      params.compression_level = options.compression_level;
+    }
+    return params;
+  }
+
   // Segment reuse gate: two writes share a segment only if their options are
   // equal (a segment must not mix encodings). Default is pointer identity --
   // COW means an unchanged config is the same object.

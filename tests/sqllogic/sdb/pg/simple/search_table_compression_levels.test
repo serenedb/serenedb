@@ -117,6 +117,50 @@ count
 statement ok
 DROP TABLE lvl_table_default;
 
+# A level named on a column holds through compaction: two columns with the
+# same values at levels 1 and 19 stay apart after their segments merge.
+statement ok
+CREATE TABLE lvl_merge (a INTEGER PRIMARY KEY,
+                        lo TEXT USING COMPRESSION dict_zstd(compression_level = 1),
+                        hi TEXT USING COMPRESSION dict_zstd(compression_level = 19))
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO lvl_merge SELECT a, 'event ' || (a % 3000) || ' completed for user ' || (a % 1000) || ' status ok',
+  'event ' || (a % 3000) || ' completed for user ' || (a % 1000) || ' status ok' FROM range(10000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) lvl_merge;
+
+statement ok
+INSERT INTO lvl_merge SELECT a, 'event ' || (a % 3000) || ' completed for user ' || (a % 1000) || ' status ok',
+  'event ' || (a % 3000) || ' completed for user ' || (a % 1000) || ' status ok' FROM range(10000, 20000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) lvl_merge;
+
+statement ok
+VACUUM (COMPACT_TABLE) lvl_merge;
+
+query
+SELECT count(DISTINCT row_group_id) AS segments,
+       sum(split_part(segment_info, '=', 2)::BIGINT) FILTER (WHERE column_name = 'hi')
+         <> sum(split_part(segment_info, '=', 2)::BIGINT) FILTER (WHERE column_name = 'lo') AS levels_differ
+FROM pragma_storage_info('lvl_merge', include_segment_info = true)
+WHERE column_name IN ('lo', 'hi') AND segment_type <> 'VALIDITY';
+----
+segments	levels_differ
+1	t
+
+query
+SELECT count(*) FROM lvl_merge WHERE lo IS DISTINCT FROM hi OR lo IS DISTINCT FROM 'event ' || (a % 3000) || ' completed for user ' || (a % 1000) || ' status ok';
+----
+count
+0
+
+statement ok
+DROP TABLE lvl_merge;
+
 # INCLUDE columns take the same string form and the same rules. On a search
 # table the index has no store of its own: its codec applies to the table's
 # column and wins over the column's USING COMPRESSION while the index exists.

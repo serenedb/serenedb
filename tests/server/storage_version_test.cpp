@@ -55,10 +55,15 @@ std::string Scalar(duckdb::Connection& con, const std::string& sql) {
   return result->GetValue(0, 0).ToString();
 }
 
-std::string TaggedWithDefaultVersion(std::string_view database) {
+std::string AttachAtLatest(const std::string& path) {
+  return absl::StrCat("ATTACH '", path,
+                      "' AS f (STORAGE_VERSION 'serenedb_latest')");
+}
+
+std::string TaggedWithLatestVersion(std::string_view database) {
   return absl::StrCat("SELECT tags::VARCHAR LIKE '%",
                       duckdb::StorageVersionInfo::GetStorageVersionString(
-                        duckdb::SERENEDB_VERSION_DEFAULT),
+                        duckdb::StorageVersion::SERENEDB_LATEST),
                       "%' FROM duckdb_databases() WHERE database_name = '",
                       database, "'");
 }
@@ -145,31 +150,25 @@ TEST_F(StorageVersionTest, SereneDBFileRoundTrips) {
   const auto path = File("f.db");
   duckdb::DuckDB db{nullptr};
   duckdb::Connection con{db};
-  ASSERT_EQ(
-    Exec(con, absl::StrCat("ATTACH '", path,
-                           "' AS f (STORAGE_VERSION 'serenedb_latest')")),
-    "");
+  ASSERT_EQ(Exec(con, AttachAtLatest(path)), "");
   ASSERT_EQ(Exec(con, "CREATE TABLE f.t AS SELECT 42 AS i"), "");
   ASSERT_EQ(Exec(con, "DETACH f"), "");
-  ASSERT_EQ(Exec(con, absl::StrCat("ATTACH '", path, "' AS f")), "");
+  ASSERT_EQ(Exec(con, AttachAtLatest(path)), "");
   EXPECT_EQ(Scalar(con, "SELECT i FROM f.t"), "42");
-  EXPECT_EQ(Scalar(con, TaggedWithDefaultVersion("f")), "true");
+  EXPECT_EQ(Scalar(con, TaggedWithLatestVersion("f")), "true");
 }
 
 TEST_F(StorageVersionTest, NewerSereneDBVersionIsRefused) {
   const auto path = File("newer.db");
   duckdb::DuckDB db{nullptr};
   duckdb::Connection con{db};
-  ASSERT_EQ(
-    Exec(con, absl::StrCat("ATTACH '", path,
-                           "' AS f (STORAGE_VERSION 'serenedb_latest')")),
-    "");
+  ASSERT_EQ(Exec(con, AttachAtLatest(path)), "");
   ASSERT_EQ(Exec(con, "CREATE TABLE f.t AS SELECT 1 AS i"), "");
   ASSERT_EQ(Exec(con, "DETACH f"), "");
   SetStorageVersion(
     path, static_cast<duckdb::StorageVersion>(
             static_cast<uint64_t>(duckdb::SERENEDB_VERSION_UPPER) + 1));
-  const auto error = Exec(con, absl::StrCat("ATTACH '", path, "' AS f"));
+  const auto error = Exec(con, AttachAtLatest(path));
   EXPECT_NE(error.find("newer than this version of SereneDB supports"),
             std::string::npos)
     << error;
@@ -182,10 +181,7 @@ TEST_F(StorageVersionTest, IntactWalEntryInAnUnknownLayoutIsAnError) {
     config.options.checkpoint_on_shutdown = false;
     duckdb::DuckDB db{nullptr, &config};
     duckdb::Connection con{db};
-    ASSERT_EQ(
-      Exec(con, absl::StrCat("ATTACH '", path,
-                             "' AS f (STORAGE_VERSION 'serenedb_latest')")),
-      "");
+    ASSERT_EQ(Exec(con, AttachAtLatest(path)), "");
     ASSERT_EQ(Exec(con, "CREATE TABLE f.t (i INTEGER)"), "");
     ASSERT_EQ(Exec(con, "INSERT INTO f.t VALUES (1), (2)"), "");
   }
@@ -203,7 +199,7 @@ TEST_F(StorageVersionTest, IntactWalEntryInAnUnknownLayoutIsAnError) {
 
   duckdb::DuckDB db{nullptr};
   duckdb::Connection con{db};
-  const auto error = Exec(con, absl::StrCat("ATTACH '", path, "' AS f"));
+  const auto error = Exec(con, AttachAtLatest(path));
   EXPECT_NE(error.find("matches its checksum but could not be replayed"),
             std::string::npos)
     << error;
@@ -216,10 +212,7 @@ TEST_F(StorageVersionTest, TornWalTailIsIgnored) {
     config.options.checkpoint_on_shutdown = false;
     duckdb::DuckDB db{nullptr, &config};
     duckdb::Connection con{db};
-    ASSERT_EQ(
-      Exec(con, absl::StrCat("ATTACH '", path,
-                             "' AS f (STORAGE_VERSION 'serenedb_latest')")),
-      "");
+    ASSERT_EQ(Exec(con, AttachAtLatest(path)), "");
     ASSERT_EQ(Exec(con, "CREATE TABLE f.t (i INTEGER)"), "");
     ASSERT_EQ(Exec(con, "INSERT INTO f.t VALUES (1), (2)"), "");
   }
@@ -234,14 +227,13 @@ TEST_F(StorageVersionTest, TornWalTailIsIgnored) {
 
   duckdb::DuckDB db{nullptr};
   duckdb::Connection con{db};
-  ASSERT_EQ(Exec(con, absl::StrCat("ATTACH '", path, "' AS f")), "");
+  ASSERT_EQ(Exec(con, AttachAtLatest(path)), "");
   EXPECT_EQ(Scalar(con, "SELECT count(*) FROM f.t"), "2");
 }
 
-TEST_F(StorageVersionTest, SereneDBStorageRefusesAPlainDuckDBFile) {
+TEST_F(StorageVersionTest, SereneDBAndDuckDBFilesDoNotMix) {
   duckdb::DBConfig config;
-  auto extension =
-    duckdb::make_shared_ptr<sdb::catalog::SereneDBStorageExtension>();
+  auto extension = duckdb::make_shared_ptr<duckdb::StorageExtension>();
   extension->attach = AttachOwned;
   extension->create_transaction_manager = OwnedTransactionManager;
   duckdb::StorageExtension::Register(config, "sdb_owned", std::move(extension));
@@ -276,8 +268,17 @@ TEST_F(StorageVersionTest, SereneDBStorageRefusesAPlainDuckDBFile) {
   ASSERT_EQ(Exec(con, "DETACH o"), "");
   ASSERT_EQ(
     Exec(con, absl::StrCat("ATTACH '", owned, "' AS o (TYPE sdb_owned)")), "");
-  EXPECT_EQ(Scalar(con, TaggedWithDefaultVersion("o")), "true");
+  EXPECT_EQ(Scalar(con, TaggedWithLatestVersion("o")), "true");
   EXPECT_EQ(Scalar(con, "SELECT i FROM o.t"), "8");
+  ASSERT_EQ(Exec(con, "DETACH o"), "");
+
+  for (const auto* options : {"", " (STORAGE_VERSION 'v2.0.0')"}) {
+    const auto refused =
+      Exec(con, absl::StrCat("ATTACH '", owned, "' AS o", options));
+    EXPECT_NE(refused.find("opens only at a SereneDB storage version"),
+              std::string::npos)
+      << refused;
+  }
 }
 
 }  // namespace

@@ -49,12 +49,6 @@ struct DataDirectory final : duckdb::StorageExtensionInfo {
   std::string directory;
 };
 
-class SereneDBStorageExtension final : public duckdb::StorageExtension {
- public:
-  void OnLoadExistingDatabase(duckdb::AttachedDatabase& db,
-                              duckdb::StorageVersion storage_version) final;
-};
-
 void RequestSereneDBStorageVersion(duckdb::AttachOptions& options);
 
 void Attach(duckdb::ClientContext& context, duckdb::AttachInfo& info,

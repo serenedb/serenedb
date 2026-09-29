@@ -84,6 +84,8 @@ SereneDB allows explicitly specifying the storage version. Using this, you can o
 
 This setting specifies the minimum SereneDB version that should be able to read the database file. When database files are written with this option, the resulting files cannot be opened by older SereneDB versions than the specified version. They can be read by the specified version and all newer versions of SereneDB.
 
+SereneDB's own database files use a SereneDB storage version: `serenedb_v1`, or `serenedb_latest` for the newest one. Such a file opens only at a SereneDB storage version, so `ATTACH` without `STORAGE_VERSION`, or with a DuckDB version such as `v2.0.0`, refuses it. A DuckDB database file never opens at a SereneDB storage version.
+
 ## Database Encryption
 
 SereneDB supports database encryption. By default, it uses [AES encryption](https://en.wikipedia.org/wiki/Advanced_Encryption_Standard) with a key length of 256 bits using the recommended [GCM](https://en.wikipedia.org/wiki/Galois/Counter_Mode) mode. The encryption covers the main database file, the write-ahead-log (WAL) file and even temporary files. To attach to an encrypted database, use the `ATTACH` statement with an `ENCRYPTION_KEY`:

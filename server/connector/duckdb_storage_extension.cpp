@@ -88,7 +88,7 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
 
 void RegisterSereneDBStorage(
   duckdb::DBConfig& config, duckdb::shared_ptr<catalog::DataDirectory> layout) {
-  auto extension = duckdb::make_shared_ptr<catalog::SereneDBStorageExtension>();
+  auto extension = duckdb::make_shared_ptr<duckdb::StorageExtension>();
   extension->attach = AttachSereneDB;
   extension->create_transaction_manager = CreateTransactionManager;
   extension->storage_info = std::move(layout);

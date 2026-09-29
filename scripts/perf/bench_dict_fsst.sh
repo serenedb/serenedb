@@ -320,7 +320,7 @@ for shape in ${SHAPES}; do
 				stop_serened
 				start_serened
 				psql "${CONN}" -X -q -v ON_ERROR_STOP=1 \
-					-c "ATTACH '${db_path}' AS ${alias} (TYPE duckdb);" >/dev/null 2>&1
+					-c "ATTACH '${db_path}' AS ${alias} (TYPE duckdb, STORAGE_VERSION 'serenedb_latest');" >/dev/null 2>&1
 			fi
 
 			# Read path 1: full scan materialising every value.

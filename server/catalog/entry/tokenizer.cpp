@@ -42,26 +42,6 @@ irs::analysis::TokenizerConfig UnpackTokenizerConfig(std::string_view name,
     "text search dictionary", name, bytes);
 }
 
-namespace {
-
-irs::analysis::TokenizerConfig WithoutLastOption(
-  const irs::analysis::TokenizerConfig& config) {
-  auto older = irs::analysis::Clone(config);
-  std::visit(
-    [](auto& options) {
-      auto fields = irs::utils::FieldsOf(options);
-      if constexpr (constexpr auto kCount = std::tuple_size_v<decltype(fields)>;
-                    kCount != 0) {
-        auto& last = std::get<kCount - 1>(fields);
-        last = std::remove_cvref_t<decltype(last)>{};
-      }
-    },
-    older.config);
-  return older;
-}
-
-}  // namespace
-
 TokenizerCatalogEntry::TokenizerCatalogEntry(duckdb::Catalog& catalog,
                                              duckdb::SchemaCatalogEntry& schema,
                                              duckdb::CreateTokenizerInfo& info)
@@ -110,7 +90,19 @@ duckdb::unique_ptr<duckdb::CreateInfo> TokenizerCatalogEntry::GetInfo() const {
   info->features = std::to_underlying(GetFeatures().GetIndexFeatures());
   info->config = PackTokenizerConfig(Config());
   SDB_IF_FAILURE("tokenizer_config_without_last_option") {
-    info->config = PackTokenizerConfig(WithoutLastOption(Config()));
+    auto older = irs::analysis::Clone(Config());
+    std::visit(
+      [](auto& options) {
+        auto fields = irs::utils::FieldsOf(options);
+        if constexpr (constexpr auto kCount =
+                        std::tuple_size_v<decltype(fields)>;
+                      kCount != 0) {
+          auto& last = std::get<kCount - 1>(fields);
+          last = std::remove_cvref_t<decltype(last)>{};
+        }
+      },
+      older.config);
+    info->config = PackTokenizerConfig(older);
   }
   info->comment = comment;
   info->tags = tags;

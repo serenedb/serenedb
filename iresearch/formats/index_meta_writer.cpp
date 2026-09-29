@@ -70,7 +70,7 @@ bool IndexMetaWriter::prepare(Directory& dir, IndexMeta& meta,
   format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& meta_out) {
     meta_out.WriteProperty<uint64_t>(
       index_meta::kFieldStorageVersion, "storage_version",
-      static_cast<uint64_t>(duckdb::kIResearchStorageVersion));
+      static_cast<uint64_t>(duckdb::StorageVersion::SERENEDB_LATEST));
     meta_out.WriteProperty<uint64_t>(index_meta::kFieldSegCounter,
                                      "seg_counter", meta.seg_counter);
     meta_out.WriteList(

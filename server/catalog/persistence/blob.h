@@ -36,7 +36,7 @@ namespace sdb::catalog::persistence {
 template<typename T>
 std::string Pack(const T& value) {
   duckdb::MemoryStream stream;
-  duckdb::BinarySerializer serializer{stream, duckdb::DatabaseStorageOptions()};
+  duckdb::BinarySerializer serializer{stream, duckdb::VersionStorageOptions()};
   irs::utils::WriteTuple(serializer, value);
   return std::string{reinterpret_cast<const char*>(stream.GetData()),
                      stream.GetPosition()};

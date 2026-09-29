@@ -308,7 +308,7 @@ namespace {
 
 std::string Pack(const Cfg& cfg) {
   duckdb::MemoryStream stream;
-  duckdb::BinarySerializer serializer{stream, duckdb::DatabaseStorageOptions()};
+  duckdb::BinarySerializer serializer{stream, duckdb::VersionStorageOptions()};
   irs::utils::WriteTuple(serializer, cfg);
   return std::string{reinterpret_cast<const char*>(stream.GetData()),
                      stream.GetPosition()};

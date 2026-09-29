@@ -11625,7 +11625,7 @@ TEST_P(IndexTestCase11, create_over_unreadable_index) {
     irs::format_utils::WriteFooter(*out, [](duckdb::BinarySerializer& meta) {
       meta.WriteProperty<uint64_t>(
         irs::index_meta::kFieldStorageVersion, "storage_version",
-        static_cast<uint64_t>(duckdb::kIResearchStorageVersion) + 1);
+        static_cast<uint64_t>(duckdb::SERENEDB_VERSION_UPPER) + 1);
     });
   }
 

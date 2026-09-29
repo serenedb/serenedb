@@ -81,6 +81,11 @@ DataDirectory::DataDirectory(std::string directory_p)
 
 void SereneDBStorageExtension::OnLoadExistingDatabase(
   duckdb::AttachedDatabase& db, duckdb::StorageVersion storage_version) {
+  static_assert(
+    duckdb::SERENEDB_VERSION_LOWER == duckdb::SERENEDB_VERSION_DEFAULT,
+    "a file below SERENEDB_VERSION_DEFAULT is raised on attach "
+    "only in memory: checkpoint it before anything writes its WAL "
+    "or search WAL, so neither log gets ahead of the file header");
   if (duckdb::IsSereneDBStorageVersion(storage_version)) {
     return;
   }

@@ -83,12 +83,11 @@ void Read(const Directory& dir, IndexMeta& meta, std::string_view filename,
     *in, filename, [&](duckdb::BinaryDeserializer& meta_in, uint64_t) {
       const auto version =
         meta_in.ReadProperty<uint64_t>(kFieldStorageVersion, "storage_version");
-      if (version != static_cast<uint64_t>(duckdb::kIResearchStorageVersion))
-        [[unlikely]] {
-        throw IndexError{absl::StrCat(
-          "Index meta '", filename, "' has storage version ", version,
-          ", this build reads storage version ",
-          static_cast<uint64_t>(duckdb::kIResearchStorageVersion))};
+      if (const auto error = duckdb::StorageVersionError(version);
+          !error.empty()) [[unlikely]] {
+        throw IndexError{absl::StrCat("Index meta '", filename,
+                                      "' has storage version ", version,
+                                      " and cannot be read: ", error)};
       }
       cnt = meta_in.ReadProperty<uint64_t>(kFieldSegCounter, "seg_counter");
       meta_in.ReadList(

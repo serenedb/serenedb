@@ -21,7 +21,6 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <duckdb/common/exception.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <iresearch/error/error.hpp>
@@ -205,7 +204,7 @@ TEST(index_meta_tests, rejects_unknown_fields) {
     irs::format_utils::WriteFooter(*out, [](duckdb::BinarySerializer& meta) {
       meta.WriteProperty<uint64_t>(
         irs::index_meta::kFieldStorageVersion, "storage_version",
-        static_cast<uint64_t>(duckdb::kIResearchStorageVersion));
+        static_cast<uint64_t>(duckdb::StorageVersion::SERENEDB_LATEST));
       meta.WriteProperty<uint64_t>(irs::index_meta::kFieldSegCounter,
                                    "seg_counter", 0);
       meta.WriteList(irs::index_meta::kFieldSegments, "segments", 0,
@@ -215,9 +214,15 @@ TEST(index_meta_tests, rejects_unknown_fields) {
     });
   }
 
-  irs::IndexMeta meta;
-  ASSERT_THROW(irs::index_meta::Read(dir, meta, name),
-               duckdb::SerializationException);
+  std::string message;
+  try {
+    irs::IndexMeta meta;
+    irs::index_meta::Read(dir, meta, name);
+  } catch (const irs::IndexError& e) {
+    message = e.what();
+  }
+  EXPECT_NE(std::string::npos, message.find("written by a newer release"))
+    << message;
 }
 
 TEST(index_meta_tests, payload_is_read_whole) {
@@ -249,7 +254,7 @@ TEST(index_meta_tests, payload_is_read_whole) {
                                        [](duckdb::BinaryDeserializer& in) {
                                          in.ReadProperty<uint64_t>(0, "tick");
                                        }),
-                 duckdb::SerializationException);
+                 irs::IndexError);
   }
 
   irs::IndexMeta read;

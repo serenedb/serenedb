@@ -24,6 +24,8 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <duckdb/common/error_data.hpp>
+#include <duckdb/common/exception.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
@@ -98,14 +100,21 @@ Footer ReadFooter(
   }
   duckdb::MemoryStream stream{const_cast<byte_type*>(footer_data), footer_len};
   duckdb::BinaryDeserializer deserializer{stream};
-  deserializer.Begin();
-  footer.data_expected_crc32c =
-    deserializer.ReadPropertyWithExplicitDefault<uint32_t>(kFieldDataCrc32c,
-                                                           "data_crc32c", 0);
-  deserializer.ReadObject(
-    kFieldMeta, "meta",
-    [&](duckdb::BinaryDeserializer& meta) { read(meta, footer.data_len); });
-  deserializer.End();
+  try {
+    deserializer.Begin();
+    footer.data_expected_crc32c =
+      deserializer.ReadPropertyWithExplicitDefault<uint32_t>(kFieldDataCrc32c,
+                                                             "data_crc32c", 0);
+    deserializer.ReadObject(
+      kFieldMeta, "meta",
+      [&](duckdb::BinaryDeserializer& meta) { read(meta, footer.data_len); });
+    deserializer.End();
+  } catch (const duckdb::SerializationException& e) {
+    throw IndexError{
+      absl::StrCat("footer: '", name,
+                   "' cannot be read: ", duckdb::ErrorData{e}.RawMessage(),
+                   "; it was written by a newer release of SereneDB")};
+  }
   return footer;
 }
 

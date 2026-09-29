@@ -56,12 +56,8 @@ constexpr uint8_t kKindDelete = 2;
 constexpr uint8_t kKindTruncate = 3;
 constexpr uint8_t kKindSegment = 4;
 
-constexpr auto kStorageVersion =
-  static_cast<uint64_t>(duckdb::kIResearchStorageVersion);
-
-constexpr duckdb::field_id_t kRecordStorageVersion = 0;
-constexpr duckdb::field_id_t kRecordTick = 1;
-constexpr duckdb::field_id_t kRecordSections = 2;
+constexpr duckdb::field_id_t kRecordTick = 0;
+constexpr duckdb::field_id_t kRecordSections = 1;
 
 constexpr duckdb::field_id_t kSectionTableId = 0;
 constexpr duckdb::field_id_t kSectionOps = 1;
@@ -160,30 +156,9 @@ bool ReadFrame(duckdb::BufferedFileReader& reader,
                           "' cannot be read: ", reason));
 }
 
-struct RecordStart {
-  uint64_t storage_version = 0;
-  uint64_t tick = 0;
-};
-
-RecordStart ReadRecordStart(duckdb::BinaryDeserializer& in) {
+uint64_t ReadRecordTick(duckdb::BinaryDeserializer& in) {
   in.Begin();
-  RecordStart start;
-  start.storage_version =
-    in.ReadProperty<uint64_t>(kRecordStorageVersion, "storage_version");
-  if (start.storage_version == kStorageVersion) {
-    start.tick = in.ReadProperty<uint64_t>(kRecordTick, "tick");
-  }
-  return start;
-}
-
-void CheckStorageVersion(const std::filesystem::path& path,
-                         uint64_t storage_version) {
-  if (storage_version != kStorageVersion) [[unlikely]] {
-    ThrowUnreadable(
-      path,
-      absl::StrCat("it has storage version ", storage_version,
-                   ", this build reads storage version ", kStorageVersion));
-  }
+  return in.ReadProperty<uint64_t>(kRecordTick, "tick");
 }
 
 uint64_t RecordTick(std::span<const uint8_t> payload,
@@ -191,14 +166,11 @@ uint64_t RecordTick(std::span<const uint8_t> payload,
   duckdb::MemoryStream stream{const_cast<uint8_t*>(payload.data()),
                               payload.size()};
   duckdb::BinaryDeserializer in{stream};
-  RecordStart start;
   try {
-    start = ReadRecordStart(in);
+    return ReadRecordTick(in);
   } catch (const duckdb::SerializationException& e) {
     ThrowUnreadable(path, duckdb::ErrorData{e}.RawMessage());
   }
-  CheckStorageVersion(path, start.storage_version);
-  return start.tick;
 }
 
 std::span<const uint8_t> ViewBytes(duckdb::MemoryStream& stream, uint64_t size,
@@ -286,8 +258,7 @@ uint64_t VisitRecord(std::span<const uint8_t> payload,
   duckdb::MemoryStream stream{const_cast<uint8_t*>(payload.data()),
                               payload.size()};
   duckdb::BinaryDeserializer in{stream};
-  const auto start = ReadRecordStart(in);
-  CheckStorageVersion(path, start.storage_version);
+  const auto tick = ReadRecordTick(in);
   in.ReadList(kRecordSections, "sections",
               [&](duckdb::BinaryDeserializer::List& sections, duckdb::idx_t) {
                 sections.ReadObject([&](duckdb::BinaryDeserializer& section) {
@@ -297,7 +268,7 @@ uint64_t VisitRecord(std::span<const uint8_t> payload,
                     kSectionOps, "ops",
                     [&](duckdb::BinaryDeserializer::List& ops, duckdb::idx_t) {
                       ops.ReadObject([&](duckdb::BinaryDeserializer& op) {
-                        on_op(start.tick, table_id,
+                        on_op(tick, table_id,
                               ReadOp(op, stream, scratch, path));
                       });
                     });
@@ -307,7 +278,7 @@ uint64_t VisitRecord(std::span<const uint8_t> payload,
   if (stream.GetPosition() != payload.size()) {
     ThrowUnreadable(path, "unexpected bytes after the end of the record");
   }
-  return start.tick;
+  return tick;
 }
 
 void WriteOp(duckdb::BinarySerializer& out, const SearchDbWal::Op& op,
@@ -427,8 +398,6 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
   duckdb::MemoryStream tmp;
   duckdb::BinarySerializer record{payload, duckdb::VersionStorageOptions()};
   record.Begin();
-  record.WriteProperty<uint64_t>(kRecordStorageVersion, "storage_version",
-                                 kStorageVersion);
   record.WriteProperty<uint64_t>(kRecordTick, "tick", tick);
   record.WriteList(
     kRecordSections, "sections", sections.size(),

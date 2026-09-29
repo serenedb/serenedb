@@ -1206,8 +1206,14 @@ TEST_P(FormatTestCase, segment_meta_rejects_unknown_fields) {
   read_meta.name = meta.name;
   read_meta.version = meta.version;
 
-  ASSERT_THROW(sm::Read(dir(), read_meta, sm::FileName(read_meta)),
-               duckdb::SerializationException);
+  std::string message;
+  try {
+    sm::Read(dir(), read_meta, sm::FileName(read_meta));
+  } catch (const irs::IndexError& e) {
+    message = e.what();
+  }
+  EXPECT_NE(std::string::npos, message.find("written by a newer release"))
+    << message;
 }
 
 TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
@@ -1471,14 +1477,14 @@ TEST_P(FormatTestCase, format_utils_footer_damaged) {
   ASSERT_THROW(read("empty"), irs::IndexError);
 }
 
-TEST_P(FormatTestCase, index_meta_rejects_other_storage_version) {
+TEST_P(FormatTestCase, index_meta_reads_its_storage_version_range) {
   namespace im = irs::index_meta;
 
-  const auto read = [&](uint64_t gen, uint64_t version) {
+  const auto read = [&](uint64_t gen, uint64_t version) -> std::string {
     const auto name = im::FileName(gen);
     {
       auto out = dir().create(name);
-      ASSERT_NE(nullptr, out);
+      EXPECT_NE(nullptr, out);
       irs::format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& meta) {
         meta.WriteProperty<uint64_t>(im::kFieldStorageVersion,
                                      "storage_version", version);
@@ -1487,14 +1493,24 @@ TEST_P(FormatTestCase, index_meta_rejects_other_storage_version) {
                        [](duckdb::BinarySerializer::List&, duckdb::idx_t) {});
       });
     }
-    irs::IndexMeta meta;
-    im::Read(dir(), meta, name);
+    try {
+      irs::IndexMeta meta;
+      im::Read(dir(), meta, name);
+    } catch (const irs::IndexError& e) {
+      return e.what();
+    }
+    return {};
   };
 
-  const auto current = static_cast<uint64_t>(duckdb::kIResearchStorageVersion);
-  ASSERT_NO_THROW(read(1, current));
-  ASSERT_THROW(read(2, current + 1), irs::IndexError);
-  ASSERT_THROW(read(3, current - 1), irs::IndexError);
+  const auto lower = static_cast<uint64_t>(duckdb::SERENEDB_VERSION_LOWER);
+  const auto upper = static_cast<uint64_t>(duckdb::SERENEDB_VERSION_UPPER);
+  EXPECT_EQ("", read(1, lower));
+  EXPECT_EQ("", read(2, upper));
+  const auto newer = read(3, upper + 1);
+  EXPECT_NE(std::string::npos, newer.find("written by a newer release"))
+    << newer;
+  const auto older = read(4, lower - 1);
+  EXPECT_NE(std::string::npos, older.find("older than this release")) << older;
 }
 
 }  // namespace tests

@@ -192,42 +192,47 @@ SQL examples are backed by sqllogic tests, so an example that stops working fail
 - Import the component once per page with `import SqlLogicTest from "@site/src/components/SqlLogicTest";`, and pass `hideResult` to render the query without its output.
 - An `id` that matches no marker renders **nothing** -- no error, no warning, just a missing example. Grep for the marker after you write the tag.
 
-## Search index file compatibility
+## Storage compatibility
 
-Every file an iresearch segment writes (`segments_N`, `.sm`, `.doc`, `.pos`, `.pay`, `.idx`, `.col`) has one layout: the file's data from offset 0, then a footer (a `BinarySerializer` object holding `data_crc32c` and the file's own fields), then 8 bytes with the footer's CRC32C and its length. `format_utils::WriteFooter` writes it and `format_utils::ReadFooter` reads it and checks the footer checksum; no file carries a header. Keep files readable across releases:
+These rules cover everything SereneDB writes: database files and their write-ahead logs, the search-table WAL and search index directories.
+
+Only two places record a storage version, a `serenedb_vN` value of DuckDB's `StorageVersion`:
+
+- The headers of each database file (`engine_catalog/catalog.db`, `engine_duckdb/<oid>.db`). The file's write-ahead log and the database's search-table WAL follow it.
+- `segments_N` of each search index directory. The directory's other files are only reached through it.
+
+SereneDB always writes `SERENEDB_LATEST`. A reader opens the versions from `SERENEDB_VERSION_LOWER` to `SERENEDB_VERSION_UPPER` and refuses the rest: a higher one as written by a newer release, a lower one as older than it reads (`duckdb::StorageVersionError`; the constants are in `third_party/duckdb/src/include/duckdb/storage/storage_info.hpp`).
+
+Most changes need no new version:
+
+- **New field or option.** Give it a default that keeps today's behaviour, write it only when it differs from the default, and read the default when it is missing (`WritePropertyWithDefault` with `ReadPropertyWithDefault` or `ReadPropertyWithExplicitDefault`, or a struct member with a default member initializer). Newer releases read older data as the default, and older releases keep reading data that leaves it at the default. They refuse data that uses it, because every reader checks the end of each object. A new `generate_ngrams` option is added this way.
+- **Removed field.** Read it with `ReadDeletedProperty`; a struct member becomes `irs::utils::Deleted<T>` of its old type.
+- **New value** of an enum or a variant, or a new codec: append it. An older release refuses data that uses a value it does not know. A new compression method is added this way: older releases refuse the `.col` block or the column segment that uses it.
+- **Never** reuse a field id, reorder struct members, or change a default, a type or what a field means.
+
+Add a `serenedb_vN` only for a change that older releases would misread instead of refusing, or to stop reading old data. Add it to `third_party/duckdb/src/storage/version_map.json` and run `scripts/generate_storage_info.py` there; `SERENEDB_LATEST`, `SERENEDB_VERSION_DEFAULT` and `SERENEDB_VERSION_UPPER` follow it, and older releases refuse everything the new one writes. To stop reading the data of earlier releases, also point `SERENEDB_VERSION_LOWER` at the new value; data below it has to be upgraded through an earlier release first. Keeping older database files readable (`SERENEDB_VERSION_LOWER` below `SERENEDB_VERSION_DEFAULT`) takes one more change, which a `static_assert` in `SereneDBStorageExtension::OnLoadExistingDatabase` asks for: attach raises such a file only in memory, so it has to be checkpointed before anything writes to its logs. Make a version change in its own PR and list it in the release notes. A value is never reused.
+
+### Search index files
+
+Every file of an iresearch segment (`segments_N`, `.sm`, `.doc`, `.pos`, `.pay`, `.idx`, `.col`) is the file's data from offset 0, then a footer (a `BinarySerializer` object holding `data_crc32c` and the file's own fields), then 8 bytes with the footer's CRC32C and its length. `format_utils::WriteFooter` writes it; `format_utils::ReadFooter` checks the checksum and reads the footer. `segments_N` stores the storage version as its first field.
 
 - **Field ids:** every object numbers its fields from 0. Name them with `kField...` constants next to the file's writer (`index_meta::kFieldPayload`, `segment_meta::kFieldFiles`, ...), and read them through the same constants.
 - **Callbacks:** footer, list and payload callbacks take `duckdb::BinarySerializer&` and `duckdb::BinaryDeserializer&` (`BinarySerializer::List&` and `BinaryDeserializer::List&` for list elements), never the `Serializer` or `Deserializer` base or `auto&`, so every call into the serializer is direct.
-- **New field:** optional with a default, written with `WritePropertyWithDefault` and read with `ReadPropertyWithDefault` or `ReadPropertyWithExplicitDefault`. When older releases must read files that use it, gate the write with `ShouldSerialize(StorageVersion::...)` and write the older form otherwise.
-- **Removed field:** read it with `ReadDeletedProperty`.
-- **Never** reuse a field id, change a default, or change what an existing field means.
 - **New data layout** (block encoding, term dictionary, ...): select it with a new field, and keep reading the old layout while it is supported.
-- **Every field is read:** `ReadFooter` checks the end of the object, so every reader of a file reads all of its footer (`segments_N` is read with its payload reader, `DirectoryReader` and `DirectoryReader::Reopen` take one, and an index with a payload but no reader is refused).
-- **Breaking compatibility:** add a new value to DuckDB's `StorageVersion` and point `duckdb::kIResearchStorageVersion` at it. `segments_N` records that version as its first field and is read only when it matches, so older binaries refuse every index directory written after the change and the new binary refuses every one written before it. Do it in its own PR and list it in the release notes. The footer trailer and the leading `storage_version` field of `segments_N` never change.
+- **Every field is read:** `segments_N` is read with its payload reader. `DirectoryReader` and `DirectoryReader::Reopen` take one, and an index with a payload but no reader is refused.
+- The footer trailer and the leading `storage_version` field of `segments_N` never change.
 
-## Database file compatibility
+### Database files
 
-SereneDB's own database files (`engine_catalog/catalog.db`, `engine_duckdb/<oid>.db`) are DuckDB database files: two checksummed headers carry the storage version, and the checkpoint and every write-ahead log entry (`.wal`, plus the `.wal.checkpoint` and `.wal.recovery` files a checkpoint or a recovery writes beside it) are `BinarySerializer` objects with the field ids of `third_party/duckdb/src/include/duckdb/storage/serialization/*.json`. SereneDB creates its files at `SERENEDB_VERSION_DEFAULT`, raises older readable ones to it, and opens only files with a SereneDB storage version between `SERENEDB_VERSION_LOWER` and `SERENEDB_VERSION_UPPER` (`third_party/duckdb/src/include/duckdb/storage/storage_info.hpp`). Keep them readable across releases:
-
-- **New field:** a json member with a new id and a `default`. A file that leaves it at the default stays readable by older binaries; a file that uses it is refused by them, because the reader checks the end of every object. SereneDB fields need no `version`, since SereneDB always writes its files at `SERENEDB_VERSION_DEFAULT`.
-- **Removed field:** mark it deleted in the json, so it is read with `ReadDeletedProperty`.
-- **Never** reuse a field id, change a default, or change what an existing field means.
-- **Write-ahead log:** entries follow the database file's storage version. An entry that matches its checksum but cannot be read stops the database from opening instead of being dropped like a torn tail. The log header never gains a field; a framing change bumps `WAL_VERSION_NUMBER`.
-- **Breaking compatibility:** add `serenedb_vN` to `third_party/duckdb/src/storage/version_map.json` and run `scripts/generate_storage_info.py` there. `SERENEDB_LATEST` becomes the new value and `SERENEDB_VERSION_DEFAULT` and `SERENEDB_VERSION_UPPER` follow it, so SereneDB writes the new version and older binaries refuse those files. To stop reading the files of earlier releases, also point `SERENEDB_VERSION_LOWER` at the new value; the new binary then refuses to open or create files below it. A file SereneDB opens as its own must also carry a SereneDB storage version (`SereneDBStorageExtension::OnLoadExistingDatabase`). `duckdb::kIResearchStorageVersion` names its version explicitly and stays put: a search index directory is read only at exactly that version, so tying it to `SERENEDB_LATEST` would make every database file break refuse every search index. Do it in its own PR and list it in the release notes. Each break of a SereneDB format adds its own `StorageVersion` value; a value is never reused.
+Database files are DuckDB database files. Their checkpoint and write-ahead log entries (`.wal`, and the `.wal.checkpoint` and `.wal.recovery` files beside it) are `BinarySerializer` objects with the field ids of `third_party/duckdb/src/include/duckdb/storage/serialization/*.json`: a new field is a json member with a new id and a `default`, and a removed one is marked deleted. SereneDB fields need no `version` there, since SereneDB always writes `SERENEDB_LATEST`. A log entry that matches its checksum but cannot be read stops the database from opening instead of being dropped like a torn tail. The log header never gains a field; a framing change bumps `WAL_VERSION_NUMBER`. A file SereneDB opens as its own must carry a SereneDB storage version (`SereneDBStorageExtension::OnLoadExistingDatabase`).
 
 ### Serialized structs
 
-Blobs stored in catalog entries (tokenizer configs, the inverted index payload), the view-backed index manifest and the segment references of the search-table WAL are written with `irs::utils::WriteTuple` and read with `ReadTuple`. They store an aggregate as a `BinarySerializer` object whose field ids are the positions of its members:
-
-- **New member:** append it with a default member initializer. A member equal to its value in a value-initialized aggregate is not written, and a missing member reads that value, so older data reads the default and older binaries keep reading data that leaves it at the default.
-- **Removed member:** replace it with `irs::utils::Deleted<T>` of its old type. The position stays taken, and a stored value is read and dropped.
-- **Never** reorder members or change a member's type or meaning. Append variant alternatives and enum values; never reorder or remove them.
-- **Unknown member:** data that uses a member a binary does not know is refused, never misread.
-- A struct boost::pfr cannot reflect (one holding a `std::vector<std::unique_ptr<T>>`) declares `SerdeFields(value)` returning `std::tie` of its members, in declaration order.
+Blobs stored in catalog entries (tokenizer configs, the inverted index payload), the view-backed index manifest and the segment references of the search-table WAL are written with `irs::utils::WriteTuple` and read with `ReadTuple`. An aggregate is a `BinarySerializer` object whose field ids are the positions of its members, and a member equal to its value in a value-initialized aggregate is not written. A struct boost::pfr cannot reflect (one holding a `std::vector<std::unique_ptr<T>>`) declares `SerdeFields(value)` returning `std::tie` of its members, in declaration order.
 
 ### Search-table WAL
 
-Each `.swal` frame is `[u64 size][u64 checksum][record]`. The record is a `BinarySerializer` object that starts with `storage_version` (`duckdb::kIResearchStorageVersion`) and `tick`, followed by its sections and their ops with their own field ids. A record with another storage version is refused, so bumping `kIResearchStorageVersion` refuses the index directories and their WAL together. Fields evolve by the rules above; the frame and the two leading fields never change.
+Each `.swal` frame is `[u64 size][u64 checksum][record]`. The record is a `BinarySerializer` object holding `tick` and then its sections and their ops, each with their own field ids. It records no storage version: the WAL belongs to one database and follows that database's file. The frame and the leading `tick` field never change.
 
 ## VSCode Setup
 

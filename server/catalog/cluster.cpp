@@ -77,7 +77,10 @@ duckdb::Catalog& ClusterCatalog::ReplayUseCatalog(
 
 void ClusterCatalog::OpenCatalogLog(
   duckdb::unique_ptr<duckdb::WriteAheadLog> log, bool compactable) {
-  _catalog_log = std::move(log);
+  {
+    std::lock_guard guard{_log_mutex};
+    _catalog_log = std::move(log);
+  }
   _compactable = compactable;
   _live_bytes = GetAttached().GetStorageManager().GetWALSize();
 }
@@ -104,7 +107,7 @@ void ClusterCatalog::EndCatalogLogCommit() {
 }
 
 void ClusterCatalog::MaybeCompactCatalogLog() {
-  if (!_compactable || !_catalog_log) {
+  if (!_compactable || !CatalogLog()) {
     return;
   }
   bool force = false;
@@ -183,8 +186,11 @@ void ClusterCatalog::CompactCatalogLog() {
     size = rewrite.GetTotalWritten();
   }
   fs.MoveFile(rewrite_path, path);
-  _catalog_log = duckdb::make_shared_ptr<duckdb::WriteAheadLog>(
-    storage, path, size, duckdb::WALInitState::UNINITIALIZED);
+  {
+    std::lock_guard guard{_log_mutex};
+    _catalog_log = duckdb::make_shared_ptr<duckdb::WriteAheadLog>(
+      storage, path, size, duckdb::WALInitState::UNINITIALIZED);
+  }
   _live_bytes = size;
 }
 
@@ -207,7 +213,7 @@ void ClusterCatalog::NoteDroppedArtifact(
   const std::vector<std::filesystem::path>& paths) {
   const std::filesystem::path root{ClusterLayout(GetAttached()).directory};
   std::lock_guard guard{_artifacts_mutex};
-  if (!_catalog_log) {
+  if (!CatalogLog()) {
     _replayed_drops.insert(oid);
     return;
   }
@@ -218,7 +224,7 @@ void ClusterCatalog::NoteDroppedArtifact(
 void ClusterCatalog::LogArtifact(
   duckdb::CatalogType type, duckdb::idx_t catalog_oid, duckdb::idx_t oid,
   const std::vector<std::filesystem::path>& paths, bool drop) {
-  if (!_catalog_log) {
+  if (!CatalogLog()) {
     return;
   }
   const std::filesystem::path root{ClusterLayout(GetAttached()).directory};

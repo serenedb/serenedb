@@ -33,7 +33,7 @@
 #include <utility>
 #include <vector>
 
-#include "catalog/column_id.h"
+#include "connector/column_id.h"
 #include "search/search_db_wal.h"
 #include "search/search_table_changes.h"
 
@@ -92,11 +92,12 @@ class SearchTableTransaction {
   void AddInlineInsertChunk(const std::shared_ptr<SearchTable>& shard,
                             duckdb::BufferManager& buffer_manager,
                             const duckdb::vector<duckdb::LogicalType>& types,
-                            std::span<const catalog::ColumnId> column_ids,
-                            duckdb::DataChunk& chunk, uint64_t pk_base);
+                            std::span<const connector::ColumnId> column_ids,
+                            duckdb::Catalog& catalog, duckdb::DataChunk& chunk,
+                            uint64_t pk_base);
 
   // Bytes a flush would reclaim for `shard_id`; deletes are not counted.
-  uint64_t BufferedBytes(ObjectId shard_id) const noexcept {
+  uint64_t BufferedBytes(duckdb::idx_t shard_id) const noexcept {
     auto it = _changes.find(shard_id);
     return it == _changes.end() ? 0 : it->second.BufferedBytes();
   }

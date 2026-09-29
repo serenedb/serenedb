@@ -33,9 +33,14 @@
 #include <string>
 #include <vector>
 
-#include "catalog/column_id.h"
+#include "connector/column_id.h"
 #include "search/search_db_wal.h"
 
+namespace duckdb {
+
+class Catalog;
+
+}  // namespace duckdb
 namespace sdb::search {
 
 // Per-search-table, per-transaction write buffer.
@@ -64,10 +69,12 @@ struct LocalTableChangesEntry {
   // The buffer. `pk_segments` bands it one entry per Sink chunk.
   std::unique_ptr<duckdb::ColumnDataCollection> collection;
   std::vector<SearchDbWal::InlinePk> pk_segments;
-  // The shard's stored columns, in chunk order -- captured with the first
-  // buffered chunk so the rows can be replayed into iresearch later, from a
-  // commit that never saw the operator that wrote them.
-  std::vector<catalog::ColumnId> column_ids;
+  // The shard's stored columns, in chunk order, and the catalog its sink is
+  // built against -- both captured with the first buffered chunk so the rows
+  // can be replayed into iresearch later, from a commit that never saw the
+  // operator that wrote them.
+  std::vector<connector::ColumnId> column_ids;
+  duckdb::Catalog* catalog = nullptr;
 
   std::vector<Op> ops;
   size_t applied_ops = 0;
@@ -76,13 +83,15 @@ struct LocalTableChangesEntry {
 
   void AppendInsertChunk(duckdb::BufferManager& bm,
                          const duckdb::vector<duckdb::LogicalType>& types,
-                         std::span<const catalog::ColumnId> cols,
-                         duckdb::DataChunk& chunk, uint64_t pk_base) {
+                         std::span<const connector::ColumnId> cols,
+                         duckdb::Catalog& cat, duckdb::DataChunk& chunk,
+                         uint64_t pk_base) {
     if (collection == nullptr) {
       collection = std::make_unique<duckdb::ColumnDataCollection>(bm, types);
     }
     if (column_ids.empty()) {
       column_ids.assign(cols.begin(), cols.end());
+      catalog = &cat;
     }
     collection->Append(chunk);
     pk_segments.push_back({pk_base, chunk.size()});

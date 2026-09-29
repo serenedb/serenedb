@@ -32,7 +32,8 @@
 #include <string>
 #include <vector>
 
-#include "catalog/duckdb_primary_key.h"
+#include "connector/column_id.h"
+#include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "search/search_db_wal.h"
 #include "search/search_table.h"
@@ -107,10 +108,10 @@ void SearchTableTransaction::AddInlineInsertChunk(
   const std::shared_ptr<SearchTable>& shard,
   duckdb::BufferManager& buffer_manager,
   const duckdb::vector<duckdb::LogicalType>& types,
-  std::span<const catalog::ColumnId> column_ids, duckdb::DataChunk& chunk,
-  uint64_t pk_base) {
-  _changes[shard->GetTableId()].AppendInsertChunk(buffer_manager, types,
-                                                  column_ids, chunk, pk_base);
+  std::span<const connector::ColumnId> column_ids, duckdb::Catalog& catalog,
+  duckdb::DataChunk& chunk, uint64_t pk_base) {
+  _changes[shard->GetTableId()].AppendInsertChunk(
+    buffer_manager, types, column_ids, catalog, chunk, pk_base);
 }
 
 // Replays a shard's buffer into `trx` in issue order: rows through a sink,
@@ -156,8 +157,8 @@ void SearchTableTransaction::ReplayBuffer(SearchTable& shard,
     remover.InitImpl(op.delete_rows.size());
     for (const auto row : op.delete_rows) {
       key.clear();
-      catalog::duckdb_primary_key::AppendGenerated(key,
-                                                   static_cast<uint64_t>(row));
+      connector::primary_key::AppendGenerated(key,
+                                              static_cast<uint64_t>(row));
       remover.DeleteRowImpl(key);
     }
     remover.FinishImpl();
@@ -172,7 +173,10 @@ void SearchTableTransaction::ReplayBuffer(SearchTable& shard,
   // Drain removes before the inserts
   drain_ops();
   if (entry.HasBufferedRows()) {
-    auto sink = connector::MakeSearchTableInsertSink(trx, shard, context);
+    SDB_ASSERT(entry.catalog != nullptr,
+               "buffered rows without the catalog their sink needs");
+    auto sink = connector::MakeSearchTableInsertSink(trx, shard,
+                                                     *entry.catalog, context);
     entry.VisitBufferedRows([&](duckdb::DataChunk& chunk, uint64_t pk_base) {
       connector::WriteChunkToSearchSink(*sink, chunk, entry.column_ids, pk_base,
                                         table_id, context);

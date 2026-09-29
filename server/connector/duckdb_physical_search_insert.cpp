@@ -202,7 +202,7 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
     search_txn.AddInlineInsertChunk(
       gstate.search_table,
       duckdb::BufferManager::GetBufferManager(context.client),
-      gstate.chunk_types, gstate.column_ids, chunk, pk_base);
+      gstate.chunk_types, gstate.column_ids, *gstate.catalog, chunk, pk_base);
 
     if (search_txn.BufferedBytes(gstate.table_id) >
         gstate.write_buffer_max_bytes) {

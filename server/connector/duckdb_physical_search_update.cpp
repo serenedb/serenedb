@@ -168,7 +168,7 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   search_txn.AddInlineInsertChunk(
     gstate.search_table,
     duckdb::BufferManager::GetBufferManager(context.client), gstate.chunk_types,
-    gstate.column_ids, new_row, pk_base);
+    gstate.column_ids, _table.catalog, new_row, pk_base);
 
   // After the new row, never between it and the removal above: a flush replays
   // the buffer in issue order, so the pair has to reach iresearch together for

@@ -28,6 +28,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <optional>
 #include <string>
@@ -153,53 +156,68 @@ class Acceptor final : public AcceptorBase,
   yaclib::Task<> Run() {
     auto self = this->shared_from_this();
     while (_running) {
-      auto connection = duckdb::make_shared_ptr<Session>(_deps, _pool.Next());
-      if (co_await AcceptInto(connection->Lowest()).NoThrow()) {
-        // Accept failed: either a clean shutdown closed the acceptor, or a
-        // transient error (e.g. fd exhaustion) -- drop this attempt and retry.
+      bool counted = false;
+      try {
+        auto connection = duckdb::make_shared_ptr<Session>(_deps, _pool.Next());
+        if (co_await AcceptInto(connection->Lowest()).NoThrow()) {
+          // Accept failed: either a clean shutdown closed the acceptor, or a
+          // transient error (e.g. fd exhaustion) -- drop this attempt and
+          // retry.
+          if (!_running) {
+            break;
+          }
+          continue;
+        }
         if (!_running) {
+          // Stop() ran between the accept and this resume: drop the connection.
           break;
         }
-        continue;
-      }
-      if (!_running) {
-        // Stop() ran between the accept and this resume: drop the connection.
-        break;
-      }
-      if constexpr (!kUnix) {
-        // Sessions batch writes themselves (message::Buffer); Nagle on top only
-        // adds delayed-ACK stalls to multi-write responses. Not valid on unix.
-        asio_ns::error_code ignored;
-        connection->Lowest().set_option(asio_ns::ip::tcp::no_delay{true},
-                                        ignored);
-        if (_opts.keepalive) {
-          connection->Lowest().set_option(
-            asio_ns::socket_base::keep_alive{*_opts.keepalive}, ignored);
+        SDB_IF_FAILURE("acceptor_throw") {
+          THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
         }
-        const int fd = connection->Lowest().native_handle();
-        if (_opts.keepidle) {
-          const int v = static_cast<int>(*_opts.keepidle);
+        if constexpr (!kUnix) {
+          // Sessions batch writes themselves (message::Buffer); Nagle on top
+          // only adds delayed-ACK stalls to multi-write responses. Not valid on
+          // unix.
+          asio_ns::error_code ignored;
+          connection->Lowest().set_option(asio_ns::ip::tcp::no_delay{true},
+                                          ignored);
+          if (_opts.keepalive) {
+            connection->Lowest().set_option(
+              asio_ns::socket_base::keep_alive{*_opts.keepalive}, ignored);
+          }
+          const int fd = connection->Lowest().native_handle();
+          if (_opts.keepidle) {
+            const int v = static_cast<int>(*_opts.keepidle);
 #ifdef TCP_KEEPIDLE
-          ::setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &v, sizeof(v));
+            ::setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &v, sizeof(v));
 #elif defined(TCP_KEEPALIVE)
-          ::setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &v, sizeof(v));
+            ::setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &v, sizeof(v));
 #endif
+          }
+          if (_opts.keepintvl) {
+            const int v = static_cast<int>(*_opts.keepintvl);
+            ::setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &v, sizeof(v));
+          }
+          if (_opts.keepcnt) {
+            const int v = static_cast<int>(*_opts.keepcnt);
+            ::setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &v, sizeof(v));
+          }
         }
-        if (_opts.keepintvl) {
-          const int v = static_cast<int>(*_opts.keepintvl);
-          ::setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &v, sizeof(v));
+        // Take the WaitGroup slot before posting Start: Stop() above is
+        // synchronous on this strand, so once Server::stop() releases the
+        // group's hold every session-to-be is already counted.
+        _deps.sessions->Add();
+        counted = true;
+        asio_ns::post(connection->Lowest().get_executor(),
+                      [connection] { connection->Start(); });
+      } catch (const std::exception& exception) {
+        if (counted) {
+          _deps.sessions->Done();
         }
-        if (_opts.keepcnt) {
-          const int v = static_cast<int>(*_opts.keepcnt);
-          ::setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &v, sizeof(v));
-        }
+        SDB_ERROR(GENERAL, "failed to set up an accepted connection: ",
+                  exception.what());
       }
-      // Take the WaitGroup slot before posting Start: Stop() above is
-      // synchronous on this strand, so once Server::stop() releases the
-      // group's hold every session-to-be is already counted.
-      _deps.sessions->Add();
-      asio_ns::post(connection->Lowest().get_executor(),
-                    [connection] { connection->Start(); });
     }
     co_return {};
   }

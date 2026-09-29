@@ -20,7 +20,9 @@
 
 #include "query/transaction.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/container/flat_hash_map.h>
 
 #include <chrono>
 #include <duckdb/main/client_context.hpp>
@@ -171,12 +173,16 @@ Transaction::SearchSlot& Transaction::EnsureIndexSlot(
   return result;
 }
 
-void Transaction::CommitSearch(
-  std::optional<search::WalCursor> cursor) noexcept {
-  if (_search_transactions.empty()) {
+void Transaction::CommitSearch(std::optional<search::WalCursor> cursor,
+                               std::optional<duckdb::idx_t> database) noexcept {
+  const auto in_scope = [&](const auto& item) {
+    return !database || item.second.storage->GetDatabaseId() == *database;
+  };
+  if (absl::c_none_of(_search_transactions, in_scope)) {
     return;
   }
-  absl::Cleanup rollback = [&] { _search_transactions.clear(); };
+  const auto erase = [&] { absl::erase_if(_search_transactions, in_scope); };
+  absl::Cleanup rollback = erase;
 
   // Pin every staged segment onto the flush context before the tick exists.
   // Pinning must precede Advance -- otherwise a refresh whose tick snapshot
@@ -185,8 +191,11 @@ void Transaction::CommitSearch(
   // reserved band so every writer's first_tick stays strictly above the tick
   // it last committed at.
   uint64_t max_queries = 0;
-  for (auto& [index_id, entry] : _search_transactions) {
-    for (auto& slot : entry.slots) {
+  for (auto& item : _search_transactions) {
+    if (!in_scope(item)) {
+      continue;
+    }
+    for (auto& slot : item.second.slots) {
       slot.writer.reset();
       if (slot.transaction) {
         slot.transaction->RegisterFlush();
@@ -213,7 +222,11 @@ void Transaction::CommitSearch(
   // commits overlap, so reading the WAL size here would include later
   // transactions' bytes and over-claim (skipping their re-stream after a
   // crash).
-  for (auto& [index_id, entry] : _search_transactions) {
+  for (auto& item : _search_transactions) {
+    if (!in_scope(item)) {
+      continue;
+    }
+    auto& [index_id, entry] = item;
     if (cursor) {
       entry.storage->RecordFlushCursor(last_tick, *cursor);
     }
@@ -228,7 +241,7 @@ void Transaction::CommitSearch(
     }
   }
 
-  _search_transactions.clear();
+  erase();
 }
 
 void Transaction::Commit() {

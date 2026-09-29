@@ -258,7 +258,7 @@ void SereneDBClientState::TransactionPreCheckpoint(
   const auto cursor = wal_end_offset > 0
                         ? search::WalCursor{wal_generation, wal_end_offset}
                         : search::WalCursor{wal_generation + 1, 0};
-  _connection_ctx->CommitSearch(cursor);
+  _connection_ctx->CommitSearch(cursor, db.oid);
 }
 
 void SereneDBClientState::TransactionPreRollback(

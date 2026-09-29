@@ -1,0 +1,71 @@
+statement ok
+SET threads = 4;
+
+statement ok
+CREATE TABLE ipf(id INTEGER PRIMARY KEY, doc JSON, body TEXT);
+
+statement ok
+CREATE INDEX ipf_idx ON ipf USING inverted(id, (doc->'nested'), body);
+
+statement ok
+INSERT INTO ipf SELECT g, ('{"nested": ' || g || '}')::JSON, 'word' || (g % 100) FROM generate_series(1, 200000) g;
+
+statement ok
+VACUUM (REFRESH_TABLE) ipf;
+
+query
+SELECT count(*) FROM ipf_idx;
+----
+count
+200000
+
+query
+SELECT count(*) FROM ipf_idx WHERE body @@ 'word7';
+----
+count
+2000
+
+query
+SELECT id FROM ipf_idx WHERE (doc->'nested') @@ ts_like('199999');
+----
+id
+199999
+
+statement error
+INSERT INTO ipf SELECT g, CASE WHEN g = 399000 THEN '{"nested":{"a":1}}'::JSON ELSE ('{"nested": ' || g || '}')::JSON END, 'late' FROM generate_series(200001, 400000) g;
+----
+db error: ERROR: Failed to commit: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+
+
+query
+SELECT count(*) FROM ipf;
+----
+count
+200000
+
+statement ok
+INSERT INTO ipf SELECT g, ('{"nested": ' || g || '}')::JSON, 'again' FROM generate_series(200001, 400000) g;
+
+statement ok
+VACUUM (REFRESH_TABLE) ipf;
+
+query
+SELECT count(*) FROM ipf_idx;
+----
+count
+400000
+
+query
+SELECT count(*) FROM ipf_idx WHERE body @@ 'again';
+----
+count
+200000
+
+query
+SELECT count(*) FROM ipf_idx WHERE body @@ 'late';
+----
+count
+0
+
+statement ok
+DROP TABLE ipf;

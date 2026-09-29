@@ -25,6 +25,7 @@
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/execution/index/bound_index.hpp>
 #include <duckdb/execution/index/index_type.hpp>
+#include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_writer.hpp>
@@ -75,6 +76,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
                            duckdb::Vector& row_ids) final {
     return AppendImpl(chunk, row_ids);
   }
+  duckdb::ErrorData FinishAppend() final;
   void Delete(duckdb::IndexLock& l, duckdb::DataChunk& chunk,
               duckdb::Vector& row_ids) final;
   duckdb::idx_t TryDelete(
@@ -119,9 +121,10 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
 
  private:
   struct ReplayOp;
+  struct FeedQueue;
   struct ReplaySession;
-  struct ReplayTask;
-  struct SliceTask;
+  struct LiveFeed;
+  struct FeedTask;
 
   duckdb::ErrorData AppendImpl(duckdb::DataChunk& chunk,
                                duckdb::Vector& row_ids);
@@ -134,8 +137,12 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
             duckdb::idx_t count);
 
   ReplaySession* ReplaySessionForEntry();
-  void Enqueue(std::unique_ptr<ReplayOp> op);
-  void Apply(ReplayOp& op);
+  void Enqueue(duckdb::TaskExecutor& executor, FeedQueue& queue,
+               std::unique_ptr<ReplayOp> op);
+  void Apply(FeedQueue& queue, ReplayOp& op);
+  static std::unique_ptr<ReplayOp> CopyInsert(duckdb::DataChunk& results,
+                                              duckdb::Vector& rows,
+                                              duckdb::idx_t count);
   void ReplayAppend(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
   void ReplayDelete(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
 
@@ -147,6 +154,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   bool _has_predicate = false;
 
   std::unique_ptr<ReplaySession> _replay;
+  std::unique_ptr<LiveFeed> _live;
 };
 
 struct PublishedInvertedIndex {

@@ -1,6 +1,10 @@
 control substitution on
 
 statement ok
+SET threads = 4
+
+
+statement ok
 CREATE TEXT SEARCH DICTIONARY sm_en AS split_text_csv(' ')
   WITH (frequency, position)
 
@@ -32,10 +36,6 @@ FROM generate_series(300001, 305000) s(i)
 
 statement ok
 VACUUM (REFRESH_TABLE) sm
-
-
-statement ok
-SET threads = 4
 
 
 statement ok
@@ -89,7 +89,7 @@ SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_s
 FROM read_text('${__TEST_DIR__}/scan_metrics_count.json');
 ----
 row_groups_scanned
-64
+5
 
 
 query
@@ -97,4 +97,4 @@ SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_s
 FROM read_text('${__TEST_DIR__}/scan_metrics_stream.json');
 ----
 row_groups_scanned
-64
+5

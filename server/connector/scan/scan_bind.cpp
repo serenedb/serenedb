@@ -130,7 +130,7 @@ duckdb::unique_ptr<ScanBindData> MakeViewScanBindData(
   spec.name = view.name.GetIdentifierName();
   data->relation.kind = ScanEntryKind::InvertedIndex;
   data->search.snapshot = std::move(snapshot);
-  spec.fast_path = ResolveViewFastPath(context, view_base,
+  spec.fast_path = ResolveViewFastPath(context, view.ParentCatalog(), view_base,
                                        catalog::ParseKeyColumns(index_options));
   data->lookup.supports_filters = false;
   if (spec.fast_path) {

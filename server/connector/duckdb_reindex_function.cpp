@@ -934,9 +934,10 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
 std::optional<Source> ResolveSource(duckdb::ClientContext& context,
                                     const ReindexTarget& target) {
   Source src;
-  auto fp =
-    ResolveViewFastPath(context, *target.view_info,
-                        catalog::ParseKeyColumns(target.index->options));
+  auto fp = ResolveViewFastPath(
+    context,
+    duckdb::Catalog::GetCatalog(context, duckdb::Identifier{target.database}),
+    *target.view_info, catalog::ParseKeyColumns(target.index->options));
   if (!fp) {
     return std::nullopt;
   }

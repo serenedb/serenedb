@@ -38,11 +38,10 @@ inline constexpr std::string_view kExt = "sm";
 
 inline constexpr size_t kMinChainBytes = 4096;
 
-inline constexpr duckdb::field_id_t kFieldMaskSize = 0;
-inline constexpr duckdb::field_id_t kFieldParents = 1;
-inline constexpr duckdb::field_id_t kFieldFiles = 2;
-inline constexpr duckdb::field_id_t kFieldDocsCount = 3;
-inline constexpr duckdb::field_id_t kFieldByteSize = 4;
+inline constexpr duckdb::field_id_t kFieldParents = 0;
+inline constexpr duckdb::field_id_t kFieldFiles = 1;
+inline constexpr duckdb::field_id_t kFieldDocsCount = 2;
+inline constexpr duckdb::field_id_t kFieldByteSize = 3;
 
 std::string FileName(const SegmentMeta& meta);
 

@@ -128,8 +128,6 @@ void Write(Directory& dir, std::string& meta_file, SegmentMeta& meta,
   }
 
   format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& meta_out) {
-    meta_out.WritePropertyWithDefault<uint64_t>(kFieldMaskSize, "mask_size",
-                                                mask_size, 0);
     if (!parents.empty()) {
       meta_out.WriteList(
         kFieldParents, "parents", parents.size(),

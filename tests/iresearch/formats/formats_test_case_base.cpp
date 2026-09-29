@@ -1104,10 +1104,8 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       auto in = dir().open(file, irs::IOAdvice::NORMAL);
       EXPECT_NE(nullptr, in);
       std::vector<uint64_t> parents;
-      irs::format_utils::ReadFooter(
+      const auto footer = irs::format_utils::ReadFooter(
         *in, file, [&](duckdb::BinaryDeserializer& meta_in, uint64_t) {
-          EXPECT_NE(0, meta_in.ReadPropertyWithExplicitDefault<uint64_t>(
-                         irs::segment_meta::kFieldMaskSize, "mask_size", 0));
           meta_in.ReadOptionalList(
             irs::segment_meta::kFieldParents, "parents",
             [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
@@ -1123,6 +1121,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
           meta_in.ReadProperty<uint64_t>(irs::segment_meta::kFieldByteSize,
                                          "byte_size");
         });
+      EXPECT_NE(0, footer.data_len);
       return parents;
     };
 
@@ -1260,8 +1259,6 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
     }
     irs::format_utils::WriteFooter(*out, [&](
                                            duckdb::BinarySerializer& meta_out) {
-      meta_out.WritePropertyWithDefault<uint64_t>(sm::kFieldMaskSize,
-                                                  "mask_size", mask.size(), 0);
       if (parents.size() != 0) {
         meta_out.WriteList(
           sm::kFieldParents, "parents", parents.size(),
@@ -1280,21 +1277,6 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
       meta_out.WriteProperty<uint64_t>(sm::kFieldByteSize, "byte_size", 42);
     });
   };
-
-  constexpr irs::byte_type kPad[8]{};
-
-  // the mask size disagrees with the data before the footer
-  {
-    auto out = create("mask_size_mismatch", 1);
-    out->WriteData(kPad, sizeof kPad);
-    irs::format_utils::WriteFooter(*out, [](
-                                           duckdb::BinarySerializer& meta_out) {
-      meta_out.WriteProperty<uint64_t>(sm::kFieldMaskSize, "mask_size", 1000);
-      meta_out.WriteProperty<uint32_t>(sm::kFieldDocsCount, "docs_count", 100);
-      meta_out.WriteProperty<uint64_t>(sm::kFieldByteSize, "byte_size", 42);
-    });
-  }
-  rejected("mask_size_mismatch", 1, "differs from the data size");
 
   // the mask is not a bitmap at all
   write("not_a_bitmap", 1, "garbage!", {}, true);
@@ -1344,8 +1326,6 @@ TEST_P(FormatTestCase, segment_meta_derives_from_listed_links) {
                    blob.size());
     irs::format_utils::WriteFooter(*out, [&](
                                            duckdb::BinarySerializer& meta_out) {
-      meta_out.WriteProperty<uint64_t>(sm::kFieldMaskSize, "mask_size",
-                                       blob.size());
       if (parents.size() != 0) {
         meta_out.WriteList(
           sm::kFieldParents, "parents", parents.size(),

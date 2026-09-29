@@ -172,6 +172,24 @@ const RegistryEntry* LookupRegistry(std::string_view function_name) {
   return nullptr;
 }
 
+std::optional<ViewFastPath> IcebergCatalogFastPath(
+  CatalogTableRef table_ref, std::vector<std::string> projection_columns,
+  bool has_limit) {
+  const auto* registry_entry = LookupRegistry("iceberg_scan");
+  if (!registry_entry) {
+    return std::nullopt;
+  }
+  ViewFastPath out;
+  out.function_name = std::string{registry_entry->function_name};
+  out.catalog_ref = std::move(table_ref);
+  out.is_glob = true;
+  out.projection_columns = std::move(projection_columns);
+  out.pk_spec = registry_entry->glob_pk_spec;
+  out.supports_filters = registry_entry->supports_filters;
+  out.supports_delta = IsGlobPK(out.pk_spec) && !has_limit;
+  return out;
+}
+
 duckdb::TableFunction LookupSingleStringReader(duckdb::ClientContext& context,
                                                std::string_view name) {
   auto& sys = duckdb::Catalog::GetSystemCatalog(context);
@@ -313,6 +331,16 @@ std::optional<ViewFastPath> ResolveViewFastPath(
   if (select_node.from_table->type == duckdb::TableReferenceType::BASE_TABLE) {
     const auto& base_ref = select_node.from_table->Cast<duckdb::BaseTableRef>();
     const auto& qname = base_ref.GetQualifiedName();
+    if (!qname.Catalog().empty() && !qname.Schema().empty()) {
+      auto catalog = duckdb::Catalog::GetCatalogEntry(context, qname.Catalog());
+      if (catalog && catalog->GetCatalogType() == "iceberg") {
+        return IcebergCatalogFastPath(
+          {.catalog = catalog->GetName().GetIdentifierName(),
+           .schema = qname.Schema().GetIdentifierName(),
+           .table = qname.Name().GetIdentifierName()},
+          std::move(projection_columns), has_limit);
+      }
+    }
     duckdb::EntryLookupInfo entry_lookup(duckdb::CatalogType::TABLE_ENTRY,
                                          duckdb::QualifiedName(qname.Name()));
     auto generic = duckdb::Catalog::GetEntry(
@@ -331,19 +359,8 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       .schema = entry.ParentSchemaName().GetIdentifierName(),
       .table = entry.name.GetIdentifierName()};
     if (cat_type == "iceberg") {
-      const auto* registry_entry = LookupRegistry("iceberg_scan");
-      if (!registry_entry) {
-        return std::nullopt;
-      }
-      ViewFastPath out;
-      out.function_name = std::string{registry_entry->function_name};
-      out.catalog_ref = table_ref;
-      out.is_glob = true;
-      out.projection_columns = std::move(projection_columns);
-      out.pk_spec = registry_entry->glob_pk_spec;
-      out.supports_filters = registry_entry->supports_filters;
-      out.supports_delta = IsGlobPK(out.pk_spec) && !has_limit;
-      return out;
+      return IcebergCatalogFastPath(table_ref, std::move(projection_columns),
+                                    has_limit);
     }
     if (cat_type == "duckdb") {
       auto& src_catalog = entry.ParentCatalog();

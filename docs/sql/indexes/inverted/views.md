@@ -97,7 +97,7 @@ Selecting its real columns is not supported and raises an error:
 
 ## `INCLUDE` columns
 
-`INCLUDE`d columns on a view are stored in the index's columnstore, so they are returned **without** materializing the source — the same as on a base table. Use `INCLUDE` for columns you frequently return but never search, to avoid the per-row source lookup.
+`INCLUDE`d columns on a view are stored in the index's columnstore, so they are returned **without** materializing the source — the same as on a base table. Use `INCLUDE` for columns you frequently return but never search, to avoid the per-row source lookup. A query that returns only indexed and `INCLUDE`d columns never touches the source at all: over a catalog-attached Iceberg table it does not even contact the catalog, so its latency does not depend on the server's `max_table_staleness`.
 
 ## Refreshing the index
 

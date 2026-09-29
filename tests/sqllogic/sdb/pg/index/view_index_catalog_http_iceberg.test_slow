@@ -1,0 +1,137 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+SET logging_storage = 'memory';
+
+statement ok
+SET logging_level = 'debug';
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vch_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.vch_t (id INTEGER, body TEXT);
+
+statement count 3
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vch_t VALUES
+  (1, 'pudge goes mid'),
+  (2, 'anchin reads manga'),
+  (3, 'vedernikoff pins snapshots');
+
+statement ok
+CREATE VIEW vch_v AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.vch_t;
+
+statement ok
+CREATE INDEX vch_stored_idx ON vch_v USING inverted(id, body vch_en) INCLUDE (id, body) WITH (compaction_interval=0);
+
+statement ok
+CREATE INDEX vch_lookup_idx ON vch_v USING inverted(id, body vch_en) WITH (compaction_interval=0);
+
+statement ok
+CREATE TABLE vch_http_mark AS
+SELECT count(*) AS n FROM duckdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
+
+query
+SELECT id, body FROM vch_stored_idx WHERE body @@ ts_phrase('pudge');
+----
+id	body
+1	pudge goes mid
+
+query
+SELECT count(*) FROM vch_stored_idx WHERE body @@ 'manga';
+----
+count
+1
+
+query
+SELECT id FROM vch_stored_idx ORDER BY id;
+----
+id
+1
+2
+3
+
+query
+SELECT count(*) - (SELECT n FROM vch_http_mark) AS http_requests
+FROM duckdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
+----
+http_requests
+0
+
+query
+SELECT id, body FROM vch_lookup_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+id	body
+3	vedernikoff pins snapshots
+
+query
+EXPLAIN SELECT id, body FROM vch_lookup_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+QUERY PLAN
+<slt:ignore>Lookup: iceberg<slt:ignore>
+
+statement ok
+CREATE TABLE vch_cache_mark AS
+SELECT count(*) AS n FROM duckdb_logs_parsed('HTTPFSInfo')
+WHERE connection_id = current_connection_id() AND message LIKE '%connection_cache_hit%';
+
+query
+SELECT count(*) FROM vch_v;
+----
+count
+3
+
+query
+SELECT count(*) FROM vch_v;
+----
+count
+3
+
+query
+SELECT count(*) > (SELECT n FROM vch_cache_mark) AS reused
+FROM duckdb_logs_parsed('HTTPFSInfo')
+WHERE connection_id = current_connection_id() AND message LIKE '%connection_cache_hit%';
+----
+reused
+t
+
+statement ok
+SET logging_level = 'info';
+
+statement ok
+DROP TABLE vch_cache_mark;
+
+statement ok
+DROP TABLE vch_http_mark;
+
+statement ok
+DROP INDEX vch_lookup_idx;
+
+statement ok
+DROP INDEX vch_stored_idx;
+
+statement ok
+DROP VIEW vch_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY vch_en;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.vch_t;
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+DROP SERVER srv_${__DATABASE__};

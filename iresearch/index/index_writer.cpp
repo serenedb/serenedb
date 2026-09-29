@@ -36,6 +36,7 @@
 
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index_meta_reader.hpp"
+#include "iresearch/formats/segment_meta_reader.hpp"
 #include "iresearch/index/directory_reader_impl.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -1380,16 +1381,15 @@ void IndexWriter::SegmentContext::Commit(uint64_t commit_queries,
 IndexWriter::IndexWriter(
   ConstructToken, IndexLock::ptr&& lock, IndexFileRefs::ref_t&& lock_file_ref,
   Directory& dir, size_t segment_pool_size,
-  const SegmentOptions& segment_limits, PayloadWriter&& meta_payload_writer,
+  const SegmentOptions& segment_limits, MetaPayloadWriter&& meta_payload_writer,
   std::shared_ptr<const DirectoryReaderImpl>&& committed_reader)
-  : _meta_payload_writer{std::move(meta_payload_writer)},
-    _dir{dir},
+  : _dir{dir},
     _committed_reader{std::move(committed_reader)},
     _segment_limits{segment_limits},
     _segment_writer_pool{segment_pool_size},
     _seg_counter{_committed_reader->Meta().index_meta.seg_counter},
     _last_gen{_committed_reader->Meta().index_meta.gen},
-    _writer{MakeIndexMetaWriter()},
+    _writer{std::move(meta_payload_writer)},
     _write_lock{std::move(lock)},
     _write_lock_file_ref{std::move(lock_file_ref)} {
   _topk_scorer = _committed_reader->Options().scorer;
@@ -1471,21 +1471,20 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, OpenMode mode,
   DirectoryMeta meta;
 
   {
-    auto reader = GetIndexMetaReader();
-    const bool index_exists = reader->last_segments_file(dir, meta.filename);
+    const bool index_exists = index_meta::LastFile(dir, meta.filename);
 
     if (kOmCreate == mode ||
         ((kOmCreate | kOmAppend) == mode && !index_exists)) {
       if (index_exists) {
-        meta.index_meta.gen = ParseGeneration(meta.filename);
+        meta.index_meta.gen = index_meta::ParseGeneration(meta.filename);
         meta.index_meta.seg_counter = MaxSegmentId(dir);
         meta.filename.clear();  // Empty index meta -> new index
       }
     } else if (!index_exists) {
       throw FileNotFound{meta.filename};  // no segments file found
     } else {
-      reader->read(dir, meta.index_meta, meta.filename,
-                   std::move(options.meta_payload_reader));
+      index_meta::Read(dir, meta.index_meta, meta.filename,
+                       std::move(options.meta_payload_reader));
     }
   }
 
@@ -1834,7 +1833,7 @@ bool IndexWriter::AdoptSegment(std::string_view meta_file, uint64_t tick) {
   IndexSegment segment;
   segment.filename = meta_file;
   try {
-    GetSegmentMetaReader()->read(_dir, segment.meta, meta_file);
+    segment_meta::Read(_dir, segment.meta, meta_file);
   } catch (const std::exception& e) {
     SDB_WARN(IRESEARCH, "Cannot adopt segment meta '", meta_file,
              "': ", e.what());
@@ -1954,7 +1953,7 @@ bool IndexWriter::ReplaceSegments(
     Adopted entry;
     entry.segment.filename = meta_file;
     try {
-      GetSegmentMetaReader()->read(_dir, entry.segment.meta, meta_file);
+      segment_meta::Read(_dir, entry.segment.meta, meta_file);
     } catch (const std::exception& e) {
       SDB_WARN(IRESEARCH, "Cannot replace with segment meta '", meta_file,
                "': ", e.what());
@@ -2295,16 +2294,9 @@ void IndexWriter::ApplyFlush(PendingContext&& context) {
   std::string index_meta_file;
   DirectoryMeta to_commit{.index_meta = std::move(context.meta)};
 
-  MetaPayloadWriter payload;
-  if (_meta_payload_writer) {
-    payload = [&](duckdb::Serializer& out) {
-      _meta_payload_writer(context.meta_tick, out);
-    };
-  }
-
   // Execute 1st phase of index meta transaction
-  if (!_writer->prepare(dir, to_commit.index_meta, to_commit.filename,
-                        index_meta_file, std::move(payload))) {
+  if (!_writer.prepare(dir, to_commit.index_meta, to_commit.filename,
+                       index_meta_file, context.meta_tick)) {
     throw IllegalState{absl::StrCat(
       "Failed to write index metadata for index: ", index_meta_file)};
   }
@@ -2314,7 +2306,7 @@ void IndexWriter::ApplyFlush(PendingContext&& context) {
   const auto new_gen = to_commit.index_meta.gen;
   Finally update_generation = [&]() noexcept {
     if (!_pending_state.Valid()) [[unlikely]] {
-      _writer->rollback();  // Rollback failed transaction
+      _writer.rollback();  // Rollback failed transaction
     }
 
     // Ensure writer's generation is updated
@@ -2372,7 +2364,7 @@ void IndexWriter::Finish() {
     Abort();  // after FinishReset it's noop
   };
 
-  if (!_writer->commit()) [[unlikely]] {
+  if (!_writer.commit()) [[unlikely]] {
     throw IllegalState{"Failed to commit index metadata"};
   }
 
@@ -2392,7 +2384,7 @@ void IndexWriter::Abort() noexcept {
     return;  // There is no open transaction
   }
 
-  _writer->rollback();
+  _writer.rollback();
   _pending_state.Reset(*this);
 }
 

@@ -22,7 +22,6 @@
 
 #include <cstdio>
 #include <iresearch/analysis/tokenizer.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>

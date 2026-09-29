@@ -25,19 +25,25 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <iresearch/error/error.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
+#include <iresearch/formats/flush_state.hpp>
 #include <iresearch/formats/format_utils.hpp>
 #include <iresearch/formats/index/burst_trie.hpp>
 #include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/index/idx_writer.hpp>
+#include <iresearch/formats/index_meta_reader.hpp>
 #include <iresearch/formats/index_meta_writer.hpp>
+#include <iresearch/formats/reader_state.hpp>
 #include <iresearch/formats/segment_meta_reader.hpp>
 #include <iresearch/formats/segment_meta_writer.hpp>
+#include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
@@ -45,7 +51,9 @@
 #include <iresearch/utils/crc.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/resource_manager.hpp>
+#include <iresearch/utils/serialization.hpp>
 #include <iresearch/utils/type_limits.hpp>
+#include <roaring/roaring.hh>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -89,13 +97,12 @@ void FormatTestCase::AssertNoDirectoryArtifacts(
   irs::IndexMeta index_meta;
   std::string segment_file;
 
-  auto reader = irs::GetIndexMetaReader();
   std::unordered_set<std::string> index_files(expect_additional.begin(),
                                               expect_additional.end());
-  const bool exists = reader->last_segments_file(dir, segment_file);
+  const bool exists = irs::index_meta::LastFile(dir, segment_file);
 
   if (exists) {
-    reader->read(dir, index_meta, segment_file);
+    irs::index_meta::Read(dir, index_meta, segment_file);
 
     VisitFiles(index_meta, [&index_files](const std::string& file) {
       index_files.emplace(file);
@@ -278,11 +285,10 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     {
       irs::IndexMeta index_meta;
       std::string segments_file;
-      auto meta_reader = irs::GetIndexMetaReader();
-      const bool exists = meta_reader->last_segments_file(*dir, segments_file);
+      const bool exists = irs::index_meta::LastFile(*dir, segments_file);
       ASSERT_TRUE(exists);
 
-      meta_reader->read(*dir, index_meta, segments_file);
+      irs::index_meta::Read(*dir, index_meta, segments_file);
 
       VisitFiles(index_meta, [&reader_files](std::string_view file) {
         reader_files.emplace(file);
@@ -722,12 +728,9 @@ TEST_P(FormatTestCase, fields_read_write) {
       (sorted_terms.empty() ? irs::bytes_view{} : *sorted_terms.begin()),
       (sorted_terms.empty() ? irs::bytes_view{} : *sorted_terms.rbegin())};
 
-    irs::IdxWriter idx{dir(), "segment_name",
-                       ::irs::DuckDBEngine::Instance().instance()};
-    irs::burst_trie::FieldWriter writer{
-      irs::MakePostingsWriter(/*compaction=*/false,
-                              irs::IResourceManager::gNoop),
-      /*compaction=*/false, irs::IResourceManager::gNoop};
+    irs::IdxWriter idx{dir(), "segment_name"};
+    irs::burst_trie::FieldWriter writer{/*compaction=*/false,
+                                        irs::IResourceManager::gNoop};
     writer.SetIdxWriter(idx);
     writer.prepare(state);
     writer.write(term_reader);
@@ -741,8 +744,7 @@ TEST_P(FormatTestCase, fields_read_write) {
     meta.name = "segment_name";
 
     irs::IdxReader idx{dir(), "segment_name"};
-    irs::burst_trie::FieldReader reader_obj{irs::MakePostingsReader(),
-                                            irs::IResourceManager::gNoop};
+    irs::burst_trie::FieldReader reader_obj{irs::IResourceManager::gNoop};
     auto* reader = &reader_obj;
     reader->prepare(
       irs::ReaderState{.dir = &dir(), .meta = &meta, .idx = &idx});
@@ -961,10 +963,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     std::string filename;
 
     // write segment meta
-    {
-      auto writer = irs::GetSegmentMetaWriter();
-      writer->Write(dir(), filename, meta);
-    }
+    irs::segment_meta::Write(dir(), filename, meta);
 
     // read segment meta
     {
@@ -972,9 +971,8 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       read_meta.name = meta.name;
       read_meta.version = 100;
 
-      auto reader = irs::GetSegmentMetaReader();
-      reader->read(dir(), read_meta,
-                   irs::FileName<irs::SegmentMetaWriter>(read_meta));
+      irs::segment_meta::Read(dir(), read_meta,
+                              irs::segment_meta::FileName(read_meta));
       ASSERT_EQ(meta.name, read_meta.name);
       ASSERT_EQ(meta.docs_count, read_meta.docs_count);
       ASSERT_EQ(meta.live_docs_count, read_meta.live_docs_count);
@@ -989,8 +987,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     {
       irs::SegmentMeta read_meta;
 
-      auto reader = irs::GetSegmentMetaReader();
-      reader->read(dir(), read_meta, filename);
+      irs::segment_meta::Read(dir(), read_meta, filename);
       ASSERT_EQ(meta.name, read_meta.name);
       ASSERT_EQ(meta.version, read_meta.version);
       ASSERT_EQ(meta.docs_count, read_meta.docs_count);
@@ -1000,9 +997,9 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     {
       irs::SegmentMeta read_meta;
 
-      auto reader = irs::GetSegmentMetaReader();
-      ASSERT_THROW(reader->read(dir(), read_meta, "no_generation.sm"),
-                   irs::IndexError);
+      ASSERT_THROW(
+        irs::segment_meta::Read(dir(), read_meta, "no_generation.sm"),
+        irs::IndexError);
     }
   }
 
@@ -1026,16 +1023,12 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
 
     std::string filename;
 
-    {
-      auto writer = irs::GetSegmentMetaWriter();
-      writer->Write(dir(), filename, meta);
-    }
+    irs::segment_meta::Write(dir(), filename, meta);
 
     {
       irs::SegmentMeta read_meta;
 
-      auto reader = irs::GetSegmentMetaReader();
-      reader->read(dir(), read_meta, filename);
+      irs::segment_meta::Read(dir(), read_meta, filename);
       ASSERT_EQ(meta.docs_count, read_meta.docs_count);
       ASSERT_EQ(451, read_meta.live_docs_count);
       ASSERT_EQ(*meta.docs_mask, *read_meta.docs_mask);
@@ -1068,17 +1061,16 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     const std::vector<std::string> data_files{"file1", "file2"};
 
     auto mask = scattered(irs::doc_limits::min(), 3);
-    ASSERT_LT(irs::SegmentMetaWriterImpl::kMinChainBytes,
+    ASSERT_LT(irs::segment_meta::kMinChainBytes,
               mask.Compress().getSizeInBytes());
 
     std::string filename;
-    auto writer = irs::GetSegmentMetaWriter();
 
     auto flush = [&](const irs::DocumentMask* patch, uint64_t parent) {
       meta.docs_mask = std::make_shared<irs::DocumentMask>(mask);
       meta.live_docs_count =
         meta.docs_count - static_cast<irs::doc_id_t>(mask.Count());
-      writer->Write(dir(), filename, meta, patch, parent);
+      irs::segment_meta::Write(dir(), filename, meta, patch, parent);
     };
 
     flush(nullptr, 0);
@@ -1101,26 +1093,35 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
 
     auto expected_files = data_files;
     expected_files.emplace_back(
-      irs::FileName(meta.name, 100, irs::SegmentMetaWriterImpl::kFormatExt));
+      irs::FileName(meta.name, 100, irs::segment_meta::kExt));
     expected_files.emplace_back(
-      irs::FileName(meta.name, 101, irs::SegmentMetaWriterImpl::kFormatExt));
+      irs::FileName(meta.name, 101, irs::segment_meta::kExt));
     ASSERT_EQ(expected_files, meta.files);
 
     auto link_of = [&](uint64_t version, std::vector<std::string>& files) {
-      const auto file = irs::FileName(meta.name, version,
-                                      irs::SegmentMetaWriterImpl::kFormatExt);
+      const auto file =
+        irs::FileName(meta.name, version, irs::segment_meta::kExt);
       auto in = dir().open(file, irs::IOAdvice::NORMAL);
       EXPECT_NE(nullptr, in);
       std::vector<uint64_t> parents;
       irs::format_utils::ReadFooter(
-        *in, file, [&](duckdb::Deserializer& meta_in, uint64_t) {
-          EXPECT_NE(0, irs::ReadMaskSize(meta_in));
-          parents = irs::ReadParents(meta_in);
-          irs::ReadFiles(meta_in, files);
-          meta_in.ReadProperty<uint32_t>(
-            irs::SegmentMetaWriterImpl::kFieldDocsCount, "docs_count");
-          meta_in.ReadProperty<uint64_t>(
-            irs::SegmentMetaWriterImpl::kFieldByteSize, "byte_size");
+        *in, file, [&](duckdb::BinaryDeserializer& meta_in, uint64_t) {
+          EXPECT_NE(0, meta_in.ReadPropertyWithExplicitDefault<uint64_t>(
+                         irs::segment_meta::kFieldMaskSize, "mask_size", 0));
+          meta_in.ReadOptionalList(
+            irs::segment_meta::kFieldParents, "parents",
+            [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+              parents.push_back(list.ReadElement<uint64_t>());
+            });
+          meta_in.ReadOptionalList(
+            irs::segment_meta::kFieldFiles, "files",
+            [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+              files.push_back(list.ReadElement<std::string>());
+            });
+          meta_in.ReadProperty<uint32_t>(irs::segment_meta::kFieldDocsCount,
+                                         "docs_count");
+          meta_in.ReadProperty<uint64_t>(irs::segment_meta::kFieldByteSize,
+                                         "byte_size");
         });
       return parents;
     };
@@ -1144,9 +1145,8 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       read_meta.name = meta.name;
       read_meta.version = 105;
 
-      auto reader = irs::GetSegmentMetaReader();
-      reader->read(dir(), read_meta,
-                   irs::FileName<irs::SegmentMetaWriter>(read_meta));
+      irs::segment_meta::Read(dir(), read_meta,
+                              irs::segment_meta::FileName(read_meta));
       ASSERT_EQ(meta.docs_count, read_meta.docs_count);
       ASSERT_EQ(meta.live_docs_count, read_meta.live_docs_count);
       ASSERT_EQ(meta.byte_size, read_meta.byte_size);
@@ -1156,25 +1156,23 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       ASSERT_EQ(mask, *read_meta.docs_mask);
     }
 
-    ASSERT_TRUE(dir().remove(
-      irs::FileName(meta.name, 101, irs::SegmentMetaWriterImpl::kFormatExt)));
+    ASSERT_TRUE(
+      dir().remove(irs::FileName(meta.name, 101, irs::segment_meta::kExt)));
 
     {
       irs::SegmentMeta read_meta;
       read_meta.name = meta.name;
       read_meta.version = 105;
 
-      auto reader = irs::GetSegmentMetaReader();
-      ASSERT_THROW(
-        reader->read(dir(), read_meta,
-                     irs::FileName<irs::SegmentMetaWriter>(read_meta)),
-        irs::IoError);
+      ASSERT_THROW(irs::segment_meta::Read(
+                     dir(), read_meta, irs::segment_meta::FileName(read_meta)),
+                   irs::IoError);
     }
   }
 }
 
 TEST_P(FormatTestCase, segment_meta_rejects_unknown_fields) {
-  using Writer = irs::SegmentMetaWriterImpl;
+  namespace sm = irs::segment_meta;
 
   irs::SegmentMeta meta;
   meta.name = "extended_meta_name";
@@ -1185,39 +1183,38 @@ TEST_P(FormatTestCase, segment_meta_rejects_unknown_fields) {
   meta.files.emplace_back("file1");
 
   {
-    auto out =
-      dir().create(irs::FileName(meta.name, meta.version, Writer::kFormatExt));
+    auto out = dir().create(sm::FileName(meta));
     ASSERT_NE(nullptr, out);
 
-    irs::format_utils::WriteFooter(*out, [&](duckdb::Serializer& meta_out) {
-      meta_out.WriteList(Writer::kFieldFiles, "files", meta.files.size(),
-                         [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                           list.WriteElement<std::string>(meta.files[i]);
-                         });
-      meta_out.WriteProperty<uint32_t>(Writer::kFieldDocsCount, "docs_count",
-                                       meta.docs_count);
-      meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize, "byte_size",
-                                       meta.byte_size);
-      meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize + 1,
-                                       "from_the_future", 123);
-    });
+    irs::format_utils::WriteFooter(
+      *out, [&](duckdb::BinarySerializer& meta_out) {
+        meta_out.WriteList(
+          sm::kFieldFiles, "files", meta.files.size(),
+          [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+            list.WriteElement<std::string>(meta.files[i]);
+          });
+        meta_out.WriteProperty<uint32_t>(sm::kFieldDocsCount, "docs_count",
+                                         meta.docs_count);
+        meta_out.WriteProperty<uint64_t>(sm::kFieldByteSize, "byte_size",
+                                         meta.byte_size);
+        meta_out.WriteProperty<uint64_t>(sm::kFieldByteSize + 1,
+                                         "from_the_future", 123);
+      });
   }
 
   irs::SegmentMeta read_meta;
   read_meta.name = meta.name;
   read_meta.version = meta.version;
 
-  auto reader = irs::GetSegmentMetaReader();
-  ASSERT_THROW(reader->read(dir(), read_meta,
-                            irs::FileName<irs::SegmentMetaWriter>(read_meta)),
+  ASSERT_THROW(sm::Read(dir(), read_meta, sm::FileName(read_meta)),
                duckdb::SerializationException);
 }
 
 TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
-  using Writer = irs::SegmentMetaWriterImpl;
+  namespace sm = irs::segment_meta;
 
   auto create = [&](std::string_view name, uint64_t version) {
-    auto out = dir().create(irs::FileName(name, version, Writer::kFormatExt));
+    auto out = dir().create(irs::FileName(name, version, sm::kExt));
     EXPECT_NE(nullptr, out);
     return out;
   };
@@ -1229,9 +1226,7 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
     std::string message{"not rejected"};
     try {
       irs::SegmentMeta meta;
-      auto reader = irs::GetSegmentMetaReader();
-      reader->read(dir(), meta,
-                   irs::FileName(name, version, Writer::kFormatExt));
+      sm::Read(dir(), meta, irs::FileName(name, version, sm::kExt));
     } catch (const irs::IndexError& e) {
       message = e.what();
     }
@@ -1257,25 +1252,26 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
       out->WriteData(reinterpret_cast<const irs::byte_type*>(mask.data()),
                      mask.size());
     }
-    irs::format_utils::WriteFooter(*out, [&](duckdb::Serializer& meta_out) {
-      meta_out.WritePropertyWithDefault<uint64_t>(Writer::kFieldMaskSize,
+    irs::format_utils::WriteFooter(*out, [&](
+                                           duckdb::BinarySerializer& meta_out) {
+      meta_out.WritePropertyWithDefault<uint64_t>(sm::kFieldMaskSize,
                                                   "mask_size", mask.size(), 0);
       if (parents.size() != 0) {
         meta_out.WriteList(
-          Writer::kFieldParents, "parents", parents.size(),
-          [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+          sm::kFieldParents, "parents", parents.size(),
+          [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
             list.WriteElement<uint64_t>(parents.begin()[i]);
           });
       }
       if (files) {
-        meta_out.WriteList(Writer::kFieldFiles, "files", 1,
-                           [](duckdb::Serializer::List& list, duckdb::idx_t) {
-                             list.WriteElement<std::string>("file1");
-                           });
+        meta_out.WriteList(
+          sm::kFieldFiles, "files", 1,
+          [](duckdb::BinarySerializer::List& list, duckdb::idx_t) {
+            list.WriteElement<std::string>("file1");
+          });
       }
-      meta_out.WriteProperty<uint32_t>(Writer::kFieldDocsCount, "docs_count",
-                                       100);
-      meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize, "byte_size", 42);
+      meta_out.WriteProperty<uint32_t>(sm::kFieldDocsCount, "docs_count", 100);
+      meta_out.WriteProperty<uint64_t>(sm::kFieldByteSize, "byte_size", 42);
     });
   };
 
@@ -1285,12 +1281,11 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
   {
     auto out = create("mask_size_mismatch", 1);
     out->WriteData(kPad, sizeof kPad);
-    irs::format_utils::WriteFooter(*out, [](duckdb::Serializer& meta_out) {
-      meta_out.WriteProperty<uint64_t>(Writer::kFieldMaskSize, "mask_size",
-                                       1000);
-      meta_out.WriteProperty<uint32_t>(Writer::kFieldDocsCount, "docs_count",
-                                       100);
-      meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize, "byte_size", 42);
+    irs::format_utils::WriteFooter(*out, [](
+                                           duckdb::BinarySerializer& meta_out) {
+      meta_out.WriteProperty<uint64_t>(sm::kFieldMaskSize, "mask_size", 1000);
+      meta_out.WriteProperty<uint32_t>(sm::kFieldDocsCount, "docs_count", 100);
+      meta_out.WriteProperty<uint64_t>(sm::kFieldByteSize, "byte_size", 42);
     });
   }
   rejected("mask_size_mismatch", 1, "differs from the data size");
@@ -1327,13 +1322,13 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
 }
 
 TEST_P(FormatTestCase, segment_meta_derives_from_listed_links) {
-  using Writer = irs::SegmentMetaWriterImpl;
+  namespace sm = irs::segment_meta;
 
   constexpr std::string_view kName = "listed_meta_name";
 
   auto write = [&](uint64_t version, irs::doc_id_t doc,
                    std::initializer_list<uint64_t> parents, bool files) {
-    auto out = dir().create(irs::FileName(kName, version, Writer::kFormatExt));
+    auto out = dir().create(irs::FileName(kName, version, sm::kExt));
     ASSERT_NE(nullptr, out);
     roaring::Roaring compressed;
     compressed.add(doc);
@@ -1341,25 +1336,26 @@ TEST_P(FormatTestCase, segment_meta_derives_from_listed_links) {
     compressed.write(blob.data());
     out->WriteData(reinterpret_cast<const irs::byte_type*>(blob.data()),
                    blob.size());
-    irs::format_utils::WriteFooter(*out, [&](duckdb::Serializer& meta_out) {
-      meta_out.WriteProperty<uint64_t>(Writer::kFieldMaskSize, "mask_size",
+    irs::format_utils::WriteFooter(*out, [&](
+                                           duckdb::BinarySerializer& meta_out) {
+      meta_out.WriteProperty<uint64_t>(sm::kFieldMaskSize, "mask_size",
                                        blob.size());
       if (parents.size() != 0) {
         meta_out.WriteList(
-          Writer::kFieldParents, "parents", parents.size(),
-          [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+          sm::kFieldParents, "parents", parents.size(),
+          [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
             list.WriteElement<uint64_t>(parents.begin()[i]);
           });
       }
       if (files) {
-        meta_out.WriteList(Writer::kFieldFiles, "files", 1,
-                           [](duckdb::Serializer::List& list, duckdb::idx_t) {
-                             list.WriteElement<std::string>("file1");
-                           });
+        meta_out.WriteList(
+          sm::kFieldFiles, "files", 1,
+          [](duckdb::BinarySerializer::List& list, duckdb::idx_t) {
+            list.WriteElement<std::string>("file1");
+          });
       }
-      meta_out.WriteProperty<uint32_t>(Writer::kFieldDocsCount, "docs_count",
-                                       100);
-      meta_out.WriteProperty<uint64_t>(Writer::kFieldByteSize, "byte_size", 42);
+      meta_out.WriteProperty<uint32_t>(sm::kFieldDocsCount, "docs_count", 100);
+      meta_out.WriteProperty<uint64_t>(sm::kFieldByteSize, "byte_size", 42);
     });
   };
 
@@ -1369,8 +1365,7 @@ TEST_P(FormatTestCase, segment_meta_derives_from_listed_links) {
   write(5, 5, {1, 3}, false);
 
   irs::SegmentMeta meta;
-  auto reader = irs::GetSegmentMetaReader();
-  reader->read(dir(), meta, irs::FileName(kName, 5, Writer::kFormatExt));
+  sm::Read(dir(), meta, irs::FileName(kName, 5, sm::kExt));
 
   irs::DocumentMask expected;
   expected.Add(1);
@@ -1381,10 +1376,10 @@ TEST_P(FormatTestCase, segment_meta_derives_from_listed_links) {
   ASSERT_EQ(expected, *meta.docs_mask);
   ASSERT_EQ(97, meta.live_docs_count);
   ASSERT_EQ(3, meta.docs_mask_chain);
-  ASSERT_EQ((std::vector<std::string>{
-              "file1", irs::FileName(kName, 1, Writer::kFormatExt),
-              irs::FileName(kName, 3, Writer::kFormatExt)}),
-            meta.files);
+  ASSERT_EQ(
+    (std::vector<std::string>{"file1", irs::FileName(kName, 1, sm::kExt),
+                              irs::FileName(kName, 3, sm::kExt)}),
+    meta.files);
 }
 
 TEST_P(FormatTestCase, format_utils_footer) {
@@ -1396,7 +1391,7 @@ TEST_P(FormatTestCase, format_utils_footer) {
       stream->WriteData(reinterpret_cast<const irs::byte_type*>(data.data()),
                         data.size());
     }
-    irs::format_utils::WriteFooter(*stream, [](duckdb::Serializer& meta) {
+    irs::format_utils::WriteFooter(*stream, [](duckdb::BinarySerializer& meta) {
       meta.WriteProperty<uint32_t>(0, "value", 42);
     });
   };
@@ -1406,7 +1401,7 @@ TEST_P(FormatTestCase, format_utils_footer) {
     uint32_t value = 0;
     uint64_t data_size = 0;
     const auto footer = irs::format_utils::ReadFooter(
-      *stream, name, [&](duckdb::Deserializer& meta, uint64_t size) {
+      *stream, name, [&](duckdb::BinaryDeserializer& meta, uint64_t size) {
         value = meta.ReadProperty<uint32_t>(0, "value");
         data_size = size;
       });
@@ -1430,7 +1425,7 @@ TEST_P(FormatTestCase, format_utils_footer_damaged) {
     auto stream = dir().create("file");
     ASSERT_NE(nullptr, stream);
     stream->WriteU64(7);
-    irs::format_utils::WriteFooter(*stream, [](duckdb::Serializer& meta) {
+    irs::format_utils::WriteFooter(*stream, [](duckdb::BinarySerializer& meta) {
       meta.WriteProperty<uint32_t>(0, "value", 42);
     });
   }
@@ -1453,10 +1448,10 @@ TEST_P(FormatTestCase, format_utils_footer_damaged) {
   const auto read = [&](std::string_view name) {
     auto stream = dir().open(name, irs::IOAdvice::NORMAL);
     ASSERT_NE(nullptr, stream);
-    irs::format_utils::ReadFooter(*stream, name,
-                                  [](duckdb::Deserializer& meta, uint64_t) {
-                                    meta.ReadProperty<uint32_t>(0, "value");
-                                  });
+    irs::format_utils::ReadFooter(
+      *stream, name, [](duckdb::BinaryDeserializer& meta, uint64_t) {
+        meta.ReadProperty<uint32_t>(0, "value");
+      });
   };
 
   auto flipped = bytes;
@@ -1477,24 +1472,23 @@ TEST_P(FormatTestCase, format_utils_footer_damaged) {
 }
 
 TEST_P(FormatTestCase, index_meta_rejects_other_storage_version) {
-  using Writer = irs::IndexMetaWriterImpl;
+  namespace im = irs::index_meta;
 
   const auto read = [&](uint64_t gen, uint64_t version) {
-    const auto name = Writer::FileName(gen);
+    const auto name = im::FileName(gen);
     {
       auto out = dir().create(name);
       ASSERT_NE(nullptr, out);
-      irs::format_utils::WriteFooter(*out, [&](duckdb::Serializer& meta) {
-        meta.WriteProperty<uint64_t>(Writer::kFieldStorageVersion,
+      irs::format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& meta) {
+        meta.WriteProperty<uint64_t>(im::kFieldStorageVersion,
                                      "storage_version", version);
-        meta.WriteProperty<uint64_t>(Writer::kFieldSegCounter, "seg_counter",
-                                     0);
-        meta.WriteList(Writer::kFieldSegments, "segments", 0,
-                       [](duckdb::Serializer::List&, duckdb::idx_t) {});
+        meta.WriteProperty<uint64_t>(im::kFieldSegCounter, "seg_counter", 0);
+        meta.WriteList(im::kFieldSegments, "segments", 0,
+                       [](duckdb::BinarySerializer::List&, duckdb::idx_t) {});
       });
     }
     irs::IndexMeta meta;
-    irs::GetIndexMetaReader()->read(dir(), meta, name);
+    im::Read(dir(), meta, name);
   };
 
   const auto current = static_cast<uint64_t>(duckdb::kIResearchStorageVersion);

@@ -91,7 +91,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
                                        duckdb::idx_t schema_id,
                                        duckdb::idx_t table_id);
   static std::filesystem::path GetWalPath(duckdb::idx_t db_id);
-  static uint64_t ReadCommittedTick(duckdb::Deserializer& payload);
+  static uint64_t ReadCommittedTick(duckdb::BinaryDeserializer& payload);
 
   // A drop commits while readers may still hold this table; the destructor
   // removes the index dir and the WAL shard once the last of them lets go.

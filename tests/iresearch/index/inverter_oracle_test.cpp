@@ -28,7 +28,6 @@
 #include <filesystem>
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/fs_directory.hpp>
 #include <string>

@@ -26,9 +26,9 @@
 #include <absl/random/random.h>
 #include <faiss/utils/distances.h>
 
-#include <duckdb/common/serializer/deserializer.hpp>
-#include <duckdb/common/serializer/serializer.hpp>
-#include <iresearch/formats/formats.hpp>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
+#include <iresearch/formats/index_meta_reader.hpp>
 #include <iresearch/formats/segment_meta_reader.hpp>
 #include <iresearch/formats/segment_meta_writer.hpp>
 #include <iresearch/index/field_meta.hpp>
@@ -47,6 +47,7 @@
 #include <iresearch/utils/type_limits.hpp>
 #include <iresearch/utils/vector.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
+#include <roaring/roaring.hh>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -11269,10 +11270,10 @@ std::optional<std::string> ReadMetaPayload(const irs::Directory& dir,
                                            const irs::DirectoryReader& reader) {
   std::optional<std::string> payload;
   irs::IndexMeta meta;
-  irs::GetIndexMetaReader()->read(
-    dir, meta, reader.Meta().filename, [&](duckdb::Deserializer& in) {
-      payload = in.ReadProperty<std::string>(0, "payload");
-    });
+  irs::index_meta::Read(dir, meta, reader.Meta().filename,
+                        [&](duckdb::BinaryDeserializer& in) {
+                          payload = in.ReadProperty<std::string>(0, "payload");
+                        });
   return payload;
 }
 
@@ -11299,7 +11300,7 @@ TEST_P(IndexTestCase11, clean_writer_with_payload) {
   std::string input_payload = "first";
   writer_options.meta_payload_writer =
     [&payload_committed_tick, &input_payload](uint64_t tick,
-                                              duckdb::Serializer& out) {
+                                              duckdb::BinarySerializer& out) {
       payload_committed_tick = tick;
       out.WriteProperty<std::string>(0, "payload", input_payload);
     };
@@ -11378,7 +11379,7 @@ TEST_P(IndexTestCase11, initial_two_phase_commit_payload) {
   uint64_t payload_calls_count{0};
   writer_options.meta_payload_writer =
     [&payload_calls_count, &payload_committed_tick, &input_payload](
-      uint64_t tick, duckdb::Serializer& out) {
+      uint64_t tick, duckdb::BinarySerializer& out) {
       payload_calls_count++;
       payload_committed_tick = tick;
       out.WriteProperty<std::string>(0, "payload", input_payload);
@@ -11414,7 +11415,7 @@ TEST_P(IndexTestCase11, initial_commit_payload) {
   uint64_t payload_calls_count{0};
   writer_options.meta_payload_writer =
     [&payload_calls_count, &payload_committed_tick, &input_payload](
-      uint64_t tick, duckdb::Serializer& out) {
+      uint64_t tick, duckdb::BinarySerializer& out) {
       payload_calls_count++;
       payload_committed_tick = tick;
       out.WriteProperty<std::string>(0, "payload", input_payload);
@@ -11448,7 +11449,7 @@ TEST_P(IndexTestCase11, commit_payload) {
   uint64_t payload_calls_count{0};
   writer_options.meta_payload_writer =
     [&payload_calls_count, &payload_committed_tick, &input_payload](
-      uint64_t tick, duckdb::Serializer& out) {
+      uint64_t tick, duckdb::BinarySerializer& out) {
       payload_calls_count++;
       payload_committed_tick = tick;
       out.WriteProperty<std::string>(0, "payload", input_payload);
@@ -11993,7 +11994,7 @@ TEST_P(IndexTestCase11, docs_mask_small_never_chains) {
     const auto mask = current_mask();
     ASSERT_NE(nullptr, mask);
     ASSERT_LE(mask->Compress().getSizeInBytes(),
-              irs::SegmentMetaWriterImpl::kMinChainBytes);
+              irs::segment_meta::kMinChainBytes);
     ASSERT_EQ(i + 1, mask->Count()) << "after removing " << removed[i];
   }
 

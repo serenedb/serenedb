@@ -41,7 +41,7 @@
 
 #include <filesystem>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
-#include <iresearch/formats/formats.hpp>
+#include <iresearch/formats/term_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>

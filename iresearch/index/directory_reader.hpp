@@ -26,6 +26,7 @@
 #include <duckdb/storage/statistics/base_statistics.hpp>
 
 #include "index_reader.hpp"
+#include "iresearch/formats/index_meta_reader.hpp"
 #include "iresearch/utils/object_pool.hpp"
 #include "iresearch/utils/shared.hpp"
 

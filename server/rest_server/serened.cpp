@@ -27,7 +27,6 @@
 #include <deque>
 #include <exception>
 #include <functional>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/utils/crash_handler.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>

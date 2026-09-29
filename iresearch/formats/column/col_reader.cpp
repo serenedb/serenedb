@@ -89,22 +89,21 @@ void CheckColumnMetaRanges(const ColumnMeta& meta, uint64_t footer_offset) {
   }
 }
 
-}  // namespace
-
-NormColumnMeta DeserializeNormMetas(duckdb::Deserializer& d, field_id id,
+NormColumnMeta DeserializeNormMetas(duckdb::BinaryDeserializer& d, field_id id,
                                     uint64_t footer_offset) {
   NormColumnMeta meta;
   meta.row_group_size = d.ReadProperty<uint32_t>(1, "row_group_size");
   meta.row_count = d.ReadProperty<uint64_t>(2, "row_count");
   d.ReadList(
-    3, "row_groups", [&](duckdb::Deserializer::List& rgl, duckdb::idx_t /*j*/) {
-      rgl.ReadObject([&](duckdb::Deserializer& po) {
+    3, "row_groups",
+    [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
         NormRowGroupMeta p;
-        p.byte_size = po.ReadProperty<uint8_t>(0, "byte_size");
-        p.max = po.ReadProperty<uint32_t>(1, "max");
-        p.sum = po.ReadProperty<uint64_t>(2, "sum");
-        p.non_zero_count = po.ReadProperty<uint64_t>(3, "non_zero_count");
-        p.file_offset = po.ReadProperty<uint64_t>(4, "file_offset");
+        p.byte_size = obj.ReadProperty<uint8_t>(0, "byte_size");
+        p.max = obj.ReadProperty<uint32_t>(1, "max");
+        p.sum = obj.ReadProperty<uint64_t>(2, "sum");
+        p.non_zero_count = obj.ReadProperty<uint64_t>(3, "non_zero_count");
+        p.file_offset = obj.ReadProperty<uint64_t>(4, "file_offset");
         SDB_ENSURE(p.byte_size == 1 || p.byte_size == 2 || p.byte_size == 4,
                    ".col reader: norm byte_size on column id ", id, ": ",
                    p.byte_size);
@@ -130,6 +129,8 @@ NormColumnMeta DeserializeNormMetas(duckdb::Deserializer& d, field_id id,
   return meta;
 }
 
+}  // namespace
+
 ColReader::ColReader(const Directory& dir, std::string_view segment_name,
                      duckdb::DatabaseInstance& db, IOAdvice advice)
   : _db{&db}, _ctx{db, OpenColFile(dir, segment_name, advice)} {
@@ -139,12 +140,12 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
   auto fin = _ctx.In().Dup();
   format_utils::ReadFooter(
     *fin, FileName(segment_name),
-    [&](duckdb::Deserializer& footer, uint64_t data_size) {
+    [&](duckdb::BinaryDeserializer& footer, uint64_t data_size) {
       footer.Set<duckdb::DatabaseInstance&>(db);
       footer.ReadList(
-        kFooterSlotColumns, "columns",
-        [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
-          list.ReadObject([&](duckdb::Deserializer& obj) {
+        kColFieldColumns, "columns",
+        [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+          list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
             auto meta = DeserializeColumnMeta(obj);
             CheckColumnMetaRanges(meta, data_size);
             auto col = ColumnReader::Make(std::move(meta));
@@ -155,9 +156,9 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
           });
         });
       footer.ReadOptionalList(
-        kFooterSlotNormColumns, "norm_columns",
-        [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
-          list.ReadObject([&](duckdb::Deserializer& obj) {
+        kColFieldNormColumns, "norm_columns",
+        [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+          list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
             const auto id =
               static_cast<field_id>(obj.ReadProperty<uint64_t>(0, "id"));
             auto meta = DeserializeNormMetas(obj, id, data_size);

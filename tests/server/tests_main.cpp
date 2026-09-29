@@ -20,7 +20,6 @@
 
 #include <gtest/gtest.h>
 
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 

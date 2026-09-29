@@ -22,7 +22,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/segment_writer.hpp>
 #include <iresearch/store/memory_directory.hpp>

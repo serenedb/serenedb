@@ -39,13 +39,6 @@
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
-namespace {
-
-constexpr duckdb::field_id_t kFooterSlotTermDict = 100;
-constexpr duckdb::field_id_t kFooterSlotIvf = 101;
-constexpr duckdb::field_id_t kFooterSlotHnsw = 102;
-
-}  // namespace
 
 struct IdxReader::Impl {
   IndexInput::ptr in;
@@ -73,11 +66,11 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
   _impl->in->EnableReadahead();
 
   format_utils::ReadFooter(
-    *_impl->in, filename, [&](duckdb::Deserializer& footer, uint64_t) {
+    *_impl->in, filename, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
       footer.ReadList(
-        kFooterSlotTermDict, "term_dict",
-        [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
-          list.ReadObject([&](duckdb::Deserializer& obj) {
+        kIdxFieldTermDict, "term_dict",
+        [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+          list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
             TermDictMeta meta;
             const auto id = obj.ReadProperty<uint64_t>(0, "id");
             meta.features = static_cast<IndexFeatures>(
@@ -97,9 +90,9 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
           });
         });
       footer.ReadOptionalList(
-        kFooterSlotIvf, "ivf",
-        [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
-          list.ReadObject([&](duckdb::Deserializer& obj) {
+        kIdxFieldIvf, "ivf",
+        [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+          list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
             const auto id = obj.ReadProperty<uint64_t>(0, "id");
             const auto tree_offset =
               obj.ReadProperty<uint64_t>(1, "tree_offset");
@@ -122,9 +115,9 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
           });
         });
       footer.ReadOptionalList(
-        kFooterSlotHnsw, "hnsw",
-        [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
-          list.ReadObject([&](duckdb::Deserializer& obj) {
+        kIdxFieldHnsw, "hnsw",
+        [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+          list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
             const auto id = obj.ReadProperty<uint64_t>(0, "id");
             const auto offset = obj.ReadProperty<uint64_t>(1, "offset");
             const auto byte_size = obj.ReadProperty<uint64_t>(2, "byte_size");

@@ -22,7 +22,6 @@
 
 #include <algorithm>
 #include <filesystem>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/term_filter.hpp>

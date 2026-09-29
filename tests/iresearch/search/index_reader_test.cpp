@@ -21,7 +21,8 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/formats/formats.hpp>
+#include <iresearch/formats/segment_meta_reader.hpp>
+#include <iresearch/formats/segment_meta_writer.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
@@ -311,16 +312,14 @@ TEST(segment_reader_test, segment_reader_has) {
   // has none (default)
   {
     irs::MemoryDirectory dir;
-    auto writer = irs::GetSegmentMetaWriter();
-    auto reader = irs::GetSegmentMetaReader();
     irs::SegmentMeta expected;
     expected.name = "_1";
 
-    writer->Write(dir, filename, expected);
+    irs::segment_meta::Write(dir, filename, expected);
 
     irs::SegmentMeta meta;
 
-    reader->read(dir, meta, filename);
+    irs::segment_meta::Read(dir, meta, filename);
 
     ASSERT_EQ(expected, meta);
     ASSERT_FALSE(irs::HasRemovals(meta));
@@ -329,16 +328,14 @@ TEST(segment_reader_test, segment_reader_has) {
   // has column store
   {
     irs::MemoryDirectory dir;
-    auto writer = irs::GetSegmentMetaWriter();
-    auto reader = irs::GetSegmentMetaReader();
     irs::SegmentMeta expected;
     expected.name = "_1";
 
-    writer->Write(dir, filename, expected);
+    irs::segment_meta::Write(dir, filename, expected);
 
     irs::SegmentMeta meta;
 
-    reader->read(dir, meta, filename);
+    irs::segment_meta::Read(dir, meta, filename);
 
     ASSERT_EQ(expected, meta);
     ASSERT_FALSE(irs::HasRemovals(meta));
@@ -347,8 +344,6 @@ TEST(segment_reader_test, segment_reader_has) {
   // has document mask
   {
     irs::MemoryDirectory dir;
-    auto writer = irs::GetSegmentMetaWriter();
-    auto reader = irs::GetSegmentMetaReader();
     irs::SegmentMeta expected;
     expected.name = "_1";
 
@@ -361,11 +356,11 @@ TEST(segment_reader_test, segment_reader_has) {
       docs_mask.Trim();
       return std::make_shared<irs::DocumentMask>(std::move(docs_mask));
     }();
-    writer->Write(dir, filename, expected);
+    irs::segment_meta::Write(dir, filename, expected);
 
     irs::SegmentMeta meta;
 
-    reader->read(dir, meta, filename);
+    irs::segment_meta::Read(dir, meta, filename);
 
     ASSERT_EQ(expected, meta);
     ASSERT_TRUE(irs::HasRemovals(meta));
@@ -374,8 +369,6 @@ TEST(segment_reader_test, segment_reader_has) {
   // has all
   {
     irs::MemoryDirectory dir;
-    auto writer = irs::GetSegmentMetaWriter();
-    auto reader = irs::GetSegmentMetaReader();
     irs::SegmentMeta expected;
     expected.name = "_1";
 
@@ -388,10 +381,10 @@ TEST(segment_reader_test, segment_reader_has) {
       docs_mask.Trim();
       return std::make_shared<irs::DocumentMask>(std::move(docs_mask));
     }();
-    writer->Write(dir, filename, expected);
+    irs::segment_meta::Write(dir, filename, expected);
 
     irs::SegmentMeta meta;
-    reader->read(dir, meta, filename);
+    irs::segment_meta::Read(dir, meta, filename);
 
     ASSERT_EQ(expected, meta);
     ASSERT_TRUE(irs::HasRemovals(meta));

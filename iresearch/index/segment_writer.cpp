@@ -32,6 +32,7 @@
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/index/inverter/columnar_flush.hpp"
@@ -124,7 +125,7 @@ void SegmentWriter::flush(IndexSegment& segment, DocumentMask& docs_mask) {
     .doc_count = buffered_docs(),
   };
 
-  IdxWriter idx{_dir, _seg_name, _db};
+  IdxWriter idx{_dir, _seg_name};
 
   std::vector<std::unique_ptr<AnnWriter>> ann_writers;
   if (_col_writer) {
@@ -215,8 +216,8 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
 
   if (!_field_writer) {
     auto& rm = _docs_context.ResourceManager();
-    _field_writer = std::make_unique<burst_trie::FieldWriter>(
-      MakePostingsWriter(/*compaction=*/false, rm), /*compaction=*/false, rm);
+    _field_writer =
+      std::make_unique<burst_trie::FieldWriter>(/*compaction=*/false, rm);
   }
 
   const auto* active = ActiveFieldOptions();

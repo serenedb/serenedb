@@ -22,16 +22,16 @@
 
 #pragma once
 
-#include <string_view>
-
 namespace irs {
 
 struct Directory;
+class IdxReader;
 struct SegmentMeta;
 
-namespace segment_meta {
+struct ReaderState {
+  const Directory* dir;
+  const SegmentMeta* meta;
+  IdxReader* idx = nullptr;
+};
 
-void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename);
-
-}  // namespace segment_meta
 }  // namespace irs

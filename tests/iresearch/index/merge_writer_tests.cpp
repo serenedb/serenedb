@@ -22,7 +22,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <iresearch/formats/column/norm_reader.hpp>
-#include <iresearch/formats/formats.hpp>
+#include <iresearch/formats/term_reader.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/merge_writer.hpp>
 #include <iresearch/index/norm.hpp>

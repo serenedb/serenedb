@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "formats.hpp"
+#include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 
 namespace irs {

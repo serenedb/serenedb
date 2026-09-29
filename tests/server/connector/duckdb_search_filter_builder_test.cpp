@@ -37,7 +37,6 @@
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/typed_terms.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>

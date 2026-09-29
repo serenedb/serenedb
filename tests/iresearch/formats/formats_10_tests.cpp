@@ -23,12 +23,15 @@
 
 #include <gtest/gtest.h>
 
+#include <iresearch/formats/flush_state.hpp>
 #include <iresearch/formats/format_utils.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/formats/index/burst_trie.hpp>
 #include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/index/idx_writer.hpp>
+#include <iresearch/formats/posting/reader.hpp>
+#include <iresearch/formats/posting/writer.hpp>
 #include <iresearch/formats/posting_meta.hpp>
+#include <iresearch/formats/reader_state.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/bit_packing.hpp>
@@ -53,8 +56,7 @@ class Format10TestCase : public tests::FormatTestCase {
     auto dir = get_directory(*this);
 
     // attributes for term
-    auto writer = irs::MakePostingsWriter(false, irs::IResourceManager::gNoop);
-    ASSERT_NE(nullptr, writer);
+    irs::PostingsWriter writer{false, irs::IResourceManager::gNoop};
     irs::PostingMeta posting_meta;
 
     // write postings for field
@@ -71,24 +73,24 @@ class Format10TestCase : public tests::FormatTestCase {
       irs::WriteStr(*out, std::string_view("file_header"));
 
       // prepare writer
-      writer->Prepare(state);
+      writer.Prepare(state);
 
-      writer->BeginField(field);
+      writer.BeginField(field);
 
       // write postings for term
       {
         TestPostings it(docs, field.index_features);
-        writer->Write(it, posting_meta);
+        writer.Write(it, posting_meta);
 
         // write attributes to out
-        writer->Encode(*out, posting_meta);
+        writer.Encode(*out, posting_meta);
       }
 
-      auto stats = writer->EndField();
+      auto stats = writer.EndField();
       ASSERT_FALSE(stats.has_score_bounds);
       ASSERT_EQ(docs.size(), stats.docs_count);
 
-      writer->End();
+      writer.End();
     }
 
     // read postings
@@ -105,9 +107,8 @@ class Format10TestCase : public tests::FormatTestCase {
       const auto tmp = irs::ReadString<std::string>(*in);
 
       // prepare reader
-      auto reader = irs::MakePostingsReader();
-      ASSERT_NE(nullptr, reader);
-      reader->prepare(state, field.index_features);
+      irs::PostingsReader reader;
+      reader.prepare(state, field.index_features);
 
       irs::bstring in_data(in->Length() - in->Position(), 0);
       in->ReadData(&in_data[0], in_data.size());
@@ -116,7 +117,7 @@ class Format10TestCase : public tests::FormatTestCase {
       // read term attributes
       {
         irs::PostingMeta read_meta;
-        begin += reader->decode(begin, field.index_features, read_meta);
+        begin += reader.decode(begin, field.index_features, read_meta);
 
         // check PostingMeta
         {
@@ -128,7 +129,7 @@ class Format10TestCase : public tests::FormatTestCase {
           ASSERT_EQ(posting_meta.doc_delta, read_meta.doc_delta);
         }
 
-        const auto handles = reader->Handles();
+        const auto handles = reader.Handles();
 
         auto assert_docs = [&](size_t seed, size_t inc) {
           auto actual = tests::MakeSeekPostings(read_meta, handles,
@@ -245,7 +246,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
 
   // docs & attributes for term0
   const std::vector<std::pair<irs::doc_id_t, uint32_t>> docs1{{6, 10}};
-  auto writer = irs::MakePostingsWriter(false, irs::IResourceManager::gNoop);
+  irs::PostingsWriter writer{false, irs::IResourceManager::gNoop};
   irs::PostingMeta meta0, meta1;
 
   // write postings
@@ -261,15 +262,15 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     ASSERT_FALSE(!out);
 
     // prepare writer
-    writer->Prepare(state);
+    writer.Prepare(state);
 
     // begin field
-    writer->BeginField(field);
+    writer.BeginField(field);
 
     // write postings for term0
     {
       TestPostings docs(docs0);
-      writer->Write(docs, meta0);
+      writer.Write(docs, meta0);
 
       // check PostingMeta
       {
@@ -279,13 +280,13 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // write term0 attributes to out
-      writer->Encode(*out, meta0);
+      writer.Encode(*out, meta0);
     }
 
     // write postings for term0
     {
       TestPostings docs(docs1);
-      writer->Write(docs, meta1);
+      writer.Write(docs, meta1);
 
       // check PostingMeta
       {
@@ -295,7 +296,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // write term0 attributes to out
-      writer->Encode(*out, meta1);
+      writer.Encode(*out, meta1);
     }
 
     // check doc positions for term0 & term1
@@ -308,7 +309,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     }
 
     // finish writing
-    writer->End();
+    writer.End();
   }
 
   // read postings
@@ -324,9 +325,8 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     ASSERT_FALSE(!in);
 
     // prepare reader
-    auto reader = irs::MakePostingsReader();
-    ASSERT_NE(nullptr, reader);
-    reader->prepare(state, field.index_features);
+    irs::PostingsReader reader;
+    reader.prepare(state, field.index_features);
 
     irs::bstring in_data(in->Length() - in->Position(), 0);
     in->ReadData(&in_data[0], in_data.size());
@@ -336,7 +336,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     {
       irs::PostingMeta read_meta;
 
-      begin += reader->decode(begin, field.index_features, read_meta);
+      begin += reader.decode(begin, field.index_features, read_meta);
 
       // check PostingMeta for term0
       {
@@ -349,8 +349,8 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // read documents
-      auto it = reader->Postings(field.index_features, irs::IndexFeatures::None,
-                                 read_meta, /*has_score_bounds=*/false);
+      auto it = reader.Postings(field.index_features, irs::IndexFeatures::None,
+                                read_meta, /*has_score_bounds=*/false);
       for (size_t i = 0; !irs::doc_limits::eof(it->Next());) {
         ASSERT_EQ(docs0[i++].first, it->Value());
       }
@@ -359,7 +359,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     // check PostingMeta for term1
     {
       irs::PostingMeta read_meta;
-      begin += reader->decode(begin, field.index_features, read_meta);
+      begin += reader.decode(begin, field.index_features, read_meta);
 
       {
         ASSERT_EQ(meta1.docs_count, read_meta.docs_count);
@@ -372,8 +372,8 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // read documents
-      auto it = reader->Postings(field.index_features, irs::IndexFeatures::None,
-                                 read_meta, /*has_score_bounds=*/false);
+      auto it = reader.Postings(field.index_features, irs::IndexFeatures::None,
+                                read_meta, /*has_score_bounds=*/false);
       for (size_t i = 0; !irs::doc_limits::eof(it->Next());) {
         ASSERT_EQ(docs1[i++].first, it->Value());
       }
@@ -396,8 +396,7 @@ TEST_P(Format10TestCase, postings_read_write) {
   // docs & attributes for term1
   const std::vector<std::pair<irs::doc_id_t, uint32_t>> docs1{
     {2, 10}, {7, 10}, {9, 10}, {19, 10}};
-  auto writer = irs::MakePostingsWriter(false, irs::IResourceManager::gNoop);
-  ASSERT_NE(nullptr, writer);
+  irs::PostingsWriter writer{false, irs::IResourceManager::gNoop};
   irs::PostingMeta meta0, meta1;  // must be destroyed before writer
 
   // write postings
@@ -413,33 +412,33 @@ TEST_P(Format10TestCase, postings_read_write) {
     ASSERT_FALSE(!out);
 
     // prepare writer
-    writer->Prepare(state);
+    writer.Prepare(state);
 
     // begin field
-    writer->BeginField(field);
+    writer.BeginField(field);
 
     // write postings for term0
     {
       TestPostings docs(docs0);
-      writer->Write(docs, meta0);
+      writer.Write(docs, meta0);
 
       // write attributes to out
-      writer->Encode(*out, meta0);
+      writer.Encode(*out, meta0);
     }
     // write postings for term1
     {
       TestPostings docs(docs1);
-      writer->Write(docs, meta1);
+      writer.Write(docs, meta1);
 
       // write attributes to out
-      writer->Encode(*out, meta1);
+      writer.Encode(*out, meta1);
     }
 
     // check doc positions for term0 & term1
     ASSERT_LT(meta0.doc_start, meta1.doc_start);
 
     // finish writing
-    writer->End();
+    writer.End();
   }
 
   // read postings
@@ -455,9 +454,8 @@ TEST_P(Format10TestCase, postings_read_write) {
     ASSERT_FALSE(!in);
 
     // prepare reader
-    auto reader = irs::MakePostingsReader();
-    ASSERT_NE(nullptr, reader);
-    reader->prepare(state, field.index_features);
+    irs::PostingsReader reader;
+    reader.prepare(state, field.index_features);
 
     irs::bstring in_data(in->Length() - in->Position(), 0);
     in->ReadData(&in_data[0], in_data.size());
@@ -468,7 +466,7 @@ TEST_P(Format10TestCase, postings_read_write) {
 
     // read term0 attributes
     {
-      begin += reader->decode(begin, field.index_features, read_meta);
+      begin += reader.decode(begin, field.index_features, read_meta);
 
       // check PostingMeta
       {
@@ -481,8 +479,8 @@ TEST_P(Format10TestCase, postings_read_write) {
       }
 
       // read documents
-      auto it = reader->Postings(field.index_features, irs::IndexFeatures::None,
-                                 read_meta, /*has_score_bounds=*/false);
+      auto it = reader.Postings(field.index_features, irs::IndexFeatures::None,
+                                read_meta, /*has_score_bounds=*/false);
       for (size_t i = 0; !irs::doc_limits::eof(it->Next());) {
         ASSERT_EQ(docs0[i++].first, it->Value());
       }
@@ -490,7 +488,7 @@ TEST_P(Format10TestCase, postings_read_write) {
 
     // read term1 attributes
     {
-      begin += reader->decode(begin, field.index_features, read_meta);
+      begin += reader.decode(begin, field.index_features, read_meta);
 
       // check PostingMeta
       {
@@ -503,8 +501,8 @@ TEST_P(Format10TestCase, postings_read_write) {
       }
 
       // read documents
-      auto it = reader->Postings(field.index_features, irs::IndexFeatures::None,
-                                 read_meta, /*has_score_bounds=*/false);
+      auto it = reader.Postings(field.index_features, irs::IndexFeatures::None,
+                                read_meta, /*has_score_bounds=*/false);
       for (size_t i = 0; !irs::doc_limits::eof(it->Next());) {
         ASSERT_EQ(docs1[i++].first, it->Value());
       }
@@ -515,8 +513,7 @@ TEST_P(Format10TestCase, postings_read_write) {
 }
 
 TEST_P(Format10TestCase, postings_writer_reuse) {
-  auto writer = irs::MakePostingsWriter(false, irs::IResourceManager::gNoop);
-  ASSERT_NE(nullptr, writer);
+  irs::PostingsWriter writer{false, irs::IResourceManager::gNoop};
 
   std::vector<std::pair<irs::doc_id_t, uint32_t>> docs0;
   irs::doc_id_t i = (irs::doc_limits::min)();
@@ -553,11 +550,11 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->Prepare(state);
-    writer->BeginField(field);
+    writer.Prepare(state);
+    writer.BeginField(field);
     irs::PostingMeta meta;
-    writer->Write(docs, meta);
-    writer->End();
+    writer.Write(docs, meta);
+    writer.End();
   }
 
   // write docs 'segment1' with position & offset
@@ -583,11 +580,11 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->Prepare(state);
-    writer->BeginField(field);
+    writer.Prepare(state);
+    writer.BeginField(field);
     irs::PostingMeta meta;
-    writer->Write(docs, meta);
-    writer->End();
+    writer.Write(docs, meta);
+    writer.End();
   }
 
   // write docs 'segment2' with position & payload
@@ -612,11 +609,11 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->Prepare(state);
-    writer->BeginField(field);
+    writer.Prepare(state);
+    writer.BeginField(field);
     irs::PostingMeta meta;
-    writer->Write(docs, meta);
-    writer->End();
+    writer.Write(docs, meta);
+    writer.End();
   }
 
   // write docs 'segment3' with position
@@ -641,11 +638,11 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->Prepare(state);
-    writer->BeginField(field);
+    writer.Prepare(state);
+    writer.BeginField(field);
     irs::PostingMeta meta;
-    writer->Write(docs, meta);
-    writer->End();
+    writer.Write(docs, meta);
+    writer.End();
   }
 
   // write docs 'segment3' with frequency
@@ -669,11 +666,11 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->Prepare(state);
-    writer->BeginField(field);
+    writer.Prepare(state);
+    writer.BeginField(field);
     irs::PostingMeta meta;
-    writer->Write(docs, meta);
-    writer->End();
+    writer.Write(docs, meta);
+    writer.End();
   }
 
   // writer segment without any attributes
@@ -695,11 +692,11 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->Prepare(state);
-    writer->BeginField(field);
+    writer.Prepare(state);
+    writer.BeginField(field);
     irs::PostingMeta meta;
-    writer->Write(docs, meta);
-    writer->End();
+    writer.Write(docs, meta);
+    writer.End();
   }
 }
 
@@ -736,12 +733,9 @@ TEST_P(Format10TestCase, ires336) {
     tests::MockTermReader term_reader{
       trms, field_meta, (terms.empty() ? irs::bytes_view{} : *terms.begin()),
       (terms.empty() ? irs::bytes_view{} : *terms.rbegin())};
-    irs::IdxWriter idx{*dir, segment_name,
-                       ::irs::DuckDBEngine::Instance().instance()};
-    irs::burst_trie::FieldWriter fw{
-      irs::MakePostingsWriter(/*compaction=*/true,
-                              irs::IResourceManager::gNoop),
-      /*compaction=*/true, irs::IResourceManager::gNoop};
+    irs::IdxWriter idx{*dir, segment_name};
+    irs::burst_trie::FieldWriter fw{/*compaction=*/true,
+                                    irs::IResourceManager::gNoop};
     fw.SetIdxWriter(idx);
     fw.prepare(flush_state);
     fw.write(term_reader);
@@ -753,8 +747,7 @@ TEST_P(Format10TestCase, ires336) {
   meta.name = segment_name;
 
   irs::IdxReader idx_reader{*dir, segment_name};
-  irs::burst_trie::FieldReader fr_obj{irs::MakePostingsReader(),
-                                      irs::IResourceManager::gNoop};
+  irs::burst_trie::FieldReader fr_obj{irs::IResourceManager::gNoop};
   auto* fr = &fr_obj;
   fr->prepare(
     irs::ReaderState{.dir = dir.get(), .meta = &meta, .idx = &idx_reader});
@@ -920,9 +913,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
       field.index_features = features;
       auto dir = get_directory(*this);
 
-      auto writer =
-        irs::MakePostingsWriter(false, irs::IResourceManager::gNoop);
-      ASSERT_NE(nullptr, writer);
+      irs::PostingsWriter writer{false, irs::IResourceManager::gNoop};
       irs::PostingMeta posting_meta;
 
       // write postings
@@ -938,17 +929,17 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
         ASSERT_FALSE(!out);
         irs::WriteStr(*out, std::string_view("file_header"));
 
-        writer->Prepare(state);
-        writer->BeginField(field);
+        writer.Prepare(state);
+        writer.BeginField(field);
 
         {
           TestPostings it(docs, field.index_features);
-          writer->Write(it, posting_meta);
-          writer->Encode(*out, posting_meta);
+          writer.Write(it, posting_meta);
+          writer.Encode(*out, posting_meta);
         }
 
-        writer->EndField();
-        writer->End();
+        writer.EndField();
+        writer.End();
       }
 
       // read postings and test reset
@@ -964,18 +955,17 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
         ASSERT_FALSE(!in);
         const auto tmp = irs::ReadString<std::string>(*in);
 
-        auto reader = irs::MakePostingsReader();
-        ASSERT_NE(nullptr, reader);
-        reader->prepare(state, field.index_features);
+        irs::PostingsReader reader;
+        reader.prepare(state, field.index_features);
 
         irs::bstring in_data(in->Length() - in->Position(), 0);
         in->ReadData(&in_data[0], in_data.size());
         const auto* begin = in_data.c_str();
 
         irs::PostingMeta read_meta;
-        begin += reader->decode(begin, field.index_features, read_meta);
+        begin += reader.decode(begin, field.index_features, read_meta);
 
-        const auto handles = reader->Handles();
+        const auto handles = reader.Handles();
 
         for (size_t i = 0; i < docs.size();
              i += std::max<size_t>(1, docs.size() / 10)) {

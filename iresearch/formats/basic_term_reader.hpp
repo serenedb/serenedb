@@ -22,16 +22,39 @@
 
 #pragma once
 
-#include <string_view>
+#include <span>
+
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/iterators.hpp"
+#include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace irs {
 
-struct Directory;
-struct SegmentMeta;
+class IndexOutput;
 
-namespace segment_meta {
+struct TermPayloadWriter {
+  virtual ~TermPayloadWriter() = default;
 
-void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename);
+  virtual void WriteTermPayload(IndexOutput& out,
+                                std::span<const doc_id_t> docs) = 0;
 
-}  // namespace segment_meta
+  virtual void Finish(IndexOutput& out) = 0;
+
+  virtual uint32_t PendingLanes() const noexcept { return 0; }
+};
+
+struct BasicTermReader : public memory::Managed {
+  virtual TermOnlyIterator::ptr iterator() const = 0;
+
+  virtual field_id id() const = 0;
+
+  virtual FieldProperties properties() const = 0;
+
+  virtual bytes_view min() const = 0;
+  virtual bytes_view max() const = 0;
+
+  virtual TermPayloadWriter* PayloadWriter() const { return nullptr; }
+};
+
 }  // namespace irs

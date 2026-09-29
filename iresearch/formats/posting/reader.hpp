@@ -20,13 +20,18 @@
 
 #pragma once
 
-#include <duckdb/common/serializer/deserializer.hpp>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
 
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/posting/common.hpp"
+#include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting/stream.hpp"
 #include "iresearch/formats/posting/writer.hpp"
+#include "iresearch/formats/reader_state.hpp"
+#include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/file_names.hpp"
+#include "iresearch/index/index_meta.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/debugging.hpp"
 
@@ -44,9 +49,9 @@ inline void PrepareInput(std::string& str, IndexInput::ptr& in, IOAdvice advice,
   }
 
   format_utils::ReadFooter(
-    *in, str, [&](duckdb::Deserializer& footer, uint64_t) {
+    *in, str, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
       const auto stored = footer.ReadProperty<uint32_t>(
-        PostingsWriterBase::kFooterSlotBlockSize, "block_size");
+        PostingsWriter::kFieldBlockSize, "block_size");
       if (stored != block_size) {
         throw IndexError{absl::StrCat(
           "While preparing postings reader, error: '", str,
@@ -57,13 +62,16 @@ inline void PrepareInput(std::string& str, IndexInput::ptr& in, IOAdvice advice,
 
 inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
 
-class PostingsReaderBase : public PostingsReader {
+class PostingsReader final {
  public:
-  PostingsHandles Handles() const noexcept final {
+  template<bool Freq, bool Pos, bool Offs>
+  using IteratorTraits = IteratorTraitsImpl<FormatTraits128, Freq, Pos, Offs>;
+
+  PostingsHandles Handles() const noexcept {
     return {.doc = _doc_in.get(), .pos = _pos_in.get(), .pay = _pay_in.get()};
   }
 
-  uint64_t CountMappedMemory() const final {
+  uint64_t CountMappedMemory() const {
     uint64_t bytes = 0;
     if (_doc_in != nullptr) {
       bytes += _doc_in->CountMappedMemory();
@@ -77,25 +85,44 @@ class PostingsReaderBase : public PostingsReader {
     return bytes;
   }
 
-  void prepare(const ReaderState& state, IndexFeatures features) final;
+  // features - the set of features available for segment
+  void prepare(const ReaderState& state, IndexFeatures features);
 
   size_t decode(const byte_type* in, IndexFeatures field_features,
-                PostingMeta& state) final;
+                PostingMeta& state);
 
-  std::unique_ptr<IndexInput> ReopenPayload() const final {
+  size_t BitUnion(IndexFeatures field_features,
+                  TermReader::CookieProvider provider, uint64_t* set,
+                  bool has_score_bounds);
+
+  // One term's whole posting list as the write side reads it: front to back,
+  // with the frequency and the positions the field stores. Nothing here
+  // seeks, so no skip list is parsed. `required_features` narrows what is
+  // decoded; what the field carries beyond that is stepped over.
+  TermPostings::ptr Postings(IndexFeatures field_features,
+                             IndexFeatures required_features,
+                             const PostingMeta& meta,
+                             bool has_score_bounds) const;
+
+  std::unique_ptr<IndexInput> ReopenPayload() const {
     return _pay_in ? _pay_in->Reopen() : nullptr;
   }
 
- protected:
-  ScorerPtr _scorer;
+ private:
+  template<typename FieldTraits, typename Factory>
+  static auto IteratorImpl(IndexFeatures enabled, Factory&& factory);
+
+  template<typename Factory>
+  static auto IteratorImpl(IndexFeatures field_features,
+                           IndexFeatures required_features, Factory&& factory);
+
   IndexInput::ptr _doc_in;
   IndexInput::ptr _pos_in;
   IndexInput::ptr _pay_in;
-  doc_id_t _docs_count = 0;
 };
 
-inline void PostingsReaderBase::prepare(const ReaderState& state,
-                                        IndexFeatures features) {
+inline void PostingsReader::prepare(const ReaderState& state,
+                                    IndexFeatures features) {
   std::string buf;
 
   const bool needs_pay =
@@ -103,29 +130,26 @@ inline void PostingsReaderBase::prepare(const ReaderState& state,
     (features & (IndexFeatures::Offs | IndexFeatures::Vec));
 
   // prepare document input
-  PrepareInput(buf, _doc_in, IOAdvice::RANDOM, state,
-               PostingsWriterBase::kDocExt, doc_limits::kBlockSize);
+  PrepareInput(buf, _doc_in, IOAdvice::RANDOM, state, PostingsWriter::kDocExt,
+               doc_limits::kBlockSize);
   _doc_in->EnableReadahead();
 
   if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
-    PrepareInput(buf, _pos_in, IOAdvice::RANDOM, state,
-                 PostingsWriterBase::kPosExt, pos_limits::kBlockSize);
+    PrepareInput(buf, _pos_in, IOAdvice::RANDOM, state, PostingsWriter::kPosExt,
+                 pos_limits::kBlockSize);
     _pos_in->EnableReadahead();
   }
 
   if (needs_pay) {
-    PrepareInput(buf, _pay_in, IOAdvice::RANDOM, state,
-                 PostingsWriterBase::kPayExt, pos_limits::kBlockSize);
+    PrepareInput(buf, _pay_in, IOAdvice::RANDOM, state, PostingsWriter::kPayExt,
+                 pos_limits::kBlockSize);
     _pay_in->EnableReadahead();
   }
-
-  _scorer = state.scorer;
-  _docs_count = state.meta->docs_count;
 }
 
-inline size_t PostingsReaderBase::decode(const byte_type* in,
-                                         IndexFeatures features,
-                                         PostingMeta& posting_meta) {
+inline size_t PostingsReader::decode(const byte_type* in,
+                                     IndexFeatures features,
+                                     PostingMeta& posting_meta) {
   const auto* p = in;
 
   SDB_ASSERT(IndexFeatures::None == (features & IndexFeatures::Vec) ||
@@ -157,29 +181,6 @@ inline size_t PostingsReaderBase::decode(const byte_type* in,
   SDB_ASSERT(p >= in);
   return size_t(std::distance(in, p));
 }
-
-template<typename FormatTraits>
-class PostingsReaderImpl final : public PostingsReaderBase {
- public:
-  template<bool Freq, bool Pos, bool Offs>
-  using IteratorTraits = IteratorTraitsImpl<FormatTraits, Freq, Pos, Offs>;
-
-  size_t BitUnion(IndexFeatures field, TermProvider provider, uint64_t* set,
-                  bool has_score_bounds) final;
-
-  TermPostings::ptr Postings(IndexFeatures field_features,
-                             IndexFeatures required_features,
-                             const PostingMeta& meta,
-                             bool has_score_bounds) const final;
-
- private:
-  template<typename FieldTraits, typename Factory>
-  static auto IteratorImpl(IndexFeatures enabled, Factory&& factory);
-
-  template<typename Factory>
-  static auto IteratorImpl(IndexFeatures field_features,
-                           IndexFeatures required_features, Factory&& factory);
-};
 
 template<typename FieldTraits>
 void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, doc_id_t* docs,
@@ -219,10 +220,9 @@ void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, doc_id_t* docs,
   }
 }
 
-template<typename FormatTraits>
-size_t PostingsReaderImpl<FormatTraits>::BitUnion(
-  const IndexFeatures field_features, TermProvider provider, uint64_t* set,
-  bool has_score_bounds) {
+inline size_t PostingsReader::BitUnion(const IndexFeatures field_features,
+                                       TermReader::CookieProvider provider,
+                                       uint64_t* set, bool has_score_bounds) {
   constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
   uint32_t enc_buf[doc_limits::kBlockSize];
   doc_id_t docs[doc_limits::kBlockSize
@@ -277,10 +277,8 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
   return count;
 }
 
-template<typename FormatTraits>
 template<typename FieldTraits, typename Factory>
-auto PostingsReaderImpl<FormatTraits>::IteratorImpl(IndexFeatures enabled,
-                                                    Factory&& factory) {
+auto PostingsReader::IteratorImpl(IndexFeatures enabled, Factory&& factory) {
   switch (ToIndex(enabled)) {
     case kPosOffs: {
       using IteratorTraits = IteratorTraits<true, true, true>;
@@ -314,11 +312,10 @@ auto PostingsReaderImpl<FormatTraits>::IteratorImpl(IndexFeatures enabled,
     .template operator()<IteratorTraits, FieldTraits>();
 }
 
-template<typename FormatTraits>
 template<typename Factory>
-auto PostingsReaderImpl<FormatTraits>::IteratorImpl(
-  IndexFeatures field_features, IndexFeatures required_features,
-  Factory&& factory) {
+auto PostingsReader::IteratorImpl(IndexFeatures field_features,
+                                  IndexFeatures required_features,
+                                  Factory&& factory) {
   // get enabled features as the intersection
   // between requested and available features
   const auto enabled = field_features & required_features;
@@ -351,8 +348,7 @@ auto ResolveInputType(DataInput::Type type, auto&& f) {
   }
 }
 
-template<typename FormatTraits>
-TermPostings::ptr PostingsReaderImpl<FormatTraits>::Postings(
+inline TermPostings::ptr PostingsReader::Postings(
   IndexFeatures field_features, IndexFeatures required_features,
   const PostingMeta& meta, bool has_score_bounds) const {
   if (meta.docs_count == 0) {

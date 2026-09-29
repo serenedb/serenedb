@@ -32,7 +32,7 @@
 // per iterator and only fails on something that cannot be a measurement
 // artefact -- a path that allocates without bound, or one that leaks.
 
-#include <iresearch/formats/formats.hpp>
+#include <iresearch/formats/term_reader.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/lead/make.hpp>
 

@@ -23,7 +23,7 @@
 #include "collectors.hpp"
 
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/formats.hpp"
+#include "iresearch/formats/term_reader.hpp"
 
 namespace irs {
 namespace {

@@ -22,14 +22,19 @@
 
 #include "format_utils.hpp"
 
+#include <absl/strings/str_cat.h>
+
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <limits>
 
+#include "iresearch/error/error.hpp"
 #include "iresearch/index/file_names.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/crc.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/serialization.hpp"
 
 namespace irs::format_utils {
@@ -41,7 +46,7 @@ constexpr duckdb::field_id_t kFieldMeta = 1;
 }  // namespace
 
 void WriteFooter(IndexOutput& out,
-                 absl::FunctionRef<void(duckdb::Serializer&)> write) {
+                 absl::FunctionRef<void(duckdb::BinarySerializer&)> write) {
   const uint32_t data_crc32c = out.Checksum();
   duckdb::MemoryStream footer;
   duckdb::BinarySerializer serializer{footer, duckdb::VersionStorageOptions()};
@@ -62,7 +67,7 @@ void WriteFooter(IndexOutput& out,
 
 Footer ReadFooter(
   IndexInput& in, std::string_view name,
-  absl::FunctionRef<void(duckdb::Deserializer&, uint64_t)> read) {
+  absl::FunctionRef<void(duckdb::BinaryDeserializer&, uint64_t)> read) {
   const uint64_t length = in.Length();
   if (length < kTrailerLen) {
     throw IndexError{absl::StrCat("footer: '", name, "' of ", length,
@@ -97,9 +102,9 @@ Footer ReadFooter(
   footer.data_expected_crc32c =
     deserializer.ReadPropertyWithExplicitDefault<uint32_t>(kFieldDataCrc32c,
                                                            "data_crc32c", 0);
-  deserializer.ReadObject(kFieldMeta, "meta", [&](duckdb::Deserializer& meta) {
-    read(meta, footer.data_len);
-  });
+  deserializer.ReadObject(
+    kFieldMeta, "meta",
+    [&](duckdb::BinaryDeserializer& meta) { read(meta, footer.data_len); });
   deserializer.End();
   return footer;
 }

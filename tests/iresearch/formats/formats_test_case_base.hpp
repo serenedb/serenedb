@@ -26,7 +26,8 @@
 #include <algorithm>
 #include <deque>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/formats/formats.hpp>
+#include <iresearch/formats/basic_term_reader.hpp>
+#include <iresearch/formats/term_reader.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/detail/posting_pos.hpp>

@@ -49,7 +49,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>

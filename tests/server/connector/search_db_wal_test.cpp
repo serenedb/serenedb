@@ -31,7 +31,6 @@
 #include <duckdb/common/types/vector.hpp>
 #include <filesystem>
 #include <fstream>
-#include <iresearch/formats/formats.hpp>
 #include <memory>
 #include <span>
 #include <string>

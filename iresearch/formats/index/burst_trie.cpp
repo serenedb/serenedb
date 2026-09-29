@@ -29,10 +29,15 @@
 #include <variant>
 
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/basic_term_reader.hpp"
+#include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/format_utils.hpp"
-#include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/posting/reader.hpp"
+#include "iresearch/formats/posting/writer.hpp"
+#include "iresearch/formats/reader_state.hpp"
+#include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -494,7 +499,7 @@ class FieldWriter::Impl {
   static constexpr uint32_t kDefaultMinBlockSize = 25;
   static constexpr uint32_t kDefaultMaxBlockSize = 48;
 
-  Impl(PostingsWriter::ptr&& pw, bool compaction, IResourceManager& rm,
+  Impl(bool compaction, IResourceManager& rm,
        uint32_t min_block_size = kDefaultMinBlockSize,
        uint32_t max_block_size = kDefaultMaxBlockSize);
 
@@ -537,7 +542,7 @@ class FieldWriter::Impl {
   MemoryOutput _stats;         // term stats column (per-field scratch)
   IdxWriter* _idx{};           // destination .idx (set via SetIdxWriter)
   IndexOutput* _blocks_out{};  // borrowed from _idx->BlocksOut() at prepare()
-  PostingsWriter::ptr _pw;     // postings writer
+  PostingsWriter _pw;          // postings writer
   ManagedVector<Entry> _stack;
   FstBuffer* _fst_buf;         // pimpl buffer used for building FST for fields
   VolatileByteRef _last_term;  // last pushed term
@@ -563,7 +568,7 @@ void FieldWriter::Impl::WriteBlock(size_t prefix, size_t begin, size_t end,
 
   Block::BlockIndex index;
 
-  _pw->BeginBlock();
+  _pw.BeginBlock();
 
   for (; begin < end; ++begin) {
     auto& e = _stack[begin];
@@ -580,7 +585,7 @@ void FieldWriter::Impl::WriteBlock(size_t prefix, size_t begin, size_t end,
     _suffix.stream.WriteData(data.data() + prefix, suf_size);
 
     if (EntryType::Term == type) {
-      _pw->Encode(_stats.stream, e.Term());
+      _pw.Encode(_stats.stream, e.Term());
     } else {
       SDB_ASSERT(EntryType::Block == type);
 
@@ -707,21 +712,19 @@ void FieldWriter::Impl::Push(bytes_view term) {
   _last_term.Assign(term, _compaction);
 }
 
-FieldWriter::Impl::Impl(PostingsWriter::ptr&& pw, bool compaction,
-                        IResourceManager& rm, uint32_t min_block_size,
-                        uint32_t max_block_size)
+FieldWriter::Impl::Impl(bool compaction, IResourceManager& rm,
+                        uint32_t min_block_size, uint32_t max_block_size)
   : _output_buffer{rm, 32},
     _blocks{ManagedTypedAllocator<Entry>{rm}},
     _suffix{rm},
     _stats{rm},
-    _pw{std::move(pw)},
+    _pw{compaction, rm},
     _stack{ManagedTypedAllocator<Entry>{rm}},
     _fst_buf{new FstBuffer{rm}},
     _prefixes{kDefaultSize, 0},
     _min_block_size{min_block_size},
     _max_block_size{max_block_size},
     _compaction{compaction} {
-  SDB_ASSERT(this->_pw);
   SDB_ASSERT(min_block_size > 1);
   SDB_ASSERT(min_block_size <= max_block_size);
   SDB_ASSERT(2 * (min_block_size - 1) <= max_block_size);
@@ -739,7 +742,7 @@ void FieldWriter::Impl::prepare(const FlushState& state) {
 
   _blocks_out = &_idx->BlocksOut();
 
-  _pw->Prepare(state);
+  _pw.Prepare(state);
 
   _suffix.Reset();
   _stats.Reset();
@@ -749,7 +752,7 @@ void FieldWriter::Impl::write(const BasicTermReader& reader) {
   const auto props = reader.properties();
   const auto index_features = props.index_features;
   BeginField(props);
-  _pw->SetTermPayloadWriter(reader.PayloadWriter());
+  _pw.SetTermPayloadWriter(reader.PayloadWriter());
 
   uint64_t term_count = 0;
   uint64_t sum_dfreq = 0;
@@ -786,7 +789,7 @@ void FieldWriter::Impl::write(const BasicTermReader& reader) {
     while (terms->next()) {
       PostingMeta meta;
       auto postings = terms->postings(index_features);
-      _pw->Write(*postings, meta);
+      _pw.Write(*postings, meta);
       consume([&] { return terms->value(); }, std::move(meta));
     }
   } else {
@@ -799,8 +802,7 @@ void FieldWriter::Impl::write(const BasicTermReader& reader) {
              term_batch, posting_batch, index_features)) {
       for (size_t i = 0; i < n; ++i) {
         PostingMeta meta;
-        SDB_ENSURE(_pw->WritePostings(posting_batch[i], meta),
-                   "flush requires a span-capable postings writer");
+        _pw.WritePostings(posting_batch[i], meta);
         consume([&] { return term_batch[i]; }, std::move(meta));
       }
     }
@@ -816,7 +818,7 @@ void FieldWriter::Impl::BeginField(const FieldProperties& meta) {
   // At the beginning of the field there should be no pending entries at all
   SDB_ASSERT(_stack.empty());
 
-  _pw->BeginField(meta);
+  _pw.BeginField(meta);
 }
 
 void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
@@ -831,7 +833,7 @@ void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
     return;
   }
 
-  const auto [has_score_bounds, doc_count] = _pw->EndField();
+  const auto [has_score_bounds, doc_count] = _pw.EndField();
 
   // cause creation of all final blocks
   Push(kEmptyStringView<byte_type>);
@@ -888,7 +890,7 @@ void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
 
 void FieldWriter::Impl::end() {
   _output_buffer.Reset();
-  _pw->End();
+  _pw.End();
   _idx = nullptr;
   _blocks_out = nullptr;
 }
@@ -2470,13 +2472,10 @@ namespace irs::burst_trie {
 
 class FieldReader::Impl {
  public:
-  explicit Impl(PostingsReader::ptr&& pr, IResourceManager& rm);
+  explicit Impl(IResourceManager& rm) : _resource_manager{rm} {}
 
   uint64_t CountMappedMemory() const {
-    uint64_t bytes = 0;
-    if (_pr != nullptr) {
-      bytes += _pr->CountMappedMemory();
-    }
+    uint64_t bytes = _pr.CountMappedMemory();
     if (_terms_in != nullptr) {
       bytes += _terms_in->CountMappedMemory();
     }
@@ -2511,7 +2510,7 @@ class FieldReader::Impl {
 
     SeekTermIterator::ptr iterator() const final {
       return memory::make_managed<TermIteratorImpl<FST>>(
-        *this, *_owner->_pr, *_owner->_terms_in, *_fst);
+        *this, _owner->_pr, *_owner->_terms_in, *_fst);
     }
 
     PostingMeta Lookup(bytes_view term) const final {
@@ -2520,7 +2519,7 @@ class FieldReader::Impl {
         return {};
       }
 
-      SingleTermLookup<FST> it{*this, *_owner->_pr, _owner->_terms_in->Reopen(),
+      SingleTermLookup<FST> it{*this, _owner->_pr, _owner->_terms_in->Reopen(),
                                *_fst};
 
       if (!it.seek(term)) {
@@ -2536,7 +2535,7 @@ class FieldReader::Impl {
         return;
       }
 
-      SingleTermLookup<FST> it{*this, *_owner->_pr, _owner->_terms_in->Reopen(),
+      SingleTermLookup<FST> it{*this, _owner->_pr, _owner->_terms_in->Reopen(),
                                *_fst};
 
       if (!it.seek(term)) {
@@ -2566,9 +2565,8 @@ class FieldReader::Impl {
 
     size_t BitUnion(CookieProvider provider, uint64_t* set) const final {
       SDB_ASSERT(_owner != nullptr);
-      SDB_ASSERT(_owner->_pr != nullptr);
-      return _owner->_pr->BitUnion(meta().index_features, provider, set,
-                                   HasScoreBounds());
+      return _owner->_pr.BitUnion(meta().index_features, provider, set,
+                                  HasScoreBounds());
     }
 
     SeekTermIterator::ptr iterator(
@@ -2600,17 +2598,17 @@ class FieldReader::Impl {
       }
 
       return memory::make_managed<AutomatonTermIterator<FST>>(
-        *this, *_owner->_pr, std::move(terms_in), *_fst, matcher);
+        *this, _owner->_pr, std::move(terms_in), *_fst, matcher);
     }
 
     std::unique_ptr<IndexInput> ReopenPayload() const final {
-      SDB_ASSERT(_owner && _owner->_pr);
-      return _owner->_pr->ReopenPayload();
+      SDB_ASSERT(_owner);
+      return _owner->_pr.ReopenPayload();
     }
 
     PostingsHandles Handles() const noexcept final {
-      SDB_ASSERT(_owner && _owner->_pr);
-      return _owner->_pr->Handles();
+      SDB_ASSERT(_owner);
+      return _owner->_pr.Handles();
     }
 
    private:
@@ -2624,15 +2622,10 @@ class FieldReader::Impl {
   ImmutableFstReaders _fields;
   absl::flat_hash_map<field_id, TermReader*> _id_to_field;
   std::vector<field_id> _sorted_ids;
-  PostingsReader::ptr _pr;
+  PostingsReader _pr;
   IndexInput::ptr _terms_in;
   IResourceManager& _resource_manager;
 };
-
-FieldReader::Impl::Impl(PostingsReader::ptr&& pr, IResourceManager& rm)
-  : _pr{std::move(pr)}, _resource_manager{rm} {
-  SDB_ASSERT(_pr);
-}
 
 void FieldReader::Impl::prepare(const ReaderState& state) {
   SDB_ASSERT(state.dir);
@@ -2654,7 +2647,7 @@ void FieldReader::Impl::prepare(const ReaderState& state) {
   for (const auto& [id, meta] : entries) {
     features = features | meta.features;
   }
-  _pr->prepare(state, features);
+  _pr.prepare(state, features);
 
   _sorted_ids.reserve(entries.size());
   for (const auto& [id, meta] : entries) {
@@ -2673,9 +2666,8 @@ const TermReader* FieldReader::Impl::field(field_id id) const {
   return it == _id_to_field.end() ? nullptr : it->second;
 }
 
-FieldWriter::FieldWriter(PostingsWriter::ptr pw, bool compaction,
-                         IResourceManager& rm)
-  : _impl{std::make_unique<Impl>(std::move(pw), compaction, rm)} {}
+FieldWriter::FieldWriter(bool compaction, IResourceManager& rm)
+  : _impl{std::make_unique<Impl>(compaction, rm)} {}
 
 FieldWriter::~FieldWriter() = default;
 
@@ -2689,8 +2681,8 @@ void FieldWriter::write(const BasicTermReader& reader) { _impl->write(reader); }
 
 void FieldWriter::end() { _impl->end(); }
 
-FieldReader::FieldReader(PostingsReader::ptr pr, IResourceManager& rm)
-  : _impl{std::make_unique<Impl>(std::move(pr), rm)} {}
+FieldReader::FieldReader(IResourceManager& rm)
+  : _impl{std::make_unique<Impl>(rm)} {}
 
 FieldReader::~FieldReader() = default;
 

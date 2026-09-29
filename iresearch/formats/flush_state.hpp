@@ -22,16 +22,27 @@
 
 #pragma once
 
+#include <cstddef>
 #include <string_view>
+
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/index_reader_options.hpp"
 
 namespace irs {
 
 struct Directory;
-struct SegmentMeta;
+struct NormProvider;
 
-namespace segment_meta {
+struct FlushState {
+  Directory* const dir{};
+  // In-flight norm reader source (SegmentWriter during initial flush,
+  // null during merge). Posting writers consult it to read per-doc norms
+  // for score bounds while the segment is still being written.
+  const NormProvider* norms{};
+  const std::string_view name;  // segment name
+  ScorerPtr scorer = nullptr;
+  const size_t doc_count;
+  IndexFeatures index_features{IndexFeatures::None};
+};
 
-void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename);
-
-}  // namespace segment_meta
 }  // namespace irs

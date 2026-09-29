@@ -40,7 +40,6 @@
 #include <ctime>
 #include <filesystem>
 #include <iresearch/analysis/tokenizer.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/utils/attributes.hpp>
 #include <iresearch/utils/containers/bitset.hpp>

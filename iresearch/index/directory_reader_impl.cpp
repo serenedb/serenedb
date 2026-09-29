@@ -31,6 +31,7 @@
 
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/index_meta_reader.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -112,14 +113,12 @@ namespace {
 IndexFileRefs::ref_t LoadNewestIndexMeta(IndexMeta& meta, const Directory& dir,
                                          MetaPayloadReader payload) noexcept {
   try {
-    auto reader = GetIndexMetaReader();
-
     IndexFileRefs::ref_t ref;
     std::string filename;
 
     // ensure have a valid ref to a filename
     while (!ref) {
-      const bool index_exists = reader->last_segments_file(dir, filename);
+      const bool index_exists = index_meta::LastFile(dir, filename);
 
       if (!index_exists) {
         return nullptr;
@@ -129,7 +128,7 @@ IndexFileRefs::ref_t LoadNewestIndexMeta(IndexMeta& meta, const Directory& dir,
     }
 
     SDB_ASSERT(ref);
-    reader->read(dir, meta, *ref, std::move(payload));
+    index_meta::Read(dir, meta, *ref, std::move(payload));
 
     return ref;
   } catch (const std::exception& e) {

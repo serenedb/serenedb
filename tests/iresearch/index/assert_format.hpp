@@ -23,7 +23,7 @@
 
 #pragma once
 
-#include <iresearch/formats/formats.hpp>
+#include <iresearch/formats/term_reader.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <unordered_set>
 

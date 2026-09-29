@@ -26,10 +26,9 @@
 #include <algorithm>
 #include <chrono>
 #include <duckdb/common/file_system.hpp>
-#include <duckdb/common/serializer/deserializer.hpp>
-#include <duckdb/common/serializer/serializer.hpp>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/store/directory_attributes.hpp>
@@ -96,7 +95,7 @@ constexpr duckdb::field_id_t kFieldTick = 0;
 
 }  // namespace
 
-uint64_t SearchTable::ReadCommittedTick(duckdb::Deserializer& payload) {
+uint64_t SearchTable::ReadCommittedTick(duckdb::BinaryDeserializer& payload) {
   return payload.ReadProperty<uint64_t>(kFieldTick, "tick");
 }
 
@@ -186,11 +185,11 @@ void SearchTable::OpenWriter() {
   }
 
   writer_options.meta_payload_writer = [this](uint64_t tick,
-                                              duckdb::Serializer& out) {
+                                              duckdb::BinarySerializer& out) {
     _last_committed_tick = std::max(_last_committed_tick, tick);
     out.WriteProperty<uint64_t>(kFieldTick, "tick", _last_committed_tick);
   };
-  writer_options.meta_payload_reader = [this](duckdb::Deserializer& in) {
+  writer_options.meta_payload_reader = [this](duckdb::BinaryDeserializer& in) {
     _last_committed_tick = ReadCommittedTick(in);
   };
 

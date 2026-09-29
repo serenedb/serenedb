@@ -21,7 +21,7 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/formats/formats.hpp>
+#include <iresearch/formats/index_meta_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/directory_cleaner.hpp>
@@ -71,17 +71,16 @@ DirectoryCleaner::removal_acceptor_t RemoveExceptCurrentSegments(
   };
 
   IndexMeta meta;
-  auto reader = GetIndexMetaReader();
 
   std::string segment_file;
-  const bool index_exists = reader->last_segments_file(dir, segment_file);
+  const bool index_exists = index_meta::LastFile(dir, segment_file);
 
   if (!index_exists) {
     // can't find segments file
     return [](std::string_view) -> bool { return true; };
   }
 
-  reader->read(dir, meta, segment_file);
+  index_meta::Read(dir, meta, segment_file);
 
   absl::flat_hash_set<std::string> retain;
 
@@ -319,12 +318,10 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
     std::string segments_file;
 
     irs::IndexMeta index_meta;
-    auto meta_reader = irs::GetIndexMetaReader();
-    const auto index_exists =
-      meta_reader->last_segments_file(dir, segments_file);
+    const auto index_exists = irs::index_meta::LastFile(dir, segments_file);
 
     ASSERT_TRUE(index_exists);
-    meta_reader->read(dir, index_meta, segments_file);
+    irs::index_meta::Read(dir, index_meta, segments_file);
 
     file_set.insert(segments_file);
 
@@ -359,12 +356,10 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
     std::string segments_file;
 
     irs::IndexMeta index_meta;
-    auto meta_reader = irs::GetIndexMetaReader();
-    const auto index_exists =
-      meta_reader->last_segments_file(dir, segments_file);
+    const auto index_exists = irs::index_meta::LastFile(dir, segments_file);
 
     ASSERT_TRUE(index_exists);
-    meta_reader->read(dir, index_meta, segments_file);
+    irs::index_meta::Read(dir, index_meta, segments_file);
 
     file_set.insert(segments_file);
 

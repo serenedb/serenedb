@@ -27,7 +27,7 @@
 #include <set>
 #include <utility>
 
-#include "iresearch/formats/format_utils.hpp"
+#include "iresearch/formats/segment_meta_writer.hpp"
 #include "iresearch/index/index_meta.hpp"
 
 namespace irs::index_utils {
@@ -172,8 +172,7 @@ double CompactionScore(const CompactionCandidate& compaction,
 
 }  // namespace tier
 
-SegmentMetaWriter::ptr PrepareFlush(IndexSegment& segment,
-                                    bool increment_version) {
+void PrepareFlush(IndexSegment& segment, bool increment_version) {
   auto& meta = segment.meta;
   SDB_ASSERT(meta.byte_size);  // Ensure segment size is estimated
   SDB_ASSERT(segment.meta.docs_mask_size <= segment.meta.byte_size);
@@ -185,8 +184,6 @@ SegmentMetaWriter::ptr PrepareFlush(IndexSegment& segment,
     meta.live_docs_count -= removals;
     meta.version += uint64_t{increment_version};
   }
-
-  return GetSegmentMetaWriter();
 }
 
 }  // namespace
@@ -443,15 +440,15 @@ CompactionPolicy MakePolicy(const CompactionTier& options) {
 
 void FlushIndexSegment(Directory& dir, IndexSegment& segment,
                        bool increment_version) {
-  auto writer = PrepareFlush(segment, increment_version);
-  writer->Write(dir, segment.filename, segment.meta);
+  PrepareFlush(segment, increment_version);
+  segment_meta::Write(dir, segment.filename, segment.meta);
 }
 
 void FlushIndexSegmentPatch(Directory& dir, IndexSegment& segment,
                             const DocumentMask& patch) {
   const auto parent = segment.meta.version;
-  auto writer = PrepareFlush(segment, true);
-  writer->Write(dir, segment.filename, segment.meta, &patch, parent);
+  PrepareFlush(segment, true);
+  segment_meta::Write(dir, segment.filename, segment.meta, &patch, parent);
 }
 
 }  // namespace irs::index_utils

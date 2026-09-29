@@ -35,13 +35,6 @@
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
-namespace {
-
-constexpr duckdb::field_id_t kFooterSlotTermDict = 100;
-constexpr duckdb::field_id_t kFooterSlotIvf = 101;
-constexpr duckdb::field_id_t kFooterSlotHnsw = 102;
-
-}  // namespace
 
 struct HnswEntry {
   field_id id;
@@ -61,18 +54,15 @@ struct TermDictEntry {
 struct IdxWriter::Impl {
   Directory* dir;
   std::string filename;
-  duckdb::DatabaseInstance* db;
   IndexOutput::ptr out;
   std::vector<IvfCentroidEntry> ivf_entries;
   std::vector<HnswEntry> hnsw_entries;
   std::vector<TermDictEntry> term_dict_entries;
 };
 
-IdxWriter::IdxWriter(Directory& dir, std::string_view segment_name,
-                     duckdb::DatabaseInstance& db)
+IdxWriter::IdxWriter(Directory& dir, std::string_view segment_name)
   : _impl{std::make_unique<Impl>()} {
   _impl->dir = &dir;
-  _impl->db = &db;
   _impl->filename = absl::StrCat(segment_name, ".", kIdxFormatExt);
 }
 
@@ -124,12 +114,12 @@ void IdxWriter::Commit() {
 
   EnsureOut();
 
-  format_utils::WriteFooter(*_impl->out, [&](duckdb::Serializer& footer) {
+  format_utils::WriteFooter(*_impl->out, [&](duckdb::BinarySerializer& footer) {
     footer.WriteList(
-      kFooterSlotTermDict, "term_dict", _impl->term_dict_entries.size(),
-      [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+      kIdxFieldTermDict, "term_dict", _impl->term_dict_entries.size(),
+      [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
         const auto& e = _impl->term_dict_entries[i];
-        list.WriteObject([&](duckdb::Serializer& obj) {
+        list.WriteObject([&](duckdb::BinarySerializer& obj) {
           obj.WriteProperty<uint64_t>(0, "id", e.id);
           obj.WriteProperty<uint32_t>(1, "features",
                                       static_cast<uint32_t>(e.meta.features));
@@ -148,10 +138,10 @@ void IdxWriter::Commit() {
       });
     if (!_impl->ivf_entries.empty()) {
       footer.WriteList(
-        kFooterSlotIvf, "ivf", _impl->ivf_entries.size(),
-        [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+        kIdxFieldIvf, "ivf", _impl->ivf_entries.size(),
+        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
           const auto& e = _impl->ivf_entries[i];
-          list.WriteObject([&](duckdb::Serializer& obj) {
+          list.WriteObject([&](duckdb::BinarySerializer& obj) {
             obj.WriteProperty<uint64_t>(0, "id", e.id);
             obj.WriteProperty<uint64_t>(1, "tree_offset", e.meta.tree_offset);
             obj.WriteProperty<uint64_t>(2, "tree_byte_size",
@@ -164,10 +154,10 @@ void IdxWriter::Commit() {
     }
     if (!_impl->hnsw_entries.empty()) {
       footer.WriteList(
-        kFooterSlotHnsw, "hnsw", _impl->hnsw_entries.size(),
-        [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+        kIdxFieldHnsw, "hnsw", _impl->hnsw_entries.size(),
+        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
           const auto& e = _impl->hnsw_entries[i];
-          list.WriteObject([&](duckdb::Serializer& obj) {
+          list.WriteObject([&](duckdb::BinarySerializer& obj) {
             obj.WriteProperty<uint64_t>(0, "id", e.id);
             obj.WriteProperty<uint64_t>(1, "offset", e.meta.offset);
             obj.WriteProperty<uint64_t>(2, "byte_size", e.meta.byte_size);

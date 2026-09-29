@@ -40,6 +40,7 @@
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/burst_trie.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
@@ -52,6 +53,7 @@
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -600,8 +602,8 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
                  const MergeWriter::FlushProgress& progress,
                  IResourceManager& rm, IdxWriter& idx,
                  std::span<const BasicTermReader* const> extra) {
-  auto field_writer = std::make_unique<burst_trie::FieldWriter>(
-    MakePostingsWriter(/*compaction=*/true, rm), /*compaction=*/true, rm);
+  auto field_writer =
+    std::make_unique<burst_trie::FieldWriter>(/*compaction=*/true, rm);
   field_writer->SetIdxWriter(idx);
   field_writer->prepare(flush_state);
 
@@ -759,7 +761,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
 
   std::unique_ptr<ColReader> col_reader;
   MergedNormProvider norm_provider;
-  IdxWriter idx{track_dir, segment.name, _db};
+  IdxWriter idx{track_dir, segment.name};
 
   col_writer->SetIdxWriter(idx);
   if (!col_writer->Commit(segment.docs_count, progress_callback)) {

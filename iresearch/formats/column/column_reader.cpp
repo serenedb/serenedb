@@ -26,8 +26,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <duckdb/common/allocator.hpp>
-#include <duckdb/common/serializer/deserializer.hpp>
-#include <duckdb/common/serializer/serializer.hpp>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
@@ -66,16 +66,16 @@
 namespace irs {
 namespace {
 
-void SerializeColumnBlockMeta(duckdb::Serializer& s, const ColumnBlockMeta& m) {
-  s.WriteProperty<uint8_t>(0, "compression_type",
-                           static_cast<uint8_t>(m.codec->type));
-  s.WriteProperty<uint64_t>(1, "tuple_count", m.tuple_count);
-  s.WriteProperty<uint64_t>(2, "file_offset", m.file_offset);
-  s.WriteProperty<uint64_t>(3, "byte_size", m.byte_size);
-  s.WriteProperty<duckdb::BaseStatistics>(4, "statistics", m.statistics);
+void SerializeColumnBlockMeta(duckdb::BinarySerializer& s,
+                              const ColumnBlockMeta& m) {
+  s.WriteProperty(0, "compression_type", static_cast<uint8_t>(m.codec->type));
+  s.WriteProperty(1, "tuple_count", m.tuple_count);
+  s.WriteProperty(2, "file_offset", m.file_offset);
+  s.WriteProperty(3, "byte_size", m.byte_size);
+  s.WriteProperty(4, "statistics", m.statistics);
 }
 
-ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::Deserializer& d,
+ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::BinaryDeserializer& d,
                                            duckdb::PhysicalType physical) {
   const auto compression_type = static_cast<duckdb::CompressionType>(
     d.ReadProperty<uint8_t>(0, "compression_type"));
@@ -91,65 +91,67 @@ ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::Deserializer& d,
                          codec.get()};
 }
 
-}  // namespace
-
-void SerializeColumnMeta(duckdb::Serializer& s, const ColumnMeta& meta) {
-  s.WriteProperty<uint64_t>(0, "id", static_cast<uint64_t>(meta.id));
-  s.WriteProperty(1, "type", meta.type);
-  s.WriteList(2, "data", meta.data.size(),
-              [&](duckdb::Serializer::List& list, duckdb::idx_t j) {
-                list.WriteObject([&](duckdb::Serializer& so) {
-                  SerializeColumnBlockMeta(so, meta.data[j]);
+void SerializeBlockMetas(duckdb::BinarySerializer& s, duckdb::field_id_t id,
+                         const char* tag,
+                         const std::vector<ColumnBlockMeta>& blocks) {
+  s.WriteList(id, tag, blocks.size(),
+              [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+                list.WriteObject([&](duckdb::BinarySerializer& obj) {
+                  SerializeColumnBlockMeta(obj, blocks[i]);
                 });
               });
+}
+
+}  // namespace
+
+void SerializeColumnMeta(duckdb::BinarySerializer& s, const ColumnMeta& meta) {
+  s.WriteProperty(0, "id", meta.id);
+  s.WriteProperty(1, "type", meta.type);
+  SerializeBlockMetas(s, 2, "data", meta.data);
   if (!meta.validity.empty()) {
-    s.WriteList(3, "validity", meta.validity.size(),
-                [&](duckdb::Serializer::List& list, duckdb::idx_t j) {
-                  list.WriteObject([&](duckdb::Serializer& so) {
-                    SerializeColumnBlockMeta(so, meta.validity[j]);
-                  });
-                });
+    SerializeBlockMetas(s, 3, "validity", meta.validity);
   }
   if (!meta.children.empty()) {
     s.WriteList(4, "children", meta.children.size(),
-                [&](duckdb::Serializer::List& list, duckdb::idx_t j) {
-                  list.WriteObject([&](duckdb::Serializer& co) {
-                    SerializeColumnMeta(co, meta.children[j]);
+                [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+                  list.WriteObject([&](duckdb::BinarySerializer& obj) {
+                    SerializeColumnMeta(obj, meta.children[i]);
                   });
                 });
   }
   if (!meta.variant_rgs.empty()) {
-    s.WriteList(
-      5, "variant_rgs", meta.variant_rgs.size(),
-      [&](duckdb::Serializer::List& list, duckdb::idx_t j) {
-        const auto& rg = meta.variant_rgs[j];
-        list.WriteObject([&](duckdb::Serializer& ro) {
-          ro.WriteProperty<uint64_t>(0, "row_count", rg.row_count);
-          ro.WriteObject(1, "unshredded", [&](duckdb::Serializer& uo) {
-            SerializeColumnMeta(uo, *rg.unshredded);
-          });
-          if (rg.shredded) {
-            ro.WriteObject(2, "shredded", [&](duckdb::Serializer& so) {
-              SerializeColumnMeta(so, *rg.shredded);
-            });
-          }
-        });
-      });
+    s.WriteList(5, "variant_rgs", meta.variant_rgs.size(),
+                [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+                  const auto& rg = meta.variant_rgs[i];
+                  list.WriteObject([&](duckdb::BinarySerializer& obj) {
+                    obj.WriteProperty(0, "row_count", rg.row_count);
+                    obj.WriteObject(1, "unshredded",
+                                    [&](duckdb::BinarySerializer& unshredded) {
+                                      SerializeColumnMeta(unshredded,
+                                                          *rg.unshredded);
+                                    });
+                    if (rg.shredded) {
+                      obj.WriteObject(
+                        2, "shredded", [&](duckdb::BinarySerializer& shredded) {
+                          SerializeColumnMeta(shredded, *rg.shredded);
+                        });
+                    }
+                  });
+                });
   }
-  s.WritePropertyWithDefault<duckdb::shared_ptr<duckdb::HyperLogLog>>(
-    6, "hyperloglog", meta.hyperloglog);
+  s.WritePropertyWithDefault(6, "hyperloglog", meta.hyperloglog);
 }
 
-ColumnMeta DeserializeColumnMeta(duckdb::Deserializer& d) {
+ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d) {
   ColumnMeta meta;
-  meta.id = static_cast<field_id>(d.ReadProperty<uint64_t>(0, "id"));
-  meta.type = d.ReadProperty<duckdb::LogicalType>(1, "type");
+  d.ReadProperty(0, "id", meta.id);
+  d.ReadProperty(1, "type", meta.type);
   const auto stats_physical = meta.type.InternalType();
   d.Set<const duckdb::LogicalType&>(meta.type);
   d.ReadList(
-    2, "data", [&](duckdb::Deserializer::List& list, duckdb::idx_t /*j*/) {
-      list.ReadObject([&](duckdb::Deserializer& so) {
-        meta.data.push_back(DeserializeColumnBlockMeta(so, stats_physical));
+    2, "data", [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
+        meta.data.push_back(DeserializeColumnBlockMeta(obj, stats_physical));
       });
     });
   d.Unset<const duckdb::LogicalType>();
@@ -157,42 +159,42 @@ ColumnMeta DeserializeColumnMeta(duckdb::Deserializer& d) {
   const auto validity_physical = validity_logical.InternalType();
   d.Set<const duckdb::LogicalType&>(validity_logical);
   d.ReadOptionalList(
-    3, "validity", [&](duckdb::Deserializer::List& list, duckdb::idx_t /*j*/) {
-      list.ReadObject([&](duckdb::Deserializer& so) {
+    3, "validity", [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
         meta.validity.push_back(
-          DeserializeColumnBlockMeta(so, validity_physical));
+          DeserializeColumnBlockMeta(obj, validity_physical));
       });
     });
   d.Unset<const duckdb::LogicalType>();
   d.ReadOptionalList(
-    4, "children", [&](duckdb::Deserializer::List& list, duckdb::idx_t /*j*/) {
-      list.ReadObject([&](duckdb::Deserializer& co) {
-        meta.children.push_back(DeserializeColumnMeta(co));
+    4, "children", [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
+        meta.children.push_back(DeserializeColumnMeta(obj));
       });
     });
   d.ReadOptionalList(
     5, "variant_rgs",
-    [&](duckdb::Deserializer::List& list, duckdb::idx_t /*j*/) {
-      list.ReadObject([&](duckdb::Deserializer& ro) {
+    [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
         VariantRgMeta rg;
-        rg.row_count = ro.ReadProperty<uint64_t>(0, "row_count");
-        ro.ReadObject(1, "unshredded", [&](duckdb::Deserializer& uo) {
-          rg.unshredded =
-            std::make_unique<ColumnMeta>(DeserializeColumnMeta(uo));
-        });
-        const bool has_shredded = ro.OnOptionalPropertyBegin(2, "shredded");
+        obj.ReadProperty(0, "row_count", rg.row_count);
+        obj.ReadObject(
+          1, "unshredded", [&](duckdb::BinaryDeserializer& unshredded) {
+            rg.unshredded =
+              std::make_unique<ColumnMeta>(DeserializeColumnMeta(unshredded));
+          });
+        const bool has_shredded = obj.OnOptionalPropertyBegin(2, "shredded");
         if (has_shredded) {
-          ro.OnObjectBegin();
-          rg.shredded = std::make_unique<ColumnMeta>(DeserializeColumnMeta(ro));
-          ro.OnObjectEnd();
+          obj.OnObjectBegin();
+          rg.shredded =
+            std::make_unique<ColumnMeta>(DeserializeColumnMeta(obj));
+          obj.OnObjectEnd();
         }
-        ro.OnOptionalPropertyEnd(has_shredded);
+        obj.OnOptionalPropertyEnd(has_shredded);
         meta.variant_rgs.push_back(std::move(rg));
       });
     });
-  meta.hyperloglog =
-    d.ReadPropertyWithDefault<duckdb::shared_ptr<duckdb::HyperLogLog>>(
-      6, "hyperloglog");
+  d.ReadPropertyWithDefault(6, "hyperloglog", meta.hyperloglog);
   return meta;
 }
 

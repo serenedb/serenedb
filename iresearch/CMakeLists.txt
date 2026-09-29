@@ -64,8 +64,11 @@ set(IResearch_core_sources
     ./formats/column/merge.cpp
     ./formats/column/internal/write_context.cpp
     ./formats/column/read_context.cpp
-    ./formats/formats.cpp
     ./formats/format_utils.cpp
+    ./formats/index_meta_reader.cpp
+    ./formats/index_meta_writer.cpp
+    ./formats/segment_meta_reader.cpp
+    ./formats/segment_meta_writer.cpp
     ./formats/posting/skip_list.cpp
     ./formats/index/burst_trie.cpp
     ./formats/index/idx_reader.cpp

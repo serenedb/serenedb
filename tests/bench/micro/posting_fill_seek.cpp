@@ -67,7 +67,6 @@
 #include <filesystem>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>

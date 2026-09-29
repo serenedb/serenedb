@@ -25,8 +25,8 @@
 #include <absl/time/time.h>
 
 #include <chrono>
-#include <duckdb/common/serializer/deserializer.hpp>
-#include <duckdb/common/serializer/serializer.hpp>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/storage/block_manager.hpp>
@@ -204,7 +204,7 @@ InvertedIndexStorage::InvertedIndexStorage(
   }
 
   writer_options.meta_payload_writer = [this](uint64_t tick,
-                                              duckdb::Serializer& out) {
+                                              duckdb::BinarySerializer& out) {
     if (_phase == Phase::Creating) {
       tick = TickDomain::Instance().Current();
     }
@@ -242,7 +242,7 @@ InvertedIndexStorage::InvertedIndexStorage(
   };
 
   std::shared_ptr<const FileManifest> file_manifest;
-  writer_options.meta_payload_reader = [&](duckdb::Deserializer& in) {
+  writer_options.meta_payload_reader = [&](duckdb::BinaryDeserializer& in) {
     _recovery_tick = in.ReadProperty<uint64_t>(kFieldTick, "tick");
     _recovery_wal_cursor.generation =
       in.ReadProperty<uint64_t>(kFieldWalGeneration, "wal_generation");

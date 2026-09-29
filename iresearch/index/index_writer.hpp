@@ -39,8 +39,10 @@
 #include <yaclib/algo/wait_group.hpp>
 #include <yaclib/async/future.hpp>
 
-#include "iresearch/formats/formats.hpp"
+#include "iresearch/formats/index_meta_reader.hpp"
+#include "iresearch/formats/index_meta_writer.hpp"
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/index/segment_writer_options.hpp"
 #include "iresearch/utils/async_utils.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/object_pool.hpp"
@@ -110,12 +112,10 @@ struct SegmentOptions {
 using ProgressReportCallback =
   std::function<void(std::string_view phase, size_t current, size_t total)>;
 
-using PayloadWriter = absl::AnyInvocable<void(uint64_t, duckdb::Serializer&)>;
-
 struct IndexWriterOptions : public SegmentOptions {
   IndexReaderOptions reader_options;
 
-  PayloadWriter meta_payload_writer;
+  MetaPayloadWriter meta_payload_writer;
 
   MetaPayloadReader meta_payload_reader;
 
@@ -504,7 +504,7 @@ class IndexWriter : private util::Noncopyable {
   IndexWriter(ConstructToken, IndexLock::ptr&& lock,
               IndexFileRefs::ref_t&& lock_file_ref, Directory& dir,
               size_t segment_pool_size, const SegmentOptions& segment_limits,
-              PayloadWriter&& meta_payload_writer,
+              MetaPayloadWriter&& meta_payload_writer,
               std::shared_ptr<const DirectoryReaderImpl>&& committed_reader);
 
  private:
@@ -792,7 +792,6 @@ class IndexWriter : private util::Noncopyable {
   duckdb::DatabaseInstance* _db = nullptr;
   const AnnBuildEnv* _ann_env = nullptr;
   std::shared_ptr<const IndexFieldOptions> _field_options;
-  PayloadWriter _meta_payload_writer;
   absl::Mutex _commit_lock;
   struct {
     std::recursive_mutex lock;
@@ -810,7 +809,7 @@ class IndexWriter : private util::Noncopyable {
   std::atomic_uint64_t _tick{writer_limits::kMinTick + 1};
   uint64_t _committed_tick{writer_limits::kMinTick};
   uint64_t _last_gen;
-  IndexMetaWriter::ptr _writer;
+  IndexMetaWriter _writer;
   IndexLock::ptr _write_lock;
   IndexFileRefs::ref_t _write_lock_file_ref;
   std::array<FlushContext, 2> _flush_contexts;

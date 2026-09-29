@@ -54,6 +54,7 @@
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -96,6 +97,9 @@ void DeclareModified(duckdb::CatalogTransaction transaction,
 duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
   duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
   duckdb::BoundCreateTableInfo& info) {
+  SDB_IF_FAILURE("unable_to_create") {
+    THROW_SQL_ERROR(ERR_MSG("internal error"));
+  }
   auto& options = info.Base().options;
   if (ReadStorageEngine(options) == TableEngine::Search) {
     auto entry =
@@ -267,7 +271,24 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
                     ERR_MSG("unrecognized parameter \"", unknown->first, "\""));
   }
   if (info.where_clause) {
-    duckdb::IndexBinder where_binder(binder, binder.context);
+    auto where_binder_owner = duckdb::Binder::CreateBinder(binder.context);
+    auto* where_bind = &binder;
+    if (table.type == duckdb::CatalogType::TABLE_ENTRY &&
+        table.Cast<duckdb::TableCatalogEntry>().IsDuckTable()) {
+      auto& columns = table.Cast<duckdb::TableCatalogEntry>().GetColumns();
+      duckdb::vector<duckdb::Identifier> names;
+      duckdb::vector<duckdb::LogicalType> types;
+      for (const auto& column : columns.Logical()) {
+        names.push_back(column.Name());
+        types.push_back(column.Type());
+      }
+      duckdb::vector<duckdb::ColumnIndex> column_ids;
+      where_binder_owner->bind_context.AddBaseTable(
+        duckdb::TableIndex(0), duckdb::Identifier(), names, types, column_ids,
+        table.Cast<duckdb::TableCatalogEntry>());
+      where_bind = where_binder_owner.get();
+    }
+    duckdb::IndexBinder where_binder(*where_bind, binder.context);
     auto where_copy = info.where_clause->Copy();
     const auto type = where_binder.Bind(where_copy)->GetReturnType();
     if (type != duckdb::LogicalType::BOOLEAN) {
@@ -327,6 +348,10 @@ duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   return {};
 }
 
+duckdb::optional_ptr<duckdb::WriteAheadLog> SereneDBCatalog::CatalogLog() {
+  return ClusterOf(GetDatabase()).CatalogLog();
+}
+
 void SereneDBCatalog::Initialize(bool load_builtin) {
   duckdb::DuckCatalog::Initialize(load_builtin);
   auto data = duckdb::CatalogTransaction::GetSystemTransaction(GetDatabase());
@@ -359,11 +384,16 @@ void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   }
   if (context.transaction.HasActiveTransaction()) {
     auto& cluster = ClusterOf(context);
-    duckdb::DropInfo info;
-    info.type = duckdb::CatalogType::DATABASE_ENTRY;
-    info.SetName(GetName());
-    info.if_not_found = duckdb::OnEntryNotFound::RETURN_NULL;
-    cluster.DropDatabase(cluster.GetCatalogTransaction(context), info);
+    const auto transaction = cluster.GetCatalogTransaction(context);
+    auto entry = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+                   .GetEntry(transaction, GetName());
+    if (entry && entry->oid == GetAttached().oid) {
+      duckdb::DropInfo info;
+      info.type = duckdb::CatalogType::DATABASE_ENTRY;
+      info.SetName(GetName());
+      info.if_not_found = duckdb::OnEntryNotFound::RETURN_NULL;
+      cluster.DropDatabase(transaction, info);
+    }
   }
   duckdb::DuckCatalog::OnDetach(context);
 }
@@ -381,6 +411,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
       ERR_CODE(ERRCODE_RESERVED_NAME),
       ERR_MSG("unacceptable schema name \"", name.GetIdentifierName(), "\""),
       ERR_DETAIL("The prefix \"pg_\" is reserved for system schemas."));
+  }
+  SDB_IF_FAILURE("unable_to_create") {
+    THROW_SQL_ERROR(ERR_MSG("internal error"));
   }
   return duckdb::DuckCatalog::CreateSchema(transaction, info);
 }

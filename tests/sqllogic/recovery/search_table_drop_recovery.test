@@ -1,11 +1,6 @@
 control substitution on
 
 
-# Reboot recovery of DROP TABLE on a search-backed table. The drop's records
-# are durable, then the process crashes before the artifact half runs
-# (crash_after_commit). Boot's orphan sweep must remove the iresearch artifacts the
-# crash left behind. A sibling search table must survive untouched.
-
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 CREATE TABLE s_drop (a INTEGER, b TEXT) WITH (storage = 'search');
 
@@ -39,7 +34,7 @@ VACUUM (REFRESH_TABLE) s_witness;
 
 
 statement ok
-SET sdb_faults = 'crash_after_commit';
+SET sdb_faults = 'crash_on_drop';
 
 
 statement error connection closed

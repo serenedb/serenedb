@@ -3,7 +3,6 @@ import re
 import threading
 
 PAUSE_CREATE_INDEX_MID_BUILD_FAULT = "pause_create_index_mid_build"
-PAUSE_CTAS_MID_INGEST_FAULT = "pause_ctas_mid_ingest"
 PAUSE_VACUUM_MID_WALK_FAULT = "pause_vacuum_mid_walk"
 COMPACT_INSIDE_DDL_FAULT = "compact_inside_ddl"
 COMPACT_INSIDE_DROP_FAULT = "compact_inside_drop"
@@ -12,18 +11,16 @@ CRASH_BEFORE_CATALOG_COMMIT_FAULT = "crash_before_catalog_commit"
 CRASH_AFTER_CATALOG_BEFORE_DATA_FAULT = "crash_after_catalog_before_data"
 CRASH_ON_DROP_FAULT = "crash_on_drop"
 CRASH_ON_PACKET_FAULT = "crash_on_packet"
-CRASH_BEFORE_SEARCH_COMMIT_FAULT = "crash_before_search_commit"
-CRASH_AFTER_SEARCH_COMMIT_FAULT = "crash_after_search_commit"
+CRASH_BEFORE_COMMIT_FAULT = "crash_before_commit"
+CRASH_AFTER_COMMIT_FAULT = "crash_after_commit"
 CRASH_BEFORE_SEARCH_WAL_COMMIT_FAULT = "crash_before_search_wal_commit"
 CRASH_AFTER_SEARCH_WAL_COMMIT_FAULT = "crash_after_search_wal_commit"
-CRASH_SST_SINK_AFTER_INGEST_FAULT = "crash_sst_sink_after_ingest"
 CRASH_AFTER_SEARCH_REFRESH_FAULT = "Search::CrashAfterCommit"
 SLOW_SEARCH_TASK_FAULT = "slow_search_task"
 UNABLE_TO_CREATE_FAULT = "unable_to_create"
 
 PARK_FAULTS = frozenset({
     PAUSE_CREATE_INDEX_MID_BUILD_FAULT,
-    PAUSE_CTAS_MID_INGEST_FAULT,
     PAUSE_VACUUM_MID_WALK_FAULT,
 })
 
@@ -32,11 +29,10 @@ CRASH_FAULTS = frozenset({
     CRASH_AFTER_CATALOG_BEFORE_DATA_FAULT,
     CRASH_ON_DROP_FAULT,
     CRASH_ON_PACKET_FAULT,
-    CRASH_BEFORE_SEARCH_COMMIT_FAULT,
-    CRASH_AFTER_SEARCH_COMMIT_FAULT,
+    CRASH_BEFORE_COMMIT_FAULT,
+    CRASH_AFTER_COMMIT_FAULT,
     CRASH_BEFORE_SEARCH_WAL_COMMIT_FAULT,
     CRASH_AFTER_SEARCH_WAL_COMMIT_FAULT,
-    CRASH_SST_SINK_AFTER_INGEST_FAULT,
     CRASH_AFTER_SEARCH_REFRESH_FAULT,
 })
 

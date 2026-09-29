@@ -113,6 +113,8 @@ Sequences are based on `BIGINT` arithmetic, so the range cannot exceed the range
 
 ## Limitations
 
+A sequence makes its values durable ahead of handing them out, 32 steps at a time, as PostgreSQL does. After a crash, `nextval` resumes past the last durable value, so up to 32 values can be skipped, but no value is handed out twice. `setval` is durable when it returns.
+
 When a table column uses a sequence as its `DEFAULT`, the column keeps a dependency on that sequence. The default can be changed with `ALTER TABLE ... ALTER COLUMN ... SET DEFAULT` — here it is reset to `NULL`, so subsequent rows no longer draw from the sequence:
 
 <SqlLogicTest id="sql/statements/create_sequence/drop_dependency/example_016" />

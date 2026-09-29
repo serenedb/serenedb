@@ -55,7 +55,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   duckdb::ClientContext& context, duckdb::AttachedDatabase& db,
   const duckdb::string& name, duckdb::AttachInfo& info,
   duckdb::AttachOptions& options) {
-  if (info.path.empty()) {
+  if (info.path.empty() || info.path == IN_MEMORY_PATH) {
     if (info.on_conflict == duckdb::OnCreateConflict::ERROR_ON_CONFLICT &&
         duckdb::DatabaseManager::Get(context).GetDatabase(info.name)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_DATABASE),
@@ -73,10 +73,19 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
       database.permissions.owner =
         connection ? connection->GetRoleId() : pg::kRootUser;
       entry = cluster.CreateDatabase(transaction, database);
+      cluster.LogArtifact(
+        duckdb::CatalogType::DATABASE_ENTRY, cluster.GetAttached().oid,
+        entry->oid,
+        catalog::DatabaseArtifacts(cluster.GetAttached(), entry->oid), false);
+      SDB_IF_FAILURE("unable_to_create") {
+        THROW_SQL_ERROR(ERR_MSG("internal error"));
+      }
     }
     db.oid = entry->oid;
-    info.path = static_cast<const catalog::DataDirectory&>(*storage_info)
-                  .DatabaseFile(entry->oid);
+    if (info.path.empty()) {
+      info.path = static_cast<const catalog::DataDirectory&>(*storage_info)
+                    .DatabaseFile(entry->oid);
+    }
   }
   // Every serenedb on-disk format sits behind our storage version, so a
   // duckdb-version database is unaffected by anything we change.

@@ -60,6 +60,9 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     return duckdb::SqlCompatibility::POSTGRES;
   }
 
+  bool UsesCatalogLog() const final { return true; }
+  duckdb::optional_ptr<duckdb::WriteAheadLog> CatalogLog() final;
+
   void Initialize(bool load_builtin) final;
 
   void OnDetach(duckdb::ClientContext& context) final;

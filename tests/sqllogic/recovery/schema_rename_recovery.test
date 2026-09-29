@@ -81,10 +81,10 @@ INSERT INTO srr_b.t (v) VALUES (4);
 
 connection after_wal_replay
 query
-SELECT max(id) AS id FROM srr_b.t;
+SELECT count(*) AS n, count(DISTINCT id) AS ids, max(id) > 3 AS above FROM srr_b.t;
 ----
-id
-4
+n	ids	above
+4	4	t
 
 connection after_wal_replay
 query

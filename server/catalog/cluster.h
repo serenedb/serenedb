@@ -51,6 +51,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
 
   bool UsesCatalogLog() const final { return true; }
   duckdb::shared_ptr<duckdb::WriteAheadLog> CatalogLog() final {
+    std::lock_guard guard{_log_mutex};
     return _catalog_log;
   }
   duckdb::Catalog& ReplayUseCatalog(duckdb::ClientContext& context,
@@ -114,6 +115,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   bool IsLive(const Artifact& artifact);
   bool HoldsPreparedBatch(duckdb::idx_t oid, duckdb::idx_t generation);
 
+  std::mutex _log_mutex;
   duckdb::shared_ptr<duckdb::WriteAheadLog> _catalog_log;
   std::atomic_size_t _commits_in_flight{0};
   bool _compactable = false;

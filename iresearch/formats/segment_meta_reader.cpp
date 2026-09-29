@@ -179,6 +179,12 @@ void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
     docs_mask = std::make_shared<DocumentMask>(std::move(builder));
   }
 
+  if (!has_files) [[unlikely]] {
+    throw IndexError{
+      absl::StrCat("While reading segment meta '", name,
+                   "', error: the segment file list is missing")};
+  }
+
   const auto mask_count = docs_mask ? docs_mask->Count() : 0;
 
   if (docs_count >= doc_limits::eof() || mask_count > docs_count) [[unlikely]] {

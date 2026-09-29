@@ -1296,6 +1296,11 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
   write("two_file_lists", 2, mask, {1}, true);
   rejected("two_file_lists", 2, "a second link carries");
 
+  write("no_file_list", 1, mask, {}, false);
+  write("no_file_list", 2, mask, {1}, false);
+  rejected("no_file_list", 1, "the segment file list is missing");
+  rejected("no_file_list", 2, "the segment file list is missing");
+
   write("maskless_head", 1, mask, {}, true);
   write("maskless_head", 2, {}, {1}, false);
   rejected("maskless_head", 2, "maskless head derives from 1 link(s)");

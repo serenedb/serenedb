@@ -32,7 +32,6 @@
 #include <duckdb/parser/statement/transaction_statement.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
-#include <iresearch/utils/log.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 
 #include "auth/role_closure.h"
@@ -2672,13 +2671,12 @@ yaclib::Task<bool> PgWireSession<Kind>::Negotiate() {
       co_await this->Flush();
       co_return false;
     }
-    co_return true;
   } catch (const std::exception& exception) {
-    SDB_ERROR(GENERAL, "pg connection startup failed: ", exception.what());
     WriteFatalResponse(this->_send, ToSqlError(exception));
+    this->KickSend();
+    co_return false;
   }
-  co_await this->Flush();
-  co_return false;
+  co_return true;
 }
 
 template<SocketKind Kind>
@@ -2854,7 +2852,6 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
       co_await RunCommandLoop();
     }
   } catch (const std::exception& exception) {
-    SDB_ERROR(GENERAL, "pg session failed: ", exception.what());
     WriteFatalResponse(this->_send, ToSqlError(exception));
   }
   // Teardown runs where everything was created: results/portals die on a duck

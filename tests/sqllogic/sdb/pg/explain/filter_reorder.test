@@ -212,4 +212,86 @@ safe
 
 
 statement ok
+SET filter_reorder = 'never';
+
+
+query
+EXPLAIN SELECT a FROM filter_reorder_t WHERE s || b::TEXT <> reverse(s) AND s LIKE b::TEXT AND a <> b;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────╮
+│ Projections: #2                                                                      │
+│ ~200 rows                                                                            │
+╰───────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ FILTER ──────────────────────────────────┴──────────────────────────────────────────╮
+│ Expression:                                                                          │
+│ (a != b) AND (s ~~ CAST(b AS VARCHAR)) AND ((s || CAST(b AS VARCHAR)) != reverse(s)) │
+│ ~200 rows                                                                            │
+╰───────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────────────┴──────────────────────────────────────────╮
+│ Table: filter_reorder_t                                                              │
+│ Type: Sequential Scan                                                                │
+│ Projections: s, b, a                                                                 │
+│ ~1,000 rows                                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────╯
+
+
+statement ok
+SET filter_reorder = 'FAST';
+
+
+query
+EXPLAIN SELECT a FROM filter_reorder_t WHERE s::INTEGER <> a AND s || b::TEXT <> reverse(s) AND a <> b;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────╮
+│ Projections: #1                                                                      │
+│ ~200 rows                                                                            │
+╰───────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ FILTER ──────────────────────────────────┴──────────────────────────────────────────╮
+│ Expression:                                                                          │
+│ (a != b) AND (CAST(s AS INTEGER) != a) AND ((s || CAST(b AS VARCHAR)) != reverse(s)) │
+│ ~200 rows                                                                            │
+╰───────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────────────┴──────────────────────────────────────────╮
+│ Table: filter_reorder_t                                                              │
+│ Type: Sequential Scan                                                                │
+│ Projections: s, a, b                                                                 │
+│ ~1,000 rows                                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────╯
+
+
+query
+SELECT count(*) FROM filter_reorder_t WHERE length(s) >= 3 OR b = c OR c = d OR a::TINYINT <> d;
+----
+count
+1000
+
+
+statement ok
+RESET filter_reorder;
+
+
+query
+SELECT count(*) FROM filter_reorder_t WHERE length(s) >= 3 OR b = c OR c = d OR a::TINYINT <> d;
+----
+count
+1000
+
+
+statement ok
+SET filter_reorder = 'always';
+
+
+statement error
+SELECT count(*) FROM filter_reorder_t WHERE length(s) >= 3 OR b = c OR c = d OR a::TINYINT <> d;
+----
+db error: ERROR: Type INT32 with value 128 can't be cast because the value is out of range for the destination type INT8 when casting from source column a
+
+
+statement ok
+RESET filter_reorder;
+
+
+statement ok
 DROP TABLE filter_reorder_t;

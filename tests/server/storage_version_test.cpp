@@ -101,6 +101,45 @@ void SetStorageVersion(const std::string& path,
   }
 }
 
+void ReplaceCompressionMethod(const std::string& path,
+                              duckdb::CompressionType from, uint8_t to) {
+  constexpr auto kSize = duckdb::Storage::FILE_HEADER_SIZE;
+  constexpr auto kChecksum = sizeof(uint64_t);
+  constexpr auto kBlockStart = 3 * kSize;
+  std::string data(std::filesystem::file_size(path), '\0');
+  {
+    std::ifstream in{path, std::ios::binary};
+    ASSERT_TRUE(in);
+    in.read(data.data(), static_cast<std::streamsize>(data.size()));
+  }
+  duckdb::MemoryStream main_stream{
+    reinterpret_cast<duckdb::data_ptr_t>(data.data() + kChecksum),
+    kSize - kChecksum};
+  const auto main_header = duckdb::MainHeader::Read(main_stream);
+  duckdb::MemoryStream header_stream{
+    reinterpret_cast<duckdb::data_ptr_t>(data.data() + kSize + kChecksum),
+    kSize - kChecksum};
+  const auto block_size =
+    duckdb::DatabaseHeader::Read(main_header, header_stream).block_alloc_size;
+  const std::string pattern{'\x67', '\x00', static_cast<char>(from), '\x68',
+                            '\x00'};
+  size_t replaced = 0;
+  for (auto pos = data.find(pattern, kBlockStart); pos != std::string::npos;
+       pos = data.find(pattern, pos + pattern.size())) {
+    data[pos + 2] = static_cast<char>(to);
+    const auto block =
+      kBlockStart + (pos - kBlockStart) / block_size * block_size;
+    const uint64_t checksum = duckdb::Checksum(
+      reinterpret_cast<const uint8_t*>(data.data() + block + kChecksum),
+      block_size - kChecksum);
+    std::memcpy(data.data() + block, &checksum, kChecksum);
+    ++replaced;
+  }
+  ASSERT_NE(replaced, 0);
+  std::ofstream out{path, std::ios::binary | std::ios::trunc};
+  out.write(data.data(), static_cast<std::streamsize>(data.size()));
+}
+
 void AppendWalEntry(const std::string& path, const duckdb::MemoryStream& entry,
                     uint64_t claimed_size) {
   const uint64_t size = entry.GetPosition();
@@ -172,6 +211,25 @@ TEST_F(StorageVersionTest, NewerSereneDBVersionIsRefused) {
   EXPECT_NE(error.find("newer than this version of SereneDB supports"),
             std::string::npos)
     << error;
+}
+
+TEST_F(StorageVersionTest, UnknownCompressionMethodFailsOnlyTheQuery) {
+  const auto path = File("codec.db");
+  duckdb::DuckDB db{nullptr};
+  duckdb::Connection con{db};
+  ASSERT_EQ(Exec(con, AttachAtLatest(path)), "");
+  ASSERT_EQ(Exec(con, "CREATE TABLE f.t AS SELECT 7 AS i FROM range(10000)"),
+            "");
+  ASSERT_EQ(Exec(con, "CHECKPOINT f"), "");
+  ASSERT_EQ(Exec(con, "DETACH f"), "");
+  ReplaceCompressionMethod(path, duckdb::CompressionType::COMPRESSION_CONSTANT,
+                           0x7F);
+  ASSERT_EQ(Exec(con, AttachAtLatest(path)), "");
+  const auto error = Exec(con, "SELECT sum(i) FROM f.t");
+  EXPECT_NE(error.find("which this release of SereneDB does not have"),
+            std::string::npos)
+    << error;
+  EXPECT_EQ(Scalar(con, "SELECT 42"), "42");
 }
 
 TEST_F(StorageVersionTest, IntactWalEntryInAnUnknownLayoutIsAnError) {

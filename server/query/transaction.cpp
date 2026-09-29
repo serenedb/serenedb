@@ -168,17 +168,23 @@ void Transaction::PreCommit() {
   CommitVariables();
 }
 
-irs::IndexWriter::Transaction& Transaction::EnsureIndexTransaction(
+Transaction::SearchSlot& Transaction::EnsureIndexSlot(
   duckdb::idx_t index_id, std::shared_ptr<search::InvertedIndexStorage> storage,
-  std::shared_ptr<const catalog::InvertedIndexConfig> config) {
+  std::shared_ptr<const catalog::InvertedIndexConfig> config, size_t slot) {
   auto& entry = _search_transactions.try_emplace(index_id).first->second;
-  if (!entry.transaction) {
-    entry.transaction = std::make_unique<irs::IndexWriter::Transaction>(
+  if (entry.slots.size() <= slot) {
+    entry.slots.resize(slot + 1);
+  }
+  auto& result = entry.slots[slot];
+  if (!result.transaction) {
+    result.transaction = std::make_unique<irs::IndexWriter::Transaction>(
       storage->GetTransaction());
-    entry.transaction->SetFieldOptions(std::move(config));
+    result.transaction->SetFieldOptions(std::move(config));
+  }
+  if (!entry.storage) {
     entry.storage = std::move(storage);
   }
-  return *entry.transaction;
+  return result;
 }
 
 void Transaction::CommitSearch(
@@ -196,9 +202,14 @@ void Transaction::CommitSearch(
   // it last committed at.
   uint64_t max_queries = 0;
   for (auto& [index_id, entry] : _search_transactions) {
-    entry.transaction->RegisterFlush();
-    max_queries =
-      std::max<uint64_t>(max_queries, entry.transaction->GetQueries());
+    for (auto& slot : entry.slots) {
+      slot.writer.reset();
+      if (slot.transaction) {
+        slot.transaction->RegisterFlush();
+        max_queries =
+          std::max<uint64_t>(max_queries, slot.transaction->GetQueries());
+      }
+    }
   }
   SDB_IF_FAILURE("long_waited_advance") {
     static std::atomic<uint32_t> gSeedCounter{0};
@@ -222,13 +233,15 @@ void Transaction::CommitSearch(
     if (cursor) {
       entry.storage->RecordFlushCursor(last_tick, *cursor);
     }
-    if (entry.transaction->Commit(last_tick)) {
-      continue;
+    for (auto& slot : entry.slots) {
+      if (!slot.transaction || slot.transaction->Commit(last_tick)) {
+        continue;
+      }
+      SDB_ERROR(SEARCH, "search index commit failed for index '", index_id,
+                "' at tick ", last_tick,
+                "; the index will be rebuilt from the store on next boot");
+      entry.storage->MarkOutOfSync();
     }
-    SDB_ERROR(SEARCH, "search index commit failed for index '", index_id,
-              "' at tick ", last_tick,
-              "; the index will be rebuilt from the store on next boot");
-    entry.storage->MarkOutOfSync();
   }
 
   _search_transactions.clear();

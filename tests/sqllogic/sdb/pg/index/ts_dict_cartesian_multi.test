@@ -52,11 +52,11 @@ QUERY PLAN
 │ sdb_inverted_index_term$body IS NOT NULL,  │
 │ sdb_inverted_index_term$title,             │
 │ sdb_inverted_index_term$title IS NOT NULL  │
-│ ~30 rows                                   │
+│ ~960 rows                                  │
 ╰──────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ──────┴─────────────────────╮
 │ Groups: #0, #1                             │
-│ ~30 rows                                   │
+│ ~960 rows                                  │
 ╰──────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
 │ Index: mc_idx                              │
@@ -64,7 +64,7 @@ QUERY PLAN
 │ Projections:                               │
 │ sdb_inverted_index_term$body,              │
 │ sdb_inverted_index_term$title              │
-│ ~60 rows                                   │
+│ ~1,920 rows                                │
 ╰────────────────────────────────────────────╯
 
 query

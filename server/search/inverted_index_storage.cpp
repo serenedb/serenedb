@@ -283,7 +283,9 @@ void RemoveDroppedStorageDir(const std::filesystem::path& path,
                              size_t parent_levels) {
   auto remove = [path, parent_levels] {
     std::error_code ec;
-    std::filesystem::remove_all(path, ec);
+    const auto tombstone = DroppedStoragePath(path);
+    std::filesystem::rename(path, tombstone, ec);
+    std::filesystem::remove_all(ec ? path : tombstone, ec);
     if (ec) {
       SDB_WARN(GENERAL, "could not remove dropped storage '", path.string(),
                "': ", ec.message());

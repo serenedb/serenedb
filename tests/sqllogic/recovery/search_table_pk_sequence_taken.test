@@ -112,7 +112,7 @@ query
 SELECT nextval('st_pk_seq');
 ----
 nextval
-2
+34
 
 
 # Dropping the table takes its own sequence with it and leaves the user's.

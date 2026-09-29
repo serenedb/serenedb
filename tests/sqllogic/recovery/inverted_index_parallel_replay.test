@@ -1,0 +1,195 @@
+control substitution on
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pr_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE pr_a(id INTEGER, body TEXT);
+
+
+statement ok
+CREATE INDEX pr_a_idx ON pr_a USING inverted(id, body pr_dict);
+
+
+statement ok
+CREATE TABLE pr_b(id INTEGER, body TEXT, keep BOOLEAN);
+
+
+statement ok
+CREATE INDEX pr_b_expr ON pr_b USING inverted(id, (upper(body)) pr_dict);
+
+
+statement ok
+CREATE INDEX pr_b_part ON pr_b USING inverted(id, body pr_dict) WHERE keep;
+
+
+statement ok
+CREATE TABLE pr_c(id INTEGER, body TEXT);
+
+
+statement ok
+CREATE INDEX pr_c_idx ON pr_c USING inverted(id, body pr_dict);
+
+
+statement ok
+INSERT INTO pr_a SELECT g, 'row ' || g || ' alpha' FROM generate_series(1, 5000) g;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pr_a;
+
+
+statement ok
+INSERT INTO pr_a SELECT g, 'row ' || g || ' bravo' FROM generate_series(5001, 10000) g;
+
+
+statement ok
+DELETE FROM pr_a WHERE id % 10 = 0;
+
+
+statement ok
+UPDATE pr_a SET body = 'row ' || id || ' charlie' WHERE id % 10 = 1;
+
+
+statement ok
+INSERT INTO pr_b SELECT g, 'row ' || g || ' bravo', (g % 3 = 0) FROM generate_series(1, 3000) g;
+
+
+statement ok
+DELETE FROM pr_b WHERE id <= 300;
+
+
+statement ok
+INSERT INTO pr_c SELECT g, 'row ' || g || ' delta' FROM generate_series(1, 4000) g;
+
+
+statement ok
+ALTER TABLE pr_c ADD COLUMN extra INTEGER DEFAULT 7;
+
+
+statement ok
+INSERT INTO pr_c SELECT g, 'row ' || g || ' echo', g FROM generate_series(4001, 6000) g;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM pr_a_idx WHERE body @@ ts_like('alpha');
+----
+count
+4000
+
+
+connection after_crash
+query
+SELECT count(*) FROM pr_a_idx WHERE body @@ ts_like('bravo');
+----
+count
+4000
+
+
+connection after_crash
+query
+SELECT count(*) FROM pr_a_idx WHERE body @@ ts_like('charlie');
+----
+count
+1000
+
+
+connection after_crash
+query
+SELECT count(*) FROM (
+  SELECT id FROM pr_a_idx WHERE body @@ ts_like('charlie')
+  EXCEPT SELECT id FROM pr_a WHERE body LIKE '%charlie%') x;
+----
+count
+0
+
+
+connection after_crash
+query
+SELECT count(*) FROM pr_b_expr WHERE upper(body) @@ ts_like('BRAVO');
+----
+count
+2700
+
+
+connection after_crash
+query
+SELECT count(*) FROM pr_b_part WHERE body @@ ts_like('bravo');
+----
+count
+900
+
+
+connection after_crash
+query
+SELECT count(*) FROM pr_c_idx WHERE body @@ ts_like('delta');
+----
+count
+4000
+
+
+connection after_crash
+query
+SELECT count(*) FROM pr_c_idx WHERE body @@ ts_like('echo');
+----
+count
+2000
+
+
+connection after_crash
+query
+SELECT sum(extra) FROM pr_c WHERE id > 4000;
+----
+sum
+10001000
+
+
+connection after_crash
+statement ok
+INSERT INTO pr_c SELECT g, 'row ' || g || ' foxtrot', g FROM generate_series(6001, 6100) g;
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) pr_c;
+
+
+connection after_crash
+query
+SELECT count(*) FROM pr_c_idx WHERE body @@ ts_like('foxtrot');
+----
+count
+100
+
+
+connection after_crash
+statement ok
+DROP TABLE pr_a;
+
+
+connection after_crash
+statement ok
+DROP TABLE pr_b;
+
+
+connection after_crash
+statement ok
+DROP TABLE pr_c;
+
+
+connection after_crash
+statement ok
+DROP TEXT SEARCH DICTIONARY pr_dict;

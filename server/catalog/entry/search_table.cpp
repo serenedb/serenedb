@@ -50,6 +50,7 @@
 #include <vector>
 
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/entry/inverted_index.h"
 #include "connector/column_id.h"
 #include "connector/primary_key.h"
@@ -192,6 +193,13 @@ SearchTableEntry::SearchTableEntry(
       _pk_sequence.GetIdentifierName();
   }
   if (!_storage) {
+    if (base.oid == 0) {
+      ClusterOf(catalog.GetDatabase())
+        .LogArtifact(
+          duckdb::CatalogType::TABLE_ENTRY, catalog.GetOid(), oid,
+          {search::SearchTable::GetPath(catalog.GetOid(), schema.oid, oid)},
+          false);
+    }
     _storage = search::SearchTable::Create(
       catalog.GetOid(), schema.oid, oid, base.oid == 0, _options,
       search::SearchTable::DeclaredCompression(GetColumns()));
@@ -282,7 +290,7 @@ duckdb::vector<duckdb::ColumnSegmentInfo> SearchTableEntry::ColumnSegmentRows(
       return generated_pk;
     }
     for (const auto& column : table.GetColumns().Physical()) {
-      if (column.Oid() == id) {
+      if (connector::TableColumnId(column) == id) {
         return column.Physical().index;
       }
     }
@@ -356,7 +364,12 @@ SearchTableEntry::GeneratedPkSequence(duckdb::ClientContext& context) const {
   return entry ? &entry->Cast<duckdb::SequenceCatalogEntry>() : nullptr;
 }
 
-void SearchTableEntry::OnDrop() { _storage->MarkDropped(); }
+void SearchTableEntry::OnDrop() {
+  ClusterOf(catalog.GetDatabase())
+    .NoteDroppedArtifact(duckdb::CatalogType::TABLE_ENTRY, catalog.GetOid(),
+                         oid, {_storage->Path()});
+  _storage->MarkDropped();
+}
 
 void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   if (prev_entry.type == duckdb::CatalogType::INVALID) {

@@ -86,6 +86,11 @@ struct WalCursor {
 void RemoveDroppedStorageDir(const std::filesystem::path& path,
                              size_t parent_levels);
 
+inline std::filesystem::path DroppedStoragePath(std::filesystem::path path) {
+  path += ".dropped";
+  return path;
+}
+
 // Physical representation of a search index (InvertedIndex). Owns the
 // iresearch writer/reader and all mutable index state; lives in the
 // SearchEngine registry keyed by index_id, not in the catalog snapshot.
@@ -105,6 +110,7 @@ class InvertedIndexStorage final
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);
   }
+  const std::filesystem::path& Path() const noexcept { return _path; }
 
   static std::filesystem::path GetPath(duckdb::idx_t db_id,
                                        duckdb::idx_t schema_id,

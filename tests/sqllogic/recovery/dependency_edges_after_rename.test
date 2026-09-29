@@ -257,7 +257,7 @@ CREATE SEQUENCE dre.gs;
 
 connection after_crash
 statement ok
-SET sdb_faults = 'crash_after_commit';
+SET sdb_faults = 'crash_after_catalog_before_data';
 
 connection after_crash
 statement error connection closed
@@ -314,12 +314,11 @@ Drop the dependent entries first and recreate them after the change.
 
 connection after_gap
 statement ok
-CREATE TABLE dre.compact_trigger(x INTEGER);
+SET sdb_faults = 'compact_inside_ddl';
 
 connection after_gap
 statement ok
-CHECKPOINT;
-
+CREATE TABLE dre.compact_trigger(x INTEGER);
 
 connection after_gap
 statement ok

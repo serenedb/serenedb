@@ -176,11 +176,16 @@ std::optional<ScorerOptions> TopKScorer(
 
 class IndexTokenizers {
  public:
+  using Bound = irs::containers::FlatHashMap<irs::field_id, ColumnTokenizer>;
+
   IndexTokenizers() = default;
   IndexTokenizers(duckdb::ClientContext& context, duckdb::Catalog& catalog,
                   const InvertedIndexConfig& config);
 
   ColumnTokenizer Acquire(irs::field_id field_id) const;
+  ColumnTokenizer Acquire(irs::field_id field_id,
+                          duckdb::ClientContext& context) const;
+  Bound AcquireAll(duckdb::ClientContext& context) const;
 
  private:
   struct Field {

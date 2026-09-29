@@ -188,14 +188,11 @@ ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d) {
             rg.unshredded =
               std::make_unique<ColumnMeta>(DeserializeColumnMeta(unshredded));
           });
-        const bool has_shredded = obj.OnOptionalPropertyBegin(2, "shredded");
-        if (has_shredded) {
-          obj.OnObjectBegin();
-          rg.shredded =
-            std::make_unique<ColumnMeta>(DeserializeColumnMeta(obj));
-          obj.OnObjectEnd();
-        }
-        obj.OnOptionalPropertyEnd(has_shredded);
+        obj.ReadOptionalObject(
+          2, "shredded", [&](duckdb::BinaryDeserializer& shredded) {
+            rg.shredded =
+              std::make_unique<ColumnMeta>(DeserializeColumnMeta(shredded));
+          });
         meta.variant_rgs.push_back(std::move(rg));
       });
     });

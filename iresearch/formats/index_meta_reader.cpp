@@ -102,18 +102,15 @@ void Read(const Directory& dir, IndexMeta& meta, std::string_view filename,
               kSegmentFieldInvisibleCount, "invisible_count", 0);
           });
         });
-      const bool has_payload =
-        meta_in.OnOptionalPropertyBegin(kFieldPayload, "payload");
-      if (has_payload) {
-        if (!payload) [[unlikely]] {
-          throw IndexError{absl::StrCat(
-            "Index meta '", filename, "' has a payload but no reader for it")};
-        }
-        meta_in.OnObjectBegin();
-        payload(meta_in);
-        meta_in.OnObjectEnd();
-      }
-      meta_in.OnOptionalPropertyEnd(has_payload);
+      meta_in.ReadOptionalObject(
+        kFieldPayload, "payload", [&](duckdb::BinaryDeserializer& obj) {
+          if (!payload) [[unlikely]] {
+            throw IndexError{
+              absl::StrCat("Index meta '", filename,
+                           "' has a payload but no reader for it")};
+          }
+          payload(obj);
+        });
     });
 
   for (size_t i = 0; auto& segment : segments) {

@@ -64,17 +64,11 @@ DocumentMask ReadDocumentMask(IndexInput& in, uint64_t mask_size) {
 
 bool ReadFiles(duckdb::BinaryDeserializer& meta_in,
                std::vector<std::string>& files) {
-  const bool present = meta_in.OnOptionalPropertyBegin(kFieldFiles, "files");
-  if (present) {
-    const auto count = meta_in.OnListBegin();
-    files.reserve(files.size() + count);
-    for (duckdb::idx_t i = 0; i != count; ++i) {
-      files.emplace_back(meta_in.ReadString());
-    }
-    meta_in.OnListEnd();
-  }
-  meta_in.OnOptionalPropertyEnd(present);
-  return present;
+  return meta_in.ReadOptionalList(
+    kFieldFiles, "files",
+    [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      files.emplace_back(list.ReadElement<std::string>());
+    });
 }
 
 std::vector<uint64_t> ReadParents(duckdb::BinaryDeserializer& meta_in) {

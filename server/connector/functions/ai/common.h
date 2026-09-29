@@ -25,6 +25,7 @@
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
+#include <simdjson.h>
 
 #include <atomic>
 #include <cstdint>
@@ -46,17 +47,11 @@
 namespace duckdb {
 
 class ClientContext;
-class DatabaseInstance;
 class DataChunk;
 class Expression;
 class ExtensionLoader;
 
 }  // namespace duckdb
-namespace simdjson::dom {
-
-class element;
-
-}  // namespace simdjson::dom
 namespace sdb::connector::ai {
 
 inline constexpr std::string_view kOpenAISecretType = "openai";
@@ -89,9 +84,9 @@ inline constexpr Api kEmbeddingApi{
   .path = "/v1/embeddings",
 };
 
-inline constexpr Api kJevApi{
+inline constexpr Api kSystemOneApi{
   .secret_type = kTypeSafeSecretType,
-  .default_secret = "sdb_ai_system1_default_secret",
+  .default_secret = "sdb_ai_system_one_default_secret",
   .base_url = "https://api.typesafe.ai",
   .path_key = "path",
   .path = "/v1/systemone",
@@ -134,6 +129,8 @@ void LoadEndpoint(duckdb::ClientContext& context, const EndpointRef& ref);
                                 std::string_view reply);
 
 std::string ToJson(std::string_view text);
+
+std::string MinifyJson(std::string_view json);
 
 template<typename Range>
 std::string JsonArray(const Range& values) {
@@ -223,6 +220,7 @@ class AIQuery final : public duckdb::ClientContextState {
 
   Settings settings;
   Limiter limiter;
+  std::atomic_size_t helpers = 0;
 
  private:
   void Begin(duckdb::ClientContext& context)
@@ -277,7 +275,7 @@ class AIWork {
 
   virtual std::string Body(size_t k) const = 0;
 
-  virtual void Decode(size_t k, simdjson::dom::element reply,
+  virtual void Decode(size_t k, simdjson::ondemand::object& reply,
                       std::string_view raw) = 0;
 
   virtual void Advance(const Replies& replies) = 0;
@@ -294,7 +292,7 @@ class BatchWork : public ScalarWork {
 
   std::string Body(size_t k) const final;
 
-  void Decode(size_t k, simdjson::dom::element reply,
+  void Decode(size_t k, simdjson::ondemand::object& reply,
               std::string_view raw) final;
 
   void Advance(const Replies& replies) final;
@@ -307,7 +305,7 @@ class BatchWork : public ScalarWork {
   virtual std::string ProbeBody() const = 0;
 
   virtual void DecodeBatch(size_t begin, size_t size,
-                           simdjson::dom::element reply,
+                           simdjson::ondemand::object& reply,
                            std::string_view raw) = 0;
 
  private:
@@ -356,10 +354,8 @@ void RegisterEmbeddingFunctions(duckdb::ExtensionLoader& loader);
 
 void RegisterTextFunctions(duckdb::ExtensionLoader& loader);
 
-void RegisterJevFunction(duckdb::ExtensionLoader& loader);
+void RegisterSystemOneFunction(duckdb::ExtensionLoader& loader);
 
 void RegisterAggregateFunctions(duckdb::ExtensionLoader& loader);
-
-void RegisterAIOptimizer(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::connector::ai

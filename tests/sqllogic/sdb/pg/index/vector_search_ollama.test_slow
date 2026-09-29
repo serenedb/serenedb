@@ -12,9 +12,9 @@ CREATE OR REPLACE SECRET ollama_${__DATABASE__} (
 
 
 query
-SELECT ai_embed('', '${OLLAMA_MODEL}', 'ollama_${__DATABASE__}') IS NULL;
+SELECT ai_embed('', '${OLLAMA_MODEL}', 'ollama_${__DATABASE__}') IS NULL AS empty_text_skipped;
 ----
-?column?
+empty_text_skipped
 t
 
 
@@ -22,16 +22,16 @@ query
 SELECT array_length(
   ai_embed('hello world', '${OLLAMA_MODEL}', 'ollama_${__DATABASE__}'),
   1
-) = 384;
+) = 384 AS model_dimension;
 ----
-?column?
+model_dimension
 t
 
 
 query
-SELECT ai_embed(NULL, '${OLLAMA_MODEL}', 'ollama_${__DATABASE__}') IS NULL;
+SELECT ai_embed(NULL, '${OLLAMA_MODEL}', 'ollama_${__DATABASE__}') IS NULL AS null_text_skipped;
 ----
-?column?
+null_text_skipped
 t
 
 

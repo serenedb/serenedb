@@ -127,22 +127,25 @@ std::string BuildChatBody(const ChatTemplate& chat, std::string_view user) {
   return std::string{builder.view().value()};
 }
 
-std::string Chat(std::string_view fn, simdjson::dom::element reply,
+std::string Chat(std::string_view fn, simdjson::ondemand::object& reply,
                  std::string_view raw, int32_t max_tokens) {
-  simdjson::dom::element choice;
-  if (reply["choices"].at(0).get(choice) != simdjson::SUCCESS) {
+  simdjson::ondemand::object choice;
+  if (reply["choices"].at(0).get_object().get(choice) != simdjson::SUCCESS) {
     ThrowBadReply(fn, "chat completion response has no 'choices'", raw);
   }
   std::string_view content;
-  std::ignore = choice["message"]["content"].get(content);
+  std::string_view refusal;
+  if (simdjson::ondemand::object message;
+      choice["message"].get_object().get(message) == simdjson::SUCCESS) {
+    std::ignore = message["content"].get_string().get(content);
+    std::ignore = message["refusal"].get_string().get(refusal);
+  }
   std::string_view finish;
-  if (std::string_view refusal;
-      choice["message"]["refusal"].get(refusal) == simdjson::SUCCESS &&
-      !refusal.empty()) {
+  if (!refusal.empty()) {
     content = refusal;
     finish = "refusal";
   } else {
-    std::ignore = choice["finish_reason"].get(finish);
+    std::ignore = choice["finish_reason"].get_string().get(finish);
   }
   if (finish == "length") {
     ThrowRowError(absl::StrCat(fn, ": model reply was cut off at max_tokens (",

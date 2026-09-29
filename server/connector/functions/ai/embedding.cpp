@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <simdjson.h>
 
@@ -61,26 +62,32 @@ struct EmbeddingBindData final : public AIFunctionData {
 };
 
 Embeddings ParseEmbeddings(const EmbeddingBindData& bind,
-                           simdjson::dom::element reply, std::string_view raw,
-                           size_t expected) {
+                           simdjson::ondemand::object& reply,
+                           std::string_view raw, size_t expected) {
   const std::string_view fn = bind.endpoint.fn;
-  simdjson::dom::array data;
-  if (reply["data"].get_array().get(data) != simdjson::SUCCESS) {
+  simdjson::ondemand::array data;
+  size_t count = 0;
+  if (reply["data"].get_array().get(data) != simdjson::SUCCESS ||
+      data.count_elements().get(count) != simdjson::SUCCESS) {
     ThrowBadReply(fn, "response has no 'data' array", raw);
   }
-  if (data.size() != expected) {
-    ThrowBadReply(fn,
-                  absl::StrCat("response has ", data.size(),
-                               " embeddings, expected ", expected),
-                  raw);
+  if (count != expected) {
+    ThrowBadReply(
+      fn,
+      absl::StrCat("response has ", count, " embeddings, expected ", expected),
+      raw);
   }
 
   Embeddings embeddings(expected);
   std::vector<bool> seen(expected);
   size_t position = 0;
-  for (auto item : data) {
+  for (auto element : data) {
     uint64_t index = position++;
-    std::ignore = item["index"].get_uint64().get(index);
+    simdjson::ondemand::object item;
+    const bool object = element.get_object().get(item) == simdjson::SUCCESS;
+    if (object) {
+      std::ignore = item["index"].get_uint64().get(index);
+    }
     if (index >= expected || seen[index]) {
       ThrowBadReply(fn,
                     absl::StrCat("response 'data[", position - 1, "].index' ",
@@ -88,25 +95,27 @@ Embeddings ParseEmbeddings(const EmbeddingBindData& bind,
                     raw);
     }
     seen[index] = true;
-    simdjson::dom::array values;
-    if (item["embedding"].get_array().get(values) != simdjson::SUCCESS) {
+    simdjson::ondemand::array values;
+    size_t size = 0;
+    if (!object ||
+        item["embedding"].get_array().get(values) != simdjson::SUCCESS ||
+        values.count_elements().get(size) != simdjson::SUCCESS) {
       ThrowBadReply(fn,
                     absl::StrCat("response 'data[", position - 1,
                                  "].embedding' is not an array"),
                     raw);
     }
-    if (values.size() == 0 ||
-        (bind.dimensions != 0 && values.size() != bind.dimensions)) {
+    if (size == 0 || (bind.dimensions != 0 && size != bind.dimensions)) {
       ThrowBadReply(
         fn,
         absl::StrCat(
-          "response 'data[", position - 1, "].embedding' has ", values.size(),
+          "response 'data[", position - 1, "].embedding' has ", size,
           " values, expected ",
           bind.dimensions == 0 ? "at least 1" : absl::StrCat(bind.dimensions)),
         raw);
     }
     auto& embedding = embeddings[index];
-    embedding.reserve(values.size());
+    embedding.reserve(size);
     for (auto val : values) {
       double d = 0.0;
       if (val.get_double().get(d) != simdjson::SUCCESS) {
@@ -186,7 +195,7 @@ class EmbeddingWork : public BatchWork {
       }
       entries[i] = {offset, e->size()};
       validity.SetValid(i);
-      std::copy(e->begin(), e->end(), data + offset);
+      absl::c_copy(*e, data + offset);
       offset += e->size();
     }
     duckdb::ListVector::SetListSize(result, offset);
@@ -212,10 +221,10 @@ class EmbeddingWork : public BatchWork {
     return BuildBody(_bind, _model, probe);
   }
 
-  void DecodeBatch(size_t begin, size_t size, simdjson::dom::element reply,
+  void DecodeBatch(size_t begin, size_t size, simdjson::ondemand::object& reply,
                    std::string_view raw) final {
-    std::ranges::move(ParseEmbeddings(_bind, reply, raw, size),
-                      _embeddings.begin() + begin);
+    absl::c_move(ParseEmbeddings(_bind, reply, raw, size),
+                 _embeddings.begin() + begin);
   }
 
   const EmbeddingBindData& _bind;
@@ -350,7 +359,10 @@ duckdb::ScalarFunction MakeEmbeddingFunction(
 
 void RegisterEmbeddingFunctions(duckdb::ExtensionLoader& loader) {
   constexpr std::string_view kEmbedTexts[] = {"text"};
-  constexpr std::string_view kSimilarityTexts[] = {"text1", "text2"};
+  constexpr std::string_view kSimilarityTexts[] = {
+    "text1",
+    "text2",
+  };
   loader.RegisterFunction(MakeEmbeddingFunction(
     "ai_embed", duckdb::LogicalType::LIST(duckdb::LogicalType::FLOAT),
     kEmbedTexts));

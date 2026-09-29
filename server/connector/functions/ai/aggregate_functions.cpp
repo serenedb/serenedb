@@ -291,7 +291,11 @@ class AggWork final : public AIWork {
       auto parts = Pack(group.values, _bind.max_context);
       const bool final = parts.size() <= 1;
       for (auto& part : parts) {
-        _tasks.push_back({.group = g, .final = final, .part = std::move(part)});
+        _tasks.push_back({
+          .group = g,
+          .final = final,
+          .part = std::move(part),
+        });
       }
     }
   }
@@ -304,7 +308,7 @@ class AggWork final : public AIWork {
                          Message(groups[task.group].size, task.part));
   }
 
-  void Decode(size_t k, simdjson::dom::element reply,
+  void Decode(size_t k, simdjson::ondemand::object& reply,
               std::string_view raw) final {
     _tasks[k].output =
       Chat(_bind.endpoint.fn, reply, raw, _bind.chat.max_tokens);

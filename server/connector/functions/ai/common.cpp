@@ -20,16 +20,13 @@
 
 #include "connector/functions/ai/common.h"
 
-#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
-#include <absl/container/flat_hash_map.h>
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <simdjson.h>
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/types/value.hpp>
@@ -43,6 +40,7 @@
 #include <duckdb/parallel/task.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
@@ -99,17 +97,19 @@ bool IsRetryable(uint16_t status) {
 }
 
 bool IsQuotaExhausted(std::string_view body) {
-  simdjson::dom::parser parser;
-  simdjson::dom::element error;
-  if (parser.parse(body.data(), body.size())["error"].get(error) !=
-      simdjson::SUCCESS) {
+  const simdjson::padded_string padded{body};
+  simdjson::ondemand::parser parser;
+  auto doc = parser.iterate(padded);
+  simdjson::ondemand::object error;
+  if (doc["error"].get_object().get(error) != simdjson::SUCCESS) {
     return false;
   }
-  return absl::c_any_of(std::array{"code", "type"}, [&](const char* key) {
+  auto is_quota = [&](std::string_view key) {
     std::string_view value;
-    return error[key].get(value) == simdjson::SUCCESS &&
+    return error[key].get_string().get(value) == simdjson::SUCCESS &&
            value == "insufficient_quota";
-  });
+  };
+  return is_quota("code") || is_quota("type");
 }
 
 int FatalErrorCode(uint16_t status, std::string_view body) {
@@ -180,23 +180,28 @@ std::string ReadableText(std::string_view text) {
 }
 
 std::string ProviderError(std::string_view body) {
-  simdjson::dom::parser parser;
-  simdjson::dom::element error;
-  std::string_view message;
-  if (parser.parse(body.data(), body.size())["error"].get(error) ==
-      simdjson::SUCCESS) {
-    if (error.get_string().get(message) == simdjson::SUCCESS ||
-        error["message"].get_string().get(message) == simdjson::SUCCESS) {
-      std::string_view type;
-      if (error["type"].get_string().get(type) == simdjson::SUCCESS &&
-          !type.empty()) {
-        return absl::StrCat("[", ReadableText(type), "] ",
-                            ReadableText(message));
-      }
-      return ReadableText(message);
-    }
+  const simdjson::padded_string padded{body};
+  simdjson::ondemand::parser parser;
+  auto doc = parser.iterate(padded);
+  simdjson::ondemand::value error;
+  if (doc["error"].get(error) != simdjson::SUCCESS) {
+    return ReadableText(body);
   }
-  return ReadableText(body);
+  std::string_view message;
+  if (error.get_string().get(message) == simdjson::SUCCESS) {
+    return ReadableText(message);
+  }
+  simdjson::ondemand::object object;
+  if (error.get_object().get(object) != simdjson::SUCCESS ||
+      object["message"].get_string().get(message) != simdjson::SUCCESS) {
+    return ReadableText(body);
+  }
+  std::string_view type;
+  if (object["type"].get_string().get(type) == simdjson::SUCCESS &&
+      !type.empty()) {
+    return absl::StrCat("[", ReadableText(type), "] ", ReadableText(message));
+  }
+  return ReadableText(message);
 }
 
 [[noreturn]] void ThrowReplyError(const Endpoint& endpoint,
@@ -299,7 +304,8 @@ class Sender {
 
   Response Send(
     std::string_view body,
-    absl::FunctionRef<void(simdjson::dom::element, std::string_view)> decode) {
+    absl::FunctionRef<void(simdjson::ondemand::object&, std::string_view)>
+      decode) {
     auto& http = duckdb::HTTPUtil::Get(*_exec.context.db);
     const auto& target = _exec.target;
     const auto& endpoint = target.endpoint;
@@ -346,19 +352,28 @@ class Sender {
  private:
   void Decode(
     Response& response,
-    absl::FunctionRef<void(simdjson::dom::element, std::string_view)> decode) {
+    absl::FunctionRef<void(simdjson::ondemand::object&, std::string_view)>
+      decode) {
     const auto& endpoint = _exec.target.endpoint;
     try {
-      simdjson::dom::element reply;
-      if (_parser.parse(response.body).get(reply) != simdjson::SUCCESS) {
-        ThrowBadReply(endpoint.fn, "response is not valid JSON", response.body);
+      const auto size = response.body.size();
+      response.body.append(simdjson::SIMDJSON_PADDING, '\0');
+      const std::string_view raw{response.body.data(), size};
+      simdjson::ondemand::document doc;
+      simdjson::ondemand::object reply;
+      if (_parser
+              .iterate(simdjson::padded_string_view{raw.data(), size,
+                                                    response.body.size()})
+              .get(doc) != simdjson::SUCCESS ||
+          doc.get_object().get(reply) != simdjson::SUCCESS) {
+        ThrowBadReply(endpoint.fn, "response is not valid JSON", raw);
       }
       if (!endpoint.usage_key.empty()) {
         uint64_t tokens = 0;
         std::ignore = reply["usage"][endpoint.usage_key].get(tokens);
         _exec.query.AddOutputTokens(tokens);
       }
-      decode(reply, response.body);
+      decode(reply, raw);
     } catch (...) {
       response.error = std::current_exception();
     }
@@ -378,7 +393,7 @@ class Sender {
 
   const AIExecution& _exec;
   duckdb::unique_ptr<duckdb::HTTPClient> _client;
-  simdjson::dom::parser _parser;
+  simdjson::ondemand::parser _parser;
 };
 
 struct FetchState {
@@ -405,10 +420,10 @@ struct FetchState {
     auto& response = out[k];
     const auto& settings = exec.query.settings;
     try {
-      response = sender.Send(
-        work.Body(k), [&](simdjson::dom::element reply, std::string_view raw) {
-          work.Decode(k, reply, raw);
-        });
+      response =
+        sender.Send(work.Body(k),
+                    [&](simdjson::ondemand::object& reply,
+                        std::string_view raw) { work.Decode(k, reply, raw); });
       if (response.error) {
         if (settings.throw_on_error) {
           std::rethrow_exception(response.error);
@@ -433,6 +448,7 @@ struct FetchState {
   }
 
   void Finish() {
+    exec.query.helpers.fetch_sub(1, std::memory_order_relaxed);
     absl::MutexLock lock{&mutex};
     --helpers;
   }
@@ -522,13 +538,22 @@ class FetchTask final : public duckdb::Task {
 
 void TopUp(const duckdb::shared_ptr<FetchState>& state) {
   auto& s = *state;
+  auto& query = s.exec.query;
   const auto remaining =
     s.out.size() -
     std::min(s.next.load(std::memory_order_relaxed), s.out.size());
+  const auto cap = std::min<size_t>(query.limiter.Available(),
+                                    s.scheduler.NumberOfAsyncThreads());
   absl::MutexLock lock{&s.mutex};
-  while (s.helpers + 1 < remaining &&
-         s.helpers < s.exec.query.limiter.Available()) {
+  while (s.helpers + 1 < remaining) {
+    absl::Cleanup release = [&] {
+      query.helpers.fetch_sub(1, std::memory_order_relaxed);
+    };
+    if (query.helpers.fetch_add(1, std::memory_order_relaxed) >= cap) {
+      break;
+    }
     FetchTask::Schedule(state, std::make_unique<Sender>(s.exec));
+    std::move(release).Cancel();
     ++s.helpers;
   }
 }
@@ -556,7 +581,11 @@ void Fetch(const AIExecution& exec, AIWork& work, std::span<Response> out) {
 
 AIExecution Execution(duckdb::ClientContext& context, const EndpointRef& ref) {
   auto& query = AIQuery::Get(context);
-  return {context, query, query.Resolve(context, ref)};
+  return {
+    .context = context,
+    .query = query,
+    .target = query.Resolve(context, ref),
+  };
 }
 
 void AIExecute(duckdb::DataChunk& args, duckdb::ExpressionState& state,
@@ -631,6 +660,17 @@ std::string ToJson(std::string_view text) {
   return std::string{builder.view().value()};
 }
 
+std::string MinifyJson(std::string_view json) {
+  std::string out(json.size(), '\0');
+  size_t size = 0;
+  if (simdjson::minify(json.data(), json.size(), out.data(), size) !=
+      simdjson::SUCCESS) {
+    return std::string{json};
+  }
+  out.resize(size);
+  return out;
+}
+
 std::vector<Criterion> ParseCriteria(const duckdb::Value& value,
                                      std::string_view fn,
                                      std::string_view param) {
@@ -692,7 +732,7 @@ Inputs CollectInputs(duckdb::Vector& input, duckdb::idx_t count, bool dedup,
                      bool skip_empty) {
   Inputs inputs;
   inputs.slots.assign(count, Inputs::kNone);
-  absl::flat_hash_map<std::string_view, size_t> seen;
+  irs::containers::FlatHashMap<std::string_view, size_t> seen;
   auto values = input.Values<duckdb::string_t>();
   for (duckdb::idx_t i = 0; i < count; i++) {
     auto value = values[i];
@@ -877,7 +917,7 @@ std::string BatchWork::Body(size_t k) const {
   return batch.probe ? ProbeBody() : BatchBody(batch.begin, batch.size);
 }
 
-void BatchWork::Decode(size_t k, simdjson::dom::element reply,
+void BatchWork::Decode(size_t k, simdjson::ondemand::object& reply,
                        std::string_view raw) {
   if (const auto& batch = _batches[k]; !batch.probe) {
     DecodeBatch(batch.begin, batch.size, reply, raw);
@@ -886,8 +926,10 @@ void BatchWork::Decode(size_t k, simdjson::dom::element reply,
 
 void BatchWork::QueueBatches(size_t n, size_t batch_size) {
   for (size_t begin = 0; begin < n; begin += batch_size) {
-    _batches.push_back(
-      {.begin = begin, .size = std::min(batch_size, n - begin)});
+    _batches.push_back({
+      .begin = begin,
+      .size = std::min(batch_size, n - begin),
+    });
   }
 }
 
@@ -913,9 +955,14 @@ void BatchWork::Advance(const Replies& replies) {
         _batches.push_back({.probe = true});
       }
       const auto half = batch.size / 2;
-      _batches.push_back({.begin = batch.begin, .size = half});
-      _batches.push_back(
-        {.begin = batch.begin + half, .size = batch.size - half});
+      _batches.push_back({
+        .begin = batch.begin,
+        .size = half,
+      });
+      _batches.push_back({
+        .begin = batch.begin + half,
+        .size = batch.size - half,
+      });
       return;
     }
     replies.Ok(k);

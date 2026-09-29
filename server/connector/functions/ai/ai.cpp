@@ -38,8 +38,12 @@ namespace {
 constexpr std::string_view kOpenAIKeys[] = {
   "api_key", "base_url", "model", "chat_path", "embeddings_path",
 };
-constexpr std::string_view kTypeSafeKeys[] = {"api_key", "base_url", "model",
-                                              "path"};
+constexpr std::string_view kTypeSafeKeys[] = {
+  "api_key",
+  "base_url",
+  "model",
+  "path",
+};
 
 duckdb::unique_ptr<duckdb::BaseSecret> CreateSecret(
   duckdb::ClientContext&, duckdb::CreateSecretInput& input) {
@@ -67,7 +71,11 @@ void RegisterSecretType(duckdb::ExtensionLoader& loader, std::string_view name,
   loader.RegisterSecretType(type);
 
   duckdb::CreateSecretFunction fn = {
-    std::string{name}, "config", CreateSecret, {}};
+    std::string{name},
+    "config",
+    CreateSecret,
+    {},
+  };
   for (const auto key : keys) {
     fn.named_parameters[duckdb::Identifier{key}] = duckdb::LogicalType::VARCHAR;
   }
@@ -84,9 +92,8 @@ void RegisterAIFunctions(duckdb::DatabaseInstance& db) {
 
   ai::RegisterEmbeddingFunctions(loader);
   ai::RegisterTextFunctions(loader);
-  ai::RegisterJevFunction(loader);
+  ai::RegisterSystemOneFunction(loader);
   ai::RegisterAggregateFunctions(loader);
-  ai::RegisterAIOptimizer(db);
 }
 
 }  // namespace sdb::connector

@@ -19,7 +19,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
-#include <absl/container/flat_hash_set.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
@@ -33,12 +32,14 @@
 #include <duckdb/function/function_set.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 #include "connector/functions/ai/chat.h"
@@ -122,34 +123,83 @@ enum class Second : uint8_t {
 
 struct TextSpec {
   std::string_view name;
-  TextKind kind;
+  TextKind kind = TextKind::Generate;
   std::string_view input;
   std::string_view second;
-  Second second_type;
-  bool input_second;
+  Second second_type = Second::None;
+  bool input_second = false;
   std::string_view option;
-  double temperature;
+  double temperature = 0;
 };
 
 constexpr TextSpec kSpecs[] = {
-  {"ai_generate", TextKind::Generate, "prompt", "", Second::None, false,
-   "system_prompt", 0.7},
-  {"ai_classify", TextKind::Classify, "text", "categories", Second::Categories,
-   false, "", 0.0},
-  {"ai_classify_labels", TextKind::ClassifyLabels, "text", "categories",
-   Second::Categories, false, "", 0.0},
-  {"ai_extract", TextKind::Extract, "text", "instruction_or_schema",
-   Second::Text, false, "", 0.0},
-  {"ai_filter", TextKind::Filter, "text", "condition", Second::Text, false, "",
-   0.0},
-  {"ai_translate", TextKind::Translate, "text", "target_language", Second::Text,
-   false, "instructions", 0.3},
-  {"ai_redact", TextKind::Redact, "text", "categories", Second::List, false,
-   "replacement", 0.0},
-  {"ai_score", TextKind::Score, "text", "criteria", Second::Text, false, "",
-   0.0},
-  {"ai_rerank", TextKind::Rerank, "document", "query", Second::Text, true, "",
-   0.0},
+  {
+    .name = "ai_generate",
+    .kind = TextKind::Generate,
+    .input = "prompt",
+    .option = "system_prompt",
+    .temperature = 0.7,
+  },
+  {
+    .name = "ai_classify",
+    .kind = TextKind::Classify,
+    .input = "text",
+    .second = "categories",
+    .second_type = Second::Categories,
+  },
+  {
+    .name = "ai_classify_labels",
+    .kind = TextKind::ClassifyLabels,
+    .input = "text",
+    .second = "categories",
+    .second_type = Second::Categories,
+  },
+  {
+    .name = "ai_extract",
+    .kind = TextKind::Extract,
+    .input = "text",
+    .second = "instruction_or_schema",
+    .second_type = Second::Text,
+  },
+  {
+    .name = "ai_filter",
+    .kind = TextKind::Filter,
+    .input = "text",
+    .second = "condition",
+    .second_type = Second::Text,
+  },
+  {
+    .name = "ai_translate",
+    .kind = TextKind::Translate,
+    .input = "text",
+    .second = "target_language",
+    .second_type = Second::Text,
+    .option = "instructions",
+    .temperature = 0.3,
+  },
+  {
+    .name = "ai_redact",
+    .kind = TextKind::Redact,
+    .input = "text",
+    .second = "categories",
+    .second_type = Second::List,
+    .option = "replacement",
+  },
+  {
+    .name = "ai_score",
+    .kind = TextKind::Score,
+    .input = "text",
+    .second = "criteria",
+    .second_type = Second::Text,
+  },
+  {
+    .name = "ai_rerank",
+    .kind = TextKind::Rerank,
+    .input = "document",
+    .second = "query",
+    .second_type = Second::Text,
+    .input_second = true,
+  },
 };
 
 const TextSpec& FindSpec(std::string_view name) {
@@ -185,7 +235,7 @@ struct TextBindData final : public AIFunctionData {
 std::vector<Criterion> ParseLabels(const duckdb::Value& value,
                                    const TextSpec& spec, bool allow_empty) {
   auto criteria = ParseCriteria(value, spec.name, spec.second);
-  absl::flat_hash_set<std::string> seen;
+  irs::containers::FlatHashSet<std::string> seen;
   for (auto& criterion : criteria) {
     criterion.label = std::string{absl::StripAsciiWhitespace(criterion.label)};
     if (criterion.label.empty()) {
@@ -219,32 +269,51 @@ std::string CategoriesPrompt(std::span<const Criterion> criteria,
 
 void BindExtract(TextBindData& bind, duckdb::BoundScalarFunction& fn,
                  const std::string& instruction, std::string& system) {
-  simdjson::dom::parser parser;
-  simdjson::dom::object schema;
-  if (parser.parse(instruction).get_object().get(schema) == simdjson::SUCCESS &&
-      schema.size() != 0) {
-    std::string properties = "{";
+  const simdjson::padded_string padded{instruction};
+  simdjson::ondemand::parser parser;
+  simdjson::ondemand::document doc;
+  std::vector<std::string> keys;
+  std::string properties = "{";
+  auto parse = [&] {
+    simdjson::ondemand::object schema;
+    if (parser.iterate(padded).get(doc) != simdjson::SUCCESS ||
+        doc.get_object().get(schema) != simdjson::SUCCESS) {
+      return false;
+    }
     for (auto field : schema) {
-      if (absl::c_linear_search(bind.keys, field.key)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG(bind.spec->name, ": key \"", field.key,
-                                "\" is defined twice"));
+      std::string_view key;
+      simdjson::ondemand::value value;
+      if (field.unescaped_key().get(key) != simdjson::SUCCESS ||
+          field.value().get(value) != simdjson::SUCCESS) {
+        return false;
+      }
+      if (absl::c_linear_search(keys, key)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG(bind.spec->name, ": key \"", key, "\" is defined twice"));
       }
       std::string_view text;
-      const auto description =
-        field.value.get_string().get(text) == simdjson::SUCCESS
-          ? std::string{text}
-          : simdjson::minify(field.value);
-      absl::StrAppend(&properties, bind.keys.empty() ? "" : ",",
-                      ToJson(field.key),
+      std::string description;
+      if (value.get_string().get(text) == simdjson::SUCCESS) {
+        description = text;
+      } else if (value.raw_json().get(text) == simdjson::SUCCESS) {
+        description = MinifyJson(text);
+      } else {
+        return false;
+      }
+      absl::StrAppend(&properties, keys.empty() ? "" : ",", ToJson(key),
                       R"(:{"type":["string","null"],"description":)",
                       ToJson(description), "}");
-      bind.keys.emplace_back(field.key);
+      keys.emplace_back(key);
     }
+    return doc.at_end() && !keys.empty();
+  };
+  if (parse()) {
+    bind.keys = std::move(keys);
     bind.chat.response_format =
       StrictJsonSchema("extraction", absl::StrCat(properties, "}"), bind.keys);
     system = absl::Substitute(kExtractSchemaPrompt, JsonArray(bind.keys),
-                              simdjson::minify(schema));
+                              MinifyJson(instruction));
     fn.SetReturnType(duckdb::LogicalType::JSON());
     return;
   }
@@ -358,21 +427,27 @@ std::string_view Unquote(std::string_view reply) {
   return reply;
 }
 
-bool ParseEnclosed(simdjson::dom::parser& parser, std::string_view text,
-                   char open, char close, simdjson::dom::element& out) {
+struct Json {
+  simdjson::padded_string text;
+  simdjson::ondemand::parser parser;
+  simdjson::ondemand::document doc;
+};
+
+bool ParseEnclosed(Json& json, std::string_view text, char open, char close) {
   const auto begin = text.find(open);
   const auto end = text.rfind(close);
-  return begin != std::string_view::npos && end != std::string_view::npos &&
-         begin < end &&
-         parser.parse(text.substr(begin, end - begin + 1)).get(out) ==
-           simdjson::SUCCESS;
+  if (begin == std::string_view::npos || end == std::string_view::npos ||
+      begin >= end) {
+    return false;
+  }
+  json.text = simdjson::padded_string{text.substr(begin, end - begin + 1)};
+  return json.parser.iterate(json.text).get(json.doc) == simdjson::SUCCESS;
 }
 
-bool Unwrap(simdjson::dom::parser& parser, std::string_view text,
-            std::string_view key, simdjson::dom::element& out) {
-  simdjson::dom::element doc;
-  return ParseEnclosed(parser, text, '{', '}', doc) &&
-         doc[key].get(out) == simdjson::SUCCESS;
+bool Unwrap(Json& json, std::string_view text, std::string_view key,
+            simdjson::ondemand::value& out) {
+  return ParseEnclosed(json, text, '{', '}') &&
+         json.doc[key].get(out) == simdjson::SUCCESS;
 }
 
 const std::string* MatchLabel(const TextBindData& bind,
@@ -384,10 +459,10 @@ const std::string* MatchLabel(const TextBindData& bind,
 }
 
 duckdb::Value ClassifyReply(const TextBindData& bind, std::string_view text) {
-  simdjson::dom::parser parser;
-  simdjson::dom::element element;
+  Json json;
+  simdjson::ondemand::value element;
   std::string_view category;
-  if (Unwrap(parser, text, "category", element) &&
+  if (Unwrap(json, text, "category", element) &&
       element.get_string().get(category) == simdjson::SUCCESS) {
     text = category;
   }
@@ -402,17 +477,17 @@ duckdb::Value ClassifyReply(const TextBindData& bind, std::string_view text) {
 duckdb::Value ClassifyLabelsReply(const TextBindData& bind,
                                   std::string_view text) {
   const auto& name = bind.spec->name;
-  simdjson::dom::parser parser;
-  simdjson::dom::element element;
-  simdjson::dom::array array;
-  if (!(Unwrap(parser, text, "categories", element) &&
+  Json json;
+  simdjson::ondemand::value element;
+  simdjson::ondemand::array array;
+  if (!(Unwrap(json, text, "categories", element) &&
         element.get_array().get(array) == simdjson::SUCCESS) &&
-      !(ParseEnclosed(parser, text, '[', ']', element) &&
-        element.get_array().get(array) == simdjson::SUCCESS)) {
+      !(ParseEnclosed(json, text, '[', ']') &&
+        json.doc.get_array().get(array) == simdjson::SUCCESS)) {
     ThrowBadReply(name, "model reply is not a JSON array of categories", text);
   }
   std::vector<duckdb::Value> values;
-  absl::flat_hash_set<const std::string*> seen;
+  irs::containers::FlatHashSet<std::string_view> seen;
   for (auto item : array) {
     std::string_view category;
     const std::string* label = nullptr;
@@ -420,10 +495,11 @@ duckdb::Value ClassifyLabelsReply(const TextBindData& bind,
       label = MatchLabel(bind, absl::StripAsciiWhitespace(category));
     }
     if (label == nullptr) {
+      std::ignore = item.raw_json().get(category);
       ThrowBadReply(name, "model returned a category outside the allowed set",
-                    simdjson::minify(item));
+                    MinifyJson(category));
     }
-    if (!seen.insert(label).second) {
+    if (!seen.insert(*label).second) {
       ThrowRowError(
         absl::StrCat(name, ": model returned the category twice: ", *label));
     }
@@ -434,11 +510,10 @@ duckdb::Value ClassifyLabelsReply(const TextBindData& bind,
 
 duckdb::Value ExtractSchemaReply(const TextBindData& bind,
                                  std::string_view reply) {
-  simdjson::dom::parser parser;
-  simdjson::dom::element doc;
-  simdjson::dom::object object;
-  if (!ParseEnclosed(parser, reply, '{', '}', doc) ||
-      doc.get_object().get(object) != simdjson::SUCCESS) {
+  Json json;
+  simdjson::ondemand::object object;
+  if (!ParseEnclosed(json, reply, '{', '}') ||
+      json.doc.get_object().get(object) != simdjson::SUCCESS) {
     ThrowBadReply(bind.spec->name, "model reply is not a JSON object", reply);
   }
   simdjson::builder::string_builder builder;
@@ -449,12 +524,18 @@ duckdb::Value ExtractSchemaReply(const TextBindData& bind,
     }
     builder.escape_and_append_with_quotes(bind.keys[i]);
     builder.append_colon();
-    simdjson::dom::element element;
-    if (object.at_key(bind.keys[i]).get(element) == simdjson::SUCCESS) {
-      builder.append_raw(simdjson::minify(element));
-    } else {
+    simdjson::ondemand::value element;
+    const auto error = object[bind.keys[i]].get(element);
+    if (error == simdjson::NO_SUCH_FIELD) {
       builder.append_null();
+      continue;
     }
+    std::string_view raw;
+    if (error != simdjson::SUCCESS ||
+        element.raw_json().get(raw) != simdjson::SUCCESS) {
+      ThrowBadReply(bind.spec->name, "model reply is not a JSON object", reply);
+    }
+    builder.append_raw(MinifyJson(raw));
   }
   builder.end_object();
   duckdb::Value value{std::string{builder.view().value()}};
@@ -466,17 +547,22 @@ duckdb::Value ExtractReply(const TextBindData& bind, std::string_view text) {
   if (!bind.keys.empty()) {
     return ExtractSchemaReply(bind, text);
   }
-  simdjson::dom::parser parser;
-  simdjson::dom::element element;
-  if (Unwrap(parser, text, "result", element)) {
-    if (element.is_null()) {
+  Json json;
+  simdjson::ondemand::value element;
+  if (simdjson::ondemand::json_type type{};
+      Unwrap(json, text, "result", element) &&
+      element.type().get(type) == simdjson::SUCCESS) {
+    std::string_view result;
+    if (type == simdjson::ondemand::json_type::null) {
       return duckdb::Value{duckdb::LogicalType::VARCHAR};
     }
-    std::string_view result;
-    if (element.get_string().get(result) != simdjson::SUCCESS) {
-      return duckdb::Value{simdjson::minify(element)};
+    if (type != simdjson::ondemand::json_type::string &&
+        element.raw_json().get(result) == simdjson::SUCCESS) {
+      return duckdb::Value{MinifyJson(result)};
     }
-    text = absl::StripAsciiWhitespace(result);
+    if (element.get_string().get(result) == simdjson::SUCCESS) {
+      text = absl::StripAsciiWhitespace(result);
+    }
   }
   if (text.empty() || absl::EqualsIgnoreCase(Unquote(text), "NONE")) {
     return duckdb::Value{duckdb::LogicalType::VARCHAR};
@@ -485,10 +571,10 @@ duckdb::Value ExtractReply(const TextBindData& bind, std::string_view text) {
 }
 
 duckdb::Value FilterReply(std::string_view text) {
-  simdjson::dom::parser parser;
-  simdjson::dom::element element;
+  Json json;
+  simdjson::ondemand::value element;
   bool match = false;
-  if (Unwrap(parser, text, "match", element) &&
+  if (Unwrap(json, text, "match", element) &&
       element.get_bool().get(match) == simdjson::SUCCESS) {
     return duckdb::Value::BOOLEAN(match);
   }
@@ -496,10 +582,10 @@ duckdb::Value FilterReply(std::string_view text) {
 }
 
 duckdb::Value ScoreReply(const TextBindData& bind, std::string_view text) {
-  simdjson::dom::parser parser;
-  simdjson::dom::element element;
+  Json json;
+  simdjson::ondemand::value element;
   double score = 0;
-  if (!(Unwrap(parser, text, "score", element) &&
+  if (!(Unwrap(json, text, "score", element) &&
         element.get_double().get(score) == simdjson::SUCCESS) &&
       !absl::SimpleAtod(Unquote(text), &score)) {
     ThrowBadReply(bind.spec->name, "model reply is not a score", text);
@@ -550,7 +636,7 @@ class TextWork final : public ScalarWork {
     return BuildChatBody(_body, _inputs.texts[k]);
   }
 
-  void Decode(size_t k, simdjson::dom::element reply,
+  void Decode(size_t k, simdjson::ondemand::object& reply,
               std::string_view raw) final {
     _outputs[k] = Interpret(
       _bind, Chat(_bind.spec->name, reply, raw, _bind.chat.max_tokens));
@@ -609,12 +695,15 @@ duckdb::LogicalType SecondType(Second type) {
   SDB_UNREACHABLE();
 }
 
-duckdb::LogicalType DescribedCategories() {
-  duckdb::child_list_t<duckdb::LogicalType> children;
-  children.emplace_back("label", duckdb::LogicalType::VARCHAR);
-  children.emplace_back("description", duckdb::LogicalType::VARCHAR);
-  return duckdb::LogicalType::LIST(
-    duckdb::LogicalType::STRUCT(std::move(children)));
+const duckdb::LogicalType& DescribedCategories() {
+  static const auto kType = [] {
+    duckdb::child_list_t<duckdb::LogicalType> children;
+    children.emplace_back("label", duckdb::LogicalType::VARCHAR);
+    children.emplace_back("description", duckdb::LogicalType::VARCHAR);
+    return duckdb::LogicalType::LIST(
+      duckdb::LogicalType::STRUCT(std::move(children)));
+  }();
+  return kType;
 }
 
 duckdb::ScalarFunction MakeTextFunction(const TextSpec& spec,

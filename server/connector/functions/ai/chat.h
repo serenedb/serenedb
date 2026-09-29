@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <simdjson.h>
+
 #include <cstdint>
 #include <duckdb/common/unique_ptr.hpp>
 #include <span>
@@ -33,11 +35,6 @@ class Expression;
 class FunctionSignature;
 
 }  // namespace duckdb
-namespace simdjson::dom {
-
-class element;
-
-}  // namespace simdjson::dom
 namespace sdb::connector::ai {
 
 struct EndpointRef;
@@ -72,7 +69,7 @@ ChatTemplate MakeChatTemplate(std::string_view model, const ChatConfig& cfg,
 
 std::string BuildChatBody(const ChatTemplate& chat, std::string_view user);
 
-std::string Chat(std::string_view fn, simdjson::dom::element reply,
+std::string Chat(std::string_view fn, simdjson::ondemand::object& reply,
                  std::string_view raw, int32_t max_tokens);
 
 }  // namespace sdb::connector::ai

@@ -36,11 +36,10 @@ target_sources(
         vector.cpp
         ai/aggregate_functions.cpp
         ai/ai.cpp
-        ai/ai_optimizer.cpp
         ai/chat.cpp
         ai/common.cpp
         ai/embedding.cpp
-        ai/jev.cpp
+        ai/system_one.cpp
         ai/text_functions.cpp
 )
 

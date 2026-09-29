@@ -37,6 +37,7 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <map>
 #include <memory>
+#include <random>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -46,6 +47,7 @@ namespace {
 enum class Corpus {
   Dict,
   Text,
+  Random,
 };
 
 uint64_t Rows() {
@@ -95,6 +97,16 @@ std::string Value(Corpus corpus, uint64_t g) {
   if (corpus == Corpus::Dict) {
     return "https://example.org/section/" + std::to_string(g % 5000) +
            "/page?id=" + std::to_string(g % 97);
+  }
+  if (corpus == Corpus::Random) {
+    static constexpr std::string_view kAlphabet =
+      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_/";
+    std::mt19937_64 rng{g * 0x9E3779B97F4A7C15ULL + 1};
+    std::string s(1400 + g % 300, ' ');
+    for (auto& c : s) {
+      c = kAlphabet[rng() % kAlphabet.size()];
+    }
+    return s;
   }
   std::string s;
   s.reserve(160);
@@ -369,8 +381,10 @@ void Register() {
     ->Unit(benchmark::kMicrosecond);
   benchmark::RegisterBenchmark("FsstDecode/bulk-copy", FsstDecodeBulkCopy)
     ->Unit(benchmark::kMicrosecond);
-  for (const auto corpus : {Corpus::Dict, Corpus::Text}) {
-    const std::string c = corpus == Corpus::Dict ? "dict" : "text";
+  for (const auto corpus : {Corpus::Dict, Corpus::Text, Corpus::Random}) {
+    const std::string c = corpus == Corpus::Dict   ? "dict"
+                          : corpus == Corpus::Text ? "text"
+                                                   : "random";
     for (size_t arm = 0; arm < std::size(kArms); ++arm) {
       const std::string suffix = "/" + c + "/" + kArms[arm].name;
       benchmark::RegisterBenchmark(("Seal" + suffix).c_str(), Seal, corpus, arm)

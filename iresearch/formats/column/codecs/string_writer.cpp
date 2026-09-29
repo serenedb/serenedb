@@ -50,10 +50,14 @@ using duckdb::string_t;
 constexpr double kPlainWinsBelow = 0.9;
 constexpr uint64_t kDedupMinRepeat = 2;
 constexpr uint64_t kEstimateEvery = 64;
+constexpr uint64_t kEstimateSteps = 16;
 constexpr uint64_t kLz4MaxRatio = 255;
 constexpr double kFsstFirstRatio = 0.5;
 constexpr double kDrift = 1.25;
 constexpr uint64_t kDriftMinFraction = 4;
+constexpr uint32_t kMaxCalibrationGap = 16;
+constexpr double kSettledGain = 0.1;
+constexpr double kMispredicted = 2.0;
 constexpr double kLevelStepGain = 0.02;
 constexpr double kWideFramesGain = 0.03;
 
@@ -128,6 +132,22 @@ uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries, uint64_t runs,
   return std::min(bitpack, rle);
 }
 
+void Record(RatioHistory& hist, uint64_t raw, uint64_t comp,
+            uint32_t target) noexcept {
+  if (hist.raw != 0 && raw != 0 && comp * kDriftMinFraction >= target) {
+    const auto predicted = static_cast<double>(raw) *
+                           static_cast<double>(hist.comp) /
+                           static_cast<double>(hist.raw);
+    const auto actual = static_cast<double>(comp);
+    if (actual > predicted * kMispredicted ||
+        actual * kMispredicted < predicted) {
+      hist = {};
+    }
+  }
+  hist.raw += raw;
+  hist.comp += comp;
+}
+
 uint32_t Lcp(std::string_view a, std::string_view b) noexcept {
   const auto n = std::min(a.size(), b.size());
   size_t i = 0;
@@ -173,8 +193,13 @@ class Encoder {
   static constexpr bool kFsst = C == ByteCodec::Fsst;
 
   Encoder(const StringAccumulator& acc, const duckdb::LogicalType& type,
-          RatioHistory* history, DedupScratch& dedup)
-    : _acc{acc}, _stats{type}, _type{type}, _history{history}, _dedup{dedup} {
+          RatioHistory* history, DedupScratch& dedup, uint32_t target)
+    : _acc{acc},
+      _stats{type},
+      _type{type},
+      _history{history},
+      _dedup{dedup},
+      _target{target} {
     if constexpr (kFsst) {
       _codec.emplace();
     } else {
@@ -203,13 +228,25 @@ class Encoder {
   }
 
   uint64_t Cut(uint32_t target) {
+    const uint64_t step = target / kEstimateSteps;
+    uint64_t estimated_raw = _raw;
     while (_next < _acc.row_count) {
       AddRow(_next++);
-      if (_rows % kEstimateEvery == 0 && Estimate() >= target) {
+      if (_rows % kEstimateEvery != 0 && _raw - estimated_raw < step) {
+        continue;
+      }
+      estimated_raw = _raw;
+      if (Estimate() >= target) {
         break;
       }
     }
     return _next;
+  }
+
+  void Retrain() noexcept {
+    if constexpr (kFsst) {
+      _codec->Reset();
+    }
   }
 
   void AddUntil(uint64_t end) {
@@ -266,15 +303,15 @@ class Encoder {
         _run_values.clear();
         _run_ends.clear();
         for (size_t i = 0; i < _codes.size(); ++i) {
-          if (i == 0 || _codes[i] != _codes[i - 1]) {
-            _run_values.push_back(_codes[i]);
+          if (i != 0 && _codes[i] == _codes[i - 1]) {
+            continue;
+          }
+          if (i != 0) {
             _run_ends.push_back(static_cast<uint32_t>(i));
           }
+          _run_values.push_back(_codes[i]);
         }
-        for (size_t r = 0; r + 1 < _run_ends.size(); ++r) {
-          _run_ends[r] = _run_ends[r + 1];
-        }
-        _run_ends.back() = static_cast<uint32_t>(_codes.size());
+        _run_ends.push_back(static_cast<uint32_t>(_codes.size()));
         codes_count = _run_values.size();
       } else {
         codes_count = _rows;
@@ -347,9 +384,7 @@ class Encoder {
       std::memcpy(base + h.off_symtab, symtab.data(), symtab.size());
     }
     if constexpr (kFsst) {
-      auto& hist = History();
-      hist.raw += _raw;
-      hist.comp += _data.size() + symtab.size();
+      Record(History(), _raw, _data.size() + symtab.size(), _target);
     }
 
     auto stats = duckdb::BaseStatistics::CreateEmpty(_type);
@@ -461,10 +496,11 @@ class Encoder {
   void CloseFrame() {
     const auto bound = Leaf<C>::Bound(_frame.size());
     const auto comp_off = _data.size();
-    _data.resize(comp_off + bound);
-    const auto n = _codec->Compress(_frame.data(), _frame.size(),
-                                    _data.data() + comp_off, bound);
-    _data.resize(comp_off + n);
+    size_t n = 0;
+    _data.resize_and_overwrite(comp_off + bound, [&](char* buf, size_t) {
+      n = _codec->Compress(_frame.data(), _frame.size(), buf + comp_off, bound);
+      return comp_off + n;
+    });
     _frames.push_back(
       FrameMeta{_frame_first, static_cast<uint32_t>(_frame.size()),
                 static_cast<uint32_t>(comp_off), static_cast<uint32_t>(n)});
@@ -603,6 +639,7 @@ class Encoder {
   duckdb::LogicalType _type;
   RatioHistory* _history;
   DedupScratch& _dedup;
+  uint32_t _target;
 
   std::vector<std::string_view> _entries;
   std::vector<uint32_t> _codes;
@@ -654,6 +691,7 @@ class SegmentWriter {
     SealOutcome outcome{.sealed = true};
     uint64_t row = 0;
     bool first = true;
+    const bool due = !_named && CalibrationDue();
     while (row < _acc.row_count) {
       const auto cutter = Cutter();
       auto* seg = Acquire();
@@ -664,9 +702,18 @@ class SegmentWriter {
         return stop;
       });
       if (!_named) {
-        const bool drift = !first && Drifted(*seg);
-        if (first || drift) {
-          seg = Calibrate(seg, row, end, !_tuning.levels_tuned || drift);
+        const bool scheduled = first && due;
+        const bool drift = !scheduled && Drifted(*seg, first);
+        const bool retune = drift && !first;
+        if (retune) {
+          if (auto& fsst =
+                std::get<std::optional<Encoder<ByteCodec::Fsst>>>(_encoders)) {
+            fsst->Retrain();
+          }
+        }
+        if (scheduled || drift) {
+          seg =
+            Calibrate(seg, row, end, !_tuning.levels_tuned || retune, drift);
         }
         if (first && seg->Size() > PlainStorageBytes(*seg)) {
           Release(seg);
@@ -699,8 +746,8 @@ class SegmentWriter {
       const auto leaf = Index(_tuning.choice->leaf);
       return {*_tuning.choice, _tuning.level[leaf], _tuning.wide[leaf]};
     }
-    const bool repeats = _acc.entries.size() * kDedupMinRepeat <=
-                         _acc.row_count - _acc.null_count;
+    const bool repeats =
+      _acc.entries.size() * kDedupMinRepeat <= _acc.row_count - _acc.null_count;
     return {{repeats ? Shape::Dedup : Shape::Plain, ByteCodec::Lz4},
             Ladder(ByteCodec::Lz4)[0],
             false};
@@ -718,14 +765,20 @@ class SegmentWriter {
     return kNoLevel;
   }
 
-  Segment* Calibrate(Segment* cut, uint64_t begin, uint64_t end,
-                     bool retune) {
+  bool CalibrationDue() noexcept {
+    if (!_tuning.choice) {
+      return true;
+    }
+    return ++_tuning.since_calibration >= _tuning.calibration_gap;
+  }
+
+  Segment* Calibrate(Segment* cut, uint64_t begin, uint64_t end, bool retune,
+                     bool drift) {
     _live.clear();
     _live.push_back(cut);
     const auto base = Ladder(ByteCodec::Lz4)[0];
     const bool wide = !retune && _tuning.wide[Index(ByteCodec::Lz4)];
-    auto* dedup =
-      Trial({Shape::Dedup, ByteCodec::Lz4}, base, begin, end, wide);
+    auto* dedup = Trial({Shape::Dedup, ByteCodec::Lz4}, base, begin, end, wide);
     Segment* plain = nullptr;
     if (PlainMayWin(*dedup)) {
       plain = Trial({Shape::Plain, ByteCodec::Lz4}, base, begin, end, wide);
@@ -738,21 +791,22 @@ class SegmentWriter {
     }
     auto chosen = ByteCodec::Lz4;
     auto chosen_bytes = std::numeric_limits<uint64_t>::max();
+    auto runner_up = std::numeric_limits<uint64_t>::max();
     for (const auto& plan : PlanFor(_params.objective)) {
       const auto ladder = Ladder(plan.leaf);
       auto& tuned = _tuning.level[Index(plan.leaf)];
       size_t rung = 0;
       if (!retune) {
         const auto it = std::find(ladder.begin(), ladder.end(), tuned);
-        rung = it == ladder.end() ? 0 : static_cast<size_t>(it - ladder.begin());
+        rung =
+          it == ladder.end() ? 0 : static_cast<size_t>(it - ladder.begin());
       }
       auto& wide_frames = _tuning.wide[Index(plan.leaf)];
       auto* cur = Trial({shape, plan.leaf}, ladder[rung], begin, end,
                         !retune && wide_frames);
       if (retune) {
         while (rung + 1 < ladder.size()) {
-          auto* next =
-            Trial({shape, plan.leaf}, ladder[rung + 1], begin, end);
+          auto* next = Trial({shape, plan.leaf}, ladder[rung + 1], begin, end);
           if (next->Size() < best->Size()) {
             best = next;
           }
@@ -778,16 +832,28 @@ class SegmentWriter {
         best = cur;
       }
       if (cur->Size() < chosen_bytes) {
+        runner_up = chosen_bytes;
         chosen_bytes = cur->Size();
         chosen = plan.leaf;
+      } else if (cur->Size() < runner_up) {
+        runner_up = cur->Size();
       }
     }
+    const StringChoice picked{shape, chosen};
+    const bool kept = _tuning.choice && *_tuning.choice == picked;
+    const bool contested = CloseCall(chosen_bytes, runner_up) ||
+                           (plain && ShapeContested(*dedup, *plain));
+    _tuning.calibration_gap =
+      drift || !kept || contested
+        ? 1
+        : std::min(_tuning.calibration_gap * 2, kMaxCalibrationGap);
+    _tuning.since_calibration = 0;
     _tuning.levels_tuned = true;
-    _tuning.choice = StringChoice{shape, chosen};
+    _tuning.choice = picked;
     _tuning.bytes_per_input =
-      cut->input == 0 ? 0
-                      : static_cast<double>(chosen_bytes) /
-                          static_cast<double>(cut->input);
+      cut->input == 0
+        ? 0
+        : static_cast<double>(chosen_bytes) / static_cast<double>(cut->input);
     for (auto* seg : _live) {
       if (seg != best) {
         Release(seg);
@@ -840,9 +906,23 @@ class SegmentWriter {
     return plain.Size() <= dedup.Size();
   }
 
-  bool Drifted(const Segment& seg) const noexcept {
+  static bool CloseCall(uint64_t winner, uint64_t other) noexcept {
+    return static_cast<double>(other) <
+           static_cast<double>(winner) * (1.0 + kSettledGain);
+  }
+
+  static bool ShapeContested(const Segment& dedup,
+                             const Segment& plain) noexcept {
+    const auto edge = static_cast<double>(dedup.Size()) *
+                      (Repeats(dedup) ? kPlainWinsBelow : 1.0);
+    const auto size = static_cast<double>(plain.Size());
+    return size < edge * (1.0 + kSettledGain) &&
+           size * (1.0 + kSettledGain) > edge;
+  }
+
+  bool Drifted(const Segment& seg, bool first) const noexcept {
     if (seg.input == 0 || _tuning.bytes_per_input == 0 ||
-        seg.Size() * kDriftMinFraction < _params.segment_target) {
+        (!first && seg.Size() * kDriftMinFraction < _params.segment_target)) {
       return false;
     }
     const auto ratio =
@@ -874,7 +954,8 @@ class SegmentWriter {
   Encoder<C>& Get() {
     auto& slot = std::get<std::optional<Encoder<C>>>(_encoders);
     if (!slot) {
-      slot.emplace(_acc, _type, _tuning.history[Index(C)], _dedup);
+      slot.emplace(_acc, _type, _tuning.history[Index(C)], _dedup,
+                   _params.segment_target);
     }
     return *slot;
   }
@@ -915,9 +996,9 @@ void StringAccumulator::Reserve(uint64_t rows, uint64_t distinct) {
     entries.reserve(rows);
     return;
   }
-  const auto expected = std::min(rows, distinct);
+  const auto expected = distinct == 0 ? rows : std::min(rows, distinct);
   entries.reserve(expected);
-  dedup.reserve(expected);
+  _map.reserve(expected);
 }
 
 void StringAccumulator::Add(const duckdb::Vector& input) {
@@ -928,42 +1009,29 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
   for (idx_t i = 0; i < count; ++i) {
     const auto idx = vdata.sel->get_index(i);
     if (!vdata.validity.RowIsValid(idx)) {
-      if (codes.empty() || codes.back() != 0) {
-        ++runs;
-      }
       codes.push_back(0);
       ++null_count;
       continue;
     }
     const auto& value = strings[idx];
     const std::string_view sv{value.GetData(), value.GetSize()};
-    raw_bytes += sv.size();
     if (_dedup && _last_code != 0 && value == _last) {
-      if (codes.back() != _last_code) {
-        ++runs;
-      }
       codes.push_back(_last_code);
       continue;
     }
     const auto next = static_cast<uint32_t>(entries.size() + 1);
     if (_dedup) {
-      const auto [it, inserted] = dedup.try_emplace(sv, next);
+      const auto [it, inserted] = _map.try_emplace(sv, next);
       _last = value;
       _last_code = it->second;
-      if (codes.empty() || codes.back() != it->second) {
-        ++runs;
-      }
       codes.push_back(it->second);
       if (!inserted) {
         continue;
       }
     } else {
-      ++runs;
       codes.push_back(next);
     }
     entries.push_back(sv);
-    entry_bytes += sv.size();
-    max_len = std::max<uint32_t>(max_len, static_cast<uint32_t>(sv.size()));
   }
   row_count += count;
 }

@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
 #include <absl/functional/function_ref.h>
 
 #include <cstdint>
@@ -36,6 +35,7 @@
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs::codecs {
 
@@ -48,6 +48,8 @@ struct StringTuning {
   std::optional<StringChoice> choice;
   double bytes_per_input = 0;
   bool levels_tuned = false;
+  uint32_t calibration_gap = 1;
+  uint32_t since_calibration = 0;
   uint64_t last_distinct = 0;
   uint8_t level[kByteCodecCount]{};
   bool wide[kByteCodecCount]{};
@@ -68,24 +70,19 @@ class StringAccumulator {
 
   uint64_t row_count = 0;
   uint64_t null_count = 0;
-  uint64_t raw_bytes = 0;
-  uint64_t entry_bytes = 0;
-  uint64_t runs = 0;
-  uint32_t max_len = 0;
-  absl::flat_hash_map<std::string_view, uint32_t> dedup;
   std::vector<std::string_view> entries;
   std::vector<uint32_t> codes;
 
  private:
+  containers::FlatHashMap<std::string_view, uint32_t> _map;
   bool _dedup;
   uint32_t _last_code = 0;
   duckdb::string_t _last;
 };
 
-using SegmentSink =
-  absl::FunctionRef<void(StringChoice choice, duckdb::BaseStatistics stats,
-                         uint64_t rows,
-                         std::span<const std::string_view> parts)>;
+using SegmentSink = absl::FunctionRef<void(
+  StringChoice choice, duckdb::BaseStatistics stats, uint64_t rows,
+  std::span<const std::string_view> parts)>;
 
 SealOutcome SealSegments(const StringAccumulator& acc,
                          std::optional<StringChoice> named,

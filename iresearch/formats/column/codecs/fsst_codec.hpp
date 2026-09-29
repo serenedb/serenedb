@@ -46,9 +46,9 @@ class FsstEncoder {
     return {reinterpret_cast<const char*>(_table), _table_size};
   }
 
- private:
   void Reset() noexcept;
 
+ private:
   duckdb_fsst_encoder_t* _encoder = nullptr;
   unsigned char _table[sizeof(duckdb_fsst_decoder_t)];
   size_t _table_size = 0;

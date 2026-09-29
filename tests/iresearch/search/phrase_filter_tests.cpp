@@ -129,6 +129,47 @@ class CapturingScorer final : public irs::Scorer {
   BlockAttrs* _attrs;
 };
 
+class TermOrderScorer final : public irs::ScorerBase<TermOrderScorer, void> {
+ public:
+  void collect(irs::byte_type*, const irs::FieldCollector*,
+               const irs::TermCollector* term) const final {
+    if (term != nullptr) {
+      docs_with_term.push_back(term->docs_with_term);
+    }
+  }
+
+  irs::IndexFeatures GetIndexFeatures() const final {
+    return irs::IndexFeatures::None;
+  }
+
+  irs::ScoreFunction PrepareScorer(const irs::ScoreContext&) const final {
+    return {};
+  }
+
+  mutable std::vector<uint64_t> docs_with_term;
+};
+
+TEST(ExpandedSlotsCollectorTest, CollectsExpandedTermsInTermOrder) {
+  constexpr size_t kTerms = 64;
+  constexpr uint32_t kThreads = 2;
+  TermOrderScorer scorer;
+  irs::StatsArena arena{duckdb::Allocator::DefaultAllocator()};
+  irs::ExpandedSlotsCollector collector{&scorer, 0, 1, arena, kThreads};
+
+  for (size_t i = kTerms; i-- != 0;) {
+    const auto term = absl::StrCat("term", 100 + i);
+    auto& counter = collector.Expanded(
+      i % kThreads,
+      0)[irs::bstring{irs::ViewCast<irs::byte_type>(std::string_view{term})}];
+    counter.docs_with_term = i + 1;
+  }
+  collector.Finish(arena);
+
+  std::vector<uint64_t> expected(kTerms);
+  std::iota(expected.begin(), expected.end(), 1);
+  EXPECT_EQ(expected, scorer.docs_with_term);
+}
+
 }  // namespace
 namespace tests {
 

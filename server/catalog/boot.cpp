@@ -129,6 +129,8 @@ void RemoveDatabaseFiles(duckdb::AttachedDatabase& cluster, duckdb::idx_t oid) {
   std::error_code ec;
   std::filesystem::remove(file, ec);
   std::filesystem::remove(file + ".wal", ec);
+  std::filesystem::remove(file + ".wal.checkpoint", ec);
+  std::filesystem::remove(file + ".wal.recovery", ec);
   std::filesystem::remove_all(search::GetSearchEngine().GetPersistedPath(oid),
                               ec);
 }

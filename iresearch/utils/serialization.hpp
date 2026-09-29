@@ -36,4 +36,11 @@ inline SerializationOptions VersionStorageOptions() {
   return opts;
 }
 
+inline SerializationOptions DatabaseStorageOptions() {
+  SerializationOptions opts;
+  opts.storage_compatibility =
+    StorageCompatibility::FromIndex(SERENEDB_VERSION_DEFAULT);
+  return opts;
+}
+
 }  // namespace duckdb

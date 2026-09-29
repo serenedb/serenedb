@@ -295,10 +295,6 @@ TEST(SerializerTest, testCustomWithArg) {
 }
 
 TEST(SerializerTest, testMandatory) {
-  // Two-field mandatory tuple. Object-format and slice-parser error
-  // variants from the original test don't translate; only the duckdb-
-  // applicable cases survive: positive round-trip + stream underflow on
-  // a too-short payload.
   struct Test {
     int a{};
     int b{0};
@@ -306,13 +302,22 @@ TEST(SerializerTest, testMandatory) {
   };
   RoundTrip(Test{42, 43});
 
-  // Stream underflow: a struct with a single field written, then read
-  // into the wide two-field shape => ReadTuple throws on field `b`.
   struct Narrow {
     int a{};
     bool operator==(const Narrow&) const = default;
   };
-  ExpectReadFails<Test>(Narrow{.a = 42});
+  ExpectReadFails<Narrow>(Test{42, 43});
+
+  duckdb::MemoryStream stream;
+  {
+    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+    irs::utils::WriteTuple(sink, Narrow{.a = 42});
+  }
+  stream.Rewind();
+  duckdb::BinaryDeserializer source{stream};
+  Test out{.a = 1, .b = 2};
+  irs::utils::ReadTuple(source, out);
+  EXPECT_EQ(out, (Test{42, 0}));
 }
 
 TEST(SerializerTest, testEnum) {

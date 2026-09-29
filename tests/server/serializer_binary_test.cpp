@@ -18,17 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-// Exhaustive coverage of the DuckDB-binary sink adapter for
-// basics/serializer.h:
-//   WriteTuple -> duckdb::BinarySerializer
-//   ReadTuple  <- duckdb::BinaryDeserializer
-//
-// This is a compact, positional wire format (no field tags / names), so the
-// reachable "data does not match schema" failures are: element-count
-// mismatches between the writer and reader shapes, out-of-range enum values,
-// and out-of-range variant indices. Every one of those must throw rather than
-// return a corrupt value or read out of bounds.
-
 #include <absl/algorithm/container.h>
 #include <gtest/gtest.h>
 
@@ -440,10 +429,6 @@ TEST(BinCustom, custom_serde) {
   RoundTrip(Test{.a = 1, .id = MyCustomInt{2}});
 }
 
-// ===========================================================================
-// FAILURE MODES: element-count mismatch between writer and reader shapes.
-// ===========================================================================
-
 struct F1 {
   int32_t a{};
   bool operator==(const F1&) const = default;
@@ -460,18 +445,131 @@ struct F3 {
   bool operator==(const F3&) const = default;
 };
 
-TEST(BinFailCount, struct_too_few_fields) {
-  const std::string m = ReadError<F2>(F1{.a = 42});
-  EXPECT_NE(m.find("element"), std::string::npos) << m;
+template<typename Target, typename Wire>
+Target ReadAs(const Wire& wire) {
+  duckdb::MemoryStream stream;
+  {
+    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+    WriteTuple(sink, wire);
+  }
+  stream.Rewind();
+  duckdb::BinaryDeserializer source{stream};
+  Target out{};
+  ReadTuple(source, out);
+  return out;
 }
-TEST(BinFailCount, struct_too_many_fields) {
+
+template<typename T>
+duckdb::idx_t SerializedSize(const T& value) {
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+  WriteTuple(sink, value);
+  return stream.GetPosition();
+}
+
+TEST(BinFields, added_field_reads_its_default) {
+  EXPECT_EQ((ReadAs<F2>(F1{.a = 42})), (F2{.a = 42}));
+  EXPECT_EQ((ReadAs<F3>(F1{.a = 1})), (F3{.a = 1}));
+}
+
+struct WithDefault1 {
+  int32_t a{};
+  bool operator==(const WithDefault1&) const = default;
+};
+struct WithDefault2 {
+  int32_t a{};
+  int32_t b{7};
+  bool operator==(const WithDefault2&) const = default;
+};
+
+TEST(BinFields, added_field_reads_its_member_initializer) {
+  EXPECT_EQ((ReadAs<WithDefault2>(WithDefault1{.a = 3})),
+            (WithDefault2{.a = 3, .b = 7}));
+}
+
+TEST(BinFields, field_at_its_default_is_not_written) {
+  EXPECT_EQ(SerializedSize(F2{.a = 1}), SerializedSize(F1{.a = 1}));
+  EXPECT_EQ(SerializedSize(WithDefault2{.a = 1}),
+            SerializedSize(WithDefault1{.a = 1}));
+  EXPECT_EQ((ReadAs<F1>(F2{.a = 1})), (F1{.a = 1}));
+  EXPECT_EQ((ReadAs<WithDefault1>(WithDefault2{.a = 5, .b = 7})),
+            (WithDefault1{.a = 5}));
+}
+
+TEST(BinFields, unknown_field_is_refused) {
   const std::string m = ReadError<F1>(F2{.a = 1, .b = 2});
-  EXPECT_NE(m.find("element"), std::string::npos) << m;
-}
-TEST(BinFailCount, struct_one_vs_three) {
-  EXPECT_TRUE((ReadFails<F3>(F1{.a = 1})));
+  EXPECT_NE(m.find("expected end of object"), std::string::npos) << m;
   EXPECT_TRUE((ReadFails<F1>(F3{.a = 1, .b = 2, .c = 3})));
+  EXPECT_TRUE((ReadFails<WithDefault1>(WithDefault2{.a = 5, .b = 0})));
 }
+
+struct R1 {
+  int32_t a{};
+  std::string b;
+  int32_t c{};
+  bool operator==(const R1&) const = default;
+};
+struct R2 {
+  int32_t a{};
+  irs::utils::Deleted<std::string> b;
+  int32_t c{};
+  bool operator==(const R2&) const = default;
+};
+
+TEST(BinFields, deleted_field_is_read_and_dropped) {
+  EXPECT_EQ((ReadAs<R2>(R1{.a = 1, .b = "gone", .c = 3})),
+            (R2{.a = 1, .c = 3}));
+}
+
+TEST(BinFields, deleted_field_is_not_written) {
+  EXPECT_EQ((ReadAs<R1>(R2{.a = 1, .c = 3})), (R1{.a = 1, .c = 3}));
+}
+
+TEST(BinFields, missing_fields_reset_a_reused_value) {
+  duckdb::MemoryStream stream;
+  {
+    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+    WriteTuple(sink, F1{.a = 1});
+  }
+  stream.Rewind();
+  duckdb::BinaryDeserializer source{stream};
+  F2 out{.a = 5, .b = 9};
+  ReadTuple(source, out);
+  EXPECT_EQ(out, (F2{.a = 1}));
+}
+
+struct Owned {
+  std::vector<std::unique_ptr<int32_t>> items;
+  int32_t tag{};
+};
+
+auto SerdeFields(Owned& owned) { return std::tie(owned.items, owned.tag); }
+
+auto SerdeFields(const Owned& owned) {
+  return std::tie(owned.items, owned.tag);
+}
+
+struct OwnedValues {
+  std::vector<std::optional<int32_t>> items;
+  int32_t tag{};
+  bool operator==(const OwnedValues&) const = default;
+};
+
+TEST(BinFields, serde_fields_match_the_reflected_encoding) {
+  Owned owned;
+  owned.items.push_back(std::make_unique<int32_t>(4));
+  owned.items.push_back(nullptr);
+  owned.tag = 2;
+  EXPECT_EQ(ReadAs<OwnedValues>(owned),
+            (OwnedValues{.items = {4, std::nullopt}, .tag = 2}));
+
+  const auto back = ReadAs<Owned>(OwnedValues{.items = {7}, .tag = 1});
+  ASSERT_EQ(back.items.size(), 1u);
+  ASSERT_TRUE(back.items[0]);
+  EXPECT_EQ(*back.items[0], 7);
+  EXPECT_EQ(back.tag, 1);
+}
+
 TEST(BinFailCount, array_too_short) {
   EXPECT_TRUE(
     (ReadFails<std::array<int32_t, 2>>(std::array<int32_t, 3>{1, 2, 3})));
@@ -487,8 +585,6 @@ TEST(BinFailCount, tuple_size_mismatch) {
     std::tuple<int32_t, int32_t>{1, 2})));
 }
 
-// Nested count mismatch is detected and surfaces while reading the inner
-// element.
 struct NInner2 {
   int32_t a{};
   int32_t b{};
@@ -509,10 +605,12 @@ struct NOuterTarget {
   bool operator==(const NOuterTarget&) const = default;
 };
 
-TEST(BinFailCount, nested_struct_field_count_mismatch) {
+TEST(BinFields, nested_unknown_field_is_refused) {
   const std::string m =
     ReadError<NOuterTarget>(NOuterWire{.x = 1, .inner = {.a = 2, .b = 3}});
-  EXPECT_FALSE(m.empty()) << m;
+  EXPECT_NE(m.find("expected end of object"), std::string::npos) << m;
+  EXPECT_EQ((ReadAs<NOuterTarget>(NOuterWire{.x = 1, .inner = {.a = 2}})),
+            (NOuterTarget{.x = 1, .inner = {.a = 2}}));
 }
 
 // ===========================================================================

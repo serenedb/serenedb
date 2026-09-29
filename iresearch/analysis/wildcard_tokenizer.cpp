@@ -150,6 +150,18 @@ bool WildcardTokenizer::FillTokens(std::span<const duckdb::string_t> tokens,
                       });
 }
 
+void WildcardTokenizer::FillRow(std::span<const duckdb::string_t> values,
+                                doc_id_t doc, TokenSink& sink, FillCtx ctx) {
+  _terms.clear();
+  if (FillValues(
+        *this, values, doc, sink, ctx,
+        [&]<TokenLayout Layout, bool KnownAscii>(duckdb::string_t value) {
+          return AppendValue<Layout, KnownAscii>(value, sink);
+        })) {
+    StoreTerms(sink);
+  }
+}
+
 template<TokenLayout Layout>
 void WildcardTokenizer::EmitEncoded(TokenSink& sink, size_t from, bool ascii) {
   if (ascii) {

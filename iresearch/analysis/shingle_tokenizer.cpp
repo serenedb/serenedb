@@ -328,6 +328,20 @@ bool ShingleTokenizer::AppendValue(duckdb::string_t value, TokenSink& sink) {
   return true;
 }
 
+void ShingleTokenizer::FillRow(std::span<const duckdb::string_t> values,
+                               doc_id_t doc, TokenSink& sink, FillCtx ctx) {
+  _blob.clear();
+  if (FillValues(
+        *this, values, doc, sink, ctx,
+        [&]<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
+            bool StoreTokens>(duckdb::string_t value) {
+          return AppendValue<Layout, OutputUnigrams, HasFrequent, StoreTokens>(
+            value, sink);
+        })) {
+    StoreBlob(sink);
+  }
+}
+
 template class TypedTokenizer<ShingleTokenizer>;
 
 }  // namespace irs::analysis

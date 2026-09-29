@@ -223,40 +223,13 @@ class TypedTokenizer : public Tokenizer {
   constexpr std::tuple<> PrepareBatch(BlockTraits) { return {}; }
 
   IRS_NO_INLINE void FillRow(std::span<const duckdb::string_t> values,
-                             doc_id_t doc, TokenSink& sink, FillCtx ctx) final {
+                             doc_id_t doc, TokenSink& sink,
+                             FillCtx ctx) override {
     auto* impl = static_cast<Impl*>(this);
-    if constexpr (requires { impl->BeginRow(); }) {
-      impl->BeginRow();
-    }
-    bool filled = false;
-    for (const auto& value : values) {
-      const auto traits =
-        ComputeValueTraits(value, impl->Impl::WantedBlockTraits(), ctx.traits);
-      sink.BeginValue(doc, value.GetSize());
-      const bool ok = DispatchFill(
-        *impl, ctx.layout, traits,
-        [&](auto layout_tag, auto... tags) IRS_FORCE_INLINE {
-          if constexpr (requires {
-                          impl->template AppendValue<layout_tag(), tags()...>(
-                            value, sink);
-                        }) {
-            return impl->template AppendValue<layout_tag(), tags()...>(value,
-                                                                       sink);
-          } else {
-            return impl->template DoFill<layout_tag(), tags()...>(value, sink);
-          }
-        });
-      if (!ok) [[unlikely]] {
-        sink.RejectValue();
-      }
-      filled |= ok;
-      sink.EndValue();
-    }
-    if constexpr (requires { impl->EndRow(sink); }) {
-      if (filled) {
-        impl->EndRow(sink);
-      }
-    }
+    FillValues(*impl, values, doc, sink, ctx,
+               [&]<TokenLayout Layout, auto... Tags>(duckdb::string_t value) {
+                 return impl->template DoFill<Layout, Tags...>(value, sink);
+               });
   }
 
   IRS_NO_INLINE bool Fill(const duckdb::string_t& value, TokenSink& sink,
@@ -294,6 +267,30 @@ class TypedTokenizer : public Tokenizer {
                        return true;
                      });
                  });
+  }
+
+ protected:
+  template<typename AppendValue>
+  static bool FillValues(Impl& self, std::span<const duckdb::string_t> values,
+                         doc_id_t doc, TokenSink& sink, FillCtx ctx,
+                         AppendValue&& append) {
+    bool filled = false;
+    for (const auto& value : values) {
+      const auto traits =
+        ComputeValueTraits(value, self.Impl::WantedBlockTraits(), ctx.traits);
+      sink.BeginValue(doc, value.GetSize());
+      const bool ok = DispatchFill(
+        self, ctx.layout, traits,
+        [&](auto layout_tag, auto... tags) IRS_FORCE_INLINE {
+          return append.template operator()<layout_tag(), tags()...>(value);
+        });
+      if (!ok) [[unlikely]] {
+        sink.RejectValue();
+      }
+      filled |= ok;
+      sink.EndValue();
+    }
+    return filled;
   }
 };
 

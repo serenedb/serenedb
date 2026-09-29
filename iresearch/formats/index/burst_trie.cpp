@@ -1998,38 +1998,12 @@ class AcceptorTermIterator : public SeekTermIterator,
     return true;
   }
 
-  void ResetRun() noexcept {
-    _prev_len = 0;
-    _prev_dead = kAlive;
-  }
-
   bool ExtendEntry(State from, const byte_type* suffix, size_t n) {
-    size_t i = 0;
-    for (const size_t limit = std::min<size_t>(n, _prev_len);
-         i != limit && suffix[i] == _prev_suffix[i];) {
-      ++i;
-    }
-    if (i > _prev_dead) {
-      return false;
-    }
-    if (_depth.size() <= n) [[unlikely]] {
-      _depth.resize(n + 1);
-    }
-    auto* depth = _depth.data();
-    if (i != 0) {
-      from = depth[i];
-    }
-    _prev_suffix = suffix;
-    _prev_len = static_cast<uint32_t>(n);
-    _prev_dead = kAlive;
-    for (; i != n; ++i) {
-      const State next = _a->Step(from, suffix[i]);
-      if (!A::Alive(next)) {
-        _prev_dead = static_cast<uint32_t>(i);
+    for (size_t i = 0; i != n; ++i) {
+      from = _a->Step(from, suffix[i]);
+      if (!A::Alive(from)) {
         return false;
       }
-      from = next;
-      depth[i + 1] = from;
     }
     _live = from;
     return true;
@@ -2088,14 +2062,8 @@ class AcceptorTermIterator : public SeekTermIterator,
 
   void RebuildLevels();
 
-  static constexpr uint32_t kAlive = std::numeric_limits<uint32_t>::max();
-
   const A* _a;
   irs::containers::SmallVector<Level, 8> _levels;
-  std::vector<State> _depth;
-  const byte_type* _prev_suffix{};
-  uint32_t _prev_len{0};
-  uint32_t _prev_dead{kAlive};
   State _live{};
   typename A::PayloadType _payload{};
   PayAttr _pay;
@@ -2137,7 +2105,6 @@ bool AcceptorTermIterator<FST, A>::PushSubBlock(const byte_type* suffix,
     this->_cur_block->ScanToSubBlock(static_cast<byte_type>(lo));
   }
   this->_cur_block->Load(this->TermsInput());
-  ResetRun();
   return true;
 }
 
@@ -2204,7 +2171,6 @@ template<typename FST, typename A>
 SeekResult AcceptorTermIterator<FST, A>::seek_ge(bytes_view target) {
   const auto res = this->SeekEqual(target, false);
   RebuildLevels();
-  ResetRun();
 
   bool accepted = false;
   if (res != SeekResult::End && _levels.back().alive) {
@@ -2235,7 +2201,6 @@ bool AcceptorTermIterator<FST, A>::NextImpl() {
   if (!this->_cur_block) {
     SDB_ASSERT(this->value().empty());
     ResetLevels();
-    ResetRun();
     this->_cur_block =
       this->PushBlock(this->_fst->Final(this->_fst->Start()), 0);
     this->_cur_block->Load(this->TermsInput());
@@ -2261,7 +2226,6 @@ bool AcceptorTermIterator<FST, A>::NextImpl() {
   for (;;) {
     while (frame_done || this->_cur_block->Done()) {
       if (!frame_done && NextFloorSubBlock()) {
-        ResetRun();
         continue;
       }
       if (&this->_block_stack.front() == this->_cur_block) {  // root
@@ -2269,12 +2233,10 @@ bool AcceptorTermIterator<FST, A>::NextImpl() {
         this->_cur_block->Reset();
         this->_sstate.clear();
         ResetLevels();
-        ResetRun();
         return false;
       }
       _levels.pop_back();
       this->PopToParent();
-      ResetRun();
       frame_done = !_levels.back().alive;
     }
 

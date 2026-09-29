@@ -598,3 +598,58 @@ SELECT currval('does_not_exist_seq');
 # setval on a missing sequence: error.
 statement error
 SELECT setval('does_not_exist_seq', 1);
+
+
+statement ok
+CREATE SEQUENCE seq_cache CACHE 10;
+
+
+query
+SELECT nextval('seq_cache');
+----
+nextval
+1
+
+
+query
+SELECT nextval('seq_cache');
+----
+nextval
+2
+
+
+query
+SELECT seqcache FROM pg_sequence WHERE seqrelid = 'seq_cache'::regclass;
+----
+seqcache
+10
+
+
+query
+SELECT cache_size FROM pg_sequences WHERE sequencename = 'seq_cache';
+----
+cache_size
+10
+
+
+statement ok
+CREATE SEQUENCE seq_nocache;
+
+
+query
+SELECT seqcache FROM pg_sequence WHERE seqrelid = 'seq_nocache'::regclass;
+----
+seqcache
+1
+
+
+statement error must be greater than zero
+CREATE SEQUENCE seq_cache_zero CACHE 0;
+
+
+statement ok
+DROP SEQUENCE seq_cache;
+
+
+statement ok
+DROP SEQUENCE seq_nocache;

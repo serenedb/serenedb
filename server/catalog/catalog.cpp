@@ -83,6 +83,11 @@
 #include "search/search_table.h"
 
 namespace sdb::catalog {
+namespace {
+
+constexpr uint64_t kPkSequenceCache = 65536;
+
+}  // namespace
 
 void DeclareModified(duckdb::CatalogTransaction transaction,
                      duckdb::Catalog& catalog,
@@ -109,6 +114,7 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
         duckdb::CreateSequenceInfo sequence_info;
         sequence_info.SetQualification(GetName(), schema.name);
         sequence_info.SetSequenceName(entry->PkSequenceName());
+        sequence_info.cache = kPkSequenceCache;
         info.dependencies.AddOwnedDependency(
           *schema.CreateSequence(transaction, sequence_info));
       }

@@ -60,8 +60,7 @@ constexpr Row kRows[] = {
 }  // namespace
 
 template<>
-catalog::MaterializedData
-SystemTableSnapshot<SqlImplementationInfo>::GetTableData() {
+MaterializedData SystemTableSnapshot<SqlImplementationInfo>::GetTableData() {
   constexpr auto kNumRows = std::size(kRows);
   auto result = CreateColumns<SqlImplementationInfo>(kNumRows);
   for (size_t row = 0; row < kNumRows; ++row) {

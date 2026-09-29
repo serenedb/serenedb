@@ -78,8 +78,6 @@ struct Term {
 
   uint64_t docs_count() const { return postings.size(); }
 
-  void sort(const std::map<irs::doc_id_t, irs::doc_id_t>& docs);
-
   std::set<tests::Posting> postings;
   irs::bstring value;
 };
@@ -104,7 +102,6 @@ struct Field : public irs::FieldMeta {
   Term& insert(irs::bytes_view term);
   Term* find(irs::bytes_view term);
   size_t remove(irs::bytes_view term);
-  void sort(const std::map<irs::doc_id_t, irs::doc_id_t>& docs);
 
   irs::bytes_view min() const;
   irs::bytes_view max() const;
@@ -135,8 +132,6 @@ class ColumnValues {
   auto end() const { return _values.end(); }
   auto size() const { return _values.size(); }
   auto empty() const { return _values.empty(); }
-
-  void sort(const std::map<irs::doc_id_t, irs::doc_id_t>& docs);
 
  private:
   irs::field_id _id;
@@ -176,8 +171,6 @@ class IndexSegment : irs::util::Noncopyable {
              has_sorted ? doc.sorted.get() : nullptr);
     }
   }
-
-  void sort(const irs::Comparer& comparator);
 
   void clear() noexcept {
     _fields.clear();

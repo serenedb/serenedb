@@ -210,9 +210,9 @@ Raw query boost contribution for each row. With no `^` boost in the query every 
 ### `raw_dl(tableoid)` {#raw_dl}
 
 **Signature.** `raw_dl(tableoid) -> FLOAT`. No parameters.
-**Captures.** The length (token count) of the matched column for each row — the normalization input that `BM25(b>0)` and the `lm_*`/`dfi` scorers use internally.
+**Captures.** The length of the matched column for each row — the normalization input that `BM25(b>0)` and the `lm_*`/`dfi` scorers use internally.
 
-Raw document length (number of tokens) of the matched column.
+Raw document length of the matched column: the number of token positions when the column records `POSITION`, so tokens stacked at one position, such as synonyms, count once, and the number of tokens otherwise. See [feature flags](../../statements/create_text_search_dictionary/index.md#feature-flags).
 
 <SqlLogicTest id="sql/functions/full_text_search/raw_dl" />
 
@@ -254,6 +254,8 @@ SELECT id, BM25(docs_idx.tableoid) AS score
 FROM   docs_idx
 WHERE  body @@ ts_any(['car', 'automobile'])::merge('max');
 ```
+
+Synonyms that the column's dictionary produces itself, with [`expand_solr_synonyms`](./tokenizers/expand_solr_synonyms.md) or [`expand_wordnet_synonyms`](./tokenizers/expand_wordnet_synonyms.md), already score this way: the tokens a query word expands to at one position form one group merged with `max`, in bare strings, `ts_tokenize`, `plainto_tsquery`, `websearch_to_tsquery`, `to_tsquery`, `ts_any`/`ts_all` over `ts_tokenize`, and a one-word `ts_phrase`.
 
 **It binds to its own node.** Nesting is therefore meaningful. With `((a OR b)::merge('max') OR c)` the inner group takes the best of `a` and `b` and the outer group still adds `c` on top. Move the modifier to the outer group and the best single branch of all three wins.
 

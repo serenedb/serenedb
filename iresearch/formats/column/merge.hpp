@@ -37,7 +37,6 @@ class ColWriter;
 struct MergeSource {
   const SubReader* reader;
   const ColReader* col_reader;
-  const DocumentMask* mask;
   uint64_t alive_count;
 };
 

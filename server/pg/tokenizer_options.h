@@ -23,6 +23,8 @@
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
+#include <iresearch/analysis/filter_tokens_tokenizer.hpp>
+#include <iresearch/analysis/html_strip_tokenizer.hpp>
 #include <iresearch/analysis/icu_text_tokenizer.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/multi_delimited_tokenizer.hpp>
@@ -88,10 +90,19 @@ void CheckCase(std::string_view option, std::string_view value);
 inline constexpr OptionInfo kCase{
   "case", "none"sv, "Text case conversion: none, lower, upper", CheckCase};
 
+inline constexpr std::string_view kFoldCase = "fold";
+
+void CheckNormCase(std::string_view option, std::string_view value);
+
+inline constexpr OptionInfo kNormCase{
+  "case", "none"sv, "Text case conversion: none, lower, upper, fold",
+  CheckNormCase};
+
 void CheckForm(std::string_view option, std::string_view value);
 
 inline constexpr OptionInfo kForm{
-  "form", "nfc"sv, "Unicode normalization form: nfc, nfkc", CheckForm};
+  "form", "nfc"sv, "Unicode normalization form: nfc, nfd, nfkc, nfkd, nfkc_cf",
+  CheckForm};
 
 inline constexpr OptionInfo kModelLocation{
   "model_location", ""sv, "Path to the ML model file", CheckFileExists};
@@ -149,6 +160,20 @@ inline constexpr OptionInfo kMaxNGramLength{
   "max_ngram_length", 16, "Maximum emitted n-gram length (minimum 3)",
   CheckMaxNGramLength};
 
+void CheckMinNGramLength(std::string_view option, int value);
+
+inline constexpr OptionInfo kMinNGramLength{
+  "min_ngram_length", 3,
+  "Minimum n-gram length (minimum 3); boundaries are chosen over hashes of "
+  "(min_ngram_length - 1)-character windows",
+  CheckMinNGramLength};
+
+void CheckLength(std::string_view option, int value);
+
+inline constexpr OptionInfo kMinCutoffLength{
+  "min_cutoff_length", 0,
+  "Drop n-grams shorter than this; 0 keeps every n-gram", CheckLength};
+
 // Classification
 
 void CheckThreshold(std::string_view option, double value);
@@ -160,6 +185,32 @@ inline constexpr OptionInfo kThreshold{
 
 inline constexpr OptionInfo kHex{"hex", false,
                                  "Treat stop words as hex-encoded strings"};
+
+inline constexpr OptionInfo kPredicate{
+  "predicate", OptionInfo::LambdaTag{},
+  "Keep only the tokens for which this lambda returns true, as in "
+  "lambda x: x NOT LIKE 'http%'"};
+
+inline constexpr OptionInfo kMinLength{
+  "min_length", 0, "Drop tokens shorter than this many characters",
+  CheckLength};
+
+inline constexpr OptionInfo kMaxLength{
+  "max_length", 0,
+  "Drop tokens longer than this many characters; 0 means no limit",
+  CheckLength};
+
+void CheckNonAlphaBreak(std::string_view option, std::string_view value);
+
+inline constexpr OptionInfo kNonAlphaBreak{
+  "break", "ascii"sv,
+  "Token boundary mode: ascii, ascii_bytes, alnum, letters, whitespace",
+  CheckNonAlphaBreak};
+
+inline constexpr OptionInfo kJoinInlineTags{
+  "join_inline_tags", false,
+  "Keep a word whole across inline tags such as <b>, <i> and <span> instead "
+  "of splitting the text at them"};
 
 // Wildcard
 
@@ -173,9 +224,10 @@ inline constexpr OptionInfo kNGramSize{
 
 // Text
 
-inline constexpr OptionInfo kBreak{"break", "alpha"sv,
-                                   "Token boundary detection mode: all, "
-                                   "graphic, alpha, sentence, line, paragraph"};
+inline constexpr OptionInfo kBreak{
+  "break", "alpha"sv,
+  "Token boundary detection mode: all, graphic, alpha, grapheme, sentence, "
+  "line, paragraph"};
 
 // Icu text
 
@@ -308,8 +360,8 @@ inline constexpr OptionInfo kNGramOptions[] = {
   kMinGram,   kMaxGram, kPreserveOriginal, kInputType, kStartMarker,
   kEndMarker, kMode};
 
-inline constexpr OptionInfo kSparseNGramOptions[] = {kMaxNGramLength,
-                                                     kCovering};
+inline constexpr OptionInfo kSparseNGramOptions[] = {
+  kMaxNGramLength, kCovering, kMinNGramLength, kMinCutoffLength};
 
 inline constexpr OptionInfo kNearestNeighborsOptions[] = {kModelLocation,
                                                           kTopK};
@@ -334,10 +386,15 @@ inline constexpr OptionInfo kNormLocale{
   "locale", ""sv,
   "ICU locale for case conversion; omit for locale-independent simple case"};
 
-inline constexpr OptionInfo kNormOptions[] = {kNormLocale, kCase, kAccent,
+inline constexpr OptionInfo kNormOptions[] = {kNormLocale, kNormCase, kAccent,
                                               kForm};
 
-inline constexpr OptionInfo kSplitByNonAlphaOptions[] = {kCase};
+inline constexpr OptionInfo kSplitByNonAlphaOptions[] = {kCase, kNonAlphaBreak};
+
+inline constexpr OptionInfo kHtmlStripOptions[] = {kJoinInlineTags};
+
+inline constexpr OptionInfo kFilterTokensOptions[] = {kPredicate, kMinLength,
+                                                      kMaxLength};
 
 inline constexpr OptionInfo kTextOptions[] = {kCase, kBreak};
 inline constexpr OptionInfo kIcuTextOptions[] = {kIcuTextLocale, kIcuTextBreak};
@@ -506,6 +563,18 @@ inline constexpr OptionGroup kWordnetSynonymsGroup{
   {},
   "expand_wordnet_synonyms",
 };
+inline constexpr OptionGroup kHtmlStripGroup{
+  irs::analysis::HtmlStripTokenizer::type_name(),
+  kHtmlStripOptions,
+  {},
+  "strip_html",
+};
+inline constexpr OptionGroup kFilterTokensGroup{
+  irs::analysis::FilterTokensTokenizer::type_name(),
+  kFilterTokensOptions,
+  {},
+  "filter_tokens",
+};
 
 inline constexpr OptionGroup kTokenizerSubgroups[] = {
   kFeaturesGroup,        kTextGroup,
@@ -521,6 +590,7 @@ inline constexpr OptionGroup kTokenizerSubgroups[] = {
   kKeywordGroup,         kSqlGroup,
   kShingleGroup,         kSolrSynonymsGroup,
   kWordnetSynonymsGroup, kSparseNGramGroup,
+  kHtmlStripGroup,       kFilterTokensGroup,
 };
 
 }  // namespace sdb::pg::tokenizer_options

@@ -25,7 +25,7 @@
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <memory>
 
-#include "connector/search_table_dispatch.h"
+#include "catalog/entry/search_table.h"
 
 namespace sdb::connector {
 
@@ -34,14 +34,14 @@ class SereneDBSearchInsert final : public duckdb::PhysicalOperator {
   // Insert mode: pre-existing target table. `return_chunk` is RETURNING: the
   // operator then hands back the rows it inserted rather than their count, and
   // `types` is the whole row.
-  SereneDBSearchInsert(duckdb::PhysicalPlan& plan, SearchWriteTarget target,
+  SereneDBSearchInsert(duckdb::PhysicalPlan& plan,
+                       const catalog::SearchTableEntry& table,
                        duckdb::vector<duckdb::LogicalType> types,
                        duckdb::idx_t estimated_cardinality, bool return_chunk);
 
   // CTAS mode: create the target table from `info` in GetGlobalSinkState.
   SereneDBSearchInsert(duckdb::PhysicalPlan& plan,
                        duckdb::unique_ptr<duckdb::BoundCreateTableInfo> info,
-                       duckdb::SchemaCatalogEntry& schema,
                        duckdb::idx_t estimated_cardinality);
 
   bool IsSink() const final { return true; }
@@ -69,13 +69,13 @@ class SereneDBSearchInsert final : public duckdb::PhysicalOperator {
   bool IsSource() const final { return true; }
 
  private:
-  // Insert mode: the pre-existing target, resolved off its entry at plan time.
-  // Unset in CTAS mode, where the table does not exist until the sink runs.
-  SearchWriteTarget _target;
+  // Insert mode: the pre-existing target. Unset in CTAS mode, where the table
+  // does not exist until the sink runs.
+  duckdb::optional_ptr<const catalog::SearchTableEntry> _table;
 
-  // CTAS mode only -- mutually exclusive with _target; null in insert mode.
+  // CTAS mode only -- mutually exclusive with _table; null in insert mode.
+  // It carries the target schema, so nothing has to resolve one.
   duckdb::unique_ptr<duckdb::BoundCreateTableInfo> _ctas_info;
-  duckdb::SchemaCatalogEntry* _ctas_schema = nullptr;
 
   bool _return_chunk = false;
 };

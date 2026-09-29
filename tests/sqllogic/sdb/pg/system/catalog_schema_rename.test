@@ -1,0 +1,230 @@
+# ALTER SCHEMA ... RENAME TO, built the way a table rename works.
+#
+# The schema gets a new version under the new name in the schemas CatalogSet,
+# sharing its contents and its SchemaInfo with the old versions; the shared
+# name flips at ALTER time, so every child's schema name follows, the same way
+# a table's shared storage name flips. The dependency manager re-keys the
+# children's edges and refuses the rename when a child has a dependent that
+# stores names as text (a view or a macro), the same rule a table rename
+# applies to its own dependents. Concurrency is the table's: alters of one
+# schema conflict through the catalog set, and writes into the schema's tables
+# by other transactions are not refused.
+
+
+statement ok
+CREATE SCHEMA csr_a;
+
+statement ok
+CREATE TABLE csr_a.t (id SERIAL PRIMARY KEY, v INTEGER);
+
+statement ok
+CREATE INDEX csr_a_t_v ON csr_a.t (v);
+
+statement ok
+CREATE SEQUENCE csr_a.s;
+
+statement ok
+CREATE TYPE csr_a.mood AS ENUM ('sad', 'ok');
+
+statement ok
+CREATE TABLE csr_a.m (id INTEGER, m csr_a.mood);
+
+statement ok
+INSERT INTO csr_a.t (v) VALUES (1), (2);
+
+statement ok
+INSERT INTO csr_a.m VALUES (1, 'ok');
+
+
+statement ok
+ALTER SCHEMA csr_a RENAME TO csr_b;
+
+
+query
+SELECT id, v FROM csr_b.t ORDER BY id;
+----
+id	v
+1	1
+2	2
+
+
+statement error
+SELECT * FROM csr_a.t;
+----
+db error: ERROR: Table with name "csr_a.t" does not exist because schema "csr_a" does not exist.
+
+
+# The SERIAL default, the index and the enum column keep working under the new name.
+statement ok
+INSERT INTO csr_b.t (v) VALUES (3);
+
+query
+SELECT max(id) AS id FROM csr_b.t;
+----
+id
+3
+
+query
+SELECT id FROM csr_b.t WHERE v = 2;
+----
+id
+2
+
+query
+SELECT m FROM csr_b.m;
+----
+m
+ok
+
+query
+SELECT nextval('csr_b.s') AS n;
+----
+n
+1
+
+
+query
+SELECT nspname FROM pg_namespace WHERE nspname LIKE 'csr\_%' ORDER BY 1;
+----
+nspname
+csr_b
+
+query
+SELECT c.relname, c.relkind
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'csr_b' ORDER BY 1;
+----
+relname	relkind
+csr_a_t_v	i
+m	r
+s	S
+t	r
+t_id_seq	S
+t_pkey	i
+
+
+# The edges were re-keyed: the sequence under the SERIAL column is still held
+# by its table, and the type by the column that uses it.
+statement error
+DROP SEQUENCE csr_b.t_id_seq;
+----
+db error: ERROR: Cannot drop entry "t_id_seq" because there are entries that depend on it.
+<slt:ignore>
+
+
+statement error
+DROP TYPE csr_b.mood;
+----
+db error: ERROR: Cannot drop entry "mood" because there are entries that depend on it.
+<slt:ignore>
+
+
+statement ok
+DROP TABLE csr_b.m;
+
+statement ok
+DROP TYPE csr_b.mood;
+
+
+# A rename is a version of the entry like any other, so it rolls back.
+statement ok
+BEGIN;
+
+statement ok
+ALTER SCHEMA csr_b RENAME TO csr_c;
+
+query
+SELECT count(*) AS n FROM csr_c.t;
+----
+n
+3
+
+statement ok
+ROLLBACK;
+
+query
+SELECT count(*) AS n FROM csr_b.t;
+----
+n
+3
+
+statement ok
+INSERT INTO csr_b.t (v) VALUES (4);
+
+
+# A view stores the table's name as text, so it blocks the rename the way it
+# blocks a table rename.
+statement ok
+CREATE VIEW csr_b.v AS SELECT id FROM csr_b.t;
+
+statement error
+ALTER SCHEMA csr_b RENAME TO csr_c;
+----
+db error: ERROR: Cannot alter entry "csr_b" because there are entries that depend on it.
+
+
+statement ok
+DROP VIEW csr_b.v;
+
+
+statement error
+ALTER SCHEMA csr_b RENAME TO public;
+----
+db error: ERROR: Could not rename "csr_b" to "public": another entry with this name already exists!
+
+
+# Two renames of one schema conflict like any two alters of one entry, and the
+# loser touches nothing: the children still name the schema the winner gave it.
+connection s1
+statement ok
+BEGIN;
+
+connection s1
+statement ok
+ALTER SCHEMA csr_b RENAME TO csr_c;
+
+connection s2
+statement error
+ALTER SCHEMA csr_b RENAME TO csr_d;
+----
+db error: ERROR: Catalog write-write conflict on alter with "csr_b"
+
+
+connection s1
+statement ok
+COMMIT;
+
+connection s2
+query
+SELECT count(*) AS n FROM csr_c.t;
+----
+n
+4
+
+connection s2
+query
+SELECT schema_name FROM duckdb_tables() WHERE table_name = 't' AND schema_name LIKE 'csr%';
+----
+schema_name
+csr_c
+
+
+statement ok
+DROP SCHEMA csr_c CASCADE;
+
+
+# A rename to a reserved pg_ name is refused, the same check CREATE SCHEMA
+# applies, so a checkpoint can never persist a pg_-prefixed user schema and
+# then fail to boot.
+statement ok
+CREATE SCHEMA csr_reserved;
+
+statement error
+ALTER SCHEMA csr_reserved RENAME TO pg_reserved;
+----
+db error: ERROR: unacceptable schema name "pg_reserved"
+DETAIL: The prefix "pg_" is reserved for system schemas.
+
+
+statement ok
+DROP SCHEMA csr_reserved;

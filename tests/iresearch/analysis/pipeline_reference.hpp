@@ -47,13 +47,22 @@ inline std::optional<std::vector<AnalyzerToken>> ChainReference(
     std::vector<AnalyzerToken> next;
     uint32_t out = 0;
     uint32_t prev = 0;
+    uint32_t skipped_inc = 0;
+    uint32_t skipped_slots = 0;
     for (const auto& p : *toks) {
       const uint32_t inc_p = p.pos - prev;
       prev = p.pos;
       const auto ctoks = Analyze(child, p.term, layout);
-      if (!ctoks) {
+      if (!ctoks || ctoks->empty()) {
+        skipped_inc += inc_p;
+        skipped_slots += inc_p != 0;
         continue;
       }
+      const uint32_t reopened = inc_p == 0 && skipped_slots != 0;
+      const uint32_t parent_inc =
+        skipped_inc + inc_p - (skipped_slots - reopened);
+      skipped_inc = 0;
+      skipped_slots = 0;
       uint32_t last = 0;
       bool first = true;
       for (const auto& c : *ctoks) {
@@ -62,7 +71,7 @@ inline std::optional<std::vector<AnalyzerToken>> ChainReference(
           uint32_t inc = c.pos - last;
           last = c.pos;
           if (first) {
-            inc += inc_p;
+            inc += parent_inc;
             --inc;
             first = false;
           }

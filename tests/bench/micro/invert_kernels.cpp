@@ -28,6 +28,7 @@
 #include <deque>
 #include <duckdb/common/types/vector.hpp>
 #include <iresearch/analysis/numeric_terms.hpp>
+#include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/index/inverter/columnar_flush.hpp>
@@ -1533,6 +1534,139 @@ void BM_UvfKeywordDict(benchmark::State& state) {
   SetUvfCounters(state, nchunks);
 }
 
+struct TextDictionary {
+  std::vector<std::string> entries;
+  duckdb::Vector values{duckdb::LogicalType::VARCHAR};
+  std::vector<std::unique_ptr<duckdb::SelectionVector>> sels;
+  std::vector<duckdb::Vector> chunks;
+
+  explicit TextDictionary(size_t distinct)
+    : values{duckdb::LogicalType::VARCHAR, distinct} {
+    std::mt19937_64 rng{7};
+    std::uniform_int_distribution<uint32_t> word{0, 4999};
+    entries.reserve(distinct);
+    auto* slots = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(values);
+    for (size_t e = 0; e < distinct; ++e) {
+      std::string text;
+      for (size_t w = 0; w < 8; ++w) {
+        text += "Word" + std::to_string(word(rng)) + ' ';
+      }
+      text.pop_back();
+      entries.push_back(std::move(text));
+    }
+    for (size_t e = 0; e < distinct; ++e) {
+      slots[e] = duckdb::string_t{entries[e].data(),
+                                  static_cast<uint32_t>(entries[e].size())};
+    }
+    std::uniform_int_distribution<uint32_t> pick{
+      0, static_cast<uint32_t>(distinct - 1)};
+    constexpr size_t kChunks = 100;
+    for (size_t c = 0; c < kChunks; ++c) {
+      auto& sel =
+        *sels.emplace_back(std::make_unique<duckdb::SelectionVector>(kChunk));
+      for (uint32_t i = 0; i < kChunk; ++i) {
+        sel.set_index(i, pick(rng));
+      }
+      chunks.emplace_back(values, sel, kChunk);
+    }
+  }
+};
+
+const TextDictionary& GetTextDictionary(size_t distinct) {
+  static std::map<size_t, TextDictionary> dicts;
+  return dicts.try_emplace(distinct, distinct).first->second;
+}
+
+void RunTextDictionary(benchmark::State& state, bool by_entry) {
+  const auto& input = GetTextDictionary(static_cast<size_t>(state.range(0)));
+  const auto size = static_cast<uint32_t>(input.entries.size());
+  auto mem = DefaultMemory();
+  auto analyzer = analysis::TextTokenizer::Make({});
+  duckdb::UnifiedVectorFormat values;
+  input.values.ToUnifiedFormat(values);
+  duckdb::UnifiedVectorFormat fmt;
+  for (auto _ : state) {
+    FieldsInverter inv{mem};
+    auto* field = inv.Emplace(1, kFeatures);
+    field->Configure(analyzer->Traits());
+    const auto layout = field->Layout();
+    bool ok = true;
+    const auto invert = [&](TokenBatch& batch, DocRuns runs) {
+      ok &= by_entry ? field->AppendEntries(batch, runs)
+                     : field->InvertBlock(batch, runs);
+    };
+    ::tests::FnTokenSink sink{layout, invert};
+    doc_id_t doc = doc_limits::min();
+    for (const auto& chunk : input.chunks) {
+      chunk.ToUnifiedFormat(fmt);
+      if (!by_entry) {
+        analyzer->Fill(fmt, kChunk, doc, sink.writer, {layout});
+        sink.writer.Finish();
+      } else {
+        if (!field->HasDictionary("bench", size)) {
+          field->BeginDictionary("bench", size);
+          analyzer->Fill(values, size, doc_limits::min(), sink.writer,
+                         {layout});
+          sink.writer.Finish();
+        }
+        ok &= field->InvertDictionaryRows(fmt, kChunk, doc);
+      }
+      doc += kChunk;
+    }
+    ScatterScratch scratch{mem.rm};
+    ScatteredField scattered{mem, scratch};
+    scattered.Reset(*field);
+    benchmark::DoNotOptimize(scattered.TermCount());
+    benchmark::DoNotOptimize(ok);
+  }
+  SetUvfCounters(state, input.chunks.size());
+}
+
+void BM_TextDictionaryRows(benchmark::State& s) { RunTextDictionary(s, false); }
+void BM_TextDictionaryEntries(benchmark::State& s) {
+  RunTextDictionary(s, true);
+}
+
+void RunKeywordDictionary(benchmark::State& state, bool by_entry) {
+  const auto& input = GetTextDictionary(static_cast<size_t>(state.range(0)));
+  const auto size = static_cast<uint32_t>(input.entries.size());
+  auto mem = DefaultMemory();
+  duckdb::UnifiedVectorFormat values;
+  input.values.ToUnifiedFormat(values);
+  duckdb::UnifiedVectorFormat fmt;
+  for (auto _ : state) {
+    FieldsInverter inv{mem};
+    auto* field = inv.Emplace(1, kTermsFeatures);
+    bool ok = true;
+    doc_id_t doc = doc_limits::min();
+    for (const auto& chunk : input.chunks) {
+      chunk.ToUnifiedFormat(fmt);
+      if (!by_entry) {
+        ok &= field->InvertKeywordBlock(fmt, kChunk, doc);
+      } else {
+        if (!field->HasDictionary("bench", size)) {
+          ok &= field->InvertKeywordDictionary("bench", values, size);
+        }
+        ok &= field->InvertDictionaryRows(fmt, kChunk, doc);
+      }
+      doc += kChunk;
+    }
+    ScatterScratch scratch{mem.rm};
+    ScatteredField scattered{mem, scratch};
+    scattered.Reset(*field);
+    benchmark::DoNotOptimize(scattered.TermCount());
+    benchmark::DoNotOptimize(ok);
+  }
+  SetUvfCounters(state, input.chunks.size());
+}
+
+void BM_KeywordDictionaryRows(benchmark::State& s) {
+  RunKeywordDictionary(s, false);
+}
+void BM_KeywordDictionaryEntries(benchmark::State& s) {
+  RunKeywordDictionary(s, true);
+}
+
 void BM_UvfBool(benchmark::State& state) {
   const size_t nchunks = kTokens / kChunk;
   std::vector<duckdb::Vector> chunks;
@@ -1950,6 +2084,26 @@ BENCHMARK(BM_TermsBlockHighCardWarm)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_UvfKeywordDense)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_UvfKeywordMasked)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_UvfKeywordDict)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_TextDictionaryRows)
+  ->Arg(64)
+  ->Arg(1024)
+  ->Arg(16384)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_TextDictionaryEntries)
+  ->Arg(64)
+  ->Arg(1024)
+  ->Arg(16384)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_KeywordDictionaryRows)
+  ->Arg(64)
+  ->Arg(1024)
+  ->Arg(16384)
+  ->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_KeywordDictionaryEntries)
+  ->Arg(64)
+  ->Arg(1024)
+  ->Arg(16384)
+  ->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_UvfBool)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_UvfNull)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_KeywordsStreamLowCard)->Unit(benchmark::kMillisecond);

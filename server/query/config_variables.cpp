@@ -44,7 +44,7 @@
 #include <string_view>
 
 #include "auth/role_closure.h"
-#include "catalog/ddl/catalog.h"
+#include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/commands/rbac.h"
 #include "pg/connection_context.h"
@@ -386,6 +386,147 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
 #endif
+    {
+      "sdb_ai_text_default_secret",
+      {
+        LogicalTypeId::VARCHAR,
+        "Name of the openai secret used by ai_generate, ai_classify, "
+        "ai_classify_labels, ai_extract, ai_filter, ai_translate, ai_redact, "
+        "ai_score, ai_rerank, ai_agg and ai_summarize_agg when the call does "
+        "not pass secret_name. Default: '' (no default).",
+        [] { return duckdb::Value{""}; },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_ai_embedding_default_secret",
+      {
+        LogicalTypeId::VARCHAR,
+        "Name of the openai secret used by ai_embed and ai_similarity when "
+        "the call does not pass secret_name. Default: '' (no default).",
+        [] { return duckdb::Value{""}; },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_ai_system_one_default_secret",
+      {
+        LogicalTypeId::VARCHAR,
+        "Name of the typesafe secret used by ai_system_one when the call does "
+        "not pass secret_name. Default: '' (no default).",
+        [] { return duckdb::Value{""}; },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_ai_throw_on_error",
+      {
+        LogicalTypeId::BOOLEAN,
+        "When true, a row whose AI function request fails fails the query; "
+        "when false, that row returns NULL. Authentication, not-found, "
+        "validation (422) and exhausted-quota (429 insufficient_quota) errors "
+        "always fail the query. Default: true.",
+        [] { return duckdb::Value::BOOLEAN(true); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_ai_throw_on_quota_exceeded",
+      {
+        LogicalTypeId::BOOLEAN,
+        "When true, exceeding sdb_ai_max_api_calls_per_query or "
+        "sdb_ai_max_output_tokens_per_query fails the query; when false, the "
+        "remaining rows return NULL. Default: true.",
+        [] { return duckdb::Value::BOOLEAN(true); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_ai_max_api_calls_per_query",
+      {
+        LogicalTypeId::UINTEGER,
+        "Maximum number of AI provider requests a single query may send. "
+        "0 = unlimited. Default: 0.",
+        [] { return duckdb::Value::UINTEGER(0); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_ai_max_output_tokens_per_query",
+      {
+        LogicalTypeId::UINTEGER,
+        "Maximum number of output tokens, as reported by the provider, a "
+        "single query may consume; checked before each request, so requests "
+        "already in flight may exceed it. 0 = unlimited. Default: 0.",
+        [] { return duckdb::Value::UINTEGER(0); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_ai_max_retries",
+      {
+        LogicalTypeId::UINTEGER,
+        "How many times an AI provider request is retried after a connection "
+        "error or HTTP 408, 429, 5xx or 529. Default: 3.",
+        [] { return duckdb::Value::UINTEGER(3); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_ai_retry_initial_delay_ms",
+      {
+        LogicalTypeId::UINTEGER,
+        "Delay before the first AI provider retry, in milliseconds; each "
+        "further retry doubles it, up to 60 seconds. A Retry-After response "
+        "header overrides it, up to 60 "
+        "seconds. Default: 500.",
+        [] { return duckdb::Value::UINTEGER(500); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_ai_request_timeout",
+      {
+        LogicalTypeId::UINTEGER,
+        "Timeout of a single AI provider request, in seconds. Default: 120.",
+        [] { return duckdb::Value::UINTEGER(120); },
+        RejectZero<"sdb_ai_request_timeout">,
+      },
+    },
+    {
+      "sdb_ai_max_concurrent_requests",
+      {
+        LogicalTypeId::UINTEGER,
+        "Maximum number of AI provider requests a query has in flight, across "
+        "all of its AI calls and threads. Requests run on DuckDB's async I/O "
+        "threads (async_threads) and on the threads that evaluate the calls. "
+        "Default: 16.",
+        [] { return duckdb::Value::UINTEGER(16); },
+        RejectZero<"sdb_ai_max_concurrent_requests">,
+      },
+    },
+    {
+      "sdb_ai_embedding_max_batch_size",
+      {
+        LogicalTypeId::UINTEGER,
+        "Maximum number of texts ai_embed and ai_similarity send in one "
+        "embeddings request. Default: 100.",
+        [] { return duckdb::Value::UINTEGER(100); },
+        RejectZero<"sdb_ai_embedding_max_batch_size">,
+      },
+    },
+    {
+      "sdb_ai_allow_insecure_endpoint",
+      {
+        LogicalTypeId::BOOLEAN,
+        "When false, AI functions refuse a secret whose base_url sends "
+        "requests over plain http:// to a host other than localhost, "
+        "127.0.0.0/8 or ::1, because the prompts and the API key would "
+        "travel unencrypted. Default: false.",
+        [] { return duckdb::Value::BOOLEAN(false); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
     // Logging knobs (level, type filters, storage, on/off) live in duckdb's
     // built-in settings: logging_level / enable_logging / enabled_log_types
     // / disabled_log_types / logging_storage / logging_mode. The previous
@@ -554,11 +695,13 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_scan_split",
       {
         LogicalTypeId::VARCHAR,
-        "When an inverted-index scan splits a segment into row-group units: "
-        "'tail' claims whole segments while more remain than workers, then "
-        "row groups; 'always' claims row groups from the first unit; 'never' "
-        "claims whole segments only; 'auto' (default) is 'always' under an "
-        "ORDER BY scan order and 'tail' otherwise.",
+        "How an inverted-index scan shares a segment between workers: 'tail' "
+        "gives each worker its own segment and lets an idle worker join the "
+        "segment with the most row groups left only once no segment is "
+        "unclaimed; 'always' puts every worker on the same segment until it "
+        "is claimed; 'never' scans each segment whole on one worker; 'auto' "
+        "(default) is 'always' under an ORDER BY scan order and 'tail' "
+        "otherwise.",
         [] { return duckdb::Value{"auto"}; },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           const auto mode = value.ToString();
@@ -578,12 +721,12 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_scan_order",
       {
         LogicalTypeId::VARCHAR,
-        "The order an inverted-index scan claims its units in: "
-        "'smallest_first' and 'largest_first' order segments by live "
-        "document count; 'order' is best-first by the ORDER BY column's "
-        "row-group statistics when the query has a scan order (and "
-        "'smallest_first' otherwise); 'auto' (default) is 'order' under a "
-        "scan order and 'smallest_first' otherwise.",
+        "The order an inverted-index scan claims its segments in: "
+        "'smallest_first' and 'largest_first' order them by live document "
+        "count; 'order' is best-first by the ORDER BY column's row-group "
+        "statistics when the query has a scan order (and 'largest_first' "
+        "otherwise); 'auto' (default) is 'order' under a scan order and "
+        "'largest_first' otherwise.",
         [] { return duckdb::Value{"auto"}; },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           const auto mode = value.ToString();
@@ -618,6 +761,19 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_compact_target_segments",
+      {
+        LogicalTypeId::UINTEGER,
+        "How many segments VACUUM (COMPACT_*) leaves in a search table. 0 or "
+        "1 (default) merges every segment into one; a larger N splits the "
+        "segments into N disjoint groups, merges each group into one segment "
+        "and stops there, so no single merge holds the whole table. A table "
+        "with N segments or fewer is left as it is. Default 1.",
+        [] { return duckdb::Value::UINTEGER(1); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
       kRowGroupSizeSetting,
       {
         LogicalTypeId::UINTEGER,
@@ -643,9 +799,10 @@ constexpr std::pair<std::string_view, VariableDescription>
       kRefreshIntervalSetting,
       {
         LogicalTypeId::UINTEGER,
-        "Background refresh interval (ms) for newly created inverted indexes. "
-        "Per-index WITH (refresh_interval = ...) overrides. 0 disables the "
-        "refresh task. Default: 1000.",
+        "Background refresh interval (ms) for newly created inverted indexes "
+        "and search tables. WITH (refresh_interval = ...) overrides it per "
+        "index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. "
+        "0 disables the refresh task. Default: 1000.",
         [] { return duckdb::Value::UINTEGER(1000); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
@@ -670,8 +827,10 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::UINTEGER,
         "Background compaction interval (ms) for newly created inverted "
-        "indexes. Per-index WITH (compaction_interval = ...) overrides. "
-        "0 disables the compaction task. Default: 1000.",
+        "indexes and search tables. WITH (compaction_interval = ...) "
+        "overrides it per index or table, ALTER INDEX / ALTER TABLE ... SET "
+        "changes it later. 0 disables background compaction; VACUUM "
+        "(COMPACT_*) still merges on demand. Default: 1000.",
         [] { return duckdb::Value::UINTEGER(1000); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
@@ -681,9 +840,9 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::UINTEGER,
         "Number of commit ticks between background unreferenced-file cleanup "
-        "passes for newly created inverted indexes. Per-index WITH "
-        "(cleanup_interval_step = ...) overrides. 0 disables cleanup. "
-        "Default: 1.",
+        "passes for newly created inverted indexes and search tables. WITH "
+        "(cleanup_interval_step = ...) overrides it per index or table. 0 "
+        "disables cleanup. Default: 1.",
         [] { return duckdb::Value::UINTEGER(1); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
@@ -711,7 +870,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "...) overrides. Default 268435456 (256MB).",
         [] {
           return duckdb::Value::UBIGINT(
-            catalog::InvertedIndexOptions{}.segment_memory_max);
+            catalog::InvertedIndexSettings{}.segment_memory_max);
         },
         RejectZero<"segment_memory_max">,
       },
@@ -742,12 +901,12 @@ constexpr std::pair<std::string_view, VariableDescription>
       kCompactionMaxSegmentsSetting,
       {
         LogicalTypeId::UINTEGER,
-        "Maximum inverted-index segments merged by one background compaction. "
-        "Per-index WITH (compaction_max_segments = ...) overrides. "
-        "Default 10.",
+        "Maximum segments of an inverted index or search table merged by one "
+        "background compaction. WITH (compaction_max_segments = ...) "
+        "overrides it per index or table. Default 10.",
         [] {
           return duckdb::Value::UINTEGER(
-            catalog::InvertedIndexOptions{}.compaction_max_segments);
+            catalog::InvertedIndexSettings{}.compaction_max_segments);
         },
         RejectZero<"compaction_max_segments">,
       },
@@ -756,12 +915,13 @@ constexpr std::pair<std::string_view, VariableDescription>
       kCompactionMaxSegmentsBytesSetting,
       {
         LogicalTypeId::UBIGINT,
-        "Byte budget of one background inverted-index compaction (the tier "
-        "target size). Per-index WITH (compaction_max_segments_bytes = ...) "
-        "overrides. Default 5368709120 (5GB).",
+        "Byte budget of one background compaction of an inverted index or "
+        "search table (the tier target size). WITH "
+        "(compaction_max_segments_bytes = ...) overrides it per index or "
+        "table. Default 5368709120 (5GB).",
         [] {
           return duckdb::Value::UBIGINT(
-            catalog::InvertedIndexOptions{}.compaction_max_segments_bytes);
+            catalog::InvertedIndexSettings{}.compaction_max_segments_bytes);
         },
         RejectZero<"compaction_max_segments_bytes">,
       },
@@ -770,13 +930,13 @@ constexpr std::pair<std::string_view, VariableDescription>
       kCompactionFloorSegmentBytesSetting,
       {
         LogicalTypeId::UBIGINT,
-        "Inverted-index segments below this size count as equal-sized for "
-        "compaction candidate selection. Per-index WITH "
-        "(compaction_floor_segment_bytes = ...) overrides. Default 2097152 "
-        "(2MB).",
+        "Segments of an inverted index or search table below this size count "
+        "as equal-sized for compaction candidate selection. WITH "
+        "(compaction_floor_segment_bytes = ...) overrides it per index or "
+        "table. Default 2097152 (2MB).",
         [] {
           return duckdb::Value::UBIGINT(
-            catalog::InvertedIndexOptions{}.compaction_floor_segment_bytes);
+            catalog::InvertedIndexSettings{}.compaction_floor_segment_bytes);
         },
         RejectZero<"compaction_floor_segment_bytes">,
       },
@@ -1019,6 +1179,17 @@ void RegisterConfigVariables(duckdb::DBConfig& config) {
   for (const auto& [name, desc] : kVariableDescription) {
     TryRegister(config, name, desc);
   }
+}
+
+duckdb::Value ValidateSetting(duckdb::ClientContext& context,
+                              std::string_view name,
+                              const duckdb::Value& value) {
+  duckdb::ExtensionOption option;
+  duckdb::DBConfig::GetConfig(context).TryGetExtensionOption(std::string{name},
+                                                             option);
+  auto result = value.CastAs(context, option.type);
+  option.set_function(context, duckdb::SetScope::AUTOMATIC, result);
+  return result;
 }
 
 }  // namespace connector

@@ -39,7 +39,7 @@ Because geometry and text share the index, a location filter and a name match co
 
 ## Bucket points into a heatmap grid
 
-A heatmap wants points rolled up into cells: snap every location onto a grid and count what lands in each square. There is no `geohash_grid` aggregation here and no `ST_X` / `ST_Y` accessor, so the grid is hand-rolled. Pull each point's coordinates out of its [`ST_AsText`](../../sql/functions/search/geo.md) string, truncate them to a fixed step and group on the result. That is a full scan rather than an index lookup, but the counts are exact and you pick the cell size.
+A heatmap wants points rolled up into cells: snap every location onto a grid and count what lands in each square. There is no `geohash_grid` aggregation here, so the grid is hand-rolled: read each point's coordinates with [`ST_X`](../../sql/functions/geometry.md#st_x-function) and `ST_Y`, truncate them to a fixed step and group on the result. That is a full scan rather than an index lookup, but the counts are exact and you pick the cell size.
 
 ### Count points per cell
 

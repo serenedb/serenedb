@@ -22,6 +22,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
+#include <stringzilla/utf8_wordbreaks/serial.h>
 
 #include <algorithm>
 #include <fstream>
@@ -213,7 +214,7 @@ TEST(words_unicode_test, segment_flags) {
     "1");
   ASSERT_EQ(1u, mixed.size());
   EXPECT_FALSE(mixed[0].ascii_only);
-  EXPECT_FALSE(mixed[0].has_alpha);
+  EXPECT_TRUE(mixed[0].has_alpha);
   EXPECT_TRUE(mixed[0].has_digit);
 
   const auto cafe = Scan("caf\xC3\xA9");
@@ -424,6 +425,77 @@ TEST(words_unicode_test, sz_dense_runs) {
     EXPECT_EQ((count + 1) / 2, Segments(flags).size()) << count;
     EXPECT_EQ(count / 2 + 1, Segments(flags + "a").size()) << count;
   }
+}
+
+std::vector<Span> SzSegments(std::string_view text) {
+  std::vector<Span> out;
+  sz_size_t starts[64];
+  sz_size_t lengths[64];
+  size_t offset = 0;
+  while (offset < text.size()) {
+    sz_size_t consumed = 0;
+    const size_t count =
+      sz_utf8_wordbreaks_serial(text.data() + offset, text.size() - offset,
+                                starts, lengths, 64, &consumed);
+    for (size_t k = 0; k < count; ++k) {
+      const auto begin = static_cast<uint32_t>(offset + starts[k]);
+      out.emplace_back(begin, begin + static_cast<uint32_t>(lengths[k]));
+    }
+    if (consumed == 0) {
+      break;
+    }
+    offset += consumed;
+  }
+  return out;
+}
+
+TEST(words_unicode_test, mixed_scripts_match_stringzilla) {
+  std::vector<std::string> pool = {
+    "a", "Z", "q", "0", "7", "_", " ",  " ",  "  ",   ",",
+    ".", ":", ";", "'", "-", "!", "\n", "\t", "\r\n", "\"",
+  };
+  for (const uint32_t cp :
+       {0xC0u,    0xE9u,    0xFFu,   0xD7u,   0xF7u,   0xB7u,   0xA0u,
+        0x101u,   0x17Fu,   0x1C4u,  0x250u,  0x2B0u,  0x2C6u,  0x2E5u,
+        0x301u,   0x345u,   0x370u,  0x37Eu,  0x387u,  0x3B1u,  0x3F6u,
+        0x400u,   0x436u,   0x44Fu,  0x482u,  0x483u,  0x4C0u,  0x4FFu,
+        0x531u,   0x55Fu,   0x5D0u,  0x5F4u,  0x5BFu,  0x627u,  0x661u,
+        0x6A9u,   0x6DDu,   0x200Du, 0x2019u, 0x30ABu, 0x4ECAu, 0xFF1Au,
+        0x1F355u, 0x1F1E6u, 0x1F3FDu}) {
+    pool.push_back(Cp(cp));
+  }
+  std::mt19937_64 rng{7};
+  size_t failures = 0;
+  for (size_t round = 0; round < 20000 && failures <= 20; ++round) {
+    std::string text;
+    const size_t pieces = rng() % 90;
+    for (size_t k = 0; k < pieces; ++k) {
+      text += pool[rng() % pool.size()];
+    }
+    const auto expected = SzSegments(text);
+    const auto actual = Segments(text);
+    if (actual != expected) {
+      ++failures;
+      EXPECT_EQ(expected, actual) << "round " << round << " text: " << text;
+      continue;
+    }
+    for (const auto& seg : Scan(text)) {
+      const std::string_view bytes{text.data() + seg.begin,
+                                   seg.end - seg.begin};
+      const bool ascii = std::ranges::all_of(
+        bytes, [](char c) { return static_cast<uint8_t>(c) < 0x80; });
+      const bool ascii_alpha = std::ranges::any_of(
+        bytes, [](char c) { return (c | 0x20) >= 'a' && (c | 0x20) <= 'z'; });
+      const bool digit =
+        std::ranges::any_of(bytes, [](char c) { return c >= '0' && c <= '9'; });
+      if (seg.ascii_only != ascii || (seg.has_alpha && !ascii_alpha && ascii) ||
+          (seg.has_digit && !digit)) {
+        ++failures;
+        EXPECT_TRUE(false) << "round " << round << " flags of " << bytes;
+      }
+    }
+  }
+  EXPECT_EQ(0u, failures);
 }
 
 TEST(utf8_case_tables_test, sorted_and_spot_values) {

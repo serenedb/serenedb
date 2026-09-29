@@ -105,7 +105,7 @@ bool IResearchSupportsPushdownExtract(const duckdb::FunctionData& bind_data_p,
   }
   const auto* info =
     bind.relation.ScannedIndex().FindColumnInfo(bind.columns.ids[bind_col]);
-  return info != nullptr && info->store_values;
+  return info && info->store_values;
 }
 
 duckdb::TableFilterPushdown IResearchSupportsPushdownFilter(
@@ -116,10 +116,10 @@ duckdb::TableFilterPushdown IResearchSupportsPushdownFilter(
     return duckdb::TableFilterPushdown::Reject;
   }
   const auto col_id = bind.columns.ids[col_idx];
-  if (col_id == catalog::kInvertedIndexScoreId) {
+  if (col_id == kInvertedIndexScoreId) {
     return HandleScoreFilter(bind, filter);
   }
-  if (col_id.id() > catalog::kMaxRealColumnIdValue) {
+  if (col_id > kMaxRealColumnIdValue) {
     return duckdb::TableFilterPushdown::Reject;
   }
   if (bind.relation.IsSearchTable()) {
@@ -156,20 +156,17 @@ bool IResearchPushdownExpression(duckdb::ClientContext&,
     return false;
   }
   const auto col_id = bind.columns.ids[col_idx];
-  if (col_id == catalog::kInvertedIndexScoreId) {
+  if (col_id == kInvertedIndexScoreId) {
     return true;
   }
-  if (col_id.id() > catalog::kMaxRealColumnIdValue) {
+  if (col_id > kMaxRealColumnIdValue) {
     return false;
   }
   if (bind.relation.IsSearchTable()) {
     return true;
   }
-  if (bind.relation.IsInvertedIndex()) {
-    const auto* info = bind.relation.ScannedIndex().FindColumnInfo(col_id);
-    return info != nullptr && info->IsStored();
-  }
-  return false;
+  const auto* info = bind.relation.ScannedIndex().FindColumnInfo(col_id);
+  return info && info->IsStored();
 }
 
 }  // namespace sdb::connector

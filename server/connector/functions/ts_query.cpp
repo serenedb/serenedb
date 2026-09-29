@@ -71,7 +71,7 @@ duckdb::LogicalType MakeModifierTSQueryType() {
 struct TSQueryCastData final : duckdb::BoundCastData {
   TSQueryParts parts;
 
-  duckdb::unique_ptr<duckdb::BoundCastData> Copy() const override {
+  duckdb::unique_ptr<duckdb::BoundCastData> Copy() const final {
     return duckdb::make_uniq<TSQueryCastData>(*this);
   }
 };
@@ -100,21 +100,6 @@ bool HasSlopModifier(const duckdb::LogicalType& type) {
 bool HasScoreModifier(const duckdb::LogicalType& type) {
   const auto* mod = TryGetTypeModifier(type);
   return mod && mod->type().id() == duckdb::LogicalTypeId::BLOB;
-}
-
-// DECIMAL/DOUBLE -> BIGINT rounds even under a strict cast, so
-// integrality is enforced by an exact round-trip: 2.0 passes, 1.5
-// errors instead of silently becoming 2.
-bool TryCastExactInt64(const duckdb::Value& v, duckdb::Value& out) {
-  if (v.IsNull() || !v.type().IsNumeric() ||
-      !v.DefaultTryCastAs(duckdb::LogicalType::BIGINT, out,
-                          /*error_message=*/nullptr, /*strict=*/true)) {
-    return false;
-  }
-  duckdb::Value back;
-  return out.DefaultTryCastAs(v.type(), back,
-                              /*error_message=*/nullptr, /*strict=*/false) &&
-         duckdb::Value::NotDistinctFrom(back, v);
 }
 
 TSQueryCastData ReadTargetModifiers(const duckdb::LogicalType& target) {
@@ -338,7 +323,7 @@ bool TSQueryBoostCast(duckdb::Vector& source, duckdb::Vector& result,
 }
 
 duckdb::BoundCastInfo BindTSQueryBoostCast(duckdb::BindCastInput&,
-                                           const duckdb::LogicalType& source,
+                                           const duckdb::LogicalType&,
                                            const duckdb::LogicalType& target) {
   return {TSQueryBoostCast,
           duckdb::make_uniq<TSQueryCastData>(ReadTargetModifiers(target))};

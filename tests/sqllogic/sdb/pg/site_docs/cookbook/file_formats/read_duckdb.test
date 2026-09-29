@@ -28,14 +28,7 @@ DETACH db1;
 
 # DOCS_TEST_BODY
 
-# read_duckdb attaches the file READ_ONLY under an internal alias. The
-# READ_WRITE attachment the setup just detached stays alive while any in-flight
-# statement on another connection that listed all catalogs still pins it, and
-# the engine correctly refuses the mode change until it is gone -- so on a
-# shared server the read is "eventually", not "instantly", possible. Retry
-# until the concurrent readers drain (same as the attach/index.test mode-change
-# attaches).
-query ok retry 40 backoff 250ms
+query ok
 FROM read_duckdb('${__TEST_DIR__}/db1.duckdb', table_name = 'region');
 ----
 r_regionkey	r_name
@@ -75,8 +68,7 @@ CREATE TABLE db2.region AS SELECT * FROM (VALUES
 statement ok
 DETACH db2;
 
-# reader-attach of a just-detached file: see the db1 read above
-query ok retry 40 backoff 250ms
+query ok
 SELECT r_regionkey, r_name
 FROM read_duckdb('${__TEST_DIR__}/db2.duckdb', table_name = 'region');
 ----
@@ -130,8 +122,7 @@ DETACH db3_2;
 
 # DOCS_TEST_BODY
 
-# reader-attach of a just-detached file: see the db1 read above
-query ? rowsort retry 40 backoff 250ms
+query ? rowsort
 SELECT x FROM read_duckdb('${__TEST_DIR__}/db3_*.duckdb', table_name = 'numbers');
 ----
 x
@@ -160,8 +151,7 @@ DETACH db4;
 
 # DOCS_TEST_BODY
 
-# reader-attach of a just-detached file: see the db1 read above
-query ok retry 40 backoff 250ms
+query ok
 FROM read_duckdb('${__TEST_DIR__}/db4.duckdb');
 ----
 x
@@ -189,8 +179,7 @@ DETACH db5;
 
 # DOCS_TEST_BODY
 
-# reader-attach of a just-detached file: see the db1 read above
-query ok retry 40 backoff 250ms
+query ok
 SELECT #1 AS "my-2" FROM '${__TEST_DIR__}/db5.duckdb';
 ----
 my-2

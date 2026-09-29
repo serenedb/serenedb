@@ -25,6 +25,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <duckdb/common/typedefs.hpp>
 #include <filesystem>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
@@ -32,8 +33,6 @@
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include "catalog/identifiers/object_id.h"
 
 namespace duckdb {
 
@@ -58,9 +57,7 @@ class SearchDbWal {
   };
 
   // One iresearch segment flushed and fsynced before the commit record was
-  // written, so its rows are never written twice. The same pair iresearch's own
-  // index meta keeps per segment (index_meta_writer.hpp): the meta file holds
-  // every other field behind its own checksum. Ordering against the deletes
+  // written, so its rows are never written twice. Ordering against the deletes
   // around it comes from the op manifest, so no tick is recorded.
   struct SegmentRef {
     std::string meta_file;
@@ -81,32 +78,32 @@ class SearchDbWal {
 
   // One transaction's contribution for a single search shard
   struct ShardSection {
-    ObjectId table_id;
+    duckdb::idx_t table_id;
     std::span<const Op> ops;
   };
 
   using ReplayCallback =
-    absl::AnyInvocable<void(uint64_t tick, ObjectId table_id, uint64_t pk_base,
-                            duckdb::DataChunk& chunk) const>;
+    absl::AnyInvocable<void(uint64_t tick, duckdb::idx_t table_id,
+                            uint64_t pk_base, duckdb::DataChunk& chunk) const>;
 
   // Invoked once per DELETE op, in manifest order, with the encoded PK byte
   // strings to remove (views into the record buffer, valid for the call only).
   using DeleteReplayCallback =
-    absl::AnyInvocable<void(uint64_t tick, ObjectId table_id,
+    absl::AnyInvocable<void(uint64_t tick, duckdb::idx_t table_id,
                             std::span<const std::string_view> pks) const>;
 
   // Invoked once per recorded segment, in manifest order. `tick` is the
   // record's own, for the caller's high-water mark -- the tick to adopt at
   // lives in the replay transaction's space (see RunSearchTableRecovery).
   using AdoptReplayCallback = absl::AnyInvocable<void(
-    uint64_t tick, ObjectId table_id, const SegmentRef& ref) const>;
+    uint64_t tick, duckdb::idx_t table_id, const SegmentRef& ref) const>;
 
   using TruncateReplayCallback =
-    absl::AnyInvocable<void(uint64_t tick, ObjectId table_id) const>;
+    absl::AnyInvocable<void(uint64_t tick, duckdb::idx_t table_id) const>;
 
-  using ShardExistsFn = absl::AnyInvocable<bool(ObjectId table_id) const>;
+  using ShardExistsFn = absl::AnyInvocable<bool(duckdb::idx_t table_id) const>;
   using ShardCommittedFn =
-    absl::AnyInvocable<uint64_t(ObjectId table_id) const>;
+    absl::AnyInvocable<uint64_t(duckdb::idx_t table_id) const>;
 
   // Default central-segment seal threshold (16MB as common standart like
   // postgres or duckdb)
@@ -123,9 +120,9 @@ class SearchDbWal {
     return _tick.load(std::memory_order_relaxed);
   }
 
-  void RegisterShard(ObjectId table_id, uint64_t committed_tick);
-  void OnShardCommit(ObjectId table_id, uint64_t committed_tick);
-  void DeregisterShard(ObjectId table_id);
+  void RegisterShard(duckdb::idx_t table_id, uint64_t committed_tick);
+  void OnShardCommit(duckdb::idx_t table_id, uint64_t committed_tick);
+  void DeregisterShard(duckdb::idx_t table_id);
 
   // Reserves `tick_span` consecutive ticks under the append lock and writes one
   // record at the top of that band; returns the record tick (== base +

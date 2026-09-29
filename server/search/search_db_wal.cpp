@@ -331,7 +331,7 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
   // Reused inline-CDC scratch across every INLINE op (Rewind keeps the buffer).
   duckdb::MemoryStream tmp;
   for (const auto& s : sections) {
-    payload.Write<uint64_t>(s.table_id.id());
+    payload.Write<uint64_t>(s.table_id);
     SDB_ASSERT(!s.ops.empty(), "shard section with no ops");
     payload.Write<uint32_t>(static_cast<uint32_t>(s.ops.size()));
     for (const auto& op : s.ops) {
@@ -386,10 +386,11 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
   return tick;
 }
 
-void SearchDbWal::RegisterShard(ObjectId table_id, uint64_t committed_tick) {
+void SearchDbWal::RegisterShard(duckdb::idx_t table_id,
+                                uint64_t committed_tick) {
   {
     absl::MutexLock lock(&_sub_mu);
-    auto& cur = _committed[table_id.id()];
+    auto& cur = _committed[table_id];
     cur = std::max(cur, committed_tick);
   }
   // Continue the tick line past every shard's durable tick: a shard's committed
@@ -400,10 +401,11 @@ void SearchDbWal::RegisterShard(ObjectId table_id, uint64_t committed_tick) {
   }
 }
 
-void SearchDbWal::OnShardCommit(ObjectId table_id, uint64_t committed_tick) {
+void SearchDbWal::OnShardCommit(duckdb::idx_t table_id,
+                                uint64_t committed_tick) {
   {
     absl::MutexLock lock(&_sub_mu);
-    auto& cur = _committed[table_id.id()];
+    auto& cur = _committed[table_id];
     cur = std::max(cur, committed_tick);
   }
   {
@@ -415,10 +417,10 @@ void SearchDbWal::OnShardCommit(ObjectId table_id, uint64_t committed_tick) {
   RunGc();
 }
 
-void SearchDbWal::DeregisterShard(ObjectId table_id) {
+void SearchDbWal::DeregisterShard(duckdb::idx_t table_id) {
   {
     absl::MutexLock lock(&_sub_mu);
-    _committed.erase(table_id.id());
+    _committed.erase(table_id);
   }
   RunGc();
 }
@@ -492,7 +494,7 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
       const uint64_t tick = c.Read<uint64_t>();
       max_tick = std::max(max_tick, tick);
       VisitSectionsOps(c, scratch, [&](uint64_t table_id, ParsedOp& op) {
-        const ObjectId tid{table_id};
+        const duckdb::idx_t tid{table_id};
         const bool live = exists_of(tid) && tick > committed_of(tid);
         switch (op.kind) {
           case kKindInline: {

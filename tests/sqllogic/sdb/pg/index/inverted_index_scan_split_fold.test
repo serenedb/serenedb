@@ -1,0 +1,233 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY sf_words AS split_text_csv(' ')
+  WITH (frequency, position)
+
+
+statement ok
+CREATE TABLE sf (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+      row_group_size = 4096)
+
+
+statement ok
+CREATE INDEX sf_idx ON sf USING inverted (body sf_words)
+
+
+statement ok
+INSERT INTO sf
+SELECT i, 'fox' || (i % 7) || ' dog' || (i % 5)
+FROM generate_series(1, 61440) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sf
+
+
+statement ok
+INSERT INTO sf
+SELECT i, 'fox' || (i % 7) || ' dog' || (i % 5)
+FROM generate_series(61441, 65536) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sf
+
+
+statement ok
+INSERT INTO sf
+SELECT i, 'fox' || (i % 7) || ' dog' || (i % 5)
+FROM generate_series(65537, 69632) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sf
+
+
+statement ok
+INSERT INTO sf
+SELECT i, 'fox' || (i % 7) || ' dog' || (i % 5)
+FROM generate_series(69633, 73728) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sf
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+SET sdb_scan_split = 'never'
+
+
+query
+SELECT count(*) FROM sf WHERE body @@ ts_any(['fox1', 'fox2', 'fox3']);
+----
+count
+31599
+
+
+query
+SELECT count(*) FROM sf WHERE body @@ ts_starts_with('dog');
+----
+count
+73728
+
+
+query
+SELECT count(*) FROM sf
+WHERE body @@ ts_any(['fox1', 'fox2', 'fox3']) AND NOT body @@ 'dog0';
+----
+count
+25279
+
+
+query
+SELECT sum(id) FROM sf
+WHERE body @@ ts_any(['fox1', 'fox2', 'fox3', 'dog4']);
+----
+sum
+1475481600
+
+
+query
+SELECT count(*) FROM sf WHERE body @@ ts_any(['fox6', 'dog1']);
+----
+count
+23171
+
+
+statement ok
+SET threads = 2
+
+
+statement ok
+SET sdb_scan_split = 'tail'
+
+
+query
+SELECT count(*) FROM sf WHERE body @@ ts_any(['fox1', 'fox2', 'fox3']);
+----
+count
+31599
+
+
+query
+SELECT count(*) FROM sf WHERE body @@ ts_starts_with('dog');
+----
+count
+73728
+
+
+query
+SELECT count(*) FROM sf
+WHERE body @@ ts_any(['fox1', 'fox2', 'fox3']) AND NOT body @@ 'dog0';
+----
+count
+25279
+
+
+query
+SELECT sum(id) FROM sf
+WHERE body @@ ts_any(['fox1', 'fox2', 'fox3', 'dog4']);
+----
+sum
+1475481600
+
+
+query
+SELECT count(*) FROM sf WHERE body @@ ts_any(['fox6', 'dog1']);
+----
+count
+23171
+
+
+statement ok
+SET threads = 8
+
+
+query
+SELECT count(*) FROM sf WHERE body @@ ts_any(['fox1', 'fox2', 'fox3']);
+----
+count
+31599
+
+
+query
+SELECT count(*) FROM sf WHERE body @@ ts_starts_with('dog');
+----
+count
+73728
+
+
+query
+SELECT count(*) FROM sf
+WHERE body @@ ts_any(['fox1', 'fox2', 'fox3']) AND NOT body @@ 'dog0';
+----
+count
+25279
+
+
+query
+SELECT sum(id) FROM sf
+WHERE body @@ ts_any(['fox1', 'fox2', 'fox3', 'dog4']);
+----
+sum
+1475481600
+
+
+query
+SELECT count(*) FROM sf WHERE body @@ ts_any(['fox6', 'dog1']);
+----
+count
+23171
+
+
+statement ok
+SET sdb_scan_split = 'always'
+
+
+query
+SELECT count(*) FROM sf WHERE body @@ ts_any(['fox1', 'fox2', 'fox3']);
+----
+count
+31599
+
+
+query
+SELECT count(*) FROM sf WHERE body @@ ts_starts_with('dog');
+----
+count
+73728
+
+
+query
+SELECT count(*) FROM sf
+WHERE body @@ ts_any(['fox1', 'fox2', 'fox3']) AND NOT body @@ 'dog0';
+----
+count
+25279
+
+
+query
+SELECT sum(id) FROM sf
+WHERE body @@ ts_any(['fox1', 'fox2', 'fox3', 'dog4']);
+----
+sum
+1475481600
+
+
+query
+SELECT count(*) FROM sf WHERE body @@ ts_any(['fox6', 'dog1']);
+----
+count
+23171
+
+
+statement ok
+RESET sdb_scan_split
+
+
+statement ok
+RESET threads

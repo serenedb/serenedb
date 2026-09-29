@@ -20,6 +20,7 @@
 
 #include "pg/system_catalog.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <boost/pfr.hpp>
@@ -36,7 +37,6 @@
 #include <iresearch/utils/static_strings.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 
-#include "catalog/identifiers/object_id.h"
 #include "pg/information_schema/sql_features.h"
 #include "pg/information_schema/sql_implementation_info.h"
 #include "pg/information_schema/sql_parts.h"
@@ -239,17 +239,30 @@ irs::containers::NodeHashMap<std::string, StaticFunction> gInfoSchemaFunctions;
 irs::containers::NodeHashMap<std::string, StaticView> gPgCatalogViews;
 irs::containers::NodeHashMap<std::string, StaticView> gInfoSchemaViews;
 
+bool IsInformationSchema(std::string_view schema) {
+  SDB_ASSERT(schema == irs::StaticStrings::kPgCatalogSchema ||
+             schema == irs::StaticStrings::kInformationSchema);
+  return schema == irs::StaticStrings::kInformationSchema;
+}
+
+const PgSystemSchema& TablesOf(std::string_view schema) {
+  return IsInformationSchema(schema) ? kInformationSchema : kPgCatalog;
+}
+
+const auto& ViewsOf(std::string_view schema) {
+  return IsInformationSchema(schema) ? gInfoSchemaViews : gPgCatalogViews;
+}
+
+const auto& FunctionsOf(std::string_view schema) {
+  return IsInformationSchema(schema) ? gInfoSchemaFunctions
+                                     : gPgCatalogFunctions;
+}
+
 }  // namespace
 
 const VirtualTable* GetSystemTable(std::string_view schema,
                                    std::string_view name) {
-  if (schema == irs::StaticStrings::kPgCatalogSchema) {
-    return GetTableFromSchema(name, kPgCatalog);
-  } else if (schema == irs::StaticStrings::kInformationSchema) {
-    return GetTableFromSchema(name, kInformationSchema);
-  } else {
-    SDB_UNREACHABLE();
-  }
+  return GetTableFromSchema(name, TablesOf(schema));
 }
 const VirtualTable* GetTable(std::string_view name) {
   if (name.starts_with("pg_") || name.starts_with("sdb_")) {
@@ -262,89 +275,86 @@ void VisitSystemTables(
   absl::FunctionRef<void(const VirtualTable&, Oid)> visitor) {
   for (const auto* table : kPgCatalog) {
     SDB_ASSERT(table);
-    visitor(*table, id::kPgCatalogSchema.id());
+    visitor(*table, kPgCatalogSchema);
   }
   for (const auto* table : kInformationSchema) {
     SDB_ASSERT(table);
-    visitor(*table, id::kPgInformationSchema.id());
+    visitor(*table, kPgInformationSchema);
   }
 }
 
 void VisitSystemViews(absl::FunctionRef<void(const StaticView&, Oid)> visitor) {
-  for (const auto& [name, view] : gPgCatalogViews) {
-    SDB_ASSERT(view.first);
-    visitor(view, id::kPgCatalogSchema.id());
-  }
-  for (const auto& [name, view] : gInfoSchemaViews) {
-    SDB_ASSERT(view.first);
-    visitor(view, id::kPgInformationSchema.id());
-  }
-}
-
-void VisitPgCatalogTables(
-  absl::FunctionRef<void(const VirtualTable&)> visitor) {
-  for (const auto* table : kPgCatalog) {
-    visitor(*table);
-  }
-}
-
-void VisitPgCatalogViews(absl::FunctionRef<void(const StaticView&)> visitor) {
   for (const auto& [_, view] : gPgCatalogViews) {
-    visitor(view);
+    SDB_ASSERT(view.info);
+    visitor(view, kPgCatalogSchema);
+  }
+  for (const auto& [_, view] : gInfoSchemaViews) {
+    SDB_ASSERT(view.info);
+    visitor(view, kPgInformationSchema);
   }
 }
 
-void VisitPgCatalogFunctions(
-  absl::FunctionRef<void(const StaticFunction&)> visitor) {
-  for (const auto& [_, f] : gPgCatalogFunctions) {
-    visitor(f);
-  }
-}
-
-void VisitInfoSchemaTables(
-  absl::FunctionRef<void(const VirtualTable&)> visitor) {
-  for (const auto* table : kInformationSchema) {
+void VisitSystemTables(std::string_view schema,
+                       absl::FunctionRef<void(const VirtualTable&)> visitor) {
+  for (const auto* table : TablesOf(schema)) {
     visitor(*table);
   }
 }
 
-void VisitInfoSchemaViews(absl::FunctionRef<void(const StaticView&)> visitor) {
-  for (const auto& [_, view] : gInfoSchemaViews) {
+void VisitSystemViews(std::string_view schema,
+                      absl::FunctionRef<void(const StaticView&)> visitor) {
+  for (const auto& [_, view] : ViewsOf(schema)) {
     visitor(view);
   }
 }
 
-void VisitInfoSchemaFunctions(
+void VisitSystemFunctions(
+  std::string_view schema,
   absl::FunctionRef<void(const StaticFunction&)> visitor) {
-  for (const auto& [_, f] : gInfoSchemaFunctions) {
-    visitor(f);
+  for (const auto& [_, function] : FunctionsOf(schema)) {
+    visitor(function);
   }
 }
 
-StaticFunction GetInfoSchemaFunction(std::string_view name) {
-  auto it = gInfoSchemaFunctions.find(name);
-  return it != gInfoSchemaFunctions.end() ? it->second : StaticFunction{};
+StaticView GetSystemView(std::string_view schema, std::string_view name) {
+  const auto& views = ViewsOf(schema);
+  const auto it = views.find(name);
+  return it == views.end() ? StaticView{} : it->second;
 }
 
-StaticFunction GetPgCatalogFunction(std::string_view name) {
-  auto it = gPgCatalogFunctions.find(name);
-  return it != gPgCatalogFunctions.end() ? it->second : StaticFunction{};
+StaticFunction GetSystemFunction(std::string_view schema,
+                                 std::string_view name) {
+  const auto& functions = FunctionsOf(schema);
+  const auto it = functions.find(name);
+  return it == functions.end() ? StaticFunction{} : it->second;
 }
 
-StaticView GetInfoSchemaView(std::string_view name) {
-  auto it = gInfoSchemaViews.find(name);
-  return it == gInfoSchemaViews.end() ? StaticView{} : it->second;
-}
-
-StaticView GetView(std::string_view name) {
-  auto it = gPgCatalogViews.find(name);
-  return it == gPgCatalogViews.end() ? StaticView{} : it->second;
+static duckdb::Permissions ViewPermissions(std::string_view name) {
+  static constexpr std::array kSuperuserOnly = {
+    std::string_view{"pg_shadow"},
+    std::string_view{"pg_aios"},
+    std::string_view{"pg_backend_memory_contexts"},
+    std::string_view{"pg_config"},
+    std::string_view{"pg_file_settings"},
+    std::string_view{"pg_ident_file_mappings"},
+    std::string_view{"pg_replication_origin_status"},
+    std::string_view{"pg_shmem_allocations"},
+    std::string_view{"pg_shmem_allocations_numa"},
+    std::string_view{"pg_statistic"},
+    std::string_view{"pg_statistic_ext_data"},
+    std::string_view{"pg_subscription"},
+    std::string_view{"pg_user_mapping"},
+  };
+  duckdb::Permissions permissions{.owner = kRootUser};
+  if (!absl::c_linear_search(kSuperuserOnly, name)) {
+    permissions.acl.assign(kSystemTableAcl.begin(), kSystemTableAcl.end());
+  }
+  return permissions;
 }
 
 void InitSystemViews(duckdb::Parser& parser) {
-  uint64_t next_id = id::kFirstSystemView.id();
+  uint64_t next_oid = kFirstSystemView;
   for (const auto& view : kExternalViews) {
-    const ObjectId id{next_id++};
     auto info = duckdb::make_uniq<duckdb::CreateViewInfo>();
     info->SetSchema(duckdb::Identifier{view.schema});
     info->SetViewName(duckdb::Identifier{view.name});
@@ -361,18 +371,13 @@ void InitSystemViews(duckdb::Parser& parser) {
       duckdb::unique_ptr_cast<duckdb::SQLStatement, duckdb::SelectStatement>(
         std::move(parser.statements[0]));
 
-    catalog::Acl acl;
-    if (!view.superuser_only) {
-      acl.push_back(catalog::kSystemPublicSelect);
-    }
     const bool info_schema =
       view.schema == irs::StaticStrings::kInformationSchema;
-    catalog::SetIdentity(
-      *info, id, info_schema ? id::kPgInformationSchema : id::kPgCatalogSchema);
     auto& map = info_schema ? gInfoSchemaViews : gPgCatalogViews;
-    map[view.name] =
-      StaticView{std::shared_ptr<const duckdb::CreateViewInfo>{info.release()},
-                 catalog::Permissions{id::kRootUser, std::move(acl), {}}};
+    map[view.name] = StaticView{
+      .info = std::shared_ptr<const duckdb::CreateViewInfo>{info.release()},
+      .permissions = ViewPermissions(view.name),
+      .oid = next_oid++};
   }
 }
 
@@ -438,16 +443,18 @@ void InitSystemFunctions(duckdb::Parser& parser) {
       existing.type = info->type;
     }
   }
-  const auto publish = [](auto& built, ObjectId schema_id, auto& out) {
+  const auto publish = [](auto& built, std::string_view schema, auto& out) {
     for (auto& [name, info] : built) {
-      catalog::SetIdentity(*info, ObjectId{}, schema_id);
+      info->SetSchema(duckdb::Identifier{schema});
       out[name] = StaticFunction{
         std::shared_ptr<const duckdb::CreateMacroInfo>{info.release()},
-        catalog::Permissions{}};
+        duckdb::Permissions{}};
     }
   };
-  publish(pg_catalog, id::kPgCatalogSchema, gPgCatalogFunctions);
-  publish(info_schema_map, id::kPgInformationSchema, gInfoSchemaFunctions);
+  publish(pg_catalog, irs::StaticStrings::kPgCatalogSchema,
+          gPgCatalogFunctions);
+  publish(info_schema_map, irs::StaticStrings::kInformationSchema,
+          gInfoSchemaFunctions);
 }
 
 }  // namespace sdb::pg

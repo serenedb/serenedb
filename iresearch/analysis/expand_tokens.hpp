@@ -32,6 +32,8 @@ class ChainPos {
     _dense = dense;
     _last = 0;
     _out = 0;
+    _pending_step = 0;
+    _pending_gap = 0;
   }
 
   IRS_FORCE_INLINE uint32_t Observe(const TokenBatch& batch,
@@ -45,13 +47,27 @@ class ChainPos {
     return inc;
   }
 
+  IRS_FORCE_INLINE void Skip(uint32_t inc) noexcept {
+    const uint32_t step = inc != 0;
+    _pending_step |= step;
+    _pending_gap += inc - step;
+  }
+
+  IRS_FORCE_INLINE uint32_t Effective(uint32_t inc) const noexcept {
+    return _pending_gap + std::max(inc, _pending_step);
+  }
+
   IRS_FORCE_INLINE uint32_t Commit(uint32_t inc) noexcept {
+    _pending_step = 0;
+    _pending_gap = 0;
     return _out += inc;
   }
 
  private:
   uint32_t _last = 0;
   uint32_t _out = 0;
+  uint32_t _pending_step = 0;
+  uint32_t _pending_gap = 0;
   bool _dense = true;
 };
 
@@ -105,27 +121,37 @@ struct TypedTokenExpander : TokenExpander {
                     TokenSink& out, ExpandCtx ctx) final {
     auto& impl = static_cast<Impl&>(*this);
     const uint64_t* const valid = ctx.valid;
-    ChainPos& pos = *ctx.pos;
-    DispatchFill(
-      impl, ctx.layout, ctx.traits,
-      [&](auto layout_tag, auto... tags) IRS_FORCE_INLINE {
-        constexpr auto kLayout = layout_tag();
-        for (uint32_t i = first; i < end; ++i) {
-          uint32_t inc = 1;
-          if constexpr (kLayout != TokenLayout::Terms) {
-            inc = pos.Observe(batch, i);
-          }
-          if (valid && !IsValid(valid, i)) {
-            continue;
-          }
-          Offs parent_offs{};
-          if constexpr (kLayout == TokenLayout::TermsPosOffs) {
-            parent_offs = {batch.offs_start[i], batch.offs_end[i]};
-          }
-          ExpandSink sink{&out, ctx.source, &pos, ChildPos{inc}, parent_offs};
-          impl.template DoFill<kLayout, tags()...>(batch.terms[i], sink);
-        }
-      });
+    ChainPos pos = *ctx.pos;
+    DispatchFill(impl, ctx.layout, ctx.traits,
+                 [&](auto layout_tag, auto... tags) IRS_FORCE_INLINE {
+                   constexpr auto kLayout = layout_tag();
+                   for (uint32_t i = first; i < end; ++i) {
+                     uint32_t inc = 1;
+                     if constexpr (kLayout != TokenLayout::Terms) {
+                       inc = pos.Observe(batch, i);
+                     }
+                     if (valid && !IsValid(valid, i)) {
+                       if constexpr (kLayout != TokenLayout::Terms) {
+                         pos.Skip(inc);
+                       }
+                       continue;
+                     }
+                     Offs parent_offs{};
+                     if constexpr (kLayout == TokenLayout::TermsPosOffs) {
+                       parent_offs = {batch.offs_start[i], batch.offs_end[i]};
+                     }
+                     ExpandSink sink{&out, ctx.source, &pos,
+                                     ChildPos{pos.Effective(inc)}, parent_offs};
+                     impl.template DoFill<kLayout, tags()...>(batch.terms[i],
+                                                              sink);
+                     if constexpr (kLayout != TokenLayout::Terms) {
+                       if (sink._cp._first) {
+                         pos.Skip(inc);
+                       }
+                     }
+                   }
+                 });
+    *ctx.pos = pos;
   }
 
  private:

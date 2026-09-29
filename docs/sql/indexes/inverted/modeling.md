@@ -64,7 +64,7 @@ A `TEXT[]` / `VARCHAR[]` column is indexed element-by-element: a row matches if 
 The index only stores what you ask it to — keep it lean:
 
 - **Feature flags** (`frequency`, `position`, `offset`, `norm`) each enlarge the index. Enable only what your queries need — see [Text Analysis](./text-analysis.md#token-positions-and-feature-flags).
-- **`INCLUDE` codecs**: each `INCLUDE`d column can set a `compression` codec (`uncompressed`, `bitpacking`, `alp`, `rle`, `fsst`).
+- **`INCLUDE` codecs**: each `INCLUDE`d column can set a `compression` codec (`auto`, the default, or `uncompressed`, `rle`, `bitpacking`, `zstd`, `alp`, `alprd`, `roaring` or `dict_fsst`).
 - **Vector columns**: `nlist` / `nlist_factor` trade build time against query precision, and `quant` trades index size against recall (recoverable with `sdb_rerank_factor`) — see [Vector Search](./vector-search.md).
 - **Partial indexes**: a `WHERE <predicate>` on `CREATE INDEX` keeps only matching rows in the index — see [Partial indexes](../../statements/create_index/inverted.md#partial-indexes).
 - Prefer `INCLUDE` over post-hoc materialization for columns you routinely return.

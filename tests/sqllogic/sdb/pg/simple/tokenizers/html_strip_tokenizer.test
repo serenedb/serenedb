@@ -1,0 +1,184 @@
+# ERROR CASES
+
+statement error unknown option "case"
+CREATE TEXT SEARCH DICTIONARY html_err1 AS
+    strip_html(case := 'lower')
+
+
+# HTML STRIP TOKENIZER
+
+# --- tags split the text into runs, each run trimmed ---
+
+query
+SELECT strip_html('<p>Hello <b>World</b></p>') AS t;
+----
+t
+{Hello,World}
+
+
+query
+SELECT strip_html('<html><head><style>p { color: red; }</style><script>var x = "<b>";</script></head><body><!-- note --><p>Text &amp; more</p><![CDATA[raw <data>]]></body></html>') AS t;
+----
+t
+{Text,&,more,"raw <data>"}
+
+
+query
+SELECT strip_html('caf&eacute; &#8212; &lt;b&gt; &nbsp;x&#39;s&nbsp; &bogus; <![CDATA[&amp;]]>') AS t;
+----
+t
+{café,—,<b>,x's,&bogus;,&amp;}
+
+
+query
+SELECT strip_html('<a title="1 > 2" href=''/x''>link</a>') AS t;
+----
+t
+{link}
+
+
+query
+SELECT strip_html('Hel<b>lo</b> <i>wor</i>ld<br>next', join_inline_tags := true) AS t;
+----
+t
+{Hello,world,next}
+
+
+query
+SELECT strip_html('Hel<b>lo</b> <i>wor</i>ld<br>next') AS t;
+----
+t
+{Hel,lo,wor,ld,next}
+
+
+# --- a closing tag may carry whitespace, and a namespaced script is a plain tag ---
+
+query
+SELECT strip_html('<SCRIPT type="text/javascript">if (a < b) {}</script >after<script:x>kept</script:x>') AS t;
+----
+t
+{after,kept}
+
+
+# --- a '<' that cannot open markup is text ---
+
+query
+SELECT strip_html('a < b and c > d') AS t;
+----
+t
+{"a < b and c > d"}
+
+
+# --- an unterminated tag runs to the end of the value ---
+
+query
+SELECT strip_html('before <unterminated') AS t;
+----
+t
+{before}
+
+
+query
+SELECT strip_html('<!---->between<!-->after') AS t;
+----
+t
+{between,after}
+
+
+query
+SELECT strip_html('') AS t;
+----
+t
+{}
+
+
+# --- as the first stage of a pipeline, offsets point into the original value ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY html_words AS
+    strip_html() | split_text(case := 'lower')
+    WITH (frequency, position, offset)
+
+
+query
+SELECT ts_lexize('html_words', '<p>Hello <b>World</b>!</p>');
+----
+ts_lexize
+{hello,world}
+
+
+query
+SELECT ts_offsets('html_words', '<p>Hello <b>World</b></p>', 'world'::TSQUERY) AS offsets;
+----
+offsets
+{12,17}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY html_joined AS
+    strip_html(join_inline_tags := true) | split_text(case := 'lower')
+    WITH (frequency, position, offset)
+
+
+query
+SELECT ts_lexize('html_joined', '<p>Hel<b>lo</b> caf&eacute; &amp; cr&egrave;me</p>');
+----
+ts_lexize
+{hello,café,crème}
+
+
+query
+SELECT ts_offsets('html_joined', '<p>Hel<b>lo</b> caf&eacute;</p>', 'hello'::TSQUERY) AS offsets;
+----
+offsets
+{3,11}
+
+
+query
+SELECT ts_offsets('html_joined', '<p>Hel<b>lo</b> caf&eacute;</p>', 'café'::TSQUERY) AS offsets;
+----
+offsets
+{16,27}
+
+
+# INVERTED INDEX
+
+statement ok
+CREATE TABLE pages(id INT, body TEXT);
+
+
+statement ok
+INSERT INTO pages VALUES
+    (1, '<p>Hello <b>World</b></p>'),
+    (2, '<script>World()</script><p>Other</p>'),
+    (3, '<div class="world">plain</div>');
+
+
+statement ok
+CREATE INDEX pages_idx ON pages USING inverted(id, body html_words);
+
+
+query
+SELECT id FROM pages_idx WHERE body @@ 'world' ORDER BY id;
+----
+id
+1
+
+
+query
+SELECT id FROM pages_idx WHERE body @@ 'other' ORDER BY id;
+----
+id
+2
+
+
+statement ok
+DROP TABLE pages;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY html_joined;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY html_words;

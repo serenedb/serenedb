@@ -64,12 +64,11 @@ SELECT ts_lexize('syn_wordnet_basic', 'advance');
 ts_lexize
 {100000002}
 
-# Unknown word: dictionary emits no tokens.
 query
 SELECT ts_lexize('syn_wordnet_basic', 'missing');
 ----
 ts_lexize
-{}
+{missing}
 
 statement error db error: ERROR: expand_wordnet_synonyms: failed to parse synonyms: Failed parse line 1
 CREATE TEXT SEARCH DICTIONARY syn_wordnet_malformed AS

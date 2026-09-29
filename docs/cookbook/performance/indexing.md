@@ -15,7 +15,7 @@ This guide covers the indexes that affect analytical query performance: the auto
 
 ## Zonemaps
 
-SereneDB automatically creates [zonemaps](https://en.wikipedia.org/wiki/Block_Range_Index) (also known as min-max indexes) for the columns of all [general-purpose data types](../../sql/data_types/overview.md#general-purpose-data-types).
+SereneDB automatically creates [zonemaps](https://en.wikipedia.org/wiki/Block_Range_Index) (also known as min-max indexes) for the columns of all [general-purpose data types](../../sql/data_types/index.md#general-purpose-data-types).
 Operations like predicate pushdown into scan operators and computing aggregations use zonemaps.
 If a filter criterion (like `WHERE column1 = 123`) is in use, SereneDB can skip any row group whose min-max range does not contain that filter value (e.g., it can omit a block with a min-max range of 1000 to 2000 when comparing for `= 123` or `< 400`).
 

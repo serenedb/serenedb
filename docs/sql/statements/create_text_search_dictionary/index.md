@@ -78,7 +78,7 @@ Because `english_dict` stems its input, the query term `searching` is reduced to
 
 ## Templates
 
-A stage is a call to a template. Twenty-one templates analyze text, and each one is documented together with its function form under [tokenizer functions](../../functions/search/tokenizers/index.md): the splitters, the token filters, the n-gram and shingle wrappers, the synonym expanders, the geospatial encoders and the fastText models.
+A stage is a call to a template. Twenty-three templates analyze text, and each one is documented together with its function form under [tokenizer functions](../../functions/search/tokenizers/index.md): the splitters, the HTML stripper, the token filters, the n-gram and shingle wrappers, the synonym expanders, the geospatial encoders and the fastText models.
 
 Four more templates exist only inside an analyzer expression, because the expression itself is how they are written:
 
@@ -102,7 +102,7 @@ The following flags control how much information the index records about each to
 | `NORM` | `false` | Store the field length normalization factor; requires `FREQUENCY` |
 | `OFFSET` | `false` | Store the byte offsets of each token in the source value; requires `POSITION` |
 
-Enable `FREQUENCY` when you rank results by relevance and `POSITION` when you run phrase or proximity queries. The dictionary in the example above sets both. The four flags belong to the dictionary, not to a stage: they are written in the `WITH (...)` clause after the expression, and a stored dictionary used as a stage does not carry its own flags into the new dictionary.
+Enable `FREQUENCY` when you rank results by relevance and `POSITION` when you run phrase or proximity queries. The dictionary in the example above sets both. With `POSITION` enabled, the field length that `NORM` records counts positions rather than tokens: tokens stacked at one position — the synonyms of [`expand_solr_synonyms`](../../functions/search/tokenizers/expand_solr_synonyms.md), the synset ids of [`expand_wordnet_synonyms`](../../functions/search/tokenizers/expand_wordnet_synonyms.md), the grams that [`generate_ngrams`](../../functions/search/tokenizers/generate_ngrams.md) starts at one character — count once, so expanding a word does not make its row look longer to BM25 and the other length-normalized scorers. Without `POSITION`, every token counts. The four flags belong to the dictionary, not to a stage: they are written in the `WITH (...)` clause after the expression, and a stored dictionary used as a stage does not carry its own flags into the new dictionary.
 
 Not every template records every flag, and a dictionary that asks for a flag its template does not support is rejected when it is created. The geospatial templates record none of the four, [`generate_wildcard_ngrams`](../../functions/search/tokenizers/generate_wildcard_ngrams.md) accepts only `FREQUENCY` and `POSITION`, [`generate_sparse_ngrams`](../../functions/search/tokenizers/generate_sparse_ngrams.md) only `FREQUENCY` and `NORM`, and [`union`](./union.md), [`sql`](./sql.md) and [`generate_shingles`](../../functions/search/tokenizers/generate_shingles.md) accept every flag except `OFFSET`. Two further limits depend on the configured analyzer rather than on its template: `OFFSET` requires an analyzer that tracks offsets, so a [`pipeline`](./pipeline/index.md) whose stages drop them is rejected, and `NORM` cannot be combined with an analyzer that stores a per-document blob, which is what `generate_shingles` does unless `store_tokens := false`.
 

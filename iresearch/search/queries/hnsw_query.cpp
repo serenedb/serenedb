@@ -110,12 +110,13 @@ HnswSearchScratch& ThreadScratch() {
 }
 
 std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
-                                  const DocumentMask* mask) {
+                                  const SubReader& segment) {
+  const auto it_mask = segment.MaskedDocs();
   std::vector<ScoreDoc> hits;
   hits.reserve(found.size());
   for (const auto& c : found) {
     const auto doc = static_cast<doc_id_t>(c.node) + doc_limits::min();
-    if (mask != nullptr && mask->contains(doc)) {
+    if (it_mask.Contains(doc)) {
       continue;
     }
     hits.push_back({.score = c.score, .doc = doc});
@@ -127,15 +128,19 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
 
 }  // namespace
 
-void HnswRefuseFilter(const detail::TableFilter* table) {
-  if (table == nullptr) [[likely]] {
-    return;
-  }
+void HnswRefuseFiltered() {
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
     ERR_MSG("an hnsw vector index does not support filtered search: the graph "
             "walk cannot honour a predicate, so the filter would be silently "
             "dropped. Use an ivf vector index instead"));
+}
+
+void HnswRefuseFilter(const detail::TableFilter* table) {
+  if (table == nullptr) [[likely]] {
+    return;
+  }
+  HnswRefuseFiltered();
 }
 
 std::vector<ScoreDoc> HnswQuery::RunSearch() const {
@@ -151,7 +156,7 @@ std::vector<ScoreDoc> HnswQuery::RunSearch() const {
                                                _max_results, scratch);
                  });
                });
-  return CollectHits(scratch.nearest, _segment.docs_mask());
+  return CollectHits(scratch.nearest, _segment);
 }
 
 }  // namespace irs

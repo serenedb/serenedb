@@ -144,6 +144,11 @@ class SereneDBTableEntry : public duckdb::DuckTableEntry {
 
   bool ForceUpdateDelAndInsert() const override;
 
+  void BindUpdateConstraints(duckdb::Binder& binder, duckdb::LogicalGet& get,
+                             duckdb::LogicalProjection& proj,
+                             duckdb::LogicalUpdate& update,
+                             duckdb::ClientContext& context) override;
+
   // A reshape replaces this entry with one of its own kind, carrying the
   // definition forward untouched: what the alter changed is the rows, and the
   // definition this entry projects is the catalog's, which the write that

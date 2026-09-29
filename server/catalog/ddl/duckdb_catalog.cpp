@@ -1444,10 +1444,29 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
     std::vector<duckdb::idx_t> pk_indices(pk_slots.size());
     absl::c_iota(pk_indices, num_updates);
 
+    SDB_ASSERT(op.update_column_count != 0,
+               "search UPDATE lost its SET-list size; carry the flag on "
+               "LogicalUpdate instead");
+    SDB_ASSERT(op.update_column_count <= op.columns.size(),
+               "SET-list size exceeds the widened update column list");
+    const auto set_list_size =
+      op.update_column_count == 0 ? op.columns.size() : op.update_column_count;
+    const auto& entry_columns = table_entry.GetColumns();
+    const bool updates_key_columns =
+      absl::c_any_of(table_entry.GetPKColumnIndexes(), [&](auto key) {
+        const auto physical = entry_columns.GetColumn(key).Physical();
+        for (duckdb::idx_t i = 0; i < set_list_size; ++i) {
+          if (op.columns[i] == physical) {
+            return true;
+          }
+        }
+        return false;
+      });
+
     auto& search_upd = planner.Make<connector::SereneDBSearchUpdate>(
       connector::ResolveSearchWriteTarget(context, table_entry),
       std::move(pk_indices), std::move(op.columns), std::move(op.types),
-      op.estimated_cardinality, op.return_chunk);
+      op.estimated_cardinality, op.return_chunk, updates_key_columns);
     search_upd.children.push_back(proj);
     return search_upd;
   }

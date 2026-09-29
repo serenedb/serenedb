@@ -164,9 +164,34 @@ SearchWriteTarget ResolveSearchWriteTarget(
     target.column_ids.emplace_back(column.CatalogOid());
     target.chunk_types.push_back(column.Type());
   }
+  for (const auto key : entry.GetPKColumnIndexes()) {
+    const auto& column = columns.GetColumn(key);
+    target.pk_slots.push_back(static_cast<duckdb::idx_t>(key.index));
+    target.pk_names.emplace_back(column.Name().GetIdentifierName());
+  }
   target.generated_pk_seq = entry.GetGeneratedPkSequence(context);
   SDB_ASSERT(target.generated_pk_seq);
   return target;
+}
+
+void VerifyPKNotNull(duckdb::DataChunk& chunk,
+                     std::span<const duckdb::idx_t> pk_slots,
+                     std::span<const std::string> pk_names,
+                     duckdb::idx_t count) {
+  if (pk_slots.empty() || count == 0) {
+    return;
+  }
+  duckdb::UnifiedVectorFormat fmt;
+  for (size_t i = 0; i < pk_slots.size(); ++i) {
+    auto& vec = chunk.data[pk_slots[i]];
+    vec.ToUnifiedFormat(count, fmt);
+    if (fmt.validity.CheckAllValid(count)) {
+      continue;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NOT_NULL_VIOLATION),
+                    ERR_MSG("null value in column \"", pk_names[i],
+                            "\" violates not-null constraint"));
+  }
 }
 
 void BuildReturnedRow(duckdb::DataChunk& out, duckdb::DataChunk& chunk,

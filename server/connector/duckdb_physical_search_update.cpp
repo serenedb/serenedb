@@ -54,6 +54,8 @@ struct SearchUpdateGlobalState : duckdb::GlobalSinkState {
 
   std::shared_lock<std::shared_mutex> table_lock;
   uint64_t write_buffer_max_bytes = 0;
+  std::vector<duckdb::idx_t> pk_slots;
+  std::vector<std::string> pk_names;
   duckdb::idx_t update_count = 0;
   // RETURNING only: the rows as this statement left them.
   std::optional<duckdb::ColumnDataCollection> returned;
@@ -71,13 +73,15 @@ SereneDBSearchUpdate::SereneDBSearchUpdate(
   std::vector<duckdb::idx_t> pk_col_indices,
   std::vector<duckdb::PhysicalIndex> update_columns,
   duckdb::vector<duckdb::LogicalType> types,
-  duckdb::idx_t estimated_cardinality, bool return_chunk)
+  duckdb::idx_t estimated_cardinality, bool return_chunk,
+  bool updates_key_columns)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              std::move(types), estimated_cardinality),
     _target(std::move(target)),
     _pk_col_indices(std::move(pk_col_indices)),
     _update_columns(std::move(update_columns)),
-    _return_chunk(return_chunk) {}
+    _return_chunk(return_chunk),
+    _updates_key_columns(updates_key_columns) {}
 
 duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
@@ -107,6 +111,13 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
     state->new_row_src[index] = i;
   }
 
+  state->pk_names = _target.pk_names;
+  state->pk_slots.reserve(_target.pk_slots.size());
+  for (const auto logical : _target.pk_slots) {
+    SDB_ASSERT(logical < p, "declared PK column is not a stored column");
+    state->pk_slots.push_back(state->new_row_src[logical]);
+  }
+
   SDB_ASSERT(_pk_col_indices.size() == 1,
              "a search table is identified by one synthetic rowid slot");
   state->generated_pk_seq = _target.generated_pk_seq;
@@ -126,6 +137,8 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   if (num_rows == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
+
+  VerifyPKNotNull(chunk, gstate.pk_slots, gstate.pk_names, num_rows);
 
   // Buffered, not removed here: the removal reaches iresearch when the write
   // buffer is replayed, ordered against exactly the rows that precede it. The

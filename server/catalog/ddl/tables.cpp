@@ -44,6 +44,7 @@
 #include "catalog/entry/duckdb_table_entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
+#include "catalog/inverted_index.h"
 #include "catalog/log/data_store.h"
 #include "catalog/log/duckdb_global_catalog.h"
 #include "catalog/log/store.h"
@@ -65,6 +66,7 @@ const SereneDBTableEntry* CreateTable(
   // Uniqueness keys are enforced by the store table's DuckDB ART, which cannot
   // index nested types. Reject a nested-type key column up front with a clear
   // error instead of silently creating the table with the constraint dropped.
+  const auto table_engine = catalog::ReadTableEngineTag(info->tags);
   for (const auto& constraint : info->constraints) {
     if (constraint->type != duckdb::ConstraintType::UNIQUE) {
       continue;
@@ -72,15 +74,27 @@ const SereneDBTableEntry* CreateTable(
     const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
     const std::string_view what =
       unique.IsPrimaryKey() ? "primary key" : "unique constraint";
+    if (table_engine == TableEngine::Search && !unique.IsPrimaryKey()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("unique constraint on a search-backed table is "
+                              "not yet supported"));
+    }
     for (const auto& key : unique.GetColumnNames()) {
       const auto* column =
         catalog::ColumnByName(*info, key.GetIdentifierName());
-      if (column != nullptr && column->Type().IsNested()) {
+      if (column == nullptr) {
+        continue;
+      }
+      if (column->Type().IsNested()) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
           ERR_MSG(what, " column \"", column->Name().GetIdentifierName(),
                   "\" has unsupported nested type ",
                   column->Type().ToString()));
+      }
+      if (table_engine == TableEngine::Search) {
+        term_dict::Validate(column->Name().GetIdentifierName(), column->Type(),
+                            /*opclass=*/{});
       }
     }
   }

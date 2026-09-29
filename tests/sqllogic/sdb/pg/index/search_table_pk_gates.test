@@ -1,0 +1,108 @@
+# Gates that keep a declared PRIMARY KEY from being silently inert on a
+# search-backed table. Each rejects at DDL or DML time something that was
+# previously accepted and then quietly did nothing: a key column whose type the
+# term dictionary cannot encode, a non-PK UNIQUE, an ALTER that would add a key
+# the shard never learns about, and a NULL in a key column.
+
+statement ok
+CREATE TABLE pkg (id BIGINT PRIMARY KEY, s TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+
+# A key column is enforced through the term dictionary its values are indexed
+# into, so a type that dictionary cannot encode would emit no term at all.
+statement error
+CREATE TABLE pkg_dec (id DECIMAL(18,4) PRIMARY KEY, s TEXT)
+  WITH (storage='search');
+----
+db error: ERROR: Column 'id' has unsupported type DECIMAL(18,4) and can not be indexed
+
+
+statement error
+CREATE TABLE pkg_uuid (id UUID PRIMARY KEY, s TEXT)
+  WITH (storage='search');
+----
+db error: ERROR: Column 'id' has unsupported type UUID and can not be indexed
+
+
+statement error
+CREATE TABLE pkg_huge (id HUGEINT PRIMARY KEY, s TEXT)
+  WITH (storage='search');
+----
+db error: ERROR: Column 'id' has unsupported type HUGEINT and can not be indexed
+
+
+# Only the second key column is unsupported.
+statement error
+CREATE TABLE pkg_comp (a BIGINT, b DECIMAL(10,2), s TEXT, PRIMARY KEY (a, b))
+  WITH (storage='search');
+----
+db error: ERROR: Column 'b' has unsupported type DECIMAL(10,2) and can not be indexed
+
+
+# The same types are fine on a transactional table, which keys through the ART.
+statement ok
+CREATE TABLE pkg_txn (id DECIMAL(18,4) PRIMARY KEY, s TEXT);
+
+
+statement ok
+DROP TABLE pkg_txn;
+
+
+# A non-PK UNIQUE was accepted and then dropped: its columns were neither
+# term-indexed nor checked.
+statement error
+CREATE TABLE pkg_uniq (id BIGINT PRIMARY KEY, e TEXT UNIQUE)
+  WITH (storage='search');
+----
+db error: ERROR: unique constraint on a search-backed table is not yet supported
+
+
+statement error
+CREATE TABLE pkg_uniq2 (id BIGINT, e TEXT, UNIQUE (e))
+  WITH (storage='search');
+----
+db error: ERROR: unique constraint on a search-backed table is not yet supported
+
+
+# ADD CONSTRAINT never reached the shard's key list, so the key stayed inert
+# until the next boot.
+statement error
+ALTER TABLE pkg ADD CONSTRAINT pkg_uk UNIQUE (s);
+----
+db error: ERROR: ALTER TABLE ADD CONSTRAINT on a search-backed table is not yet supported
+
+
+# PRIMARY KEY implies NOT NULL, and a NULL emits no term, so an unchecked one
+# would be invisible to every key lookup.
+statement error
+INSERT INTO pkg VALUES (NULL, 'x');
+----
+db error: ERROR: null value in column "id" violates not-null constraint
+
+
+statement ok
+INSERT INTO pkg VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pkg;
+
+
+statement error
+UPDATE pkg SET id = NULL WHERE id = 1;
+----
+db error: ERROR: null value in column "id" violates not-null constraint
+
+
+# The rejections above left the table exactly as it was.
+query
+SELECT id, s FROM pkg ORDER BY id;
+----
+id	s
+1	a
+2	b
+
+
+statement ok
+DROP TABLE pkg;

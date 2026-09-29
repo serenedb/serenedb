@@ -1793,6 +1793,9 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
     case duckdb::AlterTableType::DROP_CONSTRAINT:
       unsupported_search_op = "ALTER TABLE DROP CONSTRAINT";
       break;
+    case duckdb::AlterTableType::ADD_CONSTRAINT:
+      unsupported_search_op = "ALTER TABLE ADD CONSTRAINT";
+      break;
     case duckdb::AlterTableType::ALTER_COLUMN_TYPE:
       unsupported_search_op = "ALTER TABLE ALTER COLUMN TYPE";
       break;

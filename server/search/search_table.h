@@ -105,6 +105,10 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   ObjectId GetTableId() const noexcept { return _table_id; }
   ObjectId GetSchemaId() const noexcept { return _schema_id; }
   ObjectId GetDbId() const noexcept { return _db_id; }
+
+  std::span<const catalog::ColumnId> PKColumns() const noexcept {
+    return _pk_columns;
+  }
   uint64_t GetWriteBufferMaxBytes() const noexcept {
     return _segment_memory_max == 0
              ? std::numeric_limits<uint64_t>::max()

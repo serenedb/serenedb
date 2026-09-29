@@ -30,6 +30,7 @@
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/planner/binder.hpp>
+#include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/storage_manager.hpp>
@@ -366,6 +367,20 @@ bool SereneDBTableEntry::ForceUpdateDelAndInsert() const {
   // Search UPDATE is delete+insert at the index level; the base then projects
   // every physical column so the reinserted row is whole.
   return IsSearchTable();
+}
+
+void SereneDBTableEntry::BindUpdateConstraints(duckdb::Binder& binder,
+                                               duckdb::LogicalGet& get,
+                                               duckdb::LogicalProjection& proj,
+                                               duckdb::LogicalUpdate& update,
+                                               duckdb::ClientContext& context) {
+  const auto set_list_size = update.columns.size();
+  SDB_ASSERT(set_list_size != 0, "UPDATE bound with an empty SET list");
+  duckdb::TableCatalogEntry::BindUpdateConstraints(binder, get, proj, update,
+                                                   context);
+  if (IsSearchTable()) {
+    update.update_column_count = set_list_size;
+  }
 }
 
 duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {

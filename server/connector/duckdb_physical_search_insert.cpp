@@ -68,6 +68,8 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   std::shared_ptr<catalog::SequenceCounter> generated_pk_seq;
   std::shared_lock<std::shared_mutex> table_lock;
   uint64_t write_buffer_max_bytes = 0;
+  std::vector<duckdb::idx_t> pk_slots;
+  std::vector<std::string> pk_names;
 
   std::mutex combine_mu;
   duckdb::idx_t insert_count = 0;
@@ -256,6 +258,8 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->column_ids = target.column_ids;
   state->chunk_types = target.chunk_types;
   state->write_buffer_max_bytes = state->search_table->GetWriteBufferMaxBytes();
+  state->pk_slots = target.pk_slots;
+  state->pk_names = target.pk_names;
 
   state->sdb_txn = &conn_ctx;
   if (_return_chunk) {
@@ -304,6 +308,8 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
   if (num_rows == 0 || lstate->no_op) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
+  VerifyPKNotNull(chunk, gstate.pk_slots, gstate.pk_names, num_rows);
+
   auto& search_txn = gstate.sdb_txn->SearchTxn();
   const uint64_t pk_base = gstate.generated_pk_seq->Reserve(num_rows);
 

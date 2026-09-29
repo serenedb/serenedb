@@ -73,10 +73,17 @@ struct SearchWriteTarget {
   // and the type its chunk slot carries.
   std::vector<ObjectId> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
+  std::vector<duckdb::idx_t> pk_slots;
+  std::vector<std::string> pk_names;
 };
 
 SearchWriteTarget ResolveSearchWriteTarget(
   duckdb::ClientContext& context, const catalog::SereneDBTableEntry& entry);
+
+void VerifyPKNotNull(duckdb::DataChunk& chunk,
+                     std::span<const duckdb::idx_t> pk_slots,
+                     std::span<const std::string> pk_names,
+                     duckdb::idx_t count);
 
 // One RETURNING row of a search DELETE or UPDATE, assembled out of the chunk
 // the child produced. `column_map` is indexed by the relation's own column

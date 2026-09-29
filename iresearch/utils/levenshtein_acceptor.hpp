@@ -79,45 +79,34 @@ class LevenshteinAcceptor {
     // The trailing word is what lets an unaligned read take `word + 1`
     // unconditionally.
     _words = _target.size() / kWordBits + 2;
-    _ascii.fill(kNoSlot);
-    _chi.reserve(_target.size() * _words);
+    _narrow.fill(kZeroSlot);
+    _chi.reserve((_target.size() + 1) * _words);
     _chars.reserve(_target.size());
     const auto new_slot = [this] {
       const auto slot = static_cast<int32_t>(_chi.size() / _words);
       _chi.resize(_chi.size() + _words, 0);
       return slot;
     };
+    new_slot();
     for (size_t i = 0; i != _target.size(); ++i) {
       const auto c = _target[i];
-      int32_t slot = kNoSlot;
-      if (c < kAsciiMax) {
-        slot = _ascii[c];
-        if (slot == kNoSlot) {
+      int32_t slot = kZeroSlot;
+      if (c < kNarrowMax) {
+        slot = _narrow[c];
+        if (slot == kZeroSlot) {
           slot = new_slot();
-          _ascii[c] = slot;
+          _narrow[c] = slot;
         }
       } else {
-        // Ordered as it is built, so a repeat costs a binary search over the
-        // few wide code points a target has rather than a scan of them all.
-        const auto it =
-          std::ranges::lower_bound(_wide, c, {}, &WideSlot::first);
-        if (it != _wide.end() && it->first == c) {
-          slot = it->second;
-        } else {
+        slot = WideSlotOf(c);
+        if (slot == kZeroSlot) {
           slot = new_slot();
-          _wide.insert(it, WideSlot{c, slot});
+          _wide.push_back(WideSlot{c, slot});
         }
       }
       _chars.push_back({LeadByte(c), slot});
       _chi[static_cast<size_t>(slot) * _words + i / kWordBits] |=
         uint64_t{1} << (i % kWordBits);
-    }
-    // The transition every symbol outside the target takes, per parametric
-    // state. Small -- one entry per state -- and it turns the common step into
-    // a single indexed load.
-    _zero_next.reserve(description.size());
-    for (size_t s = 0; s != description.size(); ++s) {
-      _zero_next.emplace_back(description.transition(s, 0));
     }
   }
 
@@ -202,7 +191,7 @@ class LevenshteinAcceptor {
     // A code point matching nothing in the window has an all-zero
     // characteristic vector; when that keeps the state alive so does every
     // byte, and there is no bound to give.
-    if (_zero_next[state.pstate].first != kDeadState) {
+    if (Transition(state.pstate, 0).first != kDeadState) {
       lo = 0;
       hi = std::numeric_limits<byte_type>::max();
       return true;
@@ -228,9 +217,9 @@ class LevenshteinAcceptor {
   }
 
  private:
-  static constexpr uint32_t kAsciiMax = 128;
+  static constexpr uint32_t kNarrowMax = 0x800;
   static constexpr uint32_t kPrefixPhase = 4;
-  static constexpr int32_t kNoSlot = -1;
+  static constexpr int32_t kZeroSlot = 0;
   static constexpr size_t kWordBits = 64;
 
   static constexpr State Dead() noexcept { return {kDeadState, 0, 0, 0}; }
@@ -278,12 +267,19 @@ class LevenshteinAcceptor {
     return std::min<size_t>(size_t{offset} + _chi_size, _target.size());
   }
 
-  int32_t Slot(uint32_t c) const noexcept {
-    if (c < kAsciiMax) {
-      return _ascii[c];
+  int32_t WideSlotOf(uint32_t c) const noexcept {
+    int32_t slot = kZeroSlot;
+    for (const auto& wide : _wide) {
+      slot = wide.first == c ? wide.second : slot;
     }
-    const auto it = std::ranges::lower_bound(_wide, c, {}, &WideSlot::first);
-    return it != _wide.end() && it->first == c ? it->second : kNoSlot;
+    return slot;
+  }
+
+  int32_t Slot(uint32_t c) const noexcept {
+    if (c < kNarrowMax) [[likely]] {
+      return _narrow[c];
+    }
+    return WideSlotOf(c);
   }
 
   // `chi_max` is `1 << chi_size`, so the row offset is a shift here where
@@ -312,32 +308,18 @@ class LevenshteinAcceptor {
     const uint64_t* bits = _chi.data() + static_cast<size_t>(slot) * _words;
     const size_t word = offset / kWordBits;
     const size_t align = offset % kWordBits;
-    if (align == 0) {
-      return bits[word] & _mask;
-    }
-    return ((bits[word] >> align) | (bits[word + 1] << (kWordBits - align))) &
+    return ((bits[word] >> align) |
+            ((bits[word + 1] << 1) << (kWordBits - 1 - align))) &
            _mask;
   }
 
   State StepChar(State state, uint32_t c) const noexcept {
-    const auto& transition = Compute(state.pstate, state.offset, c);
-    if (transition.first == kDeadState) {
-      return Dead();
-    }
+    const auto& transition =
+      Transition(state.pstate, ChiAt(Slot(c), state.offset));
     state.pstate = transition.first;
     state.offset += transition.second;
     state.acc = 0;
     return state;
-  }
-
-  // A symbol the target does not contain has an all-zero characteristic vector
-  // whatever the offset, so its transition depends on the parametric state
-  // alone -- which is most symbols, and why it is worth its own table.
-  const ParametricDescription::transition_t& Compute(
-    uint32_t pstate, uint32_t offset, uint32_t c) const noexcept {
-    const auto slot = Slot(c);
-    return slot == kNoSlot ? _zero_next[pstate]
-                           : Transition(pstate, ChiAt(slot, offset));
   }
 
   using WideSlot = std::pair<uint32_t, int32_t>;
@@ -356,9 +338,8 @@ class LevenshteinAcceptor {
   std::vector<uint32_t> _target;
   std::vector<TargetChar> _chars;
   std::vector<uint64_t> _chi;
-  std::vector<ParametricDescription::transition_t> _zero_next;
   std::vector<WideSlot> _wide;
-  std::array<int32_t, kAsciiMax> _ascii{};
+  std::array<int32_t, kNarrowMax> _narrow;
   size_t _words{0};
   uint32_t _chi_size;
   uint64_t _mask;

@@ -283,8 +283,46 @@ class SearchSinkInsertBaseImpl {
     irs::ColumnWriter* _writer = nullptr;
   };
 
+  class RowStoreAppender final : public irs::StoreSink {
+   public:
+    void Bind(SearchSinkInsertBaseImpl& impl,
+              irs::ColumnWriter& writer) noexcept {
+      _impl = &impl;
+      _writer = &writer;
+      _doc = irs::doc_limits::invalid();
+      _blob.clear();
+    }
+
+    void OnStore(irs::doc_id_t doc, irs::bytes_view store) final {
+      if (doc != _doc) {
+        Flush();
+        _doc = doc;
+      }
+      _blob.append(store);
+    }
+
+    void Flush() {
+      if (!irs::doc_limits::valid(_doc)) {
+        return;
+      }
+      _impl->AppendBlobAt(
+        *_writer, _doc,
+        duckdb::string_t{reinterpret_cast<const char*>(_blob.data()),
+                         static_cast<uint32_t>(_blob.size())});
+      _doc = irs::doc_limits::invalid();
+      _blob.clear();
+    }
+
+   private:
+    SearchSinkInsertBaseImpl* _impl = nullptr;
+    irs::ColumnWriter* _writer = nullptr;
+    irs::doc_id_t _doc = irs::doc_limits::invalid();
+    irs::bstring _blob;
+  };
+
   duckdb::RecursiveUnifiedVectorFormat _vec_fmt;
   StoreAppender _store_appender;
+  RowStoreAppender _row_store_appender;
   KeyScratch _key_scratch;
   std::vector<IndexedExpression> _indexed_expressions;
   std::shared_ptr<const catalog::InvertedIndexConfig> _config;

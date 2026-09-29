@@ -439,14 +439,24 @@ void SearchSinkInsertBaseImpl::WriteListBatch(const Field& field,
     } else {
       auto traits = field.GetTokens().Traits();
       traits.unique = false;
+      auto* store_writer = irs::field_limits::valid(field.store_column)
+                             ? EnsureBlobColumnWriter(field.store_column)
+                             : nullptr;
+      if (store_writer) {
+        _row_store_appender.Bind(*this, *store_writer);
+      }
       InvertTokens(
-        field, nullptr, [&](irs::FieldInverter& fld, irs::TokenSink& w) {
+        field, store_writer ? &_row_store_appender : nullptr,
+        [&](irs::FieldInverter& fld, irs::TokenSink& w) {
           fld.Configure(traits);
           const auto layout = fld.Layout();
           for_each_element([&](duckdb::idx_t child_idx, irs::doc_id_t doc) {
             field.string_analyzer->Fill(data[child_idx], doc, w, {layout});
           });
         });
+      if (store_writer) {
+        _row_store_appender.Flush();
+      }
     }
   } else if constexpr (ChildKind == duckdb::LogicalTypeId::BOOLEAN) {
     const auto* data = duckdb::UnifiedVectorFormat::GetData<bool>(child_fmt);

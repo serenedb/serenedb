@@ -30,6 +30,7 @@
 #include "iresearch/index/doc_contexts.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/inverter/fields_inverter.hpp"
+#include "iresearch/index/segment_writer_options.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/type_limits.hpp"

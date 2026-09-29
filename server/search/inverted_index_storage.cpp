@@ -25,8 +25,8 @@
 #include <absl/time/time.h>
 
 #include <chrono>
-#include <duckdb/common/serializer/deserializer.hpp>
-#include <duckdb/common/serializer/serializer.hpp>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/storage/block_manager.hpp>
@@ -159,7 +159,6 @@ InvertedIndexStorage::InvertedIndexStorage(
     }
   }
 
-  auto codec = irs::formats::Get("1_5simd");
   const bool reopen = path_exists && !is_new;
   const auto open_mode =
     reopen ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
@@ -205,7 +204,7 @@ InvertedIndexStorage::InvertedIndexStorage(
   }
 
   writer_options.meta_payload_writer = [this](uint64_t tick,
-                                              duckdb::Serializer& out) {
+                                              duckdb::BinarySerializer& out) {
     if (_phase == Phase::Creating) {
       tick = TickDomain::Instance().Current();
     }
@@ -243,7 +242,7 @@ InvertedIndexStorage::InvertedIndexStorage(
   };
 
   std::shared_ptr<const FileManifest> file_manifest;
-  writer_options.meta_payload_reader = [&](duckdb::Deserializer& in) {
+  writer_options.meta_payload_reader = [&](duckdb::BinaryDeserializer& in) {
     _recovery_tick = in.ReadProperty<uint64_t>(kFieldTick, "tick");
     _recovery_wal_cursor.generation =
       in.ReadProperty<uint64_t>(kFieldWalGeneration, "wal_generation");
@@ -261,8 +260,7 @@ InvertedIndexStorage::InvertedIndexStorage(
     writer_options.segment_docs_max = 1000;
   }
 
-  _writer =
-    irs::IndexWriter::Make(*_dir, codec, open_mode, std::move(writer_options));
+  _writer = irs::IndexWriter::Make(*_dir, open_mode, std::move(writer_options));
 
   if (!reopen) {
     _writer->RefreshCommit();
@@ -447,8 +445,8 @@ auto InvertedIndexStorage::CompactUnsafeImpl(
   empty_compaction = false;
 
   try {
-    const auto res = co_await _writer->CompactAsync(policy, field_options,
-                                                    nullptr, progress, env);
+    const auto res =
+      co_await _writer->CompactAsync(policy, field_options, progress, env);
     if (res.error == irs::CompactionError::Fail) {
       co_return absl::InternalError(absl::StrCat(
         "failure while executing compaction policy on Search index '", GetId(),

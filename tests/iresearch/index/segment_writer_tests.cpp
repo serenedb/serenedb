@@ -22,7 +22,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/segment_writer.hpp>
 #include <iresearch/store/memory_directory.hpp>
@@ -60,8 +59,6 @@ TEST_F(SegmentWriterTests, memory_index_field) {
   {
     irs::SegmentMeta segment;
     segment.name = "tmp";
-    segment.codec = irs::formats::Get("1_5simd");
-    ASSERT_NE(nullptr, segment.codec);
 
     irs::MemoryDirectory dir;
     auto writer = irs::SegmentWriter::make(dir, options);
@@ -87,8 +84,6 @@ TEST_F(SegmentWriterTests, memory_index_field) {
   {
     irs::SegmentMeta segment;
     segment.name = "tmp";
-    segment.codec = irs::formats::Get("1_5simd");
-    ASSERT_NE(nullptr, segment.codec);
 
     irs::MemoryDirectory dir;
     auto writer = irs::SegmentWriter::make(dir, options);
@@ -154,7 +149,6 @@ TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
     ASSERT_EQ(0u, writer->memory_active());
     irs::SegmentMeta segment;
     segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5simd");
     writer->reset(segment);
     ASSERT_EQ(0u, writer->memory_active());
 
@@ -179,7 +173,6 @@ TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
     ASSERT_EQ(0u, writer->memory_active());
     irs::SegmentMeta segment;
     segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5simd");
     writer->reset(segment);
 
     ASSERT_EQ(irs::doc_limits::min(), writer->begin(0, 100));
@@ -227,7 +220,6 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
     auto writer = irs::SegmentWriter::make(dir, options);
     irs::SegmentMeta segment;
     segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5simd");
     writer->reset(segment);
 
     for (size_t i = 0; i < 100; ++i) {
@@ -251,7 +243,6 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
     auto writer = irs::SegmentWriter::make(dir, options);
     irs::SegmentMeta segment;
     segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5simd");
     writer->reset(segment);
 
     ASSERT_EQ(irs::doc_limits::min(), writer->begin(0, 100));

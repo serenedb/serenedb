@@ -59,6 +59,7 @@
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_simple.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
+#include <duckdb/storage/storage_manager.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
@@ -127,6 +128,12 @@ std::string KindName(CatalogType type) {
 
 bool Unowned(const duckdb::CatalogEntry& entry) {
   return entry.permissions.owner == pg::kInvalidOid;
+}
+
+bool StoresPermissions(duckdb::Catalog& catalog) {
+  return !catalog.IsDuckCatalog() ||
+         duckdb::IsSereneDBStorageVersion(
+           catalog.GetAttached().GetStorageManager().GetStorageVersion());
 }
 
 CatalogType DefaultObjType(LogicalOperatorType type) {
@@ -1249,6 +1256,12 @@ class Enforcer {
   void Stamp(duckdb::CreateInfo& info, CatalogType objtype,
              duckdb::optional_ptr<duckdb::SchemaCatalogEntry> schema,
              duckdb::idx_t owner) {
+    if (!StoresPermissions(
+          schema ? schema->ParentCatalog()
+                 : duckdb::Catalog::GetCatalog(
+                     _context, info.GetQualifiedName().Catalog()))) {
+      return;
+    }
     info.permissions.owner = owner;
     duckdb::vector<duckdb::AclItem> acl;
     const auto apply = [&](const duckdb::Permissions& holder,

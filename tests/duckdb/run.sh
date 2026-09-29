@@ -51,8 +51,9 @@ declare -A SUITE_DIR=(
 	[markdown]="$WORKSPACE/third_party/duckdb_markdown"
 	[postgres_scanner]="$WORKSPACE/third_party/duckdb_postgres"
 	[spatial]="$WORKSPACE/third_party/duckdb_spatial"
+	[interop]="$SCRIPT_DIR/interop"
 )
-SUITE_ORDER=(core avro azure httpfs iceberg inet markdown postgres_scanner spatial)
+SUITE_ORDER=(core avro azure httpfs iceberg inet markdown postgres_scanner spatial interop)
 
 # suite name -> Catch2 name filter. Core's tests register relative to --test-dir
 # (so "test/..."), while extension tests come from LoadedExtensionTestPaths() and
@@ -111,8 +112,18 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
+run_interop=false
+unittest_suites=""
+for suite in $SUITES; do
+	if [[ "$suite" == interop ]]; then
+		run_interop=true
+	else
+		unittest_suites="$unittest_suites $suite"
+	fi
+done
+
 UNITTEST="$WORKSPACE/$BUILD_DIR/third_party/duckdb/test/unittest"
-if [[ ! -x "$UNITTEST" ]]; then
+if [[ -n "${unittest_suites// /}" && ! -x "$UNITTEST" ]]; then
 	if [[ ! -f "$WORKSPACE/$BUILD_DIR/CMakeCache.txt" ]]; then
 		echo "ERROR: $WORKSPACE/$BUILD_DIR is not a configured build directory." >&2
 		exit 1
@@ -214,7 +225,7 @@ log="$REPORTS_DIR/duckdb.log"
 args=(--test-dir "${SUITE_DIR[core]}")
 filters=()
 serial_filters=()
-for suite in $SUITES; do
+for suite in $unittest_suites; do
 	config="$SCRIPT_DIR/config/$suite.json"
 	[[ -f "$config" ]] && args+=(--test-config "$config")
 	if [[ "$suite" == "postgres_scanner" ]]; then
@@ -283,6 +294,13 @@ run_unittest() {
 : >"$log"
 [[ -n "$spec" ]] && run_unittest --jobs "$DUCKDB_JOBS" "$spec"
 [[ -n "$serial_spec" ]] && run_unittest "$serial_spec"
+if [[ "$run_interop" == true ]]; then
+	start=$(wc -l <"$log")
+	BUILD_DIR="$BUILD_DIR" "$SCRIPT_DIR/interop/run.sh" 2>&1 | tee -a "$log"
+	interop_rc=${PIPESTATUS[0]}
+	summaries+=("$(tail -n +$((start + 1)) "$log" | grep -E '^===== \[duckdb interop\] [0-9]+/[0-9]+ passed' | tail -1)")
+	[[ $rc -eq 0 ]] && rc=$interop_rc
+fi
 
 # A spec that matches nothing exits 0, which would turn a typo'd filter (or an
 # extension whose tests stopped being registered) into a silent pass.

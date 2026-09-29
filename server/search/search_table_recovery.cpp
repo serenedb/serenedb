@@ -120,7 +120,6 @@ void RunSearchTableRecovery() {
     // position; the adopt tick needs the final count (see the finalize loop).
     struct PendingAdopt {
       std::string meta_file;
-      std::string codec;
       uint64_t queries_before;
     };
     std::vector<PendingAdopt> adopts;
@@ -218,7 +217,7 @@ void RunSearchTableRecovery() {
     auto replay_adopt = [&](uint64_t tick, duckdb::idx_t table_id,
                             const SearchDbWal::SegmentRef& ref) {
       auto& ctx = ensure_ctx(table_id);
-      ctx.adopts.push_back({ref.meta_file, ref.codec, ctx.trx.GetQueries()});
+      ctx.adopts.push_back({ref.meta_file, ctx.trx.GetQueries()});
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
     wal.Recover(exists_of, committed_of, replay, replay_delete, replay_truncate,
@@ -244,8 +243,7 @@ void RunSearchTableRecovery() {
         const uint64_t tick = first_tick + pending.queries_before;
         // A durable record claims these documents: failing to reopen them is
         // data loss, not something to skip.
-        const bool adopted =
-          info.search->AdoptSegment(pending.meta_file, pending.codec, tick);
+        const bool adopted = info.search->AdoptSegment(pending.meta_file, tick);
         SDB_FATAL_IF(SEARCH, !adopted,
                      "search-table WAL recovery: failed to adopt segment '",
                      pending.meta_file, "' for table ", table_id,

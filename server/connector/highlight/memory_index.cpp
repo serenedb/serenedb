@@ -25,8 +25,6 @@
 
 namespace sdb::connector::highlight {
 
-MemoryIndex::MemoryIndex()
-  : _codec{irs::formats::Get("1_5simd")},
-    _db{&irs::DuckDBEngine::Instance().instance()} {}
+MemoryIndex::MemoryIndex() : _db{&irs::DuckDBEngine::Instance().instance()} {}
 
 }  // namespace sdb::connector::highlight

@@ -23,20 +23,25 @@
 #pragma once
 
 #include <memory>
-#include <string_view>
+#include <span>
 
-#include "iresearch/formats/formats.hpp"
+#include "iresearch/types.hpp"
 
 namespace irs {
 
 class IdxWriter;
+struct BasicTermReader;
+struct FlushState;
+struct IResourceManager;
+struct ReaderState;
+struct TermReader;
 
 }  // namespace irs
 namespace irs::burst_trie {
 
 class FieldWriter final {
  public:
-  FieldWriter(PostingsWriter::ptr pw, bool compaction, IResourceManager& rm);
+  FieldWriter(bool compaction, IResourceManager& rm);
   ~FieldWriter();
 
   FieldWriter(const FieldWriter&) = delete;
@@ -54,7 +59,7 @@ class FieldWriter final {
 
 class FieldReader final {
  public:
-  FieldReader(PostingsReader::ptr pr, IResourceManager& rm);
+  explicit FieldReader(IResourceManager& rm);
   ~FieldReader();
 
   FieldReader(const FieldReader&) = delete;

@@ -460,9 +460,7 @@ TEST_P(MergeConsistencyTestCase, edit_distance) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(merge_consistency_test, MergeConsistencyTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values(tests::FormatInfo{
-                                              "1_5simd"})),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          MergeConsistencyTestCase::to_string);
 
 }  // namespace

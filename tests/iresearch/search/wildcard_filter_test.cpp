@@ -563,7 +563,5 @@ TEST_P(WildcardFilterTestCase, term_a_block_is_named_by) {
 }
 
 INSTANTIATE_TEST_SUITE_P(wildcard_filter_test, WildcardFilterTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values(tests::FormatInfo{
-                                              "1_5simd"})),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          WildcardFilterTestCase::to_string);

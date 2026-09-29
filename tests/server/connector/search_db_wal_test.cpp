@@ -24,14 +24,17 @@
 #include <cstdint>
 #include <deque>
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/checksum.hpp>
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <filesystem>
 #include <fstream>
-#include <iresearch/formats/formats.hpp>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
@@ -133,11 +136,8 @@ SearchDbWal::AdoptReplayCallback NoAdopts() {
   return [](uint64_t, duckdb::idx_t, const SearchDbWal::SegmentRef&) {};
 }
 
-// A recorded segment as the write path would hand it over: the name of the
-// segment's own meta file plus the codec that reads it.
 SearchDbWal::SegmentRef MakeSegmentRef(std::string name) {
-  return SearchDbWal::SegmentRef{.meta_file = name + ".0.sm",
-                                 .codec = "1_5simd"};
+  return SearchDbWal::SegmentRef{.meta_file = name + ".0.sm"};
 }
 
 // Replay hooks: every shard exists and nothing is durable yet (committed 0).
@@ -150,10 +150,6 @@ SearchDbWal::ShardCommittedFn CommittedAll(uint64_t tick) {
 
 class SearchDbWalTest : public ::testing::Test {
  protected:
-  // A SEGMENT op records its codec by name, so the registry has to be up for
-  // the name to resolve back to a codec.
-  static void SetUpTestCase() { irs::formats::Init(); }
-
   void SetUp() override {
     _fs = duckdb::FileSystem::CreateLocal();
     const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
@@ -763,10 +759,7 @@ TEST_F(SearchDbWalTest, SegmentRoundTrip) {
   const auto& [tick, table_id, recovered] = got.segments[0];
   EXPECT_EQ(tick, 1u);
   EXPECT_EQ(table_id, 5u);
-  // The record names the segment's own meta file and the codec that reads it --
-  // every other field lives in that file, so there is nothing else to compare.
   EXPECT_EQ(recovered.meta_file, ref.meta_file);
-  EXPECT_EQ(recovered.codec, ref.codec);
 }
 
 // One op can carry every segment a bulk worker flushed, which is the normal
@@ -885,6 +878,121 @@ TEST_F(SearchDbWalTest, SegmentRecordGcdWithoutTouchingSegmentFiles) {
     rolled.OnShardCommit(duckdb::idx_t{5}, 2);
     EXPECT_FALSE(std::filesystem::exists(SegPath(1)));
   }
+}
+
+void AppendPayload(
+  const std::filesystem::path& path,
+  const std::function<void(duckdb::BinarySerializer&)>& fields) {
+  duckdb::MemoryStream payload;
+  {
+    duckdb::BinarySerializer record{payload};
+    record.Begin();
+    fields(record);
+    record.End();
+  }
+  const uint64_t size = payload.GetPosition();
+  const uint64_t checksum = duckdb::Checksum(payload.GetData(), size);
+  std::filesystem::create_directories(path.parent_path());
+  std::ofstream out{path, std::ios::binary | std::ios::app};
+  out.write(reinterpret_cast<const char*>(&size), sizeof(size));
+  out.write(reinterpret_cast<const char*>(&checksum), sizeof(checksum));
+  out.write(reinterpret_cast<const char*>(payload.GetData()),
+            static_cast<std::streamsize>(size));
+}
+
+void AppendRecord(
+  const std::filesystem::path& path, uint64_t tick,
+  const std::function<void(duckdb::BinarySerializer&)>& fields) {
+  AppendPayload(path, [&](duckdb::BinarySerializer& record) {
+    record.WriteProperty<uint64_t>(0, "tick", tick);
+    fields(record);
+  });
+}
+
+void NoSections(duckdb::BinarySerializer& record) {
+  record.WriteList(1, "sections", 0,
+                   [](duckdb::BinarySerializer::List&, duckdb::idx_t) {});
+}
+
+std::string ErrorOf(const std::function<void()>& run) {
+  try {
+    run();
+  } catch (const std::exception& e) {
+    return e.what();
+  }
+  return {};
+}
+
+TEST_F(SearchDbWalTest, RecordStartsWithItsTick) {
+  AppendRecord(SegPath(1), 7, NoSections);
+  SearchDbWal wal(Fs(), _dir);
+  EXPECT_EQ(wal.CurrentTick(), 7u);
+  Collected got;
+  EXPECT_EQ(wal.Recover(AllExist(), CommittedAll(0), MakeCollector(got),
+                        NoDeletes(), NoTruncates(), NoAdopts()),
+            7u);
+  EXPECT_TRUE(got.chunks.empty());
+}
+
+TEST_F(SearchDbWalTest, RecordWithoutATickIsRefused) {
+  AppendPayload(SegPath(1), [](duckdb::BinarySerializer& record) {
+    record.WriteProperty<uint64_t>(7, "added_by_a_newer_release", 1);
+  });
+  const auto error = ErrorOf([&] { SearchDbWal wal(Fs(), _dir); });
+  EXPECT_NE(error.find("cannot be read"), std::string::npos) << error;
+  EXPECT_TRUE(std::filesystem::exists(SegPath(1)));
+}
+
+TEST_F(SearchDbWalTest, RecordWithAnUnknownFieldIsRefused) {
+  AppendRecord(SegPath(1), 1, [](duckdb::BinarySerializer& record) {
+    NoSections(record);
+    record.WriteProperty<bool>(2, "added_by_a_newer_release", true);
+  });
+  SearchDbWal wal(Fs(), _dir);
+  EXPECT_EQ(wal.CurrentTick(), 1u);
+  Collected got;
+  const auto error = ErrorOf([&] {
+    wal.Recover(AllExist(), CommittedAll(0), MakeCollector(got), NoDeletes(),
+                NoTruncates(), NoAdopts());
+  });
+  EXPECT_NE(error.find("cannot be read"), std::string::npos) << error;
+  EXPECT_NE(error.find("expected end of object"), std::string::npos) << error;
+}
+
+TEST_F(SearchDbWalTest, RecordWithAnUnknownOpKindIsRefused) {
+  AppendRecord(SegPath(1), 1, [](duckdb::BinarySerializer& record) {
+    record.WriteList(
+      1, "sections", 1,
+      [](duckdb::BinarySerializer::List& sections, duckdb::idx_t) {
+        sections.WriteObject([](duckdb::BinarySerializer& section) {
+          section.WriteProperty<uint64_t>(0, "table_id", 5);
+          section.WriteList(
+            1, "ops", 1,
+            [](duckdb::BinarySerializer::List& ops, duckdb::idx_t) {
+              ops.WriteObject([](duckdb::BinarySerializer& op) {
+                op.WriteProperty<uint8_t>(0, "kind", 9);
+              });
+            });
+        });
+      });
+  });
+  SearchDbWal wal(Fs(), _dir);
+  Collected got;
+  const auto error = ErrorOf([&] {
+    wal.Recover(AllExist(), CommittedAll(0), MakeCollector(got), NoDeletes(),
+                NoTruncates(), NoAdopts());
+  });
+  EXPECT_NE(error.find("unknown op kind 9"), std::string::npos) << error;
+}
+
+TEST_F(SearchDbWalTest, GcKeepsASegmentItCannotRead) {
+  SearchDbWal wal(Fs(), _dir);
+  wal.RegisterShard(duckdb::idx_t{5}, 0);
+  AppendPayload(SegPath(1), [](duckdb::BinarySerializer& record) {
+    record.WriteProperty<uint64_t>(7, "added_by_a_newer_release", 1);
+  });
+  wal.OnShardCommit(duckdb::idx_t{5}, 10);
+  EXPECT_TRUE(std::filesystem::exists(SegPath(1)));
 }
 
 }  // namespace

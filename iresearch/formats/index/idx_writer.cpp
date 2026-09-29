@@ -115,27 +115,29 @@ void IdxWriter::Commit() {
   EnsureOut();
 
   format_utils::WriteFooter(*_impl->out, [&](duckdb::BinarySerializer& footer) {
-    footer.WriteList(
-      kIdxFieldTermDict, "term_dict", _impl->term_dict_entries.size(),
-      [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-        const auto& e = _impl->term_dict_entries[i];
-        list.WriteObject([&](duckdb::BinarySerializer& obj) {
-          obj.WriteProperty<uint64_t>(0, "id", e.id);
-          obj.WriteProperty<uint32_t>(1, "features",
-                                      static_cast<uint32_t>(e.meta.features));
-          obj.WriteProperty<uint64_t>(2, "term_count", e.meta.term_count);
-          obj.WriteProperty<uint64_t>(3, "doc_count", e.meta.doc_count);
-          obj.WriteProperty<uint64_t>(4, "total_doc_freq",
-                                      e.meta.total_doc_freq);
-          obj.WriteProperty<uint64_t>(5, "total_term_freq",
-                                      e.meta.total_term_freq);
-          obj.WriteProperty<bool>(6, "has_score_bounds",
-                                  e.meta.has_score_bounds);
-          obj.WriteProperty<uint64_t>(7, "body_offset", e.meta.body_offset);
-          obj.WritePropertyWithDefault<uint64_t>(8, "norm", e.meta.norm,
-                                                 field_limits::invalid());
+    if (!_impl->term_dict_entries.empty()) {
+      footer.WriteList(
+        kIdxFieldTermDict, "term_dict", _impl->term_dict_entries.size(),
+        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+          const auto& e = _impl->term_dict_entries[i];
+          list.WriteObject([&](duckdb::BinarySerializer& obj) {
+            obj.WriteProperty<uint64_t>(0, "id", e.id);
+            obj.WriteProperty<uint32_t>(1, "features",
+                                        static_cast<uint32_t>(e.meta.features));
+            obj.WriteProperty<uint64_t>(2, "term_count", e.meta.term_count);
+            obj.WriteProperty<uint64_t>(3, "doc_count", e.meta.doc_count);
+            obj.WriteProperty<uint64_t>(4, "total_doc_freq",
+                                        e.meta.total_doc_freq);
+            obj.WriteProperty<uint64_t>(5, "total_term_freq",
+                                        e.meta.total_term_freq);
+            obj.WriteProperty<bool>(6, "has_score_bounds",
+                                    e.meta.has_score_bounds);
+            obj.WriteProperty<uint64_t>(7, "body_offset", e.meta.body_offset);
+            obj.WritePropertyWithDefault<uint64_t>(8, "norm", e.meta.norm,
+                                                   field_limits::invalid());
+          });
         });
-      });
+    }
     if (!_impl->ivf_entries.empty()) {
       footer.WriteList(
         kIdxFieldIvf, "ivf", _impl->ivf_entries.size(),

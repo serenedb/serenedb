@@ -67,7 +67,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
 
   format_utils::ReadFooter(
     *_impl->in, filename, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
-      footer.ReadList(
+      footer.ReadOptionalList(
         kIdxFieldTermDict, "term_dict",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
           list.ReadObject([&](duckdb::BinaryDeserializer& obj) {

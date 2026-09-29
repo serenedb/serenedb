@@ -21,13 +21,17 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <duckdb/common/exception.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
+#include <iresearch/error/error.hpp>
+#include <iresearch/formats/format_utils.hpp>
 #include <iresearch/formats/index_meta_reader.hpp>
 #include <iresearch/formats/index_meta_writer.hpp>
 #include <iresearch/formats/segment_meta_writer.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/serialization.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
 #include "tests_shared.hpp"
@@ -190,4 +194,73 @@ TEST(index_meta_tests, last_generation) {
 
   ASSERT_TRUE(index_exists);
   EXPECT_EQ(expected_seg_file, last_seg_file);
+}
+
+TEST(index_meta_tests, rejects_unknown_fields) {
+  irs::MemoryDirectory dir;
+  const auto name = irs::index_meta::FileName(1);
+  {
+    auto out = dir.create(name);
+    ASSERT_NE(nullptr, out);
+    irs::format_utils::WriteFooter(*out, [](duckdb::BinarySerializer& meta) {
+      meta.WriteProperty<uint64_t>(
+        irs::index_meta::kFieldStorageVersion, "storage_version",
+        static_cast<uint64_t>(duckdb::kIResearchStorageVersion));
+      meta.WriteProperty<uint64_t>(irs::index_meta::kFieldSegCounter,
+                                   "seg_counter", 0);
+      meta.WriteList(irs::index_meta::kFieldSegments, "segments", 0,
+                     [](duckdb::BinarySerializer::List&, duckdb::idx_t) {});
+      meta.WriteProperty<uint64_t>(irs::index_meta::kFieldPayload + 1,
+                                   "from_the_future", 1);
+    });
+  }
+
+  irs::IndexMeta meta;
+  ASSERT_THROW(irs::index_meta::Read(dir, meta, name),
+               duckdb::SerializationException);
+}
+
+TEST(index_meta_tests, payload_is_read_whole) {
+  irs::MemoryDirectory dir;
+  irs::IndexMetaWriter writer{[](uint64_t tick, duckdb::BinarySerializer& out) {
+    out.WriteProperty<uint64_t>(0, "tick", tick);
+    out.WriteProperty<std::string>(1, "name", "payload");
+  }};
+  irs::IndexMeta meta;
+  std::string pending_filename;
+  std::string filename;
+  ASSERT_TRUE(writer.prepare(dir, meta, pending_filename, filename, 7));
+  ASSERT_TRUE(writer.commit());
+
+  std::string message;
+  try {
+    irs::IndexMeta read;
+    irs::index_meta::Read(dir, read, filename);
+  } catch (const irs::IndexError& e) {
+    message = e.what();
+  }
+  EXPECT_NE(std::string::npos,
+            message.find("has a payload but no reader for it"))
+    << message;
+
+  {
+    irs::IndexMeta read;
+    ASSERT_THROW(irs::index_meta::Read(dir, read, filename,
+                                       [](duckdb::BinaryDeserializer& in) {
+                                         in.ReadProperty<uint64_t>(0, "tick");
+                                       }),
+                 duckdb::SerializationException);
+  }
+
+  irs::IndexMeta read;
+  uint64_t tick = 0;
+  std::string name;
+  irs::index_meta::Read(dir, read, filename,
+                        [&](duckdb::BinaryDeserializer& in) {
+                          tick = in.ReadProperty<uint64_t>(0, "tick");
+                          name = in.ReadProperty<std::string>(1, "name");
+                        });
+  EXPECT_EQ(7, tick);
+  EXPECT_EQ("payload", name);
+  EXPECT_EQ(meta, read);
 }

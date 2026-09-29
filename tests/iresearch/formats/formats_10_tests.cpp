@@ -1057,6 +1057,37 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
   }
 }
 
+TEST_P(Format10TestCase, postings_reject_other_block_size) {
+  auto dir = get_directory(*this);
+  irs::SegmentMeta meta;
+
+  const auto prepare = [&](std::string_view name, uint32_t block_size) {
+    meta.name = name;
+    {
+      auto out = dir->create(absl::StrCat(name, ".doc"));
+      EXPECT_NE(nullptr, out);
+      irs::format_utils::WriteFooter(
+        *out, [&](duckdb::BinarySerializer& footer) {
+          footer.WriteProperty<uint32_t>(irs::PostingsWriter::kFieldBlockSize,
+                                         "block_size", block_size);
+        });
+    }
+    std::string message;
+    try {
+      irs::PostingsReader reader;
+      reader.prepare(irs::ReaderState{.dir = dir.get(), .meta = &meta},
+                     irs::IndexFeatures::None);
+    } catch (const irs::IndexError& e) {
+      message = e.what();
+    }
+    return message;
+  };
+
+  EXPECT_EQ("", prepare("same", irs::doc_limits::kBlockSize));
+  const auto message = prepare("other", 2 * irs::doc_limits::kBlockSize);
+  EXPECT_NE(std::string::npos, message.find("has block size")) << message;
+}
+
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 static const auto kTestValues =
   ::testing::Combine(::testing::ValuesIn(kTestDirs));

@@ -34,7 +34,6 @@
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/system_compiler.hpp>
-#include <yaclib/coro/await.hpp>
 
 #include "auth/role_closure.h"
 #include "catalog/cluster.h"
@@ -482,9 +481,6 @@ bool PgWireSession<Kind>::SetupConnection() {
 
 template<SocketKind Kind>
 void PgWireSession<Kind>::SendStartupBurst() {
-  SDB_IF_FAILURE("startup_burst_throw") {
-    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
-  }
   static constexpr std::array<char, 9> kAuthOk{
     PQ_MSG_AUTHENTICATION_REQUEST, 0, 0, 0, 8, 0, 0, 0, 0};
   {
@@ -800,9 +796,6 @@ void PgWireSession<Kind>::CommitAndReportReady() {
   // restored and StatusByte reads 'I'. An errored batch already rolled back
   // inline; an explicit BEGIN is left open (the user owns it; status stays
   // 'T'/'E'). A commit failure reports the error but still emits ReadyForQuery.
-  SDB_IF_FAILURE("ready_for_query_throw") {
-    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
-  }
   if (auto err = CommitImplicitBlock()) {
     WriteErrorResponse(this->_send, *err);
   }
@@ -873,9 +866,6 @@ void PgWireSession<Kind>::WriteCommandTag(
 
 template<SocketKind Kind>
 yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
-  SDB_IF_FAILURE("authenticate_throw") {
-    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
-  }
   CapturePeerAddress();
 
   // Consult the HBA ruleset first: it decides trust / reject / which method,
@@ -2555,11 +2545,17 @@ yaclib::Task<> PgWireSession<Kind>::Run() {
     // and runs once on the duck worker, not here; hand the recv/send roles to
     // the duck-side half and degrade into a byte pump.
     auto cpu = SpawnSession();
-    co_await PumpRecv();
-    co_await yaclib::Await(cpu);
+    try {
+      co_await PumpRecv();
+    } catch (const std::exception&) {
+      // Teardown boundary, not error handling: every socket op is NoThrow, so a
+      // throw here is a genuine escape -- fall through to stop + join.
+    }
+    this->Stop();
+    co_await std::move(cpu);
   }
   this->Stop();
-  co_await yaclib::Await(writer);
+  co_await std::move(writer);
   co_return {};
 }
 
@@ -2569,20 +2565,20 @@ yaclib::Task<bool> PgWireSession<Kind>::Negotiate() {
   // --auth_timeout, else close. Cancelled on every exit. The handler holds a
   // self, so a fire racing teardown is harmless.
   absl::Cleanup deadline_guard = [this] { _deadline.cancel(); };
+  if (_auth_timeout.count() > 0) {
+    _deadline.expires_after(_auth_timeout);
+    _deadline.async_wait(
+      [self = this->shared_from_this()](const asio_ns::error_code& ec) {
+        if (!ec) {
+          self->_socket.Close();
+        }
+      });
+  }
+  if (!co_await this->ReadProxyPreface(_proxy)) {
+    co_return false;
+  }
+  // TODO: ssl handshake can be here, but there's no always ssl in pg-wire
   try {
-    if (_auth_timeout.count() > 0) {
-      _deadline.expires_after(_auth_timeout);
-      _deadline.async_wait(
-        [self = this->shared_from_this()](const asio_ns::error_code& ec) {
-          if (!ec) {
-            self->_socket.Close();
-          }
-        });
-    }
-    if (!co_await this->ReadProxyPreface(_proxy)) {
-      co_return false;
-    }
-    // TODO: ssl handshake can be here, but there's no always ssl in pg-wire
     StartupRequest startup;
     if (co_await NegotiateStartup(startup) == StartupOutcome::Close) {
       co_return false;
@@ -2655,13 +2651,10 @@ yaclib::Task<bool> PgWireSession<Kind>::Negotiate() {
       co_await this->Flush();
       co_return false;
     }
-    co_return true;
-  } catch (const std::exception& exception) {
-    SDB_ERROR(GENERAL, "pg connection startup failed: ", exception.what());
-    WriteFatalResponse(this->_send, ToSqlError(exception));
+  } catch (const std::exception&) {
+    co_return false;
   }
-  co_await this->Flush();
-  co_return false;
+  co_return true;
 }
 
 template<SocketKind Kind>
@@ -2786,7 +2779,7 @@ auto PgWireSession<Kind>::NegotiateStartup(StartupRequest& startup)
 }
 
 template<SocketKind Kind>
-yaclib::Future<> PgWireSession<Kind>::SpawnSession() noexcept {
+yaclib::Future<> PgWireSession<Kind>::SpawnSession() {
   this->_task = duckdb::make_shared_ptr<CpuResumer>(
     duckdb::TaskScheduler::GetScheduler(
       irs::DuckDBEngine::Instance().instance()),
@@ -2805,7 +2798,6 @@ yaclib::Task<> PgWireSession<Kind>::PumpRecv() {
       co_await this->_socket.ReadSome(this->_recv.Reserve(kReadBlock))
         .NoThrow();
     if (ec || n == 0) {
-      this->Stop();
       co_return {};
     }
     this->_recv.CommitWrite(n);
@@ -2828,43 +2820,31 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
     this->_task->Finish();
   };
   try {
-    co_await ServeSession();
+    if (SetupConnection()) {
+      {
+        absl::MutexLock lock{&_cancel_token->mu};
+        _cancel_token->ctx = _conn->context.get();
+      }
+      SendStartupBurst();
+      this->KickSend();
+      co_await RunCommandLoop();
+    }
   } catch (const std::exception& exception) {
     SDB_ERROR(GENERAL, "pg session failed: ", exception.what());
     WriteFatalResponse(this->_send, ToSqlError(exception));
   }
-  TeardownSession();
+  // Teardown runs where everything was created: results/portals die on a duck
+  // worker; their cleanup may emit notices that must be stolen before
+  // ~ConnectionContext asserts an empty queue.
+  _proto.Clear();
+  if (_connection_ctx) {
+    _connection_ctx->ConsumeNotices([](const irs::pg::SqlErrorData&) {});
+  }
   // Last responses (e.g. up to the Terminate) may still be draining; closing
   // mid-write would truncate them, so drain first, then stop -- SendWriter (io)
   // closes the socket, which unwinds the recv side. No side-channel post.
   co_await this->DrainSendOnTask();
   co_return {};
-}
-
-template<SocketKind Kind>
-yaclib::Task<> PgWireSession<Kind>::ServeSession() {
-  if (!SetupConnection()) {
-    co_return {};
-  }
-  {
-    absl::MutexLock lock{&_cancel_token->mu};
-    _cancel_token->ctx = _conn->context.get();
-  }
-  SendStartupBurst();
-  this->KickSend();
-  co_await RunCommandLoop();
-  co_return {};
-}
-
-// Teardown runs where everything was created: results/portals die on a duck
-// worker; their cleanup may emit notices that must be stolen before
-// ~ConnectionContext asserts an empty queue.
-template<SocketKind Kind>
-void PgWireSession<Kind>::TeardownSession() noexcept {
-  _proto.Clear();
-  if (_connection_ctx) {
-    _connection_ctx->ConsumeNotices([](const irs::pg::SqlErrorData&) {});
-  }
 }
 
 template<SocketKind Kind>

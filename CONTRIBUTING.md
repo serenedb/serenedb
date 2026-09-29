@@ -197,7 +197,9 @@ SQL examples are backed by sqllogic tests, so an example that stops working fail
 
 These rules cover everything SereneDB writes: database files and their write-ahead logs, the search-table WAL and search index directories.
 
-Files are not reproducible byte for byte, and making them so is not a goal. The same data and statements can write different bytes: hash tables iterate in a different order in every process, and parallel builds, checkpoints, refreshes and merges run in a different order every time. Compatibility is about what a reader gets back, so tests compare contents, never the bytes of a file.
+Files are not reproducible byte for byte, and making them so is not a goal. The same data and statements can write different bytes: hash tables iterate in a different order in every process, and parallel builds, checkpoints, refreshes and merges run in a different order every time. Compatibility is about what a reader gets back, so compatibility tests compare contents, never the bytes of a file.
+
+A file never holds stale memory, though: a compression method writes every byte of the segment size it reports, padding and alignment gaps included, so no file carries bytes left in a buffer by another table or database. `StorageVersionTest.CheckpointWritesNoStaleBufferBytes` writes the same data with each compression method twice, from buffers filled with zeros and with ones, and requires identical data blocks. Legacy FSST is left out: it samples its input at random.
 
 Only two places record a storage version, a `serenedb_vN` value of DuckDB's `StorageVersion`:
 

@@ -339,4 +339,111 @@ TEST_F(StorageVersionTest, SereneDBAndDuckDBFilesDoNotMix) {
   }
 }
 
+TEST_F(StorageVersionTest, CheckpointWritesNoStaleBufferBytes) {
+  struct Segments {
+    std::string_view compression;
+    std::string_view storage_version;
+    std::string_view query;
+  };
+  constexpr std::string_view kStrings =
+    "SELECT CASE WHEN i % 11 = 0 THEN NULL ELSE 'value_' || (i % 3000) || "
+    "repeat('x', i % 17) END AS s FROM range(200000) t(i)";
+  constexpr std::string_view kDoubles =
+    "SELECT CASE WHEN i % 9 = 0 THEN NULL ELSE (i % 1000) / 8 END::DOUBLE AS d "
+    "FROM range(200000) t(i)";
+  constexpr std::string_view kIntegers =
+    "SELECT CASE WHEN i % 7 = 0 THEN NULL ELSE (i * 37) % 100000 END::INTEGER "
+    "AS v, CASE WHEN i % 1000 < 3 THEN NULL ELSE (i // 64) % 50 END::TINYINT "
+    "AS r FROM range(200000) t(i)";
+  constexpr std::string_view kBooleans =
+    "SELECT CASE WHEN i % 13 = 0 THEN NULL ELSE i % 3 = 0 END AS b FROM "
+    "range(200000) t(i)";
+  constexpr std::array<Segments, 11> kCases{{
+    {"uncompressed", "v2.0.0", kStrings},
+    {"dict_fsst", "v2.0.0", kStrings},
+    {"dict_fsst", "serenedb_latest", kStrings},
+    {"zstd", "v2.0.0", kStrings},
+    {"dictionary", "v1.2.0", kStrings},
+    {"alp", "v2.0.0", kDoubles},
+    {"alprd", "v2.0.0", kDoubles},
+    {"bitpacking", "v2.0.0", kIntegers},
+    {"rle", "v2.0.0", kIntegers},
+    {"rle", "serenedb_latest", kIntegers},
+    {"roaring", "v2.0.0", kBooleans},
+  }};
+  constexpr auto kBlockStart = 3 * duckdb::Storage::FILE_HEADER_SIZE;
+  constexpr auto kBlockHeader = duckdb::Storage::DEFAULT_BLOCK_HEADER_SIZE;
+  constexpr auto kBlock = duckdb::Storage::DEFAULT_BLOCK_SIZE + kBlockHeader;
+
+  struct Written {
+    std::string file;
+    std::vector<int64_t> blocks;
+  };
+  const auto write = [&](duckdb::DebugInitialize initialize,
+                         std::string_view prefix) {
+    duckdb::DBConfig config;
+    config.options.debug_initialize = initialize;
+    config.options.maximum_threads = 1;
+    duckdb::DuckDB db{nullptr, &config};
+    duckdb::Connection con{db};
+    std::vector<Written> written;
+    for (size_t i = 0; i < kCases.size(); ++i) {
+      const auto& segments = kCases[i];
+      const auto path = File(absl::StrCat(prefix, i, ".db"));
+      EXPECT_EQ(
+        Exec(con, absl::StrCat("ATTACH '", path, "' AS d (STORAGE_VERSION '",
+                               segments.storage_version, "')")),
+        "");
+      EXPECT_EQ(Exec(con, absl::StrCat("SET force_compression = '",
+                                       segments.compression, "'")),
+                "");
+      EXPECT_EQ(Exec(con, absl::StrCat("CREATE TABLE d.t AS ", segments.query)),
+                "");
+      EXPECT_EQ(Exec(con, "CHECKPOINT d"), "");
+      EXPECT_EQ(Scalar(con, absl::StrCat("SELECT count(*) > 0 FROM "
+                                         "pragma_storage_info('d.t') WHERE "
+                                         "lower(compression) = '",
+                                         segments.compression, "'")),
+                "true")
+        << segments.compression;
+      auto& result = written.emplace_back();
+      const auto blocks = con.Query(
+        "SELECT DISTINCT b FROM (SELECT block_id AS b FROM "
+        "pragma_storage_info('d.t') UNION ALL SELECT "
+        "unnest(additional_block_ids) FROM pragma_storage_info('d.t')) WHERE "
+        "b >= 0 ORDER BY b");
+      EXPECT_FALSE(blocks->HasError()) << blocks->GetError();
+      for (duckdb::idx_t row = 0; row < blocks->RowCount(); ++row) {
+        result.blocks.push_back(blocks->GetValue(0, row).GetValue<int64_t>());
+      }
+      EXPECT_EQ(Exec(con, "DETACH d"), "");
+      std::ifstream in{path, std::ios::binary};
+      result.file.assign(std::istreambuf_iterator<char>{in},
+                         std::istreambuf_iterator<char>{});
+    }
+    return written;
+  };
+
+  const auto zero = write(duckdb::DebugInitialize::DEBUG_ZERO_INITIALIZE, "z");
+  const auto one = write(duckdb::DebugInitialize::DEBUG_ONE_INITIALIZE, "o");
+  for (size_t i = 0; i < kCases.size(); ++i) {
+    SCOPED_TRACE(
+      absl::StrCat(kCases[i].compression, " at ", kCases[i].storage_version));
+    ASSERT_FALSE(zero[i].blocks.empty());
+    ASSERT_EQ(zero[i].blocks, one[i].blocks);
+    for (const auto block : zero[i].blocks) {
+      const auto start = kBlockStart + block * kBlock;
+      ASSERT_LE(start + kBlock, zero[i].file.size());
+      ASSERT_LE(start + kBlock, one[i].file.size());
+      const auto begin = zero[i].file.begin() + start + kBlockHeader;
+      const auto end = zero[i].file.begin() + start + kBlock;
+      const auto differs =
+        std::mismatch(begin, end, one[i].file.begin() + start + kBlockHeader);
+      EXPECT_EQ(differs.first, end)
+        << "block " << block << " holds a stale byte at offset "
+        << (differs.first - (zero[i].file.begin() + start));
+    }
+  }
+}
+
 }  // namespace

@@ -222,20 +222,12 @@ class TypedTokenizer : public Tokenizer {
 
   constexpr std::tuple<> PrepareBatch(BlockTraits) { return {}; }
 
-  void BeginRow() noexcept {}
-
-  template<TokenLayout Layout, auto... Tags>
-  bool AppendValue(duckdb::string_t value, TokenSink& sink) {
-    return static_cast<Impl*>(this)->template DoFill<Layout, Tags...>(value,
-                                                                      sink);
-  }
-
-  void EndRow(TokenSink&) noexcept {}
-
   IRS_NO_INLINE void FillRow(std::span<const duckdb::string_t> values,
                              doc_id_t doc, TokenSink& sink, FillCtx ctx) final {
     auto* impl = static_cast<Impl*>(this);
-    impl->BeginRow();
+    if constexpr (requires { impl->BeginRow(); }) {
+      impl->BeginRow();
+    }
     bool filled = false;
     for (const auto& value : values) {
       const auto traits =
@@ -244,8 +236,15 @@ class TypedTokenizer : public Tokenizer {
       const bool ok = DispatchFill(
         *impl, ctx.layout, traits,
         [&](auto layout_tag, auto... tags) IRS_FORCE_INLINE {
-          return impl->template AppendValue<layout_tag(), tags()...>(value,
-                                                                     sink);
+          if constexpr (requires {
+                          impl->template AppendValue<layout_tag(), tags()...>(
+                            value, sink);
+                        }) {
+            return impl->template AppendValue<layout_tag(), tags()...>(value,
+                                                                       sink);
+          } else {
+            return impl->template DoFill<layout_tag(), tags()...>(value, sink);
+          }
         });
       if (!ok) [[unlikely]] {
         sink.RejectValue();
@@ -253,8 +252,10 @@ class TypedTokenizer : public Tokenizer {
       filled |= ok;
       sink.EndValue();
     }
-    if (filled) {
-      impl->EndRow(sink);
+    if constexpr (requires { impl->EndRow(sink); }) {
+      if (filled) {
+        impl->EndRow(sink);
+      }
     }
   }
 

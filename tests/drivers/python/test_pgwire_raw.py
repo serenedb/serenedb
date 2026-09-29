@@ -890,6 +890,31 @@ def test_copy_from_stdin_extended(conn):
         conn.run_ok("drop table if exists smoke_copy_ext")
 
 
+def test_copy_feeder_error_fails_the_copy(conn):
+    # A throw in the COPY FROM STDIN feeder, the io coroutine that hands the
+    # client's CopyData to the COPY, fails the COPY with an ERROR and keeps the
+    # connection. The throw used to end the feeder without telling the COPY: the
+    # worker waited for data forever, and the client for the COPY's answer.
+    if "E" in types(conn.run("set sdb_faults='copy_feeder_throw'")):
+        pytest.skip("fault injection not enabled in this build")
+    c = WireConn()
+    try:
+        c.run_ok("drop table if exists t_copy_feeder")
+        c.run_ok("create table t_copy_feeder(a int)")
+        c.send("Q", _cstr("copy t_copy_feeder from stdin"))
+        assert c.read_msg()[0] == "G"
+        c.send("d", b"1\n")
+        c.send("c")
+        c.sock.settimeout(10)
+        m = c.drain_to_ready()
+        assert "E" in types(m), types(m)
+        assert first_field(c.run("select count(*) from t_copy_feeder")) == b"0"
+    finally:
+        conn.run("set sdb_faults='-copy_feeder_throw'")
+        c.sock.close()
+        conn.run("drop table if exists t_copy_feeder")
+
+
 def test_copy_to_stdout_extended(conn):
     # COPY ... TO STDOUT over the extended protocol: Parse/Bind/Execute must
     # route to the wire collector and emit CopyOutResponse(H) + CopyData(d) +

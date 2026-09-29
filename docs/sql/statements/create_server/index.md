@@ -42,11 +42,12 @@ CREATE SERVER orders FOREIGN DATA WRAPPER postgres_fdw
 
 ### Foreign-data wrappers
 
-The wrapper name selects the connector. Two are implemented:
+The wrapper name selects the connector. Three are implemented:
 
 | `FOREIGN DATA WRAPPER` | Connects to |
 |---|---|
 | `clickhouse_fdw` | ClickHouse, over its native protocol |
+| `iceberg_fdw` | An Iceberg REST catalog; its options and authentication are on [Iceberg Catalog Authentication](../../../configuration/iceberg_authentication.md) |
 | `postgres_fdw` | PostgreSQL, over the wire protocol |
 
 Any other wrapper name is rejected at `CREATE SERVER` time.

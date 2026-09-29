@@ -21,6 +21,8 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <duckdb/common/serializer/deserializer.hpp>
+#include <duckdb/common/serializer/serializer.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/store/memory_directory.hpp>
@@ -49,15 +51,11 @@ TEST(index_meta_tests, memory_directory_read_write_15) {
   irs::IndexMeta meta_orig;
   std::string filename;
   std::string tmp_filename;
-  ASSERT_TRUE(irs::IsNull(irs::GetPayload(meta_orig)));
 
-  // set payload
-  const irs::bytes_view payload =
-    ViewCast<byte_type>(std::string_view("payload"));
-  meta_orig.payload.emplace(payload);
-
-  ASSERT_TRUE(writer->prepare(dir, meta_orig, tmp_filename, filename));
-  ASSERT_TRUE(meta_orig.payload.has_value());
+  ASSERT_TRUE(writer->prepare(
+    dir, meta_orig, tmp_filename, filename, [](duckdb::Serializer& out) {
+      out.WriteProperty<std::string>(0, "payload", "payload");
+    }));
   ASSERT_EQ("segments_1", filename);
   ASSERT_EQ("pending_segments_1", tmp_filename);
 
@@ -75,6 +73,7 @@ TEST(index_meta_tests, memory_directory_read_write_15) {
 
   // create index metadata and read it from the specified  directory
   irs::IndexMeta meta_read;
+  std::string payload;
   {
     std::string segments_file;
 
@@ -82,17 +81,73 @@ TEST(index_meta_tests, memory_directory_read_write_15) {
     const bool index_exists = reader->last_segments_file(dir, segments_file);
 
     ASSERT_TRUE(index_exists);
-    reader->read(dir, meta_read, segments_file);
+    reader->read(dir, meta_read, segments_file, [&](duckdb::Deserializer& in) {
+      payload = in.ReadProperty<std::string>(0, "payload");
+    });
   }
 
   EXPECT_EQ(meta_orig, meta_read);
+  EXPECT_EQ("payload", payload);
+}
+
+TEST(index_meta_tests, invisible_count_round_trip) {
+  auto codec = irs::formats::Get("1_5simd");
+  ASSERT_NE(nullptr, codec);
+  irs::MemoryDirectory dir;
+
+  auto make_segment = [&](std::string_view name, irs::doc_id_t visible_end) {
+    irs::IndexSegment segment;
+    segment.meta.name = name;
+    segment.meta.version = 1;
+    segment.meta.codec = codec;
+    segment.meta.docs_count = 10;
+    segment.meta.byte_size = 42;
+    segment.meta.visible_end = visible_end;
+    segment.meta.docs_mask = std::make_shared<irs::DocumentMask>([] {
+      irs::DocumentMask mask;
+      mask.Add(irs::doc_limits::min() + 1);
+      mask.Trim();
+      return mask;
+    }());
+    segment.meta.live_docs_count =
+      segment.meta.docs_count - irs::RemovalCount(segment.meta);
+    codec->get_segment_meta_writer()->Write(dir, segment.filename,
+                                            segment.meta);
+    return segment;
+  };
+
+  irs::IndexMeta meta_orig;
+  meta_orig.segments.emplace_back(
+    make_segment("tailed", irs::doc_limits::min() + 7));
+  meta_orig.segments.emplace_back(
+    make_segment("whole", irs::doc_limits::eof()));
+
+  std::string filename;
+  std::string tmp_filename;
+  auto writer = codec->get_index_meta_writer();
+  ASSERT_TRUE(writer->prepare(dir, meta_orig, tmp_filename, filename));
+  ASSERT_TRUE(writer->commit());
+
+  irs::IndexMeta meta_read;
+  codec->get_index_meta_reader()->read(dir, meta_read, filename);
+  ASSERT_EQ(2, meta_read.segments.size());
+
+  const auto& tailed = meta_read.segments[0].meta;
+  EXPECT_EQ(10, tailed.docs_count);
+  EXPECT_EQ(6, tailed.live_docs_count);
+  EXPECT_EQ(irs::doc_limits::min() + 7, tailed.visible_end);
+  EXPECT_EQ(3, irs::InvisibleCount(tailed));
+
+  const auto& whole = meta_read.segments[1].meta;
+  EXPECT_EQ(10, whole.docs_count);
+  EXPECT_EQ(9, whole.live_docs_count);
+  EXPECT_EQ(irs::doc_limits::eof(), whole.visible_end);
 }
 
 TEST(index_meta_tests, ctor) {
   irs::IndexMeta meta;
   EXPECT_EQ(0, meta.seg_counter);
   EXPECT_EQ(0, meta.segments.size());
-  EXPECT_TRUE(irs::IsNull(irs::GetPayload(meta)));
   EXPECT_EQ(irs::index_gen_limits::invalid(), meta.gen);
 }
 

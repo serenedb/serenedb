@@ -20,11 +20,20 @@
 
 #pragma once
 
-#include "network/http/router.h"
+#include <cstdint>
+#include <memory>
+
+#include "network/http/handler.h"
 
 namespace sdb::otel {
 
 // OTLP/HTTP: POST /v1/logs, /v1/traces, /v1/metrics (OTLP spec default paths).
-void RegisterHandlers(network::HttpRouter& router);
+enum class Endpoint : uint8_t {
+  Logs,
+  Traces,
+  Metrics,
+};
+
+std::unique_ptr<network::HttpHandler> Make(Endpoint endpoint);
 
 }  // namespace sdb::otel

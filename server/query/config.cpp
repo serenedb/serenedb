@@ -23,7 +23,6 @@
 #include <absl/container/node_hash_map.h>
 #include <absl/strings/match.h>
 
-#include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -39,8 +38,7 @@
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/log/store.h"
+#include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 
@@ -65,20 +63,6 @@ void Config::SetInternal(std::string_view key, std::string value) {
     _client_ctx.config.user_settings.SetUserSetting(
       setting_index.GetIndex(), duckdb::Value{std::move(value)});
   }
-}
-
-std::vector<std::string> Config::GetSearchPath() const {
-  // DuckDB stores search_path as (catalog, schema) entries and serializes
-  // them as "catalog.schema" when read as a string setting. Use the
-  // structured API so we return just the schema names.
-  const auto& entries =
-    duckdb::ClientData::Get(_client_ctx).catalog_search_path->Get();
-  std::vector<std::string> result;
-  result.reserve(entries.size());
-  for (const auto& entry : entries) {
-    result.emplace_back(entry.GetSchema().GetIdentifierName());
-  }
-  return result;
 }
 
 int8_t Config::GetExtraFloatDigits() const {
@@ -180,11 +164,6 @@ void Config::OnSet(std::string_view name, bool is_local,
     // Plain SET becomes the COMMIT keeper; drop any pending LOCAL revert.
     it->second.commit_restore.reset();
   }
-}
-
-void Config::SetSetting(std::string_view key, std::string value,
-                        bool /*is_local*/) {
-  SetInternal(key, std::move(value));
 }
 
 void Config::SetSettingChecked(std::string_view key, std::string value,

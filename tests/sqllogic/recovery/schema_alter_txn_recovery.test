@@ -1,0 +1,166 @@
+control substitution on
+
+# Schema alters are transactional in the log as well as in memory. A version
+# that lost a write-write conflict, was rolled back, or was still pending at the
+# crash is absent after WAL replay; the committed ones come back, and they come
+# back the same from a checkpoint.
+
+statement ok
+CREATE ROLE satr_r1;
+
+statement ok
+CREATE ROLE satr_r2;
+
+statement ok
+CREATE ROLE satr_owner;
+
+statement ok
+CREATE SCHEMA satr_s;
+
+statement ok
+CREATE TABLE satr_s.t (id INTEGER);
+
+statement ok
+INSERT INTO satr_s.t VALUES (1), (2);
+
+# The loser of a conflict never reaches the log.
+connection w1
+statement ok
+BEGIN;
+
+connection w1
+statement ok
+GRANT USAGE ON SCHEMA satr_s TO satr_r1;
+
+connection w2
+statement error
+GRANT USAGE ON SCHEMA satr_s TO satr_r2;
+----
+db error: ERROR: Catalog write-write conflict on alter with "satr_s"
+
+
+# Neither does a rolled-back holder.
+connection w1
+statement ok
+ROLLBACK;
+
+connection w2
+statement ok
+GRANT USAGE ON SCHEMA satr_s TO satr_r2;
+
+# Two versions committed together.
+connection w2
+statement ok
+BEGIN;
+
+connection w2
+statement ok
+GRANT CREATE ON SCHEMA satr_s TO satr_r2;
+
+connection w2
+statement ok
+ALTER SCHEMA satr_s OWNER TO satr_owner;
+
+connection w2
+statement ok
+COMMIT;
+
+# A version still pending when the server dies.
+connection w1
+statement ok
+BEGIN;
+
+connection w1
+statement ok
+GRANT CREATE ON SCHEMA satr_s TO satr_r1;
+
+connection w1
+query
+SELECT has_schema_privilege('satr_r1', 'satr_s', 'CREATE') AS pending;
+----
+pending
+t
+
+connection w3
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection w3
+statement error connection closed
+SELECT 1;
+
+connection after_wal_replay
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT pg_get_userbyid(nspowner) AS owner,
+       has_schema_privilege('satr_r1', 'satr_s', 'USAGE') AS r1_usage,
+       has_schema_privilege('satr_r2', 'satr_s', 'USAGE') AS r2_usage,
+       has_schema_privilege('satr_r2', 'satr_s', 'CREATE') AS r2_create,
+       has_schema_privilege('satr_r1', 'satr_s', 'CREATE') AS r1_create
+FROM pg_namespace WHERE nspname = 'satr_s';
+----
+owner	r1_usage	r2_usage	r2_create	r1_create
+satr_owner	f	t	t	f
+
+connection after_wal_replay
+query
+SELECT count(*) AS n FROM satr_s.t;
+----
+n
+2
+
+# The replayed version takes the next alter, and the schema still holds its tables.
+connection after_wal_replay
+statement ok
+GRANT CREATE ON SCHEMA satr_s TO satr_r1;
+
+connection after_wal_replay
+statement ok
+CREATE TABLE satr_s.t2 (id INTEGER);
+
+connection after_wal_replay
+statement ok
+CHECKPOINT;
+
+connection after_wal_replay
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_wal_replay
+statement error connection closed
+SELECT 1;
+
+connection after_checkpoint
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT pg_get_userbyid(nspowner) AS owner,
+       has_schema_privilege('satr_r1', 'satr_s', 'USAGE') AS r1_usage,
+       has_schema_privilege('satr_r2', 'satr_s', 'USAGE') AS r2_usage,
+       has_schema_privilege('satr_r2', 'satr_s', 'CREATE') AS r2_create,
+       has_schema_privilege('satr_r1', 'satr_s', 'CREATE') AS r1_create
+FROM pg_namespace WHERE nspname = 'satr_s';
+----
+owner	r1_usage	r2_usage	r2_create	r1_create
+satr_owner	f	t	t	t
+
+connection after_checkpoint
+query
+SELECT table_name FROM information_schema.tables WHERE table_schema = 'satr_s' ORDER BY table_name;
+----
+table_name
+t
+t2
+
+connection after_checkpoint
+statement ok
+DROP SCHEMA satr_s CASCADE;
+
+connection after_checkpoint
+statement ok
+DROP ROLE satr_r1;
+
+connection after_checkpoint
+statement ok
+DROP ROLE satr_r2;
+
+connection after_checkpoint
+statement ok
+DROP ROLE satr_owner;

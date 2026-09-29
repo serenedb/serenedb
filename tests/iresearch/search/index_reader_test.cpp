@@ -116,7 +116,8 @@ TEST(directory_reader_test, open_newest_index) {
       return true;
     }
     void read(const irs::Directory& /*dir*/, irs::IndexMeta& /*meta*/,
-              std::string_view filename = std::string_view{}) final {
+              std::string_view filename,
+              irs::MetaPayloadReader /*payload*/) final {
       read_file.assign(filename.data(), filename.size());
     }
     std::string segments_file;
@@ -434,12 +435,13 @@ TEST(segment_reader_test, segment_reader_has) {
     auto writer = codec->get_segment_meta_writer();
     auto reader = codec->get_segment_meta_reader();
     irs::SegmentMeta expected;
+    expected.name = "_1";
 
-    writer->write(dir, filename, expected);
+    writer->Write(dir, filename, expected);
 
     irs::SegmentMeta meta;
 
-    reader->read(dir, meta);
+    reader->read(dir, meta, filename);
 
     ASSERT_EQ(expected, meta);
     ASSERT_FALSE(irs::HasRemovals(meta));
@@ -451,8 +453,9 @@ TEST(segment_reader_test, segment_reader_has) {
     auto writer = codec->get_segment_meta_writer();
     auto reader = codec->get_segment_meta_reader();
     irs::SegmentMeta expected;
+    expected.name = "_1";
 
-    writer->write(dir, filename, expected);
+    writer->Write(dir, filename, expected);
 
     irs::SegmentMeta meta;
 
@@ -468,17 +471,18 @@ TEST(segment_reader_test, segment_reader_has) {
     auto writer = codec->get_segment_meta_writer();
     auto reader = codec->get_segment_meta_reader();
     irs::SegmentMeta expected;
+    expected.name = "_1";
 
     expected.docs_count = 43;
     expected.live_docs_count = 42;
     expected.version = 0;
     expected.docs_mask = [&] {
-      auto docs_mask =
-        std::make_shared<irs::DocumentMask>(irs::IResourceManager::gNoop);
-      docs_mask->insert(4);
-      return docs_mask;
+      irs::DocumentMask docs_mask;
+      docs_mask.Add(4);
+      docs_mask.Trim();
+      return std::make_shared<irs::DocumentMask>(std::move(docs_mask));
     }();
-    writer->write(dir, filename, expected);
+    writer->Write(dir, filename, expected);
 
     irs::SegmentMeta meta;
 
@@ -494,17 +498,18 @@ TEST(segment_reader_test, segment_reader_has) {
     auto writer = codec->get_segment_meta_writer();
     auto reader = codec->get_segment_meta_reader();
     irs::SegmentMeta expected;
+    expected.name = "_1";
 
     expected.docs_count = 43;
     expected.live_docs_count = 42;
     expected.version = 1;
     expected.docs_mask = [&] {
-      auto docs_mask =
-        std::make_shared<irs::DocumentMask>(irs::IResourceManager::gNoop);
-      docs_mask->insert(4);
-      return docs_mask;
+      irs::DocumentMask docs_mask;
+      docs_mask.Add(4);
+      docs_mask.Trim();
+      return std::make_shared<irs::DocumentMask>(std::move(docs_mask));
     }();
-    writer->write(dir, filename, expected);
+    writer->Write(dir, filename, expected);
 
     irs::SegmentMeta meta;
     reader->read(dir, meta, filename);

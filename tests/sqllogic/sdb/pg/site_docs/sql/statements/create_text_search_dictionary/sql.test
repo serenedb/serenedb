@@ -54,8 +54,6 @@ SELECT ts_lexize('sql_copy', 'A-B c');
 ts_lexize
 {a,b,c}
 
-# NULL result rejects the value (ts_lexize surfaces rejection as an error)
-
 statement ok
 CREATE TEXT SEARCH DICTIONARY sql_nullif AS
     (lambda x: nullif(lower(x), 'skip'));
@@ -66,8 +64,11 @@ SELECT ts_lexize('sql_nullif', 'keep');
 ts_lexize
 {keep}
 
-statement error error while preparing tokenizer
-SELECT ts_lexize('sql_nullif', 'SKIP');
+query
+SELECT ts_lexize('sql_nullif', 'SKIP') IS NULL AS rejected, ts_lexize('sql_nullif', '') AS empty;
+----
+rejected	empty
+t	{""}
 
 # A sql tokenizer expression may not call text-search functions: they would
 # re-enter the tokenizer machinery (unbounded recursion when self-referencing).

@@ -566,12 +566,114 @@ ts_lexize
 {ısparta}
 
 
+# --- case = fold: full case folding (ß -> ss, ligatures, final sigma) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY norm_fold AS
+    normalize_tokens(case := 'fold')
+
+
+query
+SELECT ts_lexize('norm_fold', 'Straße ﬁ οδος');
+----
+ts_lexize
+{"strasse fi οδοσ"}
+
+
+query
+SELECT ts_lexize('norm_fold', 'HELLO World');
+----
+ts_lexize
+{"hello world"}
+
+
+# --- a Turkish locale keeps the dotless i when folding ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY norm_fold_tr AS
+    normalize_tokens('tr_TR', case := 'fold')
+
+
+query
+SELECT ts_lexize('norm_fold_tr', 'ISPARTA');
+----
+ts_lexize
+{ısparta}
+
+
+# --- form = nfd / nfkd: decomposed output ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY norm_nfd AS
+    normalize_tokens(form := 'nfd')
+
+
+query
+SELECT strlen(ts_lexize('norm_nfd', 'é')[1]) AS n;
+----
+n
+3
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY norm_nfd_strip AS
+    normalize_tokens(accent := false, form := 'nfd')
+
+
+query
+SELECT ts_lexize('norm_nfd_strip', 'Café');
+----
+ts_lexize
+{Cafe}
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY norm_nfkd AS
+    normalize_tokens(form := 'nfkd')
+
+
+query
+SELECT ts_lexize('norm_nfkd', 'ﬁ①');
+----
+ts_lexize
+{fi1}
+
+
+# --- form = nfkc_cf: NFKC with case folding, lowercase with no case option ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY norm_nfkc_cf AS
+    normalize_tokens(form := 'nfkc_cf')
+
+
+query
+SELECT ts_lexize('norm_nfkc_cf', 'ＦＵＬＬ Straße ﬁ');
+----
+ts_lexize
+{"full strasse fi"}
+
+
+query
+SELECT ts_lexize('norm_nfkc_cf', 'HELLO');
+----
+ts_lexize
+{hello}
+
+
 statement error
 CREATE TEXT SEARCH DICTIONARY norm_bad_form AS
-    normalize_tokens(form := 'nfd')
+    normalize_tokens(form := 'nfx')
 ----
 db error: ERROR: invalid value in "form" parameter
-HINT: Unicode normalization form: nfc, nfkc
+HINT: Unicode normalization form: nfc, nfd, nfkc, nfkd, nfkc_cf
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY norm_bad_case AS
+    normalize_tokens(case := 'folded')
+----
+db error: ERROR: invalid value in "case" parameter
+HINT: Text case conversion: none, lower, upper, fold
 
 
 # COLLATION TEMPLATE
@@ -872,7 +974,7 @@ CREATE TEXT SEARCH DICTIONARY seg_bad_break AS
     split_text(break := 'word')
 ----
 db error: ERROR: invalid value in "break" parameter
-HINT: Token boundary detection mode: all, graphic, alpha, sentence, line, paragraph
+HINT: Token boundary detection mode: all, graphic, alpha, grapheme, sentence, line, paragraph
 
 
 # STOPWORDS TOKENIZER TEMPLATE
@@ -1868,7 +1970,7 @@ CREATE TEXT SEARCH DICTIONARY <name> AS <analyzer> [WITH (frequency, position, n
 split_text(case := 'none', break := 'alpha')
   as a function: split_text(value, case := 'none', break := 'alpha')
   case   Text case conversion: none, lower, upper
-  break  Token boundary detection mode: all, graphic, alpha, sentence, line, paragraph
+  break  Token boundary detection mode: all, graphic, alpha, grapheme, sentence, line, paragraph
 
 generate_ngrams(min_gram := 2, max_gram := 3, preserve_original := false, input_type := 'utf8', start_marker := '', end_marker := '', mode := 'all')
   as a function: generate_ngrams(value, min_gram := 2, max_gram := 3, preserve_original := false, input_type := 'utf8', start_marker := '', end_marker := '', mode := 'all')
@@ -1920,18 +2022,19 @@ generate_wildcard_ngrams(<analyzer>, ngram_size := 3)
 normalize_tokens(locale := '', case := 'none', accent := true, form := 'nfc')
   as a function: normalize_tokens(value, locale := '', case := 'none', accent := true, form := 'nfc')
   locale  ICU locale for case conversion; omit for locale-independent simple case
-  case    Text case conversion: none, lower, upper
+  case    Text case conversion: none, lower, upper, fold
   accent  Preserve accent marks
-  form    Unicode normalization form: nfc, nfkc
+  form    Unicode normalization form: nfc, nfd, nfkc, nfkd, nfkc_cf
 
 split_text_icu(locale, break := 'alpha')
   as a function: split_text_icu(value, locale, break := 'alpha')
   locale  ICU locale string (e.g. en_US.UTF-8)
   break   Token boundary detection mode: all, graphic, alpha, sentence
 
-split_by_non_alpha(case := 'none')
-  as a function: split_by_non_alpha(value, case := 'none')
-  case  Text case conversion: none, lower, upper
+split_by_non_alpha(case := 'none', break := 'ascii')
+  as a function: split_by_non_alpha(value, case := 'none', break := 'ascii')
+  case   Text case conversion: none, lower, upper
+  break  Token boundary mode: ascii, ascii_bytes, alnum, letters, whitespace
 
 <analyzer> | <analyzer>
   chain: each stage re-analyzes the tokens of the previous one
@@ -1992,10 +2095,22 @@ expand_wordnet_synonyms(synonyms)
   as a function: expand_wordnet_synonyms(value, synonyms)
   synonyms  Inline WordNet Prolog database content: one `s(synset,w_num,'word',ss_type,sense_number,tag_count).` record per line
 
-generate_sparse_ngrams(max_ngram_length := 16, covering := false)
-  as a function: generate_sparse_ngrams(value, max_ngram_length := 16, covering := false)
-  max_ngram_length  Maximum emitted n-gram length (minimum 3)
-  covering          Emit the minimal covering n-gram chain (query side) instead of all sparse n-grams (index side)
+generate_sparse_ngrams(max_ngram_length := 16, covering := false, min_ngram_length := 3, min_cutoff_length := 0)
+  as a function: generate_sparse_ngrams(value, max_ngram_length := 16, covering := false, min_ngram_length := 3, min_cutoff_length := 0)
+  max_ngram_length   Maximum emitted n-gram length (minimum 3)
+  covering           Emit the minimal covering n-gram chain (query side) instead of all sparse n-grams (index side)
+  min_ngram_length   Minimum n-gram length (minimum 3); boundaries are chosen over hashes of (min_ngram_length - 1)-character windows
+  min_cutoff_length  Drop n-grams shorter than this; 0 keeps every n-gram
+
+strip_html(join_inline_tags := false)
+  as a function: strip_html(value, join_inline_tags := false)
+  join_inline_tags  Keep a word whole across inline tags such as <b>, <i> and <span> instead of splitting the text at them
+
+filter_tokens(lambda x: <predicate>, min_length := 0, max_length := 0)
+  as a function: filter_tokens(value, min_length := 0, max_length := 0) or filter_tokens(value, lambda x: <predicate>)
+  predicate   Keep only the tokens for which this lambda returns true, as in lambda x: x NOT LIKE 'http%'
+  min_length  Drop tokens shorter than this many characters
+  max_length  Drop tokens longer than this many characters; 0 means no limit
 
 <function>(<arguments>)
   an SQL stage: the value is passed as the first argument, so lower() folds case and string_split(',') fans a value out into tokens

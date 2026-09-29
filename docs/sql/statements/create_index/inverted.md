@@ -51,7 +51,6 @@ The trailing `WITH (...)` clause sets index-level options.
 | `cleanup_interval_step` | `1` | Commit ticks between cleanup passes; `0` disables it |
 | `row_group_size` | `122880` | Row-group size for stored (`INCLUDE`d) columns and for norm columns; there is no separate norm setting. Must be a multiple of the vector size (2048). A scan claims one row group per worker, so a smaller value spreads one segment over more threads at the cost of more per-unit setup |
 | `optimize_top_k` | — | Scorer expression enabling top-K (WAND) pruning, e.g. `'bm25(1.2, 0.75)'` |
-| `pk` | auto | Primary-key column to use as row identity when indexing a [view](../../indexes/inverted/index.md#indexing-a-table-or-a-view) |
 
 ## Partial indexes
 
@@ -68,7 +67,7 @@ Partial indexes are an inverted-index feature: a plain (ART) `CREATE INDEX … W
 
 ## Indexing tables and views
 
-An inverted index can be built over a base table or a view (including a view over `read_parquet`/`read_csv` on local disk or S3). A view has no primary key, so the index materializes its columns at build time and resolves a row identity — automatically for base-table and fast-path-reader views, or via `WITH (pk = '...')` for generic views. See [Indexing a table vs. a view](../../indexes/inverted/index.md#indexing-a-table-or-a-view).
+An inverted index can be built over a base table or a view (including a view over `read_parquet`/`read_csv` on local disk or S3). The index derives each row's identity automatically from the view's source; there is no `pk` option, and only attached external databases accept an explicit key through `key_columns` (see [Row identity](../../indexes/inverted/views.md#row-identity)). The postings are a snapshot of the source, refreshed by `REINDEX INDEX` or the `reindex_interval` option (see [Refreshing the index](../../indexes/inverted/views.md#refreshing-the-index)). See also [Indexing a table vs. a view](../../indexes/inverted/index.md#indexing-a-table-or-a-view).
 
 ## Examples
 

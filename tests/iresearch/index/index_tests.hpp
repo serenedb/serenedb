@@ -182,13 +182,13 @@ void AssertSnapshotEquality(irs::DirectoryReader lhs, irs::DirectoryReader rhs);
 class MaskedPostings : public irs::TermPostings {
  public:
   MaskedPostings(irs::TermPostings::ptr&& postings,
-                 const irs::DocumentMask& mask) noexcept
-    : _postings{std::move(postings)}, _mask{&mask} {}
+                 irs::DocumentMask::Iterator&& it_mask) noexcept
+    : _postings{std::move(postings)}, _it_mask{std::move(it_mask)} {}
 
   irs::doc_id_t Next() final {
     do {
       _doc = _postings->Next();
-    } while (!irs::doc_limits::eof(_doc) && _mask->contains(_doc));
+    } while (!irs::doc_limits::eof(_doc) && _it_mask.Contains(_doc));
     return _doc;
   }
 
@@ -198,16 +198,17 @@ class MaskedPostings : public irs::TermPostings {
 
  private:
   irs::TermPostings::ptr _postings;
-  const irs::DocumentMask* _mask;
+  irs::DocumentMask::Iterator _it_mask;
 };
 
 inline irs::TermPostings::ptr MaskPostings(const irs::SubReader& segment,
                                            irs::TermPostings::ptr&& postings) {
-  const auto* mask = segment.docs_mask();
-  if (mask == nullptr || mask->empty()) {
+  auto it_mask = segment.MaskedDocs();
+  if (it_mask.Empty()) {
     return std::move(postings);
   }
-  return irs::memory::make_managed<MaskedPostings>(std::move(postings), *mask);
+  return irs::memory::make_managed<MaskedPostings>(std::move(postings),
+                                                   std::move(it_mask));
 }
 
 class IndexTestBase : public virtual TestParamBase<index_test_context> {
@@ -227,22 +228,18 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
 
   irs::doc_id_t GetPostingsBlockSize() const;
 
-  void sort(const irs::Comparer& comparator) {
-    for (auto& segment : _index) {
-      segment.sort(comparator);
-    }
-  }
-
   irs::IndexWriter::ptr open_writer(
     irs::Directory& dir, irs::OpenMode mode = irs::kOmCreate,
-    const irs::IndexWriterOptions& options = CsDefaultWriterOptions()) const {
-    return irs::IndexWriter::Make(dir, _codec, mode, EnsureWriterDb(options));
+    irs::IndexWriterOptions options = CsDefaultWriterOptions()) const {
+    return irs::IndexWriter::Make(dir, _codec, mode,
+                                  EnsureWriterDb(std::move(options)));
   }
 
   irs::IndexWriter::ptr open_writer(
     irs::OpenMode mode = irs::kOmCreate,
-    const irs::IndexWriterOptions& options = CsDefaultWriterOptions()) const {
-    return irs::IndexWriter::Make(*_dir, _codec, mode, EnsureWriterDb(options));
+    irs::IndexWriterOptions options = CsDefaultWriterOptions()) const {
+    return irs::IndexWriter::Make(*_dir, _codec, mode,
+                                  EnsureWriterDb(std::move(options)));
   }
 
   irs::DirectoryReader open_reader(
@@ -296,14 +293,14 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
   void add_segments(irs::IndexWriter& writer,
                     std::vector<DocGeneratorBase::ptr>& gens);
 
-  void add_segment(
-    tests::DocGeneratorBase& gen, irs::OpenMode mode = irs::kOmCreate,
-    const irs::IndexWriterOptions& opts = CsDefaultWriterOptions(),
-    const StoreHook& store = {});
+  void add_segment(tests::DocGeneratorBase& gen,
+                   irs::OpenMode mode = irs::kOmCreate,
+                   irs::IndexWriterOptions opts = CsDefaultWriterOptions(),
+                   const StoreHook& store = {});
   void add_segment_batched(
     tests::DocGeneratorBase& gen, size_t batch_size,
     irs::OpenMode mode = irs::kOmCreate,
-    const irs::IndexWriterOptions& opts = CsDefaultWriterOptions());
+    irs::IndexWriterOptions opts = CsDefaultWriterOptions());
 
  private:
   index_t _index;

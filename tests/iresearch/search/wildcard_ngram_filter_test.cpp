@@ -262,4 +262,28 @@ TEST(WildcardNGramFilterTest, query) {
 
   EXPECT_EQ(ids({0, 1}), execute(MakeFilter(kField, "foo%", analyzer, false)));
   EXPECT_EQ(ids({0}), execute(MakeFilter(kField, "foo_ar", analyzer, false)));
+
+  {
+    tests::sort::Boost sort;
+    const auto scored = [&](const irs::ByWildcardNGram& q) {
+      tests::PreparedFilter prepared{q, *reader, &sort, counter};
+      counter.Reset();
+      std::vector<irs::doc_id_t> result;
+      for (size_t i = 0, n = prepared.size(); i < n; ++i) {
+        auto docs = prepared.Execute(i);
+        while (!irs::doc_limits::eof(docs->Next())) {
+          result.push_back(docs->Value());
+        }
+      }
+      return result;
+    };
+
+    auto present = MakeFilter(kField, "fooba_", analyzer);
+    ASSERT_NE(nullptr, present.options().matcher);
+    EXPECT_EQ(ids({0, 1}), scored(present));
+
+    auto absent = MakeFilter(kField, "fooba_", analyzer);
+    absent.mutable_options()->store_field_id = kOtherId;
+    EXPECT_EQ(ids({}), scored(absent));
+  }
 }

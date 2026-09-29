@@ -11,10 +11,13 @@ CREATE SEQUENCE serial;
 
 # DOCS_TEST_BODY
 
-statement error db error: ERROR: sequence INCREMENT must be positive \(negative increments not yet supported\)
-CREATE SEQUENCE serial START WITH 99 INCREMENT BY -1 MAXVALUE 99;
+statement ok
+CREATE SEQUENCE countdown START WITH 99 INCREMENT BY -1 MAXVALUE 99;
 
 # DOCS_TEST: example_008
+
+statement ok
+DROP SEQUENCE countdown;
 
 # DOCS_TEST_BODY
 

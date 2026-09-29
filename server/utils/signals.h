@@ -23,7 +23,7 @@
 namespace sdb::signals {
 
 // Routes SIGTERM/SIGINT/SIGQUIT into lifecycle::BeginShutdown(). Must run
-// after CrashHandler::installCrashHandler: absl's failure handler claims
+// after irs::CrashHandler::installCrashHandler: absl's failure handler claims
 // SIGTERM and would dump a crash stack on a plain `docker stop`.
 void InstallShutdownHandlers();
 

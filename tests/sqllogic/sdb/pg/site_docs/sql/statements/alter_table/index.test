@@ -384,7 +384,7 @@ statement error
 ALTER TABLE my_table
 SET ('option_name' = 'value');
 ----
-db error: ERROR: this ALTER TABLE operation is not supported
+db error: ERROR: SET (<options>) is not supported
 
 
 # DOCS_TEST: example_030
@@ -395,7 +395,7 @@ statement error
 ALTER TABLE my_table
 RESET ('option_name');
 ----
-db error: ERROR: this ALTER TABLE operation is not supported
+db error: ERROR: RESET (<options>) is not supported
 
 
 # DOCS_TEST: example_031
@@ -406,14 +406,14 @@ statement error
 ALTER TABLE my_table
 SET ('option1' = 'value1', 'option2' = 'value2');
 ----
-db error: ERROR: this ALTER TABLE operation is not supported
+db error: ERROR: SET (<options>) is not supported
 
 
 statement error
 ALTER TABLE my_table
 RESET ('option1', 'option2');
 ----
-db error: ERROR: this ALTER TABLE operation is not supported
+db error: ERROR: RESET (<options>) is not supported
 
 
 # DOCS_TEST: example_034
@@ -443,3 +443,19 @@ CREATE TABLE items (id INTEGER);
 statement ok
 ALTER TABLE items
 ADD CONSTRAINT positive_id CHECK (id > 0);
+
+# DOCS_TEST: example_036
+
+statement ok
+DROP TABLE IF EXISTS events;
+
+statement ok
+CREATE TABLE events (id INTEGER PRIMARY KEY, msg VARCHAR) WITH (storage = 'search');
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER TABLE events SET (compaction_interval = 0);
+
+statement ok
+ALTER TABLE events RESET (compaction_interval);

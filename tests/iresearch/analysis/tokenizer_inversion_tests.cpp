@@ -149,7 +149,7 @@ void CollectKeys(const SubReader& segment, std::map<doc_id_t, size_t>& out) {
     ASSERT_TRUE(docs);
     size_t seen = 0;
     for (auto doc = docs->Next(); !doc_limits::eof(doc); doc = docs->Next()) {
-      if (mask != nullptr && mask->contains(doc)) {
+      if (mask != nullptr && mask->Contains(doc)) {
         continue;
       }
       ASSERT_TRUE(
@@ -202,7 +202,7 @@ void CollectField(const SubReader& segment, const FieldPlan& field,
     size_t docs_seen = 0;
 
     for (auto doc = docs->Next(); !doc_limits::eof(doc); doc = docs->Next()) {
-      if (mask != nullptr && mask->contains(doc)) {
+      if (mask != nullptr && mask->Contains(doc)) {
         if (positions != nullptr) {
           while (positions->next()) {
           }
@@ -240,7 +240,7 @@ void CollectField(const SubReader& segment, const FieldPlan& field,
         (*exact)[term].push_back(std::move(entry));
       }
     }
-    if ((nterms % 37) == 1 && (mask == nullptr || mask->empty())) {
+    if ((nterms % 37) == 1 && (mask == nullptr || mask->Empty())) {
       const auto meta = reader->Lookup(to_bytes(term));
       ASSERT_EQ(docs_seen, meta.docs_count)
         << "Lookup disagrees with the postings for " << Describe(term);

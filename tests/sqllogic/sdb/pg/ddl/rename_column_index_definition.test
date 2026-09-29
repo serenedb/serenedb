@@ -1,0 +1,39 @@
+# Renaming a column rewrites the definition of every index on it.
+
+statement ok
+CREATE TABLE rci_t (a INTEGER, b INTEGER);
+
+
+statement ok
+CREATE INDEX rci_i ON rci_t (a);
+
+
+statement ok
+CREATE INDEX rci_e ON rci_t ((a + b));
+
+
+statement ok
+ALTER TABLE rci_t RENAME COLUMN a TO c;
+
+
+query
+SELECT index_name, sql FROM duckdb_indexes() WHERE index_name IN ('rci_i', 'rci_e') ORDER BY 1;
+----
+index_name	sql
+rci_e	CREATE INDEX rci_e ON public.rci_t(((c + b)));
+rci_i	CREATE INDEX rci_i ON public.rci_t(c);
+
+
+statement ok
+INSERT INTO rci_t VALUES (1, 2), (3, 4);
+
+
+query
+SELECT c, b FROM rci_t WHERE c = 3;
+----
+c	b
+3	4
+
+
+statement ok
+DROP TABLE rci_t;

@@ -1,6 +1,6 @@
-# Structure of the embedded docs table, checked as invariants over every row so
-# that adding or editing documentation pages does not touch this file. A path
-# is either 'file.md' (a whole-page doc) or 'file.md#Title#Heading...' with the
+# Structure of the embedded docs, checked as invariants over every row so that
+# adding or editing documentation pages does not touch this file. A path is
+# either 'file.md' (a whole-page doc) or 'file.md#Title#Heading...' with the
 # chain of headings, one unescaped '#' per level, spaces as '_'.
 
 connection docs database=postgres
@@ -75,6 +75,13 @@ SELECT count(*) FROM sdb_docs.docs WHERE title IS NULL OR title = '' OR content 
 count
 0
 
+connection docs database=postgres
+query
+SELECT count(*) FROM sdb_docs.docs WHERE content_text <> md_to_text(content);
+----
+count
+0
+
 # Nothing from the MDX source survives: frontmatter, imports, components,
 # anchors, comments, formatting inside titles.
 connection docs database=postgres
@@ -84,49 +91,78 @@ SELECT count(*) FROM sdb_docs.docs WHERE content LIKE '---%' OR content LIKE '%i
 count
 0
 
+# The breadcrumb is one of the three searched fields: a term carried by an
+# ancestor heading reaches the rows nested under it.
 connection docs database=postgres
 query
-SELECT length(hash), layout FROM sdb_docs.meta;
-----
-length	layout
-64	12
-
-# The breadcrumb is indexed: a breadcrumb match names an ancestor heading.
-connection docs database=postgres
-query
-SELECT count(*) > 0, bool_and(breadcrumb ILIKE '%cop%') FROM sdb_docs.docs_fts WHERE breadcrumb @@ 'copy';
-----
-?column?	bool_and
-t	t
-
-# Ranking sanity: a query for a topic surfaces a row of a page about it.
-connection docs database=postgres
-query
-SELECT bool_or(path ILIKE '%inverted%') FROM (
-  SELECT path, BM25(d.tableoid) AS score
-  FROM sdb_docs.docs_fts d
-  WHERE title @@ 'inverted index' OR breadcrumb @@ 'inverted index' OR content_text @@ 'inverted index'
-  ORDER BY score DESC, path
-  LIMIT 10
-);
-----
-bool_or
-t
-
-connection docs database=postgres
-query
-SELECT count(*) > 0 FROM sdb_docs.docs_fts WHERE content_text @@ ts_phrase('inverted index');
+SELECT count(*) > 0 FROM sdb_docs.search('copy', 50) WHERE breadcrumb ILIKE '%cop%';
 ----
 ?column?
 t
 
+# Ranking sanity: a query for a topic surfaces a row of a page about it.
 connection docs database=postgres
 query
-SELECT list_contains(t, 'the'), list_contains(t, 'index'), list_contains(t, 'structure'), list_contains(t, 'md_to_text'), list_contains(t, 'MD_TO_TEXT')
-FROM (SELECT ts_lexize('sdb_docs.tokenizer', 'The index is a structure; see md_to_text()') AS t);
+SELECT bool_or(path ILIKE '%inverted%') FROM sdb_docs.search('inverted index', 10);
 ----
-list_contains	list_contains	list_contains	list_contains	list_contains
-t	t	t	t	f
+bool_or
+t
+
+# The Lucene grammar reaches the index: a quoted phrase, a prefix and a fuzzy
+# term all resolve.
+connection docs database=postgres
+query
+SELECT (SELECT count(*) FROM sdb_docs.search('"inverted index"', 5)) > 0 AS phrase,
+       (SELECT count(*) FROM sdb_docs.search('tokeniz*', 5)) > 0 AS prefix,
+       (SELECT count(*) FROM sdb_docs.search('vacum~1', 5)) > 0 AS fuzzy;
+----
+phrase	prefix	fuzzy
+t	t	t
+
+connection docs database=postgres
+query
+SELECT (SELECT string_agg(path, ',') FROM sdb_docs.search('path:configuration\/limits.md', 5)) AS term,
+       (SELECT string_agg(path, ',') FROM sdb_docs.search('path:"sql/statements/create_table/index.md#CREATE_TABLE"', 5)) AS phrase,
+       (SELECT count(*) FROM sdb_docs.search('path:sql', 5)) AS partial,
+       (SELECT bool_and(starts_with(path, 'configuration/')) FROM sdb_docs.search('path:configuration*', 500)) AS prefix;
+----
+term	phrase	partial	prefix
+configuration/limits.md	sql/statements/create_table/index.md#CREATE_TABLE	0	t
+
+# Exclusion is refused rather than silently scoped to one field.
+connection docs database=postgres
+statement error
+SELECT count(*) FROM sdb_docs.search('+fox -red', 5);
+----
+db error: ERROR: sdb_docs.search: exclusion (-term or NOT) is not supported here yet<slt:ignore>
+
+
+connection docs database=postgres
+query
+SELECT (SELECT starts_with(path, 'sql/functions/search/scoring.md') FROM sdb_docs.search('Only one scorer function is allowed per inverted index', 1)) AS pasted,
+       (SELECT count(*) FROM sdb_docs.search('How do I create an inverted index?', 5)) = 5 AS question,
+       (SELECT count(*) FROM sdb_docs.search('SELECT * FROM t WHERE body @@ ''fox''', 5)) > 0 AS unparsed,
+       (SELECT count(*) FROM sdb_docs.search('@@', 5)) > 0 AS symbol;
+----
+pasted	question	unparsed	symbol
+t	t	t	t
+
+connection docs database=postgres
+query
+SELECT (SELECT path FROM sdb_docs.search('date_trunc', 1)) = (SELECT path FROM sdb_docs.object('date_trunc') LIMIT 1) AS named_first,
+       (SELECT count(*) FROM sdb_docs.object('date_trunc(ts, ''day'')')) > 0 AS call_syntax;
+----
+named_first	call_syntax
+t	t
+
+# The tokenizer lowercases and keeps an identifier whole, so a name matches
+# whatever case it is typed in.
+connection docs database=postgres
+query
+SELECT (SELECT count(*) FROM sdb_docs.search('md_to_text', 5)) = (SELECT count(*) FROM sdb_docs.search('MD_TO_TEXT', 5));
+----
+?column?
+t
 
 # SQL entry points over the same rows and index.
 connection docs database=postgres
@@ -138,128 +174,209 @@ count	bool_and
 
 connection docs database=postgres
 query
-SELECT length(sdb_docs.read('sql/statements/create_table/index.md#CREATE_TABLE')) > 100, sdb_docs.read('no/such/page.md') IS NULL;
+SELECT (SELECT length(content) FROM sdb_docs.docs WHERE path = 'sql/statements/create_table/index.md#CREATE_TABLE') > 100,
+       (SELECT count(*) FROM sdb_docs.docs WHERE path = 'no/such/page.md') = 0;
 ----
 ?column?	?column?
 t	t
 
 connection docs database=postgres
 query
-SELECT count(*) > 3, bool_and(starts_with(path, 'sql/statements/create_table/')) FROM sdb_docs.sections('sql/statements/create_table/');
+SELECT count(*) > 3, bool_and(starts_with(path, 'sql/statements/create_table/')) FROM sdb_docs.docs WHERE starts_with(path, 'sql/statements/create_table/');
 ----
 ?column?	bool_and
 t	t
 
 connection docs database=postgres
 query
-SELECT count(*) >= 1, bool_and(lower(title) LIKE 'any_value%') FROM sdb_docs.reference('ANY_VALUE');
+SELECT count(*) > 3, count(*) FILTER (WHERE length(path) - length(replace(path, '#', '')) > 1) FROM sdb_docs.docs WHERE starts_with(path, 'sql/') AND depth <= 1;
+----
+?column?	count
+t	0
+
+connection docs database=postgres
+query
+SELECT count(*) FILTER (WHERE depth <> length(regexp_replace(path, '\\#|[^#]', '', 'g'))), count(*) > 1000 FROM sdb_docs.docs;
+----
+count	?column?
+0	t
+
+connection docs database=postgres
+query
+SELECT (SELECT count(*) FROM sdb_docs.docs WHERE path IN ('configuration/limits.md', 'sql/indexes/index.md#Indexes', 'no/such/page.md')),
+       (SELECT count(*) FROM sdb_docs.docs WHERE path LIKE 'sql/statements/create_table/%') = (SELECT count(*) FROM sdb_docs.docs WHERE starts_with(path, 'sql/statements/create_table/'));
+----
+count	?column?
+2	t
+
+connection docs database=postgres
+query
+SELECT count(*), count(d.path) FROM sdb_docs.search('bm25', 3) s LEFT JOIN sdb_docs.docs d USING (path);
+----
+count	count
+3	3
+
+connection docs database=postgres
+query
+SELECT (length(r) - length(replace(r, 'Metadata Filtering', ''))) / length('Metadata Filtering'),
+       starts_with((SELECT sdb_md_to_ansi(markdown, 0, false, path) FROM sdb_docs.docs WHERE path = 'configuration/limits.md'), '# Limits')
+FROM (SELECT sdb_md_to_ansi(markdown, 0, false, path) AS r FROM sdb_docs.docs WHERE path = 'clients/langchain-serenedb/filtering.md#Metadata_Filtering');
+----
+?column?	starts_with
+1	t
+
+connection docs database=postgres
+query
+SELECT count(*) >= 1, bool_and(lower(title) LIKE 'any_value%') FROM sdb_docs.object('ANY_VALUE');
 ----
 ?column?	bool_and
 t	t
 
-# The schema is read-only for everyone but the loader, the superuser included:
-# the tables are rebuilt from the binary, so a manual change would be silently
-# lost or would corrupt the search index.
+connection docs database=postgres
+query
+SELECT (SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'sdb_docs'),
+       (SELECT count(*) FROM information_schema.tables WHERE table_schema = 'sdb_docs');
+----
+count	count
+0	0
 
 connection docs database=postgres
 statement error
-INSERT INTO sdb_docs.docs VALUES ('zzz.md', 'z', '', 'c', 'c');
+DROP FUNCTION sdb_docs.search(TEXT, INTEGER);
 ----
-db error: ERROR: schema "sdb_docs" is read-only
-DETAIL: The embedded documentation is rebuilt from the server binary at startup.
-
-
-connection docs database=postgres
-statement error
-UPDATE sdb_docs.docs SET title = 'x' WHERE path = 'cookbook/search/autocomplete.md';
-----
-db error: ERROR: schema "sdb_docs" is read-only
-DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+db error: ERROR: Cannot drop internal catalog entry "search"!
 
 
 connection docs database=postgres
 statement error
-DELETE FROM sdb_docs.docs WHERE path = 'cookbook/search/autocomplete.md';
+DROP FUNCTION sdb_docs.docs();
 ----
-db error: ERROR: schema "sdb_docs" is read-only
-DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+db error: ERROR: Cannot drop internal catalog entry "docs"!
 
 
 connection docs database=postgres
 statement error
-DELETE FROM sdb_docs.meta;
+CREATE FUNCTION sdb_docs.x() RETURNS INT LANGUAGE SQL BEGIN ATOMIC SELECT 1; END;
 ----
-db error: ERROR: schema "sdb_docs" is read-only
-DETAIL: The embedded documentation is rebuilt from the server binary at startup.
-
-
-connection docs database=postgres
-statement error
-DROP TABLE sdb_docs.meta;
-----
-db error: ERROR: schema "sdb_docs" is read-only
-DETAIL: The embedded documentation is rebuilt from the server binary at startup.
-
-
-connection docs database=postgres
-statement error
-DROP TABLE sdb_docs.docs;
-----
-db error: ERROR: schema "sdb_docs" is read-only
-DETAIL: The embedded documentation is rebuilt from the server binary at startup.
-
-
-connection docs database=postgres
-statement error
-ALTER TABLE sdb_docs.docs RENAME TO docs2;
-----
-db error: ERROR: schema "sdb_docs" is read-only
-DETAIL: The embedded documentation is rebuilt from the server binary at startup.
-
-
-connection docs database=postgres
-statement error
-ALTER TABLE sdb_docs.meta ADD COLUMN extra TEXT;
-----
-db error: ERROR: schema "sdb_docs" is read-only
-DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+db error: ERROR: Cannot create entry in system catalog
 
 
 connection docs database=postgres
 statement error
 CREATE TABLE sdb_docs.scratch (id INT);
 ----
-db error: ERROR: schema "sdb_docs" is read-only
-DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+db error: ERROR: Cannot create entry in system catalog
 
 
 connection docs database=postgres
 statement error
-CREATE INDEX meta_hash_idx ON sdb_docs.meta (hash);
+INSERT INTO sdb_docs.docs VALUES ('p', 't', 'b', 0, 'c', 'c', 'm');
 ----
-db error: ERROR: schema "sdb_docs" is read-only
-DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+db error: ERROR: Table with name docs does not exist!<slt:ignore>
+
+
+connection docs database=postgres
+statement error
+DELETE FROM sdb_docs.docs;
+----
+db error: ERROR: Can only delete from base table
 
 
 connection docs database=postgres
 statement error
 DROP SCHEMA sdb_docs CASCADE;
 ----
-db error: ERROR: schema "sdb_docs" is read-only
-DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+db error: ERROR: Schema with name sdb_docs does not exist!
 
 
 connection docs database=postgres
 statement error
 ALTER SCHEMA sdb_docs RENAME TO sdb_docs_old;
 ----
-db error: ERROR: schema "sdb_docs" is read-only
-DETAIL: The embedded documentation is rebuilt from the server binary at startup.
+db error: ERROR: Cannot alter entry "sdb_docs" because it is an internal system entry
+
+
+connection docs database=postgres
+statement error
+ALTER SCHEMA sdb_docs OWNER TO postgres;
+----
+db error: ERROR: Cannot alter entry "sdb_docs" because it is an internal system entry
+
+
+connection docs database=postgres
+statement error
+GRANT USAGE ON SCHEMA sdb_docs TO PUBLIC;
+----
+db error: ERROR: Cannot alter entry "sdb_docs" because it is an internal system entry
+
+
+connection docs database=postgres
+statement error
+REVOKE USAGE ON SCHEMA sdb_docs FROM PUBLIC;
+----
+db error: ERROR: Cannot alter entry "sdb_docs" because it is an internal system entry
+
+
+connection docs database=postgres
+statement error
+GRANT EXECUTE ON FUNCTION sdb_docs.search(TEXT, INTEGER) TO PUBLIC;
+----
+db error: ERROR: Cannot alter entry ""search"" because it is an internal system entry
+
+
+connection docs database=postgres
+statement ok
+CREATE SCHEMA sdb_docs;
+
+connection docs database=postgres
+statement ok
+CREATE TABLE postgres.sdb_docs.docs (path TEXT);
+
+connection docs database=postgres
+statement ok
+CREATE MACRO postgres.sdb_docs.search(q, n) AS TABLE SELECT 'shadow' AS path;
+
+connection docs database=postgres
+query
+SELECT count(*) > 1000 FROM sdb_docs.docs;
+----
+?column?
+t
+
+connection docs database=postgres
+query
+SELECT count(*) > 0 AND bool_and(path <> 'shadow') AS builtin FROM sdb_docs.search('create index', 5);
+----
+builtin
+t
+
+connection docs database=postgres
+statement error
+CREATE TABLE sdb_docs.scratch (id INT);
+----
+db error: ERROR: Cannot create entry in system catalog
+
+
+connection docs database=postgres
+statement ok
+DROP SCHEMA sdb_docs CASCADE;
+
+connection docs database=postgres
+statement ok
+CREATE SCHEMA docs_scratch;
+
+connection docs database=postgres
+statement ok
+ALTER SCHEMA docs_scratch RENAME TO sdb_docs_build;
+
+connection docs database=postgres
+statement ok
+DROP SCHEMA sdb_docs_build;
 
 
 connection docs database=postgres
 query
-SELECT count(*) > 1000, (SELECT count(*) FROM sdb_docs.meta) FROM sdb_docs.docs;
+SELECT count(*) > 1000 FROM sdb_docs.docs;
 ----
-?column?	count
-t	1
+?column?
+t

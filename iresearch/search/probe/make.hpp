@@ -30,6 +30,7 @@
 #include "iresearch/search/probe/node.hpp"
 #include "iresearch/search/queries/term_state.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs::probe {
 

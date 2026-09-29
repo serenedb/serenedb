@@ -78,7 +78,11 @@ class WordnetSynonymsTokenizer final
   explicit WordnetSynonymsTokenizer(
     duckdb::shared_ptr<const State> state) noexcept;
   TokenTraits Traits() const noexcept final {
-    return {.offsets = true, .stable = true};
+    return {
+      .explicit_pos = true,
+      .offsets = true,
+      .stable = true,
+    };
   }
 
   template<TokenLayout Layout, typename Sink>

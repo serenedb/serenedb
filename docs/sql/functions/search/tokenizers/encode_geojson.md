@@ -30,7 +30,7 @@ A point — `TYPE = point`, `TYPE = centroid`, or a `Point` geometry under `TYPE
 
 Geo dictionaries support no [feature flags](../../../statements/create_text_search_dictionary/index.md#feature-flags) — `FREQUENCY`, `POSITION`, `NORM` and `OFFSET` are all rejected at `CREATE TEXT SEARCH DICTIONARY` — and no text options such as `CASE` or `LOCALE` apply.
 
-A geometry that does not parse simply produces no terms: invalid JSON, a missing or non-array `coordinates`, an unrecognized `type` or `GeometryCollection`, an invalid `LineString` or `Polygon`, a non-point geometry under `TYPE = point`, and a degenerate geometry whose centroid is not a unit vector, such as a zero-area polygon. At index time such a row is indexed without geo terms and no error is raised.
+A geometry that does not parse simply produces no terms: invalid JSON, a missing or non-array `coordinates`, an unrecognized `type` or `GeometryCollection`, an invalid `LineString` or `Polygon`, a non-point geometry under `TYPE = point`, and a degenerate geometry whose centroid is not a unit vector, such as a zero-area polygon. At index time such a row is indexed without geo terms and no error is raised; called as a function, `encode_geojson` returns `NULL` for it.
 
 ### When to use `encode_geojson` vs `encode_geopoint`
 

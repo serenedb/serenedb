@@ -1,0 +1,39 @@
+control substitution on
+
+statement ok
+ATTACH '${__TEST_DIR__}/rdh_listing.db' AS rdh_listing;
+
+statement ok
+CREATE TABLE rdh_listing.main.rdh_listing_docs(id INTEGER);
+
+statement ok
+INSERT INTO rdh_listing.main.rdh_listing_docs VALUES (1), (2);
+
+statement ok
+DETACH rdh_listing;
+
+query
+SELECT count(*) FILTER (WHERE p.database_name = current_database()) AS current_rows,
+       count(*) FILTER (WHERE p.database_name NOT IN ('memory', 'postgres', current_database())) AS other_rows
+FROM read_duckdb('${__TEST_DIR__}/rdh_listing.db', table_name='rdh_listing_docs') r, pragma_database_size() p;
+----
+current_rows	other_rows
+2	0
+
+query
+SELECT count(*) FILTER (WHERE p.database_name = current_database()) AS current_rows,
+       count(*) FILTER (WHERE p.database_name NOT IN ('memory', 'postgres', current_database())) AS other_rows
+FROM pragma_database_size() p, read_duckdb('${__TEST_DIR__}/rdh_listing.db', table_name='rdh_listing_docs') r;
+----
+current_rows	other_rows
+2	0
+
+query
+SELECT count(*) AS other_rows FROM pragma_database_size()
+WHERE database_name NOT IN ('memory', 'postgres', current_database());
+----
+other_rows
+0
+
+statement error does not exist!\nDid you mean "[a-z_.]+"\?
+SELECT * FROM read_duckdb('${__TEST_DIR__}/rdh_listing.db', table_name='rdh_listing_docs'), rdh_listing_docs;

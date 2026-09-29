@@ -87,6 +87,6 @@ struct PgConstraint {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData();
+MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData();
 
 }  // namespace sdb::pg

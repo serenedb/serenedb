@@ -1,0 +1,57 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(5) t(i)) TO '${__TEST_DIR__}/rsd_b.parquet' (FORMAT parquet);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rsd_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE VIEW rsd_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rsd_*.parquet');
+
+statement ok
+CREATE INDEX rsd_idx ON rsd_v USING inverted(id, body rsd_en);
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(5, 8) t(i)) TO '${__TEST_DIR__}/rsd_c.parquet' (FORMAT parquet);
+
+statement ok
+SET sdb_faults = 'pause_reindex_before_pass';
+
+connection reindexer
+statement async ok
+SELECT * FROM serenedb_reindex('rsd_idx');
+
+connection default
+sleep 2s
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(8, 10) t(i)) TO '${__TEST_DIR__}/rsd_a.parquet' (FORMAT parquet);
+
+statement ok
+SET sdb_faults = '-pause_reindex_before_pass';
+
+wait
+
+query
+SELECT count(*) FROM rsd_idx WHERE body @@ ts_phrase('doc');
+----
+count
+10
+
+query
+SELECT * FROM serenedb_reindex('rsd_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement ok
+DROP INDEX rsd_idx;
+
+statement ok
+DROP VIEW rsd_v;

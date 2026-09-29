@@ -22,10 +22,7 @@
 
 #include <iresearch/utils/assert.hpp>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/tokenizer.h"
+#include "catalog/entry/tokenizer.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -38,16 +35,16 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgTsDict>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgTsDict>::GetTableData() {
   std::vector<PgTsDict> values;
 
-  catalog::Visit<catalog::SereneDBTokenizerEntry>(
-    &_config.GetClientContext(), GetDatabaseId(),
-    [&](const catalog::SereneDBTokenizerEntry& tokenizer) {
+  VisitEntries<catalog::TokenizerCatalogEntry>(
+    _context, GetDatabase(),
+    [&](const catalog::TokenizerCatalogEntry& tokenizer) {
       values.push_back({
         .oid = tokenizer.oid,
         .dictname = tokenizer.name.GetIdentifierName(),
-        .dictnamespace = tokenizer.ParentSchema().oid,
+        .dictnamespace = tokenizer.ParentSchemaOid(),
         .dictowner = tokenizer.permissions.owner,
         .dicttemplate = 0,
       });

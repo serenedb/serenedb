@@ -30,8 +30,6 @@
 #include "iresearch/index/doc_contexts.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/inverter/fields_inverter.hpp"
-#include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -44,11 +42,6 @@ class DatabaseInstance;
 namespace irs {
 
 struct SegmentMeta;
-
-struct DocsMask final {
-  ManagedBitset set;
-  uint32_t count{0};
-};
 
 class SegmentWriter final : public NormProvider, util::Noncopyable {
  private:
@@ -86,24 +79,14 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   template<typename Func>
   bool WithTokens(field_id id, IndexFeatures index_features, StoreSink* store,
                   Func&& func) {
-    auto* slot = Field(id, index_features);
-    if (!slot) [[unlikely]] {
-      return false;
-    }
-    if (!_token_sink) {
-      _token_sink = std::make_unique<TokenSink>(Allocator());
-    }
-    TokensTarget target{*this, *slot};
-    _token_sink->Discard();
-    _token_sink->Bind(target, store);
-    try {
-      func(*slot, *_token_sink);
-      _token_sink->Finish();
-    } catch (...) {
-      _token_sink->Discard();
-      throw;
-    }
-    return _valid;
+    return WithTarget<TokensTarget>(id, index_features, store,
+                                    std::forward<Func>(func));
+  }
+
+  template<typename Func>
+  bool WithEntryTokens(field_id id, IndexFeatures index_features, Func&& func) {
+    return WithTarget<EntriesTarget>(id, index_features, nullptr,
+                                     std::forward<Func>(func));
   }
 
   duckdb::Allocator& Allocator() const noexcept { return _fields.Allocator(); }
@@ -121,15 +104,15 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
 
   void rollback() noexcept {
     const auto batch_last_doc_id = LastDocId();
-    for (auto id = _batch_first_doc_id; id <= batch_last_doc_id; ++id) {
-      remove(id);
+    if (_batch_first_doc_id <= batch_last_doc_id) {
+      _docs_mask.AddRange(_batch_first_doc_id, batch_last_doc_id + 1);
     }
     _valid = false;
   }
 
   DocContexts& docs_context() noexcept { return _docs_context; }
 
-  [[nodiscard]] DocMap flush(IndexSegment& segment, DocsMask& docs_mask);
+  void flush(IndexSegment& segment, DocumentMask& docs_mask);
 
   const std::string& name() const noexcept { return _seg_name; }
   size_t buffered_docs() const noexcept { return _docs_context.size(); }
@@ -201,6 +184,29 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     return true;
   }
 
+  template<typename Target, typename Func>
+  bool WithTarget(field_id id, IndexFeatures index_features, StoreSink* store,
+                  Func&& func) {
+    auto* slot = Field(id, index_features);
+    if (!slot) [[unlikely]] {
+      return false;
+    }
+    if (!_token_sink) {
+      _token_sink = std::make_unique<TokenSink>(Allocator());
+    }
+    Target target{*this, *slot};
+    _token_sink->Discard();
+    _token_sink->Bind(target, store);
+    try {
+      func(*slot, *_token_sink);
+      _token_sink->Finish();
+    } catch (...) {
+      _token_sink->Discard();
+      throw;
+    }
+    return _valid;
+  }
+
   struct TokensTarget final : TokenConsumer {
     TokensTarget(SegmentWriter& writer, FieldInverter& slot) noexcept
       : writer{&writer}, slot{&slot} {}
@@ -208,6 +214,20 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     void Consume(TokenBatch& batch, DocRuns runs) final {
       writer->WithSlot(*slot, [&](FieldInverter& fld) {
         return fld.InvertBlock(batch, runs);
+      });
+    }
+
+    SegmentWriter* writer;
+    FieldInverter* slot;
+  };
+
+  struct EntriesTarget final : TokenConsumer {
+    EntriesTarget(SegmentWriter& writer, FieldInverter& slot) noexcept
+      : writer{&writer}, slot{&slot} {}
+
+    void Consume(TokenBatch& batch, DocRuns runs) final {
+      writer->WithSlot(*slot, [&](FieldInverter& fld) {
+        return fld.AppendEntries(batch, runs);
       });
     }
 
@@ -226,7 +246,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   ScorerPtr _scorer;
   std::unique_ptr<ColReader> _col_reader;
   DocContexts _docs_context;
-  DocsMask _docs_mask;
+  DocumentMask _docs_mask;
   FieldsInverter _fields;
   std::unique_ptr<TokenSink> _token_sink;
   std::string _seg_name;

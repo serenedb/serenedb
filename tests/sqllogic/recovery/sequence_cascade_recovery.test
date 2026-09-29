@@ -28,7 +28,7 @@ id	payload
 
 
 statement ok
-SET sdb_faults = 'crash_on_drop';
+SET sdb_faults = 'crash_after_commit';
 
 
 statement error (?i)connection closed|server closed|terminat|reset|EOF

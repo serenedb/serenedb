@@ -34,7 +34,6 @@
 #include <vector>
 
 #include "catalog/column_id.h"
-#include "catalog/identifiers/object_id.h"
 #include "search/search_db_wal.h"
 
 namespace sdb::search {
@@ -168,6 +167,6 @@ struct LocalTableChangesEntry {
 // Node-based: the entry is well past FlatHashMap's size cut-off, and the buffer
 // is held by reference across a statement, so the nodes must not move.
 using LocalTableChanges =
-  irs::containers::NodeHashMap<ObjectId, LocalTableChangesEntry>;
+  irs::containers::NodeHashMap<duckdb::idx_t, LocalTableChangesEntry>;
 
 }  // namespace sdb::search

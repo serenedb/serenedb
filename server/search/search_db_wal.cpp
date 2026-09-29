@@ -344,7 +344,7 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
   duckdb::MemoryStream tmp;
   for (const auto& s : sections) {
     SDB_ASSERT(!s.entries.empty(), "shard section with no entries");
-    payload.Write<uint64_t>(s.table_id.id());
+    payload.Write<uint64_t>(s.table_id);
     payload.Write<uint32_t>(static_cast<uint32_t>(s.entries.size()));
     for (const auto& e : s.entries) {
       payload.Write<uint8_t>(static_cast<uint8_t>(e.kind));
@@ -389,10 +389,11 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
   return tick;
 }
 
-void SearchDbWal::RegisterShard(ObjectId table_id, uint64_t committed_tick) {
+void SearchDbWal::RegisterShard(duckdb::idx_t table_id,
+                                uint64_t committed_tick) {
   {
     absl::MutexLock lock(&_sub_mu);
-    auto& cur = _committed[table_id.id()];
+    auto& cur = _committed[table_id];
     cur = std::max(cur, committed_tick);
   }
   // Continue the tick line past every shard's durable tick: a shard's committed
@@ -403,10 +404,11 @@ void SearchDbWal::RegisterShard(ObjectId table_id, uint64_t committed_tick) {
   }
 }
 
-void SearchDbWal::OnShardCommit(ObjectId table_id, uint64_t committed_tick) {
+void SearchDbWal::OnShardCommit(duckdb::idx_t table_id,
+                                uint64_t committed_tick) {
   {
     absl::MutexLock lock(&_sub_mu);
-    auto& cur = _committed[table_id.id()];
+    auto& cur = _committed[table_id];
     cur = std::max(cur, committed_tick);
   }
   {
@@ -418,10 +420,10 @@ void SearchDbWal::OnShardCommit(ObjectId table_id, uint64_t committed_tick) {
   RunGc();
 }
 
-void SearchDbWal::DeregisterShard(ObjectId table_id) {
+void SearchDbWal::DeregisterShard(duckdb::idx_t table_id) {
   {
     absl::MutexLock lock(&_sub_mu);
-    _committed.erase(table_id.id());
+    _committed.erase(table_id);
   }
   RunGc();
 }
@@ -498,7 +500,7 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
         c, scratch,
         [&](uint64_t table_id, uint32_t entry_count, Cursor& cur,
             ParseScratch& sc) {
-          const ObjectId tid{table_id};
+          const duckdb::idx_t tid{table_id};
           // Entries have to be consumed either way to keep the cursor in step,
           // even for a shard this replay skips.
           const bool live = exists_of(tid) && tick > committed_of(tid);

@@ -1,0 +1,28 @@
+# A serenedb database is a cluster catalog entry that owns the duckdb file its
+# rows live in. ALTER DATABASE ... SET ALIAS renames only the attach alias, so
+# the alias and the catalog entry desync and the server can no longer resolve
+# logins against the database. Renaming a database is refused until it renames
+# both sides together.
+
+
+statement ok
+CREATE DATABASE adb_target
+
+
+statement error
+ALTER DATABASE adb_target SET ALIAS TO adb_renamed
+----
+db error: ERROR: renaming a database is not supported
+
+
+# The refusal runs before anything is touched: the database keeps its name and
+# the server stays healthy.
+query
+SELECT database_name FROM duckdb_databases() WHERE database_name = 'adb_target'
+----
+database_name
+adb_target
+
+
+statement ok
+DROP DATABASE adb_target

@@ -1,0 +1,47 @@
+# DOCS_TEST: function_form
+
+# DOCS_TEST_BODY
+
+query
+SELECT filter_tokens(['a', 'quick', 'extraordinarily', '日本語'], min_length := 2, max_length := 8) AS tokens;
+----
+tokens
+{quick,日本語}
+
+# DOCS_TEST: function_lambda
+
+# DOCS_TEST_BODY
+
+query
+SELECT filter_tokens(['see', 'https://example.com', 'docs'], lambda x: x NOT LIKE 'http%') AS tokens;
+----
+tokens
+{see,docs}
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY words_2_to_8 AS
+    split_text(case := 'lower') | filter_tokens(min_length := 2, max_length := 8);
+
+query
+SELECT ts_lexize('words_2_to_8', 'A quick brown fox jumps over the extraordinarily lazy dog');
+----
+ts_lexize
+{quick,brown,fox,jumps,over,the,lazy,dog}
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY words_no_urls AS
+    split_text_csv(' ') | filter_tokens(lambda x: x NOT LIKE 'http%', max_length := 20);
+
+query
+SELECT ts_lexize('words_no_urls', 'see https://example.com for details');
+----
+ts_lexize
+{see,for,details}

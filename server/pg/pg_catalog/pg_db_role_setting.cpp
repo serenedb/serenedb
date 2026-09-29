@@ -22,32 +22,34 @@
 
 #include <iresearch/utils/down_cast.hpp>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/role.h"
+#include "catalog/cluster.h"
+#include "catalog/entry/role.h"
 #include "pg/pg_catalog/fwd.h"
 #include "server/utils/app_server.h"
 
 namespace sdb::pg {
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgDbRoleSetting>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgDbRoleSetting>::GetTableData() {
   std::vector<PgDbRoleSetting> values;
-  catalog::VisitRoles(
-    &_config.GetClientContext(), [&](const catalog::SereneDBRoleEntry& role) {
-      auto config = role.Config();
-      if (config.empty()) {
-        // PG inserts a pg_db_role_setting row only when a GUC is set.
-        return;
-      }
-      values.push_back(PgDbRoleSetting{
-        // Role-wide (all databases) -> the pg_roles.rolconfig join.
-        .setdatabase = 0,
-        .setrole = role.GetId().id(),
-        .setconfig = config,
-      });
-    });
+  auto& context = _context;
+  auto& cluster = catalog::ClusterOf(context);
+  cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+    .Scan(cluster.GetCatalogTransaction(context),
+          [&](duckdb::CatalogEntry& entry) {
+            const auto& role = entry.Cast<catalog::RoleCatalogEntry>();
+            const auto& config = role.Config();
+            if (config.empty()) {
+              // PG inserts a pg_db_role_setting row only when a GUC is set.
+              return;
+            }
+            values.push_back(PgDbRoleSetting{
+              // Role-wide (all databases) -> the pg_roles.rolconfig join.
+              .setdatabase = 0,
+              .setrole = role.oid,
+              .setconfig = config,
+            });
+          });
 
   auto result = CreateColumns<PgDbRoleSetting>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

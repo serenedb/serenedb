@@ -208,8 +208,8 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
       irs::field_id) -> irs::field_id {
     return next->fetch_add(1, std::memory_order_relaxed);
   };
-  auto writer =
-    irs::IndexWriter::Make(*_dir, _codec, irs::kOmCreate, writer_opts);
+  auto writer = irs::IndexWriter::Make(*_dir, _codec, irs::kOmCreate,
+                                       std::move(writer_opts));
 
   KeywordField kw_field{.id = kKwFieldId};
   TextField body_field{.id = kBodyFieldId};

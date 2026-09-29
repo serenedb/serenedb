@@ -109,13 +109,23 @@ void ClassifySegmentColFilters(const irs::SubReader& seg, ScanGlobalState& g,
       .zonemap_only = cf.zonemap_only,
       .null_check = cf.null_check,
       .not_null = cf.not_null.get(),
+      .extract_path = cf.extract_path,
+      .extract_type = &cf.type,
     };
     if (spec.is_score) {
       out.active.push_back(spec);
       continue;
     }
-    const auto* reader =
+    const auto* column =
       col_reader != nullptr ? col_reader->Column(spec.field) : nullptr;
+    const auto* reader =
+      column != nullptr && !cf.extract_path.empty()
+        ? irs::DirectExtractLeaf(*column, cf.extract_path, cf.type)
+        : column;
+    if (column != nullptr && reader == nullptr) {
+      out.active.push_back(spec);
+      continue;
+    }
     if (reader == nullptr) {
       duckdb::Vector null_row{duckdb::Value{cf.type}, duckdb::count_t{1}};
       duckdb::SelectionVector sel;

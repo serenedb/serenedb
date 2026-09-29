@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <exception>
 #include <iresearch/utils/serializer.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <memory>
 #include <optional>
 #include <string>
@@ -59,9 +60,18 @@ enum class RpcCode : int {
 };
 
 constexpr std::string_view kInstructions =
-  "SereneDB documentation server. search_docs finds documentation sections "
-  "by relevance; read_doc returns a whole page or one section as Markdown "
-  "with its SQL examples; list_docs lists the available pages.";
+  "SereneDB documentation server. list_objects enumerates every documented "
+  "function, statement, tokenizer, type, setting, index type and dot command; "
+  "describe_object returns everything documented under one name. Check them "
+  "before writing SereneDB-specific SQL: Postgres tsvector functions "
+  "(to_tsvector, ts_rank, setweight, ts_headline) are not available, and "
+  "while @@ and to_tsquery exist, to_tsquery reads Lucene syntax "
+  "(foo AND bar*) rather than Postgres syntax (foo & bar:*). search_docs "
+  "finds documentation sections by relevance from keywords, a question or a "
+  "pasted error; read_doc returns a whole page or one section as Markdown "
+  "with its SQL examples and follows any link found in it; list_docs lists "
+  "the available pages. check_sql plans a statement against this server "
+  "without running it, so check the SQL you write before handing it over.";
 
 // --- Wire shapes; field names are the JSON keys ------------------------------
 
@@ -269,12 +279,14 @@ class MethodNotAllowedHandler final : public HttpHandler {
 
 // TODO: serve the conventional /mcp too; needs a way to keep an index named
 // 'mcp' reachable under ES's GET /:index at the same time.
-void Register(HttpRouter& router) {
-  router.Add(HttpMethod::Post, "/_mcp", std::make_unique<McpHandler>());
-  for (const auto method : {HttpMethod::Get, HttpMethod::Delete,
-                            HttpMethod::Put, HttpMethod::Head}) {
-    router.Add(method, "/_mcp", std::make_unique<MethodNotAllowedHandler>());
+std::unique_ptr<HttpHandler> Make(Endpoint endpoint) {
+  switch (endpoint) {
+    case Endpoint::Rpc:
+      return std::make_unique<McpHandler>();
+    case Endpoint::MethodNotAllowed:
+      return std::make_unique<MethodNotAllowedHandler>();
   }
+  SDB_UNREACHABLE();
 }
 
 }  // namespace sdb::network::http::mcp

@@ -21,16 +21,16 @@
 #pragma once
 
 #include <duckdb.hpp>
+#include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/execution/index/index_type.hpp>
 #include <duckdb/execution/physical_operator.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
-#include <iresearch/utils/down_cast.hpp>
 #include <optional>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry.h"
-#include "catalog/identifiers/object_id.h"
-#include "catalog/table.h"
+#include "catalog/catalog.h"
 #include "connector/file_manifest.h"
 
 namespace sdb::catalog {
@@ -50,7 +50,10 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
     where_clause = std::move(base.where_clause);
   }
 
-  ObjectId source_index;
+  // The index the pass refreshes, empty for a plain CREATE INDEX. It lives in
+  // the schema this statement is qualified with, so the name is the whole
+  // handle.
+  duckdb::Identifier source_index;
 
   std::vector<std::string> delta_files;
   // New-file ids are `delta_file_base + listing ordinal` -- the pass scans
@@ -69,13 +72,13 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
     Rebuild,
   };
   ReindexPass Pass() const noexcept {
-    if (!source_index.isSet()) {
+    if (source_index.empty()) {
       return ReindexPass::None;
     }
     return delta_files.empty() ? ReindexPass::Rebuild : ReindexPass::Delta;
   }
 
-  duckdb::unique_ptr<duckdb::CreateInfo> Copy() const override {
+  duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final {
     auto base = duckdb::CreateIndexInfo::Copy();
     auto result = duckdb::make_uniq<SereneDBCreateIndexInfo>(
       std::move(base->Cast<duckdb::CreateIndexInfo>()));
@@ -86,15 +89,6 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
     result->generated_pk_type = generated_pk_type;
     return result;
   }
-};
-
-// One column of the relation a CREATE INDEX reads. A base table's list comes
-// off its entry and a view's off the view body, so the operator carries the
-// three facts both can answer with rather than either relation's own shape.
-struct IndexRelationColumn {
-  std::string name;
-  duckdb::LogicalType type;
-  catalog::ColumnId id;
 };
 
 // Physical operator for CREATE INDEX on SereneDB tables.
@@ -126,28 +120,14 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
     return _expression_slot_base.IsValid();
   }
 
-  // `relation` is the catalog entry the index is built on: either a table or a
-  // view (foreign-source-backed), which is where its id, its name and the
-  // authority over it are read from.
-  // `columns` is the relation's column list and `pk_positions` the positions
-  // in it the row identity is built from -- empty for a view and for a table
-  // that declares no key.
-  // `bound_expressions` carries the IndexBinder's output (one per
-  // `info->parsed_expressions`). For a bare column ref the slot is set but
-  // unused; for an arbitrary expression we normalise + serialise
-  // it via helpers into a `catalog::ExpressionData`.
   SereneDBPhysicalCreateIndex(
-    duckdb::PhysicalPlan& plan, const duckdb::CatalogEntry& relation,
-    std::vector<IndexRelationColumn> columns,
-    std::vector<duckdb::LogicalIndex> pk_positions, ObjectId database_id,
-    duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
-    std::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions,
-    duckdb::unique_ptr<duckdb::Expression> bound_where,
-    catalog::SereneDBSchemaEntry& schema_entry,
-    duckdb::idx_t estimated_cardinality);
+    duckdb::PhysicalPlan& plan, duckdb::CatalogEntry& relation,
+    duckdb::idx_t database_id, duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
+    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions,
+    duckdb::DuckSchemaEntry& schema_entry, duckdb::idx_t estimated_cardinality);
 
   bool IsSink() const final { return true; }
-  bool ParallelSink() const final;
+  bool ParallelSink() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
     duckdb::ClientContext& context) const final;
   duckdb::unique_ptr<duckdb::LocalSinkState> GetLocalSinkState(
@@ -163,40 +143,30 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
     duckdb::ClientContext& context,
     duckdb::OperatorSinkFinalizeInput& input) const final;
 
-  // Source interface -- returns CREATE INDEX tag
-  duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(
-    duckdb::ClientContext& context) const final;
   duckdb::SourceResultType GetDataInternal(
     duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
     duckdb::OperatorSourceInput& input) const final;
   bool IsSource() const final { return true; }
 
  private:
-  // Returns the `_relation` cast to a Table when it is one; nullptr for views.
-  const catalog::SereneDBTableEntry* TableOrNull() const noexcept;
-  bool IsDuckDBTable() const noexcept;
+  duckdb::DuckTableEntry* DuckTableOrNull() const noexcept {
+    return dynamic_cast<duckdb::DuckTableEntry*>(&_relation);
+  }
+  bool IsDuckDBTable() const noexcept { return DuckTableOrNull(); }
 
-  const duckdb::CatalogEntry& _relation;
-  std::vector<IndexRelationColumn> _columns;
-  // Positions in `_columns` the row identity is built from; empty for a view
-  // and for a table with no declared primary key.
-  std::vector<duckdb::LogicalIndex> _pk_positions;
-  ObjectId _database_id;
+  // Not const: the build reads and publishes into the relation's own storage.
+  duckdb::CatalogEntry& _relation;
+  duckdb::idx_t _database_id;
   duckdb::unique_ptr<duckdb::CreateIndexInfo> _info;
-  std::vector<duckdb::unique_ptr<duckdb::Expression>> _bound_expressions;
-  // Bound partial-index predicate (info->where_clause); null for full indexes.
-  duckdb::unique_ptr<duckdb::Expression> _bound_where;
-  // The statement's SereneDBCreateIndexInfo view of _info: the bind
-  // captures (manifest, pk spec/type) plus the optional REINDEX pass
-  // identity ride the statement info itself, so prepared re-executions
-  // carry them by construction. The bind hook upgrades every create to the
-  // subclass, so this never fails.
-  const SereneDBCreateIndexInfo& Info() const noexcept {
-    return irs::utils::downCast<const SereneDBCreateIndexInfo>(*_info);
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> _bound_expressions;
+
+  duckdb::optional_ptr<const SereneDBCreateIndexInfo> Extras() const noexcept {
+    return dynamic_cast<const SereneDBCreateIndexInfo*>(_info.get());
   }
   using ReindexPass = SereneDBCreateIndexInfo::ReindexPass;
   bool IsReindexPass() const noexcept {
-    return Info().Pass() != ReindexPass::None;
+    const auto extras = Extras();
+    return extras && extras->Pass() != ReindexPass::None;
   }
 
   // First chunk slot holding a pipeline-computed indexed expression (0 when the
@@ -204,8 +174,7 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   // Unset when the planner spliced no expression projection, which is not the
   // same fact as a base of 0.
   duckdb::optional_idx _expression_slot_base;
-  bool _feeds_inverted = false;
-  catalog::SereneDBSchemaEntry& _schema_entry;
+  duckdb::DuckSchemaEntry& _schema_entry;
 };
 
 // create_plan callback registered with DuckDB's index type system.

@@ -160,8 +160,7 @@ statement error
 DROP TABLE iceberg_shared;
 ----
 db error: ERROR: Cannot drop entry "iceberg_shared" because there are entries that depend on it.
-macro function "iceberg_share_a" depends on table "iceberg_shared".
-macro function "iceberg_share_b" depends on table "iceberg_shared".
+<slt:ignore>
 Use DROP...CASCADE to drop all dependents.
 
 

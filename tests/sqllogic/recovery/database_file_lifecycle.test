@@ -81,7 +81,7 @@ DROP DATABASE dbfile_rolled;
 # record is the decision, so the database is there after the restart with the
 # file the attach created for it.
 statement ok
-SET sdb_faults = 'crash_after_catalog_before_data';
+SET sdb_faults = 'crash_after_commit';
 
 
 statement error connection closed

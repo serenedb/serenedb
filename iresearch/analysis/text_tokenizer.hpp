@@ -43,6 +43,7 @@ class TextTokenizer : private util::Noncopyable {
       Sentence,
       Line,
       Paragraph,
+      Grapheme,
     };
     using Accept = segment::Accept;
     Separate separate = Separate::Word;

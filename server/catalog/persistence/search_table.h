@@ -1,0 +1,42 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <cstdint>
+#include <string>
+
+namespace sdb::catalog::persistence {
+
+struct SearchTableOptions {
+  uint32_t refresh_interval_ms{1000};
+  uint32_t compaction_interval_ms{1000};
+  uint32_t cleanup_interval_step{1};
+  uint32_t row_group_size{122880};
+  uint64_t segment_memory_max{268435456};
+  uint32_t compaction_max_segments{10};
+  uint64_t compaction_max_segments_bytes{5368709120};
+  uint64_t compaction_floor_segment_bytes{2097152};
+  std::string optimize_top_k;
+
+  bool operator==(const SearchTableOptions& rhs) const = default;
+};
+
+}  // namespace sdb::catalog::persistence

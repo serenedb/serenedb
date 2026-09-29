@@ -57,6 +57,7 @@ class IndexBuilder {
   void IndexFromStream(std::istream& input, BatchHandlerFactory factory);
 
   irs::MMapDirectory& GetDirectory() { return _dir; }
+  irs::IndexWriter& GetWriter() { return *_writer; }
   auto GetReader() { return _writer->GetSnapshot(); }
 
  private:

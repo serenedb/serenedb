@@ -22,33 +22,35 @@
 
 #include <iresearch/utils/down_cast.hpp>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/role.h"
+#include "catalog/cluster.h"
+#include "catalog/entry/role.h"
 #include "pg/pg_catalog/fwd.h"
 #include "server/utils/app_server.h"
 
 namespace sdb::pg {
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgAuthMembers>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgAuthMembers>::GetTableData() {
   std::vector<PgAuthMembers> values;
   uint64_t oid = 1;
-  catalog::VisitRoles(&_config.GetClientContext(),
-                      [&](const catalog::SereneDBRoleEntry& role) {
-                        for (const auto& edge : role.MemberOf()) {
-                          values.push_back(PgAuthMembers{
-                            .oid = oid++,
-                            .roleid = edge.role.id(),
-                            .member = role.GetId().id(),
-                            .grantor = id::kRootUser.id(),
-                            .admin_option = edge.admin_option,
-                            .inherit_option = edge.inherit_option,
-                            .set_option = edge.set_option,
-                          });
-                        }
-                      });
+  auto& context = _context;
+  auto& cluster = catalog::ClusterOf(context);
+  cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+    .Scan(cluster.GetCatalogTransaction(context),
+          [&](duckdb::CatalogEntry& entry) {
+            const auto& role = entry.Cast<catalog::RoleCatalogEntry>();
+            for (const auto& edge : role.MemberOf()) {
+              values.push_back(PgAuthMembers{
+                .oid = oid++,
+                .roleid = edge.role,
+                .member = role.oid,
+                .grantor = edge.grantor,
+                .admin_option = edge.admin_option,
+                .inherit_option = edge.inherit_option,
+                .set_option = edge.set_option,
+              });
+            }
+          });
 
   auto result = CreateColumns<PgAuthMembers>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

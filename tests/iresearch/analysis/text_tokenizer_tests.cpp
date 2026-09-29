@@ -581,6 +581,20 @@ TEST(TextTokenizerTest, make_uppercase_graphic_break) {
   AssertStream(stream.get(), data, expected);
 }
 
+TEST(TextTokenizerTest, graphic_drops_unicode_spaces) {
+  auto stream = TextTokenizer::Make(Options{
+    .accept = Options::Accept::Graphic,
+    .convert = irs::Case::None,
+  });
+  ASSERT_TRUE(stream);
+  const AnalyzerTokens expected{{"a", 0, 1, 0}, {"b", 4, 5, 1}, {"c", 8, 9, 2}};
+  std::string data =
+    "a\xE2\x80\x83"
+    "b\xE2\x80\xA9"
+    "c";
+  AssertStream(stream.get(), data, expected);
+}
+
 // The legacy tests `make_invalidcase`, `make_numbercase`,
 // `make_uppercase_invalid_break`, `make_uppercase_invalid_number_break`,
 // and `make_invalid_json` all exercised JSON-parser-level type / enum
@@ -1012,7 +1026,8 @@ TEST(sentence_tokenizer_test, native_fills_match_pull) {
     "line one\nline two\r\n\r\npara two\xE2\x80\xA9para three",
     std::string(200, 'x') + ". tail"};
   for (const auto separate :
-       {ModeSeparate::Sentence, ModeSeparate::Line, ModeSeparate::Paragraph}) {
+       {ModeSeparate::Sentence, ModeSeparate::Line, ModeSeparate::Paragraph,
+        ModeSeparate::Grapheme}) {
     SCOPED_TRACE(testing::Message()
                  << "separate=" << static_cast<int>(separate));
     auto stream = irs::analysis::TextTokenizer::Make(ModeOpts(separate));
@@ -1287,4 +1302,77 @@ TEST(IcuTextTokenizerTest, locale_required) {
                irs::SqlException);
   ASSERT_NE(nullptr, IcuTextTokenizer::Make(IcuTextTokenizer::Options{
                        .locale = icu::Locale::createFromName("de_DE")}));
+}
+
+TEST(grapheme_tokenizer_test, goldens) {
+  auto stream =
+    irs::analysis::TextTokenizer::Make(ModeOpts(ModeSeparate::Grapheme));
+  ASSERT_TRUE(stream->Traits().offsets);
+  {
+    const auto tokens = tests::Analyze(*stream, "ab c\r\nd");
+    ASSERT_TRUE(tokens.has_value());
+    const std::vector<tests::AnalyzerToken> expected{
+      {"a", 1, 0, 1}, {"b", 2, 1, 2}, {"c", 3, 3, 4}, {"d", 4, 6, 7}};
+    ASSERT_EQ(expected, *tokens);
+  }
+  {
+    const auto tokens = tests::Analyze(*stream,
+                                       "e\xCC\x81"
+                                       "\xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD"
+                                       "\xF0\x9F\x87\xA9\xF0\x9F\x87\xAA"
+                                       "\xE1\x84\x80\xE1\x85\xA1");
+    ASSERT_TRUE(tokens.has_value());
+    const std::vector<tests::AnalyzerToken> expected{
+      {"e\xCC\x81", 1, 0, 3},
+      {"\xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD", 2, 3, 11},
+      {"\xF0\x9F\x87\xA9\xF0\x9F\x87\xAA", 3, 11, 19},
+      {"\xE1\x84\x80\xE1\x85\xA1", 4, 19, 25}};
+    ASSERT_EQ(expected, *tokens);
+  }
+  {
+    const auto tokens = tests::Analyze(*stream, "");
+    ASSERT_TRUE(tokens.has_value());
+    EXPECT_TRUE(tokens->empty());
+  }
+}
+
+TEST(grapheme_tokenizer_test, case_conversion) {
+  auto stream = irs::analysis::TextTokenizer::Make(
+    ModeOpts(ModeSeparate::Grapheme, ModeConvert::Lower));
+  const auto tokens = tests::Analyze(*stream, "\xC3\x89Z");
+  ASSERT_TRUE(tokens.has_value());
+  const std::vector<tests::AnalyzerToken> expected{{"\xC3\xA9", 1, 0, 2},
+                                                   {"z", 2, 2, 3}};
+  ASSERT_EQ(expected, *tokens);
+}
+
+TEST(grapheme_tokenizer_test, graphic_drops_spaces) {
+  using Opts = irs::analysis::TextTokenizer::Options;
+  auto stream = irs::analysis::TextTokenizer::Make(
+    {.separate = Opts::Separate::Grapheme, .accept = Opts::Accept::Graphic});
+  {
+    const auto tokens = tests::Analyze(*stream,
+                                       "a\xE3\x80\x80"
+                                       "b\xC2\xA0");
+    ASSERT_TRUE(tokens.has_value());
+    const std::vector<tests::AnalyzerToken> expected{{"a", 1, 0, 1},
+                                                     {"b", 2, 4, 5}};
+    ASSERT_EQ(expected, *tokens);
+  }
+  {
+    const auto tokens = tests::Analyze(*stream, " x\ty\r\n\x7F");
+    ASSERT_TRUE(tokens.has_value());
+    const std::vector<tests::AnalyzerToken> expected{{"x", 1, 1, 2},
+                                                     {"y", 2, 3, 4}};
+    ASSERT_EQ(expected, *tokens);
+  }
+  {
+    const auto tokens = tests::Analyze(*stream,
+                                       "\xC3\xA9\x7F"
+                                       "a\xE2\x80\x83");
+    ASSERT_TRUE(tokens.has_value());
+    const std::vector<tests::AnalyzerToken> expected{{"\xC3\xA9", 1, 0, 2},
+                                                     {"a", 2, 3, 4}};
+    ASSERT_EQ(expected, *tokens);
+  }
 }

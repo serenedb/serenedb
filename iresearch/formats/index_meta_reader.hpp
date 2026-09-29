@@ -23,6 +23,12 @@
 
 #pragma once
 
+#include <absl/strings/numbers.h>
+#include <absl/strings/strip.h>
+
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <vector>
+
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/index_meta_writer.hpp"
 
@@ -31,19 +37,16 @@ namespace irs {
 struct IndexMetaReaderImpl : public IndexMetaReader {
   bool last_segments_file(const Directory& dir, std::string& name) const final;
 
-  void read(const Directory& dir, IndexMeta& meta,
-            std::string_view filename) final;
+  void read(const Directory& dir, IndexMeta& meta, std::string_view filename,
+            MetaPayloadReader payload) final;
 };
 
 inline uint64_t ParseGeneration(std::string_view file) noexcept {
-  if (file.starts_with(IndexMetaWriterImpl::kFormatPrefix)) {
-    constexpr size_t kPrefixLength = IndexMetaWriterImpl::kFormatPrefix.size();
-
-    if (uint64_t gen; absl::SimpleAtoi(file.substr(kPrefixLength), &gen)) {
-      return gen;
-    }
+  uint64_t gen;
+  if (absl::ConsumePrefix(&file, IndexMetaWriterImpl::kFormatPrefix) &&
+      absl::SimpleAtoi(file, &gen)) {
+    return gen;
   }
-
   return index_gen_limits::invalid();
 }
 
@@ -65,12 +68,13 @@ inline bool IndexMetaReaderImpl::last_segments_file(const Directory& dir,
 }
 
 inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
-                                      std::string_view filename) {
-  std::string meta_file;
-  if (IsNull(filename)) {
-    meta_file = IndexMetaWriterImpl::FileName(meta.gen);
-    filename = meta_file;
-  }
+                                      std::string_view filename,
+                                      MetaPayloadReader payload) {
+  SDB_ASSERT(!IsNull(filename));
+
+  // Every caller names a file that last_segments_file already parsed.
+  const auto gen = ParseGeneration(filename);
+  SDB_ASSERT(index_gen_limits::valid(gen));
 
   auto in = dir.open(filename, IOAdvice::SEQUENTIAL | IOAdvice::READONCE);
 
@@ -78,45 +82,67 @@ inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
     throw IoError{absl::StrCat("Failed to open file, path: ", filename)};
   }
 
-  const auto checksum = format_utils::Checksum(*in);
+  duckdb::BinaryDeserializer meta_in{*in};
+  meta_in.Begin();
+  const auto cnt = meta_in.ReadProperty<uint64_t>(
+    IndexMetaWriterImpl::kFieldSegCounter, "seg_counter");
+  std::vector<IndexSegment> segments;
+  std::vector<uint32_t> invisible;
+  meta_in.ReadList(
+    IndexMetaWriterImpl::kFieldSegments, "segments",
+    [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
+      auto& segment = segments.emplace_back();
+      auto& invisible_count = invisible.emplace_back();
+      list.ReadObject([&](duckdb::Deserializer& obj) {
+        segment.filename = obj.ReadProperty<std::string>(
+          IndexMetaWriterImpl::kSegmentFieldFilename, "filename");
+        auto codec = obj.ReadProperty<std::string>(
+          IndexMetaWriterImpl::kSegmentFieldCodec, "codec");
+        segment.meta.codec = formats::Get(codec);
 
-  format_utils::CheckHeader(*in, IndexMetaWriterImpl::kFormatName,
-                            IndexMetaWriterImpl::kFormatVersion);
+        if (!segment.meta.codec) [[unlikely]] {
+          throw IndexError{absl::StrCat("Unknown codec '", codec,
+                                        "' of segment '", segment.filename,
+                                        "', path: ", filename)};
+        }
+        invisible_count = obj.ReadPropertyWithExplicitDefault<uint32_t>(
+          IndexMetaWriterImpl::kSegmentFieldInvisibleCount, "invisible_count",
+          0);
+      });
+    });
+  if (payload) {
+    const bool present = meta_in.OnOptionalPropertyBegin(
+      IndexMetaWriterImpl::kFieldPayload, "payload");
+    if (present) {
+      meta_in.OnObjectBegin();
+      payload(meta_in);
+      meta_in.OnObjectEnd();
+    }
+    meta_in.OnOptionalPropertyEnd(present);
+  }
 
-  // read data from segments file
-  auto gen = in->ReadV64();
-  auto cnt = in->ReadI64();
-  auto seg_count = in->ReadV32();
-  std::vector<IndexSegment> segments(seg_count);
-
-  for (size_t i = 0, count = segments.size(); i < count; ++i) {
-    auto& segment = segments[i];
-
-    segment.filename = ReadString<std::string>(*in);
-    segment.meta.codec = formats::Get(ReadString<std::string>(*in));
-
+  for (size_t i = 0; auto& segment : segments) {
     auto reader = segment.meta.codec->get_segment_meta_reader();
 
     reader->read(dir, segment.meta, segment.filename);
+
+    if (const auto count = invisible[i++]; count != 0) {
+      auto& info = segment.meta;
+      if (count > info.live_docs_count) [[unlikely]] {
+        throw IndexError{
+          absl::StrCat("Segment '", segment.filename, "' has invisible_count(",
+                       count, ") above live_docs_count(", info.live_docs_count,
+                       "), path: ", filename)};
+      }
+      info.live_docs_count -= count;
+      info.visible_end =
+        static_cast<doc_id_t>(doc_limits::min() + info.docs_count - count);
+    }
   }
-
-  bstring payload;
-  const bool has_payload = in->ReadByte() & IndexMetaWriterImpl::kHasPayload;
-
-  if (has_payload) {
-    payload = ReadString<bstring>(*in);
-  }
-
-  format_utils::CheckFooter(*in, checksum);
 
   meta.gen = gen;
   meta.seg_counter = cnt;
   meta.segments = std::move(segments);
-  if (has_payload) {
-    meta.payload = std::move(payload);
-  } else {
-    meta.payload.reset();
-  }
 }
 
 }  // namespace irs

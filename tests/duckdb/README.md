@@ -23,6 +23,7 @@ the regular sqllogic tree under [tests/sqllogic/](../sqllogic/).
 tests/duckdb/run.sh                    # every suite
 tests/duckdb/run.sh --suite core       # just duckdb core
 tests/duckdb/run.sh --suite avro,inet  # a subset
+tests/duckdb/run.sh --suite interop    # DuckDB files against the official duckdb/duckdb image
 tests/duckdb/run.sh --jobs 8           # 8 test files at a time (default: nproc)
 tests/duckdb/run.sh --list             # suite names
 ```
@@ -108,6 +109,30 @@ The skips fall into a few kinds, and the `reason` on every entry says which:
 - **Upstream expectation predates our fork.** The vendored extension pins are
   older than `third_party/duckdb`, so a few tests assert error-message wording
   that core has since changed.
+
+## DuckDB file interop
+
+The `interop` suite checks that a database file with a DuckDB storage version is a DuckDB file: vanilla DuckDB reads what SereneDB writes, and SereneDB reads what vanilla DuckDB writes. It is not a `unittest` suite. [interop/run.sh](interop/run.sh) drives `serened shell` and a vanilla `duckdb` copied out of the official `duckdb/duckdb` image (`docker create` + `docker cp` into `$BUILD_DIR/duckdb-<tag>/`; nothing is built, and the CI container gets the docker socket for it).
+
+For each storage version in `INTEROP_STORAGE_VERSIONS` (`v1.0.0 v1.5.0`) and each writer, it writes a file as:
+
+- `checkpoint`: [base.sql](interop/base.sql), checkpointed;
+- `wal`: base.sql and [changes.sql](interop/changes.sql), all in the write-ahead log;
+- `mixed`: base.sql checkpointed and changes.sql in the log, then the other engine replays and checkpoints it (`mixed-checkpointed-by-*`);
+- `compression`: one table per method in `INTEROP_COMPRESSIONS`, forced with `force_compression`.
+
+Each engine then opens its own copy of the file and runs [check.sql](interop/check.sql), the stage's `check_*.sql` and `use_*.sql`, a digest of every table and view, and `pragma_storage_info` of the compression tables. The two outputs must match byte for byte. The digest is the row count and the sum of `hash()` over the rows, because the engines print some values differently (a DOUBLE `0.0` is `0` in SereneDB). The copies are opened read-write with no checkpoint on shutdown: DuckDB 1.5 cannot open read-only a file whose log holds index data. `VANILLA_DUCKDB_TAG` (default `1.5.5`) picks the image, and `VANILLA_DUCKDB` a binary to use instead.
+
+The suite runs with every other suite when duckdb or a dependency they share changes, and alone when only `interop/` does.
+
+### Changing the DuckDB on-disk format
+
+A DuckDB file must hold only what DuckDB reads, so SereneDB-only state (stored generated columns, the dict_fsst plus modes, owners and privileges, ...) never goes into one. Follow the rules in [CONTRIBUTING.md](../../CONTRIBUTING.md#duckdb-database-files), then:
+
+- if DuckDB can store the change, add its DDL/DML to `base.sql` or `changes.sql` and a query to `check_base.sql` or `check_changes.sql`;
+- if it cannot, add the refusal to `third_party/duckdb/test/sql/storage/serenedb_state_in_duckdb_file.test`;
+- a new compression method or layout goes into `INTEROP_COMPRESSIONS`, when DuckDB has the method;
+- run `tests/duckdb/run.sh --suite core,interop`.
 
 ## The postgres_scanner fixture
 

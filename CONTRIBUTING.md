@@ -152,6 +152,7 @@ through DuckDB's `unittest` binary, which is built by default (opt out with
 ```bash
 ./tests/duckdb/run.sh                    # every suite
 ./tests/duckdb/run.sh --suite core       # just duckdb core
+./tests/duckdb/run.sh --suite interop    # DuckDB files against the official duckdb/duckdb image
 ./tests/duckdb/run.sh --list             # suite names
 ```
 
@@ -225,7 +226,20 @@ Every file of an iresearch segment (`segments_N`, `.sm`, `.doc`, `.pos`, `.pay`,
 
 ### Database files
 
-Database files are DuckDB database files. Their checkpoint and write-ahead log entries (`.wal`, and the `.wal.checkpoint` and `.wal.recovery` files beside it) are `BinarySerializer` objects with the field ids of `third_party/duckdb/src/include/duckdb/storage/serialization/*.json`: a new field is a json member with a new id and a `default`, and a removed one is marked deleted. SereneDB fields need no `version` there, since SereneDB always writes `SERENEDB_LATEST`. A log entry that matches its checksum but cannot be read stops the database from opening instead of being dropped like a torn tail. The log header never gains a field; a framing change bumps `WAL_VERSION_NUMBER`. A file with a SereneDB storage version opens only at a SereneDB storage version, and a file with a DuckDB storage version only at a DuckDB one or with none given. SereneDB opens its own files at `SERENEDB_LATEST` (`RequestSereneDBStorageVersion`), so it refuses a plain DuckDB file, and a plain `ATTACH` refuses a SereneDB file, before anything is read from it.
+Database files are DuckDB database files. Their checkpoint and write-ahead log entries (`.wal`, and the `.wal.checkpoint` and `.wal.recovery` files beside it) are `BinarySerializer` objects with the field ids of `third_party/duckdb/src/include/duckdb/storage/serialization/*.json`: a new field is a json member with a new id and a `default`, and a removed one is marked deleted. A log entry that matches its checksum but cannot be read stops the database from opening instead of being dropped like a torn tail. The log header never gains a field; a framing change bumps `WAL_VERSION_NUMBER`. A file with a SereneDB storage version opens only at a SereneDB storage version, and a file with a DuckDB storage version only at a DuckDB one or with none given. SereneDB opens its own files at `SERENEDB_LATEST` (`RequestSereneDBStorageVersion`), so it refuses a plain DuckDB file, and a plain `ATTACH` refuses a SereneDB file, before anything is read from it.
+
+### DuckDB database files
+
+A database file with a DuckDB storage version (a plain `ATTACH`, `serened shell`) must stay readable by the DuckDB release of that version, and SereneDB reads what that release writes. Field ids and enum values outside SereneDB's ranges belong to upstream:
+
+- **Fields.** A SereneDB field of an upstream class takes 16384 plus the id upstream's numbering would give it: 16484 in a class whose fields start at 100, 16584 at 200. A field from 16384 (`SERENEDB_FIELD_ID_BASE`) up is refused when written to a DuckDB file. With `"version": "serenedb_v1"` on its json member it is skipped there instead: use that for state DuckDB drops as well, such as object ids, constraint names and sequence ownership. A class SereneDB added is reached only through a SereneDB enum value, so its fields keep the usual ids.
+- **Enum values.** A SereneDB value of a stored upstream enum starts at 200 (`SERENEDB_ENUM_VALUE_BASE`), and the enum is listed in `IsSereneDBEnumValue`. Writing such a value to a DuckDB file is refused.
+- **Data layouts.** A new compression method or block layout (the dict_fsst plus modes, FOR-packed RLE) is chosen only when `IsSereneDBStorageVersion` holds for the storage version being written.
+- **Log entries.** Where SereneDB logs an operation in another shape than DuckDB, a DuckDB file keeps DuckDB's: `CREATE SCHEMA` logs the name, and table and view renames log `RenameTableInfo` and `RenameViewInfo`. `ALTER TABLE ADD UNIQUE`, which DuckDB cannot replay, is refused.
+- **Catalog.** Objects in a DuckDB file get no owner or privileges (`StoresPermissions` in `server/auth/enforce.cpp`).
+- **In-memory databases** have a SereneDB storage version, so they take every SereneDB feature.
+
+`tests/duckdb/run.sh --suite interop` checks both directions against the official `duckdb/duckdb` image; see [tests/duckdb/README.md](tests/duckdb/README.md).
 
 ### Serialized structs
 

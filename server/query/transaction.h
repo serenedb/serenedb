@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/functional/any_invocable.h>
+
 #include <functional>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -83,12 +85,17 @@ class Transaction : public Config {
   // transactions have been committed (or when there were none). With
   // `database`, only that database's indexes commit: the cursor is a position
   // in its WAL.
-  void CommitSearch(std::optional<search::WalCursor> cursor,
-                    std::optional<duckdb::idx_t> database = std::nullopt) noexcept;
+  void CommitSearch(
+    std::optional<search::WalCursor> cursor,
+    std::optional<duckdb::idx_t> database = std::nullopt) noexcept;
 
   void Commit();
 
   void Rollback();
+
+  void DeferToCommit(absl::AnyInvocable<void()> action) {
+    _on_commit.push_back(std::move(action));
+  }
 
   // True once any statement that reads or writes the current database ran
   // inside the active explicit transaction; gates late SET TRANSACTION
@@ -188,6 +195,7 @@ class Transaction : public Config {
   // lazily via SearchTxn(); reset in Destroy. The inverted-index trxs above
   // commit on the store-table tick, not the engine WAL tick.
   std::optional<search::SearchTableTransaction> _search_txn;
+  std::vector<absl::AnyInvocable<void()>> _on_commit;
   uint64_t _num_log_data_markers = 0;
   bool _had_query_in_transaction = false;
   // Set once a statement has performed uncommitted DML; pins all three views

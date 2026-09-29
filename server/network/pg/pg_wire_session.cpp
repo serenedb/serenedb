@@ -1720,6 +1720,13 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
                      ERR_MSG(std::forward<decltype(msg)>(msg)...)),
       std::source_location::current()}));
   };
+  absl::Cleanup close_guard = [&] {
+    if (!bridge.Closed()) {
+      fail(ERRCODE_CONNECTION_EXCEPTION,
+           "unexpected EOF during COPY from stdin");
+      this->Stop();
+    }
+  };
   // CopyData bodies stream straight to the bridge -- never assembled whole, so
   // there is no per-message size cap (PG/pgwire-rs accept ~1GB; memory stays
   // bounded by the recv buffer, not the frame length). The text "\."
@@ -1728,146 +1735,131 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
   CopyEodScanner scanner;
   bool eod = false;  // text marker seen: stop feeding, just drain to CopyDone
   constexpr size_t kHeader = 1 + sizeof(uint32_t);
-  uint64_t body = 0;
-  try {
-    for (;;) {
-      while (this->_recv.ReadableSize() < kHeader) {
-        if (this->SendBroken()) {
-          fail(ERRCODE_CONNECTION_EXCEPTION,
-               "unexpected EOF during COPY from stdin");
-          co_return {};
-        }
-        co_await _copy_gate.Wait(*this->_ioexec);
-      }
-      std::array<uint8_t, kHeader> head;
-      {
-        size_t off = 0;
-        for (const auto buffer : this->_recv.ReadableView(kHeader)) {
-          std::memcpy(head.data() + off, buffer.data(), buffer.size());
-          off += buffer.size();
-        }
-      }
-      const char type = static_cast<char>(head[0]);
-      const uint32_t length = absl::big_endian::Load32(head.data() + 1);
-      if (length < sizeof(uint32_t)) {
-        fail(ERRCODE_PROTOCOL_VIOLATION, "invalid COPY message length");
-        co_return {};
-      }
-      this->_recv.Consume(kHeader);
-      body = length - sizeof(uint32_t);
-
-      if (type == PQ_MSG_COPY_DATA) {
-        SDB_IF_FAILURE("copy_feeder_throw") {
-          THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
-        }
-        while (body > 0) {
-          while (!this->_recv.Readable()) {
-            if (this->SendBroken()) {
-              fail(ERRCODE_CONNECTION_EXCEPTION,
-                   "unexpected EOF during COPY from stdin");
-              co_return {};
-            }
-            co_await _copy_gate.Wait(*this->_ioexec);
-          }
-          const std::string_view chunk = this->_recv.Front();
-          const auto take = std::min<uint64_t>(body, chunk.size());
-          if (!eod && !bridge.Aborted()) {
-            const std::string_view piece = chunk.substr(0, take);
-            std::array<std::string_view, 2> spans{piece, std::string_view{}};
-            if (is_text) {
-              const auto scanned = scanner.Scan(piece);
-              spans = {scanned.carry, scanned.data};
-            }
-            for (const auto span : spans) {
-              if (span.empty()) {
-                continue;
-              }
-              bridge.Publish(span.data(), span.size());
-              co_await bridge.Drained(*this->_ioexec);
-              bridge.ResetDrained();
-            }
-            if (is_text && scanner.Ended()) {
-              eod = true;
-              // worker sees EOF; the rest of the stream is dropped
-              bridge.Finish();
-            }
-          }
-          this->_recv.Consume(take);
-          body -= take;
-        }
-      } else if (type == PQ_MSG_COPY_DONE) {
-        if (!eod && !bridge.Aborted()) {
-          if (is_text) {
-            if (const auto tail = scanner.Finish(); !tail.empty()) {
-              bridge.Publish(tail.data(), tail.size());
-              co_await bridge.Drained(*this->_ioexec);
-              bridge.ResetDrained();
-            }
-          }
-          bridge.Finish();
-        }
-        co_return {};
-      } else if (type == PQ_MSG_COPY_FAIL) {
-        // The client's CopyFail carries its own failure text; PG echoes it,
-        // reading it as a NUL-terminated string (truncate at the first NUL).
-        std::string detail;
-        detail.reserve(body);
-        while (body > 0) {
-          while (!this->_recv.Readable()) {
-            if (this->SendBroken()) {
-              fail(ERRCODE_CONNECTION_EXCEPTION,
-                   "unexpected EOF during COPY from stdin");
-              co_return {};
-            }
-            co_await _copy_gate.Wait(*this->_ioexec);
-          }
-          const std::string_view chunk = this->_recv.Front();
-          const auto take = std::min<uint64_t>(body, chunk.size());
-          detail.append(chunk.data(), take);
-          this->_recv.Consume(take);
-          body -= take;
-        }
-        fail(ERRCODE_QUERY_CANCELED, "COPY from stdin failed: ",
-             std::string_view{detail}.substr(0, detail.find('\0')));
-        co_return {};
-      } else if (type != PQ_MSG_FLUSH && type != PQ_MSG_SYNC) {
-        while (body > 0) {
-          while (!this->_recv.Readable()) {
-            if (this->SendBroken()) {
-              fail(ERRCODE_CONNECTION_EXCEPTION,
-                   "unexpected EOF during COPY from stdin");
-              co_return {};
-            }
-            co_await _copy_gate.Wait(*this->_ioexec);
-          }
-          const auto take =
-            std::min<uint64_t>(body, this->_recv.Front().size());
-          this->_recv.Consume(take);
-          body -= take;
-        }
-        fail(ERRCODE_PROTOCOL_VIOLATION,
-             "unexpected message during COPY from stdin");
-        co_return {};
-      }
-      // Flush/Sync carry an empty body -- already fully consumed (header only).
-    }
-  } catch (...) {
-    if (!eod) {
-      bridge.Fail(std::current_exception());
-    }
-  }
-  while (body > 0) {
-    while (!this->_recv.Readable()) {
+  for (;;) {
+    while (this->_recv.ReadableSize() < kHeader) {
       if (this->SendBroken()) {
+        fail(ERRCODE_CONNECTION_EXCEPTION,
+             "unexpected EOF during COPY from stdin");
         co_return {};
       }
       co_await _copy_gate.Wait(*this->_ioexec);
     }
-    const auto take = std::min<uint64_t>(body, this->_recv.Front().size());
-    this->_recv.Consume(take);
-    body -= take;
+    std::array<uint8_t, kHeader> head;
+    {
+      size_t off = 0;
+      for (const auto buffer : this->_recv.ReadableView(kHeader)) {
+        std::memcpy(head.data() + off, buffer.data(), buffer.size());
+        off += buffer.size();
+      }
+    }
+    const char type = static_cast<char>(head[0]);
+    const uint32_t length = absl::big_endian::Load32(head.data() + 1);
+    if (length < sizeof(uint32_t)) {
+      fail(ERRCODE_PROTOCOL_VIOLATION, "invalid COPY message length");
+      co_return {};
+    }
+    this->_recv.Consume(kHeader);
+    uint64_t body = length - sizeof(uint32_t);
+
+    if (type == PQ_MSG_COPY_DATA) {
+      SDB_IF_FAILURE("copy_feeder_throw") {
+        THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+      }
+      while (body > 0) {
+        while (!this->_recv.Readable()) {
+          if (this->SendBroken()) {
+            fail(ERRCODE_CONNECTION_EXCEPTION,
+                 "unexpected EOF during COPY from stdin");
+            co_return {};
+          }
+          co_await _copy_gate.Wait(*this->_ioexec);
+        }
+        const std::string_view chunk = this->_recv.Front();
+        const auto take = std::min<uint64_t>(body, chunk.size());
+        if (!eod && !bridge.Aborted()) {
+          const std::string_view piece = chunk.substr(0, take);
+          std::array<std::string_view, 2> spans{piece, std::string_view{}};
+          if (is_text) {
+            const auto scanned = scanner.Scan(piece);
+            spans = {scanned.carry, scanned.data};
+          }
+          for (const auto span : spans) {
+            if (span.empty()) {
+              continue;
+            }
+            bridge.Publish(span.data(), span.size());
+            co_await bridge.Drained(*this->_ioexec);
+            bridge.ResetDrained();
+          }
+          if (is_text && scanner.Ended()) {
+            eod = true;
+            // worker sees EOF; the rest of the stream is dropped
+            bridge.Finish();
+          }
+        }
+        this->_recv.Consume(take);
+        body -= take;
+      }
+    } else if (type == PQ_MSG_COPY_DONE) {
+      if (!eod && !bridge.Aborted()) {
+        if (is_text) {
+          if (const auto tail = scanner.Finish(); !tail.empty()) {
+            bridge.Publish(tail.data(), tail.size());
+            co_await bridge.Drained(*this->_ioexec);
+            bridge.ResetDrained();
+          }
+        }
+        bridge.Finish();
+      }
+      co_return {};
+    } else if (type == PQ_MSG_COPY_FAIL) {
+      if (body > PQ_SMALL_MESSAGE_LIMIT) {
+        fail(ERRCODE_PROTOCOL_VIOLATION, "invalid message length");
+        this->Stop();
+        co_return {};
+      }
+      // The client's CopyFail carries its own failure text; PG echoes it,
+      // reading it as a NUL-terminated string (truncate at the first NUL).
+      std::string detail;
+      detail.reserve(body);
+      while (detail.size() < body) {
+        while (!this->_recv.Readable()) {
+          if (this->SendBroken()) {
+            fail(ERRCODE_CONNECTION_EXCEPTION,
+                 "unexpected EOF during COPY from stdin");
+            co_return {};
+          }
+          co_await _copy_gate.Wait(*this->_ioexec);
+        }
+        const std::string_view chunk = this->_recv.Front();
+        const auto take =
+          std::min<uint64_t>(body - detail.size(), chunk.size());
+        detail.append(chunk.data(), take);
+        this->_recv.Consume(take);
+      }
+      fail(ERRCODE_QUERY_CANCELED, "COPY from stdin failed: ",
+           std::string_view{detail}.substr(0, detail.find('\0')));
+      co_return {};
+    } else if (type != PQ_MSG_FLUSH && type != PQ_MSG_SYNC) {
+      while (body > 0) {
+        while (!this->_recv.Readable()) {
+          if (this->SendBroken()) {
+            fail(ERRCODE_CONNECTION_EXCEPTION,
+                 "unexpected EOF during COPY from stdin");
+            co_return {};
+          }
+          co_await _copy_gate.Wait(*this->_ioexec);
+        }
+        const auto take = std::min<uint64_t>(body, this->_recv.Front().size());
+        this->_recv.Consume(take);
+        body -= take;
+      }
+      fail(ERRCODE_PROTOCOL_VIOLATION,
+           "unexpected message during COPY from stdin");
+      co_return {};
+    }
+    // Flush/Sync carry an empty body -- already fully consumed (header only).
   }
-  co_return {};
 }
 
 template<SocketKind Kind>

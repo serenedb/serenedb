@@ -890,11 +890,32 @@ def test_copy_from_stdin_extended(conn):
         conn.run_ok("drop table if exists smoke_copy_ext")
 
 
-def test_copy_feeder_error_fails_the_copy(conn):
+def test_copy_fail_longer_than_the_pg_limit_closes(conn):
+    # A CopyFail is capped at 10000 bytes, as in PostgreSQL
+    # (PQ_SMALL_MESSAGE_LIMIT): a longer one closes the connection instead of
+    # making the server buffer whatever length the client claims.
+    c = WireConn()
+    try:
+        c.run_ok("drop table if exists t_copy_fail_limit")
+        c.run_ok("create table t_copy_fail_limit(a int)")
+        c.send("Q", _cstr("copy t_copy_fail_limit from stdin"))
+        assert c.read_msg()[0] == "G"
+        c.send("f", b"x" * 10001 + b"\0")
+        c.sock.settimeout(10)
+        with pytest.raises(EOFError):
+            while True:
+                c.read_msg()
+    finally:
+        c.sock.close()
+        conn.run("drop table if exists t_copy_fail_limit")
+
+
+def test_copy_feeder_error_ends_the_copy(conn):
     # A throw in the COPY FROM STDIN feeder, the io coroutine that hands the
-    # client's CopyData to the COPY, fails the COPY with an ERROR and keeps the
-    # connection. The throw used to end the feeder without telling the COPY: the
-    # worker waited for data forever, and the client for the COPY's answer.
+    # client's CopyData to the COPY, fails the COPY and closes the connection,
+    # whose place in the client's stream is lost. The throw used to end the
+    # feeder without telling the COPY: the worker waited for data forever, and
+    # the client for the COPY's answer.
     if "E" in types(conn.run("set sdb_faults='copy_feeder_throw'")):
         pytest.skip("fault injection not enabled in this build")
     c = WireConn()
@@ -906,9 +927,10 @@ def test_copy_feeder_error_fails_the_copy(conn):
         c.send("d", b"1\n")
         c.send("c")
         c.sock.settimeout(10)
-        m = c.drain_to_ready()
-        assert "E" in types(m), types(m)
-        assert first_field(c.run("select count(*) from t_copy_feeder")) == b"0"
+        with pytest.raises(EOFError):
+            while True:
+                c.read_msg()
+        assert first_field(conn.run("select count(*) from t_copy_feeder")) == b"0"
     finally:
         conn.run("set sdb_faults='-copy_feeder_throw'")
         c.sock.close()

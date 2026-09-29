@@ -78,5 +78,6 @@ typedef uint32_t ProtocolVersion;
 #define NEGOTIATE_GSS_CODE PG_PROTOCOL(1234, 5680)
 
 #define MAX_STARTUP_PACKET_LENGTH 10000
+#define PQ_SMALL_MESSAGE_LIMIT 10000
 
 #endif /* PROTOCOL_H */

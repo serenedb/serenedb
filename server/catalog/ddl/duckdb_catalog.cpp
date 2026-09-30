@@ -1601,7 +1601,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
           stmt.info->Cast<duckdb::CreateIndexInfo>().options);
         auto info = view->GetInfo();
         fp = connector::ResolveViewFastPath(
-          binder.context, info->Cast<duckdb::CreateViewInfo>(), key_cols);
+          binder.context, target.ParentCatalog(),
+          info->Cast<duckdb::CreateViewInfo>(), key_cols);
       }
     }
     duckdb::LogicalOperator* leaf_parent_chain_root = plan.get();

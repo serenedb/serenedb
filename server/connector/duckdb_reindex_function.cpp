@@ -80,7 +80,8 @@
 #include "catalog/inverted_index.h"
 #include "catalog/log/store.h"
 #include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/rest/catalog_entry/table/iceberg_table_entry.hpp"
+#include "catalog/rest/catalog_entry/schema/iceberg_schema_entry.hpp"
+#include "catalog/rest/catalog_entry/table/iceberg_table_information.hpp"
 #include "catalog/rest/iceberg_catalog.hpp"
 #include "catalog/role.h"
 #include "connector/duckdb_client_state.h"
@@ -877,7 +878,9 @@ std::optional<Source> ResolveSource(duckdb::ClientContext& context,
                                     const ReindexTarget& target) {
   Source src;
   auto fp = ResolveViewFastPath(
-    context, *target.view_info,
+    context,
+    duckdb::Catalog::GetCatalog(context, duckdb::Identifier{target.database}),
+    *target.view_info,
     catalog::InvertedInfo(*target.index).GetOptions().key_columns);
   if (!fp) {
     return std::nullopt;
@@ -895,23 +898,25 @@ std::optional<Source> ResolveSource(duckdb::ClientContext& context,
       return std::nullopt;
   }
   if (fp->catalog_ref) {
-    auto entry = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
-      context,
-      duckdb::QualifiedName(duckdb::Identifier{fp->catalog_ref->catalog},
-                            duckdb::Identifier{fp->catalog_ref->schema},
-                            duckdb::Identifier{fp->catalog_ref->table}),
-      duckdb::OnEntryNotFound::RETURN_NULL);
-    auto* iceberg_entry = dynamic_cast<duckdb::IcebergTableEntry*>(entry.get());
-    if (!iceberg_entry) {
+    auto* ic_catalog = dynamic_cast<duckdb::IcebergCatalog*>(
+      duckdb::Catalog::GetCatalogEntry(
+        context, duckdb::Identifier{fp->catalog_ref->catalog})
+        .get());
+    if (!ic_catalog) {
       return std::nullopt;
     }
-    auto& ic_catalog =
-      iceberg_entry->ParentCatalog().Cast<duckdb::IcebergCatalog>();
-    if (ic_catalog.attach_options.max_table_staleness_micros.IsValid()) {
-      // Cache-only refresh: the bind below re-resolves the table into a fresh
-      // version from it. Reinitializing this shared version in place would
-      // destroy entries concurrent scans still hold.
-      iceberg_entry->table_info.RefreshRequestCache(context);
+    if (ic_catalog->attach_options.max_table_staleness_micros.IsValid()) {
+      auto schema =
+        ic_catalog->GetSchema(ic_catalog->GetCatalogTransaction(context),
+                              duckdb::Identifier{fp->catalog_ref->schema},
+                              duckdb::OnEntryNotFound::RETURN_NULL);
+      if (!schema) {
+        return std::nullopt;
+      }
+      duckdb::IcebergTableInformation{
+        *ic_catalog, schema->Cast<duckdb::IcebergSchemaEntry>(),
+        fp->catalog_ref->table}
+        .RefreshRequestCache(context);
     }
   }
   src.fast_path = std::move(*fp);

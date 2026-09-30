@@ -70,6 +70,10 @@ struct PhraseVerifyScratch {
 struct StoredText {
   field_id column = field_limits::invalid();
   std::function<analysis::Tokenizer::ptr()> tokenizer;
+
+  bool operator==(const StoredText& rhs) const noexcept {
+    return column == rhs.column;
+  }
 };
 
 class PhraseVerifier {
@@ -86,7 +90,7 @@ class PhraseVerifier {
     return _spec ? &*_spec : nullptr;
   }
 
-  bool operator==(const PhraseVerifier& rhs) const noexcept;
+  bool operator==(const PhraseVerifier& rhs) const noexcept = default;
 
  private:
   StoredText _text;

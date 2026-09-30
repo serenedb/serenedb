@@ -24,6 +24,7 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include <boost/utility/compare_pointees.hpp>
 #include <span>
 
 #include "iresearch/index/field_meta.hpp"
@@ -623,6 +624,12 @@ PrepareCollector::ptr ByPhrase::MakeCollectorImpl(const Scorer* scorer,
   }
   return std::make_unique<ExpandedSlotsCollector>(
     scorer, counts.terms, counts.expanded, stats, threads);
+}
+
+bool ByPhraseOptions::operator==(const ByPhraseOptions& rhs) const noexcept {
+  return _phrase == rhs._phrase && _slop == rhs._slop &&
+         _word_separator == rhs._word_separator &&
+         boost::equal_pointees(_verifier, rhs._verifier);
 }
 
 bool ByPhraseOptions::LowerParts() {

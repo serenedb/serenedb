@@ -528,9 +528,6 @@ struct FilterPrinter {
       if (const auto slop = f.options().slop(); slop > 0) {
         node.attributes["Slop"] = absl::StrCat(slop);
       }
-      if (f.options().verifier()) {
-        node.attributes["Verify"] = "stored text";
-      }
       return node;
     }
     if (type == Type<GeoFilter>::id()) {

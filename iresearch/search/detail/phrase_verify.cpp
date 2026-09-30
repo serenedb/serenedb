@@ -39,29 +39,6 @@ bool Dense(const PhraseDocTokens& doc) noexcept {
 
 }  // namespace
 
-bool SameVerifier(const PhraseVerifier* lhs,
-                  const PhraseVerifier* rhs) noexcept {
-  if (lhs == rhs) {
-    return true;
-  }
-  if (!lhs || !rhs) {
-    return false;
-  }
-  return *lhs == *rhs;
-}
-
-bool PhraseVerifier::operator==(const PhraseVerifier& rhs) const noexcept {
-  const auto* lhs_spec = Spec();
-  const auto* rhs_spec = rhs.Spec();
-  if (!lhs_spec != !rhs_spec) {
-    return false;
-  }
-  if (lhs_spec && !(*lhs_spec == *rhs_spec)) {
-    return false;
-  }
-  return _text.column == rhs._text.column;
-}
-
 PhraseTokenReader::PhraseTokenReader(const ColReader& col_reader,
                                      const ColumnReader& column,
                                      analysis::Tokenizer::ptr tokenizer)

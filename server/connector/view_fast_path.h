@@ -32,6 +32,7 @@
 
 namespace duckdb {
 
+class Catalog;
 class ClientContext;
 struct CreateViewInfo;
 
@@ -163,8 +164,8 @@ struct ViewFastPath {
 // key_columns: user lookup key columns; empty = auto (pg ctid / CH PK).
 // Build and lookup must pass the SAME value (CREATE INDEX / persisted opts).
 std::optional<ViewFastPath> ResolveViewFastPath(
-  duckdb::ClientContext& context, const duckdb::CreateViewInfo& view,
-  std::span<const std::string> key_columns);
+  duckdb::ClientContext& context, duckdb::Catalog& view_catalog,
+  const duckdb::CreateViewInfo& view, std::span<const std::string> key_columns);
 
 std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp);
 

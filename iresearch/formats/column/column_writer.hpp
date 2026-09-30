@@ -90,6 +90,8 @@ class ColumnWriter final {
 
   void AppendDense(const duckdb::Vector& vec, duckdb::idx_t count);
   void AppendList(const duckdb::Vector& vec, duckdb::idx_t count);
+  void AppendStruct(const duckdb::Vector& vec, duckdb::idx_t count);
+  void CheckListDistinct(const WriteChunk& back);
   void PadNestedNulls(uint64_t count);
   WriteChunk& OpenChunk();
 
@@ -124,9 +126,11 @@ class ColumnWriter final {
                           bool skip_validity, size_t child_count,
                           ColumnMeta& meta);
 
-  void SealStruct(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
-                  uint64_t row_count, bool skip_validity,
-                  duckdb::CompressionType forced, ColumnMeta& meta);
+  void SealStruct(
+    const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
+    uint64_t row_count, bool skip_validity, duckdb::CompressionType forced,
+    ColumnMeta& meta,
+    std::span<const std::unique_ptr<ListIngest>> field_ingest = {});
 
   void SealArray(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
                  uint64_t row_count, bool skip_validity,
@@ -170,6 +174,7 @@ class ColumnWriter final {
   int64_t _variant_min_shred_size = -1;
   duckdb::LogicalType _force_variant_shredding;
   std::unique_ptr<ListIngest> _list_ingest;
+  std::vector<std::unique_ptr<ListIngest>> _field_ingest;
   ColumnMeta _meta;
 };
 

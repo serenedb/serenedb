@@ -1643,6 +1643,98 @@ TEST_F(ColumnReaderTest, RewrittenRepeatedListsKeepTheirValues) {
   }
 }
 
+TEST_F(ColumnReaderTest, RewrittenStructsKeepTheirListFieldsDeduplicated) {
+  const auto type = duckdb::LogicalType::STRUCT(
+    {{"id", duckdb::LogicalType::BIGINT},
+     {"tags", duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)},
+     {"attrs", duckdb::LogicalType::MAP(duckdb::LogicalType::VARCHAR,
+                                        duckdb::LogicalType::VARCHAR)}});
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> source;
+  WriteViaSql(Db(), dir, "ssrc", 51, type,
+              "SELECT CASE WHEN i % 23 = 0 THEN NULL ELSE {'id': i, 'tags': "
+              "CASE WHEN i % 29 = 0 THEN NULL WHEN i % 31 = 0 THEN "
+              "[]::VARCHAR[] ELSE ['tag.' || (i % 40), 'env.' || (i % 3)] "
+              "END, 'attrs': map_from_entries(list_transform(range(3), lambda "
+              "k: {'key': 'attr.' || k, 'value': 'v' || ((i // 7) % 50) || "
+              "'-' || k}))} END FROM range(30000) t(i)",
+              8192, source);
+  const auto tag_count = [](const std::vector<duckdb::Value>& values) {
+    std::vector<duckdb::Value> tags;
+    for (const auto& v : values) {
+      if (!v.IsNull()) {
+        tags.emplace_back(duckdb::StructValue::GetChildren(v)[1]);
+      }
+    }
+    return ElementCount(tags);
+  };
+  irs::ColReader src{dir, "ssrc", Db()};
+  const auto* col = src.Column(51);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->StructFieldCount(), 3u);
+  EXPECT_LT(col->StructField(1).Child()->RowCount() * 10, tag_count(source));
+  for (const bool sliced : {false, true}) {
+    SCOPED_TRACE(sliced ? "every other row" : "every row");
+    const std::string segment = sliced ? "sdst_sliced" : "sdst";
+    std::vector<duckdb::Value> expected;
+    {
+      irs::ColWriter w{dir, segment, Db()};
+      auto& cw = w.OpenColumn(52, type, /*skip_validity=*/false, 8192);
+      auto state = col->InitScan(src.Ctx());
+      duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+      uint64_t pos = 0;
+      while (pos < col->RowCount()) {
+        const auto take =
+          std::min<uint64_t>(col->RowCount() - pos, STANDARD_VECTOR_SIZE);
+        duckdb::Vector batch{type, STANDARD_VECTOR_SIZE};
+        col->Scan(state, batch, take);
+        if (!sliced) {
+          cw.Append(batch, take);
+          expected.insert(expected.end(), source.begin() + pos,
+                          source.begin() + pos + take);
+        } else {
+          duckdb::idx_t kept = 0;
+          for (duckdb::idx_t k = 0; k < take; k += 2) {
+            sel.set_index(kept++, k);
+            expected.emplace_back(source[pos + k]);
+          }
+          const duckdb::Vector selected{batch, sel, kept};
+          cw.Append(selected, kept);
+        }
+        pos += take;
+      }
+      w.Commit(0);
+    }
+    irs::ColReader r{dir, segment, Db()};
+    const auto* out = r.Column(52);
+    ASSERT_NE(out, nullptr);
+    ASSERT_EQ(out->RowCount(), expected.size());
+    ASSERT_EQ(out->StructFieldCount(), 3u);
+    EXPECT_LT(out->StructField(1).Child()->RowCount() * 10,
+              tag_count(expected));
+    ExpectVariantValuesEqual(expected, ScanValues(*out, r.Ctx()));
+    ExpectGathered(*out, r.Ctx(), expected,
+                   Rows{{0, 1, 22, 23, 8191, 8192, expected.size() - 1}},
+                   false);
+  }
+}
+
+TEST_F(ColumnReaderTest, RepeatedListsStayDeduplicatedAcrossSplitAppends) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteSparseViaSql(Db(), dir, "split", 51, type,
+                    "SELECT CASE WHEN i % 17 = 0 THEN NULL ELSE ['tag.' || (i "
+                    "% 3), 'env'] END FROM range(40000) t(i)",
+                    8192, 1, expected);
+  irs::ColReader r{dir, "split", Db()};
+  const auto* col = r.Column(51);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), expected.size());
+  EXPECT_LT(col->Child()->RowCount() * 10, ElementCount(expected));
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+}
+
 TEST_F(ColumnReaderTest, SparseListsInsideStructsPadNulls) {
   const auto type = duckdb::LogicalType::STRUCT(
     {{"tags", duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)}});

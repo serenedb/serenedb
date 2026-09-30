@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/search/detail/pattern_cache.hpp>
 #include <iresearch/search/detail/term_acceptor.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/utils/containers/small_vector.hpp>
@@ -922,6 +923,100 @@ TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
     AssertOracle(
       *reader.GetImpl(), acceptor, [](irs::bytes_view) { return true; },
       [&](std::string_view term) { return RE2::PartialMatch(term, re); });
+  }
+}
+
+TEST_P(AcceptorWalkIndexTestCase, union_walk_is_the_union_of_its_parts) {
+  constexpr std::string_view kTerms[]{
+    "burden",
+    "b\xC3\xBCrden",
+    "bxrden",
+    "b\xE4\xB8\xADrden",
+    "b\xE0\x80\x80rden",
+    "b\xED\xA0\x80rden",
+    "b\xF4\x90\x80\x80rden",
+    "b\xFFrden",
+    "b\x80rden",
+    "b\xC3rden",
+    "BURDEN",
+    "atlas",
+    "atlantic",
+    "atl\xFF",
+    "gray",
+    "grey",
+    "nation",
+    "Nation",
+    "x",
+    "zz",
+    "ab",
+    "a\nb",
+    "access point",
+    "the siemens ag",
+    "siemensland",
+    "den\xFF",
+  };
+
+  AddTerms(kTerms);
+  AddEuroparl();
+
+  auto reader = open_reader();
+  ASSERT_NE(nullptr, reader);
+
+  using Kind = irs::RegexpAcceptor::PartKind;
+  using Part = irs::RegexpAcceptor::Part;
+  const auto part = [](Kind kind, std::string_view pattern) {
+    return Part{kind, irs::ViewCast<irs::byte_type>(pattern)};
+  };
+  const auto alone = [](const Part& part, irs::bytes_view term) {
+    switch (part.kind) {
+      case Kind::Term:
+        return term == part.pattern;
+      case Kind::Prefix:
+        return term.starts_with(part.pattern);
+      case Kind::Wildcard:
+        return irs::RegexpAcceptor{irs::RegexpAcceptor::WildcardTag{},
+                                   part.pattern}
+          .Matches(term);
+      case Kind::Perl:
+        return irs::RegexpAcceptor{part.pattern}.Matches(term);
+      case Kind::PosixEre:
+        return irs::RegexpAcceptor{part.pattern, irs::RegexpSyntax::PosixEre}
+          .Matches(term);
+    }
+    return false;
+  };
+
+  const std::vector<std::vector<Part>> unions{
+    {part(Kind::Prefix, "b"), part(Kind::Wildcard, "%tion")},
+    {part(Kind::Term, "zz"), part(Kind::Perl, "b.rden"),
+     part(Kind::Prefix, "atl")},
+    {part(Kind::Wildcard, "b_rden"), part(Kind::Perl, "(?i)bur.*")},
+    {part(Kind::Prefix, "b"), part(Kind::Perl, "x|y|zz")},
+    {part(Kind::Term, "x"), part(Kind::Term, "zz"), part(Kind::Term, "grey")},
+    {part(Kind::PosixEre, "gr(a|e)y"), part(Kind::Wildcard, "%den%")},
+    {part(Kind::Perl, "(?i)^(the\\s+)?siemens\\b.*"),
+     part(Kind::Prefix, "access")},
+    {part(Kind::Wildcard, "%"), part(Kind::Perl, "x")},
+    {part(Kind::Term, ""), part(Kind::Perl, "ab"), part(Kind::Perl, "a.b")},
+    {part(Kind::Perl, "atl(as|antic)"), part(Kind::Perl, "(?i)nation")},
+  };
+  for (const auto& parts : unions) {
+    const auto key = irs::UnionKey(parts);
+    SCOPED_TRACE(testing::Message("Union: '")
+                 << irs::DescribeUnion(key) << "'");
+    const irs::RegexpAcceptor acceptor{std::span{parts}};
+    ASSERT_TRUE(acceptor.ok());
+    AssertWalk(*reader.GetImpl(), acceptor, false);
+    AssertOracle(
+      *reader.GetImpl(), acceptor, [](irs::bytes_view) { return true; },
+      [&](std::string_view term) {
+        return std::any_of(parts.begin(), parts.end(), [&](const Part& p) {
+          return alone(p, irs::ViewCast<irs::byte_type>(term));
+        });
+      });
+    const auto source = irs::MakePatternSource(key, irs::PatternKind::Union);
+    ASSERT_NE(nullptr, source);
+    AssertSourceMatchesWalk(*reader.GetImpl(), acceptor, *source);
   }
 }
 

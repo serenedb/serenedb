@@ -28,8 +28,10 @@
 #include <list>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "iresearch/utils/regexp_acceptor.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
@@ -42,12 +44,19 @@ enum class PatternKind : uint8_t {
   RegexpPosixEre,
   Wildcard,
   Fused,
+  Union,
 };
 
 constexpr PatternKind RegexpPattern(RegexpSyntax syntax) noexcept {
   return syntax == RegexpSyntax::Perl ? PatternKind::RegexpPerl
                                       : PatternKind::RegexpPosixEre;
 }
+
+void AppendUnionPart(bstring& key, RegexpAcceptor::PartKind kind,
+                     bytes_view pattern);
+bstring UnionKey(std::span<const RegexpAcceptor::Part> parts);
+std::vector<RegexpAcceptor::Part> UnionParts(bytes_view key);
+std::string DescribeUnion(bytes_view key);
 
 class PatternCache {
  public:

@@ -28,6 +28,7 @@
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/detail/collectors.hpp>
 #include <iresearch/search/detail/column_collector.hpp>
+#include <iresearch/search/detail/pattern_cache.hpp>
 #include <iresearch/search/detail/window.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/automaton_filter.hpp>
@@ -3321,7 +3322,7 @@ TEST(OrAcceptorFusion_test, translates_wildcard_escapes) {
   EXPECT_FALSE(FusedAccepts(*fused, "xzy"));
 }
 
-TEST(OrAcceptorFusion_test, keeps_non_perl_regexp) {
+TEST(OrAcceptorFusion_test, fuses_posix_regexp) {
   auto root = std::make_unique<irs::BooleanFilter>();
   Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, "ax");
   {
@@ -3335,7 +3336,35 @@ TEST(OrAcceptorFusion_test, keeps_non_perl_regexp) {
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {.fuse_seekable_acceptors = true});
 
-  EXPECT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_EQ(irs::PatternKind::Union, fused->options().kind);
+  EXPECT_EQ("ax%|(?:a.*e)", irs::DescribeUnion(fused->options().pattern));
+  EXPECT_TRUE(FusedAccepts(*fused, "apple"));
+  EXPECT_TRUE(FusedAccepts(*fused, "axis"));
+  EXPECT_TRUE(FusedAccepts(*fused, "ax\xFF"));
+  EXPECT_FALSE(FusedAccepts(*fused, "bxe"));
+}
+
+TEST(OrAcceptorFusion_test, keeps_each_child_exact_on_any_bytes) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, "ax");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "b_d");
+  AsDisjunction(*root);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.fuse_seekable_acceptors = true});
+
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_EQ("ax%|b_d", irs::DescribeUnion(fused->options().pattern));
+  EXPECT_TRUE(FusedAccepts(*fused, "ax\xFF\x80"));
+  EXPECT_TRUE(FusedAccepts(*fused,
+                           "b\xE0\x80\x80"
+                           "d"));
+  EXPECT_FALSE(FusedAccepts(*fused,
+                            "b\xFF"
+                            "d"));
 }
 
 TEST(AndAcceptorFusion_test, fuses_same_field_acceptors) {

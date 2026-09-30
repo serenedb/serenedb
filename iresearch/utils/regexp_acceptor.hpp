@@ -74,6 +74,19 @@ class RegexpAcceptor {
 
   struct WildcardTag {};
 
+  enum class PartKind : uint8_t {
+    Term,
+    Prefix,
+    Wildcard,
+    Perl,
+    PosixEre,
+  };
+
+  struct Part {
+    PartKind kind;
+    bytes_view pattern;
+  };
+
   static constexpr int64_t kDefaultMaxMem = 64 << 20;
   static constexpr size_t kDefaultMaxDfaMem = size_t{16} << 20;
 
@@ -83,6 +96,9 @@ class RegexpAcceptor {
   RegexpAcceptor(WildcardTag, bytes_view pattern,
                  int64_t max_mem = kDefaultMaxMem,
                  size_t max_dfa_mem = kDefaultMaxDfaMem);
+  explicit RegexpAcceptor(std::span<const Part> parts,
+                          int64_t max_mem = kDefaultMaxMem,
+                          size_t max_dfa_mem = kDefaultMaxDfaMem);
   RegexpAcceptor(const RegexpAcceptor&) = delete;
   RegexpAcceptor& operator=(const RegexpAcceptor&) = delete;
   ~RegexpAcceptor();
@@ -167,6 +183,21 @@ class RegexpAcceptor {
 
   void Compile(bytes_view pattern, RegexpSyntax syntax, bool wildcard,
                int64_t max_mem);
+  void CompileParts(std::span<const Part> parts, int64_t max_mem);
+  void Setup();
+
+  re2::Prog::Inst* Inst(int id) const noexcept {
+    return id < _split ? _prog->inst(id) : _bytes_prog->inst(id - _split);
+  }
+  int Out(int id, re2::Prog::Inst* ip) const noexcept {
+    return ip->out() + (id < _split ? 0 : _split);
+  }
+  bool Fail(int id) const noexcept { return id == 0 || id == _split; }
+  int Size() const noexcept {
+    return _bytes_prog ? _split + _bytes_prog->size() : _split;
+  }
+  void AddStarts(std::vector<int>& queue, std::vector<uint32_t>& index,
+                 std::vector<int>& stack) const;
 
   const Row& Built(State state) const {
     if (!state->built.load(std::memory_order_acquire)) [[unlikely]] {
@@ -215,6 +246,8 @@ class RegexpAcceptor {
   mutable std::vector<int> _canon;
   mutable std::vector<int> _resolved;
   mutable std::vector<uint32_t> _resolved_index;
+  std::unique_ptr<re2::Prog> _bytes_prog;
+  int _split{0};
 };
 
 }  // namespace irs

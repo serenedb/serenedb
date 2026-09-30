@@ -27,11 +27,17 @@
 namespace irs {
 namespace {
 
+constexpr size_t kLengthBytes = sizeof(uint32_t);
+
 std::shared_ptr<const RegexpAcceptor> Compile(bytes_view pattern,
                                               PatternKind kind) {
   if (kind == PatternKind::Wildcard) {
     return std::make_shared<const RegexpAcceptor>(RegexpAcceptor::WildcardTag{},
                                                   pattern);
+  }
+  if (kind == PatternKind::Union) {
+    const auto parts = UnionParts(pattern);
+    return std::make_shared<const RegexpAcceptor>(std::span{parts});
   }
   SDB_ASSERT(kind == PatternKind::RegexpPerl ||
              kind == PatternKind::RegexpPosixEre);
@@ -49,6 +55,65 @@ std::string KeyOf(bytes_view pattern, PatternKind kind) {
 }
 
 }  // namespace
+
+void AppendUnionPart(bstring& key, RegexpAcceptor::PartKind kind,
+                     bytes_view pattern) {
+  key.push_back(static_cast<byte_type>(kind));
+  const auto size = static_cast<uint32_t>(pattern.size());
+  for (size_t i = 0; i != kLengthBytes; ++i) {
+    key.push_back(static_cast<byte_type>(size >> (8 * i)));
+  }
+  key += pattern;
+}
+
+bstring UnionKey(std::span<const RegexpAcceptor::Part> parts) {
+  bstring key;
+  for (const auto& part : parts) {
+    AppendUnionPart(key, part.kind, part.pattern);
+  }
+  return key;
+}
+
+std::vector<RegexpAcceptor::Part> UnionParts(bytes_view key) {
+  std::vector<RegexpAcceptor::Part> parts;
+  while (key.size() > kLengthBytes) {
+    const auto kind = static_cast<RegexpAcceptor::PartKind>(key[0]);
+    uint32_t size = 0;
+    for (size_t i = 0; i != kLengthBytes; ++i) {
+      size |= uint32_t{key[1 + i]} << (8 * i);
+    }
+    key.remove_prefix(1 + kLengthBytes);
+    SDB_ASSERT(size <= key.size());
+    parts.push_back({kind, key.substr(0, size)});
+    key.remove_prefix(size);
+  }
+  SDB_ASSERT(key.empty());
+  return parts;
+}
+
+std::string DescribeUnion(bytes_view key) {
+  std::string out;
+  for (const auto& part : UnionParts(key)) {
+    if (!out.empty()) {
+      out.push_back('|');
+    }
+    const auto chars = ViewCast<char>(part.pattern);
+    switch (part.kind) {
+      case RegexpAcceptor::PartKind::Perl:
+      case RegexpAcceptor::PartKind::PosixEre:
+        out.append("(?:").append(chars).append(")");
+        break;
+      case RegexpAcceptor::PartKind::Prefix:
+        out.append(chars).push_back('%');
+        break;
+      case RegexpAcceptor::PartKind::Term:
+      case RegexpAcceptor::PartKind::Wildcard:
+        out.append(chars);
+        break;
+    }
+  }
+  return out;
+}
 
 PatternCache& PatternCache::Instance() {
   static PatternCache cache;

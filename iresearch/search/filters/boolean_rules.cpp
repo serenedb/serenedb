@@ -22,9 +22,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/container/inlined_vector.h>
-#include <absl/strings/str_cat.h>
-#include <absl/strings/str_join.h>
-#include <re2/re2.h>
 
 #include <algorithm>
 #include <array>
@@ -37,6 +34,7 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/search/detail/pattern_cache.hpp"
 #include "iresearch/search/detail/term_acceptor.hpp"
 #include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/search/filters/automaton_filter.hpp"
@@ -713,9 +711,7 @@ struct OrAcceptorFusionRule {
   };
 
   static std::optional<AcceptorInfo> InfoOf(const Filter& child);
-  static void RenderQuoted(std::string& out, bytes_view bytes);
-  static bool RenderWildcard(std::string& out, bytes_view pattern);
-  static bool Render(std::string& out, const Filter& child);
+  static bool AppendParts(bstring& key, const Filter& child);
 };
 
 struct AndAcceptorFusionRule {
@@ -784,78 +780,51 @@ std::optional<OrAcceptorFusionRule::AcceptorInfo> OrAcceptorFusionRule::InfoOf(
   return std::nullopt;
 }
 
-void OrAcceptorFusionRule::RenderQuoted(std::string& out, bytes_view bytes) {
-  const auto chars = ViewCast<char>(bytes);
-  absl::StrAppend(&out, RE2::QuoteMeta({chars.data(), chars.size()}));
-}
-
-bool OrAcceptorFusionRule::RenderWildcard(std::string& out,
-                                          bytes_view pattern) {
-  bstring chunk;
-  const auto flush = [&] {
-    RenderQuoted(out, chunk);
-    chunk.clear();
+bool OrAcceptorFusionRule::AppendParts(bstring& key, const Filter& child) {
+  using Kind = RegexpAcceptor::PartKind;
+  const auto part = [&key](Kind kind) {
+    return [&key, kind](bytes_view pattern) {
+      AppendUnionPart(key, kind, pattern);
+      return true;
+    };
   };
-  for (size_t i = 0; i < pattern.size(); ++i) {
-    switch (pattern[i]) {
-      case '%':
-        flush();
-        absl::StrAppend(&out, "(?s:.)*");
-        break;
-      case '_':
-        flush();
-        absl::StrAppend(&out, "(?s:.)");
-        break;
-      case '\\':
-        if (++i == pattern.size()) {
-          return false;
-        }
-        chunk += pattern[i];
-        break;
-      default:
-        chunk += pattern[i];
-        break;
-    }
-  }
-  flush();
-  return true;
-}
-
-bool OrAcceptorFusionRule::Render(std::string& out, const Filter& child) {
   const auto type = child.type();
   if (type == Type<ByTerm>::id()) {
-    RenderQuoted(out, irs::utils::downCast<ByTerm>(child).options().term);
-    return true;
+    return part(Kind::Term)(irs::utils::downCast<ByTerm>(child).options().term);
   }
   if (type == Type<ByPrefix>::id()) {
-    RenderQuoted(out, irs::utils::downCast<ByPrefix>(child).options().term);
-    absl::StrAppend(&out, "(?s:.)*");
-    return true;
+    return part(Kind::Prefix)(
+      irs::utils::downCast<ByPrefix>(child).options().term);
   }
+  bstring buf;
   if (type == Type<ByWildcard>::id()) {
-    return RenderWildcard(
-      out, irs::utils::downCast<ByWildcard>(child).options().term);
+    return ExecuteWildcard(
+      buf, irs::utils::downCast<ByWildcard>(child).options().term,
+      part(Kind::Term), part(Kind::Prefix), part(Kind::Wildcard));
   }
   if (type == Type<AutomatonFilter>::id()) {
     const auto& options =
       irs::utils::downCast<AutomatonFilter>(child).options();
-    if (options.kind != PatternKind::RegexpPerl || options.pattern.empty()) {
-      return false;
+    switch (options.kind) {
+      case PatternKind::RegexpPerl:
+        return part(Kind::Perl)(options.pattern);
+      case PatternKind::RegexpPosixEre:
+        return part(Kind::PosixEre)(options.pattern);
+      case PatternKind::Wildcard:
+        return part(Kind::Wildcard)(options.pattern);
+      case PatternKind::Union:
+        key += options.pattern;
+        return true;
+      case PatternKind::Fused:
+        return false;
     }
-    const auto chars = ViewCast<char>(bytes_view{options.pattern});
-    absl::StrAppend(&out, "(?:");
-    out.append(chars.data(), chars.size());
-    absl::StrAppend(&out, ")");
-    return true;
+    return false;
   }
   SDB_ASSERT(type == Type<ByRegexp>::id());
   const auto& options = irs::utils::downCast<ByRegexp>(child).options();
-  if (options.syntax != RegexpSyntax::Perl) {
-    return false;
-  }
-  const auto chars = ViewCast<char>(bytes_view{options.pattern});
-  out.append(chars.data(), chars.size());
-  return true;
+  return ExecuteRegexp(
+    buf, options.pattern, part(Kind::Term), part(Kind::Prefix),
+    part(options.syntax == RegexpSyntax::Perl ? Kind::Perl : Kind::PosixEre));
 }
 
 bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
@@ -911,23 +880,16 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
     return false;
   }
 
-  std::vector<std::string> fragments;
-  fragments.reserve(count);
+  bstring key;
   for (const auto& term : terms) {
-    auto& fragment = fragments.emplace_back("(?:");
-    RenderQuoted(fragment, term.term);
-    absl::StrAppend(&fragment, ")");
+    AppendUnionPart(key, RegexpAcceptor::PartKind::Term, term.term);
   }
   for (const auto& child : filters) {
-    auto& fragment = fragments.emplace_back("(?:");
-    if (!Render(fragment, *child)) {
+    if (!AppendParts(key, *child)) {
       return false;
     }
-    absl::StrAppend(&fragment, ")");
   }
-  const auto rendered = absl::StrJoin(fragments, "|");
-  const auto pattern = ViewCast<byte_type>(std::string_view{rendered});
-  AutomatonOptions options{pattern, PatternKind::RegexpPerl};
+  AutomatonOptions options{key, PatternKind::Union};
   if (!options.source->ok()) {
     return false;
   }

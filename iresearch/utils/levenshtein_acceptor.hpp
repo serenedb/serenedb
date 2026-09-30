@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <limits>
 #include <span>
@@ -32,9 +33,6 @@
 
 namespace irs {
 
-// Levenshtein acceptor that steps the parametric tables directly, with no DFA
-// materialized.
-//
 // A state is a parametric state plus the offset into the target's code points,
 // plus whatever of a multi-byte code point has already been consumed, so the
 // language stays code-point-based exactly as the compiled automaton's is while
@@ -74,8 +72,6 @@ class LevenshteinAcceptor {
     // decode never grows the vector.
     _target.reserve(target.size());
     utf8_utils::ToUTF32<false>(target, std::back_inserter(_target));
-    // One characteristic bit vector per distinct code point of the target, so
-    // a step is two word loads and a shift rather than a scan of the window.
     // The trailing word is what lets an unaligned read take `word + 1`
     // unconditionally.
     _words = _target.size() / kWordBits + 2;
@@ -108,6 +104,15 @@ class LevenshteinAcceptor {
       _chi[static_cast<size_t>(slot) * _words + i / kWordBits] |=
         uint64_t{1} << (i % kWordBits);
     }
+    _slots = _chi.size() / _words;
+    const size_t offsets = _target.size() + _chi_size + 1;
+    if (description.size() < kUnknownState &&
+        offsets + _chi_size <= kOffsetMask &&
+        description.size() * offsets * _slots <= kMaxSteps) {
+      _offsets = offsets;
+      _stride = offsets * _slots;
+      _steps.assign(description.size() * _stride, kUnknownStep);
+    }
   }
 
   State Start() const noexcept {
@@ -124,10 +129,18 @@ class LevenshteinAcceptor {
   }
 
   State Step(const State& state, byte_type label) const noexcept {
-    if (state.phase != 0 || label >= 0x80) [[unlikely]] {
-      return StepSlow(state, label);
+    if (state.phase == 0) {
+      if (label < 0x80) [[likely]] {
+        return StepChar(state, label);
+      }
+      if (label >= 0xC2 && label < 0xE0) {
+        return {state.pstate, state.offset, label & 0x1FU, 1};
+      }
+    } else if (state.phase == 1 && (label & 0xC0) == 0x80) {
+      return StepChar({state.pstate, state.offset, 0, 0},
+                      (state.acc << 6) | (label & 0x3FU));
     }
-    return StepChar(state, label);
+    return StepSlow(state, label);
   }
 
   // A fuzzy state carries how much of the target it has consumed, so there is
@@ -221,11 +234,13 @@ class LevenshteinAcceptor {
   static constexpr uint32_t kPrefixPhase = 4;
   static constexpr int32_t kZeroSlot = 0;
   static constexpr size_t kWordBits = 64;
+  static constexpr size_t kUnknownState = 0xFFFF;
+  static constexpr uint32_t kOffsetMask = 0xFFFF;
+  static constexpr uint32_t kUnknownStep = std::numeric_limits<uint32_t>::max();
+  static constexpr size_t kMaxSteps = size_t{1} << 16;
 
   static constexpr State Dead() noexcept { return {kDeadState, 0, 0, 0}; }
 
-  // The literal prefix and the middle of a multi-byte code point, off the hot
-  // path so the ASCII step stays small enough to inline.
   State StepSlow(State state, byte_type label) const noexcept {
     if (state.phase >= kPrefixPhase) {
       const size_t pos = state.phase - kPrefixPhase;
@@ -314,8 +329,25 @@ class LevenshteinAcceptor {
   }
 
   State StepChar(State state, uint32_t c) const noexcept {
+    const auto slot = Slot(c);
+    if (state.offset < _offsets) [[likely]] {
+      std::atomic_ref<uint32_t> step{
+        _steps[size_t{state.pstate} * _stride + size_t{state.offset} * _slots +
+               static_cast<size_t>(slot)]};
+      auto packed = step.load(std::memory_order_relaxed);
+      if (packed == kUnknownStep) [[unlikely]] {
+        const auto& transition =
+          Transition(state.pstate, ChiAt(slot, state.offset));
+        packed = (transition.first << 16) | (state.offset + transition.second);
+        step.store(packed, std::memory_order_relaxed);
+      }
+      state.pstate = packed >> 16;
+      state.offset = packed & kOffsetMask;
+      state.acc = 0;
+      return state;
+    }
     const auto& transition =
-      Transition(state.pstate, ChiAt(Slot(c), state.offset));
+      Transition(state.pstate, ChiAt(slot, state.offset));
     state.pstate = transition.first;
     state.offset += transition.second;
     state.acc = 0;
@@ -340,6 +372,10 @@ class LevenshteinAcceptor {
   std::vector<uint64_t> _chi;
   std::vector<WideSlot> _wide;
   std::array<int32_t, kNarrowMax> _narrow;
+  mutable std::vector<uint32_t> _steps;
+  size_t _slots{0};
+  size_t _offsets{0};
+  size_t _stride{0};
   size_t _words{0};
   uint32_t _chi_size;
   uint64_t _mask;

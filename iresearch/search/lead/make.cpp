@@ -179,7 +179,7 @@ Node::ptr Make(const VerifiedPhraseQuery& query, const detail::ScoredCtx& ctx) {
                                .stats = record.stats,
                                .fetcher = ctx.fetcher,
                                .boost = query.Boost()};
-  if (args.stats == nullptr) {
+  if (!args.stats) {
     return Make(query);
   }
   return MakeVerifiedPhraseScored(query, args);

@@ -46,7 +46,6 @@
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <memory>
-#include <optional>
 #include <random>
 #include <string>
 #include <string_view>
@@ -176,7 +175,7 @@ void AppendText(irs::ColumnWriter& cw, irs::doc_id_t doc,
 
 std::shared_ptr<const irs::PhraseTokenSourceFactory> StoredText() {
   return std::make_shared<irs::StoredValueSourceFactory>(
-    kStoreId, [] { return std::make_shared<WhitespaceTokenizer>(); });
+    kStoreId, [] { return std::make_unique<WhitespaceTokenizer>(); });
 }
 
 uintmax_t DirSize(const std::filesystem::path& path) {
@@ -189,23 +188,53 @@ uintmax_t DirSize(const std::filesystem::path& path) {
   return total;
 }
 
-struct Index {
-  std::unique_ptr<irs::MMapDirectory> dir;
-  irs::DirectoryReader reader;
-  std::unique_ptr<irs::analysis::Tokenizer> tokenizer;
+struct Strategy {
+  const char* name;
+  uint32_t max_gram = 0;
+  bool frequent = false;
   bool positions = false;
+  bool verified = false;
 };
 
-Index BuildIndex(const std::vector<std::string>& docs, const char* name,
-                 std::unique_ptr<irs::analysis::Tokenizer> tokenizer,
-                 bool positions, bool store) {
+constexpr Strategy kUnigrams{.name = "unigrams"};
+
+constexpr Strategy kStrategies[] = {
+  {.name = "positions", .positions = true},
+  {.name = "verified", .verified = true},
+  {.name = "shingle2", .max_gram = 2, .verified = true},
+  {.name = "shingle3", .max_gram = 3, .verified = true},
+  {.name = "shingle4", .max_gram = 4, .verified = true},
+  {.name = "shingle3f", .max_gram = 3, .frequent = true, .verified = true},
+  {.name = "shingle2pos", .max_gram = 2, .positions = true},
+  {.name = "shingle3pos", .max_gram = 3, .positions = true},
+  {.name = "shingle4pos", .max_gram = 4, .positions = true},
+  {.name = "shingle3fpos", .max_gram = 3, .frequent = true, .positions = true},
+};
+
+struct Index {
+  const Strategy* strategy;
+  std::unique_ptr<irs::MMapDirectory> dir;
+  std::unique_ptr<irs::analysis::Tokenizer> tokenizer;
+  irs::DirectoryReader reader;
+};
+
+std::unique_ptr<irs::analysis::Tokenizer> MakeTokenizer(
+  const Strategy& strategy) {
+  if (strategy.max_gram == 0) {
+    return std::make_unique<WhitespaceTokenizer>();
+  }
+  return MakeShingles(2, strategy.max_gram, strategy.frequent);
+}
+
+Index BuildIndex(const std::vector<std::string>& docs,
+                 const Strategy& strategy) {
   const auto path =
-    std::filesystem::temp_directory_path() / "sdb-bench-phrase" / name;
+    std::filesystem::temp_directory_path() / "sdb-bench-phrase" / strategy.name;
   std::filesystem::remove_all(path);
   std::filesystem::create_directories(path);
-  Index index{.dir = std::make_unique<irs::MMapDirectory>(path),
-              .tokenizer = std::move(tokenizer),
-              .positions = positions};
+  Index index{.strategy = &strategy,
+              .dir = std::make_unique<irs::MMapDirectory>(path),
+              .tokenizer = MakeTokenizer(strategy)};
 
   auto* db = &irs::DuckDBEngine::Instance().instance();
   irs::IndexWriterOptions writer_opts;
@@ -216,15 +245,16 @@ Index BuildIndex(const std::vector<std::string>& docs, const char* name,
 
   BenchField field{
     .tokenizer = index.tokenizer.get(),
-    .features = positions ? irs::IndexFeatures::Freq | irs::IndexFeatures::Pos
-                          : irs::IndexFeatures::Freq,
+    .features = strategy.positions
+                  ? irs::IndexFeatures::Freq | irs::IndexFeatures::Pos
+                  : irs::IndexFeatures::Freq,
   };
   auto batch = writer->GetBatch();
   for (const auto& body : docs) {
     field.value = body;
     auto doc = batch.Insert();
     tests::InsertField(doc, field);
-    if (store) {
+    if (strategy.verified) {
       AppendText(
         doc.GetColWriter()->OpenColumn(kStoreId, duckdb::LogicalType::VARCHAR),
         doc.DocId(), body);
@@ -232,7 +262,8 @@ Index BuildIndex(const std::vector<std::string>& docs, const char* name,
   }
   batch.Commit();
   writer->RefreshCommit();
-  std::fprintf(stderr, "[index] %-10s %12ju bytes\n", name, DirSize(path));
+  std::fprintf(stderr, "[index] %-12s %12ju bytes\n", strategy.name,
+               DirSize(path));
 
   irs::IndexReaderOptions reader_opts;
   reader_opts.db = db;
@@ -240,98 +271,62 @@ Index BuildIndex(const std::vector<std::string>& docs, const char* name,
   return index;
 }
 
-enum class Strategy : uint8_t {
-  Positions,
-  Verified,
-  Shingle2,
-  Shingle3,
-  Shingle4,
-  Shingle2Pos,
-  Shingle3Frequent,
-  Shingle3Pos,
-  Shingle4Pos,
-  Shingle3FrequentPos,
-};
-
 struct Corpus {
   std::vector<std::string> docs;
   std::vector<Index> indexes;
-
-  const Index& Of(Strategy s) const { return indexes[static_cast<size_t>(s)]; }
 };
 
 const Corpus& GetCorpus() {
   static const Corpus corpus = [] {
     Corpus c;
     c.docs = MakeCorpus(200000, 32);
-    const auto& docs = c.docs;
     uintmax_t text = 0;
-    for (const auto& doc : docs) {
+    for (const auto& doc : c.docs) {
       text += doc.size();
     }
-    std::fprintf(stderr, "[corpus] %-10s %12ju bytes\n", "text", text);
-    c.indexes.push_back(BuildIndex(
-      docs, "positions", std::make_unique<WhitespaceTokenizer>(), true, false));
-    c.indexes.push_back(BuildIndex(
-      docs, "verified", std::make_unique<WhitespaceTokenizer>(), false, true));
-    c.indexes.push_back(
-      BuildIndex(docs, "shingle2", MakeShingles(2, 2), false, true));
-    c.indexes.push_back(
-      BuildIndex(docs, "shingle3", MakeShingles(2, 3), false, true));
-    c.indexes.push_back(
-      BuildIndex(docs, "shingle4", MakeShingles(2, 4), false, true));
-    c.indexes.push_back(
-      BuildIndex(docs, "shingle2pos", MakeShingles(2, 2), true, false));
-    c.indexes.push_back(
-      BuildIndex(docs, "shingle3f", MakeShingles(2, 3, true), false, true));
-    c.indexes.push_back(
-      BuildIndex(docs, "shingle3pos", MakeShingles(2, 3), true, false));
-    c.indexes.push_back(
-      BuildIndex(docs, "shingle4pos", MakeShingles(2, 4), true, false));
-    c.indexes.push_back(
-      BuildIndex(docs, "shingle3fpos", MakeShingles(2, 3, true), true, false));
-    c.indexes.push_back(BuildIndex(
-      docs, "unigrams", std::make_unique<WhitespaceTokenizer>(), false, false));
+    std::fprintf(stderr, "[corpus] %-12s %12ju bytes\n", "text", text);
+    BuildIndex(c.docs, kUnigrams);
+    for (const auto& strategy : kStrategies) {
+      c.indexes.push_back(BuildIndex(c.docs, strategy));
+    }
     return c;
   }();
   return corpus;
 }
 
-irs::Filter::ptr MakePhrase(const Index& index, Strategy strategy,
-                            std::string_view text) {
-  std::vector<irs::bytes_view> tokens;
-  std::vector<irs::PosAttr::value_t> positions;
+template<typename Filter, typename Options>
+irs::Filter::ptr MakeFilter(Options&& options) {
+  auto filter = std::make_unique<Filter>();
+  *filter->mutable_field_id() = kBodyId;
+  *filter->mutable_options() = std::forward<Options>(options);
+  return filter;
+}
+
+irs::Filter::ptr MakePhrase(const Index& index, std::string_view text) {
+  irs::ByPhraseOptions phrase;
   for (const auto word : absl::StrSplit(text, ' ', absl::SkipEmpty())) {
-    tokens.push_back(irs::ViewCast<irs::byte_type>(word));
-    positions.push_back(static_cast<irs::PosAttr::value_t>(positions.size()));
+    phrase.push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(word);
   }
-  const auto source = StoredText();
-  if (strategy == Strategy::Positions || strategy == Strategy::Verified) {
-    auto filter = std::make_unique<irs::ByPhrase>();
-    *filter->mutable_field_id() = kBodyId;
-    auto* options = filter->mutable_options();
-    for (const auto token : tokens) {
-      options->push_back<irs::ByTermOptions>().term = token;
+  const auto& strategy = *index.strategy;
+  auto source = strategy.verified ? StoredText() : nullptr;
+  if (strategy.max_gram == 0) {
+    if (source) {
+      phrase.set_verifier(
+        std::make_shared<irs::PhraseVerifier>(std::move(source)));
     }
-    if (strategy != Strategy::Positions) {
-      options->set_verifier(std::make_shared<irs::PhraseVerifier>(source));
-    }
-    return filter;
+    return MakeFilter<irs::ByPhrase>(std::move(phrase));
   }
   auto plan = irs::PlanShinglePhrase(
     irs::utils::downCast<irs::analysis::ShingleTokenizer>(*index.tokenizer),
-    tokens, positions, index.positions, index.positions ? nullptr : source);
-  if (plan.kind == irs::ShinglePhrasePlan::Kind::Term) {
-    auto filter = std::make_unique<irs::ByTerm>();
-    *filter->mutable_field_id() = kBodyId;
-    filter->mutable_options()->term = std::move(plan.term);
-    return filter;
-  }
-  if (plan.kind == irs::ShinglePhrasePlan::Kind::Phrase) {
-    auto filter = std::make_unique<irs::ByPhrase>();
-    *filter->mutable_field_id() = kBodyId;
-    *filter->mutable_options() = std::move(plan.phrase);
-    return filter;
+    phrase, strategy.positions, std::move(source));
+  switch (plan.kind) {
+    case irs::ShinglePhrasePlan::Kind::None:
+      return nullptr;
+    case irs::ShinglePhrasePlan::Kind::Term:
+      return MakeFilter<irs::ByTerm>(irs::ByTermOptions{std::move(plan.term)});
+    case irs::ShinglePhrasePlan::Kind::Phrase:
+      return MakeFilter<irs::ByPhrase>(std::move(plan.phrase));
   }
   return nullptr;
 }
@@ -385,24 +380,24 @@ double Scored(const irs::DirectoryReader& reader, const irs::Filter& filter,
   return total;
 }
 
-void BenchCount(benchmark::State& state, Strategy strategy,
+void BenchCount(benchmark::State& state, size_t strategy,
                 std::string_view text) {
-  const auto& index = GetCorpus().Of(strategy);
+  const auto& index = GetCorpus().indexes[strategy];
   uint64_t hits = 0;
   for (auto _ : state) {
-    const auto filter = MakePhrase(index, strategy, text);
+    const auto filter = MakePhrase(index, text);
     hits = filter ? Count(index.reader, *filter) : 0;
     benchmark::DoNotOptimize(hits);
   }
   state.counters["hits"] = static_cast<double>(hits);
 }
 
-void BenchScored(benchmark::State& state, Strategy strategy,
+void BenchScored(benchmark::State& state, size_t strategy,
                  std::string_view text) {
-  const auto& index = GetCorpus().Of(strategy);
+  const auto& index = GetCorpus().indexes[strategy];
   uint64_t hits = 0;
   for (auto _ : state) {
-    const auto filter = MakePhrase(index, strategy, text);
+    const auto filter = MakePhrase(index, text);
     hits = 0;
     benchmark::DoNotOptimize(filter ? Scored(index.reader, *filter, hits) : 0);
   }
@@ -444,19 +439,6 @@ void BenchScan(benchmark::State& state, std::string_view text) {
   state.counters["hits"] = static_cast<double>(hits);
 }
 
-constexpr std::pair<const char*, Strategy> kStrategies[] = {
-  {"positions", Strategy::Positions},
-  {"verified", Strategy::Verified},
-  {"shingle2", Strategy::Shingle2},
-  {"shingle3", Strategy::Shingle3},
-  {"shingle4", Strategy::Shingle4},
-  {"shingle2pos", Strategy::Shingle2Pos},
-  {"shingle3f", Strategy::Shingle3Frequent},
-  {"shingle3pos", Strategy::Shingle3Pos},
-  {"shingle4pos", Strategy::Shingle4Pos},
-  {"shingle3fpos", Strategy::Shingle3FrequentPos},
-};
-
 constexpr std::pair<const char*, std::string_view> kQueries[] = {
   {"content2", "quick brown"},
   {"content3", "quick brown fox"},
@@ -470,9 +452,10 @@ void RegisterAll() {
       (std::string{"Count/scan/"} + query_name).c_str(),
       [text](benchmark::State& state) { BenchScan(state, text); });
   }
-  for (const auto& [strategy_name, strategy] : kStrategies) {
+  for (size_t strategy = 0; strategy != std::size(kStrategies); ++strategy) {
     for (const auto& [query_name, text] : kQueries) {
-      const auto suffix = std::string{strategy_name} + "/" + query_name;
+      const auto suffix =
+        std::string{kStrategies[strategy].name} + "/" + query_name;
       benchmark::RegisterBenchmark(("Count/" + suffix).c_str(),
                                    [strategy, text](benchmark::State& state) {
                                      BenchCount(state, strategy, text);

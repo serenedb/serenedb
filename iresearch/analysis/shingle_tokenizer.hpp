@@ -73,7 +73,7 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
     };
   }
 
-  Tokenizer& Base() const noexcept { return *_analyzer; }
+  Tokenizer& Base() noexcept { return *_analyzer; }
   uint32_t MinShingle() const noexcept { return _min; }
   uint32_t MaxShingle() const noexcept { return _max; }
   bool OutputUnigrams() const noexcept { return _output_unigrams; }

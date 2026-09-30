@@ -30,8 +30,8 @@ namespace irs::top {
 
 Root::ptr MakeVerifiedPhrase(const VerifiedPhraseQuery& query,
                              const Context& ctx) {
-  if (query.Stats().stats == nullptr) {
-    if (ctx.table != nullptr) {
+  if (!query.Stats().stats) {
+    if (ctx.table) {
       return irs::detail::MakeVerifiedPhrase<FilteredConstantWalk, Root::ptr>(
         query, 0, ctx.table, score_t{0});
     }
@@ -45,14 +45,14 @@ Root::ptr MakeVerifiedPhrase(const VerifiedPhraseQuery& query,
                                     .boost = query.Boost()};
   if (const auto value =
         irs::detail::ConstantOf(query.Segment(), query.Reader(), args)) {
-    if (ctx.table != nullptr) {
+    if (ctx.table) {
       return irs::detail::MakeVerifiedPhrase<FilteredConstantWalk, Root::ptr>(
         query, 0, ctx.table, *value);
     }
     return irs::detail::MakeVerifiedPhrase<PlainConstantWalk, Root::ptr>(
       query, 0, utils::Empty{}, *value);
   }
-  if (ctx.table != nullptr) {
+  if (ctx.table) {
     return irs::detail::MakeVerifiedPhrase<FilteredWalk, Root::ptr, true,
                                            lead::TwoPhaseScored>(
       query, 0, ctx.table, ctx.fetcher, query.Segment(), query.Reader(), args);

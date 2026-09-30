@@ -28,7 +28,7 @@ namespace irs::probe {
 Node::ptr MakeVerifiedPhraseScored(const VerifiedPhraseQuery& query,
                                    const detail::ScoreArgs& args,
                                    uint64_t interrogations) {
-  if (args.stats == nullptr) {
+  if (!args.stats) {
     return {};
   }
   return detail::MakeVerifiedPhrase<Impl, Node::ptr, true,

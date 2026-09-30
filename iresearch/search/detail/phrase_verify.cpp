@@ -43,7 +43,7 @@ class NoTokensSource final : public PhraseTokenSource {
 class StoredValueSource final : public PhraseTokenSource {
  public:
   StoredValueSource(const ColReader& col_reader, const ColumnReader& column,
-                    std::shared_ptr<analysis::Tokenizer> tokenizer)
+                    analysis::Tokenizer::ptr tokenizer)
     : _ctx{col_reader},
       _column{&column},
       _state{column.InitScan(_ctx)},
@@ -55,6 +55,7 @@ class StoredValueSource final : public PhraseTokenSource {
   }
 
   bool Load(doc_id_t doc, PhraseDocTokens& out) final {
+    out.Clear();
     duckdb::string_t value;
     if (!Fetch(doc, value) || !_analyzer.Analyze(*_tokenizer, value, _tokens)) {
       return false;
@@ -95,7 +96,7 @@ class StoredValueSource final : public PhraseTokenSource {
   ColumnReader::ScanState _state;
   ColumnReader::VectorScratch _out;
   duckdb::SelectionVector _sel;
-  std::shared_ptr<analysis::Tokenizer> _tokenizer;
+  analysis::Tokenizer::ptr _tokenizer;
   ValueAnalyzer _analyzer;
   ValueTokens<TokenLayout::TermsPos> _tokens;
   uint32_t _loads = 0;
@@ -108,14 +109,6 @@ bool Dense(const PhraseDocTokens& doc) noexcept {
 }
 
 }  // namespace
-
-bool PhraseTokenSource::Verify(doc_id_t doc, const PhraseVerifyKernel& kernel,
-                               bool count, PhraseVerifyScratch& scratch,
-                               PhraseVerdict& out) {
-  scratch.tokens.Clear();
-  return Load(doc, scratch.tokens) &&
-         kernel.Match(scratch.tokens, count, scratch, out);
-}
 
 bool SameVerifier(const PhraseVerifier* lhs,
                   const PhraseVerifier* rhs) noexcept {
@@ -276,19 +269,34 @@ bool PhraseVerifyKernel::Match(const PhraseDocTokens& doc, bool count,
   if (doc.terms.empty() || _offs_min.empty()) {
     return false;
   }
-  if (Sequence() && Dense(doc)) {
-    size_t i = 0;
-    return MatchSequence(
-      [&](bytes_view& term) {
-        if (i == doc.terms.size()) {
-          return false;
-        }
-        term = doc.terms[i++];
-        return true;
-      },
-      count, out);
+  if (!_sequence.empty() && Dense(doc)) {
+    return MatchSequence(doc.terms, count, out);
   }
   return MatchSlots(doc, count, scratch, out);
+}
+
+bool PhraseVerifyKernel::MatchSequence(std::span<const bytes_view> terms,
+                                       bool count, PhraseVerdict& out) const {
+  const auto m = _sequence.size();
+  uint32_t k = 0;
+  uint32_t freq = 0;
+  for (const auto term : terms) {
+    while (k > 0 && term != _sequence[k]) {
+      k = _failure[k - 1];
+    }
+    if (term == _sequence[k]) {
+      ++k;
+    }
+    if (k == m) {
+      ++freq;
+      if (!count) {
+        break;
+      }
+      k = _failure[k - 1];
+    }
+  }
+  out = {.freq = freq};
+  return freq != 0;
 }
 
 bool PhraseVerifyKernel::MatchSlots(const PhraseDocTokens& doc, bool count,

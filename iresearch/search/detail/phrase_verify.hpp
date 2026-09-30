@@ -64,20 +64,13 @@ struct PhraseVerifyScratch {
   std::vector<PosAttr::value_t> valid;
   std::vector<PosAttr::value_t> next;
   detail::slop::MatchScratch slop;
-  PhraseDocTokens tokens;
 };
-
-class PhraseVerifyKernel;
 
 class PhraseTokenSource {
  public:
   virtual ~PhraseTokenSource() = default;
 
   virtual bool Load(doc_id_t doc, PhraseDocTokens& out) = 0;
-
-  virtual bool Verify(doc_id_t doc, const PhraseVerifyKernel& kernel,
-                      bool count, PhraseVerifyScratch& scratch,
-                      PhraseVerdict& out);
 };
 
 class PhraseTokenSourceFactory {
@@ -116,7 +109,7 @@ class PhraseVerifier {
 
 class StoredValueSourceFactory final : public PhraseTokenSourceFactory {
  public:
-  using MakeTokenizer = std::function<std::shared_ptr<analysis::Tokenizer>()>;
+  using MakeTokenizer = std::function<analysis::Tokenizer::ptr()>;
 
   StoredValueSourceFactory(field_id column, MakeTokenizer make_tokenizer)
     : _column{column}, _make_tokenizer{std::move(make_tokenizer)} {}
@@ -140,40 +133,10 @@ class PhraseVerifyKernel {
   PhraseVerifyKernel(PhraseVerifyKernel&&) = delete;
   PhraseVerifyKernel& operator=(PhraseVerifyKernel&&) = delete;
 
-  size_t Slots() const noexcept { return _offs_min.size(); }
-
   bool Sloppy() const noexcept { return _slop != 0; }
-
-  bool Sequence() const noexcept { return !_sequence.empty(); }
 
   bool Match(const PhraseDocTokens& doc, bool count,
              PhraseVerifyScratch& scratch, PhraseVerdict& out) const;
-
-  template<typename NextToken>
-  bool MatchSequence(NextToken&& next, bool count, PhraseVerdict& out) const {
-    SDB_ASSERT(Sequence());
-    const auto m = _sequence.size();
-    uint32_t k = 0;
-    uint32_t freq = 0;
-    bytes_view term;
-    while (next(term)) {
-      while (k > 0 && term != _sequence[k]) {
-        k = _failure[k - 1];
-      }
-      if (term == _sequence[k]) {
-        ++k;
-      }
-      if (k == m) {
-        ++freq;
-        if (!count) {
-          break;
-        }
-        k = _failure[k - 1];
-      }
-    }
-    out = {.freq = freq};
-    return freq != 0;
-  }
 
  private:
   struct SlotList {
@@ -184,6 +147,8 @@ class PhraseVerifyKernel {
   void Accept(bytes_view term, uint32_t slot);
   void Finish();
 
+  bool MatchSequence(std::span<const bytes_view> terms, bool count,
+                     PhraseVerdict& out) const;
   bool MatchSlots(const PhraseDocTokens& doc, bool count,
                   PhraseVerifyScratch& scratch, PhraseVerdict& out) const;
 

@@ -21,9 +21,7 @@
 #pragma once
 
 #include <memory>
-#include <span>
 
-#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -48,13 +46,8 @@ struct ShinglePhrasePlan {
   ByPhraseOptions phrase;
 };
 
-ByPhraseOptions MakeTokenPhrase(std::span<const bytes_view> tokens,
-                                std::span<const PosAttr::value_t> positions);
-
 ShinglePhrasePlan PlanShinglePhrase(
-  const analysis::ShingleTokenizer& tokenizer,
-  std::span<const bytes_view> tokens,
-  std::span<const PosAttr::value_t> positions, bool positional,
-  std::shared_ptr<const PhraseTokenSourceFactory> source);
+  const analysis::ShingleTokenizer& tokenizer, const ByPhraseOptions& phrase,
+  bool positional, std::shared_ptr<const PhraseTokenSourceFactory> source);
 
 }  // namespace irs

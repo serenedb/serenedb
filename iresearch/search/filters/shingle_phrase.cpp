@@ -24,9 +24,11 @@
 
 #include <algorithm>
 #include <limits>
+#include <span>
 #include <vector>
 
 #include "iresearch/analysis/shingle_tokenizer.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/detail/phrase_verify.hpp"
 
 namespace irs {
@@ -71,9 +73,9 @@ class Windows {
     if (!_tokenizer.HasFrequentWords() || count == Min()) {
       return true;
     }
-    return std::any_of(
-      _tokens.begin() + begin, _tokens.begin() + begin + count,
-      [&](bytes_view token) { return _tokenizer.IsFrequent(token); });
+    return absl::c_any_of(_tokens.subspan(begin, count), [&](bytes_view token) {
+      return _tokenizer.IsFrequent(token);
+    });
   }
 
   size_t Largest(size_t begin) const noexcept {
@@ -166,37 +168,27 @@ bool Legs(const Windows& windows, size_t m, std::vector<bstring>& legs) {
 
 }  // namespace
 
-ByPhraseOptions MakeTokenPhrase(std::span<const bytes_view> tokens,
-                                std::span<const PosAttr::value_t> positions) {
-  SDB_ASSERT(tokens.size() == positions.size());
-  ByPhraseOptions phrase;
-  for (size_t i = 0; i != tokens.size(); ++i) {
-    SDB_ASSERT(i == 0 || positions[i] > positions[i - 1]);
-    auto& part =
-      i == 0
-        ? phrase.push_back<ByTermOptions>()
-        : phrase.push_back<ByTermOptions>(positions[i] - positions[i - 1] - 1);
-    part.term = tokens[i];
-  }
-  return phrase;
-}
-
 ShinglePhrasePlan PlanShinglePhrase(
-  const analysis::ShingleTokenizer& tokenizer,
-  std::span<const bytes_view> tokens,
-  std::span<const PosAttr::value_t> positions, bool positional,
-  std::shared_ptr<const PhraseTokenSourceFactory> source) {
-  SDB_ASSERT(tokens.size() == positions.size());
+  const analysis::ShingleTokenizer& tokenizer, const ByPhraseOptions& phrase,
+  bool positional, std::shared_ptr<const PhraseTokenSourceFactory> source) {
   ShinglePhrasePlan plan;
-  const auto m = tokens.size();
-  if (m == 0) {
+  if (phrase.empty() || phrase.slop() != 0) {
     return plan;
   }
-  for (size_t i = 1; i != m; ++i) {
-    if (positions[i] <= positions[i - 1]) {
+  std::vector<bytes_view> tokens;
+  std::vector<PosAttr::value_t> positions;
+  PosAttr::value_t pos = 0;
+  for (const auto& info : phrase) {
+    const auto* term = std::get_if<ByTermOptions>(&info.part);
+    if (!term || info.offs_min != info.offs_max ||
+        (!tokens.empty() && info.offs_max == 0)) {
       return plan;
     }
+    pos += info.offs_max;
+    tokens.emplace_back(term->term);
+    positions.push_back(pos);
   }
+  const auto m = tokens.size();
   const Windows windows{tokenizer, tokens, positions};
   if (windows.Indexed(0, m)) {
     plan.kind = ShinglePhrasePlan::Kind::Term;
@@ -209,18 +201,15 @@ ShinglePhrasePlan PlanShinglePhrase(
     }
     return plan;
   }
-  if (!source) {
-    return plan;
-  }
   std::vector<bstring> legs;
-  if (!Legs(windows, m, legs)) {
+  if (!source || !Legs(windows, m, legs)) {
     return plan;
   }
   for (auto& leg : legs) {
     plan.phrase.push_back<ByTermOptions>().term = std::move(leg);
   }
-  plan.phrase.set_verifier(std::make_shared<PhraseVerifier>(
-    std::move(source), MakeTokenPhrase(tokens, positions)));
+  plan.phrase.set_verifier(
+    std::make_shared<PhraseVerifier>(std::move(source), phrase));
   plan.kind = ShinglePhrasePlan::Kind::Phrase;
   return plan;
 }

@@ -177,7 +177,7 @@ Node::ptr Make(const VerifiedPhraseQuery& query) {
 
 Node::ptr Make(const VerifiedPhraseQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge) {
-  if (query.Stats().stats == nullptr) {
+  if (!query.Stats().stats) {
     return Make(query);
   }
   return MakeVerifiedPhraseScored(query, ctx, merge);

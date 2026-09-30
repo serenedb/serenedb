@@ -66,7 +66,8 @@ class VerifiedPhraseSlots {
   }
 
   bool Match(doc_id_t doc) {
-    return _source->Verify(doc, *_kernel, _count, _scratch, _verdict);
+    return _source->Load(doc, _tokens) &&
+           _kernel->Match(_tokens, _count, _scratch, _verdict);
   }
 
   uint32_t Freq() const noexcept { return _verdict.freq; }
@@ -81,6 +82,7 @@ class VerifiedPhraseSlots {
   Approx _approx;
   std::unique_ptr<PhraseTokenSource> _source;
   const PhraseVerifyKernel* _kernel;
+  PhraseDocTokens _tokens;
   PhraseVerifyScratch _scratch;
   PhraseVerdict _verdict;
   bool _count;
@@ -93,25 +95,21 @@ Result MakeVerifiedPhrase(const VerifiedPhraseQuery& query,
   constexpr bool kProbed = std::is_same_v<Result, ProbeNode::ptr>;
   const auto recipe = query.MakeRecipe();
   const auto make = [&]<bool Sloppy> -> Result {
-    if constexpr (kProbed) {
-      auto node = query.Approx().PlanProbe({}, interrogations);
-      if (!node) {
-        return {};
+    auto node = [&] {
+      if constexpr (kProbed) {
+        return query.Approx().PlanProbe({}, interrogations);
+      } else {
+        return query.Approx().PlanLead({});
       }
-      using Slots = VerifiedPhraseSlots<probe::Erased, Sloppy>;
-      return memory::make_managed<Impl<NodeOf<Wrap, Result, Slots>>>(
-        std::forward<Prefix>(prefix)..., std::piecewise_construct,
-        std::forward_as_tuple(std::move(node)), recipe, Scored);
-    } else {
-      auto node = query.Approx().PlanLead({});
-      if (!node) {
-        return {};
-      }
-      using Slots = VerifiedPhraseSlots<lead::Erased, Sloppy>;
-      return memory::make_managed<Impl<NodeOf<Wrap, Result, Slots>>>(
-        std::forward<Prefix>(prefix)..., std::piecewise_construct,
-        std::forward_as_tuple(std::move(node)), recipe, Scored);
+    }();
+    if (!node) {
+      return {};
     }
+    using Approx = std::conditional_t<kProbed, probe::Erased, lead::Erased>;
+    using Slots = VerifiedPhraseSlots<Approx, Sloppy>;
+    return memory::make_managed<Impl<NodeOf<Wrap, Result, Slots>>>(
+      std::forward<Prefix>(prefix)..., std::piecewise_construct,
+      std::forward_as_tuple(std::move(node)), recipe, Scored);
   };
   if (query.Sloppy()) {
     return make.template operator()<true>();

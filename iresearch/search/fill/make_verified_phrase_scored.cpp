@@ -31,7 +31,7 @@ Node::ptr MakeVerifiedPhraseScored(const VerifiedPhraseQuery& query,
                                    const detail::ScoredCtx& ctx,
                                    ScoreMergeType merge) {
   const auto record = query.Stats(ctx);
-  if (record.stats == nullptr) {
+  if (!record.stats) {
     return {};
   }
   return detail::MakeVerifiedPhrase<ByWalkScored, Node::ptr, true,

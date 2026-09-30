@@ -22,7 +22,6 @@
 #include <absl/strings/str_split.h>
 
 #include <iresearch/analysis/shingle_tokenizer.hpp>
-#include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/detail/phrase_verify.hpp>
@@ -41,7 +40,6 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "insert_field.hpp"
 #include "tests_shared.hpp"
-#include "token_sink_utils.hpp"
 
 namespace {
 
@@ -82,23 +80,14 @@ std::unique_ptr<ShingleTokenizer> MakeShingles(
     std::make_unique<WhitespaceTokenizer>(), std::move(options));
 }
 
-struct Query {
-  explicit Query(std::string_view text) {
-    irs::PosAttr::value_t pos = irs::pos_limits::min();
-    for (const auto word : absl::StrSplit(text, ' ', absl::SkipEmpty())) {
-      words.emplace_back(word);
-      positions.push_back(pos++);
-    }
-    for (const auto& word : words) {
-      tokens.emplace_back(
-        irs::ViewCast<irs::byte_type>(std::string_view{word}));
-    }
+irs::ByPhraseOptions Phrase(std::string_view text) {
+  irs::ByPhraseOptions phrase;
+  for (const auto word : absl::StrSplit(text, ' ', absl::SkipEmpty())) {
+    phrase.push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(word);
   }
-
-  std::vector<std::string> words;
-  std::vector<irs::bytes_view> tokens;
-  std::vector<irs::PosAttr::value_t> positions;
-};
+  return phrase;
+}
 
 std::string Text(irs::bytes_view term) {
   return std::string{irs::ViewCast<char>(term)};
@@ -127,14 +116,13 @@ inline constexpr irs::field_id kPositionalId = 4;
 
 std::shared_ptr<const irs::PhraseTokenSourceFactory> Stored() {
   return std::make_shared<irs::StoredValueSourceFactory>(
-    kStoreId, [] { return std::make_shared<WhitespaceTokenizer>(); });
+    kStoreId, [] { return std::make_unique<WhitespaceTokenizer>(); });
 }
 
 irs::ShinglePhrasePlan Plan(const ShingleTokenizer& shingles,
                             std::string_view text, bool positional) {
-  const Query query{text};
-  return irs::PlanShinglePhrase(shingles, query.tokens, query.positions,
-                                positional, positional ? nullptr : Stored());
+  return irs::PlanShinglePhrase(shingles, Phrase(text), positional,
+                                positional ? nullptr : Stored());
 }
 
 struct Field {
@@ -256,10 +244,7 @@ irs::ByPhrase PlainPhrase(irs::field_id field, std::string_view text,
                           bool verified) {
   irs::ByPhrase filter;
   *filter.mutable_field_id() = field;
-  for (const auto word : absl::StrSplit(text, ' ', absl::SkipEmpty())) {
-    filter.mutable_options()->push_back<irs::ByTermOptions>().term =
-      irs::ViewCast<irs::byte_type>(word);
-  }
+  *filter.mutable_options() = Phrase(text);
   if (verified) {
     filter.mutable_options()->set_verifier(
       std::make_shared<irs::PhraseVerifier>(Stored()));
@@ -352,29 +337,45 @@ TEST(ShinglePhrasePlanTest, frequent_words_limit_wide_windows) {
 
 TEST(ShinglePhrasePlanTest, gaps_split_runs) {
   const auto shingles = MakeShingles(2, 2);
-  const std::vector<std::string> words{"a", "b", "c", "d"};
-  std::vector<irs::bytes_view> tokens;
-  for (const auto& word : words) {
-    tokens.emplace_back(irs::ViewCast<irs::byte_type>(std::string_view{word}));
-  }
-  const std::vector<irs::PosAttr::value_t> positions{1, 2, 4, 5};
-  auto plan =
-    irs::PlanShinglePhrase(*shingles, tokens, positions, true, nullptr);
+  auto phrase = Phrase("a b");
+  phrase.push_back<irs::ByTermOptions>(1).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"c"});
+  phrase.push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"d"});
+  const auto plan = irs::PlanShinglePhrase(*shingles, phrase, true, nullptr);
   ASSERT_EQ(Kind::Phrase, plan.kind);
   EXPECT_EQ((std::vector<std::string>{"a b", "c d"}), Terms(plan.phrase));
   EXPECT_EQ((std::vector<uint32_t>{0, 3}), Offsets(plan.phrase));
+}
 
-  const std::vector<irs::PosAttr::value_t> stacked{1, 2, 2, 3};
-  EXPECT_EQ(
-    Kind::None,
-    irs::PlanShinglePhrase(*shingles, tokens, stacked, true, nullptr).kind);
+TEST(ShinglePhrasePlanTest, plans_only_exact_term_sequences) {
+  const auto shingles = MakeShingles(2, 2);
+  const auto plan = [&](const irs::ByPhraseOptions& phrase) {
+    return irs::PlanShinglePhrase(*shingles, phrase, true, nullptr).kind;
+  };
+  const auto brown = irs::ViewCast<irs::byte_type>(std::string_view{"brown"});
+
+  auto sloppy = Phrase("quick brown");
+  sloppy.set_slop(1);
+  EXPECT_EQ(Kind::None, plan(sloppy));
+
+  auto interval = Phrase("quick");
+  interval.push_back<irs::ByTermOptions>(1, 2).term = brown;
+  EXPECT_EQ(Kind::None, plan(interval));
+
+  auto stacked = Phrase("quick");
+  stacked.push_back<irs::ByTermOptions>(0, 0).term = brown;
+  EXPECT_EQ(Kind::None, plan(stacked));
+
+  auto alternatives = Phrase("quick");
+  alternatives.push_back<irs::TermSetOptions>().terms.emplace(brown);
+  EXPECT_EQ(Kind::None, plan(alternatives));
 }
 
 TEST(ShinglePhrasePlanTest, needs_a_source_to_verify) {
   const auto shingles = MakeShingles(2, 2);
-  const Query query{"quick brown fox"};
-  EXPECT_EQ(Kind::None, irs::PlanShinglePhrase(*shingles, query.tokens,
-                                               query.positions, false, nullptr)
+  EXPECT_EQ(Kind::None, irs::PlanShinglePhrase(
+                          *shingles, Phrase("quick brown fox"), false, nullptr)
                           .kind);
 }
 

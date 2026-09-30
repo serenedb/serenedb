@@ -25,7 +25,7 @@
 namespace irs::count {
 
 Root::ptr Make(const VerifiedPhraseQuery& query, const Context& ctx) {
-  if (ctx.table != nullptr) {
+  if (ctx.table) {
     return detail::MakeVerifiedPhrase<FilteredWalk, Root::ptr>(query, 0,
                                                                ctx.table);
   }

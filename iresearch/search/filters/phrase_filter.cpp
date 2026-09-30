@@ -293,6 +293,7 @@ void ApplyTermGroups(const ByPhraseOptions& options,
 QueryBuilder::ptr MakeVerifiedPhraseQuery(
   const SubReader& segment, const PrepareContext& ctx, const TermReader& reader,
   const PhraseState& state, const ByPhraseOptions& options,
+  const PhraseVerifier& verifier,
   std::span<const std::vector<bstring>> part_terms) {
   PrepareContext sub = ctx;
   sub.collector = nullptr;
@@ -318,7 +319,6 @@ QueryBuilder::ptr MakeVerifiedPhraseQuery(
   if (!approx || QueryBuilder::IsEmpty(*approx)) {
     return QueryBuilder::Empty();
   }
-  const auto& verifier = *options.verifier();
   const auto* spec = verifier.Spec();
   auto query = memory::make_tracked<VerifiedPhraseQuery>(
     ctx.memory, segment, reader, std::move(approx), verifier.Source(),
@@ -341,8 +341,8 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
   PhraseState state{ctx.memory};
   const auto* reader = segment.field(field);
   state.reader = reader;
-  const bool verified = options.verifier() != nullptr;
-  if (verified) {
+  const auto* verifier = options.verifier();
+  if (verifier) {
     if (!reader || !detail::DocOf(*reader)) {
       return QueryBuilder::Empty();
     }
@@ -386,7 +386,7 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
       }
     }
 
-    if (options.slop() != 0 || verified) {
+    if (options.slop() != 0 || verifier) {
       part_terms.resize(phrase_size);
     }
   }
@@ -464,9 +464,9 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
     state.boosts.clear();
   }
 
-  if (verified) {
+  if (verifier) {
     return MakeVerifiedPhraseQuery(segment, ctx, *reader, state, options,
-                                   part_terms);
+                                   *verifier, part_terms);
   }
 
   if (phrase_size == 1 && state.metas.size() == 1) {

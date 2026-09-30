@@ -28,7 +28,7 @@ namespace irs::lead {
 
 Node::ptr MakeVerifiedPhraseScored(const VerifiedPhraseQuery& query,
                                    const detail::ScoreArgs& args) {
-  if (args.stats == nullptr) {
+  if (!args.stats) {
     return {};
   }
   return detail::MakeVerifiedPhrase<Impl, Node::ptr, true, TwoPhaseScored>(

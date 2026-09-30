@@ -30,7 +30,7 @@ namespace irs::hits {
 
 Root::ptr MakeVerifiedPhrase(const VerifiedPhraseQuery& query,
                              const Context& ctx) {
-  if (query.Stats().stats == nullptr) {
+  if (!query.Stats().stats) {
     return irs::detail::MakeVerifiedPhrase<ConstantWalk, Root::ptr>(query, 0,
                                                                     score_t{0});
   }

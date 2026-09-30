@@ -25,82 +25,11 @@
 #include <numeric>
 
 #include "iresearch/analysis/text/term_view.hpp"
-#include "iresearch/analysis/token_sinks.hpp"
-#include "iresearch/formats/column/col_reader.hpp"
-#include "iresearch/formats/column/column_reader.hpp"
-#include "iresearch/formats/column/read_context.hpp"
-#include "iresearch/index/index_reader.hpp"
-#include "iresearch/utils/down_cast.hpp"
 
 namespace irs {
 namespace {
 
-class NoTokensSource final : public PhraseTokenSource {
- public:
-  bool Load(doc_id_t, PhraseDocTokens&) final { return false; }
-};
-
-class StoredValueSource final : public PhraseTokenSource {
- public:
-  StoredValueSource(const ColReader& col_reader, const ColumnReader& column,
-                    analysis::Tokenizer::ptr tokenizer)
-    : _ctx{col_reader},
-      _column{&column},
-      _state{column.InitScan(_ctx)},
-      _out{column.Type()},
-      _sel{1},
-      _tokenizer{std::move(tokenizer)},
-      _tokens{_tokenizer->Traits()} {
-    _sel.set_index(0, 0);
-  }
-
-  bool Load(doc_id_t doc, PhraseDocTokens& out) final {
-    out.Clear();
-    duckdb::string_t value;
-    if (!Fetch(doc, value) || !_analyzer.Analyze(*_tokenizer, value, _tokens)) {
-      return false;
-    }
-    const auto terms = _tokens.terms();
-    const auto positions = _tokens.pos();
-    for (size_t i = 0; i != terms.size(); ++i) {
-      out.Push(AsBytesView(terms[i]), positions[i]);
-    }
-    return !terms.empty();
-  }
-
- private:
-  static constexpr uint32_t kResetEvery = 1024;
-
-  bool Fetch(doc_id_t doc, duckdb::string_t& value) {
-    const uint64_t row = doc - doc_limits::min();
-    if (row >= _column->RowCount()) {
-      return false;
-    }
-    if (_loads++ % kResetEvery == 0) {
-      _out.Reset();
-    }
-    auto& values = _out.vector;
-    _column->GatherDense(_state, row, _sel, 1, 1, values);
-    duckdb::UnifiedVectorFormat format;
-    values.ToUnifiedFormat(1, format);
-    const auto idx = format.sel->get_index(0);
-    if (!format.validity.RowIsValid(idx)) {
-      return false;
-    }
-    value = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(format)[idx];
-    return true;
-  }
-
-  ReadContext _ctx;
-  const ColumnReader* _column;
-  ColumnReader::ScanState _state;
-  ColumnReader::VectorScratch _out;
-  duckdb::SelectionVector _sel;
-  analysis::Tokenizer::ptr _tokenizer;
-  ValueAnalyzer _analyzer;
-  ValueTokens<TokenLayout::TermsPos> _tokens;
-  uint32_t _loads = 0;
-};
+constexpr uint32_t kResetEvery = 1024;
 
 bool Dense(const PhraseDocTokens& doc) noexcept {
   return doc.positions.empty() ||
@@ -130,26 +59,55 @@ bool PhraseVerifier::operator==(const PhraseVerifier& rhs) const noexcept {
   if (lhs_spec && !(*lhs_spec == *rhs_spec)) {
     return false;
   }
-  return _source->Equals(*rhs._source);
+  return _text.column == rhs._text.column;
 }
 
-std::unique_ptr<PhraseTokenSource> StoredValueSourceFactory::Open(
-  const SubReader& segment) const {
-  const auto* col_reader = segment.GetColReader();
-  const auto* column = col_reader ? col_reader->Column(_column) : nullptr;
-  if (!column) {
-    return std::make_unique<NoTokensSource>();
+PhraseTokenReader::PhraseTokenReader(const ColReader& col_reader,
+                                     const ColumnReader& column,
+                                     analysis::Tokenizer::ptr tokenizer)
+  : _ctx{col_reader},
+    _column{&column},
+    _state{column.InitScan(_ctx)},
+    _out{column.Type()},
+    _sel{1},
+    _tokenizer{std::move(tokenizer)},
+    _tokens{_tokenizer->Traits()} {
+  SDB_ASSERT(column.Type().InternalType() == duckdb::PhysicalType::VARCHAR);
+  _sel.set_index(0, 0);
+}
+
+bool PhraseTokenReader::Load(doc_id_t doc, PhraseDocTokens& out) {
+  out.Clear();
+  duckdb::string_t value;
+  if (!Fetch(doc, value) || !_analyzer.Analyze(*_tokenizer, value, _tokens)) {
+    return false;
   }
-  SDB_ASSERT(column->Type().InternalType() == duckdb::PhysicalType::VARCHAR);
-  return std::make_unique<StoredValueSource>(*col_reader, *column,
-                                             _make_tokenizer());
+  const auto terms = _tokens.terms();
+  const auto positions = _tokens.pos();
+  for (size_t i = 0; i != terms.size(); ++i) {
+    out.Push(AsBytesView(terms[i]), positions[i]);
+  }
+  return !terms.empty();
 }
 
-bool StoredValueSourceFactory::Equals(
-  const PhraseTokenSourceFactory& other) const noexcept {
-  return other.Name() == Name() &&
-         irs::utils::downCast<StoredValueSourceFactory>(other)._column ==
-           _column;
+bool PhraseTokenReader::Fetch(doc_id_t doc, duckdb::string_t& value) {
+  const uint64_t row = doc - doc_limits::min();
+  if (row >= _column->RowCount()) {
+    return false;
+  }
+  if (_loads++ % kResetEvery == 0) {
+    _out.Reset();
+  }
+  auto& values = _out.vector;
+  _column->GatherDense(_state, row, _sel, 1, 1, values);
+  duckdb::UnifiedVectorFormat format;
+  values.ToUnifiedFormat(1, format);
+  const auto idx = format.sel->get_index(0);
+  if (!format.validity.RowIsValid(idx)) {
+    return false;
+  }
+  value = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(format)[idx];
+  return true;
 }
 
 PhraseVerifyKernel::PhraseVerifyKernel(

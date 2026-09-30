@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -168,9 +169,9 @@ bool Legs(const Windows& windows, size_t m, std::vector<bstring>& legs) {
 
 }  // namespace
 
-ShinglePhrasePlan PlanShinglePhrase(
-  const analysis::ShingleTokenizer& tokenizer, const ByPhraseOptions& phrase,
-  bool positional, std::shared_ptr<const PhraseTokenSourceFactory> source) {
+ShinglePhrasePlan PlanShinglePhrase(const analysis::ShingleTokenizer& tokenizer,
+                                    const ByPhraseOptions& phrase,
+                                    bool positional, const StoredText* text) {
   ShinglePhrasePlan plan;
   if (phrase.empty() || phrase.slop() != 0) {
     return plan;
@@ -202,14 +203,13 @@ ShinglePhrasePlan PlanShinglePhrase(
     return plan;
   }
   std::vector<bstring> legs;
-  if (!source || !Legs(windows, m, legs)) {
+  if (!text || !Legs(windows, m, legs)) {
     return plan;
   }
   for (auto& leg : legs) {
     plan.phrase.push_back<ByTermOptions>().term = std::move(leg);
   }
-  plan.phrase.set_verifier(
-    std::make_shared<PhraseVerifier>(std::move(source), phrase));
+  plan.phrase.set_verifier(std::make_shared<PhraseVerifier>(*text, phrase));
   plan.kind = ShinglePhrasePlan::Kind::Phrase;
   return plan;
 }

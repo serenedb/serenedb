@@ -114,15 +114,16 @@ inline constexpr irs::field_id kShingleId = 2;
 inline constexpr irs::field_id kPlainId = 3;
 inline constexpr irs::field_id kPositionalId = 4;
 
-std::shared_ptr<const irs::PhraseTokenSourceFactory> Stored() {
-  return std::make_shared<irs::StoredValueSourceFactory>(
-    kStoreId, [] { return std::make_unique<WhitespaceTokenizer>(); });
+irs::StoredText Stored() {
+  return {.column = kStoreId,
+          .tokenizer = [] { return std::make_unique<WhitespaceTokenizer>(); }};
 }
 
 irs::ShinglePhrasePlan Plan(const ShingleTokenizer& shingles,
                             std::string_view text, bool positional) {
+  const auto stored = Stored();
   return irs::PlanShinglePhrase(shingles, Phrase(text), positional,
-                                positional ? nullptr : Stored());
+                                positional ? nullptr : &stored);
 }
 
 struct Field {

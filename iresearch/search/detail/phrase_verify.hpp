@@ -23,21 +23,22 @@
 #include <absl/container/flat_hash_map.h>
 
 #include <functional>
-#include <memory>
 #include <optional>
 #include <span>
-#include <string_view>
 #include <vector>
 
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/token_sinks.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/search/detail/phrase_slop_matcher.hpp"
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
-
-struct SubReader;
 
 struct PhraseDocTokens {
   std::vector<bytes_view> terms;
@@ -66,35 +67,20 @@ struct PhraseVerifyScratch {
   detail::slop::MatchScratch slop;
 };
 
-class PhraseTokenSource {
- public:
-  virtual ~PhraseTokenSource() = default;
-
-  virtual bool Load(doc_id_t doc, PhraseDocTokens& out) = 0;
-};
-
-class PhraseTokenSourceFactory {
- public:
-  virtual ~PhraseTokenSourceFactory() = default;
-
-  virtual std::unique_ptr<PhraseTokenSource> Open(
-    const SubReader& segment) const = 0;
-
-  virtual std::string_view Name() const noexcept = 0;
-
-  virtual bool Equals(const PhraseTokenSourceFactory& other) const noexcept = 0;
+struct StoredText {
+  field_id column = field_limits::invalid();
+  std::function<analysis::Tokenizer::ptr()> tokenizer;
 };
 
 class PhraseVerifier {
  public:
-  explicit PhraseVerifier(
-    std::shared_ptr<const PhraseTokenSourceFactory> source,
-    std::optional<ByPhraseOptions> spec = std::nullopt)
-    : _source{std::move(source)}, _spec{std::move(spec)} {
-    SDB_ASSERT(_source);
+  explicit PhraseVerifier(StoredText text,
+                          std::optional<ByPhraseOptions> spec = std::nullopt)
+    : _text{std::move(text)}, _spec{std::move(spec)} {
+    SDB_ASSERT(_text.tokenizer);
   }
 
-  const PhraseTokenSourceFactory& Source() const noexcept { return *_source; }
+  const StoredText& Text() const noexcept { return _text; }
 
   const ByPhraseOptions* Spec() const noexcept {
     return _spec ? &*_spec : nullptr;
@@ -103,26 +89,32 @@ class PhraseVerifier {
   bool operator==(const PhraseVerifier& rhs) const noexcept;
 
  private:
-  std::shared_ptr<const PhraseTokenSourceFactory> _source;
+  StoredText _text;
   std::optional<ByPhraseOptions> _spec;
 };
 
-class StoredValueSourceFactory final : public PhraseTokenSourceFactory {
+class PhraseTokenReader {
  public:
-  using MakeTokenizer = std::function<analysis::Tokenizer::ptr()>;
+  PhraseTokenReader(const ColReader& col_reader, const ColumnReader& column,
+                    analysis::Tokenizer::ptr tokenizer);
 
-  StoredValueSourceFactory(field_id column, MakeTokenizer make_tokenizer)
-    : _column{column}, _make_tokenizer{std::move(make_tokenizer)} {}
+  PhraseTokenReader(PhraseTokenReader&&) = delete;
+  PhraseTokenReader& operator=(PhraseTokenReader&&) = delete;
 
-  std::unique_ptr<PhraseTokenSource> Open(const SubReader& segment) const final;
-
-  std::string_view Name() const noexcept final { return "column"; }
-
-  bool Equals(const PhraseTokenSourceFactory& other) const noexcept final;
+  bool Load(doc_id_t doc, PhraseDocTokens& out);
 
  private:
-  field_id _column;
-  MakeTokenizer _make_tokenizer;
+  bool Fetch(doc_id_t doc, duckdb::string_t& value);
+
+  ReadContext _ctx;
+  const ColumnReader* _column;
+  ColumnReader::ScanState _state;
+  ColumnReader::VectorScratch _out;
+  duckdb::SelectionVector _sel;
+  analysis::Tokenizer::ptr _tokenizer;
+  ValueAnalyzer _analyzer;
+  ValueTokens<TokenLayout::TermsPos> _tokens;
+  uint32_t _loads = 0;
 };
 
 class PhraseVerifyKernel {

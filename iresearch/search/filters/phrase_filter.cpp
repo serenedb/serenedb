@@ -295,6 +295,10 @@ QueryBuilder::ptr MakeVerifiedPhraseQuery(
   const PhraseState& state, const ByPhraseOptions& options,
   const PhraseVerifier& verifier,
   std::span<const std::vector<bstring>> part_terms) {
+  const auto* col_reader = segment.GetColReader();
+  if (!col_reader || !col_reader->Column(verifier.Text().column)) {
+    return QueryBuilder::Empty();
+  }
   PrepareContext sub = ctx;
   sub.collector = nullptr;
   BooleanBuilder builder{segment,        ctx.memory,           0,
@@ -321,7 +325,7 @@ QueryBuilder::ptr MakeVerifiedPhraseQuery(
   }
   const auto* spec = verifier.Spec();
   auto query = memory::make_tracked<VerifiedPhraseQuery>(
-    ctx.memory, segment, reader, std::move(approx), verifier.Source(),
+    ctx.memory, segment, reader, std::move(approx), verifier.Text(),
     spec ? *spec : options,
     spec ? std::span<const std::vector<bstring>>{} : part_terms, ctx.boost);
   query->SetStats(ctx.Record());

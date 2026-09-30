@@ -23,6 +23,7 @@
 #include <span>
 #include <vector>
 
+#include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/phrase_verify.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 
@@ -31,21 +32,21 @@ namespace irs {
 class VerifiedPhraseQuery : public QueryBuilderImpl<VerifiedPhraseQuery> {
  public:
   struct Recipe {
-    const PhraseTokenSourceFactory* source = nullptr;
     const PhraseVerifyKernel* kernel = nullptr;
-    const SubReader* segment = nullptr;
+    const StoredText* text = nullptr;
+    const ColReader* col_reader = nullptr;
+    const ColumnReader* column = nullptr;
   };
 
   VerifiedPhraseQuery(const SubReader& segment, const TermReader& reader,
-                      QueryBuilder::ptr&& approx,
-                      const PhraseTokenSourceFactory& source,
+                      QueryBuilder::ptr&& approx, const StoredText& text,
                       const ByPhraseOptions& phrase,
                       std::span<const std::vector<bstring>> expanded,
                       score_t boost)
     : QueryBuilderImpl{segment, approx->EstimateMax(), QueryKind::Other},
       _approx{std::move(approx)},
       _reader{&reader},
-      _source{&source},
+      _text{&text},
       _kernel{phrase, expanded},
       _boost{boost} {
     _estimate_matches = _approx->EstimateMatches();
@@ -59,7 +60,13 @@ class VerifiedPhraseQuery : public QueryBuilderImpl<VerifiedPhraseQuery> {
 
   bool Sloppy() const noexcept { return _kernel.Sloppy(); }
 
-  Recipe MakeRecipe() const noexcept { return {_source, &_kernel, &_segment}; }
+  Recipe MakeRecipe() const {
+    const auto* col_reader = _segment.GetColReader();
+    SDB_ASSERT(col_reader);
+    const auto* column = col_reader->Column(_text->column);
+    SDB_ASSERT(column);
+    return {&_kernel, _text, col_reader, column};
+  }
 
   void Visit(PreparedStateVisitor&, score_t) const final {}
 
@@ -70,7 +77,7 @@ class VerifiedPhraseQuery : public QueryBuilderImpl<VerifiedPhraseQuery> {
  private:
   QueryBuilder::ptr _approx;
   const TermReader* _reader;
-  const PhraseTokenSourceFactory* _source;
+  const StoredText* _text;
   PhraseVerifyKernel _kernel;
   score_t _boost;
 };

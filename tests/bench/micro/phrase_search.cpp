@@ -173,9 +173,9 @@ void AppendText(irs::ColumnWriter& cw, irs::doc_id_t doc,
   cw.Append(static_cast<uint64_t>(doc) - irs::doc_limits::min(), v, 1);
 }
 
-std::shared_ptr<const irs::PhraseTokenSourceFactory> StoredText() {
-  return std::make_shared<irs::StoredValueSourceFactory>(
-    kStoreId, [] { return std::make_unique<WhitespaceTokenizer>(); });
+irs::StoredText BodyText() {
+  return {.column = kStoreId,
+          .tokenizer = [] { return std::make_unique<WhitespaceTokenizer>(); }};
 }
 
 uintmax_t DirSize(const std::filesystem::path& path) {
@@ -309,17 +309,17 @@ irs::Filter::ptr MakePhrase(const Index& index, std::string_view text) {
       irs::ViewCast<irs::byte_type>(word);
   }
   const auto& strategy = *index.strategy;
-  auto source = strategy.verified ? StoredText() : nullptr;
+  const auto body = BodyText();
+  const auto* stored = strategy.verified ? &body : nullptr;
   if (strategy.max_gram == 0) {
-    if (source) {
-      phrase.set_verifier(
-        std::make_shared<irs::PhraseVerifier>(std::move(source)));
+    if (stored) {
+      phrase.set_verifier(std::make_shared<irs::PhraseVerifier>(*stored));
     }
     return MakeFilter<irs::ByPhrase>(std::move(phrase));
   }
   auto plan = irs::PlanShinglePhrase(
     irs::utils::downCast<irs::analysis::ShingleTokenizer>(*index.tokenizer),
-    phrase, strategy.positions, std::move(source));
+    phrase, strategy.positions, stored);
   switch (plan.kind) {
     case irs::ShinglePhrasePlan::Kind::None:
       return nullptr;

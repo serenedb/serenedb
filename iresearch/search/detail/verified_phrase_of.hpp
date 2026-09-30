@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <memory>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -40,7 +39,7 @@ class VerifiedPhraseSlots {
   VerifiedPhraseSlots(std::piecewise_construct_t, ApproxArgs&& approx,
                       const VerifiedPhraseQuery::Recipe& recipe, bool count)
     : _approx{std::make_from_tuple<Approx>(std::forward<ApproxArgs>(approx))},
-      _source{recipe.source->Open(*recipe.segment)},
+      _reader{*recipe.col_reader, *recipe.column, recipe.text->tokenizer()},
       _kernel{recipe.kernel},
       _count{count} {}
 
@@ -66,7 +65,7 @@ class VerifiedPhraseSlots {
   }
 
   bool Match(doc_id_t doc) {
-    return _source->Load(doc, _tokens) &&
+    return _reader.Load(doc, _tokens) &&
            _kernel->Match(_tokens, _count, _scratch, _verdict);
   }
 
@@ -80,7 +79,7 @@ class VerifiedPhraseSlots {
 
  private:
   Approx _approx;
-  std::unique_ptr<PhraseTokenSource> _source;
+  PhraseTokenReader _reader;
   const PhraseVerifyKernel* _kernel;
   PhraseDocTokens _tokens;
   PhraseVerifyScratch _scratch;

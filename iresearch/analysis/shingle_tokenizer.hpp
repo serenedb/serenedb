@@ -55,9 +55,7 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
     bool output_unigrams = true;
     bool fallback_unigrams = false;
     bstring token_separator = bstring(1, kDefaultSeparator);
-    utils::Deleted<bstring> filler_token;
     std::vector<bstring> frequent_words;
-    utils::Deleted<bool> store_tokens;
   };
 
   static constexpr std::string_view type_name() noexcept {

@@ -49,20 +49,14 @@ class WildcardTokenizer;
 class WildcardNGramVerifier {
  public:
   WildcardNGramVerifier(std::shared_ptr<RE2> matcher,
-                        const ColumnReader* stored_field,
-                        const ColReader* col_reader)
-    : _matcher{std::move(matcher)} {
-    if (_matcher) {
-      SDB_ASSERT(stored_field && col_reader);
-      _cursor.emplace(*col_reader, *stored_field);
-    }
+                        const ColumnReader& stored_field,
+                        const ColReader& col_reader) noexcept
+    : _matcher{std::move(matcher)}, _cursor{col_reader, stored_field} {
+    SDB_ASSERT(_matcher);
   }
 
   bool Check(doc_id_t doc) {
-    if (!_matcher) {
-      return true;
-    }
-    const auto value = _cursor->FetchDoc(doc);
+    const auto value = _cursor.FetchDoc(doc);
     if (value.empty()) {
       return false;
     }
@@ -86,7 +80,7 @@ class WildcardNGramVerifier {
 
  private:
   std::shared_ptr<RE2> _matcher;
-  std::optional<ColumnReader::BlobPointReader> _cursor;
+  ColumnReader::BlobPointReader _cursor;
 };
 
 class WildcardNGramQuery : public QueryBuilderImpl<WildcardNGramQuery> {
@@ -109,7 +103,7 @@ class WildcardNGramQuery : public QueryBuilderImpl<WildcardNGramQuery> {
     const ColReader* col_reader = nullptr;
 
     WildcardNGramVerifier Make() const {
-      return WildcardNGramVerifier{matcher, column, col_reader};
+      return WildcardNGramVerifier{matcher, *column, *col_reader};
     }
   };
 
@@ -118,9 +112,7 @@ class WildcardNGramQuery : public QueryBuilderImpl<WildcardNGramQuery> {
   const QueryBuilder& NGrams() const noexcept { return *_approx; }
 
   Recipe MakeRecipe() const {
-    if (!_matcher) {
-      return {};
-    }
+    SDB_ASSERT(_matcher);
     SDB_ASSERT(irs::field_limits::valid(_store_field_id));
     const auto* col_reader = _segment.GetColReader();
     SDB_ASSERT(col_reader != nullptr);

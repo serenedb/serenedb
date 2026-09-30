@@ -113,6 +113,33 @@ id
 2
 5
 
+query
+SELECT COUNT(DISTINCT score) AS distinct_scores, COUNT(*) AS total_matches
+FROM (SELECT BM25(wc_nr_idx.tableoid) AS score
+      FROM wc_nr_idx
+      WHERE b @@ ts_like('%ai%')) t
+----
+distinct_scores	total_matches
+1	2
+
+query
+SELECT COUNT(DISTINCT score) AS distinct_scores, COUNT(*) AS total_matches
+FROM (SELECT BM25(wc_nr_pos_idx.tableoid) AS score
+      FROM wc_nr_pos_idx
+      WHERE b @@ ts_like('%ear%')) t
+----
+distinct_scores	total_matches
+1	2
+
+query
+SELECT COUNT(DISTINCT score) AS distinct_scores, COUNT(*) AS total_matches
+FROM (SELECT BM25(wc_nr_idx.tableoid) AS score
+      FROM wc_nr_idx
+      WHERE b @@ ts_like('%')) t
+----
+distinct_scores	total_matches
+1	4
+
 statement ok
 DROP TABLE wc_nr_t
 

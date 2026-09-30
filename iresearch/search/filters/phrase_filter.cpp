@@ -42,7 +42,6 @@
 #include "iresearch/search/queries/phrase_state.hpp"
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 #include "iresearch/utils/wildcard_utils.hpp"
@@ -113,8 +112,8 @@ struct GetVisitor {
   field_visitor operator()(const auto&) const { SDB_UNREACHABLE(); }
 
   field_visitor operator()(const AutomatonOptions& options) const {
-    SDB_ASSERT(options.compiled);
-    return AutomatonFilter::visitor(options.compiled->acceptor);
+    SDB_ASSERT(options.source);
+    return AutomatonFilter::visitor(options.source);
   }
 
   field_visitor operator()(const LevenshteinAutomatonOptions& options) const {
@@ -497,7 +496,7 @@ bool ByPhraseOptions::LowerParts() {
           return opts;
         },
         [](bytes_view term) -> PhrasePart {
-          return AutomatonOptions{FromWildcard(term), term};
+          return AutomatonOptions{term, PatternKind::Wildcard};
         });
       changed = true;
     } else if (const auto* e = std::get_if<ByEditDistanceOptions>(&info.part);

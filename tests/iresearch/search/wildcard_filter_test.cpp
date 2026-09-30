@@ -445,8 +445,8 @@ TEST_P(WildcardFilterTestCase, visit) {
   {
     auto term = irs::ViewCast<irs::byte_type>(std::string_view("abc"));
     tests::EmptyFilterVisitor visitor;
-    auto automaton = irs::FromWildcard(term);
-    auto field_visitor = irs::AutomatonFilter::visitor(automaton);
+    auto field_visitor = irs::AutomatonFilter::visitor(
+      irs::MakePatternSource(term, irs::PatternKind::Wildcard));
     ASSERT_TRUE(field_visitor);
     field_visitor(segment, *reader, visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());
@@ -462,8 +462,8 @@ TEST_P(WildcardFilterTestCase, visit) {
   {
     auto prefix = irs::ViewCast<irs::byte_type>(std::string_view("ab%"));
     tests::EmptyFilterVisitor visitor;
-    auto automaton = irs::FromWildcard(prefix);
-    auto field_visitor = irs::AutomatonFilter::visitor(automaton);
+    auto field_visitor = irs::AutomatonFilter::visitor(
+      irs::MakePatternSource(prefix, irs::PatternKind::Wildcard));
     ASSERT_TRUE(field_visitor);
     field_visitor(segment, *reader, visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());
@@ -483,8 +483,8 @@ TEST_P(WildcardFilterTestCase, visit) {
   {
     auto wildcard = irs::ViewCast<irs::byte_type>(std::string_view("a_c%"));
     tests::EmptyFilterVisitor visitor;
-    auto automaton = irs::FromWildcard(wildcard);
-    auto field_visitor = irs::AutomatonFilter::visitor(automaton);
+    auto field_visitor = irs::AutomatonFilter::visitor(
+      irs::MakePatternSource(wildcard, irs::PatternKind::Wildcard));
     ASSERT_TRUE(field_visitor);
     field_visitor(segment, *reader, visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());

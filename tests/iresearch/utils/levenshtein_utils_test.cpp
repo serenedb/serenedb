@@ -22,11 +22,11 @@
 
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/automaton_utils.hpp>
 #include <iresearch/utils/bytes_output.hpp>
-#include <iresearch/utils/fstext/fst_table_matcher.hpp>
+#include <iresearch/utils/levenshtein_acceptor.hpp>
 #include <iresearch/utils/levenshtein_utils.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
+#include <optional>
 
 #include "tests_shared.hpp"
 
@@ -39,17 +39,25 @@ void AssertDescription(
   const irs::bytes_view& term,
   const std::vector<std::tuple<irs::bytes_view, size_t, size_t, size_t>>&
     candidates) {
-  auto a = irs::MakeLevenshteinAutomaton(description, prefix, term);
+  const irs::LevenshteinAcceptor acceptor{description, prefix, term};
 
   irs::bstring target(prefix.data(), prefix.size());
   target += term;
 
-  // ensure only invalid state has no outbound connections
-  ASSERT_GE(a.NumStates(), 1);
-  ASSERT_EQ(0, a.NumArcs(0));
-  for (irs::automaton::StateId state = 1; state < a.NumStates(); ++state) {
-    ASSERT_GT(a.NumArcs(state), 0);
-  }
+  const auto accepted = [&](irs::bytes_view candidate) {
+    auto state = acceptor.Start();
+    for (const auto label : candidate) {
+      state = acceptor.Step(state, label);
+      if (!irs::LevenshteinAcceptor::Alive(state)) {
+        return std::optional<size_t>{};
+      }
+    }
+    irs::byte_type payload{};
+    if (!acceptor.Accept(state, payload)) {
+      return std::optional<size_t>{};
+    }
+    return std::optional<size_t>{payload};
+  };
 
   for (auto& entry : candidates) {
     const auto candidate = std::get<0>(entry);
@@ -99,12 +107,12 @@ void AssertDescription(
       }
     }
 
-    const auto state = irs::Accept(a, candidate);
+    const auto distance = accepted(candidate);
     ASSERT_EQ(expected_distance_automaton <= description.max_distance(),
-              bool(state));
-    if (state) {
+              distance.has_value());
+    if (distance) {
       // every final state contains valid edit distance
-      ASSERT_EQ(expected_distance_automaton, state.Payload());
+      ASSERT_EQ(expected_distance_automaton, *distance);
     }
   }
 }

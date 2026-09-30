@@ -41,11 +41,10 @@
 #include <iresearch/store/fs_directory.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
-#include <iresearch/utils/automaton_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/file_utils_ext.hpp>
-#include <iresearch/utils/fstext/fst_table_matcher.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <iresearch/utils/regexp_acceptor.hpp>
 #include <iresearch/utils/serialization.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <iresearch/utils/vector.hpp>
@@ -422,14 +421,14 @@ irs::PostingMeta PostingMetaOf(const irs::TermReader& field,
 class IndexTestCase : public tests::IndexTestBase {
  public:
   void assert_index(size_t skip = 0,
-                    irs::automaton_table_matcher* matcher = nullptr) const {
-    IndexTestBase::assert_index(irs::IndexFeatures::Freq, skip, matcher);
+                    const irs::RegexpAcceptor* acceptor = nullptr) const {
+    IndexTestBase::assert_index(irs::IndexFeatures::Freq, skip, acceptor);
     IndexTestBase::assert_index(
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos, skip, matcher);
+      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos, skip, acceptor);
     IndexTestBase::assert_index(irs::IndexFeatures::Freq |
                                   irs::IndexFeatures::Pos |
                                   irs::IndexFeatures::Offs,
-                                skip, matcher);
+                                skip, acceptor);
   }
 
   void ClearWriter() {
@@ -1863,9 +1862,10 @@ TEST_P(IndexTestCase, europarl_docs_automaton) {
 
   for (const auto pattern : kPatterns) {
     SCOPED_TRACE(testing::Message("Pattern: '") << pattern << "'");
-    auto acceptor = irs::FromWildcard(pattern);
-    irs::automaton_table_matcher matcher(acceptor, true);
-    assert_index(0, &matcher);
+    const irs::RegexpAcceptor acceptor{irs::RegexpAcceptor::WildcardTag{},
+                                       irs::ViewCast<irs::byte_type>(pattern)};
+    ASSERT_TRUE(acceptor.ok());
+    assert_index(0, &acceptor);
   }
 }
 
@@ -1900,9 +1900,10 @@ TEST_P(IndexTestCase, europarl_docs_big_automaton) {
 
   for (const auto pattern : kPatterns) {
     SCOPED_TRACE(testing::Message("Pattern: '") << pattern << "'");
-    auto acceptor = irs::FromWildcard(pattern);
-    irs::automaton_table_matcher matcher(acceptor, true);
-    assert_index(0, &matcher);
+    const irs::RegexpAcceptor acceptor{irs::RegexpAcceptor::WildcardTag{},
+                                       irs::ViewCast<irs::byte_type>(pattern)};
+    ASSERT_TRUE(acceptor.ok());
+    assert_index(0, &acceptor);
   }
 }
 

@@ -25,6 +25,7 @@
 
 #include <iresearch/formats/term_reader.hpp>
 #include <iresearch/index/field_meta.hpp>
+#include <iresearch/utils/regexp_acceptor.hpp>
 #include <unordered_set>
 
 #include "doc_generator.hpp"
@@ -235,10 +236,10 @@ using index_t = std::vector<IndexSegment>;
 void AssertIndex(irs::IndexReader::ptr actual_index,
                  const index_t& expected_index, irs::IndexFeatures features,
                  size_t skip = 0,
-                 irs::automaton_table_matcher* matcher = nullptr);
+                 const irs::RegexpAcceptor* acceptor = nullptr);
 
 void AssertIndex(const irs::Directory& dir, const index_t& index,
                  irs::IndexFeatures features, size_t skip = 0,
-                 irs::automaton_table_matcher* matcher = nullptr);
+                 const irs::RegexpAcceptor* acceptor = nullptr);
 
 }  // namespace tests

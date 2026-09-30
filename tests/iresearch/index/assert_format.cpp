@@ -43,11 +43,9 @@
 #include <iresearch/search/queries/term_state.hpp>
 #include <iresearch/search/scorers/tfidf.hpp>
 #include <iresearch/store/data_output.hpp>
-#include <iresearch/utils/automaton_utils.hpp>
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/bytes_output.hpp>
 #include <iresearch/utils/down_cast.hpp>
-#include <iresearch/utils/fstext/fst_table_matcher.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <unordered_set>
 
@@ -603,34 +601,36 @@ void AssertTerm(irs::TermIterator& expected_term,
              [&] { return actual_term.postings(requested_features); });
 }
 
-irs::SeekTermIterator::ptr ExpectedTerms(
-  const Field& expected_field, irs::automaton_table_matcher* matcher) {
-  auto terms = expected_field.iterator();
-  if (!matcher) {
+irs::TermIterator::ptr ExpectedTerms(const Field& expected_field,
+                                     const irs::RegexpAcceptor* acceptor) {
+  irs::TermIterator::ptr terms = expected_field.iterator();
+  if (!acceptor) {
     return terms;
   }
-  return irs::memory::make_managed<irs::AutomatonTermIterator>(
-    matcher->GetFst(), std::move(terms));
+  return irs::memory::make_managed<irs::FilteredTermIterator>(
+    std::move(terms), irs::MakeTermPredicate([acceptor](irs::bytes_view term) {
+      return acceptor->Matches(term);
+    }));
 }
 
 irs::SeekTermIterator::ptr ActualTerms(const irs::TermReader& actual_field,
-                                       irs::automaton_table_matcher* matcher) {
-  return matcher ? actual_field.iterator(*matcher) : actual_field.iterator();
+                                       const irs::RegexpAcceptor* acceptor) {
+  return acceptor ? actual_field.iterator(*acceptor) : actual_field.iterator();
 }
 
 void AssertTermsNext(const irs::SubReader& segment, const Field& expected_field,
                      const irs::TermReader& actual_field,
                      irs::IndexFeatures features,
-                     irs::automaton_table_matcher* matcher) {
+                     const irs::RegexpAcceptor* acceptor) {
   irs::bytes_view actual_min{};
   irs::bytes_view actual_max{};
   irs::bstring actual_min_buf;
   irs::bstring actual_max_buf;
   size_t actual_size = 0;
 
-  auto expected_term = ExpectedTerms(expected_field, matcher);
+  auto expected_term = ExpectedTerms(expected_field, acceptor);
 
-  auto actual_term = ActualTerms(actual_field, matcher);
+  auto actual_term = ActualTerms(actual_field, acceptor);
 
   size_t term_index = 0;
   for (; expected_term->next(); ++actual_size) {
@@ -650,7 +650,7 @@ void AssertTermsNext(const irs::SubReader& segment, const Field& expected_field,
     actual_max = actual_max_buf;
   }
 
-  if (!matcher) {
+  if (!acceptor) {
     ASSERT_EQ(expected_field.terms.size(), actual_size);
     ASSERT_EQ((expected_field.min)(), actual_min);
     ASSERT_EQ((expected_field.max)(), actual_max);
@@ -660,11 +660,11 @@ void AssertTermsNext(const irs::SubReader& segment, const Field& expected_field,
 void AssertTermsSeek(const Field& expected_field,
                      const irs::TermReader& actual_field,
                      irs::IndexFeatures features,
-                     irs::automaton_table_matcher* matcher,
+                     const irs::RegexpAcceptor* acceptor,
                      size_t lookahead = 10) {
-  auto expected_term = ExpectedTerms(expected_field, matcher);
+  auto expected_term = ExpectedTerms(expected_field, acceptor);
 
-  auto actual_term_with_state = ActualTerms(actual_field, matcher);
+  auto actual_term_with_state = ActualTerms(actual_field, acceptor);
   ASSERT_NE(nullptr, actual_term_with_state);
 
   auto actual_term_with_state_random_only = actual_field.iterator();
@@ -764,7 +764,7 @@ void AssertTermsSeek(const Field& expected_field,
 
 void AssertIndex(irs::IndexReader::ptr actual_index,
                  const index_t& expected_index, irs::IndexFeatures features,
-                 size_t skip, irs::automaton_table_matcher* matcher) {
+                 size_t skip, const irs::RegexpAcceptor* acceptor) {
   ASSERT_EQ(expected_index.size(), actual_index->size());
   size_t i = 0;
   size_t segment_index = 0;
@@ -829,9 +829,9 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
       const auto field_features =
         expected_field->second.index_features & features;
       AssertTermsNext(actual_segment, expected_field->second, *actual_terms,
-                      field_features, matcher);
+                      field_features, acceptor);
       AssertTermsSeek(expected_field->second, *actual_terms, field_features,
-                      matcher);
+                      acceptor);
     }
     ASSERT_EQ(actual_field_ids.end(), actual_id_it);
 
@@ -842,11 +842,11 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
 
 void AssertIndex(const irs::Directory& dir, const index_t& expected_index,
                  irs::IndexFeatures features, size_t skip,
-                 irs::automaton_table_matcher* matcher) {
+                 const irs::RegexpAcceptor* acceptor) {
   auto reader = irs::DirectoryReader(dir, ::irs::tests::DefaultReaderOptions());
   ASSERT_NE(nullptr, reader);
 
-  AssertIndex(reader.GetImpl(), expected_index, features, skip, matcher);
+  AssertIndex(reader.GetImpl(), expected_index, features, skip, acceptor);
 }
 
 }  // namespace tests

@@ -25,8 +25,12 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/internal/resize_uninitialized.h>
 #include <absl/strings/str_cat.h>
+#include <immintrin.h>
 
+#include <array>
+#include <bit>
 #include <variant>
+#include <vector>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/basic_term_reader.hpp"
@@ -48,32 +52,25 @@
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/attribute_helper.hpp"
-#include "iresearch/utils/automaton.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/containers/monotonic_buffer.hpp"
+#include "iresearch/utils/containers/small_vector.hpp"
+#include "iresearch/utils/fst/fst_builder.hpp"
+#include "iresearch/utils/fst/fst_matcher.hpp"
+#include "iresearch/utils/fst/fst_string_ref_weight.hpp"
+#include "iresearch/utils/fst/fst_string_weight.hpp"
+#include "iresearch/utils/fst/immutable_fst.hpp"
+#include "iresearch/utils/fst/vector_fst.hpp"
 #include "iresearch/utils/hash_utils.hpp"
+#include "iresearch/utils/levenshtein_acceptor.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/regexp_acceptor.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/string_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
-
-// fstext includes don't remove them or comment!
-// clang-format off
-
-#include "iresearch/utils/fstext/fst_string_weight.hpp"
-#include "iresearch/utils/fstext/fst_builder.hpp"
-#include "iresearch/utils/fstext/fst_decl.hpp"
-#include "iresearch/utils/fstext/fst_matcher.hpp"
-#include "iresearch/utils/fstext/fst_string_ref_weight.hpp"
-#include "iresearch/utils/fstext/fst_table_matcher.hpp"
-#include "iresearch/utils/fstext/immutable_fst.hpp"
-#include "iresearch/utils/fstext/fst_utils.hpp"
-
-// clang-format on
 
 namespace {
 
@@ -408,16 +405,6 @@ void MergeBlocks(Blocks& blocks, OutputBuffer& buffer) {
   auto& out = *buffer.Construct(std::move(root.Data()));
   root_index.PushFront(out);
 
-  // First byte in block header must not be equal to fst::kStringInfinity
-  // Consider the following:
-  //   StringWeight0 -> { fst::kStringInfinity 0x11 ... }
-  //   StringWeight1 -> { fst::kStringInfinity 0x22 ... }
-  //   CommonPrefix = fst::Plus(StringWeight0, StringWeight1) -> {
-  //   fst::kStringInfinity } Suffix = fst::Divide(StringWeight1, CommonPrefix)
-  //   -> { fst::kStringBad }
-  // But actually Suffix should be equal to { 0x22 ... }
-  SDB_ASSERT(static_cast<int8_t>(root_block.meta) != fst::kStringInfinity);
-
   // will store just several bytes here
   out.WriteByte(static_cast<byte_type>(root_block.meta));  // block metadata
   out.WriteV64(root_block.start);  // start pointer of the block
@@ -443,15 +430,7 @@ void MergeBlocks(Blocks& blocks, OutputBuffer& buffer) {
     }
   }
 
-  // ensure weight we've written doesn't interfere
-  // with semiring members and other constants
-  SDB_ASSERT(out.weight != byte_weight::One() &&
-             out.weight != byte_weight::Zero() &&
-             out.weight != byte_weight::NoWeight() &&
-             out.weight.Size() >= kMinWeightSize &&
-             byte_weight::One().Size() < kMinWeightSize &&
-             byte_weight::Zero().Size() < kMinWeightSize &&
-             byte_weight::NoWeight().Size() < kMinWeightSize);
+  SDB_ASSERT(out.weight.Size() >= kMinWeightSize);
 }
 
 // Resetable FST buffer
@@ -471,8 +450,7 @@ class FstBuffer : public vector_byte_fst {
     }
   };
 
-  FstBuffer(IResourceManager& rm)
-    : vector_byte_fst{ManagedTypedAllocator<byte_arc>{rm}} {}
+  FstBuffer(IResourceManager& rm) : vector_byte_fst{rm} {}
 
   using FstByteBuilder = FstBuilder<byte_type, vector_byte_fst, FstStatsImpl>;
 
@@ -853,15 +831,12 @@ void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
 #ifdef SDB_DEV
   // ensure evaluated stats are correct
   struct FstBuffer::FstStatsImpl stats{};
-  for (fst::StateIterator<vector_byte_fst> states(fst); !states.Done();
-       states.Next()) {
-    const auto stateid = states.Value();
+  for (vector_byte_fst::StateId s = 0; s != fst.NumStates(); ++s) {
     ++stats.num_states;
-    stats.num_arcs += fst.NumArcs(stateid);
-    stats(fst.Final(stateid));
-    for (fst::ArcIterator<vector_byte_fst> arcs(fst, stateid); !arcs.Done();
-         arcs.Next()) {
-      stats(arcs.Value().weight);
+    stats.num_arcs += fst.NumArcs(s);
+    stats(fst.Final(s));
+    for (const auto& arc : fst.Arcs(s)) {
+      stats(arc.weight);
     }
   }
   SDB_ASSERT(stats == fst_stats);
@@ -1023,6 +998,7 @@ class BlockIterator : util::Noncopyable {
   uint32_t SubCount() const noexcept { return _sub_count; }
   uint64_t Start() const noexcept { return _start; }
   bool Done() const noexcept { return _cur_ent == _ent_count; }
+  const byte_type* SuffixEnd() const noexcept { return _suffix_end; }
   bool NoTerms() const noexcept {
     // FIXME(gnusi): add term mark to block entry?
     //
@@ -1138,6 +1114,7 @@ class BlockIterator : util::Noncopyable {
   PostingMeta _state;
   size_t _suffix_length{};  // last matched suffix length
   const byte_type* _suffix_begin{};
+  const byte_type* _suffix_end{};
   uint64_t _start;      // initial block start pointer
   uint64_t _cur_start;  // current block start pointer
   uint64_t _cur_end;    // block end pointer
@@ -1196,6 +1173,7 @@ void BlockIterator::Load(IndexInput& in) {
     in.ReadData(_suffix.block.data(), block_size);
     _suffix.begin = _suffix.block.c_str();
   }
+  _suffix_end = _suffix.begin + block_size;
 #ifdef SDB_DEV
   _suffix.end = _suffix.begin + block_size;
 #endif
@@ -1532,91 +1510,43 @@ void BlockIterator::Reset() {
   _header.AssertBlockBoundaries();
 }
 
-// Base class for term iterators over the FST-indexed dictionary
-class TermIteratorBase : public SeekTermIterator {
- public:
-  TermIteratorBase(const TermReaderBase& field,
-                   PostingsReader& postings) noexcept
-    : _field{&field}, _postings{&postings} {}
-
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept override {
-    return irs::GetMutable(_attrs, type);
-  }
-
-  bytes_view value() const noexcept final {
-    return std::get<TermAttr>(_attrs).value;
-  }
-
- protected:
-  using Attributes = std::tuple<TermAttr>;
-
-  const PostingMeta& CookieImpl(BlockIterator* it) const {
-    SDB_ASSERT(it);
-    it->LoadData(_field->meta(), _posting_meta, *_postings);
-    return _posting_meta;
-  }
-
-  TermPostings::ptr PostingsImpl(BlockIterator* it,
-                                 IndexFeatures features) const {
-    const auto& field_meta = _field->meta();
-    if (it) {
-      it->LoadData(field_meta, _posting_meta, *_postings);
-    }
-    return _postings->Postings(field_meta.index_features, features,
-                               _posting_meta, _field->HasScoreBounds());
-  }
-
-  void Copy(const byte_type* suffix, size_t prefix_size, size_t suffix_size) {
-    irs::utils::StrResizeAmortized(_term_buf, prefix_size + suffix_size);
-    std::memcpy(_term_buf.data() + prefix_size, suffix, suffix_size);
-  }
-
-  void RefreshValue() noexcept { std::get<TermAttr>(_attrs).value = _term_buf; }
-  void ResetValue() noexcept { std::get<TermAttr>(_attrs).value = {}; }
-
-  mutable PostingMeta _posting_meta;
-  mutable Attributes _attrs;
-  const TermReaderBase* _field;
-  PostingsReader* _postings;
-  bstring _term_buf;
-  byte_weight _weight;  // aggregated fst output
-};
-
-// use explicit matcher to avoid implicit loops
 template<typename FST>
-using ExplicitMatcher = fst::explicit_matcher<fst::SortedMatcher<FST>>;
-
-template<typename FST>
-class TermIteratorImpl : public TermIteratorBase {
+class TermIteratorBase {
  public:
   using WeightT = typename FST::Weight;
   using StateidT = typename FST::StateId;
 
-  TermIteratorImpl(const TermReaderBase& field, PostingsReader& postings,
+  TermIteratorBase(const TermReaderBase& field, PostingsReader& postings,
                    const IndexInput& terms_in, const FST& fst)
-    : TermIteratorBase{field, postings},
+    : _field{&field},
+      _postings{&postings},
       _terms_in_source{&terms_in},
       _fst{&fst},
-      _matcher{&fst, fst::MATCH_INPUT} {  // pass pointer to avoid copying FST
+      _matcher{&fst} {}
+
+ protected:
+  ~TermIteratorBase() = default;
+
+  Attribute* GetAttribute(TypeInfo::type_id type) noexcept {
+    return type == irs::Type<TermAttr>::id() ? &_term : nullptr;
   }
 
-  bool next() final;
-  SeekResult seek_ge(bytes_view term) final;
-  bool seek(bytes_view term) final {
-    return SeekResult::Found == SeekEqual(term, true);
-  }
+  bytes_view Value() const noexcept { return _term.value; }
 
-  const PostingMeta& cookie() const final {
+  const PostingMeta& Cookie() const {
     SDB_ASSERT(_cur_block);
-    return CookieImpl(_cur_block);
+    _cur_block->LoadData(_field->meta(), _posting_meta, *_postings);
+    return _posting_meta;
   }
 
-  TermPostings::ptr postings(IndexFeatures features) const final {
-    return PostingsImpl(_cur_block, features);
+  TermPostings::ptr Postings(IndexFeatures features) const {
+    const auto& field_meta = _field->meta();
+    if (_cur_block) {
+      _cur_block->LoadData(field_meta, _posting_meta, *_postings);
+    }
+    return _postings->Postings(field_meta.index_features, features,
+                               _posting_meta, _field->HasScoreBounds());
   }
-
- private:
-  friend class BlockIterator;
 
   struct Arc {
     Arc() = default;
@@ -1692,86 +1622,47 @@ class TermIteratorImpl : public TermIteratorBase {
     return *_terms_in;
   }
 
+  void PopToParent() {
+    const uint64_t start = _cur_block->Start();
+    _cur_block = PopBlock();
+    _posting_meta = _cur_block->State();
+    if (_cur_block->Dirty() || _cur_block->BlockStart() != start) {
+      SDB_ASSERT(_cur_block->Prefix() < _term_buf.size());
+      _cur_block->ScanToSubBlock(_term_buf[_cur_block->Prefix()]);
+      _cur_block->Load(TermsInput());
+      _cur_block->ScanToBlock(start);
+    }
+  }
+
+  void Copy(const byte_type* suffix, size_t prefix_size, size_t suffix_size) {
+    irs::utils::StrResizeAmortized(_term_buf, prefix_size + suffix_size);
+    std::memcpy(_term_buf.data() + prefix_size, suffix, suffix_size);
+  }
+
+  void RefreshValue() noexcept { _term.value = _term_buf; }
+  void ResetValue() noexcept { _term.value = {}; }
+
+  mutable PostingMeta _posting_meta;
+  TermAttr _term;
+  const TermReaderBase* _field;
+  PostingsReader* _postings;
   const IndexInput* _terms_in_source;
   mutable IndexInput::ptr _terms_in;
   const FST* _fst;
-  ExplicitMatcher<FST> _matcher;
+  ArcMatcher<FST> _matcher;
+  bstring _term_buf;
+  byte_weight _weight;  // aggregated fst output
   std::vector<Arc> _sstate;
   std::vector<BlockIterator> _block_stack;
   BlockIterator* _cur_block{};
 };
 
 template<typename FST>
-bool TermIteratorImpl<FST>::next() {
-  // iterator at the beginning or seek to cached state was called
-  if (!_cur_block) {
-    if (value().empty()) {
-      // iterator at the beginning
-      _cur_block = PushBlock(_fst->Final(_fst->Start()), 0);
-      _cur_block->Load(TermsInput());
-    } else {
-      SDB_ASSERT(false);
-      // FIXME(gnusi): consider removing this, as that seems to be impossible
-      // anymore
-
-      // seek to the term with the specified state was called from
-      // TermIterator::seek(bytes_view, const attribute&),
-      // need create temporary "bytes_view" here, since "seek" calls
-      // term_.reset() internally,
-      // note, that since we do not create extra copy of term_
-      // make sure that it does not reallocate memory !!!
-      [[maybe_unused]] const auto res = SeekEqual(value(), true);
-      SDB_ASSERT(SeekResult::Found == res);
-    }
-  }
-
-  // pop finished blocks
-  while (_cur_block->Done()) {
-    if (_cur_block->NextSubBlock<false>()) {
-      _cur_block->Load(TermsInput());
-    } else if (&_block_stack.front() == _cur_block) {  // root
-      ResetValue();
-      _cur_block->Reset();
-      _sstate.clear();
-      return false;
-    } else {
-      const uint64_t start = _cur_block->Start();
-      _cur_block = PopBlock();
-      _posting_meta = _cur_block->State();
-      if (_cur_block->Dirty() || _cur_block->BlockStart() != start) {
-        // here we're currently at non block that was not loaded yet
-        SDB_ASSERT(_cur_block->Prefix() < _term_buf.size());
-        // to sub-block
-        _cur_block->ScanToSubBlock(_term_buf[_cur_block->Prefix()]);
-        _cur_block->Load(TermsInput());
-        _cur_block->ScanToBlock(start);
-      }
-    }
-  }
-
-  _sstate.resize(std::min(_sstate.size(), _cur_block->Prefix()));
-
-  auto copy_suffix = [this](const byte_type* suffix, size_t suffix_size) {
-    Copy(suffix, _cur_block->Prefix(), suffix_size);
-  };
-
-  // push new block or next term
-  for (_cur_block->Next(copy_suffix); EntryType::Block == _cur_block->Type();
-       _cur_block->Next(copy_suffix)) {
-    _cur_block = PushBlock(_cur_block->BlockStart(), _term_buf.size());
-    _cur_block->Load(TermsInput());
-  }
-
-  RefreshValue();
-  return true;
-}
-
-template<typename FST>
-ptrdiff_t TermIteratorImpl<FST>::SeekCached(size_t& prefix, StateidT& state,
+ptrdiff_t TermIteratorBase<FST>::SeekCached(size_t& prefix, StateidT& state,
                                             size_t& block, byte_weight& weight,
                                             bytes_view target) {
   SDB_ASSERT(!_block_stack.empty());
-  const auto term = value();
+  const auto term = Value();
   const byte_type* pterm = term.data();
   const byte_type* ptarget = target.data();
 
@@ -1813,9 +1704,8 @@ ptrdiff_t TermIteratorImpl<FST>::SeekCached(size_t& prefix, StateidT& state,
 }
 
 template<typename FST>
-bool TermIteratorImpl<FST>::SeekToBlock(bytes_view term, size_t& prefix) {
-  SDB_ASSERT(_fst->GetImpl());
-  auto& fst = *_fst->GetImpl();
+bool TermIteratorBase<FST>::SeekToBlock(bytes_view term, size_t& prefix) {
+  const auto& fst = *_fst;
 
   prefix = 0;                    // number of current symbol to process
   StateidT state = fst.Start();  // start state
@@ -1865,7 +1755,7 @@ bool TermIteratorImpl<FST>::SeekToBlock(bytes_view term, size_t& prefix) {
     const auto& weight = fst.FinalRef(arc.nextstate);
 
     if (!weight.Empty()) {
-      PushBlock(fst::Times(_weight, weight), prefix);
+      PushBlock(Times(_weight, weight), prefix);
       ++block;
     } else if (FstBuffer::FstByteBuilder::kFinal == arc.nextstate) {
       // ensure final state has no weight assigned
@@ -1898,7 +1788,7 @@ bool TermIteratorImpl<FST>::SeekToBlock(bytes_view term, size_t& prefix) {
 }
 
 template<typename FST>
-SeekResult TermIteratorImpl<FST>::SeekEqual(bytes_view term, bool exact) {
+SeekResult TermIteratorBase<FST>::SeekEqual(bytes_view term, bool exact) {
   [[maybe_unused]] size_t prefix;
   if (SeekToBlock(term, prefix)) {
     SDB_ASSERT(EntryType::Term == _cur_block->Type());
@@ -1909,7 +1799,7 @@ SeekResult TermIteratorImpl<FST>::SeekEqual(bytes_view term, bool exact) {
 
   if (exact && _cur_block->NoTerms()) {
     // current block has no terms
-    std::get<TermAttr>(_attrs).value = {_term_buf.c_str(), prefix};
+    _term.value = {_term_buf.c_str(), prefix};
     return SeekResult::NotFound;
   }
 
@@ -1928,20 +1818,89 @@ SeekResult TermIteratorImpl<FST>::SeekEqual(bytes_view term, bool exact) {
 }
 
 template<typename FST>
+class TermIteratorImpl : public SeekTermIterator, public TermIteratorBase<FST> {
+ public:
+  using Base = TermIteratorBase<FST>;
+  using Base::Base;
+
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    return Base::GetAttribute(type);
+  }
+
+  bytes_view value() const noexcept final { return Base::Value(); }
+
+  bool next() final;
+  SeekResult seek_ge(bytes_view term) final;
+  bool seek(bytes_view term) final {
+    return SeekResult::Found == Base::SeekEqual(term, true);
+  }
+
+  const PostingMeta& cookie() const final { return Base::Cookie(); }
+
+  TermPostings::ptr postings(IndexFeatures features) const final {
+    return Base::Postings(features);
+  }
+};
+
+template<typename FST>
+bool TermIteratorImpl<FST>::next() {
+  if (!this->_cur_block) {  // iterator at the beginning
+    SDB_ASSERT(value().empty());
+    this->_cur_block =
+      this->PushBlock(this->_fst->Final(this->_fst->Start()), 0);
+    this->_cur_block->Load(this->TermsInput());
+  }
+
+  auto copy_suffix = [this](const byte_type* suffix, size_t suffix_size) {
+    this->Copy(suffix, this->_cur_block->Prefix(), suffix_size);
+  };
+
+  while (this->_cur_block->Done()) {
+    if (this->_cur_block->template NextSubBlock<false>()) {
+      this->_cur_block->Load(this->TermsInput());
+    } else if (&this->_block_stack.front() == this->_cur_block) {  // root
+      this->ResetValue();
+      this->_cur_block->Reset();
+      this->_sstate.clear();
+      return false;
+    } else {
+      this->PopToParent();
+    }
+  }
+
+  this->_sstate.resize(
+    std::min(this->_sstate.size(), this->_cur_block->Prefix()));
+
+  for (this->_cur_block->Next(copy_suffix);;
+       this->_cur_block->Next(copy_suffix)) {
+    if (EntryType::Block != this->_cur_block->Type()) {
+      break;
+    }
+    this->_cur_block =
+      this->PushBlock(this->_cur_block->BlockStart(), this->_term_buf.size());
+    this->_cur_block->Load(this->TermsInput());
+  }
+
+  this->RefreshValue();
+  return true;
+}
+
+template<typename FST>
 SeekResult TermIteratorImpl<FST>::seek_ge(bytes_view term) {
-  switch (SeekEqual(term, false)) {
+  switch (Base::SeekEqual(term, false)) {
     case SeekResult::Found:
-      SDB_ASSERT(EntryType::Term == _cur_block->Type());
+      SDB_ASSERT(EntryType::Term == this->_cur_block->Type());
       return SeekResult::Found;
     case SeekResult::NotFound:
-      switch (_cur_block->Type()) {
+      switch (this->_cur_block->Type()) {
         case EntryType::Term:
           // we're already at greater term
           return SeekResult::NotFound;
         case EntryType::Block:
           // we're at the greater block, load it and call next
-          _cur_block = PushBlock(_cur_block->BlockStart(), _term_buf.size());
-          _cur_block->Load(TermsInput());
+          this->_cur_block = this->PushBlock(this->_cur_block->BlockStart(),
+                                             this->_term_buf.size());
+          this->_cur_block->Load(this->TermsInput());
           break;
         default:
           SDB_ASSERT(false);
@@ -1957,17 +1916,528 @@ SeekResult TermIteratorImpl<FST>::seek_ge(bytes_view term) {
   return SeekResult::End;
 }
 
-// An iterator optimized for performing exact single seeks
-//
-// WARNING: we intentionally do not copy term value to avoid
-//          unnecessary allocations as this is mostly useless
-//          in case of exact single seek
-template<typename FST>
-class SingleTermLookup : public SeekTermIterator {
+template<typename FST, typename A>
+class AcceptorTermIterator : public SeekTermIterator,
+                             public TermIteratorBase<FST> {
  public:
-  explicit SingleTermLookup(const TermReaderBase& field,
-                            PostingsReader& postings,
-                            IndexInput::ptr&& terms_in, const FST& fst) noexcept
+  using Base = TermIteratorBase<FST>;
+  using StateidT = typename Base::StateidT;
+  using State = typename A::State;
+
+  AcceptorTermIterator(const TermReaderBase& field, PostingsReader& postings,
+                       const IndexInput& terms_in, const FST& fst, const A& a)
+    : Base{field, postings, terms_in, fst}, _a{&a} {
+    if constexpr (A::kHasPayload) {
+      _pay.value = {&_payload, sizeof(typename A::PayloadType)};
+    }
+    if constexpr (kSuffixed) {
+      _required = a.RequiredSuffix();
+      _infix = a.RequiredInfix();
+      if (_infix.size() < kMinInfix || _infix.size() > kMaxInfix) {
+        _infix = {};
+      }
+      _anchor_hi = _infix.empty() ? 0 : _infix.size() - 1;
+      bool anchored = false;
+      for (size_t i = 0; i != _infix.size(); ++i) {
+        if (_infix[i] < 0xC0) {
+          _anchor_lo = anchored ? _anchor_lo : i;
+          _anchor_hi = i;
+          anchored = true;
+        }
+      }
+      _filter = !_required.empty() ? Filter::Suffix
+                : !_infix.empty()  ? Filter::Infix
+                                   : Filter::None;
+    }
+  }
+
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    if constexpr (A::kHasPayload) {
+      if (type == Type<PayAttr>::id()) {
+        return &_pay;
+      }
+    }
+    return Base::GetAttribute(type);
+  }
+
+  bytes_view value() const noexcept final { return Base::Value(); }
+
+  const PostingMeta& cookie() const final { return Base::Cookie(); }
+
+  TermPostings::ptr postings(IndexFeatures features) const final {
+    return Base::Postings(features);
+  }
+
+  bool next() final {
+    if (this->_cur_block == nullptr) [[unlikely]] {
+      if (const auto lower = _a->LowerBound(); !lower.empty()) {
+        return SeekResult::End != seek_ge(lower);
+      }
+    }
+    return NextImpl();
+  }
+
+  SeekResult seek_ge(bytes_view target) final;
+
+  bool seek(bytes_view target) final {
+    return SeekResult::Found == seek_ge(target);
+  }
+
+ private:
+  struct Level {
+    State state;
+    uint32_t lo;
+    uint32_t hi;
+    size_t weight_size;
+    StateidT fst_state;
+    bool alive;
+
+    bool HasLabels() const noexcept { return lo <= hi; }
+  };
+
+  bool NextImpl();
+
+  bool Extend(State from, const byte_type* suffix, size_t n) {
+    if constexpr (A::kCheapRuns) {
+      for (size_t i = 0; i != n;) {
+        State moved{};
+        i += _a->StepRun(from, suffix + i, n - i, moved);
+        if (i == n) {
+          break;
+        }
+        if (!A::Alive(moved)) {
+          return false;
+        }
+        from = moved;
+        ++i;
+      }
+    } else {
+      for (size_t i = 0; i != n; ++i) {
+        from = _a->Step(from, suffix[i]);
+        if (!A::Alive(from)) {
+          return false;
+        }
+      }
+    }
+    _live = from;
+    return true;
+  }
+
+  bool ExtendEntry(State from, const byte_type* suffix, size_t n) {
+    for (size_t i = 0; i != n; ++i) {
+      from = _a->Step(from, suffix[i]);
+      if (!A::Alive(from)) {
+        return false;
+      }
+    }
+    _live = from;
+    return true;
+  }
+
+  bool EndsWithRequired(const byte_type* suffix, size_t n) const noexcept {
+    const size_t size = _required.size();
+    if (size <= n) {
+      return std::memcmp(suffix + n - size, _required.data(), size) == 0;
+    }
+    const size_t prefix = this->_cur_block->Prefix();
+    const size_t head = size - n;
+    return head <= prefix &&
+           std::memcmp(this->_term_buf.data() + prefix - head, _required.data(),
+                       head) == 0 &&
+           std::memcmp(suffix, _required.data() + head, n) == 0;
+  }
+
+  IRS_NO_INLINE void LoadInfix() noexcept {
+    const size_t prefix = this->_cur_block->Prefix();
+    const auto* data = this->_term_buf.data();
+    const size_t m = _infix.size();
+    _partials = 0;
+    _infix_block =
+      prefix < m || memmem(data, prefix, _infix.data(), m) == nullptr;
+    for (size_t k = std::min(m - 1, prefix); k != 0 && _infix_block; --k) {
+      if (std::memcmp(data + prefix - k, _infix.data(), k) == 0) {
+        _partials |= uint64_t{1} << k;
+      }
+    }
+  }
+
+  bool ContainsInfix(const byte_type* h, size_t n) const noexcept {
+    const size_t m = _infix.size();
+    const auto lo = _mm256_set1_epi8(static_cast<char>(_infix[_anchor_lo]));
+    const auto hi = _mm256_set1_epi8(static_cast<char>(_infix[_anchor_hi]));
+    for (size_t i = 0; i <= n - m; i += 32) {
+      auto mask = static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_and_si256(
+        _mm256_cmpeq_epi8(
+          lo, _mm256_loadu_si256(
+                reinterpret_cast<const __m256i*>(h + i + _anchor_lo))),
+        _mm256_cmpeq_epi8(
+          hi, _mm256_loadu_si256(
+                reinterpret_cast<const __m256i*>(h + i + _anchor_hi))))));
+      const size_t limit = n - m + 1 - i;
+      if (limit < 32) {
+        mask &= (uint32_t{1} << limit) - 1;
+      }
+      for (; mask != 0; mask &= mask - 1) {
+        const auto at = static_cast<size_t>(std::countr_zero(mask));
+        if (std::memcmp(h + i + at, _infix.data(), m) == 0) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  IRS_NO_INLINE bool InfixRejects(const byte_type* suffix, size_t n) noexcept {
+    if (!_infix_loaded) {
+      LoadInfix();
+      _infix_loaded = true;
+    }
+    if (!_infix_block) {
+      return false;
+    }
+    const size_t m = _infix.size();
+    bool found = false;
+    for (auto partials = _partials; partials != 0 && !found;
+         partials &= partials - 1) {
+      const auto k = static_cast<size_t>(std::countr_zero(partials));
+      found = n >= m - k && std::memcmp(suffix, _infix.data() + k, m - k) == 0;
+    }
+    if (!found && n >= m) {
+      found = suffix + n + 32 <= this->_cur_block->SuffixEnd()
+                ? ContainsInfix(suffix, n)
+                : memmem(suffix, n, _infix.data(), m) != nullptr;
+    }
+    if (_infix_checks != kInfixProbe) {
+      _infix_rejects += !found;
+      if (++_infix_checks == kInfixProbe && _infix_rejects * 2 < kInfixProbe) {
+        _filter = Filter::None;
+      }
+    }
+    return !found;
+  }
+
+  bool Accepts() { return _a->Accept(_live, _payload); }
+
+  bool MayAccept() {
+    if constexpr (A::kMayBeUnknown) {
+      if (A::Unknown(_live)) {
+        return true;
+      }
+    }
+    return Accepts();
+  }
+
+  bool AcceptsKey() {
+    if constexpr (A::kMayBeUnknown) {
+      if (A::Unknown(_live)) [[unlikely]] {
+        return _a->Matches(bytes_view{this->_term_buf});
+      }
+    }
+    return Accepts();
+  }
+
+  bool AcceptsTerm(const byte_type* suffix, size_t n) {
+    if constexpr (A::kMayBeUnknown) {
+      if (A::Unknown(_live)) [[unlikely]] {
+        this->Copy(suffix, this->_cur_block->Prefix(), n);
+        return _a->Matches(bytes_view{this->_term_buf});
+      }
+    }
+    if (!Accepts()) {
+      return false;
+    }
+    this->Copy(suffix, this->_cur_block->Prefix(), n);
+    return true;
+  }
+
+  Level MakeLevel(State state, size_t weight_size, StateidT fst_state) const {
+    Level level{state, 1, 0, weight_size, fst_state, A::Alive(state)};
+    if (level.alive) {
+      _a->LiveRange(state, level.lo, level.hi);
+    }
+    return level;
+  }
+
+  void ResetLevels() {
+    this->_weight.Clear();
+    _levels.assign(1, MakeLevel(_a->Start(), 0, this->_fst->Start()));
+  }
+
+  bool PushSubBlock(const byte_type* suffix, size_t n);
+
+  bool NextFloorSubBlock();
+
+  void RebuildLevels();
+
+  static constexpr bool kSuffixed =
+    requires(const A& a) { a.RequiredSuffix(); };
+
+  enum class Filter : uint8_t {
+    None,
+    Suffix,
+    Infix,
+  };
+
+  static constexpr size_t kMinInfix = 3;
+  static constexpr size_t kMaxInfix = 32;
+  static constexpr size_t kInfixEntry = 24;
+  static constexpr uint32_t kInfixProbe = 256;
+
+  const A* _a;
+  bytes_view _required;
+  bytes_view _infix;
+  uint64_t _partials{0};
+  size_t _anchor_lo{0};
+  size_t _anchor_hi{0};
+  uint32_t _infix_checks{0};
+  uint32_t _infix_rejects{0};
+  bool _infix_block{false};
+  bool _infix_loaded{false};
+  Filter _filter{Filter::None};
+  irs::containers::SmallVector<Level, 8> _levels;
+  State _live{};
+  typename A::PayloadType _payload{};
+  PayAttr _pay;
+};
+
+template<typename FST, typename A>
+bool AcceptorTermIterator<FST, A>::PushSubBlock(const byte_type* suffix,
+                                                size_t n) {
+  uint32_t lo = 1;
+  uint32_t hi = 0;
+  _a->LiveRange(_live, lo, hi);
+  const bool accepts = MayAccept();
+  if (lo > hi && !accepts) {
+    return false;
+  }
+
+  const auto& fst = *this->_fst;
+  const auto& parent = _levels.back();
+  this->_weight.Resize(parent.weight_size);
+  auto fst_state = parent.fst_state;
+  for (size_t i = 0; i != n; ++i) {
+    this->_matcher.SetState(fst_state);
+    [[maybe_unused]] const bool found = this->_matcher.Find(suffix[i]);
+    SDB_ASSERT(found);
+    const auto& arc = this->_matcher.Value();
+    this->_weight.PushBack(arc.weight.begin(), arc.weight.end());
+    fst_state = arc.nextstate;
+  }
+  const size_t weight_size = this->_weight.Size();
+  const auto& final_weight = fst.FinalRef(fst_state);
+  SDB_ASSERT(!final_weight.Empty() ||
+             FstBuffer::FstByteBuilder::kFinal == fst_state);
+  this->_weight.PushBack(final_weight.begin(), final_weight.end());
+
+  _levels.emplace_back(Level{_live, lo, hi, weight_size, fst_state, true});
+  this->_cur_block =
+    this->PushBlock(bytes_view{this->_weight}, this->_term_buf.size());
+  if (!accepts && lo <= hi) {
+    this->_cur_block->ScanToSubBlock(static_cast<byte_type>(lo));
+  }
+  this->_cur_block->Load(this->TermsInput());
+  return true;
+}
+
+template<typename FST, typename A>
+bool AcceptorTermIterator<FST, A>::NextFloorSubBlock() {
+  auto* block = this->_cur_block;
+  const auto sub_count = block->SubCount();
+  if (sub_count == BlockIterator::kUndefinedCount) {
+    if (!block->template NextSubBlock<false>()) {
+      return false;
+    }
+    block->Load(this->TermsInput());
+    return true;
+  }
+  if (sub_count == 0) {
+    return false;
+  }
+  const auto& level = _levels.back();
+  const uint32_t next_label = block->NextLabel();
+  SDB_ASSERT(next_label != Block::kInvalidLabel);
+  if (!level.HasLabels() || next_label > level.hi) {
+    return false;
+  }
+  if (next_label < level.lo) {
+    block->ScanToSubBlock(static_cast<byte_type>(level.lo));
+  } else {
+    block->template NextSubBlock<true>();
+  }
+  block->Load(this->TermsInput());
+  return true;
+}
+
+template<typename FST, typename A>
+void AcceptorTermIterator<FST, A>::RebuildLevels() {
+  SDB_ASSERT(!this->_block_stack.empty());
+  const auto& fst = *this->_fst;
+  this->_weight.Clear();
+  _levels.clear();
+  auto fst_state = fst.Start();
+  auto state = _a->Start();
+  bool alive = true;
+  size_t depth = 0;
+  for (const auto& block : this->_block_stack) {
+    const size_t prefix = block.Prefix();
+    SDB_ASSERT(prefix <= this->_term_buf.size());
+    for (; depth != prefix; ++depth) {
+      const auto label = this->_term_buf[depth];
+      this->_matcher.SetState(fst_state);
+      [[maybe_unused]] const bool found = this->_matcher.Find(label);
+      SDB_ASSERT(found);
+      const auto& arc = this->_matcher.Value();
+      this->_weight.PushBack(arc.weight.begin(), arc.weight.end());
+      fst_state = arc.nextstate;
+      if (alive) {
+        state = _a->Step(state, label);
+        alive = A::Alive(state);
+      }
+    }
+    _levels.emplace_back(MakeLevel(state, this->_weight.Size(), fst_state));
+  }
+}
+
+template<typename FST, typename A>
+SeekResult AcceptorTermIterator<FST, A>::seek_ge(bytes_view target) {
+  const auto res = this->SeekEqual(target, false);
+  RebuildLevels();
+
+  bool accepted = false;
+  if (res != SeekResult::End && _levels.back().alive) {
+    const auto prefix = this->_cur_block->Prefix();
+    SDB_ASSERT(prefix <= this->_term_buf.size());
+    const auto* suffix = this->_term_buf.data() + prefix;
+    const size_t suffix_len = this->_term_buf.size() - prefix;
+    const auto state = _levels.back().state;
+    if (Extend(state, suffix, suffix_len)) {
+      if (this->_cur_block->Type() == EntryType::Term) {
+        accepted = AcceptsKey();
+      } else {
+        PushSubBlock(suffix, suffix_len);
+      }
+    }
+  }
+
+  if (accepted) {
+    this->RefreshValue();
+  } else if (!NextImpl()) {
+    return SeekResult::End;
+  }
+  return this->value() == target ? SeekResult::Found : SeekResult::NotFound;
+}
+
+template<typename FST, typename A>
+bool AcceptorTermIterator<FST, A>::NextImpl() {
+  if (!this->_cur_block) {
+    SDB_ASSERT(this->value().empty());
+    ResetLevels();
+    this->_cur_block =
+      this->PushBlock(this->_fst->Final(this->_fst->Start()), 0);
+    this->_cur_block->Load(this->TermsInput());
+  }
+
+  const byte_type* suffix_ptr = nullptr;
+  size_t suffix_len = 0;
+  auto read_suffix = [&](const byte_type* suffix, size_t suffix_size) {
+    suffix_ptr = suffix;
+    suffix_len = suffix_size;
+  };
+
+  bool frame_done = !_levels.back().alive;
+  State state{};
+  uint32_t lo = 1;
+  uint32_t hi = 0;
+  const auto load_frame = [&] {
+    const auto& frame = _levels.back();
+    state = frame.state;
+    lo = frame.lo;
+    hi = frame.hi;
+    if constexpr (kSuffixed) {
+      _infix_loaded = false;
+    }
+  };
+  for (;;) {
+    while (frame_done || this->_cur_block->Done()) {
+      if (!frame_done && NextFloorSubBlock()) {
+        continue;
+      }
+      if (&this->_block_stack.front() == this->_cur_block) {  // root
+        this->ResetValue();
+        this->_cur_block->Reset();
+        this->_sstate.clear();
+        ResetLevels();
+        return false;
+      }
+      _levels.pop_back();
+      this->PopToParent();
+      frame_done = !_levels.back().alive;
+    }
+
+    this->_sstate.resize(
+      std::min(this->_sstate.size(), this->_cur_block->Prefix()));
+    load_frame();
+
+    bool matched = false;
+    for (;;) {
+      this->_cur_block->Next(read_suffix);
+      if (suffix_len != 0) {
+        const uint32_t lead = *suffix_ptr;
+        if (lead > hi) {
+          frame_done = true;
+          break;
+        }
+        if (lead < lo) {
+          if (this->_cur_block->Done()) {
+            break;
+          }
+          continue;
+        }
+      }
+      if constexpr (kSuffixed) {
+        if (_filter != Filter::None &&
+            EntryType::Term == this->_cur_block->Type() &&
+            (_filter == Filter::Suffix
+               ? !EndsWithRequired(suffix_ptr, suffix_len)
+               : suffix_len >= kInfixEntry &&
+                   InfixRejects(suffix_ptr, suffix_len))) {
+          if (this->_cur_block->Done()) {
+            break;
+          }
+          continue;
+        }
+      }
+      if (ExtendEntry(state, suffix_ptr, suffix_len)) {
+        if (EntryType::Block != this->_cur_block->Type()) {
+          if (AcceptsTerm(suffix_ptr, suffix_len)) {
+            matched = true;
+            break;
+          }
+        } else {
+          this->Copy(suffix_ptr, this->_cur_block->Prefix(), suffix_len);
+          if (PushSubBlock(suffix_ptr, suffix_len)) {
+            load_frame();
+            continue;
+          }
+        }
+      }
+      if (this->_cur_block->Done()) {
+        break;
+      }
+    }
+
+    if (matched) {
+      this->RefreshValue();
+      return true;
+    }
+  }
+}
+
+template<typename FST>
+class SingleTermLookup {
+ public:
+  SingleTermLookup(const TermReaderBase& field, PostingsReader& postings,
+                   IndexInput::ptr&& terms_in, const FST& fst) noexcept
     : _terms_in{std::move(terms_in)},
       _postings{&postings},
       _field{&field},
@@ -1975,32 +2445,17 @@ class SingleTermLookup : public SeekTermIterator {
     SDB_ASSERT(_terms_in);
   }
 
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return type == irs::Type<TermAttr>::id() ? &_value : nullptr;
-  }
+  bool seek(bytes_view term);
 
-  bytes_view value() const noexcept final { return _value.value; }
+  const PostingMeta& cookie() const noexcept { return _meta; }
 
-  bool next() final { return false; }
-
-  SeekResult seek_ge(bytes_view) final { throw NotSupported(); }
-
-  bool seek(bytes_view term) final;
-
-  const PostingMeta& cookie() const final { return _meta; }
-
-  TermPostings::ptr postings(IndexFeatures features) const final {
+  TermPostings::ptr postings(IndexFeatures features) const {
     return _postings->Postings(_field->meta().index_features, features, _meta,
                                _field->HasScoreBounds());
   }
 
-  const PostingMeta& Meta() const noexcept { return _meta; }
-
  private:
-  friend class BlockIterator;
-
   PostingMeta _meta;
-  TermAttr _value;
   IndexInput::ptr _terms_in;
   PostingsReader* _postings;
   const TermReaderBase* _field;
@@ -2009,11 +2464,10 @@ class SingleTermLookup : public SeekTermIterator {
 
 template<typename FST>
 bool SingleTermLookup<FST>::seek(bytes_view term) {
-  SDB_ASSERT(_fst->GetImpl());
-  auto& fst = *_fst->GetImpl();
+  const auto& fst = *_fst;
 
   auto state = fst.Start();
-  ExplicitMatcher<FST> matcher{_fst, fst::MATCH_INPUT};
+  ArcMatcher<FST> matcher{_fst};
 
   byte_weight weight_prefix;
   const auto* weight_suffix = &fst.FinalRef(state);
@@ -2058,413 +2512,10 @@ bool SingleTermLookup<FST>::seek(bytes_view term) {
 
   if (SeekResult::Found == cur_block.ScanToTerm(term, [](auto, auto) {})) {
     cur_block.LoadData(_field->meta(), _meta, *_postings);
-    _value.value = term;
     return true;
   }
 
-  _value = {};
   return false;
-}
-
-class AutomatonArcMatcher {
- public:
-  AutomatonArcMatcher(const automaton::Arc* arcs, size_t narcs) noexcept
-    : _begin(arcs), _end(arcs + narcs) {}
-
-  const automaton::Arc* Seek(uint32_t label) noexcept {
-    SDB_ASSERT(_begin != _end && _begin->max < label);
-    // linear search is faster for a small number of arcs
-
-    while (++_begin != _end && _begin->max < label) {
-    }
-
-    SDB_ASSERT(_begin == _end || label <= _begin->max);
-
-    return _begin != _end && _begin->min <= label ? _begin : nullptr;
-  }
-
-  const automaton::Arc* Value() const noexcept { return _begin; }
-
-  bool Done() const noexcept { return _begin == _end; }
-
- private:
-  const automaton::Arc* _begin;  // current arc
-  const automaton::Arc* _end;    // end of arcs range
-};
-
-template<typename FST>
-class FstArcMatcher {
- public:
-  FstArcMatcher(const FST& fst, typename FST::StateId state) noexcept {
-    fst::ArcIteratorData<typename FST::Arc> data;
-    fst.InitArcIterator(state, &data);
-    _begin = data.arcs;
-    _end = _begin + data.narcs;
-  }
-
-  void Seek(typename FST::Arc::Label label) noexcept {
-    // linear search is faster for a small number of arcs
-    for (; _begin != _end; ++_begin) {
-      if (label <= _begin->ilabel) {
-        break;
-      }
-    }
-  }
-
-  const typename FST::Arc* Value() const noexcept { return _begin; }
-
-  bool Done() const noexcept { return _begin == _end; }
-
- private:
-  const typename FST::Arc* _begin;  // current arc
-  const typename FST::Arc* _end;    // end of arcs range
-};
-
-template<typename FST>
-class AutomatonTermIterator : public TermIteratorBase {
- public:
-  AutomatonTermIterator(const TermReaderBase& field, PostingsReader& postings,
-                        IndexInput::ptr&& terms_in, const FST& fst,
-                        const automaton_table_matcher& matcher)
-    : TermIteratorBase{field, postings},
-      _terms_in{std::move(terms_in)},
-      _fst{&fst},
-      _acceptor{&matcher.GetFst()},
-      _matcher{&matcher},
-      _fst_matcher{&fst, fst::MATCH_INPUT},
-      _sink{matcher.sink()} {
-    SDB_ASSERT(_terms_in);
-    SDB_ASSERT(fst::kNoStateId != _acceptor->Start());
-    SDB_ASSERT(_acceptor->NumArcs(_acceptor->Start()));
-
-    // init payload value
-    _payload.value = {&_payload_value, sizeof(_payload_value)};
-  }
-
-  bool next() final;
-
-  SeekResult seek_ge(bytes_view term) final {
-    while (value() < term) {
-      if (!next()) {
-        return SeekResult::End;
-      }
-    }
-    return value() == term ? SeekResult::Found : SeekResult::NotFound;
-  }
-
-  bool seek(bytes_view term) final {
-    return SeekResult::Found == seek_ge(term);
-  }
-
-  const PostingMeta& cookie() const final { return CookieImpl(_cur_block); }
-
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    if (type == irs::Type<PayAttr>::id()) {
-      return &_payload;
-    }
-    return TermIteratorBase::GetMutable(type);
-  }
-
-  TermPostings::ptr postings(IndexFeatures features) const final {
-    return PostingsImpl(_cur_block, features);
-  }
-
- private:
-  class BlockIterator : public ::BlockIterator {
-   public:
-    BlockIterator(bytes_view out, const FST& fst, size_t prefix,
-                  size_t weight_prefix, automaton::StateId state,
-                  typename FST::StateId fst_state, const automaton::Arc* arcs,
-                  size_t narcs) noexcept
-      : ::BlockIterator(out, prefix),
-        _arcs(arcs, narcs),
-        _fst_arcs(fst, fst_state),
-        _weight_prefix(weight_prefix),
-        _state(state),
-        _fst_state(fst_state) {}
-
-   public:
-    FstArcMatcher<FST>& FstArcs() noexcept { return _fst_arcs; }
-    AutomatonArcMatcher& Arcs() noexcept { return _arcs; }
-    automaton::StateId AcceptorState() const noexcept { return _state; }
-    typename FST::StateId FstState() const noexcept { return _fst_state; }
-    size_t WeightPrefix() const noexcept { return _weight_prefix; }
-
-   private:
-    AutomatonArcMatcher _arcs;
-    FstArcMatcher<FST> _fst_arcs;
-    size_t _weight_prefix;
-    automaton::StateId _state;  // state to which current block belongs
-    typename FST::StateId _fst_state;
-  };
-
-  BlockIterator* PopBlock() noexcept {
-    _block_stack.pop_back();
-    SDB_ASSERT(!_block_stack.empty());
-    return &_block_stack.back();
-  }
-
-  BlockIterator* PushBlock(bytes_view out, const FST& fst, size_t prefix,
-                           size_t weight_prefix, automaton::StateId state,
-                           typename FST::StateId fst_state) {
-    // ensure final weight correctness
-    SDB_ASSERT(out.size() >= kMinWeightSize);
-
-    fst::ArcIteratorData<automaton::Arc> data;
-    _acceptor->InitArcIterator(state, &data);
-    SDB_ASSERT(data.narcs);  // ensured by term_reader::iterator(...)
-
-    return &_block_stack.emplace_back(out, fst, prefix, weight_prefix, state,
-                                      fst_state, data.arcs, data.narcs);
-  }
-
-  // automaton_term_iterator usually accesses many term blocks and
-  // isn't used by prepared statements for accessing term metadata,
-  // therefore we prefer greedy strategy for term dictionary stream
-  // initialization
-  IndexInput& TermsInput() const noexcept {
-    SDB_ASSERT(_terms_in);
-    return *_terms_in;
-  }
-
-  IndexInput::ptr _terms_in;
-  const FST* _fst;
-  const automaton* _acceptor;
-  const automaton_table_matcher* _matcher;
-  ExplicitMatcher<FST> _fst_matcher;
-  std::vector<BlockIterator> _block_stack;
-  BlockIterator* _cur_block{};
-  automaton::Weight::PayloadType _payload_value;
-  PayAttr _payload;  // payload of the matched automaton state
-  automaton::StateId _sink;
-};
-
-template<typename FST>
-bool AutomatonTermIterator<FST>::next() {
-  SDB_ASSERT(_fst_matcher.GetFst().GetImpl());
-  auto& fst = *_fst_matcher.GetFst().GetImpl();
-
-  // iterator at the beginning or seek to cached state was called
-  if (!_cur_block) {
-    if (value().empty()) {
-      const auto fst_start = fst.Start();
-      _cur_block = PushBlock(fst.Final(fst_start), *_fst, 0, 0,
-                             _acceptor->Start(), fst_start);
-      _cur_block->Load(TermsInput());
-    } else {
-      SDB_ASSERT(false);
-      // FIXME(gnusi): consider removing this, as that seems to be impossible
-      // anymore
-
-      // seek to the term with the specified state was called from
-      // TermIterator::seek(bytes_view, const attribute&),
-      [[maybe_unused]] const SeekResult res = seek_ge(value());
-      SDB_ASSERT(SeekResult::Found == res);
-    }
-  }
-
-  automaton::StateId state;
-
-  auto read_suffix = [this, &state, &fst](const byte_type* suffix,
-                                          size_t suffix_size) -> SeekResult {
-    if (suffix_size) {
-      auto& arcs = _cur_block->Arcs();
-      SDB_ASSERT(!arcs.Done());
-
-      const auto* arc = arcs.Value();
-
-      const uint32_t lead_label = *suffix;
-
-      if (lead_label < arc->min) {
-        return SeekResult::NotFound;
-      }
-
-      if (lead_label > arc->max) {
-        arc = arcs.Seek(lead_label);
-
-        if (!arc) {
-          if (arcs.Done()) {
-            return SeekResult::End;  // pop current block
-          }
-
-          return SeekResult::NotFound;
-        }
-      }
-
-      SDB_ASSERT(*suffix >= arc->min && *suffix <= arc->max);
-      state = arc->nextstate;
-
-      if (state == _sink) {
-        return SeekResult::NotFound;
-      }
-
-#ifdef SDB_DEV
-      SDB_ASSERT(_matcher->Peek(_cur_block->AcceptorState(), *suffix) == state);
-#endif
-
-      const auto* end = suffix + suffix_size;
-      const auto* begin = suffix + 1;  // already match first suffix label
-
-      for (; begin < end; ++begin) {
-        state = _matcher->Peek(state, *begin);
-
-        if (fst::kNoStateId == state) {
-          // suffix doesn't match
-          return SeekResult::NotFound;
-        }
-      }
-    } else {
-      state = _cur_block->AcceptorState();
-    }
-
-    if (EntryType::Term == _cur_block->Type()) {
-      const auto weight = _acceptor->Final(state);
-      if (weight) {
-        _payload_value = weight.Payload();
-        Copy(suffix, _cur_block->Prefix(), suffix_size);
-
-        return SeekResult::Found;
-      }
-    } else {
-      SDB_ASSERT(EntryType::Block == _cur_block->Type());
-      fst::ArcIteratorData<automaton::Arc> data;
-      _acceptor->InitArcIterator(state, &data);
-
-      if (data.narcs) {
-        Copy(suffix, _cur_block->Prefix(), suffix_size);
-
-        _weight.Resize(_cur_block->WeightPrefix());
-        auto fst_state = _cur_block->FstState();
-
-        if (const auto* end = suffix + suffix_size; suffix < end) {
-          auto& fst_arcs = _cur_block->FstArcs();
-          fst_arcs.Seek(*suffix++);
-          SDB_ASSERT(!fst_arcs.Done());
-          const auto* arc = fst_arcs.Value();
-          _weight.PushBack(arc->weight.begin(), arc->weight.end());
-
-          fst_state = fst_arcs.Value()->nextstate;
-          for (_fst_matcher.SetState(fst_state); suffix < end; ++suffix) {
-            [[maybe_unused]] const bool found = _fst_matcher.Find(*suffix);
-            SDB_ASSERT(found);
-
-            const auto& arc = _fst_matcher.Value();
-            fst_state = arc.nextstate;
-            _fst_matcher.SetState(fst_state);
-            _weight.PushBack(arc.weight.begin(), arc.weight.end());
-          }
-        }
-
-        const auto& weight = fst.FinalRef(fst_state);
-        SDB_ASSERT(!weight.Empty() ||
-                   FstBuffer::FstByteBuilder::kFinal == fst_state);
-        const auto weight_prefix = _weight.Size();
-        _weight.PushBack(weight.begin(), weight.end());
-        _block_stack.emplace_back(static_cast<bytes_view>(_weight), *_fst,
-                                  _term_buf.size(), weight_prefix, state,
-                                  fst_state, data.arcs, data.narcs);
-        _cur_block = &_block_stack.back();
-
-        SDB_ASSERT(_block_stack.size() < 2 ||
-                   (++_block_stack.rbegin())->BlockStart() ==
-                     _cur_block->Start());
-
-        if (!_acceptor->Final(state)) {
-          _cur_block->ScanToSubBlock(data.arcs->min);
-        }
-
-        _cur_block->Load(TermsInput());
-      }
-    }
-
-    return SeekResult::NotFound;
-  };
-
-  for (;;) {
-    // pop finished blocks
-    while (_cur_block->Done()) {
-      if (_cur_block->SubCount()) {
-        // we always instantiate block with header
-        SDB_ASSERT(Block::kInvalidLabel != _cur_block->NextLabel());
-
-        const uint32_t next_label = _cur_block->NextLabel();
-
-        auto& arcs = _cur_block->Arcs();
-        SDB_ASSERT(!arcs.Done());
-        const auto* arc = arcs.Value();
-
-        if (next_label < arc->min) {
-          SDB_ASSERT(arc->min <= std::numeric_limits<uint8_t>::max());
-          _cur_block->ScanToSubBlock(byte_type(arc->min));
-          SDB_ASSERT(_cur_block->NextLabel() == Block::kInvalidLabel ||
-                     arc->min < uint32_t(_cur_block->NextLabel()));
-        } else if (arc->max < next_label) {
-          arc = arcs.Seek(next_label);
-
-          if (arcs.Done()) {
-            if (&_block_stack.front() == _cur_block) {
-              // need to pop root block, we're done
-              ResetValue();
-              _cur_block->Reset();
-              return false;
-            }
-
-            _cur_block = PopBlock();
-            continue;
-          }
-
-          if (!arc) {
-            SDB_ASSERT(arcs.Value()->min <=
-                       std::numeric_limits<uint8_t>::max());
-            _cur_block->ScanToSubBlock(byte_type(arcs.Value()->min));
-            SDB_ASSERT(_cur_block->NextLabel() == Block::kInvalidLabel ||
-                       arcs.Value()->min < uint32_t(_cur_block->NextLabel()));
-          } else {
-            SDB_ASSERT(arc->min <= next_label && next_label <= arc->max);
-            _cur_block->template NextSubBlock<true>();
-          }
-        } else {
-          SDB_ASSERT(arc->min <= next_label && next_label <= arc->max);
-          _cur_block->template NextSubBlock<true>();
-        }
-
-        _cur_block->Load(TermsInput());
-      } else if (&_block_stack.front() == _cur_block) {  // root
-        ResetValue();
-        _cur_block->Reset();
-        return false;
-      } else {
-        const uint64_t start = _cur_block->Start();
-        _cur_block = PopBlock();
-        _posting_meta = _cur_block->State();
-        if (_cur_block->Dirty() || _cur_block->BlockStart() != start) {
-          // here we're currently at non block that was not loaded yet
-          SDB_ASSERT(_cur_block->Prefix() < _term_buf.size());
-          // to sub-block
-          _cur_block->ScanToSubBlock(_term_buf[_cur_block->Prefix()]);
-          _cur_block->Load(TermsInput());
-          _cur_block->ScanToBlock(start);
-        }
-      }
-    }
-
-    const auto res = _cur_block->Scan(read_suffix);
-
-    if (SeekResult::Found == res) {
-      RefreshValue();
-      return true;
-    } else if (SeekResult::End == res) {
-      if (&_block_stack.front() == _cur_block) {
-        // need to pop root block, we're done
-        ResetValue();
-        _cur_block->Reset();
-        return false;
-      }
-
-      // continue with popped block
-      _cur_block = PopBlock();
-    }
-  }
 }
 
 }  // namespace
@@ -2501,7 +2552,7 @@ class FieldReader::Impl {
                          IndexInput& blocks_in) {
       blocks_in.Seek(meta.body_offset);
       LoadFromMeta(id, meta, blocks_in);
-      _fst.reset(FST::Read(blocks_in, _owner->_resource_manager));
+      _fst = FST::Read(blocks_in, _owner->_resource_manager);
       if (!_fst) {
         throw IndexError{
           absl::StrCat("Failed to read term index for field id ", id)};
@@ -2563,36 +2614,26 @@ class FieldReader::Impl {
       }
     }
 
-    SeekTermIterator::ptr iterator(
-      const automaton_table_matcher& matcher) const final {
-      auto& acceptor = matcher.GetFst();
+    template<typename A>
+    SeekTermIterator::ptr MakeAcceptorIterator(const A& a) const {
+      return memory::make_managed<AcceptorTermIterator<FST, A>>(
+        *this, _owner->_pr, *_owner->_terms_in, *_fst, a);
+    }
 
-      const auto start = acceptor.Start();
+    SeekTermIterator::ptr iterator(const LevenshteinAcceptor& a) const final {
+      return MakeAcceptorIterator(a);
+    }
 
-      if (fst::kNoStateId == start) {
-        return SeekTermIterator::empty();
-      }
+    SeekTermIterator::ptr iterator(const RegexpAcceptor& a) const final {
+      return MakeAcceptorIterator(a);
+    }
 
-      if (!acceptor.NumArcs(start)) {
-        if (acceptor.Final(start)) {
-          // match all
-          return this->iterator();
-        }
+    SeekTermIterator::ptr iterator(const RegexpConjunction& a) const final {
+      return MakeAcceptorIterator(a);
+    }
 
-        return SeekTermIterator::empty();
-      }
-
-      auto terms_in = _owner->_terms_in->Reopen();
-
-      if (!terms_in) {
-        // implementation returned wrong pointer
-        SDB_ERROR(IRESEARCH, "Failed to reopen terms input");
-
-        throw IoError{"Failed to reopen terms input"};  // FIXME
-      }
-
-      return memory::make_managed<AutomatonTermIterator<FST>>(
-        *this, _owner->_pr, std::move(terms_in), *_fst, matcher);
+    SeekTermIterator::ptr iterator(const FuzzyConjunction& a) const final {
+      return MakeAcceptorIterator(a);
     }
 
     std::unique_ptr<IndexInput> ReopenPayload() const final {

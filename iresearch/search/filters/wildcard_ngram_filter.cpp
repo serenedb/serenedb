@@ -45,41 +45,6 @@
 namespace irs {
 namespace {
 
-std::shared_ptr<RE2> BuildLikeMatcher(std::string_view pattern) {
-  std::string regex;
-  regex.reserve(pattern.size() * 2);
-  regex += "\\A";
-  bool escaped = false;
-  for (char c : pattern) {
-    if (escaped) {
-      escaped = false;
-      if (absl::StrContains("\\[](){}.*+?|^$", std::string_view{&c, 1})) {
-        regex += '\\';
-      }
-      regex += c;
-    } else if (c == '\\') {
-      escaped = true;
-    } else if (c == '%') {
-      regex += ".*";
-    } else if (c == '_') {
-      regex += '.';
-    } else {
-      if (absl::StrContains("\\[](){}.*+?|^$", std::string_view{&c, 1})) {
-        regex += '\\';
-      }
-      regex += c;
-    }
-  }
-  regex += "\\z";
-  RE2::Options opts;
-  opts.set_dot_nl(true);
-  auto re = std::make_shared<RE2>(regex, opts);
-  if (!re->ok()) {
-    return nullptr;
-  }
-  return re;
-}
-
 enum class WildcardNGramKind {
   Term,
   Prefix,
@@ -264,7 +229,10 @@ ByWildcardNGramOptions::ByWildcardNGramOptions(
     has_pos = has_positions;
   }
   if (needs_matcher || !has_pos) {
-    matcher = BuildLikeMatcher(pattern);
+    LikeMatcher like{ViewCast<byte_type>(pattern)};
+    if (like.ok()) {
+      matcher = std::make_shared<const LikeMatcher>(std::move(like));
+    }
   }
 }
 

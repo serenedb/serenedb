@@ -30,7 +30,9 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
-#include "iresearch/utils/automaton_decl.hpp"
+#include "iresearch/utils/conjunction_acceptor.hpp"
+#include "iresearch/utils/levenshtein_acceptor.hpp"
+#include "iresearch/utils/regexp_acceptor.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -68,9 +70,17 @@ struct TermReader : public AttributeProvider {
   // has nowhere to walk to afterwards.
   virtual PostingMeta Lookup(bytes_view term) const = 0;
 
-  // Returns an intersection of a specified automaton and term reader.
   virtual SeekTermIterator::ptr iterator(
-    const automaton_table_matcher& matcher) const = 0;
+    const RegexpAcceptor& acceptor) const = 0;
+
+  virtual SeekTermIterator::ptr iterator(
+    const LevenshteinAcceptor& acceptor) const = 0;
+
+  virtual SeekTermIterator::ptr iterator(
+    const RegexpConjunction& acceptor) const = 0;
+
+  virtual SeekTermIterator::ptr iterator(
+    const FuzzyConjunction& acceptor) const = 0;
 
   virtual std::unique_ptr<IndexInput> ReopenPayload() const { return nullptr; }
 

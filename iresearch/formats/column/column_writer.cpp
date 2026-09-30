@@ -357,30 +357,10 @@ class ListIngest {
     }
     _fresh.clear();
     _picked.clear();
-    for (duckdb::idx_t i = off; i < off + count; ++i) {
-      const auto idx = parent.sel->get_index(i);
-      if (!parent.validity.RowIsValid(idx)) {
-        _codes.Push(_last_code);
-        continue;
-      }
-      ++_valid_rows;
-      const auto& entry = entries[idx];
-      uint32_t rep = kNoRep;
-      const auto found =
-        _direct ? FindDirect(entry, rep) : FindSorted(keys[i - off]);
-      if (found) {
-        _last_code = *found;
-        _codes.Push(_last_code);
-        continue;
-      }
-      _last_code = _next_code++;
-      _fresh.push_back(Fresh{rep, _picked.size(), entry.length});
-      for (uint64_t k = 0; k < entry.length; ++k) {
-        _picked.push_back(static_cast<duckdb::sel_t>(entry.offset + k));
-      }
-      _running += entry.length;
-      _ends.Push(_running);
-      _codes.Push(_last_code);
+    if (TrackSource(vec)) {
+      AddRows<true>(parent, entries, keys, off, count);
+    } else {
+      AddRows<false>(parent, entries, keys, off, count);
     }
     Store(child);
     if ((_next_code - _code_base) * 10 > _valid_rows * 9) {
@@ -425,6 +405,49 @@ class ListIngest {
     size_t picked;
     uint64_t length;
   };
+
+  template<bool kCached>
+  void AddRows(const duckdb::UnifiedVectorFormat& parent,
+               const duckdb::list_entry_t* entries,
+               const duckdb::string_t* keys, duckdb::idx_t off,
+               duckdb::idx_t count) {
+    for (duckdb::idx_t i = off; i < off + count; ++i) {
+      const auto idx = parent.sel->get_index(i);
+      if (!parent.validity.RowIsValid(idx)) {
+        _codes.Push(_last_code);
+        continue;
+      }
+      ++_valid_rows;
+      if constexpr (kCached) {
+        if (idx < _source_codes.size() && _source_codes[idx] != 0) {
+          _last_code = _source_codes[idx] - 1;
+          _codes.Push(_last_code);
+          continue;
+        }
+      }
+      const auto& entry = entries[idx];
+      uint32_t rep = kNoRep;
+      const auto found =
+        _direct ? FindDirect(entry, rep) : FindSorted(keys[i - off]);
+      _last_code = found ? *found : _next_code++;
+      if constexpr (kCached) {
+        if (idx >= _source_codes.size()) {
+          _source_codes.resize(idx + 1, 0);
+        }
+        _source_codes[idx] = _last_code + 1;
+      }
+      _codes.Push(_last_code);
+      if (found) {
+        continue;
+      }
+      _fresh.push_back(Fresh{rep, _picked.size(), entry.length});
+      for (uint64_t k = 0; k < entry.length; ++k) {
+        _picked.push_back(static_cast<duckdb::sel_t>(entry.offset + k));
+      }
+      _running += entry.length;
+      _ends.Push(_running);
+    }
+  }
 
   void AddDistinct(const duckdb::UnifiedVectorFormat& parent,
                    const duckdb::list_entry_t* entries,
@@ -514,7 +537,28 @@ class ListIngest {
     return std::nullopt;
   }
 
+  bool TrackSource(const duckdb::Vector& vec) {
+    if (vec.GetVectorType() != duckdb::VectorType::DICTIONARY_VECTOR) {
+      return false;
+    }
+    const auto* lists = &vec;
+    while (lists->GetVectorType() == duckdb::VectorType::DICTIONARY_VECTOR) {
+      lists = &duckdb::DictionaryVector::Child(*lists);
+    }
+    if (lists->GetVectorType() != duckdb::VectorType::FLAT_VECTOR) {
+      return false;
+    }
+    const auto& buffer = lists->GetBufferRef();
+    if (buffer != _source) {
+      _source = buffer;
+      _source_codes.clear();
+    }
+    return true;
+  }
+
   void Forget() {
+    _source.reset();
+    _source_codes.clear();
     _prev = kNoRep;
     _heads.clear();
     _reps.clear();
@@ -619,6 +663,8 @@ class ListIngest {
   containers::FlatHashMap<std::string, uint64_t> _sorted;
   std::vector<Fresh> _fresh;
   std::vector<duckdb::sel_t> _picked;
+  duckdb::buffer_ptr<duckdb::VectorBuffer> _source;
+  std::vector<uint64_t> _source_codes;
 };
 
 namespace {

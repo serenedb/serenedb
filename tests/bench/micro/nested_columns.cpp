@@ -116,8 +116,7 @@ const Data& GetData(Shape shape) {
               EmptySql(shape) + " ELSE " + ValueSql(shape) +
               " END FROM range(" + std::to_string(Rows()) + ") t(i)");
   if (result->HasError()) {
-    std::fprintf(stderr, "data query failed: %s\n",
-                 result->GetError().c_str());
+    std::fprintf(stderr, "data query failed: %s\n", result->GetError().c_str());
     std::abort();
   }
   slot->type = result->types[0];
@@ -244,6 +243,33 @@ void FullScan(benchmark::State& state, Shape shape) {
                           static_cast<int64_t>(rows));
 }
 
+void Rewrite(benchmark::State& state, Shape shape) {
+  const auto& seg = GetSeg(shape);
+  const auto rows = seg.col->RowCount();
+  irs::ReadContext ctx{*seg.reader};
+  uint64_t bytes = 0;
+  for (auto _ : state) {
+    irs::MemoryDirectory dir{};
+    irs::ColWriter w{dir, kSeg, CsDb()};
+    auto& cw = w.OpenColumn(kField, seg.col->Type());
+    auto st = seg.col->InitScan(ctx);
+    uint64_t pos = 0;
+    while (pos < rows) {
+      duckdb::Vector batch{seg.col->Type(), STANDARD_VECTOR_SIZE};
+      const auto take = std::min<uint64_t>(rows - pos, STANDARD_VECTOR_SIZE);
+      seg.col->Scan(st, batch, take);
+      cw.Append(batch, take);
+      pos += take;
+    }
+    w.Commit(rows);
+    bytes = DirBytes(dir);
+    benchmark::DoNotOptimize(&dir);
+  }
+  state.counters["bytes"] = static_cast<double>(bytes);
+  state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) *
+                          static_cast<int64_t>(rows));
+}
+
 void SparseGather(benchmark::State& state, Shape shape) {
   const auto& seg = GetSeg(shape);
   const auto& rows = ScatteredRows();
@@ -285,6 +311,7 @@ void SparseGather(benchmark::State& state, Shape shape) {
 
 NESTED_CASES(WriteSeal);
 NESTED_CASES(WriteSealSparse);
+NESTED_CASES(Rewrite);
 NESTED_CASES(FullScan);
 NESTED_CASES(SparseGather);
 

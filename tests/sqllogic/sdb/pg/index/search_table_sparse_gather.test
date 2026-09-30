@@ -90,6 +90,17 @@ SELECT count(*) AS n FROM (
 n
 0
 
+query
+SELECT i, low, list_transform(pos, p -> p.company) AS companies FROM ssg WHERE tag = 'rare' ORDER BY i;
+----
+i	low	companies
+7	name 7	{"company 49","company 50"}
+5006	name 21	{"company 2031"}
+10005	name 35	{}
+15004	name 49	{NULL,"company 2995","company 2996","company 2997"}
+20003	name 63	{"company 1975","company 1976","company 1977"}
+25002	name 77	{"company 956",NULL}
+
 statement ok
 DROP TABLE ssg;
 

@@ -32,10 +32,10 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
-#include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/count/plan.hpp"
 #include "iresearch/search/count/walk.hpp"

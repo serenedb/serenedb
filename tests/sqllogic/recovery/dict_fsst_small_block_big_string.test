@@ -18,7 +18,7 @@ control substitution on
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/dfsb.db' AS dfsb (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', BLOCK_SIZE 16384);
+ATTACH '${__TEST_DIR__}/dfsb.db' AS dfsb (TYPE duckdb, STORAGE_VERSION 'serenedb_latest', BLOCK_SIZE 16384);
 
 
 statement ok

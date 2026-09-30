@@ -293,7 +293,7 @@ jobs:
           if [[ "${{ inputs.CONFIG }}" != "perf" ]]; then
             TARGETS+=(serenedb-tests)
             [[ "$RUN_IRESEARCH" == "true" ]] && TARGETS+=(iresearch-tests iresearch-load-tests)
-            if [[ -n "$DUCKDB_SUITES" ]]; then
+            if [[ -n "$(tr ',' '\n' <<<"$DUCKDB_SUITES" | grep -vx interop)" ]]; then
               TARGETS+=(unittest)
               EXTRA_FLAGS="${EXTRA_FLAGS} -DSDB_BUILD_DUCKDB_UNITTESTS=ON"
             fi

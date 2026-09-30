@@ -25,7 +25,7 @@
 #include <utility>
 
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/formats.hpp"
+#include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/term_predicate.hpp"
 #include "iresearch/search/scorers/scorer.hpp"

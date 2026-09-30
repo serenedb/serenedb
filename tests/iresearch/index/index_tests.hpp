@@ -166,13 +166,7 @@ struct CallbackDirectory : DirectoryMock {
   AfterCallback after;
 };
 
-struct FormatInfo {
-  constexpr FormatInfo(const char* codec = "") noexcept : codec(codec) {}
-
-  const char* codec;
-};
-
-typedef std::tuple<tests::dir_param_f, FormatInfo> index_test_context;
+typedef std::tuple<tests::dir_param_f> index_test_context;
 
 void AssertSnapshotEquality(irs::DirectoryReader lhs, irs::DirectoryReader rhs);
 
@@ -219,10 +213,7 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
  protected:
   std::shared_ptr<irs::Directory> get_directory(const TestBase& ctx) const;
 
-  irs::Format::ptr get_codec() const;
-
   irs::Directory& dir() const { return *_dir; }
-  irs::Format::ptr codec() const { return _codec; }
   const index_t& index() const { return _index; }
   index_t& index() { return _index; }
 
@@ -231,20 +222,20 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
   irs::IndexWriter::ptr open_writer(
     irs::Directory& dir, irs::OpenMode mode = irs::kOmCreate,
     irs::IndexWriterOptions options = CsDefaultWriterOptions()) const {
-    return irs::IndexWriter::Make(dir, _codec, mode,
+    return irs::IndexWriter::Make(dir, mode,
                                   EnsureWriterDb(std::move(options)));
   }
 
   irs::IndexWriter::ptr open_writer(
     irs::OpenMode mode = irs::kOmCreate,
     irs::IndexWriterOptions options = CsDefaultWriterOptions()) const {
-    return irs::IndexWriter::Make(*_dir, _codec, mode,
+    return irs::IndexWriter::Make(*_dir, mode,
                                   EnsureWriterDb(std::move(options)));
   }
 
   irs::DirectoryReader open_reader(
     const irs::IndexReaderOptions& options = CsDefaultReaderOptions()) const {
-    return irs::DirectoryReader{*_dir, _codec, options};
+    return irs::DirectoryReader{*_dir, options};
   }
 
   void AssertSnapshotEquality(const irs::IndexWriter& writer);
@@ -261,15 +252,10 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
     // set directory
     _dir = get_directory(*this);
     ASSERT_NE(nullptr, _dir);
-
-    // set codec
-    _codec = get_codec();
-    ASSERT_NE(nullptr, _codec);
   }
 
   void TearDown() final {
     _dir = nullptr;
-    _codec = nullptr;
     TestBase::TearDown();
     irs::timer_utils::InitStats();  // disable profile state tracking
   }
@@ -305,7 +291,6 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
  private:
   index_t _index;
   std::shared_ptr<irs::Directory> _dir;
-  irs::Format::ptr _codec;
 };
 
 }  // namespace tests

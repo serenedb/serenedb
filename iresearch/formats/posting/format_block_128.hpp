@@ -26,7 +26,6 @@
 
 #include <string_view>
 
-#include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
@@ -42,9 +41,6 @@ namespace irs {
 // for even bitpacking. Or larger block size.
 // But in general we need to think more about size of data.
 struct FormatTraits128 {
-  // TODO(mbkkt) rename to "block_128"
-  static constexpr std::string_view kName = "1_5simd";
-
   static_assert(doc_limits::kBlockSize > 1);
   static_assert(doc_limits::kBlockSize % BitsRequired<byte_type>() == 0);
   // For bitset encoding.
@@ -1105,11 +1101,18 @@ struct FormatTraits128 {
   IRS_FORCE_INLINE static const byte_type* ReadDataPaddedImpl(
     uint32_t size, InputType& in, uint32_t* IRS_RESTRICT buf) {
     if constexpr (InputType::kVolatileAlways) {
-      // The whole file is in memory and every index file ends with a footer of
-      // exactly STREAMVBYTE_PADDING bytes, so the padding is always in bounds.
-      static_assert(format_utils::kFooterLen >= STREAMVBYTE_PADDING);
-      SDB_ASSERT(in.Length() - in.Position() >= size + STREAMVBYTE_PADDING);
-      return in.ReadVolatile(size);
+      // The whole file is in memory, so the pointer is usable as long as the
+      // padding still lies inside it. Only a block close to the end of a file
+      // can come up short -- the footer behind it is variable length -- and
+      // this path has no caller buffer, so bounce those through a local one.
+      if (in.Length() - in.Position() >= size + STREAMVBYTE_PADDING)
+        [[likely]] {
+        return in.ReadVolatile(size);
+      }
+      static thread_local uint32_t tail[kEncBufSize];
+      SDB_ASSERT(size <= sizeof(tail) - STREAMVBYTE_PADDING);
+      in.ReadData(reinterpret_cast<byte_type*>(tail), size);
+      return reinterpret_cast<byte_type*>(tail);
     } else {
       const auto pos = in.Position();
       if (const auto* data = in.ReadVolatile(size + STREAMVBYTE_PADDING)) {

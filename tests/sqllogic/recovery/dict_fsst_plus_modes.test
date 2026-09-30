@@ -1,8 +1,5 @@
 # dict_fsst serenedb-only FSST+ modes (DICT_FSST_PLUS / FSST_PLUS)
-# and the native-write gate. Two duckdb databases are attached: one marked
-# STORAGE_VERSION 'serenedb_v1' (the version serenedb's own files and the .col
-# columnstore use),
-# one plain native. force_compression pins dict_fsst so the per-segment mode is
+# and the native-write gate. force_compression pins dict_fsst so the per-segment mode is
 # observable via pragma_storage_info(..., include_segment_info=true), which
 # reports "mode: <name>". Contract: on serenedb-owned storage an FSST-worthy
 # dictionary is cleaved into a _plus mode; native storage never writes a plus mode
@@ -18,7 +15,7 @@ SET force_compression='dict_fsst';
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/dfp_owned.db' AS own (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+ATTACH '${__TEST_DIR__}/dfp_owned.db' AS own (TYPE duckdb, STORAGE_VERSION 'serenedb_latest');
 
 
 statement ok

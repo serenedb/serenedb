@@ -20,7 +20,6 @@
 
 #include <gtest/gtest.h>
 
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 
@@ -28,7 +27,6 @@
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
-  irs::formats::Init();
   irs::InitOptimizeRules();
   irs::DuckDBEngine::Instance().Initialize(
     &sdb::connector::RegisterConfigVariables);

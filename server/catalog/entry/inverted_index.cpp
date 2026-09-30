@@ -28,9 +28,6 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
-#include <duckdb/common/serializer/binary_deserializer.hpp>
-#include <duckdb/common/serializer/binary_serializer.hpp>
-#include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/query_context.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
@@ -43,11 +40,11 @@
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/serializer.hpp>
 #include <string>
 
 #include "catalog/catalog.h"
 #include "catalog/entry/search_table.h"
+#include "catalog/persistence/blob.h"
 #include "connector/column_id.h"
 #include "connector/primary_key.h"
 #include "query/config.h"
@@ -64,27 +61,20 @@ constexpr std::string_view kKeyColumnsOption = "key_columns";
 constexpr std::string_view kStorePkOption = "store_pk";
 
 duckdb::Value Pack(const persistence::InvertedIndexData& data) {
-  duckdb::MemoryStream stream;
-  duckdb::BinarySerializer serializer{stream};
-  irs::utils::WriteTuple(serializer, data);
-  return duckdb::Value::BLOB(stream.GetData(), stream.GetPosition());
+  const auto bytes = persistence::Pack(data);
+  return duckdb::Value::BLOB(
+    reinterpret_cast<duckdb::const_data_ptr_t>(bytes.data()), bytes.size());
 }
 
 std::optional<persistence::InvertedIndexData> Unpack(
+  std::string_view index,
   const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
   const auto it = options.find(kPayloadOption);
   if (it == options.end() || it->second.IsNull()) {
     return std::nullopt;
   }
-  const auto& bytes = duckdb::StringValue::Get(it->second);
-  duckdb::MemoryStream stream{
-    const_cast<duckdb::data_ptr_t>(
-      reinterpret_cast<duckdb::const_data_ptr_t>(bytes.data())),
-    bytes.size()};
-  duckdb::BinaryDeserializer deserializer{stream};
-  persistence::InvertedIndexData data;
-  irs::utils::ReadTuple(deserializer, data);
-  return data;
+  return persistence::Unpack<persistence::InvertedIndexData>(
+    "inverted index", index, duckdb::StringValue::Get(it->second));
 }
 
 std::string TopKScorerOption(
@@ -428,7 +418,8 @@ InvertedIndexEntry::InvertedIndexEntry(
   if (table && !table->IsDuckTable()) {
     _search_table = table->Cast<SearchTableEntry>().Storage();
   }
-  if (auto data = Unpack(info.options)) {
+  if (auto data =
+        Unpack(info.GetIndexName().GetIdentifierName(), info.options)) {
     _config = FromPersisted(std::move(*data), options, parsed_expressions);
     options.erase(kPayloadOption);
   }

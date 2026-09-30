@@ -31,6 +31,7 @@
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
+#include "iresearch/formats/reader_state.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -112,18 +113,16 @@ FileRefs GetRefs(const Directory& dir, const SegmentMeta& meta) {
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   const Directory& dir, const SegmentMeta& meta,
   const IndexReaderOptions& options) {
-  SDB_ASSERT(meta.codec);
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_refs = GetRefs(dir, meta);
   reader->_data = std::make_shared<ColumnData>();
   reader->_data->Open(dir, meta, options);
-  reader->_field_reader = std::make_shared<burst_trie::FieldReader>(
-    meta.codec->get_postings_reader(), *dir.ResourceManager().readers);
+  reader->_field_reader =
+    std::make_shared<burst_trie::FieldReader>(*dir.ResourceManager().readers);
   if (options.index) {
     reader->_field_reader->prepare(ReaderState{
       .dir = &dir,
       .meta = &meta,
-      .scorer = options.scorer,
       .idx = reader->_data->idx_reader.get(),
     });
   }

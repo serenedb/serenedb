@@ -49,6 +49,8 @@ struct DataDirectory final : duckdb::StorageExtensionInfo {
   std::string directory;
 };
 
+void RequestSereneDBStorageVersion(duckdb::AttachOptions& options);
+
 void Attach(duckdb::ClientContext& context, duckdb::AttachInfo& info,
             std::string_view type, duckdb::AttachVisibility visibility);
 

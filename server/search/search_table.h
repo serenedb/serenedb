@@ -91,6 +91,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
                                        duckdb::idx_t schema_id,
                                        duckdb::idx_t table_id);
   static std::filesystem::path GetWalPath(duckdb::idx_t db_id);
+  static uint64_t ReadCommittedTick(duckdb::BinaryDeserializer& payload);
 
   // A drop commits while readers may still hold this table; the destructor
   // removes the index dir and the WAL shard once the last of them lets go.
@@ -109,10 +110,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   // Re-attach a segment this shard already flushed + fsynced, named by its meta
   // file. `tick` must be in the adopting transaction's space -- it orders the
   // segment against that transaction's removals. False == cannot be reopened.
-  bool AdoptSegment(std::string_view meta_file, std::string_view codec_name,
-                    uint64_t tick) {
-    return _writer->AdoptSegment(meta_file, irs::formats::Get(codec_name),
-                                 tick);
+  bool AdoptSegment(std::string_view meta_file, uint64_t tick) {
+    return _writer->AdoptSegment(meta_file, tick);
   }
 
   // Called once this shard's WAL has been replayed, to reclaim what the replay
@@ -247,13 +246,11 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   irs::IndexWriter::CompactionFloorGuard ArmCompactionFloor() {
     return _writer->ArmCompactionFloor();
   }
-  const irs::Format::ptr& Codec() const noexcept { return _writer->Codec(); }
   bool ReplaceSegments(std::span<const std::string_view> replaced,
                        std::span<const std::string_view> adopted_metas,
-                       const irs::Format::ptr& codec,
                        irs::IndexWriter::Transaction* removals = nullptr,
                        uint64_t removals_tick = irs::writer_limits::kMinTick) {
-    return _writer->ReplaceSegments(replaced, adopted_metas, codec, removals,
+    return _writer->ReplaceSegments(replaced, adopted_metas, removals,
                                     removals_tick);
   }
 

@@ -26,7 +26,8 @@
 #include <algorithm>
 #include <deque>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/formats/formats.hpp>
+#include <iresearch/formats/basic_term_reader.hpp>
+#include <iresearch/formats/term_reader.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/detail/posting_pos.hpp>
@@ -356,8 +357,6 @@ class FormatTestCase : public IndexTestBase {
     bool _has_pos;
   };
 
-  bool supports_encryption() const noexcept { return true; }
-
   bool supports_columnstore_headers() const noexcept { return true; }
 
   template<typename It>
@@ -456,11 +455,9 @@ class FormatTestCase : public IndexTestBase {
   }
 
   void AssertNoDirectoryArtifacts(
-    const irs::Directory& dir, const irs::Format& codec,
+    const irs::Directory& dir,
     const std::unordered_set<std::string>& expect_additional = {});
 };
-
-class FormatTestCaseWithEncryption : public FormatTestCase {};
 
 }  // namespace tests
 namespace irs {

@@ -13,7 +13,7 @@ control substitution on
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/dfp_overflow.db' AS dfo_own (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+ATTACH '${__TEST_DIR__}/dfp_overflow.db' AS dfo_own (TYPE duckdb, STORAGE_VERSION 'serenedb_latest');
 
 
 statement ok

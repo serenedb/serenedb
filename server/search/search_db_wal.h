@@ -61,7 +61,6 @@ class SearchDbWal {
   // around it comes from the op manifest, so no tick is recorded.
   struct SegmentRef {
     std::string meta_file;
-    std::string codec;
   };
 
   struct Op {

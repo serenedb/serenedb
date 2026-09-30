@@ -35,6 +35,8 @@ add_executable(
     scorer_bounds_test.cpp
     serializer_binary_test.cpp
     serializer_test.cpp
+    storage_version_test.cpp
+    catalog/entry/tokenizer_test.cpp
     connector/ai_functions_test.cpp
     connector/copy_in_bridge_test.cpp
     connector/duckdb_search_filter_builder_test.cpp

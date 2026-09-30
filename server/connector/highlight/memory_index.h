@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/memory_directory.hpp>
@@ -44,8 +43,8 @@ class MemoryIndex {
     opts.lock_repository = false;
     opts.db = _db;
     opts.reader_options.db = _db;
-    auto writer = irs::IndexWriter::Make(_dir, _codec, irs::OpenMode::kOmCreate,
-                                         std::move(opts));
+    auto writer =
+      irs::IndexWriter::Make(_dir, irs::OpenMode::kOmCreate, std::move(opts));
     {
       irs::IndexWriter::Transaction trx{*writer};
       {
@@ -66,7 +65,6 @@ class MemoryIndex {
   }
 
  private:
-  irs::Format::ptr _codec;
   irs::MemoryDirectory _dir;
   duckdb::DatabaseInstance* _db;
 };

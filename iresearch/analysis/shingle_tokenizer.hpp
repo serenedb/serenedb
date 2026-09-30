@@ -146,21 +146,4 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
   bstring _blob;
 };
 
-template<typename Context>
-void SerdeWrite(Context ctx, const ShingleTokenizer::Options& o) {
-  irs::utils::WriteTupleOrObject(
-    ctx, std::tie(o.base_analyzer, o.min_shingle_size, o.max_shingle_size,
-                  o.output_unigrams, o.fallback_unigrams, o.token_separator,
-                  o.filler_token, o.frequent_words, o.store_tokens));
-}
-
-template<typename Context>
-void SerdeRead(Context ctx, ShingleTokenizer::Options& o) {
-  auto refs =
-    std::tie(o.base_analyzer, o.min_shingle_size, o.max_shingle_size,
-             o.output_unigrams, o.fallback_unigrams, o.token_separator,
-             o.filler_token, o.frequent_words, o.store_tokens);
-  irs::utils::ReadTupleOrObject(ctx, refs);
-}
-
 }  // namespace irs::analysis

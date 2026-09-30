@@ -27,7 +27,6 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/inverter/fields_inverter.hpp>
@@ -287,10 +286,6 @@ class StoreCollector final : public StoreSink {
 
 class IndexUnderTest {
  public:
-  IndexUnderTest() : _codec{formats::Get("1_5simd")} {}
-
-  bool valid() const noexcept { return _codec != nullptr; }
-  const Format::ptr& codec() const noexcept { return _codec; }
   MemoryDirectory& dir() noexcept { return _dir; }
 
   std::shared_ptr<IndexWriter> Open() {
@@ -298,16 +293,15 @@ class IndexUnderTest {
     options.norm_column_id = [](field_id id) -> field_id {
       return static_cast<field_id>(id + 1000);
     };
-    return IndexWriter::Make(_dir, _codec, kOmCreate, std::move(options));
+    return IndexWriter::Make(_dir, kOmCreate, std::move(options));
   }
 
   DirectoryReader Read() {
-    return DirectoryReader(_dir, _codec, irs::tests::DefaultReaderOptions());
+    return DirectoryReader(_dir, irs::tests::DefaultReaderOptions());
   }
 
  private:
   MemoryDirectory _dir;
-  Format::ptr _codec;
 };
 
 void WriteBlock(IndexWriter::Transaction& trx,
@@ -554,7 +548,6 @@ void BuildIndex(const Spec& spec, std::span<const FieldPlan> plan,
 void CheckInversion(const Spec& spec, std::span<const std::string> values,
                     bool exact, bool consolidate) {
   IndexUnderTest index;
-  ASSERT_TRUE(index.valid());
   auto reference = Make(spec);
   ASSERT_NE(nullptr, reference);
   const auto plan = PlanFor(reference->Traits());
@@ -750,7 +743,6 @@ TEST(TokenizerInversion, MultiValueDocuments) {
       const auto plan = PlanFor(traits);
 
       IndexUnderTest index;
-      ASSERT_TRUE(index.valid());
       {
         auto writer = index.Open();
         ASSERT_NE(nullptr, writer);
@@ -812,7 +804,6 @@ TEST(TokenizerInversion, StoredBlobsReachTheSink) {
     const auto keys = MakeKeys(values.size());
 
     IndexUnderTest index;
-    ASSERT_TRUE(index.valid());
     StoreCollector store;
     doc_id_t first_doc = doc_limits::invalid();
     {
@@ -884,7 +875,6 @@ TEST(TokenizerInversion, SurvivesDeletesAndUpdates) {
     }
 
     IndexUnderTest index;
-    ASSERT_TRUE(index.valid());
     auto writer = index.Open();
     ASSERT_NE(nullptr, writer);
     auto tokenizer = Make(*spec);
@@ -1012,7 +1002,6 @@ TEST(TokenizerInversionLoad, ConcurrentWriters) {
     const auto plan = PlanFor(reference->Traits());
 
     IndexUnderTest index;
-    ASSERT_TRUE(index.valid());
     auto writer = index.Open();
     ASSERT_NE(nullptr, writer);
 

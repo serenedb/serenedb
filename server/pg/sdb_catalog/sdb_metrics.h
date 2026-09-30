@@ -30,7 +30,7 @@ namespace sdb::pg {
 // `relation_id` (NULL for gauges) and are re-read from the catalog per query
 // snapshot. NOLINTBEGIN
 struct SdbMetrics {
-  static constexpr uint64_t kId = 999995;  // TODO(codeworse): assign proper OID
+  static constexpr uint64_t kId = kMinSystem + 401;
   static constexpr std::string_view kName = "sdb_metrics";
 
   Text metric;

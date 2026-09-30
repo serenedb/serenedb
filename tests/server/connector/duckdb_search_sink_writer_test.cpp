@@ -197,24 +197,17 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
             .features = irs::IndexFeatures::None};
   }
 
-  static void SetUpTestCase() {
-    // Running these multiple times does no harm but is redundant.
-    irs::formats::Init();
-  }
-
   void SetUp() final {
     irs::IndexWriterOptions options;
     options.db = &TestDb();
     options.reader_options.db = &TestDb();
-    _codec = irs::formats::Get("1_5simd");
     _data_writer =
-      irs::IndexWriter::Make(_dir, _codec, irs::kOmCreate, std::move(options));
+      irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
   }
 
   void TearDown() final { _data_writer.reset(); }
 
  protected:
-  irs::Format::ptr _codec;
   irs::MemoryDirectory _dir;
   irs::IndexWriter::ptr _data_writer;
 };
@@ -446,7 +439,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
     ASSERT_FALSE(!irs::doc_limits::eof(big_postings->Next()));
   };
   {
-    auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
+    auto reader = irs::DirectoryReader(_dir, {.db = &TestDb()});
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(4, reader.docs_count());
     ASSERT_EQ(4, reader.live_docs_count());
@@ -477,7 +470,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
   _data_writer->RefreshCommit();
 
   {
-    auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
+    auto reader = irs::DirectoryReader(_dir, {.db = &TestDb()});
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(4, reader.docs_count());
     ASSERT_EQ(2, reader.live_docs_count());
@@ -547,7 +540,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
   ASSERT_TRUE(trx.Commit());
   _data_writer->RefreshCommit();
 
-  auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
+  auto reader = irs::DirectoryReader(_dir, {.db = &TestDb()});
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(4, reader.docs_count());
   ASSERT_EQ(4, reader.live_docs_count());
@@ -707,7 +700,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertStringPrefix) {
   sink.Finish();
   ASSERT_TRUE(trx.Commit());
   _data_writer->RefreshCommit();
-  auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
+  auto reader = irs::DirectoryReader(_dir, {.db = &TestDb()});
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(1, reader.docs_count());
   ASSERT_EQ(1, reader.live_docs_count());
@@ -810,7 +803,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
   InsertOneVarcharRow(*_data_writer, kPk, "value3");
   _data_writer->RefreshCommit();
 
-  auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
+  auto reader = irs::DirectoryReader(_dir, {.db = &TestDb()});
   ASSERT_EQ(2, reader.size());
   ASSERT_EQ(4, reader.docs_count());
   ASSERT_EQ(2, reader.live_docs_count());
@@ -878,7 +871,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePending) {
   InsertOneVarcharRow(*_data_writer, kPk, "value3");
   _data_writer->RefreshCommit();
 
-  auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
+  auto reader = irs::DirectoryReader(_dir, {.db = &TestDb()});
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(3, reader.docs_count());
   ASSERT_EQ(1, reader.live_docs_count());
@@ -941,7 +934,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
   // local block is needed as reader/writer should not outlive directory
   {
     auto limited_data_writer =
-      irs::IndexWriter::Make(dir, _codec, irs::kOmCreate, std::move(options));
+      irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
     constexpr std::string_view kPk = {"pk1", 3};
     constexpr std::string_view kPk2 = {"pk2", 3};
     constexpr std::string_view kPk3 = {"pk3", 3};
@@ -953,7 +946,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
     InsertOneVarcharRow(*limited_data_writer, kPk, "value3");
     limited_data_writer->RefreshCommit();
 
-    auto reader = irs::DirectoryReader(dir, _codec, {.db = &TestDb()});
+    auto reader = irs::DirectoryReader(dir, {.db = &TestDb()});
     ASSERT_EQ(3, reader.size());
     ASSERT_EQ(5, reader.docs_count());
     ASSERT_EQ(3, reader.live_docs_count());
@@ -1026,7 +1019,7 @@ TEST_F(DuckDBSearchSinkWriterTest, DeleteNotMissedWithExisting) {
   InsertOneVarcharRow(*_data_writer, kPk, "value2");
   _data_writer->RefreshCommit();
 
-  auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
+  auto reader = irs::DirectoryReader(_dir, {.db = &TestDb()});
   ASSERT_EQ(2, reader.size());
   ASSERT_EQ(3, reader.docs_count());
   ASSERT_EQ(2, reader.live_docs_count());

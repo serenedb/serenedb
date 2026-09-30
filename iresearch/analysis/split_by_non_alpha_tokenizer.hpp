@@ -74,17 +74,6 @@ class SplitByNonAlphaTokenizer final
   Options _options;
 };
 
-template<typename Context>
-void SerdeWrite(Context ctx, const SplitByNonAlphaTokenizer::Options& o) {
-  irs::utils::WriteTupleOrObject(ctx, std::tie(o.case_convert, o.chars));
-}
-
-template<typename Context>
-void SerdeRead(Context ctx, SplitByNonAlphaTokenizer::Options& o) {
-  auto refs = std::tie(o.case_convert, o.chars);
-  irs::utils::ReadTupleOrObject(ctx, refs);
-}
-
 }  // namespace irs::analysis
 namespace magic_enum {
 

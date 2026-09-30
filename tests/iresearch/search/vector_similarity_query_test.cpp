@@ -103,11 +103,7 @@ void WriteVectorAt(irs::ColWriter& cs, irs::doc_id_t doc, float x) {
 irs::DirectoryReader BuildIndex(
   irs::Directory& dir, irs::doc_id_t n,
   irs::IndexWriterOptions opts = MakeWriterOptions()) {
-  constexpr auto kFormatId = "1_5simd";
-  auto codec = irs::formats::Get(kFormatId);
-  EXPECT_NE(nullptr, codec);
-  auto writer =
-    irs::IndexWriter::Make(dir, codec, irs::kOmCreate, std::move(opts));
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
   EXPECT_NE(nullptr, writer);
 
   {

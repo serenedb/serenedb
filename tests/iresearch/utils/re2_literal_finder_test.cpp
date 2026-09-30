@@ -188,4 +188,30 @@ TEST(Re2LiteralFinderTest, prefix_accel_and_required_literal_find_the_match) {
   }
 }
 
+TEST(Re2LiteralFinderTest, first_byte_accel_finds_the_match) {
+  constexpr std::string_view kClassPieces[] = {
+    "a", "b", " ", "\xD0\xBE", "\xD1\x81", "1", "2024", "X",
+    "B", "#", "@", "\n",       "Q",        "z", "7x",   "C",
+  };
+  constexpr std::string_view kPatterns[] = {
+    "[0-9]{4}",   "[0-9]+x",      "[A-Z][a-z]+",  "[#@][a-z]+",
+    "(?i)[q-t]z", "[0-9]|[A-C]b", "\\b[0-9]+\\b", "(?m)^[0-9]",
+    "[0-9]*",     "(?:[0-9]|X)Q", "[A-Z]{2,}",    "[#@]\\w*",
+  };
+  std::mt19937 rng{20260930};
+  for (const auto pattern : kPatterns) {
+    const re2::RE2 re{pattern};
+    ASSERT_TRUE(re.ok()) << pattern;
+    for (size_t i = 0; i != 300; ++i) {
+      std::string text;
+      for (auto n = std::uniform_int_distribution<size_t>{0, 80}(rng); n != 0;
+           --n) {
+        text += kClassPieces[std::uniform_int_distribution<size_t>{
+          0, std::size(kClassPieces) - 1}(rng)];
+      }
+      ASSERT_NO_FATAL_FAILURE(ExpectLeftmostMatch(re, text));
+    }
+  }
+}
+
 }  // namespace

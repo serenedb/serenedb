@@ -310,6 +310,47 @@ TEST(term_predicate_test, wildcard) {
   EXPECT_FALSE(Accepts(*pred, "a"));
 }
 
+TEST(term_predicate_test, wildcard_matches_its_lowering) {
+  irs::ByWildcard prefix;
+  prefix.mutable_options()->term = irs::bstring{B("ab%")};
+  const auto starts = prefix.CompileTermPredicate();
+  ASSERT_NE(nullptr, starts);
+  EXPECT_TRUE(Accepts(*starts, "ab"));
+  EXPECT_TRUE(Accepts(*starts, "ab\xFF"));
+  EXPECT_TRUE(Accepts(*starts,
+                      "ab\xE0\x80\x80"
+                      "c"));
+  EXPECT_FALSE(Accepts(*starts, "a"));
+
+  irs::ByWildcard term;
+  term.mutable_options()->term = irs::bstring{B("a\\%b")};
+  const auto exact = term.CompileTermPredicate();
+  ASSERT_NE(nullptr, exact);
+  EXPECT_TRUE(Accepts(*exact, "a%b"));
+  EXPECT_FALSE(Accepts(*exact, "axb"));
+}
+
+TEST(term_predicate_test, regexp_matches_its_lowering) {
+  irs::ByRegexp prefix;
+  prefix.mutable_options()->pattern = irs::bstring{B("ab.*")};
+  const auto starts = prefix.CompileTermPredicate();
+  ASSERT_NE(nullptr, starts);
+  EXPECT_TRUE(Accepts(*starts, "ab"));
+  EXPECT_TRUE(Accepts(*starts, "ab\xFF"));
+  EXPECT_FALSE(Accepts(*starts, "a"));
+
+  irs::ByRegexp term;
+  term.mutable_options()->pattern = irs::bstring{B("abc")};
+  const auto exact = term.CompileTermPredicate();
+  ASSERT_NE(nullptr, exact);
+  EXPECT_TRUE(Accepts(*exact, "abc"));
+  EXPECT_FALSE(Accepts(*exact, "abcd"));
+
+  irs::ByRegexp broken;
+  broken.mutable_options()->pattern = irs::bstring{B("a(b")};
+  EXPECT_EQ(nullptr, broken.CompileTermPredicate());
+}
+
 TEST(term_predicate_test, regexp) {
   irs::ByRegexp f;
   f.mutable_options()->pattern = irs::bstring{B("a.*b")};

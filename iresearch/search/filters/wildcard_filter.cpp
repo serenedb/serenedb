@@ -74,11 +74,22 @@ Filter::ptr CreateByWildcard(irs::field_id id, bytes_view term, score_t boost) {
 }
 
 TermPredicate::ptr ByWildcard::CompileTermPredicate() const {
-  const auto source = MakePatternSource(options().term, PatternKind::Wildcard);
-  if (!source->ok()) {
-    return nullptr;
-  }
-  return source->Predicate();
+  bstring buf;
+  return ExecuteWildcard(
+    buf, options().term,
+    [](bytes_view term) -> TermPredicate::ptr {
+      return MakeTermPredicate(
+        [term = bstring{term}](bytes_view key) { return key == term; });
+    },
+    [](bytes_view prefix) -> TermPredicate::ptr {
+      return MakeTermPredicate([prefix = bstring{prefix}](bytes_view key) {
+        return key.starts_with(prefix);
+      });
+    },
+    [](bytes_view pattern) -> TermPredicate::ptr {
+      const auto source = MakePatternSource(pattern, PatternKind::Wildcard);
+      return source->ok() ? source->Predicate() : nullptr;
+    });
 }
 
 }  // namespace irs

@@ -24,7 +24,9 @@
 #include <atomic>
 #include <memory>
 #include <new>
+#include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "iresearch/utils/assert.hpp"
@@ -110,6 +112,307 @@ re2::Regexp* NarrowAnyChar(ParseFlags flags) {
   return SplitAtBmp(low, flags);
 }
 
+bool SameRegexp(re2::Regexp* a, re2::Regexp* b) {
+  if (a == b) {
+    return true;
+  }
+  if (a->op() != b->op() || a->parse_flags() != b->parse_flags() ||
+      a->nsub() != b->nsub()) {
+    return false;
+  }
+  switch (a->op()) {
+    case re2::kRegexpLiteral:
+      return a->rune() == b->rune();
+    case re2::kRegexpLiteralString:
+      return std::equal(a->runes(), a->runes() + a->nrunes(), b->runes(),
+                        b->runes() + b->nrunes());
+    case re2::kRegexpCharClass:
+      return std::equal(a->cc()->begin(), a->cc()->end(), b->cc()->begin(),
+                        b->cc()->end(),
+                        [](const re2::RuneRange& x, const re2::RuneRange& y) {
+                          return x.lo == y.lo && x.hi == y.hi;
+                        });
+    case re2::kRegexpRepeat:
+      if (a->min() != b->min() || a->max() != b->max()) {
+        return false;
+      }
+      break;
+    case re2::kRegexpCapture:
+      if (a->cap() != b->cap()) {
+        return false;
+      }
+      break;
+    case re2::kRegexpHaveMatch:
+      return a->match_id() == b->match_id();
+    default:
+      break;
+  }
+  for (int i = 0; i != a->nsub(); ++i) {
+    if (!SameRegexp(a->sub()[i], b->sub()[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void AppendPieces(re2::Regexp* re, std::vector<re2::Regexp*>& pieces) {
+  if (re->op() == re2::kRegexpConcat) {
+    for (int i = 0; i != re->nsub(); ++i) {
+      AppendPieces(re->sub()[i], pieces);
+    }
+  } else if (re->op() != re2::kRegexpEmptyMatch) {
+    pieces.push_back(re);
+  }
+}
+
+using Alt = std::vector<re2::Regexp*>;
+using Pieces = std::span<re2::Regexp* const>;
+
+re2::Regexp* ConcatOf(Pieces pieces, ParseFlags flags) {
+  std::vector<re2::Regexp*> subs;
+  subs.reserve(pieces.size());
+  for (auto* piece : pieces) {
+    subs.push_back(piece->Incref());
+  }
+  return re2::Regexp::Concat(subs.data(), static_cast<int>(subs.size()), flags);
+}
+
+bool LiteralLed(const Alt& alt) noexcept {
+  return !alt.empty() && (alt.front()->op() == re2::kRegexpLiteral ||
+                          alt.front()->op() == re2::kRegexpLiteralString);
+}
+
+int RuneCount(re2::Regexp* literal) {
+  return literal->op() == re2::kRegexpLiteral ? 1 : literal->nrunes();
+}
+
+re2::Rune RuneAt(re2::Regexp* literal, int i) {
+  return literal->op() == re2::kRegexpLiteral ? literal->rune()
+                                              : literal->runes()[i];
+}
+
+re2::Regexp* RuneRange(re2::Regexp* literal, int from, int to) {
+  const auto flags = literal->parse_flags();
+  if (to - from == 1) {
+    return re2::Regexp::NewLiteral(RuneAt(literal, from), flags);
+  }
+  std::vector<re2::Rune> runes;
+  runes.reserve(static_cast<size_t>(to - from));
+  for (int i = from; i != to; ++i) {
+    runes.push_back(RuneAt(literal, i));
+  }
+  return re2::Regexp::LiteralString(runes.data(), to - from, flags);
+}
+
+bool LiteralLess(re2::Regexp* a, re2::Regexp* b) {
+  if (a->parse_flags() != b->parse_flags()) {
+    return a->parse_flags() < b->parse_flags();
+  }
+  const int na = RuneCount(a);
+  const int nb = RuneCount(b);
+  for (int i = 0; i != std::min(na, nb); ++i) {
+    if (RuneAt(a, i) != RuneAt(b, i)) {
+      return RuneAt(a, i) < RuneAt(b, i);
+    }
+  }
+  return na < nb;
+}
+
+class Factoring {
+ public:
+  Factoring() = default;
+  Factoring(const Factoring&) = delete;
+  Factoring& operator=(const Factoring&) = delete;
+  ~Factoring() {
+    for (auto* re : _fresh) {
+      re->Decref();
+    }
+  }
+
+  re2::Regexp* Factor(std::vector<Alt> alts, ParseFlags flags, size_t depth) {
+    std::vector<re2::Regexp*> out;
+    out.reserve(alts.size());
+    bool empty = false;
+    const auto emit = [&](re2::Regexp* re) {
+      if (re->op() == re2::kRegexpEmptyMatch) {
+        if (empty) {
+          re->Decref();
+          return;
+        }
+        empty = true;
+      }
+      out.push_back(re);
+    };
+    if (depth == kMaxDepth) {
+      for (const auto& alt : alts) {
+        emit(ConcatOf(alt, flags));
+      }
+      return re2::Regexp::AlternateNoFactor(
+        out.data(), static_cast<int>(out.size()), flags);
+    }
+
+    const auto front = [](const Alt& a, size_t n) { return a[n]; };
+    const auto back = [](const Alt& a, size_t n) {
+      return a[a.size() - 1 - n];
+    };
+    const auto run = [&](size_t i, size_t end, auto&& piece) {
+      size_t j = i + 1;
+      if (!alts[i].empty()) {
+        while (j != end && !alts[j].empty() &&
+               SameRegexp(piece(alts[i], 0), piece(alts[j], 0))) {
+          ++j;
+        }
+      }
+      size_t shared = 1;
+      if (j - i > 1) {
+        for (bool same = true; same; shared += same) {
+          for (size_t k = i; k != j && same; ++k) {
+            same = shared < alts[k].size() &&
+                   SameRegexp(piece(alts[i], shared), piece(alts[k], shared));
+          }
+        }
+      }
+      return std::pair{j, shared};
+    };
+
+    if (alts.size() > 1) {
+      if (const auto [end, shared] = run(0, alts.size(), front);
+          end == alts.size()) {
+        std::vector<Alt> rest;
+        rest.reserve(alts.size());
+        for (const auto& alt : alts) {
+          rest.emplace_back(alt.begin() + shared, alt.end());
+        }
+        re2::Regexp* parts[]{ConcatOf(Pieces{alts[0]}.first(shared), flags),
+                             Factor(std::move(rest), flags, depth + 1)};
+        return re2::Regexp::Concat(parts, 2, flags);
+      }
+      if (const auto [end, shared] = run(0, alts.size(), back);
+          end == alts.size()) {
+        std::vector<Alt> rest;
+        rest.reserve(alts.size());
+        for (const auto& alt : alts) {
+          rest.emplace_back(alt.begin(), alt.end() - shared);
+        }
+        re2::Regexp* parts[]{Factor(std::move(rest), flags, depth + 1),
+                             ConcatOf(Pieces{alts[0]}.last(shared), flags)};
+        return re2::Regexp::Concat(parts, 2, flags);
+      }
+    }
+
+    std::stable_sort(alts.begin(), alts.end(), [](const Alt& a, const Alt& b) {
+      if (LiteralLed(a) != LiteralLed(b)) {
+        return LiteralLed(a);
+      }
+      return LiteralLed(a) && LiteralLess(a.front(), b.front());
+    });
+
+    size_t pending = 0;
+    const auto flush = [&](size_t end) {
+      for (size_t i = pending; i != end;) {
+        const auto [j, shared] = run(i, end, back);
+        if (j - i == 1) {
+          emit(ConcatOf(alts[i], flags));
+        } else {
+          std::vector<Alt> rest;
+          rest.reserve(j - i);
+          for (size_t k = i; k != j; ++k) {
+            rest.emplace_back(alts[k].begin(), alts[k].end() - shared);
+          }
+          re2::Regexp* parts[]{Factor(std::move(rest), flags, depth + 1),
+                               ConcatOf(Pieces{alts[i]}.last(shared), flags)};
+          emit(re2::Regexp::Concat(parts, 2, flags));
+        }
+        i = j;
+      }
+    };
+    for (size_t i = 0; i != alts.size();) {
+      size_t j = i + 1;
+      if (LiteralLed(alts[i])) {
+        auto* first = alts[i].front();
+        while (j != alts.size() && LiteralLed(alts[j]) &&
+               alts[j].front()->parse_flags() == first->parse_flags() &&
+               RuneAt(alts[j].front(), 0) == RuneAt(first, 0)) {
+          ++j;
+        }
+      }
+      if (j - i > 1) {
+        auto* first = alts[i].front();
+        int common = RuneCount(first);
+        for (size_t k = i + 1; k != j; ++k) {
+          auto* other = alts[k].front();
+          int same = 1;
+          while (same < common && same < RuneCount(other) &&
+                 RuneAt(other, same) == RuneAt(first, same)) {
+            ++same;
+          }
+          common = same;
+        }
+        flush(i);
+        std::vector<Alt> rest;
+        rest.reserve(j - i);
+        for (size_t k = i; k != j; ++k) {
+          auto* literal = alts[k].front();
+          auto& tail = rest.emplace_back();
+          tail.reserve(alts[k].size());
+          if (common != RuneCount(literal)) {
+            tail.push_back(_fresh.emplace_back(
+              RuneRange(literal, common, RuneCount(literal))));
+          }
+          tail.insert(tail.end(), alts[k].begin() + 1, alts[k].end());
+        }
+        re2::Regexp* parts[]{RuneRange(first, 0, common),
+                             Factor(std::move(rest), flags, depth + 1)};
+        emit(re2::Regexp::Concat(parts, 2, flags));
+        i = j;
+        pending = j;
+        continue;
+      }
+      const auto [end, shared] = run(i, alts.size(), front);
+      if (end - i == 1) {
+        ++i;
+        continue;
+      }
+      flush(i);
+      std::vector<Alt> rest;
+      rest.reserve(end - i);
+      for (size_t k = i; k != end; ++k) {
+        rest.emplace_back(alts[k].begin() + shared, alts[k].end());
+      }
+      re2::Regexp* parts[]{ConcatOf(Pieces{alts[i]}.first(shared), flags),
+                           Factor(std::move(rest), flags, depth + 1)};
+      emit(re2::Regexp::Concat(parts, 2, flags));
+      i = end;
+      pending = end;
+    }
+    flush(alts.size());
+    return re2::Regexp::AlternateNoFactor(out.data(),
+                                          static_cast<int>(out.size()), flags);
+  }
+
+ private:
+  static constexpr size_t kMaxDepth = 32;
+
+  std::vector<re2::Regexp*> _fresh;
+};
+
+re2::Regexp* FactorAlternation(re2::Regexp** subs, int nsubs,
+                               ParseFlags flags) {
+  std::vector<Alt> alts(static_cast<size_t>(nsubs));
+  for (int i = 0; i != nsubs; ++i) {
+    AppendPieces(subs[i], alts[static_cast<size_t>(i)]);
+  }
+  re2::Regexp* re;
+  {
+    Factoring factoring;
+    re = factoring.Factor(std::move(alts), flags, 0);
+  }
+  for (int i = 0; i != nsubs; ++i) {
+    subs[i]->Decref();
+  }
+  return re;
+}
+
 // Character classes are narrowed to the strict UTF-8 model (see
 // `NarrowCharClass`); everything else is left to RE2's compiler, which is the
 // whole point of going through a `Regexp` tree rather than an automaton of our
@@ -146,7 +449,7 @@ class RegexpRewriter : public re2::Regexp::Walker<re2::Regexp*> {
       case re2::kRegexpConcat:
         return re2::Regexp::Concat(child_args, nchild_args, flags);
       case re2::kRegexpAlternate:
-        return re2::Regexp::AlternateNoFactor(child_args, nchild_args, flags);
+        return FactorAlternation(child_args, nchild_args, flags);
 
       case re2::kRegexpCharClass:
         SDB_ASSERT(nchild_args == 0);

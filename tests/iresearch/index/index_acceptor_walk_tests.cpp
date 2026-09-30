@@ -779,6 +779,10 @@ TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
     "ab",
     "abb",
     "ac",
+    "abac",
+    "ABab",
+    "access",
+    "accessory",
   };
 
   AddTerms(kTerms);
@@ -817,6 +821,11 @@ TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
     "(?m)a$\\n^b",
     "\\bbur\\w*",
     "(?:ab){2}|ac",
+    "(?i:ab)ab|abac",
+    "(?:a|x)b|(?:a|x)x",
+    "(?i)^(the\\s+)?siemens\\b.*|^(the\\s+)?access.?\\b.*|^(the\\s+)?"
+    "accessories\\b.*|^(the\\s+)?siemens financial services\\b.*",
+    ".*\\bdata\\b.*|.*\\bgcp\\b.*|.*\\bgroup",
   };
   for (const auto pattern : kPerl) {
     SCOPED_TRACE(testing::Message("Regexp: '") << pattern << "'");

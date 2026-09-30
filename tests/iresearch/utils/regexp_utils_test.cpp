@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <re2/re2.h>
+
 #include <cstdint>
 #include <iresearch/utils/regexp_acceptor.hpp>
 #include <iresearch/utils/regexp_utils.hpp>
@@ -2224,4 +2226,54 @@ TEST_F(RegexpUtilsTest, repeated_group_across_alternatives) {
   EXPECT_TRUE(Accepts(b, "abcabcx"));
   EXPECT_TRUE(Accepts(b, "abd"));
   EXPECT_FALSE(Accepts(b, "abccx"));
+}
+
+TEST_F(RegexpUtilsTest, generated_alternation_matches_re2) {
+  std::mt19937 rng{1268};
+  constexpr std::string_view kSyllables[]{"ac", "ce", "ss", "in", "ter",
+                                          "st", "at", "e",  "o",  "s"};
+  const auto word = [&] {
+    std::string w;
+    for (size_t n = 1 + rng() % 3; n != 0; --n) {
+      w += kSyllables[rng() % std::size(kSyllables)];
+    }
+    return w;
+  };
+  std::vector<std::string> names;
+  for (size_t i = 0; i != 300; ++i) {
+    auto name = word();
+    if (rng() % 3 == 0) {
+      name += " " + word();
+    }
+    names.push_back(std::move(name));
+  }
+  constexpr std::string_view kShapes[]{"", ".?", ".{0,3}", "s?"};
+  std::string pattern = "(?i)";
+  std::vector<std::string> terms;
+  for (size_t i = 0; i != names.size(); ++i) {
+    const auto& name = names[i];
+    const auto shape = kShapes[rng() % std::size(kShapes)];
+    pattern += (i == 0 ? "^(the\\s+)?" : "|^(the\\s+)?") + name +
+               std::string{shape} + "\\b.*";
+    for (const std::string_view suffix :
+         {"", " inc", "x", "s", "-y", ".com", "\xc3\xb3x"}) {
+      terms.push_back(name + std::string{suffix});
+      terms.push_back("The " + name + std::string{suffix});
+    }
+    terms.push_back(name.substr(0, name.size() / 2));
+  }
+  RE2::Options options;
+  options.set_max_mem(int64_t{256} << 20);
+  const RE2 oracle{pattern, options};
+  ASSERT_TRUE(oracle.ok());
+  const auto a = FromPerl(pattern);
+  ASSERT_TRUE(a.ok());
+  size_t hits = 0;
+  for (const auto& term : terms) {
+    const bool expected = RE2::FullMatch(term, oracle);
+    hits += expected;
+    EXPECT_EQ(expected, Accepts(a, term)) << term;
+  }
+  EXPECT_NE(0, hits);
+  EXPECT_NE(terms.size(), hits);
 }

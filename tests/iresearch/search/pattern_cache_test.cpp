@@ -31,10 +31,12 @@ irs::bytes_view B(std::string_view s) {
 
 class PatternCacheTest : public ::testing::Test {
  protected:
+  static constexpr size_t kCapacity = size_t{64} << 20;
+
   void SetUp() final {
     _capacity = Cache().Capacity();
     Cache().Clear();
-    Cache().SetCapacity(irs::PatternCache::kDefaultCapacity);
+    Cache().SetCapacity(kCapacity);
   }
 
   void TearDown() final {

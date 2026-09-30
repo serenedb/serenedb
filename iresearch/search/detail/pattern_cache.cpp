@@ -57,6 +57,9 @@ PatternCache& PatternCache::Instance() {
 
 std::shared_ptr<const RegexpAcceptor> PatternCache::Get(bytes_view pattern,
                                                         PatternKind kind) {
+  if (_capacity.load(std::memory_order_relaxed) == 0) {
+    return Compile(pattern, kind);
+  }
   auto key = KeyOf(pattern, kind);
   {
     std::lock_guard lock{_mutex};
@@ -72,7 +75,7 @@ std::shared_ptr<const RegexpAcceptor> PatternCache::Get(bytes_view pattern,
   if (const auto it = _index.find(key); it != _index.end()) {
     return TouchLocked(it->second);
   }
-  if (_capacity == 0) {
+  if (_capacity.load(std::memory_order_relaxed) == 0) {
     return acceptor;
   }
   _entries.push_front(Entry{std::move(key), acceptor, bytes});
@@ -94,7 +97,8 @@ std::shared_ptr<const RegexpAcceptor> PatternCache::TouchLocked(
 }
 
 void PatternCache::EvictLocked() {
-  while (_bytes > _capacity && !_entries.empty()) {
+  while (_bytes > _capacity.load(std::memory_order_relaxed) &&
+         !_entries.empty()) {
     auto& victim = _entries.back();
     _index.erase(victim.key);
     _bytes -= victim.bytes;
@@ -104,13 +108,12 @@ void PatternCache::EvictLocked() {
 
 void PatternCache::SetCapacity(size_t bytes) {
   std::lock_guard lock{_mutex};
-  _capacity = bytes;
+  _capacity.store(bytes, std::memory_order_relaxed);
   EvictLocked();
 }
 
 size_t PatternCache::Capacity() const {
-  std::lock_guard lock{_mutex};
-  return _capacity;
+  return _capacity.load(std::memory_order_relaxed);
 }
 
 size_t PatternCache::Bytes() const {

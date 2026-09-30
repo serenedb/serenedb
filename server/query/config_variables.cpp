@@ -689,8 +689,8 @@ constexpr std::pair<std::string_view, VariableDescription>
         "fused alternations over an inverted index) kept across queries, so "
         "a pattern is compiled once per server rather than once per query. "
         "The least recently used patterns are dropped first; a pattern in use "
-        "by a running query stays alive until it finishes. 0 disables the "
-        "cache. Server-global. Default 67108864 (64MB).",
+        "by a running query stays alive until it finishes. 0, the default, "
+        "keeps nothing: each query compiles its own patterns. Server-global.",
         [] {
           return duckdb::Value::UBIGINT(irs::PatternCache::kDefaultCapacity);
         },

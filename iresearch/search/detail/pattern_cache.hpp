@@ -22,6 +22,7 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <list>
@@ -50,7 +51,7 @@ constexpr PatternKind RegexpPattern(RegexpSyntax syntax) noexcept {
 
 class PatternCache {
  public:
-  static constexpr size_t kDefaultCapacity = size_t{64} << 20;
+  static constexpr size_t kDefaultCapacity = 0;
 
   static PatternCache& Instance();
 
@@ -78,7 +79,7 @@ class PatternCache {
   mutable std::mutex _mutex;
   Entries _entries;
   absl::flat_hash_map<std::string_view, Entries::iterator> _index;
-  size_t _capacity{kDefaultCapacity};
+  std::atomic_size_t _capacity{kDefaultCapacity};
   size_t _bytes{0};
 };
 

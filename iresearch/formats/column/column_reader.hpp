@@ -353,7 +353,10 @@ class ColumnReader {
   // validity child): the data segment alone is validity-complete there.
   bool ValiditySpanAllValid(ScanState& s, uint64_t anchor,
                             duckdb::idx_t span) const;
-  void BeginScanVector(ScanState& s) const;
+  static constexpr duckdb::idx_t kDenseReads =
+    std::numeric_limits<duckdb::idx_t>::max();
+  void BeginScanVector(ScanState& s, duckdb::idx_t reads = kDenseReads) const;
+  void OpenBlock(ScanState& s, duckdb::idx_t reads) const;
   duckdb::ScanVectorType GetVectorScanType(ScanState& s, duckdb::idx_t count,
                                            duckdb::Vector& result) const;
 };

@@ -153,6 +153,7 @@ set(iresearch-tests_sources
     ./utils/levenshtein_utils_test.cpp
     ./utils/wildcard_utils_test.cpp
     ./utils/re2_literal_finder_test.cpp
+    ./utils/re2_owned_dfa_test.cpp
     ./utils/re2_required_literal_test.cpp
     ./utils/re2_segment_plan_test.cpp
     ./utils/regexp_utils_test.cpp

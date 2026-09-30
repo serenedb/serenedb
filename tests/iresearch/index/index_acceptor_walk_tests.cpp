@@ -114,6 +114,40 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
     }
   }
 
+  void AssertSourceMatchesWalk(const irs::IndexReader& reader,
+                               const irs::RegexpAcceptor& acceptor,
+                               const irs::TermAcceptorSource& source) {
+    const auto predicate = source.Predicate();
+    ASSERT_NE(nullptr, predicate);
+    for (auto& segment : reader) {
+      for (auto field_id : segment.field_ids()) {
+        const auto* field = segment.field(field_id);
+        ASSERT_NE(nullptr, field);
+        SCOPED_TRACE(testing::Message("Field: ") << field_id);
+        std::vector<irs::bstring> walked;
+        for (auto it = field->iterator(acceptor); it->next();) {
+          walked.emplace_back(it->value());
+        }
+        std::vector<irs::bstring> sourced;
+        for (auto it = source.Iterator(*field); it->next();) {
+          sourced.emplace_back(it->value());
+        }
+        EXPECT_EQ(walked, sourced);
+        auto walk = field->iterator(acceptor);
+        auto seek = source.Iterator(*field);
+        for (auto it = field->iterator(); it->next();) {
+          const auto term = it->value();
+          EXPECT_EQ(acceptor.Matches(term), predicate->Accepts(term));
+          const auto expected = walk->seek_ge(term);
+          EXPECT_EQ(expected, seek->seek_ge(term));
+          if (expected != irs::SeekResult::End) {
+            EXPECT_EQ(walk->value(), seek->value());
+          }
+        }
+      }
+    }
+  }
+
   void AddEuroparl() {
     tests::EuroparlDocTemplate doc;
     tests::DelimDocGenerator gen(resource("europarl.subset.txt"), doc);
@@ -837,6 +871,10 @@ TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
     AssertOracle(
       *reader.GetImpl(), acceptor, IsUtf8,
       [&](std::string_view term) { return RE2::FullMatch(term, re); });
+    const auto source = irs::MakePatternSource(
+      irs::ViewCast<irs::byte_type>(pattern), irs::PatternKind::RegexpPerl);
+    ASSERT_NE(nullptr, source);
+    AssertSourceMatchesWalk(*reader.GetImpl(), acceptor, *source);
   }
 
   RE2::Options posix;

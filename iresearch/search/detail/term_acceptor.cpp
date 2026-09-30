@@ -20,6 +20,8 @@
 
 #include "iresearch/search/detail/term_acceptor.hpp"
 
+#include <algorithm>
+#include <span>
 #include <utility>
 
 #include "iresearch/formats/term_reader.hpp"
@@ -30,10 +32,94 @@
 namespace irs {
 namespace {
 
+class LiteralSetIterator : public SeekTermIterator {
+ public:
+  LiteralSetIterator(SeekTermIterator::ptr&& impl,
+                     std::shared_ptr<const RegexpAcceptor> acceptor) noexcept
+    : _impl{std::move(impl)},
+      _acceptor{std::move(acceptor)},
+      _literals{_acceptor->Literals()} {
+    SDB_ASSERT(_impl);
+  }
+
+  bytes_view value() const noexcept final { return _impl->value(); }
+
+  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
+    return _impl->GetMutable(id);
+  }
+
+  const PostingMeta& cookie() const final { return _impl->cookie(); }
+
+  TermPostings::ptr postings(IndexFeatures features) const final {
+    return _impl->postings(features);
+  }
+
+  bool next() final {
+    while (_next != _literals.size()) {
+      if (_impl->seek(_literals[_next++])) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  SeekResult seek_ge(bytes_view target) final {
+    _next = static_cast<size_t>(
+      std::lower_bound(_literals.begin(), _literals.end(), target,
+                       [](const bstring& literal, bytes_view key) {
+                         return bytes_view{literal} < key;
+                       }) -
+      _literals.begin());
+    if (!next()) {
+      return SeekResult::End;
+    }
+    return value() == target ? SeekResult::Found : SeekResult::NotFound;
+  }
+
+  bool seek(bytes_view target) final {
+    return SeekResult::Found == seek_ge(target);
+  }
+
+ private:
+  SeekTermIterator::ptr _impl;
+  std::shared_ptr<const RegexpAcceptor> _acceptor;
+  std::span<const bstring> _literals;
+  size_t _next{0};
+};
+
+class LiteralSetSource final : public TermAcceptorSource {
+ public:
+  explicit LiteralSetSource(std::shared_ptr<const RegexpAcceptor> acceptor)
+    : _acceptor{std::move(acceptor)} {}
+
+  bool ok() const noexcept final { return true; }
+
+  SeekTermIterator::ptr Iterator(const TermReader& reader) const final {
+    if (_acceptor->Literals().empty()) {
+      return SeekTermIterator::empty();
+    }
+    return memory::make_managed<LiteralSetIterator>(reader.iterator(),
+                                                    _acceptor);
+  }
+
+  TermPredicate::ptr Predicate() const final {
+    return MakeTermPredicate([acceptor = _acceptor](bytes_view term) {
+      const auto literals = acceptor->Literals();
+      return std::binary_search(literals.begin(), literals.end(), term,
+                                [](const auto& lhs, const auto& rhs) {
+                                  return bytes_view{lhs} < bytes_view{rhs};
+                                });
+    });
+  }
+
+ private:
+  std::shared_ptr<const RegexpAcceptor> _acceptor;
+};
+
 class PatternSource final : public TermAcceptorSource {
  public:
-  PatternSource(bytes_view pattern, PatternKind kind)
-    : _acceptor{PatternCache::Instance().Get(pattern, kind)} {}
+  explicit PatternSource(std::shared_ptr<const RegexpAcceptor> acceptor)
+    : _acceptor{std::move(acceptor)} {}
 
   bool ok() const noexcept final { return _acceptor->ok(); }
 
@@ -126,7 +212,11 @@ class ConjunctionSource final : public TermAcceptorSource {
 TermAcceptorSource::ptr MakePatternSource(bytes_view pattern,
                                           PatternKind kind) {
   SDB_ASSERT(kind != PatternKind::Fused);
-  return std::make_shared<const PatternSource>(pattern, kind);
+  auto acceptor = PatternCache::Instance().Get(pattern, kind);
+  if (acceptor->Finite()) {
+    return std::make_shared<const LiteralSetSource>(std::move(acceptor));
+  }
+  return std::make_shared<const PatternSource>(std::move(acceptor));
 }
 
 TermAcceptorSource::ptr MakeConjunctionSource(TermAcceptorSource::ptr driver,

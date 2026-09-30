@@ -242,6 +242,107 @@ bstring SuffixOf(re2::Regexp* re) {
   return suffix;
 }
 
+void AppendRune(bstring& out, re2::Rune rune, bool latin1) {
+  if (latin1) {
+    out.push_back(static_cast<byte_type>(rune));
+    return;
+  }
+  char utf8[re2::UTFmax];
+  const int n = re2::runetochar(utf8, &rune);
+  out.append(reinterpret_cast<const byte_type*>(utf8), static_cast<size_t>(n));
+}
+
+constexpr size_t kMaxLiterals = 1024;
+constexpr size_t kMaxLiteralDepth = 64;
+
+bool FiniteLanguage(re2::Regexp* re, size_t depth, std::vector<bstring>& out) {
+  if (depth == kMaxLiteralDepth) {
+    return false;
+  }
+  const bool latin1 = (re->parse_flags() & re2::Regexp::Latin1) != 0;
+  switch (re->op()) {
+    case re2::kRegexpNoMatch:
+      out.clear();
+      return true;
+    case re2::kRegexpEmptyMatch:
+      out.assign(1, bstring{});
+      return true;
+    case re2::kRegexpLiteral:
+    case re2::kRegexpLiteralString: {
+      std::vector<re2::Rune> runes;
+      if (!ExactRunes(re, runes)) {
+        return false;
+      }
+      bstring literal;
+      for (const auto rune : runes) {
+        AppendRune(literal, rune, latin1);
+      }
+      out.assign(1, std::move(literal));
+      return true;
+    }
+    case re2::kRegexpCharClass: {
+      size_t size = 0;
+      for (const auto& range : *re->cc()) {
+        size += static_cast<size_t>(range.hi - range.lo) + 1;
+        if (size > kMaxLiterals) {
+          return false;
+        }
+      }
+      out.clear();
+      for (const auto& range : *re->cc()) {
+        for (auto rune = range.lo; rune <= range.hi; ++rune) {
+          AppendRune(out.emplace_back(), rune, latin1);
+        }
+      }
+      return true;
+    }
+    case re2::kRegexpCapture:
+      return FiniteLanguage(re->sub()[0], depth + 1, out);
+    case re2::kRegexpQuest:
+      if (!FiniteLanguage(re->sub()[0], depth + 1, out) ||
+          out.size() == kMaxLiterals) {
+        return false;
+      }
+      out.emplace_back();
+      return true;
+    case re2::kRegexpConcat: {
+      out.assign(1, bstring{});
+      std::vector<bstring> part;
+      std::vector<bstring> next;
+      for (int i = 0; i != re->nsub(); ++i) {
+        if (!FiniteLanguage(re->sub()[i], depth + 1, part) ||
+            (!part.empty() && out.size() > kMaxLiterals / part.size())) {
+          return false;
+        }
+        next.clear();
+        for (const auto& head : out) {
+          for (const auto& tail : part) {
+            auto& joined = next.emplace_back(head);
+            joined += tail;
+          }
+        }
+        out.swap(next);
+      }
+      return true;
+    }
+    case re2::kRegexpAlternate: {
+      out.clear();
+      std::vector<bstring> part;
+      for (int i = 0; i != re->nsub(); ++i) {
+        if (!FiniteLanguage(re->sub()[i], depth + 1, part) ||
+            out.size() + part.size() > kMaxLiterals) {
+          return false;
+        }
+        out.insert(out.end(), std::make_move_iterator(part.begin()),
+                   std::make_move_iterator(part.end()));
+      }
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
 using Alt = std::vector<re2::Regexp*>;
 using Pieces = std::span<re2::Regexp* const>;
 
@@ -704,6 +805,14 @@ void RegexpAcceptor::Compile(bytes_view pattern, RegexpSyntax syntax,
     wildcard ? WildcardTree(pattern) : RegexpTree(pattern, syntax);
   if (re) {
     _suffix = SuffixOf(re);
+    if (!wildcard && FiniteLanguage(re, 0, _literals)) {
+      std::sort(_literals.begin(), _literals.end());
+      _literals.erase(std::unique(_literals.begin(), _literals.end()),
+                      _literals.end());
+      _finite = true;
+    } else {
+      _literals.clear();
+    }
     _prog.reset(re->CompileToProg(max_mem));
     re->Decref();
     if (!_prog) {

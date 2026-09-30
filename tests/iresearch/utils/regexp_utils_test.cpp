@@ -2301,3 +2301,30 @@ TEST_F(RegexpUtilsTest, required_suffix) {
   EXPECT_EQ("", wildcard("b_rden"));
   EXPECT_EQ("", wildcard("bur%"));
 }
+
+TEST_F(RegexpUtilsTest, finite_language) {
+  const auto literals = [](std::string_view pattern) {
+    const auto a = FromPerl(pattern);
+    EXPECT_TRUE(a.Finite()) << pattern;
+    std::vector<std::string> out;
+    for (const auto& literal : a.Literals()) {
+      out.emplace_back(irs::ViewCast<char>(irs::bytes_view{literal}));
+    }
+    return out;
+  };
+  using Terms = std::vector<std::string>;
+  EXPECT_EQ((Terms{"x", "y", "zz"}), literals("x|y|zz"));
+  EXPECT_EQ((Terms{"gray", "grey"}), literals("gr[ae]y"));
+  EXPECT_EQ((Terms{"abd", "acd", "ad"}), literals("a(b|c)?d"));
+  EXPECT_EQ((Terms{"aa", "aaa"}), literals("a{2,3}"));
+  EXPECT_EQ((Terms{"abab", "ac"}), literals("(?:ab){2}|ac"));
+  EXPECT_EQ((Terms{"b", "\xD1\x8F"}), literals("b|\xD1\x8F|b"));
+  EXPECT_EQ((Terms{""}), literals(""));
+  for (std::string_view pattern :
+       {"a.*", "(?i)ab", "^ab", "ab$", "a\\bb", "[a-z]{3}", "x+"}) {
+    EXPECT_FALSE(FromPerl(pattern).Finite()) << pattern;
+  }
+  EXPECT_FALSE(
+    irs::RegexpAcceptor(irs::RegexpAcceptor::WildcardTag{}, ToBytesView("ab|c"))
+      .Finite());
+}

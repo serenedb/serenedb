@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -93,6 +94,10 @@ class RegexpAcceptor {
   bytes_view LowerBound() const noexcept { return _lower; }
 
   bytes_view RequiredSuffix() const noexcept { return _suffix; }
+
+  bool Finite() const noexcept { return _finite; }
+
+  std::span<const bstring> Literals() const noexcept { return _literals; }
 
   static bool Alive(State state) noexcept { return !state->dead; }
 
@@ -188,6 +193,8 @@ class RegexpAcceptor {
   State _start{nullptr};
   bstring _lower;
   bstring _suffix;
+  std::vector<bstring> _literals;
+  bool _finite{false};
   size_t _max_dfa_mem{kDefaultMaxDfaMem};
 
   mutable std::mutex _mutex;

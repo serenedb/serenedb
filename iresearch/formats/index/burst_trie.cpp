@@ -25,7 +25,9 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/internal/resize_uninitialized.h>
 #include <absl/strings/str_cat.h>
+#ifdef __AVX2__
 #include <immintrin.h>
+#endif
 
 #include <array>
 #include <bit>
@@ -2061,6 +2063,7 @@ class AcceptorTermIterator : public SeekTermIterator,
     }
   }
 
+#ifdef __AVX2__
   bool ContainsInfix(const byte_type* h, size_t n) const noexcept {
     const size_t m = _infix.size();
     const auto lo = _mm256_set1_epi8(static_cast<char>(_infix[_anchor_lo]));
@@ -2086,6 +2089,7 @@ class AcceptorTermIterator : public SeekTermIterator,
     }
     return false;
   }
+#endif
 
   IRS_NO_INLINE bool InfixRejects(const byte_type* suffix, size_t n) noexcept {
     if (!_infix_loaded) {
@@ -2103,9 +2107,15 @@ class AcceptorTermIterator : public SeekTermIterator,
       found = n >= m - k && std::memcmp(suffix, _infix.data() + k, m - k) == 0;
     }
     if (!found && n >= m) {
+#ifdef __AVX2__
+      // ContainsInfix reads whole 32-byte vectors, so it needs that much slack
+      // behind the suffix; memmem does the same search without it.
       found = suffix + n + 32 <= this->_cur_block->SuffixEnd()
                 ? ContainsInfix(suffix, n)
                 : memmem(suffix, n, _infix.data(), m) != nullptr;
+#else
+      found = memmem(suffix, n, _infix.data(), m) != nullptr;
+#endif
     }
     if (_infix_checks != kInfixProbe) {
       _infix_rejects += !found;

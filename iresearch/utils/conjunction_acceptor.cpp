@@ -84,16 +84,24 @@ uint64_t PatternsKey(
 void Collect(std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
              std::span<std::shared_ptr<const RegexpAcceptor>> owned,
              RegexpConjunction::Parts& start, bytes_view& lower,
-             bytes_view& suffix, bytes_view& infix) {
+             std::span<const bstring>& suffixes, bytes_view& infix) {
   SDB_ASSERT(!patterns.empty() && patterns.size() <= owned.size());
+  const auto shortest = [](std::span<const bstring> set) {
+    size_t size = set.empty() ? 0 : std::numeric_limits<size_t>::max();
+    for (const auto& suffix : set) {
+      size = std::min(size, suffix.size());
+    }
+    return size;
+  };
   for (size_t i = 0; i != patterns.size(); ++i) {
     const auto& pattern = *patterns[i];
     SDB_ASSERT(pattern.ok());
     owned[i] = patterns[i];
     start[i] = pattern.Start();
     lower = std::max(lower, pattern.LowerBound());
-    if (pattern.RequiredSuffix().size() > suffix.size()) {
-      suffix = pattern.RequiredSuffix();
+    if (pattern.ExemptKeys().empty() &&
+        shortest(pattern.RequiredSuffixes()) > shortest(suffixes)) {
+      suffixes = pattern.RequiredSuffixes();
     }
     if (pattern.RequiredInfix().size() > infix.size()) {
       infix = pattern.RequiredInfix();
@@ -121,7 +129,7 @@ RegexpConjunction::RegexpConjunction(
   size_t max_mem)
   : _size{patterns.size()}, _max_mem{max_mem} {
   Parts start{};
-  Collect(patterns, _patterns, start, _lower, _suffix, _infix);
+  Collect(patterns, _patterns, start, _lower, _suffixes, _infix);
   _classes =
     Refine([&](uint32_t label) { return PatternsKey(patterns, label); },
            _bytemap, _representative);
@@ -231,7 +239,7 @@ FuzzyConjunction::FuzzyConjunction(
   SDB_ASSERT(_fuzzy);
   Parts start{};
   _lower = _fuzzy->LowerBound();
-  Collect(patterns, _patterns, start, _lower, _suffix, _infix);
+  Collect(patterns, _patterns, start, _lower, _suffixes, _infix);
   const auto fuzzy_bytemap = _fuzzy->Bytemap();
   _classes = Refine(
     [&](uint32_t label) {

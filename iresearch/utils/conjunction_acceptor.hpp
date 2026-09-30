@@ -94,7 +94,13 @@ class RegexpConjunction {
 
   bytes_view LowerBound() const noexcept { return _lower; }
 
-  bytes_view RequiredSuffix() const noexcept { return _suffix; }
+  std::span<const bstring> RequiredSuffixes() const noexcept {
+    return _suffixes;
+  }
+
+  std::span<const RegexpAcceptor::ExemptKey> ExemptKeys() const noexcept {
+    return {};
+  }
 
   bytes_view RequiredInfix() const noexcept { return _infix; }
 
@@ -150,7 +156,7 @@ class RegexpConjunction {
   std::array<uint8_t, RegexpAcceptor::kMaxLabel + 1> _representative{};
   uint32_t _classes{0};
   bytes_view _lower;
-  bytes_view _suffix;
+  std::span<const bstring> _suffixes;
   bytes_view _infix;
   size_t _max_mem;
   mutable std::mutex _mutex;
@@ -201,7 +207,13 @@ class FuzzyConjunction {
 
   bytes_view LowerBound() const noexcept { return _lower; }
 
-  bytes_view RequiredSuffix() const noexcept { return _suffix; }
+  std::span<const bstring> RequiredSuffixes() const noexcept {
+    return _suffixes;
+  }
+
+  std::span<const RegexpAcceptor::ExemptKey> ExemptKeys() const noexcept {
+    return {};
+  }
 
   bytes_view RequiredInfix() const noexcept { return _infix; }
 
@@ -261,7 +273,7 @@ class FuzzyConjunction {
   std::array<uint8_t, RegexpAcceptor::kMaxLabel + 1> _representative{};
   uint32_t _classes{0};
   bytes_view _lower;
-  bytes_view _suffix;
+  std::span<const bstring> _suffixes;
   bytes_view _infix;
   size_t _max_mem;
   mutable std::mutex _mutex;

@@ -2376,7 +2376,7 @@ TEST_F(RegexpUtilsTest, generated_alternation_matches_re2) {
 TEST_F(RegexpUtilsTest, required_infix) {
   const auto infix = [](std::string_view pattern) {
     const auto a = FromPerl(pattern);
-    EXPECT_TRUE(a.RequiredSuffix().empty()) << pattern;
+    EXPECT_TRUE(a.RequiredSuffixes().empty()) << pattern;
     return std::string{irs::ViewCast<char>(a.RequiredInfix())};
   };
   EXPECT_EQ("abcd", infix(".*abcd.*"));
@@ -2394,7 +2394,17 @@ TEST_F(RegexpUtilsTest, required_infix) {
 
 TEST_F(RegexpUtilsTest, required_suffix) {
   const auto suffix = [](const irs::RegexpAcceptor& a) {
-    return std::string{irs::ViewCast<char>(a.RequiredSuffix())};
+    std::vector<std::string> suffixes;
+    for (const auto& s : a.RequiredSuffixes()) {
+      suffixes.emplace_back(irs::ViewCast<char>(irs::bytes_view{s}));
+    }
+    std::sort(suffixes.begin(), suffixes.end());
+    std::string joined;
+    for (const auto& s : suffixes) {
+      joined += joined.empty() ? "" : "|";
+      joined += s;
+    }
+    return joined;
   };
   EXPECT_EQ("\xD0\xBE\xD1\x81\xD1\x82\xD1\x8C",
             suffix(FromPerl(".*\xD0\xBE\xD1\x81\xD1\x82\xD1\x8C")));
@@ -2403,7 +2413,12 @@ TEST_F(RegexpUtilsTest, required_suffix) {
   EXPECT_EQ("ab", suffix(FromPerl(".*[a]b")));
   EXPECT_EQ("", suffix(FromPerl(".{0,3}tion")));
   EXPECT_EQ("", suffix(FromPerl("(?i).*tion")));
-  EXPECT_EQ("", suffix(FromPerl(".*tion|.*ment")));
+  EXPECT_EQ("ment|tion", suffix(FromPerl(".*tion|.*ment")));
+  EXPECT_EQ("abx|cdx", suffix(FromPerl(".*(ab|cd)x")));
+  EXPECT_EQ("c", suffix(FromPerl(".*(a|b.*)c")));
+  EXPECT_EQ("tion", suffix(FromPerl(".*tion|.*ation")));
+  EXPECT_EQ("", suffix(FromPerl(".*tion|ment")));
+  EXPECT_EQ("", suffix(FromPerl(".*tion|.*")));
   EXPECT_EQ("", suffix(FromPerl("bur.*")));
   const auto wildcard = [&](std::string_view pattern) {
     return suffix(irs::RegexpAcceptor{irs::RegexpAcceptor::WildcardTag{},
@@ -2414,6 +2429,33 @@ TEST_F(RegexpUtilsTest, required_suffix) {
   EXPECT_EQ("%x", wildcard("%\\%x"));
   EXPECT_EQ("", wildcard("b_rden"));
   EXPECT_EQ("", wildcard("bur%"));
+
+  using Part = irs::RegexpAcceptor::Part;
+  using Kind = irs::RegexpAcceptor::PartKind;
+  const Part mixed[] = {
+    {Kind::Prefix, ToBytesView("auto")},
+    {Kind::Wildcard, ToBytesView("%ska")},
+    {Kind::Term, ToBytesView("zeta")},
+    {Kind::Perl, ToBytesView(".*(ing|ed)")},
+  };
+  const irs::RegexpAcceptor fused{mixed};
+  EXPECT_EQ("ed|ing|ska", suffix(fused));
+  ASSERT_EQ(2, fused.ExemptKeys().size());
+  EXPECT_EQ("auto",
+            irs::ViewCast<char>(irs::bytes_view{fused.ExemptKeys()[0].key}));
+  EXPECT_TRUE(fused.ExemptKeys()[0].prefix);
+  EXPECT_EQ("zeta",
+            irs::ViewCast<char>(irs::bytes_view{fused.ExemptKeys()[1].key}));
+  EXPECT_FALSE(fused.ExemptKeys()[1].prefix);
+
+  const Part open[] = {
+    {Kind::Prefix, ToBytesView("auto")},
+    {Kind::Wildcard, ToBytesView("%ska")},
+    {Kind::Wildcard, ToBytesView("%ab%")},
+  };
+  const irs::RegexpAcceptor unconstrained{open};
+  EXPECT_EQ("", suffix(unconstrained));
+  EXPECT_TRUE(unconstrained.ExemptKeys().empty());
 }
 
 TEST_F(RegexpUtilsTest, finite_language) {

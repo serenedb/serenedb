@@ -1000,6 +1000,10 @@ TEST_P(AcceptorWalkIndexTestCase, union_walk_is_the_union_of_its_parts) {
     {part(Kind::Wildcard, "%"), part(Kind::Perl, "x")},
     {part(Kind::Term, ""), part(Kind::Perl, "ab"), part(Kind::Perl, "a.b")},
     {part(Kind::Perl, "atl(as|antic)"), part(Kind::Perl, "(?i)nation")},
+    {part(Kind::Prefix, "atl"), part(Kind::Wildcard, "%den"),
+     part(Kind::Term, "zz"), part(Kind::Perl, ".*(ion|ing)")},
+    {part(Kind::Term, "x"), part(Kind::Wildcard, "%rden"),
+     part(Kind::Wildcard, "%\xC3\xBCrden")},
   };
   for (const auto& parts : unions) {
     const auto key = irs::UnionKey(parts);

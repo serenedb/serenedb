@@ -1931,7 +1931,18 @@ class AcceptorTermIterator : public SeekTermIterator,
       _pay.value = {&_payload, sizeof(typename A::PayloadType)};
     }
     if constexpr (kSuffixed) {
-      _required = a.RequiredSuffix();
+      _required = a.RequiredSuffixes();
+      _exempt = a.ExemptKeys();
+      SDB_ASSERT(_required.size() <= _words.size());
+      for (size_t i = 0; i != _required.size(); ++i) {
+        const auto& suffix = _required[i];
+        ++_starts[suffix.back() + 1];
+        std::memcpy(&_words[i], suffix.data(),
+                    std::min<size_t>(suffix.size(), 8));
+      }
+      for (size_t b = 0; b != kMaxLabels; ++b) {
+        _starts[b + 1] += _starts[b];
+      }
       _infix = a.RequiredInfix();
       if (_infix.size() < kMinInfix || _infix.size() > kMaxInfix) {
         _infix = {};
@@ -1991,6 +2002,7 @@ class AcceptorTermIterator : public SeekTermIterator,
     size_t weight_size;
     StateidT fst_state;
     bool alive;
+    bool filter;
 
     bool HasLabels() const noexcept { return lo <= hi; }
   };
@@ -2034,17 +2046,96 @@ class AcceptorTermIterator : public SeekTermIterator,
     return true;
   }
 
-  bool EndsWithRequired(const byte_type* suffix, size_t n) const noexcept {
-    const size_t size = _required.size();
+  bool EndsWith(const byte_type* suffix, size_t n,
+                bytes_view required) const noexcept {
+    const size_t size = required.size();
     if (size <= n) {
-      return std::memcmp(suffix + n - size, _required.data(), size) == 0;
+      return std::memcmp(suffix + n - size, required.data(), size) == 0;
     }
     const size_t prefix = this->_cur_block->Prefix();
     const size_t head = size - n;
     return head <= prefix &&
-           std::memcmp(this->_term_buf.data() + prefix - head, _required.data(),
+           std::memcmp(this->_term_buf.data() + prefix - head, required.data(),
                        head) == 0 &&
-           std::memcmp(suffix, _required.data() + head, n) == 0;
+           std::memcmp(suffix, required.data() + head, n) == 0;
+  }
+
+  static uint64_t Load64(const byte_type* p) noexcept {
+    uint64_t value;
+    std::memcpy(&value, p, sizeof(value));
+    return value;
+  }
+
+  uint64_t Tail(const byte_type* suffix, size_t n, size_t prefix,
+                size_t& have) const noexcept {
+    if (n >= 8) {
+      have = 8;
+      return Load64(suffix + n - 8);
+    }
+    uint64_t tail = 0;
+    if (n != 0) {
+      if (suffix + 8 <= this->_cur_block->SuffixEnd()) {
+        tail = Load64(suffix) << (8 * (8 - n));
+      } else {
+        for (size_t i = 0; i != n; ++i) {
+          tail |= uint64_t{suffix[i]} << (8 * (8 - n + i));
+        }
+      }
+    }
+    const size_t head = std::min(prefix, 8 - n);
+    if (head != 0) {
+      const byte_type* end = this->_term_buf.data() + prefix;
+      uint64_t low = 0;
+      if (prefix >= 8) {
+        low = Load64(end - 8) >> (8 * (8 - head));
+      } else {
+        for (size_t i = 0; i != head; ++i) {
+          low |= uint64_t{end[i - head]} << (8 * i);
+        }
+      }
+      tail |= low << (8 * (8 - n - head));
+    }
+    have = n + head;
+    return tail;
+  }
+
+  bool EndsWithRequired(const byte_type* suffix, size_t n) const noexcept {
+    const size_t prefix = this->_cur_block->Prefix();
+    if (n == 0 && prefix == 0) {
+      return false;
+    }
+    const byte_type last = n != 0 ? suffix[n - 1] : this->_term_buf[prefix - 1];
+    const auto first = _starts[last];
+    const auto limit = _starts[last + 1];
+    if (first == limit) {
+      return false;
+    }
+    size_t have = 0;
+    const uint64_t tail = Tail(suffix, n, prefix, have);
+    for (auto i = first; i != limit; ++i) {
+      const size_t size = _required[i].size();
+      if (size <= 8 ? size <= have && (tail >> (64 - 8 * size)) == _words[i]
+                    : EndsWith(suffix, n, _required[i])) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool Filters(size_t prefix) const noexcept {
+    const byte_type* key = this->_term_buf.data();
+    for (const auto& exempt : _exempt) {
+      const size_t size = exempt.key.size();
+      const size_t common = std::min(size, prefix);
+      if (common != 0 && (exempt.key[0] != key[0] ||
+                          std::memcmp(exempt.key.data(), key, common) != 0)) {
+        continue;
+      }
+      if (size >= prefix || exempt.prefix) {
+        return false;
+      }
+    }
+    return true;
   }
 
   IRS_NO_INLINE void LoadInfix() noexcept {
@@ -2150,8 +2241,10 @@ class AcceptorTermIterator : public SeekTermIterator,
     return true;
   }
 
-  Level MakeLevel(State state, size_t weight_size, StateidT fst_state) const {
-    Level level{state, 1, 0, weight_size, fst_state, A::Alive(state)};
+  Level MakeLevel(State state, size_t weight_size, StateidT fst_state,
+                  size_t prefix) const {
+    Level level{state,          1, 0, weight_size, fst_state, A::Alive(state),
+                Filters(prefix)};
     if (level.alive) {
       _a->LiveRange(state, level.lo, level.hi);
     }
@@ -2160,7 +2253,7 @@ class AcceptorTermIterator : public SeekTermIterator,
 
   void ResetLevels() {
     this->_weight.Clear();
-    _levels.assign(1, MakeLevel(_a->Start(), 0, this->_fst->Start()));
+    _levels.assign(1, MakeLevel(_a->Start(), 0, this->_fst->Start(), 0));
   }
 
   bool PushSubBlock(const byte_type* suffix, size_t n);
@@ -2170,7 +2263,7 @@ class AcceptorTermIterator : public SeekTermIterator,
   void RebuildLevels();
 
   static constexpr bool kSuffixed =
-    requires(const A& a) { a.RequiredSuffix(); };
+    requires(const A& a) { a.RequiredSuffixes(); };
 
   enum class Filter : uint8_t {
     None,
@@ -2183,8 +2276,13 @@ class AcceptorTermIterator : public SeekTermIterator,
   static constexpr size_t kInfixEntry = 24;
   static constexpr uint32_t kInfixProbe = 256;
 
+  static constexpr size_t kMaxLabels = 256;
+
   const A* _a;
-  bytes_view _required;
+  std::span<const bstring> _required;
+  std::span<const RegexpAcceptor::ExemptKey> _exempt;
+  std::array<uint8_t, kMaxLabels + 1> _starts{};
+  std::array<uint64_t, 64> _words{};
   bytes_view _infix;
   uint64_t _partials{0};
   size_t _anchor_lo{0};
@@ -2229,7 +2327,8 @@ bool AcceptorTermIterator<FST, A>::PushSubBlock(const byte_type* suffix,
              FstBuffer::FstByteBuilder::kFinal == fst_state);
   this->_weight.PushBack(final_weight.begin(), final_weight.end());
 
-  _levels.emplace_back(Level{_live, lo, hi, weight_size, fst_state, true});
+  _levels.emplace_back(Level{_live, lo, hi, weight_size, fst_state, true,
+                             Filters(this->_term_buf.size())});
   this->_cur_block =
     this->PushBlock(bytes_view{this->_weight}, this->_term_buf.size());
   if (!accepts && lo <= hi) {
@@ -2294,7 +2393,8 @@ void AcceptorTermIterator<FST, A>::RebuildLevels() {
         alive = A::Alive(state);
       }
     }
-    _levels.emplace_back(MakeLevel(state, this->_weight.Size(), fst_state));
+    _levels.emplace_back(
+      MakeLevel(state, this->_weight.Size(), fst_state, prefix));
   }
 }
 
@@ -2348,11 +2448,13 @@ bool AcceptorTermIterator<FST, A>::NextImpl() {
   State state{};
   uint32_t lo = 1;
   uint32_t hi = 0;
+  bool filter = true;
   const auto load_frame = [&] {
     const auto& frame = _levels.back();
     state = frame.state;
     lo = frame.lo;
     hi = frame.hi;
+    filter = frame.filter;
     if constexpr (kSuffixed) {
       _infix_loaded = false;
     }
@@ -2398,7 +2500,7 @@ bool AcceptorTermIterator<FST, A>::NextImpl() {
         if (_filter != Filter::None &&
             EntryType::Term == this->_cur_block->Type() &&
             (_filter == Filter::Suffix
-               ? !EndsWithRequired(suffix_ptr, suffix_len)
+               ? filter && !EndsWithRequired(suffix_ptr, suffix_len)
                : suffix_len >= kInfixEntry &&
                    InfixRejects(suffix_ptr, suffix_len))) {
           if (this->_cur_block->Done()) {

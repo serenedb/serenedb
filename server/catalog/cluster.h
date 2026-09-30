@@ -25,6 +25,7 @@
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
+#include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <string>
 #include <string_view>
 
@@ -57,9 +58,9 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
              duckdb::AlterInfo& info) final;
 
   duckdb::CatalogTransaction LoginTransaction() {
-    return duckdb::CatalogTransaction{GetDatabase(),
-                                      duckdb::TRANSACTION_ID_START - 1,
-                                      duckdb::TRANSACTION_ID_START - 1};
+    return duckdb::CatalogTransaction{
+      GetDatabase(), duckdb::TRANSACTION_ID_START - 1,
+      duckdb::DuckTransactionManager::Get(GetAttached()).GetLastCommit() + 1};
   }
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateRole(

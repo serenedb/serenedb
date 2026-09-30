@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/synchronization/notification.h>
 #include <grp.h>
 #include <netinet/in.h>
@@ -28,6 +29,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <optional>
 #include <string>
@@ -152,6 +155,11 @@ class Acceptor final : public AcceptorBase,
 
   yaclib::Task<> Run() {
     auto self = this->shared_from_this();
+    absl::Cleanup restart_guard = [this] {
+      if (_running) {
+        Start();
+      }
+    };
     while (_running) {
       auto connection = duckdb::make_shared_ptr<Session>(_deps, _pool.Next());
       if (co_await AcceptInto(connection->Lowest()).NoThrow()) {
@@ -165,6 +173,9 @@ class Acceptor final : public AcceptorBase,
       if (!_running) {
         // Stop() ran between the accept and this resume: drop the connection.
         break;
+      }
+      SDB_IF_FAILURE("acceptor_throw") {
+        THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
       }
       if constexpr (!kUnix) {
         // Sessions batch writes themselves (message::Buffer); Nagle on top only
@@ -198,8 +209,10 @@ class Acceptor final : public AcceptorBase,
       // synchronous on this strand, so once Server::stop() releases the
       // group's hold every session-to-be is already counted.
       _deps.sessions->Add();
+      absl::Cleanup release_slot = [this] { _deps.sessions->Done(); };
       asio_ns::post(connection->Lowest().get_executor(),
                     [connection] { connection->Start(); });
+      std::move(release_slot).Cancel();
     }
     co_return {};
   }

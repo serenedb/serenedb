@@ -27,7 +27,7 @@ services:
     environment:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin
-    command: server /data
+    command: server /data --console-address :9001
     healthcheck:
       test:
         - CMD
@@ -65,6 +65,7 @@ services:
       - CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO
       - CATALOG_S3_ENDPOINT=http://minio:9000
       - CATALOG_S3_PATH__STYLE__ACCESS=true
+      - CATALOG_URI=jdbc:sqlite:/tmp/iceberg_catalog.db?journal_mode=WAL&busy_timeout=30000
     healthcheck:
       test:
         - CMD

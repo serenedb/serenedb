@@ -151,6 +151,53 @@ count
 statement ok
 ALTER INDEX recat_tick_idx SET (reindex_interval=0);
 
+statement ok
+CREATE SERVER recatw_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
+  warehouse '${ICEBERG_WAREHOUSE}',
+  endpoint '${ICEBERG_REST_URL}',
+  authorization_type 'none'
+);
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.recat_ext_t (id INTEGER, body TEXT);
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.recat_ext_t VALUES (1, 'written through the reader');
+
+statement ok
+CREATE VIEW recat_ext_v AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.recat_ext_t;
+
+statement ok
+CREATE INDEX recat_ext_idx ON recat_ext_v USING inverted(id, body recat_en) WITH (compaction_interval=0);
+
+statement count 1
+INSERT INTO recatw_${__DATABASE__}.${__DATABASE__}.recat_ext_t VALUES (2, 'committed by another writer');
+
+query
+SELECT action, files_added FROM serenedb_reindex('recat_ext_idx');
+----
+action	files_added
+delta	1
+
+query
+SELECT id, body FROM recat_ext_idx ORDER BY id;
+----
+id	body
+1	written through the reader
+2	committed by another writer
+
+statement ok
+DROP INDEX recat_ext_idx;
+
+statement ok
+DROP VIEW recat_ext_v;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.recat_ext_t;
+
+statement ok
+DROP SERVER recatw_${__DATABASE__};
+
 # Server-global residue (the server attachment and the persistent secret)
 # must not leak into later tests on the same instance.
 

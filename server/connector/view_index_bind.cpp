@@ -134,7 +134,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnView(
 
   auto view_info = view.GetInfo();
   auto& view_base = view_info->Cast<duckdb::CreateViewInfo>();
-  const auto fp = ResolveViewFastPath(context, view_base,
+  const auto fp = ResolveViewFastPath(context, view.ParentCatalog(), view_base,
                                       catalog::ParseKeyColumns(info->options));
   duckdb::optional_ptr<duckdb::LogicalGet> leaf;
   std::vector<duckdb::unique_ptr<duckdb::Expression>> pk_refs;

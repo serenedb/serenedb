@@ -25,7 +25,10 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/internal/resize_uninitialized.h>
 #include <absl/strings/str_cat.h>
+#include <immintrin.h>
 
+#include <array>
+#include <bit>
 #include <variant>
 #include <vector>
 
@@ -995,6 +998,7 @@ class BlockIterator : util::Noncopyable {
   uint32_t SubCount() const noexcept { return _sub_count; }
   uint64_t Start() const noexcept { return _start; }
   bool Done() const noexcept { return _cur_ent == _ent_count; }
+  const byte_type* SuffixEnd() const noexcept { return _suffix_end; }
   bool NoTerms() const noexcept {
     // FIXME(gnusi): add term mark to block entry?
     //
@@ -1110,6 +1114,7 @@ class BlockIterator : util::Noncopyable {
   PostingMeta _state;
   size_t _suffix_length{};  // last matched suffix length
   const byte_type* _suffix_begin{};
+  const byte_type* _suffix_end{};
   uint64_t _start;      // initial block start pointer
   uint64_t _cur_start;  // current block start pointer
   uint64_t _cur_end;    // block end pointer
@@ -1168,6 +1173,7 @@ void BlockIterator::Load(IndexInput& in) {
     in.ReadData(_suffix.block.data(), block_size);
     _suffix.begin = _suffix.block.c_str();
   }
+  _suffix_end = _suffix.begin + block_size;
 #ifdef SDB_DEV
   _suffix.end = _suffix.begin + block_size;
 #endif
@@ -1926,6 +1932,22 @@ class AcceptorTermIterator : public SeekTermIterator,
     }
     if constexpr (kSuffixed) {
       _required = a.RequiredSuffix();
+      _infix = a.RequiredInfix();
+      if (_infix.size() < kMinInfix || _infix.size() > kMaxInfix) {
+        _infix = {};
+      }
+      _anchor_hi = _infix.empty() ? 0 : _infix.size() - 1;
+      bool anchored = false;
+      for (size_t i = 0; i != _infix.size(); ++i) {
+        if (_infix[i] < 0xC0) {
+          _anchor_lo = anchored ? _anchor_lo : i;
+          _anchor_hi = i;
+          anchored = true;
+        }
+      }
+      _filter = !_required.empty() ? Filter::Suffix
+                : !_infix.empty()  ? Filter::Infix
+                                   : Filter::None;
     }
   }
 
@@ -2025,6 +2047,75 @@ class AcceptorTermIterator : public SeekTermIterator,
            std::memcmp(suffix, _required.data() + head, n) == 0;
   }
 
+  IRS_NO_INLINE void LoadInfix() noexcept {
+    const size_t prefix = this->_cur_block->Prefix();
+    const auto* data = this->_term_buf.data();
+    const size_t m = _infix.size();
+    _partials = 0;
+    _infix_block =
+      prefix < m || memmem(data, prefix, _infix.data(), m) == nullptr;
+    for (size_t k = std::min(m - 1, prefix); k != 0 && _infix_block; --k) {
+      if (std::memcmp(data + prefix - k, _infix.data(), k) == 0) {
+        _partials |= uint64_t{1} << k;
+      }
+    }
+  }
+
+  bool ContainsInfix(const byte_type* h, size_t n) const noexcept {
+    const size_t m = _infix.size();
+    const auto lo = _mm256_set1_epi8(static_cast<char>(_infix[_anchor_lo]));
+    const auto hi = _mm256_set1_epi8(static_cast<char>(_infix[_anchor_hi]));
+    for (size_t i = 0; i <= n - m; i += 32) {
+      auto mask = static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_and_si256(
+        _mm256_cmpeq_epi8(
+          lo, _mm256_loadu_si256(
+                reinterpret_cast<const __m256i*>(h + i + _anchor_lo))),
+        _mm256_cmpeq_epi8(
+          hi, _mm256_loadu_si256(
+                reinterpret_cast<const __m256i*>(h + i + _anchor_hi))))));
+      const size_t limit = n - m + 1 - i;
+      if (limit < 32) {
+        mask &= (uint32_t{1} << limit) - 1;
+      }
+      for (; mask != 0; mask &= mask - 1) {
+        const auto at = static_cast<size_t>(std::countr_zero(mask));
+        if (std::memcmp(h + i + at, _infix.data(), m) == 0) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  IRS_NO_INLINE bool InfixRejects(const byte_type* suffix, size_t n) noexcept {
+    if (!_infix_loaded) {
+      LoadInfix();
+      _infix_loaded = true;
+    }
+    if (!_infix_block) {
+      return false;
+    }
+    const size_t m = _infix.size();
+    bool found = false;
+    for (auto partials = _partials; partials != 0 && !found;
+         partials &= partials - 1) {
+      const auto k = static_cast<size_t>(std::countr_zero(partials));
+      found = n >= m - k && std::memcmp(suffix, _infix.data() + k, m - k) == 0;
+    }
+    if (!found && n >= m) {
+      found = suffix + n + 32 <= this->_cur_block->SuffixEnd()
+                ? ContainsInfix(suffix, n)
+                : memmem(suffix, n, _infix.data(), m) != nullptr;
+    }
+    if (_infix_checks != kInfixProbe) {
+      _infix_rejects += !found;
+      if (++_infix_checks == kInfixProbe && _infix_rejects * 2 < kInfixProbe) {
+        _filter = Filter::None;
+      }
+    }
+    return !found;
+  }
+
   bool Accepts() { return _a->Accept(_live, _payload); }
 
   bool MayAccept() {
@@ -2081,8 +2172,28 @@ class AcceptorTermIterator : public SeekTermIterator,
   static constexpr bool kSuffixed =
     requires(const A& a) { a.RequiredSuffix(); };
 
+  enum class Filter : uint8_t {
+    None,
+    Suffix,
+    Infix,
+  };
+
+  static constexpr size_t kMinInfix = 3;
+  static constexpr size_t kMaxInfix = 32;
+  static constexpr size_t kInfixEntry = 24;
+  static constexpr uint32_t kInfixProbe = 256;
+
   const A* _a;
   bytes_view _required;
+  bytes_view _infix;
+  uint64_t _partials{0};
+  size_t _anchor_lo{0};
+  size_t _anchor_hi{0};
+  uint32_t _infix_checks{0};
+  uint32_t _infix_rejects{0};
+  bool _infix_block{false};
+  bool _infix_loaded{false};
+  Filter _filter{Filter::None};
   irs::containers::SmallVector<Level, 8> _levels;
   State _live{};
   typename A::PayloadType _payload{};
@@ -2242,6 +2353,9 @@ bool AcceptorTermIterator<FST, A>::NextImpl() {
     state = frame.state;
     lo = frame.lo;
     hi = frame.hi;
+    if constexpr (kSuffixed) {
+      _infix_loaded = false;
+    }
   };
   for (;;) {
     while (frame_done || this->_cur_block->Done()) {
@@ -2281,8 +2395,12 @@ bool AcceptorTermIterator<FST, A>::NextImpl() {
         }
       }
       if constexpr (kSuffixed) {
-        if (!_required.empty() && EntryType::Term == this->_cur_block->Type() &&
-            !EndsWithRequired(suffix_ptr, suffix_len)) {
+        if (_filter != Filter::None &&
+            EntryType::Term == this->_cur_block->Type() &&
+            (_filter == Filter::Suffix
+               ? !EndsWithRequired(suffix_ptr, suffix_len)
+               : suffix_len >= kInfixEntry &&
+                   InfixRejects(suffix_ptr, suffix_len))) {
           if (this->_cur_block->Done()) {
             break;
           }

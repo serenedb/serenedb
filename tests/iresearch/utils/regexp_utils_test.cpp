@@ -2278,6 +2278,25 @@ TEST_F(RegexpUtilsTest, generated_alternation_matches_re2) {
   EXPECT_NE(terms.size(), hits);
 }
 
+TEST_F(RegexpUtilsTest, required_infix) {
+  const auto infix = [](std::string_view pattern) {
+    const auto a = FromPerl(pattern);
+    EXPECT_TRUE(a.RequiredSuffix().empty()) << pattern;
+    return std::string{irs::ViewCast<char>(a.RequiredInfix())};
+  };
+  EXPECT_EQ("abcd", infix(".*abcd.*"));
+  EXPECT_EQ("cde", infix(".*ab.*cde.*"));
+  EXPECT_EQ("def", infix("abc.*def.*"));
+  EXPECT_EQ("", infix("[0-9a-f]{7}c-.*"));
+  EXPECT_EQ("", infix("(?i).*abcd.*"));
+  EXPECT_EQ("", infix(".*abcd.*|.*efgh.*"));
+  EXPECT_EQ("", infix("bur.*"));
+  EXPECT_TRUE(FromPerl(".*tion").RequiredInfix().empty());
+  const irs::RegexpAcceptor wildcard{irs::RegexpAcceptor::WildcardTag{},
+                                     ToBytesView("%ab_c%")};
+  EXPECT_EQ("ab", std::string{irs::ViewCast<char>(wildcard.RequiredInfix())});
+}
+
 TEST_F(RegexpUtilsTest, required_suffix) {
   const auto suffix = [](const irs::RegexpAcceptor& a) {
     return std::string{irs::ViewCast<char>(a.RequiredSuffix())};

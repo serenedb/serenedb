@@ -252,6 +252,41 @@ void AppendRune(bstring& out, re2::Rune rune, bool latin1) {
   out.append(reinterpret_cast<const byte_type*>(utf8), static_cast<size_t>(n));
 }
 
+bstring InfixOf(re2::Regexp* re) {
+  std::vector<re2::Regexp*> pieces;
+  AppendPieces(re, pieces);
+  std::vector<re2::Rune> runes;
+  bstring best;
+  bool unbounded = false;
+  for (auto it = pieces.begin(); it != pieces.end();) {
+    runes.clear();
+    if (!EmptyWidth((*it)->op()) && !ExactRunes(*it, runes)) {
+      unbounded = unbounded || (*it)->op() == re2::kRegexpStar ||
+                  (*it)->op() == re2::kRegexpPlus;
+      ++it;
+      continue;
+    }
+    bstring run;
+    for (; it != pieces.end(); ++it) {
+      runes.clear();
+      if (EmptyWidth((*it)->op())) {
+        continue;
+      }
+      if (!ExactRunes(*it, runes)) {
+        break;
+      }
+      const bool latin1 = ((*it)->parse_flags() & re2::Regexp::Latin1) != 0;
+      for (const auto rune : runes) {
+        AppendRune(run, rune, latin1);
+      }
+    }
+    if (unbounded && run.size() > best.size()) {
+      best = std::move(run);
+    }
+  }
+  return best;
+}
+
 constexpr size_t kMaxLiterals = 1024;
 constexpr size_t kMaxLiteralDepth = 64;
 
@@ -805,6 +840,9 @@ void RegexpAcceptor::Compile(bytes_view pattern, RegexpSyntax syntax,
     wildcard ? WildcardTree(pattern) : RegexpTree(pattern, syntax);
   if (re) {
     _suffix = SuffixOf(re);
+    if (_suffix.empty()) {
+      _infix = InfixOf(re);
+    }
     if (!wildcard && FiniteLanguage(re, 0, _literals)) {
       std::sort(_literals.begin(), _literals.end());
       _literals.erase(std::unique(_literals.begin(), _literals.end()),

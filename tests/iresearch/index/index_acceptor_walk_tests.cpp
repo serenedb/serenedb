@@ -817,6 +817,11 @@ TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
     "ABab",
     "access",
     "accessory",
+    "f0e1d2c3b4a5968778695a4b3c2d1e0f-abcd-0001",
+    "f0e1d2c3b4a5968778695a4b3c2d1e0f-abce-0002",
+    "abcd000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000abcd",
+    "0000000000000000000000000000000000000abc",
   };
 
   AddTerms(kTerms);
@@ -860,6 +865,8 @@ TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
     "(?i)^(the\\s+)?siemens\\b.*|^(the\\s+)?access.?\\b.*|^(the\\s+)?"
     "accessories\\b.*|^(the\\s+)?siemens financial services\\b.*",
     ".*\\bdata\\b.*|.*\\bgcp\\b.*|.*\\bgroup",
+    ".*abcd.*",
+    ".*5a4b3c.*",
   };
   for (const auto pattern : kPerl) {
     SCOPED_TRACE(testing::Message("Regexp: '") << pattern << "'");
@@ -901,8 +908,8 @@ TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
   like.set_log_errors(false);
   like.set_dot_nl(true);
   constexpr std::string_view kWildcards[]{
-    "bur%",  "%tion", "b_rden", "%den%", "a____s", "%",     "",
-    "b%r%n", "\\%x",  "b_rde%", "gr_y",  "_t_",    "%\\%x", "b_%n",
+    "bur%", "%tion",  "b_rden", "%den%", "a____s", "%",    "",       "b%r%n",
+    "\\%x", "b_rde%", "gr_y",   "_t_",   "%\\%x",  "b_%n", "%abcd%",
   };
   for (const auto pattern : kWildcards) {
     SCOPED_TRACE(testing::Message("Wildcard: '") << pattern << "'");

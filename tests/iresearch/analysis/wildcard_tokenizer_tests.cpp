@@ -120,6 +120,75 @@ std::vector<irs::bstring> FillTokens(irs::analysis::WildcardTokenizer& stream,
   return out;
 }
 
+struct RowTokens {
+  std::vector<irs::bstring> terms;
+  std::vector<std::pair<irs::doc_id_t, irs::bstring>> stores;
+};
+
+class StoreCalls final : public irs::StoreSink {
+ public:
+  explicit StoreCalls(RowTokens& out) noexcept : _out{&out} {}
+
+  void OnStore(irs::doc_id_t doc, irs::bytes_view blob) final {
+    _out->stores.emplace_back(doc, irs::bstring{blob});
+  }
+
+ private:
+  RowTokens* _out;
+};
+
+RowTokens FillRowTokens(irs::analysis::WildcardTokenizer& stream,
+                        const std::vector<std::string>& elements,
+                        irs::doc_id_t doc) {
+  std::vector<duckdb::string_t> values;
+  for (const auto& e : elements) {
+    values.push_back(tests::ToStringT(e));
+  }
+  RowTokens out;
+  const auto collect = [&](irs::TokenBatch& batch,
+                           std::span<const irs::DocRun> runs) {
+    uint32_t tok = 0;
+    for (const auto& run : runs) {
+      EXPECT_EQ(doc, run.doc);
+      for (uint32_t j = 0; j < run.ntokens; ++j, ++tok) {
+        const auto& t = batch.terms[tok];
+        out.terms.emplace_back(
+          reinterpret_cast<const irs::byte_type*>(t.GetData()), t.GetSize());
+      }
+    }
+  };
+  tests::FnTokenSink sink{irs::TokenLayout::Terms, collect};
+  StoreCalls store{out};
+  sink.writer.Bind(sink, &store);
+  const auto fmt = tests::ValuesFormat(values);
+  stream.FillRow(fmt, 0, static_cast<uint32_t>(values.size()), doc, sink.writer,
+                 {sink.layout});
+  sink.writer.Finish();
+  return out;
+}
+
+RowTokens AnalyzeEachElement(irs::analysis::WildcardTokenizer& stream,
+                             const std::vector<std::string>& elements,
+                             irs::doc_id_t doc) {
+  RowTokens out;
+  irs::bstring store;
+  for (const auto& e : elements) {
+    irs::ValueAnalyzer analyzer;
+    irs::ValueTokens tokens;
+    if (!analyzer.Analyze(stream, tests::ToStringT(e), tokens)) {
+      continue;
+    }
+    for (const auto& t : tokens.terms()) {
+      out.terms.emplace_back(irs::AsBytesView(t));
+    }
+    store.append(tokens.store());
+  }
+  if (!store.empty()) {
+    out.stores.emplace_back(doc, std::move(store));
+  }
+  return out;
+}
+
 void AssertFillsMatchPull(size_t ngram_size, std::string_view base_delimiter,
                           const std::vector<std::string>& values) {
   auto pull_stream = MakeWildcard(ngram_size, base_delimiter);
@@ -284,6 +353,44 @@ TEST(wildcard_tokenizer_tests, base_fill_failure_leaves_no_residue) {
   }
   ASSERT_FALSE(sink.store().empty());
   ASSERT_EQ(expected.store(), sink.store());
+}
+
+TEST(wildcard_tokenizer_tests, row_fill_stores_the_whole_row_once) {
+  auto row_stream = MakeWildcard(3, " ");
+  auto per_element = MakeWildcard(3, " ");
+  const std::vector<std::string> elements = {"search alpha", "", "caf\xc3\xa9",
+                                             std::string(40, 'z'), "research"};
+
+  const auto expected = AnalyzeEachElement(*per_element, elements, 7);
+  const auto got = FillRowTokens(*row_stream, elements, 7);
+  ASSERT_FALSE(expected.terms.empty());
+  ASSERT_EQ(1U, expected.stores.size());
+  ASSERT_EQ(expected.terms, got.terms);
+  ASSERT_EQ(expected.stores, got.stores);
+
+  const auto next = FillRowTokens(*row_stream, {"beta"}, 8);
+  ASSERT_EQ(AnalyzeEachElement(*per_element, {"beta"}, 8).stores, next.stores);
+}
+
+TEST(wildcard_tokenizer_tests, row_fill_without_terms_stores_nothing) {
+  irs::analysis::WildcardTokenizer stream{
+    std::make_unique<SilentBaseTokenizer>(), 3};
+  ASSERT_TRUE(FillRowTokens(stream, {}, 1).stores.empty());
+  const auto silent = FillRowTokens(stream, {"quick", "brown"}, 2);
+  ASSERT_TRUE(silent.terms.empty());
+  ASSERT_TRUE(silent.stores.empty());
+}
+
+TEST(wildcard_tokenizer_tests, row_fill_drops_a_failed_element) {
+  irs::analysis::WildcardTokenizer stream{
+    std::make_unique<FlakyBaseTokenizer>(), 3};
+  irs::analysis::WildcardTokenizer per_element{
+    std::make_unique<FlakyBaseTokenizer>(), 3};
+  const auto got = FillRowTokens(stream, {"okey", "fail", "done"}, 3);
+  const auto expected = AnalyzeEachElement(per_element, {"okey", "done"}, 3);
+  ASSERT_EQ(1U, expected.stores.size());
+  ASSERT_EQ(expected.terms, got.terms);
+  ASSERT_EQ(expected.stores, got.stores);
 }
 
 TEST(wildcard_tokenizer_tests, memory_usage_accounts_scratch) {

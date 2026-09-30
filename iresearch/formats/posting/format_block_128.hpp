@@ -24,6 +24,7 @@
 #include <streamvbyte.h>
 #include <streamvbytedelta.h>
 
+#include <limits>
 #include <string_view>
 
 #include "iresearch/formats/posting/common.hpp"
@@ -40,15 +41,17 @@ namespace irs {
 // It's not ideal, for an example avx512/avx2 sometimes better, they can be used
 // for even bitpacking. Or larger block size.
 // But in general we need to think more about size of data.
-// Largest streamvbyte block worth writing, counted the way the candidate sizes
-// below are: the u16 length plus the encoded bytes. The decoder reads up to
-// STREAMVBYTE_PADDING bytes past a block it decodes, so the block and that
-// slack together have to fit the scratch buffer it may be copied into. Nothing
-// is lost by the cap -- a block that big is no smaller than de_values/e_values,
-// which is what gets picked instead.
-inline constexpr uint32_t kMaxStreamvbyteSize =
-  doc_limits::kBlockSize * sizeof(uint32_t) - STREAMVBYTE_PADDING +
-  sizeof(uint16_t);
+// The decoder reads up to STREAMVBYTE_PADDING bytes past a block it decodes, so
+// a block only fits the scratch buffer it may be copied into if it leaves that
+// much slack. Takes and returns a candidate size counted the way the encoder
+// counts them -- the u16 length plus the encoded bytes -- and rules an
+// oversized one out of the running. Nothing is lost: values/e_values is no
+// larger than a block that big, and gets picked instead.
+IRS_FORCE_INLINE constexpr uint32_t DropIfOversized(uint32_t size) noexcept {
+  constexpr uint32_t kMax = doc_limits::kBlockSize * sizeof(uint32_t) -
+                            STREAMVBYTE_PADDING + sizeof(uint16_t);
+  return size <= kMax ? size : std::numeric_limits<uint32_t>::max();
+}
 
 struct FormatTraits128 {
   static_assert(doc_limits::kBlockSize > 1);
@@ -108,6 +111,12 @@ struct FormatTraits128 {
         size_delta_streamvbyte1234 += ByteSize1234(delta_value);
       }
 
+      // Too large to decode into the scratch buffer with its padding, so not a
+      // candidate at all. Note best_size cannot carry this limit instead: it
+      // doubles as the payload length of whichever encoding wins.
+      size_streamvbyte1234 = DropIfOversized(size_streamvbyte1234);
+      size_delta_streamvbyte1234 = DropIfOversized(size_delta_streamvbyte1234);
+
       if (all_same) {
         if (delta_max == 1) {
           best_encoding = de_delta_all_equal_to_1;
@@ -143,8 +152,7 @@ struct FormatTraits128 {
         }
       }
 
-      if (SupportIfTail(len) && size_streamvbyte1234 < best_size &&
-          size_streamvbyte1234 <= kMaxStreamvbyteSize) {
+      if (SupportIfTail(len) && size_streamvbyte1234 < best_size) {
         best_encoding = de_streamvbyte1234;
         best_size = size_streamvbyte1234;
       }
@@ -152,8 +160,7 @@ struct FormatTraits128 {
       //   best_encoding = de_for_streamvbyte1234;
       //   best_size = size_for_streamvbyte1234;
       // }
-      if (SupportIfTail(len) && size_delta_streamvbyte1234 < best_size &&
-          size_delta_streamvbyte1234 <= kMaxStreamvbyteSize) {
+      if (SupportIfTail(len) && size_delta_streamvbyte1234 < best_size) {
         best_encoding = de_delta_streamvbyte1234;
         best_size = size_delta_streamvbyte1234;
       }
@@ -288,6 +295,9 @@ struct FormatTraits128 {
         size_streamvbyte1234 += ByteSize1234(value);
       }
 
+      // See WriteTailDelta.
+      size_streamvbyte1234 = DropIfOversized(size_streamvbyte1234);
+
       if (all_same) {
         if (max == 1) {
           best_encoding = e_all_equal_to_1;
@@ -324,8 +334,7 @@ struct FormatTraits128 {
         }
       }
 
-      if (SupportIfTail(len) && size_streamvbyte1234 < best_size &&
-          size_streamvbyte1234 <= kMaxStreamvbyteSize) {
+      if (SupportIfTail(len) && size_streamvbyte1234 < best_size) {
         best_encoding = e_streamvbyte1234;
         best_size = size_streamvbyte1234;
       }
@@ -1109,7 +1118,7 @@ struct FormatTraits128 {
   //
   // An input that hands out a pointer into a smaller window than the file --
   // a memory-file bucket, a read buffer -- refuses, and we copy instead;
-  // kMaxStreamvbyteSize is what keeps that copy in bounds.
+  // DropIfOversized is what keeps that copy in bounds.
   template<typename InputType>
   IRS_FORCE_INLINE static const byte_type* ReadDataPaddedImpl(
     uint32_t size, InputType& in, uint32_t* IRS_RESTRICT buf) {

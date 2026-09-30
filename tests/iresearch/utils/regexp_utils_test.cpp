@@ -2214,3 +2214,14 @@ TEST_F(RegexpUtilsTest, concurrent_first_use) {
     }
   }
 }
+
+TEST_F(RegexpUtilsTest, repeated_group_across_alternatives) {
+  const auto a = FromPerl("(?:ab){2}|ac");
+  EXPECT_TRUE(Accepts(a, "abab"));
+  EXPECT_TRUE(Accepts(a, "ac"));
+  EXPECT_FALSE(Accepts(a, "abb"));
+  const auto b = FromPerl("(?:abc){2}x|abd");
+  EXPECT_TRUE(Accepts(b, "abcabcx"));
+  EXPECT_TRUE(Accepts(b, "abd"));
+  EXPECT_FALSE(Accepts(b, "abccx"));
+}

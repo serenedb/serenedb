@@ -146,7 +146,7 @@ class RegexpRewriter : public re2::Regexp::Walker<re2::Regexp*> {
       case re2::kRegexpConcat:
         return re2::Regexp::Concat(child_args, nchild_args, flags);
       case re2::kRegexpAlternate:
-        return re2::Regexp::Alternate(child_args, nchild_args, flags);
+        return re2::Regexp::AlternateNoFactor(child_args, nchild_args, flags);
 
       case re2::kRegexpCharClass:
         SDB_ASSERT(nchild_args == 0);

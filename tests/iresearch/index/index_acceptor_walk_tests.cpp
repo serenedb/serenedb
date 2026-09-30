@@ -777,6 +777,8 @@ TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
     "foo bar",
     "a\nb",
     "ab",
+    "abb",
+    "ac",
   };
 
   AddTerms(kTerms);
@@ -814,6 +816,7 @@ TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
     "a$b",
     "(?m)a$\\n^b",
     "\\bbur\\w*",
+    "(?:ab){2}|ac",
   };
   for (const auto pattern : kPerl) {
     SCOPED_TRACE(testing::Message("Regexp: '") << pattern << "'");

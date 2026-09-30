@@ -1,12 +1,29 @@
 control substitution on
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY meme_res_en AS
-    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
-    WITH (frequency, position);
+CREATE TEXT SEARCH DICTIONARY meme_res_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
 
 statement ok
 CREATE SCHEMA kek;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kek.meme_res_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
 
 statement ok
 CREATE TABLE kek.pepe (id INTEGER, body TEXT);
@@ -199,6 +216,9 @@ DROP TABLE pepe;
 
 statement ok
 DROP TABLE kek.pepe;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY kek.meme_res_en;
 
 statement ok
 DROP SCHEMA kek;

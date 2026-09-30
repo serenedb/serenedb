@@ -154,6 +154,4 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
   bstring _blob;
 };
 
-extern template class TypedTokenizer<ShingleTokenizer>;
-
 }  // namespace irs::analysis

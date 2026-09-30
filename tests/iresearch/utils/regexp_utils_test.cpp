@@ -20,7 +20,9 @@
 
 #include <re2/re2.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <iresearch/utils/conjunction_acceptor.hpp>
 #include <iresearch/utils/regexp_acceptor.hpp>
 #include <iresearch/utils/regexp_utils.hpp>
 #include <latch>
@@ -2212,6 +2214,99 @@ TEST_F(RegexpUtilsTest, concurrent_first_use) {
         for (size_t t = 0; t != kThreads; ++t) {
           ASSERT_EQ(expected, actual[t]) << "thread " << t;
         }
+      }
+    }
+  }
+}
+
+TEST_F(RegexpUtilsTest, conjunction_concurrent_first_use) {
+  constexpr std::string_view kPatterns[]{
+    ".*a.{4}",
+    "(.*e){2}.*",
+    "(ab|ba|aab|e|x)*",
+  };
+  constexpr size_t kBudgets[]{size_t{4} << 10,
+                              irs::RegexpAcceptor::kDefaultMaxDfaMem};
+  constexpr size_t kThreads = 8;
+  constexpr size_t kRounds = 8;
+
+  std::mt19937 rng{1286};
+  std::vector<std::string> keys;
+  keys.reserve(2000);
+  for (size_t i = 0; i != 2000; ++i) {
+    std::string key(1 + rng() % 24, 'a');
+    for (auto& c : key) {
+      c = "abex"[rng() % 4];
+    }
+    keys.emplace_back(std::move(key));
+  }
+
+  std::vector<uint8_t> expected;
+  expected.reserve(keys.size());
+  {
+    const auto first = FromPerl(kPatterns[0]);
+    const auto second = FromPerl(kPatterns[1]);
+    const auto third = FromPerl(kPatterns[2]);
+    for (const auto& key : keys) {
+      expected.push_back(Accepts(first, key) && Accepts(second, key) &&
+                         Accepts(third, key));
+    }
+  }
+  ASSERT_NE(0, std::count(expected.begin(), expected.end(), 1));
+
+  const auto walk = [](const irs::RegexpConjunction& a, std::string_view key) {
+    auto state = a.Start();
+    for (const auto c : key) {
+      if (irs::RegexpConjunction::Unknown(state)) {
+        return a.Matches(ToBytesView(key));
+      }
+      uint32_t lo = 1;
+      uint32_t hi = 0;
+      a.LiveRange(state, lo, hi);
+      state = a.Step(state, static_cast<irs::byte_type>(c));
+      if (!irs::RegexpConjunction::Alive(state)) {
+        return false;
+      }
+    }
+    if (irs::RegexpConjunction::Unknown(state)) {
+      return a.Matches(ToBytesView(key));
+    }
+    irs::byte_type payload{};
+    return a.Accept(state, payload);
+  };
+
+  for (const auto budget : kBudgets) {
+    SCOPED_TRACE(testing::Message("budget: ") << budget);
+    for (size_t round = 0; round != kRounds; ++round) {
+      std::vector<std::shared_ptr<const irs::RegexpAcceptor>> parts;
+      for (const auto pattern : kPatterns) {
+        parts.emplace_back(std::make_shared<const irs::RegexpAcceptor>(
+          ToBytesView(pattern), irs::RegexpSyntax::Perl,
+          irs::RegexpAcceptor::kDefaultMaxMem, budget));
+        ASSERT_TRUE(parts.back()->ok());
+      }
+      const irs::RegexpConjunction shared{parts, budget};
+
+      std::latch start{kThreads};
+      std::vector<std::vector<uint8_t>> actual(
+        kThreads, std::vector<uint8_t>(keys.size()));
+      std::vector<std::thread> workers;
+      workers.reserve(kThreads);
+      for (size_t t = 0; t != kThreads; ++t) {
+        workers.emplace_back([&, t] {
+          start.arrive_and_wait();
+          for (size_t i = 0; i != keys.size(); ++i) {
+            const size_t k = (i + t * 131) % keys.size();
+            actual[t][k] = t % 2 == 0 ? shared.Matches(ToBytesView(keys[k]))
+                                      : walk(shared, keys[k]);
+          }
+        });
+      }
+      for (auto& worker : workers) {
+        worker.join();
+      }
+      for (size_t t = 0; t != kThreads; ++t) {
+        ASSERT_EQ(expected, actual[t]) << "thread " << t;
       }
     }
   }

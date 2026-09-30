@@ -46,6 +46,15 @@ class EmptyTermReader final : public irs::TermReader {
     return SeekTermIterator::empty();
   }
 
+  SeekTermIterator::ptr iterator(
+    const RegexpConjunction&) const noexcept final {
+    return SeekTermIterator::empty();
+  }
+
+  SeekTermIterator::ptr iterator(const FuzzyConjunction&) const noexcept final {
+    return SeekTermIterator::empty();
+  }
+
   PostingMeta Lookup(bytes_view) const noexcept final { return {}; }
 
   void ReadDocs(bytes_view, Acceptor acceptor) const noexcept final {}

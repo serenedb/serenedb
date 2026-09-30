@@ -21,6 +21,7 @@
 #pragma once
 
 #include <memory>
+#include <span>
 
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/iterators.hpp"
@@ -43,6 +44,10 @@ class TermAcceptorSource {
   virtual SeekTermIterator::ptr Iterator(const TermReader& reader) const = 0;
 
   virtual TermPredicate::ptr Predicate() const = 0;
+
+  virtual std::shared_ptr<const RegexpAcceptor> Automaton() const {
+    return nullptr;
+  }
 };
 
 struct TermBounds {
@@ -51,6 +56,10 @@ struct TermBounds {
 };
 
 TermAcceptorSource::ptr MakePatternSource(bytes_view pattern, PatternKind kind);
+
+TermAcceptorSource::ptr MakeJointSource(
+  std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
+  std::shared_ptr<const LevenshteinAcceptor> fuzzy);
 
 TermAcceptorSource::ptr MakeConjunctionSource(TermAcceptorSource::ptr driver,
                                               TermBounds bounds,

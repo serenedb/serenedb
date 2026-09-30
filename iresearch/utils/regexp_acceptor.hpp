@@ -49,8 +49,10 @@ class RegexpAcceptor {
   static constexpr uint32_t kMaxLabel = 255;
   static constexpr size_t kMaskWords = bitset::bits_to_words(kMaxLabel + 1);
 
+  using Mask = std::array<bitset::word_t, kMaskWords>;
+
   struct Row {
-    std::array<bitset::word_t, kMaskWords> loop{};
+    Mask loop{};
     const int* set{nullptr};
     uint32_t set_size{0};
     uint32_t context{0};
@@ -117,6 +119,10 @@ class RegexpAcceptor {
 
   std::span<const bstring> Literals() const noexcept { return _literals; }
 
+  const std::array<uint8_t, kMaxLabel + 1>& Bytemap() const noexcept {
+    return _bytemap;
+  }
+
   static bool Alive(State state) noexcept { return !state->dead; }
 
   static bool Unknown(State state) noexcept { return state->unknown; }
@@ -135,8 +141,7 @@ class RegexpAcceptor {
     return state->accept;
   }
 
-  size_t StepRun(State from, const byte_type* p, size_t n, State& out) const {
-    const auto& loop = Built(from).loop;
+  static size_t Stay(const Mask& loop, const byte_type* p, size_t n) noexcept {
     size_t i = 0;
     for (; i + kRunChunk <= n; i += kRunChunk) {
       bitset::word_t moved = 0;
@@ -151,12 +156,16 @@ class RegexpAcceptor {
     for (; i != n; ++i) {
       const size_t label = p[i];
       if (((loop[bitset::word(label)] >> bitset::bit(label)) & 1) == 0) {
-        out = Step(from, p[i]);
         return i;
       }
     }
-    out = from;
     return n;
+  }
+
+  size_t StepRun(State from, const byte_type* p, size_t n, State& out) const {
+    const auto i = Stay(Built(from).loop, p, n);
+    out = i == n ? from : Step(from, p[i]);
+    return i;
   }
 
   bool LiveRange(State state, uint32_t& lo, uint32_t& hi) const {

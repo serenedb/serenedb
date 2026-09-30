@@ -30,6 +30,7 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
+#include "iresearch/utils/conjunction_acceptor.hpp"
 #include "iresearch/utils/levenshtein_acceptor.hpp"
 #include "iresearch/utils/regexp_acceptor.hpp"
 #include "iresearch/utils/string.hpp"
@@ -74,6 +75,12 @@ struct TermReader : public AttributeProvider {
 
   virtual SeekTermIterator::ptr iterator(
     const LevenshteinAcceptor& acceptor) const = 0;
+
+  virtual SeekTermIterator::ptr iterator(
+    const RegexpConjunction& acceptor) const = 0;
+
+  virtual SeekTermIterator::ptr iterator(
+    const FuzzyConjunction& acceptor) const = 0;
 
   virtual std::unique_ptr<IndexInput> ReopenPayload() const { return nullptr; }
 

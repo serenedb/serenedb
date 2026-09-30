@@ -186,6 +186,25 @@ class LevenshteinAcceptor {
     return Accept(state, payload);
   }
 
+  std::array<uint8_t, 256> Bytemap() const {
+    std::array<uint8_t, 256> bytemap{};
+    std::vector<int32_t> classes_of(_slots, -1);
+    uint32_t classes = 0;
+    for (uint32_t label = 0; label != bytemap.size(); ++label) {
+      if (label >= 0x80 ||
+          _prefix.find(static_cast<byte_type>(label)) != bstring::npos) {
+        bytemap[label] = static_cast<uint8_t>(classes++);
+        continue;
+      }
+      auto& c = classes_of[static_cast<size_t>(_narrow[label])];
+      if (c < 0) {
+        c = static_cast<int32_t>(classes++);
+      }
+      bytemap[label] = static_cast<uint8_t>(c);
+    }
+    return bytemap;
+  }
+
   // Smallest and largest label that leaves `state` alive; the range is empty
   // (`lo > hi`, which is also what the `false` return says) when none does.
   // Evaluated once per dictionary block, which is what makes the window scan

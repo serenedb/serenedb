@@ -370,6 +370,7 @@ set(IResearch_core_sources
     ./utils/wildcard_utils.cpp
     ./utils/like_matcher.cpp
     ./utils/regexp_acceptor.cpp
+    ./utils/conjunction_acceptor.cpp
     ./utils/regexp_utils.cpp
     ./utils/levenshtein_default_pdp.cpp
     ./utils/timer_utils.cpp

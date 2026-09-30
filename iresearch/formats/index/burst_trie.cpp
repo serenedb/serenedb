@@ -2628,6 +2628,14 @@ class FieldReader::Impl {
       return MakeAcceptorIterator(a);
     }
 
+    SeekTermIterator::ptr iterator(const RegexpConjunction& a) const final {
+      return MakeAcceptorIterator(a);
+    }
+
+    SeekTermIterator::ptr iterator(const FuzzyConjunction& a) const final {
+      return MakeAcceptorIterator(a);
+    }
+
     std::unique_ptr<IndexInput> ReopenPayload() const final {
       SDB_ASSERT(_owner);
       return _owner->_pr.ReopenPayload();

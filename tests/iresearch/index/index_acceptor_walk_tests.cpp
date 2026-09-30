@@ -26,6 +26,7 @@
 #include <iresearch/search/detail/pattern_cache.hpp>
 #include <iresearch/search/detail/term_acceptor.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
+#include <iresearch/utils/conjunction_acceptor.hpp>
 #include <iresearch/utils/containers/small_vector.hpp>
 #include <iresearch/utils/levenshtein_acceptor.hpp>
 #include <iresearch/utils/levenshtein_utils.hpp>
@@ -115,8 +116,9 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
     }
   }
 
+  template<typename Acceptor>
   void AssertSourceMatchesWalk(const irs::IndexReader& reader,
-                               const irs::RegexpAcceptor& acceptor,
+                               const Acceptor& acceptor,
                                const irs::TermAcceptorSource& source) {
     const auto predicate = source.Predicate();
     ASSERT_NE(nullptr, predicate);
@@ -316,10 +318,9 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
     return regex;
   }
 
-  template<typename Covers, typename Oracle>
-  void AssertOracle(const irs::IndexReader& reader,
-                    const irs::RegexpAcceptor& acceptor, Covers&& covers,
-                    Oracle&& oracle) {
+  template<typename Acceptor, typename Covers, typename Oracle>
+  void AssertOracle(const irs::IndexReader& reader, const Acceptor& acceptor,
+                    Covers&& covers, Oracle&& oracle) {
     for (auto& segment : reader) {
       for (auto field_id : segment.field_ids()) {
         const auto* field = segment.field(field_id);
@@ -1017,6 +1018,161 @@ TEST_P(AcceptorWalkIndexTestCase, union_walk_is_the_union_of_its_parts) {
     const auto source = irs::MakePatternSource(key, irs::PatternKind::Union);
     ASSERT_NE(nullptr, source);
     AssertSourceMatchesWalk(*reader.GetImpl(), acceptor, *source);
+  }
+}
+
+TEST_P(AcceptorWalkIndexTestCase, conjunction_walk_is_the_intersection) {
+  constexpr std::string_view kTerms[]{
+    "burden",
+    "b\xC3\xBCrden",
+    "bxrden",
+    "b\xE0\x80\x80rden",
+    "b\xFFrden",
+    "atlas",
+    "atlantic",
+    "atl\xFF",
+    "gray",
+    "grey",
+    "nation",
+    "Nation",
+    "station",
+    "x",
+    "zz",
+    "the siemens ag",
+    "siemens ag",
+    "siemensland ag",
+    "siemens",
+    "siemen",
+    "simens",
+    "sieemens",
+    "siemenz",
+    "siem\xC3\xA9ns",
+    "siem\xC3\xA9n",
+    "si\xE0\x81\xA5mens",
+    "siem\xF0\x80\x81\xA5ns",
+    "sie\xC0\xADmens",
+    "s\xFFiemens",
+    "siemen\x80s",
+    "siemen\xC3",
+    "\xD0\xBC\xD0\xBE\xD1\x81\xD0\xBA\xD0\xB2\xD0\xB0",
+    "\xD0\xBC\xD0\xBE\xD1\x81\xD0\xBA\xD0\xB0",
+    "\xD0\xBC\xD0\xB0\xD1\x81\xD0\xBA\xD0\xB2\xD0\xB0",
+    "\xD0\xBC\xD0\xBE\xD1\x81\xD0\xBA\xD0\xB2\xD0\xB0\xD0\xB5",
+    "\xD0\xBC\xD0\xBE\xD1\x81\xE0\xB4\xBA\xD0\xB2\xD0\xB0",
+    "sameness",
+    "sanction",
+    "abcd",
+    "ab",
+    "a\nb",
+  };
+
+  AddTerms(kTerms);
+  AddEuroparl();
+
+  auto reader = open_reader();
+  ASSERT_NE(nullptr, reader);
+
+  using Kind = irs::RegexpAcceptor::PartKind;
+  const auto make = [](Kind kind, std::string_view pattern) {
+    const auto bytes = irs::ViewCast<irs::byte_type>(pattern);
+    if (kind == Kind::Wildcard) {
+      return std::make_shared<const irs::RegexpAcceptor>(
+        irs::RegexpAcceptor::WildcardTag{}, bytes);
+    }
+    return std::make_shared<const irs::RegexpAcceptor>(bytes);
+  };
+
+  struct Case {
+    std::vector<std::pair<Kind, std::string_view>> patterns;
+    std::string_view fuzzy;
+    std::string_view prefix;
+  };
+  const Case cases[]{
+    {{{Kind::Perl, ".*den"}, {Kind::Perl, "b.*"}}, {}},
+    {{{Kind::Wildcard, "%tion"}, {Kind::Perl, "(?i)n.*"}}, {}},
+    {{{Kind::Perl, "atl.*"}, {Kind::Wildcard, "%s"}}, {}},
+    {{{Kind::Perl, "(?i)^(the\\s+)?siemens\\b.*"}, {Kind::Wildcard, "%ag"}},
+     {}},
+    {{{Kind::Perl, ".*a.*"}, {Kind::Perl, ".{2,4}"}}, {}},
+    {{{Kind::Wildcard, "b_rden"}, {Kind::Perl, "b.rden"}}, {}},
+    {{{Kind::Perl, "x|zz"}, {Kind::Perl, "zz|y"}}, {}},
+    {{{Kind::Perl, "b.*"}, {Kind::Perl, "a.*"}}, {}},
+    {{{Kind::Wildcard, "%a%"},
+      {Kind::Wildcard, "%e%"},
+      {Kind::Wildcard, "s%n_"}},
+     {}},
+    {{{Kind::Wildcard, "%e%"},
+      {Kind::Wildcard, "%n%"},
+      {Kind::Perl, "[a-z ]+"},
+      {Kind::Wildcard, "%s"}},
+     {}},
+    {{{Kind::Wildcard, "%e%"}}, "siemens"},
+    {{{Kind::Wildcard, "s%"}, {Kind::Perl, ".*m.*"}}, "siemens"},
+    {{{Kind::Wildcard, "%a%"}, {Kind::Wildcard, "%e%"}, {Kind::Wildcard, "s%"}},
+     "sanctions"},
+    {{{Kind::Perl, "b.*"}}, "burden"},
+    {{{Kind::Perl, "(?s).*"}}, "b\xC3\xBCrden"},
+    {{{Kind::Wildcard, "%n%"}}, "emens", "si"},
+    {{{Kind::Perl, "(?s).*"}}, "siemens"},
+    {{{Kind::Perl, "(?s).*"}}, "siem\xC3\xA9ns"},
+    {{{Kind::Wildcard, "%\xD0\xB0"}},
+     "\xD0\xBC\xD0\xBE\xD1\x81\xD0\xBA\xD0\xB2\xD0\xB0"},
+    {{{Kind::Perl, "(?s).*"}},
+     "\xD1\x81\xD0\xBA\xD0\xB2\xD0\xB0",
+     "\xD0\xBC\xD0\xBE"},
+  };
+  const auto description = irs::MakeParametricDescription(1, false);
+  for (const auto& [parts, target, prefix] : cases) {
+    std::vector<std::shared_ptr<const irs::RegexpAcceptor>> patterns;
+    testing::Message trace;
+    for (const auto& [kind, text] : parts) {
+      trace << "'" << text << "' & ";
+      patterns.emplace_back(make(kind, text));
+      ASSERT_TRUE(patterns.back()->ok());
+    }
+    trace << "'" << prefix << "|" << target << "~'";
+    SCOPED_TRACE(trace);
+    const auto matches = [&](irs::bytes_view term) {
+      return std::all_of(
+        patterns.begin(), patterns.end(),
+        [&](const auto& pattern) { return pattern->Matches(term); });
+    };
+    const auto covers = [](irs::bytes_view) { return true; };
+    if (target.empty()) {
+      for (const size_t max_mem :
+           {irs::RegexpAcceptor::kDefaultMaxDfaMem, size_t{4096}, size_t{0}}) {
+        SCOPED_TRACE(testing::Message("Budget: ") << max_mem);
+        const irs::RegexpConjunction conjunction{patterns, max_mem};
+        AssertWalk(*reader.GetImpl(), conjunction, false);
+        AssertOracle(*reader.GetImpl(), conjunction, covers,
+                     [&](std::string_view term) {
+                       return matches(irs::ViewCast<irs::byte_type>(term));
+                     });
+      }
+      const irs::RegexpConjunction conjunction{patterns};
+      const auto source = irs::MakeJointSource(patterns, nullptr);
+      ASSERT_NE(nullptr, source);
+      AssertSourceMatchesWalk(*reader.GetImpl(), conjunction, *source);
+      continue;
+    }
+    auto fuzzy = std::make_shared<const irs::LevenshteinAcceptor>(
+      description, irs::ViewCast<irs::byte_type>(prefix),
+      irs::ViewCast<irs::byte_type>(target));
+    for (const size_t max_mem :
+         {irs::RegexpAcceptor::kDefaultMaxDfaMem, size_t{16384}, size_t{0}}) {
+      SCOPED_TRACE(testing::Message("Budget: ") << max_mem);
+      const irs::FuzzyConjunction conjunction{patterns, fuzzy, max_mem};
+      AssertWalk(*reader.GetImpl(), conjunction, false);
+      AssertOracle(*reader.GetImpl(), conjunction, covers,
+                   [&](std::string_view term) {
+                     const auto bytes = irs::ViewCast<irs::byte_type>(term);
+                     return matches(bytes) && fuzzy->Matches(bytes);
+                   });
+    }
+    const irs::FuzzyConjunction conjunction{patterns, fuzzy};
+    const auto source = irs::MakeJointSource(patterns, fuzzy);
+    ASSERT_NE(nullptr, source);
+    AssertSourceMatchesWalk(*reader.GetImpl(), conjunction, *source);
   }
 }
 

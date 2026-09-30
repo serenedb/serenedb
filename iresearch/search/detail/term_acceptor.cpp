@@ -136,8 +136,34 @@ class PatternSource final : public TermAcceptorSource {
     });
   }
 
+  std::shared_ptr<const RegexpAcceptor> Automaton() const final {
+    return _acceptor->ok() ? _acceptor : nullptr;
+  }
+
  private:
   std::shared_ptr<const RegexpAcceptor> _acceptor;
+};
+
+template<typename A>
+class WalkSource final : public TermAcceptorSource {
+ public:
+  explicit WalkSource(std::shared_ptr<const A> acceptor) noexcept
+    : _acceptor{std::move(acceptor)} {}
+
+  bool ok() const noexcept final { return true; }
+
+  SeekTermIterator::ptr Iterator(const TermReader& reader) const final {
+    return reader.iterator(*_acceptor);
+  }
+
+  TermPredicate::ptr Predicate() const final {
+    return MakeTermPredicate([acceptor = _acceptor](bytes_view term) {
+      return acceptor->Matches(term);
+    });
+  }
+
+ private:
+  std::shared_ptr<const A> _acceptor;
 };
 
 class BothPredicate final : public TermPredicate {
@@ -217,6 +243,22 @@ TermAcceptorSource::ptr MakePatternSource(bytes_view pattern,
     return std::make_shared<const LiteralSetSource>(std::move(acceptor));
   }
   return std::make_shared<const PatternSource>(std::move(acceptor));
+}
+
+TermAcceptorSource::ptr MakeJointSource(
+  std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
+  std::shared_ptr<const LevenshteinAcceptor> fuzzy) {
+  if (!fuzzy) {
+    SDB_ASSERT(patterns.size() > 1);
+    return std::make_shared<const WalkSource<RegexpConjunction>>(
+      std::make_shared<const RegexpConjunction>(patterns));
+  }
+  if (patterns.empty()) {
+    return std::make_shared<const WalkSource<LevenshteinAcceptor>>(
+      std::move(fuzzy));
+  }
+  return std::make_shared<const WalkSource<FuzzyConjunction>>(
+    std::make_shared<const FuzzyConjunction>(patterns, std::move(fuzzy)));
 }
 
 TermAcceptorSource::ptr MakeConjunctionSource(TermAcceptorSource::ptr driver,

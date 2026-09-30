@@ -114,6 +114,14 @@ class MockPostingsField final : public irs::TermReader {
     const irs::LevenshteinAcceptor&) const final {
     return irs::SeekTermIterator::empty();
   }
+  irs::SeekTermIterator::ptr iterator(
+    const irs::RegexpConjunction&) const final {
+    return irs::SeekTermIterator::empty();
+  }
+  irs::SeekTermIterator::ptr iterator(
+    const irs::FuzzyConjunction&) const final {
+    return irs::SeekTermIterator::empty();
+  }
   void ReadDocs(irs::bytes_view, Acceptor) const final {}
   irs::PostingMeta Lookup(irs::bytes_view) const final { return {}; }
   const irs::FieldMeta& meta() const final { return _meta; }

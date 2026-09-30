@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <streamvbyte.h>
-
 #include <bit>
 #include <cstdint>
 #include <functional>
@@ -38,12 +36,6 @@
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
-
-// Scratch buffers that a block may be decoded out of. streamvbyte reads up to
-// STREAMVBYTE_PADDING bytes past the block it decodes, so they carry that much
-// slack on top of a full block (see FormatTraits128::ReadDataPaddedImpl).
-inline constexpr size_t kEncBufSize =
-  doc_limits::kBlockSize + STREAMVBYTE_PADDING / sizeof(uint32_t);
 
 struct SkipState {
   // pointer to the beginning of document block

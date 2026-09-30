@@ -40,6 +40,16 @@ namespace irs {
 // It's not ideal, for an example avx512/avx2 sometimes better, they can be used
 // for even bitpacking. Or larger block size.
 // But in general we need to think more about size of data.
+// Largest streamvbyte block worth writing, counted the way the candidate sizes
+// below are: the u16 length plus the encoded bytes. The decoder reads up to
+// STREAMVBYTE_PADDING bytes past a block it decodes, so the block and that
+// slack together have to fit the scratch buffer it may be copied into. Nothing
+// is lost by the cap -- a block that big is no smaller than de_values/e_values,
+// which is what gets picked instead.
+inline constexpr uint32_t kMaxStreamvbyteSize =
+  doc_limits::kBlockSize * sizeof(uint32_t) - STREAMVBYTE_PADDING +
+  sizeof(uint16_t);
+
 struct FormatTraits128 {
   static_assert(doc_limits::kBlockSize > 1);
   static_assert(doc_limits::kBlockSize % BitsRequired<byte_type>() == 0);
@@ -133,7 +143,8 @@ struct FormatTraits128 {
         }
       }
 
-      if (SupportIfTail(len) && size_streamvbyte1234 < best_size) {
+      if (SupportIfTail(len) && size_streamvbyte1234 < best_size &&
+          size_streamvbyte1234 <= kMaxStreamvbyteSize) {
         best_encoding = de_streamvbyte1234;
         best_size = size_streamvbyte1234;
       }
@@ -141,7 +152,8 @@ struct FormatTraits128 {
       //   best_encoding = de_for_streamvbyte1234;
       //   best_size = size_for_streamvbyte1234;
       // }
-      if (SupportIfTail(len) && size_delta_streamvbyte1234 < best_size) {
+      if (SupportIfTail(len) && size_delta_streamvbyte1234 < best_size &&
+          size_delta_streamvbyte1234 <= kMaxStreamvbyteSize) {
         best_encoding = de_delta_streamvbyte1234;
         best_size = size_delta_streamvbyte1234;
       }
@@ -312,7 +324,8 @@ struct FormatTraits128 {
         }
       }
 
-      if (SupportIfTail(len) && size_streamvbyte1234 < best_size) {
+      if (SupportIfTail(len) && size_streamvbyte1234 < best_size &&
+          size_streamvbyte1234 <= kMaxStreamvbyteSize) {
         best_encoding = e_streamvbyte1234;
         best_size = size_streamvbyte1234;
       }
@@ -1096,7 +1109,7 @@ struct FormatTraits128 {
   //
   // An input that hands out a pointer into a smaller window than the file --
   // a memory-file bucket, a read buffer -- refuses, and we copy instead;
-  // kEncBufSize gives `buf` the same slack.
+  // kMaxStreamvbyteSize is what keeps that copy in bounds.
   template<typename InputType>
   IRS_FORCE_INLINE static const byte_type* ReadDataPaddedImpl(
     uint32_t size, InputType& in, uint32_t* IRS_RESTRICT buf) {
@@ -1109,8 +1122,8 @@ struct FormatTraits128 {
         [[likely]] {
         return in.ReadVolatile(size);
       }
-      static thread_local uint32_t tail[kEncBufSize];
-      SDB_ASSERT(size <= sizeof(tail) - STREAMVBYTE_PADDING);
+      static thread_local uint32_t tail[doc_limits::kBlockSize];
+      SDB_ASSERT(size + STREAMVBYTE_PADDING <= sizeof(tail));
       in.ReadData(reinterpret_cast<byte_type*>(tail), size);
       return reinterpret_cast<byte_type*>(tail);
     } else {
@@ -1119,6 +1132,8 @@ struct FormatTraits128 {
         in.Seek(pos + size);
         return data;
       }
+      SDB_ASSERT(size + STREAMVBYTE_PADDING <=
+                 doc_limits::kBlockSize * sizeof(uint32_t));
       in.ReadData(reinterpret_cast<byte_type*>(buf), size);
       return reinterpret_cast<byte_type*>(buf);
     }

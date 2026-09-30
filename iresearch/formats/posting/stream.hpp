@@ -160,7 +160,7 @@ class PostingsStream : public TermPostings {
     }
   }
 
-  ABSL_CACHELINE_ALIGNED uint32_t _enc_buf[kEncBufSize];
+  ABSL_CACHELINE_ALIGNED uint32_t _enc_buf[doc_limits::kBlockSize];
   [[no_unique_address]] ABSL_CACHELINE_ALIGNED utils::Need<
     IteratorTraits::Frequency(), uint32_t[doc_limits::kBlockSize]> _freqs;
   DocsBuf _docs;

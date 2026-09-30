@@ -272,27 +272,27 @@ Index BuildIndex(const std::vector<std::string>& docs,
   return index;
 }
 
-struct Corpus {
-  std::vector<std::string> docs;
-  std::vector<Index> indexes;
-};
-
-const Corpus& GetCorpus() {
-  static const Corpus corpus = [] {
-    Corpus c;
-    c.docs = MakeCorpus(200000, 32);
+const std::vector<std::string>& Docs() {
+  static const auto docs = [] {
+    auto docs = MakeCorpus(200000, 32);
     uintmax_t text = 0;
-    for (const auto& doc : c.docs) {
+    for (const auto& doc : docs) {
       text += doc.size();
     }
     std::fprintf(stderr, "[corpus] %-12s %12ju bytes\n", "text", text);
-    BuildIndex(c.docs, kUnigrams);
-    for (const auto& strategy : kStrategies) {
-      c.indexes.push_back(BuildIndex(c.docs, strategy));
-    }
-    return c;
+    BuildIndex(docs, kUnigrams);
+    return docs;
   }();
-  return corpus;
+  return docs;
+}
+
+const Index& IndexOf(size_t strategy) {
+  static std::vector<std::unique_ptr<Index>> indexes(std::size(kStrategies));
+  auto& index = indexes[strategy];
+  if (!index) {
+    index = std::make_unique<Index>(BuildIndex(Docs(), kStrategies[strategy]));
+  }
+  return *index;
 }
 
 template<typename Filter, typename Options>
@@ -412,7 +412,7 @@ double Scored(const irs::DirectoryReader& reader, const irs::Filter& filter,
 
 void BenchCount(benchmark::State& state, size_t strategy, std::string_view text,
                 bool cover) {
-  const auto& index = GetCorpus().indexes[strategy];
+  const auto& index = IndexOf(strategy);
   uint64_t hits = 0;
   for (auto _ : state) {
     const auto filter = MakePhrase(index, text, cover);
@@ -424,7 +424,7 @@ void BenchCount(benchmark::State& state, size_t strategy, std::string_view text,
 
 void BenchScored(benchmark::State& state, size_t strategy,
                  std::string_view text, bool cover) {
-  const auto& index = GetCorpus().indexes[strategy];
+  const auto& index = IndexOf(strategy);
   uint64_t hits = 0;
   for (auto _ : state) {
     const auto filter = MakePhrase(index, text, cover);
@@ -435,7 +435,7 @@ void BenchScored(benchmark::State& state, size_t strategy,
 }
 
 void BenchScan(benchmark::State& state, std::string_view text) {
-  const auto& corpus = GetCorpus();
+  const auto& docs = Docs();
   irs::ByPhraseOptions phrase;
   for (const auto word : absl::StrSplit(text, ' ', absl::SkipEmpty())) {
     phrase.push_back<irs::ByTermOptions>().term =
@@ -451,7 +451,7 @@ void BenchScan(benchmark::State& state, std::string_view text) {
   uint64_t hits = 0;
   for (auto _ : state) {
     hits = 0;
-    for (const auto& body : corpus.docs) {
+    for (const auto& body : docs) {
       analyzer.Analyze(
         tokenizer,
         duckdb::string_t{body.data(), static_cast<uint32_t>(body.size())},

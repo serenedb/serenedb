@@ -106,8 +106,67 @@ struct TopTermsVisitor final : FilterVisitor {
   TopTermsSelector<TopTerm<score_t>> _impl;
 };
 
+class WordPrefixIterator final : public WrappedTermIterator {
+ public:
+  WordPrefixIterator(const TermReader& reader, bytes_view prefix,
+                     bytes_view separator)
+    : WrappedTermIterator{reader.iterator()},
+      _prefix{prefix},
+      _separator{separator} {}
+
+  bool next() final {
+    if (_started) {
+      if (!_impl->next()) {
+        return false;
+      }
+    } else {
+      _started = true;
+      if (SeekResult::End == _impl->seek_ge(_prefix)) {
+        return false;
+      }
+    }
+    return SkipShingles();
+  }
+
+ private:
+  bool SkipShingles() {
+    while (true) {
+      const auto term = _impl->value();
+      if (!term.starts_with(_prefix)) {
+        return false;
+      }
+      const auto at = term.find(_separator);
+      if (at == bytes_view::npos) {
+        return true;
+      }
+      const auto upper = UpperBoundOf(term.substr(0, at + _separator.size()));
+      if (upper.empty() || SeekResult::End == _impl->seek_ge(upper)) {
+        return false;
+      }
+    }
+  }
+
+  bytes_view _prefix;
+  bytes_view _separator;
+  bool _started = false;
+};
+
 struct GetVisitor {
+  bytes_view separator;
+
   field_visitor operator()(const ByPrefixOptions& options) const {
+    if (!separator.empty()) {
+      return [&options, separator = separator](const SubReader& segment,
+                                               const TermReader& field,
+                                               FilterVisitor& visitor) {
+        WordPrefixIterator terms{field, options.term, separator};
+        if (!terms.next()) {
+          return;
+        }
+        visitor.Prepare(segment, field, terms.GetImpl());
+        VisitTerms(terms, visitor);
+      };
+    }
     return [&](const SubReader& segment, const TermReader& field,
                FilterVisitor& visitor) {
       return ByPrefix::visit(segment, field, options, visitor);
@@ -405,8 +464,8 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
       if (ByPhraseOptions::KindOf(word.part) != SlotKind::Expansion) {
         continue;
       }
-      auto& visitor =
-        expand_visitors.emplace_back(std::visit(GetVisitor{}, word.part));
+      auto& visitor = expand_visitors.emplace_back(
+        std::visit(GetVisitor{options.word_separator()}, word.part));
       if (!visitor) {
         auto& opts = std::get<LevenshteinAutomatonOptions>(word.part);
         visitor = LevenshteinAutomatonFilter::visitor(opts);

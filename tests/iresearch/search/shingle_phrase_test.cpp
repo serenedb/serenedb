@@ -503,6 +503,20 @@ TEST(ShinglePhraseIndexTest, pattern_parts_skip_shingles) {
             index.Docs(PrefixPhrase("qu", "brown", " ")));
 }
 
+TEST(ShinglePhraseIndexTest, pattern_parts_find_words_after_shingles) {
+  static constexpr std::string_view kDocs[] = {"fox den", "foxes den",
+                                               "fox run", "fo den"};
+  auto shingles = MakeShingles(2, 2);
+  const Index index{kDocs, *shingles,
+                    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
+  EXPECT_EQ((std::vector<irs::doc_id_t>{0, 1, 3}),
+            index.Docs(PrefixPhrase("fo", "den", " ")));
+  EXPECT_EQ((std::vector<irs::doc_id_t>{0, 1}),
+            index.Docs(PrefixPhrase("fox", "den", " ")));
+  EXPECT_EQ((std::vector<irs::doc_id_t>{}),
+            index.Docs(PrefixPhrase("fox d", "den", " ")));
+}
+
 TEST(ShinglePhraseIndexTest, partial_cover_agrees_with_positions) {
   static constexpr std::string_view kWords[] = {"a", "b", "c", "d", "e"};
   std::mt19937 rng{7};

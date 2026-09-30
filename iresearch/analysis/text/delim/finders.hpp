@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/algorithm/container.h>
+#include <re2/byte_set_finder.h>
 
 #include <algorithm>
 #include <array>
@@ -38,6 +39,15 @@
 namespace irs::analysis::delim {
 
 inline constexpr size_t kLongNeedleThreshold = 8;
+
+inline classify::ByteSet FirstBytes(const std::vector<bstring>& delimiters) {
+  classify::ByteSet set;
+  for (const auto& d : delimiters) {
+    SDB_ASSERT(!d.empty());
+    set.Add(d.front());
+  }
+  return set;
+}
 
 struct NoDelimFinder {
   template<typename OnDelim>
@@ -62,27 +72,28 @@ struct OneCharFinder {
 struct ManyCharsFinder {
   static constexpr size_t kMaxBlockDelims = 8;
 
-  IRS_FORCE_INLINE void Add(byte_type b) noexcept {
-    if (bytes.Contains(b)) {
-      return;
+  explicit ManyCharsFinder(const classify::ByteSet& set) : bytes{set} {
+    for (int b = 0; b < 256; ++b) {
+      if (!set.Contains(static_cast<byte_type>(b))) {
+        continue;
+      }
+      if (ndelims < kMaxBlockDelims) {
+        delims[ndelims] = static_cast<byte_type>(b);
+      }
+      ++ndelims;
     }
-    bytes.Add(b);
-    nibbles.Add(b);
-    if (ndelims < kMaxBlockDelims) {
-      delims[ndelims] = b;
-    }
-    ++ndelims;
+    nibbled = !Compared() && nibbles.Build(set.words.data());
   }
 
   bool Compared() const noexcept { return ndelims <= kMaxBlockDelims; }
 
-  bool Blockable() const noexcept { return Compared() || nibbles.Blockable(); }
+  bool Blockable() const noexcept { return Compared() || nibbled; }
 
   IRS_FORCE_INLINE uint32_t Classify(const byte_type* block) const noexcept {
     if (Compared()) {
       return classify::ClassifyAnyEqBlock(block, {delims.data(), ndelims});
     }
-    return classify::ClassifyNibbleBlock(block, nibbles);
+    return nibbles.Classify32(reinterpret_cast<const char*>(block));
   }
 
   template<typename OnDelim>
@@ -96,7 +107,8 @@ struct ManyCharsFinder {
   }
 
   classify::ByteSet bytes;
-  classify::NibbleSet nibbles;
+  re2::ByteSetFinder nibbles;
+  bool nibbled = false;
   std::array<byte_type, kMaxBlockDelims> delims{};
   size_t ndelims = 0;
 };
@@ -104,13 +116,13 @@ struct ManyCharsFinder {
 struct ByteRangesFinder {
   static constexpr size_t kMaxBlockRanges = 8;
 
-  explicit ByteRangesFinder(const classify::ByteSet& set) : bytes{set} {
+  explicit ByteRangesFinder(const classify::ByteSet& set)
+    : bytes{set}, nibbled{nibbles.Build(set.words.data())} {
     int prev = -2;
     for (int b = 0; b < 256; ++b) {
       if (!set.Contains(static_cast<byte_type>(b))) {
         continue;
       }
-      nibbles.Add(static_cast<byte_type>(b));
       if (b == prev + 1) {
         if (nranges <= kMaxBlockRanges) {
           ++ranges[nranges - 1].span;
@@ -127,13 +139,13 @@ struct ByteRangesFinder {
 
   bool Ranged() const noexcept { return nranges <= kMaxBlockRanges; }
 
-  bool Blockable() const noexcept { return Ranged() || nibbles.Blockable(); }
+  bool Blockable() const noexcept { return Ranged() || nibbled; }
 
   IRS_FORCE_INLINE uint32_t Classify(const byte_type* block) const noexcept {
     if (Ranged()) {
       return classify::ClassifyAnyInRangeBlock(block, {ranges.data(), nranges});
     }
-    return classify::ClassifyNibbleBlock(block, nibbles);
+    return nibbles.Classify32(reinterpret_cast<const char*>(block));
   }
 
   template<typename OnDelim>
@@ -147,7 +159,8 @@ struct ByteRangesFinder {
   }
 
   classify::ByteSet bytes;
-  classify::NibbleSet nibbles;
+  re2::ByteSetFinder nibbles;
+  bool nibbled;
   std::array<classify::ByteRange, kMaxBlockRanges> ranges{};
   size_t nranges = 0;
 };
@@ -296,10 +309,9 @@ struct OneLongStringFinder {
 struct MultiStringFinder {
   static constexpr size_t kPrefix = sizeof(uint64_t);
 
-  explicit MultiStringFinder(std::vector<bstring>&& delimiters) {
+  explicit MultiStringFinder(std::vector<bstring>&& delimiters)
+    : first{FirstBytes(delimiters)} {
     for (auto& d : delimiters) {
-      SDB_ASSERT(!d.empty());
-      first.Add(d.front());
       const size_t head = std::min(d.size(), kPrefix);
       std::array<byte_type, kPrefix> ones{};
       std::fill_n(ones.begin(), head, byte_type{0xFF});
@@ -407,12 +419,7 @@ inline Finder FinderFor(bstring&& delimiter) {
 }
 
 inline Finder FinderFor(const classify::ByteSet& set) {
-  ManyCharsFinder chars;
-  for (int b = 0; b < 256; ++b) {
-    if (set.Contains(static_cast<byte_type>(b))) {
-      chars.Add(static_cast<byte_type>(b));
-    }
-  }
+  ManyCharsFinder chars{set};
   if (chars.ndelims == 0) {
     return {};
   }
@@ -434,11 +441,7 @@ inline Finder FinderFor(std::vector<bstring>&& delimiters) {
     if (delimiters.size() == 1) {
       return OneCharFinder{delimiters[0][0]};
     }
-    ManyCharsFinder chars;
-    for (const auto& delim : delimiters) {
-      chars.Add(delim[0]);
-    }
-    return chars;
+    return ManyCharsFinder{FirstBytes(delimiters)};
   }
   if (delimiters.size() == 1) {
     return FinderFor(std::move(delimiters[0]));

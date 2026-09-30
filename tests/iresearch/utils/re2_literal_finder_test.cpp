@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
+#include <re2/byte_set_finder.h>
 #include <re2/literal_finder.h>
 #include <re2/re2.h>
 
@@ -109,6 +110,38 @@ TEST(Re2LiteralFinderTest, equal_is_memcmp) {
       ASSERT_EQ(memcmp(a.data(), b.data(), n) == 0,
                 re2::LiteralFinder::Equal(a.data(), b.data(), n))
         << "size " << n << " round " << round;
+    }
+  }
+}
+
+TEST(Re2LiteralFinderTest, byte_set_find_is_scan) {
+  std::mt19937 rng{20260930};
+  for (size_t round = 0; round != 3000; ++round) {
+    uint64_t bits[4] = {};
+    std::string members;
+    for (auto n = 1 + rng() % 12; n != 0; --n) {
+      const auto b = static_cast<uint8_t>(rng() % 256);
+      bits[b >> 6] |= uint64_t{1} << (b & 63);
+      members += static_cast<char>(b);
+    }
+    re2::ByteSetFinder finder;
+    if (!finder.Build(bits)) {
+      continue;
+    }
+    std::string text;
+    for (auto n = rng() % 100; n != 0; --n) {
+      text += rng() % 16 == 0 ? members[rng() % members.size()]
+                              : static_cast<char>(rng() % 256);
+    }
+    const char* end = text.data() + text.size();
+    for (size_t from = 0; from <= text.size(); ++from) {
+      const auto expected = text.find_first_of(members, from);
+      const char* found = finder.Find(text.data() + from, end);
+      ASSERT_EQ(expected, found == nullptr
+                            ? std::string::npos
+                            : static_cast<size_t>(found - text.data()))
+        << "round " << round << " from " << from << " text size "
+        << text.size();
     }
   }
 }

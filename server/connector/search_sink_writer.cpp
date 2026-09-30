@@ -459,20 +459,14 @@ void SearchSinkInsertBaseImpl::WriteListBatch(const Field& field,
         [&](irs::FieldInverter& fld, irs::TokenSink& w) {
           fld.Configure(traits);
           const auto layout = fld.Layout();
-          const bool flat_children = irs::analysis::IsIdentitySel(child_fmt);
+          const bool null_children = child_fmt.validity.CanHaveNull();
           for_each_row(
             [&](irs::doc_id_t doc, duckdb::idx_t offset, uint32_t length) {
-              if (flat_children &&
-                  child_fmt.validity.CheckAllValid(offset + length, offset)) {
-                tokens.FillRow({data + offset, length}, doc, w, {layout});
-                return;
+              tokens.FillRow(child_fmt, offset, length, doc, w, {layout});
+              if (null_children) {
+                for_each_child(doc, offset, length,
+                               [](duckdb::idx_t, irs::doc_id_t) {});
               }
-              for_each_child(doc, offset, length,
-                             [&](duckdb::idx_t child_idx, irs::doc_id_t) {
-                               _row_values.push_back(data[child_idx]);
-                             });
-              tokens.FillRow(_row_values, doc, w, {layout});
-              _row_values.clear();
             });
         });
     }

@@ -379,7 +379,9 @@ TEST(TokenizerStore, FillRowMatchesPerValueFills) {
       const auto per_row = CollectDocs(traits, layout, [&](irs::TokenSink& w) {
         irs::doc_id_t doc = irs::doc_limits::min();
         for (const auto& row : rows) {
-          tokenizer->FillRow(row, doc++, w, {layout});
+          const auto fmt = tests::ValuesFormat(row);
+          tokenizer->FillRow(fmt, 0, static_cast<uint32_t>(row.size()), doc++,
+                             w, {layout});
         }
       });
       ASSERT_EQ(per_value.tokens, per_row.tokens);

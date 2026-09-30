@@ -175,12 +175,6 @@ void ShingleTokenizer::AppendBlob(uint32_t n) {
   }
 }
 
-void ShingleTokenizer::StoreBlob(TokenSink& sink) {
-  if (_store_tokens) {
-    sink.Store(_blob);
-  }
-}
-
 template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent>
 void ShingleTokenizer::EmitRuns(const duckdb::string_t* raw, TokenSink& sink,
                                 uint32_t n, bool no_shingles) {
@@ -299,22 +293,33 @@ bool ShingleTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
   if (!DrainBase(raw)) {
     return false;
   }
-  _blob.clear();
+  if constexpr (StoreTokens) {
+    _blob.clear();
+  }
   EmitBaseTokens<Layout, OutputUnigrams, HasFrequent, StoreTokens>(&raw, sink);
-  StoreBlob(sink);
+  if constexpr (StoreTokens) {
+    sink.Store(_blob);
+  }
   return true;
 }
 
 bool ShingleTokenizer::FillTokens(std::span<const duckdb::string_t> tokens,
                                   TokenSink& sink, FillCtx ctx) {
-  return DispatchFill(*this, ctx.layout, ctx.traits,
-                      [&](auto layout_tag, auto... tags) IRS_FORCE_INLINE {
-                        _sub->tokens.Assign(tokens);
-                        _blob.clear();
-                        EmitBaseTokens<layout_tag(), tags()...>(nullptr, sink);
-                        StoreBlob(sink);
-                        return true;
-                      });
+  return DispatchFill(
+    *this, ctx.layout, ctx.traits,
+    [&](auto layout_tag, auto unigrams_tag, auto frequent_tag,
+        auto store_tag) IRS_FORCE_INLINE {
+      _sub->tokens.Assign(tokens);
+      if constexpr (store_tag()) {
+        _blob.clear();
+      }
+      EmitBaseTokens<layout_tag(), unigrams_tag(), frequent_tag(), store_tag()>(
+        nullptr, sink);
+      if constexpr (store_tag()) {
+        sink.Store(_blob);
+      }
+      return true;
+    });
 }
 
 template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
@@ -328,17 +333,19 @@ bool ShingleTokenizer::AppendValue(duckdb::string_t value, TokenSink& sink) {
   return true;
 }
 
-void ShingleTokenizer::FillRow(std::span<const duckdb::string_t> values,
+void ShingleTokenizer::FillRow(const duckdb::UnifiedVectorFormat& values,
+                               duckdb::idx_t offset, uint32_t count,
                                doc_id_t doc, TokenSink& sink, FillCtx ctx) {
   _blob.clear();
   if (FillValues(
-        *this, values, doc, sink, ctx,
+        *this, values, offset, count, doc, sink, ctx,
         [&]<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
             bool StoreTokens>(duckdb::string_t value) {
           return AppendValue<Layout, OutputUnigrams, HasFrequent, StoreTokens>(
             value, sink);
-        })) {
-    StoreBlob(sink);
+        }) &&
+      _store_tokens) {
+    sink.Store(_blob);
   }
 }
 

@@ -321,7 +321,9 @@ void AssertRowFillMatchesPerValue(ShingleTokenizer& analyzer,
       }
     });
   const auto row = CollectFill([&](irs::TokenSink& w, irs::TokenLayout layout) {
-    analyzer.FillRow(vals, kDoc, w, {layout});
+    const auto fmt = tests::ValuesFormat(vals);
+    analyzer.FillRow(fmt, 0, static_cast<uint32_t>(vals.size()), kDoc, w,
+                     {layout});
   });
   EXPECT_EQ(per_value.tokens, row.tokens);
 
@@ -877,7 +879,9 @@ TEST(ShingleTokenizerTest, fill_row_without_store_tokens_stores_nothing) {
   const std::vector<duckdb::string_t> vals{tests::ToStringT("quick brown"),
                                            tests::ToStringT("fox")};
   const auto row = CollectFill([&](irs::TokenSink& w, irs::TokenLayout layout) {
-    analyzer.FillRow(vals, 1, w, {layout});
+    const auto fmt = tests::ValuesFormat(vals);
+    analyzer.FillRow(fmt, 0, static_cast<uint32_t>(vals.size()), 1, w,
+                     {layout});
   });
   EXPECT_FALSE(row.tokens.empty());
   EXPECT_TRUE(row.stores.empty());

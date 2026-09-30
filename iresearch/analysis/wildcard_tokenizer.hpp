@@ -64,8 +64,9 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   bool FillTokens(std::span<const duckdb::string_t> tokens, TokenSink& sink,
                   FillCtx ctx) final;
 
-  void FillRow(std::span<const duckdb::string_t> values, doc_id_t doc,
-               TokenSink& sink, FillCtx ctx) final;
+  void FillRow(const duckdb::UnifiedVectorFormat& values, duckdb::idx_t offset,
+               uint32_t count, doc_id_t doc, TokenSink& sink,
+               FillCtx ctx) final;
 
   TokenTraits Traits() const noexcept final { return {.store = true}; }
 

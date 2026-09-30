@@ -160,7 +160,9 @@ RowTokens FillRowTokens(irs::analysis::WildcardTokenizer& stream,
   tests::FnTokenSink sink{irs::TokenLayout::Terms, collect};
   StoreCalls store{out};
   sink.writer.Bind(sink, &store);
-  stream.FillRow(values, doc, sink.writer, {sink.layout});
+  const auto fmt = tests::ValuesFormat(values);
+  stream.FillRow(fmt, 0, static_cast<uint32_t>(values.size()), doc, sink.writer,
+                 {sink.layout});
   sink.writer.Finish();
   return out;
 }

@@ -269,12 +269,9 @@ class SearchSinkInsertBaseImpl {
               irs::ColumnWriter& writer) noexcept {
       _impl = &impl;
       _writer = &writer;
-      _last = irs::doc_limits::invalid();
     }
 
     void OnStore(irs::doc_id_t doc, irs::bytes_view store) final {
-      SDB_ASSERT(!irs::doc_limits::valid(_last) || doc > _last);
-      _last = doc;
       _impl->AppendBlobAt(
         *_writer, doc,
         duckdb::string_t{reinterpret_cast<const char*>(store.data()),
@@ -284,7 +281,6 @@ class SearchSinkInsertBaseImpl {
    private:
     SearchSinkInsertBaseImpl* _impl = nullptr;
     irs::ColumnWriter* _writer = nullptr;
-    irs::doc_id_t _last = irs::doc_limits::invalid();
   };
 
   duckdb::RecursiveUnifiedVectorFormat _vec_fmt;
@@ -293,7 +289,6 @@ class SearchSinkInsertBaseImpl {
   std::vector<IndexedExpression> _indexed_expressions;
   std::shared_ptr<const catalog::InvertedIndexConfig> _config;
 
-  std::vector<duckdb::string_t> _row_values;
   std::vector<duckdb::string_t> _json_bool_terms;
   std::vector<double> _json_nums;
   std::vector<irs::doc_id_t> _json_num_docs;

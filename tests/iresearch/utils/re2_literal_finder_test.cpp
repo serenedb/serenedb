@@ -94,6 +94,25 @@ TEST(Re2LiteralFinderTest, finds_what_find_finds) {
   }
 }
 
+TEST(Re2LiteralFinderTest, equal_is_memcmp) {
+  std::mt19937 rng{20260930};
+  for (size_t n = 0; n != 40; ++n) {
+    for (size_t round = 0; round != 300; ++round) {
+      std::string a;
+      for (size_t i = 0; i != n; ++i) {
+        a += std::string_view{"ab\xD0\x00", 4}[rng() % 4];
+      }
+      auto b = a;
+      for (auto flips = rng() % 3; flips != 0 && n != 0; --flips) {
+        b[rng() % n] ^= static_cast<char>(1 + rng() % 255);
+      }
+      ASSERT_EQ(memcmp(a.data(), b.data(), n) == 0,
+                re2::LiteralFinder::Equal(a.data(), b.data(), n))
+        << "size " << n << " round " << round;
+    }
+  }
+}
+
 TEST(Re2LiteralFinderTest, empty_and_single_byte_needles) {
   const std::string text(100, 'x');
   const char* end = text.data() + text.size();

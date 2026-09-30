@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <cstdint>
@@ -164,6 +165,12 @@ bool HasPositions(const SearchColumnInfo& column_info) {
          irs::PhraseQuery::kRequiredFeatures;
 }
 
+bool HasPatternParts(const irs::ByPhraseOptions& options) {
+  return absl::c_any_of(options, [](const auto& info) {
+    return irs::ByPhraseOptions::KindOf(info.part) == irs::SlotKind::Expansion;
+  });
+}
+
 bool AddShinglePhrase(BoolTarget parent, const FilterContext& ctx,
                       const SearchColumnInfo& column_info,
                       const irs::analysis::ShingleTokenizer& shingle,
@@ -211,6 +218,19 @@ void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
                   "phrases its shingles cover"),
           ERR_HINT("Slop, interval gaps and pattern parts match unigrams; "
                    "create the dictionary with `output_unigrams := true`."));
+      }
+      if (HasPatternParts(options)) {
+        if (shingle->Separator().empty()) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+            ERR_MSG(label,
+                    " pattern parts on a shingle column need a token "
+                    "separator"),
+            ERR_HINT("Without a separator a shingle can't be told apart from "
+                     "a word; create the dictionary with a non-empty "
+                     "`token_separator`."));
+        }
+        options.set_word_separator(shingle->Separator());
       }
     } else if (!HasPositions(column_info)) {
       THROW_SQL_ERROR(

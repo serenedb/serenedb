@@ -79,6 +79,10 @@ A value whose base stream holds fewer than `MIN_GRAM` tokens produces no shingle
 
 A phrase the dictionary cannot answer fails with `ts_phrase on this shingle column needs positions: its shingles do not cover the phrase`. Leaving `position` out keeps the index smaller. A row ranks by how often the phrase occurs in it.
 
+With `position`, every run of two or more adjacent words in a phrase is looked up as shingles, also in a phrase with pattern parts, alternatives or `[min, max]` gaps. A phrase with slop matches word by word.
+
+A pattern part of `##` (`ts_like`, `ts_starts_with`, `ts_levenshtein` or `ts_between`) matches single words, never a shingle: it skips every term that contains `TOKEN_SEPARATOR`, a base token that contains it included. With `TOKEN_SEPARATOR = ''` a shingle can't be told apart from a word, so a phrase with a pattern part fails with `## pattern parts on a shingle column need a token separator`.
+
 <SqlLogicTest id="sql/functions/search/tokenizers/generate_shingles/phrase_search" />
 
 ## Examples

@@ -53,6 +53,8 @@ class Windows {
     }
   }
 
+  size_t Size() const noexcept { return _tokens.size(); }
+
   size_t Min() const noexcept { return std::max(_tokenizer.MinShingle(), 2U); }
 
   size_t Max() const noexcept { return _tokenizer.MaxShingle(); }
@@ -100,18 +102,23 @@ class Windows {
   std::vector<size_t> _run_end;
 };
 
-bool Cover(const Windows& windows, size_t m, ByPhraseOptions& out) {
+bool Cover(const Windows& windows, PosAttr::value_t entry_min,
+           PosAttr::value_t entry_max, ByPhraseOptions& out, size_t& last,
+           bool& shingled) {
   constexpr auto kNone = std::numeric_limits<size_t>::max();
   size_t prev = kNone;
   const auto emit = [&](size_t start, size_t count) {
-    auto& part = prev == kNone
-                   ? out.push_back<ByTermOptions>()
-                   : out.push_back<ByTermOptions>(windows.Position(start) -
-                                                  windows.Position(prev) - 1);
-    part.term = windows.Term(start, count);
+    auto offs_min = entry_min;
+    auto offs_max = entry_max;
+    if (prev != kNone) {
+      offs_min = offs_max = windows.Position(start) - windows.Position(prev);
+    }
+    out.push_back<ByTermOptions>(offs_min, offs_max).term =
+      windows.Term(start, count);
+    shingled |= count > 1;
     prev = start;
   };
-  for (size_t i = 0; i != m;) {
+  for (size_t i = 0, m = windows.Size(); i != m;) {
     const auto run_end = windows.RunEnd(i);
     auto run_prev = kNone;
     while (i != run_end) {
@@ -138,10 +145,92 @@ bool Cover(const Windows& windows, size_t m, ByPhraseOptions& out) {
       i = start + count;
     }
   }
+  last = prev;
   return true;
 }
 
-bool Legs(const Windows& windows, size_t m, std::vector<bstring>& legs) {
+bool CoverPhrase(const analysis::ShingleTokenizer& tokenizer,
+                 const ByPhraseOptions& phrase, ByPhraseOptions& out) {
+  std::vector<bytes_view> tokens;
+  std::vector<PosAttr::value_t> positions;
+  PosAttr::value_t entry_min = 0;
+  PosAttr::value_t entry_max = 0;
+  PosAttr::value_t lag = 0;
+  bool shingled = false;
+  bool patterns = false;
+  const auto flush = [&] {
+    if (tokens.empty()) {
+      return true;
+    }
+    const Windows windows{tokenizer, tokens, positions};
+    size_t last = 0;
+    if (!Cover(windows, entry_min + lag, entry_max + lag, out, last,
+               shingled)) {
+      return false;
+    }
+    lag = positions.back() - positions[last];
+    tokens.clear();
+    positions.clear();
+    return true;
+  };
+  for (const auto& info : phrase) {
+    const auto* term = std::get_if<ByTermOptions>(&info.part);
+    if (term && !tokens.empty() && info.offs_min == info.offs_max) {
+      positions.push_back(positions.back() + info.offs_max);
+      tokens.emplace_back(term->term);
+      continue;
+    }
+    if (!flush()) {
+      return false;
+    }
+    if (term) {
+      entry_min = info.offs_min;
+      entry_max = info.offs_max;
+      tokens.emplace_back(term->term);
+      positions.push_back(0);
+      continue;
+    }
+    if (!tokenizer.OutputUnigrams()) {
+      return false;
+    }
+    patterns |= ByPhraseOptions::KindOf(info.part) == SlotKind::Expansion;
+    std::visit(
+      [&]<typename Part>(const Part& part) {
+        out.push_back<Part>(info.offs_min + lag, info.offs_max + lag) = part;
+      },
+      info.part);
+    lag = 0;
+  }
+  if (!flush() || !shingled) {
+    return false;
+  }
+  if (patterns) {
+    if (tokenizer.Separator().empty()) {
+      return false;
+    }
+    out.set_word_separator(tokenizer.Separator());
+  }
+  return true;
+}
+
+bool ExactTerms(const ByPhraseOptions& phrase, std::vector<bytes_view>& tokens,
+                std::vector<PosAttr::value_t>& positions) {
+  PosAttr::value_t pos = 0;
+  for (const auto& info : phrase) {
+    const auto* term = std::get_if<ByTermOptions>(&info.part);
+    if (!term || info.offs_min != info.offs_max ||
+        (!tokens.empty() && info.offs_max == 0)) {
+      return false;
+    }
+    pos += info.offs_max;
+    tokens.emplace_back(term->term);
+    positions.push_back(pos);
+  }
+  return true;
+}
+
+bool Legs(const Windows& windows, std::vector<bstring>& legs) {
+  const auto m = windows.Size();
   std::vector<bool> covered(m);
   for (size_t i = 0; i != m; ++i) {
     const auto count = windows.Largest(i);
@@ -178,39 +267,34 @@ ShinglePhrasePlan PlanShinglePhrase(const analysis::ShingleTokenizer& tokenizer,
   }
   std::vector<bytes_view> tokens;
   std::vector<PosAttr::value_t> positions;
-  PosAttr::value_t pos = 0;
-  for (const auto& info : phrase) {
-    const auto* term = std::get_if<ByTermOptions>(&info.part);
-    if (!term || info.offs_min != info.offs_max ||
-        (!tokens.empty() && info.offs_max == 0)) {
+  if (ExactTerms(phrase, tokens, positions)) {
+    const Windows windows{tokenizer, tokens, positions};
+    if (windows.Indexed(0, windows.Size())) {
+      plan.kind = ShinglePhrasePlan::Kind::Term;
+      plan.term = windows.Term(0, windows.Size());
       return plan;
     }
-    pos += info.offs_max;
-    tokens.emplace_back(term->term);
-    positions.push_back(pos);
-  }
-  const auto m = tokens.size();
-  const Windows windows{tokenizer, tokens, positions};
-  if (windows.Indexed(0, m)) {
-    plan.kind = ShinglePhrasePlan::Kind::Term;
-    plan.term = windows.Term(0, m);
-    return plan;
-  }
-  if (positional) {
-    if (Cover(windows, m, plan.phrase)) {
+    if (!positional) {
+      std::vector<bstring> legs;
+      if (!text || !Legs(windows, legs)) {
+        return plan;
+      }
+      for (auto& leg : legs) {
+        plan.phrase.push_back<ByTermOptions>().term = std::move(leg);
+      }
+      plan.phrase.set_verifier(std::make_shared<PhraseVerifier>(*text, phrase));
       plan.kind = ShinglePhrasePlan::Kind::Phrase;
+      return plan;
     }
+  }
+  if (!positional) {
     return plan;
   }
-  std::vector<bstring> legs;
-  if (!text || !Legs(windows, m, legs)) {
-    return plan;
+  ByPhraseOptions cover;
+  if (CoverPhrase(tokenizer, phrase, cover)) {
+    plan.kind = ShinglePhrasePlan::Kind::Phrase;
+    plan.phrase = std::move(cover);
   }
-  for (auto& leg : legs) {
-    plan.phrase.push_back<ByTermOptions>().term = std::move(leg);
-  }
-  plan.phrase.set_verifier(std::make_shared<PhraseVerifier>(*text, phrase));
-  plan.kind = ShinglePhrasePlan::Kind::Phrase;
   return plan;
 }
 

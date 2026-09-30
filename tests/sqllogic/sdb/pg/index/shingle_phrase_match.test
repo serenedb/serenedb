@@ -140,6 +140,13 @@ db error: ERROR: ts_phrase on this shingle column needs positions: its shingles 
 HINT: Add `position` to the dictionary, or raise `max_gram` to the phrase length.
 
 
+statement error
+SELECT id FROM test_shingle_idx WHERE body @@ (ts_phrase('quick brown') ## ts_like('%ox'))
+----
+db error: ERROR: ## on this shingle column needs positions: its shingles do not cover the phrase
+HINT: Add `position` to the dictionary, or raise `max_gram` to the phrase length.
+
+
 statement ok
 DROP TABLE test_shingle
 
@@ -256,11 +263,100 @@ SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick fox', slop :=
 id
 1
 
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_like('%own') ## 'brown') ORDER BY id
+----
+id
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_like('%own') ## 'fox') ORDER BY id
+----
+id
+1
+3
+5
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_starts_with('quick b') ## 'brown') ORDER BY id
+----
+id
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_starts_with('qu') ## 'brown') ORDER BY id
+----
+id
+1
+2
+4
+5
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brown') ## ts_like('%ox')) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_starts_with('qu') ## ts_phrase('brown fox')) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brown') ## ts_any(['fox', 'dog'])) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick brown', [0, 2], 'fox') ORDER BY id
+----
+id
+1
+5
+
 statement ok
 DROP TABLE test_shingle_pos
 
 statement ok
 DROP TEXT SEARCH DICTIONARY shingle_pos
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_joined AS
+    generate_shingles(split_text_csv(' '), 2, 2, token_separator := '')
+    WITH (frequency, position)
+
+statement ok
+CREATE TABLE test_shingle_joined (id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX test_shingle_joined_idx ON test_shingle_joined USING inverted(id, body shingle_joined)
+
+statement ok
+INSERT INTO test_shingle_joined VALUES (1, 'quick brown fox'), (2, 'quick bread')
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle_joined
+
+query
+SELECT id FROM test_shingle_joined_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id
+----
+id
+1
+
+statement error
+SELECT id FROM test_shingle_joined_idx WHERE body @@ (ts_like('%own') ## 'fox')
+----
+db error: ERROR: ## pattern parts on a shingle column need a token separator
+HINT: Without a separator a shingle can't be told apart from a word; create the dictionary with a non-empty `token_separator`.
+
+
+statement ok
+DROP TABLE test_shingle_joined
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_joined
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY shingle_score AS

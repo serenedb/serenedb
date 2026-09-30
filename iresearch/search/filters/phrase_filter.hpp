@@ -100,6 +100,7 @@ class ByPhraseOptions {
 
   bool operator==(const ByPhraseOptions& rhs) const noexcept {
     return _phrase == rhs._phrase && _slop == rhs._slop &&
+           _word_separator == rhs._word_separator &&
            SameVerifier(_verifier.get(), rhs._verifier.get());
   }
 
@@ -108,6 +109,7 @@ class ByPhraseOptions {
   void clear() noexcept {
     _phrase.clear();
     _slop = 0;
+    _word_separator.clear();
     _verifier.reset();
   }
 
@@ -131,6 +133,9 @@ class ByPhraseOptions {
   PosAttr::value_t slop() const noexcept { return _slop; }
   void set_slop(PosAttr::value_t value) noexcept { _slop = value; }
 
+  bytes_view word_separator() const noexcept { return _word_separator; }
+  void set_word_separator(bytes_view value) { _word_separator = value; }
+
   const PhraseVerifier* verifier() const noexcept { return _verifier.get(); }
   void set_verifier(std::shared_ptr<const PhraseVerifier> verifier) noexcept {
     _verifier = std::move(verifier);
@@ -152,6 +157,7 @@ class ByPhraseOptions {
 
   std::deque<PhrasePartInfo> _phrase;
   PosAttr::value_t _slop{0};
+  bstring _word_separator;
   std::shared_ptr<const PhraseVerifier> _verifier;
 };
 

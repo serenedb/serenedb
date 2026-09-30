@@ -186,6 +186,42 @@ class PhraseTermVisitor final : public FilterVisitor,
   bool _has_boosts = false;
 };
 
+class WordTermsVisitor final : public FilterVisitor {
+ public:
+  WordTermsVisitor(FilterVisitor& words, bytes_view separator) noexcept
+    : _words{words}, _separator{separator} {}
+
+  void Prepare(const SubReader& segment, const TermReader& field,
+               TermIterator& terms) final {
+    _terms = &terms;
+    _words.Prepare(segment, field, terms);
+  }
+
+  bool Visit(score_t boost) final {
+    SDB_ASSERT(_terms);
+    if (_terms->value().find(_separator) != bytes_view::npos) {
+      return true;
+    }
+    return _words.Visit(boost);
+  }
+
+ private:
+  FilterVisitor& _words;
+  bytes_view _separator;
+  TermIterator* _terms = nullptr;
+};
+
+void VisitExpansion(field_visitor& expansion, const SubReader& segment,
+                    const TermReader& field, bytes_view separator,
+                    FilterVisitor& visitor) {
+  if (separator.empty()) {
+    expansion(segment, field, visitor);
+    return;
+  }
+  WordTermsVisitor words{visitor, separator};
+  expansion(segment, field, words);
+}
+
 bool HasIntervalOffsets(const ByPhraseOptions& options) noexcept {
   for (const auto& info : options) {
     if (info.offs_min != info.offs_max) {
@@ -382,7 +418,8 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
     if (!all_terms_visitors.empty()) {
       auto it = top_terms_visitors.begin();
       for (auto* visitor : all_terms_visitors) {
-        (*visitor)(segment, *reader, *it++);
+        VisitExpansion(*visitor, segment, *reader, options.word_separator(),
+                       *it++);
       }
       it = top_terms_visitors.begin();
       for (auto* visitor : all_terms_visitors) {
@@ -449,7 +486,8 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
                          .Expanded(ctx.thread, expanded_idx)
                     : nullptr,
                   part_terms.empty() ? nullptr : &part_terms[slot]);
-        expand_visitors[expanded_idx](segment, *reader, ptv);
+        VisitExpansion(expand_visitors[expanded_idx], segment, *reader,
+                       options.word_separator(), ptv);
         ++expanded_idx;
       } break;
     }

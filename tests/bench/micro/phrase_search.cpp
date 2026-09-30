@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/numbers.h>
 #include <absl/strings/str_split.h>
 #include <benchmark/benchmark.h>
 
@@ -302,12 +303,35 @@ irs::Filter::ptr MakeFilter(Options&& options) {
   return filter;
 }
 
-irs::Filter::ptr MakePhrase(const Index& index, std::string_view text) {
+irs::ByPhraseOptions ParsePhrase(std::string_view text) {
   irs::ByPhraseOptions phrase;
+  irs::PosAttr::value_t offs_min = 1;
+  irs::PosAttr::value_t offs_max = 1;
   for (const auto word : absl::StrSplit(text, ' ', absl::SkipEmpty())) {
-    phrase.push_back<irs::ByTermOptions>().term =
-      irs::ViewCast<irs::byte_type>(word);
+    if (word.starts_with('+')) {
+      const std::pair<std::string_view, std::string_view> range =
+        absl::StrSplit(word.substr(1), '-');
+      [[maybe_unused]] const bool parsed =
+        absl::SimpleAtoi(range.first, &offs_min) &&
+        absl::SimpleAtoi(range.second, &offs_max);
+      SDB_ASSERT(parsed);
+      continue;
+    }
+    if (word.ends_with('*')) {
+      phrase.push_back<irs::ByPrefixOptions>(offs_min, offs_max).term =
+        irs::ViewCast<irs::byte_type>(word.substr(0, word.size() - 1));
+    } else {
+      phrase.push_back<irs::ByTermOptions>(offs_min, offs_max).term =
+        irs::ViewCast<irs::byte_type>(word);
+    }
+    offs_min = offs_max = 1;
   }
+  return phrase;
+}
+
+irs::Filter::ptr MakePhrase(const Index& index, std::string_view text,
+                            bool cover) {
+  auto phrase = ParsePhrase(text);
   const auto& strategy = *index.strategy;
   const auto body = BodyText();
   const auto* stored = strategy.verified ? &body : nullptr;
@@ -317,12 +341,18 @@ irs::Filter::ptr MakePhrase(const Index& index, std::string_view text) {
     }
     return MakeFilter<irs::ByPhrase>(std::move(phrase));
   }
-  auto plan = irs::PlanShinglePhrase(
-    irs::utils::downCast<irs::analysis::ShingleTokenizer>(*index.tokenizer),
-    phrase, strategy.positions, stored);
+  const auto& shingles =
+    irs::utils::downCast<irs::analysis::ShingleTokenizer>(*index.tokenizer);
+  auto plan =
+    cover ? irs::PlanShinglePhrase(shingles, phrase, strategy.positions, stored)
+          : irs::ShinglePhrasePlan{};
   switch (plan.kind) {
     case irs::ShinglePhrasePlan::Kind::None:
-      return nullptr;
+      if (!strategy.positions) {
+        return nullptr;
+      }
+      phrase.set_word_separator(shingles.Separator());
+      return MakeFilter<irs::ByPhrase>(std::move(phrase));
     case irs::ShinglePhrasePlan::Kind::Term:
       return MakeFilter<irs::ByTerm>(irs::ByTermOptions{std::move(plan.term)});
     case irs::ShinglePhrasePlan::Kind::Phrase:
@@ -380,12 +410,12 @@ double Scored(const irs::DirectoryReader& reader, const irs::Filter& filter,
   return total;
 }
 
-void BenchCount(benchmark::State& state, size_t strategy,
-                std::string_view text) {
+void BenchCount(benchmark::State& state, size_t strategy, std::string_view text,
+                bool cover) {
   const auto& index = GetCorpus().indexes[strategy];
   uint64_t hits = 0;
   for (auto _ : state) {
-    const auto filter = MakePhrase(index, text);
+    const auto filter = MakePhrase(index, text, cover);
     hits = filter ? Count(index.reader, *filter) : 0;
     benchmark::DoNotOptimize(hits);
   }
@@ -393,11 +423,11 @@ void BenchCount(benchmark::State& state, size_t strategy,
 }
 
 void BenchScored(benchmark::State& state, size_t strategy,
-                 std::string_view text) {
+                 std::string_view text, bool cover) {
   const auto& index = GetCorpus().indexes[strategy];
   uint64_t hits = 0;
   for (auto _ : state) {
-    const auto filter = MakePhrase(index, text);
+    const auto filter = MakePhrase(index, text, cover);
     hits = 0;
     benchmark::DoNotOptimize(filter ? Scored(index.reader, *filter, hits) : 0);
   }
@@ -439,31 +469,56 @@ void BenchScan(benchmark::State& state, std::string_view text) {
   state.counters["hits"] = static_cast<double>(hits);
 }
 
-constexpr std::pair<const char*, std::string_view> kQueries[] = {
-  {"content2", "quick brown"},
-  {"content3", "quick brown fox"},
-  {"stop3", "the of the"},
-  {"content4", "quick brown fox jumps"},
+struct Query {
+  const char* name;
+  std::string_view text;
+  bool complex = false;
 };
 
+constexpr Query kQueries[] = {
+  {.name = "content2", .text = "quick brown"},
+  {.name = "content3", .text = "quick brown fox"},
+  {.name = "stop3", .text = "the of the"},
+  {.name = "content4", .text = "quick brown fox jumps"},
+  {.name = "prefix3", .text = "quick brown fo*", .complex = true},
+  {.name = "interval4", .text = "quick brown +2-3 jumps", .complex = true},
+  {.name = "stopprefix3", .text = "the of th*", .complex = true},
+};
+
+void Register(std::string name, size_t strategy, std::string_view text,
+              bool cover) {
+  benchmark::RegisterBenchmark(
+    ("Count/" + name).c_str(),
+    [=](benchmark::State& state) { BenchCount(state, strategy, text, cover); });
+  benchmark::RegisterBenchmark(("Scored/" + name).c_str(),
+                               [=](benchmark::State& state) {
+                                 BenchScored(state, strategy, text, cover);
+                               });
+}
+
 void RegisterAll() {
-  for (const auto& [query_name, text] : kQueries) {
+  for (const auto& query : kQueries) {
+    if (query.complex) {
+      continue;
+    }
+    const auto text = query.text;
     benchmark::RegisterBenchmark(
-      (std::string{"Count/scan/"} + query_name).c_str(),
+      (std::string{"Count/scan/"} + query.name).c_str(),
       [text](benchmark::State& state) { BenchScan(state, text); });
   }
   for (size_t strategy = 0; strategy != std::size(kStrategies); ++strategy) {
-    for (const auto& [query_name, text] : kQueries) {
-      const auto suffix =
-        std::string{kStrategies[strategy].name} + "/" + query_name;
-      benchmark::RegisterBenchmark(("Count/" + suffix).c_str(),
-                                   [strategy, text](benchmark::State& state) {
-                                     BenchCount(state, strategy, text);
-                                   });
-      benchmark::RegisterBenchmark(("Scored/" + suffix).c_str(),
-                                   [strategy, text](benchmark::State& state) {
-                                     BenchScored(state, strategy, text);
-                                   });
+    const auto& spec = kStrategies[strategy];
+    const bool shingles = spec.max_gram != 0;
+    for (const auto& query : kQueries) {
+      if (query.complex && shingles && !spec.positions) {
+        continue;
+      }
+      const auto suffix = std::string{"/"} + query.name;
+      Register(spec.name + suffix, strategy, query.text, true);
+      if (query.complex && shingles) {
+        Register(spec.name + std::string{"-flat"} + suffix, strategy,
+                 query.text, false);
+      }
     }
   }
 }

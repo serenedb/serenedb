@@ -75,6 +75,7 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
   uint32_t MinShingle() const noexcept { return _min; }
   uint32_t MaxShingle() const noexcept { return _max; }
   bool OutputUnigrams() const noexcept { return _output_unigrams; }
+  bytes_view Separator() const noexcept { return _separator; }
   bool HasFrequentWords() const noexcept { return _has_frequent; }
   bool IsFrequent(bytes_view token) const noexcept {
     return _frequent.Contains(MakeTermView(ViewCast<char>(token)));

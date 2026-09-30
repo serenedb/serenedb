@@ -64,10 +64,12 @@ set(IResearch_core_sources
     ./formats/column/merge.cpp
     ./formats/column/internal/write_context.cpp
     ./formats/column/read_context.cpp
-    ./formats/formats.cpp
     ./formats/format_utils.cpp
+    ./formats/index_meta_reader.cpp
+    ./formats/index_meta_writer.cpp
+    ./formats/segment_meta_reader.cpp
+    ./formats/segment_meta_writer.cpp
     ./formats/posting/skip_list.cpp
-    ./formats/format_block_128.cpp
     ./formats/index/burst_trie.cpp
     ./formats/index/idx_reader.cpp
     ./formats/index/idx_writer.cpp
@@ -360,8 +362,6 @@ set(IResearch_core_sources
     ./store/store_utils.cpp
     ./utils/attributes.cpp
     ./utils/automaton_utils.cpp
-    ./utils/encryption.cpp
-    ./utils/ctr_encryption.cpp
     ./utils/directory_utils.cpp
     ./utils/mmap_utils.cpp
     ./utils/index_utils.cpp

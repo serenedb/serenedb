@@ -108,7 +108,7 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
   // until then; the record carries them that way too.
   duckdb::UnifiedVectorFormat rowid;
   chunk.data[gstate.pk_columns[0].input_col_idx].ToUnifiedFormat(num_rows,
-                                                                rowid);
+                                                                 rowid);
   const auto* rowid_data = duckdb::UnifiedVectorFormat::GetData<int64_t>(rowid);
   std::vector<int64_t> rows;
   rows.reserve(num_rows);

@@ -46,8 +46,7 @@ TEST_P(EmptyFilterTestCase, empty) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(empty_filter_test, EmptyFilterTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5simd")),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          EmptyFilterTestCase::to_string);
 
 }  // namespace

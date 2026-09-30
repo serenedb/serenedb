@@ -1,0 +1,27 @@
+# A throw in the accept loop while it sets up an accepted connection drops that
+# connection, and the loop keeps accepting. The throw used to end the loop: the
+# listener stopped accepting, and every later client waited forever for an
+# answer to its startup packet.
+#
+# Failure points are process-global, so this lives in the recovery tree, where
+# each test has a server of its own.
+
+statement ok
+SET sdb_faults = 'acceptor_throw';
+
+connection dropped
+statement error
+SELECT 1;
+
+
+connection default
+statement ok
+SET sdb_faults = '-acceptor_throw';
+
+
+connection healthy
+query
+SELECT 1 AS ok;
+----
+ok
+1

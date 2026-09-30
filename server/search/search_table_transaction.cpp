@@ -157,8 +157,7 @@ void SearchTableTransaction::ReplayBuffer(SearchTable& shard,
     remover.InitImpl(op.delete_rows.size());
     for (const auto row : op.delete_rows) {
       key.clear();
-      connector::primary_key::AppendGenerated(key,
-                                              static_cast<uint64_t>(row));
+      connector::primary_key::AppendGenerated(key, static_cast<uint64_t>(row));
       remover.DeleteRowImpl(key);
     }
     remover.FinishImpl();
@@ -175,8 +174,8 @@ void SearchTableTransaction::ReplayBuffer(SearchTable& shard,
   if (entry.HasBufferedRows()) {
     SDB_ASSERT(entry.catalog != nullptr,
                "buffered rows without the catalog their sink needs");
-    auto sink = connector::MakeSearchTableInsertSink(trx, shard,
-                                                     *entry.catalog, context);
+    auto sink =
+      connector::MakeSearchTableInsertSink(trx, shard, *entry.catalog, context);
     entry.VisitBufferedRows([&](duckdb::DataChunk& chunk, uint64_t pk_base) {
       connector::WriteChunkToSearchSink(*sink, chunk, entry.column_ids, pk_base,
                                         table_id, context);
@@ -319,9 +318,7 @@ void SearchTableTransaction::Commit() {
     std::vector<SearchDbWal::SegmentRef> refs;
     refs.reserve(flushed.size());
     for (const auto& segment : flushed) {
-      refs.push_back(SearchDbWal::SegmentRef{
-        .meta_file = segment.filename,
-        .codec = std::string{segment.meta.codec->type()().name()}});
+      refs.push_back(SearchDbWal::SegmentRef{.meta_file = segment.filename});
     }
     _changes[table_id].AppendSegments(std::move(refs));
   }
@@ -377,8 +374,8 @@ uint64_t SearchTableTransaction::AppendCommit() {
   SDB_ASSERT(!_writes.empty());
   std::vector<SearchDbWal::ShardSection> sections;
   sections.reserve(_writes.size());
-  std::vector<std::vector<SearchDbWal::Entry>> entry_lists;
-  entry_lists.reserve(_writes.size());
+  std::vector<std::vector<SearchDbWal::Op>> op_lists;
+  op_lists.reserve(_writes.size());
   // Widest shard band -> ticks this commit reserves; every shard tops out here.
   uint64_t tick_span = 0;
   SearchDbWal* wal = &_writes.begin()->second.shard->Wal();
@@ -397,15 +394,15 @@ uint64_t SearchTableTransaction::AppendCommit() {
     uint64_t shard_span = ShardTickSpan(w) + (entry.ClearsShard() ? 1 : 0);
     tick_span = std::max(tick_span, shard_span);
 
-    // Entries in issue order: a row run for the bands before each op, then
+    // WAL ops in issue order: a row run for the bands before each op, then
     // the op. Position is the ordering, so nothing carries a watermark.
-    auto& entries = entry_lists.emplace_back();
-    entries.reserve(entry.ops.size() * 2 + 2);
+    auto& wal_ops = op_lists.emplace_back();
+    wal_ops.reserve(entry.ops.size() * 2 + 2);
     if (!entry.segments.empty()) {
       // Everything promoted sits ahead of what is left inline: a removal in
       // this record names rows committed before the transaction, never these.
-      entries.push_back(SearchDbWal::Entry{
-        .kind = SearchDbWal::Entry::Kind::kSegments,
+      wal_ops.push_back(SearchDbWal::Op{
+        .kind = SearchDbWal::Op::Kind::kSegments,
         .segments = std::span<const SearchDbWal::SegmentRef>{entry.segments}});
     }
     uint32_t band = 0;
@@ -414,17 +411,16 @@ uint64_t SearchTableTransaction::AppendCommit() {
       if (band >= upto) {
         return;
       }
-      entries.push_back(
-        SearchDbWal::Entry{.kind = SearchDbWal::Entry::Kind::kRows,
-                           .first_band = band,
-                           .last_band = upto});
+      wal_ops.push_back(SearchDbWal::Op{.kind = SearchDbWal::Op::Kind::kRows,
+                                        .first_band = band,
+                                        .last_band = upto});
       band = upto;
     };
     for (const auto& op : entry.ops) {
       emit_rows_to(std::min(op.band_watermark, band_count));
-      entries.push_back(SearchDbWal::Entry{
-        .kind = op.truncate ? SearchDbWal::Entry::Kind::kTruncate
-                            : SearchDbWal::Entry::Kind::kDelete,
+      wal_ops.push_back(SearchDbWal::Op{
+        .kind = op.truncate ? SearchDbWal::Op::Kind::kTruncate
+                            : SearchDbWal::Op::Kind::kDelete,
         .delete_rows = std::span<const int64_t>{op.delete_rows}});
     }
     emit_rows_to(band_count);
@@ -434,8 +430,8 @@ uint64_t SearchTableTransaction::AppendCommit() {
     section.inline_data = entry.collection.get();
     section.inline_pks =
       std::span<const SearchDbWal::InlinePk>{entry.pk_segments};
-    section.entries = std::span<const SearchDbWal::Entry>{entries};
-    SDB_ASSERT(!section.entries.empty(),
+    section.ops = std::span<const SearchDbWal::Op>{wal_ops};
+    SDB_ASSERT(!section.ops.empty(),
                "search-table commit with neither rows, segments nor ops");
     sections.push_back(section);
   }

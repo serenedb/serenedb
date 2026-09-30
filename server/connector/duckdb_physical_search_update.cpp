@@ -144,7 +144,7 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   // version it replaces.
   duckdb::UnifiedVectorFormat old_pk;
   chunk.data[gstate.old_pk_columns[0].input_col_idx].ToUnifiedFormat(num_rows,
-                                                                    old_pk);
+                                                                     old_pk);
   const auto* old_pk_data =
     duckdb::UnifiedVectorFormat::GetData<int64_t>(old_pk);
   std::vector<int64_t> old_rows;

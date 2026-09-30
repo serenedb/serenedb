@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+/// Copyright 2016 by EMC Corporation, All Rights Reserved
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,24 +15,23 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is SereneDB GmbH, Berlin, Germany
+/// Copyright holder is EMC Corporation
+///
+/// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
-#include "connector/functions/embedding/provider.h"
+namespace irs {
 
-namespace duckdb {
+struct Directory;
+class IdxReader;
+struct SegmentMeta;
 
-class DatabaseInstance;
-}
+struct ReaderState {
+  const Directory* dir;
+  const SegmentMeta* meta;
+  IdxReader* idx = nullptr;
+};
 
-namespace sdb::connector::embedding {
-
-void NormalizeOpenAIConfig(duckdb::DatabaseInstance& db, ProviderConfig& cfg);
-
-void EmbedBatchOpenAI(duckdb::DatabaseInstance& db, const ProviderConfig& cfg,
-                      duckdb::Vector& texts, duckdb::idx_t count,
-                      duckdb::Vector& result);
-
-}  // namespace sdb::connector::embedding
+}  // namespace irs

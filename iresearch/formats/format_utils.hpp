@@ -22,61 +22,36 @@
 
 #pragma once
 
-#include <absl/strings/str_cat.h>
+#include <absl/functional/function_ref.h>
 
-#include "iresearch/error/error.hpp"
-#include "iresearch/formats/formats.hpp"
+#include <duckdb/common/constants.hpp>
+
+#include "iresearch/formats/flush_state.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
 
-namespace irs {
+namespace irs::format_utils {
 
-void ValidateFooter(IndexInput& in);
+inline constexpr uint64_t kTrailerLen = 2 * sizeof(uint32_t);
 
-namespace format_utils {
+struct Footer {
+  uint64_t data_len = 0;
+  uint32_t data_expected_crc32c = 0;
+};
 
-constexpr int32_t kFormatMagic = 0x3fd76c17;
-constexpr int32_t kFooterMagic = -kFormatMagic;
-constexpr uint32_t kFooterLen = 2 * sizeof(int32_t) + sizeof(int64_t);
-
-void WriteHeader(IndexOutput& out, std::string_view format);
-
-void WriteHeader(IndexOutput& out, std::string_view format, int32_t ver);
+using FooterWriter = absl::FunctionRef<void(duckdb::BinarySerializer&)>;
+using FooterReader =
+  absl::FunctionRef<void(duckdb::BinaryDeserializer&, uint64_t)>;
 
 void WriteFooter(IndexOutput& out);
 
-size_t HeaderLength(std::string_view format) noexcept;
+void WriteFooter(IndexOutput& out, FooterWriter write);
 
-void CheckHeader(DataInput& in, std::string_view format);
+Footer ReadFooter(IndexInput& in, std::string_view name);
 
-void CheckHeader(DataInput& in, std::string_view format, int32_t ver);
-
-inline int64_t ReadChecksum(IndexInput& in) {
-  in.Seek(in.Length() - kFooterLen);
-  ValidateFooter(in);
-  return in.ReadI64();
-}
-
-inline int64_t CheckFooter(IndexInput& in, int64_t checksum) {
-  ValidateFooter(in);
-
-  if (checksum != in.ReadI64()) {
-    throw IndexError{absl::StrCat(
-      "while checking footer, error: invalid checksum '", checksum, "'")};
-  }
-
-  return checksum;
-}
-
-int64_t Checksum(const IndexInput& in);
+Footer ReadFooter(IndexInput& in, std::string_view name, FooterReader read);
 
 void PrepareOutput(std::string& str, IndexOutput::ptr& out,
-                   const FlushState& state, std::string_view ext,
-                   std::string_view format);
+                   const FlushState& state, std::string_view ext);
 
-}  // namespace format_utils
-
-template<typename T, typename M>
-std::string FileName(const M& meta);
-
-}  // namespace irs
+}  // namespace irs::format_utils

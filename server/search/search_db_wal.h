@@ -60,18 +60,17 @@ class SearchDbWal {
   // around it comes from the op manifest, so no tick is recorded.
   struct SegmentRef {
     std::string meta_file;
-    std::string codec;
   };
 
-  // One entry of a shard section. The record stores them in issue order, so
+  // One op of a shard section. The record stores them in issue order, so
   // position IS the ordering -- no watermark needed. Rows name a band range of
-  // the section's collection, which lets one buffer back several entries.
-  struct Entry {
+  // the section's collection, which lets one buffer back several ops.
+  struct Op {
     enum class Kind : uint8_t {
-      kRows = 0,
-      kDelete = 1,
-      kTruncate = 2,
-      kSegments = 3,
+      kTruncate = 3,
+      kSegments = 4,
+      kRows = 5,
+      kDelete = 6,
     };
 
     Kind kind = Kind::kRows;
@@ -82,12 +81,12 @@ class SearchDbWal {
   };
 
   // One transaction's contribution for a single search shard: the rows it
-  // buffered, plus the entries that put them in order with everything else.
+  // buffered, plus the ops that put them in order with everything else.
   struct ShardSection {
     duckdb::idx_t table_id;
     const duckdb::ColumnDataCollection* inline_data = nullptr;
     std::span<const InlinePk> inline_pks;
-    std::span<const Entry> entries;
+    std::span<const Op> ops;
   };
 
   using ReplayCallback =
@@ -96,8 +95,9 @@ class SearchDbWal {
 
   // Invoked once per DELETE op, in record order, with the rowids to remove
   // (a view into the record buffer, valid for the call only).
-  using DeleteReplayCallback = absl::AnyInvocable<void(
-    uint64_t tick, duckdb::idx_t table_id, std::span<const int64_t> rows) const>;
+  using DeleteReplayCallback =
+    absl::AnyInvocable<void(uint64_t tick, duckdb::idx_t table_id,
+                            std::span<const int64_t> rows) const>;
 
   // Invoked once per recorded segment, in manifest order. `tick` is the
   // record's own, for the caller's high-water mark -- the tick to adopt at
@@ -166,8 +166,7 @@ class SearchDbWal {
 // Re-slice an inline collection by its recorded per-Sink-chunk bands, invoking
 // `emit(slice, base)` once per band with that chunk's rows + rowid base. The
 // ranged overload emits only bands [first_band, last_band), skipping the rows
-// the earlier bands hold -- what lets one collection back several record
-// entries.
+// the earlier bands hold -- what lets one collection back several record ops.
 void VisitInlineSegments(
   const duckdb::ColumnDataCollection& cdc,
   std::span<const SearchDbWal::InlinePk> segments, size_t first_band,

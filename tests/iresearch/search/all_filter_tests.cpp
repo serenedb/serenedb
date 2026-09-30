@@ -166,8 +166,7 @@ TEST_P(AllFilterTestCase, all_order) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(all_filter_test, AllFilterTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5simd")),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          AllFilterTestCase::to_string);
 
 }  // namespace

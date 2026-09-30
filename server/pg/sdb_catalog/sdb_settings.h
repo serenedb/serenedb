@@ -29,7 +29,7 @@ namespace sdb::pg {
 // pending_restart is always false; columns with no abseil equivalent are NULL.
 // NOLINTBEGIN
 struct SdbSettings {
-  static constexpr uint64_t kId = 999994;  // TODO(codeworse): assign proper OID
+  static constexpr uint64_t kId = kMinSystem + 400;
   static constexpr std::string_view kName = "sdb_settings";
 
   Text name;

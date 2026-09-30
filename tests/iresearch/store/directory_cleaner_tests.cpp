@@ -21,7 +21,7 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/formats/formats.hpp>
+#include <iresearch/formats/index_meta_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/directory_cleaner.hpp>
@@ -64,24 +64,23 @@ bool VisitFiles(const IndexMeta& meta, Visitor&& visitor) {
 }
 
 DirectoryCleaner::removal_acceptor_t RemoveExceptCurrentSegments(
-  const Directory& dir, const Format& codec) {
+  const Directory& dir) {
   const auto acceptor = [](std::string_view filename,
                            const absl::flat_hash_set<std::string>& retain) {
     return !retain.contains(filename);
   };
 
   IndexMeta meta;
-  auto reader = codec.get_index_meta_reader();
 
   std::string segment_file;
-  const bool index_exists = reader->last_segments_file(dir, segment_file);
+  const bool index_exists = index_meta::LastFile(dir, segment_file);
 
   if (!index_exists) {
     // can't find segments file
     return [](std::string_view) -> bool { return true; };
   }
 
-  reader->read(dir, meta, segment_file);
+  index_meta::Read(dir, meta, segment_file);
 
   absl::flat_hash_set<std::string> retain;
 
@@ -257,19 +256,17 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
   const ::tests::Document* doc2 = gen.next();
   Filter::ptr query_doc1 = MakeByTerm(irs::field_id{1}, "A");
   irs::MemoryDirectory dir;
-  auto codec_ptr = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec_ptr);
 
   // writer commit tracks files that are in active segments
   {
-    auto writer = irs::IndexWriter::Make(dir, codec_ptr, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
     writer->RefreshCommit();
     ::tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec_ptr, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     std::vector<std::string> files;
     auto list_files = [&files](std::string_view name) {
@@ -286,10 +283,9 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
     writer->RefreshCommit();
     ::tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec_ptr, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
-    irs::DirectoryCleaner::clean(dir,
-                                 RemoveExceptCurrentSegments(dir, *codec_ptr));
+    irs::DirectoryCleaner::clean(dir, RemoveExceptCurrentSegments(dir));
     files.clear();
     ASSERT_TRUE(dir.visit(list_files));
     ASSERT_FALSE(files.empty());
@@ -322,12 +318,10 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
     std::string segments_file;
 
     irs::IndexMeta index_meta;
-    auto meta_reader = codec_ptr->get_index_meta_reader();
-    const auto index_exists =
-      meta_reader->last_segments_file(dir, segments_file);
+    const auto index_exists = irs::index_meta::LastFile(dir, segments_file);
 
     ASSERT_TRUE(index_exists);
-    meta_reader->read(dir, index_meta, segments_file);
+    irs::index_meta::Read(dir, index_meta, segments_file);
 
     file_set.insert(segments_file);
 
@@ -345,8 +339,7 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
       return true;
     };
     std::unordered_set<std::string> current_files(file_set);
-    irs::DirectoryCleaner::clean(dir,
-                                 RemoveExceptCurrentSegments(dir, *codec_ptr));
+    irs::DirectoryCleaner::clean(dir, RemoveExceptCurrentSegments(dir));
     ASSERT_TRUE(dir.visit(list_files));
     ASSERT_FALSE(files.empty());
 
@@ -363,12 +356,10 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
     std::string segments_file;
 
     irs::IndexMeta index_meta;
-    auto meta_reader = codec_ptr->get_index_meta_reader();
-    const auto index_exists =
-      meta_reader->last_segments_file(dir, segments_file);
+    const auto index_exists = irs::index_meta::LastFile(dir, segments_file);
 
     ASSERT_TRUE(index_exists);
-    meta_reader->read(dir, index_meta, segments_file);
+    irs::index_meta::Read(dir, index_meta, segments_file);
 
     file_set.insert(segments_file);
 
@@ -386,8 +377,7 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
       return true;
     };
     std::unordered_set<std::string> current_files(file_set);
-    auto reader =
-      irs::DirectoryReader{dir, codec_ptr, irs::tests::DefaultReaderOptions()};
+    auto reader = irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()};
     irs::DirectoryCleaner::clean(dir);
     ASSERT_TRUE(dir.visit(list_files));
     ASSERT_FALSE(files.empty());

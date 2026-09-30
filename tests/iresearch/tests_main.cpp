@@ -40,7 +40,6 @@
 #include <ctime>
 #include <filesystem>
 #include <iresearch/analysis/tokenizer.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/utils/attributes.hpp>
 #include <iresearch/utils/containers/bitset.hpp>
@@ -212,7 +211,6 @@ int TestEnv::initialize(int argc, char* argv[]) {
   ::testing::AddGlobalTestEnvironment(new IterationTracker());
   ::testing::InitGoogleTest(&gArgc, gArgv);
 
-  irs::formats::Init();
   irs::InitOptimizeRules();
 
   return RUN_ALL_TESTS();

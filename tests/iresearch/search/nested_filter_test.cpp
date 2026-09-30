@@ -1467,9 +1467,7 @@ static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 static const auto kDirectories = ::testing::ValuesIn(kTestDirs);
 
 INSTANTIATE_TEST_SUITE_P(NestedFilterTest, NestedFilterTestCase,
-                         ::testing::Combine(kDirectories,
-                                            ::testing::Values(tests::FormatInfo{
-                                              "1_5simd"})),
+                         ::testing::Combine(kDirectories),
                          NestedFilterTestCase::to_string);
 
 class NestedFilterFormatsTestCase : public NestedFilterTestCase {
@@ -1522,9 +1520,7 @@ TEST_P(NestedFilterFormatsTestCase, JoinAnyParent) {
 }
 
 INSTANTIATE_TEST_SUITE_P(NestedFilterFormatsTest, NestedFilterFormatsTestCase,
-                         ::testing::Combine(kDirectories,
-                                            ::testing::Values(tests::FormatInfo{
-                                              "1_5simd"})),
+                         ::testing::Combine(kDirectories),
                          NestedFilterFormatsTestCase::to_string);
 
 }  // namespace

@@ -41,9 +41,6 @@ namespace irs {
 // for even bitpacking. Or larger block size.
 // But in general we need to think more about size of data.
 struct FormatTraits128 {
-  // TODO(mbkkt) rename to "block_128"
-  static constexpr std::string_view kName = "1_5simd";
-
   static_assert(doc_limits::kBlockSize > 1);
   static_assert(doc_limits::kBlockSize % BitsRequired<byte_type>() == 0);
   // For bitset encoding.

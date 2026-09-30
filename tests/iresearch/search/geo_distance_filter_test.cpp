@@ -374,10 +374,7 @@ TEST(GeoDistanceFilterTest, query) {
 
   // index data
   {
-    constexpr auto kFormatId = "1_5simd";
-    auto codec = irs::formats::Get(kFormatId);
-    ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
@@ -887,10 +884,7 @@ TEST(GeoDistanceFilterTest, checkScorer) {
 
   // index data
   {
-    constexpr auto kFormatId = "1_5simd";
-    auto codec = irs::formats::Get(kFormatId);
-    ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;

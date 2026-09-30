@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import socket
 import struct
+import time
 
 import pytest
 from spec_loader import conn_kwargs
@@ -432,6 +433,38 @@ def test_fast_path_function_call_rejected_gracefully(conn):
     assert rows(m2) and rows(m2)[0].endswith(b"1")
 
 
+def test_invalid_message_type_is_fatal_then_closed():
+    c = WireConn()
+    try:
+        c.send("z")
+        t, p = c.read_msg()
+        assert t == "E", (t, p)
+        assert b"SFATAL\0" in p and b"C08P01\0" in p, p
+        c.sock.settimeout(5)
+        assert c.sock.recv(1) == b""
+    finally:
+        c.sock.close()
+
+
+def test_terminate_closes_a_client_that_is_not_reading(conn):
+    # pg_terminate_backend on a session whose client stopped reading mid-result:
+    # once the client reads again it gets the rest and then EOF. The stop used to
+    # share one wake with the session's last write, so the send writer finished
+    # that write, went back to waiting, and never closed the socket.
+    victim = WireConn()
+    try:
+        pid = int(first_field(victim.run("select pg_backend_pid()")))
+        victim.send("Q", _cstr("select repeat('x', 1000) from range(40000)"))
+        time.sleep(1)
+        assert "E" not in types(conn.run(f"select pg_terminate_backend({pid})"))
+        time.sleep(1)
+        victim.sock.settimeout(10)
+        while victim.sock.recv(1 << 20):
+            pass
+    finally:
+        victim.sock.close()
+
+
 def test_set_local_revert_not_reported(conn):
     # PG emits GUC ParameterStatus only at ReadyForQuery, after the implicit
     # block commit reverts a SET LOCAL -- so a set-then-reverted SET LOCAL nets
@@ -740,6 +773,31 @@ def test_paged_one_row_at_a_time(conn):
     assert suspends == 10, suspends
 
 
+def test_paged_portal_stops_at_chunk_boundary(conn):
+    conn.run("drop sequence if exists smoke_page_seq")
+    assert "E" not in types(conn.run("create sequence smoke_page_seq"))
+    try:
+        conn.parse("", "SELECT nextval('smoke_page_seq') FROM range(4096)")
+        conn.bind("", "")
+        conn.execute("", max_rows=2048)
+        conn.send("H")
+        page = []
+        while True:
+            t, p = conn.read_msg()
+            page.append((t, p))
+            if t in ("s", "C", "E"):
+                break
+        assert len(rows(page)) == 2048 and page[-1][0] == "s", types(page)[-3:]
+        conn.send("C", b"P" + _cstr(""))
+        conn.sync()
+        m = conn.drain_to_ready()
+        assert "E" not in types(m), errors(m)
+        m = conn.run("SELECT currval('smoke_page_seq')")
+        assert first_field(m) == b"2048", first_field(m)
+    finally:
+        conn.run("drop sequence if exists smoke_page_seq")
+
+
 # --- portal lifetime: independent of the statement, scoped to the txn --------
 # PG/CockroachDB/pgwire-rs all bind a portal to a refcounted plan, NOT to the
 # prepared-statement entry, so Close/re-Parse of the statement leaves a bound
@@ -855,6 +913,33 @@ def test_copy_from_stdin_extended(conn):
         assert b"2" in rows(m)[0] and b"one" in rows(m)[0]
     finally:
         conn.run_ok("drop table if exists smoke_copy_ext")
+
+
+def test_copy_feeder_error_ends_the_copy(conn):
+    # A throw in the COPY FROM STDIN feeder, the io coroutine that hands the
+    # client's CopyData to the COPY, fails the COPY and closes the connection,
+    # whose place in the client's stream is lost. The throw used to end the
+    # feeder without telling the COPY: the worker waited for data forever, and
+    # the client for the COPY's answer.
+    if "E" in types(conn.run("set sdb_faults='copy_feeder_throw'")):
+        pytest.skip("fault injection not enabled in this build")
+    c = WireConn()
+    try:
+        c.run_ok("drop table if exists t_copy_feeder")
+        c.run_ok("create table t_copy_feeder(a int)")
+        c.send("Q", _cstr("copy t_copy_feeder from stdin"))
+        assert c.read_msg()[0] == "G"
+        c.send("d", b"1\n")
+        c.send("c")
+        c.sock.settimeout(10)
+        with pytest.raises(EOFError):
+            while True:
+                c.read_msg()
+        assert first_field(conn.run("select count(*) from t_copy_feeder")) == b"0"
+    finally:
+        conn.run("set sdb_faults='-copy_feeder_throw'")
+        c.sock.close()
+        conn.run("drop table if exists t_copy_feeder")
 
 
 def test_copy_to_stdout_extended(conn):

@@ -34,9 +34,10 @@
 namespace irs {
 
 DirectoryReader::DirectoryReader(
-  const Directory& dir, Format::ptr codec /*= nullptr*/,
-  const IndexReaderOptions& opts /*= directory_reader_options()*/)
-  : _impl{DirectoryReaderImpl::Open(dir, opts, std::move(codec), nullptr)} {}
+  const Directory& dir,
+  const IndexReaderOptions& opts /*= directory_reader_options()*/,
+  MetaPayloadReader payload)
+  : _impl{DirectoryReaderImpl::Open(dir, opts, nullptr, std::move(payload))} {}
 
 DirectoryReader::DirectoryReader(
   std::shared_ptr<const DirectoryReaderImpl>&& impl) noexcept
@@ -81,12 +82,12 @@ size_t DirectoryReader::size() const { return _impl->size(); }
 
 const DirectoryMeta& DirectoryReader::Meta() const { return _impl->Meta(); }
 
-DirectoryReader DirectoryReader::Reopen() const {
+DirectoryReader DirectoryReader::Reopen(MetaPayloadReader payload) const {
   // make a copy
   auto impl = std::atomic_load_explicit(&_impl, std::memory_order_acquire);
 
   return DirectoryReader{DirectoryReaderImpl::Open(
-    impl->Dir(), impl->Options(), impl->Codec(), std::move(impl))};
+    impl->Dir(), impl->Options(), std::move(impl), std::move(payload))};
 }
 
 }  // namespace irs

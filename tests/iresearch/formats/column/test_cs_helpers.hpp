@@ -58,7 +58,7 @@ inline NormColumnIdProvider MakeNormColumnIdProvider() {
 // Default IndexWriterOptions / IndexReaderOptions wired to the process-wide
 // DuckDB DatabaseInstance held by irs::DuckDBEngine. tests_main brings
 // the engine up before RUN_ALL_TESTS and tears it down afterwards. Legacy
-// tests that just called `IndexWriter::Make(dir, codec, mode)` would skip
+// tests that just called `IndexWriter::Make(dir, mode)` would skip
 // opening a cs writer because `opts.db == nullptr`. Tests ported off legacy
 // STORE -> column(name) need a cs writer to keep the same write / read-back
 // behaviour; using these defaults plumbs the engine instance in without

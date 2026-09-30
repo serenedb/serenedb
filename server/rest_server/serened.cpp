@@ -27,7 +27,6 @@
 #include <deque>
 #include <exception>
 #include <functional>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/utils/crash_handler.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -197,7 +196,6 @@ extern "C" void json_object_seed(size_t seed);
 
 int main(int argc, char* argv[]) {
   json_object_seed(0);
-  irs::formats::Init();
   irs::InitOptimizeRules();
   if (argc >= 2 && std::strcmp(argv[1], "shell") == 0) {
     return RunSubcommand(argc, argv, duckdb_shell::ShellSubcommand::SHELL);

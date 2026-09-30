@@ -79,16 +79,6 @@ struct TokenizerConfig {
     config;
 };
 
-template<typename Context>
-void SerdeWrite(Context ctx, const TokenizerConfig& cfg) {
-  irs::utils::WriteTupleOrObject(ctx, cfg.config);
-}
-
-template<typename Context>
-void SerdeRead(Context ctx, TokenizerConfig& cfg) {
-  irs::utils::ReadTupleOrObject(ctx, cfg.config);
-}
-
 TokenizerConfig Clone(const TokenizerConfig& cfg);
 
 namespace detail {

@@ -1,0 +1,207 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY meme_res_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE SCHEMA kek;
+
+statement ok
+CREATE TABLE kek.pepe (id INTEGER, body TEXT);
+
+statement ok
+INSERT INTO kek.pepe VALUES (1, 'kek pepe body'), (2, 'kek doge body');
+
+statement ok
+CREATE TABLE pepe (id INTEGER, body TEXT);
+
+statement ok
+INSERT INTO pepe VALUES (1, 'public pepe body'), (2, 'public doge body');
+
+statement ok
+CREATE VIEW kek.pepe_v AS SELECT * FROM pepe;
+
+statement ok
+CREATE INDEX pepe_idx ON kek.pepe_v USING inverted (id, body meme_res_en);
+
+query
+SELECT id, body FROM kek.pepe_idx WHERE body @@ 'pepe';
+----
+id	body
+1	kek pepe body
+
+statement ok
+SET search_path = public, kek;
+
+query
+SELECT id, body FROM kek.pepe_idx WHERE body @@ 'doge';
+----
+id	body
+2	kek doge body
+
+statement ok
+RESET search_path;
+
+statement ok
+DETACH DATABASE IF EXISTS meme_att;
+
+statement ok
+ATTACH '${__TEST_DIR__}/meme_att.duckdb' AS meme_att;
+
+statement ok
+CREATE TABLE meme_att.main.doge (id INTEGER, body TEXT);
+
+statement ok
+INSERT INTO meme_att.main.doge VALUES (1, 'much wow'), (2, 'such amaze');
+
+statement ok
+CREATE VIEW doge_v AS SELECT * FROM meme_att.doge;
+
+statement ok
+CREATE INDEX doge_idx ON doge_v USING inverted (id, body meme_res_en);
+
+query
+SELECT id, body FROM doge_idx WHERE body @@ 'wow';
+----
+id	body
+1	much wow
+
+query
+EXPLAIN SELECT id, body FROM doge_idx WHERE body @@ 'wow';
+----
+QUERY PLAN
+<slt:ignore>Lookup: duckdb<slt:ignore>
+
+statement ok
+COPY (SELECT * FROM (VALUES (1, 'stonks go up'), (2, 'hodl the line')) t(id, body))
+TO '${__TEST_DIR__}/stonks.csv' (DELIMITER '|', HEADER);
+
+statement ok
+CREATE VIEW stonks_v AS SELECT * FROM read_csv('${__TEST_DIR__}/stonks.csv', delim := '|');
+
+statement ok
+CREATE INDEX stonks_idx ON stonks_v USING inverted (id, body meme_res_en);
+
+query
+SELECT id, body FROM stonks_idx WHERE body @@ 'stonks';
+----
+id	body
+1	stonks go up
+
+query
+EXPLAIN SELECT id, body FROM stonks_idx WHERE body @@ 'stonks';
+----
+QUERY PLAN
+<slt:ignore>Lookup: csv<slt:ignore>
+
+statement ok
+CREATE VIEW hodl_v AS SELECT * FROM read_csv('${__TEST_DIR__}/' || 'stonks.csv', delim = '|');
+
+statement ok
+CREATE INDEX hodl_idx ON hodl_v USING inverted (id, body meme_res_en);
+
+query
+SELECT id, body FROM hodl_idx WHERE body @@ 'hodl';
+----
+id	body
+2	hodl the line
+
+query
+EXPLAIN SELECT id, body FROM hodl_idx WHERE body @@ 'hodl';
+----
+QUERY PLAN
+<slt:ignore>Lookup: csv<slt:ignore>
+
+statement ok
+COPY (SELECT * FROM (VALUES (1, 'nyan cat flies'), (2, 'grumpy cat sits')) t(id, body))
+TO '${__TEST_DIR__}/nyan.json.gz' (FORMAT json, COMPRESSION gzip);
+
+statement ok
+CREATE VIEW nyan_v AS SELECT * FROM read_json('${__TEST_DIR__}/nyan.json.gz');
+
+statement ok
+CREATE INDEX nyan_idx ON nyan_v USING inverted (id, body meme_res_en);
+
+query
+EXPLAIN SELECT id FROM nyan_idx WHERE body @@ 'nyan';
+----
+QUERY PLAN
+<slt:ignore>Lookup: view<slt:ignore>
+
+statement error materialising real columns from this view-backed inverted index is not yet supported
+SELECT id, body FROM nyan_idx WHERE body @@ 'nyan';
+
+statement ok
+COPY (SELECT * FROM (VALUES (1, 'nyan cat flies'), (2, 'grumpy cat sits')) t(id, body))
+TO '${__TEST_DIR__}/grumpy.json' (FORMAT json);
+
+statement ok
+CREATE VIEW grumpy_v AS SELECT * FROM read_json('${__TEST_DIR__}/grumpy.json', compression = 'uncompressed');
+
+statement ok
+CREATE INDEX grumpy_idx ON grumpy_v USING inverted (id, body meme_res_en);
+
+query
+SELECT id, body FROM grumpy_idx WHERE body @@ 'grumpy';
+----
+id	body
+2	grumpy cat sits
+
+query
+EXPLAIN SELECT id, body FROM grumpy_idx WHERE body @@ 'grumpy';
+----
+QUERY PLAN
+<slt:ignore>Lookup: json<slt:ignore>
+
+statement ok
+DROP INDEX grumpy_idx;
+
+statement ok
+DROP VIEW grumpy_v;
+
+statement ok
+DROP INDEX nyan_idx;
+
+statement ok
+DROP VIEW nyan_v;
+
+statement ok
+DROP INDEX hodl_idx;
+
+statement ok
+DROP VIEW hodl_v;
+
+statement ok
+DROP INDEX stonks_idx;
+
+statement ok
+DROP VIEW stonks_v;
+
+statement ok
+DROP INDEX doge_idx;
+
+statement ok
+DROP VIEW doge_v;
+
+statement ok
+DETACH DATABASE meme_att;
+
+statement ok
+DROP INDEX kek.pepe_idx;
+
+statement ok
+DROP VIEW kek.pepe_v;
+
+statement ok
+DROP TABLE pepe;
+
+statement ok
+DROP TABLE kek.pepe;
+
+statement ok
+DROP SCHEMA kek;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY meme_res_en;

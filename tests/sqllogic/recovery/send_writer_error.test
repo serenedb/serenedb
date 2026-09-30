@@ -1,0 +1,19 @@
+# A throw in the send writer, the io coroutine that writes every response to
+# the socket, closes that connection. The throw used to end the writer without
+# closing the socket or stopping the session: the response was never sent, the
+# session and the recv pump waited for the client, and the client waited for
+# the response forever. The failure point removes itself when it fires, so
+# only the connection that armed it loses its response.
+#
+# Failure points are process-global, so this lives in the recovery tree, where
+# each test has a server of its own.
+
+statement error
+SET sdb_faults = 'send_writer_throw';
+
+connection healthy
+query
+SELECT 1 AS ok;
+----
+ok
+1

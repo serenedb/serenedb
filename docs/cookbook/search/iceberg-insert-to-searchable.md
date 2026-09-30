@@ -49,7 +49,7 @@ Skip this if the table already exists — the point of the pattern is that any e
 
 ## Index it
 
-Expose the table through a view (casting the embedding list to a fixed-size vector), then index the view: filter columns as plain terms, the text column through an analyzer for BM25, the vector column with IVF for similarity search. See [Indexes over views](../../sql/indexes/inverted/views.md) for everything the index can do:
+Expose the table through a view (casting the embedding list to a fixed-size vector) that names it by its full path, `chunks_catalog.docs.chunks`, so searches never have to look it up in the catalog ([why](../../sql/indexes/inverted/views.md#referencing-the-source)). Then index the view: filter columns as plain terms, the text column through an analyzer for BM25, the vector column with IVF for similarity search. See [Indexes over views](../../sql/indexes/inverted/views.md) for everything the index can do:
 
 <SqlLogicTest id="cookbook/search/insert_to_searchable_iceberg/example_index" />
 

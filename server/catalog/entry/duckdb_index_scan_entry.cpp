@@ -207,8 +207,8 @@ duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
   data->topk_scorer = data->ScannedIndex().GetTopKScorer();
   std::span<const std::string> key_cols =
     data->ScannedIndex().GetOptions().key_columns;
-  data->fast_path =
-    connector::ResolveViewFastPath(context, *_sdb_view, key_cols);
+  data->fast_path = connector::ResolveViewFastPath(context, this->catalog,
+                                                   *_sdb_view, key_cols);
   if (data->fast_path) {
     data->lookup_label = FormatLookupLabel(*data->fast_path);
     data->lookup_supports_filters = data->fast_path->supports_filters;

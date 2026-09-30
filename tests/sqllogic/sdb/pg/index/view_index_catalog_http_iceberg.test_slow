@@ -1,0 +1,381 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+SET logging_storage = 'memory';
+
+statement ok
+SET logging_level = 'debug';
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vch_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.vch_t (id INTEGER, body TEXT);
+
+statement count 3
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vch_t VALUES
+  (1, 'pudge goes mid'),
+  (2, 'anchin reads manga'),
+  (3, 'vedernikoff pins snapshots');
+
+statement ok
+CREATE VIEW vch_v AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.vch_t;
+
+statement ok
+CREATE INDEX vch_stored_idx ON vch_v USING inverted(id, body vch_en) INCLUDE (id, body) WITH (compaction_interval=0);
+
+statement ok
+CREATE INDEX vch_lookup_idx ON vch_v USING inverted(id, body vch_en) WITH (compaction_interval=0);
+
+statement ok
+CREATE TABLE vch_http_mark AS
+SELECT count(*) AS n FROM duckdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
+
+query
+SELECT id, body FROM vch_stored_idx WHERE body @@ ts_phrase('pudge');
+----
+id	body
+1	pudge goes mid
+
+query
+SELECT count(*) FROM vch_stored_idx WHERE body @@ 'manga';
+----
+count
+1
+
+query
+SELECT id FROM vch_stored_idx ORDER BY id;
+----
+id
+1
+2
+3
+
+query
+SELECT count(*) - (SELECT n FROM vch_http_mark) AS http_requests
+FROM duckdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
+----
+http_requests
+0
+
+query
+SELECT id, body FROM vch_lookup_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+id	body
+3	vedernikoff pins snapshots
+
+query
+EXPLAIN SELECT id, body FROM vch_lookup_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+QUERY PLAN
+<slt:ignore>Lookup: iceberg<slt:ignore>
+
+statement ok
+CREATE TABLE vch_cache_mark AS
+SELECT count(*) AS n FROM duckdb_logs_parsed('HTTPFSInfo')
+WHERE connection_id = current_connection_id() AND message LIKE '%connection_cache_hit%';
+
+query
+SELECT count(*) FROM vch_v;
+----
+count
+3
+
+query
+SELECT count(*) FROM vch_v;
+----
+count
+3
+
+query
+SELECT count(*) > (SELECT n FROM vch_cache_mark) AS reused
+FROM duckdb_logs_parsed('HTTPFSInfo')
+WHERE connection_id = current_connection_id() AND message LIKE '%connection_cache_hit%';
+----
+reused
+t
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.meme_t (
+  pepe_id VARCHAR, doge_tenant VARCHAR, wojak_source VARCHAR, chad_kind VARCHAR,
+  nyan_page INTEGER, trollface_path VARCHAR, stonks_text TEXT, rickroll_emb FLOAT[]);
+
+statement count 6
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.meme_t VALUES
+  ('p1', 'much', 'wow.pdf', 'pdf', 1, 'a > b', 'stonks to the moon', [1, 0, 0, 0]),
+  ('p2', 'much', 'wow.pdf', 'pdf', 2, 'a > c', 'hodl the line', [0, 1, 0, 0]),
+  ('p3', 'much', 'such.md', 'md', 1, 'x > y', 'moon landing was fake', [0.9, 0.1, 0, 0]),
+  ('p4', 'very', 'wow.pdf', 'pdf', 1, 'a > b', 'to the moon again', [1, 0, 0, 0]),
+  ('p5', 'very', 'amaze.txt', 'txt', 3, 'z', 'nothing to see here', [0, 0, 1, 0]),
+  ('p6', 'much', 'amaze.txt', 'txt', 4, 'z > q', 'never gonna give you up', [0, 0, 0, 1]);
+
+statement ok
+CREATE VIEW meme_v AS
+SELECT pepe_id, doge_tenant, wojak_source, chad_kind, nyan_page, trollface_path, stonks_text,
+       CAST(rickroll_emb AS FLOAT[4]) AS rickroll_emb
+FROM srv_${__DATABASE__}.${__DATABASE__}.meme_t;
+
+statement ok
+CREATE INDEX meme_idx ON meme_v USING inverted (
+  pepe_id, doge_tenant, wojak_source, chad_kind, nyan_page, trollface_path,
+  stonks_text vch_en,
+  rickroll_emb ivf (metric = 'cosine'))
+INCLUDE (pepe_id, doge_tenant, wojak_source, chad_kind, nyan_page, trollface_path, stonks_text)
+WITH (compaction_interval=0);
+
+statement ok
+CREATE TABLE meme_http_mark AS
+SELECT count(*) AS n FROM duckdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
+
+query
+WITH fused AS (
+    SELECT pepe_id, wojak_source, nyan_page, RANK() OVER (ORDER BY s DESC) AS rank FROM (
+        SELECT pepe_id, wojak_source, nyan_page, BM25(meme_idx.tableoid) AS s
+        FROM meme_idx
+        WHERE doge_tenant = 'much' AND stonks_text @@ 'moon'
+        ORDER BY s DESC LIMIT 50
+    ) lex
+    UNION ALL
+    SELECT pepe_id, wojak_source, nyan_page, RANK() OVER (ORDER BY dist) AS rank FROM (
+        SELECT pepe_id, wojak_source, nyan_page, rickroll_emb <=> [1, 0, 0, 0]::FLOAT[4] AS dist
+        FROM meme_idx
+        WHERE doge_tenant = 'much'
+        ORDER BY dist LIMIT 50
+    ) vec
+)
+SELECT pepe_id, ANY_VALUE(wojak_source) AS wojak_source, ANY_VALUE(nyan_page) AS nyan_page
+FROM fused
+GROUP BY pepe_id
+ORDER BY SUM(1.0 / (60 + rank)) DESC, pepe_id
+LIMIT 3;
+----
+pepe_id	wojak_source	nyan_page
+p1	wow.pdf	1
+p3	such.md	1
+p2	wow.pdf	2
+
+query
+SELECT pepe_id, trollface_path FROM meme_idx
+WHERE doge_tenant = 'much'
+ORDER BY rickroll_emb <=> [1, 0, 0, 0]::FLOAT[4]
+LIMIT 2;
+----
+pepe_id	trollface_path
+p1	a > b
+p3	x > y
+
+query
+SELECT count(*) FROM meme_idx WHERE doge_tenant = 'much';
+----
+count
+4
+
+query
+SELECT 1 AS found FROM meme_idx WHERE doge_tenant = 'much' AND wojak_source = 'such.md' LIMIT 1;
+----
+found
+1
+
+query
+SELECT DISTINCT wojak_source FROM meme_idx WHERE doge_tenant = 'much' ORDER BY wojak_source;
+----
+wojak_source
+amaze.txt
+such.md
+wow.pdf
+
+query
+SELECT DISTINCT wojak_source FROM meme_idx
+WHERE doge_tenant = 'much' AND chad_kind = 'pdf'
+ORDER BY wojak_source;
+----
+wojak_source
+wow.pdf
+
+statement ok
+PREPARE meme_dense AS
+SELECT pepe_id FROM meme_idx WHERE doge_tenant = $1
+ORDER BY rickroll_emb <=> [1, 0, 0, 0]::FLOAT[4] LIMIT 1;
+
+query
+EXECUTE meme_dense('much');
+----
+pepe_id
+p1
+
+query
+EXECUTE meme_dense('very');
+----
+pepe_id
+p4
+
+query
+EXECUTE meme_dense('much');
+----
+pepe_id
+p1
+
+statement ok
+DEALLOCATE meme_dense;
+
+query
+SELECT count(*) - (SELECT n FROM meme_http_mark) AS http_requests
+FROM duckdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
+----
+http_requests
+0
+
+statement ok
+CREATE TABLE meme_local (id INTEGER, body TEXT);
+
+statement ok
+INSERT INTO meme_local VALUES (1, 'doge to the moon'), (2, 'pepe stays home');
+
+statement ok
+CREATE VIEW meme_local_v AS SELECT id, body FROM meme_local;
+
+statement ok
+CREATE INDEX meme_local_idx ON meme_local_v USING inverted (id, body vch_en) INCLUDE (id, body);
+
+statement ok
+SET search_path = srv_${__DATABASE__}.${__DATABASE__}, public;
+
+statement ok
+CREATE TABLE ${__DATABASE__}.public.meme_local_mark AS
+SELECT count(*) AS n FROM duckdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
+
+query
+SELECT id, body FROM ${__DATABASE__}.public.meme_local_idx WHERE body @@ 'doge';
+----
+id	body
+1	doge to the moon
+
+statement ok
+RESET search_path;
+
+query
+SELECT count(*) - (SELECT n FROM meme_local_mark) AS http_requests
+FROM duckdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
+----
+http_requests
+0
+
+statement ok
+CREATE TABLE meme_hit_mark AS
+SELECT count(*) AS n FROM duckdb_logs_parsed('HTTPFSInfo') WHERE message LIKE '%connection_cache_hit%';
+
+connection meme_s1
+query
+SELECT count(*) FROM meme_v;
+----
+count
+6
+
+connection meme_s2
+query
+SELECT count(*) FROM meme_v;
+----
+count
+6
+
+connection meme_s3
+query
+SELECT count(*) FROM meme_v;
+----
+count
+6
+
+connection meme_s4
+query
+SELECT count(*) FROM meme_v;
+----
+count
+6
+
+connection meme_s5
+query
+SELECT count(*) FROM meme_v;
+----
+count
+6
+
+query
+SELECT count(*) - (SELECT n FROM meme_hit_mark) >= 4 AS shared
+FROM duckdb_logs_parsed('HTTPFSInfo') WHERE message LIKE '%connection_cache_hit%';
+----
+shared
+t
+
+statement ok
+DROP TABLE meme_hit_mark;
+
+statement ok
+DROP TABLE meme_local_mark;
+
+statement ok
+DROP INDEX meme_local_idx;
+
+statement ok
+DROP VIEW meme_local_v;
+
+statement ok
+DROP TABLE meme_local;
+
+statement ok
+DROP TABLE meme_http_mark;
+
+statement ok
+DROP INDEX meme_idx;
+
+statement ok
+DROP VIEW meme_v;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.meme_t;
+
+statement ok
+SET logging_level = 'info';
+
+statement ok
+DROP TABLE vch_cache_mark;
+
+statement ok
+DROP TABLE vch_http_mark;
+
+statement ok
+DROP INDEX vch_lookup_idx;
+
+statement ok
+DROP INDEX vch_stored_idx;
+
+statement ok
+DROP VIEW vch_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY vch_en;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.vch_t;
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+DROP SERVER srv_${__DATABASE__};

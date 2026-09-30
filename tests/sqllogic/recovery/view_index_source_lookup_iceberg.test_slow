@@ -1,0 +1,126 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER vsl FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vsl_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE SCHEMA vsl.${__DATABASE__};
+
+statement ok
+CREATE TABLE vsl.${__DATABASE__}.meme_t (
+  pepe_id VARCHAR, doge_tenant VARCHAR, wojak_source VARCHAR, stonks_text TEXT, rickroll_emb FLOAT[]);
+
+statement count 4
+INSERT INTO vsl.${__DATABASE__}.meme_t VALUES
+  ('p1', 'much', 'wow.pdf', 'stonks to the moon', [1, 0, 0, 0]),
+  ('p2', 'much', 'wow.pdf', 'hodl the line', [0, 1, 0, 0]),
+  ('p3', 'much', 'such.md', 'moon landing was fake', [0.9, 0.1, 0, 0]),
+  ('p4', 'very', 'amaze.txt', 'to the moon again', [1, 0, 0, 0]);
+
+statement ok
+CREATE VIEW vsl_v AS
+SELECT pepe_id, doge_tenant, wojak_source, stonks_text, CAST(rickroll_emb AS FLOAT[4]) AS rickroll_emb
+FROM vsl.${__DATABASE__}.meme_t;
+
+statement ok
+CREATE INDEX vsl_stored_idx ON vsl_v USING inverted (
+  pepe_id, doge_tenant, wojak_source, stonks_text vsl_en, rickroll_emb ivf (metric = 'cosine'))
+INCLUDE (pepe_id, doge_tenant, wojak_source, stonks_text)
+WITH (compaction_interval=0);
+
+statement ok
+CREATE INDEX vsl_lookup_idx ON vsl_v USING inverted (pepe_id, stonks_text vsl_en) WITH (compaction_interval=0);
+
+statement ok
+SET sdb_faults = 'view_index_source_lookup';
+
+query
+SELECT pepe_id, wojak_source FROM vsl_stored_idx
+WHERE doge_tenant = 'much' AND stonks_text @@ 'moon'
+ORDER BY pepe_id;
+----
+pepe_id	wojak_source
+p1	wow.pdf
+p3	such.md
+
+query
+SELECT pepe_id FROM vsl_stored_idx
+WHERE doge_tenant = 'much'
+ORDER BY rickroll_emb <=> [1, 0, 0, 0]::FLOAT[4]
+LIMIT 2;
+----
+pepe_id
+p1
+p3
+
+query
+SELECT count(*) FROM vsl_stored_idx WHERE doge_tenant = 'much';
+----
+count
+3
+
+query
+SELECT DISTINCT wojak_source FROM vsl_stored_idx WHERE doge_tenant = 'much' ORDER BY wojak_source;
+----
+wojak_source
+such.md
+wow.pdf
+
+statement ok
+PREPARE vsl_q AS SELECT pepe_id FROM vsl_stored_idx WHERE doge_tenant = $1 AND stonks_text @@ 'moon' ORDER BY pepe_id;
+
+query
+EXECUTE vsl_q('very');
+----
+pepe_id
+p4
+
+statement ok
+DEALLOCATE vsl_q;
+
+statement error intentional debug error
+SELECT pepe_id, doge_tenant FROM vsl_lookup_idx WHERE stonks_text @@ 'hodl';
+
+statement ok
+SET sdb_faults = '-view_index_source_lookup';
+
+query
+SELECT pepe_id, doge_tenant FROM vsl_lookup_idx WHERE stonks_text @@ 'hodl';
+----
+pepe_id	doge_tenant
+p2	much
+
+statement ok
+DROP INDEX vsl_lookup_idx;
+
+statement ok
+DROP INDEX vsl_stored_idx;
+
+statement ok
+DROP VIEW vsl_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY vsl_en;
+
+statement ok
+DROP TABLE vsl.${__DATABASE__}.meme_t;
+
+statement ok
+DROP SCHEMA vsl.${__DATABASE__};
+
+statement ok
+DROP SERVER vsl;

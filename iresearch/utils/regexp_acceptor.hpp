@@ -92,6 +92,8 @@ class RegexpAcceptor {
 
   bytes_view LowerBound() const noexcept { return _lower; }
 
+  bytes_view RequiredSuffix() const noexcept { return _suffix; }
+
   static bool Alive(State state) noexcept { return !state->dead; }
 
   static bool Unknown(State state) noexcept { return state->unknown; }
@@ -185,6 +187,7 @@ class RegexpAcceptor {
   uint32_t _classes{0};
   State _start{nullptr};
   bstring _lower;
+  bstring _suffix;
   size_t _max_dfa_mem{kDefaultMaxDfaMem};
 
   mutable std::mutex _mutex;

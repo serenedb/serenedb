@@ -1924,6 +1924,9 @@ class AcceptorTermIterator : public SeekTermIterator,
     if constexpr (A::kHasPayload) {
       _pay.value = {&_payload, sizeof(typename A::PayloadType)};
     }
+    if constexpr (kSuffixed) {
+      _required = a.RequiredSuffix();
+    }
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -2009,6 +2012,19 @@ class AcceptorTermIterator : public SeekTermIterator,
     return true;
   }
 
+  bool EndsWithRequired(const byte_type* suffix, size_t n) const noexcept {
+    const size_t size = _required.size();
+    if (size <= n) {
+      return std::memcmp(suffix + n - size, _required.data(), size) == 0;
+    }
+    const size_t prefix = this->_cur_block->Prefix();
+    const size_t head = size - n;
+    return head <= prefix &&
+           std::memcmp(this->_term_buf.data() + prefix - head, _required.data(),
+                       head) == 0 &&
+           std::memcmp(suffix, _required.data() + head, n) == 0;
+  }
+
   bool Accepts() { return _a->Accept(_live, _payload); }
 
   bool MayAccept() {
@@ -2062,7 +2078,11 @@ class AcceptorTermIterator : public SeekTermIterator,
 
   void RebuildLevels();
 
+  static constexpr bool kSuffixed =
+    requires(const A& a) { a.RequiredSuffix(); };
+
   const A* _a;
+  bytes_view _required;
   irs::containers::SmallVector<Level, 8> _levels;
   State _live{};
   typename A::PayloadType _payload{};
@@ -2254,6 +2274,15 @@ bool AcceptorTermIterator<FST, A>::NextImpl() {
           break;
         }
         if (lead < lo) {
+          if (this->_cur_block->Done()) {
+            break;
+          }
+          continue;
+        }
+      }
+      if constexpr (kSuffixed) {
+        if (!_required.empty() && EntryType::Term == this->_cur_block->Type() &&
+            !EndsWithRequired(suffix_ptr, suffix_len)) {
           if (this->_cur_block->Done()) {
             break;
           }

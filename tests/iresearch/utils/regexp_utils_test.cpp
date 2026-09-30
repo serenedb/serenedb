@@ -2277,3 +2277,27 @@ TEST_F(RegexpUtilsTest, generated_alternation_matches_re2) {
   EXPECT_NE(0, hits);
   EXPECT_NE(terms.size(), hits);
 }
+
+TEST_F(RegexpUtilsTest, required_suffix) {
+  const auto suffix = [](const irs::RegexpAcceptor& a) {
+    return std::string{irs::ViewCast<char>(a.RequiredSuffix())};
+  };
+  EXPECT_EQ("\xD0\xBE\xD1\x81\xD1\x82\xD1\x8C",
+            suffix(FromPerl(".*\xD0\xBE\xD1\x81\xD1\x82\xD1\x8C")));
+  EXPECT_EQ("tion", suffix(FromPerl(".*tion$")));
+  EXPECT_EQ("ing", suffix(FromPerl("x.+ing")));
+  EXPECT_EQ("ab", suffix(FromPerl(".*[a]b")));
+  EXPECT_EQ("", suffix(FromPerl(".{0,3}tion")));
+  EXPECT_EQ("", suffix(FromPerl("(?i).*tion")));
+  EXPECT_EQ("", suffix(FromPerl(".*tion|.*ment")));
+  EXPECT_EQ("", suffix(FromPerl("bur.*")));
+  const auto wildcard = [&](std::string_view pattern) {
+    return suffix(irs::RegexpAcceptor{irs::RegexpAcceptor::WildcardTag{},
+                                      ToBytesView(pattern)});
+  };
+  EXPECT_EQ("tion", wildcard("%tion"));
+  EXPECT_EQ("n", wildcard("b%r%n"));
+  EXPECT_EQ("%x", wildcard("%\\%x"));
+  EXPECT_EQ("", wildcard("b_rden"));
+  EXPECT_EQ("", wildcard("bur%"));
+}

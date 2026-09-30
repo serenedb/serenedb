@@ -165,6 +165,83 @@ void AppendPieces(re2::Regexp* re, std::vector<re2::Regexp*>& pieces) {
   }
 }
 
+bool ExactRunes(re2::Regexp* re, std::vector<re2::Rune>& runes) {
+  switch (re->op()) {
+    case re2::kRegexpLiteral:
+      if ((re->parse_flags() & re2::Regexp::FoldCase) != 0) {
+        return false;
+      }
+      runes.push_back(re->rune());
+      return true;
+    case re2::kRegexpLiteralString:
+      if ((re->parse_flags() & re2::Regexp::FoldCase) != 0) {
+        return false;
+      }
+      runes.insert(runes.end(), re->runes(), re->runes() + re->nrunes());
+      return true;
+    case re2::kRegexpCharClass:
+      if (re->cc()->size() != 1 ||
+          re->cc()->begin()->lo != re->cc()->begin()->hi) {
+        return false;
+      }
+      runes.push_back(re->cc()->begin()->lo);
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool EmptyWidth(re2::RegexpOp op) noexcept {
+  switch (op) {
+    case re2::kRegexpBeginLine:
+    case re2::kRegexpEndLine:
+    case re2::kRegexpBeginText:
+    case re2::kRegexpEndText:
+    case re2::kRegexpWordBoundary:
+    case re2::kRegexpNoWordBoundary:
+      return true;
+    default:
+      return false;
+  }
+}
+
+bstring SuffixOf(re2::Regexp* re) {
+  std::vector<re2::Regexp*> pieces;
+  AppendPieces(re, pieces);
+  auto first = pieces.end();
+  std::vector<re2::Rune> runes;
+  while (first != pieces.begin()) {
+    auto* piece = *(first - 1);
+    if (!EmptyWidth(piece->op()) && !ExactRunes(piece, runes)) {
+      break;
+    }
+    --first;
+  }
+  bstring suffix;
+  if (std::none_of(pieces.begin(), first, [](re2::Regexp* piece) {
+        return piece->op() == re2::kRegexpStar ||
+               piece->op() == re2::kRegexpPlus;
+      })) {
+    return suffix;
+  }
+  for (auto it = first; it != pieces.end(); ++it) {
+    runes.clear();
+    ExactRunes(*it, runes);
+    const bool latin1 = ((*it)->parse_flags() & re2::Regexp::Latin1) != 0;
+    for (const auto rune : runes) {
+      if (latin1) {
+        suffix.push_back(static_cast<byte_type>(rune));
+        continue;
+      }
+      char utf8[re2::UTFmax];
+      const int n = re2::runetochar(utf8, &rune);
+      suffix.append(reinterpret_cast<const byte_type*>(utf8),
+                    static_cast<size_t>(n));
+    }
+  }
+  return suffix;
+}
+
 using Alt = std::vector<re2::Regexp*>;
 using Pieces = std::span<re2::Regexp* const>;
 
@@ -626,6 +703,7 @@ void RegexpAcceptor::Compile(bytes_view pattern, RegexpSyntax syntax,
   re2::Regexp* re =
     wildcard ? WildcardTree(pattern) : RegexpTree(pattern, syntax);
   if (re) {
+    _suffix = SuffixOf(re);
     _prog.reset(re->CompileToProg(max_mem));
     re->Decref();
     if (!_prog) {

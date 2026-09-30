@@ -43,9 +43,47 @@
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/wildcard_utils.hpp"
 
 namespace irs {
 namespace {
+
+std::string LikeRegexp(std::string_view pattern) {
+  static constexpr std::string_view kMeta = "\\[](){}.*+?|^$";
+  std::string regex;
+  regex.reserve(pattern.size() * 2 + 4);
+  regex += "\\A";
+  bool escaped = false;
+  for (const auto c : pattern) {
+    if (escaped) {
+      escaped = false;
+    } else if (c == WildcardMatch::kEscape) {
+      escaped = true;
+      continue;
+    } else if (c == WildcardMatch::kAnyStr) {
+      regex += ".*";
+      continue;
+    } else if (c == WildcardMatch::kAnyChr) {
+      regex += '.';
+      continue;
+    }
+    if (kMeta.find(c) != std::string_view::npos) {
+      regex += '\\';
+    }
+    regex += c;
+  }
+  regex += "\\z";
+  return regex;
+}
+
+re2::RE2::Options LikeOptions() {
+  re2::RE2::Options options;
+  options.set_dot_nl(true);
+  options.set_log_errors(false);
+  options.set_max_mem(int64_t{256} << 20);
+  return options;
+}
 
 enum class WildcardNGramKind {
   Term,
@@ -196,6 +234,15 @@ class GramQueryPreparer {
 
 }  // namespace
 
+WildcardNGramMatcher::WildcardNGramMatcher(std::string_view like)
+  : _impl{std::in_place_type<Like>, LikeRegexp(like), LikeOptions()} {
+  const auto& re = std::get<Like>(_impl).re;
+  if (!re.ok()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                    ERR_MSG("ts_like pattern cannot be verified: ", re.error()));
+  }
+}
+
 bool WildcardNGramMatcher::MatchRegexp(bytes_view term) const {
   return std::get<Regexp>(_impl).acceptor->Matches(term);
 }
@@ -325,10 +372,7 @@ ByWildcardNGramOptions::ByWildcardNGramOptions(
     has_pos = has_positions;
   }
   if (needs_matcher || !has_pos) {
-    LikeMatcher like{ViewCast<byte_type>(pattern)};
-    if (like.ok()) {
-      matcher = std::make_shared<const WildcardNGramMatcher>(std::move(like));
-    }
+    matcher = std::make_shared<const WildcardNGramMatcher>(pattern);
   }
 }
 

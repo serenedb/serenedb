@@ -37,11 +37,11 @@
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
-#include "iresearch/utils/like_matcher.hpp"
 #include "iresearch/utils/regexp_acceptor.hpp"
 #include "iresearch/utils/regexp_ngram.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/string.hpp"
+#include "re2/re2.h"
 
 namespace irs {
 namespace analysis {
@@ -52,14 +52,14 @@ class WildcardTokenizer;
 
 class WildcardNGramMatcher {
  public:
-  explicit WildcardNGramMatcher(LikeMatcher like) : _impl{std::move(like)} {}
+  explicit WildcardNGramMatcher(std::string_view like);
   WildcardNGramMatcher(bytes_view pattern, RegexpSyntax syntax,
                        std::shared_ptr<const RegexpAcceptor> acceptor)
     : _impl{Regexp{bstring{pattern}, syntax, std::move(acceptor)}} {}
 
   bool Match(bytes_view term) const {
-    if (const auto* like = std::get_if<LikeMatcher>(&_impl)) {
-      return like->Match(term);
+    if (const auto* like = std::get_if<Like>(&_impl)) {
+      return re2::RE2::PartialMatch(ViewCast<char>(term), like->re);
     }
     return MatchRegexp(term);
   }
@@ -67,6 +67,17 @@ class WildcardNGramMatcher {
   bool operator==(const WildcardNGramMatcher&) const noexcept = default;
 
  private:
+  struct Like {
+    Like(std::string_view regexp, const re2::RE2::Options& options)
+      : re{regexp, options} {}
+
+    re2::RE2 re;
+
+    bool operator==(const Like& rhs) const noexcept {
+      return re.pattern() == rhs.re.pattern();
+    }
+  };
+
   struct Regexp {
     bstring pattern;
     RegexpSyntax syntax;
@@ -79,7 +90,7 @@ class WildcardNGramMatcher {
 
   bool MatchRegexp(bytes_view term) const;
 
-  std::variant<LikeMatcher, Regexp> _impl;
+  std::variant<Like, Regexp> _impl;
 };
 
 class WildcardNGramVerifier {

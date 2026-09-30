@@ -158,6 +158,37 @@ TEST(WildcardNGramFilterOptionsTest, one_null_matcher) {
   EXPECT_FALSE(with_matcher == no_matcher);
 }
 
+TEST(WildcardNGramFilterOptionsTest, pattern_past_default_budget_is_verified) {
+  irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
+  constexpr size_t kUnits = 600'000;
+  std::string pattern = "abc";
+  pattern.append(kUnits, '_');
+  pattern += "xyz";
+
+  irs::ByWildcardNGramOptions opts{pattern, analyzer, true};
+  ASSERT_NE(nullptr, opts.matcher);
+
+  std::string regexp = "\\Aabc";
+  regexp.append(kUnits, '.');
+  regexp += "xyz\\z";
+  re2::RE2::Options small;
+  small.set_dot_nl(true);
+  small.set_log_errors(false);
+  small.set_max_mem(int64_t{64} << 20);
+  EXPECT_FALSE(re2::RE2(regexp, small).ok());
+
+  std::string text = "abc";
+  for (size_t i = 0; i != kUnits; ++i) {
+    text += "\xD0\xB6";
+  }
+  text += "xyz";
+  EXPECT_TRUE(opts.matcher->Match(irs::ViewCast<irs::byte_type>(
+    std::string_view{text})));
+  text.erase(3, 2);
+  EXPECT_FALSE(opts.matcher->Match(irs::ViewCast<irs::byte_type>(
+    std::string_view{text})));
+}
+
 // ---------------------------------------------------------------------------
 // ByWildcardNGram unit tests
 // ---------------------------------------------------------------------------
@@ -362,9 +393,7 @@ TEST(RegexpNGramFilterOptionsTest, equality_is_by_pattern) {
 }
 
 TEST(RegexpNGramFilterOptionsTest, matcher_equality) {
-  const irs::WildcardNGramMatcher like{
-    irs::LikeMatcher{irs::ViewCast<irs::byte_type>(std::string_view{"a%"})},
-  };
+  const irs::WildcardNGramMatcher like{std::string_view{"a%"}};
   const auto regexp = [](std::string_view pattern, irs::RegexpSyntax syntax) {
     const auto bytes = irs::ViewCast<irs::byte_type>(pattern);
     return irs::WildcardNGramMatcher{

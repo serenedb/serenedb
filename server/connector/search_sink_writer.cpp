@@ -396,32 +396,40 @@ void SearchSinkInsertBaseImpl::WriteListBatch(const Field& field,
       : nullptr;
   _null_docs.clear();
 
-  const auto for_each_element = [&](auto&& on_element) {
+  const auto for_each_row = [&](auto&& on_row) {
     const irs::doc_id_t first_doc = _document->DocId();
     irs::analysis::ForEachValidRow(
       parent_fmt, static_cast<uint32_t>(count),
       [&](uint32_t i, uint32_t parent_idx) {
-        const irs::doc_id_t doc = first_doc + i;
         const auto offset =
           list_data ? list_data[parent_idx].offset : parent_idx * array_size;
         const auto length =
           list_data ? list_data[parent_idx].length : array_size;
-        irs::analysis::ForEachValidRow(
-          child_fmt, offset, static_cast<uint32_t>(length),
-          [&](uint32_t, uint32_t child_idx) {
-            on_element(child_idx, doc);
-            return true;
-          },
-          [&](uint32_t) {
-            _null_docs.push_back(doc);
-            return true;
-          });
+        on_row(first_doc + i, offset, static_cast<uint32_t>(length));
         return true;
       },
       [&](uint32_t i) {
         _null_docs.push_back(first_doc + i);
         return true;
       });
+  };
+  const auto for_each_child = [&](irs::doc_id_t doc, duckdb::idx_t offset,
+                                  uint32_t length, auto&& on_element) {
+    irs::analysis::ForEachValidRow(
+      child_fmt, offset, length,
+      [&](uint32_t, uint32_t child_idx) {
+        on_element(child_idx, doc);
+        return true;
+      },
+      [&](uint32_t) {
+        _null_docs.push_back(doc);
+        return true;
+      });
+  };
+  const auto for_each_element = [&](auto&& on_element) {
+    for_each_row([&](irs::doc_id_t doc, duckdb::idx_t offset, uint32_t length) {
+      for_each_child(doc, offset, length, on_element);
+    });
   };
 
   if constexpr (ChildKind == duckdb::LogicalTypeId::VARCHAR ||
@@ -437,15 +445,29 @@ void SearchSinkInsertBaseImpl::WriteListBatch(const Field& field,
         });
       });
     } else {
-      auto traits = field.GetTokens().Traits();
+      auto& tokens = field.GetTokens();
+      auto traits = tokens.Traits();
       traits.unique = false;
+      auto* store_writer = irs::field_limits::valid(field.store_column)
+                             ? EnsureBlobColumnWriter(field.store_column)
+                             : nullptr;
+      if (store_writer) {
+        _store_appender.Bind(*this, *store_writer);
+      }
       InvertTokens(
-        field, nullptr, [&](irs::FieldInverter& fld, irs::TokenSink& w) {
+        field, store_writer ? &_store_appender : nullptr,
+        [&](irs::FieldInverter& fld, irs::TokenSink& w) {
           fld.Configure(traits);
           const auto layout = fld.Layout();
-          for_each_element([&](duckdb::idx_t child_idx, irs::doc_id_t doc) {
-            field.string_analyzer->Fill(data[child_idx], doc, w, {layout});
-          });
+          const bool null_children = child_fmt.validity.CanHaveNull();
+          for_each_row(
+            [&](irs::doc_id_t doc, duckdb::idx_t offset, uint32_t length) {
+              tokens.FillRow(child_fmt, offset, length, doc, w, {layout});
+              if (null_children) {
+                for_each_child(doc, offset, length,
+                               [](duckdb::idx_t, irs::doc_id_t) {});
+              }
+            });
         });
     }
   } else if constexpr (ChildKind == duckdb::LogicalTypeId::BOOLEAN) {

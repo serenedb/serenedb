@@ -13,6 +13,10 @@ CREATE TEXT SEARCH DICTIONARY any_text_dict AS
     split_text() | normalize_tokens('en_US.UTF-8', accent := false)
     WITH (frequency, position);
 
+statement ok
+CREATE TEXT SEARCH DICTIONARY wc_dict AS
+    generate_wildcard_ngrams(split_text_csv(' '), 3);
+
 
 # ============================================================================
 # g17 -- Tokenizer-completeness for LIST/ARRAY columns + expression-source
@@ -34,8 +38,7 @@ CREATE TEXT SEARCH DICTIONARY any_text_dict AS
 #      implicit. g17 builds that entire matrix, plus implicit-path
 #      expression-source LIST<JSON>.
 #
-# Reuses existing dicts (kw_dict, ng_dict, any_text_dict) -- no new dict
-# declarations. All cells in g17 are validator-positive; the negative cells
+# All cells in g17 are validator-positive; the negative cells
 # (LIST<JSON> + tokenizer, LIST<GEOMETRY>) are already pinned by m_jl_*,
 # g1_reject_*, m_gl_*, g7_gl, and g7_ga.
 # ============================================================================
@@ -258,6 +261,73 @@ SELECT count(*) FROM g17_vla_va_expr_imp;
 count
 2
 
+statement ok
+CREATE INDEX g17_vla_vs_col_wc    ON g17_vla USING inverted(pk, vs wc_dict);
+
+statement ok
+CREATE INDEX g17_vla_va_col_wc    ON g17_vla USING inverted(pk, va wc_dict);
+
+statement ok
+CREATE INDEX g17_vla_vs_expr_wc   ON g17_vla USING inverted(pk, (vs) wc_dict);
+
+statement ok
+CREATE INDEX g17_vla_va_expr_wc   ON g17_vla USING inverted(pk, (va) wc_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) g17_vla;
+
+query
+SELECT pk FROM g17_vla_vs_col_wc WHERE vs @@ ts_like('%lph%') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g17_vla_vs_col_wc WHERE vs @@ ts_like('%elt%') ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g17_vla_vs_col_wc WHERE vs @@ ts_like('%psilo%') ORDER BY pk;
+----
+pk
+
+query
+SELECT pk FROM g17_vla_va_col_wc WHERE va @@ ts_like('%amma') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g17_vla_va_col_wc WHERE va @@ ts_like('%psilo%') ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g17_vla_vs_expr_wc WHERE vs @@ ts_like('%lph%') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g17_vla_va_expr_wc WHERE va @@ ts_like('%amma') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g17_vla_va_expr_wc WHERE va @@ ts_like('%psilo%') ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g17_vla_va_expr_wc WHERE va @@ ts_like('%zzz%') ORDER BY pk;
+----
+pk
+
 
 # --- (b) ng_dict on LIST<BLOB>      column ---------------------------------
 # --- (c) ng_dict on ARRAY<BLOB, 3>  column ---------------------------------
@@ -358,6 +428,47 @@ SELECT count(*) FROM g17_bla_bs_expr_imp;
 count
 2
 
+statement ok
+CREATE INDEX g17_bla_bs_col_wc    ON g17_bla USING inverted(pk, bs wc_dict);
+
+statement ok
+CREATE INDEX g17_bla_ba_col_wc    ON g17_bla USING inverted(pk, ba wc_dict);
+
+statement ok
+CREATE INDEX g17_bla_bs_expr_wc   ON g17_bla USING inverted(pk, (bs) wc_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) g17_bla;
+
+query
+SELECT pk FROM g17_bla_bs_col_wc WHERE bs @@ ts_like('%orl%') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g17_bla_bs_col_wc WHERE bs @@ ts_like('%adbee%') ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g17_bla_ba_col_wc WHERE ba @@ ts_like('%fff%') ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g17_bla_bs_expr_wc WHERE bs @@ ts_like('%orl%') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g17_bla_bs_expr_wc WHERE bs @@ ts_like('%zzz%') ORDER BY pk;
+----
+pk
+
 
 # --- (z) implicit (no opclass) LIST<JSON> expression source -----------------
 # Mirrors g7_jl_imp on the column side; this is the expression-source twin.
@@ -408,3 +519,6 @@ DROP TEXT SEARCH DICTIONARY ng_dict;
 
 statement ok
 DROP TEXT SEARCH DICTIONARY any_text_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY wc_dict;

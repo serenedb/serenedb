@@ -18,40 +18,15 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <utility>
-
-#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
-#include "iresearch/search/probe/all_docs.hpp"
+#include "iresearch/search/detail/wildcard_ngram_of.hpp"
 #include "iresearch/search/probe/impl.hpp"
-#include "iresearch/search/probe/make.hpp"
-#include "iresearch/search/probe/two_phase_docs.hpp"
-#include "iresearch/search/probe/wildcard_ngram_slots_docs.hpp"
 
 namespace irs::probe {
 
 Node::ptr MakeWildcardNGramDocs(const WildcardNGramQuery& query,
                                 uint64_t interrogations) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  const auto& ngrams = query.NGrams();
-  SDB_ASSERT(ngrams.Kind() != QueryKind::Empty);
-  if (!query.HasMatcher()) {
-    return ngrams.PlanProbe({}, interrogations);
-  }
-  const auto recipe = query.MakeRecipe();
-
-  if (ngrams.Kind() == QueryKind::All) {
-    using Slots = WildcardNGramSlotsDocs<AllDocs>;
-    return memory::make_managed<Impl<TwoPhaseDocs<Slots>>>(
-      std::piecewise_construct, std::forward_as_tuple(query.Segment()), recipe);
-  }
-
-  auto node = ngrams.PlanProbe({}, interrogations);
-  if (!node) {
-    return {};
-  }
-  using Slots = WildcardNGramSlotsDocs<Erased>;
-  return memory::make_managed<Impl<TwoPhaseDocs<Slots>>>(
-    std::piecewise_construct, std::forward_as_tuple(std::move(node)), recipe);
+  return detail::MakeWildcardNGram<Impl, Node::ptr>(query, interrogations);
 }
 
 }  // namespace irs::probe

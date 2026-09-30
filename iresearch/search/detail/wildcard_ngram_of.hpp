@@ -52,15 +52,39 @@ inline const MultiTermState& AsTerms(const QueryBuilder& query) noexcept {
   return irs::utils::downCast<MultiTermQuery>(query).State();
 }
 
-template<template<typename> class Impl, typename Result, typename... Prefix>
+template<template<typename> class Impl, typename Result,
+         bool kErasedNGrams = true, typename... Prefix>
 Result MakeWildcardNGram(const WildcardNGramQuery& query,
                          uint64_t interrogations, Prefix&&... prefix) {
   constexpr bool kProbed = std::is_same_v<Result, ProbeNode::ptr>;
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  const auto recipe = query.MakeRecipe();
   const auto& ngrams = query.NGrams();
   const auto kind = ngrams.Kind();
   SDB_ASSERT(kind != QueryKind::Empty);
+
+  if constexpr (kErasedNGrams) {
+    if (!query.HasMatcher()) {
+      if constexpr (kProbed) {
+        auto node = ngrams.PlanProbe({}, interrogations);
+        if (!node) {
+          return {};
+        }
+        return memory::make_managed<Impl<probe::Erased>>(
+          std::forward<Prefix>(prefix)..., std::move(node));
+      } else {
+        auto node = ngrams.PlanLead({});
+        if (!node) {
+          return {};
+        }
+        return memory::make_managed<Impl<lead::Erased>>(
+          std::forward<Prefix>(prefix)..., std::move(node));
+      }
+    }
+  } else {
+    SDB_ASSERT(query.HasMatcher());
+  }
+
+  const auto recipe = query.MakeRecipe();
 
   if (kind == QueryKind::All) {
     const auto& segment = query.Segment();

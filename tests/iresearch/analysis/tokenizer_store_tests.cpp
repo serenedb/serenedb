@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "tests_shared.hpp"
+#include "token_sink_utils.hpp"
 #include "tokenizer_fuzz_checks.hpp"
 #include "tokenizer_fuzz_corpus.hpp"
 #include "tokenizer_fuzz_specs.hpp"
@@ -132,6 +133,64 @@ bool IsWildcardSpec(const Spec& spec) {
 
 bool IsGeoJsonSpec(const Spec& spec) {
   return spec.name.starts_with("geojson");
+}
+
+bool IsGeoSpec(const Spec& spec) { return spec.name.starts_with("geo"); }
+
+using DocToken = std::pair<irs::doc_id_t, Token>;
+using DocStore = std::pair<irs::doc_id_t, std::string>;
+
+struct DocFill {
+  std::vector<DocToken> tokens;
+  std::vector<DocStore> stores;
+};
+
+class StoreLog final : public irs::StoreSink {
+ public:
+  explicit StoreLog(DocFill& out) noexcept : _out{&out} {}
+
+  void OnStore(irs::doc_id_t doc, irs::bytes_view blob) final {
+    _out->stores.emplace_back(
+      doc,
+      std::string{reinterpret_cast<const char*>(blob.data()), blob.size()});
+  }
+
+ private:
+  DocFill* _out;
+};
+
+template<typename Fill>
+DocFill CollectDocs(const irs::TokenTraits& traits, irs::TokenLayout layout,
+                    Fill&& fill) {
+  DocFill out;
+  const bool with_pos =
+    layout != irs::TokenLayout::Terms && traits.explicit_pos;
+  const bool with_offs = layout == irs::TokenLayout::TermsPosOffs;
+  const auto collect = [&](irs::TokenBatch& batch,
+                           std::span<const irs::DocRun> runs) {
+    uint32_t tok = 0;
+    for (const auto& run : runs) {
+      for (uint32_t j = 0; j < run.ntokens; ++j, ++tok) {
+        Token token;
+        token.term.assign(batch.terms[tok].GetData(),
+                          batch.terms[tok].GetSize());
+        if (with_pos) {
+          token.pos = batch.pos[tok];
+        }
+        if (with_offs) {
+          token.offs_start = batch.offs_start[tok];
+          token.offs_end = batch.offs_end[tok];
+        }
+        out.tokens.emplace_back(run.doc, std::move(token));
+      }
+    }
+  };
+  tests::FnTokenSink sink{layout, collect};
+  StoreLog store{out};
+  sink.writer.Bind(sink, &store);
+  fill(sink.writer);
+  sink.writer.Finish();
+  return out;
 }
 
 }  // namespace
@@ -280,6 +339,62 @@ TEST(TokenizerStore, GeoBlobCarriesTheDeclaredCoding) {
         ASSERT_EQ(coding::ToSize(options), res.store.size())
           << "centroid blob is not one coded point";
       }
+    }
+  }
+}
+
+TEST(TokenizerStore, FillRowMatchesPerValueFills) {
+  constexpr size_t kRowSizes[] = {3, 1, 0, 2, 4};
+  for (const auto* spec : SelectedSpecs()) {
+    if (IsGeoSpec(*spec)) {
+      continue;
+    }
+    SCOPED_TRACE(spec->name);
+    auto tokenizer = Make(*spec);
+    ASSERT_NE(nullptr, tokenizer);
+    const auto traits = tokenizer->Traits();
+
+    const auto values = SpecCorpus(*spec, Seed(), 48);
+    std::vector<std::vector<duckdb::string_t>> rows;
+    for (size_t v = 0, r = 0; v < values.size(); ++r) {
+      auto& row = rows.emplace_back();
+      for (size_t k = kRowSizes[r % std::size(kRowSizes)];
+           k != 0 && v < values.size(); --k) {
+        row.push_back(tests::ToStringT(values[v++]));
+      }
+    }
+
+    for (const auto layout : DeclaredLayouts(traits)) {
+      SCOPED_TRACE(LayoutName(layout));
+      const auto per_value =
+        CollectDocs(traits, layout, [&](irs::TokenSink& w) {
+          irs::doc_id_t doc = irs::doc_limits::min();
+          for (const auto& row : rows) {
+            for (const auto& value : row) {
+              tokenizer->Fill(value, doc, w, {layout});
+            }
+            ++doc;
+          }
+        });
+      const auto per_row = CollectDocs(traits, layout, [&](irs::TokenSink& w) {
+        irs::doc_id_t doc = irs::doc_limits::min();
+        for (const auto& row : rows) {
+          const auto fmt = tests::ValuesFormat(row);
+          tokenizer->FillRow(fmt, 0, static_cast<uint32_t>(row.size()), doc++,
+                             w, {layout});
+        }
+      });
+      ASSERT_EQ(per_value.tokens, per_row.tokens);
+
+      std::vector<DocStore> joined;
+      for (const auto& [doc, blob] : per_value.stores) {
+        if (!joined.empty() && joined.back().first == doc) {
+          joined.back().second += blob;
+        } else {
+          joined.emplace_back(doc, blob);
+        }
+      }
+      ASSERT_EQ(joined, per_row.stores);
     }
   }
 }

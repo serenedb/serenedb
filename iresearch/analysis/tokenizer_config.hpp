@@ -118,9 +118,7 @@ inline TokenizerConfig Clone(const TokenizerConfig& cfg) {
         copy.output_unigrams = opts.output_unigrams;
         copy.fallback_unigrams = opts.fallback_unigrams;
         copy.token_separator = opts.token_separator;
-        copy.filler_token = opts.filler_token;
         copy.frequent_words = opts.frequent_words;
-        copy.store_tokens = opts.store_tokens;
         copy.base_analyzer = detail::CloneChild(opts.base_analyzer);
         out.config = std::move(copy);
       } else {

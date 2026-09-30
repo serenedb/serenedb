@@ -284,23 +284,12 @@ inline constexpr OptionInfo kOutputUnigramsIfNoShingles{
   "fallback_unigrams", false,
   "Index unigrams only when the input is too short to form a shingle"};
 
-inline constexpr OptionInfo kStoreTokens{
-  "store_tokens", true,
-  "Persist the per-document token stream (verification source for phrases "
-  "longer than max_gram). When false the index stores terms only"};
-
 inline constexpr OptionInfo kFrequentWords{
   "frequent_words", OptionInfo::ListTag{},
   "Frequent words (typically stopwords): a list of strings, or a "
   "comma-separated string of double-quoted words. When non-empty, shingles "
   "of min_gram stay dense while wider sizes are indexed only for spans "
   "containing one of these words (adaptive width escalation)"};
-
-inline constexpr OptionInfo kFillerToken{
-  "filler_token", ""sv,
-  "Token standing in for positions the base analyzer removed (e.g. "
-  "stopwords) in the stored token stream; never indexed as a term. "
-  "Default '_'"};
 
 inline constexpr OptionInfo kTokenSeparator{
   "token_separator", " "sv,
@@ -409,8 +398,7 @@ inline constexpr OptionInfo kSqlOptions[] = {kSqlExpression};
 inline constexpr OptionInfo kShingleOptions[] = {
   kMinShingleSize, kMaxShingleSize,
   kOutputUnigrams, kOutputUnigramsIfNoShingles,
-  kStoreTokens,    kFrequentWords,
-  kFillerToken,    kTokenSeparator};
+  kFrequentWords,  kTokenSeparator};
 
 inline constexpr OptionInfo kSolrSynonymsOptions[] = {kSolrSynonyms};
 

@@ -47,6 +47,7 @@
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/search/queries/term_query.hpp"
+#include "iresearch/search/queries/verified_phrase_query.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::fill {
@@ -168,6 +169,18 @@ Node::ptr Make(const WildcardNGramQuery& query) {
 Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge) {
   return MakeWildcardNGramScored(query, ctx, merge);
+}
+
+Node::ptr Make(const VerifiedPhraseQuery& query) {
+  return MakeVerifiedPhraseDocs(query);
+}
+
+Node::ptr Make(const VerifiedPhraseQuery& query, const detail::ScoredCtx& ctx,
+               ScoreMergeType merge) {
+  if (query.Stats().stats == nullptr) {
+    return Make(query);
+  }
+  return MakeVerifiedPhraseScored(query, ctx, merge);
 }
 
 }  // namespace irs::fill

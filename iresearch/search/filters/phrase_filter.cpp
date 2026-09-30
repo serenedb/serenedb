@@ -30,6 +30,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/phrase_matcher.hpp"
+#include "iresearch/search/detail/phrase_verify.hpp"
 #include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/search/detail/top_terms_selector.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
@@ -38,10 +39,13 @@
 #include "iresearch/search/filters/range_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/filters/wildcard_filter.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
+#include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/phrase_state.hpp"
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
+#include "iresearch/search/queries/verified_phrase_query.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 #include "iresearch/utils/wildcard_utils.hpp"
@@ -286,6 +290,44 @@ void ApplyTermGroups(const ByPhraseOptions& options,
   }
 }
 
+QueryBuilder::ptr MakeVerifiedPhraseQuery(
+  const SubReader& segment, const PrepareContext& ctx, const TermReader& reader,
+  const PhraseState& state, const ByPhraseOptions& options,
+  std::span<const std::vector<bstring>> part_terms) {
+  PrepareContext sub = ctx;
+  sub.collector = nullptr;
+  BooleanBuilder builder{segment,        ctx.memory,           0,
+                         kNoBoost,       ScoreMergeType::Noop, nullptr,
+                         ctx.needs_terms};
+  for (size_t slot = 0, n = state.Slots(); slot != n; ++slot) {
+    const auto begin = state.offsets[slot];
+    const auto end = state.offsets[slot + 1];
+    if (end - begin == 1) {
+      builder.AddTerm(&reader, state.metas[begin], kNoBoost, Occur::Must, {});
+      continue;
+    }
+    auto terms = memory::make_tracked<MultiTermQuery>(
+      ctx.memory, segment, ctx.memory, kNoBoost, ScoreMergeType::Noop);
+    terms->State().Prepare(&reader);
+    for (auto i = begin; i != end; ++i) {
+      terms->State().Push(state.metas[i], kNoBoost);
+    }
+    builder.Add(MultiTermQuery::Finish(std::move(terms), sub), Occur::Must);
+  }
+  auto approx = builder.Finish();
+  if (!approx || QueryBuilder::IsEmpty(*approx)) {
+    return QueryBuilder::Empty();
+  }
+  const auto& verifier = *options.verifier();
+  const auto* spec = verifier.Spec();
+  auto query = memory::make_tracked<VerifiedPhraseQuery>(
+    ctx.memory, segment, reader, std::move(approx), verifier.Source(),
+    spec ? *spec : options,
+    spec ? std::span<const std::vector<bstring>>{} : part_terms, ctx.boost);
+  query->SetStats(ctx.Record());
+  return query;
+}
+
 QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
                                        const PrepareContext& ctx,
                                        irs::field_id field,
@@ -299,7 +341,12 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
   PhraseState state{ctx.memory};
   const auto* reader = segment.field(field);
   state.reader = reader;
-  if (!detail::ResolvePhrase(reader, state.handles)) {
+  const bool verified = options.verifier() != nullptr;
+  if (verified) {
+    if (!reader || !detail::DocOf(*reader)) {
+      return QueryBuilder::Empty();
+    }
+  } else if (!detail::ResolvePhrase(reader, state.handles)) {
     return QueryBuilder::Empty();
   }
   if (collector) {
@@ -339,7 +386,7 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
       }
     }
 
-    if (options.slop() != 0) {
+    if (options.slop() != 0 || verified) {
       part_terms.resize(phrase_size);
     }
   }
@@ -415,6 +462,11 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
 
   if (!ptv.HasBoosts()) {
     state.boosts.clear();
+  }
+
+  if (verified) {
+    return MakeVerifiedPhraseQuery(segment, ctx, *reader, state, options,
+                                   part_terms);
   }
 
   if (phrase_size == 1 && state.metas.size() == 1) {

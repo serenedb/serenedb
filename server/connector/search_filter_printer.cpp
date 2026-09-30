@@ -25,6 +25,7 @@
 #include <absl/strings/str_join.h>
 
 #include <iresearch/search/detail/pattern_cache.hpp>
+#include <iresearch/search/detail/phrase_verify.hpp>
 #include <iresearch/search/detail/search_range.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/automaton_filter.hpp>
@@ -527,6 +528,9 @@ struct FilterPrinter {
       node.attributes["Parts"] = PhraseParts(f);
       if (const auto slop = f.options().slop(); slop > 0) {
         node.attributes["Slop"] = absl::StrCat(slop);
+      }
+      if (const auto* verifier = f.options().verifier()) {
+        node.attributes["Verify"] = std::string{verifier->Source().Name()};
       }
       return node;
     }

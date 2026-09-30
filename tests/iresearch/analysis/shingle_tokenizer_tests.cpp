@@ -193,40 +193,14 @@ std::vector<TermInc> EmitWithInc(irs::analysis::Tokenizer& analyzer,
   return out;
 }
 
-std::vector<std::string> DecodeStore(irs::bytes_view blob) {
-  std::vector<std::string> out;
-  const auto* p = blob.data();
-  const auto* const end = p + blob.size();
-  while (p != end) {
-    irs::bytes_view token;
-    p = ShingleTokenizer::ReadToken(p, token);
-    out.push_back(ToString(token));
-  }
-  return out;
-}
-
-std::vector<std::string> StoreOf(irs::analysis::Tokenizer& analyzer,
-                                 std::string_view data) {
+irs::bstring StoreOf(irs::analysis::Tokenizer& analyzer,
+                     std::string_view data) {
   irs::ValueAnalyzer value_analyzer;
   irs::ValueTokens tokens;
   EXPECT_TRUE(value_analyzer.Analyze(
     analyzer, duckdb::string_t{data.data(), static_cast<uint32_t>(data.size())},
     tokens));
-  return DecodeStore(tokens.store());
-}
-
-std::string CodecRoundTrip(std::string_view token,
-                           size_t* prefix_bytes = nullptr) {
-  irs::bstring buf;
-  ShingleTokenizer::WriteToken(irs::ViewCast<irs::byte_type>(token), buf);
-  if (prefix_bytes != nullptr) {
-    *prefix_bytes = buf.size() - token.size();
-  }
-  const auto* p = buf.data();
-  irs::bytes_view decoded;
-  const auto* next = ShingleTokenizer::ReadToken(p, decoded);
-  EXPECT_EQ(next, p + buf.size());
-  return ToString(decoded);
+  return irs::bstring{tokens.store()};
 }
 
 irs::bstring Bytes(std::string_view s) {
@@ -307,8 +281,7 @@ RowFill CollectFill(Fill&& fill) {
 }
 
 void AssertRowFillMatchesPerValue(ShingleTokenizer& analyzer,
-                                  const std::vector<std::string>& values,
-                                  const std::vector<std::string>& row_store) {
+                                  const std::vector<std::string>& values) {
   std::vector<duckdb::string_t> vals;
   for (const auto& v : values) {
     vals.push_back(tests::ToStringT(v));
@@ -326,16 +299,8 @@ void AssertRowFillMatchesPerValue(ShingleTokenizer& analyzer,
                      {layout});
   });
   EXPECT_EQ(per_value.tokens, row.tokens);
-
-  irs::bstring joined;
-  for (const auto& [doc, blob] : per_value.stores) {
-    EXPECT_EQ(kDoc, doc);
-    joined += blob;
-  }
-  ASSERT_EQ(1U, row.stores.size());
-  EXPECT_EQ(kDoc, row.stores.front().first);
-  EXPECT_EQ(joined, row.stores.front().second);
-  EXPECT_EQ(row_store, DecodeStore(row.stores.front().second));
+  EXPECT_TRUE(per_value.stores.empty());
+  EXPECT_TRUE(row.stores.empty());
 }
 
 }  // namespace
@@ -346,7 +311,7 @@ TEST(ShingleTokenizerTest, traits) {
     const auto traits = analyzer.Traits();
     EXPECT_TRUE(traits.explicit_pos);
     EXPECT_FALSE(traits.offsets);
-    EXPECT_TRUE(traits.store);
+    EXPECT_FALSE(traits.store);
   }
   {
     auto analyzer = MakeAnalyzer(2, 2, false);
@@ -369,8 +334,6 @@ TEST(ShingleTokenizerTest, bigrams_with_unigrams) {
     "fox",
   };
   EXPECT_EQ(expected, Emit(analyzer, "quick brown fox"));
-  EXPECT_EQ((std::vector<std::string>{"quick", "brown", "fox"}),
-            StoreOf(analyzer, "quick brown fox"));
 }
 
 TEST(ShingleTokenizerTest, bigrams_without_unigrams) {
@@ -403,8 +366,6 @@ TEST(ShingleTokenizerTest, token_separator_multi_byte) {
     "a", "a::b", "a::b::c", "b", "b::c", "b::c::d", "c", "c::d", "d",
   };
   EXPECT_EQ(expected, Emit(analyzer, "a b c d"));
-  EXPECT_EQ((std::vector<std::string>{"a", "b", "c", "d"}),
-            StoreOf(analyzer, "a b c d"));
 }
 
 TEST(ShingleTokenizerTest, empty_token_separator_concatenates) {
@@ -419,8 +380,6 @@ TEST(ShingleTokenizerTest, empty_token_separator_concatenates) {
     "a", "ab", "abc", "b", "bc", "bcd", "c", "cd", "d",
   };
   EXPECT_EQ(expected, Emit(analyzer, "a b c d"));
-  EXPECT_EQ((std::vector<std::string>{"a", "b", "c", "d"}),
-            StoreOf(analyzer, "a b c d"));
 }
 
 TEST(ShingleTokenizerTest, empty_token_separator_keeps_positions) {
@@ -450,7 +409,6 @@ TEST(ShingleTokenizerTest, min2_max3_with_unigrams) {
 TEST(ShingleTokenizerTest, single_token_emits_unigram) {
   auto analyzer = MakeAnalyzer(2, 2, true);
   EXPECT_EQ((std::vector<std::string>{"lonely"}), Emit(analyzer, "lonely"));
-  EXPECT_EQ((std::vector<std::string>{"lonely"}), StoreOf(analyzer, "lonely"));
 }
 
 TEST(ShingleTokenizerTest, fallback_unigrams) {
@@ -461,14 +419,8 @@ TEST(ShingleTokenizerTest, fallback_unigrams) {
   EXPECT_TRUE(Emit(without, "solo").empty());
 }
 
-TEST(ShingleTokenizerTest, store_tokens_off) {
-  ShingleTokenizer analyzer{std::make_unique<WhitespaceTokenizer>(),
-                            {
-                              .min_shingle_size = 2,
-                              .max_shingle_size = 2,
-                              .output_unigrams = true,
-                              .store_tokens = false,
-                            }};
+TEST(ShingleTokenizerTest, stores_nothing) {
+  auto analyzer = MakeAnalyzer(2, 2, true);
   EXPECT_FALSE(analyzer.Traits().store);
   const std::vector<std::string> expected{
     "a", Shingle({"a", "b"}), "b", Shingle({"b", "c"}), "c",
@@ -579,15 +531,14 @@ TEST(ShingleTokenizerTest, lucene_filler_positions) {
   EXPECT_EQ(longer, EmitWithInc(analyzer, "quick the brown fox"));
 }
 
-TEST(ShingleTokenizerTest, filler_appears_in_store) {
+TEST(ShingleTokenizerTest, gap_stores_nothing) {
   ShingleTokenizer analyzer{std::make_unique<StopwordTokenizer>(),
                             {
                               .min_shingle_size = 2,
                               .max_shingle_size = 2,
                               .output_unigrams = true,
                             }};
-  EXPECT_EQ((std::vector<std::string>{"quick", "_", "brown"}),
-            StoreOf(analyzer, "quick the brown"));
+  EXPECT_TRUE(StoreOf(analyzer, "quick the brown").empty());
   EXPECT_EQ((std::vector<std::string>{"quick", "brown",
                                       Shingle({"brown", "fox"}), "fox"}),
             Emit(analyzer, "quick the brown fox"));
@@ -642,7 +593,6 @@ TEST(ShingleTokenizerTest, generated_base_tokens_are_copied) {
   }
   const std::vector<std::string> expected{A, Shingle({A, B}), B};
   EXPECT_EQ(expected, Emit(analyzer, input));
-  EXPECT_EQ((std::vector<std::string>{A, B}), StoreOf(analyzer, input));
 }
 
 TEST(ShingleTokenizerTest, column_fill_matches_per_value) {
@@ -761,70 +711,6 @@ TEST(ShingleTokenizerTest, column_fill_wave_split_matches_per_value) {
   }
 }
 
-TEST(ShingleTokenizerTest, read_token_checked_rejects_corrupt_blobs) {
-  using ST = ShingleTokenizer;
-  irs::bstring buf;
-  ST::WriteToken(irs::ViewCast<irs::byte_type>(std::string_view{"quick"}), buf);
-  const auto* p = buf.data();
-  const auto* end = p + buf.size();
-  irs::bytes_view token;
-  EXPECT_EQ(end, ST::ReadTokenChecked(p, end, token));
-  EXPECT_EQ("quick", ToString(token));
-  EXPECT_EQ(nullptr, ST::ReadTokenChecked(p, end - 1, token));
-  EXPECT_EQ(nullptr, ST::ReadTokenChecked(p, p, token));
-  const irs::byte_type bad[] = {0xC1, 0x00};
-  EXPECT_EQ(nullptr, ST::ReadTokenChecked(bad, bad + sizeof bad, token));
-  const irs::byte_type short_prefix[] = {0x41};
-  EXPECT_EQ(nullptr,
-            ST::ReadTokenChecked(short_prefix, short_prefix + 1, token));
-}
-
-TEST(ShingleTokenizerTest, token_codec_round_trip) {
-  for (size_t len : {size_t{0}, size_t{1}, size_t{63}, size_t{64}, size_t{255},
-                     size_t{16383}, size_t{16384}, size_t{70000}}) {
-    SCOPED_TRACE(len);
-    const std::string token(len, 'x');
-    EXPECT_EQ(token, CodecRoundTrip(token));
-  }
-}
-
-TEST(ShingleTokenizerTest, token_codec_prefix_width) {
-  size_t width = 0;
-  CodecRoundTrip(std::string(0, 'x'), &width);
-  EXPECT_EQ(1u, width);
-  CodecRoundTrip(std::string(63, 'x'), &width);
-  EXPECT_EQ(1u, width);
-  CodecRoundTrip(std::string(64, 'x'), &width);
-  EXPECT_EQ(2u, width);
-  CodecRoundTrip(std::string(16383, 'x'), &width);
-  EXPECT_EQ(2u, width);
-  CodecRoundTrip(std::string(16384, 'x'), &width);
-  EXPECT_EQ(4u, width);
-  CodecRoundTrip(std::string(1 << 20, 'x'), &width);
-  EXPECT_EQ(4u, width);
-}
-
-TEST(ShingleTokenizerTest, token_codec_binary_safe) {
-  const std::string token{'\x00', '\xFF', '\xFF', '\x01', '\xFF'};
-  EXPECT_EQ(token, CodecRoundTrip(token));
-}
-
-TEST(ShingleTokenizerTest, token_codec_sequence) {
-  const std::vector<std::string> tokens{
-    "",
-    "a",
-    std::string(64, 'b'),
-    std::string(20000, 'c'),
-    std::string{'\xFF', '\xFF'},
-  };
-  irs::bstring buf;
-  for (const auto& t : tokens) {
-    ShingleTokenizer::WriteToken(
-      irs::ViewCast<irs::byte_type>(std::string_view{t}), buf);
-  }
-  EXPECT_EQ(tokens, DecodeStore(irs::bytes_view{buf}));
-}
-
 TEST(ShingleTokenizerTest, failed_base_fill_does_not_leak_into_next_value) {
   ShingleTokenizer analyzer{std::make_unique<EmitThenFailTokenizer>(),
                             {
@@ -839,22 +725,20 @@ TEST(ShingleTokenizerTest, failed_base_fill_does_not_leak_into_next_value) {
   EXPECT_EQ(expected, Emit(analyzer, "w1 w2 w3"));
 }
 
-TEST(ShingleTokenizerTest, fill_row_stores_the_whole_row_once) {
+TEST(ShingleTokenizerTest, fill_row_matches_per_value) {
   auto analyzer = MakeAnalyzer(2, 3, true);
-  AssertRowFillMatchesPerValue(
-    analyzer, {"quick brown fox", "", "lonely", "a b c d"},
-    {"quick", "brown", "fox", "lonely", "a", "b", "c", "d"});
+  AssertRowFillMatchesPerValue(analyzer,
+                               {"quick brown fox", "", "lonely", "a b c d"});
 }
 
-TEST(ShingleTokenizerTest, fill_row_keeps_fillers_per_element) {
+TEST(ShingleTokenizerTest, fill_row_keeps_gaps_per_element) {
   ShingleTokenizer analyzer{std::make_unique<StopwordTokenizer>(),
                             {
                               .min_shingle_size = 2,
                               .max_shingle_size = 2,
                               .output_unigrams = true,
                             }};
-  AssertRowFillMatchesPerValue(analyzer, {"quick the brown", "the fox"},
-                               {"quick", "_", "brown", "_", "fox"});
+  AssertRowFillMatchesPerValue(analyzer, {"quick the brown", "the fox"});
 }
 
 TEST(ShingleTokenizerTest, fill_row_drops_a_failed_element) {
@@ -864,18 +748,11 @@ TEST(ShingleTokenizerTest, fill_row_drops_a_failed_element) {
                               .max_shingle_size = 2,
                               .output_unigrams = true,
                             }};
-  AssertRowFillMatchesPerValue(analyzer, {"w1 w2", "poison", "w3"},
-                               {"w1", "w2", "w3"});
+  AssertRowFillMatchesPerValue(analyzer, {"w1 w2", "poison", "w3"});
 }
 
-TEST(ShingleTokenizerTest, fill_row_without_store_tokens_stores_nothing) {
-  ShingleTokenizer analyzer{std::make_unique<WhitespaceTokenizer>(),
-                            {
-                              .min_shingle_size = 2,
-                              .max_shingle_size = 2,
-                              .output_unigrams = true,
-                              .store_tokens = false,
-                            }};
+TEST(ShingleTokenizerTest, fill_row_stores_nothing) {
+  auto analyzer = MakeAnalyzer(2, 2, true);
   const std::vector<duckdb::string_t> vals{tests::ToStringT("quick brown"),
                                            tests::ToStringT("fox")};
   const auto row = CollectFill([&](irs::TokenSink& w, irs::TokenLayout layout) {

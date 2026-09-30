@@ -208,11 +208,11 @@ def test_shingles_wrap_a_chain(conn, schema, stages, request):
     name = f"{schema}.shingle_{request.node.callspec.id}"
     base = _functions(stages)
     with conn.cursor() as cur:
-        _create(cur, name, f"generate_shingles({_dictionary(stages)}, 2, 2, store_tokens := false)")
+        _create(cur, name, f"generate_shingles({_dictionary(stages)}, 2, 2)")
         bad = _mismatches(
             cur,
             f"ts_lexize('{name}', v)",
-            f"generate_shingles({base}, 2, 2, store_tokens := false)",
+            f"generate_shingles({base}, 2, 2)",
             _values(stages),
         )
     assert bad == [], f"generate_shingles({_dictionary(stages)}): {bad}"

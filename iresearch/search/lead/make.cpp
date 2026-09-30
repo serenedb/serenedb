@@ -43,6 +43,7 @@
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/search/queries/term_query.hpp"
+#include "iresearch/search/queries/verified_phrase_query.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::lead {
@@ -166,6 +167,22 @@ Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx) {
 
 Node::ptr Make(const WildcardNGramQuery& query) {
   return MakeWildcardNGramDocs(query);
+}
+
+Node::ptr Make(const VerifiedPhraseQuery& query) {
+  return MakeVerifiedPhraseDocs(query);
+}
+
+Node::ptr Make(const VerifiedPhraseQuery& query, const detail::ScoredCtx& ctx) {
+  const auto record = query.Stats(ctx);
+  const detail::ScoreArgs args{.scorer = record.scorer,
+                               .stats = record.stats,
+                               .fetcher = ctx.fetcher,
+                               .boost = query.Boost()};
+  if (args.stats == nullptr) {
+    return Make(query);
+  }
+  return MakeVerifiedPhraseScored(query, args);
 }
 
 Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx) {

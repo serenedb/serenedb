@@ -257,41 +257,63 @@ def test_docs_generation_turns_inline_html_into_markdown(
             "Tick: ``a`b``.\n"
             "Tags as code: `<em>x</em>`, [`</a>`](#x), `` `a` <b> ``.\n\n"
             "| Operator | Example |\n| --- | --- |\n"
-            "| [`a \\|\\| b`](#concatenation) | `'x' \\|\\| 'y'` |\n\n"
+            "| [`a \\|\\| b`](#concat) | `'x' \\|\\| 'y'` |\n\n"
             '## Concatenation\n)sdbdoc"') in generated
 
 
-def test_docs_generation_points_links_at_the_shells_slug_of_a_pinned_id(
+def test_docs_generation_points_links_to_heading_ids_at_their_sections(
         tmp_path: Path) -> None:
-    """The shell finds a section by the slug of its title and never sees the
-    heading ids the site pins, so a link to one is pointed at that slug."""
     docs = tmp_path / "docs"
     (docs / "copy").mkdir(parents=True)
+    (docs / "guide" / "deep").mkdir(parents=True)
     (docs / "copy" / "index.md").write_text(
-        "---\ntitle: COPY\nsplit: headings\n---\n"
+        "---\ntitle: COPY\nsplit: headings\n---\n# COPY {#top}\n\n"
         "## `COPY ... FROM` {#copy-from}\n\nFrom.\n\n"
         "## `COPY FROM DATABASE ... TO` {#copy-from-database-to}\n\nTo.\n\n"
-        "## `a || b` {#a-b-or}\n\n## `a && b` {#a-b-and}\n\n"
-        "See [OR](#a-b-or) and [FROM](#copy-from).\n", encoding="utf-8")
-    (docs / "page.md").write_text(
-        "---\ntitle: Page\nsplit: page\n---\n"
-        "[FROM](copy/index.md#copy-from), "
-        "[TO](./copy#copy-from-database-to), "
-        "[other](copy/index.md#database), "
+        "## `ts_highlight(text)` {#ts_highlight}\n\n"
+        "## `f(text)` {#f}\n\n## `f(column)`\n\n"
+        "## Twice {#twice-over}\n\n## Again {#twice-over}\n\n"
+        "## Operators\n\n"
+        "| Operator | Meaning |\n| --- | --- |\n"
+        "| [`a \\|\\| b`](#a--b-or) | or |\n\n"
+        "#### `a || b` {#a--b-or}\n\n#### `a && b` {#a--b-and}\n\n"
+        "#### `a ## b` {#a--b-phrase}\n\n"
+        "See [AND](#a--b-and), [FROM](#copy-from), "
+        "[`ts_highlight`](#ts_highlight), [f](#f), [top](#top) and "
+        "[twice](#twice-over).\n", encoding="utf-8")
+    (docs / "guide" / "deep" / "page.md").write_text(
+        "---\ntitle: Page\nsplit: page\n---\n## Notes {#notes}\n\n"
+        "[FROM](../../copy/index.md#copy-from), "
+        "[TO](./../../copy/index.md#copy-from-database-to), "
+        "[phrase](../../copy/index.md#a--b-phrase), "
+        "[other](../../copy/index.md#database), [notes](#notes), "
         "[site](https://serenedb.com/docs/copy#copy-from).\n\n"
-        "```md\n[code](copy/index.md#copy-from)\n```\n", encoding="utf-8")
+        "As code: `[FROM](../../copy/index.md#copy-from)`.\n\n"
+        "```md\n[code](../../copy/index.md#copy-from)\n```\n",
+        encoding="utf-8")
+    (docs / "lower.md").write_text(
+        "---\ntitle: copy from\nsplit: headings\n---\n"
+        "## copy_from {#cf}\n\nSee [it](#cf).\n", encoding="utf-8")
     out = tmp_path / "docs_data.cpp"
     r = _run(str(SCRIPTS / "generate_docs.py"), str(docs), str(out),
              "--tests-dir", str(REPO / "tests" / "sqllogic"))
     assert r.returncode == 0, r.stderr
     generated = out.read_text()
-    # "a || b" and "a && b" are both a--b to the shell: that link stays.
-    assert "See [OR](#a-b-or) and [FROM](#copy--from).\n" in generated
-    assert ("[FROM](copy/index.md#copy--from), "
-            "[TO](./copy#copy-from-database--to), "
-            "[other](copy/index.md#database), "
+    assert ("| [`a \\|\\| b`](#COPY#Operators#a_\\|\\|_b) | or |\n\n"
+            "#### `a || b`\n\n#### `a && b`\n\n#### `a ## b`\n\n"
+            "See [AND](#COPY#Operators#a_\\&\\&_b), [FROM](#copy--from), "
+            "[`ts_highlight`](#ts_highlight), [f](#ftext), [top](#copy) and "
+            "[twice](#twice).\n") in generated
+    assert ('R"sdbdoc(## Notes\n\n'
+            "[FROM](../../copy/index.md#copy--from), "
+            "[TO](./../../copy/index.md#copy-from-database--to), "
+            "[phrase](../../copy/index.md#COPY#Operators#a_\\\\#\\\\#_b), "
+            "[other](../../copy/index.md#database), [notes](#notes), "
             "[site](https://serenedb.com/docs/copy#copy-from).\n\n"
-            "```md\n[code](copy/index.md#copy-from)\n```\n") in generated
+            "As code: `[FROM](../../copy/index.md#copy-from)`.\n\n"
+            '```md\n[code](../../copy/index.md#copy-from)\n```\n)sdbdoc"'
+            ) in generated
+    assert 'R"sdbdoc(See [it](#copy_from#copy_from).\n)sdbdoc"' in generated
 
 
 # Markup of the site that the shell would print as it is written: an HTML tag
@@ -326,28 +348,94 @@ def test_docs_corpus_keeps_no_site_markup() -> None:
     assert not leaks, sorted(leaks)[:5]
 
 
-def test_docs_corpus_links_pinned_ids_to_sections() -> None:
-    """A link to a pinned heading id is pointed at the shell's slug of that
-    heading, so each such slug must be the slug of one of the page's
-    sections as the shell holds them."""
+DESTINATION_ESCAPE_RE = re.compile(r"\\([!-/:-@\[-`{-~])")
+HEADING_LINE_RE = re.compile(r"^(#{1,6}) (.*?)(?:\s*\{#([^}]*)\})?\s*$")
+
+
+def _ascii_lower(text: str) -> str:
+    return "".join(c.lower() if c.isascii() else c for c in text)
+
+
+def _shell_slug(title: str) -> str:
+    return "".join(c.lower() if c.isascii() and (c.isalnum() or c in "-_")
+                   else "-" if c == " " else "" if c.isascii() else c
+                   for c in title)
+
+
+def _shell_opens(pages: dict, base: str, href: str) -> "str | None":
+    target, _, anchor = DESTINATION_ESCAPE_RE.sub(r"\1", href).partition("#")
+    if target and not target.endswith((".md", ".mdx")):
+        return None
+    parts = []
+    for part in (base.split("/")[:-1] + target.split("/") if target
+                 else base.split("/")):
+        if part == "..":
+            parts = parts[:-1]
+        elif part not in ("", "."):
+            parts.append(part)
+    page = "/".join(parts)
+    sections = sorted((unit for unit in pages.get(page, [])
+                       if unit.path.startswith(page + "#")),
+                      key=lambda unit: unit.path.encode("utf-8"))
+    if any(unit.path == f"{page}#{anchor}" for unit in sections):
+        return f"{page}#{anchor}"
+    wanted = _ascii_lower(anchor)
+    best, best_rank = page, 3
+    for unit in sections:
+        slug, title = _shell_slug(unit.title), _ascii_lower(unit.title)
+        rank = (0 if slug == wanted
+                else 1 if title == wanted or title.startswith(wanted + "(")
+                else 2 if slug.startswith(wanted) else 3)
+        if rank < best_rank:
+            best, best_rank = unit.path, rank
+    return best
+
+
+def test_docs_corpus_opens_the_section_of_every_heading_id() -> None:
     sys.path.insert(0, str(SCRIPTS))
     import generate_docs
     import sqllogic_snippets
-    units = generate_docs.collect(
-        REPO / "docs", sqllogic_snippets.load(REPO / "tests" / "sqllogic"),
-        sqllogic_snippets.Report())
-    sections = {}
+    snippets = sqllogic_snippets.load(REPO / "tests" / "sqllogic")
+    units = generate_docs.collect(REPO / "docs", snippets,
+                                  sqllogic_snippets.Report())
+    pages = {}
     for unit in units:
-        if "#" in unit.path:
-            page = unit.path.split("#", 1)[0]
-            sections.setdefault(page, set()).add(
-                generate_docs.shell_slug(unit.title))
-    missing = []
-    for page, slugs in sections.items():
-        _, body = generate_docs.split_frontmatter(
+        pages.setdefault(unit.path.split("#", 1)[0], []).append(unit)
+    headed = {page: page_units for page, page_units in pages.items()
+              if "#" in page_units[0].path}
+    sections = {page: generate_docs.shell_sections(page_units)
+                for page, page_units in headed.items()}
+    keys = {}
+    expected = {}
+    for page, page_units in headed.items():
+        meta, body = generate_docs.split_frontmatter(
             (REPO / "docs" / page).read_text(encoding="utf-8"))
-        for pin, slug in generate_docs.pinned_slugs(body).items():
-            if slug not in slugs:
-                missing.append(f"{page}#{pin}: {slug}")
-    assert sections
-    assert not missing, missing[:5]
+        cleaned = generate_docs.clean(sqllogic_snippets.inline(
+            body, snippets, page, sqllogic_snippets.Report()))
+        keys[page] = generate_docs.split_units(
+            page, meta.get("title") or Path(page).stem,
+            *generate_docs.heading_ids(cleaned))[1]
+        heads = []
+        fenced = False
+        for line in cleaned.split("\n"):
+            if line.startswith("```"):
+                fenced = not fenced
+            elif not fenced and (match := HEADING_LINE_RE.match(line)):
+                heads.append(match.group(3))
+        targets = [unit.path for unit in page_units[1:]]
+        if len(heads) == len(targets) + 1:
+            targets.insert(0, page_units[0].path)
+        assert len(heads) == len(targets), page
+        for anchor, path in zip(heads, targets):
+            if anchor:
+                expected.setdefault((page, anchor), path)
+    wrong = []
+    for (page, anchor), path in expected.items():
+        for base, target in ((page, ""), ("zz/yy/links.md", f"../../{page}")):
+            link = generate_docs.follow_heading_ids(
+                base, f"[x]({target}#{anchor})", sections, keys)
+            opened = _shell_opens(headed, base, link[len("[x]("):-1])
+            if opened != path:
+                wrong.append(f"{base} -> {page}#{anchor}: {link} opens {opened}")
+    assert expected
+    assert not wrong, wrong[:5]

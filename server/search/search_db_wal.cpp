@@ -361,32 +361,72 @@ void SearchDbWal::EnsureActiveSegmentLocked(uint64_t first_tick) {
   SDB_ENSURE(!std::filesystem::exists(seg_path, exists_ec),
              "search WAL: new active segment '", seg_path.string(),
              "' already exists -- tick seed regressed");
-  _active = std::make_unique<duckdb::BufferedFileWriter>(_fs, seg_path.string(),
+  _active = std::make_shared<duckdb::BufferedFileWriter>(_fs, seg_path.string(),
                                                          kAppendFlags);
   _active_first_tick = first_tick;
 }
 
-void SearchDbWal::WriteFrameLocked(const uint8_t* payload, uint64_t size) {
+uint64_t SearchDbWal::WriteFrameLocked(const uint8_t* payload, uint64_t size) {
   SDB_ASSERT(_active);
   auto checksum = duckdb::Checksum(payload, size);
   _active->Write<uint64_t>(size);
   _active->Write<uint64_t>(checksum);
   _active->WriteData(payload, size);
-  _active->Sync();  // commit point
+  _active->Flush();
+  const uint64_t frame = ++_written_frames;
 
   if (_active->GetTotalWritten() > _seal_threshold) {
-    _active->Close();
+    _active->Sync();
+    MarkSynced(frame);
     _active.reset();
     _active_first_tick = 0;
   }
+  return frame;
+}
+
+void SearchDbWal::MarkSynced(uint64_t frames) {
+  auto synced = _synced_frames.load(std::memory_order_relaxed);
+  while (synced < frames && !_synced_frames.compare_exchange_weak(
+                              synced, frames, std::memory_order_release,
+                              std::memory_order_relaxed)) {
+  }
+}
+
+void SearchDbWal::SyncThrough(uint64_t frame) {
+  absl::MutexLock sync_lock(&_sync_mu);
+  if (_synced_frames.load(std::memory_order_acquire) >= frame) {
+    return;
+  }
+  std::shared_ptr<duckdb::BufferedFileWriter> file;
+  uint64_t written = 0;
+  {
+    absl::MutexLock append_lock(&_append_mu);
+    file = _active;
+    written = _written_frames;
+  }
+  if (file != nullptr) {
+    file->handle->Sync();
+    MarkSynced(written);
+  }
+  SDB_ASSERT(_synced_frames.load(std::memory_order_acquire) >= frame);
 }
 
 uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
                                    uint64_t tick_span) {
   SDB_ASSERT(!sections.empty(), "AppendCommit with no shard sections");
   SDB_ASSERT(tick_span >= 1, "every commit advances the tick by at least 1");
-  absl::MutexLock lock(&_append_mu);
+  uint64_t frame = 0;
+  uint64_t tick = 0;
+  {
+    absl::MutexLock lock(&_append_mu);
+    tick = AppendRecordLocked(sections, tick_span, frame);
+  }
+  SyncThrough(frame);
+  return tick;
+}
 
+uint64_t SearchDbWal::AppendRecordLocked(std::span<const ShardSection> sections,
+                                         uint64_t tick_span, uint64_t& frame) {
   uint64_t base = _tick.fetch_add(tick_span, std::memory_order_relaxed);
   uint64_t tick = base + tick_span;
   EnsureActiveSegmentLocked(tick);
@@ -425,7 +465,7 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
       });
     });
   record.End();
-  WriteFrameLocked(payload.GetData(), payload.GetPosition());
+  frame = WriteFrameLocked(payload.GetData(), payload.GetPosition());
   return tick;
 }
 

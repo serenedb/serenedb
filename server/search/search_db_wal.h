@@ -143,14 +143,22 @@ class SearchDbWal {
 
   absl::Mutex _append_mu;
   std::atomic<uint64_t> _tick{0};
-  std::unique_ptr<duckdb::BufferedFileWriter> _active;
+  std::shared_ptr<duckdb::BufferedFileWriter> _active;
   uint64_t _active_first_tick = 0;
+  uint64_t _written_frames = 0;
+
+  absl::Mutex _sync_mu;
+  std::atomic<uint64_t> _synced_frames{0};
 
   absl::Mutex _sub_mu;
   irs::containers::FlatHashMap<uint64_t, uint64_t> _committed;
 
   void EnsureActiveSegmentLocked(uint64_t first_tick);
-  void WriteFrameLocked(const uint8_t* payload, uint64_t payload_size);
+  uint64_t AppendRecordLocked(std::span<const ShardSection> sections,
+                              uint64_t tick_span, uint64_t& frame);
+  uint64_t WriteFrameLocked(const uint8_t* payload, uint64_t payload_size);
+  void MarkSynced(uint64_t frames);
+  void SyncThrough(uint64_t frame);
   uint64_t MinCommittedTick();
   void RunGc();
 };

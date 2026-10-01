@@ -2262,7 +2262,6 @@ class AcceptorTermIterator : public SeekTermIterator,
 
   static constexpr size_t kMinInfix = 3;
   static constexpr size_t kMaxInfix = 32;
-  static constexpr size_t kInfixEntry = 24;
   static constexpr uint32_t kInfixProbe = 256;
 
   static constexpr size_t kMaxLabels = 256;

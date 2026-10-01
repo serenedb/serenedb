@@ -584,6 +584,27 @@ irs::ByWildcardNGram& AddWildcardNGramFilter(Filter&& root, uint64_t column,
   return wf;
 }
 
+template<typename Filter>
+irs::ByRegexpNGram& AddRegexpNGramFilter(
+  Filter&& root, uint64_t column, std::string_view pattern,
+  irs::RegexpSyntax syntax = irs::RegexpSyntax::Perl) {
+  auto column_analyzer = WildcardTokenizerProvider(column);
+  auto& rf = AddChild<irs::ByRegexpNGram>(root);
+  *rf.mutable_field_id() = ExpectedFieldId(column);
+  auto* opts = rf.mutable_options();
+  *opts = {
+    irs::ViewCast<irs::byte_type>(pattern),
+    syntax,
+    irs::utils::downCast<irs::analysis::WildcardTokenizer>(
+      *column_analyzer.analyzer.get()),
+    (column_analyzer.features & irs::IndexFeatures::Pos) ==
+      irs::IndexFeatures::Pos,
+  };
+  SDB_ASSERT(irs::field_limits::valid(column_analyzer.tokenizer_column));
+  opts->store_field_id = column_analyzer.tokenizer_column;
+  return rf;
+}
+
 // The old `irs::ByTerms{field, terms, min_match}`: one node of its own
 // holding the terms of a single field, required when every one of them has
 // to match and counted to `min_match` otherwise.
@@ -2398,6 +2419,38 @@ TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardTokenizer_WithNot) {
   auto not_filter = AddNegation(expected);
   AddWildcardNGramFilter(not_filter, 1, "%foo_", true);
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT(a LIKE '%foo_')", columns,
+               true, WildcardTokenizerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_Regexp_WildcardTokenizer) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::BooleanFilter expected;
+  AddRegexpNGramFilter(expected, 1, "foo.*bar");
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_regexp('foo.*bar')",
+               columns, true, WildcardTokenizerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest,
+       test_TSQueryMatch_Regexp_WildcardTokenizer_Posix) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::BooleanFilter expected;
+  AddRegexpNGramFilter(expected, 1, "gr[ae]y", irs::RegexpSyntax::PosixEre);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ ts_regexp('gr[ae]y', 'posix')",
+               columns, true, WildcardTokenizerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest,
+       test_TSQueryMatch_Regexp_WildcardTokenizer_WithNot) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::BooleanFilter expected;
+  auto not_filter = AddNegation(expected);
+  AddRegexpNGramFilter(not_filter, 1, "foo.*");
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE NOT (b @@ ts_regexp('foo.*'))", columns,
                true, WildcardTokenizerProvider);
 }
 

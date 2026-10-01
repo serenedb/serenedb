@@ -36,6 +36,8 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collectors.hpp"
+#include "iresearch/search/detail/pattern_cache.hpp"
+#include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
@@ -82,7 +84,121 @@ ByTerm MakeTermFilter(irs::field_id field, bytes_view term) {
   return by_term;
 }
 
+QueryBuilder::ptr Wrap(
+  const SubReader& segment, const PrepareContext& ctx, score_t boost,
+  const std::shared_ptr<const WildcardNGramMatcher>& matcher,
+  field_id store_field_id, QueryBuilder::ptr&& approx) {
+  if (!approx || QueryBuilder::IsEmpty(*approx)) {
+    return QueryBuilder::Empty();
+  }
+  if (matcher) {
+    const auto* col_reader = segment.GetColReader();
+    if (!col_reader || !col_reader->Column(store_field_id)) {
+      return QueryBuilder::Empty();
+    }
+  }
+  auto query = memory::make_tracked<WildcardNGramQuery>(
+    ctx.memory, segment, matcher, std::move(approx), store_field_id, boost);
+  query->SetStats(ctx.Record());
+  return query;
+}
+
+ByPhraseOptions SplitGrams(analysis::Tokenizer& ngram,
+                           ValueAnalyzer& value_analyzer, ValueTokens<>& tokens,
+                           std::string_view value) {
+  ByPhraseOptions part;
+  if (!value_analyzer.Analyze(
+        ngram,
+        duckdb::string_t{value.data(), static_cast<uint32_t>(value.size())},
+        tokens)) {
+    return part;
+  }
+  for (const auto& token : tokens.terms()) {
+    part.push_back<ByTermOptions>(ByTermOptions{bstring{AsBytesView(token)}});
+  }
+  return part;
+}
+
+void SplitLiterals(const GramQuery& query, analysis::Tokenizer& ngram,
+                   ValueAnalyzer& value_analyzer, ValueTokens<>& tokens,
+                   std::vector<ByPhraseOptions>& grams) {
+  if (query.kind == GramQuery::Kind::Literal) {
+    grams.push_back(SplitGrams(ngram, value_analyzer, tokens,
+                               ViewCast<char>(bytes_view{query.literal})));
+    return;
+  }
+  for (const auto& child : query.children) {
+    SplitLiterals(child, ngram, value_analyzer, tokens, grams);
+  }
+}
+
+class GramQueryPreparer {
+ public:
+  GramQueryPreparer(const ByRegexpNGram& filter, const SubReader& segment,
+                    const PrepareContext& ctx, const PrepareContext& sub_ctx)
+    : _filter{filter}, _segment{segment}, _ctx{ctx}, _sub_ctx{sub_ctx} {}
+
+  QueryBuilder::ptr Prepare(const GramQuery& query) {
+    switch (query.kind) {
+      case GramQuery::Kind::All:
+        return MakeAllQuery(_segment, _sub_ctx, kNoBoost);
+      case GramQuery::Kind::None:
+        return QueryBuilder::Empty();
+      case GramQuery::Kind::Literal:
+        SDB_ASSERT(_next < _filter.options().grams.size());
+        return PrepareLiteral(_filter.options().grams[_next++]);
+      case GramQuery::Kind::And:
+      case GramQuery::Kind::Or: {
+        const bool any = query.kind == GramQuery::Kind::Or;
+        auto builder = MakeBuilder(any ? 1 : 0);
+        for (const auto& child : query.children) {
+          builder.Add(Prepare(child), any ? Occur::Should : Occur::Must);
+        }
+        return builder.Finish();
+      }
+    }
+    return QueryBuilder::Empty();
+  }
+
+ private:
+  QueryBuilder::ptr PrepareLiteral(const ByPhraseOptions& grams) {
+    if (grams.empty()) {
+      return MakeAllQuery(_segment, _sub_ctx, kNoBoost);
+    }
+    if (_filter.options().has_pos) {
+      return MakePhraseFilter(_filter.field_id(), grams)
+        .PrepareSegment(_segment, _sub_ctx);
+    }
+    auto builder = MakeBuilder(0);
+    for (const auto& gram : grams) {
+      builder.Add(MakeTermFilter(_filter.field_id(),
+                                 std::get<ByTermOptions>(gram.part).term)
+                    .PrepareSegment(_segment, _sub_ctx),
+                  Occur::Must);
+    }
+    return builder.Finish();
+  }
+
+  BooleanBuilder MakeBuilder(uint32_t min_should_match) const {
+    return {
+      _segment,         _ctx.memory,         min_should_match,
+      _sub_ctx.boost,   ScoreMergeType::Sum, nullptr,
+      _ctx.needs_terms,
+    };
+  }
+
+  const ByRegexpNGram& _filter;
+  const SubReader& _segment;
+  const PrepareContext& _ctx;
+  const PrepareContext& _sub_ctx;
+  size_t _next{0};
+};
+
 }  // namespace
+
+bool WildcardNGramMatcher::MatchRegexp(bytes_view term) const {
+  return std::get<Regexp>(_impl).acceptor->Matches(term);
+}
 
 PrepareCollector::ptr ByWildcardNGram::MakeCollectorImpl(const Scorer* scorer,
                                                          StatsArena& stats,
@@ -97,21 +213,9 @@ QueryBuilder::ptr ByWildcardNGram::PrepareSegment(
   sub_ctx.Boost(GetBoost());
   sub_ctx.collector = nullptr;
 
-  const auto wrap = [&](QueryBuilder::ptr&& approx) -> QueryBuilder::ptr {
-    if (!approx || QueryBuilder::IsEmpty(*approx)) {
-      return QueryBuilder::Empty();
-    }
-    if (opts.matcher) {
-      const auto* col_reader = segment.GetColReader();
-      if (!col_reader || !col_reader->Column(opts.store_field_id)) {
-        return QueryBuilder::Empty();
-      }
-    }
-    auto query = memory::make_tracked<WildcardNGramQuery>(
-      ctx.memory, segment, opts.matcher, std::move(approx), opts.store_field_id,
-      sub_ctx.boost);
-    query->SetStats(ctx.Record());
-    return query;
+  const auto wrap = [&](QueryBuilder::ptr&& approx) {
+    return Wrap(segment, ctx, sub_ctx.boost, opts.matcher, opts.store_field_id,
+                std::move(approx));
   };
 
   switch (ClassifyKind(opts)) {
@@ -167,15 +271,7 @@ ByWildcardNGramOptions::ByWildcardNGramOptions(
   ValueTokens tokens;
 
   auto make_parts_impl = [&](std::string_view v) {
-    if (!value_analyzer.Analyze(
-          ngram, duckdb::string_t{v.data(), static_cast<uint32_t>(v.size())},
-          tokens)) {
-      return false;
-    }
-    ByPhraseOptions part;
-    for (const auto& token : tokens.terms()) {
-      part.push_back<ByTermOptions>(ByTermOptions{bstring{AsBytesView(token)}});
-    }
+    auto part = SplitGrams(ngram, value_analyzer, tokens, v);
     if (part.empty()) {
       return false;
     }
@@ -231,9 +327,46 @@ ByWildcardNGramOptions::ByWildcardNGramOptions(
   if (needs_matcher || !has_pos) {
     LikeMatcher like{ViewCast<byte_type>(pattern)};
     if (like.ok()) {
-      matcher = std::make_shared<const LikeMatcher>(std::move(like));
+      matcher = std::make_shared<const WildcardNGramMatcher>(std::move(like));
     }
   }
+}
+
+PrepareCollector::ptr ByRegexpNGram::MakeCollectorImpl(const Scorer* scorer,
+                                                       StatsArena& stats,
+                                                       uint32_t) const {
+  return std::make_unique<AllCollector>(scorer, stats);
+}
+
+QueryBuilder::ptr ByRegexpNGram::PrepareSegment(
+  const SubReader& segment, const PrepareContext& ctx) const {
+  const auto& opts = options();
+  auto sub_ctx = ctx;
+  sub_ctx.Boost(GetBoost());
+  sub_ctx.collector = nullptr;
+  auto approx =
+    GramQueryPreparer{*this, segment, ctx, sub_ctx}.Prepare(opts.query);
+  return Wrap(segment, ctx, sub_ctx.boost, opts.matcher, opts.store_field_id,
+              std::move(approx));
+}
+
+ByRegexpNGramOptions::ByRegexpNGramOptions(
+  bytes_view regexp, RegexpSyntax regexp_syntax,
+  analysis::WildcardTokenizer& analyzer, bool has_positions)
+  : pattern{regexp}, syntax{regexp_syntax}, has_pos{has_positions} {
+  auto acceptor = PatternCache::Instance().Get(regexp, RegexpPattern(syntax));
+  if (!acceptor->ok()) {
+    query = {.kind = GramQuery::Kind::None};
+    return;
+  }
+  auto& ngram = analyzer.ngram();
+  query = ExtractGramQuery(regexp, syntax, ngram.min_gram(),
+                           analysis::WildcardTokenizer::kBoundary);
+  matcher = std::make_shared<const WildcardNGramMatcher>(regexp, syntax,
+                                                         std::move(acceptor));
+  ValueAnalyzer value_analyzer;
+  ValueTokens tokens;
+  SplitLiterals(query, ngram, value_analyzer, tokens, grams);
 }
 
 }  // namespace irs

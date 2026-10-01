@@ -11,7 +11,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 | :------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------ |
 | [`union.tag`](#uniontag)                                 | Dot notation serves as an alias for `union_extract`.                                                                |
 | [`union_extract(union, 'tag')`](#union_extractunion-tag) | Extract the value with the named tags from the union. `NULL` if the tag is not currently selected.                  |
-| [`union_value(tag := any)`](#union_valuetag-any)         | Create a single member `UNION` containing the argument value. The tag of the value will be the bound variable name. |
+| [`union_value(tag := any)`](#union_valuetag--any)        | Create a single member `UNION` containing the argument value. The tag of the value will be the bound variable name. |
 | [`union_tag(union)`](#union_tagunion)                    | Retrieve the currently selected tag of the union as an [Enum](../../sql/data_types/enum.md).                        |
 
 #### `union.tag`
@@ -26,7 +26,7 @@ Extract the value with the named tags from the union. `NULL` if the tag is not c
 
 <SqlLogicTest id="sql/functions/union/union_extract" />
 
-#### `union_value(tag := any)` {#union_valuetag-any}
+#### `union_value(tag := any)`
 
 <div className="docs-table-properties">
 

@@ -69,7 +69,7 @@ Each branch alone returns one document. Fused, both surface — and a document m
 
 ## Tuning
 
-### `k` — top-rank weight {#k-top-rank-weight}
+### `k` — top-rank weight
 
 `k = 60` is the published default and works well out of the box. Lower `k` widens the gap between top ranks; higher `k` flattens the curve so that the *set* of candidates matters more than the order within each branch.
 
@@ -79,7 +79,7 @@ Each branch alone returns one document. Fused, both surface — and a document m
 | `60` | 0.0164 | 0.0143 | 1.15× |
 | `200` | 0.00498 | 0.00476 | 1.05× |
 
-### Window size — per-branch `LIMIT` {#window-size-per-branch-limit}
+### Window size — per-branch `LIMIT`
 
 Each branch's `LIMIT N` is the **window**: only the top `N` results per branch contribute. A document outside every branch's window scores 0.
 

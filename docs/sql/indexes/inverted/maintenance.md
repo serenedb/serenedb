@@ -49,7 +49,7 @@ Compaction is on by default, for inverted indexes and search tables alike: every
 
 The session settings of the same names hold the defaults a new index or search table takes.
 
-- **Disable** background compaction with `compaction_interval = 0`, in `WITH` at creation or later with `ALTER INDEX … SET` for an index and [`ALTER TABLE … SET`](../../statements/alter_table/index.md#set-reset-storage-options) for a search table. Segments are then merged only when you ask for it.
+- **Disable** background compaction with `compaction_interval = 0`, in `WITH` at creation or later with `ALTER INDEX … SET` for an index and [`ALTER TABLE … SET`](../../statements/alter_table/index.md#set--reset-storage-options) for a search table. Segments are then merged only when you ask for it.
 - **Enable** it again, or change how often it runs, the same way with a non-zero interval. `RESET (compaction_interval)` returns to the session default. The change applies to the running background task at once.
 - **Compact manually** at any time, whether background compaction is enabled or not, with `VACUUM (COMPACT_INDEX)` or `VACUUM (COMPACT_TABLE)` — see [below](#manual-maintenance-with-vacuum).
 

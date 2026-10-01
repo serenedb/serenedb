@@ -19,7 +19,7 @@ Alternatively, you can omit the `read_parquet` function and let SereneDB infer t
 
 <SqlLogicTest id="cookbook/file_formats/parquet_import/example_002" />
 
-To create a new table using the result from a query, use the [`CREATE TABLE ... AS SELECT` statement](../../sql/statements/create_table/index.md#create-table-as-select-ctas):
+To create a new table using the result from a query, use the [`CREATE TABLE ... AS SELECT` statement](../../sql/statements/create_table/index.md#create-table--as-select-ctas):
 
 <SqlLogicTest id="cookbook/file_formats/parquet_import/example_003" />
 

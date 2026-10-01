@@ -14,7 +14,7 @@ This section describes functions and operators for examining and manipulating [`
 
 | Function                                           | Description                                                                                                                                                                                                                             |
 | :------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| <a href="#arg1-arg2"><code>arg1 &#124;&#124; arg2</code></a> | Concatenates two strings, lists, or blobs. Any `NULL` input results in `NULL`. See also [`concat(arg1, arg2, ...)`](../../sql/functions/text.md#concatvalue) and [`list_concat(list1, list2, ...)`](../../sql/functions/list.md#list_concatlist_1-list_n). |
+| <a href="#arg1--arg2"><code>arg1 &#124;&#124; arg2</code></a> | Concatenates two strings, lists, or blobs. Any `NULL` input results in `NULL`. See also [`concat(arg1, arg2, ...)`](../../sql/functions/text.md#concatvalue-) and [`list_concat(list1, list2, ...)`](../../sql/functions/list.md#list_concatlist_1--list_n). |
 | [`base64(blob)`](#to_base64blob)                   | Alias for `to_base64`.                                                                                                                                                                                                                  |
 | [`decode(blob[, on_error])`](#decodeblob-on_error) | Converts `blob` to `VARCHAR`. The optional `on_error` parameter controls handling of invalid UTF-8: `'strict'` (default, throws error), `'replace'` (replaces invalid characters with `?`), or `'ignore'` (removes invalid characters). |
 | [`encode(string)`](#encodestring)                  | Converts the `string` to `BLOB`. Converts UTF-8 characters into literal encoding.                                                                                                                                                       |
@@ -36,9 +36,9 @@ This section describes functions and operators for examining and manipulating [`
 
 <!-- markdownlint-enable MD056 -->
 
-#### `arg1 || arg2` {#arg1-arg2}
+#### `arg1 || arg2`
 
-Concatenates two strings, lists, or blobs. Any `NULL` input results in `NULL`. See also [`concat(arg1, arg2, ...)`](../../sql/functions/text.md#concatvalue) and [`list_concat(list1, list2, ...)`](../../sql/functions/list.md#list_concatlist_1-list_n).
+Concatenates two strings, lists, or blobs. Any `NULL` input results in `NULL`. See also [`concat(arg1, arg2, ...)`](../../sql/functions/text.md#concatvalue-) and [`list_concat(list1, list2, ...)`](../../sql/functions/list.md#list_concatlist_1--list_n).
 
 <SqlLogicTest id="sql/functions/blob/string_concat_op" />
 

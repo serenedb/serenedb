@@ -27,7 +27,7 @@ Use SereneDB applications, or connect with any PostgreSQL-compatible client or d
 | Rust | tokio-postgres | 0.7.12 | Full | [Guide](./rust.md) |
 | R | RPostgres | 1.4.7 | Full | [Guide](./r.md) |
 
-## Frameworks & Integrations {#frameworks-integrations}
+## Frameworks & Integrations
 
 | Framework | Package | Purpose | Guide |
 |---|---|---|---|

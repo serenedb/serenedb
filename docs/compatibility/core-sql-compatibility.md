@@ -14,7 +14,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 
 ## Data Definition
 
-### Table Creation & Deletion {#table-creation-deletion}
+### Table Creation & Deletion
 | Feature                 | Support State | Details                                                      |
 |-------------------------|---------------|--------------------------------------------------------------|
 | CREATE TABLE            | Yes           |   |
@@ -180,7 +180,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | uuid                                              | Yes           |       |
 | xml                                               | No            |                          |
 
-### Operators & Functions {#operators-functions}
+### Operators & Functions
 
 #### Logical
 | Feature | Support State | Details |
@@ -833,7 +833,7 @@ On an attached PostgreSQL, the same division by zero raises an error instead (op
 
 <SqlLogicTest id="compatibility/postgresql_comparisons_pgscan/example_006" />
 
-### Integer Division Operator (`//`) {#integer-division-operator}
+### Integer Division Operator (`//`)
 
 Integer division itself behaves exactly like PostgreSQL: when both operands are integers, `/` performs integer division, so both engines return `0` here:
 
@@ -900,7 +900,7 @@ Note that the use of `==` is not encouraged due to its limited portability.
 
 In PostgreSQL, the `VACUUM` statement garbage collects tables and analyzes tables.
 In SereneDB, the [`VACUUM` statement](../sql/statements/vacuum/index.md) is only used to rebuild statistics.
-To reclaim space, use the `CHECKPOINT` statement or compact the database by creating a fresh copy with the [`COPY FROM DATABASE` statement](../sql/statements/copy/index.md#copy-from-database-to).
+To reclaim space, use the `CHECKPOINT` statement or compact the database by creating a fresh copy with the [`COPY FROM DATABASE` statement](../sql/statements/copy/index.md#copy-from-database--to).
 
 ### Strings
 

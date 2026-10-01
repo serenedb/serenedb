@@ -47,25 +47,25 @@ The table below shows the same idea from both directions, plus capture-group ext
 | extract | `[A-Z][A-Za-z0-9]{2,}` | `0` | `The Quick Brown fox jumps over Lazy Dog` | `The`, `Quick`, `Brown`, `Lazy`, `Dog` |
 | extract | `([a-zA-Z]+)(\d+)` | `2` | `abc123def456ghi` | `123`, `456` |
 
-### Extract every capitalized word (`GROUP = 0`) {#extract-every-capitalized-word-group-0}
+### Extract every capitalized word (`GROUP = 0`)
 
 Each whole match becomes a token; the lowercase `fox`, `jumps` and `over` are not matched and so are dropped:
 
 <SqlLogicTest id="sql/functions/search/tokenizers/split_by_pattern/example_001" />
 
-### Split on runs of whitespace (`GROUP = -1`) {#split-on-runs-of-whitespace-group-1}
+### Split on runs of whitespace (`GROUP = -1`)
 
 Here the pattern `\s+` marks the separators and the runs of text between them are emitted:
 
 <SqlLogicTest id="sql/functions/search/tokenizers/split_by_pattern/example_002" />
 
-### Split an identifier on several delimiters (`GROUP = -1`) {#split-an-identifier-on-several-delimiters-group-1}
+### Split an identifier on several delimiters (`GROUP = -1`)
 
 A character class splits on `-`, `_` or `.` in a single pass — something the one fixed delimiter of `split_text_csv` cannot do:
 
 <SqlLogicTest id="sql/functions/search/tokenizers/split_by_pattern/example_003" />
 
-### Keep only a capture group (`GROUP = 2`) {#keep-only-a-capture-group-group-2}
+### Keep only a capture group (`GROUP = 2`)
 
 With `GROUP = 2` each match emits just its second capture group — the trailing digits:
 

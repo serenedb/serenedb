@@ -53,7 +53,7 @@ the next value of that sequence.
 
 Implicit and explicit typecasting is possible between numerous types, see the [Typecasting](../../sql/data_types/typecasting.md) page for details.
 
-## Nested / Composite Types {#nested-composite-types}
+## Nested / Composite Types
 
 SereneDB supports five nested data types: `ARRAY`, `LIST`, `MAP`, `STRUCT` and `UNION`. Each supports different use cases and has a different structure.
 

@@ -74,7 +74,7 @@ In general, casting to `VARCHAR` is a lossless operation and most scalar types c
 
 Integer literals (such as `42`) and string literals (such as `'string'`) have special implicit casting rules. See the [literal types page](./literal_types.md) for more information.
 
-### Lists / Arrays {#lists-arrays}
+### Lists / Arrays
 
 Lists can be explicitly cast to other lists using the same casting rules. The cast is applied to the children of the list. For example, if we convert an `INTEGER[]` list to a `VARCHAR[]` list, the child `INTEGER` elements are individually cast to `VARCHAR` and a new list is constructed.
 

@@ -24,7 +24,7 @@ All [`LIST` functions](../../sql/functions/list.md) work with the [`ARRAY` data 
 | [`array_inner_product(array1, array2)`](#array_inner_productarray1-array2)                   | Computes the inner product between two arrays of the same size. The array elements cannot be `NULL`. The arrays can have any size as long as the size is the same for both arguments.          |
 | [`array_negative_dot_product(array1, array2)`](#array_negative_inner_productarray1-array2)   | Alias for `array_negative_inner_product`.                                                                                                                                                      |
 | [`array_negative_inner_product(array1, array2)`](#array_negative_inner_productarray1-array2) | Computes the negative inner product between two arrays of the same size. The array elements cannot be `NULL`. The arrays can have any size as long as the size is the same for both arguments. |
-| [`array_value(arg, ...)`](#array_valuearg)                                                   | Creates an `ARRAY` containing the argument values.                                                                                                                                             |
+| [`array_value(arg, ...)`](#array_valuearg-)                                                  | Creates an `ARRAY` containing the argument values.                                                                                                                                             |
 
 <!-- markdownlint-enable MD056 -->
 
@@ -64,7 +64,7 @@ Computes the negative inner product between two arrays of the same size. The arr
 
 <SqlLogicTest id="sql/functions/array/array_negative_inner_product" />
 
-#### `array_value(arg, ...)` {#array_valuearg}
+#### `array_value(arg, ...)`
 
 Creates an `ARRAY` containing the argument values.
 

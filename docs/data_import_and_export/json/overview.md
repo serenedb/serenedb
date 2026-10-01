@@ -60,7 +60,7 @@ Read a JSON file into a table:
 
 <SqlLogicTest id="data_import_and_export/json/overview/example_003" />
 
-Alternatively, create a table without specifying the schema manually with a [`CREATE TABLE ... AS SELECT` clause](../../sql/statements/create_table/index.md#create-table-as-select-ctas):
+Alternatively, create a table without specifying the schema manually with a [`CREATE TABLE ... AS SELECT` clause](../../sql/statements/create_table/index.md#create-table--as-select-ctas):
 
 <SqlLogicTest id="data_import_and_export/json/overview/example_004" />
 

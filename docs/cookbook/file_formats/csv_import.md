@@ -19,7 +19,7 @@ Alternatively, you can omit the `read_csv` function and let SereneDB infer the f
 
 <SqlLogicTest id="cookbook/file_formats/csv_import/example_002" />
 
-To create a new table using the result from a query, use [`CREATE TABLE ... AS SELECT` statement](../../sql/statements/create_table/index.md#create-table-as-select-ctas):
+To create a new table using the result from a query, use [`CREATE TABLE ... AS SELECT` statement](../../sql/statements/create_table/index.md#create-table--as-select-ctas):
 
 <SqlLogicTest id="cookbook/file_formats/csv_import/example_003" />
 

@@ -13,7 +13,7 @@ Supported collections on the RHS are tuples, lists, maps and subqueries that ret
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram" />
 
-## `IN (val1, val2, ...)` (Tuple) {#in-val1-val2-tuple}
+## `IN (val1, val2, ...)` (Tuple)
 
 The `IN` operator on a tuple `(val1, val2, ...)` returns `true` if the expression is present in the RHS, `false` if the expression is not in the RHS and the RHS has no `NULL` values, or `NULL` if the expression is not in the RHS and the RHS has `NULL` values.
 
@@ -25,10 +25,10 @@ The `IN` operator on a tuple `(val1, val2, ...)` returns `true` if the expressio
 
 <SqlLogicTest id="sql/expressions/in/index/example_004" />
 
-## `IN [val1, val2, ...]` (List) {#in-val1-val2-list}
+## `IN [val1, val2, ...]` (List)
 
 The `IN` operator works on lists according to the semantics used in Python.
-Unlike for the [`IN tuple` operator](#in-val1-val2-tuple), the presence of `NULL` values on the right hand side of the expression does not make a difference in the result:
+Unlike for the [`IN tuple` operator](#in-val1-val2--tuple), the presence of `NULL` values on the right hand side of the expression does not make a difference in the result:
 
 <SqlLogicTest id="sql/expressions/in/index/example_005" />
 

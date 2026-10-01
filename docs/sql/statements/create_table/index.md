@@ -78,7 +78,7 @@ Create a table with two integer columns (`i` and `j`) only if `t1` does not exis
 
 <SqlLogicTest id="sql/statements/create_table/index/example_012" />
 
-## `CREATE TABLE ... AS SELECT` (CTAS) {#create-table-as-select-ctas}
+## `CREATE TABLE ... AS SELECT` (CTAS)
 
 SereneDB supports the `CREATE TABLE ... AS SELECT` syntax, also known as “CTAS”:
 

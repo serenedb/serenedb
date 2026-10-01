@@ -46,12 +46,12 @@ The `ifnull` function is a two-argument version of `coalesce`.
 
 <SqlLogicTest id="sql/data_types/nulls/example_010" />
 
-## `NULL` and `AND` / `OR` {#null-and-and-or}
+## `NULL` and `AND` / `OR`
 
 `NULL` values have special behavior when used with `AND` and `OR`.
 For details, see the [Boolean Type documentation](../../sql/data_types/boolean.md).
 
-## `NULL` and `IN` / `NOT IN` {#null-and-in-not-in}
+## `NULL` and `IN` / `NOT IN`
 
 The behavior of `... IN ⟨something with a NULL⟩` is different from `... IN ⟨something with no NULLs⟩`.
 For details, see the [`IN` documentation](../../sql/expressions/in/index.md).

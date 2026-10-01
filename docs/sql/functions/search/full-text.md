@@ -25,9 +25,9 @@ The [`@@`](#match-operator) match operator and the [`TSQUERY`](../../data_types/
 
 | Function | Description |
 | :--- | :--- |
-| [`column @@ tsquery`](#column-tsquery) | Match predicate: rows where the indexed `column` satisfies the query. |
+| [`column @@ tsquery`](#column--tsquery) | Match predicate: rows where the indexed `column` satisfies the query. |
 
-#### `column @@ tsquery` {#column-tsquery}
+#### `column @@ tsquery` {#column--tsquery}
 
 Filters to rows where the indexed `column` satisfies a [`TSQUERY`](../../data_types/tsquery.md).
 
@@ -373,7 +373,7 @@ AND over a list of sub-queries — every element must match.
 | :--- | :--- | :--- | :--- |
 | `list` | `LIST(TSQUERY)` (bare strings allowed) | — | The conjuncts. A row matches only when it satisfies *all* of them. |
 
-**How it works.** `ts_all` is the conjunction (`AND`) of every element — equivalent to chaining the elements with [`&&`](#a-b-and), or to `ts_any(list, len(list))`. Use it to require that several tokens or sub-queries all appear in the same row. Over [`ts_tokenize`](#ts_tokenize) the synonyms of one word are alternatives: any one of them satisfies that word.
+**How it works.** `ts_all` is the conjunction (`AND`) of every element — equivalent to chaining the elements with [`&&`](#a--b-and), or to `ts_any(list, len(list))`. Use it to require that several tokens or sub-queries all appear in the same row. Over [`ts_tokenize`](#ts_tokenize) the synonyms of one word are alternatives: any one of them satisfies that word.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -394,7 +394,7 @@ Boolean query combining required, forbidden and optional clauses in one call —
 | `should` | `TSQUERY`, `LIST(TSQUERY)` or `NULL` | — | Optional clauses; at least `min_should_match` of them must match. `NULL` is an empty bucket. |
 | `min_should_match` | `INTEGER` | `1` | How many `should` clauses are required. Must be between `1` and the number of `should` clauses; supplying it with no `should` clauses is an error. |
 
-**How it works.** `ts_compound` mirrors Elasticsearch's [`bool`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-bool-query.html) query: `must` ≈ `AND`, `must_not` ≈ negation, `should` ≈ a tunable `OR`. A row matches when every `must` clause matches, no `must_not` clause matches, and at least `min_should_match` of the `should` clauses match. Each bucket accepts a single `TSQUERY`, a list of them, or `NULL` for "no clauses here". This packs the work of [`&&`](#a-b-and), [`!!`](#a-not) and [`ts_any`](#ts_any) into one expression.
+**How it works.** `ts_compound` mirrors Elasticsearch's [`bool`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-bool-query.html) query: `must` ≈ `AND`, `must_not` ≈ negation, `should` ≈ a tunable `OR`. A row matches when every `must` clause matches, no `must_not` clause matches, and at least `min_should_match` of the `should` clauses match. Each bucket accepts a single `TSQUERY`, a list of them, or `NULL` for "no clauses here". This packs the work of [`&&`](#a--b-and), [`!!`](#-a-not) and [`ts_any`](#ts_any) into one expression.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -412,13 +412,13 @@ Tighten the `should` bucket with `min_should_match` — require a fox row that a
 
 | Operator | Description |
 | :--- | :--- |
-| [`a \|\| b`](#a-b-or) | OR — match either sub-query. |
-| [`a && b`](#a-b-and) | AND — match both sub-queries. |
-| [`!! a`](#a-not) | NOT — exclude matches of `a` (within a conjunction). |
-| [`a ## b`](#a-b-phrase) | Phrase adjacency, with optional gap or gap range. |
-| [`a ^ factor`](#a-factor-boost) | Boost `a`'s contribution to the relevance score. |
+| [`a \|\| b`](#a--b-or) | OR — match either sub-query. |
+| [`a && b`](#a--b-and) | AND — match both sub-queries. |
+| [`!! a`](#-a-not) | NOT — exclude matches of `a` (within a conjunction). |
+| [`a ## b`](#a--b-phrase) | Phrase adjacency, with optional gap or gap range. |
+| [`a ^ factor`](#a--factor-boost) | Boost `a`'s contribution to the relevance score. |
 
-#### `a || b` {#a-b-or}
+#### `a || b` {#a--b-or}
 
 Disjunction (`OR`) of two sub-queries.
 
@@ -435,7 +435,7 @@ Disjunction (`OR`) of two sub-queries.
 
 <SqlLogicTest id="sql/functions/full_text_search/a--b-or" />
 
-#### `a && b` {#a-b-and}
+#### `a && b` {#a--b-and}
 
 Conjunction (`AND`) of two sub-queries.
 
@@ -443,7 +443,7 @@ Conjunction (`AND`) of two sub-queries.
 | :--- | :--- | :--- |
 | `a`, `b` | `TSQUERY` | Sub-queries. A row matches only when *both* match. |
 
-**How it works.** `&&` matches only rows satisfying both operands — the pairwise form of [`ts_all`](#ts_all). It pairs naturally with [`!!`](#a-not) to express "has X but not Y".
+**How it works.** `&&` matches only rows satisfying both operands — the pairwise form of [`ts_all`](#ts_all). It pairs naturally with [`!!`](#-a-not) to express "has X but not Y".
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -452,7 +452,7 @@ Conjunction (`AND`) of two sub-queries.
 
 <SqlLogicTest id="sql/functions/full_text_search/a--b-and" />
 
-#### `!! a` {#a-not}
+#### `!! a` {#-a-not}
 
 Unary negation (`NOT`) — excludes the matches of `a`.
 
@@ -460,7 +460,7 @@ Unary negation (`NOT`) — excludes the matches of `a`.
 | :--- | :--- | :--- |
 | `a` | `TSQUERY` | The sub-query to negate. |
 
-**How it works.** `!!a` is a hard exclusion (Elasticsearch `must_not`): it removes rows that match `a`. It is meaningful only inside a conjunction — `something && !!a` means "matches `something` but not `a`". A standalone negation has no positive clause to filter, so always combine it. SereneDB has no *soft* down-weighting query (Elasticsearch's `boosting` with a `negative_boost`); use [`^`](#a-factor-boost) to raise a positive clause instead.
+**How it works.** `!!a` is a hard exclusion (Elasticsearch `must_not`): it removes rows that match `a`. It is meaningful only inside a conjunction — `something && !!a` means "matches `something` but not `a`". A standalone negation has no positive clause to filter, so always combine it. SereneDB has no *soft* down-weighting query (Elasticsearch's `boosting` with a `negative_boost`); use [`^`](#a--factor-boost) to raise a positive clause instead.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -469,7 +469,7 @@ Unary negation (`NOT`) — excludes the matches of `a`.
 
 <SqlLogicTest id="sql/functions/full_text_search/-a-not" />
 
-#### `a ## b` {#a-b-phrase}
+#### `a ## b` {#a--b-phrase}
 
 Ordered proximity: require the sub-queries to appear close together, in order.
 
@@ -495,7 +495,7 @@ The integer in `##` counts the tokens *between* the operands (`0` = adjacent). T
 
 <SqlLogicTest id="sql/functions/full_text_search/a--b-phrase" />
 
-#### `a ^ factor` {#a-factor-boost}
+#### `a ^ factor` {#a--factor-boost}
 
 Boost: scale a sub-query's contribution to the relevance score.
 
@@ -645,7 +645,7 @@ Function form of a two-term proximity phrase, using PostgreSQL's distance conven
 | `b` | `TSQUERY` | — | Second (right) sub-query, required to follow `a`. |
 | `distance` | `INTEGER` | `1` (adjacent) | Number of lexemes between the start of `a` and the start of `b`, PostgreSQL-style: `1` means **adjacent**, `2` means one token in between. Must be `≥ 1`. |
 
-**How it works.** `tsquery_phrase` is the function spelling of an ordered proximity phrase, matching PostgreSQL's `<N>` / `tsquery_phrase` semantics where `distance = 1` is adjacency. This is the **opposite** counting convention from the [`##`](#a-b-phrase) operator, where the integer counts the tokens *between* the operands (`0` = adjacent). Pick whichever reads more clearly — they target the same positions.
+**How it works.** `tsquery_phrase` is the function spelling of an ordered proximity phrase, matching PostgreSQL's `<N>` / `tsquery_phrase` semantics where `distance = 1` is adjacency. This is the **opposite** counting convention from the [`##`](#a--b-phrase) operator, where the integer counts the tokens *between* the operands (`0` = adjacent). Pick whichever reads more clearly — they target the same positions.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -843,7 +843,7 @@ The functions on this page cover most of the Elasticsearch / OpenSearch query DS
 | [`fuzzy`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-fuzzy-query.html) | [`ts_levenshtein`](#ts_levenshtein) |
 | [`range`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-range-query.html) | [`ts_between`](#ts_between), [`ts_lt`](#ts_lt)/[`ts_le`](#ts_le)/[`ts_gt`](#ts_gt)/[`ts_ge`](#ts_ge) |
 | [`exists`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-exists-query.html) | Plain SQL [`IS NOT NULL` / `IS NULL`](#is-null) — the index claims both on indexed columns. |
-| [`bool`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-bool-query.html) (`must`/`must_not`/`should`) | [`ts_compound`](#ts_compound), or [`&&`](#a-b-and)/[`!!`](#a-not)/[`ts_any`](#ts_any) |
+| [`bool`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-bool-query.html) (`must`/`must_not`/`should`) | [`ts_compound`](#ts_compound), or [`&&`](#a--b-and)/[`!!`](#-a-not)/[`ts_any`](#ts_any) |
 | [`query_string`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-query-string-query.html) / [`simple_query_string`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-simple-query-string-query.html) | [`to_tsquery`](#to_tsquery) (strict), [`websearch_to_tsquery`](#websearch_to_tsquery) (lenient) |
 
 ### Notable differences
@@ -857,7 +857,7 @@ Elasticsearch features without a direct SereneDB equivalent, and what to use ins
 | `max_expansions` (fuzzy / prefix expansion cap) | fuzzy: [`sdb_levenshtein_max_terms`](../../indexes/inverted/maintenance.md#session-settings) (session-level, per segment, default `50`); prefix: no cap |
 | [`multi_match`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-multi-match-query.html) / `combined_fields` / `field:term` scoping | `tableoid @@` [`to_tsquery`](#to_tsquery) with `field:term` prefixes, or one `@@` per column combined with `OR` |
 | [`constant_score`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-constant-score-query.html) | none; `ORDER BY` a literal, or `raw_boost` (see [Ranking](../../indexes/inverted/ranking.md)) |
-| [`boosting`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-boosting-query.html) (`negative_boost`) | none; raise a clause with [`^`](#a-factor-boost) or exclude with [`!!`](#a-not) |
+| [`boosting`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-boosting-query.html) (`negative_boost`) | none; raise a clause with [`^`](#a--factor-boost) or exclude with [`!!`](#-a-not) |
 | [`match_phrase_prefix`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-match-query-phrase-prefix.html) / `match_bool_prefix` | combine [`ts_phrase`](#ts_phrase) with [`ts_starts_with`](#ts_starts_with) |
 | [`more_like_this`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-mlt-query.html) | none; use [`minhash`](#minhash) signatures or vector similarity ([Vector Search](../../indexes/inverted/vector-search.md)) |
 

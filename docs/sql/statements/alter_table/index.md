@@ -158,13 +158,13 @@ For example:
 
 <SqlLogicTest id="sql/statements/alter_table/struct_insert/example_024" />
 
-#### `ALTER TABLE` with `ADD COLUMN` / `DROP COLUMN` / `RENAME COLUMN` {#alter-table-with-add-column-drop-column-rename-column}
+#### `ALTER TABLE` with `ADD COLUMN` / `DROP COLUMN` / `RENAME COLUMN`
 
 SereneDB `ALTER TABLE` supports the
 [`ADD COLUMN`, `DROP COLUMN` and `RENAME COLUMN` clauses](../../data_types/struct.md#updating-the-schema)
 to update the sub-schema of a `STRUCT`.
 
-## `SET` / `DROP DEFAULT` {#set-drop-default}
+## `SET` / `DROP DEFAULT`
 
 The `SET DEFAULT` clause changes the default value of a column:
 
@@ -186,7 +186,7 @@ A primary key can also span multiple columns:
 
 The statement fails if the table already has a primary key, if an index depends on the table or if the existing data would violate the new constraint (duplicate or `NULL` values in the key columns).
 
-## `SET` / `RESET` (Table Options) {#set-reset-table-options}
+## `SET` / `RESET` (Table Options)
 
 <DocCallout type="tip">
 The `SET` and `RESET` table-option clauses are not yet supported in SereneDB.
@@ -220,7 +220,7 @@ The `ADD CONSTRAINT` clause adds a `CHECK`, `UNIQUE` or `PRIMARY KEY` constraint
 
 `FOREIGN KEY` constraints cannot be added with `ADD CONSTRAINT`.
 
-## `SET` / `RESET` storage options {#set-reset-storage-options}
+## `SET` / `RESET` storage options
 
 For a table created with `WITH (storage = 'search')`, `SET (option = value, …)` changes the background maintenance options it was created with, and `RESET (option, …)` returns them to the current session defaults. These options can be changed: `refresh_interval`, `compaction_interval`, `cleanup_interval_step`, `compaction_max_segments`, `compaction_max_segments_bytes` and `compaction_floor_segment_bytes` (see [Background compaction](../../indexes/inverted/maintenance.md#background-compaction)). A change reaches the table's background tasks at once and is undone if its transaction rolls back. `row_group_size`, `segment_memory_max` and `optimize_top_k` are fixed at `CREATE TABLE`. The current values are listed in `pg_class.reloptions`.
 

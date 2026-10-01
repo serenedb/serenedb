@@ -27,7 +27,7 @@ In the following, we introduce the three different syntaxes and illustrate them 
 In our example query, we'll look for people whose name starts with a `B` and are at least 40 years old.
 This will return a single row `<'Bob', 41>`.
 
-### Auto-Incremented Parameters: `?` {#auto-incremented-parameters}
+### Auto-Incremented Parameters: `?`
 
 SereneDB supports using prepared statements with auto-incremented indexing,
 i.e., the position of the parameters in the query corresponds to their position in the execution statement.

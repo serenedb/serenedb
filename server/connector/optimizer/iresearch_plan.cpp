@@ -779,7 +779,8 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
   }
 
   const auto col_type = connector::MakeOffsetsType();
-  const auto offsets_col_name = connector::MakeOffsetsName(target_col_id);
+  const auto offsets_col_name = connector::MakeOffsetsName(
+    found.bind_data->DisplayColumnName(target_col_id));
   if (get_col_idx == duckdb::DConstants::INVALID_INDEX) {
     get_col_idx = AppendVirtualGetColumn(*found.bind_data, *found.get,
                                          connector::kInvertedIndexOffsetsId,

@@ -53,6 +53,12 @@ void PrefetchPostings(const TermReader& reader,
   if (doc == nullptr) {
     return;
   }
+  const auto& largest = terms.front().cookie;
+  if (largest.docs_count <= 1 ||
+      doc->Resident(largest.doc_start,
+                    kPostingBytesPerDoc * largest.docs_count + kPostingSlack)) {
+    return;
+  }
   std::vector<std::pair<uint64_t, uint64_t>> ranges;
   ranges.reserve(terms.size());
   for (const auto& entry : terms) {
@@ -64,9 +70,6 @@ void PrefetchPostings(const TermReader& reader,
                             kPostingSlack);
     }
   }
-  if (ranges.empty()) {
-    return;
-  }
   absl::c_sort(ranges);
   size_t n = 0;
   for (const auto& range : ranges) {
@@ -75,9 +78,6 @@ void PrefetchPostings(const TermReader& reader,
     } else {
       ranges[n++] = range;
     }
-  }
-  if (doc->Resident(ranges[0].first, ranges[0].second - ranges[0].first)) {
-    return;
   }
   uint64_t budget = kMaxPrefetch;
   for (size_t i = 0; i != n && budget != 0; ++i) {

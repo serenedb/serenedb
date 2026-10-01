@@ -330,6 +330,16 @@ TEST(Re2LiteralFinderTest, multi_literal_accel_finds_the_match) {
     "(ab|ba)|(qe|eq)b",
     "\xD0\xBE\xD1\x81(\xD1\x82\xD1\x8C|\xD0\xB5)|ab(a|b)(q|e)",
     "ab|ba|(?i)qe",
+    "(?i)\xD0\xBE\xD1\x81\xD1\x82\xD1\x8C",
+    "(?i)\xD0\xB5\xD0\xBE|ab",
+    "[ab]e|q[ab]",
+    "[ab][\xD0\xBE\xD1\x81]q|(?i)\xD1\x81\xD1\x82",
+    "(?i)ab\xD1\x8C",
+  };
+  constexpr std::string_view kCasedPieces[] = {
+    "a",        "b",        "e",        "q",        " ",        "A",
+    "B",        "\xD0\xBE", "\xD0\x9E", "\xD1\x81", "\xD0\xA1", "\xD1\x82",
+    "\xD0\xA2", "\xD1\x8C", "\xD0\xAC", "\xD0\xB5", "\xD0\x95",
   };
   std::mt19937 rng{1134};
   for (const auto pattern : kPatterns) {
@@ -339,8 +349,8 @@ TEST(Re2LiteralFinderTest, multi_literal_accel_finds_the_match) {
       std::string text;
       for (auto n = std::uniform_int_distribution<size_t>{0, 70}(rng); n != 0;
            --n) {
-        text += kPieces[std::uniform_int_distribution<size_t>{
-          0, std::size(kPieces) - 1}(rng)];
+        text += kCasedPieces[std::uniform_int_distribution<size_t>{
+          0, std::size(kCasedPieces) - 1}(rng)];
       }
       ASSERT_NO_FATAL_FAILURE(ExpectLeftmostMatch(re, text));
     }

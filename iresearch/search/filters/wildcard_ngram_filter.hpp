@@ -59,7 +59,8 @@ class WildcardNGramMatcher {
 
   bool Match(bytes_view term) const {
     if (const auto* like = std::get_if<Like>(&_impl)) {
-      return re2::RE2::PartialMatch(ViewCast<char>(term), like->re);
+      return like->re.Match(ViewCast<char>(term), 0, term.size(),
+                            re2::RE2::ANCHOR_BOTH, nullptr, 0);
     }
     return MatchRegexp(term);
   }

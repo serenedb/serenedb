@@ -22,11 +22,14 @@
 
 #include <absl/algorithm/container.h>
 #include <re2/byte_set_finder.h>
+#include <re2/multi_literal_finder.h>
 
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <cstring>
+#include <optional>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -311,6 +314,10 @@ struct MultiStringFinder {
 
   explicit MultiStringFinder(std::vector<bstring>&& delimiters)
     : first{FirstBytes(delimiters)} {
+    prefixes.reserve(delimiters.size());
+    masks.reserve(delimiters.size());
+    sizes.reserve(delimiters.size());
+    delims.reserve(delimiters.size());
     for (auto& d : delimiters) {
       const size_t head = std::min(d.size(), kPrefix);
       std::array<byte_type, kPrefix> ones{};
@@ -356,10 +363,17 @@ struct MultiStringFinder {
   template<typename OnDelim>
   IRS_FORCE_INLINE void ForEachDelim(bytes_view data,
                                      OnDelim&& on_delim) const {
-    const auto* p = data.data();
-    const size_t size = data.size();
+    ForEachDelimUntil<0>(data.data(), data.size(), on_delim,
+                         [](size_t) IRS_FORCE_INLINE {});
+  }
+
+  template<size_t kMisses, typename OnDelim, typename OnMisses>
+  IRS_FORCE_INLINE void ForEachDelimUntil(const byte_type* p, size_t size,
+                                          OnDelim& on_delim,
+                                          OnMisses&& on_misses) const {
     size_t pos = 0;
     if (first.Blockable() && size >= classify::kClassifyBlock) {
+      [[maybe_unused]] size_t misses = 0;
       for (;;) {
         const size_t base = std::min(pos, size - classify::kClassifyBlock);
         auto mask = first.Classify(p + base) & (~uint32_t{0} << (pos - base));
@@ -368,6 +382,12 @@ struct MultiStringFinder {
           const size_t at = base + std::countr_zero(mask);
           const size_t skip = MatchAt(p + at, size - at);
           if (skip == 0) {
+            if constexpr (kMisses != 0) {
+              if (++misses == kMisses) {
+                on_misses(at + 1);
+                return;
+              }
+            }
             mask &= mask - 1;
             continue;
           }
@@ -404,9 +424,54 @@ struct MultiStringFinder {
   ManyCharsFinder first;
 };
 
-using Finder = std::variant<std::monostate, NoDelimFinder, OneCharFinder,
-                            ManyCharsFinder, ByteRangesFinder, OneStringFinder,
-                            OneLongStringFinder, MultiStringFinder>;
+struct FingerprintedStringFinder {
+  static constexpr size_t kMissesToFingerprint = 2;
+
+  template<typename OnDelim>
+  IRS_FORCE_INLINE void ForEachDelim(bytes_view data,
+                                     OnDelim&& on_delim) const {
+    const auto* p = data.data();
+    const size_t size = data.size();
+    strings.ForEachDelimUntil<kMissesToFingerprint>(
+      p, size, on_delim, [&](size_t pos) IRS_FORCE_INLINE {
+        const auto* begin = reinterpret_cast<const char*>(p);
+        Fingerprint().ForEachCandidate(
+          begin + pos, begin + size,
+          [&](const char* candidate) IRS_FORCE_INLINE {
+            const auto at = static_cast<size_t>(candidate - begin);
+            const size_t skip = strings.MatchAt(p + at, size - at);
+            if (skip == 0) {
+              return candidate + 1;
+            }
+            on_delim(at, skip);
+            return candidate + skip;
+          });
+      });
+  }
+
+  const re2::MultiLiteralFinder& Fingerprint() const {
+    if (!finder) [[unlikely]] {
+      BuildFingerprint();
+    }
+    return *finder;
+  }
+
+  IRS_NO_INLINE void BuildFingerprint() const {
+    finder.emplace().Build(strings.delims.size(), [&](size_t i) {
+      const auto& d = strings.delims[i];
+      return std::string_view{reinterpret_cast<const char*>(d.data()),
+                              d.size()};
+    });
+  }
+
+  MultiStringFinder strings;
+  mutable std::optional<re2::MultiLiteralFinder> finder{};
+};
+
+using Finder =
+  std::variant<std::monostate, NoDelimFinder, OneCharFinder, ManyCharsFinder,
+               ByteRangesFinder, OneStringFinder, OneLongStringFinder,
+               MultiStringFinder, FingerprintedStringFinder>;
 
 inline Finder FinderFor(bstring&& delimiter) {
   if (delimiter.size() == 1) {
@@ -446,7 +511,13 @@ inline Finder FinderFor(std::vector<bstring>&& delimiters) {
   if (delimiters.size() == 1) {
     return FinderFor(std::move(delimiters[0]));
   }
-  return MultiStringFinder{std::move(delimiters)};
+  MultiStringFinder strings{std::move(delimiters)};
+  if (strings.delims.size() <= re2::MultiLiteralFinder::kMaxLiterals &&
+      absl::c_all_of(strings.delims,
+                     [](const auto& delim) { return delim.size() > 1; })) {
+    return FingerprintedStringFinder{std::move(strings)};
+  }
+  return strings;
 }
 
 }  // namespace irs::analysis::delim

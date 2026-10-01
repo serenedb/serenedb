@@ -21,11 +21,14 @@
 #include <gtest/gtest.h>
 #include <re2/byte_set_finder.h>
 #include <re2/literal_finder.h>
+#include <re2/multi_literal_finder.h>
 #include <re2/re2.h>
 
+#include <algorithm>
 #include <random>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "tests_shared.hpp"
 
@@ -146,6 +149,100 @@ TEST(Re2LiteralFinderTest, byte_set_find_is_scan) {
   }
 }
 
+TEST(Re2LiteralFinderTest, multi_literal_find_is_leftmost_find) {
+  std::mt19937 rng{20260930};
+  for (size_t round = 0; round != 3000; ++round) {
+    std::vector<std::string> literals;
+    for (auto n = 1 + rng() % (round % 3 == 0 ? 70 : 8); n != 0; --n) {
+      auto literal = RandomBytes(rng, 6);
+      if (literal.empty()) {
+        literal = "ab";
+      }
+      literals.push_back(std::move(literal));
+    }
+    re2::MultiLiteralFinder finder;
+    if (!finder.Build(literals.size(), [&](size_t i) -> std::string_view {
+          return literals[i];
+        })) {
+      ASSERT_GT(literals.size(), re2::MultiLiteralFinder::kMaxLiterals);
+      continue;
+    }
+    auto text = RandomBytes(rng, 100);
+    for (auto n = rng() % 4; n != 0; --n) {
+      text = Plant(rng, text, literals[rng() % literals.size()]);
+    }
+    const std::string_view view{text};
+    const char* end = text.data() + text.size();
+    for (size_t from = 0; from <= text.size(); ++from) {
+      auto expected = std::string_view::npos;
+      for (const auto& literal : literals) {
+        expected = std::min(expected, view.find(literal, from));
+      }
+      const char* found = finder.Find(text.data() + from, end);
+      ASSERT_EQ(expected, found == nullptr
+                            ? std::string_view::npos
+                            : static_cast<size_t>(found - text.data()))
+        << "round " << round << " from " << from << " literals "
+        << literals.size() << " text size " << text.size();
+    }
+  }
+}
+
+TEST(Re2LiteralFinderTest, multi_literal_candidates_split_like_a_scan) {
+  std::mt19937 rng{1286};
+  for (size_t round = 0; round != 3000; ++round) {
+    std::vector<std::string> literals;
+    for (auto n = 1 + rng() % 12; n != 0; --n) {
+      auto literal = RandomBytes(rng, 4);
+      if (literal.empty()) {
+        literal = "ba";
+      }
+      literals.push_back(std::move(literal));
+    }
+    re2::MultiLiteralFinder finder;
+    ASSERT_TRUE(
+      finder.Build(literals.size(),
+                   [&](size_t i) -> std::string_view { return literals[i]; }));
+    auto text = RandomBytes(rng, 120);
+    for (auto n = rng() % 6; n != 0; --n) {
+      text = Plant(rng, text, literals[rng() % literals.size()]);
+    }
+    const std::string_view view{text};
+    const auto match_at = [&](size_t at) -> size_t {
+      for (const auto& literal : literals) {
+        if (view.substr(at).starts_with(literal)) {
+          return literal.size();
+        }
+      }
+      return 0;
+    };
+    std::vector<std::pair<size_t, size_t>> expected;
+    for (size_t at = 0; at < text.size();) {
+      const auto size = match_at(at);
+      if (size == 0) {
+        ++at;
+        continue;
+      }
+      expected.emplace_back(at, size);
+      at += size;
+    }
+    std::vector<std::pair<size_t, size_t>> actual;
+    finder.ForEachCandidate(
+      text.data(), text.data() + text.size(), [&](const char* candidate) {
+        const auto at = static_cast<size_t>(candidate - text.data());
+        const auto size = match_at(at);
+        if (size == 0) {
+          return candidate + 1;
+        }
+        actual.emplace_back(at, size);
+        return candidate + size;
+      });
+    ASSERT_EQ(expected, actual)
+      << "round " << round << " literals " << literals.size() << " text size "
+      << text.size();
+  }
+}
+
 TEST(Re2LiteralFinderTest, empty_and_single_byte_needles) {
   const std::string text(100, 'x');
   const char* end = text.data() + text.size();
@@ -218,6 +315,35 @@ TEST(Re2LiteralFinderTest, prefix_accel_and_required_literal_find_the_match) {
   for (const auto pattern : kRequired) {
     ASSERT_NO_FATAL_FAILURE(check(std::string{pattern}, "ab"));
     ASSERT_NO_FATAL_FAILURE(check(std::string{pattern}, "\xD0\xBE\xD1\x81"));
+  }
+}
+
+TEST(Re2LiteralFinderTest, multi_literal_accel_finds_the_match) {
+  constexpr std::string_view kPatterns[] = {
+    "\xD0\xBF\xD0\xB5\xD1\x80\xD0\xB5|\xD0\xBE\xD1\x81|ab",
+    "(\xD0\xBE\xD1\x81|ba)[a-z]*",
+    "ab|ba|qe|e\xD1\x8C",
+    "a(b|q)e|b(a|e)",
+    "(?:ab|ba)+q",
+    "ab|a",
+    "ab\\b|ba",
+    "(ab|ba)|(qe|eq)b",
+    "\xD0\xBE\xD1\x81(\xD1\x82\xD1\x8C|\xD0\xB5)|ab(a|b)(q|e)",
+    "ab|ba|(?i)qe",
+  };
+  std::mt19937 rng{1134};
+  for (const auto pattern : kPatterns) {
+    const re2::RE2 re{pattern};
+    ASSERT_TRUE(re.ok()) << pattern;
+    for (size_t i = 0; i != 300; ++i) {
+      std::string text;
+      for (auto n = std::uniform_int_distribution<size_t>{0, 70}(rng); n != 0;
+           --n) {
+        text += kPieces[std::uniform_int_distribution<size_t>{
+          0, std::size(kPieces) - 1}(rng)];
+      }
+      ASSERT_NO_FATAL_FAILURE(ExpectLeftmostMatch(re, text));
+    }
   }
 }
 

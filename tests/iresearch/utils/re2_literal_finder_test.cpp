@@ -335,6 +335,10 @@ TEST(Re2LiteralFinderTest, multi_literal_accel_finds_the_match) {
     "[ab]e|q[ab]",
     "[ab][\xD0\xBE\xD1\x81]q|(?i)\xD1\x81\xD1\x82",
     "(?i)ab\xD1\x8C",
+    "(?i)[a-z]+\xD0\xBE\xD1\x81",
+    "(?i)\\w+\xD1\x81\xD1\x82\xD1\x8C",
+    "[a-e]+(?i)ab\xD1\x8C",
+    "(?i)[a-z ]+qe[ab]",
   };
   constexpr std::string_view kCasedPieces[] = {
     "a",        "b",        "e",        "q",        " ",        "A",

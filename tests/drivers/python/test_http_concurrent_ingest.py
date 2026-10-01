@@ -61,6 +61,17 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def _wait_http(port: int, deadline: float) -> None:
+    while True:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=2):
+                return
+        except OSError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.2)
+
+
 def _connect(port: int, deadline: float) -> psycopg.Connection:
     while True:
         try:
@@ -98,6 +109,9 @@ def server(tmp_path: Path):
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
     )
     pg = _connect(pg_port, time.monotonic() + 60)
+    # The HTTP listener binds independently of pg-wire, so pg answering does
+    # not mean this one is up yet -- under a sanitizer the gap is seconds.
+    _wait_http(http_port, time.monotonic() + 60)
     try:
         yield proc, pg, http_port
     finally:

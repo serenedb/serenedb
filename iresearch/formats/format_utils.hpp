@@ -26,6 +26,8 @@
 
 #include <duckdb/common/constants.hpp>
 
+#include <streamvbyte.h>
+
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
@@ -33,6 +35,10 @@
 namespace irs::format_utils {
 
 inline constexpr uint64_t kTrailerLen = 2 * sizeof(uint32_t);
+
+// Shortest footer WriteFooter emits, so that every file ends with at least
+// STREAMVBYTE_PADDING bytes a trailing block's decoder may safely over-read.
+inline constexpr uint64_t kMinFooterLen = STREAMVBYTE_PADDING - kTrailerLen;
 
 struct Footer {
   uint64_t data_len = 0;

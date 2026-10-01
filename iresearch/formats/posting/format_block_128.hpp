@@ -41,13 +41,11 @@ namespace irs {
 // It's not ideal, for an example avx512/avx2 sometimes better, they can be used
 // for even bitpacking. Or larger block size.
 // But in general we need to think more about size of data.
-// The decoder reads up to STREAMVBYTE_PADDING bytes past a block it decodes, so
-// a block only fits the scratch buffer it may be copied into if it leaves that
-// much slack. Takes and returns a candidate size counted the way the encoder
-// counts them -- the u16 length plus the encoded bytes -- and rules an
-// oversized one out of the running. Nothing is lost: values/e_values is no
-// larger than a block that big, and gets picked instead.
+// Rules out a streamvbyte block too large to decode out of the scratch buffer,
+// which must also hold the STREAMVBYTE_PADDING its decoder reads past the end.
+// Costs nothing: values/e_values is no larger than a block that big, and wins.
 IRS_FORCE_INLINE constexpr uint32_t DropIfOversized(uint32_t size) noexcept {
+  // Sizes are counted as the encoder counts them: u16 length plus payload.
   constexpr uint32_t kMax = doc_limits::kBlockSize * sizeof(uint32_t) -
                             STREAMVBYTE_PADDING + sizeof(uint16_t);
   return size <= kMax ? size : std::numeric_limits<uint32_t>::max();
@@ -1111,41 +1109,21 @@ struct FormatTraits128 {
     return ReadDataImpl(size, in, buf);
   }
 
-  // streamvbyte's decoders load whole SIMD vectors, so they read (without
-  // using) up to STREAMVBYTE_PADDING bytes past the data they decode. That is
-  // documented behaviour and the caller has to keep those bytes readable, so
-  // only take a zero-copy pointer when the input still has them behind it.
-  //
-  // An input that hands out a pointer into a smaller window than the file --
-  // a memory-file bucket, a read buffer -- refuses, and we copy instead;
-  // DropIfOversized is what keeps that copy in bounds.
+  // streamvbyte reads up to STREAMVBYTE_PADDING bytes past the block, so ask
+  // the input for that slack too. Every file's footer is at least that long,
+  // so this only comes up short when the input hands out a window that ends
+  // mid-file -- a memory-file bucket, a read buffer -- and then we copy.
   template<typename InputType>
   IRS_FORCE_INLINE static const byte_type* ReadDataPaddedImpl(
     uint32_t size, InputType& in, uint32_t* IRS_RESTRICT buf) {
-    if constexpr (InputType::kVolatileAlways) {
-      // The whole file is in memory, so the pointer is usable as long as the
-      // padding still lies inside it. Only a block close to the end of a file
-      // can come up short -- the footer behind it is variable length -- and
-      // this path has no caller buffer, so bounce those through a local one.
-      if (in.Length() - in.Position() >= size + STREAMVBYTE_PADDING)
-        [[likely]] {
-        return in.ReadVolatile(size);
-      }
-      static thread_local uint32_t tail[doc_limits::kBlockSize];
-      SDB_ASSERT(size + STREAMVBYTE_PADDING <= sizeof(tail));
-      in.ReadData(reinterpret_cast<byte_type*>(tail), size);
-      return reinterpret_cast<byte_type*>(tail);
-    } else {
-      const auto pos = in.Position();
-      if (const auto* data = in.ReadVolatile(size + STREAMVBYTE_PADDING)) {
-        in.Seek(pos + size);
-        return data;
-      }
-      SDB_ASSERT(size + STREAMVBYTE_PADDING <=
-                 doc_limits::kBlockSize * sizeof(uint32_t));
-      in.ReadData(reinterpret_cast<byte_type*>(buf), size);
-      return reinterpret_cast<byte_type*>(buf);
+    const auto pos = in.Position();
+    if (const auto* data = in.ReadVolatile(size + STREAMVBYTE_PADDING)) {
+      // Only `size` of what we asked for was really consumed.
+      in.Seek(pos + size);
+      return data;
     }
+    in.ReadData(reinterpret_cast<byte_type*>(buf), size);
+    return reinterpret_cast<byte_type*>(buf);
   }
 
   template<typename InputType>

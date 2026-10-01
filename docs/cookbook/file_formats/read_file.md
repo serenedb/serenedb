@@ -37,7 +37,11 @@ The `read_blob` table function reads from the selected source(s) to a `BLOB`:
 
 <SqlLogicTest id="cookbook/file_formats/read_file/example_002" />
 
-> The maximum allowed file size for `read_blob` is 3.9 GiB.
+<DocCallout type="tip">
+
+The maximum allowed file size for `read_blob` is 3.9 GiB.
+
+</DocCallout>
 
 ## Schema
 

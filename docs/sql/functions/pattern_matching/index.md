@@ -49,7 +49,7 @@ Case-insensitive `ILIKE` with `ESCAPE`:
 
 There are also alternative characters that can be used as keywords in place of `LIKE` expressions. These enhance PostgreSQL compatibility.
 
-<div class="monospace_table"></div>
+<div className="docs-table-monospace">
 
 | PostgreSQL-style | `LIKE`-style |
 | :--------------- | :----------- |
@@ -57,6 +57,8 @@ There are also alternative characters that can be used as keywords in place of `
 | `!~~`            | `NOT LIKE`   |
 | `~~*`            | `ILIKE`      |
 | `!~~*`           | `NOT ILIKE`  |
+
+</div>
 
 ## `SIMILAR TO`
 

@@ -6,10 +6,11 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import DocCallout from "@site/src/components/DocCallout";
+import useBaseUrl from "@docusaurus/useBaseUrl";
 
 ## Examples
 
-The following examples use the <a href="/files/docs/flights.csv" download>`flights.csv`</a> file.
+The following examples use the <a href={useBaseUrl("/files/docs/flights.csv")} download>`flights.csv`</a> file.
 
 Read a CSV file from disk, auto-infer options:
 
@@ -113,7 +114,7 @@ The default value for the `auto_type_candidates` option is `['NULL', 'BOOLEAN', 
 
 ## CSV Functions
 
-The `read_csv` automatically attempts to figure out the correct configuration of the CSV reader using the CSV sniffer. It also automatically deduces types of columns. If the CSV file has a header, it will use the names found in that header to name the columns. Otherwise, the columns will be named `column0, column1, column2, ...`. An example with the <a href="/files/docs/flights.csv" download>`flights.csv`</a> file:
+The `read_csv` automatically attempts to figure out the correct configuration of the CSV reader using the CSV sniffer. It also automatically deduces types of columns. If the CSV file has a header, it will use the names found in that header to name the columns. Otherwise, the columns will be named `column0, column1, column2, ...`. An example with the <a href={useBaseUrl("/files/docs/flights.csv")} download>`flights.csv`</a> file:
 
 <SqlLogicTest id="data_import_and_export/csv/overview/example_007" />
 

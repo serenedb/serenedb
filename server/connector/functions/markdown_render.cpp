@@ -101,8 +101,21 @@ std::string AbsoluteLinks(std::string_view markdown,
            at = line.find("](", from)) {
         const auto start = at + 2;
         const auto end = line.find_first_of(") \t", start);
-        if (end == std::string_view::npos || line[end] != ')') {
+        if (end == std::string_view::npos) {
           break;
+        }
+        if (line[end] != ')') {
+          const auto title = line.find_first_not_of(" \t", end);
+          const auto quote =
+            title == std::string_view::npos || line[title] != '"'
+              ? std::string_view::npos
+              : line.find('"', title + 1);
+          const auto close = quote == std::string_view::npos
+                               ? std::string_view::npos
+                               : line.find_first_not_of(" \t", quote + 1);
+          if (close == std::string_view::npos || line[close] != ')') {
+            break;
+          }
         }
         const auto href = line.substr(start, end - start);
         std::string target;
@@ -503,7 +516,8 @@ class Renderer {
   }
 
  private:
-  void Number(std::vector<Run>& runs, size_t begin, std::string_view href) {
+  void Number(std::vector<Run>& runs, size_t begin, std::string_view href,
+              std::string_view title) {
     MarkdownLink link;
     if (IsExternal(href)) {
       link.url = href;
@@ -518,8 +532,11 @@ class Renderer {
         return;
       }
       if (!_links->site.empty()) {
+        const std::string_view anchor = title.starts_with('#')
+                                          ? title.substr(1)
+                                          : std::string_view{link.anchor};
         link.url = absl::StrCat(_links->site, Route(link.page),
-                                link.anchor.empty() ? "" : "#", link.anchor);
+                                anchor.empty() ? "" : "#", anchor);
       }
     }
     for (auto i = begin; i < runs.size(); ++i) {
@@ -578,7 +595,7 @@ class Renderer {
           Inlines(runs, node, _s.link, targets);
           const auto href = AsView(cmark_node_get_url(node));
           if (_links) {
-            Number(runs, begin, href);
+            Number(runs, begin, href, AsView(cmark_node_get_title(node)));
           } else if (targets) {
             if (auto resolved = ResolveHref(_base_path, href);
                 !resolved.empty()) {

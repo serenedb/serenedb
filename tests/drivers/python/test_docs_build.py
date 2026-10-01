@@ -299,21 +299,26 @@ def test_docs_generation_points_links_to_heading_ids_at_their_sections(
              "--tests-dir", str(REPO / "tests" / "sqllogic"))
     assert r.returncode == 0, r.stderr
     generated = out.read_text()
-    assert ("| [`a \\|\\| b`](#COPY#Operators#a_\\|\\|_b) | or |\n\n"
+    assert ('| [`a \\|\\| b`](#COPY#Operators#a_\\|\\|_b "#a--b-or") | or |\n\n'
             "#### `a || b`\n\n#### `a && b`\n\n#### `a ## b`\n\n"
-            "See [AND](#COPY#Operators#a_\\&\\&_b), [FROM](#copy--from), "
-            "[`ts_highlight`](#ts_highlight), [f](#ftext), [top](#copy) and "
-            "[twice](#twice).\n") in generated
+            'See [AND](#COPY#Operators#a_\\&\\&_b "#a--b-and"), '
+            '[FROM](#copy--from "#copy-from"), '
+            '[`ts_highlight`](#ts_highlight), [f](#ftext "#f"), '
+            '[top](#copy "#top") and [twice](#twice "#twice-over").\n'
+            ) in generated
     assert ('R"sdbdoc(## Notes\n\n'
-            "[FROM](../../copy/index.md#copy--from), "
-            "[TO](./../../copy/index.md#copy-from-database--to), "
-            "[phrase](../../copy/index.md#COPY#Operators#a_\\\\#\\\\#_b), "
+            '[FROM](../../copy/index.md#copy--from "#copy-from"), '
+            "[TO](./../../copy/index.md#copy-from-database--to "
+            '"#copy-from-database-to"), '
+            "[phrase](../../copy/index.md#COPY#Operators#a_\\\\#\\\\#_b "
+            '"#a--b-phrase"), '
             "[other](../../copy/index.md#database), [notes](#notes), "
             "[site](https://serenedb.com/docs/copy#copy-from).\n\n"
             "As code: `[FROM](../../copy/index.md#copy-from)`.\n\n"
             '```md\n[code](../../copy/index.md#copy-from)\n```\n)sdbdoc"'
             ) in generated
-    assert 'R"sdbdoc(See [it](#copy_from#copy_from).\n)sdbdoc"' in generated
+    assert ('R"sdbdoc(See [it](#copy_from#copy_from "#cf").\n)sdbdoc"'
+            in generated)
 
 
 # Markup of the site that the shell would print as it is written: an HTML tag
@@ -434,8 +439,11 @@ def test_docs_corpus_opens_the_section_of_every_heading_id() -> None:
         for base, target in ((page, ""), ("zz/yy/links.md", f"../../{page}")):
             link = generate_docs.follow_heading_ids(
                 base, f"[x]({target}#{anchor})", sections, keys)
-            opened = _shell_opens(headed, base, link[len("[x]("):-1])
-            if opened != path:
-                wrong.append(f"{base} -> {page}#{anchor}: {link} opens {opened}")
+            href, _, title = link[len("[x]("):-1].partition(' "')
+            opened = _shell_opens(headed, base, href)
+            site = title[1:-1] if title else href.partition("#")[2]
+            if opened != path or site != anchor:
+                wrong.append(f"{base} -> {page}#{anchor}: {link} opens "
+                             f"{opened} and the site at #{site}")
     assert expected
     assert not wrong, wrong[:5]

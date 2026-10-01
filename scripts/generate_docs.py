@@ -62,7 +62,7 @@ BACKTICKS_RE = re.compile(r"`+")
 # heading level); \{ and \} are literal braces; [^}]* is anything up to the
 # closing brace. Group 1 is the heading without the anchor, group 2 the anchor.
 HEADING_ANCHOR_RE = re.compile(r"^(#{1,6}\s.*?)\s*\{#([^}]*)\}\s*$")
-ANCHOR_LINK_RE = re.compile(r"\]\(([^)\s#]*)#([^)\s]+)\)")
+ANCHOR_LINK_RE = re.compile(r"\]\(([^)\s#]*)#([^)\s\"]+)\)")
 QUOTED_FENCE_RE = re.compile(r"^(>\s?)*\s*(```|~~~)")
 DESTINATION_ESCAPES = set(string.punctuation) - set("#-_.,/:")
 BLANK_RUN_RE = re.compile(r"\n{3,}")
@@ -372,16 +372,16 @@ def link_destination(text: str) -> str:
 def follow_heading_ids(page: str, content: str, sections: dict[str, dict[str, tuple[str, str]]],
                        keys: dict[str, dict[str, str]]) -> str:
     def follow(match: re.Match) -> str:
-        target, anchor = match.groups()
+        target, site_anchor = match.groups()
         linked = linked_page(page, target)
-        key = keys.get(linked, {}).get(anchor)
-        if not key or shell_opens(sections[linked], linked, anchor) == key:
+        key = keys.get(linked, {}).get(site_anchor)
+        if not key or shell_opens(sections[linked], linked, site_anchor) == key:
             return match.group(0)
         anchor = sections[linked][key][0]
         if ([slug for slug, _ in sections[linked].values()].count(anchor) != 1
                 or shell_opens(sections[linked], linked, anchor) != key):
             anchor = link_destination(key[len(linked) + 1:])
-        return f"]({target}#{anchor})"
+        return f']({target}#{anchor} "#{site_anchor}")'
 
     def outside_code(line: str) -> str:
         out, at = [], 0

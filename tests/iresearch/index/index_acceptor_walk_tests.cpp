@@ -869,6 +869,9 @@ TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
     ".*\\bdata\\b.*|.*\\bgcp\\b.*|.*\\bgroup",
     ".*abcd.*",
     ".*5a4b3c.*",
+    ".*ent.*",
+    ".*the.*",
+    ".*tion.*",
   };
   for (const auto pattern : kPerl) {
     SCOPED_TRACE(testing::Message("Regexp: '") << pattern << "'");

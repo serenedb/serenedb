@@ -25,7 +25,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/internal/resize_uninitialized.h>
 #include <absl/strings/str_cat.h>
-#include <immintrin.h>
+#include <re2/literal_finder.h>
 
 #include <array>
 #include <bit>
@@ -998,6 +998,7 @@ class BlockIterator : util::Noncopyable {
   uint32_t SubCount() const noexcept { return _sub_count; }
   uint64_t Start() const noexcept { return _start; }
   bool Done() const noexcept { return _cur_ent == _ent_count; }
+  const byte_type* SuffixStart() const noexcept { return _suffix_start; }
   const byte_type* SuffixEnd() const noexcept { return _suffix_end; }
   bool NoTerms() const noexcept {
     // FIXME(gnusi): add term mark to block entry?
@@ -1114,6 +1115,7 @@ class BlockIterator : util::Noncopyable {
   PostingMeta _state;
   size_t _suffix_length{};  // last matched suffix length
   const byte_type* _suffix_begin{};
+  const byte_type* _suffix_start{};
   const byte_type* _suffix_end{};
   uint64_t _start;      // initial block start pointer
   uint64_t _cur_start;  // current block start pointer
@@ -1173,6 +1175,7 @@ void BlockIterator::Load(IndexInput& in) {
     in.ReadData(_suffix.block.data(), block_size);
     _suffix.begin = _suffix.block.c_str();
   }
+  _suffix_start = _suffix.begin;
   _suffix_end = _suffix.begin + block_size;
 #ifdef SDB_DEV
   _suffix.end = _suffix.begin + block_size;
@@ -1947,15 +1950,7 @@ class AcceptorTermIterator : public SeekTermIterator,
       if (_infix.size() < kMinInfix || _infix.size() > kMaxInfix) {
         _infix = {};
       }
-      _anchor_hi = _infix.empty() ? 0 : _infix.size() - 1;
-      bool anchored = false;
-      for (size_t i = 0; i != _infix.size(); ++i) {
-        if (_infix[i] < 0xC0) {
-          _anchor_lo = anchored ? _anchor_lo : i;
-          _anchor_hi = i;
-          anchored = true;
-        }
-      }
+      _infix_finder = re2::LiteralFinder{ViewCast<char>(_infix)};
       _filter = !_required.empty() ? Filter::Suffix
                 : !_infix.empty()  ? Filter::Infix
                                    : Filter::None;
@@ -2150,36 +2145,24 @@ class AcceptorTermIterator : public SeekTermIterator,
         _partials |= uint64_t{1} << k;
       }
     }
-  }
-
-  bool ContainsInfix(const byte_type* h, size_t n) const noexcept {
-    const size_t m = _infix.size();
-    const auto lo = _mm256_set1_epi8(static_cast<char>(_infix[_anchor_lo]));
-    const auto hi = _mm256_set1_epi8(static_cast<char>(_infix[_anchor_hi]));
-    for (size_t i = 0; i <= n - m; i += 32) {
-      auto mask = static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_and_si256(
-        _mm256_cmpeq_epi8(
-          lo, _mm256_loadu_si256(
-                reinterpret_cast<const __m256i*>(h + i + _anchor_lo))),
-        _mm256_cmpeq_epi8(
-          hi, _mm256_loadu_si256(
-                reinterpret_cast<const __m256i*>(h + i + _anchor_hi))))));
-      const size_t limit = n - m + 1 - i;
-      if (limit < 32) {
-        mask &= (uint32_t{1} << limit) - 1;
-      }
-      for (; mask != 0; mask &= mask - 1) {
-        const auto at = static_cast<size_t>(std::countr_zero(mask));
-        if (std::memcmp(h + i + at, _infix.data(), m) == 0) {
-          return true;
-        }
+    _hits.clear();
+    _hit = 0;
+    if (_infix_block) {
+      const auto needle = ViewCast<char>(_infix);
+      const auto* begin =
+        reinterpret_cast<const char*>(this->_cur_block->SuffixStart());
+      const auto* end =
+        reinterpret_cast<const char*>(this->_cur_block->SuffixEnd());
+      for (const char* at = begin;
+           (at = _infix_finder.Find(needle, at, end)) != nullptr; ++at) {
+        _hits.push_back(static_cast<uint32_t>(at - begin));
       }
     }
-    return false;
   }
 
-  IRS_NO_INLINE bool InfixRejects(const byte_type* suffix, size_t n) noexcept {
-    if (!_infix_loaded) {
+  IRS_FORCE_INLINE bool InfixRejects(const byte_type* suffix,
+                                     size_t n) noexcept {
+    if (!_infix_loaded) [[unlikely]] {
       LoadInfix();
       _infix_loaded = true;
     }
@@ -2191,12 +2174,18 @@ class AcceptorTermIterator : public SeekTermIterator,
     for (auto partials = _partials; partials != 0 && !found;
          partials &= partials - 1) {
       const auto k = static_cast<size_t>(std::countr_zero(partials));
-      found = n >= m - k && std::memcmp(suffix, _infix.data() + k, m - k) == 0;
+      found = n >= m - k &&
+              re2::LiteralFinder::Equal(
+                reinterpret_cast<const char*>(suffix),
+                reinterpret_cast<const char*>(_infix.data()) + k, m - k);
     }
     if (!found && n >= m) {
-      found = suffix + n + 32 <= this->_cur_block->SuffixEnd()
-                ? ContainsInfix(suffix, n)
-                : memmem(suffix, n, _infix.data(), m) != nullptr;
+      const auto lo =
+        static_cast<uint32_t>(suffix - this->_cur_block->SuffixStart());
+      while (_hit != _hits.size() && _hits[_hit] < lo) {
+        ++_hit;
+      }
+      found = _hit != _hits.size() && _hits[_hit] <= lo + n - m;
     }
     if (_infix_checks != kInfixProbe) {
       _infix_rejects += !found;
@@ -2284,9 +2273,10 @@ class AcceptorTermIterator : public SeekTermIterator,
   std::array<uint8_t, kMaxLabels + 1> _starts{};
   std::array<uint64_t, 64> _words{};
   bytes_view _infix;
+  re2::LiteralFinder _infix_finder;
+  std::vector<uint32_t> _hits;
+  size_t _hit{0};
   uint64_t _partials{0};
-  size_t _anchor_lo{0};
-  size_t _anchor_hi{0};
   uint32_t _infix_checks{0};
   uint32_t _infix_rejects{0};
   bool _infix_block{false};
@@ -2501,8 +2491,7 @@ bool AcceptorTermIterator<FST, A>::NextImpl() {
             EntryType::Term == this->_cur_block->Type() &&
             (_filter == Filter::Suffix
                ? filter && !EndsWithRequired(suffix_ptr, suffix_len)
-               : suffix_len >= kInfixEntry &&
-                   InfixRejects(suffix_ptr, suffix_len))) {
+               : InfixRejects(suffix_ptr, suffix_len))) {
           if (this->_cur_block->Done()) {
             break;
           }

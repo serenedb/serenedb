@@ -321,6 +321,15 @@ class ColumnReader {
   void FinishStats(duckdb::BaseStatistics stats);
 
   void SkipRows(ScanState& s, duckdb::idx_t count) const;
+  // GatherFilter for a sparse span crossing a block boundary: false (state
+  // untouched) unless every block it touches selects natively and describes
+  // its own nulls.
+  bool GatherFilterAcrossBlocks(ScanState& s, duckdb::idx_t span,
+                                duckdb::SelectionVector& sel,
+                                duckdb::idx_t sel_count,
+                                duckdb::TableFilterState& filter_state,
+                                duckdb::Vector& result,
+                                duckdb::idx_t& approved) const;
 
   duckdb::idx_t ScanVector(ScanState& s, duckdb::Vector& result,
                            duckdb::idx_t count,

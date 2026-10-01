@@ -67,6 +67,8 @@
 namespace irs {
 namespace {
 
+constexpr duckdb::idx_t kSparseFilterRatio = 4;
+
 void SerializeColumnBlockMeta(duckdb::BinarySerializer& s,
                               const ColumnBlockMeta& m) {
   s.WriteProperty(0, "compression_type", static_cast<uint8_t>(m.codec->type));
@@ -589,6 +591,12 @@ duckdb::idx_t ColumnReader::GatherFilter(
   // the all-valid EMPTY codec (rle evaluates its run values once and filters
   // rows by run flag). Bare null checks keep the validity-only arm below, and
   // null-bearing spans keep the decode arm.
+  if (!within_segment && null_check == NullCheckKind::None &&
+      sel_count * kSparseFilterRatio <= span &&
+      GatherFilterAcrossBlocks(s, span, sel, sel_count, filter_state, result,
+                               approved)) {
+    return approved;
+  }
   const bool codec_filter =
     within_segment && codec.filter && !filter_state.can_throw &&
     (self_valid || (null_check == NullCheckKind::None &&
@@ -657,6 +665,78 @@ duckdb::idx_t ColumnReader::GatherFilter(
                                            approved);
   }
   return approved;
+}
+
+bool ColumnReader::GatherFilterAcrossBlocks(
+  ScanState& s, duckdb::idx_t span, duckdb::SelectionVector& sel,
+  duckdb::idx_t sel_count, duckdb::TableFilterState& filter_state,
+  duckdb::Vector& result, duckdb::idx_t& approved) const {
+  if (_type.InternalType() != duckdb::PhysicalType::VARCHAR) {
+    return false;
+  }
+  // Decoding the whole span would materialize the next block's dictionary for
+  // a handful of rows: select the survivors block by block instead, each codec
+  // decoding only the selected rows, into their span positions.
+  auto w = s.window;
+  duckdb::idx_t covered = (w.end - w.begin) - s.st.offset_in_column;
+  while (true) {
+    const auto& codec = *_segments[w.block].codec;
+    if (codec.select == nullptr ||
+        codec.validity != duckdb::CompressionValidity::NO_VALIDITY_REQUIRED) {
+      return false;
+    }
+    if (covered >= span) {
+      break;
+    }
+    if (!NextSegment(w)) {
+      return false;
+    }
+    covered += w.end - w.begin;
+  }
+  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  duckdb::FlatVector::ValidityMutable(result).SetAllValid(span);
+  auto* data = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
+  duckdb::SelectionVector part_sel(STANDARD_VECTOR_SIZE);
+  duckdb::idx_t base = 0;
+  duckdb::idx_t k = 0;
+  while (base < span) {
+    BeginScanVector(s);
+    const auto avail = (s.window.end - s.window.begin) - s.st.offset_in_column;
+    const auto part_span = std::min(avail, span - base);
+    duckdb::idx_t n = 0;
+    while (k < sel_count && sel.get_index(k) < base + part_span) {
+      part_sel.set_index(n++, sel.get_index(k++) - base);
+    }
+    if (n > 0) {
+      duckdb::Vector part(_type, n);
+      s.segments.back()->Select(s.st, part_span, part, part_sel, n);
+      duckdb::UnifiedVectorFormat format;
+      part.ToUnifiedFormat(n, format);
+      const auto* values =
+        duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(format);
+      for (duckdb::idx_t j = 0; j < n; ++j) {
+        const auto idx = format.sel->get_index(j);
+        const auto row = base + part_sel.get_index(j);
+        if (format.validity.RowIsValid(idx)) {
+          data[row] = values[idx];
+        } else {
+          duckdb::FlatVector::SetNull(result, row, true);
+        }
+      }
+      duckdb::StringVector::AddHeapReference(result, part);
+    }
+    SkipRows(s, part_span);
+    s.st.internal_index = s.st.offset_in_column;
+    base += part_span;
+  }
+  if (_validity) {
+    SDB_ASSERT(!s.child_states.empty());
+    _validity->SkipRows(s.child_states[0], span);
+  }
+  approved = sel_count;
+  duckdb::ColumnSegment::FilterSelection(sel, result, filter_state, span,
+                                         approved);
+  return true;
 }
 
 bool ColumnReader::ValiditySpanAllValid(ScanState& s, uint64_t anchor,

@@ -2648,7 +2648,13 @@ class FieldReader::Impl {
         throw IndexError{
           absl::StrCat("Failed to read term index for field id ", id)};
       }
+      _body_offset = meta.body_offset;
+      _body_end = blocks_in.Position();
     }
+
+    uint64_t BodyOffset() const noexcept { return _body_offset; }
+    uint64_t BodyEnd() const noexcept { return _body_end; }
+    void SetBlocksBegin(uint64_t begin) noexcept { _blocks_begin = begin; }
 
     SeekTermIterator::ptr iterator() const final {
       return memory::make_managed<TermIteratorImpl<FST>>(
@@ -2707,8 +2713,29 @@ class FieldReader::Impl {
 
     template<typename A>
     SeekTermIterator::ptr MakeAcceptorIterator(const A& a) const {
+      if (a.LowerBound() <= min() && StartsWide(a)) {
+        PrefetchBlocks();
+      }
       return memory::make_managed<AcceptorTermIterator<FST, A>>(
         *this, _owner->_pr, *_owner->_terms_in, *_fst, a);
+    }
+
+    template<typename A>
+    static bool StartsWide(const A& a) noexcept {
+      if constexpr (std::is_same_v<A, RegexpAcceptor>) {
+        const auto* start = a.Start();
+        return start->lo <= start->hi && start->hi - start->lo >= kWideStart;
+      } else {
+        return true;
+      }
+    }
+
+    void PrefetchBlocks() const noexcept {
+      const auto size =
+        std::min(_body_offset - _blocks_begin, kMaxBlocksPrefetch);
+      if (size != 0 && !_owner->_terms_in->Resident(_blocks_begin, size)) {
+        _owner->_terms_in->Prefetch(_blocks_begin, size);
+      }
     }
 
     SeekTermIterator::ptr iterator(const LevenshteinAcceptor& a) const final {
@@ -2738,8 +2765,14 @@ class FieldReader::Impl {
     }
 
    private:
+    static constexpr uint64_t kMaxBlocksPrefetch = uint64_t{256} << 20;
+    static constexpr int kWideStart = 128;
+
     FieldReader::Impl* _owner;
     std::unique_ptr<FST> _fst;
+    uint64_t _blocks_begin{0};
+    uint64_t _body_offset{0};
+    uint64_t _body_end{0};
   };
 
   using ImmutableFstReader = TermReaderImpl<immutable_byte_fst>;
@@ -2785,6 +2818,18 @@ void FieldReader::Impl::prepare(const ReaderState& state) {
   }
   SDB_ENSURE(std::is_sorted(_sorted_ids.begin(), _sorted_ids.end()),
              "burst_trie: term-dict entries are not sorted by field_id");
+
+  std::vector<uint64_t> ends{state.idx->AnnEnds().begin(),
+                             state.idx->AnnEnds().end()};
+  for (const auto& field : _fields) {
+    ends.push_back(field.BodyEnd());
+  }
+  absl::c_sort(ends);
+  for (auto& field : _fields) {
+    const auto it =
+      std::upper_bound(ends.begin(), ends.end(), field.BodyOffset());
+    field.SetBlocksBegin(it == ends.begin() ? 0 : *std::prev(it));
+  }
 }
 
 const TermReader* FieldReader::Impl::field(field_id id) const {

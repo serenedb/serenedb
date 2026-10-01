@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/ascii.h>
 #include <gtest/gtest.h>
 #include <re2/byte_set_finder.h>
 #include <re2/literal_finder.h>
@@ -358,6 +359,107 @@ TEST(Re2LiteralFinderTest, multi_literal_accel_finds_the_match) {
           0, std::size(kCasedPieces) - 1}(rng)];
       }
       ASSERT_NO_FATAL_FAILURE(ExpectLeftmostMatch(re, text));
+    }
+  }
+}
+
+TEST(Re2LiteralFinderTest, case_folded_accel_finds_the_match) {
+  constexpr std::string_view kPatterns[] = {
+    "(?i)london",         "(?i)the",         "(?i)and ",
+    "(?i)international",  "(?i)x(?-i)y",     "(?i)ab|cd",
+    "(?i)todo\\w*",       "(?i)re(turn|ad)", "q(?i)ab",
+    "(?i)th(e|is)[a-z]*", "(?i)a",
+  };
+  constexpr std::string_view kWords[] = {
+    "london", "the", "and ", "international", "todo", "return", "read",
+    "ab",     "cd",  "xy",   "this",
+  };
+  constexpr std::string_view kPieces[] = {
+    "l", "L", "o", "O", "n", "N", "d", "D", "t", "T", "h",
+    "H", "e", "E", " ", "a", "A", "i", "I", "r", "R", "x",
+    "y", "Y", "q", "c", "C", "b", "B", "u", "U", "-", "1",
+  };
+  std::mt19937 rng{1290};
+  const auto uniform = [&](size_t lo, size_t hi) {
+    return std::uniform_int_distribution<size_t>{lo, hi}(rng);
+  };
+  for (const auto pattern : kPatterns) {
+    const re2::RE2 re{pattern};
+    ASSERT_TRUE(re.ok()) << pattern;
+    for (size_t i = 0; i != 400; ++i) {
+      std::string text;
+      for (auto n = uniform(0, 70); n != 0; --n) {
+        text += kPieces[uniform(0, std::size(kPieces) - 1)];
+      }
+      if (i % 2 == 0) {
+        std::string word{kWords[uniform(0, std::size(kWords) - 1)]};
+        for (auto& c : word) {
+          if (uniform(0, 1) != 0) {
+            c = absl::ascii_toupper(c);
+          }
+        }
+        text.insert(uniform(0, text.size()), word);
+      }
+      ASSERT_NO_FATAL_FAILURE(ExpectLeftmostMatch(re, text));
+    }
+  }
+}
+
+TEST(Re2LiteralFinderTest, case_folded_full_match_set_is_membership) {
+  constexpr std::string_view kWordPieces[] = {
+    "a", "b", "e", "q", " ", "ab", "x", "-",
+  };
+  std::mt19937 rng{1291};
+  const auto piece = [&] {
+    return std::string{kWordPieces[std::uniform_int_distribution<size_t>{
+      0, std::size(kWordPieces) - 1}(rng)]};
+  };
+  const auto flip_case = [&](std::string text) {
+    for (auto& c : text) {
+      if (rng() % 2 != 0) {
+        c = absl::ascii_toupper(c);
+      }
+    }
+    return text;
+  };
+  for (size_t round = 0; round != 200; ++round) {
+    std::set<std::string> words;
+    for (auto n = 2 + rng() % (round % 2 == 0 ? 6 : 60); n != 0; --n) {
+      std::string word;
+      for (auto k = 1 + rng() % 4; k != 0; --k) {
+        word += piece();
+      }
+      words.insert(std::move(word));
+    }
+    std::string pattern = "(?i)(";
+    for (const auto& word : words) {
+      if (pattern.size() > 5) {
+        pattern += '|';
+      }
+      pattern += re2::RE2::QuoteMeta(word);
+    }
+    pattern += ")";
+    const re2::RE2 re{pattern};
+    ASSERT_TRUE(re.ok()) << pattern;
+    const std::vector<std::string> list{words.begin(), words.end()};
+    for (size_t i = 0; i != 200; ++i) {
+      std::string text;
+      switch (rng() % 3) {
+        case 0:
+          text = flip_case(list[rng() % list.size()]);
+          break;
+        case 1:
+          text = flip_case(list[rng() % list.size()] + piece());
+          break;
+        default:
+          for (auto k = rng() % 5; k != 0; --k) {
+            text += piece();
+          }
+          text = flip_case(std::move(text));
+      }
+      const bool expected = words.contains(absl::AsciiStrToLower(text));
+      ASSERT_EQ(expected, re2::RE2::FullMatch(text, re))
+        << "round " << round << " words " << words.size() << " text " << text;
     }
   }
 }

@@ -53,7 +53,7 @@ class LevenshteinAcceptor {
   struct State {
     uint32_t pstate;  // parametric state, `kDeadState` is the sink
     uint32_t offset;  // code points of the target already consumed
-    uint32_t acc;     // bits of a partially decoded code point
+    uint32_t acc;
     // 0 -- ready for a lead byte, which is the whole hot path; 1..3 --
     // continuation bytes still expected; `kPrefixPhase + n` -- n bytes of the
     // literal prefix matched. One field so a step tests one register.
@@ -103,7 +103,18 @@ class LevenshteinAcceptor {
       _chars.push_back({LeadByte(c), slot});
       _chi[static_cast<size_t>(slot) * _words + i / kWordBits] |=
         uint64_t{1} << (i % kWordBits);
+      if (c >= 0x80) {
+        _leads[LeadByte(c)] = true;
+        if (c >= 0x10000) {
+          _partials.push_back(PartialKey(c >> 12, 2));
+        }
+        if (c >= 0x800) {
+          _partials.push_back(PartialKey(c >> 6, 1));
+        }
+      }
     }
+    std::ranges::sort(_partials);
+    _partials.erase(std::ranges::unique(_partials).begin(), _partials.end());
     _slots = _chi.size() / _words;
     const size_t offsets = _target.size() + _chi_size + 1;
     if (description.size() < kUnknownState &&
@@ -134,7 +145,7 @@ class LevenshteinAcceptor {
         return StepChar(state, label);
       }
       if (label >= 0xC2 && label < 0xE0) {
-        return {state.pstate, state.offset, label & 0x1FU, 1};
+        return {state.pstate, state.offset, Lead(label, 0x1FU), 1};
       }
     } else if (state.phase == 1 && (label & 0xC0) == 0x80) {
       return StepChar({state.pstate, state.offset, 0, 0},
@@ -175,6 +186,11 @@ class LevenshteinAcceptor {
   // Whole-term acceptance, for callers that test one key at a time instead of
   // walking a dictionary.
   bool Matches(bytes_view term) const noexcept {
+    PayloadType payload{};
+    return Matches(term, payload);
+  }
+
+  bool Matches(bytes_view term, PayloadType& payload) const noexcept {
     auto state = Start();
     for (const auto label : term) {
       state = Step(state, label);
@@ -182,21 +198,45 @@ class LevenshteinAcceptor {
         return false;
       }
     }
-    PayloadType payload{};
     return Accept(state, payload);
   }
 
+  size_t MaxStates() const noexcept {
+    const size_t partials =
+      static_cast<size_t>(std::ranges::count(_leads, true)) + _partials.size() +
+      3;
+    const size_t offsets =
+      _target.size() + _chi_size * (_description->max_distance() + 1) + 1;
+    return _description->size() * offsets * (partials + 1) + _prefix.size();
+  }
+
   std::array<uint8_t, 256> Bytemap() const {
+    std::array<bool, 256> own{};
+    for (const auto label : _prefix) {
+      own[label] = true;
+    }
+    for (const auto c : _target) {
+      if (c < 0x80) {
+        continue;
+      }
+      own[LeadByte(c)] = true;
+      const uint32_t continuations = c < 0x800 ? 1 : c < 0x10000 ? 2 : 3;
+      for (uint32_t i = 0; i != continuations; ++i) {
+        own[0x80 | ((c >> (6 * i)) & 0x3FU)] = true;
+      }
+    }
     std::array<uint8_t, 256> bytemap{};
     std::vector<int32_t> classes_of(_slots, -1);
+    std::array<int32_t, kKinds> kinds;
+    kinds.fill(-1);
     uint32_t classes = 0;
     for (uint32_t label = 0; label != bytemap.size(); ++label) {
-      if (label >= 0x80 ||
-          _prefix.find(static_cast<byte_type>(label)) != bstring::npos) {
+      if (own[label]) {
         bytemap[label] = static_cast<uint8_t>(classes++);
         continue;
       }
-      auto& c = classes_of[static_cast<size_t>(_narrow[label])];
+      auto& c = label < 0x80 ? classes_of[static_cast<size_t>(_narrow[label])]
+                             : kinds[kHighKinds[label - 0x80]];
       if (c < 0) {
         c = static_cast<int32_t>(classes++);
       }
@@ -257,6 +297,20 @@ class LevenshteinAcceptor {
   static constexpr uint32_t kOffsetMask = 0xFFFF;
   static constexpr uint32_t kUnknownStep = std::numeric_limits<uint32_t>::max();
   static constexpr size_t kMaxSteps = size_t{1} << 16;
+  static constexpr uint32_t kForeign = std::numeric_limits<uint32_t>::max();
+  static constexpr size_t kKinds = 5;
+  static constexpr std::array<uint8_t, 128> kHighKinds = [] {
+    std::array<uint8_t, 128> kinds{};
+    for (uint32_t label = 0x80; label != 0x100; ++label) {
+      kinds[label - 0x80] = label < 0xC0   ? 0
+                            : label < 0xC2 ? 4
+                            : label < 0xE0 ? 1
+                            : label < 0xF0 ? 2
+                            : label < 0xF5 ? 3
+                                           : 4;
+    }
+    return kinds;
+  }();
 
   static constexpr State Dead() noexcept { return {kDeadState, 0, 0, 0}; }
 
@@ -275,26 +329,40 @@ class LevenshteinAcceptor {
       if ((label & 0xC0) != 0x80) {
         return Dead();
       }
-      state.acc = (state.acc << 6) | (label & 0x3FU);
-      if (--state.phase != 0) {
-        return state;
+      const uint32_t acc = (state.acc << 6) | (label & 0x3FU);
+      if (--state.phase == 0) {
+        return StepChar(state, acc);
       }
-      return StepChar(state, state.acc);
+      state.acc = state.acc == kForeign ? kForeign : Partial(acc, state.phase);
+      return state;
     }
     if (label < 0xC2 || label > 0xF4) {
       return Dead();
     }
     if (label < 0xE0) {
-      state.acc = label & 0x1FU;
+      state.acc = Lead(label, 0x1FU);
       state.phase = 1;
     } else if (label < 0xF0) {
-      state.acc = label & 0x0FU;
+      state.acc = Lead(label, 0x0FU);
       state.phase = 2;
     } else {
-      state.acc = label & 0x07U;
+      state.acc = Lead(label, 0x07U);
       state.phase = 3;
     }
     return state;
+  }
+
+  static constexpr uint64_t PartialKey(uint32_t acc, uint32_t phase) noexcept {
+    return (uint64_t{phase} << 32) | acc;
+  }
+
+  uint32_t Lead(byte_type label, uint32_t mask) const noexcept {
+    return _leads[label] ? label & mask : kForeign;
+  }
+
+  uint32_t Partial(uint32_t acc, uint32_t phase) const noexcept {
+    return std::ranges::contains(_partials, PartialKey(acc, phase)) ? acc
+                                                                    : kForeign;
   }
 
   size_t Window(uint32_t offset) const noexcept {
@@ -390,7 +458,9 @@ class LevenshteinAcceptor {
   std::vector<TargetChar> _chars;
   std::vector<uint64_t> _chi;
   std::vector<WideSlot> _wide;
+  std::vector<uint64_t> _partials;
   std::array<int32_t, kNarrowMax> _narrow;
+  std::array<bool, 256> _leads{};
   mutable std::vector<uint32_t> _steps;
   size_t _slots{0};
   size_t _offsets{0};

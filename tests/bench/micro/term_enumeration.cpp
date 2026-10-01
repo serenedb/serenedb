@@ -436,6 +436,23 @@ void RegexpAcceptorBuild(benchmark::State& state) {
   state.SetItemsProcessed(state.iterations());
 }
 
+void RegexpAcceptorBuildScaling(benchmark::State& state) {
+  const auto words = static_cast<size_t>(state.range(0));
+  const bool contains = state.range(1) != 0;
+  std::string pattern = contains ? ".*(" : "(";
+  for (size_t i = 0; i != words; ++i) {
+    absl::StrAppendFormat(&pattern, "%sw%dx", i == 0 ? "" : "|",
+                          (i * 7919) % 100003);
+  }
+  pattern += contains ? ").*" : ")";
+  for (auto _ : state) {
+    const irs::RegexpAcceptor a{AsBytes(pattern)};
+    benchmark::DoNotOptimize(a.ok());
+  }
+  state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) *
+                          static_cast<int64_t>(pattern.size()));
+}
+
 void RegexpSourceBuild(benchmark::State& state) {
   for (auto _ : state) {
     auto source = irs::MakePatternSource(AsBytes(kRegexpPattern),
@@ -867,6 +884,9 @@ BENCHMARK(InSeeks)
   ->Unit(benchmark::kMicrosecond);
 
 BENCHMARK(RegexpAcceptorBuild)->Unit(benchmark::kMicrosecond);
+BENCHMARK(RegexpAcceptorBuildScaling)
+  ->ArgsProduct({{64, 128, 256, 512, 1024, 2048}, {0, 1}})
+  ->Unit(benchmark::kMicrosecond);
 BENCHMARK(RegexpSourceBuild)->Unit(benchmark::kMicrosecond);
 BENCHMARK(RegexpAcceptorWalk)->Apply(ApplySizes);
 

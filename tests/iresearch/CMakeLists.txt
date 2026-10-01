@@ -152,8 +152,10 @@ set(iresearch-tests_sources
     ./duckdb/immutable_strings_tests.cpp
     ./utils/levenshtein_utils_test.cpp
     ./utils/wildcard_utils_test.cpp
-    ./utils/like_matcher_test.cpp
+    ./utils/re2_literal_finder_test.cpp
+    ./utils/re2_owned_dfa_test.cpp
     ./utils/re2_required_literal_test.cpp
+    ./utils/re2_segment_plan_test.cpp
     ./utils/regexp_utils_test.cpp
     ./utils/regexp_ngram_test.cpp
     ./utils/ref_counter_tests.cpp

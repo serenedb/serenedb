@@ -45,6 +45,7 @@ struct IdxReader::Impl {
   std::vector<std::pair<field_id, std::unique_ptr<AnnIndex>>> ann_entries;
   irs::containers::FlatHashMap<field_id, size_t> ann_by_id;
   std::vector<std::pair<field_id, TermDictMeta>> term_dicts;
+  std::vector<uint64_t> ann_ends;
 };
 
 IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
@@ -102,6 +103,8 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
               obj.ReadProperty<uint64_t>(3, "stats_offset");
             const auto stats_byte_size =
               obj.ReadProperty<uint64_t>(4, "stats_byte_size");
+            _impl->ann_ends.push_back(tree_offset + tree_byte_size);
+            _impl->ann_ends.push_back(stats_offset + stats_byte_size);
 
             auto body = _impl->in->Dup();
             body->Seek(tree_offset);
@@ -121,6 +124,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
             const auto id = obj.ReadProperty<uint64_t>(0, "id");
             const auto offset = obj.ReadProperty<uint64_t>(1, "offset");
             const auto byte_size = obj.ReadProperty<uint64_t>(2, "byte_size");
+            _impl->ann_ends.push_back(offset + byte_size);
 
             auto body = _impl->in->Dup();
             body->Seek(offset);
@@ -153,6 +157,10 @@ const AnnIndex* IdxReader::Ann(field_id id) const noexcept {
 std::span<const std::pair<field_id, TermDictMeta>> IdxReader::TermDicts()
   const noexcept {
   return _impl->term_dicts;
+}
+
+std::span<const uint64_t> IdxReader::AnnEnds() const noexcept {
+  return _impl->ann_ends;
 }
 
 IndexInput::ptr IdxReader::ReopenIn() const {

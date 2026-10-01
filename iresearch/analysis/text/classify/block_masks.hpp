@@ -87,8 +87,8 @@ IRS_FORCE_INLINE inline uint32_t ClassifyAnyEqBlock(
   const byte_type* block, std::span<const byte_type> targets) noexcept {
   const auto b = Load(block);
   Cmp acc{};
-  for (const auto target : targets) {
-    acc |= b == target;
+  for (size_t i = 0; i < targets.size(); ++i) {
+    acc |= b == targets[i];
   }
   return MoveMask(acc);
 }
@@ -102,8 +102,8 @@ IRS_FORCE_INLINE inline uint32_t ClassifyAnyInRangeBlock(
   const byte_type* block, std::span<const ByteRange> ranges) noexcept {
   const auto b = Load(block);
   Cmp acc{};
-  for (const auto [lo, span] : ranges) {
-    acc |= (b - lo) <= span;
+  for (size_t i = 0; i < ranges.size(); ++i) {
+    acc |= (b - ranges[i].lo) <= ranges[i].span;
   }
   return MoveMask(acc);
 }
@@ -118,68 +118,6 @@ struct ByteSet {
 
   std::array<uint64_t, 4> words{};
 };
-
-struct NibbleSet {
-  static constexpr size_t kMaxRows = 8;
-
-  IRS_FORCE_INLINE constexpr void Add(byte_type b) noexcept {
-    const auto row = static_cast<size_t>(b >> 4);
-    if (hi[row] == 0) {
-      if (rows == kMaxRows) {
-        overflow = true;
-        return;
-      }
-      hi[row] = static_cast<byte_type>(1U << rows++);
-    }
-    lo[b & 0x0F] |= hi[row];
-  }
-
-  constexpr bool Blockable() const noexcept { return !overflow; }
-
-  alignas(16) std::array<byte_type, 16> lo{};
-  alignas(16) std::array<byte_type, 16> hi{};
-  size_t rows = 0;
-  bool overflow = false;
-};
-
-IRS_FORCE_INLINE inline uint32_t ClassifyNibbleBlock(
-  const byte_type* block, const NibbleSet& set) noexcept {
-  SDB_ASSERT(set.Blockable());
-#if defined(__AVX2__)
-  const auto lo = _mm256_broadcastsi128_si256(
-    _mm_load_si128(reinterpret_cast<const __m128i*>(set.lo.data())));
-  const auto hi = _mm256_broadcastsi128_si256(
-    _mm_load_si128(reinterpret_cast<const __m128i*>(set.hi.data())));
-  const auto nibble = _mm256_set1_epi8(0x0F);
-  const auto bytes =
-    _mm256_loadu_si256(reinterpret_cast<const __m256i*>(block));
-  const auto col_bits =
-    _mm256_shuffle_epi8(lo, _mm256_and_si256(bytes, nibble));
-  const auto row_bits = _mm256_shuffle_epi8(
-    hi, _mm256_and_si256(_mm256_srli_epi16(bytes, 4), nibble));
-  const auto miss = _mm256_cmpeq_epi8(_mm256_and_si256(col_bits, row_bits),
-                                      _mm256_setzero_si256());
-  return ~static_cast<uint32_t>(_mm256_movemask_epi8(miss));
-#else
-  const auto lo =
-    _mm_load_si128(reinterpret_cast<const __m128i*>(set.lo.data()));
-  const auto hi =
-    _mm_load_si128(reinterpret_cast<const __m128i*>(set.hi.data()));
-  const auto nibble = _mm_set1_epi8(0x0F);
-  uint32_t mask = 0;
-  for (size_t half = 0; half < kClassifyBlock; half += sizeof(__m128i)) {
-    const auto bytes =
-      _mm_loadu_si128(reinterpret_cast<const __m128i*>(block + half));
-    const auto col_bits = _mm_shuffle_epi8(lo, _mm_and_si128(bytes, nibble));
-    const auto row_bits =
-      _mm_shuffle_epi8(hi, _mm_and_si128(_mm_srli_epi16(bytes, 4), nibble));
-    const auto miss =
-      _mm_cmpeq_epi8(_mm_and_si128(col_bits, row_bits), _mm_setzero_si128());
-    mask |= (~static_cast<uint32_t>(_mm_movemask_epi8(miss)) & 0xFFFFU) << half;
-  }
-  return mask;
-#endif
-}
 
 struct NibbleClasses {
   static constexpr size_t kMaxRows = 8;

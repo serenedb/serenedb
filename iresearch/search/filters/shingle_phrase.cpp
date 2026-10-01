@@ -258,10 +258,14 @@ bool Legs(const Windows& windows, std::vector<bstring>& legs) {
 
 }  // namespace
 
-ShinglePhrasePlan PlanShinglePhrase(const analysis::ShingleTokenizer& tokenizer,
-                                    const ByPhraseOptions& phrase,
-                                    bool positional, const StoredText* text) {
-  ShinglePhrasePlan plan;
+std::optional<ShinglePhrasePlan> PlanShinglePhrase(
+  const analysis::ShingleTokenizer& tokenizer, const ByPhraseOptions& phrase,
+  bool positional, const StoredText* text) {
+  std::optional<ShinglePhrasePlan> plan;
+  const auto phrase_plan = [&]() -> ByPhraseOptions& {
+    return std::get<ByPhraseOptions>(
+      plan.emplace(std::in_place_type<ByPhraseOptions>));
+  };
   if (phrase.empty() || phrase.slop() != 0) {
     return plan;
   }
@@ -270,8 +274,7 @@ ShinglePhrasePlan PlanShinglePhrase(const analysis::ShingleTokenizer& tokenizer,
   if (ExactTerms(phrase, tokens, positions)) {
     const Windows windows{tokenizer, tokens, positions};
     if (windows.Indexed(0, windows.Size())) {
-      plan.kind = ShinglePhrasePlan::Kind::Term;
-      plan.term = windows.Term(0, windows.Size());
+      plan.emplace(windows.Term(0, windows.Size()));
       return plan;
     }
     if (!positional) {
@@ -279,21 +282,16 @@ ShinglePhrasePlan PlanShinglePhrase(const analysis::ShingleTokenizer& tokenizer,
       if (!text || !Legs(windows, legs)) {
         return plan;
       }
+      auto& verified = phrase_plan();
       for (auto& leg : legs) {
-        plan.phrase.push_back<ByTermOptions>().term = std::move(leg);
+        verified.push_back<ByTermOptions>().term = std::move(leg);
       }
-      plan.phrase.set_verifier(std::make_shared<PhraseVerifier>(*text, phrase));
-      plan.kind = ShinglePhrasePlan::Kind::Phrase;
+      verified.set_verifier(std::make_shared<PhraseVerifier>(*text, phrase));
       return plan;
     }
   }
-  if (!positional) {
-    return plan;
-  }
-  ByPhraseOptions cover;
-  if (CoverPhrase(tokenizer, phrase, cover)) {
-    plan.kind = ShinglePhrasePlan::Kind::Phrase;
-    plan.phrase = std::move(cover);
+  if (positional && !CoverPhrase(tokenizer, phrase, phrase_plan())) {
+    plan.reset();
   }
   return plan;
 }

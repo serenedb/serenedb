@@ -20,6 +20,9 @@
 
 #pragma once
 
+#include <optional>
+#include <variant>
+
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -32,20 +35,10 @@ class ShingleTokenizer;
 
 struct StoredText;
 
-struct ShinglePhrasePlan {
-  enum class Kind : uint8_t {
-    None,
-    Term,
-    Phrase,
-  };
+using ShinglePhrasePlan = std::variant<bstring, ByPhraseOptions>;
 
-  Kind kind = Kind::None;
-  bstring term;
-  ByPhraseOptions phrase;
-};
-
-ShinglePhrasePlan PlanShinglePhrase(const analysis::ShingleTokenizer& tokenizer,
-                                    const ByPhraseOptions& phrase,
-                                    bool positional, const StoredText* text);
+std::optional<ShinglePhrasePlan> PlanShinglePhrase(
+  const analysis::ShingleTokenizer& tokenizer, const ByPhraseOptions& phrase,
+  bool positional, const StoredText* text);
 
 }  // namespace irs

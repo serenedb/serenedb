@@ -343,22 +343,21 @@ irs::Filter::ptr MakePhrase(const Index& index, std::string_view text,
   }
   const auto& shingles =
     irs::utils::downCast<irs::analysis::ShingleTokenizer>(*index.tokenizer);
-  auto plan =
-    cover ? irs::PlanShinglePhrase(shingles, phrase, strategy.positions, stored)
-          : irs::ShinglePhrasePlan{};
-  switch (plan.kind) {
-    case irs::ShinglePhrasePlan::Kind::None:
-      if (!strategy.positions) {
-        return nullptr;
+  if (cover) {
+    if (auto plan = irs::PlanShinglePhrase(shingles, phrase, strategy.positions,
+                                           stored)) {
+      if (auto* term = std::get_if<irs::bstring>(&*plan)) {
+        return MakeFilter<irs::ByTerm>(irs::ByTermOptions{std::move(*term)});
       }
-      phrase.set_word_separator(shingles.Separator());
-      return MakeFilter<irs::ByPhrase>(std::move(phrase));
-    case irs::ShinglePhrasePlan::Kind::Term:
-      return MakeFilter<irs::ByTerm>(irs::ByTermOptions{std::move(plan.term)});
-    case irs::ShinglePhrasePlan::Kind::Phrase:
-      return MakeFilter<irs::ByPhrase>(std::move(plan.phrase));
+      return MakeFilter<irs::ByPhrase>(
+        std::get<irs::ByPhraseOptions>(std::move(*plan)));
+    }
   }
-  return nullptr;
+  if (!strategy.positions) {
+    return nullptr;
+  }
+  phrase.set_word_separator(shingles.Separator());
+  return MakeFilter<irs::ByPhrase>(std::move(phrase));
 }
 
 uint64_t Count(const irs::DirectoryReader& reader, const irs::Filter& filter) {

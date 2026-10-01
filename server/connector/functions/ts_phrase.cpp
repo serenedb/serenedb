@@ -171,34 +171,23 @@ bool HasPatternParts(const irs::ByPhraseOptions& options) {
   });
 }
 
-bool AddShinglePhrase(BoolTarget parent, const FilterContext& ctx,
-                      const SearchColumnInfo& column_info,
-                      const irs::analysis::ShingleTokenizer& shingle,
-                      const irs::ByPhraseOptions& options) {
-  auto plan = irs::PlanShinglePhrase(shingle, options,
-                                     HasPositions(column_info), nullptr);
-  switch (plan.kind) {
-    case irs::ShinglePhrasePlan::Kind::None:
-      return false;
-    case irs::ShinglePhrasePlan::Kind::Term:
-      AddTerm(MaybeNegated(parent, ctx, column_info),
-              PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
-              plan.term, ctx.boost);
-      return true;
-    case irs::ShinglePhrasePlan::Kind::Phrase:
-      AddPhrase(parent, ctx, column_info, std::move(plan.phrase));
-      return true;
-  }
-  return false;
-}
-
 void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 irs::ByPhraseOptions&& options, std::string_view label,
                 std::string_view single_hint) {
   if (options.size() > 1) {
     if (const auto* shingle = ShingleOf(ctx, column_info)) {
-      if (AddShinglePhrase(parent, ctx, column_info, *shingle, options)) {
+      if (auto plan = irs::PlanShinglePhrase(
+            *shingle, options, HasPositions(column_info), nullptr)) {
+        if (const auto* term = std::get_if<irs::bstring>(&*plan)) {
+          AddTerm(
+            MaybeNegated(parent, ctx, column_info),
+            PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
+            *term, ctx.boost);
+        } else {
+          AddPhrase(parent, ctx, column_info,
+                    std::get<irs::ByPhraseOptions>(std::move(*plan)));
+        }
         return;
       }
       if (!HasPositions(column_info)) {

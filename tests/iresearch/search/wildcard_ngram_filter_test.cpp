@@ -24,7 +24,6 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/wildcard_ngram_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/regexp_acceptor.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <span>
 
@@ -82,7 +81,7 @@ irs::ByWildcardNGram MakeFilter(irs::field_id field, std::string_view pattern,
   return filter;
 }
 
-irs::ByRegexpNGramOptions MakeRegexpOptions(
+irs::ByWildcardNGramOptions MakeRegexpOptions(
   std::string_view pattern, irs::analysis::WildcardTokenizer& analyzer,
   bool has_positions = true,
   irs::RegexpSyntax syntax = irs::RegexpSyntax::Perl) {
@@ -94,11 +93,11 @@ irs::ByRegexpNGramOptions MakeRegexpOptions(
   };
 }
 
-irs::ByRegexpNGram MakeRegexpFilter(
+irs::ByWildcardNGram MakeRegexpFilter(
   irs::field_id field, std::string_view pattern,
   irs::analysis::WildcardTokenizer& analyzer, bool has_positions = true,
   irs::RegexpSyntax syntax = irs::RegexpSyntax::Perl) {
-  irs::ByRegexpNGram filter;
+  irs::ByWildcardNGram filter;
   *filter.mutable_field_id() = field;
   *filter.mutable_options() =
     MakeRegexpOptions(pattern, analyzer, has_positions, syntax);
@@ -114,10 +113,65 @@ irs::ByRegexpNGram MakeRegexpFilter(
 
 TEST(WildcardNGramFilterOptionsTest, default_ctor) {
   irs::ByWildcardNGramOptions opts;
-  EXPECT_TRUE(opts.parts.empty());
-  EXPECT_TRUE(opts.token.empty());
-  EXPECT_TRUE(opts.has_pos);
+  EXPECT_TRUE(opts.pattern.empty());
+  EXPECT_EQ(irs::GramQuery{}, opts.query);
+  EXPECT_TRUE(opts.grams.empty());
+  EXPECT_FALSE(opts.has_pos);
   EXPECT_EQ(nullptr, opts.matcher);
+}
+
+TEST(WildcardNGramFilterOptionsTest, like_is_a_regexp) {
+  irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
+
+  EXPECT_TRUE(irs::ByWildcardNGramOptions("a\\%b%c_", analyzer, true) ==
+              MakeRegexpOptions(R"((?s)\Aa%b.*c.\z)", analyzer));
+
+  const irs::ByWildcardNGramOptions prefix{"abc%", analyzer, false};
+  EXPECT_EQ(R"("\x1fabc")", irs::ToString(prefix.query));
+  EXPECT_NE(nullptr, prefix.matcher);
+  EXPECT_EQ(prefix.query, MakeRegexpOptions("abc.*", analyzer, false).query);
+}
+
+TEST(WildcardNGramFilterOptionsTest, short_pieces) {
+  irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
+
+  const auto part = [&](std::string_view like) {
+    const irs::ByWildcardNGramOptions opts{like, analyzer, false};
+    EXPECT_EQ(nullptr, opts.matcher) << like;
+    EXPECT_EQ(1U, opts.grams.size()) << like;
+    EXPECT_EQ(1U, opts.grams.front().size()) << like;
+    return opts.grams.front().begin()->part;
+  };
+  EXPECT_EQ(
+    irs::ByPhraseOptions::PhrasePart{irs::ByPrefixOptions{
+      {.term =
+         irs::bstring{irs::ViewCast<irs::byte_type>(std::string_view{"\x1F"
+                                                                     "a"})}}}},
+    part("a%"));
+  EXPECT_EQ(irs::ByPhraseOptions::PhrasePart{irs::ByTermOptions{
+              .term = irs::bstring{irs::ViewCast<irs::byte_type>(
+                std::string_view{"a\x1F"})}}},
+            part("%a"));
+  EXPECT_EQ(
+    irs::ByPhraseOptions::PhrasePart{irs::ByPrefixOptions{
+      {.term =
+         irs::bstring{irs::ViewCast<irs::byte_type>(std::string_view{"a"})}}}},
+    part("%a%"));
+  EXPECT_EQ(irs::ByPhraseOptions::PhrasePart{irs::ByPrefixOptions{}},
+            part("%"));
+  EXPECT_EQ(irs::ByPhraseOptions::PhrasePart{irs::ByTermOptions{
+              .term = irs::bstring{irs::ViewCast<irs::byte_type>(
+                std::string_view{"\x1F\x1F"})}}},
+            part(""));
+
+  const irs::ByWildcardNGramOptions any{"_%", analyzer, true};
+  EXPECT_EQ(irs::GramQuery{}, any.query);
+  EXPECT_NE(nullptr, any.matcher);
+
+  EXPECT_NE(nullptr,
+            irs::ByWildcardNGramOptions("bc%", analyzer, false).matcher);
+  EXPECT_EQ(nullptr,
+            irs::ByWildcardNGramOptions("bc%", analyzer, true).matcher);
 }
 
 TEST(WildcardNGramFilterOptionsTest, equality_empty) {
@@ -168,25 +222,20 @@ TEST(WildcardNGramFilterOptionsTest, pattern_past_default_budget_is_verified) {
   irs::ByWildcardNGramOptions opts{pattern, analyzer, true};
   ASSERT_NE(nullptr, opts.matcher);
 
-  std::string regexp = "\\Aabc";
-  regexp.append(kUnits, '.');
-  regexp += "xyz\\z";
   re2::RE2::Options small;
-  small.set_dot_nl(true);
   small.set_log_errors(false);
   small.set_max_mem(int64_t{64} << 20);
-  EXPECT_FALSE(re2::RE2(regexp, small).ok());
+  EXPECT_FALSE(
+    re2::RE2(irs::ViewCast<char>(irs::bytes_view{opts.pattern}), small).ok());
 
   std::string text = "abc";
   for (size_t i = 0; i != kUnits; ++i) {
     text += "\xD0\xB6";
   }
   text += "xyz";
-  EXPECT_TRUE(opts.matcher->Match(irs::ViewCast<irs::byte_type>(
-    std::string_view{text})));
+  EXPECT_TRUE(re2::RE2::FullMatch(text, *opts.matcher));
   text.erase(3, 2);
-  EXPECT_FALSE(opts.matcher->Match(irs::ViewCast<irs::byte_type>(
-    std::string_view{text})));
+  EXPECT_FALSE(re2::RE2::FullMatch(text, *opts.matcher));
 }
 
 // ---------------------------------------------------------------------------
@@ -313,8 +362,17 @@ TEST(WildcardNGramFilterTest, query) {
   EXPECT_EQ(ids({}), execute(MakeFilter(kField, "%qqq%", analyzer)));
   EXPECT_EQ(ids({}), execute(MakeFilter(kField, "fo_x%", analyzer)));
 
+  EXPECT_EQ(ids({0, 1}), execute(MakeFilter(kField, "f%", analyzer)));
+  EXPECT_EQ(ids({0}), execute(MakeFilter(kField, "%r", analyzer)));
+  EXPECT_EQ(ids({0, 1, 3, 4}), execute(MakeFilter(kField, "%o%", analyzer)));
+  EXPECT_EQ(ids({3, 4}), execute(MakeFilter(kField, "%l_%", analyzer)));
+  EXPECT_EQ(ids({}), execute(MakeFilter(kField, "", analyzer)));
+
   EXPECT_EQ(ids({0, 1}), execute(MakeFilter(kField, "foo%", analyzer, false)));
   EXPECT_EQ(ids({0}), execute(MakeFilter(kField, "foo_ar", analyzer, false)));
+  EXPECT_EQ(ids({0, 1}), execute(MakeFilter(kField, "f%", analyzer, false)));
+  EXPECT_EQ(ids({0, 1, 3, 4}),
+            execute(MakeFilter(kField, "%o%", analyzer, false)));
 
   {
     tests::sort::Boost sort;
@@ -341,15 +399,7 @@ TEST(WildcardNGramFilterTest, query) {
   }
 }
 
-TEST(RegexpNGramFilterOptionsTest, default_ctor) {
-  irs::ByRegexpNGramOptions opts;
-  EXPECT_TRUE(opts.pattern.empty());
-  EXPECT_EQ(irs::GramQuery{}, opts.query);
-  EXPECT_TRUE(opts.grams.empty());
-  EXPECT_EQ(nullptr, opts.matcher);
-}
-
-TEST(RegexpNGramFilterOptionsTest, grams_follow_literals) {
+TEST(WildcardNGramFilterOptionsTest, grams_follow_literals) {
   irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
 
   const auto opts = MakeRegexpOptions("foo.*bar", analyzer);
@@ -358,13 +408,16 @@ TEST(RegexpNGramFilterOptionsTest, grams_follow_literals) {
   EXPECT_EQ(2U, opts.grams[0].size());
   EXPECT_EQ(2U, opts.grams[1].size());
   ASSERT_NE(nullptr, opts.matcher);
-  EXPECT_TRUE(opts.matcher->Match(
-    irs::ViewCast<irs::byte_type>(std::string_view{"foo-bar"})));
-  EXPECT_FALSE(opts.matcher->Match(
-    irs::ViewCast<irs::byte_type>(std::string_view{"foo"})));
+  EXPECT_TRUE(re2::RE2::FullMatch("foo-bar", *opts.matcher));
+  EXPECT_FALSE(re2::RE2::FullMatch("foo", *opts.matcher));
+
+  const auto exact = MakeRegexpOptions("(?s)foo.*", analyzer);
+  EXPECT_EQ(R"("\x1ffoo")", irs::ToString(exact.query));
+  EXPECT_EQ(nullptr, exact.matcher);
+  EXPECT_NE(nullptr, MakeRegexpOptions("(?s)foo.*", analyzer, false).matcher);
 }
 
-TEST(RegexpNGramFilterOptionsTest, invalid_pattern_matches_nothing) {
+TEST(WildcardNGramFilterOptionsTest, invalid_pattern_matches_nothing) {
   irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
 
   for (const std::string_view pattern : {"(", "foo\\", "a{1001}"}) {
@@ -374,7 +427,7 @@ TEST(RegexpNGramFilterOptionsTest, invalid_pattern_matches_nothing) {
   }
 }
 
-TEST(RegexpNGramFilterOptionsTest, equality_is_by_pattern) {
+TEST(WildcardNGramFilterOptionsTest, regexp_equality_is_by_pattern) {
   irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
 
   EXPECT_TRUE(MakeRegexpOptions(".*abc.*x", analyzer) ==
@@ -392,33 +445,7 @@ TEST(RegexpNGramFilterOptionsTest, equality_is_by_pattern) {
                MakeRegexpOptions("abc", analyzer, false));
 }
 
-TEST(RegexpNGramFilterOptionsTest, matcher_equality) {
-  const irs::WildcardNGramMatcher like{std::string_view{"a%"}};
-  const auto regexp = [](std::string_view pattern, irs::RegexpSyntax syntax) {
-    const auto bytes = irs::ViewCast<irs::byte_type>(pattern);
-    return irs::WildcardNGramMatcher{
-      bytes,
-      syntax,
-      std::make_shared<const irs::RegexpAcceptor>(bytes, syntax),
-    };
-  };
-  EXPECT_TRUE(regexp("a.*", irs::RegexpSyntax::Perl) ==
-              regexp("a.*", irs::RegexpSyntax::Perl));
-  EXPECT_FALSE(regexp("a.*", irs::RegexpSyntax::Perl) ==
-               regexp("a.*", irs::RegexpSyntax::PosixEre));
-  EXPECT_FALSE(regexp("a.*", irs::RegexpSyntax::Perl) ==
-               regexp("a.+", irs::RegexpSyntax::Perl));
-  EXPECT_FALSE(like == regexp("a.*", irs::RegexpSyntax::Perl));
-}
-
-TEST(RegexpNGramFilterTest, ctor) {
-  irs::ByRegexpNGram q;
-  EXPECT_EQ(irs::Type<irs::ByRegexpNGram>::id(), q.type());
-  EXPECT_EQ(irs::field_limits::invalid(), q.field_id());
-  EXPECT_EQ(irs::kNoBoost, q.GetBoost());
-}
-
-TEST(RegexpNGramFilterTest, equal) {
+TEST(WildcardNGramFilterTest, equal_regexp) {
   irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
 
   auto q = MakeRegexpFilter(kFieldId, "foo.*bar", analyzer);
@@ -431,9 +458,7 @@ TEST(RegexpNGramFilterTest, equal) {
   EXPECT_NE(q, q_diff_pattern);
 }
 
-// The expected documents are the ones `RegexpAcceptor` accepts, so the index
-// may only narrow the scan, never change the answer.
-TEST(RegexpNGramFilterTest, query_matches_acceptor) {
+TEST(WildcardNGramFilterTest, query_matches_re2) {
   static constexpr irs::field_id kField = kTextId;
   static constexpr std::string_view kValues[]{
     "foobar",
@@ -460,6 +485,15 @@ TEST(RegexpNGramFilterTest, query_matches_acceptor) {
     "^abc$",
     "abc.*",
     "(?s)abc.*",
+    "(?s).*abc",
+    "(?s).*abc.*",
+    "(?s)a.*",
+    "(?s).*a",
+    "(?s).*b.*",
+    "(?s).*",
+    "(?s)..*",
+    "a.*",
+    ".*a.*",
     ".*abc",
     ".*abc.*",
     "ab",
@@ -545,18 +579,27 @@ TEST(RegexpNGramFilterTest, query_matches_acceptor) {
     };
 
     const auto check = [&](std::string_view pattern, irs::RegexpSyntax syntax) {
-      const irs::RegexpAcceptor acceptor{irs::ViewCast<irs::byte_type>(pattern),
-                                         syntax};
-      std::vector<irs::doc_id_t> expected;
-      for (size_t i = 0; i != std::size(kValues); ++i) {
-        if (acceptor.Matches(irs::ViewCast<irs::byte_type>(kValues[i]))) {
-          expected.push_back(kBase + static_cast<irs::doc_id_t>(i));
-        }
-      }
+      const re2::RE2 re{pattern, irs::RegexpOptions(syntax)};
+      const auto marked = [&](irs::doc_id_t doc) {
+        return kValues[doc - kBase].find('\x1F') != std::string_view::npos;
+      };
       for (const bool has_pos : {true, false}) {
         const auto q =
           MakeRegexpFilter(kField, pattern, analyzer, has_pos, syntax);
-        EXPECT_EQ(expected, execute(q, nullptr))
+        const bool decided = !q.options().matcher;
+        std::vector<irs::doc_id_t> expected;
+        for (size_t i = 0; i != std::size(kValues); ++i) {
+          const auto doc = kBase + static_cast<irs::doc_id_t>(i);
+          if (re.ok() && !(decided && marked(doc)) &&
+              re2::RE2::FullMatch(kValues[i], re)) {
+            expected.push_back(doc);
+          }
+        }
+        auto actual = execute(q, nullptr);
+        if (decided) {
+          std::erase_if(actual, marked);
+        }
+        EXPECT_EQ(expected, actual)
           << "pattern: " << pattern << ", n: " << n << ", pos: " << has_pos
           << ", query: " << irs::ToString(q.options().query);
       }

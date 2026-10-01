@@ -88,7 +88,7 @@ void FromRegexp(BoolTarget parent, const FilterContext& ctx,
   }
   if (column_info.tokenizer.analyzer->type() ==
       irs::Type<irs::analysis::WildcardTokenizer>::id()) {
-    auto& rf = AddMaybeNegated<irs::ByRegexpNGram>(parent, ctx, column_info);
+    auto& rf = AddMaybeNegated<irs::ByWildcardNGram>(parent, ctx, column_info);
     rf.SetBoost(ctx.boost);
     rf.SetScorer(&irs::ForceConstScore());
     *rf.mutable_field_id() =

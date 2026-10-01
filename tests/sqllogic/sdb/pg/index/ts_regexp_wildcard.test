@@ -2516,13 +2516,14 @@ QUERY PLAN
 │ Index: rx_idx                                │
 │ Lookup: table                                │
 │ Index Filter:                                │
-│ ╭─ Regexp NGram ───────────────────────────╮ │
+│ ╭─ Wildcard NGram ─────────────────────────╮ │
 │ │ Field: v(string)                         │ │
 │ │ Pattern: foo.*ba[rz]                     │ │
 │ │ Syntax: perl                             │ │
 │ │ Has Pos: false                           │ │
 │ │ Query:                                   │ │
 │ │ And("\\x1ffoo", Or("bar\\x1f", "baz\\x1f")) │ │
+│ │ Verify: true                             │ │
 │ ╰──────────────────────────────────────────╯ │
 │ Projections: id                              │
 │ ~7 rows                                      │

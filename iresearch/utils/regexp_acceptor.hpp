@@ -39,16 +39,6 @@
 
 namespace irs {
 
-struct RegexpTreeDeleter {
-  void operator()(re2::Regexp* re) const noexcept;
-};
-
-using RegexpTreePtr = std::unique_ptr<re2::Regexp, RegexpTreeDeleter>;
-
-// The tree `RegexpAcceptor` compiles its program from; null if the pattern
-// does not parse.
-RegexpTreePtr ParseRegexpTree(bytes_view pattern, RegexpSyntax syntax);
-
 class RegexpAcceptor {
  public:
   using PayloadType = byte_type;

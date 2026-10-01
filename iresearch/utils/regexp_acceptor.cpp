@@ -911,14 +911,6 @@ std::atomic_size_t kBuilds{0};
 
 }  // namespace
 
-void RegexpTreeDeleter::operator()(re2::Regexp* re) const noexcept {
-  re->Decref();
-}
-
-RegexpTreePtr ParseRegexpTree(bytes_view pattern, RegexpSyntax syntax) {
-  return RegexpTreePtr{RegexpTree(pattern, syntax)};
-}
-
 #ifdef SDB_DEV
 size_t RegexpAcceptor::Builds() noexcept {
   return kBuilds.load(std::memory_order_relaxed);

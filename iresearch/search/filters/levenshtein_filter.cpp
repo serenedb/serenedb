@@ -22,9 +22,12 @@
 
 #include "levenshtein_filter.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include <array>
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/all_terms_visitor.hpp"
@@ -162,25 +165,29 @@ void VisitImpl(const SubReader& segment, const TermReader& reader,
   VisitTerms(it, visitor);
 }
 
-void SelectTopTerms(const SubReader& segment, const TermReader& reader,
-                    const LevenshteinAutomatonOptions& options, size_t limit,
-                    TopTermsSelector<TopTermState<score_t>>& selector) {
+template<typename OnTerms, typename OnTerm>
+void WalkTopTerms(const TermReader& reader,
+                  const LevenshteinAutomatonOptions& options, size_t limit,
+                  OnTerms&& on_terms, OnTerm&& on_term) {
   SDB_ASSERT(options.parametric);
   std::optional<LevenshteinIterator> it{std::in_place, reader, options};
   if (!it->next()) {
     return;
   }
-  selector.Prepare(segment, reader, it->GetImpl());
+  on_terms(it->GetImpl());
   const auto prefix = options.parametric->LowerBound();
   const auto term = bytes_view{options.target}.substr(prefix.size());
   std::unique_ptr<const LevenshteinAcceptor> narrow;
   auto distance = static_cast<uint8_t>(options.no_distance - 1);
   std::array<size_t, ParametricDescription::kMaxDistance + 1> reached{};
+  const auto reaches = [&](score_t boost, uint8_t d) {
+    const auto best = Similarity(d, options.utf8_target_size);
+    return options.with_ties ? boost > best : boost >= best;
+  };
   for (;;) {
     const auto boost = it->Boost();
-    selector.Visit(boost);
-    for (auto d = distance; boost >= Similarity(d, options.utf8_target_size);
-         --d) {
+    on_term(boost);
+    for (auto d = distance; reaches(boost, d); --d) {
       ++reached[d];
       if (d == 0) {
         break;
@@ -203,7 +210,7 @@ void SelectTopTerms(const SubReader& segment, const TermReader& reader,
         if (!it->SeekPast(last)) {
           return;
         }
-        selector.Prepare(segment, reader, it->GetImpl());
+        on_terms(it->GetImpl());
         continue;
       }
     }
@@ -212,6 +219,79 @@ void SelectTopTerms(const SubReader& segment, const TermReader& reader,
     }
   }
 }
+
+template<typename Selector>
+void SelectTopTerms(const SubReader& segment, const TermReader& reader,
+                    const LevenshteinAutomatonOptions& options, size_t limit,
+                    AggregatedStatsVisitor& aggregate_stats) {
+  Selector selector{limit};
+  WalkTopTerms(
+    reader, options, limit,
+    [&](TermIterator& terms) { selector.Prepare(segment, reader, terms); },
+    [&](score_t key) { selector.Visit(key); });
+  selector.Visit([&aggregate_stats](TopTermState<score_t>& s) {
+    aggregate_stats.boost = std::max(0.f, s.key);
+    aggregate_stats.term = s.term;
+    s.Visit(aggregate_stats);
+  });
+}
+
+template<typename Selector>
+std::vector<TopTerm<score_t>> SelectTerms(
+  const TermReader& reader, const LevenshteinAutomatonOptions& options,
+  size_t limit) {
+  Selector selector{limit};
+  WalkTopTerms(
+    reader, options, limit,
+    [&](TermIterator& terms) { selector.Prepare(reader, terms); },
+    [&](score_t key) { selector.Visit(key); });
+  std::vector<TopTerm<score_t>> selected;
+  selector.Visit(
+    [&](TopTerm<score_t>& term) { selected.push_back(std::move(term)); });
+  absl::c_sort(selected, [](const auto& lhs, const auto& rhs) {
+    return lhs.term < rhs.term;
+  });
+  return selected;
+}
+
+class SelectedTermsIterator : public TermIterator {
+ public:
+  SelectedTermsIterator(SeekTermIterator::ptr&& impl,
+                        std::vector<TopTerm<score_t>>&& terms) noexcept
+    : _impl{std::move(impl)}, _terms{std::move(terms)} {}
+
+  bytes_view value() const noexcept final { return _impl->value(); }
+
+  const PostingMeta& cookie() const final { return _impl->cookie(); }
+
+  TermPostings::ptr postings(IndexFeatures features) const final {
+    return _impl->postings(features);
+  }
+
+  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
+    if (irs::Type<TermBoost>::id() == id) {
+      return &_boost;
+    }
+    return _impl->GetMutable(id);
+  }
+
+  bool next() final {
+    while (_next != _terms.size()) {
+      const auto& selected = _terms[_next++];
+      if (_impl->seek(selected.term)) {
+        _boost.value = selected.key;
+        return true;
+      }
+    }
+    return false;
+  }
+
+ private:
+  SeekTermIterator::ptr _impl;
+  std::vector<TopTerm<score_t>> _terms;
+  size_t _next{0};
+  TermBoost _boost;
+};
 
 uint32_t Utf8TargetSize(bytes_view prefix, bytes_view term) {
   return std::max(1U, static_cast<uint32_t>(utf8_utils::Length(prefix) +
@@ -242,16 +322,15 @@ QueryBuilder::ptr PrepareLevenshteinSegment(
                                    stats};
     VisitImpl(segment, *reader, options, term_collector);
   } else {
-    TopTermsSelector<TopTermState<score_t>> selector{terms_limit};
-    SelectTopTerms(segment, *reader, options, terms_limit, selector);
-
     AggregatedStatsVisitor aggregate_stats{query->State(), collector,
                                            ctx.thread, stats};
-    selector.Visit([&aggregate_stats](TopTermState<score_t>& s) {
-      aggregate_stats.boost = std::max(0.f, s.key);
-      aggregate_stats.term = s.term;
-      s.Visit(aggregate_stats);
-    });
+    if (options.with_ties) {
+      SelectTopTerms<TiedTermsSelector<TopTermState<score_t>>>(
+        segment, *reader, options, terms_limit, aggregate_stats);
+    } else {
+      SelectTopTerms<TopTermsSelector<TopTermState<score_t>>>(
+        segment, *reader, options, terms_limit, aggregate_stats);
+    }
   }
 
   return MultiTermQuery::Finish(std::move(query), ctx);
@@ -369,7 +448,17 @@ TermIterator::ptr LevenshteinAutomatonFilter::CompileTermIterator(
   if (!options().parametric) {
     return nullptr;
   }
-  return memory::make_managed<LevenshteinIterator>(reader, options());
+  const auto limit = options().max_terms;
+  if (limit == 0) {
+    return memory::make_managed<LevenshteinIterator>(reader, options());
+  }
+  auto selected = options().with_ties
+                    ? SelectTerms<TiedTermsSelector<TopTerm<score_t>>>(
+                        reader, options(), limit)
+                    : SelectTerms<TopTermsSelector<TopTerm<score_t>>>(
+                        reader, options(), limit);
+  return memory::make_managed<SelectedTermsIterator>(reader.iterator(),
+                                                     std::move(selected));
 }
 
 }  // namespace irs

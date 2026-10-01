@@ -1287,19 +1287,50 @@ TEST_P(ByEditDistanceTestCase, top_terms_are_the_ranked_oracle) {
                  irs::ViewCast<irs::byte_type>(rhs.term);
         });
         for (const size_t max_terms : {1, 3, 10, 50, 200}) {
-          SCOPED_TRACE(testing::Message("Prefix: '")
-                       << prefix << "', target: '" << target
-                       << "', distance: " << size_t{distance}
-                       << ", transpositions: " << transpositions
-                       << ", max terms: " << max_terms);
-          Docs expected;
-          for (size_t i = 0; i != std::min(max_terms, ranked.size()); ++i) {
-            expected.push_back(ranked[i].doc);
+          for (const bool with_ties : {false, true}) {
+            SCOPED_TRACE(testing::Message("Prefix: '")
+                         << prefix << "', target: '" << target
+                         << "', distance: " << size_t{distance}
+                         << ", transpositions: " << transpositions
+                         << ", max terms: " << max_terms
+                         << ", with ties: " << with_ties);
+            auto count = std::min(max_terms, ranked.size());
+            while (with_ties && count != 0 && count != ranked.size() &&
+                   ranked[count].similarity == ranked[count - 1].similarity) {
+              ++count;
+            }
+            Docs expected;
+            std::vector<std::pair<irs::bstring, irs::score_t>> selected;
+            for (size_t i = 0; i != count; ++i) {
+              expected.push_back(ranked[i].doc);
+              selected.emplace_back(
+                irs::ViewCast<irs::byte_type>(ranked[i].term),
+                ranked[i].similarity);
+            }
+            absl::c_sort(expected);
+            absl::c_sort(selected);
+
+            auto filter = MakeLevenshtein("title", target, distance, max_terms,
+                                          transpositions, prefix);
+            ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(),
+                      filter->type());
+            irs::utils::downCast<irs::LevenshteinAutomatonFilter>(*filter)
+              .mutable_options()
+              ->with_ties = with_ties;
+            CheckQuery(*filter, expected, rdr);
+
+            const auto* field = rdr[0].field(kTitleId);
+            ASSERT_NE(nullptr, field);
+            auto cursor = filter->CompileTermIterator(*field);
+            ASSERT_NE(nullptr, cursor);
+            const auto* boost = irs::get<irs::TermBoost>(*cursor);
+            ASSERT_NE(nullptr, boost);
+            std::vector<std::pair<irs::bstring, irs::score_t>> walked;
+            while (cursor->next()) {
+              walked.emplace_back(cursor->value(), boost->value);
+            }
+            EXPECT_EQ(selected, walked);
           }
-          absl::c_sort(expected);
-          CheckQuery(*MakeLevenshtein("title", target, distance, max_terms,
-                                      transpositions, prefix),
-                     expected, rdr);
         }
       }
     }

@@ -471,7 +471,9 @@ struct FilterPrinter {
       ExplainNode node{"Levenshtein"};
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Target"] = TermToString(o.target);
-      node.attributes["Max Terms"] = absl::StrCat(o.max_terms);
+      node.attributes["Max Terms"] = o.with_ties
+                                       ? absl::StrCat(o.max_terms, " with ties")
+                                       : absl::StrCat(o.max_terms);
       return node;
     }
     if (type == Type<ByPrefix>::id()) {

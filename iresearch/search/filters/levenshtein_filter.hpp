@@ -107,6 +107,7 @@ struct LevenshteinAutomatonOptions {
   uint32_t utf8_target_size{1};
   byte_type no_distance{1};
   bool with_transpositions{false};
+  bool with_ties{false};
   size_t max_terms{};
 
   LevenshteinAutomatonOptions() = default;
@@ -119,7 +120,7 @@ struct LevenshteinAutomatonOptions {
     return target == rhs.target && utf8_target_size == rhs.utf8_target_size &&
            no_distance == rhs.no_distance &&
            with_transpositions == rhs.with_transpositions &&
-           max_terms == rhs.max_terms;
+           with_ties == rhs.with_ties && max_terms == rhs.max_terms;
   }
 };
 

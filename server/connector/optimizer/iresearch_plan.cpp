@@ -1103,6 +1103,11 @@ void RewriteSearchCallsToColumnRefs(
                               input.optimizer.binder);
 }
 
+void LimitTsDictScans(duckdb::OptimizerExtensionInput&,
+                      duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+  LimitTsDictEnumerations(*plan);
+}
+
 }  // namespace
 
 void IResearchPushdownComplexFilter(
@@ -1136,6 +1141,12 @@ void RegisterIResearchPlanOptimizer(duckdb::DatabaseInstance& db) {
                  .rule = &RewriteSearchCallsToColumnRefs,
                  .anchor = duckdb::OptimizerType::FILTER_PUSHDOWN,
                  .where = duckdb::OptimizerHookPosition::Before,
+               });
+  duckdb::OptimizerExtension::Register(
+    db.config, duckdb::OptimizerExtension{
+                 .rule = &LimitTsDictScans,
+                 .anchor = duckdb::OptimizerType::FILTER_PUSHDOWN,
+                 .where = duckdb::OptimizerHookPosition::After,
                });
 }
 

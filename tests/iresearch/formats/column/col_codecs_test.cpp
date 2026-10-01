@@ -837,6 +837,42 @@ TEST_F(ColCodecsTest, AutoIsNoLargerThanItsCandidates) {
   }
 }
 
+TEST_F(ColCodecsTest, SampledPricesDoNotLoseToTheCandidatesTheyPrice) {
+  using duckdb::CompressionType;
+  const Value urls = [](uint64_t g) -> std::optional<std::string> {
+    return "https://example.org/section/" + std::to_string(g % 5000) +
+           "/page?id=" + std::to_string(g % 97);
+  };
+  struct Arm {
+    const char* name;
+    const Value* value;
+    uint64_t rows;
+    uint32_t segment_target;
+    irs::AutoObjective objective;
+    CompressionType named;
+  };
+  const Arm arms[] = {
+    {"periodic urls", &urls, 150000, irs::ColCodecParams{}.segment_target,
+     irs::AutoObjective::Size, CompressionType::COMPRESSION_ZSTD},
+    {"word soup", &kWordSoup, 60000, 64 * 1024, irs::AutoObjective::Balanced,
+     CompressionType::COMPRESSION_FSST},
+  };
+  for (const auto& arm : arms) {
+    irs::MemoryDirectory auto_dir{};
+    Write(auto_dir, CompressionType::COMPRESSION_AUTO,
+          {.segment_target = arm.segment_target, .objective = arm.objective},
+          arm.rows, DEFAULT_ROW_GROUP_SIZE, *arm.value);
+    irs::MemoryDirectory named_dir{};
+    Write(named_dir, arm.named, {.segment_target = arm.segment_target},
+          arm.rows, DEFAULT_ROW_GROUP_SIZE, *arm.value);
+    const auto auto_bytes = ColumnBytes(auto_dir);
+    const auto named_bytes = ColumnBytes(named_dir);
+    EXPECT_LE(auto_bytes, named_bytes + named_bytes / 100)
+      << arm.name << " auto " << auto_bytes << " named " << named_bytes;
+    Verify(auto_dir, CompressionType::COMPRESSION_AUTO, arm.rows, *arm.value);
+  }
+}
+
 TEST_F(ColCodecsTest, AutoLevelsComeFromTheLadders) {
   using duckdb::CompressionType;
   const std::set<std::string> lz4{"1", "4", "9"};

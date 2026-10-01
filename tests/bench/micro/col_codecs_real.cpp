@@ -88,9 +88,9 @@ const Column& Data() {
     }
     duckdb::Connection con{CsDb()};
     con.Query("SET threads = 1");
-    auto result = con.Query(std::string{"SELECT \""} + name +
-                            "\" FROM read_parquet('" + path + "') LIMIT " +
-                            std::to_string(RequestedRows()));
+    auto result =
+      con.Query(std::string{"SELECT \""} + name + "\" FROM read_parquet('" +
+                path + "') LIMIT " + std::to_string(RequestedRows()));
     if (result->HasError()) {
       std::fprintf(stderr, "load: %s\n", result->GetError().c_str());
       std::abort();
@@ -105,8 +105,8 @@ const Column& Data() {
         break;
       }
       const auto count = chunk->size();
-      auto vec = std::make_unique<duckdb::Vector>(duckdb::LogicalType::VARCHAR,
-                                                  count);
+      auto vec =
+        std::make_unique<duckdb::Vector>(duckdb::LogicalType::VARCHAR, count);
       duckdb::VectorOperations::Copy(chunk->data[0], *vec, count, 0, 0);
       duckdb::UnifiedVectorFormat format;
       vec->ToUnifiedFormat(format);
@@ -161,18 +161,29 @@ constexpr ColArm kColArms[] = {
   {"dict_fsst", duckdb::CompressionType::COMPRESSION_DICT_FSST, 0},
   {"fsst", duckdb::CompressionType::COMPRESSION_FSST, 0},
   {"dict_lz4", duckdb::CompressionType::COMPRESSION_DICT_LZ4, 0},
+  {"dict_lz4_hc4", duckdb::CompressionType::COMPRESSION_DICT_LZ4, 4},
   {"dict_lz4_hc9", duckdb::CompressionType::COMPRESSION_DICT_LZ4, 9},
   {"lz4", duckdb::CompressionType::COMPRESSION_LZ4, 0},
+  {"lz4_hc4", duckdb::CompressionType::COMPRESSION_LZ4, 4},
   {"lz4_hc9", duckdb::CompressionType::COMPRESSION_LZ4, 9},
   {"dict_zstd1", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 1},
   {"dict_zstd3", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 3},
+  {"dict_zstd6", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 6},
   {"dict_zstd9", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 9},
+  {"dict_zstd12", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 12},
   {"zstd1", duckdb::CompressionType::COMPRESSION_ZSTD, 1},
   {"zstd3", duckdb::CompressionType::COMPRESSION_ZSTD, 3},
+  {"zstd6", duckdb::CompressionType::COMPRESSION_ZSTD, 6},
+  {"zstd9", duckdb::CompressionType::COMPRESSION_ZSTD, 9},
+  {"zstd12", duckdb::CompressionType::COMPRESSION_ZSTD, 12},
+  {"dict_zxc1", duckdb::CompressionType::COMPRESSION_DICT_ZXC, 1},
   {"dict_zxc3", duckdb::CompressionType::COMPRESSION_DICT_ZXC, 3},
   {"dict_zxc5", duckdb::CompressionType::COMPRESSION_DICT_ZXC, 5},
+  {"dict_zxc7", duckdb::CompressionType::COMPRESSION_DICT_ZXC, 7},
+  {"zxc1", duckdb::CompressionType::COMPRESSION_ZXC, 1},
   {"zxc3", duckdb::CompressionType::COMPRESSION_ZXC, 3},
   {"zxc5", duckdb::CompressionType::COMPRESSION_ZXC, 5},
+  {"zxc7", duckdb::CompressionType::COMPRESSION_ZXC, 7},
   {"uncompressed", duckdb::CompressionType::COMPRESSION_UNCOMPRESSED, 0},
 };
 
@@ -377,8 +388,8 @@ void DuckBuild(const DuckArm& arm, DuckSeg& seg) {
   {
     duckdb::Appender appender{*seg.con, "t"};
     duckdb::DataChunk chunk;
-    chunk.InitializeEmpty(duckdb::vector<duckdb::LogicalType>{
-      duckdb::LogicalType::VARCHAR});
+    chunk.InitializeEmpty(
+      duckdb::vector<duckdb::LogicalType>{duckdb::LogicalType::VARCHAR});
     for (size_t i = 0; i < data.vectors.size(); ++i) {
       chunk.Reset();
       chunk.data[0].Reference(*data.vectors[i]);
@@ -436,9 +447,9 @@ void DuckScan(benchmark::State& state, size_t arm, bool flat) {
   WithStorage(seg, [&](duckdb::ClientContext& ctx, duckdb::DataTable& storage,
                        duckdb::DuckTransaction& tx) {
     duckdb::DataChunk chunk;
-    chunk.Initialize(duckdb::Allocator::DefaultAllocator(),
-                     duckdb::vector<duckdb::LogicalType>{
-                       duckdb::LogicalType::VARCHAR});
+    chunk.Initialize(
+      duckdb::Allocator::DefaultAllocator(),
+      duckdb::vector<duckdb::LogicalType>{duckdb::LogicalType::VARCHAR});
     for (auto _ : state) {
       state.PauseTiming();
       duckdb::TableScanState scan;
@@ -468,9 +479,9 @@ void DuckFetch(benchmark::State& state, size_t arm, bool point) {
   WithStorage(seg, [&](duckdb::ClientContext&, duckdb::DataTable& storage,
                        duckdb::DuckTransaction& tx) {
     duckdb::DataChunk out;
-    out.Initialize(duckdb::Allocator::DefaultAllocator(),
-                   duckdb::vector<duckdb::LogicalType>{
-                     duckdb::LogicalType::VARCHAR});
+    out.Initialize(
+      duckdb::Allocator::DefaultAllocator(),
+      duckdb::vector<duckdb::LogicalType>{duckdb::LogicalType::VARCHAR});
     for (auto _ : state) {
       duckdb::ColumnFetchState fetch;
       const size_t step = point ? 1 : STANDARD_VECTOR_SIZE;

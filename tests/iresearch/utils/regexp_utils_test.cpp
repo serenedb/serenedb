@@ -2448,6 +2448,23 @@ TEST_F(RegexpUtilsTest, required_suffix) {
             irs::ViewCast<char>(irs::bytes_view{fused.ExemptKeys()[1].key}));
   EXPECT_FALSE(fused.ExemptKeys()[1].prefix);
 
+  const Part covered[] = {
+    {Kind::Term, ToBytesView("zeta")},   {Kind::Term, ToBytesView("autobus")},
+    {Kind::Prefix, ToBytesView("auto")}, {Kind::Term, ToBytesView("au")},
+    {Kind::Prefix, ToBytesView("zeta")}, {Kind::Wildcard, ToBytesView("%ska")},
+  };
+  const irs::RegexpAcceptor normalized{covered};
+  ASSERT_EQ(3, normalized.ExemptKeys().size());
+  EXPECT_EQ(
+    "au", irs::ViewCast<char>(irs::bytes_view{normalized.ExemptKeys()[0].key}));
+  EXPECT_FALSE(normalized.ExemptKeys()[0].prefix);
+  EXPECT_EQ("auto", irs::ViewCast<char>(
+                      irs::bytes_view{normalized.ExemptKeys()[1].key}));
+  EXPECT_TRUE(normalized.ExemptKeys()[1].prefix);
+  EXPECT_EQ("zeta", irs::ViewCast<char>(
+                      irs::bytes_view{normalized.ExemptKeys()[2].key}));
+  EXPECT_TRUE(normalized.ExemptKeys()[2].prefix);
+
   const Part open[] = {
     {Kind::Prefix, ToBytesView("auto")},
     {Kind::Wildcard, ToBytesView("%ska")},

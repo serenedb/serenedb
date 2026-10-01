@@ -1996,6 +1996,8 @@ class AcceptorTermIterator : public SeekTermIterator,
     uint32_t hi;
     size_t weight_size;
     StateidT fst_state;
+    uint32_t exempt_lo;
+    uint32_t exempt_hi;
     bool alive;
     bool filter;
 
@@ -2117,20 +2119,40 @@ class AcceptorTermIterator : public SeekTermIterator,
     return false;
   }
 
-  bool Filters(size_t prefix) const noexcept {
+  struct Exempt {
+    uint32_t lo;
+    uint32_t hi;
+    bool filter;
+  };
+
+  Exempt InheritExempt(const Level& parent, size_t from,
+                       size_t size) const noexcept {
+    uint32_t lo = parent.exempt_lo;
+    uint32_t hi = lo;
+    if (parent.filter || parent.exempt_lo == parent.exempt_hi) {
+      return {lo, hi, parent.filter};
+    }
     const byte_type* key = this->_term_buf.data();
-    for (const auto& exempt : _exempt) {
-      const size_t size = exempt.key.size();
-      const size_t common = std::min(size, prefix);
-      if (common != 0 && (exempt.key[0] != key[0] ||
-                          std::memcmp(exempt.key.data(), key, common) != 0)) {
+    for (auto i = parent.exempt_lo; i != parent.exempt_hi; ++i) {
+      const auto& exempt = _exempt[i];
+      const size_t common = std::min(exempt.key.size(), size);
+      if (std::memcmp(exempt.key.data() + from, key + from, common - from) !=
+          0) {
+        if (lo != hi) {
+          break;
+        }
         continue;
       }
-      if (size >= prefix || exempt.prefix) {
-        return false;
+      if (exempt.key.size() >= size) {
+        if (lo == hi) {
+          lo = i;
+        }
+        hi = i + 1;
+      } else if (exempt.prefix) {
+        return {lo, lo, false};
       }
     }
-    return true;
+    return {lo, hi, lo == hi};
   }
 
   IRS_NO_INLINE void LoadInfix() noexcept {
@@ -2240,9 +2262,16 @@ class AcceptorTermIterator : public SeekTermIterator,
   }
 
   Level MakeLevel(State state, size_t weight_size, StateidT fst_state,
-                  size_t prefix) const {
-    Level level{state,          1, 0, weight_size, fst_state, A::Alive(state),
-                Filters(prefix)};
+                  const Level* parent, size_t from, size_t prefix) const {
+    Exempt exempt{0, 0, true};
+    if constexpr (kSuffixed) {
+      exempt = parent ? InheritExempt(*parent, from, prefix)
+                      : Exempt{0, static_cast<uint32_t>(_exempt.size()),
+                               _exempt.empty()};
+    }
+    Level level{state,        1,         0,         weight_size,
+                fst_state,    exempt.lo, exempt.hi, A::Alive(state),
+                exempt.filter};
     if (level.alive) {
       _a->LiveRange(state, level.lo, level.hi);
     }
@@ -2251,7 +2280,8 @@ class AcceptorTermIterator : public SeekTermIterator,
 
   void ResetLevels() {
     this->_weight.Clear();
-    _levels.assign(1, MakeLevel(_a->Start(), 0, this->_fst->Start(), 0));
+    _levels.assign(
+      1, MakeLevel(_a->Start(), 0, this->_fst->Start(), nullptr, 0, 0));
   }
 
   bool PushSubBlock(const byte_type* suffix, size_t n);
@@ -2325,8 +2355,13 @@ bool AcceptorTermIterator<FST, A>::PushSubBlock(const byte_type* suffix,
              FstBuffer::FstByteBuilder::kFinal == fst_state);
   this->_weight.PushBack(final_weight.begin(), final_weight.end());
 
-  _levels.emplace_back(Level{_live, lo, hi, weight_size, fst_state, true,
-                             Filters(this->_term_buf.size())});
+  Exempt exempt{0, 0, true};
+  if constexpr (kSuffixed) {
+    exempt =
+      InheritExempt(parent, this->_cur_block->Prefix(), this->_term_buf.size());
+  }
+  _levels.emplace_back(_live, lo, hi, weight_size, fst_state, exempt.lo,
+                       exempt.hi, true, exempt.filter);
   this->_cur_block =
     this->PushBlock(bytes_view{this->_weight}, this->_term_buf.size());
   if (!accepts && lo <= hi) {
@@ -2377,6 +2412,7 @@ void AcceptorTermIterator<FST, A>::RebuildLevels() {
   size_t depth = 0;
   for (const auto& block : this->_block_stack) {
     const size_t prefix = block.Prefix();
+    const size_t from = depth;
     SDB_ASSERT(prefix <= this->_term_buf.size());
     for (; depth != prefix; ++depth) {
       const auto label = this->_term_buf[depth];
@@ -2391,8 +2427,9 @@ void AcceptorTermIterator<FST, A>::RebuildLevels() {
         alive = A::Alive(state);
       }
     }
-    _levels.emplace_back(
-      MakeLevel(state, this->_weight.Size(), fst_state, prefix));
+    _levels.emplace_back(MakeLevel(state, this->_weight.Size(), fst_state,
+                                   _levels.empty() ? nullptr : &_levels.back(),
+                                   from, prefix));
   }
 }
 

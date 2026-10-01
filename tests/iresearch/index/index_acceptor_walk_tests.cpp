@@ -1154,6 +1154,16 @@ TEST_P(AcceptorWalkIndexTestCase, union_walk_is_the_union_of_its_parts) {
      part(Kind::Term, "zz"), part(Kind::Perl, ".*(ion|ing)")},
     {part(Kind::Term, "x"), part(Kind::Wildcard, "%rden"),
      part(Kind::Wildcard, "%\xC3\xBCrden")},
+    {part(Kind::Prefix, "ab"), part(Kind::Term, "abc"), part(Kind::Prefix, "a"),
+     part(Kind::Wildcard, "%tion")},
+    {part(Kind::Term, "then"), part(Kind::Term, "the"),
+     part(Kind::Term, "there"), part(Kind::Term, "th"),
+     part(Kind::Perl, ".*ing")},
+    {part(Kind::Prefix, "pre"), part(Kind::Term, "president"),
+     part(Kind::Prefix, "pro"), part(Kind::Term, "pr"),
+     part(Kind::Wildcard, "%ment")},
+    {part(Kind::Term, "parliamentary"), part(Kind::Prefix, "international"),
+     part(Kind::Term, "parliament"), part(Kind::Wildcard, "%ness")},
   };
   for (const auto& parts : unions) {
     const auto key = irs::UnionKey(parts);

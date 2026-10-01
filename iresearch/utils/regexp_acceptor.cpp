@@ -327,6 +327,21 @@ void NormalizeSuffixes(std::vector<bstring>& suffixes) {
   suffixes = std::move(kept);
 }
 
+void NormalizeExempt(std::vector<RegexpAcceptor::ExemptKey>& keys) {
+  std::sort(keys.begin(), keys.end(), [](const auto& a, const auto& b) {
+    return a.key != b.key ? a.key < b.key : a.prefix > b.prefix;
+  });
+  std::vector<RegexpAcceptor::ExemptKey> kept;
+  for (auto& key : keys) {
+    if (kept.empty() ||
+        !(kept.back().prefix ? bytes_view{key.key}.starts_with(kept.back().key)
+                             : key.key == kept.back().key)) {
+      kept.push_back(std::move(key));
+    }
+  }
+  keys = std::move(kept);
+}
+
 bstring InfixOf(re2::Regexp* re) {
   std::vector<re2::Regexp*> pieces;
   AppendPieces(re, pieces);
@@ -1016,6 +1031,7 @@ void RegexpAcceptor::CompileParts(std::span<const Part> parts,
     _suffixes.clear();
     _exempt.clear();
   }
+  NormalizeExempt(_exempt);
   if (!ok) {
     for (auto* re : text) {
       re->Decref();

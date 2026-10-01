@@ -20,6 +20,8 @@
 
 #include "iresearch/search/detail/term_acceptor.hpp"
 
+#include <absl/base/call_once.h>
+
 #include <algorithm>
 #include <span>
 #include <utility>
@@ -166,6 +168,37 @@ class WalkSource final : public TermAcceptorSource {
   std::shared_ptr<const A> _acceptor;
 };
 
+class FuzzySource final : public TermAcceptorSource {
+ public:
+  explicit FuzzySource(
+    std::shared_ptr<const LevenshteinAcceptor> fuzzy) noexcept
+    : _fuzzy{std::move(fuzzy)} {}
+
+  bool ok() const noexcept final { return true; }
+
+  SeekTermIterator::ptr Iterator(const TermReader& reader) const final {
+    absl::call_once(_once, [this] {
+      if (_fuzzy->LowerBound().empty()) {
+        _dfa = FuzzyConjunction::Make(_fuzzy);
+      }
+    });
+    if (_dfa) {
+      return reader.iterator(*_dfa);
+    }
+    return reader.iterator(*_fuzzy);
+  }
+
+  TermPredicate::ptr Predicate() const final {
+    return MakeTermPredicate(
+      [fuzzy = _fuzzy](bytes_view term) { return fuzzy->Matches(term); });
+  }
+
+ private:
+  std::shared_ptr<const LevenshteinAcceptor> _fuzzy;
+  mutable absl::once_flag _once;
+  mutable std::shared_ptr<const FuzzyConjunction> _dfa;
+};
+
 class BothPredicate final : public TermPredicate {
  public:
   BothPredicate(TermPredicate::ptr&& lhs, TermPredicate::ptr&& rhs) noexcept
@@ -243,6 +276,11 @@ TermAcceptorSource::ptr MakePatternSource(bytes_view pattern,
     return std::make_shared<const LiteralSetSource>(std::move(acceptor));
   }
   return std::make_shared<const PatternSource>(std::move(acceptor));
+}
+
+TermAcceptorSource::ptr MakeFuzzySource(
+  std::shared_ptr<const LevenshteinAcceptor> fuzzy) {
+  return std::make_shared<const FuzzySource>(std::move(fuzzy));
 }
 
 TermAcceptorSource::ptr MakeJointSource(

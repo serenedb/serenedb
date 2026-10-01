@@ -45,6 +45,7 @@ class RowArena {
   size_t Size() const noexcept { return _size; }
 
  private:
+  static constexpr size_t kFirstChunkBytes = size_t{4} << 10;
   static constexpr size_t kChunkBytes = size_t{64} << 10;
 
   std::vector<std::unique_ptr<std::byte[]>> _chunks;
@@ -169,8 +170,8 @@ class RegexpConjunction {
 
 class FuzzyConjunction {
  public:
-  using PayloadType = RegexpAcceptor::PayloadType;
-  static constexpr bool kHasPayload = false;
+  using PayloadType = LevenshteinAcceptor::PayloadType;
+  static constexpr bool kHasPayload = true;
   static constexpr bool kCheapRuns = false;
   static constexpr bool kMayBeUnknown = true;
 
@@ -179,12 +180,11 @@ class FuzzyConjunction {
   struct Row {
     Parts parts{};
     LevenshteinAcceptor::State fuzzy{};
-    std::atomic_bool ranged{false};
+    std::atomic<uint32_t> range{0};
     bool accept{false};
     bool dead{false};
     bool unknown{false};
-    uint8_t lo{1};
-    uint8_t hi{0};
+    PayloadType distance{0};
 
     std::atomic<const Row*>* Next() noexcept {
       return reinterpret_cast<std::atomic<const Row*>*>(this + 1);
@@ -202,6 +202,10 @@ class FuzzyConjunction {
     size_t max_mem = RegexpAcceptor::kDefaultMaxDfaMem);
   FuzzyConjunction(const FuzzyConjunction&) = delete;
   FuzzyConjunction& operator=(const FuzzyConjunction&) = delete;
+
+  static std::shared_ptr<const FuzzyConjunction> Make(
+    std::shared_ptr<const LevenshteinAcceptor> fuzzy,
+    size_t max_mem = RegexpAcceptor::kDefaultMaxDfaMem);
 
   State Start() const noexcept { return _start; }
 
@@ -231,20 +235,23 @@ class FuzzyConjunction {
   }
 
   bool Accept(State state, PayloadType& payload) const noexcept {
-    payload = 0;
+    payload = state->distance;
     return state->accept;
   }
 
   bool LiveRange(State state, uint32_t& lo, uint32_t& hi) const {
-    if (!state->ranged.load(std::memory_order_acquire)) [[unlikely]] {
-      Range(const_cast<Row*>(state));
+    auto range = state->range.load(std::memory_order_acquire);
+    if (range == 0) [[unlikely]] {
+      range = Range(const_cast<Row&>(*state));
     }
-    lo = state->lo;
-    hi = state->hi;
+    lo = (range >> 8) & 0xFFU;
+    hi = range & 0xFFU;
     return lo <= hi;
   }
 
   bool Matches(bytes_view term) const;
+
+  bool Matches(bytes_view term, PayloadType& payload) const;
 
  private:
   struct Key {
@@ -259,8 +266,14 @@ class FuzzyConjunction {
     }
   };
 
+  static constexpr uint32_t kRanged = uint32_t{1} << 16;
+
+  static constexpr uint32_t PackRange(uint32_t lo, uint32_t hi) noexcept {
+    return kRanged | (lo << 8) | hi;
+  }
+
   State StepSlow(State from, uint8_t c) const;
-  void Range(Row* row) const;
+  uint32_t Range(Row& row) const;
   State InternLocked(const Parts& parts,
                      const LevenshteinAcceptor::State& fuzzy) const;
 

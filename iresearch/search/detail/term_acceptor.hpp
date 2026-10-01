@@ -57,6 +57,9 @@ struct TermBounds {
 
 TermAcceptorSource::ptr MakePatternSource(bytes_view pattern, PatternKind kind);
 
+TermAcceptorSource::ptr MakeFuzzySource(
+  std::shared_ptr<const LevenshteinAcceptor> fuzzy);
+
 TermAcceptorSource::ptr MakeJointSource(
   std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
   std::shared_ptr<const LevenshteinAcceptor> fuzzy);

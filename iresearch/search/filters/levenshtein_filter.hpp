@@ -26,6 +26,7 @@
 #include <utility>
 
 #include "filter.hpp"
+#include "iresearch/search/detail/term_acceptor.hpp"
 #include "iresearch/utils/levenshtein_acceptor.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
 #include "iresearch/utils/levenshtein_utils.hpp"
@@ -101,6 +102,7 @@ struct LevenshteinAutomatonOptions {
 
   bstring target;
   std::shared_ptr<const LevenshteinAcceptor> parametric;
+  TermAcceptorSource::ptr source;
   uint32_t utf8_target_size{1};
   byte_type no_distance{1};
   size_t max_terms{};

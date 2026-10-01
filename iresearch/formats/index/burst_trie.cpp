@@ -2207,10 +2207,19 @@ class AcceptorTermIterator : public SeekTermIterator,
     return Accepts();
   }
 
+  bool MatchesKey() {
+    const bytes_view key{this->_term_buf};
+    if constexpr (A::kHasPayload) {
+      return _a->Matches(key, _payload);
+    } else {
+      return _a->Matches(key);
+    }
+  }
+
   bool AcceptsKey() {
     if constexpr (A::kMayBeUnknown) {
       if (A::Unknown(_live)) [[unlikely]] {
-        return _a->Matches(bytes_view{this->_term_buf});
+        return MatchesKey();
       }
     }
     return Accepts();
@@ -2220,7 +2229,7 @@ class AcceptorTermIterator : public SeekTermIterator,
     if constexpr (A::kMayBeUnknown) {
       if (A::Unknown(_live)) [[unlikely]] {
         this->Copy(suffix, this->_cur_block->Prefix(), n);
-        return _a->Matches(bytes_view{this->_term_buf});
+        return MatchesKey();
       }
     }
     if (!Accepts()) {

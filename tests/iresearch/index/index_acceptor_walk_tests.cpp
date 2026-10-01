@@ -54,8 +54,15 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
     while (terms->next()) {
       const auto term = terms->value();
       if constexpr (Acceptor::kMayBeUnknown) {
-        if (acceptor.Matches(term)) {
-          accepted.emplace_back(term, irs::byte_type{0});
+        typename Acceptor::PayloadType payload{};
+        bool matches = false;
+        if constexpr (Acceptor::kHasPayload) {
+          matches = acceptor.Matches(term, payload);
+        } else {
+          matches = acceptor.Matches(term);
+        }
+        if (matches) {
+          accepted.emplace_back(term, payload);
         }
         continue;
       }
@@ -225,14 +232,34 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
                                 const irs::ParametricDescription& description,
                                 bool transpositions, std::string_view prefix,
                                 std::string_view target) {
+    const auto fuzzy = std::make_shared<const irs::LevenshteinAcceptor>(
+      description, irs::ViewCast<irs::byte_type>(prefix),
+      irs::ViewCast<irs::byte_type>(target));
+    AssertEditDistanceWalk(reader, *fuzzy, description, transpositions, prefix,
+                           target);
+    const auto dfa = irs::FuzzyConjunction::Make(fuzzy);
+    ASSERT_NE(nullptr, dfa);
+    AssertEditDistanceWalk(reader, *dfa, description, transpositions, prefix,
+                           target);
+    for (const size_t max_mem : {size_t{16384}, size_t{0}}) {
+      SCOPED_TRACE(testing::Message("Budget: ") << max_mem);
+      const irs::FuzzyConjunction budgeted{{}, fuzzy, max_mem};
+      AssertEditDistanceWalk(reader, budgeted, description, transpositions,
+                             prefix, target);
+    }
+  }
+
+  template<typename Acceptor>
+  void AssertEditDistanceWalk(const irs::IndexReader& reader,
+                              const Acceptor& acceptor,
+                              const irs::ParametricDescription& description,
+                              bool transpositions, std::string_view prefix,
+                              std::string_view target) {
     const auto target_bytes = irs::ViewCast<irs::byte_type>(target);
     const auto prefix_bytes = irs::ViewCast<irs::byte_type>(prefix);
     irs::containers::SmallVector<uint32_t, 16> target_chars;
     irs::utf8_utils::ToUTF32<false>(target_bytes,
                                     std::back_inserter(target_chars));
-
-    const irs::LevenshteinAcceptor acceptor{description, prefix_bytes,
-                                            target_bytes};
 
     for (auto& segment : reader) {
       for (auto field_id : segment.field_ids()) {
@@ -370,10 +397,13 @@ TEST_P(AcceptorWalkIndexTestCase, levenshtein_walk_matches_scan) {
       SCOPED_TRACE(testing::Message("Target: '")
                    << target << testing::Message("', Edit distance: ")
                    << size_t(description.max_distance()));
-      const irs::LevenshteinAcceptor acceptor{
+      const auto fuzzy = std::make_shared<const irs::LevenshteinAcceptor>(
         description, irs::kEmptyStringView<irs::byte_type>,
-        irs::ViewCast<irs::byte_type>(target)};
-      AssertWalk(*reader.GetImpl(), acceptor, true);
+        irs::ViewCast<irs::byte_type>(target));
+      AssertWalk(*reader.GetImpl(), *fuzzy, true);
+      const auto dfa = irs::FuzzyConjunction::Make(fuzzy);
+      ASSERT_NE(nullptr, dfa);
+      AssertWalk(*reader.GetImpl(), *dfa, true);
     }
   }
 }
@@ -391,16 +421,18 @@ TEST_P(AcceptorWalkIndexTestCase, levenshtein_payload_is_edit_distance) {
   irs::utf8_utils::ToUTF32<false>(irs::ViewCast<irs::byte_type>(kTarget),
                                   std::back_inserter(target_chars));
 
-  const irs::LevenshteinAcceptor acceptor{
+  const auto fuzzy = std::make_shared<const irs::LevenshteinAcceptor>(
     description, irs::kEmptyStringView<irs::byte_type>,
-    irs::ViewCast<irs::byte_type>(kTarget)};
+    irs::ViewCast<irs::byte_type>(kTarget));
+  const auto dfa = irs::FuzzyConjunction::Make(fuzzy);
+  ASSERT_NE(nullptr, dfa);
 
   size_t checked = 0;
   for (auto& segment : *reader.GetImpl()) {
     for (auto field_id : segment.field_ids()) {
       const auto* field = segment.field(field_id);
       ASSERT_NE(nullptr, field);
-      auto walk = field->iterator(acceptor);
+      auto walk = field->iterator(*dfa);
       ASSERT_NE(nullptr, walk);
       const auto* payload = irs::get<irs::PayAttr>(*walk);
       ASSERT_NE(nullptr, payload);
@@ -761,6 +793,121 @@ TEST_P(AcceptorWalkIndexTestCase, levenshtein_transpositions_and_prefix) {
                                  prefix, target);
       }
     }
+  }
+}
+
+TEST_P(AcceptorWalkIndexTestCase, levenshtein_multibyte_targets) {
+  constexpr std::string_view kChars[]{
+    "a",
+    "\xC3\xA9",
+    "\xD0\xB2",
+    "\xD0\xB1",
+    "\xD1\x8B",
+    "\xE4\xB8\xAD",
+    "\xE4\xB8\xAB",
+    "\xE4\xBA\xAC",
+    "\xF0\x9F\x98\x80",
+    "\xF0\x9F\x98\x81",
+    "\xF0\x9F\x99\x82",
+  };
+  std::vector<std::string> terms;
+  for (const auto a : kChars) {
+    terms.emplace_back(a);
+    for (const auto b : kChars) {
+      terms.emplace_back(std::string{a}.append(b));
+      for (const auto c : kChars) {
+        terms.emplace_back(std::string{a}.append(b).append(c));
+      }
+    }
+  }
+  const std::vector<std::string_view> views{terms.begin(), terms.end()};
+  AddTerms(views);
+
+  auto reader = open_reader();
+  ASSERT_NE(nullptr, reader);
+
+  struct Case {
+    std::string_view prefix;
+    std::string_view target;
+  };
+  constexpr Case kCases[]{
+    {"", "\xD0\xB2"},
+    {"",
+     "\xD0\xB2\xD0\xB1"
+     "a"},
+    {"", "\xE4\xB8\xAD\xE4\xBA\xAC"},
+    {"",
+     "\xF0\x9F\x98\x80"
+     "a\xC3\xA9"},
+    {"", "a\xE4\xB8\xAB\xF0\x9F\x99\x82\xD1\x8B"},
+    {"\xD0\xB2", "\xE4\xB8\xAD"},
+    {"\xE4\xB8\xAD", "\xD0\xB1\xF0\x9F\x98\x81"},
+  };
+  for (const auto distance : {uint8_t{1}, uint8_t{2}}) {
+    for (const bool transpositions : {false, true}) {
+      const auto description =
+        irs::MakeParametricDescription(distance, transpositions);
+      for (const auto& [prefix, target] : kCases) {
+        SCOPED_TRACE(testing::Message("Prefix: '")
+                     << prefix << "', target: '" << target
+                     << "', distance: " << size_t{distance}
+                     << ", transpositions: " << transpositions);
+        AssertEditDistanceOracle(*reader.GetImpl(), description, transpositions,
+                                 prefix, target);
+      }
+    }
+  }
+}
+
+TEST_P(AcceptorWalkIndexTestCase, fuzzy_source_walks_the_parametric_language) {
+  AddEuroparl();
+
+  auto reader = open_reader();
+  ASSERT_NE(nullptr, reader);
+
+  const auto narrow = irs::MakeParametricDescription(1, false);
+  const auto small = std::make_shared<const irs::LevenshteinAcceptor>(
+    narrow, irs::kEmptyStringView<irs::byte_type>,
+    irs::ViewCast<irs::byte_type>("burden"sv));
+  EXPECT_NE(nullptr, irs::FuzzyConjunction::Make(small));
+  EXPECT_EQ(nullptr, irs::FuzzyConjunction::Make(small, 4096));
+  const auto prefixed = std::make_shared<const irs::LevenshteinAcceptor>(
+    narrow, irs::ViewCast<irs::byte_type>("bu"sv),
+    irs::ViewCast<irs::byte_type>("rden"sv));
+
+  const auto wide = irs::MakeParametricDescription(4, false);
+  const auto large = std::make_shared<const irs::LevenshteinAcceptor>(
+    wide, irs::kEmptyStringView<irs::byte_type>,
+    irs::ViewCast<irs::byte_type>("parliamentarians"sv));
+  EXPECT_EQ(nullptr, irs::FuzzyConjunction::Make(large));
+
+  for (const auto& fuzzy : {small, prefixed, large}) {
+    const auto source = irs::MakeFuzzySource(fuzzy);
+    ASSERT_NE(nullptr, source);
+    size_t total = 0;
+    for (auto& segment : *reader.GetImpl()) {
+      for (auto field_id : segment.field_ids()) {
+        const auto* field = segment.field(field_id);
+        ASSERT_NE(nullptr, field);
+        std::vector<std::pair<irs::bstring, irs::byte_type>> walked;
+        auto walk = field->iterator(*fuzzy);
+        const auto* walk_payload = irs::get<irs::PayAttr>(*walk);
+        ASSERT_NE(nullptr, walk_payload);
+        while (walk->next()) {
+          walked.emplace_back(walk->value(), walk_payload->value[0]);
+        }
+        std::vector<std::pair<irs::bstring, irs::byte_type>> sourced;
+        auto it = source->Iterator(*field);
+        const auto* payload = irs::get<irs::PayAttr>(*it);
+        ASSERT_NE(nullptr, payload);
+        while (it->next()) {
+          sourced.emplace_back(it->value(), payload->value[0]);
+        }
+        EXPECT_EQ(walked, sourced);
+        total += walked.size();
+      }
+    }
+    EXPECT_NE(0, total);
   }
 }
 

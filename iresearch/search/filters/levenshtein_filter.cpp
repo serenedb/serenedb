@@ -81,8 +81,8 @@ class LevenshteinIterator : public WrappedTermIterator {
   LevenshteinIterator(const TermReader& reader,
                       const LevenshteinAutomatonOptions& options)
     : WrappedTermIterator{[&] -> SeekTermIterator::ptr {
-        SDB_ENSURE(options.parametric, "filter has no acceptor");
-        return reader.iterator(*options.parametric);
+        SDB_ENSURE(options.source, "filter has no acceptor");
+        return options.source->Iterator(reader);
       }()},
       _payload{irs::get<PayAttr>(*_impl)},
       _no_distance{options.no_distance},
@@ -226,6 +226,7 @@ LevenshteinAutomatonOptions::LevenshteinAutomatonOptions(
   const ParametricDescription& d, bytes_view prefix, bytes_view term,
   size_t max_terms)
   : parametric{std::make_shared<const LevenshteinAcceptor>(d, prefix, term)},
+    source{MakeFuzzySource(parametric)},
     utf8_target_size{Utf8TargetSize(prefix, term)},
     no_distance{static_cast<byte_type>(d.max_distance() + 1)},
     max_terms{max_terms} {

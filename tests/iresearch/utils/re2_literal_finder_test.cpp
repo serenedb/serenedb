@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <random>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -357,6 +358,60 @@ TEST(Re2LiteralFinderTest, multi_literal_accel_finds_the_match) {
           0, std::size(kCasedPieces) - 1}(rng)];
       }
       ASSERT_NO_FATAL_FAILURE(ExpectLeftmostMatch(re, text));
+    }
+  }
+}
+
+TEST(Re2LiteralFinderTest, full_match_set_is_membership) {
+  constexpr std::string_view kWordPieces[] = {
+    "a",        "b",        "e",        "q",        " ",        "ab",
+    "\xD0\xBE", "\xD1\x81", "\xD1\x82", "\xD1\x8C", "\xD0\xB5", "X",
+  };
+  std::mt19937 rng{1268};
+  const auto piece = [&] {
+    return std::string{kWordPieces[std::uniform_int_distribution<size_t>{
+      0, std::size(kWordPieces) - 1}(rng)]};
+  };
+  for (size_t round = 0; round != 300; ++round) {
+    std::set<std::string> words;
+    for (auto n = 2 + rng() % (round % 2 == 0 ? 8 : 400); n != 0; --n) {
+      std::string word;
+      for (auto k = 1 + rng() % 4; k != 0; --k) {
+        word += piece();
+      }
+      words.insert(std::move(word));
+    }
+    std::string pattern = "(";
+    for (const auto& word : words) {
+      if (pattern.size() > 1) {
+        pattern += '|';
+      }
+      pattern += re2::RE2::QuoteMeta(word);
+    }
+    pattern += ")";
+    const re2::RE2 re{pattern};
+    const re2::RE2 anchored{"^" + pattern + "$"};
+    ASSERT_TRUE(re.ok() && anchored.ok()) << pattern;
+    const std::vector<std::string> list{words.begin(), words.end()};
+    for (size_t i = 0; i != 200; ++i) {
+      std::string text;
+      switch (rng() % 3) {
+        case 0:
+          text = list[rng() % list.size()];
+          break;
+        case 1:
+          text = list[rng() % list.size()] + piece();
+          break;
+        default:
+          for (auto k = rng() % 5; k != 0; --k) {
+            text += piece();
+          }
+      }
+      const bool expected = words.contains(text);
+      ASSERT_EQ(expected, re2::RE2::FullMatch(text, re))
+        << "round " << round << " words " << words.size();
+      ASSERT_EQ(expected, re2::RE2::PartialMatch(text, anchored))
+        << "round " << round << " words " << words.size();
     }
   }
 }

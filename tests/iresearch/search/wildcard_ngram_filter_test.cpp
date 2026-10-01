@@ -24,7 +24,9 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/wildcard_ngram_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/regexp_acceptor.hpp>
 #include <iresearch/utils/type_limits.hpp>
+#include <span>
 
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
@@ -76,6 +78,30 @@ irs::ByWildcardNGram MakeFilter(irs::field_id field, std::string_view pattern,
   *filter.mutable_field_id() = field;
   *filter.mutable_options() =
     irs::ByWildcardNGramOptions{pattern, analyzer, has_positions};
+  filter.mutable_options()->store_field_id = kStoreId;
+  return filter;
+}
+
+irs::ByRegexpNGramOptions MakeRegexpOptions(
+  std::string_view pattern, irs::analysis::WildcardTokenizer& analyzer,
+  bool has_positions = true,
+  irs::RegexpSyntax syntax = irs::RegexpSyntax::Perl) {
+  return {
+    irs::ViewCast<irs::byte_type>(pattern),
+    syntax,
+    analyzer,
+    has_positions,
+  };
+}
+
+irs::ByRegexpNGram MakeRegexpFilter(
+  irs::field_id field, std::string_view pattern,
+  irs::analysis::WildcardTokenizer& analyzer, bool has_positions = true,
+  irs::RegexpSyntax syntax = irs::RegexpSyntax::Perl) {
+  irs::ByRegexpNGram filter;
+  *filter.mutable_field_id() = field;
+  *filter.mutable_options() =
+    MakeRegexpOptions(pattern, analyzer, has_positions, syntax);
   filter.mutable_options()->store_field_id = kStoreId;
   return filter;
 }
@@ -281,5 +307,245 @@ TEST(WildcardNGramFilterTest, query) {
     auto absent = MakeFilter(kField, "fooba_", analyzer);
     absent.mutable_options()->store_field_id = kOtherId;
     EXPECT_EQ(ids({}), scored(absent));
+  }
+}
+
+TEST(RegexpNGramFilterOptionsTest, default_ctor) {
+  irs::ByRegexpNGramOptions opts;
+  EXPECT_TRUE(opts.pattern.empty());
+  EXPECT_EQ(irs::GramQuery{}, opts.query);
+  EXPECT_TRUE(opts.grams.empty());
+  EXPECT_EQ(nullptr, opts.matcher);
+}
+
+TEST(RegexpNGramFilterOptionsTest, grams_follow_literals) {
+  irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
+
+  const auto opts = MakeRegexpOptions("foo.*bar", analyzer);
+  EXPECT_EQ(R"(And("\x1ffoo", "bar\x1f"))", irs::ToString(opts.query));
+  ASSERT_EQ(2U, opts.grams.size());
+  EXPECT_EQ(2U, opts.grams[0].size());
+  EXPECT_EQ(2U, opts.grams[1].size());
+  ASSERT_NE(nullptr, opts.matcher);
+  EXPECT_TRUE(opts.matcher->Match(
+    irs::ViewCast<irs::byte_type>(std::string_view{"foo-bar"})));
+  EXPECT_FALSE(opts.matcher->Match(
+    irs::ViewCast<irs::byte_type>(std::string_view{"foo"})));
+}
+
+TEST(RegexpNGramFilterOptionsTest, invalid_pattern_matches_nothing) {
+  irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
+
+  for (const std::string_view pattern : {"(", "foo\\", "a{1001}"}) {
+    const auto opts = MakeRegexpOptions(pattern, analyzer);
+    EXPECT_EQ(irs::GramQuery::Kind::None, opts.query.kind) << pattern;
+    EXPECT_EQ(nullptr, opts.matcher) << pattern;
+  }
+}
+
+TEST(RegexpNGramFilterOptionsTest, equality_is_by_pattern) {
+  irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
+
+  EXPECT_TRUE(MakeRegexpOptions(".*abc.*x", analyzer) ==
+              MakeRegexpOptions(".*abc.*x", analyzer));
+
+  const auto x = MakeRegexpOptions(".*abc.*x", analyzer);
+  const auto y = MakeRegexpOptions(".*abc.*y", analyzer);
+  EXPECT_EQ(x.query, y.query);
+  EXPECT_FALSE(x == y);
+
+  EXPECT_FALSE(
+    MakeRegexpOptions("abc", analyzer) ==
+    MakeRegexpOptions("abc", analyzer, true, irs::RegexpSyntax::PosixEre));
+  EXPECT_FALSE(MakeRegexpOptions("abc", analyzer, true) ==
+               MakeRegexpOptions("abc", analyzer, false));
+}
+
+TEST(RegexpNGramFilterOptionsTest, matcher_equality) {
+  const irs::WildcardNGramMatcher like{
+    irs::LikeMatcher{irs::ViewCast<irs::byte_type>(std::string_view{"a%"})},
+  };
+  const auto regexp = [](std::string_view pattern, irs::RegexpSyntax syntax) {
+    const auto bytes = irs::ViewCast<irs::byte_type>(pattern);
+    return irs::WildcardNGramMatcher{
+      bytes,
+      syntax,
+      std::make_shared<const irs::RegexpAcceptor>(bytes, syntax),
+    };
+  };
+  EXPECT_TRUE(regexp("a.*", irs::RegexpSyntax::Perl) ==
+              regexp("a.*", irs::RegexpSyntax::Perl));
+  EXPECT_FALSE(regexp("a.*", irs::RegexpSyntax::Perl) ==
+               regexp("a.*", irs::RegexpSyntax::PosixEre));
+  EXPECT_FALSE(regexp("a.*", irs::RegexpSyntax::Perl) ==
+               regexp("a.+", irs::RegexpSyntax::Perl));
+  EXPECT_FALSE(like == regexp("a.*", irs::RegexpSyntax::Perl));
+}
+
+TEST(RegexpNGramFilterTest, ctor) {
+  irs::ByRegexpNGram q;
+  EXPECT_EQ(irs::Type<irs::ByRegexpNGram>::id(), q.type());
+  EXPECT_EQ(irs::field_limits::invalid(), q.field_id());
+  EXPECT_EQ(irs::kNoBoost, q.GetBoost());
+}
+
+TEST(RegexpNGramFilterTest, equal) {
+  irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
+
+  auto q = MakeRegexpFilter(kFieldId, "foo.*bar", analyzer);
+  auto q_same = MakeRegexpFilter(kFieldId, "foo.*bar", analyzer);
+  auto q_diff_field = MakeRegexpFilter(kOtherId, "foo.*bar", analyzer);
+  auto q_diff_pattern = MakeRegexpFilter(kFieldId, "foo.*baz", analyzer);
+
+  EXPECT_EQ(q, q_same);
+  EXPECT_NE(q, q_diff_field);
+  EXPECT_NE(q, q_diff_pattern);
+}
+
+// The expected documents are the ones `RegexpAcceptor` accepts, so the index
+// may only narrow the scan, never change the answer.
+TEST(RegexpNGramFilterTest, query_matches_acceptor) {
+  static constexpr irs::field_id kField = kTextId;
+  static constexpr std::string_view kValues[]{
+    "foobar",
+    "foobaz",
+    "xyz123",
+    "hello",
+    "world",
+    "FOOBAR",
+    "abc",
+    "xabcx",
+    "alpha",
+    "ab",
+    "ABC",
+    "abc\nd",
+    "\xD1\x81\xD0\xBE\xD0\xB1\xD0\xB0\xD0\xBA\xD0\xB0",
+    "a\x1F"
+    "b",
+    "",
+    "\xE0\x80\x80"
+    "abc",
+  };
+  static constexpr std::string_view kPatterns[]{
+    "abc",
+    "^abc$",
+    "abc.*",
+    "(?s)abc.*",
+    ".*abc",
+    ".*abc.*",
+    "ab",
+    "ab.*",
+    ".*a",
+    "x.*x",
+    "(?i)abc",
+    "(?i)foo.*",
+    "alpha",
+    "foo.*ba[rz]",
+    "foo(bar|baz)",
+    ".*(abc|xyz).*",
+    ".*(abc|x).*",
+    "[a-z]+[0-9]+",
+    "abc+",
+    "a.c",
+    "(abc)?",
+    "a*",
+    ".*",
+    "",
+    "hel+o",
+    "w.r.d",
+    "[^x]*",
+    "\\bfoo\\w+",
+    ".*\xD1\x81\xD0\xBE\xD0\xB1\xD0\xB0\xD0\xBA.*",
+    "a\\x1fb",
+    "[\\s\\S]*abc",
+    "\\C*abc",
+    "\\C\\C\\Cabc",
+    "(",
+    "zzz",
+  };
+  static constexpr irs::doc_id_t kBase = irs::doc_limits::min();
+
+  for (const auto n : {size_t{2}, size_t{3}}) {
+    irs::analysis::WildcardTokenizer analyzer{nullptr, n};
+    irs::MemoryDirectory dir;
+    {
+      auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                           irs::tests::DefaultWriterOptions());
+      ASSERT_NE(nullptr, writer);
+
+      WildcardField field;
+      field.id = kField;
+      field.analyzer = &analyzer;
+
+      const auto insert = [&](std::span<const std::string_view> values) {
+        auto ctx = writer->GetBatch();
+        for (auto v : values) {
+          field.value = v;
+          auto doc = ctx.Insert();
+          ASSERT_TRUE(tests::InsertField(doc, field));
+          auto* cs = doc.GetColWriter();
+          ASSERT_NE(nullptr, cs);
+          irs::tests::StoreFieldAt(*cs, kStoreId, doc.DocId(), field);
+        }
+        ctx.Commit();
+        writer->RefreshCommit();
+      };
+      insert(std::span{kValues}.first(8));
+      insert(std::span{kValues}.subspan(8));
+    }
+
+    irs::DirectoryReader reader{dir, irs::tests::DefaultReaderOptions()};
+    ASSERT_NE(nullptr, reader);
+    ASSERT_EQ(2U, reader.size());
+    ASSERT_EQ(std::size(kValues), reader->live_docs_count());
+
+    MaxMemoryCounter counter;
+    const auto execute = [&](const irs::Filter& q, const irs::Scorer* sort) {
+      tests::PreparedFilter prepared{q, *reader, sort, counter};
+      counter.Reset();
+      std::vector<irs::doc_id_t> result;
+      irs::doc_id_t offset = 0;
+      for (size_t i = 0, size = prepared.size(); i < size; ++i) {
+        auto docs = prepared.Execute(i);
+        while (!irs::doc_limits::eof(docs->Next())) {
+          result.push_back(offset + docs->Value());
+        }
+        offset += static_cast<irs::doc_id_t>(reader[i].docs_count());
+      }
+      return result;
+    };
+
+    const auto check = [&](std::string_view pattern, irs::RegexpSyntax syntax) {
+      const irs::RegexpAcceptor acceptor{irs::ViewCast<irs::byte_type>(pattern),
+                                         syntax};
+      std::vector<irs::doc_id_t> expected;
+      for (size_t i = 0; i != std::size(kValues); ++i) {
+        if (acceptor.Matches(irs::ViewCast<irs::byte_type>(kValues[i]))) {
+          expected.push_back(kBase + static_cast<irs::doc_id_t>(i));
+        }
+      }
+      for (const bool has_pos : {true, false}) {
+        const auto q =
+          MakeRegexpFilter(kField, pattern, analyzer, has_pos, syntax);
+        EXPECT_EQ(expected, execute(q, nullptr))
+          << "pattern: " << pattern << ", n: " << n << ", pos: " << has_pos
+          << ", query: " << irs::ToString(q.options().query);
+      }
+    };
+
+    for (const auto pattern : kPatterns) {
+      check(pattern, irs::RegexpSyntax::Perl);
+    }
+    for (const std::string_view pattern : {"foo.*", "foo(bar|baz)", "w.r.d"}) {
+      check(pattern, irs::RegexpSyntax::PosixEre);
+    }
+
+    tests::sort::Boost sort;
+    EXPECT_EQ(std::vector<irs::doc_id_t>{kBase},
+              execute(MakeRegexpFilter(kField, "foo.*r", analyzer), &sort));
+
+    auto absent = MakeRegexpFilter(kField, "foo.*", analyzer);
+    absent.mutable_options()->store_field_id = kOtherId;
+    EXPECT_TRUE(execute(absent, nullptr).empty());
   }
 }

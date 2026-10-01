@@ -155,6 +155,7 @@ set(iresearch-tests_sources
     ./utils/like_matcher_test.cpp
     ./utils/re2_required_literal_test.cpp
     ./utils/regexp_utils_test.cpp
+    ./utils/regexp_ngram_test.cpp
     ./utils/ref_counter_tests.cpp
     ./utils/minhash_utils_test.cpp
     ./utils/string_tests.cpp

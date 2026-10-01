@@ -27,7 +27,7 @@ An `NGRAM_SIZE` below `2` is rejected with `"ngram_size" must be at least 2`; th
 
 ## Tokenization
 
-The nested tokenizer, the first argument, first splits the input into terms. Every term is then wrapped in a single marker byte (`0xFF`) at each end, and windows of `NGRAM_SIZE` codepoints slide across the wrapped term one codepoint at a time. Each window spans `NGRAM_SIZE` codepoints or stops at the trailing marker, whichever comes first, so the last gram of a term is two symbols long. A term yields exactly one gram more than it has codepoints.
+The nested tokenizer, the first argument, first splits the input into terms. Every term is then wrapped in a single marker byte (`0x1F`) at each end, and windows of `NGRAM_SIZE` codepoints slide across the wrapped term one codepoint at a time. Each window spans `NGRAM_SIZE` codepoints or stops at the trailing marker, whichever comes first, so the last gram of a term is two symbols long. A term yields exactly one gram more than it has codepoints.
 
 Writing the marker as `⟨M⟩`, with `NGRAM_SIZE = 3` the term `search` yields `⟨M⟩se`, `sea`, `ear`, `arc`, `rch`, `ch⟨M⟩` and `h⟨M⟩`, and `cat` yields `⟨M⟩ca`, `cat`, `at⟨M⟩` and `t⟨M⟩`. The marker byte is part of the gram text, so the boundary grams of a term are not valid UTF-8 — these grams are an internal representation rather than something you inspect with `ts_lexize`, and you query them indirectly through `LIKE`-style patterns.
 
@@ -48,6 +48,10 @@ A **prefix** pattern is anchored to the start of a term:
 The same dictionary in the expression form, indexing a second table:
 
 <SqlLogicTest id="sql/functions/search/tokenizers/generate_wildcard_ngrams/example_003" />
+
+[`ts_regexp`](../full-text.md#ts_regexp) works on the same column and, as on any other dictionary, matches one whole nested term. The pieces of text the pattern requires — an exact term, a prefix, a suffix, an inner literal, the branches of an alternation — select candidates through their grams, and every candidate is re-checked against the stored term with the full regular expression, so the result is exact. A required piece shorter than `NGRAM_SIZE` codepoints selects nothing, and neither does a case-insensitive ASCII letter: a pattern such as `.*a`, `x.*x` or `(?i)abc` re-checks every row that has a term. A pattern the regular expression engine rejects matches no row.
+
+<SqlLogicTest id="sql/functions/search/tokenizers/generate_wildcard_ngrams/example_004" />
 
 ## See also
 

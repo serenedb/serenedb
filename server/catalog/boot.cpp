@@ -49,6 +49,7 @@
 
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
+#include "catalog/entry/database.h"
 #include "catalog/entry/foreign_server.h"
 #include "search/wal_recovery.h"
 #include "storage_engine/search_engine.h"
@@ -175,6 +176,13 @@ duckdb::Catalog& AttachDatabaseCatalog(duckdb::ClientContext& context,
     gMissingDatabases.missing.insert(oid);
     info.path = IN_MEMORY_PATH;
     visibility = duckdb::AttachVisibility::HIDDEN;
+  } else if (const auto entry =
+               cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+                 .GetEntry(cluster.GetCatalogTransaction(context), name)) {
+    for (const auto& [key, value] :
+         entry->Cast<DatabaseCatalogEntry>().Options()) {
+      info.options.emplace(key, value);
+    }
   }
   Attach(context, info, SereneDBCatalog::kStorageType, visibility, true);
   return manager.GetDatabase(name)->GetCatalog();

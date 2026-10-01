@@ -19,7 +19,7 @@ control substitution on
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/dfc_rewind.db' AS dfc (TYPE duckdb, STORAGE_VERSION 'serenedb_latest');
+CREATE DATABASE dfc;
 
 
 statement ok
@@ -135,7 +135,7 @@ row_dup_hits	row_nulls	plain_dup_hits
 
 
 statement ok
-DETACH dfc;
+DROP DATABASE dfc;
 
 
 statement ok

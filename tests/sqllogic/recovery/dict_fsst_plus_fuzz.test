@@ -14,7 +14,7 @@ SET force_compression='dict_fsst';
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/dfp_fuzz_owned.db' AS fown (TYPE duckdb, STORAGE_VERSION 'serenedb_latest');
+CREATE DATABASE fown;
 
 
 statement ok
@@ -85,7 +85,7 @@ t	0
 
 
 statement ok
-DETACH fown;
+DROP DATABASE fown;
 
 
 statement ok

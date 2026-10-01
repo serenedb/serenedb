@@ -43,7 +43,12 @@ class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
   void Rollback(duckdb::CatalogEntry& prev_entry) final;
   void OnDrop() final { _dropped = true; }
 
+  const duckdb::case_insensitive_map_t<duckdb::Value>& Options() const {
+    return _options;
+  }
+
  private:
+  duckdb::case_insensitive_map_t<duckdb::Value> _options;
   bool _dropped = false;
 };
 

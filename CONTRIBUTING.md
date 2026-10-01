@@ -203,10 +203,10 @@ A file never holds stale memory, though: a compression method writes every byte 
 
 Only two places record a storage version, a `serenedb_vN` value of DuckDB's `StorageVersion`:
 
-- The headers of each database file (`engine_catalog/catalog.db`, `engine_duckdb/<oid>.db`). The file's write-ahead log and the database's search-table WAL follow it.
+- The headers of each database file (`engine_duckdb/<oid>.db`). The file's write-ahead log and the database's search-table WAL follow it.
 - `segments_N` of each search index directory. The directory's other files are only reached through it.
 
-SereneDB always writes `SERENEDB_LATEST`. A reader opens the versions from `SERENEDB_VERSION_LOWER` to `SERENEDB_VERSION_UPPER` and refuses the rest: a higher one as written by a newer release, a lower one as older than it reads (`duckdb::StorageVersionError`; the constants are in `third_party/duckdb/src/include/duckdb/storage/storage_info.hpp`).
+SereneDB always writes `SERENEDB_LATEST`, and only into its own databases (`CREATE DATABASE`): an `ATTACH` of a DuckDB database refuses a SereneDB storage version, and nothing attaches a SereneDB database by path. A reader opens the versions from `SERENEDB_VERSION_LOWER` to `SERENEDB_VERSION_UPPER` and refuses the rest: a higher one as written by a newer release, a lower one as older than it reads (`duckdb::StorageVersionError`; the constants are in `third_party/duckdb/src/include/duckdb/storage/storage_info.hpp`).
 
 Most changes need no new version:
 

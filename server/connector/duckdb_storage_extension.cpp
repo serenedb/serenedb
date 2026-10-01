@@ -55,37 +55,48 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   duckdb::ClientContext& context, duckdb::AttachedDatabase& db,
   const duckdb::string& name, duckdb::AttachInfo& info,
   duckdb::AttachOptions& options) {
-  if (info.path.empty() || info.path == IN_MEMORY_PATH) {
-    if (info.on_conflict == duckdb::OnCreateConflict::ERROR_ON_CONFLICT &&
-        duckdb::DatabaseManager::Get(context).GetDatabase(info.name)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_DATABASE),
-                      ERR_MSG("database \"", info.name.GetIdentifierName(),
-                              "\" already exists"));
-    }
-    auto& cluster = catalog::ClusterOf(context);
-    const auto transaction = cluster.GetCatalogTransaction(context);
-    auto entry = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-                   .GetEntry(transaction, info.name);
-    if (!entry) {
-      duckdb::CreateDatabaseInfo database;
-      database.SetName(info.name);
-      auto* connection = GetSereneDBContextPtr(context);
-      database.permissions.owner =
-        connection ? connection->GetRoleId() : pg::kRootUser;
-      entry = cluster.CreateDatabase(transaction, database);
-      cluster.LogArtifact(
-        duckdb::CatalogType::DATABASE_ENTRY, cluster.GetAttached().oid,
-        entry->oid,
-        catalog::DatabaseArtifacts(cluster.GetAttached(), entry->oid), false);
-      SDB_IF_FAILURE("unable_to_create") {
-        THROW_SQL_ERROR(ERR_MSG("internal error"));
+  if (!info.path.empty() && info.path != IN_MEMORY_PATH) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("cannot attach \"", info.path,
+              "\" as a SereneDB database: a SereneDB database is created "
+              "with CREATE DATABASE"));
+  }
+  if (info.on_conflict == duckdb::OnCreateConflict::ERROR_ON_CONFLICT &&
+      duckdb::DatabaseManager::Get(context).GetDatabase(info.name)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_DATABASE),
+                    ERR_MSG("database \"", info.name.GetIdentifierName(),
+                            "\" already exists"));
+  }
+  auto& cluster = catalog::ClusterOf(context);
+  const auto transaction = cluster.GetCatalogTransaction(context);
+  auto entry = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+                 .GetEntry(transaction, info.name);
+  if (!entry) {
+    duckdb::CreateDatabaseInfo database;
+    database.SetName(info.name);
+    for (const auto* key : {"block_size", "row_group_size"}) {
+      if (auto option = options.options.find(key);
+          option != options.options.end()) {
+        database.options.emplace(key, option->second);
       }
     }
-    db.oid = entry->oid;
-    if (info.path.empty()) {
-      info.path = static_cast<const catalog::DataDirectory&>(*storage_info)
-                    .DatabaseFile(entry->oid);
+    auto* connection = GetSereneDBContextPtr(context);
+    database.permissions.owner =
+      connection ? connection->GetRoleId() : pg::kRootUser;
+    entry = cluster.CreateDatabase(transaction, database);
+    cluster.LogArtifact(
+      duckdb::CatalogType::DATABASE_ENTRY, cluster.GetAttached().oid,
+      entry->oid,
+      catalog::DatabaseArtifacts(cluster.GetAttached(), entry->oid), false);
+    SDB_IF_FAILURE("unable_to_create") {
+      THROW_SQL_ERROR(ERR_MSG("internal error"));
     }
+  }
+  db.oid = entry->oid;
+  if (info.path.empty()) {
+    info.path = static_cast<const catalog::DataDirectory&>(*storage_info)
+                  .DatabaseFile(entry->oid);
   }
   // Every serenedb on-disk format sits behind our storage version, so a
   // duckdb-version database is unaffected by anything we change.

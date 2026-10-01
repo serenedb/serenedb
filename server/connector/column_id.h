@@ -99,8 +99,8 @@ inline duckdb::LogicalType MakeOffsetsType() {
   return duckdb::LogicalType::LIST(duckdb::LogicalType::INTEGER);
 }
 
-inline std::string MakeOffsetsName(ColumnId column_id) {
-  return absl::StrCat(kOffsetsPrefix, column_id);
+inline std::string MakeOffsetsName(std::string_view column_name) {
+  return absl::StrCat(kOffsetsPrefix, column_name);
 }
 
 }  // namespace sdb::connector

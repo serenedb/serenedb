@@ -23,9 +23,7 @@
 #include <algorithm>
 #include <cstring>
 #include <memory>
-#include <optional>
 #include <span>
-#include <type_traits>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
@@ -40,7 +38,6 @@
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
@@ -165,7 +162,6 @@ class PostingLeaf {
   }
 
  protected:
-  static constexpr bool kView = std::is_same_v<InputType, BytesViewInput>;
   static constexpr bool kEnc = Shape.enc || !InputType::kVolatileAlways;
   static constexpr uint32_t kBlock = doc_limits::kBlockSize;
   static constexpr auto kBits = BitsRequired<uint64_t>();
@@ -219,13 +215,9 @@ class PostingLeaf {
 
   void OpenInput(const PostingMeta& meta, const IndexInput& doc_in,
                  bool bounds) {
-    if constexpr (kView) {
-      _in.emplace(irs::utils::downCast<BytesViewInput>(doc_in));
-    } else {
-      _in = doc_in.Reopen();
-      if (!_in) [[unlikely]] {
-        throw IoError{"failed to reopen document input"};
-      }
+    _in = doc_in.Reopen();
+    if (!_in) [[unlikely]] {
+      throw IoError{"failed to reopen document input"};
     }
     auto& in = In();
     in.Seek(meta.doc_start);
@@ -521,9 +513,7 @@ class PostingLeaf {
   SlackBuf<doc_id_t, doc_limits::kBlockSize,
            Shape.slack ? doc_limits::kDocsSlack : 0>
     _docs;
-  mutable std::conditional_t<kView, std::optional<BytesViewInput>,
-                             IndexInput::ptr>
-    _in;
+  IndexInput::ptr _in;
   doc_id_t _doc = doc_limits::invalid();
   doc_id_t _last = doc_limits::invalid();
   uint32_t _left_in_leaf = 0;

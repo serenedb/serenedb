@@ -1,0 +1,9 @@
+SELECT schema_name, comment FROM duckdb_schemas() WHERE database_name = 'o' ORDER BY ALL;
+SELECT schema_name, table_name, comment, has_primary_key, column_count, index_count, check_constraint_count FROM duckdb_tables() WHERE database_name = 'o' ORDER BY ALL;
+SELECT schema_name, table_name, column_index, column_name, data_type, column_default, is_nullable, comment FROM duckdb_columns() WHERE database_name = 'o' ORDER BY ALL;
+SELECT schema_name, view_name, column_count, comment FROM duckdb_views() WHERE database_name = 'o' AND NOT internal ORDER BY ALL;
+SELECT schema_name, table_name, index_name, is_unique, is_primary FROM duckdb_indexes() WHERE database_name = 'o' ORDER BY ALL;
+SELECT schema_name, table_name, constraint_type, constraint_column_names FROM duckdb_constraints() WHERE database_name = 'o' ORDER BY ALL;
+SELECT schema_name, sequence_name, start_value, min_value, max_value, increment_by, cycle FROM duckdb_sequences() WHERE database_name = 'o' ORDER BY ALL;
+SELECT schema_name, type_name, logical_type, labels FROM duckdb_types() WHERE database_name = 'o' AND NOT internal ORDER BY ALL;
+SELECT schema_name, function_name, function_type, parameters FROM duckdb_functions() WHERE database_name = 'o' AND NOT internal ORDER BY ALL;

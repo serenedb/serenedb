@@ -24,6 +24,7 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
+#include <iresearch/search/detail/pattern_cache.hpp>
 #include <iresearch/search/detail/search_range.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/automaton_filter.hpp>
@@ -508,7 +509,11 @@ struct FilterPrinter {
       const auto& f = downCast<const AutomatonFilter>(filter);
       ExplainNode node{"Automaton"};
       node.attributes["Field"] = FieldName(f.field_id());
-      node.attributes["Pattern"] = TermToString(f.options().pattern);
+      const auto& options = f.options();
+      node.attributes["Pattern"] =
+        options.kind == PatternKind::Union
+          ? TermToString(irs::DescribeUnion(options.pattern))
+          : TermToString(options.pattern);
       return node;
     }
     if (type == Type<ByWildcardNGram>::id()) {

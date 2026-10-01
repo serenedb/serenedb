@@ -19,6 +19,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <duckdb.hpp>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
@@ -26,6 +29,7 @@
 #include <duckdb/function/scalar/variant_utils.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <functional>
+#include <iresearch/error/error.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/variant_column_reader.hpp>
@@ -2452,6 +2456,46 @@ TEST_F(ColumnReaderTest, VectorColumnForcedUncompressed) {
     }
     pos += take;
   }
+}
+
+TEST_F(ColumnReaderTest, UnknownCompressionIsRefused) {
+  auto unknown =
+    duckdb::DBConfig::GetConfig(Db())
+      .GetCompressionFunction(duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
+                              duckdb::PhysicalType::INT64)
+      .get();
+  unknown.type = static_cast<duckdb::CompressionType>(200);
+
+  irs::ColumnMeta meta;
+  meta.id = 7;
+  meta.type = duckdb::LogicalType::BIGINT;
+  meta.data.push_back(irs::ColumnBlockMeta{
+    .statistics =
+      duckdb::BaseStatistics::CreateEmpty(duckdb::LogicalType::BIGINT),
+    .tuple_count = 1,
+    .byte_size = sizeof(int64_t),
+    .codec = &unknown,
+  });
+
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer serializer{stream};
+  serializer.Begin();
+  irs::SerializeColumnMeta(serializer, meta);
+  serializer.End();
+
+  stream.Rewind();
+  duckdb::BinaryDeserializer deserializer{stream};
+  deserializer.Set<duckdb::DatabaseInstance&>(Db());
+  deserializer.Begin();
+  std::string message;
+  try {
+    irs::DeserializeColumnMeta(deserializer);
+  } catch (const irs::IndexError& e) {
+    message = e.what();
+  }
+  EXPECT_NE(std::string::npos, message.find("compression 200")) << message;
+  EXPECT_NE(std::string::npos, message.find("written by a newer release"))
+    << message;
 }
 
 }  // namespace

@@ -374,6 +374,9 @@ std::string_view PgWireSession<Kind>::UserName() const {
 
 template<SocketKind Kind>
 bool PgWireSession<Kind>::SetupConnection() {
+  SDB_IF_FAILURE("setup_connection_throw") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
   auto& cluster = catalog::ClusterOf();
   auto database =
     cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
@@ -432,16 +435,7 @@ bool PgWireSession<Kind>::SetupConnection() {
     };
 
   _conn->context->session_user = std::string{UserName()};
-  std::vector<duckdb::CatalogSearchEntry> default_paths{
-    duckdb::CatalogSearchEntry{duckdb::Identifier{DatabaseName()},
-                               duckdb::Identifier{"$user"}},
-    duckdb::CatalogSearchEntry{duckdb::Identifier{DatabaseName()},
-                               duckdb::Identifier{"public"}},
-  };
-  _conn->context->client_data->catalog_search_path->SetDefaultPaths(
-    std::vector{default_paths});
-  _conn->context->client_data->catalog_search_path->Set(
-    std::move(default_paths), duckdb::CatalogSetPathType::SET_DIRECTLY);
+  connector::SetDefaultSearchPath(*_conn->context, DatabaseName());
 
   _connection_ctx->SetSetting("session_authorization", std::string{UserName()},
                               false);
@@ -871,6 +865,9 @@ void PgWireSession<Kind>::WriteCommandTag(
 
 template<SocketKind Kind>
 yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
+  SDB_IF_FAILURE("authenticate_throw") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
   CapturePeerAddress();
 
   // Consult the HBA ruleset first: it decides trust / reject / which method,
@@ -1537,7 +1534,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   _client_state->copy_stdin_open_count = 0;
   _client_state->copy_stdin_done = false;
   sdb::pg::CopyInBridge bridge;
-  _connection_ctx->SetCopyInBridge(&bridge);
+  _connection_ctx->SetSideChannel(&bridge);
   _feeder_done.store(false, std::memory_order_relaxed);
   _copy_route.store(true, std::memory_order_release);
   // CopyInResponse's column count: the explicit COPY column list, else the
@@ -1587,7 +1584,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
     co_await this->_task->Park();
   }
   _copy_route.store(false, std::memory_order_release);
-  _connection_ctx->SetCopyInBridge(nullptr);
+  _connection_ctx->SetSideChannel<sdb::pg::CopyInBridge>(nullptr);
   if (error) {
     std::rethrow_exception(error);
   }
@@ -1722,6 +1719,13 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
                      ERR_MSG(std::forward<decltype(msg)>(msg)...)),
       std::source_location::current()}));
   };
+  absl::Cleanup close_guard = [&] {
+    if (!bridge.Closed()) {
+      fail(ERRCODE_CONNECTION_EXCEPTION,
+           "unexpected EOF during COPY from stdin");
+      this->Stop();
+    }
+  };
   // CopyData bodies stream straight to the bridge -- never assembled whole, so
   // there is no per-message size cap (PG/pgwire-rs accept ~1GB; memory stays
   // bounded by the recv buffer, not the frame length). The text "\."
@@ -1757,6 +1761,9 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
     uint64_t body = length - sizeof(uint32_t);
 
     if (type == PQ_MSG_COPY_DATA) {
+      SDB_IF_FAILURE("copy_feeder_throw") {
+        THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+      }
       while (body > 0) {
         while (!this->_recv.Readable()) {
           if (this->SendBroken()) {
@@ -2570,20 +2577,23 @@ yaclib::Task<bool> PgWireSession<Kind>::Negotiate() {
   // --auth_timeout, else close. Cancelled on every exit. The handler holds a
   // self, so a fire racing teardown is harmless.
   absl::Cleanup deadline_guard = [this] { _deadline.cancel(); };
-  if (_auth_timeout.count() > 0) {
-    _deadline.expires_after(_auth_timeout);
-    _deadline.async_wait(
-      [self = this->shared_from_this()](const asio_ns::error_code& ec) {
-        if (!ec) {
-          self->_socket.Close();
-        }
-      });
-  }
-  if (!co_await this->ReadProxyPreface(_proxy)) {
-    co_return false;
-  }
-  // TODO: ssl handshake can be here, but there's no always ssl in pg-wire
   try {
+    SDB_IF_FAILURE("negotiate_throw") {
+      THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+    }
+    if (_auth_timeout.count() > 0) {
+      _deadline.expires_after(_auth_timeout);
+      _deadline.async_wait(
+        [self = this->shared_from_this()](const asio_ns::error_code& ec) {
+          if (!ec) {
+            self->_socket.Close();
+          }
+        });
+    }
+    if (!co_await this->ReadProxyPreface(_proxy)) {
+      co_return false;
+    }
+    // TODO: ssl handshake can be here, but there's no always ssl in pg-wire
     StartupRequest startup;
     if (co_await NegotiateStartup(startup) == StartupOutcome::Close) {
       co_return false;
@@ -2656,7 +2666,9 @@ yaclib::Task<bool> PgWireSession<Kind>::Negotiate() {
       co_await this->Flush();
       co_return false;
     }
-  } catch (const std::exception&) {
+  } catch (const std::exception& exception) {
+    WriteFatalResponse(this->_send, ToSqlError(exception));
+    this->KickSend();
     co_return false;
   }
   co_return true;
@@ -2784,7 +2796,7 @@ auto PgWireSession<Kind>::NegotiateStartup(StartupRequest& startup)
 }
 
 template<SocketKind Kind>
-yaclib::Future<> PgWireSession<Kind>::SpawnSession() {
+yaclib::Future<> PgWireSession<Kind>::SpawnSession() noexcept {
   this->_task = duckdb::make_shared_ptr<CpuResumer>(
     duckdb::TaskScheduler::GetScheduler(
       irs::DuckDBEngine::Instance().instance()),
@@ -2820,8 +2832,11 @@ template<SocketKind Kind>
 yaclib::Future<> PgWireSession<Kind>::SessionMain() {
   co_await this->_task->Park();
   // From here every resume is a fresh Execute() frame on a duck worker.
-  absl::Cleanup finish_guard = [this] { this->_task->Finish(); };
-  {
+  absl::Cleanup finish_guard = [this] {
+    this->Stop();
+    this->_task->Finish();
+  };
+  try {
     if (SetupConnection()) {
       {
         absl::MutexLock lock{&_cancel_token->mu};
@@ -2831,6 +2846,8 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
       this->KickSend();
       co_await RunCommandLoop();
     }
+  } catch (const std::exception& exception) {
+    WriteFatalResponse(this->_send, ToSqlError(exception));
   }
   // Teardown runs where everything was created: results/portals die on a duck
   // worker; their cleanup may emit notices that must be stolen before
@@ -2843,7 +2860,6 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
   // mid-write would truncate them, so drain first, then stop -- SendWriter (io)
   // closes the socket, which unwinds the recv side. No side-channel post.
   co_await this->DrainSendOnTask();
-  this->Stop();
   co_return {};
 }
 
@@ -2948,7 +2964,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCommandLoop() {
             SQL_ERROR_DATA(ERR_CODE(ERRCODE_PROTOCOL_VIOLATION),
                            ERR_MSG("invalid frontend message type ",
                                    static_cast<int>(type))));
-          co_await this->Flush();
           co_return {};
       }
     } catch (const std::exception& exception) {

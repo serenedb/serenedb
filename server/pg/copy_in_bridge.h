@@ -167,6 +167,7 @@ class CopyInBridge {
   bool Aborted() const noexcept {
     return _aborted.load(std::memory_order_acquire);
   }
+  bool Closed() const noexcept { return _eof || _err || Aborted(); }
 
  private:
   yaclib::OneShotEvent _data_ready;

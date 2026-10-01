@@ -20,6 +20,8 @@
 
 #include "network/http/common.h"
 
+#include <iresearch/utils/string_utils.hpp>
+
 namespace sdb::network::http {
 
 std::string SqlLiteral(std::string_view text) {
@@ -50,11 +52,17 @@ std::string SqlIdentifier(std::string_view name) {
   return out;
 }
 
-std::string FlattenBody(const message::SequenceView& body) {
+std::string FlattenBody(const message::SequenceView& body, size_t padding) {
+  size_t size = 0;
+  for (const auto buffer : body) {
+    size += buffer.size();
+  }
   std::string out;
+  out.reserve(size + padding);
   for (const auto buffer : body) {
     out.append(reinterpret_cast<const char*>(buffer.data()), buffer.size());
   }
+  irs::utils::StrAppend(out, padding);
   return out;
 }
 

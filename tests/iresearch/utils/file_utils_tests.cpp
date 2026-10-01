@@ -43,9 +43,7 @@ TEST(file_utils_tests, path_parts) {
     ASSERT_EQ(RefT{}, parts.extension);
   }
 
-  // ...........................................................................
   // no parent
-  // ...........................................................................
 
   // no parent, stem(empty), no extension
   {
@@ -117,9 +115,7 @@ TEST(file_utils_tests, path_parts) {
     ASSERT_EQ(RefT(STRING("xyz")), parts.extension);
   }
 
-  // ...........................................................................
   // empty parent
-  // ...........................................................................
 
   // parent(empty), stem(empty), no extension
   {
@@ -191,9 +187,7 @@ TEST(file_utils_tests, path_parts) {
     ASSERT_EQ(RefT(STRING("xyz")), parts.extension);
   }
 
-  // ...........................................................................
   // non-empty parent
-  // ...........................................................................
 
   // parent(non-empty), stem(empty), no extension
   {
@@ -277,9 +271,7 @@ TEST(file_utils_tests, path_parts) {
   }
 
 #ifdef _WIN32
-  // ...........................................................................
   // win32 non-empty parent
-  // ...........................................................................
 
   // parent(non-empty), stem(empty), no extension
   {

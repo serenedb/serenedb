@@ -107,7 +107,15 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
   bool FillTokens(std::span<const duckdb::string_t> tokens, TokenSink& sink,
                   FillCtx ctx) final;
 
+  void FillRow(const duckdb::UnifiedVectorFormat& values, duckdb::idx_t offset,
+               uint32_t count, doc_id_t doc, TokenSink& sink,
+               FillCtx ctx) final;
+
  private:
+  template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
+           bool StoreTokens>
+  bool AppendValue(duckdb::string_t value, TokenSink& sink);
+
   IRS_FORCE_INLINE bool DrainBase(duckdb::string_t raw);
   template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
            bool StoreTokens>
@@ -118,7 +126,7 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
   template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent>
   IRS_FORCE_INLINE void EmitRuns(const duckdb::string_t* raw, TokenSink& sink,
                                  uint32_t n, bool no_shingles);
-  IRS_FORCE_INLINE void StoreBlob(TokenSink& sink, uint32_t n);
+  IRS_FORCE_INLINE void AppendBlob(uint32_t n);
 
   Tokenizer::ptr _analyzer;
   uint32_t _min;
@@ -145,22 +153,5 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
   std::vector<uint32_t> _tok_psum;
   bstring _blob;
 };
-
-template<typename Context>
-void SerdeWrite(Context ctx, const ShingleTokenizer::Options& o) {
-  irs::utils::WriteTupleOrObject(
-    ctx, std::tie(o.base_analyzer, o.min_shingle_size, o.max_shingle_size,
-                  o.output_unigrams, o.fallback_unigrams, o.token_separator,
-                  o.filler_token, o.frequent_words, o.store_tokens));
-}
-
-template<typename Context>
-void SerdeRead(Context ctx, ShingleTokenizer::Options& o) {
-  auto refs =
-    std::tie(o.base_analyzer, o.min_shingle_size, o.max_shingle_size,
-             o.output_unigrams, o.fallback_unigrams, o.token_separator,
-             o.filler_token, o.frequent_words, o.store_tokens);
-  irs::utils::ReadTupleOrObject(ctx, refs);
-}
 
 }  // namespace irs::analysis

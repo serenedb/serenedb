@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <s2/s2latlng.h>
 
@@ -36,7 +37,6 @@
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/typed_terms.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
@@ -152,58 +152,57 @@ struct ColumnSpec {
   uint64_t null_field = 0;
 };
 
-using AnalyzerProvider = std::function<search::ColumnTokenizer(uint64_t)>;
+using AnalyzerProvider = std::function<catalog::ColumnTokenizer(uint64_t)>;
 
-search::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
-  static catalog::Tokenizer gKeywordTokenizer(
-    ObjectId{12345}, {},
+catalog::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
+  static auto gKeywordTokenizer = std::make_shared<catalog::Tokenizer>(
+    search::Features{},
     irs::analysis::TokenizerConfig{.config = irs::KeywordTokenizer::Options{}});
-  auto tokenizer = gKeywordTokenizer.GetTokenizer(TestContext());
+  auto tokenizer = gKeywordTokenizer->Acquire(TestContext());
   return {.analyzer = std::move(tokenizer),
           .features = irs::IndexFeatures::None};
 }
 
 template<irs::IndexFeatures Features>
-search::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
-  static catalog::Tokenizer gKeywordTokenizer(
-    ObjectId{12346}, {},
-    irs::analysis::TokenizerConfig{.config =
-                                     irs::analysis::TextTokenizer::Options{}});
-  auto tokenizer = gKeywordTokenizer.GetTokenizer(TestContext());
+catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
+  static auto gKeywordTokenizer = std::make_shared<catalog::Tokenizer>(
+    search::Features{}, irs::analysis::TokenizerConfig{
+                          .config = irs::analysis::TextTokenizer::Options{}});
+  auto tokenizer = gKeywordTokenizer->Acquire(TestContext());
   return {.analyzer = std::move(tokenizer), .features = Features};
 }
 
-search::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
+catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
   return SegmentationAnalyzerProviderBase<irs::IndexFeatures::Pos |
                                           irs::IndexFeatures::Freq>(id);
 }
 
-[[maybe_unused]] search::ColumnTokenizer NgramAnalyzerProvider(uint64_t) {
+[[maybe_unused]] catalog::ColumnTokenizer NGramAnalyzerProvider(uint64_t) {
   irs::analysis::NGramTokenizer::Options ngram_opts{
     .min_gram = 2,
     .max_gram = 2,
     .preserve_original = false,
     .stream_bytes_type = irs::analysis::NGramTokenizer::InputType::UTF8,
   };
-  static catalog::Tokenizer gNGramTokenizer(
-    ObjectId{12347}, {},
+  static auto gNGramTokenizer = std::make_shared<catalog::Tokenizer>(
+    search::Features{},
     irs::analysis::TokenizerConfig{.config = std::move(ngram_opts)});
-  auto tokenizer = gNGramTokenizer.GetTokenizer(TestContext());
+  auto tokenizer = gNGramTokenizer->Acquire(TestContext());
   return {.analyzer = std::move(tokenizer),
           .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq};
 }
 
-[[maybe_unused]] search::ColumnTokenizer WildcardTokenizerProvider(uint64_t) {
+[[maybe_unused]] catalog::ColumnTokenizer WildcardTokenizerProvider(uint64_t) {
   irs::analysis::WildcardTokenizer::Options wildcard_opts{
     .base_analyzer = std::make_unique<irs::analysis::TokenizerConfig>(
       irs::analysis::TokenizerConfig{.config =
                                        irs::KeywordTokenizer::Options{}}),
     .ngram_size = 3,
   };
-  static catalog::Tokenizer gWildcardTokenizer(
-    ObjectId{12348}, {},
+  static auto gWildcardTokenizer = std::make_shared<catalog::Tokenizer>(
+    search::Features{},
     irs::analysis::TokenizerConfig{.config = std::move(wildcard_opts)});
-  auto tokenizer = gWildcardTokenizer.GetTokenizer(TestContext());
+  auto tokenizer = gWildcardTokenizer->Acquire(TestContext());
   return {
     .analyzer = std::move(tokenizer),
     .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq,
@@ -211,12 +210,12 @@ search::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
   };
 }
 
-[[maybe_unused]] search::ColumnTokenizer GeoJsonTokenizerProvider(uint64_t) {
-  static catalog::Tokenizer gGeoTokenizer(
-    ObjectId{12349}, {},
+[[maybe_unused]] catalog::ColumnTokenizer GeoJsonTokenizerProvider(uint64_t) {
+  static auto gGeoTokenizer = std::make_shared<catalog::Tokenizer>(
+    search::Features{},
     irs::analysis::TokenizerConfig{
       .config = irs::analysis::GeoJsonTokenizer::Options{}});
-  auto tokenizer = gGeoTokenizer.GetTokenizer(TestContext());
+  auto tokenizer = gGeoTokenizer->Acquire(TestContext());
   return {
     .analyzer = std::move(tokenizer),
     .features = irs::IndexFeatures::None,
@@ -628,8 +627,6 @@ class SearchFilterBuilderTest : public ::testing::Test {
  public:
   SearchFilterBuilderTest() : _db(nullptr), _conn(_db) {}
 
-  static void SetUpTestCase() { irs::formats::Init(); }
-
   void SetUp() final {
     sdb::connector::RegisterSearchFunctions(*_db.instance);
     auto& db_config = duckdb::DBConfig::GetConfig(*_db.instance);
@@ -694,6 +691,8 @@ class SearchFilterBuilderTest : public ::testing::Test {
       << " (SQL: " << create_sql << ")";
 
     tlCapturedPlan.reset();
+    _conn.BeginTransaction();
+    absl::Cleanup rollback = [&] { _conn.Rollback(); };
     // ExtractPlan may throw duckdb::Exception on binding errors. We want
     // those surfaced into the test result, not swallowed.
     try {

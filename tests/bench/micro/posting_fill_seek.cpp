@@ -67,7 +67,6 @@
 #include <filesystem>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
@@ -226,7 +225,6 @@ struct BodyField {
 struct Index {
   std::filesystem::path path;
   std::unique_ptr<irs::MMapDirectory> dir;
-  irs::Format::ptr codec;
   irs::DirectoryReader reader;
 };
 
@@ -246,15 +244,14 @@ const Index& IndexOf(size_t docs, bool zipf = false) {
   std::filesystem::remove_all(index.path);
   std::filesystem::create_directories(index.path);
   index.dir = std::make_unique<irs::MMapDirectory>(index.path);
-  index.codec = irs::formats::Get("1_5simd");
 
   auto* db = &irs::DuckDBEngine::Instance().instance();
   irs::IndexWriterOptions opts;
   opts.db = db;
   opts.reader_options.db = db;
   opts.column_options = [](irs::field_id) -> irs::ColumnOptions { return {}; };
-  auto writer = irs::IndexWriter::Make(*index.dir, index.codec, irs::kOmCreate,
-                                       std::move(opts));
+  auto writer =
+    irs::IndexWriter::Make(*index.dir, irs::kOmCreate, std::move(opts));
 
   {
     auto trx = writer->GetBatch();
@@ -268,8 +265,8 @@ const Index& IndexOf(size_t docs, bool zipf = false) {
   }
   writer->RefreshCommit();
 
-  index.reader = irs::DirectoryReader{*index.dir, index.codec,
-                                      irs::IndexReaderOptions{.db = db}};
+  index.reader =
+    irs::DirectoryReader{*index.dir, irs::IndexReaderOptions{.db = db}};
   SDB_ASSERT(index.reader.size() == 1,
              "corpus must be one segment or the encodings get mixed");
   return index;
@@ -579,7 +576,6 @@ BENCHMARK(BmConjGenDense)->Apply(Sizes);
 }  // namespace
 
 int main(int argc, char** argv) {
-  irs::formats::Init();
   irs::DuckDBEngine::Instance().Initialize();
 
   benchmark::Initialize(&argc, argv);

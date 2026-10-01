@@ -845,8 +845,7 @@ TEST_P(ScorePruneScoringTestCase, ScorePruneMultisegResultValues) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(ScorePruneScoringTest, ScorePruneScoringTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5simd")),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          ScorePruneScoringTestCase::to_string);
 
 }  // namespace

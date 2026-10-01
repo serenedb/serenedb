@@ -16,11 +16,11 @@ control substitution on
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/csb16.db' AS c16 (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', BLOCK_SIZE 16384, ROW_GROUP_SIZE 1048576);
+ATTACH '${__TEST_DIR__}/csb16.db' AS c16 (TYPE duckdb, STORAGE_VERSION 'serenedb_latest', BLOCK_SIZE 16384, ROW_GROUP_SIZE 1048576);
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/csb256.db' AS c256 (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', ROW_GROUP_SIZE 1048576);
+ATTACH '${__TEST_DIR__}/csb256.db' AS c256 (TYPE duckdb, STORAGE_VERSION 'serenedb_latest', ROW_GROUP_SIZE 1048576);
 
 
 statement ok

@@ -26,10 +26,9 @@
 #include <algorithm>
 #include <chrono>
 #include <duckdb/common/file_system.hpp>
-#include <duckdb/common/serializer/deserializer.hpp>
-#include <duckdb/common/serializer/serializer.hpp>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/store/directory_attributes.hpp>
@@ -79,15 +78,6 @@ std::filesystem::path SearchTable::GetWalPath(duckdb::idx_t db_id) {
   return path;
 }
 
-std::filesystem::path SearchTable::GetChunkDir(duckdb::idx_t db_id,
-                                               duckdb::idx_t table_id) {
-  SDB_ASSERT(table_id != 0);
-  auto path = GetWalPath(db_id);
-  path /= "chunks";
-  path /= absl::StrCat(table_id);
-  return path;
-}
-
 catalog::CompressionByColumn SearchTable::DeclaredCompression(
   const duckdb::ColumnList& columns) {
   catalog::CompressionByColumn compression;
@@ -104,6 +94,10 @@ namespace {
 constexpr duckdb::field_id_t kFieldTick = 0;
 
 }  // namespace
+
+uint64_t SearchTable::ReadCommittedTick(duckdb::BinaryDeserializer& payload) {
+  return payload.ReadProperty<uint64_t>(kFieldTick, "tick");
+}
 
 SearchTable::SearchTable(duckdb::idx_t db_id, duckdb::idx_t schema_id,
                          duckdb::idx_t table_id, bool is_new,
@@ -145,7 +139,6 @@ SearchTable::~SearchTable() {
   if (!lifecycle::IsStopping()) {
     GetSearchEngine().GetDbWal(_db_id).DeregisterShard(_table_id);
   }
-  RemoveDroppedStorageDir(GetChunkDir(_db_id, _table_id), 2);
   RemoveDroppedStorageDir(GetPath(_db_id, _schema_id, _table_id), 2);
 }
 
@@ -169,7 +162,6 @@ void SearchTable::OpenWriter() {
     }
   }
 
-  auto codec = irs::formats::Get("1_5simd");
   const bool reopen = path_exists && !_is_new;
   const auto open_mode =
     reopen ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
@@ -181,6 +173,10 @@ void SearchTable::OpenWriter() {
 
   irs::IndexWriterOptions writer_options;
   writer_options.segment_memory_max = _segment_memory_max;
+  // A shard loaded from disk may hold flushed-but-unpublished segments the WAL
+  // references, so Make() must not unlink them; FinishRecovery cleans up once
+  // replay is done. A new shard's directory is empty, so it keeps the default.
+  writer_options.cleanup_on_open = _is_new;
   writer_options.lock_repository = false;
   writer_options.db = &irs::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;
@@ -189,16 +185,15 @@ void SearchTable::OpenWriter() {
   }
 
   writer_options.meta_payload_writer = [this](uint64_t tick,
-                                              duckdb::Serializer& out) {
+                                              duckdb::BinarySerializer& out) {
     _last_committed_tick = std::max(_last_committed_tick, tick);
     out.WriteProperty<uint64_t>(kFieldTick, "tick", _last_committed_tick);
   };
-  writer_options.meta_payload_reader = [this](duckdb::Deserializer& in) {
-    _last_committed_tick = in.ReadProperty<uint64_t>(kFieldTick, "tick");
+  writer_options.meta_payload_reader = [this](duckdb::BinaryDeserializer& in) {
+    _last_committed_tick = ReadCommittedTick(in);
   };
 
-  _writer =
-    irs::IndexWriter::Make(*_dir, codec, open_mode, std::move(writer_options));
+  _writer = irs::IndexWriter::Make(*_dir, open_mode, std::move(writer_options));
 
   auto& db_manager =
     duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
@@ -383,8 +378,8 @@ auto SearchTable::CompactUnsafeAsync(
   try {
     // iresearch serializes Compact against refresh/DML internally, so a long
     // merge never blocks the refresh chain.
-    const auto res = co_await _writer->CompactAsync(policy, field_options,
-                                                    nullptr, progress, env);
+    const auto res =
+      co_await _writer->CompactAsync(policy, field_options, progress, env);
     if (!res) {
       result = absl::InternalError(
         absl::StrCat("compaction failed for search table ", GetTableId()));

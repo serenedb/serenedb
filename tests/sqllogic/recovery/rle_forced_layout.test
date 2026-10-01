@@ -18,7 +18,7 @@ SET force_compression='rle';
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/rlef_owned.db' AS fown (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+ATTACH '${__TEST_DIR__}/rlef_owned.db' AS fown (TYPE duckdb, STORAGE_VERSION 'serenedb_latest');
 
 
 statement ok
@@ -108,7 +108,7 @@ SELECT 1;
 
 connection after_crash
 statement ok
-ATTACH '${__TEST_DIR__}/rlef_owned.db' AS fown2 (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+ATTACH '${__TEST_DIR__}/rlef_owned.db' AS fown2 (TYPE duckdb, STORAGE_VERSION 'serenedb_latest');
 
 
 connection after_crash

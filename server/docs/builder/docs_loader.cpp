@@ -251,16 +251,7 @@ class Loader {
     connector::SereneDBClientState::Register(*_conn->context, _ctx);
     _conn->context->session_user =
       std::string{irs::StaticStrings::kDefaultUser};
-    std::vector<duckdb::CatalogSearchEntry> paths{
-      duckdb::CatalogSearchEntry{duckdb::Identifier{std::string{database}},
-                                 duckdb::Identifier{"$user"}},
-      duckdb::CatalogSearchEntry{duckdb::Identifier{std::string{database}},
-                                 duckdb::Identifier{"public"}},
-    };
-    _conn->context->client_data->catalog_search_path->SetDefaultPaths(
-      std::vector{paths});
-    _conn->context->client_data->catalog_search_path->Set(
-      std::move(paths), duckdb::CatalogSetPathType::SET_DIRECTLY);
+    connector::SetDefaultSearchPath(*_conn->context, database);
   }
 
   ~Loader() {

@@ -20,14 +20,27 @@
 
 #pragma once
 
+#include <simdjson.h>
+
+#include <cstddef>
 #include <string_view>
 
 #include "otel/model.h"
 
 namespace sdb::otel {
 
-void ParseLogsRequest(std::string_view json, ExportLogsRequest& out);
-void ParseTracesRequest(std::string_view json, ExportTracesRequest& out);
-void ParseMetricsRequest(std::string_view json, ExportMetricsRequest& out);
+// The JSON parser reads up to this many bytes past the end of its input.
+inline constexpr size_t kJsonPadding = 64;
+
+// `padded`: `json` is followed by kJsonPadding readable bytes, so it is parsed
+// in place; otherwise it is first copied into a padded buffer.
+void ParseLogsRequest(std::string_view json, simdjson::ondemand::parser& parser,
+                      ExportLogsRequest& out, bool padded = false);
+void ParseTracesRequest(std::string_view json,
+                        simdjson::ondemand::parser& parser,
+                        ExportTracesRequest& out, bool padded = false);
+void ParseMetricsRequest(std::string_view json,
+                         simdjson::ondemand::parser& parser,
+                         ExportMetricsRequest& out, bool padded = false);
 
 }  // namespace sdb::otel

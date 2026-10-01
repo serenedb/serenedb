@@ -60,9 +60,8 @@ IndexBuilder::IndexBuilder(std::string_view path,
   : _opts{opts},
     _scorer{irs::BM25::Make(irs::BM25::Options{})},
     _dir{path},
-    _format{irs::formats::Get(config.format_name)},
     _writer{irs::IndexWriter::Make(
-      _dir, _format, irs::kOmCreate,
+      _dir, irs::kOmCreate,
       MakeWriterOptions(_scorer_ptr, opts.indexer_threads,
                         config.segment_mem_max, opts.row_group_size))} {}
 

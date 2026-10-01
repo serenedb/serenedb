@@ -29,8 +29,8 @@
 #include <vector>
 
 #include "iresearch/formats/ann_writer.hpp"
+#include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
-#include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/ivf/centroids.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/index/column_info.hpp"

@@ -23,9 +23,8 @@
 
 #pragma once
 
-#include <re2/re2.h>
-
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -37,6 +36,7 @@
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
+#include "iresearch/utils/like_matcher.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -48,7 +48,7 @@ class WildcardTokenizer;
 
 class WildcardNGramVerifier {
  public:
-  WildcardNGramVerifier(std::shared_ptr<RE2> matcher,
+  WildcardNGramVerifier(std::shared_ptr<const LikeMatcher> matcher,
                         const ColumnReader& stored_field,
                         const ColReader& col_reader) noexcept
     : _matcher{std::move(matcher)}, _cursor{col_reader, stored_field} {
@@ -66,9 +66,7 @@ class WildcardNGramVerifier {
       auto size = vread<uint32_t>(terms_begin);
       ++terms_begin;
 
-      re2::StringPiece term{reinterpret_cast<const char*>(terms_begin),
-                            static_cast<size_t>(size)};
-      if (RE2::PartialMatch(term, *_matcher)) {
+      if (_matcher->Match({terms_begin, size})) {
         return true;
       }
 
@@ -79,13 +77,14 @@ class WildcardNGramVerifier {
   }
 
  private:
-  std::shared_ptr<RE2> _matcher;
+  std::shared_ptr<const LikeMatcher> _matcher;
   ColumnReader::BlobPointReader _cursor;
 };
 
 class WildcardNGramQuery : public QueryBuilderImpl<WildcardNGramQuery> {
  public:
-  WildcardNGramQuery(const SubReader& segment, std::shared_ptr<RE2> matcher,
+  WildcardNGramQuery(const SubReader& segment,
+                     std::shared_ptr<const LikeMatcher> matcher,
                      QueryBuilder::ptr&& approx, field_id store_field_id,
                      score_t boost)
     : QueryBuilderImpl{segment, approx->EstimateMax(), QueryKind::Other},
@@ -98,7 +97,7 @@ class WildcardNGramQuery : public QueryBuilderImpl<WildcardNGramQuery> {
   }
 
   struct Recipe {
-    std::shared_ptr<RE2> matcher;
+    std::shared_ptr<const LikeMatcher> matcher;
     const ColumnReader* column = nullptr;
     const ColReader* col_reader = nullptr;
 
@@ -128,7 +127,7 @@ class WildcardNGramQuery : public QueryBuilderImpl<WildcardNGramQuery> {
   void SetBoost(score_t value) noexcept final { _boost = value; }
 
  private:
-  std::shared_ptr<RE2> _matcher;
+  std::shared_ptr<const LikeMatcher> _matcher;
   QueryBuilder::ptr _approx;
   field_id _store_field_id;
   score_t _boost;
@@ -142,7 +141,7 @@ struct ByWildcardNGramOptions {
   std::vector<ByPhraseOptions> parts;
   bstring token;
   bool has_pos{true};
-  std::shared_ptr<RE2> matcher;
+  std::shared_ptr<const LikeMatcher> matcher;
   field_id store_field_id{irs::field_limits::invalid()};
 
   bool operator==(const ByWildcardNGramOptions& other) const noexcept {
@@ -156,7 +155,7 @@ struct ByWildcardNGramOptions {
     if (!matcher || !other.matcher) {
       return false;
     }
-    return matcher->pattern() == other.matcher->pattern();
+    return *matcher == *other.matcher;
   }
 
   ByWildcardNGramOptions() noexcept = default;

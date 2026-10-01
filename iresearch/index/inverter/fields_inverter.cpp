@@ -20,6 +20,7 @@
 
 #include <absl/algorithm/container.h>
 
+#include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/burst_trie.hpp"
 #include "iresearch/index/inverter/columnar_readers.hpp"
 

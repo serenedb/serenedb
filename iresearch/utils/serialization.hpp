@@ -20,17 +20,21 @@
 
 #pragma once
 
-#include <duckdb/common/serializer/serializer.hpp>
-#include <duckdb/common/storage_compatibility.hpp>
+#include <cstdint>
 #include <duckdb/storage/storage_info.hpp>
+#include <string_view>
 
 namespace duckdb {
 
-inline SerializationOptions VersionStorageOptions() {
-  SerializationOptions opts;
-  opts.storage_compatibility =
-    StorageCompatibility::FromIndex(StorageVersion::SERENEDB_V1);
-  return opts;
+inline std::string_view StorageVersionError(uint64_t version) {
+  if (version > static_cast<uint64_t>(SERENEDB_VERSION_UPPER)) {
+    return "it was written by a newer release of SereneDB";
+  }
+  if (version < static_cast<uint64_t>(SERENEDB_VERSION_LOWER)) {
+    return "it is older than this release of SereneDB reads; upgrade it "
+           "through an earlier release first";
+  }
+  return {};
 }
 
 }  // namespace duckdb

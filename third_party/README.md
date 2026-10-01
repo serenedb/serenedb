@@ -34,9 +34,9 @@ fork introduces, on our version branch.
 generated per-arch config headers: `jemalloc-cmake`, `libxml2-cmake`,
 `openssl-cmake`.
 
-8 directories in-tree rather than submodules -- mostly historical, to be fixed:
-`fastText`, `kaldi`, `llhttp`, `magic_enum`, `openfst`, `simdcomp`, `sse2neon`,
-plus our own `duckdb_clickhouse`.
+6 directories in-tree rather than submodules -- mostly historical, to be fixed:
+`fastText`, `llhttp`, `magic_enum`, `simdcomp`, `sse2neon`, plus our own
+`duckdb_clickhouse`.
 
 Anything non-obvious about a specific library is commented where it happens in
 `CMakeLists.txt` -- the OpenSSL pre-seeding and its drift guard, the header-only

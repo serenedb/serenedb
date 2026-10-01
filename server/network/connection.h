@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/cleanup/cleanup.h>
+
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -28,6 +30,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <optional>
 #include <span>
@@ -293,9 +297,22 @@ class Transport : public TransportBase {
   // the returned future and joins it at teardown -- so it runs on a raw `this`
   // kept alive by Run's owning self.
   yaclib::Future<> SendWriter() {
+    // io-side close: cancels RecvLoop's pending read so it unwinds.
+    absl::Cleanup close_guard = [this] {
+      Stop();
+      _socket.Close();
+    };
     for (;;) {
+      if (_stopping.load(std::memory_order_acquire) &&
+          !_write_armed.load(std::memory_order_acquire)) {
+        break;
+      }
       co_await _write_gate.Wait(*_ioexec);
       if (_write_armed.exchange(false, std::memory_order_acq_rel)) {
+        SDB_IF_FAILURE("send_writer_throw") {
+          irs::RemoveFailurePointDebugging("send_writer_throw");
+          THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+        }
         auto [ec, bytes] = co_await _socket.Write(_write_view).NoThrow();
         if (ec) [[unlikely]] {
           Stop();  // client gone
@@ -321,14 +338,8 @@ class Transport : public TransportBase {
             _send_written.load(std::memory_order_relaxed) > seen) {
           _task->RequestRun();
         }
-        continue;
-      }
-      if (_stopping.load(std::memory_order_acquire)) {
-        break;
       }
     }
-    // io-side close: cancels RecvLoop's pending read so it unwinds.
-    _socket.Close();
     co_return {};
   }
 

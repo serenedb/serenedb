@@ -37,8 +37,8 @@
 
 namespace duckdb {
 
-class Deserializer;
-class Serializer;
+class BinaryDeserializer;
+class BinarySerializer;
 
 }  // namespace duckdb
 namespace sdb::search {
@@ -66,9 +66,10 @@ struct FileManifest {
     return it == entries.end() ? nullptr : &it->second;
   }
 
-  void Write(duckdb::Serializer& out) const;
+  void Write(duckdb::BinarySerializer& out) const;
 
-  static std::shared_ptr<const FileManifest> Read(duckdb::Deserializer& in);
+  static std::shared_ptr<const FileManifest> Read(
+    duckdb::BinaryDeserializer& in);
 
   bool operator==(const FileManifest&) const = default;
 };

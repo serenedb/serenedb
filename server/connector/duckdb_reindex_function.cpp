@@ -69,7 +69,6 @@
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <functional>
-#include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -84,6 +83,8 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/role.h"
+#include "catalog/rest/catalog_entry/schema/iceberg_schema_entry.hpp"
+#include "catalog/rest/catalog_entry/table/iceberg_table_information.hpp"
 #include "catalog/rest/iceberg_catalog.hpp"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_physical_create_index.h"
@@ -882,21 +883,8 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
   pass_conn.RunPass(target, std::move(info));
 }
 
-// A committed remove-all, then the plain CREATE INDEX pipeline over the
-// live index -- the pass's docs commit above the remove. Readers see an
-// empty index until the pass lands; a died rebuild leaves it empty and
-// the version mismatch relaunches.
 void RunFullRebuild(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
-                    const ReindexTarget& target,
-                    search::InvertedIndexStorage& storage) {
-  auto trx = storage.GetTransaction();
-  trx.Remove(std::make_shared<irs::All>());
-  trx.RegisterFlush();
-  if (!trx.Commit(search::TickDomain::Instance().Next(trx.GetQueries() + 1))) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("REINDEX of \"", target.name,
-                            "\": failed to commit the remove-all"));
-  }
+                    const ReindexTarget& target) {
   PassConnection pass_conn{context, conn_ctx, target};
   auto info = duckdb::make_uniq<SereneDBCreateIndexInfo>();
   info->source_index = target.index->name;
@@ -936,7 +924,7 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
     return {ReindexAction::Delta, files.added, files.changed, files.removed,
             static_cast<int64_t>(files.scan.size()) - files.added};
   }
-  RunFullRebuild(context, conn_ctx, target, storage);
+  RunFullRebuild(context, conn_ctx, target);
   return {ReindexAction::Rebuild, files.added, files.changed, files.removed,
           static_cast<int64_t>(src.files.size())};
 }
@@ -946,9 +934,10 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
 std::optional<Source> ResolveSource(duckdb::ClientContext& context,
                                     const ReindexTarget& target) {
   Source src;
-  auto fp =
-    ResolveViewFastPath(context, *target.view_info,
-                        catalog::ParseKeyColumns(target.index->options));
+  auto fp = ResolveViewFastPath(
+    context,
+    duckdb::Catalog::GetCatalog(context, duckdb::Identifier{target.database}),
+    *target.view_info, catalog::ParseKeyColumns(target.index->options));
   if (!fp) {
     return std::nullopt;
   }
@@ -965,23 +954,25 @@ std::optional<Source> ResolveSource(duckdb::ClientContext& context,
       return std::nullopt;
   }
   if (fp->catalog_ref) {
-    auto entry = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
-      context,
-      duckdb::QualifiedName(duckdb::Identifier{fp->catalog_ref->catalog},
-                            duckdb::Identifier{fp->catalog_ref->schema},
-                            duckdb::Identifier{fp->catalog_ref->table}),
-      duckdb::OnEntryNotFound::RETURN_NULL);
-    auto* iceberg_entry = dynamic_cast<duckdb::IcebergTableEntry*>(entry.get());
-    if (!iceberg_entry) {
+    auto* ic_catalog = dynamic_cast<duckdb::IcebergCatalog*>(
+      duckdb::Catalog::GetCatalogEntry(
+        context, duckdb::Identifier{fp->catalog_ref->catalog})
+        .get());
+    if (!ic_catalog) {
       return std::nullopt;
     }
-    auto& ic_catalog =
-      iceberg_entry->ParentCatalog().Cast<duckdb::IcebergCatalog>();
-    if (ic_catalog.attach_options.max_table_staleness_micros.IsValid()) {
-      // Cache-only refresh: the bind below re-resolves the table into a fresh
-      // version from it. Reinitializing this shared version in place would
-      // destroy entries concurrent scans still hold.
-      iceberg_entry->table_info.RefreshRequestCache(context);
+    if (ic_catalog->attach_options.max_table_staleness_micros.IsValid()) {
+      auto schema =
+        ic_catalog->GetSchema(ic_catalog->GetCatalogTransaction(context),
+                              duckdb::Identifier{fp->catalog_ref->schema},
+                              duckdb::OnEntryNotFound::RETURN_NULL);
+      if (!schema) {
+        return std::nullopt;
+      }
+      duckdb::IcebergTableInformation{
+        *ic_catalog, schema->Cast<duckdb::IcebergSchemaEntry>(),
+        fp->catalog_ref->table}
+        .RefreshRequestCache(context);
     }
   }
   src.fast_path = std::move(*fp);
@@ -1015,12 +1006,12 @@ ReindexOutcome RunClaimed(
   }
   // No manifest (external-pk index) or no observable source: full rebuild.
   if (!src) {
-    RunFullRebuild(context, conn_ctx, target, *storage);
+    RunFullRebuild(context, conn_ctx, target);
     return {};
   }
   if (manifest->version && manifest->entries.empty() &&
       storage->GetInvertedIndexSnapshot()->reader.live_docs_count() > 0) {
-    RunFullRebuild(context, conn_ctx, target, *storage);
+    RunFullRebuild(context, conn_ctx, target);
     return {};
   }
   if (src->version && src->version == manifest->version) {
@@ -1035,7 +1026,7 @@ ReindexOutcome RunClaimed(
         !SnapshotIsAncestor(*src->iceberg_list, manifest->version)) {
       // The indexed snapshot left the table's history: deletes may have
       // been UNDONE, invisible to any seq diff. Only a rebuild converges.
-      RunFullRebuild(context, conn_ctx, target, *storage);
+      RunFullRebuild(context, conn_ctx, target);
       return {ReindexAction::Rebuild, 0, 0, 0,
               static_cast<int64_t>(src->files.size())};
     }

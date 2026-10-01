@@ -103,7 +103,6 @@ TEST(WildcardNGramFilterOptionsTest, equality_empty) {
 TEST(WildcardNGramFilterOptionsTest, equality_with_matcher) {
   irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
 
-  // A middle "%" causes needs_matcher=true, so BuildLikeMatcher is called.
   irs::ByWildcardNGramOptions a{"foo%bar", analyzer, true};
   irs::ByWildcardNGramOptions b{"foo%bar", analyzer, true};
   EXPECT_TRUE(a == b);
@@ -180,9 +179,7 @@ TEST(WildcardNGramFilterTest, query) {
   irs::MemoryDirectory dir;
 
   {
-    auto codec = irs::formats::Get("1_5simd");
-    ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -203,8 +200,7 @@ TEST(WildcardNGramFilterTest, query) {
     writer->RefreshCommit();
   }
 
-  irs::DirectoryReader reader{dir, irs::formats::Get("1_5simd"),
-                              irs::tests::DefaultReaderOptions()};
+  irs::DirectoryReader reader{dir, irs::tests::DefaultReaderOptions()};
   ASSERT_NE(nullptr, reader);
   ASSERT_EQ(std::size(kValues), reader->live_docs_count());
 

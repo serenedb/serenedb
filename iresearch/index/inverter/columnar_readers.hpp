@@ -21,7 +21,7 @@
 #pragma once
 
 #include "iresearch/analysis/text/term_view.hpp"
-#include "iresearch/formats/formats.hpp"
+#include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/index/inverter/columnar_flush.hpp"
 #include "iresearch/index/iterators.hpp"
 

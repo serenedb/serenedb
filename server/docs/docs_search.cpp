@@ -40,7 +40,6 @@
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/index_reader_options.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/parser/parser.hpp>
@@ -72,6 +71,7 @@
 
 #include "connector/functions/markdown_render.h"
 #include "docs/docs_index_data.h"
+#include "search/search_table.h"
 
 namespace sdb::docs {
 namespace {
@@ -273,7 +273,9 @@ class EmbeddedIndex {
  public:
   EmbeddedIndex(duckdb::DatabaseInstance& db, std::span<const IndexFile> files)
     : _dir{files, kResourceManager},
-      _reader{_dir, irs::formats::Get("1_5simd"), Options(db)} {}
+      _reader{_dir, Options(db), [](duckdb::BinaryDeserializer& payload) {
+                search::SearchTable::ReadCommittedTick(payload);
+              }} {}
 
   const irs::DirectoryReader& Reader() const noexcept { return _reader; }
 

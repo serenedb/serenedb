@@ -29,7 +29,6 @@
 #include <iresearch/search/filters/regexp_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/queries/multiterm_query.hpp>
-#include <iresearch/utils/automaton_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <type_traits>
 
@@ -584,8 +583,6 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_frequency_sort) {
   }
 }
 
-// Scoring with Complex patterns (goes through FromRegexp)
-
 TEST_P(RegexpFilterTestCase, by_regexp_scoring_complex_custom_sort) {
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
@@ -594,7 +591,6 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_complex_custom_sort) {
   }
   auto rdr = open_reader();
   {
-    // ".*c.*" is Complex (not Prefix/Literal), so it goes through FromRegexp
     Docs docs{1, 4, 9, 21, 26, 31, 32};
     size_t finish_count = 0, field_docs = 0;
     std::array<irs::Scorer::ptr, 1> order{
@@ -1121,9 +1117,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_literal) {
   ASSERT_NE(nullptr, reader);
   {
     auto term = irs::ViewCast<irs::byte_type>(std::string_view("abc"));
-    auto automaton = irs::FromRegexp(term);
     tests::EmptyFilterVisitor v;
-    auto fv = irs::AutomatonFilter::visitor(automaton);
+    auto fv = irs::AutomatonFilter::visitor(
+      irs::MakePatternSource(term, irs::PatternKind::RegexpPerl));
     ASSERT_TRUE(fv);
     fv(segment, *reader, v);
     ASSERT_EQ(1, v.prepare_calls_counter());
@@ -1143,8 +1139,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_prefix) {
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("ab.*"));
     tests::EmptyFilterVisitor v;
-    auto automaton = irs::FromRegexp(p);
-    auto fv = irs::AutomatonFilter::visitor(automaton);
+    auto fv = irs::AutomatonFilter::visitor(
+      irs::MakePatternSource(p, irs::PatternKind::RegexpPerl));
     fv(segment, *reader, v);
     ASSERT_EQ(1, v.prepare_calls_counter());
     ASSERT_EQ(6, v.visit_calls_counter());
@@ -1163,8 +1159,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_wildcard_like) {
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("a.c.*"));
     tests::EmptyFilterVisitor v;
-    auto automaton = irs::FromRegexp(p);
-    auto fv = irs::AutomatonFilter::visitor(automaton);
+    auto fv = irs::AutomatonFilter::visitor(
+      irs::MakePatternSource(p, irs::PatternKind::RegexpPerl));
     ASSERT_TRUE(fv);
     fv(segment, *reader, v);
     ASSERT_EQ(1, v.prepare_calls_counter());
@@ -1184,8 +1180,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_invalid_pattern) {
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("(abc"));
     tests::EmptyFilterVisitor v;
-    auto automaton = irs::FromRegexp(p);
-    auto fv = irs::AutomatonFilter::visitor(automaton);
+    auto fv = irs::AutomatonFilter::visitor(
+      irs::MakePatternSource(p, irs::PatternKind::RegexpPerl));
     ASSERT_TRUE(fv);
     fv(segment, *reader, v);
     ASSERT_EQ(0, v.prepare_calls_counter());
@@ -1193,8 +1189,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_invalid_pattern) {
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("[abc"));
     tests::EmptyFilterVisitor v;
-    auto automaton = irs::FromRegexp(p);
-    auto fv = irs::AutomatonFilter::visitor(automaton);
+    auto fv = irs::AutomatonFilter::visitor(
+      irs::MakePatternSource(p, irs::PatternKind::RegexpPerl));
     fv(segment, *reader, v);
     ASSERT_EQ(0, v.prepare_calls_counter());
   }
@@ -1689,17 +1685,15 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_with_syntax) {
 
   auto p = irs::ViewCast<irs::byte_type>(std::string_view("\\d+"));
   {
-    auto automaton =
-      irs::FromRegexp(p, irs::kDefaultMaxDfaStates, irs::RegexpSyntax::Perl);
-    auto fv = irs::AutomatonFilter::visitor(automaton);
+    auto fv = irs::AutomatonFilter::visitor(
+      irs::MakePatternSource(p, irs::PatternKind::RegexpPerl));
     ASSERT_TRUE(fv);
     tests::EmptyFilterVisitor v;
     fv(segment, *reader, v);
   }
   {
-    auto automaton = irs::FromRegexp(p, irs::kDefaultMaxDfaStates,
-                                     irs::RegexpSyntax::PosixEre);
-    auto fv = irs::AutomatonFilter::visitor(automaton);
+    auto fv = irs::AutomatonFilter::visitor(
+      irs::MakePatternSource(p, irs::PatternKind::RegexpPosixEre));
     ASSERT_TRUE(fv);
     tests::EmptyFilterVisitor v;
     fv(segment, *reader, v);
@@ -1710,7 +1704,5 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_with_syntax) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(regexp_filter_test, RegexpFilterTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values(tests::FormatInfo{
-                                              "1_5simd"})),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          RegexpFilterTestCase::to_string);

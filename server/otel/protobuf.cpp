@@ -49,9 +49,7 @@ std::string_view View(protozero::data_view view) {
   return {view.data(), view.size()};
 }
 
-std::string Text(pbf_reader& reader) {
-  return std::string{View(reader.get_view())};
-}
+std::string_view Text(pbf_reader& reader) { return View(reader.get_view()); }
 
 std::string ReadHexId(pbf_reader& reader) {
   const auto raw = View(reader.get_view());

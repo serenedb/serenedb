@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include "automaton.hpp"
 #include "string.hpp"
 
 namespace irs {
@@ -102,28 +101,10 @@ constexpr bool IsRegexpMeta(byte_type c) noexcept {
 // is an RE2 feature that must go through the full automaton path.
 constexpr bool IsSimpleEscape(byte_type c) noexcept { return IsRegexpMeta(c); }
 
-// Default maximum number of DFA states after determinization.
-// Patterns that produce a larger DFA are rejected (return empty automaton).
-// 10'000 is generous for real-world patterns (most produce < 1'000)
-// while guarding against exponential blowup from pathological input
-// (e.g. [ab]*a[ab]{15} -> ~65'000 states).
-// 0 means no limit.
-inline constexpr int64_t kDefaultMaxDfaStates = 10'000;
-
 RegexpType ComputeRegexpType(bytes_view pattern) noexcept;
 
 bytes_view ExtractRegexpPrefix(bytes_view pattern) noexcept;
 
 bytes_view UnescapeRegexp(bytes_view in, bstring& out);
-
-automaton FromRegexp(bytes_view pattern,
-                     int64_t max_dfa_states = kDefaultMaxDfaStates,
-                     RegexpSyntax syntax = RegexpSyntax::Perl);
-
-inline automaton FromRegexp(std::string_view pattern,
-                            int64_t max_dfa_states = kDefaultMaxDfaStates,
-                            RegexpSyntax syntax = RegexpSyntax::Perl) {
-  return FromRegexp(ViewCast<byte_type>(pattern), max_dfa_states, syntax);
-}
 
 }  // namespace irs

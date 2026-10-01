@@ -57,6 +57,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachCluster(
   duckdb::ClientContext& context, duckdb::AttachedDatabase& db,
   const std::string& name, duckdb::AttachInfo& info,
   duckdb::AttachOptions& options) {
+  RequestSereneDBStorageVersion(options);
   return duckdb::make_uniq<ClusterCatalog>(db);
 }
 
@@ -75,6 +76,17 @@ const DataDirectory& Layout(duckdb::AttachedDatabase& db) {
 
 DataDirectory::DataDirectory(std::string directory_p)
   : directory{std::move(directory_p)} {}
+
+void RequestSereneDBStorageVersion(duckdb::AttachOptions& options) {
+  static_assert(
+    duckdb::SERENEDB_VERSION_LOWER == duckdb::StorageVersion::SERENEDB_LATEST,
+    "a file below SERENEDB_LATEST is raised on attach only in memory: "
+    "checkpoint it before anything writes its WAL or search WAL, so "
+    "neither log gets ahead of the file header");
+  options.options["storage_version"] =
+    duckdb::Value{duckdb::StorageVersionInfo::GetStorageVersionString(
+      duckdb::StorageVersion::SERENEDB_LATEST)};
+}
 
 std::string DataDirectory::ClusterFile() const {
   return absl::StrCat(directory, "/", kCatalogDir, "/catalog.db");
@@ -101,6 +113,8 @@ void RemoveDatabaseFiles(duckdb::AttachedDatabase& cluster, duckdb::idx_t oid) {
   std::error_code ec;
   std::filesystem::remove(file, ec);
   std::filesystem::remove(file + ".wal", ec);
+  std::filesystem::remove(file + ".wal.checkpoint", ec);
+  std::filesystem::remove(file + ".wal.recovery", ec);
   std::filesystem::remove_all(search::GetSearchEngine().GetPersistedPath(oid),
                               ec);
 }

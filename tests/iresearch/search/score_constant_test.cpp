@@ -458,8 +458,7 @@ TEST_P(ScoreConstantTest, bm25_degrades_to_freq_one_norm_one) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(score_constant_test, ScoreConstantTest,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5simd")),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          ScoreConstantTest::to_string);
 
 }  // namespace

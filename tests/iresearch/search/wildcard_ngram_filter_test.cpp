@@ -103,7 +103,6 @@ TEST(WildcardNGramFilterOptionsTest, equality_empty) {
 TEST(WildcardNGramFilterOptionsTest, equality_with_matcher) {
   irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
 
-  // A middle "%" causes needs_matcher=true, so BuildLikeMatcher is called.
   irs::ByWildcardNGramOptions a{"foo%bar", analyzer, true};
   irs::ByWildcardNGramOptions b{"foo%bar", analyzer, true};
   EXPECT_TRUE(a == b);

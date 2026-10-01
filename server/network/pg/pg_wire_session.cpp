@@ -545,9 +545,9 @@ PgWireSession<Kind>::PendingQueryEnsured(
     }
   }
   if (!wire) {
-    // Streaming can't engage here anyway: DDL/DML are FORCE_MATERIALIZED, and
-    // the describe path reads only types/names without fetching. false keeps
-    // result cleanup eager instead of leaving an open streaming result.
+    // Streaming can't engage here anyway: DDL/DML are FORCE_MATERIALIZED.
+    // false keeps result cleanup eager instead of leaving an open streaming
+    // result.
     return prepared.PendingQuery(values, /*allow_stream_result=*/false);
   }
   // Arm the collector hook for this execution. allow_stream_result=false
@@ -2173,7 +2173,8 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
   }
   // Describe what the next Bind would run, not what the last one did.
   RevalidatePlan(stmt);
-  auto& prepared = stmt.GetPrepared();
+  const auto plan = ResolvePlan(stmt, stmt.Plan());
+  auto& prepared = *plan;
   const auto return_type = prepared.GetStatementProperties().return_type;
   // A data-returning Describe can't run in an aborted block (RowDescription
   // would touch the catalog); PG rejects it BEFORE sending anything -- no
@@ -2196,7 +2197,8 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
     WriteEmptyFrame(this->_send, PQ_MSG_NO_DATA);
     return;
   }
-  WriteResolvedRowDescription(prepared, nullptr, {});
+  WriteRowDescription(this->_send, _connection_ctx->GetClientContext(),
+                      prepared.GetTypes(), prepared.GetNames(), {});
 }
 
 template<SocketKind Kind>
@@ -2207,7 +2209,8 @@ void PgWireSession<Kind>::DescribePortal(Portal& portal) {
     WriteEmptyFrame(this->_send, PQ_MSG_NO_DATA);
     return;
   }
-  auto& prepared = *portal.plan;
+  const auto plan = ResolvePlan(*portal.stmt, portal.plan);
+  auto& prepared = *plan;
   const auto return_type = prepared.GetStatementProperties().return_type;
   if (return_type != duckdb::StatementReturnType::QUERY_RESULT) {
     WriteEmptyFrame(this->_send, PQ_MSG_NO_DATA);
@@ -2219,49 +2222,27 @@ void PgWireSession<Kind>::DescribePortal(Portal& portal) {
   // The client now knows this portal's shape, so rows from this plan are no
   // longer ones it would decode against a descriptor it never saw.
   portal.stmt->MarkDescribed(prepared);
-  WriteResolvedRowDescription(prepared, &portal.bind_info.param_values,
-                              portal.bind_info.output_formats);
+  WriteRowDescription(this->_send, _connection_ctx->GetClientContext(),
+                      prepared.GetTypes(), prepared.GetNames(),
+                      portal.bind_info.output_formats);
 }
 
-// A parameterized template may carry unresolved output types (duckdb defers
-// full binding until the parameter types are known); probe-plan to describe
-// the real columns, falling back to the template. `params` are the portal's
-// bound values, or null for a statement-level Describe -- the probe then
-// synthesizes type-derived placeholders.
 template<SocketKind Kind>
-void PgWireSession<Kind>::WriteResolvedRowDescription(
-  duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>* params,
-  std::span<const sdb::pg::VarFormat> formats) {
-  const auto unresolved = [](const duckdb::LogicalType& type) {
-    return type.id() == duckdb::LogicalTypeId::UNKNOWN ||
-           type.id() == duckdb::LogicalTypeId::INVALID;
-  };
-  if (!prepared.named_param_map.empty() &&
-      std::ranges::any_of(prepared.GetTypes(), unresolved)) {
-    duckdb::vector<duckdb::Value> placeholders;
-    if (!params) {
-      const auto param_count = prepared.named_param_map.size();
-      placeholders.reserve(param_count);
-      for (size_t i = 0; i < param_count; ++i) {
-        auto type = ResolveExpectedType(prepared.data->value_map, i);
-        duckdb::Value value{"1"};
-        if (!value.DefaultTryCastAs(type)) {
-          value = duckdb::Value{type};
-        }
-        placeholders.emplace_back(std::move(value));
-      }
-      params = &placeholders;
-    }
-    ClosingPending pending = PendingQueryEnsured(prepared, *params, nullptr);
-    if (!pending->HasError()) {
-      WriteRowDescription(
-        this->_send, _connection_ctx->GetClientContext(), pending->types,
-        duckdb::StringsToIdentifiers(pending->names), formats);
-      return;
-    }
+PlanPtr PgWireSession<Kind>::ResolvePlan(Statement& stmt, const PlanPtr& plan) {
+  if (!plan || plan->data->properties.bound_all_parameters || !stmt.Source()) {
+    return plan;
   }
-  WriteRowDescription(this->_send, _connection_ctx->GetClientContext(),
-                      prepared.GetTypes(), prepared.GetNames(), formats);
+  auto hints = stmt.TypeHints();
+  const auto param_count = plan->named_param_map.size();
+  for (size_t i = 0; i < param_count; ++i) {
+    hints.emplace(absl::StrCat(i + 1),
+                  ResolveExpectedType(plan->data->value_map, i));
+  }
+  auto resolved = _conn->Prepare(stmt.Source()->Copy(), &hints);
+  if (resolved->HasError()) {
+    return plan;
+  }
+  return PlanPtr{std::move(resolved)};
 }
 
 template<SocketKind Kind>
@@ -2371,7 +2352,7 @@ yaclib::Task<> PgWireSession<Kind>::ExecutePrepared(Portal& portal,
     // Bind. Nothing to re-plan once the portal is driving: the pipeline is
     // already running against the plan it started with.
     RevalidatePlan(*portal.stmt);
-    portal.plan = portal.stmt->Plan();
+    portal.plan = ResolvePlan(*portal.stmt, portal.stmt->Plan());
     portal.epoch = portal.stmt->BindEpoch();
     if (!portal.stmt->DescribedShapeMatches(*portal.plan)) {
       // PG's plancache guard (fixed_result): a re-plan changed the row type

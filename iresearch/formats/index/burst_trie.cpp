@@ -2790,8 +2790,15 @@ class FieldReader::Impl {
     void PrefetchBlocks() const noexcept {
       const auto size =
         std::min(_body_offset - _blocks_begin, kMaxBlocksPrefetch);
-      if (size != 0 && !_owner->_terms_in->Resident(_blocks_begin, size)) {
-        _owner->_terms_in->Prefetch(_blocks_begin, size);
+      if (size == 0) {
+        return;
+      }
+      const auto& in = *_owner->_terms_in;
+      for (uint64_t i = 0; i != kBlocksProbes; ++i) {
+        if (!in.Resident(_blocks_begin + size * i / kBlocksProbes, 1)) {
+          in.Prefetch(_blocks_begin, size);
+          return;
+        }
       }
     }
 
@@ -2823,6 +2830,7 @@ class FieldReader::Impl {
 
    private:
     static constexpr uint64_t kMaxBlocksPrefetch = uint64_t{256} << 20;
+    static constexpr uint64_t kBlocksProbes = 4;
     static constexpr int kWideStart = 128;
 
     FieldReader::Impl* _owner;

@@ -60,7 +60,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
     return;
   }
 
-  _impl->in = dir.open(filename, IOAdvice::SEQUENTIAL);
+  _impl->in = dir.open(filename, IOAdvice::NORMAL);
   if (!_impl->in) {
     throw IoError{absl::StrCat("Failed to open index file, path: ", filename)};
   }

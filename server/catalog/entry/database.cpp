@@ -30,7 +30,8 @@ namespace sdb::catalog {
 DatabaseCatalogEntry::DatabaseCatalogEntry(duckdb::Catalog& catalog,
                                            duckdb::CreateDatabaseInfo& info)
   : duckdb::InCatalogEntry{duckdb::CatalogType::DATABASE_ENTRY, catalog,
-                           info.GetQualifiedName().Name(), info.oid} {
+                           info.GetQualifiedName().Name(), info.oid},
+    _options{info.options} {
   comment = info.comment;
   tags = info.tags;
   permissions = info.permissions;
@@ -41,6 +42,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> DatabaseCatalogEntry::GetInfo() const {
   info->SetName(name);
   info->comment = comment;
   info->tags = tags;
+  info->options = _options;
   return std::move(info);
 }
 

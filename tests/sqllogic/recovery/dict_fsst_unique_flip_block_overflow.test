@@ -17,7 +17,7 @@ control substitution on
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/dfp_uniqflip.db' AS dfu_own (TYPE duckdb, STORAGE_VERSION 'serenedb_latest');
+CREATE DATABASE dfu_own;
 
 
 statement ok
@@ -64,4 +64,4 @@ DROP TABLE dfu_own.flip;
 
 
 statement ok
-DETACH dfu_own;
+DROP DATABASE dfu_own;

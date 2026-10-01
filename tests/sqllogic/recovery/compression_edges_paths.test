@@ -14,7 +14,7 @@ control substitution on
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/cep.db' AS ce (TYPE duckdb, STORAGE_VERSION 'serenedb_latest', ROW_GROUP_SIZE 1048576);
+CREATE DATABASE ce WITH (ROW_GROUP_SIZE = 1048576);
 
 
 # --- special values, auto codec choice pinned per column ---
@@ -214,7 +214,7 @@ n	lo_ok	hi_ok
 
 
 statement ok
-DETACH ce;
+DROP DATABASE ce;
 
 
 # --- the auto-checkpoint path: WAL crosses the threshold, compression runs with no CHECKPOINT ---
@@ -224,7 +224,7 @@ SET wal_autocheckpoint='512KB';
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/cep_auto.db' AS ca (TYPE duckdb, STORAGE_VERSION 'serenedb_latest', ROW_GROUP_SIZE 1048576);
+CREATE DATABASE ca WITH (ROW_GROUP_SIZE = 1048576);
 
 
 statement ok
@@ -259,4 +259,4 @@ t	180000	t
 
 
 statement ok
-DETACH ca;
+DROP DATABASE ca;

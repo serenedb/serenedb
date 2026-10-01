@@ -525,6 +525,18 @@ struct FilterPrinter {
       node.attributes["Parts"] = WildcardNGramParts(f);
       return node;
     }
+    if (type == Type<ByRegexpNGram>::id()) {
+      const auto& f = downCast<const ByRegexpNGram>(filter);
+      const auto& options = f.options();
+      ExplainNode node{"Regexp NGram"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      node.attributes["Pattern"] = TermToString(options.pattern);
+      node.attributes["Syntax"] =
+        options.syntax == RegexpSyntax::Perl ? "perl" : "posix";
+      node.attributes["Has Pos"] = options.has_pos ? "true" : "false";
+      node.attributes["Query"] = irs::ToString(options.query);
+      return node;
+    }
     if (type == Type<Empty>::id()) {
       return ExplainNode{"Empty"};
     }

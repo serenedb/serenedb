@@ -1,0 +1,2544 @@
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rx_dict AS
+    generate_wildcard_ngrams(keyword(), 3)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rx_pos_dict AS
+    generate_wildcard_ngrams(keyword(), 3)
+    WITH (frequency, position)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rx_dict2 AS
+    generate_wildcard_ngrams(keyword(), 2)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rx_words_dict AS
+    generate_wildcard_ngrams(split_text_csv(' '), 3)
+
+statement ok
+CREATE TABLE rx_t (id BIGINT PRIMARY KEY, v VARCHAR)
+
+statement ok
+INSERT INTO rx_t VALUES
+    (1, 'abc'),
+    (2, 'xabcx'),
+    (3, 'alpha'),
+    (4, 'ab'),
+    (5, 'ABC'),
+    (6, 'abc' || chr(10) || 'd'),
+    (7, 'foobar'),
+    (8, 'foobaz'),
+    (9, 'FooBar'),
+    (10, chr(1089) || chr(1086) || chr(1073) || chr(1072) || chr(1082) || chr(1072)),
+    (11, chr(1057) || chr(1086) || chr(1073) || chr(1072) || chr(1082) || chr(1072)),
+    (12, ''),
+    (13, NULL),
+    (14, 'a' || chr(31) || 'b'),
+    (15, 'gray'),
+    (16, 'grey'),
+    (17, 'hello world'),
+    (18, 'the quick brown fox'),
+    (19, 'abcabcabc'),
+    (20, 'xyz123')
+
+statement ok
+CREATE INDEX rx_idx ON rx_t USING inverted(id, v rx_dict)
+
+statement ok
+CREATE INDEX rx_pos_idx ON rx_t USING inverted(id, v rx_pos_dict)
+
+statement ok
+CREATE INDEX rx_idx2 ON rx_t USING inverted(id, v rx_dict2)
+
+statement ok
+CREATE INDEX rx_words_idx ON rx_t USING inverted(id, v rx_words_dict)
+
+statement ok
+VACUUM (REFRESH_TABLE) rx_t
+
+statement ok
+INSERT INTO rx_t VALUES
+    (21, 'user@example.com'),
+    (22, 'admin@example.org'),
+    (23, 'aaa'),
+    (24, 'a'),
+    (25, 'x'),
+    (26, 'xx'),
+    (27, 'prefix_common_1'),
+    (28, 'prefix_common_2'),
+    (29, 'suffix_end'),
+    (30, 'other_end'),
+    (31, chr(1078) || chr(1091) || chr(1082)),
+    (32, chr(1046) || chr(1059) || chr(1050)),
+    (33, 'abcdefghijklmnopqrstuvwxyz0123456789'),
+    (34, 'aa'),
+    (35, 'abab')
+
+statement ok
+VACUUM (REFRESH_TABLE) rx_t
+
+# Through the index and by regexp_full_match over the table: no row on one
+# side only.
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('abc')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('abc'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('^abc$')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '^abc$'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '^abc$')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('^abc$'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('abc.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc.*')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('abc.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('(?s)abc.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(?s)abc.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(?s)abc.*')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('(?s)abc.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*abc')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*abc'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*abc.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*abc.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('ab.*c')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'ab.*c'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'ab.*c')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('ab.*c'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('foo.*ba[rz]')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'foo.*ba[rz]'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'foo.*ba[rz]')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('foo.*ba[rz]'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*(abc|xyz).*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*(abc|xyz).*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*(abc|xyz).*')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*(abc|xyz).*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*(abc|x).*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*(abc|x).*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*(abc|x).*')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*(abc|x).*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*(abc|xy)z.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*(abc|xy)z.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*(abc|xy)z.*')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*(abc|xy)z.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('gr[ae]y')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'gr[ae]y'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'gr[ae]y')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('gr[ae]y'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('[a-z]+@example\.(com|org)')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '[a-z]+@example\.(com|org)'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '[a-z]+@example\.(com|org)')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('[a-z]+@example\.(com|org)'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('abc+')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc+'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc+')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('abc+'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('(abc)+')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc)+'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc)+')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('(abc)+'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('(abc){3}')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc){3}'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc){3}')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('(abc){3}'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('a.c')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'a.c'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'a.c')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('a.c'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('(?i)abc')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)abc'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)abc')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('(?i)abc'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('(?i)foobar')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)foobar'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)foobar')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('(?i)foobar'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('(?i)foo.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)foo.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)foo.*')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('(?i)foo.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('(?i)\x{0436}\x{0443}\x{043A}')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)\x{0436}\x{0443}\x{043A}'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)\x{0436}\x{0443}\x{043A}')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('(?i)\x{0436}\x{0443}\x{043A}'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*\x{0441}\x{043E}\x{0431}\x{0430}\x{043A}.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\x{0441}\x{043E}\x{0431}\x{0430}\x{043A}.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\x{0441}\x{043E}\x{0431}\x{0430}\x{043A}.*')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*\x{0441}\x{043E}\x{0431}\x{0430}\x{043A}.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*\x{0421}\x{043E}\x{0431}\x{0430}\x{043A}.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\x{0421}\x{043E}\x{0431}\x{0430}\x{043A}.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\x{0421}\x{043E}\x{0431}\x{0430}\x{043A}.*')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*\x{0421}\x{043E}\x{0431}\x{0430}\x{043A}.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('\Cbc')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '\Cbc'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '\Cbc')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('\Cbc'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*\C.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\C.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\C.*')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*\C.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('(abc)?')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc)?'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc)?')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('(abc)?'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, ''))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp(''))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('a*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'a*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'a*')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('a*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('alpha')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'alpha'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'alpha')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('alpha'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('ab')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'ab'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'ab')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('ab'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('ab.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'ab.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'ab.*')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('ab.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*a')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*a'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*a')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*a'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('x.*x')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'x.*x'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'x.*x')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('x.*x'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('(?sm)^abc$.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(?sm)^abc$.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(?sm)^abc$.*')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('(?sm)^abc$.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('\babc\b')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '\babc\b'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '\babc\b')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('\babc\b'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('a\Bbc')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'a\Bbc'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'a\Bbc')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('a\Bbc'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('a{2,3}')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'a{2,3}'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'a{2,3}')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('a{2,3}'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('a\x1fb')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'a\x1fb'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'a\x1fb')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('a\x1fb'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('\x41BC')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '\x41BC'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '\x41BC')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('\x41BC'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('\pL+')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '\pL+'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '\pL+')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('\pL+'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*\d+')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\d+'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\d+')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*\d+'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('prefix_common_\d')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'prefix_common_\d'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'prefix_common_\d')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('prefix_common_\d'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*_end')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*_end'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*_end')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*_end'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('hello world')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'hello world'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'hello world')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('hello world'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*o w.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*o w.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*o w.*')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*o w.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('[^\x00-\x{10FFFF}]')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '[^\x00-\x{10FFFF}]'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '[^\x00-\x{10FFFF}]')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('[^\x00-\x{10FFFF}]'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('abcdefghijklmnopqrstuvwxyz0123456789')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'abcdefghijklmnopqrstuvwxyz0123456789'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'abcdefghijklmnopqrstuvwxyz0123456789')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('abcdefghijklmnopqrstuvwxyz0123456789'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*klmnop.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*klmnop.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*klmnop.*')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*klmnop.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('x|xx')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'x|xx'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'x|xx')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('x|xx'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('(?i)a')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)a'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)a')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('(?i)a'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('zzz')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'zzz'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'zzz')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('zzz'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('abc')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('abc'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('^abc$')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '^abc$'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '^abc$')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('^abc$'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('abc.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc.*')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('abc.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(?s)abc.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(?s)abc.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(?s)abc.*')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(?s)abc.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*abc')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*abc'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*abc.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*abc.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('ab.*c')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'ab.*c'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'ab.*c')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('ab.*c'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('foo.*ba[rz]')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'foo.*ba[rz]'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'foo.*ba[rz]')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('foo.*ba[rz]'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*(abc|xyz).*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*(abc|xyz).*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*(abc|xyz).*')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*(abc|xyz).*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*(abc|x).*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*(abc|x).*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*(abc|x).*')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*(abc|x).*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*(abc|xy)z.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*(abc|xy)z.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*(abc|xy)z.*')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*(abc|xy)z.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('gr[ae]y')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'gr[ae]y'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'gr[ae]y')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('gr[ae]y'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('[a-z]+@example\.(com|org)')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '[a-z]+@example\.(com|org)'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '[a-z]+@example\.(com|org)')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('[a-z]+@example\.(com|org)'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('abc+')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc+'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc+')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('abc+'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(abc)+')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc)+'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc)+')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(abc)+'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(abc){3}')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc){3}'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc){3}')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(abc){3}'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('a.c')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'a.c'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'a.c')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('a.c'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(?i)abc')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)abc'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)abc')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(?i)abc'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(?i)foobar')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)foobar'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)foobar')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(?i)foobar'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(?i)foo.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)foo.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)foo.*')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(?i)foo.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(?i)\x{0436}\x{0443}\x{043A}')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)\x{0436}\x{0443}\x{043A}'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)\x{0436}\x{0443}\x{043A}')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(?i)\x{0436}\x{0443}\x{043A}'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*\x{0441}\x{043E}\x{0431}\x{0430}\x{043A}.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\x{0441}\x{043E}\x{0431}\x{0430}\x{043A}.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\x{0441}\x{043E}\x{0431}\x{0430}\x{043A}.*')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*\x{0441}\x{043E}\x{0431}\x{0430}\x{043A}.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*\x{0421}\x{043E}\x{0431}\x{0430}\x{043A}.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\x{0421}\x{043E}\x{0431}\x{0430}\x{043A}.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\x{0421}\x{043E}\x{0431}\x{0430}\x{043A}.*')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*\x{0421}\x{043E}\x{0431}\x{0430}\x{043A}.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('\Cbc')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '\Cbc'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '\Cbc')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('\Cbc'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*\C.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\C.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\C.*')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*\C.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(abc)?')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc)?'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc)?')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(abc)?'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, ''))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp(''))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('a*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'a*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'a*')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('a*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('alpha')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'alpha'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'alpha')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('alpha'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('ab')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'ab'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'ab')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('ab'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('ab.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'ab.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'ab.*')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('ab.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*a')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*a'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*a')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*a'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('x.*x')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'x.*x'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'x.*x')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('x.*x'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(?sm)^abc$.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(?sm)^abc$.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(?sm)^abc$.*')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(?sm)^abc$.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('\babc\b')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '\babc\b'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '\babc\b')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('\babc\b'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('a\Bbc')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'a\Bbc'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'a\Bbc')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('a\Bbc'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('a{2,3}')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'a{2,3}'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'a{2,3}')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('a{2,3}'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('a\x1fb')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'a\x1fb'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'a\x1fb')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('a\x1fb'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('\x41BC')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '\x41BC'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '\x41BC')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('\x41BC'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('\pL+')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '\pL+'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '\pL+')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('\pL+'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*\d+')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\d+'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\d+')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*\d+'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('prefix_common_\d')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'prefix_common_\d'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'prefix_common_\d')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('prefix_common_\d'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*_end')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*_end'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*_end')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*_end'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('hello world')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'hello world'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'hello world')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('hello world'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*o w.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*o w.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*o w.*')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*o w.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('[^\x00-\x{10FFFF}]')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '[^\x00-\x{10FFFF}]'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '[^\x00-\x{10FFFF}]')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('[^\x00-\x{10FFFF}]'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('abcdefghijklmnopqrstuvwxyz0123456789')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'abcdefghijklmnopqrstuvwxyz0123456789'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'abcdefghijklmnopqrstuvwxyz0123456789')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('abcdefghijklmnopqrstuvwxyz0123456789'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*klmnop.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*klmnop.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*klmnop.*')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*klmnop.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('x|xx')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'x|xx'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'x|xx')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('x|xx'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(?i)a')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)a'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)a')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(?i)a'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('zzz')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'zzz'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'zzz')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('zzz'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('abc')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('abc'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('^abc$')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '^abc$'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '^abc$')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('^abc$'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('abc.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc.*')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('abc.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('(?s)abc.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(?s)abc.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(?s)abc.*')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('(?s)abc.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*abc')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*abc'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*abc.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*abc.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('ab.*c')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'ab.*c'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'ab.*c')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('ab.*c'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('foo.*ba[rz]')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'foo.*ba[rz]'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'foo.*ba[rz]')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('foo.*ba[rz]'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*(abc|xyz).*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*(abc|xyz).*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*(abc|xyz).*')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*(abc|xyz).*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*(abc|x).*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*(abc|x).*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*(abc|x).*')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*(abc|x).*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*(abc|xy)z.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*(abc|xy)z.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*(abc|xy)z.*')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*(abc|xy)z.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('gr[ae]y')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'gr[ae]y'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'gr[ae]y')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('gr[ae]y'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('[a-z]+@example\.(com|org)')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '[a-z]+@example\.(com|org)'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '[a-z]+@example\.(com|org)')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('[a-z]+@example\.(com|org)'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('abc+')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc+'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc+')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('abc+'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('(abc)+')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc)+'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc)+')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('(abc)+'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('(abc){3}')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc){3}'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc){3}')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('(abc){3}'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('a.c')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'a.c'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'a.c')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('a.c'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('(?i)abc')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)abc'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)abc')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('(?i)abc'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('(?i)foobar')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)foobar'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)foobar')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('(?i)foobar'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('(?i)foo.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)foo.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)foo.*')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('(?i)foo.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('(?i)\x{0436}\x{0443}\x{043A}')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)\x{0436}\x{0443}\x{043A}'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)\x{0436}\x{0443}\x{043A}')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('(?i)\x{0436}\x{0443}\x{043A}'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*\x{0441}\x{043E}\x{0431}\x{0430}\x{043A}.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\x{0441}\x{043E}\x{0431}\x{0430}\x{043A}.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\x{0441}\x{043E}\x{0431}\x{0430}\x{043A}.*')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*\x{0441}\x{043E}\x{0431}\x{0430}\x{043A}.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*\x{0421}\x{043E}\x{0431}\x{0430}\x{043A}.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\x{0421}\x{043E}\x{0431}\x{0430}\x{043A}.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\x{0421}\x{043E}\x{0431}\x{0430}\x{043A}.*')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*\x{0421}\x{043E}\x{0431}\x{0430}\x{043A}.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('\Cbc')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '\Cbc'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '\Cbc')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('\Cbc'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*\C.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\C.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\C.*')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*\C.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('(abc)?')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc)?'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc)?')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('(abc)?'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, ''))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp(''))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('a*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'a*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'a*')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('a*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('alpha')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'alpha'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'alpha')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('alpha'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('ab')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'ab'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'ab')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('ab'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('ab.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'ab.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'ab.*')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('ab.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*a')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*a'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*a')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*a'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('x.*x')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'x.*x'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'x.*x')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('x.*x'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('(?sm)^abc$.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(?sm)^abc$.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(?sm)^abc$.*')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('(?sm)^abc$.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('\babc\b')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '\babc\b'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '\babc\b')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('\babc\b'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('a\Bbc')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'a\Bbc'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'a\Bbc')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('a\Bbc'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('a{2,3}')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'a{2,3}'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'a{2,3}')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('a{2,3}'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('a\x1fb')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'a\x1fb'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'a\x1fb')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('a\x1fb'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('\x41BC')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '\x41BC'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '\x41BC')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('\x41BC'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('\pL+')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '\pL+'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '\pL+')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('\pL+'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*\d+')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\d+'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*\d+')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*\d+'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('prefix_common_\d')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'prefix_common_\d'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'prefix_common_\d')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('prefix_common_\d'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*_end')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*_end'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*_end')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*_end'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('hello world')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'hello world'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'hello world')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('hello world'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*o w.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*o w.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*o w.*')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*o w.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('[^\x00-\x{10FFFF}]')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '[^\x00-\x{10FFFF}]'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '[^\x00-\x{10FFFF}]')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('[^\x00-\x{10FFFF}]'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('abcdefghijklmnopqrstuvwxyz0123456789')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'abcdefghijklmnopqrstuvwxyz0123456789'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'abcdefghijklmnopqrstuvwxyz0123456789')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('abcdefghijklmnopqrstuvwxyz0123456789'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*klmnop.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*klmnop.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*klmnop.*')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('.*klmnop.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('x|xx')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'x|xx'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'x|xx')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('x|xx'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('(?i)a')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)a'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(?i)a')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('(?i)a'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('zzz')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'zzz'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'zzz')
+     EXCEPT SELECT id FROM rx_idx2 WHERE v @@ ts_regexp('zzz'))
+) t
+----
+count
+0
+
+# Explicit answers, so that two empty sides cannot pass for agreement.
+
+query
+SELECT id FROM rx_idx WHERE v @@ ts_regexp('abc') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM rx_idx WHERE v @@ ts_regexp('abc.*') ORDER BY id
+----
+id
+1
+19
+33
+
+query
+SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*abc.*') ORDER BY id
+----
+id
+1
+2
+19
+33
+
+query
+SELECT id FROM rx_idx WHERE v @@ ts_regexp('foo.*ba[rz]') ORDER BY id
+----
+id
+7
+8
+
+query
+SELECT id FROM rx_idx WHERE v @@ ts_regexp('(?i)abc') ORDER BY id
+----
+id
+1
+5
+
+query
+SELECT id FROM rx_idx WHERE v @@ ts_regexp('gr[ae]y') ORDER BY id
+----
+id
+15
+16
+
+query
+SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*\x{0441}\x{043E}\x{0431}\x{0430}\x{043A}.*') ORDER BY id
+----
+id
+10
+
+query
+SELECT id FROM rx_idx WHERE v @@ ts_regexp('(abc)?') ORDER BY id
+----
+id
+1
+12
+
+query
+SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*_end') ORDER BY id
+----
+id
+29
+30
+
+query
+SELECT id FROM rx_idx WHERE v @@ ts_regexp('x.*x') ORDER BY id
+----
+id
+2
+26
+
+# POSIX syntax against the same pattern read as Perl.
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('gr[ae]y', 'posix')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'gr[ae]y'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'gr[ae]y')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('gr[ae]y', 'posix'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('gr[ae]y', 'posix')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'gr[ae]y'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'gr[ae]y')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('gr[ae]y', 'posix'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('abc.*', 'posix')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc.*')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('abc.*', 'posix'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('abc.*', 'posix')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'abc.*')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('abc.*', 'posix'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('foo.*ba[rz]', 'posix')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'foo.*ba[rz]'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'foo.*ba[rz]')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('foo.*ba[rz]', 'posix'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('foo.*ba[rz]', 'posix')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, 'foo.*ba[rz]'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, 'foo.*ba[rz]')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('foo.*ba[rz]', 'posix'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('[[:alpha:]]+', 'posix')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '[[:alpha:]]+'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '[[:alpha:]]+')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('[[:alpha:]]+', 'posix'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('[[:alpha:]]+', 'posix')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '[[:alpha:]]+'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '[[:alpha:]]+')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('[[:alpha:]]+', 'posix'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('(abc|xyz)+', 'posix')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc|xyz)+'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc|xyz)+')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('(abc|xyz)+', 'posix'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(abc|xyz)+', 'posix')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc|xyz)+'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '(abc|xyz)+')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('(abc|xyz)+', 'posix'))
+) t
+----
+count
+0
+
+# Query shapes.
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE NOT (v @@ ts_regexp('.*abc.*'))
+     EXCEPT SELECT id FROM rx_t WHERE v IS NOT NULL AND NOT regexp_full_match(v, '.*abc.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE v IS NOT NULL AND NOT regexp_full_match(v, '.*abc.*')
+     EXCEPT SELECT id FROM rx_idx WHERE NOT (v @@ ts_regexp('.*abc.*')))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE NOT (v @@ ts_regexp('ab.*'))
+     EXCEPT SELECT id FROM rx_t WHERE v IS NOT NULL AND NOT regexp_full_match(v, 'ab.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE v IS NOT NULL AND NOT regexp_full_match(v, 'ab.*')
+     EXCEPT SELECT id FROM rx_idx WHERE NOT (v @@ ts_regexp('ab.*')))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE NOT (v @@ ts_regexp('(abc)?'))
+     EXCEPT SELECT id FROM rx_t WHERE v IS NOT NULL AND NOT regexp_full_match(v, '(abc)?'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE v IS NOT NULL AND NOT regexp_full_match(v, '(abc)?')
+     EXCEPT SELECT id FROM rx_idx WHERE NOT (v @@ ts_regexp('(abc)?')))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE NOT (v @@ ts_regexp('.*'))
+     EXCEPT SELECT id FROM rx_t WHERE v IS NOT NULL AND NOT regexp_full_match(v, '.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE v IS NOT NULL AND NOT regexp_full_match(v, '.*')
+     EXCEPT SELECT id FROM rx_idx WHERE NOT (v @@ ts_regexp('.*')))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*abc.*') AND id > 5
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*') AND id > 5)
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*') AND id > 5
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*abc.*') AND id > 5)
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*abc.*') OR v @@ ts_regexp('x.*x')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*') OR regexp_full_match(v, 'x.*x'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*') OR regexp_full_match(v, 'x.*x')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*abc.*') OR v @@ ts_regexp('x.*x'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*abc.*') OR v @@ ts_like('gr_y')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*') OR v LIKE 'gr_y')
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*') OR v LIKE 'gr_y'
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*abc.*') OR v @@ ts_like('gr_y'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*abc.*') AND v @@ ts_regexp('x.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*') AND regexp_full_match(v, 'x.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*') AND regexp_full_match(v, 'x.*')
+     EXCEPT SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*abc.*') AND v @@ ts_regexp('x.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE NOT (v @@ ts_regexp('.*abc.*'))
+     EXCEPT SELECT id FROM rx_t WHERE v IS NOT NULL AND NOT regexp_full_match(v, '.*abc.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE v IS NOT NULL AND NOT regexp_full_match(v, '.*abc.*')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE NOT (v @@ ts_regexp('.*abc.*')))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE NOT (v @@ ts_regexp('ab.*'))
+     EXCEPT SELECT id FROM rx_t WHERE v IS NOT NULL AND NOT regexp_full_match(v, 'ab.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE v IS NOT NULL AND NOT regexp_full_match(v, 'ab.*')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE NOT (v @@ ts_regexp('ab.*')))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE NOT (v @@ ts_regexp('(abc)?'))
+     EXCEPT SELECT id FROM rx_t WHERE v IS NOT NULL AND NOT regexp_full_match(v, '(abc)?'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE v IS NOT NULL AND NOT regexp_full_match(v, '(abc)?')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE NOT (v @@ ts_regexp('(abc)?')))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE NOT (v @@ ts_regexp('.*'))
+     EXCEPT SELECT id FROM rx_t WHERE v IS NOT NULL AND NOT regexp_full_match(v, '.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE v IS NOT NULL AND NOT regexp_full_match(v, '.*')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE NOT (v @@ ts_regexp('.*')))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*abc.*') AND id > 5
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*') AND id > 5)
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*') AND id > 5
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*abc.*') AND id > 5)
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*abc.*') OR v @@ ts_regexp('x.*x')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*') OR regexp_full_match(v, 'x.*x'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*') OR regexp_full_match(v, 'x.*x')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*abc.*') OR v @@ ts_regexp('x.*x'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*abc.*') OR v @@ ts_like('gr_y')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*') OR v LIKE 'gr_y')
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*') OR v LIKE 'gr_y'
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*abc.*') OR v @@ ts_like('gr_y'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*abc.*') AND v @@ ts_regexp('x.*')
+     EXCEPT SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*') AND regexp_full_match(v, 'x.*'))
+    UNION ALL
+    (SELECT id FROM rx_t WHERE regexp_full_match(v, '.*abc.*') AND regexp_full_match(v, 'x.*')
+     EXCEPT SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*abc.*') AND v @@ ts_regexp('x.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM rx_idx WHERE v @@ ts_regexp('.*abc.*')
+----
+count
+4
+
+query
+SELECT id FROM rx_idx WHERE v @@ ts_regexp('.*abc.*')
+ORDER BY BM25(rx_idx.tableoid) DESC, id LIMIT 2
+----
+id
+1
+2
+
+query
+SELECT COUNT(DISTINCT score) AS distinct_scores, COUNT(*) AS total_matches
+FROM (SELECT BM25(rx_idx.tableoid) AS score
+      FROM rx_idx
+      WHERE v @@ ts_regexp('.*abc.*')) t
+----
+distinct_scores	total_matches
+1	4
+
+query
+SELECT count(*) FROM rx_pos_idx WHERE v @@ ts_regexp('.*abc.*')
+----
+count
+4
+
+query
+SELECT id FROM rx_pos_idx WHERE v @@ ts_regexp('.*abc.*')
+ORDER BY BM25(rx_pos_idx.tableoid) DESC, id LIMIT 2
+----
+id
+1
+2
+
+query
+SELECT COUNT(DISTINCT score) AS distinct_scores, COUNT(*) AS total_matches
+FROM (SELECT BM25(rx_pos_idx.tableoid) AS score
+      FROM rx_pos_idx
+      WHERE v @@ ts_regexp('.*abc.*')) t
+----
+distinct_scores	total_matches
+1	4
+
+# A pattern RE2 rejects matches nothing, and its negation every row with a
+# value.
+
+query
+SELECT count(*) FROM rx_idx WHERE v @@ ts_regexp('(')
+----
+count
+0
+
+query
+SELECT count(*) FROM rx_idx WHERE NOT (v @@ ts_regexp('('))
+----
+count
+34
+
+query
+SELECT count(*) FROM rx_idx WHERE v @@ ts_regexp('foo\')
+----
+count
+0
+
+query
+SELECT count(*) FROM rx_idx WHERE NOT (v @@ ts_regexp('foo\'))
+----
+count
+34
+
+# Per term on a dictionary that splits values into words.
+
+query
+SELECT id FROM rx_words_idx WHERE v @@ ts_regexp('hello') ORDER BY id
+----
+id
+17
+
+query
+SELECT id FROM rx_words_idx WHERE v @@ ts_regexp('.*o') ORDER BY id
+----
+id
+17
+
+query
+SELECT id FROM rx_words_idx WHERE v @@ ts_regexp('qu.*') ORDER BY id
+----
+id
+18
+
+query
+SELECT id FROM rx_words_idx WHERE v @@ ts_regexp('(?i)FOX') ORDER BY id
+----
+id
+18
+
+query
+SELECT id FROM rx_words_idx WHERE v @@ ts_regexp('w.r.d') ORDER BY id
+----
+id
+17
+
+query
+SELECT id FROM rx_words_idx WHERE v @@ ts_regexp('brown fox') ORDER BY id
+----
+id
+
+query
+SELECT id FROM rx_words_idx WHERE v @@ ts_regexp('.*_end') ORDER BY id
+----
+id
+29
+30
+
+# Every element of a list is a term.
+statement ok
+CREATE TABLE rx_list (id BIGINT PRIMARY KEY, tags VARCHAR[])
+
+statement ok
+INSERT INTO rx_list VALUES
+    (1, ['abc', 'xyz']),
+    (2, ['foo', 'abcd']),
+    (3, []),
+    (4, NULL),
+    (5, ['xabc', NULL])
+
+statement ok
+CREATE INDEX rx_list_idx ON rx_list USING inverted(id, tags rx_dict)
+
+statement ok
+VACUUM (REFRESH_TABLE) rx_list
+
+query
+SELECT id FROM rx_list_idx WHERE tags @@ ts_regexp('abc') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM rx_list_idx WHERE tags @@ ts_regexp('abc.*') ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM rx_list_idx WHERE tags @@ ts_regexp('.*abc') ORDER BY id
+----
+id
+1
+5
+
+query
+SELECT id FROM rx_list_idx WHERE tags @@ ts_regexp('xyz|foo') ORDER BY id
+----
+id
+1
+2
+
+statement ok
+DROP TABLE rx_list
+
+query
+EXPLAIN SELECT id FROM rx_idx WHERE v @@ ts_regexp('foo.*ba[rz]')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────╮
+│ Index: rx_idx                                │
+│ Lookup: table                                │
+│ Index Filter:                                │
+│ ╭─ Regexp NGram ───────────────────────────╮ │
+│ │ Field: v(string)                         │ │
+│ │ Pattern: foo.*ba[rz]                     │ │
+│ │ Syntax: perl                             │ │
+│ │ Has Pos: false                           │ │
+│ │ Query:                                   │ │
+│ │ And("\\x1ffoo", Or("bar\\x1f", "baz\\x1f")) │ │
+│ ╰──────────────────────────────────────────╯ │
+│ Projections: id                              │
+│ ~7 rows                                      │
+╰──────────────────────────────────────────────╯
+
+statement ok
+DROP TABLE rx_t
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rx_words_dict
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rx_dict2
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rx_pos_dict
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rx_dict

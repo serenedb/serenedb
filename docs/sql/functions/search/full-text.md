@@ -179,6 +179,8 @@ A pattern's size never changes its answer: a long alternation — hundreds of ge
 
 Anchors and word boundaries keep their RE2 meaning inside a term: `^` and `$` hold only at its ends (and, with `(?m)`, around line breaks), and `\b` and `\B` look at the characters on either side. Over whole values indexed with a `keyword()` dictionary, `ts_regexp('(?i)^(the\s+)?siemens\b.*')` matches `The Siemens AG` and `siemens financial services` but not `siemensland`.
 
+On a column indexed with [`generate_wildcard_ngrams`](./tokenizers/generate_wildcard_ngrams.md#searching), the pattern still matches whole terms, but the candidates come from the grams of the text the pattern requires and each one is re-checked against the stored term.
+
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
 | `body @@ ts_regexp('qu.*ck')` | `1`, `2` | `quick` matches the Perl pattern. |

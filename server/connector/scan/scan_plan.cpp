@@ -29,6 +29,7 @@
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/scalar/generic_common.hpp>
 #include <duckdb/function/scalar_function.hpp>
+#include <duckdb/optimizer/expression_heuristics.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
@@ -264,6 +265,29 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
       }
       cf.not_null = MakeNotNullReplacement(entry.Filter(), cf.type);
     }
+  }
+  // Each column filter only evaluates the rows the earlier ones kept, so run
+  // the cheap ones first; a throwing filter pins the pushed order.
+  const auto filter_expr = [](const ScanGlobalState::ColFilter& cf) -> auto& {
+    return *duckdb::ExpressionFilter::GetExpressionFilter(*cf.filter,
+                                                          "BuildTableFilter")
+              .expr;
+  };
+  if (absl::c_none_of(state.col_filters,
+                      [&](const ScanGlobalState::ColFilter& cf) {
+                        return filter_expr(cf).CanThrow();
+                      })) {
+    const auto cost =
+      [&](const ScanGlobalState::ColFilter& cf) -> duckdb::idx_t {
+      if (cf.is_dynamic || cf.zonemap_only) {
+        return 0;
+      }
+      return duckdb::ExpressionHeuristics::Cost(filter_expr(cf));
+    };
+    absl::c_stable_sort(
+      state.col_filters,
+      [&](const ScanGlobalState::ColFilter& a,
+          const ScanGlobalState::ColFilter& b) { return cost(a) < cost(b); });
   }
 }
 

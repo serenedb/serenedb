@@ -345,6 +345,7 @@ void ColumnReader::Readahead(size_t block, ReadContext& ctx,
   }
   const bool sequential = block != 0 && s->opened_block + 1 == block;
   s->opened_block = block;
+  s->lead = file_utils::NextReadahead(sequential, s->lead);
   if (block < s->advised_end) {
     return;
   }
@@ -352,7 +353,7 @@ void ColumnReader::Readahead(size_t block, ReadContext& ctx,
     s->advised_end = block + 1;
     return;
   }
-  uint64_t budget = sequential ? file_utils::kMaxReadahead : 0;
+  uint64_t budget = s->lead;
   auto b = block;
   do {
     const auto& m = _segments[b++];

@@ -355,3 +355,24 @@ TEST(file_utils_tests, path_parts) {
   }
 #endif
 }
+
+TEST(file_utils_tests, next_readahead) {
+  using irs::file_utils::kMaxReadahead;
+  using irs::file_utils::kMinReadahead;
+  using irs::file_utils::NextReadahead;
+
+  ASSERT_EQ(0, NextReadahead(false, 0));
+  ASSERT_EQ(0, NextReadahead(false, kMaxReadahead));
+  ASSERT_EQ(kMinReadahead, NextReadahead(true, 0));
+  ASSERT_EQ(2 * kMinReadahead, NextReadahead(true, kMinReadahead));
+  ASSERT_EQ(kMaxReadahead, NextReadahead(true, kMaxReadahead));
+
+  uint64_t lead = 0;
+  size_t steps = 0;
+  while (lead != kMaxReadahead) {
+    lead = NextReadahead(true, lead);
+    ++steps;
+  }
+  ASSERT_EQ(5, steps);
+  ASSERT_EQ(0, NextReadahead(false, lead));
+}

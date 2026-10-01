@@ -1940,6 +1940,7 @@ class AcceptorTermIterator : public SeekTermIterator,
       for (size_t i = 0; i != _required.size(); ++i) {
         const auto& suffix = _required[i];
         ++_starts[suffix.back() + 1];
+        _sizes[i] = static_cast<uint8_t>(std::min<size_t>(suffix.size(), 9));
         std::memcpy(&_words[i], suffix.data(),
                     std::min<size_t>(suffix.size(), 8));
       }
@@ -2033,7 +2034,7 @@ class AcceptorTermIterator : public SeekTermIterator,
   }
 
   bool ExtendEntry(State from, const byte_type* suffix, size_t n) {
-    for (size_t i = 0; i != n; ++i) {
+    [[clang::code_align(64)]] for (size_t i = 0; i != n; ++i) {
       from = _a->Step(from, suffix[i]);
       if (!A::Alive(from)) {
         return false;
@@ -2063,54 +2064,64 @@ class AcceptorTermIterator : public SeekTermIterator,
     return value;
   }
 
-  uint64_t Tail(const byte_type* suffix, size_t n, size_t prefix,
-                size_t& have) const noexcept {
+  uint64_t PrefixTop(size_t prefix) const noexcept {
+    const byte_type* key = this->_term_buf.data();
+    if (prefix >= 8) {
+      return Load64(key + prefix - 8);
+    }
+    if (this->_term_buf.size() >= 8) {
+      return Load64(key) << (8 * (8 - prefix));
+    }
+    uint64_t top = 0;
+    std::memcpy(reinterpret_cast<byte_type*>(&top) + 8 - prefix, key, prefix);
+    return top;
+  }
+
+  uint64_t Top(const byte_type* suffix, size_t n) const noexcept {
+    const byte_type* end = this->_cur_block->SuffixEnd();
+    if (suffix + 8 <= end) {
+      return Load64(suffix) << (8 * (8 - n));
+    }
+    if (end - this->_cur_block->SuffixStart() >= 8) {
+      return (Load64(end - 8) << (8 * (end - suffix - n))) &
+             (~uint64_t{0} << (8 * (8 - n)));
+    }
+    uint64_t top = 0;
+    std::memcpy(reinterpret_cast<byte_type*>(&top) + 8 - n, suffix, n);
+    return top;
+  }
+
+  uint64_t Tail(const byte_type* suffix, size_t n,
+                size_t prefix) const noexcept {
     if (n >= 8) {
-      have = 8;
       return Load64(suffix + n - 8);
     }
-    uint64_t tail = 0;
-    if (n != 0) {
-      if (suffix + 8 <= this->_cur_block->SuffixEnd()) {
-        tail = Load64(suffix) << (8 * (8 - n));
-      } else {
-        for (size_t i = 0; i != n; ++i) {
-          tail |= uint64_t{suffix[i]} << (8 * (8 - n + i));
-        }
-      }
+    uint64_t tail = n != 0 ? Top(suffix, n) : 0;
+    if (prefix != 0) {
+      tail |= PrefixTop(prefix) >> (8 * n);
     }
-    const size_t head = std::min(prefix, 8 - n);
-    if (head != 0) {
-      const byte_type* end = this->_term_buf.data() + prefix;
-      uint64_t low = 0;
-      if (prefix >= 8) {
-        low = Load64(end - 8) >> (8 * (8 - head));
-      } else {
-        for (size_t i = 0; i != head; ++i) {
-          low |= uint64_t{end[i - head]} << (8 * i);
-        }
-      }
-      tail |= low << (8 * (8 - n - head));
-    }
-    have = n + head;
     return tail;
   }
 
   bool EndsWithRequired(const byte_type* suffix, size_t n) const noexcept {
-    const size_t prefix = this->_cur_block->Prefix();
-    if (n == 0 && prefix == 0) {
+    byte_type last;
+    if (n != 0) [[likely]] {
+      last = suffix[n - 1];
+    } else if (const size_t prefix = this->_cur_block->Prefix(); prefix != 0) {
+      last = this->_term_buf[prefix - 1];
+    } else {
       return false;
     }
-    const byte_type last = n != 0 ? suffix[n - 1] : this->_term_buf[prefix - 1];
     const auto first = _starts[last];
     const auto limit = _starts[last + 1];
     if (first == limit) {
       return false;
     }
-    size_t have = 0;
-    const uint64_t tail = Tail(suffix, n, prefix, have);
+    const size_t prefix = this->_cur_block->Prefix();
+    const size_t have = std::min<size_t>(n + prefix, 8);
+    const uint64_t tail = Tail(suffix, n, prefix);
     for (auto i = first; i != limit; ++i) {
-      const size_t size = _required[i].size();
+      const size_t size = _sizes[i];
       if (size <= 8 ? size <= have && (tail >> (64 - 8 * size)) == _words[i]
                     : EndsWith(suffix, n, _required[i])) {
         return true;
@@ -2310,6 +2321,7 @@ class AcceptorTermIterator : public SeekTermIterator,
   std::span<const RegexpAcceptor::ExemptKey> _exempt;
   std::array<uint8_t, kMaxLabels + 1> _starts{};
   std::array<uint64_t, 64> _words{};
+  std::array<uint8_t, 64> _sizes{};
   bytes_view _infix;
   re2::LiteralFinder _infix_finder;
   std::vector<uint32_t> _hits;

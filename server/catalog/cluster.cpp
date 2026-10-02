@@ -75,6 +75,51 @@ duckdb::Catalog& ClusterCatalog::ReplayUseCatalog(
   return AttachDatabaseCatalog(context, database->name, catalog_oid);
 }
 
+ClusterCatalog::~ClusterCatalog() {
+  {
+    absl::MutexLock lock{&_sync_mutex};
+    _sync_stop = true;
+  }
+  if (_sync_thread.joinable()) {
+    _sync_thread.join();
+  }
+}
+
+void ClusterCatalog::RequestCatalogLogSync(
+  duckdb::shared_ptr<duckdb::WriteAheadLog> log, duckdb::idx_t offset) {
+  absl::MutexLock lock{&_sync_mutex};
+  if (_sync_stop) {
+    return;
+  }
+  if (_sync_log != log || offset > _sync_offset) {
+    _sync_log = std::move(log);
+    _sync_offset = offset;
+  }
+  if (!_sync_thread.joinable()) {
+    _sync_thread = std::thread{[this] { SyncCatalogLogLoop(); }};
+  }
+}
+
+void ClusterCatalog::SyncCatalogLogLoop() {
+  while (true) {
+    duckdb::shared_ptr<duckdb::WriteAheadLog> log;
+    duckdb::idx_t offset = 0;
+    {
+      absl::MutexLock lock{&_sync_mutex};
+      _sync_mutex.Await(absl::Condition(this, &ClusterCatalog::SyncPending));
+      if (_sync_stop) {
+        return;
+      }
+      log = std::move(_sync_log);
+      offset = _sync_offset;
+    }
+    try {
+      log->GroupSync(offset);
+    } catch (...) {
+    }
+  }
+}
+
 void ClusterCatalog::OpenCatalogLog(
   duckdb::unique_ptr<duckdb::WriteAheadLog> log, bool compactable) {
   {

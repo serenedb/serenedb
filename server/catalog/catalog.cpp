@@ -361,6 +361,11 @@ duckdb::shared_ptr<duckdb::WriteAheadLog> SereneDBCatalog::CatalogLog() {
   return ClusterOf(GetDatabase()).CatalogLog();
 }
 
+void SereneDBCatalog::RequestCatalogLogSync(
+  duckdb::shared_ptr<duckdb::WriteAheadLog> log, duckdb::idx_t offset) {
+  ClusterOf(GetDatabase()).RequestCatalogLogSync(std::move(log), offset);
+}
+
 void SereneDBCatalog::Initialize(bool load_builtin) {
   duckdb::DuckCatalog::Initialize(load_builtin);
   auto data = duckdb::CatalogTransaction::GetSystemTransaction(GetDatabase());

@@ -63,6 +63,8 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
 
   bool UsesCatalogLog() const final { return true; }
   duckdb::shared_ptr<duckdb::WriteAheadLog> CatalogLog() final;
+  void RequestCatalogLogSync(duckdb::shared_ptr<duckdb::WriteAheadLog> log,
+                             duckdb::idx_t offset) final;
 
   void Initialize(bool load_builtin) final;
 

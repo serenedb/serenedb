@@ -120,7 +120,7 @@ Sequences are based on `BIGINT` arithmetic, so the range cannot exceed the range
 
 ## Limitations
 
-As in PostgreSQL, a sequence is made durable 32 values ahead of the values sessions have taken: the commit of a transaction whose values go past that point first writes the next position. A committed value is never handed out twice. After a crash, a sequence resumes after its last durable position, so up to 32 values, plus the values sessions had cached, can be skipped, and a value drawn by a transaction that never committed can be handed out again. `setval` is durable when it returns.
+As in PostgreSQL, a sequence is logged 32 values ahead of the values sessions have taken: when the logged values run out, `nextval` writes the next position and it is flushed to disk in the background, and a commit waits for that flush only if it has not finished yet. A committed value is never handed out twice. After a crash, a sequence resumes after its last durable position, so up to 32 values, plus the values sessions had cached, can be skipped, and a value drawn by a transaction that never committed can be handed out again. `setval` is durable when it returns.
 
 When a table column uses a sequence as its `DEFAULT`, the column keeps a dependency on that sequence. The default can be changed with `ALTER TABLE ... ALTER COLUMN ... SET DEFAULT` — here it is reset to `NULL`, so subsequent rows no longer draw from the sequence:
 

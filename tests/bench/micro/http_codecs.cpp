@@ -32,8 +32,8 @@ namespace {
 using sdb::network::http::ContentCoding;
 using sdb::network::http::FindContentCoding;
 
-constexpr std::string_view kCodings[] = {"gzip", "zstd", "br",
-                                         "lz4",  "zxc",  "snappy"};
+constexpr std::string_view kCodings[] = {"gzip", "deflate", "zstd",  "br",
+                                         "lz4",  "zxc",     "snappy"};
 
 std::string JsonDocs(size_t bytes) {
   std::string out;
@@ -50,8 +50,9 @@ std::string JsonDocs(size_t bytes) {
 
 std::string Encode(const ContentCoding& coding, std::string_view body) {
   std::string out;
-  coding.make()->Encode(body, true,
-                        [&](std::string_view part) { out.append(part); });
+  coding.make(std::nullopt)->Encode(body, true, [&](std::string_view part) {
+    out.append(part);
+  });
   return out;
 }
 
@@ -73,7 +74,7 @@ void BM_Fixed(benchmark::State& state, const ContentCoding* coding,
   const auto body = JsonDocs(size);
   std::string out;
   for (auto _ : state) {
-    coding->make()->EncodeAll(body, out);
+    coding->make(std::nullopt)->EncodeAll(body, out);
     benchmark::DoNotOptimize(out.data());
   }
   state.SetBytesProcessed(static_cast<int64_t>(state.iterations() * size));

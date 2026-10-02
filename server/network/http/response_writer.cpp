@@ -118,7 +118,7 @@ void HttpResponseWriter::Fixed(HttpStatus status, std::string_view content_type,
   if (_encoder == nullptr && ShouldEncode(status, body.size())) {
     Pooled<Scratch> scratch;
     auto& compressed = scratch->bytes;
-    auto encoder = _coding->make();
+    auto encoder = _coding->make(_level);
     encoder->EncodeAll(body, compressed);
     if (compressed.size() < body.size()) {
       _encoder = std::move(encoder);
@@ -191,7 +191,7 @@ void HttpResponseWriter::WriteHeadChunked(HttpStatus status,
                                           std::string_view content_type,
                                           std::string_view extra_headers) {
   if (_encoder == nullptr && ShouldEncode(status, kMinCompressBytes)) {
-    _encoder = _coding->make();
+    _encoder = _coding->make(_level);
   }
   EncodeHead(status, content_type, nullptr, extra_headers);
   _state = State::kChunkedBody;

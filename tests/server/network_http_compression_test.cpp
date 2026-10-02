@@ -33,6 +33,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -280,9 +281,9 @@ Response Split(const std::string& raw) {
   return response;
 }
 
-std::string Gunzip(std::string_view in) {
+std::string Gunzip(std::string_view in, int window_bits = 15 + 16) {
   z_stream stream{};
-  EXPECT_EQ(inflateInit2(&stream, 15 + 16), Z_OK);
+  EXPECT_EQ(inflateInit2(&stream, window_bits), Z_OK);
   stream.next_in =
     const_cast<Bytef*>(reinterpret_cast<const Bytef*>(in.data()));
   stream.avail_in = static_cast<uInt>(in.size());
@@ -353,10 +354,10 @@ std::string Unzxc(std::string_view in) {
   return out;
 }
 
-std::string Gzip(std::string_view in) {
+std::string Gzip(std::string_view in, int window_bits = 15 + 16) {
   z_stream stream{};
-  EXPECT_EQ(deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15 + 16, 8,
-                         Z_DEFAULT_STRATEGY),
+  EXPECT_EQ(deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED,
+                         window_bits, 8, Z_DEFAULT_STRATEGY),
             Z_OK);
   std::string out(deflateBound(&stream, in.size()), '\0');
   stream.next_in =
@@ -450,6 +451,9 @@ std::string Encode(std::string_view coding, std::string_view in) {
   if (coding == "gzip") {
     return Gzip(in);
   }
+  if (coding == "deflate") {
+    return Gzip(in, 15);
+  }
   if (coding == "zstd") {
     return Zstd(in);
   }
@@ -469,6 +473,9 @@ std::string Decode(std::string_view coding, std::string_view in) {
   if (coding == "gzip") {
     return Gunzip(in);
   }
+  if (coding == "deflate") {
+    return Gunzip(in, 15);
+  }
   if (coding == "zstd") {
     return Unzstd(in);
   }
@@ -478,8 +485,8 @@ std::string Decode(std::string_view coding, std::string_view in) {
   return Unzxc(in);
 }
 
-constexpr std::array<std::string_view, 6> kCodings{"gzip", "zstd", "lz4",
-                                                   "zxc",  "br",   "snappy"};
+constexpr std::array<std::string_view, 7> kCodings{
+  "gzip", "deflate", "zstd", "lz4", "zxc", "br", "snappy"};
 
 std::string DecodeAll(std::string_view body, std::string_view field,
                       size_t max_bytes = size_t{64} << 20) {
@@ -857,4 +864,79 @@ TEST(NetworkHttpCompression, SnappyBothDirections) {
   const auto echo = Split(harness.Post(Snappy(kLarge), "snappy", "snappy"));
   EXPECT_TRUE(echo.Has("Content-Encoding: snappy"));
   EXPECT_EQ(Unsnappy(echo.body), kLarge);
+}
+
+TEST(NetworkHttpCompression, NegotiateLevels) {
+  auto negotiated = NegotiateContentCoding("zstd(1)");
+  ASSERT_NE(negotiated.coding, nullptr);
+  EXPECT_EQ(negotiated.coding->token, "zstd");
+  EXPECT_EQ(negotiated.level, 1);
+
+  negotiated = NegotiateContentCoding("gzip(9);q=0.5, br(4)");
+  ASSERT_NE(negotiated.coding, nullptr);
+  EXPECT_EQ(negotiated.coding->token, "br");
+  EXPECT_EQ(negotiated.level, 4);
+
+  negotiated = NegotiateContentCoding("zstd");
+  ASSERT_NE(negotiated.coding, nullptr);
+  EXPECT_FALSE(negotiated.level.has_value());
+
+  for (const auto header : {"zstd(x)", "zstd(1", "zstd()", "zstd(1)x"}) {
+    EXPECT_EQ(NegotiateContentCoding(header).acceptance, Acceptance::Malformed)
+      << header;
+  }
+}
+
+TEST(NetworkHttpCompression, XGzipIsGzip) {
+  const auto negotiated = NegotiateContentCoding("x-gzip");
+  ASSERT_NE(negotiated.coding, nullptr);
+  EXPECT_EQ(negotiated.coding->token, "gzip");
+  const auto codings = ParseContentEncoding("x-gzip, zstd(3)");
+  ASSERT_TRUE(codings.has_value());
+  ASSERT_EQ(codings->size(), 2u);
+  EXPECT_EQ((*codings)[0]->token, "gzip");
+  EXPECT_EQ((*codings)[1]->token, "zstd");
+  EXPECT_EQ(DecodeAll(Gzip(kLarge), "x-gzip"), kLarge);
+}
+
+TEST(NetworkHttpCompression, EveryLevelRoundTrips) {
+  for (const auto token : kCodings) {
+    const auto* coding = FindContentCoding(token);
+    ASSERT_NE(coding, nullptr) << token;
+    for (const std::optional<int> level :
+         {std::optional<int>{}, std::optional<int>{-100000},
+          std::optional<int>{0}, std::optional<int>{1}, std::optional<int>{3},
+          std::optional<int>{100000}}) {
+      std::string encoded;
+      coding->make(level)->EncodeAll(kLarge, encoded);
+      EXPECT_EQ(Decode(token, encoded), kLarge)
+        << token << " level " << level.value_or(-1);
+      std::string streamed;
+      coding->make(level)->Encode(
+        kLarge, true, [&](std::string_view part) { streamed.append(part); });
+      EXPECT_EQ(Decode(token, streamed), kLarge)
+        << token << " level " << level.value_or(-1);
+    }
+  }
+}
+
+TEST(NetworkHttpCompression, LevelChangesTheOutput) {
+  std::string body;
+  for (size_t i = 0; body.size() < 256 * 1024; ++i) {
+    absl::StrAppend(&body, R"({"id":)", i * 7919 % 100003, R"(,"size":)",
+                    i * 104729 % 65536, R"(,"path":"/img/)", i % 977, "\"}\n");
+  }
+  for (const auto token : {"zstd", "gzip", "deflate", "br"}) {
+    const auto* coding = FindContentCoding(token);
+    std::string fast;
+    std::string dense;
+    coding->make(1)->EncodeAll(body, fast);
+    coding->make(100000)->EncodeAll(body, dense);
+    EXPECT_LT(dense.size(), fast.size()) << token;
+  }
+}
+
+TEST(NetworkHttpCompression, DeflateAcceptsRawDeflate) {
+  EXPECT_EQ(DecodeAll(Gzip(kLarge, -15), "deflate"), kLarge);
+  EXPECT_EQ(DecodeAll(Gzip(kLarge, 15), "deflate"), kLarge);
 }

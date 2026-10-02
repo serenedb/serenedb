@@ -62,12 +62,12 @@ class ContentDecoder {
 // https://www.rfc-editor.org/rfc/rfc9110#name-content-codings
 struct ContentCoding {
   std::string_view token;
-  std::unique_ptr<ContentEncoder> (*make)();
+  std::unique_ptr<ContentEncoder> (*make)(std::optional<int> level);
   std::unique_ptr<ContentDecoder> (*make_decoder)();
 };
 
-// Every coding the server implements (gzip, zstd, lz4, zxc); nullptr for a
-// token none of them answers to.
+// Every coding the server implements; `x-gzip` names gzip. nullptr for a token
+// none of them answers to.
 const ContentCoding* FindContentCoding(std::string_view token);
 
 // A fixed body smaller than this is sent as-is: the codec framing would eat
@@ -86,6 +86,7 @@ enum class Acceptance : uint8_t {
 
 struct Negotiation {
   const ContentCoding* coding = nullptr;
+  std::optional<int> level;
   Acceptance acceptance = Acceptance::Ok;
 };
 

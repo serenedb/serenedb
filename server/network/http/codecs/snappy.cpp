@@ -96,7 +96,7 @@ class SnappyDecoder final : public ContentDecoder {
 
 }  // namespace
 
-std::unique_ptr<ContentEncoder> MakeSnappyEncoder() {
+std::unique_ptr<ContentEncoder> MakeSnappyEncoder(std::optional<int>) {
   return std::make_unique<SnappyEncoder>();
 }
 

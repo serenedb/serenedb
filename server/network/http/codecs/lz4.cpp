@@ -31,6 +31,7 @@ namespace {
 
 // https://github.com/lz4/lz4/blob/dev/lib/lz4frame.h
 inline constexpr size_t kSlice = kOutBlock;
+inline constexpr int kMaxLevel = 12;
 
 struct CompressState {
   CompressState() {
@@ -74,6 +75,10 @@ struct DecompressState {
 
 class Lz4Encoder final : public ContentEncoder {
  public:
+  explicit Lz4Encoder(std::optional<int> level) {
+    _state->prefs.compressionLevel = ClampLevel(level, 0, 0, kMaxLevel);
+  }
+
   void Encode(std::string_view in, bool finish,
               absl::FunctionRef<void(std::string_view)> sink) override {
     auto& state = *_state;
@@ -165,8 +170,8 @@ class Lz4Decoder final : public ContentDecoder {
 
 }  // namespace
 
-std::unique_ptr<ContentEncoder> MakeLz4Encoder() {
-  return std::make_unique<Lz4Encoder>();
+std::unique_ptr<ContentEncoder> MakeLz4Encoder(std::optional<int> level) {
+  return std::make_unique<Lz4Encoder>(level);
 }
 
 std::unique_ptr<ContentDecoder> MakeLz4Decoder() {

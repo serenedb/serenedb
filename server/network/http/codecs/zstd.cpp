@@ -59,6 +59,16 @@ struct DecompressState {
 
 class ZstdEncoder final : public ContentEncoder {
  public:
+  explicit ZstdEncoder(std::optional<int> level) {
+    const size_t rc =
+      ZSTD_CCtx_setParameter(_state->cctx.get(), ZSTD_c_compressionLevel,
+                             ClampLevel(level, ZSTD_CLEVEL_DEFAULT,
+                                        ZSTD_minCLevel(), ZSTD_maxCLevel()));
+    if (ZSTD_isError(rc)) {
+      ThrowCodecError("zstd", ZSTD_getErrorName(rc));
+    }
+  }
+
   void Encode(std::string_view in, bool finish,
               absl::FunctionRef<void(std::string_view)> sink) override {
     auto& out = _state->out;
@@ -131,8 +141,8 @@ class ZstdDecoder final : public ContentDecoder {
 
 }  // namespace
 
-std::unique_ptr<ContentEncoder> MakeZstdEncoder() {
-  return std::make_unique<ZstdEncoder>();
+std::unique_ptr<ContentEncoder> MakeZstdEncoder(std::optional<int> level) {
+  return std::make_unique<ZstdEncoder>(level);
 }
 
 std::unique_ptr<ContentDecoder> MakeZstdDecoder() {

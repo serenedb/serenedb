@@ -126,8 +126,9 @@ const std::vector<Payload>& Payloads() {
 
 std::string Compress(const ContentCoding& coding, std::string_view body) {
   std::string out;
-  coding.make()->Encode(body, true,
-                        [&](std::string_view piece) { out.append(piece); });
+  coding.make(std::nullopt)->Encode(body, true, [&](std::string_view piece) {
+    out.append(piece);
+  });
   return out;
 }
 

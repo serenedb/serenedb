@@ -1320,8 +1320,9 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
   // Parsing binds too: the statement preprocessor resolves PRAGMA lookups
   // through the catalog (TryReparsePragma), so the snapshot must be held
   // before ExtractStatements.
+  duckdb::vector<duckdb::idx_t> raw_statement_ends;
   auto extracted =
-    _conn->ExtractStatements(query, nullptr, /*wrap_multi=*/false);
+    _conn->ExtractStatements(query, &raw_statement_ends, /*wrap_multi=*/false);
   if (extracted.empty()) {
     // A non-empty but statement-less query (";", a bare comment): postgres
     // replies EmptyQueryResponse, not just a bare ReadyForQuery.
@@ -1355,8 +1356,16 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
       }
     }
   };
+  auto raw_end = raw_statement_ends.begin();
   for (auto& statement : extracted) {
     const bool is_last = &statement == &extracted.back();
+    const auto position =
+      static_cast<duckdb::idx_t>(&statement - &extracted.front()) + 1;
+    while (raw_end != raw_statement_ends.end() && *raw_end < position) {
+      ++raw_end;
+    }
+    const bool ends_raw =
+      raw_end != raw_statement_ends.end() && *raw_end == position;
     // In an aborted transaction block PG rejects every statement except
     // COMMIT/ROLLBACK with 25P02 before parse-analysis. Mirror the extended
     // path (HandleParse): without this guard PREPARE/DEALLOCATE -- whose binder
@@ -1408,7 +1417,9 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
                            wire->rows.load(std::memory_order_relaxed));
       continue;
     }
-    WriteCommandTag(tag, *result, pending->properties.return_type);
+    if (ends_raw) {
+      WriteCommandTag(tag, *result, pending->properties.return_type);
+    }
     if (stmt_type == duckdb::StatementType::TRANSACTION_STATEMENT) {
       AfterTxnStatement();
     }
@@ -1903,16 +1914,10 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   // before the CopyData feeder is live -- so the unbound statement is stashed
   // and bound at Execute via RunCopyFromStdin. Everything else binds the
   // already-parsed statement now, so the common path parses once.
-  // wrap_multi=false: a single user command the parser expands into several
-  // statements (ALTER ... ADD COLUMN ... DEFAULT <volatile>, PIVOT) comes back
-  // as the bare body and raw_statement_count stays 1 -- we run that body as one
-  // prepared unit (see SetCompound). Genuinely separate commands
-  // (raw_statement_count > 1) are rejected: a prepared statement holds exactly
-  // one command -- one parameter list, one result descriptor.
-  duckdb::idx_t raw_statement_count = 0;
+  duckdb::vector<duckdb::idx_t> raw_statement_ends;
   auto extracted =
-    _conn->ExtractStatements(query, &raw_statement_count, /*wrap_multi=*/false);
-  if (raw_statement_count > 1) {
+    _conn->ExtractStatements(query, &raw_statement_ends, /*wrap_multi=*/false);
+  if (raw_statement_ends.size() > 1) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_SYNTAX_ERROR),
       ERR_MSG("cannot insert multiple commands into a prepared statement"));

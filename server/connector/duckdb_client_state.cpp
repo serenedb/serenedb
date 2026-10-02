@@ -219,28 +219,30 @@ void SereneDBClientState::TransactionPreCommit(
   // so catalog lookups performed by custom-impl settings (e.g. search_path)
   // can succeed via their normal set_local path.
   _connection_ctx->PreCommit();
-  for (auto& db : transaction.OpenedTransactions()) {
-    if (db.get().GetCatalog().GetCatalogType() !=
-        catalog::SereneDBCatalog::kStorageType) {
-      continue;
-    }
-    auto opened = transaction.TryGetTransaction(db);
-    if (!opened || !opened->IsDuckTransaction()) {
-      continue;
-    }
-    auto& local =
-      duckdb::LocalStorage::Get(opened->Cast<duckdb::DuckTransaction>());
-    for (auto& table : local.GetTables()) {
-      const auto rows = local.AddedRows(table);
-      if (rows == 0) {
+  if (InvertedStoreIndex::AnyBound()) {
+    for (auto& db : transaction.OpenedTransactions()) {
+      if (db.get().GetCatalog().GetCatalogType() !=
+          catalog::SereneDBCatalog::kStorageType) {
         continue;
       }
-      for (auto& index :
-           table.get().GetDataTableInfo()->GetIndexes().Indexes()) {
-        if (index.IsBound() &&
-            index.GetIndexType() == InvertedStoreIndex::kTypeName) {
-          index.Cast<InvertedStoreIndex>().PrepareFeed(*_connection_ctx,
-                                                       context, rows);
+      auto opened = transaction.TryGetTransaction(db);
+      if (!opened || !opened->IsDuckTransaction()) {
+        continue;
+      }
+      auto& local =
+        duckdb::LocalStorage::Get(opened->Cast<duckdb::DuckTransaction>());
+      for (auto& table : local.GetTables()) {
+        const auto rows = local.AddedRows(table);
+        if (rows == 0) {
+          continue;
+        }
+        for (auto& index :
+             table.get().GetDataTableInfo()->GetIndexes().Indexes()) {
+          if (index.IsBound() &&
+              index.GetIndexType() == InvertedStoreIndex::kTypeName) {
+            index.Cast<InvertedStoreIndex>().PrepareFeed(*_connection_ctx,
+                                                         context, rows);
+          }
         }
       }
     }

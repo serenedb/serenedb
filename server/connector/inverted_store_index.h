@@ -124,6 +124,8 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   void PrepareFeed(query::Transaction& transaction,
                    duckdb::ClientContext& context, duckdb::idx_t rows);
 
+  static bool AnyBound() noexcept;
+
   static bool AppendLocal(
     duckdb::DuckTransaction& transaction, duckdb::TableIndexList& index_list,
     duckdb::RowGroupCollection& source,

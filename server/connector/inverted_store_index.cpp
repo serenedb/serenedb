@@ -25,6 +25,7 @@
 #include <absl/synchronization/mutex.h>
 
 #include <algorithm>
+#include <atomic>
 #include <deque>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
@@ -167,6 +168,8 @@ TokenizerProvider BoundTokenizers(catalog::IndexTokenizers::Bound tokenizers) {
 
 constexpr duckdb::idx_t kMinSlotRows = 8 * STANDARD_VECTOR_SIZE;
 constexpr size_t kLiveFeedDepth = 2;
+
+std::atomic<size_t> gBoundInvertedIndexes{0};
 
 }  // namespace
 
@@ -408,9 +411,16 @@ InvertedStoreIndex::InvertedStoreIndex(
     _tokenizers{std::move(tokenizers)},
     _has_predicate{has_predicate} {
   SDB_ASSERT(_config);
+  gBoundInvertedIndexes.fetch_add(1, std::memory_order_release);
 }
 
-InvertedStoreIndex::~InvertedStoreIndex() = default;
+InvertedStoreIndex::~InvertedStoreIndex() {
+  gBoundInvertedIndexes.fetch_sub(1, std::memory_order_release);
+}
+
+bool InvertedStoreIndex::AnyBound() noexcept {
+  return gBoundInvertedIndexes.load(std::memory_order_acquire) != 0;
+}
 
 irs::IndexWriter::Transaction InvertedStoreIndex::NewTransaction() {
   auto trx = _storage->GetTransaction();

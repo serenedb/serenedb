@@ -39,8 +39,8 @@ class VerifiedPhraseSlots {
   VerifiedPhraseSlots(std::piecewise_construct_t, ApproxArgs&& approx,
                       const VerifiedPhraseQuery::Recipe& recipe, bool count)
     : _approx{std::make_from_tuple<Approx>(std::forward<ApproxArgs>(approx))},
-      _reader{*recipe.col_reader, *recipe.column, recipe.text->tokenizer()},
-      _kernel{recipe.kernel},
+      _reader{*recipe.col_reader, *recipe.column, recipe.text->tokenizer(),
+              *recipe.kernel},
       _count{count} {}
 
   VerifiedPhraseSlots(VerifiedPhraseSlots&&) = delete;
@@ -64,10 +64,7 @@ class VerifiedPhraseSlots {
     return _approx.Probe(target);
   }
 
-  bool Match(doc_id_t doc) {
-    return _reader.Load(doc, _tokens) &&
-           _kernel->Match(_tokens, _count, _scratch, _verdict);
-  }
+  bool Match(doc_id_t doc) { return _reader.Match(doc, _count, _verdict); }
 
   uint32_t Freq() const noexcept { return _verdict.freq; }
 
@@ -80,9 +77,6 @@ class VerifiedPhraseSlots {
  private:
   Approx _approx;
   PhraseTokenReader _reader;
-  const PhraseVerifyKernel* _kernel;
-  PhraseDocTokens _tokens;
-  PhraseVerifyScratch _scratch;
   PhraseVerdict _verdict;
   bool _count;
 };

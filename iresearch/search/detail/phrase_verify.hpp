@@ -40,21 +40,6 @@
 
 namespace irs {
 
-struct PhraseDocTokens {
-  std::vector<bytes_view> terms;
-  std::vector<PosAttr::value_t> positions;
-
-  void Clear() noexcept {
-    terms.clear();
-    positions.clear();
-  }
-
-  void Push(bytes_view term, PosAttr::value_t pos) {
-    terms.push_back(term);
-    positions.push_back(pos);
-  }
-};
-
 struct PhraseVerdict {
   uint32_t freq = 0;
   score_t scale = kNoBoost;
@@ -65,6 +50,10 @@ struct PhraseVerifyScratch {
   std::vector<PosAttr::value_t> valid;
   std::vector<PosAttr::value_t> next;
   detail::slop::MatchScratch slop;
+  uint32_t state = 0;
+  uint32_t freq = 0;
+  bool sequence = false;
+  bool count = false;
 };
 
 struct StoredText {
@@ -97,30 +86,6 @@ class PhraseVerifier {
   std::optional<ByPhraseOptions> _spec;
 };
 
-class PhraseTokenReader {
- public:
-  PhraseTokenReader(const ColReader& col_reader, const ColumnReader& column,
-                    analysis::Tokenizer::ptr tokenizer);
-
-  PhraseTokenReader(PhraseTokenReader&&) = delete;
-  PhraseTokenReader& operator=(PhraseTokenReader&&) = delete;
-
-  bool Load(doc_id_t doc, PhraseDocTokens& out);
-
- private:
-  bool Fetch(doc_id_t doc, duckdb::string_t& value);
-
-  ReadContext _ctx;
-  const ColumnReader* _column;
-  ColumnReader::ScanState _state;
-  ColumnReader::VectorScratch _out;
-  duckdb::SelectionVector _sel;
-  analysis::Tokenizer::ptr _tokenizer;
-  ValueAnalyzer _analyzer;
-  ValueTokens<TokenLayout::TermsPos> _tokens;
-  uint32_t _loads = 0;
-};
-
 class PhraseVerifyKernel {
  public:
   PhraseVerifyKernel(const ByPhraseOptions& phrase,
@@ -131,8 +96,10 @@ class PhraseVerifyKernel {
 
   bool Sloppy() const noexcept { return _slop != 0; }
 
-  bool Match(const PhraseDocTokens& doc, bool count,
-             PhraseVerifyScratch& scratch, PhraseVerdict& out) const;
+  void Begin(bool dense, bool count, PhraseVerifyScratch& scratch) const;
+  void Push(std::span<const duckdb::string_t> terms, const uint32_t* pos,
+            PhraseVerifyScratch& scratch) const;
+  bool End(PhraseVerifyScratch& scratch, PhraseVerdict& out) const;
 
  private:
   struct SlotList {
@@ -143,10 +110,11 @@ class PhraseVerifyKernel {
   void Accept(bytes_view term, uint32_t slot);
   void Finish();
 
-  bool MatchSequence(std::span<const bytes_view> terms, bool count,
-                     PhraseVerdict& out) const;
-  bool MatchSlots(const PhraseDocTokens& doc, bool count,
-                  PhraseVerifyScratch& scratch, PhraseVerdict& out) const;
+  void PushSequence(std::span<const duckdb::string_t> terms,
+                    PhraseVerifyScratch& scratch) const;
+  void PushSlots(std::span<const duckdb::string_t> terms, const uint32_t* pos,
+                 PhraseVerifyScratch& scratch) const;
+  bool EndSlots(PhraseVerifyScratch& scratch, PhraseVerdict& out) const;
 
   std::vector<bstring> _owned;
   std::vector<uint32_t> _owned_slots;
@@ -159,6 +127,52 @@ class PhraseVerifyKernel {
   std::vector<bytes_view> _sequence;
   std::vector<uint32_t> _failure;
   PosAttr::value_t _slop = 0;
+};
+
+class PhraseVerifySink final : public TokenConsumer {
+ public:
+  static constexpr TokenLayout kLayout = TokenLayout::TermsPos;
+
+  PhraseVerifySink(const PhraseVerifyKernel& kernel, TokenTraits producer)
+    : _kernel{&kernel}, _dense{!producer.explicit_pos} {}
+
+  bool Match(analysis::Tokenizer& tokenizer, ValueAnalyzer& analyzer,
+             duckdb::string_t value, bool count, PhraseVerdict& out);
+
+  void Prepare(duckdb::string_t) noexcept { _pos = 0; }
+  void Discard() noexcept {}
+  void Consume(TokenBatch& batch, DocRuns runs) final;
+
+ private:
+  const PhraseVerifyKernel* _kernel;
+  PhraseVerifyScratch _scratch;
+  uint32_t _pos = 0;
+  bool _dense;
+};
+
+class PhraseTokenReader {
+ public:
+  PhraseTokenReader(const ColReader& col_reader, const ColumnReader& column,
+                    analysis::Tokenizer::ptr tokenizer,
+                    const PhraseVerifyKernel& kernel);
+
+  PhraseTokenReader(PhraseTokenReader&&) = delete;
+  PhraseTokenReader& operator=(PhraseTokenReader&&) = delete;
+
+  bool Match(doc_id_t doc, bool count, PhraseVerdict& out);
+
+ private:
+  bool Fetch(doc_id_t doc, duckdb::string_t& value);
+
+  ReadContext _ctx;
+  const ColumnReader* _column;
+  ColumnReader::ScanState _state;
+  ColumnReader::VectorScratch _out;
+  duckdb::SelectionVector _sel;
+  analysis::Tokenizer::ptr _tokenizer;
+  ValueAnalyzer _analyzer;
+  PhraseVerifySink _sink;
+  uint32_t _loads = 0;
 };
 
 }  // namespace irs

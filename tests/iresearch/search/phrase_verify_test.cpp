@@ -54,18 +54,43 @@ class Doc {
     Fill();
   }
 
-  const irs::PhraseDocTokens& Tokens() const noexcept { return _tokens; }
+  bool Dense() const noexcept {
+    for (size_t i = 0; i != _positions.size(); ++i) {
+      if (_positions[i] != irs::pos_limits::min() + i) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  std::vector<irs::PosAttr::value_t> Positions(std::string_view word) const {
+    std::vector<irs::PosAttr::value_t> out;
+    for (size_t i = 0; i != _words.size(); ++i) {
+      if (_words[i] == word) {
+        out.push_back(_positions[i]);
+      }
+    }
+    return out;
+  }
+
+  bool Match(const irs::PhraseVerifyKernel& kernel, bool dense, bool count,
+             irs::PhraseVerdict& verdict) const {
+    irs::PhraseVerifyScratch scratch;
+    kernel.Begin(dense, count, scratch);
+    kernel.Push(_terms, _positions.data(), scratch);
+    return kernel.End(scratch, verdict);
+  }
 
  private:
   void Fill() {
-    for (size_t i = 0; i != _words.size(); ++i) {
-      _tokens.Push(Bytes(_words[i]), _positions[i]);
+    for (const auto& word : _words) {
+      _terms.emplace_back(word.data(), static_cast<uint32_t>(word.size()));
     }
   }
 
   std::vector<std::string> _words;
   std::vector<irs::PosAttr::value_t> _positions;
-  irs::PhraseDocTokens _tokens;
+  std::vector<duckdb::string_t> _terms;
 };
 
 irs::ByPhraseOptions Phrase(std::string_view text) {
@@ -85,14 +110,16 @@ struct Outcome {
 Outcome Verify(const irs::ByPhraseOptions& phrase, const Doc& doc,
                std::span<const std::vector<irs::bstring>> expanded = {}) {
   const irs::PhraseVerifyKernel kernel{phrase, expanded};
-  irs::PhraseVerifyScratch scratch;
   irs::PhraseVerdict verdict;
   Outcome out;
-  out.matched = kernel.Match(doc.Tokens(), true, scratch, verdict);
+  out.matched = doc.Match(kernel, doc.Dense(), true, verdict);
   out.freq = verdict.freq;
   out.scale = verdict.scale;
   irs::PhraseVerdict first;
-  EXPECT_EQ(out.matched, kernel.Match(doc.Tokens(), false, scratch, first));
+  EXPECT_EQ(out.matched, doc.Match(kernel, doc.Dense(), false, first));
+  irs::PhraseVerdict slots;
+  EXPECT_EQ(out.matched, doc.Match(kernel, false, true, slots));
+  EXPECT_EQ(out.freq, slots.freq);
   return out;
 }
 
@@ -200,12 +227,7 @@ TEST(PhraseVerifyKernelTest, slop_agrees_with_engine_sweep) {
   std::vector<std::vector<irs::PosAttr::value_t>> slots(3);
   for (const auto [word, slot] :
        {std::pair{"a", 0}, std::pair{"b", 1}, std::pair{"a", 2}}) {
-    const auto& tokens = doc.Tokens();
-    for (size_t i = 0; i != tokens.terms.size(); ++i) {
-      if (tokens.terms[i] == Bytes(word)) {
-        slots[slot].push_back(tokens.positions[i]);
-      }
-    }
+    slots[slot] = doc.Positions(word);
   }
   irs::detail::slop::MatchScratch scratch;
   const auto expected =

@@ -31,40 +31,49 @@ namespace {
 
 constexpr uint32_t kResetEvery = 1024;
 
-bool Dense(const PhraseDocTokens& doc) noexcept {
-  return doc.positions.empty() ||
-         doc.positions.back() - doc.positions.front() + 1 ==
-           doc.positions.size();
+}  // namespace
+
+bool PhraseVerifySink::Match(analysis::Tokenizer& tokenizer,
+                             ValueAnalyzer& analyzer, duckdb::string_t value,
+                             bool count, PhraseVerdict& out) {
+  _kernel->Begin(_dense, count, _scratch);
+  if (!analyzer.Analyze(tokenizer, value, *this)) {
+    out = {};
+    return false;
+  }
+  return _kernel->End(_scratch, out);
 }
 
-}  // namespace
+void PhraseVerifySink::Consume(TokenBatch& batch, DocRuns) {
+  if (_dense) {
+    std::iota(batch.pos, batch.pos + batch.count, _pos + 1);
+    _pos += batch.count;
+  }
+  _kernel->Push(batch.Terms(), batch.pos, _scratch);
+}
 
 PhraseTokenReader::PhraseTokenReader(const ColReader& col_reader,
                                      const ColumnReader& column,
-                                     analysis::Tokenizer::ptr tokenizer)
+                                     analysis::Tokenizer::ptr tokenizer,
+                                     const PhraseVerifyKernel& kernel)
   : _ctx{col_reader},
     _column{&column},
     _state{column.InitScan(_ctx)},
     _out{column.Type()},
     _sel{1},
     _tokenizer{std::move(tokenizer)},
-    _tokens{_tokenizer->Traits()} {
+    _sink{kernel, _tokenizer->Traits()} {
   SDB_ASSERT(column.Type().InternalType() == duckdb::PhysicalType::VARCHAR);
   _sel.set_index(0, 0);
 }
 
-bool PhraseTokenReader::Load(doc_id_t doc, PhraseDocTokens& out) {
-  out.Clear();
+bool PhraseTokenReader::Match(doc_id_t doc, bool count, PhraseVerdict& out) {
   duckdb::string_t value;
-  if (!Fetch(doc, value) || !_analyzer.Analyze(*_tokenizer, value, _tokens)) {
+  if (!Fetch(doc, value)) {
+    out = {};
     return false;
   }
-  const auto terms = _tokens.terms();
-  const auto positions = _tokens.pos();
-  for (size_t i = 0; i != terms.size(); ++i) {
-    out.Push(AsBytesView(terms[i]), positions[i]);
-  }
-  return !terms.empty();
+  return _sink.Match(*_tokenizer, _analyzer, value, count, out);
 }
 
 bool PhraseTokenReader::Fetch(doc_id_t doc, duckdb::string_t& value) {
@@ -197,25 +206,53 @@ void PhraseVerifyKernel::Finish() {
   }
 }
 
-bool PhraseVerifyKernel::Match(const PhraseDocTokens& doc, bool count,
-                               PhraseVerifyScratch& scratch,
-                               PhraseVerdict& out) const {
-  out = {};
-  if (doc.terms.empty() || _offs_min.empty()) {
-    return false;
+void PhraseVerifyKernel::Begin(bool dense, bool count,
+                               PhraseVerifyScratch& scratch) const {
+  scratch.sequence = dense && !_sequence.empty();
+  scratch.count = count;
+  scratch.state = 0;
+  scratch.freq = 0;
+  if (!scratch.sequence) {
+    scratch.slots.resize(_offs_min.size());
+    for (auto& slot : scratch.slots) {
+      slot.clear();
+    }
   }
-  if (!_sequence.empty() && Dense(doc)) {
-    return MatchSequence(doc.terms, count, out);
-  }
-  return MatchSlots(doc, count, scratch, out);
 }
 
-bool PhraseVerifyKernel::MatchSequence(std::span<const bytes_view> terms,
-                                       bool count, PhraseVerdict& out) const {
+void PhraseVerifyKernel::Push(std::span<const duckdb::string_t> terms,
+                              const uint32_t* pos,
+                              PhraseVerifyScratch& scratch) const {
+  if (scratch.sequence) {
+    PushSequence(terms, scratch);
+  } else {
+    PushSlots(terms, pos, scratch);
+  }
+}
+
+bool PhraseVerifyKernel::End(PhraseVerifyScratch& scratch,
+                             PhraseVerdict& out) const {
+  out = {};
+  if (_offs_min.empty()) {
+    return false;
+  }
+  if (scratch.sequence) {
+    out.freq = scratch.freq;
+    return scratch.freq != 0;
+  }
+  return EndSlots(scratch, out);
+}
+
+void PhraseVerifyKernel::PushSequence(std::span<const duckdb::string_t> terms,
+                                      PhraseVerifyScratch& scratch) const {
+  if (scratch.freq != 0 && !scratch.count) {
+    return;
+  }
   const auto m = _sequence.size();
-  uint32_t k = 0;
-  uint32_t freq = 0;
-  for (const auto term : terms) {
+  auto k = scratch.state;
+  auto freq = scratch.freq;
+  for (const auto& value : terms) {
+    const auto term = AsBytesView(value);
     while (k > 0 && term != _sequence[k]) {
       k = _failure[k - 1];
     }
@@ -224,39 +261,40 @@ bool PhraseVerifyKernel::MatchSequence(std::span<const bytes_view> terms,
     }
     if (k == m) {
       ++freq;
-      if (!count) {
+      if (!scratch.count) {
         break;
       }
       k = _failure[k - 1];
     }
   }
-  out = {.freq = freq};
-  return freq != 0;
+  scratch.state = k;
+  scratch.freq = freq;
 }
 
-bool PhraseVerifyKernel::MatchSlots(const PhraseDocTokens& doc, bool count,
-                                    PhraseVerifyScratch& scratch,
-                                    PhraseVerdict& out) const {
-  const auto n = _offs_min.size();
+void PhraseVerifyKernel::PushSlots(std::span<const duckdb::string_t> terms,
+                                   const uint32_t* pos,
+                                   PhraseVerifyScratch& scratch) const {
   auto& slots = scratch.slots;
-  slots.resize(n);
-  for (auto& slot : slots) {
-    slot.clear();
-  }
-  for (size_t i = 0; i != doc.terms.size(); ++i) {
-    const auto it = _accept.find(doc.terms[i]);
+  for (size_t i = 0; i != terms.size(); ++i) {
+    const auto it = _accept.find(AsBytesView(terms[i]));
     if (it == _accept.end()) {
       continue;
     }
-    const auto pos = doc.positions[i];
     const auto list = it->second;
     for (uint32_t j = 0; j != list.size; ++j) {
       auto& positions = slots[_slot_ids[list.begin + j]];
-      if (positions.empty() || positions.back() != pos) {
-        positions.push_back(pos);
+      if (positions.empty() || positions.back() != pos[i]) {
+        positions.push_back(pos[i]);
       }
     }
   }
+}
+
+bool PhraseVerifyKernel::EndSlots(PhraseVerifyScratch& scratch,
+                                  PhraseVerdict& out) const {
+  const auto n = _offs_min.size();
+  const auto count = scratch.count;
+  const auto& slots = scratch.slots;
   for (const auto& slot : slots) {
     if (slot.empty()) {
       return false;

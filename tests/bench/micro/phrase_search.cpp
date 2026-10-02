@@ -443,25 +443,16 @@ void BenchScan(benchmark::State& state, std::string_view text) {
   const irs::PhraseVerifyKernel kernel{phrase, {}};
   WhitespaceTokenizer tokenizer;
   irs::ValueAnalyzer analyzer;
-  irs::ValueTokens<irs::TokenLayout::TermsPos> tokens{tokenizer.Traits()};
-  irs::PhraseDocTokens doc;
-  irs::PhraseVerifyScratch scratch;
+  irs::PhraseVerifySink sink{kernel, tokenizer.Traits()};
   irs::PhraseVerdict verdict;
   uint64_t hits = 0;
   for (auto _ : state) {
     hits = 0;
     for (const auto& body : docs) {
-      analyzer.Analyze(
-        tokenizer,
+      hits += sink.Match(
+        tokenizer, analyzer,
         duckdb::string_t{body.data(), static_cast<uint32_t>(body.size())},
-        tokens);
-      doc.Clear();
-      const auto terms = tokens.terms();
-      const auto positions = tokens.pos();
-      for (size_t i = 0; i != terms.size(); ++i) {
-        doc.Push(irs::AsBytesView(terms[i]), positions[i]);
-      }
-      hits += kernel.Match(doc, false, scratch, verdict);
+        false, verdict);
     }
     benchmark::DoNotOptimize(hits);
   }

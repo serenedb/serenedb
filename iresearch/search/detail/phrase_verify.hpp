@@ -107,8 +107,7 @@ class PhraseVerifyKernel {
     uint32_t size = 0;
   };
 
-  void Accept(bytes_view term, uint32_t slot);
-  void Finish();
+  void Finish(std::span<const uint32_t> slots);
 
   void PushSequence(std::span<const duckdb::string_t> terms,
                     PhraseVerifyScratch& scratch) const;
@@ -117,7 +116,6 @@ class PhraseVerifyKernel {
   bool EndSlots(PhraseVerifyScratch& scratch, PhraseVerdict& out) const;
 
   std::vector<bstring> _owned;
-  std::vector<uint32_t> _owned_slots;
   absl::flat_hash_map<bytes_view, SlotList> _accept;
   std::vector<uint32_t> _slot_ids;
   std::vector<PosAttr::value_t> _offs_min;

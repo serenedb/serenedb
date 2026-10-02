@@ -176,9 +176,10 @@ void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
                 irs::ByPhraseOptions&& options, std::string_view label,
                 std::string_view single_hint) {
   if (options.size() > 1) {
+    const bool positions = HasPositions(column_info);
     if (const auto* shingle = ShingleOf(ctx, column_info)) {
-      if (auto plan = irs::PlanShinglePhrase(
-            *shingle, options, HasPositions(column_info), nullptr)) {
+      if (auto plan =
+            irs::PlanShinglePhrase(*shingle, options, positions, nullptr)) {
         if (const auto* term = std::get_if<irs::bstring>(&*plan)) {
           AddTerm(
             MaybeNegated(parent, ctx, column_info),
@@ -190,7 +191,7 @@ void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
         }
         return;
       }
-      if (!HasPositions(column_info)) {
+      if (!positions) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG(label,
@@ -221,7 +222,7 @@ void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
         }
         options.set_word_separator(shingle->Separator());
       }
-    } else if (!HasPositions(column_info)) {
+    } else if (!positions) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG(label,

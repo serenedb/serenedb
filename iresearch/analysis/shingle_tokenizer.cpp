@@ -20,9 +20,6 @@
 
 #include "iresearch/analysis/shingle_tokenizer.hpp"
 
-#include <absl/strings/str_cat.h>
-#include <absl/strings/str_join.h>
-
 #include <cstring>
 
 #include "iresearch/analysis/keyword_tokenizer.hpp"
@@ -62,12 +59,20 @@ ShingleTokenizer::ShingleTokenizer(Tokenizer::ptr base, Options&& options)
 }
 
 bstring ShingleTokenizer::Join(std::span<const bytes_view> tokens) const {
-  const auto joined =
-    absl::StrJoin(tokens, ViewCast<char>(bytes_view{_separator}),
-                  [](std::string* out, bytes_view token) {
-                    absl::StrAppend(out, ViewCast<char>(token));
-                  });
-  return bstring{ViewCast<byte_type>(std::string_view{joined})};
+  bstring out;
+  if (tokens.empty()) {
+    return out;
+  }
+  size_t size = _separator.size() * (tokens.size() - 1);
+  for (const auto token : tokens) {
+    size += token.size();
+  }
+  out.reserve(size);
+  out.append(tokens.front());
+  for (const auto token : tokens.subspan(1)) {
+    out.append(_separator).append(token);
+  }
+  return out;
 }
 
 bool ShingleTokenizer::DrainBase(duckdb::string_t raw) {

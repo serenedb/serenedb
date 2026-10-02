@@ -103,7 +103,12 @@ PhraseVerifyKernel::PhraseVerifyKernel(
   _offs_min.reserve(n);
   _offs_max.reserve(n);
   bool sequence = _slop == 0;
+  std::vector<uint32_t> slots;
   uint32_t slot = 0;
+  const auto accept = [&](bytes_view term) {
+    _owned.emplace_back(term);
+    slots.push_back(slot);
+  };
   for (const auto& info : phrase) {
     _offs_min.push_back(info.offs_min);
     _offs_max.push_back(info.offs_max);
@@ -112,26 +117,26 @@ PhraseVerifyKernel::PhraseVerifyKernel(
     }
     switch (ByPhraseOptions::KindOf(info.part)) {
       case SlotKind::Term:
-        Accept(std::get<ByTermOptions>(info.part).term, slot);
+        accept(std::get<ByTermOptions>(info.part).term);
         break;
       case SlotKind::Set:
         sequence = false;
         for (const auto& term : std::get<TermSetOptions>(info.part).terms) {
-          Accept(term, slot);
+          accept(term);
         }
         break;
       case SlotKind::Expansion:
         sequence = false;
         if (slot < expanded.size()) {
           for (const auto& term : expanded[slot]) {
-            Accept(term, slot);
+            accept(term);
           }
         }
         break;
     }
     ++slot;
   }
-  Finish();
+  Finish(slots);
 
   if (sequence) {
     _sequence.reserve(n);
@@ -156,16 +161,11 @@ PhraseVerifyKernel::PhraseVerifyKernel(
   }
 }
 
-void PhraseVerifyKernel::Accept(bytes_view term, uint32_t slot) {
-  _owned.emplace_back(term);
-  _owned_slots.push_back(slot);
-}
-
-void PhraseVerifyKernel::Finish() {
+void PhraseVerifyKernel::Finish(std::span<const uint32_t> slots) {
   std::vector<std::pair<bytes_view, uint32_t>> pending;
   pending.reserve(_owned.size());
   for (size_t i = 0; i != _owned.size(); ++i) {
-    pending.emplace_back(_owned[i], _owned_slots[i]);
+    pending.emplace_back(_owned[i], slots[i]);
   }
   absl::c_sort(pending);
 

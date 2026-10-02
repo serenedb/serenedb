@@ -152,8 +152,45 @@ class WordPrefixIterator final : public WrappedTermIterator {
   bool _started = false;
 };
 
+class WordTermsVisitor final : public FilterVisitor {
+ public:
+  WordTermsVisitor(FilterVisitor& words, bytes_view separator) noexcept
+    : _words{words}, _separator{separator} {}
+
+  void Prepare(const SubReader& segment, const TermReader& field,
+               TermIterator& terms) final {
+    _terms = &terms;
+    _words.Prepare(segment, field, terms);
+  }
+
+  bool Visit(score_t boost) final {
+    SDB_ASSERT(_terms);
+    if (_terms->value().find(_separator) != bytes_view::npos) {
+      return true;
+    }
+    return _words.Visit(boost);
+  }
+
+ private:
+  FilterVisitor& _words;
+  bytes_view _separator;
+  TermIterator* _terms = nullptr;
+};
+
 struct GetVisitor {
   bytes_view separator;
+
+  field_visitor Words(field_visitor visitor) const {
+    if (separator.empty()) {
+      return visitor;
+    }
+    return [visitor = std::move(visitor), separator = separator](
+             const SubReader& segment, const TermReader& field,
+             FilterVisitor& out) mutable {
+      WordTermsVisitor words{out, separator};
+      visitor(segment, field, words);
+    };
+  }
 
   field_visitor operator()(const ByPrefixOptions& options) const {
     if (!separator.empty()) {
@@ -177,21 +214,21 @@ struct GetVisitor {
 
   field_visitor operator()(const AutomatonOptions& options) const {
     SDB_ASSERT(options.source);
-    return AutomatonFilter::visitor(options.source);
+    return Words(AutomatonFilter::visitor(options.source));
   }
 
   field_visitor operator()(const LevenshteinAutomatonOptions& options) const {
     if (options.max_terms != 0) {
       return {};
     }
-    return LevenshteinAutomatonFilter::visitor(options);
+    return Words(LevenshteinAutomatonFilter::visitor(options));
   }
 
   field_visitor operator()(const ByRangeOptions& options) const {
-    return [&](const SubReader& segment, const TermReader& field,
-               FilterVisitor& visitor) {
+    return Words([&](const SubReader& segment, const TermReader& field,
+                     FilterVisitor& visitor) {
       return ByRange::visit(segment, field, options, visitor);
-    };
+    });
   }
 };
 
@@ -245,42 +282,6 @@ class PhraseTermVisitor final : public FilterVisitor,
   bool _boosted;
   bool _has_boosts = false;
 };
-
-class WordTermsVisitor final : public FilterVisitor {
- public:
-  WordTermsVisitor(FilterVisitor& words, bytes_view separator) noexcept
-    : _words{words}, _separator{separator} {}
-
-  void Prepare(const SubReader& segment, const TermReader& field,
-               TermIterator& terms) final {
-    _terms = &terms;
-    _words.Prepare(segment, field, terms);
-  }
-
-  bool Visit(score_t boost) final {
-    SDB_ASSERT(_terms);
-    if (_terms->value().find(_separator) != bytes_view::npos) {
-      return true;
-    }
-    return _words.Visit(boost);
-  }
-
- private:
-  FilterVisitor& _words;
-  bytes_view _separator;
-  TermIterator* _terms = nullptr;
-};
-
-void VisitExpansion(field_visitor& expansion, const SubReader& segment,
-                    const TermReader& field, bytes_view separator,
-                    FilterVisitor& visitor) {
-  if (separator.empty()) {
-    expansion(segment, field, visitor);
-    return;
-  }
-  WordTermsVisitor words{visitor, separator};
-  expansion(segment, field, words);
-}
 
 bool HasIntervalOffsets(const ByPhraseOptions& options) noexcept {
   for (const auto& info : options) {
@@ -461,15 +462,15 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
   std::vector<std::vector<bstring>> part_terms;
   if (counts.expanded != 0) {
     expand_visitors.reserve(counts.expanded);
+    const GetVisitor get{options.word_separator()};
     for (const auto& word : options) {
       if (ByPhraseOptions::KindOf(word.part) != SlotKind::Expansion) {
         continue;
       }
-      auto& visitor = expand_visitors.emplace_back(
-        std::visit(GetVisitor{options.word_separator()}, word.part));
+      auto& visitor = expand_visitors.emplace_back(std::visit(get, word.part));
       if (!visitor) {
         auto& opts = std::get<LevenshteinAutomatonOptions>(word.part);
-        visitor = LevenshteinAutomatonFilter::visitor(opts);
+        visitor = get.Words(LevenshteinAutomatonFilter::visitor(opts));
         all_terms_visitors.push_back(&visitor);
         top_terms_visitors.emplace_back(opts.max_terms);
       }
@@ -478,8 +479,7 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
     if (!all_terms_visitors.empty()) {
       auto it = top_terms_visitors.begin();
       for (auto* visitor : all_terms_visitors) {
-        VisitExpansion(*visitor, segment, *reader, options.word_separator(),
-                       *it++);
+        (*visitor)(segment, *reader, *it++);
       }
       it = top_terms_visitors.begin();
       for (auto* visitor : all_terms_visitors) {
@@ -546,8 +546,7 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
                          .Expanded(ctx.thread, expanded_idx)
                     : nullptr,
                   part_terms.empty() ? nullptr : &part_terms[slot]);
-        VisitExpansion(expand_visitors[expanded_idx], segment, *reader,
-                       options.word_separator(), ptv);
+        expand_visitors[expanded_idx](segment, *reader, ptv);
         ++expanded_idx;
       } break;
     }

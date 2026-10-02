@@ -1320,7 +1320,8 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
   // Parsing binds too: the statement preprocessor resolves PRAGMA lookups
   // through the catalog (TryReparsePragma), so the snapshot must be held
   // before ExtractStatements.
-  auto extracted = _conn->ExtractStatements(query);
+  auto extracted =
+    _conn->ExtractStatements(query, nullptr, /*wrap_multi=*/false);
   if (extracted.empty()) {
     // A non-empty but statement-less query (";", a bare comment): postgres
     // replies EmptyQueryResponse, not just a bare ReadyForQuery.

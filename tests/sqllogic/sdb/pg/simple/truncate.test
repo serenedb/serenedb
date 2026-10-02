@@ -482,6 +482,17 @@ skipif pg-wire-extended
 statement ok
 INSERT INTO gayazov VALUES (1, 'c');
 
+skipif pg-wire-extended
+statement error Table with name truncate_missing_table does not exist
+TRUNCATE babsky, truncate_missing_table;
+
+skipif pg-wire-extended
+query
+SELECT (SELECT count(*) FROM babsky) AS a, (SELECT count(*) FROM gayazov) AS b;
+----
+a	b
+1	1
+
 # multi-table with TABLE keyword
 skipif pg-wire-extended
 statement ok

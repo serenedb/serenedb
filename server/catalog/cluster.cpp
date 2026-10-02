@@ -128,6 +128,7 @@ void ClusterCatalog::OpenCatalogLog(
   }
   _compactable = compactable;
   _live_bytes = GetAttached().GetStorageManager().GetWALSize();
+  _catalog_generation.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void ClusterCatalog::OnCatalogLogPrepared() {
@@ -148,6 +149,7 @@ void ClusterCatalog::BeginCatalogLogCommit() {
 }
 
 void ClusterCatalog::EndCatalogLogCommit() {
+  _catalog_generation.fetch_add(1, std::memory_order_acq_rel);
   _commits_in_flight.fetch_sub(1, std::memory_order_acq_rel);
 }
 

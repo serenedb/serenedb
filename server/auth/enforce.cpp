@@ -200,7 +200,8 @@ class Enforcer {
       _root{root},
       _caller{connection.GetRoleId()},
       _roles{RolesOf(&context)},
-      _caller_closure{ComputeRoleClosure(*_roles, _caller)},
+      _caller_closure_owner{ClosureFor(&context, _caller)},
+      _caller_closure{*_caller_closure_owner},
       _enforce{!_caller_closure.is_superuser} {}
 
   void Run() {
@@ -1342,7 +1343,8 @@ class Enforcer {
   duckdb::LogicalOperator& _root;
   const duckdb::idx_t _caller;
   std::shared_ptr<const RoleGraph> _roles;
-  RoleClosure _caller_closure;
+  std::shared_ptr<const RoleClosure> _caller_closure_owner;
+  const RoleClosure& _caller_closure;
   const bool _enforce;
   irs::containers::NodeHashMap<duckdb::idx_t, RoleClosure> _closures;
   irs::containers::FlatHashMap<duckdb::idx_t, const duckdb::LogicalGet*>

@@ -492,6 +492,14 @@ statement ok
 COMMENT ON TABLE ccd_rolepin IS 'pins the read view';
 
 
+connection s5
+query
+SELECT count(*) AS n FROM pg_roles WHERE rolname = 'ccd_gone';
+----
+n
+1
+
+
 connection s6
 statement ok
 DROP ROLE ccd_gone;

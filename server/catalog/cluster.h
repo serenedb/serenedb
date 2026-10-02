@@ -38,6 +38,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "auth/role_closure.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
 
@@ -101,6 +102,41 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
       duckdb::DuckTransactionManager::Get(GetAttached()).GetLastCommit() + 1};
   }
 
+  uint64_t CatalogGeneration() const {
+    return _catalog_generation.load(std::memory_order_acquire);
+  }
+  std::shared_ptr<const auth::RoleGraph> CachedRoles(uint64_t generation) {
+    std::lock_guard guard{_roles_mutex};
+    return _roles_generation == generation ? _roles : nullptr;
+  }
+  void CacheRoles(uint64_t generation,
+                  std::shared_ptr<const auth::RoleGraph> roles) {
+    std::lock_guard guard{_roles_mutex};
+    if (generation > _roles_generation) {
+      _closures.clear();
+    }
+    if (generation >= _roles_generation) {
+      _roles_generation = generation;
+      _roles = std::move(roles);
+    }
+  }
+  std::shared_ptr<const auth::RoleClosure> CachedClosure(uint64_t generation,
+                                                         duckdb::idx_t role) {
+    std::lock_guard guard{_roles_mutex};
+    if (generation != _roles_generation) {
+      return nullptr;
+    }
+    const auto it = _closures.find(role);
+    return it == _closures.end() ? nullptr : it->second;
+  }
+  void CacheClosure(uint64_t generation, duckdb::idx_t role,
+                    std::shared_ptr<const auth::RoleClosure> closure) {
+    std::lock_guard guard{_roles_mutex};
+    if (generation == _roles_generation) {
+      _closures.try_emplace(role, std::move(closure));
+    }
+  }
+
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateRole(
     duckdb::CatalogTransaction transaction, duckdb::CreateRoleInfo& info);
   void DropRole(duckdb::CatalogTransaction transaction, duckdb::DropInfo& info);
@@ -135,6 +171,13 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   std::mutex _log_mutex;
   duckdb::shared_ptr<duckdb::WriteAheadLog> _catalog_log;
   std::atomic_size_t _commits_in_flight{0};
+  std::atomic_uint64_t _catalog_generation{1};
+  std::mutex _roles_mutex;
+  uint64_t _roles_generation = 0;
+  std::shared_ptr<const auth::RoleGraph> _roles;
+  irs::containers::FlatHashMap<duckdb::idx_t,
+                               std::shared_ptr<const auth::RoleClosure>>
+    _closures;
   bool _compactable = false;
   duckdb::idx_t _live_bytes = 0;
   std::mutex _artifacts_mutex;

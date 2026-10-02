@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <duckdb/main/job_scheduler.hpp>
 #include <exception>
 #include <functional>
 #include <iresearch/search/filters/filter_optimizer.hpp>
@@ -125,6 +126,9 @@ int RunServer(int argc, char** argv) {
         // goes down. The search loops' Delay()s complete instantly without it.
         stop("network", [&] { network.stop(); });
       }
+      stop("jobs", [&] {
+        duckdb::JobScheduler::StopAll(irs::DuckDBEngine::Instance().instance());
+      });
       if (up_search) {
         stop("search", [&] { search.stop(); });
       }

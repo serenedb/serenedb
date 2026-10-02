@@ -21,17 +21,23 @@
 #include "catalog/entry/inverted_index.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
 #include <absl/strings/strip.h>
 
 #include <array>
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/catalog_entry/job_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/query_context.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/parser/parsed_data/alter_job_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
+#include <duckdb/parser/parsed_data/create_job_info.hpp>
+#include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/storage_info.hpp>
@@ -47,6 +53,7 @@
 #include "catalog/persistence/blob.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/duckdb_reindex_function.h"
 #include "connector/primary_key.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
@@ -490,6 +497,68 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
     }
   }
   return result;
+}
+
+void InvertedIndexEntry::SyncReindexJob(
+  duckdb::CatalogTransaction transaction) {
+  if (info || _search_table) {
+    return;
+  }
+  auto& context = transaction.GetContext();
+  auto& schema = ParentSchema(context);
+  const auto it = options.find(kReindexIntervalSetting);
+  const uint32_t interval_ms = it == options.end() || it->second.IsNull()
+                                 ? 0
+                                 : it->second.GetValue<uint32_t>();
+  const auto body =
+    absl::StrCat("PRAGMA ", connector::kReindexByIdPragma, "(", oid, ")");
+  duckdb::optional_ptr<duckdb::JobCatalogEntry> job;
+  schema.Scan(context, duckdb::CatalogType::JOB_ENTRY,
+              [&](duckdb::CatalogEntry& entry) {
+                auto& candidate = entry.Cast<duckdb::JobCatalogEntry>();
+                if (candidate.body == body) {
+                  job = &candidate;
+                }
+              });
+  if (interval_ms == 0) {
+    if (job) {
+      duckdb::DropInfo drop;
+      drop.type = duckdb::CatalogType::JOB_ENTRY;
+      drop.SetQualifiedName(
+        duckdb::QualifiedName{catalog.GetName(), schema.name, job->name});
+      drop.if_not_found = duckdb::OnEntryNotFound::RETURN_NULL;
+      schema.DropEntry(context, drop);
+    }
+    return;
+  }
+  duckdb::JobSchedule schedule;
+  schedule.kind = duckdb::JobScheduleKind::AFTER;
+  schedule.interval = duckdb::Value::INTERVAL(
+    duckdb::Interval::FromMicro(int64_t{interval_ms} * 1000));
+  if (job) {
+    if (job->schedule == schedule) {
+      return;
+    }
+    duckdb::AlterJobInfo alter{
+      duckdb::AlterJobType::SET_SCHEDULE,
+      duckdb::AlterEntryData{
+        duckdb::QualifiedName{catalog.GetName(), schema.name, job->name},
+        duckdb::OnEntryNotFound::THROW_EXCEPTION}};
+    alter.schedule = schedule;
+    schema.Alter(transaction, alter);
+    return;
+  }
+  const auto relation = schema.GetEntry(
+    transaction, duckdb::CatalogType::TABLE_ENTRY, GetTableName());
+  duckdb::CreateJobInfo create;
+  create.SetQualifiedName(
+    duckdb::QualifiedName{catalog.GetName(), schema.name, name});
+  create.schedule = schedule;
+  create.body = body;
+  create.permissions.owner =
+    relation ? relation->permissions.owner : permissions.owner;
+  create.dependencies.AddDependency(*this);
+  schema.Cast<duckdb::DuckSchemaEntry>().CreateJob(transaction, create);
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::Copy(

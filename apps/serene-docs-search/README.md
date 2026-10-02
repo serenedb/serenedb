@@ -295,15 +295,15 @@ file over the SereneDB docs corpus:
 
 | Set | Queries | What a hit is |
 |---|---|---|
-| `cases` | 62 graded queries: exact titles, prefixes, typos, SQL keywords, code identifiers, phrases, semantic paraphrases, partial matches | each must land its page in the top 3 — except the ones marked `known` (documented misses, expected to keep missing); aggregate gate hit@1 >= 75%, MRR@10 >= 0.85 (hybrid) |
+| `cases` | 62 graded queries: exact titles, prefixes, typos, SQL keywords, code identifiers, phrases, semantic paraphrases, partial matches | each must land its page in the top 3 -- except the ones marked `known` (documented misses, expected to keep missing); aggregate gate hit@1 >= 75%, MRR@10 >= 0.85 (hybrid) |
 | `questions` | 159 questions, task phrases and symptoms as users type them, labels re-checked independently | page-level r@1 / r@5 floors |
 | `names` | 300 object names (functions, settings, types, statements, dot commands) from serened's docs catalog | same |
 | `summaries` | 300 one-line object descriptions | same |
 | `sentences` | 327 sentences pasted from the pages, one per page | same |
 
 The last four follow the batteries of serenedb#1216 (the docs search embedded in
-`serened`). Reference run — the published docs HTML indexed with the production
-config but without the blog, SereneDB 26.09.2, nomic embeddings — r@1 / r@5 (the
+`serened`). Reference run -- the published docs HTML indexed with the production
+config but without the blog, SereneDB 26.09.2, nomic embeddings -- r@1 / r@5 (the
 floors in `relevance.test.ts` sit just below these):
 
 | Set | fulltext | hybrid |

@@ -164,9 +164,8 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext& context,
       const auto& target =
         referenced == tables_by_name.end() ? *table : *referenced->second;
       for (const auto key : fk.info.pk_keys) {
-        emit(Oid{PgConstraint::kId}, fk.oid, 0,
-             Oid{PgClass::kId}, target.oid, static_cast<int32_t>(key.index + 1),
-             PgDepend::Deptype::Normal);
+        emit(Oid{PgConstraint::kId}, fk.oid, 0, Oid{PgClass::kId}, target.oid,
+             static_cast<int32_t>(key.index + 1), PgDepend::Deptype::Normal);
       }
     }
   }

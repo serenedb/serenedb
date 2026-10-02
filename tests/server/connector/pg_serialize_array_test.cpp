@@ -321,8 +321,8 @@ TEST_F(PgSerializeArrayTest, AllArrayFixedNestedIsMultiDim) {
   const auto body = std::string_view{framed}.substr(4);
   EXPECT_EQ(LoadBE32(body, 0), 2);  // ndim=2 (rectangular flatten)
   // Multi-dim uses the SCALAR leaf OID (int4=23), not the array OID.
-  EXPECT_EQ(LoadBE32(body, 8),
-            sdb::pg::Type2Oid(duckdb::LogicalType::INTEGER, /*in_array=*/false));
+  EXPECT_EQ(LoadBE32(body, 8), sdb::pg::Type2Oid(duckdb::LogicalType::INTEGER,
+                                                 /*in_array=*/false));
   EXPECT_EQ(LoadBE32(body, 12), 2);  // dim0
   EXPECT_EQ(LoadBE32(body, 20), 2);  // dim1
 }

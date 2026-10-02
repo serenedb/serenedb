@@ -87,8 +87,8 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
     entry = cluster.CreateDatabase(transaction, database);
     cluster.LogArtifact(
       duckdb::CatalogType::DATABASE_ENTRY, cluster.GetAttached().oid,
-      entry->oid,
-      catalog::DatabaseArtifacts(cluster.GetAttached(), entry->oid), false);
+      entry->oid, catalog::DatabaseArtifacts(cluster.GetAttached(), entry->oid),
+      false);
     SDB_IF_FAILURE("unable_to_create") {
       THROW_SQL_ERROR(ERR_MSG("internal error"));
     }

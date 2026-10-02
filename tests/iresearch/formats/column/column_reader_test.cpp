@@ -1813,6 +1813,51 @@ TEST_F(ColumnReaderTest, UniqueListsKeepEveryRow) {
   ExpectGathered(*col, r.Ctx(), expected, Rows{{1, 7, 8, 4096, 9999}}, false);
 }
 
+TEST_F(ColumnReaderTest, UniqueListRowGroupsStoreNoCodes) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "sseg", 62, type,
+              "SELECT CASE WHEN i % 7 = 0 THEN NULL WHEN i = 11 THEN "
+              "[]::VARCHAR[] ELSE ['u' || i, 'v' || (i * 31)] END FROM "
+              "range(10000) t(i)",
+              4096, expected);
+  irs::ColReader r{dir, "sseg", Db()};
+  const auto* col = r.Column(62);
+  ASSERT_NE(col, nullptr);
+  ASSERT_FALSE(col->DataBlocks().empty());
+  for (const auto& block : col->DataBlocks()) {
+    EXPECT_EQ(block.codec->type,
+              duckdb::CompressionType::COMPRESSION_COL_SEQUENCE);
+  }
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{0, 1, 7, 11, 12, 4095, 4096, 4097, 8191, 9999}}, false);
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{3000, 3001, 3002, 3010, 5000, 5001}}, true);
+}
+
+TEST_F(ColumnReaderTest, RepeatedListRowGroupsKeepTheirCodes) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "kseg", 63, type,
+              "SELECT CASE WHEN i < 4096 THEN ['u' || i] ELSE ['r' || (i % 5)] "
+              "END FROM range(8192) t(i)",
+              4096, expected);
+  irs::ColReader r{dir, "kseg", Db()};
+  const auto* col = r.Column(63);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->DataBlocks().size(), 2u);
+  EXPECT_EQ(col->DataBlocks()[0].codec->type,
+            duckdb::CompressionType::COMPRESSION_COL_SEQUENCE);
+  EXPECT_NE(col->DataBlocks()[1].codec->type,
+            duckdb::CompressionType::COMPRESSION_COL_SEQUENCE);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected, Rows{{0, 4095, 4096, 4097, 8191}},
+                 false);
+}
+
 TEST_F(ColumnReaderTest, RepeatedWideMapsAcrossRowGroups) {
   const auto type = duckdb::LogicalType::MAP(duckdb::LogicalType::VARCHAR,
                                              duckdb::LogicalType::VARCHAR);

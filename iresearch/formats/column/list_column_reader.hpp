@@ -179,6 +179,75 @@ class ListColumnReader final : public ColumnReader {
     return any;
   }
 
+  static bool Consecutive(const uint64_t* codes, duckdb::idx_t count) noexcept {
+    for (duckdb::idx_t i = 1; i < count; ++i) {
+      if (codes[i] != codes[0] + i) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void ScanRun(ScanState& s, duckdb::Vector& result, uint64_t first,
+               duckdb::idx_t count, duckdb::idx_t result_offset) const {
+    if (!s.list_dict) {
+      s.list_dict = std::make_unique<ListDictionary>();
+    }
+    auto& d = *s.list_dict;
+    const auto& ends_reader = *_children[1];
+    const auto& elems_reader = *_children[0];
+    const uint64_t first_end = first == 0 ? 0 : first - 1;
+    auto& ends_state = s.child_states[2];
+    if (first_end < d.ends_pos) {
+      ends_state = ends_reader.InitScan(s.ctx);
+      d.ends_pos = 0;
+    }
+    if (first_end > d.ends_pos) {
+      ends_reader.Skip(ends_state, first_end - d.ends_pos);
+    }
+    const uint64_t end_count = first + count - first_end;
+    duckdb::Vector ends_vec{duckdb::LogicalType::UBIGINT, end_count};
+    ends_reader.ScanCount(ends_state, ends_vec,
+                          static_cast<duckdb::idx_t>(end_count), 0);
+    d.ends_pos = first + count;
+    const auto* ends = duckdb::FlatVector::GetData<uint64_t>(ends_vec);
+    const uint64_t shift = first == 0 ? 0 : 1;
+    const uint64_t first_elem = first == 0 ? 0 : ends[0];
+    const uint64_t last_elem = ends[end_count - 1];
+    const uint64_t child_base =
+      result_offset != 0 ? duckdb::ListVector::GetListSize(result) : 0;
+    auto* entries =
+      duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
+    uint64_t prev = first_elem;
+    for (duckdb::idx_t k = 0; k < count; ++k) {
+      const uint64_t end = ends[shift + k];
+      entries[result_offset + k] =
+        duckdb::list_entry_t{child_base + (prev - first_elem), end - prev};
+      prev = end;
+    }
+    const uint64_t elem_count = last_elem - first_elem;
+    duckdb::ListVector::Reserve(
+      result, static_cast<duckdb::idx_t>(child_base + elem_count));
+    if (elem_count > 0) {
+      auto& elems_state = s.child_states[1];
+      if (first_elem < d.elems_pos) {
+        elems_state = elems_reader.InitScan(s.ctx);
+        d.elems_pos = 0;
+      }
+      if (first_elem > d.elems_pos) {
+        elems_reader.Skip(elems_state,
+                          static_cast<duckdb::idx_t>(first_elem - d.elems_pos));
+      }
+      elems_reader.ScanCount(elems_state,
+                             duckdb::ListVector::GetChildMutable(result),
+                             static_cast<duckdb::idx_t>(elem_count),
+                             static_cast<duckdb::idx_t>(child_base));
+      d.elems_pos = last_elem;
+    }
+    duckdb::ListVector::SetListSize(
+      result, static_cast<duckdb::idx_t>(child_base + elem_count));
+  }
+
   ListDictionary& Lists(ScanState& s, uint64_t lo, uint64_t hi,
                         duckdb::idx_t rows) const {
     if (!s.list_dict) {
@@ -265,6 +334,10 @@ class ListColumnReader final : public ColumnReader {
     }
     const auto& validity = duckdb::FlatVector::Validity(result);
     const auto* codes = duckdb::FlatVector::GetData<uint64_t>(codes_vec);
+    if (Consecutive(codes, scan_count)) {
+      ScanRun(s, result, codes[0], scan_count, 0);
+      return scan_count;
+    }
     uint64_t lo = 0;
     uint64_t hi = 0;
     if (!CodeRange(codes, validity, 0, scan_count, lo, hi)) {
@@ -303,6 +376,10 @@ class ListColumnReader final : public ColumnReader {
     const auto* codes = duckdb::FlatVector::GetData<uint64_t>(codes_vec);
     auto* entries =
       duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
+    if (Consecutive(codes, scan_count)) {
+      ScanRun(s, result, codes[0], scan_count, result_offset);
+      return scan_count;
+    }
     const uint64_t child_base =
       result_offset != 0 ? duckdb::ListVector::GetListSize(result) : 0;
     uint64_t lo = 0;

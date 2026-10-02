@@ -66,6 +66,7 @@ set(IResearch_core_sources
     ./formats/column/codecs/byte_codec.cpp
     ./formats/column/codecs/fsst_codec.cpp
     ./formats/column/codecs/registry.cpp
+    ./formats/column/codecs/sequence_codec.cpp
     ./formats/column/codecs/string_scan.cpp
     ./formats/column/codecs/string_writer.cpp
     ./formats/column/read_context.cpp

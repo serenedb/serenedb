@@ -3,8 +3,12 @@ import type {
     SearchResultItem,
     SereneSearchConfig,
 } from "@serenedb/docs-search-core";
+import { ObjectsRepository } from "@repositories/objects";
+import { PagesRepository } from "@repositories/pages";
 import { SearchRepository, type FulltextResult } from "@repositories/search";
 import { SectionsRepository } from "@repositories/sections";
+import { lookupKey } from "@services/parsing/objects";
+import { cleanQuery, tokenize } from "@utils/query";
 import NotConfiguredError from "@utils/errors/notConfiguredError";
 import { app } from "../../app";
 import { RankingService } from "@services/ranking";
@@ -13,6 +17,8 @@ import { SpellingService } from "@services/spelling";
 const DEFAULT_LIMIT = 12;
 /** Max sections of one page in the final list (multiple anchors stay useful). */
 const PER_PAGE_CAP = 3;
+/** Sections one exact object name may put first ("date_trunc" has three). */
+const MAX_KNOWN = 5;
 
 const runQuery = async (
     config: SereneSearchConfig,
@@ -69,16 +75,37 @@ const applyPins = async (
 };
 
 /**
+ * Known object first (serened's KnownFirst): a query that IS the name of a
+ * documented object — "date_trunc", "date_trunc('day', ts)", "BIGINT" via
+ * its alias "int8", ".timer", "CREATE INDEX" — leads with the sections
+ * documenting it. Lexical ranking can't do this alone: the name is one
+ * rare term, and every page merely using it competes on that term.
+ */
+const knownObjects = async (q: string): Promise<SearchResultItem[]> => {
+    const key = lookupKey(q);
+    if (key.length < 2 || key.length > 80) return [];
+    try {
+        const entries = await ObjectsRepository.lookup(key);
+        const ids = [...new Set(entries.map((e) => e.sectionId))].slice(0, MAX_KNOWN);
+        return await SectionsRepository.itemsByIds(ids, tokenize(q));
+    } catch {
+        // catalog not built yet (first sync running) — plain ranking
+        return [];
+    }
+};
+
+/**
  * Search orchestration: mode selection (hybrid with lexical fallback), then
  * the post-ranking passes — "did you mean", title-exactness rerank per
  * words-bucket, curation pins. See docs/search-pipeline.md, steps 5–6.
  */
 export const SearchService = {
     search: async (
-        q: string,
+        raw: string,
         mode: "fulltext" | "hybrid" | undefined,
         limit: number | undefined,
     ): Promise<SearchResponse> => {
+        const q = cleanQuery(raw);
         const config = app.config;
         if (!config) throw new NotConfiguredError();
         const started = Date.now();
@@ -88,17 +115,22 @@ export const SearchService = {
         const fetchLimit = Math.min(50, max * 3);
         // the correction depends only on q, never on the outcome (see
         // SpellingService), so it runs concurrently with the search itself
-        const [{ outcome, effectiveMode }, correctedQuery] = await Promise.all([
+        const [{ outcome, effectiveMode }, correctedQuery, known, inlinks] = await Promise.all([
             runQuery(config, q, mode, fetchLimit),
             SpellingService.correct(q),
+            knownObjects(q),
+            // link graph not built yet (first sync) — titles tie by relevance
+            PagesRepository.inlinks().catch(() => undefined),
         ]);
         const { items, fuzzy, partialFrom } = outcome;
         // rerank per words-bucket: partial matches never jump above full ones
         const rankQ = correctedQuery ?? q;
+        const knownIds = new Set(known.map((k) => k.id));
         let results = [
-            ...RankingService.rerankByTitle(rankQ, items.slice(0, partialFrom)),
-            ...RankingService.rerankByTitle(rankQ, items.slice(partialFrom)),
-        ];
+            ...known,
+            ...RankingService.rerankByTitle(rankQ, items.slice(0, partialFrom), inlinks),
+            ...RankingService.rerankByTitle(rankQ, items.slice(partialFrom), inlinks),
+        ].filter((item, i) => i < known.length || !knownIds.has(item.id));
         results = RankingService.capPerPage(results, PER_PAGE_CAP).slice(0, max);
         results = await applyPins(config, q, results, max);
         return {
@@ -108,7 +140,7 @@ export const SearchService = {
             total: results.length,
             tookMs: Date.now() - started,
             fuzzy: fuzzy || undefined,
-            partial: (results.length > 0 && partialFrom === 0) || undefined,
+            partial: (results.length > 0 && partialFrom === 0 && known.length === 0) || undefined,
             correctedQuery,
         };
     },

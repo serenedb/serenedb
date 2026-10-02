@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <bit>
 #include <duckdb.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
@@ -1510,6 +1511,106 @@ TEST_F(ColumnReaderTest, UniqueNestedListsKeepEveryRow) {
   ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
   ExpectGathered(*col, r.Ctx(), expected,
                  Rows{{0, 1, 11, 4095, 4096, 8191, 11999}}, false);
+}
+
+void CollectDoubleBits(const duckdb::Value& v, std::vector<uint64_t>& out) {
+  if (v.IsNull()) {
+    out.emplace_back(0x5a5a5a5a5a5a5a5aULL);
+    return;
+  }
+  const auto id = v.type().id();
+  if (id == duckdb::LogicalTypeId::DOUBLE) {
+    out.emplace_back(std::bit_cast<uint64_t>(v.GetValue<double>()));
+    return;
+  }
+  if (id == duckdb::LogicalTypeId::LIST || id == duckdb::LogicalTypeId::MAP) {
+    for (const auto& c : duckdb::ListValue::GetChildren(v)) {
+      CollectDoubleBits(c, out);
+    }
+    return;
+  }
+  if (id == duckdb::LogicalTypeId::STRUCT) {
+    for (const auto& c : duckdb::StructValue::GetChildren(v)) {
+      CollectDoubleBits(c, out);
+    }
+  }
+}
+
+void ExpectDoubleBitsRoundTrip(duckdb::DatabaseInstance& db,
+                               const duckdb::LogicalType& type,
+                               const std::vector<duckdb::Value>& rows) {
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "zseg", db};
+    auto& cw = w.OpenColumn(60, type, /*skip_validity=*/false, 4096);
+    duckdb::Vector vec{type, rows.size()};
+    for (size_t i = 0; i < rows.size(); ++i) {
+      vec.SetValue(i, rows[i]);
+    }
+    cw.Append(vec, rows.size());
+    w.Commit(0);
+  }
+  irs::ColReader r{dir, "zseg", db};
+  const auto* col = r.Column(60);
+  ASSERT_NE(col, nullptr);
+  const auto got = ScanValues(*col, r.Ctx());
+  ASSERT_EQ(got.size(), rows.size());
+  for (size_t i = 0; i < rows.size(); ++i) {
+    std::vector<uint64_t> want_bits;
+    std::vector<uint64_t> got_bits;
+    CollectDoubleBits(rows[i], want_bits);
+    CollectDoubleBits(got[i], got_bits);
+    EXPECT_EQ(want_bits, got_bits) << "row " << i;
+  }
+}
+
+std::vector<double> SignedZerosAndNaNs() {
+  return {0.0, -0.0, std::bit_cast<double>(0x7ff8000000000000ULL),
+          std::bit_cast<double>(0x7ff8000000000001ULL),
+          std::bit_cast<double>(0xfff8000000000000ULL)};
+}
+
+TEST_F(ColumnReaderTest, NestedListsKeepSignedZerosAndNaNPayloads) {
+  const auto inner = duckdb::LogicalType::LIST(duckdb::LogicalType::DOUBLE);
+  const auto type = duckdb::LogicalType::LIST(inner);
+  std::vector<duckdb::Value> rows;
+  for (const auto d : SignedZerosAndNaNs()) {
+    rows.emplace_back(duckdb::Value::LIST(
+      inner, {duckdb::Value::LIST(duckdb::LogicalType::DOUBLE,
+                                  {duckdb::Value::DOUBLE(d)})}));
+  }
+  ExpectDoubleBitsRoundTrip(Db(), type, rows);
+}
+
+TEST_F(ColumnReaderTest, MapsWithListValuesKeepSignedZerosAndNaNPayloads) {
+  const auto value_type =
+    duckdb::LogicalType::LIST(duckdb::LogicalType::DOUBLE);
+  const auto type =
+    duckdb::LogicalType::MAP(duckdb::LogicalType::VARCHAR, value_type);
+  std::vector<duckdb::Value> rows;
+  for (const auto d : SignedZerosAndNaNs()) {
+    rows.emplace_back(duckdb::Value::MAP(
+      duckdb::LogicalType::VARCHAR, value_type, {duckdb::Value{"k"}},
+      {duckdb::Value::LIST(duckdb::LogicalType::DOUBLE,
+                           {duckdb::Value::DOUBLE(d)})}));
+  }
+  ExpectDoubleBitsRoundTrip(Db(), type, rows);
+}
+
+TEST_F(ColumnReaderTest, NestedListsKeepEqualComparingIntervalsApart) {
+  const auto type = duckdb::LogicalType::LIST(
+    duckdb::LogicalType::LIST(duckdb::LogicalType::INTERVAL));
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "iseg", 61, type,
+              "SELECT CASE i % 3 WHEN 0 THEN [[INTERVAL '1 month']] WHEN 1 "
+              "THEN [[INTERVAL '30 days']] ELSE [[INTERVAL '720 hours']] END "
+              "FROM range(300) t(i)",
+              4096, expected);
+  irs::ColReader r{dir, "iseg", Db()};
+  const auto* col = r.Column(61);
+  ASSERT_NE(col, nullptr);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
 }
 
 TEST_F(ColumnReaderTest, ListsInsideStructs) {

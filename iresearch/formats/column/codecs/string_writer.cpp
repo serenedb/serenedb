@@ -21,9 +21,9 @@
 #include "iresearch/formats/column/codecs/string_writer.hpp"
 
 #include <absl/base/internal/endian.h>
+#include <absl/strings/match.h>
 
 #include <algorithm>
-#include <bit>
 #include <cstring>
 #include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/types/string_type.hpp>
@@ -200,22 +200,6 @@ void Record(RatioHistory& hist, uint64_t raw, uint64_t comp,
   }
   hist.raw += raw;
   hist.comp += comp;
-}
-
-uint32_t Lcp(std::string_view a, std::string_view b) noexcept {
-  const auto n = std::min(a.size(), b.size());
-  size_t i = 0;
-  for (; i + 8 <= n; i += 8) {
-    const auto x = absl::little_endian::Load64(a.data() + i);
-    const auto y = absl::little_endian::Load64(b.data() + i);
-    if (x != y) {
-      return static_cast<uint32_t>(i + (std::countr_zero(x ^ y) >> 3));
-    }
-  }
-  while (i < n && a[i] == b[i]) {
-    ++i;
-  }
-  return static_cast<uint32_t>(i);
 }
 
 struct DedupScratch {
@@ -712,7 +696,8 @@ class Encoder {
     const auto n = static_cast<uint32_t>(_entries.size());
     size_t common = _entries.empty() ? 0 : _entries[0].size();
     for (uint32_t i = 1; i < n && common != 0; ++i) {
-      common = std::min<size_t>(common, Lcp(_entries[0], _entries[i]));
+      common = std::min(
+        common, absl::FindLongestCommonPrefix(_entries[0], _entries[i]).size());
     }
     _order.resize(n);
     for (uint32_t i = 0; i < n; ++i) {
@@ -750,7 +735,8 @@ class Encoder {
     uint64_t frame_first = 0;
     for (size_t i = 0; i < _entries.size(); ++i) {
       const auto sv = _entries[i];
-      uint32_t lcp = Lcp(prev, sv);
+      auto lcp =
+        static_cast<uint32_t>(absl::FindLongestCommonPrefix(prev, sv).size());
       if (frame_raw != 0 && frame_raw + sv.size() > kFsstFrameRawBytes) {
         _frames.push_back(FrameMeta{static_cast<uint32_t>(frame_first),
                                     static_cast<uint32_t>(frame_raw), 0, 0});

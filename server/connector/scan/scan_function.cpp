@@ -420,6 +420,9 @@ duckdb::BindInfo ScanGetBindInfo(
   if (bind.relation.table_entry) {
     return duckdb::BindInfo(*bind.relation.table_entry);
   }
+  if (bind.relation.view_entry) {
+    return duckdb::BindInfo(*bind.relation.view_entry);
+  }
   return duckdb::BindInfo(duckdb::ScanType::TABLE);
 }
 

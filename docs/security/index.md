@@ -14,6 +14,7 @@ The model in one picture:
 2. [Roles](roles.md) are the identities: their attributes control what a role may do at the server level (log in, create databases, create other roles).
 3. [Privileges](privileges.md) control what a role may do to individual objects (read a table, use a sequence, execute a function). The owner of an object holds every privilege on it and hands out the rest with [`GRANT`](../sql/statements/grant/index.md).
 4. [Role membership](role_membership.md) groups roles: members automatically inherit what the group has been granted.
+5. [Row-level security](row_level_security.md) narrows a table's privileges down to the rows each role may see and write.
 
 ## The first connection
 

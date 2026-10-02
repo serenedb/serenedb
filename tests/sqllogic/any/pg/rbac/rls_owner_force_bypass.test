@@ -1,0 +1,184 @@
+statement ok
+DROP TABLE IF EXISTS rls_vault;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_of_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_of_arelav;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_of_vedernikoff;
+
+
+statement ok
+CREATE ROLE rls_of_babsky;
+
+
+statement ok
+CREATE ROLE rls_of_arelav;
+
+
+statement ok
+CREATE ROLE rls_of_vedernikoff BYPASSRLS;
+
+
+statement ok
+CREATE TABLE rls_vault (id int, holder text, loot int);
+
+
+statement ok
+INSERT INTO rls_vault VALUES (1, 'rls_of_babsky', 666), (2, 'rls_of_arelav', 322), (3, 'deadinside', 993);
+
+
+statement ok
+ALTER TABLE rls_vault OWNER TO rls_of_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_vault TO rls_of_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_vault TO rls_of_vedernikoff;
+
+
+statement ok
+SET ROLE rls_of_babsky;
+
+
+statement ok
+ALTER TABLE rls_vault ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_vault_holder ON rls_vault USING (holder = current_user);
+
+
+query
+SELECT count(*) FROM rls_vault;
+----
+count
+3
+
+
+statement ok
+SET ROLE rls_of_arelav;
+
+
+query
+SELECT id, loot FROM rls_vault;
+----
+id	loot
+2	322
+
+
+statement error
+CREATE POLICY rls_vault_steal ON rls_vault USING (true);
+----
+db error: ERROR: must be owner of table rls_vault<slt:ignore>
+
+
+statement error
+ALTER TABLE rls_vault DISABLE ROW LEVEL SECURITY;
+----
+db error: ERROR: must be owner of table rls_vault<slt:ignore>
+
+
+statement error
+DROP POLICY rls_vault_holder ON rls_vault;
+----
+db error: ERROR: must be owner of table rls_vault<slt:ignore>
+
+
+statement ok
+SET ROLE rls_of_vedernikoff;
+
+
+query
+SELECT count(*) FROM rls_vault;
+----
+count
+3
+
+
+statement ok
+SET ROLE rls_of_babsky;
+
+
+statement ok
+ALTER TABLE rls_vault FORCE ROW LEVEL SECURITY;
+
+
+query
+SELECT id, loot FROM rls_vault;
+----
+id	loot
+1	666
+
+
+statement ok
+SET ROLE rls_of_vedernikoff;
+
+
+query
+SELECT count(*) FROM rls_vault;
+----
+count
+3
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'rls_vault';
+----
+relrowsecurity	relforcerowsecurity
+t	t
+
+
+query
+SELECT count(*) FROM rls_vault;
+----
+count
+3
+
+
+statement ok
+SET ROLE rls_of_babsky;
+
+
+statement ok
+ALTER TABLE rls_vault NO FORCE ROW LEVEL SECURITY;
+
+
+query
+SELECT count(*) FROM rls_vault;
+----
+count
+3
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP TABLE rls_vault;
+
+
+statement ok
+DROP ROLE rls_of_babsky;
+
+
+statement ok
+DROP ROLE rls_of_arelav;
+
+
+statement ok
+DROP ROLE rls_of_vedernikoff;

@@ -1,0 +1,348 @@
+control substitution on
+
+statement ok
+DROP VIEW IF EXISTS rls_rec_board;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_rec_crew2;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_rec_squad;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_rec_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_rec_arelav;
+
+
+statement ok
+CREATE ROLE rls_rec_babsky;
+
+
+statement ok
+CREATE ROLE rls_rec_arelav;
+
+
+statement ok
+CREATE TABLE rls_rec_squad (id int, member text, vibe text, grade int);
+
+
+statement ok
+INSERT INTO rls_rec_squad VALUES
+  (1, 'rls_rec_babsky', 'boss', 21),
+  (2, 'rls_rec_arelav', 'skuf', 42),
+  (3, 'vedernikoff', 'overseer', 13);
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE ON rls_rec_squad TO rls_rec_babsky;
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE ON rls_rec_squad TO rls_rec_arelav;
+
+
+statement ok
+ALTER TABLE rls_rec_squad ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_rec_self ON rls_rec_squad USING (member = current_user);
+
+
+statement ok
+CREATE POLICY rls_rec_boss_reads ON rls_rec_squad FOR SELECT TO rls_rec_babsky USING (grade < 30);
+
+
+statement ok
+CREATE POLICY rls_rec_no_negative ON rls_rec_squad AS RESTRICTIVE FOR INSERT WITH CHECK (grade >= 0);
+
+
+statement ok
+CREATE POLICY rls_rec_doomed ON rls_rec_squad USING (true);
+
+
+statement ok
+DROP POLICY rls_rec_doomed ON rls_rec_squad;
+
+
+statement ok
+ALTER POLICY rls_rec_boss_reads ON rls_rec_squad RENAME TO rls_rec_boss_sees;
+
+
+statement ok
+CREATE VIEW rls_rec_board (who, points) AS SELECT member, grade FROM rls_rec_squad;
+
+
+statement ok
+GRANT SELECT ON rls_rec_board TO rls_rec_arelav;
+
+
+statement ok
+ALTER VIEW rls_rec_board ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_rec_board_high ON rls_rec_board USING (points > 30);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TABLE rls_rec_crew (id int, member text);
+
+
+statement ok
+INSERT INTO rls_rec_crew VALUES (1, 'rls_rec_arelav'), (2, 'rls_rec_babsky');
+
+
+statement ok
+GRANT SELECT ON rls_rec_crew TO rls_rec_arelav;
+
+
+statement ok
+ALTER TABLE rls_rec_crew ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_rec_crew_self ON rls_rec_crew USING (member = current_user);
+
+
+statement ok
+ALTER TABLE rls_rec_crew RENAME TO rls_rec_crew2;
+
+
+statement ok
+ALTER TABLE rls_rec_crew2 RENAME COLUMN member TO who;
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'rls_rec_squad';
+----
+relrowsecurity	relforcerowsecurity
+t	f
+
+
+connection after_crash
+query
+SELECT policyname, permissive, roles, cmd FROM pg_policies WHERE tablename = 'rls_rec_squad' ORDER BY policyname;
+----
+policyname	permissive	roles	cmd
+rls_rec_boss_sees	PERMISSIVE	{rls_rec_babsky}	SELECT
+rls_rec_no_negative	RESTRICTIVE	{public}	INSERT
+rls_rec_self	PERMISSIVE	{public}	ALL
+
+
+connection after_crash
+statement ok
+SET ROLE rls_rec_babsky;
+
+
+connection after_crash
+query
+SELECT id, vibe FROM rls_rec_squad ORDER BY id;
+----
+id	vibe
+1	boss
+3	overseer
+
+
+connection after_crash
+statement ok
+SET ROLE rls_rec_arelav;
+
+
+connection after_crash
+query
+SELECT id, vibe FROM rls_rec_squad ORDER BY id;
+----
+id	vibe
+2	skuf
+
+
+connection after_crash
+query
+SELECT who, points FROM rls_rec_board ORDER BY points;
+----
+who	points
+rls_rec_arelav	42
+
+
+connection after_crash
+query
+SELECT * FROM rls_rec_crew2;
+----
+id	who
+1	rls_rec_arelav
+
+
+connection after_crash
+statement error
+INSERT INTO rls_rec_squad VALUES (4, 'rls_rec_arelav', 'skuf', -1);
+----
+db error: ERROR: new row violates row-level security policy for table "rls_rec_squad"<slt:ignore>
+
+
+connection after_crash
+statement error
+INSERT INTO rls_rec_squad VALUES (5, 'rls_rec_babsky', 'skuf', 1);
+----
+db error: ERROR: new row violates row-level security policy for table "rls_rec_squad"<slt:ignore>
+
+
+connection after_crash
+statement ok
+INSERT INTO rls_rec_squad VALUES (6, 'rls_rec_arelav', 'skuf', 322);
+
+
+connection after_crash
+statement ok
+RESET ROLE;
+
+
+connection after_crash
+statement ok
+CHECKPOINT;
+
+
+connection after_crash
+statement ok
+ALTER TABLE rls_rec_squad FORCE ROW LEVEL SECURITY;
+
+
+connection after_crash
+statement ok
+ALTER POLICY rls_rec_self ON rls_rec_squad TO rls_rec_arelav;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_second_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_second_crash
+query
+SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'rls_rec_squad';
+----
+relrowsecurity	relforcerowsecurity
+t	t
+
+
+connection after_second_crash
+query
+SELECT policyname, roles FROM pg_policies WHERE tablename = 'rls_rec_squad' ORDER BY policyname;
+----
+policyname	roles
+rls_rec_boss_sees	{rls_rec_babsky}
+rls_rec_no_negative	{public}
+rls_rec_self	{rls_rec_arelav}
+
+
+connection after_second_crash
+query
+SELECT count(*) FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid WHERE c.relname = 'rls_rec_squad';
+----
+count
+3
+
+
+connection after_second_crash
+statement ok
+SET ROLE rls_rec_arelav;
+
+
+connection after_second_crash
+query
+SELECT id FROM rls_rec_squad ORDER BY id;
+----
+id
+2
+6
+
+
+connection after_second_crash
+statement ok
+SET ROLE rls_rec_babsky;
+
+
+connection after_second_crash
+query
+SELECT id FROM rls_rec_squad ORDER BY id;
+----
+id
+1
+3
+
+
+connection after_second_crash
+statement ok
+RESET ROLE;
+
+
+connection after_second_crash
+query
+SELECT tablename, policyname, qual FROM pg_policies WHERE tablename IN ('rls_rec_board', 'rls_rec_crew2') ORDER BY tablename;
+----
+tablename	policyname	qual
+rls_rec_board	rls_rec_board_high	(points > 30)
+rls_rec_crew2	rls_rec_crew_self	(who = current_user)
+
+
+connection after_second_crash
+statement ok
+DROP VIEW rls_rec_board;
+
+
+connection after_second_crash
+statement ok
+DROP TABLE rls_rec_crew2;
+
+
+connection after_second_crash
+statement ok
+DROP TABLE rls_rec_squad;
+
+
+connection after_second_crash
+statement ok
+DROP ROLE rls_rec_babsky;
+
+
+connection after_second_crash
+statement ok
+DROP ROLE rls_rec_arelav;

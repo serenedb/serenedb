@@ -22,6 +22,7 @@
 
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <functional>
@@ -146,6 +147,7 @@ struct ScanColumns {
 
 struct RelationSpec {
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table_entry;
+  duckdb::optional_ptr<duckdb::ViewCatalogEntry> view_entry;
   duckdb::optional_ptr<const catalog::InvertedIndexEntry> inverted_index;
   std::shared_ptr<const catalog::InvertedIndexConfig> inverted_config;
   ScanEntryKind kind = ScanEntryKind::InvertedIndex;

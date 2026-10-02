@@ -187,6 +187,10 @@ The job is persisted with the index, so the refresh survives server restarts. A 
 
 Between refreshes a view-backed index is a **static snapshot**: its postings are captured at `CREATE INDEX` (or the last refresh) and do not track source changes live — there is no background DML tracking as there is for base tables. A reader transaction keeps a consistent view of the index even if the underlying view is dropped concurrently.
 
+## Row-level security
+
+A query on the index applies the [row-level security policies of the view](../../../security/row_level_security.md#policies-on-views), just like a query on the view itself. A policy may reference any column of the view: columns the index does not store are read from the view, as for any other query on the index.
+
 ## See also
 
 - [Indexing External Data](./external-data.md) — Parquet/CSV/JSON on disk or S3, and attached PostgreSQL/ClickHouse

@@ -1,0 +1,246 @@
+statement ok
+DROP TABLE IF EXISTS rls_squad;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_arelav;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_kostya;
+
+
+statement ok
+CREATE ROLE rls_babsky;
+
+
+statement ok
+CREATE ROLE rls_arelav;
+
+
+statement ok
+CREATE ROLE rls_vedernikoff;
+
+
+statement ok
+CREATE ROLE rls_kostya;
+
+
+statement ok
+CREATE TABLE rls_squad (id int, member text, squad text, vibe text, grade int);
+
+
+statement ok
+INSERT INTO rls_squad VALUES
+  (1, 'rls_babsky', 'clickclack', 'boss', 21),
+  (2, 'rls_arelav', 'clickclack', 'skuf', 42),
+  (3, 'rls_vedernikoff', 'deadinside', 'overseer', 13),
+  (4, 'rls_kostya', 'deadinside', 'intern', 17),
+  (5, 'androed', 'clickclack', 'abramov', 322);
+
+
+statement ok
+GRANT SELECT ON rls_squad TO rls_babsky;
+GRANT SELECT ON rls_squad TO rls_arelav;
+GRANT SELECT ON rls_squad TO rls_vedernikoff;
+GRANT SELECT ON rls_squad TO rls_kostya;
+
+
+statement ok
+SET ROLE rls_arelav;
+
+
+query
+SELECT count(*) FROM rls_squad;
+----
+count
+5
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER TABLE rls_squad ENABLE ROW LEVEL SECURITY;
+
+
+query
+SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'rls_squad';
+----
+relrowsecurity	relforcerowsecurity
+t	f
+
+
+statement ok
+SET ROLE rls_babsky;
+
+
+query
+SELECT count(*) FROM rls_squad;
+----
+count
+0
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT count(*) FROM rls_squad;
+----
+count
+5
+
+
+statement ok
+CREATE POLICY rls_squad_clickclack ON rls_squad FOR SELECT TO rls_babsky USING (squad = 'clickclack');
+
+
+statement ok
+CREATE POLICY rls_squad_deadinside ON rls_squad FOR SELECT TO rls_vedernikoff USING (squad = 'deadinside');
+
+
+statement ok
+CREATE POLICY rls_squad_self ON rls_squad FOR SELECT TO rls_arelav, rls_kostya USING (member = current_user);
+
+
+statement ok
+SET ROLE rls_babsky;
+
+
+query
+SELECT id, member, vibe FROM rls_squad ORDER BY id;
+----
+id	member	vibe
+1	rls_babsky	boss
+2	rls_arelav	skuf
+5	androed	abramov
+
+
+statement ok
+SET ROLE rls_vedernikoff;
+
+
+query
+SELECT id, member, vibe FROM rls_squad ORDER BY id;
+----
+id	member	vibe
+3	rls_vedernikoff	overseer
+4	rls_kostya	intern
+
+
+statement ok
+SET ROLE rls_arelav;
+
+
+query
+SELECT id, member, vibe FROM rls_squad ORDER BY id;
+----
+id	member	vibe
+2	rls_arelav	skuf
+
+
+query
+SELECT count(*) FROM rls_squad WHERE squad = 'clickclack';
+----
+count
+1
+
+
+query
+SELECT count(*) FROM rls_squad WHERE member = 'rls_babsky';
+----
+count
+0
+
+
+query
+SELECT sum(grade), max(grade), min(grade) FROM rls_squad;
+----
+sum	max	min
+42	42	42
+
+
+query
+SELECT a.member, b.member FROM rls_squad a JOIN rls_squad b ON a.squad = b.squad ORDER BY 1, 2;
+----
+member	member
+rls_arelav	rls_arelav
+
+
+query
+SELECT count(*) FROM (SELECT * FROM rls_squad WHERE grade > 0) s;
+----
+count
+1
+
+
+query
+SELECT EXISTS (SELECT 1 FROM rls_squad WHERE member = 'androed');
+----
+exists
+f
+
+
+statement ok
+SET ROLE rls_kostya;
+
+
+query
+SELECT member, vibe FROM rls_squad;
+----
+member	vibe
+rls_kostya	intern
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER TABLE rls_squad DISABLE ROW LEVEL SECURITY;
+
+
+statement ok
+SET ROLE rls_arelav;
+
+
+query
+SELECT count(*) FROM rls_squad;
+----
+count
+5
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP TABLE rls_squad;
+
+
+statement ok
+DROP ROLE rls_babsky;
+
+
+statement ok
+DROP ROLE rls_arelav;
+
+
+statement ok
+DROP ROLE rls_vedernikoff;
+
+
+statement ok
+DROP ROLE rls_kostya;

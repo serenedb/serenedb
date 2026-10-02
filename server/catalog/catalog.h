@@ -141,6 +141,14 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
                                        duckdb::LogicalUpdate& op,
                                        duckdb::PhysicalOperator& plan) final;
 
+  bool BypassesRowSecurity(duckdb::ClientContext& context,
+                           duckdb::StandardEntry& relation,
+                           duckdb::optional_idx role) final;
+
+  bool IsRowSecurityMember(duckdb::ClientContext& context,
+                           const duckdb::vector<duckdb::idx_t>& policy_roles,
+                           duckdb::optional_idx role) final;
+
   duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndex(
     duckdb::Binder& binder, duckdb::CreateStatement& stmt,
     duckdb::CatalogEntry& table,

@@ -90,6 +90,9 @@ statement ok
 GRANT SELECT ON stc_parent TO stc_role
 
 statement ok
+CREATE POLICY stc_pol ON stc_parent USING (id > 0)
+
+statement ok
 INSERT INTO stc_parent VALUES (1, 'a')
 
 statement ok
@@ -287,9 +290,12 @@ SELECT * FROM pg_catalog."pg_parameter_acl" LIMIT 0;
 statement ok
 SELECT * FROM pg_catalog."pg_partitioned_table" LIMIT 0;
 
-# sys_tables: pg_policy (🟡)
-statement ok
-SELECT * FROM pg_catalog."pg_policy" LIMIT 0;
+# sys_tables: pg_policy (🟢)
+query
+SELECT count(*) > 0 AS populated FROM pg_catalog."pg_policy";
+----
+populated
+t
 
 # sys_tables: pg_proc (🟢)
 query
@@ -477,9 +483,12 @@ SELECT * FROM pg_catalog."pg_locks" LIMIT 0;
 statement ok
 SELECT * FROM pg_catalog."pg_matviews" LIMIT 0;
 
-# sys_views: pg_policies (🟡)
-statement ok
-SELECT * FROM pg_catalog."pg_policies" LIMIT 0;
+# sys_views: pg_policies (🟢)
+query
+SELECT count(*) > 0 AS populated FROM pg_catalog."pg_policies";
+----
+populated
+t
 
 # sys_views: pg_prepared_statements (🟡)
 statement ok

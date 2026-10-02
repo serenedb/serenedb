@@ -44,9 +44,12 @@ struct PgPolicy {
   Polcmd polcmd;
   bool polpermissive;
   Array<Oid> polroles;
-  PgNodeTree polqual;
-  PgNodeTree polwithcheck;
+  Text polqual;
+  Text polwithcheck;
 };
 // NOLINTEND
+
+template<>
+MaterializedData SystemTableSnapshot<PgPolicy>::GetTableData();
 
 }  // namespace sdb::pg

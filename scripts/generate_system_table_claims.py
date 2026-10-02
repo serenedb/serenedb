@@ -121,6 +121,9 @@ statement ok
 GRANT SELECT ON stc_parent TO stc_role
 
 statement ok
+CREATE POLICY stc_pol ON stc_parent USING (id > 0)
+
+statement ok
 INSERT INTO stc_parent VALUES (1, 'a')
 
 statement ok

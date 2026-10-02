@@ -1,0 +1,270 @@
+statement ok
+DROP VIEW IF EXISTS rls_vp_board_view;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_vp_board;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_vp_arelav;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_vp_babsky;
+
+
+statement ok
+CREATE ROLE rls_vp_arelav;
+
+
+statement ok
+CREATE ROLE rls_vp_babsky;
+
+
+statement ok
+CREATE TABLE rls_vp_board (id int, author text, grade int, msg text);
+
+
+statement ok
+INSERT INTO rls_vp_board VALUES
+  (1, 'rls_vp_arelav', 42, 'skuf mode on'),
+  (2, 'rls_vp_babsky', 21, 'clickclack'),
+  (3, 'rls_vp_arelav', 13, 'deadinside'),
+  (4, 'vedernikoff', 7, 'salam');
+
+
+statement ok
+CREATE VIEW rls_vp_board_view (who, points, text) AS SELECT author, grade, msg FROM rls_vp_board;
+
+
+statement ok
+GRANT SELECT ON rls_vp_board_view TO rls_vp_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_vp_board_view TO rls_vp_babsky;
+
+
+statement ok
+ALTER VIEW rls_vp_board_view ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+SET ROLE rls_vp_arelav;
+
+
+query
+SELECT count(*) AS visible FROM rls_vp_board_view;
+----
+visible
+0
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_vp_author ON rls_vp_board_view USING (who = current_user);
+
+
+statement error
+CREATE POLICY rls_vp_insert ON rls_vp_board_view FOR INSERT WITH CHECK (points > 0);
+----
+db error: ERROR: policies on views can only be created FOR SELECT or FOR ALL<slt:ignore>
+
+
+statement error
+CREATE POLICY rls_vp_check ON rls_vp_board_view WITH CHECK (points > 0);
+----
+db error: ERROR: WITH CHECK cannot be applied to policies on views<slt:ignore>
+
+
+statement error
+CREATE POLICY rls_vp_unknown ON rls_vp_board_view USING (grade > 0);
+----
+db error: ERROR: Referenced column "grade" not found in FROM clause!<slt:ignore>
+
+
+statement ok
+SET ROLE rls_vp_arelav;
+
+
+query
+SELECT who, points FROM rls_vp_board_view ORDER BY points;
+----
+who	points
+rls_vp_arelav	13
+rls_vp_arelav	42
+
+
+statement error
+CREATE POLICY rls_vp_evil ON rls_vp_board_view USING (true);
+----
+db error: ERROR: must be owner of view rls_vp_board_view<slt:ignore>
+
+
+statement error
+ALTER VIEW rls_vp_board_view DISABLE ROW LEVEL SECURITY;
+----
+db error: ERROR: must be owner of view rls_vp_board_view<slt:ignore>
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE rls_vp_babsky;
+
+
+query
+SELECT who, points FROM rls_vp_board_view ORDER BY points;
+----
+who	points
+rls_vp_babsky	21
+
+
+query
+SELECT count(*) AS visible FROM rls_vp_board_view WHERE CASE WHEN points = 13 THEN text::int ELSE 1 END = 1;
+----
+visible
+1
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_vp_high ON rls_vp_board_view AS RESTRICTIVE TO rls_vp_arelav USING (points > 20);
+
+
+statement ok
+SET ROLE rls_vp_arelav;
+
+
+query
+SELECT who, points FROM rls_vp_board_view ORDER BY points;
+----
+who	points
+rls_vp_arelav	42
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT tablename, policyname, permissive, roles, cmd, qual FROM pg_policies WHERE tablename = 'rls_vp_board_view' ORDER BY policyname;
+----
+tablename	policyname	permissive	roles	cmd	qual
+rls_vp_board_view	rls_vp_author	PERMISSIVE	{public}	ALL	(who = current_user)
+rls_vp_board_view	rls_vp_high	RESTRICTIVE	{rls_vp_arelav}	ALL	(points > 20)
+
+
+query
+SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'rls_vp_board_view';
+----
+relname	relrowsecurity	relforcerowsecurity
+rls_vp_board_view	t	f
+
+
+statement ok
+CREATE OR REPLACE VIEW rls_vp_board_view (who, points, text) AS SELECT author, grade, msg FROM rls_vp_board WHERE id > 1;
+
+
+statement ok
+SET ROLE rls_vp_arelav;
+
+
+query
+SELECT who, points FROM rls_vp_board_view ORDER BY points;
+----
+who	points
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_vp_high ON rls_vp_board_view USING (points > 10);
+
+
+statement ok
+ALTER VIEW rls_vp_board_view RENAME TO rls_vp_board_view2;
+
+
+statement ok
+SET ROLE rls_vp_arelav;
+
+
+query
+SELECT who, points FROM rls_vp_board_view2 ORDER BY points;
+----
+who	points
+rls_vp_arelav	13
+
+
+query
+SELECT row_security_active('rls_vp_board_view2') AS active;
+----
+active
+t
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT count(*) AS rows FROM rls_vp_board_view2;
+----
+rows
+3
+
+
+statement ok
+ALTER VIEW rls_vp_board_view2 FORCE ROW LEVEL SECURITY;
+
+
+query
+SELECT count(*) AS rows FROM rls_vp_board_view2;
+----
+rows
+3
+
+
+statement ok
+DROP POLICY rls_vp_high ON rls_vp_board_view2;
+
+
+statement error
+DROP POLICY rls_vp_high ON rls_vp_board_view2;
+----
+db error: ERROR: policy "rls_vp_high" for view "rls_vp_board_view2" does not exist<slt:ignore>
+
+
+statement ok
+DROP VIEW rls_vp_board_view2;
+
+
+query
+SELECT count(*) AS policies FROM pg_policies WHERE tablename LIKE 'rls_vp_%';
+----
+policies
+0
+
+
+statement ok
+DROP TABLE rls_vp_board;
+
+
+statement ok
+DROP ROLE rls_vp_arelav;
+
+
+statement ok
+DROP ROLE rls_vp_babsky;

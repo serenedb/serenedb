@@ -63,6 +63,7 @@ The following metadata functions are available:
 | [`sdb_logs()`](#sdb_logs) | Log entries |
 | [`sdb_memory()`](#sdb_memory) | Buffer manager memory usage |
 | [`sdb_optimizers()`](#sdb_optimizers) | Available optimization rules |
+| [`sdb_policies()`](../../security/row_level_security.md#catalogs) | Row-level security policies of tables and views |
 | [`sdb_prepared_statements()`](#sdb_prepared_statements) | Prepared statements in the current connection |
 | [`sdb_profiling_settings()`](#sdb_profiling_settings) | Current profiling-related settings |
 | [`sdb_schemas()`](#sdb_schemas) | Schemas |

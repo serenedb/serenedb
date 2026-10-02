@@ -20,6 +20,7 @@
 
 #include "auth/enforce.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
 
 #include <algorithm>
@@ -34,13 +35,16 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/constraint.hpp>
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
+#include <duckdb/parser/parsed_data/alter_policy_info.hpp>
 #include <duckdb/parser/parsed_data/alter_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
+#include <duckdb/parser/parsed_data/create_policy_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_trigger_info.hpp>
 #include <duckdb/parser/parsed_data/detach_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
+#include <duckdb/parser/parsed_data/extra_drop_info.hpp>
 #include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
@@ -66,6 +70,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -111,6 +116,8 @@ std::string KindName(CatalogType type) {
       return "foreign server";
     case CatalogType::JOB_ENTRY:
       return "job";
+    case CatalogType::POLICY_ENTRY:
+      return "policy";
     default:
       return "object";
   }
@@ -272,34 +279,79 @@ class Enforcer {
     }
   }
 
+  static duckdb::optional_ptr<duckdb::LogicalGet> RowSecurityScan(
+    duckdb::LogicalOperator& barrier) {
+    auto* op = barrier.children[0].get();
+    while (op->type == LogicalOperatorType::LOGICAL_FILTER ||
+           op->type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN ||
+           op->type == LogicalOperatorType::LOGICAL_DELIM_JOIN ||
+           op->type == LogicalOperatorType::LOGICAL_ANY_JOIN ||
+           op->type == LogicalOperatorType::LOGICAL_CROSS_PRODUCT ||
+           op->type == LogicalOperatorType::LOGICAL_DEPENDENT_JOIN) {
+      op = op->children[0].get();
+    }
+    if (op->type != LogicalOperatorType::LOGICAL_GET) {
+      return nullptr;
+    }
+    return &op->Cast<duckdb::LogicalGet>();
+  }
+
+  void CollectProjectionReads(const duckdb::LogicalProjection& projection,
+                              const duckdb::TableCatalogEntry& table,
+                              duckdb::unique_ptr<duckdb::Expression>& expr,
+                              std::optional<duckdb::PhysicalIndex> target) {
+    auto& positions = _projection_reads[projection.table_index.index];
+    duckdb::ExpressionIterator::EnumerateExpression(
+      expr, [&](duckdb::Expression& node) {
+        if (node.GetExpressionType() !=
+            duckdb::ExpressionType::BOUND_COLUMN_REF) {
+          return;
+        }
+        const auto& binding =
+          node.Cast<duckdb::BoundColumnRefExpression>().Binding();
+        if (binding.table_index.index != projection.table_index.index) {
+          return;
+        }
+        const auto position = binding.column_index.GetIndex();
+        if (target && IsPassthrough(projection, position, table, *target)) {
+          return;
+        }
+        positions.insert(position);
+      });
+  }
+
   void Check(duckdb::LogicalOperator& op) {
-    if (op.type == LogicalOperatorType::LOGICAL_UPDATE &&
-        !op.children.empty() &&
+    if (!op.children.empty() &&
         op.children[0]->type == LogicalOperatorType::LOGICAL_PROJECTION) {
-      auto& update = op.Cast<duckdb::LogicalUpdate>();
       const auto& projection =
         op.children[0]->Cast<duckdb::LogicalProjection>();
-      auto& positions = _projection_reads[projection.table_index.index];
-      for (duckdb::idx_t i = 0; i < update.expressions.size(); ++i) {
-        auto collect = [&](duckdb::Expression& expr) {
-          if (expr.GetExpressionType() !=
-              duckdb::ExpressionType::BOUND_COLUMN_REF) {
-            return;
+      if (op.type == LogicalOperatorType::LOGICAL_UPDATE) {
+        auto& update = op.Cast<duckdb::LogicalUpdate>();
+        _projection_reads.try_emplace(projection.table_index.index);
+        for (duckdb::idx_t i = 0; i < update.expressions.size(); ++i) {
+          CollectProjectionReads(projection, update.table,
+                                 update.expressions[i], update.columns[i]);
+        }
+      } else if (op.type == LogicalOperatorType::LOGICAL_MERGE_INTO) {
+        auto& merge = op.Cast<duckdb::LogicalMergeInto>();
+        _projection_reads.try_emplace(projection.table_index.index);
+        for (auto& [condition, actions] : merge.actions) {
+          for (auto& action : actions) {
+            if (action->condition) {
+              CollectProjectionReads(projection, merge.table, action->condition,
+                                     std::nullopt);
+            }
+            for (duckdb::idx_t i = 0; i < action->expressions.size(); ++i) {
+              std::optional<duckdb::PhysicalIndex> target;
+              if (action->action_type ==
+                  duckdb::MergeActionType::MERGE_UPDATE) {
+                target = action->columns[i];
+              }
+              CollectProjectionReads(projection, merge.table,
+                                     action->expressions[i], target);
+            }
           }
-          const auto& binding =
-            expr.Cast<duckdb::BoundColumnRefExpression>().Binding();
-          if (binding.table_index.index != projection.table_index.index) {
-            return;
-          }
-          const auto position = binding.column_index.GetIndex();
-          if (IsPassthrough(projection, position, update.table,
-                            update.columns[i])) {
-            return;
-          }
-          positions.insert(position);
-        };
-        duckdb::ExpressionIterator::EnumerateExpression(update.expressions[i],
-                                                        collect);
+        }
       }
     }
     auto visit = [&](duckdb::Expression& expr) {
@@ -359,6 +411,12 @@ class Enforcer {
         }
         break;
       }
+      case LogicalOperatorType::LOGICAL_SECURITY_BARRIER:
+        if (auto get = RowSecurityScan(op)) {
+          const auto index = get->table_index.index;
+          _row_security_refs[index] = _scan_refs[index];
+        }
+        break;
       case LogicalOperatorType::LOGICAL_INSERT: {
         auto& insert = op.Cast<duckdb::LogicalInsert>();
         if (_enforce) {
@@ -420,6 +478,15 @@ class Enforcer {
         }
         break;
       }
+      case LogicalOperatorType::LOGICAL_CREATE_POLICY: {
+        auto& info = op.Cast<duckdb::LogicalCreate>()
+                       .info->Cast<duckdb::CreatePolicyInfo>();
+        info.roles = PolicyRoleIds(info.role_names);
+        if (_enforce) {
+          RequirePolicyRelationOwner(info.GetQualifiedName(), *info.base_table);
+        }
+        break;
+      }
       case LogicalOperatorType::LOGICAL_CREATE_SCHEMA: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
         Stamp(*create.info, CatalogType::SCHEMA_ENTRY, nullptr,
@@ -456,6 +523,8 @@ class Enforcer {
         } else if (info.type == duckdb::AlterType::ALTER_ROLE) {
           pg::ResolveAlterRole(_context, info.Cast<duckdb::AlterRoleInfo>());
         } else {
+          RequireLocalRowSecurity(info);
+          ResolvePolicyRoles(info);
           if (_enforce) {
             CheckAlter(info);
           }
@@ -615,6 +684,7 @@ class Enforcer {
     }
     const auto& closure = ClosureOf(PrincipalFor(get.table_index.index));
     const bool target = _target_scans.contains(get.table_index.index);
+    const auto row_security = _row_security_refs.find(get.table_index.index);
     const auto& column_ids = get.GetColumnIds();
     std::vector<std::span<const duckdb::AclItem>> acls;
     const auto add = [&](const duckdb::ColumnIndex& column) {
@@ -626,21 +696,31 @@ class Enforcer {
           .GetColumn(duckdb::LogicalIndex(column.GetPrimaryIndex()))
           .Acl());
     };
-    if (target) {
-      if (auto it = _scan_refs.find(get.table_index.index);
-          it != _scan_refs.end()) {
-        for (const auto position : it->second) {
+    const auto add_positions =
+      [&](const irs::containers::FlatHashSet<duckdb::idx_t>& positions) {
+        for (const auto position : positions) {
           if (position < column_ids.size()) {
             add(column_ids[position]);
           }
         }
+      };
+    if (target) {
+      if (row_security != _row_security_refs.end()) {
+        add_positions(row_security->second);
+      } else if (auto it = _scan_refs.find(get.table_index.index);
+                 it != _scan_refs.end()) {
+        add_positions(it->second);
       }
       if (acls.empty()) {
         return;
       }
     } else {
-      for (const auto& column : column_ids) {
-        add(column);
+      if (row_security != _row_security_refs.end()) {
+        add_positions(row_security->second);
+      } else {
+        for (const auto& column : column_ids) {
+          add(column);
+        }
       }
       if (acls.empty()) {
         if (!closure.CanAnyColumn(table->permissions, AclMode::Select,
@@ -703,12 +783,33 @@ class Enforcer {
       return;
     }
     std::vector<std::span<const duckdb::AclItem>> acls;
-    for (const auto index : update.columns) {
-      acls.emplace_back(table.GetColumns().GetColumn(index).Acl());
+    for (duckdb::idx_t i = 0; i < update.columns.size(); ++i) {
+      if (!IsPassthroughUpdate(update, i)) {
+        acls.emplace_back(
+          table.GetColumns().GetColumn(update.columns[i]).Acl());
+      }
     }
     if (!_caller_closure.CanColumns(table.permissions, AclMode::Update, acls)) {
       Denied(table);
     }
+  }
+
+  bool IsPassthroughUpdate(const duckdb::LogicalUpdate& update,
+                           duckdb::idx_t i) const {
+    if (update.children.empty() ||
+        update.children[0]->type != LogicalOperatorType::LOGICAL_PROJECTION ||
+        i >= update.expressions.size() ||
+        update.expressions[i]->GetExpressionType() !=
+          duckdb::ExpressionType::BOUND_COLUMN_REF) {
+      return false;
+    }
+    const auto& projection =
+      update.children[0]->Cast<duckdb::LogicalProjection>();
+    const auto& binding =
+      update.expressions[i]->Cast<duckdb::BoundColumnRefExpression>().Binding();
+    return binding.table_index.index == projection.table_index.index &&
+           IsPassthrough(projection, binding.column_index.GetIndex(),
+                         update.table, update.columns[i]);
   }
 
   void CheckMerge(duckdb::LogicalMergeInto& merge) {
@@ -961,6 +1062,12 @@ class Enforcer {
 
   void CheckDrop(const duckdb::DropInfo& info) {
     const auto& name = info.GetQualifiedName();
+    if (info.type == CatalogType::POLICY_ENTRY) {
+      RequirePolicyRelationOwner(
+        name,
+        *info.extra_drop_info->Cast<duckdb::ExtraDropPolicyInfo>().base_table);
+      return;
+    }
     if (info.type == CatalogType::SCHEMA_ENTRY) {
       auto schema =
         duckdb::Catalog::GetSchema(_context, name.Catalog(), name.Name(),
@@ -993,6 +1100,12 @@ class Enforcer {
   }
 
   void CheckAlter(const duckdb::AlterInfo& info) {
+    if (info.type == duckdb::AlterType::ALTER_POLICY) {
+      RequirePolicyRelationOwner(
+        info.GetQualifiedName(),
+        *info.Cast<duckdb::AlterPolicyInfo>().base_table);
+      return;
+    }
     const auto type = info.GetCatalogType();
     if (type == CatalogType::SCHEMA_ENTRY) {
       if (auto schema = SchemaOf(type, info.GetQualifiedName())) {
@@ -1043,6 +1156,61 @@ class Enforcer {
 
   duckdb::idx_t GranteeId(std::string_view name) {
     return name == "PUBLIC" ? duckdb::ACL_ID_PUBLIC : RoleId(name);
+  }
+
+  duckdb::vector<duckdb::idx_t> PolicyRoleIds(
+    const duckdb::vector<duckdb::Identifier>& names) {
+    duckdb::vector<duckdb::idx_t> ids;
+    for (const auto& name : names) {
+      const auto& text = name.GetIdentifierName();
+      const auto id = absl::EqualsIgnoreCase(text, "PUBLIC")
+                        ? duckdb::ACL_ID_PUBLIC
+                        : RoleSpecId(text);
+      if (!absl::c_contains(ids, id)) {
+        ids.push_back(id);
+      }
+    }
+    return ids;
+  }
+
+  void RequireLocalRowSecurity(const duckdb::AlterInfo& info) {
+    if (info.type != duckdb::AlterType::SET_ROW_SECURITY) {
+      return;
+    }
+    auto relation = FindEntry(info.GetCatalogType(), info.GetQualifiedName());
+    if (!relation || relation->ParentCatalog().GetCatalogType() ==
+                       catalog::SereneDBCatalog::kStorageType) {
+      return;
+    }
+    if (relation->temporary) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("row-level security is not supported for temporary relations"));
+    }
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("row-level security is not supported in attached databases"));
+  }
+
+  void ResolvePolicyRoles(duckdb::AlterInfo& info) {
+    if (info.type != duckdb::AlterType::ALTER_POLICY) {
+      return;
+    }
+    auto& policy = info.Cast<duckdb::AlterPolicyInfo>();
+    if (!policy.role_names.empty()) {
+      policy.roles = PolicyRoleIds(policy.role_names);
+    }
+  }
+
+  void RequirePolicyRelationOwner(const duckdb::QualifiedName& policy,
+                                  const duckdb::TableRef& base_table) {
+    auto relation = FindEntry(
+      CatalogType::TABLE_ENTRY,
+      duckdb::QualifiedName{policy.Catalog(), policy.Schema(),
+                            base_table.Cast<duckdb::BaseTableRef>().Table()});
+    if (relation) {
+      RequireOwner(*relation);
+    }
   }
 
   duckdb::idx_t SchemaOwner(const duckdb::CreateSchemaInfo& info) {
@@ -1371,6 +1539,9 @@ class Enforcer {
   irs::containers::FlatHashMap<duckdb::idx_t,
                                irs::containers::FlatHashSet<duckdb::idx_t>>
     _scan_refs;
+  irs::containers::FlatHashMap<duckdb::idx_t,
+                               irs::containers::FlatHashSet<duckdb::idx_t>>
+    _row_security_refs;
   irs::containers::FlatHashMap<duckdb::idx_t,
                                irs::containers::FlatHashSet<duckdb::idx_t>>
     _projection_reads;

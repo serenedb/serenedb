@@ -1,0 +1,164 @@
+statement ok
+DROP TABLE IF EXISTS rls_leak_vault;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_leak_members;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_leak_arelav;
+
+
+statement ok
+CREATE ROLE rls_leak_arelav;
+
+
+statement ok
+CREATE TABLE rls_leak_members (member text);
+
+
+statement ok
+INSERT INTO rls_leak_members VALUES ('rls_leak_arelav');
+
+
+statement ok
+CREATE TABLE rls_leak_vault (id int, holder text, secret int, note text);
+
+
+statement ok
+INSERT INTO rls_leak_vault VALUES
+  (1, 'rls_leak_arelav', 10, '10'),
+  (2, 'vedernikoff', 42, 'babsky is the boss'),
+  (3, 'rls_leak_arelav', 7, '7'),
+  (4, 'kostya', 2147483647, 'clickclack');
+
+
+statement ok
+GRANT SELECT ON rls_leak_vault TO rls_leak_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_leak_members TO rls_leak_arelav;
+
+
+statement ok
+ALTER TABLE rls_leak_vault ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_leak_holder ON rls_leak_vault USING (holder = current_user);
+
+
+statement ok
+SET ROLE rls_leak_arelav;
+
+
+query
+SELECT count(*) FROM rls_leak_vault WHERE note::int > 0;
+----
+count
+2
+
+
+query
+SELECT count(*) FROM rls_leak_vault WHERE CASE WHEN secret = 42 THEN note::int ELSE 1 END = 1;
+----
+count
+2
+
+
+query
+SELECT count(*) FROM rls_leak_vault WHERE secret + 1 > 0;
+----
+count
+2
+
+
+query
+SELECT count(*) FROM rls_leak_vault v JOIN rls_leak_members m ON m.member = v.holder AND v.note::int > 0;
+----
+count
+2
+
+
+query
+SELECT count(*) FROM rls_leak_members m WHERE EXISTS (SELECT 1 FROM rls_leak_vault v WHERE v.holder = m.member AND v.note::int > 0);
+----
+count
+1
+
+
+query
+SELECT id, note::int AS n FROM rls_leak_vault ORDER BY id;
+----
+id	n
+1	10
+3	7
+
+
+query
+SELECT id FROM rls_leak_vault ORDER BY note::int DESC LIMIT 1;
+----
+id
+1
+
+
+query
+SELECT count(*) FROM (SELECT * FROM rls_leak_vault) s WHERE s.note::int > 0;
+----
+count
+2
+
+
+query
+SELECT max(note::int) FROM rls_leak_vault;
+----
+max
+10
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP POLICY rls_leak_holder ON rls_leak_vault;
+
+
+statement ok
+CREATE POLICY rls_leak_member_of ON rls_leak_vault USING (holder IN (SELECT member FROM rls_leak_members));
+
+
+statement ok
+SET ROLE rls_leak_arelav;
+
+
+query
+SELECT count(*) FROM rls_leak_vault WHERE note::int > 0;
+----
+count
+2
+
+
+query
+SELECT count(*) FROM rls_leak_vault WHERE secret + 1 > 0 AND id > 0;
+----
+count
+2
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP TABLE rls_leak_vault;
+
+
+statement ok
+DROP TABLE rls_leak_members;
+
+
+statement ok
+DROP ROLE rls_leak_arelav;

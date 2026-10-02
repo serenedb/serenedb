@@ -1,0 +1,285 @@
+statement ok
+DROP TABLE IF EXISTS rls_ddl_crew;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_ddl_crew2;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_ddl_arelav;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_ddl_kostya;
+
+
+statement ok
+CREATE ROLE rls_ddl_arelav;
+
+
+statement ok
+CREATE ROLE rls_ddl_kostya;
+
+
+statement ok
+CREATE TABLE rls_ddl_crew (id int, member text, grade int);
+
+
+statement ok
+INSERT INTO rls_ddl_crew VALUES (1, 'rls_ddl_arelav', 1), (2, 'rls_ddl_kostya', 2), (3, 'clickclack', 3);
+
+
+statement ok
+GRANT SELECT ON rls_ddl_crew TO rls_ddl_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_ddl_crew TO rls_ddl_kostya;
+
+
+statement ok
+ALTER TABLE rls_ddl_crew ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_ddl_p ON rls_ddl_crew USING (member = current_user);
+
+
+statement error
+CREATE POLICY rls_ddl_p ON rls_ddl_crew USING (true);
+----
+db error: ERROR: policy "rls_ddl_p" for table "rls_ddl_crew" already exists<slt:ignore>
+
+
+statement error
+CREATE POLICY rls_ddl_ins ON rls_ddl_crew FOR INSERT USING (true);
+----
+db error: ERROR: only WITH CHECK expression allowed for INSERT<slt:ignore>
+
+
+statement error
+CREATE POLICY rls_ddl_sel ON rls_ddl_crew FOR SELECT WITH CHECK (true);
+----
+db error: ERROR: WITH CHECK cannot be applied to SELECT or DELETE<slt:ignore>
+
+
+statement error
+CREATE POLICY rls_ddl_del ON rls_ddl_crew FOR DELETE WITH CHECK (true);
+----
+db error: ERROR: WITH CHECK cannot be applied to SELECT or DELETE<slt:ignore>
+
+
+statement error
+ALTER POLICY rls_ddl_nope ON rls_ddl_crew RENAME TO rls_ddl_q;
+----
+db error: ERROR: policy "rls_ddl_nope" for table "rls_ddl_crew" does not exist<slt:ignore>
+
+
+statement ok
+ALTER POLICY rls_ddl_p ON rls_ddl_crew RENAME TO rls_ddl_q;
+
+
+query
+SELECT policyname, permissive, roles, cmd FROM pg_policies WHERE tablename = 'rls_ddl_crew';
+----
+policyname	permissive	roles	cmd
+rls_ddl_q	PERMISSIVE	{public}	ALL
+
+
+statement ok
+ALTER POLICY rls_ddl_q ON rls_ddl_crew TO rls_ddl_arelav;
+
+
+query
+SELECT policyname, roles FROM pg_policies WHERE tablename = 'rls_ddl_crew';
+----
+policyname	roles
+rls_ddl_q	{rls_ddl_arelav}
+
+
+statement ok
+SET ROLE rls_ddl_kostya;
+
+
+query
+SELECT count(*) FROM rls_ddl_crew;
+----
+count
+0
+
+
+statement ok
+SET ROLE rls_ddl_arelav;
+
+
+query
+SELECT id FROM rls_ddl_crew;
+----
+id
+1
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_ddl_q ON rls_ddl_crew TO PUBLIC USING (grade >= 2);
+
+
+statement ok
+SET ROLE rls_ddl_kostya;
+
+
+query
+SELECT id FROM rls_ddl_crew ORDER BY id;
+----
+id
+2
+3
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER TABLE rls_ddl_crew RENAME COLUMN grade TO level;
+
+
+statement ok
+SET ROLE rls_ddl_kostya;
+
+
+query
+SELECT id, level FROM rls_ddl_crew ORDER BY id;
+----
+id	level
+2	2
+3	3
+
+
+statement ok
+RESET ROLE;
+
+
+statement error
+ALTER TABLE rls_ddl_crew DROP COLUMN level;
+----
+db error: ERROR: cannot drop column level of table rls_ddl_crew because other objects depend on it<slt:ignore>
+
+
+statement error
+ALTER TABLE rls_ddl_crew ALTER COLUMN level TYPE bigint;
+----
+db error: ERROR: cannot alter type of a column used in a policy definition<slt:ignore>
+
+
+statement ok
+ALTER TABLE rls_ddl_crew RENAME TO rls_ddl_crew2;
+
+
+statement ok
+SET ROLE rls_ddl_kostya;
+
+
+query
+SELECT id FROM rls_ddl_crew2 ORDER BY id;
+----
+id
+2
+3
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP POLICY rls_ddl_q ON rls_ddl_crew2;
+
+
+query
+SELECT count(*) FROM pg_policies WHERE tablename = 'rls_ddl_crew2';
+----
+count
+0
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT policyname FROM pg_policies WHERE tablename = 'rls_ddl_crew2';
+----
+policyname
+rls_ddl_q
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE POLICY rls_ddl_ghost ON rls_ddl_crew2 USING (true);
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT policyname FROM pg_policies WHERE tablename = 'rls_ddl_crew2';
+----
+policyname
+rls_ddl_q
+
+
+statement ok
+DROP POLICY IF EXISTS rls_ddl_nope ON rls_ddl_crew2;
+
+
+statement error
+DROP POLICY rls_ddl_nope ON rls_ddl_crew2;
+----
+db error: ERROR: policy "rls_ddl_nope" for table "rls_ddl_crew2" does not exist<slt:ignore>
+
+
+statement ok
+ALTER TABLE rls_ddl_crew2 DROP COLUMN level CASCADE;
+
+
+query
+SELECT count(*) FROM pg_policies WHERE tablename = 'rls_ddl_crew2';
+----
+count
+0
+
+
+statement ok
+CREATE POLICY rls_ddl_last ON rls_ddl_crew2 USING (true);
+
+
+statement ok
+DROP TABLE rls_ddl_crew2;
+
+
+query
+SELECT count(*) FROM pg_policy WHERE polname = 'rls_ddl_last';
+----
+count
+0
+
+
+statement ok
+DROP ROLE rls_ddl_arelav;
+
+
+statement ok
+DROP ROLE rls_ddl_kostya;

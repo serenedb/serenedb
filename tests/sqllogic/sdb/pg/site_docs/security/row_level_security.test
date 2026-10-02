@@ -1,0 +1,305 @@
+# DOCS_TEST: example_001
+
+statement ok
+DROP TABLE IF EXISTS doc_rls_orders;
+
+statement ok
+DROP ROLE IF EXISTS doc_rls_alice;
+
+statement ok
+DROP ROLE IF EXISTS doc_rls_bob;
+
+statement ok
+DROP ROLE IF EXISTS doc_rls_auditor;
+
+statement ok
+CREATE ROLE doc_rls_alice;
+
+statement ok
+CREATE ROLE doc_rls_bob;
+
+statement ok
+CREATE TABLE doc_rls_orders (id int, tenant text, amount int, note text);
+
+statement ok
+INSERT INTO doc_rls_orders VALUES
+  (1, 'doc_rls_alice', 100, 'first'),
+  (2, 'doc_rls_bob', 250, 'second'),
+  (3, 'doc_rls_alice', 75, 'third');
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON doc_rls_orders TO doc_rls_alice;
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON doc_rls_orders TO doc_rls_bob;
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER TABLE doc_rls_orders ENABLE ROW LEVEL SECURITY;
+
+statement ok
+SET ROLE doc_rls_alice;
+
+query
+SELECT count(*) AS visible FROM doc_rls_orders;
+----
+visible
+0
+
+statement ok
+RESET ROLE;
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE POLICY doc_rls_tenant ON doc_rls_orders USING (tenant = current_user);
+
+statement ok
+SET ROLE doc_rls_alice;
+
+query
+SELECT id, amount FROM doc_rls_orders ORDER BY id;
+----
+id	amount
+1	100
+3	75
+
+statement ok
+RESET ROLE;
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE POLICY doc_rls_small ON doc_rls_orders AS RESTRICTIVE USING (amount < 90);
+
+statement ok
+SET ROLE doc_rls_alice;
+
+query
+SELECT id, amount FROM doc_rls_orders ORDER BY id;
+----
+id	amount
+3	75
+
+statement ok
+RESET ROLE;
+
+statement ok
+DROP POLICY doc_rls_small ON doc_rls_orders;
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+SET ROLE doc_rls_alice;
+
+statement ok
+INSERT INTO doc_rls_orders VALUES (4, 'doc_rls_alice', 10, 'mine');
+
+statement error
+INSERT INTO doc_rls_orders VALUES (5, 'doc_rls_bob', 10, 'not mine');
+----
+db error: ERROR: new row violates row-level security policy for table "doc_rls_orders"
+
+
+statement error
+UPDATE doc_rls_orders SET tenant = 'doc_rls_bob' WHERE id = 4;
+----
+db error: ERROR: new row violates row-level security policy for table "doc_rls_orders"
+
+
+query
+UPDATE doc_rls_orders SET note = 'touched' WHERE id = 2 RETURNING id;
+----
+id
+
+statement ok
+RESET ROLE;
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_rls_auditor BYPASSRLS;
+
+statement ok
+GRANT SELECT ON doc_rls_orders TO doc_rls_auditor;
+
+statement ok
+SET ROLE doc_rls_auditor;
+
+query
+SELECT count(*) AS visible FROM doc_rls_orders;
+----
+visible
+4
+
+statement ok
+RESET ROLE;
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+SET ROLE doc_rls_alice;
+
+query
+EXPLAIN SELECT id FROM doc_rls_orders WHERE amount > 50;
+----
+QUERY PLAN
+╭─ SEQ_SCAN ───────────────────────────────╮
+│ Table: doc_rls_orders                    │
+│ Type: Sequential Scan                    │
+│ Projections: id                          │
+│ Column Filter: tenant = 'doc_rls_alice', │
+│                amount > 50               │
+│ ~2 rows                                  │
+╰──────────────────────────────────────────╯
+
+statement ok
+RESET ROLE;
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement ok
+SET ROLE doc_rls_alice;
+
+query
+SELECT count(*) AS visible FROM doc_rls_orders WHERE CASE WHEN amount = 250 THEN note::int ELSE 1 END = 1;
+----
+visible
+3
+
+statement ok
+RESET ROLE;
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT policyname, permissive, roles, cmd, qual FROM pg_policies WHERE tablename = 'doc_rls_orders';
+----
+policyname	permissive	roles	cmd	qual
+doc_rls_tenant	PERMISSIVE	{public}	ALL	(tenant = current_user)
+
+query
+SELECT policy_name, relation_type, command, using_expression FROM duckdb_policies() WHERE relation_name = 'doc_rls_orders';
+----
+policy_name	relation_type	command	using_expression
+doc_rls_tenant	TABLE	ALL	(tenant = current_user)
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE VIEW doc_rls_large_orders AS SELECT id, tenant, amount FROM doc_rls_orders WHERE amount >= 100;
+
+statement ok
+GRANT SELECT ON doc_rls_large_orders TO doc_rls_alice;
+
+statement ok
+ALTER VIEW doc_rls_large_orders ENABLE ROW LEVEL SECURITY;
+
+statement ok
+CREATE POLICY doc_rls_large_tenant ON doc_rls_large_orders USING (tenant = current_user);
+
+statement error
+CREATE POLICY doc_rls_large_insert ON doc_rls_large_orders FOR INSERT WITH CHECK (amount > 0);
+----
+db error: ERROR: policies on views can only be created FOR SELECT or FOR ALL<slt:ignore>
+
+statement ok
+SET ROLE doc_rls_alice;
+
+query
+SELECT id, amount FROM doc_rls_large_orders ORDER BY id;
+----
+id	amount
+1	100
+
+statement ok
+RESET ROLE;
+
+# DOCS_TEST: example_010
+
+statement ok
+DROP TABLE IF EXISTS doc_rls_totals;
+
+statement ok
+CREATE TABLE doc_rls_totals (id int PRIMARY KEY, tenant text, total int);
+
+statement ok
+INSERT INTO doc_rls_totals VALUES (1, 'doc_rls_alice', 0), (2, 'doc_rls_bob', 0);
+
+statement ok
+GRANT SELECT, INSERT, UPDATE ON doc_rls_totals TO doc_rls_alice;
+
+statement ok
+ALTER TABLE doc_rls_totals ENABLE ROW LEVEL SECURITY;
+
+statement ok
+CREATE POLICY doc_rls_totals_tenant ON doc_rls_totals USING (tenant = current_user);
+
+# DOCS_TEST_BODY
+
+statement ok
+SET ROLE doc_rls_alice;
+
+query
+MERGE INTO doc_rls_totals t
+USING (SELECT tenant, sum(amount) AS total FROM doc_rls_orders GROUP BY tenant) s ON t.tenant = s.tenant
+WHEN MATCHED THEN UPDATE SET total = s.total
+RETURNING t.id, t.total;
+----
+id	total
+1	185
+
+statement error
+INSERT INTO doc_rls_totals VALUES (2, 'doc_rls_alice', 0) ON CONFLICT (id) DO UPDATE SET total = excluded.total;
+----
+db error: ERROR: target row violates row-level security policy for table "doc_rls_totals"
+
+
+statement error
+INSERT INTO doc_rls_totals VALUES (2, 'doc_rls_bob', 0) ON CONFLICT (id) DO NOTHING;
+----
+db error: ERROR: new row violates row-level security policy for table "doc_rls_totals"
+
+
+statement ok
+INSERT INTO doc_rls_totals VALUES (2, 'doc_rls_alice', 0) ON CONFLICT (id) DO NOTHING;
+
+statement ok
+RESET ROLE;
+
+# DOCS_TEST_END
+
+statement ok
+DROP TABLE doc_rls_totals;
+
+statement ok
+DROP VIEW doc_rls_large_orders;
+
+statement ok
+DROP TABLE doc_rls_orders;
+
+statement ok
+DROP ROLE doc_rls_alice;
+
+statement ok
+DROP ROLE doc_rls_bob;
+
+statement ok
+DROP ROLE doc_rls_auditor;

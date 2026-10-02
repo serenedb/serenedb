@@ -1,0 +1,548 @@
+statement ok
+DROP TABLE IF EXISTS rls_mg_stash;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_mg_drop;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_mg_allowed;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_mg_arelav;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_mg_babsky;
+
+
+statement ok
+CREATE ROLE rls_mg_arelav;
+
+
+statement ok
+CREATE ROLE rls_mg_babsky;
+
+
+statement ok
+CREATE TABLE rls_mg_stash (id int PRIMARY KEY, owner text, amount int CHECK (amount >= 0));
+
+
+statement ok
+INSERT INTO rls_mg_stash VALUES (1, 'rls_mg_arelav', 1), (2, 'rls_mg_babsky', 2);
+
+
+statement ok
+CREATE TABLE rls_mg_drop (id int, owner text, amount int);
+
+
+statement ok
+INSERT INTO rls_mg_drop VALUES (1, 'rls_mg_arelav', 10), (2, 'rls_mg_babsky', 20), (3, 'rls_mg_arelav', 30);
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON rls_mg_stash TO rls_mg_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_mg_drop TO rls_mg_arelav;
+
+
+statement ok
+ALTER TABLE rls_mg_stash ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_mg_own ON rls_mg_stash USING (owner = current_user);
+
+
+statement ok
+CREATE POLICY rls_mg_small ON rls_mg_stash AS RESTRICTIVE FOR INSERT WITH CHECK (amount < 100);
+
+
+statement ok
+SET ROLE rls_mg_arelav;
+
+
+statement error
+INSERT INTO rls_mg_stash VALUES (3, 'rls_mg_arelav', 500) ON CONFLICT (id) DO NOTHING;
+----
+db error: ERROR: new row violates row-level security policy<slt:ignore>
+
+
+statement error
+INSERT INTO rls_mg_stash VALUES (2, 'rls_mg_arelav', 9) ON CONFLICT (id) DO UPDATE SET amount = excluded.amount;
+----
+db error: ERROR: <slt:ignore>row violates row-level security policy<slt:ignore>
+
+
+statement error
+INSERT INTO rls_mg_stash VALUES (1, 'rls_mg_arelav', 9) ON CONFLICT (id) DO UPDATE SET owner = 'rls_mg_babsky';
+----
+db error: ERROR: new row violates row-level security policy for table "rls_mg_stash"<slt:ignore>
+
+
+query
+INSERT INTO rls_mg_stash VALUES (1, 'rls_mg_arelav', 9) ON CONFLICT (id) DO UPDATE SET amount = excluded.amount RETURNING id, amount;
+----
+id	amount
+1	9
+
+
+statement ok
+INSERT INTO rls_mg_stash VALUES (2, 'rls_mg_arelav', 9) ON CONFLICT (id) DO NOTHING;
+
+
+statement ok
+INSERT INTO rls_mg_stash VALUES (5, 'rls_mg_arelav', 3) ON CONFLICT (id) DO UPDATE SET amount = excluded.amount;
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT id, owner, amount FROM rls_mg_stash ORDER BY id;
+----
+id	owner	amount
+1	rls_mg_arelav	9
+2	rls_mg_babsky	2
+5	rls_mg_arelav	3
+
+
+statement ok
+SET ROLE rls_mg_arelav;
+
+
+statement error
+MERGE INTO rls_mg_stash t USING rls_mg_drop s ON t.id = s.id WHEN NOT MATCHED THEN INSERT VALUES (s.id, 'rls_mg_arelav', s.amount);
+----
+db error: ERROR: <slt:ignore>uplicate key<slt:ignore>
+
+
+statement ok
+MERGE INTO rls_mg_stash t USING (SELECT * FROM rls_mg_drop WHERE owner = 'rls_mg_arelav') s ON t.id = s.id WHEN MATCHED THEN UPDATE SET amount = s.amount WHEN NOT MATCHED THEN INSERT VALUES (s.id, s.owner, s.amount);
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT id, owner, amount FROM rls_mg_stash ORDER BY id;
+----
+id	owner	amount
+1	rls_mg_arelav	10
+2	rls_mg_babsky	2
+3	rls_mg_arelav	30
+5	rls_mg_arelav	3
+
+
+statement ok
+CREATE POLICY rls_mg_cheap ON rls_mg_stash AS RESTRICTIVE FOR UPDATE USING (amount < 20);
+
+
+statement ok
+SET ROLE rls_mg_arelav;
+
+
+statement error
+MERGE INTO rls_mg_stash t USING rls_mg_drop s ON t.id = s.id WHEN MATCHED THEN UPDATE SET amount = 7;
+----
+db error: ERROR: target row violates row-level security policy<slt:ignore>
+
+
+statement ok
+MERGE INTO rls_mg_stash t USING rls_mg_drop s ON t.id = s.id WHEN MATCHED AND t.amount > 20 THEN DO NOTHING WHEN MATCHED THEN UPDATE SET amount = 7;
+
+
+statement error
+MERGE INTO rls_mg_stash t USING rls_mg_drop s ON t.id = s.id WHEN MATCHED THEN UPDATE SET owner = 'rls_mg_babsky';
+----
+db error: ERROR: <slt:ignore>row violates row-level security policy<slt:ignore>
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT id, owner, amount FROM rls_mg_stash ORDER BY id;
+----
+id	owner	amount
+1	rls_mg_arelav	7
+2	rls_mg_babsky	2
+3	rls_mg_arelav	30
+5	rls_mg_arelav	3
+
+
+statement ok
+DROP POLICY rls_mg_cheap ON rls_mg_stash;
+
+
+statement ok
+CREATE POLICY rls_mg_keep ON rls_mg_stash AS RESTRICTIVE FOR DELETE USING (amount < 5);
+
+
+statement ok
+SET ROLE rls_mg_arelav;
+
+
+statement error
+MERGE INTO rls_mg_stash t USING rls_mg_drop s ON t.id = s.id WHEN MATCHED THEN DELETE;
+----
+db error: ERROR: target row violates row-level security policy<slt:ignore>
+
+
+statement error
+MERGE INTO rls_mg_stash t USING (SELECT 1 AS id) s ON t.id = s.id WHEN NOT MATCHED BY SOURCE THEN DELETE;
+----
+db error: ERROR: target row violates row-level security policy<slt:ignore>
+
+
+query
+MERGE INTO rls_mg_stash t USING (SELECT 1 AS id) s ON t.id = s.id WHEN NOT MATCHED BY SOURCE AND t.amount < 5 THEN DELETE RETURNING t.id;
+----
+id
+5
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT id, owner, amount FROM rls_mg_stash ORDER BY id;
+----
+id	owner	amount
+1	rls_mg_arelav	7
+2	rls_mg_babsky	2
+3	rls_mg_arelav	30
+
+
+statement ok
+DROP TABLE rls_mg_stash;
+
+
+statement ok
+CREATE TABLE rls_mg_stash (id int PRIMARY KEY, owner text, amount int);
+
+
+statement ok
+INSERT INTO rls_mg_stash VALUES (1, 'rls_mg_arelav', 1);
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON rls_mg_stash TO rls_mg_arelav;
+
+
+statement ok
+ALTER TABLE rls_mg_stash ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_mg_read ON rls_mg_stash FOR SELECT USING (true);
+
+
+statement ok
+CREATE POLICY rls_mg_bump ON rls_mg_stash FOR UPDATE USING (true) WITH CHECK (true);
+
+
+statement ok
+CREATE POLICY rls_mg_add ON rls_mg_stash FOR INSERT WITH CHECK (amount < 10);
+
+
+statement ok
+SET ROLE rls_mg_arelav;
+
+
+statement error
+INSERT INTO rls_mg_stash VALUES (1, 'rls_mg_arelav', 50) ON CONFLICT (id) DO UPDATE SET amount = 5;
+----
+db error: ERROR: new row violates row-level security policy for table "rls_mg_stash"<slt:ignore>
+
+
+statement error
+INSERT INTO rls_mg_stash VALUES (1, 'rls_mg_arelav', 50) ON CONFLICT (id) DO NOTHING;
+----
+db error: ERROR: new row violates row-level security policy for table "rls_mg_stash"<slt:ignore>
+
+
+statement error
+INSERT INTO rls_mg_stash VALUES (1, 'rls_mg_arelav', 50) ON CONFLICT (id) DO UPDATE SET amount = 2 WHERE false;
+----
+db error: ERROR: new row violates row-level security policy for table "rls_mg_stash"<slt:ignore>
+
+
+statement ok
+INSERT INTO rls_mg_stash VALUES (1, 'rls_mg_arelav', 3) ON CONFLICT (id) DO UPDATE SET amount = 4 WHERE rls_mg_stash.amount = 1;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP POLICY rls_mg_read ON rls_mg_stash;
+
+
+statement ok
+CREATE POLICY rls_mg_read ON rls_mg_stash FOR SELECT USING (amount < 3);
+
+
+statement ok
+SET ROLE rls_mg_arelav;
+
+
+statement error
+INSERT INTO rls_mg_stash VALUES (1, 'rls_mg_arelav', 1) ON CONFLICT (id) DO UPDATE SET amount = 1;
+----
+db error: ERROR: <slt:ignore>row violates row-level security policy<slt:ignore>
+
+
+statement error
+INSERT INTO rls_mg_stash VALUES (2, 'rls_mg_arelav', 5) ON CONFLICT (id) DO UPDATE SET amount = 1;
+----
+db error: ERROR: new row violates row-level security policy for table "rls_mg_stash"<slt:ignore>
+
+
+statement error
+INSERT INTO rls_mg_stash VALUES (4, 'rls_mg_arelav', 5) ON CONFLICT (id) DO NOTHING;
+----
+db error: ERROR: new row violates row-level security policy for table "rls_mg_stash"<slt:ignore>
+
+
+statement ok
+INSERT INTO rls_mg_stash VALUES (6, 'rls_mg_arelav', 5) ON CONFLICT DO NOTHING;
+
+
+statement ok
+MERGE INTO rls_mg_stash t USING (VALUES (7, 'rls_mg_arelav', 5)) s(id, owner, amount) ON t.id = s.id WHEN NOT MATCHED THEN INSERT VALUES (s.id, s.owner, s.amount);
+
+
+statement ok
+INSERT INTO rls_mg_stash VALUES (8, 'rls_mg_arelav', 1);
+
+
+statement error
+MERGE INTO rls_mg_stash t USING (VALUES (8, 9)) s(id, amount) ON t.id = s.id WHEN MATCHED THEN UPDATE SET amount = s.amount;
+----
+db error: ERROR: new row violates row-level security policy for table "rls_mg_stash"<slt:ignore>
+
+
+statement ok
+MERGE INTO rls_mg_stash t USING (VALUES (6)) s(id) ON t.id = s.id WHEN MATCHED THEN DELETE WHEN NOT MATCHED THEN DO NOTHING;
+
+
+statement error
+UPDATE rls_mg_stash SET amount = 5 WHERE id = 8;
+----
+db error: ERROR: new row violates row-level security policy for table "rls_mg_stash"<slt:ignore>
+
+
+statement error
+UPDATE rls_mg_stash SET amount = amount + 4 WHERE amount = 1;
+----
+db error: ERROR: new row violates row-level security policy for table "rls_mg_stash"<slt:ignore>
+
+
+statement ok
+UPDATE rls_mg_stash SET amount = 5;
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT id, owner, amount FROM rls_mg_stash ORDER BY id;
+----
+id	owner	amount
+1	rls_mg_arelav	5
+6	rls_mg_arelav	5
+7	rls_mg_arelav	5
+8	rls_mg_arelav	5
+
+
+statement ok
+DROP TABLE rls_mg_stash;
+
+
+statement ok
+CREATE TABLE rls_mg_stash (id int PRIMARY KEY, owner text, amount int);
+
+
+statement ok
+INSERT INTO rls_mg_stash VALUES (1, 'rls_mg_babsky', 1), (2, 'rls_mg_arelav', 2);
+
+
+statement ok
+GRANT SELECT (id, amount) ON rls_mg_stash TO rls_mg_babsky;
+
+
+statement ok
+GRANT INSERT, UPDATE ON rls_mg_stash TO rls_mg_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_mg_drop TO rls_mg_babsky;
+
+
+statement ok
+ALTER TABLE rls_mg_stash ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_mg_own ON rls_mg_stash USING (owner = current_user);
+
+
+statement ok
+SET ROLE rls_mg_babsky;
+
+
+statement ok
+MERGE INTO rls_mg_stash t USING rls_mg_drop s ON t.id = s.id WHEN MATCHED THEN UPDATE SET amount = s.amount;
+
+
+statement error
+INSERT INTO rls_mg_stash (id, owner, amount) VALUES (2, 'rls_mg_babsky', 7) ON CONFLICT (id) DO UPDATE SET amount = excluded.amount;
+----
+db error: ERROR: <slt:ignore>row violates row-level security policy<slt:ignore>
+
+
+statement ok
+INSERT INTO rls_mg_stash (id, owner, amount) VALUES (1, 'rls_mg_babsky', 7) ON CONFLICT (id) DO UPDATE SET amount = excluded.amount;
+
+
+statement error
+MERGE INTO rls_mg_stash t USING rls_mg_drop s ON t.id = s.id WHEN MATCHED AND t.owner = 'rls_mg_babsky' THEN UPDATE SET amount = s.amount;
+----
+db error: ERROR: permission denied for table rls_mg_stash<slt:ignore>
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT id, owner, amount FROM rls_mg_stash ORDER BY id;
+----
+id	owner	amount
+1	rls_mg_babsky	7
+2	rls_mg_arelav	2
+
+
+statement ok
+DROP TABLE rls_mg_stash;
+
+
+statement ok
+CREATE TABLE rls_mg_stash (id int PRIMARY KEY, owner text, amount int);
+
+
+statement ok
+INSERT INTO rls_mg_stash VALUES (1, 'rls_mg_arelav', 1), (2, 'rls_mg_arelav', 2), (3, 'rls_mg_arelav', 3);
+
+
+statement ok
+CREATE TABLE rls_mg_allowed (id int);
+
+
+statement ok
+INSERT INTO rls_mg_allowed VALUES (1), (3);
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON rls_mg_stash TO rls_mg_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_mg_allowed TO rls_mg_arelav;
+
+
+statement ok
+ALTER TABLE rls_mg_stash ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_mg_read ON rls_mg_stash FOR SELECT USING (true);
+
+
+statement ok
+CREATE POLICY rls_mg_add ON rls_mg_stash FOR INSERT WITH CHECK (true);
+
+
+statement ok
+CREATE POLICY rls_mg_bump ON rls_mg_stash FOR UPDATE USING (id IN (SELECT id FROM rls_mg_allowed)) WITH CHECK (true);
+
+
+statement ok
+CREATE POLICY rls_mg_gone ON rls_mg_stash FOR DELETE USING (id IN (SELECT id FROM rls_mg_allowed));
+
+
+statement ok
+SET ROLE rls_mg_arelav;
+
+
+statement error
+MERGE INTO rls_mg_stash t USING (VALUES (2)) s(id) ON t.id = s.id WHEN MATCHED THEN UPDATE SET amount = 20;
+----
+db error: ERROR: target row violates row-level security policy<slt:ignore>
+
+
+statement ok
+MERGE INTO rls_mg_stash t USING (VALUES (1)) s(id) ON t.id = s.id WHEN MATCHED THEN UPDATE SET amount = 10;
+
+
+statement error
+MERGE INTO rls_mg_stash t USING (VALUES (2)) s(id) ON t.id = s.id WHEN MATCHED THEN DELETE;
+----
+db error: ERROR: target row violates row-level security policy<slt:ignore>
+
+
+statement ok
+MERGE INTO rls_mg_stash t USING (VALUES (3)) s(id) ON t.id = s.id WHEN MATCHED THEN DELETE;
+
+
+statement error
+INSERT INTO rls_mg_stash VALUES (2, 'rls_mg_arelav', 9) ON CONFLICT (id) DO UPDATE SET amount = excluded.amount;
+----
+db error: ERROR: <slt:ignore>row violates row-level security policy<slt:ignore>
+
+
+statement ok
+INSERT INTO rls_mg_stash VALUES (1, 'rls_mg_arelav', 9) ON CONFLICT (id) DO UPDATE SET amount = excluded.amount;
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT id, owner, amount FROM rls_mg_stash ORDER BY id;
+----
+id	owner	amount
+1	rls_mg_arelav	9
+2	rls_mg_arelav	2
+
+
+statement ok
+DROP TABLE rls_mg_stash;
+
+
+statement ok
+DROP TABLE rls_mg_drop;
+
+
+statement ok
+DROP TABLE rls_mg_allowed;
+
+
+statement ok
+DROP ROLE rls_mg_arelav;
+
+
+statement ok
+DROP ROLE rls_mg_babsky;

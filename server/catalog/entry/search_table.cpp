@@ -472,6 +472,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::Copy(
   auto result = duckdb::make_uniq<SearchTableEntry>(
     catalog, ParentSchema(context), *bound,
     catalog.GetCatalogTransaction(context), _storage);
+  result->GetRowSecurity().policies = GetRowSecurity().policies;
   return result;
 }
 
@@ -501,12 +502,19 @@ duckdb::unique_ptr<SearchTableEntry> SearchTableEntry::Rebuilt(
     binder->BindCreateTableInfo(std::move(create), schema, info.bind_mode);
   info.new_dependencies = duckdb::make_uniq<duckdb::LogicalDependencyList>(
     std::move(bound->dependencies));
-  return duckdb::make_uniq<SearchTableEntry>(
+  auto result = duckdb::make_uniq<SearchTableEntry>(
     catalog, schema, *bound, catalog.GetCatalogTransaction(context), _storage);
+  result->GetRowSecurity().policies = GetRowSecurity().policies;
+  return result;
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
   duckdb::ClientContext& context, duckdb::AlterInfo& info) {
+  if (info.type == duckdb::AlterType::SET_ROW_SECURITY) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("row-level security is not supported for search tables"));
+  }
   if (info.type == duckdb::AlterType::SET_COLUMN_COMMENT) {
     auto& comment = info.Cast<duckdb::SetColumnCommentInfo>();
     auto create = GetInfo();
@@ -625,6 +633,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterOptions(
   auto result = duckdb::make_uniq<SearchTableEntry>(
     catalog, ParentSchema(context), *bound,
     catalog.GetCatalogTransaction(context), _storage);
+  result->GetRowSecurity().policies = GetRowSecurity().policies;
   if (auto* connection = connector::GetSereneDBContextPtr(context)) {
     connection->DeferToCommit([storage = _storage, options = result->_options] {
       storage->ApplyOptions(options);

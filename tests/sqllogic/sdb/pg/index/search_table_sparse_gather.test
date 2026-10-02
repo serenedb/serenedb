@@ -1,0 +1,108 @@
+statement ok
+CREATE TABLE ssg_src AS
+SELECT i,
+       CASE WHEN i % 13 = 0 THEN NULL ELSE 'name ' || (i % 997)::VARCHAR END AS low,
+       'https://www.example.com/in/' || md5(i::VARCHAR) AS high,
+       CASE WHEN i % 17 = 0 THEN NULL
+            ELSE list_transform(range(i % 5),
+                                j -> {'company': CASE WHEN (i + j) % 11 = 0 THEN NULL
+                                                      ELSE 'company ' || ((i * 7 + j) % 3001)::VARCHAR END,
+                                      'title': 'title ' || md5((i + j)::VARCHAR)}) END AS pos,
+       CASE WHEN i % 4999 = 7 THEN 'rare'
+            WHEN i = 20 OR i BETWEEN 12001 AND 14048 THEN 'mixed'
+            WHEN i BETWEEN 20001 AND 26000 AND i % 50 = 3 THEN 'band'
+            ELSE 'common' END AS tag
+FROM generate_series(1, 30000) g(i);
+
+statement ok
+CREATE TABLE ssg (i BIGINT PRIMARY KEY, low VARCHAR, high VARCHAR,
+                  pos STRUCT(company VARCHAR, title VARCHAR)[], tag VARCHAR)
+WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX ssg_idx ON ssg USING inverted (i, tag);
+
+statement count 30000
+INSERT INTO ssg SELECT i, low, high, pos, tag FROM ssg_src;
+
+statement ok
+VACUUM (REFRESH_TABLE) ssg;
+
+query
+SELECT (SELECT count(*) FROM ssg WHERE tag = 'rare') AS rare,
+       (SELECT count(*) FROM ssg WHERE tag = 'mixed') AS mixed,
+       (SELECT count(*) FROM ssg WHERE tag = 'band') AS band;
+----
+rare	mixed	band
+6	2049	119
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, low, high, pos FROM ssg WHERE tag = 'rare'
+  EXCEPT ALL
+  SELECT i, low, high, pos FROM ssg_src WHERE tag = 'rare');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, low, high, pos FROM ssg_src WHERE tag = 'rare'
+  EXCEPT ALL
+  SELECT i, low, high, pos FROM ssg WHERE tag = 'rare');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, low, high, pos FROM ssg WHERE tag = 'mixed'
+  EXCEPT ALL
+  SELECT i, low, high, pos FROM ssg_src WHERE tag = 'mixed');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, low, high, pos FROM ssg_src WHERE tag = 'mixed'
+  EXCEPT ALL
+  SELECT i, low, high, pos FROM ssg WHERE tag = 'mixed');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, low, high, pos FROM ssg WHERE tag = 'band'
+  EXCEPT ALL
+  SELECT i, low, high, pos FROM ssg_src WHERE tag = 'band');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, low, high, pos FROM ssg_src WHERE tag = 'band'
+  EXCEPT ALL
+  SELECT i, low, high, pos FROM ssg WHERE tag = 'band');
+----
+n
+0
+
+query
+SELECT i, low, list_transform(pos, p -> p.company) AS companies FROM ssg WHERE tag = 'rare' ORDER BY i;
+----
+i	low	companies
+7	name 7	{"company 49","company 50"}
+5006	name 21	{"company 2031"}
+10005	name 35	{}
+15004	name 49	{NULL,"company 2995","company 2996","company 2997"}
+20003	name 63	{"company 1975","company 1976","company 1977"}
+25002	name 77	{"company 956",NULL}
+
+statement ok
+DROP TABLE ssg;
+
+statement ok
+DROP TABLE ssg_src;

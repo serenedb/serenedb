@@ -1,0 +1,109 @@
+# A GROUP BY over an indexed keyword column answered from the term dictionary
+# (the ClickBench Q34/Q35 shape on a search table with an inverted index). The
+# scan projects the dictionary's term and count columns, which have no table
+# column behind them; optimizers that map scan columns to storage columns must
+# skip them. Results are checked against a regular table.
+
+statement ok
+CREATE TABLE tdg (id BIGINT PRIMARY KEY, u TEXT, k INTEGER)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX tdg_inv ON tdg USING inverted (u, k);
+
+statement ok
+CREATE TABLE tdg_src AS
+SELECT i AS id, 'https://site' || (i % 97)::VARCHAR || '.example/' || (i % 13)::VARCHAR AS u, (i % 7)::INTEGER AS k
+FROM generate_series(1, 20000) g(i);
+
+statement count 20000
+INSERT INTO tdg SELECT * FROM tdg_src;
+
+statement ok
+VACUUM (REFRESH_TABLE) tdg;
+
+query
+EXPLAIN SELECT u, count(*) AS c FROM tdg GROUP BY u ORDER BY c DESC, u LIMIT 5;
+----
+QUERY PLAN
+╭─ TOP_N ─────────────────────────────────╮
+│ Top: 5                                  │
+│ Order By: c DESC, u ASC                 │
+│ ~5 rows                                 │
+╰────────────────────┬────────────────────╯
+╭─ PROJECTION ───────┴────────────────────╮
+│ Projections: sdb_inverted_index_term$u, │
+│              CAST(#1 AS BIGINT)         │
+│ ~797 rows                               │
+╰────────────────────┬────────────────────╯
+╭─ HASH_GROUP_BY ────┴────────────────────╮
+│ Groups: #0                              │
+│ Aggregates: sum(#1)                     │
+│ ~797 rows                               │
+╰────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ───┴────────────────────╮
+│ Index: tdg                              │
+│ Lookup: search                          │
+│ TsDict: u                               │
+│ Projections:                            │
+│ sdb_inverted_index_term$u,              │
+│ sdb_inverted_index_term_count$u         │
+│ ~1,261 rows                             │
+╰─────────────────────────────────────────╯
+
+query
+SELECT count(*) AS n FROM (
+  (SELECT u, count(*) AS c FROM tdg GROUP BY u ORDER BY c DESC, u LIMIT 5)
+  EXCEPT ALL
+  (SELECT u, count(*) AS c FROM tdg_src GROUP BY u ORDER BY c DESC, u LIMIT 5));
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  (SELECT 1 AS one, u, count(*) AS c FROM tdg GROUP BY 1, u ORDER BY c DESC, u LIMIT 5)
+  EXCEPT ALL
+  (SELECT 1 AS one, u, count(*) AS c FROM tdg_src GROUP BY 1, u ORDER BY c DESC, u LIMIT 5));
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  (SELECT u, count(*) AS c FROM tdg GROUP BY u ORDER BY c DESC, u LIMIT 5 OFFSET 3)
+  EXCEPT ALL
+  (SELECT u, count(*) AS c FROM tdg_src GROUP BY u ORDER BY c DESC, u LIMIT 5 OFFSET 3));
+----
+n
+0
+
+# Enough distinct terms that the grouped result is estimated above DuckDB's
+# partitioned-execution threshold, which maps the scan's columns to storage.
+statement ok
+CREATE TABLE tdg_big (id BIGINT PRIMARY KEY, u TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX tdg_big_inv ON tdg_big USING inverted (u);
+
+statement count 7000000
+INSERT INTO tdg_big SELECT i, 'u' || (i % 6900000)::VARCHAR FROM generate_series(1, 7000000) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) tdg_big;
+
+query
+SELECT u, count(*) AS c FROM tdg_big GROUP BY u ORDER BY c DESC, u LIMIT 3;
+----
+u	c
+u1	2
+u10	2
+u100	2
+
+query
+SELECT 1 AS one, u, count(*) AS c FROM tdg_big GROUP BY 1, u ORDER BY c DESC, u LIMIT 2;
+----
+one	u	c
+1	u1	2
+1	u10	2

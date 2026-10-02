@@ -148,7 +148,7 @@
 	shallow = true
 [submodule "third_party/duckdb"]
 	path = third_party/duckdb
-	url = https://github.com/serenedb/duckdb.git
+	url = https://github.com/OrlovEvgeny/duckdb.git
 	shallow = true
 [submodule "third_party/duckdb_httpfs"]
 	path = third_party/duckdb_httpfs

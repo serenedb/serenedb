@@ -110,13 +110,15 @@ The table below shows the available mathematical functions.
 
 #### `@(x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Absolute value. Parentheses are optional if `x` is a column name. |
 | :--- | :--- |
 | **Example** | `@(-17.4)` |
 | **Result** | `17.4` |
 | **Alias** | `abs` |
+
+</div>
 
 #### `abs(x)`
 
@@ -384,12 +386,14 @@ Converts degrees to radians.
 
 #### `random()`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Returns a random number `x` in the range `0.0 <= x < 1.0`. |
 | :--- | :--- |
 | **Example** | `random()` |
 | **Result** | various |
+
+</div>
 
 #### `round_even(v NUMERIC, s INTEGER)`
 
@@ -411,11 +415,13 @@ Round to `s` decimal places. Values `s < 0` are allowed.
 
 #### `setseed(x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Sets the seed to be used for the random function. |
 | :--- | :--- |
 | **Example** | `setseed(0.42)` |
+
+</div>
 
 #### `sign(x)`
 

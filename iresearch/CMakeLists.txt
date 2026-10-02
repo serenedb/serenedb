@@ -107,6 +107,8 @@ set(IResearch_core_sources
     ./search/scorers/make_window.cpp
     ./search/scorers/root_window.cpp
     ./search/detail/collectors.cpp
+    ./search/detail/pattern_cache.cpp
+    ./search/detail/term_acceptor.cpp
     ./search/filters/filter.cpp
     ./search/queries/docs_mask_query.cpp
     ./search/filters/term_filter.cpp
@@ -361,12 +363,14 @@ set(IResearch_core_sources
     ./store/memory_directory.cpp
     ./store/store_utils.cpp
     ./utils/attributes.cpp
-    ./utils/automaton_utils.cpp
     ./utils/directory_utils.cpp
     ./utils/mmap_utils.cpp
     ./utils/index_utils.cpp
     ./utils/levenshtein_utils.cpp
     ./utils/wildcard_utils.cpp
+    ./utils/regexp_acceptor.cpp
+    ./utils/regexp_ngram.cpp
+    ./utils/conjunction_acceptor.cpp
     ./utils/regexp_utils.cpp
     ./utils/levenshtein_default_pdp.cpp
     ./utils/timer_utils.cpp
@@ -509,7 +513,6 @@ target_link_libraries(
     PUBLIC boost_boost
     PUBLIC simdjson
     PRIVATE simdutf
-    PUBLIC iresearch-ofst
     PUBLIC ${FASTTEXT_LIBRARY_STATIC}
     PUBLIC ${SIMD_LIBRARY_STATIC}
     PUBLIC ${FAISS_LIB}

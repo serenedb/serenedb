@@ -3,6 +3,7 @@ split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
+import DocCallout from "@site/src/components/DocCallout";
 
 # System Table Compatibility
 
@@ -135,9 +136,14 @@ SereneDB does not currently expose additional system views beyond the PostgreSQL
 
 The `information_schema` is a standardized, cross-database schema that allows portable system introspection. For compatibility, SereneDB follows the PostgreSQL Information Schema, which matches the ISO/IEC 9075-11 standard.
 
->The information schema views are not included in the default search path, so queries on it need to use the fully qualified
-> name:
-><SqlLogicTest id="compatibility/system-table-compatibility/example_003" />
+<DocCallout type="note">
+
+The information schema views are not included in the default search path, so queries on it need to use the fully qualified
+name:
+
+<SqlLogicTest id="compatibility/system-table-compatibility/example_003" />
+
+</DocCallout>
 
 | Table name | Support State | Details |
 |-----------|---------------|---------|

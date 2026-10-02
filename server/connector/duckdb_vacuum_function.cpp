@@ -162,8 +162,7 @@ struct ResolvedName {
 };
 
 ResolvedName ResolveName(duckdb::ClientContext& context,
-                         const VacuumBindData& bind, Scope scope,
-                         const ConnectionContext& conn_ctx) {
+                         const VacuumBindData& bind, Scope scope) {
   ResolvedName out;
   switch (scope) {
     case Scope::Database: {
@@ -210,7 +209,8 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
   }
 
   if (out.database.empty()) {
-    out.database = conn_ctx.GetDatabase();
+    out.database =
+      duckdb::DatabaseManager::GetDefaultDatabase(context).GetIdentifierName();
   }
   return out;
 }
@@ -641,7 +641,7 @@ void VacuumExecute(duckdb::ClientContext& context,
       ERR_MSG("VACUUM (", bind_data.option, ") does not take an argument"));
   }
 
-  auto target = ResolveName(context, bind_data, verb->scope, conn_ctx);
+  auto target = ResolveName(context, bind_data, verb->scope);
 
   pg::ProgressMetrics* progress = nullptr;
   if (auto client_state = context.registered_state->Get<SereneDBClientState>(

@@ -32,6 +32,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
 #include <iresearch/index/column_info.hpp>
+#include <iresearch/search/detail/pattern_cache.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -681,6 +682,29 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_pattern_cache_size",
+      {
+        LogicalTypeId::UBIGINT,
+        "Bytes of compiled search patterns (`ts_regexp`, `ts_like`, LIKE and "
+        "fused alternations over an inverted index) kept across queries, so "
+        "a pattern is compiled once per server rather than once per query. "
+        "The least recently used patterns are dropped first; a pattern in use "
+        "by a running query stays alive until it finishes. 0, the default, "
+        "keeps nothing: each query compiles its own patterns. Server-global.",
+        [] {
+          return duckdb::Value::UBIGINT(irs::PatternCache::kDefaultCapacity);
+        },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          irs::PatternCache::Instance().SetCapacity(value.GetValue<uint64_t>());
+        },
+        [](duckdb::ClientContext&, duckdb::SetScope) {
+          irs::PatternCache::Instance().SetCapacity(
+            irs::PatternCache::kDefaultCapacity);
+        },
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
       "sdb_disable_top_k_optimization",
       {
         LogicalTypeId::BOOLEAN,
@@ -866,8 +890,10 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::UBIGINT,
         "In-memory bytes an inverted-index or search-table segment writer "
         "fills before rolling over to a new on-disk segment (also the CREATE "
-        "INDEX backfill commit cadence). Per-object WITH (segment_memory_max = "
-        "...) overrides. Default 268435456 (256MB).",
+        "INDEX backfill commit cadence, and half of it is the write buffer a "
+        "serial search-table statement fills before it starts feeding the "
+        "index as it goes). Per-object WITH (segment_memory_max = ...) "
+        "overrides. Default 268435456 (256MB).",
         [] {
           return duckdb::Value::UBIGINT(
             catalog::InvertedIndexSettings{}.segment_memory_max);

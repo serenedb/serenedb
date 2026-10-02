@@ -56,6 +56,12 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   const duckdb::string& name, duckdb::AttachInfo& info,
   duckdb::AttachOptions& options) {
   if (info.path.empty()) {
+    if (info.on_conflict == duckdb::OnCreateConflict::ERROR_ON_CONFLICT &&
+        duckdb::DatabaseManager::Get(context).GetDatabase(info.name)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_DATABASE),
+                      ERR_MSG("database \"", info.name.GetIdentifierName(),
+                              "\" already exists"));
+    }
     auto& cluster = catalog::ClusterOf(context);
     const auto transaction = cluster.GetCatalogTransaction(context);
     auto entry = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)

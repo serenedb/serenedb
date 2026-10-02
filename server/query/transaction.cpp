@@ -152,6 +152,22 @@ void Transaction::OnStatementEnd() {
   // same view, so there is nothing to drop here.
 }
 
+void Transaction::PreCommit() {
+  // Search-table writes still held in the buffer reach iresearch through
+  // a sink built off the catalog, so they have to be fed while the DuckDB
+  // transaction is still active. Ahead of CommitVariables so that a throw
+  // here leaves the SET LOCAL overlays for RollbackVariables to undo on the
+  // rollback this refusal turns into.
+  if (_search_txn) {
+    _search_txn->FlushPending(GetClientContext());
+  }
+  // Revert SET LOCAL overlays (and clear the txn map) while the DuckDB
+  // transaction is still active so custom-impl settings (search_path,
+  // transaction_isolation) can use their normal set_local path (which may
+  // do catalog lookups).
+  CommitVariables();
+}
+
 irs::IndexWriter::Transaction& Transaction::EnsureIndexTransaction(
   duckdb::idx_t index_id, std::shared_ptr<search::InvertedIndexStorage> storage,
   std::shared_ptr<const catalog::InvertedIndexConfig> config) {

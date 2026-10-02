@@ -107,9 +107,13 @@ Read the contents of a file provided as parameter of a prepared statement into t
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram1" />
 
-> To ensure compatibility with PostgreSQL, SereneDB accepts `COPY ... FROM` statements that do not fully comply with the railroad diagram shown here. For example, the following is a valid statement:
->
-> <SqlLogicTest id="sql/statements/copy/index/example_023" />
+<DocCallout type="note">
+
+To ensure compatibility with PostgreSQL, SereneDB accepts `COPY ... FROM` statements that do not fully comply with the railroad diagram shown here. For example, the following is a valid statement:
+
+<SqlLogicTest id="sql/statements/copy/index/example_023" />
+
+</DocCallout>
 
 ## `COPY ... TO`
 

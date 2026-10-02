@@ -1,0 +1,239 @@
+statement ok
+DROP TABLE IF EXISTS fl_words;
+
+statement ok
+DROP TABLE IF EXISTS fl_docs;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS fl_en;
+
+statement ok
+CREATE TABLE fl_words (id INTEGER PRIMARY KEY, w VARCHAR NOT NULL);
+
+statement ok
+CREATE INDEX fl_words_idx ON fl_words USING inverted (w);
+
+statement ok
+INSERT INTO fl_words VALUES (1, 'cuts');
+
+statement ok
+VACUUM (REFRESH_TABLE) fl_words;
+
+statement ok
+INSERT INTO fl_words VALUES (2, 'bats'), (3, 'cuts'), (4, 'mats'), (5, 'dogs');
+
+statement ok
+VACUUM (REFRESH_TABLE) fl_words;
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(w)) AS t, unnest(ts_dict_score(w)) AS s
+FROM fl_words_idx WHERE w @@ ts_levenshtein('cats', 1)
+ORDER BY s DESC LIMIT 1;
+----
+QUERY PLAN
+╭─ TOP_N ─────────────────────────────────────╮
+│ Top: 1                                      │
+│ Order By:                                   │
+│ unnest(ts_dict_score(fl_words_idx.w)) DESC, │
+│ t ASC                                       │
+│ ~0 rows                                     │
+╰──────────────────────┬──────────────────────╯
+╭─ HASH_GROUP_BY ──────┴──────────────────────╮
+│ Groups: #0                                  │
+│ Aggregates: max(#1)                         │
+│ ~0 rows                                     │
+╰──────────────────────┬──────────────────────╯
+╭─ IRESEARCH_SCAN ─────┴──────────────────────╮
+│ Index: fl_words_idx                         │
+│ Index Filter:                               │
+│ ╭─ Levenshtein ────╮                        │
+│ │ Field: w(string) │                        │
+│ │ Target: cats     │                        │
+│ │ Max Terms: 1     │                        │
+│ ╰──────────────────╯                        │
+│ TsDict: w                                   │
+│ Projections:                                │
+│ sdb_inverted_index_term$w,                  │
+│ sdb_inverted_index_term_score$w             │
+│ ~1 row                                      │
+╰─────────────────────────────────────────────╯
+
+query
+SELECT unnest(ts_dict_agg(w)) AS t, unnest(ts_dict_score(w)) AS s,
+       unnest(ts_dict_count(w)) AS c
+FROM fl_words_idx WHERE w @@ ts_levenshtein('cats', 1)
+ORDER BY s DESC LIMIT 1;
+----
+t	s	c
+bats	0.75	1
+
+query
+SELECT unnest(ts_dict_agg(w)) AS t, unnest(ts_dict_score(w)) AS s,
+       unnest(ts_dict_count(w)) AS c
+FROM fl_words_idx WHERE w @@ ts_levenshtein('cats', 1)
+ORDER BY s DESC LIMIT 2 OFFSET 1;
+----
+t	s	c
+cuts	0.75	2
+mats	0.75	1
+
+query
+SELECT unnest(ts_dict_agg(w)) AS t, unnest(ts_dict_score(w)) AS s,
+       unnest(ts_dict_count(w)) AS c
+FROM fl_words_idx WHERE w @@ ts_levenshtein('cats', 1)
+ORDER BY s DESC, t LIMIT 2;
+----
+t	s	c
+bats	0.75	1
+cuts	0.75	2
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(w)) AS t, unnest(ts_dict_score(w)) AS s,
+       unnest(ts_dict_count(w)) AS c
+FROM fl_words_idx WHERE w @@ ts_levenshtein('cats', 1)
+ORDER BY s DESC, c DESC LIMIT 1;
+----
+QUERY PLAN
+╭─ TOP_N ───────────────────────────────────────────╮
+│ Top: 1                                            │
+│ Order By:                                         │
+│ unnest(ts_dict_score(fl_words_idx.w)) DESC,       │
+│ unnest(ts_dict_count(fl_words_idx.w)) DESC        │
+│ ~0 rows                                           │
+╰─────────────────────────┬─────────────────────────╯
+╭─ PROJECTION ────────────┴─────────────────────────╮
+│ Projections:                                      │
+│ sdb_inverted_index_term$w,                        │
+│ sdb_inverted_index_term_score$w,                  │
+│ CAST(sdb_inverted_index_term_count$w AS INTEGER)  │
+│ ~0 rows                                           │
+╰─────────────────────────┬─────────────────────────╯
+╭─ HASH_GROUP_BY ─────────┴─────────────────────────╮
+│ Groups: #0                                        │
+│ Aggregates: max(#1), sum(#2)                      │
+│ ~0 rows                                           │
+╰─────────────────────────┬─────────────────────────╯
+╭─ IRESEARCH_SCAN ────────┴─────────────────────────╮
+│ Index: fl_words_idx                               │
+│ Index Filter:                                     │
+│ ╭─ Levenshtein ──────────╮                        │
+│ │ Field: w(string)       │                        │
+│ │ Target: cats           │                        │
+│ │ Max Terms: 1 with ties │                        │
+│ ╰────────────────────────╯                        │
+│ TsDict: w                                         │
+│ Projections:                                      │
+│ sdb_inverted_index_term$w,                        │
+│ sdb_inverted_index_term_score$w,                  │
+│ sdb_inverted_index_term_count$w                   │
+│ ~1 row                                            │
+╰───────────────────────────────────────────────────╯
+
+query
+SELECT unnest(ts_dict_agg(w)) AS t, unnest(ts_dict_score(w)) AS s,
+       unnest(ts_dict_count(w)) AS c
+FROM fl_words_idx WHERE w @@ ts_levenshtein('cats', 1)
+ORDER BY s DESC, c DESC LIMIT 1;
+----
+t	s	c
+cuts	0.75	2
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(w)) AS t, unnest(ts_dict_score(w)) AS s
+FROM fl_words_idx WHERE w @@ ts_levenshtein('cats', 1) AND length(w) > 0
+ORDER BY s DESC LIMIT 1;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────────╮
+│ Top: 1                                     │
+│ Order By:                                  │
+│ unnest(ts_dict_score(fl_words_idx.w)) DESC │
+│ ~0 rows                                    │
+╰──────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ──────┴─────────────────────╮
+│ Groups: #0                                 │
+│ Aggregates: max(#1)                        │
+│ ~0 rows                                    │
+╰──────────────────────┬─────────────────────╯
+╭─ FILTER ─────────────┴─────────────────────╮
+│ Expression:                                │
+│ length(sdb_inverted_index_term$w) > 0      │
+│ ~1 row                                     │
+╰──────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
+│ Index: fl_words_idx                        │
+│ Index Filter:                              │
+│ ╭─ Levenshtein ────╮                       │
+│ │ Field: w(string) │                       │
+│ │ Target: cats     │                       │
+│ │ Max Terms: 0     │                       │
+│ ╰──────────────────╯                       │
+│ TsDict: w                                  │
+│ Projections:                               │
+│ sdb_inverted_index_term$w,                 │
+│ sdb_inverted_index_term_score$w            │
+│ ~1 row                                     │
+╰────────────────────────────────────────────╯
+
+query
+SELECT unnest(ts_dict_agg(w)) AS t, unnest(ts_dict_score(w)) AS s,
+       unnest(ts_dict_count(w)) AS c
+FROM fl_words_idx WHERE w @@ ts_levenshtein('cats', 1) AND length(w) > 0
+ORDER BY s DESC, c DESC LIMIT 1;
+----
+t	s	c
+cuts	0.75	2
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fl_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false);
+
+statement ok
+CREATE TABLE fl_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX fl_docs_idx ON fl_docs USING inverted (body fl_en);
+
+statement ok
+INSERT INTO fl_docs VALUES (1, 'cuts dogs');
+
+statement ok
+VACUUM (REFRESH_TABLE) fl_docs;
+
+statement ok
+INSERT INTO fl_docs VALUES (2, 'bats cuts'), (3, 'mats');
+
+statement ok
+VACUUM (REFRESH_TABLE) fl_docs;
+
+query
+SELECT t, s, c
+FROM (SELECT unnest(ts_dict_agg(body)) AS t, unnest(ts_dict_score(body)) AS s,
+             unnest(ts_dict_count(body)) AS c
+      FROM fl_docs_idx) sub
+WHERE t @@ ts_levenshtein('cats', 1)
+ORDER BY s DESC, c DESC LIMIT 1;
+----
+t	s	c
+cuts	0.75	2
+
+query
+SELECT t, s, c
+FROM (SELECT unnest(ts_dict_agg(body)) AS t, unnest(ts_dict_score(body)) AS s,
+             unnest(ts_dict_count(body)) AS c
+      FROM fl_docs_idx) sub
+WHERE t @@ ts_levenshtein('cats', 1)
+ORDER BY s DESC LIMIT 2;
+----
+t	s	c
+bats	0.75	1
+cuts	0.75	2
+
+statement ok
+DROP TABLE fl_docs;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY fl_en;
+
+statement ok
+DROP TABLE fl_words;

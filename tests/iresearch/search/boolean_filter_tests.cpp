@@ -28,6 +28,7 @@
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/detail/collectors.hpp>
 #include <iresearch/search/detail/column_collector.hpp>
+#include <iresearch/search/detail/pattern_cache.hpp>
 #include <iresearch/search/detail/window.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/automaton_filter.hpp>
@@ -47,7 +48,6 @@
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/tfidf.hpp>
 #include <iresearch/search/scorers/unscored.hpp>
-#include <iresearch/utils/automaton_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
 #include "filter_test_case_base.hpp"
@@ -2376,7 +2376,8 @@ const irs::AutomatonFilter* FusedOf(const irs::Filter::ptr& filter) {
 }
 
 bool FusedAccepts(const irs::AutomatonFilter& fused, std::string_view term) {
-  return bool(irs::Accept(fused.options().compiled->acceptor, B(term)));
+  const auto predicate = fused.options().source->Predicate();
+  return predicate && predicate->Accepts(B(term));
 }
 
 irs::ByRange& AddRange(irs::BooleanFilter& root, irs::Occur occur,
@@ -3321,7 +3322,7 @@ TEST(OrAcceptorFusion_test, translates_wildcard_escapes) {
   EXPECT_FALSE(FusedAccepts(*fused, "xzy"));
 }
 
-TEST(OrAcceptorFusion_test, keeps_non_perl_regexp) {
+TEST(OrAcceptorFusion_test, fuses_posix_regexp) {
   auto root = std::make_unique<irs::BooleanFilter>();
   Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, "ax");
   {
@@ -3335,7 +3336,35 @@ TEST(OrAcceptorFusion_test, keeps_non_perl_regexp) {
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {.fuse_seekable_acceptors = true});
 
-  EXPECT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_EQ(irs::PatternKind::Union, fused->options().kind);
+  EXPECT_EQ("ax%|(?:a.*e)", irs::DescribeUnion(fused->options().pattern));
+  EXPECT_TRUE(FusedAccepts(*fused, "apple"));
+  EXPECT_TRUE(FusedAccepts(*fused, "axis"));
+  EXPECT_TRUE(FusedAccepts(*fused, "ax\xFF"));
+  EXPECT_FALSE(FusedAccepts(*fused, "bxe"));
+}
+
+TEST(OrAcceptorFusion_test, keeps_each_child_exact_on_any_bytes) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, "ax");
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField, "b_d");
+  AsDisjunction(*root);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.fuse_seekable_acceptors = true});
+
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_EQ("ax%|b_d", irs::DescribeUnion(fused->options().pattern));
+  EXPECT_TRUE(FusedAccepts(*fused, "ax\xFF\x80"));
+  EXPECT_TRUE(FusedAccepts(*fused,
+                           "b\xE0\x80\x80"
+                           "d"));
+  EXPECT_FALSE(FusedAccepts(*fused,
+                            "b\xFF"
+                            "d"));
 }
 
 TEST(AndAcceptorFusion_test, fuses_same_field_acceptors) {
@@ -3349,11 +3378,73 @@ TEST(AndAcceptorFusion_test, fuses_same_field_acceptors) {
   const auto* fused = FusedOf(filter);
   ASSERT_NE(nullptr, fused);
   EXPECT_EQ(kFieldTestField, fused->field_id());
-  EXPECT_EQ(irs::bstring{B("ax%&%le")}, fused->options().pattern);
+  EXPECT_EQ(irs::bstring{B("%le&ax%")}, fused->options().pattern);
   EXPECT_TRUE(FusedAccepts(*fused, "axle"));
   EXPECT_TRUE(FusedAccepts(*fused, "axolotle"));
   EXPECT_FALSE(FusedAccepts(*fused, "apple"));
   EXPECT_FALSE(FusedAccepts(*fused, "axis"));
+}
+
+TEST(AndAcceptorFusion_test, joins_two_automata_into_one_walk) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  Append<irs::ByWildcard>(*root, irs::Occur::Must, kFieldTestField, "%le");
+  Append<irs::ByWildcard>(*root, irs::Occur::Must, kFieldTestField, "a_%");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.fuse_acceptor_intersections = true});
+
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_EQ(irs::bstring{B("%le&a_%")}, fused->options().pattern);
+  EXPECT_TRUE(FusedAccepts(*fused, "axle"));
+  EXPECT_TRUE(FusedAccepts(*fused, "apple"));
+  EXPECT_FALSE(FusedAccepts(*fused, "table"));
+  EXPECT_FALSE(FusedAccepts(*fused, "le"));
+  EXPECT_FALSE(FusedAccepts(*fused, "ab"));
+}
+
+TEST(AndAcceptorFusion_test, joins_every_pattern_and_a_fuzzy_one) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  Append<irs::ByWildcard>(*root, irs::Occur::Must, kFieldTestField, "%a%");
+  Append<irs::ByEditDistance>(*root, irs::Occur::Must, kFieldTestField,
+                              "sanctions")
+    .mutable_options()
+    ->max_distance = 1;
+  Append<irs::ByWildcard>(*root, irs::Occur::Must, kFieldTestField, "%e%");
+  Append<irs::ByWildcard>(*root, irs::Occur::Must, kFieldTestField, "s%");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.fuse_acceptor_intersections = true});
+
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_EQ(irs::bstring{B("%a%&%e%&sanctions~")}, fused->options().pattern);
+  EXPECT_TRUE(FusedAccepts(*fused, "sanctiens"));
+  EXPECT_TRUE(FusedAccepts(*fused, "sanctionse"));
+  EXPECT_FALSE(FusedAccepts(*fused, "sanctions"));
+  EXPECT_FALSE(FusedAccepts(*fused, "esanctions"));
+  EXPECT_FALSE(FusedAccepts(*fused, "senctiones"));
+}
+
+TEST(AndAcceptorFusion_test, literal_set_drives) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  Append<irs::ByWildcard>(*root, irs::Occur::Must, kFieldTestField, "%le");
+  {
+    auto& re = AddChild<irs::ByRegexp>(*root, irs::Occur::Must);
+    *re.mutable_field_id() = kFieldTestField;
+    re.mutable_options()->pattern = irs::bstring{B("apple|axle|axis")};
+  }
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.fuse_acceptor_intersections = true});
+
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_EQ(irs::bstring{B("apple|axle|axis&%le")}, fused->options().pattern);
+  EXPECT_TRUE(FusedAccepts(*fused, "apple"));
+  EXPECT_TRUE(FusedAccepts(*fused, "axle"));
+  EXPECT_FALSE(FusedAccepts(*fused, "axis"));
+  EXPECT_FALSE(FusedAccepts(*fused, "able"));
 }
 
 TEST(AndAcceptorFusion_test, noop_without_flag) {
@@ -3405,12 +3496,38 @@ TEST(AndAcceptorFusion_test, levenshtein_driver_bails) {
   Append<irs::ByEditDistance>(*root, irs::Occur::Must, kFieldTestField, "apple")
     .mutable_options()
     ->max_distance = 1;
+  Append<irs::ByEditDistance>(*root, irs::Occur::Must, kFieldTestField, "berry")
+    .mutable_options()
+    ->max_distance = 1;
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.fuse_acceptor_intersections = true});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(*filter);
+  const auto filters = node.Filters(irs::Occur::Must);
+  ASSERT_EQ(2, filters.size());
+  EXPECT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(),
+            filters[0]->type());
+}
+
+TEST(AndAcceptorFusion_test, levenshtein_yields_driver_to_automaton) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  Append<irs::ByEditDistance>(*root, irs::Occur::Must, kFieldTestField, "apple")
+    .mutable_options()
+    ->max_distance = 1;
   Append<irs::ByWildcard>(*root, irs::Occur::Must, kFieldTestField, "%le");
 
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {.fuse_acceptor_intersections = true});
 
-  EXPECT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_EQ(irs::bstring{B("%le&apple~")}, fused->options().pattern);
+  EXPECT_TRUE(FusedAccepts(*fused, "apple"));
+  EXPECT_TRUE(FusedAccepts(*fused, "aple"));
+  EXPECT_FALSE(FusedAccepts(*fused, "axle"));
+  EXPECT_FALSE(FusedAccepts(*fused, "apply"));
 }
 
 TEST(AndAcceptorFusion_test, levenshtein_predicate_fuses) {

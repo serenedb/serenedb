@@ -241,9 +241,9 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
   void AssertSnapshotEquality(const irs::IndexWriter& writer);
 
   void assert_index(irs::IndexFeatures features, size_t skip = 0,
-                    irs::automaton_table_matcher* matcher = nullptr) const {
+                    const irs::RegexpAcceptor* acceptor = nullptr) const {
     tests::AssertIndex(open_reader().GetImpl(), index(), features, skip,
-                       matcher);
+                       acceptor);
   }
 
   void SetUp() final {

@@ -15,6 +15,7 @@ target_sources(
         search_filter_printer.cpp
         duckdb_client_state.cpp
         scan/col_filter_verify.cpp
+        scan/deferred_verify.cpp
         scan/scan_barrier.cpp
         scan/scan_bind.cpp
         scan/scan_claim.cpp

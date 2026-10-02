@@ -18,9 +18,14 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/str_join.h>
+
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/wildcard_tokenizer.hpp>
 #include <iresearch/search/filters/regexp_filter.hpp>
+#include <iresearch/search/filters/wildcard_ngram_filter.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
@@ -80,6 +85,27 @@ void FromRegexp(BoolTarget parent, const FilterContext& ctx,
       column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
                     ERR_MSG("ts_regexp field is not VARCHAR"));
+  }
+  if (column_info.tokenizer.analyzer->type() ==
+      irs::Type<irs::analysis::WildcardTokenizer>::id()) {
+    auto& rf = AddMaybeNegated<irs::ByWildcardNGram>(parent, ctx, column_info);
+    rf.SetBoost(ctx.boost);
+    rf.SetScorer(&irs::ForceConstScore());
+    *rf.mutable_field_id() =
+      PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
+    auto* opts = rf.mutable_options();
+    *opts = {
+      irs::ViewCast<irs::byte_type>(std::string_view{pattern}),
+      syntax,
+      irs::utils::downCast<irs::analysis::WildcardTokenizer>(
+        *column_info.tokenizer.analyzer.get()),
+      (column_info.tokenizer.features & irs::IndexFeatures::Pos) ==
+        irs::IndexFeatures::Pos,
+    };
+    SDB_ASSERT(
+      irs::field_limits::valid(column_info.tokenizer.tokenizer_column));
+    opts->store_field_id = column_info.tokenizer.tokenizer_column;
+    return;
   }
   auto regexp = irs::CreateByRegexp(
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),

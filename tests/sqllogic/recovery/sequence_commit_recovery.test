@@ -73,7 +73,7 @@ query ok
 SELECT count(*) AS n, max(id) AS m FROM seq_rows;
 ----
 n	m
-1001	1033
+1001	1065
 
 
 connection after_crash
@@ -160,11 +160,6 @@ l	r
 
 connection after_decided
 statement ok
-SET sdb_faults = 'crash_before_catalog_commit';
-
-
-connection after_decided
-statement ok
 BEGIN;
 
 
@@ -174,6 +169,34 @@ SELECT nextval('seq_local') AS l, nextval('seq_other.public.seq_remote') AS r;
 ----
 l	r
 68	68
+
+
+connection after_decided
+statement ok
+COMMIT;
+
+
+connection after_decided
+statement ok
+SET sdb_faults = 'crash_before_catalog_commit';
+
+
+connection after_decided
+statement ok
+BEGIN;
+
+
+connection after_decided
+statement ok
+CREATE TABLE seq_other.public.seq_undecided (x INTEGER);
+
+
+connection after_decided
+query ok
+SELECT nextval('seq_local') AS l, nextval('seq_other.public.seq_remote') AS r;
+----
+l	r
+69	69
 
 
 connection after_decided

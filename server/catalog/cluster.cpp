@@ -113,6 +113,7 @@ void ClusterCatalog::SyncCatalogLogLoop() {
       log = std::move(_sync_log);
       offset = _sync_offset;
     }
+    SDB_WAIT_ON_FAILURE("pause_catalog_log_sync");
     try {
       log->GroupSync(offset);
     } catch (...) {

@@ -1,0 +1,257 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE SEQUENCE scs_seq;
+
+
+statement ok
+CREATE TABLE scs_ids (id BIGINT PRIMARY KEY, src TEXT);
+
+
+statement ok
+CREATE ROLE scs_reader;
+
+
+connection w1
+statement async ok
+INSERT INTO scs_ids SELECT nextval('scs_seq'), 'w1' FROM generate_series(1, 300000);
+
+
+connection w2
+statement async ok
+INSERT INTO scs_ids SELECT nextval('scs_seq'), 'w2' FROM generate_series(1, 300000);
+
+
+connection w3
+statement ok
+BEGIN;
+
+
+connection w3
+statement async ok
+INSERT INTO scs_ids SELECT nextval('scs_seq'), 'w3' FROM generate_series(1, 300000);
+
+
+connection default
+statement ok
+COMMENT ON SEQUENCE scs_seq IS 'one';
+
+
+connection default
+statement ok
+GRANT USAGE ON SEQUENCE scs_seq TO scs_reader;
+
+
+connection default
+statement ok
+BEGIN;
+
+
+connection default
+statement ok
+COMMENT ON SEQUENCE scs_seq IS 'rolled back';
+
+
+connection default
+query
+SELECT nextval('scs_seq') > 0 AS drawn;
+----
+drawn
+t
+
+
+connection default
+statement ok
+ROLLBACK;
+
+
+connection default
+statement ok
+REVOKE USAGE ON SEQUENCE scs_seq FROM scs_reader;
+
+
+connection default
+statement ok
+COMMENT ON SEQUENCE scs_seq IS 'two';
+
+
+wait
+
+
+connection w3
+statement ok
+ROLLBACK;
+
+
+connection default
+query
+SELECT count(*) AS n, count(DISTINCT id) AS d FROM scs_ids;
+----
+n	d
+600000	600000
+
+
+connection default
+query
+SELECT nextval('scs_seq') AS n;
+----
+n
+900002
+
+
+connection w1
+statement ok
+BEGIN;
+
+
+connection w1
+statement count 1000
+INSERT INTO scs_ids SELECT nextval('scs_seq'), 'w1 pending' FROM generate_series(1, 1000);
+
+
+connection default
+statement ok
+ALTER SEQUENCE scs_seq RENAME TO scs_seq_renamed;
+
+
+connection default
+statement ok
+BEGIN;
+
+
+connection default
+statement ok
+ALTER SEQUENCE scs_seq_renamed RESTART WITH 5000000;
+
+
+connection default
+query
+SELECT nextval('scs_seq_renamed') AS n;
+----
+n
+5000000
+
+
+connection default
+statement ok
+ROLLBACK;
+
+
+connection default
+query
+SELECT nextval('scs_seq_renamed') AS n;
+----
+n
+901003
+
+
+connection default
+statement ok
+ALTER SEQUENCE scs_seq_renamed RESTART WITH 2000000;
+
+
+connection default
+statement count 100
+INSERT INTO scs_ids SELECT nextval('scs_seq_renamed'), 'after restart' FROM generate_series(1, 100);
+
+
+connection w1
+statement ok
+COMMIT;
+
+
+connection w2
+statement ok
+BEGIN;
+
+
+connection w2
+query
+SELECT nextval('scs_seq_renamed') AS n;
+----
+n
+2000100
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT count(*) AS n, count(DISTINCT id) AS d, max(id) AS m FROM scs_ids;
+----
+n	d	m
+601100	601100	2000099
+
+
+connection after_crash
+query
+SELECT min(id) AS lo, max(id) AS hi FROM scs_ids WHERE src = 'w1 pending';
+----
+lo	hi
+900003	901002
+
+
+connection after_crash
+query
+SELECT nextval('scs_seq_renamed') > 2000099 AS above, obj_description('scs_seq_renamed'::regclass) AS c;
+----
+above	c
+t	two
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'scs_seq';
+----
+n
+0
+
+
+connection after_crash
+statement count 10
+INSERT INTO scs_ids SELECT nextval('scs_seq_renamed'), 'after crash' FROM generate_series(1, 10);
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_second_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_second_crash
+query
+SELECT count(*) AS n, count(DISTINCT id) AS d FROM scs_ids;
+----
+n	d
+601110	601110
+
+
+connection after_second_crash
+statement count 10
+INSERT INTO scs_ids SELECT nextval('scs_seq_renamed'), 'after second crash' FROM generate_series(1, 10);

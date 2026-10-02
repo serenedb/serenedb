@@ -443,7 +443,7 @@ query
 SELECT count(*), max(id) FROM clickclack_iceberg_jira_tickets;
 ----
 count	max
-5500	5532
+5500	5756
 
 
 # Drop everything cleanly.

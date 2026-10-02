@@ -33,6 +33,7 @@
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -122,6 +123,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
  private:
   struct ReplayOp;
   struct FeedQueue;
+  struct ReplaySlot;
   struct ReplaySession;
   struct LiveFeed;
   struct FeedTask;
@@ -145,6 +147,11 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
                                               duckdb::idx_t count);
   void ReplayAppend(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
   void ReplayDelete(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
+  bool CommitReplay(ReplaySession& session,
+                    std::span<irs::IndexWriter::Transaction* const> trxs,
+                    const search::WalCursor* cursor);
+  bool CommitReplaySlots(ReplaySession& session,
+                         const search::WalCursor* cursor);
 
   duckdb::idx_t _index_id = 0;
 

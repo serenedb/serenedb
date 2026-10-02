@@ -44,12 +44,12 @@
 #include <ranges>
 #include <span>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "catalog/catalog.h"
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
+#include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "search/search_db_wal.h"
 #include "search/search_table.h"
@@ -185,16 +185,21 @@ void RunSearchTableRecovery() {
                                         expr_context);
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
-    // Each DELETE op replays as one removal batch on the shared trx; feeding it
-    // in manifest order keeps the `_queries` ordering vs surrounding inserts.
+    // Each DELETE op replays as one removal batch on the shared trx; the record
+    // orders it against the surrounding rows, which is what reproduces the
+    // `_queries` stamping. Rowids are re-encoded here, the way they were when
+    // the rows were written.
     auto replay_delete = [&](uint64_t tick, duckdb::idx_t table_id,
-                             std::span<const std::string_view> pks) {
-      if (pks.empty()) {
+                             std::span<const int64_t> rows) {
+      if (rows.empty()) {
         return;
       }
       auto& ctx = ensure_ctx(table_id);
-      ctx.delete_sink->InitImpl(pks.size());
-      for (auto pk : pks) {
+      ctx.delete_sink->InitImpl(rows.size());
+      std::string pk;
+      for (const auto row : rows) {
+        pk.clear();
+        connector::primary_key::AppendGenerated(pk, static_cast<uint64_t>(row));
         ctx.delete_sink->DeleteRowImpl(pk);
       }
       ctx.delete_sink->FinishImpl();

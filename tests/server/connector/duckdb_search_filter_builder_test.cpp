@@ -585,11 +585,11 @@ irs::ByWildcardNGram& AddWildcardNGramFilter(Filter&& root, uint64_t column,
 }
 
 template<typename Filter>
-irs::ByRegexpNGram& AddRegexpNGramFilter(
+irs::ByWildcardNGram& AddRegexpNGramFilter(
   Filter&& root, uint64_t column, std::string_view pattern,
   irs::RegexpSyntax syntax = irs::RegexpSyntax::Perl) {
   auto column_analyzer = WildcardTokenizerProvider(column);
-  auto& rf = AddChild<irs::ByRegexpNGram>(root);
+  auto& rf = AddChild<irs::ByWildcardNGram>(root);
   *rf.mutable_field_id() = ExpectedFieldId(column);
   auto* opts = rf.mutable_options();
   *opts = {

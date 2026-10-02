@@ -55,13 +55,6 @@ void WriteFooterImpl(IndexOutput& out, const FooterWriter* write) {
     serializer.WriteObject(kFieldMeta, "meta", *write);
   }
   serializer.End();
-  // Block decoders may read past the block they decode (streamvbyte loads whole
-  // SIMD vectors). Keeping the footer at least that long keeps the over-read of
-  // a trailing block inside the file, and so inside its mapping.
-  if (const auto len = footer.GetPosition(); len < kMinFooterLen) {
-    static constexpr byte_type kZeros[kMinFooterLen]{};
-    footer.WriteData(kZeros, kMinFooterLen - len);
-  }
   const auto size = footer.GetPosition();
   SDB_ENSURE(size <= std::numeric_limits<uint32_t>::max(), "footer of ", size,
              " bytes does not fit its 32-bit length");

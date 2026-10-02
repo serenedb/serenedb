@@ -6,6 +6,7 @@ split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
+import DocCallout from "@site/src/components/DocCallout";
 
 <!-- markdownlint-disable MD001 -->
 
@@ -178,7 +179,7 @@ A pattern's size never changes its answer: a long alternation — hundreds of ge
 
 Anchors and word boundaries keep their RE2 meaning inside a term: `^` and `$` hold only at its ends (and, with `(?m)`, around line breaks), and `\b` and `\B` look at the characters on either side. Over whole values indexed with a `keyword()` dictionary, `ts_regexp('(?i)^(the\s+)?siemens\b.*')` matches `The Siemens AG` and `siemens financial services` but not `siemensland`.
 
-On a column indexed with [`generate_wildcard_ngrams`](./tokenizers/generate_wildcard_ngrams.md#searching), the pattern still matches whole terms, but the candidates come from the grams of the text the pattern requires and each one is re-checked against the stored term.
+On a column indexed with [`generate_wildcard_ngrams`](./tokenizers/generate_wildcard_ngrams.md#searching), the pattern still matches whole terms, but it goes through the same filter as [`ts_like`](#ts_like): the candidates come from the grams of the text the pattern requires, and each one is re-checked against the stored term unless the grams alone decide the match.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -247,7 +248,11 @@ The matcher counts one n-gram per position, so a dictionary that puts several to
 
 <SqlLogicTest id="sql/functions/full_text_search/ts_ngram" />
 
-> N-gram similarity is recall-oriented, and `threshold` is its only bound on candidate terms: there is no expansion cap here, unlike [`ts_levenshtein`](#ts_levenshtein). Very low thresholds on large vocabularies can be broad; raise `threshold` to tighten results.
+<DocCallout type="note">
+
+N-gram similarity is recall-oriented, and `threshold` is its only bound on candidate terms: there is no expansion cap here, unlike [`ts_levenshtein`](#ts_levenshtein). Very low thresholds on large vocabularies can be broad; raise `threshold` to tighten results.
+
+</DocCallout>
 
 #### `ts_between(min, max, min_incl, max_incl)` {#ts_between}
 
@@ -481,7 +486,11 @@ Ordered proximity: require the sub-queries to appear close together, in order.
 
 **How it works.** `##` is an **ordered** proximity operator: `a` must precede `b`. The integer counts the tokens *between* the two ends — `a ## b` (no integer) and `a ## 0 ## b` both mean immediate adjacency, `a ## 2 ## b` means exactly two intervening tokens. Order matters: `'quick' ## 'brown'` matches `quick brown` but `'brown' ## 'quick'` does not.
 
-> The integer in `##` counts the tokens *between* the operands (`0` = adjacent). The [`tsquery_phrase`](#tsquery_phrase) function and PostgreSQL's `<->` use the opposite convention, where `distance = 1` means adjacent. See [`tsquery_phrase`](#tsquery_phrase).
+<DocCallout type="note">
+
+The integer in `##` counts the tokens *between* the operands (`0` = adjacent). The [`tsquery_phrase`](#tsquery_phrase) function and PostgreSQL's `<->` use the opposite convention, where `distance = 1` means adjacent. See [`tsquery_phrase`](#tsquery_phrase).
+
+</DocCallout>
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |

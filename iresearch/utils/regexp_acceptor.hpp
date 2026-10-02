@@ -39,16 +39,6 @@
 
 namespace irs {
 
-struct RegexpTreeDeleter {
-  void operator()(re2::Regexp* re) const noexcept;
-};
-
-using RegexpTreePtr = std::unique_ptr<re2::Regexp, RegexpTreeDeleter>;
-
-// The tree `RegexpAcceptor` compiles its program from; null if the pattern
-// does not parse.
-RegexpTreePtr ParseRegexpTree(bytes_view pattern, RegexpSyntax syntax);
-
 class RegexpAcceptor {
  public:
   using PayloadType = byte_type;
@@ -99,6 +89,11 @@ class RegexpAcceptor {
     bytes_view pattern;
   };
 
+  struct ExemptKey {
+    bstring key;
+    bool prefix;
+  };
+
   static constexpr int64_t kDefaultMaxMem = 64 << 20;
   static constexpr size_t kDefaultMaxDfaMem = size_t{16} << 20;
 
@@ -121,7 +116,11 @@ class RegexpAcceptor {
 
   bytes_view LowerBound() const noexcept { return _lower; }
 
-  bytes_view RequiredSuffix() const noexcept { return _suffix; }
+  std::span<const bstring> RequiredSuffixes() const noexcept {
+    return _suffixes;
+  }
+
+  std::span<const ExemptKey> ExemptKeys() const noexcept { return _exempt; }
 
   bytes_view RequiredInfix() const noexcept { return _infix; }
 
@@ -244,7 +243,8 @@ class RegexpAcceptor {
   uint32_t _classes{0};
   State _start{nullptr};
   bstring _lower;
-  bstring _suffix;
+  std::vector<bstring> _suffixes;
+  std::vector<ExemptKey> _exempt;
   bstring _infix;
   std::vector<bstring> _literals;
   bool _finite{false};

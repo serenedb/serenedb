@@ -11,7 +11,7 @@ The `generate_shingles` template joins the tokens of a nested analyzer into word
 
 Where [`generate_ngrams`](./generate_ngrams.md) cuts a token into character fragments, `generate_shingles` builds terms above the token level, and the nested tokenizer decides what a token is. `FREQUENCY` and `POSITION` are the interesting feature flags here; `OFFSET` is not supported, because a shingle term spans several stretches of the source value.
 
-In the [expression form](../../../statements/create_text_search_dictionary/index.md#expression-form) the nested analyzer is the first argument and may be a chain, and the remaining arguments are the options below in order: `generate_shingles(split_text_csv(' ') | normalize_tokens(case := 'lower'), 2, 2)` sets `MIN_GRAM` and `MAX_GRAM`.
+In the [expression form](../../../statements/create_text_search_dictionary/index.md#the-analyzer-expression) the nested analyzer is the first argument and may be a chain, and the remaining arguments are the options below in order: `generate_shingles(split_text_csv(' ') | normalize_tokens(case := 'lower'), 2, 2)` sets `MIN_GRAM` and `MAX_GRAM`.
 
 **As a function:** `generate_shingles(value, min_gram := 2, max_gram := 2, output_unigrams := true, fallback_unigrams := false, store_tokens := true, frequent_words := [], filler_token := '', token_separator := ' ')` — the value first, then the options in the order below. See [tokenizer functions](./index.md) for how a value, a list and a chain of calls behave.
 

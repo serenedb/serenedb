@@ -37,6 +37,7 @@
 // sweep is to find where it stops fitting.
 
 #include <benchmark/benchmark.h>
+#include <re2/byte_set_finder.h>
 
 #include <bit>
 #include <cstdint>
@@ -214,12 +215,14 @@ void BmClassifyEq(benchmark::State& state) {
 
 void BmClassifyNibble(benchmark::State& state) {
   const auto n = static_cast<size_t>(state.range(0));
-  irs::analysis::classify::NibbleSet set;
+  irs::analysis::classify::ByteSet set;
   for (const char c : kDelimChars.substr(0, n)) {
     set.Add(static_cast<irs::byte_type>(c));
   }
+  re2::ByteSetFinder finder;
+  finder.Build(set.words.data());
   RunClassify(state, [&](const irs::byte_type* block) {
-    return irs::analysis::classify::ClassifyNibbleBlock(block, set);
+    return finder.Classify32(reinterpret_cast<const char*>(block));
   });
 }
 

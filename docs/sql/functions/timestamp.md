@@ -78,21 +78,25 @@ Subtract arguments, resulting in the time difference between the two timestamps.
 
 #### `age(timestamp)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Subtract from current_date. |
 | :--- | :--- |
 | **Example** | `age(TIMESTAMP '1992-09-20')` |
 | **Result** | `29 years 1 month 27 days 12:39:00.844` |
 
+</div>
+
 #### `ago(interval)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Subtracts an interval from the current timestamp, returning a timestamp in the past. Equivalent to `current_timestamp - interval`. |
 | :--- | :--- |
 | **Example** | `ago(INTERVAL 1 HOUR)` |
 | **Result** | `2024-11-30 12:28:48.895` (if current time is `2024-11-30 13:28:48.895`) |
+
+</div>
 
 #### `century(timestamp)`
 
@@ -102,12 +106,14 @@ Extracts the century of a timestamp.
 
 #### `current_localtimestamp()`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Returns the current timestamp with time zone (at the start of the transaction). |
 | :--- | :--- |
 | **Example** | `current_localtimestamp()` |
 | **Result** | `2024-11-30 13:28:48.895` |
+
+</div>
 
 #### `date_diff(part, starttimestamp, endtimestamp)`
 

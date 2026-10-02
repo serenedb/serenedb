@@ -44,7 +44,13 @@ std::string Extract(std::string_view pattern, size_t n = 3,
                     irs::RegexpSyntax syntax = irs::RegexpSyntax::Perl,
                     const irs::GramQueryLimits& limits = {}) {
   return irs::ToString(
-    irs::ExtractGramQuery(Bytes(pattern), syntax, n, kBoundary, limits));
+    irs::ExtractGramQuery(Bytes(pattern), syntax, n, kBoundary, limits).query);
+}
+
+bool Exact(std::string_view pattern, size_t n = 3) {
+  return irs::ExtractGramQuery(Bytes(pattern), irs::RegexpSyntax::Perl, n,
+                               kBoundary)
+    .exact;
 }
 
 struct Case {
@@ -106,21 +112,27 @@ TEST(RegexpNGramTest, shapes) {
     {R"([a-z]+@example\.com)", R"("@example.com\x1f")"},
     {"abc+", R"("\x1fabc")"},
     {"(ab)+(cd)+", R"(And("\x1fab", "abcd", "cd\x1f"))"},
-    {"a.c", "ALL"},
+    {"a.c", R"("c\x1f")"},
     {"a.c", R"(And("\x1fa", "c\x1f"))", 2},
-    {"(?s)a.c", "ALL"},
+    {"(?s)a.c", R"("c\x1f")"},
     {"gr[ae]y", R"(Or("\x1fgray\x1f", "\x1fgrey\x1f"))"},
     {"(abc)?", "ALL"},
     {"(abc)?", R"(Or("\x1f\x1f", "\x1fabc\x1f"))", 2},
-    {"", "ALL"},
+    {"", R"("\x1f\x1f")"},
     {"a*", "ALL"},
     {".*", "ALL"},
+    {"(?s).*", R"("\x1f")"},
     {"alpha", R"("\x1falpha\x1f")"},
     {"ab", R"("\x1fab\x1f")"},
     {"ab.*", R"("\x1fab")"},
     {"ab.*", R"("\x1fab")", 2},
-    {".*a", "ALL"},
-    {"x.*x", "ALL"},
+    {"a.*", R"("\x1fa")"},
+    {".*a", R"("a\x1f")"},
+    {".*a.*", R"("a")"},
+    {"x.*x", R"("x\x1f")"},
+    {"..*", "ALL"},
+    {"(?s)..*", "ALL"},
+    {".*_.", R"("_")"},
     {"(?m)^a", R"("\x1fa\x1f")"},
     {R"(\babc\b)", R"("\x1fabc\x1f")"},
     {R"(a\Bbc)", R"("\x1fabc\x1f")"},
@@ -132,10 +144,23 @@ TEST(RegexpNGramTest, shapes) {
     {R"(a\x41b)", R"("\x1faAb\x1f")"},
     {R"(a\pLbc)", R"("bc\x1f")"},
     {"abc", R"("\x1fabc\x1f")", 4},
-    {".*abc.*", "ALL", 4},
+    {".*abc.*", R"("abc")", 4},
     {".*abcd.*", R"("abcd")", 4},
   };
   Check(kCases);
+}
+
+TEST(RegexpNGramTest, exact_shapes) {
+  for (const std::string_view pattern :
+       {"abc", "^abc$", "(?s)abc.*", "(?s).*abc", "(?s).*abc.*", "(?s)a.*",
+        "(?s).*a", "(?s).*", "", R"([\s\S]*abc)", "(ab){2}"}) {
+    EXPECT_TRUE(Exact(pattern)) << pattern;
+  }
+  for (const std::string_view pattern :
+       {"abc.*", ".*abc", "a.c", "(?s)a.c", "(?s)ab.*cd", "(?s).+abc",
+        "(?i)abc", "[ab]cd", "(abc)?", "a+", R"(\babc)"}) {
+    EXPECT_FALSE(Exact(pattern)) << pattern;
+  }
 }
 
 TEST(RegexpNGramTest, posix) {
@@ -151,12 +176,12 @@ TEST(RegexpNGramTest, code_points) {
   // "sobak" and "zhuk" in Cyrillic, two bytes per letter.
   EXPECT_EQ(R"("\xd1\x81\xd0\xbe\xd0\xb1\xd0\xb0\xd0\xba")",
             Extract(".*\xD1\x81\xD0\xBE\xD0\xB1\xD0\xB0\xD0\xBA.*"));
-  EXPECT_EQ("ALL", Extract(".*\xD1\x81\xD0\xBE.*"));
+  EXPECT_EQ(R"("\xd1\x81\xd0\xbe")", Extract(".*\xD1\x81\xD0\xBE.*"));
   EXPECT_EQ(R"("\xd1\x81\xd0\xbe")", Extract(".*\xD1\x81\xD0\xBE.*", 2));
 
-  const auto zhuk =
-    irs::ExtractGramQuery(Bytes("(?i)\xD0\xB6\xD1\x83\xD0\xBA"),
-                          irs::RegexpSyntax::Perl, 3, kBoundary);
+  const auto zhuk = irs::ExtractGramQuery(Bytes("(?i)\xD0\xB6\xD1\x83\xD0\xBA"),
+                                          irs::RegexpSyntax::Perl, 3, kBoundary)
+                      .query;
   ASSERT_EQ(irs::GramQuery::Kind::Or, zhuk.kind);
   EXPECT_EQ(8U, zhuk.children.size());
   const irs::GramQuery lower{
@@ -200,9 +225,9 @@ TEST(RegexpNGramTest, limits) {
   EXPECT_EQ("ALL",
             Extract("[a-c]x", 3, irs::RegexpSyntax::Perl, {.max_class = 2}));
 
-  EXPECT_EQ(
-    R"(And("abcdefgh", "\x1fab", "gh\x1f"))",
-    Extract("abcdefgh", 3, irs::RegexpSyntax::Perl, {.max_exact_runes = 4}));
+  EXPECT_EQ(R"(And("abcdefgh", "\x1fab", "gh\x1f"))",
+            Extract(R"(\babcdefgh)", 3, irs::RegexpSyntax::Perl,
+                    {.max_exact_runes = 4}));
 
   EXPECT_EQ(R"(Or("abc", "def", "ghi"))", Extract(".*(abc|def|ghi).*"));
   EXPECT_EQ("ALL", Extract(".*(abc|def|ghi).*", 3, irs::RegexpSyntax::Perl,
@@ -218,7 +243,8 @@ TEST(RegexpNGramTest, limits) {
   }
   words += ").*";
   const auto query =
-    irs::ExtractGramQuery(Bytes(words), irs::RegexpSyntax::Perl, 3, kBoundary);
+    irs::ExtractGramQuery(Bytes(words), irs::RegexpSyntax::Perl, 3, kBoundary)
+      .query;
   EXPECT_LE(irs::LeafCount(query), irs::GramQueryLimits{}.max_leaves);
 }
 
@@ -286,8 +312,10 @@ TEST(RegexpNGramTest, matched_terms_satisfy_query) {
   for (const auto& pattern : patterns) {
     const irs::RegexpAcceptor acceptor{Bytes(pattern)};
     for (const auto n : {size_t{2}, size_t{3}}) {
-      const auto query = irs::ExtractGramQuery(
-        Bytes(pattern), irs::RegexpSyntax::Perl, n, kBoundary);
+      const auto query =
+        irs::ExtractGramQuery(Bytes(pattern), irs::RegexpSyntax::Perl, n,
+                              kBoundary)
+          .query;
       for (const auto& term : terms) {
         if (!acceptor.Matches(Bytes(term))) {
           continue;
@@ -299,4 +327,55 @@ TEST(RegexpNGramTest, matched_terms_satisfy_query) {
       }
     }
   }
+}
+
+TEST(RegexpNGramTest, exact_plans_decide_terms) {
+  static constexpr std::string_view kAlphabet[]{"a", "b", "\n", "\xD0\xB6"};
+  std::vector<std::string> terms{""};
+  for (size_t from = 0, len = 0; len != 4; ++len) {
+    const auto to = terms.size();
+    for (auto i = from; i != to; ++i) {
+      for (const auto letter : kAlphabet) {
+        terms.push_back(absl::StrCat(terms[i], letter));
+      }
+    }
+    from = to;
+  }
+
+  std::vector<std::string> patterns{
+    "", "a", "ab", "(?s).*", "(?s)a.*", "(?s).*a", "(?s).*ab.*", "^ab$",
+  };
+  static constexpr std::string_view kAtoms[]{
+    "a", "b", "\xD0\xB6", "ab", "(?s:.*)", ".*", "(?s:.)", ".", "\\n",
+  };
+  std::mt19937 rng{20261002};
+  for (int i = 0; i != 400; ++i) {
+    std::string pattern;
+    const auto atoms = rng() % 5;
+    for (size_t j = 0; j != atoms; ++j) {
+      absl::StrAppend(&pattern, kAtoms[rng() % std::size(kAtoms)]);
+    }
+    patterns.push_back(std::move(pattern));
+  }
+
+  size_t exact = 0;
+  for (const auto& pattern : patterns) {
+    const irs::RegexpAcceptor acceptor{Bytes(pattern)};
+    for (const auto n : {size_t{2}, size_t{3}}) {
+      const auto plan = irs::ExtractGramQuery(
+        Bytes(pattern), irs::RegexpSyntax::Perl, n, kBoundary);
+      if (!plan.exact) {
+        continue;
+      }
+      ++exact;
+      for (const auto& term : terms) {
+        const auto wrapped = absl::StrCat("\x1F", term, "\x1F");
+        EXPECT_EQ(acceptor.Matches(Bytes(term)),
+                  Eval(plan.query, Bytes(wrapped)))
+          << "pattern: " << pattern << ", n: " << n << ", term: " << term
+          << ", query: " << irs::ToString(plan.query);
+      }
+    }
+  }
+  EXPECT_LT(100U, exact);
 }

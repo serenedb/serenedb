@@ -27,13 +27,13 @@
 
 #include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/string.hpp"
+#include "re2/re2.h"
 
 namespace irs {
 
 // A condition every term matched by a regexp satisfies, after Cox's trigram
 // index query. `Literal` holds when `literal` is a substring of the term
-// wrapped in the boundary byte on both sides; a literal is never shorter than
-// the gram size in code points.
+// wrapped in the boundary byte on both sides.
 struct GramQuery {
   enum class Kind : uint8_t {
     All,
@@ -58,11 +58,16 @@ struct GramQueryLimits {
   size_t max_leaves{64};
 };
 
-// The pattern is parsed by `ParseRegexpTree`: a pattern it rejects gives
-// `None`, a construct the extraction does not model gives `All`.
-GramQuery ExtractGramQuery(bytes_view pattern, RegexpSyntax syntax,
-                           size_t gram_size, byte_type boundary,
-                           const GramQueryLimits& limits = {});
+struct GramPlan {
+  GramQuery query;
+  bool exact{false};
+};
+
+re2::RE2::Options RegexpOptions(RegexpSyntax syntax);
+
+GramPlan ExtractGramQuery(bytes_view pattern, RegexpSyntax syntax,
+                          size_t gram_size, byte_type boundary,
+                          const GramQueryLimits& limits = {});
 
 size_t LeafCount(const GramQuery& query) noexcept;
 

@@ -13,18 +13,29 @@ if [[ "${SKIP_SLOW_TESTS:-false}" == "true" ]]; then
 	FAST_FLAG="--fast"
 fi
 
+# ai_ollama drives a local Ollama container. Under TSan on arm64 inference is
+# slow enough that ai_generate's own HTTP timeout fires, and nothing
+# TSan-specific is exercised there anyway.
+OLLAMA_SKIP=""
+if [[ -n "${TSAN_OPTIONS:-}" && "$(uname -m)" == "aarch64" ]]; then
+	OLLAMA_SKIP='_ollama\.test_slow'
+fi
+
 # sqlite subtree is under sdb/pg/any via the any/pg symlink; --skip is a path regex.
 declare -a SEL
 JUNIT="tests-serenedb"
 case "${SDB_SQLLOGIC_SCOPE:-all}" in
-ours) SEL=(--test "sdb/**/*.test*" --skip "sqlite") ;;
+ours) SEL=(--test "sdb/**/*.test*" --skip "sqlite${OLLAMA_SKIP:+|$OLLAMA_SKIP}") ;;
 sqlite) SEL=(--test "sdb/pg/any/sqlite/**/*.test*") ;;
 biglake)
 	SEL=(--test "sdb/**/*_iceberg.test_slow" --jobs 2)
 	JUNIT="tests-serenedb-biglake"
 	export ICEBERG_BACKEND=biglake
 	;;
-all | *) SEL=(--test "sdb/**/*.test*") ;;
+all | *)
+	SEL=(--test "sdb/**/*.test*")
+	[[ -n "$OLLAMA_SKIP" ]] && SEL+=(--skip "$OLLAMA_SKIP")
+	;;
 esac
 
 exec ./run.sh \

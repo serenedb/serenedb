@@ -1444,6 +1444,16 @@ def test_docs_hyperlinks_do_not_widen_a_page(narrow_docs_terminal) -> None:
     assert "PAGER_USED" not in out
 
 
+def test_docs_hyperlinks_keep_the_sites_heading_id(docs_terminal) -> None:
+    docs_terminal.send(
+        ".docs sql/functions/search/full-text.md#Full-Text_Search_Functions"
+        "#TSQUERY_Constructors#ts_all(list)\r",
+        until=".docs sql/functions/search/full-text.md"
+              "#Full-Text_Search_Functions#TSQUERY_Operators#a_&&_b")
+    assert ("\x1b]8;;https://serenedb.com/docs/sql/functions/search/full-text"
+            "#a--b-and\x1b\\") in docs_terminal.raw
+
+
 def test_docs_tab_after_docs_lists_the_sections(docs_terminal) -> None:
     out = docs_terminal.send(".docs \t", until="compatibility")
     assert "cookbook" in out

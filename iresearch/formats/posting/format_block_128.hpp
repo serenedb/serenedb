@@ -24,7 +24,6 @@
 #include <streamvbyte.h>
 #include <streamvbytedelta.h>
 
-#include <limits>
 #include <string_view>
 
 #include "iresearch/formats/posting/common.hpp"
@@ -41,16 +40,6 @@ namespace irs {
 // It's not ideal, for an example avx512/avx2 sometimes better, they can be used
 // for even bitpacking. Or larger block size.
 // But in general we need to think more about size of data.
-// Rules out a streamvbyte block too large to decode out of the scratch buffer,
-// which must also hold the STREAMVBYTE_PADDING its decoder reads past the end.
-// Costs nothing: values/e_values is no larger than a block that big, and wins.
-IRS_FORCE_INLINE constexpr uint32_t DropIfOversized(uint32_t size) noexcept {
-  // Sizes are counted as the encoder counts them: u16 length plus payload.
-  constexpr uint32_t kMax = doc_limits::kBlockSize * sizeof(uint32_t) -
-                            STREAMVBYTE_PADDING + sizeof(uint16_t);
-  return size <= kMax ? size : std::numeric_limits<uint32_t>::max();
-}
-
 struct FormatTraits128 {
   static_assert(doc_limits::kBlockSize > 1);
   static_assert(doc_limits::kBlockSize % BitsRequired<byte_type>() == 0);
@@ -108,12 +97,6 @@ struct FormatTraits128 {
         // size_for_streamvbyte1234 += ByteSize1234(for_value);
         size_delta_streamvbyte1234 += ByteSize1234(delta_value);
       }
-
-      // Too large to decode into the scratch buffer with its padding, so not a
-      // candidate at all. Note best_size cannot carry this limit instead: it
-      // doubles as the payload length of whichever encoding wins.
-      size_streamvbyte1234 = DropIfOversized(size_streamvbyte1234);
-      size_delta_streamvbyte1234 = DropIfOversized(size_delta_streamvbyte1234);
 
       if (all_same) {
         if (delta_max == 1) {
@@ -292,9 +275,6 @@ struct FormatTraits128 {
 
         size_streamvbyte1234 += ByteSize1234(value);
       }
-
-      // See WriteTailDelta.
-      size_streamvbyte1234 = DropIfOversized(size_streamvbyte1234);
 
       if (all_same) {
         if (max == 1) {
@@ -562,7 +542,7 @@ struct FormatTraits128 {
       } break;
 
       case de_streamvbyte1234: {
-        const auto* const data = ReadDataPaddedDelta(type, in, buf);
+        const auto* const data = ReadDataDelta(type, in, buf);
         streamvbyte_decode(data, begin, len);
       } break;
       // case de_for_streamvbyte1234: {
@@ -570,7 +550,7 @@ struct FormatTraits128 {
       //   streamvbyte_for_decode(data, begin, len, prev);
       // } break;
       case de_delta_streamvbyte1234: {
-        const auto* const data = ReadDataPaddedDelta(type, in, buf);
+        const auto* const data = ReadDataDelta(type, in, buf);
         streamvbyte_delta_decode(data, begin, len, prev);
       } break;
 
@@ -668,7 +648,7 @@ struct FormatTraits128 {
       } break;
 
       case e_streamvbyte1234: {
-        const auto* const data = ReadDataPadded(type, in, buf);
+        const auto* const data = ReadData(type, in, buf);
         streamvbyte_decode(data, begin, len);
       } break;
 
@@ -1107,35 +1087,6 @@ struct FormatTraits128 {
     Encoding type, InputType& in, uint32_t* IRS_RESTRICT buf) {
     const auto size = Size(0, type, in);
     return ReadDataImpl(size, in, buf);
-  }
-
-  // streamvbyte reads up to STREAMVBYTE_PADDING bytes past the block, so ask
-  // the input for that slack too. Every file's footer is at least that long,
-  // so this only comes up short when the input hands out a window that ends
-  // mid-file -- a memory-file bucket, a read buffer -- and then we copy.
-  template<typename InputType>
-  IRS_FORCE_INLINE static const byte_type* ReadDataPaddedImpl(
-    uint32_t size, InputType& in, uint32_t* IRS_RESTRICT buf) {
-    const auto pos = in.Position();
-    if (const auto* data = in.ReadVolatile(size + STREAMVBYTE_PADDING)) {
-      // Only `size` of what we asked for was really consumed.
-      in.Seek(pos + size);
-      return data;
-    }
-    in.ReadData(reinterpret_cast<byte_type*>(buf), size);
-    return reinterpret_cast<byte_type*>(buf);
-  }
-
-  template<typename InputType>
-  IRS_FORCE_INLINE static const byte_type* ReadDataPaddedDelta(
-    DeltaEncoding type, InputType& in, uint32_t* IRS_RESTRICT buf) {
-    return ReadDataPaddedImpl(SizeDelta(type, in), in, buf);
-  }
-
-  template<typename InputType>
-  IRS_FORCE_INLINE static const byte_type* ReadDataPadded(
-    Encoding type, InputType& in, uint32_t* IRS_RESTRICT buf) {
-    return ReadDataPaddedImpl(Size(0, type, in), in, buf);
   }
 };
 

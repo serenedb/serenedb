@@ -84,16 +84,24 @@ uint64_t PatternsKey(
 void Collect(std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
              std::span<std::shared_ptr<const RegexpAcceptor>> owned,
              RegexpConjunction::Parts& start, bytes_view& lower,
-             bytes_view& suffix, bytes_view& infix) {
-  SDB_ASSERT(!patterns.empty() && patterns.size() <= owned.size());
+             std::span<const bstring>& suffixes, bytes_view& infix) {
+  SDB_ASSERT(patterns.size() <= owned.size());
+  const auto shortest = [](std::span<const bstring> set) {
+    size_t size = set.empty() ? 0 : std::numeric_limits<size_t>::max();
+    for (const auto& suffix : set) {
+      size = std::min(size, suffix.size());
+    }
+    return size;
+  };
   for (size_t i = 0; i != patterns.size(); ++i) {
     const auto& pattern = *patterns[i];
     SDB_ASSERT(pattern.ok());
     owned[i] = patterns[i];
     start[i] = pattern.Start();
     lower = std::max(lower, pattern.LowerBound());
-    if (pattern.RequiredSuffix().size() > suffix.size()) {
-      suffix = pattern.RequiredSuffix();
+    if (pattern.ExemptKeys().empty() &&
+        shortest(pattern.RequiredSuffixes()) > shortest(suffixes)) {
+      suffixes = pattern.RequiredSuffixes();
     }
     if (pattern.RequiredInfix().size() > infix.size()) {
       infix = pattern.RequiredInfix();
@@ -105,7 +113,9 @@ void Collect(std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
 
 std::byte* RowArena::Allocate(size_t bytes) {
   if (_used + bytes > _capacity) {
-    _capacity = std::max(kChunkBytes, bytes);
+    _capacity = std::max(
+      _chunks.empty() ? kFirstChunkBytes : std::min(_capacity * 2, kChunkBytes),
+      bytes);
     _chunks.emplace_back(
       std::make_unique_for_overwrite<std::byte[]>(_capacity));
     _used = 0;
@@ -121,7 +131,7 @@ RegexpConjunction::RegexpConjunction(
   size_t max_mem)
   : _size{patterns.size()}, _max_mem{max_mem} {
   Parts start{};
-  Collect(patterns, _patterns, start, _lower, _suffix, _infix);
+  Collect(patterns, _patterns, start, _lower, _suffixes, _infix);
   _classes =
     Refine([&](uint32_t label) { return PatternsKey(patterns, label); },
            _bytemap, _representative);
@@ -231,77 +241,94 @@ FuzzyConjunction::FuzzyConjunction(
   SDB_ASSERT(_fuzzy);
   Parts start{};
   _lower = _fuzzy->LowerBound();
-  Collect(patterns, _patterns, start, _lower, _suffix, _infix);
+  Collect(patterns, _patterns, start, _lower, _suffixes, _infix);
   const auto fuzzy_bytemap = _fuzzy->Bytemap();
-  _classes = Refine(
-    [&](uint32_t label) {
-      return (PatternsKey(patterns, label) << 8) | fuzzy_bytemap[label];
-    },
-    _bytemap, _representative);
+  if (patterns.empty()) {
+    _bytemap = fuzzy_bytemap;
+    for (uint32_t label = 0; label != kLabels; ++label) {
+      if (_bytemap[label] == _classes) {
+        _representative[_classes++] = static_cast<uint8_t>(label);
+      }
+    }
+  } else {
+    _classes = Refine(
+      [&](uint32_t label) {
+        return (PatternsKey(patterns, label) << 8) | fuzzy_bytemap[label];
+      },
+      _bytemap, _representative);
+  }
 
   std::lock_guard lock{_mutex};
   _dead = NewRow<Row>(_arena, _classes);
   _dead->dead = true;
   Loop(_dead, _classes);
-  _dead->ranged.store(true, std::memory_order_relaxed);
+  _dead->range.store(PackRange(1, 0), std::memory_order_relaxed);
   _unknown = NewRow<Row>(_arena, _classes);
   _unknown->unknown = true;
-  _unknown->lo = 0;
-  _unknown->hi = RegexpAcceptor::kMaxLabel;
   Loop(_unknown, _classes);
-  _unknown->ranged.store(true, std::memory_order_relaxed);
+  _unknown->range.store(PackRange(0, RegexpAcceptor::kMaxLabel),
+                        std::memory_order_relaxed);
   _start = InternLocked(start, _fuzzy->Start());
 }
 
+std::shared_ptr<const FuzzyConjunction> FuzzyConjunction::Make(
+  std::shared_ptr<const LevenshteinAcceptor> fuzzy, size_t max_mem) {
+  auto dfa = std::make_shared<const FuzzyConjunction>(
+    std::span<const std::shared_ptr<const RegexpAcceptor>>{}, std::move(fuzzy),
+    max_mem);
+  if ((dfa->_fuzzy->MaxStates() + 2) * RowBytes<Row>(dfa->_classes) > max_mem) {
+    return nullptr;
+  }
+  return dfa;
+}
+
 bool FuzzyConjunction::Matches(bytes_view term) const {
+  PayloadType payload{};
+  return Matches(term, payload);
+}
+
+bool FuzzyConjunction::Matches(bytes_view term, PayloadType& payload) const {
   for (size_t i = 0; i != _size; ++i) {
     if (!_patterns[i]->Matches(term)) {
       return false;
     }
   }
-  return _fuzzy->Matches(term);
+  return _fuzzy->Matches(term, payload);
 }
 
 FuzzyConjunction::State FuzzyConjunction::StepSlow(State from,
                                                    uint8_t c) const {
-  std::lock_guard lock{_mutex};
   auto& slot = const_cast<Row*>(from)->Next()[c];
+  const auto label = _representative[c];
+  const auto fuzzy = _fuzzy->Step(from->fuzzy, label);
+  bool alive = LevenshteinAcceptor::Alive(fuzzy);
+  Parts parts{};
+  for (size_t i = 0; alive && i != _size; ++i) {
+    parts[i] = _patterns[i]->Step(from->parts[i], label);
+    alive = !parts[i]->dead;
+  }
+  if (!alive) {
+    slot.store(_dead, std::memory_order_release);
+    return _dead;
+  }
+  std::lock_guard lock{_mutex};
   if (const auto* next = slot.load(std::memory_order_relaxed);
       next != nullptr) {
     return next;
   }
-  const auto label = _representative[c];
-  State next = _dead;
-  if (const auto fuzzy = _fuzzy->Step(from->fuzzy, label);
-      LevenshteinAcceptor::Alive(fuzzy)) {
-    Parts parts{};
-    size_t i = 0;
-    for (; i != _size; ++i) {
-      parts[i] = _patterns[i]->Step(from->parts[i], label);
-      if (parts[i]->dead) {
-        break;
-      }
-    }
-    if (i == _size) {
-      next = InternLocked(parts, fuzzy);
-    }
-  }
+  const auto* next = InternLocked(parts, fuzzy);
   slot.store(next, std::memory_order_release);
   return next;
 }
 
-void FuzzyConjunction::Range(Row* row) const {
-  std::lock_guard lock{_mutex};
-  if (row->ranged.load(std::memory_order_relaxed)) {
-    return;
-  }
+uint32_t FuzzyConjunction::Range(Row& row) const {
   uint32_t lo = 1;
   uint32_t hi = 0;
-  _fuzzy->LiveRange(row->fuzzy, lo, hi);
+  _fuzzy->LiveRange(row.fuzzy, lo, hi);
   for (size_t i = 0; i != _size && lo <= hi; ++i) {
     uint32_t part_lo = 1;
     uint32_t part_hi = 0;
-    _patterns[i]->LiveRange(row->parts[i], part_lo, part_hi);
+    _patterns[i]->LiveRange(row.parts[i], part_lo, part_hi);
     lo = std::max(lo, part_lo);
     hi = std::min(hi, part_hi);
   }
@@ -309,9 +336,9 @@ void FuzzyConjunction::Range(Row* row) const {
     lo = 1;
     hi = 0;
   }
-  row->lo = static_cast<uint8_t>(lo);
-  row->hi = static_cast<uint8_t>(hi);
-  row->ranged.store(true, std::memory_order_release);
+  const auto range = PackRange(lo, hi);
+  row.range.store(range, std::memory_order_release);
+  return range;
 }
 
 FuzzyConjunction::State FuzzyConjunction::InternLocked(
@@ -319,30 +346,29 @@ FuzzyConjunction::State FuzzyConjunction::InternLocked(
   if (!LevenshteinAcceptor::Alive(fuzzy)) {
     return _dead;
   }
-  bool accept = true;
-  bool unknown = false;
   for (size_t i = 0; i != _size; ++i) {
     if (parts[i]->dead) {
       return _dead;
     }
-    accept = accept && parts[i]->accept;
-    unknown = unknown || parts[i]->unknown;
   }
-  LevenshteinAcceptor::PayloadType distance{};
-  accept = accept && _fuzzy->Accept(fuzzy, distance);
-  const Key key{parts, {fuzzy.pstate, fuzzy.offset, fuzzy.acc, fuzzy.phase}};
-  if (const auto it = _rows.find(key); it != _rows.end()) {
+  const auto [it, inserted] = _rows.try_emplace(
+    Key{parts, {fuzzy.pstate, fuzzy.offset, fuzzy.acc, fuzzy.phase}}, nullptr);
+  if (!inserted) {
     return it->second;
   }
   if (_arena.Size() + RowBytes<Row>(_classes) > _max_mem) {
+    _rows.erase(it);
     return _unknown;
   }
   Row* row = NewRow<Row>(_arena, _classes);
   row->parts = parts;
   row->fuzzy = fuzzy;
-  row->accept = accept;
-  row->unknown = unknown;
-  _rows.emplace(key, row);
+  row->accept = _fuzzy->Accept(fuzzy, row->distance);
+  for (size_t i = 0; i != _size; ++i) {
+    row->accept = row->accept && parts[i]->accept;
+    row->unknown = row->unknown || parts[i]->unknown;
+  }
+  it->second = row;
   return row;
 }
 

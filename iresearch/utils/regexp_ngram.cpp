@@ -26,13 +26,14 @@
 
 #include <algorithm>
 #include <limits>
+#include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/regexp_acceptor.hpp"
 #include "re2/regexp.h"
 
 namespace irs {
@@ -44,6 +45,25 @@ using RuneSet = std::vector<Runes>;
 
 constexpr size_t kMaxDepth = 256;
 constexpr size_t kMaxVisits = 100000;
+
+struct TreeDeleter {
+  void operator()(re2::Regexp* re) const noexcept { re->Decref(); }
+};
+
+using Tree = std::unique_ptr<re2::Regexp, TreeDeleter>;
+
+Tree ParseTree(bytes_view pattern, RegexpSyntax syntax) {
+  const absl::string_view sv{reinterpret_cast<const char*>(pattern.data()),
+                             pattern.size()};
+  const auto flags =
+    static_cast<re2::Regexp::ParseFlags>(RegexpOptions(syntax).ParseFlags());
+  re2::RegexpStatus status;
+  const Tree parsed{re2::Regexp::Parse(sv, flags, &status)};
+  if (!parsed) {
+    return {};
+  }
+  return Tree{parsed->Simplify()};
+}
 
 // What is known about the strings a subexpression matches: either the exact
 // set, or sets their prefixes and suffixes are drawn from, plus a condition
@@ -581,18 +601,183 @@ class Extractor {
   bool _poisoned{false};
 };
 
+bool AnyButNewline(re2::Regexp* re) {
+  return re->op() == re2::kRegexpCharClass &&
+         re->cc()->size() == re2::Runemax && !re->cc()->Contains('\n');
+}
+
+class LikeShape {
+ public:
+  LikeShape(size_t gram_size, byte_type boundary)
+    : _n{gram_size}, _boundary{boundary} {}
+
+  std::optional<GramPlan> Extract(re2::Regexp* root,
+                                  const GramQueryLimits& limits) {
+    if (!Collect(root, 0)) {
+      return std::nullopt;
+    }
+    std::vector<bstring> parts;
+    bstring best;
+    const auto flush = [&](bytes_view piece) {
+      if (RuneLength(piece) >= _n) {
+        parts.emplace_back(piece);
+      } else if (best.size() <= piece.size()) {
+        best = piece;
+      }
+    };
+    bool exact = true;
+    bstring piece(1, _boundary);
+    for (size_t i = 0; i != _tokens.size(); ++i) {
+      const auto& token = _tokens[i];
+      if (token.unit == Unit::Literal) {
+        piece += token.bytes;
+        continue;
+      }
+      exact = exact && token.unit == Unit::Any && token.dot_nl &&
+              (i == 0 || i + 1 == _tokens.size());
+      flush(piece);
+      piece.clear();
+    }
+    if (!piece.empty()) {
+      piece += _boundary;
+      flush(piece);
+    }
+    GramPlan plan{.exact = exact};
+    if (!parts.empty()) {
+      for (auto& part : parts) {
+        plan.query =
+          Combine(Kind::And, std::move(plan.query),
+                  GramQuery{.kind = Kind::Literal, .literal = std::move(part)});
+      }
+      plan.query = Prune(std::move(plan.query), limits.max_leaves);
+    } else if (exact || best != bytes_view{&_boundary, 1}) {
+      SDB_ASSERT(!best.empty());
+      plan.query = {.kind = Kind::Literal, .literal = std::move(best)};
+    }
+    return plan;
+  }
+
+ private:
+  enum class Unit : uint8_t {
+    Literal,
+    One,
+    Any,
+  };
+
+  struct Token {
+    Unit unit;
+    bool dot_nl{false};
+    bstring bytes;
+  };
+
+  bool Collect(re2::Regexp* re, size_t depth) {
+    if (depth == kMaxDepth || (re->parse_flags() & re2::Regexp::Latin1) != 0) {
+      return false;
+    }
+    switch (re->op()) {
+      case re2::kRegexpConcat:
+        for (int i = 0; i != re->nsub(); ++i) {
+          if (!Collect(re->sub()[i], depth + 1)) {
+            return false;
+          }
+        }
+        return true;
+      case re2::kRegexpCapture:
+        return Collect(re->sub()[0], depth + 1);
+      case re2::kRegexpEmptyMatch:
+        return true;
+      case re2::kRegexpBeginText:
+        return _tokens.empty();
+      case re2::kRegexpEndText:
+        _end = true;
+        return true;
+      case re2::kRegexpLiteral: {
+        const auto rune = re->rune();
+        return Literal(re, {&rune, 1});
+      }
+      case re2::kRegexpLiteralString:
+        return Literal(re, {re->runes(), static_cast<size_t>(re->nrunes())});
+      case re2::kRegexpAnyChar:
+        return Wildcard(Unit::One, true);
+      case re2::kRegexpCharClass:
+        return AnyButNewline(re) && Wildcard(Unit::One, false);
+      case re2::kRegexpStar:
+      case re2::kRegexpPlus: {
+        auto* sub = re->sub()[0];
+        const bool dot_nl = sub->op() == re2::kRegexpAnyChar;
+        if (!dot_nl && !AnyButNewline(sub)) {
+          return false;
+        }
+        if (re->op() == re2::kRegexpPlus && !Wildcard(Unit::One, dot_nl)) {
+          return false;
+        }
+        return Wildcard(Unit::Any, dot_nl);
+      }
+      default:
+        return false;
+    }
+  }
+
+  bool Literal(re2::Regexp* re, std::span<const re2::Rune> runes) {
+    if (_end || (re->parse_flags() & re2::Regexp::FoldCase) != 0) {
+      return false;
+    }
+    if (_tokens.empty() || _tokens.back().unit != Unit::Literal) {
+      _tokens.push_back({.unit = Unit::Literal});
+    }
+    auto& bytes = _tokens.back().bytes;
+    for (auto rune : runes) {
+      if (IsSurrogate(rune)) {
+        return false;
+      }
+      char utf8[re2::UTFmax];
+      const int n = re2::runetochar(utf8, &rune);
+      bytes.append(reinterpret_cast<const byte_type*>(utf8),
+                   static_cast<size_t>(n));
+    }
+    return true;
+  }
+
+  bool Wildcard(Unit unit, bool dot_nl) {
+    if (_end) {
+      return false;
+    }
+    _tokens.push_back({.unit = unit, .dot_nl = dot_nl});
+    return true;
+  }
+
+  size_t _n;
+  byte_type _boundary;
+  std::vector<Token> _tokens;
+  bool _end{false};
+};
+
 }  // namespace
 
-GramQuery ExtractGramQuery(bytes_view pattern, RegexpSyntax syntax,
-                           size_t gram_size, byte_type boundary,
-                           const GramQueryLimits& limits) {
+re2::RE2::Options RegexpOptions(RegexpSyntax syntax) {
+  re2::RE2::Options options;
+  options.set_log_errors(false);
+  options.set_max_mem(int64_t{256} << 20);
+  if (syntax == RegexpSyntax::PosixEre) {
+    options.set_posix_syntax(true);
+    options.set_one_line(true);
+  }
+  return options;
+}
+
+GramPlan ExtractGramQuery(bytes_view pattern, RegexpSyntax syntax,
+                          size_t gram_size, byte_type boundary,
+                          const GramQueryLimits& limits) {
   SDB_ASSERT(gram_size != 0);
   SDB_ASSERT(boundary < 0x80);
-  auto tree = ParseRegexpTree(pattern, syntax);
+  const auto tree = ParseTree(pattern, syntax);
   if (!tree) {
-    return {.kind = Kind::None};
+    return {.query = {.kind = Kind::None}};
   }
-  return Extractor{gram_size, boundary, limits}.Extract(tree.get());
+  if (auto plan = LikeShape{gram_size, boundary}.Extract(tree.get(), limits)) {
+    return *std::move(plan);
+  }
+  return {.query = Extractor{gram_size, boundary, limits}.Extract(tree.get())};
 }
 
 size_t LeafCount(const GramQuery& query) noexcept {

@@ -181,7 +181,9 @@ statement ok
 VACUUM (COMPACT_TABLE) sc_off
 
 
-query
+# Compaction publishes the merged row group asynchronously, like the
+# interval-driven cases above, so poll rather than read once.
+query ok retry 60 backoff 500ms
 SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('sc_off') WHERE column_name = 'id';
 ----
 segments

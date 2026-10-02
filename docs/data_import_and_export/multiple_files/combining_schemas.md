@@ -5,6 +5,7 @@ split: page
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import DocCallout from "@site/src/components/DocCallout";
+import useBaseUrl from "@docusaurus/useBaseUrl";
 
 <!-- markdownlint-disable MD036 -->
 
@@ -30,7 +31,7 @@ Below is an example of how both methods work.
 
 By default, SereneDB unifies the columns of these different files **by position**. This means that the first column in each file is combined together, as well as the second column in each file, etc. For example, consider the following two files.
 
-<a href="/files/docs/flights1.csv" download>`flights1.csv`</a>:
+<a href={useBaseUrl("/files/docs/flights1.csv")} download>`flights1.csv`</a>:
 
 ```csv
 FlightDate|UniqueCarrier|OriginCityName|DestCityName
@@ -38,7 +39,7 @@ FlightDate|UniqueCarrier|OriginCityName|DestCityName
 1988-01-02|AA|New York, NY|Los Angeles, CA
 ```
 
-<a href="/files/docs/flights2.csv" download>`flights2.csv`</a>:
+<a href={useBaseUrl("/files/docs/flights2.csv")} download>`flights2.csv`</a>:
 
 ```csv
 FlightDate|UniqueCarrier|OriginCityName|DestCityName
@@ -55,7 +56,7 @@ This is equivalent to the SQL construct [`UNION ALL`](../../sql/query_syntax/set
 
 If you are processing multiple files that have different schemas, perhaps because columns have been added or renamed, it might be desirable to unify the columns of different files **by name** instead. This can be done by providing the `union_by_name` option. For example, consider the following two files, where `flights4.csv` has an extra column (`UniqueCarrier`).
 
-<a href="/files/docs/flights3.csv" download>`flights3.csv`</a>:
+<a href={useBaseUrl("/files/docs/flights3.csv")} download>`flights3.csv`</a>:
 
 ```csv
 FlightDate|OriginCityName|DestCityName
@@ -63,7 +64,7 @@ FlightDate|OriginCityName|DestCityName
 1988-01-02|New York, NY|Los Angeles, CA
 ```
 
-<a href="/files/docs/flights4.csv" download>`flights4.csv`</a>:
+<a href={useBaseUrl("/files/docs/flights4.csv")} download>`flights4.csv`</a>:
 
 ```csv
 FlightDate|UniqueCarrier|OriginCityName|DestCityName

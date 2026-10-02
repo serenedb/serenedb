@@ -210,8 +210,12 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   void VacuumRefresh();
   void VacuumCompact(uint32_t target_segments);
 
-  [[nodiscard]] unsigned RegisterWriter() { return _writers.Register(); }
+  [[nodiscard]] std::optional<unsigned> RegisterWriter() {
+    return _writers.Register();
+  }
   void DeregisterWriter(unsigned slot) noexcept { _writers.Deregister(slot); }
+  [[nodiscard]] bool ClaimTruncate() { return _writers.ClaimTruncate(); }
+  void ReleaseTruncate() noexcept { _writers.ReleaseTruncate(); }
   void DrainPriorWriters(absl::FunctionRef<bool()> cancelled);
 
   class [[nodiscard]] BuildClaim {

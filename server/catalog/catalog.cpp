@@ -216,7 +216,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   }
   if (op.is_truncate) {
     return planner.Make<connector::SereneDBSearchTruncate>(
-      entry->Storage(), op.estimated_cardinality,
+      entry->Storage(), entry->name, op.estimated_cardinality,
       context.transaction.IsAutoCommit());
   }
   auto& del = planner.Make<connector::SereneDBSearchDelete>(

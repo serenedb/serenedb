@@ -120,6 +120,8 @@ std::string KindName(CatalogType type) {
       return "foreign server";
     case CatalogType::SUBSCRIPTION_ENTRY:
       return "subscription";
+    case CatalogType::JOB_ENTRY:
+      return "job";
     default:
       return "object";
   }
@@ -170,6 +172,8 @@ CatalogType DefaultObjType(LogicalOperatorType type) {
       return CatalogType::MACRO_ENTRY;
     case LogicalOperatorType::LOGICAL_CREATE_TYPE:
       return CatalogType::TYPE_ENTRY;
+    case LogicalOperatorType::LOGICAL_CREATE_JOB:
+      return CatalogType::JOB_ENTRY;
     default:
       return CatalogType::TABLE_ENTRY;
   }
@@ -424,7 +428,8 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_CREATE_VIEW:
       case LogicalOperatorType::LOGICAL_CREATE_SEQUENCE:
       case LogicalOperatorType::LOGICAL_CREATE_MACRO:
-      case LogicalOperatorType::LOGICAL_CREATE_TYPE: {
+      case LogicalOperatorType::LOGICAL_CREATE_TYPE:
+      case LogicalOperatorType::LOGICAL_CREATE_JOB: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
         Stamp(*create.info, DefaultObjType(op.type), create.schema);
         if (_enforce) {
@@ -869,6 +874,9 @@ class Enforcer {
             Denied(*entry);
           }
           break;
+        case CatalogType::JOB_ENTRY:
+          RequireOwner(*entry);
+          break;
         default:
           break;
       }
@@ -955,6 +963,7 @@ class Enforcer {
       case CatalogType::INDEX_ENTRY:
       case CatalogType::TRIGGER_ENTRY:
       case CatalogType::TOKENIZER_ENTRY:
+      case CatalogType::JOB_ENTRY:
         return true;
       default:
         return false;

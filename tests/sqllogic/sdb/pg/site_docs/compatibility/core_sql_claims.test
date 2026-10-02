@@ -156,6 +156,16 @@ CREATE FOREIGN DATA WRAPPER ddl_misc_fdw;
 statement ok
 CREATE VIEW ddl_misc_v1 AS SELECT 1 AS x;
 
+# ddl_misc: Scheduled Jobs
+statement ok
+CREATE JOB ddl_misc_job AFTER 1 HOUR AS SELECT 1;
+
+statement ok
+EXECUTE JOB ddl_misc_job;
+
+statement ok
+DROP JOB ddl_misc_job;
+
 # ddl_misc: Databases
 statement ok
 DROP DATABASE IF EXISTS ddl_misc_db1;

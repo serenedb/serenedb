@@ -1,0 +1,224 @@
+# DOCS_TEST: example_001
+
+statement ok
+DROP JOB IF EXISTS doc_rollup;
+
+statement ok
+DROP TABLE IF EXISTS doc_events;
+
+statement ok
+DROP TABLE IF EXISTS doc_daily;
+
+statement ok
+CREATE TABLE doc_events (kind text, at timestamptz);
+
+statement ok
+INSERT INTO doc_events VALUES ('login', now()), ('login', now()), ('logout', now());
+
+statement ok
+CREATE TABLE doc_daily (kind text, events bigint);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE JOB doc_rollup EVERY 1 DAY OFFSET 2 HOURS AS
+    INSERT INTO doc_daily SELECT kind, count(*) FROM doc_events GROUP BY kind;
+
+statement ok
+EXECUTE JOB doc_rollup;
+
+query
+SELECT kind, events FROM doc_daily ORDER BY kind;
+----
+kind	events
+login	2
+logout	1
+
+# DOCS_TEST: example_002
+
+statement ok
+DROP JOB IF EXISTS doc_every_15m;
+
+statement ok
+DROP JOB IF EXISTS doc_monthly;
+
+statement ok
+DROP JOB IF EXISTS doc_backoff;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE JOB doc_every_15m EVERY INTERVAL '15 minutes' AS SELECT 1;
+
+statement ok
+CREATE JOB doc_monthly EVERY 1 MONTH OFFSET 1 DAY AS SELECT 1;
+
+statement ok
+CREATE JOB doc_backoff AFTER 30 SECONDS AS SELECT 1;
+
+query
+SELECT job_name, schedule_kind, schedule
+FROM duckdb_jobs() WHERE job_name IN ('doc_every_15m', 'doc_monthly', 'doc_backoff')
+ORDER BY job_name;
+----
+job_name	schedule_kind	schedule
+doc_backoff	AFTER	AFTER INTERVAL '00:00:30'
+doc_every_15m	EVERY	EVERY INTERVAL '00:15:00'
+doc_monthly	EVERY	EVERY INTERVAL '1 mon' OFFSET INTERVAL '1 day'
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER JOB doc_rollup SUSPEND;
+
+query
+SELECT suspended, next_run IS NULL AS idle FROM duckdb_jobs() WHERE job_name = 'doc_rollup';
+----
+suspended	idle
+t	t
+
+statement ok
+ALTER JOB doc_rollup SET SCHEDULE EVERY 6 HOURS;
+
+statement ok
+ALTER JOB doc_rollup RESUME;
+
+statement ok
+ALTER JOB doc_rollup RENAME TO doc_rollup_6h;
+
+query
+SELECT job_name, schedule, suspended FROM duckdb_jobs() WHERE job_name = 'doc_rollup_6h';
+----
+job_name	schedule	suspended
+doc_rollup_6h	EVERY INTERVAL '06:00:00'	f
+
+# DOCS_TEST: example_004
+
+statement ok
+DROP JOB IF EXISTS doc_broken;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE JOB doc_broken AFTER 1 HOUR AS INSERT INTO doc_daily VALUES ('oops', 'not a number');
+
+statement error
+EXECUTE JOB doc_broken;
+----
+db error: ERROR: Could not convert string 'not a number' to INT64<slt:ignore>
+
+query
+SELECT job_name, run_count, failure_count, last_status
+FROM duckdb_jobs() WHERE job_name IN ('doc_rollup_6h', 'doc_broken') ORDER BY job_name;
+----
+job_name	run_count	failure_count	last_status
+doc_broken	1	1	failed
+doc_rollup_6h	1	0	success
+
+query
+SELECT DISTINCT job_name, trigger, success FROM duckdb_job_runs()
+WHERE job_name IN ('doc_rollup', 'doc_broken') ORDER BY job_name;
+----
+job_name	trigger	success
+doc_broken	manual	f
+doc_rollup	manual	t
+
+# DOCS_TEST: example_005
+
+statement ok
+DROP ROLE IF EXISTS doc_job_owner;
+
+statement ok
+CREATE ROLE doc_job_owner;
+
+statement ok
+GRANT CREATE ON SCHEMA public TO doc_job_owner;
+
+statement ok
+GRANT INSERT ON doc_daily TO doc_job_owner;
+
+# DOCS_TEST_BODY
+
+statement ok
+SET ROLE doc_job_owner;
+
+statement ok
+CREATE JOB doc_owned AFTER 1 HOUR AS INSERT INTO doc_daily SELECT current_user, 0;
+
+statement ok
+RESET ROLE;
+
+statement ok
+EXECUTE JOB doc_owned;
+
+query
+SELECT kind FROM doc_daily WHERE events = 0;
+----
+kind
+doc_job_owner
+
+# DOCS_TEST: example_006
+
+statement ok
+DROP TABLE IF EXISTS doc_session_log;
+
+statement ok
+CREATE TABLE doc_session_log (n int);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEMPORARY JOB doc_session_job AFTER 1 HOUR AS INSERT INTO doc_session_log VALUES (1);
+
+statement ok
+EXECUTE JOB doc_session_job;
+
+query
+SELECT count(*) AS runs FROM doc_session_log;
+----
+runs
+1
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP JOB IF EXISTS doc_rollup_6h;
+
+statement ok
+DROP JOB IF EXISTS doc_does_not_exist;
+
+# DOCS_TEST_END
+
+statement ok
+DROP JOB doc_owned;
+
+statement ok
+DROP JOB doc_broken;
+
+statement ok
+DROP JOB doc_every_15m;
+
+statement ok
+DROP JOB doc_monthly;
+
+statement ok
+DROP JOB doc_backoff;
+
+statement ok
+DROP TABLE doc_session_log;
+
+statement ok
+DROP TABLE doc_daily;
+
+statement ok
+DROP TABLE doc_events;
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM doc_job_owner;
+
+statement ok
+DROP ROLE doc_job_owner;

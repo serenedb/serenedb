@@ -26,6 +26,7 @@
 #include <cstring>
 #include <deque>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/main/job_scheduler.hpp>
 #include <exception>
 #include <functional>
 #include <iresearch/search/filters/filter_optimizer.hpp>
@@ -137,6 +138,9 @@ int RunServer(int argc, char** argv) {
         // goes down.
         stop("network", [&] { network.stop(); });
       }
+      stop("jobs", [&] {
+        duckdb::JobScheduler::StopAll(irs::DuckDBEngine::Instance().instance());
+      });
       if (up_search) {
         stop("search", [&] { search.stop(); });
       }

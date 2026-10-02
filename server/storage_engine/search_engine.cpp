@@ -98,9 +98,6 @@ void SearchEngine::StartTasks(const std::shared_ptr<Storage>& storage) {
   }
   _loops.Consume(RefreshLoop<Storage>(storage),
                  CompactionCoordinator<Storage>(storage));
-  if constexpr (std::is_same_v<Storage, InvertedIndexStorage>) {
-    _loops.Consume(ReindexLoop(storage));
-  }
 }
 
 template void SearchEngine::StartTasks(

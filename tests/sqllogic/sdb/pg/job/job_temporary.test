@@ -1,0 +1,229 @@
+control substitution on
+
+statement ok
+DROP TABLE IF EXISTS jt_log;
+
+
+statement ok
+DROP TABLE IF EXISTS jt_secret;
+
+
+statement ok
+DROP TABLE IF EXISTS memory.main.jt_log;
+
+
+statement ok
+DETACH IF EXISTS jt_ext;
+
+
+statement ok
+DROP DATABASE IF EXISTS jt_serene;
+
+
+statement ok
+DROP ROLE IF EXISTS jt_arelav;
+
+
+system ok
+rm -f $__TEST_DIR__/jt_ext.duckdb*
+
+
+statement ok
+CREATE ROLE jt_arelav;
+
+
+statement ok
+CREATE TABLE jt_log (src text);
+
+
+statement ok
+CREATE TABLE jt_secret (v int);
+
+
+statement ok
+GRANT INSERT ON jt_log TO jt_arelav;
+
+
+statement ok
+CREATE TEMPORARY JOB jt_deadinside AFTER 1 HOUR AS INSERT INTO jt_log VALUES ('temp');
+
+
+query
+SELECT database_name, temporary FROM duckdb_jobs() WHERE job_name = 'jt_deadinside';
+----
+database_name	temporary
+temp	t
+
+
+statement ok
+EXECUTE JOB jt_deadinside;
+
+
+statement ok
+DROP JOB jt_deadinside;
+
+
+statement ok
+CREATE TABLE memory.main.jt_log (src text);
+
+
+statement ok
+CREATE JOB memory.main.jt_androed AFTER 1 HOUR AS INSERT INTO jt_log VALUES ('memory');
+
+
+statement ok
+EXECUTE JOB memory.main.jt_androed;
+
+
+query
+SELECT src FROM memory.main.jt_log;
+----
+src
+memory
+
+
+statement ok
+DROP JOB memory.main.jt_androed;
+
+
+statement ok
+DROP TABLE memory.main.jt_log;
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/jt_ext.duckdb' AS jt_ext;
+
+
+statement error
+CREATE JOB jt_ext.main.jt_babsky AFTER 1 HOUR AS SELECT 1;
+----
+db error: ERROR: <slt:ignore>Cannot write CREATE_JOB to a database file with DuckDB storage version<slt:ignore>
+
+
+statement ok
+DETACH jt_ext;
+
+
+statement ok
+CREATE DATABASE jt_serene;
+
+
+statement ok
+CREATE TABLE jt_serene.main.jt_log (src text);
+
+
+statement ok
+CREATE JOB jt_serene.main.jt_babsky AFTER 1 HOUR AS INSERT INTO jt_log VALUES ('attached');
+
+
+statement ok
+EXECUTE JOB jt_serene.main.jt_babsky;
+
+
+query
+SELECT src FROM jt_serene.main.jt_log;
+----
+src
+attached
+
+
+statement ok
+DROP JOB jt_serene.main.jt_babsky;
+
+
+statement ok
+CREATE TABLE jt_serene.main.jt_secret (v int);
+
+
+statement ok
+CREATE SCHEMA jt_serene.jt_arelav_space;
+
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA jt_serene.jt_arelav_space TO jt_arelav;
+
+
+statement ok
+SET ROLE jt_arelav;
+
+
+statement ok
+CREATE TABLE jt_serene.jt_arelav_space.jt_mine (src text);
+
+
+statement ok
+CREATE JOB jt_serene.jt_arelav_space.jt_peek AFTER 1 HOUR AS INSERT INTO jt_mine SELECT 'leak' FROM jt_serene.main.jt_secret;
+
+
+statement error
+EXECUTE JOB jt_serene.jt_arelav_space.jt_peek;
+----
+db error: ERROR: permission denied for table jt_secret<slt:ignore>
+
+
+statement ok
+CREATE JOB jt_serene.jt_arelav_space.jt_fine AFTER 1 HOUR AS INSERT INTO jt_mine VALUES ('fine');
+
+
+statement ok
+EXECUTE JOB jt_serene.jt_arelav_space.jt_fine;
+
+
+query
+SELECT src FROM jt_serene.jt_arelav_space.jt_mine;
+----
+src
+fine
+
+
+statement ok
+DROP JOB jt_serene.jt_arelav_space.jt_peek;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+REVOKE INSERT ON jt_log FROM jt_arelav;
+
+
+statement error
+DROP ROLE jt_arelav;
+----
+db error: ERROR: role "jt_arelav" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+DROP JOB jt_serene.jt_arelav_space.jt_fine;
+
+
+statement ok
+DROP TABLE jt_serene.jt_arelav_space.jt_mine;
+
+
+statement ok
+REVOKE USAGE, CREATE ON SCHEMA jt_serene.jt_arelav_space FROM jt_arelav;
+
+
+statement ok
+DROP DATABASE jt_serene;
+
+
+query
+SELECT src FROM jt_log ORDER BY src;
+----
+src
+temp
+
+
+statement ok
+DROP TABLE jt_secret;
+
+
+statement ok
+DROP TABLE jt_log;
+
+
+statement ok
+DROP ROLE jt_arelav;

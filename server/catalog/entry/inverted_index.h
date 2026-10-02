@@ -230,6 +230,8 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
 
   void OnDrop() final;
 
+  void SyncReindexJob(duckdb::CatalogTransaction transaction);
+
   bool ScanColumnSegmentInfo(
     const duckdb::QueryContext& context,
     duckdb::ColumnSegmentInfoScanState& state,

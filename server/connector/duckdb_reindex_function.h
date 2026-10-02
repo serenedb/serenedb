@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <duckdb/common/projection_index.hpp>
+#include <string_view>
 
 namespace duckdb {
 
@@ -34,6 +35,8 @@ class LogicalProjection;
 namespace sdb::connector {
 
 struct SereneDBCreateIndexInfo;
+
+inline constexpr std::string_view kReindexByIdPragma = "serenedb_reindex_by_id";
 
 // serenedb_reindex('index'[, schema[, catalog]]) -- REFRESH of a view-backed
 // inverted index: bring it to the current source state and publish the

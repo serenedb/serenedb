@@ -1,0 +1,199 @@
+statement ok
+DROP JOB IF EXISTS js_every;
+
+
+statement ok
+DROP JOB IF EXISTS js_after;
+
+
+statement ok
+DROP JOB IF EXISTS js_broken;
+
+
+statement ok
+DROP JOB IF EXISTS js_ddl;
+
+
+statement ok
+DROP TABLE IF EXISTS js_ticks;
+
+
+statement ok
+DROP TABLE IF EXISTS js_made_by_job;
+
+
+statement ok
+CREATE TABLE js_ticks (source text, at timestamptz);
+
+
+statement ok
+CREATE JOB js_every EVERY 1 SECOND AS INSERT INTO js_ticks SELECT 'every', now();
+
+
+query ok retry 80 backoff 250ms
+SELECT count(*) >= 2 AS fired FROM js_ticks WHERE source = 'every';
+----
+fired
+t
+
+
+query
+SELECT run_count >= 2 AS counted, failure_count, last_status, next_run > last_start AS rescheduled
+FROM duckdb_jobs() WHERE job_name = 'js_every';
+----
+counted	failure_count	last_status	rescheduled
+t	0	success	t
+
+
+query
+SELECT count(*) = count(DISTINCT date_trunc('second', at)) AS one_per_second
+FROM js_ticks WHERE source = 'every';
+----
+one_per_second
+t
+
+
+query
+SELECT bool_and(trigger = 'schedule' AND success) AS all_scheduled
+FROM duckdb_job_runs() WHERE job_name = 'js_every';
+----
+all_scheduled
+t
+
+
+statement ok
+ALTER JOB js_every SUSPEND;
+
+
+query ok retry 80 backoff 250ms
+SELECT running FROM duckdb_jobs() WHERE job_name = 'js_every';
+----
+running
+f
+
+
+statement ok
+CREATE TABLE js_frozen AS SELECT count(*) AS n FROM js_ticks WHERE source = 'every';
+
+
+statement ok
+CREATE TABLE js_probe (n int);
+
+
+statement ok
+CREATE JOB js_after AFTER 1 SECOND AS INSERT INTO js_probe VALUES (1);
+
+
+query ok retry 80 backoff 250ms
+SELECT count(*) >= 2 AS fired FROM js_probe;
+----
+fired
+t
+
+
+query
+SELECT (SELECT count(*) FROM js_ticks WHERE source = 'every') = (SELECT n FROM js_frozen) AS stayed_suspended;
+----
+stayed_suspended
+t
+
+
+statement ok
+ALTER JOB js_every RESUME;
+
+
+query ok retry 80 backoff 250ms
+SELECT (SELECT count(*) FROM js_ticks WHERE source = 'every') > (SELECT n FROM js_frozen) AS resumed;
+----
+resumed
+t
+
+
+statement ok
+ALTER JOB js_every SET SCHEDULE EVERY 1 HOUR;
+
+
+query ok retry 80 backoff 250ms
+SELECT running,
+  extract(minute FROM next_run AT TIME ZONE 'UTC') = 0
+    AND extract(second FROM next_run AT TIME ZONE 'UTC') = 0 AS on_the_hour
+FROM duckdb_jobs() WHERE job_name = 'js_every';
+----
+running	on_the_hour
+f	t
+
+
+statement ok
+CREATE JOB js_broken EVERY 1 SECOND AS INSERT INTO js_ticks VALUES ('broken', 'not a timestamp');
+
+
+query ok retry 80 backoff 250ms
+SELECT failure_count >= 2 AS failing, last_status FROM duckdb_jobs() WHERE job_name = 'js_broken';
+----
+failing	last_status
+t	failed
+
+
+query
+SELECT last_error LIKE '%not a timestamp%' AS explained, run_count = failure_count AS never_succeeded
+FROM duckdb_jobs() WHERE job_name = 'js_broken';
+----
+explained	never_succeeded
+t	t
+
+
+query
+SELECT count(*) FROM js_ticks WHERE source = 'broken';
+----
+count
+0
+
+
+statement ok
+DROP JOB js_broken;
+
+
+statement ok
+CREATE JOB js_ddl AFTER 1 SECOND AS CREATE TABLE IF NOT EXISTS js_made_by_job AS SELECT 42 AS answer;
+
+
+query ok retry 80 backoff 250ms
+SELECT answer FROM js_made_by_job;
+----
+answer
+42
+
+
+statement ok
+DROP JOB js_ddl;
+
+
+statement ok
+DROP JOB js_after;
+
+
+statement ok
+DROP JOB js_every;
+
+
+query
+SELECT count(*) FROM duckdb_jobs() WHERE starts_with(job_name, 'js_');
+----
+count
+0
+
+
+statement ok
+DROP TABLE js_made_by_job;
+
+
+statement ok
+DROP TABLE js_probe;
+
+
+statement ok
+DROP TABLE js_frozen;
+
+
+statement ok
+DROP TABLE js_ticks;

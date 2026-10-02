@@ -42,8 +42,8 @@ namespace sdb {
 // The single background work pool: drop tasks today, and (later) search
 // refresh/compaction/cleanup and object-store prefetch. One fair yaclib thread
 // pool so blocking / latency-tolerant work stays off the io threads (which only
-// do socket IO) and off the DuckDB cpu pool (which runs queries). Sized by
-// --server_background_threads. Eventually merges into DuckDB's async pool.
+// do socket IO) and off the DuckDB cpu pool (which runs queries). Eventually
+// merges into DuckDB's async pool.
 //
 // Delays reuse the network io workers' asio timers: arming a steady_timer there
 // is free and the fire callback only re-enqueues onto this pool, so io threads

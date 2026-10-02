@@ -172,6 +172,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   duckdb::shared_ptr<duckdb::WriteAheadLog> _catalog_log;
   std::atomic_size_t _commits_in_flight{0};
   std::atomic_uint64_t _catalog_generation{1};
+  std::atomic<duckdb::idx_t> _generation_version{0};
   std::mutex _roles_mutex;
   uint64_t _roles_generation = 0;
   std::shared_ptr<const auth::RoleGraph> _roles;

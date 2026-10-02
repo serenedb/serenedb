@@ -150,7 +150,12 @@ void ClusterCatalog::BeginCatalogLogCommit() {
 }
 
 void ClusterCatalog::EndCatalogLogCommit() {
-  _catalog_generation.fetch_add(1, std::memory_order_acq_rel);
+  const auto version = duckdb::DuckTransactionManager::Get(GetAttached())
+                         .GetLastCommittedCatalogVersion();
+  if (_generation_version.exchange(version, std::memory_order_acq_rel) !=
+      version) {
+    _catalog_generation.fetch_add(1, std::memory_order_acq_rel);
+  }
   _commits_in_flight.fetch_sub(1, std::memory_order_acq_rel);
 }
 

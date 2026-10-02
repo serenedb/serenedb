@@ -60,6 +60,8 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     return duckdb::SqlCompatibility::POSTGRES;
   }
 
+  bool SupportsSereneDBCompression() const final { return true; }
+
   void Initialize(bool load_builtin) final;
 
   void OnDetach(duckdb::ClientContext& context) final;

@@ -12,6 +12,13 @@ function(add_bench FILE_NAME)
 endfunction()
 
 add_bench(bm25_byte_norm)
+add_bench(col_codecs)
+target_include_directories(
+    serenedb-bench-micro-col_codecs
+    SYSTEM
+    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fsst
+)
+add_bench(col_codecs_real)
 add_bench(ascii_probe)
 add_bench(vector_access)
 add_bench(crc32c)
@@ -55,6 +62,7 @@ add_bench(ci_compare)
 add_bench(socket_write)
 add_bench(duckdb_collector)
 add_bench(columnstore_vs_duckdb)
+add_bench(nested_columns)
 add_bench(select_thresholds)
 add_bench(clustering)
 add_bench(simd_base64)

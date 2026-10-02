@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <duckdb/common/allocator.hpp>
@@ -42,6 +43,7 @@
 #include <duckdb/storage/buffer/buffer_handle.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
+#include <duckdb/storage/object_cache.hpp>
 #include <duckdb/storage/segment/uncompressed.hpp>
 #include <duckdb/storage/statistics/array_stats.hpp>
 #include <duckdb/storage/statistics/list_stats.hpp>
@@ -54,6 +56,8 @@
 
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/column/array_column_reader.hpp"
+#include "iresearch/formats/column/codecs/dictionary_cache.hpp"
+#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/formats/column/list_column_reader.hpp"
@@ -84,8 +88,8 @@ ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::BinaryDeserializer& d,
   const auto file_offset = d.ReadProperty<uint64_t>(2, "file_offset");
   const auto byte_size = d.ReadProperty<uint64_t>(3, "byte_size");
   auto stats = d.ReadProperty<duckdb::BaseStatistics>(4, "statistics");
-  auto& cfg = duckdb::DBConfig::GetConfig(d.Get<duckdb::DatabaseInstance&>());
-  auto codec = cfg.TryGetCompressionFunction(compression_type, physical);
+  const auto* codec = codecs::GetCodec(d.Get<duckdb::DatabaseInstance&>(),
+                                       compression_type, physical);
   if (!codec) [[unlikely]] {
     throw IndexError{absl::StrCat(
       "Column block uses compression ", static_cast<uint32_t>(compression_type),
@@ -93,7 +97,7 @@ ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::BinaryDeserializer& d,
       "newer release")};
   }
   return ColumnBlockMeta{std::move(stats), tuple_count, file_offset, byte_size,
-                         codec.get()};
+                         codec};
 }
 
 void SerializeBlockMetas(duckdb::BinarySerializer& s, duckdb::field_id_t id,
@@ -220,6 +224,10 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
     _array_size{_type.id() == duckdb::LogicalTypeId::ARRAY
                   ? duckdb::ArrayType::GetSize(_type)
                   : 0} {
+  if (_type.InternalType() == duckdb::PhysicalType::VARCHAR &&
+      !_segments.empty()) {
+    _touched = std::make_unique<std::atomic<bool>[]>(_segments.size());
+  }
   auto stats = duckdb::BaseStatistics::CreateEmpty(
     _segments.empty() ? _type : _segments.front().statistics.GetType());
   _offsets.reserve(_segments.size() + 1);
@@ -230,6 +238,10 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
     stats.Merge(m.statistics);
   }
   FinishStats(std::move(stats));
+}
+
+std::string ColumnReader::DictionaryCacheKey(size_t block) const {
+  return codecs::DictionaryCacheKey(_file_id, _segments[block].file_offset);
 }
 
 bool ColumnReader::NullsInData() const noexcept {
@@ -314,7 +326,11 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
       /*block_id=*/0, /*offset=*/0, byte_size, /*segment_state=*/nullptr);
   }
 
-  auto handle = ctx.RegisterColBlock(m.file_offset, byte_size);
+  ReadContext::CacheSlot slot;
+  if (_touched && duckdb::IsSereneDBCompressionType(codec.type)) {
+    slot = {.key = DictionaryCacheKey(w.block), .touched = &_touched[w.block]};
+  }
+  auto handle = ctx.RegisterColBlock(m.file_offset, byte_size, std::move(slot));
   auto segment = std::make_unique<duckdb::ColumnSegment>(
     db, std::move(handle), duckdb::ColumnSegmentType::PERSISTENT,
     static_cast<duckdb::idx_t>(m.tuple_count), codec, std::move(stats),
@@ -364,9 +380,10 @@ void ColumnReader::Readahead(size_t block, ReadContext& ctx,
   s->advised_end = b;
 }
 
-ColumnReader::ScanState ColumnReader::InitScan(ReadContext& ctx) const {
+ColumnReader::ScanState ColumnReader::InitScan(
+  std::shared_ptr<ReadContext> ctx) const {
   ScanState s;
-  s.ctx = &ctx;
+  s.ctx = std::move(ctx);
   if (!_segments.empty()) {
     s.window = BlockWindow{0, _offsets[0], _offsets[1]};
   }
@@ -374,11 +391,50 @@ ColumnReader::ScanState ColumnReader::InitScan(ReadContext& ctx) const {
   s.st.internal_index = 0;
   s.initialized = false;
   s.child_states.reserve(_children.size() + 1);
-  s.child_states.push_back(_validity ? _validity->InitScan(ctx) : ScanState{});
+  s.child_states.push_back(_validity ? _validity->InitScan(s.ctx)
+                                     : ScanState{});
   for (const auto& child : _children) {
-    s.child_states.push_back(child->InitScan(ctx));
+    s.child_states.push_back(child->InitScan(s.ctx));
   }
   return s;
+}
+
+namespace {
+
+struct ScannedStrings final : duckdb::AuxiliaryDataHolder {
+  ScannedStrings(std::shared_ptr<ReadContext> ctx,
+                 duckdb::BufferHandle pin) noexcept
+    : ctx{std::move(ctx)}, pin{std::move(pin)} {}
+
+  bool CertifiesImmutablePayloads() const override { return true; }
+
+  std::shared_ptr<ReadContext> ctx;
+  duckdb::BufferHandle pin;
+};
+
+}  // namespace
+
+void ColumnReader::CertifyStrings(ScanState& s, duckdb::ColumnSegment& segment,
+                                  duckdb::Vector& result) const {
+  if (s.ctx.use_count() == 0 ||
+      _type.InternalType() != duckdb::PhysicalType::VARCHAR) {
+    return;
+  }
+  auto& block = segment.GetBlockHandle();
+  if (!block) {
+    return;
+  }
+  auto* target = &result;
+  if (result.GetVectorType() == duckdb::VectorType::DICTIONARY_VECTOR) {
+    if (s.certified_dictionary) {
+      return;
+    }
+    s.certified_dictionary = true;
+    target = &duckdb::DictionaryVector::Child(result);
+  }
+  auto& bm = s.ctx->Database().GetBufferManager();
+  duckdb::StringVector::AddAuxiliaryData(
+    *target, duckdb::make_uniq<ScannedStrings>(s.ctx, bm.Pin(block)));
 }
 
 void ColumnReader::BeginScanVector(ScanState& s) const {
@@ -394,6 +450,7 @@ void ColumnReader::BeginScanVector(ScanState& s) const {
     }
     s.segments.emplace_back(Open(s.window, *s.ctx, &s));
     s.segments.back()->InitializeScan(s.st);
+    s.certified_dictionary = false;
     s.st.internal_index = 0;
     s.initialized = true;
   }
@@ -446,6 +503,7 @@ duckdb::idx_t ColumnReader::ScanVector(ScanState& s, duckdb::Vector& result,
     if (scan_count > 0) {
       s.segments.back()->Scan(s.st, scan_count, result, result_offset,
                               scan_type);
+      CertifyStrings(s, *s.segments.back(), result);
       s.st.offset_in_column += scan_count;
       remaining -= scan_count;
     }
@@ -456,6 +514,7 @@ duckdb::idx_t ColumnReader::ScanVector(ScanState& s, duckdb::Vector& result,
       s.st.previous_states.emplace_back(std::move(s.st.scan_state));
       s.segments.emplace_back(Open(s.window, *s.ctx, &s));
       s.segments.back()->InitializeScan(s.st);
+      s.certified_dictionary = false;
       s.st.offset_in_column = 0;
       s.st.internal_index = 0;
     }
@@ -566,6 +625,7 @@ duckdb::idx_t ColumnReader::GatherFilter(
   duckdb::SelectionVector& sel, duckdb::idx_t sel_count,
   const duckdb::TableFilter& filter, duckdb::TableFilterState& filter_state,
   NullCheckKind null_check, duckdb::Vector& result) const {
+  NewOutputVector(s);
   const uint64_t cur = ColumnReader::GatherCursor(s);
   SDB_ASSERT(anchor >= cur, "GatherFilter requires ascending rows");
   SDB_ASSERT(span <= STANDARD_VECTOR_SIZE, "GatherFilter decodes one vector");
@@ -689,7 +749,8 @@ void ColumnReader::SkipRows(ScanState& s, duckdb::idx_t count) const {
   }
 }
 
-std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta) {
+std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta,
+                                                 uint64_t file_id) {
   std::unique_ptr<ColumnReader> validity;
   if (absl::c_any_of(meta.validity, [](const ColumnBlockMeta& m) {
         return m.codec->type != duckdb::CompressionType::COMPRESSION_EMPTY;
@@ -701,21 +762,22 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta) {
       nullptr,
       {},
     });
+    validity->_file_id = file_id;
   }
 
   std::vector<std::unique_ptr<ColumnReader>> children;
   children.reserve(meta.children.size());
   for (auto& c : meta.children) {
-    children.push_back(Make(std::move(c)));
+    children.push_back(Make(std::move(c), file_id));
   }
 
   std::unique_ptr<ColumnReader> col;
   switch (meta.type.id()) {
     case duckdb::LogicalTypeId::VARIANT:
       SDB_ASSERT(children.empty());
-      col = std::make_unique<VariantColumnReader>(meta.id, std::move(meta.type),
-                                                  std::move(validity),
-                                                  std::move(meta.variant_rgs));
+      col = std::make_unique<VariantColumnReader>(
+        meta.id, std::move(meta.type), std::move(validity),
+        std::move(meta.variant_rgs), file_id);
       break;
     case duckdb::LogicalTypeId::UNION:
     case duckdb::LogicalTypeId::STRUCT:
@@ -745,6 +807,7 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta) {
       break;
   }
   col->_hyperloglog = std::move(meta.hyperloglog);
+  col->_file_id = file_id;
   return col;
 }
 

@@ -21,6 +21,11 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/string_vector.hpp>
+#include <duckdb/function/compression_function.hpp>
+#include <duckdb/storage/table/column_segment.hpp>
+#include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/norm_reader.hpp>
 #include <iresearch/formats/term_reader.hpp>
 #include <iresearch/index/index_features.hpp>
@@ -2200,6 +2205,87 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
     EXPECT_FALSE(anothers.contains("shared_value_1"));
     EXPECT_TRUE(anothers.contains("shared_value_2"));
     EXPECT_TRUE(anothers.contains("shared_value_3"));
+  }
+}
+
+TEST_P(MergeWriterTestCase, MergeKeepsTheColumnCompressionLevel) {
+  constexpr irs::field_id kLevelId = kDocStringId;
+  constexpr size_t kDocsPerSegment = 100;
+  irs::MemoryDirectory dir;
+  {
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    for (size_t s = 0; s < 2; ++s) {
+      auto batch = writer->GetBatch();
+      for (size_t i = 0; i < kDocsPerSegment; ++i) {
+        auto doc = batch.Insert();
+        tests::StringField foo{"foo", "bar"};
+        foo.id = kFooId;
+        tests::InsertField(doc, foo);
+        auto& cw = doc.GetColWriter()->OpenColumn(
+          kLevelId, duckdb::LogicalType::VARCHAR, /*skip_validity=*/false,
+          DEFAULT_ROW_GROUP_SIZE,
+          duckdb::CompressionType::COMPRESSION_DICT_ZSTD,
+          /*hyperloglog=*/false, irs::ColCodecParams{.compression_level = 1});
+        duckdb::Vector v{duckdb::LogicalType::VARCHAR, 1};
+        duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v)[0] =
+          duckdb::StringVector::AddString(
+            v, "value-" + std::to_string(s * kDocsPerSegment + i));
+        cw.Append(static_cast<uint64_t>(doc.DocId()) - irs::doc_limits::min(),
+                  v, 1);
+      }
+      batch.Commit();
+      ASSERT_TRUE(writer->RefreshCommit());
+    }
+  }
+  auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(2, reader.size());
+
+  for (const uint8_t column_level : {uint8_t{0}, uint8_t{9}}) {
+    SCOPED_TRACE(testing::Message("column level ")
+                 << static_cast<int>(column_level));
+    irs::FunctionFieldOptions field_options{
+      [column_level](irs::field_id id) {
+        if (id != kLevelId) {
+          return irs::ColumnOptions{};
+        }
+        return irs::ColumnOptions{
+          .compression = duckdb::CompressionType::COMPRESSION_DICT_ZSTD,
+          .compression_level = column_level};
+      },
+      irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE};
+    field_options.codec_params = irs::ColCodecParams{.compression_level = 2};
+    irs::MemoryDirectory merged_dir;
+    irs::SegmentMeta merged_meta;
+    const irs::SegmentWriterOptions options{
+      .db = &::irs::DuckDBEngine::Instance().instance(),
+      .field_options = &field_options,
+    };
+    irs::MergeWriter writer(merged_dir, options);
+    writer.Reset(reader.begin(), reader.end());
+    ASSERT_TRUE(irs::GetReady(writer.Flush(merged_meta)));
+
+    auto segment = irs::SegmentReaderImpl::Open(
+      merged_dir, merged_meta, irs::tests::DefaultReaderOptions());
+    ASSERT_EQ(2 * kDocsPerSegment, segment->docs_count());
+    const auto* cs = segment->GetColReader();
+    ASSERT_NE(nullptr, cs);
+    const auto* col = cs->Column(kLevelId);
+    ASSERT_NE(nullptr, col);
+    ASSERT_FALSE(col->DataBlocks().empty());
+    irs::ReadContext ctx{*cs};
+    irs::BlockWindow window{};
+    uint64_t row = 0;
+    for (const auto& block : col->DataBlocks()) {
+      EXPECT_EQ(block.codec->type,
+                duckdb::CompressionType::COMPRESSION_DICT_ZSTD);
+      window = col->Locate(row, window);
+      auto seg = col->OpenSegment(window.block, ctx);
+      auto info = seg->GetCompressionFunction().get_segment_info(
+        duckdb::QueryContext{}, *seg);
+      EXPECT_EQ(info["level"], column_level == 0 ? "2" : "9");
+      row += block.tuple_count;
+    }
   }
 }
 

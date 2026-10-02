@@ -104,8 +104,8 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
                      const SearchBackfillTarget& target) {
   const auto* col_reader = sub.GetColReader();
   SDB_ENSURE(col_reader, "search-table build: segment has no columnstore");
-  FullScanner scanner{
-    *col_reader, source.projections, {}, &context, source.filter_states};
+  FullScanner scanner{*col_reader, source.projections,   {},
+                      &context,    source.filter_states, false};
   auto it_mask = sub.MaskedDocs();
   const bool has_mask = sub.docs_mask() != nullptr;
   const uint64_t docs = irs::VisibleCount(sub.Meta());

@@ -75,6 +75,7 @@
 #include "connector/duckdb_physical_search_truncate.h"
 #include "connector/duckdb_physical_search_update.h"
 #include "connector/primary_key.h"
+#include "connector/scan/scan_bind.h"
 #include "connector/view_index_bind.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
@@ -192,6 +193,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   auto& insert = planner.Make<connector::SereneDBSearchInsert>(
     *entry, op.types, op.estimated_cardinality, op.return_chunk);
   insert.children.emplace_back(*plan);
+  connector::ShareScanPayloads(*plan);
   return insert;
 }
 
@@ -223,6 +225,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   auto& insert = planner.Make<connector::SereneDBSearchInsert>(
     std::move(op.info), op.estimated_cardinality);
   insert.children.emplace_back(plan);
+  connector::ShareScanPayloads(plan);
   return insert;
 }
 
@@ -249,6 +252,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
     *entry, op.columns, std::move(op.expressions), op.types,
     op.estimated_cardinality, op.return_chunk);
   update.children.emplace_back(plan);
+  connector::ShareScanPayloads(plan);
   return update;
 }
 
@@ -312,6 +316,10 @@ duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   if (unknown != options.end()) {
     return duckdb::ErrorData{
       duckdb::BinderException("unrecognized parameter \"%s\"", unknown->first)};
+  }
+  for (const auto& column : info.Base().columns.Logical()) {
+    CheckColumnCompression(
+      column, search ? TableEngine::Search : TableEngine::Transactional);
   }
   return {};
 }
@@ -382,6 +390,34 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateForeignServer(
 
 void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
                             duckdb::AlterInfo& info) {
+  if (info.type == duckdb::AlterType::ALTER_TABLE && transaction.context) {
+    const auto alter_type =
+      info.Cast<duckdb::AlterTableInfo>().alter_table_type;
+    const bool add = alter_type == duckdb::AlterTableType::ADD_COLUMN;
+    const bool set_compression =
+      alter_type == duckdb::AlterTableType::SET_COLUMN_COMPRESSION;
+    const auto table = add || set_compression
+                         ? duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
+                             *transaction.context, info.GetQualifiedName(),
+                             duckdb::OnEntryNotFound::RETURN_NULL)
+                         : nullptr;
+    const auto engine = dynamic_cast<const SearchTableEntry*>(table.get())
+                          ? TableEngine::Search
+                          : TableEngine::Transactional;
+    if (add) {
+      CheckColumnCompression(info.Cast<duckdb::AddColumnInfo>().new_column,
+                             engine);
+    }
+    const auto* set = set_compression
+                        ? &info.Cast<duckdb::SetColumnCompressionInfo>()
+                        : nullptr;
+    if (set && table && table->ColumnExists(set->column_name)) {
+      auto column = table->GetColumn(set->column_name).Copy();
+      column.SetCompressionType(set->compression_type);
+      column.SetCompressionLevel(set->compression_level);
+      CheckColumnCompression(column, engine);
+    }
+  }
   const auto type = info.GetCatalogType();
   if (type == duckdb::CatalogType::SCHEMA_ENTRY &&
       info.type == duckdb::AlterType::RENAME) {

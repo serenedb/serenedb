@@ -136,6 +136,29 @@ struct ColumnOptions {
     duckdb::CompressionType::COMPRESSION_AUTO;
   std::optional<AnnInfo> ann_info;
   bool hyperloglog = false;
+  uint8_t compression_level = 0;
+};
+
+inline constexpr uint32_t kDefaultColSegmentTarget = 256 * 1024;
+
+enum class AutoObjective : uint8_t {
+  Balanced = 0,
+  Size = 1,
+  Speed = 2,
+};
+
+enum class WriteTier : uint8_t {
+  Flush,
+  Merge,
+};
+
+struct ColCodecParams {
+  uint8_t compression_level = 0;
+  uint32_t segment_target = kDefaultColSegmentTarget;
+  AutoObjective objective = AutoObjective::Balanced;
+
+  friend bool operator==(const ColCodecParams&,
+                         const ColCodecParams&) = default;
 };
 
 using ColumnOptionsProvider = std::function<ColumnOptions(field_id)>;
@@ -148,10 +171,19 @@ using NormColumnIdProvider = std::function<field_id(field_id)>;
 class IndexFieldOptions {
  public:
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
+  ColCodecParams codec_params;
 
   virtual ~IndexFieldOptions() = default;
   virtual ColumnOptions GetColumnOptions(field_id id) const = 0;
   virtual field_id GetNormColumnId(field_id id) const = 0;
+
+  ColCodecParams CodecParams(const ColumnOptions& options) const noexcept {
+    auto params = codec_params;
+    if (options.compression_level != 0) {
+      params.compression_level = options.compression_level;
+    }
+    return params;
+  }
 
   // Segment reuse gate: two writes share a segment only if their options are
   // equal (a segment must not mix encodings). Default is pointer identity --

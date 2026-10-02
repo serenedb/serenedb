@@ -32,12 +32,15 @@
 
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
+#include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
 
 class ColWriter;
+class ListIngest;
+struct ListParts;
 
 struct WriteChunk {
   duckdb::Vector data;
@@ -48,7 +51,10 @@ class ColumnWriter final {
  public:
   ColumnWriter(ColWriter& owner, field_id id, duckdb::LogicalType type,
                bool skip_validity, uint32_t row_group_size,
-               duckdb::CompressionType forced, bool hyperloglog);
+               duckdb::CompressionType forced, bool hyperloglog,
+               ColCodecParams codec_params);
+
+  ~ColumnWriter();
 
   ColumnWriter(const ColumnWriter&) = delete;
   ColumnWriter& operator=(const ColumnWriter&) = delete;
@@ -83,6 +89,9 @@ class ColumnWriter final {
   friend class ColWriter;
 
   void AppendDense(const duckdb::Vector& vec, duckdb::idx_t count);
+  void AppendList(const duckdb::Vector& vec, duckdb::idx_t count);
+  void AppendStruct(const duckdb::Vector& vec, duckdb::idx_t count);
+  void CheckListDistinct(const WriteChunk& back);
   void PadNestedNulls(uint64_t count);
   WriteChunk& OpenChunk();
 
@@ -92,6 +101,17 @@ class ColumnWriter final {
     const duckdb::LogicalType& codec_type, std::span<WriteChunk> chunks,
     duckdb::CompressionType forced,
     duckdb::unique_ptr<duckdb::AnalyzeState>& out_state);
+
+  bool CompressData(const duckdb::LogicalType& type,
+                    std::span<WriteChunk> chunks,
+                    duckdb::CompressionType forced, ColumnMeta& meta);
+
+  bool SealString(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
+                  duckdb::CompressionType forced, ColumnMeta& meta);
+
+  void SealLeafValidity(std::span<WriteChunk> chunks, uint64_t row_count,
+                        bool skip_validity, bool nulls_covered_by_data,
+                        ColumnMeta& meta);
 
   void Compress(const duckdb::CompressionFunction& picked,
                 duckdb::unique_ptr<duckdb::AnalyzeState> state,
@@ -106,9 +126,11 @@ class ColumnWriter final {
                           bool skip_validity, size_t child_count,
                           ColumnMeta& meta);
 
-  void SealStruct(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
-                  uint64_t row_count, bool skip_validity,
-                  duckdb::CompressionType forced, ColumnMeta& meta);
+  void SealStruct(
+    const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
+    uint64_t row_count, bool skip_validity, duckdb::CompressionType forced,
+    ColumnMeta& meta,
+    std::span<const std::unique_ptr<ListIngest>> field_ingest = {});
 
   void SealArray(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
                  uint64_t row_count, bool skip_validity,
@@ -117,6 +139,9 @@ class ColumnWriter final {
   void SealList(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
                 uint64_t row_count, bool skip_validity,
                 duckdb::CompressionType forced, ColumnMeta& meta);
+
+  void SealListParts(const duckdb::LogicalType& type, ListParts& parts,
+                     duckdb::CompressionType forced, ColumnMeta& meta);
 
   void SealVariant(const duckdb::LogicalType& type,
                    std::span<WriteChunk> chunks, uint64_t row_count,
@@ -136,6 +161,7 @@ class ColumnWriter final {
   bool _skip_validity = false;
   uint32_t _row_group_size = 0;
   duckdb::CompressionType _forced = duckdb::CompressionType::COMPRESSION_AUTO;
+  ColCodecParams _codec_params;
   std::vector<WriteChunk> _staged;
   std::vector<duckdb::VectorCache> _staged_caches;
   bool _is_nested = false;
@@ -147,6 +173,8 @@ class ColumnWriter final {
   duckdb::Vector _hll_hashes{duckdb::LogicalType::HASH, nullptr};
   int64_t _variant_min_shred_size = -1;
   duckdb::LogicalType _force_variant_shredding;
+  std::unique_ptr<ListIngest> _list_ingest;
+  std::vector<std::unique_ptr<ListIngest>> _field_ingest;
   ColumnMeta _meta;
 };
 

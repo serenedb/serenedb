@@ -40,7 +40,11 @@ add_bench(norm_gather)
 add_bench(word_bloom)
 add_bench(path_hierarchy_tokenizer)
 add_bench(regexp_vs_wildcard)
+add_bench(http_codecs)
 add_bench(http_compression)
+add_bench(http_response)
+add_bench(http_router)
+add_bench(listen_spec)
 target_compile_definitions(
     serenedb-bench-micro-http_compression
     PRIVATE "SDB_DOCS_DIR=\"${CMAKE_SOURCE_DIR}/docs\""

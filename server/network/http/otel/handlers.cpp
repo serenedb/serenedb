@@ -194,6 +194,15 @@ InsertOutcome Failed(const duckdb::ErrorData& error) {
   return {HttpStatus::InternalError, kCodeInternal, std::move(sql.errmsg)};
 }
 
+yaclib::Task<InsertOutcome> RunStatement(RequestContext& ctx,
+                                         std::string_view sql) {
+  auto result = co_await ctx.RunQuery(std::string{sql}, /*writes=*/true);
+  if (!result->HasError()) {
+    co_return InsertOutcome{};
+  }
+  co_return Failed(result->GetErrorObject());
+}
+
 template<typename Signal>
 yaclib::Task<InsertOutcome> RunSourceInsert(
   RequestContext& ctx, size_t target, const typename Signal::Request& request) {
@@ -202,9 +211,9 @@ yaclib::Task<InsertOutcome> RunSourceInsert(
   using Request = const typename Signal::Request;
   const auto schema = ctx.Schema();
   const auto table = Signal::kTargets[target];
-  auto& entry = ctx.PreparedSlot(Signal::kSlots[target]);
-  if (auto error = network::EnsurePrepared(
-        ctx, entry, InsertSql(schema, table, Signal::kSources[target]))) {
+  const auto sql = InsertSql(schema, table, Signal::kSources[target]);
+  auto& entry = ctx.PreparedSlot(Signal::kSlots[target], sql);
+  if (auto error = network::EnsurePrepared(ctx, entry, sql)) {
     co_return Failed(*error);
   }
   auto& connection = connector::GetSereneDBContext(*ctx.Connection().context);
@@ -326,9 +335,24 @@ class ExportHandler final : public HttpHandler {
                   error.what(), protobuf);
       co_return {};
     }
-    for (size_t target = 0; target < Signal::kTargets.size(); ++target) {
-      const auto outcome =
-        co_await RunSourceInsert<Signal>(ctx, target, decoded);
+    if constexpr (Signal::kTargets.size() == 1) {
+      const auto outcome = co_await RunSourceInsert<Signal>(ctx, 0, decoded);
+      if (WriteFailure(writer, outcome, protobuf)) {
+        co_return {};
+      }
+    } else {
+      auto outcome = co_await RunStatement(ctx, "BEGIN");
+      for (size_t target = 0;
+           outcome.status == HttpStatus::Ok && target < Signal::kTargets.size();
+           ++target) {
+        outcome = co_await RunSourceInsert<Signal>(ctx, target, decoded);
+      }
+      if (outcome.status == HttpStatus::Ok) {
+        outcome = co_await RunStatement(ctx, "COMMIT");
+      }
+      if (outcome.status != HttpStatus::Ok) {
+        co_await RunStatement(ctx, "ROLLBACK");
+      }
       if (WriteFailure(writer, outcome, protobuf)) {
         co_return {};
       }

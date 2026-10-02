@@ -286,6 +286,30 @@ def test_bulk_errors(conn, index):
     assert body["count"] == 0
 
 
+def test_large_bulk_keeps_items_in_request_order(conn, index):
+    docs = 300_000
+    payload = "".join(
+        '{"index":{"_id":"d%d"}}\n{"year":%d,"title":"doc %d"}\n' % (i, i, i)
+        for i in range(docs))
+    status, body = _bulk(conn, index, payload, refresh=True)
+    assert status == 200
+    assert body["errors"] is False
+    assert [item["index"]["_id"] for item in body["items"]] == [
+        f"d{i}" for i in range(docs)]
+    status, body = _request(conn, "GET", f"/{index}/_count")
+    assert body["count"] == docs
+
+
+def test_large_bulk_reports_the_failing_line(conn, index):
+    good = '{"index":{}}\n{"year":1}\n'
+    payload = good * 130_000 + '{"delete":{"_id":"x"}}\n{"year":1}\n' + good
+    status, body = _bulk(conn, index, payload)
+    assert status == 400
+    assert "line [260001]" in body["error"]["reason"], body
+    status, body = _request(conn, "GET", f"/{index}/_count")
+    assert body["count"] == 0
+
+
 def test_bulk_missing_index(conn):
     status, body = _bulk(conn, "drv_es_missing", '{"index":{}}\n{"f":1}\n')
     assert status == 404
@@ -317,6 +341,34 @@ def test_bulk_after_index_recreated(conn):
         assert body["error"]["type"] == "index_not_found_exception"
     finally:
         _request(conn, "DELETE", f"/{name}")
+
+
+def test_bulk_alternating_indexes(conn):
+    names = [f"drv_es_alt_{i}" for i in range(3)]
+    for name in names:
+        _request(conn, "DELETE", f"/{name}")
+        status, _ = _request(conn, "PUT", f"/{name}", MAPPINGS)
+        assert status == 200
+    try:
+        for round_ in range(3):
+            for name in names:
+                status, body = _bulk(
+                    conn, name, '{"index":{}}\n{"year":%d}\n' % round_,
+                    refresh=True)
+                assert status == 200 and body["errors"] is False, body
+        _request(conn, "DELETE", f"/{names[0]}")
+        status, _ = _request(conn, "PUT", f"/{names[0]}", {
+            "mappings": {"properties": {"code": {"type": "keyword"}}}})
+        assert status == 200
+        status, body = _bulk(conn, names[0], '{"index":{}}\n{"code":"x"}\n',
+                             refresh=True)
+        assert status == 200 and body["errors"] is False, body
+        for name, count in zip(names, (1, 3, 3)):
+            status, body = _request(conn, "GET", f"/{name}/_count")
+            assert body["count"] == count, name
+    finally:
+        for name in names:
+            _request(conn, "DELETE", f"/{name}")
 
 
 def test_bulk_bare_url_with_line_index(conn, index):

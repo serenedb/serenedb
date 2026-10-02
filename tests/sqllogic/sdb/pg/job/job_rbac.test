@@ -1,0 +1,265 @@
+statement ok
+DROP JOB IF EXISTS jr_kostya_job;
+
+
+statement ok
+DROP JOB IF EXISTS jr_kostya_steal;
+
+
+statement ok
+DROP JOB IF EXISTS jr_kostya_every;
+
+
+statement ok
+DROP TABLE IF EXISTS jr_kostya_log;
+
+
+statement ok
+DROP TABLE IF EXISTS jr_secrets;
+
+
+statement ok
+DROP ROLE IF EXISTS jr_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS jr_clickclack;
+
+
+statement ok
+CREATE ROLE jr_kostya;
+
+
+statement ok
+CREATE ROLE jr_clickclack;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO jr_kostya;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO jr_clickclack;
+
+
+statement ok
+CREATE TABLE jr_secrets (arelav text);
+
+
+statement ok
+INSERT INTO jr_secrets VALUES ('skuf');
+
+
+statement ok
+CREATE TABLE jr_kostya_log (v int, by_user text);
+
+
+statement ok
+ALTER TABLE jr_kostya_log OWNER TO jr_kostya;
+
+
+statement ok
+SET ROLE jr_kostya;
+
+
+statement ok
+CREATE JOB jr_kostya_job AFTER 1 HOUR AS INSERT INTO jr_kostya_log VALUES (1, current_user);
+
+
+statement ok
+EXECUTE JOB jr_kostya_job;
+
+
+query
+SELECT v, by_user FROM jr_kostya_log;
+----
+v	by_user
+1	jr_kostya
+
+
+statement ok
+CREATE JOB jr_kostya_steal AFTER 1 HOUR AS INSERT INTO jr_kostya_log SELECT 2, arelav FROM jr_secrets;
+
+
+statement error
+EXECUTE JOB jr_kostya_steal;
+----
+db error: ERROR: permission denied for table jr_secrets<slt:ignore>
+
+
+query
+SELECT last_status, last_error FROM duckdb_jobs() WHERE job_name = 'jr_kostya_steal';
+----
+last_status	last_error
+failed	permission denied for table jr_secrets
+
+
+query
+SELECT count(*) FROM jr_kostya_log;
+----
+count
+1
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE jr_clickclack;
+
+
+statement error
+EXECUTE JOB jr_kostya_job;
+----
+db error: ERROR: must be owner of job jr_kostya_job<slt:ignore>
+
+
+statement error
+ALTER JOB jr_kostya_job SUSPEND;
+----
+db error: ERROR: must be owner of job jr_kostya_job<slt:ignore>
+
+
+statement error
+ALTER JOB jr_kostya_job SET SCHEDULE EVERY 1 SECOND;
+----
+db error: ERROR: must be owner of job jr_kostya_job<slt:ignore>
+
+
+statement error
+ALTER JOB jr_kostya_job RENAME TO jr_clickclack_job;
+----
+db error: ERROR: must be owner of job jr_kostya_job<slt:ignore>
+
+
+statement error
+CREATE OR REPLACE JOB jr_kostya_job AFTER 1 HOUR AS INSERT INTO jr_kostya_log VALUES (666, current_user);
+----
+db error: ERROR: must be owner of job jr_kostya_job<slt:ignore>
+
+
+statement error
+DROP JOB jr_kostya_job;
+----
+db error: ERROR: must be owner of job jr_kostya_job<slt:ignore>
+
+
+statement error
+ALTER JOB jr_kostya_job OWNER TO jr_clickclack;
+----
+db error: ERROR: must be owner of job jr_kostya_job<slt:ignore>
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT body FROM duckdb_jobs() WHERE job_name = 'jr_kostya_job';
+----
+body
+INSERT INTO jr_kostya_log (VALUES (1, current_user))
+
+
+statement ok
+SET ROLE jr_kostya;
+
+
+statement ok
+CREATE JOB jr_kostya_every EVERY 1 SECOND AS INSERT INTO jr_kostya_log VALUES (3, current_user);
+
+
+statement ok
+RESET ROLE;
+
+
+query ok retry 80 backoff 250ms
+SELECT DISTINCT by_user FROM jr_kostya_log WHERE v = 3;
+----
+by_user
+jr_kostya
+
+
+statement ok
+DROP JOB jr_kostya_every;
+
+
+statement ok
+ALTER JOB jr_kostya_job OWNER TO jr_clickclack;
+
+
+statement error
+EXECUTE JOB jr_kostya_job;
+----
+db error: ERROR: permission denied for table jr_kostya_log<slt:ignore>
+
+
+statement ok
+GRANT INSERT ON jr_kostya_log TO jr_clickclack;
+
+
+statement ok
+EXECUTE JOB jr_kostya_job;
+
+
+query
+SELECT v, by_user FROM jr_kostya_log WHERE v = 1 ORDER BY by_user;
+----
+v	by_user
+1	jr_clickclack
+1	jr_kostya
+
+
+statement ok
+SET ROLE jr_clickclack;
+
+
+statement ok
+EXECUTE JOB jr_kostya_job;
+
+
+statement ok
+ALTER JOB jr_kostya_job RENAME TO jr_clickclack_job;
+
+
+statement ok
+DROP JOB jr_clickclack_job;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP TABLE jr_kostya_log;
+
+
+statement ok
+DROP TABLE jr_secrets;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM jr_kostya;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM jr_clickclack;
+
+
+statement error
+DROP ROLE jr_kostya;
+----
+db error: ERROR: role "jr_kostya" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+DROP JOB jr_kostya_steal;
+
+
+statement ok
+DROP ROLE jr_kostya;
+
+
+statement ok
+DROP ROLE jr_clickclack;

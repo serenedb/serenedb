@@ -353,7 +353,7 @@ void DropRolePragma(duckdb::ClientContext& client,
                 "\" because it is required by the database system"));
     }
 
-    size_t dependencies = 0;
+    size_t dependencies = CountJobsOwnedBy(client, role.oid);
     VisitRoleDependencies(client, [&](const RoleDependency& dependency) {
       if (dependency.role == role.oid) {
         ++dependencies;

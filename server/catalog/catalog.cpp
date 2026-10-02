@@ -575,6 +575,9 @@ void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
   }
   if (type != duckdb::CatalogType::FOREIGN_SERVER_ENTRY) {
     duckdb::DuckCatalog::Alter(transaction, info);
+    if (info.type == duckdb::AlterType::ALTER_INDEX) {
+      SyncReindexJob(transaction, info.GetQualifiedName());
+    }
     return;
   }
   DeclareModified(transaction, *this);
@@ -583,6 +586,21 @@ void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG(duckdb::CatalogTypeToString(type), " with name ",
                             name.GetIdentifierName(), " does not exist!"));
+  }
+}
+
+void SereneDBCatalog::SyncReindexJob(duckdb::CatalogTransaction transaction,
+                                     const duckdb::QualifiedName& name) {
+  auto schema =
+    GetSchema(transaction, name.Schema(), duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!schema) {
+    return;
+  }
+  auto entry = schema->GetEntry(transaction, duckdb::CatalogType::INDEX_ENTRY,
+                                name.Name());
+  if (entry &&
+      entry->Cast<duckdb::IndexCatalogEntry>().index_type == "inverted") {
+    entry->Cast<InvertedIndexEntry>().SyncReindexJob(transaction);
   }
 }
 

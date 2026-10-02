@@ -56,6 +56,8 @@ The following metadata functions are available:
 | [`sdb_extensions()`](#sdb_extensions) | Capability modules compiled into the instance |
 | [`sdb_functions()`](#sdb_functions) | Functions and macros |
 | [`sdb_indexes()`](#sdb_indexes) | Secondary indexes |
+| [`sdb_job_runs()`](../statements/create_job/index.md#monitoring) | Most recent runs of scheduled jobs |
+| [`sdb_jobs()`](../statements/create_job/index.md#monitoring) | Scheduled jobs and their run state |
 | [`sdb_keywords()`](#sdb_keywords) | Keywords and reserved words |
 | [`sdb_log_contexts()`](#sdb_log_contexts) | Contexts of log entries |
 | [`sdb_logs()`](#sdb_logs) | Log entries |

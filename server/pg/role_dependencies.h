@@ -45,4 +45,6 @@ void VisitRoleDependencies(
   duckdb::ClientContext& context,
   absl::FunctionRef<void(const RoleDependency&)> visitor);
 
+size_t CountJobsOwnedBy(duckdb::ClientContext& context, duckdb::idx_t role);
+
 }  // namespace sdb::pg

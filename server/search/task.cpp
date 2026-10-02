@@ -286,11 +286,6 @@ enum class LoopTick {
   kNeutral,   // keep the stretch
 };
 
-// The scaffolding RefreshLoop and ReindexLoop share: lock-or-exit,
-// interval+stretch delay (kDisabledPoll while the interval is 0), the stop
-// gates, the executor hop and the stretch accounting. `tick` runs on the
-// executor and locks the target itself (so a long tick does not have to pin
-// the storage).
 template<class Storage, class GetIntervalMs, class Tick>
 yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
                               std::string_view name,
@@ -492,49 +487,5 @@ template yaclib::Future<> CompactionCoordinator(
   std::weak_ptr<InvertedIndexStorage>);
 template yaclib::Future<> RefreshLoop(std::weak_ptr<SearchTable>);
 template yaclib::Future<> CompactionCoordinator(std::weak_ptr<SearchTable>);
-
-namespace {
-
-// Installed once by the connector (RegisterServerExtensions) during the
-// single-threaded boot, strictly before any storage starts its loops.
-ReindexRunner g_reindex_runner;
-
-}  // namespace
-
-void SetReindexRunner(ReindexRunner runner) {
-  g_reindex_runner = std::move(runner);
-}
-
-yaclib::Future<> ReindexLoop(std::weak_ptr<InvertedIndexStorage> weak) {
-  return IntervalLoop(
-    std::move(weak), "reindex",
-    [](InvertedIndexStorage& idx) -> size_t {
-      return idx.GetTasksSettings().reindex_interval_msec;
-    },
-    [](const std::weak_ptr<InvertedIndexStorage>& target) {
-      if (!g_reindex_runner) {
-        return LoopTick::kNeutral;
-      }
-      duckdb::idx_t database_id;
-      duckdb::idx_t id;
-      {
-        // The runner resolves the index by id through the catalog: don't pin
-        // the storage across a potentially long tick.
-        auto idx = target.lock();
-        if (!idx) {
-          return LoopTick::kNeutral;
-        }
-        database_id = idx->GetDatabaseId();
-        id = idx->GetId();
-      }
-      const auto did_work = g_reindex_runner(database_id, id);
-      if (!did_work.ok()) {
-        SDB_WARN(SEARCH, "periodic reindex of Search index '", id,
-                 "' failed: ", did_work.status().message());
-        return LoopTick::kIdle;
-      }
-      return *did_work ? LoopTick::kProgress : LoopTick::kIdle;
-    });
-}
 
 }  // namespace sdb::search

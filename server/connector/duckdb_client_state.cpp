@@ -30,6 +30,8 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
+#include <duckdb/main/database_manager.hpp>
+#include <duckdb/planner/extension_callback.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
 #include <duckdb/storage/table/index_entry.hpp>
@@ -170,6 +172,18 @@ SereneDBClientState& SereneDBClientState::Register(
       }
     };
   return registered;
+}
+
+std::shared_ptr<ConnectionContext> SereneDBClientState::Impersonate(
+  duckdb::ClientContext& client_ctx, std::string_view user,
+  duckdb::idx_t role_id, std::string_view database, duckdb::idx_t database_id,
+  int32_t backend_pid) {
+  auto connection_ctx = std::make_shared<ConnectionContext>(
+    client_ctx, user, role_id, database, database_id, nullptr, backend_pid,
+    nullptr);
+  Register(client_ctx, connection_ctx);
+  client_ctx.session_user = user;
+  return connection_ctx;
 }
 
 namespace {
@@ -381,6 +395,39 @@ SystemConnection MakeSystemConnection(std::string_view database,
   context.session_user.assign(irs::StaticStrings::kDefaultUser);
   SetDefaultSearchPath(context, database);
   return system;
+}
+
+namespace {
+
+class RoleSessionCallback final : public duckdb::ExtensionCallback {
+ public:
+  void OnConnectionOpened(duckdb::ClientContext& context) final {
+    if (!context.effective_role.IsValid()) {
+      return;
+    }
+    const auto role = context.effective_role.GetIndex();
+    const std::string user{auth::RolesOf(nullptr)->NameOf(role)};
+    if (user.empty()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("role with OID ", role, " does not exist"));
+    }
+    const auto& catalog = duckdb::ClientData::Get(context)
+                            .catalog_search_path->GetDefault()
+                            .GetCatalog();
+    auto database = duckdb::DatabaseManager::Get(context).LookupDatabase(
+      context, catalog, nullptr);
+    SereneDBClientState::Impersonate(
+      context, user, role,
+      database ? database->GetName().GetIdentifierName() : std::string{},
+      database ? database->oid : 0, 0);
+  }
+};
+
+}  // namespace
+
+void RegisterRoleSessions(duckdb::DBConfig& config) {
+  duckdb::ExtensionCallback::Register(
+    config, duckdb::make_shared_ptr<RoleSessionCallback>());
 }
 
 }  // namespace sdb::connector

@@ -912,10 +912,11 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::UINTEGER,
         "Periodic reindex interval (ms) for newly created VIEW-backed "
-        "inverted indexes: every tick runs the ordinary REINDEX road "
-        "(up_to_date / delta / rebuild) as the index owner. Per-index "
+        "inverted indexes: a non-zero value creates a job named after the "
+        "index that runs the ordinary REINDEX road (up_to_date / delta / "
+        "rebuild) as the index owner, AFTER the interval. Per-index "
         "WITH (reindex_interval = ...) overrides; ALTER INDEX SET "
-        "retunes a live loop. 0 disables the task. Hint-less iceberg "
+        "retunes, creates or drops the job. 0 disables it. Hint-less iceberg "
         "sources refresh from the background only when the GLOBAL "
         "unsafe_enable_version_guessing is set. Default: 0.",
         [] { return duckdb::Value::UINTEGER(0); },

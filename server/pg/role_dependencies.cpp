@@ -177,4 +177,23 @@ void VisitRoleDependencies(
           });
 }
 
+size_t CountJobsOwnedBy(duckdb::ClientContext& context, duckdb::idx_t role) {
+  size_t owned = 0;
+  for (auto& attached : duckdb::DatabaseManager::Get(context).GetDatabases()) {
+    auto& catalog = attached->GetCatalog();
+    if (!catalog.IsDuckCatalog()) {
+      continue;
+    }
+    VisitSchemas(context, catalog, [&](duckdb::SchemaCatalogEntry& schema) {
+      schema.Scan(context, duckdb::CatalogType::JOB_ENTRY,
+                  [&](duckdb::CatalogEntry& entry) {
+                    if (entry.permissions.owner == role) {
+                      ++owned;
+                    }
+                  });
+    });
+  }
+  return owned;
+}
+
 }  // namespace sdb::pg

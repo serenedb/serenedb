@@ -21,15 +21,20 @@
 #include "search/search_table_transaction.h"
 
 #include <duckdb/common/types/column/column_data_collection.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <span>
 #include <string>
 #include <vector>
 
+#include "connector/column_id.h"
+#include "connector/primary_key.h"
+#include "connector/search_sink_writer.hpp"
 #include "search/search_db_wal.h"
 #include "search/search_table.h"
 #include "server/utils/primary_key.h"
@@ -48,21 +53,13 @@ uint64_t ShardTickSpan(const SearchShardWrites& w) {
   return span;
 }
 
-// The rowids this transaction deleted, decoded back out of the encoded PK terms
-// the WAL carries. A build's log holds raw ids (8 bytes, no per-entry string)
-// and re-encodes at replay, the way the transactional build's does.
+// The rowids this transaction deleted. The buffer already holds them raw, so a
+// build's log takes them as they are.
 void RecordDeletesForBuild(SearchTable& shard,
                            const LocalTableChangesEntry& changes) {
   std::vector<int64_t> rows;
   for (const auto& op : changes.ops) {
-    if (!op.IsDelete()) {
-      continue;
-    }
-    rows.reserve(rows.size() + op.delete_pks.size());
-    for (const auto& pk : op.delete_pks) {
-      rows.push_back(
-        connector::primary_key::ReadSigned<int64_t>(std::string_view{pk}));
-    }
+    rows.insert(rows.end(), op.delete_rows.begin(), op.delete_rows.end());
   }
   shard.AppendDeleteLog(rows);
 }
@@ -110,10 +107,113 @@ void SearchTableTransaction::AddSegments(
 void SearchTableTransaction::AddInlineInsertChunk(
   const std::shared_ptr<SearchTable>& shard,
   duckdb::BufferManager& buffer_manager,
-  const duckdb::vector<duckdb::LogicalType>& types, duckdb::DataChunk& chunk,
-  uint64_t pk_base) {
-  _changes[shard->GetTableId()].AppendInsertChunk(buffer_manager, types, chunk,
-                                                  pk_base);
+  const duckdb::vector<duckdb::LogicalType>& types,
+  std::span<const connector::ColumnId> column_ids, duckdb::Catalog& catalog,
+  duckdb::DataChunk& chunk, uint64_t pk_base) {
+  _changes[shard->GetTableId()].AppendInsertChunk(
+    buffer_manager, types, column_ids, catalog, chunk, pk_base);
+}
+
+// Replays a shard's buffer into `trx` in issue order: rows through a sink,
+// removals through the transaction, each removal landing after exactly the rows
+// that preceded it. Feeding in this order is what reproduces the `_queries`
+// stamping the statements would have produced had they written directly.
+void SearchTableTransaction::ReplayBuffer(SearchTable& shard,
+                                          LocalTableChangesEntry& entry,
+                                          irs::IndexWriter::Transaction& trx,
+                                          duckdb::ClientContext& context) {
+  // Band index -> rows before it, so an op's watermark can be compared against
+  // the running row count of a single forward pass.
+  std::vector<uint64_t> op_rows;
+  op_rows.reserve(entry.ops.size());
+  {
+    std::vector<uint64_t> prefix;
+    prefix.reserve(entry.pk_segments.size() + 1);
+    uint64_t total = 0;
+    prefix.push_back(0);
+    for (const auto& band : entry.pk_segments) {
+      total += band.count;
+      prefix.push_back(total);
+    }
+    for (const auto& op : entry.ops) {
+      const auto band = std::min<size_t>(op.band_watermark, prefix.size() - 1);
+      op_rows.push_back(prefix[band]);
+    }
+  }
+
+  const auto table_id = shard.GetTableId();
+  connector::SearchSinkDeleteBaseImpl remover{trx};
+  std::string key;
+  size_t op_idx = entry.applied_ops;
+  uint64_t emitted = 0;
+
+  auto apply_op = [&](const LocalTableChangesEntry::Op& op) {
+    if (op.IsTruncate()) {
+      if (!op.clears_shard) {
+        trx.Remove(std::make_shared<irs::All>());
+      }
+      return;
+    }
+    remover.InitImpl(op.delete_rows.size());
+    for (const auto row : op.delete_rows) {
+      key.clear();
+      connector::primary_key::AppendGenerated(key, static_cast<uint64_t>(row));
+      remover.DeleteRowImpl(key);
+    }
+    remover.FinishImpl();
+  };
+  auto drain_ops = [&] {
+    while (op_idx < entry.ops.size() && op_rows[op_idx] <= emitted) {
+      apply_op(entry.ops[op_idx]);
+      ++op_idx;
+    }
+  };
+
+  // Drain removes before the inserts
+  drain_ops();
+  if (entry.HasBufferedRows()) {
+    SDB_ASSERT(entry.catalog != nullptr,
+               "buffered rows without the catalog their sink needs");
+    auto sink =
+      connector::MakeSearchTableInsertSink(trx, shard, *entry.catalog, context);
+    entry.VisitBufferedRows([&](duckdb::DataChunk& chunk, uint64_t pk_base) {
+      connector::WriteChunkToSearchSink(*sink, chunk, entry.column_ids, pk_base,
+                                        table_id, context);
+      emitted += chunk.size();
+      // now some removes may become valid - emit them
+      drain_ops();
+    });
+  }
+  entry.applied_ops = entry.ops.size();
+}
+
+irs::IndexWriter::Transaction& SearchTableTransaction::EnsureBufferTransaction(
+  const std::shared_ptr<SearchTable>& shard) {
+  auto& w = _writes[shard->GetTableId()];
+  if (!w.shard) {
+    w.shard = shard;
+  }
+  if (w.buffer_trx == nullptr) {
+    // Exclusive: its segments are named in the record, so they must not also
+    // carry another transaction's documents.
+    w.transactions.push_back(std::make_unique<irs::IndexWriter::Transaction>(
+      shard->GetTransaction(/*exclusive_segment=*/true)));
+    w.buffer_trx = w.transactions.back().get();
+  }
+  return *w.buffer_trx;
+}
+
+void SearchTableTransaction::FlushBuffer(
+  const std::shared_ptr<SearchTable>& shard, duckdb::ClientContext& context) {
+  auto it = _changes.find(shard->GetTableId());
+  if (it == _changes.end()) {
+    return;
+  }
+  auto& trx = EnsureBufferTransaction(shard);
+  ReplayBuffer(*shard, it->second, trx, context);
+  // The rows are this transaction's to make durable now, so the record stops
+  // carrying them. The removals stay: no segment holds those.
+  it->second.ClearBufferedRows();
 }
 
 irs::IndexWriter::Transaction&
@@ -132,11 +232,12 @@ SearchTableTransaction::EnsureSerialSearchTransaction(
 }
 
 void SearchTableTransaction::AddSearchDeletes(
-  const std::shared_ptr<SearchTable>& shard, std::span<const std::string> pks) {
-  // The destination shard + serial trx are recorded by
-  // EnsureSerialSearchTransaction (the delete Sink runs it first); here we only
-  // append the DELETE op, which seals the current insert run.
-  _changes[shard->GetTableId()].AppendDeletes(pks);
+  const std::shared_ptr<SearchTable>& shard, std::span<const int64_t> rows) {
+  auto& w = _writes[shard->GetTableId()];
+  if (!w.shard) {
+    w.shard = shard;
+  }
+  _changes[shard->GetTableId()].AppendDeletes(rows);
 }
 
 void SearchTableTransaction::AddSearchTruncate(
@@ -145,6 +246,8 @@ void SearchTableTransaction::AddSearchTruncate(
   if (!w.shard) {
     w.shard = shard;
   }
+  w.transactions.clear();
+  w.buffer_trx = nullptr;
   _changes[shard->GetTableId()].AppendTruncate(clears_shard);
 }
 
@@ -168,12 +271,58 @@ void SearchTableTransaction::Abort() noexcept {
   _readers.clear();
 }
 
+void SearchTableTransaction::FlushPending(duckdb::ClientContext& context) {
+  for (auto& [table_id, w] : _writes) {
+    auto it = _changes.find(table_id);
+    if (it == _changes.end()) {
+      continue;
+    }
+    auto& entry = it->second;
+    if (!entry.HasBufferedRows() && entry.ops.empty()) {
+      continue;
+    }
+
+    SDB_IF_FAILURE("search_feed_pending_fails") {
+      THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+    }
+    if (w.buffer_trx != nullptr) {
+      // Already overran once: the remainder joins the same transaction, whose
+      // segments the record names, so nothing is left to carry inline.
+      ReplayBuffer(*w.shard, entry, *w.buffer_trx, context);
+      entry.ClearBufferedRows();
+      continue;
+    }
+    // Never overran: a pooled transaction keeps the freelist coalescing that
+    // makes small writes cheap, and the record carries the rows inline.
+    auto& trx = EnsureSerialSearchTransaction(
+      w.shard, [&] { return w.shard->GetTransaction(); });
+    ReplayBuffer(*w.shard, entry, trx, context);
+  }
+}
+
 void SearchTableTransaction::Commit() {
   SDB_ASSERT(!_writes.empty());
   if (_changes.empty()) {
     ReleaseWriters();
     return;
   }
+  // The one and the only flush a transaction gets
+  for (auto& [table_id, w] : _writes) {
+    if (w.buffer_trx == nullptr) {
+      continue;
+    }
+    const auto flushed = w.buffer_trx->FlushAndFsync();
+    if (flushed.empty()) {
+      continue;
+    }
+    std::vector<SearchDbWal::SegmentRef> refs;
+    refs.reserve(flushed.size());
+    for (const auto& segment : flushed) {
+      refs.push_back(SearchDbWal::SegmentRef{.meta_file = segment.filename});
+    }
+    _changes[table_id].AppendSegments(std::move(refs));
+  }
+
   SDB_IF_FAILURE("crash_before_search_wal_commit") { SDB_IMMEDIATE_ABORT(); }
 
   const uint64_t record_tick = AppendCommit();
@@ -239,43 +388,51 @@ uint64_t SearchTableTransaction::AppendCommit() {
                  "search shard with a trx but no manifest ops");
       continue;
     }
+    auto& entry = cit->second;
     // A clearing TRUNCATE adds no trx but needs one tick for its Clear at the
     // band top.
-
-    uint64_t shard_span =
-      ShardTickSpan(w) + (cit->second.ClearsShard() ? 1 : 0);
+    uint64_t shard_span = ShardTickSpan(w) + (entry.ClearsShard() ? 1 : 0);
     tick_span = std::max(tick_span, shard_span);
-    auto& ops = op_lists.emplace_back();
 
-    for (auto& op : cit->second.ops) {
-      if (op.IsTruncate()) {
-        ops.push_back(SearchDbWal::Op{.truncate = true});
-        continue;
-      }
-      if (op.IsDelete()) {
-        ops.push_back(SearchDbWal::Op{
-          .delete_pks = std::span<const std::string>{op.delete_pks}});
-        continue;
-      }
-      if (op.collection && op.collection->Count() > 0) {
-        ops.push_back(SearchDbWal::Op{
-          .inline_data = op.collection.get(),
-          .inline_pks =
-            op.pk_segments
-              ? std::span<const SearchDbWal::InlinePk>{*op.pk_segments}
-              : std::span<const SearchDbWal::InlinePk>{}});
-      }
-      if (!op.segments.empty()) {
-        ops.push_back(SearchDbWal::Op{
-          .segments = std::span<const SearchDbWal::SegmentRef>{op.segments}});
-      }
+    // WAL ops in issue order: a row run for the bands before each op, then
+    // the op. Position is the ordering, so nothing carries a watermark.
+    auto& wal_ops = op_lists.emplace_back();
+    wal_ops.reserve(entry.ops.size() * 2 + 2);
+    if (!entry.segments.empty()) {
+      // Everything promoted sits ahead of what is left inline: a removal in
+      // this record names rows committed before the transaction, never these.
+      wal_ops.push_back(SearchDbWal::Op{
+        .kind = SearchDbWal::Op::Kind::kSegments,
+        .segments = std::span<const SearchDbWal::SegmentRef>{entry.segments}});
     }
-    SDB_ASSERT(!ops.empty(),
-               "search-table commit with neither segments nor inline rows");
+    uint32_t band = 0;
+    const auto band_count = static_cast<uint32_t>(entry.pk_segments.size());
+    auto emit_rows_to = [&](uint32_t upto) {
+      if (band >= upto) {
+        return;
+      }
+      wal_ops.push_back(SearchDbWal::Op{.kind = SearchDbWal::Op::Kind::kRows,
+                                        .first_band = band,
+                                        .last_band = upto});
+      band = upto;
+    };
+    for (const auto& op : entry.ops) {
+      emit_rows_to(std::min(op.band_watermark, band_count));
+      wal_ops.push_back(SearchDbWal::Op{
+        .kind = op.truncate ? SearchDbWal::Op::Kind::kTruncate
+                            : SearchDbWal::Op::Kind::kDelete,
+        .delete_rows = std::span<const int64_t>{op.delete_rows}});
+    }
+    emit_rows_to(band_count);
 
     SearchDbWal::ShardSection section;
     section.table_id = table_id;
-    section.ops = std::span<const SearchDbWal::Op>{ops};
+    section.inline_data = entry.collection.get();
+    section.inline_pks =
+      std::span<const SearchDbWal::InlinePk>{entry.pk_segments};
+    section.ops = std::span<const SearchDbWal::Op>{wal_ops};
+    SDB_ASSERT(!section.ops.empty(),
+               "search-table commit with neither rows, segments nor ops");
     sections.push_back(section);
   }
 

@@ -45,9 +45,11 @@ When they are wrapped into a `TRY` expression, they return `NULL`:
 
 #### With `TRY`
 
+<div className="docs-table-centered">
+
 <SqlLogicTest id="sql/expressions/try/example_006" />
 
-<div class="center_aligned_header_table"></div>
+</div>
 
 ## Limitations
 

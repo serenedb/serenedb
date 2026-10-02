@@ -18,6 +18,8 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include <iresearch/analysis/multi_delimited_tokenizer.hpp>
 #include <iresearch/analysis/token_batch.hpp>
 
@@ -584,6 +586,78 @@ TEST_F(MultiDelimitedTokenizerTests, short_needle_oracle) {
                                         << iter << " value.size=" << v.size());
         AssertBlockTokens(*stream, v, expected);
       }
+    }
+  }
+}
+
+TEST_F(MultiDelimitedTokenizerTests, multi_string_oracle) {
+  uint64_t seed = 0x7edd1e;
+  const auto next = [&] {
+    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+    return static_cast<size_t>(seed >> 33);
+  };
+  constexpr std::string_view kAlphabet = "ab</";
+  for (size_t variant = 0; variant < 200; ++variant) {
+    std::vector<std::string> needles;
+    for (auto n = 2 + next() % 11; n != 0; --n) {
+      std::string needle;
+      for (auto len = 1 + next() % (variant % 2 == 0 ? 5 : 2); len != 0;
+           --len) {
+        needle += kAlphabet[next() % kAlphabet.size()];
+      }
+      if (absl::c_none_of(needles, [&](const std::string& other) {
+            return other.starts_with(needle) || needle.starts_with(other);
+          })) {
+        needles.push_back(std::move(needle));
+      }
+    }
+    if (needles.size() < 2) {
+      continue;
+    }
+    std::vector<irs::bstring> delimiters;
+    for (const auto& needle : needles) {
+      delimiters.emplace_back(
+        reinterpret_cast<const irs::byte_type*>(needle.data()), needle.size());
+    }
+    auto stream =
+      MultiDelimitedTokenizer::Make({.delimiters = std::move(delimiters)});
+    for (size_t iter = 0; iter < 20; ++iter) {
+      std::string v;
+      for (auto len = next() % 300; len != 0; --len) {
+        v += next() % 4 == 0 ? kAlphabet[next() % kAlphabet.size()]
+                             : static_cast<char>('c' + next() % 20);
+      }
+      const std::string_view vv{v};
+      const auto match_at = [&](size_t at) -> size_t {
+        for (const auto& needle : needles) {
+          if (vv.substr(at).starts_with(needle)) {
+            return needle.size();
+          }
+        }
+        return 0;
+      };
+      std::vector<BlockTok> expected;
+      size_t tok = 0;
+      for (size_t at = 0; at < v.size();) {
+        const size_t size = match_at(at);
+        if (size == 0) {
+          ++at;
+          continue;
+        }
+        if (at != tok) {
+          expected.push_back({vv.substr(tok, at - tok),
+                              static_cast<uint32_t>(tok),
+                              static_cast<uint32_t>(at)});
+        }
+        at = tok = at + size;
+      }
+      if (tok != v.size()) {
+        expected.push_back({vv.substr(tok), static_cast<uint32_t>(tok),
+                            static_cast<uint32_t>(v.size())});
+      }
+      SCOPED_TRACE(testing::Message() << "variant=" << variant << " iter="
+                                      << iter << " value.size=" << v.size());
+      AssertBlockTokens(*stream, v, expected);
     }
   }
 }

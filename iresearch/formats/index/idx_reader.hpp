@@ -83,6 +83,8 @@ class IdxReader final {
 
   std::span<const std::pair<field_id, TermDictMeta>> TermDicts() const noexcept;
 
+  std::span<const uint64_t> AnnEnds() const noexcept;
+
   IndexInput::ptr ReopenIn() const;
 
  private:

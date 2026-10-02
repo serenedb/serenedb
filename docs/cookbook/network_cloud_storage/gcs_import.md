@@ -10,6 +10,7 @@ split: page
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
+import DocCallout from "@site/src/components/DocCallout";
 
 SereneDB can read and write Google Cloud Storage (GCS) over HTTP(S) directly.
 
@@ -31,4 +32,8 @@ You can attach to a database file in read-only mode:
 
 <SqlLogicTest id="cookbook/network_cloud_storage/gcs_import/example_003" />
 
-> Databases in Google Cloud Storage can only be attached in read-only mode.
+<DocCallout type="note">
+
+Databases in Google Cloud Storage can only be attached in read-only mode.
+
+</DocCallout>

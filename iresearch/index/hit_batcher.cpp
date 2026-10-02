@@ -101,9 +101,7 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
   if (!filters.empty()) {
     _filters.Bind(*col_reader, *_ctx, filters, *context, *states);
   }
-  if (!_filters.Empty()) {
-    _rg_col = _filters.Cols().front().reader;
-  }
+  _rg_col = _filters.WindowColumn();
 
   const auto bind = [&](Column& c, const irs::ColumnReader& r) {
     c.reader = &r;

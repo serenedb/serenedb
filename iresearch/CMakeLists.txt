@@ -368,8 +368,8 @@ set(IResearch_core_sources
     ./utils/index_utils.cpp
     ./utils/levenshtein_utils.cpp
     ./utils/wildcard_utils.cpp
-    ./utils/like_matcher.cpp
     ./utils/regexp_acceptor.cpp
+    ./utils/regexp_ngram.cpp
     ./utils/conjunction_acceptor.cpp
     ./utils/regexp_utils.cpp
     ./utils/levenshtein_default_pdp.cpp

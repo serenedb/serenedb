@@ -121,6 +121,7 @@ re2::RE2::Options RegexOptions(int group) {
   re2::RE2::Options options;
   options.set_log_errors(false);
   options.set_never_capture(group <= 0);
+  options.set_thread_safe(false);
   return options;
 }
 

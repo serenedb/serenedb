@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/strings/ascii.h>
+#include <re2/byte_set_finder.h>
 
 #include <algorithm>
 #include <cstring>
@@ -870,7 +871,7 @@ TEST(split_by_non_alpha_tokenizer_test, column_fill_matches_pull) {
   }
 }
 
-TEST(classify_block_test, NibbleSetAgainstScalar) {
+TEST(classify_block_test, ByteSetFinderAgainstScalar) {
   constexpr size_t kBlock = irs::analysis::classify::kClassifyBlock;
   uint64_t seed = 0xb17e5;
   const auto next = [&] {
@@ -880,15 +881,13 @@ TEST(classify_block_test, NibbleSetAgainstScalar) {
   irs::byte_type block[kBlock];
   for (size_t variant = 0; variant < 200; ++variant) {
     irs::analysis::classify::ByteSet bytes;
-    irs::analysis::classify::NibbleSet nibbles;
     const size_t count = 1 + next() % 40;
     for (size_t i = 0; i < count; ++i) {
-      const auto b = static_cast<irs::byte_type>(
-        variant % 2 == 0 ? next() % 128 : next() % 256);
-      bytes.Add(b);
-      nibbles.Add(b);
+      bytes.Add(static_cast<irs::byte_type>(variant % 2 == 0 ? next() % 128
+                                                             : next() % 256));
     }
-    if (!nibbles.Blockable()) {
+    re2::ByteSetFinder nibbles;
+    if (!nibbles.Build(bytes.words.data())) {
       continue;
     }
     for (int c = 0; c < 256; ++c) {
@@ -901,7 +900,7 @@ TEST(classify_block_test, NibbleSetAgainstScalar) {
         expect |= static_cast<uint32_t>(bytes.Contains(block[i])) << i;
       }
       ASSERT_EQ(expect,
-                irs::analysis::classify::ClassifyNibbleBlock(block, nibbles))
+                nibbles.Classify32(reinterpret_cast<const char*>(block)))
         << "variant=" << variant << " c=" << c;
     }
   }

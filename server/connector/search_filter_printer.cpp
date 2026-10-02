@@ -150,8 +150,7 @@ std::string RangeValue(const SearchRange<T>& range, Kind kind) {
   return s;
 }
 
-// Renders one phrase-part option variant. Shared between Phrase and
-// WildcardNGram filters which both hold ByPhraseOptions parts.
+// Renders one phrase-part option variant.
 struct PhrasePartVisitor : util::Noncopyable {
   auto operator()(const ByTermOptions& opts) const {
     absl::StrAppend(out, "Term:", TermToString(opts.term));
@@ -271,21 +270,6 @@ struct FilterPrinter {
       part.part.visit(PhrasePartVisitor{.out = &part_str});
       absl::StrAppend(&s, part_str, "(", part.offs_max, ", ", part.offs_min,
                       ")", "; ");
-    }
-    return s;
-  }
-
-  std::string WildcardNGramParts(const ByWildcardNGram& filter) const {
-    std::string s;
-    for (const auto& phrase : filter.options().parts) {
-      absl::StrAppend(&s, "<");
-      for (const auto& part : phrase) {
-        std::string part_str;
-        part.part.visit(PhrasePartVisitor{.out = &part_str});
-        absl::StrAppend(&s, part_str, "(", part.offs_max, ", ", part.offs_min,
-                        ")", "; ");
-      }
-      absl::StrAppend(&s, ">; ");
     }
     return s;
   }
@@ -471,7 +455,9 @@ struct FilterPrinter {
       ExplainNode node{"Levenshtein"};
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Target"] = TermToString(o.target);
-      node.attributes["Max Terms"] = absl::StrCat(o.max_terms);
+      node.attributes["Max Terms"] = o.with_ties
+                                       ? absl::StrCat(o.max_terms, " with ties")
+                                       : absl::StrCat(o.max_terms);
       return node;
     }
     if (type == Type<ByPrefix>::id()) {
@@ -518,11 +504,17 @@ struct FilterPrinter {
     }
     if (type == Type<ByWildcardNGram>::id()) {
       const auto& f = downCast<const ByWildcardNGram>(filter);
+      const auto& options = f.options();
       ExplainNode node{"Wildcard NGram"};
       node.attributes["Field"] = FieldName(f.field_id());
-      node.attributes["Token"] = TermToString(f.options().token);
-      node.attributes["Has Pos"] = f.options().has_pos ? "true" : "false";
-      node.attributes["Parts"] = WildcardNGramParts(f);
+      node.attributes["Pattern"] = TermToString(options.pattern);
+      node.attributes["Syntax"] =
+        options.syntax == RegexpSyntax::Perl ? "perl" : "posix";
+      node.attributes["Has Pos"] = options.has_pos ? "true" : "false";
+      node.attributes["Query"] = irs::ToString(options.query);
+      node.attributes["Verify"] = !options.matcher          ? "false"
+                                  : options.deferred_verify ? "table filter"
+                                                            : "inline";
       return node;
     }
     if (type == Type<Empty>::id()) {

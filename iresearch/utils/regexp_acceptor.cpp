@@ -205,43 +205,6 @@ bool EmptyWidth(re2::RegexpOp op) noexcept {
   }
 }
 
-bstring SuffixOf(re2::Regexp* re) {
-  std::vector<re2::Regexp*> pieces;
-  AppendPieces(re, pieces);
-  auto first = pieces.end();
-  std::vector<re2::Rune> runes;
-  while (first != pieces.begin()) {
-    auto* piece = *(first - 1);
-    if (!EmptyWidth(piece->op()) && !ExactRunes(piece, runes)) {
-      break;
-    }
-    --first;
-  }
-  bstring suffix;
-  if (std::none_of(pieces.begin(), first, [](re2::Regexp* piece) {
-        return piece->op() == re2::kRegexpStar ||
-               piece->op() == re2::kRegexpPlus;
-      })) {
-    return suffix;
-  }
-  for (auto it = first; it != pieces.end(); ++it) {
-    runes.clear();
-    ExactRunes(*it, runes);
-    const bool latin1 = ((*it)->parse_flags() & re2::Regexp::Latin1) != 0;
-    for (const auto rune : runes) {
-      if (latin1) {
-        suffix.push_back(static_cast<byte_type>(rune));
-        continue;
-      }
-      char utf8[re2::UTFmax];
-      const int n = re2::runetochar(utf8, &rune);
-      suffix.append(reinterpret_cast<const byte_type*>(utf8),
-                    static_cast<size_t>(n));
-    }
-  }
-  return suffix;
-}
-
 void AppendRune(bstring& out, re2::Rune rune, bool latin1) {
   if (latin1) {
     out.push_back(static_cast<byte_type>(rune));
@@ -250,6 +213,133 @@ void AppendRune(bstring& out, re2::Rune rune, bool latin1) {
   char utf8[re2::UTFmax];
   const int n = re2::runetochar(utf8, &rune);
   out.append(reinterpret_cast<const byte_type*>(utf8), static_cast<size_t>(n));
+}
+
+bool AppendExact(std::span<re2::Regexp* const> pieces, bstring& out) {
+  std::vector<re2::Rune> runes;
+  for (auto* piece : pieces) {
+    runes.clear();
+    if (EmptyWidth(piece->op())) {
+      continue;
+    }
+    if (!ExactRunes(piece, runes)) {
+      return false;
+    }
+    const bool latin1 = (piece->parse_flags() & re2::Regexp::Latin1) != 0;
+    for (const auto rune : runes) {
+      AppendRune(out, rune, latin1);
+    }
+  }
+  return true;
+}
+
+bool Unbounded(std::span<re2::Regexp* const> pieces) {
+  return std::any_of(pieces.begin(), pieces.end(), [](re2::Regexp* piece) {
+    return piece->op() == re2::kRegexpStar || piece->op() == re2::kRegexpPlus;
+  });
+}
+
+constexpr size_t kMaxSuffixes = 64;
+
+std::vector<bstring> SuffixesOf(re2::Regexp* re) {
+  std::vector<bstring> out;
+  if (re->op() == re2::kRegexpAlternate) {
+    for (int i = 0; i != re->nsub(); ++i) {
+      auto sub = SuffixesOf(re->sub()[i]);
+      if (sub.empty()) {
+        return {};
+      }
+      out.insert(out.end(), std::make_move_iterator(sub.begin()),
+                 std::make_move_iterator(sub.end()));
+    }
+    return out;
+  }
+  std::vector<re2::Regexp*> pieces;
+  AppendPieces(re, pieces);
+  std::vector<re2::Rune> runes;
+  auto first = pieces.end();
+  while (first != pieces.begin()) {
+    auto* piece = *(first - 1);
+    if (!EmptyWidth(piece->op()) && !ExactRunes(piece, runes)) {
+      break;
+    }
+    --first;
+  }
+  bstring tail;
+  AppendExact({first, pieces.end()}, tail);
+  std::vector<bstring> heads;
+  auto bound = first;
+  if (first != pieces.begin() &&
+      (*(first - 1))->op() == re2::kRegexpAlternate) {
+    auto* alternate = *(first - 1);
+    for (int i = 0; i != alternate->nsub(); ++i) {
+      std::vector<re2::Regexp*> branch;
+      AppendPieces(alternate->sub()[i], branch);
+      bstring head;
+      if (!AppendExact(branch, head)) {
+        heads.clear();
+        break;
+      }
+      heads.push_back(std::move(head));
+    }
+    if (!heads.empty()) {
+      --bound;
+    }
+  }
+  if (!Unbounded({pieces.begin(), bound})) {
+    return {};
+  }
+  if (heads.empty()) {
+    if (!tail.empty()) {
+      out.push_back(std::move(tail));
+    }
+    return out;
+  }
+  for (auto& head : heads) {
+    head += tail;
+    if (head.empty()) {
+      return {};
+    }
+    out.push_back(std::move(head));
+  }
+  return out;
+}
+
+void NormalizeSuffixes(std::vector<bstring>& suffixes) {
+  std::sort(suffixes.begin(), suffixes.end(),
+            [](const bstring& a, const bstring& b) {
+              return a.size() != b.size() ? a.size() < b.size() : a < b;
+            });
+  std::vector<bstring> kept;
+  for (auto& suffix : suffixes) {
+    if (std::none_of(kept.begin(), kept.end(), [&](const bstring& shorter) {
+          return bytes_view{suffix}.ends_with(shorter);
+        })) {
+      kept.push_back(std::move(suffix));
+    }
+  }
+  if (kept.size() > kMaxSuffixes) {
+    kept.clear();
+  }
+  std::stable_sort(
+    kept.begin(), kept.end(),
+    [](const bstring& a, const bstring& b) { return a.back() < b.back(); });
+  suffixes = std::move(kept);
+}
+
+void NormalizeExempt(std::vector<RegexpAcceptor::ExemptKey>& keys) {
+  std::sort(keys.begin(), keys.end(), [](const auto& a, const auto& b) {
+    return a.key != b.key ? a.key < b.key : a.prefix > b.prefix;
+  });
+  std::vector<RegexpAcceptor::ExemptKey> kept;
+  for (auto& key : keys) {
+    if (kept.empty() ||
+        !(kept.back().prefix ? bytes_view{key.key}.starts_with(kept.back().key)
+                             : key.key == kept.back().key)) {
+      kept.push_back(std::move(key));
+    }
+  }
+  keys = std::move(kept);
 }
 
 bstring InfixOf(re2::Regexp* re) {
@@ -860,8 +950,9 @@ void RegexpAcceptor::Compile(bytes_view pattern, RegexpSyntax syntax,
   re2::Regexp* re =
     wildcard ? WildcardTree(pattern) : RegexpTree(pattern, syntax);
   if (re) {
-    _suffix = SuffixOf(re);
-    if (_suffix.empty()) {
+    _suffixes = SuffixesOf(re);
+    NormalizeSuffixes(_suffixes);
+    if (_suffixes.empty()) {
       _infix = InfixOf(re);
     }
     if (!wildcard && FiniteLanguage(re, 0, _literals)) {
@@ -890,6 +981,7 @@ void RegexpAcceptor::CompileParts(std::span<const Part> parts,
   std::vector<re2::Regexp*> text;
   std::vector<re2::Regexp*> bytes;
   bool ok = true;
+  bool constrained = true;
   for (const auto& part : parts) {
     re2::Regexp* re = nullptr;
     switch (part.kind) {
@@ -913,10 +1005,25 @@ void RegexpAcceptor::CompileParts(std::span<const Part> parts,
       ok = false;
       break;
     }
+    if (part.kind == PartKind::Term || part.kind == PartKind::Prefix) {
+      _exempt.push_back({bstring{part.pattern}, part.kind == PartKind::Prefix});
+    } else if (auto suffixes = SuffixesOf(re); suffixes.empty()) {
+      constrained = false;
+    } else {
+      _suffixes.insert(_suffixes.end(),
+                       std::make_move_iterator(suffixes.begin()),
+                       std::make_move_iterator(suffixes.end()));
+    }
     (part.kind == PartKind::Perl || part.kind == PartKind::PosixEre ? text
                                                                     : bytes)
       .push_back(re);
   }
+  NormalizeSuffixes(_suffixes);
+  if (!ok || !constrained || _suffixes.empty()) {
+    _suffixes.clear();
+    _exempt.clear();
+  }
+  NormalizeExempt(_exempt);
   if (!ok) {
     for (auto* re : text) {
       re->Decref();
@@ -939,11 +1046,8 @@ void RegexpAcceptor::CompileParts(std::span<const Part> parts,
   auto* only = trees[0] == nullptr   ? trees[1]
                : trees[1] == nullptr ? trees[0]
                                      : nullptr;
-  if (only) {
-    _suffix = SuffixOf(only);
-    if (_suffix.empty()) {
-      _infix = InfixOf(only);
-    }
+  if (only && _suffixes.empty()) {
+    _infix = InfixOf(only);
   }
   bool finite = trees[0] != nullptr || trees[1] != nullptr;
   for (auto* tree : trees) {

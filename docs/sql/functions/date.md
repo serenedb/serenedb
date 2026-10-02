@@ -168,13 +168,15 @@ Truncate `timestamptz` to a grid of width `bucket_width`. The grid is anchored a
 
 #### `today()`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Current date (start of current transaction) in the local time zone. |
 | :--- | :--- |
 | **Example** | `today()` |
 | **Result** | `2022-10-08` |
 | **Alias** | `current_date` (no parentheses necessary) |
+
+</div>
 
 ## Date Part Extraction Functions
 

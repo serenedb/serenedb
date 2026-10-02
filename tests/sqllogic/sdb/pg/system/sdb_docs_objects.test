@@ -35,6 +35,16 @@ SELECT count(*) FROM sdb_docs.objects WHERE name ~ '[`\[\]()]' OR name <> trim(n
 count
 0
 
+connection docs database=postgres
+query
+SELECT count(*) FROM sdb_docs.objects
+WHERE length(signature) - length(replace(signature, ')', ''))
+        > length(signature) - length(replace(signature, '(', ''))
+   OR strpos(signature, '"') > 0;
+----
+count
+0
+
 # A function's signature is its name applied to arguments, optionally qualified
 # by the schema the function lives in. A niladic special form such as
 # current_timestamp carries the bare name instead.

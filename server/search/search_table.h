@@ -25,6 +25,7 @@
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <duckdb/parser/column_list.hpp>
@@ -36,6 +37,7 @@
 #include <iresearch/store/directory.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/async.hpp>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -85,6 +87,11 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   void RemoveIndexConfig(duckdb::idx_t index_oid);
 
   duckdb::idx_t GetTableId() const noexcept { return _table_id; }
+  uint64_t GetWriteBufferMaxBytes() const noexcept {
+    return _segment_memory_max == 0
+             ? std::numeric_limits<uint64_t>::max()
+             : std::max<uint64_t>(_segment_memory_max / 2, 1);
+  }
   auto& GetTableLock() noexcept { return _table_lock; }
 
   static std::filesystem::path GetPath(duckdb::idx_t db_id,

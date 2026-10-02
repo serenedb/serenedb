@@ -69,7 +69,7 @@ constexpr size_t kInsertBatch = 32;
 
 constexpr std::string_view kStripLinksToken = "@striplinks@";
 constexpr std::string_view kStripLinks =
-  R"sql('\[((?:[^\[\]]|\[(?:[^\[\]]|\[[^\[\]]*\])*\])*)\]\([^)]*\)', '\1', 'g')sql";
+  R"sql('\[((?:[^\[\]]|\[(?:[^\[\]]|\[[^\[\]]*\])*\])*)\]\((?:[^()]|\([^()]*\))*\)', '\1', 'g')sql";
 
 std::string Sql(std::string_view statement) {
   return absl::StrReplaceAll(statement, {{kStripLinksToken, kStripLinks}});

@@ -211,9 +211,9 @@ yaclib::Task<InsertOutcome> RunSourceInsert(
   using Request = const typename Signal::Request;
   const auto schema = ctx.Schema();
   const auto table = Signal::kTargets[target];
-  auto& entry = ctx.PreparedSlot(Signal::kSlots[target]);
-  if (auto error = network::EnsurePrepared(
-        ctx, entry, InsertSql(schema, table, Signal::kSources[target]))) {
+  const auto sql = InsertSql(schema, table, Signal::kSources[target]);
+  auto& entry = ctx.PreparedSlot(Signal::kSlots[target], sql);
+  if (auto error = network::EnsurePrepared(ctx, entry, sql)) {
     co_return Failed(*error);
   }
   auto& connection = connector::GetSereneDBContext(*ctx.Connection().context);

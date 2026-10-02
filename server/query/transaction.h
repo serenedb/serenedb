@@ -176,7 +176,18 @@ class Transaction : public Config {
     }
   }
 
+  const duckdb::Vector& FeedColumn(const void* table, duckdb::row_t first_row,
+                                   duckdb::idx_t count, duckdb::idx_t column,
+                                   const duckdb::Vector& source);
+
  private:
+  struct FeedColumns {
+    const void* table = nullptr;
+    duckdb::row_t first_row = 0;
+    duckdb::idx_t count = 0;
+    std::vector<std::pair<duckdb::idx_t, duckdb::Vector>> columns;
+  };
+
   // The cases a single snapshot serves a whole transaction: an explicit
   // REPEATABLE READ transaction, or any transaction that has performed
   // uncommitted DML. Everything else refreshes per statement.
@@ -191,6 +202,7 @@ class Transaction : public Config {
     _search_transactions;
   irs::containers::FlatHashMap<duckdb::idx_t, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
+  FeedColumns _feed_columns;
   // All search-table (TableEngine::Search) state + WAL commit logic. Engaged
   // lazily via SearchTxn(); reset in Destroy. The inverted-index trxs above
   // commit on the store-table tick, not the engine WAL tick.

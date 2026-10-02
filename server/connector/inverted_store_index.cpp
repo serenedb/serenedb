@@ -34,6 +34,7 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/storage_info.hpp>
@@ -458,6 +459,36 @@ std::unique_ptr<InvertedStoreIndex::ReplayOp> InvertedStoreIndex::CopyInsert(
   return op;
 }
 
+std::unique_ptr<InvertedStoreIndex::ReplayOp>
+InvertedStoreIndex::CopyInsertShared(query::Transaction& transaction,
+                                     duckdb::DataChunk& chunk,
+                                     duckdb::DataChunk& results,
+                                     duckdb::Vector& rows,
+                                     duckdb::idx_t count) {
+  if (_has_predicate || results.ColumnCount() == 0) {
+    return CopyInsert(results, rows, count);
+  }
+  auto op = std::make_unique<ReplayOp>(rows, count);
+  op->results.Initialize(duckdb::Allocator::DefaultAllocator(),
+                         results.GetTypes(), count);
+  const auto first_row =
+    duckdb::FlatVector::GetData<duckdb::row_t>(op->rows)[0];
+  for (duckdb::idx_t i = 0; i < results.ColumnCount(); ++i) {
+    auto& target = op->results.data[i];
+    const auto& expression = *bound_expressions[i];
+    if (expression.GetExpressionClass() == duckdb::ExpressionClass::BOUND_REF) {
+      const auto column =
+        expression.Cast<duckdb::BoundReferenceExpression>().Index();
+      target.Reference(transaction.FeedColumn(
+        &table_io_manager, first_row, count, column, chunk.data[column]));
+    } else {
+      duckdb::VectorOperations::Copy(results.data[i], target, count, 0, 0);
+      duckdb::FlatVector::SetSize(target, count);
+    }
+  }
+  return op;
+}
+
 bool InvertedStoreIndex::CommitReplay(
   ReplaySession& session, std::span<irs::IndexWriter::Transaction* const> trxs,
   const search::WalCursor* cursor) {
@@ -599,7 +630,8 @@ duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,
       }
     }
     auto& queue = _live->queues[_live->next++ % _live->queues.size()];
-    Enqueue(_live->executor, queue, CopyInsert(results, rows, count));
+    Enqueue(_live->executor, queue,
+            CopyInsertShared(*conn, chunk, results, rows, count));
   }
   conn->RegisterSearchFlush();
   return {};

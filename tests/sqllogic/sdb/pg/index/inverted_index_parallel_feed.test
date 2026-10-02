@@ -69,3 +69,77 @@ count
 
 statement ok
 DROP TABLE ipf;
+
+statement ok
+CREATE TABLE ipm(id INTEGER PRIMARY KEY, body TEXT, title TEXT);
+
+statement ok
+CREATE INDEX ipm_a ON ipm USING inverted(body);
+
+statement ok
+CREATE INDEX ipm_b ON ipm USING inverted(title, body);
+
+statement ok
+CREATE INDEX ipm_c ON ipm USING inverted((upper(title)));
+
+statement ok
+CREATE INDEX ipm_d ON ipm USING inverted(body) WHERE id % 2 = 0;
+
+statement ok
+INSERT INTO ipm SELECT g, 'word' || (g % 100), 'title' || (g % 10) FROM generate_series(1, 200000) g;
+
+statement ok
+VACUUM (REFRESH_TABLE) ipm;
+
+query
+SELECT count(*) FROM ipm_a WHERE body @@ 'word7';
+----
+count
+2000
+
+query
+SELECT id FROM ipm_a WHERE body @@ 'word42' ORDER BY id LIMIT 3;
+----
+id
+42
+142
+242
+
+query
+SELECT count(*) FROM ipm_b WHERE title @@ 'title3';
+----
+count
+20000
+
+query
+SELECT count(*) FROM ipm_b WHERE body @@ 'word99';
+----
+count
+2000
+
+query
+SELECT count(*) FROM ipm_c WHERE (upper(title)) @@ 'TITLE3';
+----
+count
+20000
+
+query
+SELECT count(*) FROM ipm_d;
+----
+count
+100000
+
+query
+SELECT count(*) FROM ipm_d WHERE body @@ 'word8';
+----
+count
+2000
+
+query
+SELECT count(*) FROM ipm_d WHERE body @@ 'word7';
+----
+count
+0
+
+statement ok
+DROP TABLE ipm;

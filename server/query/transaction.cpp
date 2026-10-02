@@ -25,6 +25,7 @@
 #include <absl/container/flat_hash_map.h>
 
 #include <chrono>
+#include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/storage/block_manager.hpp>
@@ -313,9 +314,35 @@ search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
   return it->second;
 }
 
+const duckdb::Vector& Transaction::FeedColumn(const void* table,
+                                              duckdb::row_t first_row,
+                                              duckdb::idx_t count,
+                                              duckdb::idx_t column,
+                                              const duckdb::Vector& source) {
+  if (_feed_columns.table != table || _feed_columns.first_row != first_row ||
+      _feed_columns.count != count) {
+    _feed_columns.table = table;
+    _feed_columns.first_row = first_row;
+    _feed_columns.count = count;
+    _feed_columns.columns.clear();
+  }
+  for (const auto& [index, copy] : _feed_columns.columns) {
+    if (index == column) {
+      return copy;
+    }
+  }
+  auto& copy = _feed_columns.columns
+                 .emplace_back(column, duckdb::Vector{source.GetType(), count})
+                 .second;
+  duckdb::VectorOperations::Copy(source, copy, count, 0, 0);
+  duckdb::FlatVector::SetSize(copy, count);
+  return copy;
+}
+
 void Transaction::Destroy() noexcept {
   _search_transactions.clear();
   _search_snapshots.clear();
+  _feed_columns = {};
   _search_txn.reset();
   _on_commit.clear();
   _num_log_data_markers = 0;

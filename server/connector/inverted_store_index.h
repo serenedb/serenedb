@@ -145,6 +145,11 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   static std::unique_ptr<ReplayOp> CopyInsert(duckdb::DataChunk& results,
                                               duckdb::Vector& rows,
                                               duckdb::idx_t count);
+  std::unique_ptr<ReplayOp> CopyInsertShared(query::Transaction& transaction,
+                                             duckdb::DataChunk& chunk,
+                                             duckdb::DataChunk& results,
+                                             duckdb::Vector& rows,
+                                             duckdb::idx_t count);
   void ReplayAppend(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
   void ReplayDelete(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
   bool CommitReplay(ReplaySession& session,

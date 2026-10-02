@@ -123,9 +123,7 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
     duckdb::ClientContext& context,
     duckdb::unique_ptr<duckdb::FunctionData>& bind_data) final;
 
-  duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext&) final {
-    return {};
-  }
+  duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext&) final;
 
   bool ScanColumnSegmentInfo(
     const duckdb::QueryContext& context,
@@ -164,9 +162,20 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
     return _pk_sequence;
   }
 
+  bool NumbersRowsWith(const duckdb::CatalogEntry& sequence) const final {
+    return sequence.name == _pk_sequence &&
+           sequence.ParentSchemaName() == ParentSchemaName();
+  }
+
   const auto& Storage() const noexcept { return _storage; }
 
  private:
+  duckdb::unique_ptr<SearchTableEntry> Rebuilt(
+    duckdb::ClientContext& context, duckdb::AlterInfo& info,
+    duckdb::unique_ptr<duckdb::CreateInfo> create) const;
+  duckdb::unique_ptr<duckdb::CatalogEntry> AlterOptions(
+    duckdb::ClientContext& context, duckdb::AlterTableInfo& alter);
+
   std::shared_ptr<search::SearchTable> _storage;
   SearchTableOptions _options;
   duckdb::Identifier _pk_sequence;

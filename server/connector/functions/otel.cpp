@@ -30,6 +30,7 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -62,9 +63,9 @@ void BindTarget(duckdb::ClientContext& context, std::string_view schema_name,
                 duckdb::vector<duckdb::string>& names) {
   auto table = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
     context,
-    duckdb::QualifiedName{
-      duckdb::Identifier{GetSereneDBContext(context).GetDatabase()},
-      duckdb::Identifier{schema_name}, duckdb::Identifier{table_name}},
+    duckdb::QualifiedName{duckdb::DatabaseManager::GetDefaultDatabase(context),
+                          duckdb::Identifier{schema_name},
+                          duckdb::Identifier{table_name}},
     duckdb::OnEntryNotFound::RETURN_NULL);
   if (!table) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),

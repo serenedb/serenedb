@@ -161,6 +161,8 @@ statement error
 ALTER SCHEMA csr_b RENAME TO csr_c;
 ----
 db error: ERROR: Cannot alter entry "csr_b" because there are entries that depend on it.
+view "v" depends on table "t".
+Drop the dependent entries first and recreate them after the change.
 
 
 statement ok

@@ -28,8 +28,10 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
+#include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/types/time.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -57,36 +59,21 @@ duckdb::optional_ptr<duckdb::Catalog> SessionDatabase(
   if (!conn) {
     return nullptr;
   }
-  return duckdb::Catalog::GetCatalog(*context,
-                                     duckdb::Identifier{conn->GetDatabase()});
+  return duckdb::Catalog::GetCatalog(
+    *context, duckdb::DatabaseManager::GetDefaultDatabase(*context));
 }
 
-duckdb::optional_ptr<duckdb::TypeCatalogEntry> UserTypeEntry(
-  const duckdb::LogicalType& type,
-  duckdb::optional_ptr<duckdb::ClientContext> context) {
-  if (!context || !type.HasAlias()) {
-    return nullptr;
+std::optional<uint64_t> UserTypeOid(const duckdb::LogicalType& type) {
+  const auto ext = type.GetExtensionInfo();
+  if (!ext) {
+    return std::nullopt;
   }
-  duckdb::optional_ptr<duckdb::TypeCatalogEntry> result;
-  const auto lookup = [&] {
-    auto database = SessionDatabase(context.get());
-    if (!database) {
-      return;
-    }
-    auto entry = database->GetEntry(*context, duckdb::CatalogType::TYPE_ENTRY,
-                                    duckdb::Identifier{INVALID_SCHEMA},
-                                    duckdb::Identifier{type.GetAlias()},
-                                    duckdb::OnEntryNotFound::RETURN_NULL);
-    if (entry && !entry->internal) {
-      result = &entry->Cast<duckdb::TypeCatalogEntry>();
-    }
-  };
-  if (context->transaction.HasActiveTransaction()) {
-    lookup();
-  } else {
-    context->RunFunctionInTransaction(lookup);
+  const auto it =
+    ext->properties.find(duckdb::ExtensionTypeInfo::CATALOG_OID_PROPERTY);
+  if (it == ext->properties.end()) {
+    return std::nullopt;
   }
-  return result;
+  return it->second.GetValue<uint64_t>();
 }
 
 }  // namespace
@@ -114,9 +101,7 @@ duckdb::optional_ptr<duckdb::TypeCatalogEntry> UserTypeEntry(
   case oid##Array:                   \
     return LogicalType::LIST(type_expr);
 
-PgTypeInfo Logical2Pg(const duckdb::LogicalType& type,
-                      duckdb::optional_ptr<duckdb::ClientContext> context,
-                      bool in_array) {
+PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
   // Arrays are varlena (typlen -1); a scalar carries its fixed width or -1. The
   // typmod (DECIMAL precision/scale, else -1) is the element's and survives the
   // array wrapping.
@@ -231,10 +216,9 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type,
     case ENUM: {
       // null for anonymous/derived enums not registered as a pg custom type
       // (e.g. enum_range); their value is just the string label on the wire.
-      if (const auto entry = UserTypeEntry(type, context)) {
-        const auto oid = entry->oid;
+      if (const auto oid = UserTypeOid(type)) {
         // Enum types are int4-backed (typlen 4).
-        return {static_cast<int32_t>(in_array ? TypeArrayOid(oid) : oid),
+        return {static_cast<int32_t>(in_array ? TypeArrayOid(*oid) : *oid),
                 in_array ? static_cast<int16_t>(-1) : static_cast<int16_t>(4),
                 -1};
       }
@@ -248,9 +232,8 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type,
         return make(kText, kTextArray, -1);
       }
       // null in case of anonymous record types (e.g. SELECT ROW(1, 2))
-      if (const auto entry = UserTypeEntry(type, context)) {
-        const auto oid = entry->oid;
-        return {static_cast<int32_t>(in_array ? TypeArrayOid(oid) : oid),
+      if (const auto oid = UserTypeOid(type)) {
+        return {static_cast<int32_t>(in_array ? TypeArrayOid(*oid) : *oid),
                 static_cast<int16_t>(-1), -1};
       }
       return make(kRecord, kRecordArray, -1);
@@ -272,9 +255,9 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type,
     case UBIGINT:
       return make(kNumeric, kNumericArray, -1);
     case LIST:
-      return Logical2Pg(duckdb::ListType::GetChildType(type), context, true);
+      return Logical2Pg(duckdb::ListType::GetChildType(type), true);
     case ARRAY:
-      return Logical2Pg(duckdb::ArrayType::GetChildType(type), context, true);
+      return Logical2Pg(duckdb::ArrayType::GetChildType(type), true);
     case GEOMETRY:
       return make(kGeometry, kGeometryArray, -1);
     case VARIANT:
@@ -286,10 +269,8 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type,
   }
 }
 
-int32_t Type2Oid(const duckdb::LogicalType& type,
-                 duckdb::optional_ptr<duckdb::ClientContext> context,
-                 bool in_array) {
-  return Logical2Pg(type, context, in_array).oid;
+int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
+  return Logical2Pg(type, in_array).oid;
 }
 
 duckdb::LogicalType Oid2Type(int32_t oid, duckdb::ClientContext& context) {
@@ -688,8 +669,8 @@ uint64_t RegnamespaceIn(const ConnectionContext& ctx, std::string_view name) {
     return pg::kPgInformationSchema;
   }
   auto& client = ctx.GetClientContext();
-  auto& database =
-    duckdb::Catalog::GetCatalog(client, duckdb::Identifier{ctx.GetDatabase()});
+  auto& database = duckdb::Catalog::GetCatalog(
+    client, duckdb::DatabaseManager::GetDefaultDatabase(client));
   if (auto schema =
         database.GetSchema(client, duckdb::Identifier{std::string{name}},
                            duckdb::OnEntryNotFound::RETURN_NULL)) {

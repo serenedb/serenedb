@@ -13,9 +13,7 @@
 #      crash leaves un-checkpointed,
 #   4. kill -9, then wall-clock restart-to-search-ready (a search query must
 #      return the pre-crash hit count, so the index delta really is applied),
-#   5. repeat REPS times on the same datadir (replay is idempotent; the WAL is
-#      never truncated because auto-checkpoint stays off and kill -9 skips the
-#      clean-shutdown checkpoint), report the median.
+#   5. repeat REPS times, report the median.
 #
 # Pre-reqs: psql, the baseline binary, the branch perf binary. No other serened
 # on PORT.
@@ -34,6 +32,7 @@ PORT="${PERF_REC_PORT:-6491}"
 TABLE_ROWS="${PERF_REC_TABLE_ROWS:-2000000}"
 DELTA_ROWS="${PERF_REC_DELTA_ROWS:-300000}"
 REPS="${PERF_REC_REPS:-3}"
+INDEXES="${PERF_REC_INDEXES:-1}"
 # 1 (default): refresh the index after the delta, so recovery replays the
 # delta into the TABLE only (the iresearch side is already durable). 0: leave
 # the delta un-refreshed, so recovery must tokenize + invert it -- the heavy
@@ -101,16 +100,26 @@ wait_up() {
 # Block until a search over the indexed table returns the expected hit count,
 # i.e. the post-checkpoint delta is fully applied to the inverted index.
 wait_search_ready() {
-	local want="$1"
-	for _ in $(seq 1 4000); do
-		local got
-		got="$("${PSQL[@]}" -c "SELECT count(*) FROM rec_txt_idx WHERE body @@ ts_phrase('token7');" 2>/dev/null || echo -1)"
-		[[ "${got}" == "${want}" ]] && return 0
-		sleep 0.05
+	local want="$1" i
+	for ((i = 1; i <= INDEXES; i++)); do
+		local ready=0
+		for _ in $(seq 1 4000); do
+			local got
+			got="$("${PSQL[@]}" -c "SELECT count(*) FROM $(index_name "${i}") WHERE body @@ ts_phrase('token7');" 2>/dev/null || echo -1)"
+			[[ "${got}" == "${want}" ]] && {
+				ready=1
+				break
+			}
+			sleep 0.05
+		done
+		((ready)) || {
+			echo "search on $(index_name "${i}") never reached ${want} hits" >&2
+			return 1
+		}
 	done
-	echo "search never reached ${want} hits" >&2
-	return 1
 }
+
+index_name() { ((${1} == 1)) && echo rec_txt_idx || echo "rec_txt_idx${1}"; }
 
 wal_bytes() { du -sb "${1}" 2>/dev/null | awk '{print $1}'; }
 
@@ -128,8 +137,12 @@ bench_one() {
 		    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
 		    WITH (frequency, position);" \
 		-c "CREATE TABLE rec_txt (id INTEGER PRIMARY KEY, body TEXT);" \
-		-c "INSERT INTO rec_txt SELECT x, 'lorem ipsum dolor sit amet word' || (x % 1000) || ' token' || (x % 50) FROM generate_series(1, ${TABLE_ROWS}) t(x);" \
-		-c "CREATE INDEX rec_txt_idx ON rec_txt USING inverted(body rec_dict);" \
+		-c "INSERT INTO rec_txt SELECT x, 'lorem ipsum dolor sit amet word' || (x % 1000) || ' token' || (x % 50) FROM generate_series(1, ${TABLE_ROWS}) t(x);" >/dev/null
+	local i
+	for ((i = 1; i <= INDEXES; i++)); do
+		"${PSQL[@]}" -c "CREATE INDEX $(index_name "${i}") ON rec_txt USING inverted(body rec_dict);" >/dev/null
+	done
+	"${PSQL[@]}" \
 		-c "VACUUM (REFRESH_TABLE) rec_txt;" \
 		-c "CHECKPOINT;" >/dev/null
 
@@ -155,11 +168,17 @@ bench_one() {
 	wal="$(wal_bytes "${datadir}")"
 	echo "   rows=${total} token7_hits=${hits} visible_pre_crash=${visible} datadir_bytes=${wal}"
 
+	kill -9 "${CUR_PID}" 2>/dev/null || true
+	wait "${CUR_PID}" 2>/dev/null || true
+	cp -a "${datadir}" "${datadir}.crash"
+
 	local times=() rss_list=() r s e
 	for ((r = 0; r < REPS; r++)); do
-		wait_quiet
 		kill -9 "${CUR_PID}" 2>/dev/null || true
 		wait "${CUR_PID}" 2>/dev/null || true
+		wait_quiet
+		rm -rf "${datadir}"
+		cp -a "${datadir}.crash" "${datadir}"
 		s=$(date +%s.%N)
 		start_serened "${srv}" "${datadir}"
 		wait_up
@@ -183,7 +202,7 @@ bench_one() {
 	med_rss=$(printf '%s\n' "${rss_list[@]}" | sort -n | awk -v n="${REPS}" 'NR==int((n+1)/2){print}')
 	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${srv}" "${total}" "${DELTA_ROWS}" "${hits}" "${wal}" "${med}" "${med_rss}" >>"${OUT_DIR}/results.tsv"
 	echo "   ${srv} recovery median=${med}s rss=${med_rss}KB"
-	rm -rf "${datadir}"
+	rm -rf "${datadir}" "${datadir}.crash"
 	CUR_DATA=""
 }
 
@@ -191,7 +210,7 @@ bench_one() {
 echo "old: ${OLD_BIN}"
 echo "new: ${NEW_BIN}"
 echo "out: ${OUT_DIR}"
-echo "table_rows=${TABLE_ROWS} delta_rows=${DELTA_ROWS} reps=${REPS}"
+echo "table_rows=${TABLE_ROWS} delta_rows=${DELTA_ROWS} indexes=${INDEXES} reps=${REPS}"
 echo
 
 BENCH_BIN="${OLD_BIN}" bench_one old

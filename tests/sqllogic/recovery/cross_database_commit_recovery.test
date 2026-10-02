@@ -1,0 +1,235 @@
+control substitution on
+
+statement ok
+CREATE DATABASE xcr_other;
+
+statement ok
+CREATE TABLE xcr_local (id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE INDEX xcr_local_idx ON xcr_local USING inverted (body);
+
+statement ok
+CREATE TABLE xcr_other.public.xcr_remote (id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE INDEX xcr_remote_idx ON xcr_other.public.xcr_remote USING inverted (body);
+
+statement ok
+INSERT INTO xcr_local SELECT i, 'bulk' || i FROM range(0, 20000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) xcr_local;
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO xcr_local VALUES (100000, 'both');
+
+statement ok
+INSERT INTO xcr_other.public.xcr_remote VALUES (1, 'both');
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) xcr_local;
+
+statement ok
+VACUUM (REFRESH_TABLE) xcr_other.public.xcr_remote;
+
+statement ok
+INSERT INTO xcr_local SELECT i, 'tail' || i FROM range(200000, 200100) t(i);
+
+statement ok
+INSERT INTO xcr_other.public.xcr_remote SELECT i, 'tail' || i FROM range(2, 102) t(i);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_commit
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) xcr_local;
+
+connection after_commit
+statement ok
+VACUUM (REFRESH_TABLE) xcr_other.public.xcr_remote;
+
+connection after_commit
+query
+SELECT (SELECT count(*) FROM xcr_local) AS t, (SELECT count(*) FROM xcr_local_idx) AS i;
+----
+t	i
+20101	20101
+
+connection after_commit
+query
+SELECT (SELECT count(*) FROM xcr_other.public.xcr_remote) AS t, (SELECT count(*) FROM xcr_other.public.xcr_remote_idx) AS i;
+----
+t	i
+101	101
+
+connection after_commit
+query
+SELECT (SELECT count(*) FROM xcr_local_idx WHERE body @@ 'both') AS l, (SELECT count(*) FROM xcr_other.public.xcr_remote_idx WHERE body @@ 'both') AS r;
+----
+l	r
+1	1
+
+connection after_commit
+statement ok
+SET sdb_faults = 'crash_before_catalog_commit';
+
+connection after_commit
+statement ok
+BEGIN;
+
+connection after_commit
+statement ok
+INSERT INTO xcr_local VALUES (300000, 'undecided');
+
+connection after_commit
+statement ok
+INSERT INTO xcr_other.public.xcr_remote VALUES (300000, 'undecided');
+
+connection after_commit
+statement error connection closed
+COMMIT;
+
+connection after_undecided
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT (SELECT count(*) FROM xcr_local WHERE id = 300000) AS l, (SELECT count(*) FROM xcr_other.public.xcr_remote WHERE id = 300000) AS r;
+----
+l	r
+0	0
+
+connection after_undecided
+statement ok
+SET sdb_faults = 'crash_after_catalog_before_data';
+
+connection after_undecided
+statement ok
+BEGIN;
+
+connection after_undecided
+statement ok
+INSERT INTO xcr_local VALUES (400000, 'decided');
+
+connection after_undecided
+statement ok
+INSERT INTO xcr_other.public.xcr_remote VALUES (400000, 'decided');
+
+connection after_undecided
+statement error connection closed
+COMMIT;
+
+connection after_decided
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT (SELECT count(*) FROM xcr_local WHERE id = 400000) AS l, (SELECT count(*) FROM xcr_other.public.xcr_remote WHERE id = 400000) AS r;
+----
+l	r
+1	1
+
+connection after_decided
+statement ok
+VACUUM (REFRESH_TABLE) xcr_local;
+
+connection after_decided
+statement ok
+VACUUM (REFRESH_TABLE) xcr_other.public.xcr_remote;
+
+connection after_decided
+query
+SELECT (SELECT count(*) FROM xcr_local_idx WHERE body @@ 'decided') AS l, (SELECT count(*) FROM xcr_other.public.xcr_remote_idx WHERE body @@ 'decided') AS r;
+----
+l	r
+1	1
+
+connection after_decided
+query
+SELECT (SELECT count(*) FROM xcr_local_idx) AS l, (SELECT count(*) FROM xcr_other.public.xcr_remote_idx) AS r;
+----
+l	r
+20102	102
+
+connection after_decided
+statement ok
+SET sdb_faults = 'crash_before_catalog_commit';
+
+connection after_decided
+statement ok
+BEGIN;
+
+connection after_decided
+statement ok
+CREATE TABLE xcr_ddl_local (id INTEGER);
+
+connection after_decided
+statement ok
+CREATE TABLE xcr_other.public.xcr_ddl_remote (id INTEGER);
+
+connection after_decided
+statement ok
+INSERT INTO xcr_ddl_local VALUES (1);
+
+connection after_decided
+statement ok
+INSERT INTO xcr_other.public.xcr_ddl_remote VALUES (1);
+
+connection after_decided
+statement error connection closed
+COMMIT;
+
+connection after_ddl_undecided
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM duckdb_tables() WHERE table_name IN ('xcr_ddl_local', 'xcr_ddl_remote');
+----
+count
+0
+
+connection after_ddl_undecided
+statement ok
+SET sdb_faults = 'crash_after_catalog_before_data';
+
+connection after_ddl_undecided
+statement ok
+BEGIN;
+
+connection after_ddl_undecided
+statement ok
+CREATE TABLE xcr_ddl_local (id INTEGER);
+
+connection after_ddl_undecided
+statement ok
+CREATE TABLE xcr_other.public.xcr_ddl_remote (id INTEGER);
+
+connection after_ddl_undecided
+statement ok
+INSERT INTO xcr_ddl_local VALUES (2);
+
+connection after_ddl_undecided
+statement ok
+INSERT INTO xcr_other.public.xcr_ddl_remote VALUES (2);
+
+connection after_ddl_undecided
+statement error connection closed
+COMMIT;
+
+connection after_ddl_decided
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT (SELECT sum(id) FROM xcr_ddl_local) AS l, (SELECT sum(id) FROM xcr_other.public.xcr_ddl_remote) AS r;
+----
+l	r
+2	2
+
+connection after_ddl_decided
+statement ok
+DROP TABLE xcr_ddl_local;
+
+connection after_ddl_decided
+statement ok
+DROP DATABASE xcr_other;

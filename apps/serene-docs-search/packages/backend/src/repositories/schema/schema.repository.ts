@@ -2,6 +2,7 @@ import type { SereneSearchConfig } from "@serenedb/docs-search-core";
 import { getDbContext, type DbContext } from "@database";
 import { EmbeddingRepository } from "@repositories/embedding";
 import { MetaRepository } from "@repositories/meta";
+import { ObjectsRepository } from "@repositories/objects";
 import { lit } from "@utils/sql";
 
 /**
@@ -10,7 +11,7 @@ import { lit } from "@utils/sql";
  */
 const signature = (ctx: DbContext): string => {
     return JSON.stringify({
-        v: 6,
+        v: 7,
         exactness: ctx.exactnessEnabled,
         hybrid: ctx.hybrid,
         model: ctx.hybrid ? ctx.embeddings?.model : null,
@@ -29,6 +30,9 @@ const signature = (ctx: DbContext): string => {
  *           -> stem (optional)
  *   exact — same minus synonyms/stemming: surface word forms, used by the
  *           exactness boost clauses (Meilisearch's "exactness" rule)
+ *
+ * Both store norms: BM25 normalizes by field length (b = 0.4, see the
+ * search repository), since a page's top section carries the whole page.
  */
 const dictionaryDdl = (
     ctx: DbContext,
@@ -51,7 +55,7 @@ const dictionaryDdl = (
     return `
             CREATE TEXT SEARCH DICTIONARY ${name} AS
                 ${stages.join("\n                | ")}
-                WITH (frequency, position)`;
+                WITH (frequency, position, norm)`;
 };
 
 const tableExists = async (ctx: DbContext, name: string): Promise<boolean> => {
@@ -84,6 +88,7 @@ export const SchemaRepository = {
             `CREATE TABLE IF NOT EXISTS ${ctx.clicksTable} (
                 id VARCHAR PRIMARY KEY, url VARCHAR, title VARCHAR, clicks INTEGER)`,
         );
+        await ObjectsRepository.ensureSchema();
     },
 
     /** Cheap check (no ai_embed): would ensureSchema drop and recreate? */
@@ -160,6 +165,8 @@ export const SchemaRepository = {
                 level INTEGER,
                 content VARCHAR,
                 code VARCHAR,
+                trail VARCHAR,
+                body VARCHAR,
                 hash VARCHAR${embeddingCol}
             )`);
 
@@ -171,13 +178,15 @@ export const SchemaRepository = {
         // exactness: the same columns again as expression fields analyzed
         // without stemming/synonyms, so surface forms can be boosted
         const exactCols = ctx.exactnessEnabled
-            ? `, lower(title) ${ctx.exactDict}, lower(content) ${ctx.exactDict}`
+            ? `, lower(title) ${ctx.exactDict}, lower(body) ${ctx.exactDict}`
             : "";
+        // matched text is `body` (the section with everything nested under
+        // it) plus the heading `trail` above it; `content` is only stored
         await ctx.pool.query(`
             CREATE INDEX ${ctx.index} ON ${ctx.table}
-            USING inverted (id, title ${ctx.dict}, content ${ctx.dict}${exactCols}, lower(code) ${ctx.ngramDict}${vectorCol})
+            USING inverted (id, title ${ctx.dict}, trail ${ctx.dict}, body ${ctx.dict}${exactCols}, lower(code) ${ctx.ngramDict}${vectorCol})
             INCLUDE (path, url, anchor, crumb, grp, kind, level)
-            WITH (optimize_top_k = 'bm25(1.2, 0.75)')`);
+            WITH (optimize_top_k = 'bm25(1.2, 0.4)')`);
 
         if (dim != null) await MetaRepository.set("embedding_dim", String(dim));
         await MetaRepository.set("schema_signature", sig);

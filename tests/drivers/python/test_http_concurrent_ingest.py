@@ -61,6 +61,22 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+# A TSan build exits 66 once it has findings to report, and CI reads those from
+# the sanitizer logs rather than the exit status, so it is not a test signal.
+_CLEAN_EXITS = (0, -15) + ((66,) if os.environ.get("TSAN_OPTIONS") else ())
+
+
+def _wait_http(port: int, deadline: float) -> None:
+    while True:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=2):
+                return
+        except OSError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.2)
+
+
 def _connect(port: int, deadline: float) -> psycopg.Connection:
     while True:
         try:
@@ -98,13 +114,16 @@ def server(tmp_path: Path):
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
     )
     pg = _connect(pg_port, time.monotonic() + 60)
+    # The HTTP listener binds independently of pg-wire, so pg answering does
+    # not mean this one is up yet -- under a sanitizer the gap is seconds.
+    _wait_http(http_port, time.monotonic() + 60)
     try:
         yield proc, pg, http_port
     finally:
         pg.close()
         proc.terminate()
         _, stderr = proc.communicate(timeout=60)
-        assert proc.returncode in (0, -15), stderr.decode(errors="replace")
+        assert proc.returncode in _CLEAN_EXITS, stderr.decode(errors="replace")
 
 
 def _counts(pg: psycopg.Connection) -> dict[str, int]:

@@ -43,6 +43,7 @@
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -313,7 +314,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabaseById(
 duckdb::optional_ptr<duckdb::Catalog> SessionCatalog(
   duckdb::ClientContext& context) {
   return duckdb::Catalog::GetCatalogEntry(
-    context, duckdb::Identifier{GetSereneDBContext(context).GetDatabase()});
+    context, duckdb::DatabaseManager::GetDefaultDatabase(context));
 }
 
 // An oid is the one thing duckdb cannot resolve from a name, so these walk the
@@ -567,15 +568,14 @@ void NumNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 // Returns regtype OID. The serializer formats regtype as PG type name.
 void PgTypeofFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                       duckdb::Vector& result) {
-  auto oid = static_cast<int64_t>(
-    pg::Type2Oid(args.data[0].GetType(), &state.GetContext()));
+  auto oid = static_cast<int64_t>(pg::Type2Oid(args.data[0].GetType()));
   result.Reference(duckdb::Value::BIGINT(oid), duckdb::count_t(args.size()));
 }
 
 duckdb::unique_ptr<duckdb::Expression> BindPgTypeof(
   duckdb::FunctionBindExpressionInput& input) {
-  auto oid = static_cast<int64_t>(
-    pg::Type2Oid(input.children[0]->GetReturnType(), &input.context));
+  auto oid =
+    static_cast<int64_t>(pg::Type2Oid(input.children[0]->GetReturnType()));
   auto val = duckdb::Value::BIGINT(oid);
   val.Reinterpret(pg::REGTYPE());
   return duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(val));

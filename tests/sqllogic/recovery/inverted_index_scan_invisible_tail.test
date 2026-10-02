@@ -5,6 +5,10 @@ RESET sdb_faults;
 
 
 statement ok
+SET threads = 1
+
+
+statement ok
 CREATE TEXT SEARCH DICTIONARY it_en AS split_text_csv(' ')
   WITH (frequency, position)
 

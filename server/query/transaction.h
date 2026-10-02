@@ -20,13 +20,18 @@
 
 #pragma once
 
+#include <absl/functional/any_invocable.h>
+
 #include <functional>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <optional>
+#include <span>
+#include <vector>
 #include <yaclib/async/future.hpp>
 
 #include "catalog/catalog.h"
+#include "connector/duckdb_sink_writer_base.h"
 #include "query/config.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table_transaction.h"
@@ -77,12 +82,20 @@ class Transaction : public Config {
   // commit's exact store-WAL position; std::nullopt on the fallback path where
   // the transaction did not commit the store database, in which case no
   // recovery cursor is recorded. Idempotent -- a no-op once the staged
-  // transactions have been committed (or when there were none).
-  void CommitSearch(std::optional<search::WalCursor> cursor) noexcept;
+  // transactions have been committed (or when there were none). With
+  // `database`, only that database's indexes commit: the cursor is a position
+  // in its WAL.
+  void CommitSearch(
+    std::optional<search::WalCursor> cursor,
+    std::optional<duckdb::idx_t> database = std::nullopt) noexcept;
 
   void Commit();
 
   void Rollback();
+
+  void DeferToCommit(absl::AnyInvocable<void()> action) {
+    _on_commit.push_back(std::move(action));
+  }
 
   // True once any statement that reads or writes the current database ran
   // inside the active explicit transaction; gates late SET TRANSACTION
@@ -126,25 +139,62 @@ class Transaction : public Config {
 
   void Destroy() noexcept;
 
+  struct SearchSlot {
+    std::unique_ptr<irs::IndexWriter::Transaction> transaction;
+    std::unique_ptr<connector::DuckDBSinkIndexWriter> writer;
+  };
+
+  SearchSlot& EnsureIndexSlot(
+    duckdb::idx_t index_id,
+    std::shared_ptr<search::InvertedIndexStorage> storage,
+    std::shared_ptr<const catalog::InvertedIndexConfig> config,
+    size_t slot = 0);
+
   irs::IndexWriter::Transaction& EnsureIndexTransaction(
     duckdb::idx_t index_id,
     std::shared_ptr<search::InvertedIndexStorage> storage,
-    std::shared_ptr<const catalog::InvertedIndexConfig> config);
+    std::shared_ptr<const catalog::InvertedIndexConfig> config) {
+    return *EnsureIndexSlot(index_id, std::move(storage), std::move(config))
+              .transaction;
+  }
+
+  std::span<SearchSlot> IndexSlots(duckdb::idx_t index_id) {
+    const auto it = _search_transactions.find(index_id);
+    if (it == _search_transactions.end()) {
+      return {};
+    }
+    return it->second.slots;
+  }
 
   void RegisterSearchFlush() noexcept {
     for (auto& [index_id, entry] : _search_transactions) {
-      entry.transaction->RegisterFlush();
+      for (auto& slot : entry.slots) {
+        if (slot.transaction) {
+          slot.transaction->RegisterFlush();
+        }
+      }
     }
   }
 
+  const duckdb::Vector& FeedColumn(const void* table, duckdb::row_t first_row,
+                                   duckdb::idx_t count, duckdb::idx_t column,
+                                   const duckdb::Vector& source);
+
  private:
+  struct FeedColumns {
+    const void* table = nullptr;
+    duckdb::row_t first_row = 0;
+    duckdb::idx_t count = 0;
+    std::vector<std::pair<duckdb::idx_t, duckdb::Vector>> columns;
+  };
+
   // The cases a single snapshot serves a whole transaction: an explicit
   // REPEATABLE READ transaction, or any transaction that has performed
   // uncommitted DML. Everything else refreshes per statement.
   bool IsStableSnapshot() const;
 
   struct SearchTransaction {
-    std::unique_ptr<irs::IndexWriter::Transaction> transaction;
+    std::vector<SearchSlot> slots;
     std::shared_ptr<search::InvertedIndexStorage> storage;
   };
 
@@ -152,10 +202,12 @@ class Transaction : public Config {
     _search_transactions;
   irs::containers::FlatHashMap<duckdb::idx_t, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
+  FeedColumns _feed_columns;
   // All search-table (TableEngine::Search) state + WAL commit logic. Engaged
   // lazily via SearchTxn(); reset in Destroy. The inverted-index trxs above
   // commit on the store-table tick, not the engine WAL tick.
   std::optional<search::SearchTableTransaction> _search_txn;
+  std::vector<absl::AnyInvocable<void()>> _on_commit;
   uint64_t _num_log_data_markers = 0;
   bool _had_query_in_transaction = false;
   // Set once a statement has performed uncommitted DML; pins all three views

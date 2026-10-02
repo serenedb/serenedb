@@ -1,0 +1,90 @@
+control substitution on
+
+hash-threshold 100
+
+statement count 2
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 2, 'anchin reads manga')
+TO '${__TEST_DIR__}/vtd.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW vtd_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/vtd.parquet');
+
+statement ok
+CREATE INDEX vtd_v_idx ON vtd_v USING inverted(id, body);
+
+statement ok
+CREATE TABLE vtd_s (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+statement ok
+CREATE INDEX vtd_s_idx ON vtd_s USING inverted (body);
+
+statement ok
+INSERT INTO vtd_s VALUES (1, 'pudge goes mid');
+
+statement ok
+VACUUM (REFRESH_TABLE) vtd_s;
+
+statement ok
+CREATE TABLE vtd_t(a int, b text);
+
+statement ok
+INSERT INTO vtd_t VALUES (1, 'pudge'), (2, 'anchin');
+
+statement ok
+CREATE INDEX vtd_t_idx ON vtd_t USING inverted(a, b);
+
+statement ok
+ALTER TABLE vtd_t ADD COLUMN c int;
+
+statement ok
+ALTER TABLE vtd_t RENAME COLUMN b TO bb;
+
+statement ok
+ALTER TABLE vtd_t DROP COLUMN c;
+
+statement ok
+ALTER TABLE vtd_t RENAME TO vtd_t2;
+
+statement ok
+BEGIN;
+
+statement ok
+ALTER TABLE vtd_t2 ADD COLUMN d int;
+
+statement ok
+ROLLBACK;
+
+statement ok
+BEGIN;
+
+statement ok
+ALTER TABLE vtd_t2 ADD COLUMN d int;
+
+statement ok
+COMMIT;
+
+query
+SELECT a, bb, d FROM vtd_t2 ORDER BY a;
+----
+a	bb	d
+1	pudge	NULL
+2	anchin	NULL
+
+query
+SELECT a FROM vtd_t_idx WHERE bb @@ 'pudge';
+----
+a
+1
+
+query
+SELECT count(*) FROM vtd_v_idx WHERE body @@ 'pudge goes mid';
+----
+count
+1
+
+query
+SELECT id FROM vtd_s_idx WHERE body @@ 'pudge goes mid';
+----
+id
+1

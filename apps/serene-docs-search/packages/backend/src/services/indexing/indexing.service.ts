@@ -7,6 +7,8 @@ import {
 } from "@serenedb/docs-search-core";
 import { EmbeddingRepository } from "@repositories/embedding";
 import { MetaRepository } from "@repositories/meta";
+import { catalogEntries, ObjectsRepository, OBJECTS_SIGNATURE } from "@repositories/objects";
+import { inlinkCounts, PagesRepository, PAGES_SIGNATURE } from "@repositories/pages";
 import { SectionsRepository, type Section } from "@repositories/sections";
 import { vocabFrequencies, VocabRepository, VOCAB_SIGNATURE } from "@repositories/vocab";
 import { ParsingService } from "@services/parsing";
@@ -14,6 +16,9 @@ import { SourcesService, type FetchContext, type FetchResult } from "@services/s
 import type { RuntimeEnv } from "../../config";
 
 type ProgressListener = (p: SyncProgress) => void;
+
+/** Meta keys versioning the tables derived from the whole corpus in step 5. */
+const DERIVED_MARKERS = ["vocab_signature", "objects_signature", "pages_signature"];
 
 function initialProgress(): SyncProgress {
     return {
@@ -135,18 +140,25 @@ export class Indexer {
 
             // 3 · diff + upsert (snapshots: skip unchanged, prune deleted)
             const snapshots = this.config.sync.snapshots !== false;
-            let changed: Section[];
-            let pruned = 0;
+            let changed: Section[] = sections;
+            let stale: string[] = [];
             if (snapshots) {
                 const existing = await SectionsRepository.existingHashes();
                 changed = sections.filter((s) => existing.get(s.id) !== s.hash);
                 const liveIds = new Set(sections.map((s) => s.id));
-                const stale = [...existing.keys()].filter((id) => !liveIds.has(id));
+                stale = [...existing.keys()].filter((id) => !liveIds.has(id));
+            }
+            const pruned = stale.length;
+            // the corpus-derived tables (step 5) are rebuilt when this sync
+            // changes rows — invalidate their markers BEFORE writing, so a
+            // sync that dies in between still forces the rebuild next time
+            if (changed.length > 0 || pruned > 0) {
+                for (const key of DERIVED_MARKERS) await MetaRepository.set(key, "");
+            }
+            if (snapshots) {
                 await SectionsRepository.deleteSections(stale);
-                pruned = stale.length;
             } else {
                 await SectionsRepository.truncate();
-                changed = sections;
             }
             await SectionsRepository.upsertSections(changed);
             this.ensureActive();
@@ -190,6 +202,24 @@ export class Indexer {
                         "vocab rebuild failed (did-you-mean degraded):",
                         (err as Error).message,
                     );
+                }
+            }
+            // object catalog (exact-name lookups) and the link graph (page
+            // popularity) — derived from the whole corpus, same rebuild rule
+            const derived: Array<[string, string, () => Promise<void>, string]> = [
+                ["objects_signature", OBJECTS_SIGNATURE, () => ObjectsRepository.replaceAll(catalogEntries(sections)), "name lookups"],
+                ["pages_signature", PAGES_SIGNATURE, () => PagesRepository.replaceAll(inlinkCounts(sections)), "page popularity"],
+            ];
+            for (const [key, version, rebuild, feature] of derived) {
+                if (changed.length === 0 && pruned === 0 && (await MetaRepository.get(key)) === version) {
+                    continue;
+                }
+                try {
+                    await MetaRepository.set(key, "");
+                    await rebuild();
+                    await MetaRepository.set(key, version);
+                } catch (err) {
+                    console.warn(`${feature} rebuild failed (degraded):`, (err as Error).message);
                 }
             }
             await SectionsRepository.refreshIndex();

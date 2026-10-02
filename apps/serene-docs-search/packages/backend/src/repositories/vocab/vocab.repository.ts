@@ -88,6 +88,18 @@ export const VocabRepository = {
         return new Set(r.rows.map((row) => String(row.term)));
     },
 
+    /** Corpus frequency of each of these terms that the vocabulary has. */
+    frequencies: async (terms: string[]): Promise<Map<string, number>> => {
+        const ctx = getDbContext();
+        if (terms.length === 0) return new Map();
+        const params = terms.map((_, j) => `$${j + 1}`).join(", ");
+        const r = await ctx.pool.query(
+            `SELECT term, freq FROM ${ctx.vocabTable} WHERE term IN (${params})`,
+            terms,
+        );
+        return new Map(r.rows.map((row) => [String(row.term), Number(row.freq)]));
+    },
+
     /**
      * Best correction candidate: the engine enumerates dictionary terms within
      * the edit distance (ts_levenshtein over the keyword index), scores each by

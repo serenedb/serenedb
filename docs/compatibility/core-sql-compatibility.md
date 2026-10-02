@@ -69,7 +69,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Ordered Indexes         | Yes           |  |
 | Unique Indexes          | Yes           |                                                    |
 | Indexes on Expressions  | Yes           |                                                    |
-| Partial Indexes         | Partial       | [Inverted indexes](../sql/statements/create_index/inverted.md#partial-indexes) honor `WHERE`. A plain index accepts it but still indexes every row, keyed on the value and on whether the predicate holds, so a partial `UNIQUE` index also rejects duplicates outside its predicate |
+| Partial Indexes         | Partial       | [Inverted indexes](../sql/statements/create_index/inverted.md#partial-indexes) honor `WHERE`. A plain index accepts it but filters only the rows present when it is built: rows written later are indexed whether or not they match, keyed on the value and on whether the predicate holds, so a partial `UNIQUE` index also rejects duplicates outside its predicate |
 
 ### Misc
 | Feature                    | Support State | Details                                         |

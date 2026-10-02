@@ -1,0 +1,119 @@
+control substitution on
+
+statement ok
+CREATE TABLE ob_t (id INT, v INT);
+
+
+statement ok
+CREATE TABLE ob_u (id INT);
+
+
+statement ok
+CREATE SEQUENCE ob_altered;
+
+
+statement ok
+ALTER SEQUENCE ob_altered OWNED BY ob_t.id;
+
+
+statement ok
+CREATE SEQUENCE ob_created OWNED BY ob_t.v;
+
+
+statement ok
+CREATE SEQUENCE ob_repointed OWNED BY ob_t.id;
+
+
+statement ok
+ALTER SEQUENCE ob_repointed OWNED BY ob_u.id;
+
+
+statement ok
+CREATE SEQUENCE ob_released OWNED BY ob_t.id;
+
+
+statement ok
+ALTER SEQUENCE ob_released OWNED BY NONE;
+
+
+statement ok
+CREATE TABLE ob_d (id INT DEFAULT nextval('ob_released'));
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_log
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection after_log
+statement ok
+CREATE TABLE ob_compaction (x INT);
+
+
+connection after_log
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_log
+statement error connection closed
+SELECT 1;
+
+
+connection after_rewrite
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+DROP TABLE ob_t;
+
+
+connection after_rewrite
+query
+SELECT sequencename FROM pg_sequences WHERE sequencename LIKE 'ob_%' ORDER BY 1;
+----
+sequencename
+ob_released
+ob_repointed
+
+
+connection after_rewrite
+statement error
+DROP SEQUENCE ob_released;
+----
+db error: ERROR: Cannot drop entry "ob_released" because there are entries that depend on it.
+table "ob_d" depends on sequence "ob_released".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection after_rewrite
+statement ok
+DROP TABLE ob_u;
+
+
+connection after_rewrite
+statement ok
+DROP TABLE ob_d;
+
+
+connection after_rewrite
+query
+SELECT sequencename FROM pg_sequences WHERE sequencename LIKE 'ob_%' ORDER BY 1;
+----
+sequencename
+ob_released
+
+
+connection after_rewrite
+statement ok
+DROP SEQUENCE ob_released;
+
+
+connection after_rewrite
+statement ok
+DROP TABLE ob_compaction;

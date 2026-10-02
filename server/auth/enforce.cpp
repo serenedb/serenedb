@@ -136,6 +136,21 @@ bool StoresPermissions(duckdb::Catalog& catalog) {
            catalog.GetAttached().GetStorageManager().GetStorageVersion());
 }
 
+bool IsSchemaMember(CatalogType type) {
+  switch (type) {
+    case CatalogType::TABLE_ENTRY:
+    case CatalogType::VIEW_ENTRY:
+    case CatalogType::SEQUENCE_ENTRY:
+    case CatalogType::MACRO_ENTRY:
+    case CatalogType::TABLE_MACRO_ENTRY:
+    case CatalogType::TYPE_ENTRY:
+    case CatalogType::INDEX_ENTRY:
+      return true;
+    default:
+      return false;
+  }
+}
+
 CatalogType DefaultObjType(LogicalOperatorType type) {
   switch (type) {
     case LogicalOperatorType::LOGICAL_CREATE_SEQUENCE:
@@ -185,7 +200,8 @@ class Enforcer {
       _root{root},
       _caller{connection.GetRoleId()},
       _roles{RolesOf(&context)},
-      _caller_closure{ComputeRoleClosure(*_roles, _caller)},
+      _caller_closure_owner{ClosureFor(&context, _caller)},
+      _caller_closure{*_caller_closure_owner},
       _enforce{!_caller_closure.is_superuser} {}
 
   void Run() {
@@ -196,6 +212,7 @@ class Enforcer {
       return;
     }
     _props.RegisterDBRead(catalog::ClusterOf(_context), _context);
+    CheckSchemaUsage();
     CheckResolved();
     CheckReturning();
     if (_file_copy) {
@@ -727,6 +744,33 @@ class Enforcer {
     }
   }
 
+  void CheckSchemaUsage() {
+    const auto& resolved = _props.resolved_entries;
+    std::vector<bool> in_view(resolved.size());
+    for (const auto& scope : _props.view_scopes) {
+      for (auto i = scope.resolved_begin;
+           i < scope.resolved_end && i < resolved.size(); ++i) {
+        in_view[i] = true;
+      }
+    }
+    irs::containers::FlatHashSet<const duckdb::CatalogEntry*> checked;
+    for (size_t i = 0; i < resolved.size(); ++i) {
+      const auto& entry = *resolved[i];
+      if (in_view[i] || !IsSchemaMember(entry.type) || Unowned(entry) ||
+          entry.ParentCatalog().IsSystemCatalog()) {
+        continue;
+      }
+      const auto& schema = entry.ParentSchema(_context);
+      if (schema.internal || !checked.insert(&schema).second) {
+        continue;
+      }
+      if (!_caller_closure.Can(CatalogType::SCHEMA_ENTRY, schema.permissions,
+                               AclMode::Usage)) {
+        Denied(schema);
+      }
+    }
+  }
+
   void CheckResolved() {
     const bool defines_relation =
       _root.type == LogicalOperatorType::LOGICAL_CREATE_TABLE ||
@@ -1143,7 +1187,8 @@ class Enforcer {
         ERR_MSG("permission denied to change default privileges"));
     }
     info.grantee_id = GranteeId(info.grantee);
-    std::string database{_connection.GetDatabase()};
+    std::string database{duckdb::DatabaseManager::GetDefaultDatabase(_context)
+                           .GetIdentifierName()};
     if (!info.default_schema.empty()) {
       auto& schema =
         duckdb::Catalog::GetSchema(_context, duckdb::Identifier{},
@@ -1204,7 +1249,9 @@ class Enforcer {
   }
 
   void RequireDatabasePrivilege(AclMode need) {
-    auto database = DatabaseEntry(_connection.GetDatabase());
+    auto database =
+      DatabaseEntry(duckdb::DatabaseManager::GetDefaultDatabase(_context)
+                      .GetIdentifierName());
     if (database && !_caller_closure.Can(CatalogType::DATABASE_ENTRY,
                                          database->permissions, need)) {
       Denied(*database);
@@ -1219,9 +1266,10 @@ class Enforcer {
   }
   duckdb::optional_ptr<duckdb::CatalogEntry> ServerEntry(
     std::string_view name) {
-    auto& catalog = duckdb::Catalog::GetCatalog(
-                      _context, duckdb::Identifier{_connection.GetDatabase()})
-                      .Cast<duckdb::DuckCatalog>();
+    auto& catalog =
+      duckdb::Catalog::GetCatalog(
+        _context, duckdb::DatabaseManager::GetDefaultDatabase(_context))
+        .Cast<duckdb::DuckCatalog>();
     return catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
       .GetEntry(catalog.GetCatalogTransaction(_context),
                 duckdb::Identifier{name});
@@ -1281,7 +1329,8 @@ class Enforcer {
     };
     const auto database = DatabaseEntry(
       schema ? schema->ParentCatalog().GetName().GetIdentifierName()
-             : _connection.GetDatabase());
+             : duckdb::DatabaseManager::GetDefaultDatabase(_context)
+                 .GetIdentifierName());
     if (database) {
       if (schema) {
         apply(database->permissions, schema->oid);
@@ -1299,7 +1348,8 @@ class Enforcer {
   duckdb::LogicalOperator& _root;
   const duckdb::idx_t _caller;
   std::shared_ptr<const RoleGraph> _roles;
-  RoleClosure _caller_closure;
+  std::shared_ptr<const RoleClosure> _caller_closure_owner;
+  const RoleClosure& _caller_closure;
   const bool _enforce;
   irs::containers::NodeHashMap<duckdb::idx_t, RoleClosure> _closures;
   irs::containers::FlatHashMap<duckdb::idx_t, const duckdb::LogicalGet*>
@@ -1325,9 +1375,6 @@ class Enforcer {
 
 void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
                  duckdb::Binder& binder, duckdb::LogicalOperator& plan) {
-  if (connection.IsStorageConnection()) {
-    return;
-  }
   Enforcer{context, connection, binder, plan}.Run();
 }
 

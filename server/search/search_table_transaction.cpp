@@ -69,18 +69,30 @@ void RecordDeletesForBuild(SearchTable& shard,
 SearchTableTransaction::~SearchTableTransaction() { ReleaseWriters(); }
 
 void SearchTableTransaction::RegisterWriter(
-  const std::shared_ptr<SearchTable>& shard) {
+  const std::shared_ptr<SearchTable>& shard,
+  const duckdb::Identifier& table_name) {
   auto& w = _writes[shard->GetTableId()];
   if (!w.shard) {
     w.shard = shard;
   }
   if (w.writer_slot < 0) {
-    w.writer_slot = static_cast<int>(shard->RegisterWriter());
+    const auto slot = shard->RegisterWriter();
+    if (!slot) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
+        ERR_MSG("Attempting to write to table ", table_name.GetIdentifierName(),
+                " but another transaction is truncating it"));
+    }
+    w.writer_slot = static_cast<int>(*slot);
   }
 }
 
 void SearchTableTransaction::ReleaseWriters() noexcept {
   for (auto& [table_id, w] : _writes) {
+    if (w.truncate_claim) {
+      w.shard->ReleaseTruncate();
+      w.truncate_claim = false;
+    }
     if (w.writer_slot >= 0) {
       w.shard->DeregisterWriter(static_cast<unsigned>(w.writer_slot));
       w.writer_slot = -1;
@@ -241,10 +253,20 @@ void SearchTableTransaction::AddSearchDeletes(
 }
 
 void SearchTableTransaction::AddSearchTruncate(
-  const std::shared_ptr<SearchTable>& shard, bool clears_shard) {
+  const std::shared_ptr<SearchTable>& shard,
+  const duckdb::Identifier& table_name, bool clears_shard) {
   auto& w = _writes[shard->GetTableId()];
   if (!w.shard) {
     w.shard = shard;
+  }
+  if (!w.truncate_claim) {
+    if (!shard->ClaimTruncate()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
+        ERR_MSG("Attempting to truncate table ", table_name.GetIdentifierName(),
+                " but another transaction is writing to this table"));
+    }
+    w.truncate_claim = true;
   }
   w.transactions.clear();
   w.buffer_trx = nullptr;

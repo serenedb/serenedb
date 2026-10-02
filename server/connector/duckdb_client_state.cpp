@@ -31,6 +31,11 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
+#include <duckdb/storage/data_table.hpp>
+#include <duckdb/storage/table/data_table_info.hpp>
+#include <duckdb/transaction/duck_transaction.hpp>
+#include <duckdb/transaction/local_storage.hpp>
+#include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -43,6 +48,8 @@
 #include "auth/enforce.h"
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
+#include "connector/inverted_store_index.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
 
@@ -212,6 +219,34 @@ void SereneDBClientState::TransactionPreCommit(
   // so catalog lookups performed by custom-impl settings (e.g. search_path)
   // can succeed via their normal set_local path.
   _connection_ctx->PreCommit();
+  if (InvertedStoreIndex::AnyBound()) {
+    for (auto& db : transaction.OpenedTransactions()) {
+      if (db.get().GetCatalog().GetCatalogType() !=
+          catalog::SereneDBCatalog::kStorageType) {
+        continue;
+      }
+      auto opened = transaction.TryGetTransaction(db);
+      if (!opened || !opened->IsDuckTransaction()) {
+        continue;
+      }
+      auto& local =
+        duckdb::LocalStorage::Get(opened->Cast<duckdb::DuckTransaction>());
+      for (auto& table : local.GetTables()) {
+        const auto rows = local.AddedRows(table);
+        if (rows == 0) {
+          continue;
+        }
+        for (auto& index :
+             table.get().GetDataTableInfo()->GetIndexes().Indexes()) {
+          if (index.IsBound() &&
+              index.GetIndexType() == InvertedStoreIndex::kTypeName) {
+            index.Cast<InvertedStoreIndex>().PrepareFeed(*_connection_ctx,
+                                                         context, rows);
+          }
+        }
+      }
+    }
+  }
   tls_committing_ctx = _connection_ctx.get();
 }
 
@@ -231,7 +266,7 @@ void SereneDBClientState::TransactionPreCheckpoint(
   const auto cursor = wal_end_offset > 0
                         ? search::WalCursor{wal_generation, wal_end_offset}
                         : search::WalCursor{wal_generation + 1, 0};
-  _connection_ctx->CommitSearch(cursor);
+  _connection_ctx->CommitSearch(cursor, db.oid);
 }
 
 void SereneDBClientState::TransactionPreRollback(
@@ -252,6 +287,9 @@ void SereneDBClientState::TransactionCommit(
   }
   tls_committing_ctx = nullptr;
   _connection_ctx->Commit();
+  if (transaction.ModifiedDatabase()) {
+    catalog::ClusterOf(*context.db).MaybeCompactCatalogLog();
+  }
 }
 
 void SereneDBClientState::TransactionRollback(

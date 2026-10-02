@@ -181,12 +181,12 @@ rni_ri
 # that reads only the rewritten file.
 connection after_crash
 statement ok
-CREATE TABLE rni_compact (x INTEGER);
+SET sdb_faults = 'compact_inside_ddl';
 
 
 connection after_crash
 statement ok
-CHECKPOINT;
+CREATE TABLE rni_compact (x INTEGER);
 
 
 connection after_crash

@@ -1,0 +1,232 @@
+control substitution on
+
+statement ok
+CREATE SCHEMA cck;
+
+
+statement ok
+CREATE TABLE cck.t (id SERIAL PRIMARY KEY, v TEXT);
+
+
+statement ok
+INSERT INTO cck.t (v) VALUES ('old');
+
+
+statement ok
+CREATE OR REPLACE TABLE cck.t (id SERIAL PRIMARY KEY, w INT, v TEXT DEFAULT 'replaced');
+
+
+statement ok
+INSERT INTO cck.t (w) VALUES (1);
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS cck.t (other INT);
+
+
+statement ok
+CREATE SEQUENCE cck.s START 100;
+
+
+query
+SELECT nextval('cck.s') AS n;
+----
+n
+100
+
+
+statement ok
+CREATE OR REPLACE SEQUENCE cck.s START 500;
+
+
+statement ok
+CREATE SEQUENCE IF NOT EXISTS cck.s START 9;
+
+
+query
+SELECT nextval('cck.s') AS n;
+----
+n
+500
+
+
+statement ok
+CREATE TYPE cck.mood AS ENUM ('a', 'b');
+
+
+statement ok
+CREATE TYPE IF NOT EXISTS cck.mood AS ENUM ('x');
+
+
+statement ok
+CREATE MACRO cck.f(x) AS x + 1;
+
+
+statement ok
+CREATE OR REPLACE MACRO cck.f(x) AS x + 2;
+
+
+statement ok
+CREATE VIEW cck.v AS SELECT w FROM cck.t;
+
+
+statement ok
+CREATE OR REPLACE VIEW cck.v AS SELECT w, v FROM cck.t;
+
+
+statement ok
+CREATE VIEW IF NOT EXISTS cck.v AS SELECT 1 AS one;
+
+
+statement ok
+CREATE INDEX cck_t_w ON cck.t (w);
+
+
+statement ok
+CREATE INDEX IF NOT EXISTS cck_t_w ON cck.t (v);
+
+
+statement ok
+CREATE INDEX cck_t_inv ON cck.t USING inverted (v);
+
+
+statement ok
+CREATE INDEX IF NOT EXISTS cck_t_inv ON cck.t USING inverted (v);
+
+
+statement ok
+CREATE TABLE cck.st (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS cck.st (id BIGINT PRIMARY KEY, other TEXT) WITH (storage = 'search');
+
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS cck;
+
+
+statement ok
+CREATE ROLE cck_role;
+
+
+statement error
+CREATE OR REPLACE TABLE cck.t (blocked INT);
+----
+db error: ERROR: Cannot drop entry "t" because there are entries that depend on it.
+view "v" depends on table "t".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE SEQUENCE cck.s START 7;
+
+
+statement ok
+CREATE OR REPLACE MACRO cck.f(x) AS x + 100;
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT table_name, column_name, column_default FROM information_schema.columns
+WHERE table_schema = 'cck' AND table_name IN ('t', 'st') ORDER BY table_name, ordinal_position;
+----
+table_name	column_name	column_default
+st	id	NULL
+st	body	NULL
+t	id	nextval('t_id_seq1')
+t	w	NULL
+t	v	'replaced'
+
+
+connection after_crash
+query
+SELECT w, v FROM cck.v ORDER BY w;
+----
+w	v
+1	replaced
+
+
+connection after_crash
+query
+SELECT id, w, v FROM cck.t ORDER BY id;
+----
+id	w	v
+1	1	replaced
+
+
+connection after_crash
+query
+SELECT nextval('cck.s') > 500 AS above, cck.f(1) AS f;
+----
+above	f
+t	3
+
+
+connection after_crash
+query
+SELECT enum_range(NULL::cck.mood)::text AS r;
+----
+r
+[a, b]
+
+
+connection after_crash
+query
+SELECT index_name FROM duckdb_indexes() WHERE schema_name = 'cck' ORDER BY 1;
+----
+index_name
+cck_t_inv
+cck_t_w
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM pg_roles WHERE rolname = 'cck_role';
+----
+n
+1
+
+
+connection after_crash
+statement count 1
+INSERT INTO cck.t (w) VALUES (2);
+
+
+connection after_crash
+query
+SELECT count(*) AS n, count(DISTINCT id) AS d FROM cck.t;
+----
+n	d
+2	2
+
+
+connection after_crash
+statement ok
+DROP SCHEMA cck CASCADE;
+
+
+connection after_crash
+statement ok
+DROP ROLE cck_role;

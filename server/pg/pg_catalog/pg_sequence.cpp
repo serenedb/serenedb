@@ -28,13 +28,6 @@
 #include "pg/pg_types.h"
 
 namespace sdb::pg {
-namespace {
-
-// duckdb hands out one value at a time, so there is no cache to report;
-// postgres writes 1 for an uncached sequence, which is every sequence here.
-constexpr int64_t kNoSequenceCache = 1;
-
-}  // namespace
 
 template<>
 MaterializedData SystemTableSnapshot<PgSequence>::GetTableData() {
@@ -50,7 +43,7 @@ MaterializedData SystemTableSnapshot<PgSequence>::GetTableData() {
         .seqincrement = data.increment,
         .seqmax = data.max_value,
         .seqmin = data.min_value,
-        .seqcache = kNoSequenceCache,
+        .seqcache = static_cast<int64_t>(data.cache),
         .seqcycle = data.cycle,
       });
     });

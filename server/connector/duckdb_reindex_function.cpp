@@ -165,7 +165,10 @@ ReindexTarget ResolveTarget(duckdb::ClientContext& context,
   }
   ReindexTarget target;
   target.name = name;
-  target.database = catalog_p.empty() ? conn_ctx.GetDatabase() : catalog_p;
+  target.database =
+    catalog_p.empty()
+      ? duckdb::DatabaseManager::GetDefaultDatabase(context).GetIdentifierName()
+      : catalog_p;
   auto database = duckdb::Catalog::GetCatalogEntry(
     context, duckdb::Identifier{target.database});
   if (!database) {

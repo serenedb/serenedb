@@ -26,12 +26,16 @@
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
+#include <duckdb/catalog/dependency_list.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/exception/binder_exception.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/parser/constraints/not_null_constraint.hpp>
+#include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
+#include <duckdb/parser/parsed_data/comment_on_column_info.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/planner/binder.hpp>
@@ -281,6 +285,35 @@ void WalkIResearchColumn(const irs::ColumnReader& node, duckdb::idx_t column_id,
   }
 }
 
+std::string_view AlterName(const duckdb::AlterTableInfo& alter) {
+  switch (alter.alter_table_type) {
+    case duckdb::AlterTableType::ADD_COLUMN:
+      return "ALTER TABLE ADD COLUMN";
+    case duckdb::AlterTableType::REMOVE_COLUMN:
+      return "ALTER TABLE DROP COLUMN";
+    case duckdb::AlterTableType::ALTER_COLUMN_TYPE:
+      return "ALTER TABLE ALTER COLUMN TYPE";
+    case duckdb::AlterTableType::ADD_CONSTRAINT:
+      return "ALTER TABLE ADD CONSTRAINT";
+    case duckdb::AlterTableType::DROP_CONSTRAINT:
+      return "ALTER TABLE DROP CONSTRAINT";
+    case duckdb::AlterTableType::RENAME_CONSTRAINT:
+      return "ALTER TABLE RENAME CONSTRAINT";
+    case duckdb::AlterTableType::FOREIGN_KEY_CONSTRAINT:
+      return "a foreign key";
+    case duckdb::AlterTableType::ADD_FIELD:
+    case duckdb::AlterTableType::REMOVE_FIELD:
+    case duckdb::AlterTableType::RENAME_FIELD:
+      return "changing a struct field";
+    case duckdb::AlterTableType::SET_PARTITIONED_BY:
+      return "SET PARTITIONED BY";
+    case duckdb::AlterTableType::SET_SORTED_BY:
+      return "SET SORTED BY";
+    default:
+      return "this ALTER TABLE";
+  }
+}
+
 }  // namespace
 
 duckdb::vector<duckdb::ColumnSegmentInfo> SearchTableEntry::ColumnSegmentRows(
@@ -442,16 +475,112 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::Copy(
   return result;
 }
 
+duckdb::TableStorageInfo SearchTableEntry::GetStorageInfo(
+  duckdb::ClientContext&) {
+  duckdb::TableStorageInfo result;
+  const auto pk = GetPrimaryKey();
+  if (!pk) {
+    return result;
+  }
+  duckdb::IndexInfo info{
+    .is_unique = true, .is_primary = true, .is_foreign = false};
+  for (const auto logical :
+       pk->Cast<duckdb::UniqueConstraint>().GetLogicalIndexes(GetColumns())) {
+    info.column_set.insert(GetColumns().LogicalToPhysical(logical).index);
+  }
+  result.index_info.push_back(std::move(info));
+  return result;
+}
+
+duckdb::unique_ptr<SearchTableEntry> SearchTableEntry::Rebuilt(
+  duckdb::ClientContext& context, duckdb::AlterInfo& info,
+  duckdb::unique_ptr<duckdb::CreateInfo> create) const {
+  auto& schema = ParentSchema(context);
+  auto binder = duckdb::Binder::CreateBinder(context);
+  auto bound =
+    binder->BindCreateTableInfo(std::move(create), schema, info.bind_mode);
+  info.new_dependencies = duckdb::make_uniq<duckdb::LogicalDependencyList>(
+    std::move(bound->dependencies));
+  return duckdb::make_uniq<SearchTableEntry>(
+    catalog, schema, *bound, catalog.GetCatalogTransaction(context), _storage);
+}
+
 duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
   duckdb::ClientContext& context, duckdb::AlterInfo& info) {
+  if (info.type == duckdb::AlterType::SET_COLUMN_COMMENT) {
+    auto& comment = info.Cast<duckdb::SetColumnCommentInfo>();
+    auto create = GetInfo();
+    create->Cast<duckdb::CreateTableInfo>()
+      .columns.GetColumnMutable(GetColumnIndex(comment.column_name))
+      .SetComment(comment.comment_value);
+    return Rebuilt(context, info, std::move(create));
+  }
   if (info.type != duckdb::AlterType::ALTER_TABLE) {
     return duckdb::TableCatalogEntry::AlterEntry(context, info);
   }
   auto& alter = info.Cast<duckdb::AlterTableInfo>();
-  if (alter.alter_table_type != duckdb::AlterTableType::SET_TABLE_OPTIONS &&
-      alter.alter_table_type != duckdb::AlterTableType::RESET_TABLE_OPTIONS) {
-    return duckdb::TableCatalogEntry::AlterEntry(context, info);
+  switch (alter.alter_table_type) {
+    case duckdb::AlterTableType::RENAME_COLUMN:
+      return duckdb::TableCatalogEntry::AlterEntry(context, info);
+    case duckdb::AlterTableType::SET_DEFAULT: {
+      auto& set_default = alter.Cast<duckdb::SetDefaultInfo>();
+      auto create = GetInfo();
+      auto& column =
+        create->Cast<duckdb::CreateTableInfo>().columns.GetColumnMutable(
+          GetColumnIndex(set_default.column_name));
+      if (column.Generated()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        ERR_MSG("cannot set a default for generated column \"",
+                                column.Name().GetIdentifierName(), "\""));
+      }
+      column.SetDefaultValue(
+        set_default.expression ? set_default.expression->Copy() : nullptr);
+      return Rebuilt(context, info, std::move(create));
+    }
+    case duckdb::AlterTableType::SET_NOT_NULL:
+    case duckdb::AlterTableType::DROP_NOT_NULL: {
+      const bool set =
+        alter.alter_table_type == duckdb::AlterTableType::SET_NOT_NULL;
+      const auto index =
+        GetColumnIndex(set ? alter.Cast<duckdb::SetNotNullInfo>().column_name
+                           : alter.Cast<duckdb::DropNotNullInfo>().column_name);
+      auto create = GetInfo();
+      auto& constraints = create->Cast<duckdb::CreateTableInfo>().constraints;
+      const auto existing = absl::c_find_if(constraints, [&](const auto& c) {
+        return c->type == duckdb::ConstraintType::NOT_NULL &&
+               c->template Cast<duckdb::NotNullConstraint>().index == index;
+      });
+      if (set && existing == constraints.end()) {
+        constraints.push_back(
+          duckdb::make_uniq<duckdb::NotNullConstraint>(index));
+      } else if (!set && existing != constraints.end()) {
+        constraints.erase(existing);
+      }
+      return Rebuilt(context, info, std::move(create));
+    }
+    case duckdb::AlterTableType::ADD_CONSTRAINT: {
+      auto& constraint = *alter.Cast<duckdb::AddConstraintInfo>().constraint;
+      if (constraint.type != duckdb::ConstraintType::CHECK) {
+        break;
+      }
+      auto create = GetInfo();
+      create->Cast<duckdb::CreateTableInfo>().constraints.push_back(
+        constraint.Copy());
+      return Rebuilt(context, info, std::move(create));
+    }
+    case duckdb::AlterTableType::SET_TABLE_OPTIONS:
+    case duckdb::AlterTableType::RESET_TABLE_OPTIONS:
+      return AlterOptions(context, alter);
+    default:
+      break;
   }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  ERR_MSG(AlterName(alter),
+                          " on a search-backed table is not yet supported"));
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterOptions(
+  duckdb::ClientContext& context, duckdb::AlterTableInfo& alter) {
   const auto require_alterable = [](std::string_view name) {
     if (absl::c_contains(kSearchTableMaintenanceSettings, name)) {
       return;

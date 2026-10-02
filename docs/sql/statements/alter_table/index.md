@@ -228,6 +228,10 @@ For a table created with `WITH (storage = 'search')`, `SET (option = value, …)
 
 `SET` and `RESET` of storage options are supported only for search tables.
 
+## Search tables
+
+A search table's columns are fixed: `ADD COLUMN`, `DROP COLUMN`, `ALTER COLUMN TYPE`, `DROP CONSTRAINT` and adding a `PRIMARY KEY` or `UNIQUE` constraint are rejected. Renaming the table or a column, `ALTER COLUMN SET DEFAULT` / `DROP DEFAULT`, `SET NOT NULL` / `DROP NOT NULL`, adding a `CHECK` constraint and `COMMENT ON COLUMN` change only the table's definition. A search table does not check `NOT NULL` and `CHECK` constraints when rows are written, whether they were declared at `CREATE TABLE` or added later.
+
 ## Limitations
 
 `ALTER COLUMN` fails if values of conflicting types have occurred in the table at any point, even if they have been deleted:

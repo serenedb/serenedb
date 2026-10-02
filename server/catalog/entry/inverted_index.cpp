@@ -175,6 +175,9 @@ void BindInvertedIndexOptions(
   for (const auto name : kInvertedIndexSettings) {
     const auto it = options.find(name);
     if (it == options.end()) {
+      if (name == kReindexIntervalSetting && !view_backed) {
+        continue;
+      }
       context.TryGetCurrentSetting(std::string{name},
                                    options[std::string{name}]);
     } else {
@@ -189,10 +192,12 @@ InvertedIndexSettings ResolveSettings(
   const auto get = [&](std::string_view name) -> const duckdb::Value& {
     return options.find(name)->second;
   };
+  const auto reindex = options.find(kReindexIntervalSetting);
   return {
     .row_group_size = get(kRowGroupSizeSetting).GetValue<uint32_t>(),
     .refresh_interval_ms = get(kRefreshIntervalSetting).GetValue<uint32_t>(),
-    .reindex_interval_ms = get(kReindexIntervalSetting).GetValue<uint32_t>(),
+    .reindex_interval_ms =
+      reindex == options.end() ? 0 : reindex->second.GetValue<uint32_t>(),
     .compaction_interval_ms =
       get(kCompactionIntervalSetting).GetValue<uint32_t>(),
     .cleanup_interval_step =

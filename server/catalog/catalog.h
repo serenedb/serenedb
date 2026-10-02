@@ -141,6 +141,15 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     duckdb::CatalogEntry& table,
     duckdb::unique_ptr<duckdb::LogicalOperator> plan) final;
 
+  void RefuseUnsupportedAlter(duckdb::ClientContext& context,
+                              duckdb::AlterInfo& info);
+
+  duckdb::unique_ptr<duckdb::LogicalOperator> BindAlterAddIndex(
+    duckdb::Binder& binder, duckdb::TableCatalogEntry& table_entry,
+    duckdb::unique_ptr<duckdb::LogicalOperator> plan,
+    duckdb::unique_ptr<duckdb::CreateIndexInfo> create_info,
+    duckdb::unique_ptr<duckdb::AlterTableInfo> alter_info) final;
+
   duckdb::ErrorData SupportsCreateTable(
     duckdb::BoundCreateTableInfo& info) final;
 

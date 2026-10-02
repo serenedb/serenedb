@@ -32,7 +32,6 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
-#include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
@@ -178,18 +177,6 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
   std::vector<std::pair<duckdb::idx_t, const duckdb::TableCatalogEntry*>>
     tables;
   irs::containers::FlatHashSet<duckdb::idx_t> generated_pk_sequences;
-  if (auto dependencies = database.GetDependencyManager()) {
-    dependencies->Scan(
-      context,
-      [&](duckdb::CatalogEntry& object, duckdb::CatalogEntry& dependent,
-          const duckdb::DependencyDependentFlags& flags) {
-        if (flags.IsOwnedBy() &&
-            object.type == duckdb::CatalogType::SEQUENCE_ENTRY &&
-            dynamic_cast<const catalog::SearchTableEntry*>(&dependent)) {
-          generated_pk_sequences.insert(object.oid);
-        }
-      });
-  }
 
   VisitSchemas(context, database, [&](duckdb::SchemaCatalogEntry& schema_ref) {
     schema_ref.Scan(
@@ -221,6 +208,9 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
           row.relacl = {table->permissions.acl};
           if (const auto* search =
                 dynamic_cast<const catalog::SearchTableEntry*>(table)) {
+            if (const auto pk_sequence = search->GeneratedPkSequence(context)) {
+              generated_pk_sequences.insert(pk_sequence->oid);
+            }
             auto& strings = reloptions_storage.emplace_back();
             auto& views = reloptions_views.emplace_back();
             const auto info = search->GetInfo();
@@ -273,8 +263,11 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
       auto& strings = reloptions_storage.emplace_back();
       auto& views = reloptions_views.emplace_back();
       for (const auto name : catalog::kInvertedIndexSettings) {
-        strings.emplace_back(absl::StrCat(
-          name, "=", inverted->options.find(name)->second.ToString()));
+        if (const auto option = inverted->options.find(name);
+            option != inverted->options.end()) {
+          strings.emplace_back(
+            absl::StrCat(name, "=", option->second.ToString()));
+        }
       }
       for (const auto& option : strings) {
         views.emplace_back(option);

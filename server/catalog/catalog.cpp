@@ -23,8 +23,10 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/catalog/default/default_schemas.hpp>
 #include <duckdb/catalog/dependency_manager.hpp>
+#include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/exception/catalog_exception.hpp>
@@ -339,6 +341,25 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   return result;
 }
 
+duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
+  duckdb::Binder& binder, duckdb::TableCatalogEntry& table_entry,
+  duckdb::unique_ptr<duckdb::LogicalOperator> plan,
+  duckdb::unique_ptr<duckdb::CreateIndexInfo> create_info,
+  duckdb::unique_ptr<duckdb::AlterTableInfo> alter_info) {
+  if (dynamic_cast<SearchTableEntry*>(&table_entry)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("ALTER TABLE ADD ",
+                            create_info->constraint_type ==
+                                duckdb::IndexConstraintType::PRIMARY
+                              ? "PRIMARY KEY"
+                              : "UNIQUE",
+                            " on a search-backed table is not yet supported"));
+  }
+  return duckdb::DuckCatalog::BindAlterAddIndex(
+    binder, table_entry, std::move(plan), std::move(create_info),
+    std::move(alter_info));
+}
+
 duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   duckdb::BoundCreateTableInfo& info) {
   const auto& options = info.Base().options;
@@ -418,6 +439,82 @@ static bool IsReservedSchemaName(const duckdb::Identifier& name) {
          name.GetIdentifierName().starts_with("pg_");
 }
 
+static std::string_view AlterActionName(duckdb::AlterTableType type) {
+  switch (type) {
+    case duckdb::AlterTableType::ADD_COLUMN:
+      return "ADD COLUMN";
+    case duckdb::AlterTableType::REMOVE_COLUMN:
+      return "DROP COLUMN";
+    case duckdb::AlterTableType::ALTER_COLUMN_TYPE:
+      return "ALTER COLUMN TYPE";
+    case duckdb::AlterTableType::SET_DEFAULT:
+      return "ALTER COLUMN SET DEFAULT";
+    case duckdb::AlterTableType::SET_NOT_NULL:
+      return "SET NOT NULL";
+    case duckdb::AlterTableType::DROP_NOT_NULL:
+      return "DROP NOT NULL";
+    case duckdb::AlterTableType::ADD_CONSTRAINT:
+    case duckdb::AlterTableType::FOREIGN_KEY_CONSTRAINT:
+      return "ADD CONSTRAINT";
+    case duckdb::AlterTableType::DROP_CONSTRAINT:
+      return "DROP CONSTRAINT";
+    default:
+      return {};
+  }
+}
+
+static void RefuseViewAlter(const duckdb::AlterTableInfo& info,
+                            std::string_view name) {
+  switch (info.alter_table_type) {
+    case duckdb::AlterTableType::RENAME_TABLE:
+      return;
+    case duckdb::AlterTableType::RENAME_COLUMN:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("cannot rename columns of a non-table relation"));
+    case duckdb::AlterTableType::RENAME_CONSTRAINT:
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+        ERR_MSG("constraint \"",
+                info.Cast<duckdb::RenameConstraintInfo>().old_name,
+                "\" for table \"", name, "\" does not exist"));
+    default:
+      break;
+  }
+  const auto action = AlterActionName(info.alter_table_type);
+  if (action.empty()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                    ERR_MSG("\"", name, "\" is not a table"),
+                    ERR_DETAIL("This operation is not supported for views."));
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                  ERR_MSG("ALTER action ", action,
+                          " cannot be performed on relation \"", name, "\""),
+                  ERR_DETAIL("This operation is not supported for views."));
+}
+
+void SereneDBCatalog::RefuseUnsupportedAlter(duckdb::ClientContext& context,
+                                             duckdb::AlterInfo& info) {
+  duckdb::CatalogEntryRetriever retriever{context};
+  const duckdb::EntryLookupInfo lookup_info{info.GetCatalogType(),
+                                            info.GetQualifiedName()};
+  const auto lookup =
+    LookupEntry(retriever, lookup_info, duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!lookup.Found()) {
+    return;
+  }
+  const auto& name = lookup.entry->name.GetIdentifierName();
+  if (info.type == duckdb::AlterType::ALTER_INDEX) {
+    if (!dynamic_cast<const InvertedIndexEntry*>(lookup.entry.get())) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                      ERR_MSG("\"", name, "\" is not an inverted index"));
+    }
+    return;
+  }
+  if (lookup.entry->type == duckdb::CatalogType::VIEW_ENTRY) {
+    RefuseViewAlter(info.Cast<duckdb::AlterTableInfo>(), name);
+  }
+}
+
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
   duckdb::CatalogTransaction transaction, duckdb::CreateSchemaInfo& info) {
   const auto& name = info.GetQualifiedName().Schema();
@@ -460,6 +557,11 @@ void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
                 "\""),
         ERR_DETAIL("The prefix \"pg_\" is reserved for system schemas."));
     }
+  }
+  if (transaction.HasContext() &&
+      (info.type == duckdb::AlterType::ALTER_TABLE ||
+       info.type == duckdb::AlterType::ALTER_INDEX)) {
+    RefuseUnsupportedAlter(transaction.GetContext(), info);
   }
   if (type != duckdb::CatalogType::FOREIGN_SERVER_ENTRY) {
     duckdb::DuckCatalog::Alter(transaction, info);

@@ -329,18 +329,16 @@ statement ok
 ALTER TABLE IF EXISTS vedernikoff RENAME CONSTRAINT a TO b;
 
 
-# ALTER TABLE on a view reaches CatalogEntry::AlterEntry's default, which has no
-# column or constraint alters; PG 18 renames a view's column here.
 statement error
 ALTER TABLE pudge_view RENAME COLUMN a TO a_renamed;
 ----
-db error: ERROR: Unsupported alter type for catalog entry!
+db error: ERROR: cannot rename columns of a non-table relation
 
 
 statement error
 ALTER TABLE pudge_view RENAME CONSTRAINT foo TO bar;
 ----
-db error: ERROR: Unsupported alter type for catalog entry!
+db error: ERROR: constraint "foo" for table "pudge_view" does not exist
 
 
 statement ok

@@ -562,6 +562,10 @@ irs::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
       data.cursorpos = pos + 1;
     }
   }
+  if (auto it = error.ExtraInfo().find("detail");
+      it != error.ExtraInfo().end()) {
+    data.errdetail = it->second;
+  }
   if (auto it = error.ExtraInfo().find("hint"); it != error.ExtraInfo().end()) {
     data.errhint = it->second;
   }

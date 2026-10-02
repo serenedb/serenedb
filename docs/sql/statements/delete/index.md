@@ -42,6 +42,10 @@ The `TRUNCATE` statement removes all rows from a table, acting as an alias for `
 
 <SqlLogicTest id="sql/statements/delete/index/example_004" />
 
+`TRUNCATE` can name several tables; they are emptied in one transaction, so either all of them are emptied or, if any of them fails, none is. As in PostgreSQL, a table that another table references with a foreign key can only be truncated together with the referencing table. By default (`RESTRICT`) the statement is refused otherwise, even when the referencing table holds no rows. `CASCADE` also truncates every table that references a truncated table, and the tables that reference those:
+
+<SqlLogicTest id="sql/statements/delete/index/example_005" />
+
 ## Limitations on Reclaiming Memory and Disk Space
 
 Running `DELETE` does not mean space is reclaimed. In general, rows are only marked as deleted. SereneDB reclaims space when performing a `CHECKPOINT`. [`VACUUM`](../../statements/vacuum/index.md) currently does not reclaim space.

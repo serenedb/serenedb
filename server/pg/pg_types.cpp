@@ -31,6 +31,7 @@
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/types/time.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -58,8 +59,8 @@ duckdb::optional_ptr<duckdb::Catalog> SessionDatabase(
   if (!conn) {
     return nullptr;
   }
-  return duckdb::Catalog::GetCatalog(*context,
-                                     duckdb::Identifier{conn->GetDatabase()});
+  return duckdb::Catalog::GetCatalog(
+    *context, duckdb::DatabaseManager::GetDefaultDatabase(*context));
 }
 
 std::optional<uint64_t> UserTypeOid(const duckdb::LogicalType& type) {
@@ -668,8 +669,8 @@ uint64_t RegnamespaceIn(const ConnectionContext& ctx, std::string_view name) {
     return pg::kPgInformationSchema;
   }
   auto& client = ctx.GetClientContext();
-  auto& database =
-    duckdb::Catalog::GetCatalog(client, duckdb::Identifier{ctx.GetDatabase()});
+  auto& database = duckdb::Catalog::GetCatalog(
+    client, duckdb::DatabaseManager::GetDefaultDatabase(client));
   if (auto schema =
         database.GetSchema(client, duckdb::Identifier{std::string{name}},
                            duckdb::OnEntryNotFound::RETURN_NULL)) {

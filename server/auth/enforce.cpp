@@ -1187,7 +1187,8 @@ class Enforcer {
         ERR_MSG("permission denied to change default privileges"));
     }
     info.grantee_id = GranteeId(info.grantee);
-    std::string database{_connection.GetDatabase()};
+    std::string database{duckdb::DatabaseManager::GetDefaultDatabase(_context)
+                           .GetIdentifierName()};
     if (!info.default_schema.empty()) {
       auto& schema =
         duckdb::Catalog::GetSchema(_context, duckdb::Identifier{},
@@ -1248,7 +1249,9 @@ class Enforcer {
   }
 
   void RequireDatabasePrivilege(AclMode need) {
-    auto database = DatabaseEntry(_connection.GetDatabase());
+    auto database =
+      DatabaseEntry(duckdb::DatabaseManager::GetDefaultDatabase(_context)
+                      .GetIdentifierName());
     if (database && !_caller_closure.Can(CatalogType::DATABASE_ENTRY,
                                          database->permissions, need)) {
       Denied(*database);
@@ -1263,9 +1266,10 @@ class Enforcer {
   }
   duckdb::optional_ptr<duckdb::CatalogEntry> ServerEntry(
     std::string_view name) {
-    auto& catalog = duckdb::Catalog::GetCatalog(
-                      _context, duckdb::Identifier{_connection.GetDatabase()})
-                      .Cast<duckdb::DuckCatalog>();
+    auto& catalog =
+      duckdb::Catalog::GetCatalog(
+        _context, duckdb::DatabaseManager::GetDefaultDatabase(_context))
+        .Cast<duckdb::DuckCatalog>();
     return catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
       .GetEntry(catalog.GetCatalogTransaction(_context),
                 duckdb::Identifier{name});
@@ -1325,7 +1329,8 @@ class Enforcer {
     };
     const auto database = DatabaseEntry(
       schema ? schema->ParentCatalog().GetName().GetIdentifierName()
-             : _connection.GetDatabase());
+             : duckdb::DatabaseManager::GetDefaultDatabase(_context)
+                 .GetIdentifierName());
     if (database) {
       if (schema) {
         apply(database->permissions, schema->oid);

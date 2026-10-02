@@ -500,6 +500,14 @@ TEST(DocsRender, AbsoluteLinksRewritesRelativeLinksOutsideCode) {
     "[z](https://e.com)\n```\n[k](./k.md)\n```");
 }
 
+TEST(DocsRender, AbsoluteLinksKeepsALinkTitle) {
+  EXPECT_EQ(connector::AbsoluteLinks(
+              "[t](#d \"#e\") then [u](./u.md#f \"#g\") and [v](#h)",
+              "dir/page.md#Title"),
+            "[t](dir/page.md#d \"#e\") then [u](dir/u.md#f \"#g\") and "
+            "[v](dir/page.md#h)");
+}
+
 TEST(DocsRender, PunctuationStaysWithAnOverflowingCodeSpan) {
   EXPECT_EQ(connector::RenderMarkdown("say `aa bb cc dd`. next", 10, false, {}),
             "say aa bb cc dd.\nnext\n");
@@ -549,6 +557,22 @@ TEST(DocsRender, NumbersLinksAndCollectsTheirTargets) {
   EXPECT_EQ(links.links[1].url, "https://example.org/docs/sql/indexes");
   EXPECT_TRUE(links.links[2].page.empty());
   EXPECT_EQ(links.links[2].url, "https://duckdb.org");
+}
+
+TEST(DocsRender, ALinkTitleNamesTheAnchorOnTheSite) {
+  connector::MarkdownLinks links{.site = "https://example.org/docs/"};
+  const auto out = connector::RenderMarkdown(
+    "[and](#Functions#a_\\&\\&_b \"#a--b-and\") and [or](./ops.md#a--b-or "
+    "\"or\")",
+    0, false, "sql/full-text.md#Functions", &links);
+  EXPECT_NE(out.find("and [1] and or [2]"), std::string::npos) << out;
+  ASSERT_EQ(links.links.size(), 2U);
+  EXPECT_EQ(links.links[0].page, "sql/full-text.md");
+  EXPECT_EQ(links.links[0].anchor, "Functions#a_&&_b");
+  EXPECT_EQ(links.links[0].url,
+            "https://example.org/docs/sql/full-text#a--b-and");
+  EXPECT_EQ(links.links[1].page, "sql/ops.md");
+  EXPECT_EQ(links.links[1].url, "https://example.org/docs/sql/ops#a--b-or");
 }
 
 TEST(DocsRender, ColorModeMakesLinksHyperlinks) {

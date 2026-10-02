@@ -4,6 +4,7 @@ split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
+import useBaseUrl from "@docusaurus/useBaseUrl";
 
 CSV files can come in all shapes and forms, with some presenting many errors that make the process of cleanly reading them inherently difficult. To help users read these files, SereneDB supports detailed error messages, the ability to skip faulty lines and the possibility of storing faulty lines in a temporary table to assist users with a data cleaning step.
 
@@ -38,7 +39,7 @@ The error reports where the failure occurred — the line number and the origina
 
 There are cases where CSV files may have multiple structural errors, and users simply wish to skip these and read the correct data. Reading erroneous CSV files is possible by utilizing the `ignore_errors` option. With this option set, rows containing data that would otherwise cause the CSV parser to generate an error will be ignored. In our example, we will demonstrate a CAST error, but note that any of the errors described in our Structural Error section would cause the faulty line to be skipped.
 
-For example, consider the following CSV file, <a href="/files/docs/faulty.csv" download>`faulty.csv`</a>:
+For example, consider the following CSV file, <a href={useBaseUrl("/files/docs/faulty.csv")} download>`faulty.csv`</a>:
 
 ```csv
 Pedro,31

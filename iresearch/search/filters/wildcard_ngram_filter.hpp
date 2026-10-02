@@ -36,8 +36,10 @@
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
-#include "iresearch/utils/like_matcher.hpp"
+#include "iresearch/utils/regexp_ngram.hpp"
+#include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/string.hpp"
+#include "re2/re2.h"
 
 namespace irs {
 namespace analysis {
@@ -46,9 +48,11 @@ class WildcardTokenizer;
 
 }  // namespace analysis
 
+bool MatchStoredTerms(const re2::RE2& matcher, bytes_view terms);
+
 class WildcardNGramVerifier {
  public:
-  WildcardNGramVerifier(std::shared_ptr<const LikeMatcher> matcher,
+  WildcardNGramVerifier(std::shared_ptr<const re2::RE2> matcher,
                         const ColumnReader& stored_field,
                         const ColReader& col_reader) noexcept
     : _matcher{std::move(matcher)}, _cursor{col_reader, stored_field} {
@@ -56,35 +60,18 @@ class WildcardNGramVerifier {
   }
 
   bool Check(doc_id_t doc) {
-    const auto value = _cursor.FetchDoc(doc);
-    if (value.empty()) {
-      return false;
-    }
-    auto* terms_begin = value.data();
-    auto* terms_end = terms_begin + value.size();
-    while (terms_begin != terms_end) {
-      auto size = vread<uint32_t>(terms_begin);
-      ++terms_begin;
-
-      if (_matcher->Match({terms_begin, size})) {
-        return true;
-      }
-
-      terms_begin += size + 1;
-    }
-
-    return false;
+    return MatchStoredTerms(*_matcher, _cursor.FetchDoc(doc));
   }
 
  private:
-  std::shared_ptr<const LikeMatcher> _matcher;
+  std::shared_ptr<const re2::RE2> _matcher;
   ColumnReader::BlobPointReader _cursor;
 };
 
 class WildcardNGramQuery : public QueryBuilderImpl<WildcardNGramQuery> {
  public:
   WildcardNGramQuery(const SubReader& segment,
-                     std::shared_ptr<const LikeMatcher> matcher,
+                     std::shared_ptr<const re2::RE2> matcher,
                      QueryBuilder::ptr&& approx, field_id store_field_id,
                      score_t boost)
     : QueryBuilderImpl{segment, approx->EstimateMax(), QueryKind::Other},
@@ -97,7 +84,7 @@ class WildcardNGramQuery : public QueryBuilderImpl<WildcardNGramQuery> {
   }
 
   struct Recipe {
-    std::shared_ptr<const LikeMatcher> matcher;
+    std::shared_ptr<const re2::RE2> matcher;
     const ColumnReader* column = nullptr;
     const ColReader* col_reader = nullptr;
 
@@ -127,7 +114,7 @@ class WildcardNGramQuery : public QueryBuilderImpl<WildcardNGramQuery> {
   void SetBoost(score_t value) noexcept final { _boost = value; }
 
  private:
-  std::shared_ptr<const LikeMatcher> _matcher;
+  std::shared_ptr<const re2::RE2> _matcher;
   QueryBuilder::ptr _approx;
   field_id _store_field_id;
   score_t _boost;
@@ -135,27 +122,24 @@ class WildcardNGramQuery : public QueryBuilderImpl<WildcardNGramQuery> {
 
 class ByWildcardNGram;
 
+// `grams` holds the n-grams of every `Literal` of `query`, in depth-first
+// order. A pattern RE2 rejects gets a `None` query and no matcher.
 struct ByWildcardNGramOptions {
   using FilterType = ByWildcardNGram;
 
-  std::vector<ByPhraseOptions> parts;
-  bstring token;
-  bool has_pos{true};
-  std::shared_ptr<const LikeMatcher> matcher;
+  bstring pattern;
+  RegexpSyntax syntax{RegexpSyntax::Perl};
+  GramQuery query;
+  std::vector<ByPhraseOptions> grams;
+  bool has_pos{false};
+  std::shared_ptr<const re2::RE2> matcher;
   field_id store_field_id{irs::field_limits::invalid()};
+  bool deferred_verify{false};
 
   bool operator==(const ByWildcardNGramOptions& other) const noexcept {
-    if (parts != other.parts || token != other.token ||
-        has_pos != other.has_pos || store_field_id != other.store_field_id) {
-      return false;
-    }
-    if (!matcher && !other.matcher) {
-      return true;
-    }
-    if (!matcher || !other.matcher) {
-      return false;
-    }
-    return *matcher == *other.matcher;
+    return pattern == other.pattern && syntax == other.syntax &&
+           has_pos == other.has_pos && store_field_id == other.store_field_id &&
+           deferred_verify == other.deferred_verify && query == other.query;
   }
 
   ByWildcardNGramOptions() noexcept = default;
@@ -163,7 +147,10 @@ struct ByWildcardNGramOptions {
   ByWildcardNGramOptions& operator=(ByWildcardNGramOptions&&) noexcept =
     default;
 
-  ByWildcardNGramOptions(std::string_view pattern,
+  ByWildcardNGramOptions(std::string_view like,
+                         analysis::WildcardTokenizer& analyzer,
+                         bool has_positions);
+  ByWildcardNGramOptions(bytes_view regexp, RegexpSyntax regexp_syntax,
                          analysis::WildcardTokenizer& analyzer,
                          bool has_positions);
 };

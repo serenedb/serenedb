@@ -5,6 +5,7 @@ split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
+import useBaseUrl from "@docusaurus/useBaseUrl";
 
 SereneDB can attempt to determine the format of a JSON file when setting `format` to `auto`.
 Here are some example JSON files and the corresponding `format` settings that should be used.
@@ -19,7 +20,7 @@ A query of this shape would work in each case:
 With `format = 'newline_delimited'` newline-delimited JSON can be parsed.
 Each line is a JSON.
 
-We use the example file <a href="/files/docs/records.json" download>`records.json`</a> with the following content:
+We use the example file <a href={useBaseUrl("/files/docs/records.json")} download>`records.json`</a> with the following content:
 
 ```json
 {"key1":"value1", "key2": "value1"}
@@ -32,7 +33,7 @@ We use the example file <a href="/files/docs/records.json" download>`records.jso
 ## Format: `array`
 
 If the JSON file contains a JSON array of objects (pretty-printed or not), `array` may be used.
-To demonstrate its use, we use the example file <a href="/files/docs/records-in-array.json" download>`records-in-array.json`</a>:
+To demonstrate its use, we use the example file <a href={useBaseUrl("/files/docs/records-in-array.json")} download>`records-in-array.json`</a>:
 
 ```json
 [
@@ -47,7 +48,7 @@ To demonstrate its use, we use the example file <a href="/files/docs/records-in-
 ## Format: `unstructured`
 
 If the JSON file contains JSON that is not newline-delimited or an array, `unstructured` may be used.
-To demonstrate its use, we use the example file <a href="/files/docs/unstructured.json" download>`unstructured.json`</a>:
+To demonstrate its use, we use the example file <a href={useBaseUrl("/files/docs/unstructured.json")} download>`unstructured.json`</a>:
 
 ```json
 {
@@ -71,7 +72,7 @@ To demonstrate its use, we use the example file <a href="/files/docs/unstructure
 SereneDB can attempt to determine whether a JSON file contains records when setting `records = auto`.
 When `records = true`, SereneDB expects JSON objects, and will unpack the fields of JSON objects into individual columns.
 
-Continuing with the same example file, <a href="/files/docs/records.json" download>`records.json`</a>:
+Continuing with the same example file, <a href={useBaseUrl("/files/docs/records.json")} download>`records.json`</a>:
 
 ```json
 {"key1":"value1", "key2": "value1"}
@@ -85,7 +86,7 @@ When `records = false`, SereneDB will not unpack the top-level objects, and crea
 
 <SqlLogicTest id="data_import_and_export/json/format_settings/example_006" />
 
-This is especially useful if we have non-object JSON, for example, <a href="/files/docs/arrays.json" download>`arrays.json`</a>:
+This is especially useful if we have non-object JSON, for example, <a href={useBaseUrl("/files/docs/arrays.json")} download>`arrays.json`</a>:
 
 ```json
 [1, 2, 3]

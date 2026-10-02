@@ -61,6 +61,7 @@
 #include "connector/inverted_store_index.h"
 #include "connector/optimizer/iresearch_plan_common.hpp"
 #include "connector/optimizer/ts_dict_plan.hpp"
+#include "connector/scan/deferred_verify.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/search_filter_builder.hpp"
 #include "pg/connection_context.h"
@@ -1075,6 +1076,9 @@ bool ClaimSearchConjuncts(
   irs::Optimize(root, {.scored = scan.score.text.has_value(),
                        .analyzed_fields = std::move(analyzed_fields),
                        .null_markers = &null_markers});
+  if (scan.offsets.requests.empty() && !scan.score.vector) {
+    connector::DeferWildcardVerify(*root);
+  }
 
   scan.search.filter = std::move(root);
   scan.search.filter_scorers = std::move(filter_scorers);
@@ -1101,6 +1105,11 @@ void RewriteSearchCallsToColumnRefs(
   duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   RewriteIResearchExpressions(input.context, plan, plan,
                               input.optimizer.binder);
+}
+
+void LimitTsDictScans(duckdb::OptimizerExtensionInput&,
+                      duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+  LimitTsDictEnumerations(*plan);
 }
 
 }  // namespace
@@ -1136,6 +1145,12 @@ void RegisterIResearchPlanOptimizer(duckdb::DatabaseInstance& db) {
                  .rule = &RewriteSearchCallsToColumnRefs,
                  .anchor = duckdb::OptimizerType::FILTER_PUSHDOWN,
                  .where = duckdb::OptimizerHookPosition::Before,
+               });
+  duckdb::OptimizerExtension::Register(
+    db.config, duckdb::OptimizerExtension{
+                 .rule = &LimitTsDictScans,
+                 .anchor = duckdb::OptimizerType::FILTER_PUSHDOWN,
+                 .where = duckdb::OptimizerHookPosition::After,
                });
 }
 

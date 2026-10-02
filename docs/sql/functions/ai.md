@@ -248,7 +248,7 @@ The embedding dimension `N` is fixed by the model. A few common ones:
 
 Check your provider's documentation for the exact dimension and use it as the `N` in the stored `FLOAT[N]` column. Match the index's [distance metric](../indexes/inverted/vector-search.md) to how the model's vectors are meant to be compared. Most text-embedding models are tuned for **cosine** similarity.
 
-### Performance
+### Performance {#ai_embed-performance}
 
 Each `ai_embed` call is a network request to the provider, so **embed documents once at write time** and store the vectors; only the *query* text is embedded at search time. Rows are sent in batches of up to `sdb_ai_embedding_max_batch_size` texts per request. If the provider rejects a batch of several texts with HTTP 400, 413 or 422, for example because one text is longer than the model accepts, the batch is split in half and sent again, down to single texts, so only the rejected texts fail. A single text rejected with HTTP 422 fails the query, like any other 422. On the first HTTP 400 or 422, one extra request with the single text `x` checks whether the provider rejects every request, for example because of the `dimensions` value; if it does, the rejected batches fail without further splitting. Embedding a column is just a `SELECT`, and `NULL`s pass through and are easy to count or filter:
 

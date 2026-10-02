@@ -86,6 +86,8 @@ WHERE cat @@ ts_levenshtein('phon', 2)      -- enumerates: uncapped
 ```
 
 Since the aggregate returns terms of *matching* documents, capping the second predicate also narrows the terms returned.
+
+A top-*k* by score bounds the enumeration instead: with `ORDER BY ts_dict_score(...) DESC LIMIT k` over one fuzzy-enumerated field and nothing else filtering its terms, the walk keeps only the terms that can still reach the first *k*, so EXPLAIN shows `Max Terms: k`, or `k with ties` when a later sort key such as `ts_dict_count` has to see every term tied with the *k*-th. The rows are the ones the unbounded query returns; when the score is the only sort key, ties are broken by term.
 :::
 
 ## Standard SQL served from the dictionary {#implicit-rewrites}

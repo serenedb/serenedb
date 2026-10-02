@@ -108,6 +108,7 @@ void ClassifySegmentColFilters(const irs::SubReader& seg, ScanGlobalState& g,
       .is_dynamic = cf.is_dynamic,
       .zonemap_only = cf.zonemap_only,
       .null_check = cf.null_check,
+      .row_gather = cf.row_gather,
       .not_null = cf.not_null.get(),
       .extract_path = cf.extract_path,
       .extract_type = &cf.type,
@@ -118,6 +119,15 @@ void ClassifySegmentColFilters(const irs::SubReader& seg, ScanGlobalState& g,
     }
     const auto* column =
       col_reader != nullptr ? col_reader->Column(spec.field) : nullptr;
+    if (spec.row_gather) {
+      if (column == nullptr) {
+        out.segment_dead = true;
+        out.active.clear();
+        return;
+      }
+      out.active.push_back(spec);
+      continue;
+    }
     const auto* reader =
       column != nullptr && !cf.extract_path.empty()
         ? irs::DirectExtractLeaf(*column, cf.extract_path, cf.type)

@@ -512,9 +512,10 @@ bool ByPhraseOptions::LowerParts() {
           opts.term += e->term;
           return opts;
         },
-        [max_terms](const ParametricDescription& d, bytes_view prefix,
-                    bytes_view term) -> PhrasePart {
-          return LevenshteinAutomatonOptions{d, prefix, term, max_terms};
+        [e, max_terms](const ParametricDescription& d, bytes_view prefix,
+                       bytes_view term) -> PhrasePart {
+          return LevenshteinAutomatonOptions{
+            d, e->provider, e->with_transpositions, prefix, term, max_terms};
         });
       changed = true;
     }

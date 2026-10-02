@@ -53,7 +53,7 @@ For details, see the [Boolean Type documentation](../../sql/data_types/boolean.m
 
 ## `NULL` and `IN` / `NOT IN`
 
-The behavior of `... IN ⟨something with a NULL⟩`{:.language-sql .highlight} is different from `... IN ⟨something with no NULLs⟩`{:.language-sql .highlight}.
+The behavior of `... IN ⟨something with a NULL⟩` is different from `... IN ⟨something with no NULLs⟩`.
 For details, see the [`IN` documentation](../../sql/expressions/in/index.md).
 
 ## `NULL` and Aggregate Functions

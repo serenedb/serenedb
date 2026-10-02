@@ -1,0 +1,72 @@
+statement ok
+CREATE TABLE contains_finder (id INT PRIMARY KEY, txt VARCHAR, needle VARCHAR)
+
+
+statement count 11
+INSERT INTO contains_finder VALUES
+  (1, repeat('ab', 40) || 'needle', 'needle'),
+  (2, 'needle' || repeat('ab', 40), 'needle'),
+  (3, repeat('ab', 20) || 'needle' || repeat('ab', 20), 'needle'),
+  (4, repeat('ab', 40) || 'needl', 'needle'),
+  (5, 'short needle', 'needle'),
+  (6, 'short', 'needle'),
+  (7, NULL, 'needle'),
+  (8, repeat('ы', 40) || 'ость', 'ость'),
+  (9, repeat('ab', 40), ''),
+  (10, repeat('ab', 40) || 'z', 'z'),
+  (11, repeat('ab', 40), NULL)
+
+
+query
+SELECT id, contains(txt, 'needle') FROM contains_finder ORDER BY id
+----
+id	contains
+1	t
+2	t
+3	t
+4	f
+5	t
+6	f
+7	NULL
+8	f
+9	f
+10	f
+11	f
+
+
+query
+SELECT id, contains(txt, needle) FROM contains_finder ORDER BY id
+----
+id	contains
+1	t
+2	t
+3	t
+4	f
+5	t
+6	f
+7	NULL
+8	t
+9	t
+10	t
+11	NULL
+
+
+query
+SELECT id FROM contains_finder WHERE contains(txt, 'ость') ORDER BY id
+----
+id
+8
+
+
+query
+SELECT id FROM contains_finder WHERE regexp_matches(txt, 'needle') ORDER BY id
+----
+id
+1
+2
+3
+5
+
+
+statement ok
+DROP TABLE contains_finder

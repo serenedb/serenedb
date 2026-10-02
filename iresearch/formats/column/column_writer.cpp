@@ -46,6 +46,7 @@
 #include <utility>
 
 #include "iresearch/formats/column/codecs/registry.hpp"
+#include "iresearch/formats/column/codecs/sequence_codec.hpp"
 #include "iresearch/formats/column/codecs/string_writer.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -424,6 +425,7 @@ struct ListParts {
   uint64_t elem_count = 0;
   uint64_t distinct = 0;
   uint64_t next_code = 0;
+  bool sequence = false;
   uint64_t running = 0;
 };
 
@@ -445,13 +447,15 @@ class ListIngest {
     _running = running;
     _elem_base = running;
     _valid_rows = 0;
+    _null_codes = 0;
+    _sequence = true;
     _dedup = _direct;
     _prev = kNoRep;
   }
 
   void AddNulls(duckdb::idx_t count) {
     for (duckdb::idx_t i = 0; i < count; ++i) {
-      _codes.Push(_last_code);
+      PushNull();
     }
   }
 
@@ -477,7 +481,8 @@ class ListIngest {
   }
 
   void CheckDistinct() {
-    if (_dedup && (_next_code - _code_base) * 10 > _valid_rows * 9) {
+    if (_dedup &&
+        (_next_code - _code_base - _null_codes) * 10 > _valid_rows * 9) {
       _dedup = false;
       Forget();
     }
@@ -503,6 +508,7 @@ class ListIngest {
     out.elem_count = _running - _elem_base;
     out.distinct = _next_code - _code_base;
     out.next_code = _next_code;
+    out.sequence = _sequence && _next_code != _code_base;
     out.running = _running;
     _elems.clear();
     Forget();
@@ -527,7 +533,7 @@ class ListIngest {
     for (duckdb::idx_t i = off; i < off + count; ++i) {
       const auto idx = parent.sel->get_index(i);
       if (!parent.validity.RowIsValid(idx)) {
-        _codes.Push(_last_code);
+        PushNull();
         continue;
       }
       ++_valid_rows;
@@ -535,6 +541,7 @@ class ListIngest {
         if (idx < _source_codes.size() && _source_codes[idx] != 0) {
           _last_code = _source_codes[idx] - 1;
           _codes.Push(_last_code);
+          _sequence = false;
           continue;
         }
       }
@@ -550,6 +557,7 @@ class ListIngest {
       }
       _codes.Push(_last_code);
       if (found) {
+        _sequence = false;
         continue;
       }
       _fresh.push_back(Fresh{rep, _picked.size(), entry.length});
@@ -561,6 +569,15 @@ class ListIngest {
     }
   }
 
+  void PushNull() {
+    if (_sequence) {
+      _last_code = _next_code++;
+      ++_null_codes;
+      _ends.Push(_running);
+    }
+    _codes.Push(_last_code);
+  }
+
   void AddDistinct(const duckdb::UnifiedVectorFormat& parent,
                    const duckdb::list_entry_t* entries,
                    const duckdb::Vector& child, duckdb::idx_t off,
@@ -570,7 +587,7 @@ class ListIngest {
     for (duckdb::idx_t i = off; i < off + count; ++i) {
       const auto idx = parent.sel->get_index(i);
       if (!parent.validity.RowIsValid(idx)) {
-        _codes.Push(_last_code);
+        PushNull();
         continue;
       }
       ++_valid_rows;
@@ -750,6 +767,8 @@ class ListIngest {
   uint64_t _running = 0;
   uint64_t _elem_base = 0;
   uint64_t _valid_rows = 0;
+  uint64_t _null_codes = 0;
+  bool _sequence = true;
   uint32_t _prev = kNoRep;
   UbigintChunks _codes;
   UbigintChunks _ends;
@@ -1114,10 +1133,20 @@ void ColumnWriter::SealListParts(const duckdb::LogicalType& type,
                                  ColumnMeta& meta) {
   meta.write_list_running = parts.running;
   meta.write_list_distinct = parts.next_code;
-  duckdb::unique_ptr<duckdb::AnalyzeState> state;
-  auto fn = PickCodec(type, parts.codes,
-                      duckdb::CompressionType::COMPRESSION_AUTO, state);
-  Compress(*fn, std::move(state), type, parts.codes, meta.data);
+  if (parts.sequence) {
+    const uint64_t first = parts.next_code - parts.distinct;
+    const std::string_view payload{reinterpret_cast<const char*>(&first),
+                                   sizeof(first)};
+    CaptureBlock(
+      WriteCtx().Database(), *codecs::SequenceFunction(type.InternalType()),
+      duckdb::BaseStatistics::CreateEmpty(type), parts.distinct,
+      std::span<const std::string_view>{&payload, 1}, Out(), meta.data);
+  } else {
+    duckdb::unique_ptr<duckdb::AnalyzeState> state;
+    auto fn = PickCodec(type, parts.codes,
+                        duckdb::CompressionType::COMPRESSION_AUTO, state);
+    Compress(*fn, std::move(state), type, parts.codes, meta.data);
+  }
   SealColumn(duckdb::ListType::GetChildType(type), parts.elems,
              parts.elem_count, /*skip_validity=*/false, forced,
              meta.children[0]);

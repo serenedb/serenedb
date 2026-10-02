@@ -57,7 +57,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | SET ROLE              | Yes           | Enforced; membership required for non-superusers |
 | INHERIT               | Yes           | `INHERIT`/`NOINHERIT` attributes enforced |
 | ALTER DEFAULT PRIVILEGES | Partial    | Accepted and stored, not yet applied to new objects |
-| Row Security Policies | No            | See [issue](https://github.com/serenedb/serenedb/issues/212) |
+| Row Security Policies | Partial       | `CREATE`/`ALTER`/`DROP POLICY`, `ENABLE`/`FORCE ROW LEVEL SECURITY`, also on views (SereneDB extension), `MERGE` and `ON CONFLICT`; not yet subqueries in `WITH CHECK`. See [Row-Level Security](../security/row_level_security.md) |
 
 ### Indexes
 | Feature                 | Support State | Details                                                     |

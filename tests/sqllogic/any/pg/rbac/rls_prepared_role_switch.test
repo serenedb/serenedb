@@ -1,0 +1,146 @@
+statement ok
+DROP TABLE IF EXISTS rls_prep_crew;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_prep_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_prep_arelav;
+
+
+statement ok
+CREATE ROLE rls_prep_babsky;
+
+
+statement ok
+CREATE ROLE rls_prep_arelav;
+
+
+statement ok
+CREATE TABLE rls_prep_crew (id int, member text, vibe text);
+
+
+statement ok
+INSERT INTO rls_prep_crew VALUES (1, 'rls_prep_babsky', 'boss'), (2, 'rls_prep_arelav', 'skuf'), (3, 'kostya', 'intern');
+
+
+statement ok
+GRANT SELECT ON rls_prep_crew TO rls_prep_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_prep_crew TO rls_prep_arelav;
+
+
+statement ok
+ALTER TABLE rls_prep_crew ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_prep_self ON rls_prep_crew USING (member = current_user);
+
+
+statement ok
+PREPARE rls_prep_all AS SELECT id, vibe FROM rls_prep_crew ORDER BY id;
+
+
+query
+EXECUTE rls_prep_all;
+----
+id	vibe
+1	boss
+2	skuf
+3	intern
+
+
+statement ok
+SET ROLE rls_prep_babsky;
+
+
+query
+EXECUTE rls_prep_all;
+----
+id	vibe
+1	boss
+
+
+statement ok
+SET ROLE rls_prep_arelav;
+
+
+query
+EXECUTE rls_prep_all;
+----
+id	vibe
+2	skuf
+
+
+statement ok
+RESET ROLE;
+
+
+query
+EXECUTE rls_prep_all;
+----
+id	vibe
+1	boss
+2	skuf
+3	intern
+
+
+statement ok
+ALTER TABLE rls_prep_crew DISABLE ROW LEVEL SECURITY;
+
+
+statement ok
+SET ROLE rls_prep_arelav;
+
+
+query
+EXECUTE rls_prep_all;
+----
+id	vibe
+1	boss
+2	skuf
+3	intern
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER TABLE rls_prep_crew ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+SET ROLE rls_prep_arelav;
+
+
+query
+EXECUTE rls_prep_all;
+----
+id	vibe
+2	skuf
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DEALLOCATE rls_prep_all;
+
+
+statement ok
+DROP TABLE rls_prep_crew;
+
+
+statement ok
+DROP ROLE rls_prep_babsky;
+
+
+statement ok
+DROP ROLE rls_prep_arelav;

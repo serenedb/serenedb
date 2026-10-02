@@ -1,0 +1,126 @@
+control substitution on
+
+statement ok
+DROP TABLE IF EXISTS rls_un_stash;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_un_search;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_un_arelav;
+
+
+statement ok
+CREATE ROLE rls_un_arelav;
+
+
+statement ok
+CREATE TABLE rls_un_stash (id int PRIMARY KEY, owner text, amount int);
+
+
+statement ok
+INSERT INTO rls_un_stash VALUES (1, 'rls_un_arelav', 42), (2, 'babsky', 21);
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON rls_un_stash TO rls_un_arelav;
+
+
+statement ok
+ALTER TABLE rls_un_stash ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_un_own ON rls_un_stash USING (owner = current_user);
+
+
+statement ok
+SET ROLE rls_un_arelav;
+
+
+statement error
+COPY rls_un_stash FROM '/nonexistent/rls_un_stash.csv' (FORMAT csv);
+----
+db error: ERROR: COPY FROM not supported with row-level security<slt:ignore>
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_un_capped ON rls_un_stash AS RESTRICTIVE FOR INSERT WITH CHECK (amount < (SELECT max(amount) FROM rls_un_stash));
+
+
+statement ok
+SET ROLE rls_un_arelav;
+
+
+statement error
+INSERT INTO rls_un_stash VALUES (5, 'rls_un_arelav', 1);
+----
+db error: ERROR: row-level security WITH CHECK expressions with subqueries are not supported<slt:ignore>
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE TABLE rls_un_search (id int PRIMARY KEY, owner text) WITH (storage = 'search');
+
+
+statement error
+ALTER TABLE rls_un_search ENABLE ROW LEVEL SECURITY;
+----
+db error: ERROR: row-level security is not supported for search tables<slt:ignore>
+
+
+statement ok
+DROP TABLE rls_un_search;
+
+
+statement ok
+CREATE TEMP TABLE rls_un_scratch (id int, owner text);
+
+
+statement error
+ALTER TABLE rls_un_scratch ENABLE ROW LEVEL SECURITY;
+----
+db error: ERROR: row-level security is not supported for temporary relations<slt:ignore>
+
+
+statement ok
+DROP TABLE rls_un_scratch;
+
+
+statement ok
+DETACH IF EXISTS rls_un_ext;
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/rls_un_ext.duckdb' AS rls_un_ext;
+
+
+statement ok
+CREATE OR REPLACE TABLE rls_un_ext.main.stash (id int, owner text);
+
+
+statement error
+ALTER TABLE rls_un_ext.main.stash ENABLE ROW LEVEL SECURITY;
+----
+db error: ERROR: row-level security is not supported in attached databases<slt:ignore>
+
+
+statement ok
+DETACH rls_un_ext;
+
+
+statement ok
+DROP TABLE rls_un_stash;
+
+
+statement ok
+DROP ROLE rls_un_arelav;

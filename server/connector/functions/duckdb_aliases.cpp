@@ -66,6 +66,7 @@ constexpr std::array kTableFunctions{
   std::string_view{"duckdb_logs"},
   std::string_view{"duckdb_memory"},
   std::string_view{"duckdb_optimizers"},
+  std::string_view{"duckdb_policies"},
   std::string_view{"duckdb_prepared_statements"},
   std::string_view{"duckdb_schemas"},
   std::string_view{"duckdb_secret_types"},

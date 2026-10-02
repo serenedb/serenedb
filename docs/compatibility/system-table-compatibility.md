@@ -59,7 +59,7 @@ System tables often contain many low-level details. For more accessible and frie
 | pg_opfamily                 | 🟡            | Contains information about operator families. |
 | pg_parameter_acl            | 🟡            | Stores access privileges for server parameters. |
 | pg_partitioned_table        | 🟡            | Contains information about partitioned tables. |
-| pg_policy                   | 🟡            | Stores information about row-level security policies. |
+| pg_policy                   | 🟢            | Stores information about row-level security policies. |
 | pg_proc                     | 🟢            | Contains information about functions and procedures. |
 | pg_publication              | 🟡            | Contains all publications created in the database. |
 | pg_publication_namespace    | 🟡            | Maps schemas to publications (many-to-many). |
@@ -105,7 +105,7 @@ System views provide convenient access to system information. System tables ofte
 | pg_indexes | 🟢 | Shows information about indexes. |
 | pg_locks | 🟡 | Displays locks currently held or awaited. |
 | pg_matviews | 🟡 | Lists materialized views. |
-| pg_policies | 🟡 | Displays information about policies. |
+| pg_policies | 🟢 | Displays information about policies. |
 | pg_prepared_statements | 🟡 | Lists prepared statements. |
 | pg_prepared_xacts | 🟡 | Shows prepared transactions. |
 | pg_publication_tables | 🟡 | Displays publications and their associated tables. |

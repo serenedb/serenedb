@@ -1,0 +1,168 @@
+statement ok
+DROP TABLE IF EXISTS rls_loot;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_pr_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_pr_arelav;
+
+
+statement ok
+CREATE ROLE rls_pr_babsky;
+
+
+statement ok
+CREATE ROLE rls_pr_arelav;
+
+
+statement ok
+CREATE TABLE rls_loot (id int, owner text, squad text, classified bool);
+
+
+statement ok
+INSERT INTO rls_loot VALUES
+  (1, 'rls_pr_babsky', 'clickclack', false),
+  (2, 'rls_pr_babsky', 'clickclack', true),
+  (3, 'rls_pr_arelav', 'clickclack', false),
+  (4, 'rls_pr_arelav', 'deadinside', true),
+  (5, 'vedernikoff', 'deadinside', false),
+  (6, 'kostya', 'salam', false);
+
+
+statement ok
+GRANT SELECT ON rls_loot TO rls_pr_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_loot TO rls_pr_arelav;
+
+
+statement ok
+ALTER TABLE rls_loot ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_loot_own ON rls_loot USING (owner = current_user);
+
+
+statement ok
+CREATE POLICY rls_loot_squad ON rls_loot FOR SELECT USING (squad = 'deadinside');
+
+
+statement ok
+SET ROLE rls_pr_babsky;
+
+
+query
+SELECT id FROM rls_loot ORDER BY id;
+----
+id
+1
+2
+4
+5
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_loot_public ON rls_loot AS RESTRICTIVE USING (NOT classified);
+
+
+statement ok
+SET ROLE rls_pr_babsky;
+
+
+query
+SELECT id FROM rls_loot ORDER BY id;
+----
+id
+1
+5
+
+
+statement ok
+SET ROLE rls_pr_arelav;
+
+
+query
+SELECT id FROM rls_loot ORDER BY id;
+----
+id
+3
+5
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_loot_not_salam ON rls_loot AS RESTRICTIVE FOR SELECT TO rls_pr_arelav USING (squad <> 'deadinside');
+
+
+statement ok
+SET ROLE rls_pr_arelav;
+
+
+query
+SELECT id FROM rls_loot ORDER BY id;
+----
+id
+3
+
+
+statement ok
+SET ROLE rls_pr_babsky;
+
+
+query
+SELECT id FROM rls_loot ORDER BY id;
+----
+id
+1
+5
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP POLICY rls_loot_own ON rls_loot;
+
+
+statement ok
+DROP POLICY rls_loot_squad ON rls_loot;
+
+
+statement ok
+SET ROLE rls_pr_babsky;
+
+
+query
+SELECT count(*) FROM rls_loot;
+----
+count
+0
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP TABLE rls_loot;
+
+
+statement ok
+DROP ROLE rls_pr_babsky;
+
+
+statement ok
+DROP ROLE rls_pr_arelav;

@@ -204,6 +204,8 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
               return constraint->type == duckdb::ConstraintType::CHECK;
             }));
           row.relhasindex = indexed_relations.contains(table->oid);
+          row.relrowsecurity = table->GetRowSecurity().enabled;
+          row.relforcerowsecurity = table->GetRowSecurity().forced;
           row.reltuples = count_store_rows(*table);
           row.relacl = {table->permissions.acl};
           if (const auto* search =
@@ -243,6 +245,8 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
           MakeBaseRow(schema_id, view_id, view_entry->name.GetIdentifierName(),
                       view_entry->permissions.owner);
         row.relkind = PgClass::Relkind::View;
+        row.relrowsecurity = view_entry->GetRowSecurity().enabled;
+        row.relforcerowsecurity = view_entry->GetRowSecurity().forced;
         row.relacl = {view_entry->permissions.acl};
         values.emplace_back(std::move(row));
       });

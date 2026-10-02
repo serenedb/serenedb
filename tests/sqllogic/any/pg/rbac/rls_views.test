@@ -1,0 +1,156 @@
+statement ok
+DROP VIEW IF EXISTS rls_board_all;
+
+
+statement ok
+DROP VIEW IF EXISTS rls_board_mine;
+
+
+statement ok
+DROP VIEW IF EXISTS rls_board_arelav;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_board;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_v_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_v_arelav;
+
+
+statement ok
+CREATE ROLE rls_v_babsky;
+
+
+statement ok
+CREATE ROLE rls_v_arelav;
+
+
+statement ok
+CREATE TABLE rls_board (id int, author text, msg text);
+
+
+statement ok
+INSERT INTO rls_board VALUES
+  (1, 'rls_v_babsky', 'clickclack'),
+  (2, 'rls_v_arelav', 'skuf mode on'),
+  (3, 'rls_v_arelav', 'deadinside'),
+  (4, 'vedernikoff', 'salam');
+
+
+statement ok
+GRANT SELECT ON rls_board TO rls_v_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_board TO rls_v_arelav;
+
+
+statement ok
+ALTER TABLE rls_board ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_board_author ON rls_board USING (author = current_user);
+
+
+statement ok
+CREATE VIEW rls_board_all AS SELECT id, author, msg FROM rls_board;
+
+
+statement ok
+CREATE VIEW rls_board_mine WITH (security_invoker = true) AS SELECT id, author, msg FROM rls_board;
+
+
+statement ok
+CREATE VIEW rls_board_arelav AS SELECT id, author, msg FROM rls_board;
+
+
+statement ok
+ALTER VIEW rls_board_arelav OWNER TO rls_v_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_board_all TO rls_v_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_board_mine TO rls_v_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_board_arelav TO rls_v_babsky;
+
+
+statement ok
+SET ROLE rls_v_babsky;
+
+
+query
+SELECT id FROM rls_board ORDER BY id;
+----
+id
+1
+
+
+query
+SELECT id FROM rls_board_all ORDER BY id;
+----
+id
+1
+2
+3
+4
+
+
+query
+SELECT id FROM rls_board_mine ORDER BY id;
+----
+id
+1
+
+
+query
+SELECT id, msg FROM rls_board_arelav ORDER BY id;
+----
+id	msg
+1	clickclack
+
+
+query
+SELECT m.id FROM rls_board_mine m JOIN rls_board_all a ON a.id = m.id;
+----
+id
+1
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP VIEW rls_board_all;
+
+
+statement ok
+DROP VIEW rls_board_mine;
+
+
+statement ok
+DROP VIEW rls_board_arelav;
+
+
+statement ok
+DROP TABLE rls_board;
+
+
+statement ok
+DROP ROLE rls_v_babsky;
+
+
+statement ok
+DROP ROLE rls_v_arelav;

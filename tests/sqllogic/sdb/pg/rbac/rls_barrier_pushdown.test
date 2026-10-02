@@ -1,0 +1,201 @@
+statement ok
+DROP TABLE IF EXISTS rls_bp_squad;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_bp_members;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_bp_arelav;
+
+
+statement ok
+CREATE ROLE rls_bp_arelav;
+
+
+statement ok
+CREATE TABLE rls_bp_squad (id int, member text, squad text, grade int, note text);
+
+
+statement ok
+INSERT INTO rls_bp_squad VALUES
+  (1, 'rls_bp_arelav', 'clickclack', 42, 'skuf'),
+  (2, 'babsky', 'clickclack', 21, 'boss'),
+  (3, 'rls_bp_arelav', 'deadinside', 13, 'overseer'),
+  (4, 'kostya', 'salam', 0, 'intern');
+
+
+statement ok
+CREATE TABLE rls_bp_members (member text, squad text);
+
+
+statement ok
+INSERT INTO rls_bp_members VALUES ('rls_bp_arelav', 'clickclack');
+
+
+statement ok
+GRANT SELECT ON rls_bp_squad TO rls_bp_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_bp_members TO rls_bp_arelav;
+
+
+statement ok
+ALTER TABLE rls_bp_squad ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_bp_self ON rls_bp_squad USING (member = current_user);
+
+
+statement ok
+SET ROLE rls_bp_arelav;
+
+
+query
+EXPLAIN SELECT id FROM rls_bp_squad WHERE id = 3;
+----
+QUERY PLAN
+╭─ SEQ_SCAN ───────────────────────────────╮
+│ Table: rls_bp_squad                      │
+│ Type: Sequential Scan                    │
+│ Projections: id                          │
+│ Column Filter: member = 'rls_bp_arelav', │
+│                id = 3                    │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM rls_bp_squad WHERE id = 3 AND CASE WHEN grade = 21 THEN error('leak') ELSE true END;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────────────────╮
+│ Projections: #0                                                                 │
+│ ~0 rows                                                                         │
+╰────────────────────────────────────────┬────────────────────────────────────────╯
+╭─ FILTER ───────────────────────────────┴────────────────────────────────────────╮
+│ Expression:                                                                     │
+│ CASE  WHEN ((grade = 21)) THEN (CAST("error"('leak') AS BOOLEAN)) ELSE true END │
+│ ~0 rows                                                                         │
+╰────────────────────────────────────────┬────────────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────────┴────────────────────────────────────────╮
+│ Table: rls_bp_squad                                                             │
+│ Type: Sequential Scan                                                           │
+│ Projections: id, grade                                                          │
+│ Column Filter: member = 'rls_bp_arelav', id = 3                                 │
+│ ~1 row                                                                          │
+╰─────────────────────────────────────────────────────────────────────────────────╯
+
+
+query
+SELECT count(*) FROM rls_bp_squad WHERE CASE WHEN grade = 21 THEN error('leak babsky') ELSE true END;
+----
+count
+2
+
+
+query
+SELECT count(*) FROM rls_bp_squad WHERE CASE WHEN grade = 0 THEN error('leak kostya') ELSE true END AND id > 0;
+----
+count
+2
+
+
+query
+SELECT id FROM rls_bp_squad ORDER BY CASE WHEN grade = 21 THEN error('leak order') ELSE grade END LIMIT 1;
+----
+id
+3
+
+
+query
+SELECT CASE WHEN note = 'boss' THEN error('leak projection') ELSE note END AS note FROM rls_bp_squad ORDER BY id;
+----
+note
+skuf
+overseer
+
+
+query
+SELECT count(*) FROM rls_bp_squad s JOIN rls_bp_members m ON m.member = s.member AND CASE WHEN s.grade = 21 THEN error('leak join') ELSE true END;
+----
+count
+2
+
+
+query
+SELECT count(*) FROM rls_bp_members m WHERE EXISTS (SELECT 1 FROM rls_bp_squad s WHERE s.squad = m.squad AND CASE WHEN s.grade = 21 THEN error('leak exists') ELSE true END);
+----
+count
+1
+
+
+query
+WITH c AS MATERIALIZED (SELECT * FROM rls_bp_squad) SELECT count(*) FROM c WHERE CASE WHEN grade = 21 THEN error('leak cte') ELSE true END;
+----
+count
+2
+
+
+query
+SELECT stats(grade) FROM rls_bp_squad LIMIT 1;
+----
+stats
+{"has_no_null":true,"has_null":true}
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP POLICY rls_bp_self ON rls_bp_squad;
+
+
+statement ok
+CREATE POLICY rls_bp_member_of ON rls_bp_squad USING (squad IN (SELECT squad FROM rls_bp_members WHERE member = current_user));
+
+
+statement ok
+SET ROLE rls_bp_arelav;
+
+
+query
+SELECT id FROM rls_bp_squad ORDER BY id;
+----
+id
+1
+2
+
+
+query
+SELECT count(*) FROM rls_bp_squad WHERE CASE WHEN grade = 0 THEN error('leak through semi join') ELSE true END;
+----
+count
+2
+
+
+query
+SELECT count(*) FROM rls_bp_squad s JOIN rls_bp_members m ON m.squad = s.squad WHERE CASE WHEN s.grade = 13 THEN error('leak join order') ELSE true END;
+----
+count
+2
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP TABLE rls_bp_squad;
+
+
+statement ok
+DROP TABLE rls_bp_members;
+
+
+statement ok
+DROP ROLE rls_bp_arelav;

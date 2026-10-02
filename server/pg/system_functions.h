@@ -1168,11 +1168,6 @@ inline constexpr SystemMacro kExternalMacros[] = {
   // --- Real, PG-faithful privilege / row-security oracles. These return PG's
   // actual answer for every reachable input (not permissive placeholders). ---
 
-  // SereneDB has no RLS (no CREATE POLICY, relrowsecurity always false), so
-  // row security is never active -- PG also returns false for every reachable
-  // input (no-policy table, system oid, non-owner). Matches PG.
-  {"pg_catalog", "row_security_active", "(a) AS false"},
-
   // has_{foreign_data_wrapper,server}_privilege: SereneDB has no FDWs or foreign
   // servers, so every object oid is nonexistent. PG returns true for a
   // superuser (the superuser check precedes the object lookup) and NULL for any

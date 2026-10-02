@@ -1,0 +1,82 @@
+statement ok
+DROP TABLE IF EXISTS rls_cp_docs;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_cp_arelav;
+
+
+statement ok
+CREATE ROLE rls_cp_arelav;
+
+
+statement ok
+CREATE TABLE rls_cp_docs (id int, owner text, secret text);
+
+
+statement ok
+INSERT INTO rls_cp_docs VALUES (1, 'rls_cp_arelav', 'skuf'), (2, 'babsky', 'boss');
+
+
+statement ok
+GRANT SELECT (id), UPDATE (secret) ON rls_cp_docs TO rls_cp_arelav;
+
+
+statement ok
+ALTER TABLE rls_cp_docs ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_cp_own ON rls_cp_docs USING (owner = current_user);
+
+
+statement ok
+SET ROLE rls_cp_arelav;
+
+
+query
+SELECT id FROM rls_cp_docs;
+----
+id
+1
+
+
+query
+SELECT count(*) FROM rls_cp_docs;
+----
+count
+1
+
+
+statement error
+SELECT id, owner FROM rls_cp_docs;
+----
+db error: ERROR: permission denied for table rls_cp_docs<slt:ignore>
+
+
+statement ok
+UPDATE rls_cp_docs SET secret = 'clickclack' WHERE id = 1;
+
+
+statement ok
+UPDATE rls_cp_docs SET secret = 'deadinside' WHERE id = 2;
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT id, secret FROM rls_cp_docs ORDER BY id;
+----
+id	secret
+1	clickclack
+2	boss
+
+
+statement ok
+DROP TABLE rls_cp_docs;
+
+
+statement ok
+DROP ROLE rls_cp_arelav;

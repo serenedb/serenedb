@@ -1,0 +1,236 @@
+statement ok
+DROP TABLE IF EXISTS rls_sq_docs;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_sq_members;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_sq_ping;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_sq_pong;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_sq_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_sq_arelav;
+
+
+statement ok
+CREATE ROLE rls_sq_babsky;
+
+
+statement ok
+CREATE ROLE rls_sq_arelav;
+
+
+statement ok
+CREATE TABLE rls_sq_members (member text, squad text);
+
+
+statement ok
+INSERT INTO rls_sq_members VALUES
+  ('rls_sq_babsky', 'clickclack'),
+  ('rls_sq_babsky', 'deadinside'),
+  ('rls_sq_arelav', 'clickclack');
+
+
+statement ok
+CREATE TABLE rls_sq_docs (id int, squad text, body text);
+
+
+statement ok
+INSERT INTO rls_sq_docs VALUES
+  (1, 'clickclack', 'arelav is a skuf'),
+  (2, 'deadinside', 'vedernikoff oversees'),
+  (3, 'salam', 'kostya iq 346'),
+  (4, 'clickclack', 'androed abramov');
+
+
+statement ok
+GRANT SELECT ON rls_sq_docs TO rls_sq_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_sq_docs TO rls_sq_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_sq_members TO rls_sq_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_sq_members TO rls_sq_arelav;
+
+
+statement ok
+ALTER TABLE rls_sq_docs ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_sq_by_squad ON rls_sq_docs USING (squad IN (SELECT squad FROM rls_sq_members WHERE member = current_user));
+
+
+statement ok
+SET ROLE rls_sq_babsky;
+
+
+query
+SELECT id FROM rls_sq_docs ORDER BY id;
+----
+id
+1
+2
+4
+
+
+statement ok
+SET ROLE rls_sq_arelav;
+
+
+query
+SELECT id, body FROM rls_sq_docs ORDER BY id;
+----
+id	body
+1	arelav is a skuf
+4	androed abramov
+
+
+query
+SELECT count(*) FROM rls_sq_docs d WHERE EXISTS (SELECT 1 FROM rls_sq_members m WHERE m.squad = d.squad);
+----
+count
+2
+
+
+query
+SELECT count(*) FROM rls_sq_docs WHERE squad = 'deadinside';
+----
+count
+0
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER TABLE rls_sq_members ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_sq_members_self ON rls_sq_members USING (member = current_user);
+
+
+statement ok
+SET ROLE rls_sq_arelav;
+
+
+query
+SELECT count(*) FROM rls_sq_members;
+----
+count
+1
+
+
+query
+SELECT id FROM rls_sq_docs ORDER BY id;
+----
+id
+1
+4
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE TABLE rls_sq_ping (id int, x int);
+
+
+statement ok
+CREATE TABLE rls_sq_pong (id int, x int);
+
+
+statement ok
+INSERT INTO rls_sq_ping VALUES (1, 1);
+
+
+statement ok
+INSERT INTO rls_sq_pong VALUES (1, 1);
+
+
+statement ok
+GRANT SELECT ON rls_sq_ping TO rls_sq_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_sq_pong TO rls_sq_arelav;
+
+
+statement ok
+ALTER TABLE rls_sq_ping ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+ALTER TABLE rls_sq_pong ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_sq_ping_p ON rls_sq_ping USING (x IN (SELECT x FROM rls_sq_pong));
+
+
+statement ok
+CREATE POLICY rls_sq_pong_p ON rls_sq_pong USING (x IN (SELECT x FROM rls_sq_ping));
+
+
+statement ok
+SET ROLE rls_sq_arelav;
+
+
+statement error
+SELECT * FROM rls_sq_ping;
+----
+db error: ERROR: infinite recursion detected in policy for relation "rls_sq_ping"<slt:ignore>
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT count(*) FROM rls_sq_ping;
+----
+count
+1
+
+
+statement ok
+DROP TABLE rls_sq_docs;
+
+
+statement ok
+DROP TABLE rls_sq_members;
+
+
+statement ok
+DROP TABLE rls_sq_ping;
+
+
+statement ok
+DROP TABLE rls_sq_pong;
+
+
+statement ok
+DROP ROLE rls_sq_babsky;
+
+
+statement ok
+DROP ROLE rls_sq_arelav;

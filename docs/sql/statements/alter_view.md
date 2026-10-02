@@ -18,6 +18,15 @@ Rename a view:
     `ALTER VIEW` changes the schema of an existing view.
 </DocCallout>
 
+## `ENABLE` / `DISABLE` / `FORCE` / `NO FORCE ROW LEVEL SECURITY`
+
+`ENABLE ROW LEVEL SECURITY` makes the view's own [policies](../../security/row_level_security.md#policies-on-views) apply to every role except superusers, roles with `BYPASSRLS` and the view owner; `DISABLE` turns them off again. `FORCE ROW LEVEL SECURITY` makes the policies apply to the owner as well, `NO FORCE` exempts the owner again:
+
+```sql
+ALTER VIEW large_orders ENABLE ROW LEVEL SECURITY;
+ALTER VIEW large_orders FORCE ROW LEVEL SECURITY;
+```
+
 <!--
  All the changes made by `ALTER VIEW` fully respect the transactional semantics, i.e., they will not be visible to other transactions until committed, and can be fully reverted through a rollback. Note that other views that rely on the view are **not** automatically updated.
 -->

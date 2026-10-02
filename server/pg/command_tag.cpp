@@ -62,6 +62,8 @@ std::string_view CreateObjectTag(duckdb::CatalogType type) {
       return "CREATE DATABASE";
     case CatalogType::JOB_ENTRY:
       return "CREATE JOB";
+    case CatalogType::POLICY_ENTRY:
+      return "CREATE POLICY";
     default:
       return "CREATE";
   }
@@ -89,6 +91,8 @@ std::string_view DropObjectTag(duckdb::CatalogType type) {
       return "DROP DATABASE";
     case CatalogType::JOB_ENTRY:
       return "DROP JOB";
+    case CatalogType::POLICY_ENTRY:
+      return "DROP POLICY";
     default:
       return "DROP";
   }
@@ -237,6 +241,10 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
           switch (alter_stmt.info->type) {
             case duckdb::AlterType::ALTER_TABLE:
               return make("ALTER TABLE");
+            case duckdb::AlterType::ALTER_POLICY:
+              return make("ALTER POLICY");
+            case duckdb::AlterType::SET_ROW_SECURITY:
+              return make(AlterObjectTag(alter_stmt.info->GetCatalogType()));
             case duckdb::AlterType::ALTER_VIEW:
               return make("ALTER VIEW");
             case duckdb::AlterType::RENAME:

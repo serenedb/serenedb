@@ -34,6 +34,7 @@
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/catalog/row_security.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/common/vector_operations/variadic_executor.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
@@ -41,6 +42,7 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
+#include <duckdb/main/config.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -953,6 +955,43 @@ bool HasTablePrivilegeImpl(ConnectionContext& conn_ctx,
   } catch (const irs::SqlException& e) {
     ThrowInvalidPrivilege(e);
   }
+}
+
+bool RowSecurityActive(duckdb::ClientContext& context,
+                       duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
+  auto row_security = entry ? duckdb::RowSecurity::Get(*entry) : nullptr;
+  if (!row_security || !row_security->enabled) {
+    return false;
+  }
+  auto& relation = entry->Cast<duckdb::StandardEntry>();
+  return !relation.ParentCatalog().BypassesRowSecurity(context, relation,
+                                                       duckdb::optional_idx());
+}
+
+void RowSecurityActiveOidFunction(duckdb::DataChunk& args,
+                                  duckdb::ExpressionState& state,
+                                  duckdb::Vector& result) {
+  auto& context = state.GetContext();
+  duckdb::UnaryExecutor::Execute<int64_t, bool>(
+    args.data[0], result, args.size(), [&](int64_t oid) {
+      return RowSecurityActive(
+        context, RelationEntryByOid(context, static_cast<uint64_t>(oid)));
+    });
+}
+
+void RowSecurityActiveNameFunction(duckdb::DataChunk& args,
+                                   duckdb::ExpressionState& state,
+                                   duckdb::Vector& result) {
+  auto& context = state.GetContext();
+  duckdb::UnaryExecutor::Execute<duckdb::string_t, bool>(
+    args.data[0], result, args.size(), [&](duckdb::string_t name) {
+      const auto qualified = duckdb::QualifiedName::Parse(name.GetString());
+      auto entry = FindRelation(context, qualified);
+      if (!entry && !ResolveSystemRelation(qualified)) {
+        ThrowRelationNotFound(qualified.Name().GetIdentifierName());
+      }
+      return RowSecurityActive(context, entry);
+    });
 }
 
 void HasTablePrivilege3Function(duckdb::DataChunk& args,
@@ -2189,6 +2228,16 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
 
   loader.RegisterFunction(duckdb::ScalarFunction{
     "session_user", {}, duckdb::LogicalType::VARCHAR, SessionUserFunction});
+
+  {
+    duckdb::ScalarFunctionSet set{duckdb::Identifier{"row_security_active"}};
+    set.AddFunction(duckdb::ScalarFunction{
+      {pg::OID()}, duckdb::LogicalType::BOOLEAN, RowSecurityActiveOidFunction});
+    set.AddFunction(duckdb::ScalarFunction{{duckdb::LogicalType::VARCHAR},
+                                           duckdb::LogicalType::BOOLEAN,
+                                           RowSecurityActiveNameFunction});
+    loader.RegisterFunction(std::move(set));
+  }
 
   loader.RegisterFunction(duckdb::ScalarFunction{
     "has_table_privilege",

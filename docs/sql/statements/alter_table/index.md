@@ -232,6 +232,15 @@ For a table created with `WITH (storage = 'search')`, `SET (option = value, …)
 
 A search table's columns are fixed: `ADD COLUMN`, `DROP COLUMN`, `ALTER COLUMN TYPE`, `DROP CONSTRAINT` and adding a `PRIMARY KEY` or `UNIQUE` constraint are rejected. Renaming the table or a column, `ALTER COLUMN SET DEFAULT` / `DROP DEFAULT`, `SET NOT NULL` / `DROP NOT NULL`, adding a `CHECK` constraint and `COMMENT ON COLUMN` change only the table's definition. A search table does not check `NOT NULL` and `CHECK` constraints when rows are written, whether they were declared at `CREATE TABLE` or added later.
 
+## `ENABLE` / `DISABLE` / `FORCE` / `NO FORCE ROW LEVEL SECURITY`
+
+`ENABLE ROW LEVEL SECURITY` makes the table's [policies](../../../security/row_level_security.md) apply to every role except superusers, roles with `BYPASSRLS` and the table owner; `DISABLE` turns them off again. `FORCE ROW LEVEL SECURITY` makes the policies apply to the owner as well, `NO FORCE` exempts the owner again:
+
+```sql
+ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE orders FORCE ROW LEVEL SECURITY;
+```
+
 ## Limitations
 
 `ALTER COLUMN` fails if values of conflicting types have occurred in the table at any point, even if they have been deleted:

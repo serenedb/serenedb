@@ -27,6 +27,7 @@
 #include <duckdb/catalog/default/default_schemas.hpp>
 #include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/catalog/row_security.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/exception/catalog_exception.hpp>
@@ -63,6 +64,7 @@
 #include <utility>
 #include <vector>
 
+#include "auth/role_closure.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/foreign_server.h"
@@ -587,6 +589,38 @@ void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
                     ERR_MSG(duckdb::CatalogTypeToString(type), " with name ",
                             name.GetIdentifierName(), " does not exist!"));
   }
+}
+
+bool SereneDBCatalog::BypassesRowSecurity(duckdb::ClientContext& context,
+                                          duckdb::StandardEntry& relation,
+                                          duckdb::optional_idx role) {
+  auto* connection = connector::GetSereneDBContextPtr(context);
+  if (!connection) {
+    return true;
+  }
+  const auto closure = auth::ClosureFor(
+    &context, role.IsValid() ? role.GetIndex() : connection->GetRoleId());
+  if (closure->is_superuser || closure->Has(RoleOption::BypassRls)) {
+    return true;
+  }
+  const auto owner = relation.permissions.owner;
+  return !duckdb::RowSecurity::Get(relation)->forced &&
+         owner != pg::kInvalidOid && closure->Owns(owner);
+}
+
+bool SereneDBCatalog::IsRowSecurityMember(
+  duckdb::ClientContext& context,
+  const duckdb::vector<duckdb::idx_t>& policy_roles,
+  duckdb::optional_idx role) {
+  auto* connection = connector::GetSereneDBContextPtr(context);
+  if (!connection) {
+    return true;
+  }
+  const auto closure = auth::ClosureFor(
+    &context, role.IsValid() ? role.GetIndex() : connection->GetRoleId());
+  return absl::c_any_of(policy_roles, [&](duckdb::idx_t policy_role) {
+    return policy_role == pg::kPublicGrantee || closure->MemberOf(policy_role);
+  });
 }
 
 void SereneDBCatalog::SyncReindexJob(duckdb::CatalogTransaction transaction,

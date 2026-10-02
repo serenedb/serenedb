@@ -69,7 +69,7 @@ Scheduled runs execute on the server's background thread pool (`--background_thr
 
 ## Security
 
-A job runs **as its owner**, the role that created it, in a session of its own: the body is checked against the owner's privileges, exactly as if the owner had typed it. Creating a job needs the `CREATE` privilege on the schema. Only the owner (or a member of the owning role, or a superuser) can alter, drop or execute the job; `ALTER JOB ... OWNER TO` hands it to another role, which from then on is the identity the job runs as.
+A job runs **as its owner**, the role that created it, in a session of its own: the body is checked against the owner's privileges and row-level security policies, exactly as if the owner had typed it. Creating a job needs the `CREATE` privilege on the schema. Only the owner (or a member of the owning role, or a superuser) can alter, drop or execute the job; `ALTER JOB ... OWNER TO` hands it to another role, which from then on is the identity the job runs as.
 
 <SqlLogicTest id="sql/statements/create_job/index/example_005" />
 

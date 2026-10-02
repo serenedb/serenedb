@@ -1,0 +1,263 @@
+statement ok
+DROP TABLE IF EXISTS rls_stash;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_wc_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_wc_arelav;
+
+
+statement ok
+CREATE ROLE rls_wc_babsky;
+
+
+statement ok
+CREATE ROLE rls_wc_arelav;
+
+
+statement ok
+CREATE TABLE rls_stash (id int, owner text, amount int);
+
+
+statement ok
+INSERT INTO rls_stash VALUES
+  (1, 'rls_wc_babsky', 21),
+  (2, 'rls_wc_arelav', 42),
+  (3, 'vedernikoff', 993);
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON rls_stash TO rls_wc_babsky;
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON rls_stash TO rls_wc_arelav;
+
+
+statement ok
+ALTER TABLE rls_stash ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_stash_own ON rls_stash USING (owner = current_user);
+
+
+statement ok
+SET ROLE rls_wc_babsky;
+
+
+statement ok
+INSERT INTO rls_stash VALUES (10, 'rls_wc_babsky', 5);
+
+
+statement error
+INSERT INTO rls_stash VALUES (11, 'rls_wc_arelav', 5);
+----
+db error: ERROR: new row violates row-level security policy for table "rls_stash"<slt:ignore>
+
+
+statement error
+INSERT INTO rls_stash VALUES (12, NULL, 5);
+----
+db error: ERROR: new row violates row-level security policy for table "rls_stash"<slt:ignore>
+
+
+query
+INSERT INTO rls_stash VALUES (13, 'rls_wc_babsky', 7) RETURNING id, amount;
+----
+id	amount
+13	7
+
+
+query rowsort
+UPDATE rls_stash SET amount = amount + 1 RETURNING id, amount;
+----
+id	amount
+1	22
+10	6
+13	8
+
+
+query
+UPDATE rls_stash SET amount = 0 WHERE id = 2 RETURNING id;
+----
+id
+
+
+statement error
+UPDATE rls_stash SET owner = 'rls_wc_arelav' WHERE id = 10;
+----
+db error: ERROR: new row violates row-level security policy for table "rls_stash"<slt:ignore>
+
+
+query rowsort
+DELETE FROM rls_stash WHERE amount > 0 RETURNING id;
+----
+id
+1
+10
+13
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT id, owner, amount FROM rls_stash ORDER BY id;
+----
+id	owner	amount
+2	rls_wc_arelav	42
+3	vedernikoff	993
+
+
+statement ok
+DROP POLICY rls_stash_own ON rls_stash;
+
+
+statement ok
+CREATE POLICY rls_stash_read ON rls_stash FOR SELECT USING (true);
+
+
+statement ok
+CREATE POLICY rls_stash_small ON rls_stash FOR INSERT TO rls_wc_arelav WITH CHECK (amount < 100 AND owner = current_user);
+
+
+statement ok
+CREATE POLICY rls_stash_bump ON rls_stash FOR UPDATE TO rls_wc_arelav USING (owner = current_user) WITH CHECK (amount <= 1000);
+
+
+statement ok
+SET ROLE rls_wc_arelav;
+
+
+statement ok
+INSERT INTO rls_stash VALUES (20, 'rls_wc_arelav', 99);
+
+
+statement error
+INSERT INTO rls_stash VALUES (21, 'rls_wc_arelav', 100);
+----
+db error: ERROR: new row violates row-level security policy for table "rls_stash"<slt:ignore>
+
+
+statement error
+INSERT INTO rls_stash VALUES (22, 'rls_wc_arelav', NULL);
+----
+db error: ERROR: new row violates row-level security policy for table "rls_stash"<slt:ignore>
+
+
+statement ok
+UPDATE rls_stash SET amount = amount * 10;
+
+
+statement error
+UPDATE rls_stash SET amount = amount * 100;
+----
+db error: ERROR: new row violates row-level security policy for table "rls_stash"<slt:ignore>
+
+
+query
+SELECT id, owner, amount FROM rls_stash ORDER BY id;
+----
+id	owner	amount
+2	rls_wc_arelav	420
+3	vedernikoff	993
+20	rls_wc_arelav	990
+
+
+query
+DELETE FROM rls_stash RETURNING id;
+----
+id
+
+
+statement ok
+SET ROLE rls_wc_babsky;
+
+
+statement error
+INSERT INTO rls_stash VALUES (30, 'rls_wc_babsky', 1);
+----
+db error: ERROR: new row violates row-level security policy for table "rls_stash"<slt:ignore>
+
+
+query
+UPDATE rls_stash SET amount = 1 RETURNING id;
+----
+id
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT count(*) FROM rls_stash;
+----
+count
+3
+
+
+statement ok
+CREATE POLICY rls_stash_claim ON rls_stash FOR UPDATE TO rls_wc_babsky USING (true) WITH CHECK (owner = current_user);
+
+
+statement ok
+SET ROLE rls_wc_babsky;
+
+
+statement error
+UPDATE rls_stash SET amount = 0 WHERE id = 3;
+----
+db error: ERROR: new row violates row-level security policy for table "rls_stash"<slt:ignore>
+
+
+statement ok
+UPDATE rls_stash SET owner = 'rls_wc_babsky', amount = 0 WHERE id = 3;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_stash_claim ON rls_stash WITH CHECK (current_user = 'rls_wc_nobody');
+
+
+statement ok
+SET ROLE rls_wc_babsky;
+
+
+statement error
+UPDATE rls_stash SET amount = 1 WHERE id = 3;
+----
+db error: ERROR: new row violates row-level security policy for table "rls_stash"<slt:ignore>
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT id, owner, amount FROM rls_stash ORDER BY id;
+----
+id	owner	amount
+2	rls_wc_arelav	420
+3	rls_wc_babsky	0
+20	rls_wc_arelav	990
+
+
+statement ok
+DROP TABLE rls_stash;
+
+
+statement ok
+DROP ROLE rls_wc_babsky;
+
+
+statement ok
+DROP ROLE rls_wc_arelav;

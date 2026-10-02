@@ -1,0 +1,214 @@
+control substitution on
+
+statement ok
+CREATE SCHEMA srd;
+
+
+statement ok
+CREATE TABLE srd.parent (id INT PRIMARY KEY, name TEXT);
+
+
+statement ok
+CREATE TABLE srd.child (id INT PRIMARY KEY, parent_id INT REFERENCES srd.parent (id));
+
+
+statement ok
+CREATE TABLE srd.docs (id SERIAL PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE INDEX srd_docs_body ON srd.docs USING inverted (body);
+
+
+statement ok
+CREATE TABLE srd.st (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+CREATE INDEX srd_st_body ON srd.st USING inverted (body);
+
+
+statement ok
+CREATE TABLE srd.st_numbered (body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO srd.parent VALUES (1, 'p1'), (2, 'p2');
+
+
+statement ok
+INSERT INTO srd.child VALUES (10, 1), (20, 2);
+
+
+statement ok
+INSERT INTO srd.docs (body) SELECT 'doc ' || i FROM generate_series(1, 100) AS s(i);
+
+
+statement ok
+INSERT INTO srd.st VALUES (1, 'search one'), (2, 'search two');
+
+
+statement ok
+INSERT INTO srd.st_numbered VALUES ('numbered one'), ('numbered two');
+
+
+statement error
+ALTER SCHEMA srd RENAME TO srd2;
+----
+db error: ERROR: Cannot alter entry "srd" because there are entries that depend on it.
+table "child" depends on table "parent".
+Drop the dependent entries first and recreate them after the change.
+
+
+statement ok
+CREATE TABLE srd.child_copy AS SELECT * FROM srd.child;
+
+
+statement ok
+DROP TABLE srd.child;
+
+
+statement ok
+ALTER SCHEMA srd RENAME TO srd2;
+
+
+statement ok
+CREATE TABLE srd2.child (id INT PRIMARY KEY, parent_id INT REFERENCES srd2.parent (id));
+
+
+statement ok
+INSERT INTO srd2.child SELECT * FROM srd2.child_copy;
+
+
+statement ok
+DROP TABLE srd2.child_copy;
+
+
+statement ok
+INSERT INTO srd2.docs (body) VALUES ('after rename');
+
+
+statement ok
+INSERT INTO srd2.st_numbered VALUES ('numbered three');
+
+
+statement ok
+INSERT INTO srd2.child VALUES (30, 2);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) srd2.st;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) srd2.st_numbered;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT c.relname, c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname IN ('srd', 'srd2') ORDER BY 1;
+----
+relname	relkind
+child	r
+child_pkey	i
+docs	r
+docs_id_seq	S
+docs_pkey	i
+parent	r
+parent_pkey	i
+srd_docs_body	i
+srd_st_body	i
+st	r
+st_numbered	r
+st_pkey	i
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'srd';
+----
+n
+0
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM srd2.parent) AS parent, (SELECT count(*) FROM srd2.child) AS child,
+       (SELECT count(*) FROM srd2.docs) AS docs, (SELECT count(*) FROM srd2.st) AS st,
+       (SELECT count(*) FROM srd2.st_numbered) AS st_numbered;
+----
+parent	child	docs	st	st_numbered
+2	3	101	2	3
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM srd2.docs WHERE body = 'doc 42';
+----
+n
+1
+
+
+connection after_crash
+query
+SELECT id FROM srd2.st WHERE body = 'search two';
+----
+id
+2
+
+
+connection after_crash
+statement error
+INSERT INTO srd2.child VALUES (99, 99);
+----
+db error: ERROR: Violates foreign key constraint because key "id: 99" does not exist in the referenced table
+
+
+connection after_crash
+statement count 1
+INSERT INTO srd2.docs (body) VALUES ('after crash');
+
+
+connection after_crash
+query
+SELECT count(*) AS n, count(DISTINCT id) AS d FROM srd2.docs;
+----
+n	d
+102	102
+
+
+connection after_crash
+statement count 1
+INSERT INTO srd2.st_numbered VALUES ('numbered four');
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) srd2.st_numbered;
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM srd2.st_numbered;
+----
+n
+4
+
+
+connection after_crash
+statement ok
+DROP SCHEMA srd2 CASCADE;

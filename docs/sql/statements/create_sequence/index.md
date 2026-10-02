@@ -91,6 +91,12 @@ You may also view the current number from the sequence. `currval` returns the va
 
 <SqlLogicTest id="sql/statements/create_sequence/cache/example_019" />
 
+### Restarting a Sequence
+
+`ALTER SEQUENCE ... RESTART` sets a sequence back to its start value, and `RESTART WITH value` to the given value: the next `nextval` returns that value. As in PostgreSQL, the restart belongs to the transaction, so if the transaction rolls back, the sequence continues where it was. [`TRUNCATE ... RESTART IDENTITY`](../delete/index.md#the-truncate-statement) restarts the sequences of the truncated tables' `SERIAL` columns the same way.
+
+<SqlLogicTest id="sql/statements/create_sequence/restart/example_020" />
+
 ## Syntax
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram" />
@@ -121,6 +127,8 @@ Sequences are based on `BIGINT` arithmetic, so the range cannot exceed the range
 ## Limitations
 
 As in PostgreSQL, a sequence is logged 32 values ahead of the values sessions have taken: when the logged values run out, `nextval` writes the next position and it is flushed to disk in the background, and a commit waits for that flush only if it has not finished yet. A committed value is never handed out twice. After a crash, a sequence resumes after its last durable position, so up to 32 values, plus the values sessions had cached, can be skipped, and a value drawn by a transaction that never committed can be handed out again. `setval` is durable when it returns.
+
+While a transaction that restarted or renamed a sequence is open, `nextval` and `setval` on that sequence in other transactions fail with a serialization error (`40001`) instead of waiting for it as in PostgreSQL; a session still hands out the values it has cached. Once that transaction commits, transactions that started before the commit keep getting the error, and later transactions use the restarted or renamed sequence.
 
 When a table column uses a sequence as its `DEFAULT`, the column keeps a dependency on that sequence. The default can be changed with `ALTER TABLE ... ALTER COLUMN ... SET DEFAULT` — here it is reset to `NULL`, so subsequent rows no longer draw from the sequence:
 

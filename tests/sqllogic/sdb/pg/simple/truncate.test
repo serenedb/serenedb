@@ -385,10 +385,8 @@ DROP TABLE vedernikoff;
 #       [ RESTART IDENTITY | CONTINUE IDENTITY ] [ CASCADE | RESTRICT ]
 # https://www.postgresql.org/docs/current/sql-truncate.html
 #
-# We don't have inheritance (so ONLY / * are no-ops), don't enforce FKs (so
-# CASCADE / RESTRICT are no-ops), and don't have OWNED-BY identity sequences
-# (so RESTART / CONTINUE IDENTITY are no-ops). Every form below should parse
-# AND empty the named tables.
+# We don't have inheritance (so ONLY / * are no-ops). Every form below should
+# parse AND empty the named tables.
 
 statement ok
 CREATE TABLE babsky(id INT PRIMARY KEY, v TEXT);
@@ -460,33 +458,24 @@ count
 statement ok
 INSERT INTO babsky VALUES (1, 'a'), (2, 'b');
 
-# multi-table -- pg-wire-extended can't Prepare a MultiStatement, so all
-# multi-table TRUNCATE forms (and the SELECTs that verify their effect)
-# are skipped under that engine.
-skipif pg-wire-extended
 statement ok
 TRUNCATE babsky, gayazov;
 
-skipif pg-wire-extended
 query
 SELECT (SELECT count(*) FROM babsky) AS a, (SELECT count(*) FROM gayazov) AS b;
 ----
 a	b
 0	0
 
-skipif pg-wire-extended
 statement ok
 INSERT INTO babsky VALUES (1, 'a');
 
-skipif pg-wire-extended
 statement ok
 INSERT INTO gayazov VALUES (1, 'c');
 
-skipif pg-wire-extended
 statement error Table with name truncate_missing_table does not exist
 TRUNCATE babsky, truncate_missing_table;
 
-skipif pg-wire-extended
 query
 SELECT (SELECT count(*) FROM babsky) AS a, (SELECT count(*) FROM gayazov) AS b;
 ----
@@ -494,31 +483,25 @@ a	b
 1	1
 
 # multi-table with TABLE keyword
-skipif pg-wire-extended
 statement ok
 TRUNCATE TABLE babsky, gayazov;
 
-skipif pg-wire-extended
 query
 SELECT (SELECT count(*) FROM babsky) AS a, (SELECT count(*) FROM gayazov) AS b;
 ----
 a	b
 0	0
 
-skipif pg-wire-extended
 statement ok
 INSERT INTO babsky VALUES (1, 'a');
 
-skipif pg-wire-extended
 statement ok
 INSERT INTO gayazov VALUES (1, 'c');
 
 # multi-table with per-relation ONLY
-skipif pg-wire-extended
 statement ok
 TRUNCATE ONLY babsky, ONLY gayazov;
 
-skipif pg-wire-extended
 query
 SELECT (SELECT count(*) FROM babsky) AS a, (SELECT count(*) FROM gayazov) AS b;
 ----
@@ -581,28 +564,22 @@ count
 0
 
 # Reset gayazov/kornaukhov so the kitchen sink starts with all three holding rows.
-skipif pg-wire-extended
 statement ok
 TRUNCATE gayazov, kornaukhov;
 
-skipif pg-wire-extended
 statement ok
 INSERT INTO babsky VALUES (1, 'a'), (2, 'b');
 
-skipif pg-wire-extended
 statement ok
 INSERT INTO gayazov VALUES (1, 'c'), (2, 'd');
 
-skipif pg-wire-extended
 statement ok
 INSERT INTO kornaukhov VALUES (1, 'e'), (2, 'f');
 
 # kitchen sink: TABLE + ONLY + * + multi-table + RESTART IDENTITY + CASCADE
-skipif pg-wire-extended
 statement ok
 TRUNCATE TABLE ONLY babsky, gayazov *, kornaukhov RESTART IDENTITY CASCADE;
 
-skipif pg-wire-extended
 query
 SELECT
   (SELECT count(*) FROM babsky) AS a,
@@ -750,26 +727,21 @@ INSERT INTO mironov VALUES (300, 'tx2'), (400, 'tx2');
 statement ok
 INSERT INTO babsky_tx VALUES (1), (2);
 
-skipif pg-wire-extended
 statement ok
 BEGIN;
 
-skipif pg-wire-extended
 statement ok
 TRUNCATE mironov, babsky_tx;
 
-skipif pg-wire-extended
 query
 SELECT (SELECT count(*) FROM mironov) AS m, (SELECT count(*) FROM babsky_tx) AS b;
 ----
 m	b
 0	0
 
-skipif pg-wire-extended
 statement ok
 ROLLBACK;
 
-skipif pg-wire-extended
 query
 SELECT (SELECT count(*) FROM mironov) AS m, (SELECT count(*) FROM babsky_tx) AS b;
 ----
@@ -781,6 +753,49 @@ DROP TABLE mironov;
 
 statement ok
 DROP TABLE babsky_tx;
+
+
+statement ok
+CREATE TABLE ri_serial (id SERIAL, v TEXT) WITH (storage = 'search');
+
+statement ok
+CREATE TABLE ri_generated (v TEXT) WITH (storage = 'search');
+
+statement ok
+INSERT INTO ri_serial (v) VALUES ('a'), ('b');
+
+statement ok
+INSERT INTO ri_generated VALUES ('a'), ('b');
+
+statement ok
+TRUNCATE ri_serial, ri_generated RESTART IDENTITY;
+
+query
+SELECT sequence_name, last_value IS NOT NULL AS used FROM duckdb_sequences()
+WHERE database_name = current_database() AND sequence_name LIKE 'ri_%' ORDER BY sequence_name;
+----
+sequence_name	used
+ri_generated_pk_seq	t
+ri_serial_id_seq	f
+ri_serial_pk_seq	t
+
+statement ok
+INSERT INTO ri_serial (v) VALUES ('c');
+
+statement ok
+VACUUM (REFRESH_TABLE) ri_serial;
+
+query
+SELECT id, v FROM ri_serial;
+----
+id	v
+1	c
+
+statement ok
+DROP TABLE ri_serial;
+
+statement ok
+DROP TABLE ri_generated;
 
 
 statement ok

@@ -46,6 +46,10 @@ The `TRUNCATE` statement removes all rows from a table, acting as an alias for `
 
 <SqlLogicTest id="sql/statements/delete/index/example_005" />
 
+`RESTART IDENTITY` also restarts the sequences behind the `SERIAL` columns of the truncated tables, so new rows are numbered from the start again. `CONTINUE IDENTITY`, the default, leaves them where they are. The restart belongs to the transaction: if it rolls back, the sequences continue where they were:
+
+<SqlLogicTest id="sql/statements/delete/index/example_006" />
+
 ## Limitations on Reclaiming Memory and Disk Space
 
 Running `DELETE` does not mean space is reclaimed. In general, rows are only marked as deleted. SereneDB reclaims space when performing a `CHECKPOINT`. [`VACUUM`](../../statements/vacuum/index.md) currently does not reclaim space.

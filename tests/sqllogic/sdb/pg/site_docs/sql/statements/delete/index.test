@@ -100,3 +100,28 @@ SELECT (SELECT count(*) FROM orders) AS orders, (SELECT count(*) FROM order_line
 ----
 orders	lines
 0	0
+
+# DOCS_TEST: example_006
+
+statement ok
+DROP TABLE IF EXISTS tickets;
+
+statement ok
+CREATE TABLE tickets (id SERIAL PRIMARY KEY, title VARCHAR);
+
+statement ok
+INSERT INTO tickets (title) VALUES ('first'), ('second');
+
+# DOCS_TEST_BODY
+
+statement ok
+TRUNCATE tickets RESTART IDENTITY;
+
+statement ok
+INSERT INTO tickets (title) VALUES ('third');
+
+query
+SELECT id, title FROM tickets;
+----
+id	title
+1	third

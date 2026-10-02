@@ -60,6 +60,10 @@ export class DbContext {
     dim: number | null = null;
     /** Query-embedding LRU so typing doesn't hammer the provider. */
     readonly embedCache = new Map<string, number[]>();
+    /** Page key → inlinks (PagesRepository), dropped when the graph is rebuilt. */
+    pageRank?: Map<string, number>;
+    /** Bumped around every link-graph rebuild; a lookup started before one doesn't cache. */
+    pageRankGeneration = 0;
 
     constructor(env: RuntimeEnv, opts: DbRuntimeOptions) {
         this.table = ident(opts.table);
@@ -86,6 +90,12 @@ export class DbContext {
             connectionTimeoutMillis: env.serenedb.connectionTimeoutMillis,
             statement_timeout: env.serenedb.statementTimeoutMillis,
             idleTimeoutMillis: 30_000,
+        });
+        // an idle pooled connection dropped by the server (engine restart)
+        // is emitted on the pool; unhandled, that 'error' event kills the
+        // whole backend process instead of one connection
+        this.pool.on("error", (err) => {
+            console.warn("serenedb connection lost:", err.message);
         });
     }
 
@@ -115,6 +125,12 @@ export class DbContext {
     }
     get vocabIndex(): string {
         return `${this.table}_vocab_idx`;
+    }
+    get objectsTable(): string {
+        return `${this.table}_objects`;
+    }
+    get pagesTable(): string {
+        return `${this.table}_pages`;
     }
 
     /** Exactness clauses only pay off when the main analyzer rewrites terms. */

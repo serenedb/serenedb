@@ -53,3 +53,20 @@ export function resolveUrlMapping(
 export function withAnchor(url: string, anchor: string | undefined): string {
     return anchor ? `${url}#${anchor}` : url;
 }
+
+/**
+ * The page a URL points to, spelled one way: no #anchor or ?query, no
+ * ".html", "/index" or trailing slash. Link targets and page URLs are
+ * compared through it — crawled sites keep "…/guide/" or "…/guide.html"
+ * while their links spell the same page differently.
+ */
+export function pageKey(url: string): string {
+    const bare = url.split("#")[0].split("?")[0];
+    const trimmed = bare
+        .replace(/\/index\.html?$/i, "")
+        .replace(/\.html?$/i, "")
+        .replace(/\/index$/i, "")
+        .replace(/\/+$/, "");
+    if (trimmed) return /^https?:\/\/[^/]+$/.test(trimmed) ? `${trimmed}/` : trimmed;
+    return "/";
+}

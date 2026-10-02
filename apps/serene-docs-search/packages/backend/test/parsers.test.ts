@@ -384,6 +384,9 @@ describe("vocabFrequencies", () => {
         level: 2,
         content,
         code: "",
+        trail: "",
+        body: content,
+        objects: [],
         hash: "h",
     });
 
@@ -693,7 +696,8 @@ describe("parseQuery", () => {
         const p = parseQuery('vacuum "read replica" -deprecated setup');
         expect(p.phrases).toEqual(["read replica"]);
         expect(p.negatives).toEqual(["deprecated"]);
-        expect(p.tokens).toEqual(["vacuum", "setup", "read", "replica"]);
+        // tokens keep the written order, quoted words in place
+        expect(p.tokens).toEqual(["vacuum", "read", "replica", "setup"]);
     });
 
     it("splits code identifiers on underscores like the analyzer does", () => {

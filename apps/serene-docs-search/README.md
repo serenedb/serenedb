@@ -286,17 +286,59 @@ npm run eval           # relevance eval against a running backend (opt-in test s
 
 ### Relevance evaluation
 
-`packages/backend/test/relevance.cases.json` holds ~60 graded queries over the SereneDB
-docs corpus (exact titles, prefixes, typos, SQL keywords, code identifiers,
-phrases, semantic paraphrases, partial matches). `npm run eval` runs
-`test/relevance.test.ts` against a live backend: every graded query is a test
-asserting its page lands in the top 3, and an aggregate test gates hit@1 >= 75%
-and MRR@10 >= 0.85. It needs a running stack, so plain `npm test` skips it;
-control it with `EVAL_BACKEND` (default `http://localhost:7700`), `EVAL_MODE`
-(`hybrid` | `fulltext`) and `EVAL_CAT` (one category). Reference numbers
-(hybrid, nomic embeddings): **hit@3 100%, hit@1 81%, MRR 0.898**; fusion
-defaults (vectorWeight 0.7, k 60, window 50) were confirmed optimal by sweep --
-they are tunable per install via `search.rrf` if your corpus behaves
-differently.
+`npm run eval` runs `packages/backend/test/relevance.test.ts` against a live
+backend. It needs a running stack, so plain `npm test` skips it; control it with
+`EVAL_BACKEND` (default `http://localhost:7700`), `EVAL_MODE` (`hybrid` |
+`fulltext`), `EVAL_CAT` (one category of the graded cases) and `EVAL_SETS`
+(comma-separated, default `cases`). Each set is a `test/relevance.<set>.json`
+file over the SereneDB docs corpus:
+
+| Set | Queries | What a hit is |
+|---|---|---|
+| `cases` | 62 graded queries: exact titles, prefixes, typos, SQL keywords, code identifiers, phrases, semantic paraphrases, partial matches | each must land its page in the top 3 — except the ones marked `known` (documented misses, expected to keep missing); aggregate gate hit@1 >= 75%, MRR@10 >= 0.85 (hybrid) |
+| `questions` | 159 questions, task phrases and symptoms as users type them, labels re-checked independently | page-level r@1 / r@5 floors |
+| `names` | 300 object names (functions, settings, types, statements, dot commands) from serened's docs catalog | same |
+| `summaries` | 300 one-line object descriptions | same |
+| `sentences` | 327 sentences pasted from the pages, one per page | same |
+
+The last four follow the batteries of serenedb#1216 (the docs search embedded in
+`serened`). Reference run — the published docs HTML indexed with the production
+config but without the blog, SereneDB 26.09.2, nomic embeddings — r@1 / r@5 (the
+floors in `relevance.test.ts` sit just below these):
+
+| Set | fulltext | hybrid |
+|---|---|---|
+| questions | 0.52 / 0.75 | 0.59 / 0.82 |
+| cases | 0.90 / 0.95 | 0.86 / 0.97 |
+| names | 0.99 / 1.00 | 0.99 / 1.00 |
+| summaries | 0.98 / 1.00 | 0.98 / 0.99 |
+| sentences | 0.98 / 0.99 | 0.98 / 0.99 |
+
+With the blog indexed alongside, the questions lose about 0.05 (long posts
+mention everything); the other sets don't move. Fusion defaults (vectorWeight
+0.7, k 60, window 50) are tunable per install via `search.rrf` if your corpus
+behaves differently.
+
+### How results are ranked
+
+- Every heading is a section; a section's indexed **body** also carries the
+  sections nested under it (a page's top section holds the whole page), and its
+  **trail** (page title and parent headings) is indexed too.
+- A query must match every term somewhere in a section's title, trail or body;
+  question words (how, do, I, what, is...) are dropped from that requirement
+  but kept in the whole-query phrase. Rows missing some terms follow as a
+  partial bucket; a term the corpus doesn't spell gets 1-2 typo edits.
+- One BM25 sum ranks them (k1 1.2, b 0.4): heading over body, surface word
+  forms over stems, the query as written and its word pairs over scattered
+  words. In hybrid mode the vector branch is fused by RRF; for 4+ term queries
+  the lexical branch ranks by coverage (any term) instead of requiring all of
+  them, and text found verbatim (a pasted sentence) leads.
+- A query that is the name of a documented object (`date_trunc`,
+  `date_trunc('day', ts)`, `BIGINT` or its alias `int8`, `.timer`,
+  `CREATE INDEX`) puts that object's section first. The catalog comes from
+  signature / statement / identifier headings and reference tables (first
+  column Function, Name, Command, Setting, Type...).
+- Equal titles are told apart by the page being about it (its own title) and
+  then by how many docs pages link to it.
 
 Backend image: `docker build -f packages/backend/Dockerfile -t serenedb/docs-search-backend:latest .`

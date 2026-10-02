@@ -48,6 +48,7 @@
 #include "connector/column_id.h"
 #include "connector/index_source_factory.h"
 #include "connector/offsets_writer.hpp"
+#include "connector/scan/deferred_verify.h"
 #include "connector/scan/scan_state.h"
 #include "connector/term_dict.h"
 
@@ -448,6 +449,9 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
   state.pushed_filters = input.filters.get();
   if (input.filters && input.filters->HasFilters()) {
     BuildTableFilter(state, bind_data, *input.filters);
+  }
+  if (bind_data.search.filter) {
+    AddDeferredVerifyFilters(state, *bind_data.search.filter);
   }
   if (bind_data.IsHnswScored()) {
     if (state.has_lookup_filter ||

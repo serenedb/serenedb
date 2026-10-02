@@ -1,0 +1,2177 @@
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tv_dict AS
+    generate_wildcard_ngrams(keyword(), 3)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tv_pos_dict AS
+    generate_wildcard_ngrams(keyword(), 3)
+    WITH (frequency, position)
+
+statement ok
+CREATE TABLE tv_t (id BIGINT PRIMARY KEY, x INTEGER, k VARCHAR, msg VARCHAR)
+
+statement ok
+CREATE INDEX tv_idx ON tv_t USING inverted(id, msg tv_dict, k) INCLUDE (x)
+  WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+CREATE INDEX tv_pos_idx ON tv_t USING inverted(id, msg tv_pos_dict) INCLUDE (x)
+  WITH (refresh_interval = 0, compaction_interval = 0)
+
+# Each refresh seals a segment and nothing merges them: the scan meets several
+# segments, one of them without a stored term at all (every msg is NULL).
+statement ok
+INSERT INTO tv_t SELECT i, i % 100, 'k' || (i % 5),
+    CASE i % 10
+        WHEN 0 THEN 'GET /api/v' || (i % 3) || '/users/' || i || ' 200 ' || (i % 97) || ' ms'
+        WHEN 1 THEN 'POST /api/v' || (i % 3) || '/orders/' || i || ' 500 ' || (i % 89) || ' ms'
+        WHEN 2 THEN 'connection to db-' || (i % 13) || ' timed out after ' || (i % 30) || ' s'
+        WHEN 3 THEN 'timed out waiting for connection to db-' || (i % 13)
+        WHEN 4 THEN 'disk usage ' || (i % 100) || ' pct on /dev/sd' || chr(CAST(97 + i % 4 AS INTEGER)) || (i % 5)
+        WHEN 5 THEN 'cache hit ratio 0.' || (i % 100)
+        WHEN 6 THEN 'user ' || i || ' login ok'
+        WHEN 7 THEN 'heartbeat ' || i
+        WHEN 8 THEN 'payment failed: card declined for order ' || i
+        ELSE CASE WHEN i % 1000 = 9
+                  THEN 'java.lang.OutOfMemoryError: Java heap space'
+                  ELSE 'NullPointerException at Foo.bar(Foo.java:' || (i % 300) || ')'
+             END
+    END
+FROM range(1, 12001) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) tv_t
+
+statement ok
+INSERT INTO tv_t SELECT i, i % 100, 'k' || (i % 5),
+    CASE i % 10
+        WHEN 0 THEN 'GET /api/v' || (i % 3) || '/users/' || i || ' 200 ' || (i % 97) || ' ms'
+        WHEN 1 THEN 'POST /api/v' || (i % 3) || '/orders/' || i || ' 500 ' || (i % 89) || ' ms'
+        WHEN 2 THEN 'connection to db-' || (i % 13) || ' timed out after ' || (i % 30) || ' s'
+        WHEN 3 THEN 'timed out waiting for connection to db-' || (i % 13)
+        WHEN 4 THEN 'disk usage ' || (i % 100) || ' pct on /dev/sd' || chr(CAST(97 + i % 4 AS INTEGER)) || (i % 5)
+        WHEN 5 THEN 'cache hit ratio 0.' || (i % 100)
+        WHEN 6 THEN 'user ' || i || ' login ok'
+        WHEN 7 THEN 'heartbeat ' || i
+        WHEN 8 THEN 'payment failed: card declined for order ' || i
+        ELSE CASE WHEN i % 1000 = 9
+                  THEN 'java.lang.OutOfMemoryError: Java heap space'
+                  ELSE 'NullPointerException at Foo.bar(Foo.java:' || (i % 300) || ')'
+             END
+    END
+FROM range(12001, 20001) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) tv_t
+
+statement ok
+INSERT INTO tv_t SELECT i, i % 100, 'k' || (i % 5), NULL
+FROM range(20001, 20101) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) tv_t
+
+statement ok
+INSERT INTO tv_t VALUES
+    (30001, 7, 'k1', NULL),
+    (30002, 7, 'k1', ''),
+    (30003, 7, 'k2', chr(31)),
+    (30004, 7, 'k2', 'a' || chr(31) || 'b'),
+    (30005, 7, 'k3', chr(1086) || chr(1096) || chr(1080) || chr(1073) || chr(1082) || chr(1072) || ': timed out'),
+    (30006, 7, 'k3', 'GET /api/'),
+    (30007, 7, 'k4', 'timed out'),
+    (30008, 99, 'k4', 'heartbeat 17'),
+    (30009, 7, 'k4', NULL),
+    (30010, 7, 'k4', NULL)
+
+statement ok
+VACUUM (REFRESH_TABLE) tv_t
+
+statement ok
+DELETE FROM tv_t WHERE id % 10 IN (2, 3) AND id <= 6000
+
+statement ok
+VACUUM (REFRESH_TABLE) tv_t
+
+query
+SELECT c.relname, m.value >= 4 AS several
+FROM sdb_metrics m JOIN pg_class c ON c.oid = m.relation_id
+WHERE c.relname IN ('tv_idx', 'tv_pos_idx') AND m.metric = 'num_segments'
+ORDER BY c.relname
+----
+relname	several
+tv_idx	t
+tv_pos_idx	t
+
+# One predicate: count, stream and top-k.
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%timed out%')) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%timed out%') AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('%timed out%')
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE '%timed out%')
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE '%timed out%'
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('%timed out%'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('%timed out%')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE msg LIKE '%timed out%')
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('%timed out%')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE msg LIKE '%timed out%')) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('GET /api/%')) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE 'GET /api/%') AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('GET /api/%')
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE 'GET /api/%')
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE 'GET /api/%'
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('GET /api/%'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('GET /api/%')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE msg LIKE 'GET /api/%')
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('GET /api/%')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE msg LIKE 'GET /api/%')) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('% ms')) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '% ms') AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('% ms')
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE '% ms')
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE '% ms'
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('% ms'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('% ms')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE msg LIKE '% ms')
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('% ms')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE msg LIKE '% ms')) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('disk usage 9_ pct on %')) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE 'disk usage 9_ pct on %') AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('disk usage 9_ pct on %')
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE 'disk usage 9_ pct on %')
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE 'disk usage 9_ pct on %'
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('disk usage 9_ pct on %'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('disk usage 9_ pct on %')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE msg LIKE 'disk usage 9_ pct on %')
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('disk usage 9_ pct on %')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE msg LIKE 'disk usage 9_ pct on %')) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%/dev/sd_3')) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%/dev/sd_3') AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('%/dev/sd_3')
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE '%/dev/sd_3')
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE '%/dev/sd_3'
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('%/dev/sd_3'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('%/dev/sd_3')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE msg LIKE '%/dev/sd_3')
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('%/dev/sd_3')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE msg LIKE '%/dev/sd_3')) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%connection%db-%timed out%')) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%connection%db-%timed out%') AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('%connection%db-%timed out%')
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE '%connection%db-%timed out%')
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE '%connection%db-%timed out%'
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('%connection%db-%timed out%'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('%connection%db-%timed out%')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE msg LIKE '%connection%db-%timed out%')
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('%connection%db-%timed out%')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE msg LIKE '%connection%db-%timed out%')) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('java.lang.OutOfMemoryError: Java heap space')) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE 'java.lang.OutOfMemoryError: Java heap space') AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('java.lang.OutOfMemoryError: Java heap space')
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE 'java.lang.OutOfMemoryError: Java heap space')
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE 'java.lang.OutOfMemoryError: Java heap space'
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('java.lang.OutOfMemoryError: Java heap space'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('java.lang.OutOfMemoryError: Java heap space')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE msg LIKE 'java.lang.OutOfMemoryError: Java heap space')
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('java.lang.OutOfMemoryError: Java heap space')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE msg LIKE 'java.lang.OutOfMemoryError: Java heap space')) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%OutOfMemoryError%')) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%OutOfMemoryError%') AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('%OutOfMemoryError%')
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE '%OutOfMemoryError%')
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE '%OutOfMemoryError%'
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('%OutOfMemoryError%'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('%OutOfMemoryError%')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE msg LIKE '%OutOfMemoryError%')
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('%OutOfMemoryError%')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE msg LIKE '%OutOfMemoryError%')) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('heartbeat 1%7')) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE 'heartbeat 1%7') AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('heartbeat 1%7')
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE 'heartbeat 1%7')
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE 'heartbeat 1%7'
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('heartbeat 1%7'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('heartbeat 1%7')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE msg LIKE 'heartbeat 1%7')
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('heartbeat 1%7')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE msg LIKE 'heartbeat 1%7')) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%')) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%') AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('%')
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE '%')
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE '%'
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('%'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('%')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE msg LIKE '%')
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('%')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE msg LIKE '%')) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('GET /api/v[12]/.*')) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, 'GET /api/v[12]/.*')) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('GET /api/v[12]/.*')
+     EXCEPT SELECT id FROM tv_t WHERE regexp_full_match(msg, 'GET /api/v[12]/.*'))
+    UNION ALL
+    (SELECT id FROM tv_t WHERE regexp_full_match(msg, 'GET /api/v[12]/.*')
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_regexp('GET /api/v[12]/.*'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('GET /api/v[12]/.*')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE regexp_full_match(msg, 'GET /api/v[12]/.*'))
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('GET /api/v[12]/.*')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, 'GET /api/v[12]/.*'))) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*')) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*')) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*')
+     EXCEPT SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*'))
+    UNION ALL
+    (SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*')
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*'))
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*'))) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('.*db-1[0-2].*')) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*db-1[0-2].*')) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*db-1[0-2].*')
+     EXCEPT SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*db-1[0-2].*'))
+    UNION ALL
+    (SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*db-1[0-2].*')
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*db-1[0-2].*'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*db-1[0-2].*')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*db-1[0-2].*'))
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*db-1[0-2].*')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*db-1[0-2].*'))) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('(?i)get /API/.*')) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '(?i)get /API/.*')) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('(?i)get /API/.*')
+     EXCEPT SELECT id FROM tv_t WHERE regexp_full_match(msg, '(?i)get /API/.*'))
+    UNION ALL
+    (SELECT id FROM tv_t WHERE regexp_full_match(msg, '(?i)get /API/.*')
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_regexp('(?i)get /API/.*'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('(?i)get /API/.*')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE regexp_full_match(msg, '(?i)get /API/.*'))
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('(?i)get /API/.*')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '(?i)get /API/.*'))) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('.*')) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*')) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*')
+     EXCEPT SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*'))
+    UNION ALL
+    (SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*')
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*'))
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*'))) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('[a-z]+ [0-9]+')) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '[a-z]+ [0-9]+')) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('[a-z]+ [0-9]+')
+     EXCEPT SELECT id FROM tv_t WHERE regexp_full_match(msg, '[a-z]+ [0-9]+'))
+    UNION ALL
+    (SELECT id FROM tv_t WHERE regexp_full_match(msg, '[a-z]+ [0-9]+')
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_regexp('[a-z]+ [0-9]+'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('[a-z]+ [0-9]+')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE regexp_full_match(msg, '[a-z]+ [0-9]+'))
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('[a-z]+ [0-9]+')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '[a-z]+ [0-9]+'))) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('heartbeat [0-9]*7')) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, 'heartbeat [0-9]*7')) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('heartbeat [0-9]*7')
+     EXCEPT SELECT id FROM tv_t WHERE regexp_full_match(msg, 'heartbeat [0-9]*7'))
+    UNION ALL
+    (SELECT id FROM tv_t WHERE regexp_full_match(msg, 'heartbeat [0-9]*7')
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_regexp('heartbeat [0-9]*7'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('heartbeat [0-9]*7')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE regexp_full_match(msg, 'heartbeat [0-9]*7'))
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('heartbeat [0-9]*7')
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, 'heartbeat [0-9]*7'))) AS d
+----
+d
+0
+
+# AND with a stored column: x > T keeps about 1, 50 and 99% of the rows.
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%timed out%') AND x > 98) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%timed out%' AND x > 98) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%timed out%') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%timed out%' AND x > 49) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%timed out%') AND x > 0) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%timed out%' AND x > 0) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('%timed out%') AND x > 49
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE '%timed out%' AND x > 49)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE '%timed out%' AND x > 49
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('%timed out%') AND x > 49)
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('%timed out%') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE msg LIKE '%timed out%' AND x > 49)
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('%timed out%') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE msg LIKE '%timed out%' AND x > 49)) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('GET /api/%') AND x > 98) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE 'GET /api/%' AND x > 98) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('GET /api/%') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE 'GET /api/%' AND x > 49) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('GET /api/%') AND x > 0) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE 'GET /api/%' AND x > 0) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('GET /api/%') AND x > 49
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE 'GET /api/%' AND x > 49)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE 'GET /api/%' AND x > 49
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('GET /api/%') AND x > 49)
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('GET /api/%') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE msg LIKE 'GET /api/%' AND x > 49)
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('GET /api/%') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE msg LIKE 'GET /api/%' AND x > 49)) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('% ms') AND x > 98) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '% ms' AND x > 98) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('% ms') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '% ms' AND x > 49) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('% ms') AND x > 0) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '% ms' AND x > 0) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('% ms') AND x > 49
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE '% ms' AND x > 49)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE '% ms' AND x > 49
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('% ms') AND x > 49)
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('% ms') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE msg LIKE '% ms' AND x > 49)
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('% ms') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE msg LIKE '% ms' AND x > 49)) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('disk usage 9_ pct on %') AND x > 98) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE 'disk usage 9_ pct on %' AND x > 98) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('disk usage 9_ pct on %') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE 'disk usage 9_ pct on %' AND x > 49) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('disk usage 9_ pct on %') AND x > 0) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE 'disk usage 9_ pct on %' AND x > 0) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('disk usage 9_ pct on %') AND x > 49
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE 'disk usage 9_ pct on %' AND x > 49)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE 'disk usage 9_ pct on %' AND x > 49
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('disk usage 9_ pct on %') AND x > 49)
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('disk usage 9_ pct on %') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE msg LIKE 'disk usage 9_ pct on %' AND x > 49)
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('disk usage 9_ pct on %') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE msg LIKE 'disk usage 9_ pct on %' AND x > 49)) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%/dev/sd_3') AND x > 98) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%/dev/sd_3' AND x > 98) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%/dev/sd_3') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%/dev/sd_3' AND x > 49) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%/dev/sd_3') AND x > 0) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%/dev/sd_3' AND x > 0) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('%/dev/sd_3') AND x > 49
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE '%/dev/sd_3' AND x > 49)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE '%/dev/sd_3' AND x > 49
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('%/dev/sd_3') AND x > 49)
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('%/dev/sd_3') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE msg LIKE '%/dev/sd_3' AND x > 49)
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('%/dev/sd_3') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE msg LIKE '%/dev/sd_3' AND x > 49)) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%connection%db-%timed out%') AND x > 98) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%connection%db-%timed out%' AND x > 98) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%connection%db-%timed out%') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%connection%db-%timed out%' AND x > 49) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%connection%db-%timed out%') AND x > 0) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%connection%db-%timed out%' AND x > 0) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('%connection%db-%timed out%') AND x > 49
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE '%connection%db-%timed out%' AND x > 49)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE '%connection%db-%timed out%' AND x > 49
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('%connection%db-%timed out%') AND x > 49)
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('%connection%db-%timed out%') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE msg LIKE '%connection%db-%timed out%' AND x > 49)
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('%connection%db-%timed out%') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE msg LIKE '%connection%db-%timed out%' AND x > 49)) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('java.lang.OutOfMemoryError: Java heap space') AND x > 98) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE 'java.lang.OutOfMemoryError: Java heap space' AND x > 98) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('java.lang.OutOfMemoryError: Java heap space') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE 'java.lang.OutOfMemoryError: Java heap space' AND x > 49) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('java.lang.OutOfMemoryError: Java heap space') AND x > 0) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE 'java.lang.OutOfMemoryError: Java heap space' AND x > 0) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('java.lang.OutOfMemoryError: Java heap space') AND x > 49
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE 'java.lang.OutOfMemoryError: Java heap space' AND x > 49)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE 'java.lang.OutOfMemoryError: Java heap space' AND x > 49
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('java.lang.OutOfMemoryError: Java heap space') AND x > 49)
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('java.lang.OutOfMemoryError: Java heap space') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE msg LIKE 'java.lang.OutOfMemoryError: Java heap space' AND x > 49)
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('java.lang.OutOfMemoryError: Java heap space') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE msg LIKE 'java.lang.OutOfMemoryError: Java heap space' AND x > 49)) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%OutOfMemoryError%') AND x > 98) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%OutOfMemoryError%' AND x > 98) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%OutOfMemoryError%') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%OutOfMemoryError%' AND x > 49) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%OutOfMemoryError%') AND x > 0) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%OutOfMemoryError%' AND x > 0) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('%OutOfMemoryError%') AND x > 49
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE '%OutOfMemoryError%' AND x > 49)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE '%OutOfMemoryError%' AND x > 49
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('%OutOfMemoryError%') AND x > 49)
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('%OutOfMemoryError%') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE msg LIKE '%OutOfMemoryError%' AND x > 49)
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('%OutOfMemoryError%') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE msg LIKE '%OutOfMemoryError%' AND x > 49)) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('heartbeat 1%7') AND x > 98) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE 'heartbeat 1%7' AND x > 98) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('heartbeat 1%7') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE 'heartbeat 1%7' AND x > 49) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('heartbeat 1%7') AND x > 0) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE 'heartbeat 1%7' AND x > 0) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('heartbeat 1%7') AND x > 49
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE 'heartbeat 1%7' AND x > 49)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE 'heartbeat 1%7' AND x > 49
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('heartbeat 1%7') AND x > 49)
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('heartbeat 1%7') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE msg LIKE 'heartbeat 1%7' AND x > 49)
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('heartbeat 1%7') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE msg LIKE 'heartbeat 1%7' AND x > 49)) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%') AND x > 98) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%' AND x > 98) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%' AND x > 49) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%') AND x > 0) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%' AND x > 0) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('%') AND x > 49
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE '%' AND x > 49)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE '%' AND x > 49
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('%') AND x > 49)
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('%') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE msg LIKE '%' AND x > 49)
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_like('%') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE msg LIKE '%' AND x > 49)) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('GET /api/v[12]/.*') AND x > 98) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, 'GET /api/v[12]/.*') AND x > 98) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('GET /api/v[12]/.*') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, 'GET /api/v[12]/.*') AND x > 49) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('GET /api/v[12]/.*') AND x > 0) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, 'GET /api/v[12]/.*') AND x > 0) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('GET /api/v[12]/.*') AND x > 49
+     EXCEPT SELECT id FROM tv_t WHERE regexp_full_match(msg, 'GET /api/v[12]/.*') AND x > 49)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE regexp_full_match(msg, 'GET /api/v[12]/.*') AND x > 49
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_regexp('GET /api/v[12]/.*') AND x > 49)
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('GET /api/v[12]/.*') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE regexp_full_match(msg, 'GET /api/v[12]/.*') AND x > 49)
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('GET /api/v[12]/.*') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, 'GET /api/v[12]/.*') AND x > 49)) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*') AND x > 98) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*') AND x > 98) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*') AND x > 49) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*') AND x > 0) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*') AND x > 0) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*') AND x > 49
+     EXCEPT SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*') AND x > 49)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*') AND x > 49
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*') AND x > 49)
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*') AND x > 49)
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*') AND x > 49)) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('.*db-1[0-2].*') AND x > 98) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*db-1[0-2].*') AND x > 98) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('.*db-1[0-2].*') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*db-1[0-2].*') AND x > 49) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('.*db-1[0-2].*') AND x > 0) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*db-1[0-2].*') AND x > 0) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*db-1[0-2].*') AND x > 49
+     EXCEPT SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*db-1[0-2].*') AND x > 49)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*db-1[0-2].*') AND x > 49
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*db-1[0-2].*') AND x > 49)
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*db-1[0-2].*') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*db-1[0-2].*') AND x > 49)
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*db-1[0-2].*') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*db-1[0-2].*') AND x > 49)) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('(?i)get /API/.*') AND x > 98) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '(?i)get /API/.*') AND x > 98) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('(?i)get /API/.*') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '(?i)get /API/.*') AND x > 49) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('(?i)get /API/.*') AND x > 0) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '(?i)get /API/.*') AND x > 0) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('(?i)get /API/.*') AND x > 49
+     EXCEPT SELECT id FROM tv_t WHERE regexp_full_match(msg, '(?i)get /API/.*') AND x > 49)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE regexp_full_match(msg, '(?i)get /API/.*') AND x > 49
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_regexp('(?i)get /API/.*') AND x > 49)
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('(?i)get /API/.*') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE regexp_full_match(msg, '(?i)get /API/.*') AND x > 49)
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('(?i)get /API/.*') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '(?i)get /API/.*') AND x > 49)) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('.*') AND x > 98) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*') AND x > 98) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('.*') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*') AND x > 49) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('.*') AND x > 0) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*') AND x > 0) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*') AND x > 49
+     EXCEPT SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*') AND x > 49)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*') AND x > 49
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*') AND x > 49)
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*') AND x > 49)
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*') AND x > 49)) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('[a-z]+ [0-9]+') AND x > 98) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '[a-z]+ [0-9]+') AND x > 98) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('[a-z]+ [0-9]+') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '[a-z]+ [0-9]+') AND x > 49) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('[a-z]+ [0-9]+') AND x > 0) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '[a-z]+ [0-9]+') AND x > 0) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('[a-z]+ [0-9]+') AND x > 49
+     EXCEPT SELECT id FROM tv_t WHERE regexp_full_match(msg, '[a-z]+ [0-9]+') AND x > 49)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE regexp_full_match(msg, '[a-z]+ [0-9]+') AND x > 49
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_regexp('[a-z]+ [0-9]+') AND x > 49)
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('[a-z]+ [0-9]+') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE regexp_full_match(msg, '[a-z]+ [0-9]+') AND x > 49)
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('[a-z]+ [0-9]+') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '[a-z]+ [0-9]+') AND x > 49)) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('heartbeat [0-9]*7') AND x > 98) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, 'heartbeat [0-9]*7') AND x > 98) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('heartbeat [0-9]*7') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, 'heartbeat [0-9]*7') AND x > 49) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('heartbeat [0-9]*7') AND x > 0) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, 'heartbeat [0-9]*7') AND x > 0) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('heartbeat [0-9]*7') AND x > 49
+     EXCEPT SELECT id FROM tv_t WHERE regexp_full_match(msg, 'heartbeat [0-9]*7') AND x > 49)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE regexp_full_match(msg, 'heartbeat [0-9]*7') AND x > 49
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_regexp('heartbeat [0-9]*7') AND x > 49)
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('heartbeat [0-9]*7') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t
+WHERE id NOT IN (SELECT id FROM tv_t WHERE regexp_full_match(msg, 'heartbeat [0-9]*7') AND x > 49)
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('heartbeat [0-9]*7') AND x > 49
+      ORDER BY BM25(tv_idx.tableoid) DESC LIMIT 10) t) -
+       least(10, (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, 'heartbeat [0-9]*7') AND x > 49)) AS d
+----
+d
+0
+
+# Two checks on one field, and a check next to an indexed predicate.
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%timed out%') AND msg @@ ts_like('connection%')) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%timed out%' AND msg LIKE 'connection%') AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('%timed out%') AND msg @@ ts_like('connection%')
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE '%timed out%' AND msg LIKE 'connection%')
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE '%timed out%' AND msg LIKE 'connection%'
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('%timed out%') AND msg @@ ts_like('connection%'))
+) t
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('GET %') AND msg @@ ts_regexp('.* 20[0-9] .*')) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE 'GET %' AND regexp_full_match(msg, '.* 20[0-9] .*')) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('GET %') AND msg @@ ts_regexp('.* 20[0-9] .*')
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE 'GET %' AND regexp_full_match(msg, '.* 20[0-9] .*'))
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE 'GET %' AND regexp_full_match(msg, '.* 20[0-9] .*')
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('GET %') AND msg @@ ts_regexp('.* 20[0-9] .*'))
+) t
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%timed out%') AND id < 9000) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%timed out%' AND id < 9000) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('%timed out%') AND id < 9000
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE '%timed out%' AND id < 9000)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE '%timed out%' AND id < 9000
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('%timed out%') AND id < 9000)
+) t
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_idx WHERE msg @@ ts_regexp('.*db-1[0-2].*') AND id < 9000) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*db-1[0-2].*') AND id < 9000) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*db-1[0-2].*') AND id < 9000
+     EXCEPT SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*db-1[0-2].*') AND id < 9000)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*db-1[0-2].*') AND id < 9000
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*db-1[0-2].*') AND id < 9000)
+) t
+----
+d
+0
+
+# OR and NOT keep the check inside the query.
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('%timed out%') OR id < 100
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE '%timed out%' OR id < 100)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE '%timed out%' OR id < 100
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('%timed out%') OR id < 100)
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('%timed out%') OR msg @@ ts_like('heartbeat 1%')
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE '%timed out%' OR msg LIKE 'heartbeat 1%')
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE '%timed out%' OR msg LIKE 'heartbeat 1%'
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('%timed out%') OR msg @@ ts_like('heartbeat 1%'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE NOT msg @@ ts_like('%timed out%')
+     EXCEPT SELECT id FROM tv_t WHERE msg IS NOT NULL AND NOT msg LIKE '%timed out%')
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg IS NOT NULL AND NOT msg LIKE '%timed out%'
+     EXCEPT SELECT id FROM tv_idx WHERE NOT msg @@ ts_like('%timed out%'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('disk usage 9_ pct on %') OR id < 100
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE 'disk usage 9_ pct on %' OR id < 100)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE 'disk usage 9_ pct on %' OR id < 100
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('disk usage 9_ pct on %') OR id < 100)
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_like('disk usage 9_ pct on %') OR msg @@ ts_like('heartbeat 1%')
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE 'disk usage 9_ pct on %' OR msg LIKE 'heartbeat 1%')
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE 'disk usage 9_ pct on %' OR msg LIKE 'heartbeat 1%'
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_like('disk usage 9_ pct on %') OR msg @@ ts_like('heartbeat 1%'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE NOT msg @@ ts_like('disk usage 9_ pct on %')
+     EXCEPT SELECT id FROM tv_t WHERE msg IS NOT NULL AND NOT msg LIKE 'disk usage 9_ pct on %')
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg IS NOT NULL AND NOT msg LIKE 'disk usage 9_ pct on %'
+     EXCEPT SELECT id FROM tv_idx WHERE NOT msg @@ ts_like('disk usage 9_ pct on %'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*') OR id < 100
+     EXCEPT SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*') OR id < 100)
+    UNION ALL
+    (SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*') OR id < 100
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*') OR id < 100)
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*') OR msg @@ ts_like('heartbeat 1%')
+     EXCEPT SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*') OR msg LIKE 'heartbeat 1%')
+    UNION ALL
+    (SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*') OR msg LIKE 'heartbeat 1%'
+     EXCEPT SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*') OR msg @@ ts_like('heartbeat 1%'))
+) t
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_idx WHERE NOT msg @@ ts_regexp('.*(timed out|declined).*')
+     EXCEPT SELECT id FROM tv_t WHERE msg IS NOT NULL AND NOT regexp_full_match(msg, '.*(timed out|declined).*'))
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg IS NOT NULL AND NOT regexp_full_match(msg, '.*(timed out|declined).*')
+     EXCEPT SELECT id FROM tv_idx WHERE NOT msg @@ ts_regexp('.*(timed out|declined).*'))
+) t
+----
+d
+0
+
+# A dictionary with positions: exact forms need no check at all.
+
+query
+SELECT (SELECT count(*) FROM tv_pos_idx WHERE msg @@ ts_like('GET /api/%')) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE 'GET /api/%') AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_pos_idx WHERE msg @@ ts_like('GET /api/%')
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE 'GET /api/%')
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE 'GET /api/%'
+     EXCEPT SELECT id FROM tv_pos_idx WHERE msg @@ ts_like('GET /api/%'))
+) t
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_pos_idx WHERE msg @@ ts_like('GET /api/%') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE 'GET /api/%' AND x > 49) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_pos_idx WHERE msg @@ ts_like('%timed out%')) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%timed out%') AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_pos_idx WHERE msg @@ ts_like('%timed out%')
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE '%timed out%')
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE '%timed out%'
+     EXCEPT SELECT id FROM tv_pos_idx WHERE msg @@ ts_like('%timed out%'))
+) t
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_pos_idx WHERE msg @@ ts_like('%timed out%') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%timed out%' AND x > 49) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_pos_idx WHERE msg @@ ts_like('disk usage 9_ pct on %')) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE 'disk usage 9_ pct on %') AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_pos_idx WHERE msg @@ ts_like('disk usage 9_ pct on %')
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE 'disk usage 9_ pct on %')
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE 'disk usage 9_ pct on %'
+     EXCEPT SELECT id FROM tv_pos_idx WHERE msg @@ ts_like('disk usage 9_ pct on %'))
+) t
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_pos_idx WHERE msg @@ ts_like('disk usage 9_ pct on %') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE 'disk usage 9_ pct on %' AND x > 49) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_pos_idx WHERE msg @@ ts_like('%connection%db-%timed out%')) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%connection%db-%timed out%') AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_pos_idx WHERE msg @@ ts_like('%connection%db-%timed out%')
+     EXCEPT SELECT id FROM tv_t WHERE msg LIKE '%connection%db-%timed out%')
+    UNION ALL
+    (SELECT id FROM tv_t WHERE msg LIKE '%connection%db-%timed out%'
+     EXCEPT SELECT id FROM tv_pos_idx WHERE msg @@ ts_like('%connection%db-%timed out%'))
+) t
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_pos_idx WHERE msg @@ ts_like('%connection%db-%timed out%') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%connection%db-%timed out%' AND x > 49) AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_pos_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*')) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*')) AS d
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT id FROM tv_pos_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*')
+     EXCEPT SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*'))
+    UNION ALL
+    (SELECT id FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*')
+     EXCEPT SELECT id FROM tv_pos_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*'))
+) t
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM tv_pos_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*') AND x > 49) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*') AND x > 49) AS d
+----
+d
+0
+
+# ts_dict builds its own filter; the check stays inside it.
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT unnest(ts_dict_agg(k)) AS t, unnest(ts_dict_count(k)) AS c
+     FROM tv_idx WHERE msg @@ ts_like('%timed out%')
+     EXCEPT SELECT k, count(*) FROM tv_t WHERE msg LIKE '%timed out%' GROUP BY k)
+    UNION ALL
+    (SELECT k, count(*) FROM tv_t WHERE msg LIKE '%timed out%' GROUP BY k
+     EXCEPT SELECT unnest(ts_dict_agg(k)) AS t, unnest(ts_dict_count(k)) AS c
+     FROM tv_idx WHERE msg @@ ts_like('%timed out%'))
+) s
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT unnest(ts_dict_agg(k)) AS t, unnest(ts_dict_count(k)) AS c
+     FROM tv_idx WHERE msg @@ ts_like('%connection%db-%timed out%')
+     EXCEPT SELECT k, count(*) FROM tv_t WHERE msg LIKE '%connection%db-%timed out%' GROUP BY k)
+    UNION ALL
+    (SELECT k, count(*) FROM tv_t WHERE msg LIKE '%connection%db-%timed out%' GROUP BY k
+     EXCEPT SELECT unnest(ts_dict_agg(k)) AS t, unnest(ts_dict_count(k)) AS c
+     FROM tv_idx WHERE msg @@ ts_like('%connection%db-%timed out%'))
+) s
+----
+d
+0
+
+query
+SELECT count(*) AS d FROM (
+    (SELECT unnest(ts_dict_agg(k)) AS t, unnest(ts_dict_count(k)) AS c
+     FROM tv_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*')
+     EXCEPT SELECT k, count(*) FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*') GROUP BY k)
+    UNION ALL
+    (SELECT k, count(*) FROM tv_t WHERE regexp_full_match(msg, '.*(timed out|declined).*') GROUP BY k
+     EXCEPT SELECT unnest(ts_dict_agg(k)) AS t, unnest(ts_dict_count(k)) AS c
+     FROM tv_idx WHERE msg @@ ts_regexp('.*(timed out|declined).*'))
+) s
+----
+d
+0
+
+# ts_offsets prepares the same filter again per segment; no check moves.
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, ts_offsets(msg) FROM tv_idx WHERE msg @@ ts_like('%timed out%')) t) -
+       (SELECT count(*) FROM tv_t WHERE msg LIKE '%timed out%') AS d
+----
+d
+0
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, ts_offsets(msg) FROM tv_idx WHERE msg @@ ts_regexp('.*db-1[0-2].*')) t) -
+       (SELECT count(*) FROM tv_t WHERE regexp_full_match(msg, '.*db-1[0-2].*')) AS d
+----
+d
+0
+
+# The plan shows where the check runs.
+
+query
+EXPLAIN SELECT count(*) FROM tv_idx WHERE msg @@ ts_like('%timed out%')
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────────╮
+│ Aggregates: count_star()           │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ─┴─────────────────╮
+│ Index: tv_idx                      │
+│ Index Filter:                      │
+│ ╭─ Wildcard NGram ───────────────╮ │
+│ │ Field: msg(string)             │ │
+│ │ Pattern: (?s)\\A.*timed out.*\\z │ │
+│ │ Syntax: perl                   │ │
+│ │ Has Pos: false                 │ │
+│ │ Query: "timed out"             │ │
+│ │ Verify: table filter           │ │
+│ ╰────────────────────────────────╯ │
+│ Output: row-count only             │
+│ ~3,782 rows                        │
+╰────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM tv_idx WHERE msg @@ ts_regexp('.*db-1[0-2].*') AND x > 49
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: tv_idx                            │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ Wildcard NGram ─────────────────────╮ │
+│ │ Field: msg(string)                   │ │
+│ │ Pattern: .*db-1[0-2].*               │ │
+│ │ Syntax: perl                         │ │
+│ │ Has Pos: false                       │ │
+│ │ Query: Or("db-10", "db-11", "db-12") │ │
+│ │ Verify: table filter                 │ │
+│ ╰──────────────────────────────────────╯ │
+│ Column Filter: x > 49                    │
+│ Projections: id                          │
+│ ~756 rows                                │
+╰──────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM tv_idx WHERE msg @@ ts_like('%timed out%') AND msg @@ ts_like('connection%')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────╮
+│ Index: tv_idx                                                         │
+│ Lookup: table                                                         │
+│ Index Filter:                                                         │
+│ ╭─ And ──────────────────────────╮                                    │
+│ ╰────────────────┬───────────────╯                                    │
+│                  ├──────────────────────────────────╮                 │
+│ ╭─ Wildcard NGram ───────────────╮  ╭─ Wildcard NGram ──────────────╮ │
+│ │ Field: msg(string)             │  │ Field: msg(string)            │ │
+│ │ Pattern: (?s)\\A.*timed out.*\\z │  │ Pattern: (?s)\\Aconnection.*\\z │ │
+│ │ Syntax: perl                   │  │ Syntax: perl                  │ │
+│ │ Has Pos: false                 │  │ Has Pos: false                │ │
+│ │ Query: "timed out"             │  │ Query: "\\x1fconnection"       │ │
+│ │ Verify: table filter           │  │ Verify: table filter          │ │
+│ ╰────────────────────────────────╯  ╰───────────────────────────────╯ │
+│ Projections: id                                                       │
+│ ~3,782 rows                                                           │
+╰───────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM tv_idx WHERE msg @@ ts_like('%timed out%') OR id < 100
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────────────────╮
+│ Index: tv_idx                                              │
+│ Lookup: table                                              │
+│ Index Filter:                                              │
+│ ╭─ Or ───────────────────────────╮                         │
+│ ╰────────────────┬───────────────╯                         │
+│                  ├─────────────────────────────╮           │
+│ ╭─ Wildcard NGram ───────────────╮  ╭─ Granular Range ───╮ │
+│ │ Field: msg(string)             │  │ Field: id(numeric) │ │
+│ │ Pattern: (?s)\\A.*timed out.*\\z │  │ Range: <100        │ │
+│ │ Syntax: perl                   │  ╰────────────────────╯ │
+│ │ Has Pos: false                 │                         │
+│ │ Query: "timed out"             │                         │
+│ │ Verify: inline                 │                         │
+│ ╰────────────────────────────────╯                         │
+│ Projections: id                                            │
+│ ~3,782 rows                                                │
+╰────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM tv_idx WHERE NOT msg @@ ts_like('%timed out%')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
+│ Index: tv_idx                                            │
+│ Lookup: table                                            │
+│ Index Filter:                                            │
+│ ╭─ Not ────────────╮                                     │
+│ ╰─────────┬────────╯                                     │
+│           ├────────────────────────────╮                 │
+│ ╭─ Terms ─┴────────╮  ╭─ Wildcard NGram ───────────────╮ │
+│ │ Field: msg(null) │  │ Field: msg(string)             │ │
+│ ╰──────────────────╯  │ Pattern: (?s)\\A.*timed out.*\\z │ │
+│                       │ Syntax: perl                   │ │
+│                       │ Has Pos: false                 │ │
+│                       │ Query: "timed out"             │ │
+│                       │ Verify: inline                 │ │
+│                       ╰────────────────────────────────╯ │
+│ Projections: id                                          │
+│ ~3,782 rows                                              │
+╰──────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id, ts_offsets(msg) FROM tv_idx WHERE msg @@ ts_like('%timed out%')
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────╮
+│ Projections: id,                   │
+│              ts_offsets('', msg)   │
+│ ~3,782 rows                        │
+╰──────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ─┴─────────────────╮
+│ Index: tv_idx                      │
+│ Lookup: table                      │
+│ Index Filter:                      │
+│ ╭─ Wildcard NGram ───────────────╮ │
+│ │ Field: msg(string)             │ │
+│ │ Pattern: (?s)\\A.*timed out.*\\z │ │
+│ │ Syntax: perl                   │ │
+│ │ Has Pos: false                 │ │
+│ │ Query: "timed out"             │ │
+│ │ Verify: inline                 │ │
+│ ╰────────────────────────────────╯ │
+│ Offsets: msg                       │
+│ Projections: msg, id               │
+│ ~3,782 rows                        │
+╰────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM tv_pos_idx WHERE msg @@ ts_like('GET /api/%')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────╮
+│ Index: tv_pos_idx                │
+│ Lookup: table                    │
+│ Index Filter:                    │
+│ ╭─ Wildcard NGram ─────────────╮ │
+│ │ Field: msg(string)           │ │
+│ │ Pattern: (?s)\\AGET /api/.*\\z │ │
+│ │ Syntax: perl                 │ │
+│ │ Has Pos: true                │ │
+│ │ Query: "\\x1fGET /api/"       │ │
+│ │ Verify: false                │ │
+│ ╰──────────────────────────────╯ │
+│ Projections: id                  │
+│ ~3,782 rows                      │
+╰──────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM tv_pos_idx WHERE msg @@ ts_like('disk usage 9_ pct on %')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────╮
+│ Index: tv_pos_idx                            │
+│ Lookup: table                                │
+│ Index Filter:                                │
+│ ╭─ Wildcard NGram ─────────────────────────╮ │
+│ │ Field: msg(string)                       │ │
+│ │ Pattern: (?s)\\Adisk usage 9. pct on .*\\z │ │
+│ │ Syntax: perl                             │ │
+│ │ Has Pos: true                            │ │
+│ │ Query:                                   │ │
+│ │ And("\\x1fdisk usage 9", " pct on ")      │ │
+│ │ Verify: table filter                     │ │
+│ ╰──────────────────────────────────────────╯ │
+│ Projections: id                              │
+│ ~3,782 rows                                  │
+╰──────────────────────────────────────────────╯
+
+statement ok
+DROP TABLE tv_t
+
+# A throwing filter on a stored column sees only rows that pass the check:
+# rows 2 and 4 hold the n-grams of '%foo%bar%' but not the pattern, and their
+# s is not a number.
+
+statement ok
+CREATE TABLE tv_thr (id BIGINT PRIMARY KEY, x INTEGER, msg VARCHAR, s VARCHAR)
+
+statement ok
+CREATE INDEX tv_thr_idx ON tv_thr USING inverted(id, msg tv_dict) INCLUDE (x, s)
+  WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO tv_thr VALUES
+    (1, 5, 'foo-bar one', '10'),
+    (2, 5, 'bar-foo two', 'abc'),
+    (3, 0, 'foo then bar', '20'),
+    (4, 5, 'bar then foo', 'xyz'),
+    (5, 5, 'nothing here', 'zzz'),
+    (6, 7, 'foobar', '30'),
+    (7, 5, NULL, 'qqq')
+
+statement ok
+VACUUM (REFRESH_TABLE) tv_thr
+
+query
+SELECT count(*) AS c FROM tv_thr_idx WHERE msg @@ ts_like('%foo%bar%')
+----
+c
+3
+
+query
+SELECT count(*) AS c FROM tv_thr_idx WHERE msg @@ ts_like('%foo%bar%') AND CAST(s AS INTEGER) > 0
+----
+c
+3
+
+query
+SELECT id, s FROM tv_thr_idx WHERE msg @@ ts_like('%foo%bar%') AND CAST(s AS INTEGER) > 0 ORDER BY id
+----
+id	s
+1	10
+3	20
+6	30
+
+query
+SELECT id, s FROM (SELECT id, s FROM tv_thr_idx WHERE msg @@ ts_like('%foo%bar%') AND CAST(s AS INTEGER) > 0
+      ORDER BY BM25(tv_thr_idx.tableoid) DESC LIMIT 10) t ORDER BY id
+----
+id	s
+1	10
+3	20
+6	30
+
+query
+SELECT count(*) AS c FROM tv_thr_idx WHERE msg @@ ts_like('%foo%bar%') AND CAST(s AS INTEGER) > 0 AND x > 0
+----
+c
+2
+
+query
+SELECT count(*) AS c FROM tv_thr_idx WHERE msg @@ ts_regexp('.*foo.*bar.*') AND CAST(s AS INTEGER) > 0
+----
+c
+3
+
+query
+SELECT count(*) AS c FROM tv_thr_idx WHERE msg @@ ts_like('%foo%') AND msg @@ ts_like('%foo%bar%') AND CAST(s AS INTEGER) > 0
+----
+c
+3
+
+statement ok
+DROP TABLE tv_thr

@@ -40,6 +40,7 @@
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
+#include <duckdb/storage/table/scan_state.hpp>
 #include <duckdb/storage/table_io_manager.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -312,6 +313,88 @@ struct InvertedStoreIndex::FeedTask final : duckdb::BaseExecutorTask {
   FeedQueue& queue;
 };
 
+struct InvertedStoreIndex::RangeTask final : duckdb::BaseExecutorTask {
+  struct Target {
+    InvertedStoreIndex* index;
+    DuckDBSinkIndexWriter* writer;
+    irs::IndexWriter::Transaction* transaction;
+  };
+
+  RangeTask(duckdb::TaskExecutor& executor,
+            duckdb::DuckTransaction& transaction,
+            duckdb::ClientContext& context, duckdb::RowGroupCollection& source,
+            const duckdb::vector<duckdb::StorageIndex>& columns,
+            std::vector<Target> targets, duckdb::idx_t begin, duckdb::idx_t end,
+            duckdb::row_t row_start)
+    : BaseExecutorTask{executor},
+      transaction{transaction},
+      context{context},
+      source{source},
+      columns{columns},
+      targets{std::move(targets)},
+      begin{begin},
+      end{end},
+      row_start{row_start} {}
+
+  void ExecuteTask() final {
+    const auto& table_types = source.GetTypes();
+    duckdb::vector<duckdb::LogicalType> scan_types;
+    scan_types.reserve(columns.size());
+    for (const auto& column : columns) {
+      scan_types.push_back(table_types[column.GetPrimaryIndex()]);
+    }
+    const auto base = static_cast<duckdb::idx_t>(duckdb::MAX_ROW_ID);
+    duckdb::TableScanState state;
+    state.Initialize(columns);
+    source.InitializeScanWithOffset(duckdb::QueryContext{}, state.local_state,
+                                    columns, base + begin, base + end);
+    duckdb::DataChunk scanned;
+    scanned.Initialize(source.GetAllocator(), scan_types);
+    duckdb::DataChunk view;
+    view.InitializeEmpty(table_types);
+    std::vector<std::unique_ptr<duckdb::ExpressionExecutor>> executors;
+    executors.reserve(targets.size());
+    for (const auto& target : targets) {
+      executors.push_back(std::make_unique<duckdb::ExpressionExecutor>(
+        context, target.index->bound_expressions));
+    }
+    std::vector<duckdb::DataChunk> results(targets.size());
+    duckdb::Vector row_ids{duckdb::LogicalType::ROW_TYPE};
+    auto row = row_start + static_cast<duckdb::row_t>(begin);
+    while (true) {
+      scanned.Reset();
+      state.local_state.Scan(transaction, scanned);
+      const auto size = scanned.size();
+      if (size == 0) {
+        break;
+      }
+      for (duckdb::idx_t i = 0; i < columns.size(); ++i) {
+        view.data[columns[i].GetPrimaryIndex()].Reference(scanned.data[i]);
+      }
+      duckdb::VectorOperations::GenerateSequence(row_ids, size, row, 1);
+      for (size_t t = 0; t < targets.size(); ++t) {
+        duckdb::Vector rows{duckdb::LogicalType::ROW_TYPE, nullptr, 0};
+        const auto fed = targets[t].index->Evaluate(view, row_ids, results[t],
+                                                    rows, executors[t].get());
+        targets[t].index->Feed(*targets[t].writer, *targets[t].transaction,
+                               results[t], rows, fed);
+      }
+      row += static_cast<duckdb::row_t>(size);
+    }
+  }
+
+  std::string TaskType() const final { return "InvertedIndexRangeFeed"; }
+
+  duckdb::DuckTransaction& transaction;
+  duckdb::ClientContext& context;
+  duckdb::RowGroupCollection& source;
+  const duckdb::vector<duckdb::StorageIndex>& columns;
+  std::vector<Target> targets;
+  const duckdb::idx_t begin;
+  const duckdb::idx_t end;
+  const duckdb::row_t row_start;
+};
+
 InvertedStoreIndex::InvertedStoreIndex(
   duckdb::CreateIndexInput& input, duckdb::idx_t index_id,
   std::shared_ptr<search::InvertedIndexStorage> storage,
@@ -335,18 +418,25 @@ irs::IndexWriter::Transaction InvertedStoreIndex::NewTransaction() {
   return trx;
 }
 
-duckdb::idx_t InvertedStoreIndex::Evaluate(duckdb::DataChunk& chunk,
-                                           duckdb::Vector& row_ids,
-                                           duckdb::DataChunk& results,
-                                           duckdb::Vector& rows) {
+duckdb::idx_t InvertedStoreIndex::Evaluate(
+  duckdb::DataChunk& chunk, duckdb::Vector& row_ids, duckdb::DataChunk& results,
+  duckdb::Vector& rows, duckdb::ExpressionExecutor* executor) {
   const auto total = chunk.size();
   rows.Reference(row_ids);
   if (bound_expressions.empty()) {
     return total;
   }
   const auto keys = std::span{_config->keys};
-  results.Initialize(duckdb::Allocator::DefaultAllocator(), logical_types);
-  ExecuteExpressions(chunk, results);
+  if (results.ColumnCount() == 0) {
+    results.Initialize(duckdb::Allocator::DefaultAllocator(), logical_types);
+  } else {
+    results.Reset();
+  }
+  if (executor) {
+    executor->Execute(chunk, results);
+  } else {
+    ExecuteExpressions(chunk, results);
+  }
   for (size_t i = 0; i < keys.size(); ++i) {
     const auto* entry = _config->FindEntry(keys[i].field_id);
     if (!entry || entry->IsTokenized()) {
@@ -375,7 +465,8 @@ void InvertedStoreIndex::Feed(DuckDBSinkIndexWriter& writer,
     rows.ToUnifiedFormat(count, row_fmt);
     const auto* row_data =
       duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(row_fmt);
-    std::vector<duckdb::string_t> key_views(count);
+    thread_local std::vector<duckdb::string_t> key_views;
+    key_views.resize(count);
     for (duckdb::idx_t i = 0; i < count; ++i) {
       key_views[i] =
         primary_key::SignedKeyTerm(row_data[row_fmt.sel->get_index(i)]);
@@ -664,6 +755,71 @@ void InvertedStoreIndex::PrepareFeed(query::Transaction& transaction,
                          BoundTokenizers(_tokenizers.AcquireAll(context)));
     }
   }
+}
+
+bool InvertedStoreIndex::AppendLocal(
+  duckdb::DuckTransaction& transaction, duckdb::TableIndexList& index_list,
+  duckdb::RowGroupCollection& source,
+  const duckdb::vector<duckdb::StorageIndex>& mapped_column_ids,
+  duckdb::row_t row_start, duckdb::ErrorData& error) {
+  auto* conn = CurrentCommittingContext();
+  if (!conn) {
+    return false;
+  }
+  std::vector<
+    std::pair<InvertedStoreIndex*, std::span<query::Transaction::SearchSlot>>>
+    indexes;
+  duckdb::idx_t slots = 0;
+  for (auto& index : index_list.Indexes()) {
+    if (!index.IsBound() || index.GetIndexType() != kTypeName) {
+      return false;
+    }
+    auto& inverted = index.Cast<InvertedStoreIndex>();
+    const auto prepared = conn->IndexSlots(inverted._index_id);
+    duckdb::idx_t ready = 0;
+    while (ready < prepared.size() && prepared[ready].writer) {
+      ++ready;
+    }
+    if (ready < 2) {
+      return false;
+    }
+    slots = slots == 0 ? ready : std::min(slots, ready);
+    indexes.emplace_back(&inverted, prepared);
+  }
+  if (indexes.empty()) {
+    return false;
+  }
+  const auto count = source.GetTotalRows();
+  auto& context = conn->GetClientContext();
+  duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context)};
+  const auto ranges = std::max<duckdb::idx_t>(2, slots - 1);
+  for (duckdb::idx_t k = 0; k < ranges; ++k) {
+    auto begin = k * count / ranges;
+    auto end = (k + 1) * count / ranges;
+    begin -= begin % STANDARD_VECTOR_SIZE;
+    if (k + 1 != ranges) {
+      end -= end % STANDARD_VECTOR_SIZE;
+    }
+    if (end <= begin) {
+      continue;
+    }
+    std::vector<RangeTask::Target> targets;
+    targets.reserve(indexes.size());
+    for (const auto& [inverted, prepared] : indexes) {
+      targets.push_back(
+        {inverted, prepared[k].writer.get(), prepared[k].transaction.get()});
+    }
+    executor.ScheduleTask(duckdb::make_uniq<RangeTask>(
+      executor, transaction, context, source, mapped_column_ids,
+      std::move(targets), begin, end, row_start));
+  }
+  try {
+    executor.WorkOnTasks();
+  } catch (const std::exception& e) {
+    error = duckdb::ErrorData{e};
+  }
+  conn->RegisterSearchFlush();
+  return true;
 }
 
 void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,

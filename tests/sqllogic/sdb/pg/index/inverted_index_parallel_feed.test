@@ -143,3 +143,126 @@ count
 
 statement ok
 DROP TABLE ipm;
+
+statement ok
+CREATE TABLE ipn(id INTEGER, doc JSON, body TEXT, title TEXT);
+
+statement ok
+CREATE INDEX ipn_a ON ipn USING inverted(body);
+
+statement ok
+CREATE INDEX ipn_b ON ipn USING inverted(title, body);
+
+statement ok
+CREATE INDEX ipn_c ON ipn USING inverted(id, (upper(title)), (doc->'nested'));
+
+statement ok
+CREATE INDEX ipn_d ON ipn USING inverted(body) WHERE id % 2 = 0;
+
+statement ok
+INSERT INTO ipn SELECT g, ('{"nested": ' || g || '}')::JSON, 'word' || (g % 100), 'title' || (g % 10) FROM generate_series(1, 200000) g;
+
+statement ok
+VACUUM (REFRESH_TABLE) ipn;
+
+query
+SELECT count(*) FROM ipn_a;
+----
+count
+200000
+
+query
+SELECT count(*) FROM ipn_a WHERE body @@ 'word7';
+----
+count
+2000
+
+query
+SELECT id FROM ipn_a WHERE body @@ 'word42' ORDER BY id LIMIT 3;
+----
+id
+42
+142
+242
+
+query
+SELECT id FROM ipn_a WHERE body @@ 'word99' ORDER BY id DESC LIMIT 2;
+----
+id
+199999
+199899
+
+query
+SELECT count(*) FROM ipn_b WHERE title @@ 'title3';
+----
+count
+20000
+
+query
+SELECT count(*) FROM ipn_c WHERE (upper(title)) @@ 'TITLE3';
+----
+count
+20000
+
+query
+SELECT id FROM ipn_c WHERE (doc->'nested') @@ ts_like('131072');
+----
+id
+131072
+
+query
+SELECT count(*) FROM ipn_d;
+----
+count
+100000
+
+query
+SELECT count(*) FROM ipn_d WHERE body @@ 'word7';
+----
+count
+0
+
+statement error
+INSERT INTO ipn SELECT g, CASE WHEN g = 399000 THEN '{"nested":{"a":1}}'::JSON ELSE ('{"nested": ' || g || '}')::JSON END, 'late', 'late' FROM generate_series(200001, 400000) g;
+----
+db error: ERROR: Failed to commit: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+
+
+query
+SELECT count(*) FROM ipn;
+----
+count
+200000
+
+statement ok
+INSERT INTO ipn SELECT g, ('{"nested": ' || g || '}')::JSON, 'again', 'again' FROM generate_series(200001, 400000) g;
+
+statement ok
+VACUUM (REFRESH_TABLE) ipn;
+
+query
+SELECT count(*) FROM ipn_a;
+----
+count
+400000
+
+query
+SELECT count(*) FROM ipn_a WHERE body @@ 'again';
+----
+count
+200000
+
+query
+SELECT count(*) FROM ipn_a WHERE body @@ 'late';
+----
+count
+0
+
+query
+SELECT id FROM ipn_c WHERE (doc->'nested') @@ ts_like('399999');
+----
+id
+399999
+
+statement ok
+DROP TABLE ipn;

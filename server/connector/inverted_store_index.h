@@ -27,6 +27,10 @@
 #include <duckdb/execution/index/index_type.hpp>
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
+#include <duckdb/storage/storage_index.hpp>
+#include <duckdb/storage/table/row_group_collection.hpp>
+#include <duckdb/storage/table/table_index_list.hpp>
+#include <duckdb/transaction/duck_transaction.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/types.hpp>
@@ -120,6 +124,12 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   void PrepareFeed(query::Transaction& transaction,
                    duckdb::ClientContext& context, duckdb::idx_t rows);
 
+  static bool AppendLocal(
+    duckdb::DuckTransaction& transaction, duckdb::TableIndexList& index_list,
+    duckdb::RowGroupCollection& source,
+    const duckdb::vector<duckdb::StorageIndex>& mapped_column_ids,
+    duckdb::row_t row_start, duckdb::ErrorData& error);
+
  private:
   struct ReplayOp;
   struct FeedQueue;
@@ -127,13 +137,15 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   struct ReplaySession;
   struct LiveFeed;
   struct FeedTask;
+  struct RangeTask;
 
   duckdb::ErrorData AppendImpl(duckdb::DataChunk& chunk,
                                duckdb::Vector& row_ids);
 
   irs::IndexWriter::Transaction NewTransaction();
   duckdb::idx_t Evaluate(duckdb::DataChunk& chunk, duckdb::Vector& row_ids,
-                         duckdb::DataChunk& results, duckdb::Vector& rows);
+                         duckdb::DataChunk& results, duckdb::Vector& rows,
+                         duckdb::ExpressionExecutor* executor = nullptr);
   void Feed(DuckDBSinkIndexWriter& writer, irs::IndexWriter::Transaction& trx,
             duckdb::DataChunk& results, duckdb::Vector& rows,
             duckdb::idx_t count);

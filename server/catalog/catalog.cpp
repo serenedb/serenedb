@@ -77,6 +77,7 @@
 #include "connector/duckdb_physical_search_insert.h"
 #include "connector/duckdb_physical_search_truncate.h"
 #include "connector/duckdb_physical_search_update.h"
+#include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
 #include "connector/view_index_bind.h"
 #include "pg/connection_context.h"
@@ -385,6 +386,15 @@ duckdb::shared_ptr<duckdb::WriteAheadLog> SereneDBCatalog::CatalogLog() {
 void SereneDBCatalog::RequestCatalogLogSync(
   duckdb::shared_ptr<duckdb::WriteAheadLog> log, duckdb::idx_t offset) {
   ClusterOf(GetDatabase()).RequestCatalogLogSync(std::move(log), offset);
+}
+
+bool SereneDBCatalog::AppendLocalIndexes(
+  duckdb::DuckTransaction& transaction, duckdb::TableIndexList& index_list,
+  duckdb::RowGroupCollection& source,
+  const duckdb::vector<duckdb::StorageIndex>& mapped_column_ids,
+  duckdb::row_t row_start, duckdb::ErrorData& error) {
+  return connector::InvertedStoreIndex::AppendLocal(
+    transaction, index_list, source, mapped_column_ids, row_start, error);
 }
 
 void SereneDBCatalog::Initialize(bool load_builtin) {

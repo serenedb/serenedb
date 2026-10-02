@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 
+#include <limits>
 #include <numeric>
 
 #include "iresearch/analysis/text/term_view.hpp"
@@ -323,27 +324,44 @@ bool PhraseVerifyKernel::EndSlots(PhraseVerifyScratch& scratch,
 
   auto& valid = scratch.valid;
   auto& next = scratch.next;
+  auto& ways = scratch.ways;
+  auto& next_ways = scratch.next_ways;
   valid.assign(slots.back().begin(), slots.back().end());
+  ways.assign(valid.size(), 1);
   for (size_t i = n - 1; i != 0; --i) {
     const auto& prev = slots[i - 1];
     next.clear();
-    size_t j = 0;
+    next_ways.clear();
+    size_t lo = 0;
+    size_t hi = 0;
+    uint64_t window = 0;
     for (const auto p : prev) {
-      const uint64_t lo = uint64_t{p} + _offs_min[i];
-      const uint64_t hi = uint64_t{p} + _offs_max[i];
-      while (j != valid.size() && valid[j] < lo) {
-        ++j;
+      const uint64_t min = uint64_t{p} + _offs_min[i];
+      const uint64_t max = uint64_t{p} + _offs_max[i];
+      for (; hi != valid.size() && valid[hi] <= max; ++hi) {
+        window += ways[hi];
       }
-      if (j != valid.size() && valid[j] <= hi) {
+      for (; lo != hi && valid[lo] < min; ++lo) {
+        window -= ways[lo];
+      }
+      if (window != 0) {
         next.push_back(p);
+        next_ways.push_back(window);
       }
     }
     std::swap(valid, next);
+    std::swap(ways, next_ways);
     if (valid.empty()) {
       return false;
     }
   }
-  out.freq = count ? static_cast<uint32_t>(valid.size()) : 1;
+  if (!count) {
+    out.freq = 1;
+    return true;
+  }
+  const auto freq = absl::c_accumulate(ways, uint64_t{0});
+  out.freq = static_cast<uint32_t>(
+    std::min<uint64_t>(freq, std::numeric_limits<uint32_t>::max()));
   return true;
 }
 

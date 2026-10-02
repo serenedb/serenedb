@@ -49,6 +49,8 @@ struct PhraseVerifyScratch {
   std::vector<std::vector<PosAttr::value_t>> slots;
   std::vector<PosAttr::value_t> valid;
   std::vector<PosAttr::value_t> next;
+  std::vector<uint64_t> ways;
+  std::vector<uint64_t> next_ways;
   detail::slop::MatchScratch slop;
   uint32_t state = 0;
   uint32_t freq = 0;

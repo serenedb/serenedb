@@ -18,8 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
 
+#include <iresearch/analysis/text/term_view.hpp>
+#include <iresearch/analysis/token_sinks.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/search/detail/phrase_slop_matcher.hpp>
 #include <iresearch/search/detail/phrase_verify.hpp>
 #include <iresearch/utils/string.hpp>
@@ -92,6 +96,59 @@ class Doc {
   std::vector<irs::PosAttr::value_t> _positions;
   std::vector<duckdb::string_t> _terms;
 };
+
+template<bool Explicit>
+class WordTokenizer final
+  : public irs::analysis::TypedTokenizer<WordTokenizer<Explicit>> {
+ public:
+  irs::TokenTraits Traits() const noexcept final {
+    return {.explicit_pos = Explicit};
+  }
+
+  static constexpr std::string_view type_name() noexcept {
+    return Explicit ? "test_explicit_words" : "test_dense_words";
+  }
+
+  template<irs::TokenLayout L>
+  bool DoFill(duckdb::string_t raw, irs::TokenSink& sink) {
+    const std::string_view data{raw.GetData(), raw.GetSize()};
+    uint32_t pos = irs::pos_limits::min();
+    for (const auto word : absl::StrSplit(data, ' ', absl::SkipEmpty())) {
+      if constexpr (Explicit) {
+        for (const auto alt : absl::StrSplit(word, '|')) {
+          sink.Emit<L>(irs::MakeTermView(alt), pos);
+        }
+        ++pos;
+      } else {
+        sink.Emit<L>(irs::MakeTermView(word));
+      }
+    }
+    return true;
+  }
+};
+
+template<bool Explicit>
+irs::PhraseVerdict Stream(const irs::ByPhraseOptions& phrase,
+                          std::string_view text, bool count, bool& matched) {
+  const irs::PhraseVerifyKernel kernel{phrase, {}};
+  WordTokenizer<Explicit> tokenizer;
+  irs::ValueAnalyzer analyzer;
+  irs::PhraseVerifySink sink{kernel, tokenizer.Traits()};
+  irs::PhraseVerdict verdict;
+  matched = sink.Match(
+    tokenizer, analyzer,
+    duckdb::string_t{text.data(), static_cast<uint32_t>(text.size())}, count,
+    verdict);
+  return verdict;
+}
+
+std::string Filler(size_t n) {
+  std::string out;
+  for (size_t i = 0; i != n; ++i) {
+    absl::StrAppend(&out, "x ");
+  }
+  return out;
+}
 
 irs::ByPhraseOptions Phrase(std::string_view text) {
   irs::ByPhraseOptions phrase;
@@ -174,6 +231,17 @@ TEST(PhraseVerifyKernelTest, interval_gap) {
   EXPECT_FALSE(Matches(phrase, Doc{"dog fox"}));
 }
 
+TEST(PhraseVerifyKernelTest, interval_gap_counts_every_combination) {
+  irs::ByPhraseOptions phrase;
+  phrase.push_back<irs::ByTermOptions>().term = Bytes("a");
+  phrase.push_back<irs::ByTermOptions>(2, 3).term = Bytes("c");
+  EXPECT_EQ(2U, Verify(phrase, Doc{"a x c c"}).freq);
+  EXPECT_EQ(3U, Verify(phrase, Doc{"a a c c"}).freq);
+  phrase.push_back<irs::ByTermOptions>(1, 2).term = Bytes("d");
+  EXPECT_EQ(3U, Verify(phrase, Doc{"a x c c d d"}).freq);
+  EXPECT_EQ(0U, Verify(phrase, Doc{"a x c x x d"}).freq);
+}
+
 TEST(PhraseVerifyKernelTest, stacked_document_tokens) {
   const auto phrase = Phrase("red car");
   const Doc synonyms{{"red", 1}, {"automobile", 2}, {"car", 2}};
@@ -238,4 +306,75 @@ TEST(PhraseVerifyKernelTest, slop_agrees_with_engine_sweep) {
   EXPECT_FLOAT_EQ(static_cast<irs::score_t>(expected.weight /
                                             static_cast<double>(expected.freq)),
                   out.scale);
+}
+
+TEST(PhraseVerifySinkTest, matches_across_token_batches) {
+  constexpr size_t kBatch = irs::TokenBatch::kCapacity;
+  const auto text =
+    absl::StrCat(Filler(kBatch - 2), "quick brown fox ", Filler(kBatch - 3),
+                 "quick brown fox ", Filler(kBatch), "quick brown");
+  const auto phrase = Phrase("quick brown fox");
+  auto gapped = Phrase("quick");
+  gapped.push_back<irs::ByTermOptions>(2, 2).term = Bytes("fox");
+  auto sloppy = Phrase("brown quick");
+  sloppy.set_slop(2);
+  for (const bool count : {false, true}) {
+    SCOPED_TRACE(count);
+    bool matched = false;
+    auto verdict = Stream<false>(phrase, text, count, matched);
+    EXPECT_TRUE(matched);
+    EXPECT_EQ(count ? 2U : 1U, verdict.freq);
+    verdict = Stream<true>(phrase, text, count, matched);
+    EXPECT_TRUE(matched);
+    EXPECT_EQ(count ? 2U : 1U, verdict.freq);
+    verdict = Stream<false>(gapped, text, count, matched);
+    EXPECT_TRUE(matched);
+    EXPECT_EQ(count ? 2U : 1U, verdict.freq);
+    Stream<false>(sloppy, text, count, matched);
+    EXPECT_TRUE(matched);
+  }
+  bool matched = true;
+  Stream<false>(Phrase("fox quick"), text, true, matched);
+  EXPECT_FALSE(matched);
+  Stream<false>(Phrase("brown fox x x"), absl::StrCat(text, " fox"), true,
+                matched);
+  EXPECT_TRUE(matched);
+}
+
+TEST(PhraseVerifySinkTest, dense_positions_continue_across_batches) {
+  constexpr size_t kBatch = irs::TokenBatch::kCapacity;
+  auto gapped = Phrase("a");
+  gapped.push_back<irs::ByTermOptions>(kBatch, kBatch).term = Bytes("b");
+  bool matched = false;
+  Stream<false>(gapped, absl::StrCat("a ", Filler(kBatch - 1), "b"), false,
+                matched);
+  EXPECT_TRUE(matched);
+  Stream<false>(gapped, absl::StrCat("a ", Filler(kBatch), "b"), false,
+                matched);
+  EXPECT_FALSE(matched);
+}
+
+TEST(PhraseVerifySinkTest, explicit_positions_keep_stacked_tokens) {
+  bool matched = false;
+  auto verdict =
+    Stream<true>(Phrase("quick fox"), "the quick fast|fox dog", true, matched);
+  EXPECT_TRUE(matched);
+  Stream<true>(Phrase("fast fox"), "the quick fast|fox dog", true, matched);
+  EXPECT_FALSE(matched);
+  verdict =
+    Stream<true>(Phrase("fast dog"), "the quick fast|fox dog", true, matched);
+  EXPECT_TRUE(matched);
+  verdict =
+    Stream<true>(Phrase("fox dog"), "the quick fast|fox dog", true, matched);
+  EXPECT_TRUE(matched);
+  EXPECT_EQ(1U, verdict.freq);
+  Stream<false>(Phrase("fox dog"), "the quick fast|fox dog", true, matched);
+  EXPECT_FALSE(matched);
+}
+
+TEST(PhraseVerifySinkTest, empty_value_matches_nothing) {
+  bool matched = true;
+  const auto verdict = Stream<false>(Phrase("a b"), "", true, matched);
+  EXPECT_FALSE(matched);
+  EXPECT_EQ(0U, verdict.freq);
 }

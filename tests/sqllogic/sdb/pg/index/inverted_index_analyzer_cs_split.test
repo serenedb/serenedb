@@ -257,7 +257,7 @@ QUERY PLAN
 │ │ Has Pos: false                         │ │
 │ │ Query:                                 │ │
 │ │ And("\\x1fpercent", "alpha", "one\\x1f") │ │
-│ │ Verify: true                           │ │
+│ │ Verify: table filter                   │ │
 │ ╰────────────────────────────────────────╯ │
 │ Projections: b (i), pk (l)                 │
 │ ~1 row                                     │
@@ -303,7 +303,7 @@ QUERY PLAN
 │ │ Has Pos: false                         │ │
 │ │ Query:                                 │ │
 │ │ And("\\x1fpercent", "alpha", "one\\x1f") │ │
-│ │ Verify: true                           │ │
+│ │ Verify: table filter                   │ │
 │ ╰────────────────────────────────────────╯ │
 │ Projections: b, pk                         │
 │ ~1 row                                     │

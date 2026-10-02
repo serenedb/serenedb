@@ -48,6 +48,8 @@ class WildcardTokenizer;
 
 }  // namespace analysis
 
+bool MatchStoredTerms(const re2::RE2& matcher, bytes_view terms);
+
 class WildcardNGramVerifier {
  public:
   WildcardNGramVerifier(std::shared_ptr<const re2::RE2> matcher,
@@ -58,25 +60,7 @@ class WildcardNGramVerifier {
   }
 
   bool Check(doc_id_t doc) {
-    const auto value = _cursor.FetchDoc(doc);
-    if (value.empty()) {
-      return false;
-    }
-    auto* terms_begin = value.data();
-    auto* terms_end = terms_begin + value.size();
-    while (terms_begin != terms_end) {
-      auto size = vread<uint32_t>(terms_begin);
-      ++terms_begin;
-
-      if (_matcher->Match(ViewCast<char>(bytes_view{terms_begin, size}), 0,
-                          size, re2::RE2::ANCHOR_BOTH, nullptr, 0)) {
-        return true;
-      }
-
-      terms_begin += size + 1;
-    }
-
-    return false;
+    return MatchStoredTerms(*_matcher, _cursor.FetchDoc(doc));
   }
 
  private:
@@ -150,11 +134,12 @@ struct ByWildcardNGramOptions {
   bool has_pos{false};
   std::shared_ptr<const re2::RE2> matcher;
   field_id store_field_id{irs::field_limits::invalid()};
+  bool deferred_verify{false};
 
   bool operator==(const ByWildcardNGramOptions& other) const noexcept {
     return pattern == other.pattern && syntax == other.syntax &&
            has_pos == other.has_pos && store_field_id == other.store_field_id &&
-           query == other.query;
+           deferred_verify == other.deferred_verify && query == other.query;
   }
 
   ByWildcardNGramOptions() noexcept = default;

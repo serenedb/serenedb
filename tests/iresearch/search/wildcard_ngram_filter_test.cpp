@@ -212,6 +212,17 @@ TEST(WildcardNGramFilterOptionsTest, one_null_matcher) {
   EXPECT_FALSE(with_matcher == no_matcher);
 }
 
+TEST(WildcardNGramFilterOptionsTest, equality_deferred_verify) {
+  irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
+
+  irs::ByWildcardNGramOptions inline_check{"foo%bar", analyzer, false};
+  irs::ByWildcardNGramOptions deferred{"foo%bar", analyzer, false};
+  EXPECT_FALSE(deferred.deferred_verify);
+  EXPECT_TRUE(inline_check == deferred);
+  deferred.deferred_verify = true;
+  EXPECT_FALSE(inline_check == deferred);
+}
+
 TEST(WildcardNGramFilterOptionsTest, pattern_past_default_budget_is_verified) {
   irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
   constexpr size_t kUnits = 600'000;
@@ -399,6 +410,110 @@ TEST(WildcardNGramFilterTest, query) {
   }
 }
 
+TEST(WildcardNGramFilterTest, deferred_verify_returns_candidates) {
+  static constexpr std::string_view kValues[]{"foobaz", "bazfoo", "hello"};
+  static constexpr irs::doc_id_t kBase = irs::doc_limits::min();
+
+  irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
+  irs::MemoryDirectory dir;
+  {
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    ASSERT_NE(nullptr, writer);
+    WildcardField field;
+    field.id = kTextId;
+    field.analyzer = &analyzer;
+    auto ctx = writer->GetBatch();
+    for (auto v : kValues) {
+      field.value = v;
+      auto doc = ctx.Insert();
+      ASSERT_TRUE(tests::InsertField(doc, field));
+      auto* cs = doc.GetColWriter();
+      ASSERT_NE(nullptr, cs);
+      irs::tests::StoreFieldAt(*cs, kStoreId, doc.DocId(), field);
+    }
+    ctx.Commit();
+    writer->RefreshCommit();
+  }
+  irs::DirectoryReader reader{dir, irs::tests::DefaultReaderOptions()};
+  ASSERT_NE(nullptr, reader);
+
+  MaxMemoryCounter counter;
+  const auto execute = [&](const irs::Filter& q) {
+    tests::PreparedFilter prepared{q, *reader, nullptr, counter};
+    std::vector<irs::doc_id_t> result;
+    for (size_t i = 0, n = prepared.size(); i < n; ++i) {
+      auto docs = prepared.Execute(i);
+      while (!irs::doc_limits::eof(docs->Next())) {
+        result.push_back(docs->Value() - kBase);
+      }
+    }
+    return result;
+  };
+  using Docs = std::vector<irs::doc_id_t>;
+
+  auto like = MakeFilter(kTextId, "%baz%foo%", analyzer, false);
+  ASSERT_NE(nullptr, like.options().matcher);
+  EXPECT_EQ(Docs{1}, execute(like));
+  like.mutable_options()->deferred_verify = true;
+  EXPECT_EQ((Docs{0, 1}), execute(like));
+  like.mutable_options()->store_field_id = kOtherId;
+  EXPECT_EQ(Docs{}, execute(like));
+
+  auto regexp = MakeRegexpFilter(kTextId, ".*baz.*foo.*", analyzer, false);
+  ASSERT_NE(nullptr, regexp.options().matcher);
+  EXPECT_EQ(Docs{1}, execute(regexp));
+  regexp.mutable_options()->deferred_verify = true;
+  EXPECT_EQ((Docs{0, 1}), execute(regexp));
+}
+
+TEST(WildcardNGramFilterTest, match_stored_terms) {
+  irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
+  const auto stored = [&](std::span<const std::string_view> values) {
+    irs::bstring blob;
+    for (const auto v : values) {
+      irs::ValueAnalyzer value_analyzer;
+      irs::ValueTokens tokens;
+      EXPECT_TRUE(
+        value_analyzer.Analyze(analyzer, tests::ToStringT(v), tokens));
+      blob += tokens.store();
+    }
+    return blob;
+  };
+  const auto like = [&](std::string_view pattern) {
+    auto matcher =
+      irs::ByWildcardNGramOptions{pattern, analyzer, false}.matcher;
+    EXPECT_NE(nullptr, matcher) << pattern;
+    return matcher;
+  };
+  const auto regexp = [&](std::string_view pattern) {
+    auto matcher = MakeRegexpOptions(pattern, analyzer, false).matcher;
+    EXPECT_NE(nullptr, matcher) << pattern;
+    return matcher;
+  };
+  const auto matches = [](const std::shared_ptr<const re2::RE2>& matcher,
+                          irs::bytes_view terms) {
+    return matcher != nullptr && irs::MatchStoredTerms(*matcher, terms);
+  };
+
+  static constexpr std::string_view kOne[]{"foobar"};
+  static constexpr std::string_view kThree[]{"abc", "foobar", "xyz"};
+  const auto one = stored(kOne);
+  const auto three = stored(kThree);
+
+  EXPECT_FALSE(matches(like("fo_bar"), {}));
+  EXPECT_TRUE(matches(like("fo_bar"), one));
+  EXPECT_FALSE(matches(like("%_az"), one));
+  EXPECT_TRUE(matches(like("a_c"), three));
+  EXPECT_TRUE(matches(like("fo_bar"), three));
+  EXPECT_TRUE(matches(like("x_z"), three));
+  EXPECT_FALSE(matches(like("%q_q%"), three));
+  EXPECT_FALSE(matches(like("abc_oo%"), three));
+  EXPECT_TRUE(matches(regexp("fo+bar"), three));
+  EXPECT_TRUE(matches(regexp("[a-c]+"), three));
+  EXPECT_FALSE(matches(regexp("f.o"), three));
+}
+
 TEST(WildcardNGramFilterOptionsTest, grams_follow_literals) {
   irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
 
@@ -443,6 +558,10 @@ TEST(WildcardNGramFilterOptionsTest, regexp_equality_is_by_pattern) {
     MakeRegexpOptions("abc", analyzer, true, irs::RegexpSyntax::PosixEre));
   EXPECT_FALSE(MakeRegexpOptions("abc", analyzer, true) ==
                MakeRegexpOptions("abc", analyzer, false));
+
+  auto deferred = MakeRegexpOptions("abc", analyzer);
+  deferred.deferred_verify = true;
+  EXPECT_FALSE(MakeRegexpOptions("abc", analyzer) == deferred);
 }
 
 TEST(WildcardNGramFilterTest, equal_regexp) {

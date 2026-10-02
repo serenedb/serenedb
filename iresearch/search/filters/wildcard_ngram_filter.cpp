@@ -89,7 +89,8 @@ ByPhrase MakePhraseFilter(irs::field_id field, const ByPhraseOptions& part) {
 QueryBuilder::ptr Wrap(const SubReader& segment, const PrepareContext& ctx,
                        score_t boost,
                        const std::shared_ptr<const re2::RE2>& matcher,
-                       field_id store_field_id, QueryBuilder::ptr&& approx) {
+                       field_id store_field_id, bool deferred_verify,
+                       QueryBuilder::ptr&& approx) {
   if (!approx || QueryBuilder::IsEmpty(*approx)) {
     return QueryBuilder::Empty();
   }
@@ -100,7 +101,8 @@ QueryBuilder::ptr Wrap(const SubReader& segment, const PrepareContext& ctx,
     }
   }
   auto query = memory::make_tracked<WildcardNGramQuery>(
-    ctx.memory, segment, matcher, std::move(approx), store_field_id, boost);
+    ctx.memory, segment, deferred_verify ? nullptr : matcher, std::move(approx),
+    store_field_id, boost);
   query->SetStats(ctx.Record());
   return query;
 }
@@ -248,6 +250,21 @@ class GramQueryPreparer {
 
 }  // namespace
 
+bool MatchStoredTerms(const re2::RE2& matcher, bytes_view terms) {
+  const auto* begin = terms.data();
+  const auto* end = begin + terms.size();
+  while (begin != end) {
+    const auto size = vread<uint32_t>(begin);
+    ++begin;
+    if (matcher.Match(ViewCast<char>(bytes_view{begin, size}), 0, size,
+                      re2::RE2::ANCHOR_BOTH, nullptr, 0)) {
+      return true;
+    }
+    begin += size + 1;
+  }
+  return false;
+}
+
 PrepareCollector::ptr ByWildcardNGram::MakeCollectorImpl(const Scorer* scorer,
                                                          StatsArena& stats,
                                                          uint32_t) const {
@@ -263,7 +280,7 @@ QueryBuilder::ptr ByWildcardNGram::PrepareSegment(
   auto approx =
     GramQueryPreparer{*this, segment, ctx, sub_ctx}.Prepare(opts.query);
   return Wrap(segment, ctx, sub_ctx.boost, opts.matcher, opts.store_field_id,
-              std::move(approx));
+              opts.deferred_verify, std::move(approx));
 }
 
 ByWildcardNGramOptions::ByWildcardNGramOptions(

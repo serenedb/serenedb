@@ -17,7 +17,7 @@ fi
 # slow enough that ai_generate's own HTTP timeout fires, and nothing
 # TSan-specific is exercised there anyway.
 OLLAMA_SKIP=""
-if [[ -n "${TSAN_OPTIONS:-}" && "$(uname -m)" == "aarch64" ]]; then
+if [[ "${SANITIZERS:-}" == *Thread* && "$(uname -m)" == "aarch64" ]]; then
 	OLLAMA_SKIP='_ollama\.test_slow'
 fi
 

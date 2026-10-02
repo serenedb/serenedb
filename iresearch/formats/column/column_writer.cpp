@@ -30,7 +30,6 @@
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/function/compression_function.hpp>
-#include <duckdb/function/create_sort_key.hpp>
 #include <duckdb/function/variant/variant_shredding.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
@@ -163,12 +162,20 @@ struct ListRep {
 class ListKeys {
  public:
   static bool Supported(const duckdb::LogicalType& type) {
-    if (type.id() != duckdb::LogicalTypeId::STRUCT) {
-      return LeafSupported(type);
+    switch (type.InternalType()) {
+      case duckdb::PhysicalType::STRUCT:
+        return std::ranges::all_of(
+          duckdb::StructType::GetChildTypes(type),
+          [](const auto& child) { return Supported(child.second); });
+      case duckdb::PhysicalType::LIST:
+        return Supported(duckdb::ListType::GetChildType(type));
+      case duckdb::PhysicalType::ARRAY:
+        return Supported(duckdb::ArrayType::GetChildType(type));
+      case duckdb::PhysicalType::VARCHAR:
+        return true;
+      default:
+        return duckdb::TypeIsConstantSize(type.InternalType());
     }
-    return std::ranges::all_of(
-      duckdb::StructType::GetChildTypes(type),
-      [](const auto& child) { return LeafSupported(child.second); });
   }
 
   void SetChunk(size_t index, const duckdb::Vector& child,
@@ -176,49 +183,72 @@ class ListKeys {
     if (index >= _chunks.size()) {
       _chunks.resize(index + 1);
     }
-    auto& leaves = _chunks[index];
-    leaves.clear();
-    if (child.GetType().id() != duckdb::LogicalTypeId::STRUCT) {
-      AddLeaf(leaves, child, count, false);
-      return;
-    }
-    AddLeaf(leaves, child, count, true);
-    for (const auto& field : duckdb::StructVector::GetEntries(child)) {
-      AddLeaf(leaves, field, count, false);
-    }
+    _chunks[index].Assign(child, count);
   }
 
   void Clear() noexcept { _chunks.clear(); }
 
   uint64_t Hash(size_t chunk, uint64_t offset, uint64_t length) const {
-    uint64_t h =
+    const uint64_t h =
       duckdb::Hash(reinterpret_cast<const char*>(&length), sizeof(length));
-    for (const auto& leaf : _chunks[chunk]) {
-      h = leaf.HashRange(h, offset, length);
-    }
-    return h;
+    return _chunks[chunk].HashRange(h, offset, length);
   }
 
   bool Equal(size_t chunk_a, uint64_t offset_a, size_t chunk_b,
              uint64_t offset_b, uint64_t length) const {
-    const auto& a = _chunks[chunk_a];
-    const auto& b = _chunks[chunk_b];
-    for (size_t l = a.size(); l-- > 0;) {
-      if (!a[l].EqualRange(offset_a, b[l], offset_b, length)) {
-        return false;
-      }
-    }
-    return true;
+    return _chunks[chunk_a].EqualRange(offset_a, _chunks[chunk_b], offset_b,
+                                       length);
   }
 
  private:
-  struct Leaf {
+  enum class Kind : uint8_t { Fixed, String, Struct, List, Array };
+
+  struct Node {
     duckdb::UnifiedVectorFormat format;
-    bool strings = false;
-    bool validity_only = false;
+    Kind kind = Kind::Fixed;
     bool flat = false;
     bool all_valid = false;
     duckdb::idx_t width = 0;
+    std::vector<Node> children;
+
+    void Assign(const duckdb::Vector& vec, duckdb::idx_t count) {
+      vec.ToUnifiedFormat(count, format);
+      flat = !format.sel->IsSet();
+      all_valid = format.validity.AllValid();
+      const auto& type = vec.GetType();
+      switch (type.InternalType()) {
+        case duckdb::PhysicalType::STRUCT: {
+          kind = Kind::Struct;
+          const auto& fields = duckdb::StructVector::GetEntries(vec);
+          children.resize(fields.size());
+          for (size_t c = 0; c < fields.size(); ++c) {
+            children[c].Assign(fields[c], count);
+          }
+        } break;
+        case duckdb::PhysicalType::LIST:
+          kind = Kind::List;
+          children.resize(1);
+          children[0].Assign(duckdb::ListVector::GetChild(vec),
+                             duckdb::ListVector::GetListSize(vec));
+          break;
+        case duckdb::PhysicalType::ARRAY:
+          kind = Kind::Array;
+          width = duckdb::ArrayType::GetSize(type);
+          children.resize(1);
+          children[0].Assign(duckdb::ArrayVector::GetEntry(vec), count * width);
+          break;
+        case duckdb::PhysicalType::VARCHAR:
+          kind = Kind::String;
+          width = sizeof(duckdb::string_t);
+          children.clear();
+          break;
+        default:
+          kind = Kind::Fixed;
+          width = duckdb::GetTypeIdSize(type.InternalType());
+          children.clear();
+          break;
+      }
+    }
 
     duckdb::idx_t Index(uint64_t e) const {
       return flat ? e : format.sel->get_index(e);
@@ -228,52 +258,71 @@ class ListKeys {
       return all_valid || format.validity.RowIsValid(Index(e));
     }
 
+    bool RangeValid(uint64_t e, uint64_t length) const {
+      if (all_valid) {
+        return true;
+      }
+      for (uint64_t k = e; k < e + length; ++k) {
+        if (!format.validity.RowIsValid(Index(k))) {
+          return false;
+        }
+      }
+      return true;
+    }
+
     const duckdb::data_t* At(uint64_t e) const {
       return format.data + Index(e) * width;
     }
 
-    uint64_t Hash(uint64_t e) const {
-      if (!Valid(e)) {
-        return 0x9e3779b97f4a7c15ULL;
-      }
-      if (validity_only) {
-        return 1;
-      }
-      if (strings) {
-        return duckdb::Hash(*reinterpret_cast<const duckdb::string_t*>(At(e)));
-      }
-      return duckdb::Hash(reinterpret_cast<const char*>(At(e)), width);
+    const duckdb::list_entry_t& Entry(uint64_t e) const {
+      return reinterpret_cast<const duckdb::list_entry_t*>(
+        format.data)[Index(e)];
     }
 
-    bool Equal(uint64_t e, const Leaf& other, uint64_t f) const {
-      const bool valid = Valid(e);
-      if (valid != other.Valid(f)) {
-        return false;
+    uint64_t Hash(uint64_t h, uint64_t e) const {
+      if (!Valid(e)) {
+        return duckdb::CombineHash(h, 0x9e3779b97f4a7c15ULL);
       }
-      if (!valid || validity_only) {
-        return true;
+      switch (kind) {
+        case Kind::Fixed:
+          return duckdb::CombineHash(
+            h, duckdb::Hash(reinterpret_cast<const char*>(At(e)), width));
+        case Kind::String:
+          return duckdb::CombineHash(
+            h, duckdb::Hash(*reinterpret_cast<const duckdb::string_t*>(At(e))));
+        case Kind::Struct:
+          h = duckdb::CombineHash(h, 1);
+          for (const auto& child : children) {
+            h = child.Hash(h, e);
+          }
+          return h;
+        case Kind::List: {
+          const auto& entry = Entry(e);
+          h = duckdb::CombineHash(h, entry.length);
+          return children[0].HashRange(h, entry.offset, entry.length);
+        }
+        case Kind::Array:
+          return children[0].HashRange(h, Index(e) * width, width);
       }
-      if (strings) {
-        return *reinterpret_cast<const duckdb::string_t*>(At(e)) ==
-               *reinterpret_cast<const duckdb::string_t*>(other.At(f));
-      }
-      return std::memcmp(At(e), other.At(f), width) == 0;
+      return h;
     }
 
     uint64_t HashRange(uint64_t h, uint64_t e, uint64_t length) const {
-      if (!all_valid || !flat) {
+      if (kind == Kind::Struct && RangeValid(e, length)) {
+        h = duckdb::CombineHash(h, 2);
+        for (const auto& child : children) {
+          h = child.HashRange(h, e, length);
+        }
+        return h;
+      }
+      if (!all_valid || !flat ||
+          (kind != Kind::Fixed && kind != Kind::String)) {
         for (uint64_t k = e; k < e + length; ++k) {
-          h = duckdb::CombineHash(h, Hash(k));
+          h = Hash(h, k);
         }
         return h;
       }
-      if (validity_only) {
-        for (uint64_t k = 0; k < length; ++k) {
-          h = duckdb::CombineHash(h, 1);
-        }
-        return h;
-      }
-      if (strings) {
+      if (kind == Kind::String) {
         const auto* x =
           reinterpret_cast<const duckdb::string_t*>(format.data) + e;
         for (uint64_t k = 0; k < length; ++k) {
@@ -289,35 +338,71 @@ class ListKeys {
       return h;
     }
 
-    bool EqualRange(uint64_t e, const Leaf& other, uint64_t f,
-                    uint64_t length) const {
-      if (!all_valid || !other.all_valid) {
-        return EqualEach(e, other, f, length);
+    bool Equal(uint64_t e, const Node& other, uint64_t f) const {
+      const bool valid = Valid(e);
+      if (valid != other.Valid(f)) {
+        return false;
       }
-      if (validity_only) {
+      if (!valid) {
         return true;
       }
-      if (!flat || !other.flat) {
-        return EqualEach(e, other, f, length);
-      }
-      if (!strings) {
-        return std::memcmp(format.data + e * width,
-                           other.format.data + f * width, length * width) == 0;
-      }
-      const auto* x =
-        reinterpret_cast<const duckdb::string_t*>(format.data) + e;
-      const auto* y =
-        reinterpret_cast<const duckdb::string_t*>(other.format.data) + f;
-      for (uint64_t k = 0; k < length; ++k) {
-        if (!(x[k] == y[k])) {
-          return false;
+      switch (kind) {
+        case Kind::Fixed:
+          return std::memcmp(At(e), other.At(f), width) == 0;
+        case Kind::String:
+          return *reinterpret_cast<const duckdb::string_t*>(At(e)) ==
+                 *reinterpret_cast<const duckdb::string_t*>(other.At(f));
+        case Kind::Struct:
+          for (size_t c = 0; c < children.size(); ++c) {
+            if (!children[c].Equal(e, other.children[c], f)) {
+              return false;
+            }
+          }
+          return true;
+        case Kind::List: {
+          const auto& a = Entry(e);
+          const auto& b = other.Entry(f);
+          return a.length == b.length &&
+                 children[0].EqualRange(a.offset, other.children[0], b.offset,
+                                        a.length);
         }
+        case Kind::Array:
+          return children[0].EqualRange(Index(e) * width, other.children[0],
+                                        other.Index(f) * width, width);
       }
-      return true;
+      return false;
     }
 
-    bool EqualEach(uint64_t e, const Leaf& other, uint64_t f,
-                   uint64_t length) const {
+    bool EqualRange(uint64_t e, const Node& other, uint64_t f,
+                    uint64_t length) const {
+      if (kind == Kind::Struct && RangeValid(e, length) &&
+          other.RangeValid(f, length)) {
+        for (size_t c = 0; c < children.size(); ++c) {
+          if (!children[c].EqualRange(e, other.children[c], f, length)) {
+            return false;
+          }
+        }
+        return true;
+      }
+      if (all_valid && other.all_valid && flat && other.flat) {
+        if (kind == Kind::Fixed) {
+          return std::memcmp(format.data + e * width,
+                             other.format.data + f * width,
+                             length * width) == 0;
+        }
+        if (kind == Kind::String) {
+          const auto* x =
+            reinterpret_cast<const duckdb::string_t*>(format.data) + e;
+          const auto* y =
+            reinterpret_cast<const duckdb::string_t*>(other.format.data) + f;
+          for (uint64_t k = 0; k < length; ++k) {
+            if (!(x[k] == y[k])) {
+              return false;
+            }
+          }
+          return true;
+        }
+      }
       for (uint64_t k = 0; k < length; ++k) {
         if (!Equal(e + k, other, f + k)) {
           return false;
@@ -327,30 +412,7 @@ class ListKeys {
     }
   };
 
-  static bool LeafSupported(const duckdb::LogicalType& type) {
-    const auto physical = type.InternalType();
-    return physical == duckdb::PhysicalType::VARCHAR ||
-           (duckdb::TypeIsConstantSize(physical) &&
-            type.id() != duckdb::LogicalTypeId::STRUCT);
-  }
-
-  static void AddLeaf(std::vector<Leaf>& leaves, const duckdb::Vector& vec,
-                      duckdb::idx_t count, bool validity_only) {
-    auto& leaf = leaves.emplace_back();
-    vec.ToUnifiedFormat(count, leaf.format);
-    leaf.flat = !leaf.format.sel->IsSet();
-    leaf.all_valid = leaf.format.validity.AllValid();
-    leaf.validity_only = validity_only;
-    if (validity_only) {
-      return;
-    }
-    const auto physical = vec.GetType().InternalType();
-    leaf.strings = physical == duckdb::PhysicalType::VARCHAR;
-    leaf.width =
-      leaf.strings ? sizeof(duckdb::string_t) : duckdb::GetTypeIdSize(physical);
-  }
-
-  std::vector<std::vector<Leaf>> _chunks;
+  std::vector<Node> _chunks;
 };
 
 }  // namespace
@@ -383,7 +445,7 @@ class ListIngest {
     _running = running;
     _elem_base = running;
     _valid_rows = 0;
-    _dedup = true;
+    _dedup = _direct;
     _prev = kNoRep;
   }
 
@@ -403,26 +465,13 @@ class ListIngest {
       AddDistinct(parent, entries, child, off, count);
       return;
     }
-    std::optional<duckdb::Vector> sort_keys;
-    const duckdb::string_t* keys = nullptr;
-    if (_direct) {
-      _keys.SetChunk(kSource, child, duckdb::ListVector::GetListSize(vec));
-    } else {
-      const duckdb::Vector rows{vec, off, off + count};
-      sort_keys.emplace(duckdb::LogicalType::BLOB, count);
-      duckdb::CreateSortKeyHelpers::CreateSortKey(
-        rows, count,
-        duckdb::OrderModifiers{duckdb::OrderType::ASCENDING,
-                               duckdb::OrderByNullType::NULLS_LAST},
-        *sort_keys);
-      keys = duckdb::FlatVector::GetData<duckdb::string_t>(*sort_keys);
-    }
+    _keys.SetChunk(kSource, child, duckdb::ListVector::GetListSize(vec));
     _fresh.clear();
     _picked.clear();
     if (TrackSource(vec)) {
-      AddRows<true>(parent, entries, keys, off, count);
+      AddRows<true>(parent, entries, off, count);
     } else {
-      AddRows<false>(parent, entries, keys, off, count);
+      AddRows<false>(parent, entries, off, count);
     }
     Store(child);
   }
@@ -473,8 +522,7 @@ class ListIngest {
 
   template<bool kCached>
   void AddRows(const duckdb::UnifiedVectorFormat& parent,
-               const duckdb::list_entry_t* entries,
-               const duckdb::string_t* keys, duckdb::idx_t off,
+               const duckdb::list_entry_t* entries, duckdb::idx_t off,
                duckdb::idx_t count) {
     for (duckdb::idx_t i = off; i < off + count; ++i) {
       const auto idx = parent.sel->get_index(i);
@@ -492,8 +540,7 @@ class ListIngest {
       }
       const auto& entry = entries[idx];
       uint32_t rep = kNoRep;
-      const auto found =
-        _direct ? FindDirect(entry, rep) : FindSorted(keys[i - off]);
+      const auto found = FindDirect(entry, rep);
       _last_code = found ? *found : _next_code++;
       if constexpr (kCached) {
         if (idx >= _source_codes.size()) {
@@ -593,15 +640,6 @@ class ListIngest {
     return std::nullopt;
   }
 
-  std::optional<uint64_t> FindSorted(const duckdb::string_t& key) {
-    const std::string_view view{key.GetData(), key.GetSize()};
-    if (const auto it = _sorted.find(view); it != _sorted.end()) {
-      return it->second;
-    }
-    _sorted.emplace(view, _next_code);
-    return std::nullopt;
-  }
-
   bool TrackSource(const duckdb::Vector& vec) {
     if (vec.GetVectorType() != duckdb::VectorType::DICTIONARY_VECTOR) {
       return false;
@@ -630,7 +668,6 @@ class ListIngest {
     _rep_codes.clear();
     _chain.clear();
     _keys.Clear();
-    _sorted.clear();
   }
 
   bool Matches(uint32_t rep, const duckdb::list_entry_t& entry) const {
@@ -686,9 +723,7 @@ class ListIngest {
         continue;
       }
       Copy(child, target, begin, take);
-      if (_direct) {
-        _keys.SetChunk(chunk, target.data, target.count);
-      }
+      _keys.SetChunk(chunk, target.data, target.count);
     }
   }
 
@@ -725,7 +760,6 @@ class ListIngest {
   std::vector<ListRep> _reps;
   std::vector<uint64_t> _rep_codes;
   std::vector<uint32_t> _chain;
-  containers::FlatHashMap<std::string, uint64_t> _sorted;
   std::vector<Fresh> _fresh;
   std::vector<duckdb::sel_t> _picked;
   duckdb::buffer_ptr<duckdb::VectorBuffer> _source;

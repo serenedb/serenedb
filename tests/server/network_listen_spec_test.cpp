@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include <string>
 #include <vector>
@@ -152,16 +153,27 @@ TEST(ListenSpec, UnixPgPortMakesPgsqlPath) {
   EXPECT_EQ(*specs[0].unix_port, 5499);
 }
 
-TEST(ListenSpec, HttpUnixSpecialScheme) {
-  // http is a WHATWG "special" scheme; the empty-authority unix form must still
-  // parse to a unix listener (textual detection, not ada).
-  const auto specs = Parse({"http:///tmp/sdbhttp.sock?api=es"});
+TEST(ListenSpec, HttpUnixSocketIsRejected) {
+  EXPECT_DEATH(
+    {
+      dup2(STDERR_FILENO, STDOUT_FILENO);
+      Parse({"http:///tmp/sdbhttp.sock?api=es"});
+    },
+    "a unix socket is only supported for postgres");
+}
+
+TEST(ListenSpec, HttpKeepsItsDefaultPort) {
+  const auto specs = Parse({"http://127.0.0.1:80?api=es"});
   ASSERT_EQ(specs.size(), 1u);
-  EXPECT_EQ(specs[0].protocol, ListenProtocol::Http);
-  EXPECT_EQ(specs[0].transport, ListenTransport::Unix);
-  EXPECT_EQ(specs[0].unix_path, "/tmp/sdbhttp.sock");
-  ASSERT_EQ(specs[0].apis.size(), 1u);
-  EXPECT_EQ(specs[0].apis[0], network::HttpApi::Es);
+  EXPECT_EQ(specs[0].transport, ListenTransport::Tcp);
+  EXPECT_EQ(specs[0].endpoint.port(), 80);
+}
+
+TEST(ListenSpec, HttpIPv6Brackets) {
+  const auto specs = Parse({"http://[::1]:9200?api=es"});
+  ASSERT_EQ(specs.size(), 1u);
+  EXPECT_TRUE(specs[0].endpoint.address().is_v6());
+  EXPECT_EQ(specs[0].endpoint.port(), 9200);
 }
 
 TEST(ListenSpec, UnixModeAndGroup) {

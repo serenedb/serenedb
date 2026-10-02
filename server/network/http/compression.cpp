@@ -33,7 +33,6 @@
 #include <optional>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "network/http/codecs/codec.h"
 
@@ -136,7 +135,8 @@ Negotiation NegotiateContentCoding(std::string_view accept_encoding) {
     return {};
   }
 
-  std::vector<AcceptedCoding> accepted;
+  std::array<std::optional<double>, kContentCodings.size()> weights;
+  std::optional<double> identity;
   std::optional<double> wildcard;
   for (const auto element : absl::StrSplit(accept_encoding, ',')) {
     if (absl::StripAsciiWhitespace(element).empty()) {
@@ -148,19 +148,25 @@ Negotiation NegotiateContentCoding(std::string_view accept_encoding) {
     }
     if (parsed->token == "*") {
       wildcard = parsed->quality;
-    } else {
-      accepted.push_back(*parsed);
+      continue;
+    }
+    if (absl::EqualsIgnoreCase(parsed->token, "identity")) {
+      if (!identity) {
+        identity = parsed->quality;
+      }
+      continue;
+    }
+    for (size_t i = 0; i < kContentCodings.size(); ++i) {
+      if (!weights[i] &&
+          absl::EqualsIgnoreCase(kContentCodings[i].token, parsed->token)) {
+        weights[i] = parsed->quality;
+      }
     }
   }
 
   // An explicit weight wins over the wildcard, whatever their order.
-  const auto quality_of = [&](std::string_view token) -> std::optional<double> {
-    for (const auto& candidate : accepted) {
-      if (absl::EqualsIgnoreCase(candidate.token, token)) {
-        return candidate.quality;
-      }
-    }
-    return wildcard;
+  const auto quality_of = [&](const std::optional<double>& weight) {
+    return weight ? weight : wildcard;
   };
 
   // "the acceptable content coding with the highest non-zero qvalue is
@@ -168,10 +174,10 @@ Negotiation NegotiateContentCoding(std::string_view accept_encoding) {
   // clients send no weights at all.
   const ContentCoding* best = nullptr;
   double best_quality = 0.0;
-  for (const auto& coding : kContentCodings) {
-    const double quality = quality_of(coding.token).value_or(0.0);
+  for (size_t i = 0; i < kContentCodings.size(); ++i) {
+    const double quality = quality_of(weights[i]).value_or(0.0);
     if (quality > best_quality) {
-      best = &coding;
+      best = &kContentCodings[i];
       best_quality = quality;
     }
   }
@@ -182,15 +188,15 @@ Negotiation NegotiateContentCoding(std::string_view accept_encoding) {
   // Nothing we encode is acceptable. The uncompressed form still is, unless
   // the client ruled it out too -- then there is no representation to send.
   // https://www.rfc-editor.org/rfc/rfc9110#name-accept-encoding
-  if (quality_of("identity").value_or(1.0) > 0.0) {
+  if (quality_of(identity).value_or(1.0) > 0.0) {
     return {};
   }
   return {.acceptance = Acceptance::NotAcceptable};
 }
 
-std::optional<std::vector<const ContentCoding*>> ParseContentEncoding(
+std::optional<ContentCodings> ParseContentEncoding(
   std::string_view content_encoding) {
-  std::vector<const ContentCoding*> codings;
+  ContentCodings codings;
   for (const auto element : absl::StrSplit(content_encoding, ',')) {
     const auto token = absl::StripAsciiWhitespace(element);
     if (token.empty() || absl::EqualsIgnoreCase(token, "identity")) {

@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/container/inlined_vector.h>
 #include <absl/functional/function_ref.h>
 
 #include <cstddef>
@@ -27,8 +28,8 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
-#include <vector>
 
 #include "server/utils/message_sequence_view.h"
 
@@ -42,6 +43,12 @@ class ContentEncoder {
 
   virtual void Encode(std::string_view in, bool finish,
                       absl::FunctionRef<void(std::string_view)> sink) = 0;
+
+  // Compresses a whole body into `out` (replacing its contents).
+  virtual void EncodeAll(std::string_view in, std::string& out) {
+    out.clear();
+    Encode(in, true, [&](std::string_view part) { out.append(part); });
+  }
 };
 
 class ContentDecoder {
@@ -90,7 +97,10 @@ Negotiation NegotiateContentCoding(std::string_view accept_encoding);
 
 inline constexpr size_t kMaxContentCodings = 2;
 
-std::optional<std::vector<const ContentCoding*>> ParseContentEncoding(
+using ContentCodings =
+  absl::InlinedVector<const ContentCoding*, kMaxContentCodings>;
+
+std::optional<ContentCodings> ParseContentEncoding(
   std::string_view content_encoding);
 
 void DecodeContent(const message::SequenceView& body,

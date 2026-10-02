@@ -20,6 +20,7 @@
 
 #include <zstd.h>
 
+#include <iresearch/utils/string_utils.hpp>
 #include <iresearch/utils/zstd_context.hpp>
 
 #include "network/http/codecs/codec.h"
@@ -28,16 +29,45 @@ namespace sdb::network::http {
 namespace {
 
 // https://facebook.github.io/zstd/zstd_manual.html#Chapter9
+struct CompressState {
+  CompressState() {}
+
+  bool Reset() noexcept {
+    return !ZSTD_isError(ZSTD_CCtx_reset(cctx.get(), ZSTD_reset_session_only));
+  }
+
+  irs::utils::ZstdCCtxPtr cctx = irs::utils::MakeZstdCCtx();
+  std::array<uint8_t, kOutBlock> out;
+};
+
+// https://www.rfc-editor.org/rfc/rfc8878#section-3.1.1.1.2 : an HTTP decoder
+// need not accept windows above 8 MiB.
+inline constexpr int kMaxWindowLog = 23;
+
+struct DecompressState {
+  DecompressState() {
+    ZSTD_DCtx_setParameter(dctx.get(), ZSTD_d_windowLogMax, kMaxWindowLog);
+  }
+
+  bool Reset() noexcept {
+    return !ZSTD_isError(ZSTD_DCtx_reset(dctx.get(), ZSTD_reset_session_only));
+  }
+
+  irs::utils::ZstdDCtxPtr dctx = irs::utils::MakeZstdDCtx();
+  std::array<uint8_t, kOutBlock> out;
+};
+
 class ZstdEncoder final : public ContentEncoder {
  public:
   void Encode(std::string_view in, bool finish,
               absl::FunctionRef<void(std::string_view)> sink) override {
+    auto& out = _state->out;
     ZSTD_inBuffer input{in.data(), in.size(), 0};
     const auto mode = finish ? ZSTD_e_end : ZSTD_e_continue;
     for (;;) {
-      ZSTD_outBuffer output{_out.data(), _out.size(), 0};
+      ZSTD_outBuffer output{out.data(), out.size(), 0};
       const size_t remaining =
-        ZSTD_compressStream2(_cctx.get(), &output, &input, mode);
+        ZSTD_compressStream2(_state->cctx.get(), &output, &input, mode);
       if (ZSTD_isError(remaining)) {
         ThrowCodecError("zstd", ZSTD_getErrorName(remaining));
       }
@@ -50,20 +80,31 @@ class ZstdEncoder final : public ContentEncoder {
     }
   }
 
+  void EncodeAll(std::string_view in, std::string& out) override {
+    irs::utils::StrResize(out, ZSTD_compressBound(in.size()));
+    const size_t size = ZSTD_compress2(_state->cctx.get(), out.data(),
+                                       out.size(), in.data(), in.size());
+    if (ZSTD_isError(size)) {
+      ThrowCodecError("zstd", ZSTD_getErrorName(size));
+    }
+    out.resize(size);
+  }
+
  private:
-  irs::utils::ZstdCCtxPtr _cctx = irs::utils::MakeZstdCCtx();
-  std::array<uint8_t, kOutBlock> _out;
+  Pooled<CompressState> _state;
 };
 
 class ZstdDecoder final : public ContentDecoder {
  public:
   void Decode(std::string_view in, bool finish,
               absl::FunctionRef<void(std::string_view)> sink) override {
+    auto& out = _state->out;
     ZSTD_inBuffer input{in.data(), in.size(), 0};
     size_t consumed = 0;
     for (;;) {
-      ZSTD_outBuffer output{_out.data(), _out.size(), 0};
-      const size_t rc = ZSTD_decompressStream(_dctx.get(), &output, &input);
+      ZSTD_outBuffer output{out.data(), out.size(), 0};
+      const size_t rc =
+        ZSTD_decompressStream(_state->dctx.get(), &output, &input);
       if (ZSTD_isError(rc)) {
         ThrowCorrupt("zstd", ZSTD_getErrorName(rc));
       }
@@ -84,9 +125,8 @@ class ZstdDecoder final : public ContentDecoder {
   }
 
  private:
-  irs::utils::ZstdDCtxPtr _dctx = irs::utils::MakeZstdDCtx();
+  Pooled<DecompressState> _state;
   size_t _pending = 1;
-  std::array<uint8_t, kOutBlock> _out;
 };
 
 }  // namespace

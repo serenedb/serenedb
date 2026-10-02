@@ -21,6 +21,7 @@
 #include <snappy-sinksource.h>
 #include <snappy.h>
 
+#include <iresearch/utils/string_utils.hpp>
 #include <string>
 
 #include "network/http/codecs/codec.h"
@@ -33,14 +34,25 @@ class SnappyEncoder final : public ContentEncoder {
  public:
   void Encode(std::string_view in, bool finish,
               absl::FunctionRef<void(std::string_view)> sink) override {
-    _pending.append(in);
     if (!finish) {
+      _pending.append(in);
       return;
     }
+    if (!_pending.empty()) {
+      _pending.append(in);
+      in = _pending;
+    }
     std::string out;
-    snappy::Compress(_pending.data(), _pending.size(), &out);
+    snappy::Compress(in.data(), in.size(), &out);
     _pending.clear();
     sink(out);
+  }
+
+  void EncodeAll(std::string_view in, std::string& out) override {
+    irs::utils::StrResize(out, snappy::MaxCompressedLength(in.size()));
+    size_t size = 0;
+    snappy::RawCompress(in.data(), in.size(), out.data(), &size);
+    out.resize(size);
   }
 
  private:
@@ -62,11 +74,15 @@ class SnappyDecoder final : public ContentDecoder {
  public:
   void Decode(std::string_view in, bool finish,
               absl::FunctionRef<void(std::string_view)> sink) override {
-    _pending.append(in);
     if (!finish) {
+      _pending.append(in);
       return;
     }
-    snappy::ByteArraySource source{_pending.data(), _pending.size()};
+    if (!_pending.empty()) {
+      _pending.append(in);
+      in = _pending;
+    }
+    snappy::ByteArraySource source{in.data(), in.size()};
     ForwardSink out{sink};
     if (!snappy::Uncompress(&source, &out)) {
       ThrowCorrupt("snappy", "corrupt or truncated body");

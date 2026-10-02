@@ -22,6 +22,9 @@
 
 #include <ada.h>
 
+#include <array>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -44,7 +47,9 @@ class HttpRouter {
   HttpHandler* Match(HttpRequest& request);
 
  private:
-  using Pattern = ada::url_pattern<AdaRe2Provider>;
+  using PathPattern = ada::url_pattern_component<AdaRe2Provider>;
+
+  static constexpr size_t kMethods = magic_enum::enum_count<HttpMethod>();
 
   // Fully literal routes are matched first, so one api's `/:index` cannot
   // swallow another's reserved `/_mcp` whichever order the apis were
@@ -52,15 +57,13 @@ class HttpRouter {
   // decides.
   struct Entry {
     HttpMethod method;
-    Pattern pattern;
-    std::unique_ptr<HttpHandler> handler;
+    PathPattern path;
+    HttpHandler* handler;
   };
 
-  static HttpHandler* MatchIn(std::vector<Entry>& routes,
-                              const ada::url_pattern_init& path,
-                              HttpRequest& request);
-
-  std::vector<Entry> _literal;
+  std::vector<std::unique_ptr<HttpHandler>> _handlers;
+  irs::containers::FlatHashMap<std::string, std::array<HttpHandler*, kMethods>>
+    _literal;
   std::vector<Entry> _parameterized;
 };
 

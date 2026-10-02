@@ -21,6 +21,8 @@
 #include <brotli/decode.h>
 #include <brotli/encode.h>
 
+#include <iresearch/utils/string_utils.hpp>
+
 #include "network/http/codecs/codec.h"
 
 namespace sdb::network::http {
@@ -29,18 +31,23 @@ namespace {
 // https://github.com/google/brotli/blob/master/c/include/brotli/encode.h
 class BrotliEncoder final : public ContentEncoder {
  public:
-  BrotliEncoder()
-    : _state{BrotliEncoderCreateInstance(nullptr, nullptr, nullptr)} {
-    if (_state == nullptr) {
-      ThrowCodecError("br", "cannot initialize the encoder");
-    }
-    BrotliEncoderSetParameter(_state, BROTLI_PARAM_QUALITY, kQuality);
-  }
+  BrotliEncoder() {}
 
-  ~BrotliEncoder() override { BrotliEncoderDestroyInstance(_state); }
+  ~BrotliEncoder() override {
+    if (_state != nullptr) {
+      BrotliEncoderDestroyInstance(_state);
+    }
+  }
 
   void Encode(std::string_view in, bool finish,
               absl::FunctionRef<void(std::string_view)> sink) override {
+    if (_state == nullptr) {
+      _state = BrotliEncoderCreateInstance(nullptr, nullptr, nullptr);
+      if (_state == nullptr) {
+        ThrowCodecError("br", "cannot initialize the encoder");
+      }
+      BrotliEncoderSetParameter(_state, BROTLI_PARAM_QUALITY, kQuality);
+    }
     size_t avail_in = in.size();
     const auto* next_in = reinterpret_cast<const uint8_t*>(in.data());
     const auto op = finish ? BROTLI_OPERATION_FINISH : BROTLI_OPERATION_PROCESS;
@@ -62,10 +69,27 @@ class BrotliEncoder final : public ContentEncoder {
     }
   }
 
+  void EncodeAll(std::string_view in, std::string& out) override {
+    const size_t bound = BrotliEncoderMaxCompressedSize(in.size());
+    if (bound == 0) {
+      ContentEncoder::EncodeAll(in, out);
+      return;
+    }
+    irs::utils::StrResize(out, bound);
+    size_t size = out.size();
+    if (!BrotliEncoderCompress(kQuality, BROTLI_DEFAULT_WINDOW,
+                               BROTLI_MODE_GENERIC, in.size(),
+                               reinterpret_cast<const uint8_t*>(in.data()),
+                               &size, reinterpret_cast<uint8_t*>(out.data()))) {
+      ThrowCodecError("br", "compression failed");
+    }
+    out.resize(size);
+  }
+
  private:
   static constexpr uint32_t kQuality = 5;
 
-  BrotliEncoderState* _state;
+  BrotliEncoderState* _state = nullptr;
   std::array<uint8_t, kOutBlock> _out;
 };
 

@@ -20,6 +20,8 @@
 
 #include <zlib.h>
 
+#include <iresearch/utils/string_utils.hpp>
+
 #include "network/http/codecs/codec.h"
 
 namespace sdb::network::http {
@@ -27,88 +29,113 @@ namespace {
 
 // https://www.zlib.net/manual.html#Advanced : windowBits 15 + 16 selects the
 // gzip wrapper around deflate.
-class GzipEncoder final : public ContentEncoder {
- public:
-  GzipEncoder() {
-    const int rc = deflateInit2(&_stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED,
+struct DeflateState {
+  DeflateState() {
+    const int rc = deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED,
                                 15 + 16, 8, Z_DEFAULT_STRATEGY);
     if (rc != Z_OK) {
       ThrowCodecError("gzip", zError(rc));
     }
-    _initialized = true;
   }
 
-  ~GzipEncoder() override {
-    if (_initialized) {
-      deflateEnd(&_stream);
+  ~DeflateState() { deflateEnd(&stream); }
+
+  bool Reset() noexcept { return deflateReset(&stream) == Z_OK; }
+
+  z_stream stream{};
+  std::array<uint8_t, kOutBlock> out;
+};
+
+struct InflateState {
+  InflateState() {
+    if (inflateInit2(&stream, 16 + MAX_WBITS) != Z_OK) {
+      ThrowCodecError("gzip", "cannot initialize the decoder");
     }
   }
 
+  ~InflateState() { inflateEnd(&stream); }
+
+  bool Reset() noexcept { return inflateReset(&stream) == Z_OK; }
+
+  z_stream stream{};
+  std::array<uint8_t, kOutBlock> out;
+};
+
+class GzipEncoder final : public ContentEncoder {
+ public:
   void Encode(std::string_view in, bool finish,
               absl::FunctionRef<void(std::string_view)> sink) override {
-    _stream.next_in =
+    auto& stream = _state->stream;
+    auto& out = _state->out;
+    stream.next_in =
       const_cast<Bytef*>(reinterpret_cast<const Bytef*>(in.data()));
-    _stream.avail_in = static_cast<uInt>(in.size());
+    stream.avail_in = static_cast<uInt>(in.size());
     const int flush = finish ? Z_FINISH : Z_NO_FLUSH;
     do {
-      _stream.next_out = _out.data();
-      _stream.avail_out = static_cast<uInt>(_out.size());
-      const int rc = deflate(&_stream, flush);
+      stream.next_out = out.data();
+      stream.avail_out = static_cast<uInt>(out.size());
+      const int rc = deflate(&stream, flush);
       // Z_BUF_ERROR only reports "no progress possible", which is expected
       // once the input is drained; anything else is fatal.
       if (rc != Z_OK && rc != Z_STREAM_END && rc != Z_BUF_ERROR) {
         ThrowCodecError("gzip", zError(rc));
       }
-      const size_t produced = _out.size() - _stream.avail_out;
+      const size_t produced = out.size() - stream.avail_out;
       if (produced != 0) {
-        sink({reinterpret_cast<const char*>(_out.data()), produced});
+        sink({reinterpret_cast<const char*>(out.data()), produced});
       }
       if (rc == Z_BUF_ERROR) {
         break;
       }
-    } while (_stream.avail_out == 0);
-    if (_stream.avail_in != 0) {
+    } while (stream.avail_out == 0);
+    if (stream.avail_in != 0) {
       ThrowCodecError("gzip", "input not consumed");
     }
   }
 
+  void EncodeAll(std::string_view in, std::string& out) override {
+    auto& stream = _state->stream;
+    irs::utils::StrResize(out, deflateBound(&stream, in.size()));
+    stream.next_in =
+      const_cast<Bytef*>(reinterpret_cast<const Bytef*>(in.data()));
+    stream.avail_in = static_cast<uInt>(in.size());
+    stream.next_out = reinterpret_cast<Bytef*>(out.data());
+    stream.avail_out = static_cast<uInt>(out.size());
+    if (deflate(&stream, Z_FINISH) != Z_STREAM_END) {
+      ThrowCodecError("gzip", "output exceeds the deflate bound");
+    }
+    out.resize(out.size() - stream.avail_out);
+  }
+
  private:
-  z_stream _stream{};
-  bool _initialized = false;
-  std::array<uint8_t, kOutBlock> _out;
+  Pooled<DeflateState> _state;
 };
 
 class GzipDecoder final : public ContentDecoder {
  public:
-  GzipDecoder() {
-    if (inflateInit2(&_stream, 16 + MAX_WBITS) != Z_OK) {
-      ThrowCodecError("gzip", "cannot initialize the decoder");
-    }
-  }
-
-  ~GzipDecoder() override { inflateEnd(&_stream); }
-
   void Decode(std::string_view in, bool finish,
               absl::FunctionRef<void(std::string_view)> sink) override {
-    _stream.next_in =
+    auto& stream = _state->stream;
+    auto& out = _state->out;
+    stream.next_in =
       const_cast<Bytef*>(reinterpret_cast<const Bytef*>(in.data()));
-    _stream.avail_in = static_cast<uInt>(in.size());
+    stream.avail_in = static_cast<uInt>(in.size());
     for (;;) {
       if (_done) {
-        if (_stream.avail_in == 0) {
+        if (stream.avail_in == 0) {
           break;
         }
-        if (inflateReset(&_stream) != Z_OK) {
+        if (inflateReset(&stream) != Z_OK) {
           ThrowCorrupt("gzip", "cannot start the next member");
         }
         _done = false;
       }
-      _stream.next_out = _out.data();
-      _stream.avail_out = static_cast<uInt>(_out.size());
-      const int rc = inflate(&_stream, Z_NO_FLUSH);
-      const size_t produced = _out.size() - _stream.avail_out;
+      stream.next_out = out.data();
+      stream.avail_out = static_cast<uInt>(out.size());
+      const int rc = inflate(&stream, Z_NO_FLUSH);
+      const size_t produced = out.size() - stream.avail_out;
       if (produced != 0) {
-        sink({reinterpret_cast<const char*>(_out.data()), produced});
+        sink({reinterpret_cast<const char*>(out.data()), produced});
       }
       if (rc == Z_STREAM_END) {
         _done = true;
@@ -118,9 +145,9 @@ class GzipDecoder final : public ContentDecoder {
         break;
       }
       if (rc != Z_OK) {
-        ThrowCorrupt("gzip", _stream.msg ? _stream.msg : zError(rc));
+        ThrowCorrupt("gzip", stream.msg ? stream.msg : zError(rc));
       }
-      if (_stream.avail_in == 0 && _stream.avail_out != 0) {
+      if (stream.avail_in == 0 && stream.avail_out != 0) {
         break;
       }
     }
@@ -130,9 +157,8 @@ class GzipDecoder final : public ContentDecoder {
   }
 
  private:
-  z_stream _stream{};
+  Pooled<InflateState> _state;
   bool _done = false;
-  std::array<uint8_t, kOutBlock> _out;
 };
 
 }  // namespace

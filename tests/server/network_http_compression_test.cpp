@@ -707,6 +707,26 @@ TEST(NetworkHttpCompression, DecodeContentCorruptOrTruncated) {
   }
 }
 
+std::string ZstdWithWindowLog(std::string_view in, int window_log) {
+  auto* cctx = ZSTD_createCCtx();
+  ZSTD_CCtx_setParameter(cctx, ZSTD_c_windowLog, window_log);
+  std::string out(ZSTD_compressBound(in.size()), '\0');
+  ZSTD_outBuffer output{out.data(), out.size(), 0};
+  ZSTD_inBuffer head{in.data(), in.size() / 2, 0};
+  ZSTD_compressStream2(cctx, &output, &head, ZSTD_e_continue);
+  ZSTD_inBuffer tail{in.data() + head.size, in.size() - head.size, 0};
+  EXPECT_EQ(ZSTD_compressStream2(cctx, &output, &tail, ZSTD_e_end), 0u);
+  ZSTD_freeCCtx(cctx);
+  out.resize(output.pos);
+  return out;
+}
+
+TEST(NetworkHttpCompression, ZstdWindowAboveEightMibIsRejected) {
+  EXPECT_EQ(DecodeAll(ZstdWithWindowLog(kLarge, 23), "zstd"), kLarge);
+  EXPECT_EQ(DecodeErrcode(ZstdWithWindowLog(kLarge, 24), "zstd"),
+            ERRCODE_DATA_EXCEPTION);
+}
+
 TEST(NetworkHttpCompression, DecodeContentSizeLimit) {
   for (const auto coding : kCodings) {
     const auto encoded = Encode(coding, kLarge);

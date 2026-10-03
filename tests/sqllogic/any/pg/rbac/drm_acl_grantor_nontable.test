@@ -81,17 +81,33 @@ t
 
 
 # The grantor cannot be dropped while it is the grantor of the column grant.
+skipif serenedb
 statement error
 DROP ROLE dag_vedernikoff;
 ----
 db error: ERROR: role "dag_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
+onlyif serenedb
+statement error
+DROP ROLE dag_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dag_vedernikoff" because there are entries that depend on it.<slt:ignore>
+
+
 # The dependent grantee is independently pinned by the same ACL row.
+skipif serenedb
 statement error
 DROP ROLE dag_clickclack;
 ----
 db error: ERROR: role "dag_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dag_clickclack;
+----
+db error: ERROR: Cannot drop entry "dag_clickclack" because there are entries that depend on it.<slt:ignore>
 
 
 # Tear down the whole column ACL (the grantor's base grant AND the dependent
@@ -144,10 +160,18 @@ statement ok
 RESET ROLE;
 
 
+skipif serenedb
 statement error
 DROP ROLE dag_vedernikoff;
 ----
 db error: ERROR: role "dag_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dag_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dag_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -198,10 +222,18 @@ statement ok
 RESET ROLE;
 
 
+skipif serenedb
 statement error
 DROP ROLE dag_vedernikoff;
 ----
 db error: ERROR: role "dag_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dag_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dag_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -252,10 +284,18 @@ statement ok
 RESET ROLE;
 
 
+skipif serenedb
 statement error
 DROP ROLE dag_vedernikoff;
 ----
 db error: ERROR: role "dag_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dag_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dag_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -307,10 +347,18 @@ statement ok
 RESET ROLE;
 
 
+skipif serenedb
 statement error
 DROP ROLE dag_vedernikoff;
 ----
 db error: ERROR: role "dag_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dag_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dag_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok

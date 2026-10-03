@@ -1,0 +1,167 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE mm (id INTEGER PRIMARY KEY, title VARCHAR, skills VARCHAR, edu VARCHAR, tenure INTEGER);
+
+
+statement ok
+INSERT INTO mm VALUES
+  (1, 'data engineer', 'gcp python', 'computer engineering', 5),
+  (2, 'data engineer', 'aws', 'computer engineering', 5),
+  (3, 'sales manager', 'gcp', 'business', 5),
+  (4, 'sales manager', 'aws', 'business', 50),
+  (5, 'data engineer', 'gcp', 'business', 50),
+  (6, 'sales manager', 'gcp python', 'business', 50);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mm_words AS split_text() WITH (frequency, position);
+
+
+statement ok
+CREATE INDEX mm_idx ON mm USING inverted(id, title mm_words, skills mm_words, edu mm_words, tenure)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mm;
+
+
+query
+SELECT id FROM mm_idx
+WHERE (title @@ ts_phrase('data engineer') OR skills @@ 'gcp'
+       OR edu @@ ts_like('%engineer%') OR tenure <= 10)::min_match(4)
+ORDER BY id;
+----
+id
+1
+
+
+query
+SELECT id FROM mm_idx
+WHERE (title @@ ts_phrase('data engineer') OR skills @@ 'gcp'
+       OR edu @@ ts_like('%engineer%') OR tenure <= 10)::min_match(3)
+ORDER BY id;
+----
+id
+1
+2
+
+
+query
+SELECT id FROM mm_idx
+WHERE (title @@ ts_phrase('data engineer') OR skills @@ 'gcp'
+       OR edu @@ ts_like('%engineer%') OR tenure <= 10)::min_match(2)
+ORDER BY id;
+----
+id
+1
+2
+3
+5
+
+
+query
+SELECT id FROM mm_idx
+WHERE (title @@ ts_phrase('data engineer') OR skills @@ 'gcp'
+       OR edu @@ ts_like('%engineer%') OR tenure <= 10)::min_match(1)
+ORDER BY id;
+----
+id
+1
+2
+3
+5
+6
+
+
+query
+SELECT id FROM mm_idx
+WHERE id <= 3
+  AND (title @@ ts_phrase('data engineer') OR skills @@ 'gcp'
+       OR edu @@ ts_like('%engineer%') OR tenure <= 10)::min_match(2)
+ORDER BY id;
+----
+id
+1
+2
+3
+
+
+query
+SELECT id FROM mm_idx
+WHERE (skills @@ 'gcp' OR skills @@ 'python' OR title @@ ts_phrase('data engineer'))::min_match(2)
+ORDER BY id;
+----
+id
+1
+5
+6
+
+
+query
+SELECT id FROM mm_idx
+WHERE ((skills @@ 'gcp' OR skills @@ 'python')::min_match(1)
+       OR title @@ ts_phrase('data engineer'))::min_match(2)
+ORDER BY id;
+----
+id
+1
+5
+
+
+query
+SELECT id FROM mm_idx
+WHERE (NOT skills @@ 'gcp' OR NOT tenure <= 10 OR NOT edu @@ ts_like('%engineer%'))::min_match(2)
+ORDER BY id;
+----
+id
+4
+5
+6
+
+
+query error ::min_match\(3\) on an OR of 2 branches
+SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR tenure <= 10)::min_match(3);
+
+
+query error min_match\(\) count must be >= 1
+SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR tenure <= 10)::min_match(0);
+
+
+query error ::min_match\(K\) applies to an OR of predicates
+SELECT id FROM mm_idx WHERE (skills @@ 'gcp')::min_match(1);
+
+
+query error ::min_match\(K\) applies to an OR of predicates
+SELECT id FROM mm_idx WHERE (skills @@ 'gcp' AND tenure <= 10)::min_match(1);
+
+
+query error NOT on a ::min_match\(K\) group is not supported
+SELECT id FROM mm_idx
+WHERE NOT (skills @@ 'gcp' OR tenure <= 10 OR edu @@ ts_like('%engineer%'))::min_match(2);
+
+
+query error ::min_match used on a predicate the inverted index could not claim
+SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR id > id)::min_match(1);
+
+
+query error ::min_match\(K\) applies to an OR of predicates, not to a query inside `@@`
+SELECT id FROM mm_idx
+WHERE skills @@ (ts_phrase('gcp') || ts_phrase('python') || ts_phrase('aws'))::min_match(2);
+
+
+query error ::min_match\(K\) is only meaningful on an OR of predicates the inverted index answers
+SELECT (id > 2 OR tenure <= 10)::min_match(2) FROM mm;
+
+
+query error ::min_match\(K\) is only meaningful on an OR of predicates the inverted index answers
+SELECT ts_phrase('gcp')::min_match(2);
+
+
+query error ::min_match\(K\) is only meaningful on an OR of predicates the inverted index answers
+SELECT 'gcp'::min_match(2);
+
+
+statement ok
+DROP TABLE mm;

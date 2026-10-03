@@ -1098,6 +1098,18 @@ ORDER BY id;
 id
 2
 
+# DOCS_TEST: min_match
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM docs_idx
+WHERE (body @@ 'quick' OR category = 'drama' OR id >= 2)::min_match(2)
+ORDER BY id;
+----
+id
+2
+3
+
 # DOCS_TEST: ts_compound_min_should
 # DOCS_TEST_BODY
 query

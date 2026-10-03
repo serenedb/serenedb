@@ -357,7 +357,7 @@ OR over a list of sub-queries, with an optional "match at least N" threshold.
 | `list` | `LIST(TSQUERY)` (bare strings allowed) | — | The alternatives. Each element is a `TSQUERY`; a plain string is tokenized by the column dictionary. |
 | `min_match` | `INTEGER` | `1` | How many alternatives a row must satisfy. Must be between `1` and the list length. `1` is a plain `OR`; raising it demands more of the alternatives. |
 
-**How it works.** `ts_any` is a disjunction with a tunable floor. At `min_match = 1` it is a straight `OR` — match any alternative. Raising `min_match` turns it into an "N of M" query: with three alternatives and `min_match = 2`, a row must contain at least two of them. This is the equivalent of Elasticsearch's `minimum_should_match` (integer form) and the `terms_set` query. SereneDB takes an integer count only — it does not accept percentage or negative `minimum_should_match` formats, nor a per-document min-match field. Over [`ts_tokenize`](#ts_tokenize) a position counts once: the synonyms of one word are one alternative, so `min_match` counts words, not synonyms.
+**How it works.** `ts_any` is a disjunction with a tunable floor. At `min_match = 1` it is a straight `OR` — match any alternative. Raising `min_match` turns it into an "N of M" query: with three alternatives and `min_match = 2`, a row must contain at least two of them. This is the equivalent of Elasticsearch's `minimum_should_match` (integer form) and the `terms_set` query. SereneDB takes an integer count only — it does not accept percentage or negative `minimum_should_match` formats, nor a per-document min-match field. Over [`ts_tokenize`](#ts_tokenize) a position counts once: the synonyms of one word are one alternative, so `min_match` counts words, not synonyms. For "N of M" over predicates on different columns, use [`::min_match(K)`](#min-match) on an `OR`.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -521,6 +521,41 @@ Boost: scale a sub-query's contribution to the relevance score.
 To see the effect, boost one alternative and order by [`BM25`](./scoring.md):
 
 <SqlLogicTest id="sql/functions/full_text_search/a--factor-boost-score" />
+
+## Matching K of N Predicates {#min-match}
+
+| Modifier | Description |
+| :--- | :--- |
+| [`(p1 OR p2 OR ...)::min_match(K)`](#p1-or-p2--min_matchk) | Match rows that satisfy at least `K` of the `OR`'s branches. |
+
+#### `(p1 OR p2 OR ...)::min_match(K)` {#p1-or-p2--min_matchk}
+
+Turns an `OR` of index predicates into an "at least `K` of `N`" filter. The branches can test different columns and mix any predicates the inverted index answers: `@@` matches, comparisons, ranges, `IN`, `IS NULL` and their negations.
+
+| Parameter | Type | Meaning |
+| :--- | :--- | :--- |
+| `p1 OR p2 OR ...` | `BOOLEAN` | The branches. Every branch has to be a predicate the inverted index answers. |
+| `K` | integer literal | How many branches a row must satisfy. Must be between `1` and the number of branches. |
+
+**How it works.** [`ts_any(list, K)`](#ts_any) counts alternatives within one column. `::min_match(K)` does the same across columns, on an `OR` written in SQL. The index evaluates the whole `OR` as a single node that requires `K` of its branches, so no row is fetched to count them. `K = 1` is the plain `OR`, and `K` equal to the number of branches is the `AND` of all of them. This is the cross-field form of Elasticsearch's `minimum_should_match` on a `bool` query's `should` clauses.
+
+Count the branches as written after the `OR`s are flattened: in `((a OR b) OR c)::min_match(2)` there are three branches. To count `a OR b` as one branch, give it a modifier of its own: `((a OR b)::min_match(1) OR c)::min_match(2)`.
+
+Where the threshold has no meaning, the query fails instead of ignoring the modifier:
+
+- on a single predicate or on an `AND`;
+- when `K` is below `1` or above the number of branches;
+- under `NOT`. "Fewer than `K` of `n`" is "at least `n - K + 1` of the negations", so write `(NOT a OR NOT b OR ...)::min_match(n - K + 1)` instead;
+- when a branch is not an index predicate;
+- on a `TSQUERY` inside `@@`. Use [`ts_any(list, K)`](#ts_any) there;
+- outside a `WHERE` clause on an inverted index, for example in the `SELECT` list.
+
+| Query | Matches `id` | Why |
+| :--- | :--- | :--- |
+| `(body @@ 'quick' OR category = 'drama' OR id >= 2)::min_match(2)` | `2`, `3` | `id 2` has `quick` and `id >= 2`, and `id 3` is a drama with `id >= 2`. `id 1` and `id 4` satisfy one branch each. |
+| `(body @@ 'quick' OR category = 'drama' OR id >= 2)::min_match(1)` | `1`, `2`, `3`, `4` | The plain `OR`. |
+
+<SqlLogicTest id="sql/functions/full_text_search/min_match" />
 
 ## PostgreSQL-Compatible Parsers {#postgresql-compatible-parsers}
 
@@ -843,6 +878,7 @@ The functions on this page cover most of the Elasticsearch / OpenSearch query DS
 | [`match_phrase`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-match-query-phrase.html) with `slop` | [`ts_phrase`](#ts_phrase) with `slop := N` or `::slop(N)`; same semantics |
 | [`term`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-term-query.html) / [`terms`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-terms-query.html) | token literal, [`has_any_tokens`](#has_any_tokens) |
 | [`terms_set`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-terms-set-query.html) (match N of M) | [`ts_any`](#ts_any) with `min_match` |
+| [`bool`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-bool-query.html) `should` over several fields with `minimum_should_match` | [`(p1 OR p2 OR ...)::min_match(K)`](#min-match) |
 | [`prefix`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-prefix-query.html) | [`ts_starts_with`](#ts_starts_with) |
 | [`wildcard`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-wildcard-query.html) | [`ts_like`](#ts_like) or [`ts_regexp`](#ts_regexp) |
 | [`regexp`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-regexp-query.html) | [`ts_regexp`](#ts_regexp) |
@@ -858,7 +894,7 @@ Elasticsearch features without a direct SereneDB equivalent, and what to use ins
 
 | Elasticsearch / OpenSearch | SereneDB |
 | :--- | :--- |
-| [`minimum_should_match`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-minimum-should-match.html) percentage / negative / combination forms | integer count only ([`ts_any`](#ts_any), [`ts_compound`](#ts_compound)) |
+| [`minimum_should_match`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-minimum-should-match.html) percentage / negative / combination forms | integer count only ([`ts_any`](#ts_any), [`ts_compound`](#ts_compound), [`::min_match(K)`](#min-match)) |
 | [`fuzziness: AUTO`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-fuzzy-query.html) | one-argument [`ts_levenshtein`](#ts_levenshtein) auto-picks a distance by term length |
 | `max_expansions` (fuzzy / prefix expansion cap) | fuzzy: [`sdb_levenshtein_max_terms`](../../indexes/inverted/maintenance.md#session-settings) (session-level, per segment, default `50`); prefix: no cap |
 | [`multi_match`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-multi-match-query.html) / `combined_fields` / `field:term` scoping | `tableoid @@` [`to_tsquery`](#to_tsquery) with `field:term` prefixes, or one `@@` per column combined with `OR` |

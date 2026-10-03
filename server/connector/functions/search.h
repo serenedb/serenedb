@@ -38,6 +38,7 @@ inline constexpr std::string_view kSlopTypeName = "slop";
 
 inline constexpr std::string_view kScoreTypeName = "score";
 inline constexpr std::string_view kMergeTypeName = "merge";
+inline constexpr std::string_view kMinMatchTypeName = "min_match";
 
 // TSQUERY leaf constructors (unprefixed). Produce a TSQUERY value;
 // stubs throw at runtime -- the filter builder claims them at bind.

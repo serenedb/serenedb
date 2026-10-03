@@ -322,6 +322,15 @@ std::optional<std::string> TryGetScoreModifier(
   return std::string{duckdb::StringValue::Get(*mod)};
 }
 
+std::optional<uint32_t> TryGetMinMatchModifier(
+  const duckdb::LogicalType& type) {
+  const auto* mod = TryGetModifier(type, duckdb::LogicalTypeId::UINTEGER);
+  if (!mod) {
+    return {};
+  }
+  return mod->GetValue<uint32_t>();
+}
+
 namespace {
 
 bool IsComparisonExpr(const duckdb::Expression& expr) {
@@ -356,7 +365,8 @@ const duckdb::Expression& UnwrapBoostBoolCoercion(
   }
   if (!TryGetBoostModifier(cast.Child().GetReturnType()) &&
       !TryGetScoreModifier(cast.Child().GetReturnType()) &&
-      !TryGetMergeModifier(cast.Child().GetReturnType())) {
+      !TryGetMergeModifier(cast.Child().GetReturnType()) &&
+      !TryGetMinMatchModifier(cast.Child().GetReturnType())) {
     return expr;
   }
   return cast.Child();
@@ -1396,10 +1406,7 @@ void CloseScope(BoolTarget parent, std::unique_ptr<irs::BooleanFilter> scope) {
   }
 }
 
-void ApplyMerge(irs::BooleanFilter& scope, TSQueryMerge merge) {
-  if (merge == TSQueryMerge::Default) {
-    return;
-  }
+irs::BooleanFilter* InnermostGroup(irs::BooleanFilter& scope) {
   irs::BooleanFilter* group = nullptr;
   for (auto* node = &scope;;) {
     const auto clauses = node->Filters(irs::Occur::Must);
@@ -1412,6 +1419,36 @@ void ApplyMerge(irs::BooleanFilter& scope, TSQueryMerge merge) {
     group = &irs::utils::downCast<irs::BooleanFilter>(*clauses[0]);
     node = group;
   }
+  return group;
+}
+
+void ApplyMinMatch(irs::BooleanFilter& scope, uint32_t min_match) {
+  auto* group = InnermostGroup(scope);
+  if (!group || group->Size(irs::Occur::Should) == 0 ||
+      group->Size(irs::Occur::Must) != 0 ||
+      group->Size(irs::Occur::MustNot) != 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("::min_match(K) applies to an OR of predicates"),
+                    ERR_HINT("Write it on an OR group, e.g. (a @@ 'x' OR "
+                             "b @@ 'y' OR c @@ 'z')::min_match(2)."));
+  }
+  const auto branches = group->Size(irs::Occur::Should);
+  if (min_match > branches) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("::min_match(", min_match, ") on an OR of ",
+                            branches, " branches"),
+                    ERR_HINT("K must be between 1 and the number of OR "
+                             "branches. A branch of several predicates is "
+                             "grouped with its own ::min_match(1)."));
+  }
+  SetMinMatch(*group, min_match);
+}
+
+void ApplyMerge(irs::BooleanFilter& scope, TSQueryMerge merge) {
+  if (merge == TSQueryMerge::Default) {
+    return;
+  }
+  auto* group = InnermostGroup(scope);
   if (!group) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("::merge(...) applies to a boolean group"),
@@ -1507,6 +1544,56 @@ bool TryDispatchSqlMergeCast(BoolTarget filter, const FilterContext& ctx,
       ERR_HINT("merge is only meaningful on an inverted-index boolean group."));
   }
   ApplyMerge(*scope, *merge);
+  CloseScope(filter, std::move(scope));
+  return true;
+}
+
+void RejectNegatedMinMatch(const FilterContext& ctx) {
+  if (ctx.negated) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("NOT on a ::min_match(K) group is not supported"),
+      ERR_HINT("Fewer than K of n branches is at least n-K+1 of their "
+               "negations: (NOT a OR NOT b OR ...)::min_match(n-K+1)."));
+  }
+}
+
+void RejectTSQueryMinMatch(const duckdb::Expression& peeled) {
+  if (peeled.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST &&
+      TryGetMinMatchModifier(
+        peeled.Cast<duckdb::BoundCastExpression>().GetReturnType())) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("::min_match(K) applies to an OR of predicates, not to a query "
+              "inside `@@`"),
+      ERR_HINT("Inside `@@` use ts_any([q1, q2, ...], K); across fields, "
+               "(a @@ q1 OR b @@ q2 OR ...)::min_match(K)."));
+  }
+}
+
+bool TryDispatchSqlMinMatchCast(BoolTarget filter, const FilterContext& ctx,
+                                const duckdb::Expression& peeled) {
+  if (peeled.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
+    return false;
+  }
+  const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
+  const auto min_match = TryGetMinMatchModifier(cast_expr.GetReturnType());
+  if (!min_match) {
+    return false;
+  }
+  RejectNegatedMinMatch(ctx);
+  auto scope = OpenScope();
+  if (auto s = FromExpression(ScopeTarget(scope), ctx, cast_expr.Child());
+      !s.ok()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("::min_match used on a predicate the inverted index could not "
+              "claim: ",
+              s.message()),
+      ERR_HINT("min_match counts the branches of an OR the inverted index "
+               "answers; every branch has to be an index predicate."));
+  }
+  ApplyMinMatch(*scope, *min_match);
   CloseScope(filter, std::move(scope));
   return true;
 }
@@ -1677,6 +1764,9 @@ absl::Status FromExpression(BoolTarget filter, const FilterContext& ctx,
     return absl::OkStatus();
   }
   if (TryDispatchSqlMergeCast(filter, ctx, UnwrapBoostBoolCoercion(expr))) {
+    return absl::OkStatus();
+  }
+  if (TryDispatchSqlMinMatchCast(filter, ctx, UnwrapBoostBoolCoercion(expr))) {
     return absl::OkStatus();
   }
 
@@ -1885,7 +1975,8 @@ const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
     // Modifier-bearing casts must be preserved so the walker sees them.
     if (!TryGetTokenizerModifier(target).empty() ||
         TryGetBoostModifier(target) || TryGetSlopModifier(target) ||
-        TryGetScoreModifier(target) || TryGetMergeModifier(target)) {
+        TryGetScoreModifier(target) || TryGetMergeModifier(target) ||
+        TryGetMinMatchModifier(target)) {
       break;
     }
     // Peel transit casts between string-ish types and the TSQUERY
@@ -2175,6 +2266,8 @@ void BuildTSQuery(BoolTarget parent, const FilterContext& ctx,
   if (TryDispatchMergeCast(parent, ctx, column_info, unwrapped)) {
     return;
   }
+
+  RejectTSQueryMinMatch(unwrapped);
 
   // Bare string (promoted via VARCHAR -> TSQUERY cast) -> tokenize via
   // the ambient (column) analyzer. Multi-token input composes with OR

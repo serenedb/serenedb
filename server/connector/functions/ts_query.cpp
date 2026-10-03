@@ -43,6 +43,7 @@
 #include <iresearch/search/scorers/unscored.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <limits>
 
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
@@ -95,6 +96,11 @@ bool HasTokenizerModifier(const duckdb::LogicalType& type) {
 bool HasSlopModifier(const duckdb::LogicalType& type) {
   const auto* mod = TryGetTypeModifier(type);
   return mod && mod->type().id() == duckdb::LogicalTypeId::BIGINT;
+}
+
+bool HasMinMatchModifier(const duckdb::LogicalType& type) {
+  const auto* mod = TryGetTypeModifier(type);
+  return mod && mod->type().id() == duckdb::LogicalTypeId::UINTEGER;
 }
 
 bool HasScoreModifier(const duckdb::LogicalType& type) {
@@ -168,6 +174,13 @@ bool ThrowingSlopCast(duckdb::Vector&, duckdb::Vector&, duckdb::idx_t,
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                   ERR_MSG("::slop(N) is only meaningful inside an `@@` match "
                           "against an inverted-indexed column."));
+}
+
+bool ThrowingMinMatchCast(duckdb::Vector&, duckdb::Vector&, duckdb::idx_t,
+                          duckdb::CastParameters&) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  ERR_MSG("::min_match(K) is only meaningful on an OR of "
+                          "predicates the inverted index answers."));
 }
 
 bool ThrowingScoreCast(duckdb::Vector&, duckdb::Vector&, duckdb::idx_t,
@@ -299,6 +312,9 @@ duckdb::BoundCastInfo BindTSQueryFromStringCast(
   if (HasSlopModifier(target)) {
     return duckdb::BoundCastInfo(ThrowingSlopCast);
   }
+  if (HasMinMatchModifier(target)) {
+    return duckdb::BoundCastInfo(ThrowingMinMatchCast);
+  }
   if (HasScoreModifier(target)) {
     return duckdb::BoundCastInfo(ThrowingScoreCast);
   }
@@ -323,8 +339,11 @@ bool TSQueryBoostCast(duckdb::Vector& source, duckdb::Vector& result,
 }
 
 duckdb::BoundCastInfo BindTSQueryBoostCast(duckdb::BindCastInput&,
-                                           const duckdb::LogicalType&,
+                                           const duckdb::LogicalType& source,
                                            const duckdb::LogicalType& target) {
+  if (HasMinMatchModifier(source) || HasMinMatchModifier(target)) {
+    return duckdb::BoundCastInfo(ThrowingMinMatchCast);
+  }
   return {TSQueryBoostCast,
           duckdb::make_uniq<TSQueryCastData>(ReadTargetModifiers(target))};
 }
@@ -360,6 +379,9 @@ duckdb::BoundCastInfo BindTSQueryToVarcharCast(
   }
   if (HasSlopModifier(source)) {
     return duckdb::BoundCastInfo(ThrowingSlopCast);
+  }
+  if (HasMinMatchModifier(source)) {
+    return duckdb::BoundCastInfo(ThrowingMinMatchCast);
   }
   if (HasScoreModifier(source)) {
     return duckdb::BoundCastInfo(ThrowingScoreCast);
@@ -614,6 +636,36 @@ void RegisterTSQueryTypes(duckdb::ExtensionLoader& loader) {
     });
 
   loader.RegisterType(
+    std::string{kMinMatchTypeName}, MakeTSQueryType(),
+    +[](duckdb::BindLogicalTypeInput& input) -> duckdb::LogicalType {
+      const auto& modifiers = input.modifiers;
+      if (modifiers.size() != 1) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("min_match(<count>) requires exactly one integer argument"));
+      }
+      const auto raw = modifiers[0].GetValue();
+      duckdb::Value count;
+      if (!TryCastExactInt64(raw, count)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("min_match() count must be a non-null "
+                                "integer, got ",
+                                raw.ToString()));
+      }
+      const auto value = count.GetValue<int64_t>();
+      if (value < 1 || value > std::numeric_limits<uint32_t>::max()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("min_match() count must be >= 1, got ", value));
+      }
+      auto type = MakeModifierTSQueryType();
+      auto info = duckdb::make_uniq<duckdb::ExtensionTypeInfo>();
+      info->modifiers.emplace_back(
+        duckdb::Value::UINTEGER(static_cast<uint32_t>(value)));
+      type.SetExtensionInfo(std::move(info));
+      return type;
+    });
+
+  loader.RegisterType(
     std::string{kScoreTypeName}, MakeTSQueryType(),
     +[](duckdb::BindLogicalTypeInput& input) -> duckdb::LogicalType {
       const auto& modifiers = input.modifiers;
@@ -701,8 +753,11 @@ void RegisterTSQueryBoolCasts(duckdb::ExtensionLoader& loader) {
   // isn't, the throwing stub fires with a specific message
   // pointing the user back to `@@`.
   auto boost_bool_cast_bind =
-    +[](duckdb::BindCastInput&, const duckdb::LogicalType&,
-        const duckdb::LogicalType&) -> duckdb::BoundCastInfo {
+    +[](duckdb::BindCastInput&, const duckdb::LogicalType& source,
+        const duckdb::LogicalType& target) -> duckdb::BoundCastInfo {
+    if (HasMinMatchModifier(source) || HasMinMatchModifier(target)) {
+      return duckdb::BoundCastInfo(ThrowingMinMatchCast);
+    }
     return duckdb::BoundCastInfo(+[](duckdb::Vector&, duckdb::Vector&,
                                      duckdb::idx_t,
                                      duckdb::CastParameters&) -> bool {

@@ -1,0 +1,39 @@
+# DOCS_TEST: example_013
+
+statement ok
+DROP VIEW IF EXISTS sales_report;
+
+statement ok
+DROP DATABASE IF EXISTS sales;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE DATABASE sales;
+
+statement ok
+CREATE TABLE sales.public.orders (id INTEGER, amount INTEGER);
+
+statement ok
+CREATE VIEW sales_report AS
+    SELECT sum(amount) AS total FROM sales.public.orders;
+
+statement error
+DROP TABLE sales.public.orders;
+----
+db error: ERROR: Cannot drop entry "orders" because there are entries that depend on it.
+view "sales_report" depends on table "orders".
+Use DROP...CASCADE to drop all dependents.
+
+statement error
+DROP DATABASE sales;
+----
+db error: ERROR: Cannot drop database "sales" because entries in other databases depend on it.
+view "sales_report" depends on table "orders".
+Drop the dependent entries first.
+
+statement ok
+DROP TABLE sales.public.orders CASCADE;
+
+statement ok
+DROP DATABASE sales;

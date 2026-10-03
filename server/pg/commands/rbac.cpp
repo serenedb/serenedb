@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/function/pragma_function.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -46,7 +47,6 @@
 #include "network/credentials.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
-#include "pg/role_dependencies.h"
 
 namespace sdb::pg {
 namespace {
@@ -353,12 +353,10 @@ void DropRolePragma(duckdb::ClientContext& client,
                 "\" because it is required by the database system"));
     }
 
-    size_t dependencies = CountJobsOwnedBy(client, role.oid);
-    VisitRoleDependencies(client, [&](const RoleDependency& dependency) {
-      if (dependency.role == role.oid) {
-        ++dependencies;
-      }
-    });
+    size_t dependencies = 0;
+    s.Cluster().GetDependencyManager()->ScanDependentEntries(
+      s.ClusterTransaction(), role,
+      [&](duckdb::CatalogEntry&) { ++dependencies; });
     if (dependencies != 0) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),

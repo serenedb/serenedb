@@ -1,0 +1,204 @@
+statement ok
+DROP VIEW IF EXISTS cxd_v
+
+
+statement ok
+DROP MACRO IF EXISTS cxd_m
+
+
+statement ok
+DROP DATABASE IF EXISTS cxd_db
+
+
+statement ok
+DROP ROLE IF EXISTS cxd_owner
+
+
+statement ok
+DROP ROLE IF EXISTS cxd_reader
+
+
+statement ok
+CREATE DATABASE cxd_db
+
+
+statement ok
+CREATE TABLE cxd_db.public.t (a INTEGER, b INTEGER)
+
+
+statement ok
+INSERT INTO cxd_db.public.t VALUES (1, 10), (2, 20)
+
+
+statement ok
+CREATE VIEW cxd_v AS SELECT a FROM cxd_db.public.t
+
+
+statement error
+DROP TABLE cxd_db.public.t
+----
+db error: ERROR: Cannot drop entry "t" because there are entries that depend on it.
+view "cxd_v" depends on table "t".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement error
+ALTER TABLE cxd_db.public.t DROP COLUMN a
+----
+db error: ERROR: Cannot alter entry "t" because there are entries that depend on it.
+view "cxd_v" depends on table "t".
+Drop the dependent entries first and recreate them after the change.
+
+
+statement ok
+ALTER TABLE cxd_db.public.t DROP COLUMN b
+
+
+statement ok
+ALTER TABLE cxd_db.public.t ADD COLUMN c INTEGER
+
+
+statement error
+DROP DATABASE cxd_db
+----
+db error: ERROR: Cannot drop database "cxd_db" because entries in other databases depend on it.
+view "cxd_v" depends on table "t".
+Drop the dependent entries first.
+
+
+query
+SELECT a FROM cxd_v ORDER BY a
+----
+a
+1
+2
+
+
+statement ok
+DROP TABLE cxd_db.public.t CASCADE
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'cxd_v'
+----
+n
+0
+
+
+statement ok
+CREATE TABLE local_t (a INTEGER)
+
+
+statement ok
+CREATE VIEW cxd_db.public.v_back AS SELECT a FROM postgres.public.local_t
+
+
+statement error
+DROP TABLE local_t
+----
+db error: ERROR: Cannot drop entry "local_t" because there are entries that depend on it.
+view "v_back" depends on table "local_t".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+DROP VIEW cxd_db.public.v_back
+
+
+statement ok
+DROP TABLE local_t
+
+
+statement ok
+CREATE TABLE cxd_db.public.m (a INTEGER)
+
+
+statement ok
+CREATE MACRO cxd_m() AS (SELECT count(*) FROM cxd_db.public.m)
+
+
+statement error
+DROP TABLE cxd_db.public.m
+----
+db error: ERROR: Cannot drop entry "m" because there are entries that depend on it.
+macro function "cxd_m" depends on table "m".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+DROP MACRO cxd_m
+
+
+statement ok
+DROP TABLE cxd_db.public.m
+
+
+statement ok
+CREATE ROLE cxd_owner
+
+
+statement ok
+CREATE ROLE cxd_reader
+
+
+statement ok
+CREATE TABLE cxd_db.public.owned (a INTEGER)
+
+
+statement ok
+ALTER TABLE cxd_db.public.owned OWNER TO cxd_owner
+
+
+statement ok
+GRANT SELECT ON cxd_db.public.owned TO cxd_reader
+
+
+query
+SELECT a.rolname, s.deptype, s.dbid = (SELECT oid FROM pg_database WHERE datname = 'cxd_db') AS in_cxd_db
+FROM pg_shdepend s
+JOIN pg_authid a ON a.oid = s.refobjid
+WHERE a.rolname IN ('cxd_owner', 'cxd_reader') AND s.classid = 'pg_class'::regclass
+ORDER BY 1, 2
+----
+rolname	deptype	in_cxd_db
+cxd_owner	a	t
+cxd_owner	o	t
+cxd_reader	a	t
+
+
+statement error
+DROP ROLE cxd_reader
+----
+db error: ERROR: role "cxd_reader" cannot be dropped because some objects depend on it
+DETAIL: 1 object(s) in database depend on role "cxd_reader"
+
+
+statement ok
+REVOKE SELECT ON cxd_db.public.owned FROM cxd_reader
+
+
+statement ok
+DROP ROLE cxd_reader
+
+
+statement ok
+ALTER ROLE cxd_owner RENAME TO cxd_owner2
+
+
+statement error
+DROP ROLE cxd_owner2
+----
+db error: ERROR: role "cxd_owner2" cannot be dropped because some objects depend on it
+DETAIL: 1 object(s) in database depend on role "cxd_owner2"
+
+
+statement ok
+DROP TABLE cxd_db.public.owned
+
+
+statement ok
+DROP ROLE cxd_owner2
+
+
+statement ok
+DROP DATABASE cxd_db

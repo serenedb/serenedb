@@ -39,7 +39,7 @@ Without it, it is:
 ## Notes
 
 - Dropping roles requires the `CREATEROLE` attribute (or superuser); dropping a superuser role requires superuser.
-- If the role owns objects or is referenced by grants, `DROP ROLE` fails with `role "..." cannot be dropped because some objects depend on it`.
+- If the role owns objects or is referenced by grants in any database, `DROP ROLE` fails with `role "..." cannot be dropped because some objects depend on it`.
 
 ## See also
 

@@ -89,6 +89,12 @@ Views that reference a table are tracked as dependents of that table. If a view 
 
 <SqlLogicTest id="sql/statements/drop/view_dependency/example_012" />
 
+### Dependencies across Databases
+
+A view or macro may read objects of another database. Those references are tracked the same way: dropping the referenced object with `RESTRICT` is rejected, `CASCADE` also drops the dependent in the other database, and `DROP DATABASE` is rejected while an object of another database depends on one of its objects:
+
+<SqlLogicTest id="sql/statements/drop/cross_database_dependency/example_013" />
+
 ## Limitations on Reclaiming Disk Space
 
 Running `DROP TABLE` should free the memory used by the table, but not always disk space.

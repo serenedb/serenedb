@@ -44,7 +44,6 @@ target_sources(
         deserialize.cpp
         system_catalog.cpp
         progress_registry.cpp
-        role_dependencies.cpp
         sql_utils.cpp
         option_help.cpp
         tokenizer_options.cpp

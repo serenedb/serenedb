@@ -84,10 +84,10 @@ class Windows {
   std::vector<size_t> _run_end;
 };
 
-bool Cover(const Windows& windows, PosAttr::value_t entry_min,
-           PosAttr::value_t entry_max, ByPhraseOptions& out, size_t& last,
-           bool& shingled) {
-  constexpr auto kNone = std::numeric_limits<size_t>::max();
+constexpr auto kNone = std::numeric_limits<size_t>::max();
+
+size_t Cover(const Windows& windows, PosAttr::value_t entry_min,
+             PosAttr::value_t entry_max, ByPhraseOptions& out, bool& shingled) {
   size_t prev = kNone;
   const auto emit = [&](size_t start, size_t count) {
     auto offs_min = entry_min;
@@ -118,7 +118,7 @@ bool Cover(const Windows& windows, PosAttr::value_t entry_min,
       }
       if (count == 0) {
         if (!windows.Indexed(i, 1)) {
-          return false;
+          return kNone;
         }
         count = 1;
       }
@@ -127,8 +127,7 @@ bool Cover(const Windows& windows, PosAttr::value_t entry_min,
       i = start + count;
     }
   }
-  last = prev;
-  return true;
+  return prev;
 }
 
 bool CoverPhrase(const analysis::ShingleTokenizer& tokenizer,
@@ -145,9 +144,9 @@ bool CoverPhrase(const analysis::ShingleTokenizer& tokenizer,
       return true;
     }
     const Windows windows{tokenizer, tokens, positions};
-    size_t last = 0;
-    if (!Cover(windows, entry_min + lag, entry_max + lag, out, last,
-               shingled)) {
+    const auto last =
+      Cover(windows, entry_min + lag, entry_max + lag, out, shingled);
+    if (last == kNone) {
       return false;
     }
     lag = positions.back() - positions[last];
@@ -183,15 +182,10 @@ bool CoverPhrase(const analysis::ShingleTokenizer& tokenizer,
       info.part);
     lag = 0;
   }
-  if (!flush() || !shingled) {
+  if (!flush() || !shingled || (patterns && tokenizer.Separator().empty())) {
     return false;
   }
-  if (patterns) {
-    if (tokenizer.Separator().empty()) {
-      return false;
-    }
-    out.set_word_separator(tokenizer.Separator());
-  }
+  out.set_word_separator(tokenizer.Separator());
   return true;
 }
 
@@ -223,9 +217,12 @@ std::optional<ShinglePhrasePlan> PlanShinglePhrase(
     plan.emplace(tokenizer.Join(words));
     return plan;
   }
-  if (positional && !CoverPhrase(tokenizer, phrase,
-                                 std::get<ByPhraseOptions>(plan.emplace(
-                                   std::in_place_type<ByPhraseOptions>)))) {
+  if (!positional) {
+    return plan;
+  }
+  auto& cover = std::get<ByPhraseOptions>(
+    plan.emplace(std::in_place_type<ByPhraseOptions>));
+  if (!CoverPhrase(tokenizer, phrase, cover)) {
     plan.reset();
   }
   return plan;

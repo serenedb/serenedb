@@ -692,7 +692,7 @@ TEST(ShinglePhrasePlanTest, partial_cover_keeps_other_parts) {
   const auto& lazy_dog = *std::next(PhraseOf(plan).begin());
   EXPECT_EQ(3U, lazy_dog.offs_min);
   EXPECT_EQ(5U, lazy_dog.offs_max);
-  EXPECT_TRUE(PhraseOf(plan).word_separator().empty());
+  EXPECT_EQ(" ", Text(PhraseOf(plan).word_separator()));
 }
 
 TEST(ShinglePhrasePlanTest, partial_cover_needs_words_for_patterns) {

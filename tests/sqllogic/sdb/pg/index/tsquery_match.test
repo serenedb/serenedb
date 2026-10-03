@@ -999,6 +999,11 @@ SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_regexp('z.*z')) ORDER BY a;
 a
 
 query
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_regexp('(')) ORDER BY a;
+----
+a
+
+query
 EXPLAIN SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_regexp('br.wn') ## ts_regexp('fo.*') ## ts_regexp('jumps'))
 ----
 QUERY PLAN

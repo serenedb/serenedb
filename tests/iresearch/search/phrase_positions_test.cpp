@@ -420,6 +420,7 @@ TEST(PhrasePositionsTest, regexp_slot) {
   EXPECT_FALSE(Matches(regexp("[[:alpha:]]+n", irs::RegexpSyntax::PosixEre),
                        Doc{"quick red fox"}));
   EXPECT_EQ(2U, Verify(regexp("[a-z]+"), Doc{"quick a fox quick b fox"}).freq);
+  EXPECT_FALSE(Matches(regexp("("), Doc{"quick ( fox"}));
 }
 
 TEST(PhrasePositionsTest, regexp_parts_lower_by_shape) {

@@ -771,3 +771,56 @@ DROP TABLE test_shingle_bare
 
 statement ok
 DROP TEXT SEARCH DICTIONARY shingle_bare
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_syn AS
+    generate_shingles(split_text(case := 'lower') | expand_solr_synonyms('car => automobile, auto'), 2, 2)
+    WITH (frequency, position)
+
+statement ok
+CREATE TABLE test_shingle_syn (id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX test_shingle_syn_idx ON test_shingle_syn USING inverted(id, body shingle_syn)
+
+statement ok
+INSERT INTO test_shingle_syn VALUES (1, 'a red car here'), (2, 'red paint here')
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle_syn
+
+query
+SELECT id FROM test_shingle_syn_idx WHERE body @@ ts_phrase('red automobile') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_syn_idx WHERE body @@ ts_phrase('red auto') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_syn_idx WHERE body @@ ts_phrase('automobile here') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_syn_idx WHERE body @@ ts_phrase('auto here') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_syn_idx WHERE body @@ ts_phrase('red paint') ORDER BY id
+----
+id
+2
+
+statement ok
+DROP TABLE test_shingle_syn
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_syn

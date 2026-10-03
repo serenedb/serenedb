@@ -867,27 +867,60 @@ TEST(ShinglePhraseIndexTest, partial_cover_agrees_with_positions) {
   const Index index{docs, *shingles,
                     irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
 
-  for (size_t i = 0; i != 300; ++i) {
+  size_t covered = 0;
+  size_t matched = 0;
+  for (size_t i = 0; i != 600; ++i) {
     irs::ByPhraseOptions phrase;
     const auto slots = 2 + rng() % 4;
     for (size_t j = 0; j != slots; ++j) {
       irs::PosAttr::value_t offs_min = j == 0 ? 0 : 1 + rng() % 2;
       irs::PosAttr::value_t offs_max = offs_min + (rng() % 5 == 0 ? 1 : 0);
       const auto word = kWords[rng() % 5];
-      if (rng() % 4 == 0) {
-        PushPrefix(phrase, word, offs_min, offs_max);
-      } else {
-        PushTerm(phrase, word, offs_min, offs_max);
+      switch (rng() % 16) {
+        case 0:
+          PushPrefix(phrase, word, offs_min, offs_max);
+          break;
+        case 1: {
+          auto& set = phrase.push_back<irs::TermSetOptions>(offs_min, offs_max);
+          set.terms.emplace(Bytes(word));
+          set.terms.emplace(Bytes(kWords[rng() % 5]));
+        } break;
+        case 2:
+          phrase.push_back<irs::ByRegexpOptions>(offs_min, offs_max) =
+            irs::ByRegexpOptions{Bytes(absl::StrCat("[", word, "-e]"))};
+          break;
+        case 3:
+          phrase.push_back<irs::ByWildcardOptions>(offs_min, offs_max) =
+            irs::ByWildcardOptions{Bytes(absl::StrCat("%", word))};
+          break;
+        case 4: {
+          auto& fuzzy =
+            phrase.push_back<irs::ByEditDistanceOptions>(offs_min, offs_max);
+          fuzzy.term = Bytes(word);
+          fuzzy.max_distance = 1;
+        } break;
+        case 5: {
+          auto& range =
+            phrase.push_back<irs::ByRangeOptions>(offs_min, offs_max).range;
+          range.min = Bytes(word);
+          range.max = Bytes("d");
+          range.min_type = irs::BoundType::Inclusive;
+          range.max_type = irs::BoundType::Inclusive;
+        } break;
+        default:
+          PushTerm(phrase, word, offs_min, offs_max);
       }
     }
-    irs::ByPhrase positional;
-    *positional.mutable_field_id() = kPositionalId;
-    *positional.mutable_options() = phrase;
-
     SCOPED_TRACE(i);
-    EXPECT_EQ(index.Docs(positional),
-              index.Docs(*ShingleFilter(*shingles, phrase)));
+    const auto expected = index.PhraseDocs(kPositionalId, phrase);
+    irs::Filter::ptr filter = ShingleFilter(*shingles, phrase);
+    irs::Optimize(filter);
+    EXPECT_EQ(expected, index.Docs(*filter));
+    covered += irs::PlanShinglePhrase(*shingles, phrase, true).has_value();
+    matched += !expected.empty();
   }
+  EXPECT_GT(covered, 150U);
+  EXPECT_GT(matched, 200U);
 }
 
 TEST(ShinglePhraseIndexTest, cover_scores_by_phrase_frequency) {

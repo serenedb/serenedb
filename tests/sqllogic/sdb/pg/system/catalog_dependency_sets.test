@@ -193,8 +193,9 @@ cds_owner	o
 statement error
 DROP ROLE cds_owner
 ----
-db error: ERROR: role "cds_owner" cannot be dropped because some objects depend on it
-DETAIL: 1 object(s) in database depend on role "cds_owner"
+db error: ERROR: Cannot drop entry "cds_owner" because there are entries that depend on it.
+table "cds_t" depends on role "cds_owner".
+Use DROP...CASCADE to drop all dependents.
 
 
 statement ok

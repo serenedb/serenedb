@@ -25,7 +25,6 @@
 
 #include <algorithm>
 #include <duckdb/catalog/catalog.hpp>
-#include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/function/pragma_function.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -351,19 +350,6 @@ void DropRolePragma(duckdb::ClientContext& client,
         ERR_CODE(ERRCODE_OBJECT_IN_USE),
         ERR_MSG("cannot drop role \"", role.name.GetIdentifierName(),
                 "\" because it is required by the database system"));
-    }
-
-    size_t dependencies = 0;
-    s.Cluster().GetDependencyManager()->ScanDependentEntries(
-      s.ClusterTransaction(), role,
-      [&](duckdb::CatalogEntry&) { ++dependencies; });
-    if (dependencies != 0) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-        ERR_MSG("role \"", name,
-                "\" cannot be dropped because some objects depend on it"),
-        ERR_DETAIL(dependencies, " object(s) in database depend on role \"",
-                   name, "\""));
     }
 
     std::vector<duckdb::Identifier> members;

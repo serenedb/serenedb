@@ -25,11 +25,11 @@ CREATE ROLE xdr_owner;
 
 
 statement ok
-CREATE TABLE xdr_db.public.owned (a INTEGER);
+CREATE TABLE xdr_db.public.xdr_owned (a INTEGER);
 
 
 statement ok
-ALTER TABLE xdr_db.public.owned OWNER TO xdr_owner;
+ALTER TABLE xdr_db.public.xdr_owned OWNER TO xdr_owner;
 
 
 statement ok
@@ -70,8 +70,9 @@ connection after_crash
 statement error
 DROP ROLE xdr_owner;
 ----
-db error: ERROR: role "xdr_owner" cannot be dropped because some objects depend on it
-DETAIL: 1 object(s) in database depend on role "xdr_owner"
+db error: ERROR: Cannot drop entry "xdr_owner" because there are entries that depend on it.
+table "xdr_owned" depends on role "xdr_owner".
+Use DROP...CASCADE to drop all dependents.
 
 
 connection after_crash
@@ -124,8 +125,9 @@ connection after_compaction
 statement error
 DROP ROLE xdr_owner;
 ----
-db error: ERROR: role "xdr_owner" cannot be dropped because some objects depend on it
-DETAIL: 1 object(s) in database depend on role "xdr_owner"
+db error: ERROR: Cannot drop entry "xdr_owner" because there are entries that depend on it.
+table "xdr_owned" depends on role "xdr_owner".
+Use DROP...CASCADE to drop all dependents.
 
 
 connection after_compaction
@@ -148,7 +150,7 @@ DROP TABLE xdr_local CASCADE;
 
 connection after_compaction
 statement ok
-DROP TABLE xdr_db.public.owned;
+DROP TABLE xdr_db.public.xdr_owned;
 
 
 connection after_compaction

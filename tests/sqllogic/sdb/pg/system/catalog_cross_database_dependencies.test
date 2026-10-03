@@ -142,15 +142,15 @@ CREATE ROLE cxd_reader
 
 
 statement ok
-CREATE TABLE cxd_db.public.owned (a INTEGER)
+CREATE TABLE cxd_db.public.cxd_owned (a INTEGER)
 
 
 statement ok
-ALTER TABLE cxd_db.public.owned OWNER TO cxd_owner
+ALTER TABLE cxd_db.public.cxd_owned OWNER TO cxd_owner
 
 
 statement ok
-GRANT SELECT ON cxd_db.public.owned TO cxd_reader
+GRANT SELECT ON cxd_db.public.cxd_owned TO cxd_reader
 
 
 query
@@ -169,12 +169,13 @@ cxd_reader	a	t
 statement error
 DROP ROLE cxd_reader
 ----
-db error: ERROR: role "cxd_reader" cannot be dropped because some objects depend on it
-DETAIL: 1 object(s) in database depend on role "cxd_reader"
+db error: ERROR: Cannot drop entry "cxd_reader" because there are entries that depend on it.
+table "cxd_owned" depends on role "cxd_reader".
+Use DROP...CASCADE to drop all dependents.
 
 
 statement ok
-REVOKE SELECT ON cxd_db.public.owned FROM cxd_reader
+REVOKE SELECT ON cxd_db.public.cxd_owned FROM cxd_reader
 
 
 statement ok
@@ -188,12 +189,13 @@ ALTER ROLE cxd_owner RENAME TO cxd_owner2
 statement error
 DROP ROLE cxd_owner2
 ----
-db error: ERROR: role "cxd_owner2" cannot be dropped because some objects depend on it
-DETAIL: 1 object(s) in database depend on role "cxd_owner2"
+db error: ERROR: Cannot drop entry "cxd_owner2" because there are entries that depend on it.
+table "cxd_owned" depends on role "cxd_owner2".
+Use DROP...CASCADE to drop all dependents.
 
 
 statement ok
-DROP TABLE cxd_db.public.owned
+DROP TABLE cxd_db.public.cxd_owned
 
 
 statement ok

@@ -191,7 +191,7 @@ REVOKE INSERT ON jt_log FROM jt_arelav;
 statement error
 DROP ROLE jt_arelav;
 ----
-db error: ERROR: role "jt_arelav" cannot be dropped because some objects depend on it<slt:ignore>
+db error: ERROR: Cannot drop entry "jt_arelav" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok

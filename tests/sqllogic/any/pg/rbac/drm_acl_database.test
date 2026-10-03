@@ -35,10 +35,18 @@ statement ok retry 20 backoff 50ms
 GRANT TEMP ON DATABASE postgres TO dadb_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE dadb_vedernikoff;
 ----
 db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dadb_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dadb_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok retry 20 backoff 50ms
@@ -61,10 +69,18 @@ statement ok retry 20 backoff 50ms
 GRANT TEMPORARY ON DATABASE postgres TO dadb_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE dadb_vedernikoff;
 ----
 db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dadb_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dadb_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok retry 20 backoff 50ms
@@ -87,10 +103,18 @@ statement ok retry 20 backoff 50ms
 GRANT CREATE ON DATABASE postgres TO dadb_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE dadb_vedernikoff;
 ----
 db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dadb_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dadb_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok retry 20 backoff 50ms
@@ -114,30 +138,54 @@ statement ok retry 20 backoff 50ms
 GRANT CONNECT, TEMP, CREATE ON DATABASE postgres TO dadb_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE dadb_vedernikoff;
 ----
 db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dadb_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dadb_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok retry 20 backoff 50ms
 REVOKE CONNECT ON DATABASE postgres FROM dadb_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE dadb_vedernikoff;
 ----
 db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dadb_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dadb_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok retry 20 backoff 50ms
 REVOKE TEMP ON DATABASE postgres FROM dadb_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE dadb_vedernikoff;
 ----
 db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dadb_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dadb_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok retry 20 backoff 50ms
@@ -161,10 +209,18 @@ statement ok retry 20 backoff 50ms
 GRANT CONNECT, TEMP, CREATE ON DATABASE postgres TO dadb_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE dadb_vedernikoff;
 ----
 db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dadb_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dadb_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok retry 20 backoff 50ms
@@ -188,20 +244,36 @@ statement ok retry 20 backoff 50ms
 GRANT CONNECT ON DATABASE postgres TO dadb_vedernikoff WITH GRANT OPTION;
 
 
+skipif serenedb
 statement error
 DROP ROLE dadb_vedernikoff;
 ----
 db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dadb_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dadb_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok retry 20 backoff 50ms
 REVOKE GRANT OPTION FOR CONNECT ON DATABASE postgres FROM dadb_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE dadb_vedernikoff;
 ----
 db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dadb_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dadb_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok retry 20 backoff 50ms

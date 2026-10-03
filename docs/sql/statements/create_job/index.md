@@ -47,7 +47,7 @@ The two schedule kinds follow ClickHouse's refreshable materialized views.
 
 A job never runs twice at the same time. If an `EVERY` run is still going when the next grid point arrives, that tick is skipped and the job runs again at the first grid point after the run finishes. Ticks that fall while the server is down are not replayed.
 
-Scheduled runs execute on the server's background thread pool (`--background_threads`), the pool that also runs index maintenance, so a long job does not hold a client session.
+Scheduled runs execute on the async thread pool (`async_threads`), so a long job does not hold a client session. With `async_threads = 0`, scheduled runs execute one at a time on the scheduler's own thread.
 
 `SUSPENDED` creates the job paused.
 

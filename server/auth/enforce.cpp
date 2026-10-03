@@ -389,7 +389,11 @@ class Enforcer {
         auto& info = create.info->base->Cast<duckdb::CreateTableInfo>();
         Stamp(info, CatalogType::TABLE_ENTRY, &create.schema);
         if (_enforce) {
-          RequireSchemaCreate(create.schema);
+          if (info.temporary) {
+            RequireDatabasePrivilege(AclMode::CreateTemp);
+          } else {
+            RequireSchemaCreate(create.schema);
+          }
           CheckReplace(info);
           CheckForeignKeys(info, create.schema);
         }

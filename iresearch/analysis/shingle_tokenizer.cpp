@@ -57,13 +57,9 @@ ShingleTokenizer::ShingleTokenizer(Tokenizer::ptr base, Options&& options)
   SDB_ASSERT(_min >= 1 && _max >= _min);
 }
 
-bool ShingleTokenizer::DrainBase(duckdb::string_t raw) {
-  return _sub->analyzer.Analyze(*_analyzer, raw, _sub->tokens);
-}
-
 template<bool HasFrequent>
-void ShingleTokenizer::BuildTables(uint32_t n) {
-  const auto tok = _sub->tokens.terms();
+void ShingleTokenizer::BuildTables(std::span<const duckdb::string_t> tok) {
+  const auto n = static_cast<uint32_t>(tok.size());
   _tok_psum.resize(n + 1);
   _tok_psum[0] = 0;
   if constexpr (HasFrequent) {
@@ -77,15 +73,29 @@ void ShingleTokenizer::BuildTables(uint32_t n) {
   }
 }
 
-template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent>
+template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
+         typename Base>
 void ShingleTokenizer::EmitRuns(const duckdb::string_t* raw, TokenSink& sink,
-                                uint32_t n, bool no_shingles) {
-  const auto* const tok = _sub->tokens.terms().data();
-  const auto* const tpos = _sub->tokens.pos().data();
+                                const Base& base, uint32_t n,
+                                bool no_shingles) {
+  constexpr bool kOffs = Base::kLayout == TokenLayout::TermsPosOffs;
+  const auto* const tok = base.terms().data();
+  const auto* const tpos = base.pos().data();
+  const uint32_t* starts = nullptr;
+  const uint32_t* ends = nullptr;
+  if constexpr (kOffs) {
+    starts = base.offs_start().data();
+    ends = base.offs_end().data();
+  }
   const auto emit_unigram = [&](uint32_t i, uint32_t pos) {
     const auto& term = tok[i];
-    sink.Emit<Layout>(raw ? *raw : term, term.GetData(),
-                      static_cast<uint32_t>(term.GetSize()), pos);
+    const auto size = static_cast<uint32_t>(term.GetSize());
+    if constexpr (kOffs) {
+      sink.Emit<Layout>(raw ? *raw : term, term.GetData(), size, pos,
+                        Offs{starts[i], ends[i]});
+    } else {
+      sink.Emit<Layout>(raw ? *raw : term, term.GetData(), size, pos);
+    }
   };
 
   const auto* const sep = _separator.data();
@@ -98,21 +108,21 @@ void ShingleTokenizer::EmitRuns(const duckdb::string_t* raw, TokenSink& sink,
     size_t count;
     uint32_t span;
     if constexpr (HasFrequent) {
-      auto& ends = _shingle_ends;
-      ends.clear();
+      auto& sizes = _shingle_sizes;
+      sizes.clear();
       bool orv = false;
       for (uint32_t k = 0; k < _min; ++k) {
         orv |= _freq[i + k] != 0;
       }
       for (uint32_t s = _min; s <= reach; ++s) {
         if (s == _min || orv) {
-          ends.push_back(window_len(i, s));
+          sizes.push_back(s);
         }
         if (i + s < n) {
           orv |= _freq[i + s] != 0;
         }
       }
-      count = ends.size();
+      count = sizes.size();
       span = count == 1 ? _min : reach;
     } else {
       count = reach - _min + 1;
@@ -132,20 +142,26 @@ void ShingleTokenizer::EmitRuns(const duckdb::string_t* raw, TokenSink& sink,
         w += size;
       }
     };
+    const auto slot = [&](uint32_t s) IRS_FORCE_INLINE {
+      if constexpr (kOffs) {
+        return EmitKSlotPosOffs{0, window_len(i, s), pos,
+                                Offs{starts[i], ends[i + s - 1]}};
+      } else {
+        return EmitKSlotPos{0, window_len(i, s), pos};
+      }
+    };
     sink.EmitK<Layout>(count + (OutputUnigrams ? 1 : 0), window_len(i, span),
                        stage, [&](size_t j, byte_type*) IRS_FORCE_INLINE {
                          if constexpr (OutputUnigrams) {
                            if (j == 0) {
-                             return EmitKSlotPos{0, window_len(i, 1), pos};
+                             return slot(1);
                            }
                            --j;
                          }
                          if constexpr (HasFrequent) {
-                           return EmitKSlotPos{0, _shingle_ends[j], pos};
+                           return slot(_shingle_sizes[j]);
                          } else {
-                           return EmitKSlotPos{
-                             0, window_len(i, _min + static_cast<uint32_t>(j)),
-                             pos};
+                           return slot(_min + static_cast<uint32_t>(j));
                          }
                        });
   };
@@ -172,24 +188,35 @@ void ShingleTokenizer::EmitRuns(const duckdb::string_t* raw, TokenSink& sink,
   }
 }
 
-template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent>
+template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
+         typename Base>
 void ShingleTokenizer::EmitBaseTokens(const duckdb::string_t* raw,
-                                      TokenSink& sink) {
-  const uint32_t n = static_cast<uint32_t>(_sub->tokens.terms().size());
+                                      TokenSink& sink, const Base& base) {
+  const auto tok = base.terms();
+  const auto n = static_cast<uint32_t>(tok.size());
   const bool no_shingles = n < _min;
   if (!no_shingles) {
-    BuildTables<HasFrequent>(n);
+    BuildTables<HasFrequent>(tok);
   }
-  EmitRuns<Layout, OutputUnigrams, HasFrequent>(raw, sink, n, no_shingles);
+  EmitRuns<Layout, OutputUnigrams, HasFrequent>(raw, sink, base, n,
+                                                no_shingles);
 }
 
 template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent>
 bool ShingleTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
-  if (!DrainBase(raw)) {
-    return false;
+  const auto fill = [&](auto& base) IRS_FORCE_INLINE {
+    if (!_sub->analyzer.Analyze(*_analyzer, raw, base)) {
+      return false;
+    }
+    EmitBaseTokens<Layout, OutputUnigrams, HasFrequent>(&raw, sink, base);
+    return true;
+  };
+  if constexpr (Layout == TokenLayout::TermsPosOffs) {
+    if (_analyzer->Traits().offsets) {
+      return fill(_sub->offs_tokens);
+    }
   }
-  EmitBaseTokens<Layout, OutputUnigrams, HasFrequent>(&raw, sink);
-  return true;
+  return fill(_sub->tokens);
 }
 
 bool ShingleTokenizer::FillTokens(std::span<const duckdb::string_t> tokens,
@@ -199,8 +226,8 @@ bool ShingleTokenizer::FillTokens(std::span<const duckdb::string_t> tokens,
     [&](auto layout_tag, auto unigrams_tag, auto frequent_tag)
       IRS_FORCE_INLINE {
         _sub->tokens.Assign(tokens);
-        EmitBaseTokens<layout_tag(), unigrams_tag(), frequent_tag()>(nullptr,
-                                                                     sink);
+        EmitBaseTokens<layout_tag(), unigrams_tag(), frequent_tag()>(
+          nullptr, sink, _sub->tokens);
         return true;
       });
 }

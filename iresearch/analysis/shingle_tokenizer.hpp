@@ -85,9 +85,11 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
   void Unbind() noexcept final { _analyzer->Unbind(); }
   size_t MemoryUsage() const noexcept final {
     return _analyzer->MemoryUsage() + _freq.capacity() * sizeof(uint8_t) +
-           _shingle_ends.capacity() * sizeof(uint32_t) +
+           _shingle_sizes.capacity() * sizeof(uint32_t) +
            _tok_psum.capacity() * sizeof(uint32_t) + _frequent.MemoryBytes() +
-           (_sub ? sizeof(Sub) + _sub->tokens.MemoryUsage() : 0);
+           (_sub ? sizeof(Sub) + _sub->tokens.MemoryUsage() +
+                     _sub->offs_tokens.MemoryUsage()
+                 : 0);
   }
 
   auto PrepareBatch(BlockTraits) {
@@ -104,15 +106,17 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
                   FillCtx ctx) final;
 
  private:
-  IRS_FORCE_INLINE bool DrainBase(duckdb::string_t raw);
-  template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent>
+  template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
+           typename Base>
   IRS_FORCE_INLINE void EmitBaseTokens(const duckdb::string_t* raw,
-                                       TokenSink& sink);
+                                       TokenSink& sink, const Base& base);
   template<bool HasFrequent>
-  IRS_FORCE_INLINE void BuildTables(uint32_t n);
-  template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent>
+  IRS_FORCE_INLINE void BuildTables(std::span<const duckdb::string_t> tok);
+  template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
+           typename Base>
   IRS_FORCE_INLINE void EmitRuns(const duckdb::string_t* raw, TokenSink& sink,
-                                 uint32_t n, bool no_shingles);
+                                 const Base& base, uint32_t n,
+                                 bool no_shingles);
 
   Tokenizer::ptr _analyzer;
   uint32_t _min;
@@ -124,15 +128,17 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
   dict::StringSet<std::string> _frequent;
 
   struct Sub {
-    explicit Sub(TokenTraits producer) : tokens{producer} {}
+    explicit Sub(TokenTraits producer)
+      : tokens{producer}, offs_tokens{producer} {}
 
     ValueAnalyzer analyzer;
     ValueTokens<TokenLayout::TermsPos> tokens;
+    ValueTokens<TokenLayout::TermsPosOffs> offs_tokens;
   };
 
   std::unique_ptr<Sub> _sub;
   std::vector<uint8_t> _freq;
-  std::vector<uint32_t> _shingle_ends;
+  std::vector<uint32_t> _shingle_sizes;
   std::vector<uint32_t> _tok_psum;
 };
 

@@ -113,6 +113,46 @@ DROP TABLE shingle_phrases CASCADE;
 statement ok
 DROP TEXT SEARCH DICTIONARY shingle_phrase;
 
+# DOCS_TEST: highlighting
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_marks AS
+    generate_shingles(split_text_csv(' '), 2, 2)
+    WITH (frequency, position);
+
+statement ok
+CREATE TABLE shingle_notes(pk INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE INDEX shingle_notes_idx ON shingle_notes
+    USING inverted(pk, body shingle_marks);
+
+statement ok
+INSERT INTO shingle_notes VALUES
+    (1, 'the quick brown fox jumps'),
+    (2, 'quick brown cat and quick brown fox');
+
+statement ok
+VACUUM (REFRESH_TABLE) shingle_notes;
+
+query
+SELECT pk, ts_offsets(body) AS offsets, ts_highlight(body) AS snippet
+FROM shingle_notes_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY pk;
+----
+pk	offsets	snippet
+1	{4,19}	the <b>quick brown fox</b> jumps
+2	{20,35}	quick brown cat and <b>quick brown fox</b>
+
+# DOCS_TEST_END
+
+statement ok
+DROP TABLE shingle_notes CASCADE;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_marks;
+
 # token_separator: a space by default, empty concatenates, any string is allowed
 
 statement ok

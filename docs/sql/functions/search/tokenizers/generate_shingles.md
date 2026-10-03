@@ -9,7 +9,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 The `generate_shingles` template joins the tokens of a nested analyzer into word n-grams — shingles — so a multi-word sequence becomes a single term. It wraps another tokenizer, takes the base tokens that tokenizer produces, and emits the concatenation of every window of `MIN_GRAM` to `MAX_GRAM` consecutive tokens. With the default `MIN_GRAM` and `MAX_GRAM` of 2, `quick brown fox` yields the bigram terms `quick brown` and `brown fox` alongside the three words themselves, so a two-word sequence is matched by one term lookup instead of by combining two.
 
-Where [`generate_ngrams`](./generate_ngrams.md) cuts a token into character fragments, `generate_shingles` builds terms above the token level, and the nested tokenizer decides what a token is. `FREQUENCY` and `POSITION` are the interesting feature flags here; `OFFSET` is not supported, because a shingle term spans several stretches of the source value.
+Where [`generate_ngrams`](./generate_ngrams.md) cuts a token into character fragments, `generate_shingles` builds terms above the token level, and the nested tokenizer decides what a token is. `FREQUENCY` and `POSITION` are the interesting feature flags here; `OFFSET` is not supported, and [highlighting](#highlighting) finds the offsets on the fly instead.
 
 In the [expression form](../../../statements/create_text_search_dictionary/index.md#the-analyzer-expression) the nested analyzer is the first argument and may be a chain, and the remaining arguments are the options below in order: `generate_shingles(split_text_csv(' ') | normalize_tokens(case := 'lower'), 2, 2)` sets `MIN_GRAM` and `MAX_GRAM`.
 
@@ -58,7 +58,7 @@ With a nested tokenizer that splits on spaces:
 | `the quick brown` | `MIN_GRAM = 2`, `MAX_GRAM = 3`, `FREQUENT_WORDS = '"the","of"'` | `{the, the⟨S⟩quick, the⟨S⟩quick⟨S⟩brown, quick, quick⟨S⟩brown, brown}` |
 | `quick the brown` | `MIN_GRAM = 2`, `MAX_GRAM = 2`, nested tokenizer drops `the` | `{quick, quick⟨S⟩brown, brown}` |
 
-Every term produced from one window carries the position of that window's first base token, so a unigram and the shingles that start with it all share a position. In the last row the two surviving words arrive at positions 1 and 2, so the bigram is built straight across the word the nested tokenizer dropped. No offsets are produced at all, which is why the `OFFSET` flag is rejected.
+Every term produced from one window carries the position of that window's first base token, so a unigram and the shingles that start with it all share a position. In the last row the two surviving words arrive at positions 1 and 2, so the bigram is built straight across the word the nested tokenizer dropped.
 
 A base token that cannot start a window of at least `MIN_GRAM` tokens — the tail of the value, or a token whose next neighbour is not one position further on — is emitted as a unigram only if `OUTPUT_UNIGRAMS` is true, or if `FALLBACK_UNIGRAMS` is true and the whole value produced fewer than `MIN_GRAM` base tokens. That second condition is per value, not per window, as the two `solo` rows show. With `OUTPUT_UNIGRAMS = false` the last `MIN_GRAM - 1` tokens of a value therefore contribute no term of their own; they are still carried inside the shingles that start earlier.
 
@@ -86,6 +86,12 @@ A shingle joins tokens at consecutive positions. If the base dictionary puts sev
 A pattern part of `##` (`ts_like`, `ts_starts_with`, `ts_levenshtein` or `ts_between`) matches single words, never a shingle: it skips every term that contains `TOKEN_SEPARATOR`, a base token that contains it included. With `TOKEN_SEPARATOR = ''` a shingle can't be told apart from a word, so a phrase with a pattern part fails with `## pattern parts on a shingle column need a token separator`.
 
 <SqlLogicTest id="sql/functions/search/tokenizers/generate_shingles/phrase_search" />
+
+## Highlighting
+
+[`ts_offsets`](../highlighting.md#ts_offsets) and [`ts_highlight`](../highlighting.md#virtual-column) work on a shingle column. The dictionary stores no offsets, so they are found on the fly from the nested tokenizer: a word covers its own text and a shingle runs from the start of its first word to the end of its last. A phrase is marked from its first word to its last, whether one shingle or several cover it. If the nested tokenizer produces no text offsets, every match covers the whole value.
+
+<SqlLogicTest id="sql/functions/search/tokenizers/generate_shingles/highlighting" />
 
 ## Examples
 

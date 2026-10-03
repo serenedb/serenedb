@@ -27,6 +27,7 @@
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/utils/string.hpp>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -40,7 +41,7 @@ using irs::analysis::ShingleTokenizer;
 class WhitespaceTokenizer final
   : public irs::analysis::TypedTokenizer<WhitespaceTokenizer> {
  public:
-  irs::TokenTraits Traits() const noexcept final { return {}; }
+  irs::TokenTraits Traits() const noexcept final { return {.offsets = true}; }
 
   static constexpr std::string_view type_name() noexcept {
     return "test_whitespace";
@@ -60,8 +61,9 @@ class WhitespaceTokenizer final
       while (p < data.size() && data[p] != ' ') {
         ++p;
       }
-      const auto w = data.substr(start, p - start);
-      sink.Emit<L>(irs::MakeTermView(w));
+      sink.EmitSlice<L>(
+        data.data(), data.data() + data.size(),
+        irs::Offs{static_cast<uint32_t>(start), static_cast<uint32_t>(p)});
     }
     return true;
   }
@@ -216,6 +218,22 @@ std::vector<TermInc> EmitWithInc(irs::analysis::Tokenizer& analyzer,
   for (size_t i = 0; i < terms.size(); ++i) {
     out.emplace_back(ToString(irs::AsBytesView(terms[i])), pos[i] - prev);
     prev = pos[i];
+  }
+  return out;
+}
+
+using TermOffs = std::tuple<std::string, uint32_t, uint32_t>;
+std::vector<TermOffs> EmitWithOffs(irs::analysis::Tokenizer& analyzer,
+                                   std::string_view data) {
+  irs::ValueAnalyzer value_analyzer;
+  irs::ValueTokens<irs::TokenLayout::TermsPosOffs> tokens{
+    irs::TokenTraits{.explicit_pos = true, .offsets = true}};
+  EXPECT_TRUE(value_analyzer.Analyze(analyzer, tests::ToStringT(data), tokens));
+  const auto terms = tokens.terms();
+  std::vector<TermOffs> out;
+  for (size_t i = 0; i != terms.size(); ++i) {
+    out.emplace_back(ToString(irs::AsBytesView(terms[i])),
+                     tokens.offs_start()[i], tokens.offs_end()[i]);
   }
   return out;
 }
@@ -806,6 +824,67 @@ TEST(ShingleTokenizerTest, stacked_tokens_shingle_along_one_path) {
   EXPECT_TRUE(has(Shingle({"c", "y"})));
   EXPECT_FALSE(has(Shingle({"x", "c"})));
   EXPECT_FALSE(has(Shingle({"b", "y"})));
+}
+
+TEST(ShingleTokenizerTest, offsets_run_from_first_to_last_word) {
+  auto analyzer = MakeAnalyzer(2, 3, true);
+  EXPECT_EQ((std::vector<TermOffs>{
+              {"the", 0, 3},
+              {Shingle({"the", "quick"}), 0, 10},
+              {Shingle({"the", "quick", "brown"}), 0, 16},
+              {"quick", 5, 10},
+              {Shingle({"quick", "brown"}), 5, 16},
+              {Shingle({"quick", "brown", "fox"}), 5, 20},
+              {"brown", 11, 16},
+              {Shingle({"brown", "fox"}), 11, 20},
+              {"fox", 17, 20},
+            }),
+            EmitWithOffs(analyzer, "the  quick brown fox"));
+
+  auto bare = MakeAnalyzer(2, 2, false);
+  EXPECT_EQ((std::vector<TermOffs>{
+              {Shingle({"a", "b"}), 0, 3},
+              {Shingle({"b", "c"}), 2, 6},
+            }),
+            EmitWithOffs(bare, "a b  c"));
+
+  ShingleTokenizer frequent{std::make_unique<WhitespaceTokenizer>(),
+                            {
+                              .min_shingle_size = 2,
+                              .max_shingle_size = 4,
+                              .frequent_words = {Bytes("the")},
+                            }};
+  EXPECT_EQ((std::vector<TermOffs>{
+              {"alpha", 0, 5},
+              {Shingle({"alpha", "beta"}), 0, 10},
+              {Shingle({"alpha", "beta", "gamma", "the"}), 0, 20},
+              {"beta", 6, 10},
+              {Shingle({"beta", "gamma"}), 6, 16},
+              {Shingle({"beta", "gamma", "the"}), 6, 20},
+              {Shingle({"beta", "gamma", "the", "delta"}), 6, 26},
+              {"gamma", 11, 16},
+              {Shingle({"gamma", "the"}), 11, 20},
+              {Shingle({"gamma", "the", "delta"}), 11, 26},
+              {"the", 17, 20},
+              {Shingle({"the", "delta"}), 17, 26},
+              {"delta", 21, 26},
+            }),
+            EmitWithOffs(frequent, "alpha beta gamma the delta"));
+}
+
+TEST(ShingleTokenizerTest, offsets_cover_the_value_without_base_offsets) {
+  ShingleTokenizer analyzer{std::make_unique<StackedTokenizer>(),
+                            {
+                              .min_shingle_size = 2,
+                              .max_shingle_size = 2,
+                              .output_unigrams = true,
+                            }};
+  const auto tokens = EmitWithOffs(analyzer, "x b|c y");
+  ASSERT_EQ(6U, tokens.size());
+  for (const auto& [term, start, end] : tokens) {
+    EXPECT_EQ(0U, start) << term;
+    EXPECT_EQ(7U, end) << term;
+  }
 }
 
 TEST(ShingleTokenizerTest, memory_usage_accounts_scratch) {

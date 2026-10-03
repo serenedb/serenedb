@@ -824,3 +824,122 @@ DROP TABLE test_shingle_syn
 
 statement ok
 DROP TEXT SEARCH DICTIONARY shingle_syn
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_offs AS
+    generate_shingles(split_text_csv(' '), 2, 3) WITH (frequency, position)
+
+statement ok
+CREATE TABLE test_shingle_offs (id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX test_shingle_offs_idx ON test_shingle_offs USING inverted(id, body shingle_offs)
+
+statement ok
+INSERT INTO test_shingle_offs VALUES
+    (1, 'the quick brown fox jumps'),
+    (2, 'quick brown cat and quick brown fox')
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle_offs
+
+query
+SELECT id, ts_offsets(body) AS offsets FROM test_shingle_offs_idx WHERE body @@ 'brown' ORDER BY id
+----
+id	offsets
+1	{10,15}
+2	{6,11,26,31}
+
+query
+SELECT id, ts_offsets(body) AS offsets FROM test_shingle_offs_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
+----
+id	offsets
+1	{4,15}
+2	{0,11,20,31}
+
+query
+SELECT id, ts_offsets(body) AS offsets FROM test_shingle_offs_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id
+----
+id	offsets
+1	{4,19}
+2	{20,35}
+
+query
+SELECT id, ts_offsets(body) AS offsets FROM test_shingle_offs_idx WHERE body @@ ts_phrase('quick brown fox jumps') ORDER BY id
+----
+id	offsets
+1	{4,25}
+
+query
+SELECT id, ts_offsets(body) AS offsets FROM test_shingle_offs_idx WHERE body @@ (ts_phrase('quick brown') ## ts_like('fo%')) ORDER BY id
+----
+id	offsets
+1	{4,19}
+2	{20,35}
+
+query
+SELECT id, ts_offsets(body) AS offsets FROM test_shingle_offs_idx WHERE body @@ (ts_phrase('quick brown') ## ts_regexp('f.x')) ORDER BY id
+----
+id	offsets
+1	{4,19}
+2	{20,35}
+
+query
+SELECT id, ts_offsets(body) AS offsets FROM test_shingle_offs_idx WHERE body @@ (ts_phrase('quick brown') ## ts_regexp('c.t|f.x')) ORDER BY id
+----
+id	offsets
+1	{4,19}
+2	{0,15,20,35}
+
+query
+SELECT id, ts_offsets(body) AS offsets, ts_highlight(body) AS snippet FROM test_shingle_offs_idx WHERE body @@ (ts_regexp('q.*k') ## ts_phrase('brown fox jumps')) ORDER BY id
+----
+id	offsets	snippet
+1	{4,25}	the <b>quick brown fox jumps</b>
+
+query
+EXPLAIN SELECT id FROM test_shingle_offs_idx WHERE body @@ (ts_regexp('q.*k') ## ts_phrase('brown fox jumps'))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────────────╮
+│ Index: test_shingle_offs_idx                           │
+│ Lookup: table                                          │
+│ Index Filter:                                          │
+│ ╭─ Phrase ───────────────────────────────────────────╮ │
+│ │ Field: body(string)                                │ │
+│ │ Parts:                                             │ │
+│ │ Automaton:q.*k(0, 0); Term:brown fox jumps(1, 1);  │ │
+│ ╰────────────────────────────────────────────────────╯ │
+│ Projections: id                                        │
+│ ~1 row                                                 │
+╰────────────────────────────────────────────────────────╯
+
+query
+SELECT id, ts_offsets(body) AS offsets FROM test_shingle_offs_idx WHERE body @@ (ts_phrase('the') ## ts_regexp('q.*k') ## ts_phrase('brown fox')) ORDER BY id
+----
+id	offsets
+1	{0,19}
+
+query
+SELECT ts_offsets('shingle_offs', 'the quick brown fox jumps', ts_phrase('quick brown') ## ts_regexp('f.x')) AS offsets
+----
+offsets
+{4,19}
+
+query
+SELECT id, ts_highlight(body) AS snippet FROM test_shingle_offs_idx WHERE body @@ ts_phrase('quick brown fox jumps') ORDER BY id
+----
+id	snippet
+1	the <b>quick brown fox jumps</b>
+
+query
+SELECT ts_offsets('shingle_offs', 'the quick brown fox jumps', ts_phrase('quick brown fox jumps')) AS offsets
+----
+offsets
+{4,25}
+
+statement ok
+DROP TABLE test_shingle_offs
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_offs

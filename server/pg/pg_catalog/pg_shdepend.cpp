@@ -121,7 +121,7 @@ class Rows {
  private:
   void Emit(duckdb::idx_t database, uint64_t classid, duckdb::idx_t objid,
             int32_t objsubid, PgShdepend::Deptype deptype) {
-    _values.push_back(PgShdepend{
+    _values.emplace_back(PgShdepend{
       .dbid = database,
       .classid = classid,
       .objid = objid,
@@ -168,7 +168,7 @@ MaterializedData SystemTableSnapshot<PgShdepend>::GetTableData() {
         std::vector<duckdb::idx_t> schemas;
         VisitSchemas(_context, database->GetCatalog(),
                      [&](duckdb::SchemaCatalogEntry& schema) {
-                       schemas.push_back(schema.oid);
+                       schemas.emplace_back(schema.oid);
                      });
         for (const auto& row : entry.permissions.defaults) {
           if (row.scope == kInvalidOid ||

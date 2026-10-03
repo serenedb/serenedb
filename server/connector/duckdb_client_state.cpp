@@ -392,7 +392,7 @@ class RoleSessionCallback final : public duckdb::ExtensionCallback {
       return;
     }
     const auto role = context.effective_role.GetIndex();
-    const std::string user{auth::RolesOf(nullptr)->NameOf(role)};
+    const auto user = auth::RolesOf(nullptr)->NameOf(role);
     if (user.empty()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                       ERR_MSG("role with OID ", role, " does not exist"));
@@ -406,7 +406,7 @@ class RoleSessionCallback final : public duckdb::ExtensionCallback {
       context,
       std::make_shared<ConnectionContext>(
         context, user, role,
-        database ? database->GetName().GetIdentifierName() : std::string{},
+        database ? database->GetName().GetIdentifierName() : std::string_view{},
         database ? database->oid : 0, nullptr, 0, nullptr));
   }
 };

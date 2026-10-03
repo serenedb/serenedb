@@ -1221,13 +1221,10 @@ void ReindexByIdPragma(duckdb::ClientContext& context,
     return;
   }
   const duckdb::Identifier schema_ident = index->GetSchemaName();
-  auto schema =
-    catalog.GetSchema(trx, schema_ident, duckdb::OnEntryNotFound::RETURN_NULL);
   const auto relation =
-    schema ? schema->GetEntry(trx, duckdb::CatalogType::TABLE_ENTRY,
-                              index->GetTableName())
-           : nullptr;
-  if (!relation || relation->type != duckdb::CatalogType::VIEW_ENTRY) {
+    catalog.GetSchema(trx, schema_ident)
+      .GetEntry(trx, duckdb::CatalogType::TABLE_ENTRY, index->GetTableName());
+  if (relation->type != duckdb::CatalogType::VIEW_ENTRY) {
     return;
   }
   const auto storage = index->Cast<catalog::InvertedIndexEntry>().Storage();
@@ -1240,9 +1237,9 @@ void ReindexByIdPragma(duckdb::ClientContext& context,
     return;
   }
   auto& conn_ctx = GetSereneDBContext(context);
-  const std::string index_name = index->name.GetIdentifierName();
-  const std::string schema_name = schema_ident.GetIdentifierName();
-  const std::string database_name = catalog.GetName().GetIdentifierName();
+  const auto& index_name = index->name.GetIdentifierName();
+  const auto& schema_name = schema_ident.GetIdentifierName();
+  const auto& database_name = catalog.GetName().GetIdentifierName();
   try {
     ReindexSession session{
       *context.db,
@@ -1348,7 +1345,7 @@ void RegisterReindexFunction(duckdb::DatabaseInstance& db) {
   loader.RegisterFunction(pragma);
 
   loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
-    duckdb::Identifier{std::string{kReindexByIdPragma}}, ReindexByIdPragma,
+    duckdb::Identifier{kReindexByIdPragma}, ReindexByIdPragma,
     {duckdb::LogicalType::BIGINT}));
 }
 

@@ -67,7 +67,9 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
 
   TokenTraits Traits() const noexcept final {
     return {
-      .explicit_pos = _output_unigrams || !_producer_dense || _min != _max,
+      .explicit_pos =
+        _output_unigrams || _producer.explicit_pos || _min != _max,
+      .offsets = _producer.offsets,
     };
   }
 
@@ -94,7 +96,7 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
 
   auto PrepareBatch(BlockTraits) {
     if (!_sub) {
-      _sub = std::make_unique<Sub>(_analyzer->Traits());
+      _sub = std::make_unique<Sub>(_producer);
     }
     return std::tuple{_output_unigrams, HasFrequentWords()};
   }
@@ -123,7 +125,7 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
   uint32_t _max;
   bool _output_unigrams;
   bool _fallback_unigrams;
-  bool _producer_dense = true;
+  TokenTraits _producer;
   bstring _separator;
   dict::StringSet<std::string> _frequent;
 

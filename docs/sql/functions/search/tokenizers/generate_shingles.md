@@ -9,7 +9,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 The `generate_shingles` template joins the tokens of a nested analyzer into word n-grams — shingles — so a multi-word sequence becomes a single term. It wraps another tokenizer, takes the base tokens that tokenizer produces, and emits the concatenation of every window of `MIN_GRAM` to `MAX_GRAM` consecutive tokens. With the default `MIN_GRAM` and `MAX_GRAM` of 2, `quick brown fox` yields the bigram terms `quick brown` and `brown fox` alongside the three words themselves, so a two-word sequence is matched by one term lookup instead of by combining two.
 
-Where [`generate_ngrams`](./generate_ngrams.md) cuts a token into character fragments, `generate_shingles` builds terms above the token level, and the nested tokenizer decides what a token is. `FREQUENCY` and `POSITION` are the interesting feature flags here; `OFFSET` is not supported, and [highlighting](#highlighting) finds the offsets on the fly instead.
+Where [`generate_ngrams`](./generate_ngrams.md) cuts a token into character fragments, `generate_shingles` builds terms above the token level, and the nested tokenizer decides what a token is. `FREQUENCY` and `POSITION` are the interesting feature flags here; `OFFSET` stores where each word and shingle sits in the value, for [highlighting](#highlighting).
 
 In the [expression form](../../../statements/create_text_search_dictionary/index.md#the-analyzer-expression) the nested analyzer is the first argument and may be a chain, and the remaining arguments are the options below in order: `generate_shingles(split_text_csv(' ') | normalize_tokens(case := 'lower'), 2, 2)` sets `MIN_GRAM` and `MAX_GRAM`.
 
@@ -32,7 +32,7 @@ Both sizes are validated, not clamped: a value outside 2–16 is rejected with `
 
 The nested analyzer is the first argument and is required — `generate_shingles(2, 3)` fails with `generate_shingles() requires a nested analyzer as its first argument`. Nesting is recursive: the first argument may itself be a chain or a wrapper.
 
-The template supports the `FREQUENCY`, `POSITION` and `NORM` [feature flags](../../../statements/create_text_search_dictionary/index.md#feature-flags), with `POSITION` and `NORM` each requiring `FREQUENCY`. `OFFSET` is rejected at `CREATE TEXT SEARCH DICTIONARY` time with `Unsupported index features are specified: offset`.
+The template supports the `FREQUENCY`, `POSITION`, `OFFSET` and `NORM` [feature flags](../../../statements/create_text_search_dictionary/index.md#feature-flags), with `POSITION` and `NORM` each requiring `FREQUENCY` and `OFFSET` requiring `POSITION`. `OFFSET` also needs a nested tokenizer that produces text offsets; over one that doesn't, such as a [`union`](../../../statements/create_text_search_dictionary/union.md), it is rejected at `CREATE TEXT SEARCH DICTIONARY` time with `Unsupported index features are specified: offset`.
 
 ## Tokenization
 
@@ -89,7 +89,7 @@ A pattern part of `##` (`ts_like`, `ts_starts_with`, `ts_levenshtein` or `ts_bet
 
 ## Highlighting
 
-[`ts_offsets`](../highlighting.md#ts_offsets) and [`ts_highlight`](../highlighting.md#virtual-column) work on a shingle column. The dictionary stores no offsets, so they are found on the fly from the nested tokenizer: a word covers its own text and a shingle runs from the start of its first word to the end of its last. A phrase is marked from its first word to its last, whether one shingle or several cover it. If the nested tokenizer produces no text offsets, every match covers the whole value.
+[`ts_offsets`](../highlighting.md#ts_offsets) and [`ts_highlight`](../highlighting.md#virtual-column) work on a shingle column. A word covers its own text and a shingle runs from the start of its first word to the end of its last, so a phrase is marked from its first word to its last, whether one shingle or several cover it. With `OFFSET` the index stores these offsets and highlighting reads them back; without it they are found on the fly from the nested tokenizer. If the nested tokenizer produces no text offsets, every match covers the whole value.
 
 <SqlLogicTest id="sql/functions/search/tokenizers/generate_shingles/highlighting" />
 

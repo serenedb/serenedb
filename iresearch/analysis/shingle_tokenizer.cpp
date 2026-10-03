@@ -47,7 +47,7 @@ ShingleTokenizer::ShingleTokenizer(Tokenizer::ptr base, Options&& options)
   if (!_analyzer) {
     _analyzer = std::make_unique<KeywordTokenizer>();
   }
-  _producer_dense = !_analyzer->Traits().explicit_pos;
+  _producer = _analyzer->Traits();
   for (const auto& word : options.frequent_words) {
     _frequent.Insert(std::string{ViewCast<char>(bytes_view{word})});
   }
@@ -212,7 +212,7 @@ bool ShingleTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
     return true;
   };
   if constexpr (Layout == TokenLayout::TermsPosOffs) {
-    if (_analyzer->Traits().offsets) {
+    if (_producer.offsets) {
       return fill(_sub->offs_tokens);
     }
   }

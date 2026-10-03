@@ -202,9 +202,14 @@ statement error unknown option "filler_token"
 CREATE TEXT SEARCH DICTIONARY shingle_filler AS
     generate_shingles(split_text_csv(' '), filler_token := '_');
 
-statement error Unsupported index features are specified
+statement ok
 CREATE TEXT SEARCH DICTIONARY shingle_offset AS
     generate_shingles(split_text_csv(' '))
+    WITH (frequency, position, offset);
+
+statement error Unsupported index features are specified: offset
+CREATE TEXT SEARCH DICTIONARY shingle_offset_union AS
+    generate_shingles([split_text_csv(' '), split_text_csv(',')])
     WITH (frequency, position, offset);
 
 statement ok

@@ -33,7 +33,7 @@ Two shapes are rejected when the dictionary is created. Both name the offending 
 
 Both checks run only for a chain of two or more stages left after dropped `keyword` stages, since a single stage is unwrapped into the bare template.
 
-The template supports the `FREQUENCY`, `POSITION` and `NORM` [feature flags](../index.md#feature-flags). `OFFSET` requires every stage to report offsets, because the pipeline folds that trait across the chain: one stage without offsets — [`sql`](../sql.md), [`generate_sparse_ngrams`](../../../functions/search/tokenizers/generate_sparse_ngrams.md), [`union`](../union.md), [`generate_shingles`](../../../functions/search/tokenizers/generate_shingles.md), [`encode_geopoint`](../../../functions/search/tokenizers/encode_geopoint.md) or [`encode_geojson`](../../../functions/search/tokenizers/encode_geojson.md) — makes `WITH (offset)` fail when the dictionary is created, with `Unsupported index features are specified: offset`.
+The template supports the `FREQUENCY`, `POSITION` and `NORM` [feature flags](../index.md#feature-flags). `OFFSET` requires every stage to report offsets, because the pipeline folds that trait across the chain: one stage without offsets — [`sql`](../sql.md), [`generate_sparse_ngrams`](../../../functions/search/tokenizers/generate_sparse_ngrams.md), [`union`](../union.md), [`encode_geopoint`](../../../functions/search/tokenizers/encode_geopoint.md) or [`encode_geojson`](../../../functions/search/tokenizers/encode_geojson.md) — makes `WITH (offset)` fail when the dictionary is created, with `Unsupported index features are specified: offset`.
 
 ## Tokenization
 

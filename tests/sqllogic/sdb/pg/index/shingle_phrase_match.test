@@ -1192,6 +1192,83 @@ statement ok
 DROP TEXT SEARCH DICTIONARY shingle_offs
 
 statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_stored AS
+    generate_shingles(split_text_csv(' '), 2, 3) WITH (frequency, position, offset)
+
+statement ok
+CREATE TABLE test_shingle_stored (id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX test_shingle_stored_idx ON test_shingle_stored USING inverted(id, body shingle_stored)
+
+statement ok
+INSERT INTO test_shingle_stored VALUES
+    (1, 'the quick brown fox jumps'),
+    (2, 'quick brown cat and quick brown fox')
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle_stored
+
+query
+SELECT id, ts_offsets(body) AS offsets FROM test_shingle_stored_idx WHERE body @@ 'brown' ORDER BY id
+----
+id	offsets
+1	{10,15}
+2	{6,11,26,31}
+
+query
+SELECT id, ts_offsets(body) AS offsets FROM test_shingle_stored_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
+----
+id	offsets
+1	{4,15}
+2	{0,11,20,31}
+
+query
+SELECT id, ts_offsets(body) AS offsets FROM test_shingle_stored_idx WHERE body @@ ts_phrase('quick brown fox jumps') ORDER BY id
+----
+id	offsets
+1	{4,25}
+
+query
+SELECT id, ts_offsets(body) AS offsets FROM test_shingle_stored_idx WHERE body @@ (ts_phrase('quick brown') ## ts_regexp('f.x')) ORDER BY id
+----
+id	offsets
+1	{4,19}
+2	{20,35}
+
+query
+SELECT id, ts_highlight(body) AS snippet FROM test_shingle_stored_idx WHERE body @@ ts_phrase('quick brown fox jumps') ORDER BY id
+----
+id	snippet
+1	the <b>quick brown fox jumps</b>
+
+query
+EXPLAIN SELECT id, ts_offsets(body) AS offsets FROM test_shingle_stored_idx WHERE body @@ ts_phrase('quick brown fox jumps')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────╮
+│ Index: test_shingle_stored_idx                                     │
+│ Lookup: table                                                      │
+│ Index Filter:                                                      │
+│ ╭─ Phrase ───────────────────────────────────────────────────────╮ │
+│ │ Field: body(string)                                            │ │
+│ │ Parts:                                                         │ │
+│ │ Shingle:quick brown fox(0, 0); Shingle:brown fox jumps(1, 1);  │ │
+│ │ Separator: ' '                                                 │ │
+│ ╰────────────────────────────────────────────────────────────────╯ │
+│ Offsets: body                                                      │
+│ Projections:                                                       │
+│ id, sdb_inverted_index_offsets$body                                │
+│ ~1 row                                                             │
+╰────────────────────────────────────────────────────────────────────╯
+
+statement ok
+DROP TABLE test_shingle_stored
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_stored
+
+statement ok
 CREATE TEXT SEARCH DICTIONARY shingle_freq AS
     generate_shingles(split_text_csv(' '), 2, 3, frequent_words := ['the']) WITH (frequency, position)
 

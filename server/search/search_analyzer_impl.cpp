@@ -122,10 +122,6 @@ void Features::Validate(std::string_view type) const {
       return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
              irs::IndexFeatures::Norm;
     }
-    if (type == irs::analysis::ShingleTokenizer::type_name()) {
-      return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-             irs::IndexFeatures::Norm;
-    }
     return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
            irs::IndexFeatures::Norm | irs::IndexFeatures::Offs;
   }();

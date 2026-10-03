@@ -355,7 +355,7 @@ TEST(ShingleTokenizerTest, traits) {
     auto analyzer = MakeAnalyzer(2, 2, true);
     const auto traits = analyzer.Traits();
     EXPECT_TRUE(traits.explicit_pos);
-    EXPECT_FALSE(traits.offsets);
+    EXPECT_TRUE(traits.offsets);
     EXPECT_FALSE(traits.store);
   }
   {
@@ -879,6 +879,7 @@ TEST(ShingleTokenizerTest, offsets_cover_the_value_without_base_offsets) {
                               .max_shingle_size = 2,
                               .output_unigrams = true,
                             }};
+  EXPECT_FALSE(analyzer.Traits().offsets);
   const auto tokens = EmitWithOffs(analyzer, "x b|c y");
   ASSERT_EQ(6U, tokens.size());
   for (const auto& [term, start, end] : tokens) {

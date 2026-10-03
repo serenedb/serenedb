@@ -219,7 +219,7 @@ class PruneLeaves {
   IRS_FORCE_INLINE void Gather(doc_id_t doc, uint32_t slot) {
     for (size_t c = 0, count = _leaves.size(); c != count; ++c) {
       auto& leaf = _leaves[c];
-      _held[c] |= static_cast<uint32_t>(leaf.Probe(doc) == doc) << slot;
+      _held[c] |= static_cast<ScoreMask>(leaf.Probe(doc) == doc) << slot;
       leaf.FetchScoreArgs(slot);
     }
   }
@@ -236,18 +236,18 @@ class PruneLeaves {
   uint32_t AddOptional(doc_id_t* IRS_RESTRICT docs,
                        score_t* IRS_RESTRICT scores, uint32_t len,
                        score_t threshold) {
-    static_assert(kScoreBlock <= BitsRequired<uint32_t>());
     SDB_ASSERT(len != 0 && len <= kScoreBlock);
     const auto count = _leaves.size();
     std::copy_n(scores, len, _running);
-    uint32_t alive =
-      len == kScoreBlock ? ~uint32_t{0} : (uint32_t{1} << len) - 1;
+    ScoreMask alive = len == BitsRequired<ScoreMask>()
+                        ? ~ScoreMask{0}
+                        : (ScoreMask{1} << len) - 1;
     bool fetched = false;
     for (size_t i = 0; i != count; ++i) {
       if (const auto required = threshold - _suffix[i]; required > 0) {
-        uint32_t keep = 0;
+        ScoreMask keep = 0;
         for (uint32_t j = 0; j != len; ++j) {
-          keep |= static_cast<uint32_t>(_running[j] > required) << j;
+          keep |= static_cast<ScoreMask>(_running[j] > required) << j;
         }
         alive &= keep;
       }
@@ -256,11 +256,11 @@ class PruneLeaves {
       }
       const auto c = _order[i];
       auto& leaf = _leaves[c];
-      uint32_t hits = 0;
+      ScoreMask hits = 0;
       for (auto m = alive; m != 0; m &= m - 1) {
         const auto j = static_cast<uint32_t>(std::countr_zero(m));
         const auto doc = docs[j];
-        hits |= static_cast<uint32_t>(leaf.Probe(doc) == doc) << j;
+        hits |= static_cast<ScoreMask>(leaf.Probe(doc) == doc) << j;
         leaf.FetchScoreArgs(j);
       }
       if (hits == 0) {
@@ -311,7 +311,7 @@ class PruneLeaves {
   irs::containers::Fixed<score_t, N> _remaining;
   irs::containers::Fixed<score_t, N> _suffix;
   irs::containers::Fixed<uint32_t, N> _order;
-  irs::containers::Fixed<uint32_t, N> _held{_leaves.size()};
+  irs::containers::Fixed<ScoreMask, N> _held{_leaves.size()};
   irs::containers::Fixed<std::array<score_t, kScoreBlock>, N> _rows{
     _leaves.size()};
   ABSL_CACHELINE_ALIGNED score_t _running[kScoreBlock];

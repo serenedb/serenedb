@@ -166,7 +166,7 @@ class OrLeaves {
 
  private:
   containers::Fixed<Leaf, N> _leaves;
-  [[no_unique_address]] utils::Need<Scored, containers::Fixed<uint32_t, N>>
+  [[no_unique_address]] utils::Need<Scored, containers::Fixed<ScoreMask, N>>
     _held;
   [[no_unique_address]] utils::Need<Scored, doc_id_t> _doc =
     doc_limits::invalid();
@@ -256,7 +256,7 @@ class ThresholdLeaves {
 
  private:
   containers::Fixed<Leaf, N> _probes;
-  [[no_unique_address]] utils::Need<Scored, containers::Fixed<uint32_t, N>>
+  [[no_unique_address]] utils::Need<Scored, containers::Fixed<ScoreMask, N>>
     _held;
   [[no_unique_address]] utils::Need<Scored, containers::Fixed<uint32_t, N>>
     _matched;
@@ -316,7 +316,7 @@ class BoostLeaves {
 
  private:
   containers::Fixed<Leaf, N> _leaves;
-  containers::Fixed<uint32_t, N> _held;
+  containers::Fixed<ScoreMask, N> _held;
   doc_id_t _doc = doc_limits::invalid();
 };
 

@@ -28,7 +28,6 @@
 #include <array>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
-#include <duckdb/catalog/catalog_entry/job_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/common/query_context.hpp>
@@ -166,6 +165,27 @@ void RequireAlterableOption(std::string_view name) {
   }
 }
 
+duckdb::JobSchedule ReindexSchedule(uint32_t interval_ms) {
+  return {.kind = duckdb::JobScheduleKind::AFTER,
+          .interval = duckdb::Value::INTERVAL(
+            duckdb::Interval::FromMicro(int64_t{interval_ms} * 1000))};
+}
+
+void SetJobOwnedBy(duckdb::CatalogTransaction transaction,
+                   duckdb::Catalog& catalog, const duckdb::Identifier& schema,
+                   const duckdb::Identifier& job,
+                   const duckdb::Identifier& owner) {
+  duckdb::ChangeOwnershipInfo ownership{
+    duckdb::CatalogType::JOB_ENTRY,
+    catalog.GetName(),
+    schema,
+    job,
+    schema,
+    owner,
+    duckdb::OnEntryNotFound::THROW_EXCEPTION};
+  catalog.Alter(transaction, ownership);
+}
+
 }  // namespace
 
 bool IsKnownInvertedIndexOption(std::string_view name) {
@@ -195,12 +215,9 @@ InvertedIndexSettings ResolveSettings(
   const auto get = [&](std::string_view name) -> const duckdb::Value& {
     return options.find(name)->second;
   };
-  const auto reindex = options.find(kReindexIntervalSetting);
   return {
     .row_group_size = get(kRowGroupSizeSetting).GetValue<uint32_t>(),
     .refresh_interval_ms = get(kRefreshIntervalSetting).GetValue<uint32_t>(),
-    .reindex_interval_ms =
-      reindex == options.end() ? 0 : reindex->second.GetValue<uint32_t>(),
     .compaction_interval_ms =
       get(kCompactionIntervalSetting).GetValue<uint32_t>(),
     .cleanup_interval_step =
@@ -465,25 +482,43 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
   auto result = Copy(context);
   auto& new_options = result->Cast<InvertedIndexEntry>().options;
   const bool view_backed = !this->info && !_search_table;
+  std::optional<duckdb::Value> reindex_interval;
   switch (index_alter.alter_index_type) {
-    case duckdb::AlterIndexType::SET_INDEX_OPTIONS:
-      for (const auto& [name, value] :
-           index_alter.Cast<duckdb::SetIndexOptionsInfo>().options) {
+    case duckdb::AlterIndexType::SET_INDEX_OPTIONS: {
+      auto& options = index_alter.Cast<duckdb::SetIndexOptionsInfo>().options;
+      if (auto node = options.extract(std::string{kReindexIntervalSetting})) {
+        RequireViewBackedOption(node.key(), view_backed);
+        reindex_interval =
+          connector::ValidateSetting(context, node.key(), node.mapped());
+      }
+      for (const auto& [name, value] : options) {
         RequireAlterableOption(name);
-        RequireViewBackedOption(name, view_backed);
         new_options[name] = connector::ValidateSetting(context, name, value);
       }
       break;
-    case duckdb::AlterIndexType::RESET_INDEX_OPTIONS:
-      for (const auto& identifier :
-           index_alter.Cast<duckdb::ResetIndexOptionsInfo>().options) {
+    }
+    case duckdb::AlterIndexType::RESET_INDEX_OPTIONS: {
+      auto& options = index_alter.Cast<duckdb::ResetIndexOptionsInfo>().options;
+      if (options.extract(duckdb::Identifier{kReindexIntervalSetting}) &&
+          view_backed) {
+        context.TryGetCurrentSetting(std::string{kReindexIntervalSetting},
+                                     reindex_interval.emplace());
+      }
+      for (const auto& identifier : options) {
         const auto& name = identifier.GetIdentifierName();
         RequireAlterableOption(name);
         context.TryGetCurrentSetting(identifier, new_options[name]);
       }
       break;
+    }
     default:
       return duckdb::CatalogEntry::AlterEntry(transaction, info);
+  }
+  if (reindex_interval &&
+      info.bind_mode != duckdb::AlterBindMode::SKIP_BINDING) {
+    AlterReindexJob(transaction, reindex_interval->IsNull()
+                                   ? 0
+                                   : reindex_interval->GetValue<uint32_t>());
   }
   if (_storage) {
     auto settings = ResolveSettings(new_options);
@@ -499,58 +534,49 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
   return result;
 }
 
-void InvertedIndexEntry::SyncReindexJob(
-  duckdb::CatalogTransaction transaction) {
-  if (info || _search_table) {
-    return;
-  }
-  duckdb::optional_ptr<duckdb::JobCatalogEntry> job;
-  catalog.GetDependencyManager()->ScanDependentEntries(
-    transaction, *this, [&](duckdb::CatalogEntry& entry) {
-      if (entry.type == duckdb::CatalogType::JOB_ENTRY) {
-        job = entry.Cast<duckdb::JobCatalogEntry>();
-      }
-    });
-  auto& context = transaction.GetContext();
-  const duckdb::QualifiedName job_name{catalog.GetName(), ParentSchemaName(),
-                                       job ? job->name : name};
-  const auto interval_ms = ResolveSettings(options).reindex_interval_ms;
+void InvertedIndexEntry::CreateReindexJob(
+  duckdb::CatalogTransaction transaction, uint32_t interval_ms) {
   if (interval_ms == 0) {
-    if (job) {
-      duckdb::DropInfo drop;
-      drop.type = duckdb::CatalogType::JOB_ENTRY;
-      drop.SetQualifiedName(job_name);
-      catalog.DropEntry(context, drop);
-    }
-    return;
-  }
-  const duckdb::JobSchedule schedule{
-    .kind = duckdb::JobScheduleKind::AFTER,
-    .interval = duckdb::Value::INTERVAL(
-      duckdb::Interval::FromMicro(int64_t{interval_ms} * 1000))};
-  if (job) {
-    if (!(job->schedule == schedule)) {
-      duckdb::AlterJobInfo alter{
-        duckdb::AlterJobType::SET_SCHEDULE,
-        duckdb::AlterEntryData{job_name,
-                               duckdb::OnEntryNotFound::THROW_EXCEPTION}};
-      alter.schedule = schedule;
-      catalog.Alter(transaction, alter);
-    }
     return;
   }
   const auto relation =
     ParentSchema(transaction)
       .GetEntry(transaction, duckdb::CatalogType::TABLE_ENTRY, GetTableName());
   duckdb::CreateJobInfo create;
-  create.SetQualifiedName(job_name);
-  create.schedule = schedule;
+  create.SetQualifiedName({catalog.GetName(), ParentSchemaName(), name});
+  create.schedule = ReindexSchedule(interval_ms);
   create.body =
     absl::StrCat("PRAGMA ", connector::kReindexByIdPragma, "(", oid, ")");
   create.permissions.owner =
     relation ? relation->permissions.owner : permissions.owner;
-  create.dependencies.AddDependency(*this);
-  catalog.CreateJob(context, create);
+  catalog.CreateJob(transaction.GetContext(), create);
+  SetJobOwnedBy(transaction, catalog, ParentSchemaName(), name, name);
+}
+
+void InvertedIndexEntry::AlterReindexJob(duckdb::CatalogTransaction transaction,
+                                         uint32_t interval_ms) {
+  const auto owned =
+    catalog.GetDependencyManager()->OwnedEntries(transaction, *this);
+  if (owned.empty()) {
+    CreateReindexJob(transaction, interval_ms);
+    return;
+  }
+  const duckdb::QualifiedName job_name{catalog.GetName(), ParentSchemaName(),
+                                       owned.front().get().name};
+  if (interval_ms == 0) {
+    SetJobOwnedBy(transaction, catalog, ParentSchemaName(), job_name.Name(),
+                  duckdb::Identifier{});
+    duckdb::DropInfo drop;
+    drop.type = duckdb::CatalogType::JOB_ENTRY;
+    drop.SetQualifiedName(job_name);
+    catalog.DropEntry(transaction.GetContext(), drop);
+    return;
+  }
+  duckdb::AlterJobInfo alter{
+    duckdb::AlterJobType::SET_SCHEDULE,
+    duckdb::AlterEntryData{job_name, duckdb::OnEntryNotFound::THROW_EXCEPTION}};
+  alter.schedule = ReindexSchedule(interval_ms);
+  catalog.Alter(transaction, alter);
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::Copy(

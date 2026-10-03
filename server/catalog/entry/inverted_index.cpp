@@ -27,10 +27,10 @@
 
 #include <array>
 #include <duckdb/catalog/catalog.hpp>
-#include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/job_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/common/query_context.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_data/alter_job_info.hpp>
@@ -513,61 +513,53 @@ void InvertedIndexEntry::SyncReindexJob(
   if (info || _search_table) {
     return;
   }
-  auto& context = transaction.GetContext();
-  auto& schema = ParentSchema(context);
-  const auto it = options.find(kReindexIntervalSetting);
-  const uint32_t interval_ms = it == options.end() || it->second.IsNull()
-                                 ? 0
-                                 : it->second.GetValue<uint32_t>();
-  const auto body =
-    absl::StrCat("PRAGMA ", connector::kReindexByIdPragma, "(", oid, ")");
   duckdb::optional_ptr<duckdb::JobCatalogEntry> job;
-  schema.Scan(context, duckdb::CatalogType::JOB_ENTRY,
-              [&](duckdb::CatalogEntry& entry) {
-                auto& candidate = entry.Cast<duckdb::JobCatalogEntry>();
-                if (candidate.body == body) {
-                  job = &candidate;
-                }
-              });
+  catalog.GetDependencyManager()->ScanDependentEntries(
+    transaction, *this, [&](duckdb::CatalogEntry& entry) {
+      if (entry.type == duckdb::CatalogType::JOB_ENTRY) {
+        job = entry.Cast<duckdb::JobCatalogEntry>();
+      }
+    });
+  auto& context = transaction.GetContext();
+  const duckdb::QualifiedName job_name{catalog.GetName(), ParentSchemaName(),
+                                       job ? job->name : name};
+  const auto interval_ms = ResolveSettings(options).reindex_interval_ms;
   if (interval_ms == 0) {
     if (job) {
       duckdb::DropInfo drop;
       drop.type = duckdb::CatalogType::JOB_ENTRY;
-      drop.SetQualifiedName(
-        duckdb::QualifiedName{catalog.GetName(), schema.name, job->name});
-      drop.if_not_found = duckdb::OnEntryNotFound::RETURN_NULL;
-      schema.DropEntry(context, drop);
+      drop.SetQualifiedName(job_name);
+      catalog.DropEntry(context, drop);
     }
     return;
   }
-  duckdb::JobSchedule schedule;
-  schedule.kind = duckdb::JobScheduleKind::AFTER;
-  schedule.interval = duckdb::Value::INTERVAL(
-    duckdb::Interval::FromMicro(int64_t{interval_ms} * 1000));
+  const duckdb::JobSchedule schedule{
+    .kind = duckdb::JobScheduleKind::AFTER,
+    .interval = duckdb::Value::INTERVAL(
+      duckdb::Interval::FromMicro(int64_t{interval_ms} * 1000))};
   if (job) {
-    if (job->schedule == schedule) {
-      return;
+    if (!(job->schedule == schedule)) {
+      duckdb::AlterJobInfo alter{
+        duckdb::AlterJobType::SET_SCHEDULE,
+        duckdb::AlterEntryData{job_name,
+                               duckdb::OnEntryNotFound::THROW_EXCEPTION}};
+      alter.schedule = schedule;
+      catalog.Alter(transaction, alter);
     }
-    duckdb::AlterJobInfo alter{
-      duckdb::AlterJobType::SET_SCHEDULE,
-      duckdb::AlterEntryData{
-        duckdb::QualifiedName{catalog.GetName(), schema.name, job->name},
-        duckdb::OnEntryNotFound::THROW_EXCEPTION}};
-    alter.schedule = schedule;
-    schema.Alter(transaction, alter);
     return;
   }
-  const auto relation = schema.GetEntry(
-    transaction, duckdb::CatalogType::TABLE_ENTRY, GetTableName());
+  const auto relation =
+    ParentSchema(transaction)
+      .GetEntry(transaction, duckdb::CatalogType::TABLE_ENTRY, GetTableName());
   duckdb::CreateJobInfo create;
-  create.SetQualifiedName(
-    duckdb::QualifiedName{catalog.GetName(), schema.name, name});
+  create.SetQualifiedName(job_name);
   create.schedule = schedule;
-  create.body = body;
+  create.body =
+    absl::StrCat("PRAGMA ", connector::kReindexByIdPragma, "(", oid, ")");
   create.permissions.owner =
     relation ? relation->permissions.owner : permissions.owner;
   create.dependencies.AddDependency(*this);
-  schema.Cast<duckdb::DuckSchemaEntry>().CreateJob(transaction, create);
+  catalog.CreateJob(context, create);
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::Copy(

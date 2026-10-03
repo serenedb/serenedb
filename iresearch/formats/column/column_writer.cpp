@@ -451,6 +451,8 @@ class ListIngest {
     _sequence = true;
     _dedup = _direct;
     _prev = kNoRep;
+    _off_chunks = 0;
+    OpenWindow();
   }
 
   void AddNulls(duckdb::idx_t count) {
@@ -465,9 +467,23 @@ class ListIngest {
     const auto* entries =
       duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(parent);
     const auto& child = duckdb::ListVector::GetChild(vec);
-    if (!_dedup) {
+    if (!_dedup &&
+        !(_direct && ++_off_chunks % kProbeEvery == 0 &&
+          Repetitive(parent, entries, child,
+                     duckdb::ListVector::GetListSize(vec), off, count))) {
       AddDistinct(parent, entries, child, off, count);
       return;
+    }
+    if (!_dedup) {
+      _dedup = true;
+      OpenWindow();
+      if (_tail) {
+        SliceChunks(_elems, duckdb::ListVector::GetChildMutable(*_tail), 0,
+                    duckdb::ListVector::GetListSize(*_tail));
+        _tail.reset();
+      }
+      _elems.push_back(
+        WriteChunk{duckdb::Vector{_child_type, STANDARD_VECTOR_SIZE}, 0});
     }
     _keys.SetChunk(kSource, child, duckdb::ListVector::GetListSize(vec));
     _fresh.clear();
@@ -481,9 +497,11 @@ class ListIngest {
   }
 
   void CheckDistinct() {
-    if (_dedup &&
-        (_next_code - _code_base - _null_codes) * 10 > _valid_rows * 9) {
+    const uint64_t codes =
+      (_next_code - _window_code) - (_null_codes - _window_nulls);
+    if (_dedup && codes * 10 > (_valid_rows - _window_valid) * 9) {
       _dedup = false;
+      _off_chunks = 0;
       Forget();
     }
   }
@@ -518,6 +536,8 @@ class ListIngest {
 
  private:
   static constexpr uint32_t kNoRep = std::numeric_limits<uint32_t>::max();
+  static constexpr uint64_t kProbeEvery = 8;
+  static constexpr duckdb::idx_t kProbeRows = 512;
   static constexpr size_t kSource = 0;
 
   struct Fresh {
@@ -567,6 +587,36 @@ class ListIngest {
       _running += entry.length;
       _ends.Push(_running);
     }
+  }
+
+  void OpenWindow() noexcept {
+    _window_code = _next_code;
+    _window_nulls = _null_codes;
+    _window_valid = _valid_rows;
+  }
+
+  bool Repetitive(const duckdb::UnifiedVectorFormat& parent,
+                  const duckdb::list_entry_t* entries,
+                  const duckdb::Vector& child, duckdb::idx_t child_count,
+                  duckdb::idx_t off, duckdb::idx_t count) {
+    _keys.SetChunk(kSource, child, child_count);
+    _probe.clear();
+    const auto end = off + std::min(count, kProbeRows);
+    for (duckdb::idx_t i = off; i < end; ++i) {
+      const auto idx = parent.sel->get_index(i);
+      if (!parent.validity.RowIsValid(idx)) {
+        continue;
+      }
+      const auto& entry = entries[idx];
+      _probe.emplace_back(_keys.Hash(kSource, entry.offset, entry.length));
+    }
+    if (_probe.empty()) {
+      return false;
+    }
+    std::ranges::sort(_probe);
+    const auto distinct =
+      static_cast<size_t>(std::ranges::unique(_probe).begin() - _probe.begin());
+    return distinct * 2 <= _probe.size();
   }
 
   void PushNull() {
@@ -768,6 +818,11 @@ class ListIngest {
   uint64_t _elem_base = 0;
   uint64_t _valid_rows = 0;
   uint64_t _null_codes = 0;
+  uint64_t _window_code = 0;
+  uint64_t _window_nulls = 0;
+  uint64_t _window_valid = 0;
+  uint64_t _off_chunks = 0;
+  std::vector<uint64_t> _probe;
   bool _sequence = true;
   uint32_t _prev = kNoRep;
   UbigintChunks _codes;

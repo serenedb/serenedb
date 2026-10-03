@@ -112,6 +112,10 @@ class PositionedTokenizer final
   }
 };
 
+irs::bytes_view Bytes(std::string_view text) {
+  return irs::ViewCast<irs::byte_type>(text);
+}
+
 std::unique_ptr<ShingleTokenizer> MakeShingles(
   uint32_t min, uint32_t max, bool unigrams = true,
   std::vector<std::string_view> frequent = {},
@@ -120,10 +124,10 @@ std::unique_ptr<ShingleTokenizer> MakeShingles(
     .min_shingle_size = min,
     .max_shingle_size = max,
     .output_unigrams = unigrams,
-    .token_separator = irs::bstring{irs::ViewCast<irs::byte_type>(separator)},
+    .token_separator = irs::bstring{Bytes(separator)},
   };
   for (const auto word : frequent) {
-    options.frequent_words.emplace_back(irs::ViewCast<irs::byte_type>(word));
+    options.frequent_words.emplace_back(Bytes(word));
   }
   return std::make_unique<ShingleTokenizer>(
     std::make_unique<WhitespaceTokenizer>(), std::move(options));
@@ -132,8 +136,7 @@ std::unique_ptr<ShingleTokenizer> MakeShingles(
 irs::ByPhraseOptions Phrase(std::string_view text) {
   irs::ByPhraseOptions phrase;
   for (const auto word : absl::StrSplit(text, ' ', absl::SkipEmpty())) {
-    phrase.push_back<irs::ByTermOptions>().term =
-      irs::ViewCast<irs::byte_type>(word);
+    phrase.push_back<irs::ByTermOptions>().term = Bytes(word);
   }
   return phrase;
 }
@@ -156,15 +159,14 @@ std::vector<std::string> Terms(const irs::ByPhraseOptions& phrase) {
 
 void PushTerm(irs::ByPhraseOptions& phrase, std::string_view word,
               irs::PosAttr::value_t offs_min, irs::PosAttr::value_t offs_max) {
-  phrase.push_back<irs::ByTermOptions>(offs_min, offs_max).term =
-    irs::ViewCast<irs::byte_type>(word);
+  phrase.push_back<irs::ByTermOptions>(offs_min, offs_max).term = Bytes(word);
 }
 
 void PushPrefix(irs::ByPhraseOptions& phrase, std::string_view prefix,
                 irs::PosAttr::value_t offs_min,
                 irs::PosAttr::value_t offs_max) {
   phrase.push_back<irs::ByPrefixOptions>(offs_min, offs_max).term =
-    irs::ViewCast<irs::byte_type>(prefix);
+    Bytes(prefix);
 }
 
 std::vector<uint32_t> Offsets(const irs::ByPhraseOptions& phrase) {
@@ -335,8 +337,7 @@ class Index {
     auto filter = std::make_unique<irs::ByPhrase>();
     *filter->mutable_field_id() = field;
     *filter->mutable_options() = phrase;
-    filter->mutable_options()->set_word_separator(
-      irs::ViewCast<irs::byte_type>(separator));
+    filter->mutable_options()->set_word_separator(Bytes(separator));
     irs::Filter::ptr root = std::move(filter);
     irs::Optimize(root);
     return Docs(*root);
@@ -541,22 +542,16 @@ irs::Filter::ptr ShingleFilter(const ShingleTokenizer& shingles,
   auto fallback = std::make_unique<irs::ByPhrase>();
   *fallback->mutable_field_id() = kShingleId;
   *fallback->mutable_options() = phrase;
-  fallback->mutable_options()->set_word_separator(
-    irs::ViewCast<irs::byte_type>(std::string_view{" "}));
+  fallback->mutable_options()->set_word_separator(Bytes(" "));
   return fallback;
 }
 
-irs::ByPhrase PrefixPhrase(std::string_view prefix, std::string_view word,
-                           std::string_view separator) {
-  irs::ByPhrase filter;
-  *filter.mutable_field_id() = kShingleId;
-  auto& options = *filter.mutable_options();
-  options.push_back<irs::ByPrefixOptions>().term =
-    irs::ViewCast<irs::byte_type>(prefix);
-  options.push_back<irs::ByTermOptions>().term =
-    irs::ViewCast<irs::byte_type>(word);
-  options.set_word_separator(irs::ViewCast<irs::byte_type>(separator));
-  return filter;
+irs::ByPhraseOptions PrefixThen(std::string_view prefix,
+                                std::string_view word) {
+  irs::ByPhraseOptions phrase;
+  PushPrefix(phrase, prefix, 0, 0);
+  PushTerm(phrase, word, 1, 1);
+  return phrase;
 }
 
 }  // namespace
@@ -650,10 +645,8 @@ TEST(ShinglePhrasePlanTest, frequent_words_limit_wide_windows) {
 TEST(ShinglePhrasePlanTest, gaps_split_runs) {
   const auto shingles = MakeShingles(2, 2);
   auto phrase = Phrase("a b");
-  phrase.push_back<irs::ByTermOptions>(1).term =
-    irs::ViewCast<irs::byte_type>(std::string_view{"c"});
-  phrase.push_back<irs::ByTermOptions>().term =
-    irs::ViewCast<irs::byte_type>(std::string_view{"d"});
+  phrase.push_back<irs::ByTermOptions>(1).term = Bytes("c");
+  phrase.push_back<irs::ByTermOptions>().term = Bytes("d");
   const auto plan = irs::PlanShinglePhrase(*shingles, phrase, true);
   ASSERT_TRUE(plan.has_value());
   EXPECT_EQ((std::vector<std::string>{"a b", "c d"}), Terms(PhraseOf(plan)));
@@ -716,7 +709,7 @@ TEST(ShinglePhrasePlanTest, declines_without_shingle_gain) {
   const auto plans = [&](const irs::ByPhraseOptions& phrase) {
     return irs::PlanShinglePhrase(*shingles, phrase, true).has_value();
   };
-  const auto brown = irs::ViewCast<irs::byte_type>(std::string_view{"brown"});
+  const auto brown = Bytes("brown");
 
   auto sloppy = Phrase("quick brown");
   sloppy.set_slop(1);
@@ -789,11 +782,11 @@ TEST(ShinglePhraseIndexTest, pattern_parts_skip_shingles) {
   const Index index{kDocs, *shingles,
                     irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
   EXPECT_EQ((std::vector<irs::doc_id_t>{0}),
-            index.Docs(PrefixPhrase("quick b", "brown", "")));
+            index.PhraseDocs(kShingleId, PrefixThen("quick b", "brown")));
   EXPECT_EQ((std::vector<irs::doc_id_t>{}),
-            index.Docs(PrefixPhrase("quick b", "brown", " ")));
+            index.PhraseDocs(kShingleId, PrefixThen("quick b", "brown"), " "));
   EXPECT_EQ((std::vector<irs::doc_id_t>{0}),
-            index.Docs(PrefixPhrase("qu", "brown", " ")));
+            index.PhraseDocs(kShingleId, PrefixThen("qu", "brown"), " "));
 }
 
 TEST(ShinglePhraseIndexTest, pattern_parts_find_words_after_shingles) {
@@ -803,11 +796,11 @@ TEST(ShinglePhraseIndexTest, pattern_parts_find_words_after_shingles) {
   const Index index{kDocs, *shingles,
                     irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
   EXPECT_EQ((std::vector<irs::doc_id_t>{0, 1, 3}),
-            index.Docs(PrefixPhrase("fo", "den", " ")));
+            index.PhraseDocs(kShingleId, PrefixThen("fo", "den"), " "));
   EXPECT_EQ((std::vector<irs::doc_id_t>{0, 1}),
-            index.Docs(PrefixPhrase("fox", "den", " ")));
+            index.PhraseDocs(kShingleId, PrefixThen("fox", "den"), " "));
   EXPECT_EQ((std::vector<irs::doc_id_t>{}),
-            index.Docs(PrefixPhrase("fox d", "den", " ")));
+            index.PhraseDocs(kShingleId, PrefixThen("fox d", "den"), " "));
 }
 
 TEST(ShinglePhraseIndexTest, partial_cover_agrees_with_positions) {
@@ -903,8 +896,8 @@ TEST(ShinglePhraseIndexTest, covers_run_in_every_family) {
           break;
         case 1: {
           auto& set = phrase.push_back<irs::TermSetOptions>(offs_min, offs_max);
-          set.terms.emplace(irs::ViewCast<irs::byte_type>(word));
-          set.terms.emplace(irs::ViewCast<irs::byte_type>(kWords[rng() % 5]));
+          set.terms.emplace(Bytes(word));
+          set.terms.emplace(Bytes(kWords[rng() % 5]));
         } break;
         default:
           PushTerm(phrase, word, offs_min, offs_max);
@@ -964,15 +957,13 @@ TEST(ShinglePhraseIndexTest, covers_run_in_every_family) {
 TEST(ShinglePhraseFilterTest, equality_covers_separator) {
   const auto base = Phrase("quick brown");
   auto separated = base;
-  separated.set_word_separator(
-    irs::ViewCast<irs::byte_type>(std::string_view{" "}));
+  separated.set_word_separator(Bytes(" "));
   EXPECT_NE(base, separated);
   auto twin = base;
-  twin.set_word_separator(irs::ViewCast<irs::byte_type>(std::string_view{" "}));
+  twin.set_word_separator(Bytes(" "));
   EXPECT_EQ(separated, twin);
   auto other = base;
-  other.set_word_separator(
-    irs::ViewCast<irs::byte_type>(std::string_view{"_"}));
+  other.set_word_separator(Bytes("_"));
   EXPECT_NE(separated, other);
 
   separated.clear();
@@ -983,16 +974,16 @@ TEST(ShinglePhraseFilterTest, lowered_patterns_reject_shingles) {
   const auto lowered = [](std::string_view separator) {
     irs::ByPhraseOptions phrase;
     PushTerm(phrase, "quick", 0, 0);
-    phrase.push_back<irs::ByWildcardOptions>() = irs::ByWildcardOptions{
-      irs::ViewCast<irs::byte_type>(std::string_view{"%ox"})};
-    phrase.set_word_separator(irs::ViewCast<irs::byte_type>(separator));
+    phrase.push_back<irs::ByWildcardOptions>() =
+      irs::ByWildcardOptions{Bytes("%ox")};
+    phrase.set_word_separator(Bytes(separator));
     phrase.LowerParts();
     return std::get<irs::AutomatonOptions>(std::next(phrase.begin())->part)
       .source->Predicate();
   };
   const auto accepts = [](const irs::TermPredicate& predicate,
                           std::string_view term) {
-    return predicate.Accepts(irs::ViewCast<irs::byte_type>(term));
+    return predicate.Accepts(Bytes(term));
   };
 
   const auto space = lowered(" ");
@@ -1014,10 +1005,9 @@ TEST(ShinglePhraseFilterTest, lowered_patterns_reject_shingles) {
 
   irs::ByPhraseOptions regexp;
   PushTerm(regexp, "quick", 0, 0);
-  regexp.push_back<irs::ByRegexpOptions>() = irs::ByRegexpOptions{
-    irs::ViewCast<irs::byte_type>(std::string_view{".*ox"})};
-  regexp.set_word_separator(
-    irs::ViewCast<irs::byte_type>(std::string_view{" "}));
+  regexp.push_back<irs::ByRegexpOptions>() =
+    irs::ByRegexpOptions{Bytes(".*ox")};
+  regexp.set_word_separator(Bytes(" "));
   regexp.LowerParts();
   const auto words =
     std::get<irs::AutomatonOptions>(std::next(regexp.begin())->part)
@@ -1027,26 +1017,23 @@ TEST(ShinglePhraseFilterTest, lowered_patterns_reject_shingles) {
 }
 
 TEST(ShinglePhraseFilterTest, lowering_is_idempotent) {
-  const auto bytes = [](std::string_view text) {
-    return irs::ViewCast<irs::byte_type>(text);
-  };
   for (const std::string_view separator : {"", " ", "\xC2\xB7", "--"}) {
     SCOPED_TRACE(separator);
     irs::ByPhraseOptions phrase;
     PushTerm(phrase, "quick", 0, 0);
     phrase.push_back<irs::ByWildcardOptions>() =
-      irs::ByWildcardOptions{bytes("%ox")};
+      irs::ByWildcardOptions{Bytes("%ox")};
     phrase.push_back<irs::ByRegexpOptions>() =
-      irs::ByRegexpOptions{bytes("f.x")};
-    phrase.set_word_separator(bytes(separator));
+      irs::ByRegexpOptions{Bytes("f.x")};
+    phrase.set_word_separator(Bytes(separator));
     EXPECT_TRUE(phrase.LowerParts());
     EXPECT_FALSE(phrase.LowerParts());
 
     irs::ByPhraseOptions lowered;
     PushTerm(lowered, "quick", 0, 0);
     lowered.push_back<irs::AutomatonOptions>() =
-      irs::AutomatonOptions{bytes("b.*n"), irs::PatternKind::RegexpPerl};
-    lowered.set_word_separator(bytes(separator));
+      irs::AutomatonOptions{Bytes("b.*n"), irs::PatternKind::RegexpPerl};
+    lowered.set_word_separator(Bytes(separator));
     EXPECT_EQ(separator.size() == 1 || separator == "\xC2\xB7",
               lowered.LowerParts());
     EXPECT_FALSE(lowered.LowerParts());
@@ -1071,8 +1058,7 @@ TEST(ShinglePhraseFilterTest, simplify_keeps_one_slot_phrases_that_filter) {
   irs::ByPhraseOptions prefix;
   PushPrefix(prefix, "qu", 0, 0);
   EXPECT_EQ(irs::Type<irs::ByPrefix>::id(), lower(prefix)->type());
-  prefix.set_word_separator(
-    irs::ViewCast<irs::byte_type>(std::string_view{" "}));
+  prefix.set_word_separator(Bytes(" "));
   EXPECT_TRUE(is_phrase(lower(prefix)));
 }
 
@@ -1086,8 +1072,7 @@ TEST(ShinglePhraseIndexTest, one_slot_pattern_skips_shingles) {
     auto phrase = std::make_unique<irs::ByPhrase>();
     *phrase->mutable_field_id() = kShingleId;
     PushPrefix(*phrase->mutable_options(), prefix, 0, 0);
-    phrase->mutable_options()->set_word_separator(
-      irs::ViewCast<irs::byte_type>(std::string_view{" "}));
+    phrase->mutable_options()->set_word_separator(Bytes(" "));
     irs::Filter::ptr filter = std::move(phrase);
     irs::Optimize(filter);
     const auto out = index.Docs(*filter);
@@ -1121,9 +1106,6 @@ TEST(ShinglePhraseIndexTest, phrase_without_positions_matches_nothing) {
 
 TEST(ShinglePhraseIndexTest, every_pattern_kind_skips_shingles) {
   static constexpr std::string_view kWords[] = {"ab", "ac", "bc", "bd", "cd"};
-  const auto bytes = [](std::string_view text) {
-    return irs::bstring{irs::ViewCast<irs::byte_type>(text)};
-  };
   for (const std::string_view separator : {" ", "\xC2\xB7", "--"}) {
     SCOPED_TRACE(separator);
     std::mt19937 rng{23};
@@ -1147,22 +1129,22 @@ TEST(ShinglePhraseIndexTest, every_pattern_kind_skips_shingles) {
                                    ? absl::StrCat("%", word.substr(1))
                                    : absl::StrCat(word.substr(0, 1), "%");
             phrase.push_back<irs::ByWildcardOptions>(offs, offs) =
-              irs::ByWildcardOptions{bytes(pattern)};
+              irs::ByWildcardOptions{Bytes(pattern)};
             absl::StrAppend(&shape, " like:", pattern);
           } break;
           case 1:
           case 2: {
             auto& fuzzy =
               phrase.push_back<irs::ByEditDistanceOptions>(offs, offs);
-            fuzzy.term = bytes(word);
+            fuzzy.term = Bytes(word);
             fuzzy.max_distance = 2;
             fuzzy.max_terms = rng() % 2 ? 0 : 3;
             absl::StrAppend(&shape, " fuzzy:", word, "/", fuzzy.max_terms);
           } break;
           case 3: {
             auto& range = phrase.push_back<irs::ByRangeOptions>(offs, offs);
-            range.range.min = bytes(word.substr(0, 1));
-            range.range.max = bytes(absl::StrCat(word.substr(0, 1), "z"));
+            range.range.min = Bytes(word.substr(0, 1));
+            range.range.max = Bytes(absl::StrCat(word.substr(0, 1), "z"));
             range.range.min_type = irs::BoundType::Inclusive;
             range.range.max_type = irs::BoundType::Inclusive;
             absl::StrAppend(&shape, " range:", word.substr(0, 1));
@@ -1180,7 +1162,7 @@ TEST(ShinglePhraseIndexTest, every_pattern_kind_skips_shingles) {
                 pattern = absl::StrCat(word.substr(0, 1), ".*", word.substr(1));
             }
             phrase.push_back<irs::ByRegexpOptions>(offs, offs) =
-              irs::ByRegexpOptions{bytes(pattern)};
+              irs::ByRegexpOptions{Bytes(pattern)};
             absl::StrAppend(&shape, " regexp:", pattern);
           } break;
           default:
@@ -1217,8 +1199,8 @@ TEST(ShinglePhraseIndexTest, range_parts_respect_every_bound_type) {
         irs::ByPhraseOptions phrase;
         const auto push_range = [&](irs::PosAttr::value_t offs) {
           auto& range = phrase.push_back<irs::ByRangeOptions>(offs, offs).range;
-          range.min = irs::ViewCast<irs::byte_type>(std::string_view{"ac"});
-          range.max = irs::ViewCast<irs::byte_type>(std::string_view{"bd"});
+          range.min = Bytes("ac");
+          range.max = Bytes("bd");
           range.min_type = min_type;
           range.max_type = max_type;
         };

@@ -80,17 +80,33 @@ RESET ROLE;
 
 
 # The grantor cannot be dropped while the grant it authored exists.
+skipif serenedb
 statement error
 DROP ROLE drm_vedernikoff;
 ----
 db error: ERROR: role "drm_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
+onlyif serenedb
+statement error
+DROP ROLE drm_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "drm_vedernikoff" because there are entries that depend on it.<slt:ignore>
+
+
 # The grantee is equally a dependency of the same ACL -> also refused.
+skipif serenedb
 statement error
 DROP ROLE drm_clickclack;
 ----
 db error: ERROR: role "drm_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE drm_clickclack;
+----
+db error: ERROR: Cannot drop entry "drm_clickclack" because there are entries that depend on it.<slt:ignore>
 
 
 # A role uninvolved in this ACL drops cleanly.
@@ -105,10 +121,18 @@ statement ok
 REVOKE SELECT ON drm_kostya FROM drm_clickclack;
 
 
+skipif serenedb
 statement error
 DROP ROLE drm_vedernikoff;
 ----
 db error: ERROR: role "drm_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE drm_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "drm_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Revoking the grantor's own privilege WITHOUT cascade is refused while the
@@ -159,10 +183,18 @@ statement ok
 RESET ROLE;
 
 
+skipif serenedb
 statement error
 DROP ROLE drm_vedernikoff;
 ----
 db error: ERROR: role "drm_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE drm_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "drm_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Dropping the table removes the entire ACL, so the grantor relationship is gone.
@@ -217,10 +249,18 @@ RESET ROLE;
 
 
 # vedernikoff is the grantor of two distinct grants -> refused.
+skipif serenedb
 statement error
 DROP ROLE drm_vedernikoff;
 ----
 db error: ERROR: role "drm_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE drm_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "drm_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # REVOKE ALL ... FROM the grantor CASCADE tears down its own grants and every

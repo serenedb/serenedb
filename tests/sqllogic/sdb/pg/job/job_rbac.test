@@ -250,7 +250,7 @@ REVOKE CREATE ON SCHEMA public FROM jr_clickclack;
 statement error
 DROP ROLE jr_kostya;
 ----
-db error: ERROR: role "jr_kostya" cannot be dropped because some objects depend on it<slt:ignore>
+db error: ERROR: Cannot drop entry "jr_kostya" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok

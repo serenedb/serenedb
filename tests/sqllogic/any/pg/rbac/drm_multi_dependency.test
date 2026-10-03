@@ -115,10 +115,18 @@ dmd_vedernikoff=r*/postgres
 # === ROUND 1: remove deps in the order owns -> granted -> grantor ===
 
 # All three dependencies present -> DROP ROLE refused.
+skipif serenedb
 statement error
 DROP ROLE dmd_vedernikoff;
 ----
 db error: ERROR: role "dmd_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dmd_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dmd_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Clear dep1 by transferring ownership of drm_iceberg to babsky. Two deps remain.
@@ -127,10 +135,18 @@ ALTER TABLE drm_iceberg OWNER TO dmd_babsky;
 
 
 # Still refused -- the granted privilege and the grantor relationship remain.
+skipif serenedb
 statement error
 DROP ROLE dmd_vedernikoff;
 ----
 db error: ERROR: role "dmd_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dmd_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dmd_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Clear dep2 by revoking the SELECT grant on drm_clickclack. One dep remains.
@@ -139,10 +155,18 @@ REVOKE SELECT ON drm_clickclack FROM dmd_vedernikoff;
 
 
 # Still refused -- vedernikoff is still the grantor of kostya's grant on drm_mop.
+skipif serenedb
 statement error
 DROP ROLE dmd_vedernikoff;
 ----
 db error: ERROR: role "dmd_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dmd_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dmd_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # A plain (RESTRICT) revoke of vedernikoff's own grant is itself refused while the
@@ -154,10 +178,18 @@ db error: ERROR: dependent privileges exist<slt:ignore>
 
 
 # DROP ROLE is therefore still refused after the failed revoke (nothing changed).
+skipif serenedb
 statement error
 DROP ROLE dmd_vedernikoff;
 ----
 db error: ERROR: role "dmd_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dmd_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dmd_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # CASCADE clears dep3: it revokes vedernikoff's option grant AND tears down the
@@ -217,10 +249,18 @@ RESET ROLE;
 
 
 # All three present again -> refused.
+skipif serenedb
 statement error
 DROP ROLE dmd_vedernikoff;
 ----
 db error: ERROR: role "dmd_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dmd_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dmd_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Clear dep3 step 1: revoke the downstream grant to kostya (attributed to
@@ -249,10 +289,18 @@ dmd_vedernikoff=r*/postgres
 
 
 # Still refused -- dep3 not fully cleared (own grant remains), plus dep1, dep2.
+skipif serenedb
 statement error
 DROP ROLE dmd_vedernikoff;
 ----
 db error: ERROR: role "dmd_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dmd_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dmd_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Clear dep3 step 2: now that no dependent grant remains, a plain RESTRICT revoke
@@ -262,10 +310,18 @@ REVOKE SELECT ON drm_mop FROM dmd_vedernikoff;
 
 
 # Still refused -- dep1 (owns iceberg) and dep2 (granted on clickclack) remain.
+skipif serenedb
 statement error
 DROP ROLE dmd_vedernikoff;
 ----
 db error: ERROR: role "dmd_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dmd_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dmd_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Clear dep2: revoke the SELECT grant on drm_clickclack. Only ownership remains.
@@ -274,10 +330,18 @@ REVOKE SELECT ON drm_clickclack FROM dmd_vedernikoff;
 
 
 # Still refused -- vedernikoff still owns drm_iceberg.
+skipif serenedb
 statement error
 DROP ROLE dmd_vedernikoff;
 ----
 db error: ERROR: role "dmd_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dmd_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dmd_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Clear dep1 by DROPPING the owned table outright (vs. reassigning). Last dep gone.

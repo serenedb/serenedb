@@ -69,10 +69,18 @@ doc_vedernikoff
 
 
 # Refused while the role still owns the table it created and holds schema grants.
+skipif serenedb
 statement error
 DROP ROLE doc_vedernikoff;
 ----
 db error: ERROR: role "doc_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE doc_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "doc_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Move ownership away (this also re-owns the table's generated PK sequence) and
@@ -117,10 +125,18 @@ REVOKE ALL ON SCHEMA public FROM doc_vedernikoff;
 
 
 # Still refused: it owns the created table even after schema grants are gone.
+skipif serenedb
 statement error
 DROP ROLE doc_vedernikoff;
 ----
 db error: ERROR: role "doc_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE doc_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "doc_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -164,10 +180,18 @@ DROP ROLE doc_vedernikoff;
 
 
 # The new owner is now pinned by the table (and its owned PK sequence).
+skipif serenedb
 statement error
 DROP ROLE doc_kostya;
 ----
 db error: ERROR: role "doc_kostya" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE doc_kostya;
+----
+db error: ERROR: Cannot drop entry "doc_kostya" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -220,10 +244,18 @@ REVOKE SELECT ON doc_base FROM doc_vedernikoff;
 
 
 # Still refused: owns the view it created.
+skipif serenedb
 statement error
 DROP ROLE doc_vedernikoff;
 ----
 db error: ERROR: role "doc_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE doc_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "doc_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -256,10 +288,18 @@ statement ok
 REVOKE ALL ON SCHEMA public FROM doc_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE doc_vedernikoff;
 ----
 db error: ERROR: role "doc_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE doc_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "doc_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok

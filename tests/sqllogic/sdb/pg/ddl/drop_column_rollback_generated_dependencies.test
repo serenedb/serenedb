@@ -1,0 +1,68 @@
+statement ok
+CREATE TABLE donsimon_runs (x INT, a INT, g INT GENERATED ALWAYS AS (a + 1) VIRTUAL);
+
+
+statement ok
+INSERT INTO donsimon_runs (x, a) VALUES (1, 10);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE donsimon_runs DROP COLUMN x;
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+ALTER TABLE donsimon_runs DROP COLUMN x;
+
+
+statement error
+ALTER TABLE donsimon_runs DROP COLUMN a;
+----
+db error: ERROR: Cannot drop column: column is a dependency of 1 or more generated column(s)
+
+
+query
+SELECT a, g FROM donsimon_runs;
+----
+a	g
+10	11
+
+
+statement ok
+CREATE TABLE pudge_hooks (a INT, g INT GENERATED ALWAYS AS (a + 1) VIRTUAL, b INT);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE pudge_hooks DROP COLUMN a CASCADE;
+
+
+statement ok
+ROLLBACK;
+
+
+statement error
+ALTER TABLE pudge_hooks DROP COLUMN a;
+----
+db error: ERROR: Cannot drop column: column is a dependency of 1 or more generated column(s)
+
+
+statement ok
+ALTER TABLE pudge_hooks DROP COLUMN a CASCADE;
+
+
+query
+SELECT column_name FROM information_schema.columns WHERE table_name = 'pudge_hooks' ORDER BY ordinal_position;
+----
+column_name
+b

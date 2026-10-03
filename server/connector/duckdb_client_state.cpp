@@ -174,18 +174,6 @@ SereneDBClientState& SereneDBClientState::Register(
   return registered;
 }
 
-std::shared_ptr<ConnectionContext> SereneDBClientState::Impersonate(
-  duckdb::ClientContext& client_ctx, std::string_view user,
-  duckdb::idx_t role_id, std::string_view database, duckdb::idx_t database_id,
-  int32_t backend_pid) {
-  auto connection_ctx = std::make_shared<ConnectionContext>(
-    client_ctx, user, role_id, database, database_id, nullptr, backend_pid,
-    nullptr);
-  Register(client_ctx, connection_ctx);
-  client_ctx.session_user = user;
-  return connection_ctx;
-}
-
 namespace {
 
 // Published for the duration of the storage commit: BoundIndex appends run
@@ -414,10 +402,12 @@ class RoleSessionCallback final : public duckdb::ExtensionCallback {
                             .GetCatalog();
     auto database = duckdb::DatabaseManager::Get(context).LookupDatabase(
       context, catalog, nullptr);
-    SereneDBClientState::Impersonate(
-      context, user, role,
-      database ? database->GetName().GetIdentifierName() : std::string{},
-      database ? database->oid : 0, 0);
+    SereneDBClientState::Register(
+      context,
+      std::make_shared<ConnectionContext>(
+        context, user, role,
+        database ? database->GetName().GetIdentifierName() : std::string{},
+        database ? database->oid : 0, nullptr, 0, nullptr));
   }
 };
 

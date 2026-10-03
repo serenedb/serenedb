@@ -178,8 +178,7 @@ void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
   if (options.size() > 1) {
     const bool positions = HasPositions(column_info);
     if (const auto* shingle = ShingleOf(ctx, column_info)) {
-      if (auto plan =
-            irs::PlanShinglePhrase(*shingle, options, positions, nullptr)) {
+      if (auto plan = irs::PlanShinglePhrase(*shingle, options, positions)) {
         if (const auto* term = std::get_if<irs::bstring>(&*plan)) {
           AddTerm(
             MaybeNegated(parent, ctx, column_info),

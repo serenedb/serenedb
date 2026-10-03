@@ -24,13 +24,11 @@
 
 #include <algorithm>
 #include <limits>
-#include <memory>
 #include <span>
 #include <vector>
 
 #include "iresearch/analysis/shingle_tokenizer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/search/detail/phrase_verify.hpp"
 
 namespace irs {
 namespace {
@@ -229,43 +227,12 @@ bool ExactTerms(const ByPhraseOptions& phrase, std::vector<bytes_view>& tokens,
   return true;
 }
 
-bool Legs(const Windows& windows, std::vector<bstring>& legs) {
-  const auto m = windows.Size();
-  std::vector<bool> covered(m);
-  for (size_t i = 0; i != m; ++i) {
-    const auto count = windows.Largest(i);
-    if (count == 0 ||
-        std::all_of(covered.begin() + i, covered.begin() + i + count,
-                    [](bool c) { return c; })) {
-      continue;
-    }
-    legs.push_back(windows.Term(i, count));
-    std::fill(covered.begin() + i, covered.begin() + i + count, true);
-  }
-  for (size_t i = 0; i != m; ++i) {
-    if (covered[i]) {
-      continue;
-    }
-    if (!windows.Indexed(i, 1)) {
-      return false;
-    }
-    legs.push_back(windows.Term(i, 1));
-  }
-  absl::c_sort(legs);
-  legs.erase(std::unique(legs.begin(), legs.end()), legs.end());
-  return !legs.empty();
-}
-
 }  // namespace
 
 std::optional<ShinglePhrasePlan> PlanShinglePhrase(
   const analysis::ShingleTokenizer& tokenizer, const ByPhraseOptions& phrase,
-  bool positional, const StoredText* text) {
+  bool positional) {
   std::optional<ShinglePhrasePlan> plan;
-  const auto phrase_plan = [&]() -> ByPhraseOptions& {
-    return std::get<ByPhraseOptions>(
-      plan.emplace(std::in_place_type<ByPhraseOptions>));
-  };
   if (phrase.empty() || phrase.slop() != 0) {
     return plan;
   }
@@ -277,20 +244,10 @@ std::optional<ShinglePhrasePlan> PlanShinglePhrase(
       plan.emplace(windows.Term(0, windows.Size()));
       return plan;
     }
-    if (!positional) {
-      std::vector<bstring> legs;
-      if (!text || !Legs(windows, legs)) {
-        return plan;
-      }
-      auto& verified = phrase_plan();
-      for (auto& leg : legs) {
-        verified.push_back<ByTermOptions>().term = std::move(leg);
-      }
-      verified.set_verifier(std::make_shared<PhraseVerifier>(*text, phrase));
-      return plan;
-    }
   }
-  if (positional && !CoverPhrase(tokenizer, phrase, phrase_plan())) {
+  if (positional && !CoverPhrase(tokenizer, phrase,
+                                 std::get<ByPhraseOptions>(plan.emplace(
+                                   std::in_place_type<ByPhraseOptions>)))) {
     plan.reset();
   }
   return plan;

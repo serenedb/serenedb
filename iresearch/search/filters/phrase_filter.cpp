@@ -24,14 +24,12 @@
 
 #include <absl/container/flat_hash_map.h>
 
-#include <boost/utility/compare_pointees.hpp>
 #include <span>
 
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/phrase_matcher.hpp"
-#include "iresearch/search/detail/phrase_verify.hpp"
 #include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/search/detail/top_terms_selector.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
@@ -40,13 +38,10 @@
 #include "iresearch/search/filters/range_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/filters/wildcard_filter.hpp"
-#include "iresearch/search/queries/boolean_query.hpp"
-#include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/phrase_state.hpp"
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
-#include "iresearch/search/queries/verified_phrase_query.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 #include "iresearch/utils/wildcard_utils.hpp"
@@ -387,48 +382,6 @@ void ApplyTermGroups(const ByPhraseOptions& options,
   }
 }
 
-QueryBuilder::ptr MakeVerifiedPhraseQuery(
-  const SubReader& segment, const PrepareContext& ctx, const TermReader& reader,
-  const PhraseState& state, const ByPhraseOptions& options,
-  const PhraseVerifier& verifier,
-  std::span<const std::vector<bstring>> part_terms) {
-  const auto* col_reader = segment.GetColReader();
-  if (!col_reader || !col_reader->Column(verifier.Text().column)) {
-    return QueryBuilder::Empty();
-  }
-  PrepareContext sub = ctx;
-  sub.collector = nullptr;
-  BooleanBuilder builder{segment,        ctx.memory,           0,
-                         kNoBoost,       ScoreMergeType::Noop, nullptr,
-                         ctx.needs_terms};
-  for (size_t slot = 0, n = state.Slots(); slot != n; ++slot) {
-    const auto begin = state.offsets[slot];
-    const auto end = state.offsets[slot + 1];
-    if (end - begin == 1) {
-      builder.AddTerm(&reader, state.metas[begin], kNoBoost, Occur::Must, {});
-      continue;
-    }
-    auto terms = memory::make_tracked<MultiTermQuery>(
-      ctx.memory, segment, ctx.memory, kNoBoost, ScoreMergeType::Noop);
-    terms->State().Prepare(&reader);
-    for (auto i = begin; i != end; ++i) {
-      terms->State().Push(state.metas[i], kNoBoost);
-    }
-    builder.Add(MultiTermQuery::Finish(std::move(terms), sub), Occur::Must);
-  }
-  auto approx = builder.Finish();
-  if (!approx || QueryBuilder::IsEmpty(*approx)) {
-    return QueryBuilder::Empty();
-  }
-  const auto* spec = verifier.Spec();
-  auto query = memory::make_tracked<VerifiedPhraseQuery>(
-    ctx.memory, segment, reader, std::move(approx), verifier.Text(),
-    spec ? *spec : options,
-    spec ? std::span<const std::vector<bstring>>{} : part_terms, ctx.boost);
-  query->SetStats(ctx.Record());
-  return query;
-}
-
 QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
                                        const PrepareContext& ctx,
                                        irs::field_id field,
@@ -442,12 +395,7 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
   PhraseState state{ctx.memory};
   const auto* reader = segment.field(field);
   state.reader = reader;
-  const auto* verifier = options.verifier();
-  if (verifier) {
-    if (!reader || !detail::DocOf(*reader)) {
-      return QueryBuilder::Empty();
-    }
-  } else if (!detail::ResolvePhrase(reader, state.handles)) {
+  if (!detail::ResolvePhrase(reader, state.handles)) {
     return QueryBuilder::Empty();
   }
   if (collector) {
@@ -487,7 +435,7 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
       }
     }
 
-    if (options.slop() != 0 || verifier) {
+    if (options.slop() != 0) {
       part_terms.resize(phrase_size);
     }
   }
@@ -565,11 +513,6 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
     state.boosts.clear();
   }
 
-  if (verifier) {
-    return MakeVerifiedPhraseQuery(segment, ctx, *reader, state, options,
-                                   *verifier, part_terms);
-  }
-
   if (phrase_size == 1 && state.metas.size() == 1) {
     return MakeTermQuery(ctx.memory, segment, state.reader, state.metas.front(),
                          ctx.boost, ctx.Record());
@@ -623,12 +566,6 @@ PrepareCollector::ptr ByPhrase::MakeCollectorImpl(const Scorer* scorer,
   }
   return std::make_unique<ExpandedSlotsCollector>(
     scorer, counts.terms, counts.expanded, stats, threads);
-}
-
-bool ByPhraseOptions::operator==(const ByPhraseOptions& rhs) const noexcept {
-  return _phrase == rhs._phrase && _slop == rhs._slop &&
-         _word_separator == rhs._word_separator &&
-         boost::equal_pointees(_verifier, rhs._verifier);
 }
 
 bool ByPhraseOptions::LowerParts() {

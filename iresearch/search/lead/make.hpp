@@ -42,7 +42,6 @@ Node::ptr Make(const VariadicPhraseQuery& query);
 Node::ptr Make(const NGramSimilarityQuery& query);
 Node::ptr Make(const AllQuery& query);
 Node::ptr Make(const WildcardNGramQuery& query);
-Node::ptr Make(const VerifiedPhraseQuery& query);
 Node::ptr Make(const ByNestedQuery& query);
 Node::ptr Make(const RangeVectorQuery& query);
 inline Node::ptr Make(const HnswQuery&) { return {}; }
@@ -59,7 +58,6 @@ Node::ptr Make(const VariadicPhraseQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const NGramSimilarityQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx);
-Node::ptr Make(const VerifiedPhraseQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const ByNestedQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const HnswQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const KnnVectorQuery& query, const detail::ScoredCtx& ctx);
@@ -118,10 +116,6 @@ Node::ptr MakeNGramAllScored(const NGramSimilarityQuery& query,
 Node::ptr MakeWildcardNGramDocs(const WildcardNGramQuery& query);
 Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
                                   score_t score);
-
-Node::ptr MakeVerifiedPhraseDocs(const VerifiedPhraseQuery& query);
-Node::ptr MakeVerifiedPhraseScored(const VerifiedPhraseQuery& query,
-                                   const detail::ScoreArgs& args);
 
 Node::ptr MakeRequiredDocs(std::span<const detail::PostingClause> must,
                            std::span<const QueryBuilder::ptr> must_filters,

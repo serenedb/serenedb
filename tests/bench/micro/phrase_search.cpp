@@ -25,19 +25,15 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <duckdb/common/types/vector.hpp>
-#include <duckdb/common/vector/flat_vector.hpp>
-#include <duckdb/common/vector/string_vector.hpp>
 #include <filesystem>
 #include <iresearch/analysis/shingle_tokenizer.hpp>
+#include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
-#include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/detail/column_collector.hpp>
-#include <iresearch/search/detail/phrase_verify.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/shingle_phrase.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
@@ -56,7 +52,6 @@
 
 namespace {
 
-constexpr irs::field_id kStoreId = 1;
 constexpr irs::field_id kBodyId = 2;
 
 class WhitespaceTokenizer final
@@ -165,20 +160,6 @@ struct BenchField {
   irs::IndexFeatures features{};
 };
 
-void AppendText(irs::ColumnWriter& cw, irs::doc_id_t doc,
-                std::string_view text) {
-  duckdb::Vector v{duckdb::LogicalType::VARCHAR, 1};
-  auto* slots = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v);
-  slots[0] = duckdb::StringVector::AddString(v, text.data(), text.size());
-  duckdb::FlatVector::ValidityMutable(v).SetAllValid(1);
-  cw.Append(static_cast<uint64_t>(doc) - irs::doc_limits::min(), v, 1);
-}
-
-irs::StoredText BodyText() {
-  return {.column = kStoreId,
-          .tokenizer = [] { return std::make_unique<WhitespaceTokenizer>(); }};
-}
-
 uintmax_t DirSize(const std::filesystem::path& path) {
   uintmax_t total = 0;
   for (const auto& e : std::filesystem::recursive_directory_iterator{path}) {
@@ -194,18 +175,16 @@ struct Strategy {
   uint32_t max_gram = 0;
   bool frequent = false;
   bool positions = false;
-  bool verified = false;
 };
 
 constexpr Strategy kUnigrams{.name = "unigrams"};
 
 constexpr Strategy kStrategies[] = {
   {.name = "positions", .positions = true},
-  {.name = "verified", .verified = true},
-  {.name = "shingle2", .max_gram = 2, .verified = true},
-  {.name = "shingle3", .max_gram = 3, .verified = true},
-  {.name = "shingle4", .max_gram = 4, .verified = true},
-  {.name = "shingle3f", .max_gram = 3, .frequent = true, .verified = true},
+  {.name = "shingle2", .max_gram = 2},
+  {.name = "shingle3", .max_gram = 3},
+  {.name = "shingle4", .max_gram = 4},
+  {.name = "shingle3f", .max_gram = 3, .frequent = true},
   {.name = "shingle2pos", .max_gram = 2, .positions = true},
   {.name = "shingle3pos", .max_gram = 3, .positions = true},
   {.name = "shingle4pos", .max_gram = 4, .positions = true},
@@ -255,11 +234,6 @@ Index BuildIndex(const std::vector<std::string>& docs,
     field.value = body;
     auto doc = batch.Insert();
     tests::InsertField(doc, field);
-    if (strategy.verified) {
-      AppendText(
-        doc.GetColWriter()->OpenColumn(kStoreId, duckdb::LogicalType::VARCHAR),
-        doc.DocId(), body);
-    }
   }
   batch.Commit();
   writer->RefreshCommit();
@@ -333,19 +307,14 @@ irs::Filter::ptr MakePhrase(const Index& index, std::string_view text,
                             bool cover) {
   auto phrase = ParsePhrase(text);
   const auto& strategy = *index.strategy;
-  const auto body = BodyText();
-  const auto* stored = strategy.verified ? &body : nullptr;
   if (strategy.max_gram == 0) {
-    if (stored) {
-      phrase.set_verifier(std::make_shared<irs::PhraseVerifier>(*stored));
-    }
     return MakeFilter<irs::ByPhrase>(std::move(phrase));
   }
   const auto& shingles =
     irs::utils::downCast<irs::analysis::ShingleTokenizer>(*index.tokenizer);
   if (cover) {
-    if (auto plan = irs::PlanShinglePhrase(shingles, phrase, strategy.positions,
-                                           stored)) {
+    if (auto plan =
+          irs::PlanShinglePhrase(shingles, phrase, strategy.positions)) {
       if (auto* term = std::get_if<irs::bstring>(&*plan)) {
         return MakeFilter<irs::ByTerm>(irs::ByTermOptions{std::move(*term)});
       }
@@ -435,28 +404,40 @@ void BenchScored(benchmark::State& state, size_t strategy,
 
 void BenchScan(benchmark::State& state, std::string_view text) {
   const auto& docs = Docs();
-  irs::ByPhraseOptions phrase;
-  for (const auto word : absl::StrSplit(text, ' ', absl::SkipEmpty())) {
-    phrase.push_back<irs::ByTermOptions>().term =
-      irs::ViewCast<irs::byte_type>(word);
-  }
-  const irs::PhraseVerifyKernel kernel{phrase, {}};
+  const std::vector<std::string_view> words =
+    absl::StrSplit(text, ' ', absl::SkipEmpty());
   WhitespaceTokenizer tokenizer;
   irs::ValueAnalyzer analyzer;
-  irs::PhraseVerifySink sink{kernel, tokenizer.Traits()};
-  irs::PhraseVerdict verdict;
+  irs::ValueTokens<irs::TokenLayout::Terms> tokens;
+  const auto same = [](const duckdb::string_t& term, std::string_view word) {
+    return std::string_view{term.GetData(), term.GetSize()} == word;
+  };
   uint64_t hits = 0;
   for (auto _ : state) {
     hits = 0;
     for (const auto& body : docs) {
-      hits += sink.Match(
-        tokenizer, analyzer,
+      analyzer.Analyze(
+        tokenizer,
         duckdb::string_t{body.data(), static_cast<uint32_t>(body.size())},
-        false, verdict);
+        tokens);
+      const auto terms = tokens.terms();
+      hits += std::search(terms.begin(), terms.end(), words.begin(),
+                          words.end(), same) != terms.end();
     }
     benchmark::DoNotOptimize(hits);
   }
   state.counters["hits"] = static_cast<double>(hits);
+}
+
+bool Answers(const Strategy& strategy, std::string_view text) {
+  if (strategy.max_gram == 0 || strategy.positions) {
+    return true;
+  }
+  const auto tokenizer = MakeTokenizer(strategy);
+  return irs::PlanShinglePhrase(
+           irs::utils::downCast<irs::analysis::ShingleTokenizer>(*tokenizer),
+           ParsePhrase(text), false)
+    .has_value();
 }
 
 struct Query {
@@ -500,7 +481,7 @@ void RegisterAll() {
     const auto& spec = kStrategies[strategy];
     const bool shingles = spec.max_gram != 0;
     for (const auto& query : kQueries) {
-      if (query.complex && shingles && !spec.positions) {
+      if (!Answers(spec, query.text)) {
         continue;
       }
       const auto suffix = std::string{"/"} + query.name;

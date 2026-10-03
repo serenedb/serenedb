@@ -23,7 +23,6 @@
 #pragma once
 
 #include <deque>
-#include <memory>
 #include <set>
 #include <variant>
 
@@ -45,7 +44,6 @@ struct TermSetOptions {
 };
 
 class ByPhrase;
-class PhraseVerifier;
 
 enum class SlotKind : uint8_t {
   Term,
@@ -95,7 +93,7 @@ class ByPhraseOptions {
     return insert(std::forward<PhrasePart>(t), offs + 1, offs + 1);
   }
 
-  bool operator==(const ByPhraseOptions& rhs) const noexcept;
+  bool operator==(const ByPhraseOptions& rhs) const noexcept = default;
 
   bool LowerParts();
 
@@ -103,7 +101,6 @@ class ByPhraseOptions {
     _phrase.clear();
     _slop = 0;
     _word_separator.clear();
-    _verifier.reset();
   }
 
   bool simple() const noexcept {
@@ -129,11 +126,6 @@ class ByPhraseOptions {
   bytes_view word_separator() const noexcept { return _word_separator; }
   void set_word_separator(bytes_view value) { _word_separator = value; }
 
-  const PhraseVerifier* verifier() const noexcept { return _verifier.get(); }
-  void set_verifier(std::shared_ptr<const PhraseVerifier> verifier) noexcept {
-    _verifier = std::move(verifier);
-  }
-
  private:
   template<typename PhrasePart>
   PhrasePart& insert(PhrasePart&& t, PosAttr::value_t offs_min,
@@ -151,7 +143,6 @@ class ByPhraseOptions {
   std::deque<PhrasePartInfo> _phrase;
   PosAttr::value_t _slop{0};
   bstring _word_separator;
-  std::shared_ptr<const PhraseVerifier> _verifier;
 };
 
 class ByPhrase : public FilterWithField<ByPhraseOptions> {

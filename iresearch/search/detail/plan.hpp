@@ -45,7 +45,6 @@ class VariadicPhraseQuery;
 class AllQuery;
 class NGramSimilarityQuery;
 class WildcardNGramQuery;
-class VerifiedPhraseQuery;
 class ByNestedQuery;
 class HnswQuery;
 class KnnVectorQuery;

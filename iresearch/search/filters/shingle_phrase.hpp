@@ -33,12 +33,10 @@ class ShingleTokenizer;
 
 }  // namespace analysis
 
-struct StoredText;
-
 using ShinglePhrasePlan = std::variant<bstring, ByPhraseOptions>;
 
 std::optional<ShinglePhrasePlan> PlanShinglePhrase(
   const analysis::ShingleTokenizer& tokenizer, const ByPhraseOptions& phrase,
-  bool positional, const StoredText* text);
+  bool positional);
 
 }  // namespace irs

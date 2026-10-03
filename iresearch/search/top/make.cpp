@@ -173,10 +173,6 @@ Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx) {
   return MakeWildcardNGram(query, ctx);
 }
 
-Root::ptr Make(const VerifiedPhraseQuery& query, const Context& ctx) {
-  return MakeVerifiedPhrase(query, ctx);
-}
-
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   if (query.Kind() == QueryKind::Empty) {
     return MakeEmpty();

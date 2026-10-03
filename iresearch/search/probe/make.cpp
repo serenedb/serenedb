@@ -40,7 +40,6 @@
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/search/queries/term_query.hpp"
-#include "iresearch/search/queries/verified_phrase_query.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::probe {
@@ -92,23 +91,6 @@ Node::ptr Make(const AllQuery& query, uint64_t) {
 
 Node::ptr Make(const WildcardNGramQuery& query, uint64_t interrogations) {
   return MakeWildcardNGramDocs(query, interrogations);
-}
-
-Node::ptr Make(const VerifiedPhraseQuery& query, uint64_t interrogations) {
-  return MakeVerifiedPhraseDocs(query, interrogations);
-}
-
-Node::ptr Make(const VerifiedPhraseQuery& query, const detail::ScoredCtx& ctx,
-               uint64_t interrogations) {
-  const auto record = query.Stats(ctx);
-  const detail::ScoreArgs args{.scorer = record.scorer,
-                               .stats = record.stats,
-                               .fetcher = ctx.fetcher,
-                               .boost = query.Boost()};
-  if (!args.stats) {
-    return Make(query, interrogations);
-  }
-  return MakeVerifiedPhraseScored(query, args, interrogations);
 }
 
 Node::ptr Make(const TermQuery& query, const detail::ScoredCtx& ctx, uint64_t) {

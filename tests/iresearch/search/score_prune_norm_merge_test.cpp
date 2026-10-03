@@ -22,8 +22,6 @@
 // search-benchmark-game flagged. The minimal scenario passed; this file
 // adds the shapes the bench is likely actually hitting:
 //   * multi-row-group norm columns (small `row_group_size`),
-//   * RGs with mixed byte_size on the same column,
-//   * mismatched per-source byte widths during compaction,
 //   * removals before compaction (mask-filter on the norm merge),
 //   * multiple norm-bearing fields in one segment.
 //
@@ -340,8 +338,7 @@ TEST_P(ScorePruneNormMergeCase, BasicBM25PruneRoundTripAcrossCompact) {
 
 // -------------------------------------------------------------------------
 // Multi-RG norm column inside ONE segment. Forces several FlushRowGroup
-// calls in the norm writer; each RG may pick a different byte_size based
-// on its local max. Reader's Get must walk to the right RG.
+// calls in the norm writer. Reader's Get must walk to the right RG.
 // -------------------------------------------------------------------------
 TEST_P(ScorePruneNormMergeCase, NormMultiRgInOneSegment) {
   static constexpr size_t kRgSize = 4;
@@ -439,15 +436,8 @@ TEST_P(ScorePruneNormMergeCase, NormMultiRgAcrossMerge) {
     << "BM25 score set diverged across multi-RG compaction";
 }
 
-// -------------------------------------------------------------------------
-// Source segments use DIFFERENT byte widths per RG (one with values that
-// fit in uint8, the other with values requiring uint16). The merged
-// column should still read back each doc's original value.
-// -------------------------------------------------------------------------
 TEST_P(ScorePruneNormMergeCase, NormMixedByteWidthsMerge) {
-  // segment A: all <= 255 -> byte_size=1 per RG.
   static constexpr uint32_t kA[] = {10, 50, 100, 200};
-  // segment B: max > 255 -> byte_size=2.
   static constexpr uint32_t kB[] = {300, 1000, 65000};
 
   auto bm25 = std::make_unique<irs::BM25>();
@@ -614,7 +604,7 @@ TEST_P(ScorePruneNormMergeCase, NormTwoFieldsAcrossMerge) {
 // 16 source segments compacted in one shot. Mirrors the
 // search-benchmark-game ingest pattern: ~15-17 commit-per-batch segments,
 // then a single `CompactionCount` merges them all. If any cross-source
-// state in the norm merge (running merged_row, byte_size promotion,
+// state in the norm merge (running merged_row,
 // per-source NormColumnReader cache) gets confused with more than 2
 // sources, this is where it surfaces.
 // -------------------------------------------------------------------------
@@ -701,8 +691,6 @@ TEST_P(ScorePruneNormMergeCase, NormMultiSegmentMultiRgMixedWidthsCompact) {
   auto writer = open_writer(irs::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
 
-  // Counts ramp into the uint16 range half-way through so some sources
-  // pick byte_size=1 and some byte_size=2 per RG.
   std::vector<uint32_t> expected_counts;
   expected_counts.reserve(kSegments * kDocsPerSeg);
   for (size_t s = 0; s < kSegments; ++s) {

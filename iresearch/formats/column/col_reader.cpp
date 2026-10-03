@@ -100,37 +100,56 @@ NormColumnMeta DeserializeNormMeta(duckdb::BinaryDeserializer& d, field_id id,
     [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
       list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
         NormRowGroupMeta p;
-        p.byte_size = obj.ReadProperty<uint8_t>(0, "byte_size");
+        p.bits = obj.ReadProperty<uint8_t>(0, "bits");
         p.max = obj.ReadProperty<uint32_t>(1, "max");
         p.sum = obj.ReadProperty<uint64_t>(2, "sum");
         p.non_zero_count = obj.ReadProperty<uint64_t>(3, "non_zero_count");
         p.file_offset = obj.ReadProperty<uint64_t>(4, "file_offset");
-        p.exceptions =
-          obj.ReadPropertyWithExplicitDefault<uint32_t>(5, "exceptions", 0);
-        SDB_ENSURE(p.byte_size == 1 || p.byte_size == 2 || p.byte_size == 4,
-                   ".col reader: norm byte_size on column id ", id, ": ",
-                   p.byte_size);
-        SDB_ENSURE(p.exceptions == 0 || p.byte_size == 1,
-                   ".col reader: norm exceptions on column id ", id,
-                   " with byte_size ", p.byte_size);
+        SDB_ENSURE(p.bits <= kNormMaxBits && p.bits % 8 == 0,
+                   ".col reader: norm bits on column id ", id, ": ", p.bits);
         meta.row_groups.push_back(p);
       });
     });
+  meta.file_offset = d.ReadProperty<uint64_t>(4, "file_offset");
+  meta.size = d.ReadProperty<uint64_t>(5, "size");
+  meta.exceptions =
+    d.ReadPropertyWithExplicitDefault<uint32_t>(6, "exceptions", 0);
+  if (meta.exceptions != 0) {
+    meta.exceptions_offset = d.ReadProperty<uint64_t>(7, "exceptions_offset");
+    meta.exception_bytes = d.ReadProperty<uint8_t>(8, "exception_bytes");
+  }
   const uint64_t groups = meta.row_groups.size();
   const uint64_t rgs = meta.row_group_size;
   SDB_ENSURE(groups != 0 && rgs != 0 && meta.row_count > (groups - 1) * rgs &&
-               meta.row_count <= groups * rgs,
+               meta.row_count <= groups * rgs &&
+               meta.row_count <= doc_limits::eof() - doc_limits::min(),
              ".col reader: norm column id ", id, " holds ", meta.row_count,
              " rows across ", groups, " row groups of ", rgs);
+  const auto end = meta.file_offset + meta.size;
+  SDB_ENSURE(end >= meta.file_offset && end <= footer_offset,
+             ".col reader: norm column id ", id, " out of range (offset ",
+             meta.file_offset, ", size ", meta.size, ")");
   for (uint64_t rg = 0; rg < groups; ++rg) {
     const auto& p = meta.row_groups[rg];
     const auto rows = std::min(rgs, meta.row_count - rg * rgs);
-    SDB_ENSURE(p.exceptions <= rows &&
-                 p.file_offset + rows * p.byte_size +
-                     uint64_t{p.exceptions} * kNormExceptionBytes <=
-                   footer_offset,
+    const auto first_doc = rg * rgs + doc_limits::min();
+    const auto bytes = ((first_doc * p.bits & 7) + rows * p.bits + 7) / 8;
+    SDB_ENSURE(p.file_offset >= meta.file_offset &&
+                 p.file_offset + bytes + kNormSlotSlack <= end,
                ".col reader: norm data on column id ", id,
                " out of range (offset ", p.file_offset, ")");
+  }
+  if (meta.exceptions != 0) {
+    SDB_ENSURE(meta.exceptions <= meta.row_count &&
+                 (meta.exception_bytes == 1 || meta.exception_bytes == 2 ||
+                  meta.exception_bytes == 4) &&
+                 meta.exceptions_offset >= meta.file_offset &&
+                 meta.exceptions_offset +
+                     NormExceptionsSize(meta.row_count, meta.exceptions,
+                                        meta.exception_bytes) <=
+                   end,
+               ".col reader: norm exceptions on column id ", id,
+               " out of range (offset ", meta.exceptions_offset, ")");
   }
   return meta;
 }

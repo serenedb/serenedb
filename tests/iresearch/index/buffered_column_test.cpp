@@ -121,7 +121,7 @@ void AssertNormReads(const irs::NormColumnReader& col,
 
   std::vector<irs::doc_id_t> sparse_docs;
   for (uint64_t i = 0; i < expected.size(); ++i) {
-    if (expected[i] >= irs::kNormEscape || i % 97 == 0) {
+    if (expected[i] > 255 || i % 97 == 0) {
       sparse_docs.push_back(doc(i));
     }
   }
@@ -268,8 +268,6 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
     EXPECT_EQ(col->RowGroupCount(), 5u);
   }
 
-  // (3) Stream of duplicates crossing row-group boundaries; assert each
-  //     row group reads back the same `byte_size` (all-equal -> 1 byte).
   {
     irs::MemoryDirectory dir;
     constexpr uint64_t kRowCount = 300;
@@ -288,9 +286,11 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowGroupCount(), 3u);
     for (size_t rg = 0; rg < col->RowGroupCount(); ++rg) {
-      EXPECT_EQ(col->ByteSize(rg), 1u) << "rg=" << rg;
+      EXPECT_EQ(col->Bits(rg), 8u) << "rg=" << rg;
       EXPECT_EQ(col->RowGroupRowCount(rg), kRowGroupSize) << "rg=" << rg;
     }
+    EXPECT_TRUE(col->Uniform());
+    EXPECT_FALSE(col->HasExceptions());
   }
 }
 
@@ -304,8 +304,8 @@ TEST_P(BufferedColumnTestCase, RareLargeValues) {
   expected[5] = 255;
   expected[700] = 300;
   expected[1023] = 70000;
-  for (uint32_t j : {0, 100, 200, 300, 400}) {
-    expected[1024 + j] = 256 + j;
+  for (uint64_t i = 1024; i < 2048; ++i) {
+    expected[i] = static_cast<uint32_t>(256 + i % 1000);
   }
   expected[2058] = 255;
 
@@ -322,11 +322,11 @@ TEST_P(BufferedColumnTestCase, RareLargeValues) {
   const auto* col = r.NormColumn(9);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->RowGroupCount(), 3u);
-  EXPECT_EQ(col->ByteSize(0), 1u);
-  EXPECT_EQ(col->ByteSize(1), 2u);
-  EXPECT_EQ(col->ByteSize(2), 1u);
+  EXPECT_EQ(col->Bits(0), 8u);
+  EXPECT_EQ(col->Bits(1), 16u);
+  EXPECT_EQ(col->Bits(2), 8u);
   EXPECT_TRUE(col->HasExceptions());
-  EXPECT_FALSE(col->UniformByteSize());
+  EXPECT_FALSE(col->Uniform());
   AssertNormReads(*col, expected);
 }
 
@@ -357,10 +357,10 @@ TEST_P(BufferedColumnTestCase, RareLargeValuesEveryRowGroup) {
     EXPECT_EQ(col->RowGroupCount(),
               kRowCount / std::min<uint64_t>(kRowCount, row_group_size));
     for (size_t rg = 0; rg < col->RowGroupCount(); ++rg) {
-      EXPECT_EQ(col->ByteSize(rg), 1u) << "rg=" << rg;
+      EXPECT_EQ(col->Bits(rg), 8u) << "rg=" << rg;
     }
     EXPECT_TRUE(col->HasExceptions());
-    EXPECT_TRUE(col->UniformByteSize());
+    EXPECT_TRUE(col->Uniform());
     AssertNormReads(*col, expected);
   }
 }

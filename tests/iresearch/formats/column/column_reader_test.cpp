@@ -1467,8 +1467,6 @@ TEST_F(ColumnReaderTest, NormColumnRoundTrip) {
   constexpr uint32_t kRgSize = 1024;
   constexpr irs::field_id kN = 50;
 
-  // Norm for every 3rd doc (others zero-padded); value grows so byte_size
-  // widens across row groups (1->2->4 byte packing).
   auto has_norm = [](uint64_t d) { return d % 3 == 0; };
   auto norm_val = [](uint64_t d) { return static_cast<uint32_t>(d * 13 + 1); };
 

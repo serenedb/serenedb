@@ -329,7 +329,7 @@ TEST_P(NormTestCase, RareLongNormsAcrossCompaction) {
     ASSERT_NE(nullptr, column);
     EXPECT_TRUE(column->HasExceptions());
     for (size_t rg = 0; rg < column->RowGroupCount(); ++rg) {
-      EXPECT_EQ(1, column->ByteSize(rg)) << "rg=" << rg;
+      EXPECT_EQ(8u, column->Bits(rg)) << "rg=" << rg;
     }
   };
 

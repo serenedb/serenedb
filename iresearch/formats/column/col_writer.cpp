@@ -44,23 +44,28 @@ namespace {
 
 void SerializeNormColumn(duckdb::BinarySerializer& s,
                          const NormColumnWriter& nw, uint64_t base) {
+  const auto& meta = nw.Meta();
   s.WriteProperty(0, "id", static_cast<uint64_t>(nw.Id()));
-  s.WriteProperty(1, "row_group_size", nw.RowGroupSize());
-  s.WriteProperty(2, "row_count", nw.RowCount());
-  const auto& ptrs = nw.Pointers();
-  s.WriteList(3, "row_groups", ptrs.size(),
+  s.WriteProperty(1, "row_group_size", meta.row_group_size);
+  s.WriteProperty(2, "row_count", meta.row_count);
+  s.WriteList(3, "row_groups", meta.row_groups.size(),
               [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-                const auto& p = ptrs[i];
+                const auto& p = meta.row_groups[i];
                 list.WriteObject([&](duckdb::BinarySerializer& obj) {
-                  obj.WriteProperty(0, "byte_size", p.byte_size);
+                  obj.WriteProperty(0, "bits", p.bits);
                   obj.WriteProperty(1, "max", p.max);
                   obj.WriteProperty(2, "sum", p.sum);
                   obj.WriteProperty(3, "non_zero_count", p.non_zero_count);
                   obj.WriteProperty(4, "file_offset", base + p.file_offset);
-                  obj.WritePropertyWithDefault<uint32_t>(5, "exceptions",
-                                                         p.exceptions, 0);
                 });
               });
+  s.WriteProperty(4, "file_offset", base + meta.file_offset);
+  s.WriteProperty(5, "size", meta.size);
+  s.WritePropertyWithDefault<uint32_t>(6, "exceptions", meta.exceptions, 0);
+  if (meta.exceptions != 0) {
+    s.WriteProperty(7, "exceptions_offset", base + meta.exceptions_offset);
+    s.WriteProperty(8, "exception_bytes", meta.exception_bytes);
+  }
 }
 
 }  // namespace
@@ -234,7 +239,7 @@ bool ColWriter::Commit(uint64_t target_row,
     norm->writer.PadTo(target_row);
     norm->writer.Finalize();
     norm->out.Flush();
-    if (!norm->writer.Pointers().empty()) {
+    if (!norm->writer.Meta().row_groups.empty()) {
       norms.push_back(norm.get());
     }
   }

@@ -29,105 +29,91 @@
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
 class IndexInput;
 
+IRS_FORCE_INLINE inline uint32_t NormSlot(const byte_type* base, uint32_t bits,
+                                          doc_id_t doc) noexcept {
+  const uint64_t bit = uint64_t{doc} * bits;
+  return static_cast<uint32_t>(
+    (absl::little_endian::Load64(base + (bit >> 3)) >> (bit & 7)) &
+    ((uint64_t{1} << bits) - 1));
+}
+
 class NormColumnReader final {
  public:
-  // Per-RG view bundling the four fields the hot path (BM25/TFIDF
-  // multi-RG `RefreshRowGroup`) reads back-to-back. One bound check
-  // instead of four.
-  struct RgInfo {
-    std::span<const byte_type> bytes;
-    uint64_t first_row;
-    uint64_t row_count;
+  struct Window {
+    const byte_type* base;
+    doc_id_t first_doc;
+    doc_id_t end_doc;
     size_t rg;
-    uint8_t byte_size;
-    std::span<const byte_type> exceptions;
+    uint32_t bits;
   };
 
   NormColumnReader(field_id id, NormColumnMeta meta, IndexInput& in);
 
   field_id Id() const noexcept { return _id; }
-  size_t RowGroupCount() const noexcept { return _pointers.size(); }
-  uint64_t RowCount() const noexcept { return _total_row_count; }
+  size_t RowGroupCount() const noexcept { return _windows.size(); }
+  uint64_t RowCount() const noexcept { return _row_count; }
+  uint64_t Sum() const noexcept { return _sum; }
+  uint64_t NonZeroCount() const noexcept { return _non_zero; }
+  bool Uniform() const noexcept { return _uniform; }
+  bool HasExceptions() const noexcept { return _exceptions != 0; }
+  uint32_t MaxBits() const noexcept { return _max_bits; }
 
-  uint64_t Sum() const noexcept { return _total_sum; }
-  uint64_t NonZeroCount() const noexcept { return _total_non_zero; }
-
-  RgInfo Rg(size_t rg) const noexcept {
-    SDB_ASSERT(rg < _pointers.size());
-    return {.bytes = _spans[rg],
-            .first_row = rg * _rg_rows,
-            .row_count = RowGroupRowCount(rg),
-            .rg = rg,
-            .byte_size = _pointers[rg].byte_size,
-            .exceptions = _exceptions[rg]};
+  uint32_t Bits(size_t rg) const noexcept {
+    SDB_ASSERT(rg < _windows.size());
+    return _windows[rg].bits;
   }
 
-  uint8_t ByteSize(size_t rg) const noexcept {
-    SDB_ASSERT(rg < _pointers.size());
-    return _pointers[rg].byte_size;
+  const Window& Rg(size_t rg) const noexcept {
+    SDB_ASSERT(rg < _windows.size());
+    return _windows[rg];
   }
-  bool UniformByteSize() const noexcept { return _uniform_byte_size; }
-  bool HasExceptions() const noexcept { return _has_exceptions; }
-  // Groups are uniform, so only the last one is short.
-  uint64_t RowGroupRowCount(size_t rg) const noexcept {
-    SDB_ASSERT(rg < _pointers.size());
-    return rg + 1 == _pointers.size() ? _total_row_count - rg * _rg_rows
-                                      : _rg_rows;
+
+  const Window& Locate(doc_id_t doc) const noexcept {
+    SDB_ASSERT(doc >= doc_limits::min());
+    SDB_ASSERT(doc - doc_limits::min() < _row_count);
+    return _windows[(doc - doc_limits::min()) / _rg_rows];
   }
+
   uint64_t RowGroupFirstRow(size_t rg) const noexcept {
-    SDB_ASSERT(rg < _pointers.size());
+    SDB_ASSERT(rg < _windows.size());
     return rg * _rg_rows;
   }
-  std::span<const byte_type> RowGroupBytes(size_t rg) const noexcept {
-    SDB_ASSERT(rg < _spans.size());
-    return _spans[rg];
+
+  uint64_t RowGroupRowCount(size_t rg) const noexcept {
+    SDB_ASSERT(rg < _windows.size());
+    return _windows[rg].end_doc - _windows[rg].first_doc;
   }
-  std::span<const byte_type> RowGroupExtent(size_t rg) const noexcept {
-    SDB_ASSERT(rg < _spans.size());
-    return {_spans[rg].data(), _spans[rg].size() + _exceptions[rg].size()};
-  }
+
+  std::span<const byte_type> RowGroupExtent(size_t rg) const noexcept;
+
+  uint32_t Exception(doc_id_t doc) const noexcept;
+
+  uint32_t Get(uint64_t row) const noexcept;
 
   void Decode(size_t rg, uint32_t* values) const noexcept;
 
-  static uint32_t Exception(std::span<const byte_type> exceptions,
-                            uint64_t row) noexcept;
-
-  RgInfo Locate(uint64_t row_pos) const noexcept {
-    SDB_ASSERT(row_pos < _total_row_count);
-    return Rg(static_cast<size_t>(row_pos / _rg_rows));
-  }
-
-  uint32_t Get(uint64_t row_pos) const noexcept;
-
  private:
   field_id _id;
-  std::vector<NormRowGroupMeta> _pointers;
-  std::vector<std::span<const byte_type>> _spans;
-  std::vector<std::span<const byte_type>> _exceptions;
+  std::vector<Window> _windows;
   std::vector<byte_type> _owned;
+  const byte_type* _begin = nullptr;
+  const byte_type* _offsets = nullptr;
+  const byte_type* _values = nullptr;
   uint64_t _rg_rows = 1;
-  uint64_t _total_row_count = 0;
-  uint64_t _total_sum = 0;
-  uint64_t _total_non_zero = 0;
-  bool _uniform_byte_size = true;
-  bool _has_exceptions = false;
+  uint64_t _row_count = 0;
+  uint64_t _sum = 0;
+  uint64_t _non_zero = 0;
+  uint32_t _exceptions = 0;
+  uint32_t _max_bits = 0;
+  uint8_t _exception_bytes = 0;
+  bool _uniform = true;
 };
-
-// Decode one stored value from a row-group's raw bytes.
-inline uint32_t ReadNormValue(const byte_type* bytes,
-                              uint8_t byte_size) noexcept {
-  if (byte_size == 1) {
-    return *bytes;
-  }
-  if (byte_size == 2) {
-    return absl::little_endian::Load16(bytes);
-  }
-  return absl::little_endian::Load32(bytes);
-}
 
 }  // namespace irs

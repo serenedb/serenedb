@@ -25,31 +25,46 @@
 #include <vector>
 
 #include "iresearch/types.hpp"
-#include "iresearch/utils/containers/monotonic_buffer.hpp"
 
 namespace irs {
 
 class IndexOutput;
-class NormColumnWriter;
 
-inline constexpr uint32_t kNormEscape = 255;
-inline constexpr uint32_t kNormExceptionShare = 256;
-inline constexpr size_t kNormExceptionBytes = 2 * sizeof(uint32_t);
+inline constexpr uint32_t kNormBucketShift = 8;
+inline constexpr uint32_t kNormBucketRows = uint32_t{1} << kNormBucketShift;
+inline constexpr uint32_t kNormMaxBits = 32;
+inline constexpr size_t kNormSlotSlack = sizeof(uint64_t);
+inline constexpr size_t kNormOffsetSlack = 32;
+inline constexpr size_t kNormValueSlack = sizeof(uint32_t);
 
 struct NormRowGroupMeta {
-  uint8_t byte_size = 0;
+  uint8_t bits = 0;
   uint32_t max = 0;
   uint64_t sum = 0;
   uint64_t non_zero_count = 0;
   uint64_t file_offset = 0;
-  uint32_t exceptions = 0;
 };
 
 struct NormColumnMeta {
   uint32_t row_group_size = 0;
   uint64_t row_count = 0;
+  uint64_t file_offset = 0;
+  uint64_t size = 0;
+  uint64_t exceptions_offset = 0;
+  uint32_t exceptions = 0;
+  uint8_t exception_bytes = 0;
   std::vector<NormRowGroupMeta> row_groups;
 };
+
+inline uint64_t NormBuckets(uint64_t rows) noexcept {
+  return (rows + kNormBucketRows - 1) >> kNormBucketShift;
+}
+
+inline uint64_t NormExceptionsSize(uint64_t rows, uint64_t exceptions,
+                                   uint64_t exception_bytes) noexcept {
+  return (NormBuckets(rows) + 1) * sizeof(uint32_t) + exceptions +
+         kNormOffsetSlack + exceptions * exception_bytes + kNormValueSlack;
+}
 
 class NormColumnWriter final {
  public:
@@ -68,27 +83,23 @@ class NormColumnWriter final {
 
   field_id Id() const noexcept { return _id; }
 
-  uint64_t RowCount() const noexcept;
+  uint64_t RowCount() const noexcept {
+    return _meta.row_count + _values.size();
+  }
 
-  uint32_t RowGroupSize() const noexcept { return _row_group_size; }
+  uint32_t RowGroupSize() const noexcept { return _meta.row_group_size; }
 
-  const auto& Pointers() const noexcept { return _pointers; }
+  const NormColumnMeta& Meta() const noexcept { return _meta; }
 
  private:
   void FlushRowGroup();
 
   field_id _id;
-  uint32_t _row_group_size;
   IndexOutput* _out;
-
-  MonotonicBuffer<uint32_t, 1, 0> _pending;
-  std::vector<std::span<const uint32_t>> _spans;
-  uint32_t _filled = 0;
-  uint64_t _flushed = 0;
-  uint32_t _rg_max = 0;
-  uint64_t _rg_sum = 0;
-  uint64_t _rg_non_zero = 0;
-  std::vector<NormRowGroupMeta> _pointers;
+  NormColumnMeta _meta;
+  std::vector<uint32_t> _values;
+  std::vector<uint32_t> _exception_rows;
+  std::vector<uint32_t> _exception_values;
 };
 
 }  // namespace irs

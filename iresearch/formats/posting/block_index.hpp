@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 
 #include <algorithm>
@@ -49,12 +50,18 @@ IRS_FORCE_INLINE constexpr BlockIndexShape BlockIndexShapeOf(
   return {.pos = skip.pos, .offs = skip.offs, .bounds = bounds};
 }
 
+struct BoundPair {
+  uint32_t freq;
+  uint32_t norm;
+};
+
 class BlockIndex {
  public:
   static constexpr uint32_t kRun = doc_limits::kSkipSize;
-  static constexpr uint32_t kBoundBytes = 2 * sizeof(uint32_t);
+  static constexpr uint32_t kRootBytes = 2 * sizeof(uint32_t);
   static constexpr uint8_t kWideEnd = 1;
   static constexpr uint8_t kWideGroup = 2;
+  static constexpr uint8_t kNarrowBounds = 4;
 
   static_assert(std::endian::native == std::endian::little);
 
@@ -78,6 +85,11 @@ class BlockIndex {
     return (flags & kWideGroup) != 0 ? sizeof(uint64_t) : sizeof(uint32_t);
   }
 
+  static constexpr uint32_t BoundBytes(uint8_t flags) noexcept {
+    return (flags & kNarrowBounds) != 0 ? 2 * sizeof(uint16_t)
+                                        : 2 * sizeof(uint32_t);
+  }
+
   static constexpr uint32_t LandingBytes(BlockIndexShape shape,
                                          uint8_t flags) noexcept {
     auto bytes = EndBytes(flags);
@@ -97,7 +109,7 @@ class BlockIndex {
     const uint64_t r = Runs(blocks);
     uint64_t bytes = 4 * (n + r) + LandingBytes(shape, flags) * (n - 1);
     if (shape.bounds) {
-      bytes += kBoundBytes * (1 + n + r);
+      bytes += kRootBytes + BoundBytes(flags) * (n + r);
     }
     return bytes;
   }
@@ -115,22 +127,26 @@ class BlockIndex {
     _group_at = EndBytes(flags);
     _index_at = _group_at + GroupBytes(flags);
     _pay_at = _index_at + sizeof(uint16_t);
+    _narrow_bounds = (flags & kNarrowBounds) != 0;
     if (shape.bounds) {
       _root = data;
-      data += kBoundBytes;
+      data += kRootBytes;
     }
     _last = reinterpret_cast<const uint32_t*>(data);
     _run_last = _last + n;
     _landing = data + 4 * (n + r);
     if (shape.bounds) {
       _bound = _landing + uint64_t{_landing_bytes} * (n - 1);
-      _run_bound = _bound + kBoundBytes * n;
+      _run_bound = _bound + BoundBytes(flags) * n;
     }
   }
 
   uint32_t Size() const noexcept { return _blocks; }
 
-  const byte_type* Root() const noexcept { return _root; }
+  BoundPair Root() const noexcept {
+    return {absl::little_endian::Load32(_root),
+            absl::little_endian::Load32(_root + sizeof(uint32_t))};
+  }
 
   doc_id_t Last(uint32_t k) const noexcept { return _last[k]; }
 
@@ -156,16 +172,14 @@ class BlockIndex {
                        : absl::little_endian::Load32(p);
   }
 
-  const byte_type* Bound(uint32_t k) const noexcept {
-    return _bound + kBoundBytes * k;
-  }
+  BoundPair Bound(uint32_t k) const noexcept { return PairAt(_bound, k); }
 
   uint32_t Runs() const noexcept { return Runs(_blocks); }
 
   doc_id_t RunLast(uint32_t r) const noexcept { return _run_last[r]; }
 
-  const byte_type* RunBound(uint32_t r) const noexcept {
-    return _run_bound + kBoundBytes * r;
+  BoundPair RunBound(uint32_t r) const noexcept {
+    return PairAt(_run_bound, r);
   }
 
   uint32_t Find(uint32_t from, doc_id_t target) const noexcept {
@@ -217,6 +231,17 @@ class BlockIndex {
     return _landing + size_t{_landing_bytes} * k;
   }
 
+  BoundPair PairAt(const byte_type* base, uint32_t k) const noexcept {
+    if (_narrow_bounds) {
+      const auto* p = base + 2 * sizeof(uint16_t) * size_t{k};
+      return {absl::little_endian::Load16(p),
+              absl::little_endian::Load16(p + sizeof(uint16_t))};
+    }
+    const auto* p = base + 2 * sizeof(uint32_t) * size_t{k};
+    return {absl::little_endian::Load32(p),
+            absl::little_endian::Load32(p + sizeof(uint32_t))};
+  }
+
   const byte_type* _root = nullptr;
   const uint32_t* _last = nullptr;
   const uint32_t* _run_last = nullptr;
@@ -230,6 +255,7 @@ class BlockIndex {
   uint32_t _pay_at = 0;
   bool _wide_end = false;
   bool _wide_group = false;
+  bool _narrow_bounds = false;
 };
 
 class BlockCursor {
@@ -404,11 +430,17 @@ class BlockIndexWriter {
   uint32_t* Root() noexcept { return _root; }
 
   uint8_t Flags() const noexcept {
+    uint8_t flags = 0;
+    const auto narrow = [](uint32_t value) noexcept {
+      return value <= std::numeric_limits<uint16_t>::max();
+    };
+    if (absl::c_all_of(_bound, narrow) && absl::c_all_of(_run_bound, narrow)) {
+      flags |= BlockIndex::kNarrowBounds;
+    }
     const auto m = Size() - 1;
     if (m == 0) {
-      return 0;
+      return flags;
     }
-    uint8_t flags = 0;
     if (_end[m - 1] > std::numeric_limits<uint16_t>::max()) {
       flags |= BlockIndex::kWideEnd;
     }
@@ -466,11 +498,18 @@ class BlockIndexWriter {
       }
     }
     if (shape.bounds) {
+      const auto bound = [&](uint32_t value) {
+        if ((flags & BlockIndex::kNarrowBounds) != 0) {
+          out.WriteU16(static_cast<uint16_t>(value));
+        } else {
+          out.WriteU32(value);
+        }
+      };
       for (const auto value : _bound) {
-        out.WriteU32(value);
+        bound(value);
       }
       for (const auto value : _run_bound) {
-        out.WriteU32(value);
+        bound(value);
       }
     }
   }

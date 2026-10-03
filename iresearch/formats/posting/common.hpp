@@ -33,6 +33,7 @@
 #include <tuple>
 
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/types.hpp"
@@ -101,7 +102,6 @@ void SkipScoreBounds(bool has_score_bounds, Input& in) {
   }
 }
 
-inline constexpr uint64_t kPosBytesPerFreq = 1;
 inline constexpr uint64_t kMaxPrefetch = uint64_t{16} << 20;
 
 template<typename Input>
@@ -121,7 +121,17 @@ inline uint64_t DocExtent(const PostingMeta& meta) noexcept {
 }
 
 inline uint64_t PosExtent(const PostingMeta& meta) noexcept {
-  return uint64_t{meta.freq} * kPosBytesPerFreq + file_utils::kPage;
+  return pos_limits::kBlockSize < meta.freq
+           ? meta.pos_extent
+           : 2 *
+               (PosGroup::kHeaderBytes + block_codec::Codec256::kMaxBlockBytes);
+}
+
+inline uint64_t PayExtent(const PostingMeta& meta) noexcept {
+  return pos_limits::kBlockSize < meta.freq
+           ? meta.pay_extent
+           : 2 * (PosGroup::kHeaderBytes +
+                  2 * block_codec::Codec256::kMaxBlockBytes);
 }
 
 template<typename Input>
@@ -137,7 +147,6 @@ class GrowingHint {
     _last = at;
     _end = at;
     _stop = stop;
-    _extent = stop - at;
     _run = 0;
     _skipped = 0;
     _window = kFirst;
@@ -150,9 +159,6 @@ class GrowingHint {
       (gap < file_utils::kPage ? _run : _skipped) += gap;
     }
     _last = at;
-    if (at >= _stop) [[unlikely]] {
-      _stop = at + _extent;
-    }
     if (at + _window / 2 >= _end && _end < _stop) [[unlikely]] {
       Grow(in, at);
     }
@@ -177,7 +183,6 @@ class GrowingHint {
   uint64_t _last = 0;
   uint64_t _end = 0;
   uint64_t _stop = 0;
-  uint64_t _extent = 0;
   uint64_t _run = 0;
   uint64_t _skipped = 0;
   uint64_t _window = kFirst;

@@ -137,7 +137,7 @@ class PositionImpl final : public PosAttr {
 
       _pay.view = IteratorTraits::View(*_pay.in);
       _pay.hint.Arm(state.term_state->pay_start,
-                    state.term_state->pay_start + PosExtent(*state.term_state));
+                    state.term_state->pay_start + PayExtent(*state.term_state));
     }
     Land(state.term_state->pos_start, state.term_state->pay_start,
          state.term_state->pos_offset);

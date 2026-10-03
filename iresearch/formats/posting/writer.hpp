@@ -111,6 +111,8 @@ class BlockGroup {
 
   uint32_t Blocks() const noexcept { return _blocks; }
 
+  uint64_t Bytes() const noexcept { return _data.size(); }
+
   void Reset() noexcept {
     _data.clear();
     _blocks = 0;
@@ -437,6 +439,13 @@ inline void PostingsWriter::Encode(BufferedOutput& out,
     out.WriteV32(meta.doc_delta);
   }
 
+  if (_features.HasPosition() && pos_limits::kBlockSize < meta.freq) {
+    out.WriteV32(meta.pos_extent);
+    if (_features.HasOffset()) {
+      out.WriteV32(meta.pay_extent);
+    }
+  }
+
   _last_state = meta;
   if (inlined) {
     _last_state.doc_start = doc_start;
@@ -503,6 +512,27 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
                              .bounds = _valid_writer != nullptr});
   }
 
+  if (_features.HasPosition() && pos_limits::kBlockSize < meta.freq) {
+    const auto extent = [](const IndexOutput& out, uint64_t start,
+                           const BlockGroup& group, bool partial,
+                           uint32_t blocks) {
+      const uint64_t bytes =
+        out.Position() - start + PosGroup::kHeaderBytes + group.Bytes() +
+        (partial ? blocks * FormatTraits128::Codec::kMaxBlockBytes : 0);
+      SDB_ENSURE(bytes <= std::numeric_limits<uint32_t>::max(),
+                 "postings writer: a single term's positions footprint of ",
+                 bytes, " bytes exceeds the ",
+                 std::numeric_limits<uint32_t>::max(), " byte limit");
+      return static_cast<uint32_t>(bytes);
+    };
+    meta.pos_extent =
+      extent(*_pos_out, meta.pos_start, _pos_group, _pos.size != 0, 1);
+    if (_features.HasOffset()) {
+      meta.pay_extent =
+        extent(*_pay_out, meta.pay_start, _pay_group, _pay.size != 0, 2);
+    }
+  }
+
   _doc.size = 0;
   _doc.last = doc_limits::invalid();
   _doc.block_last = doc_limits::invalid();
@@ -565,8 +595,8 @@ inline void PostingsWriter::WritePosBlock() {
 
 inline void PostingsWriter::WritePayBlock() {
   SDB_ASSERT(_pay_out);
-  _pay_group.Append(_enc_buf,
-                    FormatTraits128::EncodeBlock(_pay.offs_start_buf, _enc_buf));
+  _pay_group.Append(
+    _enc_buf, FormatTraits128::EncodeBlock(_pay.offs_start_buf, _enc_buf));
   _pay_group.Append(_enc_buf,
                     FormatTraits128::EncodeBlock(_pay.offs_len_buf, _enc_buf));
   _pay_group.Close(*_pay_out);

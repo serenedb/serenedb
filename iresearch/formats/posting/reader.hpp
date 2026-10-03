@@ -169,6 +169,14 @@ inline size_t PostingsReader::decode(const byte_type* in,
     posting_meta.doc_delta = vread<uint32_t>(p);
   }
 
+  if (IndexFeatures::None != (features & IndexFeatures::Pos) &&
+      pos_limits::kBlockSize < posting_meta.freq) {
+    posting_meta.pos_extent = vread<uint32_t>(p);
+    if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
+      posting_meta.pay_extent = vread<uint32_t>(p);
+    }
+  }
+
   SDB_ASSERT(p >= in);
   return size_t(std::distance(in, p));
 }

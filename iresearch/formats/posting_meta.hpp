@@ -37,6 +37,7 @@ struct PostingMeta {
     doc_start = pos_start = pay_start = 0;
     pos_offset = 0;
     doc_delta = 0;
+    pos_extent = pay_extent = 0;
     inline_size = 0;
   }
 
@@ -56,6 +57,8 @@ struct PostingMeta {
   // by the file -- `EndTerm` refuses a term that does not fit. For the lengths
   // in between it is neither written nor read.
   uint32_t doc_delta = 0;
+  uint32_t pos_extent = 0;
+  uint32_t pay_extent = 0;
   uint8_t inline_size = 0;
   byte_type inline_data[kInlineBytes]{};
 };

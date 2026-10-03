@@ -631,15 +631,6 @@ void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
   }
   if (type != duckdb::CatalogType::FOREIGN_SERVER_ENTRY) {
     duckdb::DuckCatalog::Alter(transaction, info);
-    if (info.type == duckdb::AlterType::ALTER_INDEX) {
-      const auto& name = info.GetQualifiedName();
-      auto index = duckdb::Catalog::GetEntry<duckdb::IndexCatalogEntry>(
-        transaction.GetContext(), {GetName(), name.Schema(), name.Name()},
-        duckdb::OnEntryNotFound::RETURN_NULL);
-      if (index && index->index_type == "inverted") {
-        index->Cast<InvertedIndexEntry>().SyncReindexJob(transaction);
-      }
-    }
     return;
   }
   DeclareModified(transaction, *this);

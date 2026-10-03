@@ -256,6 +256,11 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   } else {
     const auto transaction =
       _schema_entry.ParentCatalog().GetCatalogTransaction(context);
+    uint32_t reindex_interval = 0;
+    if (auto node =
+          _info->options.extract(std::string{kReindexIntervalSetting})) {
+      reindex_interval = node.mapped().GetValue<uint32_t>();
+    }
     auto entry = _schema_entry.CreateIndex(transaction, *_info, _relation);
     if (entry) {
       auto& index_entry = entry->Cast<catalog::InvertedIndexEntry>();
@@ -289,7 +294,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
           context, index_entry, _relation, _bound_expressions);
         published.storage->SetFileManifest(extras ? extras->manifest : nullptr);
         published.storage->StartTasks();
-        index_entry.SyncReindexJob(transaction);
+        index_entry.CreateReindexJob(transaction, reindex_interval);
         if (IsDuckDBTable()) {
           published.storage->SetDeleteLogRowidEnd(published.rowid_horizon);
           state->backfill_rowid_end =

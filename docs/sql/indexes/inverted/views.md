@@ -181,7 +181,7 @@ The `reindex_interval` index option (milliseconds, `0` = off, the default) runs 
 
 <SqlLogicTest id="sql/indexes/inverted/views/reindex_interval" />
 
-The job appears in `duckdb_jobs()` with its run counters and last error, and the usual job statements apply to it: `ALTER JOB ... SUSPEND` pauses the refresh without touching the index option, and `EXECUTE JOB` runs one pass right away. The job targets the index by its internal id, so renaming the index keeps it working, and it is dropped together with the index. Creating the index fails if a job with the same name already exists in the schema.
+The job appears in `duckdb_jobs()` with its run counters and last error, and the usual job statements apply to it: `ALTER JOB ... SUSPEND` pauses the refresh, and `EXECUTE JOB` runs one pass right away. The interval lives only in the job, so the index's `reloptions` do not list it. The job is owned by the index, the way a sequence is owned by a column: it is dropped together with the index and cannot be dropped on its own. It targets the index by its internal id, so renaming the index keeps it working. Creating the index fails if a job with the same name already exists in the schema.
 
 The job is persisted with the index, so the refresh survives server restarts. A failed pass (source unreachable, empty glob) leaves the index serving its last published state and is recorded as the job's last error; the next pass retries. The pass runs in its own session and reads **global** settings — apply options the source needs with `SET GLOBAL`; a manual `REINDEX` uses the calling session's settings.
 

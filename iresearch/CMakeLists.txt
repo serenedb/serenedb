@@ -325,6 +325,7 @@ set(IResearch_core_sources
     ./search/top/make_pruned_disjunction.cpp
     ./search/top/make_pruned_conjunction.cpp
     ./search/top/make_pruned_conjunction_nested.cpp
+    ./search/top/make_pruned_req_opt.cpp
     ./search/queries/multiterm_query.cpp
     ./search/queries/term_query.cpp
     ./search/filters/boolean_filter.cpp

@@ -78,6 +78,7 @@ class PruneLeafBase {
     _fetcher = args.fetcher;
     _recipe = {&segment, &field, args};
     _provider.freq.value = _freqs.data;
+    _cost = meta.docs_count;
 
     auto source = args.scorer->PrepareScoreBoundSource();
     if (source) {
@@ -140,6 +141,8 @@ class PruneLeafBase {
   }
 
   doc_id_t Value() const noexcept { return _doc; }
+
+  uint32_t Cost() const noexcept { return _cost; }
 
   score_t MaxScore(doc_id_t doc) {
     if (!_cursor.Armed()) {
@@ -415,6 +418,7 @@ class PruneLeafBase {
   doc_id_t _max_in_leaf = doc_limits::invalid();
   doc_id_t _upper_bound = doc_limits::eof();
   uint32_t _left_in_list = 0;
+  uint32_t _cost = 0;
   bool _needs_reposition = false;
   bool _scored = false;
 };

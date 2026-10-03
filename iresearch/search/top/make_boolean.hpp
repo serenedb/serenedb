@@ -168,6 +168,13 @@ struct Api {
     return top::MakePrunedPosting(posting, excludes, exclude_filters, segment,
                                   ctx);
   }
+
+  static Result MakePrunedReqOpt(
+    const irs::detail::PostingClause& required,
+    std::span<const irs::detail::PostingClause> optional,
+    const SubReader& segment, const Context& ctx, ScoreMergeType merge) {
+    return top::MakePrunedReqOpt(required, optional, segment, ctx, merge);
+  }
 };
 
 template<typename Term>

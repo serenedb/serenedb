@@ -151,6 +151,11 @@ Root::ptr MakePrunedConjunction(
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx, ScoreMergeType merge);
 
+Root::ptr MakePrunedReqOpt(const irs::detail::PostingClause& required,
+                           std::span<const irs::detail::PostingClause> optional,
+                           const SubReader& segment, const Context& ctx,
+                           ScoreMergeType merge);
+
 Root::ptr MakeNestedPrunedConjunction(
   std::span<const irs::detail::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters,

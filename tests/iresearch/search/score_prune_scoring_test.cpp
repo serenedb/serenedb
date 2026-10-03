@@ -613,6 +613,20 @@ TEST_P(ScorePruneScoringTestCase, PruningIsTaken) {
     filter.SetMinShouldMatch(1);
     EXPECT_LT(reached(filter, true), reached(filter, false));
   }
+
+  {
+    SCOPED_TRACE("required and optional terms");
+    auto filter = ParseQuery("+topic:database content:index");
+    ASSERT_NE(nullptr, filter);
+    EXPECT_LT(reached(*filter, true), reached(*filter, false));
+  }
+
+  {
+    SCOPED_TRACE("required term and a rare optional term");
+    auto filter = ParseQuery("+topic:database content:lookup");
+    ASSERT_NE(nullptr, filter);
+    EXPECT_LT(reached(*filter, true) * 10, reached(*filter, false));
+  }
 }
 
 // A query that takes the best of its terms rather than adding them up must be
@@ -653,6 +667,25 @@ TEST_P(ScorePruneScoringTestCase, Bm25PrunedVsBaseline) {
   ASSERT_NE(nullptr, filter);
 
   ComparePrunedVsBaseline(reader, *filter, scorer, 15);
+}
+
+TEST_P(ScorePruneScoringTestCase, Bm25RequiredOptionalPrunedVsBaseline) {
+  auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
+  auto reader = CreateLargeIndex(scorer, 10);
+
+  for (const auto* query :
+       {"+topic:database content:index", "+topic:search content:index",
+        "+topic:database content:index content:search topic:search",
+        "+topic:database content:lookup",
+        "+topic:database content:lookup content:index",
+        "+topic:physics content:quantum content:lookup content:relativity"}) {
+    SCOPED_TRACE(query);
+    auto filter = ParseQuery(query);
+    ASSERT_NE(nullptr, filter);
+    for (const size_t k : {1, 10, 100}) {
+      ComparePrunedVsBaseline(reader, *filter, scorer, k);
+    }
+  }
 }
 
 // Anti-correlated row filter: the highest-scoring docs all FAIL the filter and

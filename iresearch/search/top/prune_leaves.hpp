@@ -20,7 +20,11 @@
 
 #pragma once
 
+#include <absl/base/optimization.h>
+
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <cstddef>
 #include <limits>
 #include <span>
@@ -31,6 +35,7 @@
 #include "iresearch/search/detail/score_filter.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -183,6 +188,101 @@ class PruneLeaves {
     return len;
   }
 
+  size_t Drivers(score_t lead_max, score_t threshold) const noexcept {
+    if (lead_max > threshold) {
+      return 0;
+    }
+    const auto count = _leaves.size();
+    size_t k = 1;
+    while (k != count && lead_max + _suffix[k] > threshold) {
+      ++k;
+    }
+    return k;
+  }
+
+  uint64_t DriverCost(size_t drivers) const noexcept {
+    uint64_t cost = 0;
+    for (size_t i = 0; i != drivers; ++i) {
+      cost += _leaves[_order[i]].Cost();
+    }
+    return cost;
+  }
+
+  IRS_FORCE_INLINE doc_id_t FirstOf(size_t drivers, doc_id_t target) {
+    auto first = _leaves[_order[0]].Probe(target);
+    for (size_t i = 1; i != drivers; ++i) {
+      first = std::min(first, _leaves[_order[i]].Probe(target));
+    }
+    return first;
+  }
+
+  IRS_FORCE_INLINE void Gather(doc_id_t doc, uint32_t slot) {
+    for (size_t c = 0, count = _leaves.size(); c != count; ++c) {
+      auto& leaf = _leaves[c];
+      _held[c] |= static_cast<uint32_t>(leaf.Probe(doc) == doc) << slot;
+      leaf.FetchScoreArgs(slot);
+    }
+  }
+
+  void ScoreHeld(score_t* IRS_RESTRICT scores, uint32_t len) {
+    for (size_t c = 0, count = _leaves.size(); c != count; ++c) {
+      if (_held[c] != 0) {
+        _scorers[c].Score(_rows[c].data(), static_cast<scores_size_t>(len));
+      }
+    }
+    AddHeld(scores, len);
+  }
+
+  uint32_t AddOptional(doc_id_t* IRS_RESTRICT docs,
+                       score_t* IRS_RESTRICT scores, uint32_t len,
+                       score_t threshold) {
+    static_assert(kScoreBlock <= BitsRequired<uint32_t>());
+    SDB_ASSERT(len != 0 && len <= kScoreBlock);
+    const auto count = _leaves.size();
+    std::copy_n(scores, len, _running);
+    uint32_t alive =
+      len == kScoreBlock ? ~uint32_t{0} : (uint32_t{1} << len) - 1;
+    bool fetched = false;
+    for (size_t i = 0; i != count; ++i) {
+      if (const auto required = threshold - _suffix[i]; required > 0) {
+        uint32_t keep = 0;
+        for (uint32_t j = 0; j != len; ++j) {
+          keep |= static_cast<uint32_t>(_running[j] > required) << j;
+        }
+        alive &= keep;
+      }
+      if (alive == 0) {
+        break;
+      }
+      const auto c = _order[i];
+      auto& leaf = _leaves[c];
+      uint32_t hits = 0;
+      for (auto m = alive; m != 0; m &= m - 1) {
+        const auto j = static_cast<uint32_t>(std::countr_zero(m));
+        const auto doc = docs[j];
+        hits |= static_cast<uint32_t>(leaf.Probe(doc) == doc) << j;
+        leaf.FetchScoreArgs(j);
+      }
+      if (hits == 0) {
+        continue;
+      }
+      if (!fetched) {
+        _fetcher.Fetch(std::span<const doc_id_t>{docs, len});
+        fetched = true;
+      }
+      _held[c] = hits;
+      auto* const row = _rows[c].data();
+      _scorers[c].Score(row, static_cast<scores_size_t>(len));
+      for (uint32_t j = 0; j != len; ++j) {
+        _running[j] += ((hits >> j) & 1) != 0 ? row[j] : score_t{0};
+      }
+    }
+    if (fetched) {
+      AddHeld(scores, len);
+    }
+    return irs::detail::FilterScores(docs, scores, len, threshold);
+  }
+
  private:
   static ScoreFunction Scorer(Leaf& leaf) {
     if constexpr (requires { leaf.PrepareScore(); }) {
@@ -192,12 +292,29 @@ class PruneLeaves {
     }
   }
 
+  void AddHeld(score_t* IRS_RESTRICT scores, uint32_t len) {
+    for (size_t c = 0, count = _leaves.size(); c != count; ++c) {
+      const auto held = std::exchange(_held[c], 0);
+      if (held == 0) {
+        continue;
+      }
+      const auto* const row = _rows[c].data();
+      for (uint32_t j = 0; j != len; ++j) {
+        scores[j] += ((held >> j) & 1) != 0 ? row[j] : score_t{0};
+      }
+    }
+  }
+
   ColumnArgsFetcher& _fetcher;
   irs::containers::Fixed<Leaf, N> _leaves;
   irs::containers::Fixed<ScoreFunction, N> _scorers;
   irs::containers::Fixed<score_t, N> _remaining;
   irs::containers::Fixed<score_t, N> _suffix;
   irs::containers::Fixed<uint32_t, N> _order;
+  irs::containers::Fixed<uint32_t, N> _held{_leaves.size()};
+  irs::containers::Fixed<std::array<score_t, kScoreBlock>, N> _rows{
+    _leaves.size()};
+  ABSL_CACHELINE_ALIGNED score_t _running[kScoreBlock];
   uint32_t _dropped = 0;
 };
 

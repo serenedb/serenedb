@@ -278,18 +278,18 @@ template<size_t N, typename It, typename T, typename Cmp = std::less<>>
 IRS_FORCE_INLINE It BranchlessLowerBound(It begin, const T& value,
                                          Cmp&& compare = {}) {
   static_assert(std::has_single_bit(N));
-  constexpr size_t kWindow = 64;
-  if constexpr (N > kWindow && std::is_pointer_v<It> &&
+  constexpr size_t kGroup = 32;
+  if constexpr (N > kGroup && std::is_pointer_v<It> &&
                 std::is_same_v<std::remove_const_t<std::remove_pointer_t<It>>,
                                uint32_t> &&
                 std::is_same_v<T, uint32_t> &&
                 std::is_same_v<std::remove_cvref_t<Cmp>, std::less<>>) {
-    for (size_t step = N / 2; step >= kWindow; step /= 2) {
-      if (begin[step - 1] < value) {
-        begin += step;
-      }
+    size_t group = 0;
+    for (size_t g = 1; g != N / kGroup; ++g) {
+      group += static_cast<size_t>(begin[g * kGroup - 1] < value);
     }
-    return begin + CountLess<kWindow>(begin, value);
+    begin += group * kGroup;
+    return begin + CountLess<kGroup>(begin, value);
   } else {
     for (size_t step = N / 2; step != 0; step /= 2) {
       if (compare(begin[step], value)) {

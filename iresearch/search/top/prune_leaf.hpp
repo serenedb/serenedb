@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/base/internal/endian.h>
-
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -180,9 +178,8 @@ class PruneLeafBase {
     return irs::utils::downCast<InputType>(*_in);
   }
 
-  score_t BoundScore(const byte_type* bound) {
-    _bound_source->Set(absl::little_endian::Load32(bound),
-                       absl::little_endian::Load32(bound + sizeof(uint32_t)));
+  score_t BoundScore(BoundPair bound) {
+    _bound_source->Set(bound.freq, bound.norm);
     return _bound_func.Score();
   }
 

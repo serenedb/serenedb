@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/base/internal/endian.h>
-
 #include <utility>
 
 #include "iresearch/analysis/token_attributes.hpp"
@@ -103,9 +101,8 @@ class PrunedPhrase : public Root {
   }
 
  private:
-  score_t BoundScore(const byte_type* bound) {
-    _bound_source->Set(_slots.FreqBoundOf(absl::little_endian::Load32(bound)),
-                       absl::little_endian::Load32(bound + sizeof(uint32_t)));
+  score_t BoundScore(BoundPair bound) {
+    _bound_source->Set(_slots.FreqBoundOf(bound.freq), bound.norm);
     return _bound_func.Score();
   }
 

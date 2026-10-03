@@ -497,6 +497,7 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
   field_id out_id = field_limits::invalid();
   NormColumnWriter* norm_writer = nullptr;
   uint64_t merged_row = 0;
+  std::vector<uint32_t> values;
   for (const auto& src : sources) {
     const NormColumnReader* norm_reader = nullptr;
     if (src.col_reader) {
@@ -529,12 +530,12 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
     auto it_mask = src.reader->MaskedDocs();
     for (size_t rg = 0, rg_count = norm_reader->RowGroupCount(); rg < rg_count;
          ++rg) {
-      const auto bytes = norm_reader->RowGroupBytes(rg);
-      const auto byte_size = norm_reader->ByteSize(rg);
       const auto rg_first_row = norm_reader->RowGroupFirstRow(rg);
       const auto n = norm_reader->RowGroupRowCount(rg);
+      values.resize(n);
+      norm_reader->Decode(rg, values.data());
       if (!has_mask) {
-        norm_writer->AppendBytes(merged_row, bytes.data(), n, byte_size);
+        norm_writer->AppendValues(merged_row, values);
         merged_row += n;
         continue;
       }
@@ -542,8 +543,8 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
       auto flush_run = [&](size_t run_end) {
         if (run_end > run_start) {
           const auto run = run_end - run_start;
-          norm_writer->AppendBytes(
-            merged_row, bytes.data() + run_start * byte_size, run, byte_size);
+          norm_writer->AppendValues(merged_row,
+                                    std::span{values.data() + run_start, run});
           merged_row += run;
         }
       };

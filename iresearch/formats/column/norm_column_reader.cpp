@@ -23,7 +23,6 @@
 #include <utility>
 
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
@@ -32,6 +31,7 @@ NormColumnReader::NormColumnReader(field_id id, NormColumnMeta meta,
                                    IndexInput& in)
   : _id{id}, _pointers{std::move(meta.row_groups)} {
   _spans.resize(_pointers.size());
+  _exceptions.resize(_pointers.size());
   if (!_pointers.empty()) {
     _rg_rows = meta.row_group_size;
     _total_row_count = meta.row_count;
@@ -45,15 +45,22 @@ NormColumnReader::NormColumnReader(field_id id, NormColumnMeta meta,
     _total_sum += p.sum;
     _total_non_zero += p.non_zero_count;
     _uniform_byte_size &= p.byte_size == _pointers.front().byte_size;
+    _has_exceptions |= p.exceptions != 0;
     const auto byte_count = RowGroupRowCount(rg) * p.byte_size;
-    if (byte_count == 0) {
+    const auto exception_count = size_t{p.exceptions} * kNormExceptionBytes;
+    const auto total = byte_count + exception_count;
+    if (total == 0) {
       continue;
     }
-    if (const auto* ptr = in.ReadStable(p.file_offset, byte_count); ptr) {
+    if (const auto* ptr = in.ReadStable(p.file_offset, total); ptr) {
       _spans[rg] = std::span<const byte_type>{ptr, byte_count};
+      _exceptions[rg] =
+        std::span<const byte_type>{ptr + byte_count, exception_count};
     } else {
       _spans[rg] = {static_cast<const byte_type*>(nullptr), byte_count};
-      owned_total += byte_count;
+      _exceptions[rg] = {static_cast<const byte_type*>(nullptr),
+                         exception_count};
+      owned_total += total;
     }
   }
   if (owned_total != 0) {
@@ -64,45 +71,84 @@ NormColumnReader::NormColumnReader(field_id id, NormColumnMeta meta,
         continue;
       }
       const auto byte_count = _spans[rg].size();
-      if (byte_count == 0) {
+      const auto exception_count = _exceptions[rg].size();
+      const auto total = byte_count + exception_count;
+      if (total == 0) {
         continue;
       }
       auto* dst = _owned.data() + offset;
-      in.ReadData(_pointers[rg].file_offset, dst, byte_count);
+      in.ReadData(_pointers[rg].file_offset, dst, total);
       _spans[rg] = std::span<const byte_type>{dst, byte_count};
-      offset += byte_count;
+      _exceptions[rg] =
+        std::span<const byte_type>{dst + byte_count, exception_count};
+      offset += total;
     }
   }
-}
-
-size_t NormColumnReader::Stream(size_t rg, const byte_type* from,
-                                size_t advised) const noexcept {
-  if (!_owned.empty()) {
-    return advised;
-  }
-  uint64_t budget = file_utils::kMaxReadahead;
-  auto r = std::max(rg, advised);
-  if (r == rg) {
-    const auto span = _spans[r++];
-    SDB_ASSERT(from >= span.data() && from < span.data() + span.size());
-    const auto size = static_cast<size_t>(span.data() + span.size() - from);
-    file_utils::Prefetch(from, size);
-    budget -= std::min<uint64_t>(budget, size);
-  }
-  for (; r < _spans.size() && budget != 0; ++r) {
-    const auto span = _spans[r];
-    file_utils::Prefetch(span.data(), span.size());
-    budget -= std::min<uint64_t>(budget, span.size());
-  }
-  return r;
 }
 
 uint32_t NormColumnReader::Get(uint64_t row_pos) const noexcept {
   const auto info = Locate(row_pos);
   SDB_ASSERT(!info.bytes.empty());
-  return ReadNormValue(
-    info.bytes.data() + (row_pos - info.first_row) * info.byte_size,
-    info.byte_size);
+  const auto row = row_pos - info.first_row;
+  const auto value =
+    ReadNormValue(info.bytes.data() + row * info.byte_size, info.byte_size);
+  if (value == kNormEscape && !info.exceptions.empty()) {
+    return Exception(info.exceptions, row);
+  }
+  return value;
+}
+
+void NormColumnReader::Decode(size_t rg,
+                              uint32_t* IRS_RESTRICT values) const noexcept {
+  SDB_ASSERT(rg < _spans.size());
+  const auto* IRS_RESTRICT bytes = _spans[rg].data();
+  const auto rows = RowGroupRowCount(rg);
+  switch (_pointers[rg].byte_size) {
+    case 1:
+      for (uint64_t i = 0; i != rows; ++i) {
+        values[i] = bytes[i];
+      }
+      break;
+    case 2:
+      for (uint64_t i = 0; i != rows; ++i) {
+        values[i] = absl::little_endian::Load16(bytes + i * 2);
+      }
+      break;
+    default:
+      SDB_ASSERT(_pointers[rg].byte_size == 4);
+      for (uint64_t i = 0; i != rows; ++i) {
+        values[i] = absl::little_endian::Load32(bytes + i * 4);
+      }
+      break;
+  }
+  const auto exceptions = _exceptions[rg];
+  for (size_t i = 0; i != exceptions.size(); i += kNormExceptionBytes) {
+    const auto row = absl::little_endian::Load32(exceptions.data() + i);
+    SDB_ASSERT(row < rows);
+    values[row] =
+      absl::little_endian::Load32(exceptions.data() + i + sizeof(uint32_t));
+  }
+}
+
+uint32_t NormColumnReader::Exception(std::span<const byte_type> exceptions,
+                                     uint64_t row) noexcept {
+  SDB_ASSERT(!exceptions.empty());
+  size_t lo = 0;
+  size_t hi = exceptions.size() / kNormExceptionBytes;
+  while (lo < hi) {
+    const auto mid = (lo + hi) / 2;
+    const auto at = absl::little_endian::Load32(exceptions.data() +
+                                                mid * kNormExceptionBytes);
+    if (at < row) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  const auto* entry = exceptions.data() + lo * kNormExceptionBytes;
+  SDB_ASSERT(lo < exceptions.size() / kNormExceptionBytes);
+  SDB_ASSERT(absl::little_endian::Load32(entry) == row);
+  return absl::little_endian::Load32(entry + sizeof(uint32_t));
 }
 
 }  // namespace irs

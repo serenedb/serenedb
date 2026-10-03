@@ -23,6 +23,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -44,11 +45,8 @@ class ScoreBoundWriterImpl final : public ScoreBoundWriter {
 
  public:
   template<typename... Args>
-  ScoreBoundWriterImpl(size_t max_levels, Args&&... args)
-    : _producer{std::forward<Args>(args)...} {
-    SDB_ASSERT(max_levels != 0);
-    _levels.resize(max_levels + 1);
-  }
+  explicit ScoreBoundWriterImpl(Args&&... args)
+    : _producer{std::forward<Args>(args)...} {}
 
   bool Prepare(const NormProvider& norms, const FieldProperties& meta,
                const AttributeProvider& attrs) final {
@@ -66,24 +64,20 @@ class ScoreBoundWriterImpl final : public ScoreBoundWriter {
     _producer.Produce(_levels.front());
   }
 
-  void Write(size_t level, MemoryIndexOutput& out) final {
-    SDB_ASSERT(level + 1 < _levels.size());
-    auto& entry = _levels[level];
-    _producer.Produce(entry, _levels[level + 1]);
-    Producer::Write(entry, out);
-    entry = {};
-  }
-
-  void WriteRoot(size_t level, IndexOutput& out) final {
+  void WriteRoot(size_t level, DataOutput& out) final {
     SDB_ASSERT(level < _levels.size());
     auto& entry = _levels[level];
     Producer::Write(entry, out);
   }
 
-  uint8_t Size(size_t level) const noexcept final {
-    SDB_ASSERT(level + 1 < _levels.size());
-    const auto& entry = _levels[level];
-    return Producer::Size(entry);
+  void Take(size_t level, uint32_t* out) final {
+    SDB_ASSERT(level < _levels.size());
+    auto& entry = _levels[level];
+    if (level + 1 != _levels.size()) {
+      _producer.Produce(entry, _levels[level + 1]);
+    }
+    Producer::Take(entry, out);
+    entry = {};
   }
 
   uint8_t SizeRoot(size_t level) noexcept final {
@@ -97,9 +91,7 @@ class ScoreBoundWriterImpl final : public ScoreBoundWriter {
   }
 
  private:
-  // doc_limits::kMaxSkipLevels -- current max skip list levels
-  // 1 -- for whole skip list level
-  utils::FixedBuffer<EntryType, doc_limits::kMaxSkipLevels + 1> _levels;
+  std::array<EntryType, doc_limits::kBoundLevels> _levels{};
   [[no_unique_address]] Producer _producer;
 };
 
@@ -202,6 +194,15 @@ class FreqNormProducer : public AttributeProvider {
       if (entry.norm != entry.freq) {
         out.WriteV32(entry.norm - entry.freq);
       }
+    }
+  }
+
+  static void Take(Entry entry, uint32_t* out) noexcept {
+    out[0] = entry.freq;
+    if constexpr (kNorm) {
+      out[1] = entry.norm;
+    } else {
+      out[1] = entry.freq;
     }
   }
 
@@ -376,6 +377,13 @@ class FreqNormSource final : public ScoreBoundSource {
       // TODO(mbkkt) if (!kNorm) in.skip(read - size);
       norm += in.ReadV32();
     }
+    if constexpr (kNorm) {
+      _norm.value = norm;
+    }
+  }
+
+  void Set(uint32_t freq, uint32_t norm) final {
+    _freq = freq;
     if constexpr (kNorm) {
       _norm.value = norm;
     }

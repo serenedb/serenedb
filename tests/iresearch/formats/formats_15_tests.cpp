@@ -79,10 +79,8 @@ struct FreqScorer : irs::ScorerBase<void> {
     return irs::ScoreFunction::Make<FreqScorerContext>(freq);
   }
 
-  irs::ScoreBoundWriter::ptr PrepareScoreBoundWriter(
-    size_t max_levels) const final {
-    return std::make_unique<irs::FreqNormWriter<irs::kScoreBoundMaxFreq>>(
-      max_levels);
+  irs::ScoreBoundWriter::ptr PrepareScoreBoundWriter() const final {
+    return std::make_unique<irs::FreqNormWriter<irs::kScoreBoundMaxFreq>>();
   }
 
   irs::ScoreBoundSource::ptr PrepareScoreBoundSource() const final {
@@ -352,6 +350,7 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
       irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq);
     EXPECT_EQ(expected_has_score_bounds, stats.has_score_bounds);
     writer.Encode(*out, posting_meta);
+    out->WriteData(posting_meta.inline_data, posting_meta.inline_size);
     writer.End();
   }
 
@@ -373,10 +372,15 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
 
   irs::PostingMeta read_meta;
   begin += reader->decode(begin, features, read_meta);
+  std::memcpy(read_meta.inline_data, begin, read_meta.inline_size);
+  begin += read_meta.inline_size;
 
   {
     EXPECT_EQ(posting_meta.docs_count, read_meta.docs_count);
-    EXPECT_EQ(posting_meta.doc_start, read_meta.doc_start);
+    EXPECT_EQ(posting_meta.Inline(), read_meta.Inline());
+    if (posting_meta.inline_size == 0) {
+      EXPECT_EQ(posting_meta.doc_start, read_meta.doc_start);
+    }
     EXPECT_EQ(posting_meta.pos_start, read_meta.pos_start);
     EXPECT_EQ(posting_meta.pay_start, read_meta.pay_start);
     EXPECT_EQ(posting_meta.pos_offset, read_meta.pos_offset);
@@ -706,6 +710,15 @@ INSTANTIATE_TEST_SUITE_P(Format15Test, FormatTestCase, kTestValues,
 
 TEST_P(Format15TestCase, SingletonPostings) {
   static constexpr size_t kCount = 1;
+  ASSERT_TRUE(kCount < GetPostingsBlockSize());
+
+  const auto docs = GenerateDocs(kCount, 50.f, 14.f, 1);
+
+  AssertStressPostings(docs);
+}
+
+TEST_P(Format15TestCase, InlinePostings) {
+  static constexpr size_t kCount = 5;
   ASSERT_TRUE(kCount < GetPostingsBlockSize());
 
   const auto docs = GenerateDocs(kCount, 50.f, 14.f, 1);

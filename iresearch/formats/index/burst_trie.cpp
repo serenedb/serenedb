@@ -38,6 +38,7 @@
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/reader.hpp"
 #include "iresearch/formats/posting/writer.hpp"
 #include "iresearch/formats/reader_state.hpp"
@@ -525,6 +526,7 @@ class FieldWriter::Impl {
   FstBuffer* _fst_buf;         // pimpl buffer used for building FST for fields
   VolatileByteRef _last_term;  // last pushed term
   std::vector<size_t> _prefixes;
+  bstring _inline;
   const uint32_t _min_block_size;
   const uint32_t _max_block_size;
   const bool _compaction;
@@ -547,6 +549,7 @@ void FieldWriter::Impl::WriteBlock(size_t prefix, size_t begin, size_t end,
   Block::BlockIndex index;
 
   _pw.BeginBlock();
+  _stats.stream.WriteV64(_inline.size());
 
   for (; begin < end; ++begin) {
     auto& e = _stack[begin];
@@ -563,7 +566,9 @@ void FieldWriter::Impl::WriteBlock(size_t prefix, size_t begin, size_t end,
     _suffix.stream.WriteData(data.data() + prefix, suf_size);
 
     if (EntryType::Term == type) {
-      _pw.Encode(_stats.stream, e.Term());
+      const auto& term = e.Term();
+      _pw.Encode(_stats.stream, term);
+      _inline.append(term.inline_data, term.inline_size);
     } else {
       SDB_ASSERT(EntryType::Block == type);
 
@@ -843,6 +848,7 @@ void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
 #endif
 
   const uint64_t body_offset = _blocks_out->Position();
+  _blocks_out->WriteV64(_inline.size());
   WriteStr(*_blocks_out, min_term);
   WriteStr(*_blocks_out, max_term);
   const bool ok = immutable_byte_fst::Write(fst, *_blocks_out, fst_stats);
@@ -850,6 +856,8 @@ void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
     throw IndexError{
       absl::StrCat("Failed to write term index for field id ", id)};
   }
+  _blocks_out->WriteData(_inline.data(), _inline.size());
+  _inline.clear();
 
   TermDictMeta meta;
   meta.features = props.index_features;
@@ -889,7 +897,19 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
   bool HasScoreBounds() const noexcept final { return _has_score_bounds; }
 
+  uint64_t InlineOffset() const noexcept { return _inline_offset; }
+  uint64_t InlineEnd() const noexcept { return _inline_offset + _inline_size; }
+  const byte_type* InlineRegion() const noexcept { return _inline_region; }
+
   void LoadFromMeta(field_id id, const TermDictMeta& meta, DataInput& in);
+
+ protected:
+  void MapInlineRegion(IndexInput& in) {
+    _inline_offset = in.Position();
+    if (_inline_size != 0) {
+      _inline_region = in.ReadStable(_inline_offset, _inline_size);
+    }
+  }
 
  private:
   FieldMeta _field;
@@ -897,6 +917,9 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
   bstring _max_term;
   uint64_t _terms_count{};
   uint64_t _doc_count{};
+  uint64_t _inline_offset{};
+  uint64_t _inline_size{};
+  const byte_type* _inline_region{};
   bool _has_score_bounds{};
   FreqAttr _freq;
 };
@@ -908,6 +931,7 @@ void TermReaderBase::LoadFromMeta(field_id id, const TermDictMeta& meta,
   _field.index_features = meta.features;
   _terms_count = meta.term_count;
   _doc_count = meta.doc_count;
+  _inline_size = in.ReadV64();
   _min_term = ReadString<bstring>(in);
   _max_term = ReadString<bstring>(in);
   const auto total =
@@ -997,6 +1021,7 @@ class BlockIterator : util::Noncopyable {
   uint16_t NextLabel() const noexcept { return _next_label; }
   uint32_t SubCount() const noexcept { return _sub_count; }
   uint64_t Start() const noexcept { return _start; }
+  uint64_t LoadStart() const noexcept { return _cur_start; }
   bool Done() const noexcept { return _cur_ent == _ent_count; }
   const byte_type* SuffixStart() const noexcept { return _suffix_start; }
   const byte_type* SuffixEnd() const noexcept { return _suffix_end; }
@@ -1032,7 +1057,8 @@ class BlockIterator : util::Noncopyable {
   void ScanToBlock(uint64_t ptr);
 
   // read attributes
-  void LoadData(const FieldMeta& meta, PostingMeta& state, PostingsReader& pr);
+  void LoadData(const TermReaderBase& field, PostingMeta& state,
+                PostingsReader& pr);
 
  private:
   struct DataBlock : util::Noncopyable {
@@ -1113,6 +1139,8 @@ class BlockIterator : util::Noncopyable {
   DataBlock _suffix;  // suffix data block
   DataBlock _stats;   // stats data block
   PostingMeta _state;
+  IndexInput* _in{};
+  uint64_t _inline_next{};
   size_t _suffix_length{};  // last matched suffix length
   const byte_type* _suffix_begin{};
   const byte_type* _suffix_start{};
@@ -1197,7 +1225,9 @@ void BlockIterator::Load(IndexInput& in) {
 #ifdef SDB_DEV
   _stats.end = _stats.begin + block_size;
 #endif
+  _inline_next = vread<uint64_t>(_stats.begin);
   _stats.AssertBlockBoundaries();
+  _in = &in;
 
   _cur_end = in.Position();
   _cur_ent = 0;
@@ -1472,7 +1502,7 @@ void BlockIterator::ScanToBlock(uint64_t start) {
   SDB_ASSERT(false);
 }
 
-void BlockIterator::LoadData(const FieldMeta& meta, PostingMeta& state,
+void BlockIterator::LoadData(const TermReaderBase& field, PostingMeta& state,
                              PostingsReader& pr) {
   SDB_ASSERT(EntryType::Term == _cur_type);
 
@@ -1487,9 +1517,23 @@ void BlockIterator::LoadData(const FieldMeta& meta, PostingMeta& state,
     state = _state;
   }
 
+  const auto features = field.meta().index_features;
+  uint64_t inline_at = 0;
   for (; _cur_stats_ent < _term_count; ++_cur_stats_ent) {
-    _stats.begin += pr.decode(_stats.begin, meta.index_features, state);
+    _stats.begin += pr.decode(_stats.begin, features, state);
     _stats.AssertBlockBoundaries();
+    inline_at = _inline_next;
+    _inline_next += state.inline_size;
+  }
+
+  if (state.inline_size != 0) {
+    if (const auto* region = field.InlineRegion()) {
+      std::memcpy(state.inline_data, region + inline_at, state.inline_size);
+    } else {
+      SDB_ASSERT(_in != nullptr);
+      _in->Seek(field.InlineOffset() + inline_at);
+      _in->ReadData(state.inline_data, state.inline_size);
+    }
   }
 
   _state = state;
@@ -1538,14 +1582,14 @@ class TermIteratorBase {
 
   const PostingMeta& Cookie() const {
     SDB_ASSERT(_cur_block);
-    _cur_block->LoadData(_field->meta(), _posting_meta, *_postings);
+    _cur_block->LoadData(*_field, _posting_meta, *_postings);
     return _posting_meta;
   }
 
   TermPostings::ptr Postings(IndexFeatures features) const {
     const auto& field_meta = _field->meta();
     if (_cur_block) {
-      _cur_block->LoadData(field_meta, _posting_meta, *_postings);
+      _cur_block->LoadData(*_field, _posting_meta, *_postings);
     }
     return _postings->Postings(field_meta.index_features, features,
                                _posting_meta, _field->HasScoreBounds());
@@ -1625,6 +1669,18 @@ class TermIteratorBase {
     return *_terms_in;
   }
 
+  void LoadBlock(BlockIterator& block) {
+    auto& in = TermsInput();
+    if (block.Dirty()) {
+      if (!_hinted) {
+        _hint.Arm(block.LoadStart(), in.Length());
+        _hinted = true;
+      }
+      _hint.Advance(in, block.LoadStart());
+    }
+    block.Load(in);
+  }
+
   void PopToParent() {
     const uint64_t start = _cur_block->Start();
     _cur_block = PopBlock();
@@ -1632,7 +1688,7 @@ class TermIteratorBase {
     if (_cur_block->Dirty() || _cur_block->BlockStart() != start) {
       SDB_ASSERT(_cur_block->Prefix() < _term_buf.size());
       _cur_block->ScanToSubBlock(_term_buf[_cur_block->Prefix()]);
-      _cur_block->Load(TermsInput());
+      LoadBlock(*_cur_block);
       _cur_block->ScanToBlock(start);
     }
   }
@@ -1658,6 +1714,8 @@ class TermIteratorBase {
   std::vector<Arc> _sstate;
   std::vector<BlockIterator> _block_stack;
   BlockIterator* _cur_block{};
+  GrowingHint _hint;
+  bool _hinted = false;
 };
 
 template<typename FST>
@@ -1812,7 +1870,7 @@ SeekResult TermIteratorBase<FST>::SeekEqual(bytes_view term, bool exact) {
     std::memcpy(_term_buf.data() + prefix, suffix, suffix_size);
   };
 
-  _cur_block->Load(TermsInput());
+  LoadBlock(*_cur_block);
 
   Finally refresh_value = [this]() noexcept { this->RefreshValue(); };
 
@@ -1851,7 +1909,7 @@ bool TermIteratorImpl<FST>::next() {
     SDB_ASSERT(value().empty());
     this->_cur_block =
       this->PushBlock(this->_fst->Final(this->_fst->Start()), 0);
-    this->_cur_block->Load(this->TermsInput());
+    this->LoadBlock(*this->_cur_block);
   }
 
   auto copy_suffix = [this](const byte_type* suffix, size_t suffix_size) {
@@ -1860,7 +1918,7 @@ bool TermIteratorImpl<FST>::next() {
 
   while (this->_cur_block->Done()) {
     if (this->_cur_block->template NextSubBlock<false>()) {
-      this->_cur_block->Load(this->TermsInput());
+      this->LoadBlock(*this->_cur_block);
     } else if (&this->_block_stack.front() == this->_cur_block) {  // root
       this->ResetValue();
       this->_cur_block->Reset();
@@ -1881,7 +1939,7 @@ bool TermIteratorImpl<FST>::next() {
     }
     this->_cur_block =
       this->PushBlock(this->_cur_block->BlockStart(), this->_term_buf.size());
-    this->_cur_block->Load(this->TermsInput());
+    this->LoadBlock(*this->_cur_block);
   }
 
   this->RefreshValue();
@@ -1903,7 +1961,7 @@ SeekResult TermIteratorImpl<FST>::seek_ge(bytes_view term) {
           // we're at the greater block, load it and call next
           this->_cur_block = this->PushBlock(this->_cur_block->BlockStart(),
                                              this->_term_buf.size());
-          this->_cur_block->Load(this->TermsInput());
+          this->LoadBlock(*this->_cur_block);
           break;
         default:
           SDB_ASSERT(false);
@@ -2379,7 +2437,7 @@ bool AcceptorTermIterator<FST, A>::PushSubBlock(const byte_type* suffix,
   if (!accepts && lo <= hi) {
     this->_cur_block->ScanToSubBlock(static_cast<byte_type>(lo));
   }
-  this->_cur_block->Load(this->TermsInput());
+  this->LoadBlock(*this->_cur_block);
   return true;
 }
 
@@ -2391,7 +2449,7 @@ bool AcceptorTermIterator<FST, A>::NextFloorSubBlock() {
     if (!block->template NextSubBlock<false>()) {
       return false;
     }
-    block->Load(this->TermsInput());
+    this->LoadBlock(*block);
     return true;
   }
   if (sub_count == 0) {
@@ -2408,7 +2466,7 @@ bool AcceptorTermIterator<FST, A>::NextFloorSubBlock() {
   } else {
     block->template NextSubBlock<true>();
   }
-  block->Load(this->TermsInput());
+  this->LoadBlock(*block);
   return true;
 }
 
@@ -2481,7 +2539,7 @@ bool AcceptorTermIterator<FST, A>::NextImpl() {
     ResetLevels();
     this->_cur_block =
       this->PushBlock(this->_fst->Final(this->_fst->Start()), 0);
-    this->_cur_block->Load(this->TermsInput());
+    this->LoadBlock(*this->_cur_block);
   }
 
   const byte_type* suffix_ptr = nullptr;
@@ -2659,7 +2717,7 @@ bool SingleTermLookup<FST>::seek(bytes_view term) {
   cur_block.Load(*_terms_in);
 
   if (SeekResult::Found == cur_block.ScanToTerm(term, [](auto, auto) {})) {
-    cur_block.LoadData(_field->meta(), _meta, *_postings);
+    cur_block.LoadData(*_field, _meta, *_postings);
     return true;
   }
 
@@ -2706,7 +2764,8 @@ class FieldReader::Impl {
           absl::StrCat("Failed to read term index for field id ", id)};
       }
       _body_offset = meta.body_offset;
-      _body_end = blocks_in.Position();
+      MapInlineRegion(blocks_in);
+      _body_end = InlineEnd();
     }
 
     uint64_t BodyOffset() const noexcept { return _body_offset; }
@@ -2782,6 +2841,9 @@ class FieldReader::Impl {
       if constexpr (std::is_same_v<A, RegexpAcceptor>) {
         const auto* start = a.Start();
         return start->lo <= start->hi && start->hi - start->lo >= kWideStart;
+      } else if constexpr (std::is_same_v<A, LevenshteinAcceptor> ||
+                           std::is_same_v<A, FuzzyConjunction>) {
+        return a.MaxDistance() > 1;
       } else {
         return true;
       }
@@ -2895,6 +2957,7 @@ void FieldReader::Impl::prepare(const ReaderState& state) {
       std::upper_bound(ends.begin(), ends.end(), field.BodyOffset());
     field.SetBlocksBegin(it == ends.begin() ? 0 : *std::prev(it));
   }
+  _terms_in->Advise(IOAdvice::RANDOM);
 }
 
 const TermReader* FieldReader::Impl::field(field_id id) const {

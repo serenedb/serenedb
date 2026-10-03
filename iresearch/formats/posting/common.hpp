@@ -20,6 +20,12 @@
 
 #pragma once
 
+#include <absl/base/internal/endian.h>
+
+#ifdef __AVX2__
+#include <immintrin.h>
+#endif
+
 #include <bit>
 #include <cstdint>
 #include <functional>
@@ -42,33 +48,33 @@ struct SkipState {
   uint64_t doc_ptr = 0;
   // last document in a previous block
   doc_id_t doc = doc_limits::invalid();
-  // positions to skip before new document block
   uint32_t pos_offset = 0;
-  // pointer to the positions of the first document in a document block
   uint64_t pos_ptr = 0;
-  // pointer to the payloads of the first document in a document block
   uint64_t pay_ptr = 0;
 };
 
-template<typename IteratorTraits>
-IRS_FORCE_INLINE void CopyState(SkipState& to, const SkipState& from) noexcept {
-  if constexpr (IteratorTraits::Offset()) {
-    to = from;
-  } else {
-    to.doc_ptr = from.doc_ptr;
-    to.doc = from.doc;
-    if constexpr (IteratorTraits::Position()) {
-      to.pos_offset = from.pos_offset;
-      to.pos_ptr = from.pos_ptr;
-    }
-  }
-}
+struct PosGroup {
+  static constexpr uint32_t kBlocks = 16;
+  static constexpr uint32_t kHeaderBytes = kBlocks * sizeof(uint16_t);
+  static constexpr uint32_t kPositions = kBlocks * pos_limits::kBlockSize;
 
-// What a skip level holds beyond the document and where its block starts:
-// a position pointer when the field has positions, a payload pointer beside
-// it when the field has offsets, and a position offset closing the level.
-// Which of them are there is the field's own answer and the same for every
-// level and every term, so it is read once where the leaf is built.
+  IRS_FORCE_INLINE static uint32_t End(const byte_type* header,
+                                       uint32_t block) noexcept {
+    SDB_ASSERT(block < kBlocks);
+    return absl::little_endian::Load16(header + block * sizeof(uint16_t));
+  }
+
+  IRS_FORCE_INLINE static uint32_t Start(const byte_type* header,
+                                         uint32_t block) noexcept {
+    return block == 0 ? 0 : End(header, block - 1);
+  }
+
+  IRS_FORCE_INLINE static uint64_t Next(uint64_t group,
+                                        const byte_type* header) noexcept {
+    return group + kHeaderBytes + End(header, kBlocks - 1);
+  }
+};
+
 struct SkipLayout {
   bool pos = false;
   bool offs = false;
@@ -85,56 +91,6 @@ IRS_FORCE_INLINE constexpr bool FeaturesHaveFreq(
   return IndexFeatures::None != (features & IndexFeatures::Freq);
 }
 
-// A level of a field whose positions the leaf never reads. What the field
-// wrote for the streams it does not touch is stepped over, not parsed: the
-// copy traits of every such leaf carry neither pointer out of a level, so
-// accumulating them would be writing state nothing reads back.
-template<typename Input>
-IRS_FORCE_INLINE void ReadDocState(SkipState& state, Input& in,
-                                   SkipLayout layout) {
-  state.doc = in.ReadV32();
-  state.doc_ptr += in.ReadV64();
-  if (layout.pos) {
-    in.SkipV64();
-    if (layout.offs) {
-      in.SkipV64();
-    }
-    std::ignore = in.ReadByte();
-  }
-}
-
-// A level of a field the leaf does read positions out of. Such a leaf is
-// built only on a field that has them, so the position pointer is not a
-// question -- `Offs` is whether this leaf decodes the payloads beside them,
-// and `has_pay` whether the field wrote a pointer to step over either way.
-template<bool Offs, typename Input>
-IRS_FORCE_INLINE void ReadPosState(SkipState& state, Input& in, bool has_pay) {
-  state.doc = in.ReadV32();
-  state.doc_ptr += in.ReadV64();
-  state.pos_ptr += in.ReadV64();
-  if (has_pay) {
-    if constexpr (Offs) {
-      state.pay_ptr += in.ReadV64();
-    } else {
-      in.SkipV64();
-    }
-  }
-  state.pos_offset = in.ReadByte();
-}
-
-template<typename IteratorTraits>
-IRS_FORCE_INLINE void CopyState(SkipState& to,
-                                const PostingMeta& from) noexcept {
-  to.doc_ptr = from.doc_start;
-  if constexpr (IteratorTraits::Position()) {
-    to.pos_ptr = from.pos_start;
-    if constexpr (IteratorTraits::Offset()) {
-      to.pay_ptr = from.pay_start;
-    }
-    to.pos_offset = from.pos_offset;
-  }
-}
-
 // TODO(mbkkt) Make it overloads
 // Remove to many Readers implementations
 
@@ -145,23 +101,87 @@ void SkipScoreBounds(bool has_score_bounds, Input& in) {
   }
 }
 
-inline constexpr uint64_t kDocsPerSkipByte = 4;
-inline constexpr uint64_t kPosBytesPerFreq = 3;
+inline constexpr uint64_t kPosBytesPerFreq = 1;
+inline constexpr uint64_t kMaxPrefetch = uint64_t{16} << 20;
 
 template<typename Input>
-void LimitDocReadahead(Input& in, const PostingMeta& meta) noexcept {
-  const uint64_t blocks =
-    meta.docs_count > doc_limits::kBlockSize
-      ? uint64_t{meta.doc_delta} + meta.docs_count / kDocsPerSkipByte
-      : 0;
-  in.LimitReadahead(meta.doc_start + blocks + file_utils::kPage);
+void Hint(const Input& in, uint64_t offset, uint64_t size) noexcept {
+  if (size > file_utils::kPrefetchChunk && in.Resident(offset, size)) {
+    return;
+  }
+  in.Prefetch(offset, size);
+}
+
+inline uint64_t DocExtent(const PostingMeta& meta) noexcept {
+  if (meta.inline_size != 0 || meta.docs_count <= 1) {
+    return 0;
+  }
+  return meta.docs_count > doc_limits::kBlockSize ? uint64_t{meta.doc_delta}
+                                                  : file_utils::kPage;
+}
+
+inline uint64_t PosExtent(const PostingMeta& meta) noexcept {
+  return uint64_t{meta.freq} * kPosBytesPerFreq + file_utils::kPage;
 }
 
 template<typename Input>
-void LimitPosReadahead(Input& in, const PostingMeta& meta) noexcept {
-  in.LimitReadahead(meta.pos_start + uint64_t{meta.freq} * kPosBytesPerFreq +
-                    file_utils::kPage);
+void PrefetchDocs(const Input& in, const PostingMeta& meta) noexcept {
+  if (const auto extent = DocExtent(meta); extent != 0) {
+    Hint(in, meta.doc_start, std::min(extent, kMaxPrefetch));
+  }
 }
+
+class GrowingHint {
+ public:
+  void Arm(uint64_t at, uint64_t stop) noexcept {
+    _last = at;
+    _end = at;
+    _stop = stop;
+    _extent = stop - at;
+    _run = 0;
+    _skipped = 0;
+    _window = kFirst;
+  }
+
+  template<typename Input>
+  IRS_FORCE_INLINE void Advance(const Input& in, uint64_t at) noexcept {
+    if (at > _last) {
+      const auto gap = at - _last;
+      (gap < file_utils::kPage ? _run : _skipped) += gap;
+    }
+    _last = at;
+    if (at >= _stop) [[unlikely]] {
+      _stop = at + _extent;
+    }
+    if (at + _window / 2 >= _end && _end < _stop) [[unlikely]] {
+      Grow(in, at);
+    }
+  }
+
+ private:
+  static constexpr uint64_t kFirst = file_utils::kPrefetchChunk;
+  static constexpr uint64_t kLast = file_utils::kMaxReadahead;
+
+  template<typename Input>
+  void Grow(const Input& in, uint64_t at) noexcept {
+    const auto from = std::max(at, _end);
+    if (_run < file_utils::kPage || 2 * _run < _skipped || from >= _stop) {
+      return;
+    }
+    const auto len = std::min(_window, _stop - from);
+    Hint(in, from, len);
+    _end = from + len;
+    _window = std::min(2 * _window, kLast);
+  }
+
+  uint64_t _last = 0;
+  uint64_t _end = 0;
+  uint64_t _stop = 0;
+  uint64_t _extent = 0;
+  uint64_t _run = 0;
+  uint64_t _skipped = 0;
+  uint64_t _window = kFirst;
+};
 
 inline IRS_FORCE_INLINE void SetBitRange(uint64_t* IRS_RESTRICT words,
                                          uint64_t begin,
@@ -281,16 +301,70 @@ IRS_FORCE_INLINE void VisitDocs(uint32_t size, Visitor&& visit) {
   }
 }
 
+template<size_t W>
+IRS_FORCE_INLINE uint32_t CountLess(const uint32_t* begin,
+                                    uint32_t value) noexcept {
+  static_assert(W % 32 == 0);
+  uint32_t count = 0;
+  for (size_t i = 0; i != W; i += 32) {
+#ifdef __AVX2__
+    const __m256i bias = _mm256_set1_epi32(std::numeric_limits<int32_t>::min());
+    const __m256i target =
+      _mm256_xor_si256(_mm256_set1_epi32(static_cast<int32_t>(value)), bias);
+    const auto less = [&](size_t j) IRS_FORCE_INLINE {
+      return _mm256_cmpgt_epi32(
+        target, _mm256_xor_si256(_mm256_loadu_si256(
+                                   reinterpret_cast<const __m256i*>(begin + j)),
+                                 bias));
+    };
+    const __m256i low = _mm256_packs_epi32(less(i), less(i + 8));
+    const __m256i high = _mm256_packs_epi32(less(i + 16), less(i + 24));
+    count += std::popcount(static_cast<uint32_t>(
+      _mm256_movemask_epi8(_mm256_packs_epi16(low, high))));
+#else
+    using U32x8 = uint32_t __attribute__((vector_size(32)));
+    using I32x8 = int32_t __attribute__((vector_size(32)));
+    const U32x8 target = U32x8{} + value;
+    I32x8 acc{};
+    for (size_t j = i; j != i + 32; j += 8) {
+      U32x8 v;
+      std::memcpy(&v, begin + j, sizeof(v));
+      acc += (I32x8)(v < target);
+    }
+    int32_t sum = 0;
+    for (size_t lane = 0; lane != 8; ++lane) {
+      sum += acc[lane];
+    }
+    count += static_cast<uint32_t>(-sum);
+#endif
+  }
+  return count;
+}
+
 template<size_t N, typename It, typename T, typename Cmp = std::less<>>
 IRS_FORCE_INLINE It BranchlessLowerBound(It begin, const T& value,
                                          Cmp&& compare = {}) {
   static_assert(std::has_single_bit(N));
-  for (size_t step = N / 2; step != 0; step /= 2) {
-    if (compare(begin[step], value)) {
-      begin += step;
+  constexpr size_t kGroup = 32;
+  if constexpr (N > kGroup && std::is_pointer_v<It> &&
+                std::is_same_v<std::remove_const_t<std::remove_pointer_t<It>>,
+                               uint32_t> &&
+                std::is_same_v<T, uint32_t> &&
+                std::is_same_v<std::remove_cvref_t<Cmp>, std::less<>>) {
+    size_t group = 0;
+    for (size_t g = 1; g != N / kGroup; ++g) {
+      group += static_cast<size_t>(begin[g * kGroup - 1] < value);
     }
+    begin += group * kGroup;
+    return begin + CountLess<kGroup>(begin, value);
+  } else {
+    for (size_t step = N / 2; step != 0; step /= 2) {
+      if (compare(begin[step], value)) {
+        begin += step;
+      }
+    }
+    return begin + compare(*begin, value);
   }
-  return begin + compare(*begin, value);
 }
 
 template<typename FormatTraits, bool Freq, bool Pos, bool Offs>

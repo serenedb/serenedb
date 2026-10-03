@@ -388,6 +388,14 @@ class PhraseMatcher {
     return freq;
   }
 
+  uint32_t FreqBoundOf(uint32_t freq) const noexcept {
+    if constexpr (HasIntervals) {
+      return static_cast<uint32_t>(
+        std::min<uint64_t>(uint64_t{freq} * _freq_scale, kMaxFreq));
+    }
+    return freq;
+  }
+
   std::pair<uint32_t, uint32_t> Offsets() const noexcept
     requires(Offs)
   {

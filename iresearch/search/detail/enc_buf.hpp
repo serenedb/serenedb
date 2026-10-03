@@ -20,8 +20,10 @@
 
 #pragma once
 
+#include <algorithm>
 #include <type_traits>
 
+#include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -29,15 +31,19 @@
 namespace irs::detail {
 
 struct ABSL_CACHELINE_ALIGNED EncBuf {
-  uint32_t data[doc_limits::kBlockSize];
+  uint32_t data[std::max(doc_limits::kBlockSize, FormatTraits128::kEncWords)];
 };
 
 struct ABSL_CACHELINE_ALIGNED FreqBuf {
-  uint32_t data[doc_limits::kBlockSize];
+  SlackBuf<uint32_t, doc_limits::kBlockSize, block_codec::kOutSlack> data;
 };
 
 struct ABSL_CACHELINE_ALIGNED GatherBuf {
   uint32_t data[doc_limits::kBlockSize]{};
+};
+
+struct HoleBuf {
+  uint64_t data[FormatTraits128::kHoleWords];
 };
 
 template<typename InputType>

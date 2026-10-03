@@ -4,7 +4,6 @@ if(uring_FOUND)
     add_definitions(-DIRESEARCH_URING)
 endif()
 
-set(SIMD_LIBRARY_STATIC "simdcomp-static")
 set(FASTTEXT_LIBRARY_STATIC "fasttext-static")
 
 if(
@@ -61,6 +60,8 @@ set(IResearch_core_sources
     ./formats/column/variant_column_reader.cpp
     ./formats/column/norm_writer.cpp
     ./formats/column/norm_column_reader.cpp
+    ./formats/column/nrm_reader.cpp
+    ./formats/column/nrm_writer.cpp
     ./formats/column/merge.cpp
     ./formats/column/internal/write_context.cpp
     ./formats/column/read_context.cpp
@@ -69,7 +70,6 @@ set(IResearch_core_sources
     ./formats/index_meta_writer.cpp
     ./formats/segment_meta_reader.cpp
     ./formats/segment_meta_writer.cpp
-    ./formats/posting/skip_list.cpp
     ./formats/index/burst_trie.cpp
     ./formats/index/idx_reader.cpp
     ./formats/index/idx_writer.cpp
@@ -327,6 +327,7 @@ set(IResearch_core_sources
     ./search/top/make_pruned_disjunction.cpp
     ./search/top/make_pruned_conjunction.cpp
     ./search/top/make_pruned_conjunction_nested.cpp
+    ./search/top/make_pruned_req_opt.cpp
     ./search/queries/multiterm_query.cpp
     ./search/queries/term_query.cpp
     ./search/filters/boolean_filter.cpp
@@ -514,12 +515,11 @@ target_link_libraries(
     PUBLIC simdjson
     PRIVATE simdutf
     PUBLIC ${FASTTEXT_LIBRARY_STATIC}
-    PUBLIC ${SIMD_LIBRARY_STATIC}
+    PUBLIC sse2neon
     PUBLIC ${FAISS_LIB}
     PUBLIC re2
     PUBLIC roaring::roaring
     PUBLIC s2
-    PUBLIC streamvbyte
     PUBLIC duckdb_static
     PRIVATE lz4_static
     PRIVATE stemmer-static

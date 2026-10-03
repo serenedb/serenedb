@@ -27,13 +27,16 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/noncopyable.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
-using scores_size_t = uint8_t;  // NOLINT
-inline constexpr scores_size_t kScoreBlock = 32;
+using scores_size_t = uint16_t;  // NOLINT
+inline constexpr scores_size_t kScoreBlock = 64;
 static_assert(kScoreBlock < std::numeric_limits<scores_size_t>::max());
-inline constexpr scores_size_t kPostingBlock = 4 * kScoreBlock;
+using ScoreMask = uint64_t;
+static_assert(kScoreBlock <= std::numeric_limits<ScoreMask>::digits);
+inline constexpr scores_size_t kPostingBlock = doc_limits::kBlockSize;
 static_assert(kPostingBlock < std::numeric_limits<scores_size_t>::max());
 static_assert(kPostingBlock % kScoreBlock == 0);
 

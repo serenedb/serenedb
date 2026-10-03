@@ -23,7 +23,6 @@
 #include <algorithm>
 #include <bit>
 
-#include "iresearch/formats/posting/skip_list.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -103,12 +102,12 @@ class PostingProbe : public PostingLeaf<InputType, kProbeShape> {
  private:
   doc_id_t ProbeBitset(doc_id_t target) noexcept {
     SDB_ASSERT(target > _cursor.base);
-    const auto bit = target - _cursor.base;
+    const auto bit = target - _cursor.base - 1;
     const auto w = bit / kBits;
     if (const auto word = _bitset[w] >> (bit % kBits); word != 0) {
       return _doc = target + std::countr_zero(word);
     }
-    return _cursor.base + (w + 1) * kBits;
+    return _cursor.base + 1 + (w + 1) * kBits;
   }
 
   void ReadLeaf(doc_id_t prev) {

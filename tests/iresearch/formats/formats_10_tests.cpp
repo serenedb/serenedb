@@ -123,7 +123,10 @@ class Format10TestCase : public tests::FormatTestCase {
         // check PostingMeta
         {
           ASSERT_EQ(posting_meta.docs_count, read_meta.docs_count);
-          ASSERT_EQ(posting_meta.doc_start, read_meta.doc_start);
+          ASSERT_EQ(posting_meta.Inline(), read_meta.Inline());
+          if (posting_meta.inline_size == 0) {
+            ASSERT_EQ(posting_meta.doc_start, read_meta.doc_start);
+          }
           ASSERT_EQ(posting_meta.pos_start, read_meta.pos_start);
           ASSERT_EQ(posting_meta.pay_start, read_meta.pay_start);
           ASSERT_EQ(posting_meta.pos_offset, read_meta.pos_offset);
@@ -425,6 +428,7 @@ TEST_P(Format10TestCase, postings_read_write) {
 
       // write attributes to out
       writer.Encode(*out, meta0);
+      out->WriteData(meta0.inline_data, meta0.inline_size);
     }
     // write postings for term1
     {
@@ -433,10 +437,11 @@ TEST_P(Format10TestCase, postings_read_write) {
 
       // write attributes to out
       writer.Encode(*out, meta1);
+      out->WriteData(meta1.inline_data, meta1.inline_size);
     }
 
-    // check doc positions for term0 & term1
-    ASSERT_LT(meta0.doc_start, meta1.doc_start);
+    ASSERT_NE(0, meta0.inline_size);
+    ASSERT_NE(0, meta1.inline_size);
 
     // finish writing
     writer.End();
@@ -468,11 +473,13 @@ TEST_P(Format10TestCase, postings_read_write) {
     // read term0 attributes
     {
       begin += reader.decode(begin, field.index_features, read_meta);
+      std::memcpy(read_meta.inline_data, begin, read_meta.inline_size);
+      begin += read_meta.inline_size;
 
       // check PostingMeta
       {
         ASSERT_EQ(meta0.docs_count, read_meta.docs_count);
-        ASSERT_EQ(meta0.doc_start, read_meta.doc_start);
+        ASSERT_EQ(meta0.Inline(), read_meta.Inline());
         ASSERT_EQ(meta0.pos_start, read_meta.pos_start);
         ASSERT_EQ(meta0.pay_start, read_meta.pay_start);
         ASSERT_EQ(meta0.pos_offset, read_meta.pos_offset);
@@ -490,11 +497,13 @@ TEST_P(Format10TestCase, postings_read_write) {
     // read term1 attributes
     {
       begin += reader.decode(begin, field.index_features, read_meta);
+      std::memcpy(read_meta.inline_data, begin, read_meta.inline_size);
+      begin += read_meta.inline_size;
 
       // check PostingMeta
       {
         ASSERT_EQ(meta1.docs_count, read_meta.docs_count);
-        ASSERT_EQ(meta1.doc_start, read_meta.doc_start);
+        ASSERT_EQ(meta1.Inline(), read_meta.Inline());
         ASSERT_EQ(meta1.pos_start, read_meta.pos_start);
         ASSERT_EQ(meta1.pay_start, read_meta.pay_start);
         ASSERT_EQ(meta1.pos_offset, read_meta.pos_offset);

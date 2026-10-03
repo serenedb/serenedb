@@ -21,6 +21,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/strings/str_cat.h>
 
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
@@ -293,6 +294,96 @@ TEST_P(NormTestCase, StackedTokensCountOnce) {
   ASSERT_EQ(1, reader.size());
   AssertNormColumn<uint32_t>(reader[0], FieldIdFor(kName),
                              {{1, 2}, {2, 3}, {3, 4}, {4, 683}});
+}
+
+TEST_P(NormTestCase, RareLongNormsAcrossCompaction) {
+  constexpr std::string_view kName = "long";
+  constexpr std::string_view kKey = "key";
+  constexpr size_t kDocs = 1024;
+  const auto count_of = [](size_t segment, size_t i) -> uint32_t {
+    if (segment == 0) {
+      switch (i) {
+        case 100:
+          return 300;
+        case 500:
+          return 255;
+        case 900:
+          return 1000;
+        default:
+          return static_cast<uint32_t>(1 + i % 9);
+      }
+    }
+    switch (i) {
+      case 10:
+        return 400;
+      case 20:
+        return 5000;
+      default:
+        return static_cast<uint32_t>(2 + i % 5);
+    }
+  };
+  const auto assert_escaped = [&](const irs::SubReader& segment) {
+    const auto* field = segment.field(FieldIdFor(kName));
+    ASSERT_NE(nullptr, field);
+    const auto* column = segment.GetColReader()->NormColumn(field->meta().norm);
+    ASSERT_NE(nullptr, column);
+    EXPECT_TRUE(column->HasExceptions());
+    for (size_t rg = 0; rg < column->RowGroupCount(); ++rg) {
+      EXPECT_EQ(1, column->ByteSize(rg)) << "rg=" << rg;
+    }
+  };
+
+  auto writer = open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+  ASSERT_NE(nullptr, writer);
+  std::vector<std::vector<std::pair<irs::doc_id_t, uint32_t>>> expected(2);
+  for (size_t segment = 0; segment < 2; ++segment) {
+    for (size_t i = 0; i < kDocs; ++i) {
+      tests::Document doc;
+      doc.insert(std::make_shared<NormField>(std::string{kName}, "x",
+                                             count_of(segment, i)));
+      doc.insert(std::make_shared<NormField>(
+        std::string{kKey}, absl::StrCat("k", segment, "_", i), 1));
+      ASSERT_TRUE(Insert(*writer, doc.indexed.begin(), doc.indexed.end()));
+      expected[segment].emplace_back(
+        static_cast<irs::doc_id_t>(i + irs::doc_limits::min()),
+        count_of(segment, i));
+    }
+    writer->RefreshCommit();
+  }
+
+  auto reader = open_reader(irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(2, reader.size());
+  for (size_t segment = 0; segment < 2; ++segment) {
+    AssertNormColumn<uint32_t>(reader[segment], FieldIdFor(kName),
+                               expected[segment]);
+    assert_escaped(reader[segment]);
+  }
+
+  const auto remove_long = MakeByTerm(FieldIdFor(kKey), "k0_100");
+  const auto remove_short = MakeByTerm(FieldIdFor(kKey), "k1_7");
+  tests::Remove(*writer, *remove_long);
+  tests::Remove(*writer, *remove_short);
+  writer->RefreshCommit();
+  const irs::index_utils::CompactionCount compact_all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+  writer->RefreshCommit();
+
+  std::vector<std::pair<irs::doc_id_t, uint32_t>> merged;
+  for (size_t segment = 0; segment < 2; ++segment) {
+    for (size_t i = 0; i < kDocs; ++i) {
+      if ((segment == 0 && i == 100) || (segment == 1 && i == 7)) {
+        continue;
+      }
+      merged.emplace_back(
+        static_cast<irs::doc_id_t>(merged.size() + irs::doc_limits::min()),
+        count_of(segment, i));
+    }
+  }
+  reader = open_reader(irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(1, reader.size());
+  ASSERT_EQ(2 * kDocs - 2, reader[0].docs_count());
+  AssertNormColumn<uint32_t>(reader[0], FieldIdFor(kName), merged);
+  assert_escaped(reader[0]);
 }
 
 TEST_P(NormTestCase, CheckNormsBatched) {

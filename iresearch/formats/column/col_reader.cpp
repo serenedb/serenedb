@@ -33,7 +33,6 @@
 
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
-#include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -89,48 +88,13 @@ void CheckColumnMetaRanges(const ColumnMeta& meta, uint64_t footer_offset) {
   }
 }
 
-NormColumnMeta DeserializeNormMetas(duckdb::BinaryDeserializer& d, field_id id,
-                                    uint64_t footer_offset) {
-  NormColumnMeta meta;
-  meta.row_group_size = d.ReadProperty<uint32_t>(1, "row_group_size");
-  meta.row_count = d.ReadProperty<uint64_t>(2, "row_count");
-  d.ReadList(
-    3, "row_groups",
-    [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
-      list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
-        NormRowGroupMeta p;
-        p.byte_size = obj.ReadProperty<uint8_t>(0, "byte_size");
-        p.max = obj.ReadProperty<uint32_t>(1, "max");
-        p.sum = obj.ReadProperty<uint64_t>(2, "sum");
-        p.non_zero_count = obj.ReadProperty<uint64_t>(3, "non_zero_count");
-        p.file_offset = obj.ReadProperty<uint64_t>(4, "file_offset");
-        SDB_ENSURE(p.byte_size == 1 || p.byte_size == 2 || p.byte_size == 4,
-                   ".col reader: norm byte_size on column id ", id, ": ",
-                   p.byte_size);
-        meta.row_groups.push_back(p);
-      });
-    });
-  const uint64_t groups = meta.row_groups.size();
-  const uint64_t rgs = meta.row_group_size;
-  SDB_ENSURE(groups != 0 && rgs != 0 && meta.row_count > (groups - 1) * rgs &&
-               meta.row_count <= groups * rgs,
-             ".col reader: norm column id ", id, " holds ", meta.row_count,
-             " rows across ", groups, " row groups of ", rgs);
-  for (uint64_t rg = 0; rg < groups; ++rg) {
-    const auto& p = meta.row_groups[rg];
-    const auto rows = std::min(rgs, meta.row_count - rg * rgs);
-    SDB_ENSURE(p.file_offset + rows * p.byte_size <= footer_offset,
-               ".col reader: norm data on column id ", id,
-               " out of range (offset ", p.file_offset, ")");
-  }
-  return meta;
-}
-
 }  // namespace
 
 ColReader::ColReader(const Directory& dir, std::string_view segment_name,
                      duckdb::DatabaseInstance& db, IOAdvice advice)
-  : _db{&db}, _ctx{db, OpenColFile(dir, segment_name, advice)} {
+  : _db{&db},
+    _ctx{db, OpenColFile(dir, segment_name, advice)},
+    _nrm{dir, segment_name} {
   if (!_ctx.HasIn()) {
     return;
   }
@@ -152,20 +116,6 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
             _columns.push_back(std::move(col));
           });
         });
-      footer.ReadOptionalList(
-        kColFieldNormColumns, "norm_columns",
-        [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
-          list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
-            const auto id =
-              static_cast<field_id>(obj.ReadProperty<uint64_t>(0, "id"));
-            auto meta = DeserializeNormMetas(obj, id, data_size);
-            auto nr = std::make_unique<NormColumnReader>(id, std::move(meta),
-                                                         _ctx.In());
-            const bool ok = _norm_by_id.emplace(id, nr.get()).second;
-            SDB_ENSURE(ok, ".col footer: duplicate norm field_id ", id);
-            _norm_readers.push_back(std::move(nr));
-          });
-        });
       footer.Unset<duckdb::DatabaseInstance>();
     });
 }
@@ -175,15 +125,6 @@ ColReader::~ColReader() = default;
 const ColumnReader* ColReader::Column(field_id id) const noexcept {
   auto it = _by_id.find(id);
   return it == _by_id.end() ? nullptr : it->second;
-}
-
-bool ColReader::HasNormColumn(field_id id) const noexcept {
-  return _norm_by_id.contains(id);
-}
-
-const NormColumnReader* ColReader::NormColumn(field_id id) const noexcept {
-  auto it = _norm_by_id.find(id);
-  return it == _norm_by_id.end() ? nullptr : it->second;
 }
 
 }  // namespace irs

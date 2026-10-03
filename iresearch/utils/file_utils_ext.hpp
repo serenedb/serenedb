@@ -158,8 +158,10 @@ void HintWriteback(void* fd, uint64_t offset, size_t size) noexcept;
 
 inline constexpr size_t kPage = 4 * 1024;
 inline constexpr size_t kMaxReadahead = 2 * 1024 * 1024;
+inline constexpr size_t kPrefetchChunk = 128 * 1024;
 
 void Prefetch(const void* addr, size_t size) noexcept;
+void Prefetch(int fd, uint64_t offset, uint64_t size) noexcept;
 bool IsResident(const void* addr, size_t size) noexcept;
 
 IRS_FORCE_INLINE inline bool Write(void* fd, const void* buf, size_t size) {

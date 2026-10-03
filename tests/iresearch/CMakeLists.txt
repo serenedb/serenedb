@@ -60,12 +60,12 @@ set(iresearch-tests_sources
     ./formats/column/test_cs_helpers.cpp
     ./formats/columnstore2_test.cpp
     ./formats/posting_alloc_test.cpp
+    ./formats/posting/block_codec_test.cpp
     ./formats/hnsw/hnsw_test.cpp
     ./formats/ivf/quantizer_test.cpp
     ./formats/ivf/centroids_test.cpp
     ./formats/sparse_bitmap_test.cpp
     ./formats/formats_test_case_base.cpp
-    ./formats/skip_list_test.cpp
     ./store/directory_test_case.cpp
     ./store/directory_cleaner_tests.cpp
     ./store/memory_index_output_tests.cpp

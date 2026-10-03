@@ -24,7 +24,6 @@
 #include <bit>
 #include <vector>
 
-#include "iresearch/formats/posting/skip_list.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
@@ -132,7 +131,7 @@ class PostingProbeScored : public PostingLeaf<InputType, kProbeScoredShape> {
       return target;
     }
 
-    auto bit = static_cast<uint64_t>(target) - _cursor.base;
+    auto bit = static_cast<uint64_t>(target) - first;
     for (auto w = bit / kBits; w != _words; ++w) {
       const auto word = _bitset[w] & (~uint64_t{0} << (bit % kBits));
       if (word != 0) {
@@ -144,7 +143,7 @@ class PostingProbeScored : public PostingLeaf<InputType, kProbeScoredShape> {
         _index = kBlock - _len + _prefix_bits +
                  static_cast<uint32_t>(
                    std::popcount(_bitset[w] & ((uint64_t{1} << tz) - 1)));
-        return static_cast<doc_id_t>(_cursor.base + w * kBits + tz);
+        return static_cast<doc_id_t>(first + w * kBits + tz);
       }
       bit = (w + 1) * kBits;
     }

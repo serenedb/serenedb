@@ -119,8 +119,8 @@ ScoreFunction RawTF::PrepareScorer(const ScoreContext& ctx) const {
   });
 }
 
-ScoreBoundWriter::ptr RawTF::PrepareScoreBoundWriter(size_t max_levels) const {
-  return std::make_unique<FreqNormWriter<kScoreBoundMaxFreq>>(max_levels);
+ScoreBoundWriter::ptr RawTF::PrepareScoreBoundWriter() const {
+  return std::make_unique<FreqNormWriter<kScoreBoundMaxFreq>>();
 }
 
 ScoreBoundSource::ptr RawTF::PrepareScoreBoundSource() const {

@@ -115,18 +115,15 @@ inline void PostingsReader::prepare(const ReaderState& state,
 
   // prepare document input
   PrepareInput(buf, _doc_in, IOAdvice::RANDOM, state, PostingsWriter::kDocExt);
-  _doc_in->EnableReadahead();
 
   if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
     PrepareInput(buf, _pos_in, IOAdvice::RANDOM, state,
                  PostingsWriter::kPosExt);
-    _pos_in->EnableReadahead();
   }
 
   if (needs_pay) {
     PrepareInput(buf, _pay_in, IOAdvice::RANDOM, state,
                  PostingsWriter::kPayExt);
-    _pay_in->EnableReadahead();
   }
 }
 
@@ -139,18 +136,29 @@ inline size_t PostingsReader::decode(const byte_type* in,
              IndexFeatures::None ==
                (features & (IndexFeatures::Pos | IndexFeatures::Offs)));
 
-  posting_meta.docs_count = vread<uint32_t>(p);
+  const auto head = vread<uint32_t>(p);
+  posting_meta.docs_count = head >> 1;
   if (IndexFeatures::None != (features & IndexFeatures::Freq)) {
     posting_meta.freq = posting_meta.docs_count + vread<uint32_t>(p);
   }
 
-  posting_meta.doc_start += vread<uint64_t>(p);
+  if ((head & 1) != 0) {
+    const auto size = *p++;
+    SDB_ASSERT(size != 0 && size <= PostingMeta::kInlineBytes);
+    posting_meta.inline_size = size;
+  } else {
+    posting_meta.inline_size = 0;
+    posting_meta.doc_start += vread<uint64_t>(p);
+  }
   if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
-    posting_meta.pos_start += vread<uint64_t>(p);
+    const auto pos_delta = vread<uint64_t>(p);
+    posting_meta.pos_start += pos_delta;
     if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
       posting_meta.pay_start += vread<uint64_t>(p);
     }
-    posting_meta.pos_offset = *p++;
+    const auto pos_offset = vread<uint32_t>(p);
+    posting_meta.pos_offset =
+      pos_delta == 0 ? posting_meta.pos_offset + pos_offset : pos_offset;
   } else if (IndexFeatures::None != (features & IndexFeatures::Vec)) {
     posting_meta.pay_start += vread<uint64_t>(p);
     posting_meta.pos_offset = *p++;

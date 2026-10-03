@@ -408,6 +408,13 @@ std::optional<std::string> RenderCast(
       duckdb::Value(std::string{magic_enum::enum_name(*merge)}).ToSQLString(),
       ")");
   }
+  if (const auto min_match = TryGetMinMatchModifier(target)) {
+    auto child = RenderTSQueryExpression(context, inner);
+    if (!child) {
+      return std::nullopt;
+    }
+    return absl::StrCat(std::move(*child), "::min_match(", *min_match, ")");
+  }
   if (const auto scorer = TryGetScoreModifier(target)) {
     auto child = RenderTSQueryExpression(context, inner);
     if (!child) {

@@ -350,5 +350,6 @@ std::optional<int64_t> TryGetSlopModifier(const duckdb::LogicalType& type);
 std::optional<std::string> TryGetScoreModifier(const duckdb::LogicalType& type);
 std::optional<TSQueryMerge> TryGetMergeModifier(
   const duckdb::LogicalType& type);
+std::optional<uint32_t> TryGetMinMatchModifier(const duckdb::LogicalType& type);
 
 }  // namespace sdb::connector

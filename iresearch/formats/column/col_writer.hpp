@@ -33,11 +33,12 @@
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
-#include "iresearch/formats/column/nrm_writer.hpp"
+#include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
+#include "iresearch/store/memory_directory.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
@@ -70,9 +71,7 @@ class ColWriter final {
 
   void SetIdxWriter(IdxWriter& idx) noexcept;
 
-  NormColumnWriter& OpenNormColumn(field_id id, uint32_t row_group_size) {
-    return _nrm.OpenNormColumn(id, row_group_size);
-  }
+  NormColumnWriter& OpenNormColumn(field_id id, uint32_t row_group_size);
 
   std::vector<std::unique_ptr<AnnWriter>> TakeAnnWriters() noexcept;
 
@@ -95,6 +94,14 @@ class ColWriter final {
     std::unique_ptr<AnnWriter> writer;
   };
 
+  struct NormBuffer {
+    NormBuffer(field_id id, uint32_t row_group_size);
+
+    MemoryFile file;
+    MemoryIndexOutput out;
+    NormColumnWriter writer;
+  };
+
   void EnsureOut();
   bool Empty() const noexcept;
   ColumnWriter& OpenColumnInternal(field_id id, duckdb::LogicalType type,
@@ -111,7 +118,8 @@ class ColWriter final {
   std::unique_ptr<WriteContext> _write_ctx;
   std::vector<std::unique_ptr<ColumnWriter>> _columns;
   irs::containers::FlatHashMap<field_id, ColumnWriter*> _by_id;
-  NrmWriter _nrm;
+  std::vector<std::unique_ptr<NormBuffer>> _norms;
+  irs::containers::FlatHashMap<field_id, NormColumnWriter*> _norm_by_id;
   std::vector<std::unique_ptr<AnnEntry>> _ann_writers;
   irs::containers::FlatHashMap<field_id, AnnEntry*> _ann_by_id;
   bool _committed = false;

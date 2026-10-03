@@ -37,16 +37,43 @@
 #include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/resource_manager.hpp"
 
 namespace irs {
+namespace {
+
+void SerializeNormColumn(duckdb::BinarySerializer& s,
+                         const NormColumnWriter& nw, uint64_t base) {
+  s.WriteProperty(0, "id", static_cast<uint64_t>(nw.Id()));
+  s.WriteProperty(1, "row_group_size", nw.RowGroupSize());
+  s.WriteProperty(2, "row_count", nw.RowCount());
+  const auto& ptrs = nw.Pointers();
+  s.WriteList(3, "row_groups", ptrs.size(),
+              [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+                const auto& p = ptrs[i];
+                list.WriteObject([&](duckdb::BinarySerializer& obj) {
+                  obj.WriteProperty(0, "byte_size", p.byte_size);
+                  obj.WriteProperty(1, "max", p.max);
+                  obj.WriteProperty(2, "sum", p.sum);
+                  obj.WriteProperty(3, "non_zero_count", p.non_zero_count);
+                  obj.WriteProperty(4, "file_offset", base + p.file_offset);
+                  obj.WritePropertyWithDefault<uint32_t>(5, "exceptions",
+                                                         p.exceptions, 0);
+                });
+              });
+}
+
+}  // namespace
+
+ColWriter::NormBuffer::NormBuffer(field_id id, uint32_t row_group_size)
+  : file{IResourceManager::gNoop}, out{file}, writer{id, row_group_size, out} {}
 
 ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
                      duckdb::DatabaseInstance& db)
   : _dir{&dir},
     _segment_name{segment_name},
     _filename{FileName(segment_name)},
-    _db{&db},
-    _nrm{dir, segment_name} {}
+    _db{&db} {}
 
 ColWriter::~ColWriter() {
   if (_out && !_committed) {
@@ -126,6 +153,17 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
                             compression, hyperloglog);
 }
 
+NormColumnWriter& ColWriter::OpenNormColumn(field_id id,
+                                            uint32_t row_group_size) {
+  if (auto it = _norm_by_id.find(id); it != _norm_by_id.end()) {
+    return *it->second;
+  }
+  auto& norm =
+    *_norms.emplace_back(std::make_unique<NormBuffer>(id, row_group_size));
+  _norm_by_id.emplace(id, &norm.writer);
+  return norm.writer;
+}
+
 AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
   if (auto it = _ann_by_id.find(column_id); it != _ann_by_id.end()) {
     auto& existing = *it->second;
@@ -191,16 +229,31 @@ bool ColWriter::Commit(uint64_t target_row,
   if (_committed) {
     return true;
   }
-  _nrm.Commit(target_row);
-  if (Empty() && !_out) {
+  std::vector<NormBuffer*> norms;
+  for (auto& norm : _norms) {
+    norm->writer.PadTo(target_row);
+    norm->writer.Finalize();
+    norm->out.Flush();
+    if (!norm->writer.Pointers().empty()) {
+      norms.push_back(norm.get());
+    }
+  }
+  if (Empty() && !_out && norms.empty()) {
     _committed = true;
     return true;
   }
+  EnsureOut();
   for (auto& cw : _columns) {
     if (!progress()) {
       return false;
     }
     cw->SealRowGroup();
+  }
+  std::vector<uint64_t> bases;
+  bases.reserve(norms.size());
+  for (auto* norm : norms) {
+    bases.push_back(_out->Position());
+    norm->file >> *_out;
   }
   format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& footer) {
     if (!_columns.empty()) {
@@ -209,6 +262,15 @@ bool ColWriter::Commit(uint64_t target_row,
         [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
           list.WriteObject([&](duckdb::BinarySerializer& obj) {
             SerializeColumnMeta(obj, _columns[i]->Meta());
+          });
+        });
+    }
+    if (!norms.empty()) {
+      footer.WriteList(
+        kColFieldNormColumns, "norm_columns", norms.size(),
+        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+          list.WriteObject([&](duckdb::BinarySerializer& obj) {
+            SerializeNormColumn(obj, norms[i]->writer, bases[i]);
           });
         });
     }

@@ -59,8 +59,6 @@ set(IResearch_core_sources
     ./formats/column/variant_column_reader.cpp
     ./formats/column/norm_writer.cpp
     ./formats/column/norm_column_reader.cpp
-    ./formats/column/nrm_reader.cpp
-    ./formats/column/nrm_writer.cpp
     ./formats/column/merge.cpp
     ./formats/column/internal/write_context.cpp
     ./formats/column/read_context.cpp

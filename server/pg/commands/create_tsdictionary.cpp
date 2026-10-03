@@ -771,8 +771,10 @@ void CreateTokenizer(ConnectionContext& conn_ctx, duckdb::QualifiedName name,
 
   if (features.HasFeatures(irs::IndexFeatures::Offs) &&
       !test_analyzer->Traits().offsets) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("Unsupported index features are specified"));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Unsupported index features are specified: offset"),
+      ERR_HINT("A step of this dictionary produces no text offsets."));
   }
 
   if (features.HasFeatures(irs::IndexFeatures::Norm) &&

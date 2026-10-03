@@ -151,15 +151,16 @@ std::string RangeValue(const SearchRange<T>& range, Kind kind) {
   return s;
 }
 
+bool IsShingle(bytes_view separator, bytes_view term) {
+  return !separator.empty() &&
+         absl::StrContains(ViewCast<char>(term), ViewCast<char>(separator));
+}
+
 // Renders one phrase-part option variant.
 struct PhrasePartVisitor : util::Noncopyable {
   auto operator()(const ByTermOptions& opts) const {
-    const bool shingle =
-      !separator.empty() &&
-      absl::StrContains(ViewCast<char>(bytes_view{opts.term}),
-                        ViewCast<char>(separator));
-    absl::StrAppend(out,
-                    shingle ? "Shingle:" : "Term:", TermToString(opts.term));
+    absl::StrAppend(out, IsShingle(separator, opts.term) ? "Shingle:" : "Term:",
+                    TermToString(opts.term));
   }
   auto operator()(const TermSetOptions& opts) const {
     absl::StrAppend(out, "Terms:[",
@@ -265,14 +266,16 @@ std::string_view VectorMetricName(VectorMetric metric) {
 }
 
 struct FilterPrinter {
-  const FieldNameResolver& name_of;
-  const FieldKindResolver& kind_of;
+  const FieldResolver& fields;
 
   std::string FieldName(field_id fid) const {
-    return name_of(sdb::connector::ColumnId{fid});
+    return fields.name_of(sdb::connector::ColumnId{fid});
   }
   Kind FieldKind(field_id fid) const {
-    return kind_of(sdb::connector::ColumnId{fid});
+    return fields.kind_of(sdb::connector::ColumnId{fid});
+  }
+  bytes_view FieldSeparator(field_id fid) const {
+    return fields.separator_of(sdb::connector::ColumnId{fid});
   }
 
   std::string PhraseParts(const ByPhrase& filter) const {
@@ -350,10 +353,13 @@ struct FilterPrinter {
       if (kind != Kind::Null || run.front().boost != kNoBoost ||
           Explicit(run.front().scorer)) {
         const std::string_view quote = kind == Kind::String ? "'" : "";
+        const auto separator = FieldSeparator(run.front().field);
         leaves.attributes["Values"] = absl::StrJoin(
           run, ", ", [&](std::string* o, const TermClause& clause) {
             const auto start = o->size();
-            absl::StrAppend(o, quote, TermValue(clause.term, kind), quote);
+            absl::StrAppend(o,
+                            IsShingle(separator, clause.term) ? "Shingle:" : "",
+                            quote, TermValue(clause.term, kind), quote);
             const auto pad = [&] { return o->size() == start ? "" : " "; };
             if (clause.boost != kNoBoost) {
               absl::StrAppend(o, pad(), "(", clause.boost, ")");
@@ -427,7 +433,9 @@ struct FilterPrinter {
     }
     if (type == Type<ByTerm>::id()) {
       const auto& f = downCast<const ByTerm>(filter);
-      ExplainNode node{"Term"};
+      ExplainNode node{IsShingle(FieldSeparator(f.field_id()), f.options().term)
+                         ? "Shingle"
+                         : "Term"};
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Value"] =
         TermValue(f.options().term, FieldKind(f.field_id()));
@@ -589,16 +597,19 @@ std::string IdentityField(sdb::connector::ColumnId id) {
 
 Kind UnknownKind(sdb::connector::ColumnId) { return Kind::Unsupported; }
 
+bytes_view NoSeparator(sdb::connector::ColumnId) { return {}; }
+
 }  // namespace
 
 duckdb::ExplainNode ToExplainNode(const Filter& f) {
-  return ToExplainNode(f, IdentityField, UnknownKind);
+  return ToExplainNode(f, {.name_of = IdentityField,
+                           .kind_of = UnknownKind,
+                           .separator_of = NoSeparator});
 }
 
 duckdb::ExplainNode ToExplainNode(const Filter& f,
-                                  const FieldNameResolver& name_of,
-                                  const FieldKindResolver& kind_of) {
-  return FilterPrinter{.name_of = name_of, .kind_of = kind_of}.Build(f);
+                                  const FieldResolver& fields) {
+  return FilterPrinter{.fields = fields}.Build(f);
 }
 
 }  // namespace irs

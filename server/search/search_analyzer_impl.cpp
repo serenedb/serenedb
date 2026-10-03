@@ -20,6 +20,8 @@
 
 #include "search/search_analyzer_impl.h"
 
+#include <absl/strings/str_cat.h>
+
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
@@ -38,6 +40,25 @@
 #include "catalog/catalog.h"
 
 namespace sdb::search {
+namespace {
+
+std::string FeatureNames(irs::IndexFeatures features) {
+  const std::pair<irs::IndexFeatures, std::string_view> names[] = {
+    {irs::IndexFeatures::Freq, irs::Type<irs::FreqAttr>::name()},
+    {irs::IndexFeatures::Pos, irs::Type<irs::PosAttr>::name()},
+    {irs::IndexFeatures::Offs, irs::Type<irs::OffsAttr>::name()},
+    {irs::IndexFeatures::Norm, irs::Type<irs::Norm>::name()},
+  };
+  std::string out;
+  for (const auto& [feature, name] : names) {
+    if (irs::IsSubsetOf(feature, features)) {
+      absl::StrAppend(&out, out.empty() ? "" : ", ", name);
+    }
+  }
+  return out;
+}
+
+}  // namespace
 
 bool Features::Add(std::string_view feature_name) {
   if (feature_name == irs::Type<irs::PosAttr>::name()) {
@@ -110,9 +131,13 @@ void Features::Validate(std::string_view type) const {
   }();
 
   if (!irs::IsSubsetOf(_index_features, supported_features)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("Unsupported index features are specified: ",
-                            std::to_underlying(_index_features)));
+    const auto supported = FeatureNames(supported_features);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("Unsupported index features are specified: ",
+              FeatureNames(_index_features & ~supported_features)),
+      ERR_HINT(type, " supports ",
+               supported.empty() ? "no index features" : supported, "."));
   }
 }
 

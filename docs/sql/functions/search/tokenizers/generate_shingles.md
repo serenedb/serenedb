@@ -32,7 +32,7 @@ Both sizes are validated, not clamped: a value outside 2–16 is rejected with `
 
 The nested analyzer is the first argument and is required — `generate_shingles(2, 3)` fails with `generate_shingles() requires a nested analyzer as its first argument`. Nesting is recursive: the first argument may itself be a chain or a wrapper.
 
-The template supports the `FREQUENCY`, `POSITION` and `NORM` [feature flags](../../../statements/create_text_search_dictionary/index.md#feature-flags), with `POSITION` and `NORM` each requiring `FREQUENCY`. `OFFSET` is rejected at `CREATE TEXT SEARCH DICTIONARY` time with `Unsupported index features are specified: <mask>`.
+The template supports the `FREQUENCY`, `POSITION` and `NORM` [feature flags](../../../statements/create_text_search_dictionary/index.md#feature-flags), with `POSITION` and `NORM` each requiring `FREQUENCY`. `OFFSET` is rejected at `CREATE TEXT SEARCH DICTIONARY` time with `Unsupported index features are specified: offset`.
 
 ## Tokenization
 
@@ -79,7 +79,7 @@ A value whose base stream holds fewer than `MIN_GRAM` tokens produces no shingle
 
 A phrase the dictionary cannot answer fails with `ts_phrase on this shingle column needs positions: its shingles do not cover the phrase`. Leaving `position` out keeps the index smaller. A row ranks by how often the phrase occurs in it.
 
-With `position`, every run of two or more adjacent words in a phrase is looked up as shingles, also in a phrase with pattern parts, alternatives or `[min, max]` gaps. A phrase with slop matches word by word. In `EXPLAIN` a covered phrase lists each shingle it looks up as a `Shingle:` part, and every phrase on a shingle column shows the column's `Separator`.
+With `position`, every run of two or more adjacent words in a phrase is looked up as shingles, also in a phrase with pattern parts, alternatives or `[min, max]` gaps. A phrase with slop matches word by word. In `EXPLAIN` a phrase that is one shingle is a `Shingle` lookup, a covered phrase lists each shingle it looks up as a `Shingle:` part, and every phrase on a shingle column shows the column's `Separator`.
 
 A shingle joins tokens at consecutive positions. If the base dictionary puts several tokens at one position, like the synonyms of [`expand_solr_synonyms`](./expand_solr_synonyms.md) or [`expand_wordnet_synonyms`](./expand_wordnet_synonyms.md), a shingle continues from just one of them. On such a column every phrase of two or more words matches word by word, so it needs `position` and `OUTPUT_UNIGRAMS`.
 

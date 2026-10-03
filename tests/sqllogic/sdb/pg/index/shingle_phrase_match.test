@@ -155,7 +155,7 @@ QUERY PLAN
 │ Index: test_shingle_idx │
 │ Lookup: table           │
 │ Index Filter:           │
-│ ╭─ Term ──────────────╮ │
+│ ╭─ Shingle ───────────╮ │
 │ │ Field: body(string) │ │
 │ │ Value: quick brown  │ │
 │ ╰─────────────────────╯ │
@@ -180,7 +180,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: test_shingle_idx  │
 │ Index Filter:            │
-│ ╭─ Term ──────────────╮  │
+│ ╭─ Shingle ───────────╮  │
 │ │ Field: body(string) │  │
 │ │ Value: quick brown  │  │
 │ ╰─────────────────────╯  │
@@ -301,19 +301,19 @@ query
 EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ websearch_to_tsquery('"quick brown" cat')
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────╮
-│ Index: test_shingle_pos_idx      │
-│ Lookup: table                    │
-│ Index Filter:                    │
-│ ╭─ And ────────────────────────╮ │
-│ ╰───────────────┬──────────────╯ │
-│ ╭─ Terms ───────┴──────────────╮ │
-│ │ Field: body(string)          │ │
-│ │ Values: 'cat', 'quick brown' │ │
-│ ╰──────────────────────────────╯ │
-│ Projections: id                  │
-│ ~1 row                           │
-╰──────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: test_shingle_pos_idx              │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ And ────────────────────────────────╮ │
+│ ╰───────────────────┬──────────────────╯ │
+│ ╭─ Terms ───────────┴──────────────────╮ │
+│ │ Field: body(string)                  │ │
+│ │ Values: 'cat', Shingle:'quick brown' │ │
+│ ╰──────────────────────────────────────╯ │
+│ Projections: id                          │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
 
 query
 SELECT id FROM test_shingle_pos_idx WHERE body @@ websearch_to_tsquery('quick -"brown fox"') ORDER BY id
@@ -706,7 +706,7 @@ QUERY PLAN
 │ Index: test_shingle_pos_idx │
 │ Lookup: table               │
 │ Index Filter:               │
-│ ╭─ Term ──────────────╮     │
+│ ╭─ Shingle ───────────╮     │
 │ │ Field: body(string) │     │
 │ │ Value: brown fox    │     │
 │ ╰─────────────────────╯     │
@@ -1233,7 +1233,7 @@ QUERY PLAN
 │ Index: test_shingle_freq_idx │
 │ Lookup: table                │
 │ Index Filter:                │
-│ ╭─ Term ─────────────────╮   │
+│ ╭─ Shingle ──────────────╮   │
 │ │ Field: body(string)    │   │
 │ │ Value: the quick brown │   │
 │ ╰────────────────────────╯   │

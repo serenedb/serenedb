@@ -22,8 +22,13 @@
 #include <absl/strings/str_join.h>
 
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
+#include <iresearch/analysis/shingle_tokenizer.hpp>
+#include <iresearch/analysis/tokenizer_config.hpp>
 #include <ranges>
+#include <variant>
 
+#include "catalog/catalog.h"
+#include "catalog/entry/tokenizer.h"
 #include "connector/column_id.h"
 #include "connector/functions/vector.h"
 #include "connector/scan/scan_bind.h"
@@ -159,6 +164,28 @@ auto MakeFieldKindResolver(const ScanBindData& bind_data) {
       return ClassifyTerms(column_type);
     }
     return Kind::Unsupported;
+  };
+}
+
+auto MakeShingleSeparatorResolver(const ScanBindData& bind_data) {
+  return [&bind_data](ColumnId col_id) -> irs::bytes_view {
+    const auto& relation = bind_data.relation;
+    const auto* entry = relation.inverted_config->LookupField(col_id).entry;
+    if (!entry || !entry->HasTextDictionary()) {
+      return {};
+    }
+    auto& catalog = (relation.inverted_index ? relation.inverted_index->catalog
+                                             : relation.table_entry->catalog)
+                      .Cast<catalog::SereneDBCatalog>();
+    const auto dict = catalog.FindIn<catalog::TokenizerCatalogEntry>(
+      nullptr, entry->text_dictionary);
+    if (!dict) {
+      return {};
+    }
+    const auto* shingle = std::get_if<irs::analysis::ShingleTokenizer::Options>(
+      &dict->Config().config);
+    return shingle ? irs::bytes_view{shingle->token_separator}
+                   : irs::bytes_view{};
   };
 }
 
@@ -312,18 +339,21 @@ void ScanBindData::AppendSummary(
   const auto& bind = *this;
   const auto& vector = score.vector;
   std::unique_ptr<irs::Scorer> query_scorer;
-  const auto name_of = MakeFieldNameResolver(bind);
-  const auto kind_of = MakeFieldKindResolver(bind);
+  const irs::FieldResolver fields{
+    .name_of = MakeFieldNameResolver(bind),
+    .kind_of = MakeFieldKindResolver(bind),
+    .separator_of = MakeShingleSeparatorResolver(bind),
+  };
   const bool vector_is_range =
     vector && vector->radius != std::numeric_limits<float>::max();
   if (vector_is_range) {
     const auto display =
       MakeVectorFilter(*vector, search.filter, vector->radius);
-    out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
-                                 *display, name_of, kind_of)));
+    out.insert("Index Filter",
+               duckdb::ExplainValue(irs::ToExplainNode(*display, fields)));
   } else if (search.filter) {
-    out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
-                                 *search.filter, name_of, kind_of)));
+    out.insert("Index Filter", duckdb::ExplainValue(
+                                 irs::ToExplainNode(*search.filter, fields)));
   }
   for (const auto& req : ts_dict.requests) {
     if (!req.having_filter) {
@@ -334,7 +364,7 @@ void ScanBindData::AppendSummary(
         ? std::string{"Index Filter"}
         : absl::StrCat("Index Filter(", DisplayColumnName(req.display_id), ")");
     out.insert(std::move(key), duckdb::ExplainValue(irs::ToExplainNode(
-                                 *req.having_filter, name_of, kind_of)));
+                                 *req.having_filter, fields)));
   }
   if (vector && !vector_is_range) {
     const auto col_id = vector->field_id;
@@ -342,9 +372,9 @@ void ScanBindData::AppendSummary(
     if (ctype.id() == duckdb::LogicalTypeId::INVALID) {
       ctype = relation.inverted_config->ExpressionType(vector->field_id);
     }
-    out.insert("Score",
-               absl::StrCat(VectorMetricFunctionName(vector->metric), "(",
-                            name_of(col_id), ", ", ctype.ToString(), ")"));
+    out.insert("Score", absl::StrCat(VectorMetricFunctionName(vector->metric),
+                                     "(", fields.name_of(col_id), ", ",
+                                     ctype.ToString(), ")"));
   }
   if (score.text) {
     query_scorer = search::MakeScorer(*score.text);

@@ -548,16 +548,15 @@ void InvertedIndexEntry::CreateReindexJob(
   if (interval_ms == 0) {
     return;
   }
-  const auto relation =
-    ParentSchema(transaction)
-      .GetEntry(transaction, duckdb::CatalogType::TABLE_ENTRY, GetTableName());
   duckdb::CreateJobInfo create;
   create.SetQualifiedName({catalog.GetName(), ParentSchemaName(), name});
   create.schedule = ReindexSchedule(interval_ms);
   create.body =
     absl::StrCat("PRAGMA ", connector::kReindexByIdPragma, "(", oid, ")");
   create.permissions.owner =
-    relation ? relation->permissions.owner : permissions.owner;
+    ParentSchema(transaction)
+      .GetEntry(transaction, duckdb::CatalogType::TABLE_ENTRY, GetTableName())
+      ->permissions.owner;
   catalog.CreateJob(transaction.GetContext(), create);
   SetJobOwnedBy(transaction, catalog, ParentSchemaName(), name, name);
 }

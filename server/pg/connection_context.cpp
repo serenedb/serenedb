@@ -83,7 +83,7 @@ ConnectionContext::ConnectionContext(
     _backend_pid{backend_pid},
     _cancel_registry{cancel_registry},
     _send_buffer{send_buffer} {
-  duckdb_ctx.session_user = std::string{user};
+  duckdb_ctx.session_user = user;
   duckdb_ctx.login_role = role_id;
   duckdb_ctx.session_role = role_id;
   duckdb_ctx.effective_role = role_id;

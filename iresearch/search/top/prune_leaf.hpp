@@ -107,7 +107,7 @@ class PruneLeafBase {
 
     _cursor.Disarm();
     _cached.fill(kNoBlock);
-    _cached_run = kNoBlock;
+    _cached_runs.fill(kNoBlock);
     _root_score = std::numeric_limits<score_t>::max();
     _threshold = std::numeric_limits<score_t>::lowest();
     _upper_bound = doc_limits::eof();
@@ -147,32 +147,45 @@ class PruneLeafBase {
     }
     const auto& index = _cursor.Index();
     const auto n = index.Size();
-    const auto b = _cursor.Block();
+    auto b = _cursor.Block();
     if (b == n) {
       return _root_score;
+    }
+    if (_doc > index.Last(b) && !doc_limits::eof(_doc)) {
+      b = index.Find(b, _doc);
+      if (b == n) {
+        return _root_score;
+      }
     }
     if (doc <= index.Last(b)) [[likely]] {
       return BlockScore(b);
     }
-    const auto limit = std::min(n, b + kMaxScoreBlocks) - 1;
-    if (doc > index.Last(limit) && limit + 1 != n) {
-      const auto r = b / BlockIndex::kRun;
-      return doc <= index.RunLast(r) ? RunScore(r) : _root_score;
+    const auto r = b / BlockIndex::kRun;
+    if (r + kCachedRuns < index.Runs() &&
+        doc > index.RunLast(r + kCachedRuns - 1)) {
+      return _root_score;
     }
+    const auto last = std::min(index.Find(b, doc), n - 1);
     auto score = BlockScore(b);
-    for (auto k = b + 1; k <= limit; ++k) {
-      score = std::max(score, BlockScore(k));
-      if (doc <= index.Last(k)) {
-        break;
+    if (last - b < kCachedBlocks) {
+      for (auto k = b + 1; k <= last; ++k) {
+        score = std::max(score, BlockScore(k));
       }
+      return score;
+    }
+    for (auto k = b + 1, end = (r + 1) * BlockIndex::kRun; k < end; ++k) {
+      score = std::max(score, BlockScore(k));
+    }
+    for (auto k = r + 1, end = last / BlockIndex::kRun; k <= end; ++k) {
+      score = std::max(score, RunScore(k));
     }
     return score;
   }
 
  protected:
   static constexpr uint32_t kNoBlock = std::numeric_limits<uint32_t>::max();
-  static constexpr uint32_t kMaxScoreBlocks = 8;
-  static constexpr uint32_t kCachedBlocks = 8;
+  static constexpr uint32_t kCachedBlocks = BlockIndex::kRun;
+  static constexpr uint32_t kCachedRuns = 8;
 
   IRS_FORCE_INLINE InputType& In() const noexcept {
     return irs::utils::downCast<InputType>(*_in);
@@ -193,11 +206,12 @@ class PruneLeafBase {
   }
 
   score_t RunScore(uint32_t r) {
-    if (_cached_run != r) {
-      _cached_run = r;
-      _run_score = BoundScore(_cursor.Index().RunBound(r));
+    const auto slot = r % kCachedRuns;
+    if (_cached_runs[slot] != r) {
+      _cached_runs[slot] = r;
+      _run_scores[slot] = BoundScore(_cursor.Index().RunBound(r));
     }
-    return _run_score;
+    return _run_scores[slot];
   }
 
   uint32_t SeekCursor(doc_id_t target) {
@@ -390,8 +404,8 @@ class PruneLeafBase {
   ScoreBoundSource::ptr _bound_source;
   std::array<uint32_t, kCachedBlocks> _cached;
   std::array<score_t, kCachedBlocks> _cached_scores;
-  uint32_t _cached_run = kNoBlock;
-  score_t _run_score = 0;
+  std::array<uint32_t, kCachedRuns> _cached_runs;
+  std::array<score_t, kCachedRuns> _run_scores;
   score_t _root_score = std::numeric_limits<score_t>::max();
   score_t _threshold = std::numeric_limits<score_t>::lowest();
   doc_id_t _doc = 0;

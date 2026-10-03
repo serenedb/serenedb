@@ -127,7 +127,9 @@ int RunServer(int argc, char** argv) {
         stop("network", [&] { network.stop(); });
       }
       stop("jobs", [&] {
-        duckdb::JobScheduler::StopAll(irs::DuckDBEngine::Instance().instance());
+        auto& jobs = irs::DuckDBEngine::Instance().instance().GetJobScheduler();
+        jobs.Stop();
+        jobs.Wait();
       });
       if (up_search) {
         stop("search", [&] { search.stop(); });

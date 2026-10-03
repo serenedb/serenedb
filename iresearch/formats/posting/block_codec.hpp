@@ -304,6 +304,14 @@ inline IRS_FORCE_INLINE uint32_t MoveMask8(I8x32 lanes) noexcept {
 }
 
 inline IRS_FORCE_INLINE uint32_t SumBytes(I8x32 lanes) noexcept {
+#ifdef __AVX2__
+  const __m256i sums =
+    _mm256_sad_epu8(std::bit_cast<__m256i>(lanes), _mm256_setzero_si256());
+  const __m128i half = _mm_add_epi64(_mm256_castsi256_si128(sums),
+                                     _mm256_extracti128_si256(sums, 1));
+  return static_cast<uint32_t>(_mm_cvtsi128_si64(half) +
+                               _mm_extract_epi64(half, 1));
+#else
   const auto bytes = std::bit_cast<U8x32>(lanes);
   const U8x16 lo = __builtin_shufflevector(bytes, bytes, 0, 1, 2, 3, 4, 5, 6, 7,
                                            8, 9, 10, 11, 12, 13, 14, 15);
@@ -311,6 +319,7 @@ inline IRS_FORCE_INLINE uint32_t SumBytes(I8x32 lanes) noexcept {
     __builtin_shufflevector(bytes, bytes, 16, 17, 18, 19, 20, 21, 22, 23, 24,
                             25, 26, 27, 28, 29, 30, 31);
   return uint32_t{__builtin_reduce_add(lo)} + __builtin_reduce_add(hi);
+#endif
 }
 
 template<bool Exact>
@@ -623,6 +632,8 @@ inline IRS_FORCE_INLINE uint32_t TailPacked(uint32_t len,
                                             uint32_t bits) noexcept {
   return (len * bits + 7) / 8;
 }
+
+inline constexpr uint32_t kMinPatchBytes = 4;
 
 template<uint32_t L, typename Above>
 IRS_FORCE_INLINE uint32_t TailPatchBound(uint32_t len, uint32_t width,
@@ -1729,52 +1740,68 @@ class TinyWidths {
   I8x32 _widths;
 };
 
+struct TinyChunk {
+  U32x8 values;
+  U32x8 valid;
+};
+
+inline IRS_FORCE_INLINE TinyChunk LoadTinyChunk(const uint32_t* values,
+                                                uint32_t len,
+                                                uint32_t chunk) noexcept {
+  const uint32_t rest = len - chunk * kWideLanes;
+  if (rest >= kWideLanes) {
+    U32x8 v;
+    std::memcpy(&v, values + chunk * kWideLanes, sizeof(v));
+    return {v, U32x8{} - 1};
+  }
+  return {LoadFirst(values + chunk * kWideLanes, rest),
+          std::bit_cast<U32x8>(I32x8{0, 1, 2, 3, 4, 5, 6, 7} <
+                               static_cast<int32_t>(rest))};
+}
+
 class TinyValues {
  public:
   IRS_FORCE_INLINE TinyValues(const uint32_t* values, uint32_t len) noexcept {
     SDB_ASSERT(1 <= len && len <= kTinyTail);
     const U32x8 first = U32x8{} + values[0];
-    U32x8 any{};
-    U32x8 less_any{};
-    U32x8 diff{};
-    U32x8 zeros{};
-    I8x8 raw[kTinyTail / kWideLanes] = {};
-    I8x8 less[kTinyTail / kWideLanes] = {};
+    U32x8 lo = first;
+    U32x8 hi = first;
     for (uint32_t c = 0; c != kTinyTail / kWideLanes; ++c) {
       if (c * kWideLanes >= len) {
         break;
       }
-      const uint32_t rest = len - c * kWideLanes;
-      U32x8 v;
-      U32x8 valid;
-      if (rest >= kWideLanes) {
-        std::memcpy(&v, values + c * kWideLanes, sizeof(v));
-        valid = U32x8{} - 1;
-      } else {
-        v = LoadFirst(values + c * kWideLanes, rest);
-        valid = std::bit_cast<U32x8>(I32x8{0, 1, 2, 3, 4, 5, 6, 7} <
-                                     static_cast<int32_t>(rest));
-      }
-      const U32x8 minus = (v - 1) & valid;
-      any |= v;
-      less_any |= minus;
-      diff |= (v ^ first) & valid;
-      zeros |= (v == 0) & valid;
-      raw[c] = LaneWidths<true>(std::bit_cast<I32x8>(v));
-      less[c] = LaneWidths<false>(std::bit_cast<I32x8>(minus));
+      const auto [v, valid] = LoadTinyChunk(values, len, c);
+      const U32x8 x = (v & valid) | (first & ~valid);
+      lo = __builtin_elementwise_min(lo, x);
+      hi = __builtin_elementwise_max(hi, x);
     }
-    _any = __builtin_reduce_or(any);
-    _less_any = __builtin_reduce_or(less_any);
-    _same = __builtin_reduce_or(diff) == 0;
-    _zeros = __builtin_reduce_or(zeros) != 0;
+    _min = __builtin_reduce_min(lo);
+    _max = __builtin_reduce_max(hi);
+  }
+
+  uint32_t Max() const noexcept { return _max; }
+  bool Same() const noexcept { return _min == _max; }
+  bool HasZero() const noexcept { return _min == 0; }
+
+ private:
+  uint32_t _min;
+  uint32_t _max;
+};
+
+class TinyValueWidths {
+ public:
+  IRS_FORCE_INLINE TinyValueWidths(const uint32_t* values,
+                                   uint32_t len) noexcept {
+    I8x8 raw[kTinyTail / kWideLanes] = {};
+    I8x8 less[kTinyTail / kWideLanes] = {};
+    for (uint32_t c = 0; c * kWideLanes < len; ++c) {
+      const auto [v, valid] = LoadTinyChunk(values, len, c);
+      raw[c] = LaneWidths<true>(std::bit_cast<I32x8>(v));
+      less[c] = LaneWidths<false>(std::bit_cast<I32x8>((v - 1) & valid));
+    }
     _widths[0] = Concat4(raw);
     _widths[1] = Concat4(less);
   }
-
-  uint32_t Any() const noexcept { return _any; }
-  uint32_t LessAny() const noexcept { return _less_any; }
-  bool Same() const noexcept { return _same; }
-  bool HasZero() const noexcept { return _zeros; }
 
   IRS_FORCE_INLINE uint32_t Above(uint32_t bits, bool less) const noexcept {
     return static_cast<uint32_t>(
@@ -1782,17 +1809,16 @@ class TinyValues {
   }
 
  private:
-  uint32_t _any;
-  uint32_t _less_any;
-  bool _same;
-  bool _zeros;
   I8x32 _widths[2];
 };
 
 template<uint32_t L>
-IRS_FORCE_INLINE bool TinyPackWins(const TinyWidths& widths, uint32_t len,
-                                   uint32_t width) noexcept {
-  const uint32_t pack = 1 + TailPacked(len, width);
+IRS_FORCE_INLINE bool TinyPackWins(const uint32_t* gaps, uint32_t len,
+                                   uint32_t width, uint32_t pack) noexcept {
+  if (pack <= kMinPatchBytes) {
+    return true;
+  }
+  const TinyWidths widths{gaps, len, width};
   return TailPatchBound<L>(len, width, pack,
                            [&](uint32_t bits) IRS_FORCE_INLINE {
                              return widths.Above(bits);
@@ -1851,12 +1877,24 @@ IRS_FORCE_INLINE uint32_t EncodeTinyValues(const TinyValues& tiny,
                                            const uint32_t* values, uint32_t len,
                                            bool minus_one,
                                            byte_type* out) noexcept {
-  const auto width = static_cast<uint32_t>(std::bit_width(tiny.Any()));
+  const auto width = static_cast<uint32_t>(std::bit_width(tiny.Max()));
   const uint32_t pack = 1 + TailPacked(len, width);
+  const auto less_width = static_cast<uint32_t>(std::bit_width(tiny.Max() - 1));
+  if (pack <= kMinPatchBytes) {
+    if (minus_one && less_width <= kMinusOneBits &&
+        TailPacked(len, less_width) + 1 < pack) {
+      return WriteTailPack<false>(
+        values, len, less_width, 1,
+        Code(ValueEncoding::PackMinusOne) + less_width - 1, out);
+    }
+    return WriteTailPack<false>(values, len, width, 0,
+                                Code(ValueEncoding::Pack) + width - 1, out);
+  }
+  const TinyValueWidths widths{values, len};
   const auto raw = [&](uint32_t bits)
-                     IRS_FORCE_INLINE { return tiny.Above(bits, false); };
+                     IRS_FORCE_INLINE { return widths.Above(bits, false); };
   const auto less = [&](uint32_t bits)
-                      IRS_FORCE_INLINE { return tiny.Above(bits, true); };
+                      IRS_FORCE_INLINE { return widths.Above(bits, true); };
   const auto write_less = [&](uint32_t less_width) IRS_FORCE_INLINE {
     const uint32_t less_pack = 1 + TailPacked(len, less_width);
     if (TailPatchBound<L>(len, less_width, less_pack, less) < less_pack) {
@@ -1866,7 +1904,6 @@ IRS_FORCE_INLINE uint32_t EncodeTinyValues(const TinyValues& tiny,
       values, len, less_width, 1,
       Code(ValueEncoding::PackMinusOne) + less_width - 1, out);
   };
-  const auto less_width = static_cast<uint32_t>(std::bit_width(tiny.LessAny()));
   if (minus_one) {
     const uint32_t less_pack = 1 + TailPacked(len, less_width);
     if (less_width <= kMinusOneBits && less_pack < pack &&
@@ -1953,9 +1990,8 @@ IRS_NO_INLINE uint32_t EncodeDelta(const doc_id_t* docs, uint32_t len,
   }
   const auto width = static_cast<uint32_t>(std::bit_width(any));
   if constexpr (!Full) {
-    if (len <= kTinyTail &&
-        TinyPackWins<L>(TinyWidths{gaps, len, width}, len, width)) {
-      const uint32_t pack = 1 + TailPacked(len, width);
+    const uint32_t pack = 1 + TailPacked(len, width);
+    if (len <= kTinyTail && TinyPackWins<L>(gaps, len, width, pack)) {
       if (const auto words = BitsetWords<L>(docs, len, prev, pack, options)) {
         return WriteBitset<false, L>(docs, len, prev, words, out);
       }
@@ -1994,8 +2030,8 @@ inline uint32_t WriteSameValue(uint32_t value, byte_type* out) noexcept {
 }
 
 template<bool Full, uint32_t L>
-uint32_t EncodeGeneralValues(const uint32_t* values, uint32_t len, uint32_t any,
-                             uint32_t less_any, bool minus_one, byte_type* out,
+uint32_t EncodeGeneralValues(const uint32_t* values, uint32_t len, uint32_t max,
+                             bool minus_one, byte_type* out,
                              const EncodeOptions& options) noexcept {
   constexpr uint32_t kN = kBlockOf<L>;
   const uint32_t* raw = values;
@@ -2006,8 +2042,8 @@ uint32_t EncodeGeneralValues(const uint32_t* values, uint32_t len, uint32_t any,
     raw = padded;
   }
   const Stats<L, Full> stats{
-    raw, len, static_cast<uint32_t>(std::bit_width(any)),
-    minus_one ? static_cast<uint32_t>(std::bit_width(less_any))
+    raw, len, static_cast<uint32_t>(std::bit_width(max)),
+    minus_one ? static_cast<uint32_t>(std::bit_width(max - 1))
               : Stats<L, Full>::kNoWidth};
   const auto plan = ChooseValuePlan(stats, options);
   if (plan.add == 0) {
@@ -2038,24 +2074,20 @@ IRS_NO_INLINE uint32_t EncodeValues(const uint32_t* values, uint32_t len,
           EncodeTinyValues<L>(tiny, values, len, minus_one, out)) {
       return size;
     }
-    return EncodeGeneralValues<Full, L>(values, len, tiny.Any(), tiny.LessAny(),
-                                        minus_one, out, options);
+    return EncodeGeneralValues<Full, L>(values, len, tiny.Max(), minus_one, out,
+                                        options);
   }
-  uint32_t any = 0;
-  uint32_t less_any = 0;
-  uint32_t diff = 0;
-  uint32_t zeros = 0;
+  uint32_t min = values[0];
+  uint32_t max = values[0];
   for (uint32_t i = 0; i != len; ++i) {
-    any |= values[i];
-    less_any |= values[i] - 1;
-    diff |= values[i] ^ values[0];
-    zeros += values[i] == 0;
+    min = std::min(min, values[i]);
+    max = std::max(max, values[i]);
   }
-  if (diff == 0) {
+  if (min == max) {
     return WriteSameValue(values[0], out);
   }
   return EncodeGeneralValues<Full, L>(
-    values, len, any, less_any, options.minus_one && zeros == 0, out, options);
+    values, len, max, options.minus_one && min != 0, out, options);
 }
 
 template<bool Full, uint32_t L>

@@ -45,9 +45,10 @@ enum class Shape : uint8_t {
   MapRepeated,
   MapUnique,
   StructRepeated,
+  MapWide,
 };
 
-constexpr size_t kShapes = 5;
+constexpr size_t kShapes = 6;
 constexpr irs::field_id kField = 0;
 constexpr std::string_view kSeg = "bench_seg";
 
@@ -83,6 +84,10 @@ std::string ValueSql(Shape shape) {
     case Shape::StructRepeated:
       return "{'tags': " + ValueSql(Shape::ListRepeated) +
              ", 'attrs': " + ValueSql(Shape::MapRepeated) + "}";
+    case Shape::MapWide:
+      return "map_from_entries(list_transform(range(4), lambda k: {'key': "
+             "'attribute.' || k, 'value': 'v' || ((i * 7919) % 30011) || '-' "
+             "|| k}))";
   }
   return {};
 }
@@ -92,7 +97,8 @@ std::string EmptySql(Shape shape) {
     return "{'tags': []::VARCHAR[], 'attrs': map([], [])::MAP(VARCHAR, "
            "VARCHAR)}";
   }
-  if (shape == Shape::MapRepeated || shape == Shape::MapUnique) {
+  if (shape == Shape::MapRepeated || shape == Shape::MapUnique ||
+      shape == Shape::MapWide) {
     return "map([], [])::MAP(VARCHAR, VARCHAR)";
   }
   return "[]::VARCHAR[]";
@@ -306,6 +312,9 @@ void SparseGather(benchmark::State& state, Shape shape) {
     ->Unit(benchmark::kMillisecond)                             \
     ->UseRealTime();                                            \
   BENCHMARK_CAPTURE(fn, struct_repeated, Shape::StructRepeated) \
+    ->Unit(benchmark::kMillisecond)                             \
+    ->UseRealTime();                                            \
+  BENCHMARK_CAPTURE(fn, map_wide, Shape::MapWide)               \
     ->Unit(benchmark::kMillisecond)                             \
     ->UseRealTime()
 

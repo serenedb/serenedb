@@ -163,7 +163,9 @@ class PostingBatch {
                  bool bounds) {
     _in = OpenDocInput(meta, doc_in);
     auto& in = In();
-    LimitDocReadahead(in, meta);
+    if (const auto extent = DocExtent(meta); extent != 0) {
+      _hint.Arm(meta.doc_start, meta.doc_start + extent);
+    }
     if (meta.docs_count < kBlock) {
       SkipScoreBounds(bounds, in);
     }
@@ -206,6 +208,7 @@ class PostingBatch {
   }
 
   IRS_FORCE_INLINE void ReadDocs(doc_id_t* IRS_RESTRICT dest, uint32_t len) {
+    _hint.Advance(In(), In().Position());
     FormatTraits128::ReadTailDeltaAt(len, In(), Enc(), dest, _last);
     _last = dest[len - 1];
     _left_in_list -= len;
@@ -236,6 +239,7 @@ class PostingBatch {
   [[no_unique_address]] utils::Need<!Scored, FreqLen> _freq_len;
   [[no_unique_address]] utils::Need<Scored, LeafScore> _score;
   [[no_unique_address]] utils::Need<Scored, LeafProvider> _provider;
+  GrowingHint _hint;
   BlockCursor _walk;
 };
 

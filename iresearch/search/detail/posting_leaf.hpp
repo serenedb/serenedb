@@ -47,6 +47,11 @@
 
 namespace irs::detail {
 
+enum class LeafReads : uint8_t {
+  Grows,
+  Whole,
+};
+
 struct LeafShape {
   bool scored = false;
   bool defer = false;
@@ -56,14 +61,22 @@ struct LeafShape {
   bool enc = false;
   bool delta = false;
   bool holes = false;
+  LeafReads reads = LeafReads::Grows;
 };
 
 inline constexpr LeafShape kWindowShape{.delta = true, .holes = true};
+
+inline constexpr LeafShape kCountShape{
+  .delta = true,
+  .holes = true,
+  .reads = LeafReads::Whole,
+};
 
 inline constexpr LeafShape kWindowScoredShape{
   .scored = true,
   .freqs = true,
   .enc = true,
+  .reads = LeafReads::Whole,
 };
 
 inline constexpr LeafShape kCursorShape{
@@ -225,7 +238,13 @@ class PostingLeaf {
                  bool bounds) {
     _in = OpenDocInput(meta, doc_in);
     auto& in = In();
-    LimitDocReadahead(in, meta);
+    if constexpr (Shape.reads == LeafReads::Whole) {
+      PrefetchDocs(in, meta);
+    } else if constexpr (Shape.reads == LeafReads::Grows) {
+      if (const auto extent = DocExtent(meta); extent != 0) {
+        _hint.Arm(meta.doc_start, meta.doc_start + extent);
+      }
+    }
     if (meta.docs_count < kBlock) {
       SkipScoreBounds(bounds, in);
     }
@@ -350,6 +369,9 @@ class PostingLeaf {
       _cursor.base = prev;
     }
     auto& in = In();
+    if constexpr (Shape.reads == LeafReads::Grows) {
+      _hint.Advance(in, in.Position());
+    }
     if (_left_in_list >= kBlock) [[likely]] {
       FormatTraits128::ReadBlockDelta(in, Enc(), _docs, prev);
       _left_in_leaf = kBlock;
@@ -499,6 +521,7 @@ class PostingLeaf {
   IRS_FORCE_INLINE FillRead ReadLeafFill(doc_id_t prev) {
     static_assert(Shape.cursor && !Shape.delta);
     auto& in = In();
+    _hint.Advance(in, in.Position());
     const auto len = std::min(_left_in_list, kBlock);
     const auto leaf =
       FormatTraits128::ReadTailForFill(len, in, Enc(), Holes(), _docs, prev);
@@ -526,6 +549,8 @@ class PostingLeaf {
     _provider;
   [[no_unique_address]] utils::Need<Shape.defer, LeafRecipe> _recipe;
   [[no_unique_address]] utils::Need<Shape.cursor, LeafCursor> _cursor;
+  [[no_unique_address]] utils::Need<Shape.reads == LeafReads::Grows,
+                                    GrowingHint> _hint;
   BlockCursor _walk;
 };
 

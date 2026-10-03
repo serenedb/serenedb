@@ -115,18 +115,15 @@ inline void PostingsReader::prepare(const ReaderState& state,
 
   // prepare document input
   PrepareInput(buf, _doc_in, IOAdvice::RANDOM, state, PostingsWriter::kDocExt);
-  _doc_in->EnableReadahead();
 
   if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
     PrepareInput(buf, _pos_in, IOAdvice::RANDOM, state,
                  PostingsWriter::kPosExt);
-    _pos_in->EnableReadahead();
   }
 
   if (needs_pay) {
     PrepareInput(buf, _pay_in, IOAdvice::RANDOM, state,
                  PostingsWriter::kPayExt);
-    _pay_in->EnableReadahead();
   }
 }
 

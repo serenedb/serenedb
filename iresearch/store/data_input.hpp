@@ -32,6 +32,8 @@
 
 namespace irs {
 
+enum class IOAdvice : uint32_t;
+
 class DataInput : public duckdb::ReadStream {
  public:
   static constexpr bool kVolatileAlways = false;
@@ -122,9 +124,7 @@ class IndexInput : public DataInput {
 
   virtual bool Resident(uint64_t, uint64_t) const noexcept { return false; }
 
-  virtual void EnableReadahead() noexcept {}
-
-  virtual void LimitReadahead(uint64_t) noexcept {}
+  virtual void Advise(IOAdvice) noexcept {}
 
   IndexInput& operator=(const IndexInput&) = delete;
 

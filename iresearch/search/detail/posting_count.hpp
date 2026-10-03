@@ -30,8 +30,8 @@
 namespace irs::detail {
 
 template<typename InputType>
-class PostingCount : public PostingLeaf<InputType, kWindowShape> {
-  using Base = PostingLeaf<InputType, kWindowShape>;
+class PostingCount : public PostingLeaf<InputType, kCountShape> {
+  using Base = PostingLeaf<InputType, kCountShape>;
 
   using Base::_doc;
   using Base::_docs;

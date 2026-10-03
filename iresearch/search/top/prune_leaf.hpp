@@ -124,8 +124,10 @@ class PruneLeafBase {
 
     _in = OpenDocInput(meta, doc_in);
     auto& in = In();
-    LimitDocReadahead(in, meta);
     _left_in_list = meta.docs_count;
+    if (const auto extent = DocExtent(meta); extent != 0) {
+      _hint.Arm(meta.doc_start, meta.doc_start + extent);
+    }
 
     if (meta.docs_count > doc_limits::kBlockSize) {
       _cursor.Arm(meta, BlockIndexShapeOf(layout, true));
@@ -294,6 +296,7 @@ class PruneLeafBase {
 
   void ReadLeaf(doc_id_t prev) {
     auto& in = In();
+    _hint.Advance(in, in.Position());
     const auto len = std::min(_left_in_list, doc_limits::kBlockSize);
     FormatTraits128::ReadTailDelta(len, in, _enc.data, _docs, prev);
     FormatTraits128::ReadTail(len, in, _enc.data, _freqs.data);
@@ -403,6 +406,7 @@ class PruneLeafBase {
   detail::LeafProvider _provider;
   detail::LeafRecipe _recipe;
   BlockCursor _cursor;
+  GrowingHint _hint;
   ScoreFunction _bound_func;
   ScoreBoundSource::ptr _bound_source;
   std::array<uint32_t, kCachedBlocks> _cached;

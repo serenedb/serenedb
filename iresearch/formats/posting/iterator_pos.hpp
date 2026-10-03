@@ -120,8 +120,8 @@ class PositionImpl final : public PosAttr {
     }
 
     _pos.view = IteratorTraits::View(*_pos.in);
-    LimitPosReadahead(irs::utils::downCast<InputType>(*_pos.in),
-                      *state.term_state);
+    _pos.hint.Arm(state.term_state->pos_start,
+                  state.term_state->pos_start + PosExtent(*state.term_state));
     _enc_buf = state.enc_buf;
 
     if constexpr (IteratorTraits::Offset()) {
@@ -136,6 +136,8 @@ class PositionImpl final : public PosAttr {
       }
 
       _pay.view = IteratorTraits::View(*_pay.in);
+      _pay.hint.Arm(state.term_state->pay_start,
+                    state.term_state->pay_start + PosExtent(*state.term_state));
     }
     Land(state.term_state->pos_start, state.term_state->pay_start,
          state.term_state->pos_offset);
@@ -163,6 +165,7 @@ class PositionImpl final : public PosAttr {
  private:
   struct Stream {
     void Load() {
+      hint.Advance(*in, group);
       if (view != nullptr) {
         header = view->ReadStable(group, PosGroup::kHeaderBytes);
       } else {
@@ -199,11 +202,16 @@ class PositionImpl final : public PosAttr {
       }
     }
 
+    void Account() {
+      hint.Advance(*in, view != nullptr ? view->Position() : in->Position());
+    }
+
     IndexInput::ptr in;
     BytesViewInput* view = nullptr;
     uint64_t group = 0;
     const byte_type* header = nullptr;
     byte_type copy[PosGroup::kHeaderBytes];
+    GrowingHint hint;
   };
 
   struct Cookie {
@@ -305,6 +313,10 @@ class PositionImpl final : public PosAttr {
         _pay.Step();
       }
       _next = 0;
+    }
+    _pos.Account();
+    if constexpr (IteratorTraits::Offset()) {
+      _pay.Account();
     }
     if (_pos.view != nullptr && (!IteratorTraits::Offset() || PayView()))
       [[likely]] {

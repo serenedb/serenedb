@@ -66,6 +66,7 @@ class PostingsStream : public TermPostings {
       _doc_in = OpenDocInput(meta, doc_in);
 
       auto& in = In();
+      PrefetchDocs(in, meta);
       // A term short enough to have no skip list carries its score bound
       // ahead of the one block it does have; a longer one carries it past
       // the blocks, where nothing reading forward ever reaches it.

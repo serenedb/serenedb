@@ -73,7 +73,9 @@ class PostingPos {
     } else {
       _in = OpenDocInput(meta, doc_in);
       auto& in = In();
-      LimitDocReadahead(in, meta);
+      if (const auto extent = DocExtent(meta); extent != 0) {
+        _hint.Arm(meta.doc_start, meta.doc_start + extent);
+      }
       if (meta.docs_count < doc_limits::kBlockSize) {
         SkipScoreBounds(Bounds, in);
       }
@@ -216,6 +218,7 @@ class PostingPos {
 
   void ReadLeaf(doc_id_t prev) {
     auto& in = In();
+    _hint.Advance(in, in.Position());
     if (_left_in_list >= doc_limits::kBlockSize) [[likely]] {
       FormatTraits128::ReadBlockDelta(in, Enc(), _docs, prev);
       _left_in_leaf = doc_limits::kBlockSize;
@@ -257,6 +260,7 @@ class PostingPos {
   IndexInput::ptr _in;
   Position _pos;
   BlockCursor _cursor;
+  GrowingHint _hint;
   doc_id_t _doc = doc_limits::invalid();
   doc_id_t _max_in_leaf = doc_limits::invalid();
   uint32_t _docs_count = 0;

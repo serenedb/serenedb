@@ -22,12 +22,14 @@
 
 #include <algorithm>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <utility>
 #include <vector>
 
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/common.hpp"
+#include "iresearch/formats/posting/doc_input.hpp"
 #include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/bitset_storage.hpp"
@@ -294,7 +296,6 @@ class PostingReader {
     }
     auto& in = In();
     in.Seek(meta.doc_start);
-    LimitDocReadahead(in, meta);
     ReadPosting(meta, in, Enc(), Holes(), Docs(), has_score_bounds, has_freq,
                 sink);
   }
@@ -308,38 +309,17 @@ class PostingReader {
   [[no_unique_address]] NeedEnc<Input> _enc;
 };
 
-template<typename Term, typename Input>
-void PrefetchTerms(std::span<const Term> terms, PostingReader<Input>& r) {
-  const PostingMeta* first = nullptr;
-  for (const auto& term : terms) {
-    const auto& meta = CookieOf(term);
-    if (meta.docs_count > 1 && meta.inline_size == 0) {
-      first = &meta;
-      break;
-    }
-  }
-  if (first == nullptr) {
-    return;
-  }
-  auto& in = r.In();
-  if (in.Resident(first->doc_start, file_utils::kPage)) {
-    return;
-  }
-  for (const auto& term : terms) {
-    const auto& meta = CookieOf(term);
-    if (meta.docs_count <= 1 || meta.inline_size != 0) {
-      continue;
-    }
-    in.Prefetch(meta.doc_start, meta.docs_count > doc_limits::kBlockSize
-                                  ? uint64_t{meta.doc_delta}
-                                  : file_utils::kPage);
-  }
-}
-
 template<typename Term, typename Sink, typename Input>
 void ReadTerms(std::span<const Term> terms, const TermReader* field,
                PostingReader<Input>& r, Sink& sink) {
-  PrefetchTerms(terms, r);
+  const auto metas =
+    terms | std::views::transform([](const Term& term) -> const PostingMeta& {
+      return CookieOf(term);
+    });
+  if (std::ranges::any_of(
+        metas, [](const PostingMeta& meta) { return DocExtent(meta) != 0; })) {
+    PrefetchDocExtents(r.In(), metas);
+  }
   for (size_t i = 0; i != terms.size(); ++i) {
     const auto& meta = CookieOf(terms[i]);
     SDB_ASSERT(meta.docs_count != 0);

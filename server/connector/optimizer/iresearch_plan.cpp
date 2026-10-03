@@ -412,14 +412,13 @@ bool TryFoldQueryVector(duckdb::ClientContext& context,
   if (!TryFoldExpression(context, expr, folded)) {
     return false;
   }
-  duckdb::Value casted;
-  const auto target =
-    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, dim);
-  if (!folded.DefaultTryCastAs(target, casted, nullptr) || casted.IsNull()) {
+  const auto casted = folded.DefaultTryCastAs(
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, dim));
+  if (!casted || casted->IsNull()) {
     return false;
   }
   out.reserve(dim);
-  for (const auto& child : duckdb::ArrayValue::GetChildren(casted)) {
+  for (const auto& child : duckdb::ArrayValue::GetChildren(*casted)) {
     if (child.IsNull()) {
       return false;
     }
@@ -940,9 +939,9 @@ std::optional<duckdb::ColumnBinding> ScoreSideBinding(
   const duckdb::Expression* e, bool& negated) {
   negated = false;
   const auto strip_casts = [](const duckdb::Expression* x) {
-    while (x &&
-           x->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
-      x = &x->Cast<duckdb::BoundCastExpression>().Child();
+    while (x && duckdb::BoundCastExpression::IsCast(*x)) {
+      x = &duckdb::BoundCastExpression::Child(
+        x->Cast<duckdb::BoundFunctionExpression>());
     }
     return x;
   };

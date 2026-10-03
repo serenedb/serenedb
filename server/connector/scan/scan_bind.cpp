@@ -273,7 +273,7 @@ duckdb::unique_ptr<duckdb::NodeStatistics> ScanBindData::Cardinality(
 duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   const duckdb::QualifiedName qualified{
     duckdb::Identifier{input.inputs[0].GetValue<std::string>()},
     duckdb::Identifier{input.inputs[1].GetValue<std::string>()},

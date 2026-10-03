@@ -7,6 +7,7 @@ add_compile_warnings_flags()
 add_executable(serened rest_server/serened.cpp)
 
 target_link_libraries(serened serene_docs_shell)
+sdb_link_duckdb_extensions(serened)
 
 ################################################################################
 ## installation
@@ -45,6 +46,7 @@ target_include_directories(
         ${CMAKE_SOURCE_DIR}/server
         # ICU extension helpers for session-zone TIMESTAMPTZ text I/O.
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/icu/include
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/icu/datetime/include
 )
 
 add_subdirectory(auth)

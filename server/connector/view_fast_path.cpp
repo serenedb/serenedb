@@ -27,13 +27,12 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp>
-#include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/enums/file_compression_type.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/multi_file/multi_file_states.hpp>
-#include <duckdb/common/string_util.hpp>
 #include <duckdb/execution/expression_executor.hpp>
+#include <duckdb/function/function_binder.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/cast_expression.hpp>
@@ -47,6 +46,7 @@
 #include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
 #include <duckdb/planner/binder.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression_binder/table_function_binder.hpp>
 #include <duckdb/planner/tableref/bound_at_clause.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -398,10 +398,9 @@ bool IsCompressedJson(const std::string& path,
                       const duckdb::named_parameter_map_t& named_params) {
   auto compression = duckdb::FileCompressionType::AUTO_DETECT;
   if (auto it = named_params.find("compression"); it != named_params.end()) {
-    compression = duckdb::EnumUtil::FromString<duckdb::FileCompressionType>(
-      duckdb::StringUtil::Upper(it->second.ToString()));
+    compression = duckdb::FileCompressionType{it->second.ToString()};
   }
-  if (compression == duckdb::FileCompressionType::AUTO_DETECT) {
+  if (compression.IsAutoDetect()) {
     return duckdb::IsFileCompressed(path, duckdb::FileCompressionType::GZIP) ||
            duckdb::IsFileCompressed(path, duckdb::FileCompressionType::ZSTD);
   }
@@ -437,8 +436,8 @@ std::optional<ViewFastPath> ResolveFunctionSource(duckdb::Binder& binder,
           child = std::move(comp.RightMutable());
         }
       }
-    } else if (child->IsNamedParameter()) {
-      param_name = child->GetAlias();
+    } else if (arg.HasName()) {
+      param_name = arg.GetName();
     }
     duckdb::TableFunctionBinder arg_binder(binder, binder.context,
                                            std::string{entry->function_name});
@@ -560,7 +559,7 @@ void EnableIcebergSort(duckdb::FunctionData* bind_data) noexcept {
   }
   if (auto* iceberg_list = dynamic_cast<duckdb::IcebergMultiFileList*>(
         multi_bd->file_list.get())) {
-    iceberg_list->need_sort = true;
+    iceberg_list->GetScanPlanner().SortFilesByPath();
   }
 }
 
@@ -598,52 +597,64 @@ duckdb::unique_ptr<duckdb::FunctionData> BindCatalogSource(
 duckdb::unique_ptr<duckdb::FunctionData> BindReaderSource(
   duckdb::ClientContext& context, const ViewFastPath& fp) {
   SDB_ASSERT(!fp.args.empty());
-  auto reader =
+  auto& reader =
     duckdb::Catalog::GetEntry(
       context,
       duckdb::EntryLookupInfo{
         duckdb::CatalogType::TABLE_FUNCTION_ENTRY,
         duckdb::QualifiedName(SYSTEM_CATALOG, DEFAULT_SCHEMA,
                               duckdb::Identifier{fp.function_name})})
-      .Cast<duckdb::TableFunctionCatalogEntry>()
-      .functions.GetFunctionByArguments(context,
-                                        {duckdb::LogicalType::VARCHAR});
-  duckdb::vector<duckdb::Value> inputs = fp.args;
-  duckdb::named_parameter_map_t named_params;
-  named_params.reserve(fp.named_params.size() + 1);
-  for (auto& [k, v] : fp.named_params) {
-    auto it = reader.named_parameters.find(k);
-    if (it == reader.named_parameters.end() ||
-        it->second.id() == duckdb::LogicalTypeId::ANY) {
-      named_params.emplace(k, v);
+      .Cast<duckdb::TableFunctionCatalogEntry>();
+  const bool pin_snapshot =
+    fp.pinned_iceberg_snapshot_id != 0 && fp.function_name == "iceberg_scan";
+  const duckdb::Identifier snapshot_param{"snapshot_from_id"};
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> positional;
+  positional.reserve(fp.args.size());
+  for (const auto& arg : fp.args) {
+    positional.push_back(
+      duckdb::make_uniq<duckdb::BoundConstantExpression>(arg));
+  }
+  duckdb::vector<
+    std::pair<duckdb::Identifier, duckdb::unique_ptr<duckdb::Expression>>>
+    named;
+  named.reserve(fp.named_params.size() + 1);
+  for (const auto& [name, value] : fp.named_params) {
+    if (pin_snapshot && name == snapshot_param) {
       continue;
     }
-    duckdb::Value coerced = v;
-    if (!coerced.DefaultTryCastAs(it->second)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("named argument `", k.GetIdentifierName(), "` for `",
-                fp.function_name, "` cannot be coerced from ",
-                v.type().ToString(), " to ", it->second.ToString()));
-    }
-    named_params.emplace(k, std::move(coerced));
+    named.emplace_back(
+      name, duckdb::make_uniq<duckdb::BoundConstantExpression>(value));
   }
-  if (fp.pinned_iceberg_snapshot_id != 0 &&
-      fp.function_name == "iceberg_scan") {
-    named_params["snapshot_from_id"] = duckdb::Value::UBIGINT(
-      static_cast<uint64_t>(fp.pinned_iceberg_snapshot_id));
+  if (pin_snapshot) {
+    named.emplace_back(
+      snapshot_param,
+      duckdb::make_uniq<duckdb::BoundConstantExpression>(duckdb::Value::UBIGINT(
+        static_cast<uint64_t>(fp.pinned_iceberg_snapshot_id))));
   }
-  duckdb::vector<duckdb::LogicalType> unused_types;
-  duckdb::vector<duckdb::Identifier> unused_names;
-  duckdb::TableFunctionRef unused_ref;
-  duckdb::TableFunctionBindInput input(inputs, named_params, unused_types,
-                                       unused_names, reader.function_info.get(),
-                                       nullptr, reader, unused_ref);
-  duckdb::vector<duckdb::LogicalType> out_types;
-  duckdb::vector<std::string> out_names;
-  auto bind_data = reader.bind(context, input, out_types, out_names);
-  if (reader.get_virtual_columns) {
-    reader.get_virtual_columns(context, bind_data.get());
+  duckdb::FunctionBinder function_binder{context};
+  duckdb::vector<duckdb::Value> parameters;
+  duckdb::named_argument_map_t named_parameters;
+  duckdb::ErrorData error;
+  const auto index =
+    function_binder.BindFunction(reader.name, reader.functions, positional,
+                                 named, parameters, named_parameters, error);
+  if (!index.IsValid()) {
+    error.Throw();
+  }
+  duckdb::BoundTableFunction function{
+    reader.functions.GetFunctionByOffset(index.GetIndex())};
+  function.SetCallArguments(parameters, named_parameters);
+  duckdb::vector<duckdb::LogicalType> input_table_types;
+  duckdb::vector<duckdb::Identifier> input_table_names;
+  duckdb::TableFunctionRef ref;
+  duckdb::TableFunctionBindInput input(
+    parameters, named_parameters, input_table_types, input_table_names,
+    function.function_info.get(), nullptr, function, ref);
+  duckdb::vector<duckdb::LogicalType> types;
+  duckdb::vector<duckdb::Identifier> names;
+  auto bind_data = function.bind(context, input, types, names);
+  if (function.get_virtual_columns) {
+    function.get_virtual_columns(context, bind_data.get());
   }
   return bind_data;
 }

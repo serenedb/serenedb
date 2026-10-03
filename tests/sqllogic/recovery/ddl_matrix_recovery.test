@@ -573,7 +573,7 @@ connection after_crash
 statement error
 INSERT INTO dm.pk VALUES (9, 'much too long');
 ----
-db error: ERROR: CHECK constraint failed on table pk with expression CHECK((length(v) < 10))
+db error: ERROR: CHECK constraint failed on table "pk" with expression CHECK((length(v) < 10))
 
 
 connection after_crash

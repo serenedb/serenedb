@@ -107,4 +107,4 @@ GROUP BY 2 * mark + 228
 ORDER BY 2 * mark + 228, ROW_NUMBER() OVER (PARTITION BY 2 * mark + 228);
 ----
 db error: ERROR: column "mark" must appear in the GROUP BY clause or must be part of an aggregate function.
-Either add it to the GROUP BY list, or use "ANY_VALUE(mark)" if the exact value of "mark" is not important.
+Either add it to the GROUP BY list, or use ANY_VALUE("mark") if the exact value of "mark" is not important.

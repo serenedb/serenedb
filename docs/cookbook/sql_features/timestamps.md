@@ -34,13 +34,16 @@ This will avoid confusing issues such as this, and the arithmetic operations are
 
 ## Time Zone Performance
 
-SereneDB uses the _International Components for Unicode_ time library for
-time zone support.
-This library has a number of advantages, including support for daylight savings time past 2037.
+SereneDB's time zone support follows the rules of the _International Components for Unicode_
+and carries the IANA time zone database, including daylight savings time past 2037.
 (Note: Pandas gives incorrect results past that year).
 
-The downside of using ICU is that it is not highly performant.
-One workaround for this is to create a calendar table for the timestamps being modeled.
+Zoned binning and arithmetic (`date_trunc`, `date_part`, `strftime`, `time_bucket`, the casts,
+`AT TIME ZONE`, interval arithmetic and `date_diff`, among others) read a per-zone table of the days
+from 1900 to 2299 instead of running the calendar computation for every value.
+A value outside that range, or on a day with several transitions, takes the per-value computation.
+
+When the same bins are needed again and again, a calendar table for the timestamps being modeled still helps.
 For example, if the application is modeling electrical supply and demand out to 2100 at hourly resolution,
 one can create the calendar table like so:
 
@@ -54,7 +57,7 @@ because `date_part` returns 64 bit integers for all parts.
 Notice that we can extract _all_ of the parts with a single call to `date_part`.
 This part list version of the function is faster than extracting the parts one by one
 because the underlying binning computation computes all parts,
-so picking out the ones in the list avoids duplicate calls to the slow ICU function.
+so picking out the ones in the list avoids computing the bins once per part.
 
 Also notice that we are leveraging the `DATE` cast rules from the previous section
 to bound the calendar to the model domain.

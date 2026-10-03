@@ -67,7 +67,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SystemTableInit(
 void SystemTableScanSerialize(
   duckdb::Serializer& serializer,
   const duckdb::optional_ptr<duckdb::FunctionData> bind_data,
-  const duckdb::TableFunction&) {
+  const duckdb::BoundTableFunction&) {
   const auto& entry = *bind_data->Cast<SystemTableBindData>().entry;
   serializer.WriteProperty(100, "catalog", entry.catalog.GetName());
   serializer.WriteProperty(101, "schema", entry.ParentSchemaName());
@@ -75,7 +75,7 @@ void SystemTableScanSerialize(
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> SystemTableScanDeserialize(
-  duckdb::Deserializer& deserializer, duckdb::TableFunction&) {
+  duckdb::Deserializer& deserializer, duckdb::BoundTableFunction&) {
   const auto catalog =
     deserializer.ReadProperty<duckdb::Identifier>(100, "catalog");
   const auto schema =

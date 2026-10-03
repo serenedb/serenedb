@@ -78,8 +78,8 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   void Alter(duckdb::CatalogTransaction transaction,
              duckdb::AlterInfo& info) final;
 
-  std::string GetDefaultSchema() const final {
-    return std::string{irs::StaticStrings::kPublic};
+  duckdb::optional<duckdb::Identifier> GetDefaultSchema() const final {
+    return duckdb::Identifier{std::string{irs::StaticStrings::kPublic}};
   }
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateSchema(
@@ -143,8 +143,17 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
 
   duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndex(
     duckdb::Binder& binder, duckdb::CreateStatement& stmt,
-    duckdb::CatalogEntry& table,
+    duckdb::TableCatalogEntry& table,
     duckdb::unique_ptr<duckdb::LogicalOperator> plan) final;
+
+  duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateViewIndex(
+    duckdb::Binder& binder, duckdb::CreateStatement& stmt,
+    duckdb::ViewCatalogEntry& view,
+    duckdb::unique_ptr<duckdb::LogicalOperator> plan) final;
+
+  void BindIndexDefinition(duckdb::Binder& binder,
+                           duckdb::CreateStatement& stmt,
+                           duckdb::CatalogEntry& target);
 
   void RefuseUnsupportedAlter(duckdb::ClientContext& context,
                               duckdb::AlterInfo& info);

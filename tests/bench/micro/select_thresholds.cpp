@@ -111,7 +111,7 @@ std::unique_ptr<Blk> BuildBlk(const Shape& shape, uint64_t w) {
                  qr->GetError().c_str());
     std::abort();
   }
-  const auto col_type = qr->types[0];
+  const auto col_type = qr->GetTypes()[0];
   {
     irs::ColWriter writer{blk->dir, kSegName, CsDb()};
     auto& cw = writer.OpenColumn(kField, col_type);

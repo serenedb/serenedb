@@ -33,7 +33,6 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
-#include <duckdb/main/materialized_query_result.hpp>
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/main/query_result.hpp>
 #include <exception>
@@ -336,7 +335,7 @@ class Loader {
         values.emplace_back(std::string{doc.content});
       }
       auto& statement = tail ? *tail : *full;
-      auto result = statement.Execute(values, /*allow_stream_result=*/false);
+      auto result = statement.Execute(values);
       if (result->HasError()) {
         SDB_WARN(GENERAL, "embedded docs: insert failed: ", result->GetError());
         return false;

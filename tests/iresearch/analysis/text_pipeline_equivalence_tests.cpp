@@ -44,8 +44,8 @@ using namespace irs::analysis;
 
 const std::vector<std::string> kStopwords = {"the", "and", "of", "a"};
 
-Tokenizer::ptr MakeHead(const icu::Locale& seg_locale) {
-  if (seg_locale.isBogus()) {
+Tokenizer::ptr MakeHead(const duckdb::text::Locale& seg_locale) {
+  if (seg_locale.IsBogus()) {
     return TextTokenizer::Make({.convert = irs::Case::Lower});
   }
   return IcuTextTokenizer::Make({.locale = seg_locale});
@@ -53,7 +53,7 @@ Tokenizer::ptr MakeHead(const icu::Locale& seg_locale) {
 
 Tokenizer::ptr MakeNorm(bool lower) {
   NormalizingTokenizer::Options o;
-  o.locale = icu::Locale::createFromName("en");
+  o.locale = duckdb::text::Locale::FromName("en");
   o.case_convert = lower ? Case::Lower : Case::None;
   o.accent = false;
   return NormalizingTokenizer::Make(std::move(o));
@@ -61,13 +61,13 @@ Tokenizer::ptr MakeNorm(bool lower) {
 
 Tokenizer::ptr MakeStem() {
   StemmingTokenizer::Options o;
-  o.locale = icu::Locale::createFromName("en");
+  o.locale = duckdb::text::Locale::FromName("en");
   return StemmingTokenizer::Make(std::move(o));
 }
 
 Tokenizer::ptr MakePipelineTextEn(
-  const icu::Locale& seg_locale = irs::MakeBogusLocale()) {
-  const bool icu = !seg_locale.isBogus();
+  const duckdb::text::Locale& seg_locale = duckdb::text::Locale{}) {
+  const bool icu = !seg_locale.IsBogus();
   std::vector<Tokenizer::ptr> subs;
   subs.push_back(MakeHead(seg_locale));
   subs.push_back(MakeNorm(icu));
@@ -81,13 +81,13 @@ Tokenizer::ptr MakePipelineTextEn(
 }
 
 Tokenizer::ptr MakeIcuTextEn() {
-  return MakePipelineTextEn(icu::Locale::createFromName("en_US.UTF-8"));
+  return MakePipelineTextEn(duckdb::text::Locale::FromName("en_US.UTF-8"));
 }
 
 Tokenizer::ptr MakePipelineTextEnNGram(size_t min_gram, size_t max_gram,
                                        bool preserve_original) {
   std::vector<Tokenizer::ptr> subs;
-  subs.push_back(MakeHead(irs::MakeBogusLocale()));
+  subs.push_back(MakeHead(duckdb::text::Locale{}));
   subs.push_back(MakeNorm(false));
   {
     StopwordsTokenizer::Options s;
@@ -290,7 +290,7 @@ TEST(TextPipelineEquivalenceTest, loaded_stopwords_match_inline) {
 
   const auto make = [&](StopwordsTokenizer::Options stop) {
     std::vector<Tokenizer::ptr> subs;
-    subs.push_back(MakeHead(irs::MakeBogusLocale()));
+    subs.push_back(MakeHead(duckdb::text::Locale{}));
     subs.push_back(MakeNorm(false));
     subs.push_back(StopwordsTokenizer::Make(std::move(stop), tests::Cache()));
     subs.push_back(MakeStem());
@@ -310,7 +310,7 @@ TEST(TextPipelineEquivalenceTest, icu_sentence_segmentation) {
   auto icu = IcuTextTokenizer::Make(
     {.separate = IcuTextTokenizer::Options::Separate::Sentence,
      .accept = Accept::Any,
-     .locale = icu::Locale::createFromName("en_US.UTF-8")});
+     .locale = duckdb::text::Locale::FromName("en_US.UTF-8")});
   const std::vector<std::string> values = {
     "Hello world. Second sentence! And a third one?",
     "One sentence only",

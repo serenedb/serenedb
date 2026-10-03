@@ -22,9 +22,9 @@
 
 #include <atomic>
 #include <duckdb/main/connection.hpp>
-#include <duckdb/main/materialized_query_result.hpp>
-#include <duckdb/main/pending_query_result.hpp>
 #include <duckdb/main/prepared_statement.hpp>
+#include <duckdb/main/query_parameters.hpp>
+#include <duckdb/main/query_result.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <thread>
@@ -43,17 +43,17 @@ namespace {
 // Yield/Park exactly like the session's DriveQuery, then parks until an
 // external RequestRun releases it.
 yaclib::Future<> HostedBody(network::CpuResumer& task,
-                            duckdb::PendingQueryResult& pending,
+                            duckdb::QueryResult& pending,
                             std::atomic<int>& phase, std::thread::id test_tid) {
   co_await task.Park();
   EXPECT_NE(std::this_thread::get_id(), test_tid);
 
   for (;;) {
     const auto status = pending.ExecuteTask([&task] { task.RequestRun(); });
-    if (duckdb::PendingQueryResult::IsResultReady(status)) {
+    if (duckdb::IsObservable(status)) {
       break;
     }
-    if (status == duckdb::PendingExecutionResult::RESULT_NOT_READY) {
+    if (status == duckdb::QueryResultState::NOT_READY) {
       co_await task.Yield();
     } else {
       co_await task.Park();
@@ -78,7 +78,9 @@ TEST(NetworkCpuResumer, DrivesQueryAndParksOffTestThread) {
   auto prepared = connection->Prepare("SELECT 42");
   ASSERT_FALSE(prepared->HasError());
   duckdb::vector<duckdb::Value> params;
-  auto pending = prepared->PendingQuery(params, /*allow_stream_result=*/false);
+  duckdb::QueryParameters parameters;
+  parameters.result_eagerness = duckdb::ResultEagerness::FORCED;
+  auto pending = prepared->Submit(params, parameters);
   ASSERT_FALSE(pending->HasError());
 
   auto& scheduler = duckdb::TaskScheduler::GetScheduler(
@@ -97,10 +99,9 @@ TEST(NetworkCpuResumer, DrivesQueryAndParksOffTestThread) {
   while (phase.load(std::memory_order_acquire) != 1) {
     std::this_thread::yield();
   }
-  auto result = pending->Execute();
-  ASSERT_FALSE(result->HasError());
-  auto& materialized = result->Cast<duckdb::MaterializedQueryResult>();
-  EXPECT_EQ(materialized.GetValue(0, 0).GetValue<int64_t>(), 42);
+  pending->Complete();
+  ASSERT_FALSE(pending->HasError());
+  EXPECT_EQ(pending->Collection().GetValue(0, 0).GetValue<int64_t>(), 42);
 
   // Wake the parked coroutine from a foreign thread.
   phase.store(2, std::memory_order_release);

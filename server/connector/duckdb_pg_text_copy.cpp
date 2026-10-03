@@ -274,7 +274,7 @@ struct PgTextCopyFromGlobalState final
 
 duckdb::unique_ptr<duckdb::FunctionData> BindFrom(
   duckdb::ClientContext&, duckdb::CopyFromFunctionBindInput& input,
-  duckdb::vector<std::string>&,
+  duckdb::vector<duckdb::Identifier>&,
   duckdb::vector<duckdb::LogicalType>& expected_types) {
   // HEADER lands in parsed_options (still populated here -- the binder folds it
   // into options only after this bind); delimiter/null arrive via options.
@@ -564,40 +564,43 @@ void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
 }  // namespace
 
 void ResolveTextCopyOptions(
-  const duckdb::case_insensitive_map_t<duckdb::vector<duckdb::Value>>& options,
+  const duckdb::identifier_map_t<duckdb::vector<duckdb::Value>>& options,
   TextCopyOptions& out) {
   for (const auto& [key, values] : options) {
     if (values.empty()) {
-      ApplyTextCopyOption(out, key, {});
+      ApplyTextCopyOption(out, key.GetIdentifierName(), {});
     } else {
-      ApplyTextCopyOption(out, key, values[0].GetValue<std::string>());
+      ApplyTextCopyOption(out, key.GetIdentifierName(),
+                          values[0].GetValue<std::string>());
     }
   }
 }
 
 TextCopyOptions ResolveTextCopyOptions(
-  const duckdb::case_insensitive_map_t<duckdb::vector<duckdb::Value>>&
-    options) {
+  const duckdb::identifier_map_t<duckdb::vector<duckdb::Value>>& options) {
   TextCopyOptions result;
   ResolveTextCopyOptions(options, result);
   return result;
 }
 
 TextCopyOptions ResolveTextCopyOptions(
-  const duckdb::case_insensitive_map_t<
-    duckdb::unique_ptr<duckdb::ParsedExpression>>& parsed_options) {
+  const duckdb::identifier_map_t<duckdb::unique_ptr<duckdb::ParsedExpression>>&
+    parsed_options) {
   TextCopyOptions result;
   for (const auto& [key, expr] : parsed_options) {
     if (!expr) {
       // A bare boolean flag (e.g. HEADER with no value) means true.
-      ApplyTextCopyOption(result, key, {});
+      ApplyTextCopyOption(result, key.GetIdentifierName(), {});
       continue;
     }
     if (expr->GetExpressionClass() != duckdb::ExpressionClass::CONSTANT) {
       continue;
     }
-    const auto& value = expr->Cast<duckdb::ConstantExpression>().GetValue();
-    ApplyTextCopyOption(result, key, value.GetValue<std::string>());
+    ApplyTextCopyOption(result, key.GetIdentifierName(),
+                        expr->Cast<duckdb::ConstantExpression>()
+                          .GetLiteral()
+                          .ToValue()
+                          .GetValue<std::string>());
   }
   return result;
 }

@@ -26,9 +26,11 @@
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
+#include <duckdb/function/scalar/string_common.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
+#include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -139,6 +141,18 @@ void ToHexFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 }
 
 // get_byte(bytea, offset) -> integer -- ported from PgGetByte
+void BlobPositionFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                          duckdb::Vector& result) {
+  duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t, int64_t>(
+    args.data[0], args.data[1], result, args.size(),
+    [](duckdb::string_t data, duckdb::string_t search) -> int64_t {
+      const auto location = duckdb::FindStrInStr(data, search);
+      return location == duckdb::DConstants::INVALID_INDEX
+               ? 0
+               : static_cast<int64_t>(location) + 1;
+    });
+}
+
 void GetByteFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                      duckdb::Vector& result) {
   duckdb::BinaryExecutor::Execute<duckdb::string_t, int32_t, int32_t>(
@@ -1103,9 +1117,11 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
                                 duckdb::LogicalType::VARCHAR,
                                 PgFormatFunction,
                                 PgFormatBind};
-    func.SetVarArgs(duckdb::LogicalType::ANY);
+    func.GetSignature().AddArgs("args", duckdb::LogicalType::ANY);
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    loader.RegisterFunction(func);
+    duckdb::CreateScalarFunctionInfo info{std::move(func)};
+    info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
+    loader.RegisterFunction(std::move(info));
   }
 
   // normalize(text [, form]) -> text
@@ -1173,6 +1189,12 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
                                                  {duckdb::LogicalType::BIGINT},
                                                  duckdb::LogicalType::VARCHAR,
                                                  ToHexFunction<int64_t>});
+
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    "position",
+    {duckdb::LogicalType::BLOB, duckdb::LogicalType::BLOB},
+    duckdb::LogicalType::BIGINT,
+    BlobPositionFunction});
 
   // get_byte(bytea, int) -> int
   loader.RegisterFunction(duckdb::ScalarFunction{

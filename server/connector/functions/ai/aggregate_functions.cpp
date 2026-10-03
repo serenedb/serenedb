@@ -190,9 +190,6 @@ duckdb::unique_ptr<duckdb::FunctionData> AggBind(
   bind->max_context = static_cast<size_t>(chars);
   bind->final_system = Prompt(summarize, false, instruction);
   bind->partial_system = Prompt(summarize, true, instruction);
-  while (args.size() > 1) {
-    duckdb::Function::EraseArgument(fn, args, args.size() - 1);
-  }
   return bind;
 }
 

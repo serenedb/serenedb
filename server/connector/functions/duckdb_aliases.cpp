@@ -55,8 +55,11 @@ constexpr std::array kTableFunctions{
   std::string_view{"duckdb_databases"},
   std::string_view{"duckdb_dependencies"},
   std::string_view{"duckdb_eviction_queues"},
+  std::string_view{"duckdb_extension_repositories"},
   std::string_view{"duckdb_extensions"},
   std::string_view{"duckdb_external_file_cache"},
+  std::string_view{"duckdb_external_resource_types"},
+  std::string_view{"duckdb_external_resources"},
   std::string_view{"duckdb_functions"},
   std::string_view{"duckdb_indexes"},
   std::string_view{"duckdb_keywords"},
@@ -66,6 +69,7 @@ constexpr std::array kTableFunctions{
   std::string_view{"duckdb_optimizers"},
   std::string_view{"duckdb_prepared_statements"},
   std::string_view{"duckdb_schemas"},
+  std::string_view{"duckdb_secret_type_parameters"},
   std::string_view{"duckdb_secret_types"},
   std::string_view{"duckdb_secrets"},
   std::string_view{"duckdb_sequences"},
@@ -205,7 +209,6 @@ void RegisterDuckDBAliases(duckdb::DatabaseInstance& db) {
   AliasScalarFunctions(loader);
 
   duckdb::ParserOptions parser_options;
-  parser_options.parser_cache = &db.GetParserCache();
   duckdb::Parser parser{parser_options};
   AliasTableMacros(loader, parser_options);
   AliasViews(db, parser);

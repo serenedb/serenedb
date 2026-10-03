@@ -554,21 +554,21 @@ statement error
 SELECT id FROM geo_data_g_idx
 WHERE ST_Intersects(geo, 'POINT(0 0)'::GEOMETRY('OGC:CRS83'))
 ----
-db error: ERROR: Cannot call function 'ST_Intersects' with geometries of different coordinate reference systems (CRS).<slt:ignore>
+db error: ERROR: Cannot call function "ST_Intersects" with geometries of different coordinate reference systems (CRS).<slt:ignore>
 
 
 statement error
 SELECT id FROM geo_data_g_idx
 WHERE ST_Contains(geo, 'POINT(0 0)'::GEOMETRY('OGC:CRS83'))
 ----
-db error: ERROR: Cannot call function 'ST_Contains' with geometries of different coordinate reference systems (CRS).<slt:ignore>
+db error: ERROR: Cannot call function "ST_Contains" with geometries of different coordinate reference systems (CRS).<slt:ignore>
 
 
 statement error
 SELECT id FROM geo_data_g_idx
 WHERE ST_Contains('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'::GEOMETRY('OGC:CRS83'), geo)
 ----
-db error: ERROR: Cannot call function 'ST_Contains' with geometries of different coordinate reference systems (CRS).<slt:ignore>
+db error: ERROR: Cannot call function "ST_Contains" with geometries of different coordinate reference systems (CRS).<slt:ignore>
 
 
 # --- Error: GEOMETRY constant with Z / M dimensions ---
@@ -1118,7 +1118,7 @@ ORDER BY id;
 ----
 QUERY PLAN
 ╭─ ORDER_BY ──────────────────────────────────────╮
-│ Order By: places_idx.id ASC                     │
+│ Order By: id ASC                                │
 │ ~1 row                                          │
 ╰────────────────────────┬────────────────────────╯
 ╭─ PROJECTION ───────────┴────────────────────────╮
@@ -1160,7 +1160,7 @@ ORDER BY BM25(places_idx.tableoid) DESC, id;
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────────╮
-│ Order By: #1 DESC, places_idx.id ASC                     │
+│ Order By: #1 DESC, id ASC                                │
 │ ~1 row                                                   │
 ╰─────────────────────────────┬────────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────────┴────────────────────────────╮

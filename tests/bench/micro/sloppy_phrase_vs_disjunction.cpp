@@ -248,7 +248,8 @@ class BreakIterator {
     while (it != _end) {
       const OctetIterator prev = it;
       int sz = 0;
-      const auto cp = duckdb::Utf8Proc::UTF8ToCodepoint(&*it, sz);
+      const auto cp = duckdb::Utf8Proc::UTF8ToCodepoint(
+        &*it, sz, static_cast<size_t>(std::distance(it, _end)));
       it += sz > 0 ? sz : 1;
       if (static_cast<uint32_t>(cp) == _delim) {
         _res.assign(_wbegin, prev);

@@ -28,8 +28,8 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/common/query_context.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/main/query_context.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/qualified_name.hpp>
@@ -116,14 +116,12 @@ std::shared_ptr<const InvertedIndexConfig> FromPersisted(
 }
 
 duckdb::shared_ptr<duckdb::IndexDataTableInfo> DataTableInfoOf(
-  duckdb::optional_ptr<duckdb::TableCatalogEntry> table,
-  const duckdb::CreateIndexInfo& info) {
+  duckdb::optional_ptr<duckdb::TableCatalogEntry> table) {
   if (!table || !table->IsDuckTable()) {
     return nullptr;
   }
   return duckdb::make_shared_ptr<duckdb::IndexDataTableInfo>(
-    table->Cast<duckdb::DuckTableEntry>().GetStorage().GetDataTableInfo(),
-    info.GetIndexName());
+    table->Cast<duckdb::DuckTableEntry>().GetStorage().GetDataTableInfo());
 }
 
 const InvertedIndexKey* FindKey(const InvertedIndexConfig& config,
@@ -178,7 +176,7 @@ void BindInvertedIndexOptions(
       if (name == kReindexIntervalSetting && !view_backed) {
         continue;
       }
-      context.TryGetCurrentSetting(std::string{name},
+      context.TryGetCurrentSetting(duckdb::Identifier{name},
                                    options[std::string{name}]);
     } else {
       RequireViewBackedOption(name, view_backed);
@@ -424,7 +422,7 @@ InvertedIndexEntry::InvertedIndexEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
   duckdb::CreateIndexInfo& info,
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table)
-  : duckdb::DuckIndexEntry{catalog, schema, info, DataTableInfoOf(table, info)},
+  : duckdb::DuckIndexEntry{catalog, schema, info, DataTableInfoOf(table)},
     _relation_name{info.table} {
   if (table && !table->IsDuckTable()) {
     _search_table = table->Cast<SearchTableEntry>().Storage();
@@ -474,7 +472,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
            index_alter.Cast<duckdb::ResetIndexOptionsInfo>().options) {
         const auto& name = identifier.GetIdentifierName();
         RequireAlterableOption(name);
-        context.TryGetCurrentSetting(name, new_options[name]);
+        context.TryGetCurrentSetting(identifier, new_options[name]);
       }
       break;
     default:

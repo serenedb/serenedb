@@ -141,12 +141,12 @@ date_trunc month	t	t	t
 date_trunc second wide: over budget	t	f	f
 date_trunc week	t	t	t
 dayname zoned	t	t	t
-distinct aggregate: declines	t	f	f
-distinct on	t	t	t
+distinct aggregate: declines	t	f	t
+distinct on	t	f	t
 epoch bin	t	f	t
 epoch of a truncation	t	t	t
 filtered	t	t	t
-grouping sets: declines	t	f	f
+grouping sets: declines	t	t	t
 having	t	t	t
 insert select	t	t	t
 interval shift of a truncation	t	t	t

@@ -286,10 +286,10 @@ SELECT * REPLACE (
 )
 FROM parquet_metadata('${__TEST_DIR__}/data_import_and_export_parquet_overview_example_010_1_test_parquet.parquet');
 ----
-file_name	row_group_id	row_group_num_rows	row_group_num_columns	row_group_bytes	column_id	file_offset	num_values	path_in_schema	type	stats_min	stats_max	stats_null_count	stats_distinct_count	stats_min_value	stats_max_value	compression	encodings	index_page_offset	dictionary_page_offset	data_page_offset	total_compressed_size	total_uncompressed_size	key_value_metadata	bloom_filter_offset	bloom_filter_length	min_is_exact	max_is_exact	row_group_compressed_bytes	geo_bbox	geo_types
-test.parquet	0	2	3	<slt:ignore>	0	<slt:ignore>	2	id	INT32	1	2	0	NULL	1	2	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
-test.parquet	0	2	3	<slt:ignore>	1	<slt:ignore>	2	name	BYTE_ARRAY	alpha	beta	0	NULL	alpha	beta	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
-test.parquet	0	2	3	<slt:ignore>	2	<slt:ignore>	2	value	INT32	10	20	0	NULL	10	20	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
+file_name	row_group_id	row_group_num_rows	row_group_num_columns	row_group_bytes	column_id	file_offset	num_values	path_in_schema	type	stats_min	stats_max	stats_null_count	stats_distinct_count	stats_min_value	stats_max_value	compression	encodings	index_page_offset	dictionary_page_offset	data_page_offset	total_compressed_size	total_uncompressed_size	key_value_metadata	bloom_filter_offset	bloom_filter_length	min_is_exact	max_is_exact	row_group_compressed_bytes	geo_bbox	geo_types	encoding_stats	stats_nan_count
+test.parquet	0	2	3	<slt:ignore>	0	<slt:ignore>	2	id	INT32	1	2	0	NULL	1	2	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL	{"(DATA_PAGE,PLAIN,1)"}	NULL
+test.parquet	0	2	3	<slt:ignore>	1	<slt:ignore>	2	name	BYTE_ARRAY	alpha	beta	0	NULL	alpha	beta	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL	{"(DATA_PAGE,PLAIN,1)"}	NULL
+test.parquet	0	2	3	<slt:ignore>	2	<slt:ignore>	2	value	INT32	10	20	0	NULL	10	20	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL	{"(DATA_PAGE,PLAIN,1)"}	NULL
 
 # DOCS_TEST: example_011
 

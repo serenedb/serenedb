@@ -172,24 +172,19 @@ set(Boost_INCLUDE_DIRS "${Boost_INCLUDE_DIRS}" PARENT_SCOPE)
 add_library(Boost::headers ALIAS boost_boost)
 
 ################################################################################
-### icu library (provided by duckdb's bundled ICU 78.3)
+### text, collation, datetime and property headers of duckdb's icu extension
 ################################################################################
 
-# serenedb links a single ICU: the one vendored inside duckdb's icu extension
-# (compiled into icu_extension -> duckdb_static). This target only carries the
-# ICU 78 headers; the ICU symbols are resolved at final-executable link time
-# from icu_extension (pulled in via duckdb_static). We deliberately do NOT add a
-# link edge to duckdb_static here: duckdb links serenedb's shared `re2`, and re2
-# links ICU::uc, so a link edge would create a dependency cycle
-# (re2 -> ICU::uc -> duckdb_static -> re2). Header-only avoids that; every
-# executable that uses ICU already links duckdb_static.
 add_library(sdb_icu INTERFACE)
 target_include_directories(
     sdb_icu
     SYSTEM
     INTERFACE
-        ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/extension/icu/third_party/icu/common
-        ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/extension/icu/third_party/icu/i18n
+        ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/extension/icu/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/extension/icu/collation/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/extension/icu/datetime/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/extension/icu/properties/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/extension/icu/text/include
 )
 
 add_library(icu ALIAS sdb_icu)
@@ -583,30 +578,8 @@ sdb_update_module(${GIT_EXECUTABLE} "avro" ${CMAKE_CURRENT_SOURCE_DIR} "README.m
 set(ZLIB_FOUND ON CACHE BOOL "" FORCE)
 set(SNAPPY_FOUND ON CACHE BOOL "" FORCE)
 set(JANSSON_FOUND ON CACHE BOOL "" FORCE)
+set(THREADSAFE ON CACHE BOOL "" FORCE)
 add_subdirectory(avro/lang/c)
-
-################################################################################
-## AWS SDK (monolithic build)
-################################################################################
-
-sdb_update_module(${GIT_EXECUTABLE} "aws-c-auth" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-c-cal" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-c-common" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-c-compression" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-c-event-stream" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-c-http" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-c-io" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-c-mqtt" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-c-s3" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-c-sdkutils" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-checksums" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-sdk-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-crt-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(aws-cmake)
-
-set(AWSSDK_FOUND ON CACHE BOOL "" FORCE)
-set(AWSSDK_LIBRARIES _aws CACHE STRING "" FORCE)
-set(AWSSDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/aws-cmake" CACHE PATH "" FORCE)
 
 ################################################################################
 ## libxml2
@@ -661,17 +634,21 @@ option(
     ON
 )
 set(BUILD_UNITTESTS ${SDB_BUILD_DUCKDB_UNITTESTS} CACHE BOOL "" FORCE)
-set(ENABLE_UNITTEST_CPP_TESTS FALSE CACHE BOOL "" FORCE)
-set(BUILD_BENCHMARKS FALSE CACHE BOOL "" FORCE)
+set(ENABLE_UNITTEST_CPP_TESTS ${SDB_BUILD_DUCKDB_UNITTESTS} CACHE BOOL "" FORCE)
+option(
+    SDB_BUILD_DUCKDB_BENCHMARKS
+    "Build DuckDB's benchmark_runner for its benchmark suites"
+    ON
+)
+set(BUILD_BENCHMARKS ${SDB_BUILD_DUCKDB_BENCHMARKS} CACHE BOOL "" FORCE)
 set(BUILD_COMPLETE_EXTENSION_SET FALSE CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS_ONLY FALSE CACHE BOOL "" FORCE)
 # Keep builtin extensions (core_functions, parquet, json, etc.)
 set(ENABLE_EXTENSION_AUTOLOADING FALSE CACHE BOOL "" FORCE)
 set(ENABLE_EXTENSION_AUTOINSTALL FALSE CACHE BOOL "" FORCE)
-# No dynamic extension load/install (we link a fixed BUILD_EXTENSIONS set). Drops
-# the load/install machinery and, via -DDUCKDB_DISABLE_EXTENSION_LOAD, lets the
-# read-mostly registries take shared_ptr_ipp.hpp's lock-free plain_load() path.
-set(DISABLE_EXTENSION_LOAD TRUE CACHE BOOL "" FORCE)
+# No dynamic extension load/install (we link a fixed BUILD_EXTENSIONS set).
+set(ENABLE_EXTENSION_LOAD FALSE CACHE BOOL "" FORCE)
+set(DUCKDB_CAPABILITIES "none" CACHE STRING "" FORCE)
 set(EXTENSION_STATIC_BUILD TRUE CACHE BOOL "" FORCE)
 set(ENABLE_SANITIZER FALSE CACHE BOOL "" FORCE)
 set(ENABLE_UBSAN FALSE CACHE BOOL "" FORCE)
@@ -686,6 +663,12 @@ set(SPATIAL_USE_BOOST TRUE CACHE BOOL "" FORCE)
 set(SPATIAL_USE_RTREE FALSE CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS
     "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial"
+    CACHE STRING
+    ""
+    FORCE
+)
+set(STATICALLY_LINK_EXTENSIONS
+    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner"
     CACHE STRING
     ""
     FORCE
@@ -720,10 +703,17 @@ include_directories(SYSTEM ${CMAKE_CURRENT_SOURCE_DIR}/simdutf/include)
 
 add_subdirectory(duckdb)
 
-target_compile_definitions(
-    duckdb_shell_static
-    PRIVATE SERENEDB_SHELL_VERSION="${SERENEDB_VERSION}"
-)
+if(TARGET duckdb_shell)
+    target_compile_definitions(
+        duckdb_shell
+        PRIVATE SERENEDB_SHELL_VERSION="${SERENEDB_VERSION}"
+    )
+endif()
+
+function(sdb_link_duckdb_extensions TARGET)
+    set(DUCKDB_MODULE_BASE_DIR ${CMAKE_SOURCE_DIR}/third_party/duckdb)
+    duckdb_link_extensions(${TARGET} ${ARGN} ${STATICALLY_LINK_EXTENSIONS})
+endfunction()
 
 target_include_directories(
     duckdb_static
@@ -735,7 +725,6 @@ target_include_directories(
 target_link_libraries(
     duckdb_static
     PUBLIC
-        duckdb_generated_extension_loader
         core_functions_extension
         parquet_extension
         tpch_extension
@@ -746,7 +735,6 @@ target_link_libraries(
         avro_extension
         iceberg_extension
         postgres_scanner_extension
-        clickhouse_scanner_extension
         autocomplete_extension
         icu_extension
         inet_extension

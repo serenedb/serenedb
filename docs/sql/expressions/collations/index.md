@@ -21,9 +21,9 @@ The `BINARY` collation is also available under the aliases `C` and `POSIX`.
 
 ## Using Collations
 
-SereneDB ships with three built-in, region-independent collations: `NOCASE`, `NOACCENT` and `NFC`. The `NOCASE` collation compares characters as equal regardless of their casing. The `NOACCENT` collation compares characters as equal regardless of their accents. The `NFC` collation performs NFC-normalized comparisons, see [Unicode normalization](https://en.wikipedia.org/wiki/Unicode_equivalence#Normalization) for more information. In addition to these three built-ins, SereneDB also includes the region- and language-specific (ICU) collations described in [ICU Collations](#icu-collations) below.
+SereneDB ships with three built-in, region-independent collations: `NOCASE`, `NOACCENT` and `NFC`. The `NOCASE` collation compares characters as equal regardless of their casing. The `NOACCENT` collation compares characters as equal regardless of their accents. The `NFC` collation performs NFC-normalized comparisons, see [Unicode normalization](https://en.wikipedia.org/wiki/Unicode_equivalence#Normalization) for more information. In addition to these three built-ins, SereneDB also includes the region- and language-specific collations described in [Locale Collations](#locale-collations) below.
 
-The available collations can be listed with `PRAGMA collations`. The query below filters to a stable subset to show both the built-ins and a few ICU locales:
+The available collations can be listed with `PRAGMA collations`. The query below filters to a stable subset to show both the built-ins and a few locales:
 
 <SqlLogicTest id="sql/expressions/collations/index/example_015" />
 
@@ -67,17 +67,17 @@ We need to manually overwrite the collation:
 
 <SqlLogicTest id="sql/expressions/collations/index/example_014" />
 
-## ICU Collations
+## Locale Collations
 
-The collations we have seen so far are not region-dependent and do not follow any specific regional rules. SereneDB also includes region- and language-specific collations powered by [ICU](https://icu.unicode.org/). These follow the ordering and comparison rules of a specific language or region.
+The collations we have seen so far are not region-dependent and do not follow any specific regional rules. SereneDB also includes region- and language-specific collations. These follow the ordering and comparison rules of a specific language or region: the Unicode Collation Algorithm with the tailorings of the [CLDR](https://cldr.unicode.org/) locale data, the rules [ICU](https://icu.unicode.org/) implements. SereneDB carries its own implementation and the data it is generated from, not the ICU library.
 
-ICU collations are named by their locale, for example `de` (German), `fr` (French) and `ja` (Japanese). Region-qualified locales are also available, such as `de_at` (German as used in Austria). The full set of available locales can be inspected with `PRAGMA collations` as shown above.
+Locale collations are named by their locale, for example `de` (German), `fr` (French) and `ja` (Japanese). Region-qualified locales are also available, such as `de_at` (German as used in Austria). The full set of available locales can be inspected with `PRAGMA collations` as shown above.
 
 For example, the German collation orders the umlaut `ä` next to `a` rather than after `z`:
 
 <SqlLogicTest id="sql/expressions/collations/index/example_016" />
 
-Like the built-in collations, ICU collations can be applied per expression with the `COLLATE` operator:
+Like the built-in collations, locale collations can be applied per expression with the `COLLATE` operator:
 
 <SqlLogicTest id="sql/expressions/collations/index/example_017" />
 

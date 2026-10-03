@@ -41,8 +41,10 @@
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
+#include <duckdb/storage/table/index_entry.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
 #include <duckdb/storage/table_io_manager.hpp>
+#include <duckdb/transaction/duck_transaction.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iterator>
@@ -115,8 +117,8 @@ duckdb::idx_t SelectRows(duckdb::Vector& predicate, duckdb::idx_t total,
 size_t ReplayDepth(duckdb::DatabaseInstance& db) {
   auto& config = duckdb::DBConfig::GetConfig(db);
   duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-  const auto index =
-    config.TryGetSettingIndex(std::string{kRecoveryReplayDepthSetting}, option);
+  const auto index = config.TryGetSettingIndex(
+    duckdb::Identifier{kRecoveryReplayDepthSetting}, option);
   duckdb::Value value;
   size_t depth = 0;
   if (index.IsValid() &&
@@ -776,16 +778,20 @@ bool InvertedStoreIndex::AppendLocal(
   if (!conn) {
     return false;
   }
+  std::vector<duckdb::IndexWriteHandle<InvertedStoreIndex>> handles;
   std::vector<
     std::pair<InvertedStoreIndex*, std::span<query::Transaction::SearchSlot>>>
     indexes;
   duckdb::idx_t slots = 0;
-  for (auto& index : index_list.Indexes()) {
-    if (!index.IsBound() || index.GetIndexType() != kTypeName) {
+  for (auto entry : index_list.IndexEntries()) {
+    if (entry->GetBindState() != duckdb::IndexBindState::BOUND ||
+        entry->GetIndexType() != kTypeName) {
       return false;
     }
-    auto& inverted = index.Cast<InvertedStoreIndex>();
-    const auto prepared = conn->IndexSlots(inverted._index_id);
+    auto* inverted =
+      handles.emplace_back(entry->GetWriteHandle<InvertedStoreIndex>())
+        .operator->();
+    const auto prepared = conn->IndexSlots(inverted->_index_id);
     duckdb::idx_t ready = 0;
     while (ready < prepared.size() && prepared[ready].writer) {
       ++ready;
@@ -794,7 +800,7 @@ bool InvertedStoreIndex::AppendLocal(
       return false;
     }
     slots = slots == 0 ? ready : std::min(slots, ready);
-    indexes.emplace_back(&inverted, prepared);
+    indexes.emplace_back(inverted, prepared);
   }
   if (indexes.empty()) {
     return false;
@@ -972,9 +978,17 @@ PublishedInvertedIndex PublishInvertedIndex(
   auto index = duckdb::make_uniq<InvertedStoreIndex>(
     input, entry.oid, storage, entry.Config(), entry.ResolveTokenizers(context),
     static_cast<bool>(entry.where_clause));
-  auto publish_lock = data.GetCheckpointLock();
-  data.GetDataTableInfo()->GetIndexes().AddIndex(std::move(index));
-  return {std::move(storage), data.GetNextRowId()};
+  auto commit_lock = data.db.GetStorageManager().GetCommitLock();
+  data.AddIndex(std::move(index), entry.oid);
+  const auto rowid_horizon = data.GetNextRowId();
+  auto& transaction = duckdb::DuckTransaction::Get(context, data.db);
+  const auto undo = transaction.GetUndoProperties();
+  if (!undo.has_updates && !undo.has_deletes) {
+    auto& manager = duckdb::DuckTransactionManager::Get(data.db);
+    manager.WaitForDurability();
+    manager.AdvanceStartTime(transaction);
+  }
+  return {std::move(storage), rowid_horizon};
 }
 
 }  // namespace sdb::connector

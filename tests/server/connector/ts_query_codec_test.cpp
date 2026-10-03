@@ -93,9 +93,8 @@ duckdb::LogicalType TruncatedTSQueryType(size_t n) {
   for (size_t i = 0; i < n; ++i) {
     ch.emplace_back(all[i].first, all[i].second);
   }
-  auto type = duckdb::LogicalType::STRUCT(ch);
-  type.SetAlias(std::string{kTSQueryTypeName});
-  return type;
+  return duckdb::LogicalType::STRUCT(ch).WithAlias(
+    std::string{kTSQueryTypeName});
 }
 
 duckdb::Value FullStruct(const duckdb::Value& scorer) {

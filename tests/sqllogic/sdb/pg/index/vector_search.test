@@ -152,22 +152,22 @@ query
 EXPLAIN SELECT id FROM l2_index WHERE 1 > l2_distance(emb, [1, 1, 1]::FLOAT[3]) ORDER BY id;
 ----
 QUERY PLAN
-╭─ ORDER_BY ────────────────╮
-│ Order By: l2_index.id ASC │
-│ ~4 rows                   │
-╰─────────────┬─────────────╯
-╭─ IRESEARCH_SCAN ──────────╮
-│ Index: l2_index           │
-│ Lookup: table             │
-│ Index Filter:             │
-│ ╭─ Vector Range ─╮        │
-│ │ Field: emb     │        │
-│ │ Metric: l2     │        │
-│ │ Radius: < 1    │        │
-│ ╰────────────────╯        │
-│ Projections: id           │
-│ ~4 rows                   │
-╰───────────────────────────╯
+╭─ ORDER_BY ─────────╮
+│ Order By: id ASC   │
+│ ~4 rows            │
+╰──────────┬─────────╯
+╭─ IRESEARCH_SCAN ───╮
+│ Index: l2_index    │
+│ Lookup: table      │
+│ Index Filter:      │
+│ ╭─ Vector Range ─╮ │
+│ │ Field: emb     │ │
+│ │ Metric: l2     │ │
+│ │ Radius: < 1    │ │
+│ ╰────────────────╯ │
+│ Projections: id    │
+│ ~4 rows            │
+╰────────────────────╯
 
 
 query

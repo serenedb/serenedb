@@ -363,7 +363,7 @@ Content Needed(std::span<const Column> columns) {
 duckdb::unique_ptr<duckdb::FunctionData> Bind(
   duckdb::ClientContext&, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   auto bind = duckdb::make_uniq<BindData>();
   bind->table = &input.info->Cast<TableInfo>().table;
   const auto& table = *bind->table;

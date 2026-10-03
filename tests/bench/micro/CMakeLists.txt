@@ -4,6 +4,7 @@ function(add_bench FILE_NAME)
     set(NAME serenedb-bench-micro-${FILE_NAME})
     add_executable(${NAME} ${FILE_NAME}.cpp)
     target_link_libraries(${NAME} PRIVATE sereneserver benchmark)
+    sdb_link_duckdb_extensions(${NAME} PRIVATE)
     target_include_directories(
         ${NAME}
         PRIVATE ${CMAKE_SOURCE_DIR}/tests/iresearch
@@ -136,4 +137,5 @@ target_link_libraries(
     vector-distances-bench
     PRIVATE sereneserver benchmark ${FAISS_LIB}
 )
+sdb_link_duckdb_extensions(vector-distances-bench PRIVATE)
 add_dependencies(serenedb-bench-micro vector-distances-bench)

@@ -21,9 +21,11 @@ endif()
 
 add_executable(search-benchmark-game-build build_index.cpp)
 target_link_libraries(search-benchmark-game-build search-benchmark-common)
+sdb_link_duckdb_extensions(search-benchmark-game-build)
 
 add_executable(search-benchmark-game-query do_query.cpp)
 target_link_libraries(search-benchmark-game-query search-benchmark-common)
+sdb_link_duckdb_extensions(search-benchmark-game-query)
 
 add_custom_target(search-benchmark-game)
 add_dependencies(

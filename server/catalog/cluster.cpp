@@ -133,7 +133,7 @@ void ClusterCatalog::SyncCatalogLogLoop() {
     }
     SDB_WAIT_ON_FAILURE("pause_catalog_log_sync");
     try {
-      log->GroupSync(offset);
+      log->SyncUpTo(offset);
     } catch (...) {
     }
   }
@@ -190,7 +190,7 @@ void ClusterCatalog::MaybeCompactCatalogLog() {
   if (storage.GetWALSize() < threshold) {
     return;
   }
-  auto lock = storage.GetWALLock();
+  auto lock = storage.GetCommitLock();
   if (storage.GetWALSize() < threshold ||
       _commits_in_flight.load(std::memory_order_acquire) > 0) {
     return;
@@ -302,9 +302,9 @@ void ClusterCatalog::LogArtifact(
   const std::filesystem::path root{ClusterLayout(GetAttached()).directory};
   auto relative = RelativePaths(root, paths);
   {
-    auto lock = GetAttached().GetStorageManager().GetWALLock();
+    auto lock = GetAttached().GetStorageManager().GetCommitLock();
     _catalog_log->WriteArtifact(type, catalog_oid, oid, relative);
-    _catalog_log->GroupSync(_catalog_log->FlushAppendNoSync());
+    _catalog_log->SyncUpTo(_catalog_log->FlushMarker());
   }
   std::lock_guard guard{_artifacts_mutex};
   _artifacts.push_back({type, catalog_oid, oid, std::move(relative), drop});

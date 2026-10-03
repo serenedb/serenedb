@@ -73,6 +73,7 @@ target_link_libraries(
     serene_docs_builder
     serene_docs_bootstrap
 )
+sdb_link_duckdb_extensions(serened-docs-bootstrap)
 
 add_custom_command(
     OUTPUT ${SDB_DOCS_INDEX_GENERATED}

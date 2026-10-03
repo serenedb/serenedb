@@ -143,7 +143,7 @@ CREATE TEXT SEARCH DICTIONARY mh_words AS
 statement error
 CREATE INDEX mh_lexize_idx ON mh_docs USING inverted(id, (minhash(ts_lexize('mh_words', body), 16)));
 ----
-db error: ERROR: Cannot use ts_lexize in this context
+db error: ERROR: Cannot use "ts_lexize" in this context
 
 
 # --- The index follows inserts and deletes ---

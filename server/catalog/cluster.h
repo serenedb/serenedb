@@ -99,7 +99,8 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   duckdb::CatalogTransaction LoginTransaction() {
     return duckdb::CatalogTransaction{
       GetDatabase(), duckdb::TRANSACTION_ID_START - 1,
-      duckdb::DuckTransactionManager::Get(GetAttached()).GetLastCommit() + 1};
+      duckdb::VisibilityBound::Through(
+        duckdb::DuckTransactionManager::Get(GetAttached()).GetLastCommit())};
   }
 
   uint64_t CatalogGeneration() const {

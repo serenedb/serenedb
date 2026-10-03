@@ -30,7 +30,7 @@
 #   REPORTS_DIR  (default: <workspace>/out/test-results)  -- where JUnit XML lands
 #   PGHOST/PGPORT/PGUSER/PGDATABASE -- postgres_scanner uses an existing server
 #                                      when PGHOST is set
-#   SDB_DUCKDB_MAX_THREADS  (default: min(nproc, 32)) -- caps DuckDB's default
+#   SDB_DUCKDB_MAX_THREADS  (default: min(nproc, 16)) -- caps DuckDB's default
 #     thread count, via the SLURM_CPUS_ON_NODE lever GetSystemMaxThreads()
 #     honours on Linux. The memory-limit tests set a fixed budget (100MB-1GB)
 #     but the minimum footprint scales per thread, so on a many-core box they
@@ -44,7 +44,7 @@ WORKSPACE=$(cd "$SCRIPT_DIR/../.." && pwd)
 : "${BUILD_DIR:=build}"
 : "${REPORTS_DIR:=$WORKSPACE/out/test-results}"
 : "${DUCKDB_JOBS:=$(nproc 2>/dev/null || echo 4)}"
-: "${SDB_DUCKDB_MAX_THREADS:=$(($(nproc) < 32 ? $(nproc) : 32))}"
+: "${SDB_DUCKDB_MAX_THREADS:=$(($(nproc) < 16 ? $(nproc) : 16))}"
 
 if [[ -n "$SDB_DUCKDB_MAX_THREADS" ]] && [[ -z "${SLURM_CPUS_ON_NODE:-}" ]]; then
 	export SLURM_CPUS_ON_NODE="$SDB_DUCKDB_MAX_THREADS"
@@ -53,6 +53,7 @@ fi
 # suite name -> vendored source root whose test/ tree we run.
 declare -A SUITE_DIR=(
 	[core]="$WORKSPACE/third_party/duckdb"
+	[cpp]="$WORKSPACE/third_party/duckdb"
 	[avro]="$WORKSPACE/third_party/duckdb_avro"
 	[azure]="$WORKSPACE/third_party/duckdb_azure"
 	[httpfs]="$WORKSPACE/third_party/duckdb_httpfs"
@@ -63,14 +64,17 @@ declare -A SUITE_DIR=(
 	[spatial]="$WORKSPACE/third_party/duckdb_spatial"
 	[interop]="$SCRIPT_DIR/interop"
 )
-SUITE_ORDER=(core avro azure httpfs iceberg inet markdown postgres_scanner spatial interop)
+SUITE_ORDER=(core cpp avro azure httpfs iceberg inet markdown postgres_scanner spatial interop)
 
 # suite name -> Catch2 name filter. Core's tests register relative to --test-dir
 # (so "test/..."), while extension tests come from LoadedExtensionTestPaths() and
-# register under their absolute path.
+# register under their absolute path. The C++ tests register under their own
+# names, so cpp is everything that is not a sqllogic file.
 suite_filter() {
 	if [[ "$1" == "core" ]]; then
 		echo 'test/*'
+	elif [[ "$1" == "cpp" ]]; then
+		echo '~"*.test" ~"*.test_slow" ~"*.test_coverage" ~[.]'
 	else
 		echo "${SUITE_DIR[$1]}/test/*"
 	fi

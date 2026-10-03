@@ -211,7 +211,7 @@ SELECT split_text(v, case := c) FROM (VALUES ('A', 'lower')) AS t(v, c);
 statement error
 SELECT split_text('a', locale := 'en');
 ----
-db error: ERROR: No function matches the given name and argument types 'split_text(STRING_LITERAL, locale := STRING_LITERAL)'. You might need to add explicit type casts.
+db error: ERROR: No function matches the given name and argument types 'split_text(STRING_LITERAL, "locale" := STRING_LITERAL)'. You might need to add explicit type casts.
 	Candidate functions:
 	split_text("value" VARCHAR, "case" VARCHAR := none, break VARCHAR := alpha) -> VARCHAR[]
 	split_text("value" VARCHAR[], "case" VARCHAR := none, break VARCHAR := alpha) -> VARCHAR[]
@@ -364,7 +364,7 @@ t
 statement error
 SELECT remove_stopwords(['a'], stopwords := 42);
 ----
-db error: ERROR: No function matches the given name and argument types 'remove_stopwords(VARCHAR[], stopwords := INTEGER_LITERAL)'. You might need to add explicit type casts.
+db error: ERROR: No function matches the given name and argument types 'remove_stopwords(VARCHAR[], "stopwords" := INTEGER_LITERAL)'. You might need to add explicit type casts.
 	Candidate functions:
 	remove_stopwords("value" VARCHAR, stopwords UNION(str VARCHAR, list VARCHAR[]) := [], stopwords_path VARCHAR := , hex BOOLEAN := false) -> VARCHAR[]
 	remove_stopwords("value" VARCHAR[], stopwords UNION(str VARCHAR, list VARCHAR[]) := [], stopwords_path VARCHAR := , hex BOOLEAN := false) -> VARCHAR[]

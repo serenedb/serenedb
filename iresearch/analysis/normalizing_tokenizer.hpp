@@ -20,18 +20,16 @@
 
 #pragma once
 
-#include <unicode/locid.h>
-#include <unicode/normalizer2.h>
-#include <unicode/translit.h>
-
 #include <magic_enum/magic_enum.hpp>
-#include <memory>
 #include <string>
 #include <string_view>
+#include <text_casing.hpp>
+#include <text_normalizer.hpp>
 #include <tuple>
+#include <vector>
 
 #include "iresearch/analysis/process_tokens.hpp"
-#include "iresearch/utils/icu_locale_serde.hpp"
+#include "iresearch/utils/locale_serde.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "tokenizer.hpp"
 
@@ -52,7 +50,7 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
  public:
   struct Options {
     using Owner = NormalizingTokenizer;
-    icu::Locale locale = irs::MakeBogusLocale();
+    duckdb::text::Locale locale;
     Case case_convert{Case::None};
     bool accent{true};
     NormForm form{NormForm::Nfc};
@@ -78,8 +76,7 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
 
   size_t MemoryUsage() const noexcept final {
     return _norm_buf.capacity() + _strip_buf.capacity() +
-           static_cast<size_t>(_udata.getCapacity() + _token.getCapacity()) *
-             sizeof(char16_t);
+           (_chars.capacity() + _mapped.capacity()) * sizeof(uint32_t);
   }
 
   template<TokenLayout Layout, Case C, bool Accent, bool KnownAscii,
@@ -107,17 +104,20 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
   size_t CaseBound(size_t size) const noexcept;
   template<Case C>
   size_t ConvertCase(std::string_view bytes, byte_type* out) const noexcept;
-  IRS_NO_INLINE void InitIcu();
+  template<Case C, bool Accent>
+  void NormalizeCaseStrip();
 
   Options _options;
-  icu::UnicodeString _udata;
-  icu::UnicodeString _token;
-  const icu::Normalizer2* _normalizer{};
-  const icu::Normalizer2* _renormalizer{};
-  std::unique_ptr<icu::Transliterator> _transliterator;
+  std::vector<uint32_t> _chars;
+  std::vector<uint32_t> _mapped;
   std::string _norm_buf;
   std::string _strip_buf;
-  uint32_t _fold_options{0};
+  duckdb::text::NormalizationForm _form;
+  duckdb::text::NormalizationForm _renormalize_form;
+  duckdb::text::NormalizationForm _strip_form;
+  bool _strip_composes{true};
+  duckdb::text::CaseLocale _case_locale;
+  duckdb::text::CaseFolding _folding{duckdb::text::CaseFolding::DEFAULT};
   CasePath _case_path = CasePath::Fast;
 };
 

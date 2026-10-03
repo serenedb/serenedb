@@ -177,7 +177,9 @@ SystemTableEntry::SystemTableEntry(duckdb::Catalog& catalog,
                                    duckdb::SchemaCatalogEntry& schema,
                                    duckdb::CreateTableInfo& info,
                                    const pg::VirtualTable& table)
-  : duckdb::TableCatalogEntry{catalog, schema, info}, _table{table} {
+  : duckdb::TableCatalogEntry{catalog, schema, info},
+    _columns{std::move(info.columns)},
+    _table{table} {
   internal = true;
   permissions.owner = pg::kRootUser;
   const auto acl = table.GetAcl();

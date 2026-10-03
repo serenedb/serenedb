@@ -50,65 +50,109 @@ list (`DUCKDB_SUITES`) derived from the diff by `scripts/ci/classify-changes.sh`
 duckdb itself or any dependency it shares selects every suite, while an
 extension-only dependency selects just that extension.
 
-## Fork points
+## Branches
 
-Every vendored duckdb repo carries a linear SereneDB patchset on top of one upstream commit. That commit is the **fork point**: `<fork>..HEAD` is exactly our patchset, and it is what a rebase onto a newer upstream replays.
+Every repo in the table below is a `serenedb/<name>` fork. Each update builds a new branch `vYYYY.MM.DD` in every fork from scratch, and serenedb's gitlinks point at those heads (`scripts/check_submodule_pointers.py` refuses a gitlink that no version branch contains). A version branch is never rewritten once created; the next update makes a new one.
 
-| submodule | fork point | upstream | fork-point subject |
-|---|---|---|---|
-| `third_party/duckdb` | `958bef9a6b` | duckdb/duckdb | Make `QualifiedName` immutable and instead override the entire qualified name when modified (#23490) |
-| `third_party/duckdb_httpfs` | `2a6481d0bf` | duckdb/duckdb-httpfs | Merge pull request #344 from OlexG/fix/s3-url-style-virtual-alias |
-| `third_party/duckdb_avro` | `b1b9612069` | duckdb/duckdb-avro | Merge pull request #111 from duckdb/avro_get_metadata_callback |
-| `third_party/duckdb_iceberg` | `18ec6a364e` | duckdb/duckdb-iceberg | Merge pull request #1127 from NiclasHaderer/nh/fix-flake |
-| `third_party/duckdb_postgres` | `4f0c4cb16e` | duckdb/duckdb-postgres | Merge pull request #492 from MBkkt/patch-1 |
-| `third_party/duckdb_inet` | `bf675673d9` | duckdb/duckdb-inet | Merge pull request #24 from Maxxen/main |
-| `third_party/duckdb_markdown` | `340c0cd597` | teaguesterling/duckdb_markdown | fix: unwrap nested table bodies in legacy Pandoc table rows |
-| `third_party/duckdb_azure` | `ed1c69cf05` | duckdb/duckdb-azure | pass etags through for improved caching (#182) |
-| `third_party/duckdb_spatial` | `2b072abd2a` | duckdb/duckdb-spatial | Merge pull request #851 from Maxxen/main-dev |
-| `third_party/database-connector` | `7777dac887` | duckdb/database-connector | Apply Identifier patch |
+The first-parent history of a version branch, oldest first:
 
-Six of the ten fork points are upstream *merge* commits, because those repos merge PRs; duckdb's, duckdb_azure's, duckdb_markdown's and database-connector's are plain commits (duckdb squash-merges upstream). So "the last merge commit before our first commit" is a good first guess but not a rule.
+1. upstream `main` at the update;
+2. DuckDB's own patches for that extension, the files under `.github/patches/extensions/<ext>/` of the new duckdb, one `duckdb ext patch: <file>` commit each, in file order. They adapt the extension to DuckDB `main`'s API, and upstream applies them itself sooner or later: a patch whose content upstream already has (`git patch-id --stable`) is dropped, never re-applied;
+3. real merges of the repo's release branches (`v2.0-cyanoptera`, then `v1.5-variegata`, where it has them), with every conflict resolved inside the merge commit. This tip is the **boundary**: `<boundary>..HEAD` is exactly our patchset;
+4. our patchset: linear, one concern per commit, conventional-commit subjects, every commit formatted on its own;
+5. duckdb only: one final `regen:` commit with everything the generators produce.
 
-Do **not** infer the boundary from authorship: in `database-connector` the last five upstream commits and our first are hard to tell apart from the log alone. Do not use a local `main` either -- those refs are stale and `git merge-base main HEAD` answers far too early.
+Upstream merges pull requests as merge commits (duckdb's PR titles are the merge subjects), so `git log --first-parent` reads as one entry per PR.
 
-And if the local history was ever rewritten (rebase, replay), SHA reachability lies: rewritten copies of upstream commits are no longer reachable from upstream, so the check reports them as ours. Compare **content** instead -- `git show <c> | git patch-id --stable` against upstream's recent commits. That is how `database-connector`'s fork point was found to be `7777dac887` and not the much earlier `43e79061e5`.
+### The update of 2026-10-02
 
-To re-derive or re-validate one, fetch upstream by URL (no permanent remote needed) and check three things: the fork commit is reachable from upstream, the commit right after it is not, and the count of commits missing from upstream equals the patchset size.
+| submodule | upstream | `main` | merged | ext patches | boundary |
+|---|---|---|---|---|---|
+| `third_party/duckdb` | duckdb/duckdb | `5a06879d94` | `v2.0-cyanoptera` `a35967a254`, `v1.5-variegata` `069cc9f9b5` | none | `5823c68f58` |
+| `third_party/duckdb_httpfs` | duckdb/duckdb-httpfs | `7773e83` | `v1.5-variegata` `b26737e` | 0003-duplicate-secret-option-error | `23aad73c47` |
+| `third_party/duckdb_avro` | duckdb/duckdb-avro | `859d56d` | `v1.5-variegata` `a54bd17` | none | `b108c9d5e3` |
+| `third_party/duckdb_iceberg` | duckdb/duckdb-iceberg | `b6dd9b291` | `v1.5-variegata` `5dcf5070c` | 0001-can-autoload-extension-database, 0001-table-function-signature-options | `37faf61daa` |
+| `third_party/duckdb_postgres` | duckdb/duckdb-postgres | `f9db66e` | `v1.5-variegata` `1ddd672` | none | `a8af95ab29` |
+| `third_party/duckdb_inet` | duckdb/duckdb-inet | `61ce2d7245` | none | none | `61ce2d7245` |
+| `third_party/duckdb_markdown` | teaguesterling/duckdb_markdown | `5f045685e5` | none | none | `5f045685e5` |
+| `third_party/duckdb_azure` | duckdb/duckdb-azure | `951a0ab` | `v1.5-variegata` `73bd62b` | 0001-fix-azure-storage-cstdint | `5a0c59d34e` |
+| `third_party/duckdb_spatial` | duckdb/duckdb-spatial | `2b072abd2a` | `v1.5-variegata` `9bfcf30e` | all 17: 0003 to 0013 in file order, then 0007-function-set-shared-ptr | `c5d22e92` |
+| `third_party/database-connector` | duckdb/database-connector | `73d27b7` | `v1.5-variegata` `0a8505f` | none | `5ee92ce63e` |
+| `third_party/avro` | apache/avro | `28cb08c15` | duckdb/duckdb-avro-c's 18 commits `35ff8b997..51ab9b2d3`, cherry-picked (its merges carry no resolutions) | none | `36e295afc` |
+
+- inet and markdown have no release branches to merge. DuckDB's inet patches target the v1.4 C++ layout while inet `main` is a C-API extension, so they are not applied; our port commit carries that adaptation.
+- In spatial, `0007-function-set-shared-ptr` applies only after `0013`.
+- duckdb-avro-c's 1.11 release history is not merged: apache never merges it into `main`.
+
+### Our patchset by area (duckdb core)
+
+- **Parser and grammar:** PostgreSQL's surface in the core grammar (CREATE FUNCTION/PROCEDURE, roles and grants, FDW servers, text search dictionaries, subscriptions, REINDEX, LISTEN/NOTIFY, DISCARD, SET/RESET/SHOW scoping, TRUNCATE CASCADE/RESTART, pg_dump's sequence forms, opclass CREATE INDEX, VACUUM options, SELECT INTO, regex/SIMILAR TO/BETWEEN SYMMETRIC/JSON operators, tokenizer operators) and PostgreSQL literals (booleans, digit separators, ISO 8601 durations, `'{...}'` arrays).
+- **Catalog:** roles, databases, foreign servers and tokenizers as catalog entries with stable oids and permissions; renames of every entry kind through one template; schema sets shared across a rename; `SqlCompatibility::POSTGRES`; dependency `owned_by`; catalog-log WAL records; triggers stored with their tables.
+- **Commit path and storage:** the catalog log on upstream's group commit, the pre-checkpoint hook, two-phase commit with the server's stores, SereneDB storage versions in the low half of `StorageVersion`, and the refusal of SereneDB-only state in DuckDB files.
+- **Compression and scans:** dict_fsst FSST+ layouts, filters evaluated inside bitpacking, ALP, RLE and dict_fsst, the compiled zonemap checker, `TableFilterPushdown`.
+- **Functions and binding:** PostgreSQL functions and casts, implicit-cast ranking of string literals, the date_trunc family with monotone predicate ranges, bucket rewrites, aggregate input dedup.
+- **Table functions and indexes:** point lookups for CSV, parquet, JSON, text and DuckDB files, `consume_top_n`, `set_scan_order`, external index hooks keyed by stable column id.
+- **Client API and execution:** typed parameter hints, a caller-driven result collector and inline single-task driving for the pg-wire session, session-scoped `threads`, sink-lock reductions.
+- **Common layer:** `duckdb::mutex` as `absl::Mutex`, absl hash containers, string_view APIs, simdutf validation, fmt formatting.
+- **Dependencies:** fmt, fast_float, re2, zstd, brotli, lz4, snappy, zlib-ng (for miniz), jemalloc, abseil and ada come from serenedb's `third_party` instead of duckdb's bundled copies; httplib is gone and httpfs is curl-only.
+- **ICU:** the icu extension carries the text layer (break iteration, normalization, casing, locales) and the Unicode property tables that iresearch, the server and re2 use instead of ICU itself.
+- **Tests:** expectations for PostgreSQL rendering and our error texts.
+
+### The update recipe
+
+Run it in every fork, the parents first (duckdb, then the extensions, then serenedb's gitlinks):
 
 ```bash
 cd third_party/<submodule>
-git fetch https://github.com/duckdb/<upstream-repo>.git main   # parent repo: gh api repos/serenedb/<name> --jq .parent.full_name
-first_ours=$(git rev-list HEAD --not FETCH_HEAD | tail -1)
-fork=$(git rev-parse "$first_ours^")
-git merge-base --is-ancestor "$fork" FETCH_HEAD          # fork is upstream's
-! git merge-base --is-ancestor "$first_ours" FETCH_HEAD  # ours is not
-test "$(git rev-list --count "$fork..HEAD")" = "$(git rev-list --count HEAD --not FETCH_HEAD)"
+git config rerere.enabled true
+git fetch upstream                                  # by URL if there is no remote: the table's upstream column
+git switch -c mbkkt/update-duckdb upstream/main
+for p in <new duckdb>/.github/patches/extensions/<ext>/*.patch; do    # skip what upstream already has
+  git apply "$p" && git add -A && git commit -m "duckdb ext patch: $(basename "$p" .patch)"
+done
+git merge upstream/v2.0-cyanoptera                  # duckdb only
+git merge upstream/v1.5-variegata
+git cherry-pick <previous boundary>..<previous vYYYY.MM.DD>   # duckdb: stop before its regen: commit
 ```
 
-### Commits upstream has since applied itself
+Then regenerate, format, build, run every suite here and the serenedb sqllogic, recovery and gtest runs, and push. Once CI is green, the head becomes `vYYYY.MM.DD` (created, never forced) and serenedb's gitlinks move to it.
 
-`duckdb_httpfs`'s `duckdb ext patch: 0002` .. `0006` have exact content matches upstream (`606018bb`, `5bf8ff0a`, `03bf787e`, `9c9f073b`, `7b436a4c`), applied there after our fork point. They are not wrong today -- our base predates them, so the patches are still needed -- but the next upstream bump makes them no-ops, and they should be dropped rather than re-applied. duckdb core's cherry-picked upstream fixes behave the same way.
+Rules for the rebuilt series:
 
-Find them with the same patch-id comparison, over `<fork>..<upstream tip>`.
+- Resolve conflicts toward the final state; history is free. Fold a fix into the commit that introduced the problem (`fixup!` + autosquash), drop what upstream has (compare content with `git patch-id --stable`, never reachability: rewritten copies of upstream commits are not reachable from upstream), and keep a commit we still need even when upstream has a similar change, reduced to what upstream lacks.
+- Generated files never carry hand edits. During the cherry-picks, take upstream's side of a fully generated file; at the end, from `third_party/duckdb`, run `./scripts/parser/build_grammar.sh` (the PEG grammar and transformer) and then `make generate-files` (settings, serialization, enum_util, functions, metrics, storage info), and commit everything they changed as the one `regen:` commit.
+- Format each commit with `./scripts/format_duckdb.sh` from the repo root (clang-format 11.0.1 in docker over the changed files of every duckdb submodule and `duckdb_clickhouse`). Upstream's own unformatted lines are left to a final `--all` pass.
+- Never derive a boundary from authorship or from a local `main`: those refs are stale, and `git merge-base main HEAD` answers far too early.
 
 ## Suites and their configs
 
-Each suite runs with `config/<suite>.json`, a DuckDB `--test-config` listing the
-tests we skip and why. Everything not on that list is a live regression gate on
+A suite with a `config/<suite>.json` runs with it as DuckDB's `--test-config`,
+listing the tests we skip and why. Everything not on that list is a live regression gate on
 the fork -- if a test starts failing, the fork broke it.
 
 The skips fall into a few kinds, and the `reason` on every entry says which:
 
 - **Deliberate SereneDB behaviour.** `LOAD`/`INSTALL` are unsupported (extensions
-  are compiled into the server binary), and `httpfs_client_implementation` only
-  accepts `curl`/`default` because httplib was dropped. Tests for those features
+  are compiled into the server binary); the parser is one fixed grammar, with no
+  parser, grammar or dialect extensions; `search_path` follows PostgreSQL; `//` on
+  `DECIMAL` divides by IEEE 754 like `/`; httpfs is curl-only; spatial is built
+  without GEOS, GDAL, PROJ and its persistent RTREE index. Tests for those features
   cannot pass and shouldn't.
-- **Needs the public internet or cloud credentials.** Some tests reach live S3 /
-  Azure / HuggingFace endpoints without a `require-env` guard, so they fail in a
-  sandboxed runner rather than skipping themselves.
-- **Upstream expectation predates our fork.** The vendored extension pins are
-  older than `third_party/duckdb`, so a few tests assert error-message wording
-  that core has since changed.
+- **Needs a live third-party endpoint.** A test that reaches a public bucket
+  without a `require-env` guard fails intermittently on the endpoint's answer, not
+  on anything the fork does.
+
+The `cpp` suite is DuckDB's C++ test cases (`test/api`, `test/sql_export`, the
+storage and appender tests, ...): every Catch2 case of the same `unittest`
+binary that is not a sqllogic file. It has no skip list: every case passes.
+
+`SDB_BUILD_DUCKDB_BENCHMARKS` (on by default) also builds DuckDB's
+`benchmark_runner` (`$BUILD_DIR/third_party/duckdb/benchmark/benchmark_runner`)
+with the same statically linked extensions. Measure only on `build_perf`, and
+keep its artifacts out of the checkout the way
+[benchmark/micro/parser/README.md](../../third_party/duckdb/benchmark/micro/parser/README.md)
+shows: a scratch `--root-dir` with `benchmark` and `extension` symlinked from
+`third_party/duckdb`.
 
 ## DuckDB file interop
 

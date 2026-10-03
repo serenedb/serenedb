@@ -106,8 +106,12 @@ EXPLAIN SELECT count(DISTINCT brand) FROM abase_idx WHERE svc = 'frontend'
 ----
 QUERY PLAN
 ╭─ UNGROUPED_AGGREGATE ───────────╮
-│ Aggregates: count(DISTINCT #0)  │
+│ Aggregates: count(#0)           │
 │ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ HASH_GROUP_BY ┴────────────────╮
+│ Groups: #0                      │
+│ ~0 rows                         │
 ╰────────────────┬────────────────╯
 ╭─ IRESEARCH_SCAN ────────────────╮
 │ Index: abase_idx                │

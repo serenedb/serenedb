@@ -21,14 +21,9 @@
 #include "icu_text_tokenizer.hpp"
 
 #include <simdutf.h>
-#include <unicode/brkiter.h>
-#include <unicode/ubrk.h>
-#include <unicode/uloc.h>
-#include <unicode/unistr.h>
 
-#include <memory>
 #include <string_view>
-#include <vector>
+#include <text_break_iterator.hpp>
 
 #include "iresearch/analysis/text/segment/fill.hpp"
 #include "iresearch/analysis/token_batch.hpp"
@@ -40,39 +35,16 @@ namespace {
 using Options = IcuTextTokenizer::Options;
 using Accept = Options::Accept;
 
-std::unique_ptr<icu::BreakIterator> MakeBreakIterator(
-  Options::Separate separate, const icu::Locale& locale) {
-  auto err = UErrorCode::U_ZERO_ERROR;
-  std::unique_ptr<icu::BreakIterator> it{
-    separate == Options::Separate::Word
-      ? icu::BreakIterator::createWordInstance(locale, err)
-      : icu::BreakIterator::createSentenceInstance(locale, err)};
-  if (!U_SUCCESS(err) || !it) {
-    THROW_SQL_ERROR(
-      ERR_MSG("split_text_icu: failed to create a break iterator for locale '",
-              locale.getName(), "': ", u_errorName(err)));
-  }
-  return it;
-}
-
-bool RulesAreTailored(const icu::BreakIterator& it) {
-  auto err = UErrorCode::U_ZERO_ERROR;
-  const char* actual = it.getLocaleID(ULOC_ACTUAL_LOCALE, err);
-  if (!U_SUCCESS(err) || actual == nullptr) {
-    return true;
-  }
-  const std::string_view name{actual};
-  return !name.empty() && name != "root";
-}
-
 template<Options::Separate S>
 class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
                                   public IcuTextTokenizer {
  public:
   explicit IcuTextAnalyzerImpl(const Options& opts)
     : _accept{opts.accept},
-      _break{MakeBreakIterator(S, opts.locale)},
-      _scan_ascii{!RulesAreTailored(*_break)} {}
+      _break{S == Options::Separate::Word ? duckdb::text::BreakKind::WORD
+                                          : duckdb::text::BreakKind::SENTENCE,
+             opts.locale, duckdb::text::BreakUnits::UTF16},
+      _scan_ascii{!_break.IsTailored()} {}
 
   BlockTraits WantedBlockTraits() const noexcept final {
     if constexpr (S == Options::Separate::Word) {
@@ -90,9 +62,7 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
     return {.offsets = true, .stable = true};
   }
 
-  size_t MemoryUsage() const noexcept final {
-    return _u16.capacity() * sizeof(char16_t);
-  }
+  size_t MemoryUsage() const noexcept final { return 0; }
 
   template<TokenLayout Layout, Accept A, bool KnownAscii>
   bool DoFill(const duckdb::string_t& raw, TokenSink& sink) {
@@ -112,37 +82,20 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
     if (n == 0) {
       return true;
     }
-    if (_u16.size() < n) {
-      _u16.resize(n);
-    }
-    const size_t len = simdutf::convert_utf8_to_utf16(data, n, _u16.data());
-    if (len == 0) [[unlikely]] {
+    if (!simdutf::validate_utf8(data, n)) [[unlikely]] {
       return false;
     }
-    _text.setTo(false, _u16.data(), static_cast<int32_t>(len));
-    _break->setText(_text);
+    _break.SetText(data, n);
 
-    const auto* p = reinterpret_cast<const uint8_t*>(data);
     uint32_t begin = 0;
-    uint32_t stop = 0;
-    int32_t unit = 0;
-    _break->first();
-    for (auto end = _break->next(); end != icu::BreakIterator::DONE;
-         end = _break->next()) {
-      while (unit < end) {
-        const uint8_t lead = p[stop];
-        const uint32_t size = lead < 0x80   ? 1
-                              : lead < 0xE0 ? 2
-                              : lead < 0xF0 ? 3
-                                            : 4;
-        unit += size == 4 ? 2 : 1;
-        stop += size;
-      }
+    for (auto end = _break.Next(); end != duckdb::text::BreakIterator::DONE;
+         end = _break.Next()) {
+      const auto stop = static_cast<uint32_t>(end);
       if constexpr (S == Options::Separate::Sentence) {
         segment::EmitTrimmedSegment<Layout, Case::None, A, KnownAscii>(
           sink, data, n, begin, stop);
       } else if constexpr (A == Accept::AlphaNumeric || A == Accept::Alpha) {
-        if (_break->getRuleStatus() != UWordBreak::UBRK_WORD_NONE) {
+        if (_break.GetRuleStatus() != duckdb::text::WORD_NONE) {
           segment::EmitAccepted<Layout, Case::None, A, KnownAscii>(
             sink, data, n, begin, stop);
         }
@@ -156,10 +109,8 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
   }
 
   Accept _accept;
-  std::unique_ptr<icu::BreakIterator> _break;
+  duckdb::text::BreakIterator _break;
   bool _scan_ascii;
-  std::vector<char16_t> _u16;
-  icu::UnicodeString _text;
 };
 
 }  // namespace
@@ -174,7 +125,7 @@ struct Type<analysis::IcuTextAnalyzerImpl<S>>
 namespace irs::analysis {
 
 Tokenizer::ptr IcuTextTokenizer::Make(Options options) {
-  if (options.locale.isBogus()) {
+  if (options.locale.IsBogus()) {
     THROW_SQL_ERROR(ERR_MSG("split_text_icu: locale is required"));
   }
   using Separate = Options::Separate;

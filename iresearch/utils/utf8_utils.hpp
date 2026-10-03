@@ -32,7 +32,6 @@ namespace irs::utf8_utils {
 
 inline constexpr uint8_t kMaxCharSize = 4;
 
-// icu::UnicodeString::kInvalidUChar is private
 inline constexpr uint32_t kInvalidChar32 = 0xFFFF;
 
 // 0 -- return 0 for last invalid and intermediate

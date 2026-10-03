@@ -347,19 +347,20 @@ absl::Status RequireKeywordAnalyzed(const SearchColumnInfo& info,
 // isn't that exact shape, returns `expr` unchanged.
 const duckdb::Expression& UnwrapBoostBoolCoercion(
   const duckdb::Expression& expr) {
-  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
+  if (!duckdb::BoundCastExpression::IsCast(expr)) {
     return expr;
   }
-  const auto& cast = expr.Cast<duckdb::BoundCastExpression>();
+  const auto& cast = expr.Cast<duckdb::BoundFunctionExpression>();
   if (cast.GetReturnType().id() != duckdb::LogicalTypeId::BOOLEAN) {
     return expr;
   }
-  if (!TryGetBoostModifier(cast.Child().GetReturnType()) &&
-      !TryGetScoreModifier(cast.Child().GetReturnType()) &&
-      !TryGetMergeModifier(cast.Child().GetReturnType())) {
+  const auto& child = duckdb::BoundCastExpression::Child(cast);
+  if (!TryGetBoostModifier(child.GetReturnType()) &&
+      !TryGetScoreModifier(child.GetReturnType()) &&
+      !TryGetMergeModifier(child.GetReturnType())) {
     return expr;
   }
-  return cast.Child();
+  return child;
 }
 
 absl::Status FromExpression(BoolTarget filter, const FilterContext& ctx,
@@ -1223,16 +1224,16 @@ void FromTSQueryBoost(BoolTarget parent, const FilterContext& ctx,
 // dispatch failure throws via the inner BuildTSQuery / BuildFts*).
 const duckdb::Expression* TryPeelBoostCast(const duckdb::Expression& peeled,
                                            irs::score_t& factor) {
-  if (peeled.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
+  if (!duckdb::BoundCastExpression::IsCast(peeled)) {
     return nullptr;
   }
-  const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
+  const auto& cast_expr = peeled.Cast<duckdb::BoundFunctionExpression>();
   const auto boost = TryGetBoostModifier(cast_expr.GetReturnType());
   if (!boost) {
     return nullptr;
   }
   factor = static_cast<irs::score_t>(*boost);
-  return &cast_expr.Child();
+  return &duckdb::BoundCastExpression::Child(cast_expr);
 }
 
 bool TryDispatchBoostCast(BoolTarget parent, const FilterContext& ctx,
@@ -1253,10 +1254,10 @@ bool TryDispatchBoostCast(BoolTarget parent, const FilterContext& ctx,
 bool TryDispatchSlopCast(BoolTarget parent, const FilterContext& ctx,
                          const SearchColumnInfo& column_info,
                          const duckdb::Expression& peeled) {
-  if (peeled.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
+  if (!duckdb::BoundCastExpression::IsCast(peeled)) {
     return false;
   }
-  const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
+  const auto& cast_expr = peeled.Cast<duckdb::BoundFunctionExpression>();
   const auto slop = TryGetSlopModifier(cast_expr.GetReturnType());
   if (!slop) {
     return false;
@@ -1271,7 +1272,7 @@ bool TryDispatchSlopCast(BoolTarget parent, const FilterContext& ctx,
                     ERR_MSG("::slop too large: ", *slop));
   }
   BuildTSQuery(parent, ctx.WithSlop(static_cast<irs::PosAttr::value_t>(*slop)),
-               column_info, cast_expr.Child());
+               column_info, duckdb::BoundCastExpression::Child(cast_expr));
   return true;
 }
 
@@ -1425,17 +1426,18 @@ void ApplyMerge(irs::BooleanFilter& scope, TSQueryMerge merge) {
 bool TryDispatchScoreCast(BoolTarget parent, const FilterContext& ctx,
                           const SearchColumnInfo& column_info,
                           const duckdb::Expression& peeled) {
-  if (peeled.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
+  if (!duckdb::BoundCastExpression::IsCast(peeled)) {
     return false;
   }
-  const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
+  const auto& cast_expr = peeled.Cast<duckdb::BoundFunctionExpression>();
   auto expr = TryGetScoreModifier(cast_expr.GetReturnType());
   if (!expr) {
     return false;
   }
   const auto* scorer = ResolveScoreOverride(ctx, *expr);
   auto scope = OpenScope();
-  BuildTSQuery(ScopeTarget(scope), ctx, column_info, cast_expr.Child());
+  BuildTSQuery(ScopeTarget(scope), ctx, column_info,
+               duckdb::BoundCastExpression::Child(cast_expr));
   ApplyScoreOverride(*scope, scorer);
   CloseScope(parent, std::move(scope));
   return true;
@@ -1444,16 +1446,17 @@ bool TryDispatchScoreCast(BoolTarget parent, const FilterContext& ctx,
 bool TryDispatchMergeCast(BoolTarget parent, const FilterContext& ctx,
                           const SearchColumnInfo& column_info,
                           const duckdb::Expression& peeled) {
-  if (peeled.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
+  if (!duckdb::BoundCastExpression::IsCast(peeled)) {
     return false;
   }
-  const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
+  const auto& cast_expr = peeled.Cast<duckdb::BoundFunctionExpression>();
   const auto merge = TryGetMergeModifier(cast_expr.GetReturnType());
   if (!merge) {
     return false;
   }
   auto scope = OpenScope();
-  BuildTSQuery(ScopeTarget(scope), ctx, column_info, cast_expr.Child());
+  BuildTSQuery(ScopeTarget(scope), ctx, column_info,
+               duckdb::BoundCastExpression::Child(cast_expr));
   ApplyMerge(*scope, *merge);
   CloseScope(parent, std::move(scope));
   return true;
@@ -1461,17 +1464,18 @@ bool TryDispatchMergeCast(BoolTarget parent, const FilterContext& ctx,
 
 bool TryDispatchSqlScoreCast(BoolTarget filter, const FilterContext& ctx,
                              const duckdb::Expression& peeled) {
-  if (peeled.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
+  if (!duckdb::BoundCastExpression::IsCast(peeled)) {
     return false;
   }
-  const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
+  const auto& cast_expr = peeled.Cast<duckdb::BoundFunctionExpression>();
   auto expr = TryGetScoreModifier(cast_expr.GetReturnType());
   if (!expr) {
     return false;
   }
   const auto* scorer = ResolveScoreOverride(ctx, *expr);
   auto scope = OpenScope();
-  if (auto s = FromExpression(ScopeTarget(scope), ctx, cast_expr.Child());
+  if (auto s = FromExpression(ScopeTarget(scope), ctx,
+                              duckdb::BoundCastExpression::Child(cast_expr));
       !s.ok()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1488,16 +1492,17 @@ bool TryDispatchSqlScoreCast(BoolTarget filter, const FilterContext& ctx,
 
 bool TryDispatchSqlMergeCast(BoolTarget filter, const FilterContext& ctx,
                              const duckdb::Expression& peeled) {
-  if (peeled.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
+  if (!duckdb::BoundCastExpression::IsCast(peeled)) {
     return false;
   }
-  const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
+  const auto& cast_expr = peeled.Cast<duckdb::BoundFunctionExpression>();
   const auto merge = TryGetMergeModifier(cast_expr.GetReturnType());
   if (!merge) {
     return false;
   }
   auto scope = OpenScope();
-  if (auto s = FromExpression(ScopeTarget(scope), ctx, cast_expr.Child());
+  if (auto s = FromExpression(ScopeTarget(scope), ctx,
+                              duckdb::BoundCastExpression::Child(cast_expr));
       !s.ok()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1517,11 +1522,11 @@ bool TryDispatchTokenizeCast(BoolTarget parent, const FilterContext& ctx,
   std::string_view tokenizer;
   const duckdb::Expression* expr = nullptr;
   const duckdb::Value* val = nullptr;
-  if (peeled.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
-    const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
+  if (duckdb::BoundCastExpression::IsCast(peeled)) {
+    const auto& cast_expr = peeled.Cast<duckdb::BoundFunctionExpression>();
     tokenizer = TryGetTokenizerModifier(cast_expr.GetReturnType());
     if (!tokenizer.empty()) {
-      expr = &cast_expr.Child();
+      expr = &duckdb::BoundCastExpression::Child(cast_expr);
       val = TryGetConstant(UnwrapTSQueryCast(*expr));
       if (val && IsTSQueryStructType(val->type())) {
         val = nullptr;
@@ -1620,6 +1625,21 @@ absl::Status FromComparisonExpression(
   const auto& left = duckdb::BoundComparisonExpression::Left(cmp);
   const auto& right = duckdb::BoundComparisonExpression::Right(cmp);
   const auto cmp_type = cmp.GetExpressionType();
+  if (ctx.expr_getter && !TryGetConstant(left) && !TryGetConstant(right)) {
+    if (FindColumnInfoForExpr(ctx, cmp)) {
+      const duckdb::BoundConstantExpression value{duckdb::Value::BOOLEAN(true)};
+      return FromBinaryEq<true>(filter, ctx, cmp, value, false);
+    }
+    auto negated = cmp.Copy();
+    duckdb::BoundComparisonExpression::SetType(
+      negated->Cast<duckdb::BoundFunctionExpression>(),
+      duckdb::NegateComparisonExpression(cmp_type));
+    if (FindColumnInfoForExpr(ctx, *negated)) {
+      const duckdb::BoundConstantExpression value{
+        duckdb::Value::BOOLEAN(false)};
+      return FromBinaryEq<true>(filter, ctx, *negated, value, false);
+    }
+  }
   switch (cmp_type) {
     case duckdb::ExpressionType::COMPARE_EQUAL:
       return FromBinaryEq<true>(filter, ctx, left, right, false);
@@ -1724,9 +1744,9 @@ const duckdb::Value* TryGetConstant(const duckdb::Expression& expr) {
   // run the filter builder mid-bind, before the optimizer folds
   // redundant casts the binder may have inserted around literals.
   const auto* cur = &expr;
-  while (cur->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
-    const auto& cast = cur->Cast<duckdb::BoundCastExpression>();
-    cur = &cast.Child();
+  while (duckdb::BoundCastExpression::IsCast(*cur)) {
+    cur = &duckdb::BoundCastExpression::Child(
+      cur->Cast<duckdb::BoundFunctionExpression>());
   }
   if (cur->GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
     return nullptr;
@@ -1778,11 +1798,11 @@ struct UnwrappedField {
 };
 
 UnwrappedField UnwrapFieldCast(const duckdb::Expression& expr) {
-  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
+  if (!duckdb::BoundCastExpression::IsCast(expr)) {
     return {&expr, std::nullopt};
   }
-  const auto& c = expr.Cast<duckdb::BoundCastExpression>();
-  return {&c.Child(), c.GetReturnType()};
+  const auto& c = expr.Cast<duckdb::BoundFunctionExpression>();
+  return {&duckdb::BoundCastExpression::Child(c), c.GetReturnType()};
 }
 
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
@@ -1878,10 +1898,11 @@ const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
            type.id() == duckdb::LogicalTypeId::STRING_LITERAL;
   };
   const duckdb::Expression* cur = &expr;
-  while (cur->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
-    const auto& cast = cur->Cast<duckdb::BoundCastExpression>();
+  while (duckdb::BoundCastExpression::IsCast(*cur)) {
+    const auto& cast = cur->Cast<duckdb::BoundFunctionExpression>();
     const auto& target = cast.GetReturnType();
-    const auto& source = cast.Child().GetReturnType();
+    const auto& source =
+      duckdb::BoundCastExpression::Child(cast).GetReturnType();
     // Modifier-bearing casts must be preserved so the walker sees them.
     if (!TryGetTokenizerModifier(target).empty() ||
         TryGetBoostModifier(target) || TryGetSlopModifier(target) ||
@@ -1897,7 +1918,7 @@ const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
         !in_family(target) || !in_family(source)) {
       break;
     }
-    cur = &cast.Child();
+    cur = &duckdb::BoundCastExpression::Child(cast);
   }
   return *cur;
 }
@@ -1912,12 +1933,11 @@ bool TryCoerce(const duckdb::Value& val, duckdb::LogicalTypeId target_id,
     out = val.GetValue<T>();
     return true;
   }
-  duckdb::Value coerced;
-  std::string err;
-  if (!val.DefaultTryCastAs(duckdb::LogicalType{target_id}, coerced, &err)) {
+  const auto coerced = val.DefaultTryCastAs(duckdb::LogicalType{target_id});
+  if (!coerced) {
     return false;
   }
-  out = coerced.GetValue<T>();
+  out = coerced->GetValue<T>();
   return true;
 }
 
@@ -2132,10 +2152,11 @@ void BuildTSQuery(BoolTarget parent, const FilterContext& ctx,
   // false -> Empty. Surfaces as either a NULL TSQUERY constant or a
   // BoundCast<TSQUERY> wrapping a BOOLEAN constant. Works at any
   // TSQUERY position thanks to the recursive walker.
-  if (unwrapped.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
-    const auto& cast = unwrapped.Cast<duckdb::BoundCastExpression>();
-    if (cast.Child().GetReturnType().id() == duckdb::LogicalTypeId::BOOLEAN) {
-      const auto* val = TryGetConstant(cast.Child());
+  if (duckdb::BoundCastExpression::IsCast(unwrapped)) {
+    const auto& child = duckdb::BoundCastExpression::Child(
+      unwrapped.Cast<duckdb::BoundFunctionExpression>());
+    if (child.GetReturnType().id() == duckdb::LogicalTypeId::BOOLEAN) {
+      const auto* val = TryGetConstant(child);
       if (!val) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("BOOLEAN inside TSQUERY must be a constant"),

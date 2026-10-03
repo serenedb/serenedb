@@ -495,7 +495,7 @@ find_nearest_words(model_location := '', top_k := 1)
 
 stem_words(locale := '')
   as a function: stem_words(value, locale := '')
-  locale  ICU locale string (e.g. en_US.UTF-8)
+  locale  Locale identifier (e.g. en_US.UTF-8)
 
 remove_stopwords(stopwords := [], stopwords_path := '', hex := false)
   as a function: remove_stopwords(value, stopwords := [], stopwords_path := '', hex := false)
@@ -511,7 +511,7 @@ classify_text(model_location := '', top_k := 1, threshold := 0)
 
 collate_tokens(locale := '')
   as a function: collate_tokens(value, locale := '')
-  locale  ICU locale string (e.g. en_US.UTF-8)
+  locale  Locale identifier (e.g. en_US.UTF-8)
 
 split_text_csv(delimiter)
   as a function: split_text_csv(value, delimiter)
@@ -527,14 +527,14 @@ generate_wildcard_ngrams(<analyzer>, ngram_size := 3)
 
 normalize_tokens(locale := '', case := 'none', accent := true, form := 'nfc')
   as a function: normalize_tokens(value, locale := '', case := 'none', accent := true, form := 'nfc')
-  locale  ICU locale for case conversion; omit for locale-independent simple case
+  locale  Locale for case conversion; omit for locale-independent simple case
   case    Text case conversion: none, lower, upper, fold
   accent  Preserve accent marks
   form    Unicode normalization form: nfc, nfd, nfkc, nfkd, nfkc_cf
 
 split_text_icu(locale, break := 'alpha')
   as a function: split_text_icu(value, locale, break := 'alpha')
-  locale  ICU locale string (e.g. en_US.UTF-8)
+  locale  Locale identifier (e.g. en_US.UTF-8)
   break   Token boundary detection mode: all, graphic, alpha, sentence
 
 split_by_non_alpha(case := 'none', break := 'ascii')
@@ -664,7 +664,7 @@ CREATE TEXT SEARCH DICTIONARY bad_no_input AS upper('x');
 ----
 db error: ERROR: sql: No function matches the given name and argument types 'upper(VARCHAR, STRING_LITERAL)'. You might need to add explicit type casts.
 	Candidate functions:
-	upper(col0 VARCHAR) -> VARCHAR
+	upper(string VARCHAR) -> VARCHAR
 
 
 # A name close to a template is reported as a template typo; a distant one is

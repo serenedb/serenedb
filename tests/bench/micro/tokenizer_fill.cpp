@@ -881,7 +881,7 @@ Tokenizer::ptr MakeKeyword() { return KeywordTokenizer::Make({}); }
 
 Tokenizer::ptr MakeNorm() {
   NormalizingTokenizer::Options opts;
-  opts.locale = icu::Locale::createFromName("en");
+  opts.locale = duckdb::text::Locale::FromName("en");
   opts.case_convert = Case::Lower;
   opts.accent = false;
   return NormalizingTokenizer::Make(std::move(opts));
@@ -889,7 +889,7 @@ Tokenizer::ptr MakeNorm() {
 
 Tokenizer::ptr MakeNormNfkcAccent() {
   NormalizingTokenizer::Options opts;
-  opts.locale = icu::Locale::createFromName("en");
+  opts.locale = duckdb::text::Locale::FromName("en");
   opts.case_convert = Case::Lower;
   opts.accent = false;
   opts.form = NormForm::Nfkc;
@@ -898,21 +898,21 @@ Tokenizer::ptr MakeNormNfkcAccent() {
 
 Tokenizer::ptr MakeNormLower() {
   NormalizingTokenizer::Options opts;
-  opts.locale = icu::Locale::createFromName("en");
+  opts.locale = duckdb::text::Locale::FromName("en");
   opts.case_convert = Case::Lower;
   return NormalizingTokenizer::Make(std::move(opts));
 }
 
 Tokenizer::ptr MakeNormFold() {
   NormalizingTokenizer::Options opts;
-  opts.locale = icu::Locale::createFromName("en");
+  opts.locale = duckdb::text::Locale::FromName("en");
   opts.fold = true;
   return NormalizingTokenizer::Make(std::move(opts));
 }
 
 Tokenizer::ptr MakeNormNfd() {
   NormalizingTokenizer::Options opts;
-  opts.locale = icu::Locale::createFromName("en");
+  opts.locale = duckdb::text::Locale::FromName("en");
   opts.case_convert = Case::Lower;
   opts.form = NormForm::Nfd;
   return NormalizingTokenizer::Make(std::move(opts));
@@ -920,14 +920,14 @@ Tokenizer::ptr MakeNormNfd() {
 
 Tokenizer::ptr MakeNormNfkcCf() {
   NormalizingTokenizer::Options opts;
-  opts.locale = icu::Locale::createFromName("en");
+  opts.locale = duckdb::text::Locale::FromName("en");
   opts.form = NormForm::NfkcCf;
   return NormalizingTokenizer::Make(std::move(opts));
 }
 
 Tokenizer::ptr MakeCollation() {
   CollationTokenizer::Options opts;
-  opts.locale = icu::Locale::createFromName("de");
+  opts.locale = duckdb::text::Locale::FromName("de");
   return CollationTokenizer::Make(std::move(opts));
 }
 
@@ -957,7 +957,7 @@ Tokenizer::ptr MakeGeoPointWkb() {
 
 Tokenizer::ptr MakeStem() {
   StemmingTokenizer::Options opts;
-  opts.locale = icu::Locale::createFromName("en");
+  opts.locale = duckdb::text::Locale::FromName("en");
   return StemmingTokenizer::Make(std::move(opts));
 }
 
@@ -1324,13 +1324,13 @@ Tokenizer::ptr MakeTextGrapheme() {
 
 Tokenizer::ptr MakeIcuText() {
   return IcuTextTokenizer::Make(
-    {.locale = icu::Locale::createFromName("en_US")});
+    {.locale = duckdb::text::Locale::FromName("en_US")});
 }
 
 Tokenizer::ptr MakeIcuSentence() {
   return IcuTextTokenizer::Make(
     {.separate = IcuTextTokenizer::Options::Separate::Sentence,
-     .locale = icu::Locale::createFromName("en_US")});
+     .locale = duckdb::text::Locale::FromName("en_US")});
 }
 
 Tokenizer::ptr MakeSolrSynonyms() {
@@ -1349,7 +1349,7 @@ Tokenizer::ptr MakePipelineTextImpl(bool seg_lower) {
     {.convert = seg_lower ? irs::Case::Lower : irs::Case::None}));
   {
     NormalizingTokenizer::Options o;
-    o.locale = icu::Locale::createFromName("en");
+    o.locale = duckdb::text::Locale::FromName("en");
     o.case_convert = seg_lower ? Case::None : Case::Lower;
     o.accent = false;
     subs.push_back(NormalizingTokenizer::Make(std::move(o)));
@@ -1361,7 +1361,7 @@ Tokenizer::ptr MakePipelineTextImpl(bool seg_lower) {
   }
   {
     StemmingTokenizer::Options o;
-    o.locale = icu::Locale::createFromName("en");
+    o.locale = duckdb::text::Locale::FromName("en");
     subs.push_back(StemmingTokenizer::Make(std::move(o)));
   }
   return std::make_unique<PipelineTokenizer>(std::move(subs));
@@ -1441,14 +1441,14 @@ Tokenizer::ptr MakePipelineT2RewriteImpl(bool with_stem) {
   subs.push_back(DelimitedTokenizer::Make({","}));
   {
     NormalizingTokenizer::Options o;
-    o.locale = icu::Locale::createFromName("en");
+    o.locale = duckdb::text::Locale::FromName("en");
     o.case_convert = Case::Lower;
     o.accent = false;
     subs.push_back(NormalizingTokenizer::Make(std::move(o)));
   }
   if (with_stem) {
     StemmingTokenizer::Options o;
-    o.locale = icu::Locale::createFromName("en");
+    o.locale = duckdb::text::Locale::FromName("en");
     subs.push_back(StemmingTokenizer::Make(std::move(o)));
   }
   return std::make_unique<PipelineTokenizer>(std::move(subs));
@@ -1457,7 +1457,7 @@ Tokenizer::ptr MakePipelineT2Coll() {
   std::vector<Tokenizer::ptr> subs;
   subs.push_back(DelimitedTokenizer::Make({","}));
   subs.push_back(CollationTokenizer::Make(
-    {.locale = icu::Locale::createFromName("en_US.UTF-8")}));
+    {.locale = duckdb::text::Locale::FromName("en_US.UTF-8")}));
   return std::make_unique<PipelineTokenizer>(std::move(subs));
 }
 
@@ -1534,7 +1534,7 @@ Tokenizer::ptr MakePipelineSqlSplitNorm() {
   subs.push_back(
     SqlTokenizer::Make({.expression = "string_split(input, ',')"}));
   NormalizingTokenizer::Options o;
-  o.locale = icu::Locale::createFromName("en");
+  o.locale = duckdb::text::Locale::FromName("en");
   o.case_convert = Case::Lower;
   o.accent = false;
   subs.push_back(NormalizingTokenizer::Make(std::move(o)));

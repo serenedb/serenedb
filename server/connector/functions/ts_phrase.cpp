@@ -471,16 +471,19 @@ PhraseGap ParseTsqueryPhraseDistance(const duckdb::Expression& expr) {
               "LIST/ARRAY"),
       ERR_HINT(kHint));
   }
-  duckdb::Value out;
-  if (val->IsNull() || !val->type().IsNumeric() ||
-      !val->DefaultTryCastAs(duckdb::LogicalType::BIGINT, out, nullptr, true)) {
+  std::optional<duckdb::Value> out;
+  if (!val->IsNull() && val->type().IsNumeric()) {
+    out = val->DefaultTryCastAs(duckdb::LogicalType::BIGINT,
+                                /*error_message=*/nullptr, /*strict=*/true);
+  }
+  if (!out) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("tsquery_phrase distance must be a non-null integer, got ",
               val->ToString(), " of type ", val->type().ToString()),
       ERR_HINT(kHint));
   }
-  const auto raw = out.GetValue<int64_t>();
+  const auto raw = out->GetValue<int64_t>();
   if (raw < 1) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("tsquery_phrase distance must be >= 1, got ", raw),
@@ -614,10 +617,8 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
 
   for (size_t i = 0; i < seq.parts.size(); ++i) {
     const auto& part_expr_ref = UnwrapTSQueryCast(*seq.parts[i]);
-    if (part_expr_ref.GetExpressionClass() ==
-          duckdb::ExpressionClass::BOUND_CAST &&
-        TryGetSlopModifier(
-          part_expr_ref.Cast<duckdb::BoundCastExpression>().GetReturnType())) {
+    if (duckdb::BoundCastExpression::IsCast(part_expr_ref) &&
+        TryGetSlopModifier(part_expr_ref.GetReturnType())) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("## part must not carry a slop modifier"),
                       ERR_HINT("Use ts_phrase(..., slop := N) or "

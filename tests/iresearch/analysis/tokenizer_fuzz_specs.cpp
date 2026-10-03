@@ -61,7 +61,9 @@ Ptr MakeChild(Cfg cfg) {
   return irs::analysis::CreateTokenizer(std::move(cfg), ::tests::Cache());
 }
 
-icu::Locale Loc(const char* name) { return icu::Locale::createFromName(name); }
+duckdb::text::Locale Loc(const char* name) {
+  return duckdb::text::Locale::FromName(name);
+}
 
 Cfg TextChainCfg(const char* locale, irs::Case convert, bool stemming,
                  std::vector<std::string> stopwords = {}) {

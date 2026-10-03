@@ -37,7 +37,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | DROP COLUMN        | Yes           |  |
 | ADD CHECK          | Yes           |                                                              |
 | ADD CONSTRAINT     | Yes           | `CHECK`, `UNIQUE` and `PRIMARY KEY` constraints; not `FOREIGN KEY` |
-| ADD FOREIGN KEY    | No            | Fails with `unsupported constraint type in ALTER TABLE statement` |
+| ADD FOREIGN KEY    | No            | Fails with `No support for adding FOREIGN_KEY constraints with ALTER TABLE` |
 | DROP CONSTRAINT    | Yes           |                                                              |
 | ALTER COLUMN       | Yes           | `TYPE`, `SET`/`DROP DEFAULT` and `SET NOT NULL` |
 | SET DEFAULT        | Yes           |                                                              |
@@ -223,7 +223,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | ^                | Yes           |                                                                         |
 | |/               | Yes            |                                                                         |
 | ||/              | Yes            |                                                                         |
-| @                | No            |                                                                         |
+| @                | Yes           |                                                                         |
 | &                | Yes           |                                                                         |
 | |                | Yes            |                                                                         |
 | #                | No            |                                                                         |
@@ -340,7 +340,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | ltrim          | Yes           |                           |
 | octet_length   | Yes           |                           |
 | overlay        | Yes           |                           |
-| position       | No            |                           |
+| position       | Yes           |                           |
 | rtrim          | Yes           |                           |
 | substring      | Yes           |                           |
 | trim           | Yes           |                           |

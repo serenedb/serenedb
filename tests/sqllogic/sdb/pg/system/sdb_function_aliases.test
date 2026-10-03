@@ -1,5 +1,5 @@
 # Every duckdb_* metadata surface is also reachable under an sdb_* name:
-# 32 table functions, the 9 default views that shadow them, the 2 default table
+# 36 table functions, the 9 default views that shadow them, the 2 default table
 # macros and the duckdb_format_sql scalar. Aliases share the source's catalog
 # entry, so named parameters, overloads and pushdown flags come along for free.
 
@@ -47,7 +47,7 @@ FROM duckdb_functions()
 WHERE alias_of IS NOT NULL AND function_name LIKE '%sdb\_%'
 ----
 aliases
-33
+37
 
 
 # The one alias whose name is not simply the source with a different prefix.

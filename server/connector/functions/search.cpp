@@ -86,10 +86,9 @@ void ScorerStubFn(duckdb::DataChunk& /*args*/, duckdb::ExpressionState& state,
 // (e.g. ts_dict_min/ts_dict_max) into one before the optimizer can claim them.
 template<int Tag>
 struct TsDictStub {
-  static duckdb::idx_t StateSize(const duckdb::BoundAggregateFunction&) {
-    return 1;
-  }
-  static void Init(const duckdb::BoundAggregateFunction&, duckdb::data_ptr_t) {}
+  static duckdb::idx_t StateSize(duckdb::AggregateStateInput&) { return 1; }
+  static void Init(duckdb::AggregateStateInput&, duckdb::data_ptr_t*,
+                   duckdb::idx_t) {}
   static void Update(duckdb::Vector[], duckdb::AggregateInputData&,
                      duckdb::idx_t, duckdb::Vector&, duckdb::idx_t) {
     Throw();

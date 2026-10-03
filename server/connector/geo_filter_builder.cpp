@@ -52,17 +52,18 @@ namespace {
 // re-shapes (struct field projection) are NOT peeled -- they carry data
 // changes the filter builder must respect.
 const duckdb::Expression& PeelSameTypeIdCast(const duckdb::Expression& expr) {
-  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
+  if (!duckdb::BoundCastExpression::IsCast(expr)) {
     return expr;
   }
-  const auto& cast = expr.Cast<duckdb::BoundCastExpression>();
-  if (cast.GetReturnType().id() != cast.Child().GetReturnType().id()) {
+  const auto& cast = expr.Cast<duckdb::BoundFunctionExpression>();
+  const auto& child = duckdb::BoundCastExpression::Child(cast);
+  if (cast.GetReturnType().id() != child.GetReturnType().id()) {
     return expr;
   }
   if (cast.GetReturnType().IsNested()) {
     return expr;
   }
-  return cast.Child();
+  return child;
 }
 
 // Populate the iresearch geo filter base options from the column's geo

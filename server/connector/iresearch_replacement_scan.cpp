@@ -36,8 +36,7 @@ namespace {
 
 duckdb::unique_ptr<duckdb::ParsedExpression> NameArgument(
   const duckdb::Identifier& value) {
-  return duckdb::make_uniq<duckdb::ConstantExpression>(
-    duckdb::Value{value.GetIdentifierName()});
+  return duckdb::ConstantExpression::String(value.GetIdentifierName());
 }
 
 duckdb::unique_ptr<duckdb::TableRef> IResearchReplacementScan(

@@ -333,16 +333,6 @@ i
 4
 5
 
-# DOCS_TEST: example_016
-
-# DOCS_TEST_BODY
-
-statement ok
-SET deprecated_using_key_syntax = 'DEFAULT';
-
-statement ok
-SET deprecated_using_key_syntax = 'UNION_AS_UNION_ALL';
-
 # DOCS_TEST: example_017
 
 statement ok

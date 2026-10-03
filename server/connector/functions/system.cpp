@@ -50,6 +50,7 @@
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/database_size.hpp>
 #include <duckdb/storage/storage_manager.hpp>
+#include <duckdb/storage/table/index_entry.hpp>
 #include <duckdb/storage/table_io_manager.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -119,12 +120,12 @@ int64_t StoreTableIndexBytes(duckdb::ClientContext& context,
                   .GetDataTableInfo();
   info.BindIndexes(context);
   int64_t total = 0;
-  for (auto& index : info.GetIndexes().Indexes()) {
-    if (!index.IsBound()) {
+  for (auto entry : info.GetIndexes().IndexEntries()) {
+    if (entry->GetBindState() != duckdb::IndexBindState::BOUND) {
       continue;
     }
-    total += static_cast<int64_t>(
-      index.Cast<duckdb::BoundIndex>().GetAllocationSize());
+    const auto index = entry->GetReadHandle<duckdb::BoundIndex>();
+    total += static_cast<int64_t>(index->GetAllocationSize());
   }
   return total;
 }
@@ -186,8 +187,12 @@ int64_t IndexEntryBytes(duckdb::ClientContext& context,
   // allocation the store table reports for it.
   auto& info = index.GetDataTableInfo();
   info.BindIndexes(context);
-  auto bound = info.GetIndexes().Find(index.name);
-  return bound ? static_cast<int64_t>(bound->GetAllocationSize()) : 0;
+  auto entry = info.GetIndexes().FindEntry(index.name);
+  if (!entry || entry->GetBindState() != duckdb::IndexBindState::BOUND) {
+    return 0;
+  }
+  const auto bound = entry->GetReadHandle<duckdb::BoundIndex>();
+  return static_cast<int64_t>(bound->GetAllocationSize());
 }
 
 int64_t TableIndexesTotalBytes(duckdb::ClientContext& context,
@@ -378,7 +383,7 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
     const bool missing_ok = ok_value.GetValue();
     const auto key = name_value.GetValue().GetString();
     duckdb::Value value;
-    if (context.TryGetCurrentSetting(key, value)) {
+    if (context.TryGetCurrentSetting(duckdb::Identifier{key}, value)) {
       result_ptr[row] =
         duckdb::StringVector::AddString(result, value.ToString());
       continue;
@@ -491,13 +496,14 @@ void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     [&](duckdb::string_t name, duckdb::string_t value,
         bool is_local) -> duckdb::string_t {
       duckdb::Value val{std::string{value.GetData(), value.GetSize()}};
+      const duckdb::Identifier setting{name.GetString()};
       duckdb::PhysicalSet::SetVariable(
-        context, duckdb::String::Reference(name.GetData(), name.GetSize()),
+        context, setting,
         is_local ? duckdb::SetScope::LOCAL : duckdb::SetScope::AUTOMATIC, val);
 
       // Return actual stored value (callbacks may have modified it).
       duckdb::Value current;
-      const bool ok = context.TryGetCurrentSetting(name.GetString(), current);
+      const bool ok = context.TryGetCurrentSetting(setting, current);
       SDB_ASSERT(ok);
       return duckdb::StringVector::AddString(result, current.ToString());
     });
@@ -576,9 +582,8 @@ duckdb::unique_ptr<duckdb::Expression> BindPgTypeof(
   duckdb::FunctionBindExpressionInput& input) {
   auto oid =
     static_cast<int64_t>(pg::Type2Oid(input.children[0]->GetReturnType()));
-  auto val = duckdb::Value::BIGINT(oid);
-  val.Reinterpret(pg::REGTYPE());
-  return duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(val));
+  return duckdb::make_uniq<duckdb::BoundConstantExpression>(
+    duckdb::Value::BIGINT(oid).WithType(pg::REGTYPE()));
 }
 
 void ToRegtypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
@@ -1968,7 +1973,9 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
                                 {duckdb::LogicalType::ANY},
                                 duckdb::LogicalType::INTEGER,
                                 NumNonNullsFunction};
-    func.SetVarArgs(duckdb::LogicalType::ANY);
+    func.GetSignature()
+      .AddArgs("args", duckdb::LogicalType::ANY)
+      .AddKwargs("kwargs", duckdb::LogicalType::ANY);
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     loader.RegisterFunction(func);
   }
@@ -1979,7 +1986,9 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
                                 {duckdb::LogicalType::ANY},
                                 duckdb::LogicalType::INTEGER,
                                 NumNullsFunction};
-    func.SetVarArgs(duckdb::LogicalType::ANY);
+    func.GetSignature()
+      .AddArgs("args", duckdb::LogicalType::ANY)
+      .AddKwargs("kwargs", duckdb::LogicalType::ANY);
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     loader.RegisterFunction(func);
   }

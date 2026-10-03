@@ -3,6 +3,7 @@
 #include <memory>
 
 #include "duckdb/function/table_function.hpp"
+#include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database_manager.hpp"
 
 #include "storage/clickhouse_catalog.hpp"
@@ -28,7 +29,7 @@ struct ConfigurePoolBindData : public TableFunctionData {
 	std::pair<uint64_t, bool> idle_timeout_millis;
 	std::pair<bool, bool> enable_reaper_thread;
 
-	static Value Lookup(const named_parameter_map_t &map, const string &key) {
+	static Value Lookup(const named_argument_map_t &map, const string &key) {
 		auto it = map.find(Identifier(key));
 		if (it == map.end()) {
 			return Value();
@@ -36,7 +37,7 @@ struct ConfigurePoolBindData : public TableFunctionData {
 		return it->second;
 	}
 
-	static std::pair<string, bool> LookupString(const named_parameter_map_t &map, const string &key) {
+	static std::pair<string, bool> LookupString(const named_argument_map_t &map, const string &key) {
 		Value val = Lookup(map, key);
 		if (val.IsNull()) {
 			return std::make_pair("", true);
@@ -45,7 +46,7 @@ struct ConfigurePoolBindData : public TableFunctionData {
 		return std::make_pair(std::move(str), false);
 	}
 
-	static std::pair<uint64_t, bool> LookupUBigInt(const named_parameter_map_t &map, const string &key) {
+	static std::pair<uint64_t, bool> LookupUBigInt(const named_argument_map_t &map, const string &key) {
 		Value val = Lookup(map, key);
 		if (val.IsNull()) {
 			return std::make_pair(0, true);
@@ -53,7 +54,7 @@ struct ConfigurePoolBindData : public TableFunctionData {
 		return std::make_pair(UBigIntValue::Get(val), false);
 	}
 
-	static std::pair<bool, bool> LookupBool(const named_parameter_map_t &map, const string &key) {
+	static std::pair<bool, bool> LookupBool(const named_argument_map_t &map, const string &key) {
 		Value val = Lookup(map, key);
 		if (val.IsNull()) {
 			return std::make_pair(false, true);
@@ -61,7 +62,7 @@ struct ConfigurePoolBindData : public TableFunctionData {
 		return std::make_pair(BooleanValue::Get(val), false);
 	}
 
-	static std::pair<dbconnector::pool::AcquireMode, bool> LookupAcquireMode(const named_parameter_map_t &map,
+	static std::pair<dbconnector::pool::AcquireMode, bool> LookupAcquireMode(const named_argument_map_t &map,
 	                                                                         const string &key) {
 		std::pair<string, bool> st_pair = LookupString(map, key);
 		if (st_pair.second) {
@@ -75,7 +76,7 @@ struct ConfigurePoolBindData : public TableFunctionData {
 		}
 	}
 
-	ConfigurePoolBindData(const named_parameter_map_t &map)
+	ConfigurePoolBindData(const named_argument_map_t &map)
 	    : catalog_name(LookupString(map, "catalog_name")), acquire_mode(LookupAcquireMode(map, "acquire_mode")),
 	      max_connections(LookupUBigInt(map, "max_connections")),
 	      wait_timeout_millis(LookupUBigInt(map, "wait_timeout_millis")),
@@ -83,10 +84,9 @@ struct ConfigurePoolBindData : public TableFunctionData {
 	      max_lifetime_millis(LookupUBigInt(map, "max_lifetime_millis")),
 	      idle_timeout_millis(LookupUBigInt(map, "idle_timeout_millis")),
 	      enable_reaper_thread(LookupBool(map, "enable_reaper_thread")) {
-		if (catalog_name.second &&
-		    !(acquire_mode.second && max_connections.second && wait_timeout_millis.second &&
-		      enable_thread_local_cache.second && max_lifetime_millis.second && idle_timeout_millis.second &&
-		      enable_reaper_thread.second)) {
+		if (catalog_name.second && !(acquire_mode.second && max_connections.second && wait_timeout_millis.second &&
+		                             enable_thread_local_cache.second && max_lifetime_millis.second &&
+		                             idle_timeout_millis.second && enable_reaper_thread.second)) {
 			throw BinderException("'catalog_name' argument must be specified to change any option value on the "
 			                      "connection pool of this catalog");
 		}
@@ -101,14 +101,14 @@ struct LocalState : public LocalTableFunctionState {
 
 } // namespace
 
-static void AddColumn(vector<LogicalType> &return_types, vector<string> &names, const string &col_name,
+static void AddColumn(vector<LogicalType> &return_types, vector<Identifier> &names, const string &col_name,
                       LogicalType col_type) {
 	names.emplace_back(col_name);
 	return_types.emplace_back(col_type);
 }
 
 static unique_ptr<FunctionData> ConfigurePoolBind(ClientContext &context, TableFunctionBindInput &input,
-                                                  vector<LogicalType> &return_types, vector<string> &names) {
+                                                  vector<LogicalType> &return_types, vector<Identifier> &names) {
 	AddColumn(return_types, names, "catalog_name", LogicalType::VARCHAR);
 	AddColumn(return_types, names, "acquire_mode", LogicalType::VARCHAR);
 	AddColumn(return_types, names, "available_connections", LogicalType::UBIGINT);
@@ -228,14 +228,16 @@ static void ConfigurePoolFunction(ClientContext &context, TableFunctionInput &in
 ClickHouseConfigurePoolFunction::ClickHouseConfigurePoolFunction()
     : TableFunction("clickhouse_configure_pool", vector<LogicalType>(), ConfigurePoolFunction, ConfigurePoolBind,
                     ConfigurePoolInitGlobalState, ConfigurePoolInitLocalState) {
-	named_parameters["catalog_name"] = LogicalType::VARCHAR;
-	named_parameters["acquire_mode"] = LogicalType::VARCHAR;
-	named_parameters["max_connections"] = LogicalType::UBIGINT;
-	named_parameters["wait_timeout_millis"] = LogicalType::UBIGINT;
-	named_parameters["enable_thread_local_cache"] = LogicalType::BOOLEAN;
-	named_parameters["max_lifetime_millis"] = LogicalType::UBIGINT;
-	named_parameters["idle_timeout_millis"] = LogicalType::UBIGINT;
-	named_parameters["enable_reaper_thread"] = LogicalType::BOOLEAN;
+	GetSignature().WithTypedKwargs("options", [](TypedKwargs &options) {
+		options.Add("catalog_name", LogicalType::VARCHAR)
+		    .Add("acquire_mode", LogicalType::VARCHAR)
+		    .Add("max_connections", LogicalType::UBIGINT)
+		    .Add("wait_timeout_millis", LogicalType::UBIGINT)
+		    .Add("enable_thread_local_cache", LogicalType::BOOLEAN)
+		    .Add("max_lifetime_millis", LogicalType::UBIGINT)
+		    .Add("idle_timeout_millis", LogicalType::UBIGINT)
+		    .Add("enable_reaper_thread", LogicalType::BOOLEAN);
+	});
 }
 
 } // namespace duckdb

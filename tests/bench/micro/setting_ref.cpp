@@ -22,7 +22,6 @@
 
 #include <duckdb.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <string>
 #include <string_view>
 
 #include "query/config.h"
@@ -48,14 +47,14 @@ void SettingRefCached(benchmark::State& state) {
 void IndexLookupEveryRead(benchmark::State& state) {
   auto& context = Context();
   auto& config = duckdb::DBConfig::GetConfig(context);
-  const duckdb::String name{kName.data(), static_cast<uint32_t>(kName.size())};
+  const duckdb::Identifier name{kName};
   for (auto _ : state) {
     duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
     const auto index = config.TryGetSettingIndex(name, option);
     duckdb::Value value;
     if (!context.config.user_settings.TryGetSetting(config.user_settings,
                                                     index.GetIndex(), value)) {
-      context.TryGetCurrentSetting(std::string{kName}, value);
+      context.TryGetCurrentSetting(name, value);
     }
     benchmark::DoNotOptimize(value.GetValue<uint32_t>());
   }
@@ -63,7 +62,7 @@ void IndexLookupEveryRead(benchmark::State& state) {
 
 void TryGetCurrentSetting(benchmark::State& state) {
   auto& context = Context();
-  const std::string name{kName};
+  const duckdb::Identifier name{kName};
   for (auto _ : state) {
     duckdb::Value value;
     context.TryGetCurrentSetting(name, value);

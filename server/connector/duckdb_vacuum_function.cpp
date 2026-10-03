@@ -126,7 +126,7 @@ struct VacuumBindData final : public duckdb::FunctionData {
 duckdb::unique_ptr<duckdb::FunctionData> VacuumBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   auto data = duckdb::make_uniq<VacuumBindData>();
 
   if (input.inputs.size() >= 1 && !input.inputs[0].IsNull()) {
@@ -715,13 +715,15 @@ void VacuumPragma(duckdb::ClientContext& context,
 void RegisterVacuumFunction(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader(db, "serenedb");
 
-  duckdb::TableFunction func("serenedb_vacuum", {}, VacuumExecute, VacuumBind);
-  func.varargs = duckdb::LogicalType::VARCHAR;
+  duckdb::FunctionSignature signature;
+  signature.AddArgs("args", duckdb::LogicalType::VARCHAR);
+  duckdb::TableFunction func("serenedb_vacuum", std::move(signature),
+                             VacuumExecute, VacuumBind);
   loader.RegisterFunction(func);
 
   auto pragma = duckdb::PragmaFunction::PragmaCall(
-    "serenedb_vacuum", VacuumPragma, {duckdb::LogicalType::VARCHAR});
-  pragma.varargs = duckdb::LogicalType::VARCHAR;
+    "serenedb_vacuum", VacuumPragma, {duckdb::LogicalType::VARCHAR},
+    duckdb::LogicalType::VARCHAR);
   loader.RegisterFunction(pragma);
 }
 

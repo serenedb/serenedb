@@ -20,44 +20,23 @@
 
 #pragma once
 
-#include <unicode/locid.h>
-#include <unicode/uversion.h>
-
 #include <string>
 #include <string_view>
+#include <text_locale.hpp>
 
 #include "iresearch/utils/serializer.hpp"
 
-namespace irs {
-
-inline icu::Locale MakeBogusLocale() {
-  icu::Locale l{"C"};
-  l.setToBogus();
-  return l;
-}
-
-}  // namespace irs
-
-U_NAMESPACE_BEGIN
+namespace duckdb::text {
 
 template<typename Context>
-void SerdeWrite(Context ctx, const icu::Locale& locale) {
-  if (locale.isBogus()) {
-    irs::utils::detail::WriteString(ctx.io(), std::string_view{});
-  } else {
-    irs::utils::detail::WriteString(ctx.io(),
-                                    std::string_view{locale.getName()});
-  }
+void SerdeWrite(Context ctx, const Locale& locale) {
+  irs::utils::detail::WriteString(ctx.io(), std::string_view{locale.GetName()});
 }
 
 template<typename Context>
-void SerdeRead(Context ctx, icu::Locale& locale) {
+void SerdeRead(Context ctx, Locale& locale) {
   const std::string name = ctx.io().ReadString();
-  if (name.empty()) {
-    locale = irs::MakeBogusLocale();
-    return;
-  }
-  locale = icu::Locale::createFromName(name.c_str());
+  locale = name.empty() ? Locale{} : Locale::FromName(name);
 }
 
-U_NAMESPACE_END
+}  // namespace duckdb::text

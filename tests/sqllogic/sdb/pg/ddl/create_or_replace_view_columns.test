@@ -54,7 +54,7 @@ db error: ERROR: cannot change name of view column "a" to "b"
 statement error
 CREATE OR REPLACE VIEW corv_t AS SELECT 1 AS a;
 ----
-db error: ERROR: Existing object corv_t is of type Table, trying to replace with type View
+db error: ERROR: Existing object "corv_t" is of type Table, trying to replace with type View
 
 
 # A refused replace leaves the view as it was.

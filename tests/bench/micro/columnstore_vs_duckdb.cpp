@@ -44,8 +44,7 @@
 #include <cstdlib>
 #include <duckdb.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/main/pending_query_result.hpp>
-#include <duckdb/main/stream_query_result.hpp>
+#include <duckdb/main/query_result_stream.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
@@ -320,29 +319,15 @@ duckdb::Connection& NativeCon() {
 }
 
 uint64_t StreamDrain(duckdb::ClientContext& ctx, const std::string& sql) {
-  auto pending = ctx.PendingQuery(sql, /*allow_stream_result=*/true);
-  if (pending->HasError()) {
-    std::fprintf(stderr, "pending: %s\n", pending->GetError().c_str());
+  auto result = ctx.Submit(sql, duckdb::QueryParameters{});
+  if (result->HasError()) {
+    std::fprintf(stderr, "submit: %s\n", result->GetError().c_str());
     std::abort();
   }
-  for (;;) {
-    auto status = pending->ExecuteTask();
-    if (duckdb::PendingQueryResult::IsResultReady(status)) {
-      break;
-    }
-    if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR) {
-      std::fprintf(stderr, "execute: %s\n", pending->GetError().c_str());
-      std::abort();
-    }
-    if (status == duckdb::PendingExecutionResult::NO_TASKS_AVAILABLE ||
-        status == duckdb::PendingExecutionResult::BLOCKED) {
-      pending->WaitForTask();
-    }
-  }
-  auto result = pending->Execute();
+  duckdb::QueryResultStream<duckdb::ChunkFormat> stream{std::move(result)};
   uint64_t rows = 0;
   for (;;) {
-    auto chunk = result->Fetch();
+    auto chunk = stream.Fetch();
     if (!chunk || chunk->size() == 0) {
       break;
     }

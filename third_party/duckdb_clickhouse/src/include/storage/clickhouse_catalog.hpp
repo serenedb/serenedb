@@ -36,8 +36,8 @@ public:
 	string GetCatalogType() override {
 		return "clickhouse";
 	}
-	string GetDefaultSchema() const override {
-		return default_schema.empty() ? "default" : default_schema;
+	optional<Identifier> GetDefaultSchema() const override {
+		return Identifier(default_schema.empty() ? "default" : default_schema);
 	}
 
 	optional_ptr<CatalogEntry> CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) override;
@@ -58,7 +58,7 @@ public:
 	PhysicalOperator &PlanMergeInto(ClientContext &context, PhysicalPlanGenerator &planner, LogicalMergeInto &op,
 	                                PhysicalOperator &plan) override;
 
-	unique_ptr<LogicalOperator> BindCreateIndex(Binder &binder, CreateStatement &stmt, CatalogEntry &table,
+	unique_ptr<LogicalOperator> BindCreateIndex(Binder &binder, CreateStatement &stmt, TableCatalogEntry &table,
 	                                            unique_ptr<LogicalOperator> plan) override;
 
 	DatabaseSize GetDatabaseSize(ClientContext &context) override;

@@ -118,7 +118,7 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
         sequence_info.SetQualification(GetName(), schema.name);
         sequence_info.SetSequenceName(entry->PkSequenceName());
         sequence_info.cache = kPkSequenceCache;
-        info.dependencies.AddOwnedDependency(
+        info.Base().dependencies.AddOwnedDependency(
           *schema.CreateSequence(transaction, sequence_info));
       }
       entry->Storage()->StartTasks();
@@ -265,10 +265,9 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   return update;
 }
 
-duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
-  duckdb::Binder& binder, duckdb::CreateStatement& stmt,
-  duckdb::CatalogEntry& table,
-  duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
+void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
+                                          duckdb::CreateStatement& stmt,
+                                          duckdb::CatalogEntry& table) {
   auto& info = stmt.info->Cast<duckdb::CreateIndexInfo>();
   const bool inverted = info.index_type == kInvertedIndexTypeName;
   const auto unknown =
@@ -323,15 +322,19 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       info.dependencies.AddDependency(*entry);
     }
   }
-  if (table.type == duckdb::CatalogType::VIEW_ENTRY) {
-    return connector::BindCreateIndexOnView(
-      binder, stmt, table.Cast<duckdb::ViewCatalogEntry>(), std::move(plan));
-  }
-  auto& table_entry = table.Cast<duckdb::TableCatalogEntry>();
-  if (auto* search = dynamic_cast<SearchTableEntry*>(&table_entry)) {
+}
+
+duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
+  duckdb::Binder& binder, duckdb::CreateStatement& stmt,
+  duckdb::TableCatalogEntry& table,
+  duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
+  BindIndexDefinition(binder, stmt, table);
+  if (auto* search = dynamic_cast<SearchTableEntry*>(&table)) {
     return connector::BindCreateIndexOnSearchTable(binder, stmt, *search,
                                                    std::move(plan));
   }
+  const bool inverted = stmt.info->Cast<duckdb::CreateIndexInfo>().index_type ==
+                        kInvertedIndexTypeName;
   auto& scan = plan->Cast<duckdb::LogicalGet>()
                  .bind_data->Cast<duckdb::TableScanBindData>();
   auto result =
@@ -340,6 +343,15 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     scan.is_create_index = false;
   }
   return result;
+}
+
+duckdb::unique_ptr<duckdb::LogicalOperator>
+SereneDBCatalog::BindCreateViewIndex(
+  duckdb::Binder& binder, duckdb::CreateStatement& stmt,
+  duckdb::ViewCatalogEntry& view,
+  duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
+  BindIndexDefinition(binder, stmt, view);
+  return connector::BindCreateIndexOnView(binder, stmt, view, std::move(plan));
 }
 
 duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
@@ -514,7 +526,8 @@ void SereneDBCatalog::RefuseUnsupportedAlter(duckdb::ClientContext& context,
   }
   const auto& name = lookup.entry->name.GetIdentifierName();
   if (info.type == duckdb::AlterType::ALTER_INDEX) {
-    if (!dynamic_cast<const InvertedIndexEntry*>(lookup.entry.get())) {
+    if (!info.GetNewName() &&
+        !dynamic_cast<const InvertedIndexEntry*>(lookup.entry.get())) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
                       ERR_MSG("\"", name, "\" is not an inverted index"));
     }
@@ -557,16 +570,14 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateForeignServer(
 void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
                             duckdb::AlterInfo& info) {
   const auto type = info.GetCatalogType();
-  if (type == duckdb::CatalogType::SCHEMA_ENTRY &&
-      info.type == duckdb::AlterType::RENAME) {
-    const auto& new_name = info.Cast<duckdb::RenameInfo>().new_name;
-    if (IsReservedSchemaName(new_name)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_RESERVED_NAME),
-        ERR_MSG("unacceptable schema name \"", new_name.GetIdentifierName(),
-                "\""),
-        ERR_DETAIL("The prefix \"pg_\" is reserved for system schemas."));
-    }
+  if (const auto new_name = info.GetNewName();
+      new_name && type == duckdb::CatalogType::SCHEMA_ENTRY &&
+      IsReservedSchemaName(*new_name)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_RESERVED_NAME),
+      ERR_MSG("unacceptable schema name \"", new_name->GetIdentifierName(),
+              "\""),
+      ERR_DETAIL("The prefix \"pg_\" is reserved for system schemas."));
   }
   if (transaction.HasContext() &&
       (info.type == duckdb::AlterType::ALTER_TABLE ||

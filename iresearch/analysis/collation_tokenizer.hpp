@@ -20,15 +20,12 @@
 
 #pragma once
 
-#include <unicode/locid.h>
-#include <unicode/ucol.h>
-
-#include <memory>
+#include <collation_collator.hpp>
 #include <tuple>
 #include <vector>
 
 #include "iresearch/analysis/process_tokens.hpp"
-#include "iresearch/utils/icu_locale_serde.hpp"
+#include "iresearch/utils/locale_serde.hpp"
 #include "tokenizer.hpp"
 
 namespace irs::analysis {
@@ -39,7 +36,7 @@ class CollationTokenizer final : public TypedTokenizer<CollationTokenizer>,
  public:
   struct Options {
     using Owner = CollationTokenizer;
-    icu::Locale locale = irs::MakeBogusLocale();
+    duckdb::text::Locale locale;
   };
   static ptr Make(Options opts);
 
@@ -66,19 +63,18 @@ class CollationTokenizer final : public TypedTokenizer<CollationTokenizer>,
   }
 
   size_t MemoryUsage() const noexcept final {
-    return _u16_buf.capacity() * sizeof(char16_t);
+    return _buffer.text.capacity() * sizeof(uint32_t) +
+           _buffer.elements.capacity() * sizeof(uint64_t) +
+           _buffer.key.capacity() + _valid.capacity();
   }
 
   template<TokenLayout Layout, bool Ascii, typename Sink>
   bool DoFill(duckdb::string_t value, Sink& sink);
 
  private:
-  struct CollatorDeleter {
-    void operator()(UCollator* p) const noexcept { ucol_close(p); }
-  };
-
-  std::unique_ptr<UCollator, CollatorDeleter> _collator;
-  std::vector<char16_t> _u16_buf;
+  duckdb::collation::Collator _collator;
+  duckdb::collation::CollationBuffer _buffer;
+  std::vector<uint8_t> _valid;
 };
 
 }  // namespace irs::analysis

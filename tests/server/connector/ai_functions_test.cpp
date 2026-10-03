@@ -170,8 +170,7 @@ class AIFunctionsTest : public ::testing::Test {
     Run("SET sdb_ai_retry_initial_delay_ms = 1");
   }
 
-  duckdb::unique_ptr<duckdb::MaterializedQueryResult> Run(
-    const std::string& sql) {
+  duckdb::unique_ptr<duckdb::QueryResult> Run(const std::string& sql) {
     auto result = _conn.Query(sql);
     EXPECT_FALSE(result->HasError()) << sql << ": " << result->GetError();
     return result;
@@ -208,7 +207,7 @@ TEST_F(AIFunctionsTest, RetriesHonorRetryAfter) {
   const auto start = std::chrono::steady_clock::now();
   auto result = Run("SELECT ai_generate('hi', secret_name := 'chat')");
   EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds{60});
-  EXPECT_EQ(result->GetValue(0, 0).ToString(), "done");
+  EXPECT_EQ(result->Collection().GetValue(0, 0).ToString(), "done");
   EXPECT_EQ(mock.Bodies().size(), 3);
 }
 
@@ -226,7 +225,7 @@ TEST_F(AIFunctionsTest, FatalStatusesIgnoreThrowOnError) {
               "returned HTTP 422");
   status = 400;
   auto result = Run("SELECT ai_generate('hi', secret_name := 'chat')");
-  EXPECT_TRUE(result->GetValue(0, 0).IsNull());
+  EXPECT_TRUE(result->Collection().GetValue(0, 0).IsNull());
 }
 
 TEST_F(AIFunctionsTest, TruncatedReplies) {
@@ -241,7 +240,7 @@ TEST_F(AIFunctionsTest, TruncatedReplies) {
               "cut off at max_tokens (1024)");
   Run("SET sdb_ai_throw_on_error = false");
   auto result = Run("SELECT ai_generate('x', secret_name := 'chat')");
-  EXPECT_TRUE(result->GetValue(0, 0).IsNull());
+  EXPECT_TRUE(result->Collection().GetValue(0, 0).IsNull());
 }
 
 TEST_F(AIFunctionsTest, OutputTokenQuota) {
@@ -258,7 +257,7 @@ TEST_F(AIFunctionsTest, OutputTokenQuota) {
   auto result = Run(
     "SELECT count(g) FROM (SELECT ai_generate(range::VARCHAR, secret_name := "
     "'chat') AS g FROM range(3))");
-  EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 1);
+  EXPECT_EQ(result->Collection().GetValue(0, 0).GetValue<int64_t>(), 1);
   EXPECT_EQ(mock.Bodies().size(), 2);
 }
 
@@ -270,7 +269,8 @@ TEST_F(AIFunctionsTest, ChatRequestBody) {
   Start();
   auto result = Run(
     R"(SELECT ai_extract('Lives in Berlin.', '{"city": "the city"}', secret_name := 'chat'))");
-  EXPECT_EQ(result->GetValue(0, 0).ToString(), R"({"city":"Berlin"})");
+  EXPECT_EQ(result->Collection().GetValue(0, 0).ToString(),
+            R"({"city":"Berlin"})");
   Run(
     "SELECT ai_generate('q', system_prompt := 'be brief', temperature := 0.2, "
     "max_tokens := 7, secret_name := 'chat')");
@@ -315,7 +315,7 @@ TEST_F(AIFunctionsTest, EmbeddingBatchesAndDimensions) {
   auto result = Run(
     "SELECT count(e) FROM (SELECT ai_embed(body, 'm', 'chat', dimensions := "
     "2) AS e FROM (VALUES ('a'), (NULL), ('b'), ('c')) v(body))");
-  EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 3);
+  EXPECT_EQ(result->Collection().GetValue(0, 0).GetValue<int64_t>(), 3);
 
   auto bodies = mock.Bodies();
   ASSERT_EQ(bodies.size(), 2);
@@ -333,7 +333,7 @@ TEST_F(AIFunctionsTest, EmbeddingBatchesAndDimensions) {
                    }));
 
   result = Run("SELECT ai_similarity('a', 'b', 'm', 'chat')");
-  EXPECT_DOUBLE_EQ(result->GetValue(0, 0).GetValue<double>(), 1.0);
+  EXPECT_DOUBLE_EQ(result->Collection().GetValue(0, 0).GetValue<double>(), 1.0);
 }
 
 TEST_F(AIFunctionsTest, SystemOnePackingSplitsOn422) {
@@ -362,7 +362,7 @@ TEST_F(AIFunctionsTest, SystemOnePackingSplitsOn422) {
     "'Which team?', choice := [{label: 'billing', description: 'Invoices'}, "
     "{label: 'sales', description: NULL}], batch_size := 3, secret_name := "
     "'system_one') AS r FROM (VALUES ('a'), ('b'), ('c')) v(body)) sub");
-  EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 3);
+  EXPECT_EQ(result->Collection().GetValue(0, 0).GetValue<int64_t>(), 3);
 
   const auto bodies = mock.Bodies();
   ASSERT_EQ(bodies.size(), 4);
@@ -463,7 +463,8 @@ TEST_F(AIFunctionsTest, ThreadsShareQueryCap) {
     total = 0;
     auto result =
       Run(absl::StrCat("SELECT count(", call, ") FROM range(4096)"));
-    EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 4096) << call;
+    EXPECT_EQ(result->Collection().GetValue(0, 0).GetValue<int64_t>(), 4096)
+      << call;
     EXPECT_LE(flight.peak.load(), 4) << call;
     EXPECT_GE(busy.load() * 4, total.load() * 3)
       << call << ": " << busy.load() << " of " << total.load();
@@ -484,7 +485,7 @@ TEST_F(AIFunctionsTest, AsyncThreadsZeroSendsInline) {
   auto result = Run(
     "SELECT count(ai_generate(range::VARCHAR, secret_name := 'chat')) FROM "
     "range(4096)");
-  EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 4096);
+  EXPECT_EQ(result->Collection().GetValue(0, 0).GetValue<int64_t>(), 4096);
   EXPECT_LE(flight.peak.load(), 2);
 }
 
@@ -503,7 +504,7 @@ TEST_F(AIFunctionsTest, HelpersCappedByAsyncThreads) {
   auto result = Run(
     "SELECT count(ai_generate(range::VARCHAR, secret_name := 'chat')) FROM "
     "range(64)");
-  EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 64);
+  EXPECT_EQ(result->Collection().GetValue(0, 0).GetValue<int64_t>(), 64);
   EXPECT_LE(flight.peak.load(), 3);
   EXPECT_GE(flight.peak.load(), 2);
 }
@@ -522,7 +523,7 @@ TEST_F(AIFunctionsTest, AndConjunctsRunLazily) {
     "SELECT count(*) FROM range(4) WHERE ai_filter(range::VARCHAR, 'first', "
     "secret_name := 'chat') AND ai_filter(range::VARCHAR, 'second', "
     "secret_name := 'chat')");
-  EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 2);
+  EXPECT_EQ(result->Collection().GetValue(0, 0).GetValue<int64_t>(), 2);
   EXPECT_EQ(absl::c_count_if(mock.Bodies(),
                              [](const std::string& body) {
                                return absl::StrContains(Content(body, 0),
@@ -560,12 +561,14 @@ TEST_F(AIFunctionsTest, EvaluateKeepsInputOrder) {
       "SELECT count(*) FILTER (WHERE r <> range::VARCHAR) FROM (SELECT range, "
       "ai_generate(range::VARCHAR, secret_name := 'chat') AS r FROM "
       "range(2500))");
-    EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 0) << threads;
+    EXPECT_EQ(result->Collection().GetValue(0, 0).GetValue<int64_t>(), 0)
+      << threads;
     result = Run(
       "SELECT list(r) = list(range::VARCHAR) FROM (SELECT range, "
       "ai_generate(range::VARCHAR, secret_name := 'chat') AS r FROM "
       "range(2500))");
-    EXPECT_TRUE(result->GetValue(0, 0).GetValue<bool>()) << threads;
+    EXPECT_TRUE(result->Collection().GetValue(0, 0).GetValue<bool>())
+      << threads;
   }
 }
 
@@ -577,8 +580,8 @@ TEST_F(AIFunctionsTest, AggregateOrderAndWindow) {
   auto result = Run(
     "SELECT g, ai_agg(v, 'q', secret_name := 'chat' ORDER BY v DESC) FROM "
     "(VALUES (1, 'a'), (1, 'b'), (2, NULL)) t(g, v) GROUP BY g ORDER BY g");
-  EXPECT_EQ(result->GetValue(1, 0).ToString(), "summary");
-  EXPECT_TRUE(result->GetValue(1, 1).IsNull());
+  EXPECT_EQ(result->Collection().GetValue(1, 0).ToString(), "summary");
+  EXPECT_TRUE(result->Collection().GetValue(1, 1).IsNull());
   auto bodies = mock.Bodies();
   ASSERT_EQ(bodies.size(), 1);
   EXPECT_EQ(Content(bodies[0], 1), R"({"group_size":2,"values":["b","a"]})");
@@ -586,7 +589,7 @@ TEST_F(AIFunctionsTest, AggregateOrderAndWindow) {
   result = Run(
     "SELECT ai_agg(v, 'q', secret_name := 'chat') OVER () FROM (VALUES ('a'), "
     "('b')) t(v)");
-  EXPECT_EQ(result->GetValue(0, 1).ToString(), "summary");
+  EXPECT_EQ(result->Collection().GetValue(0, 1).ToString(), "summary");
   bodies = mock.Bodies();
   ASSERT_GE(bodies.size(), 2);
   EXPECT_EQ(Content(bodies.back(), 1),
@@ -602,7 +605,7 @@ TEST_F(AIFunctionsTest, DuplicateInputsShareOneRequest) {
   auto result = Run(
     "SELECT count(ai_classify(v, ['a', 'b'], secret_name := 'chat')) FROM "
     "(VALUES ('x'), ('x'), ('y')) t(v)");
-  EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 3);
+  EXPECT_EQ(result->Collection().GetValue(0, 0).GetValue<int64_t>(), 3);
   EXPECT_EQ(mock.Bodies().size(), 2);
 }
 
@@ -617,7 +620,7 @@ TEST_F(AIFunctionsTest, ProviderRefusalIsRowError) {
               "withheld or filtered");
   Run("SET sdb_ai_throw_on_error = false");
   auto result = Run("SELECT ai_generate('x', secret_name := 'chat')");
-  EXPECT_TRUE(result->GetValue(0, 0).IsNull());
+  EXPECT_TRUE(result->Collection().GetValue(0, 0).IsNull());
 }
 
 TEST_F(AIFunctionsTest, EmbeddingsFollowResponseIndex) {
@@ -630,8 +633,8 @@ TEST_F(AIFunctionsTest, EmbeddingsFollowResponseIndex) {
   auto result = Run(
     "SELECT v, ai_embed(v, 'm', 'chat')[1] FROM (VALUES ('a'), ('b')) t(v) "
     "ORDER BY v");
-  EXPECT_EQ(result->GetValue(1, 0).GetValue<float>(), 1);
-  EXPECT_EQ(result->GetValue(1, 1).GetValue<float>(), 0);
+  EXPECT_EQ(result->Collection().GetValue(1, 0).GetValue<float>(), 1);
+  EXPECT_EQ(result->Collection().GetValue(1, 1).GetValue<float>(), 0);
 }
 
 TEST_F(AIFunctionsTest, InsecureEndpointNeedsOptIn) {
@@ -643,7 +646,7 @@ TEST_F(AIFunctionsTest, InsecureEndpointNeedsOptIn) {
               "insecure endpoint");
   Run("SET sdb_ai_allow_insecure_endpoint = true");
   auto result = Run("SELECT ai_generate(NULL, secret_name := 'far')");
-  EXPECT_TRUE(result->GetValue(0, 0).IsNull());
+  EXPECT_TRUE(result->Collection().GetValue(0, 0).IsNull());
 }
 
 TEST_F(AIFunctionsTest, CancelWhileRequestsWait) {
@@ -662,7 +665,7 @@ TEST_F(AIFunctionsTest, CancelWhileRequestsWait) {
   cancel.join();
   EXPECT_TRUE(result->HasError());
   auto after = Run("SELECT 1");
-  EXPECT_EQ(after->GetValue(0, 0).GetValue<int32_t>(), 1);
+  EXPECT_EQ(after->Collection().GetValue(0, 0).GetValue<int32_t>(), 1);
 }
 
 TEST_F(AIFunctionsTest, RateLimitRetriesThenFailsRow) {
@@ -677,10 +680,10 @@ TEST_F(AIFunctionsTest, RateLimitRetriesThenFailsRow) {
   ExpectError(sql, "returned HTTP 429: [requests] Rate limit reached");
   EXPECT_EQ(mock.Bodies().size(), 3);
   Run("SET sdb_ai_throw_on_error = false");
-  EXPECT_TRUE(Run(sql)->GetValue(0, 0).IsNull());
+  EXPECT_TRUE(Run(sql)->Collection().GetValue(0, 0).IsNull());
   EXPECT_EQ(mock.Bodies().size(), 6);
   Run("SET sdb_ai_max_retries = 0");
-  EXPECT_TRUE(Run(sql)->GetValue(0, 0).IsNull());
+  EXPECT_TRUE(Run(sql)->Collection().GetValue(0, 0).IsNull());
   EXPECT_EQ(mock.Bodies().size(), 7);
 }
 
@@ -718,14 +721,15 @@ TEST_F(AIFunctionsTest, CancelDuringRetryAfter) {
     std::this_thread::sleep_for(std::chrono::milliseconds{200});
     _conn.Interrupt();
   }};
-  duckdb::unique_ptr<duckdb::MaterializedQueryResult> result;
+  duckdb::unique_ptr<duckdb::QueryResult> result;
   const auto elapsed = Timed([&] {
     result = _conn.Query("SELECT ai_generate('x', secret_name := 'chat')");
   });
   cancel.join();
   EXPECT_TRUE(result->HasError());
   EXPECT_LT(elapsed, std::chrono::seconds{5});
-  EXPECT_EQ(Run("SELECT 1")->GetValue(0, 0).GetValue<int32_t>(), 1);
+  EXPECT_EQ(Run("SELECT 1")->Collection().GetValue(0, 0).GetValue<int32_t>(),
+            1);
 }
 
 TEST_F(AIFunctionsTest, RetriesStayWithinConcurrency) {
@@ -747,7 +751,7 @@ TEST_F(AIFunctionsTest, RetriesStayWithinConcurrency) {
   auto result = Run(
     "SELECT count(ai_generate(range::VARCHAR, secret_name := 'chat')) FROM "
     "range(8)");
-  EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 8);
+  EXPECT_EQ(result->Collection().GetValue(0, 0).GetValue<int64_t>(), 8);
   EXPECT_LE(flight.peak.load(), 2);
   EXPECT_EQ(mock.Bodies().size(), 16);
 }
@@ -792,7 +796,7 @@ TEST_F(AIFunctionsTest, OutputTokenQuotaBoundsInFlight) {
   const auto sent = mock.Bodies().size();
   EXPECT_GE(sent, 1);
   EXPECT_LE(sent, 4);
-  EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), sent);
+  EXPECT_EQ(result->Collection().GetValue(0, 0).GetValue<int64_t>(), sent);
 }
 
 TEST_F(AIFunctionsTest, OutputTokenQuotaCountsSystem1) {
@@ -824,7 +828,7 @@ TEST_F(AIFunctionsTest, UnreportedUsageNeverTrips) {
   auto result = Run(
     "SELECT count(ai_generate(range::VARCHAR, secret_name := 'chat')) FROM "
     "range(3)");
-  EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 3);
+  EXPECT_EQ(result->Collection().GetValue(0, 0).GetValue<int64_t>(), 3);
   EXPECT_EQ(mock.Bodies().size(), 3);
 }
 
@@ -852,8 +856,8 @@ TEST_F(AIFunctionsTest, ContextLengthErrorFailsOnlyLongRows) {
   EXPECT_EQ(long_rows(), 1);
   Run("SET sdb_ai_throw_on_error = false");
   auto result = Run(sql);
-  EXPECT_EQ(result->GetValue(1, 0).ToString(), "ok");
-  EXPECT_TRUE(result->GetValue(1, 1).IsNull());
+  EXPECT_EQ(result->Collection().GetValue(1, 0).ToString(), "ok");
+  EXPECT_TRUE(result->Collection().GetValue(1, 1).IsNull());
   EXPECT_EQ(long_rows(), 2);
 }
 
@@ -881,7 +885,8 @@ TEST_F(AIFunctionsTest, EmbeddingBatchSplitsAroundOversizedText) {
   const auto before = mock.Bodies().size();
   auto result = Run(sql);
   for (duckdb::idx_t i = 0; i != 4; ++i) {
-    EXPECT_EQ(result->GetValue(0, i).GetValue<bool>(), i == 3) << i;
+    EXPECT_EQ(result->Collection().GetValue(0, i).GetValue<bool>(), i == 3)
+      << i;
   }
   const auto bodies = mock.Bodies();
   std::vector<size_t> sizes;
@@ -914,7 +919,7 @@ TEST_F(AIFunctionsTest, UniformRejectionStopsSplitting) {
   ExpectError(sql, "dimensions is not supported");
   EXPECT_EQ(mock.Bodies().size(), 4);
   Run("SET sdb_ai_throw_on_error = false");
-  EXPECT_EQ(Run(sql)->GetValue(0, 0).GetValue<int64_t>(), 0);
+  EXPECT_EQ(Run(sql)->Collection().GetValue(0, 0).GetValue<int64_t>(), 0);
   EXPECT_EQ(mock.Bodies().size(), 8);
 }
 
@@ -939,7 +944,7 @@ TEST_F(AIFunctionsTest, SizeRejectionStillSplits) {
     "SELECT count(r) FROM (SELECT ai_system_one(range::VARCHAR, 'q', "
     "batch_size "
     ":= 8, secret_name := 'system_one') AS r FROM range(8))");
-  EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 8);
+  EXPECT_EQ(result->Collection().GetValue(0, 0).GetValue<int64_t>(), 8);
   EXPECT_EQ(mock.Bodies().size(), 8);
 }
 
@@ -957,7 +962,7 @@ TEST_F(AIFunctionsTest, EmbeddingReplyMustMatchDimensions) {
   ExpectError("SELECT ai_embed(v, 'm', 'chat') FROM (VALUES ('a')) t(v)",
               "has 0 values, expected at least 1");
   Run("SET sdb_ai_throw_on_error = false");
-  EXPECT_TRUE(Run(sql)->GetValue(0, 0).IsNull());
+  EXPECT_TRUE(Run(sql)->Collection().GetValue(0, 0).IsNull());
 }
 
 TEST_F(AIFunctionsTest, AggregateRespectsContextBudget) {
@@ -968,7 +973,7 @@ TEST_F(AIFunctionsTest, AggregateRespectsContextBudget) {
   auto result = Run(
     "SELECT ai_agg(v, 'q', max_context_chars := 25, secret_name := 'chat') "
     "FROM (SELECT repeat(range::VARCHAR, 10) AS v FROM range(6))");
-  EXPECT_EQ(result->GetValue(0, 0).ToString(), "done");
+  EXPECT_EQ(result->Collection().GetValue(0, 0).ToString(), "done");
   const auto bodies = mock.Bodies();
   ASSERT_EQ(bodies.size(), 4);
   size_t partials = 0;
@@ -998,7 +1003,7 @@ TEST_F(AIFunctionsTest, AggregateCutsOnCharacterBoundaries) {
     "SELECT ai_agg(v, 'q', max_context_chars := 2, secret_name := 'chat') "
     "FROM (VALUES ('",
     kEmoji, kEmoji, kEmoji, "')) t(v)"));
-  EXPECT_EQ(result->GetValue(0, 0).ToString(), "done");
+  EXPECT_EQ(result->Collection().GetValue(0, 0).ToString(), "done");
   size_t partials = 0;
   for (const auto& body : mock.Bodies()) {
     if (IsPartial(body)) {
@@ -1021,7 +1026,7 @@ TEST_F(AIFunctionsTest, AggregateStopsWithoutProgress) {
     "FROM (SELECT repeat('a', 10) AS v FROM range(3))";
   ExpectError(sql, "condensing the group made no progress");
   Run("SET sdb_ai_throw_on_error = false");
-  EXPECT_TRUE(Run(sql)->GetValue(0, 0).IsNull());
+  EXPECT_TRUE(Run(sql)->Collection().GetValue(0, 0).IsNull());
 }
 
 TEST_F(AIFunctionsTest, MaximalIntegerSettings) {
@@ -1039,11 +1044,13 @@ TEST_F(AIFunctionsTest, MaximalIntegerSettings) {
     Run(absl::StrCat("SET ", name, " = 4294967295"));
   }
   EXPECT_EQ(Run("SELECT ai_generate('x', secret_name := 'chat')")
-              ->GetValue(0, 0)
+              ->Collection()
+              .GetValue(0, 0)
               .ToString(),
             "ok");
   EXPECT_EQ(Run("SELECT len(ai_embed(v, 'm', 'chat')) FROM (VALUES ('a')) t(v)")
-              ->GetValue(0, 0)
+              ->Collection()
+              .GetValue(0, 0)
               .GetValue<int64_t>(),
             2);
 }
@@ -1060,7 +1067,7 @@ TEST_F(AIFunctionsTest, RequestTimeoutFailsRow) {
   EXPECT_LT(Timed([&] { ExpectError(sql, "/v1/chat/completions' failed: "); }),
             std::chrono::milliseconds{2500});
   Run("SET sdb_ai_throw_on_error = false");
-  EXPECT_TRUE(Run(sql)->GetValue(0, 0).IsNull());
+  EXPECT_TRUE(Run(sql)->Collection().GetValue(0, 0).IsNull());
 }
 
 TEST_F(AIFunctionsTest, ThrowOnErrorCoversEveryFunction) {
@@ -1093,7 +1100,7 @@ TEST_F(AIFunctionsTest, ThrowOnErrorCoversEveryFunction) {
     Run("SET sdb_ai_throw_on_error = true");
     ExpectError(sql, "not valid JSON");
     Run("SET sdb_ai_throw_on_error = false");
-    EXPECT_TRUE(Run(sql)->GetValue(0, 0).GetValue<bool>()) << call;
+    EXPECT_TRUE(Run(sql)->Collection().GetValue(0, 0).GetValue<bool>()) << call;
   }
 }
 
@@ -1121,7 +1128,8 @@ TEST_F(AIFunctionsTest, AsyncThreadsZeroStillSends) {
         "CASE WHEN v <> '' THEN ai_generate(v, secret_name := 'chat') END"}) {
     auto result = Run(absl::StrCat("SELECT count(", select,
                                    ") FROM (VALUES ('a'), ('b')) t(v)"));
-    EXPECT_EQ(result->GetValue(0, 0).GetValue<int64_t>(), 2) << select;
+    EXPECT_EQ(result->Collection().GetValue(0, 0).GetValue<int64_t>(), 2)
+      << select;
   }
 }
 
@@ -1148,7 +1156,7 @@ TEST_F(AIFunctionsTest, PreparedStatementsResolveAtExecution) {
   Start();
   auto execute = [](duckdb::PreparedStatement& statement) {
     duckdb::vector<duckdb::Value> values;
-    return statement.Execute(values, false);
+    return statement.Execute(values);
   };
   auto succeed = [&](duckdb::PreparedStatement& statement) {
     auto result = execute(statement);
@@ -1247,7 +1255,7 @@ TEST_F(AIFunctionsTest, CancelWithoutAsyncThreads) {
     std::this_thread::sleep_for(std::chrono::milliseconds{300});
     _conn.Interrupt();
   }};
-  duckdb::unique_ptr<duckdb::MaterializedQueryResult> result;
+  duckdb::unique_ptr<duckdb::QueryResult> result;
   const auto elapsed = Timed([&] {
     result = _conn.Query(
       "SELECT ai_generate(range::VARCHAR, secret_name := 'chat') FROM "
@@ -1256,7 +1264,8 @@ TEST_F(AIFunctionsTest, CancelWithoutAsyncThreads) {
   cancel.join();
   EXPECT_TRUE(result->HasError());
   EXPECT_LT(elapsed, std::chrono::seconds{5});
-  EXPECT_EQ(Run("SELECT 1")->GetValue(0, 0).GetValue<int32_t>(), 1);
+  EXPECT_EQ(Run("SELECT 1")->Collection().GetValue(0, 0).GetValue<int32_t>(),
+            1);
 }
 
 TEST_F(AIFunctionsTest, PrepareAfterExhaustedQuota) {
@@ -1269,7 +1278,7 @@ TEST_F(AIFunctionsTest, PrepareAfterExhaustedQuota) {
   auto prepared = _conn.Prepare("SELECT ai_similarity('c', 'd', 'm', 'chat')");
   ASSERT_FALSE(prepared->HasError()) << prepared->GetError();
   duckdb::vector<duckdb::Value> values;
-  auto result = prepared->Execute(values, false);
+  auto result = prepared->Execute(values);
   ASSERT_FALSE(result->HasError()) << result->GetError();
 }
 
@@ -1287,7 +1296,7 @@ TEST_F(AIFunctionsTest, SystemOneBatchWithBadAnswerFailsWhole) {
     "FROM (VALUES ('a'), ('b'), ('c')) v(body)");
   ASSERT_EQ(result->RowCount(), 3);
   for (duckdb::idx_t i = 0; i != 3; ++i) {
-    EXPECT_TRUE(result->GetValue(0, i).IsNull()) << i;
+    EXPECT_TRUE(result->Collection().GetValue(0, i).IsNull()) << i;
   }
 }
 
@@ -1302,8 +1311,8 @@ TEST_F(AIFunctionsTest, ClassifyMatchesPunctuatedLabels) {
   auto result = Run(
     "SELECT ai_classify('x', ['U.S.', 'EU'], secret_name := 'chat'), "
     "ai_classify('y', ['U.S.', 'EU'], secret_name := 'chat')");
-  EXPECT_EQ(result->GetValue(0, 0).ToString(), "U.S.");
-  EXPECT_EQ(result->GetValue(1, 0).ToString(), "EU");
+  EXPECT_EQ(result->Collection().GetValue(0, 0).ToString(), "U.S.");
+  EXPECT_EQ(result->Collection().GetValue(1, 0).ToString(), "EU");
 }
 
 TEST_F(AIFunctionsTest, ExtractReturnsNonStringResult) {
@@ -1314,7 +1323,7 @@ TEST_F(AIFunctionsTest, ExtractReturnsNonStringResult) {
   auto result = Run(
     "SELECT ai_extract('x', 'the number', secret_name := "
     "'chat')");
-  EXPECT_EQ(result->GetValue(0, 0).ToString(), "42");
+  EXPECT_EQ(result->Collection().GetValue(0, 0).ToString(), "42");
 }
 
 TEST_F(AIFunctionsTest, DuplicateKeysFail) {

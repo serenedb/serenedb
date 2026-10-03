@@ -22,6 +22,7 @@
 
 #include <libstemmer.h>
 
+#include <string>
 #include <string_view>
 
 #include "iresearch/analysis/token_batch.hpp"
@@ -30,10 +31,11 @@
 namespace irs::analysis {
 
 StemmingTokenizer::StemmingTokenizer(const Options& options) {
-  if (options.locale.isBogus()) {
+  if (options.locale.IsBogus()) {
     THROW_SQL_ERROR(ERR_MSG("stem_words: invalid locale"));
   }
-  _stemmer = make_stemmer_ptr(options.locale.getLanguage(), nullptr);
+  const std::string language{options.locale.GetLanguage()};
+  _stemmer = make_stemmer_ptr(language.c_str(), nullptr);
 }
 
 Tokenizer::ptr StemmingTokenizer::Make(Options opts) {

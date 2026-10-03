@@ -224,6 +224,7 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
       }
       return make(kText, kTextArray, -1);
     }
+    case TUPLE:
     case STRUCT: {
       if (IsInet(type)) {
         return make(kInet, kInetArray, -1);

@@ -16,7 +16,11 @@
 namespace duckdb {
 
 ClickHouseTableEntry::ClickHouseTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info)
-    : TableCatalogEntry(catalog, schema, info) {
+    : TableCatalogEntry(catalog, schema, info), columns(std::move(info.columns)) {
+}
+
+const ColumnList &ClickHouseTableEntry::GetColumns() const {
+	return columns;
 }
 
 static bool IsRowIdInteger(const LogicalType &type) {

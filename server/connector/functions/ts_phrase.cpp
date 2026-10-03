@@ -171,66 +171,72 @@ bool HasPatternParts(const irs::ByPhraseOptions& options) {
   });
 }
 
+void EmitShinglePhrase(BoolTarget parent, const FilterContext& ctx,
+                       const SearchColumnInfo& column_info,
+                       const irs::analysis::ShingleTokenizer& shingle,
+                       irs::ByPhraseOptions&& options, std::string_view label) {
+  const bool positions = HasPositions(column_info);
+  if (auto plan = irs::PlanShinglePhrase(shingle, options, positions)) {
+    if (const auto* term = std::get_if<irs::bstring>(&*plan)) {
+      AddTerm(MaybeNegated(parent, ctx, column_info),
+              PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
+              *term, ctx.boost);
+      return;
+    }
+    AddPhrase(parent, ctx, column_info,
+              std::get<irs::ByPhraseOptions>(std::move(*plan)));
+    return;
+  }
+  if (!positions) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(label,
+              " on this shingle column needs positions: its shingles do "
+              "not cover the phrase"),
+      ERR_HINT("Add `position` to the dictionary, or raise `max_gram` to "
+               "the phrase length."));
+  }
+  if (!shingle.OutputUnigrams()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(label,
+              " on a shingle column without unigrams supports only "
+              "phrases its shingles cover"),
+      ERR_HINT("Slop, interval gaps and pattern parts match unigrams; "
+               "create the dictionary with `output_unigrams := true`."));
+  }
+  if (shingle.Separator().empty() && HasPatternParts(options)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(label,
+              " pattern parts on a shingle column need a token separator"),
+      ERR_HINT("Without a separator a shingle can't be told apart from "
+               "a word; create the dictionary with a non-empty "
+               "`token_separator`."));
+  }
+  options.set_word_separator(shingle.Separator());
+  AddPhrase(parent, ctx, column_info, std::move(options));
+}
+
 void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 irs::ByPhraseOptions&& options, std::string_view label,
                 std::string_view single_hint) {
-  if (options.size() > 1) {
-    const bool positions = HasPositions(column_info);
-    if (const auto* shingle = ShingleOf(ctx, column_info)) {
-      if (auto plan = irs::PlanShinglePhrase(*shingle, options, positions)) {
-        if (const auto* term = std::get_if<irs::bstring>(&*plan)) {
-          AddTerm(
-            MaybeNegated(parent, ctx, column_info),
-            PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
-            *term, ctx.boost);
-        } else {
-          AddPhrase(parent, ctx, column_info,
-                    std::get<irs::ByPhraseOptions>(std::move(*plan)));
-        }
-        return;
-      }
-      if (!positions) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG(label,
-                  " on this shingle column needs positions: its shingles do "
-                  "not cover the phrase"),
-          ERR_HINT("Add `position` to the dictionary, or raise `max_gram` to "
-                   "the phrase length."));
-      }
-      if (!shingle->OutputUnigrams()) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG(label,
-                  " on a shingle column without unigrams supports only "
-                  "phrases its shingles cover"),
-          ERR_HINT("Slop, interval gaps and pattern parts match unigrams; "
-                   "create the dictionary with `output_unigrams := true`."));
-      }
-      if (HasPatternParts(options)) {
-        if (shingle->Separator().empty()) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-            ERR_MSG(label,
-                    " pattern parts on a shingle column need a token "
-                    "separator"),
-            ERR_HINT("Without a separator a shingle can't be told apart from "
-                     "a word; create the dictionary with a non-empty "
-                     "`token_separator`."));
-        }
-        options.set_word_separator(shingle->Separator());
-      }
-    } else if (!positions) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG(label,
-                " field should have Positions and Frequency features "
-                "enabled for multi-term phrases"),
-        ERR_HINT("Recreate the inverted index with both `Positions` and "
-                 "`Frequency` features attached to the column, or query with ",
-                 single_hint, "."));
-    }
+  const bool multi = options.size() > 1;
+  if (const auto* shingle = multi ? ShingleOf(ctx, column_info) : nullptr) {
+    EmitShinglePhrase(parent, ctx, column_info, *shingle, std::move(options),
+                      label);
+    return;
+  }
+  if (multi && !HasPositions(column_info)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(label,
+              " field should have Positions and Frequency features "
+              "enabled for multi-term phrases"),
+      ERR_HINT("Recreate the inverted index with both `Positions` and "
+               "`Frequency` features attached to the column, or query with ",
+               single_hint, "."));
   }
   AddPhrase(parent, ctx, column_info, std::move(options));
 }

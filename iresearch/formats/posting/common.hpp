@@ -136,7 +136,7 @@ inline uint64_t PayExtent(const PostingMeta& meta) noexcept {
 
 template<typename Input>
 void PrefetchDocs(const Input& in, const PostingMeta& meta) noexcept {
-  if (const auto extent = DocExtent(meta); extent != 0) {
+  if (const auto extent = DocExtent(meta); extent > file_utils::kPage) {
     Hint(in, meta.doc_start, std::min(extent, kMaxPrefetch));
   }
 }

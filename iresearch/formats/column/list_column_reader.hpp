@@ -144,6 +144,8 @@ class ListColumnReader final : public ColumnReader {
  private:
   static constexpr duckdb::idx_t kPointRows = 16;
   static constexpr uint64_t kReadAheadLists = 2048;
+  static constexpr uint64_t kWholeBlockElems = 1 << 19;
+  static constexpr uint64_t kWholeBlockLists = 8192;
 
   bool Deduplicated() const noexcept { return _children.size() == 2; }
 
@@ -248,6 +250,36 @@ class ListColumnReader final : public ColumnReader {
       result, static_cast<duckdb::idx_t>(child_base + elem_count));
   }
 
+  [[gnu::noinline]] static bool DirectRun(const ScanState& s, uint64_t first,
+                                          duckdb::idx_t count) noexcept {
+    if (!s.list_dict) {
+      return true;
+    }
+    const auto& d = *s.list_dict;
+    if ((first == 0 ? 0 : first - 1) < d.ends_pos) {
+      return false;
+    }
+    return !(d.lists && first >= d.begin && first + count - 1 < d.end);
+  }
+
+  [[gnu::noinline]] bool WidenToBlock(ListDictionary& d, uint64_t lo,
+                                      uint64_t hi, uint64_t& first,
+                                      uint64_t& last) const {
+    const auto w = _children[1]->Locate(lo);
+    const uint64_t key = w.block + 1;
+    if (hi >= w.end || w.end - w.begin > kWholeBlockLists ||
+        d.oversized_block == key) {
+      return false;
+    }
+    if (d.missed_block != key) {
+      d.missed_block = key;
+      return false;
+    }
+    first = w.begin;
+    last = w.end - 1;
+    return true;
+  }
+
   ListDictionary& Lists(ScanState& s, uint64_t lo, uint64_t hi,
                         duckdb::idx_t rows) const {
     if (!s.list_dict) {
@@ -261,12 +293,16 @@ class ListColumnReader final : public ColumnReader {
     const auto& elems_reader = *_children[0];
     const uint64_t distinct = ends_reader.RowCount();
     SDB_ASSERT(hi < distinct);
+    uint64_t first = lo;
     uint64_t last_list = hi;
+    bool whole_block = false;
     if (rows > kPointRows) {
       last_list =
         std::min(distinct - 1, std::max(hi, lo + kReadAheadLists - 1));
+    } else {
+      whole_block = WidenToBlock(d, lo, hi, first, last_list);
     }
-    const uint64_t first_end = lo == 0 ? 0 : lo - 1;
+    const uint64_t first_end = first == 0 ? 0 : first - 1;
     auto& ends_state = s.child_states[2];
     if (first_end < d.ends_pos) {
       ends_state = ends_reader.InitScan(s.ctx);
@@ -281,10 +317,15 @@ class ListColumnReader final : public ColumnReader {
                           static_cast<duckdb::idx_t>(end_count), 0);
     d.ends_pos = last_list + 1;
     const auto* ends = duckdb::FlatVector::GetData<uint64_t>(ends_vec);
-    const uint64_t shift = lo == 0 ? 0 : 1;
-    const uint64_t first_elem = lo == 0 ? 0 : ends[0];
+    const uint64_t shift = first == 0 ? 0 : 1;
+    const uint64_t first_elem = first == 0 ? 0 : ends[0];
     const uint64_t last_elem = ends[end_count - 1];
-    const uint64_t list_count = last_list - lo + 1;
+    const uint64_t list_count = last_list - first + 1;
+    if (whole_block && last_elem - first_elem > kWholeBlockElems) {
+      d.oversized_block = d.missed_block;
+      d.missed_block = 0;
+      return Lists(s, lo, hi, rows);
+    }
 
     duckdb::Vector lists{_type, static_cast<duckdb::idx_t>(list_count + 1)};
     auto* entries =
@@ -317,7 +358,7 @@ class ListColumnReader final : public ColumnReader {
     duckdb::ListVector::SetListSize(lists,
                                     static_cast<duckdb::idx_t>(elem_count));
     d.lists.emplace(std::move(lists));
-    d.begin = lo;
+    d.begin = first;
     d.end = last_list + 1;
     return d;
   }
@@ -334,7 +375,7 @@ class ListColumnReader final : public ColumnReader {
     }
     const auto& validity = duckdb::FlatVector::Validity(result);
     const auto* codes = duckdb::FlatVector::GetData<uint64_t>(codes_vec);
-    if (Consecutive(codes, scan_count)) {
+    if (Consecutive(codes, scan_count) && DirectRun(s, codes[0], scan_count)) {
       ScanRun(s, result, codes[0], scan_count, 0);
       return scan_count;
     }
@@ -376,7 +417,7 @@ class ListColumnReader final : public ColumnReader {
     const auto* codes = duckdb::FlatVector::GetData<uint64_t>(codes_vec);
     auto* entries =
       duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
-    if (Consecutive(codes, scan_count)) {
+    if (Consecutive(codes, scan_count) && DirectRun(s, codes[0], scan_count)) {
       ScanRun(s, result, codes[0], scan_count, result_offset);
       return scan_count;
     }

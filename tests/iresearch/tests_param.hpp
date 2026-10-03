@@ -27,7 +27,6 @@
 #include <bit>
 #include <iresearch/store/directory.hpp>
 #include <iresearch/store/directory_attributes.hpp>
-#include <iresearch/utils/ctr_encryption.hpp>
 #include <iresearch/utils/type_id.hpp>
 #include <memory>
 
@@ -36,51 +35,6 @@
 class TestBase;
 
 namespace tests {
-
-class Rot13Encryption final : public irs::CtrEncryption {
- public:
-  static std::shared_ptr<Rot13Encryption> make(
-    size_t block_size, size_t header_length = kDefaultHeaderLength) {
-    return std::make_shared<Rot13Encryption>(block_size, header_length);
-  }
-
-  explicit Rot13Encryption(size_t block_size,
-                           size_t header_length = kDefaultHeaderLength) noexcept
-    : irs::CtrEncryption(_cipher),
-      _cipher(block_size),
-      _header_length(header_length) {}
-
-  size_t header_length() noexcept final { return _header_length; }
-
- private:
-  class Rot13Cipher final : public irs::Cipher {
-   public:
-    explicit Rot13Cipher(size_t block_size) noexcept
-      : _block_size(block_size) {}
-
-    size_t block_size() const noexcept final { return _block_size; }
-
-    bool Decrypt(irs::byte_type* data) const final {
-      for (size_t i = 0; i < _block_size; ++i) {
-        data[i] -= 13;
-      }
-      return true;
-    }
-
-    bool Encrypt(irs::byte_type* data) const final {
-      for (size_t i = 0; i < _block_size; ++i) {
-        data[i] += 13;
-      }
-      return true;
-    }
-
-   private:
-    size_t _block_size;
-  };
-
-  Rot13Cipher _cipher;
-  size_t _header_length;
-};
 
 template<typename Impl, typename... Args>
 std::shared_ptr<irs::Directory> MakePhysicalDirectory(
@@ -126,29 +80,12 @@ std::pair<std::shared_ptr<irs::Directory>, std::string> Directory(
   return std::make_pair(dir, ToString(DirectoryGenerator));
 }
 
-template<dir_generator_f DirectoryGenerator, size_t BlockSize>
-std::pair<std::shared_ptr<irs::Directory>, std::string> Rot13Directory(
-  const TestBase* ctx) {
-  auto dir = DirectoryGenerator(
-    ctx,
-    irs::DirectoryAttributes{std::make_unique<Rot13Encryption>(BlockSize)});
-
-  return std::make_pair(dir, ToString(DirectoryGenerator) + "_cipher_rot13_" +
-                               std::to_string(BlockSize));
-}
-
 using dir_param_f =
   std::pair<std::shared_ptr<irs::Directory>, std::string> (*)(const TestBase*);
 
 enum Types : uint64_t {
   kTypesDefault = 1 << 0,
-  kTypesRot1316 = 1 << 2,
-  kTypesRot137 = 1 << 3,
 };
-
-inline constexpr auto kTypesDefaultRot13 = kTypesDefault | kTypesRot1316;
-inline constexpr auto kTypesAllRot13 = kTypesRot1316 | kTypesRot137;
-inline constexpr auto kTypesAll = kTypesDefault | kTypesRot1316 | kTypesRot137;
 
 // #define IRS_TEST_ONLY_MEMORY_DIR
 
@@ -171,26 +108,6 @@ constexpr auto GetDirectories() {
 #endif
     *p++ = &tests::Directory<&tests::MmapDirectory>;
     *p++ = &tests::Directory<&tests::FsDirectory>;
-#endif
-  }
-  if constexpr (Type & kTypesRot1316) {
-    *p++ = &tests::Rot13Directory<&tests::MemoryDirectory, 16>;
-#ifndef IRS_TEST_ONLY_MEMORY_DIR
-#ifdef IRESEARCH_URING
-    *p++ = &tests::rot13_directory<&tests::AsyncDirectory, 16>;
-#endif
-    *p++ = &tests::Rot13Directory<&tests::MmapDirectory, 16>;
-    *p++ = &tests::Rot13Directory<&tests::FsDirectory, 16>;
-#endif
-  }
-  if constexpr (Type & kTypesRot137) {
-    *p++ = &tests::Rot13Directory<&tests::MemoryDirectory, 7>;
-#ifndef IRS_TEST_ONLY_MEMORY_DIR
-#ifdef IRESEARCH_URING
-    *p++ = &tests::rot13_directory<&tests::AsyncDirectory, 7>;
-#endif
-    *p++ = &tests::Rot13Directory<&tests::MmapDirectory, 7>;
-    *p++ = &tests::Rot13Directory<&tests::FsDirectory, 7>;
 #endif
   }
   return data;
@@ -232,9 +149,3 @@ class DirectoryTestCaseBase
 };
 
 }  // namespace tests
-namespace irs {
-
-template<>
-struct Type<::tests::Rot13Encryption> : Type<Encryption> {};
-
-}  // namespace irs

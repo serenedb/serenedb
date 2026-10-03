@@ -39,7 +39,7 @@ t	index_t
 
 connection new1
 statement ok
-SET sdb_faults = 'crash_on_drop';
+SET sdb_faults = 'crash_after_commit';
 
 
 connection new1

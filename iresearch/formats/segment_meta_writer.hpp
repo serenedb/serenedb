@@ -1,4 +1,3 @@
-
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
@@ -23,87 +22,31 @@
 
 #pragma once
 
-#include "iresearch/formats/format_utils.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/index/file_names.hpp"
-#include "iresearch/store/store_utils.hpp"
+#include <duckdb/common/serializer/serialization_traits.hpp>
+#include <string>
+#include <string_view>
 
 namespace irs {
 
-struct SegmentMetaWriterImpl : public SegmentMetaWriter {
-  static constexpr std::string_view kFormatExt = "sm";
-  static constexpr std::string_view kFormatName = "iresearch_10_segment_meta";
+struct Directory;
+class DocumentMask;
+struct SegmentMeta;
 
-  static constexpr int32_t kFormatVersion = 0;
+namespace segment_meta {
 
-  void write(Directory& dir, std::string& filename, SegmentMeta& meta) final;
-};
+inline constexpr std::string_view kExt = "sm";
 
-template<>
-inline std::string FileName<SegmentMetaWriter, SegmentMeta>(
-  const SegmentMeta& meta) {
-  return irs::FileName(meta.name, meta.version,
-                       SegmentMetaWriterImpl::kFormatExt);
-}
+inline constexpr size_t kMinChainBytes = 4096;
 
-inline uint64_t WriteDocumentMask(IndexOutput& out, const auto& docs_mask) {
-  // TODO(gnusi): better format
-  uint32_t mask_size = docs_mask ? static_cast<uint32_t>(docs_mask->size()) : 0;
-  SDB_ASSERT(mask_size < doc_limits::eof());
+inline constexpr duckdb::field_id_t kFieldParents = 0;
+inline constexpr duckdb::field_id_t kFieldFiles = 1;
+inline constexpr duckdb::field_id_t kFieldDocsCount = 2;
+inline constexpr duckdb::field_id_t kFieldByteSize = 3;
 
-  if (!mask_size) {
-    out.WriteV32(0);
-    return 0;
-  }
+std::string FileName(const SegmentMeta& meta);
 
-  out.WriteV32(mask_size);
-  const auto pos = out.Position();
-  for (auto mask : *docs_mask) {
-    out.WriteV32(mask);
-  }
-  return out.Position() - pos;
-}
+void Write(Directory& dir, std::string& filename, SegmentMeta& meta,
+           const DocumentMask* patch = nullptr, uint64_t parent = 0);
 
-inline void WriteStrings(IndexOutput& out, const auto& strings) {
-  SDB_ASSERT(strings.size() < std::numeric_limits<uint32_t>::max());
-
-  out.WriteV32(static_cast<uint32_t>(strings.size()));
-  for (const auto& s : strings) {
-    WriteStr(out, s);
-  }
-}
-
-inline void SegmentMetaWriterImpl::write(Directory& dir, std::string& meta_file,
-                                         SegmentMeta& meta) {
-  if (meta.docs_count < meta.live_docs_count ||
-      meta.docs_count - meta.live_docs_count != RemovalCount(meta))
-    [[unlikely]] {
-    throw IndexError{absl::StrCat("Invalid segment meta '", meta.name,
-                                  "' detected : docs_count=", meta.docs_count,
-                                  ", live_docs_count=", meta.live_docs_count)};
-  }
-
-  meta_file = FileName<SegmentMetaWriter>(meta);
-  auto out = dir.create(meta_file);
-
-  if (!out) [[unlikely]] {
-    throw IoError{absl::StrCat("failed to create file, path: ", meta_file)};
-  }
-
-  SDB_ASSERT(meta.docs_mask_size <= meta.byte_size);
-  const auto size_without_mask = meta.byte_size - meta.docs_mask_size;
-
-  format_utils::WriteHeader(*out, kFormatName, kFormatVersion);
-  WriteStr(*out, meta.name);
-  out->WriteV64(meta.version);
-  out->WriteV32(meta.live_docs_count);
-  const auto docs_mask_size = WriteDocumentMask(*out, meta.docs_mask);
-  out->WriteV64(size_without_mask);
-  WriteStrings(*out, meta.files);
-  format_utils::WriteFooter(*out);
-
-  meta.byte_size = size_without_mask + docs_mask_size;
-  meta.docs_mask_size = docs_mask_size;
-}
-
+}  // namespace segment_meta
 }  // namespace irs

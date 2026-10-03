@@ -1,0 +1,88 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rts_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.rts_t (id INTEGER, body TEXT);
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.rts_t VALUES (1, 'first row');
+
+statement ok
+CREATE VIEW rts_v AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.rts_t;
+
+statement ok
+CREATE INDEX rts_idx ON rts_v USING inverted(id, body rts_en) WITH (compaction_interval=0);
+
+connection reader user=postgres
+statement ok
+BEGIN;
+
+connection reader user=postgres
+query
+SELECT count(*) FROM rts_v;
+----
+count
+1
+
+connection writer user=postgres
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.rts_t VALUES (2, 'second row');
+
+connection reader user=postgres
+query
+SELECT count(*) FROM rts_v;
+----
+count
+1
+
+connection reader user=postgres
+query
+SELECT * FROM serenedb_reindex('rts_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+connection reader user=postgres
+statement ok
+COMMIT;
+
+query
+SELECT id FROM rts_idx WHERE body @@ ts_phrase('row') ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT * FROM serenedb_reindex('rts_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement ok
+DROP INDEX rts_idx;
+
+statement ok
+DROP VIEW rts_v;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.rts_t;
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+DROP SERVER srv_${__DATABASE__};

@@ -28,7 +28,6 @@
 #include <filesystem>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
@@ -134,8 +133,7 @@ inline irs::bytes_view AsBytes(std::string_view s) noexcept {
 class FilterPrepareFixture : public benchmark::Fixture {
  public:
   void SetUp(const ::benchmark::State& state) override {
-    if (!_codec) {
-      _codec = irs::formats::Get("1_5simd");
+    if (_term_pool.empty()) {
       _term_pool = MakeTermPool();
     }
     BuildIndex(static_cast<size_t>(state.range(0)));
@@ -156,7 +154,6 @@ class FilterPrepareFixture : public benchmark::Fixture {
 
   std::unique_ptr<irs::MMapDirectory> _dir;
   std::filesystem::path _dir_path;
-  irs::Format::ptr _codec;
   irs::DirectoryReader _reader;
 
   irs::BM25 _bm25;
@@ -209,7 +206,7 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
     return next->fetch_add(1, std::memory_order_relaxed);
   };
   auto writer =
-    irs::IndexWriter::Make(*_dir, _codec, irs::kOmCreate, writer_opts);
+    irs::IndexWriter::Make(*_dir, irs::kOmCreate, std::move(writer_opts));
 
   KeywordField kw_field{.id = kKwFieldId};
   TextField body_field{.id = kBodyFieldId};
@@ -231,8 +228,7 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
     writer->RefreshCommit();
   }
 
-  _reader =
-    irs::DirectoryReader{*_dir, _codec, irs::IndexReaderOptions{.db = db}};
+  _reader = irs::DirectoryReader{*_dir, irs::IndexReaderOptions{.db = db}};
 }
 
 void ApplyArgs(benchmark::internal::Benchmark* b) {
@@ -433,7 +429,6 @@ DEFINE_FILTER_VARIANTS(Not, irs::BooleanFilter, SetUpNot);
 #undef DEFINE_FILTER_VARIANTS
 
 int main(int argc, char** argv) {
-  irs::formats::Init();
   irs::DuckDBEngine::Instance().Initialize();
 
   benchmark::Initialize(&argc, argv);

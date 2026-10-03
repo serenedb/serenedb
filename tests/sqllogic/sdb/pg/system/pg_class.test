@@ -1,5 +1,5 @@
 query
-SELECT oid, relname, reltablespace, relkind FROM pg_class WHERE reltablespace = 0 AND relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname = 'sdb_docs') ORDER BY oid
+SELECT oid, relname, reltablespace, relkind FROM pg_class WHERE reltablespace = 0 ORDER BY oid
 ----
 oid	relname	reltablespace	relkind
 101	pg_aggregate	0	r
@@ -71,9 +71,9 @@ oid	relname	reltablespace	relkind
 167	sql_parts	0	r
 168	sql_sizing	0	r
 169	pg_hba_file_rules	0	v
-999994	sdb_settings	0	r
-999995	sdb_metrics	0	r
-999997	sdb_progress	0	r
+16784	sdb_settings	0	r
+16785	sdb_metrics	0	r
+16786	sdb_progress	0	r
 <slt:ignore>	pg_roles	0	v
 <slt:ignore>	pg_shadow	0	v
 <slt:ignore>	pg_group	0	v
@@ -232,8 +232,7 @@ relname
 t
 
 query
-SELECT relname, reloptions FROM pg_class WHERE reloptions <> ARRAY[]::varchar[]
-  AND relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname = 'sdb_docs');
+SELECT relname, reloptions FROM pg_class WHERE reloptions <> ARRAY[]::varchar[];
 ----
 relname	reloptions
 

@@ -21,11 +21,15 @@
 #pragma once
 
 #include <absl/algorithm/container.h>
+#include <re2/byte_set_finder.h>
+#include <re2/multi_literal_finder.h>
 
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <cstring>
+#include <optional>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -38,6 +42,15 @@
 namespace irs::analysis::delim {
 
 inline constexpr size_t kLongNeedleThreshold = 8;
+
+inline classify::ByteSet FirstBytes(const std::vector<bstring>& delimiters) {
+  classify::ByteSet set;
+  for (const auto& d : delimiters) {
+    SDB_ASSERT(!d.empty());
+    set.Add(d.front());
+  }
+  return set;
+}
 
 struct NoDelimFinder {
   template<typename OnDelim>
@@ -62,21 +75,28 @@ struct OneCharFinder {
 struct ManyCharsFinder {
   static constexpr size_t kMaxBlockDelims = 8;
 
-  IRS_FORCE_INLINE void Add(byte_type b) noexcept {
-    if (bytes.Contains(b)) {
-      return;
+  explicit ManyCharsFinder(const classify::ByteSet& set) : bytes{set} {
+    for (int b = 0; b < 256; ++b) {
+      if (!set.Contains(static_cast<byte_type>(b))) {
+        continue;
+      }
+      if (ndelims < kMaxBlockDelims) {
+        delims[ndelims] = static_cast<byte_type>(b);
+      }
+      ++ndelims;
     }
-    bytes.Add(b);
-    if (ndelims < kMaxBlockDelims) {
-      delims[ndelims] = b;
-    }
-    ++ndelims;
+    nibbled = !Compared() && nibbles.Build(set.words.data());
   }
 
-  bool Blockable() const noexcept { return ndelims <= kMaxBlockDelims; }
+  bool Compared() const noexcept { return ndelims <= kMaxBlockDelims; }
+
+  bool Blockable() const noexcept { return Compared() || nibbled; }
 
   IRS_FORCE_INLINE uint32_t Classify(const byte_type* block) const noexcept {
-    return classify::ClassifyAnyEqBlock(block, {delims.data(), ndelims});
+    if (Compared()) {
+      return classify::ClassifyAnyEqBlock(block, {delims.data(), ndelims});
+    }
+    return nibbles.Classify32(reinterpret_cast<const char*>(block));
   }
 
   template<typename OnDelim>
@@ -90,6 +110,8 @@ struct ManyCharsFinder {
   }
 
   classify::ByteSet bytes;
+  re2::ByteSetFinder nibbles;
+  bool nibbled = false;
   std::array<byte_type, kMaxBlockDelims> delims{};
   size_t ndelims = 0;
 };
@@ -97,7 +119,8 @@ struct ManyCharsFinder {
 struct ByteRangesFinder {
   static constexpr size_t kMaxBlockRanges = 8;
 
-  explicit ByteRangesFinder(const classify::ByteSet& set) : bytes{set} {
+  explicit ByteRangesFinder(const classify::ByteSet& set)
+    : bytes{set}, nibbled{nibbles.Build(set.words.data())} {
     int prev = -2;
     for (int b = 0; b < 256; ++b) {
       if (!set.Contains(static_cast<byte_type>(b))) {
@@ -117,10 +140,15 @@ struct ByteRangesFinder {
     }
   }
 
-  bool Blockable() const noexcept { return nranges <= kMaxBlockRanges; }
+  bool Ranged() const noexcept { return nranges <= kMaxBlockRanges; }
+
+  bool Blockable() const noexcept { return Ranged() || nibbled; }
 
   IRS_FORCE_INLINE uint32_t Classify(const byte_type* block) const noexcept {
-    return classify::ClassifyAnyInRangeBlock(block, {ranges.data(), nranges});
+    if (Ranged()) {
+      return classify::ClassifyAnyInRangeBlock(block, {ranges.data(), nranges});
+    }
+    return nibbles.Classify32(reinterpret_cast<const char*>(block));
   }
 
   template<typename OnDelim>
@@ -134,6 +162,8 @@ struct ByteRangesFinder {
   }
 
   classify::ByteSet bytes;
+  re2::ByteSetFinder nibbles;
+  bool nibbled;
   std::array<classify::ByteRange, kMaxBlockRanges> ranges{};
   size_t nranges = 0;
 };
@@ -148,19 +178,112 @@ IRS_FORCE_INLINE inline bool BytesEqual(const byte_type* a, const byte_type* b,
   return true;
 }
 
+template<typename OnDelim>
+IRS_NO_INLINE size_t FindSparse(bytes_view data, bytes_view needle, size_t from,
+                                size_t since, OnDelim& on_delim) {
+  for (;;) {
+    const size_t hit = data.find(needle, from);
+    if (hit == bytes_view::npos) {
+      return hit;
+    }
+    on_delim(hit, needle.size());
+    const size_t end = hit + needle.size();
+    if (hit - since < classify::kClassifyBlock) {
+      return end;
+    }
+    from = since = end;
+  }
+}
+
+template<bool SparseFind, typename Verify, typename OnDelim>
+IRS_FORCE_INLINE void ForEachFirstLastMatch(bytes_view data, bytes_view needle,
+                                            Verify&& verify,
+                                            OnDelim&& on_delim) {
+  const auto* p = data.data();
+  const size_t size = data.size();
+  const size_t n = needle.size();
+  if (size < n) {
+    return;
+  }
+  const auto first = needle.front();
+  const auto last = needle.back();
+  const size_t last_start = size - n;
+  size_t pos = 0;
+  if (last_start + 1 >= classify::kClassifyBlock) {
+    for (;;) {
+      const size_t base =
+        std::min(pos, last_start + 1 - classify::kClassifyBlock);
+      const uint32_t firsts = classify::ClassifyEqBlock(p + base, first) &
+                              (~uint32_t{0} << (pos - base));
+      if constexpr (SparseFind) {
+        if (firsts == 0) {
+          pos = FindSparse(data, needle, base + classify::kClassifyBlock, pos,
+                           on_delim);
+          if (pos > last_start) {
+            return;
+          }
+          continue;
+        }
+      }
+      size_t next = base + classify::kClassifyBlock;
+      auto mask = firsts & classify::ClassifyEqBlock(p + base + n - 1, last);
+      while (mask != 0) {
+        const size_t at = base + std::countr_zero(mask);
+        if (!verify(at)) {
+          mask &= mask - 1;
+          continue;
+        }
+        on_delim(at, n);
+        const size_t end = at + n;
+        if (end >= next) {
+          next = end;
+          break;
+        }
+        mask &= ~uint32_t{0} << (end - base);
+      }
+      if (next > last_start) {
+        return;
+      }
+      pos = next;
+    }
+  }
+  while (pos <= last_start) {
+    if (p[pos] == first && p[pos + n - 1] == last && verify(pos)) {
+      on_delim(pos, n);
+      pos += n;
+      continue;
+    }
+    ++pos;
+  }
+}
+
 struct OneStringFinder {
   bstring delim;
+  uint64_t prefix = 0;
+  uint64_t mask = 0;
 
-  explicit OneStringFinder(bstring&& delimiter) : delim{std::move(delimiter)} {}
+  explicit OneStringFinder(bstring&& delimiter) : delim{std::move(delimiter)} {
+    SDB_ASSERT(delim.size() >= 2 && delim.size() <= kLongNeedleThreshold);
+    std::memcpy(&prefix, delim.data(), delim.size());
+    mask = ~uint64_t{0} >> (8 * (sizeof(uint64_t) - delim.size()));
+  }
 
   template<typename OnDelim>
   IRS_FORCE_INLINE void ForEachDelim(bytes_view data,
                                      OnDelim&& on_delim) const {
-    const bytes_view needle{delim};
-    for (size_t pos = data.find(needle); pos != bytes_view::npos;
-         pos = data.find(needle, pos + needle.size())) {
-      on_delim(pos, needle.size());
-    }
+    const auto* p = data.data();
+    const size_t size = data.size();
+    ForEachFirstLastMatch<true>(
+      data, delim,
+      [&](size_t at) IRS_FORCE_INLINE {
+        if (at + sizeof(uint64_t) <= size) {
+          uint64_t window;
+          std::memcpy(&window, p + at, sizeof window);
+          return ((window ^ prefix) & mask) == 0;
+        }
+        return BytesEqual(p + at, delim.data(), delim.size());
+      },
+      on_delim);
   }
 };
 
@@ -176,64 +299,26 @@ struct OneLongStringFinder {
   IRS_FORCE_INLINE void ForEachDelim(bytes_view data,
                                      OnDelim&& on_delim) const {
     const auto* p = data.data();
-    const size_t size = data.size();
     const size_t n = delim.size();
-    if (size < n) {
-      return;
-    }
-    const auto first = delim.front();
-    const auto last = delim.back();
-    const size_t last_start = size - n;
-    const auto middle = [&](size_t at) IRS_FORCE_INLINE {
-      return std::memcmp(p + at + 1, delim.data() + 1, n - 2) == 0;
-    };
-    size_t pos = 0;
-    if (last_start + 1 >= classify::kClassifyBlock) {
-      for (;;) {
-        const size_t base =
-          std::min(pos, last_start + 1 - classify::kClassifyBlock);
-        auto mask = (classify::ClassifyEqBlock(p + base, first) &
-                     classify::ClassifyEqBlock(p + base + n - 1, last)) &
-                    (~uint32_t{0} << (pos - base));
-        size_t next = base + classify::kClassifyBlock;
-        while (mask != 0) {
-          const size_t at = base + std::countr_zero(mask);
-          if (!middle(at)) {
-            mask &= mask - 1;
-            continue;
-          }
-          on_delim(at, n);
-          const size_t end = at + n;
-          if (end >= next) {
-            next = end;
-            break;
-          }
-          mask &= ~uint32_t{0} << (end - base);
-        }
-        if (next > last_start) {
-          return;
-        }
-        pos = next;
-      }
-    }
-    while (pos <= last_start) {
-      if (p[pos] == first && p[pos + n - 1] == last && middle(pos)) {
-        on_delim(pos, n);
-        pos += n;
-        continue;
-      }
-      ++pos;
-    }
+    ForEachFirstLastMatch<false>(
+      data, delim,
+      [&](size_t at) IRS_FORCE_INLINE {
+        return std::memcmp(p + at + 1, delim.data() + 1, n - 2) == 0;
+      },
+      on_delim);
   }
 };
 
 struct MultiStringFinder {
   static constexpr size_t kPrefix = sizeof(uint64_t);
 
-  explicit MultiStringFinder(std::vector<bstring>&& delimiters) {
+  explicit MultiStringFinder(std::vector<bstring>&& delimiters)
+    : first{FirstBytes(delimiters)} {
+    prefixes.reserve(delimiters.size());
+    masks.reserve(delimiters.size());
+    sizes.reserve(delimiters.size());
+    delims.reserve(delimiters.size());
     for (auto& d : delimiters) {
-      SDB_ASSERT(!d.empty());
-      first.Add(d.front());
       const size_t head = std::min(d.size(), kPrefix);
       std::array<byte_type, kPrefix> ones{};
       std::fill_n(ones.begin(), head, byte_type{0xFF});
@@ -278,10 +363,17 @@ struct MultiStringFinder {
   template<typename OnDelim>
   IRS_FORCE_INLINE void ForEachDelim(bytes_view data,
                                      OnDelim&& on_delim) const {
-    const auto* p = data.data();
-    const size_t size = data.size();
+    ForEachDelimUntil<0>(data.data(), data.size(), on_delim,
+                         [](size_t) IRS_FORCE_INLINE {});
+  }
+
+  template<size_t kMisses, typename OnDelim, typename OnMisses>
+  IRS_FORCE_INLINE void ForEachDelimUntil(const byte_type* p, size_t size,
+                                          OnDelim& on_delim,
+                                          OnMisses&& on_misses) const {
     size_t pos = 0;
     if (first.Blockable() && size >= classify::kClassifyBlock) {
+      [[maybe_unused]] size_t misses = 0;
       for (;;) {
         const size_t base = std::min(pos, size - classify::kClassifyBlock);
         auto mask = first.Classify(p + base) & (~uint32_t{0} << (pos - base));
@@ -290,6 +382,12 @@ struct MultiStringFinder {
           const size_t at = base + std::countr_zero(mask);
           const size_t skip = MatchAt(p + at, size - at);
           if (skip == 0) {
+            if constexpr (kMisses != 0) {
+              if (++misses == kMisses) {
+                on_misses(at + 1);
+                return;
+              }
+            }
             mask &= mask - 1;
             continue;
           }
@@ -326,9 +424,54 @@ struct MultiStringFinder {
   ManyCharsFinder first;
 };
 
-using Finder = std::variant<std::monostate, NoDelimFinder, OneCharFinder,
-                            ManyCharsFinder, ByteRangesFinder, OneStringFinder,
-                            OneLongStringFinder, MultiStringFinder>;
+struct FingerprintedStringFinder {
+  static constexpr size_t kMissesToFingerprint = 2;
+
+  template<typename OnDelim>
+  IRS_FORCE_INLINE void ForEachDelim(bytes_view data,
+                                     OnDelim&& on_delim) const {
+    const auto* p = data.data();
+    const size_t size = data.size();
+    strings.ForEachDelimUntil<kMissesToFingerprint>(
+      p, size, on_delim, [&](size_t pos) IRS_FORCE_INLINE {
+        const auto* begin = reinterpret_cast<const char*>(p);
+        Fingerprint().ForEachCandidate(
+          begin + pos, begin + size,
+          [&](const char* candidate) IRS_FORCE_INLINE {
+            const auto at = static_cast<size_t>(candidate - begin);
+            const size_t skip = strings.MatchAt(p + at, size - at);
+            if (skip == 0) {
+              return candidate + 1;
+            }
+            on_delim(at, skip);
+            return candidate + skip;
+          });
+      });
+  }
+
+  const re2::MultiLiteralFinder& Fingerprint() const {
+    if (!finder) [[unlikely]] {
+      BuildFingerprint();
+    }
+    return *finder;
+  }
+
+  IRS_NO_INLINE void BuildFingerprint() const {
+    finder.emplace().Build(strings.delims.size(), [&](size_t i) {
+      const auto& d = strings.delims[i];
+      return std::string_view{reinterpret_cast<const char*>(d.data()),
+                              d.size()};
+    });
+  }
+
+  MultiStringFinder strings;
+  mutable std::optional<re2::MultiLiteralFinder> finder{};
+};
+
+using Finder =
+  std::variant<std::monostate, NoDelimFinder, OneCharFinder, ManyCharsFinder,
+               ByteRangesFinder, OneStringFinder, OneLongStringFinder,
+               MultiStringFinder, FingerprintedStringFinder>;
 
 inline Finder FinderFor(bstring&& delimiter) {
   if (delimiter.size() == 1) {
@@ -341,19 +484,14 @@ inline Finder FinderFor(bstring&& delimiter) {
 }
 
 inline Finder FinderFor(const classify::ByteSet& set) {
-  ManyCharsFinder chars;
-  for (int b = 0; b < 256; ++b) {
-    if (set.Contains(static_cast<byte_type>(b))) {
-      chars.Add(static_cast<byte_type>(b));
-    }
-  }
+  ManyCharsFinder chars{set};
   if (chars.ndelims == 0) {
     return {};
   }
   if (chars.ndelims == 1) {
     return OneCharFinder{chars.delims.front()};
   }
-  if (!chars.Blockable()) {
+  if (!chars.Compared()) {
     return ByteRangesFinder{set};
   }
   return chars;
@@ -368,16 +506,18 @@ inline Finder FinderFor(std::vector<bstring>&& delimiters) {
     if (delimiters.size() == 1) {
       return OneCharFinder{delimiters[0][0]};
     }
-    ManyCharsFinder chars;
-    for (const auto& delim : delimiters) {
-      chars.Add(delim[0]);
-    }
-    return chars;
+    return ManyCharsFinder{FirstBytes(delimiters)};
   }
   if (delimiters.size() == 1) {
     return FinderFor(std::move(delimiters[0]));
   }
-  return MultiStringFinder{std::move(delimiters)};
+  MultiStringFinder strings{std::move(delimiters)};
+  if (strings.delims.size() <= re2::MultiLiteralFinder::kMaxLiterals &&
+      absl::c_all_of(strings.delims,
+                     [](const auto& delim) { return delim.size() > 1; })) {
+    return FingerprintedStringFinder{std::move(strings)};
+  }
+  return strings;
 }
 
 }  // namespace irs::analysis::delim

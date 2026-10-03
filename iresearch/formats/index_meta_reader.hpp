@@ -1,4 +1,3 @@
-
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
@@ -23,100 +22,27 @@
 
 #pragma once
 
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/formats/index_meta_writer.hpp"
+#include <absl/functional/any_invocable.h>
+
+#include <duckdb/common/constants.hpp>
+#include <string>
+#include <string_view>
 
 namespace irs {
 
-struct IndexMetaReaderImpl : public IndexMetaReader {
-  bool last_segments_file(const Directory& dir, std::string& name) const final;
+struct Directory;
+struct IndexMeta;
 
-  void read(const Directory& dir, IndexMeta& meta,
-            std::string_view filename) final;
-};
+using MetaPayloadReader = absl::AnyInvocable<void(duckdb::BinaryDeserializer&)>;
 
-inline uint64_t ParseGeneration(std::string_view file) noexcept {
-  if (file.starts_with(IndexMetaWriterImpl::kFormatPrefix)) {
-    constexpr size_t kPrefixLength = IndexMetaWriterImpl::kFormatPrefix.size();
+namespace index_meta {
 
-    if (uint64_t gen; absl::SimpleAtoi(file.substr(kPrefixLength), &gen)) {
-      return gen;
-    }
-  }
+uint64_t ParseGeneration(std::string_view file) noexcept;
 
-  return index_gen_limits::invalid();
-}
+bool LastFile(const Directory& dir, std::string& name);
 
-inline bool IndexMetaReaderImpl::last_segments_file(const Directory& dir,
-                                                    std::string& out) const {
-  uint64_t max_gen = index_gen_limits::invalid();
-  Directory::visitor_f visitor = [&out, &max_gen](std::string_view name) {
-    const uint64_t gen = ParseGeneration(name);
+void Read(const Directory& dir, IndexMeta& meta, std::string_view filename,
+          MetaPayloadReader payload = {});
 
-    if (gen > max_gen) {
-      out = std::move(name);
-      max_gen = gen;
-    }
-    return true;  // continue iteration
-  };
-
-  dir.visit(visitor);
-  return index_gen_limits::valid(max_gen);
-}
-
-inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
-                                      std::string_view filename) {
-  std::string meta_file;
-  if (IsNull(filename)) {
-    meta_file = IndexMetaWriterImpl::FileName(meta.gen);
-    filename = meta_file;
-  }
-
-  auto in = dir.open(filename, IOAdvice::SEQUENTIAL | IOAdvice::READONCE);
-
-  if (!in) {
-    throw IoError{absl::StrCat("Failed to open file, path: ", filename)};
-  }
-
-  const auto checksum = format_utils::Checksum(*in);
-
-  format_utils::CheckHeader(*in, IndexMetaWriterImpl::kFormatName,
-                            IndexMetaWriterImpl::kFormatVersion);
-
-  // read data from segments file
-  auto gen = in->ReadV64();
-  auto cnt = in->ReadI64();
-  auto seg_count = in->ReadV32();
-  std::vector<IndexSegment> segments(seg_count);
-
-  for (size_t i = 0, count = segments.size(); i < count; ++i) {
-    auto& segment = segments[i];
-
-    segment.filename = ReadString<std::string>(*in);
-    segment.meta.codec = formats::Get(ReadString<std::string>(*in));
-
-    auto reader = segment.meta.codec->get_segment_meta_reader();
-
-    reader->read(dir, segment.meta, segment.filename);
-  }
-
-  bstring payload;
-  const bool has_payload = in->ReadByte() & IndexMetaWriterImpl::kHasPayload;
-
-  if (has_payload) {
-    payload = ReadString<bstring>(*in);
-  }
-
-  format_utils::CheckFooter(*in, checksum);
-
-  meta.gen = gen;
-  meta.seg_counter = cnt;
-  meta.segments = std::move(segments);
-  if (has_payload) {
-    meta.payload = std::move(payload);
-  } else {
-    meta.payload.reset();
-  }
-}
-
+}  // namespace index_meta
 }  // namespace irs

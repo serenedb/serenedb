@@ -21,31 +21,22 @@
 #include <gtest/gtest.h>
 
 #include <array>
-#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
-#include <yaclib/algo/wait_group.hpp>
 #include <yaclib/async/future.hpp>
 #include <yaclib/async/make.hpp>
 #include <yaclib/coro/task.hpp>
 #include <yaclib/lazy/make.hpp>
 
-#include "network/acceptor.h"
-#include "network/cancel_registry.h"
+#include "http_server_harness.h"
 #include "network/http/handler.h"
-#include "network/http/router.h"
-#include "network/http/session.h"
-#include "network/io_context.h"
-#include "server/utils/asio_ns.h"
 
 using namespace sdb;
+using test::HttpServerHarness;
 
 namespace {
-
-using HttpAcceptor =
-  network::Acceptor<network::HttpSession<network::SocketKind::Tcp>>;
 
 // Fixed-response handler: writes a constant JSON body, no DB. Keeps these
 // transport tests self-contained -- the real root/health/ping handlers (and
@@ -111,43 +102,6 @@ std::string Roundtrip(const asio_ns::ip::tcp::endpoint& server,
   }
   return response;
 }
-
-asio_ns::ip::tcp::endpoint Loopback(std::uint16_t port) {
-  return {asio_ns::ip::make_address("127.0.0.1"), port};
-}
-
-// Wires the deps the acceptor requires the same way Server does (cancel
-// registry + session WaitGroup) and tears down in the server's order:
-// stop accepting, terminate live sessions, wait for their futures, then
-// stop the pool.
-class HttpServerHarness {
- public:
-  explicit HttpServerHarness(network::HttpRouter& router) : _context{router} {
-    _context.cancel = &_cancel;
-    _context.sessions = &_sessions;
-    _pool.Start();
-    _acceptor = std::make_shared<HttpAcceptor>(_pool, Loopback(0), _context);
-    server = Loopback(_acceptor->LocalEndpoint().port());
-    _acceptor->Start();
-  }
-
-  ~HttpServerHarness() {
-    _acceptor->Stop();
-    _cancel.TerminateAll();
-    _sessions.Done();
-    _sessions.Wait();
-    _pool.Stop();
-  }
-
-  asio_ns::ip::tcp::endpoint server;
-
- private:
-  network::IoThreadPool _pool{1};
-  network::CancelRegistry _cancel;
-  yaclib::WaitGroup<> _sessions{1};
-  network::HttpServerContext _context;
-  std::shared_ptr<HttpAcceptor> _acceptor;
-};
 
 }  // namespace
 

@@ -27,14 +27,10 @@
 
 namespace sdb::pg {
 
-// CREATE SERVER: persist a foreign server (the external-DB connection target)
-// and ATTACH it so it is immediately usable and survives restart. `options`
-// carries the connection settings (host/port/database/user/password/...).
 void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
                          std::string_view fdw_name, bool if_not_exists,
                          const duckdb::named_parameter_map_t& options);
 
-// DROP SERVER: remove the persisted server and DETACH its live attachment.
 void DropForeignServer(ConnectionContext& conn_ctx, std::string_view name,
                        bool missing_ok, bool cascade);
 

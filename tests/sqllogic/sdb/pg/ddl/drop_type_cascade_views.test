@@ -1,0 +1,111 @@
+# Dropping a type or a column under views, as PostgreSQL does it: a view goes
+# only when it reads the removed column, the other views and the table stay,
+# and a rebinding ALTER on the table keeps its dependency on the type.
+
+statement ok
+CREATE SCHEMA dtc;
+
+
+statement ok
+CREATE TYPE dtc.color AS ENUM ('red', 'green');
+
+
+statement ok
+CREATE SEQUENCE dtc.seq;
+
+
+statement ok
+CREATE TABLE dtc.records (id INT DEFAULT nextval('dtc.seq'), payload TEXT, c dtc.color);
+
+
+statement ok
+INSERT INTO dtc.records (payload, c) VALUES ('one', 'red');
+
+
+statement ok
+CREATE VIEW dtc.v_c AS SELECT id, c FROM dtc.records;
+
+
+statement ok
+CREATE VIEW dtc.v_payload AS SELECT id, payload FROM dtc.records;
+
+
+# A rebinding ALTER keeps the table's dependency on the type.
+statement ok
+ALTER TABLE dtc.records ALTER COLUMN id DROP DEFAULT;
+
+
+statement error
+DROP TYPE dtc.color;
+----
+db error: ERROR: Cannot drop entry "color" because there are entries that depend on it.<slt:ignore>
+
+
+# A column read by a view needs CASCADE.
+statement error
+ALTER TABLE dtc.records DROP COLUMN c;
+----
+db error: ERROR: Cannot alter entry "records" because there are entries that depend on it.
+
+
+# A column no view reads goes without CASCADE.
+statement ok
+ALTER TABLE dtc.records ADD COLUMN d INT;
+
+
+statement ok
+ALTER TABLE dtc.records DROP COLUMN d;
+
+
+# DROP TYPE CASCADE removes the column and only the view that reads it.
+statement ok
+DROP TYPE dtc.color CASCADE;
+
+
+query
+SELECT column_name FROM information_schema.columns WHERE table_schema = 'dtc' AND table_name = 'records' ORDER BY ordinal_position;
+----
+column_name
+id
+payload
+
+
+query
+SELECT view_name FROM duckdb_views() WHERE schema_name = 'dtc' ORDER BY 1;
+----
+view_name
+v_payload
+
+
+query
+SELECT id, payload FROM dtc.v_payload;
+----
+id	payload
+1	one
+
+
+# The same through an explicit column drop.
+statement ok
+CREATE VIEW dtc.v_id AS SELECT id FROM dtc.records;
+
+
+statement ok
+ALTER TABLE dtc.records DROP COLUMN payload CASCADE;
+
+
+query
+SELECT view_name FROM duckdb_views() WHERE schema_name = 'dtc' ORDER BY 1;
+----
+view_name
+v_id
+
+
+query
+SELECT id FROM dtc.v_id;
+----
+id
+1
+
+
+statement ok
+DROP SCHEMA dtc CASCADE;

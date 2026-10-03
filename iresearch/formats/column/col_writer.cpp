@@ -37,28 +37,30 @@
 #include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
-#include "iresearch/utils/serialization.hpp"
 
 namespace irs {
+namespace {
 
-void SerializeNormColumn(duckdb::Serializer& s, const NormColumnWriter& nw) {
-  s.WriteProperty<uint64_t>(0, "id", static_cast<uint64_t>(nw.Id()));
-  s.WriteProperty<uint32_t>(1, "row_group_size", nw.RowGroupSize());
-  s.WriteProperty<uint64_t>(2, "row_count", nw.RowCount());
+void SerializeNormColumn(duckdb::BinarySerializer& s,
+                         const NormColumnWriter& nw) {
+  s.WriteProperty(0, "id", static_cast<uint64_t>(nw.Id()));
+  s.WriteProperty(1, "row_group_size", nw.RowGroupSize());
+  s.WriteProperty(2, "row_count", nw.RowCount());
   const auto& ptrs = nw.Pointers();
   s.WriteList(3, "row_groups", ptrs.size(),
-              [&](duckdb::Serializer::List& rgl, duckdb::idx_t j) {
-                const auto& p = ptrs[j];
-                rgl.WriteObject([&](duckdb::Serializer& po) {
-                  po.WriteProperty<uint8_t>(0, "byte_size", p.byte_size);
-                  po.WriteProperty<uint32_t>(1, "max", p.max);
-                  po.WriteProperty<uint64_t>(2, "sum", p.sum);
-                  po.WriteProperty<uint64_t>(3, "non_zero_count",
-                                             p.non_zero_count);
-                  po.WriteProperty<uint64_t>(4, "file_offset", p.file_offset);
+              [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+                const auto& p = ptrs[i];
+                list.WriteObject([&](duckdb::BinarySerializer& obj) {
+                  obj.WriteProperty(0, "byte_size", p.byte_size);
+                  obj.WriteProperty(1, "max", p.max);
+                  obj.WriteProperty(2, "sum", p.sum);
+                  obj.WriteProperty(3, "non_zero_count", p.non_zero_count);
+                  obj.WriteProperty(4, "file_offset", p.file_offset);
                 });
               });
 }
+
+}  // namespace
 
 ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
                      duckdb::DatabaseInstance& db)
@@ -82,7 +84,6 @@ void ColWriter::EnsureOut() {
     throw IoError{
       absl::StrCat("col writer: cannot create .col file: ", _filename)};
   }
-  format_utils::WriteHeader(*_out, kFormatName, kFormatVersion);
   _write_ctx = std::make_unique<WriteContext>(*_db, *_out);
 }
 
@@ -245,25 +246,26 @@ bool ColWriter::Commit(uint64_t target_row,
       norm_columns.push_back(nw.get());
     }
   }
-  const uint64_t footer_offset = _out->Position();
-  duckdb::BinarySerializer serializer{*_out, duckdb::VersionStorageOptions()};
-  serializer.Begin();
-  serializer.WriteList(kFooterSlotColumns, "columns", _columns.size(),
-                       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                         list.WriteObject([&](duckdb::Serializer& obj) {
-                           SerializeColumnMeta(obj, _columns[i]->Meta());
-                         });
-                       });
-  serializer.WriteList(kFooterSlotNormColumns, "norm_columns",
-                       norm_columns.size(),
-                       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                         list.WriteObject([&](duckdb::Serializer& obj) {
-                           SerializeNormColumn(obj, *norm_columns[i]);
-                         });
-                       });
-  serializer.End();
-  _out->WriteU64(footer_offset);
-  format_utils::WriteFooter(*_out);
+  format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& footer) {
+    if (!_columns.empty()) {
+      footer.WriteList(
+        kColFieldColumns, "columns", _columns.size(),
+        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+          list.WriteObject([&](duckdb::BinarySerializer& obj) {
+            SerializeColumnMeta(obj, _columns[i]->Meta());
+          });
+        });
+    }
+    if (!norm_columns.empty()) {
+      footer.WriteList(
+        kColFieldNormColumns, "norm_columns", norm_columns.size(),
+        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+          list.WriteObject([&](duckdb::BinarySerializer& obj) {
+            SerializeNormColumn(obj, *norm_columns[i]);
+          });
+        });
+    }
+  });
   _out.reset();
   _committed = true;
   return true;

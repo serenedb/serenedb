@@ -20,12 +20,12 @@
 
 #include "connector/index_source_factory.h"
 
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/pk_spec.h"
-#include "catalog/table.h"
+#include "catalog/catalog.h"
+#include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/index_source_external_lookup.h"
 #include "connector/index_source_view_file.h"
@@ -41,7 +41,7 @@ std::unique_ptr<irs::IndexSource> MakeIndexSource(
   duckdb::ClientContext& context, const ScanBindData& bind_data,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::ColumnId> bind_column_ids,
+  std::span<const ColumnId> bind_column_ids,
   duckdb::TableFilterSet* pushed_filters) {
   if (bind_data.IsViewBacked()) {
     const auto& vbd = *bind_data.view;
@@ -65,17 +65,17 @@ std::unique_ptr<irs::IndexSource> MakeIndexSource(
       fp.pinned_iceberg_snapshot_id =
         bind_data.search.snapshot->file_manifest->version;
     }
-    if (fp.catalog_ref && fp.pk_spec == catalog::PkSpec::DuckDBRowId) {
+    if (fp.catalog_ref && fp.pk_spec == PkSpec::DuckDBRowId) {
       return std::make_unique<ViewTableIndexSource>(
         context, std::move(fp), projected_columns, projected_types,
         bind_column_ids, pushed_filters);
     }
-    if (fp.catalog_ref && catalog::IsExternalPK(fp.pk_spec)) {
+    if (fp.catalog_ref && IsExternalPK(fp.pk_spec)) {
       return std::make_unique<ExternalLookupIndexSource>(
         context, std::move(fp), projected_columns, projected_types,
         bind_column_ids);
     }
-    if (catalog::IsGlobPK(fp.pk_spec)) {
+    if (IsGlobPK(fp.pk_spec)) {
       return std::make_unique<ViewFileGlobIndexSource>(
         context, std::move(fp), projected_columns, projected_types,
         bind_column_ids, pushed_filters,
@@ -86,9 +86,13 @@ std::unique_ptr<irs::IndexSource> MakeIndexSource(
       bind_column_ids, pushed_filters);
   }
   SDB_ASSERT(bind_data.relation.table_entry);
+  // The bind data is const, but the entry it points at is the live catalog
+  // object the fetch reads storage from -- non-owning, so the copy of the
+  // pointer is what carries that.
+  auto table = bind_data.relation.table_entry;
   return std::make_unique<TableRowIdIndexSource>(
-    context, *bind_data.relation.table_entry, bind_data.RelationId(),
-    projected_columns, projected_types, bind_column_ids, pushed_filters);
+    context, *table, projected_columns, projected_types, bind_column_ids,
+    pushed_filters);
 }
 
 }  // namespace sdb::connector

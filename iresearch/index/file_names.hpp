@@ -45,4 +45,8 @@ inline std::string FileName(std::string_view name, std::string_view ext) {
 // Returns string in the following format : {name}.{gen}.{ext}
 std::string FileName(std::string_view name, uint64_t gen, std::string_view ext);
 
+// Splits a {name}.{gen}.{ext} file back into its name and generation
+bool ParseFileName(std::string_view file, std::string_view ext,
+                   std::string_view& name, uint64_t& gen) noexcept;
+
 }  // namespace irs

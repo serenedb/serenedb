@@ -6,6 +6,7 @@ split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
+import DocCallout from "@site/src/components/DocCallout";
 
 <!-- markdownlint-disable MD001 -->
 
@@ -73,12 +74,12 @@ Match a run of tokens in their indexed order, optionally separated by token gaps
 
 | Parameter | Type | Default | Meaning |
 | :--- | :--- | :--- | :--- |
-| `text` | `VARCHAR` or `BLOB` | — | A phrase segment. It is tokenized by the column's dictionary; multiple tokens within one segment must be strictly adjacent. |
+| `text` | `VARCHAR` or `BLOB` | — | A phrase segment. It is tokenized by the column's dictionary; the positions of its tokens must be strictly adjacent, and tokens the dictionary puts at one position are alternatives for it. |
 | `gap` | `INTEGER` or `INTEGER[]` | `0` between successive segments | Number of tokens allowed *between* the two surrounding segments. An integer `N` means exactly `N` tokens between; a two-element array `[min, max]` allows a range. `0` means adjacent. |
 | `text, ...` | `VARCHAR`/`BLOB` | — | Further segments, each preceded by its own `gap`. |
 | `slop` | `INTEGER` (named) | `0` | Budget of position moves allowed when lining the query up with the document. Must be `>= 0`; incompatible with `[min, max]` interval gaps. |
 
-**How it works.** `ts_phrase` matches positions, so the column's dictionary must have `position` enabled. The tokens of each `text` segment must appear adjacent and in order; the optional `gap` arguments control how far apart consecutive segments may sit. The gap counts the tokens *between* the two segments — `0` is immediate adjacency, `2` means exactly two intervening tokens. A `[min, max]` array accepts any gap in that inclusive range. Without `slop`, order is always preserved: `ts_phrase('a', 0, 'b')` does not match `b a`.
+**How it works.** `ts_phrase` matches positions, so the column's dictionary must have `position` enabled. The tokens of each `text` segment must appear adjacent and in order. A dictionary can put several tokens at one position — the synonyms of [`expand_solr_synonyms`](./tokenizers/expand_solr_synonyms.md), or the n-grams of [`generate_ngrams`](./tokenizers/generate_ngrams.md) that start at the same character — and any one of them matches that position: with the synonyms `car, automobile`, `ts_phrase('red car')` also matches `red automobile`. The optional `gap` arguments control how far apart consecutive segments may sit. The gap counts the tokens *between* the two segments — `0` is immediate adjacency, `2` means exactly two intervening tokens. A `[min, max]` array accepts any gap in that inclusive range. Without `slop`, order is always preserved: `ts_phrase('a', 0, 'b')` does not match `b a`.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -112,7 +113,7 @@ Analyze `text` into a query using a chosen dictionary, overriding the column's d
 | `text` | `VARCHAR`/`BLOB` (or a `LIST` of them) | — | The text to tokenize. A list yields a `LIST(TSQUERY)`, one per element, for use inside [`ts_any`](#ts_any) / [`ts_all`](#ts_all). |
 | `dictionary` | `VARCHAR` | the `@@` column's dictionary | Name of the [text-search dictionary](../../statements/create_text_search_dictionary/index.md) to analyze with. The special value `'keyword'` bypasses analysis and treats `text` as a single raw token. |
 
-**How it works.** The one-argument form analyzes `text` with the same dictionary as the column it is matched against, so the query and the index agree on casing, stemming and stop-words. Naming a dictionary forces a specific analyzer — useful when you want, say, exact `'keyword'` matching against a column that is otherwise stemmed. Multi-token output is combined with `OR`.
+**How it works.** The one-argument form analyzes `text` with the same dictionary as the column it is matched against, so the query and the index agree on casing, stemming and stop-words. Naming a dictionary forces a specific analyzer — useful when you want, say, exact `'keyword'` matching against a column that is otherwise stemmed. Multi-token output is combined with `OR`. Tokens the dictionary puts at one position, such as the synonyms of a word, are one alternative that scores as its best-matching token.
 
 **Other value modifiers.** `::score(scorer)` and `::merge(policy)` change how a subtree scores rather than what it matches; see [Per-node score control](./scoring.md#per-node).
 
@@ -174,6 +175,12 @@ Match indexed tokens against a regular expression.
 
 **How it works.** The pattern is applied to each indexed term and a row matches when any term matches. Because terms are stored in their analyzed form (lower-cased by the dictionary in our setup), write the pattern against that form — `ts_regexp('QUICK')` finds nothing, but the inline flag `ts_regexp('(?i)QUICK')` does (in `'perl'` mode). The `'posix'` dialect is handy for bracket-class patterns such as `gr[ae]y`.
 
+A pattern's size never changes its answer: a long alternation — hundreds of generated names, synonyms or term lists — returns exactly the terms it matches, only more slowly past the point where the index can no longer prune the dictionary with it. Alternatives that begin or end the same way are merged before matching, so thousands of `^(the\s+)?<name>\b.*` branches cost about as much as the distinct names they spell. A pattern that can only match a short list of words (up to 1024), such as `x|y|zz` or `gr[ae]y`, looks those words up directly, as `ts_any` does. A prepared statement compiles its patterns once; to reuse compiled patterns across queries as well, set [`sdb_pattern_cache_size`](../../../configuration/overview.md#search-and-indexing) to the number of bytes the server may keep for them.
+
+Anchors and word boundaries keep their RE2 meaning inside a term: `^` and `$` hold only at its ends (and, with `(?m)`, around line breaks), and `\b` and `\B` look at the characters on either side. Over whole values indexed with a `keyword()` dictionary, `ts_regexp('(?i)^(the\s+)?siemens\b.*')` matches `The Siemens AG` and `siemens financial services` but not `siemensland`.
+
+On a column indexed with [`generate_wildcard_ngrams`](./tokenizers/generate_wildcard_ngrams.md#searching), the pattern still matches whole terms, but it goes through the same filter as [`ts_like`](#ts_like): the candidates come from the grams of the text the pattern requires, and each one is re-checked against the stored term unless the grams alone decide the match.
+
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
 | `body @@ ts_regexp('qu.*ck')` | `1`, `2` | `quick` matches the Perl pattern. |
@@ -203,7 +210,7 @@ Fuzzy match: find tokens within a bounded edit distance of `text` — the standa
 - **Auto distance.** The one-argument form picks the distance from the query length: `0` for two characters or fewer, `1` for three to five, `2` from six up. Short queries tolerate fewer edits, which keeps them from drifting into unrelated tokens.
 - **Transpositions.** On by default, so a single adjacent-character swap costs one edit instead of two: `quikc` reaches `quick` at distance 1, where strict Levenshtein needs distance 2.
 - **Prefix.** Anchors an exact leading substring and fuzzy-matches only the rest, which both narrows the candidate set and speeds the scan. `ts_levenshtein('X', 1, true, 'quic')` requires the literal `quic`, then allows one edit on `X`, reaching `quick`.
-- **Expansion cap.** [`sdb_levenshtein_max_terms`](../../indexes/inverted/maintenance.md#session-settings) (default `64`) bounds how many dictionary terms the predicate expands to. The terms closest to the query survive; the rest neither match nor score. Set it to `0` to match every term within the edit distance, or narrow the candidate set with `prefix`. The cap applies per index segment, so a wide predicate can match more terms while they sit in separate segments than after a merge.
+- **Expansion cap.** [`sdb_levenshtein_max_terms`](../../indexes/inverted/maintenance.md#session-settings) (default `50`) bounds how many dictionary terms the predicate expands to. The terms closest to the query survive; the rest neither match nor score. Set it to `0` to match every term within the edit distance, or narrow the candidate set with `prefix`. The cap applies per index segment, so a wide predicate can match more terms while they sit in separate segments than after a merge.
 - **Term enumeration.** A predicate on the column that a [`ts_dict_*`](./term-dictionary.md) query enumerates is exempt from the cap, because there the terms are the result rather than a means to one. Other predicates in the same query keep it, and since enumeration only sees matching documents, capping one of those narrows the returned terms too.
 
 | Query | Matches `id` | Why |
@@ -228,7 +235,9 @@ Match by n-gram similarity — fuzzy matching that scores on shared character se
 | `text` | `VARCHAR`/`BLOB` | — | The term to match approximately. |
 | `threshold` | `DOUBLE` | `0.7` | Minimum similarity, in `0.0`–`1.0`. A term matches when the fraction of n-grams it shares with `text` is at least `threshold`. Lower values widen the match (higher recall); higher values tighten it (higher precision). |
 
-**How it works.** This requires a column tokenized with an [n-gram dictionary](./tokenizers/generate_ngrams.md) (our `bigram` dictionary splits `hello` into `he`, `el`, `ll`, `lo`). The query string is split the same way and a term matches when enough of its n-grams overlap. Because it compares sub-sequences, n-gram similarity tolerates insertions, deletions and reorderings and is well suited to short strings and approximate matching where edit distance is too rigid. `1.0` demands an exact n-gram set; `0.3` is permissive.
+**How it works.** This requires a column tokenized with an [n-gram dictionary](./tokenizers/generate_ngrams.md) of a single gram size (our `bigram` dictionary splits `hello` into `he`, `el`, `ll`, `lo`). The query string is split the same way, and a term's similarity is the share of the query's n-grams it contains in the same order, gaps allowed: `help` holds `he` and `el` of `hello`'s four bigrams, a similarity of 0.5. N-gram similarity therefore tolerates insertions and deletions but not reordered chunks, and suits short strings and approximate matching where edit distance is too rigid. `1.0` demands every n-gram in order; `0.3` is permissive.
+
+The matcher counts one n-gram per position, so a dictionary that puts several tokens at one position is rejected with `ts_ngram needs a dictionary that emits one token per position`. That covers different `MIN_GRAM` and `MAX_GRAM` (the defaults of `generate_ngrams()` are 2 and 3), `PRESERVE_ORIGINAL` and synonym stages.
 
 | Query | Matches `id`, `title` | Why |
 | :--- | :--- | :--- |
@@ -239,7 +248,11 @@ Match by n-gram similarity — fuzzy matching that scores on shared character se
 
 <SqlLogicTest id="sql/functions/full_text_search/ts_ngram" />
 
-> N-gram similarity is recall-oriented, and `threshold` is its only bound on candidate terms: there is no expansion cap here, unlike [`ts_levenshtein`](#ts_levenshtein). Very low thresholds on large vocabularies can be broad; raise `threshold` to tighten results.
+<DocCallout type="note">
+
+N-gram similarity is recall-oriented, and `threshold` is its only bound on candidate terms: there is no expansion cap here, unlike [`ts_levenshtein`](#ts_levenshtein). Very low thresholds on large vocabularies can be broad; raise `threshold` to tighten results.
+
+</DocCallout>
 
 #### `ts_between(min, max, min_incl, max_incl)` {#ts_between}
 
@@ -344,7 +357,7 @@ OR over a list of sub-queries, with an optional "match at least N" threshold.
 | `list` | `LIST(TSQUERY)` (bare strings allowed) | — | The alternatives. Each element is a `TSQUERY`; a plain string is tokenized by the column dictionary. |
 | `min_match` | `INTEGER` | `1` | How many alternatives a row must satisfy. Must be between `1` and the list length. `1` is a plain `OR`; raising it demands more of the alternatives. |
 
-**How it works.** `ts_any` is a disjunction with a tunable floor. At `min_match = 1` it is a straight `OR` — match any alternative. Raising `min_match` turns it into an "N of M" query: with three alternatives and `min_match = 2`, a row must contain at least two of them. This is the equivalent of Elasticsearch's `minimum_should_match` (integer form) and the `terms_set` query. SereneDB takes an integer count only — it does not accept percentage or negative `minimum_should_match` formats, nor a per-document min-match field.
+**How it works.** `ts_any` is a disjunction with a tunable floor. At `min_match = 1` it is a straight `OR` — match any alternative. Raising `min_match` turns it into an "N of M" query: with three alternatives and `min_match = 2`, a row must contain at least two of them. This is the equivalent of Elasticsearch's `minimum_should_match` (integer form) and the `terms_set` query. SereneDB takes an integer count only — it does not accept percentage or negative `minimum_should_match` formats, nor a per-document min-match field. Over [`ts_tokenize`](#ts_tokenize) a position counts once: the synonyms of one word are one alternative, so `min_match` counts words, not synonyms.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -366,7 +379,7 @@ AND over a list of sub-queries — every element must match.
 | :--- | :--- | :--- | :--- |
 | `list` | `LIST(TSQUERY)` (bare strings allowed) | — | The conjuncts. A row matches only when it satisfies *all* of them. |
 
-**How it works.** `ts_all` is the conjunction (`AND`) of every element — equivalent to chaining the elements with [`&&`](#a--b-and), or to `ts_any(list, len(list))`. Use it to require that several tokens or sub-queries all appear in the same row.
+**How it works.** `ts_all` is the conjunction (`AND`) of every element — equivalent to chaining the elements with [`&&`](#a--b-and), or to `ts_any(list, len(list))`. Use it to require that several tokens or sub-queries all appear in the same row. Over [`ts_tokenize`](#ts_tokenize) the synonyms of one word are alternatives: any one of them satisfies that word.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -473,7 +486,11 @@ Ordered proximity: require the sub-queries to appear close together, in order.
 
 **How it works.** `##` is an **ordered** proximity operator: `a` must precede `b`. The integer counts the tokens *between* the two ends — `a ## b` (no integer) and `a ## 0 ## b` both mean immediate adjacency, `a ## 2 ## b` means exactly two intervening tokens. Order matters: `'quick' ## 'brown'` matches `quick brown` but `'brown' ## 'quick'` does not.
 
-> The integer in `##` counts the tokens *between* the operands (`0` = adjacent). The [`tsquery_phrase`](#tsquery_phrase) function and PostgreSQL's `<->` use the opposite convention, where `distance = 1` means adjacent. See [`tsquery_phrase`](#tsquery_phrase).
+<DocCallout type="note">
+
+The integer in `##` counts the tokens *between* the operands (`0` = adjacent). The [`tsquery_phrase`](#tsquery_phrase) function and PostgreSQL's `<->` use the opposite convention, where `distance = 1` means adjacent. See [`tsquery_phrase`](#tsquery_phrase).
+
+</DocCallout>
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -539,7 +556,18 @@ Parse a single Lucene-style query string into a `TSQUERY`.
 | `(a b)` | Grouping. |
 | `a^N` | Boost `a`'s relevance contribution by factor `N`. |
 
-These combine freely. Despite the PostgreSQL-compatible name, this builds a SereneDB inverted-index query, not a PostgreSQL `tsquery`; the queries operate on the single column on the left of `@@` (there is no `field:term` scoping).
+These combine freely. Despite the PostgreSQL-compatible name, this builds a SereneDB inverted-index query, not a PostgreSQL `tsquery`.
+
+A column on the left of `@@` names the field, so every term in the query searches it and a `field:term` prefix is rejected. To let the query choose its own fields, put the relation's `tableoid` on the left instead — the same handle [`BM25`](./scoring.md) takes. The operand then means "this index" rather than "this field", and every term must name one:
+
+```sql
+SELECT id FROM docs_idx d
+WHERE d.tableoid @@ to_tsquery('title:fox OR body:dog');
+```
+
+This is the only way to express one boolean spanning several fields: `title @@ q OR body @@ q` builds two independent queries, so an exclusion in `q` is scoped to whichever field matched it, while the form above excludes across the whole row. A bare term is an error here, since it has no field to search. Only `to_tsquery` takes this operand, on its own or combined with `||`, `&&`, `!!` and `^`. Every other constructor searches a single field, so it needs a column on the left.
+
+A prefix on a group applies to every term inside it, so `title:(fox OR dog)` searches `title` for both. A term inside the group can still name its own field: in `title:(fox body:dog cat)` only `dog` searches `body`, and `cat` searches `title` again. A field never reaches past the group it was named in.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -568,7 +596,7 @@ Tokenize `text` and combine the terms with `AND`.
 | :--- | :--- | :--- | :--- |
 | `text` | `VARCHAR` | — | Free text. It is tokenized by the column dictionary and the resulting terms are joined with `AND`. Operators are *not* interpreted — `+`, `-`, quotes and `*` are treated as ordinary characters. |
 
-**How it works.** `plainto_tsquery` is the "all words must appear" parser: it splits `text` into terms and requires every term, with no order constraint. It is the conjunctive counterpart to a bare string literal (which uses `OR`).
+**How it works.** `plainto_tsquery` is the "all words must appear" parser: it splits `text` into terms and requires every term, with no order constraint. It is the conjunctive counterpart to a bare string literal (which uses `OR`). Tokens the dictionary puts at one position are alternatives: with the one-way rule `car => automobile, auto`, `plainto_tsquery('red car')` needs `red` and either `automobile` or `auto`, and the pair scores as its better match.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -603,7 +631,7 @@ Parse forgiving, web-search-bar syntax into a `TSQUERY`.
 | :--- | :--- | :--- | :--- |
 | `text` | `VARCHAR` | — | A search-engine-style string. Quoted substrings become phrases, the `OR` keyword separates alternatives, a leading `-` excludes a term and unquoted words are otherwise combined with `AND`. |
 
-**How it works.** This is the parser for untrusted, user-facing input: unlike [`to_tsquery`](#to_tsquery) it never raises on malformed syntax — stray operators are simply treated as text. It recognizes `"quoted phrases"`, the literal `OR` keyword, and a leading `-` for exclusion; everything else is `AND`-ed.
+**How it works.** This is the parser for untrusted, user-facing input: unlike [`to_tsquery`](#to_tsquery) it never raises on malformed syntax — stray operators are simply treated as text. It recognizes `"quoted phrases"`, the literal `OR` keyword, and a leading `-` for exclusion; everything else is `AND`-ed. An unquoted word that the dictionary splits into several tokens, such as `wi-fi`, matches as a phrase, as in PostgreSQL; on a column without the `position` feature every part is required instead. Synonyms of a word are alternatives, and a row matching several of them scores as its best match.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -777,9 +805,9 @@ Return the tokens a dictionary produces for `text` — the tool for inspecting a
 | Parameter | Type | Default | Meaning |
 | :--- | :--- | :--- | :--- |
 | `dictionary` | `VARCHAR` | — | Name of an existing [text-search dictionary](../../statements/create_text_search_dictionary/index.md). It must exist in the catalog (`'keyword'` is not a real dictionary here). |
-| `text` | `VARCHAR` or `LIST(VARCHAR)` | — | The text to analyze. A list analyzes each element and concatenates the results. |
+| `text` | `VARCHAR` or `LIST(VARCHAR)` | — | The text to analyze. A list analyzes each element and concatenates the results; an element the dictionary rejects is dropped like a `NULL` element. |
 
-**How it works.** `ts_lexize` is the only function on this page that runs on its own (not inside `@@`): it applies a named dictionary's analysis pipeline — lower-casing, stemming, stop-word removal, n-gram splitting — and returns the resulting lexemes as a `LIST(VARCHAR)`. A dictionary has no call form of its own, so `ts_lexize` is how a query runs one; it takes the name as a value, which is what a query that picks a dictionary per row needs. Use it to see exactly how a query string or a document will be tokenized when [tuning an index](../../indexes/inverted/text-analysis.md): if your search misses, lexize both the query and the source text and compare.
+**How it works.** `ts_lexize` is the only function on this page that runs on its own (not inside `@@`): it applies a named dictionary's analysis pipeline — lower-casing, stemming, stop-word removal, n-gram splitting — and returns the resulting lexemes as a `LIST(VARCHAR)`. A dictionary has no call form of its own, so `ts_lexize` is how a query runs one; it takes the name as a value, which is what a query that picks a dictionary per row needs. Use it to see exactly how a query string or a document will be tokenized when [tuning an index](../../indexes/inverted/text-analysis.md): if your search misses, lexize both the query and the source text and compare. As in PostgreSQL, the result tells a rejected value from an empty one: a value the dictionary rejects — such as a `NULL` result of a [`sql`](../../statements/create_text_search_dictionary/sql.md) dictionary, or input a geo dictionary cannot parse — returns `NULL`, while a value it accepts without producing tokens, such as a stop word, returns an empty list.
 
 | Input | Tokens | Why |
 | :--- | :--- | :--- |
@@ -832,8 +860,8 @@ Elasticsearch features without a direct SereneDB equivalent, and what to use ins
 | :--- | :--- |
 | [`minimum_should_match`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-minimum-should-match.html) percentage / negative / combination forms | integer count only ([`ts_any`](#ts_any), [`ts_compound`](#ts_compound)) |
 | [`fuzziness: AUTO`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-fuzzy-query.html) | one-argument [`ts_levenshtein`](#ts_levenshtein) auto-picks a distance by term length |
-| `max_expansions` (fuzzy / prefix expansion cap) | fuzzy: [`sdb_levenshtein_max_terms`](../../indexes/inverted/maintenance.md#session-settings) (session-level, per segment, default `64`); prefix: no cap |
-| [`multi_match`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-multi-match-query.html) / `combined_fields` / `field:term` scoping | single-column `@@`; compose multiple predicates with `OR` |
+| `max_expansions` (fuzzy / prefix expansion cap) | fuzzy: [`sdb_levenshtein_max_terms`](../../indexes/inverted/maintenance.md#session-settings) (session-level, per segment, default `50`); prefix: no cap |
+| [`multi_match`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-multi-match-query.html) / `combined_fields` / `field:term` scoping | `tableoid @@` [`to_tsquery`](#to_tsquery) with `field:term` prefixes, or one `@@` per column combined with `OR` |
 | [`constant_score`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-constant-score-query.html) | none; `ORDER BY` a literal, or `raw_boost` (see [Ranking](../../indexes/inverted/ranking.md)) |
 | [`boosting`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-boosting-query.html) (`negative_boost`) | none; raise a clause with [`^`](#a--factor-boost) or exclude with [`!!`](#-a-not) |
 | [`match_phrase_prefix`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-match-query-phrase-prefix.html) / `match_bool_prefix` | combine [`ts_phrase`](#ts_phrase) with [`ts_starts_with`](#ts_starts_with) |

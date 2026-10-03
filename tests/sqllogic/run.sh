@@ -138,6 +138,9 @@ ICEBERG_REST_CONTAINER_NAME=""
 ICEBERG_REST_LOG_FILE=""
 OLLAMA_CONTAINER_NAME=""
 OLLAMA_LOG_FILE=""
+KEV_CONTAINER_NAME=""
+KEV_LOG_FILE=""
+KEV_IMAGE="serenedb-test-kev:0.5b-09ff745d52a0"
 POSTGRES_CONTAINER_NAME=""
 POSTGRES_LOG_FILE=""
 CLICKHOUSE_CONTAINER_NAME=""
@@ -318,6 +321,20 @@ cleanup_ollama() {
 	fi
 }
 
+cleanup_kev() {
+	if [[ -n "$KEV_CONTAINER_NAME" ]]; then
+		local name="$KEV_CONTAINER_NAME"
+		KEV_CONTAINER_NAME=""
+		report_failed_container "$name" "Kev"
+		if [[ -n "$KEV_LOG_FILE" ]]; then
+			echo "Saving Kev logs to ${KEV_LOG_FILE}..."
+			docker logs "$name" >"${KEV_LOG_FILE}" 2>&1 || true
+		fi
+		echo "Stopping Kev container..."
+		docker rm -fv "$name" >/dev/null 2>&1 || true
+	fi
+}
+
 cleanup_postgres() {
 	if [[ -n "$POSTGRES_CONTAINER_NAME" ]]; then
 		local name="$POSTGRES_CONTAINER_NAME"
@@ -350,6 +367,7 @@ cleanup_all() {
 	cleanup_cancel_pid
 	cleanup_iceberg_rest
 	cleanup_ollama
+	cleanup_kev
 	cleanup_postgres
 	cleanup_clickhouse
 	cleanup_minio
@@ -379,7 +397,6 @@ launch_s3() {
 	export MINIO_SECRET_KEY="minioadmin"
 	export MINIO_BUCKET="testbucket"
 	export MINIO_PORT
-	MINIO_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
 
 	local network_args=()
 	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
@@ -389,17 +406,21 @@ launch_s3() {
 	else
 		TEST_NETWORK="${PREFIX}-serenedb-test-net-$$"
 		docker network create "$TEST_NETWORK" >/dev/null
-		network_args=(--network "$TEST_NETWORK" -p "$MINIO_PORT:9000")
+		network_args=(--network "$TEST_NETWORK" -p 9000)
 		export MINIO_HOST="localhost"
 	fi
 
-	echo "Starting MinIO (host=$MINIO_HOST, port=$MINIO_PORT)..."
+	echo "Starting MinIO (host=$MINIO_HOST)..."
 	docker run -d \
 		--name "$MINIO_CONTAINER_NAME" \
 		"${network_args[@]}" \
 		-e "MINIO_ROOT_USER=$MINIO_ACCESS_KEY" \
 		-e "MINIO_ROOT_PASSWORD=$MINIO_SECRET_KEY" \
-		pgsty/minio:latest server /data
+		pgsty/minio:latest server /data --console-address :9001
+	if [[ -z "${COMPOSE_NETWORK:-}" ]]; then
+		MINIO_PORT=$(docker port "$MINIO_CONTAINER_NAME" 9000/tcp | head -1 | sed 's/.*://')
+	fi
+	echo "MinIO port: $MINIO_PORT"
 
 	echo "Waiting for MinIO to be ready..."
 	for i in $(seq 1 30); do
@@ -443,17 +464,20 @@ launch_azure() {
 		host="$AZURITE_CONTAINER_NAME"
 		port=10000
 	else
-		port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
 		host="localhost"
-		docker_args+=(-p "${port}:10000")
+		docker_args+=(-p 10000)
 	fi
 
-	echo "Starting Azurite (host=$host, port=$port)..."
+	echo "Starting Azurite (host=$host)..."
 	# --skipApiVersionCheck: the vendored Azure SDK may speak a service API
 	# version newer than the Azurite image knows.
 	docker run "${docker_args[@]}" \
 		mcr.microsoft.com/azure-storage/azurite \
 		azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
+	if [[ -z "${COMPOSE_NETWORK:-}" ]]; then
+		port=$(docker port "$AZURITE_CONTAINER_NAME" 10000/tcp | head -1 | sed 's/.*://')
+	fi
+	echo "Azurite port: $port"
 
 	export AZURITE_CONNECTION_STRING="DefaultEndpointsProtocol=http;AccountName=${account};AccountKey=${key};BlobEndpoint=http://${host}:${port}/${account};"
 
@@ -518,12 +542,10 @@ launch_iceberg_rest() {
 		export ICEBERG_REST_HOST="$ICEBERG_REST_CONTAINER_NAME"
 		export ICEBERG_REST_PORT=8181
 	else
-		ICEBERG_REST_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
 		export ICEBERG_REST_HOST="localhost"
 		export ICEBERG_REST_PORT
-		docker_args+=(--network "$TEST_NETWORK" -p "${ICEBERG_REST_PORT}:8181")
+		docker_args+=(--network "$TEST_NETWORK" -p 8181)
 	fi
-	export ICEBERG_REST_URL="http://${ICEBERG_REST_HOST}:${ICEBERG_REST_PORT}"
 
 	# S3 warehouse on MinIO. Both containers share the network above, so the
 	# catalog reaches MinIO via container name on its internal port.
@@ -535,11 +557,17 @@ launch_iceberg_rest() {
 		-e "CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO"
 		-e "CATALOG_S3_ENDPOINT=http://${MINIO_CONTAINER_NAME}:9000"
 		-e "CATALOG_S3_PATH__STYLE__ACCESS=true"
+		-e "CATALOG_URI=jdbc:sqlite:/tmp/iceberg_catalog.db?journal_mode=WAL&busy_timeout=30000"
 	)
 
-	echo "Starting iceberg-rest (port=$ICEBERG_REST_PORT)..."
+	echo "Starting iceberg-rest..."
 	docker run "${docker_args[@]}" "${catalog_env[@]}" \
 		apache/iceberg-rest-fixture:1.10.1
+	if [[ -z "${COMPOSE_NETWORK:-}" ]]; then
+		ICEBERG_REST_PORT=$(docker port "$ICEBERG_REST_CONTAINER_NAME" 8181/tcp | head -1 | sed 's/.*://')
+	fi
+	export ICEBERG_REST_URL="http://${ICEBERG_REST_HOST}:${ICEBERG_REST_PORT}"
+	echo "iceberg-rest port: $ICEBERG_REST_PORT"
 
 	echo "Waiting for iceberg-rest to be ready..."
 	for i in $(seq 1 60); do
@@ -623,17 +651,13 @@ launch_biglake() {
 	export ICEBERG_SERVER_OPTIONS="warehouse 'bl://projects/${BIGLAKE_PROJECT}/catalogs/${BIGLAKE_CATALOG}', endpoint 'https://biglake.googleapis.com/iceberg/v1/restcatalog', secret 'iceberg_ci_catalog'"
 }
 
-# Launches an Ollama server and pulls a small embedding model. Ollama exposes
-# an OpenAI-compatible API at /v1/embeddings on port 11434, which ai_embed()
-# targets via a SECRET of TYPE openai with a custom base_url. The pulled
-# model determines the embedding dimension; pick the smallest one that's
-# still useful so the first run stays under ~30s in CI.
 launch_ollama() {
 	local prefix
 	prefix="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
 	OLLAMA_CONTAINER_NAME="${prefix}-serenedb-test-ollama-$$"
 	OLLAMA_LOG_FILE="${LOG_DIR:-/tmp}/${OLLAMA_CONTAINER_NAME}.log"
 	export OLLAMA_MODEL="${OLLAMA_MODEL:-all-minilm}"
+	export OLLAMA_CHAT_MODEL="${OLLAMA_CHAT_MODEL:-qwen2.5:0.5b}"
 
 	local network_args=()
 	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
@@ -645,17 +669,21 @@ launch_ollama() {
 			TEST_NETWORK="${prefix}-serenedb-test-net-$$"
 			docker network create "$TEST_NETWORK" >/dev/null
 		fi
-		OLLAMA_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
-		network_args=(--network "$TEST_NETWORK" -p "$OLLAMA_PORT:11434")
+		network_args=(--network "$TEST_NETWORK" -p 11434)
 		export OLLAMA_HOST="localhost"
 		export OLLAMA_PORT
 	fi
 
-	echo "Starting Ollama (host=$OLLAMA_HOST, port=$OLLAMA_PORT)..."
+	echo "Starting Ollama (host=$OLLAMA_HOST)..."
 	docker run -d \
 		--name "$OLLAMA_CONTAINER_NAME" \
 		"${network_args[@]}" \
+		-v serenedb-test-ollama:/root/.ollama \
 		ollama/ollama:latest
+	if [[ -z "${COMPOSE_NETWORK:-}" ]]; then
+		OLLAMA_PORT=$(docker port "$OLLAMA_CONTAINER_NAME" 11434/tcp | head -1 | sed 's/.*://')
+	fi
+	echo "Ollama port: $OLLAMA_PORT"
 
 	echo "Waiting for Ollama to be ready..."
 	for i in $(seq 1 60); do
@@ -671,10 +699,71 @@ launch_ollama() {
 		sleep 1
 	done
 
-	echo "Pulling model '$OLLAMA_MODEL'..."
-	docker exec "$OLLAMA_CONTAINER_NAME" ollama pull "$OLLAMA_MODEL"
+	for model in "$OLLAMA_MODEL" "$OLLAMA_CHAT_MODEL"; do
+		if ! docker exec "$OLLAMA_CONTAINER_NAME" ollama show "$model" >/dev/null 2>&1; then
+			echo "Pulling model '$model'..."
+			if ! docker exec "$OLLAMA_CONTAINER_NAME" ollama pull "$model"; then
+				echo "ERROR: could not pull Ollama model '$model'"
+				exit 1
+			fi
+		fi
+	done
 
-	echo "Ollama running (host=$OLLAMA_HOST, port=$OLLAMA_PORT, model=$OLLAMA_MODEL)."
+	echo "Ollama running (host=$OLLAMA_HOST, port=$OLLAMA_PORT, model=$OLLAMA_MODEL, chat model=$OLLAMA_CHAT_MODEL)."
+	echo
+}
+
+launch_kev() {
+	local prefix
+	prefix="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
+	KEV_CONTAINER_NAME="${prefix}-serenedb-test-kev-$$"
+	KEV_LOG_FILE="${LOG_DIR:-/tmp}/${KEV_CONTAINER_NAME}.log"
+
+	if ! docker image inspect "$KEV_IMAGE" >/dev/null 2>&1; then
+		echo "Building $KEV_IMAGE..."
+		docker build -t "$KEV_IMAGE" "${SCRIPT_DIR}/fixtures/kev"
+	fi
+
+	local network_args=()
+	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
+		network_args=(--network "$COMPOSE_NETWORK")
+		export KEV_HOST="$KEV_CONTAINER_NAME"
+		export KEV_PORT=8009
+	else
+		if [[ -z "$TEST_NETWORK" ]]; then
+			TEST_NETWORK="${prefix}-serenedb-test-net-$$"
+			docker network create "$TEST_NETWORK" >/dev/null
+		fi
+		network_args=(--network "$TEST_NETWORK" -p 8009)
+		export KEV_HOST="localhost"
+		export KEV_PORT
+	fi
+
+	echo "Starting Kev (host=$KEV_HOST)..."
+	docker run -d \
+		--name "$KEV_CONTAINER_NAME" \
+		"${network_args[@]}" \
+		"$KEV_IMAGE"
+	if [[ -z "${COMPOSE_NETWORK:-}" ]]; then
+		KEV_PORT=$(docker port "$KEV_CONTAINER_NAME" 8009/tcp | head -1 | sed 's/.*://')
+	fi
+	echo "Kev port: $KEV_PORT"
+
+	echo "Waiting for Kev to be ready..."
+	for i in $(seq 1 180); do
+		if docker exec "$KEV_CONTAINER_NAME" \
+			python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8009/v1/models')" >/dev/null 2>&1; then
+			echo "Kev is ready."
+			break
+		fi
+		if [[ $i -eq 180 ]]; then
+			echo "ERROR: Kev failed to start within 180 seconds"
+			exit 1
+		fi
+		sleep 1
+	done
+
+	echo "Kev running (host=$KEV_HOST, port=$KEV_PORT)."
 	echo
 }
 
@@ -698,26 +787,29 @@ launch_postgres() {
 			TEST_NETWORK="${prefix}-serenedb-test-net-$$"
 			docker network create "$TEST_NETWORK" >/dev/null
 		fi
-		PGPORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
-		network_args=(--network "$TEST_NETWORK" -p "$PGPORT:5432")
+		network_args=(--network "$TEST_NETWORK" -p 5432)
 		export PGHOST="localhost"
 		export PGPORT
 	fi
 	export PGUSER=postgres
 	export PGDATABASE=postgres
 
-	echo "Starting postgres (host=$PGHOST, port=$PGPORT)..."
+	echo "Starting postgres (host=$PGHOST)..."
 	docker run -d \
 		--name "$POSTGRES_CONTAINER_NAME" \
 		"${network_args[@]}" \
 		-e POSTGRES_HOST_AUTH_METHOD=trust \
 		-e POSTGRES_DB=postgres \
 		postgres:18.3
+	if [[ -z "${COMPOSE_NETWORK:-}" ]]; then
+		PGPORT=$(docker port "$POSTGRES_CONTAINER_NAME" 5432/tcp | head -1 | sed 's/.*://')
+	fi
+	echo "postgres port: $PGPORT"
 
 	echo "Waiting for postgres to be ready..."
 	for i in $(seq 1 60); do
 		if docker exec "$POSTGRES_CONTAINER_NAME" \
-			pg_isready -U postgres >/dev/null 2>&1; then
+			pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1; then
 			echo "postgres is ready."
 			break
 		fi
@@ -772,14 +864,13 @@ launch_clickhouse() {
 			TEST_NETWORK="${prefix}-serenedb-test-net-$$"
 			docker network create "$TEST_NETWORK" >/dev/null
 		fi
-		CHPORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
-		network_args=(--network "$TEST_NETWORK" -p "$CHPORT:9000")
+		network_args=(--network "$TEST_NETWORK" -p 9000)
 		export CHHOST="localhost"
 		export CHPORT
 	fi
 	export CHUSER=default
 
-	echo "Starting clickhouse (host=$CHHOST, port=$CHPORT)..."
+	echo "Starting clickhouse (host=$CHHOST)..."
 	# CLICKHOUSE_SKIP_USER_SETUP opens the `default` user to all networks with no
 	# password (the image otherwise locks it to localhost, rejecting serened's
 	# host-side connection). Env-var auth, analogous to postgres's
@@ -794,6 +885,10 @@ launch_clickhouse() {
 		--health-retries 3 \
 		--health-start-period 60s \
 		"$CLICKHOUSE_IMAGE"
+	if [[ -z "${COMPOSE_NETWORK:-}" ]]; then
+		CHPORT=$(docker port "$CLICKHOUSE_CONTAINER_NAME" 9000/tcp | head -1 | sed 's/.*://')
+	fi
+	echo "clickhouse port: $CHPORT"
 
 	echo "Waiting for clickhouse to be ready..."
 	for i in $(seq 1 60); do
@@ -879,7 +974,7 @@ PY
 launch_external() {
 	shopt -s globstar
 	local pattern test_files f
-	local needs_s3=false needs_iceberg=false needs_ollama=false needs_postgres=false needs_clickhouse=false needs_azure=false
+	local needs_s3=false needs_iceberg=false needs_ollama=false needs_kev=false needs_postgres=false needs_clickhouse=false needs_azure=false
 	local needs_iceberg_fixture=false
 	local -a misnamed=()
 	for pattern in "${tests[@]}"; do
@@ -900,13 +995,14 @@ launch_external() {
 			# package RTA, which has no docker -- exclude it. An external-service
 			# suffix on a plain .test is a mistake; fail loudly instead of
 			# letting the service launch blow up later.
-			*_s3.test | *_iceberg.test | *_ollama.test | *_pgscan.test | *_chscan.test | *_azure.test)
+			*_s3.test | *_iceberg.test | *_ollama.test | *_kev.test | *_pgscan.test | *_chscan.test | *_azure.test)
 				misnamed+=("$f")
 				;;
 			*_s3.test_slow) needs_s3=true ;;
 			*_azure.test_slow) needs_azure=true ;;
 			*_iceberg.test_slow) needs_iceberg=true ;;
 			*_ollama.test_slow) needs_ollama=true ;;
+			*_kev.test_slow) needs_kev=true ;;
 			*_pgscan.test_slow) needs_postgres=true ;;
 			*_chscan.test_slow) needs_clickhouse=true ;;
 			esac
@@ -982,6 +1078,9 @@ launch_external() {
 	fi
 	if [[ "$needs_ollama" == "true" ]]; then
 		launch_ollama
+	fi
+	if [[ "$needs_kev" == "true" ]]; then
+		launch_kev
 	fi
 	if [[ "$needs_postgres" == "true" ]]; then
 		launch_postgres

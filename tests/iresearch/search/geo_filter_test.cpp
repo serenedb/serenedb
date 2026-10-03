@@ -277,10 +277,7 @@ TEST(GeoFilterTest, query) {
 
   // index data
   {
-    constexpr auto kFormatId = "1_5simd";
-    auto codec = irs::formats::Get(kFormatId);
-    ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
@@ -654,10 +651,7 @@ TEST(GeoFilterTest, checkScorer) {
 
   // index data
   {
-    constexpr auto kFormatId = "1_5simd";
-    auto codec = irs::formats::Get(kFormatId);
-    ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
@@ -893,9 +887,7 @@ TEST(GeoFilterTest, per_node_scorer_override) {
   irs::MemoryDirectory dir;
   irs::DirectoryReader reader;
   {
-    auto codec = irs::formats::Get("1_5simd");
-    ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;

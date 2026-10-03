@@ -19,16 +19,6 @@ SereneDB unifies **Elasticsearch-like search** and **ClickHouse-like analytics**
 
 Search is a first-class citizen of the query engine. All search functionality is powered by [IResearch](iresearch/README.md), an open-source C++ information retrieval library that core members of the SereneDB team have been developing since 2016.
 
-<div align=center>
-<a href="https://www.producthunt.com/posts/serenedb-krummelanke?utm_source=badge-featured&amp;utm_medium=badge">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1250875&amp;theme=dark">
-    <source media="(prefers-color-scheme: light)" srcset="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1250875&amp;theme=light">
-    <img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=POST_ID&amp;theme=light" alt="SereneDB - Ultra-Fast Search &amp; Analytics Database | Product Hunt" height="46"/>
-  </picture>
-</a>
-</div>
-
 
 ## Open Benchmarks
 

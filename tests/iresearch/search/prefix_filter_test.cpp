@@ -153,17 +153,18 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
     irs::Scorer* score = &bm25;
     irs::IndexWriterOptions opts;
     opts.reader_options.db = &::irs::DuckDBEngine::Instance().instance();
-    if (codec()->type()().name().starts_with("1_5simd") && score_prune) {
+    if (score_prune) {
       opts.reader_options.scorer = score;
     }
+    const auto reader_options = opts.reader_options;
     // add segment
     {
       tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                   &tests::NormStringJsonFieldFactory);
-      add_segment(gen, irs::kOmCreate, opts);
+      add_segment(gen, irs::kOmCreate, std::move(opts));
     }
 
-    auto rdr = open_reader(opts.reader_options);
+    auto rdr = open_reader(reader_options);
 
     // empty query
     CheckQuery(irs::ByPrefix(), Docs{}, Costs{0}, rdr);
@@ -496,9 +497,7 @@ TEST_P(PrefixFilterTestCase, by_prefix_no_collector) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(prefix_filter_test, PrefixFilterTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values(tests::FormatInfo{
-                                              "1_5simd"})),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          PrefixFilterTestCase::to_string);
 
 }  // namespace

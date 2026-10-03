@@ -10,9 +10,11 @@ else is flattened through a lossy per-type mapping. Server code must not
 Sanctioned exceptions:
   - `throw;`                            -- a bare rethrow keeps the original
   - `throw irs::SqlException{...}`      -- the typed wire exception itself
-  - `throw duckdb::TransactionException`-- the commit/rollback seam speaks to
-    DuckDB's own transaction machinery and the wire layer special-cases
-    ExceptionType::TRANSACTION
+  - `throw duckdb::NotImplementedException` -- DuckDB catches this exact type
+    to decide a plan is not serializable (logical_operator.cpp,
+    LogicalOperator::Serialize and ToString), so our table function's
+    serialize / deserialize callbacks must raise it for the fallback to run;
+    anything else aborts the query instead
   - allowlisted paths below, each a subsystem whose exceptions never reach
     the pg wire.
 """
@@ -36,14 +38,8 @@ ALLOWED_PATHS = (
 STRING_RE = re.compile(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'')
 COMMENT_RE = re.compile(r"//.*$|/\*.*?\*/")
 THROW_RE = re.compile(r"\bthrow\b\s*(?P<rest>[^\s;]*)")
-# duckdb::NotImplementedException: the plan serialize / deserialize callbacks
-# duckdb requires on our table functions and system table entries are
-# unreachable placeholders (we never serialize a plan), and duckdb itself
-# expects that exception type there -- it never surfaces to a client as a pg
-# error, so a sqlstate would be meaningless.
 ALLOWED_EXPRS = (
     "irs::SqlException",
-    "duckdb::TransactionException",
     "duckdb::NotImplementedException",
 )
 
@@ -96,7 +92,6 @@ def main() -> int:
             "SDB_THROW) so the PG sqlstate survives to the client "
             "(pg/sql_exception_macro.h). Sanctioned: bare `throw;`, "
             "`throw irs::SqlException{...}`, "
-            "`throw duckdb::TransactionException`, "
             "`throw duckdb::NotImplementedException`, and the allowlisted "
             "subsystems in scripts/check_no_raw_throw.py.",
             file=sys.stderr,

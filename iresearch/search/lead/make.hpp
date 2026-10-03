@@ -31,6 +31,7 @@
 #include "iresearch/search/queries/term_state.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs::lead {
 

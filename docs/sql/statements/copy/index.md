@@ -107,9 +107,13 @@ Read the contents of a file provided as parameter of a prepared statement into t
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram1" />
 
-> To ensure compatibility with PostgreSQL, SereneDB accepts `COPY ... FROM` statements that do not fully comply with the railroad diagram shown here. For example, the following is a valid statement:
->
-> <SqlLogicTest id="sql/statements/copy/index/example_023" />
+<DocCallout type="note">
+
+To ensure compatibility with PostgreSQL, SereneDB accepts `COPY ... FROM` statements that do not fully comply with the railroad diagram shown here. For example, the following is a valid statement:
+
+<SqlLogicTest id="sql/statements/copy/index/example_023" />
+
+</DocCallout>
 
 ## `COPY ... TO`
 
@@ -231,7 +235,7 @@ The below options are applicable when writing CSV files.
 | `DELIM` or `SEP`  | The character that is written to separate columns within each row.                                                                                                                                                                                   | `VARCHAR`   | `,`     |
 | `ESCAPE`          | The character that should appear before a character that matches the `quote` value.                                                                                                                                                                  | `VARCHAR`   | `"`     |
 | `FORCE_QUOTE`     | The list of columns to always add quotes to, even if not required.                                                                                                                                                                                   | `VARCHAR[]` | `[]`    |
-| `HEADER`          | Whether or not to write a header for the CSV file.                                                                                                                                                                                                   | `BOOL`      | `true`  |
+| `HEADER`          | Whether or not to write a header for the CSV file. A server writes none unless you pass `HEADER`, following the `copy_csv_header_default` setting; `serened shell` writes one. | `BOOL`      | `false` on a server  |
 | `NULLSTR`         | The string that is written to represent a `NULL` value.                                                                                                                                                                                              | `VARCHAR`   | (empty) |
 | `PREFIX`          | Prefixes the CSV file with a specified string. This option must be used in conjunction with `SUFFIX` and requires `HEADER` to be set to `false`.                                                                                                     | `VARCHAR`   | (empty) |
 | `SUFFIX`          | Appends a specified string as a suffix to the CSV file. This option must be used in conjunction with `PREFIX` and requires `HEADER` to be set to `false`.                                                                                            | `VARCHAR`   | (empty) |

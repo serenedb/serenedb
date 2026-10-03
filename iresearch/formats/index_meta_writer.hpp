@@ -1,4 +1,3 @@
-
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
@@ -23,151 +22,56 @@
 
 #pragma once
 
-#include "iresearch/formats/format_utils.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/index/file_names.hpp"
-#include "iresearch/store/store_utils.hpp"
+#include <absl/functional/any_invocable.h>
+
+#include <duckdb/common/constants.hpp>
+#include <duckdb/common/serializer/serialization_traits.hpp>
+#include <string>
+#include <string_view>
+
+#include "iresearch/index/index_meta.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
-struct IndexMetaWriterImpl final : public IndexMetaWriter {
-  static constexpr std::string_view kFormatName = "iresearch_10_index_meta";
-  static constexpr std::string_view kFormatPrefix = "segments_";
-  static constexpr std::string_view kFormatPrefixTmp = "pending_segments_";
+struct Directory;
 
-  static constexpr int32_t kFormatVersion = 0;
+namespace index_meta {
 
-  enum {
-    kHasPayload = 1,
-  };
+inline constexpr std::string_view kPrefix = "segments_";
+inline constexpr std::string_view kPendingPrefix = "pending_segments_";
 
-  static std::string FileName(uint64_t gen) {
-    return FileName(kFormatPrefix, gen);
-  }
+inline constexpr duckdb::field_id_t kFieldStorageVersion = 0;
+inline constexpr duckdb::field_id_t kFieldSegCounter = 1;
+inline constexpr duckdb::field_id_t kFieldSegments = 2;
+inline constexpr duckdb::field_id_t kFieldPayload = 3;
+
+inline constexpr duckdb::field_id_t kSegmentFieldFilename = 0;
+inline constexpr duckdb::field_id_t kSegmentFieldInvisibleCount = 1;
+
+std::string FileName(uint64_t gen);
+
+}  // namespace index_meta
+
+using MetaPayloadWriter =
+  absl::AnyInvocable<void(uint64_t tick, duckdb::BinarySerializer&)>;
+
+class IndexMetaWriter final {
+ public:
+  explicit IndexMetaWriter(MetaPayloadWriter payload = {}) noexcept
+    : _payload{std::move(payload)} {}
 
   // FIXME(gnusi): Better to split prepare into 2 methods and pass meta by
   // const reference
   bool prepare(Directory& dir, IndexMeta& meta, std::string& pending_filename,
-               std::string& filename) final;
-  bool commit() final;
-  void rollback() noexcept final;
+               std::string& filename, uint64_t tick);
+  bool commit();
+  void rollback() noexcept;
 
  private:
-  static std::string FileName(std::string_view prefix, uint64_t gen) {
-    SDB_ASSERT(index_gen_limits::valid(gen));
-    return irs::FileName(prefix, gen);
-  }
-
-  static std::string PendingFileName(uint64_t gen) {
-    return FileName(kFormatPrefixTmp, gen);
-  }
-
+  MetaPayloadWriter _payload;
   Directory* _dir{};
   uint64_t _pending_gen{index_gen_limits::invalid()};  // Generation to commit
 };
-
-inline bool IndexMetaWriterImpl::prepare(Directory& dir, IndexMeta& meta,
-                                         std::string& pending_filename,
-                                         std::string& filename) {
-  if (index_gen_limits::valid(_pending_gen)) {
-    // prepare() was already called with no corresponding call to commit()
-    return false;
-  }
-
-  ++meta.gen;  // Increment generation before generating filename
-  pending_filename = PendingFileName(meta.gen);
-  filename = FileName(meta.gen);
-
-  auto out = dir.create(pending_filename);
-
-  if (!out) {
-    throw IoError{
-      absl::StrCat("Failed to create file, path: ", pending_filename)};
-  }
-
-  {
-    format_utils::WriteHeader(*out, kFormatName, kFormatVersion);
-    out->WriteV64(meta.gen);
-    out->WriteU64(meta.seg_counter);
-    SDB_ASSERT(meta.segments.size() <= std::numeric_limits<uint32_t>::max());
-    out->WriteV32(static_cast<uint32_t>(meta.segments.size()));
-
-    for (const auto& segment : meta.segments) {
-      WriteStr(*out, segment.filename);
-      WriteStr(*out, segment.meta.codec->type()().name());
-    }
-
-    const auto payload = GetPayload(meta);
-    const uint8_t flags = IsNull(payload) ? 0 : kHasPayload;
-    out->WriteByte(flags);
-
-    if (flags == kHasPayload) {
-      WriteStr(*out, payload);
-    }
-
-    format_utils::WriteFooter(*out);
-  }  // Important to close output here
-
-  // Only noexcept operations below
-  _dir = &dir;
-  _pending_gen = meta.gen;
-
-  return true;
-}
-
-inline bool IndexMetaWriterImpl::commit() {
-  if (!index_gen_limits::valid(_pending_gen)) {
-    return false;
-  }
-
-  const auto src = PendingFileName(_pending_gen);
-  const auto dst = FileName(_pending_gen);
-
-  if (!_dir->rename(src, dst)) {
-    rollback();
-
-    throw IoError{absl::StrCat("Failed to rename file, src path: '", src,
-                               "' dst path: '", dst, "'")};
-  }
-
-  // only noexcept operations below
-  // clear pending state
-  _pending_gen = index_gen_limits::invalid();
-  _dir = nullptr;
-
-  return true;
-}
-
-inline void IndexMetaWriterImpl::rollback() noexcept {
-  if (!index_gen_limits::valid(_pending_gen)) {
-    return;
-  }
-
-  std::string seg_file;
-
-  try {
-    seg_file = PendingFileName(_pending_gen);
-  } catch (const std::exception& e) {
-    SDB_ERROR(
-      IRESEARCH,
-      absl::StrCat(
-        "Caught error while generating file name for index meta, reason: ",
-        e.what()));
-    return;
-  } catch (...) {
-    SDB_ERROR(IRESEARCH,
-              "Caught error while generating file name for index meta");
-    return;
-  }
-
-  if (!_dir->remove(seg_file)) {  // suppress all errors
-    SDB_ERROR(IRESEARCH,
-              absl::StrCat("Failed to remove file, path: ", seg_file));
-  }
-
-  // clear pending state
-  _dir = nullptr;
-  _pending_gen = index_gen_limits::invalid();
-}
 
 }  // namespace irs

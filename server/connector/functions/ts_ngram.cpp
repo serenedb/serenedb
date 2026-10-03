@@ -71,6 +71,15 @@ void FromNGram(BoolTarget filter, const FilterContext& ctx,
                "`Frequency` features attached to the column."));
   }
 
+  if (ctx.tokenizer.Traits().explicit_pos) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("ts_ngram needs a dictionary that emits one token per position"),
+      ERR_HINT("Use a single n-gram size, such as generate_ngrams(2, 2). "
+               "Tokens stacked at one position, from several n-gram sizes or "
+               "from synonyms, cannot be matched by n-gram similarity."));
+  }
+
   auto& ngram =
     AddMaybeNegated<irs::ByNGramSimilarity>(filter, ctx, column_info);
   ngram.SetBoost(ctx.boost);

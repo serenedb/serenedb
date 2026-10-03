@@ -12,12 +12,17 @@
 {{- end -}}
 {{- end -}}
 
+{{- /*
+serenedb.labels: the helm.sh/chart value replaces '+' with '_' because only
+hotfix/patch versions (X.Y.Z.W) carry SemVer build metadata (X.Y.Z+W), and '+'
+is illegal in a k8s label value. No-op for normal versions.
+*/ -}}
 {{- define "serenedb.labels" -}}
 app.kubernetes.io/name: {{ include "serenedb.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end -}}
 
 {{- define "serenedb.selectorLabels" -}}

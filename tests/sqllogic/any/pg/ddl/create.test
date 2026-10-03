@@ -1,3 +1,28 @@
+control substitution on
+
+
+statement ok
+CREATE DATABASE my_test_unique_db_name;
+
+
+query error
+CREATE DATABASE my_test_unique_db_name;
+----
+db error: ERROR: database "my_test_unique_db_name" already exists
+
+
+statement ok
+DROP DATABASE my_test_unique_db_name;
+
+
+statement error
+DROP DATABASE my_test_unique_db_name;
+
+
+statement ok
+DROP DATABASE IF EXISTS my_test_unique_db_name;
+
+
 statement ok
 CREATE DATABASE my_test_unique_db_name;
 
@@ -21,22 +46,72 @@ DROP DATABASE IF EXISTS my_test_unique_db_name;
 
 
 statement ok
-CREATE DATABASE my_test_unique_db_name;
+CREATE DATABASE my_test_idx_db_name;
+
+
+onlyif serenedb
+statement ok
+USE my_test_idx_db_name;
+
+
+onlyif serenedb
+statement ok
+CREATE TABLE t (id INT PRIMARY KEY, b TEXT);
+
+
+onlyif serenedb
+statement ok
+CREATE INDEX t_idx ON t USING inverted (id, b);
+
+
+onlyif serenedb
+statement ok
+INSERT INTO t VALUES (1, 'alpha');
+
+
+onlyif serenedb
+statement ok
+USE $__DATABASE__;
 
 
 query error
-CREATE DATABASE my_test_unique_db_name;
+CREATE DATABASE my_test_idx_db_name;
 ----
-db error: ERROR: database "my_test_unique_db_name" already exists
+db error: ERROR: database "my_test_idx_db_name" already exists
+
+
+onlyif serenedb
+statement ok
+CREATE DATABASE IF NOT EXISTS my_test_idx_db_name;
+
+
+onlyif serenedb
+statement ok
+USE my_test_idx_db_name;
+
+
+onlyif serenedb
+statement ok
+INSERT INTO t VALUES (2, 'bravo');
+
+
+onlyif serenedb
+statement ok
+VACUUM (REFRESH_TABLE) t;
+
+
+onlyif serenedb
+query
+SELECT count(*) FROM t;
+----
+count
+2
+
+
+onlyif serenedb
+statement ok
+USE $__DATABASE__;
 
 
 statement ok
-DROP DATABASE my_test_unique_db_name;
-
-
-statement error
-DROP DATABASE my_test_unique_db_name;
-
-
-statement ok
-DROP DATABASE IF EXISTS my_test_unique_db_name;
+DROP DATABASE my_test_idx_db_name;

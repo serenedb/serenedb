@@ -35,6 +35,12 @@
 
 #include "connector/view_fast_path.h"
 
+namespace duckdb {
+
+class BinaryDeserializer;
+class BinarySerializer;
+
+}  // namespace duckdb
 namespace sdb::search {
 
 struct FileManifestEntry {
@@ -60,9 +66,10 @@ struct FileManifest {
     return it == entries.end() ? nullptr : &it->second;
   }
 
-  void Serialize(irs::bstring& out) const;
+  void Write(duckdb::BinarySerializer& out) const;
 
-  static std::shared_ptr<const FileManifest> Parse(irs::bytes_view tail);
+  static std::shared_ptr<const FileManifest> Read(
+    duckdb::BinaryDeserializer& in);
 
   bool operator==(const FileManifest&) const = default;
 };

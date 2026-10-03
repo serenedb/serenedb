@@ -253,7 +253,7 @@ class ScorePruneScoringTestCase : public IndexTestBase {
                                         size_t multiplier = 1) {
     irs::IndexWriterOptions opts;
     opts.reader_options.scorer = &scorer;
-    auto writer = open_writer(irs::kOmCreate, opts);
+    auto writer = open_writer(irs::kOmCreate, std::move(opts));
 
     std::vector<tests::JsonDocGenerator> gens;
     for (size_t i = 0; i < multiplier; ++i) {
@@ -275,7 +275,7 @@ class ScorePruneScoringTestCase : public IndexTestBase {
                                                size_t multiplier = 1) {
     irs::IndexWriterOptions opts;
     opts.reader_options.scorer = &scorer;
-    auto writer = open_writer(irs::kOmCreate, opts);
+    auto writer = open_writer(irs::kOmCreate, std::move(opts));
     auto& index_ref = const_cast<tests::index_t&>(index());
 
     const std::string files[] = {
@@ -845,8 +845,7 @@ TEST_P(ScorePruneScoringTestCase, ScorePruneMultisegResultValues) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(ScorePruneScoringTest, ScorePruneScoringTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5simd")),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          ScorePruneScoringTestCase::to_string);
 
 }  // namespace

@@ -16,7 +16,7 @@
 # serves a search, and a row written after the rollback still reaches it.
 #
 # Rolled-back CREATE INDEX is in index_rollback_create_inverted.test; rolled-back
-# DROP INDEX is a known gap, pinned in index_rollback_drop_gap.test.
+# DROP INDEX is in index_rollback_drop.test.
 
 
 statement ok

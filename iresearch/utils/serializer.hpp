@@ -57,6 +57,8 @@ static_assert(false);
 #endif
 static_assert(BOOST_PFR_ENABLED);
 
+#include <duckdb/common/error_data.hpp>
+#include <duckdb/common/serializer/serialization_traits.hpp>
 #include <duckdb/common/types/string_type.hpp>
 
 #include "iresearch/utils/assert.hpp"
@@ -87,6 +89,12 @@ FixedString(const char (&part)[N]) -> FixedString<N - 1>;
 
 struct ObjectFormat {};
 struct TupleFormat {};
+
+template<typename T>
+struct Deleted {
+  using Type = T;
+  bool operator==(const Deleted&) const = default;
+};
 
 namespace detail {
 
@@ -172,6 +180,11 @@ template<typename... Args>
 struct IsVariant<std::variant<Args...>> : std::true_type {};
 
 template<typename T>
+struct IsDeleted : std::false_type {};
+template<typename T>
+struct IsDeleted<Deleted<T>> : std::true_type {};
+
+template<typename T>
 concept IsRange = requires(std::enable_if_t<!IsString<T>::value, T> t) {
   t.begin();
   t.end();
@@ -204,6 +217,9 @@ concept HasSourceReadOverload = requires(T& t, Source& src, const A& arg) {
 
 template<typename Sink, typename T>
 concept HasMemberSerialize = requires(const T& t, Sink& b) { t.Serialize(b); };
+
+template<typename T>
+concept HasSerdeFields = requires(T& t) { SerdeFields(t); };
 
 template<typename Source, typename T>
 concept HasStaticDeserialize = requires(Source& src) {
@@ -281,10 +297,29 @@ template<typename T>
 inline constexpr bool kIsVariant = detail::IsVariant<T>::value;
 
 template<typename T>
+inline constexpr bool kIsDeleted = detail::IsDeleted<T>::value;
+
+template<typename T>
+inline constexpr bool kIsFieldObject =
+  detail::HasSerdeFields<T> ||
+  (std::is_aggregate_v<T> && !std::is_array_v<T> && !kIsArray<T> &&
+   !detail::IsRange<T> && !kIsDeleted<T>);
+
+template<typename T>
+auto FieldsOf(T& value) {
+  if constexpr (detail::HasSerdeFields<T>) {
+    return SerdeFields(value);
+  } else {
+    return boost::pfr::structure_tie(value);
+  }
+}
+
+template<typename T>
 inline constexpr bool kIsSupportedBuiltIn =
   std::is_enum_v<T> || detail::IsContainer<T> || detail::IsRange<T> ||
   detail::IsMap<T> || detail::IsSet<T> || kIsArray<T> || kIsTuple<T> ||
-  kIsNullable<T> || kIsPrimitive<T> || std::is_aggregate_v<T>;
+  kIsNullable<T> || kIsPrimitive<T> || std::is_aggregate_v<T> ||
+  kIsFieldObject<T>;
 
 template<typename T, typename F, typename A, typename Sink>
 inline constexpr bool kIsWritable = kIsSupportedBuiltIn<T> || kIsVariant<T> ||
@@ -313,6 +348,72 @@ bool ReadVariantIndex(Variant& v, size_t index, ReadInto&& read_into) {
       ...);
     return matched;
   }(std::make_index_sequence<std::variant_size_v<Variant>>{});
+}
+
+template<typename T>
+const T& DefaultValue() {
+  static const T kValue{};
+  return kValue;
+}
+
+template<size_t I>
+inline constexpr auto kFieldTag = [] {
+  constexpr size_t kDigits = [] {
+    size_t digits = 1;
+    for (size_t v = I; v >= 10; v /= 10) {
+      ++digits;
+    }
+    return digits;
+  }();
+  FixedString<kDigits> tag;
+  size_t v = I;
+  for (size_t i = kDigits; i-- > 0; v /= 10) {
+    tag.value[i] = static_cast<char>('0' + v % 10);
+  }
+  return tag;
+}();
+
+template<typename T>
+using FieldsOfT = decltype(FieldsOf(std::declval<T&>()));
+
+template<typename T>
+bool IsDefault(const T& value, const T& expected) {
+  if constexpr (kIsDeleted<T>) {
+    return true;
+  } else if constexpr (kIsOptional<T> || kIsPointer<T>) {
+    if (!value || !expected) {
+      return !value && !expected;
+    }
+    return IsDefault(*value, *expected);
+  } else if constexpr (kIsVariant<T>) {
+    return value.index() == expected.index() && [&]<size_t... I>(
+                                                  std::index_sequence<I...>) {
+      return ((value.index() != I || IsDefault(*std::get_if<I>(&value),
+                                               *std::get_if<I>(&expected))) &&
+              ...);
+    }(std::make_index_sequence<std::variant_size_v<T>>{});
+  } else if constexpr (kIsTuple<T>) {
+    return [&]<size_t... I>(std::index_sequence<I...>) {
+      return (IsDefault(std::get<I>(value), std::get<I>(expected)) && ...);
+    }(std::make_index_sequence<std::tuple_size_v<T>>{});
+  } else if constexpr (IsMap<T> || IsSet<T>) {
+    return std::ranges::empty(value) && std::ranges::empty(expected);
+  } else if constexpr (IsRange<T>) {
+    return std::ranges::equal(
+      value, expected,
+      [](const auto& lhs, const auto& rhs) { return IsDefault(lhs, rhs); });
+  } else if constexpr (kIsFieldObject<T>) {
+    const auto fields = FieldsOf(value);
+    const auto expected_fields = FieldsOf(expected);
+    return [&]<size_t... I>(std::index_sequence<I...>) {
+      return (IsDefault(std::get<I>(fields), std::get<I>(expected_fields)) &&
+              ...);
+    }(std::make_index_sequence<std::tuple_size_v<FieldsOfT<const T>>>{});
+  } else if constexpr (requires { value == expected; }) {
+    return value == expected;
+  } else {
+    return false;
+  }
 }
 
 }  // namespace detail
@@ -398,6 +499,30 @@ void ReadTuple(Source& src, U& out, const A& arg = {}) {
       if (!matched) [[unlikely]] {
         THROW_SQL_ERROR(ERR_MSG("Variant index ", index, " out of range"));
       }
+    } else if constexpr (kIsFieldObject<T>) {
+      src.OnObjectBegin();
+      value = T{};
+      auto fields = FieldsOf(value);
+      [&]<size_t... I>(std::index_sequence<I...>) {
+        (
+          [&] {
+            auto& field = std::get<I>(fields);
+            using F = std::remove_cvref_t<decltype(field)>;
+            const bool present = src.OnOptionalPropertyBegin(
+              static_cast<duckdb::field_id_t>(I), detail::kFieldTag<I>.value);
+            if (present) {
+              if constexpr (kIsDeleted<F>) {
+                typename F::Type deleted{};
+                self(deleted, src);
+              } else {
+                self(field, src);
+              }
+            }
+            src.OnOptionalPropertyEnd(present);
+          }(),
+          ...);
+      }(std::make_index_sequence<std::tuple_size_v<decltype(fields)>>{});
+      src.OnObjectEnd();
     } else if constexpr (!std::is_empty_v<T>) {
       const size_t count = src.OnListBegin();
       auto check_size = [&](size_t expected) {
@@ -469,8 +594,8 @@ void ReadTuple(Source& src, U& out, const A& arg = {}) {
         }
       } catch (const std::exception& e) {
         src.OnListEnd();
-        THROW_SQL_ERROR(
-          ERR_MSG("Failed to read element ", element_idx, ": ", e.what()));
+        THROW_SQL_ERROR(ERR_MSG("Failed to read element ", element_idx, ": ",
+                                duckdb::ErrorData{e}.RawMessage()));
       } catch (...) {
         src.OnListEnd();
         THROW_SQL_ERROR(ERR_MSG("Failed to read element ", element_idx,
@@ -498,6 +623,29 @@ void WriteTuple(Sink& b, const U& in, const A& arg = {}) {
     } else if constexpr (detail::HasMemberSerialize<Sink, T>) {
       b.OnObjectBegin();
       value.Serialize(b);
+      b.OnObjectEnd();
+    } else if constexpr (kIsFieldObject<T>) {
+      b.OnObjectBegin();
+      const auto fields = FieldsOf(value);
+      const auto defaults = FieldsOf(detail::DefaultValue<T>());
+      [&]<size_t... I>(std::index_sequence<I...>) {
+        (
+          [&] {
+            const auto& field = std::get<I>(fields);
+            using F = std::remove_cvref_t<decltype(field)>;
+            if constexpr (!kIsDeleted<F>) {
+              const bool present =
+                !detail::IsDefault(field, std::get<I>(defaults));
+              b.OnOptionalPropertyBegin(static_cast<duckdb::field_id_t>(I),
+                                        detail::kFieldTag<I>.value, present);
+              if (present) {
+                self(field);
+              }
+              b.OnOptionalPropertyEnd(present);
+            }
+          }(),
+          ...);
+      }(std::make_index_sequence<std::tuple_size_v<decltype(fields)>>{});
       b.OnObjectEnd();
     } else if constexpr (kIsNullable<T>) {
       bool present = false;
@@ -531,12 +679,6 @@ void WriteTuple(Sink& b, const U& in, const A& arg = {}) {
         detail::ThrowInvalidEnum<T>(static_cast<int64_t>(raw));
       }
       self(raw);
-    } else if constexpr (std::is_aggregate_v<T>) {
-      constexpr size_t kCount = boost::pfr::tuple_size_v<T>;
-      b.OnListBegin(kCount);
-      boost::pfr::for_each_field(value,
-                                 [&](const auto& field_v) { self(field_v); });
-      b.OnListEnd();
     } else if constexpr (std::is_same_v<T, bool>) {
       b.WriteValue(value);
     } else if constexpr (std::is_same_v<T, char>) {
@@ -567,6 +709,9 @@ void ReadObject(Source& src, U& out, const A& arg = {}) {
     if constexpr (detail::HasSourceReadOverload<Source, ObjectFormat, T, A>) {
       SerdeRead(detail::Context<ObjectFormat, Source*, A, false>{&src, arg},
                 value);
+    } else if constexpr (kIsDeleted<T>) {
+      typename T::Type deleted{};
+      self(deleted);
     } else if constexpr (std::is_same_v<T, bool>) {
       value = src.ReadBool();
     } else if constexpr (std::is_enum_v<T>) {
@@ -844,29 +989,6 @@ void WriteObject(Sink& b, const U& in, const A& arg = {}) {
   };
 
   impl(in);
-}
-
-// A SerdeWrite/SerdeRead whose only difference between formats is named fields
-// versus positional ones: the object form for a sink that renders objects (the
-// JSON introspection path), the tuple form for the binary catalog encoding.
-// Overload on the format where the two forms actually differ in content; use
-// these where the branch would otherwise be copy-pasted per type.
-template<typename Context, typename U>
-void WriteTupleOrObject(Context& ctx, const U& in) {
-  if constexpr (std::is_same_v<typename Context::Format, ObjectFormat>) {
-    WriteObject(ctx.io(), in, ctx.arg());
-  } else {
-    WriteTuple(ctx.io(), in, ctx.arg());
-  }
-}
-
-template<typename Context, typename U>
-void ReadTupleOrObject(Context& ctx, U& out) {
-  if constexpr (std::is_same_v<typename Context::Format, ObjectFormat>) {
-    ReadObject(ctx.io(), out, ctx.arg());
-  } else {
-    ReadTuple(ctx.io(), out, ctx.arg());
-  }
 }
 
 }  // namespace irs::utils

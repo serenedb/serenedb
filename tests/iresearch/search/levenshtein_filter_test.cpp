@@ -20,6 +20,10 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+#include <absl/strings/str_cat.h>
+
+#include <algorithm>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/detail/column_collector.hpp>
@@ -33,7 +37,12 @@
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/levenshtein_default_pdp.hpp>
 #include <iresearch/utils/misc.hpp>
+#include <iresearch/utils/utf8_utils.hpp>
 #include <map>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
 
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
@@ -535,7 +544,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     auto opts = irs::tests::DefaultWriterOptions();
 
-    add_segment(gen, irs::kOmCreate, opts);
+    add_segment(gen, irs::kOmCreate, std::move(opts));
   }
 
   std::array<irs::Scorer::ptr, 1> order{irs::BM25::Make(irs::BM25::Options{})};
@@ -1140,6 +1149,194 @@ TEST_P(ByEditDistanceTestCase, blends_document_frequency) {
   }
 }
 
+namespace {
+
+class TermsGenerator : public tests::DocGeneratorBase {
+ public:
+  explicit TermsGenerator(std::span<const std::string> terms) noexcept
+    : _terms{terms} {}
+
+  const tests::Document* next() final {
+    if (_pos == _terms.size()) {
+      return nullptr;
+    }
+    _doc.clear();
+    auto field = std::make_shared<tests::StringField>("title", _terms[_pos++]);
+    field->id = kTitleId;
+    _doc.insert(field);
+    return &_doc;
+  }
+
+  void reset() final { _pos = 0; }
+
+ private:
+  std::span<const std::string> _terms;
+  size_t _pos{0};
+  tests::Document _doc;
+};
+
+std::vector<uint32_t> CodePoints(std::string_view text) {
+  std::vector<uint32_t> chars;
+  irs::utf8_utils::ToUTF32<true>(irs::ViewCast<irs::byte_type>(text),
+                                 std::back_inserter(chars));
+  return chars;
+}
+
+size_t RestrictedDamerau(std::span<const uint32_t> lhs,
+                         std::span<const uint32_t> rhs) {
+  const size_t width = rhs.size() + 1;
+  std::vector<size_t> d((lhs.size() + 1) * width);
+  const auto at = [&](size_t i, size_t j) -> size_t& {
+    return d[i * width + j];
+  };
+  for (size_t i = 0; i <= lhs.size(); ++i) {
+    at(i, 0) = i;
+  }
+  for (size_t j = 0; j <= rhs.size(); ++j) {
+    at(0, j) = j;
+  }
+  for (size_t i = 1; i <= lhs.size(); ++i) {
+    for (size_t j = 1; j <= rhs.size(); ++j) {
+      at(i, j) = std::min({at(i - 1, j) + 1, at(i, j - 1) + 1,
+                           at(i - 1, j - 1) + (lhs[i - 1] != rhs[j - 1])});
+      if (i > 1 && j > 1 && lhs[i - 1] == rhs[j - 2] &&
+          lhs[i - 2] == rhs[j - 1]) {
+        at(i, j) = std::min(at(i, j), at(i - 2, j - 2) + 1);
+      }
+    }
+  }
+  return at(lhs.size(), rhs.size());
+}
+
+}  // namespace
+
+TEST_P(ByEditDistanceTestCase, top_terms_are_the_ranked_oracle) {
+  constexpr std::string_view kAlphabet[]{"a", "b", "c", "\xD0\xB4"};
+  std::vector<std::string> terms{""};
+  for (size_t begin = 0, length = 1; length <= 4; ++length) {
+    const size_t end = terms.size();
+    for (size_t i = begin; i != end; ++i) {
+      for (const auto letter : kAlphabet) {
+        terms.push_back(absl::StrCat(terms[i], letter));
+      }
+    }
+    begin = end;
+  }
+  terms.erase(terms.begin());
+  for (size_t i = 0; i != terms.size(); ++i) {
+    std::swap(terms[i], terms[(i * 7 + 3) % terms.size()]);
+  }
+  {
+    TermsGenerator gen{terms};
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+
+  struct Case {
+    std::string_view prefix;
+    std::string_view target;
+  };
+  constexpr Case kCases[]{
+    {"", "a"},
+    {"", "ab"},
+    {"", "abc"},
+    {"", "abcd"},
+    {"", "ba"},
+    {"",
+     "\xD0\xB4"
+     "a"},
+    {"a", "bc"},
+    {"b", "a"},
+  };
+  for (const auto& [prefix, target] : kCases) {
+    const auto target_chars = CodePoints(target);
+    const auto size =
+      std::max<size_t>(1, CodePoints(prefix).size() + target_chars.size());
+    for (const irs::byte_type distance : {1, 2, 3}) {
+      for (const bool transpositions : {false, true}) {
+        struct Ranked {
+          irs::score_t similarity;
+          std::string_view term;
+          irs::doc_id_t doc;
+        };
+        std::vector<Ranked> ranked;
+        for (size_t i = 0; i != terms.size(); ++i) {
+          const std::string_view term = terms[i];
+          if (!term.starts_with(prefix)) {
+            continue;
+          }
+          const auto chars = CodePoints(term.substr(prefix.size()));
+          const auto edits =
+            transpositions
+              ? RestrictedDamerau(chars, target_chars)
+              : irs::EditDistance(chars.data(), chars.size(),
+                                  target_chars.data(), target_chars.size());
+          if (edits > distance) {
+            continue;
+          }
+          const auto length = std::min(CodePoints(term).size(), size);
+          ranked.push_back({1.f - static_cast<irs::score_t>(edits) /
+                                    static_cast<irs::score_t>(length),
+                            term, static_cast<irs::doc_id_t>(i + 1)});
+        }
+        absl::c_sort(ranked, [](const Ranked& lhs, const Ranked& rhs) {
+          if (lhs.similarity != rhs.similarity) {
+            return lhs.similarity > rhs.similarity;
+          }
+          return irs::ViewCast<irs::byte_type>(lhs.term) <
+                 irs::ViewCast<irs::byte_type>(rhs.term);
+        });
+        for (const size_t max_terms : {1, 3, 10, 50, 200}) {
+          for (const bool with_ties : {false, true}) {
+            SCOPED_TRACE(testing::Message("Prefix: '")
+                         << prefix << "', target: '" << target
+                         << "', distance: " << size_t{distance}
+                         << ", transpositions: " << transpositions
+                         << ", max terms: " << max_terms
+                         << ", with ties: " << with_ties);
+            auto count = std::min(max_terms, ranked.size());
+            while (with_ties && count != 0 && count != ranked.size() &&
+                   ranked[count].similarity == ranked[count - 1].similarity) {
+              ++count;
+            }
+            Docs expected;
+            std::vector<std::pair<irs::bstring, irs::score_t>> selected;
+            for (size_t i = 0; i != count; ++i) {
+              expected.push_back(ranked[i].doc);
+              selected.emplace_back(
+                irs::ViewCast<irs::byte_type>(ranked[i].term),
+                ranked[i].similarity);
+            }
+            absl::c_sort(expected);
+            absl::c_sort(selected);
+
+            auto filter = MakeLevenshtein("title", target, distance, max_terms,
+                                          transpositions, prefix);
+            ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(),
+                      filter->type());
+            irs::utils::downCast<irs::LevenshteinAutomatonFilter>(*filter)
+              .mutable_options()
+              ->with_ties = with_ties;
+            CheckQuery(*filter, expected, rdr);
+
+            const auto* field = rdr[0].field(kTitleId);
+            ASSERT_NE(nullptr, field);
+            auto cursor = filter->CompileTermIterator(*field);
+            ASSERT_NE(nullptr, cursor);
+            const auto* boost = irs::get<irs::TermBoost>(*cursor);
+            ASSERT_NE(nullptr, boost);
+            std::vector<std::pair<irs::bstring, irs::score_t>> walked;
+            while (cursor->next()) {
+              walked.emplace_back(cursor->value(), boost->value);
+            }
+            EXPECT_EQ(selected, walked);
+          }
+        }
+      }
+    }
+  }
+}
+
 TEST_P(ByEditDistanceTestCase, max_merge_is_kept_whole_in_a_sum_parent) {
   {
     tests::JsonDocGenerator gen(resource("levenshtein_sequential.json"),
@@ -1183,7 +1380,5 @@ TEST_P(ByEditDistanceTestCase, max_merge_is_kept_whole_in_a_sum_parent) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(by_edit_distance_test, ByEditDistanceTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values(tests::FormatInfo{
-                                              "1_5simd"})),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          ByEditDistanceTestCase::to_string);

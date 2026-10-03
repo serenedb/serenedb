@@ -1,0 +1,97 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE ef (pk INTEGER PRIMARY KEY, txt VARCHAR,
+  meta STRUCT(cat INTEGER, name VARCHAR, inner_s STRUCT(k INTEGER)),
+  v VARIANT)
+
+
+statement ok
+CREATE INDEX ef_idx ON ef USING inverted(pk, txt) INCLUDE (meta, v)
+  WITH (row_group_size = 2048)
+
+
+statement ok
+INSERT INTO ef SELECT i, 'w' || (i % 3),
+  CASE WHEN i % 7 = 0 THEN NULL
+       ELSE {'cat': i // 2500, 'name': 'n' || i, 'inner_s': {'k': i % 4}} END,
+  CASE WHEN i % 2 = 0 THEN {'a': i % 5}::VARIANT ELSE (i % 5)::VARIANT END
+FROM range(10000) t(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ef
+
+
+query
+SELECT count(*) FROM ef_idx WHERE meta.cat = 3
+----
+count
+2143
+
+
+query
+SELECT pk FROM ef_idx WHERE meta.cat = 3 AND meta.inner_s.k = 1
+ORDER BY pk LIMIT 5
+----
+pk
+7501
+7505
+7509
+7513
+7517
+
+
+query
+SELECT count(*) FROM ef_idx WHERE meta.cat IS NULL
+----
+count
+1429
+
+
+query
+SELECT pk FROM ef_idx WHERE meta.name = 'n9999'
+----
+pk
+9999
+
+
+query
+SELECT count(*) FROM ef_idx WHERE meta.cat::BIGINT = 0
+----
+count
+2142
+
+
+query
+SELECT count(*) FROM ef_idx WHERE v.a = 3
+----
+count
+1000
+
+
+query
+SELECT count(*) FROM ef_idx WHERE v.a IS NULL
+----
+count
+5000
+
+
+query
+SELECT pk, meta.cat FROM ef_idx WHERE txt @@ 'w0' AND meta.cat = 3
+ORDER BY pk LIMIT 3
+----
+pk	cat
+7500	3
+7503	3
+7506	3
+
+
+query
+SELECT pk, meta.name FROM ef_idx WHERE meta.cat = 1 AND meta.name LIKE 'n25%'
+ORDER BY pk LIMIT 3
+----
+pk	name
+2500	n2500
+2501	n2501
+2502	n2502

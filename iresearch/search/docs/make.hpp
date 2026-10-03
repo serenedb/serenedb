@@ -27,6 +27,7 @@
 #include "iresearch/search/docs/empty.hpp"
 #include "iresearch/search/docs/root.hpp"
 #include "iresearch/search/queries/term_state.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs::docs {
 

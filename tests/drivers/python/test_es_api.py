@@ -292,6 +292,33 @@ def test_bulk_missing_index(conn):
     assert body["error"]["type"] == "index_not_found_exception"
 
 
+def test_bulk_after_index_recreated(conn):
+    name = "drv_es_recreated"
+    _request(conn, "DELETE", f"/{name}")
+    status, _ = _request(conn, "PUT", f"/{name}", MAPPINGS)
+    assert status == 200
+    try:
+        status, body = _bulk(conn, name, '{"index":{"_id":"a"}}\n{"year":1}\n',
+                             refresh=True)
+        assert status == 200 and body["errors"] is False
+        _request(conn, "DELETE", f"/{name}")
+        status, _ = _request(conn, "PUT", f"/{name}", {
+            "mappings": {"properties": {"code": {"type": "keyword"}}}})
+        assert status == 200
+        status, body = _bulk(conn, name, '{"index":{"_id":"b"}}\n{"code":"x"}\n',
+                             refresh=True)
+        assert status == 200, body
+        assert body["items"][0]["index"]["_id"] == "b"
+        status, body = _request(conn, "GET", f"/{name}/_count")
+        assert body["count"] == 1
+        _request(conn, "DELETE", f"/{name}")
+        status, body = _bulk(conn, name, '{"index":{}}\n{"code":"y"}\n')
+        assert status == 404
+        assert body["error"]["type"] == "index_not_found_exception"
+    finally:
+        _request(conn, "DELETE", f"/{name}")
+
+
 def test_bulk_bare_url_with_line_index(conn, index):
     """helpers.bulk posts to bare /_bulk and routes via per-line _index."""
     payload = (

@@ -159,10 +159,9 @@ void ShingleTokenizer::BuildTables(uint32_t n) {
   }
 }
 
-void ShingleTokenizer::StoreBlob(TokenSink& sink, uint32_t n) {
+void ShingleTokenizer::AppendBlob(uint32_t n) {
   const auto tok = _sub->tokens.terms();
   const auto tpos = _sub->tokens.pos();
-  _blob.clear();
   const auto write_fillers = [&](uint32_t k) {
     for (; k != 0; --k) {
       WriteToken(_filler, _blob);
@@ -174,17 +173,16 @@ void ShingleTokenizer::StoreBlob(TokenSink& sink, uint32_t n) {
     prev = tpos[i];
     WriteToken(AsBytesView(tok[i]), _blob);
   }
-  sink.Store(_blob);
 }
 
 template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent>
-void ShingleTokenizer::EmitRuns(duckdb::string_t raw, TokenSink& sink,
+void ShingleTokenizer::EmitRuns(const duckdb::string_t* raw, TokenSink& sink,
                                 uint32_t n, bool no_shingles) {
   const auto* const tok = _sub->tokens.terms().data();
   const auto* const tpos = _sub->tokens.pos().data();
   const auto emit_unigram = [&](uint32_t i, uint32_t pos) {
     const auto& term = tok[i];
-    sink.Emit<Layout>(raw, term.GetData(),
+    sink.Emit<Layout>(raw ? *raw : term, term.GetData(),
                       static_cast<uint32_t>(term.GetSize()), pos);
   };
 
@@ -274,11 +272,8 @@ void ShingleTokenizer::EmitRuns(duckdb::string_t raw, TokenSink& sink,
 
 template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
          bool StoreTokens>
-bool ShingleTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
-  if (!DrainBase(raw)) {
-    return false;
-  }
-
+void ShingleTokenizer::EmitBaseTokens(const duckdb::string_t* raw,
+                                      TokenSink& sink) {
   const uint32_t n = static_cast<uint32_t>(_sub->tokens.terms().size());
   const bool no_shingles = n < _min;
   if (!no_shingles) {
@@ -288,9 +283,70 @@ bool ShingleTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
   EmitRuns<Layout, OutputUnigrams, HasFrequent>(raw, sink, n, no_shingles);
 
   if constexpr (StoreTokens) {
-    StoreBlob(sink, n);
+    AppendBlob(n);
+  }
+}
+
+template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
+         bool StoreTokens>
+bool ShingleTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
+  if (!DrainBase(raw)) {
+    return false;
+  }
+  if constexpr (StoreTokens) {
+    _blob.clear();
+  }
+  EmitBaseTokens<Layout, OutputUnigrams, HasFrequent, StoreTokens>(&raw, sink);
+  if constexpr (StoreTokens) {
+    sink.Store(_blob);
   }
   return true;
+}
+
+bool ShingleTokenizer::FillTokens(std::span<const duckdb::string_t> tokens,
+                                  TokenSink& sink, FillCtx ctx) {
+  return DispatchFill(
+    *this, ctx.layout, ctx.traits,
+    [&](auto layout_tag, auto unigrams_tag, auto frequent_tag,
+        auto store_tag) IRS_FORCE_INLINE {
+      _sub->tokens.Assign(tokens);
+      if constexpr (store_tag()) {
+        _blob.clear();
+      }
+      EmitBaseTokens<layout_tag(), unigrams_tag(), frequent_tag(), store_tag()>(
+        nullptr, sink);
+      if constexpr (store_tag()) {
+        sink.Store(_blob);
+      }
+      return true;
+    });
+}
+
+template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
+         bool StoreTokens>
+bool ShingleTokenizer::AppendValue(duckdb::string_t value, TokenSink& sink) {
+  if (!DrainBase(value)) {
+    return false;
+  }
+  EmitBaseTokens<Layout, OutputUnigrams, HasFrequent, StoreTokens>(&value,
+                                                                   sink);
+  return true;
+}
+
+void ShingleTokenizer::FillRow(const duckdb::UnifiedVectorFormat& values,
+                               duckdb::idx_t offset, uint32_t count,
+                               doc_id_t doc, TokenSink& sink, FillCtx ctx) {
+  _blob.clear();
+  if (FillValues(
+        *this, values, offset, count, doc, sink, ctx,
+        [&]<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
+            bool StoreTokens>(duckdb::string_t value) {
+          return AppendValue<Layout, OutputUnigrams, HasFrequent, StoreTokens>(
+            value, sink);
+        }) &&
+      _store_tokens) {
+    sink.Store(_blob);
+  }
 }
 
 template class TypedTokenizer<ShingleTokenizer>;

@@ -40,6 +40,7 @@
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/burst_trie.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
@@ -52,6 +53,7 @@
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -523,7 +525,8 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
     }
 
     SDB_ASSERT(norm_reader->RowCount() == src.reader->docs_count());
-    const bool has_mask = src.mask && !src.mask->empty();
+    const bool has_mask = HasRemovals(src.reader->Meta());
+    auto it_mask = src.reader->MaskedDocs();
     for (size_t rg = 0, rg_count = norm_reader->RowGroupCount(); rg < rg_count;
          ++rg) {
       const auto bytes = norm_reader->RowGroupBytes(rg);
@@ -547,7 +550,7 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
       for (size_t i = 0; i < n; ++i) {
         const auto src_doc =
           static_cast<doc_id_t>(rg_first_row + i + doc_limits::min());
-        if (src.mask->contains(src_doc)) {
+        if (it_mask.Contains(src_doc)) {
           flush_run(i);
           run_start = i + 1;
         }
@@ -599,9 +602,8 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
                  const MergeWriter::FlushProgress& progress,
                  IResourceManager& rm, IdxWriter& idx,
                  std::span<const BasicTermReader* const> extra) {
-  auto field_writer = std::make_unique<burst_trie::FieldWriter>(
-    meta.codec->get_postings_writer(/*compaction=*/true, rm),
-    /*compaction=*/true, rm);
+  auto field_writer =
+    std::make_unique<burst_trie::FieldWriter>(/*compaction=*/true, rm);
   field_writer->SetIdxWriter(idx);
   field_writer->prepare(flush_state);
 
@@ -666,7 +668,7 @@ bool ComputeDocMappingsAndFieldMeta(
       reader_ctx.remap.base_id = base_id;
       base_id += static_cast<doc_id_t>(docs_count);
     } else {
-      reader_ctx.remap.mask = reader.docs_mask();
+      reader_ctx.remap.mask = reader.MaskedDocs();
       base_id = ComputeDocIds(reader_ctx.remap.id_map, reader, base_id);
     }
     if (!doc_limits::valid(base_id)) {
@@ -693,7 +695,6 @@ void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
     sources.push_back(MergeSource{
       .reader = ctx.reader,
       .col_reader = ctx.reader->GetColReader(),
-      .mask = ctx.reader->docs_mask(),
       .alive_count = static_cast<uint64_t>(ctx.reader->live_docs_count()),
     });
   }
@@ -713,8 +714,6 @@ auto MergeWriter::Flush(SegmentMeta& segment,
                         const FlushProgress& progress /*= {}*/,
                         const AnnBuildEnv* env /*= nullptr*/)
   -> yaclib::Future<bool> {
-  SDB_ASSERT(segment.codec);
-
   bool result = false;
   Finally segment_invalidator = [&result, &segment]() noexcept {
     if (!result) [[unlikely]] {
@@ -762,7 +761,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
 
   std::unique_ptr<ColReader> col_reader;
   MergedNormProvider norm_provider;
-  IdxWriter idx{track_dir, segment.name, _db};
+  IdxWriter idx{track_dir, segment.name};
 
   col_writer->SetIdxWriter(idx);
   if (!col_writer->Commit(segment.docs_count, progress_callback)) {

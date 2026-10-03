@@ -23,8 +23,9 @@
 
 #pragma once
 
-#include <iresearch/formats/formats.hpp>
+#include <iresearch/formats/term_reader.hpp>
 #include <iresearch/index/field_meta.hpp>
+#include <iresearch/utils/regexp_acceptor.hpp>
 #include <unordered_set>
 
 #include "doc_generator.hpp"
@@ -78,8 +79,6 @@ struct Term {
 
   uint64_t docs_count() const { return postings.size(); }
 
-  void sort(const std::map<irs::doc_id_t, irs::doc_id_t>& docs);
-
   std::set<tests::Posting> postings;
   irs::bstring value;
 };
@@ -104,7 +103,6 @@ struct Field : public irs::FieldMeta {
   Term& insert(irs::bytes_view term);
   Term* find(irs::bytes_view term);
   size_t remove(irs::bytes_view term);
-  void sort(const std::map<irs::doc_id_t, irs::doc_id_t>& docs);
 
   irs::bytes_view min() const;
   irs::bytes_view max() const;
@@ -135,8 +133,6 @@ class ColumnValues {
   auto end() const { return _values.end(); }
   auto size() const { return _values.size(); }
   auto empty() const { return _values.empty(); }
-
-  void sort(const std::map<irs::doc_id_t, irs::doc_id_t>& docs);
 
  private:
   irs::field_id _id;
@@ -176,8 +172,6 @@ class IndexSegment : irs::util::Noncopyable {
              has_sorted ? doc.sorted.get() : nullptr);
     }
   }
-
-  void sort(const irs::Comparer& comparator);
 
   void clear() noexcept {
     _fields.clear();
@@ -242,11 +236,10 @@ using index_t = std::vector<IndexSegment>;
 void AssertIndex(irs::IndexReader::ptr actual_index,
                  const index_t& expected_index, irs::IndexFeatures features,
                  size_t skip = 0,
-                 irs::automaton_table_matcher* matcher = nullptr);
+                 const irs::RegexpAcceptor* acceptor = nullptr);
 
-void AssertIndex(const irs::Directory& dir, irs::Format::ptr codec,
-                 const index_t& index, irs::IndexFeatures features,
-                 size_t skip = 0,
-                 irs::automaton_table_matcher* matcher = nullptr);
+void AssertIndex(const irs::Directory& dir, const index_t& index,
+                 irs::IndexFeatures features, size_t skip = 0,
+                 const irs::RegexpAcceptor* acceptor = nullptr);
 
 }  // namespace tests

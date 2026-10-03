@@ -28,6 +28,7 @@
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/fill/node.hpp"
 #include "iresearch/search/queries/term_state.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs::fill {
 

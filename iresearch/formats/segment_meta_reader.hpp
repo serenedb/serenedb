@@ -1,4 +1,3 @@
-
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
@@ -23,99 +22,16 @@
 
 #pragma once
 
-#include "iresearch/formats/format_utils.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/formats/segment_meta_writer.hpp"
-#include "iresearch/store/store_utils.hpp"
+#include <string_view>
 
 namespace irs {
 
-struct SegmentMetaReaderImpl : public SegmentMetaReader {
-  void read(const Directory& dir, SegmentMeta& meta,
-            std::string_view filename = {}) final;  // null == use meta
-};
+struct Directory;
+struct SegmentMeta;
 
-inline std::vector<std::string> ReadStrings(DataInput& in) {
-  const size_t size = in.ReadV32();
+namespace segment_meta {
 
-  if (size > std::numeric_limits<uint32_t>::max()) [[unlikely]] {
-    throw IoError{absl::StrCat("Too many strings to read: ", size)};
-  }
+void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename);
 
-  std::vector<std::string> strings(size);
-  for (auto& s : strings) {
-    s = ReadString<std::string>(in);
-  }
-
-  return strings;
-}
-
-inline std::pair<const std::shared_ptr<DocumentMask>, uint64_t>
-ReadDocumentMask(DataInput& in, IResourceManager& rm) {
-  auto count = in.ReadV32();
-
-  if (!count) {
-    return {};
-  }
-
-  auto docs_mask = std::make_shared<DocumentMask>(rm);
-  docs_mask->reserve(count);
-
-  const auto pos = in.Position();
-  while (count--) {
-    static_assert(sizeof(doc_id_t) == sizeof(decltype(in.ReadV32())));
-
-    docs_mask->insert(in.ReadV32());
-  }
-
-  return {std::move(docs_mask), in.Position() - pos};
-}
-
-inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
-                                        std::string_view filename) {
-  const std::string meta_file = IsNull(filename)
-                                  ? FileName<SegmentMetaWriter>(meta)
-                                  : std::string{filename};
-
-  auto in = dir.open(meta_file, IOAdvice::SEQUENTIAL | IOAdvice::READONCE);
-
-  if (!in) [[unlikely]] {
-    throw IoError{absl::StrCat("Failed to open file, path: ", meta_file)};
-  }
-
-  const auto checksum = format_utils::Checksum(*in);
-
-  format_utils::CheckHeader(*in, SegmentMetaWriterImpl::kFormatName,
-                            SegmentMetaWriterImpl::kFormatVersion);
-  auto name = ReadString<std::string>(*in);
-  const auto segment_version = in->ReadV64();
-  const auto live_docs_count = in->ReadV32();
-  auto [docs_mask, docs_mask_size] =
-    ReadDocumentMask(*in, *dir.ResourceManager().readers);
-  const auto docs_count =
-    live_docs_count + static_cast<doc_id_t>(docs_mask ? docs_mask->size() : 0);
-  const auto size = in->ReadV64();
-  auto files = ReadStrings(*in);
-  format_utils::CheckFooter(*in, checksum);
-
-  if (docs_count < live_docs_count) [[unlikely]] {
-    throw IndexError{absl::StrCat(
-      "While reading segment meta '", name, "', error: docs_count(", docs_count,
-      ") > live_docs_count(", live_docs_count, ")")};
-  }
-
-  // ...........................................................................
-  // all operations below are noexcept
-  // ...........................................................................
-
-  meta.name = std::move(name);
-  meta.version = segment_version;
-  meta.docs_count = docs_count;
-  meta.live_docs_count = live_docs_count;
-  meta.docs_mask = std::move(docs_mask);
-  meta.docs_mask_size = docs_mask_size;
-  meta.byte_size = size + docs_mask_size;
-  meta.files = std::move(files);
-}
-
+}  // namespace segment_meta
 }  // namespace irs

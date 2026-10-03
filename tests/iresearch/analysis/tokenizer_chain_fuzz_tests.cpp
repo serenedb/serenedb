@@ -31,6 +31,7 @@
 #include <string>
 #include <vector>
 
+#include "pipeline_reference.hpp"
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_checks.hpp"
@@ -224,6 +225,19 @@ TEST(TokenizerChainFuzz, PipelineEqualsSequentialApplication) {
       ASSERT_TRUE(actual.has_value());
       EXPECT_EQ(*expected, *actual);
       ++compared;
+      const auto expected_pos =
+        tests::ChainReference(oracle, value, irs::TokenLayout::TermsPos);
+      const auto actual_pos =
+        AnalyzeValue(*chain, value, irs::TokenLayout::TermsPos);
+      if (!expected_pos || !actual_pos.ok) {
+        continue;
+      }
+      ASSERT_EQ(expected_pos->size(), actual_pos.tokens.size());
+      for (size_t k = 0; k < expected_pos->size(); ++k) {
+        SCOPED_TRACE(testing::Message() << "token " << k);
+        EXPECT_EQ((*expected_pos)[k].term, actual_pos.tokens[k].term);
+        EXPECT_EQ((*expected_pos)[k].pos, actual_pos.tokens[k].pos);
+      }
     }
   }
   EXPECT_GT(compared, 0u);

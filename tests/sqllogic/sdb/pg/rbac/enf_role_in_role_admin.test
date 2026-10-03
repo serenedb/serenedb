@@ -1,0 +1,52 @@
+# CREATE ROLE ... IN ROLE g grants the new role membership in g, so it needs
+# the same authorization GRANT g TO ... needs: the caller must be a superuser
+# or hold the ADMIN option on g. Without the check a CREATEROLE role could put
+# its new role, and through SET ROLE itself, into postgres.
+
+
+statement ok
+DROP ROLE IF EXISTS rir_creator;
+
+
+statement ok
+DROP ROLE IF EXISTS rir_parent;
+
+
+statement ok
+CREATE ROLE rir_creator CREATEROLE;
+
+
+statement ok
+SET ROLE rir_creator;
+
+
+statement error
+CREATE ROLE rir_sneaky LOGIN IN ROLE postgres;
+----
+db error: ERROR: permission denied to grant role "postgres"
+DETAIL: Only roles with the ADMIN option on role "postgres" may grant this role.
+
+
+statement ok
+RESET ROLE;
+
+
+# A superuser may create a role IN ROLE any role.
+statement ok
+CREATE ROLE rir_parent;
+
+
+statement ok
+CREATE ROLE rir_child IN ROLE rir_parent;
+
+
+statement ok
+DROP ROLE rir_child;
+
+
+statement ok
+DROP ROLE rir_parent;
+
+
+statement ok
+DROP ROLE rir_creator;

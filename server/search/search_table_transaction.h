@@ -33,8 +33,7 @@
 #include <utility>
 #include <vector>
 
-#include "catalog/column_id.h"
-#include "catalog/identifiers/object_id.h"
+#include "connector/column_id.h"
 #include "search/search_db_wal.h"
 #include "search/search_table_changes.h"
 
@@ -73,7 +72,7 @@ class SearchTableTransaction {
   // refuses to run in such a transaction: the rebuild would wait for writers
   // that predate its config swap, and this one cannot finish until the
   // statement it is running does.
-  bool HasWritesFor(ObjectId shard_id) const noexcept {
+  bool HasWritesFor(duckdb::idx_t shard_id) const noexcept {
     return _writes.contains(shard_id);
   }
 
@@ -93,11 +92,12 @@ class SearchTableTransaction {
   void AddInlineInsertChunk(const std::shared_ptr<SearchTable>& shard,
                             duckdb::BufferManager& buffer_manager,
                             const duckdb::vector<duckdb::LogicalType>& types,
-                            std::span<const catalog::ColumnId> column_ids,
-                            duckdb::DataChunk& chunk, uint64_t pk_base);
+                            std::span<const connector::ColumnId> column_ids,
+                            duckdb::Catalog& catalog, duckdb::DataChunk& chunk,
+                            uint64_t pk_base);
 
   // Bytes a flush would reclaim for `shard_id`; deletes are not counted.
-  uint64_t BufferedBytes(ObjectId shard_id) const noexcept {
+  uint64_t BufferedBytes(duckdb::idx_t shard_id) const noexcept {
     auto it = _changes.find(shard_id);
     return it == _changes.end() ? 0 : it->second.BufferedBytes();
   }
@@ -119,7 +119,7 @@ class SearchTableTransaction {
 
   template<typename Factory>
   std::shared_ptr<irs::DirectoryReader> EnsureSearchTableReader(
-    ObjectId shard_id, Factory&& make_reader) {
+    duckdb::idx_t shard_id, Factory&& make_reader) {
     auto it = _readers.find(shard_id);
     if (it == _readers.end()) {
       it = _readers
@@ -147,7 +147,9 @@ class SearchTableTransaction {
 
   void ResetReaders() noexcept { _readers.clear(); }
 
-  void ResetReader(ObjectId shard_id) noexcept { _readers.erase(shard_id); }
+  void ResetReader(duckdb::idx_t shard_id) noexcept {
+    _readers.erase(shard_id);
+  }
 
  private:
   // Builds the shard sections, reserves the tick band (width = max over shards
@@ -170,8 +172,9 @@ class SearchTableTransaction {
   irs::IndexWriter::Transaction& EnsureBufferTransaction(
     const std::shared_ptr<SearchTable>& shard);
 
-  irs::containers::NodeHashMap<ObjectId, SearchShardWrites> _writes;
-  irs::containers::FlatHashMap<ObjectId, std::shared_ptr<irs::DirectoryReader>>
+  irs::containers::NodeHashMap<duckdb::idx_t, SearchShardWrites> _writes;
+  irs::containers::FlatHashMap<duckdb::idx_t,
+                               std::shared_ptr<irs::DirectoryReader>>
     _readers;
   LocalTableChanges _changes;
 };

@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/function/table_function.hpp>
@@ -29,10 +30,9 @@
 #include <string>
 #include <vector>
 
-#include "catalog/pk_spec.h"
-
 namespace duckdb {
 
+class Catalog;
 class ClientContext;
 struct CreateViewInfo;
 
@@ -53,21 +53,68 @@ struct ExternalKeyColumn {
   duckdb::LogicalType type;       // projected + stored type
 };
 
+// How a view-backed index identifies a source row, and therefore what its
+// generated pk column carries.
+enum class PkSpec : uint8_t {
+  DuckDBRowId,
+  FileRowNumber,
+  FileIndexPlusRowNumber,
+  FileOffset,
+  FileIndexPlusOffset,
+  FileIndexPlusDuckDBRowId,
+  ExternalPostgresCtid,
+  ExternalColumnKey,
+};
+
+// The multi-file pk specs: the key carries a file index, so the index
+// decomposes per source file and can refresh one file at a time.
+constexpr bool IsGlobPK(PkSpec spec) noexcept {
+  switch (spec) {
+    case PkSpec::FileIndexPlusRowNumber:
+    case PkSpec::FileIndexPlusOffset:
+    case PkSpec::FileIndexPlusDuckDBRowId:
+      return true;
+    case PkSpec::DuckDBRowId:
+    case PkSpec::FileRowNumber:
+    case PkSpec::FileOffset:
+    case PkSpec::ExternalPostgresCtid:
+    case PkSpec::ExternalColumnKey:
+      return false;
+  }
+}
+
+// Row identity supplied by the remote engine rather than by the scan: the
+// lookup re-fetches by key instead of by position.
+constexpr bool IsExternalPK(PkSpec spec) noexcept {
+  switch (spec) {
+    case PkSpec::ExternalPostgresCtid:
+    case PkSpec::ExternalColumnKey:
+      return true;
+    case PkSpec::DuckDBRowId:
+    case PkSpec::FileRowNumber:
+    case PkSpec::FileIndexPlusRowNumber:
+    case PkSpec::FileOffset:
+    case PkSpec::FileIndexPlusOffset:
+    case PkSpec::FileIndexPlusDuckDBRowId:
+      return false;
+  }
+}
+
 // The file-shaped pk specs: row identity comes from (file, row-ish) -- the
 // shapes whose builds capture a file manifest. NOTE: the stored pk COLUMN
 // is the two-component struct below only for the glob variants;
 // single-file sources store a scalar row pk.
-constexpr bool IsFilePkSpec(catalog::PkSpec spec) noexcept {
+constexpr bool IsFilePkSpec(PkSpec spec) noexcept {
   switch (spec) {
-    case catalog::PkSpec::FileRowNumber:
-    case catalog::PkSpec::FileIndexPlusRowNumber:
-    case catalog::PkSpec::FileOffset:
-    case catalog::PkSpec::FileIndexPlusOffset:
-    case catalog::PkSpec::FileIndexPlusDuckDBRowId:
+    case PkSpec::FileRowNumber:
+    case PkSpec::FileIndexPlusRowNumber:
+    case PkSpec::FileOffset:
+    case PkSpec::FileIndexPlusOffset:
+    case PkSpec::FileIndexPlusDuckDBRowId:
       return true;
-    case catalog::PkSpec::DuckDBRowId:
-    case catalog::PkSpec::ExternalPostgresCtid:
-    case catalog::PkSpec::ExternalColumnKey:
+    case PkSpec::DuckDBRowId:
+    case PkSpec::ExternalPostgresCtid:
+    case PkSpec::ExternalColumnKey:
       return false;
   }
 }
@@ -92,7 +139,7 @@ struct ViewFastPath {
   bool is_glob = false;
   // 0 = not pinned. Set at query time from the index's commit payload.
   int64_t pinned_iceberg_snapshot_id = 0;
-  catalog::PkSpec pk_spec;
+  PkSpec pk_spec;
   // ExternalColumnKey: the key columns in order (any types, count >= 1);
   // empty for ExternalPostgresCtid (keyed on the virtual duckdb rowid).
   std::vector<ExternalKeyColumn> key_columns;
@@ -117,15 +164,10 @@ struct ViewFastPath {
 // key_columns: user lookup key columns; empty = auto (pg ctid / CH PK).
 // Build and lookup must pass the SAME value (CREATE INDEX / persisted opts).
 std::optional<ViewFastPath> ResolveViewFastPath(
-  duckdb::ClientContext& context, const duckdb::CreateViewInfo& view,
-  std::span<const std::string> key_columns);
+  duckdb::ClientContext& context, duckdb::Catalog& view_catalog,
+  const duckdb::CreateViewInfo& view, std::span<const std::string> key_columns);
 
 std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp);
-
-// The parsed `key_columns` CREATE INDEX option from an options map, or {} when
-// absent.
-std::vector<std::string> KeyColumnsFromOptions(
-  const duckdb::case_insensitive_map_t<duckdb::Value>& options);
 
 duckdb::TableFunction MakeFastPathLookupFunction(const ViewFastPath& fp);
 

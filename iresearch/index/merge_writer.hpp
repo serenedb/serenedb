@@ -31,6 +31,7 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/segment_writer_options.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/string.hpp"
@@ -47,13 +48,11 @@ struct TrackingDirectory;
 struct DocRemap {
   explicit DocRemap(IResourceManager& rm) noexcept : id_map{{rm}} {}
 
-  const DocumentMask* mask = nullptr;
+  DocumentMask::Iterator mask;
   doc_id_t base_id = doc_limits::invalid();
   ManagedVector<doc_id_t> id_map;
 
-  bool IsMasked(doc_id_t src) const noexcept {
-    return mask != nullptr && mask->contains(src);
-  }
+  bool IsMasked(doc_id_t src) const noexcept { return mask.Contains(src); }
 
   doc_id_t Remap(doc_id_t src) const noexcept {
     if (!id_map.empty()) {

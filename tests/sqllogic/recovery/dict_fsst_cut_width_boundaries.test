@@ -17,11 +17,11 @@ control substitution on
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/dfwb_wide.db' AS dfwb (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', ROW_GROUP_SIZE 1048576);
+ATTACH '${__TEST_DIR__}/dfwb_wide.db' AS dfwb (TYPE duckdb, STORAGE_VERSION 'serenedb_latest', ROW_GROUP_SIZE 1048576);
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/dfwb_dflt.db' AS dfwd (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+ATTACH '${__TEST_DIR__}/dfwb_dflt.db' AS dfwd (TYPE duckdb, STORAGE_VERSION 'serenedb_latest');
 
 
 statement ok

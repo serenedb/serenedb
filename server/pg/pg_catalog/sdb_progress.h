@@ -30,7 +30,7 @@ namespace sdb::pg {
 // pg_stat_progress_* views derive from this table.
 // NOLINTBEGIN
 struct SdbProgress {
-  static constexpr uint64_t kId = 999997;
+  static constexpr uint64_t kId = kMinSystem + 402;
   static constexpr std::string_view kName = "sdb_progress";
 
   int32_t pid;
@@ -63,6 +63,6 @@ struct SdbProgress {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<SdbProgress>::GetTableData();
+MaterializedData SystemTableSnapshot<SdbProgress>::GetTableData();
 
 }  // namespace sdb::pg

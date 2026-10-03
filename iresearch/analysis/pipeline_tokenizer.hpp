@@ -199,6 +199,8 @@ class PipelineTokenizer final : public Tokenizer, private util::Noncopyable {
     void RebaseRun(const TokenBatch& batch, uint32_t first, uint32_t end,
                    uint32_t parent);
 
+    void SettleParent();
+
     void AdvanceToParent(uint32_t parent);
 
     void NextSourceRun();
@@ -261,6 +263,7 @@ class PipelineTokenizer final : public Tokenizer, private util::Noncopyable {
     TokenLayout _out_layout{};
     doc_id_t _open_doc = 0;
     uint32_t _cur_parent = 0;
+    uint32_t _parent_inc = 0;
     uint32_t _scan = 0;
     uint32_t _src_run = 0;
     uint32_t _src_run_end = 0;
@@ -292,15 +295,12 @@ class PipelineTokenizer final : public Tokenizer, private util::Noncopyable {
   bool _bound_column = false;
 };
 
-template<typename Context>
-void SerdeWrite(Context ctx, const PipelineTokenizer::Options& o) {
-  irs::utils::WriteTupleOrObject(ctx, std::tie(o.children));
+inline auto SerdeFields(PipelineTokenizer::Options& options) {
+  return std::tie(options.children);
 }
 
-template<typename Context>
-void SerdeRead(Context ctx, PipelineTokenizer::Options& o) {
-  auto refs = std::tie(o.children);
-  irs::utils::ReadTupleOrObject(ctx, refs);
+inline auto SerdeFields(const PipelineTokenizer::Options& options) {
+  return std::tie(options.children);
 }
 
 }  // namespace irs::analysis

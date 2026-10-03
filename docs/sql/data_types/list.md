@@ -10,7 +10,7 @@ A `LIST` column encodes lists of values. Fields in the column can have values wi
 
 `LIST`s are similar to PostgreSQL's `ARRAY` type. SereneDB uses the `LIST` terminology, but some [`array_` functions](../../sql/functions/list.md) are provided for PostgreSQL compatibility.
 
-See the [data types overview](../../sql/data_types/overview.md) for a comparison between nested data types.
+See the [data types overview](../../sql/data_types/index.md) for a comparison between nested data types.
 
 <DocCallout type="tip">
 For storing fixed-length lists, SereneDB uses the [`ARRAY` type](../../sql/data_types/array.md).

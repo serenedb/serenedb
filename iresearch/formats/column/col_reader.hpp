@@ -47,12 +47,10 @@ namespace irs {
 class ColumnReader;
 class NormColumnReader;
 
-inline constexpr std::string_view kFormatName = "iresearch_col";
-inline constexpr int32_t kFormatVersion = 0;
 inline constexpr std::string_view kFormatExt = "col";
 
-inline constexpr duckdb::field_id_t kFooterSlotColumns = 100;
-inline constexpr duckdb::field_id_t kFooterSlotNormColumns = 101;
+inline constexpr duckdb::field_id_t kColFieldColumns = 0;
+inline constexpr duckdb::field_id_t kColFieldNormColumns = 1;
 
 inline std::string FileName(std::string_view segment_name) {
   return absl::StrCat(segment_name, ".", kFormatExt);

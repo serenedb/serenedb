@@ -94,17 +94,25 @@ query error
 CREATE VIEW pudge AS
 SELECT 2 as hero;
 ----
-db error: ERROR: relation "pudge" already exists
+db error: ERROR: <slt:ignore>"pudge" already exists<slt:ignore>
 
 
 statement ok
 CREATE TABLE chinchopa (id INT);
 
 
+skipif serenedb
 query error
 CREATE OR REPLACE VIEW chinchopa AS SELECT 1;
 ----
 db error: ERROR: "chinchopa" is not a view
+
+
+skipif postgres
+query error
+CREATE OR REPLACE VIEW chinchopa AS SELECT 1;
+----
+db error: ERROR: Existing object chinchopa is of type Table, trying to replace with type View
 
 
 statement ok

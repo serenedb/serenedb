@@ -24,40 +24,50 @@
 #include "iresearch/search/detail/multiterm_collector.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
+#include "iresearch/search/queries/multiterm_query.hpp"
 
 namespace irs {
 
-AutomatonOptions::AutomatonOptions(automaton acceptor, bytes_view pattern)
-  : pattern{pattern},
-    compiled{std::make_shared<const CompiledAcceptor>(std::move(acceptor))} {}
+AutomatonOptions::AutomatonOptions(bytes_view pattern, PatternKind kind)
+  : pattern{pattern}, source{MakePatternSource(pattern, kind)}, kind{kind} {}
 
-field_visitor AutomatonFilter::visitor(const automaton& acceptor) {
-  if (!Validate(acceptor)) {
-    return [](const SubReader&, const TermReader&, FilterVisitor&) {};
-  }
+AutomatonOptions::AutomatonOptions(bytes_view pattern,
+                                   TermAcceptorSource::ptr source)
+  : pattern{pattern}, source{std::move(source)}, kind{PatternKind::Fused} {}
 
-  struct AutomatonContext : util::Noncopyable {
-    explicit AutomatonContext(const automaton& a)
-      : matcher{MakeAutomatonMatcher(a)} {}
-
-    automaton_table_matcher matcher;
-  };
-
-  auto ctx = AutomatonContext{acceptor};
-
-  return [context = std::move(ctx)](const SubReader& segment,
-                                    const TermReader& field,
-                                    FilterVisitor& visitor) mutable {
-    return irs::Visit(segment, field, context.matcher, visitor);
+field_visitor AutomatonFilter::visitor(TermAcceptorSource::ptr source) {
+  return [source = std::move(source)](const SubReader& segment,
+                                      const TermReader& field,
+                                      FilterVisitor& visitor) {
+    auto terms = source->Iterator(field);
+    SDB_ASSERT(terms);
+    if (!terms->next()) {
+      return;
+    }
+    visitor.Prepare(segment, field, *terms);
+    VisitTerms(*terms, visitor);
   };
 }
 
 QueryBuilder::ptr AutomatonFilter::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
-  SDB_ASSERT(options().compiled);
-  return PrepareAutomatonSegment(segment, ctx, field_id(),
-                                 options().compiled->matcher, GetBoost());
+  SDB_ASSERT(options().source);
+  const auto* reader = segment.field(field_id());
+  if (!reader) {
+    return QueryBuilder::Empty();
+  }
+
+  auto query = memory::make_tracked<MultiTermQuery>(
+    ctx.memory, segment, ctx.memory, ctx.boost * GetBoost(),
+    ScoreMergeType::Sum);
+  MultiTermVisitor mtv{ctx, query->State(), *reader};
+  auto terms = options().source->Iterator(*reader);
+  SDB_ASSERT(terms);
+  if (terms->next()) {
+    mtv.Prepare(segment, *reader, *terms);
+    VisitTerms(*terms, mtv);
+  }
+  return MultiTermQuery::Finish(std::move(query), ctx);
 }
 
 PrepareCollector::ptr AutomatonFilter::MakeCollectorImpl(
@@ -68,42 +78,19 @@ PrepareCollector::ptr AutomatonFilter::MakeCollectorImpl(
   return std::make_unique<MultiTermCollector>(scorer, stats, threads);
 }
 
-namespace {
-
-class AutomatonTermPredicate final : public TermPredicate {
- public:
-  explicit AutomatonTermPredicate(
-    std::shared_ptr<const CompiledAcceptor> compiled) noexcept
-    : _compiled{std::move(compiled)} {}
-
-  bool Accepts(bytes_view term) const final {
-    return bool(Accept(_compiled->acceptor, term));
-  }
-
- private:
-  std::shared_ptr<const CompiledAcceptor> _compiled;
-};
-
-}  // namespace
-
-TermPredicate::ptr MakeAutomatonTermPredicate(
-  std::shared_ptr<const CompiledAcceptor> compiled) {
-  if (!compiled) {
+TermPredicate::ptr AutomatonFilter::CompileTermPredicate() const {
+  if (!options().source) {
     return nullptr;
   }
-  return std::make_unique<AutomatonTermPredicate>(std::move(compiled));
-}
-
-TermPredicate::ptr AutomatonFilter::CompileTermPredicate() const {
-  return MakeAutomatonTermPredicate(options().compiled);
+  return options().source->Predicate();
 }
 
 TermIterator::ptr AutomatonFilter::CompileTermIterator(
   const TermReader& reader) const {
-  if (!options().compiled) {
+  if (!options().source) {
     return nullptr;
   }
-  auto it = reader.iterator(options().compiled->matcher);
+  auto it = options().source->Iterator(reader);
   SDB_ASSERT(it);
   return it;
 }

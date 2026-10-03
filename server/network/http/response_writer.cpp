@@ -48,12 +48,16 @@ std::string_view ReasonPhrase(HttpStatus status) noexcept {
       return "Not Found";
     case 405:
       return "Method Not Allowed";
+    case 406:
+      return "Not Acceptable";
     case 408:
       return "Request Timeout";
     case 409:
       return "Conflict";
     case 413:
       return "Content Too Large";
+    case 415:
+      return "Unsupported Media Type";
     case 417:
       return "Expectation Failed";
     case 429:

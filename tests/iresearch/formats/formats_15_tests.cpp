@@ -21,8 +21,11 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/formats/formats.hpp>
+#include <iresearch/formats/flush_state.hpp>
+#include <iresearch/formats/posting/reader.hpp>
 #include <iresearch/formats/posting/score_bound_writer.hpp>
+#include <iresearch/formats/posting/writer.hpp>
+#include <iresearch/formats/reader_state.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_reader_options.hpp>
@@ -104,13 +107,23 @@ class MockPostingsField final : public irs::TermReader {
   irs::SeekTermIterator::ptr iterator() const final {
     return irs::SeekTermIterator::empty();
   }
+  irs::SeekTermIterator::ptr iterator(const irs::RegexpAcceptor&) const final {
+    return irs::SeekTermIterator::empty();
+  }
   irs::SeekTermIterator::ptr iterator(
-    const irs::automaton_table_matcher&) const final {
+    const irs::LevenshteinAcceptor&) const final {
+    return irs::SeekTermIterator::empty();
+  }
+  irs::SeekTermIterator::ptr iterator(
+    const irs::RegexpConjunction&) const final {
+    return irs::SeekTermIterator::empty();
+  }
+  irs::SeekTermIterator::ptr iterator(
+    const irs::FuzzyConjunction&) const final {
     return irs::SeekTermIterator::empty();
   }
   void ReadDocs(irs::bytes_view, Acceptor) const final {}
   irs::PostingMeta Lookup(irs::bytes_view) const final { return {}; }
-  size_t BitUnion(CookieProvider, uint64_t*) const final { return 0; }
   const irs::FieldMeta& meta() const final { return _meta; }
   size_t size() const final { return 1; }
   uint64_t docs_count() const final { return _docs_count; }
@@ -244,9 +257,9 @@ class Format15TestCase : public tests::FormatTestCase {
 
   Docs GenerateDocs(size_t count, float_t mean, float_t dev, size_t step);
 
-  std::pair<irs::PostingMeta, irs::PostingsReader::ptr> WriteReadMeta(
-    irs::Directory& dir, DocsView docs, irs::ScorerPtr scorer,
-    irs::IndexFeatures features);
+  std::pair<irs::PostingMeta, std::unique_ptr<irs::PostingsReader>>
+  WriteReadMeta(irs::Directory& dir, DocsView docs, irs::ScorerPtr scorer,
+                irs::IndexFeatures features);
 
   void AssertPostingsWalk(irs::PostingsReader& reader, DocsView docs,
                           irs::IndexFeatures field_features,
@@ -306,15 +319,12 @@ class Format15TestCase : public tests::FormatTestCase {
   }
 };
 
-std::pair<irs::PostingMeta, irs::PostingsReader::ptr>
+std::pair<irs::PostingMeta, std::unique_ptr<irs::PostingsReader>>
 Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
                                 irs::ScorerPtr scorer,
                                 irs::IndexFeatures features) {
   EXPECT_TRUE(scorer);
-  auto codec = get_codec();
-  EXPECT_NE(nullptr, codec);
-  auto writer = codec->get_postings_writer(false, irs::IResourceManager::gNoop);
-  EXPECT_NE(nullptr, writer);
+  irs::PostingsWriter writer{false, irs::IResourceManager::gNoop};
   irs::PostingMeta posting_meta;
 
   {
@@ -331,32 +341,31 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
     EXPECT_FALSE(!out);
     irs::WriteStr(*out, std::string_view("file_header"));
 
-    writer->Prepare(*out, state);
-    writer->BeginField(irs::FieldProperties{.index_features = features});
+    writer.Prepare(state);
+    writer.BeginField(irs::FieldProperties{.index_features = features});
 
     TestPostings it{docs, features};
-    writer->Write(it, posting_meta);
-    const auto stats = writer->EndField();
+    writer.Write(it, posting_meta);
+    const auto stats = writer.EndField();
     EXPECT_EQ(docs.size(), stats.docs_count);
     const uint64_t expected_has_score_bounds =
       irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq);
     EXPECT_EQ(expected_has_score_bounds, stats.has_score_bounds);
-    writer->Encode(*out, posting_meta);
-    writer->End();
+    writer.Encode(*out, posting_meta);
+    writer.End();
   }
 
   irs::SegmentMeta meta;
   meta.name = "segment_name";
 
-  const irs::ReaderState state{.dir = &dir, .meta = &meta, .scorer = scorer};
+  const irs::ReaderState state{.dir = &dir, .meta = &meta};
 
   auto in = dir.open("attributes", irs::IOAdvice::NORMAL);
   EXPECT_FALSE(!in);
   [[maybe_unused]] const auto tmp = irs::ReadString<std::string>(*in);
 
-  auto reader = codec->get_postings_reader();
-  EXPECT_NE(nullptr, reader);
-  reader->prepare(*in, state, features);
+  auto reader = std::make_unique<irs::PostingsReader>();
+  reader->prepare(state, features);
 
   irs::bstring in_data(in->Length() - in->Position(), 0);
   in->ReadData(&in_data[0], in_data.size());
@@ -683,33 +692,15 @@ void Format15TestCase::AssertStressPostings(DocsView docs) {
   AssertPostings(docs, kOffs, kOffs);
 }
 
-static const auto kTestFormats =
-  ::testing::Values(tests::FormatInfo{"1_5simd"});
-
 static const auto kTestDirs =
-  ::testing::ValuesIn(tests::GetDirectories<tests::kTypesAll>());
-
-static const auto kTestDirsWithoutEncryption =
   ::testing::ValuesIn(tests::GetDirectories<tests::kTypesDefault>());
 
-static const auto kTestDirsWithEncryption =
-  ::testing::ValuesIn(tests::GetDirectories<tests::kTypesAllRot13>());
-
-static const auto kTestValues = ::testing::Combine(kTestDirs, kTestFormats);
-static const auto kTestValuesWithoutEncryption =
-  ::testing::Combine(kTestDirsWithoutEncryption, kTestFormats);
-static const auto kTestValuesWithEncryption =
-  ::testing::Combine(kTestDirsWithEncryption, kTestFormats);
+static const auto kTestValues = ::testing::Combine(kTestDirs);
 
 // Generic tests
 using tests::FormatTestCase;
 INSTANTIATE_TEST_SUITE_P(Format15Test, FormatTestCase, kTestValues,
                          FormatTestCase::to_string);
-
-using tests::FormatTestCaseWithEncryption;
-INSTANTIATE_TEST_SUITE_P(Format15Test, FormatTestCaseWithEncryption,
-                         kTestValuesWithEncryption,
-                         FormatTestCaseWithEncryption::to_string);
 
 // 1.5 specific tests
 
@@ -786,8 +777,7 @@ TEST_P(Format15TestCase, VeryLongPostings) {
   AssertStressPostings(docs);
 }
 
-INSTANTIATE_TEST_SUITE_P(Format15Test, Format15TestCase,
-                         kTestValuesWithoutEncryption,
+INSTANTIATE_TEST_SUITE_P(Format15Test, Format15TestCase, kTestValues,
                          Format15TestCase::to_string);
 
 }  // namespace

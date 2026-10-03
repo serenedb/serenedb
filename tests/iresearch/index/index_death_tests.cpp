@@ -21,7 +21,6 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
@@ -290,8 +289,7 @@ class FailingDirectory : public tests::DirectoryMock {
   mutable std::set<FailT, FailLess> _failures;
 };
 
-void OpenReader(std::string_view format,
-                std::function<void(FailingDirectory& dir)> failure_registerer) {
+void OpenReader(std::function<void(FailingDirectory& dir)> failure_registerer) {
   constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
                                               irs::IndexFeatures::Pos |
                                               irs::IndexFeatures::Offs;
@@ -302,16 +300,13 @@ void OpenReader(std::string_view format,
   const auto* doc2 = gen.next();
   auto query_doc2 = MakeByTerm(kNameId, "B");
 
-  auto codec = irs::formats::Get(format);
-  ASSERT_NE(nullptr, codec);
-
   // create source segment
   irs::MemoryDirectory impl;
   FailingDirectory dir(impl);
 
   // write index
   {
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -323,20 +318,19 @@ void OpenReader(std::string_view format,
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
   }
 
   failure_registerer(dir);
 
   while (!dir.NoFailures()) {
     ASSERT_THROW(
-      (irs::DirectoryReader{dir, codec, irs::tests::DefaultReaderOptions()}),
+      (irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()}),
       irs::IoError);
   }
 
   // check data
-  auto reader =
-    irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+  auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
   ASSERT_TRUE(reader);
   ASSERT_EQ(1, reader->size());
   ASSERT_EQ(2, reader->docs_count());
@@ -390,9 +384,6 @@ TEST(index_death_test_formats_15, index_meta_write_fail_1st_phase) {
     });
   const auto* doc1 = gen.next();
 
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
   {
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
@@ -404,7 +395,7 @@ TEST(index_death_test_formats_15, index_meta_write_fail_1st_phase) {
       "pending_segments_1");  // fail first phase of transaction
 
     // write index
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -419,11 +410,10 @@ TEST(index_death_test_formats_15, index_meta_write_fail_1st_phase) {
     ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // ensure no data
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(0, reader->size());
     ASSERT_EQ(0, reader->docs_count());
@@ -445,7 +435,7 @@ TEST(index_death_test_formats_15, index_meta_write_fail_1st_phase) {
       "pending_segments_1");  // fail first phase of transaction
 
     // write index
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -462,8 +452,7 @@ TEST(index_death_test_formats_15, index_meta_write_fail_1st_phase) {
     ASSERT_FALSE(writer->RefreshCommit());
 
     // check data
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     tests::AssertSnapshotEquality(writer->GetSnapshot(), reader);
     ASSERT_TRUE(reader);
     ASSERT_EQ(1, reader->size());
@@ -508,9 +497,6 @@ TEST(index_death_test_formats_15, index_commit_fail_sync_1st_phase) {
     });
   const auto* doc1 = gen.next();
 
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
   {
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
@@ -522,7 +508,7 @@ TEST(index_death_test_formats_15, index_commit_fail_sync_1st_phase) {
                         "_3.idx");  // unable to sync term index + data
 
     // write index
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -546,8 +532,7 @@ TEST(index_death_test_formats_15, index_commit_fail_sync_1st_phase) {
     ASSERT_FALSE(writer->RefreshCommit());
 
     // ensure no data
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     tests::AssertSnapshotEquality(writer->GetSnapshot(), reader);
     ASSERT_TRUE(reader);
     ASSERT_EQ(0, reader->size());
@@ -570,7 +555,7 @@ TEST(index_death_test_formats_15, index_commit_fail_sync_1st_phase) {
                         "_3.idx");  // unable to sync term index + data
 
     // write index
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -579,7 +564,7 @@ TEST(index_death_test_formats_15, index_commit_fail_sync_1st_phase) {
     ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
@@ -606,8 +591,7 @@ TEST(index_death_test_formats_15, index_commit_fail_sync_1st_phase) {
     ASSERT_FALSE(writer->RefreshCommit());
 
     // check data
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     tests::AssertSnapshotEquality(writer->GetSnapshot(), reader);
     ASSERT_TRUE(reader);
     ASSERT_EQ(1, reader->size());
@@ -652,9 +636,6 @@ TEST(index_death_test_formats_15, index_meta_write_failure_2nd_phase) {
     });
   const auto* doc1 = gen.next();
 
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
   {
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
@@ -663,7 +644,7 @@ TEST(index_death_test_formats_15, index_meta_write_failure_2nd_phase) {
                         "pending_segments_1");
 
     // write index
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -672,7 +653,7 @@ TEST(index_death_test_formats_15, index_meta_write_failure_2nd_phase) {
     ASSERT_TRUE(writer->RefreshBegin());
     ASSERT_THROW(writer->RefreshCommit(), irs::IoError);
     ASSERT_THROW(
-      (irs::DirectoryReader{dir, codec, irs::tests::DefaultReaderOptions()}),
+      (irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()}),
       irs::IndexNotFound);
 
     // second attempt
@@ -680,11 +661,10 @@ TEST(index_death_test_formats_15, index_meta_write_failure_2nd_phase) {
     ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // ensure no data
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(0, reader->size());
     ASSERT_EQ(0, reader->docs_count());
@@ -703,7 +683,7 @@ TEST(index_death_test_formats_15, index_meta_write_failure_2nd_phase) {
       "pending_segments_1");  // fail second phase of transaction
 
     // write index
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -712,7 +692,7 @@ TEST(index_death_test_formats_15, index_meta_write_failure_2nd_phase) {
     ASSERT_TRUE(writer->RefreshBegin());
     ASSERT_THROW(writer->RefreshCommit(), irs::IoError);
     ASSERT_THROW(
-      (irs::DirectoryReader{dir, codec, irs::tests::DefaultReaderOptions()}),
+      (irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()}),
       irs::IndexNotFound);
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -722,11 +702,10 @@ TEST(index_death_test_formats_15, index_meta_write_failure_2nd_phase) {
     ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // check data
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(1, reader->size());
     ASSERT_EQ(1, reader->docs_count());
@@ -771,9 +750,6 @@ TEST(index_death_test_formats_15,
     });
   const auto* doc1 = gen.next();
 
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
   {
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
@@ -783,7 +759,7 @@ TEST(index_death_test_formats_15,
                         "_2.0.sm");  // fail at segment meta synchronization
 
     // write index
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -802,11 +778,10 @@ TEST(index_death_test_formats_15,
     ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // ensure no data
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(0, reader->size());
     ASSERT_EQ(0, reader->docs_count());
@@ -826,7 +801,7 @@ TEST(index_death_test_formats_15,
                         "_2.0.sm");  // fail at segment meta synchronization
 
     // write index
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -847,11 +822,10 @@ TEST(index_death_test_formats_15,
     ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // check data
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(1, reader->size());
     ASSERT_EQ(1, reader->docs_count());
@@ -897,9 +871,6 @@ TEST(index_death_test_formats_15,
   const auto* doc1 = gen.next();
   const auto* doc2 = gen.next();
 
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
   {
     constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
                                                 irs::IndexFeatures::Pos |
@@ -909,7 +880,7 @@ TEST(index_death_test_formats_15,
     FailingDirectory dir(impl);
 
     // write index
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -918,14 +889,14 @@ TEST(index_death_test_formats_15,
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // segment 1
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // register failures
     dir.RegisterFailure(
@@ -948,8 +919,7 @@ TEST(index_death_test_formats_15,
     ASSERT_FALSE(writer->RefreshBegin());  // nothing to flush
 
     // check data
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(2, reader->size());
     ASSERT_EQ(2, reader->docs_count());
@@ -1019,9 +989,6 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
   const auto* doc3 = gen.next();
   const auto* doc4 = gen.next();
 
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
   {
     constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
                                                 irs::IndexFeatures::Pos |
@@ -1031,7 +998,7 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
     FailingDirectory dir(impl);
 
     // write index
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -1040,14 +1007,14 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // segment 1
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // register failures
     dir.RegisterFailure(
@@ -1067,7 +1034,7 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
     ASSERT_FALSE(writer->RefreshCommit());  // commit started transaction
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
     ASSERT_THROW(
       writer->RefreshBegin(),
       irs::IoError);  // start transaction to commit pending compaction
@@ -1080,14 +1047,13 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
     ASSERT_FALSE(writer->RefreshCommit());  // commit started transaction
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
     ASSERT_THROW(
       writer->RefreshBegin(),
       irs::IoError);  // start transaction to commit pending compaction
 
     // check data
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(4, reader->size());
     ASSERT_EQ(4, reader->docs_count());
@@ -1184,7 +1150,7 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
 }
 
 TEST(index_death_test_formats_15, open_reader) {
-  ::OpenReader("1_5simd", [](FailingDirectory& dir) {
+  ::OpenReader([](FailingDirectory& dir) {
     // postings list (documents)
     dir.RegisterFailure(FailingDirectory::Failure::OPEN, "_1.doc");
     // columnstore
@@ -1216,16 +1182,13 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
   const auto* doc2 = gen.next();
   auto query_doc2 = MakeByTerm(kNameId, "B");
 
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
   // create source segment
   irs::MemoryDirectory impl;
   FailingDirectory dir(impl);
 
   // write index
   {
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -1238,12 +1201,11 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
   }
 
   // check data
-  auto reader =
-    irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+  auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
   ASSERT_TRUE(reader);
   ASSERT_EQ(1, reader->size());
   ASSERT_EQ(2, reader->docs_count());
@@ -1374,9 +1336,6 @@ TEST(index_death_test_formats_15,
   const auto* doc1 = gen.next();
   const auto* doc2 = gen.next();
 
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
   // Phase 1: columnstore creation fails on the very first segment.
   // SegmentWriter::reset(meta) wires the columnstore Writer via
   // `dir.create("_1.col")` and throws on failure.
@@ -1385,7 +1344,7 @@ TEST(index_death_test_formats_15,
     FailingDirectory dir(impl);
     dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_1.col");
 
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -1398,10 +1357,9 @@ TEST(index_death_test_formats_15,
     ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(0, reader->size());
     ASSERT_EQ(0, reader->docs_count());
@@ -1418,7 +1376,7 @@ TEST(index_death_test_formats_15,
     FailingDirectory dir(impl);
     dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_1.col");
 
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -1429,10 +1387,9 @@ TEST(index_death_test_formats_15,
     ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(1, reader->size());
     ASSERT_EQ(1, reader->docs_count());
@@ -1470,7 +1427,7 @@ TEST(index_death_test_formats_15,
     FailingDirectory dir(impl);
     dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_2.col");
 
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -1479,7 +1436,7 @@ TEST(index_death_test_formats_15,
     ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     ASSERT_THROW(InsertWithName(*writer, *doc2), irs::IoError);
 
@@ -1488,10 +1445,9 @@ TEST(index_death_test_formats_15,
     ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(2, reader->size());
     ASSERT_EQ(2, reader->docs_count());
@@ -1557,9 +1513,6 @@ TEST(index_death_test_formats_15,
   const auto* doc2 = gen.next();
   auto query_doc2 = MakeByTerm(kNameId, "B");
 
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
   // Helper that drives one round: register one failure, try
   // insert+insert+remove+Begin, expect *some* throw to consume the
   // failure. Returns when the failure budget is empty.
@@ -1604,7 +1557,7 @@ TEST(index_death_test_formats_15,
     dir.RegisterFailure(FailingDirectory::Failure::CREATE,
                         "_5.pay");  // postings list (offset + payload)
 
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -1613,12 +1566,11 @@ TEST(index_death_test_formats_15,
     ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     DriveCreateFailures(dir, *writer);
 
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(0, reader->size());
     ASSERT_EQ(0, reader->docs_count());
@@ -1639,7 +1591,7 @@ TEST(index_death_test_formats_15,
     dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_4.pos");
     dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_5.pay");
 
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -1651,10 +1603,9 @@ TEST(index_death_test_formats_15,
     ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(1, reader->size());
     ASSERT_EQ(1, reader->docs_count());
@@ -1695,9 +1646,6 @@ TEST(index_death_test_formats_15,
   const auto* doc2 = gen.next();
   auto query_doc2 = MakeByTerm(kNameId, "B");
 
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
   // Helper: drive one round of inserts + Begin(), expecting a sync
   // failure to throw on Begin. Each retry advances the segment id.
   // Do not use Remove() here: the doc_mask sync surface would obscure
@@ -1732,7 +1680,7 @@ TEST(index_death_test_formats_15,
     dir.RegisterFailure(FailingDirectory::Failure::SYNC,
                         "_6.pay");  // postings list (offset + payload)
 
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -1742,10 +1690,9 @@ TEST(index_death_test_formats_15,
     ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(0, reader->size());
     ASSERT_EQ(0, reader->docs_count());
@@ -1767,7 +1714,7 @@ TEST(index_death_test_formats_15,
     dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_5.idx");
     dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_6.pay");
 
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -1779,10 +1726,9 @@ TEST(index_death_test_formats_15,
     ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(1, reader->size());
     ASSERT_EQ(1, reader->docs_count());
@@ -1831,9 +1777,6 @@ TEST(index_death_test_formats_15,
   const auto* doc2 = gen.next();
   const auto* doc3 = gen.next();
 
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
   // segment meta creation failure during compaction
   {
     constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
@@ -1844,7 +1787,7 @@ TEST(index_death_test_formats_15,
     FailingDirectory failing_dir(impl);
     tests::BlockingDirectory dir(failing_dir, "_3.col");
 
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -1853,14 +1796,14 @@ TEST(index_death_test_formats_15,
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // segment 1
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // fail segment meta creation on the compacted segment
     failing_dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_3.0.sm");
@@ -1880,13 +1823,12 @@ TEST(index_death_test_formats_15,
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     dir.intermediate_commits_lock.unlock();
     compaction_thread.join();
 
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(3, reader->size());
     ASSERT_EQ(3, reader->docs_count());
@@ -1912,7 +1854,7 @@ TEST(index_death_test_formats_15,
     FailingDirectory failing_dir(impl);
     tests::BlockingDirectory dir(failing_dir, "_3.col");
 
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -1920,13 +1862,13 @@ TEST(index_death_test_formats_15,
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     failing_dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_3.0.sm");
 
@@ -1943,7 +1885,7 @@ TEST(index_death_test_formats_15,
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     dir.intermediate_commits_lock.unlock();
     compaction_thread.join();
@@ -1951,8 +1893,7 @@ TEST(index_death_test_formats_15,
     // pending compaction commit fails on segment-meta sync.
     ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
 
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(3, reader->size());
     ASSERT_EQ(3, reader->docs_count());
@@ -1977,9 +1918,6 @@ TEST(index_death_test_formats_15, segment_components_write_fail_compaction) {
   const auto* doc1 = gen.next();
   const auto* doc2 = gen.next();
 
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
   {
     constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
                                                 irs::IndexFeatures::Pos |
@@ -1988,7 +1926,7 @@ TEST(index_death_test_formats_15, segment_components_write_fail_compaction) {
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
 
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -1997,14 +1935,14 @@ TEST(index_death_test_formats_15, segment_components_write_fail_compaction) {
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // segment 1
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // Register CREATE failures across the compacted-segment
     // components. Each compaction attempt allocates a fresh
@@ -2032,8 +1970,7 @@ TEST(index_death_test_formats_15, segment_components_write_fail_compaction) {
       ASSERT_FALSE(writer->RefreshBegin());  // nothing to flush
     }
 
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(2, reader->size());
     ASSERT_EQ(2, reader->docs_count());
@@ -2087,9 +2024,6 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_compaction) {
   const auto* doc1 = gen.next();
   const auto* doc2 = gen.next();
 
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
   {
     constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
                                                 irs::IndexFeatures::Pos |
@@ -2098,7 +2032,7 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_compaction) {
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
 
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -2106,13 +2040,13 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_compaction) {
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // Sync failures fire at Begin() (after Compact succeeds in
     // creating the files). Each iteration consumes one failure;
@@ -2132,8 +2066,7 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_compaction) {
       ASSERT_FALSE(writer->RefreshBegin());
     }
 
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(2, reader->size());
     ASSERT_EQ(2, reader->docs_count());
@@ -2179,142 +2112,6 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_compaction) {
   }
 }
 
-TEST(index_death_test_formats_15, segment_components_fail_import) {
-  // Import path: read from `src_index`, write a fresh segment in `dir`.
-  constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
-                                              irs::IndexFeatures::Pos |
-                                              irs::IndexFeatures::Offs;
-
-  tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
-                              &tests::PayloadedJsonFieldFactory);
-  const auto* doc1 = gen.next();
-
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
-  // create source segment
-  irs::MemoryDirectory src_dir;
-  {
-    auto writer = irs::IndexWriter::Make(src_dir, codec, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
-    ASSERT_NE(nullptr, writer);
-    ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    ASSERT_TRUE(writer->RefreshCommit());
-    tests::AssertSnapshotEquality(
-      writer->GetSnapshot(),
-      irs::DirectoryReader(src_dir, codec, irs::tests::DefaultReaderOptions()));
-  }
-
-  auto src_index =
-    irs::DirectoryReader(src_dir, codec, irs::tests::DefaultReaderOptions());
-  ASSERT_TRUE(src_index);
-
-  // file creation failures (no recovery)
-  {
-    irs::MemoryDirectory impl;
-    FailingDirectory dir(impl);
-
-    // 6 distinct per-segment files: cs, idx, doc, pos, pay, 0.sm.
-    // Each Import retry advances the segment id.
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "_1.col");  // columnstore
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "_2.idx");  // term index + data (merged)
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "_3.doc");  // postings list (documents)
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "_4.pos");  // postings list (positions)
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "_5.pay");  // postings list (offset + payload)
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "_6.0.sm");  // segment meta
-
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
-    ASSERT_NE(nullptr, writer);
-
-    // initial commit
-    ASSERT_TRUE(writer->RefreshBegin());
-    ASSERT_FALSE(writer->RefreshCommit());
-    tests::AssertSnapshotEquality(
-      writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
-
-    while (!dir.NoFailures()) {
-      ASSERT_THROW(writer->Import(*src_index), irs::IoError);
-      ASSERT_FALSE(writer->RefreshBegin());  // nothing to commit
-    }
-
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
-    ASSERT_TRUE(reader);
-    ASSERT_EQ(0, reader->size());
-    ASSERT_EQ(0, reader->docs_count());
-    ASSERT_EQ(0, reader->live_docs_count());
-  }
-
-  // file creation failures, then successful import + commit
-  {
-    irs::MemoryDirectory impl;
-    FailingDirectory dir(impl);
-
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_1.col");
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_2.idx");
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_3.doc");
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_4.pos");
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_5.pay");
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_6.0.sm");
-
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
-    ASSERT_NE(nullptr, writer);
-
-    ASSERT_TRUE(writer->RefreshBegin());
-    ASSERT_FALSE(writer->RefreshCommit());
-    tests::AssertSnapshotEquality(
-      writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
-
-    while (!dir.NoFailures()) {
-      ASSERT_THROW(writer->Import(*src_index), irs::IoError);
-      ASSERT_FALSE(writer->RefreshBegin());  // nothing to commit
-    }
-
-    ASSERT_TRUE(writer->Import(*src_index));
-    ASSERT_TRUE(writer->RefreshBegin());
-    ASSERT_FALSE(writer->RefreshCommit());
-    tests::AssertSnapshotEquality(
-      writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
-
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
-    ASSERT_TRUE(reader);
-    ASSERT_EQ(1, reader->size());
-    ASSERT_EQ(1, reader->docs_count());
-    ASSERT_EQ(1, reader->live_docs_count());
-
-    tests::index_t expected_index;
-    expected_index.emplace_back();
-    expected_index.back().insert(*doc1);
-    tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
-
-    auto& segment = reader[0];
-    const auto* column = segment.Column(kNameId);
-    ASSERT_NE(nullptr, column);
-    irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field(kSameId);
-    ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator();
-    ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
-    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-    ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
-                     values, docs_itr->Value()));
-    ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-  }
-}
-
 TEST(index_death_test_formats_15,
      segment_components_creation_fail_implicit_segment_flush) {
   // Implicit segment flush: `segment_docs_max = 1` makes every other
@@ -2326,9 +2123,6 @@ TEST(index_death_test_formats_15,
   const auto* doc1 = gen.next();
   const auto* doc2 = gen.next();
 
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
   // file creation failures, individually verified
   {
     irs::MemoryDirectory impl;
@@ -2337,7 +2131,7 @@ TEST(index_death_test_formats_15,
     auto opts = irs::tests::DefaultWriterOptions();
     opts.segment_docs_max = 1;  // flush every 2nd document
 
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate, opts);
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
     ASSERT_NE(nullptr, writer);
 
     // initial commit
@@ -2345,7 +2139,7 @@ TEST(index_death_test_formats_15,
     ASSERT_FALSE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // Failure 1: `_1.col` CREATE fires at insert time (cs writer
     // construction).
@@ -2376,9 +2170,6 @@ TEST(index_death_test_formats_15,
   const auto* doc1 = gen.next();
   const auto* doc2 = gen.next();
 
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
   {
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
@@ -2386,7 +2177,7 @@ TEST(index_death_test_formats_15,
     auto opts = irs::tests::DefaultWriterOptions();
     opts.segment_docs_max = 1;
 
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate, opts);
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
     ASSERT_NE(nullptr, writer);
 
     // CREATE failure on the very first segment's cs file: insert
@@ -2401,10 +2192,9 @@ TEST(index_death_test_formats_15,
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(1u, reader->size());
     ASSERT_EQ(1u, reader->live_docs_count());
@@ -2436,9 +2226,6 @@ TEST(index_death_test_formats_15,
   const auto* doc1 = gen.next();
   const auto* doc2 = gen.next();
 
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
   {
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
@@ -2446,7 +2233,7 @@ TEST(index_death_test_formats_15,
     auto opts = irs::tests::DefaultWriterOptions();
     opts.segment_docs_max = 1;
 
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate, opts);
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
     ASSERT_NE(nullptr, writer);
 
     // initial commit so a DirectoryReader can be opened at the end
@@ -2466,8 +2253,7 @@ TEST(index_death_test_formats_15,
     ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
     ASSERT_TRUE(dir.NoFailures());
 
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(0, reader->size());
     ASSERT_EQ(0, reader->docs_count());
@@ -2487,9 +2273,6 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
   const auto* doc1 = gen.next();
   const auto* doc2 = gen.next();
 
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
   constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
                                               irs::IndexFeatures::Pos |
                                               irs::IndexFeatures::Offs;
@@ -2498,7 +2281,7 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
 
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -2510,14 +2293,14 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
                         "pending_segments_1");
     ASSERT_THROW(writer->RefreshCommit(), irs::IoError);
     ASSERT_THROW(
-      (irs::DirectoryReader{dir, codec, irs::tests::DefaultReaderOptions()}),
+      (irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()}),
       irs::IndexNotFound);
 
     // Now empty commit succeeds.
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // Insert fails because `.col` creation fails for the new segment.
     dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_1.col");
@@ -2525,7 +2308,7 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
     ASSERT_FALSE(writer->RefreshCommit());  // nothing to commit
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -2535,7 +2318,7 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
     ASSERT_THROW(writer->RefreshCommit(), irs::IoError);
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // Nothing to commit after a failed first phase.
     ASSERT_FALSE(writer->RefreshCommit());
@@ -2545,13 +2328,13 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     const irs::index_utils::CompactionCount compact_all;
 
@@ -2559,7 +2342,7 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // Register REMOVE failures on superseded segment `.col` files; the
     // DirectoryCleaner should tolerate the failures (leave stale
@@ -2570,10 +2353,9 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
     ASSERT_FALSE(writer->RefreshCommit());  // nothing changed
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
-    auto reader =
-      irs::DirectoryReader{dir, codec, irs::tests::DefaultReaderOptions()};
+    auto reader = irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()};
     ASSERT_TRUE(reader);
     ASSERT_EQ(1, reader->size());
     ASSERT_EQ(2, reader->docs_count());
@@ -2621,14 +2403,11 @@ TEST(index_death_test_formats_15, fails_in_exists) {
   const auto* doc3 = gen.next();
   const auto* doc4 = gen.next();
 
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
   {
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
 
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -2641,7 +2420,7 @@ TEST(index_death_test_formats_15, fails_in_exists) {
       ASSERT_TRUE(InsertWithName(*writer, *doc1));
       ASSERT_THROW(writer->RefreshCommit(), irs::IoError);
       ASSERT_THROW(
-        (irs::DirectoryReader{dir, codec, irs::tests::DefaultReaderOptions()}),
+        (irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()}),
         irs::IndexNotFound);
     }
 
@@ -2650,14 +2429,14 @@ TEST(index_death_test_formats_15, fails_in_exists) {
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     const irs::index_utils::CompactionCount compact_all;
 
@@ -2665,12 +2444,11 @@ TEST(index_death_test_formats_15, fails_in_exists) {
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     ASSERT_TRUE(dir.NoFailures());
 
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(1, reader->size());
     ASSERT_EQ(4, reader->docs_count());
@@ -2729,9 +2507,6 @@ TEST(index_death_test_formats_15, fails_in_length) {
   const auto* doc3 = gen.next();
   const auto* doc4 = gen.next();
 
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
   {
     constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
                                                 irs::IndexFeatures::Pos |
@@ -2757,7 +2532,7 @@ TEST(index_death_test_formats_15, fails_in_length) {
 
     const size_t num_failures = dir.NumFailures();
 
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -2766,32 +2541,32 @@ TEST(index_death_test_formats_15, fails_in_length) {
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // segment 1
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // segment 2
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // segment 3
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     {
       auto reader =
-        irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+        irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
       ASSERT_TRUE(reader);
       ASSERT_EQ(4, reader->size());
       ASSERT_EQ(4, reader->docs_count());
@@ -2823,12 +2598,11 @@ TEST(index_death_test_formats_15, fails_in_length) {
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     ASSERT_EQ(num_failures_before, dir.NumFailures());
 
-    auto reader =
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
     ASSERT_EQ(1, reader->size());
     ASSERT_EQ(4, reader->docs_count());
@@ -2868,11 +2642,6 @@ TEST(index_death_test_formats_15, fails_in_length) {
 }
 
 TEST(index_death_test_formats_15, columnstore_reopen_fail) {
-  // Reader-side failures on the columnstore file.
-  //
-  // OPEN failure on `_1.col` -- the segment reader's columnstore probe
-  // (`ColReader::Reader` -> `OpenAndCheckHeader`) calls
-  // `dir.open("_1.col")` and turns nullptr into `irs::IoError`.
   constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
                                               irs::IndexFeatures::Pos |
                                               irs::IndexFeatures::Offs;
@@ -2883,14 +2652,11 @@ TEST(index_death_test_formats_15, columnstore_reopen_fail) {
   const auto* doc2 = gen.next();
   auto query_doc2 = MakeByTerm(kNameId, "B");
 
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-
   irs::MemoryDirectory impl;
   FailingDirectory dir(impl);
 
   {
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -2901,18 +2667,16 @@ TEST(index_death_test_formats_15, columnstore_reopen_fail) {
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions()));
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
   }
 
   // OPEN failure on `_1.col` -- DirectoryReader throws.
   dir.RegisterFailure(FailingDirectory::Failure::OPEN, "_1.col");
-  ASSERT_THROW(
-    (irs::DirectoryReader{dir, codec, irs::tests::DefaultReaderOptions()}),
-    irs::IoError);
+  ASSERT_THROW((irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()}),
+               irs::IoError);
 
   // Read succeeds once the failure clears.
-  auto reader =
-    irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
+  auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
   ASSERT_TRUE(reader);
   ASSERT_EQ(1, reader->size());
   ASSERT_EQ(2, reader->docs_count());

@@ -152,6 +152,8 @@ add_subdirectory(zlib-ng)
 # For compatibility
 add_library(ZLIB::ZLIB ALIAS zlib-ng)
 set(ZLIB_FOUND ON CACHE BOOL "" FORCE)
+set(ZLIB_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/zlib-ng" CACHE PATH "" FORCE)
+set(ZLIB_LIBRARY zlib-ng CACHE STRING "" FORCE)
 
 ################################################################################
 ## BOOST
@@ -201,6 +203,19 @@ set(ABSL_PROPAGATE_CXX_STD OFF CACHE BOOL "" FORCE)
 set(ABSL_USE_SYSTEM_INCLUDES ON CACHE BOOL "" FORCE)
 add_subdirectory(abseil-cpp)
 target_link_libraries(absl_strings PUBLIC simdutf)
+
+################################################################################
+### zxc library -- lossless compression built for fast decode, an HTTP
+### response content-coding
+################################################################################
+
+set(ZXC_BUILD_CLI OFF CACHE BOOL "" FORCE)
+set(ZXC_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ZXC_INSTALL OFF CACHE BOOL "" FORCE)
+set(ZXC_NATIVE_ARCH OFF CACHE BOOL "" FORCE)
+set(ZXC_ENABLE_LTO OFF CACHE BOOL "" FORCE)
+sdb_update_module(${GIT_EXECUTABLE} "zxc" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_subdirectory(zxc)
 
 ################################################################################
 ### protozero library -- header-only protobuf wire format, used for OTLP
@@ -270,46 +285,6 @@ if(ARCH_AARCH64)
         INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/sse2neon"
     )
 endif()
-
-################################################################################
-### OpenFST + Kaldi library
-################################################################################
-
-# We build OpenFST extensions provided by Kaldi as a part of OpenFST
-set(Kaldi_sources
-    ${CMAKE_CURRENT_SOURCE_DIR}/kaldi/src/base/io-funcs.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/kaldi/src/base/kaldi-error.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/kaldi/src/base/kaldi-utils.cc
-)
-
-set(OpenFST_sources
-    ${CMAKE_CURRENT_SOURCE_DIR}/openfst/compat.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/openfst/encode.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/openfst/flags.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/openfst/fst.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/openfst/fst-types.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/openfst/mapped-file.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/openfst/properties.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/openfst/symbol-table.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/openfst/symbol-table-ops.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/openfst/util.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/openfst/weight.cc
-    ${Kaldi_sources}
-)
-
-add_library(iresearch-ofst OBJECT ${OpenFST_sources})
-
-target_include_directories(
-    iresearch-ofst
-    SYSTEM
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/openfst
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/kaldi/src
-)
-
-target_link_libraries(
-    iresearch-ofst
-    PUBLIC absl::flat_hash_set absl::flat_hash_map
-)
 
 ################################################################################
 ### SIMDCOMP library

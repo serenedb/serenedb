@@ -1,0 +1,103 @@
+hash-threshold 100
+
+control substitution on
+
+statement ok
+CREATE DATABASE vacuum_use_db;
+
+
+statement ok
+USE vacuum_use_db;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY public.en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
+
+
+statement ok
+CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX docs_idx ON docs USING inverted(id, body en);
+
+
+statement ok
+INSERT INTO docs VALUES (1, 'alpha');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) docs;
+
+
+query
+SELECT count(*) FROM docs_idx WHERE body @@ ts_phrase('alpha');
+----
+count
+1
+
+
+statement ok
+INSERT INTO docs VALUES (2, 'beta');
+
+
+statement ok
+VACUUM (REFRESH_INDEX) docs_idx;
+
+
+query
+SELECT count(*) FROM docs_idx WHERE body @@ ts_phrase('beta');
+----
+count
+1
+
+
+statement ok
+INSERT INTO docs VALUES (3, 'gamma');
+
+
+statement ok
+VACUUM (REFRESH_SCHEMA) public;
+
+
+query
+SELECT count(*) FROM docs_idx WHERE body @@ ts_phrase('gamma');
+----
+count
+1
+
+
+statement ok
+VACUUM (COMPACT_TABLE) docs;
+
+
+statement ok
+VACUUM (COMPACT_INDEX) docs_idx;
+
+
+statement ok
+VACUUM (RECOMPUTE_STATS_TABLE) docs;
+
+
+statement ok
+VACUUM (RECOMPUTE_STATS_COLUMN) docs.body;
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement error
+VACUUM (REFRESH_TABLE) docs;
+----
+db error: ERROR: relation "docs" does not exist
+
+
+statement ok
+VACUUM (REFRESH_TABLE) vacuum_use_db.public.docs;
+
+
+statement ok
+DROP DATABASE vacuum_use_db;

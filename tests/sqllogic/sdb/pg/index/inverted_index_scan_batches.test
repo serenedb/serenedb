@@ -1,0 +1,406 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sb_words AS split_text_csv(' ')
+  WITH (frequency, position)
+
+
+statement ok
+CREATE TABLE sb (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+      row_group_size = 4096)
+
+
+statement ok
+CREATE INDEX sb_idx ON sb USING inverted (body sb_words)
+
+
+statement ok
+INSERT INTO sb
+SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END
+FROM generate_series(1, 20000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sb
+
+
+statement ok
+INSERT INTO sb
+SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END
+FROM generate_series(20001, 40000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sb
+
+
+statement ok
+INSERT INTO sb
+SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END
+FROM generate_series(40001, 60000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sb
+
+
+statement ok
+INSERT INTO sb
+SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END
+FROM generate_series(60001, 60100) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sb
+
+
+statement ok
+INSERT INTO sb
+SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END
+FROM generate_series(60101, 60200) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sb
+
+
+statement ok
+INSERT INTO sb
+SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END
+FROM generate_series(60201, 60300) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sb
+
+
+statement ok
+INSERT INTO sb
+SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END
+FROM generate_series(60301, 60400) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sb
+
+
+statement ok
+INSERT INTO sb
+SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END
+FROM generate_series(60401, 60500) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sb
+
+
+statement ok
+INSERT INTO sb
+SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END
+FROM generate_series(60501, 60600) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sb
+
+
+statement ok
+INSERT INTO sb
+SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END
+FROM generate_series(60601, 60700) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sb
+
+
+statement ok
+INSERT INTO sb
+SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END
+FROM generate_series(60701, 60800) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sb
+
+
+statement ok
+INSERT INTO sb
+SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END
+FROM generate_series(60801, 60900) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sb
+
+
+statement ok
+INSERT INTO sb
+SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END
+FROM generate_series(60901, 61000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sb
+
+
+statement ok
+INSERT INTO sb
+SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END
+FROM generate_series(61001, 61100) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sb
+
+
+statement ok
+INSERT INTO sb
+SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END
+FROM generate_series(61101, 61200) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sb
+
+
+statement ok
+DELETE FROM sb WHERE id <= 1000 OR (id > 59000 AND id <= 60000)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sb
+
+
+statement ok
+SET threads = 2
+
+
+statement ok
+SET sdb_scan_split = 'tail'
+
+
+query
+SELECT count(*) FROM sb WHERE body @@ 'dog';
+----
+count
+19733
+
+
+query
+SELECT count(*), max(id) FROM sb WHERE body @@ 'dog';
+----
+count	max
+19733	61200
+
+
+query
+SELECT count(*) FROM sb WHERE body @@ 'fox' AND NOT body @@ 'dog';
+----
+count
+39467
+
+
+query
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS docs
+FROM sb ORDER BY term;
+----
+term	docs
+dog	19733
+fox	59200
+
+
+statement ok
+SET threads = 3
+
+
+statement ok
+SET sdb_scan_split = 'tail'
+
+
+query
+SELECT count(*) FROM sb WHERE body @@ 'dog';
+----
+count
+19733
+
+
+query
+SELECT count(*), max(id) FROM sb WHERE body @@ 'dog';
+----
+count	max
+19733	61200
+
+
+query
+SELECT count(*) FROM sb WHERE body @@ 'fox' AND NOT body @@ 'dog';
+----
+count
+39467
+
+
+query
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS docs
+FROM sb ORDER BY term;
+----
+term	docs
+dog	19733
+fox	59200
+
+
+statement ok
+SET threads = 8
+
+
+statement ok
+SET sdb_scan_split = 'tail'
+
+
+query
+SELECT count(*) FROM sb WHERE body @@ 'dog';
+----
+count
+19733
+
+
+query
+SELECT count(*), max(id) FROM sb WHERE body @@ 'dog';
+----
+count	max
+19733	61200
+
+
+query
+SELECT count(*) FROM sb WHERE body @@ 'fox' AND NOT body @@ 'dog';
+----
+count
+39467
+
+
+query
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS docs
+FROM sb ORDER BY term;
+----
+term	docs
+dog	19733
+fox	59200
+
+
+statement ok
+SET threads = 3
+
+
+statement ok
+SET sdb_scan_split = 'never'
+
+
+query
+SELECT count(*) FROM sb WHERE body @@ 'dog';
+----
+count
+19733
+
+
+query
+SELECT count(*), max(id) FROM sb WHERE body @@ 'dog';
+----
+count	max
+19733	61200
+
+
+query
+SELECT count(*) FROM sb WHERE body @@ 'fox' AND NOT body @@ 'dog';
+----
+count
+39467
+
+
+query
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS docs
+FROM sb ORDER BY term;
+----
+term	docs
+dog	19733
+fox	59200
+
+
+statement ok
+SET threads = 3
+
+
+statement ok
+SET sdb_scan_split = 'always'
+
+
+query
+SELECT count(*) FROM sb WHERE body @@ 'dog';
+----
+count
+19733
+
+
+query
+SELECT count(*), max(id) FROM sb WHERE body @@ 'dog';
+----
+count	max
+19733	61200
+
+
+query
+SELECT count(*) FROM sb WHERE body @@ 'fox' AND NOT body @@ 'dog';
+----
+count
+39467
+
+
+query
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS docs
+FROM sb ORDER BY term;
+----
+term	docs
+dog	19733
+fox	59200
+
+
+statement ok
+SET threads = 2
+
+
+statement ok
+SET sdb_scan_split = 'tail'
+
+
+statement ok
+SET enable_profiling = 'json'
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/scan_batches_count.json'
+
+
+query
+SELECT count(*) FROM sb WHERE body @@ 'dog';
+----
+count
+19733
+
+
+statement ok
+RESET enable_profiling
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/scan_batches_count.json');
+----
+row_groups_scanned
+27
+
+
+statement ok
+RESET sdb_scan_split
+
+
+statement ok
+RESET threads

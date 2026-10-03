@@ -26,6 +26,7 @@
 #include <duckdb/storage/statistics/base_statistics.hpp>
 
 #include "index_reader.hpp"
+#include "iresearch/formats/index_meta_reader.hpp"
 #include "iresearch/utils/object_pool.hpp"
 #include "iresearch/utils/shared.hpp"
 
@@ -42,10 +43,9 @@ class DirectoryReader final : public IndexReader {
   DirectoryReader& operator=(DirectoryReader&&) noexcept = default;
 
   // Create an index reader over the specified directory
-  // if codec == nullptr then use the latest file for all known codecs
   explicit DirectoryReader(
-    const Directory& dir, Format::ptr codec = nullptr,
-    const IndexReaderOptions& opts = IndexReaderOptions{});
+    const Directory& dir, const IndexReaderOptions& opts = IndexReaderOptions{},
+    MetaPayloadReader payload = {});
   explicit DirectoryReader(
     std::shared_ptr<const DirectoryReaderImpl>&& impl) noexcept;
   DirectoryReader(const DirectoryReader& other) noexcept;
@@ -81,9 +81,8 @@ class DirectoryReader final : public IndexReader {
 
   size_t size() const final;
 
-  // Open a new instance based on the latest file for the specified codec
   // this call will attempt to reuse segments from the existing reader
-  DirectoryReader Reopen() const;
+  DirectoryReader Reopen(MetaPayloadReader payload = {}) const;
 
   const std::shared_ptr<const DirectoryReaderImpl>& GetImpl() const noexcept {
     return _impl;

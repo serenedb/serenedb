@@ -149,4 +149,11 @@ struct StoreSink {
   ~StoreSink() = default;
 };
 
+struct RejectSink {
+  virtual void OnReject(doc_id_t doc) = 0;
+
+ protected:
+  ~RejectSink() = default;
+};
+
 }  // namespace irs

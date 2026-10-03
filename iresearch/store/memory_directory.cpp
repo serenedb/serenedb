@@ -208,7 +208,7 @@ class ChecksumMemoryIndexOutput final : public MemoryIndexOutput {
 
     FlushBuffer<true>();
 
-    return _crc.checksum();
+    return std::exchange(_crc, Crc32c{}).checksum();
   }
 
  private:

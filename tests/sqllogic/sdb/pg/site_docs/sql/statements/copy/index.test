@@ -384,22 +384,22 @@ COPY tbl FROM '${__TEST_DIR__}/sql_statements_copy_index_example_023_1_tbl_csv.c
 # DOCS_TEST: example_024
 
 # DOCS_TEST_RAW
-#| COPY lineitem TO 'lineitem.csv';
+#| COPY lineitem TO 'lineitem.csv' (HEADER);
 
 # DOCS_TEST_BODY
 
 statement ok
-COPY lineitem TO '${__TEST_DIR__}/sql_statements_copy_index_example_024_1_lineitem_csv.csv';
+COPY lineitem TO '${__TEST_DIR__}/sql_statements_copy_index_example_024_1_lineitem_csv.csv' (HEADER);
 
 # DOCS_TEST: example_025
 
 # DOCS_TEST_RAW
-#| COPY lineitem TO 'lineitem.tbl' (DELIMITER '|');
+#| COPY lineitem TO 'lineitem.tbl' (DELIMITER '|', HEADER);
 
 # DOCS_TEST_BODY
 
 statement ok
-COPY lineitem TO '${__TEST_DIR__}/sql_statements_copy_index_example_025_1_lineitem_tbl.tbl' (DELIMITER '|');
+COPY lineitem TO '${__TEST_DIR__}/sql_statements_copy_index_example_025_1_lineitem_tbl.tbl' (DELIMITER '|', HEADER);
 
 # DOCS_TEST: example_026
 
@@ -424,12 +424,12 @@ COPY lineitem(l_orderkey) TO '${__TEST_DIR__}/sql_statements_copy_index_example_
 # DOCS_TEST: example_028
 
 # DOCS_TEST_RAW
-#| COPY (SELECT 42 AS a, 'hello' AS b) TO 'query.csv' (DELIMITER ',');
+#| COPY (SELECT 42 AS a, 'hello' AS b) TO 'query.csv' (DELIMITER ',', HEADER);
 
 # DOCS_TEST_BODY
 
 statement ok
-COPY (SELECT 42 AS a, 'hello' AS b) TO '${__TEST_DIR__}/sql_statements_copy_index_example_028_1_query_csv.csv' (DELIMITER ',');
+COPY (SELECT 42 AS a, 'hello' AS b) TO '${__TEST_DIR__}/sql_statements_copy_index_example_028_1_query_csv.csv' (DELIMITER ',', HEADER);
 
 # DOCS_TEST: example_029
 

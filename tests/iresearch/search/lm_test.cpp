@@ -192,7 +192,7 @@ void LMIndexTest::BuildFixture() {
 
   auto opts = irs::tests::DefaultWriterOptions();
 
-  auto writer = open_writer(irs::kOmCreate, opts);
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   ASSERT_TRUE(tests::Insert(*writer, doc1.indexed.begin(), doc1.indexed.end()));
   ASSERT_TRUE(tests::Insert(*writer, doc2.indexed.begin(), doc2.indexed.end()));
@@ -272,8 +272,7 @@ TEST_P(LMIndexTest, dirichlet_scores_nonnegative) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(lm_test, LMIndexTest,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5simd")),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          LMIndexTest::to_string);
 
 }  // namespace

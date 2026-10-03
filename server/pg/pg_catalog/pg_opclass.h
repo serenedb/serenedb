@@ -43,6 +43,6 @@ struct PgOpclass {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData();
+MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData();
 
 }  // namespace sdb::pg

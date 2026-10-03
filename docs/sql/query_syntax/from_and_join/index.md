@@ -211,24 +211,30 @@ This query is equivalent to:
 
 The `LATERAL` keyword allows subqueries in the `FROM` clause to refer to previous subqueries. This feature is also known as a _lateral join_.
 
+<div className="docs-table-centered">
+
 <SqlLogicTest id="sql/query_syntax/from_and_join/index/example_033" />
 
-<div class="center_aligned_header_table"></div>
+</div>
 
 Lateral joins are a generalization of correlated subqueries, as they can return multiple values per input value rather than only a single value.
 
+<div className="docs-table-centered">
+
 <SqlLogicTest id="sql/query_syntax/from_and_join/index/example_034" />
 
-<div class="center_aligned_header_table"></div>
+</div>
 
 It may be helpful to think about `LATERAL` as a loop where we iterate through the rows of the first subquery and use it as input to the second (`LATERAL`) subquery.
 In the examples above, we iterate through table `t` and refer to its column `i` from the definition of table `t2`. The rows of `t2` form column `j` in the result.
 
 It is possible to refer to multiple attributes from the `LATERAL` subquery. Using the table from the first example:
 
+<div className="docs-table-centered">
+
 <SqlLogicTest id="sql/query_syntax/from_and_join/index/example_035" />
 
-<div class="center_aligned_header_table"></div>
+</div>
 
 <DocCallout type="tip">
 SereneDB detects when `LATERAL` joins should be used, making the use of the `LATERAL` keyword optional.
@@ -252,9 +258,11 @@ or disk files (like [CSVs](../../../data_import_and_export/csv/overview.md) or [
 
 Connecting them using this ordering is called a _positional join:_
 
+<div className="docs-table-centered">
+
 <SqlLogicTest id="sql/query_syntax/from_and_join/index/example_036" />
 
-<div class="center_aligned_header_table"></div>
+</div>
 
 Positional joins are always `FULL OUTER` joins, i.e., the resulting table has the length of the longer input table and the missing entries are filled with `NULL` values.
 
@@ -332,9 +340,11 @@ The following statement demonstrates the use of the `FROM`-first syntax:
 
 This is equivalent to:
 
+<div className="docs-table-centered">
+
 <SqlLogicTest id="sql/query_syntax/from_and_join/index/example_047" />
 
-<div class="center_aligned_header_table"></div>
+</div>
 
 ### `FROM`-First Syntax without a `SELECT` Clause
 
@@ -344,9 +354,11 @@ The following statement demonstrates the use of the optional `SELECT` clause:
 
 This is equivalent to:
 
+<div className="docs-table-centered">
+
 <SqlLogicTest id="sql/query_syntax/from_and_join/index/example_049" />
 
-<div class="center_aligned_header_table"></div>
+</div>
 
 ## Syntax
 

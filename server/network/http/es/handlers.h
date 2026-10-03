@@ -20,11 +20,41 @@
 
 #pragma once
 
-#include "network/http/router.h"
+#include <cstdint>
+#include <memory>
+
+#include "network/http/handler.h"
 
 namespace sdb::network::http::es {
 
 // The standard Elasticsearch API surface (spec: rest-api-spec).
-void Register(HttpRouter& router);
+enum class Endpoint : uint8_t {
+  Root,
+  Health,
+  CatIndices,
+  CatCount,
+  Bulk,
+  NodesStats,
+  ClusterSettings,
+  IndexStats,
+  ForceMerge,
+  Refresh,
+  CreateIndex,
+  DeleteIndex,
+  IndexExists,
+  IndexInfo,
+  Mapping,
+  Doc,
+  GetDoc,
+  ExistsDoc,
+  GetSource,
+  Mget,
+  Count,
+  Search,
+  Scroll,
+  ClearScroll,
+};
+
+std::unique_ptr<HttpHandler> Make(Endpoint endpoint);
 
 }  // namespace sdb::network::http::es

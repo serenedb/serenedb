@@ -20,9 +20,12 @@
 
 #include "connector/duckdb_physical_search_update.h"
 
+#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <duckdb/transaction/duck_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <memory>
 #include <optional>
@@ -30,10 +33,9 @@
 #include <string>
 #include <vector>
 
-#include "catalog/duckdb_primary_key.h"
-#include "catalog/identifiers/object_id.h"
-#include "catalog/sequence.h"
+#include "catalog/entry/search_table.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
@@ -42,85 +44,86 @@
 namespace sdb::connector {
 namespace {
 
-struct SearchUpdateGlobalState : duckdb::GlobalSinkState {
-  ObjectId table_id;
+struct SearchUpdateGlobalState final : duckdb::GlobalSinkState {
   std::shared_ptr<search::SearchTable> search_table;
   query::Transaction* sdb_txn = nullptr;
 
-  std::vector<ObjectId> column_ids;
+  std::vector<ColumnId> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
-  std::vector<duckdb::idx_t> new_row_src;
-  std::shared_ptr<catalog::SequenceCounter> generated_pk_seq;
+  duckdb::vector<duckdb::column_t> new_row_src;
+  duckdb::optional_ptr<duckdb::SequenceCatalogEntry> generated_pk_seq;
+
+  std::vector<primary_key::PKColumn> old_pk_columns;
 
   std::shared_lock<std::shared_mutex> table_lock;
   uint64_t write_buffer_max_bytes = 0;
-  std::vector<duckdb::idx_t> pk_slots;
-  std::vector<std::string> pk_names;
   duckdb::idx_t update_count = 0;
   // RETURNING only: the rows as this statement left them.
   std::optional<duckdb::ColumnDataCollection> returned;
 };
 
-struct SearchUpdateSourceState : duckdb::GlobalSourceState {
-  bool finished = false;
+struct SearchUpdateSourceState final : duckdb::GlobalSourceState {
   duckdb::ColumnDataScanState scan;
 };
 
 }  // namespace
 
 SereneDBSearchUpdate::SereneDBSearchUpdate(
-  duckdb::PhysicalPlan& plan, SearchWriteTarget target,
-  std::vector<duckdb::idx_t> pk_col_indices,
-  std::vector<duckdb::PhysicalIndex> update_columns,
+  duckdb::PhysicalPlan& plan, const catalog::SearchTableEntry& table,
+  duckdb::vector<duckdb::PhysicalIndex> columns,
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions,
   duckdb::vector<duckdb::LogicalType> types,
-  duckdb::idx_t estimated_cardinality, bool return_chunk,
-  bool updates_key_columns)
+  duckdb::idx_t estimated_cardinality, bool return_chunk)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              std::move(types), estimated_cardinality),
-    _target(std::move(target)),
-    _pk_col_indices(std::move(pk_col_indices)),
-    _update_columns(std::move(update_columns)),
-    _return_chunk(return_chunk),
-    _updates_key_columns(updates_key_columns) {}
+    _table(table),
+    _columns(std::move(columns)),
+    _expressions(std::move(expressions)),
+    _return_chunk(return_chunk) {}
 
 duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<SearchUpdateGlobalState>();
   auto& conn_ctx = GetSereneDBContext(context);
 
-  state->table_id = _target.table_id;
-
-  state->search_table = _target.data;
+  state->search_table = _table.Storage();
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
   conn_ctx.SearchTxn().RegisterWriter(state->search_table);
 
-  state->column_ids = _target.column_ids;
-  state->chunk_types = _target.chunk_types;
+  const auto& columns = _table.GetColumns();
+  state->column_ids.reserve(columns.LogicalColumnCount());
+  for (const auto& column : columns.Logical()) {
+    state->column_ids.emplace_back(column.Oid());
+  }
+  state->chunk_types = columns.GetColumnTypes();
   state->write_buffer_max_bytes = state->search_table->GetWriteBufferMaxBytes();
 
   const auto p = state->column_ids.size();
-  state->new_row_src.assign(p, 0);
-  SDB_ASSERT(_update_columns.size() == p,
+  state->new_row_src.assign(p, duckdb::DConstants::INVALID_INDEX);
+  SDB_ASSERT(_columns.size() == p,
              "search UPDATE must project every non-generated-PK column");
-  // Each projected column names its own slot in the chunk the sink writes: the
-  // entry lists exactly the columns iresearch stores, in that order.
-  for (size_t i = 0; i < _update_columns.size(); ++i) {
-    const auto index = _update_columns[i].index;
+  for (size_t i = 0; i < _columns.size(); ++i) {
+    const auto index = _columns[i].index;
     SDB_ASSERT(index < p,
                "projected update column is not a stored table column");
-    state->new_row_src[index] = i;
+    SDB_ASSERT(
+      _expressions[i]->GetExpressionType() == duckdb::ExpressionType::BOUND_REF,
+      "search UPDATE expects every SET value to be projected");
+    state->new_row_src[index] =
+      _expressions[i]->Cast<duckdb::BoundReferenceExpression>().Index();
   }
 
-  state->pk_names = _target.pk_names;
-  state->pk_slots.reserve(_target.pk_slots.size());
-  for (const auto logical : _target.pk_slots) {
-    SDB_ASSERT(logical < p, "declared PK column is not a stored column");
-    state->pk_slots.push_back(state->new_row_src[logical]);
+  const auto row_ids = _table.GetRowIdColumns().size();
+  const auto& input_types = children[0].get().GetTypes();
+  const auto width = input_types.size();
+  SDB_ASSERT(row_ids <= width);
+  state->old_pk_columns.reserve(row_ids);
+  for (auto i = width - row_ids; i < width; ++i) {
+    state->old_pk_columns.emplace_back(i, input_types[i]);
   }
 
-  SDB_ASSERT(_pk_col_indices.size() == 1,
-             "a search table is identified by one synthetic rowid slot");
-  state->generated_pk_seq = _target.generated_pk_seq;
+  state->generated_pk_seq = _table.GeneratedPkSequence(context);
+  SDB_ASSERT(state->generated_pk_seq);
 
   state->sdb_txn = &conn_ctx;
   if (_return_chunk) {
@@ -134,18 +137,14 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SearchUpdateGlobalState>();
   const auto num_rows = chunk.size();
-  if (num_rows == 0) {
-    return duckdb::SinkResultType::NEED_MORE_INPUT;
-  }
-
-  VerifyPKNotNull(chunk, gstate.pk_slots, gstate.pk_names, num_rows);
 
   // Buffered, not removed here: the removal reaches iresearch when the write
   // buffer is replayed, ordered against exactly the rows that precede it. The
   // new row is buffered straight after, so it still outranks the removal of the
   // version it replaces.
   duckdb::UnifiedVectorFormat old_pk;
-  chunk.data[_pk_col_indices[0]].ToUnifiedFormat(num_rows, old_pk);
+  chunk.data[gstate.old_pk_columns[0].input_col_idx].ToUnifiedFormat(num_rows,
+                                                                     old_pk);
   const auto* old_pk_data =
     duckdb::UnifiedVectorFormat::GetData<int64_t>(old_pk);
   std::vector<int64_t> old_rows;
@@ -157,58 +156,42 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
 
   duckdb::DataChunk new_row;
   new_row.InitializeEmpty(gstate.chunk_types);
-  for (size_t col = 0; col < gstate.column_ids.size(); ++col) {
-    new_row.data[col].Reference(chunk.data[gstate.new_row_src[col]]);
-  }
-  new_row.SetCardinality(num_rows);
+  new_row.ReferenceColumns(chunk, gstate.new_row_src);
 
-  const uint64_t pk_base = gstate.generated_pk_seq->Reserve(num_rows);
+  const uint64_t pk_base = gstate.generated_pk_seq->NextValues(
+    duckdb::DuckTransaction::Get(context.client,
+                                 gstate.generated_pk_seq->catalog),
+    num_rows);
   // TODO(Dronplane): Maybe we can re-use generated PKs from delete if PK is not
   // changed. Looks not big win now. But for future optimizations.
   auto& search_txn = gstate.sdb_txn->SearchTxn();
   search_txn.AddInlineInsertChunk(
     gstate.search_table,
     duckdb::BufferManager::GetBufferManager(context.client), gstate.chunk_types,
-    gstate.column_ids, new_row, pk_base);
+    gstate.column_ids, _table.catalog, new_row, pk_base);
 
   // After the new row, never between it and the removal above: a flush replays
   // the buffer in issue order, so the pair has to reach iresearch together for
   // the new version to outrank the removal of the one it replaces.
-  if (search_txn.BufferedBytes(gstate.table_id) >
-      gstate.write_buffer_max_bytes) {
+  if (search_txn.BufferedBytes(_table.oid) > gstate.write_buffer_max_bytes) {
     search_txn.FlushBuffer(gstate.search_table, context.client);
   }
 
   if (gstate.returned) {
-    // The new row, which is what postgres' RETURNING reports for an UPDATE. The
-    // projection under this sink carries every stored column, so new_row_src
-    // already says where each of them arrived.
-    duckdb::DataChunk row;
-    row.InitializeEmpty(GetTypes());
-    BuildReturnedRow(row, chunk, gstate.new_row_src);
-    gstate.returned->Append(row);
+    gstate.returned->Append(new_row);
   }
 
   gstate.update_count += num_rows;
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
 
-duckdb::SinkFinalizeType SereneDBSearchUpdate::Finalize(
-  duckdb::Pipeline& /*pipeline*/, duckdb::Event& /*event*/,
-  duckdb::ClientContext& /*context*/,
-  duckdb::OperatorSinkFinalizeInput& /*input*/) const {
-  return duckdb::SinkFinalizeType::READY;
-}
-
 duckdb::unique_ptr<duckdb::GlobalSourceState>
 SereneDBSearchUpdate::GetGlobalSourceState(
   duckdb::ClientContext& /*context*/) const {
   auto state = duckdb::make_uniq<SearchUpdateSourceState>();
-  if (sink_state != nullptr) {
-    auto& gstate = sink_state->Cast<SearchUpdateGlobalState>();
-    if (gstate.returned) {
-      gstate.returned->InitializeScan(state->scan);
-    }
+  auto& gstate = sink_state->Cast<SearchUpdateGlobalState>();
+  if (gstate.returned) {
+    gstate.returned->InitializeScan(state->scan);
   }
   return state;
 }
@@ -223,14 +206,20 @@ duckdb::SourceResultType SereneDBSearchUpdate::GetDataInternal(
     return chunk.size() == 0 ? duckdb::SourceResultType::FINISHED
                              : duckdb::SourceResultType::HAVE_MORE_OUTPUT;
   }
-  if (source.finished) {
-    return duckdb::SourceResultType::FINISHED;
-  }
-  source.finished = true;
 
   chunk.SetCardinality(1);
   chunk.SetValue(0, 0, duckdb::Value::BIGINT(gstate.update_count));
-  return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
+  return duckdb::SourceResultType::FINISHED;
+}
+
+duckdb::SinkFinalizeType SereneDBSearchUpdate::Finalize(
+  duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext&,
+  duckdb::OperatorSinkFinalizeInput& input) const {
+  auto& state = input.global_state.Cast<SearchUpdateGlobalState>();
+  if (state.table_lock.owns_lock()) {
+    state.table_lock.unlock();
+  }
+  return duckdb::SinkFinalizeType::READY;
 }
 
 }  // namespace sdb::connector

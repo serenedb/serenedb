@@ -40,7 +40,7 @@ class ProbeScore : public ScoreOperator {
 
  public:
   ProbeScore(ScoreFunction&& required, std::vector<ScoreFunction>&& probed,
-             uint32_t* held, score_t constant) noexcept
+             ScoreMask* held, score_t constant) noexcept
     : _required{std::move(required)},
       _probed{probed.size(),
               [&](ScoreFunction& slot, size_t i) noexcept {
@@ -107,10 +107,10 @@ class ProbeScore : public ScoreOperator {
   IRS_FORCE_INLINE void ScoreImpl(score_t* IRS_RESTRICT res,
                                   scores_size_t n) const noexcept {
     SDB_ASSERT(n <= kScoreBlock);
-    uint32_t covered = 0;
+    ScoreMask covered = 0;
     if (!_required.IsDefault()) {
       _required.Score(_gathered, n);
-      covered = ~uint32_t{0};
+      covered = ~ScoreMask{0};
     }
     for (size_t i = 0, count = _probed.size(); i != count; ++i) {
       const auto held = _held[i];
@@ -150,7 +150,7 @@ class ProbeScore : public ScoreOperator {
 
   ScoreFunction _required;
   containers::Fixed<ScoreFunction> _probed;
-  uint32_t* IRS_RESTRICT _held;
+  ScoreMask* IRS_RESTRICT _held;
   [[no_unique_address]] utils::Need<HasConst, score_t> _constant;
   ABSL_CACHELINE_ALIGNED mutable score_t _gathered[kScoreBlock];
   ABSL_CACHELINE_ALIGNED mutable score_t _scratch[kScoreBlock];
@@ -158,7 +158,7 @@ class ProbeScore : public ScoreOperator {
 
 template<bool HasConst>
 ScoreFunction Resolve(ScoreMergeType inner, ScoreFunction&& required,
-                      std::vector<ScoreFunction>&& probed, uint32_t* held,
+                      std::vector<ScoreFunction>&& probed, ScoreMask* held,
                       score_t constant) {
   if (inner == ScoreMergeType::Max) {
     return ScoreFunction::Make<ProbeScore<ScoreMergeType::Max, HasConst>>(
@@ -178,7 +178,7 @@ bool AnyProbed(const std::vector<ScoreFunction>& probed) noexcept {
 
 ScoreFunction MakeProbeScore(ScoreMergeType inner, ScoreFunction&& required,
                              std::vector<ScoreFunction>&& probed,
-                             uint32_t* held, score_t constant) {
+                             ScoreMask* held, score_t constant) {
   if (!AnyProbed(probed)) {
     probed.clear();
     if (constant == 0) {

@@ -1253,11 +1253,15 @@ class Enforcer {
   }
 
   void RequireDatabasePrivilege(AclMode need) {
-    auto database =
-      DatabaseEntry(duckdb::DatabaseManager::GetDefaultDatabase(_context)
-                      .GetIdentifierName());
-    if (database && !_caller_closure.Can(CatalogType::DATABASE_ENTRY,
-                                         database->permissions, need)) {
+    const auto name = duckdb::DatabaseManager::GetDefaultDatabase(_context)
+                        .GetIdentifierName();
+    auto database = DatabaseEntry(name);
+    if (!database) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
+                      ERR_MSG("database \"", name, "\" does not exist"));
+    }
+    if (!_caller_closure.Can(CatalogType::DATABASE_ENTRY,
+                             database->permissions, need)) {
       Denied(*database);
     }
   }

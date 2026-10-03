@@ -21,6 +21,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
 
 #include <atomic>
@@ -61,6 +62,7 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "insert_field.hpp"
 #include "tests_shared.hpp"
+#include "token_sink_utils.hpp"
 
 namespace {
 
@@ -740,6 +742,59 @@ TEST(ShinglePhrasePlanTest, max_gram_decides_without_positions) {
   EXPECT_EQ("quick brown fox", TermOf(plan));
 }
 
+TEST(ShinglePhrasePlanTest, plans_exactly_the_emitted_shingles) {
+  static constexpr std::string_view kWords[] = {"a", "b", "c", "d"};
+  struct Config {
+    uint32_t min;
+    uint32_t max;
+    bool unigrams;
+    std::vector<std::string_view> frequent;
+  };
+  const Config configs[] = {
+    {2, 2, true, {}},  {2, 3, true, {}},     {2, 4, false, {}},
+    {3, 4, true, {}},  {2, 3, false, {"a"}}, {2, 4, true, {"b", "c"}},
+    {3, 3, false, {}},
+  };
+  std::mt19937 rng{5};
+  for (const auto& config : configs) {
+    const auto shingles =
+      MakeShingles(config.min, config.max, config.unigrams, config.frequent);
+    for (size_t doc = 0; doc != 60; ++doc) {
+      const auto text = RandomText(rng, kWords, 1, 8);
+      SCOPED_TRACE(absl::StrCat(config.min, "..", config.max, " ", text));
+      const auto tokens =
+        tests::Analyze(*shingles, text, irs::TokenLayout::TermsPos);
+      ASSERT_TRUE(tokens.has_value());
+      const std::vector<std::string_view> words = absl::StrSplit(text, ' ');
+      for (size_t begin = 0; begin != words.size(); ++begin) {
+        for (auto end = begin + 1; end <= words.size(); ++end) {
+          const auto window =
+            absl::StrJoin(words.begin() + begin, words.begin() + end, " ");
+          const tests::AnalyzerToken shingle{
+            window, static_cast<uint32_t>(begin) + irs::pos_limits::min(), 0,
+            0};
+          const auto plan = Plan(*shingles, window, false);
+          EXPECT_EQ(absl::c_linear_search(*tokens, shingle), plan.has_value())
+            << window << "@" << shingle.pos;
+          if (plan) {
+            EXPECT_EQ(window, TermOf(plan));
+          }
+        }
+      }
+    }
+  }
+}
+
+TEST(ShinglePhrasePlanTest, stacked_base_plans_single_words_only) {
+  ShingleTokenizer shingles{std::make_unique<PositionedTokenizer>(),
+                            {.min_shingle_size = 2, .max_shingle_size = 2}};
+  const auto word = Plan(shingles, "x", false);
+  ASSERT_TRUE(word.has_value());
+  EXPECT_EQ("x", TermOf(word));
+  EXPECT_FALSE(Plan(shingles, "x b", false).has_value());
+  EXPECT_FALSE(Plan(shingles, "x b", true).has_value());
+}
+
 TEST(ShinglePhraseIndexTest, covers_match_with_and_without_positions) {
   using Docs = std::optional<std::vector<irs::doc_id_t>>;
   static constexpr std::string_view kDocs[] = {
@@ -853,21 +908,24 @@ TEST(ShinglePhraseIndexTest, cover_scores_by_phrase_frequency) {
 
 TEST(ShinglePhraseIndexTest, cover_agrees_with_positions) {
   static constexpr std::string_view kWords[] = {"a", "b", "c", "d", "e"};
-  std::mt19937 rng{42};
-  const auto texts = RandomTexts(rng, kWords, 300, 3, 10);
-  const std::vector<std::string_view> docs{texts.begin(), texts.end()};
-  auto shingles = MakeShingles(2, 3);
-  const Index index{docs, *shingles,
-                    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
+  for (const std::string_view separator : {" ", "\xC2\xB7", "--"}) {
+    SCOPED_TRACE(separator);
+    std::mt19937 rng{42};
+    const auto texts = RandomTexts(rng, kWords, 300, 3, 10);
+    const std::vector<std::string_view> docs{texts.begin(), texts.end()};
+    auto shingles = MakeShingles(2, 3, true, {}, separator);
+    const Index index{docs, *shingles,
+                      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
 
-  for (size_t i = 0; i != 200; ++i) {
-    const auto phrase = RandomText(rng, kWords, 2, 4);
-    SCOPED_TRACE(phrase);
-    const auto positional = PlainPhrase(kPositionalId, phrase);
-    auto shingle_filter = ToFilter(Plan(*shingles, phrase, true));
-    ASSERT_NE(nullptr, shingle_filter);
-    EXPECT_EQ(index.Docs(positional), index.Docs(*shingle_filter));
-    EXPECT_EQ(index.Freqs(positional), index.Freqs(*shingle_filter));
+    for (size_t i = 0; i != 200; ++i) {
+      const auto phrase = RandomText(rng, kWords, 2, 4);
+      SCOPED_TRACE(phrase);
+      const auto positional = PlainPhrase(kPositionalId, phrase);
+      auto shingle_filter = ToFilter(Plan(*shingles, phrase, true));
+      ASSERT_NE(nullptr, shingle_filter);
+      EXPECT_EQ(index.Docs(positional), index.Docs(*shingle_filter));
+      EXPECT_EQ(index.Freqs(positional), index.Freqs(*shingle_filter));
+    }
   }
 }
 

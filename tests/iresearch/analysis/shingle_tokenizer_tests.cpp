@@ -19,8 +19,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
-#include <absl/strings/str_cat.h>
-#include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
 
 #include <cctype>
@@ -28,8 +26,6 @@
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/utils/string.hpp>
-#include <random>
-#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -795,59 +791,7 @@ TEST(ShingleTokenizerTest, fill_row_stores_nothing) {
   EXPECT_TRUE(row.stores.empty());
 }
 
-TEST(ShingleTokenizerTest, indexes_agrees_with_emitted_runs) {
-  static constexpr std::string_view kWords[] = {"a", "b", "c", "d"};
-  struct Config {
-    uint32_t min;
-    uint32_t max;
-    bool unigrams;
-    std::vector<std::string_view> frequent;
-  };
-  const Config configs[] = {
-    {2, 2, true, {}},  {2, 3, true, {}},     {2, 4, false, {}},
-    {3, 4, true, {}},  {2, 3, false, {"a"}}, {2, 4, true, {"b", "c"}},
-    {3, 3, false, {}},
-  };
-  std::mt19937 rng{5};
-  for (const auto& config : configs) {
-    ShingleTokenizer::Options options{
-      .min_shingle_size = config.min,
-      .max_shingle_size = config.max,
-      .output_unigrams = config.unigrams,
-    };
-    for (const auto word : config.frequent) {
-      options.frequent_words.emplace_back(Bytes(word));
-    }
-    ShingleTokenizer analyzer{std::make_unique<WhitespaceTokenizer>(),
-                              std::move(options)};
-    for (size_t doc = 0; doc != 60; ++doc) {
-      std::vector<std::string_view> words(1 + rng() % 8);
-      for (auto& word : words) {
-        word = kWords[rng() % 4];
-      }
-      const auto text = absl::StrJoin(words, " ");
-      SCOPED_TRACE(absl::StrCat(config.min, "..", config.max, " ", text));
-      std::set<std::pair<std::string, uint32_t>> emitted;
-      uint32_t pos = 0;
-      for (const auto& [term, inc] : EmitWithInc(analyzer, text)) {
-        pos += inc;
-        emitted.emplace(term, pos);
-      }
-      for (size_t begin = 0; begin != words.size(); ++begin) {
-        std::vector<irs::bytes_view> window;
-        for (size_t end = begin; end != words.size(); ++end) {
-          window.push_back(irs::ViewCast<irs::byte_type>(words[end]));
-          const auto term = ToString(analyzer.Join(window));
-          const auto at = static_cast<uint32_t>(begin) + irs::pos_limits::min();
-          EXPECT_EQ(emitted.contains({term, at}), analyzer.Indexes(window))
-            << term << "@" << at;
-        }
-      }
-    }
-  }
-}
-
-TEST(ShingleTokenizerTest, indexes_is_conservative_over_stacked_tokens) {
+TEST(ShingleTokenizerTest, stacked_tokens_shingle_along_one_path) {
   ShingleTokenizer analyzer{std::make_unique<StackedTokenizer>(),
                             {
                               .min_shingle_size = 2,
@@ -862,17 +806,6 @@ TEST(ShingleTokenizerTest, indexes_is_conservative_over_stacked_tokens) {
   EXPECT_TRUE(has(Shingle({"c", "y"})));
   EXPECT_FALSE(has(Shingle({"x", "c"})));
   EXPECT_FALSE(has(Shingle({"b", "y"})));
-  const auto indexes = [&](std::initializer_list<std::string_view> words) {
-    std::vector<irs::bytes_view> window;
-    for (const auto word : words) {
-      window.push_back(irs::ViewCast<irs::byte_type>(word));
-    }
-    return analyzer.Indexes(window);
-  };
-  EXPECT_TRUE(indexes({"x"}));
-  EXPECT_TRUE(indexes({"c"}));
-  EXPECT_FALSE(indexes({"x", "b"}));
-  EXPECT_FALSE(indexes({"x", "c"}));
 }
 
 TEST(ShingleTokenizerTest, memory_usage_accounts_scratch) {

@@ -71,12 +71,15 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
     };
   }
 
-  Tokenizer& Base() noexcept { return *_analyzer; }
+  auto& Base(this auto& self) noexcept { return *self._analyzer; }
+  uint32_t MinShingle() const noexcept { return _min; }
   uint32_t MaxShingle() const noexcept { return _max; }
   bool OutputUnigrams() const noexcept { return _output_unigrams; }
   bytes_view Separator() const noexcept { return _separator; }
-  bool Indexes(std::span<const bytes_view> words) const noexcept;
-  bstring Join(std::span<const bytes_view> tokens) const;
+  bool HasFrequentWords() const noexcept { return !_frequent.Empty(); }
+  bool IsFrequent(bytes_view word) const noexcept {
+    return _frequent.Contains(MakeTermView(ViewCast<char>(word)));
+  }
 
   void Bind(duckdb::ClientContext& ctx) final { _analyzer->Bind(ctx); }
   void Unbind() noexcept final { _analyzer->Unbind(); }
@@ -91,7 +94,7 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
     if (!_sub) {
       _sub = std::make_unique<Sub>(_analyzer->Traits());
     }
-    return std::tuple{_output_unigrams, _has_frequent};
+    return std::tuple{_output_unigrams, HasFrequentWords()};
   }
 
   template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent>
@@ -116,7 +119,6 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
   uint32_t _max;
   bool _output_unigrams;
   bool _fallback_unigrams;
-  bool _has_frequent;
   bool _producer_dense = true;
   bstring _separator;
   dict::StringSet<std::string> _frequent;

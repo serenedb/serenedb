@@ -20,6 +20,7 @@
 
 #include "iresearch/search/filters/shingle_phrase.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/container/inlined_vector.h>
 
 #include <algorithm>
@@ -32,6 +33,36 @@
 
 namespace irs {
 namespace {
+
+bool Indexes(const analysis::ShingleTokenizer& tokenizer,
+             std::span<const bytes_view> words) noexcept {
+  const auto n = words.size();
+  if (n == 1 && tokenizer.OutputUnigrams()) {
+    return true;
+  }
+  if (n < tokenizer.MinShingle() || n > tokenizer.MaxShingle() ||
+      (n > 1 && tokenizer.Base().Traits().explicit_pos)) {
+    return false;
+  }
+  return n == tokenizer.MinShingle() || !tokenizer.HasFrequentWords() ||
+         absl::c_any_of(
+           words, [&](bytes_view word) { return tokenizer.IsFrequent(word); });
+}
+
+bstring Join(bytes_view separator, std::span<const bytes_view> words) {
+  SDB_ASSERT(!words.empty());
+  auto size = separator.size() * (words.size() - 1);
+  for (const auto word : words) {
+    size += word.size();
+  }
+  bstring out;
+  out.reserve(size);
+  out.append(words.front());
+  for (const auto word : words.subspan(1)) {
+    out.append(separator).append(word);
+  }
+  return out;
+}
 
 class Windows {
  public:
@@ -60,7 +91,7 @@ class Windows {
   PosAttr::value_t Position(size_t i) const noexcept { return _positions[i]; }
 
   bool Indexed(size_t begin, size_t count) const noexcept {
-    return _tokenizer.Indexes(_tokens.subspan(begin, count));
+    return Indexes(_tokenizer, _tokens.subspan(begin, count));
   }
 
   size_t Largest(size_t begin) const noexcept {
@@ -74,7 +105,7 @@ class Windows {
   }
 
   bstring Term(size_t begin, size_t count) const {
-    return _tokenizer.Join(_tokens.subspan(begin, count));
+    return Join(_tokenizer.Separator(), _tokens.subspan(begin, count));
   }
 
  private:
@@ -213,8 +244,8 @@ std::optional<ShinglePhrasePlan> PlanShinglePhrase(
     return plan;
   }
   Words words;
-  if (AdjacentWords(phrase, words) && tokenizer.Indexes(words)) {
-    plan.emplace(tokenizer.Join(words));
+  if (AdjacentWords(phrase, words) && Indexes(tokenizer, words)) {
+    plan.emplace(Join(tokenizer.Separator(), words));
     return plan;
   }
   if (!positional) {

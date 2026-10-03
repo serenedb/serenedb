@@ -20,8 +20,6 @@
 
 #include "iresearch/analysis/shingle_tokenizer.hpp"
 
-#include <absl/algorithm/container.h>
-
 #include <cstring>
 
 #include "iresearch/analysis/keyword_tokenizer.hpp"
@@ -53,43 +51,10 @@ ShingleTokenizer::ShingleTokenizer(Tokenizer::ptr base, Options&& options)
   for (const auto& word : options.frequent_words) {
     _frequent.Insert(std::string{ViewCast<char>(bytes_view{word})});
   }
-  _has_frequent = !_frequent.Empty();
-  if (_has_frequent) {
+  if (HasFrequentWords()) {
     _output_unigrams = true;
   }
   SDB_ASSERT(_min >= 1 && _max >= _min);
-}
-
-bool ShingleTokenizer::Indexes(
-  std::span<const bytes_view> words) const noexcept {
-  const auto n = words.size();
-  if (n == 1 && _output_unigrams) {
-    return true;
-  }
-  if (n < _min || n > _max || (n > 1 && !_producer_dense)) {
-    return false;
-  }
-  return n == _min || !_has_frequent ||
-         absl::c_any_of(words, [&](bytes_view word) {
-           return _frequent.Contains(MakeTermView(ViewCast<char>(word)));
-         });
-}
-
-bstring ShingleTokenizer::Join(std::span<const bytes_view> tokens) const {
-  bstring out;
-  if (tokens.empty()) {
-    return out;
-  }
-  size_t size = _separator.size() * (tokens.size() - 1);
-  for (const auto token : tokens) {
-    size += token.size();
-  }
-  out.reserve(size);
-  out.append(tokens.front());
-  for (const auto token : tokens.subspan(1)) {
-    out.append(_separator).append(token);
-  }
-  return out;
 }
 
 bool ShingleTokenizer::DrainBase(duckdb::string_t raw) {

@@ -155,9 +155,9 @@ class UbigintChunks {
 };
 
 struct ListRep {
-  size_t chunk;
-  uint64_t offset;
-  uint64_t length;
+  uint32_t chunk;
+  uint32_t offset;
+  uint32_t length;
 };
 
 class ListKeys {
@@ -705,22 +705,22 @@ class ListIngest {
       return std::nullopt;
     }
     if (_prev != kNoRep && Matches(_prev, entry)) {
-      return _rep_codes[_prev];
+      return _code_base + _rep_codes[_prev];
     }
     const auto hash = _keys.Hash(kSource, entry.offset, entry.length);
     auto [head, inserted] = _heads.try_emplace(hash, kNoRep);
     for (auto r = head->second; r != kNoRep; r = _chain[r]) {
       if (Matches(r, entry)) {
         _prev = r;
-        return _rep_codes[r];
+        return _code_base + _rep_codes[r];
       }
     }
     rep = static_cast<uint32_t>(_reps.size());
     _chain.emplace_back(head->second);
     head->second = rep;
-    _reps.emplace_back(
-      ListRep{kSource, static_cast<uint64_t>(entry.offset), entry.length});
-    _rep_codes.emplace_back(_next_code);
+    _reps.emplace_back(ListRep{kSource, static_cast<uint32_t>(entry.offset),
+                               static_cast<uint32_t>(entry.length)});
+    _rep_codes.emplace_back(static_cast<uint32_t>(_next_code - _code_base));
     _prev = rep;
     return std::nullopt;
   }
@@ -783,7 +783,9 @@ class ListIngest {
              target.count + take + _fresh[i].length <= STANDARD_VECTOR_SIZE) {
         if (_fresh[i].rep != kNoRep) {
           _reps[_fresh[i].rep] =
-            ListRep{chunk, target.count + take, _fresh[i].length};
+            ListRep{static_cast<uint32_t>(chunk),
+                    static_cast<uint32_t>(target.count + take),
+                    static_cast<uint32_t>(_fresh[i].length)};
         }
         take += _fresh[i].length;
         ++i;
@@ -854,7 +856,7 @@ class ListIngest {
   ListKeys _keys;
   containers::FlatHashMap<uint64_t, uint32_t> _heads;
   std::vector<ListRep> _reps;
-  std::vector<uint64_t> _rep_codes;
+  std::vector<uint32_t> _rep_codes;
   std::vector<uint32_t> _chain;
   std::vector<Fresh> _fresh;
   std::vector<duckdb::sel_t> _picked;

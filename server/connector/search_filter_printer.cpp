@@ -21,6 +21,7 @@
 #include "search_filter_printer.hpp"
 
 #include <absl/strings/ascii.h>
+#include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
@@ -153,7 +154,12 @@ std::string RangeValue(const SearchRange<T>& range, Kind kind) {
 // Renders one phrase-part option variant.
 struct PhrasePartVisitor : util::Noncopyable {
   auto operator()(const ByTermOptions& opts) const {
-    absl::StrAppend(out, "Term:", TermToString(opts.term));
+    const bool shingle =
+      !separator.empty() &&
+      absl::StrContains(ViewCast<char>(bytes_view{opts.term}),
+                        ViewCast<char>(separator));
+    absl::StrAppend(out,
+                    shingle ? "Shingle:" : "Term:", TermToString(opts.term));
   }
   auto operator()(const TermSetOptions& opts) const {
     absl::StrAppend(out, "Terms:[",
@@ -210,6 +216,7 @@ struct PhrasePartVisitor : util::Noncopyable {
     }
   }
   std::string* out;
+  bytes_view separator;
 };
 
 std::string_view GeoFilterTypeName(GeoFilterType type) {
@@ -272,8 +279,9 @@ struct FilterPrinter {
     std::string s;
     for (const auto& part : filter.options()) {
       std::string part_str;
-      part.part.visit(PhrasePartVisitor{.out = &part_str});
-      absl::StrAppend(&s, part_str, "(", part.offs_max, ", ", part.offs_min,
+      part.part.visit(PhrasePartVisitor{
+        .out = &part_str, .separator = filter.options().word_separator()});
+      absl::StrAppend(&s, part_str, "(", part.offs_min, ", ", part.offs_max,
                       ")", "; ");
     }
     return s;
@@ -530,6 +538,11 @@ struct FilterPrinter {
       ExplainNode node{"Phrase"};
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Parts"] = PhraseParts(f);
+      if (const auto separator = f.options().word_separator();
+          !separator.empty()) {
+        node.attributes["Separator"] =
+          absl::StrCat("'", TermToString(separator), "'");
+      }
       if (const auto slop = f.options().slop(); slop > 0) {
         node.attributes["Slop"] = absl::StrCat(slop);
       }

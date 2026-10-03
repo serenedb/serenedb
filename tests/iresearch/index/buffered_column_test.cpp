@@ -156,12 +156,9 @@ TEST_P(BufferedColumnTestCase, Ctor) {
     nw.Append(2, 7);
     EXPECT_EQ(nw.RowCount(), 3u);
 
-    // Rollback -- the eagerly-created `.col` file stays on disk as an
-    // orphan. The directory cleaner sweeps it later; the writer itself
-    // does not remove (matches the legacy `.csd` writer contract).
     w.Rollback();
   }
-  EXPECT_TRUE(HasCsFile(dir, "ctor_seg"));
+  EXPECT_FALSE(HasCsFile(dir, "ctor_seg"));
 }
 
 TEST_P(BufferedColumnTestCase, FlushEmpty) {
@@ -178,9 +175,7 @@ TEST_P(BufferedColumnTestCase, FlushEmpty) {
       EXPECT_EQ(nw.RowCount(), 0u);
       w.Rollback();
     }
-    // Eagerly-created `.col` file is left as an orphan post-Rollback; the
-    // directory cleaner sweeps it later (legacy `.csd` writer contract).
-    EXPECT_TRUE(HasCsFile(dir, "flush_empty_rb"));
+    EXPECT_FALSE(HasCsFile(dir, "flush_empty_rb"));
   }
 
   // --- (2) Commit-with-zero-padding produces a 0-row group ---------------

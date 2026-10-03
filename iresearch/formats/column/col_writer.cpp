@@ -39,37 +39,14 @@
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
-namespace {
-
-void SerializeNormColumn(duckdb::BinarySerializer& s,
-                         const NormColumnWriter& nw) {
-  s.WriteProperty(0, "id", static_cast<uint64_t>(nw.Id()));
-  s.WriteProperty(1, "row_group_size", nw.RowGroupSize());
-  s.WriteProperty(2, "row_count", nw.RowCount());
-  const auto& ptrs = nw.Pointers();
-  s.WriteList(3, "row_groups", ptrs.size(),
-              [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-                const auto& p = ptrs[i];
-                list.WriteObject([&](duckdb::BinarySerializer& obj) {
-                  obj.WriteProperty(0, "byte_size", p.byte_size);
-                  obj.WriteProperty(1, "max", p.max);
-                  obj.WriteProperty(2, "sum", p.sum);
-                  obj.WriteProperty(3, "non_zero_count", p.non_zero_count);
-                  obj.WriteProperty(4, "file_offset", p.file_offset);
-                  obj.WritePropertyWithDefault<uint32_t>(5, "exceptions",
-                                                         p.exceptions, 0);
-                });
-              });
-}
-
-}  // namespace
 
 ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
                      duckdb::DatabaseInstance& db)
   : _dir{&dir},
     _segment_name{segment_name},
     _filename{FileName(segment_name)},
-    _db{&db} {}
+    _db{&db},
+    _nrm{dir, segment_name} {}
 
 ColWriter::~ColWriter() {
   if (_out && !_committed) {
@@ -90,7 +67,7 @@ void ColWriter::EnsureOut() {
 }
 
 bool ColWriter::Empty() const noexcept {
-  return _columns.empty() && _norm_writers.empty() && _ann_writers.empty();
+  return _columns.empty() && _ann_writers.empty();
 }
 
 void ColWriter::SetFieldOptions(
@@ -147,19 +124,6 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
                                     bool hyperloglog) {
   return OpenColumnInternal(id, std::move(type), skip_validity, row_group_size,
                             compression, hyperloglog);
-}
-
-NormColumnWriter& ColWriter::OpenNormColumn(field_id id,
-                                            uint32_t row_group_size) {
-  if (auto it = _norm_by_id.find(id); it != _norm_by_id.end()) {
-    return *it->second;
-  }
-  EnsureOut();
-  auto nw = std::make_unique<NormColumnWriter>(id, row_group_size, *_out);
-  auto* ptr = nw.get();
-  _norm_by_id.emplace(id, ptr);
-  _norm_writers.push_back(std::move(nw));
-  return *ptr;
 }
 
 AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
@@ -227,6 +191,7 @@ bool ColWriter::Commit(uint64_t target_row,
   if (_committed) {
     return true;
   }
+  _nrm.Commit(target_row);
   if (Empty() && !_out) {
     _committed = true;
     return true;
@@ -237,17 +202,6 @@ bool ColWriter::Commit(uint64_t target_row,
     }
     cw->SealRowGroup();
   }
-  for (auto& nw : _norm_writers) {
-    nw->PadTo(target_row);
-    nw->Finalize();
-  }
-  std::vector<const NormColumnWriter*> norm_columns;
-  norm_columns.reserve(_norm_writers.size());
-  for (const auto& nw : _norm_writers) {
-    if (!nw->Pointers().empty()) {
-      norm_columns.push_back(nw.get());
-    }
-  }
   format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& footer) {
     if (!_columns.empty()) {
       footer.WriteList(
@@ -255,15 +209,6 @@ bool ColWriter::Commit(uint64_t target_row,
         [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
           list.WriteObject([&](duckdb::BinarySerializer& obj) {
             SerializeColumnMeta(obj, _columns[i]->Meta());
-          });
-        });
-    }
-    if (!norm_columns.empty()) {
-      footer.WriteList(
-        kColFieldNormColumns, "norm_columns", norm_columns.size(),
-        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-          list.WriteObject([&](duckdb::BinarySerializer& obj) {
-            SerializeNormColumn(obj, *norm_columns[i]);
           });
         });
     }

@@ -539,7 +539,12 @@ void CountPatches(benchmark::State& state, const irs::bstring& bytes,
   for (uint32_t b = 0; b != blocks; ++b) {
     const uint32_t token = p[0];
     if constexpr (std::is_same_v<Encoding, bc::DeltaEncoding>) {
-      bitsets += token == static_cast<uint32_t>(bc::DeltaEncoding::Bitset);
+      if (token == static_cast<uint32_t>(bc::DeltaEncoding::Bitset) ||
+          bc::IsTokenBitset(token)) {
+        ++bitsets;
+        p += size(p);
+        continue;
+      }
     }
     if (token >= static_cast<uint32_t>(Encoding::Pack)) {
       const auto shape = bc::ShapeOf<Encoding>(token);
@@ -1061,13 +1066,14 @@ void BmDensityFill(benchmark::State& state) {
     const auto* p = encoded.data();
     irs::doc_id_t prev = 0;
     for (uint32_t b = 0; b != kDensityDocs / kN; ++b) {
-      if (p[0] == static_cast<irs::byte_type>(bc::DeltaEncoding::Bitset)) {
-        const uint32_t n = p[1];
-        const auto* bits = reinterpret_cast<const uint64_t*>(p + 2);
+      if (p[0] == static_cast<irs::byte_type>(bc::DeltaEncoding::Bitset) ||
+          bc::IsTokenBitset(p[0])) {
+        const auto [raw, n] = bc::ParseBitset(p);
+        const auto* bits = reinterpret_cast<const uint64_t*>(raw);
         irs::OrBitsetAt(words.data(), uint64_t{prev} + 1, bits, n);
         prev += 1 + (n - 1) * kBits + (kBits - 1) -
                 static_cast<uint32_t>(std::countl_zero(bits[n - 1]));
-        p += 2 + n * sizeof(uint64_t);
+        p = raw + n * sizeof(uint64_t);
       } else if (zero_base != 0 && IsZeroBasePatch(p[0])) {
         p = zero_base == 1 ? FillZeroBase(p, prev, words.data())
                            : FillZeroBaseWords(p, prev, words.data());

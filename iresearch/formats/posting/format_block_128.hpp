@@ -208,10 +208,11 @@ struct FormatTraits128 {
     SDB_ASSERT(1 <= len && len <= kBlock);
     const bool full = len == kBlock;
     const auto token = begin[0];
-    if (token == block_codec::Code(block_codec::DeltaEncoding::Bitset)) {
-      const uint32_t words = begin[1];
-      const auto* const bitset = reinterpret_cast<const uint64_t*>(begin + 2);
-      end = begin + 2 + words * sizeof(uint64_t);
+    if (token == block_codec::Code(block_codec::DeltaEncoding::Bitset) ||
+        block_codec::IsTokenBitset(token)) {
+      const auto [bits, words] = block_codec::ParseBitset(begin);
+      const auto* const bitset = reinterpret_cast<const uint64_t*>(bits);
+      end = bits + words * sizeof(uint64_t);
       return {bitset, words, BitsetMax(prev, bitset, words),
               FillLeaf::Kind::Bitset};
     }

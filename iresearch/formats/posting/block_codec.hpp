@@ -63,7 +63,8 @@ enum class DeltaEncoding : byte_type {
   Patch32 = Patch16 + kMaxWidth,
   PatchMixed = Patch32 + kMaxWidth,
   PatchBitmap = PatchMixed + kMaxWidth,
-  End = PatchBitmap + kMaxWidth,
+  BitsetWords = PatchBitmap + kMaxWidth,
+  End = 255,
 };
 
 inline constexpr uint32_t kMinusOneBits = 8;
@@ -148,6 +149,33 @@ inline constexpr uint32_t kMaxCount = std::numeric_limits<byte_type>::max();
 template<typename E>
 constexpr uint32_t Code(E e) noexcept {
   return static_cast<uint32_t>(e);
+}
+
+inline constexpr uint32_t kTokenBitsetWords =
+  Code(DeltaEncoding::End) - Code(DeltaEncoding::BitsetWords);
+
+constexpr bool IsTokenBitset(uint32_t token) noexcept {
+  return token >= Code(DeltaEncoding::BitsetWords);
+}
+
+constexpr uint32_t TokenBitsetWords(uint32_t token) noexcept {
+  return token - Code(DeltaEncoding::BitsetWords) + 1;
+}
+
+constexpr uint32_t BitsetHeader(uint32_t words) noexcept {
+  return words <= kTokenBitsetWords ? 1 : 2;
+}
+
+struct BitsetView {
+  const byte_type* bits;
+  uint32_t words;
+};
+
+inline IRS_FORCE_INLINE BitsetView ParseBitset(const byte_type* in) noexcept {
+  if (IsTokenBitset(in[0])) {
+    return {in + 1, TokenBitsetWords(in[0])};
+  }
+  return {in + 2, in[1]};
 }
 
 #define IRS_BLOCK_CODEC_CASE(V)                                   \
@@ -994,9 +1022,15 @@ uint32_t WriteBitset(const doc_id_t* docs, uint32_t len, doc_id_t prev,
   if constexpr (Full) {
     len = kBlockOf<L>;
   }
-  out[0] = static_cast<byte_type>(DeltaEncoding::Bitset);
-  out[1] = static_cast<byte_type>(words);
-  auto* bits = out + 2;
+  const auto header = BitsetHeader(words);
+  if (header == 1) {
+    out[0] =
+      static_cast<byte_type>(Code(DeltaEncoding::BitsetWords) + words - 1);
+  } else {
+    out[0] = static_cast<byte_type>(DeltaEncoding::Bitset);
+    out[1] = static_cast<byte_type>(words);
+  }
+  auto* bits = out + header;
   const U64x4 zero = Opaque(U64x4{});
   for (uint32_t w = 0; w <= words; w += 4) {
     std::memcpy(bits + w * sizeof(uint64_t), &zero, sizeof(zero));
@@ -1039,7 +1073,7 @@ uint32_t WriteBitset(const doc_id_t* docs, uint32_t len, doc_id_t prev,
   for (; i != len; ++i) {
     deposit(docs[i] - base, 1);
   }
-  return 2 + words * sizeof(uint64_t);
+  return header + words * sizeof(uint64_t);
 }
 
 inline IRS_FORCE_INLINE void FillProgression(doc_id_t* out, uint32_t len,
@@ -1131,6 +1165,13 @@ inline constexpr auto kSizeShapes = [] {
   std::array<SizeShape, 256> shapes{};
   for (uint32_t token = 0; token != Code(Encoding::End); ++token) {
     auto& s = shapes[token];
+    if constexpr (std::is_same_v<Encoding, DeltaEncoding>) {
+      if (IsTokenBitset(token)) {
+        s = {.fixed = static_cast<uint16_t>(1 + TokenBitsetWords(token) *
+                                                  sizeof(uint64_t))};
+        continue;
+      }
+    }
     if (token < Code(Encoding::Pack)) {
       constexpr uint16_t kSame[] = {1, 2, 3, 5};
       if constexpr (std::is_same_v<Encoding, DeltaEncoding>) {
@@ -1327,8 +1368,7 @@ inline IRS_FORCE_INLINE IRS_BLOCK_CODEC_AVX512 doc_id_t* MaterializeWord16(
 
 inline IRS_FORCE_INLINE IRS_BLOCK_CODEC_AVX512 const byte_type* DecodeBitset16(
   const byte_type* in, uint32_t len, doc_id_t prev, doc_id_t* out) noexcept {
-  const uint32_t words = in[1];
-  const auto* bits = in + 2;
+  const auto [bits, words] = ParseBitset(in);
   auto* p = out;
   for (uint32_t w = 0; w != words; ++w) {
     p = MaterializeWord16(
@@ -1378,8 +1418,7 @@ inline IRS_FORCE_INLINE IRS_BLOCK_CODEC_VBMI2 doc_id_t* MaterializeWord64(
 template<uint32_t G>
 IRS_FORCE_INLINE IRS_BLOCK_CODEC_VBMI2 const byte_type* DecodeBitsetWords64(
   const byte_type* in, uint32_t len, doc_id_t prev, doc_id_t* out) noexcept {
-  const uint32_t words = in[1];
-  const auto* bits = in + 2;
+  const auto [bits, words] = ParseBitset(in);
   auto* p = out;
   const auto* const end = out + len + kOutSlack;
   uint32_t w = 0;
@@ -1404,7 +1443,7 @@ inline IRS_FORCE_INLINE IRS_BLOCK_CODEC_VBMI2 const byte_type* DecodeBitset64(
 #ifdef __AVX2__
   constexpr uint32_t kSparse = 10;
   constexpr uint32_t kMedium = 24;
-  const uint32_t words = in[1];
+  const auto words = ParseBitset(in).words;
   if (len <= kSparse * words) {
     return DecodeBitsetWords64<1>(in, len, prev, out);
   }
@@ -1448,8 +1487,7 @@ IRS_FORCE_INLINE const byte_type* DecodeDeltaBody(const byte_type* in,
     FillProgression(out, len, prev, absl::little_endian::Load32(in + 1));
     return in + 1 + sizeof(uint32_t);
   } else if constexpr (Token == Code(DeltaEncoding::Bitset)) {
-    const uint32_t words = in[1];
-    const auto* bits = in + 2;
+    const auto [bits, words] = ParseBitset(in);
     auto* p = out;
     for (uint32_t w = 0; w != words; ++w) {
       p = MaterializeBits(
@@ -1539,7 +1577,9 @@ consteval bool WideTail(uint32_t token) noexcept {
 
 template<uint32_t Token, uint32_t L, bool Wide, bool Bytes>
 consteval DeltaBlockDecoder DeltaBlockDecoderOf() noexcept {
-  if constexpr (Bytes && Token == Code(DeltaEncoding::Bitset)) {
+  if constexpr (IsTokenBitset(Token)) {
+    return DeltaBlockDecoderOf<Code(DeltaEncoding::Bitset), L, Wide, Bytes>();
+  } else if constexpr (Bytes && Token == Code(DeltaEncoding::Bitset)) {
     return &DecodeBitsetBlock64;
   } else if constexpr (Wide && Token >= Code(DeltaEncoding::Bitset)) {
     return &DecodeDeltaBlockTokenAvx512<Token>;
@@ -1550,7 +1590,9 @@ consteval DeltaBlockDecoder DeltaBlockDecoderOf() noexcept {
 
 template<uint32_t Token, uint32_t L, bool Wide, bool Bytes>
 consteval DeltaTailDecoder DeltaTailDecoderOf() noexcept {
-  if constexpr (Bytes && Token == Code(DeltaEncoding::Bitset)) {
+  if constexpr (IsTokenBitset(Token)) {
+    return DeltaTailDecoderOf<Code(DeltaEncoding::Bitset), L, Wide, Bytes>();
+  } else if constexpr (Bytes && Token == Code(DeltaEncoding::Bitset)) {
     return &DecodeBitsetTail64;
   } else if constexpr (Wide && WideTail(Token)) {
     return &DecodeDeltaTailTokenAvx512<Token>;
@@ -1796,7 +1838,8 @@ IRS_FORCE_INLINE uint32_t BitsetWords(const doc_id_t* docs, uint32_t len,
   const uint64_t words =
     (range + BitsRequired<uint64_t>() - 1) / BitsRequired<uint64_t>();
   if (options.bitset && words <= Layout<L>::kMaxBitsetWords &&
-      (2 + words * sizeof(uint64_t)) * 100 <=
+      (BitsetHeader(static_cast<uint32_t>(words)) + words * sizeof(uint64_t)) *
+          100 <=
         uint64_t{plan_size} * (100 + options.bitset_margin_percent)) {
     return static_cast<uint32_t>(words);
   }
@@ -2028,6 +2071,11 @@ template<typename Encoding, bool Full, uint32_t L>
 uint32_t PrefixSize(uint32_t token, uint32_t len) noexcept {
   if constexpr (Full) {
     len = kBlockOf<L>;
+  }
+  if constexpr (std::is_same_v<Encoding, DeltaEncoding>) {
+    if (IsTokenBitset(token)) {
+      return 1;
+    }
   }
   if (token < Code(Encoding::Pack)) {
     if constexpr (std::is_same_v<Encoding, DeltaEncoding>) {

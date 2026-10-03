@@ -21,7 +21,6 @@
 #include "catalog/entry/inverted_index.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
 #include <absl/strings/strip.h>
 
@@ -32,12 +31,14 @@
 #include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/common/query_context.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_job_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_job_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/qualified_name.hpp>
+#include <duckdb/parser/statement/pragma_statement.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
@@ -542,8 +543,11 @@ void InvertedIndexEntry::CreateReindexJob(
   duckdb::CreateJobInfo create;
   create.SetQualifiedName({catalog.GetName(), ParentSchemaName(), name});
   create.schedule = ReindexSchedule(interval_ms);
-  create.body =
-    absl::StrCat("PRAGMA ", connector::kReindexByIdPragma, "(", oid, ")");
+  auto body = duckdb::make_uniq<duckdb::PragmaStatement>();
+  body->info->name = duckdb::Identifier{connector::kReindexByIdPragma};
+  body->info->parameters.emplace_back(
+    duckdb::make_uniq<duckdb::ConstantExpression>(duckdb::Value::BIGINT(oid)));
+  create.body = std::move(body);
   create.permissions.owner =
     ParentSchema(transaction)
       .GetEntry(transaction, duckdb::CatalogType::TABLE_ENTRY, GetTableName())

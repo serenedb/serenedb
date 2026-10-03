@@ -1858,6 +1858,42 @@ TEST_F(ColumnReaderTest, RepeatedListRowGroupsKeepTheirCodes) {
                  false);
 }
 
+TEST_F(ColumnReaderTest, ListsTurningRepetitiveAreDeduplicatedAgain) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(
+    Db(), dir, "aseg", 64, type,
+    "SELECT CASE WHEN i % 17 = 0 THEN NULL WHEN i < 4096 THEN ['u' || "
+    "i] ELSE ['r' || (i % 5), 'x'] END FROM range(65536) t(i)",
+    32768, expected);
+  irs::ColReader r{dir, "aseg", Db()};
+  const auto* col = r.Column(64);
+  ASSERT_NE(col, nullptr);
+  EXPECT_LT(col->Child()->RowCount(), 40000u);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{0, 1, 4095, 4096, 4097, 9000, 40000, 65535}}, false);
+}
+
+TEST_F(ColumnReaderTest, StructListsTurningRepetitiveAreDeduplicatedAgain) {
+  const auto type = duckdb::LogicalType::STRUCT(
+    {{"tags", duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)}});
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "bseg", 65, type,
+              "SELECT {'tags': CASE WHEN i % 17 = 0 THEN NULL WHEN i < 4096 "
+              "THEN ['u' || i] ELSE ['r' || (i % 5), 'x'] END} FROM "
+              "range(32768) t(i)",
+              32768, expected);
+  irs::ColReader r{dir, "bseg", Db()};
+  const auto* col = r.Column(65);
+  ASSERT_NE(col, nullptr);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{0, 1, 4095, 4096, 4097, 9000, 20000, 32767}}, false);
+}
+
 TEST_F(ColumnReaderTest, RepeatedWideMapsAcrossRowGroups) {
   const auto type = duckdb::LogicalType::MAP(duckdb::LogicalType::VARCHAR,
                                              duckdb::LogicalType::VARCHAR);

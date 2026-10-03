@@ -632,7 +632,13 @@ void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
   if (type != duckdb::CatalogType::FOREIGN_SERVER_ENTRY) {
     duckdb::DuckCatalog::Alter(transaction, info);
     if (info.type == duckdb::AlterType::ALTER_INDEX) {
-      SyncReindexJob(transaction, info.GetQualifiedName());
+      const auto& name = info.GetQualifiedName();
+      auto index = duckdb::Catalog::GetEntry<duckdb::IndexCatalogEntry>(
+        transaction.GetContext(), {GetName(), name.Schema(), name.Name()},
+        duckdb::OnEntryNotFound::RETURN_NULL);
+      if (index && index->index_type == "inverted") {
+        index->Cast<InvertedIndexEntry>().SyncReindexJob(transaction);
+      }
     }
     return;
   }
@@ -642,21 +648,6 @@ void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG(duckdb::CatalogTypeToString(type), " with name ",
                             name.GetIdentifierName(), " does not exist!"));
-  }
-}
-
-void SereneDBCatalog::SyncReindexJob(duckdb::CatalogTransaction transaction,
-                                     const duckdb::QualifiedName& name) {
-  auto schema =
-    GetSchema(transaction, name.Schema(), duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!schema) {
-    return;
-  }
-  auto entry = schema->GetEntry(transaction, duckdb::CatalogType::INDEX_ENTRY,
-                                name.Name());
-  if (entry &&
-      entry->Cast<duckdb::IndexCatalogEntry>().index_type == "inverted") {
-    entry->Cast<InvertedIndexEntry>().SyncReindexJob(transaction);
   }
 }
 

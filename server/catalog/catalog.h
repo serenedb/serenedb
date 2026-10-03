@@ -192,9 +192,6 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
 
  private:
   std::shared_ptr<DatabaseDirectory> _directory;
-  void SyncReindexJob(duckdb::CatalogTransaction transaction,
-                      const duckdb::QualifiedName& name);
-
   std::atomic_bool _detached{false};
 };
 

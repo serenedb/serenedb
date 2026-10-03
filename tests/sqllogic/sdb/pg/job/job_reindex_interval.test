@@ -31,7 +31,7 @@ CREATE INDEX jri_idx ON jri_v USING inverted(id, body) WITH (reindex_interval=10
 
 
 query
-SELECT job_name, schedule, schedule_kind, body LIKE 'PRAGMA serenedb_reindex_by_id(%)' AS by_id
+SELECT job_name, schedule, schedule_kind, body LIKE 'PRAGMA serenedb_reindex_by_id(%);' AS by_id
 FROM duckdb_jobs() WHERE job_name = 'jri_idx';
 ----
 job_name	schedule	schedule_kind	by_id

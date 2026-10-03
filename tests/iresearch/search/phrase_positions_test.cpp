@@ -267,6 +267,7 @@ Outcome Run(const irs::ByPhraseOptions& phrase, const Doc& doc, bool dense) {
   irs::ByPhrase filter;
   *filter.mutable_field_id() = kField;
   *filter.mutable_options() = phrase;
+  filter.mutable_options()->LowerParts();
 
   Outcome out;
   tests::PreparedFilter prepared{filter, *reader};
@@ -396,6 +397,56 @@ TEST(PhrasePositionsTest, expansion_slot_accepts_expanded_terms) {
   narrow.push_back<irs::ByPrefixOptions>().term = Bytes("bro");
   EXPECT_TRUE(Matches(narrow, Doc{"the quick brown fox"}));
   EXPECT_FALSE(Matches(narrow, Doc{"the quick bread"}));
+}
+
+TEST(PhrasePositionsTest, regexp_slot) {
+  const auto regexp = [](std::string_view pattern,
+                         irs::RegexpSyntax syntax = irs::RegexpSyntax::Perl) {
+    irs::ByPhraseOptions phrase;
+    phrase.push_back<irs::ByTermOptions>().term = Bytes("quick");
+    phrase.push_back<irs::ByRegexpOptions>() =
+      irs::ByRegexpOptions{Bytes(pattern), syntax};
+    phrase.push_back<irs::ByTermOptions>().term = Bytes("fox");
+    return phrase;
+  };
+  EXPECT_TRUE(Matches(regexp("br.wn"), Doc{"the quick brown fox"}));
+  EXPECT_FALSE(Matches(regexp("br.wn"), Doc{"the quick bread fox"}));
+  EXPECT_TRUE(Matches(regexp("(brown|red)"), Doc{"quick red fox"}));
+  EXPECT_TRUE(Matches(regexp("brown"), Doc{"quick brown fox"}));
+  EXPECT_FALSE(Matches(regexp("brown"), Doc{"quick browns fox"}));
+  EXPECT_TRUE(Matches(regexp("bro.*"), Doc{"quick browns fox"}));
+  EXPECT_TRUE(Matches(regexp("[[:alpha:]]+n", irs::RegexpSyntax::PosixEre),
+                      Doc{"quick brown fox"}));
+  EXPECT_FALSE(Matches(regexp("[[:alpha:]]+n", irs::RegexpSyntax::PosixEre),
+                       Doc{"quick red fox"}));
+  EXPECT_EQ(2U, Verify(regexp("[a-z]+"), Doc{"quick a fox quick b fox"}).freq);
+}
+
+TEST(PhrasePositionsTest, regexp_parts_lower_by_shape) {
+  const auto lowered = [](std::string_view pattern,
+                          irs::RegexpSyntax syntax = irs::RegexpSyntax::Perl) {
+    irs::ByPhraseOptions phrase;
+    phrase.push_back<irs::ByRegexpOptions>() =
+      irs::ByRegexpOptions{Bytes(pattern), syntax};
+    phrase.LowerParts();
+    return phrase.begin()->part;
+  };
+  const auto literal = lowered("brown");
+  ASSERT_TRUE(std::holds_alternative<irs::ByTermOptions>(literal));
+  EXPECT_EQ(Bytes("brown"),
+            irs::bytes_view{std::get<irs::ByTermOptions>(literal).term});
+  const auto prefix = lowered("bro.*");
+  ASSERT_TRUE(std::holds_alternative<irs::ByPrefixOptions>(prefix));
+  EXPECT_EQ(Bytes("bro"),
+            irs::bytes_view{std::get<irs::ByPrefixOptions>(prefix).term});
+  const auto perl = lowered("br.wn");
+  ASSERT_TRUE(std::holds_alternative<irs::AutomatonOptions>(perl));
+  EXPECT_EQ(irs::PatternKind::RegexpPerl,
+            std::get<irs::AutomatonOptions>(perl).kind);
+  const auto posix = lowered("br[[:alpha:]]wn", irs::RegexpSyntax::PosixEre);
+  ASSERT_TRUE(std::holds_alternative<irs::AutomatonOptions>(posix));
+  EXPECT_EQ(irs::PatternKind::RegexpPosixEre,
+            std::get<irs::AutomatonOptions>(posix).kind);
 }
 
 TEST(PhrasePositionsTest, slop) {

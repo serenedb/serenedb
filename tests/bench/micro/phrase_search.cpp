@@ -291,7 +291,29 @@ irs::ByPhraseOptions ParsePhrase(std::string_view text) {
       SDB_ASSERT(parsed);
       continue;
     }
-    if (word.ends_with('*')) {
+    if (word.starts_with('[')) {
+      const std::pair<std::string_view, std::string_view> bounds =
+        absl::StrSplit(word.substr(1, word.size() - 2), ',');
+      auto& range =
+        phrase.push_back<irs::ByRangeOptions>(offs_min, offs_max).range;
+      range.min = irs::ViewCast<irs::byte_type>(bounds.first);
+      range.max = irs::ViewCast<irs::byte_type>(bounds.second);
+      range.min_type = irs::BoundType::Inclusive;
+      range.max_type = irs::BoundType::Inclusive;
+    } else if (const auto tilde = word.rfind('~');
+               tilde != std::string_view::npos) {
+      auto& fuzzy =
+        phrase.push_back<irs::ByEditDistanceOptions>(offs_min, offs_max);
+      fuzzy.term = irs::ViewCast<irs::byte_type>(word.substr(0, tilde));
+      uint32_t distance = 1;
+      [[maybe_unused]] const bool parsed =
+        absl::SimpleAtoi(word.substr(tilde + 1), &distance);
+      SDB_ASSERT(parsed);
+      fuzzy.max_distance = static_cast<irs::byte_type>(distance);
+    } else if (word.contains('%')) {
+      phrase.push_back<irs::ByWildcardOptions>(offs_min, offs_max) =
+        irs::ByWildcardOptions{irs::ViewCast<irs::byte_type>(word)};
+    } else if (word.ends_with('*')) {
       phrase.push_back<irs::ByPrefixOptions>(offs_min, offs_max).term =
         irs::ViewCast<irs::byte_type>(word.substr(0, word.size() - 1));
     } else {
@@ -303,12 +325,17 @@ irs::ByPhraseOptions ParsePhrase(std::string_view text) {
   return phrase;
 }
 
+irs::Filter::ptr MakeLoweredPhrase(irs::ByPhraseOptions&& phrase) {
+  phrase.LowerParts();
+  return MakeFilter<irs::ByPhrase>(std::move(phrase));
+}
+
 irs::Filter::ptr MakePhrase(const Index& index, std::string_view text,
                             bool cover) {
   auto phrase = ParsePhrase(text);
   const auto& strategy = *index.strategy;
   if (strategy.max_gram == 0) {
-    return MakeFilter<irs::ByPhrase>(std::move(phrase));
+    return MakeLoweredPhrase(std::move(phrase));
   }
   const auto& shingles =
     irs::utils::downCast<irs::analysis::ShingleTokenizer>(*index.tokenizer);
@@ -318,7 +345,7 @@ irs::Filter::ptr MakePhrase(const Index& index, std::string_view text,
       if (auto* term = std::get_if<irs::bstring>(&*plan)) {
         return MakeFilter<irs::ByTerm>(irs::ByTermOptions{std::move(*term)});
       }
-      return MakeFilter<irs::ByPhrase>(
+      return MakeLoweredPhrase(
         std::get<irs::ByPhraseOptions>(std::move(*plan)));
     }
   }
@@ -326,7 +353,7 @@ irs::Filter::ptr MakePhrase(const Index& index, std::string_view text,
     return nullptr;
   }
   phrase.set_word_separator(shingles.Separator());
-  return MakeFilter<irs::ByPhrase>(std::move(phrase));
+  return MakeLoweredPhrase(std::move(phrase));
 }
 
 uint64_t Count(const irs::DirectoryReader& reader, const irs::Filter& filter) {
@@ -454,6 +481,10 @@ constexpr Query kQueries[] = {
   {.name = "prefix3", .text = "quick brown fo*", .complex = true},
   {.name = "interval4", .text = "quick brown +2-3 jumps", .complex = true},
   {.name = "stopprefix3", .text = "the of th*", .complex = true},
+  {.name = "suffix3", .text = "quick brown %ox", .complex = true},
+  {.name = "infix3", .text = "quick brown f%x", .complex = true},
+  {.name = "range3", .text = "quick brown [fo,fp]", .complex = true},
+  {.name = "fuzzy3", .text = "quick brown fax~2", .complex = true},
 };
 
 void Register(std::string name, size_t strategy, std::string_view text,

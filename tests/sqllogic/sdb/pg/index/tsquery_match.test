@@ -799,10 +799,11 @@ SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(ts_starts_with('qu'), ts_phrase(
 a
 1
 
-# Regex isn't a supported phrase part (the emitter accepts term-shaped
-# parts only). Same restriction as `##`.
-statement error
+query
 SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(ts_regexp('^qu.*ck$'), ts_phrase('red'));
+----
+a
+2
 
 # tsquery_phrase with multi-word phrase part on either side. The inner
 # multi-word ts_phrase('brown fox') is itself a 2-part phrase that
@@ -946,6 +947,80 @@ SELECT a FROM tsq_idx WHERE b @@ (ts_levenshtein('quikc', 2) ## 'brown');
 ----
 a
 1
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_regexp('br.wn') ## 'fox') ORDER BY a;
+----
+a
+1
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_regexp('(brown|red)') ## 'fox') ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_regexp('brown')) ORDER BY a;
+----
+a
+1
+
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_regexp('qu.*') ## 1 ## 'fox') ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## 1 ## ts_regexp('f.x')) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_regexp('[[:alpha:]]+n', 'posix') ## 'fox') ORDER BY a;
+----
+a
+1
+
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_like('qu%') ## ts_regexp('r.d') ## ts_any(['fox', 'dog'])) ORDER BY a;
+----
+a
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_regexp('z.*z')) ORDER BY a;
+----
+a
+
+query
+EXPLAIN SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_regexp('br.wn') ## ts_regexp('fo.*') ## ts_regexp('jumps'))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────╮
+│ Index: tsq_idx                                                                   │
+│ Lookup: table                                                                    │
+│ Index Filter:                                                                    │
+│ ╭─ Phrase ─────────────────────────────────────────────────────────────────────╮ │
+│ │ Field: b(string)                                                             │ │
+│ │ Parts:                                                                       │ │
+│ │ Term:quick(0, 0); Automaton:br.wn(1, 1); Prefix:fo(1, 1); Term:jumps(1, 1);  │ │
+│ ╰──────────────────────────────────────────────────────────────────────────────╯ │
+│ Projections: a                                                                   │
+│ ~1 row                                                                           │
+╰──────────────────────────────────────────────────────────────────────────────────╯
+
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_regexp('br.wn', 'lisp'));
+----
+db error: ERROR: ts_regexp syntax must be one of ['perl', 'posix'], got 'lisp'
+HINT: Example: ts_regexp('abc.*') or ts_regexp('foo', 'posix'). Syntax is 'perl' (default) or 'posix'.
+
 
 # ----------------------------------------------------------------------
 # ## with ANY_OF / ALL_OF phrase parts.
@@ -2684,7 +2759,7 @@ statement error
 SELECT a FROM tsq_idx WHERE b @@ (('fox'::TSQUERY ^ 2.0) ## 'dog');
 ----
 db error: ERROR: ## part type not supported yet: ^
-HINT: Supported phrase parts: bare 'word', ts_starts_with, ts_like, ts_levenshtein, ts_phrase, ts_any, ts_between.
+HINT: Supported phrase parts: bare 'word', ts_starts_with, ts_like, ts_regexp, ts_levenshtein, ts_phrase, ts_any, ts_between.
 
 
 # ----------------------------------------------------------------------

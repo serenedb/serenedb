@@ -262,6 +262,12 @@ void FillByEditDistanceOptions(const LevenshteinArgs& args,
                                irs::ByEditDistanceOptions& out,
                                size_t max_terms);
 
+struct RegexpArgs {
+  std::string pattern;
+  irs::RegexpSyntax syntax = irs::RegexpSyntax::Perl;
+};
+RegexpArgs ParseRegexpArgs(const duckdb::BoundFunctionExpression& func);
+
 // ts_any/ts_all arg unpacker: handles single TSQUERY, TSQUERY[]
 // (extracts elements), and the optional min_should_match suffix.
 // `synthesised` collects any temporary expressions the unpacker

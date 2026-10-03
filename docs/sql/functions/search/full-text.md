@@ -194,6 +194,10 @@ Use the `'posix'` dialect for a POSIX ERE bracket expression:
 
 <SqlLogicTest id="sql/functions/full_text_search/ts_regexp_posix" />
 
+In a [`##`](../../indexes/inverted/full-text-search.md#phrase-parts) phrase, `ts_regexp` matches the token at its position:
+
+<SqlLogicTest id="sql/functions/full_text_search/ts_regexp_phrase" />
+
 #### `ts_levenshtein(text[, distance[, transpositions[, prefix]]])` {#ts_levenshtein}
 
 Fuzzy match: find tokens within a bounded edit distance of `text` — the standard tolerance for typos.

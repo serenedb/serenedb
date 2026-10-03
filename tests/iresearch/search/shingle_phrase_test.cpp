@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
 
@@ -52,6 +53,7 @@
 #include <optional>
 #include <random>
 #include <string>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -78,6 +80,33 @@ class WhitespaceTokenizer final
     const std::string_view data{raw.GetData(), raw.GetSize()};
     for (const auto word : absl::StrSplit(data, ' ', absl::SkipEmpty())) {
       sink.Emit<L>(irs::MakeTermView(word));
+    }
+    return true;
+  }
+};
+
+class PositionedTokenizer final
+  : public irs::analysis::TypedTokenizer<PositionedTokenizer> {
+ public:
+  irs::TokenTraits Traits() const noexcept final {
+    return {.explicit_pos = true};
+  }
+
+  static constexpr std::string_view type_name() noexcept {
+    return "test_positioned";
+  }
+
+  template<irs::TokenLayout L>
+  bool DoFill(duckdb::string_t raw, irs::TokenSink& sink) {
+    const std::string_view data{raw.GetData(), raw.GetSize()};
+    for (const auto token : absl::StrSplit(data, ' ', absl::SkipEmpty())) {
+      const auto at = token.rfind('@');
+      uint32_t pos = 0;
+      if (at == std::string_view::npos ||
+          !absl::SimpleAtoi(token.substr(at + 1), &pos)) {
+        return false;
+      }
+      sink.Emit<L>(irs::MakeTermView(token.substr(0, at)), pos);
     }
     return true;
   }
@@ -142,6 +171,29 @@ std::vector<uint32_t> Offsets(const irs::ByPhraseOptions& phrase) {
     out.push_back(info.offs_max);
   }
   return out;
+}
+
+std::string RandomText(std::mt19937& rng,
+                       std::span<const std::string_view> words,
+                       size_t min_length, size_t spread) {
+  std::string text;
+  const auto length = min_length + rng() % spread;
+  for (size_t j = 0; j != length; ++j) {
+    absl::StrAppend(&text, j == 0 ? "" : " ", words[rng() % words.size()]);
+  }
+  return text;
+}
+
+std::vector<std::string> RandomTexts(std::mt19937& rng,
+                                     std::span<const std::string_view> words,
+                                     size_t count, size_t min_length,
+                                     size_t spread) {
+  std::vector<std::string> texts;
+  texts.reserve(count);
+  for (size_t i = 0; i != count; ++i) {
+    texts.push_back(RandomText(rng, words, min_length, spread));
+  }
+  return texts;
 }
 
 inline constexpr irs::field_id kShingleId = 2;
@@ -230,13 +282,14 @@ void ExpectConsistent(const Families& families) {
 
 class Index {
  public:
+  template<typename Words = WhitespaceTokenizer>
   Index(std::span<const std::string_view> docs, ShingleTokenizer& shingles,
-        irs::IndexFeatures shingle_features) {
+        irs::IndexFeatures shingle_features, std::type_identity<Words> = {}) {
     auto writer = irs::IndexWriter::Make(_dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     EXPECT_NE(nullptr, writer);
-    WhitespaceTokenizer plain;
-    WhitespaceTokenizer positional;
+    Words plain;
+    Words positional;
     Field shingle_field{
       .analyzer = &shingles, .id = kShingleId, .features = shingle_features};
     Field plain_field{.analyzer = &plain, .id = kPlainId};
@@ -745,16 +798,8 @@ TEST(ShinglePhraseIndexTest, pattern_parts_find_words_after_shingles) {
 TEST(ShinglePhraseIndexTest, partial_cover_agrees_with_positions) {
   static constexpr std::string_view kWords[] = {"a", "b", "c", "d", "e"};
   std::mt19937 rng{7};
-  std::vector<std::string> texts;
-  for (size_t i = 0; i != 300; ++i) {
-    std::string text;
-    const auto length = 3 + rng() % 10;
-    for (size_t j = 0; j != length; ++j) {
-      absl::StrAppend(&text, j == 0 ? "" : " ", kWords[rng() % 5]);
-    }
-    texts.push_back(std::move(text));
-  }
-  std::vector<std::string_view> docs{texts.begin(), texts.end()};
+  const auto texts = RandomTexts(rng, kWords, 300, 3, 10);
+  const std::vector<std::string_view> docs{texts.begin(), texts.end()};
   auto shingles = MakeShingles(2, 3);
   const Index index{docs, *shingles,
                     irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
@@ -801,26 +846,14 @@ TEST(ShinglePhraseIndexTest, cover_scores_by_phrase_frequency) {
 TEST(ShinglePhraseIndexTest, cover_agrees_with_positions) {
   static constexpr std::string_view kWords[] = {"a", "b", "c", "d", "e"};
   std::mt19937 rng{42};
-  std::vector<std::string> texts;
-  for (size_t i = 0; i != 300; ++i) {
-    std::string text;
-    const auto length = 3 + rng() % 10;
-    for (size_t j = 0; j != length; ++j) {
-      absl::StrAppend(&text, j == 0 ? "" : " ", kWords[rng() % 5]);
-    }
-    texts.push_back(std::move(text));
-  }
-  std::vector<std::string_view> docs{texts.begin(), texts.end()};
+  const auto texts = RandomTexts(rng, kWords, 300, 3, 10);
+  const std::vector<std::string_view> docs{texts.begin(), texts.end()};
   auto shingles = MakeShingles(2, 3);
   const Index index{docs, *shingles,
                     irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
 
   for (size_t i = 0; i != 200; ++i) {
-    std::string phrase;
-    const auto length = 2 + rng() % 4;
-    for (size_t j = 0; j != length; ++j) {
-      absl::StrAppend(&phrase, j == 0 ? "" : " ", kWords[rng() % 5]);
-    }
+    const auto phrase = RandomText(rng, kWords, 2, 4);
     SCOPED_TRACE(phrase);
     const auto positional = PlainPhrase(kPositionalId, phrase);
     auto shingle_filter = ToFilter(Plan(*shingles, phrase, true));
@@ -833,16 +866,8 @@ TEST(ShinglePhraseIndexTest, cover_agrees_with_positions) {
 TEST(ShinglePhraseIndexTest, covers_run_in_every_family) {
   static constexpr std::string_view kWords[] = {"a", "b", "c", "d", "e"};
   std::mt19937 rng{11};
-  std::vector<std::string> texts;
-  for (size_t i = 0; i != 600; ++i) {
-    std::string text;
-    const auto length = 3 + rng() % 12;
-    for (size_t j = 0; j != length; ++j) {
-      absl::StrAppend(&text, j == 0 ? "" : " ", kWords[rng() % 5]);
-    }
-    texts.push_back(std::move(text));
-  }
-  std::vector<std::string_view> docs{texts.begin(), texts.end()};
+  const auto texts = RandomTexts(rng, kWords, 600, 3, 12);
+  const std::vector<std::string_view> docs{texts.begin(), texts.end()};
   auto shingles = MakeShingles(2, 3);
   const Index index{docs, *shingles,
                     irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
@@ -939,6 +964,53 @@ TEST(ShinglePhraseFilterTest, equality_covers_separator) {
   EXPECT_EQ(irs::ByPhraseOptions{}, separated);
 }
 
+TEST(ShinglePhraseFilterTest, lowered_patterns_reject_shingles) {
+  const auto lowered = [](std::string_view separator) {
+    irs::ByPhraseOptions phrase;
+    PushTerm(phrase, "quick", 0, 0);
+    phrase.push_back<irs::ByWildcardOptions>() = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view{"%ox"})};
+    phrase.set_word_separator(irs::ViewCast<irs::byte_type>(separator));
+    phrase.LowerParts();
+    return std::get<irs::AutomatonOptions>(std::next(phrase.begin())->part)
+      .source->Predicate();
+  };
+  const auto accepts = [](const irs::TermPredicate& predicate,
+                          std::string_view term) {
+    return predicate.Accepts(irs::ViewCast<irs::byte_type>(term));
+  };
+
+  const auto space = lowered(" ");
+  EXPECT_TRUE(accepts(*space, "fox"));
+  EXPECT_FALSE(accepts(*space, "brown fox"));
+  EXPECT_TRUE(accepts(*space, "brown_fox"));
+
+  const auto dot = lowered("\xC2\xB7");
+  EXPECT_TRUE(accepts(*dot, "box"));
+  EXPECT_FALSE(accepts(*dot,
+                       "brown\xC2\xB7"
+                       "fox"));
+
+  const auto none = lowered("");
+  EXPECT_TRUE(accepts(*none, "brown fox"));
+
+  const auto wide = lowered("--");
+  EXPECT_TRUE(accepts(*wide, "brown--fox"));
+
+  irs::ByPhraseOptions regexp;
+  PushTerm(regexp, "quick", 0, 0);
+  regexp.push_back<irs::ByRegexpOptions>() = irs::ByRegexpOptions{
+    irs::ViewCast<irs::byte_type>(std::string_view{".*ox"})};
+  regexp.set_word_separator(
+    irs::ViewCast<irs::byte_type>(std::string_view{" "}));
+  regexp.LowerParts();
+  const auto words =
+    std::get<irs::AutomatonOptions>(std::next(regexp.begin())->part)
+      .source->Predicate();
+  EXPECT_TRUE(accepts(*words, "fox"));
+  EXPECT_FALSE(accepts(*words, "brown fox"));
+}
+
 TEST(ShinglePhraseFilterTest, simplify_keeps_one_slot_phrases_that_filter) {
   const auto lower = [](irs::ByPhraseOptions options) {
     auto filter = std::make_unique<irs::ByPhrase>();
@@ -1008,16 +1080,8 @@ TEST(ShinglePhraseIndexTest, phrase_without_positions_matches_nothing) {
 TEST(ShinglePhraseIndexTest, every_pattern_kind_skips_shingles) {
   static constexpr std::string_view kWords[] = {"ab", "ac", "bc", "bd", "cd"};
   std::mt19937 rng{23};
-  std::vector<std::string> texts;
-  for (size_t i = 0; i != 300; ++i) {
-    std::string text;
-    const auto length = 2 + rng() % 8;
-    for (size_t j = 0; j != length; ++j) {
-      absl::StrAppend(&text, j == 0 ? "" : " ", kWords[rng() % 5]);
-    }
-    texts.push_back(std::move(text));
-  }
-  std::vector<std::string_view> docs{texts.begin(), texts.end()};
+  const auto texts = RandomTexts(rng, kWords, 300, 2, 8);
+  const std::vector<std::string_view> docs{texts.begin(), texts.end()};
   auto shingles = MakeShingles(2, 3);
   const Index index{docs, *shingles,
                     irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
@@ -1046,7 +1110,7 @@ TEST(ShinglePhraseIndexTest, every_pattern_kind_skips_shingles) {
     for (size_t j = 0; j != slots; ++j) {
       const irs::PosAttr::value_t offs = j == 0 ? 0 : 1;
       const auto word = kWords[rng() % 5];
-      switch (rng() % 5) {
+      switch (rng() % 6) {
         case 0: {
           const auto pattern = rng() % 2 ? absl::StrCat("%", word.substr(1))
                                          : absl::StrCat(word.substr(0, 1), "%");
@@ -1071,6 +1135,22 @@ TEST(ShinglePhraseIndexTest, every_pattern_kind_skips_shingles) {
           range.range.max_type = irs::BoundType::Inclusive;
           absl::StrAppend(&shape, " range:", word.substr(0, 1));
         } break;
+        case 4: {
+          std::string pattern;
+          switch (rng() % 3) {
+            case 0:
+              pattern = absl::StrCat(".*", word.substr(1));
+              break;
+            case 1:
+              pattern = absl::StrCat(word.substr(0, 1), ".*");
+              break;
+            default:
+              pattern = absl::StrCat(word.substr(0, 1), ".*", word.substr(1));
+          }
+          phrase.push_back<irs::ByRegexpOptions>(offs, offs) =
+            irs::ByRegexpOptions{bytes(pattern)};
+          absl::StrAppend(&shape, " regexp:", pattern);
+        } break;
         default:
           PushTerm(phrase, word, offs, offs);
           absl::StrAppend(&shape, " ", word);
@@ -1084,4 +1164,20 @@ TEST(ShinglePhraseIndexTest, every_pattern_kind_skips_shingles) {
   }
   EXPECT_GT(matched, 100U);
   EXPECT_GT(unseparated, 10U);
+}
+
+TEST(ShinglePhraseIndexTest, stacked_base_tokens_match_like_positions) {
+  static constexpr std::string_view kDocs[] = {
+    "x@1 b@2 c@2 y@3", "x@1 c@2 b@2 y@3", "x@1 b@2 y@3", "x@1 c@2 y@3"};
+  ShingleTokenizer shingles{std::make_unique<PositionedTokenizer>(),
+                            {.min_shingle_size = 2, .max_shingle_size = 2}};
+  const Index index{kDocs, shingles,
+                    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos,
+                    std::type_identity<PositionedTokenizer>{}};
+  for (const auto text : {"x b", "x c", "b y", "c y", "x b y", "x c y"}) {
+    SCOPED_TRACE(text);
+    const auto expected = index.Docs(PlainPhrase(kPositionalId, text));
+    EXPECT_FALSE(expected.empty());
+    EXPECT_EQ(expected, index.Docs(*ShingleFilter(shingles, Phrase(text))));
+  }
 }

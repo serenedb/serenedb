@@ -20,7 +20,7 @@
 
 #include "iresearch/search/filters/shingle_phrase.hpp"
 
-#include <absl/algorithm/container.h>
+#include <absl/container/inlined_vector.h>
 
 #include <algorithm>
 #include <limits>
@@ -53,8 +53,6 @@ class Windows {
 
   size_t Size() const noexcept { return _tokens.size(); }
 
-  size_t Min() const noexcept { return std::max(_tokenizer.MinShingle(), 2U); }
-
   size_t Max() const noexcept { return _tokenizer.MaxShingle(); }
 
   size_t RunEnd(size_t i) const noexcept { return _run_end[i]; }
@@ -62,26 +60,12 @@ class Windows {
   PosAttr::value_t Position(size_t i) const noexcept { return _positions[i]; }
 
   bool Indexed(size_t begin, size_t count) const noexcept {
-    if (begin + count > _run_end[begin]) {
-      return false;
-    }
-    if (count == 1) {
-      return _tokenizer.OutputUnigrams();
-    }
-    if (count < Min() || count > Max()) {
-      return false;
-    }
-    if (!_tokenizer.HasFrequentWords() || count == Min()) {
-      return true;
-    }
-    return absl::c_any_of(_tokens.subspan(begin, count), [&](bytes_view token) {
-      return _tokenizer.IsFrequent(token);
-    });
+    return _tokenizer.Indexes(_tokens.subspan(begin, count));
   }
 
   size_t Largest(size_t begin) const noexcept {
     const auto reach = std::min(Max(), _run_end[begin] - begin);
-    for (auto count = reach; count >= Min(); --count) {
+    for (auto count = reach; count >= 2; --count) {
       if (Indexed(begin, count)) {
         return count;
       }
@@ -124,7 +108,7 @@ bool Cover(const Windows& windows, PosAttr::value_t entry_min,
       auto count = windows.Largest(i);
       if (count == 0 && run_prev != kNone) {
         for (auto cand = std::min(windows.Max(), run_end - run_prev - 1);
-             cand >= windows.Min(); --cand) {
+             cand >= 2; --cand) {
           if (windows.Indexed(run_end - cand, cand)) {
             start = run_end - cand;
             count = cand;
@@ -211,18 +195,16 @@ bool CoverPhrase(const analysis::ShingleTokenizer& tokenizer,
   return true;
 }
 
-bool ExactTerms(const ByPhraseOptions& phrase, std::vector<bytes_view>& tokens,
-                std::vector<PosAttr::value_t>& positions) {
-  PosAttr::value_t pos = 0;
+using Words = absl::InlinedVector<bytes_view, 8>;
+
+bool AdjacentWords(const ByPhraseOptions& phrase, Words& words) {
   for (const auto& info : phrase) {
     const auto* term = std::get_if<ByTermOptions>(&info.part);
-    if (!term || info.offs_min != info.offs_max ||
-        (!tokens.empty() && info.offs_max == 0)) {
+    if (!term ||
+        (!words.empty() && (info.offs_min != 1 || info.offs_max != 1))) {
       return false;
     }
-    pos += info.offs_max;
-    tokens.emplace_back(term->term);
-    positions.push_back(pos);
+    words.emplace_back(term->term);
   }
   return true;
 }
@@ -236,14 +218,10 @@ std::optional<ShinglePhrasePlan> PlanShinglePhrase(
   if (phrase.empty() || phrase.slop() != 0) {
     return plan;
   }
-  std::vector<bytes_view> tokens;
-  std::vector<PosAttr::value_t> positions;
-  if (ExactTerms(phrase, tokens, positions)) {
-    const Windows windows{tokenizer, tokens, positions};
-    if (windows.Indexed(0, windows.Size())) {
-      plan.emplace(windows.Term(0, windows.Size()));
-      return plan;
-    }
+  Words words;
+  if (AdjacentWords(phrase, words) && tokenizer.Indexes(words)) {
+    plan.emplace(tokenizer.Join(words));
+    return plan;
   }
   if (positional && !CoverPhrase(tokenizer, phrase,
                                  std::get<ByPhraseOptions>(plan.emplace(

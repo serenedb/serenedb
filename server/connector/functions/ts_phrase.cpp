@@ -658,6 +658,13 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
           irs::ByWildcardOptions{
             irs::ViewCast<irs::byte_type>(std::string_view{pattern})};
       } break;
+      case TSQueryOp::Regexp: {
+        auto args = ParseRegexpArgs(*f);
+        options.push_back<irs::ByRegexpOptions>(gap.min, gap.max) =
+          irs::ByRegexpOptions{
+            irs::ViewCast<irs::byte_type>(std::string_view{args.pattern}),
+            args.syntax};
+      } break;
       case TSQueryOp::Fuzzy: {
         auto args = ParseLevenshteinArgs(*f);
         FillByEditDistanceOptions(
@@ -740,7 +747,8 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
             "## part type not supported yet: ",
             f ? f->Function().GetName().GetIdentifierName() : "<bare-const>"),
           ERR_HINT("Supported phrase parts: bare 'word', ts_starts_with, "
-                   "ts_like, ts_levenshtein, ts_phrase, ts_any, ts_between."));
+                   "ts_like, ts_regexp, ts_levenshtein, ts_phrase, ts_any, "
+                   "ts_between."));
     }
   }
   EmitPhrase(parent, ctx, column_info, std::move(options), "##",

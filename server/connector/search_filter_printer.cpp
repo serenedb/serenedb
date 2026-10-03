@@ -172,6 +172,11 @@ struct PhrasePartVisitor : util::Noncopyable {
       ERR_MSG("Wildcard phrase part must be lowered by the optimizer before "
               "printing"));
   }
+  auto operator()(const ByRegexpOptions&) const {
+    THROW_SQL_ERROR(
+      ERR_MSG("Regexp phrase part must be lowered by the optimizer before "
+              "printing"));
+  }
   auto operator()(const ByEditDistanceOptions&) const {
     THROW_SQL_ERROR(
       ERR_MSG("Levenshtein phrase part must be lowered by the optimizer before "

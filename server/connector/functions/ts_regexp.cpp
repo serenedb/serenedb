@@ -51,17 +51,14 @@ customize::enum_name<irs::RegexpSyntax>(irs::RegexpSyntax value) noexcept {
 }  // namespace magic_enum
 namespace sdb::connector {
 
-void FromRegexp(BoolTarget parent, const FilterContext& ctx,
-                const SearchColumnInfo& column_info,
-                const duckdb::BoundFunctionExpression& func) {
+RegexpArgs ParseRegexpArgs(const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_regexp('abc.*') or ts_regexp('foo', 'posix'). "
     "Syntax is 'perl' (default) or 'posix'.";
   SDB_ASSERT(func.GetChildren().size() >= 1 && func.GetChildren().size() <= 2);
-  std::string pattern;
-  GetVarcharArg(*func.GetChildren()[0], pattern,
+  RegexpArgs args;
+  GetVarcharArg(*func.GetChildren()[0], args.pattern,
                 {"ts_regexp pattern", kSyntaxHint});
-  auto syntax = irs::RegexpSyntax::Perl;
   if (func.GetChildren().size() == 2) {
     std::string syntax_name;
     GetVarcharArg(*func.GetChildren()[1], syntax_name,
@@ -79,8 +76,15 @@ void FromRegexp(BoolTarget parent, const FilterContext& ctx,
                 "], got '", syntax_name, "'"),
         ERR_HINT(kSyntaxHint));
     }
-    syntax = *parsed;
+    args.syntax = *parsed;
   }
+  return args;
+}
+
+void FromRegexp(BoolTarget parent, const FilterContext& ctx,
+                const SearchColumnInfo& column_info,
+                const duckdb::BoundFunctionExpression& func) {
+  auto [pattern, syntax] = ParseRegexpArgs(func);
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
       column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),

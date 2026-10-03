@@ -31,6 +31,7 @@
 #include "iresearch/search/filters/levenshtein_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/range_filter.hpp"
+#include "iresearch/search/filters/regexp_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/filters/wildcard_filter.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
@@ -55,8 +56,8 @@ class ByPhraseOptions {
  public:
   using PhrasePart =
     std::variant<ByTermOptions, ByPrefixOptions, ByWildcardOptions,
-                 ByEditDistanceOptions, TermSetOptions, ByRangeOptions,
-                 AutomatonOptions, LevenshteinAutomatonOptions>;
+                 ByRegexpOptions, ByEditDistanceOptions, TermSetOptions,
+                 ByRangeOptions, AutomatonOptions, LevenshteinAutomatonOptions>;
 
   struct PhrasePartInfo {
     PhrasePart part;

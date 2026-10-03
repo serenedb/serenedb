@@ -81,6 +81,8 @@ A phrase the dictionary cannot answer fails with `ts_phrase on this shingle colu
 
 With `position`, every run of two or more adjacent words in a phrase is looked up as shingles, also in a phrase with pattern parts, alternatives or `[min, max]` gaps. A phrase with slop matches word by word.
 
+A shingle joins tokens at consecutive positions. If the base dictionary puts several tokens at one position, like the synonyms of [`expand_solr_synonyms`](./expand_solr_synonyms.md) or [`expand_wordnet_synonyms`](./expand_wordnet_synonyms.md), a shingle continues from just one of them. On such a column every phrase of two or more words matches word by word, so it needs `position` and `OUTPUT_UNIGRAMS`.
+
 A pattern part of `##` (`ts_like`, `ts_starts_with`, `ts_levenshtein` or `ts_between`) matches single words, never a shingle: it skips every term that contains `TOKEN_SEPARATOR`, a base token that contains it included. With `TOKEN_SEPARATOR = ''` a shingle can't be told apart from a word, so a phrase with a pattern part fails with `## pattern parts on a shingle column need a token separator`.
 
 <SqlLogicTest id="sql/functions/search/tokenizers/generate_shingles/phrase_search" />

@@ -64,9 +64,10 @@ constexpr double kWideFramesGain = 0.03;
 constexpr size_t kPriceFrames = 8;
 
 constexpr uint8_t kLz4Fast[] = {1};
+constexpr uint8_t kLz4Balanced[] = {1, 4, 6};
 constexpr uint8_t kLz4Ladder[] = {1, 4, 9};
 constexpr uint8_t kZstdLadder[] = {1, 3, 6, 9, 12};
-constexpr uint8_t kZxcFastLookups[] = {1, 3, 5};
+constexpr uint8_t kZxcBalanced[] = {1, 3};
 constexpr uint8_t kZxcLadder[] = {1, 3, 5, 7};
 constexpr uint8_t kNoLevel[] = {0};
 
@@ -77,8 +78,8 @@ struct LeafPlan {
 
 constexpr LeafPlan kSpeedPlan[] = {{ByteCodec::Lz4, kLz4Fast}};
 constexpr LeafPlan kBalancedPlan[] = {{ByteCodec::Fsst, kNoLevel},
-                                      {ByteCodec::Lz4, kLz4Ladder},
-                                      {ByteCodec::Zxc, kZxcFastLookups}};
+                                      {ByteCodec::Lz4, kLz4Balanced},
+                                      {ByteCodec::Zxc, kZxcBalanced}};
 constexpr LeafPlan kSizePlan[] = {{ByteCodec::Fsst, kNoLevel},
                                   {ByteCodec::Lz4, kLz4Ladder},
                                   {ByteCodec::Zstd, kZstdLadder},

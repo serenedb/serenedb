@@ -50,7 +50,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Feature               | Support State | Details                                                      |
 |-----------------------|---------------|--------------------------------------------------------------|
 | CREATE ROLE           | Yes           | See [Database Roles](../security/roles.md) |
-| OWNER TO              | Yes           | Tables, views, sequences, schemas, types; not databases/functions yet |
+| OWNER TO              | Yes           | Tables, views, sequences, schemas, types, jobs; not databases/functions yet |
 | ALTER ROLE            | Yes           | Attributes, passwords, `VALID UNTIL`, `RENAME TO` |
 | GRANT                 | Yes           | Privileges and role membership, incl. column grants; see [Privileges](../security/privileges.md) |
 | REVOKE                | Yes           | Incl. `GRANT OPTION FOR` |
@@ -82,6 +82,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Foreign Data Wrappers      | No            |                                                                |
 | Views                      | Yes           |      |
 | Databases                  | Yes           |  |
+| Scheduled Jobs             | Yes           | SereneDB extension, not PostgreSQL syntax: [`CREATE JOB`](../sql/statements/create_job/index.md) |
 | Functions & Procedures     | Yes           |  |
 | Custom Types               | Yes           |                                                 |
 | Triggers                   | No            |                                                 |

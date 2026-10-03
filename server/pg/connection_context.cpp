@@ -78,10 +78,11 @@ ConnectionContext::ConnectionContext(
     _database_id{database_id},
     _backend_pid{backend_pid},
     _cancel_registry{cancel_registry},
-    _send_buffer{send_buffer},
-    _login_role_id{role_id},
-    _session_role_id{role_id},
-    _effective_role_id{role_id} {}
+    _send_buffer{send_buffer} {
+  duckdb_ctx.login_role = role_id;
+  duckdb_ctx.session_role = role_id;
+  duckdb_ctx.effective_role = role_id;
+}
 
 namespace {
 
@@ -94,12 +95,12 @@ std::string RoleName(const auth::RoleGraph& roles, duckdb::idx_t role,
 }  // namespace
 
 std::string ConnectionContext::EffectiveUserName() const {
-  return RoleName(*auth::RolesOf(&GetClientContext()), _effective_role_id,
-                  _user);
+  return RoleName(*auth::RolesOf(&GetClientContext()), GetRoleId(), _user);
 }
 
 std::string ConnectionContext::SessionUserName() const {
-  return RoleName(*auth::RolesOf(&GetClientContext()), _session_role_id, _user);
+  return RoleName(*auth::RolesOf(&GetClientContext()), GetSessionRoleId(),
+                  _user);
 }
 
 }  // namespace sdb

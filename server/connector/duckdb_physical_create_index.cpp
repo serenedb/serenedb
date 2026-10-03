@@ -291,6 +291,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
           context, index_entry, _relation, _bound_expressions);
         published.storage->SetFileManifest(extras ? extras->manifest : nullptr);
         published.storage->StartTasks();
+        index_entry.SyncReindexJob(transaction);
         if (IsDuckDBTable()) {
           published.storage->SetDeleteLogRowidEnd(published.rowid_horizon);
           state->backfill_rowid_end =

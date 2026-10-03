@@ -59,6 +59,8 @@ constexpr std::array kTableFunctions{
   std::string_view{"duckdb_external_file_cache"},
   std::string_view{"duckdb_functions"},
   std::string_view{"duckdb_indexes"},
+  std::string_view{"duckdb_job_runs"},
+  std::string_view{"duckdb_jobs"},
   std::string_view{"duckdb_keywords"},
   std::string_view{"duckdb_log_contexts"},
   std::string_view{"duckdb_logs"},

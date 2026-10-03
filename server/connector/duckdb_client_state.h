@@ -62,6 +62,11 @@ class SereneDBClientState final : public duckdb::ClientContextState {
     duckdb::ClientContext& client_ctx,
     std::shared_ptr<ConnectionContext> connection_ctx);
 
+  static std::shared_ptr<ConnectionContext> Impersonate(
+    duckdb::ClientContext& client_ctx, std::string_view user,
+    duckdb::idx_t role_id, std::string_view database, duckdb::idx_t database_id,
+    int32_t backend_pid);
+
   explicit SereneDBClientState(
     std::shared_ptr<ConnectionContext> connection_ctx)
     : _connection_ctx{std::move(connection_ctx)} {}
@@ -139,6 +144,8 @@ ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context);
 
 void SetDefaultSearchPath(duckdb::ClientContext& context,
                           std::string_view database);
+
+void RegisterRoleSessions(duckdb::DBConfig& config);
 
 struct SystemConnection {
   duckdb::unique_ptr<duckdb::Connection> conn;

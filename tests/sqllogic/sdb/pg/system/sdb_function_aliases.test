@@ -47,7 +47,7 @@ FROM duckdb_functions()
 WHERE alias_of IS NOT NULL AND function_name LIKE '%sdb\_%'
 ----
 aliases
-33
+35
 
 
 # The one alias whose name is not simply the source with a different prefix.

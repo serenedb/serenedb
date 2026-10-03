@@ -426,6 +426,8 @@ struct ListParts {
   uint64_t distinct = 0;
   uint64_t next_code = 0;
   bool sequence = false;
+  uint64_t runs = 0;
+  uint64_t longest_run = 0;
   uint64_t running = 0;
 };
 
@@ -448,6 +450,9 @@ class ListIngest {
     _elem_base = running;
     _valid_rows = 0;
     _null_codes = 0;
+    _runs = 0;
+    _run = 0;
+    _longest_run = 0;
     _sequence = true;
     _dedup = _direct;
     _prev = kNoRep;
@@ -527,6 +532,8 @@ class ListIngest {
     out.distinct = _next_code - _code_base;
     out.next_code = _next_code;
     out.sequence = _sequence && _next_code != _code_base;
+    out.runs = _runs;
+    out.longest_run = std::max(_longest_run, _run);
     out.running = _running;
     _elems.clear();
     Forget();
@@ -560,7 +567,7 @@ class ListIngest {
       if constexpr (kCached) {
         if (idx < _source_codes.size() && _source_codes[idx] != 0) {
           _last_code = _source_codes[idx] - 1;
-          _codes.Push(_last_code);
+          PushCode(_last_code);
           _sequence = false;
           continue;
         }
@@ -575,7 +582,7 @@ class ListIngest {
         }
         _source_codes[idx] = _last_code + 1;
       }
-      _codes.Push(_last_code);
+      PushCode(_last_code);
       if (found) {
         _sequence = false;
         continue;
@@ -619,13 +626,24 @@ class ListIngest {
     return distinct * 2 <= _probe.size();
   }
 
+  void PushCode(uint64_t code) {
+    if (_run == 0 || code != _run_code) {
+      _longest_run = std::max(_longest_run, _run);
+      _run_code = code;
+      _run = 0;
+      ++_runs;
+    }
+    ++_run;
+    _codes.Push(code);
+  }
+
   void PushNull() {
     if (_sequence) {
       _last_code = _next_code++;
       ++_null_codes;
       _ends.Push(_running);
     }
-    _codes.Push(_last_code);
+    PushCode(_last_code);
   }
 
   void AddDistinct(const duckdb::UnifiedVectorFormat& parent,
@@ -650,7 +668,7 @@ class ListIngest {
       _last_code = _next_code++;
       _running += entry.length;
       _ends.Push(_running);
-      _codes.Push(_last_code);
+      PushCode(_last_code);
     }
     AppendRange(child, run_begin, run_end - run_begin);
   }
@@ -818,6 +836,10 @@ class ListIngest {
   uint64_t _elem_base = 0;
   uint64_t _valid_rows = 0;
   uint64_t _null_codes = 0;
+  uint64_t _runs = 0;
+  uint64_t _run = 0;
+  uint64_t _run_code = 0;
+  uint64_t _longest_run = 0;
   uint64_t _window_code = 0;
   uint64_t _window_nulls = 0;
   uint64_t _window_valid = 0;
@@ -1196,6 +1218,8 @@ void ColumnWriter::SealListParts(const duckdb::LogicalType& type,
       WriteCtx().Database(), *codecs::SequenceFunction(type.InternalType()),
       duckdb::BaseStatistics::CreateEmpty(type), parts.distinct,
       std::span<const std::string_view>{&payload, 1}, Out(), meta.data);
+  } else if (const auto* codec = PlainCodec(type, CodesCodec(parts))) {
+    Compress(*codec, nullptr, type, parts.codes, meta.data);
   } else {
     duckdb::unique_ptr<duckdb::AnalyzeState> state;
     auto fn = PickCodec(type, parts.codes,
@@ -1205,9 +1229,48 @@ void ColumnWriter::SealListParts(const duckdb::LogicalType& type,
   SealColumn(duckdb::ListType::GetChildType(type), parts.elems,
              parts.elem_count, /*skip_validity=*/false, forced,
              meta.children[0]);
+  auto& ends = meta.children[1];
+  if (const auto* codec =
+        PlainCodec(duckdb::LogicalType::UBIGINT,
+                   duckdb::CompressionType::COMPRESSION_BITPACKING)) {
+    if (ends.type.id() == duckdb::LogicalTypeId::INVALID) {
+      ends.id = _id;
+      ends.type = duckdb::LogicalType::UBIGINT;
+    }
+    Compress(*codec, nullptr, duckdb::LogicalType::UBIGINT, parts.ends,
+             ends.data);
+    return;
+  }
   SealColumn(duckdb::LogicalType::UBIGINT, parts.ends, parts.distinct,
              /*skip_validity=*/true, duckdb::CompressionType::COMPRESSION_AUTO,
-             meta.children[1]);
+             ends);
+}
+
+duckdb::CompressionType ColumnWriter::CodesCodec(
+  const ListParts& parts) noexcept {
+  uint64_t rows = 0;
+  for (const auto& c : parts.codes) {
+    rows += c.count;
+  }
+  const uint64_t width =
+    duckdb::BitpackingPrimitives::MinimumBitWidth<uint64_t>(
+      parts.distinct == 0 ? 0 : parts.distinct - 1);
+  const uint64_t run_width =
+    duckdb::BitpackingPrimitives::MinimumBitWidth<uint64_t>(parts.longest_run);
+  const uint64_t bitpacked = rows * width;
+  const uint64_t runs = parts.runs * (width + run_width);
+  return runs < bitpacked ? duckdb::CompressionType::COMPRESSION_RLE
+                          : duckdb::CompressionType::COMPRESSION_BITPACKING;
+}
+
+const duckdb::CompressionFunction* ColumnWriter::PlainCodec(
+  const duckdb::LogicalType& type, duckdb::CompressionType codec) const {
+  const auto& config = duckdb::DBConfig::GetConfig(WriteCtx().Database());
+  if (duckdb::Settings::Get<duckdb::ForceCompressionSetting>(config) !=
+      duckdb::CompressionType::COMPRESSION_AUTO) {
+    return nullptr;
+  }
+  return config.TryGetCompressionFunction(codec, type.InternalType()).get();
 }
 
 void ColumnWriter::SealVariant(const duckdb::LogicalType& type,

@@ -26,10 +26,12 @@
 
 #include <algorithm>
 #include <limits>
+#include <ranges>
 #include <span>
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/posting/doc_input.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
@@ -41,49 +43,15 @@
 namespace irs {
 namespace {
 
-constexpr size_t kPrefetchTerms = 64;
-constexpr uint64_t kPrefetchGap = 128 * 1024;
-constexpr uint64_t kMaxPrefetch = 32 << 20;
-constexpr uint64_t kPostingBytesPerDoc = 4;
-constexpr uint64_t kPostingSlack = 64;
-
 void PrefetchPostings(const TermReader& reader,
                       std::span<const MultiTermState::Entry> terms) {
-  const auto* doc = reader.Handles().doc;
-  if (doc == nullptr) {
-    return;
-  }
-  const auto& largest = terms.front().cookie;
-  if (largest.docs_count <= 1 ||
-      doc->Resident(largest.doc_start,
-                    kPostingBytesPerDoc * largest.docs_count + kPostingSlack)) {
-    return;
-  }
-  std::vector<std::pair<uint64_t, uint64_t>> ranges;
-  ranges.reserve(terms.size());
-  for (const auto& entry : terms) {
-    const auto& cookie = entry.cookie;
-    if (cookie.docs_count > 1) {
-      ranges.emplace_back(cookie.doc_start,
-                          cookie.doc_start +
-                            kPostingBytesPerDoc * cookie.docs_count +
-                            kPostingSlack);
-    }
-  }
-  absl::c_sort(ranges);
-  size_t n = 0;
-  for (const auto& range : ranges) {
-    if (n != 0 && range.first <= ranges[n - 1].second + kPrefetchGap) {
-      ranges[n - 1].second = std::max(ranges[n - 1].second, range.second);
-    } else {
-      ranges[n++] = range;
-    }
-  }
-  uint64_t budget = kMaxPrefetch;
-  for (size_t i = 0; i != n && budget != 0; ++i) {
-    const auto size = std::min(ranges[i].second - ranges[i].first, budget);
-    doc->Prefetch(ranges[i].first, size);
-    budget -= size;
+  if (const auto* doc = reader.Handles().doc; doc != nullptr) {
+    PrefetchDocExtents(
+      *doc,
+      terms | std::views::transform(
+                [](const MultiTermState::Entry& entry) -> const PostingMeta& {
+                  return entry.cookie;
+                }));
   }
 }
 
@@ -109,7 +77,7 @@ QueryBuilder::ptr MultiTermQuery::Finish(
   query->_estimate_matches = query->_estimate_max;
   query->_postings = sum;
   query->_leaves = static_cast<uint32_t>(terms.size());
-  if (terms.size() >= kPrefetchTerms && ctx.Record().scorer == nullptr &&
+  if (terms.size() > 1 && ctx.Record().scorer == nullptr &&
       query->_state.Reader() != nullptr) {
     PrefetchPostings(*query->_state.Reader(), terms);
   }

@@ -243,8 +243,6 @@ void HintWriteback(void* fd, uint64_t offset, size_t size) noexcept {
 #ifndef _WIN32
 namespace {
 
-constexpr size_t kPrefetchChunk = 128 * 1024;
-
 std::pair<uintptr_t, size_t> PageRange(const void* addr, size_t size) noexcept {
   static const size_t kPageSize = ::sysconf(_SC_PAGESIZE);
   const auto begin = reinterpret_cast<uintptr_t>(addr);
@@ -268,20 +266,35 @@ void Prefetch(const void* addr, size_t size) noexcept {
 #endif
 }
 
+void Prefetch(int fd, uint64_t offset, uint64_t size) noexcept {
+#ifndef _WIN32
+  for (uint64_t at = 0; at < size; at += kPrefetchChunk) {
+    ::posix_fadvise(
+      fd, static_cast<off_t>(offset + at),
+      static_cast<off_t>(std::min<uint64_t>(kPrefetchChunk, size - at)),
+      POSIX_FADV_WILLNEED);
+  }
+#endif
+}
+
 bool IsResident(const void* addr, size_t size) noexcept {
 #ifndef _WIN32
   if (size == 0) {
     return true;
   }
   constexpr size_t kMaxPages = 1024;
-  auto [aligned, total] = PageRange(addr, size);
-  total = std::min(total, kMaxPages * kPage);
+  const auto [aligned, total] = PageRange(addr, size);
   unsigned char resident[kMaxPages];
-  if (::mincore(reinterpret_cast<void*>(aligned), total, resident) != 0) {
-    return false;
+  for (size_t done = 0; done < total; done += kMaxPages * kPage) {
+    const auto len = std::min(total - done, kMaxPages * kPage);
+    if (::mincore(reinterpret_cast<void*>(aligned + done), len, resident) !=
+          0 ||
+        !std::all_of(resident, resident + (len + kPage - 1) / kPage,
+                     [](unsigned char page) { return (page & 1) != 0; })) {
+      return false;
+    }
   }
-  return std::all_of(resident, resident + (total + kPage - 1) / kPage,
-                     [](unsigned char page) { return (page & 1) != 0; });
+  return true;
 #else
   return false;
 #endif

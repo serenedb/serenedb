@@ -38,6 +38,7 @@
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/reader.hpp"
 #include "iresearch/formats/posting/writer.hpp"
 #include "iresearch/formats/reader_state.hpp"
@@ -1020,6 +1021,7 @@ class BlockIterator : util::Noncopyable {
   uint16_t NextLabel() const noexcept { return _next_label; }
   uint32_t SubCount() const noexcept { return _sub_count; }
   uint64_t Start() const noexcept { return _start; }
+  uint64_t LoadStart() const noexcept { return _cur_start; }
   bool Done() const noexcept { return _cur_ent == _ent_count; }
   const byte_type* SuffixStart() const noexcept { return _suffix_start; }
   const byte_type* SuffixEnd() const noexcept { return _suffix_end; }
@@ -1667,6 +1669,18 @@ class TermIteratorBase {
     return *_terms_in;
   }
 
+  void LoadBlock(BlockIterator& block) {
+    auto& in = TermsInput();
+    if (block.Dirty()) {
+      if (!_hinted) {
+        _hint.Arm(block.LoadStart(), in.Length());
+        _hinted = true;
+      }
+      _hint.Advance(in, block.LoadStart());
+    }
+    block.Load(in);
+  }
+
   void PopToParent() {
     const uint64_t start = _cur_block->Start();
     _cur_block = PopBlock();
@@ -1674,7 +1688,7 @@ class TermIteratorBase {
     if (_cur_block->Dirty() || _cur_block->BlockStart() != start) {
       SDB_ASSERT(_cur_block->Prefix() < _term_buf.size());
       _cur_block->ScanToSubBlock(_term_buf[_cur_block->Prefix()]);
-      _cur_block->Load(TermsInput());
+      LoadBlock(*_cur_block);
       _cur_block->ScanToBlock(start);
     }
   }
@@ -1700,6 +1714,8 @@ class TermIteratorBase {
   std::vector<Arc> _sstate;
   std::vector<BlockIterator> _block_stack;
   BlockIterator* _cur_block{};
+  GrowingHint _hint;
+  bool _hinted = false;
 };
 
 template<typename FST>
@@ -1854,7 +1870,7 @@ SeekResult TermIteratorBase<FST>::SeekEqual(bytes_view term, bool exact) {
     std::memcpy(_term_buf.data() + prefix, suffix, suffix_size);
   };
 
-  _cur_block->Load(TermsInput());
+  LoadBlock(*_cur_block);
 
   Finally refresh_value = [this]() noexcept { this->RefreshValue(); };
 
@@ -1893,7 +1909,7 @@ bool TermIteratorImpl<FST>::next() {
     SDB_ASSERT(value().empty());
     this->_cur_block =
       this->PushBlock(this->_fst->Final(this->_fst->Start()), 0);
-    this->_cur_block->Load(this->TermsInput());
+    this->LoadBlock(*this->_cur_block);
   }
 
   auto copy_suffix = [this](const byte_type* suffix, size_t suffix_size) {
@@ -1902,7 +1918,7 @@ bool TermIteratorImpl<FST>::next() {
 
   while (this->_cur_block->Done()) {
     if (this->_cur_block->template NextSubBlock<false>()) {
-      this->_cur_block->Load(this->TermsInput());
+      this->LoadBlock(*this->_cur_block);
     } else if (&this->_block_stack.front() == this->_cur_block) {  // root
       this->ResetValue();
       this->_cur_block->Reset();
@@ -1923,7 +1939,7 @@ bool TermIteratorImpl<FST>::next() {
     }
     this->_cur_block =
       this->PushBlock(this->_cur_block->BlockStart(), this->_term_buf.size());
-    this->_cur_block->Load(this->TermsInput());
+    this->LoadBlock(*this->_cur_block);
   }
 
   this->RefreshValue();
@@ -1945,7 +1961,7 @@ SeekResult TermIteratorImpl<FST>::seek_ge(bytes_view term) {
           // we're at the greater block, load it and call next
           this->_cur_block = this->PushBlock(this->_cur_block->BlockStart(),
                                              this->_term_buf.size());
-          this->_cur_block->Load(this->TermsInput());
+          this->LoadBlock(*this->_cur_block);
           break;
         default:
           SDB_ASSERT(false);
@@ -2421,7 +2437,7 @@ bool AcceptorTermIterator<FST, A>::PushSubBlock(const byte_type* suffix,
   if (!accepts && lo <= hi) {
     this->_cur_block->ScanToSubBlock(static_cast<byte_type>(lo));
   }
-  this->_cur_block->Load(this->TermsInput());
+  this->LoadBlock(*this->_cur_block);
   return true;
 }
 
@@ -2433,7 +2449,7 @@ bool AcceptorTermIterator<FST, A>::NextFloorSubBlock() {
     if (!block->template NextSubBlock<false>()) {
       return false;
     }
-    block->Load(this->TermsInput());
+    this->LoadBlock(*block);
     return true;
   }
   if (sub_count == 0) {
@@ -2450,7 +2466,7 @@ bool AcceptorTermIterator<FST, A>::NextFloorSubBlock() {
   } else {
     block->template NextSubBlock<true>();
   }
-  block->Load(this->TermsInput());
+  this->LoadBlock(*block);
   return true;
 }
 
@@ -2523,7 +2539,7 @@ bool AcceptorTermIterator<FST, A>::NextImpl() {
     ResetLevels();
     this->_cur_block =
       this->PushBlock(this->_fst->Final(this->_fst->Start()), 0);
-    this->_cur_block->Load(this->TermsInput());
+    this->LoadBlock(*this->_cur_block);
   }
 
   const byte_type* suffix_ptr = nullptr;
@@ -2825,6 +2841,9 @@ class FieldReader::Impl {
       if constexpr (std::is_same_v<A, RegexpAcceptor>) {
         const auto* start = a.Start();
         return start->lo <= start->hi && start->hi - start->lo >= kWideStart;
+      } else if constexpr (std::is_same_v<A, LevenshteinAcceptor> ||
+                           std::is_same_v<A, FuzzyConjunction>) {
+        return a.MaxDistance() > 1;
       } else {
         return true;
       }
@@ -2938,6 +2957,7 @@ void FieldReader::Impl::prepare(const ReaderState& state) {
       std::upper_bound(ends.begin(), ends.end(), field.BodyOffset());
     field.SetBlocksBegin(it == ends.begin() ? 0 : *std::prev(it));
   }
+  _terms_in->Advise(IOAdvice::RANDOM);
 }
 
 const TermReader* FieldReader::Impl::field(field_id id) const {

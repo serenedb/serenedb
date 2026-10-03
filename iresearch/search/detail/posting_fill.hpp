@@ -38,6 +38,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
 
   using Base::_doc;
   using Base::_docs;
+  using Base::_hint;
   using Base::_last;
   using Base::_left_in_leaf;
   using Base::_left_in_list;
@@ -231,6 +232,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
   IRS_FORCE_INLINE FormatTraits128::FillLeaf ReadFill(const byte_type*& at,
                                                       uint32_t len,
                                                       doc_id_t base) {
+    _hint.Advance(In(), In().Position());
     if constexpr (InputType::kVolatileAlways) {
       return FormatTraits128::FillView(In(), at, len, this->Holes(), _docs,
                                        base, len == this->_freq_len.value);

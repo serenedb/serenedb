@@ -20,10 +20,16 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
+#include <algorithm>
 #include <cstring>
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "iresearch/error/error.hpp"
+#include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/store/store_utils.hpp"
 
@@ -47,6 +53,34 @@ class InlineDocInput final : public BytesViewInput {
  private:
   byte_type _data[PostingMeta::kInlineBytes];
 };
+
+template<typename Metas>
+void PrefetchDocExtents(const IndexInput& in, Metas&& metas) {
+  std::vector<std::pair<uint64_t, uint64_t>> ranges;
+  for (const PostingMeta& meta : metas) {
+    if (const auto extent = DocExtent(meta); extent != 0) {
+      ranges.emplace_back(meta.doc_start, meta.doc_start + extent);
+    }
+  }
+  if (ranges.empty()) {
+    return;
+  }
+  absl::c_sort(ranges);
+  size_t n = 0;
+  for (const auto& range : ranges) {
+    if (n != 0 && range.first <= ranges[n - 1].second + file_utils::kPage) {
+      ranges[n - 1].second = std::max(ranges[n - 1].second, range.second);
+    } else {
+      ranges[n++] = range;
+    }
+  }
+  uint64_t budget = kMaxPrefetch;
+  for (size_t i = 0; i != n && budget != 0; ++i) {
+    const auto size = std::min(ranges[i].second - ranges[i].first, budget);
+    Hint(in, ranges[i].first, size);
+    budget -= size;
+  }
+}
 
 inline IndexInput::ptr OpenDocInput(const PostingMeta& meta,
                                     const IndexInput& doc_in) {

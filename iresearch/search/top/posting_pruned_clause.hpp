@@ -34,6 +34,7 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
   using Base::_docs;
   using Base::_enc;
   using Base::_freqs;
+  using Base::_hint;
   using Base::_left_in_list;
   using Base::_len;
   using Base::_max_in_leaf;
@@ -175,6 +176,7 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
   void ReadFill(doc_id_t prev) {
     ++_reads;
     auto& in = In();
+    _hint.Advance(in, in.Position());
     const auto len = std::min(_left_in_list, kBlock);
     const auto leaf = FormatTraits128::ReadTailForFill(len, in, _enc.data,
                                                        nullptr, _docs, prev);

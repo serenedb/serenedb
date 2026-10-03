@@ -101,20 +101,87 @@ void SkipScoreBounds(bool has_score_bounds, Input& in) {
   }
 }
 
-inline constexpr uint64_t kPosBytesPerFreq = 3;
+inline constexpr uint64_t kPosBytesPerFreq = 1;
+inline constexpr uint64_t kMaxPrefetch = uint64_t{16} << 20;
 
 template<typename Input>
-void LimitDocReadahead(Input& in, const PostingMeta& meta) noexcept {
-  in.LimitReadahead(meta.doc_start + (meta.docs_count > doc_limits::kBlockSize
-                                        ? uint64_t{meta.doc_delta}
-                                        : file_utils::kPage));
+void Hint(const Input& in, uint64_t offset, uint64_t size) noexcept {
+  if (size > file_utils::kPrefetchChunk && in.Resident(offset, size)) {
+    return;
+  }
+  in.Prefetch(offset, size);
+}
+
+inline uint64_t DocExtent(const PostingMeta& meta) noexcept {
+  if (meta.inline_size != 0 || meta.docs_count <= 1) {
+    return 0;
+  }
+  return meta.docs_count > doc_limits::kBlockSize ? uint64_t{meta.doc_delta}
+                                                  : file_utils::kPage;
+}
+
+inline uint64_t PosExtent(const PostingMeta& meta) noexcept {
+  return uint64_t{meta.freq} * kPosBytesPerFreq + file_utils::kPage;
 }
 
 template<typename Input>
-void LimitPosReadahead(Input& in, const PostingMeta& meta) noexcept {
-  in.LimitReadahead(meta.pos_start + uint64_t{meta.freq} * kPosBytesPerFreq +
-                    file_utils::kPage);
+void PrefetchDocs(const Input& in, const PostingMeta& meta) noexcept {
+  if (const auto extent = DocExtent(meta); extent != 0) {
+    Hint(in, meta.doc_start, std::min(extent, kMaxPrefetch));
+  }
 }
+
+class GrowingHint {
+ public:
+  void Arm(uint64_t at, uint64_t stop) noexcept {
+    _last = at;
+    _end = at;
+    _stop = stop;
+    _extent = stop - at;
+    _run = 0;
+    _skipped = 0;
+    _window = kFirst;
+  }
+
+  template<typename Input>
+  IRS_FORCE_INLINE void Advance(const Input& in, uint64_t at) noexcept {
+    if (at > _last) {
+      const auto gap = at - _last;
+      (gap < file_utils::kPage ? _run : _skipped) += gap;
+    }
+    _last = at;
+    if (at >= _stop) [[unlikely]] {
+      _stop = at + _extent;
+    }
+    if (at + _window / 2 >= _end && _end < _stop) [[unlikely]] {
+      Grow(in, at);
+    }
+  }
+
+ private:
+  static constexpr uint64_t kFirst = file_utils::kPrefetchChunk;
+  static constexpr uint64_t kLast = file_utils::kMaxReadahead;
+
+  template<typename Input>
+  void Grow(const Input& in, uint64_t at) noexcept {
+    const auto from = std::max(at, _end);
+    if (_run < file_utils::kPage || 2 * _run < _skipped || from >= _stop) {
+      return;
+    }
+    const auto len = std::min(_window, _stop - from);
+    Hint(in, from, len);
+    _end = from + len;
+    _window = std::min(2 * _window, kLast);
+  }
+
+  uint64_t _last = 0;
+  uint64_t _end = 0;
+  uint64_t _stop = 0;
+  uint64_t _extent = 0;
+  uint64_t _run = 0;
+  uint64_t _skipped = 0;
+  uint64_t _window = kFirst;
+};
 
 inline IRS_FORCE_INLINE void SetBitRange(uint64_t* IRS_RESTRICT words,
                                          uint64_t begin,

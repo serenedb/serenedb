@@ -102,6 +102,11 @@ class ColumnWriter final {
     duckdb::CompressionType forced,
     duckdb::unique_ptr<duckdb::AnalyzeState>& out_state);
 
+  static duckdb::CompressionType CodesCodec(const ListParts& parts) noexcept;
+
+  const duckdb::CompressionFunction* PlainCodec(
+    const duckdb::LogicalType& type, duckdb::CompressionType codec) const;
+
   bool CompressData(const duckdb::LogicalType& type,
                     std::span<WriteChunk> chunks,
                     duckdb::CompressionType forced, ColumnMeta& meta);

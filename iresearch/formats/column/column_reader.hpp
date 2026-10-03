@@ -133,6 +133,8 @@ struct ListDictionary {
   uint64_t end = 0;
   uint64_t ends_pos = 0;
   uint64_t elems_pos = 0;
+  uint64_t missed_block = 0;
+  uint64_t oversized_block = 0;
   std::optional<duckdb::Vector> lists;
 };
 

@@ -45,7 +45,7 @@ An option whose value is a list of strings takes either spelling of the dictiona
 
 <SqlLogicTest id="sql/functions/search/tokenizers/index/constant_option" />
 
-The result type follows the tokenizer: `VARCHAR[]` for every text template, `BLOB[]` for [`collate_tokens`](./collate_tokens.md), [`encode_geopoint`](./encode_geopoint.md) and [`encode_geojson`](./encode_geojson.md), whose terms are binary. A template that stores a per-document payload alongside its terms — `generate_shingles` with `store_tokens`, `encode_geojson` with a non-source coding — returns only the terms.
+The result type follows the tokenizer: `VARCHAR[]` for every text template, `BLOB[]` for [`collate_tokens`](./collate_tokens.md), [`encode_geopoint`](./encode_geopoint.md) and [`encode_geojson`](./encode_geojson.md), whose terms are binary. A template that stores a per-document payload alongside its terms, such as `encode_geojson` with a non-source coding, returns only the terms.
 
 Four templates have no function form, because SQL already expresses them: [`keyword`](../../../statements/create_text_search_dictionary/keyword.md) is the list literal `[value]`, [`pipeline`](../../../statements/create_text_search_dictionary/pipeline/index.md) is nesting, [`union`](../../../statements/create_text_search_dictionary/union.md) is `list_concat` of two calls, and a [`sql`](../../../statements/create_text_search_dictionary/sql.md) stage is the expression itself.
 
@@ -74,7 +74,7 @@ messages are on the page each row links to.
 | [`generate_ngrams(value, min_gram := 2, max_gram := 3, preserve_original := false, input_type := 'utf8', start_marker := '', end_marker := '', mode := 'all')`](./generate_ngrams.md) | Character n-grams of each token, including the prefix-anchored edge n-grams of `mode := 'only_prefix'` |
 | [`generate_sparse_ngrams(value, max_ngram_length := 16, covering := false, min_ngram_length := 3, min_cutoff_length := 0)`](./generate_sparse_ngrams.md) | Sparse variable-length n-grams for substring search |
 | [`generate_wildcard_ngrams(value, ngram_size := 3)`](./generate_wildcard_ngrams.md) | Boundary-marked n-grams for wildcard and prefix matching; a list is the token stream, a `VARCHAR` one token |
-| [`generate_shingles(value, min_gram := 2, max_gram := 2, output_unigrams := true, fallback_unigrams := false, store_tokens := true, frequent_words := [], filler_token := '', token_separator := ' ')`](./generate_shingles.md) | Word n-grams over the token stream; a list is the token stream, a `VARCHAR` one token |
+| [`generate_shingles(value, min_gram := 2, max_gram := 2, output_unigrams := true, fallback_unigrams := false, frequent_words := [], token_separator := ' ')`](./generate_shingles.md) | Word n-grams over the token stream; a list is the token stream, a `VARCHAR` one token |
 | [`collate_tokens(value, locale := '')`](./collate_tokens.md) | The collation sort key of each token for `locale`, as `BLOB[]` |
 | [`expand_solr_synonyms(value, synonyms)`](./expand_solr_synonyms.md) | Synonym expansion from a Solr synonyms text |
 | [`expand_wordnet_synonyms(value, synonyms)`](./expand_wordnet_synonyms.md) | Synonym expansion from WordNet prolog text |

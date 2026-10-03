@@ -46,6 +46,7 @@ target_compile_definitions(
     PRIVATE "SDB_DOCS_DIR=\"${CMAKE_SOURCE_DIR}/docs\""
 )
 add_bench(sloppy_phrase_vs_disjunction)
+add_bench(phrase_search)
 add_bench(filter_prepare)
 add_bench(consecutive_run_length)
 add_bench(parse_query)

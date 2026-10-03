@@ -116,6 +116,7 @@ set(IResearch_core_sources
     ./search/filters/prefix_filter.cpp
     ./search/filters/range_filter.cpp
     ./search/filters/phrase_filter.cpp
+    ./search/filters/shingle_phrase.cpp
     ./search/filters/automaton_filter.cpp
     ./search/filters/wildcard_filter.cpp
     ./search/filters/regexp_filter.cpp

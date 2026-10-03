@@ -2076,15 +2076,13 @@ encode_geojson(type := 'shape', coding := 'source', max_cells := 20, min_level :
 
 keyword()
 
-generate_shingles(<analyzer>, min_gram := 2, max_gram := 2, output_unigrams := true, fallback_unigrams := false, store_tokens := true, frequent_words := [], filler_token := '', token_separator := ' ')
-  as a function: generate_shingles(value, min_gram := 2, max_gram := 2, output_unigrams := true, fallback_unigrams := false, store_tokens := true, frequent_words := [], filler_token := '', token_separator := ' ')
+generate_shingles(<analyzer>, min_gram := 2, max_gram := 2, output_unigrams := true, fallback_unigrams := false, frequent_words := [], token_separator := ' ')
+  as a function: generate_shingles(value, min_gram := 2, max_gram := 2, output_unigrams := true, fallback_unigrams := false, frequent_words := [], token_separator := ' ')
   min_gram           Minimum shingle (word n-gram) size (minimum 2)
   max_gram           Maximum shingle (word n-gram) size (>= min_gram)
   output_unigrams    Index individual tokens alongside the shingles
   fallback_unigrams  Index unigrams only when the input is too short to form a shingle
-  store_tokens       Persist the per-document token stream (verification source for phrases longer than max_gram). When false the index stores terms only
   frequent_words     Frequent words (typically stopwords): a list of strings, or a comma-separated string of double-quoted words. When non-empty, shingles of min_gram stay dense while wider sizes are indexed only for spans containing one of these words (adaptive width escalation)
-  filler_token       Token standing in for positions the base analyzer removed (e.g. stopwords) in the stored token stream; never indexed as a term. Default '_'
   token_separator    String written between the words of a shingle; an empty value concatenates them
 
 expand_solr_synonyms(synonyms)

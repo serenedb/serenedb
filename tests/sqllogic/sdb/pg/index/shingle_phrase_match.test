@@ -1,0 +1,970 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_dict AS
+    generate_shingles(split_text_csv(' '), 2, 2) WITH (frequency)
+
+statement ok
+CREATE TABLE test_shingle (id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX test_shingle_idx ON test_shingle USING inverted(id, body shingle_dict)
+
+statement ok
+INSERT INTO test_shingle VALUES
+    (1, 'the quick brown fox'),
+    (2, 'quick brown dog'),
+    (3, 'brown fox quick'),
+    (4, 'fox quick brown'),
+    (5, 'quick brown cat brown fox')
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle
+
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
+----
+id
+1
+2
+4
+5
+
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('brown fox') ORDER BY id
+----
+id
+1
+3
+5
+
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('fox') ORDER BY id
+----
+id
+1
+3
+4
+5
+
+query
+SELECT id FROM test_shingle_idx WHERE body @@ phraseto_tsquery('quick brown') ORDER BY id
+----
+id
+1
+2
+4
+5
+
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown') AND id < 2 ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_idx
+WHERE body @@ ts_phrase('brown dog') OR body @@ ts_phrase('fox quick')
+ORDER BY id
+----
+id
+2
+3
+4
+
+query
+SELECT id FROM test_shingle_idx
+WHERE body @@ ts_phrase('brown fox') AND NOT body @@ ts_phrase('quick brown')
+ORDER BY id
+----
+id
+3
+
+query
+SELECT id FROM test_shingle_idx WHERE body @@ (ts_phrase('brown') ## ts_phrase('fox')) ORDER BY id
+----
+id
+1
+3
+5
+
+query
+SELECT id FROM test_shingle_idx WHERE body @@ plainto_tsquery('quick fox') ORDER BY id
+----
+id
+1
+3
+4
+5
+
+query
+SELECT id FROM test_shingle_idx WHERE body @@ plainto_tsquery('quick quick brown') ORDER BY id
+----
+id
+1
+2
+3
+4
+5
+
+statement error
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown fox')
+----
+db error: ERROR: ts_phrase on this shingle column needs positions: its shingles do not cover the phrase
+HINT: Add `position` to the dictionary, or raise `max_gram` to the phrase length.
+
+
+statement error
+SELECT id FROM test_shingle_idx WHERE body @@ phraseto_tsquery('quick brown fox')
+----
+db error: ERROR: ts_phrase on this shingle column needs positions: its shingles do not cover the phrase
+HINT: Add `position` to the dictionary, or raise `max_gram` to the phrase length.
+
+
+statement error
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick', 1, 'fox')
+----
+db error: ERROR: ts_phrase on this shingle column needs positions: its shingles do not cover the phrase
+HINT: Add `position` to the dictionary, or raise `max_gram` to the phrase length.
+
+
+statement error
+SELECT id FROM test_shingle_idx WHERE body @@ (ts_phrase('quick') ## 1 ## ts_phrase('fox'))
+----
+db error: ERROR: ## on this shingle column needs positions: its shingles do not cover the phrase
+HINT: Add `position` to the dictionary, or raise `max_gram` to the phrase length.
+
+
+statement error
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick fox', slop := 1)
+----
+db error: ERROR: ts_phrase on this shingle column needs positions: its shingles do not cover the phrase
+HINT: Add `position` to the dictionary, or raise `max_gram` to the phrase length.
+
+
+statement error
+SELECT id FROM test_shingle_idx WHERE body @@ (ts_phrase('quick brown') ## ts_like('%ox'))
+----
+db error: ERROR: ## on this shingle column needs positions: its shingles do not cover the phrase
+HINT: Add `position` to the dictionary, or raise `max_gram` to the phrase length.
+
+
+query
+EXPLAIN SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: test_shingle_idx │
+│ Lookup: table           │
+│ Index Filter:           │
+│ ╭─ Term ──────────────╮ │
+│ │ Field: body(string) │ │
+│ │ Value: quick brown  │ │
+│ ╰─────────────────────╯ │
+│ Projections: id         │
+│ ~1 row                  │
+╰─────────────────────────╯
+
+query
+SELECT count(*) FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown')
+----
+count
+4
+
+query
+EXPLAIN SELECT count(*) FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown')
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: test_shingle_idx  │
+│ Index Filter:            │
+│ ╭─ Term ──────────────╮  │
+│ │ Field: body(string) │  │
+│ │ Value: quick brown  │  │
+│ ╰─────────────────────╯  │
+│ Output: row-count only   │
+│ ~1 row                   │
+╰──────────────────────────╯
+
+query
+SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown')
+ORDER BY BM25(test_shingle_idx.tableoid) DESC, id LIMIT 2
+----
+id
+1
+2
+
+statement ok
+DROP TABLE test_shingle
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_dict
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_pos AS
+    generate_shingles(split_text_csv(' '), 2, 2)
+    WITH (frequency, position)
+
+statement ok
+CREATE TABLE test_shingle_pos (id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX test_shingle_pos_idx ON test_shingle_pos USING inverted(id, body shingle_pos)
+
+statement ok
+INSERT INTO test_shingle_pos VALUES
+    (1, 'the quick brown fox'),
+    (2, 'quick brown dog'),
+    (3, 'brown fox quick'),
+    (4, 'fox quick brown'),
+    (5, 'quick brown cat brown fox')
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle_pos
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('brown fox') ORDER BY id
+----
+id
+1
+3
+5
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('purple monkey dishwasher') ORDER BY id
+----
+id
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ phraseto_tsquery('quick brown fox') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick brown fox') AND id > 0 ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_pos_idx
+WHERE body @@ ts_phrase('quick brown fox') OR body @@ ts_phrase('brown fox quick')
+ORDER BY id
+----
+id
+1
+3
+
+query
+SELECT id FROM test_shingle_pos_idx
+WHERE body @@ ts_phrase('brown fox') AND NOT body @@ ts_phrase('quick brown fox')
+ORDER BY id
+----
+id
+3
+5
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick', 1, 'cat') ORDER BY id
+----
+id
+5
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick', 1, 'fox') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick') ## ts_phrase('brown')) ORDER BY id
+----
+id
+1
+2
+4
+5
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick') ## 1 ## ts_phrase('cat')) ORDER BY id
+----
+id
+5
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('the') ## ts_phrase('quick brown')) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick fox', slop := 1) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_like('%own') ## 'brown') ORDER BY id
+----
+id
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_like('%own') ## 'fox') ORDER BY id
+----
+id
+1
+3
+5
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_regexp('.*own') ## 'brown') ORDER BY id
+----
+id
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_regexp('.*own') ## 'fox') ORDER BY id
+----
+id
+1
+3
+5
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brown') ## ts_regexp('f.x')) ORDER BY id
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brown') ## ts_regexp('f.x'))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────╮
+│ Index: test_shingle_pos_idx                          │
+│ Lookup: table                                        │
+│ Index Filter:                                        │
+│ ╭─ Phrase ─────────────────────────────────────────╮ │
+│ │ Field: body(string)                              │ │
+│ │ Parts:                                           │ │
+│ │ Shingle:quick brown(0, 0); Automaton:f.x(2, 2);  │ │
+│ │ Separator: ' '                                   │ │
+│ ╰──────────────────────────────────────────────────╯ │
+│ Projections: id                                      │
+│ ~1 row                                               │
+╰──────────────────────────────────────────────────────╯
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_starts_with('quick b') ## 'brown') ORDER BY id
+----
+id
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_starts_with('qu') ## 'brown') ORDER BY id
+----
+id
+1
+2
+4
+5
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brown') ## ts_like('%ox')) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_starts_with('qu') ## ts_phrase('brown fox')) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brown') ## ts_any(['fox', 'dog'])) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick brown', [0, 2], 'fox') ORDER BY id
+----
+id
+1
+5
+
+query
+EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick brown', [0, 2], 'fox')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────────────╮
+│ Index: test_shingle_pos_idx                     │
+│ Lookup: table                                   │
+│ Index Filter:                                   │
+│ ╭─ Phrase ────────────────────────────────────╮ │
+│ │ Field: body(string)                         │ │
+│ │ Parts:                                      │ │
+│ │ Shingle:quick brown(0, 0); Term:fox(2, 4);  │ │
+│ │ Separator: ' '                              │ │
+│ ╰─────────────────────────────────────────────╯ │
+│ Projections: id                                 │
+│ ~1 row                                          │
+╰─────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick brown fox')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
+│ Index: test_shingle_pos_idx                              │
+│ Lookup: table                                            │
+│ Index Filter:                                            │
+│ ╭─ Phrase ─────────────────────────────────────────────╮ │
+│ │ Field: body(string)                                  │ │
+│ │ Parts:                                               │ │
+│ │ Shingle:quick brown(0, 0); Shingle:brown fox(1, 1);  │ │
+│ │ Separator: ' '                                       │ │
+│ ╰──────────────────────────────────────────────────────╯ │
+│ Projections: id                                          │
+│ ~1 row                                                   │
+╰──────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brown') ## ts_like('%ox'))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────╮
+│ Index: test_shingle_pos_idx                          │
+│ Lookup: table                                        │
+│ Index Filter:                                        │
+│ ╭─ Phrase ─────────────────────────────────────────╮ │
+│ │ Field: body(string)                              │ │
+│ │ Parts:                                           │ │
+│ │ Shingle:quick brown(0, 0); Automaton:%ox(2, 2);  │ │
+│ │ Separator: ' '                                   │ │
+│ ╰──────────────────────────────────────────────────╯ │
+│ Projections: id                                      │
+│ ~1 row                                               │
+╰──────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_starts_with('qu') ## 'brown')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────╮
+│ Index: test_shingle_pos_idx             │
+│ Lookup: table                           │
+│ Index Filter:                           │
+│ ╭─ Phrase ────────────────────────────╮ │
+│ │ Field: body(string)                 │ │
+│ │ Parts:                              │ │
+│ │ Prefix:qu(0, 0); Term:brown(1, 1);  │ │
+│ │ Separator: ' '                      │ │
+│ ╰─────────────────────────────────────╯ │
+│ Projections: id                         │
+│ ~1 row                                  │
+╰─────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick fox', slop := 1)
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: test_shingle_pos_idx            │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Phrase ───────────────────────────╮ │
+│ │ Field: body(string)                │ │
+│ │ Parts:                             │ │
+│ │ Term:quick(0, 0); Term:fox(1, 1);  │ │
+│ │ Separator: ' '                     │ │
+│ │ Slop: 1                            │ │
+│ ╰────────────────────────────────────╯ │
+│ Projections: id                        │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+query
+SELECT count(*) FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick brown fox')
+----
+count
+1
+
+query
+SELECT count(*) FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brown') ## ts_like('%ox'))
+----
+count
+1
+
+query
+EXPLAIN SELECT count(*) FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick brown fox')
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────────────────────────────────╮
+│ Aggregates: count_star()                                 │
+│ ~1 row                                                   │
+╰─────────────────────────────┬────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────┴────────────────────────────╮
+│ Index: test_shingle_pos_idx                              │
+│ Index Filter:                                            │
+│ ╭─ Phrase ─────────────────────────────────────────────╮ │
+│ │ Field: body(string)                                  │ │
+│ │ Parts:                                               │ │
+│ │ Shingle:quick brown(0, 0); Shingle:brown fox(1, 1);  │ │
+│ │ Separator: ' '                                       │ │
+│ ╰──────────────────────────────────────────────────────╯ │
+│ Output: row-count only                                   │
+│ ~1 row                                                   │
+╰──────────────────────────────────────────────────────────╯
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('brown fox')
+ORDER BY BM25(test_shingle_pos_idx.tableoid) DESC, id LIMIT 2
+----
+id
+1
+3
+
+query
+EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('brown fox')
+ORDER BY BM25(test_shingle_pos_idx.tableoid) DESC LIMIT 2
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: test_shingle_pos_idx │
+│ Lookup: table               │
+│ Index Filter:               │
+│ ╭─ Term ──────────────╮     │
+│ │ Field: body(string) │     │
+│ │ Value: brown fox    │     │
+│ ╰─────────────────────╯     │
+│ Score: bm25(k1=1.2, b=0.75) │
+│ Top: 2                      │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('brown') ## ts_levenshtein('fax', 1)) ORDER BY id
+----
+id
+1
+3
+5
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_levenshtein('quack', 1) ## 'brown') ORDER BY id
+----
+id
+1
+2
+4
+5
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brown') ## ts_between('d', 'g', true, true)) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_between('fox a', 'fox z', true, true) ## 'quick') ORDER BY id
+----
+id
+
+statement ok
+DROP TABLE test_shingle_pos
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_pos
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_joined AS
+    generate_shingles(split_text_csv(' '), 2, 2, token_separator := '')
+    WITH (frequency, position)
+
+statement ok
+CREATE TABLE test_shingle_joined (id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX test_shingle_joined_idx ON test_shingle_joined USING inverted(id, body shingle_joined)
+
+statement ok
+INSERT INTO test_shingle_joined VALUES (1, 'quick brown fox'), (2, 'quick bread')
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle_joined
+
+query
+SELECT id FROM test_shingle_joined_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id
+----
+id
+1
+
+statement error
+SELECT id FROM test_shingle_joined_idx WHERE body @@ (ts_like('%own') ## 'fox')
+----
+db error: ERROR: ## pattern parts on a shingle column need a token separator
+HINT: Without a separator a shingle can't be told apart from a word; create the dictionary with a non-empty `token_separator`.
+
+
+statement error
+SELECT id FROM test_shingle_joined_idx WHERE body @@ (ts_regexp('.*own') ## 'fox')
+----
+db error: ERROR: ## pattern parts on a shingle column need a token separator
+HINT: Without a separator a shingle can't be told apart from a word; create the dictionary with a non-empty `token_separator`.
+
+
+statement ok
+DROP TABLE test_shingle_joined
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_joined
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_score AS
+    generate_shingles(split_text_csv(' '), 2, 2) WITH (frequency)
+
+statement ok
+CREATE TABLE test_shingle_score (id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX test_shingle_score_idx ON test_shingle_score USING inverted(id, body shingle_score)
+
+statement ok
+INSERT INTO test_shingle_score VALUES
+    (1, 'brown fox'),
+    (2, 'brown fox brown fox'),
+    (3, 'the brown fox jumped over things')
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle_score
+
+query
+SELECT id FROM test_shingle_score_idx WHERE body @@ ts_phrase('brown fox')
+ORDER BY BM25(test_shingle_score_idx.tableoid) DESC, id
+----
+id
+2
+1
+3
+
+statement ok
+DROP TABLE test_shingle_score
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_score
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_rank AS
+    generate_shingles(split_text_csv(' '), 2, 2) WITH (frequency, position)
+
+statement ok
+CREATE TABLE test_shingle_rank (id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX test_shingle_rank_idx ON test_shingle_rank USING inverted(id, body shingle_rank)
+
+statement ok
+INSERT INTO test_shingle_rank VALUES
+    (1, 'quick brown fox'),
+    (2, 'quick brown z brown fox y quick brown fox'),
+    (3, 'quick brown fox quick brown fox'),
+    (4, 'quick brown only and brown fox only')
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle_rank
+
+query
+SELECT id FROM test_shingle_rank_idx WHERE body @@ ts_phrase('quick brown fox')
+ORDER BY BM25(test_shingle_rank_idx.tableoid) DESC, id
+----
+id
+3
+1
+2
+
+query
+SELECT count(*) FROM test_shingle_rank_idx WHERE body @@ ts_phrase('quick brown fox')
+----
+count
+3
+
+statement ok
+DROP TABLE test_shingle_rank
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_rank
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_terms AS
+    generate_shingles(split_text_csv(' '), 2, 3) WITH (frequency)
+
+statement ok
+CREATE TABLE test_shingle_terms (id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX test_shingle_terms_idx ON test_shingle_terms USING inverted(id, body shingle_terms)
+
+statement ok
+INSERT INTO test_shingle_terms VALUES
+    (1, 'the quick brown fox jumps'),
+    (2, 'quick brown dog'),
+    (3, 'brown fox quick')
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle_terms
+
+query
+SELECT id FROM test_shingle_terms_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_terms_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
+----
+id
+1
+2
+
+statement error
+SELECT id FROM test_shingle_terms_idx WHERE body @@ ts_phrase('quick brown fox jumps')
+----
+db error: ERROR: ts_phrase on this shingle column needs positions: its shingles do not cover the phrase
+HINT: Add `position` to the dictionary, or raise `max_gram` to the phrase length.
+
+
+statement ok
+DROP TABLE test_shingle_terms
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_terms
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_bare AS
+    generate_shingles(split_text_csv(' '), 2, 2, output_unigrams := false)
+    WITH (frequency, position)
+
+statement ok
+CREATE TABLE test_shingle_bare (id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX test_shingle_bare_idx ON test_shingle_bare USING inverted(id, body shingle_bare)
+
+statement ok
+INSERT INTO test_shingle_bare VALUES
+    (1, 'the quick brown fox'),
+    (2, 'quick brown cat brown fox')
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle_bare
+
+query
+SELECT id FROM test_shingle_bare_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_bare_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
+----
+id
+1
+2
+
+statement error
+SELECT id FROM test_shingle_bare_idx WHERE body @@ ts_phrase('quick fox', slop := 1)
+----
+db error: ERROR: ts_phrase on a shingle column without unigrams supports only phrases its shingles cover
+HINT: Slop, interval gaps and pattern parts match unigrams; create the dictionary with `output_unigrams := true`.
+
+
+statement ok
+DROP TABLE test_shingle_bare
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_bare
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_syn AS
+    generate_shingles(split_text(case := 'lower') | expand_solr_synonyms('car => automobile, auto'), 2, 2)
+    WITH (frequency, position)
+
+statement ok
+CREATE TABLE test_shingle_syn (id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX test_shingle_syn_idx ON test_shingle_syn USING inverted(id, body shingle_syn)
+
+statement ok
+INSERT INTO test_shingle_syn VALUES (1, 'a red car here'), (2, 'red paint here')
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle_syn
+
+query
+SELECT id FROM test_shingle_syn_idx WHERE body @@ ts_phrase('red automobile') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_syn_idx WHERE body @@ ts_phrase('red auto') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_syn_idx WHERE body @@ ts_phrase('automobile here') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_syn_idx WHERE body @@ ts_phrase('auto here') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM test_shingle_syn_idx WHERE body @@ ts_phrase('red paint') ORDER BY id
+----
+id
+2
+
+statement ok
+DROP TABLE test_shingle_syn
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_syn
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shingle_offs AS
+    generate_shingles(split_text_csv(' '), 2, 3) WITH (frequency, position)
+
+statement ok
+CREATE TABLE test_shingle_offs (id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX test_shingle_offs_idx ON test_shingle_offs USING inverted(id, body shingle_offs)
+
+statement ok
+INSERT INTO test_shingle_offs VALUES
+    (1, 'the quick brown fox jumps'),
+    (2, 'quick brown cat and quick brown fox')
+
+statement ok
+VACUUM (REFRESH_TABLE) test_shingle_offs
+
+query
+SELECT id, ts_offsets(body) AS offsets FROM test_shingle_offs_idx WHERE body @@ 'brown' ORDER BY id
+----
+id	offsets
+1	{10,15}
+2	{6,11,26,31}
+
+query
+SELECT id, ts_offsets(body) AS offsets FROM test_shingle_offs_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
+----
+id	offsets
+1	{4,15}
+2	{0,11,20,31}
+
+query
+SELECT id, ts_offsets(body) AS offsets FROM test_shingle_offs_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id
+----
+id	offsets
+1	{4,19}
+2	{20,35}
+
+query
+SELECT id, ts_offsets(body) AS offsets FROM test_shingle_offs_idx WHERE body @@ ts_phrase('quick brown fox jumps') ORDER BY id
+----
+id	offsets
+1	{4,25}
+
+query
+SELECT id, ts_offsets(body) AS offsets FROM test_shingle_offs_idx WHERE body @@ (ts_phrase('quick brown') ## ts_like('fo%')) ORDER BY id
+----
+id	offsets
+1	{4,19}
+2	{20,35}
+
+query
+SELECT id, ts_offsets(body) AS offsets FROM test_shingle_offs_idx WHERE body @@ (ts_phrase('quick brown') ## ts_regexp('f.x')) ORDER BY id
+----
+id	offsets
+1	{4,19}
+2	{20,35}
+
+query
+SELECT id, ts_offsets(body) AS offsets FROM test_shingle_offs_idx WHERE body @@ (ts_phrase('quick brown') ## ts_regexp('c.t|f.x')) ORDER BY id
+----
+id	offsets
+1	{4,19}
+2	{0,15,20,35}
+
+query
+SELECT id, ts_offsets(body) AS offsets, ts_highlight(body) AS snippet FROM test_shingle_offs_idx WHERE body @@ (ts_regexp('q.*k') ## ts_phrase('brown fox jumps')) ORDER BY id
+----
+id	offsets	snippet
+1	{4,25}	the <b>quick brown fox jumps</b>
+
+query
+EXPLAIN SELECT id FROM test_shingle_offs_idx WHERE body @@ (ts_regexp('q.*k') ## ts_phrase('brown fox jumps'))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────╮
+│ Index: test_shingle_offs_idx                              │
+│ Lookup: table                                             │
+│ Index Filter:                                             │
+│ ╭─ Phrase ──────────────────────────────────────────────╮ │
+│ │ Field: body(string)                                   │ │
+│ │ Parts:                                                │ │
+│ │ Automaton:q.*k(0, 0); Shingle:brown fox jumps(1, 1);  │ │
+│ │ Separator: ' '                                        │ │
+│ ╰───────────────────────────────────────────────────────╯ │
+│ Projections: id                                           │
+│ ~1 row                                                    │
+╰───────────────────────────────────────────────────────────╯
+
+query
+SELECT id, ts_offsets(body) AS offsets FROM test_shingle_offs_idx WHERE body @@ (ts_phrase('the') ## ts_regexp('q.*k') ## ts_phrase('brown fox')) ORDER BY id
+----
+id	offsets
+1	{0,19}
+
+query
+SELECT ts_offsets('shingle_offs', 'the quick brown fox jumps', ts_phrase('quick brown') ## ts_regexp('f.x')) AS offsets
+----
+offsets
+{4,19}
+
+query
+SELECT id, ts_highlight(body) AS snippet FROM test_shingle_offs_idx WHERE body @@ ts_phrase('quick brown fox jumps') ORDER BY id
+----
+id	snippet
+1	the <b>quick brown fox jumps</b>
+
+query
+SELECT ts_offsets('shingle_offs', 'the quick brown fox jumps', ts_phrase('quick brown fox jumps')) AS offsets
+----
+offsets
+{4,25}
+
+statement ok
+DROP TABLE test_shingle_offs
+
+statement ok
+DROP TEXT SEARCH DICTIONARY shingle_offs

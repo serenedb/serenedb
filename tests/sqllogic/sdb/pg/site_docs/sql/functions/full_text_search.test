@@ -1063,6 +1063,18 @@ ORDER BY id;
 id
 3
 
+# DOCS_TEST: ts_regexp_phrase
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM docs_idx
+WHERE body @@ ('quick' ## ts_regexp('(brown|red)') ## 'fox')
+ORDER BY id;
+----
+id
+1
+2
+
 # DOCS_TEST: ts_levenshtein_prefix
 # DOCS_TEST_BODY
 query

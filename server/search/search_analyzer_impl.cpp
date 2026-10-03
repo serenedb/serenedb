@@ -102,7 +102,6 @@ void Features::Validate(std::string_view type) const {
              irs::IndexFeatures::Norm;
     }
     if (type == irs::analysis::ShingleTokenizer::type_name()) {
-      // Shingle terms carry positions but no source offsets.
       return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
              irs::IndexFeatures::Norm;
     }

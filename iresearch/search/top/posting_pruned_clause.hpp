@@ -54,6 +54,7 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
                const TermReader& field, const detail::ScoreArgs& args) {
     _index = kBlock - 1;
     _packed = true;
+    _lazy = nullptr;
     if (Base::PrepareCommon(meta, doc_in, layout, segment, field, args)) {
       _doc = doc_limits::min() + meta.doc_delta;
     }
@@ -100,6 +101,11 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot) noexcept {
     SDB_ASSERT(slot < kScoreBlock);
+    if constexpr (InputType::kVolatileAlways) {
+      if (_lazy != nullptr) {
+        DecodeFreqs();
+      }
+    }
     _gather[slot] = _freqs.data[_index];
   }
 
@@ -181,7 +187,12 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
         _bitset = reinterpret_cast<const uint64_t*>(std::begin(_docs));
       }
     }
-    FormatTraits128::ReadTail(len, in, _enc.data, _freqs.data);
+    if constexpr (InputType::kVolatileAlways) {
+      _lazy = in.Current();
+      FormatTraits128::SkipTail(len, in);
+    } else {
+      FormatTraits128::ReadTail(len, in, _enc.data, _freqs.data);
+    }
     _base = prev;
     _max_in_leaf = leaf.max;
     _len = len;
@@ -191,6 +202,16 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
     _prefix_bits = 0;
     _run = leaf.IsRun();
     _packed = !leaf.Maskable();
+  }
+
+  IRS_NO_INLINE void DecodeFreqs() noexcept {
+    using Codec = FormatTraits128::Codec;
+    if (_len == kBlock) {
+      Codec::DecodeValuesBlock(_lazy, _freqs.data);
+    } else {
+      Codec::DecodeValuesTail(_lazy, _len, _freqs.data + (kBlock - _len));
+    }
+    _lazy = nullptr;
   }
 
   doc_id_t SeekToBlock(doc_id_t target) {
@@ -242,6 +263,7 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
 
   ABSL_CACHELINE_ALIGNED uint32_t _gather[kScoreBlock]{};
   const uint64_t* _bitset = nullptr;
+  const byte_type* _lazy = nullptr;
   uint64_t _prefix_word = 0;
   uint32_t _words = 0;
   uint32_t _at = kBlock;

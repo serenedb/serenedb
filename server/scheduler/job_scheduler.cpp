@@ -38,7 +38,6 @@
 #include <duckdb/main/database_manager.hpp>
 #include <functional>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <optional>
 #include <utility>
 
 #include "auth/role_closure.h"
@@ -223,8 +222,9 @@ void JobScheduler::RunConcurrent(std::shared_ptr<JobState> state,
     ++status.running;
     _runs.Add();
     BackgroundScheduler::instance()
-      .Run(
-        [this, state, job = state->definition] { RunBody(*state, job, false); })
+      .Run([this, state, job = state->definition] {
+        RunBody(state, job, false, 0);
+      })
       .Detach();
   }
   BackgroundScheduler::instance().RunAt(
@@ -233,7 +233,7 @@ void JobScheduler::RunConcurrent(std::shared_ptr<JobState> state,
 
 void JobScheduler::RunNotConcurrent(std::shared_ptr<JobState> state,
                                     uint64_t timer) {
-  std::optional<JobDefinition> job;
+  JobDefinition job;
   {
     absl::MutexLock lock{&state->mutex};
     if (state->dropped || state->timer != timer) {
@@ -241,45 +241,43 @@ void JobScheduler::RunNotConcurrent(std::shared_ptr<JobState> state,
     }
     auto& status = state->status;
     const auto now = duckdb::Timestamp::GetCurrentTimestamp();
-    if (status.running > 0) {
-      status.next_run = NextRun(status.schedule, now);
-    } else if (now >= status.next_run) {
-      ++status.running;
-      _runs.Add();
-      job = state->definition;
+    if (status.running > 0 || now < status.next_run) {
+      if (status.running > 0) {
+        status.next_run = NextRun(status.schedule, now);
+      }
+      BackgroundScheduler::instance().RunAt(
+        status.next_run,
+        [this, state, timer] { RunNotConcurrent(state, timer); });
+      return;
     }
+    ++status.running;
+    _runs.Add();
+    job = state->definition;
   }
-  if (job) {
-    RunBody(*state, std::move(*job), false);
-  }
-  absl::MutexLock lock{&state->mutex};
-  if (!state->dropped && state->timer == timer) {
-    BackgroundScheduler::instance().RunAt(
-      state->status.next_run,
-      [this, state, timer] { RunNotConcurrent(state, timer); });
-  }
+  RunBody(state, std::move(job), false, timer);
 }
 
 void JobScheduler::Execute(catalog::JobCatalogEntry& job) {
   auto definition = DefinitionOf(job);
-  auto& state = *job.State();
+  const auto& state = job.State();
   {
-    absl::MutexLock lock{&state.mutex};
-    if (state.status.running > 0 && !state.status.schedule.concurrent) {
+    absl::MutexLock lock{&state->mutex};
+    if (state->status.running > 0 && !state->status.schedule.concurrent) {
       throw duckdb::InvalidInputException("Job \"%s\" is already running",
                                           definition.name);
     }
-    ++state.status.running;
+    ++state->status.running;
     _runs.Add();
   }
-  auto error = RunBody(state, std::move(definition), true);
+  auto error = RunBody(state, std::move(definition), true, 0);
   if (error.HasError()) {
     error.Throw();
   }
 }
 
-duckdb::ErrorData JobScheduler::RunBody(JobState& state, JobDefinition job,
-                                        bool manual) {
+duckdb::ErrorData JobScheduler::RunBody(std::shared_ptr<JobState> state,
+                                        JobDefinition job, bool manual,
+                                        uint64_t timer) {
   JobRunRecord run{
     .database_oid = job.database_oid,
     .catalog = job.catalog,
@@ -293,19 +291,24 @@ duckdb::ErrorData JobScheduler::RunBody(JobState& state, JobDefinition job,
   };
   duckdb::shared_ptr<duckdb::ClientContext> context;
   absl::Cleanup finish = [&] {
-    absl::MutexLock lock{&state.mutex};
-    std::erase(state.contexts, context);
-    auto& status = state.status;
-    if (state.timer != 0 && !status.schedule.concurrent) {
+    absl::MutexLock lock{&state->mutex};
+    std::erase(state->contexts, context);
+    auto& status = state->status;
+    if (state->timer != 0 && !status.schedule.concurrent) {
       status.next_run = NextRun(status.schedule, run.finish);
     }
     ++status.run_count;
     status.failure_count += !run.success;
     status.last_run = run;
     --status.running;
+    if (timer != 0 && !state->dropped && state->timer == timer) {
+      BackgroundScheduler::instance().RunAt(
+        status.next_run,
+        [this, state, timer] { RunNotConcurrent(state, timer); });
+    }
     _runs.Done();
   };
-  auto error = RunQuery(state, job, context);
+  auto error = RunQuery(*state, job, context);
   run.finish = duckdb::Timestamp::GetCurrentTimestamp();
   run.success = !error.HasError();
   if (!run.success) {

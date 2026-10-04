@@ -283,8 +283,8 @@ class Encoder {
     }
   }
 
-  uint64_t Cut(uint32_t target) {
-    const uint64_t step = target / kEstimateSteps;
+  uint64_t Cut() {
+    const uint64_t step = _target / kEstimateSteps;
     uint64_t estimated_raw = _raw;
     while (_next < _acc.row_count) {
       AddRow(_next++);
@@ -292,7 +292,7 @@ class Encoder {
         continue;
       }
       estimated_raw = _raw;
-      if (Estimate() >= target) {
+      if (Estimate() >= _target) {
         break;
       }
     }
@@ -852,7 +852,7 @@ class SegmentWriter {
       auto* seg = Acquire();
       const auto end = With(cutter.choice.leaf, [&](auto& enc) {
         enc.Begin(cutter.choice.shape, cutter.level, cutter.wide, row);
-        const auto stop = enc.Cut(_params.segment_target);
+        const auto stop = enc.Cut();
         enc.Finish(*seg);
         return stop;
       });

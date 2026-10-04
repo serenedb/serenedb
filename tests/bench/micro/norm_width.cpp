@@ -331,44 +331,79 @@ BENCHMARK(Bench)->Apply(Args);
 
 constexpr uint32_t kEscape = 0xFF;
 
-template<typename Offset>
-class Escaped {
+class Slots {
  public:
-  Escaped() = default;
-  Escaped(const Escaped&) = delete;
-  Escaped& operator=(const Escaped&) = delete;
-  ~Escaped() { Reset(); }
+  Slots() = default;
+  Slots(const Slots&) = delete;
+  Slots& operator=(const Slots&) = delete;
+  ~Slots() { Reset(); }
 
-  void Reset() noexcept {
-    if (_slots != nullptr) {
-      munmap(_slots, _size);
-      _slots = nullptr;
-    }
-  }
-
-  void Build(uint32_t rows, uint32_t every, uint32_t shift) {
+  uint8_t* Map(size_t size) {
     Reset();
-    _size = rows + kSlack;
-    void* p = mmap(nullptr, _size, PROT_READ | PROT_WRITE,
+    void* p = mmap(nullptr, size, PROT_READ | PROT_WRITE,
                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (p == MAP_FAILED) {
       std::abort();
     }
-    madvise(p, _size, MADV_NOHUGEPAGE);
-    _slots = static_cast<uint8_t*>(p);
-    _shift = shift;
-    _marks.assign((rows + 63) / 64, 0);
-    std::mt19937_64 rng{uint64_t{every} * 31 + rows};
-    std::vector<uint32_t> picked;
-    if (every != 0) {
-      std::geometric_distribution<uint32_t> gap{1.0 / every};
-      for (uint64_t r = gap(rng); r < rows; r += 1 + gap(rng)) {
-        picked.push_back(static_cast<uint32_t>(r));
-        _marks[r / 64] |= uint64_t{1} << (r % 64);
-      }
+    madvise(p, size, MADV_NOHUGEPAGE);
+    _data = static_cast<uint8_t*>(p);
+    _size = size;
+    return _data;
+  }
+
+  const uint8_t* Data() const noexcept { return _data; }
+
+ private:
+  void Reset() noexcept {
+    if (_data != nullptr) {
+      munmap(_data, _size);
+      _data = nullptr;
     }
+  }
+
+  uint8_t* _data = nullptr;
+  size_t _size = 0;
+};
+
+uint32_t Expected(uint32_t row) noexcept { return 1000 + (row & 1023); }
+
+class Picked {
+ public:
+  void Build(uint32_t rows, uint32_t every) {
+    _rows.clear();
+    _marks.assign((rows + 63) / 64, 0);
+    if (every == 0) {
+      return;
+    }
+    std::mt19937_64 rng{uint64_t{every} * 31 + rows};
+    std::geometric_distribution<uint32_t> gap{1.0 / every};
+    for (uint64_t r = gap(rng); r < rows; r += 1 + gap(rng)) {
+      _rows.push_back(static_cast<uint32_t>(r));
+      _marks[r / 64] |= uint64_t{1} << (r % 64);
+    }
+  }
+
+  const std::vector<uint32_t>& Rows() const noexcept { return _rows; }
+
+  uint32_t Want(uint32_t row) const noexcept {
+    return (_marks[row / 64] >> (row % 64)) & 1 ? Expected(row) : Value(row, 7);
+  }
+
+ private:
+  std::vector<uint32_t> _rows;
+  std::vector<uint64_t> _marks;
+};
+
+template<typename Offset>
+class Escaped {
+ public:
+  void Build(uint32_t rows, uint32_t every, uint32_t shift) {
+    uint8_t* slots = _slots.Map(rows + kSlack);
+    _shift = shift;
+    _picked.Build(rows, every);
+    const auto& picked = _picked.Rows();
     for (uint32_t r = 0; r != rows; ++r) {
-      _slots[r] = static_cast<uint8_t>(Value(r, 7));
+      slots[r] = static_cast<uint8_t>(Value(r, 7));
     }
     const uint32_t buckets = (rows >> shift) + 1;
     _starts.assign(buckets + 1, 0);
@@ -379,9 +414,9 @@ class Escaped {
       _starts[b] = static_cast<uint32_t>(i);
       while (i != picked.size() && (picked[i] >> shift) == b) {
         const auto r = picked[i++];
-        _slots[r] = kEscape;
+        slots[r] = kEscape;
         _offsets.push_back(static_cast<Offset>(r & ((1u << shift) - 1)));
-        _values.push_back(Expected(r));
+        _values.push_back(static_cast<uint16_t>(Expected(r)));
       }
     }
     _starts[buckets] = static_cast<uint32_t>(i);
@@ -390,13 +425,7 @@ class Escaped {
     _exceptions = picked.size();
   }
 
-  static uint32_t Expected(uint32_t row) noexcept {
-    return 1000 + (row & 1023);
-  }
-
-  uint32_t Want(uint32_t row) const noexcept {
-    return (_marks[row / 64] >> (row % 64)) & 1 ? Expected(row) : Value(row, 7);
-  }
+  uint32_t Want(uint32_t row) const noexcept { return _picked.Want(row); }
 
   size_t Exceptions() const noexcept { return _exceptions; }
   size_t TableBytes() const noexcept {
@@ -406,8 +435,9 @@ class Escaped {
 
   IRS_FORCE_INLINE void Fetch(const uint32_t* IRS_RESTRICT rows,
                               uint32_t* IRS_RESTRICT out) const noexcept {
+    const uint8_t* slots = _slots.Data();
     for (size_t i = 0; i != kBlock; ++i) {
-      out[i] = _slots[rows[i]];
+      out[i] = slots[rows[i]];
     }
     if (!_any) {
       return;
@@ -476,25 +506,229 @@ class Escaped {
     return _values[lo + k];
   }
 
-  uint8_t* _slots = nullptr;
-  size_t _size = 0;
+  Slots _slots;
+  Picked _picked;
   uint32_t _shift = 8;
   bool _any = false;
   size_t _exceptions = 0;
-  std::vector<uint64_t> _marks;
   std::vector<uint32_t> _starts;
   std::vector<Offset> _offsets;
   std::vector<uint16_t> _values;
 };
 
-template<typename Offset>
-const Escaped<Offset>& GetEscaped(uint32_t rows, uint32_t every,
-                                  uint32_t shift) {
-  static Escaped<Offset> column;
-  static std::array<uint32_t, 3> key{};
-  if (key != std::array{rows, every, shift}) {
-    column.Build(rows, every, shift);
-    key = {rows, every, shift};
+template<bool Fused>
+class Indexed {
+ public:
+  static constexpr uint32_t kCodes = 16;
+  static constexpr uint32_t kFirst = 256 - kCodes;
+  static constexpr uint32_t kOverflow = 255;
+  static constexpr size_t kGroup = 64;
+
+  void Build(uint32_t rows, uint32_t every) {
+    uint8_t* slots = _slots.Map(rows + kSlack);
+    _shift = every == 0 ? 20
+                        : static_cast<uint32_t>(std::clamp<int>(
+                            std::bit_width(uint64_t{every} * 4) - 1, 6, 20));
+    _picked.Build(rows, every);
+    const auto& picked = _picked.Rows();
+    for (uint32_t r = 0; r != rows; ++r) {
+      slots[r] = static_cast<uint8_t>(Value(r, 7));
+    }
+    const uint32_t buckets = (rows >> _shift) + 1;
+    _bases.assign(buckets, 0);
+    _values.clear();
+    size_t i = 0;
+    for (uint32_t b = 0; b != buckets; ++b) {
+      _bases[b] = static_cast<uint32_t>(i);
+      for (uint32_t local = 0; i != picked.size() && (picked[i] >> _shift) == b;
+           ++local) {
+        const auto r = picked[i++];
+        slots[r] =
+          static_cast<uint8_t>(local < kCodes - 1 ? kFirst + local : kOverflow);
+        _values.push_back(static_cast<uint16_t>(Expected(r)));
+      }
+    }
+    _values.push_back(0);
+    _any = !picked.empty();
+    _exceptions = picked.size();
+  }
+
+  uint32_t Want(uint32_t row) const noexcept { return _picked.Want(row); }
+
+  size_t Exceptions() const noexcept { return _exceptions; }
+  size_t TableBytes() const noexcept {
+    return _bases.size() * sizeof(uint32_t) + _exceptions * sizeof(uint16_t);
+  }
+
+  IRS_FORCE_INLINE void Fetch(const uint32_t* IRS_RESTRICT rows,
+                              uint32_t* IRS_RESTRICT out) const noexcept {
+    const uint8_t* slots = _slots.Data();
+    for (size_t i = 0; i != kBlock; ++i) {
+      out[i] = slots[rows[i]];
+    }
+    if (!_any) {
+      return;
+    }
+    if constexpr (Fused) {
+      Gather(rows, out);
+      return;
+    }
+    bool escaped = false;
+    for (size_t i = 0; i != kBlock; ++i) {
+      escaped |= out[i] >= kFirst;
+    }
+    if (escaped) [[unlikely]] {
+      Patch(rows, out);
+    }
+  }
+
+ private:
+  IRS_FORCE_INLINE void Gather(const uint32_t* IRS_RESTRICT rows,
+                               uint32_t* IRS_RESTRICT out) const noexcept {
+    const __m256i limit = _mm256_set1_epi32(static_cast<int>(kFirst - 1));
+    const __m256i first = _mm256_set1_epi32(static_cast<int>(kFirst));
+    const __m256i overflow = _mm256_set1_epi32(static_cast<int>(kOverflow));
+    const __m256i low = _mm256_set1_epi32(0xFFFF);
+    const __m128i shift = _mm_cvtsi32_si128(static_cast<int>(_shift));
+    const auto* bases = reinterpret_cast<const int*>(_bases.data());
+    const auto* values = reinterpret_cast<const int*>(_values.data());
+    for (size_t v = 0; v != kBlock; v += 8) {
+      const __m256i codes =
+        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(out + v));
+      const __m256i m = _mm256_cmpgt_epi32(codes, limit);
+      if (_mm256_testz_si256(m, m)) [[likely]] {
+        continue;
+      }
+      if (!_mm256_testz_si256(m, _mm256_cmpeq_epi32(codes, overflow)))
+        [[unlikely]] {
+        for (size_t j = v; j != v + 8; ++j) {
+          if (out[j] >= kFirst) {
+            out[j] = Lookup(rows[j], out[j]);
+          }
+        }
+        continue;
+      }
+      const __m256i buckets = _mm256_srl_epi32(
+        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(rows + v)), shift);
+      const __m256i base = _mm256_mask_i32gather_epi32(_mm256_setzero_si256(),
+                                                       bases, buckets, m, 4);
+      const __m256i at = _mm256_add_epi32(base, _mm256_sub_epi32(codes, first));
+      const __m256i got = _mm256_and_si256(
+        _mm256_mask_i32gather_epi32(_mm256_setzero_si256(), values, at, m, 2),
+        low);
+      _mm256_storeu_si256(reinterpret_cast<__m256i*>(out + v),
+                          _mm256_blendv_epi8(codes, got, m));
+    }
+  }
+
+  [[gnu::noinline]] void Patch(const uint32_t* IRS_RESTRICT rows,
+                               uint32_t* IRS_RESTRICT out) const noexcept {
+    const __m256i limit = _mm256_set1_epi32(static_cast<int>(kFirst - 1));
+    for (size_t g = 0; g != kBlock; g += kGroup) {
+      __m256i any = _mm256_setzero_si256();
+      for (size_t v = 0; v != kGroup; v += 8) {
+        any = _mm256_or_si256(
+          any,
+          _mm256_cmpgt_epi32(
+            _mm256_loadu_si256(reinterpret_cast<const __m256i*>(out + g + v)),
+            limit));
+      }
+      if (_mm256_testz_si256(any, any)) {
+        continue;
+      }
+      for (size_t v = 0; v != kGroup; v += 8) {
+        auto m = static_cast<uint32_t>(
+          _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(
+            _mm256_loadu_si256(reinterpret_cast<const __m256i*>(out + g + v)),
+            limit))));
+        for (; m != 0; m &= m - 1) {
+          const auto j = g + v + static_cast<size_t>(std::countr_zero(m));
+          out[j] = Lookup(rows[j], out[j]);
+        }
+      }
+    }
+  }
+
+  IRS_FORCE_INLINE uint32_t Lookup(uint32_t row, uint32_t code) const noexcept {
+    const uint32_t base = _bases[row >> _shift];
+    if (code != kOverflow) [[likely]] {
+      return _values[base + code - kFirst];
+    }
+    return Overflow(row, base);
+  }
+
+  [[gnu::noinline]] uint32_t Overflow(uint32_t row,
+                                      uint32_t base) const noexcept {
+    const uint8_t* slots = _slots.Data();
+    uint32_t rank = 0;
+    for (uint32_t r = (row >> _shift) << _shift; r != row; ++r) {
+      rank += slots[r] >= kFirst;
+    }
+    return _values[base + rank];
+  }
+
+  Slots _slots;
+  Picked _picked;
+  uint32_t _shift = 20;
+  bool _any = false;
+  size_t _exceptions = 0;
+  std::vector<uint32_t> _bases;
+  std::vector<uint16_t> _values;
+};
+
+class Plain16 {
+ public:
+  void Build(uint32_t rows) {
+    uint8_t* slots = _slots.Map(size_t{rows} * 2 + kSlack);
+    for (uint32_t r = 0; r != rows; ++r) {
+      absl::little_endian::Store16(slots + size_t{r} * 2,
+                                   static_cast<uint16_t>(Value(r, 16)));
+    }
+  }
+
+  uint32_t Want(uint32_t row) const noexcept { return Value(row, 16); }
+  size_t Exceptions() const noexcept { return 0; }
+  size_t TableBytes() const noexcept { return 0; }
+
+  IRS_FORCE_INLINE void Fetch(const uint32_t* IRS_RESTRICT rows,
+                              uint32_t* IRS_RESTRICT out) const noexcept {
+    const uint8_t* slots = _slots.Data();
+    for (size_t i = 0; i != kBlock; ++i) {
+      out[i] = absl::little_endian::Load16(slots + size_t{rows[i]} * 2);
+    }
+  }
+
+ private:
+  Slots _slots;
+};
+
+template<typename Column>
+void Measure(benchmark::State& state, const Column& column,
+             const std::vector<uint32_t>& ids, uint32_t rows) {
+  alignas(64) uint32_t out[kBlock];
+  for (size_t b = 0; b < kBlocks; b += 7) {
+    const auto* block = ids.data() + b * kBlock;
+    column.Fetch(block, out);
+    for (size_t i = 0; i != kBlock; ++i) {
+      if (out[i] != column.Want(block[i])) {
+        state.SkipWithError("mismatch");
+        return;
+      }
+    }
+  }
+  Run(state, ids, [&](const uint32_t* r, uint32_t* o) { column.Fetch(r, o); });
+  state.counters["table_bits_per_row"] =
+    static_cast<double>(column.TableBytes()) * 8 / static_cast<double>(rows);
+  state.counters["exceptions"] = static_cast<double>(column.Exceptions());
+}
+
+template<typename Column, typename... Key>
+const Column& Cached(Key... key) {
+  static Column column;
+  static std::array<uint32_t, sizeof...(Key)> built{};
+  if (built != std::array<uint32_t, sizeof...(Key)>{key...}) {
+    column.Build(key...);
+    built = {key...};
   }
   return column;
 }
@@ -503,31 +737,32 @@ void BenchEscapes(benchmark::State& state) {
   const auto rows = static_cast<uint32_t>(state.range(0));
   const auto every = static_cast<uint32_t>(state.range(1));
   const auto shift = static_cast<uint32_t>(state.range(2));
-  const auto span = static_cast<uint32_t>(state.range(3));
-  const auto& ids = GetRows(rows, span);
-  const auto measure = [&](const auto& column) {
-    alignas(64) uint32_t out[kBlock];
-    for (size_t b = 0; b < kBlocks; b += 7) {
-      const auto* block = ids.data() + b * kBlock;
-      column.Fetch(block, out);
-      for (size_t i = 0; i != kBlock; ++i) {
-        if (out[i] != column.Want(block[i])) {
-          state.SkipWithError("mismatch");
-          return;
-        }
-      }
-    }
-    Run(state, ids,
-        [&](const uint32_t* r, uint32_t* o) { column.Fetch(r, o); });
-    state.counters["table_bits_per_row"] =
-      static_cast<double>(column.TableBytes()) * 8 / static_cast<double>(rows);
-    state.counters["exceptions"] = static_cast<double>(column.Exceptions());
-  };
+  const auto& ids = GetRows(rows, static_cast<uint32_t>(state.range(3)));
   if (shift <= 8) {
-    measure(GetEscaped<uint8_t>(rows, every, shift));
+    Measure(state, Cached<Escaped<uint8_t>>(rows, every, shift), ids, rows);
   } else {
-    measure(GetEscaped<uint16_t>(rows, every, shift));
+    Measure(state, Cached<Escaped<uint16_t>>(rows, every, shift), ids, rows);
   }
+}
+
+void BenchIndexed(benchmark::State& state) {
+  const auto rows = static_cast<uint32_t>(state.range(0));
+  const auto every = static_cast<uint32_t>(state.range(1));
+  const auto& ids = GetRows(rows, static_cast<uint32_t>(state.range(2)));
+  Measure(state, Cached<Indexed<false>>(rows, every), ids, rows);
+}
+
+void BenchFused(benchmark::State& state) {
+  const auto rows = static_cast<uint32_t>(state.range(0));
+  const auto every = static_cast<uint32_t>(state.range(1));
+  const auto& ids = GetRows(rows, static_cast<uint32_t>(state.range(2)));
+  Measure(state, Cached<Indexed<true>>(rows, every), ids, rows);
+}
+
+void BenchPlain16(benchmark::State& state) {
+  const auto rows = static_cast<uint32_t>(state.range(0));
+  const auto& ids = GetRows(rows, static_cast<uint32_t>(state.range(1)));
+  Measure(state, Cached<Plain16>(rows), ids, rows);
 }
 
 void EscapeArgs(benchmark::internal::Benchmark* b) {
@@ -551,7 +786,30 @@ void EscapeArgs(benchmark::internal::Benchmark* b) {
   b->ArgNames({"rows", "every", "shift", "span"});
 }
 
+void IndexedArgs(benchmark::internal::Benchmark* b) {
+  for (int64_t rows : {int64_t{1} << 20, int64_t{1} << 28}) {
+    for (int64_t every : {0, 16384, 4096, 1024, 256, 64, 16}) {
+      for (int64_t span : {256, 4096, 262144}) {
+        b->Args({rows, every, span});
+      }
+    }
+  }
+  b->ArgNames({"rows", "every", "span"});
+}
+
+void Plain16Args(benchmark::internal::Benchmark* b) {
+  for (int64_t rows : {int64_t{1} << 20, int64_t{1} << 28}) {
+    for (int64_t span : {256, 4096, 262144}) {
+      b->Args({rows, span});
+    }
+  }
+  b->ArgNames({"rows", "span"});
+}
+
 BENCHMARK(BenchEscapes)->Apply(EscapeArgs);
+BENCHMARK(BenchIndexed)->Apply(IndexedArgs);
+BENCHMARK(BenchFused)->Apply(IndexedArgs);
+BENCHMARK(BenchPlain16)->Apply(Plain16Args);
 
 }  // namespace
 

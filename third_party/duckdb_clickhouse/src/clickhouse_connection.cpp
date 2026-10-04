@@ -217,8 +217,8 @@ ClickHouseConnectionParams ClickHouseConnectionParams::FromConnectionString(cons
 				value += s[i++];
 			}
 			if (i >= s.size()) {
-				throw InvalidInputException("Invalid ClickHouse connection string: unterminated quoted value for \"%s\"",
-				                            key);
+				throw InvalidInputException(
+				    "Invalid ClickHouse connection string: unterminated quoted value for \"%s\"", key);
 			}
 			i++; // closing quote
 		} else {
@@ -252,8 +252,7 @@ clickhouse::ClientOptions ClickHouseConnectionParams::ToClientOptions() const {
 	return options;
 }
 
-ClickHouseConnection::ClickHouseConnection(std::unique_ptr<clickhouse::Client> client_p)
-    : client(std::move(client_p)) {
+ClickHouseConnection::ClickHouseConnection(std::unique_ptr<clickhouse::Client> client_p) : client(std::move(client_p)) {
 }
 
 ClickHouseConnection ClickHouseConnection::Open(const ClickHouseConnectionParams &params) {
@@ -276,7 +275,7 @@ clickhouse::Client &ClickHouseConnection::GetClient() {
 // every worker that issues a query -- a plain bool is a data race (tsan:
 // "Location is global 'duckdb::debug_clickhouse_print_queries'"). Relaxed is
 // enough: the flag guards nothing but itself.
-static std::atomic<bool> debug_clickhouse_print_queries{false};
+static std::atomic<bool> debug_clickhouse_print_queries {false};
 
 void ClickHouseConnection::DebugSetPrintQueries(bool print) {
 	debug_clickhouse_print_queries.store(print, std::memory_order_relaxed);
@@ -291,7 +290,7 @@ clickhouse::Query ClickHouseConnection::MakeQuery(duckdb::ClientContext &context
 			// ClickHouse's max_execution_time is in (fractional) seconds; a per-query
 			// SETTINGS keeps it off the pooled connection (no sticky session GUC).
 			double seconds = static_cast<double>(ms) / 1000.0;
-			query.SetSetting("max_execution_time", clickhouse::QuerySettingsField{absl::StrCat(seconds), 0});
+			query.SetSetting("max_execution_time", clickhouse::QuerySettingsField {absl::StrCat(seconds), 0});
 		}
 	}
 	return query;
@@ -308,7 +307,7 @@ void ClickHouseConnection::ThrowError(const char *op, const string &sql, const s
 }
 
 // Same as above: SET writes it, connection setup reads it from worker threads.
-static std::atomic<bool> clickhouse_connection_cache_enabled{true};
+static std::atomic<bool> clickhouse_connection_cache_enabled {true};
 
 void ClickHouseConnection::SetConnectionCache(bool enabled) {
 	clickhouse_connection_cache_enabled.store(enabled, std::memory_order_relaxed);

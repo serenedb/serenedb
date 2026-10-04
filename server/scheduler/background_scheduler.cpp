@@ -26,8 +26,6 @@
 #include <duckdb/common/types/timestamp.hpp>
 #include <memory>
 #include <yaclib/async/contract.hpp>
-#include <yaclib/coro/await.hpp>
-#include <yaclib/coro/future.hpp>
 
 #include "network/io_context.h"
 #include "network/server.h"
@@ -127,25 +125,15 @@ yaclib::Future<> BackgroundScheduler::Delay(clock::duration d) {
   return std::move(f);
 }
 
-namespace {
-
-yaclib::Future<> DelayThenRun(BackgroundScheduler& scheduler,
-                              BackgroundScheduler::clock::duration delay,
-                              std::function<void()> task) {
-  co_await scheduler.Delay(delay);
-  if (!scheduler.IsStopping()) {
-    scheduler.Run(std::move(task)).Detach();
-  }
-  co_return {};
-}
-
-}  // namespace
-
 void BackgroundScheduler::RunAt(duckdb::timestamp_t at,
                                 std::function<void()> task) {
   const std::chrono::microseconds delay{
     at.value - duckdb::Timestamp::GetCurrentTimestamp().value};
-  DelayThenRun(*this, delay, std::move(task)).Detach();
+  Delay(delay).Detach(*_pool, [this, task = std::move(task)] {
+    if (!IsStopping()) {
+      task();
+    }
+  });
 }
 
 void BackgroundScheduler::OpenDelays() {

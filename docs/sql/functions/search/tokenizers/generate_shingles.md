@@ -79,6 +79,8 @@ A value whose base stream holds fewer than `MIN_GRAM` tokens produces no shingle
 
 A phrase the dictionary cannot answer fails with `ts_phrase on this shingle column needs positions: its shingles do not cover the phrase`. Leaving `position` out keeps the index smaller. A row ranks by how often the phrase occurs in it.
 
+A phrase of one word looks up that word, so it needs `OUTPUT_UNIGRAMS`. Without it the phrase fails with `ts_phrase on a shingle column without unigrams can't match a single word`. `FALLBACK_UNIGRAMS` doesn't help here: it indexes words only for values too short to form a shingle.
+
 With `position`, every run of two or more adjacent words in a phrase is looked up as shingles, also in a phrase with pattern parts, alternatives or `[min, max]` gaps. A phrase with slop matches word by word. In `EXPLAIN` a shingle is a term like any other: a phrase that is one shingle is a single `Term`, a covered phrase lists its shingles as `Term:` parts, and every phrase on a shingle column shows the column's `Separator`.
 
 A shingle joins tokens at consecutive positions. If the base dictionary puts several tokens at one position, like the synonyms of [`expand_solr_synonyms`](./expand_solr_synonyms.md) or [`expand_wordnet_synonyms`](./expand_wordnet_synonyms.md), a shingle continues from just one of them. On such a column every phrase of two or more words matches word by word, so it needs `position` and `OUTPUT_UNIGRAMS`.

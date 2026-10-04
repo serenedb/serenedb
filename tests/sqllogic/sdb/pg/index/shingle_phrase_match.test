@@ -1231,6 +1231,20 @@ db error: ERROR: ts_phrase on a shingle column without unigrams supports only ph
 HINT: Slop, interval gaps and pattern parts match unigrams; create the dictionary with `output_unigrams := true`.
 
 
+statement error
+SELECT id FROM test_shingle_bare_idx WHERE body @@ ts_phrase('quick')
+----
+db error: ERROR: ts_phrase on a shingle column without unigrams can't match a single word
+HINT: Single words aren't indexed; search for 2 or more words, or create the dictionary with `output_unigrams := true`.
+
+
+statement error
+SELECT id FROM test_shingle_bare_idx WHERE body @@ to_tsquery('"quick"')
+----
+db error: ERROR: to_tsquery on a shingle column without unigrams can't match a single word
+HINT: Single words aren't indexed; search for 2 or more words, or create the dictionary with `output_unigrams := true`.
+
+
 statement ok
 DROP TABLE test_shingle_bare
 

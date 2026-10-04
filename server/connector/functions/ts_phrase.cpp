@@ -167,6 +167,20 @@ bool HasPatternParts(const irs::ByPhraseOptions& options) {
 void PlanShingles(const irs::analysis::ShingleTokenizer& shingle,
                   const SearchColumnInfo& column_info,
                   irs::ByPhraseOptions& options, std::string_view label) {
+  if (options.size() == 1) {
+    if (!shingle.OutputUnigrams()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG(label,
+                " on a shingle column without unigrams can't match a single "
+                "word"),
+        ERR_HINT("Single words aren't indexed; search for ",
+                 shingle.MinShingle(),
+                 " or more words, or create the dictionary with "
+                 "`output_unigrams := true`."));
+    }
+    return;
+  }
   if (!irs::IsSubsetOf(irs::PhraseQuery::kRequiredFeatures,
                        column_info.tokenizer.features)) {
     THROW_SQL_ERROR(
@@ -206,26 +220,25 @@ void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 irs::ByPhraseOptions&& options, std::string_view label,
                 std::string_view single_hint) {
-  if (options.size() > 1) {
-    if (const auto* shingle = QueryShingle(ctx, column_info)) {
-      if (auto term = irs::ShingleTerm(*shingle, options)) {
-        AddTerm(MaybeNegated(parent, ctx, column_info),
-                PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
-                *term, ctx.boost);
-        return;
-      }
-      PlanShingles(*shingle, column_info, options, label);
-    } else if (!irs::IsSubsetOf(irs::PhraseQuery::kRequiredFeatures,
-                                column_info.tokenizer.features)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG(label,
-                " field should have Positions and Frequency features "
-                "enabled for multi-term phrases"),
-        ERR_HINT("Recreate the inverted index with both `Positions` and "
-                 "`Frequency` features attached to the column, or query with ",
-                 single_hint, "."));
+  if (const auto* shingle = QueryShingle(ctx, column_info)) {
+    if (auto term = irs::ShingleTerm(*shingle, options)) {
+      AddTerm(MaybeNegated(parent, ctx, column_info),
+              PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
+              *term, ctx.boost);
+      return;
     }
+    PlanShingles(*shingle, column_info, options, label);
+  } else if (options.size() > 1 &&
+             !irs::IsSubsetOf(irs::PhraseQuery::kRequiredFeatures,
+                              column_info.tokenizer.features)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(label,
+              " field should have Positions and Frequency features "
+              "enabled for multi-term phrases"),
+      ERR_HINT("Recreate the inverted index with both `Positions` and "
+               "`Frequency` features attached to the column, or query with ",
+               single_hint, "."));
   }
   AddPhrase(parent, ctx, column_info, std::move(options));
 }
@@ -249,7 +262,7 @@ void PlanShinglePhrases(
     auto& phrase = irs::utils::downCast<irs::ByPhrase>(*child);
     const auto* column_info = column_of(phrase.field_id());
     const auto* shingle = column_info ? ShingleOf(*column_info) : nullptr;
-    if (!shingle || phrase.options().size() < 2) {
+    if (!shingle || phrase.options().empty()) {
       return;
     }
     if (auto term = irs::ShingleTerm(*shingle, phrase.options())) {

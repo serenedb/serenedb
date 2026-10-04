@@ -105,7 +105,8 @@ class JobScheduler final {
  private:
   void RunConcurrent(std::shared_ptr<JobState> state, uint64_t timer);
   void RunNotConcurrent(std::shared_ptr<JobState> state, uint64_t timer);
-  duckdb::ErrorData RunBody(JobState& state, JobDefinition job, bool manual);
+  duckdb::ErrorData RunBody(std::shared_ptr<JobState> state, JobDefinition job,
+                            bool manual, uint64_t timer);
 
   inline static JobScheduler* gInstance = nullptr;
 

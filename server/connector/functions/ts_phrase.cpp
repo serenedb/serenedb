@@ -43,6 +43,17 @@
 #include "ts_common.hpp"
 
 namespace sdb::connector {
+
+irs::analysis::ShingleTokenizer* ShingleOf(
+  const SearchColumnInfo& column_info) {
+  auto* tokenizer = column_info.tokenizer.analyzer.get();
+  if (!tokenizer ||
+      tokenizer->type() != irs::Type<irs::analysis::ShingleTokenizer>::id()) {
+    return nullptr;
+  }
+  return &irs::utils::downCast<irs::analysis::ShingleTokenizer>(*tokenizer);
+}
+
 namespace {
 
 PhraseGap ParsePhraseGap(const duckdb::Value& val, std::string_view label,
@@ -141,22 +152,10 @@ void AddPhrase(BoolTarget parent, const FilterContext& ctx,
   *phrase.mutable_options() = std::move(options);
 }
 
-irs::analysis::ShingleTokenizer* ShingleOf(
+irs::analysis::ShingleTokenizer* QueryShingle(
   const FilterContext& ctx, const SearchColumnInfo& column_info) {
-  if (column_info.tokenizer.analyzer.get() != &ctx.tokenizer ||
-      ctx.tokenizer.type() !=
-        irs::Type<irs::analysis::ShingleTokenizer>::id()) {
-    return nullptr;
-  }
-  return &irs::utils::downCast<irs::analysis::ShingleTokenizer>(ctx.tokenizer);
-}
-
-irs::analysis::Tokenizer& PhraseAnalyzer(const FilterContext& ctx,
-                                         const SearchColumnInfo& column_info) {
-  if (auto* shingle = ShingleOf(ctx, column_info)) {
-    return shingle->Base();
-  }
-  return ctx.tokenizer;
+  auto* shingle = ShingleOf(column_info);
+  return shingle == &ctx.tokenizer ? shingle : nullptr;
 }
 
 bool HasPositions(const SearchColumnInfo& column_info) {
@@ -171,21 +170,11 @@ bool HasPatternParts(const irs::ByPhraseOptions& options) {
   });
 }
 
-void EmitShinglePhrase(BoolTarget parent, const FilterContext& ctx,
-                       const SearchColumnInfo& column_info,
-                       const irs::analysis::ShingleTokenizer& shingle,
-                       irs::ByPhraseOptions&& options, std::string_view label) {
-  const bool positions = HasPositions(column_info);
+irs::ShinglePhrasePlan ShinglePlan(
+  const irs::analysis::ShingleTokenizer& shingle,
+  irs::ByPhraseOptions&& options, bool positions, std::string_view label) {
   if (auto plan = irs::PlanShinglePhrase(shingle, options, positions)) {
-    if (const auto* term = std::get_if<irs::bstring>(&*plan)) {
-      AddTerm(MaybeNegated(parent, ctx, column_info),
-              PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
-              *term, ctx.boost);
-      return;
-    }
-    AddPhrase(parent, ctx, column_info,
-              std::get<irs::ByPhraseOptions>(std::move(*plan)));
-    return;
+    return std::move(*plan);
   }
   if (!positions) {
     THROW_SQL_ERROR(
@@ -215,7 +204,23 @@ void EmitShinglePhrase(BoolTarget parent, const FilterContext& ctx,
                "`token_separator`."));
   }
   options.set_word_separator(shingle.Separator());
-  AddPhrase(parent, ctx, column_info, std::move(options));
+  return std::move(options);
+}
+
+void EmitShinglePhrase(BoolTarget parent, const FilterContext& ctx,
+                       const SearchColumnInfo& column_info,
+                       const irs::analysis::ShingleTokenizer& shingle,
+                       irs::ByPhraseOptions&& options, std::string_view label) {
+  auto plan =
+    ShinglePlan(shingle, std::move(options), HasPositions(column_info), label);
+  if (const auto* term = std::get_if<irs::bstring>(&plan)) {
+    AddTerm(MaybeNegated(parent, ctx, column_info),
+            PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
+            *term, ctx.boost);
+    return;
+  }
+  AddPhrase(parent, ctx, column_info,
+            std::get<irs::ByPhraseOptions>(std::move(plan)));
 }
 
 void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
@@ -223,7 +228,7 @@ void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
                 irs::ByPhraseOptions&& options, std::string_view label,
                 std::string_view single_hint) {
   const bool multi = options.size() > 1;
-  if (const auto* shingle = multi ? ShingleOf(ctx, column_info) : nullptr) {
+  if (const auto* shingle = multi ? QueryShingle(ctx, column_info) : nullptr) {
     EmitShinglePhrase(parent, ctx, column_info, *shingle, std::move(options),
                       label);
     return;
@@ -242,6 +247,40 @@ void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
 }
 
 }  // namespace
+
+irs::analysis::Tokenizer& PhraseAnalyzer(const FilterContext& ctx,
+                                         const SearchColumnInfo& column_info) {
+  auto* shingle = QueryShingle(ctx, column_info);
+  return shingle ? shingle->Base() : ctx.tokenizer;
+}
+
+void PlanShinglePhrases(
+  irs::Filter& root,
+  absl::FunctionRef<const SearchColumnInfo*(irs::field_id)> column_of) {
+  root.VisitChildren([&](irs::Filter::ptr& child, bool) {
+    if (child->type() != irs::Type<irs::ByPhrase>::id()) {
+      PlanShinglePhrases(*child, column_of);
+      return;
+    }
+    auto& phrase = irs::utils::downCast<irs::ByPhrase>(*child);
+    const auto* column_info = column_of(phrase.field_id());
+    const auto* shingle = column_info ? ShingleOf(*column_info) : nullptr;
+    if (!shingle || phrase.options().size() < 2) {
+      return;
+    }
+    auto plan = ShinglePlan(*shingle, std::move(*phrase.mutable_options()),
+                            HasPositions(*column_info), "to_tsquery");
+    if (auto* term = std::get_if<irs::bstring>(&plan)) {
+      auto filter = std::make_unique<irs::ByTerm>();
+      *filter->mutable_field_id() = phrase.field_id();
+      filter->mutable_options()->term = std::move(*term);
+      filter->SetBoost(phrase.GetBoost());
+      child = std::move(filter);
+      return;
+    }
+    *phrase.mutable_options() = std::get<irs::ByPhraseOptions>(std::move(plan));
+  });
+}
 
 void FromPhrase(BoolTarget filter, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,

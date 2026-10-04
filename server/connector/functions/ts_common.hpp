@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <duckdb/planner/column_binding_map.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -46,6 +48,11 @@
 #include "connector/search_filter_builder.hpp"
 #include "connector/term_dict.h"
 
+namespace irs::analysis {
+
+class ShingleTokenizer;
+
+}  // namespace irs::analysis
 namespace sdb::connector {
 
 struct FilterContext {
@@ -295,6 +302,13 @@ void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq);
 void AttachPart(PhraseSeq& seq, const duckdb::Expression& next);
 void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
                    const SearchColumnInfo& column_info, const PhraseSeq& seq);
+
+irs::analysis::ShingleTokenizer* ShingleOf(const SearchColumnInfo& column_info);
+irs::analysis::Tokenizer& PhraseAnalyzer(const FilterContext& ctx,
+                                         const SearchColumnInfo& column_info);
+void PlanShinglePhrases(
+  irs::Filter& root,
+  absl::FunctionRef<const SearchColumnInfo*(irs::field_id)> column_of);
 
 enum class TSQueryOp {
   Unknown,

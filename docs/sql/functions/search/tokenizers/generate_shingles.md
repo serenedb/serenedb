@@ -70,7 +70,7 @@ A value whose base stream holds fewer than `MIN_GRAM` tokens produces no shingle
 
 ## Phrase search
 
-[`ts_phrase`](../full-text.md#ts_phrase), [`phraseto_tsquery`](../full-text.md#phraseto_tsquery) and `##` work on a shingle column, and a phrase the column indexes as one shingle is a single term lookup. That is any phrase of `MIN_GRAM` to `MAX_GRAM` words, except that with `FREQUENT_WORDS` a phrase wider than `MIN_GRAM` has to contain a listed word. Every other phrase needs `position`:
+[`ts_phrase`](../full-text.md#ts_phrase), [`phraseto_tsquery`](../full-text.md#phraseto_tsquery), the quoted phrases of [`to_tsquery`](../full-text.md#to_tsquery) and `##` work on a shingle column, and a phrase the column indexes as one shingle is a single term lookup. That is any phrase of `MIN_GRAM` to `MAX_GRAM` words, except that with `FREQUENT_WORDS` a phrase wider than `MIN_GRAM` has to contain a listed word. Every other phrase needs `position`:
 
 | Dictionary | One-shingle phrases | Longer phrases, exact gaps | Slop, `[min, max]` gaps, pattern parts |
 |---|---|---|---|

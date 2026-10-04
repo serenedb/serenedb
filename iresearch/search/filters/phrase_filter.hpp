@@ -22,9 +22,9 @@
 
 #pragma once
 
-#include <deque>
 #include <set>
 #include <variant>
+#include <vector>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/filters/automaton_filter.hpp"
@@ -134,14 +134,16 @@ class ByPhraseOptions {
     SDB_ASSERT(offs_max >= offs_min);
     if (_phrase.empty()) {
       offs_max = offs_min = 0;
+      _phrase.reserve(kReservedParts);
     }
-    _phrase.push_back(PhrasePartInfo{.part = std::forward<PhrasePart>(t),
-                                     .offs_min = offs_min,
-                                     .offs_max = offs_max});
-    return std::get<std::decay_t<PhrasePart>>(_phrase.back().part);
+    return std::get<std::decay_t<PhrasePart>>(
+      _phrase.emplace_back(std::forward<PhrasePart>(t), offs_min, offs_max)
+        .part);
   }
 
-  std::deque<PhrasePartInfo> _phrase;
+  static constexpr size_t kReservedParts = 4;
+
+  std::vector<PhrasePartInfo> _phrase;
   PosAttr::value_t _slop{0};
   bstring _word_separator;
 };

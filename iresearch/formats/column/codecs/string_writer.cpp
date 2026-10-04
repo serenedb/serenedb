@@ -56,7 +56,6 @@ constexpr double kFsstFirstRatio = 0.5;
 constexpr double kDrift = 1.25;
 constexpr uint64_t kDriftMinFraction = 4;
 constexpr uint32_t kMaxCalibrationGap = 16;
-constexpr double kSettledGain = 0.1;
 constexpr double kMispredicted = 2.0;
 constexpr double kLevelTolerance = 0.02;
 constexpr size_t kMaxRungs = 8;
@@ -942,29 +941,21 @@ class SegmentWriter {
       plain && PlainWins(*dedup, *plain) ? Shape::Plain : Shape::Dedup;
     _measured = false;
     _smallest = {.bytes = std::numeric_limits<uint64_t>::max()};
-    Candidate chosen{};
-    auto chosen_bytes = std::numeric_limits<uint64_t>::max();
-    auto runner_up = std::numeric_limits<uint64_t>::max();
+    Candidate chosen{.bytes = std::numeric_limits<uint64_t>::max()};
     for (const auto& plan : PlanFor(_params.objective)) {
       const auto c = Tune(shape, plan.leaf, begin, end, retune);
-      if (c.bytes < chosen_bytes) {
-        runner_up = chosen_bytes;
-        chosen_bytes = c.bytes;
+      if (c.bytes < chosen.bytes) {
         chosen = c;
-      } else if (c.bytes < runner_up) {
-        runner_up = c.bytes;
       }
     }
     const auto& write = _smallest.bytes < chosen.bytes ? _smallest : chosen;
     Trial({shape, write.leaf}, write.level, begin, end, write.wide);
     auto* best = Smallest(shape, shape == Shape::Dedup ? dedup : plain);
-    chosen_bytes = best->Size();
+    const auto chosen_bytes = best->Size();
     const StringChoice picked{shape, best->choice.leaf};
     const bool kept = _tuning.choice && *_tuning.choice == picked;
-    const bool contested = CloseCall(chosen_bytes, runner_up) ||
-                           (plain && ShapeContested(*dedup, *plain));
     _tuning.calibration_gap =
-      drift || !kept || contested
+      drift || !kept
         ? 1
         : std::min(_tuning.calibration_gap * 2, kMaxCalibrationGap);
     _tuning.since_calibration = 0;
@@ -1170,20 +1161,6 @@ class SegmentWriter {
              static_cast<double>(dedup.Size()) * kPlainWinsBelow;
     }
     return plain.Size() <= dedup.Size();
-  }
-
-  static bool CloseCall(uint64_t winner, uint64_t other) noexcept {
-    return static_cast<double>(other) <
-           static_cast<double>(winner) * (1.0 + kSettledGain);
-  }
-
-  static bool ShapeContested(const Segment& dedup,
-                             const Segment& plain) noexcept {
-    const auto edge = static_cast<double>(dedup.Size()) *
-                      (Repeats(dedup) ? kPlainWinsBelow : 1.0);
-    const auto size = static_cast<double>(plain.Size());
-    return size < edge * (1.0 + kSettledGain) &&
-           size * (1.0 + kSettledGain) > edge;
   }
 
   bool Drifted(const Segment& seg, bool first) const noexcept {

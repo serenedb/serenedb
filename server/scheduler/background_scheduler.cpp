@@ -23,6 +23,7 @@
 #include <absl/flags/flag.h>
 
 #include <algorithm>
+#include <duckdb/common/types/timestamp.hpp>
 #include <memory>
 #include <yaclib/async/contract.hpp>
 #include <yaclib/coro/await.hpp>
@@ -140,8 +141,10 @@ yaclib::Future<> DelayThenRun(BackgroundScheduler& scheduler,
 
 }  // namespace
 
-void BackgroundScheduler::RunAfter(clock::duration delay,
-                                   std::function<void()> task) {
+void BackgroundScheduler::RunAt(duckdb::timestamp_t at,
+                                std::function<void()> task) {
+  const std::chrono::microseconds delay{
+    at.value - duckdb::Timestamp::GetCurrentTimestamp().value};
   DelayThenRun(*this, delay, std::move(task)).Detach();
 }
 

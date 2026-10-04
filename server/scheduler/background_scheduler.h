@@ -26,6 +26,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <duckdb/main/job_scheduler.hpp>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -54,7 +55,7 @@ namespace sdb {
 // already-satisfied Delay is a busy spin; after CancelDelays() (shutdown) it
 // completes immediately, because that is exactly how a loop learns to look at
 // its stop flag and exit.
-class BackgroundScheduler final {
+class BackgroundScheduler final : public duckdb::JobRuntime {
  public:
   using clock = std::chrono::steady_clock;
 
@@ -85,7 +86,7 @@ class BackgroundScheduler final {
   // parked until OpenDelays() while the io pool has never been up).
   yaclib::Future<> Delay(clock::duration d);
 
-  void RunAfter(clock::duration delay, std::function<void()> task);
+  void RunAt(duckdb::timestamp_t at, std::function<void()> task) final;
 
   // Startup: the io pool is up, so Delay can arm real timers. Releases every
   // waiter parked during boot. Called once, after Server::StartIoPool().

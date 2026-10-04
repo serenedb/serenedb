@@ -20,15 +20,45 @@
 
 #pragma once
 
-#include <duckdb/catalog/catalog_entry/job_catalog_entry.hpp>
+#include <duckdb/catalog/job_schedule.hpp>
+#include <duckdb/catalog/standard_entry.hpp>
+#include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/parser/parsed_data/create_job_info.hpp>
+#include <duckdb/parser/sql_statement.hpp>
+#include <string>
 
 namespace sdb::catalog {
 
-class JobEntry final : public duckdb::JobCatalogEntry {
- public:
-  using duckdb::JobCatalogEntry::JobCatalogEntry;
+void VerifySchedule(const duckdb::JobSchedule& schedule);
+duckdb::timestamp_t NextRun(const duckdb::JobSchedule& schedule,
+                            duckdb::timestamp_t after);
 
+class JobCatalogEntry final : public duckdb::StandardEntry {
+ public:
+  static constexpr duckdb::CatalogType Type = duckdb::CatalogType::JOB_ENTRY;
+  static constexpr const char* Name = "job";
+
+  JobCatalogEntry(duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+                  duckdb::CreateJobInfo& info);
+
+  const duckdb::JobSchedule& Schedule() const noexcept { return _schedule; }
+  bool Suspended() const noexcept { return _suspended; }
+  const duckdb::SQLStatement& Body() const noexcept { return *_body; }
+
+  void ScheduleAtCommit(duckdb::ClientContext& context) const;
   void OnDrop() final;
+
+  duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
+    duckdb::ClientContext& context) const final;
+  duckdb::unique_ptr<duckdb::CatalogEntry> AlterEntry(
+    duckdb::ClientContext& context, duckdb::AlterInfo& info) final;
+  duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
+  std::string ToSQL() const final { return GetInfo()->ToString(); }
+
+ private:
+  duckdb::JobSchedule _schedule;
+  bool _suspended;
+  duckdb::unique_ptr<duckdb::SQLStatement> _body;
 };
 
 }  // namespace sdb::catalog

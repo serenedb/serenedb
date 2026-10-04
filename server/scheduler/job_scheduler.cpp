@@ -21,7 +21,6 @@
 #include "scheduler/job_scheduler.h"
 
 #include <duckdb/catalog/catalog.hpp>
-#include <duckdb/catalog/catalog_entry/job_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/exception.hpp>
@@ -32,6 +31,7 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 
 #include "catalog/catalog.h"
+#include "catalog/entry/job.h"
 #include "connector/duckdb_client_state.h"
 #include "scheduler/background_scheduler.h"
 
@@ -49,19 +49,19 @@ JobScheduler::JobScheduler(BackgroundScheduler& background)
 
 JobScheduler::~JobScheduler() { gInstance = nullptr; }
 
-JobScheduler::Key JobScheduler::KeyOf(duckdb::JobCatalogEntry& job) {
+JobScheduler::Key JobScheduler::KeyOf(catalog::JobCatalogEntry& job) {
   return {job.ParentCatalog().GetOid(), job.oid};
 }
 
 JobScheduler::Definition JobScheduler::DefinitionOf(
-  duckdb::JobCatalogEntry& job) {
+  catalog::JobCatalogEntry& job) {
   return {
     .key = KeyOf(job),
     .catalog = job.ParentCatalog().GetName().GetIdentifierName(),
     .schema = job.ParentSchemaName().GetIdentifierName(),
     .name = job.name.GetIdentifierName(),
     .owner = job.permissions.owner,
-    .body = std::shared_ptr<duckdb::SQLStatement>{job.body->Copy().release()}};
+    .body = std::shared_ptr<duckdb::SQLStatement>{job.Body().Copy().release()}};
 }
 
 void JobScheduler::Start() {
@@ -75,13 +75,13 @@ void JobScheduler::Start() {
       [&](duckdb::SchemaCatalogEntry& schema) {
         schema.Scan(duckdb::CatalogType::JOB_ENTRY,
                     [&](duckdb::CatalogEntry& entry) {
-                      Schedule(entry.Cast<duckdb::JobCatalogEntry>());
+                      Schedule(entry.Cast<catalog::JobCatalogEntry>());
                     });
       });
   }
 }
 
-void JobScheduler::Schedule(duckdb::JobCatalogEntry& entry) {
+void JobScheduler::Schedule(catalog::JobCatalogEntry& entry) {
   auto definition = DefinitionOf(entry);
   const auto now = duckdb::Timestamp::GetCurrentTimestamp();
   absl::MutexLock lock{&_mutex};
@@ -91,24 +91,24 @@ void JobScheduler::Schedule(duckdb::JobCatalogEntry& entry) {
   auto [it, inserted] = _jobs.try_emplace(definition.key);
   auto& job = it->second;
   auto& status = job.status;
-  const bool reschedule = inserted || !(status.schedule == entry.schedule) ||
-                          status.suspended != entry.suspended;
+  const bool reschedule = inserted || !(status.schedule == entry.Schedule()) ||
+                          status.suspended != entry.Suspended();
   job.definition = std::move(definition);
-  status.schedule = entry.schedule;
-  status.suspended = entry.suspended;
+  status.schedule = entry.Schedule();
+  status.suspended = entry.Suspended();
   if (!reschedule) {
     return;
   }
   job.epoch = ++_last_epoch;
-  status.next_run = entry.schedule.NextRun(now);
-  if (!entry.suspended) {
+  status.next_run = catalog::NextRun(entry.Schedule(), now);
+  if (!entry.Suspended()) {
     _background.RunAt(
       status.next_run,
       [this, key = it->first, epoch = job.epoch] { Run(key, epoch); });
   }
 }
 
-void JobScheduler::Drop(duckdb::JobCatalogEntry& entry) {
+void JobScheduler::Drop(catalog::JobCatalogEntry& entry) {
   const auto key = KeyOf(entry);
   absl::MutexLock lock{&_mutex};
   auto it = _jobs.find(key);
@@ -144,7 +144,7 @@ void JobScheduler::Run(Key key, uint64_t epoch) {
   const auto now = duckdb::Timestamp::GetCurrentTimestamp();
   auto& status = it->second.status;
   if (status.running) {
-    status.next_run = status.schedule.NextRun(now);
+    status.next_run = catalog::NextRun(status.schedule, now);
   } else if (now >= status.next_run) {
     RunBody(guard, it->second.definition, false);
     guard.lock();
@@ -157,7 +157,7 @@ void JobScheduler::Run(Key key, uint64_t epoch) {
                     [this, key, epoch] { Run(key, epoch); });
 }
 
-void JobScheduler::Execute(duckdb::JobCatalogEntry& entry) {
+void JobScheduler::Execute(catalog::JobCatalogEntry& entry) {
   auto definition = DefinitionOf(entry);
   std::unique_lock guard{_mutex};
   auto it = _jobs.find(definition.key);
@@ -225,7 +225,7 @@ duckdb::ErrorData JobScheduler::RunBody(std::unique_lock<absl::Mutex>& guard,
   if (it != _jobs.end()) {
     auto& status = it->second.status;
     status.running = false;
-    status.next_run = status.schedule.NextRun(run.finish);
+    status.next_run = catalog::NextRun(status.schedule, run.finish);
     ++status.run_count;
     if (!run.success) {
       ++status.failure_count;
@@ -240,7 +240,7 @@ duckdb::ErrorData JobScheduler::RunBody(std::unique_lock<absl::Mutex>& guard,
   return error;
 }
 
-bool JobScheduler::TryGetStatus(duckdb::JobCatalogEntry& entry,
+bool JobScheduler::TryGetStatus(catalog::JobCatalogEntry& entry,
                                 JobStatus& result) {
   const auto key = KeyOf(entry);
   absl::MutexLock lock{&_mutex};

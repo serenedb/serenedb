@@ -23,7 +23,6 @@
 #include <absl/container/flat_hash_set.h>
 
 #include <duckdb/catalog/catalog.hpp>
-#include <duckdb/catalog/catalog_entry/job_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
@@ -40,13 +39,14 @@
 #include <utility>
 #include <vector>
 
+#include "catalog/entry/job.h"
 #include "scheduler/job_scheduler.h"
 
 namespace sdb::connector {
 namespace {
 
 struct JobsState final : duckdb::GlobalTableFunctionState {
-  std::vector<duckdb::reference<duckdb::JobCatalogEntry>> entries;
+  std::vector<duckdb::reference<catalog::JobCatalogEntry>> entries;
   size_t offset = 0;
 };
 
@@ -110,7 +110,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobsInit(
     schema.get().Scan(
       context, duckdb::CatalogType::JOB_ENTRY,
       [&](duckdb::CatalogEntry& entry) {
-        result->entries.emplace_back(entry.Cast<duckdb::JobCatalogEntry>());
+        result->entries.emplace_back(entry.Cast<catalog::JobCatalogEntry>());
       });
   }
   return result;
@@ -126,10 +126,10 @@ void JobsExecute(duckdb::ClientContext& context,
     auto& job = state.entries[state.offset++].get();
     JobStatus status;
     const bool scheduled = scheduler && scheduler->TryGetStatus(job, status) &&
-                           status.schedule == job.schedule &&
-                           status.suspended == job.suspended;
+                           status.schedule == job.Schedule() &&
+                           status.suspended == job.Suspended();
     const auto next_run =
-      scheduled ? status.next_run : job.schedule.NextRun(now);
+      scheduled ? status.next_run : catalog::NextRun(job.Schedule(), now);
     const bool ran = status.run_count > 0;
     const auto& last_run = status.last_run;
     duckdb::idx_t col = 0;
@@ -138,17 +138,18 @@ void JobsExecute(duckdb::ClientContext& context,
     output.SetValue(col++, count, duckdb::Value{job.ParentSchemaName()});
     output.SetValue(col++, count, duckdb::Value{job.name});
     output.SetValue(col++, count, Count(job.oid));
-    output.SetValue(col++, count, duckdb::Value{job.schedule.ToString()});
+    output.SetValue(col++, count, duckdb::Value{job.Schedule().ToString()});
     output.SetValue(
       col++, count,
-      duckdb::Value{job.schedule.kind == duckdb::JobScheduleKind::EVERY
+      duckdb::Value{job.Schedule().kind == duckdb::JobScheduleKind::EVERY
                       ? "EVERY"
                       : "AFTER"});
-    output.SetValue(col++, count, job.schedule.interval);
-    output.SetValue(col++, count, job.schedule.offset);
-    output.SetValue(col++, count, duckdb::Value::BOOLEAN(job.suspended));
+    output.SetValue(col++, count, job.Schedule().interval);
+    output.SetValue(col++, count, job.Schedule().offset);
+    output.SetValue(col++, count, duckdb::Value::BOOLEAN(job.Suspended()));
     output.SetValue(col++, count, duckdb::Value::BOOLEAN(status.running));
-    output.SetValue(col++, count, OptionalTimestamp(!job.suspended, next_run));
+    output.SetValue(col++, count,
+                    OptionalTimestamp(!job.Suspended(), next_run));
     output.SetValue(col++, count, OptionalTimestamp(ran, last_run.start));
     output.SetValue(col++, count, OptionalTimestamp(ran, last_run.finish));
     output.SetValue(col++, count,
@@ -160,7 +161,7 @@ void JobsExecute(duckdb::ClientContext& context,
     output.SetValue(col++, count, Count(status.run_count));
     output.SetValue(col++, count, Count(status.failure_count));
     output.SetValue(col++, count, job.comment);
-    output.SetValue(col++, count, duckdb::Value{job.body->ToString()});
+    output.SetValue(col++, count, duckdb::Value{job.Body().ToString()});
     output.SetValue(col++, count, duckdb::Value{job.ToSQL()});
     ++count;
   }
@@ -261,7 +262,7 @@ void ExecuteJobExecute(duckdb::ClientContext& context,
   }
   auto& data = input.bind_data->Cast<ExecuteJobData>();
   scheduler->Execute(
-    duckdb::Catalog::GetEntry<duckdb::JobCatalogEntry>(context, data.name));
+    duckdb::Catalog::GetEntry<catalog::JobCatalogEntry>(context, data.name));
 }
 
 }  // namespace

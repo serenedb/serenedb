@@ -67,7 +67,7 @@ Scheduled runs execute on the server's background thread pool (`--background_thr
 
 ## Monitoring
 
-`duckdb_jobs()` lists the jobs visible to the session with their schedule, their `body` and full `CREATE JOB` statement (`sql`), and their run state: `running`, `next_run`, `last_start`, `last_finish`, `last_status` (`success` or `failed`), `last_error`, `run_count` and `failure_count`. `duckdb_job_runs()` returns the most recent runs of all jobs (up to 1024), with `trigger` set to `schedule` or `manual`. Run state is kept in memory and starts over when the server restarts.
+`duckdb_jobs()` lists the jobs visible to the session with their schedule, their `body` and full `CREATE JOB` statement (`sql`), and their run state: `running`, `next_run`, `last_start`, `last_finish`, `last_status` (`success` or `failed`), `last_error`, `run_count` and `failure_count`. `duckdb_job_runs()` returns the most recent runs of all jobs (up to [`sdb_job_history_size`](../../../configuration/overview.md#logging-metrics-and-profiling), 1024 by default), with `trigger` set to `schedule` or `manual`. Run state is kept in memory and starts over when the server restarts.
 
 <SqlLogicTest id="sql/statements/create_job/index/example_004" />
 

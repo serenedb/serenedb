@@ -249,12 +249,10 @@ class IndexFields final : public irs::ParserContext::FieldProvider {
     if (!info) {
       return false;
     }
-    auto* tokenizer = info->tokenizer.analyzer.get();
-    if (auto* shingle = ShingleOf(*info)) {
-      tokenizer = &shingle->Base();
-    }
-    out = {.id = PickPerKindFieldId(*info, duckdb::LogicalTypeId::VARCHAR),
-           .tokenizer = tokenizer};
+    auto* shingle = ShingleOf(*info);
+    out = {
+      .id = PickPerKindFieldId(*info, duckdb::LogicalTypeId::VARCHAR),
+      .tokenizer = shingle ? &shingle->Base() : info->tokenizer.analyzer.get()};
     _held.push_back(std::move(*info));
     return true;
   }
@@ -301,7 +299,7 @@ void FromToTsquery(BoolTarget parent, const FilterContext& ctx,
   }
   PlanShinglePhrases(root, [&](irs::field_id field) -> const SearchColumnInfo* {
     if (field == parser_ctx.default_field_id) {
-      return ShingleOf(column_info) == &ctx.tokenizer ? &column_info : nullptr;
+      return QueryShingle(ctx, column_info) ? &column_info : nullptr;
     }
     return provider ? provider->Find(field) : nullptr;
   });

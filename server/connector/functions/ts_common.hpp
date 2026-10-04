@@ -304,6 +304,8 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
                    const SearchColumnInfo& column_info, const PhraseSeq& seq);
 
 irs::analysis::ShingleTokenizer* ShingleOf(const SearchColumnInfo& column_info);
+irs::analysis::ShingleTokenizer* QueryShingle(
+  const FilterContext& ctx, const SearchColumnInfo& column_info);
 irs::analysis::Tokenizer& PhraseAnalyzer(const FilterContext& ctx,
                                          const SearchColumnInfo& column_info);
 void PlanShinglePhrases(

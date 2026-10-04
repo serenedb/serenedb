@@ -54,6 +54,12 @@ irs::analysis::ShingleTokenizer* ShingleOf(
   return &irs::utils::downCast<irs::analysis::ShingleTokenizer>(*tokenizer);
 }
 
+irs::analysis::ShingleTokenizer* QueryShingle(
+  const FilterContext& ctx, const SearchColumnInfo& column_info) {
+  auto* shingle = ShingleOf(column_info);
+  return shingle == &ctx.tokenizer ? shingle : nullptr;
+}
+
 namespace {
 
 PhraseGap ParsePhraseGap(const duckdb::Value& val, std::string_view label,
@@ -150,12 +156,6 @@ void AddPhrase(BoolTarget parent, const FilterContext& ctx,
   phrase.SetBoost(ctx.boost);
   *phrase.mutable_field_id() = field_id;
   *phrase.mutable_options() = std::move(options);
-}
-
-irs::analysis::ShingleTokenizer* QueryShingle(
-  const FilterContext& ctx, const SearchColumnInfo& column_info) {
-  auto* shingle = ShingleOf(column_info);
-  return shingle == &ctx.tokenizer ? shingle : nullptr;
 }
 
 bool HasPatternParts(const irs::ByPhraseOptions& options) {

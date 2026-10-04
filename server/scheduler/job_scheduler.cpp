@@ -255,12 +255,31 @@ void JobScheduler::Execute(catalog::JobCatalogEntry& job) {
 
 duckdb::ErrorData JobScheduler::RunBody(JobState& state, JobDefinition job,
                                         bool manual) {
-  absl::Cleanup done = [&] {
+  JobRunRecord run{
+    .database_oid = job.database_oid,
+    .catalog = job.catalog,
+    .schema = job.schema,
+    .name = job.name,
+    .manual = manual,
+    .start = duckdb::Timestamp::GetCurrentTimestamp(),
+    .finish = {},
+    .success = false,
+    .error = {},
+  };
+  duckdb::shared_ptr<duckdb::ClientContext> context;
+  absl::Cleanup finish = [&] {
     absl::MutexLock lock{&state.mutex};
-    --state.status.running;
+    std::erase(state.contexts, context);
+    auto& status = state.status;
+    if (state.timer != 0 && !status.schedule.concurrent) {
+      status.next_run = NextRun(status.schedule, run.finish);
+    }
+    ++status.run_count;
+    status.failure_count += !run.success;
+    status.last_run = run;
+    --status.running;
     _runs.Done();
   };
-  const auto start = duckdb::Timestamp::GetCurrentTimestamp();
   duckdb::ErrorData error;
   try {
     const auto user = auth::RolesOf(nullptr)->NameOf(job.owner);
@@ -270,8 +289,8 @@ duckdb::ErrorData JobScheduler::RunBody(JobState& state, JobDefinition job,
     }
     auto connection = connector::MakeSystemConnection(
       user, job.owner, job.catalog, job.database_oid);
-    auto& context = *connection.conn->context;
-    context.client_data->catalog_search_path->Set(
+    context = connection.conn->context;
+    context->client_data->catalog_search_path->Set(
       {duckdb::CatalogSearchEntry{duckdb::Identifier{job.catalog},
                                   duckdb::Identifier{job.schema}}},
       duckdb::CatalogSetPathType::SET_DIRECTLY);
@@ -280,47 +299,25 @@ duckdb::ErrorData JobScheduler::RunBody(JobState& state, JobDefinition job,
       if (state.dropped) {
         throw duckdb::InterruptException();
       }
-      state.contexts.push_back(connection.conn->context);
+      state.contexts.push_back(context);
     }
-    absl::Cleanup forget = [&] {
-      absl::MutexLock lock{&state.mutex};
-      std::erase_if(state.contexts, [&](const auto& running) {
-        return running.get() == &context;
-      });
-    };
-    auto result = context.Query(job.body->Copy(), false);
+    auto result = context->Query(job.body->Copy(), false);
     if (result->HasError()) {
       result->ThrowError();
     }
   } catch (const std::exception& ex) {
     error = duckdb::ErrorData{ex};
   }
-  const JobRunRecord run{
-    .database_oid = job.database_oid,
-    .catalog = job.catalog,
-    .schema = job.schema,
-    .name = job.name,
-    .manual = manual,
-    .start = start,
-    .finish = duckdb::Timestamp::GetCurrentTimestamp(),
-    .success = !error.HasError(),
-    .error = error.HasError() ? error.RawMessage() : std::string{},
-  };
-  {
-    absl::MutexLock lock{&_mutex};
-    _history.push_back(run);
-    if (_history.size() > kHistoryCapacity) {
-      _history.pop_front();
-    }
+  run.finish = duckdb::Timestamp::GetCurrentTimestamp();
+  run.success = !error.HasError();
+  if (!run.success) {
+    run.error = error.RawMessage();
   }
-  absl::MutexLock lock{&state.mutex};
-  auto& status = state.status;
-  if (state.timer != 0 && !status.schedule.concurrent) {
-    status.next_run = NextRun(status.schedule, run.finish);
+  absl::MutexLock lock{&_mutex};
+  _history.push_back(run);
+  if (_history.size() > kHistoryCapacity) {
+    _history.pop_front();
   }
-  ++status.run_count;
-  status.failure_count += !run.success;
-  status.last_run = run;
   return error;
 }
 

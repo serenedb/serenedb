@@ -116,29 +116,6 @@ void ToOctFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-// to_hex(int32/int64) -> text -- PG-compatible lowercase hex
-template<typename T>
-void ToHexFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                   duckdb::Vector& result) {
-  duckdb::UnaryExecutor::Execute<T, duckdb::string_t>(
-    args.data[0], result, args.size(), [&](T value) -> duckdb::string_t {
-      using U = std::make_unsigned_t<T>;
-      U uval = static_cast<U>(value);
-      if (uval == 0) {
-        return duckdb::StringVector::AddString(result, "0");
-      }
-      char buf[sizeof(U) * 2];
-      int pos = sizeof(buf);
-      while (uval > 0) {
-        static constexpr char kHexDigits[] = "0123456789abcdef";
-        buf[--pos] = kHexDigits[uval & 0xf];
-        uval >>= 4;
-      }
-      return duckdb::StringVector::AddString(result, buf + pos,
-                                             sizeof(buf) - pos);
-    });
-}
-
 // get_byte(bytea, offset) -> integer -- ported from PgGetByte
 void BlobPositionFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                           duckdb::Vector& result) {
@@ -1171,16 +1148,6 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
                                                  {duckdb::LogicalType::BIGINT},
                                                  duckdb::LogicalType::VARCHAR,
                                                  ToOctFunction<int64_t>});
-
-  // to_hex(int32), to_hex(int64)
-  loader.RegisterFunction(duckdb::ScalarFunction{"to_hex",
-                                                 {duckdb::LogicalType::INTEGER},
-                                                 duckdb::LogicalType::VARCHAR,
-                                                 ToHexFunction<int32_t>});
-  loader.RegisterFunction(duckdb::ScalarFunction{"to_hex",
-                                                 {duckdb::LogicalType::BIGINT},
-                                                 duckdb::LogicalType::VARCHAR,
-                                                 ToHexFunction<int64_t>});
 
   loader.RegisterFunction(duckdb::ScalarFunction{
     "position",

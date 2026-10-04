@@ -1,0 +1,81 @@
+statement ok
+DROP JOB IF EXISTS jrp_vedernikoff;
+
+
+statement ok
+DROP JOB IF EXISTS jrp_deadinside;
+
+
+statement ok
+DROP TABLE IF EXISTS jrp_kostya;
+
+
+statement ok
+SET debug_verify_statement = 'REPARSE_STATEMENT';
+
+
+statement ok
+CREATE TABLE jrp_kostya (n int);
+
+
+statement ok
+CREATE JOB jrp_babsky EVERY (INTERVAL '1 hour' * 2) OFFSET (INTERVAL '5 minutes') AS INSERT INTO jrp_kostya VALUES (1);
+
+
+statement ok
+CREATE JOB jrp_clickclack EVERY 15 MINUTES AS SELECT 'arelav; is skuf' ;
+
+
+statement ok
+CREATE OR REPLACE JOB jrp_deadinside AFTER INTERVAL '1' DAY SUSPENDED AS SELECT 1;
+
+
+statement ok
+ALTER JOB jrp_babsky SET SCHEDULE EVERY (INTERVAL '3 hours') OFFSET 1 HOUR;
+
+
+statement ok
+ALTER JOB jrp_babsky RENAME TO jrp_vedernikoff;
+
+
+statement ok
+ALTER JOB jrp_vedernikoff SUSPEND;
+
+
+statement ok
+EXECUTE JOB jrp_vedernikoff;
+
+
+statement ok
+DROP JOB IF EXISTS jrp_clickclack CASCADE;
+
+
+query
+SELECT job_name, schedule, suspended, body FROM duckdb_jobs() WHERE starts_with(job_name, 'jrp_') ORDER BY job_name;
+----
+job_name	schedule	suspended	body
+jrp_deadinside	AFTER INTERVAL '1 day'	t	SELECT 1
+jrp_vedernikoff	EVERY INTERVAL '03:00:00' OFFSET INTERVAL '01:00:00'	t	INSERT INTO jrp_kostya (VALUES (1))
+
+
+query
+SELECT n FROM jrp_kostya;
+----
+n
+1
+
+
+statement ok
+RESET debug_verify_statement;
+
+
+statement ok
+DROP JOB jrp_vedernikoff;
+
+
+statement ok
+DROP JOB jrp_deadinside;
+
+
+statement ok
+DROP TABLE jrp_kostya;

@@ -146,8 +146,6 @@ ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context);
 void SetDefaultSearchPath(duckdb::ClientContext& context,
                           std::string_view database);
 
-void RegisterRoleSessions(duckdb::DBConfig& config);
-
 struct SystemConnection {
   duckdb::unique_ptr<duckdb::Connection> conn;
   std::shared_ptr<ConnectionContext> ctx;
@@ -155,5 +153,10 @@ struct SystemConnection {
 
 SystemConnection MakeSystemConnection(std::string_view database,
                                       duckdb::idx_t database_id);
+
+SystemConnection MakeJobConnection(duckdb::idx_t owner,
+                                   std::string_view database,
+                                   duckdb::idx_t database_id,
+                                   std::string_view schema);
 
 }  // namespace sdb::connector

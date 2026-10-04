@@ -33,6 +33,7 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_context_state.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -73,15 +74,38 @@ bool HasTemporaryTableCreate(const duckdb::PhysicalOperator& op) {
   switch (op.type) {
     case duckdb::PhysicalOperatorType::CREATE_TABLE: {
       const auto& create = op.Cast<duckdb::PhysicalCreateTable>();
-      return create.info && create.info->base && create.info->base->temporary;
+      if (create.info && create.info->base && create.info->base->temporary) {
+        return true;
+      }
+      break;
     }
     case duckdb::PhysicalOperatorType::INSERT: {
       const auto& insert = op.Cast<duckdb::PhysicalInsert>();
-      return insert.info && insert.info->base && insert.info->base->temporary;
+      if (insert.info && insert.info->base && insert.info->base->temporary) {
+        return true;
+      }
+      break;
+    }
+    case duckdb::PhysicalOperatorType::CREATE_TABLE_AS: {
+      const auto& insert = static_cast<const duckdb::PhysicalInsert&>(op);
+      if (insert.info && insert.info->base && insert.info->base->temporary) {
+        return true;
+      }
+      break;
     }
     case duckdb::PhysicalOperatorType::BATCH_INSERT: {
       const auto& insert = op.Cast<duckdb::PhysicalBatchInsert>();
-      return insert.info && insert.info->base && insert.info->base->temporary;
+      if (insert.info && insert.info->base && insert.info->base->temporary) {
+        return true;
+      }
+      break;
+    }
+    case duckdb::PhysicalOperatorType::BATCH_CREATE_TABLE_AS: {
+      const auto& insert = static_cast<const duckdb::PhysicalBatchInsert&>(op);
+      if (insert.info && insert.info->base && insert.info->base->temporary) {
+        return true;
+      }
+      break;
     }
     default:
       break;
@@ -104,12 +128,13 @@ void RequireTemporaryTableDatabasePrivilege(
   }
 
   auto& connection = GetSereneDBContext(context);
-  const auto* database =
-    catalog::FindDatabase(&context, connection.GetDatabaseId());
+  const auto current_database =
+    duckdb::DatabaseManager::GetDefaultDatabase(context).GetIdentifierName();
+  const auto* database = catalog::FindDatabase(&context, current_database);
   if (database == nullptr) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
-      ERR_MSG("database \"", connection.GetDatabase(), "\" does not exist"));
+      ERR_MSG("database \"", current_database, "\" does not exist"));
   }
   catalog::RequireDatabaseAccess(&context, connection.GetRoleId(), database,
                                  catalog::AclMode::CreateTemp);

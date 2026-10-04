@@ -354,9 +354,11 @@ bool NGramMatcher<Base, CollectAll, N>::Match(size_t potential, doc_id_t doc) {
               if (current_found_len > longest_sequence_len) {
                 longest_sequence_len = current_found_len;
               } else {
-                for (found = _search_buf.Toward(found);
-                     found != _search_buf.Nil();
-                     found = _search_buf.Toward(found)) {
+                [[clang::code_align(64)]] for (found =
+                                                 _search_buf.Toward(found);
+                                               found != _search_buf.Nil();
+                                               found =
+                                                 _search_buf.Toward(found)) {
                   found_state = &Deref(found->state);
                   if (found_state->origin != pos_iterator.pos &&
                       found_state->len + 1 > current_found_len) {

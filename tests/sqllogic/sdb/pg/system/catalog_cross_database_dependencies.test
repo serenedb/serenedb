@@ -7,6 +7,14 @@ DROP MACRO IF EXISTS cxd_m
 
 
 statement ok
+DROP TABLE IF EXISTS cxd_def
+
+
+statement ok
+DROP TABLE IF EXISTS cxd_typed
+
+
+statement ok
 DROP DATABASE IF EXISTS cxd_copy_dst
 
 
@@ -327,6 +335,101 @@ DROP TABLE cxd_db.public.cxd_conflict
 
 statement ok
 DROP ROLE cxd_grantee
+
+
+statement ok
+CREATE SEQUENCE cxd_db.public.cxd_seq
+
+
+statement ok
+CREATE TABLE cxd_def (id BIGINT DEFAULT nextval('cxd_db.public.cxd_seq'), a INTEGER)
+
+
+statement ok
+INSERT INTO cxd_def (a) VALUES (1)
+
+
+statement error
+DROP SEQUENCE cxd_db.public.cxd_seq
+----
+db error: ERROR: Cannot drop entry "cxd_seq" because there are entries that depend on it.
+table "cxd_def" depends on sequence "cxd_seq".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement error
+DROP DATABASE cxd_db
+----
+db error: ERROR: Cannot drop database "cxd_db" because entries in other databases depend on it.
+table "cxd_def" depends on sequence "cxd_seq".
+Drop the dependent entries first.
+
+
+statement ok
+ALTER TABLE cxd_def ALTER COLUMN id DROP DEFAULT
+
+
+statement ok
+DROP SEQUENCE cxd_db.public.cxd_seq
+
+
+statement ok
+CREATE SEQUENCE cxd_db.public.cxd_seq2
+
+
+statement ok
+ALTER TABLE cxd_def ALTER COLUMN id SET DEFAULT nextval('cxd_db.public.cxd_seq2')
+
+
+statement error
+DROP SEQUENCE cxd_db.public.cxd_seq2
+----
+db error: ERROR: Cannot drop entry "cxd_seq2" because there are entries that depend on it.
+table "cxd_def" depends on sequence "cxd_seq2".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+DROP SEQUENCE cxd_db.public.cxd_seq2 CASCADE
+
+
+statement ok
+INSERT INTO cxd_def (a) VALUES (2)
+
+
+query
+SELECT count(*) AS n FROM cxd_def
+----
+n
+2
+
+
+statement ok
+CREATE TYPE cxd_db.public.cxd_mood AS ENUM ('ok', 'sad')
+
+
+statement ok
+CREATE TABLE cxd_typed (m cxd_db.public.cxd_mood)
+
+
+statement error
+DROP TYPE cxd_db.public.cxd_mood
+----
+db error: ERROR: Cannot drop entry "cxd_mood" because there are entries that depend on it.
+table "cxd_typed" depends on type "cxd_mood".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+DROP TABLE cxd_typed
+
+
+statement ok
+DROP TYPE cxd_db.public.cxd_mood
+
+
+statement ok
+DROP TABLE cxd_def
 
 
 statement ok

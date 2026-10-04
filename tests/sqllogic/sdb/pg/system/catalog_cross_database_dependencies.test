@@ -7,6 +7,14 @@ DROP MACRO IF EXISTS cxd_m
 
 
 statement ok
+DROP DATABASE IF EXISTS cxd_copy_dst
+
+
+statement ok
+DROP DATABASE IF EXISTS cxd_copy_src
+
+
+statement ok
 DROP DATABASE IF EXISTS cxd_db
 
 
@@ -16,6 +24,10 @@ DROP ROLE IF EXISTS cxd_owner
 
 statement ok
 DROP ROLE IF EXISTS cxd_reader
+
+
+statement ok
+DROP ROLE IF EXISTS cxd_grantee
 
 
 statement ok
@@ -200,6 +212,121 @@ DROP TABLE cxd_db.public.cxd_owned
 
 statement ok
 DROP ROLE cxd_owner2
+
+
+statement ok
+CREATE DATABASE cxd_copy_src
+
+
+statement ok
+CREATE DATABASE cxd_copy_dst
+
+
+statement ok
+CREATE TABLE cxd_db.public.cxd_remote (a INTEGER)
+
+
+statement ok
+CREATE TABLE cxd_copy_src.public.cxd_local (a INTEGER)
+
+
+statement ok
+CREATE VIEW cxd_copy_src.public.v_local AS SELECT a FROM cxd_copy_src.public.cxd_local
+
+
+statement ok
+CREATE VIEW cxd_copy_src.public.v_remote AS SELECT a FROM cxd_db.public.cxd_remote
+
+
+statement ok
+COPY FROM DATABASE cxd_copy_src TO cxd_copy_dst
+
+
+statement error
+DROP TABLE cxd_copy_dst.public.cxd_local
+----
+db error: ERROR: Cannot drop entry "cxd_local" because there are entries that depend on it.
+view "v_local" depends on table "cxd_local".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+DROP VIEW cxd_copy_src.public.v_local
+
+
+statement ok
+DROP TABLE cxd_copy_src.public.cxd_local
+
+
+statement ok
+DROP VIEW cxd_copy_src.public.v_remote
+
+
+statement error
+DROP TABLE cxd_db.public.cxd_remote
+----
+db error: ERROR: Cannot drop entry "cxd_remote" because there are entries that depend on it.
+view "v_remote" depends on table "cxd_remote".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+DROP DATABASE cxd_copy_dst
+
+
+statement ok
+DROP DATABASE cxd_copy_src
+
+
+statement ok
+DROP TABLE cxd_db.public.cxd_remote
+
+
+statement ok
+CREATE ROLE cxd_grantee
+
+
+statement ok
+CREATE TABLE cxd_db.public.cxd_conflict (a INTEGER)
+
+
+statement ok
+GRANT SELECT ON cxd_db.public.cxd_conflict TO cxd_grantee
+
+
+connection cxd_c1
+statement ok
+BEGIN
+
+
+connection cxd_c1
+statement ok
+REVOKE SELECT ON cxd_db.public.cxd_conflict FROM cxd_grantee
+
+
+connection default
+statement error
+GRANT INSERT ON cxd_db.public.cxd_conflict TO cxd_grantee
+----
+db error: ERROR: Catalog write-write conflict on alter with "cxd_conflict"
+
+
+connection cxd_c1
+statement ok
+ROLLBACK
+
+
+connection default
+statement ok
+GRANT INSERT ON cxd_db.public.cxd_conflict TO cxd_grantee
+
+
+statement ok
+DROP TABLE cxd_db.public.cxd_conflict
+
+
+statement ok
+DROP ROLE cxd_grantee
 
 
 statement ok

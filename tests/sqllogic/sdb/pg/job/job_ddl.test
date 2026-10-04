@@ -519,7 +519,7 @@ n
 
 
 statement ok
-CREATE JOB jd_caller AFTER 1 HOUR SUSPENDED AS CALL execute_job('jd_called');
+CREATE JOB jd_caller AFTER 1 HOUR SUSPENDED AS EXECUTE JOB jd_called;
 
 
 statement ok
@@ -543,7 +543,7 @@ jd_caller	1	0
 
 
 statement ok
-CREATE JOB jd_loop AFTER 1 HOUR SUSPENDED AS CALL execute_job('jd_loop');
+CREATE JOB jd_loop AFTER 1 HOUR SUSPENDED AS EXECUTE JOB jd_loop;
 
 
 statement error
@@ -553,13 +553,13 @@ db error: ERROR: <slt:ignore>Job "jd_loop" is already running<slt:ignore>
 
 
 statement ok
-CREATE JOB jd_self EVERY 1 HOUR CONCURRENT SUSPENDED AS CALL execute_job('jd_self');
+CREATE JOB jd_self EVERY 1 HOUR CONCURRENT SUSPENDED AS EXECUTE JOB jd_self;
 
 
 statement error
 EXECUTE JOB jd_self;
 ----
-db error: ERROR: <slt:ignore>EXECUTE JOB is nested more than 16 levels deep<slt:ignore>
+db error: ERROR: <slt:ignore>Max job depth limit of 16 exceeded. Use "SET sdb_job_max_depth TO x" to increase the maximum job depth.<slt:ignore>
 
 
 query
@@ -570,17 +570,17 @@ f	17	17
 
 
 statement ok
-CREATE JOB jd_ping EVERY 1 HOUR CONCURRENT SUSPENDED AS CALL execute_job('jd_pong');
+CREATE JOB jd_ping EVERY 1 HOUR CONCURRENT SUSPENDED AS EXECUTE JOB jd_pong;
 
 
 statement ok
-CREATE JOB jd_pong EVERY 1 HOUR CONCURRENT SUSPENDED AS CALL execute_job('jd_ping');
+CREATE JOB jd_pong EVERY 1 HOUR CONCURRENT SUSPENDED AS EXECUTE JOB jd_ping;
 
 
 statement error
 EXECUTE JOB jd_ping;
 ----
-db error: ERROR: <slt:ignore>EXECUTE JOB is nested more than 16 levels deep<slt:ignore>
+db error: ERROR: <slt:ignore>Max job depth limit of 16 exceeded. Use "SET sdb_job_max_depth TO x" to increase the maximum job depth.<slt:ignore>
 
 
 query

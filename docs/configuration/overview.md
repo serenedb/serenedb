@@ -210,6 +210,7 @@ Planning, rewriting and the shape of query output.
 | `preserve_insertion_order`                    | Whether or not to preserve insertion order. If set to false the system is allowed to re-order any results that do not contain ORDER BY clauses.                                                                | `BOOLEAN`   | `true`                                              |
 | `read_ahead_depth` | The number of scan jobs prefetched ahead of decoding (-1 = automatic, bounded by a memory budget; 0 = disabled). | `BIGINT` | `-1` |
 | `scalar_subquery_error_on_multiple_rows`      | When a scalar subquery returns multiple rows - return a random row instead of returning an error.                                                                                                              | `BOOLEAN`   | `true`                                              |
+| `sdb_job_max_depth` | Maximum number of job runs in one chain of EXECUTE JOB calls, where a job's body executes another job; a run that would go deeper fails. Default 16. Server-global. | `UINTEGER` | `16` |
 | `standard_vector_size` | The compiled-in STANDARD_VECTOR_SIZE (read-only). | `UBIGINT` | `2048` |
 
 #### Session and PostgreSQL compatibility

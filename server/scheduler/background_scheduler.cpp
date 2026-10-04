@@ -27,8 +27,6 @@
 #include <yaclib/async/contract.hpp>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
-#include <yaclib/exe/strand.hpp>
-#include <yaclib/exe/submit.hpp>
 
 #include "network/io_context.h"
 #include "network/server.h"
@@ -128,14 +126,8 @@ yaclib::Future<> BackgroundScheduler::Delay(clock::duration d) {
   return std::move(f);
 }
 
-std::shared_ptr<BackgroundScheduler::Timer> BackgroundScheduler::MakeTimer(
-  std::function<void()> fire) {
-  return std::make_shared<Timer>(yaclib::MakeStrand(_pool), std::move(fire));
-}
-
-BackgroundScheduler::Timer::Timer(yaclib::IExecutorPtr strand,
-                                  std::function<void()> fire)
-  : _strand{std::move(strand)}, _fire{std::move(fire)} {}
+BackgroundScheduler::Timer::Timer(std::function<void()> fire)
+  : _fire{std::move(fire)} {}
 
 void BackgroundScheduler::Timer::ArmAt(clock::time_point at) {
   std::uint64_t generation = 0;
@@ -165,7 +157,7 @@ yaclib::Future<> BackgroundScheduler::Timer::Wait(std::shared_ptr<Timer> self,
     }
     self->_deadline.reset();
   }
-  yaclib::Submit(*self->_strand, self->_fire);
+  s.Run(self->_fire).Detach();
   co_return {};
 }
 

@@ -71,7 +71,8 @@ class BackgroundJobRuntime final : public duckdb::JobRuntime {
   BackgroundJobRuntime(BackgroundScheduler& background,
                        duckdb::JobScheduler& jobs)
     : _background{background},
-      _timer{background.MakeTimer([&jobs] { jobs.Tick(); })} {}
+      _timer{std::make_shared<BackgroundScheduler::Timer>(
+        [&jobs] { jobs.Tick(); })} {}
 
   void WakeAt(duckdb::timestamp_t at) final {
     _timer->ArmAt(BackgroundScheduler::clock::now() +

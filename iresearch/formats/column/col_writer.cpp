@@ -169,6 +169,17 @@ NormColumnWriter& ColWriter::OpenNormColumn(field_id id,
   return norm.writer;
 }
 
+NormColumnWriter& ColWriter::StreamNormColumn(field_id id,
+                                              uint32_t row_group_size) {
+  SDB_ASSERT(!_norm_by_id.contains(id), "ColWriter::StreamNormColumn: column ",
+             id, " already open");
+  EnsureOut();
+  auto& writer = *_streamed_norms.emplace_back(
+    std::make_unique<NormColumnWriter>(id, row_group_size, *_out));
+  _norm_by_id.emplace(id, &writer);
+  return writer;
+}
+
 AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
   if (auto it = _ann_by_id.find(column_id); it != _ann_by_id.end()) {
     auto& existing = *it->second;
@@ -234,16 +245,28 @@ bool ColWriter::Commit(uint64_t target_row,
   if (_committed) {
     return true;
   }
-  std::vector<NormBuffer*> norms;
+  std::vector<const NormColumnWriter*> norms;
+  std::vector<uint64_t> bases;
+  for (const auto& writer : _streamed_norms) {
+    SDB_ASSERT(writer->RowCount() == writer->Meta().row_count,
+               "ColWriter::Commit: streamed norm column ", writer->Id(),
+               " was not finalized");
+    if (!writer->Meta().row_groups.empty()) {
+      SDB_ASSERT(writer->Meta().row_count == target_row);
+      norms.push_back(writer.get());
+      bases.push_back(0);
+    }
+  }
+  std::vector<NormBuffer*> buffered;
   for (auto& norm : _norms) {
     norm->writer.PadTo(target_row);
     norm->writer.Finalize();
     norm->out.Flush();
     if (!norm->writer.Meta().row_groups.empty()) {
-      norms.push_back(norm.get());
+      buffered.push_back(norm.get());
     }
   }
-  if (Empty() && !_out && norms.empty()) {
+  if (Empty() && !_out && buffered.empty()) {
     _committed = true;
     return true;
   }
@@ -254,9 +277,8 @@ bool ColWriter::Commit(uint64_t target_row,
     }
     cw->SealRowGroup();
   }
-  std::vector<uint64_t> bases;
-  bases.reserve(norms.size());
-  for (auto* norm : norms) {
+  for (auto* norm : buffered) {
+    norms.push_back(&norm->writer);
     bases.push_back(_out->Position());
     norm->file >> *_out;
   }
@@ -275,7 +297,7 @@ bool ColWriter::Commit(uint64_t target_row,
         kColFieldNormColumns, "norm_columns", norms.size(),
         [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
           list.WriteObject([&](duckdb::BinarySerializer& obj) {
-            SerializeNormColumn(obj, norms[i]->writer, bases[i]);
+            SerializeNormColumn(obj, *norms[i], bases[i]);
           });
         });
     }

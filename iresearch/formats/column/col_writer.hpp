@@ -73,6 +73,8 @@ class ColWriter final {
 
   NormColumnWriter& OpenNormColumn(field_id id, uint32_t row_group_size);
 
+  NormColumnWriter& StreamNormColumn(field_id id, uint32_t row_group_size);
+
   std::vector<std::unique_ptr<AnnWriter>> TakeAnnWriters() noexcept;
 
   bool Commit(uint64_t target_row);
@@ -119,6 +121,7 @@ class ColWriter final {
   std::vector<std::unique_ptr<ColumnWriter>> _columns;
   irs::containers::FlatHashMap<field_id, ColumnWriter*> _by_id;
   std::vector<std::unique_ptr<NormBuffer>> _norms;
+  std::vector<std::unique_ptr<NormColumnWriter>> _streamed_norms;
   irs::containers::FlatHashMap<field_id, NormColumnWriter*> _norm_by_id;
   std::vector<std::unique_ptr<AnnEntry>> _ann_writers;
   irs::containers::FlatHashMap<field_id, AnnEntry*> _ann_by_id;

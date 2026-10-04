@@ -521,7 +521,7 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
                  "mint a valid id for field ",
                  id);
       out_id = norm_id;
-      norm_writer = &col_writer.OpenNormColumn(out_id, row_group_size);
+      norm_writer = &col_writer.StreamNormColumn(out_id, row_group_size);
       norm_writer->PadTo(merged_row);
     }
 
@@ -558,6 +558,9 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
       }
       flush_run(n);
     }
+  }
+  if (norm_writer) {
+    norm_writer->Finalize();
   }
   return out_id;
 }

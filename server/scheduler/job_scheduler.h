@@ -26,6 +26,7 @@
 #include <deque>
 #include <duckdb/catalog/job_schedule.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/identifier.hpp>
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <memory>
@@ -50,9 +51,9 @@ void VerifySchedule(const duckdb::JobSchedule& schedule);
 
 struct JobRunRecord {
   duckdb::idx_t database_oid = 0;
-  std::string catalog;
-  std::string schema;
-  std::string name;
+  duckdb::Identifier catalog;
+  duckdb::Identifier schema;
+  duckdb::Identifier name;
   bool manual = false;
   duckdb::timestamp_t start;
   duckdb::timestamp_t finish;
@@ -72,9 +73,9 @@ struct JobStatus {
 
 struct JobDefinition {
   duckdb::idx_t database_oid = 0;
-  std::string catalog;
-  std::string schema;
-  std::string name;
+  duckdb::Identifier catalog;
+  duckdb::Identifier schema;
+  duckdb::Identifier name;
   duckdb::idx_t owner = 0;
   std::shared_ptr<duckdb::SQLStatement> body;
 };

@@ -21,6 +21,7 @@
 #include "scheduler/job_scheduler.h"
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
@@ -37,8 +38,6 @@
 #include <duckdb/main/database_manager.hpp>
 #include <functional>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <iresearch/utils/pg/errcodes.hpp>
-#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
 #include <utility>
 
@@ -91,9 +90,9 @@ duckdb::timestamp_t NextRun(const duckdb::JobSchedule& schedule,
 JobDefinition DefinitionOf(catalog::JobCatalogEntry& job) {
   return {
     .database_oid = job.ParentCatalog().GetOid(),
-    .catalog = job.ParentCatalog().GetName().GetIdentifierName(),
-    .schema = job.ParentSchemaName().GetIdentifierName(),
-    .name = job.name.GetIdentifierName(),
+    .catalog = job.ParentCatalog().GetName(),
+    .schema = job.ParentSchemaName(),
+    .name = job.name,
     .owner = job.permissions.owner,
     .body = std::shared_ptr<duckdb::SQLStatement>{job.Body().Copy().release()}};
 }
@@ -107,6 +106,32 @@ void ForAllJobs(
       catalog::ForEachJob(catalog.Cast<duckdb::DuckCatalog>(), callback);
     }
   }
+}
+
+duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
+                           duckdb::shared_ptr<duckdb::ClientContext>& context) {
+  const auto user = auth::RolesOf(nullptr)->NameOf(job.owner);
+  if (user.empty()) {
+    return duckdb::ErrorData{
+      duckdb::ExceptionType::CATALOG,
+      absl::StrCat("role with OID ", job.owner, " does not exist")};
+  }
+  auto connection = connector::MakeSystemConnection(
+    user, job.owner, job.catalog.GetIdentifierName(), job.database_oid);
+  context = connection.conn->context;
+  context->client_data->catalog_search_path->Set(
+    {duckdb::CatalogSearchEntry{job.catalog, job.schema}},
+    duckdb::CatalogSetPathType::SET_DIRECTLY);
+  {
+    absl::MutexLock lock{&state.mutex};
+    if (state.dropped) {
+      return duckdb::ErrorData{duckdb::ExceptionType::INTERRUPT,
+                               "Interrupted!"};
+    }
+    state.contexts.push_back(context);
+  }
+  auto result = context->Query(job.body->Copy(), false);
+  return result->HasError() ? result->GetErrorObject() : duckdb::ErrorData{};
 }
 
 }  // namespace
@@ -280,34 +305,7 @@ duckdb::ErrorData JobScheduler::RunBody(JobState& state, JobDefinition job,
     --status.running;
     _runs.Done();
   };
-  duckdb::ErrorData error;
-  try {
-    const auto user = auth::RolesOf(nullptr)->NameOf(job.owner);
-    if (user.empty()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                      ERR_MSG("role with OID ", job.owner, " does not exist"));
-    }
-    auto connection = connector::MakeSystemConnection(
-      user, job.owner, job.catalog, job.database_oid);
-    context = connection.conn->context;
-    context->client_data->catalog_search_path->Set(
-      {duckdb::CatalogSearchEntry{duckdb::Identifier{job.catalog},
-                                  duckdb::Identifier{job.schema}}},
-      duckdb::CatalogSetPathType::SET_DIRECTLY);
-    {
-      absl::MutexLock lock{&state.mutex};
-      if (state.dropped) {
-        throw duckdb::InterruptException();
-      }
-      state.contexts.push_back(context);
-    }
-    auto result = context->Query(job.body->Copy(), false);
-    if (result->HasError()) {
-      result->ThrowError();
-    }
-  } catch (const std::exception& ex) {
-    error = duckdb::ErrorData{ex};
-  }
+  auto error = RunQuery(state, job, context);
   run.finish = duckdb::Timestamp::GetCurrentTimestamp();
   run.success = !error.HasError();
   if (!run.success) {

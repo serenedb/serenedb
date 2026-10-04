@@ -190,7 +190,8 @@ duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeJobEntry(
   duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
   duckdb::CreateJobInfo& info) {
   VerifySchedule(info.schedule);
-  auto job = duckdb::make_uniq<JobCatalogEntry>(*this, schema, info);
+  auto job = duckdb::make_uniq<JobCatalogEntry>(*this, schema, info,
+                                                std::make_shared<JobState>());
   if (transaction.context) {
     job->ScheduleAtCommit(*transaction.context);
   }
@@ -466,9 +467,7 @@ duckdb::idx_t SereneDBCatalog::DefaultSchemaOid() const {
 
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   _detached.store(true, std::memory_order_release);
-  if (auto* jobs = JobScheduler::Instance()) {
-    jobs->DropDatabase(GetOid());
-  }
+  ForEachJob(*this, [](JobCatalogEntry& job) { job.OnDrop(); });
   std::vector<duckdb::Identifier> servers;
   GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)
     .Scan(

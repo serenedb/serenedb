@@ -62,6 +62,9 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   }
 
   bool UsesCatalogLog() const final { return true; }
+  bool IsDropped() const final {
+    return _detached.load(std::memory_order_acquire);
+  }
   duckdb::shared_ptr<duckdb::WriteAheadLog> CatalogLog() final;
   void RequestCatalogLogSync(duckdb::shared_ptr<duckdb::WriteAheadLog> log,
                              duckdb::idx_t offset) final;

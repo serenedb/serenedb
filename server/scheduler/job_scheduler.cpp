@@ -33,6 +33,7 @@
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/client_context_state.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -48,6 +49,16 @@
 
 namespace sdb {
 namespace {
+
+constexpr const char* kJobRunKey = "sdb_job_run";
+constexpr uint32_t kMaxJobDepth = 16;
+
+class JobRun final : public duckdb::ClientContextState {
+ public:
+  explicit JobRun(uint32_t depth) : depth{depth} {}
+
+  const uint32_t depth;
+};
 
 bool IsNegative(const duckdb::interval_t& value) {
   return value.months < 0 || value.days < 0 || value.micros < 0;
@@ -106,7 +117,16 @@ void ForAllJobs(
 }
 
 duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
+                           duckdb::optional_ptr<duckdb::ClientContext> caller,
                            duckdb::shared_ptr<duckdb::ClientContext>& context) {
+  auto parent =
+    caller ? caller->registered_state->Get<JobRun>(kJobRunKey) : nullptr;
+  const uint32_t depth = parent ? parent->depth + 1 : 1;
+  if (depth > kMaxJobDepth) {
+    return duckdb::ErrorData{duckdb::ExceptionType::INVALID_INPUT,
+                             absl::StrCat("EXECUTE JOB is nested more than ",
+                                          kMaxJobDepth, " levels deep")};
+  }
   const auto user = auth::RolesOf(nullptr)->NameOf(job.owner);
   if (user.empty()) {
     return duckdb::ErrorData{
@@ -116,6 +136,8 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
   auto connection = connector::MakeSystemConnection(
     user, job.owner, job.catalog.GetIdentifierName(), job.database_oid);
   context = connection.conn->context;
+  context->registered_state->Insert(kJobRunKey,
+                                    duckdb::make_shared_ptr<JobRun>(depth));
   context->client_data->catalog_search_path->Set(
     {duckdb::CatalogSearchEntry{job.catalog, job.schema}},
     duckdb::CatalogSetPathType::SET_DIRECTLY);
@@ -225,7 +247,7 @@ void JobScheduler::RunConcurrent(std::shared_ptr<JobState> state,
     _runs.Add();
     BackgroundScheduler::instance()
       .Run([this, state, job = state->definition] {
-        RunBody(state, job, false, 0);
+        RunBody(state, job, nullptr, 0);
       })
       .Detach();
   }
@@ -256,10 +278,11 @@ void JobScheduler::RunNotConcurrent(std::shared_ptr<JobState> state,
     _runs.Add();
     job = state->definition;
   }
-  RunBody(state, std::move(job), false, timer);
+  RunBody(state, std::move(job), nullptr, timer);
 }
 
-void JobScheduler::Execute(catalog::JobCatalogEntry& job) {
+void JobScheduler::Execute(duckdb::ClientContext& caller,
+                           catalog::JobCatalogEntry& job) {
   auto definition = DefinitionOf(job);
   const auto& state = job.State();
   {
@@ -271,21 +294,21 @@ void JobScheduler::Execute(catalog::JobCatalogEntry& job) {
     ++state->status.running;
     _runs.Add();
   }
-  auto error = RunBody(state, std::move(definition), true, 0);
+  auto error = RunBody(state, std::move(definition), caller, 0);
   if (error.HasError()) {
     error.Throw();
   }
 }
 
-duckdb::ErrorData JobScheduler::RunBody(std::shared_ptr<JobState> state,
-                                        JobDefinition job, bool manual,
-                                        uint64_t timer) {
+duckdb::ErrorData JobScheduler::RunBody(
+  std::shared_ptr<JobState> state, JobDefinition job,
+  duckdb::optional_ptr<duckdb::ClientContext> caller, uint64_t timer) {
   JobRunRecord run{
     .database_oid = job.database_oid,
     .catalog = job.catalog,
     .schema = job.schema,
     .name = job.name,
-    .manual = manual,
+    .manual = static_cast<bool>(caller),
     .start = duckdb::Timestamp::GetCurrentTimestamp(),
     .finish = {},
     .success = false,
@@ -310,7 +333,7 @@ duckdb::ErrorData JobScheduler::RunBody(std::shared_ptr<JobState> state,
     }
     _runs.Done();
   };
-  auto error = RunQuery(*state, job, context);
+  auto error = RunQuery(*state, job, caller, context);
   run.finish = duckdb::Timestamp::GetCurrentTimestamp();
   run.success = !error.HasError();
   if (!run.success) {

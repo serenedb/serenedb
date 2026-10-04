@@ -262,6 +262,7 @@ void ExecuteJobExecute(duckdb::ClientContext& context,
   }
   auto& data = input.bind_data->Cast<ExecuteJobData>();
   scheduler->Execute(
+    context,
     duckdb::Catalog::GetEntry<catalog::JobCatalogEntry>(context, data.name));
 }
 

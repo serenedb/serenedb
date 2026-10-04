@@ -1,0 +1,226 @@
+statement ok
+DROP DATABASE IF EXISTS temp_priv_db;
+
+
+statement ok
+DROP ROLE IF EXISTS temp_priv_reader;
+
+
+statement ok
+CREATE ROLE temp_priv_reader LOGIN PASSWORD 'temp_priv_reader_pw' NOSUPERUSER NOCREATEDB NOCREATEROLE;
+
+
+statement ok
+CREATE DATABASE temp_priv_db;
+
+
+connection temp_priv_admin user=postgres database=temp_priv_db
+statement ok
+REVOKE TEMPORARY ON DATABASE temp_priv_db FROM PUBLIC;
+
+
+connection temp_priv_admin user=postgres database=temp_priv_db
+statement ok
+CREATE TEMP TABLE temp_priv_superuser_table AS SELECT 11 AS id;
+
+
+connection temp_priv_admin user=postgres database=temp_priv_db
+query
+SELECT id FROM temp_priv_superuser_table;
+----
+id
+11
+
+
+connection temp_priv_admin user=postgres database=temp_priv_db
+statement ok
+GRANT CREATE ON SCHEMA public TO temp_priv_reader;
+
+
+connection temp_priv_existing user=temp_priv_reader password=temp_priv_reader_pw database=temp_priv_db
+query
+SELECT has_database_privilege('temp_priv_reader', 'temp_priv_db', 'TEMPORARY'),
+       has_schema_privilege('temp_priv_reader', 'public', 'CREATE');
+----
+has_database_privilege	has_schema_privilege
+f	t
+
+
+connection temp_priv_existing user=temp_priv_reader password=temp_priv_reader_pw database=temp_priv_db
+statement ok
+CREATE TABLE temp_priv_regular_allowed (id integer);
+
+
+connection temp_priv_existing user=temp_priv_reader password=temp_priv_reader_pw database=temp_priv_db
+statement ok
+INSERT INTO temp_priv_regular_allowed VALUES (3);
+
+
+connection temp_priv_existing user=temp_priv_reader password=temp_priv_reader_pw database=temp_priv_db
+query
+SELECT id FROM temp_priv_regular_allowed;
+----
+id
+3
+
+
+connection temp_priv_existing user=temp_priv_reader password=temp_priv_reader_pw database=temp_priv_db
+statement error
+CREATE TEMP TABLE temp_priv_denied (id integer);
+----
+db error: ERROR: permission denied for database temp_priv_db<slt:ignore>
+
+
+connection temp_priv_admin user=postgres database=temp_priv_db
+statement ok
+REVOKE CREATE ON SCHEMA public FROM temp_priv_reader;
+
+
+connection temp_priv_admin user=postgres database=temp_priv_db
+query
+SELECT has_schema_privilege('temp_priv_reader', 'public', 'CREATE');
+----
+has_schema_privilege
+f
+
+
+connection temp_priv_admin user=postgres database=temp_priv_db
+statement ok
+GRANT TEMPORARY ON DATABASE temp_priv_db TO temp_priv_reader;
+
+
+connection temp_priv_existing user=temp_priv_reader password=temp_priv_reader_pw database=temp_priv_db
+query
+SELECT has_database_privilege('temp_priv_reader', 'temp_priv_db', 'TEMPORARY'),
+       has_schema_privilege('temp_priv_reader', 'public', 'CREATE');
+----
+has_database_privilege	has_schema_privilege
+t	f
+
+
+connection temp_priv_existing user=temp_priv_reader password=temp_priv_reader_pw database=temp_priv_db
+statement ok
+CREATE TEMPORARY TABLE temp_priv_existing_table AS SELECT 7 AS id;
+
+
+connection temp_priv_existing user=temp_priv_reader password=temp_priv_reader_pw database=temp_priv_db
+query
+SELECT id FROM temp_priv_existing_table;
+----
+id
+7
+
+
+connection temp_priv_existing user=temp_priv_reader password=temp_priv_reader_pw database=temp_priv_db
+statement ok
+PREPARE temp_priv_prepared_create AS CREATE OR REPLACE TEMP TABLE temp_priv_prepared_table AS SELECT 8 AS id;
+
+connection temp_priv_admin user=postgres database=temp_priv_db
+statement ok
+REVOKE TEMPORARY ON DATABASE temp_priv_db FROM temp_priv_reader;
+
+connection temp_priv_existing user=temp_priv_reader password=temp_priv_reader_pw database=temp_priv_db
+statement error
+EXECUTE temp_priv_prepared_create;
+----
+db error: ERROR: permission denied for database temp_priv_db<slt:ignore>
+
+connection temp_priv_admin user=postgres database=temp_priv_db
+statement ok
+GRANT TEMPORARY ON DATABASE temp_priv_db TO temp_priv_reader;
+
+connection temp_priv_existing user=temp_priv_reader password=temp_priv_reader_pw database=temp_priv_db
+statement ok
+EXECUTE temp_priv_prepared_create;
+
+connection temp_priv_existing user=temp_priv_reader password=temp_priv_reader_pw database=temp_priv_db
+query
+SELECT id FROM temp_priv_prepared_table;
+----
+id
+8
+
+connection temp_priv_admin user=postgres database=temp_priv_db
+statement ok
+REVOKE TEMPORARY ON DATABASE temp_priv_db FROM temp_priv_reader;
+
+connection temp_priv_existing user=temp_priv_reader password=temp_priv_reader_pw database=temp_priv_db
+statement error
+EXECUTE temp_priv_prepared_create;
+----
+db error: ERROR: permission denied for database temp_priv_db<slt:ignore>
+
+connection temp_priv_existing user=temp_priv_reader password=temp_priv_reader_pw database=temp_priv_db
+query
+SELECT id FROM temp_priv_prepared_table;
+----
+id
+8
+
+connection temp_priv_existing user=temp_priv_reader password=temp_priv_reader_pw database=temp_priv_db
+statement error
+CREATE TABLE temp_priv_permanent_denied (id integer);
+----
+db error: ERROR: permission denied for schema public<slt:ignore>
+
+
+connection temp_priv_admin user=postgres database=temp_priv_db
+statement ok
+REVOKE TEMPORARY ON DATABASE temp_priv_db FROM temp_priv_reader;
+
+
+connection temp_priv_existing user=temp_priv_reader password=temp_priv_reader_pw database=temp_priv_db
+query
+SELECT id FROM temp_priv_existing_table;
+----
+id
+7
+
+
+connection temp_priv_existing user=temp_priv_reader password=temp_priv_reader_pw database=temp_priv_db
+statement error
+CREATE TEMPORARY TABLE temp_priv_existing_session_denied (id integer);
+----
+db error: ERROR: permission denied for database temp_priv_db<slt:ignore>
+
+
+connection temp_priv_new user=temp_priv_reader password=temp_priv_reader_pw database=temp_priv_db
+query
+SELECT has_database_privilege('temp_priv_reader', 'temp_priv_db', 'TEMPORARY');
+----
+has_database_privilege
+f
+
+
+connection temp_priv_new user=temp_priv_reader password=temp_priv_reader_pw database=temp_priv_db
+statement error
+CREATE TEMP TABLE temp_priv_new_session_denied AS SELECT 1 AS id;
+----
+db error: ERROR: permission denied for database temp_priv_db<slt:ignore>
+
+
+connection temp_priv_admin user=postgres database=temp_priv_db
+statement ok
+GRANT TEMPORARY ON DATABASE temp_priv_db TO temp_priv_reader;
+
+
+connection temp_priv_new user=temp_priv_reader password=temp_priv_reader_pw database=temp_priv_db
+statement ok
+CREATE TEMP TABLE temp_priv_new_session_allowed AS SELECT 9 AS id;
+
+
+connection temp_priv_new user=temp_priv_reader password=temp_priv_reader_pw database=temp_priv_db
+query
+SELECT id FROM temp_priv_new_session_allowed;
+----
+id
+9
+
+
+connection default
+statement ok
+DROP DATABASE temp_priv_db;
+
+
+statement ok
+DROP ROLE temp_priv_reader;

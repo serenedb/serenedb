@@ -64,6 +64,15 @@ class SereneDBClientState final : public duckdb::ClientContextState {
     std::shared_ptr<ConnectionContext> connection_ctx)
     : _connection_ctx{std::move(connection_ctx)} {}
 
+  bool CanRequestRebind() final;
+  duckdb::RebindQueryInfo OnFinalizePrepare(
+    duckdb::ClientContext& context,
+    duckdb::PreparedStatementData& prepared_statement,
+    duckdb::PreparedStatementMode mode) final;
+  duckdb::RebindQueryInfo OnExecutePrepared(
+    duckdb::ClientContext& context, duckdb::PreparedStatementCallbackInfo& info,
+    duckdb::RebindQueryInfo current_rebind) final;
+
   ~SereneDBClientState() final {
     if (progress_source) {
       progress_source->Detach();

@@ -26,8 +26,15 @@
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
+#include <duckdb/execution/operator/persistent/physical_batch_insert.hpp>
+#include <duckdb/execution/operator/persistent/physical_insert.hpp>
+#include <duckdb/execution/operator/schema/physical_create_table.hpp>
+#include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/client_context_state.hpp>
+#include <duckdb/main/prepared_statement_data.hpp>
+#include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/log.hpp>
@@ -37,6 +44,7 @@
 #include <utility>
 
 #include "auth/role_closure.h"
+#include "catalog/ddl/catalog.h"
 #include "catalog/log/duckdb_global_catalog.h"
 #include "catalog/log/store.h"
 #include "catalog/read/duckdb_catalog_sets.h"
@@ -61,7 +69,70 @@ const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
   "server_version_num",
 };
 
+bool HasTemporaryTableCreate(const duckdb::PhysicalOperator& op) {
+  switch (op.type) {
+    case duckdb::PhysicalOperatorType::CREATE_TABLE: {
+      const auto& create = op.Cast<duckdb::PhysicalCreateTable>();
+      return create.info && create.info->base && create.info->base->temporary;
+    }
+    case duckdb::PhysicalOperatorType::INSERT: {
+      const auto& insert = op.Cast<duckdb::PhysicalInsert>();
+      return insert.info && insert.info->base && insert.info->base->temporary;
+    }
+    case duckdb::PhysicalOperatorType::BATCH_INSERT: {
+      const auto& insert = op.Cast<duckdb::PhysicalBatchInsert>();
+      return insert.info && insert.info->base && insert.info->base->temporary;
+    }
+    default:
+      break;
+  }
+  for (const auto& child : op.children) {
+    if (HasTemporaryTableCreate(child.get())) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void RequireTemporaryTableDatabasePrivilege(
+  duckdb::ClientContext& context,
+  const duckdb::PreparedStatementData& prepared_statement) {
+  if (connector::IsStorageStatement(context) ||
+      !prepared_statement.physical_plan ||
+      !HasTemporaryTableCreate(prepared_statement.physical_plan->Root())) {
+    return;
+  }
+
+  auto& connection = GetSereneDBContext(context);
+  const auto* database =
+    catalog::FindDatabase(&context, connection.GetDatabaseId());
+  if (database == nullptr) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
+      ERR_MSG("database \"", connection.GetDatabase(), "\" does not exist"));
+  }
+  catalog::RequireDatabaseAccess(&context, connection.GetRoleId(), database,
+                                 catalog::AclMode::CreateTemp);
+}
+
 }  // namespace
+
+bool SereneDBClientState::CanRequestRebind() { return true; }
+
+duckdb::RebindQueryInfo SereneDBClientState::OnFinalizePrepare(
+  duckdb::ClientContext& context,
+  duckdb::PreparedStatementData& prepared_statement,
+  duckdb::PreparedStatementMode /*mode*/) {
+  RequireTemporaryTableDatabasePrivilege(context, prepared_statement);
+  return duckdb::RebindQueryInfo::DO_NOT_REBIND;
+}
+
+duckdb::RebindQueryInfo SereneDBClientState::OnExecutePrepared(
+  duckdb::ClientContext& context, duckdb::PreparedStatementCallbackInfo& info,
+  duckdb::RebindQueryInfo /*current_rebind*/) {
+  RequireTemporaryTableDatabasePrivilege(context, info.prepared_statement);
+  return duckdb::RebindQueryInfo::DO_NOT_REBIND;
+}
 
 SereneDBClientState& SereneDBClientState::Register(
   duckdb::ClientContext& client_ctx,

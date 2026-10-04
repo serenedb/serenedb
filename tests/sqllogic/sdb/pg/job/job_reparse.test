@@ -7,6 +7,10 @@ DROP JOB IF EXISTS jrp_deadinside;
 
 
 statement ok
+DROP JOB IF EXISTS jrp_parallel;
+
+
+statement ok
 DROP TABLE IF EXISTS jrp_kostya;
 
 
@@ -28,6 +32,10 @@ CREATE JOB jrp_clickclack EVERY 15 MINUTES AS SELECT 'arelav; is skuf' ;
 
 statement ok
 CREATE OR REPLACE JOB jrp_deadinside AFTER INTERVAL '1' DAY SUSPENDED AS SELECT 1;
+
+
+statement ok
+CREATE JOB jrp_parallel EVERY (INTERVAL '30 seconds') OFFSET 10 SECONDS CONCURRENT SUSPENDED AS SELECT 2;
 
 
 statement ok
@@ -55,6 +63,7 @@ SELECT job_name, schedule, suspended, body FROM duckdb_jobs() WHERE starts_with(
 ----
 job_name	schedule	suspended	body
 jrp_deadinside	AFTER INTERVAL '1 day'	t	SELECT 1
+jrp_parallel	EVERY INTERVAL '00:00:30' OFFSET INTERVAL '00:00:10' CONCURRENT	t	SELECT 2
 jrp_vedernikoff	EVERY INTERVAL '03:00:00' OFFSET INTERVAL '01:00:00'	t	INSERT INTO jrp_kostya (VALUES (1))
 
 
@@ -75,6 +84,10 @@ DROP JOB jrp_vedernikoff;
 
 statement ok
 DROP JOB jrp_deadinside;
+
+
+statement ok
+DROP JOB jrp_parallel;
 
 
 statement ok

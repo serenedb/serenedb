@@ -17,13 +17,13 @@ Roll up yesterday's events every day at 02:00 UTC, and run it once right away:
 
 ```sql
 CREATE [ OR REPLACE ] JOB [ IF NOT EXISTS ] name
-    { EVERY interval [ OFFSET interval ] | AFTER interval }
+    { EVERY interval [ OFFSET interval ] [ CONCURRENT ] | AFTER interval }
     [ SUSPENDED ]
     AS statement
 
 ALTER JOB [ IF EXISTS ] name SUSPEND
 ALTER JOB [ IF EXISTS ] name RESUME
-ALTER JOB [ IF EXISTS ] name SET SCHEDULE { EVERY interval [ OFFSET interval ] | AFTER interval }
+ALTER JOB [ IF EXISTS ] name SET SCHEDULE { EVERY interval [ OFFSET interval ] [ CONCURRENT ] | AFTER interval }
 ALTER JOB [ IF EXISTS ] name RENAME TO new_name
 ALTER JOB name OWNER TO role
 
@@ -45,7 +45,11 @@ The two schedule kinds follow ClickHouse's refreshable materialized views.
 
 <SqlLogicTest id="sql/statements/create_job/index/example_002" />
 
-A job never runs twice at the same time. If an `EVERY` run is still going when the next grid point arrives, that tick is skipped and the job runs again at the first grid point after the run finishes. Ticks that fall while the server is down are not replayed.
+A job never runs twice at the same time unless it is `CONCURRENT`. If an `EVERY` run is still going when the next grid point arrives, that tick is skipped and the job runs again at the first grid point after the run finishes. Ticks that fall while the server is down are not replayed.
+
+`CONCURRENT` lets the runs of an `EVERY` job overlap: every grid point starts a run, even while earlier runs are still going, and `EXECUTE JOB` runs alongside them. Use it for bodies that are independent of each other; every run takes a session and a background thread of its own, so a body slower than its interval keeps several of them busy. `AFTER` jobs cannot be `CONCURRENT`, since each run is counted from the end of the previous one. `ALTER JOB ... SET SCHEDULE` turns it on or off with the rest of the schedule.
+
+<SqlLogicTest id="sql/statements/create_job/index/example_008" />
 
 Scheduled runs execute on the server's background thread pool (`--background_threads`), the pool that also runs index maintenance, so a long job does not hold a client session.
 
@@ -59,7 +63,7 @@ Scheduled runs execute on the server's background thread pool (`--background_thr
 
 ## Running a job on demand
 
-`EXECUTE JOB` runs the body once, synchronously, and reports the body's error if it fails. The body runs in the job's own session and transaction, exactly as a scheduled run would, so its effects commit independently of the calling transaction. It works for suspended jobs too and does not change the schedule of an `EVERY` job; for an `AFTER` job the next run is counted from the end of this one. It fails if the job is already running.
+`EXECUTE JOB` runs the body once, synchronously, and reports the body's error if it fails. The body runs in the job's own session and transaction, exactly as a scheduled run would, so its effects commit independently of the calling transaction. It works for suspended jobs too and does not change the schedule of an `EVERY` job; for an `AFTER` job the next run is counted from the end of this one. It fails if the job is already running, unless the job is `CONCURRENT`.
 
 ## Monitoring
 

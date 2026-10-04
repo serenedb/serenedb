@@ -29,7 +29,6 @@
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <vector>
 #include <yaclib/algo/wait_group.hpp>
@@ -64,7 +63,7 @@ struct JobRunRecord {
 struct JobStatus {
   duckdb::JobSchedule schedule;
   bool suspended = false;
-  bool running = false;
+  uint32_t running = 0;
   duckdb::timestamp_t next_run;
   uint64_t run_count = 0;
   uint64_t failure_count = 0;
@@ -86,7 +85,7 @@ struct JobState {
   JobStatus status;
   uint64_t timer = 0;
   bool dropped = false;
-  duckdb::shared_ptr<duckdb::ClientContext> context;
+  std::vector<duckdb::shared_ptr<duckdb::ClientContext>> contexts;
 };
 
 class JobScheduler final {
@@ -103,9 +102,9 @@ class JobScheduler final {
   void Stop();
 
  private:
-  void Run(std::shared_ptr<JobState> state, uint64_t timer);
-  duckdb::ErrorData RunBody(std::unique_lock<absl::Mutex>& guard,
-                            JobState& state, JobDefinition job, bool manual);
+  void RunConcurrent(std::shared_ptr<JobState> state, uint64_t timer);
+  void RunNotConcurrent(std::shared_ptr<JobState> state, uint64_t timer);
+  duckdb::ErrorData RunBody(JobState& state, JobDefinition job, bool manual);
 
   inline static JobScheduler* gInstance = nullptr;
 

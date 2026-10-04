@@ -39,6 +39,7 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <optional>
 #include <utility>
 
 #include "auth/role_closure.h"
@@ -171,58 +172,94 @@ void JobScheduler::Schedule(catalog::JobCatalogEntry& job) {
   }
   const auto timer = ++state->timer;
   status.next_run = NextRun(status.schedule, now);
-  if (!status.suspended) {
+  if (status.suspended) {
+    return;
+  }
+  if (status.schedule.concurrent) {
     BackgroundScheduler::instance().RunAt(
-      status.next_run, [this, state, timer] { Run(state, timer); });
+      status.next_run, [this, state, timer] { RunConcurrent(state, timer); });
+  } else {
+    BackgroundScheduler::instance().RunAt(
+      status.next_run,
+      [this, state, timer] { RunNotConcurrent(state, timer); });
   }
 }
 
-void JobScheduler::Run(std::shared_ptr<JobState> state, uint64_t timer) {
-  std::unique_lock guard{state->mutex};
+void JobScheduler::RunConcurrent(std::shared_ptr<JobState> state,
+                                 uint64_t timer) {
+  absl::MutexLock lock{&state->mutex};
   if (state->dropped || state->timer != timer) {
     return;
   }
   auto& status = state->status;
   const auto now = duckdb::Timestamp::GetCurrentTimestamp();
-  if (status.running) {
+  if (now >= status.next_run) {
     status.next_run = NextRun(status.schedule, now);
-  } else if (now >= status.next_run) {
-    RunBody(guard, *state, state->definition, false);
+    ++status.running;
+    _runs.Add();
+    BackgroundScheduler::instance()
+      .Run(
+        [this, state, job = state->definition] { RunBody(*state, job, false); })
+      .Detach();
+  }
+  BackgroundScheduler::instance().RunAt(
+    status.next_run, [this, state, timer] { RunConcurrent(state, timer); });
+}
+
+void JobScheduler::RunNotConcurrent(std::shared_ptr<JobState> state,
+                                    uint64_t timer) {
+  std::optional<JobDefinition> job;
+  {
+    absl::MutexLock lock{&state->mutex};
     if (state->dropped || state->timer != timer) {
       return;
     }
+    auto& status = state->status;
+    const auto now = duckdb::Timestamp::GetCurrentTimestamp();
+    if (status.running > 0) {
+      status.next_run = NextRun(status.schedule, now);
+    } else if (now >= status.next_run) {
+      ++status.running;
+      _runs.Add();
+      job = state->definition;
+    }
   }
-  BackgroundScheduler::instance().RunAt(
-    status.next_run, [this, state, timer] { Run(state, timer); });
+  if (job) {
+    RunBody(*state, std::move(*job), false);
+  }
+  absl::MutexLock lock{&state->mutex};
+  if (!state->dropped && state->timer == timer) {
+    BackgroundScheduler::instance().RunAt(
+      state->status.next_run,
+      [this, state, timer] { RunNotConcurrent(state, timer); });
+  }
 }
 
 void JobScheduler::Execute(catalog::JobCatalogEntry& job) {
   auto definition = DefinitionOf(job);
   auto& state = *job.State();
-  std::unique_lock guard{state.mutex};
-  if (state.status.running) {
-    throw duckdb::InvalidInputException("Job \"%s\" is already running",
-                                        definition.name);
+  {
+    absl::MutexLock lock{&state.mutex};
+    if (state.status.running > 0 && !state.status.schedule.concurrent) {
+      throw duckdb::InvalidInputException("Job \"%s\" is already running",
+                                          definition.name);
+    }
+    ++state.status.running;
+    _runs.Add();
   }
-  auto error = RunBody(guard, state, std::move(definition), true);
+  auto error = RunBody(state, std::move(definition), true);
   if (error.HasError()) {
     error.Throw();
   }
 }
 
-duckdb::ErrorData JobScheduler::RunBody(std::unique_lock<absl::Mutex>& guard,
-                                        JobState& state, JobDefinition job,
+duckdb::ErrorData JobScheduler::RunBody(JobState& state, JobDefinition job,
                                         bool manual) {
-  state.status.running = true;
-  _runs.Add();
   absl::Cleanup done = [&] {
-    if (!guard.owns_lock()) {
-      guard.lock();
-    }
-    state.status.running = false;
+    absl::MutexLock lock{&state.mutex};
+    --state.status.running;
     _runs.Done();
   };
-  guard.unlock();
   const auto start = duckdb::Timestamp::GetCurrentTimestamp();
   duckdb::ErrorData error;
   try {
@@ -238,19 +275,19 @@ duckdb::ErrorData JobScheduler::RunBody(std::unique_lock<absl::Mutex>& guard,
       {duckdb::CatalogSearchEntry{duckdb::Identifier{job.catalog},
                                   duckdb::Identifier{job.schema}}},
       duckdb::CatalogSetPathType::SET_DIRECTLY);
-    bool dropped;
     {
       absl::MutexLock lock{&state.mutex};
-      state.context = connection.conn->context;
-      dropped = state.dropped;
+      if (state.dropped) {
+        throw duckdb::InterruptException();
+      }
+      state.contexts.push_back(connection.conn->context);
     }
     absl::Cleanup forget = [&] {
       absl::MutexLock lock{&state.mutex};
-      state.context.reset();
+      std::erase_if(state.contexts, [&](const auto& running) {
+        return running.get() == &context;
+      });
     };
-    if (dropped) {
-      throw duckdb::InterruptException();
-    }
     auto result = context.Query(job.body->Copy(), false);
     if (result->HasError()) {
       result->ThrowError();
@@ -276,15 +313,13 @@ duckdb::ErrorData JobScheduler::RunBody(std::unique_lock<absl::Mutex>& guard,
       _history.pop_front();
     }
   }
-  guard.lock();
+  absl::MutexLock lock{&state.mutex};
   auto& status = state.status;
-  if (state.timer != 0) {
+  if (state.timer != 0 && !status.schedule.concurrent) {
     status.next_run = NextRun(status.schedule, run.finish);
   }
   ++status.run_count;
-  if (!run.success) {
-    ++status.failure_count;
-  }
+  status.failure_count += !run.success;
   status.last_run = run;
   return error;
 }

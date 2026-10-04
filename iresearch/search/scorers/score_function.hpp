@@ -32,9 +32,9 @@
 namespace irs {
 
 using scores_size_t = uint16_t;  // NOLINT
-inline constexpr scores_size_t kScoreBlock = 64;
+inline constexpr scores_size_t kScoreBlock = 32;
 static_assert(kScoreBlock < std::numeric_limits<scores_size_t>::max());
-using ScoreMask = uint64_t;
+using ScoreMask = uint32_t;
 static_assert(kScoreBlock <= std::numeric_limits<ScoreMask>::digits);
 inline constexpr scores_size_t kPostingBlock = doc_limits::kBlockSize;
 static_assert(kPostingBlock < std::numeric_limits<scores_size_t>::max());

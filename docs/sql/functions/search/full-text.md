@@ -545,13 +545,16 @@ Turns an `OR` of index predicates into an "at least `K` of `N`" filter. The bran
 
 Count the branches as written after the `OR`s are flattened: in `((a OR b) OR c)::min_match(2)` there are three branches. To count `a OR b` as one branch, give it a modifier of its own: `((a OR b)::min_match(1) OR c)::min_match(2)`.
 
+Groups nest. A group is one branch of the `OR` around it, so `((a OR b OR c)::min_match(2) OR d)::min_match(2)` matches rows that have `d` and at least two of `a`, `b` and `c`. A group can also stand in a plain `OR` or an `AND`, next to other groups or next to an `AND` branch. `::merge` and `::boost` combine with `::min_match` on the same group, in either order.
+
 Where the threshold has no meaning, the query fails instead of ignoring the modifier:
 
 - on a single predicate or on an `AND`;
 - when `K` is below `1` or above the number of branches;
+- twice on the same group, as in `(a OR b OR c)::min_match(2)::min_match(1)`. Each group takes one threshold;
 - under `NOT`. "Fewer than `K` of `n`" is "at least `n - K + 1` of the negations", so write `(NOT a OR NOT b OR ...)::min_match(n - K + 1)` instead;
 - when a branch is not an index predicate;
-- on a `TSQUERY` inside `@@`. Use [`ts_any(list, K)`](#ts_any) there;
+- on a `TSQUERY` inside `@@`, including a bound parameter typed with it (`col @@ $1::min_match(2)`). Use [`ts_any(list, K)`](#ts_any) there. The branches' queries can be parameters: `(a @@ $1 OR b @@ $2)::min_match(2)`;
 - outside a `WHERE` clause on an inverted index, for example in the `SELECT` list.
 
 | Query | Matches `id` | Why |

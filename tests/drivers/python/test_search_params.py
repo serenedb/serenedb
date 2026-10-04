@@ -225,6 +225,44 @@ def test_modifier_param_in_list_element(conn, schema):
     assert got[4] > 42.0
 
 
+# ---- ::min_match over the client protocol -----------------------------------
+#
+# The threshold sits on an OR of predicates, not on a TSQUERY value: the
+# branches' queries can be parameters, while a parameter typed with the
+# modifier must fail - folded into the value it would vanish without a trace.
+
+MIN_MATCH_SQL = (
+    "SELECT a FROM {schema}.sp_idx "
+    "WHERE (b @@ %s OR b @@ %s OR a <= %s)::min_match({k}) ORDER BY a"
+)
+
+
+def test_min_match_params(conn, schema):
+    with conn.cursor() as cur:
+        cur.execute(MIN_MATCH_SQL.format(schema=schema, k=2), ("quick", "dog", 2))
+        assert [r[0] for r in cur.fetchall()] == [1, 2, 4]
+        cur.execute(MIN_MATCH_SQL.format(schema=schema, k=3), ("quick", "dog", 2))
+        assert cur.fetchall() == []
+        cur.execute(MIN_MATCH_SQL.format(schema=schema, k=1), ("quick", "dog", 2))
+        assert [r[0] for r in cur.fetchall()] == [1, 2, 4]
+
+
+def test_min_match_params_reexecute_prepared(conn, schema):
+    sql = MIN_MATCH_SQL.format(schema=schema, k=2)
+    with conn.cursor() as cur:
+        cur.execute(sql, ("quick", "dog", 2), prepare=True)
+        assert [r[0] for r in cur.fetchall()] == [1, 2, 4]
+        cur.execute(sql, ("lazy", "fox", 2), prepare=True)
+        assert [r[0] for r in cur.fetchall()] == [1, 2]
+
+
+def test_min_match_typed_param_fails(conn, schema):
+    sql = f"SELECT a FROM {schema}.sp_idx WHERE b @@ %s::min_match(2) ORDER BY a"
+    with conn.cursor() as cur:
+        with pytest.raises(psycopg.errors.FeatureNotSupported, match="min_match"):
+            cur.execute(sql, ("quick",))
+
+
 def test_tsquery_value_text_form(conn):
     with conn.cursor() as cur:
         # Plain value: bare text, no quoting.
@@ -306,6 +344,50 @@ def test_wire_param_modifier_both_formats(schema):
             # Second column is the score: exactly the constant.
             scores = [_data_row_fields(p)[1] for p in data]
             assert all(float(s) == 42.0 for s in scores), (fmt, scores)
+    finally:
+        c.close()
+
+
+def test_wire_param_min_match_both_formats(schema):
+    sql = (
+        f"SELECT a FROM {schema}.sp_idx "
+        "WHERE (b @@ $1 OR b @@ $2)::min_match(2) ORDER BY a"
+    )
+    c = WireConn()
+    try:
+        c.parse("smm", sql)
+        c.describe("S", "smm")
+        c.sync()
+        msgs = c.drain_to_ready()
+        assert not errors(msgs), errors(msgs)
+        # Both branch parameters present as text on the wire inside the group.
+        (param_desc,) = [p for t, p in msgs if t == "t"]
+        assert struct.unpack("!HII", param_desc[:10]) == (2, 25, 25)
+
+        for fmt in (0, 1):
+            payload = _cstr("") + _cstr("smm") + struct.pack("!HH", 1, fmt)
+            payload += struct.pack("!H", 2)
+            for value in (b"quick", b"dog"):
+                payload += struct.pack("!I", len(value)) + value
+            payload += struct.pack("!H", 0)
+            c.send("B", payload)
+            c.execute("")
+            c.sync()
+            msgs = c.drain_to_ready()
+            assert not errors(msgs), (fmt, errors(msgs))
+            got = [_data_row_fields(p)[0] for p in rows(msgs)]
+            assert got == [b"4"], (fmt, got)
+
+        # Typed with the modifier itself, the parameter is refused, not folded.
+        c.parse("smm1", f"SELECT a FROM {schema}.sp_idx WHERE b @@ $1::min_match(2)")
+        c.sync()
+        msgs = c.drain_to_ready()
+        if not errors(msgs):
+            _bind_with_format(c, "", "smm1", b"quick", 0)
+            c.execute("")
+            c.sync()
+            msgs = c.drain_to_ready()
+        assert any("min_match" in e.get("M", "") for e in errors(msgs)), types(msgs)
     finally:
         c.close()
 

@@ -527,6 +527,7 @@ To see the effect, boost one alternative and order by [`BM25`](./scoring.md):
 | Modifier | Description |
 | :--- | :--- |
 | [`(p1 OR p2 OR ...)::min_match(K)`](#p1-or-p2--min_matchk) | Match rows that satisfy at least `K` of the `OR`'s branches. |
+| [`query::min_match(K)`](#query-min_matchk) | Match rows that satisfy at least `K` of a `TSQUERY`'s alternatives: its words, its `\|\|` branches or its `ts_any` elements. |
 
 #### `(p1 OR p2 OR ...)::min_match(K)` {#p1-or-p2--min_matchk}
 
@@ -550,8 +551,9 @@ Where the threshold has no meaning, the query fails instead of ignoring the modi
 - twice on the same group, as in `(a OR b OR c)::min_match(2)::min_match(1)`. Each group takes one threshold;
 - under `NOT`. "Fewer than `K` of `n`" is "at least `n - K + 1` of the negations", so write `(NOT a OR NOT b OR ...)::min_match(n - K + 1)` instead;
 - when a branch is not an index predicate;
-- on a `TSQUERY` inside `@@`, including a bound parameter typed with it (`col @@ $1::min_match(2)`). Use [`ts_any(list, K)`](#ts_any) there. The branches' queries can be parameters: `(a @@ $1 OR b @@ $2)::min_match(2)`;
 - outside a `WHERE` clause on an inverted index, for example in the `SELECT` list.
+
+The branches' queries can be bound parameters: `(a @@ $1 OR b @@ $2)::min_match(2)`.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -559,6 +561,31 @@ Where the threshold has no meaning, the query fails instead of ignoring the modi
 | `(body @@ 'quick' OR category = 'drama' OR id >= 2)::min_match(1)` | `1`, `2`, `3`, `4` | The plain `OR`. |
 
 <SqlLogicTest id="sql/functions/full_text_search/min_match" />
+
+#### `query::min_match(K)` {#query-min_matchk}
+
+The same threshold on a `TSQUERY` value, inside one `@@`. Like the other [`TSQUERY`](../../data_types/tsquery.md) modifiers it travels with the value, so it also works on a bound parameter: `body @@ $1::min_match(2)` with `$1 = 'quick red fox'` matches rows that have at least two of the three words. This is Elasticsearch's `match` query with `minimum_should_match`.
+
+| Parameter | Type | Meaning |
+| :--- | :--- | :--- |
+| `query` | `TSQUERY` | The alternatives to count. |
+| `K` | integer literal | How many alternatives a row must satisfy, at least `1`. |
+
+**How it works.** The threshold goes to the `OR` at the top of the query, and what counts as one alternative depends on its shape:
+
+- **Several words** (a bare string, [`ts_tokenize`](#ts_tokenize)): one alternative per word, with the synonyms of a word counting once. `K` above the number of words is capped at that number, so a one-word search with `::min_match(2)` matches that word, as Elasticsearch does.
+- **A `||` chain**: one alternative per operand of the whole chain, so `(a || b || c)::min_match(2)` has three. A parenthesized group with a modifier of its own is one operand. `K` above the number of operands is an error.
+- **[`ts_any(list)`](#ts_any)**: one alternative per element, the same as `ts_any(list, K)`. Giving both thresholds is an error.
+- **Anything else** (a phrase, `&&`, `!!`, a range, `to_tsquery`) is one alternative: `K = 1` changes nothing, a larger `K` is an error.
+
+A second `::min_match` on the same query is an error, and so is a `::min_match` query under `NOT`. `::merge`, `::boost` and `::score` combine with it.
+
+| Query | Matches `id` | Why |
+| :--- | :--- | :--- |
+| `body @@ 'quick red grey'::min_match(2)` | `2` | Only `id 2` has two of the words, `quick` and `red`. |
+| `body @@ ('fox' \|\| 'turtle' \|\| 'lazy')::min_match(2)` | `1`, `2` | Both have `fox` and `lazy`; `id 3` has only `turtle`. |
+
+<SqlLogicTest id="sql/functions/full_text_search/min_match_tsquery" />
 
 ## PostgreSQL-Compatible Parsers {#postgresql-compatible-parsers}
 

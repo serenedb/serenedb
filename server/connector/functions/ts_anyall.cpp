@@ -63,6 +63,17 @@ void FromTokenizeListInAnyAllOf(
     }
     min_match = static_cast<size_t>(m);
   }
+  if (is_any) {
+    if (const auto value_min_match = TakeMinMatch(ctx)) {
+      if (min_match) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("::min_match(K) on a ts_any that already has a min_match"),
+          ERR_HINT(kSyntaxHint));
+      }
+      min_match = value_min_match;
+    }
+  }
 
   SDB_ASSERT(tokenize_call.GetChildren().size() >= 1 &&
              tokenize_call.GetChildren().size() <= 2);
@@ -262,8 +273,27 @@ void FromAnyAllOf(BoolTarget parent, const FilterContext& ctx,
   std::vector<duckdb::unique_ptr<duckdb::Expression>> synthesised;
   std::optional<size_t> min_match;
   ExtractAnyAllOfArgs(func, is_any, args, synthesised, min_match);
+  if (is_any) {
+    if (const auto value_min_match = TakeMinMatch(ctx)) {
+      if (min_match) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("::min_match(K) on a ts_any that already has a min_match"),
+          ERR_HINT("Give the threshold once: ts_any(list, K) or "
+                   "ts_any(list)::min_match(K)."));
+      }
+      if (value_min_match > args.size()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("::min_match(", value_min_match,
+                                ") on an OR of ", args.size(), " branches"),
+                        ERR_HINT("K must be between 1 and the number of "
+                                 "ts_any elements."));
+      }
+      min_match = value_min_match;
+    }
+  }
 
-  auto sub_ctx = ctx;
+  auto sub_ctx = ctx.WithoutMinMatch();
   sub_ctx.boost = irs::kNoBoost;
   sub_ctx.negated = false;
 

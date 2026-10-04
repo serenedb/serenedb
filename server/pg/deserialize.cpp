@@ -73,7 +73,7 @@ void VectorSink::Tsquery(std::string_view text) {
   auto& boost_vec = entries[connector::kTSQueryBoostChild];
   duckdb::FlatVector::GetDataMutable<float>(boost_vec)[row] = parts.boost;
   auto& slop_vec = entries[connector::kTSQuerySlopChild];
-  duckdb::FlatVector::GetDataMutable<int64_t>(slop_vec)[row] = parts.slop;
+  duckdb::FlatVector::GetDataMutable<uint16_t>(slop_vec)[row] = parts.slop;
   auto& scorer_vec = entries[connector::kTSQueryScorerChild];
   if (parts.scorer.empty()) {
     duckdb::FlatVector::SetNull(scorer_vec, row, true);
@@ -85,6 +85,9 @@ void VectorSink::Tsquery(std::string_view text) {
   auto& merge_vec = entries[connector::kTSQueryMergeChild];
   duckdb::FlatVector::GetDataMutable<uint8_t>(merge_vec)[row] =
     static_cast<uint8_t>(parts.merge);
+  auto& min_match_vec = entries[connector::kTSQueryMinMatchChild];
+  duckdb::FlatVector::GetDataMutable<uint32_t>(min_match_vec)[row] =
+    parts.min_match;
 }
 
 void ValueSink::Tsquery(std::string_view text) {

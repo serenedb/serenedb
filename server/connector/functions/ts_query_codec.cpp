@@ -46,6 +46,7 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <limits>
 
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
@@ -62,6 +63,14 @@ bool TryCastExactInt64(const duckdb::Value& v, duckdb::Value& out) {
   return out.DefaultTryCastAs(v.type(), back,
                               /*error_message=*/nullptr, /*strict=*/false) &&
          duckdb::Value::NotDistinctFrom(back, v);
+}
+
+uint16_t CheckedSlop(int64_t value) {
+  if (value < 0 || value > std::numeric_limits<uint16_t>::max()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("::slop too large: ", value));
+  }
+  return static_cast<uint16_t>(value);
 }
 namespace {
 
@@ -80,7 +89,8 @@ bool IsTSQueryFamilyTypeName(std::string_view name) {
          absl::EqualsIgnoreCase(name, kTokenizerTypeName) ||
          absl::EqualsIgnoreCase(name, kBoostTypeName) ||
          absl::EqualsIgnoreCase(name, kSlopTypeName) ||
-         absl::EqualsIgnoreCase(name, kScoreTypeName);
+         absl::EqualsIgnoreCase(name, kScoreTypeName) ||
+         absl::EqualsIgnoreCase(name, kMinMatchTypeName);
 }
 
 bool IsNumericTypeId(duckdb::LogicalTypeId id) {
@@ -294,6 +304,9 @@ std::string RenderTSQueryPartsSQL(const TSQueryParts& parts) {
         .ToSQLString(),
       ")");
   }
+  if (parts.min_match != 0) {
+    absl::StrAppend(&out, "::min_match(", parts.min_match, ")");
+  }
   if (!parts.scorer.empty()) {
     absl::StrAppend(&out, "::score(",
                     parts.scorer == irs::Unscored::type_name()
@@ -306,7 +319,8 @@ std::string RenderTSQueryPartsSQL(const TSQueryParts& parts) {
 
 std::string RenderTSQueryValueText(const TSQueryParts& parts) {
   if (parts.tokenizer.empty() && parts.boost == 1.0f && parts.slop == 0 &&
-      parts.scorer.empty() && parts.merge == TSQueryMerge::Default) {
+      parts.scorer.empty() && parts.merge == TSQueryMerge::Default &&
+      parts.min_match == 0) {
     return parts.text;
   }
   return RenderTSQueryPartsSQL(parts);
@@ -619,7 +633,7 @@ std::optional<TSQueryParts> TryGetTSQueryParts(const duckdb::Value& value) {
   }
   if (children.size() > kTSQuerySlopChild &&
       !children[kTSQuerySlopChild].IsNull()) {
-    parts.slop = children[kTSQuerySlopChild].GetValue<int64_t>();
+    parts.slop = children[kTSQuerySlopChild].GetValue<uint16_t>();
   }
   if (children.size() > kTSQueryScorerChild &&
       !children[kTSQueryScorerChild].IsNull()) {
@@ -630,16 +644,15 @@ std::optional<TSQueryParts> TryGetTSQueryParts(const duckdb::Value& value) {
     parts.merge = static_cast<TSQueryMerge>(
       children[kTSQueryMergeChild].GetValue<uint8_t>());
   }
+  if (children.size() > kTSQueryMinMatchChild &&
+      !children[kTSQueryMinMatchChild].IsNull()) {
+    parts.min_match = children[kTSQueryMinMatchChild].GetValue<uint32_t>();
+  }
   return parts;
 }
 
 TSQueryParts TSQueryPartsForType(const duckdb::LogicalType& type,
                                  std::string_view text) {
-  if (TryGetMinMatchModifier(type)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("::min_match(K) is only meaningful on an OR of "
-                            "predicates the inverted index answers."));
-  }
   TSQueryParts parts;
   parts.text = std::string{text};
   parts.tokenizer = std::string{TryGetTokenizerModifier(type)};
@@ -647,13 +660,16 @@ TSQueryParts TSQueryPartsForType(const duckdb::LogicalType& type,
     parts.boost = static_cast<float>(*boost);
   }
   if (const auto slop = TryGetSlopModifier(type)) {
-    parts.slop = *slop;
+    parts.slop = CheckedSlop(*slop);
   }
   if (auto scorer = TryGetScoreModifier(type)) {
     parts.scorer = std::move(*scorer);
   }
   if (const auto merge = TryGetMergeModifier(type)) {
     parts.merge = *merge;
+  }
+  if (const auto min_match = TryGetMinMatchModifier(type)) {
+    parts.min_match = *min_match;
   }
   return parts;
 }
@@ -663,16 +679,17 @@ duckdb::Value MakeTSQueryValue(const duckdb::LogicalType& type,
   SDB_ASSERT(IsTSQueryStructType(type));
   const auto parts = TSQueryPartsForType(type, text);
   duckdb::vector<duckdb::Value> children;
-  children.reserve(6);
+  children.reserve(7);
   children.emplace_back(parts.text);
   children.emplace_back(parts.tokenizer);
   children.emplace_back(duckdb::Value::FLOAT(parts.boost));
-  children.emplace_back(duckdb::Value::BIGINT(parts.slop));
+  children.emplace_back(duckdb::Value::USMALLINT(parts.slop));
   children.emplace_back(parts.scorer.empty()
                           ? duckdb::Value{duckdb::LogicalType::VARCHAR}
                           : duckdb::Value{parts.scorer});
   children.emplace_back(
     duckdb::Value::UTINYINT(static_cast<uint8_t>(parts.merge)));
+  children.emplace_back(duckdb::Value::UINTEGER(parts.min_match));
   return duckdb::Value::STRUCT(type, std::move(children));
 }
 

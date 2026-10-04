@@ -241,6 +241,23 @@ SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick fox')::slop(5000000000);
 db error: ERROR: ::slop too large: 5000000000
 
 
+query
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick fox')::slop(65535) ORDER BY a;
+----
+a
+1
+2
+3
+4
+6
+
+
+query error
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick fox')::slop(65536);
+----
+db error: ERROR: ::slop too large: 65536
+
+
 # Additional corpus for the multi-term, repeated-term, and gap cases.
 
 statement ok

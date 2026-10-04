@@ -805,6 +805,19 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_job_max_depth",
+      {
+        LogicalTypeId::UINTEGER,
+        "Maximum number of job runs in one chain of EXECUTE JOB calls, where "
+        "a job's body executes another job; a run that would go deeper fails. "
+        "Default 16. Server-global.",
+        [] { return duckdb::Value::UINTEGER(16); },
+        nullptr,
+        nullptr,
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
       "sdb_disable_top_k_optimization",
       {
         LogicalTypeId::BOOLEAN,

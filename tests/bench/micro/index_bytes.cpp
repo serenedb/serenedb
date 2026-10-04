@@ -24,6 +24,8 @@
 #include <map>
 #include <string>
 
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/posting/block_index.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/store/mmap_directory.hpp"
@@ -47,6 +49,49 @@ struct Totals {
   uint64_t block_bytes = 0;
   uint64_t index_bytes = 0;
 };
+
+struct Norms {
+  uint64_t rows = 0;
+  uint64_t regions = 0;
+  uint64_t bytes = 0;
+  uint64_t exceptions = 0;
+  uint64_t overflow = 0;
+  std::map<uint32_t, uint64_t> rows_by_bits;
+};
+
+void WalkNorms(const irs::SubReader& segment,
+               std::map<irs::field_id, Norms>& norms) {
+  const auto* cols = segment.GetColReader();
+  if (cols == nullptr) {
+    return;
+  }
+  for (const auto id : segment.field_ids()) {
+    const auto* field = segment.field(id);
+    if (!irs::field_limits::valid(field->meta().norm)) {
+      continue;
+    }
+    const auto* column = cols->NormColumn(field->meta().norm);
+    if (column == nullptr) {
+      continue;
+    }
+    auto& n = norms[id];
+    n.rows += column->RowCount();
+    n.regions += column->RegionCount();
+    for (size_t i = 0; i != column->RegionCount(); ++i) {
+      const auto& r = column->Region(i);
+      const uint64_t rows = r.end_doc - r.first_doc;
+      n.rows_by_bits[r.bits] += rows;
+      n.bytes += rows * (r.bits / 8);
+      if (r.exceptions) {
+        n.exceptions += r.direct + r.overflow;
+        n.overflow += r.overflow;
+        n.bytes += (((rows - 1) >> r.shift) + 1) * sizeof(uint32_t) +
+                   uint64_t{r.overflow} * 8 +
+                   uint64_t{r.direct} * r.exception_bytes;
+      }
+    }
+  }
+}
 
 void Walk(const irs::SubReader& segment, irs::Directory& dir, Totals& t) {
   const auto doc =
@@ -107,8 +152,10 @@ int main(int argc, char** argv) {
       dir,
       irs::IndexReaderOptions{.db = &irs::DuckDBEngine::Instance().instance()}};
     Totals t;
+    std::map<irs::field_id, Norms> norms;
     for (const auto& segment : reader) {
       Walk(segment, dir, t);
+      WalkNorms(segment, norms);
     }
     const auto mb = [](uint64_t bytes) {
       return static_cast<double>(bytes) / 1e6;
@@ -133,6 +180,18 @@ int main(int argc, char** argv) {
                 8.0 * static_cast<double>(files[".pos"]) /
                   static_cast<double>(t.positions),
                 t.positions);
+    for (const auto& [id, n] : norms) {
+      std::printf(
+        "norms field %u: %lu rows, %lu regions, %.1f MB (%.3f bits per row), "
+        "%lu exceptions (%lu overflow), rows by bits:",
+        static_cast<unsigned>(id), n.rows, n.regions, mb(n.bytes),
+        8.0 * static_cast<double>(n.bytes) / static_cast<double>(n.rows),
+        n.exceptions, n.overflow);
+      for (const auto& [bits, rows] : n.rows_by_bits) {
+        std::printf(" %u:%lu", bits, rows);
+      }
+      std::printf("\n");
+    }
   }
   irs::DuckDBEngine::Instance().Shutdown();
   return 0;

@@ -56,6 +56,7 @@
 #include "pg/connection_context.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
+#include "scheduler/job_scheduler.h"
 
 namespace sdb {
 
@@ -776,6 +777,29 @@ constexpr std::pair<std::string_view, VariableDescription>
         [](duckdb::ClientContext&, duckdb::SetScope) {
           irs::PatternCache::Instance().SetCapacity(
             irs::PatternCache::kDefaultCapacity);
+        },
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
+      "sdb_job_history_size",
+      {
+        LogicalTypeId::UBIGINT,
+        "Number of recent job runs, across all jobs, that duckdb_job_runs() "
+        "returns; the oldest run is dropped first. 0 keeps none. Default "
+        "1024. Server-global.",
+        [] {
+          return duckdb::Value::UBIGINT(JobScheduler::kDefaultHistorySize);
+        },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          if (auto* jobs = JobScheduler::Instance()) {
+            jobs->SetHistorySize(value.GetValue<uint64_t>());
+          }
+        },
+        [](duckdb::ClientContext&, duckdb::SetScope) {
+          if (auto* jobs = JobScheduler::Instance()) {
+            jobs->SetHistorySize(JobScheduler::kDefaultHistorySize);
+          }
         },
         duckdb::SetScope::GLOBAL,
       },

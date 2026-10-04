@@ -91,6 +91,8 @@ struct JobState {
 
 class JobScheduler final {
  public:
+  static constexpr size_t kDefaultHistorySize = 1024;
+
   static JobScheduler* Instance() noexcept { return gInstance; }
 
   JobScheduler();
@@ -100,6 +102,7 @@ class JobScheduler final {
   void Schedule(catalog::JobCatalogEntry& job);
   void Execute(catalog::JobCatalogEntry& job);
   std::vector<JobRunRecord> GetHistory();
+  void SetHistorySize(size_t size);
   void Stop();
 
  private:
@@ -113,6 +116,7 @@ class JobScheduler final {
   yaclib::WaitGroup<> _runs{1};
   absl::Mutex _mutex;
   std::deque<JobRunRecord> _history;
+  size_t _history_size = kDefaultHistorySize;
 };
 
 }  // namespace sdb

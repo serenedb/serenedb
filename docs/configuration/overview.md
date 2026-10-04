@@ -282,6 +282,7 @@ What the server records about itself.
 | `logging_level`                               | The log level which will be recorded in the log                                                                                                                                                                | `VARCHAR`   | `INFO`                                              |
 | `logging_mode`                                | Determines which types of log messages are logged                                                                                                                                                              | `VARCHAR`   | `LEVEL_ONLY`                                        |
 | `logging_storage`                             | Set the logging storage (memory/stdout/file/&lt;custom&gt;)                                                                                                                                                    | `VARCHAR`   | `stdout`                                            |
+| `sdb_job_history_size` | Number of recent job runs, across all jobs, that `duckdb_job_runs()` returns; the oldest run is dropped first. 0 keeps none. Default 1024. Server-global. | `UBIGINT` | `1024` |
 
 #### Files, object stores and caching
 

@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <deque>
 #include <duckdb/catalog/job_schedule.hpp>
+#include <duckdb/catalog/schema_info.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/identifier.hpp>
 #include <duckdb/common/optional_ptr.hpp>
@@ -75,7 +76,7 @@ struct JobStatus {
 struct JobDefinition {
   duckdb::idx_t database_oid = 0;
   duckdb::Identifier catalog;
-  duckdb::Identifier schema;
+  duckdb::shared_ptr<duckdb::SchemaInfo> schema;
   duckdb::Identifier name;
   duckdb::idx_t owner = 0;
   std::shared_ptr<duckdb::SQLStatement> body;

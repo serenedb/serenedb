@@ -70,6 +70,7 @@
 #include "catalog/entry/database.h"
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/inverted_index.h"
+#include "catalog/entry/job.h"
 #include "catalog/entry/role.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/system_table.h"
@@ -85,6 +86,7 @@
 #include "connector/view_index_bind.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
+#include "scheduler/job_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 
@@ -185,6 +187,25 @@ SereneDBCatalog::FindSchemaById(duckdb::ClientContext& context,
     return nullptr;
   }
   return &entry->Cast<duckdb::SchemaCatalogEntry>();
+}
+
+duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeJobEntry(
+  duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
+  duckdb::CreateJobInfo& info) {
+  auto job = duckdb::make_uniq<JobEntry>(*this, schema, info);
+  auto* connection = transaction.context
+                       ? connector::GetSereneDBContextPtr(*transaction.context)
+                       : nullptr;
+  if (connection) {
+    connection->DeferToCommit([this, oid = job->oid] {
+      auto* jobs = JobScheduler::Instance();
+      auto entry = FindIn<duckdb::JobCatalogEntry>(nullptr, oid);
+      if (jobs && entry) {
+        jobs->Schedule(*entry);
+      }
+    });
+  }
+  return job;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::FindEntryById(
@@ -477,6 +498,9 @@ duckdb::idx_t SereneDBCatalog::DefaultSchemaOid() const {
 
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   _detached.store(true, std::memory_order_release);
+  if (auto* jobs = JobScheduler::Instance()) {
+    jobs->DropDatabase(GetOid());
+  }
   std::vector<duckdb::Identifier> servers;
   GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)
     .Scan(

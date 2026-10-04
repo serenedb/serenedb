@@ -43,11 +43,11 @@ CREATE JOB jd_babsky AFTER 1 HOUR AS INSERT INTO jd_skuf VALUES ('arelav', 1);
 
 
 query
-SELECT job_name, schema_name, schedule, schedule_kind, suspended, temporary, running, body
+SELECT job_name, schema_name, schedule, schedule_kind, suspended, running, body
 FROM duckdb_jobs() WHERE job_name = 'jd_babsky';
 ----
-job_name	schema_name	schedule	schedule_kind	suspended	temporary	running	body
-jd_babsky	public	AFTER INTERVAL '01:00:00'	AFTER	f	f	f	INSERT INTO jd_skuf (VALUES ('arelav', 1))
+job_name	schema_name	schedule	schedule_kind	suspended	running	body
+jd_babsky	public	AFTER INTERVAL '01:00:00'	AFTER	f	f	INSERT INTO jd_skuf (VALUES ('arelav', 1))
 
 
 query
@@ -385,3 +385,76 @@ SELECT count(*) FROM duckdb_jobs() WHERE job_name = 'jd_nested';
 ----
 count
 0
+
+
+statement error
+CREATE JOB jd_invalid EVERY 0 SECONDS AS SELECT 1;
+----
+db error: ERROR: job schedule interval must be positive, got 00:00:00
+
+
+statement error
+CREATE JOB jd_invalid EVERY INTERVAL '1 month 1 day' AS SELECT 1;
+----
+db error: ERROR: EVERY interval cannot mix months with days or time, got 1 mon 1 day
+
+
+statement error
+CREATE JOB jd_invalid EVERY 1 HOUR OFFSET 2 HOURS AS SELECT 1;
+----
+db error: ERROR: job schedule offset 02:00:00 must be shorter than the interval 01:00:00
+
+
+statement error
+CREATE JOB jd_invalid EVERY 1 HOUR OFFSET INTERVAL '-1 minute' AS SELECT 1;
+----
+db error: ERROR: job schedule offset must not be negative, got -00:01:00
+
+
+statement error
+CREATE JOB jd_invalid AFTER 1 HOUR OFFSET 1 MINUTE AS SELECT 1;
+----
+db error: ERROR: syntax error at or near "OFFSET"<slt:ignore>
+
+
+statement error
+CREATE JOB jd_invalid AFTER 1 HOUR AS BEGIN TRANSACTION;
+----
+db error: ERROR: <slt:ignore>CREATE JOB body cannot be a transaction statement<slt:ignore>
+
+
+statement error
+CREATE JOB jd_invalid AFTER 1 HOUR AS SELECT $1;
+----
+db error: ERROR: <slt:ignore>CREATE JOB cannot have parameters<slt:ignore>
+
+
+statement ok
+DROP TABLE IF EXISTS jd_calls;
+
+
+statement ok
+CREATE TABLE jd_calls (n int);
+
+
+statement ok
+CREATE JOB jd_called AFTER 1 HOUR AS INSERT INTO jd_calls VALUES (1);
+
+
+statement ok
+CALL execute_job('jd_called');
+
+
+query
+SELECT count(*) AS n FROM jd_calls;
+----
+n
+1
+
+
+statement ok
+DROP JOB jd_called;
+
+
+statement ok
+DROP TABLE jd_calls;

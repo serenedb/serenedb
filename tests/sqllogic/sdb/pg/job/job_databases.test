@@ -9,10 +9,6 @@ DROP TABLE IF EXISTS jt_secret;
 
 
 statement ok
-DROP TABLE IF EXISTS memory.main.jt_log;
-
-
-statement ok
 DETACH IF EXISTS jt_ext;
 
 
@@ -44,50 +40,16 @@ statement ok
 GRANT INSERT ON jt_log TO jt_arelav;
 
 
-statement ok
+statement error
 CREATE TEMPORARY JOB jt_deadinside AFTER 1 HOUR AS INSERT INTO jt_log VALUES ('temp');
-
-
-query
-SELECT database_name, temporary FROM duckdb_jobs() WHERE job_name = 'jt_deadinside';
 ----
-database_name	temporary
-temp	t
+db error: ERROR: <slt:ignore>Jobs are not supported by this catalog<slt:ignore>
 
 
-statement ok
-EXECUTE JOB jt_deadinside;
-
-
-statement ok
-DROP JOB jt_deadinside;
-
-
-statement ok
-CREATE TABLE memory.main.jt_log (src text);
-
-
-statement ok
+statement error
 CREATE JOB memory.main.jt_androed AFTER 1 HOUR AS INSERT INTO jt_log VALUES ('memory');
-
-
-statement ok
-EXECUTE JOB memory.main.jt_androed;
-
-
-query
-SELECT src FROM memory.main.jt_log;
 ----
-src
-memory
-
-
-statement ok
-DROP JOB memory.main.jt_androed;
-
-
-statement ok
-DROP TABLE memory.main.jt_log;
+db error: ERROR: <slt:ignore>Jobs are not supported by this catalog<slt:ignore>
 
 
 statement ok
@@ -97,7 +59,7 @@ ATTACH '${__TEST_DIR__}/jt_ext.duckdb' AS jt_ext;
 statement error
 CREATE JOB jt_ext.main.jt_babsky AFTER 1 HOUR AS SELECT 1;
 ----
-db error: ERROR: <slt:ignore>Cannot write CREATE_JOB to a database file with DuckDB storage version<slt:ignore>
+db error: ERROR: <slt:ignore>Jobs are not supported by this catalog<slt:ignore>
 
 
 statement ok
@@ -208,13 +170,6 @@ REVOKE USAGE, CREATE ON SCHEMA jt_serene.jt_arelav_space FROM jt_arelav;
 
 statement ok
 DROP DATABASE jt_serene;
-
-
-query
-SELECT src FROM jt_log ORDER BY src;
-----
-src
-temp
 
 
 statement ok

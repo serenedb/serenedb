@@ -162,24 +162,32 @@ doc_job_owner
 # DOCS_TEST: example_006
 
 statement ok
-DROP TABLE IF EXISTS doc_session_log;
+DROP DATABASE IF EXISTS doc_jobs_db;
 
 statement ok
-CREATE TABLE doc_session_log (n int);
+CREATE DATABASE doc_jobs_db;
+
+statement ok
+CREATE TABLE doc_jobs_db.public.doc_session_log (n int);
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEMPORARY JOB doc_session_job AFTER 1 HOUR AS INSERT INTO doc_session_log VALUES (1);
+CREATE JOB doc_jobs_db.public.doc_db_job AFTER 1 HOUR AS INSERT INTO doc_session_log VALUES (1);
 
 statement ok
-EXECUTE JOB doc_session_job;
+EXECUTE JOB doc_jobs_db.public.doc_db_job;
 
 query
-SELECT count(*) AS runs FROM doc_session_log;
+SELECT count(*) AS runs FROM doc_jobs_db.public.doc_session_log;
 ----
 runs
 1
+
+statement error
+CREATE TEMPORARY JOB doc_session_job AFTER 1 HOUR AS SELECT 1;
+----
+db error: ERROR: <slt:ignore>Jobs are not supported by this catalog<slt:ignore>
 
 # DOCS_TEST: example_007
 
@@ -209,7 +217,7 @@ statement ok
 DROP JOB doc_backoff;
 
 statement ok
-DROP TABLE doc_session_log;
+DROP DATABASE doc_jobs_db;
 
 statement ok
 DROP TABLE doc_daily;

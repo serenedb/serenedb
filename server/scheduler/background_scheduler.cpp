@@ -25,6 +25,10 @@
 #include <algorithm>
 #include <memory>
 #include <yaclib/async/contract.hpp>
+#include <yaclib/coro/await.hpp>
+#include <yaclib/coro/future.hpp>
+#include <yaclib/exe/strand.hpp>
+#include <yaclib/exe/submit.hpp>
 
 #include "network/io_context.h"
 #include "network/server.h"
@@ -111,6 +115,47 @@ yaclib::Future<> BackgroundScheduler::Delay(clock::duration d) {
     });
   _delays.insert(std::move(timer));
   return std::move(f);
+}
+
+std::shared_ptr<BackgroundScheduler::Timer> BackgroundScheduler::MakeTimer(
+  std::function<void()> fire) {
+  return std::make_shared<Timer>(yaclib::MakeStrand(_pool), std::move(fire));
+}
+
+BackgroundScheduler::Timer::Timer(yaclib::IExecutorPtr strand,
+                                  std::function<void()> fire)
+  : _strand{std::move(strand)}, _fire{std::move(fire)} {}
+
+void BackgroundScheduler::Timer::ArmAt(clock::time_point at) {
+  std::uint64_t generation = 0;
+  {
+    absl::MutexLock lock{&_mutex};
+    if (_deadline && *_deadline <= at) {
+      return;
+    }
+    _deadline = at;
+    generation = ++_generation;
+  }
+  Wait(shared_from_this(), generation, at).Detach();
+}
+
+yaclib::Future<> BackgroundScheduler::Timer::Wait(std::shared_ptr<Timer> self,
+                                                  std::uint64_t generation,
+                                                  clock::time_point at) {
+  auto& s = BackgroundScheduler::instance();
+  co_await s.Delay(at - clock::now());
+  if (s.IsStopping()) {
+    co_return {};
+  }
+  {
+    absl::MutexLock lock{&self->_mutex};
+    if (self->_generation != generation) {
+      co_return {};
+    }
+    self->_deadline.reset();
+  }
+  yaclib::Submit(*self->_strand, self->_fire);
+  co_return {};
 }
 
 void BackgroundScheduler::OpenDelays() {

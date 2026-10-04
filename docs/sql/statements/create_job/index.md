@@ -47,7 +47,7 @@ The two schedule kinds follow ClickHouse's refreshable materialized views.
 
 A job never runs twice at the same time. If an `EVERY` run is still going when the next grid point arrives, that tick is skipped and the job runs again at the first grid point after the run finishes. Ticks that fall while the server is down are not replayed.
 
-Scheduled runs execute on the async thread pool (`async_threads`), so a long job does not hold a client session. With `async_threads = 0`, scheduled runs execute one at a time on the scheduler's own thread.
+Scheduled runs execute on the server's background thread pool (`--background_threads`), the pool that also runs index maintenance, so a long job does not hold a client session.
 
 `SUSPENDED` creates the job paused.
 
@@ -80,6 +80,8 @@ The job session starts with the job's schema first on the search path and reads 
 A job can live in any database, like a table, and wherever it lives it runs as its owner. `CREATE TEMPORARY JOB` creates a job that belongs to the session and is dropped when the session ends; its body resolves names with the `search_path` the session had when it created the job:
 
 <SqlLogicTest id="sql/statements/create_job/index/example_006" />
+
+A run executes on a connection of its own, so a temporary job's body does not see the session's temporary tables.
 
 Jobs can also be created in `memory` and in attached databases. An attached DuckDB file stores jobs only with a SereneDB storage version (`ATTACH 'file.duckdb' (STORAGE_VERSION 'serenedb_latest')`); a file with a DuckDB storage version refuses `CREATE JOB` when the transaction commits.
 

@@ -99,7 +99,7 @@ JobDefinition DefinitionOf(catalog::JobCatalogEntry& job) {
   return {
     .database_oid = job.ParentCatalog().GetOid(),
     .catalog = job.ParentCatalog().GetName(),
-    .schema = job.ParentSchemaName(),
+    .schema = job.schema_info,
     .name = job.name,
     .owner = job.permissions.owner,
     .body = std::shared_ptr<duckdb::SQLStatement>{job.Body().Copy().release()}};
@@ -139,7 +139,7 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
   context->registered_state->Insert(kJobRunKey,
                                     duckdb::make_shared_ptr<JobRun>(depth));
   context->client_data->catalog_search_path->Set(
-    {duckdb::CatalogSearchEntry{job.catalog, job.schema}},
+    {duckdb::CatalogSearchEntry{job.catalog, job.schema->Name()}},
     duckdb::CatalogSetPathType::SET_DIRECTLY);
   auto pending = context->PendingQuery(job.body->Copy(), false);
   if (pending->HasError()) {
@@ -306,7 +306,7 @@ duckdb::ErrorData JobScheduler::RunBody(
   JobRunRecord run{
     .database_oid = job.database_oid,
     .catalog = job.catalog,
-    .schema = job.schema,
+    .schema = job.schema->Name(),
     .name = job.name,
     .manual = static_cast<bool>(caller),
     .start = duckdb::Timestamp::GetCurrentTimestamp(),

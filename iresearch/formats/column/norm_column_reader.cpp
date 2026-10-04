@@ -94,6 +94,7 @@ NormColumnReader::NormColumnReader(field_id id, const NormColumnMeta& meta,
     for (uint64_t at = 0; at < size; at += window_bytes) {
       _windows.emplace_back(slots + at, std::min(window_bytes, size - at));
     }
+    r.windows = _windows.size() - r.window;
     r.first_page = reinterpret_cast<uintptr_t>(slots) >> kPageShift;
     r.page = _pages;
     _pages += (reinterpret_cast<uintptr_t>(slots + size - 1) >> kPageShift) -

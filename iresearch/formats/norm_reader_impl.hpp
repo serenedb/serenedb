@@ -123,6 +123,7 @@ class NormReaderBase : public NormReader {
                                  static_cast<double>(column.NonZeroCount()))} {}
 
   static constexpr size_t kCalls = 16;
+  static constexpr size_t kMaxProbe = 64;
   static constexpr uint64_t kMaxSpanPerPage = 2;
   static constexpr uint64_t kMaxGapPages = 2;
   static constexpr size_t kBits = BitsRequired<uint64_t>();
@@ -162,10 +163,24 @@ class NormReaderBase : public NormReader {
     }
     if (!Test(_probed_at + _window)) {
       Set(_probed_at + _window);
-      const auto span = _column->Window(_window);
       const auto* at = At(docs[0]);
-      if (file_utils::IsResident(
-            at, static_cast<size_t>(span.data() + span.size() - at))) {
+      const auto resident = [&](size_t last) {
+        const auto span = _column->Window(last);
+        return file_utils::IsResident(
+          at, static_cast<size_t>(span.data() + span.size() - at));
+      };
+      const auto last =
+        std::min(_window + _probe, _region->window + _region->windows) - 1;
+      if (resident(last)) {
+        for (auto window = _window; window <= last; ++window) {
+          Set(_probed_at + window);
+          Done(window);
+        }
+        _probe = std::min(_probe * 2, kMaxProbe);
+        return;
+      }
+      _probe = 1;
+      if (last != _window && resident(_window)) {
         Done(_window);
         return;
       }
@@ -325,6 +340,7 @@ class NormReaderBase : public NormReader {
   doc_id_t _window_first = 0;
   doc_id_t _window_end = 0;
   size_t _window = 0;
+  size_t _probe = 1;
   size_t _probed_at = 0;
   size_t _seen_at = 0;
   uint64_t _fresh = 0;

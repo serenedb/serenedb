@@ -56,6 +56,7 @@ struct NormRegion {
   uint32_t exception_bytes = 0;
   bool exceptions = false;
   size_t window = 0;
+  size_t windows = 0;
   size_t page = 0;
   uintptr_t first_page = 0;
 

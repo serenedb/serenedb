@@ -22,15 +22,11 @@
 #include <faiss/utils/distances.h>
 
 #include <cmath>
+#include <core_functions/array_kernels.hpp>
 #include <cstddef>
-#include <iresearch/utils/vector.hpp>
 #include <memory>
 #include <vector>
 
-// Benchmarks comparing:
-//   - sdb::pg distance functions (iresearch SIMD-backed)
-//   - FAISS distance kernels
-//
 // Vector construction is done in the fixture's SetUp, outside the timed loop.
 // Parameterized by dimension: 64, 128, 256, 512, 1024, 2048.
 
@@ -67,33 +63,22 @@ class DistanceFixture : public benchmark::Fixture {
 
 [[gnu::noinline]] float SdbComputeL2(const float* left, const float* right,
                                      size_t sz) {
-  return irs::vector::L2Space<float, float, float>::Dist(
-    reinterpret_cast<const irs::byte_type*>(left),
-    reinterpret_cast<const irs::byte_type*>(right), static_cast<uint16_t>(sz));
+  return duckdb::DistanceSquaredOp::Operation(left, right, sz);
 }
 
 [[gnu::noinline]] float SdbComputeL1(const float* left, const float* right,
                                      size_t sz) {
-  return irs::vector::L1Space<float, float, float>::Dist(
-    reinterpret_cast<const irs::byte_type*>(left),
-    reinterpret_cast<const irs::byte_type*>(right), static_cast<uint16_t>(sz));
+  return duckdb::L1DistanceOp::Operation(left, right, sz);
 }
 
 [[gnu::noinline]] float SdbComputeDotProduct(const float* left,
                                              const float* right, size_t sz) {
-  return irs::vector::DotProductImpl<float, float>::Compute(
-    reinterpret_cast<const irs::byte_type*>(left),
-    reinterpret_cast<const irs::byte_type*>(right), static_cast<uint16_t>(sz));
+  return duckdb::InnerProductOp::Operation(left, right, sz);
 }
 
 [[gnu::noinline]] float SdbComputeCosine(const float* left, const float* right,
                                          size_t sz) {
-  const auto [ll, lr, rr] =
-    irs::vector::CosineDistanceImpl<float, float, float>::Compute(
-      reinterpret_cast<const irs::byte_type*>(left),
-      reinterpret_cast<const irs::byte_type*>(right),
-      static_cast<uint16_t>(sz));
-  return static_cast<float>(lr / std::sqrt(ll * rr));
+  return duckdb::CosineSimilarityOp::Operation(left, right, sz);
 }
 
 [[gnu::noinline]] float FaissComputeCosine(const float* left,

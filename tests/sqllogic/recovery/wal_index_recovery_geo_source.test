@@ -34,7 +34,7 @@ VACUUM (REFRESH_TABLE) wal_geo_src_t;
 # the force-included cs column (`geo (i)` / `pk (l)`), no RocksDB fallback.
 query
 EXPLAIN SELECT pk, geo FROM wal_geo_src_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 QUERY PLAN
 ╭─ PROJECTION ───────────╮
@@ -57,7 +57,7 @@ QUERY PLAN
 # Pre-crash row: geo distance query works against on-disk segment.
 query
 SELECT pk FROM wal_geo_src_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0
 ORDER BY pk;
 ----
 pk
@@ -67,7 +67,7 @@ pk
 # cs column -- source coding stores the raw source, no aux blob).
 query
 SELECT pk, geo FROM wal_geo_src_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 pk	geo
 1	{"type":"Point","coordinates":[37.615895,55.703900]}
@@ -98,7 +98,7 @@ VACUUM (REFRESH_TABLE) wal_geo_src_t;
 connection wal_after
 query
 SELECT pk FROM wal_geo_src_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 pk
 1
@@ -108,7 +108,7 @@ pk
 connection wal_after
 query
 SELECT pk FROM wal_geo_src_idx
-WHERE geo <-> '{"type":"Point","coordinates":[2.35,48.86]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[2.35,48.86]}') < 1000.0;
 ----
 pk
 2
@@ -116,7 +116,7 @@ pk
 connection wal_after
 query
 SELECT pk FROM wal_geo_src_idx
-WHERE geo <-> '{"type":"Point","coordinates":[-74.0,40.71]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[-74.0,40.71]}') < 1000.0;
 ----
 pk
 3

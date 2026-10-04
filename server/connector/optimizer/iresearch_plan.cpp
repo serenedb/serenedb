@@ -39,6 +39,7 @@
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/boolean_rules.hpp>
 #include <iresearch/search/queries/hnsw_query.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -491,6 +492,74 @@ bool IsScorerFunctionName(std::string_view name) {
   return kScorerNames.contains(name);
 }
 
+struct AnnFunctionInfo {
+  irs::VectorMetric metric;
+  duckdb::OrderType order;
+  bool is_norm;
+  connector::ScoreEmit score_emit;
+};
+
+std::optional<AnnFunctionInfo> GetAnnFunctionInfo(
+  const duckdb::BoundFunctionExpression& func) {
+  using enum irs::VectorMetric;
+  using enum connector::ScoreEmit;
+  constexpr auto kAsc = duckdb::OrderType::ASCENDING;
+  constexpr auto kDesc = duckdb::OrderType::DESCENDING;
+  constexpr AnnFunctionInfo kL2Info{L2Sqr, kAsc, false, SqrtNeg};
+  constexpr AnnFunctionInfo kL2SqrInfo{L2Sqr, kAsc, false, Negate};
+  constexpr AnnFunctionInfo kL1Info{L1, kAsc, false, Negate};
+  constexpr AnnFunctionInfo kCosineInfo{Cosine, kAsc, false, OneMinus};
+  constexpr AnnFunctionInfo kCosineSimilarityInfo{Cosine, kDesc, false,
+                                                  Identity};
+  constexpr AnnFunctionInfo kIPInfo{InnerProduct, kDesc, false, Identity};
+  constexpr AnnFunctionInfo kNegativeIPInfo{InnerProduct, kAsc, false, Negate};
+  constexpr AnnFunctionInfo kL1NormInfo{L1, kAsc, true, Negate};
+  constexpr AnnFunctionInfo kL2NormInfo{L2Sqr, kAsc, true, SqrtNeg};
+  static const irs::containers::FlatHashMap<std::string_view, AnnFunctionInfo>
+    kFunctions{
+      {connector::kL2Distance, kL2Info},
+      {connector::kL2DistanceOp, kL2Info},
+      {"list_distance", kL2Info},
+      {"array_distance", kL2Info},
+      {connector::kL2SqrDistance, kL2SqrInfo},
+      {connector::kL1Distance, kL1Info},
+      {connector::kL1DistanceOp, kL1Info},
+      {connector::kCosineDistance, kCosineInfo},
+      {connector::kCosineDistanceOp, kCosineInfo},
+      {"list_cosine_distance", kCosineInfo},
+      {"array_cosine_distance", kCosineInfo},
+      {connector::kCosineSimilarity, kCosineSimilarityInfo},
+      {"list_cosine_similarity", kCosineSimilarityInfo},
+      {"array_cosine_similarity", kCosineSimilarityInfo},
+      {connector::kIP, kIPInfo},
+      {"list_inner_product", kIPInfo},
+      {"list_dot_product", kIPInfo},
+      {"array_inner_product", kIPInfo},
+      {"array_dot_product", kIPInfo},
+      {connector::kNegativeIP, kNegativeIPInfo},
+      {connector::kNegativeIPDistanceOp, kNegativeIPInfo},
+      {"list_negative_inner_product", kNegativeIPInfo},
+      {"list_negative_dot_product", kNegativeIPInfo},
+      {"array_negative_inner_product", kNegativeIPInfo},
+      {"array_negative_dot_product", kNegativeIPInfo},
+      {connector::kL1Norm, kL1NormInfo},
+      {connector::kL2Norm, kL2NormInfo},
+      {"vector_norm", kL2NormInfo},
+    };
+  const auto it =
+    kFunctions.find(func.Function().GetName().GetIdentifierName());
+  if (it == kFunctions.end()) {
+    return std::nullopt;
+  }
+  for (const auto& type : func.Function().GetArguments()) {
+    if (type.id() != duckdb::LogicalTypeId::LIST &&
+        type.id() != duckdb::LogicalTypeId::ARRAY) {
+      return std::nullopt;
+    }
+  }
+  return it->second;
+}
+
 bool ScanColumnIsScore(const FoundScanColumn& sc) {
   return ResolveColumnId(sc.binding, *sc.found.bind_data, *sc.found.get) ==
          connector::kInvertedIndexScoreId;
@@ -569,8 +638,25 @@ uint32_t ReadHnswEfSearch(duckdb::ClientContext& context) {
   return gEfSearch.Int(context);
 }
 
+const duckdb::Expression& PeelArrayToListCast(const duckdb::Expression& expr) {
+  if (!duckdb::BoundCastExpression::IsCast(expr)) {
+    return expr;
+  }
+  const auto& child = duckdb::BoundCastExpression::Child(
+    expr.Cast<duckdb::BoundFunctionExpression>());
+  const auto& from = child.GetReturnType();
+  const auto& to = expr.GetReturnType();
+  if (from.id() != duckdb::LogicalTypeId::ARRAY ||
+      to.id() != duckdb::LogicalTypeId::LIST ||
+      duckdb::ArrayType::GetChildType(from) !=
+        duckdb::ListType::GetChildType(to)) {
+    return expr;
+  }
+  return child;
+}
+
 duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
-  duckdb::BoundFunctionExpression& func, const connector::AnnFunctionInfo& info,
+  duckdb::BoundFunctionExpression& func, const AnnFunctionInfo& info,
   duckdb::LogicalOperator& root, duckdb::ClientContext& context) {
   const auto [col_arg, value_arg] =
     [&] -> std::pair<duckdb::Expression*, duckdb::Expression*> {
@@ -596,8 +682,9 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   if (!col_arg) {
     return nullptr;
   }
+  const auto& column = PeelArrayToListCast(*col_arg);
 
-  const auto anchor_ti = SingleReferencedTableIndex(*col_arg);
+  const auto anchor_ti = SingleReferencedTableIndex(column);
   if (!anchor_ti) {
     return nullptr;
   }
@@ -612,7 +699,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   }
 
   const auto call_field_id =
-    ResolveAnnTargetFieldId(*col_arg, *found->get, *found->bind_data, context);
+    ResolveAnnTargetFieldId(column, *found->get, *found->bind_data, context);
   if (!irs::field_limits::valid(call_field_id)) {
     return nullptr;
   }
@@ -823,7 +910,7 @@ void RewriteCallInExpr(duckdb::unique_ptr<duckdb::Expression>& expr,
         expr = std::move(repl);
         return;
       }
-    } else if (auto info = connector::GetAnnFunctionInfo(func)) {
+    } else if (auto info = GetAnnFunctionInfo(func)) {
       if (auto repl = PushdownDistanceCall(func, *info, root, context)) {
         expr = std::move(repl);
         return;

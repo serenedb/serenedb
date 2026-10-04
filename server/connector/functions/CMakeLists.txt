@@ -33,7 +33,6 @@ target_sources(
         ts_term.cpp
         ts_to_tsquery.cpp
         ts_tokenize.cpp
-        vector.cpp
         ai/aggregate_functions.cpp
         ai/ai.cpp
         ai/chat.cpp

@@ -38,7 +38,6 @@
 #include "connector/geo_validate.h"
 #include "functions/search.h"
 #include "functions/ts_common.hpp"
-#include "functions/vector.h"
 #include "search_filter_builder.hpp"
 
 namespace sdb::connector {
@@ -413,49 +412,20 @@ bool FromGeoFilter(BoolTarget filter, const FilterContext& ctx,
 }  // namespace
 
 // Returns the inner expression as a ST_Distance_Centroid(field, centroid)
-// call -- or its `<->` operator-form synonym -- when it matches that
-// exact shape, or nullptr otherwise. Used to rewrite the pattern
-// `ST_Distance_Centroid(...) OP <const>` (and the equivalent `<->` form)
-// into an iresearch GeoDistanceFilter at filter-build time.
-//
-// `<->` shares its operator name with the vector L2 op registered in
-// vector.cpp. Disambiguate by resolving each operand against the
-// catalog: at least one side must be an indexed JSON column (catalog
-// type with the JSON logical alias preserved) or GEOMETRY column --
-// the same JSON / GEOMETRY pair the catalog enforces for geo analyzers
-// at CREATE INDEX time. The post-binding `return_type` on the bound
-// expression demotes JSON to plain VARCHAR through function-arg
-// coercion, so we read `column_info->logical_type` (catalog-stored,
-// JSON alias intact) and use `IsJSONType()` rather than an id-only
-// check. PrepareGeoDistanceFilter further validates the column's
-// analyzer before adding the iresearch GeoDistanceFilter.
+// call when it matches that exact shape, or nullptr otherwise. Used to
+// rewrite the pattern `ST_Distance_Centroid(...) OP <const>` into an
+// iresearch GeoDistanceFilter at filter-build time.
 const duckdb::BoundFunctionExpression* TryGetGeoDistanceCall(
-  const FilterContext& ctx, const duckdb::Expression& expr) {
+  const duckdb::Expression& expr) {
   if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
     return nullptr;
   }
   const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
-  if (func.GetChildren().size() != 2) {
+  if (func.GetChildren().size() != 2 ||
+      func.Function().GetName() != kGeoDistance) {
     return nullptr;
   }
-  if (func.Function().GetName() == kGeoDistance) {
-    return &func;
-  }
-  if (func.Function().GetName() == kL2DistanceOp) {
-    auto is_geo_col = [&ctx](const duckdb::Expression& child) {
-      const auto* info = FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(child));
-      if (!info) {
-        return false;
-      }
-      return info->logical_type.IsJSONType() ||
-             info->logical_type.id() == duckdb::LogicalTypeId::GEOMETRY;
-    };
-    if (is_geo_col(*func.GetChildren()[0]) ||
-        is_geo_col(*func.GetChildren()[1])) {
-      return &func;
-    }
-  }
-  return nullptr;
+  return &func;
 }
 
 // ST_Distance_Centroid(field, centroid) OP distance  --  range one-sided.

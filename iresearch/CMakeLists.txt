@@ -474,6 +474,8 @@ target_include_directories(
     PRIVATE $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INCLUDE_DIRECTORIES>
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
     PUBLIC ${CMAKE_SOURCE_DIR}/third_party/stringzilla/include
+    PUBLIC
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/core_functions/include
 )
 
 if(ARCH_AMD64)

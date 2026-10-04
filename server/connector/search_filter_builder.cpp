@@ -633,7 +633,7 @@ absl::Status FromBinaryEq(BoolTarget filter, const FilterContext& ctx,
   // ST_Distance_Centroid(field, centroid) = / != distance  --  rewrite to
   // range.
   if constexpr (GenericVersion) {
-    if (const auto* geo_call = TryGetGeoDistanceCall(ctx, left_expr)) {
+    if (const auto* geo_call = TryGetGeoDistanceCall(left_expr)) {
       FilterContext geo_ctx = ctx;
       geo_ctx.negated = (ctx.negated != not_equal);
       FromGeoDistanceBinaryEq(filter, geo_ctx, *geo_call, right_expr);
@@ -694,7 +694,7 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
   // InvertComparisonOp above, so clear it before recursing -- otherwise the
   // geo filter would Negate the range that is itself already inverted.
   if constexpr (GenericVersion) {
-    if (const auto* geo_call = TryGetGeoDistanceCall(ctx, field_expr)) {
+    if (const auto* geo_call = TryGetGeoDistanceCall(field_expr)) {
       FilterContext geo_ctx = ctx;
       geo_ctx.negated = false;
       FromGeoDistanceComparison(filter, geo_ctx, *geo_call, value_expr, op);

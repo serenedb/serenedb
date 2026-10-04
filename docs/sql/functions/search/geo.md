@@ -19,7 +19,6 @@ The **indexed column must be `JSON` (holding [GeoJSON](https://geojson.org/)) or
 | [`ST_Contains(a, b)`](#st_contains) | True where `a` fully contains `b`. Direction-dependent — argument order matters. |
 | [`ST_Distance_Between(field, centroid, min, max [, incl_min [, incl_max]])`](#st_distance_between) | True where the geodesic distance to `centroid` falls in `[min, max]`. |
 | [`ST_Distance_Centroid(field, centroid)`](#st_distance_centroid) | Geodesic distance (metres) from the indexed geometry to `centroid`. |
-| [`field <-> centroid`](#distance-operator) | Operator synonym for `ST_Distance_Centroid`. |
 
 :::note Index-scan context
 These functions are predicates evaluated by the index, not scalar functions you can call in a bare `SELECT` list. Use them in the `WHERE` clause of a query against an indexed table (or its `_idx` alias). `ST_Distance_Centroid` in particular returns the distance only inside an index scan; selecting it as a plain projection raises *"Inverted index function called outside inverted index context."*
@@ -135,11 +134,15 @@ Geodesic distance, in metres, from the indexed geometry's centroid to `centroid`
 
 `ST_Distance_Centroid(field, c) < r` is the open-disc form of `ST_Distance_Between(field, c, 0, r, true, false)`.
 
-#### `field <-> centroid` {#distance-operator}
+#### `a <-> b` {#distance-operator}
 
-The `<->` operator is a synonym for `ST_Distance_Centroid`: `field <-> centroid` is exactly equivalent to `ST_Distance_Centroid(field, centroid)`, used the same way in a `WHERE` comparison within an index scan. It reads naturally as a distance and keeps radius queries terse:
+As in PostGIS, `<->` between two `GEOMETRY` values is their planar distance in coordinate units — the same value as `ST_Distance(a, b)`. It is an ordinary scalar that works in any expression, `ORDER BY` included, but it takes only `GEOMETRY` operands (not `JSON`) and the index does not answer it.
 
-<SqlLogicTest id="sql/functions/full_text_search/st_distance_centroid_op" />
+:::caution `<->` is planar, not geodesic
+For `OGC:CRS84` data the coordinates are longitude and latitude, so `<->` returns **degrees**, not metres. It is not `ST_Distance_Centroid`: for a radius in metres that the index answers, write `ST_Distance_Centroid(field, centroid) < r` or `ST_Distance_Between`.
+:::
+
+<SqlLogicTest id="sql/functions/full_text_search/geometry_distance_operator" />
 
 ## Coming from Elasticsearch
 

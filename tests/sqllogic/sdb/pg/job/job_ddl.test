@@ -519,6 +519,100 @@ n
 
 
 statement ok
+CREATE JOB jd_caller AFTER 1 HOUR SUSPENDED AS CALL execute_job('jd_called');
+
+
+statement ok
+EXECUTE JOB jd_caller;
+
+
+query
+SELECT count(*) AS n FROM jd_calls;
+----
+n
+2
+
+
+query
+SELECT job_name, run_count, failure_count FROM duckdb_jobs()
+WHERE job_name IN ('jd_called', 'jd_caller') ORDER BY job_name;
+----
+job_name	run_count	failure_count
+jd_called	2	0
+jd_caller	1	0
+
+
+statement ok
+CREATE JOB jd_loop AFTER 1 HOUR SUSPENDED AS CALL execute_job('jd_loop');
+
+
+statement error
+EXECUTE JOB jd_loop;
+----
+db error: ERROR: <slt:ignore>Job "jd_loop" is already running<slt:ignore>
+
+
+statement ok
+CREATE JOB jd_self EVERY 1 HOUR CONCURRENT SUSPENDED AS CALL execute_job('jd_self');
+
+
+statement error
+EXECUTE JOB jd_self;
+----
+db error: ERROR: <slt:ignore>EXECUTE JOB is nested more than 16 levels deep<slt:ignore>
+
+
+query
+SELECT running, run_count, failure_count FROM duckdb_jobs() WHERE job_name = 'jd_self';
+----
+running	run_count	failure_count
+f	17	17
+
+
+statement ok
+CREATE JOB jd_ping EVERY 1 HOUR CONCURRENT SUSPENDED AS CALL execute_job('jd_pong');
+
+
+statement ok
+CREATE JOB jd_pong EVERY 1 HOUR CONCURRENT SUSPENDED AS CALL execute_job('jd_ping');
+
+
+statement error
+EXECUTE JOB jd_ping;
+----
+db error: ERROR: <slt:ignore>EXECUTE JOB is nested more than 16 levels deep<slt:ignore>
+
+
+query
+SELECT job_name, running, run_count, failure_count FROM duckdb_jobs()
+WHERE job_name IN ('jd_ping', 'jd_pong') ORDER BY job_name;
+----
+job_name	running	run_count	failure_count
+jd_ping	f	9	9
+jd_pong	f	8	8
+
+
+statement ok
+DROP JOB jd_ping;
+
+
+statement ok
+DROP JOB jd_pong;
+
+
+statement ok
+DROP JOB jd_self;
+
+
+statement ok
+DROP JOB jd_loop;
+
+
+statement ok
+DROP JOB jd_caller;
+
+
+statement ok
 DROP JOB jd_called;
 
 

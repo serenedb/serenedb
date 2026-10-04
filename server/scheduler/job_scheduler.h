@@ -27,6 +27,7 @@
 #include <duckdb/catalog/job_schedule.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/identifier.hpp>
+#include <duckdb/common/optional_ptr.hpp>
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <memory>
@@ -100,7 +101,7 @@ class JobScheduler final {
 
   void Start();
   void Schedule(catalog::JobCatalogEntry& job);
-  void Execute(catalog::JobCatalogEntry& job);
+  void Execute(duckdb::ClientContext& caller, catalog::JobCatalogEntry& job);
   std::vector<JobRunRecord> GetHistory();
   void SetHistorySize(size_t size);
   void Stop();
@@ -109,7 +110,8 @@ class JobScheduler final {
   void RunConcurrent(std::shared_ptr<JobState> state, uint64_t timer);
   void RunNotConcurrent(std::shared_ptr<JobState> state, uint64_t timer);
   duckdb::ErrorData RunBody(std::shared_ptr<JobState> state, JobDefinition job,
-                            bool manual, uint64_t timer);
+                            duckdb::optional_ptr<duckdb::ClientContext> caller,
+                            uint64_t timer);
 
   inline static JobScheduler* gInstance = nullptr;
 

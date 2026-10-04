@@ -21104,7 +21104,8 @@ SELECT ALL - ( 27 ) * - 92 / + + 0 / CASE + ( + 27 ) WHEN - 36 THEN NULL WHEN - 
 NULL
 
 skipif mysql # not compatible
-skipif postgres # TODO(mbkkt)
+skipif postgres # division by zero
+skipif serenedb # division by zero
 query I rowsort label-2290
 SELECT ALL - ( 27 ) * - 92 / + + 0 / CASE + ( + 27 ) WHEN - 36 THEN NULL WHEN - NULLIF ( - COUNT ( + 36 ), - 78 ) THEN + 46 ELSE NULL END * + 53 + - - 8
 ----

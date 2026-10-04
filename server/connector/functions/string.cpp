@@ -24,7 +24,6 @@
 
 #include <duckdb/common/types/blob.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
-#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
 #include <duckdb/function/scalar/string_common.hpp>
 #include <duckdb/function/scalar_function.hpp>
@@ -870,15 +869,8 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> RegexpInitLocalState(
 
 std::unique_ptr<re2::RE2> CompileConstantPattern(
   duckdb::BindScalarFunctionInput& input) {
-  auto& context = input.GetClientContext();
-  auto& arguments = input.GetArguments();
-  // Check if pattern argument is a constant
-  if (arguments[1]->IsFoldable()) {
-    auto val =
-      duckdb::ExpressionExecutor::EvaluateScalar(context, *arguments[1]);
-    if (!val.IsNull()) {
-      return std::make_unique<re2::RE2>(val.ToString(), OwnedRegexOptions());
-    }
+  if (auto val = input.TryGetConstant(1); val && !val->IsNull()) {
+    return std::make_unique<re2::RE2>(val->ToString(), OwnedRegexOptions());
   }
   return nullptr;
 }

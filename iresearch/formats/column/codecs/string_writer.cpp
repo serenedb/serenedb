@@ -48,6 +48,7 @@ using duckdb::idx_t;
 using duckdb::string_t;
 
 constexpr double kPlainWinsBelow = 0.9;
+constexpr uint64_t kPlainMinSaving = 4096;
 constexpr uint64_t kDedupMinRepeat = 2;
 constexpr uint64_t kEstimateEvery = 64;
 constexpr uint64_t kEstimateSteps = 16;
@@ -1149,18 +1150,22 @@ class SegmentWriter {
     const auto floor = kHeaderSize + Packed(dedup.rows, dedup.max_len) +
                        dedup.input / kLz4MaxRatio;
     if (Repeats(dedup)) {
-      return static_cast<double>(floor) <
-             static_cast<double>(dedup.Size()) * kPlainWinsBelow;
+      return SavesEnough(dedup.Size(), floor);
     }
     return floor <= dedup.Size();
   }
 
   static bool PlainWins(const Segment& dedup, const Segment& plain) noexcept {
     if (Repeats(dedup)) {
-      return static_cast<double>(plain.Size()) <
-             static_cast<double>(dedup.Size()) * kPlainWinsBelow;
+      return SavesEnough(dedup.Size(), plain.Size());
     }
     return plain.Size() <= dedup.Size();
+  }
+
+  static bool SavesEnough(uint64_t dedup, uint64_t plain) noexcept {
+    return static_cast<double>(plain) <
+             static_cast<double>(dedup) * kPlainWinsBelow &&
+           plain + kPlainMinSaving <= dedup;
   }
 
   bool Drifted(const Segment& seg, bool first) const noexcept {

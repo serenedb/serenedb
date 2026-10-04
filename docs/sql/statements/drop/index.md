@@ -91,7 +91,7 @@ Views that reference a table are tracked as dependents of that table. If a view 
 
 ### Dependencies across Databases
 
-A view or macro may read objects of another database. Those references are tracked the same way: dropping the referenced object with `RESTRICT` is rejected, `CASCADE` also drops the dependent in the other database, and `DROP DATABASE` is rejected while an object of another database depends on one of its objects:
+A view or macro may read objects of another database, and a table may take a column default (`nextval`) or a column type from one. Those references are tracked the same way: dropping the referenced object with `RESTRICT` is rejected, and `DROP DATABASE` is rejected while an object of another database depends on one of its objects. `CASCADE` also drops a dependent view or macro in the other database; a dependent table stays, and a column default that used a dropped sequence is removed:
 
 <SqlLogicTest id="sql/statements/drop/cross_database_dependency/example_013" />
 

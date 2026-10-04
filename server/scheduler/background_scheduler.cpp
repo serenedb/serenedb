@@ -126,39 +126,23 @@ yaclib::Future<> BackgroundScheduler::Delay(clock::duration d) {
   return std::move(f);
 }
 
-BackgroundScheduler::Timer::Timer(std::function<void()> fire)
-  : _fire{std::move(fire)} {}
+namespace {
 
-void BackgroundScheduler::Timer::ArmAt(clock::time_point at) {
-  std::uint64_t generation = 0;
-  {
-    absl::MutexLock lock{&_mutex};
-    if (_deadline && *_deadline <= at) {
-      return;
-    }
-    _deadline = at;
-    generation = ++_generation;
+yaclib::Future<> DelayThenRun(BackgroundScheduler& scheduler,
+                              BackgroundScheduler::clock::duration delay,
+                              std::function<void()> task) {
+  co_await scheduler.Delay(delay);
+  if (!scheduler.IsStopping()) {
+    scheduler.Run(std::move(task)).Detach();
   }
-  Wait(shared_from_this(), generation, at).Detach();
+  co_return {};
 }
 
-yaclib::Future<> BackgroundScheduler::Timer::Wait(std::shared_ptr<Timer> self,
-                                                  std::uint64_t generation,
-                                                  clock::time_point at) {
-  auto& s = BackgroundScheduler::instance();
-  co_await s.Delay(at - clock::now());
-  if (s.IsStopping()) {
-    co_return {};
-  }
-  {
-    absl::MutexLock lock{&self->_mutex};
-    if (self->_generation != generation) {
-      co_return {};
-    }
-    self->_deadline.reset();
-  }
-  s.Run(self->_fire).Detach();
-  co_return {};
+}  // namespace
+
+void BackgroundScheduler::RunAfter(clock::duration delay,
+                                   std::function<void()> task) {
+  DelayThenRun(*this, delay, std::move(task)).Detach();
 }
 
 void BackgroundScheduler::OpenDelays() {

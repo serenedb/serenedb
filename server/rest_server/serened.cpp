@@ -68,25 +68,18 @@ const boost::asio::ssl::detail::openssl_init<true> kSslInit{};
 
 class BackgroundJobRuntime final : public duckdb::JobRuntime {
  public:
-  BackgroundJobRuntime(BackgroundScheduler& background,
-                       duckdb::JobScheduler& jobs)
-    : _background{background},
-      _timer{std::make_shared<BackgroundScheduler::Timer>(
-        [&jobs] { jobs.Tick(); })} {}
+  explicit BackgroundJobRuntime(BackgroundScheduler& background)
+    : _background{background} {}
 
-  void WakeAt(duckdb::timestamp_t at) final {
-    _timer->ArmAt(BackgroundScheduler::clock::now() +
-                  std::chrono::microseconds{
-                    at.value - duckdb::Timestamp::GetCurrentTimestamp().value});
-  }
-
-  void Run(std::function<void()> run) final {
-    _background.Run(std::move(run)).Detach();
+  void RunAt(duckdb::timestamp_t at, std::function<void()> task) final {
+    _background.RunAfter(
+      std::chrono::microseconds{at.value -
+                                duckdb::Timestamp::GetCurrentTimestamp().value},
+      std::move(task));
   }
 
  private:
   BackgroundScheduler& _background;
-  std::shared_ptr<BackgroundScheduler::Timer> _timer;
 };
 
 int RunServer(int argc, char** argv) {
@@ -175,7 +168,7 @@ int RunServer(int argc, char** argv) {
     background.start();
     up_background = true;
     auto& jobs = irs::DuckDBEngine::Instance().instance().GetJobScheduler();
-    jobs.SetRuntime(std::make_unique<BackgroundJobRuntime>(background, jobs));
+    jobs.SetRuntime(std::make_unique<BackgroundJobRuntime>(background));
     catalog::InitCatalog(db_path.directory());
     // The io pool must be up before search.start(): the per-index refresh /
     // compaction loops co_await BackgroundScheduler::Delay(), which hosts its

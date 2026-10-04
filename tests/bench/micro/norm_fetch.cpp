@@ -22,6 +22,7 @@
 #include <benchmark/benchmark.h>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -61,6 +62,8 @@ enum class Shape : int {
 enum class Layout : int {
   Main,
   Packed,
+  Var,
+  Line,
 };
 enum class Mode : int {
   Fetch,
@@ -277,6 +280,213 @@ struct PackedColumn {
   }
 };
 
+struct Exceptions {
+  std::vector<std::pair<uint32_t, uint32_t>> list;
+
+  uint32_t Find(uint32_t doc) const noexcept {
+    return std::lower_bound(list.begin(), list.end(),
+                            std::pair{doc, uint32_t{0}})
+      ->second;
+  }
+};
+
+struct VarColumn {
+  static constexpr uint32_t kGroup = 64;
+  static constexpr uint32_t kHead = 12;
+  static constexpr uint32_t kEscape = 0xFFFF;
+
+  std::vector<uint8_t> head;
+  std::vector<uint8_t> data;
+  Exceptions exceptions;
+  size_t bytes = 0;
+
+  void Build(const std::vector<uint32_t>& values) {
+    const size_t groups = (values.size() + kGroup - 1) / kGroup;
+    head.resize(groups * kHead + kSlack);
+    for (size_t g = 0; g != groups; ++g) {
+      const auto base = static_cast<uint32_t>(data.size());
+      uint64_t ctrl = 0;
+      for (uint32_t i = 0; i != kGroup; ++i) {
+        const size_t r = g * kGroup + i;
+        if (r >= values.size()) {
+          break;
+        }
+        const auto v = values[r];
+        if (v < 256) {
+          data.push_back(static_cast<uint8_t>(v));
+          continue;
+        }
+        ctrl |= uint64_t{1} << i;
+        const auto w = std::min(v, kEscape);
+        if (w == kEscape) {
+          exceptions.list.emplace_back(
+            static_cast<uint32_t>(r + irs::doc_limits::min()), v);
+        }
+        data.push_back(static_cast<uint8_t>(w));
+        data.push_back(static_cast<uint8_t>(w >> 8));
+      }
+      std::memcpy(head.data() + g * kHead, &base, sizeof(base));
+      std::memcpy(head.data() + g * kHead + 4, &ctrl, sizeof(ctrl));
+    }
+    bytes = groups * kHead + data.size() + exceptions.list.size() * 8;
+    data.resize(data.size() + kSlack, 0);
+  }
+
+  size_t Bytes() const noexcept { return bytes; }
+
+  IRS_FORCE_INLINE void Fetch(const uint32_t* IRS_RESTRICT docs,
+                              uint32_t* IRS_RESTRICT out) noexcept {
+    const uint8_t* h = head.data();
+    const uint8_t* d = data.data();
+    uint32_t escaped = 0;
+    for (size_t i = 0; i != kBlock; ++i) {
+      const uint32_t r = docs[i] - irs::doc_limits::min();
+      const uint8_t* rec = h + size_t{r / kGroup} * kHead;
+      const uint32_t j = r % kGroup;
+      const uint64_t ctrl = absl::little_endian::Load64(rec + 4);
+      const uint32_t off =
+        absl::little_endian::Load32(rec) + j +
+        static_cast<uint32_t>(std::popcount(ctrl & ((uint64_t{1} << j) - 1)));
+      const uint32_t raw = absl::little_endian::Load16(d + off);
+      const uint32_t wide = static_cast<uint32_t>(ctrl >> j) & 1;
+      const uint32_t v = raw & (0xFFu | (0u - wide) << 8);
+      out[i] = v;
+      escaped |= static_cast<uint32_t>(v == kEscape);
+    }
+    if (escaped != 0) [[unlikely]] {
+      for (size_t i = 0; i != kBlock; ++i) {
+        if (out[i] == kEscape) {
+          out[i] = exceptions.Find(docs[i]);
+        }
+      }
+    }
+  }
+};
+
+struct LineColumn {
+  static constexpr uint32_t kLine = 64;
+  static constexpr uint32_t kEscape = 0xFFFF;
+
+  std::vector<uint8_t> data;
+  Exceptions exceptions;
+  uint32_t k = kLine;
+  uint32_t flags_at = kLine;
+  uint32_t highs_at = kLine;
+  uint32_t highs = 0;
+  uint64_t magic = 0;
+  size_t bytes = 0;
+
+  static uint32_t Overflow(const std::vector<uint32_t>& values, uint32_t k,
+                           uint32_t highs) {
+    uint32_t over = 0;
+    for (size_t lo = 0; lo < values.size(); lo += k) {
+      uint32_t wide = 0;
+      for (size_t r = lo, e = std::min(values.size(), lo + k); r != e; ++r) {
+        if (values[r] >= 256) {
+          over += static_cast<uint32_t>(wide >= highs || values[r] >= kEscape);
+          ++wide;
+        }
+      }
+    }
+    return over;
+  }
+
+  void Build(const std::vector<uint32_t>& values) {
+    const auto limit = values.size() / 256;
+    uint32_t best = 0;
+    for (uint32_t cand = 56; cand >= 8; --cand) {
+      const uint32_t f = (cand + 7) / 8;
+      const uint32_t h = kLine - cand - f;
+      if (Overflow(values, cand, h) <= limit) {
+        best = cand;
+        break;
+      }
+    }
+    SDB_ASSERT(best != 0);
+    k = best;
+    flags_at = k;
+    highs_at = k + (k + 7) / 8;
+    highs = kLine - highs_at;
+    magic = (uint64_t{1} << 36) / k + 1;
+    const size_t lines = (values.size() + k - 1) / k;
+    data.assign(lines * kLine + kSlack, 0);
+    for (size_t l = 0; l != lines; ++l) {
+      uint8_t* p = data.data() + l * kLine;
+      uint64_t flags = 0;
+      uint32_t wide = 0;
+      for (uint32_t j = 0; j != k; ++j) {
+        const size_t r = l * k + j;
+        if (r >= values.size()) {
+          break;
+        }
+        const auto v = values[r];
+        if (v < 256) {
+          p[j] = static_cast<uint8_t>(v);
+          continue;
+        }
+        flags |= uint64_t{1} << j;
+        if (wide >= highs || v >= kEscape) {
+          p[j] = 0xFF;
+          if (wide < highs) {
+            p[highs_at + wide] = 0xFF;
+          }
+          exceptions.list.emplace_back(
+            static_cast<uint32_t>(r + irs::doc_limits::min()), v);
+        } else {
+          p[j] = static_cast<uint8_t>(v);
+          p[highs_at + wide] = static_cast<uint8_t>(v >> 8);
+        }
+        ++wide;
+      }
+      std::memcpy(p + flags_at, &flags, (k + 7) / 8);
+    }
+    bytes = lines * kLine + exceptions.list.size() * 8;
+  }
+
+  size_t Bytes() const noexcept { return bytes; }
+
+  IRS_FORCE_INLINE void Fetch(const uint32_t* IRS_RESTRICT docs,
+                              uint32_t* IRS_RESTRICT out) noexcept {
+    const uint8_t* d = data.data();
+    const uint64_t m = magic;
+    const uint32_t kk = k;
+    const uint32_t fa = flags_at;
+    const uint32_t ha = highs_at;
+    const uint32_t hn = highs;
+    const uint64_t fmask = kk == 64 ? ~uint64_t{0} : (uint64_t{1} << kk) - 1;
+    uint32_t escaped = 0;
+    for (size_t i = 0; i != kBlock; ++i) {
+      const uint32_t r = docs[i] - irs::doc_limits::min();
+      const auto line = static_cast<uint32_t>((r * m) >> 36);
+      const uint32_t j = r - line * kk;
+      const uint8_t* p = d + size_t{line} * kLine;
+      const uint64_t flags = absl::little_endian::Load64(p + fa) & fmask;
+      const uint32_t wide = static_cast<uint32_t>(flags >> j) & 1;
+      const auto rank =
+        static_cast<uint32_t>(std::popcount(flags & ((uint64_t{1} << j) - 1)));
+      const uint32_t high = p[ha + std::min(rank, hn - 1)];
+      const uint32_t v = p[j] | ((high << 8) & (0u - wide));
+      out[i] = v;
+      escaped |= static_cast<uint32_t>(wide & (v == kEscape || rank >= hn));
+    }
+    if (escaped != 0) [[unlikely]] {
+      for (size_t i = 0; i != kBlock; ++i) {
+        const uint32_t r = docs[i] - irs::doc_limits::min();
+        const uint32_t line = r / kk;
+        const uint32_t j = r - line * kk;
+        const uint8_t* p = d + size_t{line} * kLine;
+        const uint64_t flags = absl::little_endian::Load64(p + fa) & fmask;
+        if (((flags >> j) & 1) != 0 &&
+            (out[i] == kEscape ||
+             std::popcount(flags & ((uint64_t{1} << j) - 1)) >=
+               static_cast<int>(hn))) {
+          out[i] = exceptions.Find(docs[i]);
+        }
+      }
+    }
+  }
+};
+
 template<typename Column>
 struct Lazy {
   Column column;
@@ -295,6 +505,8 @@ struct Fixture {
   std::vector<uint32_t> values;
   Lazy<MainColumn> main;
   Lazy<PackedColumn> packed;
+  Lazy<VarColumn> var;
+  Lazy<LineColumn> line;
   std::map<uint32_t, std::vector<uint32_t>> blocks;
 
   const std::vector<uint32_t>& Blocks(uint32_t span) {
@@ -432,6 +644,10 @@ void Bench(benchmark::State& state) {
       return dispatch(f.main.Get(f.values));
     case Layout::Packed:
       return dispatch(f.packed.Get(f.values));
+    case Layout::Var:
+      return dispatch(f.var.Get(f.values));
+    case Layout::Line:
+      return dispatch(f.line.Get(f.values));
   }
 }
 
@@ -440,7 +656,7 @@ void Args(benchmark::internal::Benchmark* b) {
     if (shape == 3 && std::getenv("NORM_INDEX") == nullptr) {
       continue;
     }
-    for (int layout : {0, 1}) {
+    for (int layout : {0, 1, 2, 3}) {
       for (int64_t rows :
            {int64_t{1} << 20, int64_t{1} << 24, int64_t{1} << 28}) {
         for (int64_t span : {256, 4096, 32768, 262144}) {

@@ -24,7 +24,6 @@
 
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
-#include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -53,27 +52,9 @@
 #include "connector/inverted_store_index.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
+#include "query/config.h"
 
 namespace sdb::connector {
-namespace {
-
-// Settings a client may never change, refused for the lifetime of the process
-// by the setting_change_handler below.
-const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
-  // Describes how this process is wired rather than a preference, and is pinned
-  // at startup in
-  // ConfigureServerDBConfig.
-  "external_threads",
-  // Read-only in PostgreSQL, where reporting the value is the whole point of
-  // the GUC.
-  "in_hot_standby",
-  "is_superuser",
-  "server_encoding",
-  "server_version",
-  "server_version_num",
-};
-
-}  // namespace
 
 SereneDBClientState& SereneDBClientState::Register(
   duckdb::ClientContext& client_ctx,
@@ -115,7 +96,7 @@ SereneDBClientState& SereneDBClientState::Register(
       // settings and extension options alike, through this handler, and does so
       // before invoking an option's own set_function -- so an entry here needs
       // no callback of its own.
-      if (kUnchangeableSettings.contains(name)) {
+      if (IsUnchangeableSetting(name)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_CANT_CHANGE_RUNTIME_PARAM),
                         ERR_MSG("parameter \"", name, "\" cannot be changed"));
       }

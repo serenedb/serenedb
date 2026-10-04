@@ -1179,6 +1179,26 @@ std::string_view GetOriginalName(std::string_view name) {
   return *it;
 }
 
+// Settings a client may never change, refused for the lifetime of the process
+// by the setting_change_handler.
+const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
+  // Describes how this process is wired rather than a preference, and is pinned
+  // at startup in
+  // ConfigureServerDBConfig.
+  "external_threads",
+  // Read-only in PostgreSQL, where reporting the value is the whole point of
+  // the GUC.
+  "in_hot_standby",
+  "is_superuser",
+  "server_encoding",
+  "server_version",
+  "server_version_num",
+};
+
+bool IsUnchangeableSetting(std::string_view name) {
+  return kUnchangeableSettings.contains(name);
+}
+
 namespace {
 
 void TryRegister(duckdb::DBConfig& config, std::string_view name,
@@ -1191,7 +1211,8 @@ void TryRegister(duckdb::DBConfig& config, std::string_view name,
   config.AddExtensionOption(
     setting, std::string{desc.description}, duckdb::LogicalType{desc.type},
     desc.default_value ? desc.default_value() : duckdb::Value{},
-    desc.set_callback, desc.reset_callback, desc.scope);
+    desc.set_callback, desc.reset_callback, desc.scope,
+    IsUnchangeableSetting(name));
 }
 
 }  // namespace

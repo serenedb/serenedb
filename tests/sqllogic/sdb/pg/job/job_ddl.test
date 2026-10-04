@@ -412,6 +412,25 @@ db error: ERROR: job schedule offset must not be negative, got -00:01:00
 
 
 statement error
+CREATE JOB jd_invalid EVERY 100000000 YEARS AS SELECT 1;
+----
+db error: ERROR: <slt:ignore>Date and time not in timestamp range<slt:ignore>
+
+
+statement error
+CREATE JOB jd_invalid AFTER 100000000 YEARS AS SELECT 1;
+----
+db error: ERROR: <slt:ignore>Date out of range<slt:ignore>
+
+
+query
+SELECT count(*) FROM duckdb_jobs() WHERE job_name = 'jd_invalid';
+----
+count
+0
+
+
+statement error
 CREATE JOB jd_invalid AFTER 1 HOUR OFFSET 1 MINUTE AS SELECT 1;
 ----
 db error: ERROR: syntax error at or near "OFFSET"<slt:ignore>

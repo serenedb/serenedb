@@ -22,16 +22,23 @@
 
 #include <duckdb/catalog/job_schedule.hpp>
 #include <duckdb/catalog/standard_entry.hpp>
-#include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/parser/parsed_data/create_job_info.hpp>
 #include <duckdb/parser/sql_statement.hpp>
+#include <functional>
+#include <memory>
 #include <string>
 
-namespace sdb::catalog {
+namespace duckdb {
 
-void VerifySchedule(const duckdb::JobSchedule& schedule);
-duckdb::timestamp_t NextRun(const duckdb::JobSchedule& schedule,
-                            duckdb::timestamp_t after);
+class DuckCatalog;
+
+}  // namespace duckdb
+namespace sdb {
+
+struct JobState;
+
+}  // namespace sdb
+namespace sdb::catalog {
 
 class JobCatalogEntry final : public duckdb::StandardEntry {
  public:
@@ -39,11 +46,12 @@ class JobCatalogEntry final : public duckdb::StandardEntry {
   static constexpr const char* Name = "job";
 
   JobCatalogEntry(duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-                  duckdb::CreateJobInfo& info);
+                  duckdb::CreateJobInfo& info, std::shared_ptr<JobState> state);
 
   const duckdb::JobSchedule& Schedule() const noexcept { return _schedule; }
   bool Suspended() const noexcept { return _suspended; }
   const duckdb::SQLStatement& Body() const noexcept { return *_body; }
+  const std::shared_ptr<JobState>& State() const noexcept { return _state; }
 
   void ScheduleAtCommit(duckdb::ClientContext& context) const;
   void OnDrop() final;
@@ -59,6 +67,10 @@ class JobCatalogEntry final : public duckdb::StandardEntry {
   duckdb::JobSchedule _schedule;
   bool _suspended;
   duckdb::unique_ptr<duckdb::SQLStatement> _body;
+  std::shared_ptr<JobState> _state;
 };
+
+void ForEachJob(duckdb::DuckCatalog& catalog,
+                const std::function<void(JobCatalogEntry&)>& callback);
 
 }  // namespace sdb::catalog

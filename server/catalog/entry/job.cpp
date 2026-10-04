@@ -21,10 +21,8 @@
 #include "catalog/entry/job.h"
 
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <duckdb/common/exception.hpp>
-#include <duckdb/common/operator/date_trunc_operators.hpp>
-#include <duckdb/common/types/date.hpp>
-#include <duckdb/common/types/interval.hpp>
+#include <duckdb/catalog/duck_catalog.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_data/alter_job_info.hpp>
 #include <utility>
 
@@ -34,93 +32,17 @@
 #include "scheduler/job_scheduler.h"
 
 namespace sdb::catalog {
-namespace {
-
-bool IsNegative(const duckdb::interval_t& value) {
-  return value.months < 0 || value.days < 0 || value.micros < 0;
-}
-
-}  // namespace
-
-void VerifySchedule(const duckdb::JobSchedule& schedule) {
-  auto every = schedule.interval.GetValue<duckdb::interval_t>();
-  auto shift = schedule.offset.GetValue<duckdb::interval_t>();
-  if (IsNegative(every) || every == duckdb::interval_t()) {
-    throw duckdb::InvalidInputException(
-      "job schedule interval must be positive, got %s",
-      schedule.interval.ToString());
-  }
-  if (IsNegative(shift)) {
-    throw duckdb::InvalidInputException(
-      "job schedule offset must not be negative, got %s",
-      schedule.offset.ToString());
-  }
-  if (schedule.kind == duckdb::JobScheduleKind::AFTER) {
-    if (shift != duckdb::interval_t()) {
-      throw duckdb::InvalidInputException("OFFSET is not allowed with AFTER");
-    }
-    return;
-  }
-  if (every.months != 0) {
-    if (every.days != 0 || every.micros != 0) {
-      throw duckdb::InvalidInputException(
-        "EVERY interval cannot mix months with days or time, got %s",
-        schedule.interval.ToString());
-    }
-    if (shift.months >= every.months) {
-      throw duckdb::InvalidInputException(
-        "job schedule offset %s must be shorter than the interval %s",
-        schedule.offset.ToString(), schedule.interval.ToString());
-    }
-    return;
-  }
-  if (shift.months != 0 ||
-      duckdb::Interval::GetMicro(shift) >= duckdb::Interval::GetMicro(every)) {
-    throw duckdb::InvalidInputException(
-      "job schedule offset %s must be shorter than the interval %s",
-      schedule.offset.ToString(), schedule.interval.ToString());
-  }
-}
-
-duckdb::timestamp_t NextRun(const duckdb::JobSchedule& schedule,
-                            duckdb::timestamp_t after) {
-  auto every = schedule.interval.GetValue<duckdb::interval_t>();
-  auto shift = schedule.offset.GetValue<duckdb::interval_t>();
-  if (schedule.kind == duckdb::JobScheduleKind::AFTER) {
-    return duckdb::Interval::Add(after, every);
-  }
-  const auto shift_micros =
-    duckdb::Interval::GetMicro(duckdb::interval_t{0, shift.days, shift.micros});
-  const auto from = after.value - shift_micros;
-  if (every.months == 0) {
-    const auto width = duckdb::Interval::GetMicro(every);
-    const auto origin =
-      duckdb::DateTrunc::FromDays(duckdb::Date::FromDate(2000, 1, 3).days)
-        .value;
-    return duckdb::timestamp_t(
-      origin + (duckdb::DateTrunc::FloorDiv(from - origin, width) + 1) * width +
-      shift_micros);
-  }
-  const int64_t width = every.months;
-  const int64_t origin =
-    2000 * duckdb::Interval::MONTHS_PER_YEAR + shift.months;
-  const auto from_month =
-    duckdb::DateTrunc::MonthIndex(duckdb::timestamp_t(from));
-  const auto month =
-    origin +
-    (duckdb::DateTrunc::FloorDiv(from_month - origin, width) + 1) * width;
-  return duckdb::timestamp_t(duckdb::DateTrunc::MonthIndexStart(month).value +
-                             shift_micros);
-}
 
 JobCatalogEntry::JobCatalogEntry(duckdb::Catalog& catalog,
                                  duckdb::SchemaCatalogEntry& schema,
-                                 duckdb::CreateJobInfo& info)
+                                 duckdb::CreateJobInfo& info,
+                                 std::shared_ptr<JobState> state)
   : duckdb::StandardEntry{duckdb::CatalogType::JOB_ENTRY, schema, catalog,
                           info.GetQualifiedName().Name(), info.oid},
     _schedule{info.schedule},
     _suspended{info.suspended},
-    _body{info.body->Copy()} {
+    _body{info.body->Copy()},
+    _state{std::move(state)} {
   comment = info.comment;
   tags = info.tags;
   dependencies = info.dependencies;
@@ -143,8 +65,9 @@ duckdb::unique_ptr<duckdb::CreateInfo> JobCatalogEntry::GetInfo() const {
 duckdb::unique_ptr<duckdb::CatalogEntry> JobCatalogEntry::Copy(
   duckdb::ClientContext& context) const {
   auto info = GetInfo();
-  return duckdb::make_uniq<JobCatalogEntry>(
-    catalog, ParentSchema(context), info->Cast<duckdb::CreateJobInfo>());
+  return duckdb::make_uniq<JobCatalogEntry>(catalog, ParentSchema(context),
+                                            info->Cast<duckdb::CreateJobInfo>(),
+                                            _state);
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> JobCatalogEntry::AlterEntry(
@@ -172,7 +95,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> JobCatalogEntry::AlterEntry(
       break;
   }
   return duckdb::make_uniq<JobCatalogEntry>(catalog, ParentSchema(context),
-                                            next);
+                                            next, _state);
 }
 
 void JobCatalogEntry::ScheduleAtCommit(duckdb::ClientContext& context) const {
@@ -191,9 +114,21 @@ void JobCatalogEntry::ScheduleAtCommit(duckdb::ClientContext& context) const {
 }
 
 void JobCatalogEntry::OnDrop() {
-  if (auto* jobs = JobScheduler::Instance()) {
-    jobs->Drop(*this);
+  absl::MutexLock lock{&_state->mutex};
+  _state->dropped = true;
+  if (_state->context) {
+    _state->context->Interrupt();
   }
+}
+
+void ForEachJob(duckdb::DuckCatalog& catalog,
+                const std::function<void(JobCatalogEntry&)>& callback) {
+  catalog.ScanSchemas([&](duckdb::SchemaCatalogEntry& schema) {
+    schema.Scan(duckdb::CatalogType::JOB_ENTRY,
+                [&](duckdb::CatalogEntry& entry) {
+                  callback(entry.Cast<JobCatalogEntry>());
+                });
+  });
 }
 
 }  // namespace sdb::catalog

@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
 #include <absl/synchronization/mutex.h>
 
 #include <cstdint>
@@ -32,8 +31,8 @@
 #include <memory>
 #include <mutex>
 #include <string>
-#include <utility>
 #include <vector>
+#include <yaclib/algo/wait_group.hpp>
 
 namespace duckdb {
 
@@ -49,6 +48,8 @@ class JobCatalogEntry;
 namespace sdb {
 
 class BackgroundScheduler;
+
+void VerifySchedule(const duckdb::JobSchedule& schedule);
 
 struct JobRunRecord {
   duckdb::idx_t database_oid = 0;
@@ -72,6 +73,24 @@ struct JobStatus {
   JobRunRecord last_run;
 };
 
+struct JobDefinition {
+  duckdb::idx_t database_oid = 0;
+  std::string catalog;
+  std::string schema;
+  std::string name;
+  duckdb::idx_t owner = 0;
+  std::shared_ptr<duckdb::SQLStatement> body;
+};
+
+struct JobState {
+  absl::Mutex mutex;
+  JobDefinition definition;
+  JobStatus status;
+  uint64_t timer = 0;
+  bool dropped = false;
+  duckdb::shared_ptr<duckdb::ClientContext> context;
+};
+
 class JobScheduler final {
  public:
   static JobScheduler* Instance() noexcept { return gInstance; }
@@ -81,48 +100,20 @@ class JobScheduler final {
 
   void Start();
   void Schedule(catalog::JobCatalogEntry& job);
-  void Drop(catalog::JobCatalogEntry& job);
-  void DropDatabase(duckdb::idx_t database_oid);
   void Execute(catalog::JobCatalogEntry& job);
-  bool TryGetStatus(catalog::JobCatalogEntry& job, JobStatus& result);
   std::vector<JobRunRecord> GetHistory();
   void Stop();
 
  private:
-  using Key = std::pair<duckdb::idx_t, duckdb::idx_t>;
-
-  struct Definition {
-    Key key;
-    std::string catalog;
-    std::string schema;
-    std::string name;
-    duckdb::idx_t owner = 0;
-    std::shared_ptr<duckdb::SQLStatement> body;
-  };
-
-  struct Job {
-    Definition definition;
-    JobStatus status;
-    uint64_t epoch = 0;
-    duckdb::shared_ptr<duckdb::ClientContext> context;
-  };
-
-  static Key KeyOf(catalog::JobCatalogEntry& job);
-  static Definition DefinitionOf(catalog::JobCatalogEntry& job);
-
-  void Run(Key key, uint64_t epoch);
+  void Run(std::shared_ptr<JobState> state, uint64_t timer);
   duckdb::ErrorData RunBody(std::unique_lock<absl::Mutex>& guard,
-                            Definition job, bool manual);
+                            JobState& state, JobDefinition job, bool manual);
 
   inline static JobScheduler* gInstance = nullptr;
 
   BackgroundScheduler& _background;
+  yaclib::WaitGroup<> _runs{1};
   absl::Mutex _mutex;
-  absl::CondVar _idle;
-  bool _stopped = false;
-  uint64_t _in_flight = 0;
-  uint64_t _last_epoch = 0;
-  absl::flat_hash_map<Key, Job> _jobs;
   std::deque<JobRunRecord> _history;
 };
 

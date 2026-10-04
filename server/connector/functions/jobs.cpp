@@ -119,17 +119,16 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobsInit(
 void JobsExecute(duckdb::ClientContext& context,
                  duckdb::TableFunctionInput& input, duckdb::DataChunk& output) {
   auto& state = input.global_state->Cast<JobsState>();
-  auto* scheduler = JobScheduler::Instance();
-  const auto now = duckdb::Timestamp::GetCurrentTimestamp();
   duckdb::idx_t count = 0;
   while (state.offset < state.entries.size() && count < STANDARD_VECTOR_SIZE) {
     auto& job = state.entries[state.offset++].get();
     JobStatus status;
-    const bool scheduled = scheduler && scheduler->TryGetStatus(job, status) &&
-                           status.schedule == job.Schedule() &&
-                           status.suspended == job.Suspended();
-    const auto next_run =
-      scheduled ? status.next_run : catalog::NextRun(job.Schedule(), now);
+    bool scheduled;
+    {
+      absl::MutexLock lock{&job.State()->mutex};
+      status = job.State()->status;
+      scheduled = job.State()->timer != 0;
+    }
     const bool ran = status.run_count > 0;
     const auto& last_run = status.last_run;
     duckdb::idx_t col = 0;
@@ -148,8 +147,9 @@ void JobsExecute(duckdb::ClientContext& context,
     output.SetValue(col++, count, job.Schedule().offset);
     output.SetValue(col++, count, duckdb::Value::BOOLEAN(job.Suspended()));
     output.SetValue(col++, count, duckdb::Value::BOOLEAN(status.running));
-    output.SetValue(col++, count,
-                    OptionalTimestamp(!job.Suspended(), next_run));
+    output.SetValue(
+      col++, count,
+      OptionalTimestamp(scheduled && !status.suspended, status.next_run));
     output.SetValue(col++, count, OptionalTimestamp(ran, last_run.start));
     output.SetValue(col++, count, OptionalTimestamp(ran, last_run.finish));
     output.SetValue(col++, count,

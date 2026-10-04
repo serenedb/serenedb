@@ -20,6 +20,9 @@
 
 #pragma once
 
+#include <array>
+#include <deque>
+
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/flush_state.hpp"
@@ -302,6 +305,7 @@ class PostingsWriter final {
 
   BlockIndexWriter _index;
   bstring _tail;
+  std::deque<std::array<byte_type, PostingMeta::kInlineBytes>> _inline;
   PostingMeta _last_state;    // Last final term state
   bitset _docs;               // Set of all processed documents
   IndexOutput::ptr _doc_out;  // Postings (doc + freq)
@@ -427,12 +431,13 @@ inline void PostingsWriter::Encode(BufferedOutput& out,
       out.WriteV64(meta.pay_start - _last_state.pay_start);
     }
     SDB_ASSERT(pos_delta != 0 || _last_state.pos_offset <= meta.pos_offset);
-    out.WriteV32(pos_delta == 0 ? meta.pos_offset - _last_state.pos_offset
+    out.WriteV32(pos_delta == 0 ? static_cast<uint32_t>(meta.pos_offset -
+                                                        _last_state.pos_offset)
                                 : meta.pos_offset);
   } else if (_features.HasVector()) {
     out.WriteV64(meta.pay_start - _last_state.pay_start);
     SDB_ASSERT(meta.pos_offset <= std::numeric_limits<uint8_t>::max());
-    out.WriteByte(meta.pos_offset);
+    out.WriteByte(static_cast<byte_type>(meta.pos_offset));
   }
 
   if (meta.docs_count == 1 || meta.docs_count > doc_limits::kBlockSize) {
@@ -462,7 +467,7 @@ inline void PostingsWriter::BeginTerm(PostingMeta& meta) {
       SDB_ASSERT(_pay_out);
       meta.pay_start = _pay_out->Position();
     }
-    meta.pos_offset = PosIndex();
+    meta.pos_offset = static_cast<uint16_t>(PosIndex());
   }
 }
 
@@ -485,8 +490,10 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
     });
     AppendTailDoc(out);
     if (_tail.size() <= PostingMeta::kInlineBytes) {
+      auto& bytes = _inline.emplace_back();
+      std::memcpy(bytes.data(), _tail.data(), _tail.size());
+      meta.inline_data = bytes.data();
       meta.inline_size = static_cast<uint8_t>(_tail.size());
-      std::memcpy(meta.inline_data, _tail.data(), _tail.size());
     } else {
       _doc_out->WriteData(_tail.data(), _tail.size());
     }
@@ -604,6 +611,7 @@ inline void PostingsWriter::WritePayBlock() {
 }
 
 inline void PostingsWriter::BeginField(const FieldProperties& meta) {
+  _inline.clear();
   _features.Reset(meta.index_features);
   PrepareWriters(meta);
   _docs.clear();
@@ -719,6 +727,7 @@ inline void PostingsWriter::AddPosition(uint32_t pos) {
 }
 
 inline void PostingsWriter::End() {
+  FormatTraits128::WriteSlack(*_doc_out);
   format_utils::WriteFooter(*_doc_out);
   _doc_out.reset();  // ensure stream is closed
 
@@ -729,6 +738,7 @@ inline void PostingsWriter::End() {
     if (!_pos_group.Empty()) {
       _pos_group.Flush(*_pos_out);
     }
+    FormatTraits128::WriteSlack(*_pos_out);
     format_utils::WriteFooter(*_pos_out);
     _pos_out.reset();  // ensure stream is closed
   } else {
@@ -744,6 +754,7 @@ inline void PostingsWriter::End() {
     if (!_pay_group.Empty()) {
       _pay_group.Flush(*_pay_out);
     }
+    FormatTraits128::WriteSlack(*_pay_out);
     format_utils::WriteFooter(*_pay_out);
     _pay_out.reset();  // ensure stream is closed
   } else {
@@ -849,7 +860,7 @@ inline void PostingsWriter::Write(TermPostings& docs, PostingMeta& meta) {
   if (has_vec) {
     SDB_ASSERT(_pay_out && _term_pay);
     meta.pay_start = _pay_out->Position();
-    meta.pos_offset = _term_pay->PendingLanes();
+    meta.pos_offset = static_cast<uint16_t>(_term_pay->PendingLanes());
     _term_pay->WriteTermPayload(*_pay_out, _term_docs);
   }
 }
@@ -920,7 +931,7 @@ inline void PostingsWriter::WritePostings(const PostingRows& postings,
   if (has_vec) {
     SDB_ASSERT(_pay_out && _term_pay);
     meta.pay_start = _pay_out->Position();
-    meta.pos_offset = _term_pay->PendingLanes();
+    meta.pos_offset = static_cast<uint16_t>(_term_pay->PendingLanes());
     _term_pay->WriteTermPayload(*_pay_out, _term_docs);
   }
 }

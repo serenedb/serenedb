@@ -157,8 +157,8 @@ inline size_t PostingsReader::decode(const byte_type* in,
       posting_meta.pay_start += vread<uint64_t>(p);
     }
     const auto pos_offset = vread<uint32_t>(p);
-    posting_meta.pos_offset =
-      pos_delta == 0 ? posting_meta.pos_offset + pos_offset : pos_offset;
+    posting_meta.pos_offset = static_cast<uint16_t>(
+      pos_delta == 0 ? posting_meta.pos_offset + pos_offset : pos_offset);
   } else if (IndexFeatures::None != (features & IndexFeatures::Vec)) {
     posting_meta.pay_start += vread<uint64_t>(p);
     posting_meta.pos_offset = *p++;

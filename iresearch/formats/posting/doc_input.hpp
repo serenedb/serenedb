@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
-#include <cstring>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -34,25 +33,6 @@
 #include "iresearch/store/store_utils.hpp"
 
 namespace irs {
-
-class InlineDocInput final : public BytesViewInput {
- public:
-  explicit InlineDocInput(bytes_view data) noexcept {
-    SDB_ASSERT(data.size() <= sizeof(_data));
-    std::memcpy(_data, data.data(), data.size());
-    reset(_data, data.size());
-  }
-
-  InlineDocInput(const InlineDocInput& other) noexcept
-    : InlineDocInput{bytes_view{other._data, other.Length()}} {
-    Seek(other.Position());
-  }
-
-  ptr Dup() const final { return std::make_unique<InlineDocInput>(*this); }
-
- private:
-  byte_type _data[PostingMeta::kInlineBytes];
-};
 
 template<typename Metas>
 void PrefetchDocExtents(const IndexInput& in, Metas&& metas) {
@@ -85,7 +65,7 @@ void PrefetchDocExtents(const IndexInput& in, Metas&& metas) {
 inline IndexInput::ptr OpenDocInput(const PostingMeta& meta,
                                     const IndexInput& doc_in) {
   if (meta.inline_size != 0) {
-    return std::make_unique<InlineDocInput>(meta.Inline());
+    return std::make_unique<BytesViewInput>(meta.Inline());
   }
   auto in = doc_in.Reopen();
   if (!in) [[unlikely]] {

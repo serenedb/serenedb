@@ -48,6 +48,12 @@ struct FormatTraits128 {
   static_assert(block_codec::kOutSlack <= doc_limits::kDocsSlack);
   static_assert(block_codec::kSlotBitsOf<Codec::kLanes> == 8);
 
+  template<typename Output>
+  static void WriteSlack(Output& out) {
+    static constexpr byte_type kZeros[block_codec::kInSlack]{};
+    out.WriteData(kZeros, sizeof(kZeros));
+  }
+
   IRS_FORCE_INLINE static void WriteBlockDelta(BufferedOutput& out,
                                                const uint32_t* in,
                                                uint32_t prev, uint32_t* buf) {

@@ -857,6 +857,9 @@ void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
       absl::StrCat("Failed to write term index for field id ", id)};
   }
   _blocks_out->WriteData(_inline.data(), _inline.size());
+  if (!_inline.empty()) {
+    FormatTraits128::WriteSlack(*_blocks_out);
+  }
   _inline.clear();
 
   TermDictMeta meta;
@@ -897,7 +900,6 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
   bool HasScoreBounds() const noexcept final { return _has_score_bounds; }
 
-  uint64_t InlineOffset() const noexcept { return _inline_offset; }
   uint64_t InlineEnd() const noexcept { return _inline_offset + _inline_size; }
   const byte_type* InlineRegion() const noexcept { return _inline_region; }
 
@@ -906,8 +908,15 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
  protected:
   void MapInlineRegion(IndexInput& in) {
     _inline_offset = in.Position();
-    if (_inline_size != 0) {
-      _inline_region = in.ReadStable(_inline_offset, _inline_size);
+    if (_inline_size == 0) {
+      return;
+    }
+    const auto bytes = _inline_size + block_codec::kInSlack;
+    _inline_region = in.ReadStable(_inline_offset, bytes);
+    if (_inline_region == nullptr) {
+      _inline_copy = std::make_unique_for_overwrite<byte_type[]>(bytes);
+      in.ReadData(_inline_offset, _inline_copy.get(), bytes);
+      _inline_region = _inline_copy.get();
     }
   }
 
@@ -920,6 +929,7 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
   uint64_t _inline_offset{};
   uint64_t _inline_size{};
   const byte_type* _inline_region{};
+  std::unique_ptr<byte_type[]> _inline_copy;
   bool _has_score_bounds{};
   FreqAttr _freq;
 };
@@ -1139,7 +1149,6 @@ class BlockIterator : util::Noncopyable {
   DataBlock _suffix;  // suffix data block
   DataBlock _stats;   // stats data block
   PostingMeta _state;
-  IndexInput* _in{};
   uint64_t _inline_next{};
   size_t _suffix_length{};  // last matched suffix length
   const byte_type* _suffix_begin{};
@@ -1227,7 +1236,6 @@ void BlockIterator::Load(IndexInput& in) {
 #endif
   _inline_next = vread<uint64_t>(_stats.begin);
   _stats.AssertBlockBoundaries();
-  _in = &in;
 
   _cur_end = in.Position();
   _cur_ent = 0;
@@ -1527,13 +1535,8 @@ void BlockIterator::LoadData(const TermReaderBase& field, PostingMeta& state,
   }
 
   if (state.inline_size != 0) {
-    if (const auto* region = field.InlineRegion()) {
-      std::memcpy(state.inline_data, region + inline_at, state.inline_size);
-    } else {
-      SDB_ASSERT(_in != nullptr);
-      _in->Seek(field.InlineOffset() + inline_at);
-      _in->ReadData(state.inline_data, state.inline_size);
-    }
+    SDB_ASSERT(field.InlineRegion() != nullptr);
+    state.inline_data = field.InlineRegion() + inline_at;
   }
 
   _state = state;

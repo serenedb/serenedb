@@ -28,7 +28,6 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <optional>
 #include <vector>
 #include <yaclib/async/future.hpp>
 #include <yaclib/async/promise.hpp>
@@ -59,8 +58,6 @@ class BackgroundScheduler final {
  public:
   using clock = std::chrono::steady_clock;
 
-  class Timer;
-
   inline static BackgroundScheduler* gInstance = nullptr;
   static BackgroundScheduler& instance() noexcept { return *gInstance; }
 
@@ -87,6 +84,8 @@ class BackgroundScheduler final {
   // Completes after `d` (best-effort; immediate once CancelDelays() has run,
   // parked until OpenDelays() while the io pool has never been up).
   yaclib::Future<> Delay(clock::duration d);
+
+  void RunAfter(clock::duration delay, std::function<void()> task);
 
   // Startup: the io pool is up, so Delay can arm real timers. Releases every
   // waiter parked during boot. Called once, after Server::StartIoPool().
@@ -116,23 +115,6 @@ class BackgroundScheduler final {
   // (boot finished) or CancelDelays() (boot was aborted).
   std::vector<yaclib::Promise<>> _parked;
   bool _delays_open = false;
-};
-
-class BackgroundScheduler::Timer final
-  : public std::enable_shared_from_this<Timer> {
- public:
-  explicit Timer(std::function<void()> fire);
-
-  void ArmAt(clock::time_point at);
-
- private:
-  static yaclib::Future<> Wait(std::shared_ptr<Timer> self,
-                               std::uint64_t generation, clock::time_point at);
-
-  absl::Mutex _mutex;
-  std::optional<clock::time_point> _deadline;
-  std::uint64_t _generation = 0;
-  std::function<void()> _fire;
 };
 
 }  // namespace sdb

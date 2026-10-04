@@ -54,9 +54,6 @@ class CopyInBridge {
       // re-checks _len, leaving a _data_ready Set unconsumed so the next
       // Publish/Finish double-Sets and corrupts the event -> SIGSEGV).
       if (_armed) {
-        if (_err) {
-          std::rethrow_exception(_err);
-        }
         _data_ready.Wait();
         _data_ready.Reset();
         _armed = false;
@@ -92,9 +89,6 @@ class CopyInBridge {
   // parser work runs between draining a frame and asking for the next.
   std::span<const char> Window() {
     if (_armed) {
-      if (_err) {
-        std::rethrow_exception(_err);
-      }
       _data_ready.Wait();
       _data_ready.Reset();
       _armed = false;

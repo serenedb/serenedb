@@ -318,7 +318,13 @@ class Enforcer {
             expr.Cast<duckdb::BoundColumnRefExpression>().Binding();
           if (auto it = _dml_tables.find(binding.table_index.index);
               it != _dml_tables.end()) {
-            _returning[it->second].insert(binding.column_index.GetIndex());
+            auto entry = std::ranges::find(_returning, it->second,
+                                           &ReturningColumns::first);
+            if (entry == _returning.end()) {
+              entry = _returning.emplace(_returning.end(), it->second,
+                                         ReturningColumns::second_type{});
+            }
+            entry->second.insert(binding.column_index.GetIndex());
           }
           _scan_refs[binding.table_index.index].insert(
             binding.column_index.GetIndex());
@@ -1375,9 +1381,10 @@ class Enforcer {
     _target_scans;
   irs::containers::FlatHashMap<duckdb::idx_t, const duckdb::TableCatalogEntry*>
     _dml_tables;
-  irs::containers::FlatHashMap<const duckdb::TableCatalogEntry*,
-                               irs::containers::FlatHashSet<duckdb::idx_t>>
-    _returning;
+  using ReturningColumns =
+    std::pair<const duckdb::TableCatalogEntry*,
+              irs::containers::FlatHashSet<duckdb::idx_t>>;
+  std::vector<ReturningColumns> _returning;
   irs::containers::FlatHashMap<duckdb::idx_t,
                                irs::containers::FlatHashSet<duckdb::idx_t>>
     _scan_refs;

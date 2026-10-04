@@ -73,14 +73,39 @@ size_t Largest(const analysis::ShingleTokenizer& tokenizer,
   return 0;
 }
 
-bool CoverPhrase(const analysis::ShingleTokenizer& tokenizer,
-                 const ByPhraseOptions& phrase, ByPhraseOptions& out) {
+}  // namespace
+
+std::optional<bstring> ShingleTerm(const analysis::ShingleTokenizer& tokenizer,
+                                   const ByPhraseOptions& phrase) {
+  if (phrase.slop() != 0) {
+    return std::nullopt;
+  }
+  absl::InlinedVector<bytes_view, 8> words;
+  for (const auto& info : phrase) {
+    const auto* term = std::get_if<ByTermOptions>(&info.part);
+    if (!term ||
+        (!words.empty() && (info.offs_min != 1 || info.offs_max != 1))) {
+      return std::nullopt;
+    }
+    words.emplace_back(term->term);
+  }
+  if (!Indexes(tokenizer, words)) {
+    return std::nullopt;
+  }
+  return Join(tokenizer.Separator(), words);
+}
+
+std::optional<ByPhraseOptions> ShingleCover(
+  const analysis::ShingleTokenizer& tokenizer, const ByPhraseOptions& phrase) {
+  if (phrase.slop() != 0) {
+    return std::nullopt;
+  }
+  ByPhraseOptions cover;
   absl::InlinedVector<bytes_view, 8> run;
   PosAttr::value_t run_min = 0;
   PosAttr::value_t run_max = 0;
   PosAttr::value_t lag = 0;
   bool shingled = false;
-  bool patterns = false;
   const auto flush = [&] {
     if (run.empty()) {
       return true;
@@ -112,7 +137,7 @@ bool CoverPhrase(const analysis::ShingleTokenizer& tokenizer,
       if (i != 0) {
         offs_min = offs_max = static_cast<PosAttr::value_t>(start - prev);
       }
-      out.push_back<ByTermOptions>(offs_min, offs_max).term =
+      cover.push_back<ByTermOptions>(offs_min, offs_max).term =
         Join(tokenizer.Separator(), words.subspan(start, count));
       shingled |= count > 1;
       prev = start;
@@ -129,7 +154,7 @@ bool CoverPhrase(const analysis::ShingleTokenizer& tokenizer,
       continue;
     }
     if (!flush()) {
-      return false;
+      return std::nullopt;
     }
     if (term) {
       run_min = info.offs_min;
@@ -137,52 +162,22 @@ bool CoverPhrase(const analysis::ShingleTokenizer& tokenizer,
       run.emplace_back(term->term);
       continue;
     }
-    if (!tokenizer.OutputUnigrams()) {
-      return false;
+    if (!tokenizer.OutputUnigrams() ||
+        (tokenizer.Separator().empty() &&
+         ByPhraseOptions::KindOf(info.part) == SlotKind::Expansion)) {
+      return std::nullopt;
     }
-    patterns |= ByPhraseOptions::KindOf(info.part) == SlotKind::Expansion;
     std::visit(
       [&]<typename Part>(const Part& part) {
-        out.push_back<Part>(info.offs_min + lag, info.offs_max + lag) = part;
+        cover.push_back<Part>(info.offs_min + lag, info.offs_max + lag) = part;
       },
       info.part);
     lag = 0;
   }
-  if (!flush() || !shingled || (patterns && tokenizer.Separator().empty())) {
-    return false;
-  }
-  out.set_word_separator(tokenizer.Separator());
-  return true;
-}
-
-}  // namespace
-
-std::optional<bstring> ShingleTerm(const analysis::ShingleTokenizer& tokenizer,
-                                   const ByPhraseOptions& phrase) {
-  if (phrase.slop() != 0) {
+  if (!flush() || !shingled) {
     return std::nullopt;
   }
-  absl::InlinedVector<bytes_view, 8> words;
-  for (const auto& info : phrase) {
-    const auto* term = std::get_if<ByTermOptions>(&info.part);
-    if (!term ||
-        (!words.empty() && (info.offs_min != 1 || info.offs_max != 1))) {
-      return std::nullopt;
-    }
-    words.emplace_back(term->term);
-  }
-  if (!Indexes(tokenizer, words)) {
-    return std::nullopt;
-  }
-  return Join(tokenizer.Separator(), words);
-}
-
-std::optional<ByPhraseOptions> ShingleCover(
-  const analysis::ShingleTokenizer& tokenizer, const ByPhraseOptions& phrase) {
-  ByPhraseOptions cover;
-  if (phrase.slop() != 0 || !CoverPhrase(tokenizer, phrase, cover)) {
-    return std::nullopt;
-  }
+  cover.set_word_separator(tokenizer.Separator());
   return cover;
 }
 

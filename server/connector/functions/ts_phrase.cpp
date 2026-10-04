@@ -158,23 +158,20 @@ irs::analysis::ShingleTokenizer* QueryShingle(
   return shingle == &ctx.tokenizer ? shingle : nullptr;
 }
 
-bool HasPositions(const SearchColumnInfo& column_info) {
-  return (column_info.tokenizer.features &
-          irs::PhraseQuery::kRequiredFeatures) ==
-         irs::PhraseQuery::kRequiredFeatures;
-}
-
 bool HasPatternParts(const irs::ByPhraseOptions& options) {
   return absl::c_any_of(options, [](const auto& info) {
     return irs::ByPhraseOptions::KindOf(info.part) == irs::SlotKind::Expansion;
   });
 }
 
-irs::ShinglePhrasePlan ShinglePlan(
-  const irs::analysis::ShingleTokenizer& shingle,
-  irs::ByPhraseOptions&& options, bool positions, std::string_view label) {
+void PlanShingles(const irs::analysis::ShingleTokenizer& shingle,
+                  const SearchColumnInfo& column_info,
+                  irs::ByPhraseOptions& options, std::string_view label) {
+  const bool positions = irs::IsSubsetOf(irs::PhraseQuery::kRequiredFeatures,
+                                         column_info.tokenizer.features);
   if (auto plan = irs::PlanShinglePhrase(shingle, options, positions)) {
-    return std::move(*plan);
+    options = std::move(*plan);
+    return;
   }
   if (!positions) {
     THROW_SQL_ERROR(
@@ -204,44 +201,26 @@ irs::ShinglePhrasePlan ShinglePlan(
                "`token_separator`."));
   }
   options.set_word_separator(shingle.Separator());
-  return std::move(options);
-}
-
-void EmitShinglePhrase(BoolTarget parent, const FilterContext& ctx,
-                       const SearchColumnInfo& column_info,
-                       const irs::analysis::ShingleTokenizer& shingle,
-                       irs::ByPhraseOptions&& options, std::string_view label) {
-  auto plan =
-    ShinglePlan(shingle, std::move(options), HasPositions(column_info), label);
-  if (const auto* term = std::get_if<irs::bstring>(&plan)) {
-    AddTerm(MaybeNegated(parent, ctx, column_info),
-            PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
-            *term, ctx.boost);
-    return;
-  }
-  AddPhrase(parent, ctx, column_info,
-            std::get<irs::ByPhraseOptions>(std::move(plan)));
 }
 
 void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 irs::ByPhraseOptions&& options, std::string_view label,
                 std::string_view single_hint) {
-  const bool multi = options.size() > 1;
-  if (const auto* shingle = multi ? QueryShingle(ctx, column_info) : nullptr) {
-    EmitShinglePhrase(parent, ctx, column_info, *shingle, std::move(options),
-                      label);
-    return;
-  }
-  if (multi && !HasPositions(column_info)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG(label,
-              " field should have Positions and Frequency features "
-              "enabled for multi-term phrases"),
-      ERR_HINT("Recreate the inverted index with both `Positions` and "
-               "`Frequency` features attached to the column, or query with ",
-               single_hint, "."));
+  if (options.size() > 1) {
+    if (const auto* shingle = QueryShingle(ctx, column_info)) {
+      PlanShingles(*shingle, column_info, options, label);
+    } else if (!irs::IsSubsetOf(irs::PhraseQuery::kRequiredFeatures,
+                                column_info.tokenizer.features)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG(label,
+                " field should have Positions and Frequency features "
+                "enabled for multi-term phrases"),
+        ERR_HINT("Recreate the inverted index with both `Positions` and "
+                 "`Frequency` features attached to the column, or query with ",
+                 single_hint, "."));
+    }
   }
   AddPhrase(parent, ctx, column_info, std::move(options));
 }
@@ -265,20 +244,10 @@ void PlanShinglePhrases(
     auto& phrase = irs::utils::downCast<irs::ByPhrase>(*child);
     const auto* column_info = column_of(phrase.field_id());
     const auto* shingle = column_info ? ShingleOf(*column_info) : nullptr;
-    if (!shingle || phrase.options().size() < 2) {
-      return;
+    if (shingle && phrase.options().size() > 1) {
+      PlanShingles(*shingle, *column_info, *phrase.mutable_options(),
+                   "to_tsquery");
     }
-    auto plan = ShinglePlan(*shingle, std::move(*phrase.mutable_options()),
-                            HasPositions(*column_info), "to_tsquery");
-    if (auto* term = std::get_if<irs::bstring>(&plan)) {
-      auto filter = std::make_unique<irs::ByTerm>();
-      *filter->mutable_field_id() = phrase.field_id();
-      filter->mutable_options()->term = std::move(*term);
-      filter->SetBoost(phrase.GetBoost());
-      child = std::move(filter);
-      return;
-    }
-    *phrase.mutable_options() = std::get<irs::ByPhraseOptions>(std::move(plan));
   });
 }
 

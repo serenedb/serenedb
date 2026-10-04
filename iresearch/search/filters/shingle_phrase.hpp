@@ -21,10 +21,8 @@
 #pragma once
 
 #include <optional>
-#include <variant>
 
 #include "iresearch/search/filters/phrase_filter.hpp"
-#include "iresearch/utils/string.hpp"
 
 namespace irs {
 namespace analysis {
@@ -33,9 +31,7 @@ class ShingleTokenizer;
 
 }  // namespace analysis
 
-using ShinglePhrasePlan = std::variant<bstring, ByPhraseOptions>;
-
-std::optional<ShinglePhrasePlan> PlanShinglePhrase(
+std::optional<ByPhraseOptions> PlanShinglePhrase(
   const analysis::ShingleTokenizer& tokenizer, const ByPhraseOptions& phrase,
   bool positional);
 

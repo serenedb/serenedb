@@ -114,11 +114,6 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
                                        TokenSink& sink, const Base& base);
   template<bool HasFrequent>
   IRS_FORCE_INLINE void BuildTables(std::span<const duckdb::string_t> tok);
-  template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
-           typename Base>
-  IRS_FORCE_INLINE void EmitRuns(const duckdb::string_t* raw, TokenSink& sink,
-                                 const Base& base, uint32_t n,
-                                 bool no_shingles);
 
   Tokenizer::ptr _analyzer;
   uint32_t _min;

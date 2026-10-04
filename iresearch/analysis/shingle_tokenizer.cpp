@@ -75,11 +75,16 @@ void ShingleTokenizer::BuildTables(std::span<const duckdb::string_t> tok) {
 
 template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
          typename Base>
-void ShingleTokenizer::EmitRuns(const duckdb::string_t* raw, TokenSink& sink,
-                                const Base& base, uint32_t n,
-                                bool no_shingles) {
+void ShingleTokenizer::EmitBaseTokens(const duckdb::string_t* raw,
+                                      TokenSink& sink, const Base& base) {
   constexpr bool kOffs = Base::kLayout == TokenLayout::TermsPosOffs;
-  const auto* const tok = base.terms().data();
+  const auto terms = base.terms();
+  const auto n = static_cast<uint32_t>(terms.size());
+  const bool no_shingles = n < _min;
+  if (!no_shingles) {
+    BuildTables<HasFrequent>(terms);
+  }
+  const auto* const tok = terms.data();
   const auto* const tpos = base.pos().data();
   const uint32_t* starts = nullptr;
   const uint32_t* ends = nullptr;
@@ -186,20 +191,6 @@ void ShingleTokenizer::EmitRuns(const duckdb::string_t* raw, TokenSink& sink,
     }
     emit_shingles(i, reach, pos);
   }
-}
-
-template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
-         typename Base>
-void ShingleTokenizer::EmitBaseTokens(const duckdb::string_t* raw,
-                                      TokenSink& sink, const Base& base) {
-  const auto tok = base.terms();
-  const auto n = static_cast<uint32_t>(tok.size());
-  const bool no_shingles = n < _min;
-  if (!no_shingles) {
-    BuildTables<HasFrequent>(tok);
-  }
-  EmitRuns<Layout, OutputUnigrams, HasFrequent>(raw, sink, base, n,
-                                                no_shingles);
 }
 
 template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent>

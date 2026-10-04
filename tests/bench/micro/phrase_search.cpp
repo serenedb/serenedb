@@ -34,9 +34,9 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/detail/column_collector.hpp>
+#include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/shingle_phrase.hpp>
-#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -269,14 +269,6 @@ const Index& IndexOf(size_t strategy) {
   return *index;
 }
 
-template<typename Filter, typename Options>
-irs::Filter::ptr MakeFilter(Options&& options) {
-  auto filter = std::make_unique<Filter>();
-  *filter->mutable_field_id() = kBodyId;
-  *filter->mutable_options() = std::forward<Options>(options);
-  return filter;
-}
-
 irs::ByPhraseOptions ParsePhrase(std::string_view text) {
   irs::ByPhraseOptions phrase;
   irs::PosAttr::value_t offs_min = 1;
@@ -326,8 +318,12 @@ irs::ByPhraseOptions ParsePhrase(std::string_view text) {
 }
 
 irs::Filter::ptr MakeLoweredPhrase(irs::ByPhraseOptions&& phrase) {
-  phrase.LowerParts();
-  return MakeFilter<irs::ByPhrase>(std::move(phrase));
+  auto node = std::make_unique<irs::ByPhrase>();
+  *node->mutable_field_id() = kBodyId;
+  *node->mutable_options() = std::move(phrase);
+  irs::Filter::ptr filter = std::move(node);
+  irs::Optimize(filter);
+  return filter;
 }
 
 irs::Filter::ptr MakePhrase(const Index& index, std::string_view text,
@@ -342,11 +338,7 @@ irs::Filter::ptr MakePhrase(const Index& index, std::string_view text,
   if (cover) {
     if (auto plan =
           irs::PlanShinglePhrase(shingles, phrase, strategy.positions)) {
-      if (auto* term = std::get_if<irs::bstring>(&*plan)) {
-        return MakeFilter<irs::ByTerm>(irs::ByTermOptions{std::move(*term)});
-      }
-      return MakeLoweredPhrase(
-        std::get<irs::ByPhraseOptions>(std::move(*plan)));
+      return MakeLoweredPhrase(std::move(*plan));
     }
   }
   if (!strategy.positions) {

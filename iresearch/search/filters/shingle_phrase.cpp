@@ -236,25 +236,19 @@ bool AdjacentWords(const ByPhraseOptions& phrase, Words& words) {
 
 }  // namespace
 
-std::optional<ShinglePhrasePlan> PlanShinglePhrase(
+std::optional<ByPhraseOptions> PlanShinglePhrase(
   const analysis::ShingleTokenizer& tokenizer, const ByPhraseOptions& phrase,
   bool positional) {
-  std::optional<ShinglePhrasePlan> plan;
   if (phrase.empty() || phrase.slop() != 0) {
+    return std::nullopt;
+  }
+  ByPhraseOptions plan;
+  if (Words words; AdjacentWords(phrase, words) && Indexes(tokenizer, words)) {
+    plan.push_back<ByTermOptions>().term = Join(tokenizer.Separator(), words);
     return plan;
   }
-  Words words;
-  if (AdjacentWords(phrase, words) && Indexes(tokenizer, words)) {
-    plan.emplace(Join(tokenizer.Separator(), words));
-    return plan;
-  }
-  if (!positional) {
-    return plan;
-  }
-  auto& cover = std::get<ByPhraseOptions>(
-    plan.emplace(std::in_place_type<ByPhraseOptions>));
-  if (!CoverPhrase(tokenizer, phrase, cover)) {
-    plan.reset();
+  if (!positional || !CoverPhrase(tokenizer, phrase, plan)) {
+    return std::nullopt;
   }
   return plan;
 }

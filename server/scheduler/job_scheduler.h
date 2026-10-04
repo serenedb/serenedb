@@ -47,8 +47,6 @@ class JobCatalogEntry;
 }  // namespace sdb::catalog
 namespace sdb {
 
-class BackgroundScheduler;
-
 void VerifySchedule(const duckdb::JobSchedule& schedule);
 
 struct JobRunRecord {
@@ -95,7 +93,7 @@ class JobScheduler final {
  public:
   static JobScheduler* Instance() noexcept { return gInstance; }
 
-  explicit JobScheduler(BackgroundScheduler& background);
+  JobScheduler();
   ~JobScheduler();
 
   void Start();
@@ -111,7 +109,6 @@ class JobScheduler final {
 
   inline static JobScheduler* gInstance = nullptr;
 
-  BackgroundScheduler& _background;
   yaclib::WaitGroup<> _runs{1};
   absl::Mutex _mutex;
   std::deque<JobRunRecord> _history;

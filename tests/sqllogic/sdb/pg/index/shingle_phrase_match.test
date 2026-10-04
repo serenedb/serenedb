@@ -164,7 +164,7 @@ QUERY PLAN
 │ Index: test_shingle_idx │
 │ Lookup: table           │
 │ Index Filter:           │
-│ ╭─ Shingle ───────────╮ │
+│ ╭─ Term ──────────────╮ │
 │ │ Field: body(string) │ │
 │ │ Value: quick brown  │ │
 │ ╰─────────────────────╯ │
@@ -187,7 +187,7 @@ QUERY PLAN
 │ Index: test_shingle_idx │
 │ Lookup: table           │
 │ Index Filter:           │
-│ ╭─ Shingle ───────────╮ │
+│ ╭─ Term ──────────────╮ │
 │ │ Field: body(string) │ │
 │ │ Value: quick brown  │ │
 │ ╰─────────────────────╯ │
@@ -212,7 +212,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: test_shingle_idx  │
 │ Index Filter:            │
-│ ╭─ Shingle ───────────╮  │
+│ ╭─ Term ──────────────╮  │
 │ │ Field: body(string) │  │
 │ │ Value: quick brown  │  │
 │ ╰─────────────────────╯  │
@@ -285,19 +285,19 @@ query
 EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ phraseto_tsquery('quick brown fox')
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
-│ Index: test_shingle_pos_idx                              │
-│ Lookup: table                                            │
-│ Index Filter:                                            │
-│ ╭─ Phrase ─────────────────────────────────────────────╮ │
-│ │ Field: body(string)                                  │ │
-│ │ Parts:                                               │ │
-│ │ Shingle:quick brown(0, 0); Shingle:brown fox(1, 1);  │ │
-│ │ Separator: ' '                                       │ │
-│ ╰──────────────────────────────────────────────────────╯ │
-│ Projections: id                                          │
-│ ~1 row                                                   │
-╰──────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────────────╮
+│ Index: test_shingle_pos_idx                        │
+│ Lookup: table                                      │
+│ Index Filter:                                      │
+│ ╭─ Phrase ───────────────────────────────────────╮ │
+│ │ Field: body(string)                            │ │
+│ │ Parts:                                         │ │
+│ │ Term:quick brown(0, 0); Term:brown fox(1, 1);  │ │
+│ │ Separator: ' '                                 │ │
+│ ╰────────────────────────────────────────────────╯ │
+│ Projections: id                                    │
+│ ~1 row                                             │
+╰────────────────────────────────────────────────────╯
 
 query
 SELECT id FROM test_shingle_pos_idx WHERE body @@ websearch_to_tsquery('"quick brown fox"') ORDER BY id
@@ -309,19 +309,19 @@ query
 EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ websearch_to_tsquery('"quick brown fox"')
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
-│ Index: test_shingle_pos_idx                              │
-│ Lookup: table                                            │
-│ Index Filter:                                            │
-│ ╭─ Phrase ─────────────────────────────────────────────╮ │
-│ │ Field: body(string)                                  │ │
-│ │ Parts:                                               │ │
-│ │ Shingle:quick brown(0, 0); Shingle:brown fox(1, 1);  │ │
-│ │ Separator: ' '                                       │ │
-│ ╰──────────────────────────────────────────────────────╯ │
-│ Projections: id                                          │
-│ ~1 row                                                   │
-╰──────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────────────╮
+│ Index: test_shingle_pos_idx                        │
+│ Lookup: table                                      │
+│ Index Filter:                                      │
+│ ╭─ Phrase ───────────────────────────────────────╮ │
+│ │ Field: body(string)                            │ │
+│ │ Parts:                                         │ │
+│ │ Term:quick brown(0, 0); Term:brown fox(1, 1);  │ │
+│ │ Separator: ' '                                 │ │
+│ ╰────────────────────────────────────────────────╯ │
+│ Projections: id                                    │
+│ ~1 row                                             │
+╰────────────────────────────────────────────────────╯
 
 query
 SELECT id FROM test_shingle_pos_idx WHERE body @@ websearch_to_tsquery('"quick brown" cat') ORDER BY id
@@ -333,19 +333,19 @@ query
 EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ websearch_to_tsquery('"quick brown" cat')
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────╮
-│ Index: test_shingle_pos_idx              │
-│ Lookup: table                            │
-│ Index Filter:                            │
-│ ╭─ And ────────────────────────────────╮ │
-│ ╰───────────────────┬──────────────────╯ │
-│ ╭─ Terms ───────────┴──────────────────╮ │
-│ │ Field: body(string)                  │ │
-│ │ Values: 'cat', Shingle:'quick brown' │ │
-│ ╰──────────────────────────────────────╯ │
-│ Projections: id                          │
-│ ~1 row                                   │
-╰──────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────╮
+│ Index: test_shingle_pos_idx      │
+│ Lookup: table                    │
+│ Index Filter:                    │
+│ ╭─ And ────────────────────────╮ │
+│ ╰───────────────┬──────────────╯ │
+│ ╭─ Terms ───────┴──────────────╮ │
+│ │ Field: body(string)          │ │
+│ │ Values: 'cat', 'quick brown' │ │
+│ ╰──────────────────────────────╯ │
+│ Projections: id                  │
+│ ~1 row                           │
+╰──────────────────────────────────╯
 
 query
 SELECT id FROM test_shingle_pos_idx WHERE body @@ websearch_to_tsquery('quick -"brown fox"') ORDER BY id
@@ -364,19 +364,19 @@ query
 EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ tsquery_phrase(ts_phrase('quick brown'), ts_phrase('fox'))
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
-│ Index: test_shingle_pos_idx                              │
-│ Lookup: table                                            │
-│ Index Filter:                                            │
-│ ╭─ Phrase ─────────────────────────────────────────────╮ │
-│ │ Field: body(string)                                  │ │
-│ │ Parts:                                               │ │
-│ │ Shingle:quick brown(0, 0); Shingle:brown fox(1, 1);  │ │
-│ │ Separator: ' '                                       │ │
-│ ╰──────────────────────────────────────────────────────╯ │
-│ Projections: id                                          │
-│ ~1 row                                                   │
-╰──────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────────────╮
+│ Index: test_shingle_pos_idx                        │
+│ Lookup: table                                      │
+│ Index Filter:                                      │
+│ ╭─ Phrase ───────────────────────────────────────╮ │
+│ │ Field: body(string)                            │ │
+│ │ Parts:                                         │ │
+│ │ Term:quick brown(0, 0); Term:brown fox(1, 1);  │ │
+│ │ Separator: ' '                                 │ │
+│ ╰────────────────────────────────────────────────╯ │
+│ Projections: id                                    │
+│ ~1 row                                             │
+╰────────────────────────────────────────────────────╯
 
 query
 SELECT id FROM test_shingle_pos_idx WHERE body @@ tsquery_phrase(ts_phrase('quick brown'), ts_phrase('fox'), 3) ORDER BY id
@@ -388,19 +388,19 @@ query
 EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ tsquery_phrase(ts_phrase('quick brown'), ts_phrase('fox'), 3)
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ────────────────────────────────╮
-│ Index: test_shingle_pos_idx                     │
-│ Lookup: table                                   │
-│ Index Filter:                                   │
-│ ╭─ Phrase ────────────────────────────────────╮ │
-│ │ Field: body(string)                         │ │
-│ │ Parts:                                      │ │
-│ │ Shingle:quick brown(0, 0); Term:fox(4, 4);  │ │
-│ │ Separator: ' '                              │ │
-│ ╰─────────────────────────────────────────────╯ │
-│ Projections: id                                 │
-│ ~1 row                                          │
-╰─────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────────╮
+│ Index: test_shingle_pos_idx                  │
+│ Lookup: table                                │
+│ Index Filter:                                │
+│ ╭─ Phrase ─────────────────────────────────╮ │
+│ │ Field: body(string)                      │ │
+│ │ Parts:                                   │ │
+│ │ Term:quick brown(0, 0); Term:fox(4, 4);  │ │
+│ │ Separator: ' '                           │ │
+│ ╰──────────────────────────────────────────╯ │
+│ Projections: id                              │
+│ ~1 row                                       │
+╰──────────────────────────────────────────────╯
 
 query
 SELECT id FROM test_shingle_pos_idx WHERE body @@ to_tsquery('"quick brown fox"') ORDER BY id
@@ -412,19 +412,19 @@ query
 EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ to_tsquery('"quick brown fox"')
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
-│ Index: test_shingle_pos_idx                              │
-│ Lookup: table                                            │
-│ Index Filter:                                            │
-│ ╭─ Phrase ─────────────────────────────────────────────╮ │
-│ │ Field: body(string)                                  │ │
-│ │ Parts:                                               │ │
-│ │ Shingle:quick brown(0, 0); Shingle:brown fox(1, 1);  │ │
-│ │ Separator: ' '                                       │ │
-│ ╰──────────────────────────────────────────────────────╯ │
-│ Projections: id                                          │
-│ ~1 row                                                   │
-╰──────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────────────╮
+│ Index: test_shingle_pos_idx                        │
+│ Lookup: table                                      │
+│ Index Filter:                                      │
+│ ╭─ Phrase ───────────────────────────────────────╮ │
+│ │ Field: body(string)                            │ │
+│ │ Parts:                                         │ │
+│ │ Term:quick brown(0, 0); Term:brown fox(1, 1);  │ │
+│ │ Separator: ' '                                 │ │
+│ ╰────────────────────────────────────────────────╯ │
+│ Projections: id                                    │
+│ ~1 row                                             │
+╰────────────────────────────────────────────────────╯
 
 query
 SELECT id FROM test_shingle_pos_idx WHERE body @@ to_tsquery('"quick brown fox"~1') ORDER BY id
@@ -459,7 +459,7 @@ QUERY PLAN
 │ Index: test_shingle_pos_idx │
 │ Lookup: table               │
 │ Index Filter:               │
-│ ╭─ Shingle ───────────╮     │
+│ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
 │ │ Value: quick brown  │     │
 │ │ Boost: 2            │     │
@@ -485,19 +485,19 @@ query
 EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ to_tsquery('"quick brown fo*"')
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────╮
-│ Index: test_shingle_pos_idx                      │
-│ Lookup: table                                    │
-│ Index Filter:                                    │
-│ ╭─ Phrase ─────────────────────────────────────╮ │
-│ │ Field: body(string)                          │ │
-│ │ Parts:                                       │ │
-│ │ Shingle:quick brown(0, 0); Prefix:fo(2, 2);  │ │
-│ │ Separator: ' '                               │ │
-│ ╰──────────────────────────────────────────────╯ │
-│ Projections: id                                  │
-│ ~1 row                                           │
-╰──────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────────────╮
+│ Index: test_shingle_pos_idx                   │
+│ Lookup: table                                 │
+│ Index Filter:                                 │
+│ ╭─ Phrase ──────────────────────────────────╮ │
+│ │ Field: body(string)                       │ │
+│ │ Parts:                                    │ │
+│ │ Term:quick brown(0, 0); Prefix:fo(2, 2);  │ │
+│ │ Separator: ' '                            │ │
+│ ╰───────────────────────────────────────────╯ │
+│ Projections: id                               │
+│ ~1 row                                        │
+╰───────────────────────────────────────────────╯
 
 query
 SELECT id FROM test_shingle_pos_idx WHERE body @@ to_tsquery('"quick brown f?x"') ORDER BY id
@@ -509,19 +509,19 @@ query
 EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ to_tsquery('"quick brown f?x"')
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────╮
-│ Index: test_shingle_pos_idx                          │
-│ Lookup: table                                        │
-│ Index Filter:                                        │
-│ ╭─ Phrase ─────────────────────────────────────────╮ │
-│ │ Field: body(string)                              │ │
-│ │ Parts:                                           │ │
-│ │ Shingle:quick brown(0, 0); Automaton:f_x(2, 2);  │ │
-│ │ Separator: ' '                                   │ │
-│ ╰──────────────────────────────────────────────────╯ │
-│ Projections: id                                      │
-│ ~1 row                                               │
-╰──────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────────────────╮
+│ Index: test_shingle_pos_idx                       │
+│ Lookup: table                                     │
+│ Index Filter:                                     │
+│ ╭─ Phrase ──────────────────────────────────────╮ │
+│ │ Field: body(string)                           │ │
+│ │ Parts:                                        │ │
+│ │ Term:quick brown(0, 0); Automaton:f_x(2, 2);  │ │
+│ │ Separator: ' '                                │ │
+│ ╰───────────────────────────────────────────────╯ │
+│ Projections: id                                   │
+│ ~1 row                                            │
+╰───────────────────────────────────────────────────╯
 
 query
 SELECT id FROM test_shingle_pos_idx WHERE body @@ to_tsquery('"quick brown" OR "brown fox"') ORDER BY id
@@ -537,20 +537,19 @@ query
 EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ to_tsquery('"quick brown" OR "brown fox"')
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────────────────────╮
-│ Index: test_shingle_pos_idx                    │
-│ Lookup: table                                  │
-│ Index Filter:                                  │
-│ ╭─ Or ───────────────────────────────────────╮ │
-│ ╰──────────────────────┬─────────────────────╯ │
-│ ╭─ Terms ──────────────┴─────────────────────╮ │
-│ │ Field: body(string)                        │ │
-│ │ Values:                                    │ │
-│ │ Shingle:'brown fox', Shingle:'quick brown' │ │
-│ ╰────────────────────────────────────────────╯ │
-│ Projections: id                                │
-│ ~1 row                                         │
-╰────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: test_shingle_pos_idx            │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Or ───────────────────────────────╮ │
+│ ╰──────────────────┬─────────────────╯ │
+│ ╭─ Terms ──────────┴─────────────────╮ │
+│ │ Field: body(string)                │ │
+│ │ Values: 'brown fox', 'quick brown' │ │
+│ ╰────────────────────────────────────╯ │
+│ Projections: id                        │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
 
 query
 SELECT id FROM test_shingle_pos_idx WHERE body @@ to_tsquery('fox AND ("quick brown fox" OR "brown cat")') ORDER BY id
@@ -563,25 +562,25 @@ query
 EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ to_tsquery('fox AND ("quick brown fox" OR "brown cat")')
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Index: test_shingle_pos_idx                                                                                        │
-│ Lookup: table                                                                                                      │
-│ Index Filter:                                                                                                      │
-│ ╭─ And ───────────────╮                                                                                            │
-│ ╰──────────┬──────────╯                                                                                            │
-│            ├────────────────────────────╮                                                                          │
-│ ╭─ Terms ──┴──────────╮  ╭─ Or ─────────┴──────────────╮                                                           │
-│ │ Field: body(string) │  ╰──────────────┬──────────────╯                                                           │
-│ │ Values: 'fox'       │                 ├─────────────────────────────────────────────╮                            │
-│ ╰─────────────────────╯  ╭─ Terms ──────┴──────────────╮  ╭─ Phrase ──────────────────┴──────────────────────────╮ │
-│                          │ Field: body(string)         │  │ Field: body(string)                                  │ │
-│                          │ Values: Shingle:'brown cat' │  │ Parts:                                               │ │
-│                          ╰─────────────────────────────╯  │ Shingle:quick brown(0, 0); Shingle:brown fox(1, 1);  │ │
-│                                                           │ Separator: ' '                                       │ │
-│                                                           ╰──────────────────────────────────────────────────────╯ │
-│ Projections: id                                                                                                    │
-│ ~1 row                                                                                                             │
-╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────────────────────╮
+│ Index: test_shingle_pos_idx                                                                          │
+│ Lookup: table                                                                                        │
+│ Index Filter:                                                                                        │
+│ ╭─ And ───────────────╮                                                                              │
+│ ╰──────────┬──────────╯                                                                              │
+│            ├────────────────────────╮                                                                │
+│ ╭─ Terms ──┴──────────╮  ╭─ Or ─────┴──────────╮                                                     │
+│ │ Field: body(string) │  ╰──────────┬──────────╯                                                     │
+│ │ Values: 'fox'       │             ├──────────────────────────────────────╮                         │
+│ ╰─────────────────────╯  ╭─ Terms ──┴──────────╮  ╭─ Phrase ───────────────┴───────────────────────╮ │
+│                          │ Field: body(string) │  │ Field: body(string)                            │ │
+│                          │ Values: 'brown cat' │  │ Parts:                                         │ │
+│                          ╰─────────────────────╯  │ Term:quick brown(0, 0); Term:brown fox(1, 1);  │ │
+│                                                   │ Separator: ' '                                 │ │
+│                                                   ╰────────────────────────────────────────────────╯ │
+│ Projections: id                                                                                      │
+│ ~1 row                                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
 query
 SELECT id FROM test_shingle_pos_idx WHERE tableoid @@ to_tsquery('body:"quick brown fox"') ORDER BY id
@@ -593,19 +592,19 @@ query
 EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE tableoid @@ to_tsquery('body:"quick brown fox"')
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
-│ Index: test_shingle_pos_idx                              │
-│ Lookup: table                                            │
-│ Index Filter:                                            │
-│ ╭─ Phrase ─────────────────────────────────────────────╮ │
-│ │ Field: body(string)                                  │ │
-│ │ Parts:                                               │ │
-│ │ Shingle:quick brown(0, 0); Shingle:brown fox(1, 1);  │ │
-│ │ Separator: ' '                                       │ │
-│ ╰──────────────────────────────────────────────────────╯ │
-│ Projections: id                                          │
-│ ~1 row                                                   │
-╰──────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────────────╮
+│ Index: test_shingle_pos_idx                        │
+│ Lookup: table                                      │
+│ Index Filter:                                      │
+│ ╭─ Phrase ───────────────────────────────────────╮ │
+│ │ Field: body(string)                            │ │
+│ │ Parts:                                         │ │
+│ │ Term:quick brown(0, 0); Term:brown fox(1, 1);  │ │
+│ │ Separator: ' '                                 │ │
+│ ╰────────────────────────────────────────────────╯ │
+│ Projections: id                                    │
+│ ~1 row                                             │
+╰────────────────────────────────────────────────────╯
 
 query
 SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick brown fox') AND id > 0 ORDER BY id
@@ -668,19 +667,19 @@ query
 EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brown') ## 1 ## ts_phrase('brown fox'))
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
-│ Index: test_shingle_pos_idx                              │
-│ Lookup: table                                            │
-│ Index Filter:                                            │
-│ ╭─ Phrase ─────────────────────────────────────────────╮ │
-│ │ Field: body(string)                                  │ │
-│ │ Parts:                                               │ │
-│ │ Shingle:quick brown(0, 0); Shingle:brown fox(3, 3);  │ │
-│ │ Separator: ' '                                       │ │
-│ ╰──────────────────────────────────────────────────────╯ │
-│ Projections: id                                          │
-│ ~1 row                                                   │
-╰──────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────────────╮
+│ Index: test_shingle_pos_idx                        │
+│ Lookup: table                                      │
+│ Index Filter:                                      │
+│ ╭─ Phrase ───────────────────────────────────────╮ │
+│ │ Field: body(string)                            │ │
+│ │ Parts:                                         │ │
+│ │ Term:quick brown(0, 0); Term:brown fox(3, 3);  │ │
+│ │ Separator: ' '                                 │ │
+│ ╰────────────────────────────────────────────────╯ │
+│ Projections: id                                    │
+│ ~1 row                                             │
+╰────────────────────────────────────────────────────╯
 
 query
 SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('the') ## ts_phrase('quick brown')) ORDER BY id
@@ -730,19 +729,19 @@ query
 EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brown') ## ts_regexp('f.x'))
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────╮
-│ Index: test_shingle_pos_idx                          │
-│ Lookup: table                                        │
-│ Index Filter:                                        │
-│ ╭─ Phrase ─────────────────────────────────────────╮ │
-│ │ Field: body(string)                              │ │
-│ │ Parts:                                           │ │
-│ │ Shingle:quick brown(0, 0); Automaton:f.x(2, 2);  │ │
-│ │ Separator: ' '                                   │ │
-│ ╰──────────────────────────────────────────────────╯ │
-│ Projections: id                                      │
-│ ~1 row                                               │
-╰──────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────────────────╮
+│ Index: test_shingle_pos_idx                       │
+│ Lookup: table                                     │
+│ Index Filter:                                     │
+│ ╭─ Phrase ──────────────────────────────────────╮ │
+│ │ Field: body(string)                           │ │
+│ │ Parts:                                        │ │
+│ │ Term:quick brown(0, 0); Automaton:f.x(2, 2);  │ │
+│ │ Separator: ' '                                │ │
+│ ╰───────────────────────────────────────────────╯ │
+│ Projections: id                                   │
+│ ~1 row                                            │
+╰───────────────────────────────────────────────────╯
 
 query
 SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_starts_with('quick b') ## 'brown') ORDER BY id
@@ -781,19 +780,19 @@ query
 EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brown') ## ts_any(['fox', 'dog']))
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ────────────────────────────────────────────╮
-│ Index: test_shingle_pos_idx                                 │
-│ Lookup: table                                               │
-│ Index Filter:                                               │
-│ ╭─ Phrase ────────────────────────────────────────────────╮ │
-│ │ Field: body(string)                                     │ │
-│ │ Parts:                                                  │ │
-│ │ Shingle:quick brown(0, 0); Terms:['dog','fox',](2, 2);  │ │
-│ │ Separator: ' '                                          │ │
-│ ╰─────────────────────────────────────────────────────────╯ │
-│ Projections: id                                             │
-│ ~1 row                                                      │
-╰─────────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
+│ Index: test_shingle_pos_idx                              │
+│ Lookup: table                                            │
+│ Index Filter:                                            │
+│ ╭─ Phrase ─────────────────────────────────────────────╮ │
+│ │ Field: body(string)                                  │ │
+│ │ Parts:                                               │ │
+│ │ Term:quick brown(0, 0); Terms:['dog','fox',](2, 2);  │ │
+│ │ Separator: ' '                                       │ │
+│ ╰──────────────────────────────────────────────────────╯ │
+│ Projections: id                                          │
+│ ~1 row                                                   │
+╰──────────────────────────────────────────────────────────╯
 
 query
 SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick brown', [0, 2], 'fox') ORDER BY id
@@ -806,55 +805,55 @@ query
 EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick brown', [0, 2], 'fox')
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ────────────────────────────────╮
-│ Index: test_shingle_pos_idx                     │
-│ Lookup: table                                   │
-│ Index Filter:                                   │
-│ ╭─ Phrase ────────────────────────────────────╮ │
-│ │ Field: body(string)                         │ │
-│ │ Parts:                                      │ │
-│ │ Shingle:quick brown(0, 0); Term:fox(2, 4);  │ │
-│ │ Separator: ' '                              │ │
-│ ╰─────────────────────────────────────────────╯ │
-│ Projections: id                                 │
-│ ~1 row                                          │
-╰─────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────────╮
+│ Index: test_shingle_pos_idx                  │
+│ Lookup: table                                │
+│ Index Filter:                                │
+│ ╭─ Phrase ─────────────────────────────────╮ │
+│ │ Field: body(string)                      │ │
+│ │ Parts:                                   │ │
+│ │ Term:quick brown(0, 0); Term:fox(2, 4);  │ │
+│ │ Separator: ' '                           │ │
+│ ╰──────────────────────────────────────────╯ │
+│ Projections: id                              │
+│ ~1 row                                       │
+╰──────────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick brown fox')
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
-│ Index: test_shingle_pos_idx                              │
-│ Lookup: table                                            │
-│ Index Filter:                                            │
-│ ╭─ Phrase ─────────────────────────────────────────────╮ │
-│ │ Field: body(string)                                  │ │
-│ │ Parts:                                               │ │
-│ │ Shingle:quick brown(0, 0); Shingle:brown fox(1, 1);  │ │
-│ │ Separator: ' '                                       │ │
-│ ╰──────────────────────────────────────────────────────╯ │
-│ Projections: id                                          │
-│ ~1 row                                                   │
-╰──────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────────────╮
+│ Index: test_shingle_pos_idx                        │
+│ Lookup: table                                      │
+│ Index Filter:                                      │
+│ ╭─ Phrase ───────────────────────────────────────╮ │
+│ │ Field: body(string)                            │ │
+│ │ Parts:                                         │ │
+│ │ Term:quick brown(0, 0); Term:brown fox(1, 1);  │ │
+│ │ Separator: ' '                                 │ │
+│ ╰────────────────────────────────────────────────╯ │
+│ Projections: id                                    │
+│ ~1 row                                             │
+╰────────────────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brown') ## ts_like('%ox'))
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────╮
-│ Index: test_shingle_pos_idx                          │
-│ Lookup: table                                        │
-│ Index Filter:                                        │
-│ ╭─ Phrase ─────────────────────────────────────────╮ │
-│ │ Field: body(string)                              │ │
-│ │ Parts:                                           │ │
-│ │ Shingle:quick brown(0, 0); Automaton:%ox(2, 2);  │ │
-│ │ Separator: ' '                                   │ │
-│ ╰──────────────────────────────────────────────────╯ │
-│ Projections: id                                      │
-│ ~1 row                                               │
-╰──────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────────────────╮
+│ Index: test_shingle_pos_idx                       │
+│ Lookup: table                                     │
+│ Index Filter:                                     │
+│ ╭─ Phrase ──────────────────────────────────────╮ │
+│ │ Field: body(string)                           │ │
+│ │ Parts:                                        │ │
+│ │ Term:quick brown(0, 0); Automaton:%ox(2, 2);  │ │
+│ │ Separator: ' '                                │ │
+│ ╰───────────────────────────────────────────────╯ │
+│ Projections: id                                   │
+│ ~1 row                                            │
+╰───────────────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_starts_with('qu') ## 'brown')
@@ -909,22 +908,22 @@ query
 EXPLAIN SELECT count(*) FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick brown fox')
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ────────────────────────────────────╮
-│ Aggregates: count_star()                                 │
-│ ~1 row                                                   │
-╰─────────────────────────────┬────────────────────────────╯
-╭─ IRESEARCH_SCAN ────────────┴────────────────────────────╮
-│ Index: test_shingle_pos_idx                              │
-│ Index Filter:                                            │
-│ ╭─ Phrase ─────────────────────────────────────────────╮ │
-│ │ Field: body(string)                                  │ │
-│ │ Parts:                                               │ │
-│ │ Shingle:quick brown(0, 0); Shingle:brown fox(1, 1);  │ │
-│ │ Separator: ' '                                       │ │
-│ ╰──────────────────────────────────────────────────────╯ │
-│ Output: row-count only                                   │
-│ ~1 row                                                   │
-╰──────────────────────────────────────────────────────────╯
+╭─ UNGROUPED_AGGREGATE ──────────────────────────────╮
+│ Aggregates: count_star()                           │
+│ ~1 row                                             │
+╰──────────────────────────┬─────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────┴─────────────────────────╮
+│ Index: test_shingle_pos_idx                        │
+│ Index Filter:                                      │
+│ ╭─ Phrase ───────────────────────────────────────╮ │
+│ │ Field: body(string)                            │ │
+│ │ Parts:                                         │ │
+│ │ Term:quick brown(0, 0); Term:brown fox(1, 1);  │ │
+│ │ Separator: ' '                                 │ │
+│ ╰────────────────────────────────────────────────╯ │
+│ Output: row-count only                             │
+│ ~1 row                                             │
+╰────────────────────────────────────────────────────╯
 
 query
 SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('brown fox')
@@ -943,7 +942,7 @@ QUERY PLAN
 │ Index: test_shingle_pos_idx │
 │ Lookup: table               │
 │ Index Filter:               │
-│ ╭─ Shingle ───────────╮     │
+│ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
 │ │ Value: brown fox    │     │
 │ ╰─────────────────────╯     │
@@ -980,19 +979,19 @@ query
 EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brown') ## ts_levenshtein('fax', 1))
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ────────────────────────────────────────────────╮
-│ Index: test_shingle_pos_idx                                     │
-│ Lookup: table                                                   │
-│ Index Filter:                                                   │
-│ ╭─ Phrase ────────────────────────────────────────────────────╮ │
-│ │ Field: body(string)                                         │ │
-│ │ Parts:                                                      │ │
-│ │ Shingle:quick brown(0, 0); LevenshteinAutomaton:fax(2, 2);  │ │
-│ │ Separator: ' '                                              │ │
-│ ╰─────────────────────────────────────────────────────────────╯ │
-│ Projections: id                                                 │
-│ ~1 row                                                          │
-╰─────────────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────╮
+│ Index: test_shingle_pos_idx                                  │
+│ Lookup: table                                                │
+│ Index Filter:                                                │
+│ ╭─ Phrase ─────────────────────────────────────────────────╮ │
+│ │ Field: body(string)                                      │ │
+│ │ Parts:                                                   │ │
+│ │ Term:quick brown(0, 0); LevenshteinAutomaton:fax(2, 2);  │ │
+│ │ Separator: ' '                                           │ │
+│ ╰──────────────────────────────────────────────────────────╯ │
+│ Projections: id                                              │
+│ ~1 row                                                       │
+╰──────────────────────────────────────────────────────────────╯
 
 query
 SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brown') ## ts_between('d', 'g', true, true)) ORDER BY id
@@ -1005,19 +1004,19 @@ query
 EXPLAIN SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_phrase('quick brown') ## ts_between('d', 'g', true, true))
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────╮
-│ Index: test_shingle_pos_idx                          │
-│ Lookup: table                                        │
-│ Index Filter:                                        │
-│ ╭─ Phrase ─────────────────────────────────────────╮ │
-│ │ Field: body(string)                              │ │
-│ │ Parts:                                           │ │
-│ │ Shingle:quick brown(0, 0); Range: [d..g](2, 2);  │ │
-│ │ Separator: ' '                                   │ │
-│ ╰──────────────────────────────────────────────────╯ │
-│ Projections: id                                      │
-│ ~1 row                                               │
-╰──────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────────────────╮
+│ Index: test_shingle_pos_idx                       │
+│ Lookup: table                                     │
+│ Index Filter:                                     │
+│ ╭─ Phrase ──────────────────────────────────────╮ │
+│ │ Field: body(string)                           │ │
+│ │ Parts:                                        │ │
+│ │ Term:quick brown(0, 0); Range: [d..g](2, 2);  │ │
+│ │ Separator: ' '                                │ │
+│ ╰───────────────────────────────────────────────╯ │
+│ Projections: id                                   │
+│ ~1 row                                            │
+╰───────────────────────────────────────────────────╯
 
 query
 SELECT id FROM test_shingle_pos_idx WHERE body @@ (ts_between('fox a', 'fox z', true, true) ## 'quick') ORDER BY id
@@ -1384,19 +1383,19 @@ query
 EXPLAIN SELECT id FROM test_shingle_offs_idx WHERE body @@ (ts_regexp('q.*k') ## ts_phrase('brown fox jumps'))
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ──────────────────────────────────────────╮
-│ Index: test_shingle_offs_idx                              │
-│ Lookup: table                                             │
-│ Index Filter:                                             │
-│ ╭─ Phrase ──────────────────────────────────────────────╮ │
-│ │ Field: body(string)                                   │ │
-│ │ Parts:                                                │ │
-│ │ Automaton:q.*k(0, 0); Shingle:brown fox jumps(1, 1);  │ │
-│ │ Separator: ' '                                        │ │
-│ ╰───────────────────────────────────────────────────────╯ │
-│ Projections: id                                           │
-│ ~1 row                                                    │
-╰───────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────────────────╮
+│ Index: test_shingle_offs_idx                           │
+│ Lookup: table                                          │
+│ Index Filter:                                          │
+│ ╭─ Phrase ───────────────────────────────────────────╮ │
+│ │ Field: body(string)                                │ │
+│ │ Parts:                                             │ │
+│ │ Automaton:q.*k(0, 0); Term:brown fox jumps(1, 1);  │ │
+│ │ Separator: ' '                                     │ │
+│ ╰────────────────────────────────────────────────────╯ │
+│ Projections: id                                        │
+│ ~1 row                                                 │
+╰────────────────────────────────────────────────────────╯
 
 query
 SELECT id, ts_offsets(body) AS offsets FROM test_shingle_offs_idx WHERE body @@ (ts_phrase('the') ## ts_regexp('q.*k') ## ts_phrase('brown fox')) ORDER BY id
@@ -1483,21 +1482,21 @@ query
 EXPLAIN SELECT id, ts_offsets(body) AS offsets FROM test_shingle_stored_idx WHERE body @@ ts_phrase('quick brown fox jumps')
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────╮
-│ Index: test_shingle_stored_idx                                     │
-│ Lookup: table                                                      │
-│ Index Filter:                                                      │
-│ ╭─ Phrase ───────────────────────────────────────────────────────╮ │
-│ │ Field: body(string)                                            │ │
-│ │ Parts:                                                         │ │
-│ │ Shingle:quick brown fox(0, 0); Shingle:brown fox jumps(1, 1);  │ │
-│ │ Separator: ' '                                                 │ │
-│ ╰────────────────────────────────────────────────────────────────╯ │
-│ Offsets: body                                                      │
-│ Projections:                                                       │
-│ id, sdb_inverted_index_offsets$body                                │
-│ ~1 row                                                             │
-╰────────────────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────╮
+│ Index: test_shingle_stored_idx                               │
+│ Lookup: table                                                │
+│ Index Filter:                                                │
+│ ╭─ Phrase ─────────────────────────────────────────────────╮ │
+│ │ Field: body(string)                                      │ │
+│ │ Parts:                                                   │ │
+│ │ Term:quick brown fox(0, 0); Term:brown fox jumps(1, 1);  │ │
+│ │ Separator: ' '                                           │ │
+│ ╰──────────────────────────────────────────────────────────╯ │
+│ Offsets: body                                                │
+│ Projections:                                                 │
+│ id, sdb_inverted_index_offsets$body                          │
+│ ~1 row                                                       │
+╰──────────────────────────────────────────────────────────────╯
 
 statement ok
 DROP TABLE test_shingle_stored
@@ -1547,7 +1546,7 @@ QUERY PLAN
 │ Index: test_shingle_freq_idx │
 │ Lookup: table                │
 │ Index Filter:                │
-│ ╭─ Shingle ──────────────╮   │
+│ ╭─ Term ─────────────────╮   │
 │ │ Field: body(string)    │   │
 │ │ Value: the quick brown │   │
 │ ╰────────────────────────╯   │
@@ -1566,19 +1565,19 @@ query
 EXPLAIN SELECT id FROM test_shingle_freq_idx WHERE body @@ ts_phrase('quick brown fox')
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
-│ Index: test_shingle_freq_idx                             │
-│ Lookup: table                                            │
-│ Index Filter:                                            │
-│ ╭─ Phrase ─────────────────────────────────────────────╮ │
-│ │ Field: body(string)                                  │ │
-│ │ Parts:                                               │ │
-│ │ Shingle:quick brown(0, 0); Shingle:brown fox(1, 1);  │ │
-│ │ Separator: ' '                                       │ │
-│ ╰──────────────────────────────────────────────────────╯ │
-│ Projections: id                                          │
-│ ~1 row                                                   │
-╰──────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────────────╮
+│ Index: test_shingle_freq_idx                       │
+│ Lookup: table                                      │
+│ Index Filter:                                      │
+│ ╭─ Phrase ───────────────────────────────────────╮ │
+│ │ Field: body(string)                            │ │
+│ │ Parts:                                         │ │
+│ │ Term:quick brown(0, 0); Term:brown fox(1, 1);  │ │
+│ │ Separator: ' '                                 │ │
+│ ╰────────────────────────────────────────────────╯ │
+│ Projections: id                                    │
+│ ~1 row                                             │
+╰────────────────────────────────────────────────────╯
 
 query
 SELECT id FROM test_shingle_freq_idx WHERE body @@ ts_phrase('the quick brown dog') ORDER BY id
@@ -1590,19 +1589,19 @@ query
 EXPLAIN SELECT id FROM test_shingle_freq_idx WHERE body @@ ts_phrase('the quick brown dog')
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────────────╮
-│ Index: test_shingle_freq_idx                                 │
-│ Lookup: table                                                │
-│ Index Filter:                                                │
-│ ╭─ Phrase ─────────────────────────────────────────────────╮ │
-│ │ Field: body(string)                                      │ │
-│ │ Parts:                                                   │ │
-│ │ Shingle:the quick brown(0, 0); Shingle:brown dog(2, 2);  │ │
-│ │ Separator: ' '                                           │ │
-│ ╰──────────────────────────────────────────────────────────╯ │
-│ Projections: id                                              │
-│ ~1 row                                                       │
-╰──────────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────────────────╮
+│ Index: test_shingle_freq_idx                           │
+│ Lookup: table                                          │
+│ Index Filter:                                          │
+│ ╭─ Phrase ───────────────────────────────────────────╮ │
+│ │ Field: body(string)                                │ │
+│ │ Parts:                                             │ │
+│ │ Term:the quick brown(0, 0); Term:brown dog(2, 2);  │ │
+│ │ Separator: ' '                                     │ │
+│ ╰────────────────────────────────────────────────────╯ │
+│ Projections: id                                        │
+│ ~1 row                                                 │
+╰────────────────────────────────────────────────────────╯
 
 statement ok
 DROP TABLE test_shingle_freq
@@ -1636,19 +1635,19 @@ query
 EXPLAIN SELECT id FROM test_shingle_alpha_idx WHERE body @@ to_tsquery('"quick-brown fox"')
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
-│ Index: test_shingle_alpha_idx                            │
-│ Lookup: table                                            │
-│ Index Filter:                                            │
-│ ╭─ Phrase ─────────────────────────────────────────────╮ │
-│ │ Field: body(string)                                  │ │
-│ │ Parts:                                               │ │
-│ │ Shingle:quick brown(0, 0); Shingle:brown fox(1, 1);  │ │
-│ │ Separator: ' '                                       │ │
-│ ╰──────────────────────────────────────────────────────╯ │
-│ Projections: id                                          │
-│ ~1 row                                                   │
-╰──────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────────────╮
+│ Index: test_shingle_alpha_idx                      │
+│ Lookup: table                                      │
+│ Index Filter:                                      │
+│ ╭─ Phrase ───────────────────────────────────────╮ │
+│ │ Field: body(string)                            │ │
+│ │ Parts:                                         │ │
+│ │ Term:quick brown(0, 0); Term:brown fox(1, 1);  │ │
+│ │ Separator: ' '                                 │ │
+│ ╰────────────────────────────────────────────────╯ │
+│ Projections: id                                    │
+│ ~1 row                                             │
+╰────────────────────────────────────────────────────╯
 
 statement ok
 DROP TABLE test_shingle_alpha

@@ -30,18 +30,17 @@
 
 namespace irs {
 
-struct FieldResolver {
-  std::function<std::string(sdb::connector::ColumnId)> name_of;
-  std::function<sdb::connector::term_dict::Kind(sdb::connector::ColumnId)>
-    kind_of;
-  std::function<bytes_view(sdb::connector::ColumnId)> separator_of;
-};
+using FieldNameResolver = std::function<std::string(sdb::connector::ColumnId)>;
+using FieldKindResolver =
+  std::function<sdb::connector::term_dict::Kind(sdb::connector::ColumnId)>;
 
 // Builds the structured filter tree for EXPLAIN: one node per filter with its
 // attributes (field, decoded terms/bounds, max_terms, min_match, boost, ...)
 // and children for boolean operators. DuckDB renders it per output format
 // (nested boxes in text, nested objects in JSON).
 duckdb::ExplainNode ToExplainNode(const Filter& f);
-duckdb::ExplainNode ToExplainNode(const Filter& f, const FieldResolver& fields);
+duckdb::ExplainNode ToExplainNode(const Filter& f,
+                                  const FieldNameResolver& name_of,
+                                  const FieldKindResolver& kind_of);
 
 }  // namespace irs

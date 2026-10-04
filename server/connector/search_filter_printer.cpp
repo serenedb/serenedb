@@ -21,7 +21,6 @@
 #include "search_filter_printer.hpp"
 
 #include <absl/strings/ascii.h>
-#include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
@@ -151,16 +150,10 @@ std::string RangeValue(const SearchRange<T>& range, Kind kind) {
   return s;
 }
 
-bool IsShingle(bytes_view separator, bytes_view term) {
-  return !separator.empty() &&
-         absl::StrContains(ViewCast<char>(term), ViewCast<char>(separator));
-}
-
 // Renders one phrase-part option variant.
 struct PhrasePartVisitor : util::Noncopyable {
   auto operator()(const ByTermOptions& opts) const {
-    absl::StrAppend(out, IsShingle(separator, opts.term) ? "Shingle:" : "Term:",
-                    TermToString(opts.term));
+    absl::StrAppend(out, "Term:", TermToString(opts.term));
   }
   auto operator()(const TermSetOptions& opts) const {
     absl::StrAppend(out, "Terms:[",
@@ -217,7 +210,6 @@ struct PhrasePartVisitor : util::Noncopyable {
     }
   }
   std::string* out;
-  bytes_view separator;
 };
 
 std::string_view GeoFilterTypeName(GeoFilterType type) {
@@ -266,24 +258,21 @@ std::string_view VectorMetricName(VectorMetric metric) {
 }
 
 struct FilterPrinter {
-  const FieldResolver& fields;
+  const FieldNameResolver& name_of;
+  const FieldKindResolver& kind_of;
 
   std::string FieldName(field_id fid) const {
-    return fields.name_of(sdb::connector::ColumnId{fid});
+    return name_of(sdb::connector::ColumnId{fid});
   }
   Kind FieldKind(field_id fid) const {
-    return fields.kind_of(sdb::connector::ColumnId{fid});
-  }
-  bytes_view FieldSeparator(field_id fid) const {
-    return fields.separator_of(sdb::connector::ColumnId{fid});
+    return kind_of(sdb::connector::ColumnId{fid});
   }
 
   std::string PhraseParts(const ByPhrase& filter) const {
     std::string s;
     for (const auto& part : filter.options()) {
       std::string part_str;
-      part.part.visit(PhrasePartVisitor{
-        .out = &part_str, .separator = filter.options().word_separator()});
+      part.part.visit(PhrasePartVisitor{.out = &part_str});
       absl::StrAppend(&s, part_str, "(", part.offs_min, ", ", part.offs_max,
                       ")", "; ");
     }
@@ -353,13 +342,10 @@ struct FilterPrinter {
       if (kind != Kind::Null || run.front().boost != kNoBoost ||
           Explicit(run.front().scorer)) {
         const std::string_view quote = kind == Kind::String ? "'" : "";
-        const auto separator = FieldSeparator(run.front().field);
         leaves.attributes["Values"] = absl::StrJoin(
           run, ", ", [&](std::string* o, const TermClause& clause) {
             const auto start = o->size();
-            absl::StrAppend(o,
-                            IsShingle(separator, clause.term) ? "Shingle:" : "",
-                            quote, TermValue(clause.term, kind), quote);
+            absl::StrAppend(o, quote, TermValue(clause.term, kind), quote);
             const auto pad = [&] { return o->size() == start ? "" : " "; };
             if (clause.boost != kNoBoost) {
               absl::StrAppend(o, pad(), "(", clause.boost, ")");
@@ -433,9 +419,7 @@ struct FilterPrinter {
     }
     if (type == Type<ByTerm>::id()) {
       const auto& f = downCast<const ByTerm>(filter);
-      ExplainNode node{IsShingle(FieldSeparator(f.field_id()), f.options().term)
-                         ? "Shingle"
-                         : "Term"};
+      ExplainNode node{"Term"};
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Value"] =
         TermValue(f.options().term, FieldKind(f.field_id()));
@@ -597,19 +581,16 @@ std::string IdentityField(sdb::connector::ColumnId id) {
 
 Kind UnknownKind(sdb::connector::ColumnId) { return Kind::Unsupported; }
 
-bytes_view NoSeparator(sdb::connector::ColumnId) { return {}; }
-
 }  // namespace
 
 duckdb::ExplainNode ToExplainNode(const Filter& f) {
-  return ToExplainNode(f, {.name_of = IdentityField,
-                           .kind_of = UnknownKind,
-                           .separator_of = NoSeparator});
+  return ToExplainNode(f, IdentityField, UnknownKind);
 }
 
 duckdb::ExplainNode ToExplainNode(const Filter& f,
-                                  const FieldResolver& fields) {
-  return FilterPrinter{.fields = fields}.Build(f);
+                                  const FieldNameResolver& name_of,
+                                  const FieldKindResolver& kind_of) {
+  return FilterPrinter{.name_of = name_of, .kind_of = kind_of}.Build(f);
 }
 
 }  // namespace irs

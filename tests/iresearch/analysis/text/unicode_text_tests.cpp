@@ -21,6 +21,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -490,6 +491,40 @@ TEST(UnicodeNormalizerTest, part1_unlisted_code_points_are_inert) {
         ++failures;
         ADD_FAILURE() << "cp: " << std::hex << c
                       << " form: " << static_cast<int>(form);
+      }
+    }
+  }
+  EXPECT_EQ(0u, failures);
+}
+
+TEST(UnicodeNormalizerTest, nfkc_casefold_is_canonically_closed) {
+  const std::vector<std::vector<uint32_t>> tails{
+    {}, {0x301}, {0x323, 0x301}, {0x308, 0x301}, {0x1161}, {0x11A8}, {0x3099}};
+  std::vector<uint32_t> text;
+  std::vector<uint32_t> decomposed;
+  std::vector<uint32_t> expected;
+  std::vector<uint32_t> actual;
+  size_t failures = 0;
+  for (uint32_t c = 0; c < 0x110000 && failures <= 20; ++c) {
+    if (c >= 0xD800 && c <= 0xDFFF) {
+      continue;
+    }
+    Normalizer::Normalize(NormalizationForm::NFD, &c, 1, decomposed);
+    if (std::ranges::contains(decomposed, 0x345u)) {
+      continue;
+    }
+    for (const auto& tail : tails) {
+      text.assign(1, c);
+      text.insert(text.end(), tail.begin(), tail.end());
+      Normalizer::Normalize(NormalizationForm::NFD, text.data(), text.size(),
+                            decomposed);
+      Normalizer::Normalize(NormalizationForm::NFKC_CF, decomposed.data(),
+                            decomposed.size(), expected);
+      Normalizer::Normalize(NormalizationForm::NFKC_CF, text.data(),
+                            text.size(), actual);
+      if (actual != expected) {
+        ++failures;
+        ADD_FAILURE() << "cp: " << std::hex << c << " tail: " << tail.size();
       }
     }
   }

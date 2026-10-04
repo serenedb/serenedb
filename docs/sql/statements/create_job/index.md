@@ -65,6 +65,8 @@ Scheduled runs execute on the server's background thread pool (`--background_thr
 
 `EXECUTE JOB` runs the body once, synchronously, and reports the body's error if it fails. The body runs in the job's own session and transaction, exactly as a scheduled run would, so its effects commit independently of the calling transaction. It works for suspended jobs too and does not change the schedule of an `EVERY` job; for an `AFTER` job the next run is counted from the end of this one. It fails if the job is already running, unless the job is `CONCURRENT`.
 
+A body can run another job with `EXECUTE JOB`: that job runs in a session of its own while the calling run waits for it. Such calls nest at most 16 levels deep: a `CONCURRENT` job that executes itself, directly or through other jobs, fails with `EXECUTE JOB is nested more than 16 levels deep`, and every run in the chain is recorded as failed.
+
 ## Monitoring
 
 `duckdb_jobs()` lists the jobs visible to the session with their schedule, their `body` and full `CREATE JOB` statement (`sql`), and their run state: `running`, `next_run`, `last_start`, `last_finish`, `last_status` (`success` or `failed`), `last_error`, `run_count` and `failure_count`. `duckdb_job_runs()` returns the most recent runs of all jobs (up to [`sdb_job_history_size`](../../../configuration/overview.md#logging-metrics-and-profiling), 1024 by default), with `trigger` set to `schedule` or `manual`. Run state is kept in memory and starts over when the server restarts.

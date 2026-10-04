@@ -88,8 +88,6 @@ class BackgroundScheduler final {
   // parked until OpenDelays() while the io pool has never been up).
   yaclib::Future<> Delay(clock::duration d);
 
-  std::shared_ptr<Timer> MakeTimer(std::function<void()> fire);
-
   // Startup: the io pool is up, so Delay can arm real timers. Releases every
   // waiter parked during boot. Called once, after Server::StartIoPool().
   void OpenDelays();
@@ -123,7 +121,7 @@ class BackgroundScheduler final {
 class BackgroundScheduler::Timer final
   : public std::enable_shared_from_this<Timer> {
  public:
-  Timer(yaclib::IExecutorPtr strand, std::function<void()> fire);
+  explicit Timer(std::function<void()> fire);
 
   void ArmAt(clock::time_point at);
 
@@ -134,7 +132,6 @@ class BackgroundScheduler::Timer final
   absl::Mutex _mutex;
   std::optional<clock::time_point> _deadline;
   std::uint64_t _generation = 0;
-  yaclib::IExecutorPtr _strand;
   std::function<void()> _fire;
 };
 

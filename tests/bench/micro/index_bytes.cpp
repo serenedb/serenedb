@@ -20,6 +20,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <filesystem>
 #include <map>
 #include <string>
@@ -41,6 +42,8 @@ struct Totals {
   uint64_t tails = 0;
   uint64_t large = 0;
   uint64_t inline_bytes = 0;
+  uint64_t inline_roots = 0;
+  uint64_t inline_docs = 0;
   uint64_t inline_regions = 0;
   uint64_t docs = 0;
   uint64_t positions = 0;
@@ -112,6 +115,8 @@ void Walk(const irs::SubReader& segment, irs::Directory& dir, Totals& t) {
       } else if (meta.inline_size != 0) {
         ++t.inlined;
         t.inline_bytes += meta.inline_size;
+        t.inline_roots += 1 + meta.inline_data[0];
+        t.inline_docs += meta.docs_count;
         any_inline = true;
       } else if (meta.docs_count <= irs::doc_limits::kBlockSize) {
         ++t.tails;
@@ -150,7 +155,12 @@ int main(int argc, char** argv) {
     irs::MMapDirectory dir{argv[1]};
     irs::DirectoryReader reader{
       dir,
-      irs::IndexReaderOptions{.db = &irs::DuckDBEngine::Instance().instance()}};
+      irs::IndexReaderOptions{.db = &irs::DuckDBEngine::Instance().instance()},
+      [](duckdb::BinaryDeserializer& in) {
+        in.ReadProperty<uint64_t>(0, "tick");
+        in.ReadPropertyWithExplicitDefault<uint64_t>(1, "wal_generation", 0);
+        in.ReadPropertyWithExplicitDefault<uint64_t>(2, "wal_offset", 0);
+      }};
     Totals t;
     std::map<irs::field_id, Norms> norms;
     for (const auto& segment : reader) {
@@ -168,6 +178,13 @@ int main(int argc, char** argv) {
     std::printf(".idx inline %.1f MB (%lu regions), rest %.1f MB\n",
                 mb(t.inline_bytes), t.inline_regions,
                 mb(files[".idx"] - t.inline_bytes));
+    std::printf(
+      "inline lists: %.2f docs and %.2f bytes per term, score roots %.1f MB "
+      "(%.2f bytes per term)\n",
+      static_cast<double>(t.inline_docs) / static_cast<double>(t.inlined),
+      static_cast<double>(t.inline_bytes) / static_cast<double>(t.inlined),
+      mb(t.inline_roots),
+      static_cast<double>(t.inline_roots) / static_cast<double>(t.inlined));
     std::printf(
       ".doc large-term blocks %.1f MB, block index %.1f MB (%.2f B per block, "
       "%.1f%% of blocks narrow), tails %.1f MB\n",

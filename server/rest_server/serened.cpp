@@ -25,8 +25,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
-#include <duckdb/main/database.hpp>
-#include <duckdb/main/job_scheduler.hpp>
 #include <exception>
 #include <functional>
 #include <iresearch/search/filters/filter_optimizer.hpp>
@@ -47,6 +45,7 @@
 #include "query/server_engine.h"
 #include "rest_server/database_path_feature.h"
 #include "scheduler/background_scheduler.h"
+#include "scheduler/job_scheduler.h"
 #include "server/utils/app_server.h"
 #include "server/utils/init.h"
 #include "storage_engine/search_engine.h"
@@ -81,6 +80,7 @@ int RunServer(int argc, char** argv) {
     BackgroundScheduler background;
     search::SearchEngine search;
     Server network;
+    JobScheduler jobs{background};
 
     // Lifecycle is two explicit, flat lists: bring features UP in dependency
     // order, then take them DOWN in a dependency order that is deliberately
@@ -127,9 +127,7 @@ int RunServer(int argc, char** argv) {
         // goes down. The search loops' Delay()s complete instantly without it.
         stop("network", [&] { network.stop(); });
       }
-      stop("jobs", [] {
-        irs::DuckDBEngine::Instance().instance().GetJobScheduler().Stop();
-      });
+      stop("jobs", [&] { jobs.Stop(); });
       if (up_search) {
         stop("search", [&] { search.stop(); });
       }
@@ -146,8 +144,6 @@ int RunServer(int argc, char** argv) {
     network::pg::hba::SetHbaConfig(db_path.hbaConfigFile());
     background.start();
     up_background = true;
-    irs::DuckDBEngine::Instance().instance().GetJobScheduler().SetRuntime(
-      background);
     catalog::InitCatalog(db_path.directory());
     // The io pool must be up before search.start(): the per-index refresh /
     // compaction loops co_await BackgroundScheduler::Delay(), which hosts its
@@ -161,6 +157,7 @@ int RunServer(int argc, char** argv) {
     background.OpenDelays();
     search.start();
     up_search = true;
+    jobs.Start();
     if (const auto bootstrapped = docs::RunDocsBootstrap()) {
       return *bootstrapped;
     }

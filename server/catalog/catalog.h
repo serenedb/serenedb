@@ -41,6 +41,7 @@ class PhysicalOperator;
 class LogicalInsert;
 class LogicalCreateTable;
 class LogicalMergeInto;
+struct CreateJobInfo;
 struct DropInfo;
 
 }  // namespace duckdb
@@ -115,6 +116,10 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     duckdb::DuckSchemaEntry& schema, duckdb::CreateTokenizerInfo& info) final {
     return duckdb::make_uniq<TokenizerCatalogEntry>(*this, schema, info);
   }
+
+  duckdb::unique_ptr<duckdb::StandardEntry> MakeJobEntry(
+    duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
+    duckdb::CreateJobInfo& info) final;
 
   duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchemaById(
     duckdb::ClientContext& context, duckdb::idx_t id);

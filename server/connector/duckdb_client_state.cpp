@@ -30,8 +30,6 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
-#include <duckdb/main/database_manager.hpp>
-#include <duckdb/planner/extension_callback.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
 #include <duckdb/storage/table/index_entry.hpp>
@@ -383,39 +381,26 @@ SystemConnection MakeSystemConnection(std::string_view database,
   return system;
 }
 
-namespace {
-
-class RoleSessionCallback final : public duckdb::ExtensionCallback {
- public:
-  void OnConnectionOpened(duckdb::ClientContext& context) final {
-    if (!context.effective_role.IsValid()) {
-      return;
-    }
-    const auto role = context.effective_role.GetIndex();
-    const auto user = auth::RolesOf(nullptr)->NameOf(role);
-    if (user.empty()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                      ERR_MSG("role with OID ", role, " does not exist"));
-    }
-    const auto& catalog = duckdb::ClientData::Get(context)
-                            .catalog_search_path->GetDefault()
-                            .GetCatalog();
-    auto database = duckdb::DatabaseManager::Get(context).LookupDatabase(
-      context, catalog, nullptr);
-    SereneDBClientState::Register(
-      context,
-      std::make_shared<ConnectionContext>(
-        context, user, role,
-        database ? database->GetName().GetIdentifierName() : std::string_view{},
-        database ? database->oid : 0, nullptr, 0, nullptr));
+SystemConnection MakeJobConnection(duckdb::idx_t owner,
+                                   std::string_view database,
+                                   duckdb::idx_t database_id,
+                                   std::string_view schema) {
+  const auto user = auth::RolesOf(nullptr)->NameOf(owner);
+  if (user.empty()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("role with OID ", owner, " does not exist"));
   }
-};
-
-}  // namespace
-
-void RegisterRoleSessions(duckdb::DBConfig& config) {
-  duckdb::ExtensionCallback::Register(
-    config, duckdb::make_shared_ptr<RoleSessionCallback>());
+  SystemConnection job{.conn =
+                         irs::DuckDBEngine::Instance().CreateConnection()};
+  auto& context = *job.conn->context;
+  job.ctx = std::make_shared<ConnectionContext>(
+    context, user, owner, database, database_id, nullptr, 0, nullptr);
+  SereneDBClientState::Register(context, job.ctx);
+  duckdb::ClientData::Get(context).catalog_search_path->Set(
+    {duckdb::CatalogSearchEntry{duckdb::Identifier{std::string{database}},
+                                duckdb::Identifier{std::string{schema}}}},
+    duckdb::CatalogSetPathType::SET_DIRECTLY);
+  return job;
 }
 
 }  // namespace sdb::connector

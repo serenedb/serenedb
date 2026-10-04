@@ -29,7 +29,6 @@
 #include <duckdb/catalog/default/default_views.hpp>
 
 #include "catalog/boot.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_foreign_server_function.h"
 #include "connector/duckdb_pg_binary_copy.h"
@@ -46,6 +45,7 @@
 #include "connector/functions/encode_key.h"
 #include "connector/functions/es.h"
 #include "connector/functions/inout.h"
+#include "connector/functions/jobs.h"
 #include "connector/functions/json.h"
 #include "connector/functions/markdown_render.h"
 #include "connector/functions/math.h"
@@ -253,7 +253,6 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   catalog::RegisterClusterStorage(config, std::move(layout));
   connector::RegisterConfigVariables(config);
   connector::RegisterIResearchReplacementScan(config);
-  connector::RegisterRoleSessions(config);
   config.SetOptionByName(
     "temp_directory",
     duckdb::Value{utils::file_utils::BuildFilename(datadir, "tmp")});
@@ -341,6 +340,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterMarkdownRenderFunctions(db);
 
   docs::RegisterDocsFunctions(db);
+
+  connector::RegisterJobFunctions(db);
 
   connector::RegisterDuckDBAliases(db);
 

@@ -148,12 +148,8 @@ struct SystemConnection {
   std::shared_ptr<ConnectionContext> ctx;
 };
 
-SystemConnection MakeSystemConnection(std::string_view database,
+SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
+                                      std::string_view database,
                                       duckdb::idx_t database_id);
-
-SystemConnection MakeJobConnection(duckdb::idx_t owner,
-                                   std::string_view database,
-                                   duckdb::idx_t database_id,
-                                   std::string_view schema);
 
 }  // namespace sdb::connector

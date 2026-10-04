@@ -22,14 +22,19 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
+#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/job.h"
 #include "connector/duckdb_client_state.h"
@@ -183,9 +188,18 @@ duckdb::ErrorData JobScheduler::RunBody(std::unique_lock<absl::Mutex>& guard,
   duckdb::ErrorData error;
   connector::SystemConnection connection;
   try {
-    connection = connector::MakeJobConnection(job.owner, job.catalog,
-                                              job.key.first, job.schema);
+    const auto user = auth::RolesOf(nullptr)->NameOf(job.owner);
+    if (user.empty()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("role with OID ", job.owner, " does not exist"));
+    }
+    connection = connector::MakeSystemConnection(user, job.owner, job.catalog,
+                                                 job.key.first);
     auto& context = *connection.conn->context;
+    context.client_data->catalog_search_path->Set(
+      {duckdb::CatalogSearchEntry{duckdb::Identifier{job.catalog},
+                                  duckdb::Identifier{job.schema}}},
+      duckdb::CatalogSetPathType::SET_DIRECTLY);
     guard.lock();
     it = _jobs.find(job.key);
     if (it != _jobs.end()) {

@@ -49,8 +49,6 @@
 namespace sdb {
 namespace {
 
-constexpr size_t kHistoryCapacity = 1024;
-
 bool IsNegative(const duckdb::interval_t& value) {
   return value.months < 0 || value.days < 0 || value.micros < 0;
 }
@@ -320,7 +318,7 @@ duckdb::ErrorData JobScheduler::RunBody(std::shared_ptr<JobState> state,
   }
   absl::MutexLock lock{&_mutex};
   _history.push_back(run);
-  if (_history.size() > kHistoryCapacity) {
+  if (_history.size() > _history_size) {
     _history.pop_front();
   }
   return error;
@@ -329,6 +327,14 @@ duckdb::ErrorData JobScheduler::RunBody(std::shared_ptr<JobState> state,
 std::vector<JobRunRecord> JobScheduler::GetHistory() {
   absl::MutexLock lock{&_mutex};
   return {_history.begin(), _history.end()};
+}
+
+void JobScheduler::SetHistorySize(size_t size) {
+  absl::MutexLock lock{&_mutex};
+  _history_size = size;
+  while (_history.size() > _history_size) {
+    _history.pop_front();
+  }
 }
 
 void JobScheduler::Stop() {

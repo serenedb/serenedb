@@ -1,0 +1,111 @@
+statement ok
+CREATE JOB jhs_tick AFTER 1 HOUR SUSPENDED AS SELECT 1;
+
+
+query
+SHOW sdb_job_history_size;
+----
+sdb_job_history_size
+1024
+
+
+statement ok
+SET GLOBAL sdb_job_history_size = 2;
+
+
+connection other
+query
+SHOW sdb_job_history_size;
+----
+sdb_job_history_size
+2
+
+
+connection default
+statement ok
+EXECUTE JOB jhs_tick;
+
+
+connection default
+statement ok
+EXECUTE JOB jhs_tick;
+
+
+connection default
+statement ok
+EXECUTE JOB jhs_tick;
+
+
+connection default
+query
+SELECT job_name, count(*) FROM duckdb_job_runs() GROUP BY job_name;
+----
+job_name	count
+jhs_tick	2
+
+
+connection default
+statement ok
+SET GLOBAL sdb_job_history_size = 1;
+
+
+connection default
+query
+SELECT count(*) FROM duckdb_job_runs();
+----
+count
+1
+
+
+connection default
+statement ok
+SET sdb_job_history_size = 0;
+
+
+connection default
+statement ok
+EXECUTE JOB jhs_tick;
+
+
+connection other
+query
+SELECT count(*) FROM duckdb_job_runs();
+----
+count
+0
+
+
+connection default
+statement ok
+RESET GLOBAL sdb_job_history_size;
+
+
+connection default
+statement ok
+EXECUTE JOB jhs_tick;
+
+
+connection default
+statement ok
+EXECUTE JOB jhs_tick;
+
+
+connection other
+query
+SHOW sdb_job_history_size;
+----
+sdb_job_history_size
+1024
+
+
+connection default
+query
+SELECT count(*) FROM duckdb_job_runs();
+----
+count
+2
+
+
+connection default
+statement ok
+DROP JOB jhs_tick;

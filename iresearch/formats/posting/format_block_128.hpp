@@ -42,6 +42,13 @@ struct FormatTraits128 {
     Codec::kMaxBlockBytes + block_codec::kInSlack;
   static constexpr uint32_t kEncWords =
     (kEncBytes + sizeof(uint32_t) - 1) / sizeof(uint32_t);
+  static constexpr uint32_t kStreamAhead = 128;
+  static constexpr uint32_t kLine = 64;
+
+  IRS_FORCE_INLINE static void PrefetchStream(const byte_type* at) noexcept {
+    __builtin_prefetch(at + kStreamAhead);
+    __builtin_prefetch(at + kStreamAhead + kLine);
+  }
 
   static_assert(kBlock == doc_limits::kBlockSize);
   static_assert(kBlock == pos_limits::kBlockSize);
@@ -202,6 +209,7 @@ struct FormatTraits128 {
     if (freqs) {
       end += Codec::ValuesBlockSize(end);
     }
+    PrefetchStream(end);
     view.ReadStable(static_cast<uint64_t>(end - at));
     at = end;
     return leaf;
@@ -478,6 +486,7 @@ struct FormatTraits128 {
   IRS_FORCE_INLINE static void End(InputType& in, const byte_type* begin,
                                    const byte_type* end) noexcept {
     if (auto* view = View(in)) {
+      PrefetchStream(end);
       view->ReadStable(static_cast<uint64_t>(end - begin));
     }
   }

@@ -227,9 +227,9 @@ def test_modifier_param_in_list_element(conn, schema):
 
 # ---- ::min_match over the client protocol -----------------------------------
 #
-# The threshold sits on an OR of predicates, not on a TSQUERY value: the
-# branches' queries can be parameters, while a parameter typed with the
-# modifier must fail - folded into the value it would vanish without a trace.
+# The threshold sits on an OR of predicates, whose branches' queries can be
+# parameters, or on a TSQUERY value: a parameter typed with the modifier
+# carries it in the value and counts the words of the bound text.
 
 MIN_MATCH_SQL = (
     "SELECT a FROM {schema}.sp_idx "
@@ -256,11 +256,23 @@ def test_min_match_params_reexecute_prepared(conn, schema):
         assert [r[0] for r in cur.fetchall()] == [1, 2]
 
 
-def test_min_match_typed_param_fails(conn, schema):
+def test_min_match_typed_param(conn, schema):
     sql = f"SELECT a FROM {schema}.sp_idx WHERE b @@ %s::min_match(2) ORDER BY a"
     with conn.cursor() as cur:
+        cur.execute(sql, ("quick dog",))
+        assert [r[0] for r in cur.fetchall()] == [4]
+        # One word: the threshold is capped at the words there are.
+        cur.execute(sql, ("quick",))
+        assert [r[0] for r in cur.fetchall()] == [1, 4]
+        cur.execute("SELECT (%s::min_match(2))::TSQUERY::VARCHAR", ("quick dog",))
+        assert cur.fetchone()[0] == "'quick dog'::min_match(2)"
+
+
+def test_min_match_typed_param_under_not_fails(conn, schema):
+    sql = f"SELECT a FROM {schema}.sp_idx WHERE NOT b @@ %s::min_match(2)"
+    with conn.cursor() as cur:
         with pytest.raises(psycopg.errors.FeatureNotSupported, match="min_match"):
-            cur.execute(sql, ("quick",))
+            cur.execute(sql, ("quick dog",))
 
 
 def test_tsquery_value_text_form(conn):
@@ -378,16 +390,20 @@ def test_wire_param_min_match_both_formats(schema):
             got = [_data_row_fields(p)[0] for p in rows(msgs)]
             assert got == [b"4"], (fmt, got)
 
-        # Typed with the modifier itself, the parameter is refused, not folded.
+        # Typed with the modifier itself, the parameter carries the threshold
+        # in its value: both words of the bound text, in either format.
         c.parse("smm1", f"SELECT a FROM {schema}.sp_idx WHERE b @@ $1::min_match(2)")
         c.sync()
         msgs = c.drain_to_ready()
-        if not errors(msgs):
-            _bind_with_format(c, "", "smm1", b"quick", 0)
+        assert not errors(msgs), errors(msgs)
+        for fmt in (0, 1):
+            _bind_with_format(c, "", "smm1", b"quick dog", fmt)
             c.execute("")
             c.sync()
             msgs = c.drain_to_ready()
-        assert any("min_match" in e.get("M", "") for e in errors(msgs)), types(msgs)
+            assert not errors(msgs), (fmt, errors(msgs))
+            got = [_data_row_fields(p)[0] for p in rows(msgs)]
+            assert got == [b"4"], (fmt, got)
     finally:
         c.close()
 

@@ -156,6 +156,7 @@ void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
     BuildFtsTerm(parent, ctx, column_info, duckdb::Value(std::string{text}));
     return;
   }
+  const size_t value_min_match = require_all ? 0 : TakeMinMatch(ctx);
   irs::ValueTokens<irs::TokenLayout::TermsPos> tokens{ctx.tokenizer.Traits()};
   AnalyzeText(ctx.tokenizer, text, tokens);
   if (tokens.terms().empty()) {
@@ -164,7 +165,8 @@ void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
   }
   TokenGroups groups;
   AppendTokenGroups(tokens.terms(), tokens.pos(), groups);
-  const auto min_match = require_all ? groups.size() : size_t{1};
+  const auto min_match =
+    require_all ? groups.size() : std::max(value_min_match, size_t{1});
   AddTokenGroups(
     MaybeNegated(parent, ctx, column_info),
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR), groups,

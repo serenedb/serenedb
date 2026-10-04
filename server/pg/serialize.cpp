@@ -1547,7 +1547,8 @@ std::string RenderTsqueryRow(const duckdb::RecursiveUnifiedVectorFormat& vdata,
   const auto& slop_child = vdata.children[connector::kTSQuerySlopChild].unified;
   if (const auto idx = slop_child.sel->get_index(row);
       slop_child.validity.RowIsValid(idx)) {
-    parts.slop = duckdb::UnifiedVectorFormat::GetData<int64_t>(slop_child)[idx];
+    parts.slop =
+      duckdb::UnifiedVectorFormat::GetData<uint16_t>(slop_child)[idx];
   }
   const auto& merge_child =
     vdata.children[connector::kTSQueryMergeChild].unified;
@@ -1555,6 +1556,13 @@ std::string RenderTsqueryRow(const duckdb::RecursiveUnifiedVectorFormat& vdata,
       merge_child.validity.RowIsValid(idx)) {
     parts.merge = static_cast<connector::TSQueryMerge>(
       duckdb::UnifiedVectorFormat::GetData<uint8_t>(merge_child)[idx]);
+  }
+  const auto& min_match_child =
+    vdata.children[connector::kTSQueryMinMatchChild].unified;
+  if (const auto idx = min_match_child.sel->get_index(row);
+      min_match_child.validity.RowIsValid(idx)) {
+    parts.min_match =
+      duckdb::UnifiedVectorFormat::GetData<uint32_t>(min_match_child)[idx];
   }
   return connector::RenderTSQueryValueText(parts);
 }

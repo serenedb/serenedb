@@ -43,8 +43,11 @@ inline constexpr duckdb::idx_t kTSQueryBoostChild = 2;
 inline constexpr duckdb::idx_t kTSQuerySlopChild = 3;
 inline constexpr duckdb::idx_t kTSQueryScorerChild = 4;
 inline constexpr duckdb::idx_t kTSQueryMergeChild = 5;
+inline constexpr duckdb::idx_t kTSQueryMinMatchChild = 6;
 
 bool TryCastExactInt64(const duckdb::Value& v, duckdb::Value& out);
+
+uint16_t CheckedSlop(int64_t value);
 
 bool IsTSQueryStructType(const duckdb::LogicalType& type);
 
@@ -81,9 +84,10 @@ struct TSQueryFields {
   Str text;
   Str tokenizer;
   Str scorer;
-  int64_t slop = 0;
+  uint16_t slop = 0;
   float boost = 1.0f;
   TSQueryMerge merge = TSQueryMerge::Default;
+  uint32_t min_match = 0;
 };
 
 using TSQueryParts = TSQueryFields<std::string>;

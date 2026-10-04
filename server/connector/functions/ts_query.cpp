@@ -57,9 +57,10 @@ duckdb::LogicalType MakeTSQueryStructType(std::string_view alias) {
   children.emplace_back("text", duckdb::LogicalType::VARCHAR);
   children.emplace_back("tokenizer", duckdb::LogicalType::VARCHAR);
   children.emplace_back("boost", duckdb::LogicalType::FLOAT);
-  children.emplace_back("slop", duckdb::LogicalType::BIGINT);
+  children.emplace_back("slop", duckdb::LogicalType::USMALLINT);
   children.emplace_back("scorer", duckdb::LogicalType::VARCHAR);
   children.emplace_back("merge", duckdb::LogicalType::UTINYINT);
+  children.emplace_back("min_match", duckdb::LogicalType::UINTEGER);
   return duckdb::LogicalType::STRUCT(std::move(children))
     .WithAlias(std::string{alias});
 }
@@ -121,13 +122,16 @@ TSQueryCastData ReadTargetModifiers(const duckdb::LogicalType& target) {
       data.parts.tokenizer = mod->GetValue<std::string>();
       break;
     case duckdb::LogicalTypeId::BIGINT:
-      data.parts.slop = mod->GetValue<int64_t>();
+      data.parts.slop = CheckedSlop(mod->GetValue<int64_t>());
       break;
     case duckdb::LogicalTypeId::BLOB:
       data.parts.scorer = std::string{duckdb::StringValue::Get(*mod)};
       break;
     case duckdb::LogicalTypeId::UTINYINT:
       data.parts.merge = static_cast<TSQueryMerge>(mod->GetValue<uint8_t>());
+      break;
+    case duckdb::LogicalTypeId::UINTEGER:
+      data.parts.min_match = mod->GetValue<uint32_t>();
       break;
     default:
       break;
@@ -156,6 +160,15 @@ TSQueryRowView ComposeParts(const TSQueryRowView& inner,
   }
   if (outer.merge != TSQueryMerge::Default) {
     parts.merge = outer.merge;
+  }
+  if (outer.min_match != 0) {
+    if (inner.min_match != 0) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("::min_match(K) on a query that already has a ::min_match"),
+        ERR_HINT("A query takes one threshold."));
+    }
+    parts.min_match = outer.min_match;
   }
   return parts;
 }
@@ -233,6 +246,7 @@ struct TSQueryStructWriter {
   duckdb::Vector& slop;
   duckdb::Vector& scorer;
   duckdb::Vector& merge;
+  duckdb::Vector& min_match;
 
   explicit TSQueryStructWriter(duckdb::Vector& result)
     : text{duckdb::StructVector::GetEntries(result)[kTSQueryTextChild]},
@@ -241,7 +255,9 @@ struct TSQueryStructWriter {
       boost{duckdb::StructVector::GetEntries(result)[kTSQueryBoostChild]},
       slop{duckdb::StructVector::GetEntries(result)[kTSQuerySlopChild]},
       scorer{duckdb::StructVector::GetEntries(result)[kTSQueryScorerChild]},
-      merge{duckdb::StructVector::GetEntries(result)[kTSQueryMergeChild]} {}
+      merge{duckdb::StructVector::GetEntries(result)[kTSQueryMergeChild]},
+      min_match{
+        duckdb::StructVector::GetEntries(result)[kTSQueryMinMatchChild]} {}
 
   void Write(duckdb::idx_t row, const TSQueryRowView& parts) {
     WriteStr(text, row, parts.text);
@@ -250,6 +266,7 @@ struct TSQueryStructWriter {
     WriteFlat(slop, row, parts.slop);
     WriteStrOrNull(scorer, row, parts.scorer);
     WriteFlat(merge, row, static_cast<uint8_t>(parts.merge));
+    WriteFlat(min_match, row, parts.min_match);
   }
 };
 
@@ -271,11 +288,14 @@ std::optional<TSQueryRowView> ReadTSQueryRow(const duckdb::Vector& vec,
   if (auto v = ReadFlat<float>(entries[kTSQueryBoostChild], row)) {
     parts.boost = *v;
   }
-  if (auto v = ReadFlat<int64_t>(entries[kTSQuerySlopChild], row)) {
+  if (auto v = ReadFlat<uint16_t>(entries[kTSQuerySlopChild], row)) {
     parts.slop = *v;
   }
   if (auto v = ReadStr(entries[kTSQueryScorerChild], row)) {
     parts.scorer = *v;
+  }
+  if (auto v = ReadFlat<uint32_t>(entries[kTSQueryMinMatchChild], row)) {
+    parts.min_match = *v;
   }
   if (auto v = ReadFlat<uint8_t>(entries[kTSQueryMergeChild], row)) {
     parts.merge = static_cast<TSQueryMerge>(*v);
@@ -311,9 +331,6 @@ duckdb::BoundCastInfo BindTSQueryFromStringCast(
   if (HasSlopModifier(target)) {
     return duckdb::BoundCastInfo(ThrowingSlopCast);
   }
-  if (HasMinMatchModifier(target)) {
-    return duckdb::BoundCastInfo(ThrowingMinMatchCast);
-  }
   if (HasScoreModifier(target)) {
     return duckdb::BoundCastInfo(ThrowingScoreCast);
   }
@@ -338,11 +355,8 @@ bool TSQueryBoostCast(duckdb::Vector& source, duckdb::Vector& result,
 }
 
 duckdb::BoundCastInfo BindTSQueryBoostCast(duckdb::BindCastInput&,
-                                           const duckdb::LogicalType& source,
+                                           const duckdb::LogicalType&,
                                            const duckdb::LogicalType& target) {
-  if (HasMinMatchModifier(source) || HasMinMatchModifier(target)) {
-    return duckdb::BoundCastInfo(ThrowingMinMatchCast);
-  }
   return {TSQueryBoostCast,
           duckdb::make_uniq<TSQueryCastData>(ReadTargetModifiers(target))};
 }
@@ -363,6 +377,7 @@ bool TSQueryToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
       .slop = parts->slop,
       .boost = parts->boost,
       .merge = parts->merge,
+      .min_match = parts->min_match,
     });
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result)[i] =
       duckdb::StringVector::AddString(result, rendered);
@@ -378,9 +393,6 @@ duckdb::BoundCastInfo BindTSQueryToVarcharCast(
   }
   if (HasSlopModifier(source)) {
     return duckdb::BoundCastInfo(ThrowingSlopCast);
-  }
-  if (HasMinMatchModifier(source)) {
-    return duckdb::BoundCastInfo(ThrowingMinMatchCast);
   }
   if (HasScoreModifier(source)) {
     return duckdb::BoundCastInfo(ThrowingScoreCast);

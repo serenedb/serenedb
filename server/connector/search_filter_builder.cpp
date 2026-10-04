@@ -1176,22 +1176,55 @@ absl::Status FromFunctionExpression(
   return absl::UnimplementedError(absl::StrCat("Unsupported function: ", name));
 }
 
+void CollectOrChain(const duckdb::Expression& expr,
+                    std::vector<const duckdb::Expression*>& out) {
+  const auto& unwrapped = UnwrapTSQueryCast(expr);
+  if (unwrapped.GetExpressionClass() ==
+      duckdb::ExpressionClass::BOUND_FUNCTION) {
+    const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
+    if (ClassifyTSQueryFunction(
+          func.Function().GetName().GetIdentifierName()) == TSQueryOp::Or) {
+      for (const auto& child : func.GetChildren()) {
+        CollectOrChain(*child, out);
+      }
+      return;
+    }
+  }
+  out.push_back(&expr);
+}
+
 void FromTSQueryConjunction(BoolTarget parent, const FilterContext& ctx,
                             const SearchColumnInfo& column_info,
                             const duckdb::BoundFunctionExpression& func,
                             bool is_and) {
   SDB_ASSERT(func.GetChildren().size() == 2);
+  const auto min_match = is_and ? 0 : TakeMinMatch(ctx);
+  std::vector<const duckdb::Expression*> operands;
+  for (const auto& child : func.GetChildren()) {
+    if (min_match != 0) {
+      CollectOrChain(*child, operands);
+    } else {
+      operands.push_back(child.get());
+    }
+  }
+  if (min_match > operands.size()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("::min_match(", min_match, ") on an OR of ",
+                            operands.size(), " branches"),
+                    ERR_HINT("K must be between 1 and the number of `||` "
+                             "branches."));
+  }
   const auto group = AddGroup(MaybeNegated(parent, ctx, column_info),
                               is_and ? irs::Occur::Must : irs::Occur::Should);
   group.node->SetBoost(ctx.boost);
-  auto sub_ctx = ctx;
+  auto sub_ctx = ctx.WithoutMinMatch();
   sub_ctx.boost = irs::kNoBoost;
   sub_ctx.negated = false;
-  for (const auto& child : func.GetChildren()) {
+  for (const auto* child : operands) {
     BuildTSQuery(group, sub_ctx, column_info, *child);
   }
   if (!is_and) {
-    SetMinMatch(*group.node, 1);
+    SetMinMatch(*group.node, min_match != 0 ? min_match : 1);
   }
 }
 
@@ -1277,12 +1310,8 @@ bool TryDispatchSlopCast(BoolTarget parent, const FilterContext& ctx,
                     ERR_MSG("::slop specified more than once"),
                     ERR_HINT("Apply ::slop(N) at most once per phrase."));
   }
-  if (*slop > std::numeric_limits<irs::PosAttr::value_t>::max()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("::slop too large: ", *slop));
-  }
-  BuildTSQuery(parent, ctx.WithSlop(static_cast<irs::PosAttr::value_t>(*slop)),
-               column_info, duckdb::BoundCastExpression::Child(cast_expr));
+  BuildTSQuery(parent, ctx.WithSlop(CheckedSlop(*slop)), column_info,
+               duckdb::BoundCastExpression::Child(cast_expr));
   return true;
 }
 
@@ -1499,6 +1528,47 @@ bool TryDispatchMergeCast(BoolTarget parent, const FilterContext& ctx,
   return true;
 }
 
+template<typename Build>
+void BuildWithValueMinMatch(const FilterContext& ctx, uint32_t min_match,
+                            Build&& build) {
+  if (ctx.min_match != 0) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("::min_match(K) on a query that already has a ::min_match"),
+      ERR_HINT("A query takes one threshold. To count a group as one branch "
+               "of another, put it inside the outer `||`: (('a' || 'b' || "
+               "'c')::min_match(2) || 'd')::min_match(2)."));
+  }
+  bool taken = false;
+  build(ctx.WithMinMatch(min_match, &taken));
+  if (!taken && min_match > 1) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("::min_match(", min_match, ") on a query with one branch"),
+      ERR_HINT("A TSQUERY counts its branches when it is an OR: several "
+               "words ('a b c'::min_match(2)), a `||` chain or ts_any(...). "
+               "Anything else is one branch."));
+  }
+}
+
+bool TryDispatchMinMatchCast(BoolTarget parent, const FilterContext& ctx,
+                             const SearchColumnInfo& column_info,
+                             const duckdb::Expression& peeled) {
+  if (!duckdb::BoundCastExpression::IsCast(peeled)) {
+    return false;
+  }
+  const auto& cast_expr = peeled.Cast<duckdb::BoundFunctionExpression>();
+  const auto min_match = TryGetMinMatchModifier(cast_expr.GetReturnType());
+  if (!min_match) {
+    return false;
+  }
+  BuildWithValueMinMatch(ctx, *min_match, [&](const FilterContext& sub_ctx) {
+    BuildTSQuery(parent, sub_ctx, column_info,
+                 duckdb::BoundCastExpression::Child(cast_expr));
+  });
+  return true;
+}
+
 bool TryDispatchSqlScoreCast(BoolTarget filter, const FilterContext& ctx,
                              const duckdb::Expression& peeled) {
   if (!duckdb::BoundCastExpression::IsCast(peeled)) {
@@ -1560,18 +1630,6 @@ void RejectNegatedMinMatch(const FilterContext& ctx) {
       ERR_MSG("NOT on a ::min_match(K) group is not supported"),
       ERR_HINT("Fewer than K of n branches is at least n-K+1 of their "
                "negations: (NOT a OR NOT b OR ...)::min_match(n-K+1)."));
-  }
-}
-
-void RejectTSQueryMinMatch(const duckdb::Expression& peeled) {
-  if (duckdb::BoundCastExpression::IsCast(peeled) &&
-      TryGetMinMatchModifier(peeled.GetReturnType())) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("::min_match(K) applies to an OR of predicates, not to a query "
-              "inside `@@`"),
-      ERR_HINT("Inside `@@` use ts_any([q1, q2, ...], K); across fields, "
-               "(a @@ q1 OR b @@ q2 OR ...)::min_match(K)."));
   }
 }
 
@@ -2165,6 +2223,23 @@ TSQueryOp ClassifyTSQueryFunction(std::string_view name) {
   return magic_enum::enum_cast<TSQueryOp>(name).value_or(TSQueryOp::Unknown);
 }
 
+uint32_t TakeMinMatch(const FilterContext& ctx) {
+  if (ctx.min_match == 0) {
+    return 0;
+  }
+  if (ctx.negated) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("NOT on a ::min_match(K) query is not supported"),
+      ERR_HINT("Fewer than K of n branches is at least n-K+1 of their "
+               "negations."));
+  }
+  if (ctx.min_match_taken) {
+    *ctx.min_match_taken = true;
+  }
+  return ctx.min_match;
+}
+
 namespace {
 
 // Throws if a ::slop(N) budget reached a leaf that cannot consume it.
@@ -2225,24 +2300,25 @@ void BuildTSQueryValue(BoolTarget parent, const FilterContext& ctx,
                     ERR_MSG("::slop specified more than once"),
                     ERR_HINT("Apply ::slop(N) at most once per phrase."));
   }
-  if (parts->slop > std::numeric_limits<irs::PosAttr::value_t>::max()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("::slop too large: ", parts->slop));
-  }
-  const auto boosted =
-    parts->slop != 0
-      ? ctx.WithBoost(parts->boost)
-          .WithSlop(static_cast<irs::PosAttr::value_t>(parts->slop))
-      : ctx.WithBoost(parts->boost);
+  const auto boosted = parts->slop != 0
+                         ? ctx.WithBoost(parts->boost).WithSlop(parts->slop)
+                         : ctx.WithBoost(parts->boost);
   const auto* scorer =
     parts->scorer.empty() ? nullptr : ResolveScoreOverride(ctx, parts->scorer);
-  if (parts->tokenizer.empty()) {
-    emit(boosted);
-  } else if (parts->tokenizer == irs::KeywordTokenizer::type_name()) {
-    emit(boosted.WithTokenizer(boosted.identity));
+  const auto build = [&](const FilterContext& sub_ctx) {
+    if (parts->tokenizer.empty()) {
+      emit(sub_ctx);
+    } else if (parts->tokenizer == irs::KeywordTokenizer::type_name()) {
+      emit(sub_ctx.WithTokenizer(sub_ctx.identity));
+    } else {
+      auto wrapper = ResolveTokenizerOrThrow(ctx, parts->tokenizer);
+      emit(sub_ctx.WithTokenizer(*wrapper));
+    }
+  };
+  if (parts->min_match != 0) {
+    BuildWithValueMinMatch(boosted, parts->min_match, build);
   } else {
-    auto wrapper = ResolveTokenizerOrThrow(ctx, parts->tokenizer);
-    emit(boosted.WithTokenizer(*wrapper));
+    build(boosted);
   }
   if (!scoped) {
     return;
@@ -2310,7 +2386,9 @@ void BuildTSQuery(BoolTarget parent, const FilterContext& ctx,
     return;
   }
 
-  RejectTSQueryMinMatch(unwrapped);
+  if (TryDispatchMinMatchCast(parent, ctx, column_info, unwrapped)) {
+    return;
+  }
 
   // Bare string (promoted via VARCHAR -> TSQUERY cast) -> tokenize via
   // the ambient (column) analyzer. Multi-token input composes with OR
@@ -2357,6 +2435,12 @@ void BuildTSQuery(BoolTarget parent, const FilterContext& ctx,
   const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
   const auto op =
     ClassifyTSQueryFunction(func.Function().GetName().GetIdentifierName());
+
+  constexpr TSQueryOp kMinMatchOps[] = {TSQueryOp::Or, TSQueryOp::Any,
+                                        TSQueryOp::Tokenize, TSQueryOp::Boost};
+  if (ctx.min_match != 0 && !absl::c_linear_search(kMinMatchOps, op)) {
+    return BuildTSQuery(parent, ctx.WithoutMinMatch(), column_info, expr);
+  }
 
   // Only the phrase emitters consume ctx.slop. Any other op carrying a
   // non-zero slop (ts_like('x')::slop(2); ## which builds a phrase but

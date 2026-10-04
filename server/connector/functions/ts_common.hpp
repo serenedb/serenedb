@@ -68,6 +68,8 @@ struct FilterContext {
   duckdb::ClientContext& client_context;
   uint32_t levenshtein_max_terms = 50;
   FilterScorers* scorer_sink = nullptr;
+  uint32_t min_match = 0;
+  bool* min_match_taken = nullptr;
 
   FilterContext WithTokenizer(irs::analysis::Tokenizer& tokenizer) const {
     return {
@@ -83,6 +85,8 @@ struct FilterContext {
       .client_context = client_context,
       .levenshtein_max_terms = levenshtein_max_terms,
       .scorer_sink = scorer_sink,
+      .min_match = min_match,
+      .min_match_taken = min_match_taken,
     };
   }
 
@@ -100,6 +104,8 @@ struct FilterContext {
       .client_context = client_context,
       .levenshtein_max_terms = levenshtein_max_terms,
       .scorer_sink = scorer_sink,
+      .min_match = min_match,
+      .min_match_taken = min_match_taken,
     };
   }
 
@@ -117,9 +123,22 @@ struct FilterContext {
       .client_context = client_context,
       .levenshtein_max_terms = levenshtein_max_terms,
       .scorer_sink = scorer_sink,
+      .min_match = min_match,
+      .min_match_taken = min_match_taken,
     };
   }
+
+  FilterContext WithMinMatch(uint32_t value, bool* taken) const {
+    auto out = *this;
+    out.min_match = value;
+    out.min_match_taken = taken;
+    return out;
+  }
+
+  FilterContext WithoutMinMatch() const { return WithMinMatch(0, nullptr); }
 };
+
+uint32_t TakeMinMatch(const FilterContext& ctx);
 
 inline BoolTarget MaybeNegated(BoolTarget parent, const FilterContext& ctx,
                                const SearchColumnInfo& info) {

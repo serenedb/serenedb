@@ -192,18 +192,10 @@ SereneDBCatalog::FindSchemaById(duckdb::ClientContext& context,
 duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeJobEntry(
   duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
   duckdb::CreateJobInfo& info) {
-  auto job = duckdb::make_uniq<JobEntry>(*this, schema, info);
-  auto* connection = transaction.context
-                       ? connector::GetSereneDBContextPtr(*transaction.context)
-                       : nullptr;
-  if (connection) {
-    connection->DeferToCommit([this, oid = job->oid] {
-      auto* jobs = JobScheduler::Instance();
-      auto entry = FindIn<duckdb::JobCatalogEntry>(nullptr, oid);
-      if (jobs && entry) {
-        jobs->Schedule(*entry);
-      }
-    });
+  VerifySchedule(info.schedule);
+  auto job = duckdb::make_uniq<JobCatalogEntry>(*this, schema, info);
+  if (transaction.context) {
+    job->ScheduleAtCommit(*transaction.context);
   }
   return job;
 }

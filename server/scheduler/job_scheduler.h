@@ -28,6 +28,7 @@
 #include <duckdb/catalog/job_schedule.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/shared_ptr.hpp>
+#include <duckdb/common/types/timestamp.hpp>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -37,10 +38,14 @@
 namespace duckdb {
 
 class ClientContext;
-class JobCatalogEntry;
 class SQLStatement;
 
 }  // namespace duckdb
+namespace sdb::catalog {
+
+class JobCatalogEntry;
+
+}  // namespace sdb::catalog
 namespace sdb {
 
 class BackgroundScheduler;
@@ -75,11 +80,11 @@ class JobScheduler final {
   ~JobScheduler();
 
   void Start();
-  void Schedule(duckdb::JobCatalogEntry& job);
-  void Drop(duckdb::JobCatalogEntry& job);
+  void Schedule(catalog::JobCatalogEntry& job);
+  void Drop(catalog::JobCatalogEntry& job);
   void DropDatabase(duckdb::idx_t database_oid);
-  void Execute(duckdb::JobCatalogEntry& job);
-  bool TryGetStatus(duckdb::JobCatalogEntry& job, JobStatus& result);
+  void Execute(catalog::JobCatalogEntry& job);
+  bool TryGetStatus(catalog::JobCatalogEntry& job, JobStatus& result);
   std::vector<JobRunRecord> GetHistory();
   void Stop();
 
@@ -102,8 +107,8 @@ class JobScheduler final {
     duckdb::shared_ptr<duckdb::ClientContext> context;
   };
 
-  static Key KeyOf(duckdb::JobCatalogEntry& job);
-  static Definition DefinitionOf(duckdb::JobCatalogEntry& job);
+  static Key KeyOf(catalog::JobCatalogEntry& job);
+  static Definition DefinitionOf(catalog::JobCatalogEntry& job);
 
   void Run(Key key, uint64_t epoch);
   duckdb::ErrorData RunBody(std::unique_lock<absl::Mutex>& guard,

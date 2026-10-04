@@ -26,6 +26,7 @@
 #include <cstring>
 #include <duckdb.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
+#include <filesystem>
 #include <iresearch/formats/column/codecs/fsst_codec.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
@@ -34,6 +35,7 @@
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <map>
 #include <memory>
@@ -58,6 +60,16 @@ uint64_t Rows() {
     return static_cast<uint64_t>(2'000'000);
   }();
   return rows;
+}
+
+uint32_t SegmentTarget() {
+  static const uint32_t target = [] {
+    if (const char* e = std::getenv("SDB_BENCH_SEGMENT_TARGET")) {
+      return static_cast<uint32_t>(std::strtoul(e, nullptr, 10));
+    }
+    return irs::ColCodecParams{}.segment_target;
+  }();
+  return target;
 }
 
 constexpr irs::field_id kField = 0;
@@ -126,8 +138,21 @@ void FillBatch(duckdb::Vector& vec, Corpus corpus, uint64_t base,
   }
 }
 
+std::unique_ptr<irs::Directory> MakeSegDirectory(Corpus corpus, size_t arm) {
+  const char* root = std::getenv("SDB_BENCH_MMAP_DIR");
+  if (root == nullptr) {
+    return std::make_unique<irs::MemoryDirectory>();
+  }
+  const auto path = std::filesystem::path{root} /
+                    ("col_codecs_" + std::to_string(static_cast<int>(corpus)) +
+                     "_" + std::to_string(arm));
+  std::filesystem::remove_all(path);
+  std::filesystem::create_directories(path);
+  return std::make_unique<irs::MMapDirectory>(path);
+}
+
 struct Seg {
-  irs::MemoryDirectory dir{};
+  std::unique_ptr<irs::Directory> dir;
   std::unique_ptr<irs::ColReader> reader;
   const irs::ColumnReader* col = nullptr;
   uint64_t rows = 0;
@@ -141,6 +166,7 @@ uint64_t Build(irs::Directory& dir, Corpus corpus, const Arm& arm,
                           /*skip_validity=*/false, DEFAULT_ROW_GROUP_SIZE,
                           arm.codec, /*hyperloglog=*/false,
                           irs::ColCodecParams{.compression_level = arm.level,
+                                              .segment_target = SegmentTarget(),
                                               .objective = arm.objective});
   uint64_t pos = 0;
   while (pos < rows) {
@@ -165,9 +191,10 @@ const Seg& GetSeg(Corpus corpus, size_t arm) {
   if (!slot) {
     slot = std::make_unique<Seg>();
     slot->rows = Rows();
-    slot->bytes = Build(slot->dir, corpus, kArms[arm], slot->rows);
+    slot->dir = MakeSegDirectory(corpus, arm);
+    slot->bytes = Build(*slot->dir, corpus, kArms[arm], slot->rows);
     slot->reader =
-      std::make_unique<irs::ColReader>(slot->dir, std::string{kSeg}, CsDb());
+      std::make_unique<irs::ColReader>(*slot->dir, std::string{kSeg}, CsDb());
     slot->col = slot->reader->Column(kField);
     if (slot->col == nullptr) {
       std::fprintf(stderr, "col_codecs: column missing\n");
@@ -274,6 +301,8 @@ void PointLookup(benchmark::State& state, Corpus corpus, size_t arm) {
       benchmark::DoNotOptimize(out);
     }
   }
+  state.counters["segments"] =
+    static_cast<double>(seg.col->DataBlocks().size());
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) *
                           static_cast<int64_t>(rows.size()));
 }

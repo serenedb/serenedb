@@ -55,13 +55,57 @@ struct BoundPair {
   uint32_t norm;
 };
 
+IRS_FORCE_INLINE inline uint32_t CountLessRun(const uint32_t* begin,
+                                              uint32_t value) noexcept {
+#ifdef __AVX2__
+  const __m256i bias = _mm256_set1_epi32(std::numeric_limits<int32_t>::min());
+  const __m256i target =
+    _mm256_xor_si256(_mm256_set1_epi32(static_cast<int32_t>(value)), bias);
+  const auto less = [&](size_t j) IRS_FORCE_INLINE {
+    return _mm256_cmpgt_epi32(
+      target,
+      _mm256_xor_si256(
+        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(begin + j)), bias));
+  };
+  return static_cast<uint32_t>(std::popcount(static_cast<uint32_t>(
+           _mm256_movemask_epi8(_mm256_packs_epi32(less(0), less(8)))))) /
+         2;
+#else
+  uint32_t count = 0;
+  for (size_t i = 0; i != 16; ++i) {
+    count += static_cast<uint32_t>(begin[i] < value);
+  }
+  return count;
+#endif
+}
+
+IRS_FORCE_INLINE inline uint32_t CountLessRun(const uint16_t* begin,
+                                              uint32_t value) noexcept {
+#ifdef __AVX2__
+  const __m256i v = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(begin));
+  const __m256i t = _mm256_set1_epi16(static_cast<int16_t>(value));
+  const __m256i ge = _mm256_cmpeq_epi16(_mm256_max_epu16(v, t), v);
+  return 16 - static_cast<uint32_t>(std::popcount(
+                static_cast<uint32_t>(_mm256_movemask_epi8(ge)))) /
+                2;
+#else
+  uint32_t count = 0;
+  for (size_t i = 0; i != 16; ++i) {
+    count += static_cast<uint32_t>(begin[i] < value);
+  }
+  return count;
+#endif
+}
+
 class BlockIndex {
  public:
-  static constexpr uint32_t kRun = doc_limits::kSkipSize;
+  static constexpr uint32_t kRun = 16;
   static constexpr uint32_t kRootBytes = 2 * sizeof(uint32_t);
   static constexpr uint8_t kWideEnd = 1;
   static constexpr uint8_t kWideGroup = 2;
   static constexpr uint8_t kNarrowBounds = 4;
+  static constexpr uint8_t kNarrowRuns = 8;
+  static constexpr uint32_t kNarrowSpan = std::numeric_limits<uint16_t>::max();
 
   static_assert(std::endian::native == std::endian::little);
 
@@ -107,7 +151,13 @@ class BlockIndex {
     SDB_ASSERT(blocks != 0);
     const uint64_t n = blocks;
     const uint64_t r = Runs(blocks);
-    uint64_t bytes = 4 * (n + r) + LandingBytes(shape, flags) * (n - 1);
+    uint64_t bytes = LandingBytes(shape, flags) * (n - 1);
+    if ((flags & kNarrowRuns) != 0) {
+      bytes += sizeof(uint32_t) + 2 * sizeof(uint32_t) * r +
+               sizeof(uint16_t) * kRun * r;
+    } else {
+      bytes += sizeof(uint32_t) * (n + r);
+    }
     if (shape.bounds) {
       bytes += kRootBytes + BoundBytes(flags) * (n + r);
     }
@@ -123,6 +173,8 @@ class BlockIndex {
     _blocks = blocks;
     _wide_end = (flags & kWideEnd) != 0;
     _wide_group = (flags & kWideGroup) != 0;
+    _narrow = (flags & kNarrowRuns) != 0;
+    SDB_ASSERT(!_narrow || !_wide_end);
     _landing_bytes = LandingBytes(shape, flags);
     _group_at = EndBytes(flags);
     _index_at = _group_at + GroupBytes(flags);
@@ -132,9 +184,18 @@ class BlockIndex {
       _root = data;
       data += kRootBytes;
     }
-    _last = reinterpret_cast<const uint32_t*>(data);
-    _run_last = _last + n;
-    _landing = data + 4 * (n + r);
+    if (_narrow) {
+      _base = absl::little_endian::Load32(data);
+      data += sizeof(uint32_t);
+      _run_last = reinterpret_cast<const uint32_t*>(data);
+      _run_end = _run_last + r;
+      _last16 = reinterpret_cast<const uint16_t*>(_run_end + r);
+      _landing = data + 2 * sizeof(uint32_t) * r + sizeof(uint16_t) * kRun * r;
+    } else {
+      _last = reinterpret_cast<const uint32_t*>(data);
+      _run_last = _last + n;
+      _landing = data + sizeof(uint32_t) * (n + r);
+    }
     if (shape.bounds) {
       _bound = _landing + uint64_t{_landing_bytes} * (n - 1);
       _run_bound = _bound + BoundBytes(flags) * n;
@@ -148,10 +209,15 @@ class BlockIndex {
             absl::little_endian::Load32(_root + sizeof(uint32_t))};
   }
 
-  doc_id_t Last(uint32_t k) const noexcept { return _last[k]; }
+  doc_id_t Last(uint32_t k) const noexcept {
+    return _narrow ? RunBase(k / kRun) + _last16[k] : _last[k];
+  }
 
   uint64_t End(uint32_t k) const noexcept {
     const auto* p = Landing(k);
+    if (_narrow) {
+      return _run_end[k / kRun] + absl::little_endian::Load16(p);
+    }
     return _wide_end ? absl::little_endian::Load32(p)
                      : absl::little_endian::Load16(p);
   }
@@ -184,8 +250,11 @@ class BlockIndex {
 
   uint32_t Find(uint32_t from, doc_id_t target) const noexcept {
     const auto n = _blocks;
-    if (from >= n || _last[from] >= target) {
+    if (from >= n || Last(from) >= target) {
       return from;
+    }
+    if (_narrow) {
+      return FindNarrow(from, target);
     }
     auto k = from + 1;
     if (k + kWindow <= n) {
@@ -216,7 +285,7 @@ class BlockIndex {
     auto b = std::max(k, r * kRun);
     const auto e = std::min(n, (r + 1) * kRun);
     if (b == r * kRun && e == b + kRun) {
-      return b + CountLess<kRun>(_last + b, target);
+      return b + CountLessRun(_last + b, target);
     }
     while (b != e && _last[b] < target) {
       ++b;
@@ -226,6 +295,35 @@ class BlockIndex {
 
  private:
   static constexpr uint32_t kWindow = 64;
+
+  doc_id_t RunBase(uint32_t r) const noexcept {
+    return r == 0 ? _base : _run_last[r - 1];
+  }
+
+  uint32_t FindNarrow(uint32_t from, doc_id_t target) const noexcept {
+    const auto runs = Runs(_blocks);
+    auto r = from / kRun;
+    if (_run_last[r] < target) {
+      ++r;
+      while (r + kWindow <= runs && _run_last[r + kWindow - 1] < target) {
+        r += kWindow;
+      }
+      if (r + kWindow <= runs) {
+        r += CountLess<kWindow>(_run_last + r, target);
+      } else {
+        while (r != runs && _run_last[r] < target) {
+          ++r;
+        }
+        if (r == runs) {
+          return _blocks;
+        }
+      }
+    }
+    const auto base = RunBase(r);
+    const auto rel = target > base ? target - base : 0;
+    SDB_ASSERT(rel <= kNarrowSpan);
+    return std::max(from, r * kRun + CountLessRun(_last16 + r * kRun, rel));
+  }
 
   const byte_type* Landing(uint32_t k) const noexcept {
     return _landing + size_t{_landing_bytes} * k;
@@ -244,17 +342,21 @@ class BlockIndex {
 
   const byte_type* _root = nullptr;
   const uint32_t* _last = nullptr;
+  const uint16_t* _last16 = nullptr;
   const uint32_t* _run_last = nullptr;
+  const uint32_t* _run_end = nullptr;
   const byte_type* _landing = nullptr;
   const byte_type* _bound = nullptr;
   const byte_type* _run_bound = nullptr;
   uint32_t _blocks = 0;
+  uint32_t _base = 0;
   uint32_t _landing_bytes = 0;
   uint32_t _group_at = 0;
   uint32_t _index_at = 0;
   uint32_t _pay_at = 0;
   bool _wide_end = false;
   bool _wide_group = false;
+  bool _narrow = false;
   bool _narrow_bounds = false;
 };
 
@@ -441,7 +543,9 @@ class BlockIndexWriter {
     if (m == 0) {
       return flags;
     }
-    if (_end[m - 1] > std::numeric_limits<uint16_t>::max()) {
+    if (NarrowRuns()) {
+      flags |= BlockIndex::kNarrowRuns;
+    } else if (_end[m - 1] > std::numeric_limits<uint16_t>::max()) {
       flags |= BlockIndex::kWideEnd;
     }
     if (std::max(_pos_group[m - 1], _pay_group[m - 1]) >
@@ -449,6 +553,29 @@ class BlockIndexWriter {
       flags |= BlockIndex::kWideGroup;
     }
     return flags;
+  }
+
+  doc_id_t RunBase(uint32_t first) const noexcept {
+    return first == 0 ? _last[0] : _last[first - 1];
+  }
+
+  uint64_t RunEnd(uint32_t first) const noexcept {
+    return first == 0 ? 0 : _end[first - 1];
+  }
+
+  bool NarrowRuns() const noexcept {
+    const auto n = Size();
+    for (uint32_t first = 0; first < n; first += BlockIndex::kRun) {
+      const auto last = std::min(n, first + BlockIndex::kRun) - 1;
+      if (_last[last] - RunBase(first) > BlockIndex::kNarrowSpan) {
+        return false;
+      }
+      if (first + 1 < n && _end[std::min(last, n - 2)] - RunEnd(first) >
+                             BlockIndex::kNarrowSpan) {
+        return false;
+      }
+    }
+    return true;
   }
 
   void Write(IndexOutput& out, BlockIndexShape shape) const {
@@ -468,11 +595,26 @@ class BlockIndexWriter {
       out.WriteU32(_root[0]);
       out.WriteU32(_root[1]);
     }
-    for (const auto last : _last) {
-      out.WriteU32(last);
+    const bool narrow = (flags & BlockIndex::kNarrowRuns) != 0;
+    if (narrow) {
+      out.WriteU32(RunBase(0));
+    } else {
+      for (const auto last : _last) {
+        out.WriteU32(last);
+      }
     }
     for (uint32_t i = 0; i != r; ++i) {
       out.WriteU32(_last[std::min(n, (i + 1) * BlockIndex::kRun) - 1]);
+    }
+    if (narrow) {
+      for (uint32_t i = 0; i != r; ++i) {
+        out.WriteU32(static_cast<uint32_t>(RunEnd(i * BlockIndex::kRun)));
+      }
+      for (uint32_t k = 0, end = r * BlockIndex::kRun; k != end; ++k) {
+        const auto first = k / BlockIndex::kRun * BlockIndex::kRun;
+        out.WriteU16(k < n ? static_cast<uint16_t>(_last[k] - RunBase(first))
+                           : std::numeric_limits<uint16_t>::max());
+      }
     }
     const bool wide_end = (flags & BlockIndex::kWideEnd) != 0;
     const bool wide_group = (flags & BlockIndex::kWideGroup) != 0;
@@ -484,7 +626,10 @@ class BlockIndexWriter {
       }
     };
     for (uint32_t k = 0; k != m; ++k) {
-      if (wide_end) {
+      if (narrow) {
+        out.WriteU16(static_cast<uint16_t>(
+          _end[k] - RunEnd(k / BlockIndex::kRun * BlockIndex::kRun)));
+      } else if (wide_end) {
         out.WriteU32(static_cast<uint32_t>(_end[k]));
       } else {
         out.WriteU16(static_cast<uint16_t>(_end[k]));

@@ -1136,7 +1136,7 @@ id
 query
 SELECT id
 FROM docs_idx
-WHERE body @@ ('fox' || 'turtle' || 'lazy')::min_match(2)
+WHERE body @@ (ts_phrase('fox') || ts_phrase('turtle') || ts_phrase('lazy'))::min_match(2)
 ORDER BY id;
 ----
 id

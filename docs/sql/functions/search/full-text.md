@@ -587,7 +587,7 @@ A second `::min_match` on the same query is an error, and so is a `::min_match` 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
 | `body @@ 'quick red grey'::min_match(2)` | `2` | Only `id 2` has two of the words, `quick` and `red`. |
-| `body @@ ('fox' \|\| 'turtle' \|\| 'lazy')::min_match(2)` | `1`, `2` | Both have `fox` and `lazy`; `id 3` has only `turtle`. |
+| `body @@ (ts_phrase('fox') \|\| ts_phrase('turtle') \|\| ts_phrase('lazy'))::min_match(2)` | `1`, `2` | Both have `fox` and `lazy`; `id 3` has only `turtle`. |
 
 <SqlLogicTest id="sql/functions/full_text_search/min_match_tsquery" />
 

@@ -660,9 +660,13 @@ void RegisterTSQueryTypes(duckdb::ExtensionLoader& loader) {
                                 raw.ToString()));
       }
       const auto value = count.GetValue<int64_t>();
-      if (value < 1 || value > std::numeric_limits<uint32_t>::max()) {
+      if (value < 1) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("min_match() count must be >= 1, got ", value));
+      }
+      if (value > std::numeric_limits<uint32_t>::max()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("min_match() count too large: ", value));
       }
       auto type = MakeModifierTSQueryType();
       auto info = duckdb::make_uniq<duckdb::ExtensionTypeInfo>();

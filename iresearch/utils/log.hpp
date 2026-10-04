@@ -47,6 +47,8 @@ IRS_NO_INLINE void LogCrash(std::string_view message) noexcept;
 
 bool IsEnabled(duckdb::LogLevel level, std::string_view topic) noexcept;
 
+void Flush() noexcept;
+
 }  // namespace irs::log
 
 #define SDB_LOG_INTERNAL(LEVEL, TOPIC, ...)                    \

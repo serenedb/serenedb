@@ -875,9 +875,10 @@ TEST_F(ColCodecsTest, SampledPricesDoNotLoseToTheCandidatesTheyPrice) {
 
 TEST_F(ColCodecsTest, AutoLevelsComeFromTheLadders) {
   using duckdb::CompressionType;
-  const std::set<std::string> lz4{"1", "4", "9"};
+  const std::set<std::string> lz4_balanced{"1", "4", "6"};
+  const std::set<std::string> lz4_size{"1", "4", "9"};
   const std::set<std::string> zstd{"1", "3", "6", "9", "12"};
-  const std::set<std::string> zxc_balanced{"1", "3", "5"};
+  const std::set<std::string> zxc_balanced{"1", "3"};
   const std::set<std::string> zxc_size{"1", "3", "5", "7"};
   const std::pair<const char*, const Value*> corpora[] = {
     {"low-cardinality", &kLowCardinalityWithNulls},
@@ -900,7 +901,8 @@ TEST_F(ColCodecsTest, AutoLevelsComeFromTheLadders) {
         switch (type) {
           case CompressionType::COMPRESSION_LZ4:
           case CompressionType::COMPRESSION_DICT_LZ4:
-            EXPECT_TRUE(lz4.contains(level)) << label;
+            EXPECT_TRUE((size ? lz4_size : lz4_balanced).contains(level))
+              << label;
             break;
           case CompressionType::COMPRESSION_COL_ZSTD:
           case CompressionType::COMPRESSION_DICT_ZSTD:
@@ -1563,10 +1565,12 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   EXPECT_EQ(tuning.calibration_gap, 1u);
   ASSERT_TRUE(tuning.choice.has_value());
   EXPECT_EQ(tuning.choice->shape, Shape::Dedup);
+  gaps.clear();
   for (int rg = 0; rg < 4; ++rg) {
     seal(changed, tuning);
-    EXPECT_EQ(tuning.calibration_gap, 1u) << "row group " << rg;
+    gaps.push_back(tuning.calibration_gap);
   }
+  EXPECT_EQ(gaps, (std::vector<uint32_t>{1, 2, 2, 4}));
 
   seal(steady, tuning);
   EXPECT_EQ(tuning.calibration_gap, 1u);

@@ -146,7 +146,7 @@ void JobsExecute(duckdb::ClientContext& context,
     output.SetValue(col++, count, job.Schedule().interval);
     output.SetValue(col++, count, job.Schedule().offset);
     output.SetValue(col++, count, duckdb::Value::BOOLEAN(job.Suspended()));
-    output.SetValue(col++, count, duckdb::Value::BOOLEAN(status.running));
+    output.SetValue(col++, count, duckdb::Value::BOOLEAN(status.running > 0));
     output.SetValue(
       col++, count,
       OptionalTimestamp(scheduled && !status.suspended, status.next_run));

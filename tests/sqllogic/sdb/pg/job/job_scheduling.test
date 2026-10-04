@@ -15,6 +15,10 @@ DROP JOB IF EXISTS js_ddl;
 
 
 statement ok
+DROP JOB IF EXISTS js_parallel;
+
+
+statement ok
 DROP TABLE IF EXISTS js_ticks;
 
 
@@ -166,6 +170,33 @@ answer
 
 statement ok
 DROP JOB js_ddl;
+
+
+statement ok
+CREATE JOB js_parallel EVERY 1 SECOND CONCURRENT AS INSERT INTO js_ticks SELECT 'parallel', now() WHERE sleep_ms(2500) IS NULL;
+
+
+query ok retry 80 backoff 250ms
+SELECT count(*) >= 3 AS fired FROM js_ticks WHERE source = 'parallel';
+----
+fired
+t
+
+
+query
+SELECT bool_or(gap < INTERVAL '2 seconds') AS overlapped
+FROM (SELECT at - lag(at) OVER (ORDER BY at) AS gap FROM js_ticks WHERE source = 'parallel');
+----
+overlapped
+t
+
+
+statement ok
+EXECUTE JOB js_parallel;
+
+
+statement ok
+DROP JOB js_parallel;
 
 
 statement ok

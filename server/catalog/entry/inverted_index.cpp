@@ -442,10 +442,12 @@ duckdb::unique_ptr<duckdb::CreateInfo> InvertedIndexEntry::GetInfo() const {
 }
 
 duckdb::Identifier InvertedIndexEntry::GetTableName() const {
-  if (!info) {
-    return _relation_name;
+  if (info) {
+    return duckdb::DuckIndexEntry::GetTableName();
   }
-  return duckdb::DuckIndexEntry::GetTableName();
+  const auto relation =
+    catalog.Cast<duckdb::DuckCatalog>().GetOidIndex().GetCommitted(table_oid);
+  return relation ? relation->name : _relation_name;
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
@@ -533,11 +535,7 @@ bool InvertedIndexEntry::ScanColumnSegmentInfo(
   if (!client) {
     return false;
   }
-  const duckdb::EntryLookupInfo lookup{
-    duckdb::CatalogType::TABLE_ENTRY,
-    duckdb::QualifiedName{catalog.GetName(), GetSchemaName(), GetTableName()}};
-  auto relation = duckdb::Catalog::GetEntry(
-    *client, lookup, duckdb::OnEntryNotFound::RETURN_NULL);
+  auto relation = GetRelation(catalog.GetCatalogTransaction(*client));
   if (!relation) {
     return false;
   }

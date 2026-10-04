@@ -325,7 +325,7 @@ void CollectInvertedSteps(duckdb::ClientContext& context,
     context, duckdb::CatalogType::INDEX_ENTRY,
     [&](duckdb::CatalogEntry& entry) {
       auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
-      if (!IsInvertedIndex(index) || index.GetTableName() != table.name) {
+      if (!IsInvertedIndex(index) || index.table_oid != table.oid) {
         return;
       }
       const auto& inverted = index.Cast<catalog::InvertedIndexEntry>();
@@ -404,14 +404,8 @@ void DispatchInverted(duckdb::ClientContext& context,
       }
       // An index has no owner of its own; maintenance rides on its
       // relation (a table, or a view for view-backed indexes).
-      auto relation = duckdb::Catalog::GetEntry(
-        context,
-        duckdb::EntryLookupInfo{
-          duckdb::CatalogType::TABLE_ENTRY,
-          duckdb::QualifiedName{duckdb::Identifier{target.database},
-                                index->ParentSchemaName(),
-                                index->GetTableName()}},
-        duckdb::OnEntryNotFound::RETURN_NULL);
+      auto relation =
+        index->GetRelation(index->catalog.GetCatalogTransaction(context));
       if (relation && !MayMaintain(conn_ctx, relation->permissions,
                                    relation->name.GetIdentifierName(), verb)) {
         return;

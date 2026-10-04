@@ -1158,7 +1158,8 @@ void DeriveKeys(
     if (dict) {
       field.text_dictionary = dict->oid;
     }
-    ApplyOpclassToEntry(context, entry.ParentSchemaName().GetIdentifierName(),
+    ApplyOpclassToEntry(context,
+                        entry.ParentSchema(context).name.GetIdentifierName(),
                         label, value_type, opclass, dict, next_id, field);
     if (auto& ivf = field.column_options.ann_info) {
       ivf->centroids_id = record.field_id;

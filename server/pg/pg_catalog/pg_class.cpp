@@ -158,9 +158,8 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
   irs::containers::FlatHashSet<duckdb::idx_t> indexed_relations;
   VisitEntries<duckdb::DuckIndexEntry>(
     context, database, [&](const duckdb::DuckIndexEntry& entry) {
-      const auto host = entry.ParentSchema(context).GetEntry(
-        entry.catalog.GetCatalogTransaction(context),
-        duckdb::CatalogType::TABLE_ENTRY, entry.GetTableName());
+      const auto host =
+        entry.GetRelation(entry.catalog.GetCatalogTransaction(context));
       const auto host_id =
         host && (host->type == duckdb::CatalogType::TABLE_ENTRY ||
                  host->type == duckdb::CatalogType::VIEW_ENTRY)

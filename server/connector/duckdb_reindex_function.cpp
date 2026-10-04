@@ -191,16 +191,11 @@ ReindexTarget ResolveTarget(duckdb::ClientContext& context,
                     ERR_MSG("index \"", name, "\" does not exist"));
   }
   target.index = &index_entry->Cast<catalog::InvertedIndexEntry>();
-  target.schema = target.index->ParentSchemaName().GetIdentifierName();
+  target.schema = target.index->ParentSchema(context).name.GetIdentifierName();
   // Views and tables share one catalog set, so the type has to be checked
   // rather than assumed from the lookup that found the entry.
-  auto relation = duckdb::Catalog::GetEntry(
-    context,
-    duckdb::EntryLookupInfo{
-      duckdb::CatalogType::VIEW_ENTRY,
-      duckdb::QualifiedName{database_name, target.index->ParentSchemaName(),
-                            target.index->GetTableName()}},
-    duckdb::OnEntryNotFound::RETURN_NULL);
+  auto relation = target.index->GetRelation(
+    target.index->catalog.GetCatalogTransaction(context));
   if (!relation || relation->type != duckdb::CatalogType::VIEW_ENTRY) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -1262,19 +1257,11 @@ absl::StatusOr<bool> RunReindexTick(duckdb::DatabaseInstance& db,
         return false;
       }
       index_name = index->name.GetIdentifierName();
-      // The index names its relation, and duckdb keeps both halves of that
-      // name in step with a rename.
-      const duckdb::Identifier schema_ident = index->GetSchemaName();
-      auto schema = catalog.GetSchema(trx, schema_ident,
-                                      duckdb::OnEntryNotFound::RETURN_NULL);
-      const auto relation =
-        schema ? schema->GetEntry(trx, duckdb::CatalogType::TABLE_ENTRY,
-                                  index->GetTableName())
-               : nullptr;
+      const auto relation = index->GetRelation(trx);
       if (!relation || relation->type != duckdb::CatalogType::VIEW_ENTRY) {
         return false;
       }
-      schema_name = schema_ident.GetIdentifierName();
+      schema_name = index->GetSchemaName().GetIdentifierName();
       // Ownership itself is real (pg_class.relowner asserts it), so the id is
       // carried through.
       owner_id = relation->permissions.owner;

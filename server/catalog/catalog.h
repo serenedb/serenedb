@@ -72,6 +72,7 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     duckdb::row_t row_start, duckdb::ErrorData& error) final;
 
   void Initialize(bool load_builtin) final;
+  duckdb::idx_t DefaultSchemaOid() const final;
 
   void OnDetach(duckdb::ClientContext& context) final;
 

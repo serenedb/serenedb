@@ -154,43 +154,48 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
   return std::move(entry);
 }
 
+namespace {
+
+duckdb::CatalogType SchemaSetOf(duckdb::CatalogType type) {
+  switch (type) {
+    case duckdb::CatalogType::VIEW_ENTRY:
+      return duckdb::CatalogType::TABLE_ENTRY;
+    case duckdb::CatalogType::TABLE_MACRO_ENTRY:
+      return duckdb::CatalogType::TABLE_FUNCTION_ENTRY;
+    case duckdb::CatalogType::AGGREGATE_FUNCTION_ENTRY:
+    case duckdb::CatalogType::SCALAR_FUNCTION_ENTRY:
+    case duckdb::CatalogType::WINDOW_FUNCTION_ENTRY:
+      return duckdb::CatalogType::MACRO_ENTRY;
+    default:
+      return type;
+  }
+}
+
+}  // namespace
+
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry>
 SereneDBCatalog::FindSchemaById(duckdb::ClientContext& context,
                                 duckdb::idx_t id) {
-  duckdb::optional_ptr<duckdb::SchemaCatalogEntry> result;
-  GetSchemaCatalogSet().ScanWithReturn(
-    context, [&](duckdb::CatalogEntry& entry) {
-      if (entry.oid != id) {
-        return true;
-      }
-      result = &entry.Cast<duckdb::SchemaCatalogEntry>();
-      return false;
-    });
-  return result;
+  auto entry =
+    GetOidIndex().GetVisible(id, GetCatalogTransaction(context).view);
+  if (!entry || entry->type != duckdb::CatalogType::SCHEMA_ENTRY) {
+    return nullptr;
+  }
+  return &entry->Cast<duckdb::SchemaCatalogEntry>();
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::FindEntryById(
   duckdb::optional_ptr<duckdb::ClientContext> context, duckdb::CatalogType type,
   duckdb::idx_t id) {
-  duckdb::optional_ptr<duckdb::CatalogEntry> result;
-  const auto match = [&](duckdb::CatalogEntry& entry) {
-    if (!result && !entry.internal && entry.oid == id) {
-      result = &entry;
-    }
-  };
-  if (context) {
-    for (auto& schema : GetSchemas(*context)) {
-      schema.get().Scan(*context, type, match);
-    }
-    return result;
+  auto entry =
+    context ? GetOidIndex().GetVisible(id, GetCatalogTransaction(*context).view)
+            : GetOidIndex().GetCommitted(id);
+  if (!entry || entry->internal ||
+      entry->type == duckdb::CatalogType::SCHEMA_ENTRY ||
+      SchemaSetOf(entry->type) != SchemaSetOf(type)) {
+    return nullptr;
   }
-  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
-  duckdb::DuckCatalog::ScanSchemas(
-    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
-  for (auto& schema : schemas) {
-    schema.get().Scan(type, match);
-  }
-  return result;
+  return entry;
 }
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
@@ -428,6 +433,10 @@ void SereneDBCatalog::Initialize(bool load_builtin) {
   info.oid = pg::kPgPublicSchema;
   CreateSchema(data, info);
   MountSystemSchemas(*this);
+}
+
+duckdb::idx_t SereneDBCatalog::DefaultSchemaOid() const {
+  return pg::kPgMainSchema;
 }
 
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {

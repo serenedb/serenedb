@@ -76,7 +76,7 @@ Add a primary key to a column of a table:
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_014" />
 
-The `RENAME TO` clause renames an entire table, changing its name in the schema. Indexes follow the rename. A table that a view, a function or another table's `DEFAULT`, `CHECK` or generated column uses can't be renamed: the error lists those dependents, which have to be dropped first and recreated afterwards.
+The `RENAME TO` clause renames an entire table, changing its name in the schema. Indexes follow the rename, except in an [attached DuckDB file](../attach/duckdb.md), where a table that has an index can't be renamed. A table that a view, a function or another table's `DEFAULT`, `CHECK` or generated column uses can't be renamed: the error lists those dependents, which have to be dropped first and recreated afterwards.
 
 <DocCallout type="tip">
     `ALTER TABLE` changes the schema of an existing table.
@@ -94,7 +94,7 @@ To rename a column of a table, use the `RENAME` or `RENAME COLUMN` clauses:
 
 <SqlLogicTest id="sql/statements/alter_table/rename_column_short/example_016" />
 
-The `RENAME [COLUMN]` clause renames a single column within a table. Constraints and indexes that use the column are updated automatically. A column that a view or a table function reads can't be renamed, and neither can its type be changed; the error lists the dependents. A column that no dependent reads can be renamed or retyped freely.
+The `RENAME [COLUMN]` clause renames a single column within a table. Constraints and indexes that use the column are updated automatically; in an [attached DuckDB file](../attach/duckdb.md), a table that has an index can't rename its columns. A column that a view or a table function reads can't be renamed, and neither can its type be changed; the error lists the dependents. A column that no dependent reads can be renamed or retyped freely.
 
 ## `ADD COLUMN`
 

@@ -28,6 +28,7 @@
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -593,9 +594,8 @@ class Enforcer {
       return;
     }
     const auto& index = *bind.relation.inverted_index;
-    auto view = index.ParentSchema(_context).GetEntry(
-      index.catalog.GetCatalogTransaction(_context), CatalogType::TABLE_ENTRY,
-      index.GetTableName());
+    auto view =
+      index.GetRelation(index.catalog.GetCatalogTransaction(_context));
     if (!view || view->type != CatalogType::VIEW_ENTRY || Unowned(*view)) {
       return;
     }
@@ -793,14 +793,20 @@ class Enforcer {
         if (dependency.entry.type != CatalogType::TYPE_ENTRY) {
           continue;
         }
-        auto entry = duckdb::Catalog::GetEntry(
-          _context,
-          duckdb::EntryLookupInfo{
-            CatalogType::TYPE_ENTRY,
-            duckdb::QualifiedName::FromCatalogSchema(
-              dependency.catalog, dependency.entry.schema_path,
-              dependency.entry.name)},
-          duckdb::OnEntryNotFound::RETURN_NULL);
+        auto& catalog =
+          duckdb::Catalog::GetCatalog(_context, dependency.catalog);
+        auto dependency_manager = catalog.GetDependencyManager();
+        auto entry = dependency_manager
+                       ? dependency_manager->LookupEntry(
+                           catalog.GetCatalogTransaction(_context), dependency)
+                       : duckdb::Catalog::GetEntry(
+                           _context,
+                           duckdb::EntryLookupInfo{
+                             CatalogType::TYPE_ENTRY,
+                             duckdb::QualifiedName::FromCatalogSchema(
+                               dependency.catalog, dependency.entry.schema_path,
+                               dependency.entry.name)},
+                           duckdb::OnEntryNotFound::RETURN_NULL);
         if (!entry || Unowned(*entry) || !seen.insert(entry.get()).second) {
           continue;
         }
@@ -1118,8 +1124,11 @@ class Enforcer {
     info.entry_catalog_type = entry->type == CatalogType::VIEW_ENTRY
                                 ? CatalogType::TABLE_ENTRY
                                 : entry->type;
-    info.SetQualifiedName(entry->ParentCatalog().GetName(),
-                          entry->ParentSchemaName(), entry->name);
+    info.SetQualifiedName(duckdb::QualifiedName::FromCatalogSchema(
+      entry->ParentCatalog().GetName(),
+      entry->ParentSchemaPath(
+        entry->ParentCatalog().GetCatalogTransaction(_context)),
+      entry->name));
     return *entry;
   }
 
@@ -1238,9 +1247,8 @@ class Enforcer {
   void RequireOwner(const duckdb::CatalogEntry& entry) {
     if (entry.type == CatalogType::INDEX_ENTRY) {
       auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
-      auto host = index.ParentSchema(_context).GetEntry(
-        index.catalog.GetCatalogTransaction(_context), CatalogType::TABLE_ENTRY,
-        index.GetTableName());
+      auto host =
+        index.GetRelation(index.catalog.GetCatalogTransaction(_context));
       if (host && !_caller_closure.Owns(host->permissions.owner)) {
         MustOwn(*host);
       }

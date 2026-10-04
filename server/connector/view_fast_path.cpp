@@ -376,8 +376,8 @@ std::optional<ViewFastPath> ResolveTableSource(
   }
   auto& table = entry->Cast<duckdb::TableCatalogEntry>();
   auto& catalog = table.ParentCatalog();
-  auto out = CatalogFastPath(catalog, table.ParentSchemaName(), table.name,
-                             std::move(body.projection_columns));
+  auto out = CatalogFastPath(catalog, table.ParentSchema(binder.context).name,
+                             table.name, std::move(body.projection_columns));
   const auto cat_type = catalog.GetCatalogType();
   if (cat_type == "iceberg") {
     return IcebergFastPath(std::move(out), body.has_limit);

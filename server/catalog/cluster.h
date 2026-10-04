@@ -54,6 +54,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   ~ClusterCatalog() override;
 
   std::string GetCatalogType() final { return kStorageType; }
+  duckdb::idx_t DefaultSchemaOid() const final;
 
   bool UsesCatalogLog() const final { return true; }
   duckdb::shared_ptr<duckdb::WriteAheadLog> CatalogLog() final {

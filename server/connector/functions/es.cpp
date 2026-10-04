@@ -112,7 +112,7 @@ void VisitInvertedIndexes(
     context, duckdb::CatalogType::INDEX_ENTRY,
     [&](duckdb::CatalogEntry& entry) {
       auto& index = entry.Cast<duckdb::DuckIndexEntry>();
-      if (index.GetTableName() == table.name &&
+      if (index.table_oid == table.oid &&
           index.index_type == InvertedStoreIndex::kTypeName) {
         indexes.emplace_back(index);
       }

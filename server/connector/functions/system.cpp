@@ -200,15 +200,14 @@ int64_t TableIndexesTotalBytes(duckdb::ClientContext& context,
   int64_t total = dynamic_cast<const catalog::SearchTableEntry*>(&table)
                     ? 0
                     : StoreTableIndexBytes(context, table);
-  table.ParentSchema(context).Scan(context, duckdb::CatalogType::INDEX_ENTRY,
-                                   [&](duckdb::CatalogEntry& entry) {
-                                     auto& index =
-                                       entry.Cast<duckdb::DuckIndexEntry>();
-                                     if (index.GetTableName() == table.name &&
-                                         connector::IsInvertedIndex(index)) {
-                                       total += IndexEntryBytes(context, index);
-                                     }
-                                   });
+  table.ParentSchema(context).Scan(
+    context, duckdb::CatalogType::INDEX_ENTRY,
+    [&](duckdb::CatalogEntry& entry) {
+      auto& index = entry.Cast<duckdb::DuckIndexEntry>();
+      if (index.table_oid == table.oid && connector::IsInvertedIndex(index)) {
+        total += IndexEntryBytes(context, index);
+      }
+    });
   return total;
 }
 
@@ -222,7 +221,8 @@ duckdb::DatabaseSize DatabaseStorageSize(duckdb::ClientContext& context,
       attached.GetStorageManager().GetDatabaseSize().block_size;
   }
   const auto in_scope = [&](const duckdb::CatalogEntry& entry) {
-    return only_schema.empty() || entry.ParentSchemaName() == only_schema;
+    return only_schema.empty() ||
+           entry.ParentSchema(context).name == only_schema;
   };
   int64_t bytes = 0;
   int64_t blocks = 0;

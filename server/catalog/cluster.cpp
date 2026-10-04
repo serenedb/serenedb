@@ -103,6 +103,10 @@ ClusterCatalog::~ClusterCatalog() {
   }
 }
 
+duckdb::idx_t ClusterCatalog::DefaultSchemaOid() const {
+  return pg::kPgMainSchema;
+}
+
 void ClusterCatalog::RequestCatalogLogSync(
   duckdb::shared_ptr<duckdb::WriteAheadLog> log, duckdb::idx_t offset) {
   absl::MutexLock lock{&_sync_mutex};

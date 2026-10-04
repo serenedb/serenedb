@@ -199,7 +199,35 @@ DROP JOB IF EXISTS doc_rollup_6h;
 statement ok
 DROP JOB IF EXISTS doc_does_not_exist;
 
+# DOCS_TEST: example_008
+
+statement ok
+DROP JOB IF EXISTS doc_ping;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE JOB doc_ping EVERY 1 MINUTE CONCURRENT AS SELECT 1;
+
+query
+SELECT schedule FROM duckdb_jobs() WHERE job_name = 'doc_ping';
+----
+schedule
+EVERY INTERVAL '00:01:00' CONCURRENT
+
+statement ok
+ALTER JOB doc_ping SET SCHEDULE EVERY 1 MINUTE;
+
+query
+SELECT schedule FROM duckdb_jobs() WHERE job_name = 'doc_ping';
+----
+schedule
+EVERY INTERVAL '00:01:00'
+
 # DOCS_TEST_END
+
+statement ok
+DROP JOB doc_ping;
 
 statement ok
 DROP JOB doc_owned;

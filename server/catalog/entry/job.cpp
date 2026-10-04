@@ -116,8 +116,8 @@ void JobCatalogEntry::ScheduleAtCommit(duckdb::ClientContext& context) const {
 void JobCatalogEntry::OnDrop() {
   absl::MutexLock lock{&_state->mutex};
   _state->dropped = true;
-  if (_state->context) {
-    _state->context->Interrupt();
+  for (const auto& context : _state->contexts) {
+    context->Interrupt();
   }
 }
 

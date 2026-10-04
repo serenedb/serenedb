@@ -3,6 +3,10 @@ DROP JOB IF EXISTS jd_babsky;
 
 
 statement ok
+DROP JOB IF EXISTS jd_parallel;
+
+
+statement ok
 DROP JOB IF EXISTS jd_hourly;
 
 
@@ -387,6 +391,43 @@ count
 0
 
 
+statement ok
+CREATE JOB jd_parallel EVERY 1 HOUR OFFSET 5 MINUTES CONCURRENT AS SELECT 1;
+
+
+query
+SELECT schedule FROM duckdb_jobs() WHERE job_name = 'jd_parallel';
+----
+schedule
+EVERY INTERVAL '01:00:00' OFFSET INTERVAL '00:05:00' CONCURRENT
+
+
+statement ok
+ALTER JOB jd_parallel SET SCHEDULE EVERY 2 HOURS;
+
+
+query
+SELECT schedule FROM duckdb_jobs() WHERE job_name = 'jd_parallel';
+----
+schedule
+EVERY INTERVAL '02:00:00'
+
+
+statement ok
+ALTER JOB jd_parallel SET SCHEDULE EVERY 2 HOURS CONCURRENT;
+
+
+query
+SELECT schedule FROM duckdb_jobs() WHERE job_name = 'jd_parallel';
+----
+schedule
+EVERY INTERVAL '02:00:00' CONCURRENT
+
+
+statement ok
+DROP JOB jd_parallel;
+
+
 statement error
 CREATE JOB jd_invalid EVERY 0 SECONDS AS SELECT 1;
 ----
@@ -428,6 +469,12 @@ SELECT count(*) FROM duckdb_jobs() WHERE job_name = 'jd_invalid';
 ----
 count
 0
+
+
+statement error
+CREATE JOB jd_invalid AFTER 1 HOUR CONCURRENT AS SELECT 1;
+----
+db error: ERROR: syntax error at or near "CONCURRENT"<slt:ignore>
 
 
 statement error

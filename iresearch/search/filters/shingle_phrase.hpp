@@ -31,8 +31,10 @@ class ShingleTokenizer;
 
 }  // namespace analysis
 
-std::optional<ByPhraseOptions> PlanShinglePhrase(
-  const analysis::ShingleTokenizer& tokenizer, const ByPhraseOptions& phrase,
-  bool positional);
+std::optional<bstring> ShingleTerm(const analysis::ShingleTokenizer& tokenizer,
+                                   const ByPhraseOptions& phrase);
+
+std::optional<ByPhraseOptions> ShingleCover(
+  const analysis::ShingleTokenizer& tokenizer, const ByPhraseOptions& phrase);
 
 }  // namespace irs

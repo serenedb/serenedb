@@ -167,13 +167,8 @@ bool HasPatternParts(const irs::ByPhraseOptions& options) {
 void PlanShingles(const irs::analysis::ShingleTokenizer& shingle,
                   const SearchColumnInfo& column_info,
                   irs::ByPhraseOptions& options, std::string_view label) {
-  const bool positions = irs::IsSubsetOf(irs::PhraseQuery::kRequiredFeatures,
-                                         column_info.tokenizer.features);
-  if (auto plan = irs::PlanShinglePhrase(shingle, options, positions)) {
-    options = std::move(*plan);
-    return;
-  }
-  if (!positions) {
+  if (!irs::IsSubsetOf(irs::PhraseQuery::kRequiredFeatures,
+                       column_info.tokenizer.features)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG(label,
@@ -181,6 +176,10 @@ void PlanShingles(const irs::analysis::ShingleTokenizer& shingle,
               "not cover the phrase"),
       ERR_HINT("Add `position` to the dictionary, or raise `max_gram` to "
                "the phrase length."));
+  }
+  if (auto cover = irs::ShingleCover(shingle, options)) {
+    options = std::move(*cover);
+    return;
   }
   if (!shingle.OutputUnigrams()) {
     THROW_SQL_ERROR(
@@ -209,6 +208,12 @@ void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
                 std::string_view single_hint) {
   if (options.size() > 1) {
     if (const auto* shingle = QueryShingle(ctx, column_info)) {
+      if (auto term = irs::ShingleTerm(*shingle, options)) {
+        AddTerm(MaybeNegated(parent, ctx, column_info),
+                PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
+                *term, ctx.boost);
+        return;
+      }
       PlanShingles(*shingle, column_info, options, label);
     } else if (!irs::IsSubsetOf(irs::PhraseQuery::kRequiredFeatures,
                                 column_info.tokenizer.features)) {
@@ -244,10 +249,20 @@ void PlanShinglePhrases(
     auto& phrase = irs::utils::downCast<irs::ByPhrase>(*child);
     const auto* column_info = column_of(phrase.field_id());
     const auto* shingle = column_info ? ShingleOf(*column_info) : nullptr;
-    if (shingle && phrase.options().size() > 1) {
-      PlanShingles(*shingle, *column_info, *phrase.mutable_options(),
-                   "to_tsquery");
+    if (!shingle || phrase.options().size() < 2) {
+      return;
     }
+    if (auto term = irs::ShingleTerm(*shingle, phrase.options())) {
+      auto filter = std::make_unique<irs::ByTerm>();
+      *filter->mutable_field_id() = phrase.field_id();
+      filter->mutable_options()->term = std::move(*term);
+      filter->SetBoost(phrase.GetBoost());
+      filter->SetScorer(phrase.GetScorer());
+      child = std::move(filter);
+      return;
+    }
+    PlanShingles(*shingle, *column_info, *phrase.mutable_options(),
+                 "to_tsquery");
   });
 }
 

@@ -220,37 +220,35 @@ bool CoverPhrase(const analysis::ShingleTokenizer& tokenizer,
   return true;
 }
 
-using Words = absl::InlinedVector<bytes_view, 8>;
+}  // namespace
 
-bool AdjacentWords(const ByPhraseOptions& phrase, Words& words) {
+std::optional<bstring> ShingleTerm(const analysis::ShingleTokenizer& tokenizer,
+                                   const ByPhraseOptions& phrase) {
+  if (phrase.slop() != 0) {
+    return std::nullopt;
+  }
+  absl::InlinedVector<bytes_view, 8> words;
   for (const auto& info : phrase) {
     const auto* term = std::get_if<ByTermOptions>(&info.part);
     if (!term ||
         (!words.empty() && (info.offs_min != 1 || info.offs_max != 1))) {
-      return false;
+      return std::nullopt;
     }
     words.emplace_back(term->term);
   }
-  return true;
+  if (!Indexes(tokenizer, words)) {
+    return std::nullopt;
+  }
+  return Join(tokenizer.Separator(), words);
 }
 
-}  // namespace
-
-std::optional<ByPhraseOptions> PlanShinglePhrase(
-  const analysis::ShingleTokenizer& tokenizer, const ByPhraseOptions& phrase,
-  bool positional) {
-  if (phrase.empty() || phrase.slop() != 0) {
+std::optional<ByPhraseOptions> ShingleCover(
+  const analysis::ShingleTokenizer& tokenizer, const ByPhraseOptions& phrase) {
+  ByPhraseOptions cover;
+  if (phrase.slop() != 0 || !CoverPhrase(tokenizer, phrase, cover)) {
     return std::nullopt;
   }
-  ByPhraseOptions plan;
-  if (Words words; AdjacentWords(phrase, words) && Indexes(tokenizer, words)) {
-    plan.push_back<ByTermOptions>().term = Join(tokenizer.Separator(), words);
-    return plan;
-  }
-  if (!positional || !CoverPhrase(tokenizer, phrase, plan)) {
-    return std::nullopt;
-  }
-  return plan;
+  return cover;
 }
 
 }  // namespace irs

@@ -169,14 +169,27 @@ class NormReaderBase : public NormReader {
         return file_utils::IsResident(
           at, static_cast<size_t>(span.data() + span.size() - at));
       };
-      const auto last =
-        std::min(_window + _probe, _region->window + _region->windows) - 1;
+      const bool dense =
+        n > 1 && (uint64_t{docs[n - 1] - docs[0]} + 1) * _bytes <=
+                   uint64_t{n} * file_utils::kPage;
+      if (!dense) {
+        _probe = 1;
+      }
+      auto last = _window + _probe - 1;
+      if (dense) {
+        last = std::max<size_t>(
+          last, _region->window +
+                  ((docs[n - 1] - _region->first_doc) >> kNormWindowShift));
+      }
+      last = std::min(last, _region->window + _region->windows - 1);
       if (resident(last)) {
         for (auto window = _window; window <= last; ++window) {
           Set(_probed_at + window);
           Done(window);
         }
-        _probe = std::min(_probe * 2, kMaxProbe);
+        if (dense) {
+          _probe = std::min(_probe * 2, kMaxProbe);
+        }
         return;
       }
       _probe = 1;

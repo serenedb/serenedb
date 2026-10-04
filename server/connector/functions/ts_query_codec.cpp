@@ -42,9 +42,11 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression_binder/constant_binder.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
+#include <exception>
 #include <iresearch/search/scorers/unscored.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 
@@ -718,6 +720,7 @@ duckdb::unique_ptr<duckdb::Expression> TryParseStructuredTSQueryText(
     }
   }
   duckdb::unique_ptr<duckdb::Expression> bound;
+  std::exception_ptr rejected;
   try {
     auto binder = duckdb::Binder::CreateBinder(context);
     duckdb::ConstantBinder constant_binder(*binder, context, "TSQUERY");
@@ -725,6 +728,8 @@ duckdb::unique_ptr<duckdb::Expression> TryParseStructuredTSQueryText(
     if (bound) {
       FoldStructuredConstants(context, bound);
     }
+  } catch (const irs::SqlException&) {
+    rejected = std::current_exception();
   } catch (const std::exception&) {
     bound = nullptr;
   }
@@ -734,6 +739,9 @@ duckdb::unique_ptr<duckdb::Expression> TryParseStructuredTSQueryText(
     } catch (const std::exception&) {
       bound = nullptr;
     }
+  }
+  if (rejected) {
+    std::rethrow_exception(rejected);
   }
   return bound;
 }

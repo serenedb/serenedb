@@ -268,6 +268,19 @@ def test_min_match_typed_param(conn, schema):
         assert cur.fetchone()[0] == "'quick dog'::min_match(2)"
 
 
+def test_min_match_text_param(conn, schema):
+    sql = f"SELECT a FROM {schema}.sp_idx WHERE b @@ %s::TSQUERY ORDER BY a"
+    with conn.cursor() as cur:
+        cur.execute(sql, ("'quick dog'::min_match(2)",))
+        assert [r[0] for r in cur.fetchall()] == [4]
+        cur.execute(sql, ("'quick dog'::min_match(4294967295)",))
+        assert [r[0] for r in cur.fetchall()] == [4]
+        with pytest.raises(psycopg.errors.InvalidParameterValue, match="must be >= 1"):
+            cur.execute(sql, ("'quick dog'::min_match(0)",))
+        with pytest.raises(psycopg.errors.InvalidParameterValue, match="too large"):
+            cur.execute(sql, ("'quick dog'::min_match(4294967296)",))
+
+
 def test_min_match_typed_param_under_not_fails(conn, schema):
     sql = f"SELECT a FROM {schema}.sp_idx WHERE NOT b @@ %s::min_match(2)"
     with conn.cursor() as cur:

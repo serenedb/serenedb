@@ -275,12 +275,112 @@ statement ok
 DEALLOCATE mm_param;
 
 
+statement ok
+PREPARE mm_param_max AS SELECT id FROM mm_idx WHERE skills @@ $1::min_match(4294967295) ORDER BY id;
+
+
+query
+EXECUTE mm_param_max('gcp python');
+----
+id
+1
+6
+
+
+statement ok
+DEALLOCATE mm_param_max;
+
+
+statement ok
+PREPARE mm_text AS SELECT id FROM mm_idx WHERE skills @@ $1::TSQUERY ORDER BY id;
+
+
+query
+EXECUTE mm_text('''gcp python''::min_match(2)');
+----
+id
+1
+6
+
+
+query
+EXECUTE mm_text('''gcp python''::min_match(4294967295)');
+----
+id
+1
+6
+
+
+query error min_match\(\) count must be >= 1, got 0
+EXECUTE mm_text('''gcp python''::min_match(0)');
+
+
+query error min_match\(\) count too large: 4294967296
+EXECUTE mm_text('''gcp python''::min_match(4294967296)');
+
+
+query error ::min_match\(3\) on an OR of 2 branches
+EXECUTE mm_text('(''gcp''::TSQUERY || ''python'')::min_match(3)');
+
+
+query error ::min_match\(K\) on a query that already has a ::min_match
+EXECUTE mm_text('''gcp python''::min_match(2)::min_match(1)');
+
+
+statement ok
+DEALLOCATE mm_text;
+
+
 query error ::min_match\(3\) on an OR of 2 branches
 SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR tenure <= 10)::min_match(3);
 
 
 query error min_match\(\) count must be >= 1
 SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR tenure <= 10)::min_match(0);
+
+
+query error min_match\(\) count must be >= 1, got -1
+SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR tenure <= 10)::min_match(-1);
+
+
+query error min_match\(\) count must be a non-null integer, got NULL
+SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR tenure <= 10)::min_match(NULL);
+
+
+query error min_match\(\) count must be a non-null integer, got 2.5
+SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR tenure <= 10)::min_match(2.5);
+
+
+query error ::min_match\(4294967295\) on an OR of 2 branches
+SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR tenure <= 10)::min_match(4294967295);
+
+
+query error min_match\(\) count too large: 4294967296
+SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR tenure <= 10)::min_match(4294967296);
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ 'gcp python'::min_match(4294967295) ORDER BY id;
+----
+id
+1
+6
+
+
+query error min_match\(\) count too large: 4294967296
+SELECT id FROM mm_idx WHERE skills @@ 'gcp python'::min_match(4294967296);
+
+
+query error ::min_match\(4294967295\) on an OR of 2 branches
+SELECT id FROM mm_idx WHERE skills @@ ('gcp'::TSQUERY || 'python')::min_match(4294967295);
+
+
+query error ::min_match\(4294967295\) on an OR of 2 branches
+SELECT id FROM mm_idx WHERE skills @@ ts_any(['gcp', 'python'])::min_match(4294967295);
+
+
+query error ::min_match\(4294967295\) on a query with one branch
+SELECT id FROM mm_idx WHERE skills @@ ts_phrase('gcp')::min_match(4294967295);
 
 
 query error ::min_match\(K\) applies to an OR of predicates
@@ -371,17 +471,31 @@ SELECT id FROM mm_idx WHERE skills @@ ts_any(['gcp', 'python'])::min_match(3);
 
 
 query
-SELECT id FROM mm_idx WHERE skills @@ ('gcp' || 'python' || 'aws')::min_match(3) ORDER BY id;
+SELECT id FROM mm_idx WHERE skills @@ ('gcp'::TSQUERY || 'python' || 'aws')::min_match(2) ORDER BY id;
+----
+id
+1
+6
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ ('gcp'::TSQUERY || 'python' || 'aws')::min_match(3) ORDER BY id;
+----
+id
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ (('gcp'::TSQUERY || 'python') || 'aws')::min_match(3) ORDER BY id;
 ----
 id
 
 
 query error ::min_match\(3\) on an OR of 2 branches
-SELECT id FROM mm_idx WHERE skills @@ ('gcp' || 'python')::min_match(3);
+SELECT id FROM mm_idx WHERE skills @@ ('gcp'::TSQUERY || 'python')::min_match(3);
 
 
 query
-SELECT id FROM mm_idx WHERE skills @@ (('gcp' || 'aws')::min_match(1) || 'python')::min_match(2) ORDER BY id;
+SELECT id FROM mm_idx WHERE skills @@ (('gcp'::TSQUERY || 'aws')::min_match(1) || 'python')::min_match(2) ORDER BY id;
 ----
 id
 1
@@ -402,11 +516,11 @@ SELECT id FROM mm_idx WHERE title @@ ts_phrase('data engineer')::min_match(2);
 
 
 query error ::min_match\(2\) on a query with one branch
-SELECT id FROM mm_idx WHERE skills @@ ('gcp' && 'python')::min_match(2);
+SELECT id FROM mm_idx WHERE skills @@ ('gcp'::TSQUERY && 'python')::min_match(2);
 
 
 query error ::min_match\(2\) on a query with one branch
-SELECT id FROM mm_idx WHERE skills @@ (!! ('gcp' || 'python'))::min_match(2);
+SELECT id FROM mm_idx WHERE skills @@ (!! ('gcp'::TSQUERY || 'python'))::min_match(2);
 
 
 query error ::min_match\(K\) on a query that already has a ::min_match
@@ -418,7 +532,15 @@ SELECT id FROM mm_idx WHERE NOT skills @@ 'gcp python'::min_match(2);
 
 
 query
-SELECT id FROM mm_idx WHERE skills @@ ('gcp' || 'python' || 'aws')::min_match(2)::merge('max') ORDER BY id;
+SELECT id FROM mm_idx WHERE skills @@ ('gcp'::TSQUERY || 'python' || 'aws')::min_match(2)::merge('max') ORDER BY id;
+----
+id
+1
+6
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ ('gcp'::TSQUERY || 'python' || 'aws')::merge('max')::min_match(2) ORDER BY id;
 ----
 id
 1

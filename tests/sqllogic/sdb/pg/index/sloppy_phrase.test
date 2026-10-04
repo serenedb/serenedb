@@ -142,6 +142,26 @@ a
 2
 6
 
+query
+EXECUTE sp_slop('ts_phrase(''quick fox'')::slop(65535)');
+----
+a
+1
+2
+3
+4
+6
+
+query error
+EXECUTE sp_slop('ts_phrase(''quick fox'')::slop(65536)');
+----
+db error: ERROR: ::slop too large: 65536
+
+query error
+EXECUTE sp_slop('ts_phrase(''quick fox'')::slop(-1)');
+----
+db error: ERROR: slop() budget must be >= 0, got -1
+
 statement ok
 DEALLOCATE sp_slop;
 

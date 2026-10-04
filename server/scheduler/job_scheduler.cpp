@@ -147,10 +147,7 @@ void VerifySchedule(const duckdb::JobSchedule& schedule) {
   NextRun(schedule, duckdb::Timestamp::GetCurrentTimestamp());
 }
 
-JobScheduler::JobScheduler(BackgroundScheduler& background)
-  : _background{background} {
-  gInstance = this;
-}
+JobScheduler::JobScheduler() { gInstance = this; }
 
 JobScheduler::~JobScheduler() { gInstance = nullptr; }
 
@@ -164,20 +161,19 @@ void JobScheduler::Schedule(catalog::JobCatalogEntry& job) {
   const auto& state = job.State();
   absl::MutexLock lock{&state->mutex};
   auto& status = state->status;
-  const bool rearm = state->timer == 0 ||
-                     !(status.schedule == job.Schedule()) ||
-                     status.suspended != job.Suspended();
+  const bool unchanged =
+    status.schedule == job.Schedule() && status.suspended == job.Suspended();
   state->definition = std::move(definition);
   status.schedule = job.Schedule();
   status.suspended = job.Suspended();
-  if (!rearm) {
+  if (unchanged) {
     return;
   }
   const auto timer = ++state->timer;
   status.next_run = NextRun(status.schedule, now);
   if (!status.suspended) {
-    _background.RunAt(status.next_run,
-                      [this, state, timer] { Run(state, timer); });
+    BackgroundScheduler::instance().RunAt(
+      status.next_run, [this, state, timer] { Run(state, timer); });
   }
 }
 
@@ -196,8 +192,8 @@ void JobScheduler::Run(std::shared_ptr<JobState> state, uint64_t timer) {
       return;
     }
   }
-  _background.RunAt(status.next_run,
-                    [this, state, timer] { Run(state, timer); });
+  BackgroundScheduler::instance().RunAt(
+    status.next_run, [this, state, timer] { Run(state, timer); });
 }
 
 void JobScheduler::Execute(catalog::JobCatalogEntry& job) {

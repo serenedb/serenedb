@@ -84,7 +84,7 @@ int RunServer(int argc, char** argv) {
     search::SearchEngine search;
     Server network;
     std::optional<replication::SubscriptionEngine> subscriptions;
-    JobScheduler jobs{background};
+    JobScheduler jobs;
 
     // Lifecycle is two explicit, flat lists: bring features UP in dependency
     // order, then take them DOWN in a dependency order that is deliberately

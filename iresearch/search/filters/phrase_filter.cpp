@@ -630,40 +630,40 @@ PrepareCollector::ptr ByPhrase::MakeCollectorImpl(const Scorer* scorer,
 }
 
 bool ByPhraseOptions::LowerParts() {
-  const auto term_part = [](bytes_view term) -> PhrasePart {
-    ByTermOptions opts;
-    opts.term = term;
-    return opts;
-  };
-  const auto prefix_part = [](bytes_view prefix) -> PhrasePart {
-    ByPrefixOptions opts;
-    opts.term = prefix;
-    return opts;
-  };
   bool changed = false;
   for (auto& info : _phrase) {
     if (const auto* t = std::get_if<TermSetOptions>(&info.part);
         t != nullptr && t->terms.size() == 1) {
-      ByTermOptions opts;
-      opts.term = *t->terms.begin();
-      info.part = std::move(opts);
+      info.part = ByTermOptions{*t->terms.begin()};
       changed = true;
     } else if (const auto* w = std::get_if<ByWildcardOptions>(&info.part); w) {
       bstring buf;
-      info.part =
-        ExecuteWildcard(buf, bytes_view{w->term}, term_part, prefix_part,
-                        [](bytes_view term) -> PhrasePart {
-                          return AutomatonOptions{term, PatternKind::Wildcard};
-                        });
+      info.part = ExecuteWildcard(
+        buf, bytes_view{w->term},
+        [](bytes_view term) -> PhrasePart {
+          return ByTermOptions{bstring{term}};
+        },
+        [](bytes_view prefix) -> PhrasePart {
+          return ByPrefixOptions{{bstring{prefix}}};
+        },
+        [](bytes_view term) -> PhrasePart {
+          return AutomatonOptions{term, PatternKind::Wildcard};
+        });
       changed = true;
     } else if (const auto* r = std::get_if<ByRegexpOptions>(&info.part); r) {
       bstring buf;
       const auto kind = RegexpPattern(r->syntax);
-      info.part =
-        ExecuteRegexp(buf, bytes_view{r->pattern}, term_part, prefix_part,
-                      [kind](bytes_view pattern) -> PhrasePart {
-                        return AutomatonOptions{pattern, kind};
-                      });
+      info.part = ExecuteRegexp(
+        buf, bytes_view{r->pattern},
+        [](bytes_view term) -> PhrasePart {
+          return ByTermOptions{bstring{term}};
+        },
+        [](bytes_view prefix) -> PhrasePart {
+          return ByPrefixOptions{{bstring{prefix}}};
+        },
+        [kind](bytes_view pattern) -> PhrasePart {
+          return AutomatonOptions{pattern, kind};
+        });
       changed = true;
     } else if (const auto* e = std::get_if<ByEditDistanceOptions>(&info.part);
                e) {

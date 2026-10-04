@@ -24,9 +24,7 @@
 #include <absl/container/inlined_vector.h>
 
 #include <algorithm>
-#include <limits>
 #include <span>
-#include <vector>
 
 #include "iresearch/analysis/shingle_tokenizer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
@@ -64,142 +62,79 @@ bstring Join(bytes_view separator, std::span<const bytes_view> words) {
   return out;
 }
 
-class Windows {
- public:
-  Windows(const analysis::ShingleTokenizer& tokenizer,
-          std::span<const bytes_view> tokens,
-          std::span<const PosAttr::value_t> positions)
-    : _tokenizer{tokenizer},
-      _tokens{tokens},
-      _positions{positions},
-      _run_end(tokens.size()) {
-    auto end = tokens.size();
-    for (auto i = tokens.size(); i-- != 0;) {
-      if (i + 1 != tokens.size() && positions[i + 1] - positions[i] != 1) {
-        end = i + 1;
-      }
-      _run_end[i] = end;
+size_t Largest(const analysis::ShingleTokenizer& tokenizer,
+               std::span<const bytes_view> words) noexcept {
+  for (auto count = std::min<size_t>(tokenizer.MaxShingle(), words.size());
+       count >= 2; --count) {
+    if (Indexes(tokenizer, words.first(count))) {
+      return count;
     }
   }
+  return 0;
+}
 
-  size_t Size() const noexcept { return _tokens.size(); }
-
-  size_t Max() const noexcept { return _tokenizer.MaxShingle(); }
-
-  size_t RunEnd(size_t i) const noexcept { return _run_end[i]; }
-
-  PosAttr::value_t Position(size_t i) const noexcept { return _positions[i]; }
-
-  bool Indexed(size_t begin, size_t count) const noexcept {
-    return Indexes(_tokenizer, _tokens.subspan(begin, count));
-  }
-
-  size_t Largest(size_t begin) const noexcept {
-    const auto reach = std::min(Max(), _run_end[begin] - begin);
-    for (auto count = reach; count >= 2; --count) {
-      if (Indexed(begin, count)) {
-        return count;
-      }
+bool CoverPhrase(const analysis::ShingleTokenizer& tokenizer,
+                 const ByPhraseOptions& phrase, ByPhraseOptions& out) {
+  absl::InlinedVector<bytes_view, 8> run;
+  PosAttr::value_t run_min = 0;
+  PosAttr::value_t run_max = 0;
+  PosAttr::value_t lag = 0;
+  bool shingled = false;
+  bool patterns = false;
+  const auto flush = [&] {
+    if (run.empty()) {
+      return true;
     }
-    return 0;
-  }
-
-  bstring Term(size_t begin, size_t count) const {
-    return Join(_tokenizer.Separator(), _tokens.subspan(begin, count));
-  }
-
- private:
-  const analysis::ShingleTokenizer& _tokenizer;
-  std::span<const bytes_view> _tokens;
-  std::span<const PosAttr::value_t> _positions;
-  std::vector<size_t> _run_end;
-};
-
-constexpr auto kNone = std::numeric_limits<size_t>::max();
-
-size_t Cover(const Windows& windows, PosAttr::value_t entry_min,
-             PosAttr::value_t entry_max, ByPhraseOptions& out, bool& shingled) {
-  size_t prev = kNone;
-  const auto emit = [&](size_t start, size_t count) {
-    auto offs_min = entry_min;
-    auto offs_max = entry_max;
-    if (prev != kNone) {
-      offs_min = offs_max = windows.Position(start) - windows.Position(prev);
-    }
-    out.push_back<ByTermOptions>(offs_min, offs_max).term =
-      windows.Term(start, count);
-    shingled |= count > 1;
-    prev = start;
-  };
-  for (size_t i = 0, m = windows.Size(); i != m;) {
-    const auto run_end = windows.RunEnd(i);
-    auto run_prev = kNone;
-    while (i != run_end) {
+    const std::span<const bytes_view> words{run};
+    auto offs_min = run_min + lag;
+    auto offs_max = run_max + lag;
+    size_t prev = 0;
+    for (size_t i = 0; i != words.size();) {
       auto start = i;
-      auto count = windows.Largest(i);
-      if (count == 0 && run_prev != kNone) {
-        for (auto cand = std::min(windows.Max(), run_end - run_prev - 1);
-             cand >= 2; --cand) {
-          if (windows.Indexed(run_end - cand, cand)) {
-            start = run_end - cand;
-            count = cand;
+      auto count = Largest(tokenizer, words.subspan(i));
+      if (count == 0 && i != 0) {
+        for (auto tail = std::min<size_t>(tokenizer.MaxShingle(),
+                                          words.size() - prev - 1);
+             tail >= 2; --tail) {
+          if (Indexes(tokenizer, words.last(tail))) {
+            start = words.size() - tail;
+            count = tail;
             break;
           }
         }
       }
       if (count == 0) {
-        if (!windows.Indexed(i, 1)) {
-          return kNone;
+        if (!Indexes(tokenizer, words.subspan(i, 1))) {
+          return false;
         }
         count = 1;
       }
-      emit(start, count);
-      run_prev = start;
+      if (i != 0) {
+        offs_min = offs_max = static_cast<PosAttr::value_t>(start - prev);
+      }
+      out.push_back<ByTermOptions>(offs_min, offs_max).term =
+        Join(tokenizer.Separator(), words.subspan(start, count));
+      shingled |= count > 1;
+      prev = start;
       i = start + count;
     }
-  }
-  return prev;
-}
-
-bool CoverPhrase(const analysis::ShingleTokenizer& tokenizer,
-                 const ByPhraseOptions& phrase, ByPhraseOptions& out) {
-  std::vector<bytes_view> tokens;
-  std::vector<PosAttr::value_t> positions;
-  PosAttr::value_t entry_min = 0;
-  PosAttr::value_t entry_max = 0;
-  PosAttr::value_t lag = 0;
-  bool shingled = false;
-  bool patterns = false;
-  const auto flush = [&] {
-    if (tokens.empty()) {
-      return true;
-    }
-    const Windows windows{tokenizer, tokens, positions};
-    const auto last =
-      Cover(windows, entry_min + lag, entry_max + lag, out, shingled);
-    if (last == kNone) {
-      return false;
-    }
-    lag = positions.back() - positions[last];
-    tokens.clear();
-    positions.clear();
+    lag = static_cast<PosAttr::value_t>(words.size() - 1 - prev);
+    run.clear();
     return true;
   };
   for (const auto& info : phrase) {
     const auto* term = std::get_if<ByTermOptions>(&info.part);
-    if (term && !tokens.empty() && info.offs_min == info.offs_max) {
-      positions.push_back(positions.back() + info.offs_max);
-      tokens.emplace_back(term->term);
+    if (term && !run.empty() && info.offs_min == 1 && info.offs_max == 1) {
+      run.emplace_back(term->term);
       continue;
     }
     if (!flush()) {
       return false;
     }
     if (term) {
-      entry_min = info.offs_min;
-      entry_max = info.offs_max;
-      tokens.emplace_back(term->term);
-      positions.push_back(0);
+      run_min = info.offs_min;
+      run_max = info.offs_max;
+      run.emplace_back(term->term);
       continue;
     }
     if (!tokenizer.OutputUnigrams()) {

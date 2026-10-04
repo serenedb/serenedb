@@ -22,9 +22,12 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/flags/flag.h>
 
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/main/database.hpp>
 #include <duckdb/main/job_scheduler.hpp>
 #include <exception>
 #include <functional>
@@ -62,6 +65,28 @@ using namespace sdb;
 using namespace sdb::app;
 
 const boost::asio::ssl::detail::openssl_init<true> kSslInit{};
+
+class BackgroundJobRuntime final : public duckdb::JobRuntime {
+ public:
+  BackgroundJobRuntime(BackgroundScheduler& background,
+                       duckdb::JobScheduler& jobs)
+    : _background{background},
+      _timer{background.MakeTimer([&jobs] { jobs.Tick(); })} {}
+
+  void WakeAt(duckdb::timestamp_t at) final {
+    _timer->ArmAt(BackgroundScheduler::clock::now() +
+                  std::chrono::microseconds{
+                    at.value - duckdb::Timestamp::GetCurrentTimestamp().value});
+  }
+
+  void Run(std::function<void()> run) final {
+    _background.Run(std::move(run)).Detach();
+  }
+
+ private:
+  BackgroundScheduler& _background;
+  std::shared_ptr<BackgroundScheduler::Timer> _timer;
+};
 
 int RunServer(int argc, char** argv) {
   try {
@@ -130,6 +155,7 @@ int RunServer(int argc, char** argv) {
         auto& jobs = irs::DuckDBEngine::Instance().instance().GetJobScheduler();
         jobs.Stop();
         jobs.Wait();
+        jobs.SetRuntime(nullptr);
       });
       if (up_search) {
         stop("search", [&] { search.stop(); });
@@ -147,6 +173,8 @@ int RunServer(int argc, char** argv) {
     network::pg::hba::SetHbaConfig(db_path.hbaConfigFile());
     background.start();
     up_background = true;
+    auto& jobs = irs::DuckDBEngine::Instance().instance().GetJobScheduler();
+    jobs.SetRuntime(std::make_unique<BackgroundJobRuntime>(background, jobs));
     catalog::InitCatalog(db_path.directory());
     // The io pool must be up before search.start(): the per-index refresh /
     // compaction loops co_await BackgroundScheduler::Delay(), which hosts its

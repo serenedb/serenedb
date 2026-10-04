@@ -73,12 +73,13 @@ void AssertNormReads(const irs::NormColumnReader& col,
   EXPECT_EQ(col.Sum(), sum);
 
   std::vector<uint32_t> decoded;
-  for (size_t rg = 0; rg < col.RowGroupCount(); ++rg) {
-    const auto first = col.RowGroupFirstRow(rg);
-    decoded.assign(col.RowGroupRowCount(rg), 0);
-    col.Decode(rg, decoded.data());
+  for (size_t r = 0; r < col.RegionCount(); ++r) {
+    const auto& region = col.Region(r);
+    const auto first = region.first_doc - irs::doc_limits::min();
+    decoded.assign(region.end_doc - region.first_doc, 0);
+    col.Decode(region.first_doc, decoded.size(), decoded.data());
     for (size_t i = 0; i < decoded.size(); ++i) {
-      ASSERT_EQ(decoded[i], expected[first + i]) << "rg=" << rg << " i=" << i;
+      ASSERT_EQ(decoded[i], expected[first + i]) << "r=" << r << " i=" << i;
     }
   }
 
@@ -265,7 +266,11 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
       EXPECT_EQ(col->Get(i), kRepeatedValue) << "i=" << i;
     }
     // Multi-row-group: with 1024 RG size + 5000 rows we expect 5 row groups.
-    EXPECT_EQ(col->RowGroupCount(), 5u);
+    ASSERT_EQ(col->RegionCount(), 5u);
+    for (size_t r = 0; r < col->RegionCount(); ++r) {
+      EXPECT_EQ(col->Region(r).bits, 0u) << "r=" << r;
+      EXPECT_EQ(col->Region(r).value, kRepeatedValue) << "r=" << r;
+    }
   }
 
   {
@@ -284,12 +289,13 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
     irs::ColReader r{dir, "dup_rg", Db()};
     const auto* col = r.NormColumn(9);
     ASSERT_NE(col, nullptr);
-    EXPECT_EQ(col->RowGroupCount(), 3u);
-    for (size_t rg = 0; rg < col->RowGroupCount(); ++rg) {
-      EXPECT_EQ(col->Bits(rg), 8u) << "rg=" << rg;
-      EXPECT_EQ(col->RowGroupRowCount(rg), kRowGroupSize) << "rg=" << rg;
+    EXPECT_EQ(col->RegionCount(), 3u);
+    for (size_t r = 0; r < col->RegionCount(); ++r) {
+      const auto& region = col->Region(r);
+      EXPECT_EQ(region.bits, 0u) << "r=" << r;
+      EXPECT_EQ(region.value, kRepeatedValue) << "r=" << r;
+      EXPECT_EQ(region.end_doc - region.first_doc, kRowGroupSize) << "r=" << r;
     }
-    EXPECT_TRUE(col->Uniform());
     EXPECT_FALSE(col->HasExceptions());
   }
 }
@@ -321,12 +327,13 @@ TEST_P(BufferedColumnTestCase, RareLargeValues) {
   irs::ColReader r{dir, "rare", Db()};
   const auto* col = r.NormColumn(9);
   ASSERT_NE(col, nullptr);
-  ASSERT_EQ(col->RowGroupCount(), 3u);
-  EXPECT_EQ(col->Bits(0), 8u);
-  EXPECT_EQ(col->Bits(1), 16u);
-  EXPECT_EQ(col->Bits(2), 8u);
-  EXPECT_TRUE(col->HasExceptions());
-  EXPECT_FALSE(col->Uniform());
+  ASSERT_EQ(col->RegionCount(), 3u);
+  EXPECT_EQ(col->Region(0).bits, 8u);
+  EXPECT_EQ(col->Region(1).bits, 16u);
+  EXPECT_EQ(col->Region(2).bits, 8u);
+  EXPECT_TRUE(col->Region(0).exceptions);
+  EXPECT_FALSE(col->Region(1).exceptions);
+  EXPECT_TRUE(col->Region(2).exceptions);
   AssertNormReads(*col, expected);
 }
 
@@ -334,7 +341,7 @@ TEST_P(BufferedColumnTestCase, RareLargeValuesEveryRowGroup) {
   constexpr uint64_t kRowCount = 2048;
   std::vector<uint32_t> expected(kRowCount);
   for (uint64_t i = 0; i < kRowCount; ++i) {
-    expected[i] = static_cast<uint32_t>(i * 7 % 250);
+    expected[i] = static_cast<uint32_t>(i * 7 % irs::NormFirstCode(8));
   }
   for (uint64_t rg = 0; rg < 4; ++rg) {
     expected[rg * 512 + 3] = static_cast<uint32_t>(1000 + rg);
@@ -354,15 +361,135 @@ TEST_P(BufferedColumnTestCase, RareLargeValuesEveryRowGroup) {
     irs::ColReader r{dir, "rare_all", Db()};
     const auto* col = r.NormColumn(9);
     ASSERT_NE(col, nullptr);
-    EXPECT_EQ(col->RowGroupCount(),
+    EXPECT_EQ(col->RegionCount(),
               kRowCount / std::min<uint64_t>(kRowCount, row_group_size));
-    for (size_t rg = 0; rg < col->RowGroupCount(); ++rg) {
-      EXPECT_EQ(col->Bits(rg), 8u) << "rg=" << rg;
+    for (size_t r = 0; r < col->RegionCount(); ++r) {
+      EXPECT_EQ(col->Region(r).bits, 8u) << "r=" << r;
+      EXPECT_TRUE(col->Region(r).exceptions) << "r=" << r;
     }
-    EXPECT_TRUE(col->HasExceptions());
-    EXPECT_TRUE(col->Uniform());
     AssertNormReads(*col, expected);
   }
+}
+
+TEST_P(BufferedColumnTestCase, CrowdedBucketOverflows) {
+  constexpr uint64_t kRowCount = 8192;
+  std::vector<uint32_t> expected(kRowCount);
+  for (uint64_t i = 0; i < kRowCount; ++i) {
+    expected[i] = static_cast<uint32_t>(1 + i % 200);
+  }
+  for (uint64_t i = 0; i < 2 * irs::kNormDirect; ++i) {
+    expected[100 + i * 3] = static_cast<uint32_t>(500 + i);
+  }
+  expected[kRowCount - 1] = 1u << 31;
+
+  irs::MemoryDirectory dir;
+  {
+    irs::ColWriter w{dir, "crowded", Db()};
+    auto& nw = w.OpenNormColumn(/*id=*/9, kRowCount);
+    for (uint64_t i = 0; i < kRowCount; ++i) {
+      nw.Append(i, expected[i]);
+    }
+    w.Commit(kRowCount);
+  }
+  irs::ColReader r{dir, "crowded", Db()};
+  const auto* col = r.NormColumn(9);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RegionCount(), 1u);
+  const auto& region = col->Region(0);
+  EXPECT_EQ(region.bits, 8u);
+  EXPECT_EQ(region.exception_bytes, 4u);
+  EXPECT_EQ(region.direct + region.overflow, 2 * irs::kNormDirect + 1);
+  EXPECT_NE(region.overflow, 0u);
+  AssertNormReads(*col, expected);
+}
+
+TEST_P(BufferedColumnTestCase, WideRegions) {
+  constexpr uint64_t kRowCount = 4096;
+  std::vector<uint32_t> expected(kRowCount);
+  for (uint64_t i = 0; i < 2048; ++i) {
+    expected[i] = static_cast<uint32_t>(300 + i * 31 % 60000);
+  }
+  expected[17] = irs::NormFirstCode(16);
+  expected[900] = 70000;
+  expected[2047] = std::numeric_limits<uint32_t>::max();
+  for (uint64_t i = 2048; i < kRowCount; ++i) {
+    expected[i] = static_cast<uint32_t>(i % 3 == 0 ? 100000 + i : i);
+  }
+
+  irs::MemoryDirectory dir;
+  {
+    irs::ColWriter w{dir, "wide", Db()};
+    auto& nw = w.OpenNormColumn(/*id=*/9, 2048);
+    for (uint64_t i = 0; i < kRowCount; ++i) {
+      nw.Append(i, expected[i]);
+    }
+    w.Commit(kRowCount);
+  }
+  irs::ColReader r{dir, "wide", Db()};
+  const auto* col = r.NormColumn(9);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RegionCount(), 2u);
+  EXPECT_EQ(col->Region(0).bits, 16u);
+  EXPECT_TRUE(col->Region(0).exceptions);
+  EXPECT_EQ(col->Region(0).exception_bytes, 4u);
+  EXPECT_EQ(col->Region(1).bits, 32u);
+  EXPECT_FALSE(col->Region(1).exceptions);
+  AssertNormReads(*col, expected);
+}
+
+TEST_P(BufferedColumnTestCase, StreamedRegions) {
+  const auto value = [](uint64_t i) -> uint32_t {
+    if (i < 3000) {
+      return i == 1500 ? 4000 : static_cast<uint32_t>(1 + i % 100);
+    }
+    if (i < 5000) {
+      return 0;
+    }
+    return static_cast<uint32_t>(10 + i % 7);
+  };
+  constexpr uint64_t kRowCount = 7000;
+  std::vector<uint32_t> expected;
+  irs::MemoryDirectory dir;
+  {
+    irs::ColWriter w{dir, "streamed", Db()};
+    auto& nw = w.StreamNormColumn(/*id=*/9);
+    const auto write = [&](uint64_t from, uint64_t to, uint64_t skip) {
+      irs::NormStats planned;
+      std::vector<uint32_t> all;
+      for (auto i = from; i < to; ++i) {
+        all.push_back(value(i));
+      }
+      planned.Add(all);
+      std::vector<uint32_t> kept;
+      for (auto i = from; i < to; ++i) {
+        if (skip == 0 || i % skip != 0) {
+          kept.push_back(value(i));
+        }
+      }
+      nw.OpenRegion(planned);
+      nw.Write(std::span{kept}.first(kept.size() / 2));
+      nw.Write(std::span{kept}.subspan(kept.size() / 2));
+      nw.CloseRegion();
+      expected.insert(expected.end(), kept.begin(), kept.end());
+    };
+    write(0, 3000, 0);
+    write(3000, 5000, 0);
+    write(5000, kRowCount, 5);
+    write(kRowCount, kRowCount, 0);
+    nw.Finalize();
+    w.Commit(expected.size());
+  }
+  irs::ColReader r{dir, "streamed", Db()};
+  const auto* col = r.NormColumn(9);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RegionCount(), 3u);
+  EXPECT_EQ(col->Region(0).bits, 8u);
+  EXPECT_TRUE(col->Region(0).exceptions);
+  EXPECT_EQ(col->Region(1).bits, 0u);
+  EXPECT_EQ(col->Region(1).value, 0u);
+  EXPECT_EQ(col->Region(2).bits, 8u);
+  EXPECT_FALSE(col->Region(2).exceptions);
+  AssertNormReads(*col, expected);
 }
 
 TEST_P(BufferedColumnTestCase, Sort) {

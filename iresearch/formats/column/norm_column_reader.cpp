@@ -20,165 +20,175 @@
 
 #include "iresearch/formats/column/norm_column_reader.hpp"
 
-#ifdef __AVX2__
-#include <immintrin.h>
-#endif
-
 #include <algorithm>
 #include <bit>
 
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
+namespace {
 
-NormColumnReader::NormColumnReader(field_id id, NormColumnMeta meta,
-                                   IndexInput& in)
-  : _id{id},
-    _rg_rows{meta.row_group_size},
-    _row_count{meta.row_count},
-    _exceptions{meta.exceptions},
-    _exception_bytes{meta.exception_bytes} {
-  const auto* data = in.ReadStable(meta.file_offset, meta.size);
-  if (data == nullptr) {
-    _owned.resize(meta.size);
-    in.ReadData(meta.file_offset, _owned.data(), meta.size);
-    data = _owned.data();
-  }
-  _windows.reserve(meta.row_groups.size());
-  for (size_t rg = 0; rg != meta.row_groups.size(); ++rg) {
-    const auto& p = meta.row_groups[rg];
-    _sum += p.sum;
-    _non_zero += p.non_zero_count;
-    _max_bits = std::max<uint32_t>(_max_bits, p.bits);
-    const uint64_t first_row = rg * _rg_rows;
-    const auto first_doc = static_cast<doc_id_t>(first_row + doc_limits::min());
-    const auto rows = std::min(_rg_rows, _row_count - first_row);
-    const auto* base = data + (p.file_offset - meta.file_offset) -
-                       ((uint64_t{first_doc} * p.bits) >> 3);
-    _windows.push_back({
-      .base = base,
-      .first_doc = first_doc,
-      .end_doc = static_cast<doc_id_t>(first_doc + rows),
-      .rg = rg,
-      .bits = p.bits,
-    });
-    _uniform &=
-      p.bits == _windows.front().bits && base == _windows.front().base;
-  }
-  if (_exceptions == 0) {
-    return;
-  }
-  const auto buckets = NormBuckets(_row_count);
-  _begin = data + (meta.exceptions_offset - meta.file_offset);
-  _offsets = _begin + (buckets + 1) * sizeof(uint32_t);
-  _values = _offsets + _exceptions + kNormOffsetSlack;
-  uint32_t prev = 0;
-  for (uint64_t b = 0; b <= buckets; ++b) {
-    const auto at = absl::little_endian::Load32(_begin + b * sizeof(uint32_t));
-    SDB_ENSURE(at >= prev && at - prev <= kNormBucketRows &&
-                 (b != 0 || at == 0) && (b != buckets || at == _exceptions),
-               ".col reader: norm exceptions index on column id ", _id,
-               " is corrupt at bucket ", b);
-    prev = at;
-  }
-}
+constexpr uint32_t kPageShift =
+  static_cast<uint32_t>(std::countr_zero(file_utils::kPage));
 
-std::span<const byte_type> NormColumnReader::RowGroupExtent(
-  size_t rg) const noexcept {
-  SDB_ASSERT(rg < _windows.size());
-  const auto& w = _windows[rg];
-  const auto* first = w.base + ((uint64_t{w.first_doc} * w.bits) >> 3);
-  const auto* end = w.base + ((uint64_t{w.end_doc} * w.bits + 7) >> 3);
-  return {first, static_cast<size_t>(end - first)};
-}
+}  // namespace
 
-uint32_t NormColumnReader::Exception(doc_id_t doc) const noexcept {
-  SDB_ASSERT(_exceptions != 0);
-  const uint64_t row = doc - doc_limits::min();
-  const auto* bucket = _begin + (row >> kNormBucketShift) * sizeof(uint32_t);
-  const auto lo = absl::little_endian::Load32(bucket);
-  const auto n = absl::little_endian::Load32(bucket + sizeof(uint32_t)) - lo;
-  const auto key = static_cast<byte_type>(row & (kNormBucketRows - 1));
-  const auto* offsets = _offsets + lo;
-  uint32_t k = 0;
-#ifdef __AVX2__
-  const __m256i needle = _mm256_set1_epi8(static_cast<char>(key));
-  for (; k < n; k += 32) {
-    auto m = static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_cmpeq_epi8(
-      _mm256_loadu_si256(reinterpret_cast<const __m256i*>(offsets + k)),
-      needle)));
-    if (n - k < 32) {
-      m &= (uint32_t{1} << (n - k)) - 1;
-    }
-    if (m != 0) {
-      k += static_cast<uint32_t>(std::countr_zero(m));
-      break;
+uint32_t NormRegion::Overflow(uint32_t row) const noexcept {
+  uint32_t lo = 0;
+  uint32_t hi = overflow;
+  while (lo < hi) {
+    const auto mid = lo + (hi - lo) / 2;
+    if (absl::little_endian::Load32(overflow_rows + size_t{mid} * 4) < row) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
     }
   }
-#else
-  while (k < n && offsets[k] != key) {
-    ++k;
-  }
-#endif
-  SDB_ASSERT(k < n, "norm exception for doc ", doc, " is missing");
-  if (k >= n) [[unlikely]] {
+  const bool found = lo < overflow && absl::little_endian::Load32(
+                                        overflow_rows + size_t{lo} * 4) == row;
+  SDB_ASSERT(found, "norm overflow exception for row ", row, " is missing");
+  if (!found) [[unlikely]] {
     return 0;
   }
-  const auto* value = _values + size_t{lo + k} * _exception_bytes;
-  switch (_exception_bytes) {
-    case 1:
-      return *value;
-    case 2:
-      return absl::little_endian::Load16(value);
-    default:
-      return absl::little_endian::Load32(value);
+  return absl::little_endian::Load32(overflow_values + size_t{lo} * 4);
+}
+
+const byte_type* NormColumnReader::Map(IndexInput& in, uint64_t offset,
+                                       uint64_t size) {
+  if (const auto* data = in.ReadStable(offset, size)) {
+    return data;
   }
+  auto& owned =
+    _owned.emplace_back(std::make_unique_for_overwrite<byte_type[]>(size));
+  in.ReadData(offset, owned.get(), size);
+  return owned.get();
+}
+
+NormColumnReader::NormColumnReader(field_id id, const NormColumnMeta& meta,
+                                   IndexInput& in)
+  : _id{id}, _row_count{meta.row_count} {
+  _regions.reserve(meta.regions.size());
+  _stats.reserve(meta.regions.size());
+  auto first = doc_limits::min();
+  for (const auto& m : meta.regions) {
+    _stats.push_back(m.stats);
+    auto& r = _regions.emplace_back();
+    r.first_doc = first;
+    r.end_doc = static_cast<doc_id_t>(first + m.stats.rows);
+    r.bits = m.bits;
+    r.value = m.value;
+    _sum += m.stats.sum;
+    _non_zero += m.stats.non_zero;
+    first = r.end_doc;
+    if (m.bits == 0) {
+      continue;
+    }
+    const uint64_t bytes = m.bits / 8;
+    const uint64_t size = NormSlotsSize(m);
+    const auto* slots = Map(in, m.file_offset, size);
+    r.base = slots - uint64_t{r.first_doc} * bytes;
+    r.window = _windows.size();
+    const uint64_t window_bytes = (uint64_t{1} << kNormWindowShift) * bytes;
+    for (uint64_t at = 0; at < size; at += window_bytes) {
+      _windows.emplace_back(slots + at, std::min(window_bytes, size - at));
+    }
+    r.first_page = reinterpret_cast<uintptr_t>(slots) >> kPageShift;
+    r.page = _pages;
+    _pages += (reinterpret_cast<uintptr_t>(slots + size - 1) >> kPageShift) -
+              r.first_page + 1;
+    if (m.exceptions == 0) {
+      continue;
+    }
+    const auto buckets = NormBuckets(m);
+    const auto* table = Map(in, m.table_offset, NormTableSize(m));
+    _exceptions = true;
+    r.exceptions = true;
+    r.first_code = NormFirstCode(m.bits);
+    r.shift = m.shift;
+    r.direct = m.exceptions - m.overflow;
+    r.overflow = m.overflow;
+    r.exception_bytes = m.exception_bytes;
+    r.bases = table;
+    r.overflow_rows = table + buckets * sizeof(uint32_t);
+    r.overflow_values = r.overflow_rows + uint64_t{m.overflow} * 4;
+    r.values = r.overflow_values + uint64_t{m.overflow} * 4;
+    uint32_t prev = 0;
+    for (uint64_t b = 0; b != buckets; ++b) {
+      const auto at = absl::little_endian::Load32(r.bases + b * 4);
+      SDB_ENSURE(at >= prev && at <= r.direct,
+                 ".col reader: norm exceptions index on column id ", _id,
+                 " is corrupt at bucket ", b);
+      prev = at;
+    }
+    for (uint32_t k = 0; k != m.overflow; ++k) {
+      const auto row =
+        absl::little_endian::Load32(r.overflow_rows + size_t{k} * 4);
+      SDB_ENSURE(row < m.stats.rows &&
+                   (k == 0 || row > absl::little_endian::Load32(
+                                      r.overflow_rows + size_t{k - 1} * 4)),
+                 ".col reader: norm overflow exceptions on column id ", _id,
+                 " are corrupt at ", k);
+    }
+  }
+}
+
+const NormRegion& NormColumnReader::Locate(doc_id_t doc) const noexcept {
+  SDB_ASSERT(doc >= doc_limits::min());
+  SDB_ASSERT(doc - doc_limits::min() < _row_count);
+  const auto it = std::upper_bound(
+    _regions.begin(), _regions.end(), doc,
+    [](doc_id_t d, const NormRegion& r) { return d < r.end_doc; });
+  SDB_ASSERT(it != _regions.end());
+  return *it;
 }
 
 uint32_t NormColumnReader::Get(uint64_t row) const noexcept {
   SDB_ASSERT(row < _row_count);
   const auto doc = static_cast<doc_id_t>(row + doc_limits::min());
-  const auto& w = Locate(doc);
-  const auto value = NormSlot(w.base, w.bits, doc);
-  if (_exceptions != 0 && w.bits != 0 && value == (uint64_t{1} << w.bits) - 1) {
-    return Exception(doc);
-  }
-  return value;
+  const auto& r = Locate(doc);
+  const auto value = r.Slot(doc);
+  return r.exceptions && value >= r.first_code ? r.Exception(doc, value)
+                                               : value;
 }
 
-void NormColumnReader::Decode(size_t rg,
+void NormColumnReader::Decode(doc_id_t first, size_t n,
                               uint32_t* IRS_RESTRICT values) const noexcept {
-  SDB_ASSERT(rg < _windows.size());
-  const auto& w = _windows[rg];
-  const auto rows = w.end_doc - w.first_doc;
-  if (w.bits == 0) {
-    std::fill_n(values, rows, 0);
+  if (n == 0) {
     return;
   }
-  for (auto doc = w.first_doc; doc != w.end_doc; ++doc) {
-    values[doc - w.first_doc] = NormSlot(w.base, w.bits, doc);
-  }
-  if (_exceptions == 0) {
-    return;
-  }
-  const uint64_t first_row = w.first_doc - doc_limits::min();
-  const uint64_t end_row = first_row + rows;
-  for (auto b = first_row >> kNormBucketShift, end = NormBuckets(end_row);
-       b != end; ++b) {
-    const auto* bucket = _begin + b * sizeof(uint32_t);
-    const auto hi = absl::little_endian::Load32(bucket + sizeof(uint32_t));
-    for (auto i = absl::little_endian::Load32(bucket); i != hi; ++i) {
-      const auto row = (b << kNormBucketShift) | _offsets[i];
-      if (row < first_row || row >= end_row) {
-        continue;
+  const auto& r = Locate(first);
+  SDB_ASSERT(first + n <= r.end_doc);
+  switch (r.bits) {
+    case 0:
+      std::fill_n(values, n, r.value);
+      return;
+    case 8: {
+      const auto* p = r.base + first;
+      for (size_t i = 0; i != n; ++i) {
+        values[i] = p[i];
       }
-      const auto* value = _values + size_t{i} * _exception_bytes;
-      values[row - first_row] =
-        _exception_bytes == 1
-          ? *value
-          : (_exception_bytes == 2 ? absl::little_endian::Load16(value)
-                                   : absl::little_endian::Load32(value));
+    } break;
+    case 16: {
+      const auto* p = r.base + size_t{first} * 2;
+      for (size_t i = 0; i != n; ++i) {
+        values[i] = absl::little_endian::Load16(p + i * 2);
+      }
+    } break;
+    default: {
+      const auto* p = r.base + size_t{first} * 4;
+      for (size_t i = 0; i != n; ++i) {
+        values[i] = absl::little_endian::Load32(p + i * 4);
+      }
+    }
+  }
+  if (!r.exceptions) {
+    return;
+  }
+  for (size_t i = 0; i != n; ++i) {
+    if (values[i] >= r.first_code) [[unlikely]] {
+      values[i] = r.Exception(static_cast<doc_id_t>(first + i), values[i]);
     }
   }
 }

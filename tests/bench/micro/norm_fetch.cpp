@@ -264,7 +264,10 @@ struct PackedColumn {
     writer.AppendValues(0, values);
     writer.Finalize();
     out.Flush();
-    bytes = writer.Meta().size;
+    for (const auto& region : writer.Meta().regions) {
+      bytes += irs::NormSlotsSize(region) +
+               (region.exceptions == 0 ? 0 : irs::NormTableSize(region));
+    }
     in = std::make_unique<irs::MemoryIndexInput>(file);
     column = std::make_unique<irs::NormColumnReader>(1, writer.Meta(), *in);
     reader = irs::MakePersistedNormReader(*column);

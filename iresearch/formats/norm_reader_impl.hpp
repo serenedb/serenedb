@@ -42,15 +42,15 @@
 
 namespace irs {
 
-IRS_FORCE_INLINE inline void ReadNormSlots(const byte_type* IRS_RESTRICT base,
-                                           uint32_t bits,
+IRS_FORCE_INLINE inline void ReadNormSlots(const NormRegion& region,
                                            const doc_id_t* IRS_RESTRICT docs,
                                            uint32_t* IRS_RESTRICT values,
                                            size_t n) noexcept {
   SDB_ASSERT(n != 0);
-  switch (bits) {
+  const auto* base = region.base;
+  switch (region.bits) {
     case 0:
-      std::memset(values, 0, n * sizeof(uint32_t));
+      std::fill_n(values, n, region.value);
       return;
     case 8:
       for (size_t i = 0; i != n; ++i) {
@@ -62,57 +62,50 @@ IRS_FORCE_INLINE inline void ReadNormSlots(const byte_type* IRS_RESTRICT base,
         values[i] = absl::little_endian::Load16(base + size_t{docs[i]} * 2);
       }
       return;
-    case 24:
-      for (size_t i = 0; i != n; ++i) {
-        values[i] =
-          absl::little_endian::Load32(base + size_t{docs[i]} * 3) & 0xFFFFFF;
-      }
-      return;
     default:
-      SDB_ASSERT(bits == 32);
+      SDB_ASSERT(region.bits == 32);
       for (size_t i = 0; i != n; ++i) {
         values[i] = absl::little_endian::Load32(base + size_t{docs[i]} * 4);
       }
   }
 }
 
-IRS_NO_INLINE inline void PatchNormEscapes(const NormColumnReader& column,
-                                           uint32_t escape,
+IRS_NO_INLINE inline void PatchNormEscapes(const NormRegion& region,
                                            const doc_id_t* IRS_RESTRICT docs,
                                            uint32_t* IRS_RESTRICT values,
                                            size_t n) noexcept {
   size_t i = 0;
 #ifdef __AVX2__
-  const __m256i needle = _mm256_set1_epi32(static_cast<int>(escape));
+  const __m256i limit =
+    _mm256_set1_epi32(static_cast<int>(region.first_code - 1));
   for (; i + 8 <= n; i += 8) {
     auto m = static_cast<uint32_t>(
-      _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpeq_epi32(
+      _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(
         _mm256_loadu_si256(reinterpret_cast<const __m256i*>(values + i)),
-        needle))));
+        limit))));
     for (; m != 0; m &= m - 1) {
       const auto j = i + static_cast<size_t>(std::countr_zero(m));
-      values[j] = column.Exception(docs[j]);
+      values[j] = region.Exception(docs[j], values[j]);
     }
   }
 #endif
   for (; i != n; ++i) {
-    if (values[i] == escape) {
-      values[i] = column.Exception(docs[i]);
+    if (values[i] >= region.first_code) {
+      values[i] = region.Exception(docs[i], values[i]);
     }
   }
 }
 
-IRS_FORCE_INLINE inline void PatchNormSlots(const NormColumnReader& column,
-                                            uint32_t escape,
+IRS_FORCE_INLINE inline void PatchNormSlots(const NormRegion& region,
                                             const doc_id_t* IRS_RESTRICT docs,
                                             uint32_t* IRS_RESTRICT values,
                                             size_t n) noexcept {
   bool escaped = false;
   for (size_t i = 0; i != n; ++i) {
-    escaped |= values[i] == escape;
+    escaped |= values[i] >= region.first_code;
   }
   if (escaped) [[unlikely]] {
-    PatchNormEscapes(column, escape, docs, values, n);
+    PatchNormEscapes(region, docs, values, n);
   }
 }
 
@@ -123,7 +116,6 @@ class NormReaderBase : public NormReader {
  protected:
   explicit NormReaderBase(const NormColumnReader& column) noexcept
     : _column{&column},
-      _page_bits{std::max<uint32_t>(column.MaxBits(), 1)},
       _avg{
         column.NonZeroCount() == 0
           ? score_t{}
@@ -135,22 +127,30 @@ class NormReaderBase : public NormReader {
   static constexpr uint64_t kMaxGapPages = 2;
   static constexpr size_t kBits = BitsRequired<uint64_t>();
   static constexpr uint32_t kPageShift =
-    static_cast<uint32_t>(std::countr_zero(file_utils::kPage)) + 3;
+    static_cast<uint32_t>(std::countr_zero(file_utils::kPage));
 
   IRS_FORCE_INLINE const byte_type* At(doc_id_t doc) const noexcept {
-    return _base + ((uint64_t{doc} * _bits) >> 3);
+    return _region->base + uint64_t{doc} * _bytes;
   }
 
   IRS_FORCE_INLINE const byte_type* End(doc_id_t doc) const noexcept {
-    return _base + ((uint64_t{doc} * _bits + _bits + 7) >> 3);
+    return At(doc) + _bytes;
   }
 
   IRS_FORCE_INLINE uint64_t PageOf(doc_id_t doc) const noexcept {
-    return (uint64_t{doc - doc_limits::min()} * _page_bits) >> kPageShift;
+    return _region->page +
+           ((reinterpret_cast<uintptr_t>(At(doc)) >> kPageShift) -
+            _region->first_page);
   }
 
   IRS_FORCE_INLINE void Touched(const doc_id_t* docs, size_t n) noexcept {
-    if (_rg_done) [[likely]] {
+    if (_bytes == 0) {
+      return;
+    }
+    if (docs[0] < _window_first || docs[0] >= _window_end) [[unlikely]] {
+      Enter(docs[0]);
+    }
+    if (_window_done) [[likely]] {
       return;
     }
     Cold(docs, n);
@@ -160,13 +160,13 @@ class NormReaderBase : public NormReader {
     if (_seen.empty()) {
       Init();
     }
-    if (!Test(_probed_at + _rg)) {
-      Set(_probed_at + _rg);
-      const auto span = _column->RowGroupExtent(_rg);
+    if (!Test(_probed_at + _window)) {
+      Set(_probed_at + _window);
+      const auto span = _column->Window(_window);
       const auto* at = At(docs[0]);
       if (file_utils::IsResident(
             at, static_cast<size_t>(span.data() + span.size() - at))) {
-        Done(_rg);
+        Done(_window);
         return;
       }
     }
@@ -214,45 +214,49 @@ class NormReaderBase : public NormReader {
       return;
     }
     _dense = true;
-    const auto span = _column->RowGroupExtent(_rg);
+    const auto span = _column->Window(_window);
     const auto* at = At(docs[0]);
     file_utils::Prefetch(at,
                          static_cast<size_t>(span.data() + span.size() - at));
-    Done(_rg);
-    Ahead(_rg + 1);
+    Done(_window);
+    Ahead(_window + 1);
   }
 
-  void Ahead(size_t rg) noexcept {
+  void Ahead(size_t window) noexcept {
     SDB_ASSERT(_dense);
     uint64_t budget = file_utils::kMaxReadahead;
-    for (const auto count = _column->RowGroupCount(); rg < count && budget != 0;
-         ++rg) {
-      const auto span = _column->RowGroupExtent(rg);
+    for (const auto count = _column->WindowCount();
+         window < count && budget != 0; ++window) {
+      const auto span = _column->Window(window);
       budget -= std::min<uint64_t>(budget, span.size());
-      if (Test(rg)) {
+      if (Test(window)) {
         continue;
       }
       if (!file_utils::IsResident(span.data(), span.size())) {
         file_utils::Prefetch(span.data(), span.size());
       }
-      Done(rg);
+      Done(window);
     }
   }
 
-  void Entered() noexcept {
-    _rg_done = !_seen.empty() && Test(_rg);
+  void Enter(doc_id_t doc) noexcept {
+    const auto& r = *_region;
+    const auto local = (doc - r.first_doc) >> kNormWindowShift;
+    _window = r.window + local;
+    _window_first = r.first_doc + (local << kNormWindowShift);
+    _window_end = static_cast<doc_id_t>(std::min<uint64_t>(
+      uint64_t{_window_first} + (uint64_t{1} << kNormWindowShift), r.end_doc));
+    _window_done = !_seen.empty() && Test(_window);
     if (_dense) {
-      Ahead(_rg);
+      Ahead(_window);
     }
   }
 
   void Init() {
-    const auto rgs = _column->RowGroupCount();
-    _probed_at = (rgs + kBits - 1) / kBits * kBits;
+    const auto windows = _column->WindowCount();
+    _probed_at = (windows + kBits - 1) / kBits * kBits;
     _seen_at = 2 * _probed_at;
-    const auto pages =
-      (((_column->RowCount() - 1) * _page_bits) >> kPageShift) + 1;
-    _seen.assign((_seen_at + pages + kBits - 1) / kBits, 0);
+    _seen.assign((_seen_at + _column->PageCount() + kBits - 1) / kBits, 0);
   }
 
   IRS_FORCE_INLINE bool Test(size_t bit) const noexcept {
@@ -272,9 +276,9 @@ class NormReaderBase : public NormReader {
     return true;
   }
 
-  void Done(size_t rg) noexcept {
-    Set(rg);
-    _rg_done |= rg == _rg;
+  void Done(size_t window) noexcept {
+    Set(window);
+    _window_done |= window == _window;
   }
 
   uint64_t Count(uint64_t lo, uint64_t hi) const noexcept {
@@ -292,43 +296,35 @@ class NormReaderBase : public NormReader {
 
   IRS_FORCE_INLINE void Read(const doc_id_t* docs, uint32_t* values,
                              size_t n) const noexcept {
-    ReadNormSlots(_base, _bits, docs, values, n);
-    if (_escapes) {
-      PatchNormSlots(*_column, _escape, docs, values, n);
+    ReadNormSlots(*_region, docs, values, n);
+    if (_region->exceptions) {
+      PatchNormSlots(*_region, docs, values, n);
     }
   }
 
   IRS_FORCE_INLINE uint32_t ReadOne(doc_id_t doc) const noexcept {
-    const auto value = NormSlot(_base, _bits, doc);
-    return _escapes && value == _escape ? _column->Exception(doc) : value;
+    const auto value = _region->Slot(doc);
+    return _region->exceptions && value >= _region->first_code
+             ? _region->Exception(doc, value)
+             : value;
   }
 
-  void Track(const NormColumnReader::Window& window) noexcept {
-    _rg = window.rg;
-    _rg_first_doc = window.first_doc;
-    _rg_end_doc = window.end_doc;
-    Entered();
-  }
-
-  void Position(const NormColumnReader::Window& window) noexcept {
-    _base = window.base;
-    _bits = window.bits;
-    _escape = static_cast<uint32_t>((uint64_t{1} << window.bits) - 1);
-    _escapes = _column->HasExceptions() && window.bits != 0;
-    Track(window);
+  void Position(const NormRegion& region) noexcept {
+    _region = &region;
+    _bytes = region.bits / 8;
+    _window_first = 0;
+    _window_end = 0;
+    _window_done = false;
   }
 
   const NormColumnReader* _column;
-  const byte_type* _base = nullptr;
-  uint32_t _bits = 0;
-  uint32_t _escape = 0;
-  bool _escapes = false;
-  bool _rg_done = false;
+  const NormRegion* _region = nullptr;
+  uint32_t _bytes = 0;
+  bool _window_done = false;
   bool _dense = false;
-  doc_id_t _rg_first_doc = 0;
-  doc_id_t _rg_end_doc = 0;
-  size_t _rg = 0;
-  uint32_t _page_bits;
+  doc_id_t _window_first = 0;
+  doc_id_t _window_end = 0;
+  size_t _window = 0;
   size_t _probed_at = 0;
   size_t _seen_at = 0;
   uint64_t _fresh = 0;
@@ -337,12 +333,12 @@ class NormReaderBase : public NormReader {
   score_t _avg;
 };
 
-class StreamNormReader : public NormReaderBase {
+class SingleRegionNormReader : public NormReaderBase {
  public:
-  explicit StreamNormReader(const NormColumnReader& column) noexcept
+  explicit SingleRegionNormReader(const NormColumnReader& column) noexcept
     : NormReaderBase{column} {
-    SDB_ASSERT(column.Uniform());
-    Position(column.Rg(0));
+    SDB_ASSERT(column.RegionCount() == 1);
+    Position(column.Region(0));
   }
 
   void Get(std::span<const doc_id_t> docs,
@@ -356,7 +352,6 @@ class StreamNormReader : public NormReaderBase {
 
   uint32_t Get(doc_id_t doc) noexcept final {
     SDB_ASSERT(doc >= doc_limits::min());
-    Follow(doc);
     Touched(&doc, 1);
     return ReadOne(doc);
   }
@@ -373,26 +368,19 @@ class StreamNormReader : public NormReaderBase {
   }
 
  private:
-  IRS_FORCE_INLINE void Follow(doc_id_t doc) noexcept {
-    if (doc < _rg_first_doc || doc >= _rg_end_doc) [[unlikely]] {
-      Track(_column->Locate(doc));
-    }
-  }
-
   IRS_FORCE_INLINE void Fetch(const doc_id_t* docs, uint32_t* values,
                               size_t n) noexcept {
     SDB_ASSERT(std::is_sorted(docs, docs + n));
-    Follow(docs[0]);
     Touched(docs, n);
     Read(docs, values, n);
   }
 };
 
-class WindowedNormReader : public NormReaderBase {
+class MultiRegionNormReader : public NormReaderBase {
  public:
-  explicit WindowedNormReader(const NormColumnReader& column) noexcept
+  explicit MultiRegionNormReader(const NormColumnReader& column) noexcept
     : NormReaderBase{column} {
-    Position(column.Rg(0));
+    Position(column.Region(0));
   }
 
   void Get(std::span<const doc_id_t> docs,
@@ -406,7 +394,7 @@ class WindowedNormReader : public NormReaderBase {
 
   uint32_t Get(doc_id_t doc) noexcept final {
     SDB_ASSERT(doc >= doc_limits::min());
-    if (doc < _rg_first_doc || doc >= _rg_end_doc) [[unlikely]] {
+    if (doc < _region->first_doc || doc >= _region->end_doc) [[unlikely]] {
       Position(_column->Locate(doc));
     }
     Touched(&doc, 1);
@@ -428,7 +416,8 @@ class WindowedNormReader : public NormReaderBase {
   IRS_FORCE_INLINE void Fetch(const doc_id_t* docs, uint32_t* values,
                               size_t n) noexcept {
     SDB_ASSERT(std::is_sorted(docs, docs + n));
-    if (docs[0] >= _rg_first_doc && docs[n - 1] < _rg_end_doc) [[likely]] {
+    if (docs[0] >= _region->first_doc && docs[n - 1] < _region->end_doc)
+      [[likely]] {
       Touched(docs, n);
       Read(docs, values, n);
       return;
@@ -439,11 +428,11 @@ class WindowedNormReader : public NormReaderBase {
   void Split(const doc_id_t* IRS_RESTRICT docs, uint32_t* IRS_RESTRICT values,
              size_t n) noexcept {
     for (size_t i = 0; i != n;) {
-      if (docs[i] < _rg_first_doc || docs[i] >= _rg_end_doc) {
+      if (docs[i] < _region->first_doc || docs[i] >= _region->end_doc) {
         Position(_column->Locate(docs[i]));
       }
       size_t j = i + 1;
-      while (j != n && docs[j] < _rg_end_doc) {
+      while (j != n && docs[j] < _region->end_doc) {
         ++j;
       }
       Touched(docs + i, j - i);
@@ -455,11 +444,11 @@ class WindowedNormReader : public NormReaderBase {
 
 inline memory::managed_ptr<NormReader> MakePersistedNormReader(
   const NormColumnReader& column) {
-  SDB_ASSERT(column.RowGroupCount() > 0);
-  if (column.Uniform()) {
-    return memory::make_managed<StreamNormReader>(column);
+  SDB_ASSERT(column.RegionCount() > 0);
+  if (column.RegionCount() == 1) {
+    return memory::make_managed<SingleRegionNormReader>(column);
   }
-  return memory::make_managed<WindowedNormReader>(column);
+  return memory::make_managed<MultiRegionNormReader>(column);
 }
 
 }  // namespace irs

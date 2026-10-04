@@ -373,11 +373,14 @@ TEST_P(ScorePruneNormMergeCase, NormMultiRgInOneSegment) {
   const auto norm_id = field->meta().norm;
   const auto* col = seg.GetColReader()->NormColumn(norm_id);
   ASSERT_NE(nullptr, col);
-  ASSERT_EQ(3u, col->RowGroupCount())
-    << "expected 4+4+2 layout, got " << col->RowGroupCount();
-  EXPECT_EQ(4u, col->RowGroupRowCount(0));
-  EXPECT_EQ(4u, col->RowGroupRowCount(1));
-  EXPECT_EQ(2u, col->RowGroupRowCount(2));
+  ASSERT_EQ(3u, col->RegionCount())
+    << "expected 4+4+2 layout, got " << col->RegionCount();
+  const auto rows = [&](size_t r) {
+    return col->Region(r).end_doc - col->Region(r).first_doc;
+  };
+  EXPECT_EQ(4u, rows(0));
+  EXPECT_EQ(4u, rows(1));
+  EXPECT_EQ(2u, rows(2));
 
   RunBM25(reader, *bm25, kBody, 10);
 }

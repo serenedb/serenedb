@@ -328,8 +328,8 @@ TEST_P(NormTestCase, RareLongNormsAcrossCompaction) {
     const auto* column = segment.GetColReader()->NormColumn(field->meta().norm);
     ASSERT_NE(nullptr, column);
     EXPECT_TRUE(column->HasExceptions());
-    for (size_t rg = 0; rg < column->RowGroupCount(); ++rg) {
-      EXPECT_EQ(8u, column->Bits(rg)) << "rg=" << rg;
+    for (size_t r = 0; r < column->RegionCount(); ++r) {
+      EXPECT_EQ(8u, column->Region(r).bits) << "r=" << r;
     }
   };
 

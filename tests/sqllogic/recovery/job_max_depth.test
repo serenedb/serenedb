@@ -1,0 +1,113 @@
+statement ok
+CREATE TABLE jmd_log (n int);
+
+
+statement ok
+CREATE JOB jmd_third AFTER 1 HOUR SUSPENDED AS INSERT INTO jmd_log VALUES (3);
+
+
+statement ok
+CREATE JOB jmd_second AFTER 1 HOUR SUSPENDED AS EXECUTE JOB jmd_third;
+
+
+statement ok
+CREATE JOB jmd_first AFTER 1 HOUR SUSPENDED AS EXECUTE JOB jmd_second;
+
+
+query
+SHOW sdb_job_max_depth;
+----
+sdb_job_max_depth
+16
+
+
+statement ok
+EXECUTE JOB jmd_first;
+
+
+query
+SELECT count(*) FROM jmd_log;
+----
+count
+1
+
+
+statement ok
+SET GLOBAL sdb_job_max_depth = 2;
+
+
+connection other
+query
+SHOW sdb_job_max_depth;
+----
+sdb_job_max_depth
+2
+
+
+connection default
+statement error
+EXECUTE JOB jmd_first;
+----
+db error: ERROR: <slt:ignore>Max job depth limit of 2 exceeded. Use "SET sdb_job_max_depth TO x" to increase the maximum job depth.<slt:ignore>
+
+
+connection default
+statement ok
+EXECUTE JOB jmd_second;
+
+
+connection default
+query
+SELECT count(*) FROM jmd_log;
+----
+count
+2
+
+
+connection default
+query
+SELECT job_name, run_count, failure_count FROM duckdb_jobs()
+WHERE starts_with(job_name, 'jmd_') ORDER BY job_name;
+----
+job_name	run_count	failure_count
+jmd_first	2	1
+jmd_second	3	1
+jmd_third	3	1
+
+
+connection default
+statement ok
+RESET GLOBAL sdb_job_max_depth;
+
+
+connection default
+statement ok
+EXECUTE JOB jmd_first;
+
+
+connection default
+query
+SELECT count(*) FROM jmd_log;
+----
+count
+3
+
+
+connection default
+statement ok
+DROP JOB jmd_first;
+
+
+connection default
+statement ok
+DROP JOB jmd_second;
+
+
+connection default
+statement ok
+DROP JOB jmd_third;
+
+
+connection default
+statement ok
+DROP TABLE jmd_log;

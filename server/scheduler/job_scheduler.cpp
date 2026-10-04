@@ -45,13 +45,13 @@
 #include "catalog/catalog.h"
 #include "catalog/entry/job.h"
 #include "connector/duckdb_client_state.h"
+#include "query/config.h"
 #include "scheduler/background_scheduler.h"
 
 namespace sdb {
 namespace {
 
 constexpr const char* kJobRunKey = "sdb_job_run";
-constexpr uint32_t kMaxJobDepth = 16;
 
 class JobRun final : public duckdb::ClientContextState {
  public:
@@ -119,13 +119,17 @@ void ForAllJobs(
 duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
                            duckdb::optional_ptr<duckdb::ClientContext> caller,
                            duckdb::shared_ptr<duckdb::ClientContext>& context) {
+  static constinit SettingRef gMaxDepth{"sdb_job_max_depth"};
   auto parent =
     caller ? caller->registered_state->Get<JobRun>(kJobRunKey) : nullptr;
   const uint32_t depth = parent ? parent->depth + 1 : 1;
-  if (depth > kMaxJobDepth) {
-    return duckdb::ErrorData{duckdb::ExceptionType::INVALID_INPUT,
-                             absl::StrCat("EXECUTE JOB is nested more than ",
-                                          kMaxJobDepth, " levels deep")};
+  const uint32_t max_depth = caller ? gMaxDepth.Int(*caller) : depth;
+  if (depth > max_depth) {
+    return duckdb::ErrorData{
+      duckdb::ExceptionType::INVALID_INPUT,
+      absl::StrCat("Max job depth limit of ", max_depth,
+                   " exceeded. Use \"SET sdb_job_max_depth TO x\" to "
+                   "increase the maximum job depth.")};
   }
   const auto user = auth::RolesOf(nullptr)->NameOf(job.owner);
   if (user.empty()) {

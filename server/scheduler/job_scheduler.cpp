@@ -121,6 +121,10 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
   context->client_data->catalog_search_path->Set(
     {duckdb::CatalogSearchEntry{job.catalog, job.schema}},
     duckdb::CatalogSetPathType::SET_DIRECTLY);
+  auto pending = context->PendingQuery(job.body->Copy(), false);
+  if (pending->HasError()) {
+    return pending->GetErrorObject();
+  }
   {
     absl::MutexLock lock{&state.mutex};
     if (state.dropped) {
@@ -129,7 +133,7 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
     }
     state.contexts.push_back(context);
   }
-  auto result = context->Query(job.body->Copy(), false);
+  auto result = pending->Execute();
   return result->HasError() ? result->GetErrorObject() : duckdb::ErrorData{};
 }
 

@@ -1571,6 +1571,27 @@ void RejectTSQueryMinMatch(const duckdb::Expression& peeled) {
   }
 }
 
+void RejectRepeatedMinMatch(const duckdb::Expression& operand) {
+  for (const auto* cur = &UnwrapBoostBoolCoercion(operand);
+       cur->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST;) {
+    const auto& cast = cur->Cast<duckdb::BoundCastExpression>();
+    const auto& type = cast.GetReturnType();
+    if (TryGetMinMatchModifier(type)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("::min_match(K) on a group that already has a ::min_match"),
+        ERR_HINT("A group takes one threshold. To count a group as one branch "
+                 "of another, put it inside the outer OR: ((a OR b OR "
+                 "c)::min_match(2) OR d)::min_match(2)."));
+    }
+    if (!TryGetBoostModifier(type) && !TryGetScoreModifier(type) &&
+        !TryGetMergeModifier(type)) {
+      return;
+    }
+    cur = &UnwrapBoostBoolCoercion(cast.Child());
+  }
+}
+
 bool TryDispatchSqlMinMatchCast(BoolTarget filter, const FilterContext& ctx,
                                 const duckdb::Expression& peeled) {
   if (peeled.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
@@ -1582,6 +1603,7 @@ bool TryDispatchSqlMinMatchCast(BoolTarget filter, const FilterContext& ctx,
     return false;
   }
   RejectNegatedMinMatch(ctx);
+  RejectRepeatedMinMatch(cast_expr.Child());
   auto scope = OpenScope();
   if (auto s = FromExpression(ScopeTarget(scope), ctx, cast_expr.Child());
       !s.ok()) {

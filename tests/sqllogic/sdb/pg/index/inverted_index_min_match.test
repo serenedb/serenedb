@@ -121,6 +121,146 @@ id
 6
 
 
+query
+SELECT id FROM mm_idx
+WHERE ((title @@ ts_phrase('data engineer') OR skills @@ 'gcp' OR edu @@ ts_like('%engineer%'))::min_match(2)
+       OR tenure <= 10)::min_match(2)
+ORDER BY id;
+----
+id
+1
+2
+
+
+query
+SELECT id FROM mm_idx
+WHERE ((title @@ ts_phrase('data engineer') OR skills @@ 'gcp' OR edu @@ ts_like('%engineer%'))::min_match(2)
+       OR tenure <= 10 OR skills @@ 'aws')::min_match(2)
+ORDER BY id;
+----
+id
+1
+2
+
+
+query
+SELECT id FROM mm_idx
+WHERE (title @@ ts_phrase('data engineer') OR skills @@ 'gcp' OR edu @@ ts_like('%engineer%'))::min_match(2)
+   OR skills @@ 'aws'
+ORDER BY id;
+----
+id
+1
+2
+4
+5
+
+
+query
+SELECT id FROM mm_idx
+WHERE (title @@ ts_phrase('data engineer') OR skills @@ 'gcp' OR edu @@ ts_like('%engineer%'))::min_match(2)
+  AND tenure <= 10
+ORDER BY id;
+----
+id
+1
+2
+
+
+query
+SELECT id FROM mm_idx
+WHERE ((skills @@ 'gcp' OR skills @@ 'python')::min_match(2)
+       OR (title @@ ts_phrase('data engineer') OR edu @@ ts_like('%engineer%'))::min_match(2))::min_match(1)
+ORDER BY id;
+----
+id
+1
+2
+6
+
+
+query
+SELECT id FROM mm_idx
+WHERE ((skills @@ 'gcp' OR skills @@ 'python')::min_match(2)
+       OR (title @@ ts_phrase('data engineer') OR edu @@ ts_like('%engineer%'))::min_match(2))::min_match(2)
+ORDER BY id;
+----
+id
+1
+
+
+query
+SELECT id FROM mm_idx
+WHERE ((title @@ ts_phrase('data engineer') AND edu @@ ts_like('%engineer%'))
+       OR (skills @@ 'gcp' OR skills @@ 'python')::min_match(2) OR tenure <= 10)::min_match(2)
+ORDER BY id;
+----
+id
+1
+2
+
+
+query
+SELECT id FROM mm_idx
+WHERE (((skills @@ 'gcp' OR skills @@ 'python')::min_match(1) OR title @@ ts_phrase('data engineer')
+        OR skills @@ 'aws')::min_match(2)
+       OR edu @@ ts_like('%engineer%') OR tenure <= 10)::min_match(2)
+ORDER BY id;
+----
+id
+1
+2
+
+
+query
+SELECT id FROM mm_idx
+WHERE (skills @@ 'gcp' OR skills @@ 'python' OR title @@ ts_phrase('data engineer'))::min_match(2)::merge('max')
+ORDER BY id;
+----
+id
+1
+5
+6
+
+
+query
+SELECT id FROM mm_idx
+WHERE (skills @@ 'gcp' OR skills @@ 'python' OR title @@ ts_phrase('data engineer'))::merge('max')::min_match(2)
+ORDER BY id;
+----
+id
+1
+5
+6
+
+
+query error ::min_match\(K\) on a group that already has a ::min_match
+SELECT id FROM mm_idx
+WHERE (title @@ ts_phrase('data engineer') OR skills @@ 'gcp' OR edu @@ ts_like('%engineer%'))::min_match(2)::min_match(1);
+
+
+query error ::min_match\(K\) on a group that already has a ::min_match
+SELECT id FROM mm_idx
+WHERE ((title @@ ts_phrase('data engineer') OR skills @@ 'gcp' OR edu @@ ts_like('%engineer%'))::min_match(1))::min_match(3);
+
+
+query error ::min_match\(K\) on a group that already has a ::min_match
+SELECT id FROM mm_idx
+WHERE (title @@ ts_phrase('data engineer') OR skills @@ 'gcp' OR edu @@ ts_like('%engineer%'))::min_match(2)::merge('max')::min_match(1);
+
+
+statement ok
+PREPARE mm_param AS SELECT id FROM mm_idx WHERE skills @@ $1::min_match(2);
+
+
+query error ::min_match\(K\)
+EXECUTE mm_param('gcp');
+
+
+statement ok
+DEALLOCATE mm_param;
+
+
 query error ::min_match\(3\) on an OR of 2 branches
 SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR tenure <= 10)::min_match(3);
 

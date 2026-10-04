@@ -44,6 +44,8 @@
 #include <duckdb/planner/expression_iterator.hpp>
 #include <iresearch/search/scorers/unscored.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
@@ -633,6 +635,11 @@ std::optional<TSQueryParts> TryGetTSQueryParts(const duckdb::Value& value) {
 
 TSQueryParts TSQueryPartsForType(const duckdb::LogicalType& type,
                                  std::string_view text) {
+  if (TryGetMinMatchModifier(type)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("::min_match(K) is only meaningful on an OR of "
+                            "predicates the inverted index answers."));
+  }
   TSQueryParts parts;
   parts.text = std::string{text};
   parts.tokenizer = std::string{TryGetTokenizerModifier(type)};

@@ -80,7 +80,7 @@ int RunServer(int argc, char** argv) {
     BackgroundScheduler background;
     search::SearchEngine search;
     Server network;
-    JobScheduler jobs{background};
+    JobScheduler jobs;
 
     // Lifecycle is two explicit, flat lists: bring features UP in dependency
     // order, then take them DOWN in a dependency order that is deliberately

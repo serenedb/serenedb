@@ -35,7 +35,6 @@ set(IResearch_core_sources
     ./analysis/icu_text_tokenizer.cpp
     ./analysis/classification_tokenizer.cpp
     ./analysis/nearest_neighbors_tokenizer.cpp
-    ./analysis/text/normalize/normalize.cpp
     ./analysis/normalizing_tokenizer.cpp
     ./analysis/collation_tokenizer.cpp
     ./analysis/text_tokenizer.cpp
@@ -474,7 +473,6 @@ target_include_directories(
         $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INTERFACE_INCLUDE_DIRECTORIES>
     PRIVATE $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INCLUDE_DIRECTORIES>
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
-    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
     PUBLIC ${CMAKE_SOURCE_DIR}/third_party/stringzilla/include
 )
 

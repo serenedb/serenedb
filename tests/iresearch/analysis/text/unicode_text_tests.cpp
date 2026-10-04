@@ -30,6 +30,7 @@
 #include <text_casing.hpp>
 #include <text_locale.hpp>
 #include <text_normalizer.hpp>
+#include <text_transform.hpp>
 #include <text_utf8.hpp>
 #include <unicode_properties.hpp>
 #include <utility>
@@ -50,6 +51,8 @@ using duckdb::text::Locale;
 using duckdb::text::NormalizationForm;
 using duckdb::text::Normalizer;
 using duckdb::text::PropertyRange;
+using duckdb::text::Transform;
+using duckdb::text::TransformOptions;
 using duckdb::text::UnicodeProperties;
 
 using Boundaries = std::vector<std::pair<int64_t, int32_t>>;
@@ -71,28 +74,65 @@ std::vector<int64_t> Positions(BreakIterator& it, std::string_view text) {
   return out;
 }
 
-std::string Lower(CaseLocale locale, std::string_view text) {
+template<typename Map>
+std::string MapCodePoints(std::string_view text, Map map) {
+  std::vector<uint32_t> chars;
+  std::vector<uint32_t> mapped;
+  duckdb::text::DecodeUtf8(text, chars);
+  map(chars, mapped);
   std::string out;
-  CaseMap::ToLower(locale, text, out);
+  duckdb::text::AppendUtf8(mapped.data(), mapped.size(), out);
   return out;
+}
+
+std::string Lower(CaseLocale locale, std::string_view text) {
+  return MapCodePoints(text, [&](const auto& chars, auto& mapped) {
+    CaseMap::ToLower(locale, chars.data(), chars.size(), mapped);
+  });
 }
 
 std::string Upper(CaseLocale locale, std::string_view text) {
-  std::string out;
-  CaseMap::ToUpper(locale, text, out);
-  return out;
+  return MapCodePoints(text, [&](const auto& chars, auto& mapped) {
+    CaseMap::ToUpper(locale, chars.data(), chars.size(), mapped);
+  });
 }
 
 std::string Fold(CaseFolding folding, std::string_view text) {
-  std::string out;
-  CaseMap::Fold(folding, text, out);
+  return MapCodePoints(text, [&](const auto& chars, auto& mapped) {
+    CaseMap::Fold(folding, chars.data(), chars.size(), mapped);
+  });
+}
+
+class StringOutput final : public duckdb::text::TransformOutput {
+ public:
+  explicit StringOutput(std::string& out)
+    : TransformOutput{out.data(), out.size()}, _out{out} {}
+
+  void Grow(size_t, size_t needed) final {
+    _out.resize(std::max(needed, 2 * _out.size()));
+    data = _out.data();
+    capacity = _out.size();
+  }
+
+ private:
+  std::string& _out;
+};
+
+std::string Apply(const Transform& transform, std::string_view text,
+                  duckdb::text::TransformBuffer& buffer) {
+  std::string out(text.size(), '\0');
+  StringOutput output{out};
+  out.resize(transform.Apply(text, output, buffer));
   return out;
 }
 
+std::string Apply(const Transform& transform, std::string_view text) {
+  duckdb::text::TransformBuffer buffer;
+  return Apply(transform, text, buffer);
+}
+
 std::string Normalize(NormalizationForm form, std::string_view text) {
-  std::string out;
-  Normalizer::Normalize(form, text, out);
-  return out;
+  return Apply(Transform{{.form = form}}, text);
 }
 
 bool Contains(const std::vector<PropertyRange>& ranges, uint32_t c) {
@@ -525,6 +565,252 @@ TEST(UnicodeNormalizerTest, nfkc_casefold_is_canonically_closed) {
       if (actual != expected) {
         ++failures;
         ADD_FAILURE() << "cp: " << std::hex << c << " tail: " << tail.size();
+      }
+    }
+  }
+  EXPECT_EQ(0u, failures);
+}
+
+TEST(UnicodeNormalizerTest, utf8_matches_code_points) {
+  constexpr NormalizationForm kForms[] = {
+    NormalizationForm::NFC, NormalizationForm::NFD, NormalizationForm::NFKC,
+    NormalizationForm::NFKD, NormalizationForm::NFKC_CF};
+  const std::vector<std::vector<uint32_t>> tails{{}, {0x301}, {0x11A8}};
+  std::vector<uint32_t> text;
+  std::vector<uint32_t> chars;
+  std::vector<uint32_t> normalized;
+  std::string input;
+  std::string expected;
+  size_t failures = 0;
+  const auto check = [&](NormalizationForm form) {
+    duckdb::text::DecodeUtf8(input, chars);
+    Normalizer::Normalize(form, chars.data(), chars.size(), normalized);
+    expected.clear();
+    duckdb::text::AppendUtf8(normalized.data(), normalized.size(), expected);
+    if (Normalize(form, input) != expected) {
+      ++failures;
+      ADD_FAILURE() << "form: " << static_cast<int>(form)
+                    << " bytes: " << input.size() << " first: " << std::hex
+                    << (chars.size() > 1 ? chars[1] : chars[0]);
+    }
+  };
+  for (uint32_t c = 0x80; c < 0x110000 && failures <= 20; ++c) {
+    if (c >= 0xD800 && c <= 0xDFFF) {
+      continue;
+    }
+    for (const auto& tail : tails) {
+      text.assign({'A', c});
+      text.insert(text.end(), tail.begin(), tail.end());
+      text.push_back('b');
+      input.clear();
+      duckdb::text::AppendUtf8(text.data(), text.size(), input);
+      for (const auto form : kForms) {
+        check(form);
+      }
+    }
+  }
+  for (const std::string_view bytes :
+       {std::string_view{"\xC3"}, std::string_view{"A\xE2\x82"},
+        std::string_view{"\xF0\x9F\x98"
+                         "A"},
+        std::string_view{"\xFF\xFE"}, std::string_view{"\xED\xA0\x80\xCC\x81"},
+        std::string_view{"e\xCC\x81\xC3"},
+        std::string_view{"\xEF\xBF\xBD\xCC\x81"},
+        std::string_view{"\xCC\x81Z\xCC\x81"}}) {
+    input.assign(bytes);
+    for (const auto form : kForms) {
+      check(form);
+    }
+  }
+  EXPECT_EQ(0u, failures);
+}
+
+std::vector<uint32_t> ReferenceTransform(const TransformOptions& options,
+                                         const std::vector<uint32_t>& chars) {
+  using duckdb::text::CaseMapping;
+  const auto renormalize = options.form == NormalizationForm::NFKC_CF
+                             ? NormalizationForm::NFKC
+                             : options.form;
+  const bool canonical = options.form == NormalizationForm::NFC ||
+                         options.form == NormalizationForm::NFD;
+  const bool composes = options.form != NormalizationForm::NFD &&
+                        options.form != NormalizationForm::NFKD;
+  std::vector<uint32_t> text = chars;
+  std::vector<uint32_t> scratch;
+  const auto normalize = [&](NormalizationForm form) {
+    Normalizer::Normalize(form, text.data(), text.size(), scratch);
+    text.swap(scratch);
+  };
+  const auto map_case = [&] {
+    switch (options.case_mapping) {
+      case CaseMapping::NONE:
+        return;
+      case CaseMapping::LOWER:
+        CaseMap::ToLower(options.locale, text.data(), text.size(), scratch);
+        break;
+      case CaseMapping::UPPER:
+        CaseMap::ToUpper(options.locale, text.data(), text.size(), scratch);
+        break;
+      case CaseMapping::FOLD:
+        CaseMap::Fold(options.folding, text.data(), text.size(), scratch);
+        break;
+      case CaseMapping::SIMPLE_LOWER:
+        std::ranges::transform(text, text.begin(), CaseMap::SimpleLower);
+        return;
+      case CaseMapping::SIMPLE_UPPER:
+        std::ranges::transform(text, text.begin(), CaseMap::SimpleUpper);
+        return;
+    }
+    text.swap(scratch);
+  };
+  const auto strip = [&] {
+    normalize(canonical ? NormalizationForm::NFD : NormalizationForm::NFKD);
+    Normalizer::RemoveNonspacingMarks(text);
+    if (composes) {
+      normalize(renormalize);
+    }
+  };
+  normalize(options.form);
+  if (options.strip_marks && !options.strip_before_case) {
+    map_case();
+    strip();
+    return text;
+  }
+  if (options.strip_marks) {
+    strip();
+  }
+  map_case();
+  if (options.case_mapping != CaseMapping::NONE) {
+    normalize(renormalize);
+  }
+  return text;
+}
+
+std::vector<TransformOptions> AllTransformOptions() {
+  using duckdb::text::CaseMapping;
+  std::vector<TransformOptions> all;
+  for (const auto form :
+       {NormalizationForm::NFC, NormalizationForm::NFD, NormalizationForm::NFKC,
+        NormalizationForm::NFKD, NormalizationForm::NFKC_CF}) {
+    all.push_back({.form = form});
+    all.push_back({.form = form, .strip_marks = true});
+    for (const auto [strip, before] :
+         {std::pair{false, false}, std::pair{true, false},
+          std::pair{true, true}}) {
+      for (const auto mapping : {CaseMapping::LOWER, CaseMapping::UPPER}) {
+        for (const auto locale :
+             {CaseLocale::ROOT, CaseLocale::TURKISH, CaseLocale::LITHUANIAN,
+              CaseLocale::GREEK, CaseLocale::ARMENIAN}) {
+          all.push_back({.form = form,
+                         .case_mapping = mapping,
+                         .locale = locale,
+                         .strip_marks = strip,
+                         .strip_before_case = before});
+        }
+      }
+      for (const auto folding : {CaseFolding::DEFAULT, CaseFolding::TURKIC}) {
+        all.push_back({.form = form,
+                       .case_mapping = CaseMapping::FOLD,
+                       .folding = folding,
+                       .strip_marks = strip,
+                       .strip_before_case = before});
+      }
+      for (const auto mapping :
+           {CaseMapping::SIMPLE_LOWER, CaseMapping::SIMPLE_UPPER}) {
+        all.push_back({.form = form,
+                       .case_mapping = mapping,
+                       .strip_marks = strip,
+                       .strip_before_case = before});
+      }
+    }
+  }
+  return all;
+}
+
+TEST(UnicodeTransformTest, matches_reference_pipeline) {
+  std::vector<uint32_t> code_points;
+  for (uint32_t c = 0; c < 0x110000; c += c < 0x800 ? 1 : 251) {
+    if (c < 0xD800 || c > 0xDFFF) {
+      code_points.push_back(c);
+    }
+  }
+  for (const uint32_t c : {0x3A3u, 0x3F9u, 0x130u, 0x131u, 0x345u, 0x390u,
+                           0x1E9Eu, 0x1F80u, 0x2126u, 0x212Au, 0xFB03u, 0xFDFAu,
+                           0xFF21u, 0xFF29u, 0x1D6BAu, 0xAC00u, 0x11A8u}) {
+    code_points.push_back(c);
+  }
+  const std::vector<std::vector<uint32_t>> contexts{
+    {}, {'A', 0, 0x301, 'b'}, {0x3A3, 0, '.', 0x3A3}, {'I', 0, 0x307}};
+  std::vector<uint32_t> text;
+  std::string input;
+  std::string expected;
+  duckdb::text::TransformBuffer buffer;
+  size_t failures = 0;
+  for (const auto& options : AllTransformOptions()) {
+    const Transform transform{options};
+    for (const auto c : code_points) {
+      for (const auto& context : contexts) {
+        text = context.empty() ? std::vector<uint32_t>{c} : context;
+        std::replace(text.begin(), text.end(), 0u, c);
+        input.clear();
+        duckdb::text::AppendUtf8(text.data(), text.size(), input);
+        const auto reference = ReferenceTransform(options, text);
+        expected.clear();
+        duckdb::text::AppendUtf8(reference.data(), reference.size(), expected);
+        if (Apply(transform, input, buffer) != expected && ++failures <= 20) {
+          ADD_FAILURE() << "form " << static_cast<int>(options.form)
+                        << " mapping " << static_cast<int>(options.case_mapping)
+                        << " locale " << static_cast<int>(options.locale)
+                        << " folding " << static_cast<int>(options.folding)
+                        << " strip " << options.strip_marks << " cp "
+                        << std::hex << c << " context " << context.size();
+        }
+      }
+    }
+  }
+  EXPECT_EQ(0u, failures);
+}
+
+TEST(UnicodeTransformTest, final_sigma_sees_neighbours) {
+  const Transform lower{{.case_mapping = duckdb::text::CaseMapping::LOWER}};
+  EXPECT_EQ("οδος οδος.", Apply(lower, "ΟΔΟΣ ΟΔΟΣ."));
+  EXPECT_EQ("σας", Apply(lower, "ΣΑΣ"));
+  EXPECT_EQ("aς", Apply(lower, "AΣ"));
+  EXPECT_EQ("a.ς.", Apply(lower, "A.Σ."));
+  EXPECT_EQ("a.σb", Apply(lower, "A.Σb"));
+  EXPECT_EQ("é'ς", Apply(lower, "É'Σ"));
+  const Transform nfkc_lower{
+    {.form = NormalizationForm::NFKC,
+     .case_mapping = duckdb::text::CaseMapping::LOWER}};
+  EXPECT_EQ("h.ς", Apply(nfkc_lower, "\xCA\xB0.Σ"));
+  EXPECT_EQ("σh", Apply(nfkc_lower, "Σ\xCA\xB0"));
+  const Transform simple_lower{
+    {.case_mapping = duckdb::text::CaseMapping::SIMPLE_LOWER}};
+  EXPECT_EQ("οδοσ οδοσ.", Apply(simple_lower, "ΟΔΟΣ ΟΔΟΣ."));
+}
+
+TEST(UnicodeTransformTest, invalid_utf8_becomes_replacement) {
+  std::vector<uint32_t> chars;
+  duckdb::text::TransformBuffer buffer;
+  size_t failures = 0;
+  for (const auto& options : AllTransformOptions()) {
+    const Transform transform{options};
+    for (const std::string_view bytes :
+         {std::string_view{"\xC3"}, std::string_view{"A\xE2\x82"},
+          std::string_view{"\xF0\x9F\x98"
+                           "A"},
+          std::string_view{"\xFF\xFE"},
+          std::string_view{"\xED\xA0\x80\xCC\x81"},
+          std::string_view{"e\xCC\x81\xC3"},
+          std::string_view{"\xCC\x81Z\xCC\x81\xC0\x80"}}) {
+      duckdb::text::DecodeUtf8(bytes, chars);
+      const auto reference = ReferenceTransform(options, chars);
+      std::string expected;
+      duckdb::text::AppendUtf8(reference.data(), reference.size(), expected);
+      if (Apply(transform, bytes, buffer) != expected && ++failures <= 20) {
+        ADD_FAILURE() << "form " << static_cast<int>(options.form)
+                      << " mapping " << static_cast<int>(options.case_mapping)
+                      << " bytes " << bytes.size();
       }
     }
   }

@@ -21,10 +21,8 @@
 #include "collation_tokenizer.hpp"
 
 #include <absl/strings/str_cat.h>
-#include <simdutf.h>
 
 #include <string>
-#include <text_utf8.hpp>
 
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/utils/log.hpp"
@@ -53,25 +51,9 @@ Tokenizer::ptr CollationTokenizer::Make(Options opts) {
   return std::make_unique<CollationTokenizer>(opts);
 }
 
-template<TokenLayout Layout, bool Ascii, typename Sink>
+template<TokenLayout Layout, typename Sink>
 bool CollationTokenizer::DoFill(duckdb::string_t raw, Sink& sink) {
-  const char* data = raw.GetData();
-  size_t length = raw.GetSize();
-  if constexpr (!Ascii) {
-    if (!simdutf::validate_utf8(data, length)) [[unlikely]] {
-      _valid.clear();
-      const auto* bytes = reinterpret_cast<const uint8_t*>(data);
-      uint8_t encoded[4];
-      for (size_t position = 0; position < length;) {
-        const auto c = duckdb::text::DecodeUtf8(bytes, length, position);
-        _valid.insert(_valid.end(), encoded,
-                      encoded + duckdb::text::EncodeUtf8(c, encoded));
-      }
-      data = reinterpret_cast<const char*>(_valid.data());
-      length = _valid.size();
-    }
-  }
-  _collator.GetSortKey(data, length, _buffer);
+  _collator.GetSortKey(raw.GetData(), raw.GetSize(), _buffer);
   const auto size = _buffer.key.size() - 1;
   if (size >= kMaxTokenSize) {
     SDB_ERROR(IRESEARCH,

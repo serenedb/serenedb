@@ -21,8 +21,6 @@
 #pragma once
 
 #include <collation_collator.hpp>
-#include <tuple>
-#include <vector>
 
 #include "iresearch/analysis/process_tokens.hpp"
 #include "iresearch/utils/locale_serde.hpp"
@@ -54,27 +52,18 @@ class CollationTokenizer final : public TypedTokenizer<CollationTokenizer>,
     };
   }
 
-  BlockTraits WantedBlockTraits() const noexcept final {
-    return {.ascii = true};
-  }
-
-  std::tuple<bool> PrepareBatch(BlockTraits traits) const noexcept {
-    return {traits.ascii};
-  }
-
   size_t MemoryUsage() const noexcept final {
     return _buffer.text.capacity() * sizeof(uint32_t) +
            _buffer.elements.capacity() * sizeof(uint64_t) +
-           _buffer.key.capacity() + _valid.capacity();
+           _buffer.key.capacity();
   }
 
-  template<TokenLayout Layout, bool Ascii, typename Sink>
+  template<TokenLayout Layout, typename Sink>
   bool DoFill(duckdb::string_t value, Sink& sink);
 
  private:
   duckdb::collation::Collator _collator;
   duckdb::collation::CollationBuffer _buffer;
-  std::vector<uint8_t> _valid;
 };
 
 }  // namespace irs::analysis

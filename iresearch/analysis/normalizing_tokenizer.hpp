@@ -23,10 +23,8 @@
 #include <magic_enum/magic_enum.hpp>
 #include <string>
 #include <string_view>
-#include <text_casing.hpp>
-#include <text_normalizer.hpp>
+#include <text_transform.hpp>
 #include <tuple>
-#include <vector>
 
 #include "iresearch/analysis/process_tokens.hpp"
 #include "iresearch/utils/locale_serde.hpp"
@@ -75,8 +73,10 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
   std::tuple<Case, bool, bool> PrepareBatch(BlockTraits traits);
 
   size_t MemoryUsage() const noexcept final {
-    return _norm_buf.capacity() + _strip_buf.capacity() +
-           (_chars.capacity() + _mapped.capacity()) * sizeof(uint32_t);
+    return _norm_buf.capacity() + _decompose_buf.capacity() +
+           (_transform_buf.text.capacity() +
+            _transform_buf.scratch.capacity()) *
+             sizeof(uint32_t);
   }
 
   template<TokenLayout Layout, Case C, bool Accent, bool KnownAscii,
@@ -94,30 +94,22 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
     Icu,
   };
 
-  template<TokenLayout Layout, Case C, bool Accent, typename Sink>
-  bool UnicodeEmit(const duckdb::string_t& raw, Sink& sink);
-  template<TokenLayout Layout, Case C, bool Accent, NormForm F, typename Sink>
+  template<TokenLayout Layout, typename Sink>
+  IRS_NO_INLINE bool UnicodeEmit(const duckdb::string_t& raw, Sink& sink);
+  template<TokenLayout Layout, Case C, NormForm F, typename Sink>
   bool FastUnicodeEmit(const duckdb::string_t& raw, Sink& sink);
-  template<TokenLayout Layout, Case C, bool Accent, NormForm F, typename Sink>
+  template<TokenLayout Layout, Case C, NormForm F, typename Sink>
   bool DecomposedEmit(const duckdb::string_t& raw, Sink& sink);
   template<Case C>
   size_t CaseBound(size_t size) const noexcept;
   template<Case C>
   size_t ConvertCase(std::string_view bytes, byte_type* out) const noexcept;
-  template<Case C, bool Accent>
-  void NormalizeCaseStrip();
 
   Options _options;
-  std::vector<uint32_t> _chars;
-  std::vector<uint32_t> _mapped;
+  duckdb::text::Transform _transform;
+  duckdb::text::TransformBuffer _transform_buf;
   std::string _norm_buf;
-  std::string _strip_buf;
-  duckdb::text::NormalizationForm _form;
-  duckdb::text::NormalizationForm _renormalize_form;
-  duckdb::text::NormalizationForm _strip_form;
-  bool _strip_composes{true};
-  duckdb::text::CaseLocale _case_locale;
-  duckdb::text::CaseFolding _folding{duckdb::text::CaseFolding::DEFAULT};
+  std::string _decompose_buf;
   CasePath _case_path = CasePath::Fast;
 };
 

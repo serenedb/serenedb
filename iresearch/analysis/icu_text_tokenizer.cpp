@@ -20,8 +20,6 @@
 
 #include "icu_text_tokenizer.hpp"
 
-#include <simdutf.h>
-
 #include <string_view>
 #include <text_break_iterator.hpp>
 
@@ -81,9 +79,6 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
     const uint32_t n = value.GetSize();
     if (n == 0) {
       return true;
-    }
-    if (!simdutf::validate_utf8(data, n)) [[unlikely]] {
-      return false;
     }
     _break.SetText(data, n);
 

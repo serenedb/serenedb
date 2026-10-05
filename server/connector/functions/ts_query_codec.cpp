@@ -71,8 +71,9 @@ bool TryCastExactInt64(const duckdb::Value& v, duckdb::Value& out) {
 uint16_t CheckedSlop(int64_t value) {
   SDB_ASSERT(value >= 0);
   if (value > kMaxSlop) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("::slop too large: ", value));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("::slop too large: ", value, " (at most ", kMaxSlop, ")"));
   }
   return static_cast<uint16_t>(value);
 }

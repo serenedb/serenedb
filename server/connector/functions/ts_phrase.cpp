@@ -309,7 +309,8 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
     }
     if (slop_raw > kMaxSlop) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("ts_phrase slop too large: ", slop_raw),
+                      ERR_MSG("ts_phrase slop too large: ", slop_raw,
+                              " (at most ", kMaxSlop, ")"),
                       ERR_HINT(kSyntaxHint));
     }
     arg_slop = slop_raw;

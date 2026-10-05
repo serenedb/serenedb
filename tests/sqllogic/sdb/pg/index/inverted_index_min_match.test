@@ -364,7 +364,7 @@ query error min_match\(\) count must be >= 1, got 0
 EXECUTE mm_text('''gcp python''::min_match(0)');
 
 
-query error min_match\(\) count too large: 4294967296
+query error min_match\(\) count too large: 4294967296 \(at most 4294967295\)
 EXECUTE mm_text('''gcp python''::min_match(4294967296)');
 
 

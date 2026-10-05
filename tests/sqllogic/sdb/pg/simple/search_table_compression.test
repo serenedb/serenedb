@@ -456,7 +456,7 @@ GROUP BY column_name ORDER BY column_name;
 ----
 column_name	compression
 body	LZ4
-host	LZ4
+host	DICT_LZ4
 url	DICT_LZ4
 
 query
@@ -467,7 +467,7 @@ GROUP BY column_name ORDER BY column_name;
 ----
 column_name	compression
 body	LZ4
-host	LZ4
+host	DICT_LZ4
 url	DICT_LZ4
 
 query
@@ -478,7 +478,7 @@ GROUP BY column_name ORDER BY column_name;
 ----
 column_name	compression
 body	LZ4
-host	LZ4
+host	DICT_LZ4
 url	DICT_LZ4
 
 statement ok

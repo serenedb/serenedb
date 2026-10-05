@@ -636,6 +636,37 @@ void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   }
 }
 
+duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::SetColumnCompression(
+  duckdb::ClientContext& context, duckdb::SetColumnCompressionInfo& info) {
+  const auto index = GetColumnIndex(info.column_name);
+  if (index.index == duckdb::COLUMN_IDENTIFIER_ROW_ID) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("cannot SET COMPRESSION for the rowid column"));
+  }
+  auto create = GetInfo();
+  auto& column =
+    create->Cast<duckdb::CreateTableInfo>().columns.GetColumnMutable(index);
+  if (column.Generated()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("cannot SET COMPRESSION for generated column \"",
+                            column.Name().GetIdentifierName(), "\""));
+  }
+  column.SetCompressionType(info.compression_type);
+  column.SetCompressionLevel(info.compression_level);
+  auto result = Rebuilt(context, info, std::move(create));
+  auto declared =
+    search::SearchTable::DeclaredCompression(result->GetColumns());
+  if (auto* connection = connector::GetSereneDBContextPtr(context)) {
+    connection->DeferToCommit(
+      [storage = _storage, declared = std::move(declared)]() mutable {
+        storage->SetDeclaredCompression(std::move(declared));
+      });
+  } else {
+    _storage->SetDeclaredCompression(std::move(declared));
+  }
+  return result;
+}
+
 void SearchTableEntry::BindUpdateConstraints(duckdb::Binder&,
                                              duckdb::LogicalGet& get,
                                              duckdb::LogicalProjection& proj,
@@ -830,6 +861,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
         constraint.Copy());
       return Rebuilt(context, info, std::move(create));
     }
+    case duckdb::AlterTableType::SET_COLUMN_COMPRESSION:
+      return SetColumnCompression(
+        context, alter.Cast<duckdb::SetColumnCompressionInfo>());
     case duckdb::AlterTableType::SET_TABLE_OPTIONS:
     case duckdb::AlterTableType::RESET_TABLE_OPTIONS:
       return AlterOptions(context, alter);
@@ -843,8 +877,12 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
 
 duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterOptions(
   duckdb::ClientContext& context, duckdb::AlterTableInfo& alter) {
-  const auto require_alterable = [](std::string_view name) {
-    if (absl::c_contains(kSearchTableMaintenanceSettings, name)) {
+  const auto codec_option = [](std::string_view name) {
+    return absl::c_contains(kSearchTableCodecOptions, name);
+  };
+  const auto require_alterable = [&](std::string_view name) {
+    if (absl::c_contains(kSearchTableMaintenanceSettings, name) ||
+        codec_option(name)) {
       return;
     }
     if (absl::c_contains(kSearchTableOptions, name)) {
@@ -867,20 +905,27 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterOptions(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG("option \"", name, "\" expects a constant value"));
       }
-      options[name] = OptionConstant(connector::ValidateSetting(
-        context, name,
-        expr->Cast<duckdb::ConstantExpression>().GetLiteral().ToValue()));
+      const auto value =
+        expr->Cast<duckdb::ConstantExpression>().GetLiteral().ToValue();
+      options[name] = OptionConstant(
+        codec_option(name) ? value
+                           : connector::ValidateSetting(context, name, value));
     }
   } else {
     for (const auto& identifier :
          alter.Cast<duckdb::ResetTableOptionsInfo>().table_options) {
       const auto& name = identifier.GetIdentifierName();
       require_alterable(name);
+      if (codec_option(name)) {
+        options.erase(name);
+        continue;
+      }
       duckdb::Value value;
       context.TryGetCurrentSetting(identifier, value);
       options[name] = OptionConstant(value);
     }
   }
+  BindCodecOptions(options);
   auto binder = duckdb::Binder::CreateBinder(context);
   auto bound = binder->BindCreateTableInfo(std::move(create));
   auto result = duckdb::make_uniq<SearchTableEntry>(

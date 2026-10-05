@@ -111,6 +111,26 @@ void SearchTable::ApplyOptions(const catalog::SearchTableOptions& options) {
     options.compaction_max_segments_bytes;
   _maint_settings.compaction_floor_segment_bytes =
     options.compaction_floor_segment_bytes;
+  const irs::ColCodecParams codec_params{
+    .compression_level = options.compression_level,
+    .segment_target = options.segment_target,
+    .objective =
+      static_cast<irs::AutoObjective>(options.compression_objective)};
+  {
+    std::unique_lock lock(_table_lock);
+    if (_codec_params != codec_params) {
+      _codec_params = codec_params;
+      RebuildConfig();
+    }
+  }
+  NudgeCompaction();
+}
+
+void SearchTable::SetDeclaredCompression(
+  catalog::CompressionByColumn compression) {
+  std::unique_lock lock(_table_lock);
+  _compression = std::move(compression);
+  RebuildConfig();
 }
 
 SearchTable::~SearchTable() {

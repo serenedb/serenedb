@@ -49,6 +49,7 @@ class SequenceCatalogEntry;
 struct CreateInfo;
 struct CreateTableInfo;
 struct BoundCreateTableInfo;
+struct SetColumnCompressionInfo;
 
 }  // namespace duckdb
 namespace irs {
@@ -77,6 +78,12 @@ inline constexpr auto kSearchTableMaintenanceSettings = std::to_array({
   kCompactionMaxSegmentsSetting,
   kCompactionMaxSegmentsBytesSetting,
   kCompactionFloorSegmentBytesSetting,
+});
+
+inline constexpr auto kSearchTableCodecOptions = std::to_array({
+  kCompressionLevelSetting,
+  kSegmentTargetSetting,
+  kCompressionObjectiveSetting,
 });
 
 inline constexpr auto kSearchTableSettings = std::to_array({
@@ -196,6 +203,8 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
     duckdb::unique_ptr<duckdb::CreateInfo> create) const;
   duckdb::unique_ptr<duckdb::CatalogEntry> AlterOptions(
     duckdb::ClientContext& context, duckdb::AlterTableInfo& alter);
+  duckdb::unique_ptr<duckdb::CatalogEntry> SetColumnCompression(
+    duckdb::ClientContext& context, duckdb::SetColumnCompressionInfo& info);
 
   duckdb::ColumnList _columns;
   std::shared_ptr<search::SearchTable> _storage;

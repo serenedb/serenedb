@@ -1,0 +1,77 @@
+control substitution on
+
+# Options and column codecs changed with ALTER TABLE survive a crash: the
+# catalog keeps them and the reopened table writes with them.
+
+statement ok
+CREATE TABLE alr (id INTEGER PRIMARY KEY, v TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO alr SELECT i, 'v' || (i % 7) FROM range(1000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) alr;
+
+statement ok
+ALTER TABLE alr ALTER COLUMN v SET COMPRESSION dict_zxc(compression_level = 4);
+
+statement ok
+ALTER TABLE alr SET (refresh_interval = 200, compression_objective = 'speed', segment_target = 65536);
+
+statement ok
+CREATE TABLE alr_tx (a INTEGER, b INTEGER);
+
+statement ok
+ALTER TABLE alr_tx ALTER COLUMN b SET COMPRESSION rle;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM alr;
+----
+n
+1000
+
+connection after_crash
+query
+SELECT split_part(sql, ' WITH', 1) AS columns FROM duckdb_tables() WHERE table_name IN ('alr', 'alr_tx') ORDER BY table_name;
+----
+columns
+CREATE TABLE public.alr(id INTEGER PRIMARY KEY, v VARCHAR USING COMPRESSION DICT_ZXC(compression_level = 4))
+CREATE TABLE public.alr_tx(a INTEGER, b INTEGER USING COMPRESSION RLE);
+
+connection after_crash
+query
+SELECT reloptions FROM pg_class WHERE relname = 'alr';
+----
+reloptions
+{refresh_interval=200,compaction_interval=0,cleanup_interval_step=1,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152,row_group_size=122880,segment_memory_max=268435456,segment_target=65536,compression_objective=speed}
+
+# The background refresh runs at the altered interval, and the new rows are
+# written with the altered codec.
+connection after_crash
+statement ok
+INSERT INTO alr SELECT i, 'v' || (i % 7) FROM range(1000, 2000) t(i);
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM alr;
+----
+n
+2000
+
+connection after_crash
+query
+SELECT compression FROM pragma_storage_info('alr')
+WHERE column_name = 'v' AND segment_type <> 'VALIDITY'
+  AND row_group_id = (SELECT max(row_group_id) FROM pragma_storage_info('alr'));
+----
+compression
+DICT_ZXC

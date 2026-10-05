@@ -364,7 +364,8 @@ class SpecCompiler {
   irs::analysis::TokenizerConfig Compile(std::string_view spec) {
     duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> exprs;
     try {
-      exprs = duckdb::Parser::ParseExpressionList(std::string{spec});
+      exprs = duckdb::Parser::GetBuiltinParser().ParseExpressionList(
+        std::string{spec});
     } catch (const std::exception& e) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                       ERR_MSG(kOperation, ": ", e.what()));

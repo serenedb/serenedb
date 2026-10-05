@@ -104,9 +104,8 @@ InvertedIndexEntries() {
 std::optional<BoundIndexHandle> BoundIndexOf(
   catalog::InvertedIndexEntry& entry) {
   for (auto index : entry.info->info->GetIndexes().IndexEntries()) {
-    const auto oid = index->GetCatalogIndexOid();
     if (index->GetBindState() == duckdb::IndexBindState::BOUND &&
-        oid.IsValid() && oid.GetIndex() == entry.oid) {
+        index->GetIndexOid() == entry.oid) {
       return index->GetWriteHandle<connector::InvertedStoreIndex>();
     }
   }

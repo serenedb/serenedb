@@ -27,7 +27,7 @@
 #include <absl/strings/str_join.h>
 
 #include <duckdb/common/exception.hpp>
-#include <duckdb/common/extra_type_info.hpp>
+#include <duckdb/common/logical_type_info.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/expression/cast_expression.hpp>
@@ -197,7 +197,8 @@ duckdb::unique_ptr<duckdb::ParsedExpression> ParseWhitelisted(
     return nullptr;
   }
   try {
-    auto exprs = duckdb::Parser::ParseExpressionList(std::string{text});
+    auto exprs =
+      duckdb::Parser::GetBuiltinParser().ParseExpressionList(std::string{text});
     if (exprs.size() != 1 || !exprs[0]) {
       return nullptr;
     }

@@ -556,10 +556,16 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
     }
     case duckdb::AlterTableType::SET_DEFAULT: {
       auto& set_default = alter.Cast<duckdb::SetDefaultInfo>();
+      if (set_default.column_path.size() > 1) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG(
+            "Setting a default value on a nested field is not yet supported"));
+      }
       auto create = GetInfo();
       auto& column =
         create->Cast<duckdb::CreateTableInfo>().columns.GetColumnMutable(
-          GetColumnIndex(set_default.column_name));
+          GetColumnIndex(set_default.column_path[0]));
       if (column.Generated()) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                         ERR_MSG("cannot set a default for generated column \"",
@@ -573,9 +579,17 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
     case duckdb::AlterTableType::DROP_NOT_NULL: {
       const bool set =
         alter.alter_table_type == duckdb::AlterTableType::SET_NOT_NULL;
-      const auto index =
-        GetColumnIndex(set ? alter.Cast<duckdb::SetNotNullInfo>().column_name
-                           : alter.Cast<duckdb::DropNotNullInfo>().column_name);
+      const auto& column_path =
+        set ? alter.Cast<duckdb::SetNotNullInfo>().column_path
+            : alter.Cast<duckdb::DropNotNullInfo>().column_path;
+      if (column_path.size() > 1) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        ERR_MSG(set ? "Setting a NOT NULL constraint on a "
+                                      "nested field is not yet supported"
+                                    : "Dropping a NOT NULL constraint on a "
+                                      "nested field is not yet supported"));
+      }
+      const auto index = GetColumnIndex(column_path[0]);
       auto create = GetInfo();
       auto& constraints = create->Cast<duckdb::CreateTableInfo>().constraints;
       const auto existing = absl::c_find_if(constraints, [&](const auto& c) {

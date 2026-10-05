@@ -374,7 +374,7 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   // Parse and cache system functions/views for serving from our attached
   // catalog.
-  duckdb::Parser parser;
+  auto parser = duckdb::Parser::GetBuiltinParser();
   pg::InitSystemFunctions(parser);
   pg::InitSystemViews(parser);
 }

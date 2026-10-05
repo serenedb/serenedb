@@ -204,7 +204,7 @@ irs::ScorerOptions ParseScorerExpression(duckdb::ClientContext* context,
                                          std::string input,
                                          std::string_view what) {
   using namespace duckdb;
-  auto exprs = Parser::ParseExpressionList(input);
+  auto exprs = Parser::GetBuiltinParser().ParseExpressionList(input);
   if (exprs.size() != 1) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_SYNTAX_ERROR),

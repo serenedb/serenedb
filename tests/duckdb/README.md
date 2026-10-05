@@ -64,24 +64,25 @@ The first-parent history of a version branch, oldest first:
 
 Upstream merges pull requests as merge commits (duckdb's PR titles are the merge subjects), so `git log --first-parent` reads as one entry per PR.
 
-### The update of 2026-10-02
+### The update of 2026-10-05
 
 | submodule | upstream | `main` | merged | ext patches | boundary |
 |---|---|---|---|---|---|
-| `third_party/duckdb` | duckdb/duckdb | `5a06879d94` | `v2.0-cyanoptera` `a35967a254`, `v1.5-variegata` `069cc9f9b5` | none | `5823c68f58` |
-| `third_party/duckdb_httpfs` | duckdb/duckdb-httpfs | `7773e83` | `v1.5-variegata` `b26737e` | 0003-duplicate-secret-option-error | `23aad73c47` |
+| `third_party/duckdb` | duckdb/duckdb | `e829ad1529` | `v2.0-cyanoptera` `36265ef34d`, `v1.5-variegata` `069cc9f9b5` | none | `a6955106d7` |
+| `third_party/duckdb_httpfs` | duckdb/duckdb-httpfs | `53b78e97a5` | `v1.5-variegata` `b26737e` | 0003-duplicate-secret-option-error | `954e6d913b` |
 | `third_party/duckdb_avro` | duckdb/duckdb-avro | `859d56d` | `v1.5-variegata` `a54bd17` | none | `b108c9d5e3` |
-| `third_party/duckdb_iceberg` | duckdb/duckdb-iceberg | `b6dd9b291` | `v1.5-variegata` `5dcf5070c` | 0001-can-autoload-extension-database, 0001-table-function-signature-options | `37faf61daa` |
-| `third_party/duckdb_postgres` | duckdb/duckdb-postgres | `f9db66e` | `v1.5-variegata` `1ddd672` | none | `a8af95ab29` |
+| `third_party/duckdb_iceberg` | duckdb/duckdb-iceberg | `221db9bb4f` | `v1.5-variegata` `5dcf5070c5` | 0002-alter-info-column-path, 0002-logical-type-info-header | `72e8d691f2` |
+| `third_party/duckdb_postgres` | duckdb/duckdb-postgres | `f9db66ec5a` | `v1.5-variegata` `1ddd672176` | 0002-builtin-parser | `e72abd6178` |
 | `third_party/duckdb_inet` | duckdb/duckdb-inet | `61ce2d7245` | none | none | `61ce2d7245` |
-| `third_party/duckdb_markdown` | teaguesterling/duckdb_markdown | `5f045685e5` | none | none | `5f045685e5` |
+| `third_party/duckdb_markdown` | teaguesterling/duckdb_markdown | `769f8c0e39` | none | none | `769f8c0e39` |
 | `third_party/duckdb_azure` | duckdb/duckdb-azure | `951a0ab` | `v1.5-variegata` `73bd62b` | 0001-fix-azure-storage-cstdint | `5a0c59d34e` |
 | `third_party/duckdb_spatial` | duckdb/duckdb-spatial | `2b072abd2a` | `v1.5-variegata` `9bfcf30e` | all 17: 0003 to 0013 in file order, then 0007-function-set-shared-ptr | `dae76d3f` |
 | `third_party/database-connector` | duckdb/database-connector | `73d27b7` | `v1.5-variegata` `0a8505f` | none | `5ee92ce63e` |
 | `third_party/avro` | apache/avro | `28cb08c15` | duckdb/duckdb-avro-c's 18 commits `35ff8b997..51ab9b2d3`, cherry-picked (its merges carry no resolutions) | none | `36e295afc` |
 
-- inet and markdown have no release branches to merge. DuckDB's inet patches target the v1.4 C++ layout while inet `main` is a C-API extension, so they are not applied; our port commit carries that adaptation.
-- In spatial, `0007-function-set-shared-ptr` applies only after `0013`.
+- inet has no release branches, and markdown's `v1.5-variegata` and spatial's `v2.0-cyanoptera` are contained in their `main`, so none of them is merged. DuckDB's inet patches target the v1.4 C++ layout while inet `main` is a C-API extension, so they are not applied; our port commit carries that adaptation.
+- In spatial, `0007-function-set-shared-ptr` applies only after `0013`, and `0014-spatial-join-logical-cast` is not applied: `v1.5-variegata` already has its change.
+- DuckDB writes its iceberg patches against the iceberg commit it pins, older than iceberg `main`. Iceberg `main` already has `0001-can-autoload-extension-database` and its own port of `0001-table-function-signature-options`, so neither is applied, and `0002-alter-info-column-path` goes in with `git apply --3way`.
 - duckdb-avro-c's 1.11 release history is not merged: apache never merges it into `main`.
 
 ### Our patchset by area (duckdb core)

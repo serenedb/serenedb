@@ -419,35 +419,39 @@ int main() {
   // Initialize subsystems (required once per process).
   irs::InitOptimizeRules();
 
-  auto scorer = irs::BM25::Make(irs::BM25::Options{});
-  auto tokenizer =
-    irs::analysis::TextTokenizer::Make(irs::analysis::TextTokenizer::Options{});
+  {
+    auto scorer = irs::BM25::Make(irs::BM25::Options{});
+    auto tokenizer = irs::analysis::TextTokenizer::Make(
+      irs::analysis::TextTokenizer::Options{});
 
-  irs::MemoryDirectory dir;
-  irs::IndexWriterOptions options;
-  options.db = &Db();
-  options.reader_options.db = &Db();
-  options.norm_column_id = [next = std::make_shared<std::atomic<irs::field_id>>(
-                              0)](irs::field_id) -> irs::field_id {
-    return next->fetch_add(1, std::memory_order_relaxed);
-  };
-  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
+    irs::MemoryDirectory dir;
+    irs::IndexWriterOptions options;
+    options.db = &Db();
+    options.reader_options.db = &Db();
+    options.norm_column_id =
+      [next = std::make_shared<std::atomic<irs::field_id>>(0)](
+        irs::field_id) -> irs::field_id {
+      return next->fetch_add(1, std::memory_order_relaxed);
+    };
+    auto writer =
+      irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
 
-  BuildIndex(*writer);
+    BuildIndex(*writer);
 
-  auto reader = writer->GetSnapshot();
+    auto reader = writer->GetSnapshot();
 
-  PrintIndexStats(reader);
-  QuerySingleTerm(reader, *tokenizer);
-  QueryTopK(reader, *scorer, *tokenizer);
-  QueryBooleanAnd(reader, *tokenizer);
-  QueryBooleanOr(reader, *tokenizer);
-  QueryPhrase(reader, *tokenizer);
-  QueryPrefix(reader, *tokenizer);
-  QueryExclusion(reader, *tokenizer);
-  ReadStoredFields(reader);
-  RemoveDocuments(*writer, *tokenizer);
-  CompactIndex(*writer, dir);
+    PrintIndexStats(reader);
+    QuerySingleTerm(reader, *tokenizer);
+    QueryTopK(reader, *scorer, *tokenizer);
+    QueryBooleanAnd(reader, *tokenizer);
+    QueryBooleanOr(reader, *tokenizer);
+    QueryPhrase(reader, *tokenizer);
+    QueryPrefix(reader, *tokenizer);
+    QueryExclusion(reader, *tokenizer);
+    ReadStoredFields(reader);
+    RemoveDocuments(*writer, *tokenizer);
+    CompactIndex(*writer, dir);
+  }
 
   engine.Shutdown();
   return 0;

@@ -51,8 +51,9 @@
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
+#include "catalog/entry/role.h"
 #include "connector/duckdb_client_state.h"
-#include "pg/commands/rbac.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
@@ -261,27 +262,72 @@ void RequireFaultSuperuser(duckdb::ClientContext& ctx) {
 }
 #endif
 
-// The `role` / `session_authorization` GUCs are thin shims over the identity
-// switches in pg/commands/rbac (which own the catalog/authz logic, next to
-// CREATE/ALTER ROLE); they only bridge the DuckDB Value <-> the string API.
-void SetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope,
-                     duckdb::Value& value) {
-  value = duckdb::Value{
-    pg::SetRole(connector::GetSereneDBContext(ctx), value.ToString())};
+const catalog::RoleCatalogEntry& RoleNamed(duckdb::ClientContext& ctx,
+                                           std::string_view name) {
+  auto& cluster = catalog::ClusterOf(ctx);
+  auto entry =
+    cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+      .GetEntry(cluster.GetCatalogTransaction(ctx), duckdb::Identifier{name});
+  if (!entry) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("role \"", name, "\" does not exist"));
+  }
+  return entry->Cast<catalog::RoleCatalogEntry>();
+}
+
+void RefreshSuperuser(ConnectionContext& conn) {
+  const bool superuser =
+    auth::ClosureFor(&conn.GetClientContext(), conn.GetRoleId())->is_superuser;
+  conn.SetSetting("is_superuser", superuser ? "on" : "off", false);
 }
 
 void ResetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope) {
-  pg::ResetRole(connector::GetSereneDBContext(ctx));
+  auto& conn = connector::GetSereneDBContext(ctx);
+  conn.SetEffectiveRole(conn.GetSessionRoleId());
+  RefreshSuperuser(conn);
+}
+
+void SetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope scope,
+                     duckdb::Value& value) {
+  const auto name = value.ToString();
+  if (name.empty() || absl::EqualsIgnoreCase(name, "none")) {
+    ResetRoleCallback(ctx, scope);
+    value = duckdb::Value{"none"};
+    return;
+  }
+  auto& conn = connector::GetSereneDBContext(ctx);
+  const auto& role = RoleNamed(ctx, name);
+  const auto session_role = conn.GetSessionRoleId();
+  const auto session =
+    auth::ComputeRoleClosure(*auth::RolesOf(&ctx), session_role);
+  if (role.oid != session_role && !session.is_superuser &&
+      !session.CanSet(role.oid)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied to set role \"", name, "\""));
+  }
+  conn.SetEffectiveRole(role.oid);
+  RefreshSuperuser(conn);
 }
 
 void SetSessionAuthCallback(duckdb::ClientContext& ctx, duckdb::SetScope,
                             duckdb::Value& value) {
-  value = duckdb::Value{pg::SetSessionAuthorization(
-    connector::GetSereneDBContext(ctx), value.ToString())};
+  const auto name = value.ToString();
+  auto& conn = connector::GetSereneDBContext(ctx);
+  const auto& role = RoleNamed(ctx, name);
+  const auto login = conn.GetLoginRoleId();
+  if (role.oid != login && !auth::ClosureFor(&ctx, login)->is_superuser) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("permission denied to set session authorization \"", name, "\""));
+  }
+  conn.SetSessionRole(role.oid);
+  RefreshSuperuser(conn);
 }
 
 void ResetSessionAuthCallback(duckdb::ClientContext& ctx, duckdb::SetScope) {
-  pg::ResetSessionAuthorization(connector::GetSereneDBContext(ctx));
+  auto& conn = connector::GetSereneDBContext(ctx);
+  conn.ResetIdentity();
+  RefreshSuperuser(conn);
 }
 
 void NoOverwriteClientEncoding(duckdb::ClientContext& ctx, duckdb::SetScope,

@@ -47,6 +47,7 @@
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <duckdb/parser/parsed_data/create_tokenizer_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
@@ -68,7 +69,6 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/inverted_index_bind.h"
 #include "connector/inverted_store_index.h"
-#include "pg/commands/create_tsdictionary.h"
 #include "pg/connection_context.h"
 #include "search/inverted_index_storage.h"
 #include "server/utils/simdjson_sink.h"
@@ -302,17 +302,21 @@ void CreateTextIndex(duckdb::ClientContext& context,
                      duckdb::TableCatalogEntry& table,
                      std::span<const std::string_view> text_columns) {
   {
-    duckdb::named_parameter_map_t features;
-    features["frequency"] = duckdb::Value::BOOLEAN(true);
-    features["position"] = duckdb::Value::BOOLEAN(true);
-    features["norm"] = duckdb::Value::BOOLEAN(true);
-    pg::CreateTokenizer(
-      GetSereneDBContext(context),
+    duckdb::CreateTokenizerInfo tokenizer;
+    tokenizer.SetQualifiedName(
       duckdb::QualifiedName{duckdb::Identifier{}, duckdb::Identifier{kEsSchema},
-                            duckdb::Identifier{kTextTokenizer}},
-      /*if_not_exists=*/true, features,
+                            duckdb::Identifier{kTextTokenizer}});
+    tokenizer.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
+    tokenizer.definition =
       "split_text(case := 'lower') | "
-      "normalize_tokens('en_US.UTF-8', accent := false)");
+      "normalize_tokens('en_US.UTF-8', accent := false)";
+    tokenizer.options["frequency"] = duckdb::Value::BOOLEAN(true);
+    tokenizer.options["position"] = duckdb::Value::BOOLEAN(true);
+    tokenizer.options["norm"] = duckdb::Value::BOOLEAN(true);
+    tokenizer.permissions.owner = GetSereneDBContext(context).GetRoleId();
+    duckdb::Catalog::GetCatalog(
+      context, duckdb::DatabaseManager::GetDefaultDatabase(context))
+      .CreateTokenizer(context, tokenizer);
   }
 
   const auto index_name =

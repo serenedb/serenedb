@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "pg/commands/tsdictionary_spec.h"
+#include "pg/tsdictionary_spec.h"
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
@@ -53,9 +53,9 @@
 
 #include "catalog/catalog.h"
 #include "catalog/entry/tokenizer.h"
-#include "pg/commands/create_tsdictionary.h"
 #include "pg/option_help.h"
 #include "pg/tokenizer_options.h"
+#include "pg/tsdictionary.h"
 
 namespace sdb::pg {
 namespace {

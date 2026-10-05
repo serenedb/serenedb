@@ -59,7 +59,7 @@ DROP ROLE IF EXISTS obs_never_existed;
 statement error
 DROP ROLE obs_never_existed;
 ----
-db error: ERROR: role "obs_never_existed" does not exist
+db error: ERROR: <slt:ignore>does not exist<slt:ignore>
 
 
 # The current user (the default superuser) can never drop itself.

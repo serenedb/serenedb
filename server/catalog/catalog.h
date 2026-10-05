@@ -113,9 +113,8 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   }
 
   duckdb::unique_ptr<duckdb::StandardEntry> MakeTokenizerEntry(
-    duckdb::DuckSchemaEntry& schema, duckdb::CreateTokenizerInfo& info) final {
-    return duckdb::make_uniq<TokenizerCatalogEntry>(*this, schema, info);
-  }
+    duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
+    duckdb::CreateTokenizerInfo& info) final;
 
   duckdb::unique_ptr<duckdb::StandardEntry> MakeJobEntry(
     duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
@@ -184,16 +183,12 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   duckdb::ErrorData SupportsCreateTable(
     duckdb::BoundCreateTableInfo& info) final;
 
-  duckdb::optional_ptr<duckdb::CatalogEntry> CreateTokenizer(
-    duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
-    duckdb::CreateTokenizerInfo& info);
-
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateForeignServer(
     duckdb::CatalogTransaction transaction,
-    duckdb::CreateForeignServerInfo& info);
+    duckdb::CreateForeignServerInfo& info) final;
 
   void DropForeignServer(duckdb::CatalogTransaction transaction,
-                         duckdb::DropInfo& info);
+                         duckdb::DropInfo& info) final;
 
  private:
   std::shared_ptr<DatabaseDirectory> _directory;

@@ -55,10 +55,10 @@ jd_babsky	public	AFTER INTERVAL '01:00:00'	AFTER	f	f	INSERT INTO jd_skuf (VALUES
 
 
 query
-SELECT sql FROM duckdb_jobs() WHERE job_name = 'jd_babsky';
+SELECT replace(sql, current_database() || '.', '') AS sql FROM duckdb_jobs() WHERE job_name = 'jd_babsky';
 ----
 sql
-CREATE JOB postgres.public.jd_babsky AFTER INTERVAL '01:00:00' AS INSERT INTO jd_skuf (VALUES ('arelav', 1));
+CREATE JOB public.jd_babsky AFTER INTERVAL '01:00:00' AS INSERT INTO jd_skuf (VALUES ('arelav', 1));
 
 
 query

@@ -225,12 +225,6 @@ def test_modifier_param_in_list_element(conn, schema):
     assert got[4] > 42.0
 
 
-# ---- ::min_match over the client protocol -----------------------------------
-#
-# The threshold sits on an OR of predicates, whose branches' queries can be
-# parameters, or on a TSQUERY value: a parameter typed with the modifier
-# carries it in the value and counts the words of the bound text.
-
 MIN_MATCH_SQL = (
     "SELECT a FROM {schema}.sp_idx "
     "WHERE (b @@ %s OR b @@ %s OR a <= %s)::min_match({k}) ORDER BY a"
@@ -261,7 +255,6 @@ def test_min_match_typed_param(conn, schema):
     with conn.cursor() as cur:
         cur.execute(sql, ("quick dog",))
         assert [r[0] for r in cur.fetchall()] == [4]
-        # One word: the threshold is capped at the words there are.
         cur.execute(sql, ("quick",))
         assert [r[0] for r in cur.fetchall()] == [1, 4]
         cur.execute("SELECT (%s::min_match(2))::TSQUERY::VARCHAR", ("quick dog",))
@@ -385,7 +378,6 @@ def test_wire_param_min_match_both_formats(schema):
         c.sync()
         msgs = c.drain_to_ready()
         assert not errors(msgs), errors(msgs)
-        # Both branch parameters present as text on the wire inside the group.
         (param_desc,) = [p for t, p in msgs if t == "t"]
         assert struct.unpack("!HII", param_desc[:10]) == (2, 25, 25)
 
@@ -403,8 +395,6 @@ def test_wire_param_min_match_both_formats(schema):
             got = [_data_row_fields(p)[0] for p in rows(msgs)]
             assert got == [b"4"], (fmt, got)
 
-        # Typed with the modifier itself, the parameter carries the threshold
-        # in its value: both words of the bound text, in either format.
         c.parse("smm1", f"SELECT a FROM {schema}.sp_idx WHERE b @@ $1::min_match(2)")
         c.sync()
         msgs = c.drain_to_ready()

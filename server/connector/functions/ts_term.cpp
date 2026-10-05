@@ -151,12 +151,12 @@ void AddTokenGroups(BoolTarget parent, irs::field_id field, TokenGroups& groups,
 void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info, std::string_view text,
                     bool require_all) {
+  const size_t value_min_match = require_all ? 0 : TakeMinMatch(ctx);
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
       column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     BuildFtsTerm(parent, ctx, column_info, duckdb::Value(std::string{text}));
     return;
   }
-  const size_t value_min_match = require_all ? 0 : TakeMinMatch(ctx);
   irs::ValueTokens<irs::TokenLayout::TermsPos> tokens{ctx.tokenizer.Traits()};
   AnalyzeText(ctx.tokenizer, text, tokens);
   if (tokens.terms().empty()) {

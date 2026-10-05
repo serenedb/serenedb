@@ -23,6 +23,7 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/unique_ptr.hpp>
+#include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 #include <span>
@@ -44,6 +45,8 @@ inline constexpr duckdb::idx_t kTSQuerySlopChild = 3;
 inline constexpr duckdb::idx_t kTSQueryScorerChild = 4;
 inline constexpr duckdb::idx_t kTSQueryMergeChild = 5;
 inline constexpr duckdb::idx_t kTSQueryMinMatchChild = 6;
+
+inline constexpr int64_t kMaxSlop = std::numeric_limits<uint16_t>::max();
 
 bool TryCastExactInt64(const duckdb::Value& v, duckdb::Value& out);
 
@@ -92,6 +95,13 @@ struct TSQueryFields {
 
 using TSQueryParts = TSQueryFields<std::string>;
 using TSQueryRowView = TSQueryFields<std::string_view>;
+
+template<typename Str>
+bool HasModifiers(const TSQueryFields<Str>& parts) {
+  return !parts.tokenizer.empty() || parts.boost != 1.0f || parts.slop != 0 ||
+         !parts.scorer.empty() || parts.merge != TSQueryMerge::Default ||
+         parts.min_match != 0;
+}
 
 std::optional<TSQueryParts> TryGetTSQueryParts(const duckdb::Value& value);
 

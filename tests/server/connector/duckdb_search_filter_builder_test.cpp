@@ -6715,16 +6715,13 @@ TEST_F(SearchFilterBuilderTest, test_SloppyPhraseEmptyPhrase) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_SloppyPhraseSlopMax) {
-  // INT32_MAX slop fits PosAttr::value_t (uint32_t) and flows through
-  // unchanged. Values above uint32_t max are rejected -- see
-  // test_SloppyPhraseSlopTooLarge.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
   irs::BooleanFilter expected;
-  AddSloppyPhraseFilter(expected, 1, {"a", "b"}, 2147483647);
+  AddSloppyPhraseFilter(expected, 1, {"a", "b"}, 65535);
   AssertFilter(expected,
                "SELECT * FROM foo WHERE category @@ "
-               "ts_phrase('a b', slop := 2147483647)",
+               "ts_phrase('a b', slop := 65535)",
                columns, true, SegmentationAnalyzerProvider);
 }
 
@@ -6830,15 +6827,16 @@ TEST_F(SearchFilterBuilderTest, test_SloppyPhraseMultipleChunksMultipleGaps) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_SloppyPhraseSlopTooLarge) {
-  // The named argument binds as an ANY vararg, so an out-of-uint32
-  // budget reaches the builder's overflow check instead of a generic
-  // binder cast error -- symmetric with ::slop(5000000000).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
   irs::BooleanFilter expected;  // unused on the negative path
   AssertFilter(expected,
                "SELECT * FROM foo WHERE category @@ "
                "ts_phrase('a b', slop := 5000000000)",
+               columns, false, SegmentationAnalyzerProvider, "slop too large");
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a b', slop := 65536)",
                columns, false, SegmentationAnalyzerProvider, "slop too large");
 }
 

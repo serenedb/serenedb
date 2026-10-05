@@ -35,7 +35,6 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
-#include <limits>
 
 #include "connector/functions/ts_query_codec.h"
 #include "search.h"
@@ -308,7 +307,7 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
                       ERR_MSG("ts_phrase slop must be >= 0, got ", slop_raw),
                       ERR_HINT(kSyntaxHint));
     }
-    if (slop_raw > std::numeric_limits<irs::PosAttr::value_t>::max()) {
+    if (slop_raw > kMaxSlop) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("ts_phrase slop too large: ", slop_raw),
                       ERR_HINT(kSyntaxHint));

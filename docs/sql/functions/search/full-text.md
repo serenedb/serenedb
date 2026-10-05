@@ -77,7 +77,7 @@ Match a run of tokens in their indexed order, optionally separated by token gaps
 | `text` | `VARCHAR` or `BLOB` | — | A phrase segment. It is tokenized by the column's dictionary; the positions of its tokens must be strictly adjacent, and tokens the dictionary puts at one position are alternatives for it. |
 | `gap` | `INTEGER` or `INTEGER[]` | `0` between successive segments | Number of tokens allowed *between* the two surrounding segments. An integer `N` means exactly `N` tokens between; a two-element array `[min, max]` allows a range. `0` means adjacent. |
 | `text, ...` | `VARCHAR`/`BLOB` | — | Further segments, each preceded by its own `gap`. |
-| `slop` | `INTEGER` (named) | `0` | Budget of position moves allowed when lining the query up with the document. Must be `>= 0`; incompatible with `[min, max]` interval gaps. |
+| `slop` | `INTEGER` (named) | `0` | Budget of position moves allowed when lining the query up with the document. Must be between `0` and `65535`; incompatible with `[min, max]` interval gaps. |
 
 **How it works.** `ts_phrase` matches positions, so the column's dictionary must have `position` enabled. A [`generate_shingles`](./tokenizers/generate_shingles.md#phrase-search) dictionary without `position` still answers a phrase that one of its shingles covers. The tokens of each `text` segment must appear adjacent and in order. A dictionary can put several tokens at one position — the synonyms of [`expand_solr_synonyms`](./tokenizers/expand_solr_synonyms.md), or the n-grams of [`generate_ngrams`](./tokenizers/generate_ngrams.md) that start at the same character — and any one of them matches that position: with the synonyms `car, automobile`, `ts_phrase('red car')` also matches `red automobile`. The optional `gap` arguments control how far apart consecutive segments may sit. The gap counts the tokens *between* the two segments — `0` is immediate adjacency, `2` means exactly two intervening tokens. A `[min, max]` array accepts any gap in that inclusive range. Without `slop`, order is always preserved: `ts_phrase('a', 0, 'b')` does not match `b a`.
 
@@ -100,7 +100,7 @@ Precisely, a match costs the spread of its shifts: shift each query token by its
 
 When a `gap` is declared, the budget counts deviation from *that* gap rather than from adjacency: `ts_phrase('quick', 1, 'fox', slop := 1)` accepts `quick fox` and `quick a b fox` — one step either side of the declared single-token gap. Interval gaps already express a range, so `ts_phrase('a', [1, 3], 'b', slop := 2)` is an error.
 
-`(...)::slop(N)` applies the same budget as a modifier to an already-built phrase, including one from [`phraseto_tsquery`](#phraseto_tsquery). Lucene's `"..."~N` reaches it through [`to_tsquery`](#to_tsquery). The forms are mutually exclusive: specifying slop twice on one phrase is an error, and `::slop` on a non-phrase query (or on a `##` part) is rejected.
+`(...)::slop(N)` applies the same budget, with the same `0` to `65535` range, as a modifier to an already-built phrase, including one from [`phraseto_tsquery`](#phraseto_tsquery). Lucene's `"..."~N` reaches it through [`to_tsquery`](#to_tsquery). The forms are mutually exclusive: specifying slop twice on one phrase is an error, and `::slop` on a non-phrase query (or on a `##` part) is rejected.
 
 See [Phrase and Proximity Search](../../../cookbook/search/phrase-and-proximity-search.md#proximity-search-with-slop) for worked examples.
 
@@ -550,10 +550,10 @@ Groups nest. A group is one branch of the `OR` around it, so `((a OR b OR c)::mi
 
 Where the threshold has no meaning, the query fails instead of ignoring the modifier:
 
-- on a single predicate or on an `AND`;
+- on a single predicate or on an `AND`. That includes a predicate with alternatives of its own, such as `(body @@ 'quick red fox')::min_match(2)`, `ts_any` or `IN`. To count the words of one `@@` match, put the threshold on its query: `body @@ 'quick red fox'::min_match(2)`;
 - when `K` is below `1` or above the number of branches;
 - twice on the same group, as in `(a OR b OR c)::min_match(2)::min_match(1)`. Each group takes one threshold;
-- under `NOT`. "Fewer than `K` of `n`" is "at least `n - K + 1` of the negations", so write `(NOT a OR NOT b OR ...)::min_match(n - K + 1)` instead;
+- directly under `NOT`. "Fewer than `K` of `n`" is "at least `n - K + 1` of the negations", so write `(NOT a OR NOT b OR ...)::min_match(n - K + 1)` instead;
 - when a branch is not an index predicate;
 - outside a `WHERE` clause on an inverted index, for example in the `SELECT` list.
 
@@ -578,11 +578,11 @@ The same threshold on a `TSQUERY` value, inside one `@@`. Like the other [`TSQUE
 **How it works.** The threshold goes to the `OR` at the top of the query, and what counts as one alternative depends on its shape:
 
 - **Several words** (a bare string, [`ts_tokenize`](#ts_tokenize)): one alternative per word, with the synonyms of a word counting once. `K` above the number of words is capped at that number, so a one-word search with `::min_match(2)` matches that word, as Elasticsearch does.
-- **A `||` chain**: one alternative per operand of the whole chain, so `(a || b || c)::min_match(2)` has three. A parenthesized group with a modifier of its own is one operand. `K` above the number of operands is an error.
+- **A `||` chain**: one alternative per operand of the whole chain, so `(a || b || c)::min_match(2)` has three. A parenthesized group with a modifier of its own is one operand. A bound parameter that holds a `||` chain adds its operands to the count. `K` above the number of operands is an error.
 - **[`ts_any(list)`](#ts_any)**: one alternative per element, the same as `ts_any(list, K)`. Giving both thresholds is an error.
 - **Anything else** (a phrase, `&&`, `!!`, a range, `to_tsquery`) is one alternative: `K = 1` changes nothing, a larger `K` is an error.
 
-A second `::min_match` on the same query is an error, and so is a `::min_match` query under `NOT`. `::merge`, `::boost` and `::score` combine with it.
+A second `::min_match` on the same query is an error, and so is `NOT` or `!!` applied directly to a `::min_match` query, whatever `K` is. A `!!` around a larger query that contains one is fine: `!! (('a'::TSQUERY || 'b')::min_match(2) || 'c')` matches rows that have neither both `a` and `b` nor `c`. A SQL `NOT` is pushed down to each predicate, so `NOT (body @@ 'a b'::min_match(2) OR id > 1)` is an error too. `::merge`, `::boost` and `::score` combine with it.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |

@@ -48,7 +48,6 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <limits>
 
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
@@ -70,12 +69,14 @@ bool TryCastExactInt64(const duckdb::Value& v, duckdb::Value& out) {
 }
 
 uint16_t CheckedSlop(int64_t value) {
-  if (value < 0 || value > std::numeric_limits<uint16_t>::max()) {
+  SDB_ASSERT(value >= 0);
+  if (value > kMaxSlop) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("::slop too large: ", value));
   }
   return static_cast<uint16_t>(value);
 }
+
 namespace {
 
 constexpr size_t kMaxStructuredNodes = 4096;
@@ -94,6 +95,7 @@ bool IsTSQueryFamilyTypeName(std::string_view name) {
          absl::EqualsIgnoreCase(name, kBoostTypeName) ||
          absl::EqualsIgnoreCase(name, kSlopTypeName) ||
          absl::EqualsIgnoreCase(name, kScoreTypeName) ||
+         absl::EqualsIgnoreCase(name, kMergeTypeName) ||
          absl::EqualsIgnoreCase(name, kMinMatchTypeName);
 }
 
@@ -331,9 +333,7 @@ std::string RenderTSQueryPartsSQL(const TSQueryParts& parts) {
 }
 
 std::string RenderTSQueryValueText(const TSQueryParts& parts) {
-  if (parts.tokenizer.empty() && parts.boost == 1.0f && parts.slop == 0 &&
-      parts.scorer.empty() && parts.merge == TSQueryMerge::Default &&
-      parts.min_match == 0) {
+  if (!HasModifiers(parts)) {
     return parts.text;
   }
   return RenderTSQueryPartsSQL(parts);
@@ -753,6 +753,9 @@ duckdb::unique_ptr<duckdb::Expression> TryParseStructuredTSQueryText(
   }
   if (rejected) {
     std::rethrow_exception(rejected);
+  }
+  if (bound && !IsTSQueryStructType(bound->GetReturnType())) {
+    return nullptr;
   }
   return bound;
 }

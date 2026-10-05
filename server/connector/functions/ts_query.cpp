@@ -70,6 +70,8 @@ duckdb::LogicalType MakeModifierTSQueryType() {
 }
 
 struct TSQueryCastData final : duckdb::BoundCastData {
+  explicit TSQueryCastData(TSQueryParts parts) : parts{std::move(parts)} {}
+
   TSQueryParts parts;
 
   duckdb::unique_ptr<duckdb::BoundCastData> Copy() const final {
@@ -98,50 +100,13 @@ bool HasSlopModifier(const duckdb::LogicalType& type) {
   return mod && mod->type().id() == duckdb::LogicalTypeId::BIGINT;
 }
 
-bool HasMinMatchModifier(const duckdb::LogicalType& type) {
-  const auto* mod = TryGetTypeModifier(type);
-  return mod && mod->type().id() == duckdb::LogicalTypeId::UINTEGER;
-}
-
 bool HasScoreModifier(const duckdb::LogicalType& type) {
   const auto* mod = TryGetTypeModifier(type);
   return mod && mod->type().id() == duckdb::LogicalTypeId::BLOB;
 }
 
-TSQueryCastData ReadTargetModifiers(const duckdb::LogicalType& target) {
-  TSQueryCastData data;
-  const auto* mod = TryGetTypeModifier(target);
-  if (!mod) {
-    return data;
-  }
-  switch (mod->type().id()) {
-    case duckdb::LogicalTypeId::DOUBLE:
-      data.parts.boost = static_cast<float>(mod->GetValue<double>());
-      break;
-    case duckdb::LogicalTypeId::VARCHAR:
-      data.parts.tokenizer = mod->GetValue<std::string>();
-      break;
-    case duckdb::LogicalTypeId::BIGINT:
-      data.parts.slop = CheckedSlop(mod->GetValue<int64_t>());
-      break;
-    case duckdb::LogicalTypeId::BLOB:
-      data.parts.scorer = std::string{duckdb::StringValue::Get(*mod)};
-      break;
-    case duckdb::LogicalTypeId::UTINYINT:
-      data.parts.merge = static_cast<TSQueryMerge>(mod->GetValue<uint8_t>());
-      break;
-    case duckdb::LogicalTypeId::UINTEGER:
-      data.parts.min_match = mod->GetValue<uint32_t>();
-      break;
-    default:
-      break;
-  }
-  return data;
-}
-
 TSQueryRowView ComposeParts(const TSQueryRowView& inner,
-                            const TSQueryCastData& cast) {
-  const auto& outer = cast.parts;
+                            const TSQueryParts& outer) {
   TSQueryRowView parts = inner;
   parts.boost = inner.boost * outer.boost;
   if (!outer.tokenizer.empty()) {
@@ -163,10 +128,7 @@ TSQueryRowView ComposeParts(const TSQueryRowView& inner,
   }
   if (outer.min_match != 0) {
     if (inner.min_match != 0) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("::min_match(K) on a query that already has a ::min_match"),
-        ERR_HINT("A query takes one threshold."));
+      ThrowRepeatedMinMatch();
     }
     parts.min_match = outer.min_match;
   }
@@ -317,7 +279,7 @@ bool TSQueryFromStringCast(duckdb::Vector& source, duckdb::Vector& result,
     }
     TSQueryRowView parts;
     parts.text = {value.GetValue().GetData(), value.GetValue().GetSize()};
-    writer.Write(i, ComposeParts(parts, data));
+    writer.Write(i, ComposeParts(parts, data.parts));
   }
   return true;
 }
@@ -335,7 +297,7 @@ duckdb::BoundCastInfo BindTSQueryFromStringCast(
     return duckdb::BoundCastInfo(ThrowingScoreCast);
   }
   return {TSQueryFromStringCast,
-          duckdb::make_uniq<TSQueryCastData>(ReadTargetModifiers(target))};
+          duckdb::make_uniq<TSQueryCastData>(TSQueryPartsForType(target, {}))};
 }
 
 bool TSQueryBoostCast(duckdb::Vector& source, duckdb::Vector& result,
@@ -349,7 +311,7 @@ bool TSQueryBoostCast(duckdb::Vector& source, duckdb::Vector& result,
       duckdb::FlatVector::SetNull(result, i, true);
       continue;
     }
-    writer.Write(i, ComposeParts(*parts, data));
+    writer.Write(i, ComposeParts(*parts, data.parts));
   }
   return true;
 }
@@ -358,7 +320,7 @@ duckdb::BoundCastInfo BindTSQueryBoostCast(duckdb::BindCastInput&,
                                            const duckdb::LogicalType&,
                                            const duckdb::LogicalType& target) {
   return {TSQueryBoostCast,
-          duckdb::make_uniq<TSQueryCastData>(ReadTargetModifiers(target))};
+          duckdb::make_uniq<TSQueryCastData>(TSQueryPartsForType(target, {}))};
 }
 
 bool TSQueryToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
@@ -418,9 +380,8 @@ void TSQueryBoostFn(duckdb::DataChunk& args, duckdb::ExpressionState&,
                       ERR_MSG("boost factor must be >= 0, got ", factor),
                       ERR_HINT("Example: ts_phrase('text') ^ 2.0."));
     }
-    TSQueryCastData factor_data;
-    factor_data.parts.boost = static_cast<float>(factor);
-    writer.Write(i, ComposeParts(*parts, factor_data));
+    writer.Write(i,
+                 ComposeParts(*parts, {.boost = static_cast<float>(factor)}));
   }
 }
 
@@ -764,7 +725,7 @@ void RegisterTSQueryBoolCasts(duckdb::ExtensionLoader& loader) {
   auto boost_bool_cast_bind =
     +[](duckdb::BindCastInput&, const duckdb::LogicalType& source,
         const duckdb::LogicalType& target) -> duckdb::BoundCastInfo {
-    if (HasMinMatchModifier(source) || HasMinMatchModifier(target)) {
+    if (TryGetMinMatchModifier(source) || TryGetMinMatchModifier(target)) {
       return duckdb::BoundCastInfo(ThrowingMinMatchCast);
     }
     return duckdb::BoundCastInfo(+[](duckdb::Vector&, duckdb::Vector&,

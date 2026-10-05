@@ -55,6 +55,11 @@ class ShingleTokenizer;
 }  // namespace irs::analysis
 namespace sdb::connector {
 
+struct MinMatchSlot {
+  uint32_t value = 0;
+  bool taken = false;
+};
+
 struct FilterContext {
   bool negated = false;
   irs::score_t boost = irs::kNoBoost;
@@ -68,8 +73,7 @@ struct FilterContext {
   duckdb::ClientContext& client_context;
   uint32_t levenshtein_max_terms = 50;
   FilterScorers* scorer_sink = nullptr;
-  uint32_t min_match = 0;
-  bool* min_match_taken = nullptr;
+  MinMatchSlot* min_match = nullptr;
 
   FilterContext WithTokenizer(irs::analysis::Tokenizer& tokenizer) const {
     return {
@@ -86,59 +90,43 @@ struct FilterContext {
       .levenshtein_max_terms = levenshtein_max_terms,
       .scorer_sink = scorer_sink,
       .min_match = min_match,
-      .min_match_taken = min_match_taken,
     };
   }
 
   FilterContext WithBoost(irs::score_t factor) const {
-    return {
-      .negated = negated,
-      .boost = boost * factor,
-      .slop = slop,
-      .column_getter = column_getter,
-      .expr_getter = expr_getter,
-      .column_cache = column_cache,
-      .expr_cache = expr_cache,
-      .identity = identity,
-      .tokenizer = tokenizer,
-      .client_context = client_context,
-      .levenshtein_max_terms = levenshtein_max_terms,
-      .scorer_sink = scorer_sink,
-      .min_match = min_match,
-      .min_match_taken = min_match_taken,
-    };
-  }
-
-  FilterContext WithSlop(irs::PosAttr::value_t value) const {
-    return {
-      .negated = negated,
-      .boost = boost,
-      .slop = value,
-      .column_getter = column_getter,
-      .expr_getter = expr_getter,
-      .column_cache = column_cache,
-      .expr_cache = expr_cache,
-      .identity = identity,
-      .tokenizer = tokenizer,
-      .client_context = client_context,
-      .levenshtein_max_terms = levenshtein_max_terms,
-      .scorer_sink = scorer_sink,
-      .min_match = min_match,
-      .min_match_taken = min_match_taken,
-    };
-  }
-
-  FilterContext WithMinMatch(uint32_t value, bool* taken) const {
     auto out = *this;
-    out.min_match = value;
-    out.min_match_taken = taken;
+    out.boost = boost * factor;
     return out;
   }
 
-  FilterContext WithoutMinMatch() const { return WithMinMatch(0, nullptr); }
+  FilterContext WithSlop(irs::PosAttr::value_t value) const {
+    auto out = *this;
+    out.slop = value;
+    return out;
+  }
+
+  FilterContext WithMinMatch(MinMatchSlot* slot) const {
+    auto out = *this;
+    out.min_match = slot;
+    return out;
+  }
+
+  FilterContext WithoutMinMatch() const { return WithMinMatch(nullptr); }
 };
 
-uint32_t TakeMinMatch(const FilterContext& ctx);
+inline uint32_t TakeMinMatch(const FilterContext& ctx) {
+  if (!ctx.min_match) {
+    return 0;
+  }
+  ctx.min_match->taken = true;
+  return ctx.min_match->value;
+}
+
+[[noreturn]] void ThrowRepeatedMinMatch();
+
+[[noreturn]] void ThrowMinMatchAboveBranches(uint32_t min_match,
+                                             size_t branches,
+                                             std::string_view hint);
 
 inline BoolTarget MaybeNegated(BoolTarget parent, const FilterContext& ctx,
                                const SearchColumnInfo& info) {

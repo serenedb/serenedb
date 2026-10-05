@@ -46,6 +46,7 @@ void FromTokenize(BoolTarget parent, const FilterContext& ctx,
   GetVarcharArg(*func.GetChildren()[1], analyzer_name,
                 {"ts_tokenize analyzer name", kSyntaxHint});
   if (analyzer_name == irs::KeywordTokenizer::type_name()) {
+    TakeMinMatch(ctx);
     BuildFtsTerm(parent, ctx, column_info, duckdb::Value(text));
     return;
   }

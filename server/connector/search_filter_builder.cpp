@@ -21,6 +21,7 @@
 #include "search_filter_builder.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/container/inlined_vector.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
@@ -67,7 +68,6 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
-#include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 
@@ -1176,19 +1176,56 @@ absl::Status FromFunctionExpression(
   return absl::UnimplementedError(absl::StrCat("Unsupported function: ", name));
 }
 
-void CollectOrChain(const duckdb::Expression& expr,
-                    std::vector<const duckdb::Expression*>& out) {
+const duckdb::BoundFunctionExpression* AsTSQueryOr(
+  const duckdb::Expression& expr) {
   const auto& unwrapped = UnwrapTSQueryCast(expr);
-  if (unwrapped.GetExpressionClass() ==
+  if (unwrapped.GetExpressionClass() !=
       duckdb::ExpressionClass::BOUND_FUNCTION) {
-    const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
-    if (ClassifyTSQueryFunction(
-          func.Function().GetName().GetIdentifierName()) == TSQueryOp::Or) {
-      for (const auto& child : func.GetChildren()) {
-        CollectOrChain(*child, out);
-      }
-      return;
+    return nullptr;
+  }
+  const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
+  if (ClassifyTSQueryFunction(func.Function().GetName().GetIdentifierName()) !=
+      TSQueryOp::Or) {
+    return nullptr;
+  }
+  return &func;
+}
+
+duckdb::unique_ptr<duckdb::Expression> TryParseFoldedOrChain(
+  duckdb::ClientContext& context, const duckdb::Expression& expr) {
+  const auto& unwrapped = UnwrapTSQueryCast(expr);
+  if (unwrapped.GetExpressionClass() !=
+      duckdb::ExpressionClass::BOUND_CONSTANT) {
+    return nullptr;
+  }
+  const auto parts = TryGetTSQueryParts(
+    unwrapped.Cast<duckdb::BoundConstantExpression>().GetValue());
+  if (!parts || HasModifiers(*parts)) {
+    return nullptr;
+  }
+  auto structured = TryParseStructuredTSQueryText(parts->text, context);
+  if (!structured || !AsTSQueryOr(*structured)) {
+    return nullptr;
+  }
+  return structured;
+}
+
+using TSQueryOperands = absl::InlinedVector<const duckdb::Expression*, 2>;
+
+void CollectOrChain(
+  duckdb::ClientContext& context, const duckdb::Expression& expr,
+  TSQueryOperands& out,
+  std::vector<duckdb::unique_ptr<duckdb::Expression>>& parsed) {
+  if (const auto* func = AsTSQueryOr(expr)) {
+    for (const auto& child : func->GetChildren()) {
+      CollectOrChain(context, *child, out, parsed);
     }
+    return;
+  }
+  if (auto chain = TryParseFoldedOrChain(context, expr)) {
+    parsed.push_back(std::move(chain));
+    CollectOrChain(context, *parsed.back(), out, parsed);
+    return;
   }
   out.push_back(&expr);
 }
@@ -1199,20 +1236,19 @@ void FromTSQueryConjunction(BoolTarget parent, const FilterContext& ctx,
                             bool is_and) {
   SDB_ASSERT(func.GetChildren().size() == 2);
   const auto min_match = is_and ? 0 : TakeMinMatch(ctx);
-  std::vector<const duckdb::Expression*> operands;
+  TSQueryOperands operands;
+  std::vector<duckdb::unique_ptr<duckdb::Expression>> parsed;
   for (const auto& child : func.GetChildren()) {
     if (min_match != 0) {
-      CollectOrChain(*child, operands);
+      CollectOrChain(ctx.client_context, *child, operands, parsed);
     } else {
       operands.push_back(child.get());
     }
   }
   if (min_match > operands.size()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("::min_match(", min_match, ") on an OR of ",
-                            operands.size(), " branches"),
-                    ERR_HINT("K must be between 1 and the number of `||` "
-                             "branches."));
+    ThrowMinMatchAboveBranches(
+      min_match, operands.size(),
+      "K must be between 1 and the number of `||` branches.");
   }
   const auto group = AddGroup(MaybeNegated(parent, ctx, column_info),
                               is_and ? irs::Occur::Must : irs::Occur::Should);
@@ -1224,7 +1260,7 @@ void FromTSQueryConjunction(BoolTarget parent, const FilterContext& ctx,
     BuildTSQuery(group, sub_ctx, column_info, *child);
   }
   if (!is_and) {
-    SetMinMatch(*group.node, min_match != 0 ? min_match : 1);
+    SetMinMatch(*group.node, std::max(min_match, uint32_t{1}));
   }
 }
 
@@ -1452,28 +1488,6 @@ irs::BooleanFilter* InnermostGroup(irs::BooleanFilter& scope) {
   return group;
 }
 
-void ApplyMinMatch(irs::BooleanFilter& scope, uint32_t min_match) {
-  auto* group = InnermostGroup(scope);
-  if (!group || group->Size(irs::Occur::Should) == 0 ||
-      group->Size(irs::Occur::Must) != 0 ||
-      group->Size(irs::Occur::MustNot) != 0) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("::min_match(K) applies to an OR of predicates"),
-                    ERR_HINT("Write it on an OR group, e.g. (a @@ 'x' OR "
-                             "b @@ 'y' OR c @@ 'z')::min_match(2)."));
-  }
-  const auto branches = group->Size(irs::Occur::Should);
-  if (min_match > branches) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("::min_match(", min_match, ") on an OR of ",
-                            branches, " branches"),
-                    ERR_HINT("K must be between 1 and the number of OR "
-                             "branches. A branch of several predicates is "
-                             "grouped with its own ::min_match(1)."));
-  }
-  SetMinMatch(*group, min_match);
-}
-
 void ApplyMerge(irs::BooleanFilter& scope, TSQueryMerge merge) {
   if (merge == TSQueryMerge::Default) {
     return;
@@ -1531,17 +1545,19 @@ bool TryDispatchMergeCast(BoolTarget parent, const FilterContext& ctx,
 template<typename Build>
 void BuildWithValueMinMatch(const FilterContext& ctx, uint32_t min_match,
                             Build&& build) {
-  if (ctx.min_match != 0) {
+  if (ctx.min_match) {
+    ThrowRepeatedMinMatch();
+  }
+  if (ctx.negated) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("::min_match(K) on a query that already has a ::min_match"),
-      ERR_HINT("A query takes one threshold. To count a group as one branch "
-               "of another, put it inside the outer `||`: (('a' || 'b' || "
-               "'c')::min_match(2) || 'd')::min_match(2)."));
+      ERR_MSG("NOT on a ::min_match(K) query is not supported"),
+      ERR_HINT("Fewer than K of n alternatives is at least n-K+1 of their "
+               "negations: (!! a || !! b || ...)::min_match(n-K+1)."));
   }
-  bool taken = false;
-  build(ctx.WithMinMatch(min_match, &taken));
-  if (!taken && min_match > 1) {
+  MinMatchSlot slot{.value = min_match};
+  build(ctx.WithMinMatch(&slot));
+  if (!slot.taken && min_match > 1) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("::min_match(", min_match, ") on a query with one branch"),
@@ -1569,6 +1585,21 @@ bool TryDispatchMinMatchCast(BoolTarget parent, const FilterContext& ctx,
   return true;
 }
 
+std::unique_ptr<irs::BooleanFilter> BuildSqlModifierScope(
+  const FilterContext& ctx, const duckdb::Expression& child,
+  std::string_view modifier, std::string_view hint) {
+  auto scope = OpenScope();
+  if (auto s = FromExpression(ScopeTarget(scope), ctx, child); !s.ok()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(modifier,
+                            " used on a predicate the inverted index could not "
+                            "claim: ",
+                            s.message()),
+                    ERR_HINT(hint));
+  }
+  return scope;
+}
+
 bool TryDispatchSqlScoreCast(BoolTarget filter, const FilterContext& ctx,
                              const duckdb::Expression& peeled) {
   if (!duckdb::BoundCastExpression::IsCast(peeled)) {
@@ -1580,18 +1611,10 @@ bool TryDispatchSqlScoreCast(BoolTarget filter, const FilterContext& ctx,
     return false;
   }
   const auto* scorer = ResolveScoreOverride(ctx, *expr);
-  auto scope = OpenScope();
-  if (auto s = FromExpression(ScopeTarget(scope), ctx,
-                              duckdb::BoundCastExpression::Child(cast_expr));
-      !s.ok()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("::score(...) used on a predicate the inverted index could not "
-              "claim: ",
-              s.message()),
-      ERR_HINT("score is only meaningful inside an inverted-index match. "
-               "Move it into an `@@` match or remove it."));
-  }
+  auto scope = BuildSqlModifierScope(
+    ctx, duckdb::BoundCastExpression::Child(cast_expr), "::score(...)",
+    "score is only meaningful inside an inverted-index match. Move it into an "
+    "`@@` match or remove it.");
   ApplyScoreOverride(*scope, scorer);
   CloseScope(filter, std::move(scope));
   return true;
@@ -1607,37 +1630,18 @@ bool TryDispatchSqlMergeCast(BoolTarget filter, const FilterContext& ctx,
   if (!merge) {
     return false;
   }
-  auto scope = OpenScope();
-  if (auto s = FromExpression(ScopeTarget(scope), ctx,
-                              duckdb::BoundCastExpression::Child(cast_expr));
-      !s.ok()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("::merge used on a predicate the inverted index could not "
-              "claim: ",
-              s.message()),
-      ERR_HINT("merge is only meaningful on an inverted-index boolean group."));
-  }
+  auto scope = BuildSqlModifierScope(
+    ctx, duckdb::BoundCastExpression::Child(cast_expr), "::merge",
+    "merge is only meaningful on an inverted-index boolean group.");
   ApplyMerge(*scope, *merge);
   CloseScope(filter, std::move(scope));
   return true;
 }
 
-void RejectNegatedMinMatch(const FilterContext& ctx) {
-  if (ctx.negated) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("NOT on a ::min_match(K) group is not supported"),
-      ERR_HINT("Fewer than K of n branches is at least n-K+1 of their "
-               "negations: (NOT a OR NOT b OR ...)::min_match(n-K+1)."));
-  }
-}
-
-void RejectRepeatedMinMatch(const duckdb::Expression& operand) {
-  for (const auto* cur = &UnwrapBoostBoolCoercion(operand);
-       duckdb::BoundCastExpression::IsCast(*cur);) {
-    const auto& cast = cur->Cast<duckdb::BoundFunctionExpression>();
-    const auto& type = cast.GetReturnType();
+size_t CountMinMatchBranches(const duckdb::Expression& operand) {
+  const auto* cur = &UnwrapBoostBoolCoercion(operand);
+  while (duckdb::BoundCastExpression::IsCast(*cur)) {
+    const auto& type = cur->GetReturnType();
     if (TryGetMinMatchModifier(type)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -1648,10 +1652,20 @@ void RejectRepeatedMinMatch(const duckdb::Expression& operand) {
     }
     if (!TryGetBoostModifier(type) && !TryGetScoreModifier(type) &&
         !TryGetMergeModifier(type)) {
-      return;
+      break;
     }
-    cur = &UnwrapBoostBoolCoercion(duckdb::BoundCastExpression::Child(cast));
+    cur = &UnwrapBoostBoolCoercion(duckdb::BoundCastExpression::Child(
+      cur->Cast<duckdb::BoundFunctionExpression>()));
   }
+  if (cur->GetExpressionType() != duckdb::ExpressionType::CONJUNCTION_OR) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("::min_match(K) applies to an OR of predicates"),
+      ERR_HINT("Write it on an OR group, e.g. (a @@ 'x' OR b @@ 'y' OR c @@ "
+               "'z')::min_match(2). To count the words or alternatives of one "
+               "@@ match, put it on the query: col @@ 'x y z'::min_match(2)."));
+  }
+  return cur->Cast<duckdb::BoundConjunctionExpression>().GetChildren().size();
 }
 
 bool TryDispatchSqlMinMatchCast(BoolTarget filter, const FilterContext& ctx,
@@ -1664,23 +1678,51 @@ bool TryDispatchSqlMinMatchCast(BoolTarget filter, const FilterContext& ctx,
   if (!min_match) {
     return false;
   }
-  RejectNegatedMinMatch(ctx);
-  RejectRepeatedMinMatch(duckdb::BoundCastExpression::Child(cast_expr));
-  auto scope = OpenScope();
-  if (auto s = FromExpression(ScopeTarget(scope), ctx,
-                              duckdb::BoundCastExpression::Child(cast_expr));
-      !s.ok()) {
+  if (ctx.negated) {
     THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("::min_match used on a predicate the inverted index could not "
-              "claim: ",
-              s.message()),
-      ERR_HINT("min_match counts the branches of an OR the inverted index "
-               "answers; every branch has to be an index predicate."));
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("NOT on a ::min_match(K) group is not supported"),
+      ERR_HINT("Fewer than K of n branches is at least n-K+1 of their "
+               "negations: (NOT a OR NOT b OR ...)::min_match(n-K+1)."));
   }
-  ApplyMinMatch(*scope, *min_match);
+  const auto& operand = duckdb::BoundCastExpression::Child(cast_expr);
+  const auto branches = CountMinMatchBranches(operand);
+  if (*min_match > branches) {
+    ThrowMinMatchAboveBranches(
+      *min_match, branches,
+      "K must be between 1 and the number of OR branches. A branch of several "
+      "predicates is grouped with its own ::min_match(1).");
+  }
+  auto scope = BuildSqlModifierScope(
+    ctx, operand, "::min_match",
+    "min_match counts the branches of an OR the inverted index answers; every "
+    "branch has to be an index predicate.");
+  auto* group = InnermostGroup(*scope);
+  SDB_ASSERT(group && group->Size(irs::Occur::Should) == branches);
+  SetMinMatch(*group, *min_match);
   CloseScope(filter, std::move(scope));
   return true;
+}
+
+bool HasQueryModifier(const duckdb::LogicalType& type) {
+  return TryGetBoostModifier(type) || TryGetSlopModifier(type) ||
+         TryGetScoreModifier(type) || TryGetMergeModifier(type) ||
+         TryGetMinMatchModifier(type);
+}
+
+const duckdb::Value* TryGetUnmodifiedConstant(const duckdb::Expression& expr) {
+  const auto* cur = &expr;
+  while (duckdb::BoundCastExpression::IsCast(*cur)) {
+    if (HasQueryModifier(cur->GetReturnType())) {
+      return nullptr;
+    }
+    cur = &duckdb::BoundCastExpression::Child(
+      cur->Cast<duckdb::BoundFunctionExpression>());
+  }
+  if (cur->GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
+    return nullptr;
+  }
+  return &cur->Cast<duckdb::BoundConstantExpression>().GetValue();
 }
 
 bool TryDispatchTokenizeCast(BoolTarget parent, const FilterContext& ctx,
@@ -1694,7 +1736,7 @@ bool TryDispatchTokenizeCast(BoolTarget parent, const FilterContext& ctx,
     tokenizer = TryGetTokenizerModifier(cast_expr.GetReturnType());
     if (!tokenizer.empty()) {
       expr = &duckdb::BoundCastExpression::Child(cast_expr);
-      val = TryGetConstant(UnwrapTSQueryCast(*expr));
+      val = TryGetUnmodifiedConstant(*expr);
       if (val && IsTSQueryStructType(val->type())) {
         val = nullptr;
       }
@@ -2074,10 +2116,7 @@ const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
     const auto& source =
       duckdb::BoundCastExpression::Child(cast).GetReturnType();
     // Modifier-bearing casts must be preserved so the walker sees them.
-    if (!TryGetTokenizerModifier(target).empty() ||
-        TryGetBoostModifier(target) || TryGetSlopModifier(target) ||
-        TryGetScoreModifier(target) || TryGetMergeModifier(target) ||
-        TryGetMinMatchModifier(target)) {
+    if (!TryGetTokenizerModifier(target).empty() || HasQueryModifier(target)) {
       break;
     }
     // Peel transit casts between string-ish types and the TSQUERY
@@ -2223,21 +2262,21 @@ TSQueryOp ClassifyTSQueryFunction(std::string_view name) {
   return magic_enum::enum_cast<TSQueryOp>(name).value_or(TSQueryOp::Unknown);
 }
 
-uint32_t TakeMinMatch(const FilterContext& ctx) {
-  if (ctx.min_match == 0) {
-    return 0;
-  }
-  if (ctx.negated) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("NOT on a ::min_match(K) query is not supported"),
-      ERR_HINT("Fewer than K of n branches is at least n-K+1 of their "
-               "negations."));
-  }
-  if (ctx.min_match_taken) {
-    *ctx.min_match_taken = true;
-  }
-  return ctx.min_match;
+void ThrowRepeatedMinMatch() {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+    ERR_MSG("::min_match(K) on a query that already has a ::min_match"),
+    ERR_HINT("A query takes one threshold. To count a group as one branch of "
+             "another, put it inside the outer `||`: (('a'::TSQUERY || 'b' || "
+             "'c')::min_match(2) || 'd')::min_match(2)."));
+}
+
+void ThrowMinMatchAboveBranches(uint32_t min_match, size_t branches,
+                                std::string_view hint) {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    ERR_MSG("::min_match(", min_match, ") on an OR of ", branches, " branches"),
+    ERR_HINT(hint));
 }
 
 namespace {
@@ -2390,10 +2429,6 @@ void BuildTSQuery(BoolTarget parent, const FilterContext& ctx,
     return;
   }
 
-  // Bare string (promoted via VARCHAR -> TSQUERY cast) -> tokenize via
-  // the ambient (column) analyzer. Multi-token input composes with OR
-  // (min_match=1) per the plan's "col @@ 'Quick Fox' ≡ ANY_OF(tokens)"
-  // rule. Non-VARCHAR / analyzer-less paths fall back to raw ByTerm.
   if (unwrapped.GetExpressionClass() ==
       duckdb::ExpressionClass::BOUND_CONSTANT) {
     const auto& val =
@@ -2438,7 +2473,7 @@ void BuildTSQuery(BoolTarget parent, const FilterContext& ctx,
 
   constexpr TSQueryOp kMinMatchOps[] = {TSQueryOp::Or, TSQueryOp::Any,
                                         TSQueryOp::Tokenize, TSQueryOp::Boost};
-  if (ctx.min_match != 0 && !absl::c_linear_search(kMinMatchOps, op)) {
+  if (ctx.min_match && !absl::c_linear_search(kMinMatchOps, op)) {
     return BuildTSQuery(parent, ctx.WithoutMinMatch(), column_info, expr);
   }
 

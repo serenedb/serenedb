@@ -1122,6 +1122,18 @@ id
 2
 3
 
+query
+SELECT id
+FROM docs_idx
+WHERE (body @@ 'quick' OR category = 'drama' OR id >= 2)::min_match(1)
+ORDER BY id;
+----
+id
+1
+2
+3
+4
+
 # DOCS_TEST: min_match_tsquery
 # DOCS_TEST_BODY
 query

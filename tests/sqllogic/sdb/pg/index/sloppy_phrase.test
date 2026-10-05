@@ -157,10 +157,12 @@ EXECUTE sp_slop('ts_phrase(''quick fox'')::slop(65536)');
 ----
 db error: ERROR: ::slop too large: 65536
 
+
 query error
 EXECUTE sp_slop('ts_phrase(''quick fox'')::slop(-1)');
 ----
 db error: ERROR: slop() budget must be >= 0, got -1
+
 
 statement ok
 DEALLOCATE sp_slop;
@@ -380,6 +382,27 @@ query error
 SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick fox', slop := 5000000000);
 ----
 db error: ERROR: ts_phrase slop too large: 5000000000
+HINT: Example: ts_phrase('quick brown fox') or ts_phrase('a', 1, 'b', slop := 2). INTEGER / INTEGER[] gap allowed between text args; `slop := N` is a non-negative budget for position rearrangements (incompatible with interval gaps).
+
+
+query
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick fox', slop := 65535) ORDER BY a;
+----
+a
+1
+2
+3
+4
+6
+7
+8
+9
+
+
+query error
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick fox', slop := 65536);
+----
+db error: ERROR: ts_phrase slop too large: 65536
 HINT: Example: ts_phrase('quick brown fox') or ts_phrase('a', 1, 'b', slop := 2). INTEGER / INTEGER[] gap allowed between text args; `slop := N` is a non-negative budget for position rearrangements (incompatible with interval gaps).
 
 

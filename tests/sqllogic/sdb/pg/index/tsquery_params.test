@@ -56,6 +56,18 @@ EXECUTE tqp_match(NULL);
 ----
 a
 
+query
+EXECUTE tqp_match('2024-10-05');
+----
+a
+
+query
+EXECUTE tqp_match('2024-10-05 quick');
+----
+a
+1
+4
+
 # ----------------------------------------------------------------------
 # Explicit tsquery cast on the parameter
 # ----------------------------------------------------------------------

@@ -31,6 +31,22 @@
 namespace sdb::connector {
 namespace {
 
+void TakeAnyMinMatch(const FilterContext& ctx,
+                     std::optional<size_t>& min_match) {
+  const auto value_min_match = TakeMinMatch(ctx);
+  if (!value_min_match) {
+    return;
+  }
+  if (min_match) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("::min_match(K) on a ts_any that already has a min_match"),
+      ERR_HINT("Give the threshold once: ts_any(list, K) or "
+               "ts_any(list)::min_match(K)."));
+  }
+  min_match = value_min_match;
+}
+
 bool IsTokenizeListCall(const duckdb::Expression& expr) {
   if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
     return false;
@@ -64,15 +80,7 @@ void FromTokenizeListInAnyAllOf(
     min_match = static_cast<size_t>(m);
   }
   if (is_any) {
-    if (const auto value_min_match = TakeMinMatch(ctx)) {
-      if (min_match) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-          ERR_MSG("::min_match(K) on a ts_any that already has a min_match"),
-          ERR_HINT(kSyntaxHint));
-      }
-      min_match = value_min_match;
-    }
+    TakeAnyMinMatch(ctx, min_match);
   }
 
   SDB_ASSERT(tokenize_call.GetChildren().size() >= 1 &&
@@ -273,23 +281,12 @@ void FromAnyAllOf(BoolTarget parent, const FilterContext& ctx,
   std::vector<duckdb::unique_ptr<duckdb::Expression>> synthesised;
   std::optional<size_t> min_match;
   ExtractAnyAllOfArgs(func, is_any, args, synthesised, min_match);
-  if (is_any) {
-    if (const auto value_min_match = TakeMinMatch(ctx)) {
-      if (min_match) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-          ERR_MSG("::min_match(K) on a ts_any that already has a min_match"),
-          ERR_HINT("Give the threshold once: ts_any(list, K) or "
-                   "ts_any(list)::min_match(K)."));
-      }
-      if (value_min_match > args.size()) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("::min_match(", value_min_match,
-                                ") on an OR of ", args.size(), " branches"),
-                        ERR_HINT("K must be between 1 and the number of "
-                                 "ts_any elements."));
-      }
-      min_match = value_min_match;
+  if (is_any && ctx.min_match) {
+    TakeAnyMinMatch(ctx, min_match);
+    if (*min_match > args.size()) {
+      ThrowMinMatchAboveBranches(
+        static_cast<uint32_t>(*min_match), args.size(),
+        "K must be between 1 and the number of ts_any elements.");
     }
   }
 

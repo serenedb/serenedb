@@ -75,8 +75,6 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     return _detached.load(std::memory_order_acquire);
   }
   duckdb::shared_ptr<duckdb::WriteAheadLog> CatalogLog() final;
-  void RequestCatalogLogSync(duckdb::shared_ptr<duckdb::WriteAheadLog> log,
-                             duckdb::idx_t offset) final;
   bool AppendLocalIndexes(
     duckdb::DuckTransaction& transaction, duckdb::TableIndexList& index_list,
     duckdb::RowGroupCollection& source,

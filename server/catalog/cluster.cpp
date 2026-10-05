@@ -44,6 +44,7 @@
 #include <iresearch/utils/static_strings.hpp>
 #include <string_view>
 
+#include "auth/role_closure.h"
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
 #include "catalog/database_directory.h"
@@ -78,54 +79,8 @@ duckdb::Catalog& ClusterCatalog::ReplayUseCatalog(
   return AttachDatabaseCatalog(context, database->name, catalog_oid);
 }
 
-ClusterCatalog::~ClusterCatalog() {
-  {
-    absl::MutexLock lock{&_sync_mutex};
-    _sync_stop = true;
-  }
-  if (_sync_thread.joinable()) {
-    _sync_thread.join();
-  }
-}
-
 duckdb::idx_t ClusterCatalog::DefaultSchemaOid() const {
   return pg::kPgMainSchema;
-}
-
-void ClusterCatalog::RequestCatalogLogSync(
-  duckdb::shared_ptr<duckdb::WriteAheadLog> log, duckdb::idx_t offset) {
-  absl::MutexLock lock{&_sync_mutex};
-  if (_sync_stop) {
-    return;
-  }
-  if (_sync_log != log || offset > _sync_offset) {
-    _sync_log = std::move(log);
-    _sync_offset = offset;
-  }
-  if (!_sync_thread.joinable()) {
-    _sync_thread = std::thread{[this] { SyncCatalogLogLoop(); }};
-  }
-}
-
-void ClusterCatalog::SyncCatalogLogLoop() {
-  while (true) {
-    duckdb::shared_ptr<duckdb::WriteAheadLog> log;
-    duckdb::idx_t offset = 0;
-    {
-      absl::MutexLock lock{&_sync_mutex};
-      _sync_mutex.Await(absl::Condition(this, &ClusterCatalog::SyncPending));
-      if (_sync_stop) {
-        return;
-      }
-      log = std::move(_sync_log);
-      offset = _sync_offset;
-    }
-    SDB_WAIT_ON_FAILURE("pause_catalog_log_sync");
-    try {
-      log->SyncUpTo(offset);
-    } catch (...) {
-    }
-  }
 }
 
 void ClusterCatalog::OpenCatalogLog(
@@ -137,7 +92,6 @@ void ClusterCatalog::OpenCatalogLog(
   _compactable = compactable;
   _live_bytes.store(GetAttached().GetStorageManager().GetWALSize(),
                     std::memory_order_relaxed);
-  _catalog_generation.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void ClusterCatalog::OnCatalogLogPrepared() {
@@ -154,22 +108,8 @@ void ClusterCatalog::OnCatalogLogDecided() {
   SDB_WAIT_ON_FAILURE("pause_after_catalog_decision");
 }
 
-void ClusterCatalog::BeginCatalogLogCommit() {
-  _commits_in_flight.fetch_add(1, std::memory_order_acq_rel);
-}
-
-void ClusterCatalog::EndCatalogLogCommit() {
-  const auto version = duckdb::DuckTransactionManager::Get(GetAttached())
-                         .GetLastCommittedCatalogVersion();
-  if (_generation_version.exchange(version, std::memory_order_acq_rel) !=
-      version) {
-    _catalog_generation.fetch_add(1, std::memory_order_acq_rel);
-  }
-  _commits_in_flight.fetch_sub(1, std::memory_order_acq_rel);
-}
-
 void ClusterCatalog::MaybeCompactCatalogLog() {
-  if (!_compactable || !CatalogLog()) {
+  if (!_compactable) {
     return;
   }
   bool force = false;
@@ -186,8 +126,11 @@ void ClusterCatalog::MaybeCompactCatalogLog() {
     return;
   }
   auto lock = storage.GetCommitLock();
-  if (storage.GetWALSize() < threshold() ||
-      _commits_in_flight.load(std::memory_order_acquire) > 0) {
+  if (storage.GetWALSize() < threshold()) {
+    return;
+  }
+  auto commits = _commit_lock.TryGetExclusiveLock();
+  if (!commits) {
     return;
   }
   std::vector<duckdb::unique_ptr<duckdb::StorageLockKey>> quiescent;

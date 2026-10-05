@@ -242,11 +242,13 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
 
 class Loader {
  public:
-  Loader(std::string_view database, duckdb::idx_t database_id)
+  Loader(std::string_view database, duckdb::idx_t database_id,
+         std::span<const Doc> docs)
     : _conn{irs::DuckDBEngine::Instance().CreateConnection()},
       _ctx{std::make_shared<ConnectionContext>(
         *_conn->context, irs::StaticStrings::kDefaultUser, pg::kRootUser,
-        database, database_id, nullptr, 0, nullptr)} {
+        database, database_id, nullptr, 0, nullptr)},
+      _docs{docs} {
     connector::SereneDBClientState::Register(*_conn->context, _ctx);
     _conn->context->session_user =
       std::string{irs::StaticStrings::kDefaultUser};
@@ -313,14 +315,13 @@ class Loader {
   }
 
   bool Insert() {
-    const auto docs = GetDocs();
     auto full = PrepareInsert(kInsertBatch);
     if (!full) {
       return false;
     }
-    for (size_t begin = 0; begin < docs.size(); begin += kInsertBatch) {
+    for (size_t begin = 0; begin < _docs.size(); begin += kInsertBatch) {
       const auto batch =
-        docs.subspan(begin, std::min(kInsertBatch, docs.size() - begin));
+        _docs.subspan(begin, std::min(kInsertBatch, _docs.size() - begin));
       auto tail =
         batch.size() == kInsertBatch ? nullptr : PrepareInsert(batch.size());
       if (batch.size() != kInsertBatch && !tail) {
@@ -346,9 +347,10 @@ class Loader {
 
   duckdb::unique_ptr<duckdb::Connection> _conn;
   std::shared_ptr<ConnectionContext> _ctx;
+  std::span<const Doc> _docs;
 };
 
-std::vector<IndexBlob> BuildImage() {
+std::vector<IndexBlob> BuildImage(std::span<const Doc> docs) {
   const auto database =
     catalog::FindDatabase(irs::StaticStrings::kDefaultDatabase);
   if (!database) {
@@ -359,7 +361,7 @@ std::vector<IndexBlob> BuildImage() {
   const std::string_view name = database->name.GetIdentifierName();
   const auto begin = std::chrono::steady_clock::now();
   try {
-    Loader loader{name, database->oid};
+    Loader loader{name, database->oid, docs};
     auto image = loader.Build();
     if (!image.empty()) {
       SDB_INFO(STARTUP, "embedded docs indexed in database \"", name, "\" in ",
@@ -459,8 +461,9 @@ bool WriteImage(std::span<const IndexBlob> image,
 
 }  // namespace
 
-bool BuildEmbeddedIndex(const std::filesystem::path& out) {
-  const auto image = BuildImage();
+bool BuildEmbeddedIndex(const std::filesystem::path& out,
+                        std::span<const Doc> docs) {
+  const auto image = BuildImage(docs);
   return !image.empty() && WriteImage(image, out);
 }
 

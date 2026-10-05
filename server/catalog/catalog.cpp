@@ -304,7 +304,8 @@ void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
     duckdb::IndexBinder where_binder(*where_bind, binder.context);
     auto where_copy = info.where_clause->Copy();
     const auto type = where_binder.Bind(where_copy)->GetReturnType();
-    if (type != duckdb::LogicalType::BOOLEAN) {
+    if (type != duckdb::LogicalType::BOOLEAN &&
+        type.id() != duckdb::LogicalTypeId::SQLNULL) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
         ERR_MSG("argument of WHERE must be type boolean, not type ",

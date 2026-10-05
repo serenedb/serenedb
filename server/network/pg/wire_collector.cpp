@@ -132,9 +132,9 @@ class PhysicalPgWireCollector final : public duckdb::PhysicalResultCollector {
         std::min<duckdb::idx_t>(chunk.size() - start, budget - sent);
       WriteDataChunk(out, chunk, lstate.serializers, lstate.sctx, start,
                      start + take);
-      ctx.rows.fetch_add(take, std::memory_order_relaxed);
       ctx.direct_committed.store(out.TotalCommitted(),
                                  std::memory_order_release);
+      ctx.rows.fetch_add(take, std::memory_order_release);
       if (start + take < chunk.size() || sent + take == budget) {
         ctx.page_offset = start + take;
         ctx.BlockSink(input.interrupt_state);

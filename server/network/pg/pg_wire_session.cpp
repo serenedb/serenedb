@@ -1473,7 +1473,7 @@ yaclib::Task<duckdb::QueryResultState> PgWireSession<Kind>::DriveQuery(
     // so the caller emits PortalSuspended; a re-Execute raises the budget and
     // resumes this same pending.
     if (wire && wire->paged &&
-        wire->rows.load(std::memory_order_relaxed) >=
+        wire->rows.load(std::memory_order_acquire) >=
           wire->row_budget.load(std::memory_order_relaxed)) {
       co_return status;
     }
@@ -2451,7 +2451,7 @@ yaclib::Task<> PgWireSession<Kind>::ExecutePrepared(Portal& portal,
   auto& wire = *exec.wire;
   const auto rows_before = wire.rows.load(std::memory_order_relaxed);
   const auto status = co_await DriveQuery(*exec.pending, &wire);
-  if (wire.rows.load(std::memory_order_relaxed) >=
+  if (wire.rows.load(std::memory_order_acquire) >=
       wire.row_budget.load(std::memory_order_relaxed)) {
     WriteEmptyFrame(this->_send, PQ_MSG_PORTAL_SUSPENDED);
     co_return {};

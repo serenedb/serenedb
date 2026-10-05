@@ -36,6 +36,7 @@ add_executable(
     serializer_binary_test.cpp
     serializer_test.cpp
     storage_version_test.cpp
+    thread_local_pool_test.cpp
     catalog/entry/tokenizer_test.cpp
     connector/ai_functions_test.cpp
     connector/copy_in_bridge_test.cpp

@@ -42,6 +42,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <magic_enum/magic_enum.hpp>
+#include <utility>
 
 #include "connector/common.h"
 #include "connector/functions/ts_query_codec.h"
@@ -54,11 +55,6 @@ class ShingleTokenizer;
 
 }  // namespace irs::analysis
 namespace sdb::connector {
-
-struct MinMatchSlot {
-  uint32_t value = 0;
-  bool taken = false;
-};
 
 struct FilterContext {
   bool negated = false;
@@ -73,7 +69,7 @@ struct FilterContext {
   duckdb::ClientContext& client_context;
   uint32_t levenshtein_max_terms = 50;
   FilterScorers* scorer_sink = nullptr;
-  MinMatchSlot* min_match = nullptr;
+  uint32_t* min_match = nullptr;
 
   FilterContext WithTokenizer(irs::analysis::Tokenizer& tokenizer) const {
     return {
@@ -105,9 +101,9 @@ struct FilterContext {
     return out;
   }
 
-  FilterContext WithMinMatch(MinMatchSlot* slot) const {
+  FilterContext WithMinMatch(uint32_t* pending) const {
     auto out = *this;
-    out.min_match = slot;
+    out.min_match = pending;
     return out;
   }
 
@@ -118,8 +114,7 @@ inline uint32_t TakeMinMatch(const FilterContext& ctx) {
   if (!ctx.min_match) {
     return 0;
   }
-  ctx.min_match->taken = true;
-  return ctx.min_match->value;
+  return std::exchange(*ctx.min_match, 0);
 }
 
 void RecordWrittenMinMatchBranches(duckdb::Expression& expr);

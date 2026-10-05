@@ -1660,9 +1660,9 @@ void BuildWithValueMinMatch(const FilterContext& ctx, uint32_t min_match,
     build(ctx);
     return;
   }
-  MinMatchSlot slot{.value = min_match};
-  build(ctx.WithMinMatch(&slot));
-  if (!slot.taken && min_match > 1) {
+  uint32_t pending = min_match;
+  build(ctx.WithMinMatch(&pending));
+  if (pending > 1) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("::min_match(", min_match, ") on a query with one branch"),

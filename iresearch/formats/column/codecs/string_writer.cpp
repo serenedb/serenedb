@@ -62,6 +62,7 @@ constexpr double kLevelTolerance = 0.02;
 constexpr size_t kMaxRungs = 8;
 constexpr double kWideFramesGain = 0.03;
 constexpr double kUntrainedGain = 0.02;
+constexpr double kFsstPreference = 0.05;
 constexpr size_t kPriceFrames = 8;
 
 constexpr uint8_t kLz4Fast[] = {1};
@@ -997,6 +998,15 @@ class SegmentWriter {
     const auto& write = _smallest.bytes < chosen.bytes ? _smallest : chosen;
     Trial({shape, write.leaf}, write.level, begin, end, write.layout);
     auto* best = Smallest(shape, shape == Shape::Dedup ? dedup : plain);
+    if (_params.objective == AutoObjective::Balanced &&
+        best->choice.leaf != ByteCodec::Fsst) {
+      if (auto* fsst = Fsst(shape);
+          fsst &&
+          static_cast<double>(fsst->Size()) <=
+            static_cast<double>(best->Size()) * (1.0 + kFsstPreference)) {
+        best = fsst;
+      }
+    }
     const auto chosen_bytes = best->Size();
     const StringChoice picked{shape, best->choice.leaf};
     const bool kept = _tuning.choice && *_tuning.choice == picked;
@@ -1171,6 +1181,17 @@ class SegmentWriter {
       _smallest = {leaf, level, layout, bytes};
     }
     return bytes;
+  }
+
+  Segment* Fsst(Shape shape) const noexcept {
+    Segment* found = nullptr;
+    for (auto* seg : _live) {
+      if (seg->choice.shape == shape && seg->choice.leaf == ByteCodec::Fsst &&
+          (!found || seg->Size() < found->Size())) {
+        found = seg;
+      }
+    }
+    return found;
   }
 
   Segment* Smallest(Shape shape, Segment* best) const noexcept {

@@ -1579,7 +1579,7 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
     seal(changed, tuning);
     gaps.push_back(tuning.calibration_gap);
   }
-  EXPECT_EQ(gaps, (std::vector<uint32_t>{1, 2, 2, 4}));
+  EXPECT_EQ(gaps, (std::vector<uint32_t>{2, 2, 4, 4}));
 
   seal(steady, tuning);
   EXPECT_EQ(tuning.calibration_gap, 1u);

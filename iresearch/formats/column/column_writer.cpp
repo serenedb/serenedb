@@ -88,6 +88,10 @@ void CaptureBlock(duckdb::DatabaseInstance& db,
     m.byte_size = 0;
   } else {
     SDB_ASSERT(size <= std::numeric_limits<uint32_t>::max());
+    if (const uint64_t misalign = out.Position() % 8; misalign != 0) {
+      static constexpr byte_type kPad[8]{};
+      out.WriteData(kPad, 8 - misalign);
+    }
     m.file_offset = out.Position();
     for (const auto part : parts) {
       out.WriteData(reinterpret_cast<const byte_type*>(part.data()),

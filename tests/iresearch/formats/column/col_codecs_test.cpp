@@ -1252,7 +1252,7 @@ TEST_F(ColCodecsTest, GatherFilterReleasesPassedSegments) {
   EXPECT_EQ(kept, expected);
 }
 
-TEST_F(ColCodecsTest, MappedFileUnalignedBlocks) {
+TEST_F(ColCodecsTest, MappedFileAlignedBlocks) {
   const auto path = test_dir() / "col_codecs_mmap";
   std::filesystem::create_directories(path);
   irs::MMapDirectory dir{path};
@@ -1276,18 +1276,17 @@ TEST_F(ColCodecsTest, MappedFileUnalignedBlocks) {
       irs::ColReader r{dir, std::string{kSeg}, Db()};
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
-      bool unaligned = false;
       for (const auto& block : col->DataBlocks()) {
-        unaligned |= block.file_offset % 8 != 0;
+        EXPECT_EQ(block.file_offset % 8, 0u)
+          << duckdb::CompressionTypeToString(arm.codec);
       }
-      EXPECT_TRUE(unaligned) << duckdb::CompressionTypeToString(arm.codec);
     }
     Verify(dir, arm.codec, 5000, *arm.value);
     dir.remove(irs::FileName(kSeg));
   }
 }
 
-TEST_F(ColCodecsTest, MappedFileNumericCodecsUnaligned) {
+TEST_F(ColCodecsTest, MappedFileNumericCodecs) {
   const auto path = test_dir() / "col_codecs_mmap_numeric";
   std::filesystem::create_directories(path);
   irs::MMapDirectory dir{path};

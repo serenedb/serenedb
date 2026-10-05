@@ -162,7 +162,8 @@ void ReadContext::Read(duckdb::QueryContext context, duckdb::Block& block) {
              "ReadContext::Read: unregistered block ", block.id);
   const auto [offset, size] = _ranges[id];
   SDB_ASSERT(block.Size() >= size, "block buffer sector-rounds up");
-  if (_mapping && offset + block.Size() <= _mapping->Size()) {
+  if (_mapping && offset % 8 == 0 &&
+      offset + block.Size() <= _mapping->Size()) {
     block.Read(context, *_mapping, offset);
     return;
   }

@@ -44,6 +44,7 @@
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <map>
 #include <memory>
@@ -130,7 +131,11 @@ const Column& Data() {
 const std::vector<uint64_t>& ScatteredRows() {
   static const std::vector<uint64_t> rows = [] {
     std::vector<uint64_t> out;
-    for (uint64_t r = 0; r < Data().rows; r += 37) {
+    uint64_t stride = 37;
+    if (const char* e = std::getenv("SDB_BENCH_STRIDE")) {
+      stride = std::max<uint64_t>(1, std::strtoull(e, nullptr, 10));
+    }
+    for (uint64_t r = 0; r < Data().rows; r += stride) {
       out.push_back(r);
     }
     return out;
@@ -187,8 +192,20 @@ constexpr ColArm kColArms[] = {
   {"uncompressed", duckdb::CompressionType::COMPRESSION_UNCOMPRESSED, 0},
 };
 
+std::unique_ptr<irs::Directory> MakeSegDirectory(size_t arm) {
+  const char* root = std::getenv("SDB_BENCH_MMAP_DIR");
+  if (root == nullptr) {
+    return std::make_unique<irs::MemoryDirectory>();
+  }
+  const auto path =
+    std::filesystem::path{root} / ("col_codecs_real_" + std::to_string(arm));
+  std::filesystem::remove_all(path);
+  std::filesystem::create_directories(path);
+  return std::make_unique<irs::MMapDirectory>(path);
+}
+
 struct ColSeg {
-  irs::MemoryDirectory dir{};
+  std::unique_ptr<irs::Directory> dir;
   std::unique_ptr<irs::ColReader> reader;
   const irs::ColumnReader* col = nullptr;
   uint64_t bytes = 0;
@@ -223,9 +240,10 @@ const ColSeg& GetColSeg(size_t arm) {
   auto& slot = cache[arm];
   if (!slot) {
     slot = std::make_unique<ColSeg>();
-    slot->bytes = ColBuild(slot->dir, kColArms[arm]);
+    slot->dir = MakeSegDirectory(arm);
+    slot->bytes = ColBuild(*slot->dir, kColArms[arm]);
     slot->reader =
-      std::make_unique<irs::ColReader>(slot->dir, std::string{kSeg}, CsDb());
+      std::make_unique<irs::ColReader>(*slot->dir, std::string{kSeg}, CsDb());
     slot->col = slot->reader->Column(kField);
     if (slot->col == nullptr) {
       std::fprintf(stderr, "col_codecs_real: column missing\n");

@@ -43,21 +43,6 @@ uint32_t GetMinMatchArg(const duckdb::Expression& arg,
   return static_cast<uint32_t>(m);
 }
 
-void TakeAnyMinMatch(const FilterContext& ctx, uint32_t& min_match) {
-  const auto value_min_match = TakeMinMatch(ctx);
-  if (!value_min_match) {
-    return;
-  }
-  if (min_match) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("::min_match(K) on a ts_any that already has a min_match"),
-      ERR_HINT("Give the threshold once: ts_any(list, K) or "
-               "ts_any(list)::min_match(K)."));
-  }
-  min_match = value_min_match;
-}
-
 bool IsTokenizeListCall(const duckdb::Expression& expr) {
   if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
     return false;
@@ -83,8 +68,8 @@ void FromTokenizeListInAnyAllOf(
   if (is_any && outer.GetChildren().size() == 2) {
     min_match = GetMinMatchArg(*outer.GetChildren()[1], kSyntaxHint);
   }
-  if (is_any) {
-    TakeAnyMinMatch(ctx, min_match);
+  if (const auto value_min_match = is_any ? TakeMinMatch(ctx) : 0) {
+    min_match = value_min_match;
   }
 
   SDB_ASSERT(tokenize_call.GetChildren().size() >= 1 &&
@@ -279,8 +264,8 @@ void FromAnyAllOf(BoolTarget parent, const FilterContext& ctx,
   std::vector<duckdb::unique_ptr<duckdb::Expression>> synthesised;
   uint32_t min_match = 0;
   ExtractAnyAllOfArgs(func, is_any, args, synthesised, min_match);
-  if (is_any && ctx.min_match) {
-    TakeAnyMinMatch(ctx, min_match);
+  if (const auto value_min_match = is_any ? TakeMinMatch(ctx) : 0) {
+    min_match = value_min_match;
     if (min_match > args.size()) {
       ThrowMinMatchAboveBranches(
         min_match, args.size(),

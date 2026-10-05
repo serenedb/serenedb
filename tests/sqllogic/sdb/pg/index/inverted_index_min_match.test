@@ -345,8 +345,14 @@ query error ::min_match\(3\) on an OR of 2 branches
 EXECUTE mm_text('(''gcp''::TSQUERY || ''python'')::min_match(3)');
 
 
-query error ::min_match\(K\) on a query that already has a ::min_match
+query
 EXECUTE mm_text('''gcp python''::min_match(2)::min_match(1)');
+----
+id
+1
+3
+5
+6
 
 
 query
@@ -514,8 +520,16 @@ statement ok
 DEALLOCATE mm_same;
 
 
-statement error ::min_match\(K\) applies to an OR of predicates
+statement ok
 PREPARE mm_single AS SELECT id FROM mm_idx WHERE (skills @@ $1)::min_match(2);
+
+
+query error ::min_match\(K\) applies to an OR of predicates
+EXECUTE mm_single('gcp python');
+
+
+statement ok
+DEALLOCATE mm_single;
 
 
 query error NOT on a ::min_match\(K\) group is not supported
@@ -619,8 +633,30 @@ id
 6
 
 
-query error ::min_match\(K\) on a ts_any that already has a min_match
-SELECT id FROM mm_idx WHERE skills @@ ts_any(['gcp', 'python'], 1)::min_match(2);
+query
+SELECT id FROM mm_idx WHERE skills @@ ts_any(['gcp', 'python'], 1)::min_match(2) ORDER BY id;
+----
+id
+1
+6
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ ts_any(['gcp', 'python'], 2)::min_match(1) ORDER BY id;
+----
+id
+1
+3
+5
+6
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ ts_any(ts_tokenize(['gcp', 'python']), 1)::min_match(2) ORDER BY id;
+----
+id
+1
+6
 
 
 query error ::min_match\(3\) on an OR of 2 branches
@@ -724,8 +760,14 @@ query error ::min_match\(2\) on a query with one branch
 SELECT id FROM mm_idx WHERE skills @@ (!! ('gcp'::TSQUERY || 'python'))::min_match(2);
 
 
-query error ::min_match\(K\) on a query that already has a ::min_match
-SELECT id FROM mm_idx WHERE skills @@ ('gcp python'::min_match(2))::min_match(1);
+query
+SELECT id FROM mm_idx WHERE skills @@ ('gcp python'::min_match(2))::min_match(1) ORDER BY id;
+----
+id
+1
+3
+5
+6
 
 
 query
@@ -813,8 +855,11 @@ offsets
 {0,5,6,9}
 
 
-query error ::min_match\(K\) on a query that already has a ::min_match
-SELECT ts_offsets('mm_words', 'quick red fox', 'a b c'::min_match(2)::tokenize('mm_words')::min_match(1));
+query
+SELECT ts_offsets('mm_words', 'quick red fox', 'quick a b'::min_match(3)::tokenize('mm_words')::min_match(1)) AS offsets;
+----
+offsets
+{0,5}
 
 
 query

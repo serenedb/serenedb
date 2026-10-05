@@ -579,10 +579,10 @@ The same threshold on a `TSQUERY` value, inside one `@@`. Like the other [`TSQUE
 
 - **Several words** (a bare string, [`ts_tokenize`](#ts_tokenize)): one alternative per word, with the synonyms of a word counting once. `K` above the number of words is capped at that number, so a one-word search with `::min_match(2)` matches that word, as Elasticsearch does.
 - **A `||` chain**: one alternative per operand of the whole chain, so `(a || b || c)::min_match(2)` has three. A parenthesized group with a modifier of its own is one operand. A bound parameter that holds a `||` chain adds its operands to the count. `K` above the number of operands is an error.
-- **[`ts_any(list)`](#ts_any)**: one alternative per element, the same as `ts_any(list, K)`. Giving both thresholds is an error.
+- **[`ts_any(list)`](#ts_any)**: one alternative per element, the same as `ts_any(list, K)`. Given both, `::min_match` wins: `ts_any(list, 1)::min_match(2)` requires two elements.
 - **Anything else** (a phrase, `&&`, `!!`, a range, `to_tsquery`) is one alternative: `K = 1` changes nothing, a larger `K` is an error.
 
-A second `::min_match` on the same query is an error. `NOT` and `!!` negate the whole threshold: `NOT body @@ 'quick red grey'::min_match(2)` matches rows that have fewer than two of the words, and `!! (('a'::TSQUERY || 'b')::min_match(2) || 'c')` matches rows that have neither both `a` and `b` nor `c`. `::merge`, `::boost` and `::score` combine with it.
+A second `::min_match` replaces the first, like a second `::merge` or `::score`: `'a b c'::min_match(2)::min_match(1)` requires one word, and so does a bound parameter `$1::min_match(1)` whose value already carries `::min_match(2)`. `NOT` and `!!` negate the whole threshold: `NOT body @@ 'quick red grey'::min_match(2)` matches rows that have fewer than two of the words, and `!! (('a'::TSQUERY || 'b')::min_match(2) || 'c')` matches rows that have neither both `a` and `b` nor `c`. `::merge`, `::boost` and `::score` combine with it.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |

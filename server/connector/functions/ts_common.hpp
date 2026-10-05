@@ -122,10 +122,6 @@ inline uint32_t TakeMinMatch(const FilterContext& ctx) {
   return ctx.min_match->value;
 }
 
-[[noreturn]] void ThrowRepeatedMinMatch();
-
-[[noreturn]] void ThrowMinMatchNotOnOr();
-
 [[noreturn]] void ThrowMinMatchAboveBranches(uint32_t min_match,
                                              size_t branches,
                                              std::string_view hint);

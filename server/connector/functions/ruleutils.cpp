@@ -104,7 +104,8 @@ void VisitTables(duckdb::ClientContext& context, Visitor&& visitor) {
 
 std::string RelationName(duckdb::ClientContext& context,
                          const duckdb::CatalogEntry& relation, bool qualified) {
-  const auto& schema = relation.ParentSchemaName().GetIdentifierName();
+  const auto parent = relation.ParentSchemaName();
+  const auto& schema = parent.GetIdentifierName();
   const auto& name = relation.name.GetIdentifierName();
   if (qualified) {
     return absl::StrCat(pg::QuoteIdentifier(schema), ".",
@@ -199,7 +200,8 @@ const duckdb::ViewCatalogEntry* UserView(duckdb::ClientContext& context,
   if (!view) {
     return nullptr;
   }
-  const auto& schema = view->ParentSchemaName().GetIdentifierName();
+  const auto parent = view->ParentSchemaName();
+  const auto& schema = parent.GetIdentifierName();
   if (view->internal || schema == irs::StaticStrings::kPgCatalogSchema ||
       schema == irs::StaticStrings::kInformationSchema) {
     return nullptr;

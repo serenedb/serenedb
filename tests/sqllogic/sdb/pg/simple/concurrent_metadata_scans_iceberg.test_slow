@@ -123,7 +123,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE table_name = 't';
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -155,7 +155,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE table_name = 't';
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -187,7 +187,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE table_name = 't';
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -219,7 +219,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE table_name = 't';
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -251,7 +251,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE table_name = 't';
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -283,7 +283,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE table_name = 't';
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -315,7 +315,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE table_name = 't';
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -347,7 +347,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE table_name = 't';
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -379,7 +379,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE table_name = 't';
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -411,7 +411,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE table_name = 't';
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -443,7 +443,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE table_name = 't';
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -475,7 +475,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE table_name = 't';
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -507,7 +507,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE table_name = 't';
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -539,7 +539,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE table_name = 't';
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -571,7 +571,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE table_name = 't';
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -603,7 +603,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE table_name = 't';
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -635,7 +635,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE table_name = 't';
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -667,7 +667,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE table_name = 't';
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -699,7 +699,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE table_name = 't';
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -731,7 +731,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE table_name = 't';
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -763,7 +763,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE view_name = 'v';
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -795,7 +795,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE view_name = 'v';
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -827,7 +827,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE view_name = 'v';
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -859,7 +859,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE view_name = 'v';
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -891,7 +891,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE view_name = 'v';
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -923,7 +923,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE view_name = 'v';
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -955,7 +955,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE view_name = 'v';
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -987,7 +987,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE view_name = 'v';
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -1019,7 +1019,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE view_name = 'v';
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -1051,7 +1051,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE view_name = 'v';
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -1083,7 +1083,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE view_name = 'v';
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -1115,7 +1115,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE view_name = 'v';
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -1147,7 +1147,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE view_name = 'v';
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -1179,7 +1179,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE view_name = 'v';
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -1211,7 +1211,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE view_name = 'v';
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -1243,7 +1243,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE view_name = 'v';
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -1275,7 +1275,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE view_name = 'v';
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -1307,7 +1307,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE view_name = 'v';
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -1339,7 +1339,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE view_name = 'v';
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6
@@ -1371,7 +1371,7 @@ SELECT count(DISTINCT schema_name) AS schemas FROM (
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
   UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
-) scans WHERE view_name = 'v';
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
 ----
 schemas
 6

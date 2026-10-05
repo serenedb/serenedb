@@ -37,6 +37,7 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
+#include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/logical_operator_visitor.hpp>
@@ -74,6 +75,7 @@ struct TSQueryCastData final : duckdb::BoundCastData {
   explicit TSQueryCastData(TSQueryParts parts) : parts{std::move(parts)} {}
 
   TSQueryParts parts;
+  uint32_t written_branches = 0;
 
   duckdb::unique_ptr<duckdb::BoundCastData> Copy() const final {
     return duckdb::make_uniq<TSQueryCastData>(*this);
@@ -160,10 +162,10 @@ bool HasGroupModifier(const duckdb::LogicalType& type) {
          TryGetMergeModifier(type);
 }
 
-bool IsSqlMinMatchCast(const duckdb::Expression& expr) {
+const duckdb::Expression* SqlMinMatchOperand(const duckdb::Expression& expr) {
   if (!duckdb::BoundCastExpression::IsCast(expr) ||
       !TryGetMinMatchModifier(expr.GetReturnType())) {
-    return false;
+    return nullptr;
   }
   const auto* cur = &duckdb::BoundCastExpression::Child(
     expr.Cast<duckdb::BoundFunctionExpression>());
@@ -172,12 +174,21 @@ bool IsSqlMinMatchCast(const duckdb::Expression& expr) {
     cur = &duckdb::BoundCastExpression::Child(
       cur->Cast<duckdb::BoundFunctionExpression>());
   }
-  return cur->GetReturnType().id() == duckdb::LogicalTypeId::BOOLEAN;
+  if (cur->GetReturnType().id() != duckdb::LogicalTypeId::BOOLEAN) {
+    return nullptr;
+  }
+  return cur;
+}
+
+TSQueryCastData* MinMatchCastData(duckdb::BoundFunctionExpression& cast) {
+  auto data =
+    duckdb::BoundCastExpression::GetBoundCastMutable(cast).GetCastData();
+  return data ? &data->Cast<TSQueryCastData>() : nullptr;
 }
 
 bool MinMatchRewriteBarrier(const duckdb::Expression& parent,
                             bool parent_frozen) {
-  if (IsSqlMinMatchCast(parent)) {
+  if (SqlMinMatchOperand(parent)) {
     return true;
   }
   return parent_frozen && duckdb::BoundCastExpression::IsCast(parent) &&
@@ -425,6 +436,7 @@ class TSQueryFoldVisitor final : public duckdb::LogicalOperatorVisitor {
 
   void VisitExpression(duckdb::unique_ptr<duckdb::Expression>* slot) final {
     VisitExpressionChildren(**slot);
+    RecordWrittenMinMatchBranches(**slot);
     const auto& expr = **slot;
     if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
       return;
@@ -747,7 +759,8 @@ void RegisterTSQueryBoolCasts(duckdb::ExtensionLoader& loader) {
     +[](duckdb::BindCastInput&, const duckdb::LogicalType& source,
         const duckdb::LogicalType& target) -> duckdb::BoundCastInfo {
     if (TryGetMinMatchModifier(source) || TryGetMinMatchModifier(target)) {
-      return duckdb::BoundCastInfo(ThrowingMinMatchCast);
+      return {ThrowingMinMatchCast,
+              duckdb::make_uniq<TSQueryCastData>(TSQueryParts{})};
     }
     return duckdb::BoundCastInfo(+[](duckdb::Vector&, duckdb::Vector&,
                                      duckdb::idx_t,
@@ -1216,6 +1229,25 @@ void RegisterTSQueryConstantFolding(duckdb::ExtensionLoader& loader) {
 
 duckdb::LogicalType MakeTSQueryType() {
   return MakeTSQueryStructType(kTSQueryTypeName);
+}
+
+void RecordWrittenMinMatchBranches(duckdb::Expression& expr) {
+  const auto* operand = SqlMinMatchOperand(expr);
+  if (!operand ||
+      operand->GetExpressionType() != duckdb::ExpressionType::CONJUNCTION_OR) {
+    return;
+  }
+  if (auto* data =
+        MinMatchCastData(expr.Cast<duckdb::BoundFunctionExpression>())) {
+    data->written_branches = static_cast<uint32_t>(
+      operand->Cast<duckdb::BoundConjunctionExpression>().GetChildren().size());
+  }
+}
+
+uint32_t WrittenMinMatchBranches(const duckdb::BoundFunctionExpression& cast) {
+  const auto data =
+    duckdb::BoundCastExpression::GetBoundCast(cast).GetCastData();
+  return data ? data->Cast<TSQueryCastData>().written_branches : 0;
 }
 
 void RegisterTSQueryFunctions(duckdb::ExtensionLoader& loader) {

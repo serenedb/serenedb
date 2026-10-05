@@ -27,9 +27,12 @@
 #include <duckdb.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression/bound_conjunction_expression.hpp>
+#include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/logical_operator.hpp>
 #include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
+#include <functional>
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/ngram_tokenizer.hpp>
@@ -63,6 +66,7 @@
 
 #include "connector/column_id.h"
 #include "connector/functions/search.h"
+#include "connector/functions/ts_common.hpp"
 #include "connector/search_filter_builder.hpp"
 #include "gtest/gtest.h"
 #include "query/config.h"
@@ -777,6 +781,9 @@ class SearchFilterBuilderTest : public ::testing::Test {
     size_t claimed = 0;
     std::string caught_message;
     for (const auto& expr : filter_op->expressions) {
+      if (_mutate_filter) {
+        _mutate_filter(*expr);
+      }
       irs::BooleanFilter node;
       std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&expr, 1};
       try {
@@ -880,6 +887,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
  protected:
   duckdb::DuckDB _db;
   duckdb::Connection _conn;
+  std::function<void(duckdb::Expression&)> _mutate_filter;
 };
 
 // ---------------------------------------------------------------------------
@@ -6838,6 +6846,42 @@ TEST_F(SearchFilterBuilderTest, test_SloppyPhraseSlopTooLarge) {
                "SELECT * FROM foo WHERE category @@ "
                "ts_phrase('a b', slop := 65536)",
                columns, false, SegmentationAnalyzerProvider, "slop too large");
+}
+
+TEST_F(SearchFilterBuilderTest, test_MinMatchRewrittenOrRejected) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"},
+    {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "price"}};
+  _mutate_filter = [](duckdb::Expression& root) {
+    const auto record = [](this auto& self, duckdb::Expression& expr) -> void {
+      duckdb::ExpressionIterator::EnumerateChildren(
+        expr, [&](duckdb::Expression& child) { self(child); });
+      sdb::connector::RecordWrittenMinMatchBranches(expr);
+    };
+    record(root);
+    const auto drop_branch = [](this auto& self,
+                                duckdb::Expression& expr) -> bool {
+      if (expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_OR) {
+        expr.Cast<duckdb::BoundConjunctionExpression>()
+          .GetChildrenMutable()
+          .pop_back();
+        return true;
+      }
+      bool dropped = false;
+      duckdb::ExpressionIterator::EnumerateChildren(
+        expr,
+        [&](duckdb::Expression& child) { dropped = dropped || self(child); });
+      return dropped;
+    };
+    ASSERT_TRUE(drop_branch(root));
+  };
+  irs::BooleanFilter expected;
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE (category @@ 'a' OR category @@ 'b' "
+               "OR price > 1)::min_match(2)",
+               columns, false, SegmentationAnalyzerProvider,
+               "rewritten before the index claimed it (3 branches written, 2 "
+               "seen)");
 }
 
 TEST_F(SearchFilterBuilderTest, test_SloppyPhraseNonConstantSlop) {

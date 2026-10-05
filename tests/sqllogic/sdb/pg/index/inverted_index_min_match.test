@@ -873,3 +873,69 @@ id
 
 statement ok
 DROP TABLE mm;
+
+
+statement ok
+CREATE TABLE nm (id INTEGER PRIMARY KEY, skills VARCHAR, bonus INTEGER, tenure INTEGER);
+
+
+statement ok
+INSERT INTO nm VALUES
+  (1, 'gcp', NULL, 5),
+  (2, 'aws', NULL, 50),
+  (3, 'gcp', 10, 50),
+  (4, 'aws', 1, 50),
+  (5, NULL, 10, 50),
+  (6, 'gcp', 1, 5);
+
+
+statement ok
+CREATE INDEX nm_idx ON nm USING inverted(id, skills mm_words, bonus, tenure)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) nm;
+
+
+query
+SELECT id FROM nm_idx
+WHERE NOT ((skills @@ 'gcp' OR bonus > 5)::min_match(2) OR tenure <= 10)
+ORDER BY id;
+----
+id
+2
+4
+
+
+query
+SELECT id FROM nm_idx
+WHERE NOT ((skills @@ 'gcp' OR bonus > 5)::min_match(1) OR tenure <= 10)
+ORDER BY id;
+----
+id
+4
+
+
+query
+SELECT id FROM nm_idx
+WHERE NOT ((skills @@ 'gcp' OR bonus > 5)::min_match(2) OR bonus < 0)
+ORDER BY id;
+----
+id
+4
+6
+
+
+query error negated group over nullable columns mixes index-only search predicates
+SELECT id FROM nm_idx
+WHERE NOT ((skills @@ 'gcp' OR bonus IS NULL)::min_match(2) OR tenure <= 10);
+
+
+query error ::min_match\(3\) on an OR of 2 branches
+SELECT id FROM nm_idx
+WHERE NOT ((skills @@ 'gcp' OR bonus > 5)::min_match(3) OR tenure <= 10);
+
+
+statement ok
+DROP TABLE nm;

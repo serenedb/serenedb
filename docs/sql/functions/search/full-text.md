@@ -553,7 +553,7 @@ Where the threshold has no meaning, the query fails instead of ignoring the modi
 - on a single predicate or on an `AND`. That includes a predicate with alternatives of its own, such as `(body @@ 'quick red fox')::min_match(2)`, `ts_any` or `IN`. To count the words of one `@@` match, put the threshold on its query: `body @@ 'quick red fox'::min_match(2)`;
 - when `K` is below `1` or above the number of branches;
 - twice on the same group, as in `(a OR b OR c)::min_match(2)::min_match(1)`. Each group takes one threshold;
-- directly under `NOT`. "Fewer than `K` of `n`" is "at least `n - K + 1` of the negations", so write `(NOT a OR NOT b OR ...)::min_match(n - K + 1)` instead;
+- directly under `NOT`. "Fewer than `K` of `n`" is "at least `n - K + 1` of the negations", so write `(NOT a OR NOT b OR ...)::min_match(n - K + 1)` instead. A group inside a larger negated `OR`, as in `NOT ((a OR b)::min_match(2) OR c)`, is fine, also over nullable columns: a branch on a `NULL` value is unknown, so the group is false only when fewer than `K` branches can still match;
 - when a branch is not an index predicate;
 - outside a `WHERE` clause on an inverted index, for example in the `SELECT` list.
 

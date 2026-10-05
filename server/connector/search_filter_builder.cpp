@@ -534,6 +534,87 @@ bool IsStrictPredicate(const duckdb::Expression& expr) {
   return false;
 }
 
+void RejectRewrittenMinMatch(const duckdb::BoundFunctionExpression& cast,
+                             size_t seen) {
+  const auto written = WrittenMinMatchBranches(cast);
+  if (written && written != seen) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("::min_match(K): the OR was rewritten before the index claimed "
+              "it (",
+              written, " branches written, ", seen, " seen)"));
+  }
+}
+
+struct StrictMinMatchGroup {
+  const duckdb::BoundFunctionExpression* cast = nullptr;
+  const duckdb::BoundConjunctionExpression* branches = nullptr;
+  uint32_t min_match = 0;
+};
+
+std::optional<StrictMinMatchGroup> AsStrictMinMatchGroup(
+  const duckdb::Expression& expr) {
+  const auto& peeled = UnwrapBoostBoolCoercion(expr);
+  if (!duckdb::BoundCastExpression::IsCast(peeled)) {
+    return std::nullopt;
+  }
+  const auto min_match = TryGetMinMatchModifier(peeled.GetReturnType());
+  if (!min_match) {
+    return std::nullopt;
+  }
+  const auto& cast = peeled.Cast<duckdb::BoundFunctionExpression>();
+  const auto* cur =
+    &UnwrapBoostBoolCoercion(duckdb::BoundCastExpression::Child(cast));
+  while (duckdb::BoundCastExpression::IsCast(*cur)) {
+    const auto& type = cur->GetReturnType();
+    if (!TryGetBoostModifier(type) && !TryGetScoreModifier(type) &&
+        !TryGetMergeModifier(type)) {
+      break;
+    }
+    cur = &UnwrapBoostBoolCoercion(duckdb::BoundCastExpression::Child(
+      cur->Cast<duckdb::BoundFunctionExpression>()));
+  }
+  if (cur->GetExpressionType() != duckdb::ExpressionType::CONJUNCTION_OR) {
+    return std::nullopt;
+  }
+  const auto& branches = cur->Cast<duckdb::BoundConjunctionExpression>();
+  if (!absl::c_all_of(branches.GetChildren(), [](const auto& branch) {
+        return IsStrictPredicate(*branch);
+      })) {
+    return std::nullopt;
+  }
+  return StrictMinMatchGroup{
+    .cast = &cast, .branches = &branches, .min_match = *min_match};
+}
+
+absl::Status FromNullAwareMinMatchGroup(BoolTarget parent,
+                                        const FilterContext& ctx,
+                                        const StrictMinMatchGroup& group) {
+  const auto& branches = group.branches->GetChildren();
+  RejectRewrittenMinMatch(*group.cast, branches.size());
+  if (group.min_match > branches.size()) {
+    ThrowMinMatchAboveBranches(
+      group.min_match, branches.size(),
+      "K must be between 1 and the number of OR branches. A branch of several "
+      "predicates is grouped with its own ::min_match(1).");
+  }
+  const auto node = AddGroup(parent, irs::Occur::Should);
+  for (const auto& branch : branches) {
+    const auto alternative = AddGroup(node, irs::Occur::Should);
+    if (auto s = FromExpression(alternative, ctx, *branch); !s.ok()) {
+      return s;
+    }
+    std::vector<irs::field_id> markers;
+    CollectNullableMarkers(ctx, *branch, markers);
+    for (const auto marker : markers) {
+      AddNullMarkerTerm(alternative, marker);
+    }
+    SetMinMatch(*alternative.node, 1);
+  }
+  SetMinMatch(*node.node, group.min_match);
+  return absl::OkStatus();
+}
+
 absl::Status MakeGroup(BoolTarget parent, const FilterContext& ctx,
                        const duckdb::BoundConjunctionExpression& conj,
                        bool is_and) {
@@ -547,6 +628,7 @@ absl::Status MakeGroup(BoolTarget parent, const FilterContext& ctx,
   };
   BoolTarget group;
   bool group_is_union = !is_and;
+  bool null_aware_groups = false;
   if (ctx.negated && absl::c_all_of(conj.GetChildren(), [](const auto& child) {
         SDB_ASSERT(child);
         return IsComparisonExpr(*child);
@@ -556,27 +638,34 @@ absl::Status MakeGroup(BoolTarget parent, const FilterContext& ctx,
     group_is_union = is_and;
     group = open(parent, group_is_union);
   } else if (ctx.negated) {
-    // A negated group claims soundly only as a strict DISJUNCTION over
-    // nullable columns: any NULL operand keeps the OR non-false, so SQL
-    // rejects the row and the group's exclusion may match the columns'
-    // null markers too. A negated conjunction has no such shape (Kleene
-    // FALSE AND UNKNOWN is FALSE), so it stays a row filter. A NULL
-    // literal inside a child makes it UNKNOWN-capable on non-NULL rows
-    // (its positive claim compiles the literal away), so it defeats the
-    // claim regardless of column nullability.
     if (absl::c_any_of(conj.GetChildren(), [](const auto& child) {
           return ContainsNullConstant(*child);
         })) {
       return absl::InvalidArgumentError(
         "negated group with NULL literals can be UNKNOWN on non-NULL rows");
     }
+    null_aware_groups = !is_and;
     for (const auto& child : conj.GetChildren()) {
+      if (null_aware_groups && AsStrictMinMatchGroup(*child)) {
+        continue;
+      }
       CollectNullableMarkers(ctx, *child, markers);
     }
-    if (!markers.empty()) {
+    const bool has_nullable_group =
+      null_aware_groups &&
+      absl::c_any_of(conj.GetChildren(), [&](const auto& child) {
+        const auto group = AsStrictMinMatchGroup(*child);
+        if (!group) {
+          return false;
+        }
+        std::vector<irs::field_id> group_markers;
+        CollectNullableMarkers(ctx, *child, group_markers);
+        return !group_markers.empty();
+      });
+    if (!markers.empty() || has_nullable_group) {
       const bool claimable =
         !is_and && absl::c_all_of(conj.GetChildren(), [](const auto& child) {
-          return IsStrictPredicate(*child);
+          return IsStrictPredicate(*child) || AsStrictMinMatchGroup(*child);
         });
       if (!claimable) {
         if (absl::c_any_of(conj.GetChildren(), [](const auto& child) {
@@ -603,6 +692,16 @@ absl::Status MakeGroup(BoolTarget parent, const FilterContext& ctx,
   }
   group.node->SetBoost(ctx.boost);
   for (const auto& child : conj.GetChildren()) {
+    if (null_aware_groups) {
+      if (const auto min_match_group = AsStrictMinMatchGroup(*child)) {
+        if (auto s =
+              FromNullAwareMinMatchGroup(group, sub_ctx, *min_match_group);
+            !s.ok()) {
+          return s;
+        }
+        continue;
+      }
+    }
     if (group_is_union && !ctx.negated &&
         child->GetExpressionClass() ==
           duckdb::ExpressionClass::BOUND_CONSTANT) {
@@ -1693,6 +1792,7 @@ bool TryDispatchSqlMinMatchCast(BoolTarget filter, const FilterContext& ctx,
   }
   const auto& operand = duckdb::BoundCastExpression::Child(cast_expr);
   const auto branches = CountMinMatchBranches(operand);
+  RejectRewrittenMinMatch(cast_expr, branches);
   if (*min_match > branches) {
     ThrowMinMatchAboveBranches(
       *min_match, branches,

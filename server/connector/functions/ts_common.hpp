@@ -122,6 +122,10 @@ inline uint32_t TakeMinMatch(const FilterContext& ctx) {
   return ctx.min_match->value;
 }
 
+void RecordWrittenMinMatchBranches(duckdb::Expression& expr);
+
+uint32_t WrittenMinMatchBranches(const duckdb::BoundFunctionExpression& cast);
+
 [[noreturn]] void ThrowMinMatchAboveBranches(uint32_t min_match,
                                              size_t branches,
                                              std::string_view hint);

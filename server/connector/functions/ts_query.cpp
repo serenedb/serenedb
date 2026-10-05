@@ -135,23 +135,23 @@ TSQueryRowView ComposeParts(const TSQueryRowView& inner,
   return parts;
 }
 
-bool ThrowingTokenizeCast(duckdb::Vector&, duckdb::Vector&, duckdb::idx_t,
-                          duckdb::CastParameters&) {
+[[noreturn]] bool ThrowingTokenizeCast(duckdb::Vector&, duckdb::Vector&,
+                                       duckdb::idx_t, duckdb::CastParameters&) {
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
     ERR_MSG("::tokenize(...) is only meaningful inside an `@@` match "
             "against an inverted-indexed column."));
 }
 
-bool ThrowingSlopCast(duckdb::Vector&, duckdb::Vector&, duckdb::idx_t,
-                      duckdb::CastParameters&) {
+[[noreturn]] bool ThrowingSlopCast(duckdb::Vector&, duckdb::Vector&,
+                                   duckdb::idx_t, duckdb::CastParameters&) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                   ERR_MSG("::slop(N) is only meaningful inside an `@@` match "
                           "against an inverted-indexed column."));
 }
 
-bool ThrowingMinMatchCast(duckdb::Vector&, duckdb::Vector&, duckdb::idx_t,
-                          duckdb::CastParameters&) {
+[[noreturn]] bool ThrowingMinMatchCast(duckdb::Vector&, duckdb::Vector&,
+                                       duckdb::idx_t, duckdb::CastParameters&) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                   ERR_MSG("::min_match(K) is only meaningful on an OR of "
                           "predicates the inverted index answers."));
@@ -195,8 +195,8 @@ bool MinMatchRewriteBarrier(const duckdb::Expression& parent,
          HasGroupModifier(parent.GetReturnType());
 }
 
-bool ThrowingScoreCast(duckdb::Vector&, duckdb::Vector&, duckdb::idx_t,
-                       duckdb::CastParameters&) {
+[[noreturn]] bool ThrowingScoreCast(duckdb::Vector&, duckdb::Vector&,
+                                    duckdb::idx_t, duckdb::CastParameters&) {
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
     ERR_MSG("::score(...) is only meaningful inside an `@@` match "
@@ -470,9 +470,9 @@ void FoldTSQueryConstants(duckdb::OptimizerExtensionInput& input,
   }
 }
 
-void TSQueryStubFn(duckdb::DataChunk& /*args*/,
-                   duckdb::ExpressionState& /*state*/,
-                   duckdb::Vector& /*result*/) {
+[[noreturn]] void TSQueryStubFn(duckdb::DataChunk& /*args*/,
+                                duckdb::ExpressionState& /*state*/,
+                                duckdb::Vector& /*result*/) {
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
     ERR_MSG("TSQUERY expression evaluated outside an `@@` match against an "

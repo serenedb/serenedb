@@ -731,7 +731,6 @@ duckdb::unique_ptr<duckdb::Expression> TryParseStructuredTSQueryText(
     }
   }
   duckdb::unique_ptr<duckdb::Expression> bound;
-  std::exception_ptr rejected;
   try {
     auto binder = duckdb::Binder::CreateBinder(context);
     duckdb::ConstantBinder constant_binder(*binder, context, "TSQUERY");
@@ -740,7 +739,10 @@ duckdb::unique_ptr<duckdb::Expression> TryParseStructuredTSQueryText(
       FoldStructuredConstants(context, bound);
     }
   } catch (const irs::SqlException&) {
-    rejected = std::current_exception();
+    if (begin_transaction) {
+      context.transaction.Rollback(nullptr);
+    }
+    throw;
   } catch (const std::exception&) {
     bound = nullptr;
   }
@@ -750,9 +752,6 @@ duckdb::unique_ptr<duckdb::Expression> TryParseStructuredTSQueryText(
     } catch (const std::exception&) {
       bound = nullptr;
     }
-  }
-  if (rejected) {
-    std::rethrow_exception(rejected);
   }
   if (bound && !IsTSQueryStructType(bound->GetReturnType())) {
     return nullptr;

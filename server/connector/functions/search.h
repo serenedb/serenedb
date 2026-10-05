@@ -130,8 +130,9 @@ duckdb::LogicalType MakeTSQueryType();
 
 // Stub body shared by optimizer-claimed search functions across TUs:
 // throws if a claimed function is ever executed as a plain scalar.
-void SearchStubFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
-                  duckdb::Vector& result);
+[[noreturn]] void SearchStubFn(duckdb::DataChunk& args,
+                               duckdb::ExpressionState& state,
+                               duckdb::Vector& result);
 
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name);

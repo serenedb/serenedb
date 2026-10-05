@@ -502,9 +502,9 @@ duckdb::ScalarFunction MakeOffsetsFn(duckdb::vector<duckdb::LogicalType> args) {
 
 // Only runs if DuckDB ever invokes a sugar overload without firing
 // its bind_expression rewrite hook -- a clean failure mode.
-void TsHighlightStubFn(duckdb::DataChunk& /*args*/,
-                       duckdb::ExpressionState& /*state*/,
-                       duckdb::Vector& /*result*/) {
+[[noreturn]] void TsHighlightStubFn(duckdb::DataChunk& /*args*/,
+                                    duckdb::ExpressionState& /*state*/,
+                                    duckdb::Vector& /*result*/) {
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_INTERNAL_ERROR),
     ERR_MSG("ts_highlight() bind-time rewrite did not fire"),

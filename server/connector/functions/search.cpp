@@ -58,9 +58,9 @@
 
 namespace sdb::connector {
 
-void SearchStubFn(duckdb::DataChunk& /*args*/,
-                  duckdb::ExpressionState& /*state*/,
-                  duckdb::Vector& /*result*/) {
+[[noreturn]] void SearchStubFn(duckdb::DataChunk& /*args*/,
+                               duckdb::ExpressionState& /*state*/,
+                               duckdb::Vector& /*result*/) {
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
     ERR_MSG("Inverted index function called outside inverted index context. "
@@ -69,8 +69,9 @@ void SearchStubFn(duckdb::DataChunk& /*args*/,
 
 namespace {
 
-void ScorerStubFn(duckdb::DataChunk& /*args*/, duckdb::ExpressionState& state,
-                  duckdb::Vector& /*result*/) {
+[[noreturn]] void ScorerStubFn(duckdb::DataChunk& /*args*/,
+                               duckdb::ExpressionState& state,
+                               duckdb::Vector& /*result*/) {
   const auto& fn_name =
     state.expr.Cast<duckdb::BoundFunctionExpression>().Function().GetName();
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

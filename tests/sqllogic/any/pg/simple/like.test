@@ -79,3 +79,31 @@ SELECT 'Serene%DB' LIKE 'Serene#%DB' ESCAPE '#';
 ----
 <slt:ignore>
 t
+
+
+query
+SELECT 'Serene' LIKE 'Serene%%' ESCAPE '%';
+----
+<slt:ignore>
+f
+
+
+query
+SELECT 'Serene%' LIKE 'Serene%%' ESCAPE '%';
+----
+<slt:ignore>
+t
+
+
+query
+SELECT 'Serene' LIKE 'Serene%' ESCAPE '%';
+----
+<slt:ignore>
+f
+
+
+query
+SELECT '' LIKE '%' ESCAPE '%';
+----
+<slt:ignore>
+f

@@ -5,6 +5,7 @@ import html
 import pathlib
 import re
 import string
+import struct
 import sys
 
 import sqllogic_snippets
@@ -474,6 +475,16 @@ def render(units: list[Unit]) -> str:
     return "\n".join(out)
 
 
+def pack_corpus(units: list[Unit]) -> bytes:
+    out = bytearray()
+    for u in units:
+        for field in u.fields():
+            data = field.encode("utf-8")
+            out += struct.pack("<I", len(data))
+            out += data
+    return bytes(out)
+
+
 def report_snippets(report) -> None:
     for page, ids in sorted(report.empty.items()):
         print(f"{page}: {len(ids)} SqlLogicTest tags resolved to an empty snippet", file=sys.stderr)
@@ -491,6 +502,7 @@ def main() -> None:
     parser.add_argument("docs_dir", type=pathlib.Path)
     parser.add_argument("output", type=pathlib.Path)
     parser.add_argument("--tests-dir", type=pathlib.Path, default=None)
+    parser.add_argument("--corpus", type=pathlib.Path, default=None)
     args = parser.parse_args()
     if not args.docs_dir.is_dir():
         sys.exit(f"{args.docs_dir}: not a directory")
@@ -504,6 +516,9 @@ def main() -> None:
     units = collect(args.docs_dir, snippets, report)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(render(units), encoding="utf-8")
+    if args.corpus:
+        args.corpus.parent.mkdir(parents=True, exist_ok=True)
+        args.corpus.write_bytes(pack_corpus(units))
     pages = len({u.path.split("#", 1)[0] for u in units})
     size = sum(len(field.encode("utf-8")) for u in units for field in u.fields())
     report_snippets(report)

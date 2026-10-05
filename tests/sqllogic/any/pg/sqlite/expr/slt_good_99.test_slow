@@ -54545,7 +54545,8 @@ SELECT + MIN( 95 ) / - + 0 * + CASE - - COUNT( + 54 ) WHEN + 27 * + ( - - 48 ) -
 NULL
 
 skipif mysql # not compatible
-skipif postgres # TODO(mbkkt)
+skipif postgres # division by zero
+skipif serenedb # division by zero
 query I rowsort label-5803
 SELECT + MIN ( 95 ) / - + 0 * + CASE - - COUNT ( + 54 ) WHEN + 27 * + ( - - 48 ) - - 45 THEN COUNT ( * ) * + 21 ELSE NULL END * 41
 ----

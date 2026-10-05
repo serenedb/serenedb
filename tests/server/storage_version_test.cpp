@@ -52,7 +52,7 @@ std::string Scalar(duckdb::Connection& con, const std::string& sql) {
   if (result->HasError()) {
     return result->GetError();
   }
-  return result->GetValue(0, 0).ToString();
+  return result->Collection().GetValue(0, 0).ToString();
 }
 
 std::string AttachSereneDBFile(const std::string& path) {
@@ -234,7 +234,7 @@ TEST_F(StorageVersionTest, NewerSereneDBVersionIsRefused) {
     path, static_cast<duckdb::StorageVersion>(
             static_cast<uint64_t>(duckdb::SERENEDB_VERSION_UPPER) + 1));
   const auto error = Exec(con, AttachSereneDBFile(path));
-  EXPECT_NE(error.find("newer than this version of SereneDB supports"),
+  EXPECT_NE(error.find("The file was created with a newer storage version"),
             std::string::npos)
     << error;
 }
@@ -449,7 +449,8 @@ TEST_F(StorageVersionTest, CheckpointWritesNoStaleBufferBytes) {
         "b >= 0 ORDER BY b");
       EXPECT_FALSE(blocks->HasError()) << blocks->GetError();
       for (duckdb::idx_t row = 0; row < blocks->RowCount(); ++row) {
-        result.blocks.push_back(blocks->GetValue(0, row).GetValue<int64_t>());
+        result.blocks.push_back(
+          blocks->Collection().GetValue(0, row).GetValue<int64_t>());
       }
       EXPECT_EQ(Exec(con, "DETACH d"), "");
       std::ifstream in{path, std::ios::binary};

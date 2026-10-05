@@ -1,4 +1,5 @@
 #include "duckdb.hpp"
+#include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/planner/filter/table_filter_functions.hpp"
 
 #include "dbconnector/query/query_writer.hpp"
@@ -9,7 +10,8 @@
 
 namespace duckdb {
 
-string ClickHouseFilterPushdown::TransformFilters(const vector<column_t> &column_ids, optional_ptr<TableFilterSet> filters,
+string ClickHouseFilterPushdown::TransformFilters(const vector<column_t> &column_ids,
+                                                  optional_ptr<TableFilterSet> filters,
                                                   const ClickHouseBindData &bind_data, vector<idx_t> &inexact_filters) {
 	if (!filters || !filters->HasFilters()) {
 		return string();
@@ -17,8 +19,8 @@ string ClickHouseFilterPushdown::TransformFilters(const vector<column_t> &column
 	// Backslash escaping: CH treats backslash as an escape inside both `...`
 	// and '...'; BLOBs render as unhex('HEX').
 	auto config = dbconnector::table_scan::FilterPushdown::CreateConfig(
-	    '`', '\'', dbconnector::query::QuoteEscapeStyle::BACKSLASH, dbconnector::query::Dialect::ClickHouse,
-	    "unhex('", ")");
+	    '`', '\'', dbconnector::query::QuoteEscapeStyle::BACKSLASH, dbconnector::query::Dialect::ClickHouse, "unhex('",
+	    ")");
 	string result;
 	for (auto &entry : *filters) {
 		auto column_id = column_ids[entry.GetIndex()];

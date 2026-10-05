@@ -24,7 +24,7 @@ connection s2
 statement error
 TRUNCATE tci
 ----
-db error: ERROR: Attempting to truncate table tci but another transaction has added rows to this table
+db error: ERROR: Attempting to truncate table "tci" but another transaction has added rows to this table
 
 
 connection s1
@@ -95,7 +95,7 @@ connection s1
 statement error
 TRUNCATE tcp
 ----
-db error: ERROR: Attempting to truncate table tcp but another transaction has added rows to this table
+db error: ERROR: Attempting to truncate table "tcp" but another transaction has added rows to this table
 
 
 connection s1
@@ -122,7 +122,7 @@ connection s2
 statement error
 TRUNCATE tci RESTART IDENTITY
 ----
-db error: ERROR: Attempting to truncate table tci but another transaction has added rows to this table
+db error: ERROR: Attempting to truncate table "tci" but another transaction has added rows to this table
 
 
 connection s1

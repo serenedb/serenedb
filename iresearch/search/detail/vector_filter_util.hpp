@@ -21,6 +21,7 @@
 #pragma once
 
 #include <array>
+#include <core_functions/array_kernels.hpp>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -35,7 +36,6 @@
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/queries/vector_state.hpp"
 #include "iresearch/utils/string.hpp"
-#include "iresearch/utils/vector.hpp"
 
 namespace irs {
 
@@ -89,9 +89,7 @@ inline bool PrepareVectorState(
   std::span<const float> query = opts.query;
   if (opts.metric == VectorMetric::Cosine) {
     normalized_query.resize(query.size());
-    vector::L2Space<float, float, float>::Normalize(
-      reinterpret_cast<const byte_type*>(query.data()),
-      static_cast<uint16_t>(d), normalized_query.data());
+    duckdb::L2NormalizeOp::Operation(query.data(), normalized_query.data(), d);
     query = normalized_query;
   }
 

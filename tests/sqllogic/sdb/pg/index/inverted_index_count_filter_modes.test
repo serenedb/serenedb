@@ -529,7 +529,7 @@ QUERY PLAN
 │ │ Value: fox          │  │
 │ ╰─────────────────────╯  │
 │ Output: row-count only   │
-│ ~8 rows                  │
+│ ~40 rows                 │
 ╰──────────────────────────╯
 
 

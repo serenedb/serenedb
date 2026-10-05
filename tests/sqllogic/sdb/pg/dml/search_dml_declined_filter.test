@@ -1,0 +1,36 @@
+statement ok
+CREATE TABLE sdf (a INT PRIMARY KEY, b TEXT) WITH (storage = 'search', compaction_interval = 0)
+
+
+statement ok
+INSERT INTO sdf SELECT i, 'v' || i FROM generate_series(1, 5) g(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdf
+
+
+statement count 1
+DELETE FROM sdf WHERE tableoid = 'sdf'::regclass AND a = 3
+
+
+statement count 1
+UPDATE sdf SET b = 'u' WHERE tableoid = 'sdf'::regclass AND a = 2
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdf
+
+
+query
+SELECT a, b FROM sdf ORDER BY a
+----
+a	b
+1	v1
+2	u
+4	v4
+5	v5
+
+
+statement ok
+DROP TABLE sdf

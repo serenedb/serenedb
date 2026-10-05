@@ -41,31 +41,31 @@ CREATE TABLE vedernikoff_iceberg_t5 (
 statement error
 INSERT INTO vedernikoff_iceberg_t1 VALUES (5000);
 ----
-db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t1 with expression CHECK(vedernikoff_iceberg_within_bounds(v))
+db error: ERROR: CHECK constraint failed on table "vedernikoff_iceberg_t1" with expression CHECK(vedernikoff_iceberg_within_bounds(v))
 
 
 statement error
 INSERT INTO vedernikoff_iceberg_t2 VALUES (-5);
 ----
-db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t2 with expression CHECK(vedernikoff_iceberg_within_bounds(v))
+db error: ERROR: CHECK constraint failed on table "vedernikoff_iceberg_t2" with expression CHECK(vedernikoff_iceberg_within_bounds(v))
 
 
 statement error
 INSERT INTO vedernikoff_iceberg_t3 VALUES (100000);
 ----
-db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t3 with expression CHECK(vedernikoff_iceberg_within_bounds(v))
+db error: ERROR: CHECK constraint failed on table "vedernikoff_iceberg_t3" with expression CHECK(vedernikoff_iceberg_within_bounds(v))
 
 
 statement error
 INSERT INTO vedernikoff_iceberg_t4 VALUES (-99);
 ----
-db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t4 with expression CHECK(vedernikoff_iceberg_within_bounds(v))
+db error: ERROR: CHECK constraint failed on table "vedernikoff_iceberg_t4" with expression CHECK(vedernikoff_iceberg_within_bounds(v))
 
 
 statement error
 INSERT INTO vedernikoff_iceberg_t5 VALUES (9999);
 ----
-db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t5 with expression CHECK(vedernikoff_iceberg_within_bounds(v))
+db error: ERROR: CHECK constraint failed on table "vedernikoff_iceberg_t5" with expression CHECK(vedernikoff_iceberg_within_bounds(v))
 
 
 statement error
@@ -187,13 +187,13 @@ INSERT INTO vedernikoff_mop_data VALUES (500);
 statement error
 INSERT INTO vedernikoff_mop_data VALUES (-1);
 ----
-db error: ERROR: CHECK constraint failed on table vedernikoff_mop_data with expression CHECK((vedernikoff_mop_is_positive(v) AND vedernikoff_mop_is_small(v)))
+db error: ERROR: CHECK constraint failed on table "vedernikoff_mop_data" with expression CHECK((vedernikoff_mop_is_positive(v) AND vedernikoff_mop_is_small(v)))
 
 
 statement error
 INSERT INTO vedernikoff_mop_data VALUES (5000);
 ----
-db error: ERROR: CHECK constraint failed on table vedernikoff_mop_data with expression CHECK((vedernikoff_mop_is_positive(v) AND vedernikoff_mop_is_small(v)))
+db error: ERROR: CHECK constraint failed on table "vedernikoff_mop_data" with expression CHECK((vedernikoff_mop_is_positive(v) AND vedernikoff_mop_is_small(v)))
 
 
 # Drop one function with CASCADE -- whole CHECK should be cleared.
@@ -293,19 +293,19 @@ INSERT INTO vedernikoff_clickclack_metrics VALUES (100, 50, 1);
 statement error
 INSERT INTO vedernikoff_clickclack_metrics VALUES (5000, 1, 1);
 ----
-db error: ERROR: CHECK constraint failed on table vedernikoff_clickclack_metrics with expression CHECK((qps < vedernikoff_clickclack_threshold()))
+db error: ERROR: CHECK constraint failed on table "vedernikoff_clickclack_metrics" with expression CHECK((qps < vedernikoff_clickclack_threshold()))
 
 
 statement error
 INSERT INTO vedernikoff_clickclack_metrics VALUES (1, 5000, 1);
 ----
-db error: ERROR: CHECK constraint failed on table vedernikoff_clickclack_metrics with expression CHECK((latency < vedernikoff_clickclack_threshold()))
+db error: ERROR: CHECK constraint failed on table "vedernikoff_clickclack_metrics" with expression CHECK((latency < vedernikoff_clickclack_threshold()))
 
 
 statement error
 INSERT INTO vedernikoff_clickclack_metrics VALUES (1, 1, 5000);
 ----
-db error: ERROR: CHECK constraint failed on table vedernikoff_clickclack_metrics with expression CHECK((err < vedernikoff_clickclack_threshold()))
+db error: ERROR: CHECK constraint failed on table "vedernikoff_clickclack_metrics" with expression CHECK((err < vedernikoff_clickclack_threshold()))
 
 
 statement error

@@ -1326,5 +1326,3 @@ void BmScanTailAsBitsIterator(benchmark::State& state) {
 BENCHMARK(BmScanTailAsBitsIterator);
 
 }  // namespace
-
-BENCHMARK_MAIN();

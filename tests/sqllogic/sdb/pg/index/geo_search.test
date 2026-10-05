@@ -554,21 +554,21 @@ statement error
 SELECT id FROM geo_data_g_idx
 WHERE ST_Intersects(geo, 'POINT(0 0)'::GEOMETRY('OGC:CRS83'))
 ----
-db error: ERROR: Cannot call function 'ST_Intersects' with geometries of different coordinate reference systems (CRS).<slt:ignore>
+db error: ERROR: Cannot call function "ST_Intersects" with geometries of different coordinate reference systems (CRS).<slt:ignore>
 
 
 statement error
 SELECT id FROM geo_data_g_idx
 WHERE ST_Contains(geo, 'POINT(0 0)'::GEOMETRY('OGC:CRS83'))
 ----
-db error: ERROR: Cannot call function 'ST_Contains' with geometries of different coordinate reference systems (CRS).<slt:ignore>
+db error: ERROR: Cannot call function "ST_Contains" with geometries of different coordinate reference systems (CRS).<slt:ignore>
 
 
 statement error
 SELECT id FROM geo_data_g_idx
 WHERE ST_Contains('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'::GEOMETRY('OGC:CRS83'), geo)
 ----
-db error: ERROR: Cannot call function 'ST_Contains' with geometries of different coordinate reference systems (CRS).<slt:ignore>
+db error: ERROR: Cannot call function "ST_Contains" with geometries of different coordinate reference systems (CRS).<slt:ignore>
 
 
 # --- Error: GEOMETRY constant with Z / M dimensions ---
@@ -976,128 +976,70 @@ id
 2
 
 
-# --- `<->` operator: synonym for ST_Distance_Centroid ---
-# Mirrors the ST_Distance_Centroid tests above. The `<->` operator binds
-# to a separate set of geo overloads registered alongside the vector
-# `<->` (search.cpp's RegisterGeoFunctions); the filter builder
-# recognizes both the function-call form and the operator form via
-# TryGetGeoDistanceCall and rewrites them to GeoDistanceFilter.
-# Reference centroid (37.616, 55.704); approximate distances:
-#   id=1 ~100m  id=2 ~100m  id=3 ~100m  id=6 ~250m
-#   id=7 ~90m   id=4 ~3.8km id=5 ~15km
+query
+SELECT id FROM geo_idx
+WHERE ST_Distance_Centroid('{"type":"Point","coordinates":[37.616,55.704]}', geo) > 1000.0
+ORDER BY id
+----
+id
+4
+5
 
-# --- `<->` on JSON column with JSON-text centroid ---
 
 query
+SELECT id, round(geo <-> 'POINT(37.616 55.704)'::GEOMETRY('OGC:CRS84'), 6) AS d FROM geo_data_g ORDER BY id
+----
+id	d
+1	0.000145
+2	0.000882
+3	0.001217
+4	0.05773
+5	0.15413
+6	0.001906
+7	0.0013
+
+
+query
+SELECT id FROM geo_data_g_idx ORDER BY geo <-> 'POINT(37.616 55.704)', id LIMIT 3
+----
+id
+1
+2
+3
+
+
+query
+EXPLAIN SELECT id FROM geo_data_g_idx WHERE geo <-> 'POINT(37.616 55.704)' < 0.01
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────╮
+│ Projections: #1                                    │
+│ ~1 row                                             │
+╰──────────────────────────┬─────────────────────────╯
+╭─ FILTER ─────────────────┴─────────────────────────╮
+│ Expression:                                        │
+│ (geo <-> 'POINT (37.616 55.704)'::GEOMETRY) < 0.01 │
+│ ~1 row                                             │
+╰──────────────────────────┬─────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────┴─────────────────────────╮
+│ Index: geo_data_g_idx                              │
+│ Lookup: table                                      │
+│ Projections: geo, id                               │
+│ ~7 rows                                            │
+╰────────────────────────────────────────────────────╯
+
+
+query error
 SELECT id FROM geo_idx
 WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
-ORDER BY id
 ----
-id
-1
-2
-3
-6
-7
-
-
-# --- `<->` on JSON column: > separates far rows ---
-
-query
-SELECT id FROM geo_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' > 1000.0
-ORDER BY id
-----
-id
-4
-5
-
-
-# --- `<->` is commutative: operand order doesn't matter ---
-# Same query as above with operands swapped -- the filter builder
-# accepts the column on either side (PrepareGeoDistanceFilter mirrors
-# the column-on-either-side pattern ST_Intersects uses).
-
-query
-SELECT id FROM geo_idx
-WHERE '{"type":"Point","coordinates":[37.616,55.704]}' <-> geo > 1000.0
-ORDER BY id
-----
-id
-4
-5
-
-
-# --- `<->` on JSON column with GEOMETRY centroid (mixed) ---
-
-query
-SELECT id FROM geo_idx
-WHERE geo <-> 'POINT(37.616 55.704)'::GEOMETRY('OGC:CRS84') < 500.0
-ORDER BY id
-----
-id
-1
-2
-3
-6
-7
-
-
-# --- `<->` on GEOMETRY column with GEOMETRY centroid ---
-
-query
-SELECT id FROM geo_data_g_idx
-WHERE geo <-> 'POINT(37.616 55.704)'::GEOMETRY('OGC:CRS84') < 500.0
-ORDER BY id
-----
-id
-1
-2
-3
-6
-7
-
-
-# --- `<->` on GEOMETRY column: very-far threshold isolates id=5 ---
-
-query
-SELECT id FROM geo_data_g_idx
-WHERE geo <-> 'POINT(37.616 55.704)'::GEOMETRY('OGC:CRS84') > 10000.0
-ORDER BY id
-----
-id
-5
-
-
-# --- `<->` on GEOMETRY column with GeoJSON-text centroid (mixed) ---
-
-query
-SELECT id FROM geo_data_g_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' > 1000.0
-ORDER BY id
-----
-id
-4
-5
-
-
-# --- `<->` combined with tsquery + BM25 ranking ---
-# Same shape as the ST_Distance_Centroid + boosted text test above,
-# expressed with the operator-form synonym. Verifies the `<->` claim
-# composes with @@ inside the same bool filter and keeps BM25 scoring
-# attached to the text leaf.
-
-query
-SELECT id FROM places_idx
-WHERE body @@ ('blue'::TSQUERY ^ 1000.0 || 'red')
-  AND geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
-ORDER BY BM25(places_idx.tableoid) DESC, id
-----
-id
-4
-1
-3
-2
+db error: ERROR: No function matches the given name and argument types '<->(JSON, STRING_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	"<->"(list1 FLOAT[], list2 FLOAT[]) -> FLOAT
+	"<->"(array1 FLOAT[ANY], array2 FLOAT[ANY]) -> FLOAT
+	"<->"(list1 DOUBLE[], list2 DOUBLE[]) -> DOUBLE
+	"<->"(array1 DOUBLE[ANY], array2 DOUBLE[ANY]) -> DOUBLE
+	"<->"(geom1 GEOMETRY, geom2 GEOMETRY) -> DOUBLE
 
 
 # --- EXPLAIN: geo predicate composes with @@ inside IRESEARCH_SCAN ---
@@ -1118,7 +1060,7 @@ ORDER BY id;
 ----
 QUERY PLAN
 ╭─ ORDER_BY ──────────────────────────────────────╮
-│ Order By: places_idx.id ASC                     │
+│ Order By: id ASC                                │
 │ ~1 row                                          │
 ╰────────────────────────┬────────────────────────╯
 ╭─ PROJECTION ───────────┴────────────────────────╮
@@ -1143,11 +1085,8 @@ QUERY PLAN
 ╰─────────────────────────────────────────────────╯
 
 
-# --- EXPLAIN: `<->` + boosted text composes inside IRESEARCH_SCAN ---
 # Locks the GEO_DISTANCE printer's range rendering (unbounded lower
-# `*`, bounded upper `<500`) and confirms the `<->` operator binds
-# through the same path as ST_Distance_Centroid -- both produce a
-# GEO_DISTANCE leaf inside the AND. The OR wraps the `^1000.0`-boosted
+# `*`, bounded upper `<500`). The OR wraps the `^1000.0`-boosted
 # blue term together with the bare red term; current rendering doesn't
 # surface the per-leaf boost factor (pre-existing printer limitation),
 # so the OR shows the term pair only.
@@ -1155,12 +1094,12 @@ QUERY PLAN
 query
 EXPLAIN SELECT id FROM places_idx
 WHERE body @@ ('blue'::TSQUERY ^ 1000.0 || 'red')
-  AND geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+  AND ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 500.0
 ORDER BY BM25(places_idx.tableoid) DESC, id;
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────────╮
-│ Order By: #1 DESC, places_idx.id ASC                     │
+│ Order By: #1 DESC, id ASC                                │
 │ ~1 row                                                   │
 ╰─────────────────────────────┬────────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────────┴────────────────────────────╮
@@ -1245,11 +1184,10 @@ id
 
 
 # --- source-coded GEOMETRY field + geo distance ---
-# `<->` distance < 500m from [37.616, 55.704] picks the cluster (1,2,3,6,7).
 
 query
 SELECT id FROM geo_data_g_src_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 500.0
 ORDER BY id
 ----
 id
@@ -1258,19 +1196,6 @@ id
 3
 6
 7
-
-
-query
-SELECT id FROM places_idx
-WHERE body @@ ('blue'::TSQUERY ^ 1000.0 || 'red')
-  AND geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
-ORDER BY BM25(places_idx.tableoid) DESC, id;
-----
-id
-4
-1
-3
-2
 
 
 # --- geopoint analyzer: path mode ---
@@ -1282,9 +1207,7 @@ id
 # don't have the configured paths or whose values aren't numbers are
 # silently skipped at index time (GeoPointTokenizer::ParsePoint returns
 # false, no terms emitted). The same query operators (ST_Intersects,
-# ST_Distance_Centroid, `<->`) work as on a `geojson_shape`-indexed
-# column -- the discriminator in TryGetGeoDistanceCall and friends is
-# column-info-based, not analyzer-specific.
+# ST_Distance_Centroid) work as on a `geojson_shape`-indexed column.
 
 statement ok
 CREATE TABLE geo_pt (id INTEGER PRIMARY KEY, geo JSON)
@@ -1369,25 +1292,9 @@ id
 5
 
 
-# --- `<->` synonym + path-mode geopoint ---
-
 query
 SELECT id FROM geo_pt_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
-ORDER BY id
-----
-id
-1
-2
-3
-
-
-# `<->` with a GEOMETRY centroid: the column is JSON, the centroid is
-# WKB -- the (VARCHAR, GEOMETRY) overload binds.
-
-query
-SELECT id FROM geo_pt_idx
-WHERE geo <-> 'POINT(37.616 55.704)'::GEOMETRY('OGC:CRS84') < 500.0
+WHERE ST_Distance_Centroid(geo, 'POINT(37.616 55.704)'::GEOMETRY('OGC:CRS84')) < 500.0
 ORDER BY id
 ----
 id
@@ -1469,11 +1376,9 @@ id
 3
 
 
-# --- `<->` synonym + array-mode geopoint ---
-
 query
 SELECT id FROM geo_pt_arr_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' > 1000.0
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') > 1000.0
 ORDER BY id
 ----
 id

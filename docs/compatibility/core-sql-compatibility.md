@@ -37,7 +37,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | DROP COLUMN        | Yes           |  |
 | ADD CHECK          | Yes           |                                                              |
 | ADD CONSTRAINT     | Yes           | `CHECK`, `UNIQUE` and `PRIMARY KEY` constraints; not `FOREIGN KEY` |
-| ADD FOREIGN KEY    | No            | Fails with `unsupported constraint type in ALTER TABLE statement` |
+| ADD FOREIGN KEY    | No            | Fails with `No support for adding FOREIGN_KEY constraints with ALTER TABLE` |
 | DROP CONSTRAINT    | Yes           |                                                              |
 | ALTER COLUMN       | Yes           | `TYPE`, `SET`/`DROP DEFAULT` and `SET NOT NULL` |
 | SET DEFAULT        | Yes           |                                                              |
@@ -70,6 +70,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Unique Indexes          | Yes           |                                                    |
 | Indexes on Expressions  | Yes           |                                                    |
 | Partial Indexes         | Partial       | [Inverted indexes](../sql/statements/create_index/inverted.md#partial-indexes) honor `WHERE`. A plain index accepts it but filters only the rows present when it is built: rows written later are indexed whether or not they match, keyed on the value and on whether the predicate holds, so a partial `UNIQUE` index also rejects duplicates outside its predicate |
+| INCLUDE                 | Partial       | [Inverted indexes](../sql/statements/create_index/inverted.md) store `INCLUDE` columns. A plain index accepts `INCLUDE` but keeps only its key columns, so a `UNIQUE` index is unique on the keys alone, as in PostgreSQL |
 
 ### Misc
 | Feature                    | Support State | Details                                         |
@@ -223,7 +224,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | ^                | Yes           |                                                                         |
 | |/               | Yes            |                                                                         |
 | ||/              | Yes            |                                                                         |
-| @                | No            |                                                                         |
+| @                | Yes           |                                                                         |
 | &                | Yes           |                                                                         |
 | |                | Yes            |                                                                         |
 | #                | No            |                                                                         |
@@ -340,7 +341,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | ltrim          | Yes           |                           |
 | octet_length   | Yes           |                           |
 | overlay        | Yes           |                           |
-| position       | No            |                           |
+| position       | Yes           |                           |
 | rtrim          | Yes           |                           |
 | substring      | Yes           |                           |
 | trim           | Yes           |                           |
@@ -818,6 +819,22 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 |---------------------|---------------|--------------------------------------------------------------|
 | generate_series     | Yes           |  |
 | generate_subscript  | Yes           |  |
+
+#### System Information
+| Feature                            | Support State | Details |
+|------------------------------------|---------------|---------|
+| pg_get_constraintdef               | Yes           | `CHECK` expressions are printed in SereneDB's form (for example `!=` and no casts) |
+| pg_get_indexdef                    | Yes           | The access method is `secondary` or `inverted`. An inverted index shows its column dictionaries and options, `INCLUDE` columns and settings; ordering (`DESC`, `NULLS FIRST`) is not stored, so it is not shown |
+| pg_get_viewdef                     | Yes           | The view's query in SereneDB's one-line form |
+| pg_get_ruledef                     | Yes           | The `_RETURN` rule of a view, around the same query text |
+| pg_get_triggerdef                  | Yes           | A trigger runs a statement, which takes the place of `EXECUTE FUNCTION` |
+| pg_get_functiondef                 | Yes           | The body is printed in SereneDB's form; a DuckDB macro is printed as `CREATE MACRO` |
+| pg_get_function_arguments          | Yes           |  |
+| pg_get_function_identity_arguments | Yes           |  |
+| pg_get_function_result             | Yes           |  |
+| pg_get_function_arg_default        | Yes           |  |
+| pg_get_partkeydef                  | Yes           | Always `NULL`: there are no partitioned tables |
+| pg_get_statisticsobjdef            | Yes           | Always `NULL`, as are `pg_get_statisticsobjdef_columns` and `pg_get_statisticsobjdef_expressions`: there are no extended statistics |
 
 ## Behavioral Differences from PostgreSQL
 

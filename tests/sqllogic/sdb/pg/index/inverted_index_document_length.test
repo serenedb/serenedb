@@ -101,7 +101,7 @@ WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 QUERY PLAN
 ╭─ ORDER_BY ─────────────────────────────╮
-│ Order By: docs_idx.id ASC              │
+│ Order By: id ASC                       │
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮

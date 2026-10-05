@@ -24,10 +24,10 @@
 #pragma once
 
 #include <absl/container/flat_hash_set.h>
+#include <absl/synchronization/mutex.h>
 
 #include <functional>
 #include <memory>
-#include <mutex>
 
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/noncopyable.hpp"
@@ -79,7 +79,7 @@ class RefCounter : public util::Noncopyable {
 
   template<typename T>
   ref_t add(T&& key) {
-    std::lock_guard lock{_lock};
+    absl::MutexLock lock{&_lock};
 
     auto it = _refs.lazy_emplace(key, [&](const auto& ctor) {
       ctor(std::make_shared<const Key>(std::forward<T>(key)));
@@ -90,19 +90,19 @@ class RefCounter : public util::Noncopyable {
 
   template<typename T>
   bool remove(T&& key) {
-    std::lock_guard lock{_lock};
+    absl::MutexLock lock{&_lock};
     return _refs.erase(std::forward<T>(key)) > 0;
   }
 
   template<typename T>
   bool contains(T&& key) const noexcept {
-    std::lock_guard lock{_lock};
+    absl::MutexLock lock{&_lock};
     return _refs.contains(std::forward<T>(key));
   }
 
   template<typename T>
   size_t find(T&& key) const noexcept {
-    std::lock_guard lock{_lock};
+    absl::MutexLock lock{&_lock};
     auto itr = _refs.find(std::forward<T>(key));
 
     return itr == _refs.end()
@@ -111,20 +111,20 @@ class RefCounter : public util::Noncopyable {
   }
 
   bool empty() const noexcept {
-    std::lock_guard lock{_lock};
+    absl::MutexLock lock{&_lock};
     return _refs.empty();
   }
 
   template<typename Visitor>
   bool visit(const Visitor& visitor, bool remove_unused = false) {
-    std::lock_guard lock{_lock};
+    absl::MutexLock lock{&_lock};
 
     for (auto itr = _refs.begin(), end = _refs.end(); itr != end;) {
       auto& ref = *itr;
       SDB_ASSERT(*itr);
 
       // -1 for usage by refs_ itself
-      auto visit_next = visitor(*ref, ref.use_count() - 1);
+      auto visit_next = visitor(ref, ref.use_count() - 1);
 
       if (remove_unused && ref.use_count() == 1) {
         const auto erase_me = itr++;
@@ -142,9 +142,8 @@ class RefCounter : public util::Noncopyable {
   }
 
  private:
-  // recursive to allow usage for 'this' from withing visit(...)
-  mutable std::recursive_mutex _lock;
-  absl::flat_hash_set<ref_t, Hash, EqualTo> _refs;
+  mutable absl::Mutex _lock;
+  absl::flat_hash_set<ref_t, Hash, EqualTo> _refs ABSL_GUARDED_BY(_lock);
 };
 
 }  // namespace irs

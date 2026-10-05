@@ -1,0 +1,139 @@
+control substitution on
+
+statement ok
+DETACH IF EXISTS rnf;
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/rename_attached.duckdb' AS rnf;
+
+
+statement ok
+CREATE SCHEMA rnf.s;
+
+
+statement ok
+CREATE TABLE rnf.s.t (a INTEGER);
+
+
+statement ok
+CREATE INDEX rnf_i ON rnf.s.t (a);
+
+
+statement ok
+CREATE SEQUENCE rnf.s.q;
+
+
+statement ok
+CREATE TABLE rnf.s.plain (a INTEGER);
+
+
+statement ok
+ALTER TABLE rnf.s.plain RENAME TO plain2;
+
+
+statement error Cannot write RENAME_SCHEMA to a database file with DuckDB storage version
+ALTER SCHEMA rnf.s RENAME TO s2;
+
+
+statement error Cannot write ALTER_INDEX to a database file with DuckDB storage version
+ALTER INDEX rnf.s.rnf_i RENAME TO rnf_j;
+
+
+statement error Cannot write RENAME_SEQUENCE to a database file with DuckDB storage version
+ALTER SEQUENCE rnf.s.q RENAME TO q2;
+
+
+statement error Cannot alter entry "t" because there are entries that depend on it
+ALTER TABLE rnf.s.t RENAME TO t2;
+
+
+query
+SELECT schema_name, table_name FROM duckdb_tables() WHERE database_name = 'rnf' ORDER BY table_name;
+----
+schema_name	table_name
+s	plain2
+s	t
+
+
+query
+SELECT schema_name, index_name, table_name FROM duckdb_indexes() WHERE database_name = 'rnf';
+----
+schema_name	index_name	table_name
+s	rnf_i	t
+
+
+statement ok
+DETACH rnf;
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/rename_attached.duckdb' AS rnf;
+
+
+query
+SELECT schema_name, table_name FROM duckdb_tables() WHERE database_name = 'rnf' ORDER BY table_name;
+----
+schema_name	table_name
+s	plain2
+s	t
+
+
+statement ok
+DETACH rnf;
+
+
+statement ok
+DETACH IF EXISTS rnm;
+
+
+statement ok
+ATTACH ':memory:' AS rnm;
+
+
+statement ok
+CREATE SCHEMA rnm.s;
+
+
+statement ok
+CREATE TABLE rnm.s.t (a INTEGER, b INTEGER);
+
+
+statement ok
+CREATE UNIQUE INDEX rnm_i ON rnm.s.t (a);
+
+
+statement ok
+ALTER INDEX rnm.s.rnm_i RENAME TO rnm_j;
+
+
+statement ok
+CREATE UNIQUE INDEX rnm_i ON rnm.s.t (b);
+
+
+statement ok
+ALTER TABLE rnm.s.t RENAME TO t2;
+
+
+statement ok
+ALTER SCHEMA rnm.s RENAME TO s2;
+
+
+query
+SELECT schema_name, index_name, table_name FROM duckdb_indexes() WHERE database_name = 'rnm' ORDER BY index_name;
+----
+schema_name	index_name	table_name
+s2	rnm_i	t2
+s2	rnm_j	t2
+
+
+statement ok
+INSERT INTO rnm.s2.t2 VALUES (1, 1);
+
+
+statement error violates unique constraint
+INSERT INTO rnm.s2.t2 VALUES (1, 2);
+
+
+statement ok
+DETACH rnm;

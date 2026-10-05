@@ -21,10 +21,8 @@
 #pragma once
 
 #include <duckdb/common/error_data.hpp>
-#include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/prepared_statement.hpp>
-#include <duckdb/main/prepared_statement_data.hpp>
 #include <exception>
 #include <optional>
 #include <string>
@@ -39,18 +37,8 @@ inline std::optional<duckdb::ErrorData> EnsurePrepared(RequestContext& ctx,
                                                        const std::string& sql) {
   try {
     auto& connection = ctx.Connection();
-    auto& context = *connection.context;
     if (entry.statement != nullptr && entry.sql != sql) {
       entry.statement.reset();
-    }
-    if (entry.statement != nullptr) {
-      bool stale = false;
-      context.RunFunctionInTransaction([&] {
-        stale = entry.statement->data->RequireRebind(context, nullptr);
-      });
-      if (stale) {
-        entry.statement.reset();
-      }
     }
     if (entry.statement == nullptr) {
       auto statement = connection.Prepare(sql);

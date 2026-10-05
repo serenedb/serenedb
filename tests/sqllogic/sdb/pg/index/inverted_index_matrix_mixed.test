@@ -297,7 +297,7 @@ count
 
 query
 SELECT pk FROM g13_c_mix
-WHERE j <-> '{"type":"Point","coordinates":[0.1, 0.1]}' < 100000.0
+WHERE ST_Distance_Centroid(j, '{"type":"Point","coordinates":[0.1, 0.1]}') < 100000.0
 ORDER BY pk;
 ----
 pk
@@ -305,7 +305,7 @@ pk
 
 query
 SELECT pk FROM g13_c_mix
-WHERE j2 <-> '{"type":"Point","coordinates":[10.0, 20.0]}' < 1.0
+WHERE ST_Distance_Centroid(j2, '{"type":"Point","coordinates":[10.0, 20.0]}') < 1.0
 ORDER BY pk;
 ----
 pk
@@ -391,7 +391,7 @@ pk
 
 query
 SELECT pk FROM g13_e_mix
-WHERE j2 <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+WHERE ST_Distance_Centroid(j2, '{"type":"Point","coordinates":[37.616,55.704]}') < 500.0
 ORDER BY pk;
 ----
 pk
@@ -401,7 +401,7 @@ pk
 query
 SELECT pk FROM g13_e_mix
 WHERE j @@ ts_like('beta')
-  AND j2 <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+  AND ST_Distance_Centroid(j2, '{"type":"Point","coordinates":[37.616,55.704]}') < 500.0
 ORDER BY pk;
 ----
 pk
@@ -490,7 +490,7 @@ count
 query
 SELECT pk, j FROM g13_g_mix
 WHERE v @@ ts_like('beta')
-  AND g <-> 'POINT(10 20)'::GEOMETRY('OGC:CRS84') < 1.0
+  AND ST_Distance_Centroid(g, 'POINT(10 20)'::GEOMETRY('OGC:CRS84')) < 1.0
 ORDER BY pk;
 ----
 pk	j

@@ -39,6 +39,7 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <core_functions/array_kernels.hpp>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -52,8 +53,8 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/misc.hpp"
-#include "iresearch/utils/vector.hpp"
 
 namespace irs {
 
@@ -250,12 +251,9 @@ struct PanoramaStatsHeader {
 
 void RotateQuery(const byte_type* rotation, const float* q, float* out,
                  uint32_t d) {
-  const auto* qb = reinterpret_cast<const byte_type*>(q);
-  const auto width = static_cast<uint16_t>(d);
-  const size_t stride = size_t{d} * sizeof(float);
+  const auto* rows = reinterpret_cast<const float*>(rotation);
   for (uint32_t i = 0; i < d; ++i) {
-    out[i] = vector::DotProductImpl<float, float>::Compute(
-      rotation + i * stride, qb, width);
+    out[i] = duckdb::InnerProductOp::Operation(rows + size_t{i} * d, q, d);
   }
 }
 constexpr uint32_t PanoramaLevels(uint32_t d) noexcept {
@@ -787,10 +785,8 @@ std::shared_ptr<const QuantizerCodebook> ScalarQuantizerStats<M>::MakeCodebook(
 }
 
 float TurboQuantNorm(const float* v, uint32_t d) {
-  return std::max(
-    std::sqrt(vector::L2Space<float, float, float>::Norm(
-      reinterpret_cast<const byte_type*>(v), static_cast<uint16_t>(d))),
-    std::numeric_limits<float>::epsilon());
+  return std::max(duckdb::L2NormOp::Operation(v, d),
+                  std::numeric_limits<float>::epsilon());
 }
 
 struct TurboQuantLayout {
@@ -1100,8 +1096,7 @@ class TurboQuantizerWriter final : public QuantizerWriter {
     const float norm = TurboQuantNorm(_res.data(), _lay.rd);
     _norms[lane] = norm;
     if constexpr (M == VectorMetric::L2Sqr) {
-      _xnorm2[lane] = vector::L2Space<float, float, float>::Norm(
-        reinterpret_cast<const byte_type*>(vec), static_cast<uint16_t>(_lay.d));
+      _xnorm2[lane] = duckdb::NormSquaredOp::Operation(vec, _lay.d);
     }
     const float scale = _sqrt_rd / norm;
     for (uint32_t j = 0; j < _lay.rd; ++j) {
@@ -1144,9 +1139,7 @@ class TurboQuantizerWriter final : public QuantizerWriter {
       return;
     }
 
-    _gammas[lane] = std::sqrt(vector::L2Space<float, float, float>::Norm(
-      reinterpret_cast<const byte_type*>(_res.data()),
-      static_cast<uint16_t>(_lay.rd)));
+    _gammas[lane] = duckdb::L2NormOp::Operation(_res.data(), _lay.rd);
     TurboQuantProject(_sq.turboq_refine.fwht_signs, _res.data(), _proj.data(),
                       _lay.rd);
     uint8_t* qjl = _code2.data() + lane * size_t{_lay.code2_bytes};
@@ -1344,9 +1337,7 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
       }
     }
     if constexpr (M == VectorMetric::L2Sqr) {
-      _query_norm2 = vector::L2Space<float, float, float>::Norm(
-        reinterpret_cast<const byte_type*>(_query.data()),
-        static_cast<uint16_t>(lay.d));
+      _query_norm2 = duckdb::NormSquaredOp::Operation(_query.data(), lay.d);
     }
     BuildMseLut();
     if (lay.full) {
@@ -2017,9 +2008,7 @@ class ProductQuantizerWriter final : public QuantizerWriter {
         for (uint32_t j = 0; j < _d; ++j) {
           _dec[j] += _centroid[j];
         }
-        _norms[_coded + i] = vector::L2Space<float, float, float>::Norm(
-          reinterpret_cast<const byte_type*>(_dec.data()),
-          static_cast<uint16_t>(_d));
+        _norms[_coded + i] = duckdb::NormSquaredOp::Operation(_dec.data(), _d);
       }
     }
     _coded = _lane;
@@ -2110,9 +2099,8 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
     faiss::pq4_pack_LUT(1, static_cast<int>(nsq), lutq.data(),
                         _packed_ip_lut.data());
     if constexpr (M == VectorMetric::L2Sqr) {
-      _query_norm2 = vector::L2Space<float, float, float>::Norm(
-        reinterpret_cast<const byte_type*>(_query.data()),
-        static_cast<uint16_t>(_query.size()));
+      _query_norm2 =
+        duckdb::NormSquaredOp::Operation(_query.data(), _query.size());
     }
   }
 

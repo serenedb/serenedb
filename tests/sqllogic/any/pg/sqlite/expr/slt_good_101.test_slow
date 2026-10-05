@@ -55198,7 +55198,8 @@ SELECT DISTINCT ( + + 88 ) + 69 + - - 22 / - + 0 * - 93 * CASE - CASE ( - COUNT(
 NULL
 
 skipif mysql # not compatible
-skipif postgres # TODO(mbkkt)
+skipif postgres # division by zero
+skipif serenedb # division by zero
 query I rowsort label-5863
 SELECT DISTINCT ( + + 88 ) + 69 + - - 22 / - + 0 * - 93 * CASE - CASE ( - COUNT ( * ) ) WHEN - 77 * - 44 - COUNT ( * ) + + 99 THEN - MIN ( - 30 ) WHEN - 30 THEN NULL WHEN + ( + 80 ) + + 33 / + COALESCE ( - - 93, - MAX ( DISTINCT 58 ) ) + - 99 * + 90 THEN - + COUNT ( * ) - AVG ( DISTINCT - 74 ) / 10 ELSE NULL END WHEN 16 THEN 3 END * + 78
 ----

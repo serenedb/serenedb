@@ -85,29 +85,46 @@ duckdb::optional_ptr<const duckdb::ConstantExpression> FindConstant(
   return &it->second->Cast<duckdb::ConstantExpression>();
 }
 
+duckdb::unique_ptr<duckdb::ConstantExpression> OptionConstant(
+  const duckdb::Value& value) {
+  if (value.IsNull()) {
+    return duckdb::ConstantExpression::Null();
+  }
+  if (value.type().IsIntegral()) {
+    return duckdb::ConstantExpression::Number(value.ToString());
+  }
+  return duckdb::ConstantExpression::String(value.ToString());
+}
+
 void BindOptions(duckdb::ClientContext& context, WithOptions& options) {
   for (const auto name : kSearchTableSettings) {
     duckdb::Value value;
     if (const auto constant = FindConstant(options, name)) {
-      value = connector::ValidateSetting(context, name, constant->GetValue());
+      value = connector::ValidateSetting(context, name,
+                                         constant->GetLiteral().ToValue());
     } else {
-      context.TryGetCurrentSetting(std::string{name}, value);
+      context.TryGetCurrentSetting(duckdb::Identifier{name}, value);
     }
-    options[std::string{name}] =
-      duckdb::make_uniq<duckdb::ConstantExpression>(std::move(value));
+    options[std::string{name}] = OptionConstant(value);
   }
   if (const auto constant = FindConstant(options, kOptimizeTopKSetting)) {
-    search::ParseScorerExpression(nullptr,
-                                  constant->GetValue().GetValue<std::string>());
+    search::ParseScorerExpression(
+      nullptr, constant->GetLiteral().ToValue().GetValue<std::string>());
   }
 }
 
 SearchTableOptions ResolveOptions(const WithOptions& options) {
   const auto get = [&](std::string_view name) {
-    return FindConstant(options, name)->GetValue().GetValue<uint32_t>();
+    return FindConstant(options, name)
+      ->GetLiteral()
+      .ToValue()
+      .GetValue<uint32_t>();
   };
   const auto get64 = [&](std::string_view name) {
-    return FindConstant(options, name)->GetValue().GetValue<uint64_t>();
+    return FindConstant(options, name)
+      ->GetLiteral()
+      .ToValue()
+      .GetValue<uint64_t>();
   };
   SearchTableOptions result{
     .refresh_interval_ms = get(kRefreshIntervalSetting),
@@ -121,7 +138,8 @@ SearchTableOptions ResolveOptions(const WithOptions& options) {
       get64(kCompactionFloorSegmentBytesSetting),
   };
   if (const auto constant = FindConstant(options, kOptimizeTopKSetting)) {
-    result.optimize_top_k = constant->GetValue().GetValue<std::string>();
+    result.optimize_top_k =
+      constant->GetLiteral().ToValue().GetValue<std::string>();
   }
   return result;
 }
@@ -163,7 +181,8 @@ TableEngine ReadStorageEngine(const WithOptions& options) {
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("WITH option \"", kStorageOption, "\" expects a string literal"));
   }
-  const auto engine = value->GetValue()
+  const auto engine = value->GetLiteral()
+                        .ToValue()
                         .DefaultCastAs(duckdb::LogicalType::VARCHAR)
                         .GetValue<std::string>();
   if (absl::EqualsIgnoreCase(engine, "transactional")) {
@@ -181,11 +200,13 @@ TableEngine ReadStorageEngine(const WithOptions& options) {
 SearchTableEntry::SearchTableEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
   duckdb::BoundCreateTableInfo& info, duckdb::CatalogTransaction transaction,
-  std::shared_ptr<search::SearchTable> inherited_storage)
-  : duckdb::TableCatalogEntry{catalog, schema, info.Base()},
+  std::shared_ptr<search::SearchTable> inherited_storage,
+  duckdb::shared_ptr<duckdb::CatalogSet> inherited_triggers)
+  : duckdb::TableCatalogEntry{catalog, schema, info.Base(),
+                              std::move(inherited_triggers)},
+    _columns{std::move(info.Base().columns)},
     _storage{std::move(inherited_storage)} {
   auto& base = info.Base();
-  dependencies = info.dependencies;
   if (base.oid == 0) {
     BindOptions(*transaction.context, base.options);
   }
@@ -432,9 +453,8 @@ void SearchTableEntry::BindUpdateConstraints(duckdb::Binder&,
 duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
   auto info = duckdb::TableCatalogEntry::GetInfo();
   auto& options = info->Cast<duckdb::CreateTableInfo>().options;
-  const auto set = [&](std::string_view name, duckdb::Value value) {
-    options[std::string{name}] =
-      duckdb::make_uniq<duckdb::ConstantExpression>(std::move(value));
+  const auto set = [&](std::string_view name, const duckdb::Value& value) {
+    options[std::string{name}] = OptionConstant(value);
   };
   set(kStorageOption, duckdb::Value{std::string{kEngineSearch}});
   set(kRefreshIntervalSetting,
@@ -471,7 +491,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::Copy(
   auto bound = binder->BindCreateTableInfo(std::move(info));
   auto result = duckdb::make_uniq<SearchTableEntry>(
     catalog, ParentSchema(context), *bound,
-    catalog.GetCatalogTransaction(context), _storage);
+    catalog.GetCatalogTransaction(context), _storage, triggers);
   return result;
 }
 
@@ -500,9 +520,10 @@ duckdb::unique_ptr<SearchTableEntry> SearchTableEntry::Rebuilt(
   auto bound =
     binder->BindCreateTableInfo(std::move(create), schema, info.bind_mode);
   info.new_dependencies = duckdb::make_uniq<duckdb::LogicalDependencyList>(
-    std::move(bound->dependencies));
+    bound->Base().dependencies);
   return duckdb::make_uniq<SearchTableEntry>(
-    catalog, schema, *bound, catalog.GetCatalogTransaction(context), _storage);
+    catalog, schema, *bound, catalog.GetCatalogTransaction(context), _storage,
+    triggers);
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
@@ -520,8 +541,19 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
   }
   auto& alter = info.Cast<duckdb::AlterTableInfo>();
   switch (alter.alter_table_type) {
-    case duckdb::AlterTableType::RENAME_COLUMN:
+    case duckdb::AlterTableType::RENAME_TABLE:
       return duckdb::TableCatalogEntry::AlterEntry(context, info);
+    case duckdb::AlterTableType::RENAME_COLUMN: {
+      auto& rename = alter.Cast<duckdb::RenameColumnInfo>();
+      GetColumnIndex(rename.old_name);
+      auto create = GetInfo();
+      auto& table = create->Cast<duckdb::CreateTableInfo>();
+      duckdb::TableCatalogEntry::RenameColumn(table.columns, table.constraints,
+                                              rename);
+      auto result = Rebuilt(context, info, std::move(create));
+      RenameTriggerColumns(context, rename);
+      return result;
+    }
     case duckdb::AlterTableType::SET_DEFAULT: {
       auto& set_default = alter.Cast<duckdb::SetDefaultInfo>();
       auto create = GetInfo();
@@ -605,9 +637,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterOptions(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG("option \"", name, "\" expects a constant value"));
       }
-      options[name] = duckdb::make_uniq<duckdb::ConstantExpression>(
-        connector::ValidateSetting(
-          context, name, expr->Cast<duckdb::ConstantExpression>().GetValue()));
+      options[name] = OptionConstant(connector::ValidateSetting(
+        context, name,
+        expr->Cast<duckdb::ConstantExpression>().GetLiteral().ToValue()));
     }
   } else {
     for (const auto& identifier :
@@ -615,16 +647,15 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterOptions(
       const auto& name = identifier.GetIdentifierName();
       require_alterable(name);
       duckdb::Value value;
-      context.TryGetCurrentSetting(name, value);
-      options[name] =
-        duckdb::make_uniq<duckdb::ConstantExpression>(std::move(value));
+      context.TryGetCurrentSetting(identifier, value);
+      options[name] = OptionConstant(value);
     }
   }
   auto binder = duckdb::Binder::CreateBinder(context);
   auto bound = binder->BindCreateTableInfo(std::move(create));
   auto result = duckdb::make_uniq<SearchTableEntry>(
     catalog, ParentSchema(context), *bound,
-    catalog.GetCatalogTransaction(context), _storage);
+    catalog.GetCatalogTransaction(context), _storage, triggers);
   if (auto* connection = connector::GetSereneDBContextPtr(context)) {
     connection->DeferToCommit([storage = _storage, options = result->_options] {
       storage->ApplyOptions(options);

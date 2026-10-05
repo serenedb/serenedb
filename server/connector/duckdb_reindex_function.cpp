@@ -84,7 +84,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/role.h"
 #include "catalog/rest/catalog_entry/schema/iceberg_schema_entry.hpp"
-#include "catalog/rest/catalog_entry/table/iceberg_table_information.hpp"
+#include "catalog/rest/catalog_entry/table/iceberg_table.hpp"
 #include "catalog/rest/iceberg_catalog.hpp"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_physical_create_index.h"
@@ -191,16 +191,11 @@ ReindexTarget ResolveTarget(duckdb::ClientContext& context,
                     ERR_MSG("index \"", name, "\" does not exist"));
   }
   target.index = &index_entry->Cast<catalog::InvertedIndexEntry>();
-  target.schema = target.index->ParentSchemaName().GetIdentifierName();
+  target.schema = target.index->ParentSchema(context).name.GetIdentifierName();
   // Views and tables share one catalog set, so the type has to be checked
   // rather than assumed from the lookup that found the entry.
-  auto relation = duckdb::Catalog::GetEntry(
-    context,
-    duckdb::EntryLookupInfo{
-      duckdb::CatalogType::VIEW_ENTRY,
-      duckdb::QualifiedName{database_name, target.index->ParentSchemaName(),
-                            target.index->GetTableName()}},
-    duckdb::OnEntryNotFound::RETURN_NULL);
+  auto relation = target.index->GetRelation(
+    target.index->catalog.GetCatalogTransaction(context));
   if (!relation || relation->type != duckdb::CatalogType::VIEW_ENTRY) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -373,13 +368,20 @@ std::vector<EqGroup> GroupCoveredFiles(const IcebergObserve& observe) {
     std::vector<const duckdb::IcebergEqualityDeleteFile*>, size_t>
     group_of;
   for (const auto& covered : observe.eq_covered) {
-    const auto entry =
-      observe.Deletes().list->GetManifestEntry(covered.listing_idx);
-    auto delete_files = observe.Deletes().list->GetEqualityDeletesForFile(
-      entry, observe.SequenceNumber());
+    auto task =
+      observe.List().GetScanPlanner().GetScanTask(covered.listing_idx);
+    if (!task) {
+      continue;
+    }
+    std::erase_if(task->delete_files, [&](const auto& file) {
+      return file.content !=
+               duckdb::IcebergManifestEntryContentType::EQUALITY_DELETES ||
+             !observe.IsNew(file.sequence_number);
+    });
+    auto delete_files = observe.List().ProcessDeletes(*task).equality_deletes;
     const size_t total_rows = absl::c_accumulate(
       delete_files, size_t{0},
-      [](size_t n, auto& df) { return n + df.get().rows.size(); });
+      [](size_t n, auto& df) { return n + df.get().equality_values.size(); });
     if (total_rows == 0) {
       // Seq moved but nothing applies per the spec (delete landed in the
       // same snapshot as the file).
@@ -400,8 +402,8 @@ std::vector<EqGroup> GroupCoveredFiles(const IcebergObserve& observe) {
   return groups;
 }
 
-// Empty = no road (non-constant filters, a column outside the view output,
-// or no rows). Only IS-NULL-carrying rows are deduplicated: they become an
+// Empty = no road (a column outside the view output, or no rows). Only
+// IS-NULL-carrying rows are deduplicated: they become an
 // OR branch each; NULL-free rows feed an IN semi-join, repeats can't hurt.
 std::vector<EqRow> ParseEqRows(
   const duckdb::vector<
@@ -439,36 +441,25 @@ std::vector<EqRow> ParseEqRows(
   irs::containers::FlatHashSet<std::string> seen_null_rows;
   std::string row_key;
   for (const auto& delete_file : delete_files) {
-    for (const auto& row : delete_file.get().rows) {
+    const auto& file = delete_file.get();
+    std::vector<uint64_t> positions;
+    positions.reserve(file.equality_ids.size());
+    for (const auto field_id : file.equality_ids) {
+      const auto pos = resolve_view_pos(field_id);
+      if (!pos) {
+        return {};
+      }
+      positions.push_back(*pos);
+    }
+    const auto& values = file.equality_values;
+    for (duckdb::idx_t row = 0; row < values.size(); ++row) {
       EqRow parsed;
-      parsed.reserve(row.filters.size());
+      parsed.reserve(positions.size());
       bool has_null = false;
-      for (const auto& [field_id, keep] : row.filters) {
-        const auto pos = resolve_view_pos(field_id);
-        if (!pos) {
-          return {};
-        }
-        if (keep->GetExpressionType() ==
-            duckdb::ExpressionType::OPERATOR_IS_NOT_NULL) {
-          parsed.push_back({*pos, duckdb::Value{}});
-          has_null = true;
-        } else if (keep->GetExpressionType() ==
-                   duckdb::ExpressionType::COMPARE_NOTEQUAL) {
-          const auto& right = duckdb::BoundComparisonExpression::Right(
-            keep->Cast<duckdb::BoundFunctionExpression>());
-          if (right.GetExpressionType() !=
-              duckdb::ExpressionType::VALUE_CONSTANT) {
-            return {};
-          }
-          auto value = right.Cast<duckdb::BoundConstantExpression>().GetValue();
-          if (value.IsNull()) {
-            // Would read as IS NULL below and over-delete.
-            return {};
-          }
-          parsed.push_back({*pos, std::move(value)});
-        } else {
-          return {};
-        }
+      for (size_t column = 0; column < positions.size(); ++column) {
+        auto value = values.GetValue(column, row);
+        has_null = has_null || value.IsNull();
+        parsed.push_back({positions[column], std::move(value)});
       }
       absl::c_sort(parsed, [](const auto& lhs, const auto& rhs) {
         return lhs.pos < rhs.pos;
@@ -524,7 +515,7 @@ duckdb::unique_ptr<duckdb::ParsedExpression> BuildEqWhere(
         if (!conjunct.value.IsNull()) {
           conjuncts.push_back(duckdb::make_uniq<duckdb::ComparisonExpression>(
             duckdb::ExpressionType::COMPARE_EQUAL, column_ref(conjunct.pos),
-            duckdb::make_uniq<duckdb::ConstantExpression>(conjunct.value)));
+            duckdb::ConstantExpression::FromValue(conjunct.value)));
         } else {
           conjuncts.push_back(duckdb::make_uniq<duckdb::OperatorExpression>(
             duckdb::ExpressionType::OPERATOR_IS_NULL,
@@ -629,7 +620,7 @@ duckdb::unique_ptr<duckdb::ParsedExpression> BuildFileScope(
   in_children.push_back(duckdb::make_uniq<duckdb::ColumnRefExpression>(
     duckdb::Identifier{"file_index"}));
   for (const auto* covered : files) {
-    in_children.push_back(duckdb::make_uniq<duckdb::ConstantExpression>(
+    in_children.push_back(duckdb::ConstantExpression::FromValue(
       duckdb::Value::UBIGINT(covered->file_id)));
   }
   return duckdb::make_uniq<duckdb::OperatorExpression>(
@@ -642,7 +633,6 @@ bool RunEqualityRemoves(duckdb::ClientContext& context,
                         const ReindexTarget& target, const Source& src,
                         IcebergObserve& observe,
                         std::vector<std::string>& pks) {
-  observe.EnsureDeletesProcessed();
   const auto& view_info = *target.view_info;
   if (absl::c_any_of(view_info.names, [](const duckdb::Identifier& name) {
         return name == "file_index";
@@ -972,10 +962,9 @@ std::optional<Source> ResolveSource(duckdb::ClientContext& context,
       if (!schema) {
         return std::nullopt;
       }
-      duckdb::IcebergTableInformation{
-        *ic_catalog, schema->Cast<duckdb::IcebergSchemaEntry>(),
-        fp->catalog_ref->table}
-        .RefreshRequestCache(context);
+      ic_catalog->table_request_cache.Evict(duckdb::IcebergTable::GetTableKey(
+        *ic_catalog, schema->Cast<duckdb::IcebergSchemaEntry>().namespace_items,
+        fp->catalog_ref->table));
     }
   }
   src.fast_path = std::move(*fp);
@@ -990,8 +979,10 @@ std::optional<Source> ResolveSource(duckdb::ClientContext& context,
   src.list = mfbd.file_list.get();
   src.iceberg_list = dynamic_cast<duckdb::IcebergMultiFileList*>(src.list);
   if (src.iceberg_list) {
-    if (const auto& info = src.iceberg_list->GetSnapshot(); info.snapshot) {
-      src.version = info.snapshot->snapshot_id;
+    auto& planner = src.iceberg_list->GetScanPlanner();
+    planner.DisableServerSidePlanning();
+    if (const auto& info = planner.GetSnapshot(); info.snapshot) {
+      src.version = info.snapshot->snapshot_id.value_or(0);
     }
   }
   return src;
@@ -1169,7 +1160,7 @@ void FillReindexArgs(ReindexBindData& data,
 duckdb::unique_ptr<duckdb::FunctionData> ReindexBind(
   duckdb::ClientContext&, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   auto data = duckdb::make_uniq<ReindexBindData>();
   FillReindexArgs(*data, input.inputs);
   return_types = {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BIGINT,
@@ -1266,19 +1257,11 @@ absl::StatusOr<bool> RunReindexTick(duckdb::DatabaseInstance& db,
         return false;
       }
       index_name = index->name.GetIdentifierName();
-      // The index names its relation, and duckdb keeps both halves of that
-      // name in step with a rename.
-      const duckdb::Identifier schema_ident = index->GetSchemaName();
-      auto schema = catalog.GetSchema(trx, schema_ident,
-                                      duckdb::OnEntryNotFound::RETURN_NULL);
-      const auto relation =
-        schema ? schema->GetEntry(trx, duckdb::CatalogType::TABLE_ENTRY,
-                                  index->GetTableName())
-               : nullptr;
+      const auto relation = index->GetRelation(trx);
       if (!relation || relation->type != duckdb::CatalogType::VIEW_ENTRY) {
         return false;
       }
-      schema_name = schema_ident.GetIdentifierName();
+      schema_name = index->GetSchemaName().GetIdentifierName();
       // Ownership itself is real (pg_class.relowner asserts it), so the id is
       // carried through.
       owner_id = relation->permissions.owner;
@@ -1338,8 +1321,9 @@ void NarrowScanToDelta(duckdb::LogicalGet& leaf,
   if (const auto* iceberg_list =
         dynamic_cast<const duckdb::IcebergMultiFileList*>(
           mfbd.file_list.get())) {
-    const auto& snapshot = iceberg_list->GetSnapshot().snapshot;
-    const int64_t bound = snapshot ? snapshot->snapshot_id : 0;
+    const auto& snapshot =
+      iceberg_list->GetScanPlanner().GetSnapshot().snapshot;
+    const int64_t bound = snapshot ? snapshot->snapshot_id.value_or(0) : 0;
     if (bound != info.manifest->version) {
       ThrowSourceMoved();
     }
@@ -1398,14 +1382,15 @@ void RegisterReindexFunction(duckdb::DatabaseInstance& db) {
       return RunReindexTick(db, database_id, index_id);
     });
 
-  duckdb::TableFunction func("serenedb_reindex", {}, ReindexExecute,
-                             ReindexBind, ReindexInitGlobal);
-  func.varargs = duckdb::LogicalType::VARCHAR;
+  duckdb::FunctionSignature signature;
+  signature.AddArgs("args", duckdb::LogicalType::VARCHAR);
+  duckdb::TableFunction func("serenedb_reindex", std::move(signature),
+                             ReindexExecute, ReindexBind, ReindexInitGlobal);
   loader.RegisterFunction(func);
 
   auto pragma = duckdb::PragmaFunction::PragmaCall(
-    "serenedb_reindex", ReindexPragma, {duckdb::LogicalType::VARCHAR});
-  pragma.varargs = duckdb::LogicalType::VARCHAR;
+    "serenedb_reindex", ReindexPragma, {duckdb::LogicalType::VARCHAR},
+    duckdb::LogicalType::VARCHAR);
   loader.RegisterFunction(pragma);
 }
 

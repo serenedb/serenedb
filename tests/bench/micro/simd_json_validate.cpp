@@ -145,7 +145,7 @@ void PrintSemanticTable() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+static int Main(int argc, char** argv) {
   PrintSemanticTable();
   Register();
   benchmark::Initialize(&argc, argv);
@@ -153,3 +153,6 @@ int main(int argc, char** argv) {
   benchmark::Shutdown();
   return 0;
 }
+
+[[maybe_unused]] static const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

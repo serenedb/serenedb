@@ -24,7 +24,6 @@
 
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
-#include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -33,6 +32,7 @@
 #include <duckdb/main/connection.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
+#include <duckdb/storage/table/index_entry.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <duckdb/transaction/local_storage.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
@@ -52,27 +52,9 @@
 #include "connector/inverted_store_index.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
+#include "query/config.h"
 
 namespace sdb::connector {
-namespace {
-
-// Settings a client may never change, refused for the lifetime of the process
-// by the setting_change_handler below.
-const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
-  // Describes how this process is wired rather than a preference, and is pinned
-  // at startup in
-  // ConfigureServerDBConfig.
-  "external_threads",
-  // Read-only in PostgreSQL, where reporting the value is the whole point of
-  // the GUC.
-  "in_hot_standby",
-  "is_superuser",
-  "server_encoding",
-  "server_version",
-  "server_version_num",
-};
-
-}  // namespace
 
 SereneDBClientState& SereneDBClientState::Register(
   duckdb::ClientContext& client_ctx,
@@ -105,59 +87,58 @@ SereneDBClientState& SereneDBClientState::Register(
     return true;
   };
 
-  client_ctx.setting_change_handler = [](duckdb::ClientContext& ctx,
-                                         const std::string& name,
-                                         duckdb::SetScope scope,
-                                         const duckdb::Value* new_value) {
-    // Refused the way PG refuses a postmaster-scoped GUC. Checked before the
-    // SetScope::GLOBAL return below, since some of these are global and would
-    // otherwise slip past it. DuckDB routes SET and RESET, for built-in
-    // settings and extension options alike, through this handler, and does so
-    // before invoking an option's own set_function -- so an entry here needs no
-    // callback of its own.
-    if (kUnchangeableSettings.contains(name)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_CANT_CHANGE_RUNTIME_PARAM),
-                      ERR_MSG("parameter \"", name, "\" cannot be changed"));
-    }
-    // Resolve AUTOMATIC against the setting's target scope so the downstream
-    // check works uniformly regardless of how the user wrote the SET.
-    if (scope == duckdb::SetScope::AUTOMATIC) {
-      auto& db_config = duckdb::DBConfig::GetConfig(ctx);
-      auto name_ref = duckdb::String::Reference(name.data(), name.size());
-      duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-      if (db_config.TryGetSettingIndex(name_ref, option).IsValid() && option) {
-        scope = (option->scope == duckdb::SettingScopeTarget::GLOBAL_ONLY ||
-                 option->scope == duckdb::SettingScopeTarget::GLOBAL_DEFAULT)
-                  ? duckdb::SetScope::GLOBAL
-                  : duckdb::SetScope::SESSION;
-      } else {
-        duckdb::ExtensionOption ext;
-        if (db_config.TryGetExtensionOption(name_ref, ext)) {
-          scope = ext.default_scope;
+  client_ctx.setting_change_handler =
+    [](duckdb::ClientContext& ctx, const std::string& name,
+       duckdb::SetScope scope, const duckdb::Value* new_value) {
+      // Refused the way PG refuses a postmaster-scoped GUC. Checked before the
+      // SetScope::GLOBAL return below, since some of these are global and would
+      // otherwise slip past it. DuckDB routes SET and RESET, for built-in
+      // settings and extension options alike, through this handler, and does so
+      // before invoking an option's own set_function -- so an entry here needs
+      // no callback of its own.
+      if (IsUnchangeableSetting(name)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_CANT_CHANGE_RUNTIME_PARAM),
+                        ERR_MSG("parameter \"", name, "\" cannot be changed"));
+      }
+      // Resolve AUTOMATIC against the setting's target scope so the downstream
+      // check works uniformly regardless of how the user wrote the SET.
+      if (scope == duckdb::SetScope::AUTOMATIC) {
+        auto& db_config = duckdb::DBConfig::GetConfig(ctx);
+        const duckdb::Identifier setting{name};
+        duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
+        if (db_config.TryGetSettingIndex(setting, option).IsValid() && option) {
+          scope = (option->scope == duckdb::SettingScopeTarget::GLOBAL_ONLY ||
+                   option->scope == duckdb::SettingScopeTarget::GLOBAL_DEFAULT)
+                    ? duckdb::SetScope::GLOBAL
+                    : duckdb::SetScope::SESSION;
+        } else {
+          duckdb::ExtensionOption ext;
+          if (db_config.TryGetExtensionOption(setting, ext)) {
+            scope = ext.default_scope;
+          }
         }
       }
-    }
-    // SET GLOBAL changes the DB-instance default (lives only in DBConfig, not
-    // user_settings / custom session store) and is not rolled back with the
-    // transaction -- only session/local changes are tracked.
-    if (scope == duckdb::SetScope::GLOBAL) {
-      return;
-    }
-    auto& sdb_ctx = GetSereneDBContext(ctx);
-    // A reported GUC may have changed -- flag it so the wire layer re-emits
-    // ParameterStatus at the next ReadyForQuery (a cheap version bump; the GUC
-    // poll itself is skipped entirely when nothing changed).
-    sdb_ctx.MarkSettingsChanged();
-    // Outside an explicit transaction there's nothing to roll back --
-    // the map stays empty.
-    if (!sdb_ctx.IsExplicitTransaction()) {
-      return;
-    }
-    duckdb::Value old_value;
-    ctx.TryGetCurrentSetting(name, old_value);
-    sdb_ctx.OnSet(name, scope == duckdb::SetScope::LOCAL, std::move(old_value),
-                  new_value);
-  };
+      // SET GLOBAL changes the DB-instance default (lives only in DBConfig, not
+      // user_settings / custom session store) and is not rolled back with the
+      // transaction -- only session/local changes are tracked.
+      if (scope == duckdb::SetScope::GLOBAL) {
+        return;
+      }
+      auto& sdb_ctx = GetSereneDBContext(ctx);
+      // A reported GUC may have changed -- flag it so the wire layer re-emits
+      // ParameterStatus at the next ReadyForQuery (a cheap version bump; the
+      // GUC poll itself is skipped entirely when nothing changed).
+      sdb_ctx.MarkSettingsChanged();
+      // Outside an explicit transaction there's nothing to roll back --
+      // the map stays empty.
+      if (!sdb_ctx.IsExplicitTransaction()) {
+        return;
+      }
+      duckdb::Value old_value;
+      ctx.TryGetCurrentSetting(duckdb::Identifier{name}, old_value);
+      sdb_ctx.OnSet(name, scope == duckdb::SetScope::LOCAL,
+                    std::move(old_value), new_value);
+    };
 
   client_ctx.setting_visibility = [](duckdb::ClientContext&,
                                      const std::string& name) {
@@ -236,12 +217,12 @@ void SereneDBClientState::TransactionPreCommit(
         if (rows == 0) {
           continue;
         }
-        for (auto& index :
-             table.get().GetDataTableInfo()->GetIndexes().Indexes()) {
-          if (index.IsBound() &&
-              index.GetIndexType() == InvertedStoreIndex::kTypeName) {
-            index.Cast<InvertedStoreIndex>().PrepareFeed(*_connection_ctx,
-                                                         context, rows);
+        for (auto entry :
+             table.get().GetDataTableInfo()->GetIndexes().IndexEntries()) {
+          if (entry->GetBindState() == duckdb::IndexBindState::BOUND &&
+              entry->GetIndexType() == InvertedStoreIndex::kTypeName) {
+            auto index = entry->GetWriteHandle<InvertedStoreIndex>();
+            index->PrepareFeed(*_connection_ctx, context, rows);
           }
         }
       }

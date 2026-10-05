@@ -137,8 +137,7 @@ ORDER BY n DESC, cat LIMIT 2
 QUERY PLAN
 ╭─ TOP_N ───────────────────────────────────╮
 │ Top: 2                                    │
-│ Order By: count_star() DESC,              │
-│           ft_idx.cat ASC                  │
+│ Order By: n DESC, cat ASC                 │
 │ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ PROJECTION ────────┴─────────────────────╮
@@ -212,12 +211,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$cat, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: ft_idx                             │
@@ -248,12 +247,12 @@ GROUP BY cat
 QUERY PLAN
 ╭─ PROJECTION ────────────────────────────────────────────────────────────────────────╮
 │ Projections: sdb_inverted_index_term$cat, CAST(#1 AS BIGINT)                        │
-│ ~0 rows                                                                             │
+│ ~1 row                                                                              │
 ╰──────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ HASH_GROUP_BY ──────────────────────────┴──────────────────────────────────────────╮
 │ Groups: #0                                                                          │
 │ Aggregates: sum(#1)                                                                 │
-│ ~0 rows                                                                             │
+│ ~1 row                                                                              │
 ╰──────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ FILTER ─────────────────────────────────┴──────────────────────────────────────────╮
 │ Expression:                                                                         │
@@ -388,7 +387,7 @@ QUERY PLAN
 ╭─ HASH_GROUP_BY ──────────╮
 │ Groups: #0               │
 │ Aggregates: count_star() │
-│ ~0 rows                  │
+│ ~1 row                   │
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: ft_idx            │
@@ -441,7 +440,7 @@ QUERY PLAN
 ╭─ HASH_GROUP_BY ──────────╮
 │ Groups: #0               │
 │ Aggregates: count_star() │
-│ ~0 rows                  │
+│ ~1 row                   │
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: ft_idx            │
@@ -705,12 +704,12 @@ QUERY PLAN
 │ Projections:                         │
 │ sdb_inverted_index_term$scope,       │
 │ CAST(#1 AS BIGINT)                   │
-│ ~0 rows                              │
+│ ~1 row                               │
 ╰───────────────────┬──────────────────╯
 ╭─ HASH_GROUP_BY ───┴──────────────────╮
 │ Groups: #0                           │
 │ Aggregates: sum(#1)                  │
-│ ~0 rows                              │
+│ ~1 row                               │
 ╰───────────────────┬──────────────────╯
 ╭─ IRESEARCH_SCAN ──┴──────────────────╮
 │ Index: ffw_idx                       │
@@ -746,12 +745,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────────────╮
 │ Projections:                                      │
 │ sdb_inverted_index_term$scope, CAST(#1 AS BIGINT) │
-│ ~0 rows                                           │
+│ ~1 row                                            │
 ╰─────────────────────────┬─────────────────────────╯
 ╭─ HASH_GROUP_BY ─────────┴─────────────────────────╮
 │ Groups: #0                                        │
 │ Aggregates: sum(#1)                               │
-│ ~0 rows                                           │
+│ ~1 row                                            │
 ╰─────────────────────────┬─────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────┴─────────────────────────╮
 │ Index: ffw_idx                                    │
@@ -780,7 +779,7 @@ QUERY PLAN
 ╭─ HASH_GROUP_BY ──────────╮
 │ Groups: #0               │
 │ Aggregates: count_star() │
-│ ~0 rows                  │
+│ ~1 row                   │
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: ffw_idx           │
@@ -899,7 +898,7 @@ QUERY PLAN
 ╭─ HASH_GROUP_BY ──────────╮
 │ Groups: #0               │
 │ Aggregates: count_star() │
-│ ~0 rows                  │
+│ ~1 row                   │
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: fnw_idx           │
@@ -1165,19 +1164,35 @@ WHERE id < 3
 GROUP BY GROUPING SETS ((brand), (color))
 ----
 QUERY PLAN
-╭─ HASH_GROUP_BY ──────────╮
-│ Groups: #0, #1           │
-│ Aggregates: count_star() │
-│ ~0 rows                  │
-╰─────────────┬────────────╯
-╭─ IRESEARCH_SCAN ─────────╮
-│ Index: gsf_idx           │
-│ Lookup: table            │
-│ Projections: brand,      │
-│              color       │
-│ Column Filter: id < 3    │
-│ ~1 row                   │
-╰──────────────────────────╯
+╭─ CTE ─────────────────────────────────╮
+│ CTE Name: __grouping_sets_input_cte_7 │
+│ Table Index: 7                        │
+│ Execution Mode: PIPELINE_DEPENDENT    │
+│ ~0 rows                               │
+╰───────────────────┬───────────────────╯
+                    ├─────────────────────────────────────╮
+╭─ IRESEARCH_SCAN ──┴───────────────────╮  ╭─ UNION ──────┴──────────────╮
+│ Index: gsf_idx                        │  ╰──────────────┬──────────────╯
+│ Lookup: table                         │                 ├────────────────────────────────╮
+│ Projections: brand, color             │  ╭─ PROJECTION ─┴──────────────╮  ╭─ PROJECTION ─┴──────────────╮
+│ Column Filter: id < 3                 │  │ Projections: #0,            │  │ Projections: NULL::VARCHAR, │
+│ ~1 row                                │  │              NULL::VARCHAR, │  │              #0, #1         │
+╰───────────────────────────────────────╯  │              #1             │  │ ~0 rows                     │
+                                           │ ~0 rows                     │  ╰──────────────┬──────────────╯
+                                           ╰──────────────┬──────────────╯  ╭─ HASH_GROUP_BY ─────────────╮
+                                           ╭─ HASH_GROUP_BY ─────────────╮  │ Groups: #0                  │
+                                           │ Groups: #0                  │  │ Aggregates: count_star()    │
+                                           │ Aggregates: count_star()    │  │ ~0 rows                     │
+                                           │ ~0 rows                     │  ╰──────────────┬──────────────╯
+                                           ╰──────────────┬──────────────╯  ╭─ PROJECTION ─┴──────────────╮
+                                           ╭─ PROJECTION ─┴──────────────╮  │ Projections: color          │
+                                           │ Projections: brand          │  │ ~1 row                      │
+                                           │ ~1 row                      │  ╰──────────────┬──────────────╯
+                                           ╰──────────────┬──────────────╯  ╭─ CTE_SCAN ───┴──────────────╮
+                                           ╭─ CTE_SCAN ───┴──────────────╮  │ CTE Index: 7                │
+                                           │ CTE Index: 7                │  │ ~1 row                      │
+                                           │ ~1 row                      │  ╰─────────────────────────────╯
+                                           ╰─────────────────────────────╯
 
 # Non-singleton and empty sets fall back.
 query TTI
@@ -1198,18 +1213,35 @@ EXPLAIN SELECT brand, color, count(*) AS n FROM gsf_idx
 GROUP BY GROUPING SETS ((brand), (color), ())
 ----
 QUERY PLAN
-╭─ HASH_GROUP_BY ──────────╮
-│ Groups: #0, #1           │
-│ Aggregates: count_star() │
-│ ~3 rows                  │
-╰─────────────┬────────────╯
-╭─ IRESEARCH_SCAN ─────────╮
-│ Index: gsf_idx           │
-│ Lookup: table            │
-│ Projections: brand,      │
-│              color       │
-│ ~5 rows                  │
-╰──────────────────────────╯
+╭─ CTE ─────────────────────────────────╮
+│ CTE Name: __grouping_sets_input_cte_7 │
+│ Table Index: 7                        │
+│ Execution Mode: PIPELINE_DEPENDENT    │
+│ ~5 rows                               │
+╰───────────────────┬───────────────────╯
+                    ├─────────────────────────────────────╮
+╭─ IRESEARCH_SCAN ──┴───────────────────╮  ╭─ UNION ──────┴──────────────╮
+│ Index: gsf_idx                        │  ╰──────────────┬──────────────╯
+│ Lookup: table                         │                 ├────────────────────────────────┬────────────────────────────────╮
+│ Projections: brand, color             │  ╭─ PROJECTION ─┴──────────────╮  ╭─ PROJECTION ─┴──────────────╮  ╭─ PROJECTION ─┴──────────────╮
+│ ~5 rows                               │  │ Projections: #0,            │  │ Projections: NULL::VARCHAR, │  │ Projections: NULL::VARCHAR, │
+╰───────────────────────────────────────╯  │              NULL::VARCHAR, │  │              #0, #1         │  │              NULL::VARCHAR, │
+                                           │              #1             │  │ ~2 rows                     │  │              #0             │
+                                           │ ~2 rows                     │  ╰──────────────┬──────────────╯  │ ~1 row                      │
+                                           ╰──────────────┬──────────────╯  ╭─ HASH_GROUP_BY ─────────────╮  ╰──────────────┬──────────────╯
+                                           ╭─ HASH_GROUP_BY ─────────────╮  │ Groups: #0                  │  ╭─ UNGROUPED_AGGREGATE ───────╮
+                                           │ Groups: #0                  │  │ Aggregates: count_star()    │  │ Aggregates: count_star()    │
+                                           │ Aggregates: count_star()    │  │ ~2 rows                     │  │ ~1 row                      │
+                                           │ ~2 rows                     │  ╰──────────────┬──────────────╯  ╰──────────────┬──────────────╯
+                                           ╰──────────────┬──────────────╯  ╭─ PROJECTION ─┴──────────────╮  ╭─ CTE_SCAN ───┴──────────────╮
+                                           ╭─ PROJECTION ─┴──────────────╮  │ Projections: color          │  │ CTE Index: 7                │
+                                           │ Projections: brand          │  │ ~5 rows                     │  │ ~5 rows                     │
+                                           │ ~5 rows                     │  ╰──────────────┬──────────────╯  ╰─────────────────────────────╯
+                                           ╰──────────────┬──────────────╯  ╭─ CTE_SCAN ───┴──────────────╮
+                                           ╭─ CTE_SCAN ───┴──────────────╮  │ CTE Index: 7                │
+                                           │ CTE Index: 7                │  │ ~5 rows                     │
+                                           │ ~5 rows                     │  ╰─────────────────────────────╯
+                                           ╰─────────────────────────────╯
 
 query TTI
 SELECT brand, color, count(*) AS n FROM gsf_idx
@@ -1258,18 +1290,35 @@ EXPLAIN SELECT brand, color, count(*) AS n, GROUPING(brand) AS g FROM gsf_idx
 GROUP BY GROUPING SETS ((brand), (color))
 ----
 QUERY PLAN
-╭─ HASH_GROUP_BY ──────────╮
-│ Groups: #0, #1           │
-│ Aggregates: count_star() │
-│ ~3 rows                  │
-╰─────────────┬────────────╯
-╭─ IRESEARCH_SCAN ─────────╮
-│ Index: gsf_idx           │
-│ Lookup: table            │
-│ Projections: brand,      │
-│              color       │
-│ ~5 rows                  │
-╰──────────────────────────╯
+╭─ CTE ─────────────────────────────────╮
+│ CTE Name: __grouping_sets_input_cte_7 │
+│ Table Index: 7                        │
+│ Execution Mode: PIPELINE_DEPENDENT    │
+│ ~4 rows                               │
+╰───────────────────┬───────────────────╯
+                    ├─────────────────────────────────────╮
+╭─ IRESEARCH_SCAN ──┴───────────────────╮  ╭─ UNION ──────┴──────────────╮
+│ Index: gsf_idx                        │  ╰──────────────┬──────────────╯
+│ Lookup: table                         │                 ├────────────────────────────────╮
+│ Projections: brand, color             │  ╭─ PROJECTION ─┴──────────────╮  ╭─ PROJECTION ─┴──────────────╮
+│ ~5 rows                               │  │ Projections: #0,            │  │ Projections: NULL::VARCHAR, │
+╰───────────────────────────────────────╯  │              NULL::VARCHAR, │  │              #0, #1, 1      │
+                                           │              #1, 0          │  │ ~2 rows                     │
+                                           │ ~2 rows                     │  ╰──────────────┬──────────────╯
+                                           ╰──────────────┬──────────────╯  ╭─ HASH_GROUP_BY ─────────────╮
+                                           ╭─ HASH_GROUP_BY ─────────────╮  │ Groups: #0                  │
+                                           │ Groups: #0                  │  │ Aggregates: count_star()    │
+                                           │ Aggregates: count_star()    │  │ ~2 rows                     │
+                                           │ ~2 rows                     │  ╰──────────────┬──────────────╯
+                                           ╰──────────────┬──────────────╯  ╭─ PROJECTION ─┴──────────────╮
+                                           ╭─ PROJECTION ─┴──────────────╮  │ Projections: color          │
+                                           │ Projections: brand          │  │ ~5 rows                     │
+                                           │ ~5 rows                     │  ╰──────────────┬──────────────╯
+                                           ╰──────────────┬──────────────╯  ╭─ CTE_SCAN ───┴──────────────╮
+                                           ╭─ CTE_SCAN ───┴──────────────╮  │ CTE Index: 7                │
+                                           │ CTE Index: 7                │  │ ~5 rows                     │
+                                           │ ~5 rows                     │  ╰─────────────────────────────╯
+                                           ╰─────────────────────────────╯
 
 # One nullable key among the sets converts: its genuine NULL group is the
 # only all-NULL group key, so it cannot collide with the other sets' padding.
@@ -1572,21 +1621,35 @@ EXPLAIN SELECT a, lower(b) AS lb, count(*) AS n FROM ftwo_idx
 GROUP BY GROUPING SETS ((a), (lower(b)))
 ----
 QUERY PLAN
-╭─ HASH_GROUP_BY ──────────╮
-│ Groups: #0, #1           │
-│ Aggregates: count_star() │
-│ ~1 row                   │
-╰─────────────┬────────────╯
-╭─ PROJECTION ┴────────────╮
-│ Projections: a, lower(b) │
-│ ~2 rows                  │
-╰─────────────┬────────────╯
-╭─ IRESEARCH_SCAN ─────────╮
-│ Index: ftwo_idx          │
-│ Lookup: table            │
-│ Projections: a, b        │
-│ ~2 rows                  │
-╰──────────────────────────╯
+╭─ CTE ─────────────────────────────────╮
+│ CTE Name: __grouping_sets_input_cte_7 │
+│ Table Index: 7                        │
+│ Execution Mode: PIPELINE_DEPENDENT    │
+│ ~2 rows                               │
+╰───────────────────┬───────────────────╯
+                    ├─────────────────────────────────────╮
+╭─ IRESEARCH_SCAN ──┴───────────────────╮  ╭─ UNION ──────┴──────────────╮
+│ Index: ftwo_idx                       │  ╰──────────────┬──────────────╯
+│ Lookup: table                         │                 ├────────────────────────────────╮
+│ Projections: a, b                     │  ╭─ PROJECTION ─┴──────────────╮  ╭─ PROJECTION ─┴──────────────╮
+│ ~2 rows                               │  │ Projections: #0,            │  │ Projections: NULL::VARCHAR, │
+╰───────────────────────────────────────╯  │              NULL::VARCHAR, │  │              #0, #1         │
+                                           │              #1             │  │ ~1 row                      │
+                                           │ ~1 row                      │  ╰──────────────┬──────────────╯
+                                           ╰──────────────┬──────────────╯  ╭─ HASH_GROUP_BY ─────────────╮
+                                           ╭─ HASH_GROUP_BY ─────────────╮  │ Groups: #0                  │
+                                           │ Groups: #0                  │  │ Aggregates: count_star()    │
+                                           │ Aggregates: count_star()    │  │ ~1 row                      │
+                                           │ ~1 row                      │  ╰──────────────┬──────────────╯
+                                           ╰──────────────┬──────────────╯  ╭─ PROJECTION ─┴──────────────╮
+                                           ╭─ PROJECTION ─┴──────────────╮  │ Projections: lower(b)       │
+                                           │ Projections: a              │  │ ~2 rows                     │
+                                           │ ~2 rows                     │  ╰──────────────┬──────────────╯
+                                           ╰──────────────┬──────────────╯  ╭─ CTE_SCAN ───┴──────────────╮
+                                           ╭─ CTE_SCAN ───┴──────────────╮  │ CTE Index: 7                │
+                                           │ CTE Index: 7                │  │ ~2 rows                     │
+                                           │ ~2 rows                     │  ╰─────────────────────────────╯
+                                           ╰─────────────────────────────╯
 
 # The nullable set key's NULL group stays filter-exact under a claimable
 # WHERE, and its zero-count groups vanish.
@@ -1798,15 +1861,19 @@ query
 EXPLAIN SELECT array_agg(DISTINCT SeverityText) FROM fvw_idx
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ──────────────╮
-│ Aggregates: array_agg(DISTINCT #0) │
-│ ~1 row                             │
-╰──────────────────┬─────────────────╯
-╭─ IRESEARCH_SCAN ─┴─────────────────╮
-│ Index: fvw_idx                     │
-│ Projections: severitytext          │
-│ ~4 rows                            │
-╰────────────────────────────────────╯
+╭─ UNGROUPED_AGGREGATE ─────╮
+│ Aggregates: array_agg(#0) │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ HASH_GROUP_BY ───────────╮
+│ Groups: #0                │
+│ ~2 rows                   │
+╰─────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ──────────╮
+│ Index: fvw_idx            │
+│ Projections: severitytext │
+│ ~4 rows                   │
+╰───────────────────────────╯
 
 # Explicit ts_dict_agg reads the dictionary terms directly (no NULL element).
 query T

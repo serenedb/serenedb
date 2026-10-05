@@ -109,10 +109,13 @@ using persistence::SearchTableOptions;
 
 class SearchTableEntry final : public duckdb::TableCatalogEntry {
  public:
-  SearchTableEntry(duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-                   duckdb::BoundCreateTableInfo& info,
-                   duckdb::CatalogTransaction transaction,
-                   std::shared_ptr<search::SearchTable> inherited_storage = {});
+  SearchTableEntry(
+    duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+    duckdb::BoundCreateTableInfo& info, duckdb::CatalogTransaction transaction,
+    std::shared_ptr<search::SearchTable> inherited_storage = {},
+    duckdb::shared_ptr<duckdb::CatalogSet> inherited_triggers = {});
+
+  const duckdb::ColumnList& GetColumns() const final { return _columns; }
 
   duckdb::unique_ptr<duckdb::BaseStatistics> GetStatistics(
     duckdb::ClientContext&, duckdb::column_t) final {
@@ -176,6 +179,7 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
   duckdb::unique_ptr<duckdb::CatalogEntry> AlterOptions(
     duckdb::ClientContext& context, duckdb::AlterTableInfo& alter);
 
+  duckdb::ColumnList _columns;
   std::shared_ptr<search::SearchTable> _storage;
   SearchTableOptions _options;
   duckdb::Identifier _pk_sequence;

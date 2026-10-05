@@ -26,6 +26,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <core_functions/array_kernels.hpp>
 #include <cstring>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
@@ -50,7 +51,6 @@
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/topic.hpp"
-#include "iresearch/utils/vector.hpp"
 
 namespace irs {
 namespace {
@@ -244,8 +244,7 @@ uint64_t ScanVectors(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
     if (normalize) {
       for (duckdb::idx_t i = 0; i < take; ++i) {
         float* v = buf.data() + static_cast<size_t>(i) * d;
-        vector::L2Space<float, float, float>::Normalize(
-          reinterpret_cast<const byte_type*>(v), static_cast<uint16_t>(d), v);
+        duckdb::L2NormalizeOp::Operation(v, v, d);
       }
     }
     fn(buf.data(), static_cast<size_t>(take), done, mask);
@@ -318,8 +317,7 @@ bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
       if (normalize) {
         for (size_t i = lo; i < hi; ++i) {
           float* v = owned.data() + i * size_t{d};
-          vector::L2Space<float, float, float>::Normalize(
-            reinterpret_cast<const byte_type*>(v), static_cast<uint16_t>(d), v);
+          duckdb::L2NormalizeOp::Operation(v, v, d);
         }
       }
       auto& writer = w == 0 ? qw : *spare[w - 1];

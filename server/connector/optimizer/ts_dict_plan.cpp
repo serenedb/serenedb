@@ -513,8 +513,9 @@ void CollapseTsDictUnnest(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
       return;
     }
     const auto* inner = ba.GetChildren()[0].get();
-    if (inner->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
-      inner = &inner->Cast<duckdb::BoundCastExpression>().Child();
+    if (duckdb::BoundCastExpression::IsCast(*inner)) {
+      inner = &duckdb::BoundCastExpression::Child(
+        inner->Cast<duckdb::BoundFunctionExpression>());
     }
     if (inner->GetExpressionClass() !=
         duckdb::ExpressionClass::BOUND_COLUMN_REF) {

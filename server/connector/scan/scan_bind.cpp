@@ -273,7 +273,7 @@ duckdb::unique_ptr<duckdb::NodeStatistics> ScanBindData::Cardinality(
 duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   const duckdb::QualifiedName qualified{
     duckdb::Identifier{input.inputs[0].GetValue<std::string>()},
     duckdb::Identifier{input.inputs[1].GetValue<std::string>()},
@@ -286,12 +286,14 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
                             "\" does not exist"));
   }
   const auto& entry = irs::utils::downCast<catalog::InvertedIndexEntry>(*index);
-  auto& relation = duckdb::Catalog::GetEntry(
-    context,
-    duckdb::EntryLookupInfo{
-      duckdb::CatalogType::TABLE_ENTRY,
-      duckdb::QualifiedName{qualified.Catalog(), index->GetSchemaName(),
-                            index->GetTableName()}});
+  auto host = index->GetRelation(index->catalog.GetCatalogTransaction(context));
+  if (!host) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+      ERR_MSG("relation \"", index->GetTableName().GetIdentifierName(),
+              "\" does not exist"));
+  }
+  auto& relation = *host;
   const auto* search_table =
     dynamic_cast<const catalog::SearchTableEntry*>(&relation);
   search::InvertedIndexSnapshotPtr snapshot;

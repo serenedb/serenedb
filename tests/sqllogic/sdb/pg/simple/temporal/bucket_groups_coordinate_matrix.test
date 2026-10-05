@@ -367,7 +367,7 @@ QUERY PLAN
 ╭─ PROJECTION ──────────┴───────────────────────╮
 │ Projections:                                  │
 │ __internal_date_trunc_month_bucket(ts, 1, 0), │
-│ NULL                                          │
+│ NULL::BIGINT                                  │
 │ ~60,001 rows                                  │
 ╰───────────────────────┬───────────────────────╯
 ╭─ SEQ_SCAN ────────────┴───────────────────────╮

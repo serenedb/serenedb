@@ -116,7 +116,7 @@ EXPLAIN SELECT id FROM wtf_idx WHERE body @@ ts_phrase('term') AND BM25(wtf_idx.
 ----
 QUERY PLAN
 ╭─ ORDER_BY ─────────────────────╮
-│ Order By: wtf_idx.id ASC       │
+│ Order By: id ASC               │
 │ ~1 row                         │
 ╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮

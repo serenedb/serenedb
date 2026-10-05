@@ -47,6 +47,13 @@ void Log(duckdb::LogLevel level, std::string_view topic,
 } catch (...) {
 }
 
+void Flush() noexcept try {
+  if (gLogger) {
+    gLogger->Flush();
+  }
+} catch (...) {
+}
+
 void LogCrash(std::string_view message) noexcept {
   // Async-signal-safe path: stack buffer + write(2). No heap, no mutex,
   // no LogManager lookup. Truncates at 4KiB minus the trailing newline.

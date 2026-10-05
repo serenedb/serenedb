@@ -82,6 +82,17 @@ set_property(
     PROPERTY STRINGS NONE LINES COLUMNS SANITIZE COVERAGE PROFILE LLDB GDB FULL
 )
 
+if(APPLE)
+    set(SDB_SPLIT_DWARF_DEFAULT OFF)
+else()
+    set(SDB_SPLIT_DWARF_DEFAULT ON)
+endif()
+option(
+    SDB_SPLIT_DWARF
+    "debug info in a .dwo file beside each object instead of in every binary"
+    ${SDB_SPLIT_DWARF_DEFAULT}
+)
+
 set(SDB_GEN_PGO OFF CACHE BOOL "build instrumented for PGO profile generation")
 set(SDB_GEN_CS_PGO
     ""
@@ -161,6 +172,17 @@ project(
     LANGUAGES CXX C ASM
     VERSION ${SERENEDB_VERSION_MAJOR}.${SERENEDB_VERSION_MINOR}
 )
+
+if(NOT APPLE)
+    foreach(lang C CXX ASM)
+        set(CMAKE_${lang}_ARCHIVE_CREATE
+            "<CMAKE_AR> qcT <TARGET> <LINK_FLAGS> <OBJECTS>"
+        )
+        set(CMAKE_${lang}_ARCHIVE_APPEND
+            "<CMAKE_AR> qT <TARGET> <LINK_FLAGS> <OBJECTS>"
+        )
+    endforeach()
+endif()
 
 enable_testing()
 
@@ -418,6 +440,15 @@ elseif(USE_DEBUG_INFO STREQUAL "GDB")
     set(DEBUG_INFO_FLAGS "${GDB_DEBUG_INFO}")
 else()
     set(DEBUG_INFO_FLAGS "${FULL_DEBUG_INFO}")
+endif()
+
+if(SDB_SPLIT_DWARF AND NOT USE_DEBUG_INFO STREQUAL "NONE")
+    set(DEBUG_INFO_FLAGS "${DEBUG_INFO_FLAGS} -gsplit-dwarf")
+    if(IPO_ENABLED)
+        add_link_options(
+            "-Wl,--plugin-opt=dwo_dir=${CMAKE_BINARY_DIR}/dwo/$<TARGET_PROPERTY:NAME>"
+        )
+    endif()
 endif()
 
 # c

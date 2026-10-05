@@ -24,7 +24,7 @@
 // non-ASCII value; `probe_every` arms probe every value regardless (the work
 // per-value probing performs inside a fill on mixed data).
 //
-//   taskset -c N ./serenedb-bench-micro-ascii_probe --benchmark_min_time=0.3s \
+//   taskset -c N ./serenedb-bench-micro ascii_probe --benchmark_min_time=0.3s \
 //     --benchmark_repetitions=12 --benchmark_report_aggregates_only=true
 
 #include <benchmark/benchmark.h>
@@ -163,5 +163,3 @@ ASCII_PROBE_BENCH(mixed_half64, MixedHalf64);
 ASCII_PROBE_BENCH(unicode_first64, UnicodeFirst64);
 
 }  // namespace
-
-BENCHMARK_MAIN();

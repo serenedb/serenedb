@@ -103,7 +103,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
     return true;
   }
   void Vacuum(duckdb::IndexLock&) final {}
-  duckdb::idx_t GetInMemorySize(duckdb::IndexLock&) final { return 0; }
+  duckdb::idx_t GetInMemorySize(duckdb::IndexLock&) const final { return 0; }
   void Verify(duckdb::IndexLock&) final {}
   std::string ToString(duckdb::IndexLock&, bool) final {
     return "inverted store index";
@@ -112,7 +112,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   void VerifyBuffers(duckdb::IndexLock&) final {}
   std::string GetConstraintViolationMessage(duckdb::VerifyExistenceType,
                                             duckdb::idx_t,
-                                            duckdb::DataChunk&) final {
+                                            duckdb::DataChunk&) const final {
     return "inverted store index constraint violation";
   }
 

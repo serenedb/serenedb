@@ -637,7 +637,7 @@ statement error
 SELECT ||/ 27.0;
 
 # op_math: @
-statement error
+statement ok
 SELECT @ -5;
 
 # op_math: &
@@ -1073,7 +1073,7 @@ statement ok
 SELECT overlay('\x010203'::bytea placing '\xff'::bytea from 2);
 
 # op_bytea: position
-statement error
+statement ok
 SELECT position('\x02'::bytea in '\x0102'::bytea);
 
 # op_bytea: rtrim

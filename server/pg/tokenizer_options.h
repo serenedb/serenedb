@@ -81,7 +81,7 @@ inline constexpr OptionInfo kOffsetFeature{"offset", false,
 // Common
 
 inline constexpr OptionInfo kLocale{"locale", ""sv,
-                                    "ICU locale string (e.g. en_US.UTF-8)"};
+                                    "Locale identifier (e.g. en_US.UTF-8)"};
 
 inline constexpr OptionInfo kAccent{"accent", true, "Preserve accent marks"};
 
@@ -233,7 +233,7 @@ inline constexpr OptionInfo kBreak{
 
 inline constexpr OptionInfo kIcuTextLocale{
   "locale", OptionInfo::RequiredTag<std::string_view>{},
-  "ICU locale string (e.g. en_US.UTF-8)"};
+  "Locale identifier (e.g. en_US.UTF-8)"};
 
 inline constexpr OptionInfo kIcuTextBreak{
   "break", "alpha"sv,
@@ -373,7 +373,7 @@ inline constexpr OptionInfo kWildcardOptions[] = {kNGramSize};
 
 inline constexpr OptionInfo kNormLocale{
   "locale", ""sv,
-  "ICU locale for case conversion; omit for locale-independent simple case"};
+  "Locale for case conversion; omit for locale-independent simple case"};
 
 inline constexpr OptionInfo kNormOptions[] = {kNormLocale, kNormCase, kAccent,
                                               kForm};

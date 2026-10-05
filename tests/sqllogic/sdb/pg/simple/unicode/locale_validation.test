@@ -1,0 +1,172 @@
+query
+SELECT split_text_icu('ok', 'en') AS t;
+----
+t
+{ok}
+
+
+query
+SELECT split_text_icu('ok', 'EN-us') AS t;
+----
+t
+{ok}
+
+
+query
+SELECT split_text_icu('ok', 'en_US.UTF-8') AS t;
+----
+t
+{ok}
+
+
+query
+SELECT split_text_icu('ok', 'sr_Latn_RS') AS t;
+----
+t
+{ok}
+
+
+query
+SELECT split_text_icu('ok', 'de-DE') AS t;
+----
+t
+{ok}
+
+
+query
+SELECT split_text_icu('ok', 'en@ss=standard') AS t;
+----
+t
+{ok}
+
+
+query
+SELECT split_text_icu('ok', 'ru_RU.UTF-16') AS t;
+----
+t
+{ok}
+
+
+query
+SELECT split_text_icu('ok', 'es_419') AS t;
+----
+t
+{ok}
+
+
+query
+SELECT split_text_icu('ok', 'tur') AS t;
+----
+t
+{ok}
+
+
+query
+SELECT split_text_icu('ok', 'de__POSIX') AS t;
+----
+t
+{ok}
+
+
+query
+SELECT split_text_icu('ok', 'en_US@ss') AS t;
+----
+t
+{ok}
+
+
+statement error Invalid locale ".*" for option "locale"
+SELECT split_text_icu('x', 'definitely_not_a_locale_@@@');
+
+
+statement error Invalid locale ".*" for option "locale"
+SELECT split_text_icu('x', 'trk');
+
+
+statement error Invalid locale ".*" for option "locale"
+SELECT split_text_icu('x', 'tr-TR ');
+
+
+statement error Invalid locale ".*" for option "locale"
+SELECT split_text_icu('x', 'C');
+
+
+statement error Invalid locale ".*" for option "locale"
+SELECT split_text_icu('x', 'C.UTF-8');
+
+
+statement error Invalid locale ".*" for option "locale"
+SELECT split_text_icu('x', 'en_XX');
+
+
+statement error Invalid locale ".*" for option "locale"
+SELECT split_text_icu('x', 'x');
+
+
+statement error Invalid locale ".*" for option "locale"
+SELECT split_text_icu('x', 'en-u-ss-standard');
+
+
+statement error Invalid locale ".*" for option "locale"
+SELECT split_text_icu('x', 'en_US_toolongvariant');
+
+
+statement error Invalid locale ".*" for option "locale"
+SELECT split_text_icu('x', 'en@');
+
+
+statement error Invalid locale ".*" for option "locale"
+SELECT split_text_icu('x', '@ss=standard');
+
+
+statement error Invalid locale ".*" for option "locale"
+SELECT split_text_icu('x', '123');
+
+
+statement error Invalid locale ".*" for option "locale"
+SELECT split_text_icu('x', 'en__');
+
+
+statement error Invalid locale ".*" for option "locale"
+SELECT normalize_tokens('ISPARTA', locale := 'trk', case := 'lower');
+
+
+statement error Invalid locale ".*" for option "locale"
+SELECT collate_tokens('x', 'zz');
+
+
+statement error stem_words: there is no stemmer for the language "zh"
+SELECT stem_words('running', 'zh');
+
+
+statement error collate_tokens: there is no collation for locale "de@collation=phonebook"
+SELECT collate_tokens('x', 'de@collation=phonebook');
+
+
+statement error Invalid locale ".*" for option "locale"
+SELECT collate_tokens('x', 'de__phonebook');
+
+
+statement error collate_tokens: there is no collation for locale "sr_Latn"
+SELECT collate_tokens('x', 'sr_Latn');
+
+
+query
+SELECT stem_words('running', 'en_US.UTF-8') AS t;
+----
+t
+{run}
+
+
+query
+SELECT normalize_tokens('ISPARTA', locale := 'tr', case := 'lower') AS t;
+----
+t
+{ısparta}
+
+
+query
+SELECT collate_tokens('a', 'zh_TW') < collate_tokens('b', 'zh_TW') AS ordered;
+----
+ordered
+t

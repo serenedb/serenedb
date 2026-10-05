@@ -51,7 +51,7 @@ VACUUM (REFRESH_TABLE) t_geo_inc;
 
 query
 EXPLAIN SELECT pk, geo FROM t_geo_inc_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 QUERY PLAN
 ╭─ PROJECTION ───────────╮
@@ -73,7 +73,7 @@ QUERY PLAN
 
 query
 SELECT pk, geo FROM t_geo_inc_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 pk	geo
 1	{"type":"Point","coordinates":[37.615895,55.703900]}
@@ -94,7 +94,7 @@ VACUUM (REFRESH_TABLE) t_geo_noi;
 
 query
 EXPLAIN SELECT pk, geo FROM t_geo_noi_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 QUERY PLAN
 ╭─ PROJECTION ───────────╮
@@ -115,7 +115,7 @@ QUERY PLAN
 
 query
 SELECT pk, geo FROM t_geo_noi_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 pk	geo
 1	{"type":"Point","coordinates":[37.615895,55.703900]}
@@ -139,7 +139,7 @@ VACUUM (REFRESH_TABLE) t_geo_src_noi;
 
 query
 EXPLAIN SELECT pk, geo FROM t_geo_src_noi_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 QUERY PLAN
 ╭─ PROJECTION ─────────────╮
@@ -161,7 +161,7 @@ QUERY PLAN
 
 query
 SELECT pk, geo FROM t_geo_src_noi_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 pk	geo
 1	{"type":"Point","coordinates":[37.615895,55.703900]}
@@ -188,7 +188,7 @@ VACUUM (REFRESH_TABLE) t_geo_src_zstd;
 
 query
 EXPLAIN SELECT pk, geo FROM t_geo_src_zstd_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 QUERY PLAN
 ╭─ PROJECTION ──────────────╮
@@ -210,7 +210,7 @@ QUERY PLAN
 
 query
 SELECT pk, geo FROM t_geo_src_zstd_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 pk	geo
 1	{"type":"Point","coordinates":[37.615895,55.703900]}

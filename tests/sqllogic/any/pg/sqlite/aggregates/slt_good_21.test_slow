@@ -477,6 +477,7 @@ SELECT DISTINCT + AVG ( - col2 ) / + CAST ( NULL AS INTEGER ) AS col1 FROM tab1
 NULL
 
 skipif postgres # division by zero
+skipif serenedb # division by zero
 query I rowsort
 SELECT DISTINCT + 33 + col1 col0 FROM tab0 WHERE NOT 35 / 0 = ( NULL )
 ----

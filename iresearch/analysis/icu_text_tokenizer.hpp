@@ -20,10 +20,8 @@
 
 #pragma once
 
-#include <unicode/locid.h>
-
 #include "iresearch/analysis/text/segment/options.hpp"
-#include "iresearch/utils/icu_locale_serde.hpp"
+#include "iresearch/utils/locale_serde.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "tokenizer.hpp"
 
@@ -46,7 +44,7 @@ class IcuTextTokenizer : private util::Noncopyable {
 
     Separate separate = Separate::Word;
     Accept accept = Accept::AlphaNumeric;
-    icu::Locale locale = irs::MakeBogusLocale();
+    duckdb::text::Locale locale;
   };
 
   static Tokenizer::ptr Make(Options opts);

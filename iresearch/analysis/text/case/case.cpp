@@ -20,20 +20,24 @@
 
 #include "iresearch/analysis/text/case/case.hpp"
 
-#include "ucase.h"
+#include <text_locale.hpp>
 
 namespace irs::analysis::casing {
 
+using duckdb::text::CaseLocale;
+using duckdb::text::Locale;
+
 bool AsciiCaseSafe(const char* locale_name) noexcept {
-  const auto case_locale = ucase_getCaseLocale(locale_name);
-  return case_locale != UCASE_LOC_TURKISH &&
-         case_locale != UCASE_LOC_LITHUANIAN;
+  const auto case_locale = Locale::CaseLocaleOf(locale_name);
+  return case_locale != CaseLocale::TURKISH &&
+         case_locale != CaseLocale::LITHUANIAN;
 }
 
 bool SimpleCaseSafe(const char* locale_name) noexcept {
-  const auto case_locale = ucase_getCaseLocale(locale_name);
-  return case_locale != UCASE_LOC_TURKISH &&
-         case_locale != UCASE_LOC_LITHUANIAN && case_locale != UCASE_LOC_GREEK;
+  const auto case_locale = Locale::CaseLocaleOf(locale_name);
+  return case_locale != CaseLocale::TURKISH &&
+         case_locale != CaseLocale::LITHUANIAN &&
+         case_locale != CaseLocale::GREEK;
 }
 
 }  // namespace irs::analysis::casing

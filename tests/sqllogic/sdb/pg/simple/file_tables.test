@@ -34,22 +34,16 @@ WHERE
   AND v3.fact LIKE '%gain%' AND (v1.iq = 23 OR v2.iq = 54);
 ----
 QUERY PLAN
-╭─ CROSS_PRODUCT ───────────────────────────╮
-╰─────────────────────┬─────────────────────╯
-                      ├───────────────────────────────────────────────────────────────────╮
-╭─ BLOCKWISE_NL_JOIN ─┴─────────────────────╮                      ╭─ READ_PARQUET ───────┴─────────────────────╮
-│ Join Type: INNER                          │                      │ Function: READ_PARQUET                     │
-│ Condition: false                          │                      │ Projections: iq, salary, fact              │
-│ ~2,000 rows                               │                      │ Column Filter:                             │
-╰─────────────────────┬─────────────────────╯                      │ (iq >= 90) AND (NOT (iq IN (99, 95, 97))), │
-                      ├─────────────────────────────────╮          │ contains(fact, 'gain')                     │
-╭─ READ_PARQUET ──────┴─────────────────────╮  ╭─ EMPTY_RESULT ─╮  │ ~2,000 rows                                │
-│ Function: READ_PARQUET                    │  ╰────────────────╯  ╰────────────────────────────────────────────╯
-│ Projections: iq, salary, fact             │
-│ Column Filter:                            │
-│ ((iq != 95) AND (iq > 90)) AND (iq < 100) │
-│ ~2,000 rows                               │
-╰───────────────────────────────────────────╯
+╭─ CROSS_PRODUCT ─╮
+╰────────┬────────╯
+         ├─────────────────────────────────╮
+╭─ EMPTY_RESULT ──╮  ╭─ READ_PARQUET ──────┴─────────────────────╮
+╰─────────────────╯  │ Function: READ_PARQUET                    │
+                     │ Projections: iq, salary, fact             │
+                     │ Column Filter:                            │
+                     │ (iq >= 90) AND (NOT (iq IN (99, 95, 97))) │
+                     │ ~2,000 rows                               │
+                     ╰───────────────────────────────────────────╯
 
 query
 SELECT * FROM vedernikoff_company;

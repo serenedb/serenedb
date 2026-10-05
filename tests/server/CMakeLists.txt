@@ -53,9 +53,12 @@ target_link_libraries(
     serenedb-tests
     PUBLIC sereneserver gtest serene_docs_corpus
 )
+sdb_link_duckdb_extensions(serenedb-tests PUBLIC)
 
 if(SDB_EMBEDDED_DOCS)
     target_link_libraries(serenedb-tests PUBLIC serene_docs_index)
+    add_dependencies(serenedb-tests serened)
+    sdb_embed_docs_index(serenedb-tests)
 endif()
 
 target_compile_definitions(

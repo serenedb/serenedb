@@ -118,7 +118,7 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
         sequence_info.SetQualification(GetName(), schema.name);
         sequence_info.SetSequenceName(entry->PkSequenceName());
         sequence_info.cache = kPkSequenceCache;
-        info.dependencies.AddOwnedDependency(
+        info.Base().dependencies.AddOwnedDependency(
           *schema.CreateSequence(transaction, sequence_info));
       }
       entry->Storage()->StartTasks();
@@ -154,43 +154,48 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
   return std::move(entry);
 }
 
+namespace {
+
+duckdb::CatalogType SchemaSetOf(duckdb::CatalogType type) {
+  switch (type) {
+    case duckdb::CatalogType::VIEW_ENTRY:
+      return duckdb::CatalogType::TABLE_ENTRY;
+    case duckdb::CatalogType::TABLE_MACRO_ENTRY:
+      return duckdb::CatalogType::TABLE_FUNCTION_ENTRY;
+    case duckdb::CatalogType::AGGREGATE_FUNCTION_ENTRY:
+    case duckdb::CatalogType::SCALAR_FUNCTION_ENTRY:
+    case duckdb::CatalogType::WINDOW_FUNCTION_ENTRY:
+      return duckdb::CatalogType::MACRO_ENTRY;
+    default:
+      return type;
+  }
+}
+
+}  // namespace
+
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry>
 SereneDBCatalog::FindSchemaById(duckdb::ClientContext& context,
                                 duckdb::idx_t id) {
-  duckdb::optional_ptr<duckdb::SchemaCatalogEntry> result;
-  GetSchemaCatalogSet().ScanWithReturn(
-    context, [&](duckdb::CatalogEntry& entry) {
-      if (entry.oid != id) {
-        return true;
-      }
-      result = &entry.Cast<duckdb::SchemaCatalogEntry>();
-      return false;
-    });
-  return result;
+  auto entry =
+    GetOidIndex().GetVisible(id, GetCatalogTransaction(context).view);
+  if (!entry || entry->type != duckdb::CatalogType::SCHEMA_ENTRY) {
+    return nullptr;
+  }
+  return &entry->Cast<duckdb::SchemaCatalogEntry>();
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::FindEntryById(
   duckdb::optional_ptr<duckdb::ClientContext> context, duckdb::CatalogType type,
   duckdb::idx_t id) {
-  duckdb::optional_ptr<duckdb::CatalogEntry> result;
-  const auto match = [&](duckdb::CatalogEntry& entry) {
-    if (!result && !entry.internal && entry.oid == id) {
-      result = &entry;
-    }
-  };
-  if (context) {
-    for (auto& schema : GetSchemas(*context)) {
-      schema.get().Scan(*context, type, match);
-    }
-    return result;
+  auto entry =
+    context ? GetOidIndex().GetVisible(id, GetCatalogTransaction(*context).view)
+            : GetOidIndex().GetCommitted(id);
+  if (!entry || entry->internal ||
+      entry->type == duckdb::CatalogType::SCHEMA_ENTRY ||
+      SchemaSetOf(entry->type) != SchemaSetOf(type)) {
+    return nullptr;
   }
-  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
-  duckdb::DuckCatalog::ScanSchemas(
-    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
-  for (auto& schema : schemas) {
-    schema.get().Scan(type, match);
-  }
-  return result;
+  return entry;
 }
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
@@ -265,10 +270,9 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   return update;
 }
 
-duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
-  duckdb::Binder& binder, duckdb::CreateStatement& stmt,
-  duckdb::CatalogEntry& table,
-  duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
+void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
+                                          duckdb::CreateStatement& stmt,
+                                          duckdb::CatalogEntry& table) {
   auto& info = stmt.info->Cast<duckdb::CreateIndexInfo>();
   const bool inverted = info.index_type == kInvertedIndexTypeName;
   const auto unknown =
@@ -300,7 +304,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     duckdb::IndexBinder where_binder(*where_bind, binder.context);
     auto where_copy = info.where_clause->Copy();
     const auto type = where_binder.Bind(where_copy)->GetReturnType();
-    if (type != duckdb::LogicalType::BOOLEAN) {
+    if (type != duckdb::LogicalType::BOOLEAN &&
+        type.id() != duckdb::LogicalTypeId::SQLNULL) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
         ERR_MSG("argument of WHERE must be type boolean, not type ",
@@ -310,6 +315,17 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   if (inverted) {
     BindInvertedIndexOptions(binder.context, info.options,
                              table.type == duckdb::CatalogType::VIEW_ENTRY);
+  } else {
+    for (auto i = info.column_opclasses.size(); i-- > 0;) {
+      if (info.column_opclasses[i] != kIncludedKind) {
+        continue;
+      }
+      info.column_opclasses.erase(info.column_opclasses.begin() + i);
+      info.column_opclass_options.erase(info.column_opclass_options.begin() +
+                                        i);
+      info.expressions.erase(info.expressions.begin() + i);
+      info.parsed_expressions.erase(info.parsed_expressions.begin() + i);
+    }
   }
   for (const auto& opclass : info.column_opclasses) {
     if (opclass.empty() || opclass == kIncludedKind || opclass == kIVFKind ||
@@ -323,15 +339,19 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       info.dependencies.AddDependency(*entry);
     }
   }
-  if (table.type == duckdb::CatalogType::VIEW_ENTRY) {
-    return connector::BindCreateIndexOnView(
-      binder, stmt, table.Cast<duckdb::ViewCatalogEntry>(), std::move(plan));
-  }
-  auto& table_entry = table.Cast<duckdb::TableCatalogEntry>();
-  if (auto* search = dynamic_cast<SearchTableEntry*>(&table_entry)) {
+}
+
+duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
+  duckdb::Binder& binder, duckdb::CreateStatement& stmt,
+  duckdb::TableCatalogEntry& table,
+  duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
+  BindIndexDefinition(binder, stmt, table);
+  if (auto* search = dynamic_cast<SearchTableEntry*>(&table)) {
     return connector::BindCreateIndexOnSearchTable(binder, stmt, *search,
                                                    std::move(plan));
   }
+  const bool inverted = stmt.info->Cast<duckdb::CreateIndexInfo>().index_type ==
+                        kInvertedIndexTypeName;
   auto& scan = plan->Cast<duckdb::LogicalGet>()
                  .bind_data->Cast<duckdb::TableScanBindData>();
   auto result =
@@ -340,6 +360,15 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     scan.is_create_index = false;
   }
   return result;
+}
+
+duckdb::unique_ptr<duckdb::LogicalOperator>
+SereneDBCatalog::BindCreateViewIndex(
+  duckdb::Binder& binder, duckdb::CreateStatement& stmt,
+  duckdb::ViewCatalogEntry& view,
+  duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
+  BindIndexDefinition(binder, stmt, view);
+  return connector::BindCreateIndexOnView(binder, stmt, view, std::move(plan));
 }
 
 duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
@@ -416,6 +445,10 @@ void SereneDBCatalog::Initialize(bool load_builtin) {
   info.oid = pg::kPgPublicSchema;
   CreateSchema(data, info);
   MountSystemSchemas(*this);
+}
+
+duckdb::idx_t SereneDBCatalog::DefaultSchemaOid() const {
+  return pg::kPgMainSchema;
 }
 
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
@@ -514,7 +547,8 @@ void SereneDBCatalog::RefuseUnsupportedAlter(duckdb::ClientContext& context,
   }
   const auto& name = lookup.entry->name.GetIdentifierName();
   if (info.type == duckdb::AlterType::ALTER_INDEX) {
-    if (!dynamic_cast<const InvertedIndexEntry*>(lookup.entry.get())) {
+    if (!info.GetNewName() &&
+        !dynamic_cast<const InvertedIndexEntry*>(lookup.entry.get())) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
                       ERR_MSG("\"", name, "\" is not an inverted index"));
     }
@@ -557,16 +591,14 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateForeignServer(
 void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
                             duckdb::AlterInfo& info) {
   const auto type = info.GetCatalogType();
-  if (type == duckdb::CatalogType::SCHEMA_ENTRY &&
-      info.type == duckdb::AlterType::RENAME) {
-    const auto& new_name = info.Cast<duckdb::RenameInfo>().new_name;
-    if (IsReservedSchemaName(new_name)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_RESERVED_NAME),
-        ERR_MSG("unacceptable schema name \"", new_name.GetIdentifierName(),
-                "\""),
-        ERR_DETAIL("The prefix \"pg_\" is reserved for system schemas."));
-    }
+  if (const auto new_name = info.GetNewName();
+      new_name && type == duckdb::CatalogType::SCHEMA_ENTRY &&
+      IsReservedSchemaName(*new_name)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_RESERVED_NAME),
+      ERR_MSG("unacceptable schema name \"", new_name->GetIdentifierName(),
+              "\""),
+      ERR_DETAIL("The prefix \"pg_\" is reserved for system schemas."));
   }
   if (transaction.HasContext() &&
       (info.type == duckdb::AlterType::ALTER_TABLE ||

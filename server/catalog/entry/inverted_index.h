@@ -221,9 +221,6 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   duckdb::unique_ptr<duckdb::CatalogEntry> AlterEntry(
     duckdb::CatalogTransaction transaction, duckdb::AlterInfo& info) final;
 
-  // A view-backed index has no DataTableInfo to read the relation's name off,
-  // and the base would dereference it. The name it was created against is the
-  // answer, and it is the only one available.
   duckdb::Identifier GetTableName() const final;
 
   duckdb::Identifier GetSchemaName() const final { return ParentSchemaName(); }

@@ -231,17 +231,35 @@ EXPLAIN SELECT Brand, Status, count(*) FROM vlog_idx
 GROUP BY GROUPING SETS ((Brand), (Status))
 ----
 QUERY PLAN
-╭─ HASH_GROUP_BY ──────────╮
-│ Groups: #0, #1           │
-│ Aggregates: count_star() │
-│ ~3 rows                  │
-╰─────────────┬────────────╯
-╭─ IRESEARCH_SCAN ─────────╮
-│ Index: vlog_idx          │
-│ Projections: brand,      │
-│              status      │
-│ ~5 rows                  │
-╰──────────────────────────╯
+╭─ CTE ─────────────────────────────────╮
+│ CTE Name: __grouping_sets_input_cte_7 │
+│ Table Index: 7                        │
+│ Execution Mode: PIPELINE_DEPENDENT    │
+│ ~4 rows                               │
+╰───────────────────┬───────────────────╯
+                    ├─────────────────────────────────────╮
+╭─ IRESEARCH_SCAN ──┴───────────────────╮  ╭─ UNION ──────┴──────────────╮
+│ Index: vlog_idx                       │  ╰──────────────┬──────────────╯
+│ Projections: brand, status            │                 ├────────────────────────────────╮
+│ ~5 rows                               │  ╭─ PROJECTION ─┴──────────────╮  ╭─ PROJECTION ─┴──────────────╮
+╰───────────────────────────────────────╯  │ Projections: #0,            │  │ Projections: NULL::VARCHAR, │
+                                           │              NULL::VARCHAR, │  │              #0, #1         │
+                                           │              #1             │  │ ~2 rows                     │
+                                           │ ~2 rows                     │  ╰──────────────┬──────────────╯
+                                           ╰──────────────┬──────────────╯  ╭─ HASH_GROUP_BY ─────────────╮
+                                           ╭─ HASH_GROUP_BY ─────────────╮  │ Groups: #0                  │
+                                           │ Groups: #0                  │  │ Aggregates: count_star()    │
+                                           │ Aggregates: count_star()    │  │ ~2 rows                     │
+                                           │ ~2 rows                     │  ╰──────────────┬──────────────╯
+                                           ╰──────────────┬──────────────╯  ╭─ PROJECTION ─┴──────────────╮
+                                           ╭─ PROJECTION ─┴──────────────╮  │ Projections: status         │
+                                           │ Projections: brand          │  │ ~5 rows                     │
+                                           │ ~5 rows                     │  ╰──────────────┬──────────────╯
+                                           ╰──────────────┬──────────────╯  ╭─ CTE_SCAN ───┴──────────────╮
+                                           ╭─ CTE_SCAN ───┴──────────────╮  │ CTE Index: 7                │
+                                           │ CTE Index: 7                │  │ ~5 rows                     │
+                                           │ ~5 rows                     │  ╰─────────────────────────────╯
+                                           ╰─────────────────────────────╯
 
 query TI
 SELECT coalesce(brand, status) AS v, count(*) AS n FROM vbase
@@ -315,15 +333,19 @@ query
 EXPLAIN SELECT array_agg(DISTINCT Brand) FROM vlog_idx
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ──────────────╮
-│ Aggregates: array_agg(DISTINCT #0) │
-│ ~1 row                             │
-╰──────────────────┬─────────────────╯
-╭─ IRESEARCH_SCAN ─┴─────────────────╮
-│ Index: vlog_idx                    │
-│ Projections: brand                 │
-│ ~5 rows                            │
-╰────────────────────────────────────╯
+╭─ UNGROUPED_AGGREGATE ─────╮
+│ Aggregates: array_agg(#0) │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ HASH_GROUP_BY ───────────╮
+│ Groups: #0                │
+│ ~2 rows                   │
+╰─────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ──────────╮
+│ Index: vlog_idx           │
+│ Projections: brand        │
+│ ~5 rows                   │
+╰───────────────────────────╯
 
 query T
 SELECT array_agg(DISTINCT brand ORDER BY brand) AS lst FROM vbase

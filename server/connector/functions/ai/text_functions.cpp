@@ -538,9 +538,8 @@ duckdb::Value ExtractSchemaReply(const TextBindData& bind,
     builder.append_raw(MinifyJson(raw));
   }
   builder.end_object();
-  duckdb::Value value{std::string{builder.view().value()}};
-  value.Reinterpret(duckdb::LogicalType::JSON());
-  return value;
+  return duckdb::Value{std::string{builder.view().value()}}.WithType(
+    duckdb::LogicalType::JSON());
 }
 
 duckdb::Value ExtractReply(const TextBindData& bind, std::string_view text) {

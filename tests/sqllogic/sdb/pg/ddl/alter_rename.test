@@ -274,7 +274,7 @@ Did you mean: "a"
 statement error
 ALTER TABLE pudge RENAME COLUMN a TO b;
 ----
-db error: ERROR: Column with name b already exists!
+db error: ERROR: Column with name "b" already exists!
 
 
 statement error

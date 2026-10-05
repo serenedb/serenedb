@@ -143,7 +143,7 @@ To distinguish the two hours, another range of bins containing the offset from U
 
 ### Time Zone Support
 
-The `TIMESTAMPTZ` type can be binned into calendar and clock bins. SereneDB implements the binning and arithmetic functions using the [International Components for Unicode](https://icu.unicode.org) time zone and calendar functions.
+The `TIMESTAMPTZ` type can be binned into calendar and clock bins. SereneDB implements the binning and arithmetic functions with its own time zone and calendar code, which follows the rules of the [International Components for Unicode](https://icu.unicode.org) and carries the [IANA time zone database](https://www.iana.org/time-zones) built in.
 
 To set the time zone, use the `SET TimeZone` command:
 
@@ -172,7 +172,7 @@ A list of available calendars can be pulled from the `icu_calendar_names()` tabl
 
 ## Settings
 
-The current value of the `TimeZone` and `Calendar` settings are determined by ICU when it starts up.
+When the server starts, `TimeZone` is the zone the `TZ` environment variable names, otherwise the zone `/etc/localtime` points at, otherwise `UTC`, and `Calendar` is `gregorian`.
 They can be queried from the `sdb_settings()` table function:
 
 <SqlLogicTest id="sql/data_types/timestamp/example_014" />

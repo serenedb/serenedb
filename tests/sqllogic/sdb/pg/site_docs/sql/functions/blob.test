@@ -56,6 +56,14 @@ SELECT octet_length('\xAABB'::BLOB) AS octet_length;
 octet_length
 2
 
+# DOCS_TEST: position
+# DOCS_TEST_BODY
+query
+SELECT position('\xBB'::BLOB IN '\xAABB'::BLOB) AS position;
+----
+position
+2
+
 # DOCS_TEST: repeat
 # DOCS_TEST_BODY
 query

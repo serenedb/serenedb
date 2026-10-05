@@ -1,8 +1,6 @@
 add_compile_options(-Wno-error)
 
 add_library(search-benchmark-common OBJECT executor.cpp index_builder.cpp)
-# iresearch-static owns irs::DuckDBEngine; the build/query binaries Initialize /
-# Shutdown it in their respective main(). Replaces the leaking bench::CsDb().
 target_link_libraries(search-benchmark-common iresearch-static simdjson)
 target_include_directories(
     search-benchmark-common
@@ -10,24 +8,8 @@ target_include_directories(
     PUBLIC ${CMAKE_SOURCE_DIR}/tests/iresearch
 )
 
-if(APPLE)
-    # Lets duckdb's weak duckdb_external_types hook stay unbound here,
-    # no serene engine to define it. ELF resolves it to null by default.
-    target_link_options(
-        search-benchmark-common
-        INTERFACE -Wl,-U,_duckdb_external_types
-    )
-endif()
-
-add_executable(search-benchmark-game-build build_index.cpp)
-target_link_libraries(search-benchmark-game-build search-benchmark-common)
-
-add_executable(search-benchmark-game-query do_query.cpp)
-target_link_libraries(search-benchmark-game-query search-benchmark-common)
+add_bench(build_index search-benchmark-game-build)
+add_bench(do_query search-benchmark-game-query)
 
 add_custom_target(search-benchmark-game)
-add_dependencies(
-    search-benchmark-game
-    search-benchmark-game-build
-    search-benchmark-game-query
-)
+add_dependencies(search-benchmark-game serenedb-bench-micro)

@@ -188,7 +188,7 @@ INSERT INTO pk_nulls VALUES (1), (NULL);
 statement error
 ALTER TABLE pk_nulls ADD PRIMARY KEY (i);
 ----
-db error: ERROR: NOT NULL constraint failed: PRIMARY_pk_nulls_i
+db error: ERROR: NOT NULL constraint failed: "PRIMARY_pk_nulls_i"
 
 
 # ---------------------------------------------------------------------------

@@ -98,8 +98,8 @@ QUERY PLAN
 ╭─ BATCH_INSERT ─────╮
 ╰──────────┬─────────╯
 ╭─ PROJECTION ───────╮
-│ Projections: #1,   │
-│              #0    │
+│ Projections: name, │
+│              id    │
 │ ~4 rows            │
 ╰──────────┬─────────╯
 ╭─ READ_CSV ─────────╮

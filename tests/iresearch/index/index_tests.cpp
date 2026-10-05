@@ -47,7 +47,6 @@
 #include <iresearch/utils/regexp_acceptor.hpp>
 #include <iresearch/utils/serialization.hpp>
 #include <iresearch/utils/type_limits.hpp>
-#include <iresearch/utils/vector.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <roaring/roaring.hh>
 #include <string>

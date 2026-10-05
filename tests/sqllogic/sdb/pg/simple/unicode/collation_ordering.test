@@ -1,0 +1,694 @@
+statement ok
+CREATE TABLE co_words AS SELECT * FROM (VALUES
+    ('en', 'a'),
+    ('en', 'A'),
+    ('en', 'á'),
+    ('en', 'Á'),
+    ('en', 'à'),
+    ('en', 'â'),
+    ('en', 'ä'),
+    ('en', 'b'),
+    ('en', 'B'),
+    ('en', 'co-op'),
+    ('en', 'coop'),
+    ('en', 'Co-op'),
+    ('en', 'cote'),
+    ('en', 'côte'),
+    ('en', 'coté'),
+    ('en', 'côté'),
+    ('en', 'resume'),
+    ('en', 'résumé'),
+    ('en', 'Résumé'),
+    ('en', 'zebra'),
+    ('en', 'Zebra'),
+    ('en', 'ñ'),
+    ('en', 'æ'),
+    ('en', 'ß'),
+    ('en', 'ss'),
+    ('en', 'ø'),
+    ('en', '1'),
+    ('en', '10'),
+    ('en', '2'),
+    ('en', '%'),
+    ('en', '_'),
+    ('en', '-'),
+    ('sv', 'a'),
+    ('sv', 'å'),
+    ('sv', 'ä'),
+    ('sv', 'ö'),
+    ('sv', 'z'),
+    ('sv', 'aa'),
+    ('sv', 'ae'),
+    ('sv', 'ü'),
+    ('sv', 'y'),
+    ('sv', 'v'),
+    ('sv', 'w'),
+    ('sv', 'ø'),
+    ('sv', 'æ'),
+    ('sv', 'Ö'),
+    ('sv', 'Å'),
+    ('sv', 'Ä'),
+    ('de', 'a'),
+    ('de', 'ä'),
+    ('de', 'ae'),
+    ('de', 'b'),
+    ('de', 'o'),
+    ('de', 'ö'),
+    ('de', 'oe'),
+    ('de', 'u'),
+    ('de', 'ü'),
+    ('de', 'ue'),
+    ('de', 's'),
+    ('de', 'ß'),
+    ('de', 'ss'),
+    ('de', 'z'),
+    ('de', 'Äpfel'),
+    ('de', 'Apfel'),
+    ('de', 'Zebra'),
+    ('es', 'c'),
+    ('es', 'ch'),
+    ('es', 'd'),
+    ('es', 'l'),
+    ('es', 'll'),
+    ('es', 'm'),
+    ('es', 'n'),
+    ('es', 'ñ'),
+    ('es', 'o'),
+    ('es', 'cz'),
+    ('es', 'chico'),
+    ('es', 'cuna'),
+    ('es', 'llave'),
+    ('es', 'luz'),
+    ('da', 'a'),
+    ('da', 'aa'),
+    ('da', 'å'),
+    ('da', 'æ'),
+    ('da', 'ø'),
+    ('da', 'z'),
+    ('da', 'Aa'),
+    ('da', 'Å'),
+    ('da', 'Ærø'),
+    ('da', 'Øl'),
+    ('nb', 'a'),
+    ('nb', 'aa'),
+    ('nb', 'å'),
+    ('nb', 'æ'),
+    ('nb', 'ø'),
+    ('nb', 'z'),
+    ('fi', 'v'),
+    ('fi', 'w'),
+    ('fi', 'y'),
+    ('fi', 'ü'),
+    ('fi', 'z'),
+    ('fi', 'å'),
+    ('fi', 'ä'),
+    ('fi', 'ö'),
+    ('cs', 'c'),
+    ('cs', 'č'),
+    ('cs', 'ch'),
+    ('cs', 'h'),
+    ('cs', 'i'),
+    ('cs', 'r'),
+    ('cs', 'ř'),
+    ('cs', 's'),
+    ('cs', 'š'),
+    ('cs', 'z'),
+    ('cs', 'ž'),
+    ('cs', 'cha'),
+    ('cs', 'hra'),
+    ('pl', 'a'),
+    ('pl', 'ą'),
+    ('pl', 'c'),
+    ('pl', 'ć'),
+    ('pl', 'e'),
+    ('pl', 'ę'),
+    ('pl', 'l'),
+    ('pl', 'ł'),
+    ('pl', 'n'),
+    ('pl', 'ń'),
+    ('pl', 'o'),
+    ('pl', 'ó'),
+    ('pl', 's'),
+    ('pl', 'ś'),
+    ('pl', 'z'),
+    ('pl', 'ź'),
+    ('pl', 'ż'),
+    ('tr', 'c'),
+    ('tr', 'ç'),
+    ('tr', 'g'),
+    ('tr', 'ğ'),
+    ('tr', 'h'),
+    ('tr', 'ı'),
+    ('tr', 'i'),
+    ('tr', 'İ'),
+    ('tr', 'I'),
+    ('tr', 'o'),
+    ('tr', 'ö'),
+    ('tr', 's'),
+    ('tr', 'ş'),
+    ('tr', 'u'),
+    ('tr', 'ü'),
+    ('lt', 'i'),
+    ('lt', 'y'),
+    ('lt', 'j'),
+    ('lt', 'k'),
+    ('lt', 'ch'),
+    ('et', 's'),
+    ('et', 'š'),
+    ('et', 'z'),
+    ('et', 'ž'),
+    ('et', 't'),
+    ('et', 'õ'),
+    ('et', 'ä'),
+    ('et', 'ö'),
+    ('et', 'ü'),
+    ('hu', 'c'),
+    ('hu', 'cs'),
+    ('hu', 'd'),
+    ('hu', 'dz'),
+    ('hu', 'dzs'),
+    ('hu', 'g'),
+    ('hu', 'gy'),
+    ('hu', 'l'),
+    ('hu', 'ly'),
+    ('hu', 'n'),
+    ('hu', 'ny'),
+    ('hu', 's'),
+    ('hu', 'sz'),
+    ('hu', 't'),
+    ('hu', 'ty'),
+    ('hu', 'z'),
+    ('hu', 'zs'),
+    ('ja', 'あ'),
+    ('ja', 'ア'),
+    ('ja', 'か'),
+    ('ja', 'カ'),
+    ('ja', 'が'),
+    ('ja', 'ガ'),
+    ('ja', '亜'),
+    ('ja', '一'),
+    ('ja', 'ー'),
+    ('ja', 'ｱ'),
+    ('ja', 'あい'),
+    ('ja', 'アイ'),
+    ('zh', '阿'),
+    ('zh', '爱'),
+    ('zh', '安'),
+    ('zh', '八'),
+    ('zh', '白'),
+    ('zh', '中'),
+    ('zh', '国'),
+    ('zh', '人'),
+    ('zh', '大'),
+    ('zh', '小'),
+    ('zh', '汉'),
+    ('zh', '字'),
+    ('zh_TW', '阿'),
+    ('zh_TW', '爱'),
+    ('zh_TW', '安'),
+    ('zh_TW', '八'),
+    ('zh_TW', '白'),
+    ('zh_TW', '中'),
+    ('zh_TW', '国'),
+    ('zh_TW', '人'),
+    ('zh_TW', '大'),
+    ('zh_TW', '小'),
+    ('zh_TW', '汉'),
+    ('zh_TW', '字'),
+    ('ko', '가'),
+    ('ko', '각'),
+    ('ko', '나'),
+    ('ko', '다'),
+    ('ko', '라'),
+    ('ko', '마'),
+    ('ko', '바'),
+    ('ko', '사'),
+    ('ko', '아'),
+    ('ko', '자'),
+    ('ko', '차'),
+    ('ko', '카'),
+    ('ko', '타'),
+    ('ko', '파'),
+    ('ko', '하'),
+    ('ko', 'ㄱ'),
+    ('ko', 'ㄲ'),
+    ('ru', 'а'),
+    ('ru', 'б'),
+    ('ru', 'в'),
+    ('ru', 'г'),
+    ('ru', 'ё'),
+    ('ru', 'е'),
+    ('ru', 'ж'),
+    ('ru', 'з'),
+    ('ru', 'и'),
+    ('ru', 'й'),
+    ('ru', 'ы'),
+    ('ru', 'ь'),
+    ('ru', 'э'),
+    ('ru', 'ю'),
+    ('ru', 'я'),
+    ('ru', 'Ё'),
+    ('ru', 'Е'),
+    ('el', 'α'),
+    ('el', 'ά'),
+    ('el', 'β'),
+    ('el', 'γ'),
+    ('el', 'δ'),
+    ('el', 'ε'),
+    ('el', 'έ'),
+    ('el', 'ω'),
+    ('el', 'ώ'),
+    ('el', 'Α'),
+    ('el', 'Ά'),
+    ('el', 'Ω'),
+    ('ar', 'ا'),
+    ('ar', 'ب'),
+    ('ar', 'ت'),
+    ('ar', 'ث'),
+    ('ar', 'ج'),
+    ('ar', 'ح'),
+    ('ar', 'خ'),
+    ('ar', 'د'),
+    ('ar', 'ذ'),
+    ('ar', 'ر'),
+    ('ar', 'ز'),
+    ('he', 'א'),
+    ('he', 'ב'),
+    ('he', 'ג'),
+    ('he', 'ד'),
+    ('he', 'ה'),
+    ('he', 'ו'),
+    ('he', 'ז'),
+    ('he', 'ח'),
+    ('he', 'ט'),
+    ('th', 'ก'),
+    ('th', 'ข'),
+    ('th', 'ค'),
+    ('th', 'เก'),
+    ('th', 'แก'),
+    ('th', 'โก'),
+    ('th', 'ไก'),
+    ('th', 'กา'),
+    ('th', 'กิ'),
+    ('vi', 'a'),
+    ('vi', 'ă'),
+    ('vi', 'â'),
+    ('vi', 'b'),
+    ('vi', 'd'),
+    ('vi', 'đ'),
+    ('vi', 'e'),
+    ('vi', 'ê'),
+    ('vi', 'o'),
+    ('vi', 'ô'),
+    ('vi', 'ơ'),
+    ('vi', 'u'),
+    ('vi', 'ư'),
+    ('fr_CA', 'cote'),
+    ('fr_CA', 'côte'),
+    ('fr_CA', 'coté'),
+    ('fr_CA', 'côté'),
+    ('sr', 'а'),
+    ('sr', 'б'),
+    ('sr', 'в'),
+    ('sr', 'г'),
+    ('sr', 'д'),
+    ('sr', 'ђ'),
+    ('sr', 'е'),
+    ('sr', 'ж'),
+    ('sr', 'з'),
+    ('hr', 'c'),
+    ('hr', 'č'),
+    ('hr', 'ć'),
+    ('hr', 'd'),
+    ('hr', 'dž'),
+    ('hr', 'đ'),
+    ('hr', 'l'),
+    ('hr', 'lj'),
+    ('hr', 'n'),
+    ('hr', 'nj'),
+    ('hr', 's'),
+    ('hr', 'š'),
+    ('hr', 'z'),
+    ('hr', 'ž')
+) t(locale, w);
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'en';
+----
+ordered
+_ - % 1 10 2 a A á Á à â ä æ b B co-op Co-op coop cote coté côte côté ñ ø resume résumé Résumé ss ß zebra Zebra
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'sv'), w) AS ordered FROM co_words WHERE locale = 'sv';
+----
+ordered
+a aa ae v w y ü z å Å ä Ä æ ö Ö ø
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'sv';
+----
+ordered
+a å Å ä Ä aa ae æ ö Ö ø ü v w y z
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'de'), w) AS ordered FROM co_words WHERE locale = 'de';
+----
+ordered
+a ä ae Apfel Äpfel b o ö oe s ss ß u ü ue z Zebra
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'de';
+----
+ordered
+a ä ae Apfel Äpfel b o ö oe s ss ß u ü ue z Zebra
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'es'), w) AS ordered FROM co_words WHERE locale = 'es';
+----
+ordered
+c ch chico cuna cz d l ll llave luz m n ñ o
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'es';
+----
+ordered
+c ch chico cuna cz d l ll llave luz m n ñ o
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'da'), w) AS ordered FROM co_words WHERE locale = 'da';
+----
+ordered
+a z æ Ærø ø Øl Å Aa å aa
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'da';
+----
+ordered
+a å Å aa Aa æ Ærø ø Øl z
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'nb'), w) AS ordered FROM co_words WHERE locale = 'nb';
+----
+ordered
+a z æ ø å aa
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'nb';
+----
+ordered
+a å aa æ ø z
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'fi'), w) AS ordered FROM co_words WHERE locale = 'fi';
+----
+ordered
+v w y ü z å ä ö
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'fi';
+----
+ordered
+å ä ö ü v w y z
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'cs'), w) AS ordered FROM co_words WHERE locale = 'cs';
+----
+ordered
+c č h hra ch cha i r ř s š z ž
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'cs';
+----
+ordered
+c č ch cha h hra i r ř s š z ž
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'pl'), w) AS ordered FROM co_words WHERE locale = 'pl';
+----
+ordered
+a ą c ć e ę l ł n ń o ó s ś z ź ż
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'pl';
+----
+ordered
+a ą c ć e ę l ł n ń o ó s ś z ź ż
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'tr'), w) AS ordered FROM co_words WHERE locale = 'tr';
+----
+ordered
+c ç g ğ h ı I i İ o ö s ş u ü
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'tr';
+----
+ordered
+c ç g ğ h i I İ ı o ö s ş u ü
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'lt'), w) AS ordered FROM co_words WHERE locale = 'lt';
+----
+ordered
+ch i y j k
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'lt';
+----
+ordered
+ch i j k y
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'et'), w) AS ordered FROM co_words WHERE locale = 'et';
+----
+ordered
+s š z ž t õ ä ö ü
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'et';
+----
+ordered
+ä ö õ s š t ü z ž
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'hu'), w) AS ordered FROM co_words WHERE locale = 'hu';
+----
+ordered
+c cs d dz dzs g gy l ly n ny s sz t ty z zs
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'hu';
+----
+ordered
+c cs d dz dzs g gy l ly n ny s sz t ty z zs
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'ja'), w) AS ordered FROM co_words WHERE locale = 'ja';
+----
+ordered
+ー あ ア ｱ あい アイ か カ が ガ 亜 一
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'ja';
+----
+ordered
+ー あ ア ｱ あい アイ か カ が ガ 一 亜
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'zh'), w) AS ordered FROM co_words WHERE locale = 'zh';
+----
+ordered
+阿 爱 安 八 白 大 国 汉 人 小 中 字
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'zh';
+----
+ordered
+中 人 八 国 大 字 安 小 汉 爱 白 阿
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'zh_TW'), w) AS ordered FROM co_words WHERE locale = 'zh_TW';
+----
+ordered
+人 八 大 小 中 汉 白 字 安 国 阿 爱
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'zh_TW';
+----
+ordered
+中 人 八 国 大 字 安 小 汉 爱 白 阿
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'ko'), w) AS ordered FROM co_words WHERE locale = 'ko';
+----
+ordered
+ㄱ 가 각 ㄲ 나 다 라 마 바 사 아 자 차 카 타 파 하
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'ko';
+----
+ordered
+ㄱ 가 각 ㄲ 나 다 라 마 바 사 아 자 차 카 타 파 하
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'ru'), w) AS ordered FROM co_words WHERE locale = 'ru';
+----
+ordered
+а б в г е Е ё Ё ж з и й ы ь э ю я
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'ru';
+----
+ordered
+а б в г е Е ё Ё ж з и й ы ь э ю я
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'el'), w) AS ordered FROM co_words WHERE locale = 'el';
+----
+ordered
+α Α ά Ά β γ δ ε έ ω Ω ώ
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'el';
+----
+ordered
+α Α ά Ά β γ δ ε έ ω Ω ώ
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'ar'), w) AS ordered FROM co_words WHERE locale = 'ar';
+----
+ordered
+ا ب ت ث ج ح خ د ذ ر ز
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'ar';
+----
+ordered
+ا ب ت ث ج ح خ د ذ ر ز
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'he'), w) AS ordered FROM co_words WHERE locale = 'he';
+----
+ordered
+א ב ג ד ה ו ז ח ט
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'he';
+----
+ordered
+א ב ג ד ה ו ז ח ט
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'th'), w) AS ordered FROM co_words WHERE locale = 'th';
+----
+ordered
+ก กา กิ เก แก โก ไก ข ค
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'th';
+----
+ordered
+ก กา กิ เก แก โก ไก ข ค
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'vi'), w) AS ordered FROM co_words WHERE locale = 'vi';
+----
+ordered
+a ă â b d đ e ê o ô ơ u ư
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'vi';
+----
+ordered
+a ă â b d đ e ê o ô ơ u ư
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'fr_CA'), w) AS ordered FROM co_words WHERE locale = 'fr_CA';
+----
+ordered
+cote côte coté côté
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'fr_CA';
+----
+ordered
+cote coté côte côté
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'sr'), w) AS ordered FROM co_words WHERE locale = 'sr';
+----
+ordered
+а б в г д ђ е ж з
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'sr';
+----
+ordered
+а б в г д ђ е ж з
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'hr'), w) AS ordered FROM co_words WHERE locale = 'hr';
+----
+ordered
+c č ć d dž đ l lj n nj s š z ž
+
+
+query
+SELECT string_agg(w, ' ' ORDER BY collate_tokens(w, 'en'), w) AS ordered FROM co_words WHERE locale = 'hr';
+----
+ordered
+c ć č d đ dž l lj n nj s š z ž
+
+
+statement ok
+DROP TABLE co_words;

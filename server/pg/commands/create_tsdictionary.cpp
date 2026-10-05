@@ -24,7 +24,6 @@
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
-#include <unicode/locid.h>
 
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/planner/binder.hpp>
@@ -58,9 +57,10 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
-#include <iresearch/utils/icu_locale_serde.hpp>
+#include <iresearch/utils/locale_serde.hpp>
 #include <iresearch/utils/misc.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/snowball_stemmer.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <optional>
@@ -235,21 +235,23 @@ class CreateTSDictionaryOptions : public OptionsParser {
   }
 
   template<const OptionInfo& Info>
-  icu::Locale ResolveLocale() {
+  duckdb::text::Locale ResolveLocale() {
     if (OptionsParser::HasOption(Info.name)) {
       auto raw = OptionsParser::EraseOptionOrDefault<Info>();
       if (raw.empty()) {
-        return irs::MakeBogusLocale();
+        return {};
       }
-      auto loc = icu::Locale::createFromName(raw.c_str());
-      if (loc.isBogus()) {
+      duckdb::text::Locale loc;
+      std::string reason;
+      if (!duckdb::text::Locale::TryParse(raw, loc, reason)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("Invalid locale \"", raw, "\" for option \"",
-                                Info.name, "\""));
+                                Info.name, "\""),
+                        ERR_DETAIL(reason));
       }
       return loc;
     }
-    return irs::MakeBogusLocale();
+    return {};
   }
 
   template<const OptionInfo& Info, typename Enum>
@@ -273,12 +275,28 @@ class CreateTSDictionaryOptions : public OptionsParser {
   irs::analysis::StemmingTokenizer::Options BuildStem() {
     irs::analysis::StemmingTokenizer::Options opts;
     opts.locale = ResolveLocale<tokenizer_options::kLocale>();
+    if (!opts.locale.IsBogus()) {
+      const std::string language{opts.locale.GetLanguage()};
+      if (!irs::make_stemmer_ptr(language.c_str(), nullptr)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("stem_words: there is no stemmer for the language \"",
+                  language, "\" of locale \"", opts.locale.GetName(), "\""));
+      }
+    }
     return opts;
   }
 
   irs::analysis::CollationTokenizer::Options BuildCollation() {
     irs::analysis::CollationTokenizer::Options opts;
     opts.locale = ResolveLocale<tokenizer_options::kLocale>();
+    std::string collation;
+    if (!opts.locale.IsBogus() && !opts.locale.GetCollation(collation)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("collate_tokens: there is no collation for locale \"",
+                opts.locale.GetName(), "\""));
+    }
     return opts;
   }
 

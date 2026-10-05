@@ -110,26 +110,44 @@ l2_norm
 0
 
 
-query
+query error
 SELECT l2_norm([1.0, 2.0, NULL]::FLOAT[3]);
+----
+db error: ERROR: l2_norm: argument can not contain NULL values
+
+
+query error
+SELECT l1_norm([1.0, 2.0, NULL]::FLOAT[3]);
+----
+db error: ERROR: l1_norm: argument can not contain NULL values
+
+
+query
+SELECT l2_norm(NULL::FLOAT[3]);
 ----
 l2_norm
 NULL
 
 
 query
-SELECT l1_norm([1.0, 2.0, NULL]::FLOAT[3]);
+SELECT l2_norm(ARRAY[]);
+----
+l2_norm
+0
+
+
+query
+SELECT l1_norm(ARRAY[]);
 ----
 l1_norm
-NULL
+0
 
 
-query error
-SELECT l2_norm(ARRAY[]);
-
-
-query error
-SELECT l1_norm(ARRAY[]);
+query
+SELECT vector_norm([0.0, 3.0, 4.0]::FLOAT[3]), vector_norm([0.0, 3.0, 4.0]);
+----
+vector_norm	vector_norm
+5	5
 
 
 query
@@ -188,26 +206,44 @@ x
 {0,-0.42<slt:ignore>,0.57<slt:ignore>}
 
 
-query
+query error
 SELECT l2_normalize([1.0, 2.0, NULL]::FLOAT[3]);
 ----
-l2_normalize
-NULL
+db error: ERROR: l2_normalize: argument can not contain NULL values
+
+
+query error
+SELECT l1_normalize([1.0, 2.0, NULL]::FLOAT[3]);
+----
+db error: ERROR: l1_normalize: argument can not contain NULL values
 
 
 query
-SELECT l1_normalize([1.0, 2.0, NULL]::FLOAT[3]);
+SELECT l2_normalize(ARRAY[]);
+----
+l2_normalize
+{}
+
+
+query
+SELECT l1_normalize(ARRAY[]);
 ----
 l1_normalize
-NULL
+{}
 
 
-query error
-SELECT l2_normalize(ARRAY[]);
+query
+SELECT l2_normalize([0.0, 0.0]::FLOAT[2]) AS a, l1_normalize([0.0, 0.0]) AS l;
+----
+a	l
+{0,0}	{0,0}
 
 
-query error
-SELECT l1_normalize(ARRAY[]);
+query
+SELECT l2_normalize([0.0, 3.0, 4.0]) AS l;
+----
+l
+{0,0.6<slt:ignore>,0.8<slt:ignore>}
 
 
 query
@@ -261,78 +297,119 @@ l2_norm
 
 query error
 SELECT [0.0, 1.0, 2.0, 4.0]::FLOAT[4] <=> [2.0, 1.0, 0.0]::FLOAT[3];
+----
+db error: ERROR: "<=>": Array arguments must be of the same size
 
 
 query error
 SELECT [0.0, 1.0, 2.0, 4.0]::FLOAT[4] <-> [2.0, 1.0, 0.0]::FLOAT[3];
+----
+db error: ERROR: "<->": Array arguments must be of the same size
 
 
 query error
 SELECT [0.0, 1.0, 2.0, 4.0]::FLOAT[4] <+> [2.0, 1.0, 0.0]::FLOAT[3];
+----
+db error: ERROR: "<+>": Array arguments must be of the same size
 
 
 query error
 SELECT [0.0, 1.0, 2.0, 4.0]::FLOAT[4] <#> [2.0, 1.0, 0.0]::FLOAT[3];
+----
+db error: ERROR: "<#>": Array arguments must be of the same size
 
 
-query
+query error
+SELECT [0.0, 1.0, 2.0, 4.0] <-> [2.0, 1.0, 0.0];
+----
+db error: ERROR: "<->": list dimensions must be equal, got left length '4' and right length '3'
+
+
+query error
 SELECT [0.0, 1.0, 2.0, 4.0]::FLOAT[4] <=> [2.0, 1.0, 0.0, NULL]::FLOAT[4];
 ----
-?column?
-NULL
+db error: ERROR: "<=>": right argument can not contain NULL values
 
 
-query
+query error
 SELECT [0.0, 1.0, 2.0, 4.0]::FLOAT[4] <-> [2.0, 1.0, 0.0, NULL]::FLOAT[4];
 ----
-?column?
-NULL
-
-
-query
-SELECT [0.0, 1.0, 2.0, 4.0]::FLOAT[4] <+> [2.0, 1.0, 0.0, NULL]::FLOAT[4];
-----
-?column?
-NULL
-
-
-query
-SELECT [0.0, 1.0, 2.0, 4.0]::FLOAT[4] <#> [2.0, 1.0, 0.0, NULL]::FLOAT[4];
-----
-?column?
-NULL
+db error: ERROR: "<->": right argument can not contain NULL values
 
 
 query error
+SELECT [0.0, 1.0, 2.0, NULL]::FLOAT[4] <+> [2.0, 1.0, 0.0, 4.0]::FLOAT[4];
+----
+db error: ERROR: "<+>": left argument can not contain NULL values
+
+
+query error
+SELECT [0.0, 1.0, 2.0, 4.0] <#> [2.0, 1.0, 0.0, NULL];
+----
+db error: ERROR: "<#>": right argument can not contain NULL values
+
+
+query
+SELECT NULL::FLOAT[4] <-> [2.0, 1.0, 0.0, 4.0]::FLOAT[4] AS a, [2.0, 1.0] <#> NULL AS l;
+----
+a	l
+NULL	NULL
+
+
+query
 SELECT ARRAY[] <-> ARRAY[];
 ----
-db error: ERROR: No function matches the given name and argument types '<->("NULL"[], "NULL"[])'. You might need to add explicit type casts.
-	Candidate functions:
-	<->(col0 VARCHAR, col1 VARCHAR) -> DOUBLE
-	<->(col0 VARCHAR, col1 GEOMETRY('OGC:CRS84')) -> DOUBLE
-	<->(col0 GEOMETRY('OGC:CRS84'), col1 VARCHAR) -> DOUBLE
-	<->(col0 GEOMETRY('OGC:CRS84'), col1 GEOMETRY('OGC:CRS84')) -> DOUBLE
-	<->(col0 FLOAT[ANY], col1 FLOAT[ANY]) -> FLOAT
-	<->(col0 DOUBLE[ANY], col1 DOUBLE[ANY]) -> DOUBLE
+?column?
+0
 
 
-
-query error
+query
 SELECT ARRAY[] <=> ARRAY[];
 ----
-db error: ERROR: No function matches the given name and argument types '<=>("NULL"[], "NULL"[])'. You might need to add explicit type casts.
-	Candidate functions:
-	<=>(col0 FLOAT[ANY], col1 FLOAT[ANY]) -> FLOAT
-	<=>(col0 DOUBLE[ANY], col1 DOUBLE[ANY]) -> DOUBLE
+?column?
+NULL
 
 
-
-query error
+query
 SELECT ARRAY[] <+> ARRAY[];
+----
+?column?
+0
 
 
-query error
+query
 SELECT ARRAY[] <#> ARRAY[];
+----
+?column?
+0
+
+
+query
+SELECT [0.0, 0.0]::FLOAT[2] <=> [1.0, 2.0]::FLOAT[2] AS a, cosine_similarity([0.0, 0.0], [0.0, 0.0]) AS l;
+----
+a	l
+1	0
+
+
+query
+SELECT [0.0, 1.0, 2.0] <-> [2.0, 1.0, 0.0] AS l2, [0.0, 1.0, 2.0] <=> [0.0, -1.0, -2.0] AS cos, [0.0, 1.0, 2.0] <+> [2.0, 1.0, 0.0] AS l1, [0.0, 1.0, 2.0] <#> [2.0, 1.0, 0.0] AS nip;
+----
+l2	cos	l1	nip
+2.8<slt:ignore>	2	4	-1
+
+
+query
+SELECT l2_sqr_distance([0.0, 1.0, 2.0], [2.0, 1.0, 0.0]) AS l2sqr, inner_product([0.0, 1.0, 2.0], [2.0, 1.0, 0.0]) AS ip, negative_inner_product([0.0, 1.0, 2.0], [2.0, 1.0, 0.0]) AS nip, l1_distance([0.0, 1.0, 2.0], [2.0, 1.0, 0.0]) AS l1;
+----
+l2sqr	ip	nip	l1
+8	1	-1	4
+
+
+query
+SELECT array_distance([0.0, 1.0, 2.0]::FLOAT[3], [2.0, 1.0, 0.0]::FLOAT[3]) = l2_distance([0.0, 1.0, 2.0], [2.0, 1.0, 0.0])::FLOAT AS a, list_inner_product([0.0, 1.0, 2.0]::FLOAT[3], [2.0, 1.0, 0.0]::FLOAT[3]) AS l;
+----
+a	l
+t	1
 
 
 statement ok
@@ -341,6 +418,8 @@ CREATE TABLE t(name TEXT, emb REAL[2]);
 
 statement error
 INSERT INTO t VALUES ("pablo", [6.5, 1.101]::REAL[2]), ("vedernikoff", ARRAY[1.002, 8.098]);
+----
+db error: ERROR: Referenced column "pablo" was not found because the FROM clause is missing
 
 
 statement ok
@@ -349,6 +428,8 @@ INSERT INTO t VALUES ('pablo', [6.5, 1.101]::REAL[2]), ('vedernikoff', ARRAY[1.0
 
 query error
 SELECT * FROM t ORDER BY t.emb <-> [1.0, 1.0, 1.0]::REAL[3];
+----
+db error: ERROR: "<->": Array arguments must be of the same size
 
 
 statement ok

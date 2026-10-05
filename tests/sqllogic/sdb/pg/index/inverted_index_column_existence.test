@@ -224,26 +224,26 @@ query
 EXPLAIN SELECT pk, body FROM ce_idx WHERE body IS NOT NULL ORDER BY pk
 ----
 QUERY PLAN
-╭─ ORDER_BY ──────────────╮
-│ Order By: ce_idx.pk ASC │
-│ ~1 row                  │
-╰────────────┬────────────╯
-╭─ PROJECTION ────────────╮
-│ Projections: pk, body   │
-│ ~1 row                  │
-╰────────────┬────────────╯
-╭─ IRESEARCH_SCAN ────────╮
-│ Index: ce_idx           │
-│ Lookup: table           │
-│ Index Filter:           │
-│ ╭─ Not ─────────────╮   │
-│ ╰─────────┬─────────╯   │
-│ ╭─ Terms ─┴─────────╮   │
-│ │ Field: body(null) │   │
-│ ╰───────────────────╯   │
-│ Projections: body, pk   │
-│ ~1 row                  │
-╰─────────────────────────╯
+╭─ ORDER_BY ────────────╮
+│ Order By: pk ASC      │
+│ ~1 row                │
+╰───────────┬───────────╯
+╭─ PROJECTION ──────────╮
+│ Projections: pk, body │
+│ ~1 row                │
+╰───────────┬───────────╯
+╭─ IRESEARCH_SCAN ──────╮
+│ Index: ce_idx         │
+│ Lookup: table         │
+│ Index Filter:         │
+│ ╭─ Not ─────────────╮ │
+│ ╰─────────┬─────────╯ │
+│ ╭─ Terms ─┴─────────╮ │
+│ │ Field: body(null) │ │
+│ ╰───────────────────╯ │
+│ Projections: body, pk │
+│ ~1 row                │
+╰───────────────────────╯
 
 
 query

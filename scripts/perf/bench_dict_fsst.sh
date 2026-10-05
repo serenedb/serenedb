@@ -310,7 +310,7 @@ for shape in ${SHAPES}; do
 			segments=$(plain_sql "SELECT count(*) FROM pragma_storage_info('${alias}.t') WHERE column_name='s' AND segment_type='VARCHAR';")
 			# ORDER BY keeps the list stable across rounds, so averaging
 			# does not report a spurious "mixed".
-			seg_modes=$(plain_sql "SELECT string_agg(m, ',' ORDER BY m) FROM (SELECT DISTINCT replace(segment_info, 'mode: ', '') AS m FROM pragma_storage_info('${alias}.t', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR');")
+			seg_modes=$(plain_sql "SELECT string_agg(m, ',' ORDER BY m) FROM (SELECT DISTINCT split_part(segment_info, ':', 1) AS m FROM pragma_storage_info('${alias}.t', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR');")
 			[[ -n "${seg_modes}" ]] || seg_modes="none"
 
 			if [[ "${COLD}" == "1" ]]; then

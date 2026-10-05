@@ -39,7 +39,7 @@ VACUUM (REFRESH_TABLE) wal_geo_t;
 # Plan check: geo distance + projection both served by the inverted index.
 query
 EXPLAIN SELECT pk FROM wal_geo_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
@@ -57,7 +57,7 @@ QUERY PLAN
 # Pre-crash row: geo distance query works against on-disk segment.
 query
 SELECT pk FROM wal_geo_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0
 ORDER BY pk;
 ----
 pk
@@ -68,7 +68,7 @@ pk
 # that the geo distance filter consults, not user-visible).
 query
 SELECT pk, geo FROM wal_geo_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 pk	geo
 1	{"type":"Point","coordinates":[37.615895,55.703900]}
@@ -100,7 +100,7 @@ VACUUM (REFRESH_TABLE) wal_geo_t;
 connection wal_after
 query
 SELECT pk FROM wal_geo_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 pk
 1
@@ -109,7 +109,7 @@ pk
 connection wal_after
 query
 SELECT pk FROM wal_geo_idx
-WHERE geo <-> '{"type":"Point","coordinates":[2.35,48.86]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[2.35,48.86]}') < 1000.0;
 ----
 pk
 2
@@ -117,7 +117,7 @@ pk
 connection wal_after
 query
 SELECT pk FROM wal_geo_idx
-WHERE geo <-> '{"type":"Point","coordinates":[-74.0,40.71]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[-74.0,40.71]}') < 1000.0;
 ----
 pk
 3

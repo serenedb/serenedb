@@ -90,25 +90,6 @@ std::string_view DropObjectTag(duckdb::CatalogType type) {
   }
 }
 
-std::string_view AlterObjectTag(duckdb::CatalogType type) {
-  using duckdb::CatalogType;
-  switch (type) {
-    case CatalogType::TABLE_ENTRY:
-      return "ALTER TABLE";
-    case CatalogType::VIEW_ENTRY:
-      return "ALTER VIEW";
-    case CatalogType::INDEX_ENTRY:
-      return "ALTER INDEX";
-    case CatalogType::SEQUENCE_ENTRY:
-      return "ALTER SEQUENCE";
-    case CatalogType::MACRO_ENTRY:
-    case CatalogType::TABLE_MACRO_ENTRY:
-      return "ALTER FUNCTION";
-    default:
-      return "ALTER";
-  }
-}
-
 // `EXECUTE name` reports the underlying statement's tag in PG (e.g. a
 // SELECT-backed prepared statement yields "SELECT N"). Look the referenced
 // statement up in DuckDB's client-local prepared-statement catalog.
@@ -233,8 +214,13 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
               return make("ALTER TABLE");
             case duckdb::AlterType::ALTER_VIEW:
               return make("ALTER VIEW");
-            case duckdb::AlterType::RENAME:
-              return make(AlterObjectTag(alter_stmt.info->GetCatalogType()));
+            case duckdb::AlterType::ALTER_INDEX:
+              return make("ALTER INDEX");
+            case duckdb::AlterType::ALTER_SCALAR_FUNCTION:
+            case duckdb::AlterType::ALTER_TABLE_FUNCTION:
+              return make("ALTER FUNCTION");
+            case duckdb::AlterType::ALTER_SCHEMA:
+              return make("ALTER SCHEMA");
             case duckdb::AlterType::ALTER_SEQUENCE:
               return make("ALTER SEQUENCE");
             case duckdb::AlterType::ALTER_DATABASE:
@@ -275,9 +261,23 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
 }  // namespace
 
 CommandTag BuildCommandTag(const duckdb::PreparedStatement& prepared) {
-  return BuildCommandTagImpl(prepared.data->statement_type,
-                             prepared.data->unbound_statement.get(),
-                             prepared.context.get());
+  return BuildCommandTagImpl(prepared.GetStatementType(),
+                             UnboundStatement(prepared),
+                             prepared.TryGetContext().get());
+}
+
+const duckdb::SQLStatement* UnboundStatement(
+  const duckdb::PreparedStatement& prepared) {
+  const auto context = prepared.TryGetContext();
+  if (!context) {
+    return nullptr;
+  }
+  const auto& statements =
+    duckdb::ClientData::Get(*context).prepared_statements;
+  const auto it = statements.find(duckdb::Identifier{prepared.GetName()});
+  return it != statements.end() && it->second
+           ? it->second->unbound_statement.get()
+           : nullptr;
 }
 
 CommandTag BuildCommandTag(const duckdb::SQLStatement& statement,

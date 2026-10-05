@@ -36,7 +36,7 @@ static void WriteFile(uint64_t size) {
   }
 }
 
-int main() {
+static int Main() {
   std::vector<std::thread> threads;
   threads.reserve(kThreads);
   for (uint64_t i = 0; i != kThreads; ++i) {
@@ -52,4 +52,8 @@ int main() {
   for (auto& thread : threads) {
     thread.join();
   }
+  return 0;
 }
+
+[[maybe_unused]] static const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

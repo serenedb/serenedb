@@ -275,18 +275,37 @@ query
 EXPLAIN SELECT count(DISTINCT x), sum(DISTINCT x), min(DISTINCT x) FROM agg_dedupe;
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ─────────────────────╮
-│ Aggregates: count(DISTINCT #0),           │
-│             sum_no_overflow(DISTINCT #0), │
-│             min(#0)                       │
-│ ~1 row                                    │
-╰─────────────────────┬─────────────────────╯
-╭─ SEQ_SCAN ──────────┴─────────────────────╮
-│ Table: agg_dedupe                         │
-│ Type: Sequential Scan                     │
-│ Projections: x                            │
-│ ~5 rows                                   │
-╰───────────────────────────────────────────╯
+╭─ CTE ──────────────────────────────╮
+│ CTE Name: __aggregate_cte_7        │
+│ Table Index: 7                     │
+│ Execution Mode: PIPELINE_DEPENDENT │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+                   ├──────────────────────────────────────╮
+╭─ SEQ_SCAN ───────┴─────────────────╮  ╭─ CROSS_PRODUCT ─┴────────────────╮
+│ Table: agg_dedupe                  │  ╰─────────────────┬────────────────╯
+│ Type: Sequential Scan              │                    ├───────────────────────────────╮
+│ Projections: x                     │  ╭─ UNGROUPED_AGGREGATE ────────────╮  ╭─ UNGROUPED_AGGREGATE ─╮
+│ ~5 rows                            │  │ Aggregates: count(#0),           │  │ Aggregates: min(#0)   │
+╰────────────────────────────────────╯  │             sum_no_overflow(#0)  │  │ ~1 row                │
+                                        │ ~1 row                           │  ╰───────────┬───────────╯
+                                        ╰─────────────────┬────────────────╯  ╭─ CTE_SCAN ┴───────────╮
+                                        ╭─ PROJECTION ────┴────────────────╮  │ CTE Index: 7          │
+                                        │ Projections: CAST(#0 AS INTEGER) │  │ ~5 rows               │
+                                        │ ~2 rows                          │  ╰───────────────────────╯
+                                        ╰─────────────────┬────────────────╯
+                                        ╭─ PERFECT_HASH_GROUP_BY ──────────╮
+                                        │ Groups: #0                       │
+                                        │ ~2 rows                          │
+                                        ╰─────────────────┬────────────────╯
+                                        ╭─ PROJECTION ────┴────────────────╮
+                                        │ Projections: CAST(#0 AS TINYINT) │
+                                        │ ~5 rows                          │
+                                        ╰─────────────────┬────────────────╯
+                                        ╭─ CTE_SCAN ──────┴────────────────╮
+                                        │ CTE Index: 7                     │
+                                        │ ~5 rows                          │
+                                        ╰──────────────────────────────────╯
 
 
 # Plan: distinct aggregates over different inputs get a slot each.
@@ -294,17 +313,45 @@ query
 EXPLAIN SELECT count(DISTINCT x), sum(DISTINCT y) FROM agg_dedupe;
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ─────────────────────╮
-│ Aggregates: count(DISTINCT #0),           │
-│             sum_no_overflow(DISTINCT #1)  │
-│ ~1 row                                    │
-╰─────────────────────┬─────────────────────╯
-╭─ SEQ_SCAN ──────────┴─────────────────────╮
-│ Table: agg_dedupe                         │
-│ Type: Sequential Scan                     │
-│ Projections: x, y                         │
-│ ~5 rows                                   │
-╰───────────────────────────────────────────╯
+╭─ CTE ──────────────────────────────╮
+│ CTE Name: __aggregate_cte_7        │
+│ Table Index: 7                     │
+│ Execution Mode: PIPELINE_DEPENDENT │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+                   ├──────────────────────────────────────╮
+╭─ SEQ_SCAN ───────┴─────────────────╮  ╭─ PROJECTION ────┴─────────────────╮
+│ Table: agg_dedupe                  │  │ Projections: #1, #0               │
+│ Type: Sequential Scan              │  │ ~1 row                            │
+│ Projections: x, y                  │  ╰─────────────────┬─────────────────╯
+│ ~5 rows                            │  ╭─ CROSS_PRODUCT ─┴─────────────────╮
+╰────────────────────────────────────╯  ╰─────────────────┬─────────────────╯
+                                                          ├──────────────────────────────────────╮
+                                        ╭─ UNGROUPED_AGGREGATE ─────────────╮  ╭─ UNGROUPED_AGGREGATE ─────────────╮
+                                        │ Aggregates: sum_no_overflow(#0)   │  │ Aggregates: count(#0)             │
+                                        │ ~1 row                            │  │ ~1 row                            │
+                                        ╰─────────────────┬─────────────────╯  ╰─────────────────┬─────────────────╯
+                                        ╭─ PROJECTION ────┴─────────────────╮  ╭─ PROJECTION ────┴─────────────────╮
+                                        │ Projections: CAST(#0 AS INTEGER)  │  │ Projections: CAST(#0 AS INTEGER)  │
+                                        │ ~2 rows                           │  │ ~2 rows                           │
+                                        ╰─────────────────┬─────────────────╯  ╰─────────────────┬─────────────────╯
+                                        ╭─ PERFECT_HASH_GROUP_BY ───────────╮  ╭─ PERFECT_HASH_GROUP_BY ───────────╮
+                                        │ Groups: #0                        │  │ Groups: #0                        │
+                                        │ ~2 rows                           │  │ ~2 rows                           │
+                                        ╰─────────────────┬─────────────────╯  ╰─────────────────┬─────────────────╯
+                                        ╭─ PROJECTION ────┴─────────────────╮  ╭─ PROJECTION ────┴─────────────────╮
+                                        │ Projections: y                    │  │ Projections: x                    │
+                                        │ ~5 rows                           │  │ ~5 rows                           │
+                                        ╰─────────────────┬─────────────────╯  ╰─────────────────┬─────────────────╯
+                                        ╭─ PROJECTION ────┴─────────────────╮  ╭─ PROJECTION ────┴─────────────────╮
+                                        │ Projections: CAST(#0 AS TINYINT), │  │ Projections: CAST(#0 AS TINYINT), │
+                                        │              CAST(#1 AS TINYINT)  │  │              CAST(#1 AS TINYINT)  │
+                                        │ ~5 rows                           │  │ ~5 rows                           │
+                                        ╰─────────────────┬─────────────────╯  ╰─────────────────┬─────────────────╯
+                                        ╭─ CTE_SCAN ──────┴─────────────────╮  ╭─ CTE_SCAN ──────┴─────────────────╮
+                                        │ CTE Index: 7                      │  │ CTE Index: 7                      │
+                                        │ ~5 rows                           │  │ ~5 rows                           │
+                                        ╰───────────────────────────────────╯  ╰───────────────────────────────────╯
 
 
 # Plan: same input but different filters -- separate slots for the filters.
@@ -312,22 +359,45 @@ query
 EXPLAIN SELECT count(DISTINCT x) FILTER (WHERE y > 15), sum(DISTINCT x) FILTER (WHERE y < 25) FROM agg_dedupe;
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ──────────────────────────────────────╮
-│ Aggregates:                                                │
-│ count(DISTINCT #0) FILTER (WHERE #1) Filter: #1,           │
-│ sum_no_overflow(DISTINCT #0) FILTER (WHERE #2) Filter: #2  │
-│ ~1 row                                                     │
-╰──────────────────────────────┬─────────────────────────────╯
-╭─ PROJECTION ─────────────────┴─────────────────────────────╮
-│ Projections: x, y > 15, y < 25                             │
-│ ~5 rows                                                    │
-╰──────────────────────────────┬─────────────────────────────╯
-╭─ SEQ_SCAN ───────────────────┴─────────────────────────────╮
-│ Table: agg_dedupe                                          │
-│ Type: Sequential Scan                                      │
-│ Projections: y, x                                          │
-│ ~5 rows                                                    │
-╰────────────────────────────────────────────────────────────╯
+╭─ CTE ──────────────────────────────╮
+│ CTE Name: __aggregate_cte_7        │
+│ Table Index: 7                     │
+│ Execution Mode: PIPELINE_DEPENDENT │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+                   ├──────────────────────────────────────────────╮
+╭─ SEQ_SCAN ───────┴─────────────────╮  ╭─ PROJECTION ────────────┴────────────────────────╮
+│ Table: agg_dedupe                  │  │ Projections: #1, #0                              │
+│ Type: Sequential Scan              │  │ ~1 row                                           │
+│ Projections: y, x                  │  ╰─────────────────────────┬────────────────────────╯
+│ ~5 rows                            │  ╭─ CROSS_PRODUCT ─────────┴────────────────────────╮
+╰────────────────────────────────────╯  ╰─────────────────────────┬────────────────────────╯
+                                                                  ├────────────────────────────────────────────────╮
+                                        ╭─ UNGROUPED_AGGREGATE ───┴────────────────────────╮  ╭─ UNGROUPED_AGGREGATE ──────────────────╮
+                                        │ Aggregates:                                      │  │ Aggregates:                            │
+                                        │ sum_no_overflow(#0) FILTER (WHERE #1) Filter: #1 │  │ count(#0) FILTER (WHERE #1) Filter: #1 │
+                                        │ ~1 row                                           │  │ ~1 row                                 │
+                                        ╰─────────────────────────┬────────────────────────╯  ╰────────────────────┬───────────────────╯
+                                        ╭─ PROJECTION ────────────┴────────────────────────╮  ╭─ PROJECTION ───────┴───────────────────╮
+                                        │ Projections: CAST(#0 AS INTEGER), #1             │  │ Projections: CAST(#0 AS INTEGER), #1   │
+                                        │ ~2 rows                                          │  │ ~2 rows                                │
+                                        ╰─────────────────────────┬────────────────────────╯  ╰────────────────────┬───────────────────╯
+                                        ╭─ HASH_GROUP_BY ─────────┴────────────────────────╮  ╭─ HASH_GROUP_BY ────┴───────────────────╮
+                                        │ Groups: #0, #1                                   │  │ Groups: #0, #1                         │
+                                        │ ~2 rows                                          │  │ ~2 rows                                │
+                                        ╰─────────────────────────┬────────────────────────╯  ╰────────────────────┬───────────────────╯
+                                        ╭─ PROJECTION ────────────┴────────────────────────╮  ╭─ PROJECTION ───────┴───────────────────╮
+                                        │ Projections: x, y < 25                           │  │ Projections: x, y > 15                 │
+                                        │ ~5 rows                                          │  │ ~5 rows                                │
+                                        ╰─────────────────────────┬────────────────────────╯  ╰────────────────────┬───────────────────╯
+                                        ╭─ PROJECTION ────────────┴────────────────────────╮  ╭─ PROJECTION ───────┴───────────────────╮
+                                        │ Projections: #0, CAST(#1 AS TINYINT)             │  │ Projections: #0, CAST(#1 AS TINYINT)   │
+                                        │ ~5 rows                                          │  │ ~5 rows                                │
+                                        ╰─────────────────────────┬────────────────────────╯  ╰────────────────────┬───────────────────╯
+                                        ╭─ CTE_SCAN ──────────────┴────────────────────────╮  ╭─ CTE_SCAN ─────────┴───────────────────╮
+                                        │ CTE Index: 7                                     │  │ CTE Index: 7                           │
+                                        │ ~5 rows                                          │  │ ~5 rows                                │
+                                        ╰──────────────────────────────────────────────────╯  ╰────────────────────────────────────────╯
 
 
 # Plan: volatile inputs are never shared -- min reads #0, max reads #1.

@@ -22,6 +22,7 @@
 
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/common/unique_ptr.hpp>
+#include <duckdb/main/query_result.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <string>
 #include <yaclib/async/future.hpp>
@@ -36,7 +37,6 @@
 namespace duckdb {
 
 class Connection;
-class MaterializedQueryResult;
 class PreparedStatement;
 
 }  // namespace duckdb
@@ -76,11 +76,11 @@ class RequestContext {
   // scheduler worker is returned to the pool (other sessions + this query's
   // own parallel sub-tasks keep progressing). `writes` arms the storage
   // transaction. The result may carry an error (check HasError()).
-  virtual yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>>
-  RunQuery(std::string sql, bool writes) = 0;
+  virtual yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunQuery(
+    std::string sql, bool writes) = 0;
   // RunQuery for a statement prepared on Connection(), with no parameters.
-  virtual yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>>
-  RunPrepared(duckdb::PreparedStatement& statement) = 0;
+  virtual yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunPrepared(
+    duckdb::PreparedStatement& statement) = 0;
   // A per-session slot for a statement prepared on Connection(); a handler
   // prepares into it once and re-executes it on later requests.
   virtual PreparedEntry& PreparedSlot(PreparedSlotId slot) = 0;

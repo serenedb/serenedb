@@ -24,7 +24,7 @@
 // invocation and then read every row, which is the shape of the loops that
 // remain on the unified form.
 //
-//   perf stat -e instructions ./serenedb-bench-micro-vector_access \
+//   perf stat -e instructions ./serenedb-bench-micro vector_access \
 //     --benchmark_filter='^BM_Strings/' --benchmark_min_time=2000x
 
 #include <benchmark/benchmark.h>
@@ -207,5 +207,3 @@ BENCHMARK_CAPTURE(BM_Rowids, flat_unified, Shape::Flat, false);
 BENCHMARK_CAPTURE(BM_Rowids, flat_values, Shape::Flat, true);
 BENCHMARK_CAPTURE(BM_Rowids, dict_unified, Shape::Dictionary, false);
 BENCHMARK_CAPTURE(BM_Rowids, dict_values, Shape::Dictionary, true);
-
-BENCHMARK_MAIN();

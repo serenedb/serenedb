@@ -223,30 +223,29 @@ FROM docs_idx WHERE body @@ ts_any(['trail', 'gear'])
 ORDER BY hybrid DESC, pk;
 ----
 QUERY PLAN
-╭─ ORDER_BY ─────────────────────────────────────────────────────╮
-│ Order By:                                                      │
-│ va <-> CAST(list_value(100, 0, 0) AS FLOAT[3])) * 0.01)) DESC, │
-│ docs_idx.pk ASC                                                │
-│ ~1 row                                                         │
-╰────────────────────────────────┬───────────────────────────────╯
-╭─ PROJECTION ───────────────────┴───────────────────────────────╮
-│ Projections: pk, hybrid                                        │
-│ ~1 row                                                         │
-╰────────────────────────────────┬───────────────────────────────╯
-╭─ IRESEARCH_SCAN ───────────────┴───────────────────────────────╮
-│ Index: docs_idx                                                │
-│ Lookup: table                                                  │
-│ Index Filter:                                                  │
-│ ╭─ Or ────────────────────╮                                    │
-│ ╰────────────┬────────────╯                                    │
-│ ╭─ Terms ────┴────────────╮                                    │
-│ │ Field: body(string)     │                                    │
-│ │ Values: 'gear', 'trail' │                                    │
-│ ╰─────────────────────────╯                                    │
-│ Score: idf()                                                   │
-│ Projections: pk (l), va (i), sdb_inverted_index_score          │
-│ ~1 row                                                         │
-╰────────────────────────────────────────────────────────────────╯
+╭─ ORDER_BY ─────────────────────────────╮
+│ Order By: hybrid DESC, pk ASC          │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ PROJECTION ───────┴───────────────────╮
+│ Projections: pk, hybrid                │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: docs_idx                        │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Or ────────────────────╮            │
+│ ╰────────────┬────────────╯            │
+│ ╭─ Terms ────┴────────────╮            │
+│ │ Field: body(string)     │            │
+│ │ Values: 'gear', 'trail' │            │
+│ ╰─────────────────────────╯            │
+│ Score: idf()                           │
+│ Projections: pk (l), va (i),           │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
 
 
 # Ordering by the vector alone, for contrast: the text side is a filter and
@@ -287,32 +286,31 @@ WHERE (body @@ ts_any(['trail', 'gear']))::score('constant(1)')::merge('max')
 ORDER BY hybrid DESC, pk;
 ----
 QUERY PLAN
-╭─ ORDER_BY ─────────────────────────────────────────────────────╮
-│ Order By:                                                      │
-│ va <-> CAST(list_value(100, 0, 0) AS FLOAT[3])) * 0.01)) DESC, │
-│ docs_idx.pk ASC                                                │
-│ ~1 row                                                         │
-╰────────────────────────────────┬───────────────────────────────╯
-╭─ PROJECTION ───────────────────┴───────────────────────────────╮
-│ Projections: pk, hybrid                                        │
-│ ~1 row                                                         │
-╰────────────────────────────────┬───────────────────────────────╯
-╭─ IRESEARCH_SCAN ───────────────┴───────────────────────────────╮
-│ Index: docs_idx                                                │
-│ Lookup: table                                                  │
-│ Index Filter:                                                  │
-│ ╭─ Or ─────────────────────╮                                   │
-│ │ Merge: max               │                                   │
-│ │ Score: constant(value=1) │                                   │
-│ ╰─────────────┬────────────╯                                   │
-│ ╭─ Terms ─────┴────────────╮                                   │
-│ │ Field: body(string)      │                                   │
-│ │ Values: 'gear', 'trail'  │                                   │
-│ ╰──────────────────────────╯                                   │
-│ Score: bm25(k1=1.2, b=0.75)                                    │
-│ Projections: pk (l), va (i), sdb_inverted_index_score          │
-│ ~1 row                                                         │
-╰────────────────────────────────────────────────────────────────╯
+╭─ ORDER_BY ─────────────────────────────╮
+│ Order By: hybrid DESC, pk ASC          │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ PROJECTION ───────┴───────────────────╮
+│ Projections: pk, hybrid                │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: docs_idx                        │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Or ─────────────────────╮           │
+│ │ Merge: max               │           │
+│ │ Score: constant(value=1) │           │
+│ ╰─────────────┬────────────╯           │
+│ ╭─ Terms ─────┴────────────╮           │
+│ │ Field: body(string)      │           │
+│ │ Values: 'gear', 'trail'  │           │
+│ ╰──────────────────────────╯           │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: pk (l), va (i),           │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
 
 
 # --- hybrid: text filter + vector ordering -----------------------------------

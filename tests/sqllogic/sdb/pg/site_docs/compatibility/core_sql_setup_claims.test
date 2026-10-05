@@ -91,7 +91,7 @@ ALTER TABLE sc_alter ADD CONSTRAINT sc_alter_uq UNIQUE (b);
 statement error
 ALTER TABLE sc_alter ADD FOREIGN KEY (a) REFERENCES sc_alter_pk (a);
 ----
-db error: ERROR: unsupported constraint type in ALTER TABLE statement
+db error: ERROR: No support for adding FOREIGN_KEY constraints with ALTER TABLE
 
 
 # ddl_alter: DROP CONSTRAINT

@@ -1,0 +1,56 @@
+control substitution on
+
+statement ok
+CREATE DATABASE diu_db;
+
+
+statement ok
+CREATE TABLE diu_db.public.t AS SELECT range AS x FROM range(1000);
+
+
+statement ok
+INSERT INTO diu_db.public.t SELECT range FROM range(1000);
+
+
+connection reader
+statement ok
+BEGIN;
+
+
+connection reader
+query
+SELECT count(*) AS n FROM diu_db.public.t;
+----
+n
+2000
+
+
+connection default
+statement ok
+DROP DATABASE diu_db;
+
+
+connection reader
+query
+SELECT count(*) AS n FROM diu_db.public.t;
+----
+n
+2000
+
+
+connection reader
+statement ok
+COMMIT;
+
+
+connection reader
+statement error Table with name "diu_db.public.t" does not exist
+SELECT count(*) AS n FROM diu_db.public.t;
+
+
+connection default
+query
+SELECT count(*) AS n FROM pg_database WHERE datname = 'diu_db';
+----
+n
+0

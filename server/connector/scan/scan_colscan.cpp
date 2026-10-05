@@ -59,7 +59,8 @@ duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
       continue;
     }
     const auto take = static_cast<duckdb::idx_t>(
-      std::min<uint64_t>(STANDARD_VECTOR_SIZE, l.doc_end - l.doc_cursor));
+      std::min<uint64_t>({STANDARD_VECTOR_SIZE, l.doc_end - l.doc_cursor,
+                          scanner.WindowEnd(l.doc_cursor) - l.doc_cursor}));
     duckdb::idx_t produced;
     if (l.has_mask) {
       const auto first =

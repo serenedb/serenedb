@@ -1,0 +1,340 @@
+# A filtered search-table scan ends its windows where the block of any string
+# filter column ends, so no string column's codec filter sees a window that
+# crosses into its next block. The string blocks here are not multiples of the
+# vector size; every result is checked against a native copy of the rows,
+# before and after deleting rows.
+
+statement ok
+CREATE TABLE swb_src AS
+SELECT i,
+       CASE WHEN i % 50 = 0 THEN '' ELSE 'https://host' || (i % 9973)::VARCHAR || '.example/path/' || md5(i::VARCHAR) END AS s,
+       (i % 37)::INTEGER AS k,
+       CASE WHEN i % 9 = 0 THEN '' ELSE 'title ' || (i % 701)::VARCHAR || ' ' || md5((i * 7)::VARCHAR) || md5(i::VARCHAR) END AS t
+FROM generate_series(1, 120000) g(i);
+
+statement ok
+CREATE TABLE swb (i BIGINT PRIMARY KEY, s VARCHAR USING COMPRESSION dict_fsst, k INTEGER, t VARCHAR USING COMPRESSION dict_fsst)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement count 120000
+INSERT INTO swb SELECT i, s, k, t FROM swb_src;
+
+statement ok
+VACUUM (REFRESH_TABLE) swb;
+
+query
+SELECT count(*) > 1 AS many, count(*) FILTER (WHERE count % 2048 <> 0) > 0 AS unaligned
+FROM pragma_storage_info('swb') WHERE column_name = 's' AND segment_type = 'VARCHAR';
+----
+many	unaligned
+t	t
+
+query
+SELECT count(*) > 0 AS differ FROM (
+  SELECT start FROM pragma_storage_info('swb') WHERE column_name = 's' AND segment_type = 'VARCHAR'
+  EXCEPT
+  SELECT start FROM pragma_storage_info('swb') WHERE column_name = 't' AND segment_type = 'VARCHAR');
+----
+differ
+t
+
+# Dense string filter, another column projected.
+query
+SELECT count(*) AS n FROM (
+  SELECT i, k FROM swb WHERE s <> ''
+  EXCEPT ALL
+  SELECT i, k FROM swb_src WHERE s <> '');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, k FROM swb_src WHERE s <> ''
+  EXCEPT ALL
+  SELECT i, k FROM swb WHERE s <> '');
+----
+n
+0
+
+
+# Dense string filter with its own column projected.
+query
+SELECT count(*) AS n FROM (
+  SELECT i, s FROM swb WHERE s <> ''
+  EXCEPT ALL
+  SELECT i, s FROM swb_src WHERE s <> '');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, s FROM swb_src WHERE s <> ''
+  EXCEPT ALL
+  SELECT i, s FROM swb WHERE s <> '');
+----
+n
+0
+
+
+# Two filters, the string one first in the chain.
+query
+SELECT count(*) AS n FROM (
+  SELECT i FROM swb WHERE s <> '' AND k < 30
+  EXCEPT ALL
+  SELECT i FROM swb_src WHERE s <> '' AND k < 30);
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i FROM swb_src WHERE s <> '' AND k < 30
+  EXCEPT ALL
+  SELECT i FROM swb WHERE s <> '' AND k < 30);
+----
+n
+0
+
+
+# Selective string filter.
+query
+SELECT count(*) AS n FROM (
+  SELECT i, k FROM swb WHERE s = ''
+  EXCEPT ALL
+  SELECT i, k FROM swb_src WHERE s = '');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, k FROM swb_src WHERE s = ''
+  EXCEPT ALL
+  SELECT i, k FROM swb WHERE s = '');
+----
+n
+0
+
+# Two string filters with different block boundaries.
+query
+SELECT count(*) AS n FROM (
+  SELECT i, k FROM swb WHERE s <> '' AND t LIKE '%title 7%'
+  EXCEPT ALL
+  SELECT i, k FROM swb_src WHERE s <> '' AND t LIKE '%title 7%');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, k FROM swb_src WHERE s <> '' AND t LIKE '%title 7%'
+  EXCEPT ALL
+  SELECT i, k FROM swb WHERE s <> '' AND t LIKE '%title 7%');
+----
+n
+0
+
+
+# Two string filters, both projected.
+query
+SELECT count(*) AS n FROM (
+  SELECT i, s, t FROM swb WHERE t <> '' AND s LIKE '%host12%'
+  EXCEPT ALL
+  SELECT i, s, t FROM swb_src WHERE t <> '' AND s LIKE '%host12%');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, s, t FROM swb_src WHERE t <> '' AND s LIKE '%host12%'
+  EXCEPT ALL
+  SELECT i, s, t FROM swb WHERE t <> '' AND s LIKE '%host12%');
+----
+n
+0
+
+
+# A selective string filter before a dense one.
+query
+SELECT count(*) AS n FROM (
+  SELECT i FROM swb WHERE s LIKE '%host99%' AND t <> ''
+  EXCEPT ALL
+  SELECT i FROM swb_src WHERE s LIKE '%host99%' AND t <> '');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i FROM swb_src WHERE s LIKE '%host99%' AND t <> ''
+  EXCEPT ALL
+  SELECT i FROM swb WHERE s LIKE '%host99%' AND t <> '');
+----
+n
+0
+
+# Grouped, the ClickBench Q28 shape.
+query
+SELECT count(*) AS n FROM (
+  SELECT k, avg(length(s)), count(*) FROM swb WHERE s <> '' GROUP BY k
+  EXCEPT ALL
+  SELECT k, avg(length(s)), count(*) FROM swb_src WHERE s <> '' GROUP BY k);
+----
+n
+0
+
+query
+SELECT count(*) AS n, sum(k) AS k FROM swb WHERE s <> '';
+----
+n	k
+117600	2116685
+
+statement ok
+DELETE FROM swb WHERE i % 7 = 3;
+
+statement ok
+DELETE FROM swb_src WHERE i % 7 = 3;
+
+statement ok
+VACUUM (REFRESH_TABLE) swb;
+
+# Dense string filter, another column projected, after deletes.
+query
+SELECT count(*) AS n FROM (
+  SELECT i, k FROM swb WHERE s <> ''
+  EXCEPT ALL
+  SELECT i, k FROM swb_src WHERE s <> '');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, k FROM swb_src WHERE s <> ''
+  EXCEPT ALL
+  SELECT i, k FROM swb WHERE s <> '');
+----
+n
+0
+
+
+# Dense string filter with its own column projected, after deletes.
+query
+SELECT count(*) AS n FROM (
+  SELECT i, s FROM swb WHERE s <> ''
+  EXCEPT ALL
+  SELECT i, s FROM swb_src WHERE s <> '');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, s FROM swb_src WHERE s <> ''
+  EXCEPT ALL
+  SELECT i, s FROM swb WHERE s <> '');
+----
+n
+0
+
+
+# Two filters, the string one first in the chain, after deletes.
+query
+SELECT count(*) AS n FROM (
+  SELECT i FROM swb WHERE s <> '' AND k < 30
+  EXCEPT ALL
+  SELECT i FROM swb_src WHERE s <> '' AND k < 30);
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i FROM swb_src WHERE s <> '' AND k < 30
+  EXCEPT ALL
+  SELECT i FROM swb WHERE s <> '' AND k < 30);
+----
+n
+0
+
+
+# Selective string filter, after deletes.
+query
+SELECT count(*) AS n FROM (
+  SELECT i, k FROM swb WHERE s = ''
+  EXCEPT ALL
+  SELECT i, k FROM swb_src WHERE s = '');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, k FROM swb_src WHERE s = ''
+  EXCEPT ALL
+  SELECT i, k FROM swb WHERE s = '');
+----
+n
+0
+
+# Two string filters with different block boundaries, after deletes.
+query
+SELECT count(*) AS n FROM (
+  SELECT i, k FROM swb WHERE s <> '' AND t LIKE '%title 7%'
+  EXCEPT ALL
+  SELECT i, k FROM swb_src WHERE s <> '' AND t LIKE '%title 7%');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, k FROM swb_src WHERE s <> '' AND t LIKE '%title 7%'
+  EXCEPT ALL
+  SELECT i, k FROM swb WHERE s <> '' AND t LIKE '%title 7%');
+----
+n
+0
+
+
+# Two string filters, both projected, after deletes.
+query
+SELECT count(*) AS n FROM (
+  SELECT i, s, t FROM swb WHERE t <> '' AND s LIKE '%host12%'
+  EXCEPT ALL
+  SELECT i, s, t FROM swb_src WHERE t <> '' AND s LIKE '%host12%');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, s, t FROM swb_src WHERE t <> '' AND s LIKE '%host12%'
+  EXCEPT ALL
+  SELECT i, s, t FROM swb WHERE t <> '' AND s LIKE '%host12%');
+----
+n
+0
+
+
+# A selective string filter before a dense one, after deletes.
+query
+SELECT count(*) AS n FROM (
+  SELECT i FROM swb WHERE s LIKE '%host99%' AND t <> ''
+  EXCEPT ALL
+  SELECT i FROM swb_src WHERE s LIKE '%host99%' AND t <> '');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i FROM swb_src WHERE s LIKE '%host99%' AND t <> ''
+  EXCEPT ALL
+  SELECT i FROM swb WHERE s LIKE '%host99%' AND t <> '');
+----
+n
+0

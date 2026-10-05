@@ -37,42 +37,23 @@ void HttpRouter::Add(HttpMethod method, std::string_view pattern,
   init.pathname = std::string{pattern};
   auto parsed = ada::parse_url_pattern<AdaRe2Provider>(std::move(init));
   SDB_VERIFY(parsed.has_value(), "invalid HTTP route pattern: '", pattern, "'");
-  const bool literal =
-    pattern.find_first_of(":*(){}?+") == std::string_view::npos;
-  auto& routes = literal ? _literal : _parameterized;
-  routes.push_back({method, std::move(*parsed), std::move(handler)});
-}
-
-HttpHandler* HttpRouter::MatchIn(std::vector<Entry>& routes,
-                                 const ada::url_pattern_init& path,
-                                 HttpRequest& request) {
-  for (auto& route : routes) {
-    if (route.method != request.method) {
-      continue;
+  auto& path = parsed->pathname_component;
+  auto* raw = _handlers.emplace_back(std::move(handler)).get();
+  if (path.type == ada::url_pattern_component_type::EXACT_MATCH) {
+    auto [it, _] = _literal.try_emplace(path.exact_match_value);
+    auto& slot = it->second[static_cast<size_t>(method)];
+    if (slot == nullptr) {
+      slot = raw;
     }
-    const auto hit = route.pattern.test(path, nullptr);
-    if (!hit || !*hit) {
-      continue;
-    }
-    const auto result = route.pattern.exec(path, nullptr);
-    if (!result || !*result) {
-      continue;
-    }
-    request.params.clear();
-    for (const auto& [name, value] : (*result)->pathname.groups) {
-      if (value) {
-        request.params.emplace_back(name, *value);
-      }
-    }
-    return route.handler.get();
+    return;
   }
-  return nullptr;
+  _parameterized.push_back({method, std::move(path), raw});
 }
 
 HttpHandler* HttpRouter::Match(HttpRequest& request) {
   std::string_view target = request.target;
   const size_t cut = target.find_first_of("?#");
-  const std::string_view path =
+  const std::string_view raw_path =
     cut == std::string_view::npos ? target : target.substr(0, cut);
   // Parse the query string (request-scoped) into request.query, percent-decoded
   // by ada; path matching below uses `path` only, so it is unaffected.
@@ -87,18 +68,38 @@ HttpHandler* HttpRouter::Match(HttpRequest& request) {
       request.query.emplace_back(key, value);
     }
   }
-  if (path.empty() || path.front() != '/') {
+  request.params.clear();
+  if (raw_path.empty() || raw_path.front() != '/') {
     return nullptr;
   }
-  ada::url_pattern_init input{};
-  input.pathname = std::string{path};
-  if (auto* handler = MatchIn(_literal, input, request)) {
-    return handler;
+  const auto canonical =
+    ada::url_pattern_helpers::canonicalize_pathname(raw_path);
+  if (!canonical) {
+    return nullptr;
   }
-  if (auto* handler = MatchIn(_parameterized, input, request)) {
-    return handler;
+  const std::string_view path = *canonical;
+  const auto method = static_cast<size_t>(request.method);
+  if (const auto it = _literal.find(path); it != _literal.end()) {
+    if (auto* handler = it->second[method]) {
+      return handler;
+    }
   }
-  request.params.clear();
+  for (auto& route : _parameterized) {
+    if (route.method != request.method || !route.path.fast_test(path)) {
+      continue;
+    }
+    auto groups = route.path.fast_match(path);
+    if (!groups) {
+      continue;
+    }
+    const auto& names = route.path.group_name_list;
+    for (size_t i = 0; i < groups->size() && i < names.size(); ++i) {
+      if (auto& value = (*groups)[i]) {
+        request.params.emplace_back(names[i], std::move(*value));
+      }
+    }
+    return route.handler;
+  }
   return nullptr;
 }
 

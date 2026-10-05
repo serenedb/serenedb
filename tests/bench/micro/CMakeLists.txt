@@ -19,6 +19,7 @@ target_include_directories(
     SYSTEM
     PRIVATE
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fsst
         ${CMAKE_SOURCE_DIR}/third_party/lz4/lib
 )
 add_custom_command(
@@ -55,11 +56,6 @@ endfunction()
 
 add_bench(bm25_byte_norm)
 add_bench(col_codecs)
-target_include_directories(
-    serenedb-bench-micro-col_codecs
-    SYSTEM
-    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fsst
-)
 add_bench(col_codecs_real)
 add_bench(ascii_probe)
 add_bench(vector_access)

@@ -1423,7 +1423,7 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
   };
   const auto listed = duckdb::ListCompressionTypes();
   EXPECT_EQ(listed.size(),
-            static_cast<size_t>(duckdb::CompressionType::COMPRESSION_COUNT) +
+            static_cast<size_t>(duckdb::CompressionType::ENUM_SIZE) +
               std::size(names) + 1);
   EXPECT_TRUE(duckdb::IsSereneDBCompressionType(
     duckdb::CompressionType::COMPRESSION_COL_SEQUENCE));

@@ -106,21 +106,20 @@ std::optional<uint32_t> UintOption(const WithOptions& options,
   if (!options.contains(name)) {
     return std::nullopt;
   }
-  const auto constant = FindConstant(options, name);
-  duckdb::Value value;
-  if (!constant || !constant->GetValue().DefaultTryCastAs(
-                     duckdb::LogicalType::UINTEGER, value, nullptr)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("WITH option \"", name, "\" expects a non-negative integer"));
+  if (const auto constant = FindConstant(options, name)) {
+    if (const auto value = constant->GetLiteral().ToValue().DefaultTryCastAs(
+          duckdb::LogicalType::UINTEGER)) {
+      return value->GetValue<uint32_t>();
+    }
   }
-  return value.GetValue<uint32_t>();
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    ERR_MSG("WITH option \"", name, "\" expects a non-negative integer"));
 }
 
 void BindCodecOptions(WithOptions& options) {
-  const auto store = [&](std::string_view name, duckdb::Value value) {
-    options[std::string{name}] =
-      duckdb::make_uniq<duckdb::ConstantExpression>(std::move(value));
+  const auto store = [&](std::string_view name, const duckdb::Value& value) {
+    options[std::string{name}] = OptionConstant(value);
   };
   if (const auto level = UintOption(options, kCompressionLevelSetting)) {
     if (*level > kMaxCompressionLevel) {
@@ -147,11 +146,10 @@ void BindCodecOptions(WithOptions& options) {
   std::optional<irs::AutoObjective> objective;
   if (const auto constant =
         FindConstant(options, kCompressionObjectiveSetting)) {
-    duckdb::Value text;
-    if (constant->GetValue().DefaultTryCastAs(duckdb::LogicalType::VARCHAR,
-                                              text, nullptr)) {
+    if (const auto text = constant->GetLiteral().ToValue().DefaultTryCastAs(
+          duckdb::LogicalType::VARCHAR)) {
       objective = ParseCompressionObjective(
-        duckdb::StringUtil::Lower(text.GetValue<std::string>()));
+        duckdb::StringUtil::Lower(text->GetValue<std::string>()));
     }
   }
   if (!objective) {
@@ -210,16 +208,18 @@ SearchTableOptions ResolveOptions(const WithOptions& options) {
       constant->GetLiteral().ToValue().GetValue<std::string>();
   }
   if (const auto constant = FindConstant(options, kCompressionLevelSetting)) {
-    result.compression_level =
-      static_cast<uint8_t>(constant->GetValue().GetValue<uint32_t>());
+    result.compression_level = static_cast<uint8_t>(
+      constant->GetLiteral().ToValue().GetValue<uint32_t>());
   }
   if (const auto constant = FindConstant(options, kSegmentTargetSetting)) {
-    result.segment_target = constant->GetValue().GetValue<uint32_t>();
+    result.segment_target =
+      constant->GetLiteral().ToValue().GetValue<uint32_t>();
   }
   if (const auto constant =
         FindConstant(options, kCompressionObjectiveSetting)) {
     result.compression_objective = static_cast<uint8_t>(
-      ParseCompressionObjective(constant->GetValue().GetValue<std::string>())
+      ParseCompressionObjective(
+        constant->GetLiteral().ToValue().GetValue<std::string>())
         .value_or(irs::AutoObjective::Balanced));
   }
   return result;

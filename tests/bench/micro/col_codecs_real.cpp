@@ -96,9 +96,9 @@ const Column& Data() {
       std::fprintf(stderr, "load: %s\n", result->GetError().c_str());
       std::abort();
     }
-    if (result->types[0] != duckdb::LogicalType::VARCHAR) {
+    if (result->GetTypes()[0] != duckdb::LogicalType::VARCHAR) {
       std::fprintf(stderr, "column %s is %s, not VARCHAR\n", name,
-                   result->types[0].ToString().c_str());
+                   result->GetTypes()[0].ToString().c_str());
       std::abort();
     }
     while (auto chunk = result->Fetch()) {
@@ -554,7 +554,7 @@ void Register() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+static int Main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Initialize();
   if (std::getenv("SDB_BENCH_NO_DICT_CACHE")) {
     CsDb().GetObjectCache().SetMaxMemory(0);
@@ -569,3 +569,6 @@ int main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }
+
+[[maybe_unused]] static const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

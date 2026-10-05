@@ -125,7 +125,7 @@ const Data& GetData(Shape shape) {
     std::fprintf(stderr, "data query failed: %s\n", result->GetError().c_str());
     std::abort();
   }
-  slot->type = result->types[0];
+  slot->type = result->GetTypes()[0];
   while (auto chunk = result->Fetch()) {
     if (chunk->size() == 0) {
       continue;
@@ -324,7 +324,7 @@ NESTED_CASES(Rewrite);
 NESTED_CASES(FullScan);
 NESTED_CASES(SparseGather);
 
-int main(int argc, char** argv) {
+static int Main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Initialize();
   benchmark::Initialize(&argc, argv);
   benchmark::RunSpecifiedBenchmarks();
@@ -332,3 +332,6 @@ int main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }
+
+[[maybe_unused]] static const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

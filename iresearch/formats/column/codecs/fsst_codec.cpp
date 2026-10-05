@@ -20,8 +20,6 @@
 
 #include "iresearch/formats/column/codecs/fsst_codec.hpp"
 
-#include <cstring>
-
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::codecs {
@@ -89,9 +87,11 @@ bool FsstDecoder::Import(std::string_view table) noexcept {
   if (table.size() > sizeof(duckdb_fsst_decoder_t)) {
     return false;
   }
-  unsigned char buf[sizeof(duckdb_fsst_decoder_t)];
-  std::memcpy(buf, table.data(), table.size());
-  return duckdb_fsst_import(&_decoder, buf) != 0;
+  const auto consumed = duckdb_fsst_import(
+    &_decoder, reinterpret_cast<const unsigned char*>(table.data()),
+    table.size());
+  return consumed != 0 && consumed != DUCKDB_FSST_IMPORT_VERSION_MISMATCH &&
+         consumed != DUCKDB_FSST_IMPORT_OUT_OF_BOUNDS;
 }
 
 }  // namespace irs::codecs

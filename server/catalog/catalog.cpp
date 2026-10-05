@@ -86,6 +86,7 @@
 #include "connector/view_index_bind.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
+#include "pg/tsdictionary.h"
 #include "scheduler/job_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
@@ -187,6 +188,15 @@ SereneDBCatalog::FindSchemaById(duckdb::ClientContext& context,
     return nullptr;
   }
   return &entry->Cast<duckdb::SchemaCatalogEntry>();
+}
+
+duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeTokenizerEntry(
+  duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
+  duckdb::CreateTokenizerInfo& info) {
+  if (!info.definition.empty()) {
+    pg::CompileTokenizer(transaction.GetContext(), info);
+  }
+  return duckdb::make_uniq<TokenizerCatalogEntry>(*this, schema, info);
 }
 
 duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeJobEntry(
@@ -500,19 +510,6 @@ void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
     duckdb::DatabaseManager::Get(context).DetachDatabase(
       context, server, duckdb::OnEntryNotFound::RETURN_NULL);
   }
-  if (context.transaction.HasActiveTransaction()) {
-    auto& cluster = ClusterOf(context);
-    const auto transaction = cluster.GetCatalogTransaction(context);
-    auto entry = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-                   .GetEntry(transaction, GetName());
-    if (entry && entry->oid == GetAttached().oid) {
-      duckdb::DropInfo info;
-      info.type = duckdb::CatalogType::DATABASE_ENTRY;
-      info.SetName(GetName());
-      info.if_not_found = duckdb::OnEntryNotFound::RETURN_NULL;
-      cluster.DropDatabase(transaction, info);
-    }
-  }
   duckdb::DuckCatalog::OnDetach(context);
 }
 
@@ -613,18 +610,15 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
   return duckdb::DuckCatalog::CreateSchema(transaction, info);
 }
 
-duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateTokenizer(
-  duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
-  duckdb::CreateTokenizerInfo& info) {
-  DeclareModified(transaction, *this);
-  return schema.CreateTokenizer(transaction, info);
-}
-
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateForeignServer(
   duckdb::CatalogTransaction transaction,
   duckdb::CreateForeignServerInfo& info) {
   DeclareModified(transaction, *this);
-  return duckdb::DuckCatalog::CreateForeignServer(transaction, info);
+  auto entry = duckdb::DuckCatalog::CreateForeignServer(transaction, info);
+  if (entry && transaction.HasContext()) {
+    entry->Cast<ForeignServerCatalogEntry>().Attach(transaction.GetContext());
+  }
+  return entry;
 }
 
 void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,

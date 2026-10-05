@@ -17,7 +17,7 @@ CREATE TABLE xdr_local (a INTEGER);
 
 
 statement ok
-CREATE VIEW xdr_db.public.v_back AS SELECT a FROM postgres.public.xdr_local;
+CREATE VIEW xdr_db.public.v_back AS SELECT a FROM ${__DATABASE__}.public.xdr_local;
 
 
 statement ok

@@ -8,7 +8,7 @@ import RailroadSource from './diagram.js';
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-The `DROP ROLE` statement removes one or more roles. `DROP USER` is an alias. A role that still owns objects or holds privileges on them cannot be dropped — transfer ownership (`ALTER TABLE ... OWNER TO ...`) or revoke the grants first.
+The `DROP ROLE` statement removes a role. `DROP USER` is an alias. A role that still owns objects or holds privileges on them cannot be dropped — transfer ownership (`ALTER TABLE ... OWNER TO ...`) or revoke the grants first.
 
 ## Examples
 
@@ -20,7 +20,7 @@ Drop one:
 
 <SqlLogicTest id="sql/statements/drop_role/index/example_002" />
 
-Drop several at once:
+Each statement drops one role; drop several with one statement per role:
 
 <SqlLogicTest id="sql/statements/drop_role/index/example_003" />
 

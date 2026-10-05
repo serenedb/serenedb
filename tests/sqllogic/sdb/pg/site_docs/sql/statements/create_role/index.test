@@ -69,7 +69,7 @@ CREATE ROLE doc_bad LOGIN NOLOGIN;
 
 # DOCS_TEST_BODY
 
-statement error db error: ERROR: role "doc_analyst" already exists
+statement error db error: ERROR: Role with name "doc_analyst" already exists!
 CREATE ROLE doc_analyst;
 
 # DOCS_TEST: example_009

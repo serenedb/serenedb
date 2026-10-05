@@ -9,7 +9,7 @@ statement error
 CREATE SUBSCRIPTION my_sub;
 ----
 db error: ERROR: Pragma Function with name create_subscription does not exist!
-Did you mean "create_text_search_dictionary"?
+Did you mean "<slt:ignore>"?
 
 
 # --- WITH CONNECTION only ---
@@ -17,7 +17,7 @@ statement error
 CREATE SUBSCRIPTION my_sub CONNECTION 'host=localhost dbname=mydb';
 ----
 db error: ERROR: Pragma Function with name create_subscription does not exist!
-Did you mean "create_text_search_dictionary"?
+Did you mean "<slt:ignore>"?
 
 
 # --- WITH CONNECTION + single PUBLICATION ---
@@ -25,7 +25,7 @@ statement error
 CREATE SUBSCRIPTION my_sub CONNECTION 'host=localhost dbname=mydb' PUBLICATION my_pub;
 ----
 db error: ERROR: Pragma Function with name create_subscription does not exist!
-Did you mean "create_text_search_dictionary"?
+Did you mean "<slt:ignore>"?
 
 
 # --- WITH CONNECTION + multiple PUBLICATIONs ---
@@ -33,4 +33,4 @@ statement error
 CREATE SUBSCRIPTION my_sub CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1, pub2;
 ----
 db error: ERROR: Pragma Function with name create_subscription does not exist!
-Did you mean "create_text_search_dictionary"?
+Did you mean "<slt:ignore>"?

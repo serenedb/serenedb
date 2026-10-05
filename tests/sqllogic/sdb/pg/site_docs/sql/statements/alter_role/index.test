@@ -57,7 +57,7 @@ ALTER ROLE doc_worker_renamed SUPERUSER NOSUPERUSER;
 
 # DOCS_TEST_BODY
 
-statement error db error: ERROR: role "doc_missing" does not exist
+statement error db error: ERROR: Role with name doc_missing does not exist!
 ALTER ROLE doc_missing LOGIN;
 
 # DOCS_TEST: example_009

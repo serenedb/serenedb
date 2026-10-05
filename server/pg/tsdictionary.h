@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -20,31 +20,25 @@
 
 #pragma once
 
-#include <string>
-#include <string_view>
+#include <duckdb/parser/parsed_data/create_tokenizer_info.hpp>
+#include <iresearch/analysis/tokenizer_config.hpp>
+#include <memory>
+#include <vector>
 
-namespace duckdb {
+#include "pg/options_parser.h"
 
-class ClientContext;
-class DatabaseInstance;
-struct AlterRoleInfo;
-
-}  // namespace duckdb
-namespace sdb {
-
-class ConnectionContext;
-
-}  // namespace sdb
 namespace sdb::pg {
 
-void RegisterRbacFunctions(duckdb::DatabaseInstance& db);
-void ResolveAlterRole(duckdb::ClientContext& client,
-                      duckdb::AlterRoleInfo& info);
+void CompileTokenizer(duckdb::ClientContext& context,
+                      duckdb::CreateTokenizerInfo& info);
 
-std::string SetRole(ConnectionContext& ctx, std::string_view name);
-void ResetRole(ConnectionContext& ctx);
-std::string SetSessionAuthorization(ConnectionContext& ctx,
-                                    std::string_view name);
-void ResetSessionAuthorization(ConnectionContext& ctx);
+using TokenizerConfigs =
+  std::vector<std::unique_ptr<irs::analysis::TokenizerConfig>>;
+
+irs::analysis::TokenizerConfig BuildStage(duckdb::ClientContext& context,
+                                          std::string_view type,
+                                          Options options,
+                                          TokenizerConfigs children,
+                                          std::string_view operation);
 
 }  // namespace sdb::pg

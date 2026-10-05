@@ -1,3 +1,6 @@
+control substitution on
+
+
 statement ok
 DROP VIEW IF EXISTS cxd_v
 
@@ -81,9 +84,9 @@ ALTER TABLE cxd_db.public.t ADD COLUMN c INTEGER
 statement error
 DROP DATABASE cxd_db
 ----
-db error: ERROR: Cannot drop database "cxd_db" because entries in other databases depend on it.
-view "cxd_v" depends on table "t".
-Drop the dependent entries first.
+db error: ERROR: Cannot drop entry "cxd_db" because there are entries that depend on it.
+view "cxd_v" depends on database "cxd_db".
+Use DROP...CASCADE to drop all dependents.
 
 
 query
@@ -110,7 +113,7 @@ CREATE TABLE local_t (a INTEGER)
 
 
 statement ok
-CREATE VIEW cxd_db.public.v_back AS SELECT a FROM postgres.public.local_t
+CREATE VIEW cxd_db.public.v_back AS SELECT a FROM ${__DATABASE__}.public.local_t
 
 
 statement error
@@ -360,9 +363,9 @@ Use DROP...CASCADE to drop all dependents.
 statement error
 DROP DATABASE cxd_db
 ----
-db error: ERROR: Cannot drop database "cxd_db" because entries in other databases depend on it.
-table "cxd_def" depends on sequence "cxd_seq".
-Drop the dependent entries first.
+db error: ERROR: Cannot drop entry "cxd_db" because there are entries that depend on it.
+table "cxd_def" depends on database "cxd_db".
+Use DROP...CASCADE to drop all dependents.
 
 
 statement ok
@@ -434,3 +437,73 @@ DROP TABLE cxd_def
 
 statement ok
 DROP DATABASE cxd_db
+
+
+statement ok
+CREATE DATABASE cxd_db
+
+
+statement ok
+CREATE TABLE cxd_db.public.t (a INTEGER)
+
+
+statement ok
+INSERT INTO cxd_db.public.t VALUES (1)
+
+
+statement ok
+CREATE SEQUENCE cxd_db.public.cxd_seq
+
+
+statement ok
+CREATE VIEW cxd_v AS SELECT a FROM cxd_db.public.t
+
+
+statement ok
+CREATE TABLE cxd_def (id BIGINT DEFAULT nextval('cxd_db.public.cxd_seq'), a INTEGER)
+
+
+statement ok
+INSERT INTO cxd_def (a) VALUES (1)
+
+
+statement error
+DETACH cxd_db
+----
+db error: ERROR: cannot detach database "cxd_db", use DROP DATABASE
+
+
+statement ok
+DROP DATABASE cxd_db CASCADE
+
+
+query
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'cxd_db'
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'cxd_v'
+----
+n
+0
+
+
+query
+SELECT column_default IS NULL AS no_default FROM information_schema.columns WHERE table_name = 'cxd_def' AND column_name = 'id'
+----
+no_default
+t
+
+
+query
+SELECT count(*) AS n FROM cxd_def
+----
+n
+1
+
+
+statement ok
+DROP TABLE cxd_def

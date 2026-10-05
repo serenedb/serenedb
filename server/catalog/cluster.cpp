@@ -274,9 +274,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
   duckdb::CatalogTransaction transaction, duckdb::CreateRoleInfo& info) {
   DeclareModified(transaction, *this);
   auto role = duckdb::DuckCatalog::CreateRole(transaction, info);
-  if (!role) {
-    return role;
-  }
   const auto grant = [&](const duckdb::Identifier& member,
                          const duckdb::Identifier& granted, bool admin) {
     duckdb::AlterRoleInfo alter{member};
@@ -314,10 +311,7 @@ void ClusterCatalog::DropRole(duckdb::CatalogTransaction transaction,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   auto& roles = GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY);
   if (auto role = roles.GetEntry(transaction, info.GetQualifiedName().Name())) {
-    auto* session =
-      transaction.HasContext()
-        ? connector::GetSereneDBContextPtr(transaction.GetContext())
-        : nullptr;
+    auto* session = connector::GetSereneDBContextPtr(transaction.GetContext());
     if (session && (role->oid == session->GetRoleId() ||
                     role->oid == session->GetSessionRoleId() ||
                     role->oid == session->GetLoginRoleId())) {
@@ -376,11 +370,10 @@ void ClusterCatalog::DropDatabase(duckdb::CatalogTransaction transaction,
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   duckdb::DuckCatalog::DropDatabase(transaction, info);
-  if (transaction.HasContext()) {
-    duckdb::DatabaseManager::Get(transaction.GetContext())
-      .DetachDatabase(transaction.GetContext(), info.GetQualifiedName().Name(),
-                      duckdb::OnEntryNotFound::RETURN_NULL);
-  }
+  auto& context = transaction.GetContext();
+  duckdb::DatabaseManager::Get(context).DetachDatabase(
+    context, info.GetQualifiedName().Name(),
+    duckdb::OnEntryNotFound::RETURN_NULL);
 }
 
 ClusterCatalog& ClusterOf(duckdb::ClientContext& context) {

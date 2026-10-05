@@ -610,7 +610,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateForeignServer(
   duckdb::CreateForeignServerInfo& info) {
   DeclareModified(transaction, *this);
   auto entry = duckdb::DuckCatalog::CreateForeignServer(transaction, info);
-  if (entry && transaction.HasContext()) {
+  if (entry) {
     entry->Cast<ForeignServerCatalogEntry>().Attach(transaction.GetContext());
   }
   return entry;

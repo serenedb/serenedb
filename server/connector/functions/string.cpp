@@ -28,7 +28,6 @@
 #include <duckdb/function/scalar/string_common.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-#include <duckdb/parser/keyword_helper.hpp>
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
@@ -261,36 +260,12 @@ void QuoteIdentFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
     args.data[0], result, args.size(),
     [&](duckdb::string_t input) -> duckdb::string_t {
-      std::string_view str(input.GetData(), input.GetSize());
-      bool needs_quoting = str.empty() || (str[0] >= '0' && str[0] <= '9');
-      if (!needs_quoting) {
-        for (auto c : str) {
-          if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
-            needs_quoting = true;
-            break;
-          }
-        }
-      }
-      if (!needs_quoting) {
-        if (duckdb::KeywordHelper::IsKeyword(std::string{str})) {
-          needs_quoting = true;
-        }
-      }
-      if (!needs_quoting) {
+      const std::string_view str(input.GetData(), input.GetSize());
+      const auto quoted = pg::QuoteIdentifier(str);
+      if (quoted == str) {
         return input;
       }
-      std::string out;
-      out.reserve(str.size() + 2);
-      out += '"';
-      for (auto c : str) {
-        if (c == '"') {
-          out += "\"\"";
-        } else {
-          out += c;
-        }
-      }
-      out += '"';
-      return duckdb::StringVector::AddString(result, out);
+      return duckdb::StringVector::AddString(result, quoted);
     });
 }
 
@@ -520,32 +495,6 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       return std::string{val.GetData(), val.GetSize()};
     };
 
-    // Helper: quote identifier (same as quote_ident)
-    auto quote_ident = [](const std::string& s) -> std::string {
-      bool needs_quoting = s.empty();
-      if (!needs_quoting) {
-        for (auto c : s) {
-          if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
-            needs_quoting = true;
-            break;
-          }
-        }
-      }
-      if (!needs_quoting) {
-        return s;
-      }
-      std::string out = "\"";
-      for (auto c : s) {
-        if (c == '"') {
-          out += "\"\"";
-        } else {
-          out += c;
-        }
-      }
-      out += '"';
-      return out;
-    };
-
     // Helper: quote literal
     auto quote_literal =
       [](const std::optional<std::string>& s) -> std::string {
@@ -639,7 +588,7 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
               ERR_CODE(ERRCODE_NULL_VALUE_NOT_ALLOWED),
               ERR_MSG("null values cannot be formatted as an SQL identifier"));
           }
-          formatted = quote_ident(*val);
+          formatted = pg::QuoteIdentifier(*val);
         } break;
         case 'L': {
           auto val = get_arg(arg_idx);

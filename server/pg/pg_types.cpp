@@ -31,6 +31,7 @@
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/types/time.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/main/client_data.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/down_cast.hpp>
@@ -43,6 +44,7 @@
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
 #include "pg/serialize.h"
+#include "pg/sql_utils.h"
 #include "pg/system_catalog.h"
 
 namespace sdb::pg {
@@ -609,8 +611,15 @@ std::string RegclassOut(duckdb::ClientContext* context, uint64_t oid) {
           duckdb::CatalogType::INDEX_ENTRY}) {
       if (auto entry = database->Cast<catalog::SereneDBCatalog>().FindEntryById(
             context, type, oid)) {
-        return std::string{entry->name.GetIdentifierName()};
+        return RelationName(*context,
+                            entry->ParentSchemaName().GetIdentifierName(),
+                            entry->name.GetIdentifierName(), oid);
       }
+    }
+    if (const auto key = FindKeyIndex(*context, *database, oid); key.table) {
+      return RelationName(*context,
+                          key.table->ParentSchemaName().GetIdentifierName(),
+                          ConstraintName(*key.table, *key.constraint), oid);
     }
   }
   std::string result;
@@ -625,25 +634,61 @@ std::string RegclassOut(duckdb::ClientContext* context, uint64_t oid) {
   return absl::StrCat(oid);
 }
 
-uint64_t RegclassIn(const ConnectionContext& ctx, std::string_view name) {
+uint64_t ResolveRelation(duckdb::ClientContext& context,
+                         const duckdb::QualifiedName& name) {
   // Every half of the relation namespace, in the order postgres resolves them
   // -- a table and a view share duckdb's set, so the first lookup covers both.
-  auto& client = ctx.GetClientContext();
-  const auto qualified = duckdb::QualifiedName::Parse(std::string{name});
   for (const auto type :
        {duckdb::CatalogType::TABLE_ENTRY, duckdb::CatalogType::SEQUENCE_ENTRY,
         duckdb::CatalogType::INDEX_ENTRY}) {
     if (auto entry = duckdb::Catalog::GetEntry(
-          client, duckdb::EntryLookupInfo{type, qualified},
+          context, duckdb::EntryLookupInfo{type, name},
           duckdb::OnEntryNotFound::RETURN_NULL)) {
       return entry->oid;
     }
   }
-  auto* system_table = GetTable(qualified.Name().GetIdentifierName());
-  if (system_table) {
+  if (auto database = SessionDatabase(&context)) {
+    const auto key_index = [&](const duckdb::Identifier& schema_name) {
+      auto schema = database->GetSchema(context, schema_name,
+                                        duckdb::OnEntryNotFound::RETURN_NULL);
+      if (!schema) {
+        return kInvalidOid;
+      }
+      const auto key =
+        FindKeyIndex(context, *schema, name.Name().GetIdentifierName());
+      return key.table ? key.constraint->index_oid : kInvalidOid;
+    };
+    if (!name.Schema().empty()) {
+      if (const auto oid = key_index(name.Schema()); oid != kInvalidOid) {
+        return oid;
+      }
+    } else {
+      for (const auto& path :
+           duckdb::ClientData::Get(context).catalog_search_path->Get()) {
+        if (const auto oid = key_index(path.GetSchema()); oid != kInvalidOid) {
+          return oid;
+        }
+      }
+    }
+  }
+  if (auto* system_table = GetTable(name.Name().GetIdentifierName())) {
     return system_table->Id();
   }
   return kInvalidOid;
+}
+
+std::string RelationName(duckdb::ClientContext& context,
+                         std::string_view schema, std::string_view name,
+                         uint64_t oid) {
+  if (ResolveRelation(context, duckdb::Identifier{std::string{name}}) == oid) {
+    return QuoteIdentifier(name);
+  }
+  return absl::StrCat(QuoteIdentifier(schema), ".", QuoteIdentifier(name));
+}
+
+uint64_t RegclassIn(const ConnectionContext& ctx, std::string_view name) {
+  return ResolveRelation(ctx.GetClientContext(),
+                         duckdb::QualifiedName::Parse(std::string{name}));
 }
 
 std::string RegnamespaceOut(duckdb::ClientContext* context, uint64_t oid) {

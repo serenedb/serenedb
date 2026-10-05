@@ -22,8 +22,12 @@
 
 #include <duckdb/common/optional_ptr.hpp>
 #include <duckdb/common/types/value.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/parser/qualified_name.hpp>
 #include <expected>
 #include <magic_enum/magic_enum.hpp>
+#include <string>
+#include <string_view>
 
 namespace duckdb {
 
@@ -297,6 +301,12 @@ uint64_t RegtypeIn(std::string_view name);
 
 std::string RegclassOut(duckdb::ClientContext* context, uint64_t oid);
 uint64_t RegclassIn(const ConnectionContext& ctx, std::string_view name);
+
+uint64_t ResolveRelation(duckdb::ClientContext& context,
+                         const duckdb::QualifiedName& name);
+std::string RelationName(duckdb::ClientContext& context,
+                         std::string_view schema, std::string_view name,
+                         uint64_t oid);
 
 std::string RegnamespaceOut(duckdb::ClientContext* context, uint64_t oid);
 uint64_t RegnamespaceIn(const ConnectionContext& ctx, std::string_view name);

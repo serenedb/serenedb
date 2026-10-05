@@ -820,6 +820,22 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | generate_series     | Yes           |  |
 | generate_subscript  | Yes           |  |
 
+#### System Information
+| Feature                            | Support State | Details |
+|------------------------------------|---------------|---------|
+| pg_get_constraintdef               | Yes           | `CHECK` expressions are printed in SereneDB's form (for example `!=` and no casts) |
+| pg_get_indexdef                    | Yes           | The access method is `secondary` or `inverted`. An inverted index shows its column dictionaries and options, `INCLUDE` columns and settings; ordering (`DESC`, `NULLS FIRST`) is not stored, so it is not shown |
+| pg_get_viewdef                     | Yes           | The view's query in SereneDB's one-line form |
+| pg_get_ruledef                     | Yes           | The `_RETURN` rule of a view, around the same query text |
+| pg_get_triggerdef                  | Yes           | A trigger runs a statement, which takes the place of `EXECUTE FUNCTION` |
+| pg_get_functiondef                 | Yes           | The body is printed in SereneDB's form; a DuckDB macro is printed as `CREATE MACRO` |
+| pg_get_function_arguments          | Yes           |  |
+| pg_get_function_identity_arguments | Yes           |  |
+| pg_get_function_result             | Yes           |  |
+| pg_get_function_arg_default        | Yes           |  |
+| pg_get_partkeydef                  | Yes           | Always `NULL`: there are no partitioned tables |
+| pg_get_statisticsobjdef            | Yes           | Always `NULL`, as are `pg_get_statisticsobjdef_columns` and `pg_get_statisticsobjdef_expressions`: there are no extended statistics |
+
 ## Behavioral Differences from PostgreSQL
 
 Even where a feature is supported, SereneDB intentionally diverges from PostgreSQL in a few places. SereneDB's SQL dialect closely follows PostgreSQL conventions; the exceptions are listed below.

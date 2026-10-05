@@ -49,6 +49,7 @@
 #include "connector/functions/markdown_render.h"
 #include "connector/functions/math.h"
 #include "connector/functions/otel.h"
+#include "connector/functions/ruleutils.h"
 #include "connector/functions/search.h"
 #include "connector/functions/string.h"
 #include "connector/functions/system.h"
@@ -316,6 +317,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterKeyEncodingFunctions(db);
 
   connector::RegisterPgSystemFunctions(db);
+
+  connector::RegisterRuleutilsFunctions(db);
 
   connector::RegisterPgInOutFunctions(db);
 

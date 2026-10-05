@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -20,34 +20,10 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
+#include <duckdb/main/database.hpp>
 
-#include <duckdb/common/enums/catalog_type.hpp>
-#include <duckdb/common/types.hpp>
-#include <string>
-#include <vector>
+namespace sdb::connector {
 
-namespace duckdb {
+void RegisterRuleutilsFunctions(duckdb::DatabaseInstance& db);
 
-class ClientContext;
-
-}  // namespace duckdb
-namespace sdb::pg {
-
-struct BuiltinFunction {
-  duckdb::idx_t oid;
-  std::string name;
-  duckdb::CatalogType kind = duckdb::CatalogType::INVALID;
-  duckdb::LogicalType return_type;
-  std::vector<duckdb::LogicalType> parameter_types;
-  bool returns_set = false;
-  bool has_varargs = false;
-};
-
-void VisitBuiltinFunctions(
-  duckdb::ClientContext& context,
-  absl::FunctionRef<void(const BuiltinFunction&)> visitor);
-
-duckdb::idx_t BuiltinTypeOid(const duckdb::LogicalType& type);
-
-}  // namespace sdb::pg
+}  // namespace sdb::connector

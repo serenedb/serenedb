@@ -351,21 +351,21 @@ SELECT conrelid::regclass::text AS rel, conname, contype FROM pg_constraint
 WHERE connamespace = 'dm'::regnamespace ORDER BY 1, 2;
 ----
 rel	conname	contype
-child	child_id_not_null	n
-child	child_parent_id_fkey	f
-child	child_pkey	p
-parent	parent_id_not_null	n
-parent	parent_pkey	p
-pk	pk_id_not_null	n
-pk	pk_pkey	p
-pk	pk_v_short	c
-plain2	plain2_a_not_null	n
-ser	ser_id_not_null	n
-ser	ser_pkey	p
-st	st_id_not_null	n
-st	st_pkey	p
-st_inv	st_inv_a_not_null	n
-uq	uq_code_key	u
+dm.child	child_id_not_null	n
+dm.child	child_parent_id_fkey	f
+dm.child	child_pkey	p
+dm.parent	parent_id_not_null	n
+dm.parent	parent_pkey	p
+dm.pk	pk_id_not_null	n
+dm.pk	pk_pkey	p
+dm.pk	pk_v_short	c
+dm.plain2	plain2_a_not_null	n
+dm.ser	ser_id_not_null	n
+dm.ser	ser_pkey	p
+dm.st	st_id_not_null	n
+dm.st	st_pkey	p
+dm.st_inv	st_inv_a_not_null	n
+dm.uq	uq_code_key	u
 
 
 query
@@ -471,21 +471,21 @@ SELECT conrelid::regclass::text AS rel, conname, contype FROM pg_constraint
 WHERE connamespace = 'dm'::regnamespace ORDER BY 1, 2;
 ----
 rel	conname	contype
-child	child_id_not_null	n
-child	child_parent_id_fkey	f
-child	child_pkey	p
-parent	parent_id_not_null	n
-parent	parent_pkey	p
-pk	pk_id_not_null	n
-pk	pk_pkey	p
-pk	pk_v_short	c
-plain2	plain2_a_not_null	n
-ser	ser_id_not_null	n
-ser	ser_pkey	p
-st	st_id_not_null	n
-st	st_pkey	p
-st_inv	st_inv_a_not_null	n
-uq	uq_code_key	u
+dm.child	child_id_not_null	n
+dm.child	child_parent_id_fkey	f
+dm.child	child_pkey	p
+dm.parent	parent_id_not_null	n
+dm.parent	parent_pkey	p
+dm.pk	pk_id_not_null	n
+dm.pk	pk_pkey	p
+dm.pk	pk_v_short	c
+dm.plain2	plain2_a_not_null	n
+dm.ser	ser_id_not_null	n
+dm.ser	ser_pkey	p
+dm.st	st_id_not_null	n
+dm.st	st_pkey	p
+dm.st_inv	st_inv_a_not_null	n
+dm.uq	uq_code_key	u
 
 
 connection after_crash
@@ -670,21 +670,21 @@ SELECT conrelid::regclass::text AS rel, conname, contype FROM pg_constraint
 WHERE connamespace = 'dm'::regnamespace ORDER BY 1, 2;
 ----
 rel	conname	contype
-child	child_id_not_null	n
-child	child_parent_id_fkey	f
-child	child_pkey	p
-parent	parent_id_not_null	n
-parent	parent_pkey	p
-pk	pk_id_not_null	n
-pk	pk_pkey	p
-pk	pk_v_short	c
-plain2	plain2_a_not_null	n
-ser	ser_id_not_null	n
-ser	ser_pkey	p
-st	st_id_not_null	n
-st	st_pkey	p
-st_inv	st_inv_a_not_null	n
-uq	uq_code_key	u
+dm.child	child_id_not_null	n
+dm.child	child_parent_id_fkey	f
+dm.child	child_pkey	p
+dm.parent	parent_id_not_null	n
+dm.parent	parent_pkey	p
+dm.pk	pk_id_not_null	n
+dm.pk	pk_pkey	p
+dm.pk	pk_v_short	c
+dm.plain2	plain2_a_not_null	n
+dm.ser	ser_id_not_null	n
+dm.ser	ser_pkey	p
+dm.st	st_id_not_null	n
+dm.st	st_pkey	p
+dm.st_inv	st_inv_a_not_null	n
+dm.uq	uq_code_key	u
 
 
 connection after_restart

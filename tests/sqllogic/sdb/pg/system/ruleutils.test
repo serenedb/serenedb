@@ -1,0 +1,244 @@
+statement ok
+CREATE SCHEMA rs;
+
+
+statement ok
+CREATE TABLE rs.t (
+  id integer PRIMARY KEY,
+  a integer,
+  b integer,
+  c text,
+  "Odd Col" integer,
+  CONSTRAINT t_c_uq UNIQUE (c),
+  CONSTRAINT t_ab_check CHECK (a > 0 AND b IS NOT NULL)
+);
+
+
+statement ok
+CREATE INDEX t_plain ON rs.t (a, b);
+
+
+statement ok
+CREATE UNIQUE INDEX t_lower ON rs.t (lower(c));
+
+
+statement ok
+CREATE INDEX t_expr ON rs.t ((a + b));
+
+
+statement ok
+CREATE INDEX t_coalesce ON rs.t (coalesce(a, b));
+
+
+statement ok
+CREATE INDEX t_part ON rs.t (a) WHERE a > 10 AND b IS NOT NULL;
+
+
+statement ok
+CREATE INDEX "Odd Idx" ON rs.t ("Odd Col");
+
+
+statement ok
+CREATE UNIQUE INDEX t_incl ON rs.t (b) INCLUDE (c);
+
+
+query
+SELECT c.relname, pg_get_indexdef(c.oid) AS def
+FROM pg_class c WHERE c.relnamespace = 'rs'::regnamespace AND c.relkind = 'i' ORDER BY c.relname;
+----
+relname	def
+Odd Idx	CREATE INDEX "Odd Idx" ON rs.t USING secondary ("Odd Col")
+t_c_uq	CREATE UNIQUE INDEX t_c_uq ON rs.t USING secondary (c)
+t_coalesce	CREATE INDEX t_coalesce ON rs.t USING secondary (COALESCE(a, b))
+t_expr	CREATE INDEX t_expr ON rs.t USING secondary (((a + b)))
+t_incl	CREATE UNIQUE INDEX t_incl ON rs.t USING secondary (b)
+t_lower	CREATE UNIQUE INDEX t_lower ON rs.t USING secondary (lower(c))
+t_part	CREATE INDEX t_part ON rs.t USING secondary (a) WHERE ((a > 10) AND (b IS NOT NULL))
+t_pkey	CREATE UNIQUE INDEX t_pkey ON rs.t USING secondary (id)
+t_plain	CREATE INDEX t_plain ON rs.t USING secondary (a, b)
+
+
+query
+SELECT pg_get_indexdef('rs.t_plain'::regclass, 0, true) AS def;
+----
+def
+CREATE INDEX t_plain ON rs.t USING secondary (a, b)
+
+
+statement ok
+SET search_path = rs, public;
+
+
+query
+SELECT pg_get_indexdef('rs.t_plain'::regclass, 0, true) AS pretty, pg_get_indexdef('rs.t_plain'::regclass) AS plain;
+----
+pretty	plain
+CREATE INDEX t_plain ON t USING secondary (a, b)	CREATE INDEX t_plain ON rs.t USING secondary (a, b)
+
+
+statement ok
+RESET search_path;
+
+
+query
+SELECT pg_get_indexdef('rs.t_expr'::regclass, 1, false) AS expr, pg_get_indexdef('rs.t_lower'::regclass, 1, true) AS func;
+----
+expr	func
+((a + b))	lower(c)
+
+
+statement ok
+INSERT INTO rs.t (id, a, b, c) VALUES (1, 1, 1, 'x');
+
+
+statement error
+INSERT INTO rs.t (id, a, b, c) VALUES (2, 2, 1, 'y');
+----
+db error: ERROR: Duplicate key "b: 1" violates unique constraint.
+
+
+query
+SELECT conname, pg_get_constraintdef(oid) AS def
+FROM pg_constraint WHERE conrelid = 'rs.t'::regclass AND contype = 'c' ORDER BY conname;
+----
+conname	def
+t_ab_check	CHECK (((a > 0) AND (b IS NOT NULL)))
+
+
+statement ok
+CREATE TABLE rs.docs (id integer, body text, emb FLOAT[3], j JSON, tag text);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rs.docs_text AS split_text(case := 'lower') WITH (frequency, position);
+
+
+statement ok
+CREATE INDEX docs_idx ON rs.docs USING inverted (id, body rs.docs_text, emb ivf (metric = 'l2'), lower(tag)) INCLUDE (j) WITH (compaction_interval = 0) WHERE id > 0;
+
+
+query
+SELECT pg_get_indexdef('rs.docs_idx'::regclass) AS def;
+----
+def
+CREATE INDEX docs_idx ON rs.docs USING inverted (id, body rs.docs_text, emb ivf (metric=l2), lower(tag)) INCLUDE (j) WITH (row_group_size='122880', refresh_interval='1000', compaction_interval='0', cleanup_interval_step='1', segment_memory_max='268435456', segment_docs_max='0', compaction_max_segments='10', compaction_max_segments_bytes='5368709120', compaction_floor_segment_bytes='2097152') WHERE (id > 0)
+
+
+query
+SELECT pg_get_indexdef('rs.docs_idx'::regclass, 2, true) AS body,
+       pg_get_indexdef('rs.docs_idx'::regclass, 4, true) AS tag,
+       pg_get_indexdef('rs.docs_idx'::regclass, 5, true) AS included,
+       pg_get_indexdef('rs.docs_idx'::regclass, 6, true) AS past_end;
+----
+body	tag	included	past_end
+body	lower(tag)	j	(empty)
+
+
+statement ok
+CREATE VIEW rs.v AS SELECT a, b FROM rs.t WHERE a > 0;
+
+
+query
+SELECT pg_get_viewdef('rs.v'::regclass) AS by_regclass,
+       pg_get_viewdef('rs.v') AS by_name,
+       pg_get_viewdef('rs.v', true) AS by_name_pretty,
+       pg_get_viewdef('rs.v'::regclass, 80) AS wrapped;
+----
+by_regclass	by_name	by_name_pretty	wrapped
+SELECT a, b FROM rs.t WHERE (a > 0);	SELECT a, b FROM rs.t WHERE (a > 0);	SELECT a, b FROM rs.t WHERE (a > 0);	SELECT a, b FROM rs.t WHERE (a > 0);
+
+
+query
+SELECT pg_get_ruledef(oid) AS def, pg_get_ruledef(oid, true) AS pretty
+FROM pg_rewrite WHERE ev_class = 'rs.v'::regclass;
+----
+def	pretty
+CREATE RULE "_RETURN" AS\n    ON SELECT TO rs.v DO INSTEAD  SELECT a, b FROM rs.t WHERE (a > 0);	CREATE RULE "_RETURN" AS\n    ON SELECT TO rs.v DO INSTEAD  SELECT a, b FROM rs.t WHERE (a > 0);
+
+
+statement ok
+CREATE TABLE rs.audit (a integer);
+
+
+statement ok
+CREATE TRIGGER t_ins AFTER INSERT ON rs.t FOR EACH ROW INSERT INTO rs.audit VALUES (NEW.a);
+
+
+statement ok
+CREATE TRIGGER t_upd BEFORE UPDATE OF a, b ON rs.t FOR EACH STATEMENT INSERT INTO rs.audit VALUES (0);
+
+
+query
+SELECT tgname, pg_get_triggerdef(oid) AS def, pg_get_triggerdef(oid, true) AS pretty
+FROM pg_trigger WHERE tgrelid = 'rs.t'::regclass ORDER BY tgname;
+----
+tgname	def	pretty
+t_ins	CREATE TRIGGER t_ins AFTER INSERT ON rs.t FOR EACH ROW INSERT INTO rs.audit (VALUES ("new".a))	CREATE TRIGGER t_ins AFTER INSERT ON rs.t FOR EACH ROW INSERT INTO rs.audit (VALUES ("new".a))
+t_upd	CREATE TRIGGER t_upd BEFORE UPDATE OF a, b ON rs.t FOR EACH STATEMENT INSERT INTO rs.audit (VALUES (0))	CREATE TRIGGER t_upd BEFORE UPDATE OF a, b ON rs.t FOR EACH STATEMENT INSERT INTO rs.audit (VALUES (0))
+
+
+query
+SELECT trigger_name, action_statement, action_condition
+FROM information_schema.triggers WHERE trigger_schema = 'rs' ORDER BY trigger_name;
+----
+trigger_name	action_statement	action_condition
+t_ins	INSERT INTO rs.audit (VALUES ("new".a))	NULL
+t_upd	INSERT INTO rs.audit (VALUES (0))	NULL
+
+
+statement ok
+CREATE FUNCTION rs.add1(x integer, y integer) RETURNS integer LANGUAGE sql AS 'SELECT x + y';
+
+
+statement ok
+CREATE FUNCTION rs.tf(n integer) RETURNS TABLE(i integer, s text) LANGUAGE sql AS 'SELECT n, ''x''';
+
+
+statement ok
+CREATE PROCEDURE rs.p(x integer) LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+CREATE MACRO rs.m(a, b := 3) AS a + b;
+
+
+query
+SELECT proname, pg_get_functiondef(oid) AS def
+FROM pg_proc WHERE pronamespace = 'rs'::regnamespace ORDER BY proname;
+----
+proname	def
+add1	CREATE OR REPLACE FUNCTION rs.add1(x integer, y integer)\n RETURNS integer\n LANGUAGE sql\nAS $function$(SELECT (x + y) LIMIT 1)$function$\n
+m	CREATE MACRO rs.m (a, b := 3) AS ((a + b));
+p	CREATE OR REPLACE PROCEDURE rs.p(IN x integer)\n LANGUAGE sql\nAS $procedure$SELECT 1$procedure$\n
+tf	CREATE OR REPLACE FUNCTION rs.tf(n integer)\n RETURNS TABLE(i integer, s text)\n LANGUAGE sql\nAS $function$SELECT n AS i, 'x' AS s$function$\n
+
+
+query
+SELECT pg_get_function_arguments(oid) AS args, pg_get_function_identity_arguments(oid) AS identity,
+       pg_get_function_result(oid) AS result, pg_get_function_arg_default(oid, 1) AS d1,
+       pg_get_function_arg_default(oid, 2) AS d2, proargnames
+FROM pg_proc WHERE pronamespace = 'rs'::regnamespace AND proname = 'm';
+----
+args	identity	result	d1	d2	proargnames
+a, b DEFAULT 3	a, b	NULL	NULL	3	{a,b}
+
+
+query
+SELECT pg_get_function_arguments(oid) AS args, pg_get_function_result(oid) AS result
+FROM pg_proc WHERE proname = 'lower' AND pronamespace = 'pg_catalog'::regnamespace ORDER BY args LIMIT 1;
+----
+args	result
+text	text
+
+
+query
+SELECT pg_get_statisticsobjdef(0) IS NULL AS stats,
+       pg_get_statisticsobjdef_columns(0) IS NULL AS stats_columns,
+       pg_get_statisticsobjdef_expressions(0) IS NULL AS stats_expressions;
+----
+stats	stats_columns	stats_expressions
+t	t	t
+
+
+statement ok
+DROP SCHEMA rs CASCADE;

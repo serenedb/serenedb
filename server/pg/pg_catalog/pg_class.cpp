@@ -330,6 +330,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
         auto row = MakeBaseRow(schema_id, unique.index_oid, names.back(),
                                table->permissions.owner);
         row.relkind = PgClass::Relkind::Index;
+        row.relam = pg::kPgAmSecondary;
         row.relnatts =
           static_cast<int16_t>(KeyConstraintAttnums(*table, unique).size());
         values.push_back(std::move(row));

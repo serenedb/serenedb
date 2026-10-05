@@ -182,4 +182,33 @@ void VisitBuiltinFunctions(
   SDB_ASSERT(next_oid <= kMaxSystem);
 }
 
+namespace {
+
+bool TypeIsComplete(const duckdb::LogicalType& type) {
+  switch (type.id()) {
+    using enum duckdb::LogicalTypeId;
+    case DECIMAL:
+    case STRUCT:
+    case MAP:
+    case UNION:
+    case ENUM:
+      return type.AuxInfo();
+    case LIST:
+      return type.AuxInfo() &&
+             TypeIsComplete(duckdb::ListType::GetChildType(type));
+    case ARRAY:
+      return type.AuxInfo() &&
+             TypeIsComplete(duckdb::ArrayType::GetChildType(type));
+    default:
+      return true;
+  }
+}
+
+}  // namespace
+
+duckdb::idx_t BuiltinTypeOid(const duckdb::LogicalType& type) {
+  return TypeIsComplete(type) ? static_cast<duckdb::idx_t>(Type2Oid(type))
+                              : static_cast<duckdb::idx_t>(PgTypeOID::kUnknown);
+}
+
 }  // namespace sdb::pg

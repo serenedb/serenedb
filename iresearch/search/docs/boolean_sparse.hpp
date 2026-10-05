@@ -66,12 +66,11 @@ class BooleanSparse : public Root {
           continue;
         }
       }
-      out[n] = doc;
-      if constexpr (kExcludes) {
-        n += static_cast<uint32_t>(!detail::IsExcluded(_excludes, doc));
-      } else {
-        ++n;
+      if (detail::SkipSpan(_excludes, _lead, doc)) {
+        continue;
       }
+      out[n] = doc;
+      n += static_cast<uint32_t>(detail::Kept(_excludes, doc));
       doc = _lead.Next();
     }
 

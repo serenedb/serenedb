@@ -88,6 +88,9 @@ struct Api {
     std::span<const detail::PostingClause> exclude_terms,
     std::span<const QueryBuilder::ptr> exclude_filters,
     const SubReader& segment, uint64_t, const Context& ctx) {
+    if (detail::OnlyMask(exclude_terms, exclude_filters)) {
+      return MakeLiveDocs(segment);
+    }
     return detail::builder::MakeWindowNegation<Api>(
       exclude_terms, exclude_filters, segment, ctx);
   }

@@ -91,6 +91,7 @@ Node::ptr MakePostingDocs(const detail::PostingClause& posting,
                           const SubReader& segment);
 
 Node::ptr MakeAllDocs(const SubReader& segment);
+Node::ptr MakeLiveDocs(const SubReader& segment);
 
 Node::ptr MakeSparseConjunctionDocs(
   std::span<const detail::PostingClause> terms,

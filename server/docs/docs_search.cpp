@@ -45,7 +45,7 @@
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/detail/lazy_bitset.hpp>
-#include <iresearch/search/fill/docs_mask.hpp>
+#include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/filters/prefix_filter.hpp>
@@ -510,9 +510,10 @@ void ForEachMatchIn(const irs::DirectoryReader& reader,
     const auto docs_count = static_cast<irs::doc_id_t>(segment.docs_count());
     std::optional<irs::detail::LazyBitset> live;
     if (auto* folded = node->Folded()) {
-      live.emplace(std::move(*folded), irs::fill::DocsMask{segment});
+      live.emplace(std::move(*folded), irs::MakeGenericDocsMask(segment));
     } else {
-      live.emplace(std::move(node), docs_count, irs::fill::DocsMask{segment});
+      live.emplace(std::move(node), docs_count,
+                   irs::MakeGenericDocsMask(segment));
     }
     auto fetcher = make(segment);
     for (auto doc = live->Probe(irs::doc_limits::min());

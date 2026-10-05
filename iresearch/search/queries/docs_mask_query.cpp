@@ -22,12 +22,11 @@
 
 #include <utility>
 
+#include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/fill/docs_mask.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
-#include "iresearch/search/probe/docs_mask.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -48,12 +47,18 @@ class MaskQuery : public QueryBuilder {
     : QueryBuilder{segment, masked, QueryKind::DocsMask} {}
 
   probe::Node::ptr PlanProbe(const detail::ScoredCtx&, uint64_t) const final {
-    return memory::make_managed<probe::Impl<probe::DocsMask>>(_segment);
+    return ResolveDocsMask(
+      _segment, [&]<DocsMaskType Mask>(Mask docs_mask) -> probe::Node::ptr {
+        return memory::make_managed<probe::Impl<Mask>>(std::move(docs_mask));
+      });
   }
 
   fill::Node::ptr PlanFill(const detail::ScoredCtx&,
                            ScoreMergeType) const final {
-    return memory::make_managed<fill::Impl<fill::DocsMask>>(_segment);
+    return ResolveDocsMask(
+      _segment, [&]<DocsMaskType Mask>(Mask docs_mask) -> fill::Node::ptr {
+        return memory::make_managed<fill::Impl<Mask>>(std::move(docs_mask));
+      });
   }
 
   count::Root::ptr PlanCount(const count::Context&) const final { return {}; }
@@ -77,12 +82,28 @@ QueryBuilder::ptr WithDocsMask(QueryBuilder::ptr query,
     return query;
   }
 
+  auto mask = memory::make_tracked<MaskQuery>(ctx.memory, segment, masked);
+  if (ctx.collector != nullptr && query->Kind() == QueryKind::Boolean) {
+    const auto& nested = irs::utils::downCast<BooleanQuery>(*query);
+    const auto stats = nested.Stats();
+    BooleanBuilder builder{
+      segment,        ctx.memory,         nested.DeclaredMinShouldMatch(),
+      nested.Boost(), nested.MergeType(), ctx.collector,
+      ctx.needs_terms};
+    builder.Inherit(nested);
+    builder.Add(std::move(mask), Occur::MustNot);
+    auto flat = builder.Finish();
+    if (flat && flat->Kind() == QueryKind::Boolean) {
+      const_cast<QueryBuilder&>(*flat).SetStats(stats);
+    }
+    return flat;
+  }
+
   BooleanBuilder builder{segment,        ctx.memory,          0,
                          kNoBoost,       ScoreMergeType::Sum, ctx.collector,
                          ctx.needs_terms};
   builder.Add(std::move(query), Occur::Must);
-  builder.Add(memory::make_tracked<MaskQuery>(ctx.memory, segment, masked),
-              Occur::MustNot);
+  builder.Add(std::move(mask), Occur::MustNot);
   return builder.Finish();
 }
 

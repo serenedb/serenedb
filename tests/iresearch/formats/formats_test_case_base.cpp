@@ -1074,7 +1074,6 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     };
 
     flush(nullptr, 0);
-    ASSERT_EQ(1, meta.docs_mask_chain);
     ASSERT_EQ(data_files, meta.files);
 
     const auto first_patch = scattered(2, 9);
@@ -1082,14 +1081,12 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     mask.Trim();
     meta.version = 101;
     flush(&first_patch, 100);
-    ASSERT_EQ(2, meta.docs_mask_chain);
 
     const auto second_patch = scattered(5, 9);
     mask.Merge(second_patch);
     mask.Trim();
     meta.version = 105;
     flush(&second_patch, 101);
-    ASSERT_EQ(3, meta.docs_mask_chain);
 
     auto expected_files = data_files;
     expected_files.emplace_back(
@@ -1150,7 +1147,6 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       ASSERT_EQ(meta.live_docs_count, read_meta.live_docs_count);
       ASSERT_EQ(meta.byte_size, read_meta.byte_size);
       ASSERT_EQ(meta.docs_mask_size, read_meta.docs_mask_size);
-      ASSERT_EQ(3, read_meta.docs_mask_chain);
       ASSERT_EQ(expected_files, read_meta.files);
       ASSERT_EQ(mask, *read_meta.docs_mask);
     }
@@ -1366,7 +1362,6 @@ TEST_P(FormatTestCase, segment_meta_derives_from_listed_links) {
   ASSERT_NE(nullptr, meta.docs_mask);
   ASSERT_EQ(expected, *meta.docs_mask);
   ASSERT_EQ(97, meta.live_docs_count);
-  ASSERT_EQ(3, meta.docs_mask_chain);
   ASSERT_EQ(
     (std::vector<std::string>{"file1", irs::FileName(kName, 1, sm::kExt),
                               irs::FileName(kName, 3, sm::kExt)}),

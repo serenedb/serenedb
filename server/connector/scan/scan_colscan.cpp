@@ -20,7 +20,7 @@
 
 #include <algorithm>
 #include <iresearch/index/index_reader.hpp>
-#include <iresearch/search/fill/docs_mask.hpp>
+#include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "connector/full_scanner.h"
@@ -109,7 +109,7 @@ void RunColScan(duckdb::ClientContext&, duckdb::TableFunctionInput&,
     l.doc_cursor = rows.begin;
     l.doc_end = rows.end;
     l.has_mask = sub.docs_mask() != nullptr;
-    l.mask = irs::fill::DocsMask{sub};
+    l.mask = irs::MakeGenericDocsMask(sub);
     OpenScanner(g, l);
   }
   output.SetChildCardinality(0);

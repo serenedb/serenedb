@@ -74,10 +74,10 @@ class BooleanSparse : public Root {
         probe = _probes.Probe(doc);
       }
       if (probe == doc) {
-        bool kept = true;
-        if constexpr (kExcludes) {
-          kept = !detail::IsExcluded(_excludes, doc);
+        if (detail::SkipSpan(_excludes, _lead, doc)) {
+          continue;
         }
+        const bool kept = detail::Kept(_excludes, doc);
         if constexpr (kTable) {
           _docs[n] = doc;
           n += static_cast<uint32_t>(kept);

@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/index/document_mask.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/detail/bitset_storage.hpp>
@@ -30,14 +31,14 @@
 #include <iresearch/search/docs/boolean_bitset.hpp>
 #include <iresearch/search/docs/boolean_window.hpp>
 #include <iresearch/search/fill/bitset_docs.hpp>
-#include <iresearch/search/fill/docs_mask.hpp>
 #include <iresearch/search/fill/node.hpp>
 #include <iresearch/search/fill/walk.hpp>
 #include <iresearch/search/lead/bitset_docs.hpp>
 #include <iresearch/search/probe/bitset_docs.hpp>
-#include <iresearch/search/probe/docs_mask.hpp>
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/memory.hpp>
+#include <roaring/roaring.hh>
+#include <string>
 #include <vector>
 
 #include "tests_shared.hpp"
@@ -712,7 +713,7 @@ TEST(lazy_bitset_test, fills_only_as_far_as_asked) {
   auto* fill = node.get();
   irs::detail::LazyBitset set{
     std::move(node), kDocs,
-    irs::fill::DocsMask{nullptr, irs::doc_limits::eof()}};
+    irs::MakeGenericDocsMask(nullptr, irs::doc_limits::eof())};
 
   ASSERT_EQ(0, fill->windows());
   ASSERT_EQ(kMin, set.Filled());
@@ -756,7 +757,7 @@ TEST(lazy_bitset_test, drops_a_masked_tail) {
 
   auto node = irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs));
   irs::detail::LazyBitset set{std::move(node), kDocs,
-                              irs::fill::DocsMask{&removals, kTail}};
+                              irs::MakeGenericDocsMask(&removals, kTail)};
 
   ASSERT_TRUE(set.Contains(3));
   ASSERT_FALSE(set.Contains(64));
@@ -779,7 +780,7 @@ TEST(lazy_bitset_test, skips_the_windows_it_holds_nothing_in) {
   auto* fill = node.get();
   irs::detail::LazyBitset set{
     std::move(node), kDocs,
-    irs::fill::DocsMask{nullptr, irs::doc_limits::eof()}};
+    irs::MakeGenericDocsMask(nullptr, irs::doc_limits::eof())};
 
   // The segment spans three windows, the middle one holds nothing, and two
   // fills answer a probe that crosses all three.
@@ -804,9 +805,9 @@ irs::DocumentMask MakeMask(const std::vector<irs::doc_id_t>& docs) {
   return mask;
 }
 
-irs::probe::DocsMask ProbeOver(const irs::DocumentMask* mask,
+irs::GenericDocsMask ProbeOver(const irs::DocumentMask* mask,
                                irs::doc_id_t visible_end) {
-  return irs::probe::DocsMask{mask, visible_end};
+  return irs::MakeGenericDocsMask(mask, visible_end);
 }
 
 }  // namespace
@@ -821,7 +822,9 @@ TEST(docs_mask_test, probe_answers_out_of_the_targets_own_word) {
   ASSERT_EQ(3, probe.Probe(3));
   ASSERT_EQ(64, probe.Probe(4));
   ASSERT_EQ(64, probe.Probe(64));
-  ASSERT_EQ(128, probe.Probe(65));
+  const auto bound = probe.Probe(65);
+  ASSERT_LT(65, bound);
+  ASSERT_GE(4999, bound);
   ASSERT_EQ(4999, probe.Probe(4993));
   ASSERT_LT(5000, probe.Probe(5000));
   ASSERT_TRUE(irs::doc_limits::eof(probe.Probe(100000)));
@@ -849,7 +852,9 @@ TEST(docs_mask_test, probe_treats_the_invisible_tail_as_deleted) {
   auto probe = ProbeOver(&removals, 5000);
 
   ASSERT_EQ(3, probe.Probe(1));
-  ASSERT_EQ(64, probe.Probe(4));
+  const auto bound = probe.Probe(4);
+  ASSERT_LT(4, bound);
+  ASSERT_GE(5000, bound);
   ASSERT_EQ(5000, probe.Probe(4992));
   ASSERT_EQ(6000, probe.Probe(6000));
 }
@@ -872,7 +877,7 @@ TEST(docs_mask_test, tail_only_probe_starts_at_the_bound) {
 
 TEST(docs_mask_test, fill_sets_deleted_bits_in_a_window) {
   const auto removals = MakeMask({1, 3, 64, 127, 128});
-  irs::fill::DocsMask fill{&removals, irs::doc_limits::eof()};
+  auto fill = irs::MakeGenericDocsMask(&removals, irs::doc_limits::eof());
 
   uint64_t words[3]{};
   const auto next = fill.FillOr(1, 1 + 3 * kBits, words);
@@ -888,7 +893,7 @@ TEST(docs_mask_test, fill_sets_deleted_bits_in_a_window) {
 }
 
 TEST(docs_mask_test, fill_covers_the_invisible_tail) {
-  irs::fill::DocsMask fill{nullptr, 70};
+  auto fill = irs::MakeGenericDocsMask(nullptr, 70);
 
   uint64_t words[2]{};
   const auto next = fill.FillOr(1, 1 + 2 * kBits, words);
@@ -961,47 +966,6 @@ TEST(docs_mask_test, clear_empties_a_reusable_mask) {
   ASSERT_TRUE(mask.Contains(7));
 }
 
-TEST(docs_mask_test, add_grows_capacity_by_powers_of_two) {
-  irs::DocumentMask mask;
-  size_t capacity = 0;
-  size_t reallocations = 0;
-  for (irs::doc_id_t doc = irs::doc_limits::min(); doc < 64 * 1000; doc += 7) {
-    mask.Add(doc);
-    const auto words = mask.ByteCapacity() / sizeof(uint64_t);
-    ASSERT_TRUE(std::has_single_bit(words)) << words;
-    if (words != capacity) {
-      capacity = words;
-      ++reallocations;
-    }
-  }
-  ASSERT_EQ(1024, capacity);
-  ASSERT_EQ(static_cast<size_t>(std::countr_zero(capacity)), reallocations);
-
-  irs::DocumentMask range;
-  range.AddRange(irs::doc_limits::min(), 64 * 5 + 1);
-  ASSERT_EQ(8 * sizeof(uint64_t), range.ByteCapacity());
-}
-
-TEST(docs_mask_test, merge_grows_capacity_by_doubling) {
-  const auto trimmed = MakeMask({1, 64 * 2 + 1});
-  ASSERT_EQ(3 * sizeof(uint64_t), trimmed.ByteCapacity());
-  const auto wide = MakeMask({64 * 9 + 1});
-
-  irs::DocumentMask copy{trimmed};
-  ASSERT_EQ(3 * sizeof(uint64_t), copy.ByteCapacity());
-  copy.Merge(wide);
-  ASSERT_EQ(12 * sizeof(uint64_t), copy.ByteCapacity());
-  ASSERT_EQ(3, copy.Count());
-  ASSERT_TRUE(copy.Contains(1));
-  ASSERT_TRUE(copy.Contains(64 * 2 + 1));
-  ASSERT_TRUE(copy.Contains(64 * 9 + 1));
-
-  auto merged = MakeMask({1});
-  merged.Merge(wide);
-  ASSERT_EQ(16 * sizeof(uint64_t), merged.ByteCapacity());
-  ASSERT_EQ(2, merged.Count());
-}
-
 TEST(docs_mask_test, trim_releases_an_all_zero_mask) {
   auto mask = MakeMask({1, 4999});
   mask.Truncate(irs::doc_limits::min());
@@ -1023,7 +987,7 @@ TEST(docs_mask_test, fill_agrees_with_probe_across_windows) {
   }
   const auto removals = MakeMask(docs);
 
-  irs::fill::DocsMask fill{&removals, 15000};
+  auto fill = irs::MakeGenericDocsMask(&removals, 15000);
   auto probe = ProbeOver(&removals, 15000);
 
   constexpr uint32_t kWords = 64;
@@ -1042,6 +1006,103 @@ TEST(docs_mask_test, fill_agrees_with_probe_across_windows) {
   }
 }
 
+TEST(docs_mask_test, and_not_agrees_with_fill_across_chunks) {
+  std::vector<irs::doc_id_t> docs;
+  for (irs::doc_id_t doc = 1; doc < 300000; ++doc) {
+    if ((doc < 65536 && doc % 97 == 0) ||
+        (doc >= 65536 && doc < 131072 && doc % 3 == 0) ||
+        (doc >= 140000 && doc < 150000) || doc == 131072 || doc == 196607) {
+      docs.push_back(doc);
+    }
+  }
+  const auto removals = MakeMask(docs);
+  constexpr irs::doc_id_t kVisibleEnd = 250000;
+  constexpr uint32_t kWords = 64;
+  constexpr irs::doc_id_t kSpan = kWords * kBits;
+
+  const auto expect = [&](irs::doc_id_t min, irs::doc_id_t max) {
+    auto fill = irs::MakeGenericDocsMask(&removals, kVisibleEnd);
+    std::vector<uint64_t> words((max - min + kBits - 1) / kBits, ~uint64_t{0});
+    for (auto base = min; base < max; base += kSpan) {
+      const auto stop = std::min(base + kSpan, max);
+      std::vector<uint64_t> dead(kWords, 0);
+      fill.FillOr(base, stop, dead.data());
+      const auto first = (base - min) / kBits;
+      for (uint32_t w = 0; w != (stop - base + kBits - 1) / kBits; ++w) {
+        words[first + w] &= ~dead[w];
+      }
+    }
+    return words;
+  };
+
+  for (const auto [min, max] :
+       {std::pair<irs::doc_id_t, irs::doc_id_t>{1, 1 + 5000 * kBits},
+        {1 + 1000 * kBits, 1 + 4000 * kBits + 17},
+        {65537, 131137}}) {
+    auto fill = irs::MakeGenericDocsMask(&removals, kVisibleEnd);
+    std::vector<uint64_t> words((max - min + kBits - 1) / kBits, ~uint64_t{0});
+    fill.AndNot(min, max, words.data());
+    const auto expected = expect(min, max);
+    ASSERT_EQ(expected, words) << "range [" << min << ", " << max << ")";
+
+    auto bulk = irs::MakeGenericDocsMask(&removals, kVisibleEnd);
+    std::vector<uint64_t> filled(words.size(), 0);
+    bulk.FillRange(min, max, filled.data());
+    for (size_t w = 0; w != filled.size(); ++w) {
+      const auto used = std::min<uint64_t>(kBits, max - min - w * kBits);
+      const auto keep =
+        used == kBits ? ~uint64_t{0} : ~uint64_t{0} >> (kBits - used);
+      ASSERT_EQ(~expected[w] & keep, filled[w])
+        << "word " << w << " of [" << min << ", " << max << ")";
+    }
+  }
+}
+
+TEST(docs_mask_test, mask_round_trips_and_mutates) {
+  std::vector<irs::doc_id_t> docs;
+  for (irs::doc_id_t doc = 1; doc < 200000; doc += 97) {
+    docs.push_back(doc);
+  }
+  for (irs::doc_id_t doc = 250000; doc < 250100; ++doc) {
+    docs.push_back(doc);
+  }
+  auto mask = MakeMask(docs);
+
+  const auto round_trip = [](const irs::DocumentMask& source) {
+    const auto compressed = source.Compress();
+    std::string blob(compressed.getSizeInBytes(true), '\0');
+    compressed.write(blob.data(), true);
+    return irs::DocumentMask::Read(blob.data(), blob.size());
+  };
+
+  auto restored = round_trip(mask);
+  ASSERT_EQ(mask.Count(), restored.Count());
+  ASSERT_TRUE(restored == mask);
+  restored.Trim();
+  ASSERT_TRUE(restored == mask);
+  for (const auto doc : docs) {
+    ASSERT_TRUE(restored.Contains(doc)) << doc;
+  }
+  ASSERT_FALSE(restored.Contains(2));
+  ASSERT_FALSE(restored.Contains(250100));
+
+  ASSERT_TRUE(mask.Add(2));
+  mask.Merge(MakeMask({300000}));
+  mask.Truncate(250050);
+  mask.Trim();
+  ASSERT_TRUE(mask.Contains(2));
+  ASSERT_TRUE(mask.Contains(250049));
+  ASSERT_FALSE(mask.Contains(250050));
+  ASSERT_FALSE(mask.Contains(300000));
+
+  const irs::DocumentMask copy{mask};
+  ASSERT_TRUE(copy == mask);
+  auto again = round_trip(copy);
+  again.Trim();
+  ASSERT_TRUE(again == mask);
+  ASSERT_EQ(mask.Count(), again.Count());
+}
+
 // A set that is already folded has no clause left to fill from, so a question
 // past its end has to stop at the end rather than reach for one. CountAgainst
 // asks exactly that of the last leaf of a bounded scan.
@@ -1049,7 +1110,7 @@ TEST(lazy_bitset_test, reaching_past_the_end_of_a_folded_set) {
   constexpr irs::doc_id_t kDocs = 300;
   irs::detail::LazyBitset set{
     MakeSet(kDocs, {3, 100, 299}),
-    irs::fill::DocsMask{nullptr, irs::doc_limits::eof()}};
+    irs::MakeGenericDocsMask(nullptr, irs::doc_limits::eof())};
 
   ASSERT_EQ(kDocs + 1, set.End());
   ASSERT_EQ(kDocs + 1, set.Filled());

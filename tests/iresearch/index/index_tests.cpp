@@ -11598,12 +11598,10 @@ TEST_P(IndexTestCase11, partial_commit_masks_tail_as_bound) {
   ASSERT_EQ(irs::doc_limits::min() + 2, segment.Meta().visible_end);
   ASSERT_EQ(1, irs::InvisibleCount(segment.Meta()));
 
-  auto it_mask = segment.MaskedDocs();
-  ASSERT_LT(irs::doc_limits::min(), it_mask.Seek(irs::doc_limits::min()));
-  ASSERT_LT(irs::doc_limits::min() + 1,
-            it_mask.Seek(irs::doc_limits::min() + 1));
-  ASSERT_EQ(irs::doc_limits::min() + 2,
-            it_mask.Seek(irs::doc_limits::min() + 2));
+  const auto it_mask = segment.MaskedDocs();
+  ASSERT_FALSE(it_mask.Contains(irs::doc_limits::min()));
+  ASSERT_FALSE(it_mask.Contains(irs::doc_limits::min() + 1));
+  ASSERT_TRUE(it_mask.Contains(irs::doc_limits::min() + 2));
 
   auto docs = segment.docs_iterator();
   ASSERT_NE(nullptr, docs);
@@ -11933,6 +11931,79 @@ TEST_P(IndexTestCase11, partial_commit_tail_compacts_after_reopen) {
   AssertSnapshotEquality(*writer);
 }
 
+TEST_P(IndexTestCase11, partial_commit_tail_replayed_once) {
+  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                              &tests::GenericJsonFieldFactory);
+
+  auto& directory = dir();
+  auto* doc0 = gen.next();
+  auto* doc1 = gen.next();
+  auto* doc2 = gen.next();
+
+  constexpr uint64_t kVisibleTick = 10;
+  constexpr uint64_t kPendingTick = 20;
+
+  auto insert = [](auto& trx, const tests::Document& src) {
+    auto doc = trx.Insert();
+    tests::InsertFields(doc, src.indexed.begin(), src.indexed.end());
+    CaptureNameLikeFields(doc, src.indexed);
+    tests::InsertFields(doc, src.stored.begin(), src.stored.end());
+    return static_cast<bool>(doc);
+  };
+
+  {
+    auto writer =
+      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+    {
+      auto trx = writer->GetBatch();
+      ASSERT_TRUE(insert(trx, *doc0));
+      ASSERT_TRUE(insert(trx, *doc1));
+      trx.Commit(kVisibleTick);
+    }
+    {
+      auto trx = writer->GetBatch();
+      ASSERT_TRUE(insert(trx, *doc2));
+      trx.Commit(kPendingTick);
+    }
+    ASSERT_TRUE(writer->RefreshCommit({.tick = kVisibleTick}));
+  }
+
+  auto writer = open_writer(irs::kOmAppend, irs::tests::DefaultWriterOptions());
+  {
+    auto trx = writer->GetBatch();
+    ASSERT_TRUE(insert(trx, *doc2));
+    ASSERT_TRUE(trx.Commit());
+  }
+  ASSERT_TRUE(writer->RefreshCommit());
+
+  auto reader = irs::DirectoryReader(directory, nullptr,
+                                     irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(2, reader.size());
+  EXPECT_EQ(3, reader.live_docs_count());
+
+  size_t matches = 0;
+  for (const auto& segment : reader) {
+    const auto* field = segment.field(kNameFieldId);
+    ASSERT_NE(nullptr, field);
+    auto terms = field->iterator();
+    if (!terms->seek(irs::ViewCast<irs::byte_type>("C"sv))) {
+      continue;
+    }
+    auto docs =
+      tests::MaskPostings(segment, terms->postings(irs::IndexFeatures::None));
+    for (auto doc = docs->Next(); !irs::doc_limits::eof(doc);
+         doc = docs->Next()) {
+      ++matches;
+    }
+  }
+  EXPECT_EQ(1, matches);
+}
+
+size_t MaskLinks(const irs::SegmentMeta& meta) {
+  return static_cast<size_t>(absl::c_count_if(
+    meta.files, [](std::string_view file) { return file.ends_with(".sm"); }));
+}
+
 TEST_P(IndexTestCase11, docs_mask_small_never_chains) {
   tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory);
@@ -11950,12 +12021,12 @@ TEST_P(IndexTestCase11, docs_mask_small_never_chains) {
   }
   writer->RefreshCommit();
 
-  auto mask_chain = [&] {
+  auto mask_links = [&] {
     auto snapshot = writer->GetSnapshot();
     EXPECT_EQ(1, snapshot.size());
-    return snapshot.Meta().index_meta.segments[0].meta.docs_mask_chain;
+    return MaskLinks(snapshot.Meta().index_meta.segments[0].meta);
   };
-  ASSERT_EQ(0, mask_chain());
+  ASSERT_EQ(0, mask_links());
 
   auto current_mask = [&] {
     auto snapshot = writer->GetSnapshot();
@@ -11970,7 +12041,7 @@ TEST_P(IndexTestCase11, docs_mask_small_never_chains) {
       trx.Commit();
     }
     writer->RefreshCommit();
-    ASSERT_EQ(1, mask_chain()) << "after removing " << removed[i];
+    ASSERT_EQ(0, mask_links()) << "after removing " << removed[i];
     const auto mask = current_mask();
     ASSERT_NE(nullptr, mask);
     ASSERT_LE(mask->Compress().getSizeInBytes(),
@@ -12043,10 +12114,10 @@ TEST_P(IndexTestCase11, docs_mask_chain_grows_unbounded) {
   InsertBucketDocs(*writer, kDocs, kBuckets);
   writer->RefreshCommit();
 
-  auto mask_chain = [&] {
+  auto mask_links = [&] {
     auto snapshot = writer->GetSnapshot();
     EXPECT_EQ(1, snapshot.size());
-    return snapshot.Meta().index_meta.segments[0].meta.docs_mask_chain;
+    return MaskLinks(snapshot.Meta().index_meta.segments[0].meta);
   };
 
   for (uint32_t round = 0; round != kRounds; ++round) {
@@ -12062,7 +12133,7 @@ TEST_P(IndexTestCase11, docs_mask_chain_grows_unbounded) {
     writer->RefreshCommit();
 
     // Nothing caps the chain: every patched write adds a link.
-    ASSERT_EQ(round + 1, mask_chain()) << "after round " << round;
+    ASSERT_EQ(round, mask_links()) << "after round " << round;
   }
 
   auto reader =
@@ -12113,13 +12184,17 @@ TEST_P(IndexTestCase11, docs_mask_chain_file_lifecycle) {
   };
 
   remove_round(0);
-  ASSERT_EQ(1, segment_meta().docs_mask_chain);
+  {
+    const auto meta = segment_meta();
+    ASSERT_NE(nullptr, meta.docs_mask);
+    ASSERT_EQ(0, MaskLinks(meta));
+  }
 
   std::vector<std::string> links;
   for (uint32_t round = 1; round != kRounds; ++round) {
     remove_round(round);
     const auto meta = segment_meta();
-    ASSERT_EQ(round + 1, meta.docs_mask_chain) << "after round " << round;
+    ASSERT_EQ(round, MaskLinks(meta)) << "after round " << round;
     links.emplace_back(meta.files.back());
     ASSERT_TRUE(links.back().ends_with(".sm"));
     ASSERT_TRUE(exists(links.back()));

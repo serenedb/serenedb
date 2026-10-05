@@ -159,6 +159,8 @@ class BooleanBuilder {
   void AddTerm(const TermReader* reader, const PostingMeta& meta, score_t boost,
                Occur occur, detail::StatsRecord stats);
 
+  void Inherit(const BooleanQuery& nested);
+
   QueryBuilder::ptr Finish();
 
  private:

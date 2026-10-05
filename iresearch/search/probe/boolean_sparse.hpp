@@ -82,7 +82,9 @@ class BooleanSparse {
         return probe;
       }
     }
-    if constexpr (kExcludes) {
+    if constexpr (detail::kSkipsExcluded<Excludes>) {
+      return _excludes.NextLive(target);
+    } else if constexpr (kExcludes) {
       if (detail::IsExcluded(_excludes, target)) {
         return target + 1;
       }

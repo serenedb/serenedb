@@ -46,6 +46,7 @@
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
+#include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
@@ -461,13 +462,18 @@ doc_id_t ComputeDocIds(DocIdMapT& doc_id_map, const SubReader& reader,
       reader.docs_count() + doc_limits::min());
     return doc_limits::invalid();
   }
-  auto docs_itr = reader.docs_iterator();
-  for (auto src_doc_id = docs_itr->Next(); !doc_limits::eof(src_doc_id);
-       src_doc_id = docs_itr->Next(), ++next_id) {
-    SDB_ASSERT(src_doc_id >= doc_limits::min());
-    SDB_ASSERT(src_doc_id < reader.docs_count() + doc_limits::min());
-    doc_id_map[src_doc_id] = next_id;
-  }
+  VisitLiveRanges(
+    reader.docs_mask(), reader.Meta().visible_end, doc_limits::min(),
+    static_cast<doc_id_t>(reader.docs_count() + doc_limits::min()),
+    [&](doc_id_t first, doc_id_t last) {
+      auto* IRS_RESTRICT out = doc_id_map.data() + first;
+      const auto base = next_id;
+      const auto count = last - first;
+      for (doc_id_t i = 0; i != count; ++i) {
+        out[i] = base + i;
+      }
+      next_id += count;
+    });
   return next_id;
 }
 
@@ -526,7 +532,6 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
 
     SDB_ASSERT(norm_reader->RowCount() == src.reader->docs_count());
     const bool has_mask = HasRemovals(src.reader->Meta());
-    auto it_mask = src.reader->MaskedDocs();
     for (size_t rg = 0, rg_count = norm_reader->RowGroupCount(); rg < rg_count;
          ++rg) {
       const auto bytes = norm_reader->RowGroupBytes(rg);
@@ -538,24 +543,18 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
         merged_row += n;
         continue;
       }
-      size_t run_start = 0;
-      auto flush_run = [&](size_t run_end) {
-        if (run_end > run_start) {
-          const auto run = run_end - run_start;
-          norm_writer->AppendBytes(
-            merged_row, bytes.data() + run_start * byte_size, run, byte_size);
-          merged_row += run;
-        }
-      };
-      for (size_t i = 0; i < n; ++i) {
-        const auto src_doc =
-          static_cast<doc_id_t>(rg_first_row + i + doc_limits::min());
-        if (it_mask.Contains(src_doc)) {
-          flush_run(i);
-          run_start = i + 1;
-        }
-      }
-      flush_run(n);
+      const auto first_doc =
+        static_cast<doc_id_t>(rg_first_row + doc_limits::min());
+      VisitLiveRanges(src.reader->docs_mask(), src.reader->Meta().visible_end,
+                      first_doc, static_cast<doc_id_t>(first_doc + n),
+                      [&](doc_id_t first, doc_id_t last) {
+                        const size_t run = last - first;
+                        norm_writer->AppendBytes(
+                          merged_row,
+                          bytes.data() + size_t{first - first_doc} * byte_size,
+                          run, byte_size);
+                        merged_row += run;
+                      });
     }
   }
   return out_id;
@@ -668,7 +667,6 @@ bool ComputeDocMappingsAndFieldMeta(
       reader_ctx.remap.base_id = base_id;
       base_id += static_cast<doc_id_t>(docs_count);
     } else {
-      reader_ctx.remap.mask = reader.MaskedDocs();
       base_id = ComputeDocIds(reader_ctx.remap.id_map, reader, base_id);
     }
     if (!doc_limits::valid(base_id)) {

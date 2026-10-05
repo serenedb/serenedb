@@ -28,6 +28,7 @@
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/probe_leaves.hpp"
 #include "iresearch/search/detail/resolve.hpp"
+#include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/probe/all_docs.hpp"
 #include "iresearch/search/probe/boolean_sparse.hpp"
 #include "iresearch/search/probe/impl.hpp"
@@ -178,6 +179,9 @@ Node::ptr MakeSparseExclusionDocs(
   };
   if (no_must) {
     if (!optional) {
+      if (detail::OnlyMask(exclude, exclude_filters)) {
+        return MakeLiveDocs(segment);
+      }
       return excluded.template operator()<AllDocs, utils::Empty>(
         std::forward_as_tuple(segment), std::forward_as_tuple());
     }

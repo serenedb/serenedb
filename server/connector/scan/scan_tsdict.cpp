@@ -328,11 +328,11 @@ irs::detail::LazyBitset& TsDictLocalState::Live() {
     EnsurePlanned(node != nullptr);
     if (auto* folded = node->Folded()) {
       _live = std::make_unique<irs::detail::LazyBitset>(
-        std::move(*folded), irs::fill::DocsMask{*_seg});
+        std::move(*folded), irs::MakeGenericDocsMask(*_seg));
     } else {
       _live = std::make_unique<irs::detail::LazyBitset>(
         std::move(node), irs::VisibleCount(_seg->Meta()),
-        irs::fill::DocsMask{*_seg});
+        irs::MakeGenericDocsMask(*_seg));
     }
   }
   return *_live;

@@ -32,6 +32,7 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/file_utils_ext.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -279,18 +280,6 @@ IRS_FORCE_INLINE void VisitDocs(uint32_t size, Visitor&& visit) {
       visit(i);
     }
   }
-}
-
-template<size_t N, typename It, typename T, typename Cmp = std::less<>>
-IRS_FORCE_INLINE It BranchlessLowerBound(It begin, const T& value,
-                                         Cmp&& compare = {}) {
-  static_assert(std::has_single_bit(N));
-  for (size_t step = N / 2; step != 0; step /= 2) {
-    if (compare(begin[step], value)) {
-      begin += step;
-    }
-  }
-  return begin + compare(*begin, value);
 }
 
 template<typename FormatTraits, bool Freq, bool Pos, bool Offs>

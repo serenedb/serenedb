@@ -23,6 +23,7 @@
 #include "segment_reader_impl.hpp"
 
 #include <duckdb/common/types.hpp>
+#include <utility>
 #include <vector>
 
 #include "iresearch/analysis/token_attributes.hpp"
@@ -32,7 +33,10 @@
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/formats/reader_state.hpp"
+#include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_meta.hpp"
+#include "iresearch/search/detail/with_mask.hpp"
+#include "iresearch/search/lead/impl.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -59,41 +63,6 @@ class SegmentAllDocs : public lead::Node {
 
  private:
   const doc_id_t _max_doc;
-  doc_id_t _doc = doc_limits::invalid();
-};
-
-class SegmentLiveDocs : public lead::Node {
- public:
-  SegmentLiveDocs(doc_id_t begin, doc_id_t end,
-                  const DocumentMask& docs_mask) noexcept
-    : _it_mask{&docs_mask}, _end{end}, _next{begin} {
-    SDB_ASSERT(begin <= end);
-    SDB_ASSERT(doc_limits::valid(begin));
-    SDB_ASSERT(!doc_limits::eof(end));
-  }
-
-  doc_id_t Next() noexcept final {
-    while (_next < _end) {
-      const auto doc = _next++;
-      if (doc < _it_mask.Seek(doc)) {
-        return _doc = doc;
-      }
-    }
-    return _doc = doc_limits::eof();
-  }
-
-  doc_id_t Seek(doc_id_t target) noexcept final {
-    if (target <= _doc) [[unlikely]] {
-      return _doc;
-    }
-    _next = target;
-    return Next();
-  }
-
- private:
-  DocumentMask::Iterator _it_mask;
-  const doc_id_t _end;
-  doc_id_t _next;
   doc_id_t _doc = doc_limits::invalid();
 };
 
@@ -144,13 +113,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::ReopenReader(
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::UpdateMeta(
   const Directory& dir, const SegmentMeta& meta) const {
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
-  if (absl::c_equal(_refs, meta.files, [](const auto& ref, const auto& file) {
-        return *ref == file;
-      })) {
-    reader->_refs = _refs;
-  } else {
-    reader->_refs = GetRefs(dir, meta);
-  }
+  reader->_refs = GetRefs(dir, meta);
   reader->_field_reader = _field_reader;
   reader->_data = _data;
   return reader;
@@ -199,8 +162,14 @@ lead::Node::ptr SegmentReaderImpl::docs_iterator() const {
   }
   SDB_ASSERT(!_docs_mask->Empty());
 
-  return memory::make_managed<SegmentLiveDocs>(
-    doc_limits::min(), doc_limits::min() + VisibleCount(_info), *_docs_mask);
+  const auto live_end =
+    static_cast<doc_id_t>(doc_limits::min() + VisibleCount(_info));
+  return ResolveDocsMask(
+    _docs_mask.get(), doc_limits::eof(),
+    [&]<DocsMaskType Mask>(Mask docs_mask) -> lead::Node::ptr {
+      return memory::make_managed<lead::Impl<detail::LiveDocs<Mask>>>(
+        std::move(docs_mask), live_end);
+    });
 }
 
 void SegmentReaderImpl::ColumnData::Open(const Directory& dir,

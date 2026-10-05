@@ -137,8 +137,8 @@ inline bool TakeExclusionFold(const BitsetBuckets& buckets,
                               const ExcludeCosts<PostingClause>& exclusion,
                               const IndexInput& doc, doc_id_t docs_count,
                               uint64_t candidates) noexcept {
-  if (fills.children.empty() && !buckets.NeedsSet() &&
-      !buckets.DenseLead(docs_count)) {
+  if (fills.children.empty() && buckets.masked == nullptr &&
+      !buckets.NeedsSet() && !buckets.DenseLead(docs_count)) {
     return false;
   }
   const auto words = static_cast<double>(SegmentWords(docs_count));
@@ -220,9 +220,14 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
   }
   const auto candidates =
     IncludeCandidates(groups.must, groups.must_filters, segment);
+  const auto split = SplitMask(groups.must_not_filters);
   ExcludeFills fills;
-  CollectExcludeBuckets(groups.must_not, groups.must_not_filters, nullptr,
-                        docs_count, buckets, fills);
+  CollectExcludeBuckets(groups.must_not, split.rest, nullptr, docs_count,
+                        buckets, fills);
+  if (split.Masked()) {
+    buckets.masked = &segment;
+    fills.cost += MaskClauseCost(segment, docs_count).fill;
+  }
   const ExcludeCosts<PostingClause> exclusion{
     groups.must_not, groups.must_not_filters, candidates, candidates,
     docs_count,      ExcludeUse::PerDoc};

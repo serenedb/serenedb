@@ -37,6 +37,7 @@
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/posting_count.hpp"
 #include "iresearch/search/detail/posting_fill.hpp"
+#include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/fill/all_docs.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/leaves.hpp"
@@ -167,26 +168,55 @@ Result<Api> MakeWindowConjunction(std::span<const PostingClause> terms,
                                               std::forward_as_tuple(), ctx);
 }
 
+template<typename Result, typename Term, typename Make>
+Result BuildNegationWindow(std::span<const Term> terms,
+                           std::span<const QueryBuilder::ptr> filters,
+                           const SubReader& segment, Make&& make) {
+  SDB_ASSERT(!terms.empty() || !filters.empty());
+  using Excludes = fill::FilledAndNot<fill::SetLeaves<fill::Erased>>;
+  const auto split = SplitMask(filters);
+  const auto with_lead = [&]<typename Lead>(auto&& lead) -> Result {
+    if (terms.empty() && split.rest.empty()) {
+      return make.template operator()<Lead, utils::Empty>(
+        std::forward<decltype(lead)>(lead), std::forward_as_tuple());
+    }
+    std::vector<FillNode::ptr> nodes;
+    if (!CollectFills(terms, split.rest, nullptr, segment, nodes)) {
+      return {};
+    }
+    return make.template operator()<Lead, Excludes>(
+      std::forward<decltype(lead)>(lead),
+      std::forward_as_tuple(
+        std::piecewise_construct,
+        std::forward_as_tuple(nodes.size(), [&](fill::Erased& leaf, size_t i) {
+          leaf = fill::Erased{std::move(nodes[i])};
+        })));
+  };
+  if (!split.Masked()) {
+    return with_lead.template operator()<fill::AllDocs>(
+      std::forward_as_tuple(segment));
+  }
+  return ResolveDocsMask(
+    segment, [&]<DocsMaskType Mask>(Mask docs_mask) -> Result {
+      return with_lead.template operator()<fill::LiveDocs<Mask>>(
+        std::forward_as_tuple(std::move(docs_mask), LiveEnd(segment)));
+    });
+}
+
 template<typename Api>
 Result<Api> MakeWindowNegation(
   std::span<const PostingClause> exclude_terms,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context<Api>& ctx) {
-  SDB_ASSERT(!exclude_terms.empty() || !exclude_filters.empty());
-  std::vector<FillNode::ptr> nodes;
-  if (!CollectFills(exclude_terms, exclude_filters, nullptr, segment, nodes)) {
-    return {};
-  }
-  using Excludes = fill::FilledAndNot<fill::SetLeaves<fill::Erased>>;
-  return Api::template MakeWindow<fill::AllDocs, utils::Empty, utils::Empty,
-                                  Excludes>(
-    ctx, std::forward_as_tuple(segment), std::forward_as_tuple(),
-    std::forward_as_tuple(),
-    std::forward_as_tuple(
-      std::piecewise_construct,
-      std::forward_as_tuple(nodes.size(), [&](fill::Erased& leaf, size_t i) {
-        leaf = fill::Erased{std::move(nodes[i])};
-      })));
+  return BuildNegationWindow<Result<Api>>(
+    exclude_terms, exclude_filters, segment,
+    [&]<typename Lead, typename Excludes>(auto&& lead,
+                                          auto&& excludes) -> Result<Api> {
+      return Api::template MakeWindow<Lead, utils::Empty, utils::Empty,
+                                      Excludes>(
+        ctx, std::forward<decltype(lead)>(lead), std::forward_as_tuple(),
+        std::forward_as_tuple(), std::forward<decltype(excludes)>(excludes));
+    });
 }
 
 template<typename Api>
@@ -343,24 +373,36 @@ Result<Api> MakeSparseExclusionOf(
     });
 }
 
-inline bool ExcludesDocsMask(
-  std::span<const PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters) noexcept {
-  return exclude_terms.empty() && exclude_filters.size() == 1 &&
-         exclude_filters.front()->Kind() == QueryKind::DocsMask;
-}
-
 template<typename Api>
 Result<Api> MakeSparseNegation(
   std::span<const PostingClause> exclude_terms,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   uint64_t candidates, const Context<Api>& ctx) {
-  auto driven = lead::MakeAllDocs(segment);
-  if (!driven) {
-    return {};
+  if (OnlyMask(exclude_terms, exclude_filters)) {
+    return MakeWindowNegation<Api>(exclude_terms, exclude_filters, segment,
+                                   ctx);
   }
-  return MakeSparseExclusionOf<Api>(std::move(driven), exclude_terms,
-                                    exclude_filters, segment, candidates, ctx);
+  const auto split = SplitMask(exclude_filters);
+  if (!split.Masked()) {
+    auto driven = lead::MakeAllDocs(segment);
+    if (!driven) {
+      return {};
+    }
+    return MakeSparseExclusionOf<Api>(std::move(driven), exclude_terms,
+                                      exclude_filters, segment, candidates,
+                                      ctx);
+  }
+  return ResolveDocsMask(
+    segment, [&]<DocsMaskType Mask>(Mask docs_mask) -> Result<Api> {
+      using Lead = LiveDocs<Mask>;
+      return BuildErasedExcludeSide<Result<Api>>(
+        exclude_terms, split.rest, exclude_filters, nullptr, segment,
+        candidates, [&]<typename Exclude>(auto&& exclude) -> Result<Api> {
+          return Api::template MakeSparse<Lead, utils::Empty, Exclude>(
+            ctx, std::forward_as_tuple(std::move(docs_mask), LiveEnd(segment)),
+            std::forward_as_tuple(), std::forward<decltype(exclude)>(exclude));
+        });
+    });
 }
 
 template<typename Api>

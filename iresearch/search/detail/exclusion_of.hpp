@@ -33,6 +33,7 @@
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
+#include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/leaves.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
@@ -89,6 +90,17 @@ class ExcludeCosts {
     const auto add = [&](const ClauseCost& clause) {
       const auto d = static_cast<double>(clause.docs);
       const auto leaves = static_cast<double>(clause.leaves);
+      if (clause.mask) {
+        _probes += per_doc ? c * clause.probe
+                           : blocks * clause.block_probe +
+                               c * dirty(clause.sparse) * clause.probe;
+        const double refill = touched * kMaskWindowCost;
+        _lazy += refill + clause.lazy_fill * (touched / _windows);
+        _filled += clause.fill + refill;
+        eager += clause.fill;
+        sparse += clause.sparse;
+        return;
+      }
       const double reach = d * std::min(1.0, c / s);
       const double steps = std::min(reach, c);
       const double r = c > 0 ? reach / c : 0.0;
@@ -208,31 +220,35 @@ class ExcludeCosts {
   double _bitset_lead = 0;
 };
 
-template<typename Result, typename Input, typename Term, typename Make>
+template<typename Result, typename Input, bool kConcrete = true, typename Term,
+         typename Make>
 Result BuildExcludeProbes(std::span<const Term> metas,
                           std::span<const QueryBuilder::ptr> filters,
                           const TermReader* field, const SubReader& segment,
                           uint64_t candidates, Make&& make) {
-  const IndexInput* doc = nullptr;
-  if (ExcludeTerms(metas, filters, field, doc)) {
-    const auto concrete = [&]<typename In> -> Result {
-      using Probe = PostingProbe<In>;
-      if (metas.size() == 1) {
-        const auto& own = FieldOf(metas.front(), field);
-        return make.template operator()<Probe>(std::forward_as_tuple(
-          CookieOf(metas.front()), *DocOf(own), LayoutOf(own), BoundsOf(own)));
+  if constexpr (kConcrete) {
+    const IndexInput* doc = nullptr;
+    if (ExcludeTerms(metas, filters, field, doc)) {
+      const auto concrete = [&]<typename In> -> Result {
+        using Probe = PostingProbe<In>;
+        if (metas.size() == 1) {
+          const auto& own = FieldOf(metas.front(), field);
+          return make.template operator()<Probe>(
+            std::forward_as_tuple(CookieOf(metas.front()), *DocOf(own),
+                                  LayoutOf(own), BoundsOf(own)));
+        }
+        return make.template operator()<probe::OrLeaves<Probe>>(
+          std::forward_as_tuple(metas.size(), [&](Probe& probe, size_t i) {
+            const auto& own = FieldOf(metas[i], field);
+            probe.Prepare(CookieOf(metas[i]), *DocOf(own), LayoutOf(own),
+                          BoundsOf(own));
+          }));
+      };
+      if constexpr (std::is_void_v<Input>) {
+        return ResolveInput(*doc, concrete);
+      } else {
+        return concrete.template operator()<Input>();
       }
-      return make.template operator()<probe::OrLeaves<Probe>>(
-        std::forward_as_tuple(metas.size(), [&](Probe& probe, size_t i) {
-          const auto& own = FieldOf(metas[i], field);
-          probe.Prepare(CookieOf(metas[i]), *DocOf(own), LayoutOf(own),
-                        BoundsOf(own));
-        }));
-    };
-    if constexpr (std::is_void_v<Input>) {
-      return ResolveInput(*doc, concrete);
-    } else {
-      return concrete.template operator()<Input>();
     }
   }
   std::vector<probe::Erased> probes;
@@ -279,23 +295,29 @@ Result BuildExcludeFills(std::span<const Term> metas,
     }));
 }
 
-template<typename Result, typename Input, typename Term, typename Make>
-Result BuildExcludesOf(ExcludeUse use, std::span<const Term> metas,
-                       std::span<const QueryBuilder::ptr> filters,
-                       const TermReader* field, const SubReader& segment,
-                       uint64_t candidates, uint64_t span, Make&& make) {
+inline constexpr auto kNoMaskFold = [](BitsetStorage&) noexcept {};
+
+template<typename Result, typename Input, bool kConcrete, typename Term,
+         typename Fold, typename Make>
+Result BuildRestExcludes(ExcludeUse use, std::span<const Term> metas,
+                         std::span<const QueryBuilder::ptr> filters,
+                         std::span<const QueryBuilder::ptr> costed,
+                         const TermReader* field, const SubReader& segment,
+                         uint64_t candidates, uint64_t span, Fold&& fold,
+                         Make&& make) {
   SDB_ASSERT(!metas.empty() || !filters.empty());
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
   const auto* const doc = SegmentDoc(segment);
-  const ExcludeCosts<Term> costs{metas, filters,    candidates,
+  const ExcludeCosts<Term> costs{metas, costed,     candidates,
                                  span,  docs_count, use};
   switch (costs.Probed(doc != nullptr)) {
     case ExcludeForm::Probes:
-      return BuildExcludeProbes<Result, Input>(metas, filters, field, segment,
-                                               candidates, make);
+      return BuildExcludeProbes<Result, Input, kConcrete>(
+        metas, filters, field, segment, candidates, make);
     case ExcludeForm::Bitset:
       return BuildExcludeBitset<Result>(
         metas, filters, field, segment, *doc, [&](auto&& set) -> Result {
+          fold(set);
           return make.template operator()<probe::BitsetDocs>(
             std::forward_as_tuple(std::forward<decltype(set)>(set)));
         });
@@ -308,6 +330,57 @@ Result BuildExcludesOf(ExcludeUse use, std::span<const Term> metas,
       return make.template operator()<Window>(std::forward_as_tuple(
         std::piecewise_construct, std::forward<decltype(leaves)>(leaves)));
     });
+}
+
+template<typename Result, typename Folded, typename Term, typename Build,
+         typename Make>
+Result PeelMask(std::span<const Term> metas,
+                std::span<const QueryBuilder::ptr> filters,
+                const SubReader& segment, Build&& build, Make&& make) {
+  SDB_ASSERT(!metas.empty() || !filters.empty());
+  const auto split = SplitMask(filters);
+  if (!split.Masked()) {
+    return build.template operator()<true>(filters, kNoMaskFold, make);
+  }
+  return ResolveDocsMask(
+    segment, [&]<DocsMaskType Mask>(Mask docs_mask) -> Result {
+      if (metas.empty() && split.rest.empty()) {
+        return make.template operator()<Mask>(
+          std::forward_as_tuple(std::move(docs_mask)));
+      }
+      return build.template operator()<false>(
+        split.rest,
+        [&](BitsetStorage& set) noexcept {
+          docs_mask.FillRange(BitsetStorage::kMin, set.End(), set.Words());
+        },
+        [&]<typename Rest>(auto&& rest) -> Result {
+          if constexpr (std::is_same_v<Rest, Folded>) {
+            return make.template operator()<Rest>(
+              std::forward<decltype(rest)>(rest));
+          } else {
+            return make.template operator()<WithMask<Mask, Rest>>(
+              std::forward_as_tuple(std::piecewise_construct,
+                                    std::move(docs_mask),
+                                    std::forward<decltype(rest)>(rest)));
+          }
+        });
+    });
+}
+
+template<typename Result, typename Input, typename Term, typename Make>
+Result BuildExcludesOf(ExcludeUse use, std::span<const Term> metas,
+                       std::span<const QueryBuilder::ptr> filters,
+                       const TermReader* field, const SubReader& segment,
+                       uint64_t candidates, uint64_t span, Make&& make) {
+  return PeelMask<Result, probe::BitsetDocs>(
+    metas, filters, segment,
+    [&]<bool kConcrete>(std::span<const QueryBuilder::ptr> rest, auto&& fold,
+                        auto&& wrap) -> Result {
+      return BuildRestExcludes<Result, Input, kConcrete>(
+        use, metas, rest, filters, field, segment, candidates, span, fold,
+        wrap);
+    },
+    make);
 }
 
 template<typename Result, typename Input, typename Term, typename Make>
@@ -328,6 +401,17 @@ Result BuildExcludeSideOf(std::span<const Term> metas,
   return BuildExcludeSideOf<Result, Input, Term>(metas, filters, field, segment,
                                                  candidates, candidates,
                                                  std::forward<Make>(make));
+}
+
+template<typename Result, typename Term, typename Make>
+Result BuildErasedExcludeSide(std::span<const Term> terms,
+                              std::span<const QueryBuilder::ptr> filters,
+                              std::span<const QueryBuilder::ptr> costed,
+                              const TermReader* field, const SubReader& segment,
+                              uint64_t candidates, Make&& make) {
+  return BuildRestExcludes<Result, void, false>(
+    ExcludeUse::PerDoc, terms, filters, costed, field, segment, candidates,
+    candidates, kNoMaskFold, std::forward<Make>(make));
 }
 
 template<typename Result, typename Term, typename Make>
@@ -396,15 +480,18 @@ Result BuildExcludeBitset(std::span<const Term> metas,
     BuildBitset(buckets, doc, static_cast<doc_id_t>(segment.docs_count())));
 }
 
-template<typename Result, typename Term, typename Make>
-Result BuildWindowExcludes(std::span<const Term> metas,
-                           std::span<const QueryBuilder::ptr> filters,
-                           const TermReader* field, const SubReader& segment,
-                           uint64_t candidates, Make&& make) {
+template<typename Result, bool kConcrete, typename Term, typename Fold,
+         typename Make>
+Result BuildRestWindowExcludes(std::span<const Term> metas,
+                               std::span<const QueryBuilder::ptr> filters,
+                               std::span<const QueryBuilder::ptr> costed,
+                               const TermReader* field,
+                               const SubReader& segment, uint64_t candidates,
+                               Fold&& fold, Make&& make) {
   SDB_ASSERT(!metas.empty() || !filters.empty());
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
   const auto* const doc = SegmentDoc(segment);
-  const ExcludeCosts<Term> costs{metas,      filters,    candidates,
+  const ExcludeCosts<Term> costs{metas,      costed,     candidates,
                                  candidates, docs_count, ExcludeUse::PerDoc};
   const auto probed = [&]<typename Probe>(auto&& probe) -> Result {
     return make.template operator()<fill::ProbedAndNot<Probe>>(
@@ -413,11 +500,12 @@ Result BuildWindowExcludes(std::span<const Term> metas,
   };
   switch (costs.Windowed(doc != nullptr)) {
     case ExcludeForm::Probes:
-      return BuildExcludeProbes<Result, void>(metas, filters, field, segment,
-                                              candidates, probed);
+      return BuildExcludeProbes<Result, void, kConcrete>(
+        metas, filters, field, segment, candidates, probed);
     case ExcludeForm::Bitset:
       return BuildExcludeBitset<Result>(
         metas, filters, field, segment, *doc, [&](auto&& set) -> Result {
+          fold(set);
           return probed.template operator()<probe::BitsetDocs>(
             std::forward_as_tuple(std::forward<decltype(set)>(set)));
         });
@@ -430,6 +518,21 @@ Result BuildWindowExcludes(std::span<const Term> metas,
       return make.template operator()<Excludes>(std::forward_as_tuple(
         std::piecewise_construct, std::forward<decltype(leaves)>(leaves)));
     });
+}
+
+template<typename Result, typename Term, typename Make>
+Result BuildWindowExcludes(std::span<const Term> metas,
+                           std::span<const QueryBuilder::ptr> filters,
+                           const TermReader* field, const SubReader& segment,
+                           uint64_t candidates, Make&& make) {
+  return PeelMask<Result, fill::ProbedAndNot<probe::BitsetDocs>>(
+    metas, filters, segment,
+    [&]<bool kConcrete>(std::span<const QueryBuilder::ptr> rest, auto&& fold,
+                        auto&& wrap) -> Result {
+      return BuildRestWindowExcludes<Result, kConcrete>(
+        metas, rest, filters, field, segment, candidates, fold, wrap);
+    },
+    make);
 }
 
 }  // namespace irs::detail

@@ -27,6 +27,9 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/index/docs_mask/docs_mask.hpp"
+#include "iresearch/index/document_mask.hpp"
+#include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/bitset_build.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
@@ -84,6 +87,12 @@ inline constexpr double kSeedBuildCost = 0.65;
 inline constexpr double kDenseBuildWordCost = 3.0;
 inline constexpr double kFoldWordCost = 0.25;
 inline constexpr uint64_t kPhraseMatchShare = 16;
+inline constexpr double kMaskWordProbeCost = 0.3;
+inline constexpr double kMaskCursorProbeCost = 0.4;
+inline constexpr double kMaskBlockProbeCost = 2.0;
+inline constexpr double kMaskScatterCost = 1.0;
+inline constexpr double kMaskRunCost = 2.0;
+inline constexpr double kMaskWindowCost = 8.0;
 
 enum class ExcludeUse {
   PerDoc,
@@ -102,6 +111,7 @@ struct ClauseCost {
   uint64_t leaves;
   bool exact;
   bool nested;
+  bool mask = false;
 };
 
 inline double PostingBuildCost(uint64_t docs, doc_id_t docs_count,
@@ -131,6 +141,52 @@ inline ClauseCost TermClauseCost(uint64_t docs, doc_id_t docs_count) noexcept {
           .nested = false};
 }
 
+inline ClauseCost MaskClauseCost(const SubReader& segment,
+                                 doc_id_t docs_count) noexcept {
+  const auto* mask = segment.docs_mask();
+  const auto visible_end = segment.Meta().visible_end;
+  const auto live_end = LiveEnd(segment);
+  const double tail = visible_end < live_end ? live_end - visible_end : 0;
+  double fill = tail / kWindowBits * kFoldWordCost;
+  double spans = tail != 0 ? 1 : 0;
+  bool words = false;
+  uint64_t masked = 0;
+  if (mask != nullptr && !mask->Empty()) {
+    masked = mask->Count();
+    const auto runs = static_cast<double>(mask->RunsBound());
+    spans += runs;
+    const auto chunk_words =
+      static_cast<double>(DocumentMask::kChunkDocs / kWindowBits);
+    const auto chunks = static_cast<double>(mask->ContainerCount());
+    switch (mask->Kind()) {
+      case MaskKind::Bitsets:
+        words = true;
+        [[fallthrough]];
+      case MaskKind::Mixed:
+        fill += chunks * chunk_words * kFoldWordCost;
+        break;
+      case MaskKind::Arrays:
+        fill += static_cast<double>(masked) * kMaskScatterCost;
+        break;
+      case MaskKind::Runs:
+        fill += runs * kMaskRunCost;
+        break;
+    }
+  }
+  return {.docs = masked,
+          .matches = static_cast<double>(masked),
+          .sparse = spans,
+          .fill = fill,
+          .lazy_fill = fill,
+          .probe = words ? kMaskWordProbeCost : kMaskCursorProbeCost,
+          .block_probe = kMaskBlockProbeCost,
+          .hit = 0.0,
+          .leaves = 1,
+          .exact = false,
+          .nested = false,
+          .mask = true};
+}
+
 inline ClauseCost ChildClauseCost(const QueryBuilder& child,
                                   doc_id_t docs_count) noexcept {
   const uint64_t docs = child.EstimateMax();
@@ -153,6 +209,8 @@ inline ClauseCost ChildClauseCost(const QueryBuilder& child,
               .leaves = leaves,
               .exact = true,
               .nested = false};
+    case QueryKind::DocsMask:
+      return MaskClauseCost(child.Segment(), docs_count);
     case QueryKind::Phrase: {
       const auto matches = static_cast<double>(child.EstimateMatches());
       const auto fill =

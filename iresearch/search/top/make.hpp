@@ -23,12 +23,15 @@
 #include <algorithm>
 #include <cstdint>
 #include <span>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/collect_scored.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/fill/leaves.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
@@ -207,11 +210,14 @@ Root::ptr MakePrunedDisjunction(
       return irs::detail::BuildBlockExcludes<Root::ptr>(
         excludes, exclude_filters, nullptr, segment, candidates, candidates,
         [&]<typename Exclude>(auto&& negated) -> Root::ptr {
-          return MakeShape<PrunedDisjunction, Leaf,
-                           fill::ProbedAndNot<Exclude>>(
-            ctx, terms.size(), docs_count, init,
-            std::forward_as_tuple(std::piecewise_construct,
-                                  std::forward<decltype(negated)>(negated)));
+          return irs::detail::MakeRemovable(
+            std::type_identity<Exclude>{},
+            std::forward<decltype(negated)>(negated),
+            [&]<typename Removable>(auto&& args) -> Root::ptr {
+              return MakeShape<PrunedDisjunction, Leaf, Removable>(
+                ctx, terms.size(), docs_count, init,
+                std::forward<decltype(args)>(args));
+            });
         });
     };
     return make();

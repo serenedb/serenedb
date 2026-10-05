@@ -103,7 +103,7 @@ SELECT 'maltese'::breed = 'Maltese'::breed;
 ?column?
 f
 
-query error db error: ERROR: Could not convert string 'MALTESE' to UINT8
+query error db error: ERROR: Could not convert string 'MALTESE' to breed
 -- Will error
 SELECT 'MALTESE'::breed;
 
@@ -128,7 +128,7 @@ INSERT INTO person VALUES
 
 # DOCS_TEST_BODY
 
-statement error db error: ERROR: Could not convert string 'quackity-quack' to UINT8
+statement error db error: ERROR: Could not convert string 'quackity\-quack' to mood
 INSERT INTO person VALUES ('Hannes', 'quackity-quack');
 
 # DOCS_TEST: example_009
@@ -215,7 +215,7 @@ name	current_mood
 
 # DOCS_TEST_BODY
 
-query error db error: ERROR: Could not convert string 'bogus' to UINT8
+query error db error: ERROR: Could not convert string 'bogus' to mood
 SELECT * FROM person
 WHERE current_mood = 'bogus'::mood;
 

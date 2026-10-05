@@ -19,7 +19,7 @@ count
 3
 
 statement error Avro container file
-SELECT count(*) FROM iceberg_scan('${__TEST_DIR__}/imre_bad', allow_moved_paths=true);
+SELECT * FROM iceberg_scan('${__TEST_DIR__}/imre_bad', allow_moved_paths=true);
 
 query
 SELECT 1 AS alive;

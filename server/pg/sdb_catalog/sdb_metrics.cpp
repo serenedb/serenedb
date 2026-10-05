@@ -53,32 +53,34 @@ constexpr uint64_t kPerIndexMask = MaskFromNonNulls({
   GetIndex(&SdbMetrics::relation_id),
 });
 
-using Stats = search::InvertedIndexStorage::Stats;
+using search::StoreStats;
 
 struct IndexMetricDesc {
   std::string_view metric;
-  uint64_t Stats::* field;
+  uint64_t StoreStats::* field;
   std::string_view description;
 };
 
 constexpr std::array<IndexMetricDesc, 12> kIndexMetrics = {{
-  {"num_docs", &Stats::numDocs, "documents in the index (including deleted)"},
-  {"num_live_docs", &Stats::numLiveDocs, "live (non-deleted) documents"},
-  {"num_buffered_docs", &Stats::numBufferedDocs,
+  {"num_docs", &StoreStats::numDocs,
+   "documents in the index (including deleted)"},
+  {"num_live_docs", &StoreStats::numLiveDocs, "live (non-deleted) documents"},
+  {"num_buffered_docs", &StoreStats::numBufferedDocs,
    "documents buffered in the writer, not yet committed"},
-  {"num_segments", &Stats::numSegments, "index segments"},
-  {"num_files", &Stats::numFiles, "files backing the index"},
-  {"index_size", &Stats::indexSize, "on-disk index size in bytes"},
-  {"num_failed_commits", &Stats::numFailedCommits, "failed commit operations"},
-  {"num_failed_cleanups", &Stats::numFailedCleanups,
+  {"num_segments", &StoreStats::numSegments, "index segments"},
+  {"num_files", &StoreStats::numFiles, "files backing the index"},
+  {"index_size", &StoreStats::indexSize, "on-disk index size in bytes"},
+  {"num_failed_commits", &StoreStats::numFailedCommits,
+   "failed commit operations"},
+  {"num_failed_cleanups", &StoreStats::numFailedCleanups,
    "failed cleanup operations"},
-  {"num_failed_consolidations", &Stats::numFailedConsolidations,
+  {"num_failed_consolidations", &StoreStats::numFailedConsolidations,
    "failed consolidation operations"},
-  {"avg_commit_time_ms", &Stats::avgCommitTimeMs,
+  {"avg_commit_time_ms", &StoreStats::avgCommitTimeMs,
    "average time of the last few commits, in ms"},
-  {"avg_cleanup_time_ms", &Stats::avgCleanupTimeMs,
+  {"avg_cleanup_time_ms", &StoreStats::avgCleanupTimeMs,
    "average time of the last few cleanups, in ms"},
-  {"avg_consolidation_time_ms", &Stats::avgConsolidationTimeMs,
+  {"avg_consolidation_time_ms", &StoreStats::avgConsolidationTimeMs,
    "average time of the last few consolidations, in ms"},
 }};
 
@@ -111,7 +113,7 @@ MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
   masks.insert(masks.end(), values.size() - wal_first, kPerProcessMask);
 
   auto& context = _context;
-  const auto emit = [&](const Stats& stats, Oid relation_id) {
+  const auto emit = [&](const StoreStats& stats, Oid relation_id) {
     for (const auto& desc : kIndexMetrics) {
       values.emplace_back(desc.metric, stats.*desc.field, desc.description,
                           relation_id);

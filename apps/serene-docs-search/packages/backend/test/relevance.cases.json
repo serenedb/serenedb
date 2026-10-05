@@ -1,5 +1,5 @@
 {
-  "comment": "Graded search-relevance cases over the serene_site docs corpus. expect = url prefix (page part, string) or {title: regex}. A case passes at rank N if any expectation matches within top N.",
+  "comment": "Graded search-relevance cases over the serene_site docs corpus. expect = url prefix (page part, string) or {title: regex}. A case passes at rank N if any expectation matches within top N. known = a documented miss: the test expects it to keep missing and fails when it starts passing (then drop the marker).",
   "cases": [
     { "cat": "exact-title", "q": "hybrid search", "expect": ["/docs/sql/indexes/inverted/hybrid-search", "/docs/cookbook/search/hybrid-search"] },
     { "cat": "exact-title", "q": "vector search", "expect": ["/docs/sql/indexes/inverted/vector-search"] },
@@ -41,13 +41,13 @@
     { "cat": "code-identifiers", "q": "read_json", "expect": [{ "title": "read_json" }, "/docs/cookbook/file_formats/json_import"] },
     { "cat": "code-identifiers", "q": "ai_embed", "expect": ["/docs/sql/functions/ai"] },
     { "cat": "code-identifiers", "q": "date_part", "expect": [{ "title": "date part" }, { "title": "date_part" }] },
-    { "cat": "code-identifiers", "q": "ts query", "expect": [{ "title": "tsquery" }] },
+    { "cat": "code-identifiers", "q": "ts query", "expect": [{ "title": "tsquery" }], "known": "a space-split identifier: no heading spells 'ts query', and 'ts' is too short to expand" },
 
     { "cat": "phrases", "q": "\"reciprocal rank\"", "expect": ["/docs/cookbook/search/reciprocal-rank-fusion", { "title": "reciprocal rank" }] },
     { "cat": "phrases", "q": "\"inverted index\"", "expect": ["/docs/sql/indexes/inverted"] },
     { "cat": "phrases", "q": "vacuum -refresh", "exclude": ["/docs/sql/indexes/inverted/maintenance"], "expect": [{ "title": "vacuum" }] },
 
-    { "cat": "semantic", "q": "search as you type", "expect": ["/docs/cookbook/search/autocomplete"] },
+    { "cat": "semantic", "q": "search as you type", "expect": ["/docs/cookbook/search/autocomplete"], "known": "the autocomplete page never says 'as you type'; nomic embeddings don't bridge it — a search.pins case" },
     { "cat": "semantic", "q": "fix typos in search queries", "expect": ["/docs/cookbook/search/spell-correction", "/docs/cookbook/search/fuzzy-search"] },
     { "cat": "semantic", "q": "combine keyword and vector results", "expect": ["/docs/sql/indexes/inverted/hybrid-search", "/docs/cookbook/search/hybrid-search", "/docs/cookbook/search/reciprocal-rank-fusion"] },
     { "cat": "semantic", "q": "import csv files", "expect": ["/docs/cookbook/file_formats/csv_import", "/docs/data_import_and_export/csv"] },

@@ -48,4 +48,6 @@ void VisitBuiltinFunctions(
   duckdb::ClientContext& context,
   absl::FunctionRef<void(const BuiltinFunction&)> visitor);
 
+duckdb::idx_t BuiltinTypeOid(const duckdb::LogicalType& type);
+
 }  // namespace sdb::pg

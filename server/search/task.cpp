@@ -87,7 +87,7 @@ bool ShouldStop() noexcept {
 // Background compaction policy (the TieredMergePolicy analog), built per
 // target from its WITH-configured settings. `small` reduces the merge byte
 // budget when the global slot gate is nearly full so the pool keeps draining
-// under occupancy backpressure. VACUUM keeps CompactionCount{SIZE_MAX}.
+// under occupancy backpressure.
 irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings,
                                      bool small) {
   irs::index_utils::CompactionTier tier;
@@ -96,7 +96,7 @@ irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings,
   tier.floor_segment_bytes = settings.compaction_floor_segment_bytes;
   if (small) {
     tier.max_segments_bytes =
-      std::min(tier.max_segments_bytes, size_t{512} << 20);
+      std::max(2 * tier.floor_segment_bytes, tier.max_segments_bytes / 2);
   }
   return irs::index_utils::MakePolicy(tier);
 }
@@ -254,6 +254,7 @@ template<class Storage>
 yaclib::Future<> WaitForCompactionTrigger(BackgroundScheduler& s,
                                           std::weak_ptr<Storage> weak,
                                           uint64_t base_gen,
+                                          Clock::duration interval,
                                           Clock::duration total) {
   auto remaining = total;
   while (remaining > Clock::duration::zero()) {
@@ -266,7 +267,9 @@ yaclib::Future<> WaitForCompactionTrigger(BackgroundScheduler& s,
     if (!idx) {
       break;
     }
-    const bool nudged = idx->CompactionGeneration() != base_gen;
+    const bool nudged =
+      idx->CompactionGeneration() != base_gen ||
+      ToDuration(idx->GetTasksSettings().compaction_interval_msec) != interval;
     idx.reset();
     if (nudged) {
       break;
@@ -306,13 +309,22 @@ yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
       const bool enabled = interval > Clock::duration::zero();
       idx.reset();
 
-      const auto delay =
-        enabled ? interval + interval * stretch : kDisabledPoll;
-      co_await s.Delay(delay);
+      bool changed = false;
+      auto remaining = enabled ? interval + interval * stretch : kDisabledPoll;
+      while (remaining > Clock::duration::zero() && !changed) {
+        const auto slice = std::min(remaining, kDisabledPoll);
+        co_await s.Delay(slice);
+        if (ShouldStop()) {
+          break;
+        }
+        auto live = weak.lock();
+        changed = !live || ToDuration(get_interval_ms(*live)) != interval;
+        remaining -= slice;
+      }
       if (ShouldStop()) {
         break;
       }
-      if (!enabled) {
+      if (changed || !enabled) {
         stretch = 0;
         continue;
       }
@@ -354,13 +366,15 @@ template<class Storage>
 yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak) {
   return IntervalLoop(
     std::move(weak), "refresh",
-    [](Storage& idx) { return idx.GetTasksSettings().refresh_interval_msec; },
+    [](Storage& idx) -> size_t {
+      return idx.GetTasksSettings().refresh_interval_msec;
+    },
     [cleanup_count = size_t{0}](const std::weak_ptr<Storage>& target) mutable {
       auto idx = target.lock();
       if (!idx) {
         return LoopTick::kNeutral;
       }
-      const auto cleanup_step = idx->GetTasksSettings().cleanup_interval_step;
+      const size_t cleanup_step = idx->GetTasksSettings().cleanup_interval_step;
       const bool stale = idx->StalePressure() >= kStalePressureCleanup;
       const bool periodic = cleanup_step && ++cleanup_count >= cleanup_step;
       const bool run_cleanup = stale || periodic;
@@ -414,10 +428,20 @@ yaclib::Future<> CompactionCoordinator(std::weak_ptr<Storage> weak) {
       // A productive tick re-evaluates immediately (Lucene MERGE_FINISHED
       // cascade); otherwise wait the interval+backoff or a refresh nudge.
       if (!cascade) {
-        co_await WaitForCompactionTrigger(s, weak, base_gen,
+        co_await WaitForCompactionTrigger(s, weak, base_gen, interval,
                                           interval + backoff);
         if (ShouldStop()) {
           break;
+        }
+        bool changed = true;
+        if (auto live = weak.lock()) {
+          changed =
+            ToDuration(live->GetTasksSettings().compaction_interval_msec) !=
+            interval;
+        }
+        if (changed) {
+          backoff = Clock::duration::zero();
+          continue;
         }
       }
       cascade = false;
@@ -484,7 +508,7 @@ void SetReindexRunner(ReindexRunner runner) {
 yaclib::Future<> ReindexLoop(std::weak_ptr<InvertedIndexStorage> weak) {
   return IntervalLoop(
     std::move(weak), "reindex",
-    [](InvertedIndexStorage& idx) {
+    [](InvertedIndexStorage& idx) -> size_t {
       return idx.GetTasksSettings().reindex_interval_msec;
     },
     [](const std::weak_ptr<InvertedIndexStorage>& target) {

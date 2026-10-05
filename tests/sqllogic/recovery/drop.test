@@ -38,8 +38,15 @@ statement ok
 INSERT INTO s1.t VALUES (1, 'foo'), (2, 'bar'), (3, 'bas');
 
 
+query
+SELECT count(*) > 0 AS indexed FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_search/*/*/*/*/**');
+----
+indexed
+t
+
+
 statement ok
-SET sdb_faults = 'crash_after_commit';
+SET sdb_faults = 'crash_on_drop';
 
 
 statement error connection closed
@@ -51,6 +58,14 @@ query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT COUNT(*) FROM pg_class WHERE relname = 'i';
 ----
 count
+0
+
+
+connection after_index_drop
+query
+SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_search/*/*/*/*/**');
+----
+leftover
 0
 
 
@@ -98,7 +113,7 @@ CREATE INDEX i ON s1.t USING inverted(id);
 
 connection after_index_drop
 statement ok
-SET sdb_faults = 'crash_after_commit';
+SET sdb_faults = 'crash_on_drop';
 
 
 connection after_index_drop
@@ -144,7 +159,7 @@ CREATE VIEW s2.v AS SELECT id + 1 FROM s2.t;
 
 connection after_table_drop
 statement ok
-SET sdb_faults = 'crash_after_commit';
+SET sdb_faults = 'crash_on_drop';
 
 
 connection after_table_drop
@@ -180,7 +195,7 @@ CREATE DATABASE db;
 
 connection after_schema_drop
 statement ok
-SET sdb_faults = 'crash_after_commit';
+SET sdb_faults = 'crash_on_drop';
 
 
 connection after_schema_drop

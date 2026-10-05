@@ -188,7 +188,7 @@ INSERT INTO pk_nulls VALUES (1), (NULL);
 statement error
 ALTER TABLE pk_nulls ADD PRIMARY KEY (i);
 ----
-db error: ERROR: NOT NULL constraint failed: PRIMARY_pk_nulls_i
+db error: ERROR: NOT NULL constraint failed: "PRIMARY_pk_nulls_i"
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +233,8 @@ statement error
 ALTER TABLE pk_idx ADD PRIMARY KEY (a);
 ----
 db error: ERROR: Cannot alter entry "pk_idx" because there are entries that depend on it.
+index "pk_idx_b" depends on table "pk_idx".
+Drop the dependent entries first and recreate them after the change.
 
 
 statement ok

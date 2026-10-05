@@ -20,18 +20,18 @@
 
 #pragma once
 
-#include <unicode/calendar.h>
-
 #include <duckdb/common/operator/cast_operators.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
+#include <duckdb/function/cast/default_casts.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <tz_calendar.hpp>
 #include <vector>
 
 #include "pg/serialize.h"
@@ -46,12 +46,13 @@ struct RecordDeserializers;
 
 struct DeserializeContext {
   std::unique_ptr<RecordDeserializers> record_cache;
-  std::unique_ptr<icu::Calendar> session_calendar;
+  duckdb::unique_ptr<duckdb::Calendar> session_calendar;
   duckdb::shared_ptr<const duckdb::ZoneLUT> session_lut;
-  irs::containers::FlatHashMap<std::string, std::unique_ptr<icu::Calendar>>
+  irs::containers::FlatHashMap<std::string,
+                               duckdb::unique_ptr<duckdb::Calendar>>
     named_calendars;
 
-  icu::Calendar* CalendarFor(std::string_view tz_name);
+  duckdb::Calendar* CalendarFor(std::string_view tz_name);
 };
 
 void FillDeserializeContext(duckdb::ClientContext& client,

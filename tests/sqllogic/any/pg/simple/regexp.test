@@ -302,3 +302,23 @@ statement error
 SELECT regexp_match(txt, '(') FROM regexp_match_rows
 ----
 db error: ERROR: invalid regular expression: <slt:ignore>
+
+
+query
+SELECT CASE WHEN false THEN regexp_instr('abc', (1 / 0)::text) ELSE 0 END AS r;
+----
+r
+0
+
+
+query
+SELECT CASE WHEN false THEN regexp_match('abc', (1 / 0)::text) END AS r;
+----
+r
+NULL
+
+
+statement error
+SELECT regexp_instr('abc', (1 / 0)::text);
+----
+db error: ERROR: <slt:ignore>

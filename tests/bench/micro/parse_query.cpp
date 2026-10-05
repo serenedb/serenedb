@@ -46,7 +46,7 @@
 //
 // Flat profile of a single case, e.g.:
 //   perf record -g --call-graph fp -- \
-//     ./build_perf/tests/bench/micro/serenedb-bench-micro-parse_query \
+//     ./build_perf/bin/serenedb-bench-micro parse_query \
 //     --benchmark_filter='parse_select1' --benchmark_min_time=5s
 //   perf report --no-children --stdio | head -40
 
@@ -129,5 +129,3 @@ BENCHMARK_CAPTURE(Parse, parse_rows, std::string{kRows});
 // Parse vs parse+bind+plan, same statements: the gap is bind/plan.
 BENCHMARK_CAPTURE(Prepare, prepare_select1, std::string{"SELECT 1"});
 BENCHMARK_CAPTURE(Prepare, prepare_rows, std::string{kRows});
-
-BENCHMARK_MAIN();

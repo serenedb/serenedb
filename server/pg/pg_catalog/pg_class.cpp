@@ -32,8 +32,8 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
-#include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/storage/data_table.hpp>
@@ -158,9 +158,8 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
   irs::containers::FlatHashSet<duckdb::idx_t> indexed_relations;
   VisitEntries<duckdb::DuckIndexEntry>(
     context, database, [&](const duckdb::DuckIndexEntry& entry) {
-      const auto host = entry.ParentSchema(context).GetEntry(
-        entry.catalog.GetCatalogTransaction(context),
-        duckdb::CatalogType::TABLE_ENTRY, entry.GetTableName());
+      const auto host =
+        entry.GetRelation(entry.catalog.GetCatalogTransaction(context));
       const auto host_id =
         host && (host->type == duckdb::CatalogType::TABLE_ENTRY ||
                  host->type == duckdb::CatalogType::VIEW_ENTRY)
@@ -178,18 +177,6 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
   std::vector<std::pair<duckdb::idx_t, const duckdb::TableCatalogEntry*>>
     tables;
   irs::containers::FlatHashSet<duckdb::idx_t> generated_pk_sequences;
-  if (auto dependencies = database.GetDependencyManager()) {
-    dependencies->Scan(
-      context,
-      [&](duckdb::CatalogEntry& object, duckdb::CatalogEntry& dependent,
-          const duckdb::DependencyDependentFlags& flags) {
-        if (flags.IsOwnedBy() &&
-            object.type == duckdb::CatalogType::SEQUENCE_ENTRY &&
-            dynamic_cast<const catalog::SearchTableEntry*>(&dependent)) {
-          generated_pk_sequences.insert(object.oid);
-        }
-      });
-  }
 
   VisitSchemas(context, database, [&](duckdb::SchemaCatalogEntry& schema_ref) {
     schema_ref.Scan(
@@ -221,6 +208,9 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
           row.relacl = {table->permissions.acl};
           if (const auto* search =
                 dynamic_cast<const catalog::SearchTableEntry*>(table)) {
+            if (const auto pk_sequence = search->GeneratedPkSequence(context)) {
+              generated_pk_sequences.insert(pk_sequence->oid);
+            }
             auto& strings = reloptions_storage.emplace_back();
             auto& views = reloptions_views.emplace_back();
             const auto info = search->GetInfo();
@@ -230,7 +220,8 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
                 strings.emplace_back(
                   absl::StrCat(name, "=",
                                it->second->Cast<duckdb::ConstantExpression>()
-                                 .GetValue()
+                                 .GetLiteral()
+                                 .ToValue()
                                  .ToString()));
               }
             }
@@ -273,8 +264,11 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
       auto& strings = reloptions_storage.emplace_back();
       auto& views = reloptions_views.emplace_back();
       for (const auto name : catalog::kInvertedIndexSettings) {
-        strings.emplace_back(absl::StrCat(
-          name, "=", inverted->options.find(name)->second.ToString()));
+        if (const auto option = inverted->options.find(name);
+            option != inverted->options.end()) {
+          strings.emplace_back(
+            absl::StrCat(name, "=", option->second.ToString()));
+        }
       }
       for (const auto& option : strings) {
         views.emplace_back(option);
@@ -323,21 +317,20 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
   // as for any index. Primary keys first so the rows stay grouped.
   for (const auto primary : {true, false}) {
     for (const auto& [schema_id, table] : tables) {
-      const auto& constraints = table->GetConstraints();
-      for (size_t position = 0; position != constraints.size(); ++position) {
-        if (constraints[position]->type != duckdb::ConstraintType::UNIQUE) {
+      for (const auto& constraint : table->GetConstraints()) {
+        if (constraint->type != duckdb::ConstraintType::UNIQUE) {
           continue;
         }
-        const auto& unique =
-          constraints[position]->Cast<duckdb::UniqueConstraint>();
+        const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
         if (unique.IsPrimaryKey() != primary) {
           continue;
         }
         auto& names = primary ? pk_index_names : uq_index_names;
         names.emplace_back(ConstraintName(*table, unique));
-        auto row = MakeBaseRow(schema_id, KeyIndexOid(table->oid, position),
-                               names.back(), table->permissions.owner);
+        auto row = MakeBaseRow(schema_id, unique.index_oid, names.back(),
+                               table->permissions.owner);
         row.relkind = PgClass::Relkind::Index;
+        row.relam = pg::kPgAmSecondary;
         row.relnatts =
           static_cast<int16_t>(KeyConstraintAttnums(*table, unique).size());
         values.push_back(std::move(row));

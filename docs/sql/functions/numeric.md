@@ -105,6 +105,7 @@ The table below shows the available mathematical functions.
 | [`sqrt(x)`](#sqrtx)                                                    | Returns the square root of the number.                                                                                                                                                         |
 | [`subtract(x, y)`](#subtractx-y)                                       | Alias for `x - y`.                                                                                                                                                                             |
 | [`tan(x)`](#tanx)                                                      | Computes the tangent of `x`.                                                                                                                                                                   |
+| [`to_hex(x)`](#to_hexx)                                                | Converts the integer `x` to lowercase hexadecimal, as PostgreSQL does.                                                                                                                         |
 | [`trunc(x)`](#truncx)                                                  | Truncates the number.                                                                                                                                                                          |
 | [`xor(x, y)`](#xorx-y)                                                 | Bitwise XOR.                                                                                                                                                                                   |
 
@@ -458,6 +459,12 @@ Alias for `x - y`.
 Computes the tangent of `x`.
 
 <SqlLogicTest id="sql/functions/numeric/tan" />
+
+#### `to_hex(x)`
+
+Converts the `integer` or `bigint` `x` to lowercase hexadecimal, as PostgreSQL does. A negative value is shown in the two's complement of its own width: `to_hex(-1)` is `ffffffff`, `to_hex(-1::BIGINT)` is `ffffffffffffffff`. For a string or blob, `to_hex` is an alias of [`hex`](../../sql/functions/text.md#hexstring).
+
+<SqlLogicTest id="sql/functions/numeric/to_hex" />
 
 #### `trunc(x)`
 

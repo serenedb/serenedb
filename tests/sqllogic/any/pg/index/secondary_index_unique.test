@@ -2251,3 +2251,46 @@ count
 
 statement ok
 DROP TABLE babsky_uniq_idx_scan_comp;
+
+
+statement ok
+CREATE TABLE include_unique (a int, b int);
+
+
+statement ok
+CREATE UNIQUE INDEX include_unique_a_idx ON include_unique (a) INCLUDE (b);
+
+
+statement ok
+INSERT INTO include_unique VALUES (1, 1);
+
+
+onlyif serenedb # DuckDB error
+statement error
+INSERT INTO include_unique VALUES (1, 2);
+----
+db error: ERROR: Duplicate key "a: 1" violates unique constraint.
+
+
+skipif serenedb # Postgres error
+statement error
+INSERT INTO include_unique VALUES (1, 2);
+----
+db error: ERROR: duplicate key value violates unique constraint "include_unique_a_idx"
+DETAIL: Key (a)=(1) already exists.
+
+
+statement ok
+INSERT INTO include_unique VALUES (2, 1);
+
+
+query
+SELECT a, b FROM include_unique ORDER BY a;
+----
+a	b
+1	1
+2	1
+
+
+statement ok
+DROP TABLE include_unique;

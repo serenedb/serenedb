@@ -8,9 +8,15 @@
       ]
     },
     {
-      "reason": "There is no runtime extension loader: SereneDB builds with DISABLE_EXTENSION_LOAD and links its extension set statically, so `INSTALL non_existent_extension` reports that instead of the HTTP download failure the file asserts. The whole file is about installing an extension over HTTP with the curl client, so there is nothing left to test once the loader is gone. Same reason as the 27 core-suite paths, tracked in issue #887.",
+      "reason": "There is no runtime extension loader: SereneDB builds with DISABLE_EXTENSION_LOAD and links its extension set statically, so `INSTALL non_existent_extension` reports that instead of the HTTP download failure the file asserts. The whole file is about installing an extension over HTTP with the curl client, so there is nothing left to test once the loader is gone. Same reason as the core-suite LOAD and INSTALL paths, tracked in issue #887.",
       "paths": [
         "test/sql/curl_client/test_load_other_extensions.test"
+      ]
+    },
+    {
+      "reason": "SereneDB's httpfs is curl-only (build: remove the httplib client backend): `SET httpfs_client_implementation='httplib'` is rejected with `Unsupported option for httpfs_client_implementation, only curl and default are currently supported`, and the whole file is about the httplib backend's connection handling.",
+      "paths": [
+        "test/sql/connection_caching_httplib.test"
       ]
     }
   ]

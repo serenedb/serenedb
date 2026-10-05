@@ -39,6 +39,7 @@
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/types/uuid.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
@@ -86,7 +87,7 @@ constexpr std::string_view kTextTokenizer = "standard";
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry> EsSchema(
   duckdb::ClientContext& context) {
   auto& db_catalog = duckdb::Catalog::GetCatalog(
-    context, duckdb::Identifier{GetSereneDBContext(context).GetDatabase()});
+    context, duckdb::DatabaseManager::GetDefaultDatabase(context));
   return db_catalog.GetSchema(context, duckdb::Identifier{kEsSchema},
                               duckdb::OnEntryNotFound::RETURN_NULL);
 }
@@ -95,9 +96,9 @@ duckdb::optional_ptr<duckdb::TableCatalogEntry> FindEsTable(
   duckdb::ClientContext& context, std::string_view index) {
   return duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
     context,
-    duckdb::QualifiedName{
-      duckdb::Identifier{GetSereneDBContext(context).GetDatabase()},
-      duckdb::Identifier{kEsSchema}, duckdb::Identifier{index}},
+    duckdb::QualifiedName{duckdb::DatabaseManager::GetDefaultDatabase(context),
+                          duckdb::Identifier{kEsSchema},
+                          duckdb::Identifier{index}},
     duckdb::OnEntryNotFound::RETURN_NULL);
 }
 
@@ -111,7 +112,7 @@ void VisitInvertedIndexes(
     context, duckdb::CatalogType::INDEX_ENTRY,
     [&](duckdb::CatalogEntry& entry) {
       auto& index = entry.Cast<duckdb::DuckIndexEntry>();
-      if (index.GetTableName() == table.name &&
+      if (index.table_oid == table.oid &&
           index.index_type == InvertedStoreIndex::kTypeName) {
         indexes.emplace_back(index);
       }
@@ -279,12 +280,12 @@ duckdb::unique_ptr<duckdb::FunctionData> BindIndexArgs(
 duckdb::unique_ptr<duckdb::FunctionData> EsAcknowledgedBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   auto data = BindIndexArgs(input);
   if (input.binder) {
     input.binder->GetStatementProperties().RegisterDBModify(
       duckdb::Catalog::GetCatalog(
-        context, duckdb::Identifier{GetSereneDBContext(context).GetDatabase()}),
+        context, duckdb::DatabaseManager::GetDefaultDatabase(context)),
       context,
       duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY |
         duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
@@ -369,12 +370,10 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   ValidateIndexName(data.index);
   auto request = ParseCreateIndexBody(data.index, data.body);
 
-  auto& conn_ctx = GetSereneDBContext(context);
-
   // Through the database's own catalog: CREATE SCHEMA and CREATE TABLE are
   // duckdb's operations, and serenedb's are the same ones.
   auto& db_catalog = duckdb::Catalog::GetCatalog(
-    context, duckdb::Identifier{conn_ctx.GetDatabase()});
+    context, duckdb::DatabaseManager::GetDefaultDatabase(context));
   {
     duckdb::CreateSchemaInfo info;
     info.SetSchema(duckdb::Identifier{std::string{kEsSchema}});
@@ -434,9 +433,8 @@ void EsDropIndexExecute(duckdb::ClientContext& context,
 
   ValidateIndexName(data.index);
 
-  auto& conn_ctx = GetSereneDBContext(context);
   auto& db_catalog = duckdb::Catalog::GetCatalog(
-    context, duckdb::Identifier{conn_ctx.GetDatabase()});
+    context, duckdb::DatabaseManager::GetDefaultDatabase(context));
   const duckdb::QualifiedName qname{db_catalog.GetName(),
                                     duckdb::Identifier{kEsSchema},
                                     duckdb::Identifier{data.index}};
@@ -461,7 +459,7 @@ void EsDropIndexExecute(duckdb::ClientContext& context,
 duckdb::unique_ptr<duckdb::FunctionData> EsMappingBind(
   duckdb::ClientContext&, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   auto data = BindIndexArgs(input);
   return_types.push_back(duckdb::LogicalType::VARCHAR);
   names.push_back("mappings");
@@ -523,7 +521,7 @@ void EsMappingExecute(duckdb::ClientContext& context,
 duckdb::unique_ptr<duckdb::FunctionData> EsCatIndicesBind(
   duckdb::ClientContext&, duckdb::TableFunctionBindInput&,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   return_types.push_back(duckdb::LogicalType::VARCHAR);
   names.push_back("index");
   return_types.push_back(duckdb::LogicalType::BIGINT);
@@ -638,7 +636,7 @@ struct EsWriteBindData final : duckdb::TableFunctionData {
 duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
   duckdb::ClientContext& context, std::string index,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   auto data = duckdb::make_uniq<EsWriteBindData>();
   data->index = std::move(index);
 
@@ -667,7 +665,7 @@ duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
 duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
   duckdb::ClientContext& context, const duckdb::Value& index_arg,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   if (index_arg.IsNull()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("index name cannot be NULL"));
@@ -905,7 +903,7 @@ void WriteDocRow(const EsWriteBindData& bind, simdjson::ondemand::document& doc,
 duckdb::unique_ptr<duckdb::FunctionData> EsDocBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   auto data = BindWriteTarget(context, input.inputs[0], return_types, names);
   if (input.inputs[1].IsNull() || input.inputs[2].IsNull()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -989,7 +987,7 @@ std::string_view NextBulkLine(std::string_view body, size_t& pos) {
 duckdb::unique_ptr<duckdb::FunctionData> EsBulkBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   auto data = BindWriteTarget(context, input.inputs[0], return_types, names);
   if (input.inputs[1].IsNull()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1006,7 +1004,7 @@ duckdb::unique_ptr<duckdb::FunctionData> EsBulkBind(
 duckdb::unique_ptr<duckdb::FunctionData> EsBulkSourceBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   auto data = BindWriteTarget(context, input.inputs[0], return_types, names);
   data->from_side_channel = true;
   return data;
@@ -1199,7 +1197,7 @@ void EsRefreshExecute(duckdb::ClientContext& context,
 duckdb::unique_ptr<duckdb::FunctionData> EsRefreshBind(
   duckdb::ClientContext&, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   auto data = duckdb::make_uniq<EsIndexBindData>();
   if (!input.inputs[0].IsNull()) {
     data->index = input.inputs[0].GetValue<std::string>();

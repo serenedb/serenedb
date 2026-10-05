@@ -1,0 +1,131 @@
+control substitution on
+
+statement ok
+CREATE TABLE ccr_t(a INTEGER, b TEXT)
+
+
+statement ok
+CREATE TABLE ccr_u(a INTEGER)
+
+
+statement ok
+CREATE TABLE ccr_keep(a INTEGER)
+
+
+statement ok
+INSERT INTO ccr_keep VALUES (1), (2)
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE INDEX ccr_t_i ON ccr_t(a)
+
+
+connection s1
+statement ok
+CREATE TABLE ccr_new AS SELECT range AS x FROM range(1000)
+
+
+connection s2
+statement ok
+DROP TABLE ccr_t
+
+
+connection s1
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "ccr_t" has been deleted
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE VIEW ccr_v AS SELECT a FROM ccr_u
+
+
+connection s2
+statement ok
+DROP TABLE ccr_u
+
+
+connection s1
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "ccr_u" has been deleted
+
+
+query
+SELECT relname FROM pg_class
+WHERE relname IN ('ccr_t', 'ccr_t_i', 'ccr_new', 'ccr_u', 'ccr_v', 'ccr_keep')
+ORDER BY relname
+----
+relname
+ccr_keep
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet'
+
+
+statement error connection closed
+SELECT 1
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1
+----
+?column?
+1
+
+
+connection after_crash
+query
+SELECT relname FROM pg_class
+WHERE relname IN ('ccr_t', 'ccr_t_i', 'ccr_new', 'ccr_u', 'ccr_v', 'ccr_keep')
+ORDER BY relname
+----
+relname
+ccr_keep
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM ccr_keep
+----
+n
+2
+
+
+connection after_crash
+statement ok
+CREATE TABLE ccr_new AS SELECT 1 AS x
+
+
+connection after_crash
+statement ok
+CREATE TABLE ccr_t(a INTEGER)
+
+
+connection after_crash
+statement ok
+CREATE INDEX ccr_t_i ON ccr_t(a)
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM ccr_new
+----
+n
+1

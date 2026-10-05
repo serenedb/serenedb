@@ -34,11 +34,12 @@ size_t DirectoryCleaner::clean(Directory& dir,
 
   size_t remove_count = 0;
   IndexFileRefs::ref_t tmp_ref;
-  auto visitor = [&dir, &refs, &acceptor, &remove_count, &tmp_ref](
-                   std::string_view filename, size_t count) -> bool {
+  auto visitor = [&dir, &acceptor, &remove_count, &tmp_ref](
+                   const IndexFileRefs::ref_t& ref, size_t count) -> bool {
+    const std::string_view filename = *ref;
     // for retained files add a temporary reference to avoid removal
     if (!acceptor(filename)) {
-      tmp_ref = refs.add(filename);
+      tmp_ref = ref;
     } else if (!count && dir.remove(filename)) {
       ++remove_count;
     }

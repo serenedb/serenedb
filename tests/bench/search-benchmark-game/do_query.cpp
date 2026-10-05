@@ -67,7 +67,7 @@ size_t ExecuteCommand(bench::Executor& executor, const bench::Command& cmd,
 
 }  // namespace
 
-int main(int argc, const char* argv[]) {
+static int Main(int argc, const char* argv[]) {
   irs::RemapExecutable();
   // DuckDBEngine owns the process-wide DuckDB the cs codec / reader use.
   // Bracket the executor lifetime so the DuckDB instance is destroyed
@@ -118,3 +118,6 @@ int main(int argc, const char* argv[]) {
   irs::DuckDBEngine::Instance().Shutdown();
   return exit_code;
 }
+
+[[maybe_unused]] static const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

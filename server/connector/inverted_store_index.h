@@ -25,18 +25,26 @@
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/execution/index/bound_index.hpp>
 #include <duckdb/execution/index/index_type.hpp>
+#include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
+#include <duckdb/storage/storage_index.hpp>
+#include <duckdb/storage/table/row_group_collection.hpp>
+#include <duckdb/storage/table/table_index_list.hpp>
+#include <duckdb/transaction/duck_transaction.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
 #include "catalog/entry/inverted_index.h"
 #include "connector/duckdb_index_utils.h"
+#include "connector/duckdb_sink_writer_base.h"
+#include "query/transaction.h"
 #include "search/inverted_index_storage.h"
 
 namespace duckdb {
@@ -45,8 +53,6 @@ class ClientContext;
 
 }  // namespace duckdb
 namespace sdb::connector {
-
-class DuckDBSearchSinkInsertWriter;
 
 using catalog::InvertedIndexConfig;
 using catalog::PkColumnKind;
@@ -75,17 +81,16 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
                            duckdb::Vector& row_ids) final {
     return AppendImpl(chunk, row_ids);
   }
+  duckdb::ErrorData FinishAppend() final;
   void Delete(duckdb::IndexLock& l, duckdb::DataChunk& chunk,
               duckdb::Vector& row_ids) final;
   duckdb::idx_t TryDelete(
     duckdb::IndexLock& l, duckdb::DataChunk& chunk, duckdb::Vector& row_ids,
     duckdb::optional_ptr<duckdb::SelectionVector> deleted_sel,
     duckdb::optional_ptr<duckdb::SelectionVector> non_deleted_sel) final;
+  bool RemovalNeedsColumnValues() const final { return false; }
 
-  void OnReplayRange(duckdb::idx_t commit_offset) final {
-    _replay_commit_offset = commit_offset;
-  }
-  void FinishReplay() final;
+  void FinishReplay();
 
   duckdb::IndexStorageInfo SerializeToDisk(
     duckdb::QueryContext context,
@@ -98,7 +103,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
     return true;
   }
   void Vacuum(duckdb::IndexLock&) final {}
-  duckdb::idx_t GetInMemorySize(duckdb::IndexLock&) final { return 0; }
+  duckdb::idx_t GetInMemorySize(duckdb::IndexLock&) const final { return 0; }
   void Verify(duckdb::IndexLock&) final {}
   std::string ToString(duckdb::IndexLock&, bool) final {
     return "inverted store index";
@@ -107,7 +112,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   void VerifyBuffers(duckdb::IndexLock&) final {}
   std::string GetConstraintViolationMessage(duckdb::VerifyExistenceType,
                                             duckdb::idx_t,
-                                            duckdb::DataChunk&) final {
+                                            duckdb::DataChunk&) const final {
     return "inverted store index constraint violation";
   }
 
@@ -116,22 +121,56 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
 
   duckdb::idx_t IndexId() const noexcept { return _index_id; }
 
+  void PrepareFeed(query::Transaction& transaction,
+                   duckdb::ClientContext& context, duckdb::idx_t rows);
+
+  static bool AnyBound() noexcept;
+
+  static bool AppendLocal(
+    duckdb::DuckTransaction& transaction, duckdb::TableIndexList& index_list,
+    duckdb::RowGroupCollection& source,
+    const duckdb::vector<duckdb::StorageIndex>& mapped_column_ids,
+    duckdb::row_t row_start, duckdb::ErrorData& error);
+
  private:
+  struct ReplayOp;
+  struct FeedQueue;
+  struct ReplaySlot;
   struct ReplaySession;
+  struct LiveFeed;
+  struct FeedTask;
+  struct RangeTask;
 
   duckdb::ErrorData AppendImpl(duckdb::DataChunk& chunk,
                                duckdb::Vector& row_ids);
 
   irs::IndexWriter::Transaction NewTransaction();
-  std::unique_ptr<DuckDBSearchSinkInsertWriter> MakeInsertWriter(
-    irs::IndexWriter::Transaction& trx);
-  void WriteChunk(DuckDBSearchSinkInsertWriter& writer,
-                  irs::IndexWriter::Transaction& trx, duckdb::DataChunk& chunk,
-                  duckdb::Vector& row_ids);
+  duckdb::idx_t Evaluate(duckdb::DataChunk& chunk, duckdb::Vector& row_ids,
+                         duckdb::DataChunk& results, duckdb::Vector& rows,
+                         duckdb::ExpressionExecutor* executor = nullptr);
+  void Feed(DuckDBSinkIndexWriter& writer, irs::IndexWriter::Transaction& trx,
+            duckdb::DataChunk& results, duckdb::Vector& rows,
+            duckdb::idx_t count);
 
-  ReplaySession& EnsureReplaySession();
+  ReplaySession* ReplaySessionForEntry();
+  void Enqueue(duckdb::TaskExecutor& executor, FeedQueue& queue,
+               std::unique_ptr<ReplayOp> op);
+  void Apply(FeedQueue& queue, ReplayOp& op);
+  static std::unique_ptr<ReplayOp> CopyInsert(duckdb::DataChunk& results,
+                                              duckdb::Vector& rows,
+                                              duckdb::idx_t count);
+  std::unique_ptr<ReplayOp> CopyInsertShared(query::Transaction& transaction,
+                                             duckdb::DataChunk& chunk,
+                                             duckdb::DataChunk& results,
+                                             duckdb::Vector& rows,
+                                             duckdb::idx_t count);
   void ReplayAppend(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
   void ReplayDelete(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
+  bool CommitReplay(ReplaySession& session,
+                    std::span<irs::IndexWriter::Transaction* const> trxs,
+                    const search::WalCursor* cursor);
+  bool CommitReplaySlots(ReplaySession& session,
+                         const search::WalCursor* cursor);
 
   duckdb::idx_t _index_id = 0;
 
@@ -141,7 +180,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   bool _has_predicate = false;
 
   std::unique_ptr<ReplaySession> _replay;
-  duckdb::idx_t _replay_commit_offset = 0;
+  std::unique_ptr<LiveFeed> _live;
 };
 
 struct PublishedInvertedIndex {

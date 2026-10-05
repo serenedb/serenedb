@@ -408,13 +408,15 @@ Did you mean "idx_dml_test"?
 statement error
 UPDATE idx_dml_idx SET b = 'world' WHERE a = 1;
 ----
-db error: ERROR: projecting virtual column 18446744073709551615 through an inverted-index scan is not supported
+db error: ERROR: cannot open relation "idx_dml_idx"
+DETAIL: This operation is not supported for indexes.
 
 
 statement error
 DELETE FROM idx_dml_idx WHERE a = 1;
 ----
-db error: ERROR: projecting virtual column 18446744073709551615 through an inverted-index scan is not supported
+db error: ERROR: cannot open relation "idx_dml_idx"
+DETAIL: This operation is not supported for indexes.
 
 
 statement error

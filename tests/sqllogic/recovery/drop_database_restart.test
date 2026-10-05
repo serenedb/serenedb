@@ -1,0 +1,33 @@
+control substitution on
+
+
+statement ok
+CREATE DATABASE dropped_db;
+
+
+statement ok
+CREATE TABLE dropped_db.public.t (x INTEGER);
+
+
+statement ok
+INSERT INTO dropped_db.public.t VALUES (1);
+
+
+statement ok
+DROP DATABASE dropped_db;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_drop
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pg_database WHERE datname = 'dropped_db';
+----
+n
+0

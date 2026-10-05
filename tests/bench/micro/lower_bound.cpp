@@ -57,5 +57,3 @@ void BmLinearScan(benchmark::State& state) {
 BENCHMARK(BmLinearScan)->DenseRange(0, 256, 8);
 
 }  // namespace
-
-BENCHMARK_MAIN();

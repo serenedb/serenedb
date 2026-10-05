@@ -68,11 +68,11 @@ constexpr duckdb::field_id_t kSliceChunk = 1;
 
 constexpr std::string_view kSegSuffix = ".swal";
 
-constexpr duckdb::FileOpenFlags kAppendFlags =
-  duckdb::FileFlags::FILE_FLAGS_WRITE |
-  duckdb::FileFlags::FILE_FLAGS_FILE_CREATE |
-  duckdb::FileFlags::FILE_FLAGS_APPEND |
-  duckdb::FileFlags::FILE_FLAGS_MULTI_CLIENT_ACCESS;
+constexpr duckdb::idx_t kAppendFlags =
+  duckdb::FileOpenFlags::FILE_FLAGS_WRITE |
+  duckdb::FileOpenFlags::FILE_FLAGS_FILE_CREATE |
+  duckdb::FileOpenFlags::FILE_FLAGS_APPEND |
+  duckdb::FileOpenFlags::FILE_FLAGS_MULTI_CLIENT_ACCESS;
 
 // PostgreSQL-style fixed-width 16-hex names: lexicographic order == numeric.
 std::string SegmentName(uint64_t first_tick) {

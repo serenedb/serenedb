@@ -126,7 +126,7 @@ struct VacuumBindData final : public duckdb::FunctionData {
 duckdb::unique_ptr<duckdb::FunctionData> VacuumBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   auto data = duckdb::make_uniq<VacuumBindData>();
 
   if (input.inputs.size() >= 1 && !input.inputs[0].IsNull()) {
@@ -325,7 +325,7 @@ void CollectInvertedSteps(duckdb::ClientContext& context,
     context, duckdb::CatalogType::INDEX_ENTRY,
     [&](duckdb::CatalogEntry& entry) {
       auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
-      if (!IsInvertedIndex(index) || index.GetTableName() != table.name) {
+      if (!IsInvertedIndex(index) || index.table_oid != table.oid) {
         return;
       }
       const auto& inverted = index.Cast<catalog::InvertedIndexEntry>();
@@ -404,14 +404,8 @@ void DispatchInverted(duckdb::ClientContext& context,
       }
       // An index has no owner of its own; maintenance rides on its
       // relation (a table, or a view for view-backed indexes).
-      auto relation = duckdb::Catalog::GetEntry(
-        context,
-        duckdb::EntryLookupInfo{
-          duckdb::CatalogType::TABLE_ENTRY,
-          duckdb::QualifiedName{duckdb::Identifier{target.database},
-                                index->ParentSchemaName(),
-                                index->GetTableName()}},
-        duckdb::OnEntryNotFound::RETURN_NULL);
+      auto relation =
+        index->GetRelation(index->catalog.GetCatalogTransaction(context));
       if (relation && !MayMaintain(conn_ctx, relation->permissions,
                                    relation->name.GetIdentifierName(), verb)) {
         return;
@@ -715,13 +709,15 @@ void VacuumPragma(duckdb::ClientContext& context,
 void RegisterVacuumFunction(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader(db, "serenedb");
 
-  duckdb::TableFunction func("serenedb_vacuum", {}, VacuumExecute, VacuumBind);
-  func.varargs = duckdb::LogicalType::VARCHAR;
+  duckdb::FunctionSignature signature;
+  signature.AddArgs("args", duckdb::LogicalType::VARCHAR);
+  duckdb::TableFunction func("serenedb_vacuum", std::move(signature),
+                             VacuumExecute, VacuumBind);
   loader.RegisterFunction(func);
 
   auto pragma = duckdb::PragmaFunction::PragmaCall(
-    "serenedb_vacuum", VacuumPragma, {duckdb::LogicalType::VARCHAR});
-  pragma.varargs = duckdb::LogicalType::VARCHAR;
+    "serenedb_vacuum", VacuumPragma, {duckdb::LogicalType::VARCHAR},
+    duckdb::LogicalType::VARCHAR);
   loader.RegisterFunction(pragma);
 }
 

@@ -413,30 +413,27 @@ void BmSmallInput(benchmark::State& state) {
   SetBytes(state, data);
 }
 
-class MixedCorpus : public benchmark::Fixture {
+std::string MakeProseCorpus() { return MakeWordsCorpus(LatinLetters()); }
+
+std::string MakeCyrillicCorpus() { return MakeWordsCorpus(CyrillicLetters()); }
+
+template<std::string (*Make)()>
+class Corpus : public benchmark::Fixture {
  public:
-  std::string data = MakeMixedCorpus();
+  void SetUp(benchmark::State&) override {
+    if (data.empty()) {
+      data = Make();
+    }
+  }
+
+  std::string data;
 };
 
-class LongTokenCorpus : public benchmark::Fixture {
- public:
-  std::string data = MakeLongTokenCorpus();
-};
-
-class Utf8Corpus : public benchmark::Fixture {
- public:
-  std::string data = MakeUtf8Corpus();
-};
-
-class ProseCorpus : public benchmark::Fixture {
- public:
-  std::string data = MakeWordsCorpus(LatinLetters());
-};
-
-class CyrillicCorpus : public benchmark::Fixture {
- public:
-  std::string data = MakeWordsCorpus(CyrillicLetters());
-};
+using MixedCorpus = Corpus<MakeMixedCorpus>;
+using LongTokenCorpus = Corpus<MakeLongTokenCorpus>;
+using Utf8Corpus = Corpus<MakeUtf8Corpus>;
+using ProseCorpus = Corpus<MakeProseCorpus>;
+using CyrillicCorpus = Corpus<MakeCyrillicCorpus>;
 
 }  // namespace
 
@@ -650,5 +647,3 @@ BENCHMARK_REGISTER_F(CyrillicCorpus, BmKernelUnicode);
 BENCHMARK_REGISTER_F(CyrillicCorpus, BmKernelText);
 
 BENCHMARK(BmSmallInput)->Arg(8)->Arg(16)->Arg(24)->Arg(31)->Arg(48)->Arg(64);
-
-BENCHMARK_MAIN();

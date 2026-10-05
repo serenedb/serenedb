@@ -48,6 +48,12 @@ A statement that fails inside a transaction aborts the whole transaction: every 
 
 When multiple SQL statements are submitted together (e.g., separated by semicolons), they are executed within a single implicit transaction. If any statement fails, all preceding statements in the batch are rolled back. This also applies to `PRAGMA` commands that decompose into multiple internal operations, such as `COPY FROM DATABASE`.
 
+## Transactions Across Databases
+
+A transaction can write to several databases of the same server, including DDL in each of them and cluster-wide objects such as roles and databases (`CREATE ROLE`, `CREATE DATABASE`, `GRANT`). The commit is atomic across all of them: after a crash, either every database has the transaction's changes or none has.
+
+A database attached with `ATTACH` keeps its own file and commits on its own, so a transaction that writes to it cannot write to any other database.
+
 ## Isolation Level
 
 SereneDB's concurrency model guarantees snapshot isolation. Transactions that violate this isolation level are aborted.

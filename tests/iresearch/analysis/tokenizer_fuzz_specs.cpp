@@ -61,7 +61,9 @@ Ptr MakeChild(Cfg cfg) {
   return irs::analysis::CreateTokenizer(std::move(cfg), ::tests::Cache());
 }
 
-icu::Locale Loc(const char* name) { return icu::Locale::createFromName(name); }
+duckdb::text::Locale Loc(const char* name) {
+  return duckdb::text::Locale::FromName(name);
+}
 
 Cfg TextChainCfg(const char* locale, irs::Case convert, bool stemming,
                  std::vector<std::string> stopwords = {}) {
@@ -1227,12 +1229,10 @@ void AddShingle(std::vector<Spec>& out) {
                   .min_shingle_size = 1,
                   .max_shingle_size = 4,
                   .output_unigrams = true,
-                  .token_separator = Bytes("_"),
-                  .filler_token = Bytes("#")}};
+                  .token_separator = Bytes("_")}};
               },
-            .dict = {",", "_", "#", "\""},
+            .dict = {",", "_", "\""},
             .native = CsvValues(),
-            .params = {.delim = '#'},
             .model_children =
               [] {
                 std::vector<Ptr> subs;
@@ -1250,12 +1250,10 @@ void AddShingle(std::vector<Spec>& out) {
                   .min_shingle_size = 1,
                   .max_shingle_size = 3,
                   .output_unigrams = true,
-                  .token_separator = {},
-                  .filler_token = Bytes("#")}};
+                  .token_separator = {}}};
               },
-            .dict = {",", "#", "\""},
+            .dict = {",", "\""},
             .native = CsvValues(),
-            .params = {.delim = '#'},
             .model_children =
               [] {
                 std::vector<Ptr> subs;
@@ -1272,8 +1270,7 @@ void AddShingle(std::vector<Spec>& out) {
                   .min_shingle_size = 2,
                   .max_shingle_size = 2,
                   .output_unigrams = false,
-                  .frequent_words = {Bytes("the"), Bytes("a"), Bytes("of")},
-                  .store_tokens = false}};
+                  .frequent_words = {Bytes("the"), Bytes("a"), Bytes("of")}}};
               },
             .dict = Merge({WordDict(), StopwordDict()}),
             .native = WordValues(),

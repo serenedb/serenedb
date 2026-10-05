@@ -57,8 +57,8 @@ T GetEnumValue(std::string_view value) noexcept {
 void Config::SetInternal(std::string_view key, std::string value) {
   auto& db_config = duckdb::DBConfig::GetConfig(*_client_ctx.db);
   duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-  auto setting_index = db_config.TryGetSettingIndex(
-    duckdb::String::Reference(key.data(), key.size()), option);
+  auto setting_index =
+    db_config.TryGetSettingIndex(duckdb::Identifier{key}, option);
   if (setting_index.IsValid()) {
     _client_ctx.config.user_settings.SetUserSetting(
       setting_index.GetIndex(), duckdb::Value{std::move(value)});
@@ -91,7 +91,7 @@ IsolationLevel Config::GetIsolationLevel() const {
 
 std::optional<std::string> Config::Get(std::string_view key) const {
   duckdb::Value value;
-  if (_client_ctx.TryGetCurrentSetting(std::string{key}, value)) {
+  if (_client_ctx.TryGetCurrentSetting(duckdb::Identifier{key}, value)) {
     return duckdb::Settings::FormatDisplayValue(_client_ctx, value).ToString();
   }
   return std::nullopt;
@@ -169,7 +169,7 @@ void Config::OnSet(std::string_view name, bool is_local,
 void Config::SetSettingChecked(std::string_view key, std::string value,
                                bool is_local) {
   duckdb::PhysicalSet::SetVariable(
-    _client_ctx, duckdb::String::Reference(key.data(), key.size()),
+    _client_ctx, duckdb::Identifier{key},
     is_local ? duckdb::SetScope::LOCAL : duckdb::SetScope::SESSION,
     duckdb::Value{std::move(value)});
 }
@@ -183,7 +183,7 @@ void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
   // is still active, so catalog lookups performed by custom-impl set_local
   // callbacks work normally.
   auto& db_config = duckdb::DBConfig::GetConfig(*_client_ctx.db);
-  auto name_ref = duckdb::String::Reference(key.data(), key.size());
+  const duckdb::Identifier setting{key};
 
   // A NULL old_value means the setting was at its default (never explicitly
   // SET), so the restore is a RESET rather than a SET. Calling set_local(NULL)
@@ -194,7 +194,7 @@ void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
   try {
     // Built-in options first.
     duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-    auto setting_index = db_config.TryGetSettingIndex(name_ref, option);
+    auto setting_index = db_config.TryGetSettingIndex(setting, option);
     if (option) {
       if (is_reset) {
         if (option->reset_local) {
@@ -217,7 +217,7 @@ void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
     // Extension options: use the registered set_function so side effects
     // (e.g. sdb_faults toggling global fault-point state) are re-applied.
     duckdb::ExtensionOption ext;
-    if (!db_config.TryGetExtensionOption(name_ref, ext)) {
+    if (!db_config.TryGetExtensionOption(setting, ext)) {
       return;
     }
     // Only session/local SETs are tracked (setting_change_handler skips

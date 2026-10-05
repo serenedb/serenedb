@@ -88,6 +88,22 @@ bool SuperKMeansGate(uint32_t d, uint32_t k, uint32_t min_k) {
 
 }  // namespace
 
+bool UsesSuperKMeans(VectorMetric metric, size_t n, uint32_t k, uint32_t d,
+                     ClusteringAlgo algo) {
+  if (n == 0 || k == 0) {
+    return false;
+  }
+  if (algo != ClusteringAlgo::Auto) {
+    return algo == ClusteringAlgo::FlatSuperKMeans;
+  }
+  k = static_cast<uint32_t>(std::min<size_t>(k, n));
+  if (VectorMetricIsAngular(metric)) {
+    return metric == VectorMetric::Cosine &&
+           SuperKMeansGate(d, k, kSuperKMeansSphericalMinK);
+  }
+  return SuperKMeansGate(d, k, kSuperKMeansMinK);
+}
+
 std::vector<float> MakeRotation(uint32_t d, uint32_t seed) {
   faiss::RandomRotationMatrix rotation(static_cast<int>(d),
                                        static_cast<int>(d));
@@ -111,8 +127,7 @@ faiss::PCAMatrix TrainPcaRotation(const float* data, size_t n, uint32_t d) {
 void NormalizeRows(float* data, size_t n, uint32_t d) {
   for (size_t i = 0; i < n; ++i) {
     float* row = data + i * d;
-    vector::L2Space<float, float, float>::Normalize(
-      reinterpret_cast<const byte_type*>(row), static_cast<uint16_t>(d), row);
+    duckdb::L2NormalizeOp::Operation(row, row, d);
   }
 }
 
@@ -123,32 +138,17 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
   if (n == 0 || k == 0) {
     return {};
   }
+  const bool use_skm = UsesSuperKMeans(metric, n, k, d, algo);
   k = static_cast<uint32_t>(std::min<size_t>(k, n));
-
-  if (VectorMetricIsAngular(metric)) {
-    const bool use_skm =
-      algo == ClusteringAlgo::FlatSuperKMeans ||
-      (algo == ClusteringAlgo::Auto && metric == VectorMetric::Cosine &&
-       SuperKMeansGate(d, k, kSuperKMeansSphericalMinK));
-    if (use_skm) {
-      auto centroids =
-        RunSuperKMeans(data, n, k, d, seed, niter, nredo, rotation);
-      NormalizeRows(centroids.data(), centroids.size() / d, d);
-      return centroids;
-    }
-    return RunLloyd(data, n, k, d, seed, niter, nredo, /*spherical=*/true);
+  const bool angular = VectorMetricIsAngular(metric);
+  if (!use_skm) {
+    return RunLloyd(data, n, k, d, seed, niter, nredo, /*spherical=*/angular);
   }
-
-  ClusteringAlgo eff = algo;
-  if (eff == ClusteringAlgo::Auto) {
-    eff = SuperKMeansGate(d, k, kSuperKMeansMinK)
-            ? ClusteringAlgo::FlatSuperKMeans
-            : ClusteringAlgo::Lloyd;
+  auto centroids = RunSuperKMeans(data, n, k, d, seed, niter, nredo, rotation);
+  if (angular) {
+    NormalizeRows(centroids.data(), centroids.size() / d, d);
   }
-  if (eff == ClusteringAlgo::FlatSuperKMeans) {
-    return RunSuperKMeans(data, n, k, d, seed, niter, nredo, rotation);
-  }
-  return RunLloyd(data, n, k, d, seed, niter, nredo);
+  return centroids;
 }
 
 namespace {

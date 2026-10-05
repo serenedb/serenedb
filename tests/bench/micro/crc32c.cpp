@@ -99,5 +99,3 @@ BENCHMARK(BmCalculateFolly)->ARGS2;
 #endif
 
 }  // namespace
-
-BENCHMARK_MAIN();

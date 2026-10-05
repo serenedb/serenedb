@@ -1,89 +1,32 @@
-# serenedb-specific storage versions. SERENEDB_V1 is what gates the formats vanilla duckdb cannot
-# read (FSST+ string modes, the bitpacked RLE layout), and it is selected per database through the
-# ordinary STORAGE_VERSION attach option rather than a bespoke flag. In memory a version is
-# <duckdb version> * 2^32 + <serenedb sequence>; on disk the shift is dropped when the sequence is
-# zero, so a duckdb database still stores duckdb's own number and stays openable by duckdb, while a
-# serenedb version stores the whole value, which duckdb rejects as out of range.
-#
-# The reopen case below is a regression guard: the guard that rejects a too-new file once compared
-# against duckdb's latest, so a serenedb-versioned datadir could not be reopened by the engine that
-# wrote it.
-
 control substitution on
 
 
-# --- 1. both serenedb spellings attach, and report the version they are on ------
 statement ok
+CREATE DATABASE sv_db;
+
+
+query
+SELECT tags::VARCHAR LIKE '%serenedb_v1%' AS tagged
+  FROM duckdb_databases(include_hidden := true) WHERE database_name = 'sv_db';
+----
+tagged
+t
+
+
+statement ok
+CREATE TABLE sv_db.t AS SELECT i, 'row_' || i::VARCHAR AS s FROM range(20000) t(i);
+
+
+statement ok
+CHECKPOINT sv_db;
+
+
+statement error a SereneDB storage version is for SereneDB databases, a DuckDB database takes a DuckDB storage version
 ATTACH '${__TEST_DIR__}/sv_v1.db' AS sv_ver1 (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
 
 
-statement ok
+statement error a SereneDB storage version is for SereneDB databases, a DuckDB database takes a DuckDB storage version
 ATTACH '${__TEST_DIR__}/sv_latest.db' AS sv_verl (TYPE duckdb, STORAGE_VERSION 'serenedb_latest');
-
-
-query
-SELECT database_name, tags::VARCHAR LIKE '%serenedb_v1%' AS tagged
-  FROM duckdb_databases(include_hidden := true) WHERE database_name IN ('sv_ver1', 'sv_verl') ORDER BY 1;
-----
-database_name	tagged
-sv_ver1	t
-sv_verl	t
-
-
-# --- 2. a serenedb-versioned database can be reopened by the engine that wrote it ---
-statement ok
-CREATE TABLE sv_ver1.t AS SELECT i, 'row_' || i::VARCHAR AS s FROM range(20000) t(i);
-
-
-statement ok
-CHECKPOINT sv_ver1;
-
-
-statement ok
-DETACH sv_ver1;
-
-
-statement ok
-ATTACH '${__TEST_DIR__}/sv_v1.db' AS sv_reopened (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
-
-
-query
-SELECT count(*) AS n, sum(i) AS sum_i, max(length(s)) AS max_len FROM sv_reopened.t;
-----
-n	sum_i	max_len
-20000	199990000	9
-
-
-statement ok
-DETACH sv_reopened;
-
-
-statement ok
-ATTACH '${__TEST_DIR__}/sv_v1.db' AS sv_serene (TYPE serenedb);
-
-
-query
-SELECT tags::VARCHAR LIKE '%serenedb_v1%' AS kept_version, (SELECT count(*) FROM sv_serene.main.t) AS n
-  FROM duckdb_databases(include_hidden := true) WHERE database_name = 'sv_serene';
-----
-kept_version	n
-t	20000
-
-
-statement ok
-DETACH sv_serene;
-
-
-statement error has SereneDB storage version serenedb_v1\. A file with a SereneDB storage version opens only at a SereneDB storage version
-ATTACH '${__TEST_DIR__}/sv_v1.db' AS sv_implicit (TYPE duckdb);
-
-
-statement error has SereneDB storage version serenedb_v1\. A file with a SereneDB storage version opens only at a SereneDB storage version
-ATTACH '${__TEST_DIR__}/sv_v1.db' AS sv_lowered (TYPE duckdb, STORAGE_VERSION 'v2.0.0');
-
-
-statement ok
-DETACH sv_verl;
 
 
 statement ok
@@ -102,11 +45,11 @@ statement ok
 DETACH sv_nat;
 
 
-statement error has storage version v2\.0\.0, which is not a SereneDB storage version
+statement error a SereneDB storage version is for SereneDB databases, a DuckDB database takes a DuckDB storage version
 ATTACH '${__TEST_DIR__}/sv_native.db' AS sv_raised (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
 
 
-statement error has storage version v2\.0\.0, which is not a SereneDB storage version
+statement error a SereneDB database is created with CREATE DATABASE
 ATTACH '${__TEST_DIR__}/sv_native.db' AS sv_owned (TYPE serenedb);
 
 
@@ -124,3 +67,33 @@ t	42
 
 statement ok
 DETACH sv_nat_again;
+
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_restart
+query
+SELECT count(*) AS n, sum(i) AS sum_i, max(length(s)) AS max_len FROM sv_db.t;
+----
+n	sum_i	max_len
+20000	199990000	9
+
+
+connection after_restart
+query
+SELECT tags::VARCHAR LIKE '%serenedb_v1%' AS kept_version
+  FROM duckdb_databases(include_hidden := true) WHERE database_name = 'sv_db';
+----
+kept_version
+t

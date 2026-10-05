@@ -14,6 +14,7 @@ target_sources(
         string.cpp
         system.cpp
         minhash.cpp
+        ruleutils.cpp
         search.cpp
         tokenizer_functions.cpp
         ts_anyall.cpp
@@ -33,7 +34,6 @@ target_sources(
         ts_term.cpp
         ts_to_tsquery.cpp
         ts_tokenize.cpp
-        vector.cpp
         ai/aggregate_functions.cpp
         ai/ai.cpp
         ai/chat.cpp

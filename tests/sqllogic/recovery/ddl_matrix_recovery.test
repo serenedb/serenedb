@@ -1,0 +1,763 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE SCHEMA dm;
+
+
+statement ok
+CREATE ROLE dm_reader;
+
+
+statement ok
+CREATE TABLE dm.plain (a INT, b TEXT);
+
+
+statement ok
+CREATE TABLE dm.pk (id INT PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE TABLE dm.uq (id INT, code TEXT UNIQUE);
+
+
+statement ok
+CREATE TABLE dm.parent (id INT PRIMARY KEY, name TEXT);
+
+
+statement ok
+CREATE TABLE dm.child (id INT PRIMARY KEY, parent_id INT REFERENCES dm.parent (id));
+
+
+statement ok
+CREATE TABLE dm.sec (a INT, b TEXT);
+
+
+statement ok
+CREATE INDEX dm_sec_a ON dm.sec (a);
+
+
+statement ok
+CREATE TABLE dm.inv (a INT, body TEXT);
+
+
+statement ok
+CREATE INDEX dm_inv_body ON dm.inv USING inverted (body);
+
+
+statement ok
+CREATE TABLE dm.ser (id SERIAL PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE TABLE dm.st (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+CREATE TABLE dm.st_inv (a INT, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+CREATE INDEX dm_st_inv_body ON dm.st_inv USING inverted (body);
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS dm.pk (other INT);
+
+
+statement ok
+CREATE INDEX IF NOT EXISTS dm_sec_a ON dm.sec (b);
+
+
+statement ok
+CREATE INDEX IF NOT EXISTS dm_inv_body ON dm.inv USING inverted (body);
+
+
+statement ok
+INSERT INTO dm.plain VALUES (1, 'one'), (2, 'two');
+
+
+statement ok
+INSERT INTO dm.pk VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+INSERT INTO dm.uq VALUES (1, 'x'), (2, 'y');
+
+
+statement ok
+INSERT INTO dm.parent VALUES (1, 'p1'), (2, 'p2');
+
+
+statement ok
+INSERT INTO dm.child VALUES (10, 1), (20, 2);
+
+
+statement ok
+INSERT INTO dm.sec SELECT i, 'sec ' || i FROM generate_series(1, 100) AS s(i);
+
+
+statement ok
+INSERT INTO dm.inv SELECT i, 'body ' || i FROM generate_series(1, 100) AS s(i);
+
+
+statement ok
+INSERT INTO dm.ser (v) VALUES ('s1'), ('s2'), ('s3');
+
+
+statement ok
+INSERT INTO dm.st VALUES (1, 'search one'), (2, 'search two');
+
+
+statement ok
+INSERT INTO dm.st_inv VALUES (1, 'indexed one'), (2, 'indexed two');
+
+
+statement ok
+ALTER TABLE dm.plain ADD COLUMN c INT DEFAULT 7;
+
+
+statement ok
+ALTER TABLE dm.plain RENAME COLUMN b TO b2;
+
+
+statement ok
+ALTER TABLE dm.plain ALTER COLUMN a TYPE BIGINT;
+
+
+statement ok
+ALTER TABLE dm.plain ALTER COLUMN a SET NOT NULL;
+
+
+statement ok
+COMMENT ON COLUMN dm.plain.b2 IS 'renamed';
+
+
+statement ok
+ALTER TABLE dm.plain RENAME TO plain2;
+
+
+statement ok
+ALTER TABLE dm.pk ADD CONSTRAINT pk_v_short CHECK (length(v) < 10);
+
+
+statement ok
+ALTER TABLE dm.pk ALTER COLUMN v SET DEFAULT 'dflt';
+
+
+statement ok
+ALTER TABLE dm.pk ADD COLUMN w INT;
+
+
+statement ok
+ALTER TABLE dm.pk DROP COLUMN w;
+
+
+statement ok
+COMMENT ON TABLE dm.uq IS 'unique codes';
+
+
+statement ok
+GRANT SELECT ON dm.uq TO dm_reader;
+
+
+statement ok
+TRUNCATE dm.parent CASCADE;
+
+
+statement ok
+INSERT INTO dm.parent VALUES (3, 'p3');
+
+
+statement ok
+INSERT INTO dm.child VALUES (30, 3);
+
+
+statement ok
+DROP INDEX IF EXISTS dm.dm_sec_missing;
+
+
+statement ok
+CREATE INDEX dm_sec_b ON dm.sec (b);
+
+
+statement ok
+ALTER INDEX dm.dm_inv_body SET (refresh_interval = 500);
+
+
+statement ok
+ALTER TABLE dm.inv RENAME COLUMN a TO a2;
+
+
+statement ok
+TRUNCATE dm.ser RESTART IDENTITY;
+
+
+statement ok
+INSERT INTO dm.ser (v) VALUES ('r1'), ('r2');
+
+
+statement ok
+ALTER TABLE dm.st ALTER COLUMN body SET DEFAULT 'none';
+
+
+statement ok
+COMMENT ON COLUMN dm.st.body IS 'search body';
+
+
+statement ok
+ALTER TABLE dm.st RENAME COLUMN body TO text_body;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE dm.uq ADD COLUMN extra TEXT DEFAULT 'e';
+
+
+statement ok
+ALTER TABLE dm.uq ALTER COLUMN extra DROP DEFAULT;
+
+
+statement ok
+CREATE INDEX dm_uq_extra ON dm.uq (extra);
+
+
+statement ok
+ALTER TABLE dm.sec RENAME TO sec2;
+
+
+statement ok
+REVOKE SELECT ON dm.uq FROM dm_reader;
+
+
+statement ok
+GRANT INSERT ON dm.uq TO dm_reader;
+
+
+statement ok
+ALTER TABLE dm.st_inv ALTER COLUMN a SET NOT NULL;
+
+
+statement ok
+INSERT INTO dm.uq (id, code) VALUES (3, 'z');
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP TABLE dm.pk;
+
+
+statement ok
+ALTER TABLE dm.uq ADD COLUMN rolled INT;
+
+
+statement ok
+ALTER TABLE dm.plain2 RENAME TO plain3;
+
+
+statement ok
+DROP INDEX dm.dm_inv_body;
+
+
+statement ok
+TRUNCATE dm.ser RESTART IDENTITY;
+
+
+statement ok
+COMMENT ON TABLE dm.uq IS 'rolled back';
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+INSERT INTO dm.ser (v) VALUES ('r3');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dm.st;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dm.st_inv;
+
+
+connection pending
+statement ok
+BEGIN;
+
+
+connection pending
+statement ok
+DROP TABLE dm.child;
+
+
+connection pending
+statement ok
+CREATE TABLE dm.ghost (g INT);
+
+
+connection pending
+statement ok
+ALTER TABLE dm.uq RENAME COLUMN code TO pending_code;
+
+
+
+query
+SELECT table_name, column_name, data_type, is_nullable, column_default FROM information_schema.columns
+WHERE table_schema = 'dm' ORDER BY table_name, ordinal_position;
+----
+table_name	column_name	data_type	is_nullable	column_default
+child	id	integer	NO	NULL
+child	parent_id	integer	YES	NULL
+inv	a2	integer	YES	NULL
+inv	body	text	YES	NULL
+parent	id	integer	NO	NULL
+parent	name	text	YES	NULL
+pk	id	integer	NO	NULL
+pk	v	text	YES	'dflt'
+plain2	a	bigint	NO	NULL
+plain2	b2	text	YES	NULL
+plain2	c	integer	YES	7
+sec2	a	integer	YES	NULL
+sec2	b	text	YES	NULL
+ser	id	integer	NO	nextval('ser_id_seq')
+ser	v	text	YES	NULL
+st	id	bigint	NO	NULL
+st	text_body	text	YES	'none'
+st_inv	a	integer	NO	NULL
+st_inv	body	text	YES	NULL
+uq	id	integer	YES	NULL
+uq	code	text	YES	NULL
+uq	extra	text	YES	NULL
+
+
+query
+SELECT conrelid::regclass::text AS rel, conname, contype FROM pg_constraint
+WHERE connamespace = 'dm'::regnamespace ORDER BY 1, 2;
+----
+rel	conname	contype
+dm.child	child_id_not_null	n
+dm.child	child_parent_id_fkey	f
+dm.child	child_pkey	p
+dm.parent	parent_id_not_null	n
+dm.parent	parent_pkey	p
+dm.pk	pk_id_not_null	n
+dm.pk	pk_pkey	p
+dm.pk	pk_v_short	c
+dm.plain2	plain2_a_not_null	n
+dm.ser	ser_id_not_null	n
+dm.ser	ser_pkey	p
+dm.st	st_id_not_null	n
+dm.st	st_pkey	p
+dm.st_inv	st_inv_a_not_null	n
+dm.uq	uq_code_key	u
+
+
+query
+SELECT index_name, table_name FROM duckdb_indexes() WHERE schema_name = 'dm' ORDER BY 1;
+----
+index_name	table_name
+dm_inv_body	inv
+dm_sec_a	sec2
+dm_sec_b	sec2
+dm_st_inv_body	st_inv
+dm_uq_extra	uq
+
+
+query
+SELECT c.relname, d.objsubid, d.description FROM pg_description d JOIN pg_class c ON c.oid = d.objoid
+WHERE c.relnamespace = 'dm'::regnamespace ORDER BY 1, 2;
+----
+relname	objsubid	description
+plain2	2	renamed
+st	2	search body
+uq	0	unique codes
+
+
+query
+SELECT has_table_privilege('dm_reader', 'dm.uq', 'SELECT') AS sel, has_table_privilege('dm_reader', 'dm.uq', 'INSERT') AS ins;
+----
+sel	ins
+f	t
+
+
+query
+SELECT (SELECT count(*) FROM dm.plain2) AS plain, (SELECT count(*) FROM dm.pk) AS pk, (SELECT count(*) FROM dm.uq) AS uq,
+       (SELECT count(*) FROM dm.parent) AS parent, (SELECT count(*) FROM dm.child) AS child,
+       (SELECT count(*) FROM dm.sec2) AS sec, (SELECT count(*) FROM dm.inv) AS inv, (SELECT count(*) FROM dm.ser) AS ser,
+       (SELECT count(*) FROM dm.st) AS st, (SELECT count(*) FROM dm.st_inv) AS st_inv;
+----
+plain	pk	uq	parent	child	sec	inv	ser	st	st_inv
+2	2	3	1	1	100	100	3	2	2
+
+
+query
+SELECT id, v FROM dm.ser ORDER BY id;
+----
+id	v
+1	r1
+2	r2
+3	r3
+
+
+query
+SELECT count(*) AS n FROM dm.inv WHERE body = 'body 42';
+----
+n
+1
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT table_name, column_name, data_type, is_nullable, column_default FROM information_schema.columns
+WHERE table_schema = 'dm' ORDER BY table_name, ordinal_position;
+----
+table_name	column_name	data_type	is_nullable	column_default
+child	id	integer	NO	NULL
+child	parent_id	integer	YES	NULL
+inv	a2	integer	YES	NULL
+inv	body	text	YES	NULL
+parent	id	integer	NO	NULL
+parent	name	text	YES	NULL
+pk	id	integer	NO	NULL
+pk	v	text	YES	'dflt'
+plain2	a	bigint	NO	NULL
+plain2	b2	text	YES	NULL
+plain2	c	integer	YES	7
+sec2	a	integer	YES	NULL
+sec2	b	text	YES	NULL
+ser	id	integer	NO	nextval('ser_id_seq')
+ser	v	text	YES	NULL
+st	id	bigint	NO	NULL
+st	text_body	text	YES	'none'
+st_inv	a	integer	NO	NULL
+st_inv	body	text	YES	NULL
+uq	id	integer	YES	NULL
+uq	code	text	YES	NULL
+uq	extra	text	YES	NULL
+
+
+connection after_crash
+query
+SELECT conrelid::regclass::text AS rel, conname, contype FROM pg_constraint
+WHERE connamespace = 'dm'::regnamespace ORDER BY 1, 2;
+----
+rel	conname	contype
+dm.child	child_id_not_null	n
+dm.child	child_parent_id_fkey	f
+dm.child	child_pkey	p
+dm.parent	parent_id_not_null	n
+dm.parent	parent_pkey	p
+dm.pk	pk_id_not_null	n
+dm.pk	pk_pkey	p
+dm.pk	pk_v_short	c
+dm.plain2	plain2_a_not_null	n
+dm.ser	ser_id_not_null	n
+dm.ser	ser_pkey	p
+dm.st	st_id_not_null	n
+dm.st	st_pkey	p
+dm.st_inv	st_inv_a_not_null	n
+dm.uq	uq_code_key	u
+
+
+connection after_crash
+query
+SELECT index_name, table_name FROM duckdb_indexes() WHERE schema_name = 'dm' ORDER BY 1;
+----
+index_name	table_name
+dm_inv_body	inv
+dm_sec_a	sec2
+dm_sec_b	sec2
+dm_st_inv_body	st_inv
+dm_uq_extra	uq
+
+
+connection after_crash
+query
+SELECT c.relname, d.objsubid, d.description FROM pg_description d JOIN pg_class c ON c.oid = d.objoid
+WHERE c.relnamespace = 'dm'::regnamespace ORDER BY 1, 2;
+----
+relname	objsubid	description
+plain2	2	renamed
+st	2	search body
+uq	0	unique codes
+
+
+connection after_crash
+query
+SELECT has_table_privilege('dm_reader', 'dm.uq', 'SELECT') AS sel, has_table_privilege('dm_reader', 'dm.uq', 'INSERT') AS ins;
+----
+sel	ins
+f	t
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM dm.plain2) AS plain, (SELECT count(*) FROM dm.pk) AS pk, (SELECT count(*) FROM dm.uq) AS uq,
+       (SELECT count(*) FROM dm.parent) AS parent, (SELECT count(*) FROM dm.child) AS child,
+       (SELECT count(*) FROM dm.sec2) AS sec, (SELECT count(*) FROM dm.inv) AS inv, (SELECT count(*) FROM dm.ser) AS ser,
+       (SELECT count(*) FROM dm.st) AS st, (SELECT count(*) FROM dm.st_inv) AS st_inv;
+----
+plain	pk	uq	parent	child	sec	inv	ser	st	st_inv
+2	2	3	1	1	100	100	3	2	2
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ghost';
+----
+n
+0
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM dm.inv WHERE body = 'body 42';
+----
+n
+1
+
+
+connection after_crash
+statement count 1
+INSERT INTO dm.ser (v) VALUES ('after crash');
+
+
+connection after_crash
+query
+SELECT v, id > 3 AS fresh FROM dm.ser ORDER BY id;
+----
+v	fresh
+r1	f
+r2	f
+r3	f
+after crash	t
+
+
+connection after_crash
+statement error
+INSERT INTO dm.pk VALUES (1, 'dup');
+----
+db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+
+
+connection after_crash
+statement error
+INSERT INTO dm.pk VALUES (9, 'much too long');
+----
+db error: ERROR: CHECK constraint failed on table "pk" with expression CHECK((length(v) < 10))
+
+
+connection after_crash
+statement error
+INSERT INTO dm.uq (id, code) VALUES (9, 'x');
+----
+db error: ERROR: Duplicate key "code: x" violates unique constraint.
+
+
+connection after_crash
+statement error
+INSERT INTO dm.child VALUES (99, 99);
+----
+db error: ERROR: Violates foreign key constraint because key "id: 99" does not exist in the referenced table
+
+
+connection after_crash
+statement error
+INSERT INTO dm.plain2 (b2) VALUES ('no a');
+----
+db error: ERROR: NOT NULL constraint failed: plain2.a
+
+
+connection after_crash
+statement error
+INSERT INTO dm.parent VALUES (3, 'dup parent');
+----
+db error: ERROR: Duplicate key "id: 3" violates primary key constraint.
+
+
+connection after_crash
+statement count 1
+INSERT INTO dm.pk (id) VALUES (3);
+
+
+connection after_crash
+query
+SELECT id, v FROM dm.pk ORDER BY id;
+----
+id	v
+1	a
+2	b
+3	dflt
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_restart
+query
+SELECT table_name, column_name, data_type, is_nullable, column_default FROM information_schema.columns
+WHERE table_schema = 'dm' ORDER BY table_name, ordinal_position;
+----
+table_name	column_name	data_type	is_nullable	column_default
+child	id	integer	NO	NULL
+child	parent_id	integer	YES	NULL
+inv	a2	integer	YES	NULL
+inv	body	text	YES	NULL
+parent	id	integer	NO	NULL
+parent	name	text	YES	NULL
+pk	id	integer	NO	NULL
+pk	v	text	YES	'dflt'
+plain2	a	bigint	NO	NULL
+plain2	b2	text	YES	NULL
+plain2	c	integer	YES	7
+sec2	a	integer	YES	NULL
+sec2	b	text	YES	NULL
+ser	id	integer	NO	nextval('ser_id_seq')
+ser	v	text	YES	NULL
+st	id	bigint	NO	NULL
+st	text_body	text	YES	'none'
+st_inv	a	integer	NO	NULL
+st_inv	body	text	YES	NULL
+uq	id	integer	YES	NULL
+uq	code	text	YES	NULL
+uq	extra	text	YES	NULL
+
+
+connection after_restart
+query
+SELECT conrelid::regclass::text AS rel, conname, contype FROM pg_constraint
+WHERE connamespace = 'dm'::regnamespace ORDER BY 1, 2;
+----
+rel	conname	contype
+dm.child	child_id_not_null	n
+dm.child	child_parent_id_fkey	f
+dm.child	child_pkey	p
+dm.parent	parent_id_not_null	n
+dm.parent	parent_pkey	p
+dm.pk	pk_id_not_null	n
+dm.pk	pk_pkey	p
+dm.pk	pk_v_short	c
+dm.plain2	plain2_a_not_null	n
+dm.ser	ser_id_not_null	n
+dm.ser	ser_pkey	p
+dm.st	st_id_not_null	n
+dm.st	st_pkey	p
+dm.st_inv	st_inv_a_not_null	n
+dm.uq	uq_code_key	u
+
+
+connection after_restart
+query
+SELECT index_name, table_name FROM duckdb_indexes() WHERE schema_name = 'dm' ORDER BY 1;
+----
+index_name	table_name
+dm_inv_body	inv
+dm_sec_a	sec2
+dm_sec_b	sec2
+dm_st_inv_body	st_inv
+dm_uq_extra	uq
+
+
+connection after_restart
+query
+SELECT c.relname, d.objsubid, d.description FROM pg_description d JOIN pg_class c ON c.oid = d.objoid
+WHERE c.relnamespace = 'dm'::regnamespace ORDER BY 1, 2;
+----
+relname	objsubid	description
+plain2	2	renamed
+st	2	search body
+uq	0	unique codes
+
+
+connection after_restart
+query
+SELECT has_table_privilege('dm_reader', 'dm.uq', 'SELECT') AS sel, has_table_privilege('dm_reader', 'dm.uq', 'INSERT') AS ins;
+----
+sel	ins
+f	t
+
+
+connection after_restart
+statement count 1
+INSERT INTO dm.ser (v) VALUES ('after restart');
+
+
+connection after_restart
+query
+SELECT v FROM dm.ser ORDER BY id;
+----
+v
+r1
+r2
+r3
+after crash
+after restart
+
+
+connection after_restart
+query
+SELECT count(*) AS n FROM dm.inv WHERE body = 'body 42';
+----
+n
+1
+
+
+connection after_restart
+query
+SELECT id, v FROM dm.pk ORDER BY id;
+----
+id	v
+1	a
+2	b
+3	dflt
+
+
+connection after_restart
+statement ok
+DROP SCHEMA dm CASCADE;
+
+
+connection after_restart
+statement ok
+DROP ROLE dm_reader;

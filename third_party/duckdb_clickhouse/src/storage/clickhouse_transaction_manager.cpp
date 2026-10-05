@@ -6,7 +6,8 @@
 
 namespace duckdb {
 
-ClickHouseTransactionManager::ClickHouseTransactionManager(AttachedDatabase &db_p, ClickHouseCatalog &clickhouse_catalog)
+ClickHouseTransactionManager::ClickHouseTransactionManager(AttachedDatabase &db_p,
+                                                           ClickHouseCatalog &clickhouse_catalog)
     : TransactionManager(db_p), clickhouse_catalog(clickhouse_catalog) {
 }
 

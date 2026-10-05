@@ -30,6 +30,7 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -59,12 +60,12 @@ struct TargetColumns {
 void BindTarget(duckdb::ClientContext& context, std::string_view schema_name,
                 std::string_view table_name, TargetColumns& data,
                 duckdb::vector<duckdb::LogicalType>& return_types,
-                duckdb::vector<duckdb::string>& names) {
+                duckdb::vector<duckdb::Identifier>& names) {
   auto table = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
     context,
-    duckdb::QualifiedName{
-      duckdb::Identifier{GetSereneDBContext(context).GetDatabase()},
-      duckdb::Identifier{schema_name}, duckdb::Identifier{table_name}},
+    duckdb::QualifiedName{duckdb::DatabaseManager::GetDefaultDatabase(context),
+                          duckdb::Identifier{schema_name},
+                          duckdb::Identifier{table_name}},
     duckdb::OnEntryNotFound::RETURN_NULL);
   if (!table) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
@@ -358,7 +359,7 @@ template<typename Source>
 duckdb::unique_ptr<SourceBindData> BindSource(
   duckdb::ClientContext& context, std::string_view schema_name,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   constexpr const auto& table = schema::TableOf(typename Source::Column{});
   TargetColumns target;
   BindTarget(context, schema_name, table.name, target, return_types, names);
@@ -850,7 +851,7 @@ template<typename Source>
 duckdb::unique_ptr<duckdb::FunctionData> SourceBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   if (input.inputs[0].IsNull()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("schema name cannot be NULL"));
@@ -916,7 +917,7 @@ template<typename Source>
 duckdb::unique_ptr<duckdb::FunctionData> ParseBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   auto data = BindSource<Source>(context, kOtelSchema, return_types, names);
   const bool protobuf = ReadProtobufArgument(input.inputs);
   auto parsed = std::make_shared<ParsedPayload<typename Source::Request>>();

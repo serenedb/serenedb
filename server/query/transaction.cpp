@@ -20,9 +20,12 @@
 
 #include "query/transaction.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/container/flat_hash_map.h>
 
 #include <chrono>
+#include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/storage/block_manager.hpp>
@@ -168,25 +171,35 @@ void Transaction::PreCommit() {
   CommitVariables();
 }
 
-irs::IndexWriter::Transaction& Transaction::EnsureIndexTransaction(
+Transaction::SearchSlot& Transaction::EnsureIndexSlot(
   duckdb::idx_t index_id, std::shared_ptr<search::InvertedIndexStorage> storage,
-  std::shared_ptr<const catalog::InvertedIndexConfig> config) {
+  std::shared_ptr<const catalog::InvertedIndexConfig> config, size_t slot) {
   auto& entry = _search_transactions.try_emplace(index_id).first->second;
-  if (!entry.transaction) {
-    entry.transaction = std::make_unique<irs::IndexWriter::Transaction>(
+  if (entry.slots.size() <= slot) {
+    entry.slots.resize(slot + 1);
+  }
+  auto& result = entry.slots[slot];
+  if (!result.transaction) {
+    result.transaction = std::make_unique<irs::IndexWriter::Transaction>(
       storage->GetTransaction());
-    entry.transaction->SetFieldOptions(std::move(config));
+    result.transaction->SetFieldOptions(std::move(config));
+  }
+  if (!entry.storage) {
     entry.storage = std::move(storage);
   }
-  return *entry.transaction;
+  return result;
 }
 
-void Transaction::CommitSearch(
-  std::optional<search::WalCursor> cursor) noexcept {
-  if (_search_transactions.empty()) {
+void Transaction::CommitSearch(std::optional<search::WalCursor> cursor,
+                               std::optional<duckdb::idx_t> database) noexcept {
+  const auto in_scope = [&](const auto& item) {
+    return !database || item.second.storage->GetDatabaseId() == *database;
+  };
+  if (absl::c_none_of(_search_transactions, in_scope)) {
     return;
   }
-  absl::Cleanup rollback = [&] { _search_transactions.clear(); };
+  const auto erase = [&] { absl::erase_if(_search_transactions, in_scope); };
+  absl::Cleanup rollback = erase;
 
   // Pin every staged segment onto the flush context before the tick exists.
   // Pinning must precede Advance -- otherwise a refresh whose tick snapshot
@@ -195,10 +208,18 @@ void Transaction::CommitSearch(
   // reserved band so every writer's first_tick stays strictly above the tick
   // it last committed at.
   uint64_t max_queries = 0;
-  for (auto& [index_id, entry] : _search_transactions) {
-    entry.transaction->RegisterFlush();
-    max_queries =
-      std::max<uint64_t>(max_queries, entry.transaction->GetQueries());
+  for (auto& item : _search_transactions) {
+    if (!in_scope(item)) {
+      continue;
+    }
+    for (auto& slot : item.second.slots) {
+      slot.writer.reset();
+      if (slot.transaction) {
+        slot.transaction->RegisterFlush();
+        max_queries =
+          std::max<uint64_t>(max_queries, slot.transaction->GetQueries());
+      }
+    }
   }
   SDB_IF_FAILURE("long_waited_advance") {
     static std::atomic<uint32_t> gSeedCounter{0};
@@ -218,23 +239,32 @@ void Transaction::CommitSearch(
   // commits overlap, so reading the WAL size here would include later
   // transactions' bytes and over-claim (skipping their re-stream after a
   // crash).
-  for (auto& [index_id, entry] : _search_transactions) {
+  for (auto& item : _search_transactions) {
+    if (!in_scope(item)) {
+      continue;
+    }
+    auto& [index_id, entry] = item;
     if (cursor) {
       entry.storage->RecordFlushCursor(last_tick, *cursor);
     }
-    if (entry.transaction->Commit(last_tick)) {
-      continue;
+    for (auto& slot : entry.slots) {
+      if (!slot.transaction || slot.transaction->Commit(last_tick)) {
+        continue;
+      }
+      SDB_ERROR(SEARCH, "search index commit failed for index '", index_id,
+                "' at tick ", last_tick,
+                "; the index will be rebuilt from the store on next boot");
+      entry.storage->MarkOutOfSync();
     }
-    SDB_ERROR(SEARCH, "search index commit failed for index '", index_id,
-              "' at tick ", last_tick,
-              "; the index will be rebuilt from the store on next boot");
-    entry.storage->MarkOutOfSync();
   }
 
-  _search_transactions.clear();
+  erase();
 }
 
 void Transaction::Commit() {
+  for (auto& action : _on_commit) {
+    action();
+  }
   // Search-table segments commit on the database WAL tick; register their flush
   // up-front -- before any commit point -- so a concurrent background
   // RefreshCommit waits for them. They commit in the WAL block below.
@@ -284,10 +314,37 @@ search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
   return it->second;
 }
 
+const duckdb::Vector& Transaction::FeedColumn(const void* table,
+                                              duckdb::row_t first_row,
+                                              duckdb::idx_t count,
+                                              duckdb::idx_t column,
+                                              const duckdb::Vector& source) {
+  if (_feed_columns.table != table || _feed_columns.first_row != first_row ||
+      _feed_columns.count != count) {
+    _feed_columns.table = table;
+    _feed_columns.first_row = first_row;
+    _feed_columns.count = count;
+    _feed_columns.columns.clear();
+  }
+  for (const auto& [index, copy] : _feed_columns.columns) {
+    if (index == column) {
+      return copy;
+    }
+  }
+  auto& copy = _feed_columns.columns
+                 .emplace_back(column, duckdb::Vector{source.GetType(), count})
+                 .second;
+  duckdb::VectorOperations::Copy(source, copy, count, 0, 0);
+  duckdb::FlatVector::SetSize(copy, count);
+  return copy;
+}
+
 void Transaction::Destroy() noexcept {
   _search_transactions.clear();
   _search_snapshots.clear();
+  _feed_columns = {};
   _search_txn.reset();
+  _on_commit.clear();
   _num_log_data_markers = 0;
   _had_query_in_transaction = false;
   _had_dml = false;

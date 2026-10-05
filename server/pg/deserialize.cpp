@@ -590,23 +590,17 @@ struct BlobText {
   }
 };
 
-std::unique_ptr<icu::Calendar> MakeCalendar(std::string tz_name) {
+duckdb::unique_ptr<duckdb::Calendar> MakeCalendar(std::string tz_name) {
   auto tz = duckdb::ICUHelpers::TryGetTimeZone(tz_name);
   if (!tz) {
     return nullptr;
   }
-  UErrorCode status = U_ZERO_ERROR;
-  std::unique_ptr<icu::Calendar> calendar{
-    icu::Calendar::createInstance(tz.release(), status)};
-  if (U_FAILURE(status)) {
-    return nullptr;
-  }
-  return calendar;
+  return duckdb::Calendar::TryCreate({}, std::move(tz));
 }
 
 }  // namespace
 
-icu::Calendar* DeserializeContext::CalendarFor(std::string_view tz_name) {
+duckdb::Calendar* DeserializeContext::CalendarFor(std::string_view tz_name) {
   auto it = named_calendars.try_emplace(tz_name, nullptr).first;
   if (it->second) {
     return it->second.get();
@@ -629,9 +623,9 @@ void FillDeserializeContext(duckdb::ClientContext& client,
   } else {
     context.session_calendar = MakeCalendar(tz_name);
     if (context.session_calendar &&
-        std::strcmp(context.session_calendar->getType(), "gregorian") == 0) {
+        std::strcmp(context.session_calendar->GetType(), "gregorian") == 0) {
       context.session_lut =
-        duckdb::ZoneLUT::Get(context.session_calendar->getTimeZone());
+        duckdb::ZoneLUT::Get(context.session_calendar->GetTimeZone());
     }
   }
 }
@@ -652,7 +646,7 @@ inline bool ConvertTimestampTzText(DeserializeContext& ctx,
   if (has_offset || !result.IsFinite()) {
     return true;
   }
-  icu::Calendar* calendar = nullptr;
+  duckdb::Calendar* calendar = nullptr;
   if (tz_name.GetSize() != 0) {
     calendar = ctx.CalendarFor({tz_name.GetData(), tz_name.GetSize()});
     if (!calendar) {
@@ -887,13 +881,12 @@ struct BitBin {
 bool DeserializeTextDefaultInto(std::string_view data,
                                 const duckdb::LogicalType& type,
                                 duckdb::Value& out) {
-  duckdb::Value value{std::string{data}};
-  duckdb::Value casted;
-  std::string error;
-  if (!value.DefaultTryCastAs(type, casted, &error, /*strict=*/true)) {
+  auto casted = duckdb::Value{std::string{data}}.DefaultTryCastAs(
+    type, /*error_message=*/nullptr, /*strict=*/true);
+  if (!casted) {
     return false;
   }
-  out = std::move(casted);
+  out = std::move(*casted);
   return true;
 }
 
@@ -1894,6 +1887,7 @@ DeserializationFunction<Sink> GetDeserialization(
       return SelectDecoder<BitBin, BitText, Sink>(binary);
     case LIST:
       return SelectDecoder<ListBin, ListText, Sink>(binary);
+    case TUPLE:
     case STRUCT:
       if (IsInet(type)) {
         return SelectDecoder<InetBin, InetText, Sink>(binary);

@@ -1,0 +1,110 @@
+# Reading an object needs USAGE on its schema as well as the object's own
+# privilege, as in PostgreSQL. public grants USAGE to PUBLIC; a view reads its
+# schema-qualified sources with its owner's rights.
+
+
+statement ok
+DROP SCHEMA IF EXISTS su_s CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS su_reader;
+
+
+statement ok
+CREATE ROLE su_reader LOGIN PASSWORD 'su_reader_pw';
+
+
+statement ok
+CREATE SCHEMA su_s;
+
+
+statement ok
+CREATE TABLE su_s.t(a INT);
+
+
+statement ok
+INSERT INTO su_s.t VALUES (1);
+
+
+statement ok
+CREATE TABLE public.su_pt(a INT);
+
+
+statement ok
+CREATE VIEW public.su_v AS SELECT a FROM su_s.t;
+
+
+statement ok
+GRANT SELECT ON su_s.t TO su_reader;
+
+
+statement ok
+GRANT SELECT ON public.su_pt TO su_reader;
+
+
+statement ok
+GRANT SELECT ON public.su_v TO su_reader;
+
+
+query
+SELECT nspacl FROM pg_namespace WHERE nspname = 'public';
+----
+nspacl
+{postgres=UC/postgres,=U/postgres}
+
+
+connection su user=su_reader password=su_reader_pw
+statement error
+SELECT a FROM su_s.t;
+----
+db error: ERROR: permission denied for schema su_s
+
+
+connection su user=su_reader password=su_reader_pw
+query
+SELECT count(*) FROM public.su_pt;
+----
+count
+0
+
+
+connection su user=su_reader password=su_reader_pw
+query
+SELECT a FROM public.su_v;
+----
+a
+1
+
+
+connection default
+statement ok
+GRANT USAGE ON SCHEMA su_s TO su_reader;
+
+
+connection su user=su_reader password=su_reader_pw
+query
+SELECT a FROM su_s.t;
+----
+a
+1
+
+
+connection default
+statement ok
+DROP VIEW public.su_v;
+
+
+connection default
+statement ok
+DROP TABLE public.su_pt;
+
+
+connection default
+statement ok
+DROP SCHEMA su_s CASCADE;
+
+
+connection default
+statement ok
+DROP ROLE su_reader;

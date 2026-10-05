@@ -105,9 +105,8 @@ T GetIndexOption(std::string_view index_kind, std::string_view column_name,
                  std::string_view key, const duckdb::Value& v,
                  duckdb::LogicalTypeId target_type,
                  std::string_view type_name) {
-  auto value = v.Copy();
-  if (value.DefaultTryCastAs(target_type)) {
-    return value.GetValue<T>();
+  if (const auto value = v.DefaultTryCastAs(target_type)) {
+    return value->GetValue<T>();
   }
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
@@ -1048,9 +1047,18 @@ void DeriveKeys(
   InvertedIndexConfig& config) {
   const auto* search_table =
     dynamic_cast<const catalog::SearchTableEntry*>(&relation);
-  static_assert(std::is_same_v<connector::ColumnId, duckdb::column_t>);
-  const std::span<const connector::ColumnId> column_ids{
-    entry.column_ids.data(), entry.column_ids.size()};
+  const auto* table = relation.type == duckdb::CatalogType::TABLE_ENTRY
+                        ? &relation.Cast<duckdb::TableCatalogEntry>()
+                        : nullptr;
+  std::vector<connector::ColumnId> relation_column_ids;
+  relation_column_ids.reserve(entry.column_ids.size());
+  for (const auto column : entry.column_ids) {
+    relation_column_ids.push_back(
+      table ? connector::TableColumnId(
+                table->GetColumns().GetColumn(duckdb::LogicalIndex(column)))
+            : connector::ColumnId{column});
+  }
+  const std::span<const connector::ColumnId> column_ids{relation_column_ids};
 
   const size_t keys = entry.parsed_expressions.size();
   config.keys.reserve(keys);
@@ -1074,8 +1082,8 @@ void DeriveKeys(
     value_type = exprs[i]->GetReturnType();
     if (const auto colref = AsColumnRef(*exprs[i])) {
       const auto pos = colref->Binding().column_index.GetIndex();
-      SDB_ASSERT(pos < entry.column_ids.size());
-      record.column_id = entry.column_ids[pos];
+      SDB_ASSERT(pos < column_ids.size());
+      record.column_id = column_ids[pos];
       label = colref->GetName().GetIdentifierName();
       bare_column = true;
     }
@@ -1150,7 +1158,8 @@ void DeriveKeys(
     if (dict) {
       field.text_dictionary = dict->oid;
     }
-    ApplyOpclassToEntry(context, entry.ParentSchemaName().GetIdentifierName(),
+    ApplyOpclassToEntry(context,
+                        entry.ParentSchema(context).name.GetIdentifierName(),
                         label, value_type, opclass, dict, next_id, field);
     if (auto& ivf = field.column_options.ann_info) {
       ivf->centroids_id = record.field_id;

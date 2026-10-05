@@ -422,6 +422,14 @@ SELECT tan(pi() / 4) AS tan;
 tan
 0.9999999999999999
 
+# DOCS_TEST: to_hex
+# DOCS_TEST_BODY
+query
+SELECT to_hex(-1) AS to_hex;
+----
+to_hex
+ffffffff
+
 # DOCS_TEST: trunc
 # DOCS_TEST_BODY
 query

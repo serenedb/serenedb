@@ -134,7 +134,7 @@ QUERY PLAN
 ╭─ EXTENSION ───────────────────────╮
 ╰─────────────────┬─────────────────╯
 ╭─ ORDER_BY ──────┴─────────────────╮
-│ Order By: read_parquet.id ASC     │
+│ Order By: id ASC                  │
 │ ~5 rows                           │
 ╰─────────────────┬─────────────────╯
 ╭─ PROJECTION ────┴─────────────────╮
@@ -176,21 +176,21 @@ QUERY PLAN
 ╭─ EXTENSION ────────────────────────╮
 ╰──────────────────┬─────────────────╯
 ╭─ ORDER_BY ───────┴─────────────────╮
-│ Order By: read_parquet.unused1 ASC │
-│ ~5 rows                            │
+│ Order By: unused1 ASC              │
+│ ~4 rows                            │
 ╰──────────────────┬─────────────────╯
 ╭─ HASH_JOIN ──────┴─────────────────╮
 │ Join Type: SEMI                    │
 │ Conditions:                        │
 │ file_index = file_index,           │
 │ file_row_number = file_row_number  │
-│ ~5 rows                            │
+│ ~4 rows                            │
 ╰──────────────────┬─────────────────╯
                    ├─────────────────────────────────────────╮
 ╭─ READ_PARQUET ───┴─────────────────╮  ╭─ TOP_N ────────────┴───────────────────╮
 │ Function: READ_PARQUET             │  │ Top: 4                                 │
-│ Projections: body, unused1         │  │ Order By: read_parquet.unused1 ASC     │
-│ ~5 rows                            │  │ ~4 rows                                │
+│ Projections: body, unused1         │  │ Order By: unused1 ASC                  │
+│ ~1 row                             │  │ ~4 rows                                │
 ╰────────────────────────────────────╯  ╰────────────────────┬───────────────────╯
                                         ╭─ PROJECTION ───────┴───────────────────╮
                                         │ Projections: unused1, file_index,      │

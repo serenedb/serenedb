@@ -55,11 +55,11 @@ and query it in-process, so no server and no dataset are needed.
 | [text_filters.cpp](iresearch/text_filters.cpp) | The advanced text filters built by hand rather than through the parser -- `ByPhrase`, `ByNGramSimilarity`, `ByRegexp`, `ByWildcard`, `ByEditDistance` -- each against the same corpus so you can compare what they match |
 | [geo.cpp](iresearch/geo.cpp) | S2-based geospatial search: index GeoJSON points with the geojson analyzer, then run a shape `Intersects` filter against a polygon and a distance filter against a center and radius |
 
-Build them with the aggregate target and run from the build directory:
+They are built into one binary; pick an example by name and run from the build directory:
 
 ```bash
 cd build && ninja iresearch-examples
-./bin/iresearch-example-basic
-./bin/iresearch-example-text-filters
-./bin/iresearch-example-geo
+./bin/iresearch-examples basic
+./bin/iresearch-examples text_filters
+./bin/iresearch-examples geo
 ```

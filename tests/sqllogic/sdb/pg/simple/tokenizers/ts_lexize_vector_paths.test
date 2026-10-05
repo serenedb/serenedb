@@ -130,6 +130,19 @@ vp	1500	t	t
 vp_upper	1500	t	t
 
 
+query
+SELECT CASE WHEN false THEN ts_lexize('vp' || (1 / 0)::text, 'alpha') END AS t
+----
+t
+NULL
+
+
+statement error
+SELECT ts_lexize('vp' || (1 / 0)::text, 'alpha')
+----
+db error: ERROR: Division by zero in expression (1 // 0). Use TRY(...) to return NULL for this expression, or SET error_on_division_by_zero=false to return NULL for all divisions by zero.
+
+
 statement ok
 DROP TABLE vp_rows
 

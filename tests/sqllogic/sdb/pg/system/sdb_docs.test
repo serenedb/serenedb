@@ -321,7 +321,7 @@ connection docs database=postgres
 statement error
 GRANT EXECUTE ON FUNCTION sdb_docs.search(TEXT, INTEGER) TO PUBLIC;
 ----
-db error: ERROR: Cannot alter entry ""search"" because it is an internal system entry
+db error: ERROR: Cannot alter entry "search" because it is an internal system entry
 
 
 connection docs database=postgres

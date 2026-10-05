@@ -103,10 +103,13 @@ void Register() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+static int Main(int argc, char** argv) {
   Register();
   benchmark::Initialize(&argc, argv);
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
   return 0;
 }
+
+[[maybe_unused]] static const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

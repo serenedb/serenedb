@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import re
+import struct
 import subprocess
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 SCRIPTS = REPO / "scripts"
+REGION_TAG = b"sdb-docs-index-1"
 
 
 def _run(*args: str) -> subprocess.CompletedProcess:
@@ -14,35 +16,214 @@ def _run(*args: str) -> subprocess.CompletedProcess:
                           text=True, timeout=300)
 
 
-def test_index_embedding_prints_every_file_by_size(tmp_path: Path) -> None:
+def _write_macho(path: Path, capacity: int, regions: int = 1) -> None:
+    region = (REGION_TAG + struct.pack("<QQ", capacity, 0) + bytes(32) +
+              bytes(capacity))
+    path.write_bytes(b"\xcf\xfa\xed\xfe" + bytes(60) + region * regions +
+                     b"tail")
+
+
+def _write_elf(path: Path, last: bool = True) -> None:
+    names = b"\0.text\0.sdb_docs\0.comment\0.aligned\0.shstrtab\0"
+    loads = [(1, 5, 0, 0, 0, 0x140, 0x140, 0x1000),
+             (1, 4, 0x140, 0x1140, 0x1140, 64, 64, 0x1000)]
+    if not last:
+        loads.append((1, 4, 0, 0x3000, 0x3000, 0x40, 0x40, 0x1000))
+    sections = [
+        (0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+        (names.index(b".text"), 1, 6, 0x100, 0x100, 0x40, 0, 0, 16, 0),
+        (names.index(b".sdb_docs"), 1, 2, 0x1140, 0x140, 64, 0, 0, 64, 0),
+        (names.index(b".comment"), 1, 0x30, 0, 0x180, 11, 0, 0, 1, 1),
+        (names.index(b".aligned"), 1, 0, 0, 0x190, 16, 0, 0, 8, 0),
+        (names.index(b".shstrtab"), 3, 0, 0, 0x1a0, len(names), 0, 0, 1, 0),
+    ]
+    shoff = 0x1a0 + len(names) + -(0x1a0 + len(names)) % 8
+    data = bytearray(shoff + 64 * len(sections))
+    struct.pack_into("<16sHHIQQQIHHHHHH", data, 0, b"\x7fELF\x02\x01\x01", 3,
+                     62, 1, 0x100, 64, shoff, 0, 64, 56, len(loads), 64,
+                     len(sections), len(sections) - 1)
+    for i, load in enumerate(loads):
+        struct.pack_into("<IIQQQQQQ", data, 64 + 56 * i, *load)
+    data[0x100:0x140] = b"\x90" * 0x40
+    data[0x140:0x180] = (REGION_TAG + bytes(16)).ljust(64, b"\0")
+    data[0x180:0x18b] = b"sdb comment"
+    data[0x190:0x1a0] = b"8-aligned-bytes!"
+    data[0x1a0:0x1a0 + len(names)] = names
+    for i, section in enumerate(sections):
+        struct.pack_into("<IIQQQQIIQQ", data, shoff + 64 * i, *section)
+    path.write_bytes(data)
+
+
+def _read_elf(path: Path) -> tuple[dict[str, tuple[int, int, int]],
+                                   list[tuple[int, ...]], bytes]:
+    data = path.read_bytes()
+    header = struct.unpack_from("<16sHHIQQQIHHHHHH", data, 0)
+    phoff, shoff, phnum, shnum, shstrndx = (header[5], header[6], header[10],
+                                            header[12], header[13])
+    headers = [struct.unpack_from("<IIQQQQIIQQ", data, shoff + 64 * i)
+               for i in range(shnum)]
+    names = headers[shstrndx][4]
+    sections = {
+        data[names + h[0]:data.index(b"\0", names + h[0])].decode():
+            (h[4], h[5], h[8])
+        for h in headers[1:]
+    }
+    loads = [struct.unpack_from("<IIQQQQQQ", data, phoff + 56 * i)
+             for i in range(phnum)]
+    return sections, loads, data
+
+
+def _read_region(path: Path) -> tuple[int, dict[str, list[tuple[str, bytes]]]]:
+    data = path.read_bytes()
+    at = data.index(REGION_TAG)
+    _, size = struct.unpack_from("<QQ", data, at + len(REGION_TAG))
+    payload = data[at + 64:at + 64 + size]
+    offset = 0
+    indexes: dict[str, list[tuple[str, bytes]]] = {}
+    for index in ("docs", "objects") if size else ():
+        (count,) = struct.unpack_from("<I", payload, offset)
+        offset += 4
+        files = []
+        for _ in range(count):
+            (name_size,) = struct.unpack_from("<I", payload, offset)
+            offset += 4
+            name = payload[offset:offset + name_size].decode()
+            offset += name_size
+            (file_size,) = struct.unpack_from("<Q", payload, offset)
+            offset += 8 + -(offset + 8) % 64
+            files.append((name, payload[offset:offset + file_size]))
+            offset += file_size
+        indexes[index] = files
+    return size, indexes
+
+
+def _write_index(index: Path, sizes: dict[str, int]) -> None:
+    for name, size in sizes.items():
+        (index / name).parent.mkdir(parents=True, exist_ok=True)
+        (index / name).write_bytes(name.encode()[:1] * size)
+
+
+def test_index_embedding_grows_the_elf_section_to_fit(tmp_path: Path) -> None:
     index = tmp_path / "index"
     sizes = {"docs/small": 10, "docs/large": 3 * 1024 * 1024 // 2,
              "objects/medium": 2048}
-    for name, size in sizes.items():
-        (index / name).parent.mkdir(parents=True, exist_ok=True)
-        (index / name).write_bytes(b"x" * size)
-    out = tmp_path / "docs_index_data.cpp"
-    r = _run(str(SCRIPTS / "generate_docs_index.py"), str(index), str(out))
+    _write_index(index, sizes)
+    binary = tmp_path / "serened"
+    _write_elf(binary)
+    before = binary.stat().st_size
+    r = _run(str(SCRIPTS / "embed_docs_index.py"), str(index), str(binary))
     assert r.returncode == 0, r.stderr
     lines = r.stdout.splitlines()
     assert lines[0] == (f"embedded docs index: 3 files, 1.5 MiB "
-                        f"({sum(sizes.values())} bytes) -> {out}")
+                        f"({sum(sizes.values())} bytes) -> {binary}")
     assert [line.split() for line in lines[1:]] == [
         ["docs/large", "1.5", "MiB"], ["objects/medium", "2.0", "KiB"],
         ["docs/small", "10", "B"]]
-    generated = out.read_text()
-    assert "#embed" in generated
-    assert "GetDocsIndex()" in generated and "GetObjectsIndex()" in generated
+    size, indexes = _read_region(binary)
+    assert indexes == {
+        "docs": [("large", b"d" * sizes["docs/large"]),
+                 ("small", b"d" * sizes["docs/small"])],
+        "objects": [("medium", b"o" * sizes["objects/medium"])]}
+    sections, loads, data = _read_elf(binary)
+    offset, section_size, _ = sections[".sdb_docs"]
+    assert (offset, section_size) == (0x140, 64 + size)
+    assert loads[1][2:] == (0x140, 0x1140, 0x1140, 64 + size, 64 + size,
+                            0x1000)
+    assert 0 <= binary.stat().st_size - before - size < 8
+    for name, content in ((".comment", b"sdb comment"),
+                          (".aligned", b"8-aligned-bytes!")):
+        at, length, alignment = sections[name]
+        assert data[at:at + length] == content and at % alignment == 0
+
+
+def test_index_embedding_needs_the_elf_section_last(tmp_path: Path) -> None:
+    index = tmp_path / "index"
+    _write_index(index, {"docs/segments_1": 1, "objects/segments_1": 1})
+    binary = tmp_path / "serened"
+    _write_elf(binary, last=False)
+    before = binary.read_bytes()
+    r = _run(str(SCRIPTS / "embed_docs_index.py"), str(index), str(binary))
+    assert r.returncode == 1
+    assert ".sdb_docs must be alone in the last loadable segment" in r.stderr
+    assert binary.read_bytes() == before
+
+
+def test_index_embedding_fills_the_macos_region_in_place(
+        tmp_path: Path) -> None:
+    index = tmp_path / "index"
+    _write_index(index, {"docs/segments_1": 100, "objects/segments_1": 1})
+    binary = tmp_path / "serened"
+    _write_macho(binary, 4096)
+    before = binary.stat().st_size
+    r = _run(str(SCRIPTS / "embed_docs_index.py"), str(index), str(binary))
+    assert r.returncode == 0, r.stderr
+    _, indexes = _read_region(binary)
+    assert indexes == {"docs": [("segments_1", b"d" * 100)],
+                       "objects": [("segments_1", b"o")]}
+    assert binary.stat().st_size == before
+    assert binary.read_bytes().endswith(b"tail")
 
 
 def test_index_embedding_needs_both_indexes(tmp_path: Path) -> None:
     index = tmp_path / "index"
-    (index / "docs").mkdir(parents=True)
-    (index / "docs" / "segments_1").write_bytes(b"x")
-    r = _run(str(SCRIPTS / "generate_docs_index.py"), str(index),
-             str(tmp_path / "docs_index_data.cpp"))
+    _write_index(index, {"docs/segments_1": 1})
+    binary = tmp_path / "serened"
+    _write_elf(binary)
+    r = _run(str(SCRIPTS / "embed_docs_index.py"), str(index), str(binary))
     assert r.returncode == 1
     assert "no index files under" in r.stderr and "objects" in r.stderr
+
+
+def test_index_embedding_fails_when_the_index_outgrows_the_macos_region(
+        tmp_path: Path) -> None:
+    index = tmp_path / "index"
+    _write_index(index, {"docs/segments_1": 2048, "objects/segments_1": 1})
+    binary = tmp_path / "serened"
+    _write_macho(binary, 1024)
+    r = _run(str(SCRIPTS / "embed_docs_index.py"), str(index), str(binary))
+    assert r.returncode == 1
+    assert "1024-byte region; raise kCapacity" in r.stderr
+    assert _read_region(binary) == (0, {})
+
+
+def test_index_embedding_needs_exactly_one_macos_region(
+        tmp_path: Path) -> None:
+    index = tmp_path / "index"
+    _write_index(index, {"docs/segments_1": 1, "objects/segments_1": 1})
+    for regions in (0, 2):
+        binary = tmp_path / f"serened_{regions}"
+        _write_macho(binary, 1024, regions)
+        r = _run(str(SCRIPTS / "embed_docs_index.py"), str(index), str(binary))
+        assert r.returncode == 1
+        assert "expected exactly one docs index region" in r.stderr
+
+
+def test_docs_generation_writes_the_corpus(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "page.md").write_text(
+        "---\ntitle: Page\nsplit: page\n---\nHello corpus.\n",
+        encoding="utf-8")
+    out = tmp_path / "docs_data.cpp"
+    corpus = tmp_path / "docs_corpus.bin"
+    r = _run(str(SCRIPTS / "generate_docs.py"), str(docs), str(out),
+             "--tests-dir", str(REPO / "tests" / "sqllogic"),
+             "--corpus", str(corpus))
+    assert r.returncode == 0, r.stderr
+    data = corpus.read_bytes()
+    rows = []
+    offset = 0
+    while offset < len(data):
+        row = []
+        for _ in range(4):
+            (size,) = struct.unpack_from("<I", data, offset)
+            offset += 4
+            row.append(data[offset:offset + size].decode())
+            offset += size
+        rows.append(row)
+    rows_reported = int(re.search(r", ([0-9]+) rows, ", r.stdout).group(1))
+    assert len(rows) == rows_reported
+    assert any(row[1] == "Page" and "Hello corpus." in row[3] for row in rows)
 
 
 def test_docs_generation_reports_the_embedded_text(tmp_path: Path) -> None:

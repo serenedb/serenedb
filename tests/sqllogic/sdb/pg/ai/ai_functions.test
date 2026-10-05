@@ -581,39 +581,39 @@ query
 EXPLAIN SELECT id, ai_generate(body) FROM ai_rows;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────────────╮
-│ Projections:                                     │
-│ id,                                              │
-│ ai_generate(body, NULL, NULL, NULL, NULL, NULL)  │
-│ ~3 rows                                          │
-╰─────────────────────────┬────────────────────────╯
-╭─ SEQ_SCAN ──────────────┴────────────────────────╮
-│ Table: ai_rows                                   │
-│ Type: Sequential Scan                            │
-│ Projections: id, body                            │
-│ ~3 rows                                          │
-╰──────────────────────────────────────────────────╯
+╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                 │
+│ id,                                                                                          │
+│ ai_generate(body, NULL::VARCHAR, NULL::VARCHAR, NULL::VARCHAR, NULL::DOUBLE, NULL::INTEGER)  │
+│ ~3 rows                                                                                      │
+╰───────────────────────────────────────────────┬──────────────────────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────────────────┴──────────────────────────────────────────────╮
+│ Table: ai_rows                                                                               │
+│ Type: Sequential Scan                                                                        │
+│ Projections: id, body                                                                        │
+│ ~3 rows                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM ai_rows WHERE body <> 'c' AND ai_filter(body, 'x');
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────────╮
-│ Projections: #1                              │
-│ ~1 row                                       │
-╰───────────────────────┬──────────────────────╯
-╭─ FILTER ──────────────┴──────────────────────╮
-│ Expression:                                  │
-│ ai_filter(body, 'x', NULL, NULL, NULL, NULL) │
-│ ~1 row                                       │
-╰───────────────────────┬──────────────────────╯
-╭─ SEQ_SCAN ────────────┴──────────────────────╮
-│ Table: ai_rows                               │
-│ Type: Sequential Scan                        │
-│ Projections: body, id                        │
-│ Column Filter: body != 'c'                   │
-│ ~1 row                                       │
-╰──────────────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────────────────────────────────────────────────╮
+│ Projections: #1                                                                 │
+│ ~1 row                                                                          │
+╰────────────────────────────────────────┬────────────────────────────────────────╯
+╭─ FILTER ───────────────────────────────┴────────────────────────────────────────╮
+│ Expression:                                                                     │
+│ ai_filter(body, 'x', NULL::VARCHAR, NULL::VARCHAR, NULL::DOUBLE, NULL::INTEGER) │
+│ ~1 row                                                                          │
+╰────────────────────────────────────────┬────────────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────────┴────────────────────────────────────────╮
+│ Table: ai_rows                                                                  │
+│ Type: Sequential Scan                                                           │
+│ Projections: body, id                                                           │
+│ Column Filter: body != 'c'                                                      │
+│ ~1 row                                                                          │
+╰─────────────────────────────────────────────────────────────────────────────────╯
 
 query
 SELECT id, ai_generate(body) IS NULL AS g FROM ai_rows ORDER BY id LIMIT 2;
@@ -626,30 +626,38 @@ query
 EXPLAIN SELECT id, CASE WHEN id = 1 THEN ai_generate(body) END FROM ai_rows;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────────────────────────────────────────────────────────────╮
-│ Projections:                                                                                │
-│ id,                                                                                         │
-│ CASE  WHEN ((id = 1)) THEN (ai_generate(body, NULL, NULL, NULL, NULL, NULL)) ELSE NULL END  │
-│ ~3 rows                                                                                     │
-╰──────────────────────────────────────────────┬──────────────────────────────────────────────╯
-╭─ SEQ_SCAN ───────────────────────────────────┴──────────────────────────────────────────────╮
-│ Table: ai_rows                                                                              │
-│ Type: Sequential Scan                                                                       │
-│ Projections: id, body                                                                       │
-│ ~3 rows                                                                                     │
-╰─────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                                                                     │
+│ id,                                                                                                                                              │
+│ CASE  WHEN ((id = 1)) THEN (ai_generate(body, NULL::VARCHAR, NULL::VARCHAR, NULL::VARCHAR, NULL::DOUBLE, NULL::INTEGER)) ELSE NULL::VARCHAR END  │
+│ ~3 rows                                                                                                                                          │
+╰─────────────────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────────────╮
+│ Table: ai_rows                                                                                                                                   │
+│ Type: Sequential Scan                                                                                                                            │
+│ Projections: id, body                                                                                                                            │
+│ ~3 rows                                                                                                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT ai_agg(body, 'q') FROM ai_rows;
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ──╮
-│ Aggregates: ai_agg(#0) │
-│ ~1 row                 │
-╰────────────┬───────────╯
-╭─ SEQ_SCAN ─┴───────────╮
-│ Table: ai_rows         │
-│ Type: Sequential Scan  │
-│ Projections: body      │
-│ ~3 rows                │
-╰────────────────────────╯
+╭─ UNGROUPED_AGGREGATE ──────────────╮
+│ Aggregates:                        │
+│ ai_agg(#0, #1, #2, #2, #3, #4, #5) │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+╭─ PROJECTION ─────┴─────────────────╮
+│ Projections: body, 'q', model,     │
+│              temperature,          │
+│              max_tokens,           │
+│              max_context_chars     │
+│ ~3 rows                            │
+╰──────────────────┬─────────────────╯
+╭─ SEQ_SCAN ───────┴─────────────────╮
+│ Table: ai_rows                     │
+│ Type: Sequential Scan              │
+│ Projections: body                  │
+│ ~3 rows                            │
+╰────────────────────────────────────╯

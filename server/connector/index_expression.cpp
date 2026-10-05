@@ -63,10 +63,10 @@ duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
     *expr, [&](duckdb::unique_ptr<duckdb::Expression>& child) {
       child = FoldConstantCasts(std::move(child), context);
     });
-  if (expr->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
-    auto& cast = expr->Cast<duckdb::BoundCastExpression>();
-    if (cast.Child().GetExpressionClass() ==
-        duckdb::ExpressionClass::BOUND_CONSTANT) {
+  if (duckdb::BoundCastExpression::IsCast(*expr)) {
+    if (duckdb::BoundCastExpression::Child(
+          expr->Cast<duckdb::BoundFunctionExpression>())
+          .GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT) {
       duckdb::Value folded;
       SDB_ENSURE(
         duckdb::ExpressionExecutor::TryEvaluateScalar(context, *expr, folded),

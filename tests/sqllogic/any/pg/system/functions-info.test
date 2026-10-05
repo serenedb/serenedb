@@ -1318,4 +1318,4 @@ query
 SELECT DISTINCT parameters FROM duckdb_functions() WHERE function_name = 'arg_max' AND len(parameters) = 3;
 ----
 parameters
-{arg,val,column3}
+{arg,val,N}

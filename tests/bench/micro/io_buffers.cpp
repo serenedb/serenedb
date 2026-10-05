@@ -108,7 +108,7 @@ class BufferFixture : public benchmark::Fixture {
   static constexpr size_t kPacketSize = 1024;
   static std::vector<std::string> gData;
   static std::vector<size_t> gActions;
-  BufferFixture() {
+  void SetUp(benchmark::State&) override {
     if (!gData.empty()) {
       return;
     }
@@ -337,5 +337,3 @@ BUFFER_BENCHMARK(BM_basic_string)
 BUFFER_BENCHMARK(BM_boost_string)
 BUFFER_BENCHMARK(BM_boost_circular_buffer)
 BUFFER_BENCHMARK(BM_sdb_buffer)
-
-BENCHMARK_MAIN();

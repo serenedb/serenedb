@@ -64,7 +64,7 @@ Order by kind and then by planet, both using the default orderings:
 
 <SqlLogicTest id="sql/query_syntax/orderby/index/example_006" />
 
-Region- and language-specific (ICU) collations, such as German, are available in this build of SereneDB, so ordering by one such collation works. For example, German orders `ä` next to `a` rather than at the end. For more information, see the [Collation page](../../expressions/collations/index.md):
+Region- and language-specific collations, such as German, are available in this build of SereneDB, so ordering by one such collation works. For example, German orders `ä` next to `a` rather than at the end. For more information, see the [Collation page](../../expressions/collations/index.md):
 
 <SqlLogicTest id="sql/query_syntax/orderby/index/example_007" />
 

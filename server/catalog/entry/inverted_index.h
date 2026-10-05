@@ -142,7 +142,6 @@ struct InvertedIndexConfig final : irs::IndexFieldOptions {
 
   const InvertedIndexField* FindEntry(irs::field_id field_id) const noexcept;
   irs::field_id TermField(irs::field_id column_id) const noexcept;
-  std::vector<irs::field_id> TermFields(irs::field_id column_id) const;
   irs::field_id ColumnOf(irs::field_id field_id) const noexcept;
   const InvertedIndexField* FindColumnInfo(
     irs::field_id column_id) const noexcept {
@@ -177,11 +176,16 @@ std::optional<ScorerOptions> TopKScorer(
 
 class IndexTokenizers {
  public:
+  using Bound = irs::containers::FlatHashMap<irs::field_id, ColumnTokenizer>;
+
   IndexTokenizers() = default;
   IndexTokenizers(duckdb::ClientContext& context, duckdb::Catalog& catalog,
                   const InvertedIndexConfig& config);
 
   ColumnTokenizer Acquire(irs::field_id field_id) const;
+  ColumnTokenizer Acquire(irs::field_id field_id,
+                          duckdb::ClientContext& context) const;
+  Bound AcquireAll(duckdb::ClientContext& context) const;
 
  private:
   struct Field {
@@ -217,9 +221,6 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   duckdb::unique_ptr<duckdb::CatalogEntry> AlterEntry(
     duckdb::CatalogTransaction transaction, duckdb::AlterInfo& info) final;
 
-  // A view-backed index has no DataTableInfo to read the relation's name off,
-  // and the base would dereference it. The name it was created against is the
-  // answer, and it is the only one available.
   duckdb::Identifier GetTableName() const final;
 
   duckdb::Identifier GetSchemaName() const final { return ParentSchemaName(); }

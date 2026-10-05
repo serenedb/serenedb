@@ -25,7 +25,6 @@
 #include <cstdint>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
-#include <duckdb/main/pending_query_result.hpp>
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <duckdb/main/query_result.hpp>
@@ -44,6 +43,7 @@
 #include <vector>
 
 #include "network/pg/wire_frames.h"
+#include "pg/command_tag.h"
 #include "pg/serialize.h"
 
 namespace sdb::network::pg {
@@ -113,8 +113,10 @@ class Statement {
   // The statement behind the plan, for classifying it (transaction control)
   // without paying for a copy. Null when the plan does not carry one.
   const duckdb::SQLStatement* Unbound() const {
-    if (_prepared && _prepared->data && _prepared->data->unbound_statement) {
-      return _prepared->data->unbound_statement.get();
+    if (_prepared) {
+      if (const auto* unbound = sdb::pg::UnboundStatement(*_prepared)) {
+        return unbound;
+      }
     }
     return _source.get();
   }
@@ -242,7 +244,7 @@ struct BindInfo {
 class ClosingPending {
  public:
   ClosingPending() = default;
-  ClosingPending(duckdb::unique_ptr<duckdb::PendingQueryResult> pending)
+  ClosingPending(duckdb::unique_ptr<duckdb::QueryResult> pending)
     : _pending{std::move(pending)} {}
   ClosingPending(ClosingPending&& other) noexcept = default;
   ClosingPending& operator=(ClosingPending&& other) noexcept {
@@ -264,12 +266,16 @@ class ClosingPending {
     }
   }
 
-  duckdb::PendingQueryResult* operator->() const { return _pending.get(); }
-  duckdb::PendingQueryResult& operator*() const { return *_pending; }
+  duckdb::QueryResult* operator->() const { return _pending.get(); }
+  duckdb::QueryResult& operator*() const { return *_pending; }
   explicit operator bool() const { return _pending != nullptr; }
 
+  duckdb::unique_ptr<duckdb::QueryResult> Release() noexcept {
+    return std::move(_pending);
+  }
+
  private:
-  duckdb::unique_ptr<duckdb::PendingQueryResult> _pending;
+  duckdb::unique_ptr<duckdb::QueryResult> _pending;
 };
 
 // A portal's execution lifecycle. The old started/exhausted bool pair only had

@@ -55,6 +55,22 @@ relname
 st_pk_seq
 
 
+statement ok
+CREATE TABLE st_serial(id SERIAL, txt TEXT) WITH (storage = 'search');
+
+
+query
+SELECT relname FROM pg_class
+WHERE relkind = 'S' AND relname LIKE 'st_serial%' ORDER BY relname;
+----
+relname
+st_serial_id_seq
+
+
+statement ok
+DROP TABLE st_serial;
+
+
 # The table owns it, so it cannot be dropped from under the table.
 statement error
 DROP SEQUENCE st_pk_seq1;
@@ -112,7 +128,7 @@ query
 SELECT nextval('st_pk_seq');
 ----
 nextval
-2
+34
 
 
 # Dropping the table takes its own sequence with it and leaves the user's.

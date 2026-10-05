@@ -30,9 +30,9 @@
 #include <array>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
-#include <duckdb/main/materialized_query_result.hpp>
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
+#include <duckdb/main/query_result.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <memory>

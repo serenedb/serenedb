@@ -495,7 +495,7 @@ find_nearest_words(model_location := '', top_k := 1)
 
 stem_words(locale := '')
   as a function: stem_words(value, locale := '')
-  locale  ICU locale string (e.g. en_US.UTF-8)
+  locale  Locale identifier (e.g. en_US.UTF-8)
 
 remove_stopwords(stopwords := [], stopwords_path := '', hex := false)
   as a function: remove_stopwords(value, stopwords := [], stopwords_path := '', hex := false)
@@ -511,7 +511,7 @@ classify_text(model_location := '', top_k := 1, threshold := 0)
 
 collate_tokens(locale := '')
   as a function: collate_tokens(value, locale := '')
-  locale  ICU locale string (e.g. en_US.UTF-8)
+  locale  Locale identifier (e.g. en_US.UTF-8)
 
 split_text_csv(delimiter)
   as a function: split_text_csv(value, delimiter)
@@ -527,14 +527,14 @@ generate_wildcard_ngrams(<analyzer>, ngram_size := 3)
 
 normalize_tokens(locale := '', case := 'none', accent := true, form := 'nfc')
   as a function: normalize_tokens(value, locale := '', case := 'none', accent := true, form := 'nfc')
-  locale  ICU locale for case conversion; omit for locale-independent simple case
+  locale  Locale for case conversion; omit for locale-independent simple case
   case    Text case conversion: none, lower, upper, fold
   accent  Preserve accent marks
   form    Unicode normalization form: nfc, nfd, nfkc, nfkd, nfkc_cf
 
 split_text_icu(locale, break := 'alpha')
   as a function: split_text_icu(value, locale, break := 'alpha')
-  locale  ICU locale string (e.g. en_US.UTF-8)
+  locale  Locale identifier (e.g. en_US.UTF-8)
   break   Token boundary detection mode: all, graphic, alpha, sentence
 
 split_by_non_alpha(case := 'none', break := 'ascii')
@@ -582,15 +582,13 @@ encode_geojson(type := 'shape', coding := 'source', max_cells := 20, min_level :
 
 keyword()
 
-generate_shingles(<analyzer>, min_gram := 2, max_gram := 2, output_unigrams := true, fallback_unigrams := false, store_tokens := true, frequent_words := [], filler_token := '', token_separator := ' ')
-  as a function: generate_shingles(value, min_gram := 2, max_gram := 2, output_unigrams := true, fallback_unigrams := false, store_tokens := true, frequent_words := [], filler_token := '', token_separator := ' ')
+generate_shingles(<analyzer>, min_gram := 2, max_gram := 2, output_unigrams := true, fallback_unigrams := false, frequent_words := [], token_separator := ' ')
+  as a function: generate_shingles(value, min_gram := 2, max_gram := 2, output_unigrams := true, fallback_unigrams := false, frequent_words := [], token_separator := ' ')
   min_gram           Minimum shingle (word n-gram) size (minimum 2)
   max_gram           Maximum shingle (word n-gram) size (>= min_gram)
   output_unigrams    Index individual tokens alongside the shingles
   fallback_unigrams  Index unigrams only when the input is too short to form a shingle
-  store_tokens       Persist the per-document token stream (verification source for phrases longer than max_gram). When false the index stores terms only
   frequent_words     Frequent words (typically stopwords): a list of strings, or a comma-separated string of double-quoted words. When non-empty, shingles of min_gram stay dense while wider sizes are indexed only for spans containing one of these words (adaptive width escalation)
-  filler_token       Token standing in for positions the base analyzer removed (e.g. stopwords) in the stored token stream; never indexed as a term. Default '_'
   token_separator    String written between the words of a shingle; an empty value concatenates them
 
 expand_solr_synonyms(synonyms)
@@ -666,7 +664,7 @@ CREATE TEXT SEARCH DICTIONARY bad_no_input AS upper('x');
 ----
 db error: ERROR: sql: No function matches the given name and argument types 'upper(VARCHAR, STRING_LITERAL)'. You might need to add explicit type casts.
 	Candidate functions:
-	upper(col0 VARCHAR) -> VARCHAR
+	upper(string VARCHAR) -> VARCHAR
 
 
 # A name close to a template is reported as a template typo; a distant one is

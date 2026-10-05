@@ -1,5 +1,6 @@
 #include "duckdb.hpp"
 
+#include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parser/parsed_data/attach_info.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"

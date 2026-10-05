@@ -6,7 +6,7 @@ target_sources(sereneserver PRIVATE docs_search.cpp docs_functions.cpp)
 
 add_library(serene_docs_shell STATIC docs_shell_backend.cpp)
 
-target_link_libraries(serene_docs_shell PUBLIC sereneserver duckdb_shell_static)
+target_link_libraries(serene_docs_shell PUBLIC sereneserver duckdb_shell)
 
 target_link_libraries(sereneserver PUBLIC serene_docs)
 

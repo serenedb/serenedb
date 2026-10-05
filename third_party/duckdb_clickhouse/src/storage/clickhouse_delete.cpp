@@ -5,6 +5,7 @@
 #include "clickhouse_connection.hpp"
 #include "clickhouse_types.hpp"
 
+#include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/planner/operator/logical_delete.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 

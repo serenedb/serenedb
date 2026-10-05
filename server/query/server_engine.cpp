@@ -49,10 +49,10 @@
 #include "connector/functions/markdown_render.h"
 #include "connector/functions/math.h"
 #include "connector/functions/otel.h"
+#include "connector/functions/ruleutils.h"
 #include "connector/functions/search.h"
 #include "connector/functions/string.h"
 #include "connector/functions/system.h"
-#include "connector/functions/vector.h"
 #include "connector/inverted_store_index.h"
 #include "connector/iresearch_replacement_scan.h"
 #include "connector/pg_logical_types.h"
@@ -166,11 +166,8 @@ extern "C" const duckdb::DefaultType* duckdb_external_types(
     // PG composite type used as cast target in pg_stats_ext_exprs view.
     {
       "pg_statistic",
-      [] {
-        auto t = sdb::pg::SystemTable<sdb::pg::PgStatistic>{}.RowType();
-        t.SetAlias("pg_statistic");
-        return t;
-      }(),
+      sdb::pg::SystemTable<sdb::pg::PgStatistic>{}.RowType().WithAlias(
+        "pg_statistic"),
       nullptr,
     },
     // information_schema types, TODO(mbkkt) move this to namespace
@@ -282,7 +279,7 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   config.SetOptionByName("threads", duckdb::Value::UBIGINT(threads));
   if (const auto depth = absl::GetFlag(FLAGS_recovery_replay_depth);
       depth != 0) {
-    config.SetOptionByName(std::string{kRecoveryReplayDepthSetting},
+    config.SetOptionByName(duckdb::Identifier{kRecoveryReplayDepthSetting},
                            duckdb::Value::UINTEGER(depth));
   }
   // serenedb runs every query on the internal pool (sessions are scheduled as
@@ -303,6 +300,11 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   // DOUBLE. A client that wants DuckDB's reading can still SET this back per
   // session.
   config.SetOptionByName("integer_division", duckdb::Value::BOOLEAN(true));
+  config.SetOptionByName("show_behavior", duckdb::Value("SETTING"));
+  config.SetOptionByName("autoinstall_known_extensions",
+                         duckdb::Value::BOOLEAN(false));
+  config.SetOptionByName("autoload_known_extensions",
+                         duckdb::Value::BOOLEAN(false));
 }
 
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
@@ -315,6 +317,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterKeyEncodingFunctions(db);
 
   connector::RegisterPgSystemFunctions(db);
+
+  connector::RegisterRuleutilsFunctions(db);
 
   connector::RegisterPgInOutFunctions(db);
 
@@ -352,8 +356,6 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   pg::RegisterRbacFunctions(db);
 
-  connector::RegisterVectorFunctions(db);
-
   connector::RegisterAIFunctions(db);
 
   connector::RegisterSereneDBOptimizers(db);
@@ -371,12 +373,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   fs.RegisterSubSystem(duckdb::make_uniq<connector::SereneDBCopyFileSystem>());
 
   // Parse and cache system functions/views for serving from our attached
-  // catalog. Route through the database parser cache so the PEG matcher built
-  // here is the one reused by every connection -- a bare Parser uses a
-  // throwaway local cache.
-  duckdb::ParserOptions parser_options;
-  parser_options.parser_cache = &db.GetParserCache();
-  duckdb::Parser parser{parser_options};
+  // catalog.
+  duckdb::Parser parser;
   pg::InitSystemFunctions(parser);
   pg::InitSystemViews(parser);
 }

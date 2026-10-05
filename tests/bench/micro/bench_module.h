@@ -20,44 +20,25 @@
 
 #pragma once
 
-#include <unicode/locid.h>
-#include <unicode/uversion.h>
+#include <benchmark/benchmark.h>
 
-#include <string>
+#include <memory>
 #include <string_view>
 
-#include "iresearch/utils/serializer.hpp"
+namespace sdb::bench {
 
-namespace irs {
+bool AddMain(std::string_view module, int (*main)(int argc, char** argv));
+bool AddMain(std::string_view module,
+             int (*main)(int argc, const char* argv[]));
+bool AddMain(std::string_view module, int (*main)());
 
-inline icu::Locale MakeBogusLocale() {
-  icu::Locale l{"C"};
-  l.setToBogus();
-  return l;
-}
+}  // namespace sdb::bench
+namespace benchmark::internal {
 
-}  // namespace irs
+::benchmark::Benchmark* DeferBenchmark(
+  std::string_view module, std::unique_ptr<::benchmark::Benchmark> benchmark);
 
-U_NAMESPACE_BEGIN
+}  // namespace benchmark::internal
 
-template<typename Context>
-void SerdeWrite(Context ctx, const icu::Locale& locale) {
-  if (locale.isBogus()) {
-    irs::utils::detail::WriteString(ctx.io(), std::string_view{});
-  } else {
-    irs::utils::detail::WriteString(ctx.io(),
-                                    std::string_view{locale.getName()});
-  }
-}
-
-template<typename Context>
-void SerdeRead(Context ctx, icu::Locale& locale) {
-  const std::string name = ctx.io().ReadString();
-  if (name.empty()) {
-    locale = irs::MakeBogusLocale();
-    return;
-  }
-  locale = icu::Locale::createFromName(name.c_str());
-}
-
-U_NAMESPACE_END
+#define RegisterBenchmarkInternal(...) \
+  DeferBenchmark(SDB_BENCH_MODULE, __VA_ARGS__)

@@ -25,22 +25,19 @@
 #include <absl/time/time.h>
 
 #include <chrono>
-#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/main/attached_database.hpp>
-#include <duckdb/main/client_context.hpp>
-#include <duckdb/main/client_data.hpp>
-#include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <duckdb/storage/data_table.hpp>
+#include <duckdb/parallel/task_executor.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
-#include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <duckdb/storage/table/index_entry.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <memory>
+#include <optional>
+#include <utility>
 #include <vector>
 
 #include "catalog/catalog.h"
@@ -50,96 +47,120 @@
 #include "search/tick_domain.h"
 
 namespace sdb::search {
+namespace {
+
+using BoundIndexHandle =
+  duckdb::IndexWriteHandle<connector::InvertedStoreIndex>;
+
+struct FinishReplayTask final : duckdb::BaseExecutorTask {
+  FinishReplayTask(duckdb::TaskExecutor& executor,
+                   std::optional<BoundIndexHandle> index,
+                   std::shared_ptr<InvertedIndexStorage> storage)
+    : BaseExecutorTask{executor},
+      index{std::move(index)},
+      storage{std::move(storage)} {}
+
+  void ExecuteTask() final {
+    if (index) {
+      (*index)->FinishReplay();
+    }
+    storage->Refresh();
+  }
+
+  std::string TaskType() const final { return "InvertedFinishReplay"; }
+
+  std::optional<BoundIndexHandle> index;
+  std::shared_ptr<InvertedIndexStorage> storage;
+};
+
+std::vector<duckdb::reference<catalog::InvertedIndexEntry>>
+InvertedIndexEntries() {
+  std::vector<duckdb::reference<catalog::InvertedIndexEntry>> indexes;
+  for (const auto& database :
+       duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance())
+         .GetDatabases()) {
+    auto& catalog = database->GetCatalog();
+    if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
+      continue;
+    }
+    std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
+    catalog.Cast<catalog::SereneDBCatalog>().ScanSchemas(
+      [&](duckdb::SchemaCatalogEntry& schema) {
+        schemas.emplace_back(schema);
+      });
+    for (auto& schema : schemas) {
+      schema.get().Scan(
+        duckdb::CatalogType::INDEX_ENTRY, [&](duckdb::CatalogEntry& entry) {
+          if (connector::IsInvertedIndex(
+                entry.Cast<duckdb::IndexCatalogEntry>())) {
+            indexes.emplace_back(entry.Cast<catalog::InvertedIndexEntry>());
+          }
+        });
+    }
+  }
+  return indexes;
+}
+
+std::optional<BoundIndexHandle> BoundIndexOf(
+  catalog::InvertedIndexEntry& entry) {
+  for (auto index : entry.info->info->GetIndexes().IndexEntries()) {
+    const auto oid = index->GetCatalogIndexOid();
+    if (index->GetBindState() == duckdb::IndexBindState::BOUND &&
+        oid.IsValid() && oid.GetIndex() == entry.oid) {
+      return index->GetWriteHandle<connector::InvertedStoreIndex>();
+    }
+  }
+  return std::nullopt;
+}
+
+}  // namespace
 
 void InitInvertedIndexes() {
   const auto begin = std::chrono::steady_clock::now();
-  std::vector<std::shared_ptr<InvertedIndexStorage>> recovering;
-  std::vector<std::shared_ptr<InvertedIndexStorage>> statics;
-  std::vector<duckdb::DuckTableEntry*> tables;
-  irs::containers::FlatHashSet<duckdb::idx_t> seen_tables;
-
-  auto conn = irs::DuckDBEngine::Instance().CreateConnection();
-  auto& context = *conn->context;
-  context.RunFunctionInTransaction([&] {
-    for (const auto& database :
-         duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance())
-           .GetDatabases()) {
-      auto& catalog = database->GetCatalog();
-      if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
-        continue;
-      }
-      const auto transaction = catalog.GetCatalogTransaction(context);
-      std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
-      catalog.Cast<catalog::SereneDBCatalog>().ScanSchemas(
-        [&](duckdb::SchemaCatalogEntry& schema) {
-          schemas.emplace_back(schema);
-        });
-      for (auto& schema : schemas) {
-        std::vector<duckdb::reference<catalog::InvertedIndexEntry>> indexes;
-        schema.get().Scan(
-          duckdb::CatalogType::INDEX_ENTRY, [&](duckdb::CatalogEntry& entry) {
-            if (connector::IsInvertedIndex(
-                  entry.Cast<duckdb::IndexCatalogEntry>())) {
-              indexes.emplace_back(entry.Cast<catalog::InvertedIndexEntry>());
-            }
-          });
-        for (auto& index : indexes) {
-          const auto& storage = index.get().Storage();
-          if (!storage) {
-            continue;
-          }
-          TickDomain::Instance().SeedAtLeast(storage->GetRecoveryTick());
-          storage->StartTasks();
-          auto relation =
-            schema.get().GetEntry(transaction, duckdb::CatalogType::TABLE_ENTRY,
-                                  index.get().GetTableName());
-          const bool table_backed =
-            relation && relation->type == duckdb::CatalogType::TABLE_ENTRY &&
-            relation->Cast<duckdb::TableCatalogEntry>().IsDuckTable();
-          if (!table_backed) {
-            statics.emplace_back(storage);
-            continue;
-          }
-          storage->StartRecovery();
-          recovering.emplace_back(storage);
-          if (seen_tables.insert(relation->oid).second) {
-            tables.emplace_back(&relation->Cast<duckdb::DuckTableEntry>());
-          }
-        }
-      }
+  std::vector<std::shared_ptr<InvertedIndexStorage>> storages;
+  std::vector<std::pair<std::optional<BoundIndexHandle>,
+                        std::shared_ptr<InvertedIndexStorage>>>
+    recovering;
+  for (auto& index : InvertedIndexEntries()) {
+    const auto& storage = index.get().Storage();
+    if (!storage) {
+      continue;
     }
-
-    absl::Cleanup finish = [&] {
-      for (auto& storage : statics) {
-        storage->FinishCreation();
-      }
-      for (auto& storage : recovering) {
-        storage->FinishCreation();
-      }
-    };
-
-    auto& search_path = *duckdb::ClientData::Get(context).catalog_search_path;
-    for (auto* table : tables) {
-      search_path.Set(duckdb::CatalogSearchEntry{table->catalog.GetName(),
-                                                 table->ParentSchemaName()},
-                      duckdb::CatalogSetPathType::SET_SCHEMA);
-      table->GetStorage().GetDataTableInfo()->BindIndexes(
-        context, connector::InvertedStoreIndex::kTypeName);
+    TickDomain::Instance().SeedAtLeast(storage->GetRecoveryTick());
+    storages.emplace_back(storage);
+    if (!index.get().info) {
+      continue;
     }
-    search_path.Reset();
-    for (auto& storage : recovering) {
-      storage->Refresh();
+    storage->StartRecovery();
+    recovering.emplace_back(BoundIndexOf(index.get()), storage);
+  }
+  absl::Cleanup finish = [&] {
+    for (auto& storage : storages) {
+      storage->FinishCreation();
     }
-  });
-
-  if (tables.empty()) {
+  };
+  duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(
+    irs::DuckDBEngine::Instance().instance())};
+  for (auto& [index, storage] : recovering) {
+    executor.ScheduleTask(
+      duckdb::make_uniq<FinishReplayTask>(executor, std::move(index), storage));
+  }
+  executor.WorkOnTasks();
+  if (recovering.empty()) {
     return;
   }
   const auto duration =
     absl::FromChrono(std::chrono::steady_clock::now() - begin);
-  SDB_INFO(SEARCH, "search index recovery: bound ", tables.size(),
-           " table(s), ", recovering.size(), " inverted index(es) in ",
-           absl::FormatDuration(duration));
+  SDB_INFO(SEARCH, "search index recovery: ", recovering.size(),
+           " inverted index(es) in ", absl::FormatDuration(duration));
+}
+
+void StartInvertedIndexTasks() {
+  for (auto& index : InvertedIndexEntries()) {
+    if (const auto& storage = index.get().Storage()) {
+      storage->StartTasks();
+    }
+  }
 }
 
 }  // namespace sdb::search

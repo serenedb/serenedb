@@ -50,7 +50,7 @@ irs::bstring Bytes(std::string_view s) {
                       s.size()};
 }
 
-icu::Locale Bogus() { return irs::MakeBogusLocale(); }
+duckdb::text::Locale Bogus() { return duckdb::text::Locale{}; }
 
 std::string ModelLocation() {
   return TestEnv::resource("model_cooking.bin").string();
@@ -187,7 +187,7 @@ std::vector<Rejected> RejectedConfigs() {
   Collect(out, "pipeline/blob_into_varchar", [] {
     PipelineTokenizer::Options opts;
     opts.children.push_back(Child(Cfg{CollationTokenizer::Options{
-      .locale = icu::Locale::createFromName("en_US.UTF-8")}}));
+      .locale = duckdb::text::Locale::FromName("en_US.UTF-8")}}));
     opts.children.push_back(
       Child(Cfg{DelimitedTokenizer::Options{.delimiter = ","}}));
     return Cfg{std::move(opts)};

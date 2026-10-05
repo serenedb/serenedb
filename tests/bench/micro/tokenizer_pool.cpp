@@ -214,5 +214,3 @@ BENCHMARK(BM_LeaseRelease<LockFreePool<true>, 128>)
   ->Name("lockfree_work")
   ->ThreadRange(1, 32)
   ->UseRealTime();
-
-BENCHMARK_MAIN();

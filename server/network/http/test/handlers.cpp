@@ -26,7 +26,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cstddef>
-#include <duckdb/main/materialized_query_result.hpp>
+#include <duckdb/main/query_result.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <memory>
 #include <string>
@@ -131,7 +131,8 @@ class SessionUserHandler final : public HttpHandler {
     if (result->HasError()) {
       writer.Error(HttpStatus::InternalError, "query_failed");
     } else {
-      writer.Text(HttpStatus::Ok, result->GetValue(0, 0).ToString());
+      writer.Text(HttpStatus::Ok,
+                  result->Collection().GetValue(0, 0).ToString());
     }
     co_return {};
   }

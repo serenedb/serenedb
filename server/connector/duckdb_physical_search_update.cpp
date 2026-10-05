@@ -88,7 +88,7 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
 
   state->search_table = _table.Storage();
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
-  conn_ctx.SearchTxn().RegisterWriter(state->search_table);
+  conn_ctx.SearchTxn().RegisterWriter(state->search_table, _table.name);
 
   const auto& columns = _table.GetColumns();
   state->column_ids.reserve(columns.LogicalColumnCount());

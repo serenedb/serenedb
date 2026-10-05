@@ -30,6 +30,7 @@
 #include <absl/strings/strip.h>
 
 #include <algorithm>
+#include <duckdb/logging/log_manager.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>

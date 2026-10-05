@@ -227,31 +227,139 @@ statement ok
 DROP INDEX search_dml_inv_idx;
 
 
-# Search tables have a fixed iresearch schema: structural ALTERs are rejected.
-# The guard runs before column/constraint resolution, so even a missing
-# constraint name reports the search-table rejection.
 statement error
 ALTER TABLE search_dml ADD COLUMN c INTEGER;
 ----
-db error: ERROR: Unsupported alter type for catalog entry!
+db error: ERROR: ALTER TABLE ADD COLUMN on a search-backed table is not yet supported
 
 
 statement error
 ALTER TABLE search_dml DROP COLUMN b;
 ----
-db error: ERROR: Unsupported alter type for catalog entry!
+db error: ERROR: ALTER TABLE DROP COLUMN on a search-backed table is not yet supported
 
 
 statement error
 ALTER TABLE search_dml ALTER COLUMN b TYPE VARCHAR;
 ----
-db error: ERROR: Unsupported alter type for catalog entry!
+db error: ERROR: ALTER TABLE ALTER COLUMN TYPE on a search-backed table is not yet supported
 
 
 statement error
 ALTER TABLE search_dml DROP CONSTRAINT search_dml_pkey;
 ----
-db error: ERROR: Unsupported alter type for catalog entry!
+db error: ERROR: ALTER TABLE DROP CONSTRAINT on a search-backed table is not yet supported
+
+
+statement error
+ALTER TABLE search_dml ADD UNIQUE (b);
+----
+db error: ERROR: ALTER TABLE ADD UNIQUE on a search-backed table is not yet supported
+
+
+statement ok
+ALTER TABLE search_dml ALTER COLUMN b SET DEFAULT 'dflt';
+
+
+statement ok
+INSERT INTO search_dml (a) VALUES (100);
+
+
+statement ok
+ALTER TABLE search_dml ALTER COLUMN b DROP DEFAULT;
+
+
+statement ok
+INSERT INTO search_dml (a) VALUES (101);
+
+
+statement ok
+ALTER TABLE search_dml ALTER COLUMN b SET NOT NULL;
+
+
+query
+SELECT attnotnull FROM pg_attribute
+WHERE attrelid = 'search_dml'::regclass AND attname = 'b';
+----
+attnotnull
+t
+
+
+statement ok
+ALTER TABLE search_dml ALTER COLUMN b DROP NOT NULL;
+
+
+statement ok
+ALTER TABLE search_dml ADD CONSTRAINT search_dml_a_positive CHECK (a > 0);
+
+
+statement ok
+COMMENT ON COLUMN search_dml.b IS 'body';
+
+
+query
+SELECT col_description('search_dml'::regclass, 2);
+----
+col_description
+body
+
+
+statement ok
+VACUUM (REFRESH_TABLE) search_dml;
+
+
+query
+SELECT a, b FROM search_dml WHERE a >= 100 ORDER BY a;
+----
+a	b
+100	dflt
+101	NULL
+
+
+statement ok
+DELETE FROM search_dml WHERE a >= 100;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) search_dml;
+
+
+statement ok
+CREATE TABLE search_serial (id SERIAL, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO search_serial (body) VALUES ('one');
+
+
+statement error
+ALTER TABLE search_serial ADD PRIMARY KEY (id);
+----
+db error: ERROR: ALTER TABLE ADD PRIMARY KEY on a search-backed table is not yet supported
+
+
+statement error
+DROP SEQUENCE search_serial_id_seq;
+----
+db error: ERROR: Cannot drop entry "search_serial_id_seq" because there are entries that depend on it.
+table "search_serial" depends on sequence "search_serial_id_seq".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+DROP SEQUENCE search_serial_id_seq CASCADE;
+
+
+query
+SELECT column_default IS NULL FROM information_schema.columns
+WHERE table_name = 'search_serial' AND column_name = 'id';
+----
+?column?
+t
+
+
+statement ok
+DROP TABLE search_serial;
 
 
 # Renames are catalog-only metadata -- iresearch and the scan are keyed by

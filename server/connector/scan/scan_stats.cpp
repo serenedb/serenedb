@@ -102,15 +102,12 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
   }
   if (leaf->GetType().IsNumeric() && want.IsNumeric() &&
       duckdb::NumericStats::HasMinMax(*leaf)) {
-    duckdb::Value cmin;
-    duckdb::Value cmax;
-    if (duckdb::NumericStats::Min(*leaf).DefaultTryCastAs(want, cmin,
-                                                          nullptr) &&
-        duckdb::NumericStats::Max(*leaf).DefaultTryCastAs(want, cmax,
-                                                          nullptr)) {
+    const auto cmin = duckdb::NumericStats::Min(*leaf).DefaultTryCastAs(want);
+    const auto cmax = duckdb::NumericStats::Max(*leaf).DefaultTryCastAs(want);
+    if (cmin && cmax) {
       auto casted = duckdb::NumericStats::CreateEmpty(want);
-      duckdb::NumericStats::SetMin(casted, cmin);
-      duckdb::NumericStats::SetMax(casted, cmax);
+      duckdb::NumericStats::SetMin(casted, *cmin);
+      duckdb::NumericStats::SetMax(casted, *cmax);
       return casted.ToUnique();
     }
   }

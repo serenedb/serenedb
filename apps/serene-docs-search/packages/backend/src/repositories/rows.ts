@@ -13,6 +13,7 @@ export function toItem(
         crumb: String(row.crumb ?? ""),
         group: String(row.grp ?? ""),
         kind: (row.kind as SearchResultItem["kind"]) ?? "text",
+        level: row.level == null ? undefined : Number(row.level),
         ...scores,
     };
 }

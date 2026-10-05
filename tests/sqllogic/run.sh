@@ -977,6 +977,10 @@ launch_external() {
 		[[ -n "$test_files" ]] || continue
 		while IFS= read -r f; do
 			[[ -n "$f" ]] || continue
+			# Skipped tests must not boot their service (Ollama, MinIO, ...).
+			if [[ -n "$skip" && "$f" =~ $skip ]]; then
+				continue
+			fi
 			# The local iceberg fixture is generated, not checked in. Tests
 			# symlink ${RESOURCES}/tests/iceberg/<table>_vN and serened
 			# resolves the target; under compose run_in_docker.sh generates

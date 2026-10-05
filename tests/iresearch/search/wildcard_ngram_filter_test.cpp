@@ -598,6 +598,12 @@ TEST(WildcardNGramFilterTest, query_matches_re2) {
     "",
     "\xE0\x80\x80"
     "abc",
+    "kelvin",
+    "\xE2\x84\xAA"
+    "elvin",
+    "KELVIN",
+    "\xC5\xBFky",
+    "SKY",
   };
   static constexpr std::string_view kPatterns[]{
     "abc",
@@ -621,6 +627,15 @@ TEST(WildcardNGramFilterTest, query_matches_re2) {
     "x.*x",
     "(?i)abc",
     "(?i)foo.*",
+    "(?i).*ooba.*",
+    "(?i)XABCX",
+    "(?i)kelvin",
+    "[Kk]elvin",
+    "(?i).*elvin",
+    "(?i)k.*",
+    "(?i)sky",
+    "(?i).*ky",
+    "(?i)s.*",
     "alpha",
     "foo.*ba[rz]",
     "foo(bar|baz)",

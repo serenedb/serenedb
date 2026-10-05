@@ -1,0 +1,228 @@
+statement ok
+CREATE SEQUENCE rs_seq START 10;
+
+
+query
+SELECT nextval('rs_seq') AS a, nextval('rs_seq') AS b;
+----
+a	b
+10	11
+
+
+statement ok
+ALTER SEQUENCE rs_seq RESTART;
+
+
+query
+SELECT nextval('rs_seq') AS a;
+----
+a
+10
+
+
+statement ok
+ALTER SEQUENCE rs_seq RESTART WITH 100;
+
+
+query
+SELECT nextval('rs_seq') AS a;
+----
+a
+100
+
+
+statement error RESTART value \(0\) cannot be less than MINVALUE \(1\)
+ALTER SEQUENCE rs_seq RESTART WITH 0;
+
+
+query
+SELECT nextval('rs_seq') AS a;
+----
+a
+101
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER SEQUENCE rs_seq RESTART;
+
+
+query
+SELECT nextval('rs_seq') AS a;
+----
+a
+10
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT nextval('rs_seq') AS a;
+----
+a
+102
+
+
+statement ok
+CREATE SEQUENCE rs_desc INCREMENT -1 MINVALUE -10 MAXVALUE -1;
+
+
+statement ok
+ALTER SEQUENCE rs_desc RESTART WITH -5;
+
+
+query
+SELECT nextval('rs_desc') AS a, nextval('rs_desc') AS b;
+----
+a	b
+-5	-6
+
+
+statement error RESTART value \(0\) cannot be greater than MAXVALUE \(-1\)
+ALTER SEQUENCE rs_desc RESTART WITH 0;
+
+
+statement ok
+CREATE TABLE ri_parent (id SERIAL PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE TABLE ri_child (id SERIAL PRIMARY KEY, pid INT REFERENCES ri_parent (id));
+
+
+statement ok
+INSERT INTO ri_parent (v) VALUES ('a'), ('b'), ('c');
+
+
+statement ok
+INSERT INTO ri_child (pid) VALUES (1), (2);
+
+
+statement ok
+TRUNCATE ri_child;
+
+
+statement ok
+INSERT INTO ri_child (pid) VALUES (3);
+
+
+query
+SELECT id, pid FROM ri_child;
+----
+id	pid
+3	3
+
+
+statement ok
+TRUNCATE ri_child CONTINUE IDENTITY;
+
+
+statement ok
+INSERT INTO ri_child (pid) VALUES (3);
+
+
+query
+SELECT id, pid FROM ri_child;
+----
+id	pid
+4	3
+
+
+statement ok
+TRUNCATE ri_child RESTART IDENTITY;
+
+
+statement ok
+INSERT INTO ri_child (pid) VALUES (2), (3);
+
+
+query
+SELECT id, pid FROM ri_child ORDER BY id;
+----
+id	pid
+1	2
+2	3
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+TRUNCATE ri_parent RESTART IDENTITY CASCADE;
+
+
+statement ok
+INSERT INTO ri_parent (v) VALUES ('d');
+
+
+query
+SELECT id, v FROM ri_parent;
+----
+id	v
+1	d
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+INSERT INTO ri_parent (v) VALUES ('e');
+
+
+query
+SELECT id, v FROM ri_parent ORDER BY id;
+----
+id	v
+1	a
+2	b
+3	c
+4	e
+
+
+statement ok
+TRUNCATE ri_parent RESTART IDENTITY CASCADE;
+
+
+query
+SELECT (SELECT count(*) FROM ri_parent) AS p, (SELECT count(*) FROM ri_child) AS c;
+----
+p	c
+0	0
+
+
+statement ok
+INSERT INTO ri_parent (v) VALUES ('f');
+
+
+statement ok
+INSERT INTO ri_child (pid) VALUES (1);
+
+
+query
+SELECT p.id, p.v, c.id AS cid FROM ri_parent p JOIN ri_child c ON c.pid = p.id;
+----
+id	v	cid
+1	f	1
+
+
+statement ok
+DROP TABLE ri_child;
+
+
+statement ok
+DROP TABLE ri_parent;
+
+
+statement ok
+DROP SEQUENCE rs_desc;
+
+
+statement ok
+DROP SEQUENCE rs_seq;

@@ -59,9 +59,8 @@ duckdb::LogicalType MakeTSQueryStructType(std::string_view alias) {
   children.emplace_back("slop", duckdb::LogicalType::BIGINT);
   children.emplace_back("scorer", duckdb::LogicalType::VARCHAR);
   children.emplace_back("merge", duckdb::LogicalType::UTINYINT);
-  auto type = duckdb::LogicalType::STRUCT(std::move(children));
-  type.SetAlias(std::string{alias});
-  return type;
+  return duckdb::LogicalType::STRUCT(std::move(children))
+    .WithAlias(std::string{alias});
 }
 
 duckdb::LogicalType MakeModifierTSQueryType() {
@@ -510,8 +509,7 @@ void RegisterTSQueryTypes(duckdb::ExtensionLoader& loader) {
       // filter-build time (search_filter_builder.cpp) where each call
       // gets its own AnalyzerWrapper from the catalog Tokenizer's pool
       // and releases it back when the call returns.
-      type.SetExtensionInfo(std::move(info));
-      return type;
+      return type.WithExtensionInfo(std::move(info));
     });
 
   // `boost(<factor>)` parameterised type: parallel to tokenize, with
@@ -541,8 +539,7 @@ void RegisterTSQueryTypes(duckdb::ExtensionLoader& loader) {
       auto type = MakeModifierTSQueryType();
       auto info = duckdb::make_uniq<duckdb::ExtensionTypeInfo>();
       info->modifiers.emplace_back(std::move(factor));
-      type.SetExtensionInfo(std::move(info));
-      return type;
+      return type.WithExtensionInfo(std::move(info));
     });
 
   // `slop(<budget>)` parameterized type: parallel to tokenize/boost,
@@ -576,8 +573,7 @@ void RegisterTSQueryTypes(duckdb::ExtensionLoader& loader) {
       auto type = MakeModifierTSQueryType();
       auto info = duckdb::make_uniq<duckdb::ExtensionTypeInfo>();
       info->modifiers.emplace_back(std::move(budget));
-      type.SetExtensionInfo(std::move(info));
-      return type;
+      return type.WithExtensionInfo(std::move(info));
     });
 
   loader.RegisterType(
@@ -609,8 +605,7 @@ void RegisterTSQueryTypes(duckdb::ExtensionLoader& loader) {
       auto info = duckdb::make_uniq<duckdb::ExtensionTypeInfo>();
       info->modifiers.emplace_back(
         duckdb::Value::UTINYINT(static_cast<uint8_t>(*merge)));
-      type.SetExtensionInfo(std::move(info));
-      return type;
+      return type.WithExtensionInfo(std::move(info));
     });
 
   loader.RegisterType(
@@ -649,8 +644,7 @@ void RegisterTSQueryTypes(duckdb::ExtensionLoader& loader) {
       auto type = MakeModifierTSQueryType();
       auto info = duckdb::make_uniq<duckdb::ExtensionTypeInfo>();
       info->modifiers.emplace_back(duckdb::Value::BLOB_RAW(encoded));
-      type.SetExtensionInfo(std::move(info));
-      return type;
+      return type.WithExtensionInfo(std::move(info));
     });
 }
 
@@ -779,7 +773,9 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
     for (auto first_arg :
          {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB}) {
       auto fn = TSQConstructor(duckdb::Identifier{kTSQPhrase}, {first_arg});
-      fn.SetVarArgs(duckdb::LogicalType::ANY);
+      fn.GetSignature()
+        .AddArgs("args", duckdb::LogicalType::ANY)
+        .AddKwargs("kwargs", duckdb::LogicalType::ANY);
       set.AddFunction(std::move(fn));
     }
     loader.RegisterFunction(std::move(set));
@@ -1088,7 +1084,9 @@ void RegisterPredicateFunctions(duckdb::ExtensionLoader& loader) {
       duckdb::Identifier{kPhraseMatches},
       {duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR},
       duckdb::LogicalType::BOOLEAN, SearchStubFn);
-    fn.SetVarArgs(duckdb::LogicalType::ANY);
+    fn.GetSignature()
+      .AddArgs("args", duckdb::LogicalType::ANY)
+      .AddKwargs("kwargs", duckdb::LogicalType::ANY);
     loader.RegisterFunction(std::move(fn));
   }
 

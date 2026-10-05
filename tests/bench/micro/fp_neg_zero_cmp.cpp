@@ -69,7 +69,7 @@ double ReplaceBitwiseDouble(double x) {
   return x;
 }
 
-int main() {
+static int Main() {
   constexpr std::size_t kCount = 100'000'000;
   constexpr std::size_t kSeed = 42;
   std::random_device rd;
@@ -109,3 +109,6 @@ int main() {
   std::cout << "Prev: " << prev << std::endl;
   return 0;
 }
+
+[[maybe_unused]] static const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

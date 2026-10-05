@@ -220,5 +220,3 @@ COLLECTOR_CASE(parallel_unordered_orderby, Mode::ParallelUnordered,
                Order::OrderBy);
 COLLECTOR_CASE(ordered_plain, Mode::Ordered, Order::Plain);
 COLLECTOR_CASE(ordered_orderby, Mode::Ordered, Order::OrderBy);
-
-BENCHMARK_MAIN();

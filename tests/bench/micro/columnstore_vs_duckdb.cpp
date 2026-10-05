@@ -29,9 +29,8 @@
 // reset cost is included, not hidden by an artificially fresh vector.
 //
 // Build (from build_perf):
-//   cmake .                                    # only because CMakeLists
-//   changed ninja serenedb-bench-micro-columnstore_vs_duckdb
-//   SDB_BENCH_ROWS=2000000 ./bin/serenedb-bench-micro-columnstore_vs_duckdb
+//   ninja serenedb-bench-micro
+//   SDB_BENCH_ROWS=2000000 ./bin/serenedb-bench-micro columnstore_vs_duckdb
 //
 // build_perf is RelWithDebInfo/-O3: correct for A/B deltas; re-run headline
 // absolute numbers under the `bench` preset before publishing a claim.
@@ -374,7 +373,7 @@ IRS_CASES(IrsPointLookup);
 IRS_CASES(IrsWriteSeal);
 IRS_CASES(DuckFullScan);
 
-int main(int argc, char** argv) {
+static int Main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Initialize();
   benchmark::Initialize(&argc, argv);
   benchmark::RunSpecifiedBenchmarks();
@@ -382,3 +381,6 @@ int main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }
+
+[[maybe_unused]] static const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

@@ -1,15 +1,56 @@
-add_custom_target(serenedb-bench-micro)
+add_executable(serenedb-bench-micro main.cpp)
+target_link_libraries(
+    serenedb-bench-micro
+    PRIVATE
+        sereneserver
+        benchmark
+        search-benchmark-common
+        simdutf
+        simdjson
+        ${FAISS_LIB}
+)
+sdb_link_duckdb_extensions(serenedb-bench-micro PRIVATE)
+target_include_directories(
+    serenedb-bench-micro
+    PRIVATE ${CMAKE_SOURCE_DIR}/tests/iresearch
+)
+target_include_directories(
+    serenedb-bench-micro
+    SYSTEM
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
+        ${CMAKE_SOURCE_DIR}/third_party/lz4/lib
+)
+add_custom_command(
+    TARGET serenedb-bench-micro
+    POST_BUILD
+    COMMAND
+        ${CMAKE_COMMAND} -E create_symlink serenedb-bench-micro
+        $<TARGET_FILE_DIR:serenedb-bench-micro>/search-benchmark-game-build
+    COMMAND
+        ${CMAKE_COMMAND} -E create_symlink serenedb-bench-micro
+        $<TARGET_FILE_DIR:serenedb-bench-micro>/search-benchmark-game-query
+)
 
-function(add_bench FILE_NAME)
-    set(NAME serenedb-bench-micro-${FILE_NAME})
-    add_executable(${NAME} ${FILE_NAME}.cpp)
-    target_link_libraries(${NAME} PRIVATE sereneserver benchmark)
-    sdb_link_duckdb_extensions(${NAME} PRIVATE)
-    target_include_directories(
-        ${NAME}
-        PRIVATE ${CMAKE_SOURCE_DIR}/tests/iresearch
+function(add_bench NAME)
+    set(MODULE ${NAME})
+    if(ARGC GREATER 1)
+        set(MODULE ${ARGV1})
+    endif()
+    target_sources(serenedb-bench-micro PRIVATE ${NAME}.cpp)
+    set_property(
+        SOURCE ${NAME}.cpp TARGET_DIRECTORY serenedb-bench-micro
+        APPEND
+        PROPERTY COMPILE_DEFINITIONS "SDB_BENCH_MODULE=\"${MODULE}\""
     )
-    add_dependencies(serenedb-bench-micro ${NAME})
+    set_property(
+        SOURCE ${NAME}.cpp TARGET_DIRECTORY serenedb-bench-micro
+        APPEND
+        PROPERTY
+            COMPILE_OPTIONS
+                -include
+                ${CMAKE_SOURCE_DIR}/tests/bench/micro/bench_module.h
+    )
 endfunction()
 
 add_bench(bm25_byte_norm)
@@ -42,10 +83,6 @@ add_bench(word_bloom)
 add_bench(path_hierarchy_tokenizer)
 add_bench(regexp_vs_wildcard)
 add_bench(http_compression)
-target_compile_definitions(
-    serenedb-bench-micro-http_compression
-    PRIVATE "SDB_DOCS_DIR=\"${CMAKE_SOURCE_DIR}/docs\""
-)
 add_bench(sloppy_phrase_vs_disjunction)
 add_bench(phrase_search)
 add_bench(filter_prepare)
@@ -66,76 +103,38 @@ add_bench(virtual_column_map)
 add_bench(tokenizer_fill)
 add_bench(stemming)
 add_bench(stringzilla_kernels)
+add_bench(vector_distances)
 
 if(ARCH_AMD64)
     add_bench(ci_lower)
     add_bench(ci_fold128)
 endif()
 
-# SIMD string-encoding benches: link the candidate libraries directly.
-target_link_libraries(serenedb-bench-micro-simd_base64 PRIVATE simdutf)
-target_link_libraries(serenedb-bench-micro-simd_json_validate PRIVATE simdjson)
-target_link_libraries(
-    serenedb-bench-micro-simd_utf8_validate
-    PRIVATE simdutf simdjson
-)
-# Utf8Proc baseline lives in duckdb's vendored utf8proc (not a target-interface
-# include), so add its header dir explicitly for the utf8 bench.
-target_include_directories(
-    serenedb-bench-micro-simd_utf8_validate
-    SYSTEM
-    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
-)
-target_include_directories(
-    serenedb-bench-micro-ci_hash
-    SYSTEM
-    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/lz4/lib
+set_property(
+    SOURCE http_compression.cpp
+    APPEND
+    PROPERTY COMPILE_DEFINITIONS "SDB_DOCS_DIR=\"${CMAKE_SOURCE_DIR}/docs\""
 )
 
 # Same relaxed FP search/scorers/bm25.cpp is built with, otherwise the kernels here
 # aren't the ones we ship.
-target_compile_options(
-    serenedb-bench-micro-bm25_byte_norm
-    PRIVATE
-        -fapprox-func
-        -fno-math-errno
-        -fassociative-math
-        -freciprocal-math
-        -fno-signed-zeros
-        -fno-trapping-math
-        -fno-rounding-math
-        -ffp-contract=fast
+set_property(
+    SOURCE bm25_byte_norm.cpp
+    APPEND
+    PROPERTY
+        COMPILE_OPTIONS
+            -fapprox-func
+            -fno-math-errno
+            -fassociative-math
+            -freciprocal-math
+            -fno-signed-zeros
+            -fno-trapping-math
+            -fno-rounding-math
+            -ffp-contract=fast
 )
 
-# regexp_vs_wildcard splits UTF-8 via duckdb's vendored utf8proc + simdutf.
-target_link_libraries(serenedb-bench-micro-regexp_vs_wildcard PRIVATE simdutf)
-
-target_include_directories(
-    serenedb-bench-micro-regexp_vs_wildcard
-    SYSTEM
-    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
+set_property(
+    SOURCE vector_distances.cpp
+    APPEND
+    PROPERTY COMPILE_OPTIONS -fassociative-math -fno-signed-zeros
 )
-
-target_link_libraries(
-    serenedb-bench-micro-sloppy_phrase_vs_disjunction
-    PRIVATE simdutf
-)
-target_include_directories(
-    serenedb-bench-micro-sloppy_phrase_vs_disjunction
-    SYSTEM
-    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
-)
-
-# vector distances
-add_executable(vector-distances-bench vector_distances.cpp)
-target_compile_options(
-    vector-distances-bench
-    PRIVATE -fassociative-math -fno-signed-zeros
-)
-
-target_link_libraries(
-    vector-distances-bench
-    PRIVATE sereneserver benchmark ${FAISS_LIB}
-)
-sdb_link_duckdb_extensions(vector-distances-bench PRIVATE)
-add_dependencies(serenedb-bench-micro vector-distances-bench)

@@ -76,7 +76,7 @@
 // iresearch. Adopting boost::unordered in dict/ would need a CMake change.
 //
 // Pin to one core on a quiet box:
-//   taskset -c N ./build_perf/bin/serenedb-bench-micro-word_bloom \
+//   taskset -c N ./build_perf/bin/serenedb-bench-micro word_bloom \
 //     --benchmark_min_time=0.3s --benchmark_repetitions=9 \
 //     --benchmark_report_aggregates_only=true
 //
@@ -1549,5 +1549,3 @@ BUILD_BENCH(StrTKeyHash, StrTKeySet<true>);
 #undef BUILD_BENCH
 
 }  // namespace
-
-BENCHMARK_MAIN();

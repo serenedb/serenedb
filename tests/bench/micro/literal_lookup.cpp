@@ -6196,5 +6196,3 @@ BENCHMARK(ci_trivial_1000_short);
 #endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 }  // namespace
-
-BENCHMARK_MAIN();

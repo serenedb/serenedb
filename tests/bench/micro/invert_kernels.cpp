@@ -2127,5 +2127,3 @@ BENCHMARK(BM_DictResolveSweep)
 BENCHMARK(BM_DictFusedLowCard)->Unit(benchmark::kMillisecond);
 
 }  // namespace
-
-BENCHMARK_MAIN();

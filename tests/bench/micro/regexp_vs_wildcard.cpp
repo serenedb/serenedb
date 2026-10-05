@@ -697,5 +697,3 @@ REGISTER(RegexpOnlyPerlClassPrepare);
 #undef REGISTER
 
 }  // namespace
-
-BENCHMARK_MAIN();

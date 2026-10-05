@@ -243,5 +243,3 @@ CLUSTERING_REGISTER(HierLloyd);
 CLUSTERING_REGISTER(Hskm);
 
 }  // namespace
-
-BENCHMARK_MAIN();

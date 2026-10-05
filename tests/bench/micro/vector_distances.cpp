@@ -168,5 +168,3 @@ BENCHMARK_DEFINE_F(DistanceFixture, FaissCosine)(benchmark::State& state) {
 DISTANCES_BENCHMARK_REGISTER(DistanceFixture, FaissCosine);
 
 }  // namespace
-
-BENCHMARK_MAIN();

@@ -139,5 +139,3 @@ void BmTopTermCollector(benchmark::State& state) {
 }  // namespace
 
 BENCHMARK(BmTopTermCollector)->DenseRange(0, 2048, 32);
-
-BENCHMARK_MAIN();

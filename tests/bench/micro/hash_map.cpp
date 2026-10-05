@@ -101,5 +101,3 @@ BENCHMARK(BmHashAbslNode)->RangeMultiplier(2)->Range(0, 100);
 BENCHMARK(BmHashStd)->RangeMultiplier(2)->Range(0, 100);
 
 }  // namespace
-
-BENCHMARK_MAIN();

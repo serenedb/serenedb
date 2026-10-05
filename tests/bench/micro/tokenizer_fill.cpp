@@ -1806,5 +1806,3 @@ TOKENIZER_BENCH(wordnet_synonyms_large, MakeWordnetSynonymsLarge,
                 LargeSynonymCorpus);
 
 }  // namespace
-
-BENCHMARK_MAIN();

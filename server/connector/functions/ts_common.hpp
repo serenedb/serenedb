@@ -292,7 +292,7 @@ void ExtractAnyAllOfArgs(
   const duckdb::BoundFunctionExpression& func, bool is_any,
   std::vector<const duckdb::Expression*>& args,
   std::vector<duckdb::unique_ptr<duckdb::Expression>>& synthesised,
-  std::optional<size_t>& min_match);
+  uint32_t& min_match);
 
 // Phrase-sequence representation, shared between FromTSQueryPhraseSeq
 // (the `##` operator) and tsquery_phrase

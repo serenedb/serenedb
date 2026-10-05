@@ -61,6 +61,7 @@ constexpr double kMispredicted = 2.0;
 constexpr double kLevelTolerance = 0.02;
 constexpr size_t kMaxRungs = 8;
 constexpr double kWideFramesGain = 0.03;
+constexpr double kUntrainedGain = 0.02;
 constexpr size_t kPriceFrames = 8;
 
 constexpr uint8_t kLz4Fast[] = {1};
@@ -212,7 +213,7 @@ struct DedupScratch {
 struct Segment {
   StringChoice choice{};
   uint8_t level = 0;
-  bool wide = false;
+  FrameLayout layout = FrameLayout::Dictionary;
   uint64_t begin = 0;
   uint64_t rows = 0;
   uint64_t entries = 0;
@@ -247,13 +248,16 @@ template<ByteCodec C>
 class Encoder {
  public:
   static constexpr bool kFsst = C == ByteCodec::Fsst;
+  static constexpr bool kTrainable =
+    C == ByteCodec::Lz4 || C == ByteCodec::Zstd;
 
   Encoder(const StringAccumulator& acc, const duckdb::LogicalType& type,
-          RatioHistory* history, DedupScratch& dedup, uint32_t target)
+          StringTuning& tuning, DedupScratch& dedup, uint32_t target)
     : _acc{acc},
       _stats{type},
       _type{type},
-      _history{history},
+      _tuning{tuning},
+      _history{tuning.history[static_cast<size_t>(C)]},
       _dedup{dedup},
       _target{target} {
     if constexpr (kFsst) {
@@ -263,14 +267,20 @@ class Encoder {
     }
   }
 
-  void Begin(Shape shape, uint8_t level, bool wide, uint64_t begin) {
+  void Begin(Shape shape, uint8_t level, FrameLayout layout, uint64_t begin) {
     _shape = shape;
     _level = level;
-    _wide = wide;
+    _frame_layout = layout;
     _next = begin;
     if constexpr (!kFsst) {
       _codec->SetLevel(level);
-      _layout = wide ? FrameShape{kFrameRawBytes, 0} : ShapeOf<C>();
+      _trained = Trained(layout);
+      _layout = FrameShapeOf(_trained, layout);
+      if constexpr (kTrainable) {
+        if (_trained) {
+          _codec->LoadTrained(*_trained);
+        }
+      }
     }
     _dictionary.clear();
     _data.clear();
@@ -305,12 +315,18 @@ class Encoder {
     }
   }
 
-  uint64_t Price(const Profile& p, uint8_t level, bool wide, uint64_t seed)
+  uint64_t Price(const Profile& p, uint8_t level, FrameLayout frame_layout,
+                 uint64_t seed)
     requires(!kFsst)
   {
     _codec->SetLevel(level);
-    const auto frame_shape =
-      wide ? FrameShape{kFrameRawBytes, 0} : ShapeOf<C>();
+    const auto* trained = Trained(frame_layout);
+    const auto frame_shape = FrameShapeOf(trained, frame_layout);
+    if constexpr (kTrainable) {
+      if (trained) {
+        _codec->LoadTrained(*trained);
+      }
+    }
     SplitFrames(p, frame_shape);
     uint64_t data = 0;
     if (!_spans.empty()) {
@@ -409,7 +425,10 @@ class Encoder {
     h.row_count = static_cast<uint32_t>(_rows);
     h.entry_count = static_cast<uint32_t>(entry_count);
     h.frame_count = static_cast<uint32_t>(_frames.size());
-    h.flags = !_dictionary.empty() && _frames.size() > 1 ? kFrameDictionary : 0;
+    h.flags = _trained                                     ? kTrainedDictionary
+              : !_dictionary.empty() && _frames.size() > 1 ? kFrameDictionary
+                                                           : 0;
+    h.dictionary = _trained ? _tuning.dictionary_id : 0;
     h.raw_bytes = _raw;
 
     const auto codes_encoding = codes.encoding;
@@ -494,7 +513,7 @@ class Encoder {
     _stats.Merge(stats);
     out.choice = StringChoice{_shape, C};
     out.level = _level;
-    out.wide = _wide;
+    out.layout = _frame_layout;
     out.begin = _next - _rows;
     out.rows = _rows;
     out.entries = _entries.size();
@@ -524,6 +543,26 @@ class Encoder {
   }
 
  private:
+  const TrainedDictionary* Trained(FrameLayout layout) const noexcept {
+    if constexpr (kTrainable) {
+      if (layout == FrameLayout::Dictionary) {
+        return _tuning.dictionary.get();
+      }
+    }
+    return nullptr;
+  }
+
+  static FrameShape FrameShapeOf(const TrainedDictionary* trained,
+                                 FrameLayout layout) noexcept {
+    if (trained) {
+      return {kTrainedFrameBytes, 0};
+    }
+    if (layout == FrameLayout::Wide) {
+      return {kFrameRawBytes, 0};
+    }
+    return ShapeOf<C>();
+  }
+
   uint32_t FirstEntry() const noexcept {
     return _shape == Shape::Dedup ? 1 : 0;
   }
@@ -787,7 +826,9 @@ class Encoder {
   std::optional<Codec> _codec;
   duckdb::StatsWriter<string_t> _stats;
   duckdb::LogicalType _type;
+  const StringTuning& _tuning;
   RatioHistory* _history;
+  const TrainedDictionary* _trained = nullptr;
   DedupScratch& _dedup;
   uint32_t _target;
 
@@ -801,7 +842,7 @@ class Encoder {
   uint64_t _nulls = 0;
   uint64_t _input = 0;
 
-  bool _wide = false;
+  FrameLayout _frame_layout = FrameLayout::Dictionary;
   FrameShape _layout{kFrameRawBytes, 0};
   std::string _frame;
   std::string _dictionary;
@@ -851,7 +892,7 @@ class SegmentWriter {
       const auto cutter = Cutter();
       auto* seg = Acquire();
       const auto end = With(cutter.choice.leaf, [&](auto& enc) {
-        enc.Begin(cutter.choice.shape, cutter.level, cutter.wide, row);
+        enc.Begin(cutter.choice.shape, cutter.level, cutter.layout, row);
         const auto stop = enc.Cut();
         enc.Finish(*seg);
         return stop;
@@ -890,22 +931,22 @@ class SegmentWriter {
   struct Pick {
     StringChoice choice;
     uint8_t level;
-    bool wide;
+    FrameLayout layout;
   };
 
   Pick Cutter() const noexcept {
     if (_named) {
-      return {*_named, _params.compression_level, false};
+      return {*_named, _params.compression_level, FrameLayout::Dictionary};
     }
     if (_tuning.choice) {
       const auto leaf = Index(_tuning.choice->leaf);
-      return {*_tuning.choice, _tuning.level[leaf], _tuning.wide[leaf]};
+      return {*_tuning.choice, _tuning.level[leaf], _tuning.layout[leaf]};
     }
     const bool repeats =
       _acc.entries.size() * kDedupMinRepeat <= _acc.row_count - _acc.null_count;
     return {{repeats ? Shape::Dedup : Shape::Plain, ByteCodec::Lz4},
             Ladder(ByteCodec::Lz4)[0],
-            false};
+            FrameLayout::Dictionary};
   }
 
   std::span<const uint8_t> Ladder(ByteCodec leaf) const noexcept {
@@ -932,11 +973,15 @@ class SegmentWriter {
     _live.clear();
     _live.push_back(cut);
     const auto base = Ladder(ByteCodec::Lz4)[0];
-    const bool wide = !retune && _tuning.wide[Index(ByteCodec::Lz4)];
-    auto* dedup = Trial({Shape::Dedup, ByteCodec::Lz4}, base, begin, end, wide);
+    const auto tuned = _tuning.layout[Index(ByteCodec::Lz4)];
+    const auto layout = retune || tuned == FrameLayout::Dictionary
+                          ? FrameLayout::FirstFrame
+                          : tuned;
+    auto* dedup =
+      Trial({Shape::Dedup, ByteCodec::Lz4}, base, begin, end, layout);
     Segment* plain = nullptr;
     if (PlainMayWin(*dedup)) {
-      plain = Trial({Shape::Plain, ByteCodec::Lz4}, base, begin, end, wide);
+      plain = Trial({Shape::Plain, ByteCodec::Lz4}, base, begin, end, layout);
     }
     const auto shape =
       plain && PlainWins(*dedup, *plain) ? Shape::Plain : Shape::Dedup;
@@ -950,7 +995,7 @@ class SegmentWriter {
       }
     }
     const auto& write = _smallest.bytes < chosen.bytes ? _smallest : chosen;
-    Trial({shape, write.leaf}, write.level, begin, end, write.wide);
+    Trial({shape, write.leaf}, write.level, begin, end, write.layout);
     auto* best = Smallest(shape, shape == Shape::Dedup ? dedup : plain);
     const auto chosen_bytes = best->Size();
     const StringChoice picked{shape, best->choice.leaf};
@@ -978,7 +1023,7 @@ class SegmentWriter {
   struct Candidate {
     ByteCodec leaf = ByteCodec::Lz4;
     uint8_t level = 0;
-    bool wide = false;
+    FrameLayout layout = FrameLayout::Dictionary;
     uint64_t bytes = 0;
   };
 
@@ -992,20 +1037,21 @@ class SegmentWriter {
                  bool retune) {
     const auto ladder = Ladder(leaf);
     auto& tuned = _tuning.level[Index(leaf)];
-    auto& wide_frames = _tuning.wide[Index(leaf)];
+    auto& tuned_layout = _tuning.layout[Index(leaf)];
     size_t rung = 0;
     if (!retune) {
       const auto it = std::find(ladder.begin(), ladder.end(), tuned);
       rung = it == ladder.end() ? 0 : static_cast<size_t>(it - ladder.begin());
     }
-    bool wide = !retune && wide_frames;
+    auto layout = retune ? FrameLayout::Dictionary : tuned_layout;
     std::optional<uint64_t> bytes;
     if (retune && leaf != ByteCodec::Fsst) {
       SDB_ASSERT(ladder.size() <= kMaxRungs);
       uint64_t prices[kMaxRungs];
       uint64_t lowest = std::numeric_limits<uint64_t>::max();
       for (size_t r = 0; r < ladder.size(); ++r) {
-        prices[r] = PriceOf(shape, leaf, ladder[r], false, begin, end);
+        prices[r] =
+          PriceOf(shape, leaf, ladder[r], FrameLayout::Dictionary, begin, end);
         lowest = std::min(lowest, prices[r]);
       }
       while (static_cast<double>(prices[rung]) >
@@ -1013,26 +1059,40 @@ class SegmentWriter {
         ++rung;
       }
       bytes = prices[rung];
-      const auto frames = PriceOf(shape, leaf, ladder[rung], true, begin, end);
-      wide = static_cast<double>(frames) <
-             static_cast<double>(*bytes) * (1.0 - kWideFramesGain);
-      wide_frames = wide;
-      if (wide) {
-        bytes = frames;
+      const auto wide =
+        PriceOf(shape, leaf, ladder[rung], FrameLayout::Wide, begin, end);
+      if (static_cast<double>(wide) <
+          static_cast<double>(*bytes) * (1.0 - kWideFramesGain)) {
+        layout = FrameLayout::Wide;
+        bytes = wide;
       }
+      if (Trainable(leaf) && _tuning.dictionary) {
+        const auto first = PriceOf(shape, leaf, ladder[rung],
+                                   FrameLayout::FirstFrame, begin, end);
+        if (static_cast<double>(first) <
+            static_cast<double>(*bytes) * (1.0 - kUntrainedGain)) {
+          layout = FrameLayout::FirstFrame;
+          bytes = first;
+        }
+      }
+      tuned_layout = layout;
     }
     tuned = ladder[rung];
-    auto* seg = Cached({shape, leaf}, tuned, begin, end, wide);
+    auto* seg = Cached({shape, leaf}, tuned, begin, end, layout);
     if (!seg && Cheap(leaf, tuned)) {
-      seg = Trial({shape, leaf}, tuned, begin, end, wide);
+      seg = Trial({shape, leaf}, tuned, begin, end, layout);
     }
     if (seg) {
-      return {leaf, tuned, wide, seg->Size()};
+      return {leaf, tuned, layout, seg->Size()};
     }
     if (!bytes) {
-      bytes = PriceOf(shape, leaf, tuned, wide, begin, end);
+      bytes = PriceOf(shape, leaf, tuned, layout, begin, end);
     }
-    return {leaf, tuned, wide, *bytes};
+    return {leaf, tuned, layout, *bytes};
+  }
+
+  static bool Trainable(ByteCodec leaf) noexcept {
+    return leaf == ByteCodec::Lz4 || leaf == ByteCodec::Zstd;
   }
 
   void Measure(Shape shape, uint64_t begin, uint64_t end) {
@@ -1085,9 +1145,18 @@ class SegmentWriter {
       std::max<uint32_t>(_profile.max_len, static_cast<uint32_t>(sv.size()));
   }
 
-  uint64_t PriceOf(Shape shape, ByteCodec leaf, uint8_t level, bool wide,
-                   uint64_t begin, uint64_t end) {
-    if (const auto* seg = Cached({shape, leaf}, level, begin, end, wide)) {
+  FrameLayout Normalize(ByteCodec leaf, FrameLayout layout) const noexcept {
+    if (layout == FrameLayout::FirstFrame &&
+        (!_tuning.dictionary || !Trainable(leaf))) {
+      return FrameLayout::Dictionary;
+    }
+    return layout;
+  }
+
+  uint64_t PriceOf(Shape shape, ByteCodec leaf, uint8_t level,
+                   FrameLayout layout, uint64_t begin, uint64_t end) {
+    layout = Normalize(leaf, layout);
+    if (const auto* seg = Cached({shape, leaf}, level, begin, end, layout)) {
       return seg->Size();
     }
     Measure(shape, begin, end);
@@ -1095,11 +1164,11 @@ class SegmentWriter {
       if constexpr (std::remove_reference_t<decltype(enc)>::kFsst) {
         SDB_UNREACHABLE();
       } else {
-        return enc.Price(_profile, level, wide, begin);
+        return enc.Price(_profile, level, layout, begin);
       }
     });
     if (bytes < _smallest.bytes) {
-      _smallest = {leaf, level, wide, bytes};
+      _smallest = {leaf, level, layout, bytes};
     }
     return bytes;
   }
@@ -1114,11 +1183,11 @@ class SegmentWriter {
   }
 
   Segment* Cached(StringChoice choice, uint8_t level, uint64_t begin,
-                  uint64_t end, bool wide) const noexcept {
+                  uint64_t end, FrameLayout layout) const noexcept {
     for (auto* seg : _live) {
       if (seg->choice.shape == choice.shape &&
           seg->choice.leaf == choice.leaf && seg->level == level &&
-          seg->wide == wide && seg->begin == begin &&
+          seg->layout == layout && seg->begin == begin &&
           seg->rows == end - begin) {
         return seg;
       }
@@ -1127,13 +1196,14 @@ class SegmentWriter {
   }
 
   Segment* Trial(StringChoice choice, uint8_t level, uint64_t begin,
-                 uint64_t end, bool wide = false) {
-    if (auto* seg = Cached(choice, level, begin, end, wide)) {
+                 uint64_t end, FrameLayout layout = FrameLayout::Dictionary) {
+    layout = Normalize(choice.leaf, layout);
+    if (auto* seg = Cached(choice, level, begin, end, layout)) {
       return seg;
     }
     auto* seg = Acquire();
     With(choice.leaf, [&](auto& enc) {
-      enc.Begin(choice.shape, level, wide, begin);
+      enc.Begin(choice.shape, level, layout, begin);
       enc.AddUntil(end);
       enc.Finish(*seg);
       return end;
@@ -1203,8 +1273,7 @@ class SegmentWriter {
   Encoder<C>& Get() {
     auto& slot = std::get<std::optional<Encoder<C>>>(_encoders);
     if (!slot) {
-      slot.emplace(_acc, _type, _tuning.history[Index(C)], _dedup,
-                   _params.segment_target);
+      slot.emplace(_acc, _type, _tuning, _dedup, _params.segment_target);
     }
     return *slot;
   }
@@ -1288,12 +1357,37 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
   row_count += count;
 }
 
+bool TrainsDictionary(std::optional<StringChoice> named,
+                      const ColCodecParams& params) noexcept {
+  if (params.objective == AutoObjective::Speed) {
+    return false;
+  }
+  return !named || named->leaf == ByteCodec::Lz4 ||
+         named->leaf == ByteCodec::Zstd;
+}
+
 SealOutcome SealSegments(const StringAccumulator& acc,
                          std::optional<StringChoice> named,
                          const ColCodecParams& params,
                          const duckdb::LogicalType& type, StringTuning& tuning,
-                         SegmentSink sink) {
+                         SegmentSink sink, DictionarySink dictionaries) {
   SDB_ASSERT(acc.codes.size() == acc.row_count);
+  if (!tuning.sampling_done && TrainsDictionary(named, params)) {
+    if (!tuning.sampler.Ready()) {
+      tuning.sampler.Add(acc.entries);
+    }
+    if (tuning.sampler.Ready()) {
+      tuning.sampling_done = true;
+      if (auto bytes = tuning.sampler.Train()) {
+        tuning.dictionary_id = dictionaries(*bytes);
+        tuning.dictionary =
+          std::make_shared<const TrainedDictionary>(std::move(*bytes));
+        tuning.levels_tuned = false;
+        tuning.calibration_gap = 1;
+        tuning.since_calibration = 0;
+      }
+    }
+  }
   return SegmentWriter{acc, named, params, type, tuning}.Run(sink);
 }
 

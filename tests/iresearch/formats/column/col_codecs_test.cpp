@@ -60,6 +60,8 @@
 
 namespace {
 
+uint16_t IgnoreDictionary(std::string_view) { return 1; }
+
 using Value = std::function<std::optional<std::string>(uint64_t)>;
 
 constexpr irs::field_id kField = 7;
@@ -744,7 +746,8 @@ TEST_F(ColCodecsTest, NamedCodecSealsEverySegment) {
         EXPECT_EQ(sealed.leaf, choice.leaf);
         ++segments;
         rows += count;
-      });
+      },
+      IgnoreDictionary);
     EXPECT_TRUE(outcome.sealed);
     EXPECT_EQ(outcome.all_dedup, choice.shape == Shape::Dedup);
     EXPECT_GT(segments, 1u);
@@ -775,7 +778,8 @@ TEST_F(ColCodecsTest, AutoChoosesPerSegment) {
     acc, std::nullopt, irs::ColCodecParams{.segment_target = 16 * 1024},
     duckdb::LogicalType::VARCHAR, tuning,
     [&](irs::codecs::StringChoice choice, duckdb::BaseStatistics, uint64_t,
-        std::span<const std::string_view>) { shapes.push_back(choice.shape); });
+        std::span<const std::string_view>) { shapes.push_back(choice.shape); },
+    IgnoreDictionary);
   ASSERT_TRUE(outcome.sealed);
   ASSERT_GT(shapes.size(), 2u);
   EXPECT_EQ(shapes.front(), Shape::Plain);
@@ -1533,7 +1537,8 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
       acc, std::nullopt, irs::ColCodecParams{}, duckdb::LogicalType::VARCHAR,
       tuning,
       [](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,
-         std::span<const std::string_view>) {});
+         std::span<const std::string_view>) {},
+      IgnoreDictionary);
     EXPECT_TRUE(outcome.sealed);
   };
   const Value urls = [](uint64_t g) -> std::optional<std::string> {
@@ -1551,8 +1556,12 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   expected.resize(3, 2);
   expected.resize(7, 4);
   expected.resize(15, 8);
-  expected.resize(32, 16);
+  expected.resize(24, 16);
+  expected.resize(26, 2);
+  expected.resize(30, 4);
+  expected.resize(32, 8);
   EXPECT_EQ(gaps, expected);
+  EXPECT_TRUE(tuning.dictionary);
   ASSERT_TRUE(tuning.choice.has_value());
   EXPECT_EQ(tuning.choice->shape, Shape::Plain);
 
@@ -1640,7 +1649,8 @@ TEST_F(ColCodecsTest, FsstSegmentsFollowAChangeInCompressibility) {
         bytes += part.size();
       }
       sizes.push_back(bytes);
-    });
+    },
+    IgnoreDictionary);
   ASSERT_TRUE(outcome.sealed);
   ASSERT_GT(sizes.size(), 8u);
   const auto oversized = std::ranges::count_if(
@@ -1648,4 +1658,67 @@ TEST_F(ColCodecsTest, FsstSegmentsFollowAChangeInCompressibility) {
   EXPECT_LE(oversized, 2) << ::testing::PrintToString(sizes);
   RoundTrip(duckdb::CompressionType::COMPRESSION_FSST,
             {.segment_target = kTarget}, kRows, DEFAULT_ROW_GROUP_SIZE, value);
+}
+
+TEST_F(ColCodecsTest, LargeColumnsTrainADictionary) {
+  using duckdb::CompressionType;
+  constexpr uint64_t kRows = 120000;
+  constexpr uint32_t kRowGroup = 16384;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 211 == 0) {
+      return std::nullopt;
+    }
+    return "https://shop" + std::to_string(g % 997) + ".example.org/catalog/" +
+           std::to_string((g * 7919) % 100003) +
+           "/item?id=" + std::to_string(g) + "&ref=" + std::to_string(g % 13);
+  };
+  for (const auto codec :
+       {CompressionType::COMPRESSION_DICT_LZ4, CompressionType::COMPRESSION_LZ4,
+        CompressionType::COMPRESSION_DICT_ZSTD,
+        CompressionType::COMPRESSION_COL_ZSTD}) {
+    SCOPED_TRACE(duckdb::CompressionTypeToString(codec));
+    irs::MemoryDirectory dir{};
+    Write(dir, codec, {.compression_level = 3}, kRows, kRowGroup, value);
+    const auto dictionaries = SegmentInfo(dir, "dictionary");
+    EXPECT_NE(std::ranges::find(dictionaries, "trained:1"), dictionaries.end())
+      << ::testing::PrintToString(dictionaries);
+    EXPECT_NE(std::ranges::find(dictionaries, "trained:1"),
+              dictionaries.begin())
+      << ::testing::PrintToString(dictionaries);
+    Verify(dir, codec, kRows, value);
+  }
+}
+
+TEST_F(ColCodecsTest, SpeedObjectiveDoesNotTrain) {
+  constexpr uint64_t kRows = 120000;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    return "https://shop" + std::to_string(g % 997) + ".example.org/catalog/" +
+           std::to_string((g * 7919) % 100003) +
+           "/item?id=" + std::to_string(g);
+  };
+  irs::MemoryDirectory dir{};
+  Write(dir, duckdb::CompressionType::COMPRESSION_AUTO,
+        {.objective = irs::AutoObjective::Speed}, kRows, 16384, value);
+  for (const auto& d : SegmentInfo(dir, "dictionary")) {
+    EXPECT_FALSE(d.starts_with("trained")) << d;
+  }
+  Verify(dir, duckdb::CompressionType::COMPRESSION_AUTO, kRows, value);
+}
+
+TEST_F(ColCodecsTest, AutoCompressesLogTextWithATrainedDictionary) {
+  constexpr uint64_t kRows = 60000;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    return "2026-10-05T12:" + std::to_string(g % 60) + " INFO service-" +
+           std::to_string(g % 17) + " handled request /api/v1/orders/" +
+           std::to_string(g) + " for customer " +
+           std::to_string((g * 31) % 5000) + " in " + std::to_string(g % 997) +
+           "ms with status 200 and payload size " +
+           std::to_string((g * 13) % 65536) + " bytes";
+  };
+  irs::MemoryDirectory dir{};
+  Write(dir, duckdb::CompressionType::COMPRESSION_AUTO, {}, kRows, 8192, value);
+  const auto dictionaries = SegmentInfo(dir, "dictionary");
+  EXPECT_NE(std::ranges::find(dictionaries, "trained:1"), dictionaries.end())
+    << ::testing::PrintToString(dictionaries);
+  Verify(dir, duckdb::CompressionType::COMPRESSION_AUTO, kRows, value);
 }

@@ -151,6 +151,16 @@ void SerializeColumnMeta(duckdb::BinarySerializer& s, const ColumnMeta& meta) {
                 });
   }
   s.WritePropertyWithDefault(6, "hyperloglog", meta.hyperloglog);
+  if (!meta.dictionaries.empty()) {
+    s.WriteList(7, "dictionaries", meta.dictionaries.size(),
+                [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+                  const auto& d = meta.dictionaries[i];
+                  list.WriteObject([&](duckdb::BinarySerializer& obj) {
+                    obj.WriteProperty(0, "file_offset", d.file_offset);
+                    obj.WriteProperty(1, "byte_size", d.byte_size);
+                  });
+                });
+  }
 }
 
 ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d) {
@@ -203,6 +213,15 @@ ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d) {
       });
     });
   d.ReadPropertyWithDefault(6, "hyperloglog", meta.hyperloglog);
+  d.ReadOptionalList(
+    7, "dictionaries",
+    [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
+        auto& m = meta.dictionaries.emplace_back();
+        obj.ReadProperty(0, "file_offset", m.file_offset);
+        obj.ReadProperty(1, "byte_size", m.byte_size);
+      });
+    });
   return meta;
 }
 
@@ -238,6 +257,26 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
     stats.Merge(m.statistics);
   }
   FinishStats(std::move(stats));
+}
+
+const codecs::TrainedDictionaries* ColumnReader::Dictionaries(
+  ReadContext& ctx) const {
+  if (_dictionary_metas.empty()) {
+    return nullptr;
+  }
+  std::call_once(_dictionaries_loaded, [&] {
+    codecs::TrainedDictionaries loaded;
+    loaded.reserve(_dictionary_metas.size());
+    for (const auto& d : _dictionary_metas) {
+      std::string bytes(d.byte_size, '\0');
+      ctx.Read(d.file_offset,
+               reinterpret_cast<duckdb::data_ptr_t>(bytes.data()), d.byte_size);
+      loaded.push_back(
+        std::make_shared<const codecs::TrainedDictionary>(std::move(bytes)));
+    }
+    _dictionaries = std::move(loaded);
+  });
+  return &_dictionaries;
 }
 
 std::string ColumnReader::DictionaryCacheKey(size_t block) const {
@@ -327,8 +366,12 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
   }
 
   ReadContext::CacheSlot slot;
-  if (_touched && duckdb::IsSereneDBCompressionType(codec.type)) {
-    slot = {.key = DictionaryCacheKey(w.block), .touched = &_touched[w.block]};
+  if (duckdb::IsSereneDBCompressionType(codec.type)) {
+    if (_touched) {
+      slot.key = DictionaryCacheKey(w.block);
+      slot.touched = &_touched[w.block];
+    }
+    slot.dictionaries = Dictionaries(ctx);
   }
   auto handle = ctx.RegisterColBlock(m.file_offset, byte_size, std::move(slot));
   auto segment = std::make_unique<duckdb::ColumnSegment>(
@@ -808,6 +851,7 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta,
       break;
   }
   col->_hyperloglog = std::move(meta.hyperloglog);
+  col->_dictionary_metas = std::move(meta.dictionaries);
   col->_file_id = file_id;
   return col;
 }

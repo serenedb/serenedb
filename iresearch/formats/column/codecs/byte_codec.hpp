@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <string_view>
 
+#include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/utils/zstd_context.hpp"
 
 union LZ4_stream_u;
@@ -98,6 +99,7 @@ class LeafCompressor<ByteCodec::Lz4> {
   }
 
   void LoadDictionary(std::string_view dictionary, size_t frame_bytes);
+  void LoadTrained(const TrainedDictionary& dictionary);
   void ClearDictionary() noexcept { _dictionary = false; }
 
   size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
@@ -105,6 +107,8 @@ class LeafCompressor<ByteCodec::Lz4> {
  private:
   uint8_t _level;
   bool _dictionary = false;
+  uint64_t _trained = 0;
+  uint8_t _trained_level = 0;
   LZ4_stream_u* _dict = nullptr;
   LZ4_stream_u* _work = nullptr;
   LZ4_streamHC_u* _hc_dict = nullptr;
@@ -128,6 +132,7 @@ class LeafCompressor<ByteCodec::Zstd> {
   }
 
   void LoadDictionary(std::string_view dictionary, size_t frame_bytes);
+  void LoadTrained(const TrainedDictionary& dictionary);
   void ClearDictionary() noexcept;
 
   size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
@@ -136,6 +141,10 @@ class LeafCompressor<ByteCodec::Zstd> {
   uint8_t _level;
   utils::ZstdCCtxPtr _ctx;
   ZSTD_CDict_s* _cdict = nullptr;
+  ZSTD_CDict_s* _trained_cdict = nullptr;
+  uint64_t _trained = 0;
+  uint8_t _trained_level = 0;
+  bool _use_trained = false;
 };
 
 template<>
@@ -193,6 +202,9 @@ class LeafDecompressor<ByteCodec::Zstd> {
   LeafDecompressor& operator=(const LeafDecompressor&) = delete;
 
   void SetDictionary(std::string_view dictionary);
+  void SetTrained(const TrainedDictionary& dictionary) noexcept {
+    _trained = dictionary.ZstdDictionary();
+  }
 
   bool Decompress(const char* src, size_t size, char* dst,
                   size_t raw_size) noexcept;
@@ -201,6 +213,7 @@ class LeafDecompressor<ByteCodec::Zstd> {
 
  private:
   utils::ZstdDCtxPtr _ctx;
+  const ZSTD_DDict_s* _trained = nullptr;
   ZSTD_DDict_s* _ddict = nullptr;
   std::string_view _loaded;
   bool _use = false;

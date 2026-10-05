@@ -85,6 +85,9 @@ class ColumnWriter final {
   const duckdb::LogicalType& Type() const noexcept { return _type; }
   const ColumnMeta& Meta() const noexcept { return _meta; }
 
+  bool TrainsDictionary() const noexcept;
+  void SampleDictionary(std::span<const std::string_view> entries);
+
  private:
   friend class ColWriter;
 

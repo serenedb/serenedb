@@ -150,6 +150,7 @@ LeafCompressor<ByteCodec::Lz4>::~LeafCompressor() {
 void LeafCompressor<ByteCodec::Lz4>::LoadDictionary(std::string_view dictionary,
                                                     size_t /*frame_bytes*/) {
   SDB_ASSERT(dictionary.size() <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
+  _trained = 0;
   const auto size = static_cast<int>(dictionary.size());
   if (_level <= 1) {
     if (!_dict) {
@@ -166,6 +167,17 @@ void LeafCompressor<ByteCodec::Lz4>::LoadDictionary(std::string_view dictionary,
     LZ4_loadDictHC(_hc_dict, dictionary.data(), size);
   }
   _dictionary = true;
+}
+
+void LeafCompressor<ByteCodec::Lz4>::LoadTrained(
+  const TrainedDictionary& dictionary) {
+  if (_trained == dictionary.Id() && _trained_level == _level) {
+    _dictionary = true;
+    return;
+  }
+  LoadDictionary(dictionary.Bytes(), 0);
+  _trained = dictionary.Id();
+  _trained_level = _level;
 }
 
 size_t LeafCompressor<ByteCodec::Lz4>::Compress(const char* src, size_t size,
@@ -207,11 +219,34 @@ size_t LeafCompressor<ByteCodec::Lz4>::Compress(const char* src, size_t size,
   return static_cast<size_t>(n);
 }
 
-LeafCompressor<ByteCodec::Zstd>::~LeafCompressor() { ClearDictionary(); }
+LeafCompressor<ByteCodec::Zstd>::~LeafCompressor() {
+  ClearDictionary();
+  ZSTD_freeCDict(_trained_cdict);
+}
 
 void LeafCompressor<ByteCodec::Zstd>::ClearDictionary() noexcept {
   ZSTD_freeCDict(_cdict);
   _cdict = nullptr;
+  _use_trained = false;
+}
+
+void LeafCompressor<ByteCodec::Zstd>::LoadTrained(
+  const TrainedDictionary& dictionary) {
+  ClearDictionary();
+  if (_trained != dictionary.Id() || _trained_level != _level) {
+    ZSTD_freeCDict(_trained_cdict);
+    _trained_cdict = nullptr;
+    _trained = 0;
+    const auto bytes = dictionary.Bytes();
+    _trained_cdict = ZSTD_createCDict_advanced(
+      bytes.data(), bytes.size(), ZSTD_dlm_byRef, ZSTD_dct_auto,
+      ZSTD_getCParams(_level, kTrainedFrameBytes, bytes.size()),
+      ZSTD_defaultCMem);
+    SDB_ENSURE(_trained_cdict, "zstd: cannot load a trained dictionary");
+    _trained = dictionary.Id();
+    _trained_level = _level;
+  }
+  _use_trained = true;
 }
 
 void LeafCompressor<ByteCodec::Zstd>::LoadDictionary(
@@ -225,9 +260,10 @@ void LeafCompressor<ByteCodec::Zstd>::LoadDictionary(
 
 size_t LeafCompressor<ByteCodec::Zstd>::Compress(const char* src, size_t size,
                                                  char* dst, size_t capacity) {
+  const auto* cdict = _use_trained ? _trained_cdict : _cdict;
   const auto n =
-    _cdict
-      ? ZSTD_compress_usingCDict(_ctx.get(), dst, capacity, src, size, _cdict)
+    cdict
+      ? ZSTD_compress_usingCDict(_ctx.get(), dst, capacity, src, size, cdict)
       : ZSTD_compressCCtx(_ctx.get(), dst, capacity, src, size, _level);
   SDB_ENSURE(!ZSTD_isError(n),
              "zstd compression failed: ", ZSTD_getErrorName(n));
@@ -276,6 +312,7 @@ LeafDecompressor<ByteCodec::Zstd>::~LeafDecompressor() {
 
 void LeafDecompressor<ByteCodec::Zstd>::SetDictionary(
   std::string_view dictionary) {
+  _trained = nullptr;
   _use = !dictionary.empty();
   if (!_use || (dictionary.data() == _loaded.data() &&
                 dictionary.size() == _loaded.size())) {
@@ -294,9 +331,10 @@ void LeafDecompressor<ByteCodec::Zstd>::SetDictionary(
 bool LeafDecompressor<ByteCodec::Zstd>::Decompress(const char* src, size_t size,
                                                    char* dst,
                                                    size_t raw_size) noexcept {
+  const auto* ddict = _trained ? _trained : _use ? _ddict : nullptr;
   const auto n =
-    _use
-      ? ZSTD_decompress_usingDDict(_ctx.get(), dst, raw_size, src, size, _ddict)
+    ddict
+      ? ZSTD_decompress_usingDDict(_ctx.get(), dst, raw_size, src, size, ddict)
       : ZSTD_decompressDCtx(_ctx.get(), dst, raw_size, src, size);
   return !ZSTD_isError(n) && n == raw_size;
 }

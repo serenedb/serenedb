@@ -202,7 +202,13 @@ class ListKeys {
   }
 
  private:
-  enum class Kind : uint8_t { Fixed, String, Struct, List, Array };
+  enum class Kind : uint8_t {
+    Fixed,
+    String,
+    Struct,
+    List,
+    Array,
+  };
 
   struct Node {
     duckdb::UnifiedVectorFormat format;
@@ -1043,6 +1049,13 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
       const auto& codec = *codecs::GetCodec(db, codecs::TypeOf(choice),
                                             duckdb::PhysicalType::VARCHAR);
       CaptureBlock(db, codec, std::move(stats), rows, parts, out, meta.data);
+    },
+    [&](std::string_view bytes) {
+      meta.dictionaries.push_back(
+        {.file_offset = out.Position(), .byte_size = bytes.size()});
+      out.WriteData(reinterpret_cast<const byte_type*>(bytes.data()),
+                    bytes.size());
+      return static_cast<uint16_t>(meta.dictionaries.size());
     });
   if (outcome.sealed) {
     return outcome.all_dedup;
@@ -1689,6 +1702,24 @@ void ColumnWriter::SealRowGroup() {
 void ColumnWriter::SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll) {
   _meta.hyperloglog = std::move(hll);
   _hll_auto = false;
+}
+
+bool ColumnWriter::TrainsDictionary() const noexcept {
+  if (_is_nested || _type.InternalType() != duckdb::PhysicalType::VARCHAR) {
+    return false;
+  }
+  const auto named = codecs::ChoiceOf(_forced);
+  if (!named && _forced != duckdb::CompressionType::COMPRESSION_AUTO) {
+    return false;
+  }
+  return codecs::TrainsDictionary(named, _codec_params);
+}
+
+void ColumnWriter::SampleDictionary(std::span<const std::string_view> entries) {
+  if (!_meta.write_string_tuning) {
+    _meta.write_string_tuning = std::make_shared<codecs::StringTuning>();
+  }
+  _meta.write_string_tuning->sampler.Add(entries);
 }
 
 }  // namespace irs

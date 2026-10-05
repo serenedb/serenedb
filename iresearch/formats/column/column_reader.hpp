@@ -33,6 +33,7 @@
 #include <duckdb/storage/table/scan_state.hpp>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -102,6 +103,11 @@ struct ColumnBlockMeta {
   const duckdb::CompressionFunction* codec = nullptr;
 };
 
+struct ColumnDictionaryMeta {
+  uint64_t file_offset = 0;
+  uint64_t byte_size = 0;
+};
+
 struct ColumnMeta;
 
 struct VariantRgMeta {
@@ -117,6 +123,7 @@ struct ColumnMeta {
   std::vector<ColumnBlockMeta> validity;
   std::vector<ColumnMeta> children;
   std::vector<VariantRgMeta> variant_rgs;
+  std::vector<ColumnDictionaryMeta> dictionaries;
   duckdb::shared_ptr<duckdb::HyperLogLog> hyperloglog;
   uint64_t write_list_running = 0;
   std::shared_ptr<codecs::StringTuning> write_string_tuning;
@@ -373,8 +380,12 @@ class ColumnReader {
   uint64_t _array_size = 0;
   duckdb::shared_ptr<duckdb::HyperLogLog> _hyperloglog;
   duckdb::unique_ptr<duckdb::BaseStatistics> _stats;
+  std::vector<ColumnDictionaryMeta> _dictionary_metas;
+  mutable std::once_flag _dictionaries_loaded;
+  mutable codecs::TrainedDictionaries _dictionaries;
 
  private:
+  const codecs::TrainedDictionaries* Dictionaries(ReadContext& ctx) const;
   void CertifyStrings(ScanState& s, duckdb::ColumnSegment& segment,
                       duckdb::Vector& result) const;
   void Readahead(size_t block, ReadContext& ctx, ScanState* s) const noexcept;

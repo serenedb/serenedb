@@ -67,6 +67,7 @@ set(IResearch_core_sources
     ./formats/column/codecs/sequence_codec.cpp
     ./formats/column/codecs/string_scan.cpp
     ./formats/column/codecs/string_writer.cpp
+    ./formats/column/codecs/trained_dictionary.cpp
     ./formats/column/read_context.cpp
     ./formats/format_utils.cpp
     ./formats/posting/block_codec.cpp

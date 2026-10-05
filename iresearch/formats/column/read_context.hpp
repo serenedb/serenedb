@@ -26,6 +26,7 @@
 #include <string>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/formats/column/internal/block_manager.hpp"
 #include "iresearch/store/data_input.hpp"
 
@@ -70,6 +71,7 @@ class ReadContext final : public BlockManager,
   struct CacheSlot {
     std::string key;
     std::atomic<bool>* touched = nullptr;
+    const codecs::TrainedDictionaries* dictionaries = nullptr;
   };
 
   duckdb::shared_ptr<duckdb::BlockHandle> RegisterColBlock(uint64_t offset,

@@ -26,6 +26,7 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -34,6 +35,7 @@
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
+#include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
@@ -44,6 +46,12 @@ struct RatioHistory {
   uint64_t comp = 0;
 };
 
+enum class FrameLayout : uint8_t {
+  Dictionary = 0,
+  Wide = 1,
+  FirstFrame = 2,
+};
+
 struct StringTuning {
   std::optional<StringChoice> choice;
   double bytes_per_input = 0;
@@ -52,8 +60,12 @@ struct StringTuning {
   uint32_t since_calibration = 0;
   uint64_t last_distinct = 0;
   uint8_t level[kByteCodecCount]{};
-  bool wide[kByteCodecCount]{};
+  FrameLayout layout[kByteCodecCount]{};
   RatioHistory history[kByteCodecCount][2]{};
+  DictionarySampler sampler;
+  bool sampling_done = false;
+  std::shared_ptr<const TrainedDictionary> dictionary;
+  uint16_t dictionary_id = 0;
 };
 
 struct SealOutcome {
@@ -84,10 +96,15 @@ using SegmentSink = absl::FunctionRef<void(
   StringChoice choice, duckdb::BaseStatistics stats, uint64_t rows,
   std::span<const std::string_view> parts)>;
 
+using DictionarySink = absl::FunctionRef<uint16_t(std::string_view bytes)>;
+
+bool TrainsDictionary(std::optional<StringChoice> named,
+                      const ColCodecParams& params) noexcept;
+
 SealOutcome SealSegments(const StringAccumulator& acc,
                          std::optional<StringChoice> named,
                          const ColCodecParams& params,
                          const duckdb::LogicalType& type, StringTuning& tuning,
-                         SegmentSink sink);
+                         SegmentSink sink, DictionarySink dictionaries);
 
 }  // namespace irs::codecs

@@ -719,11 +719,12 @@ duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,
       return _tokenizers.Acquire(id, context);
     });
     Feed(*writer, trx, results, rows, count);
-    conn->RegisterSearchFlush();
+    conn->RegisterIndexFlush(_index_id);
     return {};
   }
   if (prepared == 1) {
     Feed(*slots[0].writer, *slots[0].transaction, results, rows, count);
+    conn->RegisterIndexFlush(_index_id);
   } else if (count != 0) {
     if (!_live) {
       _live = std::make_unique<LiveFeed>(db.GetDatabase());
@@ -736,7 +737,6 @@ duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,
     Enqueue(_live->executor, queue,
             CopyInsertShared(*conn, chunk, results, rows, count));
   }
-  conn->RegisterSearchFlush();
   return {};
 }
 
@@ -749,6 +749,9 @@ duckdb::ErrorData InvertedStoreIndex::FinishAppend() {
     live->executor.WorkOnTasks();
   } catch (const std::exception& e) {
     return duckdb::ErrorData{e};
+  }
+  if (auto* conn = CurrentCommittingContext()) {
+    conn->RegisterIndexFlush(_index_id);
   }
   return {};
 }
@@ -834,7 +837,9 @@ bool InvertedStoreIndex::AppendLocal(
   } catch (const std::exception& e) {
     error = duckdb::ErrorData{e};
   }
-  conn->RegisterSearchFlush();
+  for (const auto& [inverted, prepared] : indexes) {
+    conn->RegisterIndexFlush(inverted->_index_id);
+  }
   return true;
 }
 
@@ -890,7 +895,7 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
   } else {
     remove(count, [&](size_t i) { return data[fmt.sel->get_index(i)]; });
   }
-  conn->RegisterSearchFlush();
+  conn->RegisterIndexFlush(_index_id);
 }
 
 idx_t InvertedStoreIndex::TryDelete(

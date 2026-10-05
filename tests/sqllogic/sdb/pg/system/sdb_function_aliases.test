@@ -314,7 +314,8 @@ ok
 t
 
 query
-SELECT (SELECT count(*) FROM main.sdb_tables) = (SELECT count(*) FROM sdb_tables)
+SELECT (SELECT count(*) FROM main.sdb_tables WHERE database_name = current_database())
+     = (SELECT count(*) FROM sdb_tables WHERE database_name = current_database())
   AS ok
 ----
 ok

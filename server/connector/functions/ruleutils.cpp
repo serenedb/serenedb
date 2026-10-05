@@ -92,13 +92,18 @@ const T* EntryByOid(duckdb::ClientContext& context, duckdb::CatalogType type,
 
 template<typename Visitor>
 void VisitTables(duckdb::ClientContext& context, Visitor&& visitor) {
+  std::vector<duckdb::reference<duckdb::TableCatalogEntry>> tables;
   for (auto& schema : SessionCatalog(context).GetSchemas(context)) {
-    schema.get().Scan(context, duckdb::CatalogType::TABLE_ENTRY,
-                      [&](duckdb::CatalogEntry& entry) {
-                        if (entry.type == duckdb::CatalogType::TABLE_ENTRY) {
-                          visitor(entry.Cast<duckdb::TableCatalogEntry>());
-                        }
-                      });
+    schema.get().Scan(
+      context, duckdb::CatalogType::TABLE_ENTRY,
+      [&](duckdb::CatalogEntry& entry) {
+        if (entry.type == duckdb::CatalogType::TABLE_ENTRY) {
+          tables.emplace_back(entry.Cast<duckdb::TableCatalogEntry>());
+        }
+      });
+  }
+  for (auto& table : tables) {
+    visitor(table.get());
   }
 }
 
@@ -488,27 +493,18 @@ FoundTrigger FindTrigger(duckdb::ClientContext& context, int64_t oid) {
   if (oid <= 0) {
     return found;
   }
-  for (auto& schema : SessionCatalog(context).GetSchemas(context)) {
-    schema.get().Scan(
-      context, duckdb::CatalogType::TABLE_ENTRY,
-      [&](duckdb::CatalogEntry& entry) {
-        if (found.table || entry.type != duckdb::CatalogType::TABLE_ENTRY) {
-          return;
-        }
-        auto& table = entry.Cast<duckdb::TableCatalogEntry>();
-        table.ScanTriggers(
-          duckdb::CatalogTransaction(table.ParentCatalog(), context),
-          [&](duckdb::CatalogEntry& trigger) {
-            if (!found.table &&
-                trigger.oid == static_cast<duckdb::idx_t>(oid)) {
-              found = {&table, &trigger.Cast<duckdb::TriggerCatalogEntry>()};
-            }
-          });
-      });
+  VisitTables(context, [&](duckdb::TableCatalogEntry& table) {
     if (found.table) {
-      break;
+      return;
     }
-  }
+    table.ScanTriggers(
+      duckdb::CatalogTransaction(table.ParentCatalog(), context),
+      [&](duckdb::CatalogEntry& trigger) {
+        if (!found.table && trigger.oid == static_cast<duckdb::idx_t>(oid)) {
+          found = {&table, &trigger.Cast<duckdb::TriggerCatalogEntry>()};
+        }
+      });
+  });
   return found;
 }
 

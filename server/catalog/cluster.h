@@ -182,7 +182,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
                                std::shared_ptr<const auth::RoleClosure>>
     _closures;
   bool _compactable = false;
-  duckdb::idx_t _live_bytes = 0;
+  std::atomic<duckdb::idx_t> _live_bytes{0};
   std::mutex _artifacts_mutex;
   std::vector<Artifact> _artifacts;
   std::unordered_set<duckdb::idx_t> _replayed_drops;

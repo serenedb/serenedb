@@ -150,7 +150,8 @@ void ClusterCatalog::OpenCatalogLog(
     _catalog_log = std::move(log);
   }
   _compactable = compactable;
-  _live_bytes = GetAttached().GetStorageManager().GetWALSize();
+  _live_bytes.store(GetAttached().GetStorageManager().GetWALSize(),
+                    std::memory_order_relaxed);
   _catalog_generation.fetch_add(1, std::memory_order_acq_rel);
 }
 
@@ -189,13 +190,17 @@ void ClusterCatalog::MaybeCompactCatalogLog() {
   SDB_IF_FAILURE("compact_inside_ddl") { force = true; }
   SDB_IF_FAILURE("compact_inside_drop") { force = true; }
   auto& storage = GetAttached().GetStorageManager();
-  const auto threshold =
-    force ? 0 : std::max<duckdb::idx_t>(kCompactionFloor, 2 * _live_bytes);
-  if (storage.GetWALSize() < threshold) {
+  const auto threshold = [&] {
+    return force ? 0
+                 : std::max<duckdb::idx_t>(
+                     kCompactionFloor,
+                     2 * _live_bytes.load(std::memory_order_relaxed));
+  };
+  if (storage.GetWALSize() < threshold()) {
     return;
   }
   auto lock = storage.GetCommitLock();
-  if (storage.GetWALSize() < threshold ||
+  if (storage.GetWALSize() < threshold() ||
       _commits_in_flight.load(std::memory_order_acquire) > 0) {
     return;
   }
@@ -266,7 +271,7 @@ void ClusterCatalog::CompactCatalogLog() {
     _catalog_log = duckdb::make_shared_ptr<duckdb::WriteAheadLog>(
       storage, path, size, duckdb::WALInitState::UNINITIALIZED);
   }
-  _live_bytes = size;
+  _live_bytes.store(size, std::memory_order_relaxed);
   SyncDirectory(std::filesystem::path{path}.parent_path().string());
 }
 

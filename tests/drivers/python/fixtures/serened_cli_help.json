@@ -352,6 +352,32 @@
           "categoryLabel": "server/catalog/boot.cpp"
         }
       ]
+    },
+    {
+      "id": "server/docs/builder/docs_bootstrap.cpp",
+      "label": "server/docs/builder/docs_bootstrap.cpp",
+      "flags": [
+        {
+          "name": "build_docs_index",
+          "flag": "--build_docs_index",
+          "type": "",
+          "defaultValue": "",
+          "description": "Index the documentation corpus named by --docs_corpus into this directory and exit, without starting a listener. The build runs it on the freshly linked binary and writes the index into that binary; see CONTRIBUTING.md.",
+          "source": "server/docs/builder/docs_bootstrap.cpp",
+          "category": "server/docs/builder/docs_bootstrap.cpp",
+          "categoryLabel": "server/docs/builder/docs_bootstrap.cpp"
+        },
+        {
+          "name": "docs_corpus",
+          "flag": "--docs_corpus",
+          "type": "",
+          "defaultValue": "",
+          "description": "The documentation corpus --build_docs_index reads, as written by scripts/generate_docs.py --corpus.",
+          "source": "server/docs/builder/docs_bootstrap.cpp",
+          "category": "server/docs/builder/docs_bootstrap.cpp",
+          "categoryLabel": "server/docs/builder/docs_bootstrap.cpp"
+        }
+      ]
     }
   ]
 }

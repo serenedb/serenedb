@@ -23,11 +23,17 @@
 #include <algorithm>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database.hpp>
+#include <duckdb/storage/object_cache.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
+#include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
+#include <mutex>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "catalog/cluster.h"
@@ -137,14 +143,46 @@ std::shared_ptr<const RoleGraph> BuildRoleGraph(
   return graph;
 }
 
+struct RoleCache final : duckdb::ObjectCacheEntry {
+  static std::string ObjectType() { return "sdb_role_cache"; }
+  std::string GetObjectType() final { return ObjectType(); }
+  duckdb::optional_idx GetEstimatedCacheMemory() const final { return {}; }
+
+  std::mutex mutex;
+  duckdb::idx_t version = 0;
+  std::shared_ptr<const RoleGraph> roles;
+  irs::containers::FlatHashMap<duckdb::idx_t,
+                               std::shared_ptr<const RoleClosure>>
+    closures;
+};
+
+duckdb::shared_ptr<RoleCache> RoleCacheOf(catalog::ClusterCatalog& cluster) {
+  return cluster.GetDatabase().GetObjectCache().GetOrCreate<RoleCache>(
+    RoleCache::ObjectType());
+}
+
+duckdb::idx_t CommittedVersion(catalog::ClusterCatalog& cluster) {
+  return duckdb::DuckTransactionManager::Get(cluster.GetAttached())
+    .GetLastCommittedCatalogVersion();
+}
+
 std::shared_ptr<const RoleGraph> CommittedRoles(
   catalog::ClusterCatalog& cluster) {
-  const auto generation = cluster.CatalogGeneration();
-  if (auto roles = cluster.CachedRoles(generation)) {
-    return roles;
+  auto cache = RoleCacheOf(cluster);
+  const auto version = CommittedVersion(cluster);
+  {
+    std::lock_guard guard{cache->mutex};
+    if (cache->roles && cache->version == version) {
+      return cache->roles;
+    }
   }
   auto roles = BuildRoleGraph(cluster, cluster.LoginTransaction());
-  cluster.CacheRoles(generation, roles);
+  std::lock_guard guard{cache->mutex};
+  if (!cache->roles || version > cache->version) {
+    cache->version = version;
+    cache->roles = roles;
+    cache->closures.clear();
+  }
   return roles;
 }
 
@@ -208,13 +246,23 @@ std::shared_ptr<const RoleClosure> ClosureFor(duckdb::ClientContext* context,
     return std::make_shared<const RoleClosure>(ComputeRoleClosure(
       *BuildRoleGraph(cluster, cluster.GetCatalogTransaction(*context)), role));
   }
-  const auto generation = cluster.CatalogGeneration();
-  if (auto closure = cluster.CachedClosure(generation, role)) {
-    return closure;
+  auto cache = RoleCacheOf(cluster);
+  const auto version = CommittedVersion(cluster);
+  {
+    std::lock_guard guard{cache->mutex};
+    if (cache->roles && cache->version == version) {
+      if (const auto it = cache->closures.find(role);
+          it != cache->closures.end()) {
+        return it->second;
+      }
+    }
   }
   auto closure = std::make_shared<const RoleClosure>(
     ComputeRoleClosure(*CommittedRoles(cluster), role));
-  cluster.CacheClosure(generation, role, closure);
+  std::lock_guard guard{cache->mutex};
+  if (cache->version == version) {
+    cache->closures.try_emplace(role, closure);
+  }
   return closure;
 }
 

@@ -523,6 +523,38 @@ duckdb::idx_t ColFilterChain::FilterMaskScores(
   return total;
 }
 
+duckdb::idx_t ColFilterChain::CountRange(uint64_t begin, uint64_t end) {
+  if (_cols.empty()) {
+    return end > begin ? end - begin : 0;
+  }
+  if (!_sel_data) {
+    _sel_data =
+      duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
+  }
+  const auto* const window_col = WindowColumn();
+  duckdb::idx_t total = 0;
+  uint64_t anchor = begin;
+  while (anchor < end) {
+    const auto dead_end = DeadUntil(anchor);
+    if (dead_end > anchor) {
+      anchor = dead_end;
+      continue;
+    }
+    uint64_t stop = std::min<uint64_t>(end, anchor + STANDARD_VECTOR_SIZE);
+    if (window_col != nullptr) {
+      stop = std::min<uint64_t>(stop, window_col->RowGroupEnd(anchor));
+    }
+    const auto span = static_cast<duckdb::idx_t>(stop - anchor);
+    _sel.Initialize(_sel_data);
+    for (duckdb::idx_t k = 0; k < span; ++k) {
+      _sel.set_index(k, k);
+    }
+    total += FilterWindow(anchor, span, _sel, span, nullptr);
+    anchor = stop;
+  }
+  return total;
+}
+
 duckdb::idx_t ColFilterChain::FilterDocsScores(
   const duckdb::TableFilter& filter, duckdb::TableFilterState& state,
   irs::doc_id_t* docs, irs::score_t* scores, duckdb::idx_t n) {

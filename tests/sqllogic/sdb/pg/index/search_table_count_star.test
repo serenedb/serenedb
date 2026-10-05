@@ -1,7 +1,8 @@
 # COUNT(*) over a whole search table is answered from the reader's live
-# document count at planning time. Every count is checked against count(i),
-# which still scans, after inserts, deletes, updates, inside a transaction and
-# with a filter that keeps the scan.
+# document count at planning time, and a filtered COUNT(*) runs the column
+# filters over contiguous row ranges. Every count is checked against a scanning
+# aggregate, after inserts, deletes, updates, inside a transaction, with
+# zonemap-dead ranges, string filters and two filters.
 
 statement ok
 CREATE TABLE scs (i BIGINT PRIMARY KEY, v VARCHAR)
@@ -30,6 +31,20 @@ SELECT count(*) AS n FROM scs;
 ----
 n
 3000
+
+query
+SELECT (SELECT count(*) FROM scs WHERE i > 2500) AS n,
+       (SELECT sum(CASE WHEN i > 2500 THEN 1 ELSE 0 END) FROM scs) AS n_scan;
+----
+n	n_scan
+500	500
+
+query
+SELECT (SELECT count(*) FROM scs WHERE v = 'v3') AS n,
+       (SELECT sum(CASE WHEN v = 'v3' THEN 1 ELSE 0 END) FROM scs) AS n_scan;
+----
+n	n_scan
+429	429
 
 statement count 300
 DELETE FROM scs WHERE i % 10 = 0;
@@ -72,6 +87,55 @@ SELECT count(*) AS n, min(i) AS min_i FROM scs;
 ----
 n	min_i
 2700	1
+
+query
+SELECT (SELECT count(*) FROM scs WHERE i > 2500) AS n,
+       (SELECT sum(CASE WHEN i > 2500 THEN 1 ELSE 0 END) FROM scs) AS n_scan;
+----
+n	n_scan
+450	450
+
+query
+SELECT (SELECT count(*) FROM scs WHERE i < 100 OR i > 2950) AS n,
+       (SELECT sum(CASE WHEN i < 100 OR i > 2950 THEN 1 ELSE 0 END) FROM scs) AS n_scan;
+----
+n	n_scan
+135	135
+
+query
+SELECT (SELECT count(*) FROM scs WHERE v = 'v3') AS n,
+       (SELECT sum(CASE WHEN v = 'v3' THEN 1 ELSE 0 END) FROM scs) AS n_scan;
+----
+n	n_scan
+371	371
+
+query
+SELECT (SELECT count(*) FROM scs WHERE v <> 'v3') AS n,
+       (SELECT sum(CASE WHEN v <> 'v3' THEN 1 ELSE 0 END) FROM scs) AS n_scan;
+----
+n	n_scan
+2329	2329
+
+query
+SELECT (SELECT count(*) FROM scs WHERE v = 'nothing') AS n,
+       (SELECT sum(CASE WHEN v = 'nothing' THEN 1 ELSE 0 END) FROM scs) AS n_scan;
+----
+n	n_scan
+0	0
+
+query
+SELECT (SELECT count(*) FROM scs WHERE i % 3 = 0 AND v <> 'v1') AS n,
+       (SELECT sum(CASE WHEN i % 3 = 0 AND v <> 'v1' THEN 1 ELSE 0 END) FROM scs) AS n_scan;
+----
+n	n_scan
+771	771
+
+query
+SELECT (SELECT count(*) FROM scs WHERE i BETWEEN 1000 AND 1999 AND v = 'updated') AS n,
+       (SELECT sum(CASE WHEN i BETWEEN 1000 AND 1999 AND v = 'updated' THEN 1 ELSE 0 END) FROM scs) AS n_scan;
+----
+n	n_scan
+34	34
 
 statement ok
 BEGIN;

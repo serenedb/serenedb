@@ -64,6 +64,8 @@ class ColFilterVerify : public irs::detail::TableFilter {
   uint64_t CountAndClear(irs::doc_id_t base, uint64_t* mask,
                          uint32_t words) final;
 
+  uint64_t CountRange(irs::doc_id_t min, irs::doc_id_t max) final;
+
   void Rewind() {
     if (_ctx) {
       _chain.Rewind(*_ctx);

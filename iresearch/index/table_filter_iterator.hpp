@@ -228,6 +228,8 @@ class ColFilterChain {
   duckdb::idx_t CountMask(irs::doc_id_t base, uint64_t* mask,
                           duckdb::idx_t words);
 
+  duckdb::idx_t CountRange(uint64_t begin, uint64_t end);
+
   // The computed-score filter over a window: clears the bits whose score fails
   // it. Unlike the run form it compacts nothing -- a window's scores are
   // indexed by offset, so the bit is the only thing that moves.

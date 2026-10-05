@@ -37,6 +37,8 @@ class AllDocs {
     return ++_doc;
   }
 
+  doc_id_t Last() const noexcept { return _last; }
+
   doc_id_t Seek(doc_id_t target) noexcept {
     if (target <= _doc) {
       return _doc;

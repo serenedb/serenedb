@@ -1,0 +1,5049 @@
+# CREATE OR REPLACE and triggers under MVCC, seen from more than one connection.
+#
+# A replacement writes a new version of the catalog entry on the replacing
+# transaction. Until it commits every other connection keeps binding the old
+# definition and reading the old rows; COMMIT hands the new version to the
+# next snapshot, a snapshot taken before the commit keeps the old version, and
+# ROLLBACK leaves the old version in place for everybody. A second writer of
+# the same entry is refused on the spot with a write-write conflict rather than
+# waiting on a lock the way PostgreSQL does.
+#
+# A trigger is an entry in its table's trigger set, so whether a DML statement
+# fires it, and which body runs, is decided by the snapshot of the transaction
+# running that statement. The rows a trigger writes belong to that transaction
+# and share its fate.
+#
+# The default isolation is REPEATABLE READ: the snapshot is taken by the first
+# statement after BEGIN that reads the database. A READ COMMITTED transaction's
+# first write pins its catalog view, so it keeps the definitions it wrote
+# against to the end.
+
+
+# ===========================================================================
+# VIEW
+# ===========================================================================
+
+statement ok
+CREATE TABLE cmr_vt(a INTEGER)
+
+
+statement ok
+INSERT INTO cmr_vt VALUES (1), (2), (3)
+
+
+statement ok
+CREATE VIEW cmr_v AS SELECT a FROM cmr_vt WHERE a = 1
+
+
+# --- an uncommitted replacement is private to its transaction ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE VIEW cmr_v AS SELECT a FROM cmr_vt WHERE a = 2
+
+
+connection s1
+query
+SELECT a FROM cmr_v
+----
+a
+2
+
+
+connection s2
+query
+SELECT a FROM cmr_v
+----
+a
+1
+
+
+connection s2
+query
+SELECT definition FROM pg_views WHERE viewname = 'cmr_v'
+----
+definition
+SELECT a FROM cmr_vt WHERE (a = 1);
+
+
+connection s3
+statement ok
+BEGIN
+
+
+connection s3
+query
+SELECT a FROM cmr_v
+----
+a
+1
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT a FROM cmr_v
+----
+a
+2
+
+
+# s3's snapshot predates the commit, so it keeps the old definition.
+connection s3
+query
+SELECT a FROM cmr_v
+----
+a
+1
+
+
+connection s3
+query
+SELECT definition FROM pg_views WHERE viewname = 'cmr_v'
+----
+definition
+SELECT a FROM cmr_vt WHERE (a = 1);
+
+
+connection s3
+statement ok
+COMMIT
+
+
+connection s3
+query
+SELECT a FROM cmr_v
+----
+a
+2
+
+
+# --- ROLLBACK leaves the old definition for everybody ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE VIEW cmr_v AS SELECT a FROM cmr_vt WHERE a = 3
+
+
+connection s1
+query
+SELECT a FROM cmr_v
+----
+a
+3
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s1
+query
+SELECT a FROM cmr_v
+----
+a
+2
+
+
+connection s2
+query
+SELECT definition FROM pg_views WHERE viewname = 'cmr_v'
+----
+definition
+SELECT a FROM cmr_vt WHERE (a = 2);
+
+
+# --- a pending replacement holds the view against every other writer ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE VIEW cmr_v AS SELECT a FROM cmr_vt WHERE a = 3
+
+
+connection s2
+statement error
+CREATE OR REPLACE VIEW cmr_v AS SELECT a FROM cmr_vt WHERE a > 0
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_v"
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement error
+CREATE OR REPLACE VIEW cmr_v AS SELECT a FROM cmr_vt WHERE a > 0
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_v"
+
+
+# Inside a transaction the refusal aborts it.
+connection s2
+statement error
+SELECT 1
+----
+db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+
+
+connection s2
+statement ok
+ROLLBACK
+
+
+# The view has two dependency edges; a refusal met on an edge names whichever
+# edge came first, so those records accept either one.
+connection s2
+statement error Catalog write-write conflict on alter with ""(Schema\\0public\\0public|Table\\0public\\0cmr_vt)\\0View\\0public\\0cmr_v""
+DROP VIEW cmr_v
+
+
+connection s2
+statement error
+ALTER VIEW cmr_v RENAME TO cmr_v_other
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_v"
+
+
+connection s2
+statement error
+COMMENT ON VIEW cmr_v IS 'late'
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_v"
+
+
+connection s2
+statement error Catalog write-write conflict on alter with ""View\\0public\\0cmr_v\\0(Schema\\0public\\0public|Table\\0public\\0cmr_vt)""
+CREATE VIEW cmr_v AS SELECT 0 AS a
+
+
+# IF NOT EXISTS finds the committed view and leaves it alone.
+connection s2
+statement ok
+CREATE VIEW IF NOT EXISTS cmr_v AS SELECT 0 AS a
+
+
+connection s2
+query
+SELECT a FROM cmr_v
+----
+a
+2
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT a FROM cmr_v
+----
+a
+3
+
+
+# --- the other order: the replacement loses against a pending DROP ---
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+DROP VIEW cmr_v
+
+
+connection s1
+statement error
+CREATE OR REPLACE VIEW cmr_v AS SELECT a FROM cmr_vt WHERE a = 1
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_v"
+
+
+connection s2
+statement ok
+ROLLBACK
+
+
+connection s1
+query
+SELECT a FROM cmr_v
+----
+a
+3
+
+
+# --- and against a pending RENAME, under either name ---
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+ALTER VIEW cmr_v RENAME TO cmr_v2
+
+
+connection s1
+statement error
+CREATE OR REPLACE VIEW cmr_v AS SELECT a FROM cmr_vt WHERE a = 1
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_v"
+
+
+connection s1
+statement error Catalog write-write conflict on create with ""(Schema\\0public\\0public|Table\\0public\\0cmr_vt)\\0View\\0public\\0cmr_v2""
+CREATE OR REPLACE VIEW cmr_v2 AS SELECT a FROM cmr_vt WHERE a = 1
+
+
+connection s2
+statement ok
+COMMIT
+
+
+connection s1
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'cmr\_v%' ORDER BY 1
+----
+relname
+cmr_v2
+cmr_vt
+
+
+connection s1
+statement ok
+CREATE OR REPLACE VIEW cmr_v2 AS SELECT a FROM cmr_vt WHERE a = 1
+
+
+connection s2
+query
+SELECT a FROM cmr_v2
+----
+a
+1
+
+
+# --- a snapshot starts at the first statement and lasts to the end ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE VIEW cmr_v2 AS SELECT a FROM cmr_vt WHERE a = 2
+
+
+connection s3
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+COMMIT
+
+
+# s3 ran nothing before the commit, so its snapshot already has it.
+connection s3
+query
+SELECT a FROM cmr_v2
+----
+a
+2
+
+
+connection s3
+statement ok
+COMMIT
+
+
+connection s3
+statement ok
+BEGIN ISOLATION LEVEL REPEATABLE READ
+
+
+connection s3
+query
+SELECT a FROM cmr_v2
+----
+a
+2
+
+
+connection s1
+statement ok
+CREATE OR REPLACE VIEW cmr_v2 AS SELECT a FROM cmr_vt WHERE a = 3
+
+
+connection s3
+query
+SELECT a FROM cmr_v2
+----
+a
+2
+
+
+connection s3
+statement ok
+COMMIT
+
+
+connection s3
+query
+SELECT a FROM cmr_v2
+----
+a
+3
+
+
+statement ok
+DROP VIEW cmr_v2
+
+
+statement ok
+DROP TABLE cmr_vt
+
+
+# --- the view's dependencies move at COMMIT ---
+
+statement ok
+CREATE TABLE cmr_vd1(a INTEGER)
+
+
+statement ok
+CREATE TABLE cmr_vd2(a INTEGER)
+
+
+statement ok
+CREATE TABLE cmr_vd3(a INTEGER)
+
+
+statement ok
+INSERT INTO cmr_vd1 VALUES (1)
+
+
+statement ok
+INSERT INTO cmr_vd2 VALUES (2)
+
+
+statement ok
+INSERT INTO cmr_vd3 VALUES (3)
+
+
+statement ok
+CREATE VIEW cmr_vd AS SELECT a FROM cmr_vd1
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE VIEW cmr_vd AS SELECT a FROM cmr_vd2
+
+
+# The committed view still reads the old table, so the old table stays pinned.
+connection s2
+statement error
+DROP TABLE cmr_vd1
+----
+db error: ERROR: Cannot drop entry "cmr_vd1" because there are entries that depend on it.
+view "cmr_vd" depends on table "cmr_vd1".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+statement ok
+DROP TABLE cmr_vd1
+
+
+connection s2
+query
+SELECT a FROM cmr_vd
+----
+a
+2
+
+
+# A new dependency dropped under a pending replacement makes its COMMIT fail,
+# and the committed view is untouched.
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE VIEW cmr_vd AS SELECT a FROM cmr_vd3
+
+
+connection s2
+statement ok
+DROP TABLE cmr_vd3
+
+
+connection s1
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "cmr_vd" has been deleted
+
+
+connection s1
+query
+SELECT a FROM cmr_vd
+----
+a
+2
+
+
+connection s2
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'cmr\_vd%' ORDER BY 1
+----
+relname
+cmr_vd
+cmr_vd2
+
+
+statement ok
+DROP VIEW cmr_vd
+
+
+statement ok
+DROP TABLE cmr_vd2
+
+
+# --- a view over a replaced view reads the version its reader sees ---
+
+statement ok
+CREATE VIEW cmr_vb AS SELECT 1 AS x
+
+
+statement ok
+CREATE VIEW cmr_vc AS SELECT x * 10 AS y FROM cmr_vb
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE VIEW cmr_vb AS SELECT 2 AS x
+
+
+connection s1
+query
+SELECT y FROM cmr_vc
+----
+y
+20
+
+
+connection s2
+query
+SELECT y FROM cmr_vc
+----
+y
+10
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT y FROM cmr_vc
+----
+y
+20
+
+
+statement ok
+DROP VIEW cmr_vc
+
+
+statement ok
+DROP VIEW cmr_vb
+
+
+# ===========================================================================
+# TABLE: CREATE OR REPLACE TABLE is duckdb's drop-and-create
+# ===========================================================================
+
+statement ok
+CREATE TABLE cmr_t(a INTEGER, b TEXT)
+
+
+statement ok
+INSERT INTO cmr_t VALUES (1, 'x'), (2, 'y')
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_t(c INTEGER)
+
+
+connection s1
+statement ok
+INSERT INTO cmr_t VALUES (10)
+
+
+connection s1
+query
+SELECT c FROM cmr_t
+----
+c
+10
+
+
+connection s2
+query
+SELECT a, b FROM cmr_t ORDER BY a
+----
+a	b
+1	x
+2	y
+
+
+connection s2
+query
+SELECT column_name FROM information_schema.columns
+WHERE table_name = 'cmr_t' ORDER BY ordinal_position
+----
+column_name
+a
+b
+
+
+connection s3
+statement ok
+BEGIN
+
+
+connection s3
+query
+SELECT count(*) AS n FROM cmr_t
+----
+n
+2
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT c FROM cmr_t
+----
+c
+10
+
+
+# The old snapshot still reads the old table and its rows.
+connection s3
+query
+SELECT a, b FROM cmr_t ORDER BY a
+----
+a	b
+1	x
+2	y
+
+
+# Reading the old table is fine; writing it is refused, the table is gone.
+connection s3
+statement error
+INSERT INTO cmr_t VALUES (3, 'z')
+----
+db error: ERROR: Transaction conflict: attempting to insert into table "cmr_t" but it has been dropped by a different transaction
+
+
+connection s3
+statement ok
+ROLLBACK
+
+
+connection s3
+query
+SELECT c FROM cmr_t
+----
+c
+10
+
+
+# --- ROLLBACK of a CTAS replacement keeps the old table and its rows ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_t AS SELECT 'zz' AS z
+
+
+connection s1
+query
+SELECT z FROM cmr_t
+----
+z
+zz
+
+
+connection s2
+query
+SELECT c FROM cmr_t
+----
+c
+10
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s1
+query
+SELECT c FROM cmr_t
+----
+c
+10
+
+
+connection s2
+query
+SELECT column_name FROM information_schema.columns
+WHERE table_name = 'cmr_t' ORDER BY ordinal_position
+----
+column_name
+c
+
+
+# --- writes into the old table while a replacement is pending ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_t(d INTEGER)
+
+
+# An autocommit write into the old table is refused at its own commit.
+connection s2
+statement error
+INSERT INTO cmr_t VALUES (11)
+----
+db error: ERROR: Failed to commit: Attempting to modify table cmr_t but another transaction has no changes this table
+
+
+connection s2
+query
+SELECT c FROM cmr_t
+----
+c
+10
+
+
+# Inside a transaction the write is accepted and the COMMIT is refused.
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+INSERT INTO cmr_t VALUES (12)
+
+
+connection s2
+query
+SELECT c FROM cmr_t ORDER BY c
+----
+c
+10
+12
+
+
+connection s2
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Attempting to modify table cmr_t but another transaction has no changes this table
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+# Neither refused write landed, and the old row is still there.
+connection s2
+query
+SELECT c FROM cmr_t ORDER BY c
+----
+c
+10
+
+
+# --- the replacement commits over a transaction that wrote the old table ---
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+INSERT INTO cmr_t VALUES (13)
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_t(e INTEGER)
+
+
+connection s2
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Transaction conflict: attempting to insert into table "cmr_t" but it has been dropped by a different transaction
+
+
+connection s2
+query
+SELECT count(*) AS n FROM cmr_t
+----
+n
+0
+
+
+statement ok
+INSERT INTO cmr_t VALUES (1), (2)
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+UPDATE cmr_t SET e = e * 10
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_t(f INTEGER)
+
+
+connection s2
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Attempting to modify table cmr_t but another transaction has dropped this table
+
+
+statement ok
+INSERT INTO cmr_t VALUES (1), (2)
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+DELETE FROM cmr_t WHERE f = 1
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_t(g INTEGER)
+
+
+connection s2
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Attempting to modify table cmr_t but another transaction has dropped this table
+
+
+connection s2
+query
+SELECT count(*) AS n FROM cmr_t
+----
+n
+0
+
+
+# --- a pending replacement holds the table against every other writer ---
+
+statement ok
+INSERT INTO cmr_t VALUES (1)
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_t(h INTEGER)
+
+
+connection s2
+statement error
+CREATE OR REPLACE TABLE cmr_t(i INTEGER)
+----
+db error: ERROR: Catalog write-write conflict on alter with ""Schema\0public\0public\0Table\0public\0cmr_t""
+
+
+connection s2
+statement error
+DROP TABLE cmr_t
+----
+db error: ERROR: Catalog write-write conflict on alter with ""Schema\0public\0public\0Table\0public\0cmr_t""
+
+
+connection s2
+statement error
+CREATE TABLE cmr_t(q INTEGER)
+----
+db error: ERROR: Catalog write-write conflict on alter with ""Table\0public\0cmr_t\0Schema\0public\0public""
+
+
+connection s2
+statement ok
+CREATE TABLE IF NOT EXISTS cmr_t(q INTEGER)
+
+
+connection s2
+statement error
+ALTER TABLE cmr_t ADD COLUMN z INTEGER
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_t"
+
+
+connection s2
+statement error
+ALTER TABLE cmr_t RENAME TO cmr_t_other
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_t"
+
+
+connection s2
+query
+SELECT g FROM cmr_t
+----
+g
+1
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+# Every refused writer left the old table exactly as it was.
+connection s2
+query
+SELECT g FROM cmr_t
+----
+g
+1
+
+
+connection s2
+query
+SELECT column_name FROM information_schema.columns
+WHERE table_name = 'cmr_t' ORDER BY ordinal_position
+----
+column_name
+g
+
+
+# --- the other order: the replacement loses against a pending DDL ---
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+DROP TABLE cmr_t
+
+
+connection s1
+statement error
+CREATE OR REPLACE TABLE cmr_t(h INTEGER)
+----
+db error: ERROR: Catalog write-write conflict on alter with ""Schema\0public\0public\0Table\0public\0cmr_t""
+
+
+connection s2
+statement ok
+ROLLBACK
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+ALTER TABLE cmr_t ADD COLUMN z INTEGER
+
+
+connection s1
+statement error
+CREATE OR REPLACE TABLE cmr_t(h INTEGER)
+----
+db error: ERROR: Catalog write-write conflict on alter with ""Schema\0public\0public\0Table\0public\0cmr_t""
+
+
+connection s2
+statement ok
+COMMIT
+
+
+connection s1
+query
+SELECT g, z FROM cmr_t
+----
+g	z
+1	NULL
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+CREATE OR REPLACE TABLE cmr_t(k INTEGER)
+
+
+connection s1
+statement error
+CREATE OR REPLACE TABLE cmr_t(h INTEGER)
+----
+db error: ERROR: Catalog write-write conflict on alter with ""Schema\0public\0public\0Table\0public\0cmr_t""
+
+
+connection s2
+statement ok
+ROLLBACK
+
+
+connection s1
+query
+SELECT g, z FROM cmr_t
+----
+g	z
+1	NULL
+
+
+# --- a READ COMMITTED transaction that wrote the old table keeps it ---
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_t(m TEXT)
+
+
+connection s1
+statement ok
+INSERT INTO cmr_t VALUES ('new')
+
+
+connection s3
+statement ok
+BEGIN ISOLATION LEVEL READ COMMITTED
+
+
+connection s3
+statement ok
+INSERT INTO cmr_t VALUES ('mine')
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_t(n INTEGER)
+
+
+# The write pinned s3's catalog view on the table it wrote.
+connection s3
+query
+SELECT m FROM cmr_t ORDER BY m
+----
+m
+mine
+new
+
+
+connection s3
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Transaction conflict: attempting to insert into table "cmr_t" but it has been dropped by a different transaction
+
+
+connection s3
+query
+SELECT count(*) AS n FROM cmr_t
+----
+n
+0
+
+
+statement ok
+DROP TABLE cmr_t
+
+
+# --- the old table's index stays for the others until COMMIT ---
+
+statement ok
+CREATE TABLE cmr_ti(a INTEGER)
+
+
+statement ok
+CREATE INDEX cmr_ti_i ON cmr_ti(a)
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_ti(b INTEGER)
+
+
+connection s1
+query
+SELECT count(*) AS n FROM duckdb_indexes() WHERE index_name LIKE 'cmr\_ti%'
+----
+n
+0
+
+
+connection s2
+query
+SELECT index_name FROM duckdb_indexes() WHERE index_name LIKE 'cmr\_ti%'
+----
+index_name
+cmr_ti_i
+
+
+# A new index on the old table is a dependency the pending drop cannot
+# commit over, so the replacement fails and the old table keeps both indexes.
+connection s2
+statement ok
+CREATE INDEX cmr_ti_j ON cmr_ti(a)
+
+
+connection s1
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit DROP of "cmr_ti" because a dependency was created after the transaction started
+
+
+connection s1
+query
+SELECT index_name FROM duckdb_indexes() WHERE index_name LIKE 'cmr\_ti%' ORDER BY 1
+----
+index_name
+cmr_ti_i
+cmr_ti_j
+
+
+connection s1
+query
+SELECT column_name FROM information_schema.columns WHERE table_name = 'cmr_ti'
+----
+column_name
+a
+
+
+statement ok
+DROP TABLE cmr_ti
+
+
+# --- a view created on the old table meanwhile makes the replacement fail ---
+
+statement ok
+CREATE TABLE cmr_tw(a INTEGER)
+
+
+statement ok
+INSERT INTO cmr_tw VALUES (1)
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_tw(b INTEGER)
+
+
+connection s2
+statement ok
+CREATE VIEW cmr_twv AS SELECT a FROM cmr_tw
+
+
+connection s1
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit DROP of "cmr_tw" because a dependency was created after the transaction started
+
+
+connection s2
+query
+SELECT a FROM cmr_twv
+----
+a
+1
+
+
+statement ok
+DROP VIEW cmr_twv
+
+
+statement ok
+DROP TABLE cmr_tw
+
+
+# --- a replacement built from the table it replaces ---
+
+statement ok
+CREATE TABLE cmr_tc(a INTEGER)
+
+
+statement ok
+INSERT INTO cmr_tc VALUES (1), (2)
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_tc AS SELECT a * 10 AS a FROM cmr_tc
+
+
+connection s1
+query
+SELECT a FROM cmr_tc ORDER BY a
+----
+a
+10
+20
+
+
+connection s2
+query
+SELECT a FROM cmr_tc ORDER BY a
+----
+a
+1
+2
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT a FROM cmr_tc ORDER BY a
+----
+a
+10
+20
+
+
+statement ok
+DROP TABLE cmr_tc
+
+
+# ===========================================================================
+# SEARCH TABLE: the same replacement over a search-backed table
+# ===========================================================================
+#
+# A search table's rows become readable once the table refreshes, so the
+# records below refresh before reading back what a committed writer wrote.
+
+statement ok
+CREATE TABLE cmr_s(a INTEGER, b TEXT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+
+
+statement ok
+INSERT INTO cmr_s VALUES (1, 'x'), (2, 'y')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cmr_s
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_s(c INTEGER, d TEXT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+
+
+connection s1
+statement ok
+INSERT INTO cmr_s VALUES (10, 'z')
+
+
+connection s2
+query
+SELECT a, b FROM cmr_s ORDER BY a
+----
+a	b
+1	x
+2	y
+
+
+connection s2
+query
+SELECT column_name FROM information_schema.columns
+WHERE table_name = 'cmr_s' ORDER BY ordinal_position
+----
+column_name
+a
+b
+
+
+connection s3
+statement ok
+BEGIN
+
+
+connection s3
+query
+SELECT count(*) AS n FROM cmr_s
+----
+n
+2
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+statement ok
+VACUUM (REFRESH_TABLE) cmr_s
+
+
+connection s2
+query
+SELECT c, d FROM cmr_s
+----
+c	d
+10	z
+
+
+# The old snapshot still reads the old shard.
+connection s3
+query
+SELECT a, b FROM cmr_s ORDER BY a
+----
+a	b
+1	x
+2	y
+
+
+connection s3
+statement ok
+COMMIT
+
+
+# --- ROLLBACK keeps the old search table, rows written meanwhile included ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_s(e INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+
+
+connection s1
+statement ok
+INSERT INTO cmr_s VALUES (100)
+
+
+connection s2
+statement ok
+INSERT INTO cmr_s VALUES (11, 'w')
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+statement ok
+VACUUM (REFRESH_TABLE) cmr_s
+
+
+connection s2
+query
+SELECT c, d FROM cmr_s ORDER BY c
+----
+c	d
+10	z
+11	w
+
+
+# --- a pending replacement holds the search table against other writers ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_s(e INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+
+
+connection s2
+statement error
+CREATE OR REPLACE TABLE cmr_s(f INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+----
+db error: ERROR: Catalog write-write conflict on create with ""Schema\0public\0public\0Sequence\0public\0cmr_s_pk_seq""
+
+
+# The search table depends on its schema and on its key sequence.
+connection s2
+statement error Catalog write-write conflict on alter with ""(Schema\\0public\\0public|Sequence\\0public\\0cmr_s_pk_seq1)\\0Table\\0public\\0cmr_s""
+DROP TABLE cmr_s
+
+
+connection s2
+statement error
+ALTER TABLE cmr_s RENAME TO cmr_s_other
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_s"
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT column_name FROM information_schema.columns
+WHERE table_name = 'cmr_s' ORDER BY ordinal_position
+----
+column_name
+e
+
+
+connection s2
+statement ok
+INSERT INTO cmr_s VALUES (7)
+
+
+connection s2
+statement ok
+VACUUM (REFRESH_TABLE) cmr_s
+
+
+connection s2
+query
+SELECT e FROM cmr_s
+----
+e
+7
+
+
+# --- replacing a search table with a plain one, and back ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_s(p INTEGER)
+
+
+connection s1
+statement ok
+INSERT INTO cmr_s VALUES (1)
+
+
+connection s1
+query
+SELECT p FROM cmr_s
+----
+p
+1
+
+
+connection s2
+query
+SELECT e FROM cmr_s
+----
+e
+7
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT p FROM cmr_s
+----
+p
+1
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_s(r INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+query
+SELECT p FROM cmr_s
+----
+p
+1
+
+
+statement ok
+DROP TABLE cmr_s
+
+
+# --- the other order, and writers of the old search table ---
+
+statement ok
+CREATE TABLE cmr_sr(a INTEGER, b TEXT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+
+
+statement ok
+INSERT INTO cmr_sr VALUES (1, 'x')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cmr_sr
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+DROP TABLE cmr_sr
+
+
+connection s1
+statement error Catalog write-write conflict on alter with ""(Schema\\0public\\0public|Sequence\\0public\\0cmr_sr_pk_seq)\\0Table\\0public\\0cmr_sr""
+CREATE OR REPLACE TABLE cmr_sr(c INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+
+
+connection s2
+statement ok
+ROLLBACK
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+ALTER TABLE cmr_sr RENAME TO cmr_sr_other
+
+
+connection s1
+statement error Catalog write-write conflict on alter with ""(Schema\\0public\\0public|Sequence\\0public\\0cmr_sr_pk_seq)\\0Table\\0public\\0cmr_sr""
+CREATE OR REPLACE TABLE cmr_sr(c INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+
+
+connection s2
+statement ok
+ROLLBACK
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_sr(c INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+
+
+connection s2
+statement error
+COMMENT ON TABLE cmr_sr IS 'late'
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_sr"
+
+
+# Writes into the old search table that commit ahead of the pending
+# replacement stay once the replacement rolls back.
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+INSERT INTO cmr_sr VALUES (2, 'y')
+
+
+connection s2
+statement ok
+COMMIT
+
+
+connection s2
+statement ok
+DELETE FROM cmr_sr WHERE a = 1
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+statement ok
+VACUUM (REFRESH_TABLE) cmr_sr
+
+
+connection s2
+query
+SELECT a, b FROM cmr_sr ORDER BY a
+----
+a	b
+2	y
+
+
+statement ok
+DROP TABLE cmr_sr
+
+
+# ===========================================================================
+# MACRO and FUNCTION
+# ===========================================================================
+
+statement ok
+CREATE MACRO cmr_m(x) AS x + 1
+
+
+statement ok
+CREATE FUNCTION cmr_f(x INTEGER) RETURNS INTEGER LANGUAGE SQL AS $$ SELECT x + 1 $$
+
+
+statement ok
+CREATE VIEW cmr_mv AS SELECT cmr_m(1) AS v
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE MACRO cmr_m(x) AS x + 100
+
+
+connection s1
+statement ok
+CREATE OR REPLACE FUNCTION cmr_f(x INTEGER) RETURNS INTEGER LANGUAGE SQL AS $$ SELECT x + 100 $$
+
+
+connection s1
+query
+SELECT cmr_m(1) AS m, cmr_f(1) AS f, (SELECT v FROM cmr_mv) AS via_view
+----
+m	f	via_view
+101	101	101
+
+
+connection s2
+query
+SELECT cmr_m(1) AS m, cmr_f(1) AS f, (SELECT v FROM cmr_mv) AS via_view
+----
+m	f	via_view
+2	2	2
+
+
+connection s2
+query
+SELECT function_name, macro_definition FROM duckdb_functions()
+WHERE function_name LIKE 'cmr\_%' ORDER BY 1
+----
+function_name	macro_definition
+cmr_f	(SELECT (x + 1) LIMIT 1)
+cmr_m	(x + 1)
+
+
+connection s3
+statement ok
+BEGIN
+
+
+connection s3
+query
+SELECT cmr_m(1) AS m
+----
+m
+2
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT cmr_m(1) AS m, cmr_f(1) AS f, (SELECT v FROM cmr_mv) AS via_view
+----
+m	f	via_view
+101	101	101
+
+
+connection s3
+query
+SELECT cmr_m(1) AS m, cmr_f(1) AS f, (SELECT v FROM cmr_mv) AS via_view
+----
+m	f	via_view
+2	2	2
+
+
+connection s3
+statement ok
+COMMIT
+
+
+# --- ROLLBACK ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE MACRO cmr_m(x) AS x + 7
+
+
+connection s1
+statement ok
+CREATE OR REPLACE FUNCTION cmr_f(x INTEGER) RETURNS INTEGER LANGUAGE SQL AS $$ SELECT x + 7 $$
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+query
+SELECT cmr_m(1) AS m, cmr_f(1) AS f
+----
+m	f
+101	101
+
+
+connection s1
+query
+SELECT proname, prosrc FROM pg_proc WHERE proname LIKE 'cmr\_%' ORDER BY 1
+----
+proname	prosrc
+cmr_f	(SELECT (x + 100) LIMIT 1)
+cmr_m	(x + 100)
+
+
+# --- conflicts ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE MACRO cmr_m(x) AS x + 7
+
+
+connection s2
+statement error
+CREATE OR REPLACE MACRO cmr_m(x) AS x + 8
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_m"
+
+
+# The committed view still depends on the committed macro.
+connection s2
+statement error
+DROP MACRO cmr_m
+----
+db error: ERROR: Cannot drop entry "cmr_m" because there are entries that depend on it.
+view "cmr_mv" depends on macro function "cmr_m".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection s2
+statement error Catalog write-write conflict on alter with ""[^"]*Macro Function\\0public\\0cmr_m[^"]*""
+DROP MACRO cmr_m CASCADE
+
+
+connection s2
+query
+SELECT v FROM cmr_mv
+----
+v
+101
+
+
+connection s2
+statement error
+COMMENT ON FUNCTION cmr_m IS 'late'
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_m"
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+DROP FUNCTION cmr_f
+
+
+connection s1
+statement error
+CREATE OR REPLACE FUNCTION cmr_f(x INTEGER) RETURNS INTEGER LANGUAGE SQL AS $$ SELECT x + 7 $$
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_f"
+
+
+connection s2
+statement ok
+ROLLBACK
+
+
+connection s1
+query
+SELECT cmr_m(1) AS m, cmr_f(1) AS f
+----
+m	f
+101	101
+
+
+# --- a new overload is an in-place change of the same entry ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE FUNCTION cmr_f(x INTEGER, y INTEGER) RETURNS INTEGER LANGUAGE SQL AS $$ SELECT x + y $$
+
+
+connection s1
+query
+SELECT cmr_f(1) AS one_arg, cmr_f(1, 2) AS two_args
+----
+one_arg	two_args
+101	3
+
+
+connection s2
+statement error Macro cmr_f\(\) does not support the supplied arguments
+SELECT cmr_f(1, 2)
+
+
+connection s2
+query
+SELECT pronargs FROM pg_proc WHERE proname = 'cmr_f' ORDER BY 1
+----
+pronargs
+1
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT cmr_f(1) AS one_arg, cmr_f(1, 2) AS two_args
+----
+one_arg	two_args
+101	3
+
+
+connection s2
+query
+SELECT pronargs FROM pg_proc WHERE proname = 'cmr_f' ORDER BY 1
+----
+pronargs
+1
+2
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE FUNCTION cmr_f(x INTEGER, y INTEGER, z INTEGER) RETURNS INTEGER LANGUAGE SQL AS $$ SELECT x + y + z $$
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+query
+SELECT pronargs FROM pg_proc WHERE proname = 'cmr_f' ORDER BY 1
+----
+pronargs
+1
+2
+
+
+statement ok
+DROP VIEW cmr_mv
+
+
+statement ok
+DROP MACRO cmr_m
+
+
+statement ok
+DROP FUNCTION cmr_f(INTEGER)
+
+
+statement ok
+DROP FUNCTION cmr_f(INTEGER, INTEGER)
+
+
+# --- a table macro, IF NOT EXISTS, and a view created meanwhile ---
+
+statement ok
+CREATE MACRO cmr_tm(n) AS TABLE SELECT range AS r FROM range(n)
+
+
+statement ok
+CREATE MACRO cmr_m2(x) AS x + 1
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE MACRO cmr_tm(n) AS TABLE SELECT range * 10 AS r FROM range(n)
+
+
+connection s1
+statement ok
+CREATE OR REPLACE MACRO cmr_m2(x) AS x + 100
+
+
+connection s2
+query
+SELECT sum(r) AS t FROM cmr_tm(3)
+----
+t
+3
+
+
+connection s2
+statement error
+CREATE OR REPLACE MACRO cmr_tm(n) AS TABLE SELECT 0 AS r
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_tm"
+
+
+# IF NOT EXISTS finds the committed macro and leaves it alone.
+connection s2
+statement ok
+CREATE MACRO IF NOT EXISTS cmr_m2(x) AS x + 5
+
+
+# A view reaches the macro by name, so it follows whichever version is current.
+connection s2
+statement ok
+CREATE VIEW cmr_m2v AS SELECT cmr_m2(1) AS v
+
+
+connection s2
+query
+SELECT cmr_m2(1) AS m, (SELECT v FROM cmr_m2v) AS via_view
+----
+m	via_view
+2	2
+
+
+connection s1
+query
+SELECT (SELECT sum(r) FROM cmr_tm(3)) AS t, cmr_m2(1) AS m
+----
+t	m
+30	101
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT (SELECT sum(r) FROM cmr_tm(3)) AS t, cmr_m2(1) AS m, (SELECT v FROM cmr_m2v) AS via_view
+----
+t	m	via_view
+30	101	101
+
+
+statement ok
+DROP VIEW cmr_m2v
+
+
+statement ok
+DROP MACRO cmr_m2
+
+
+statement ok
+DROP MACRO TABLE cmr_tm
+
+
+# ===========================================================================
+# SEQUENCE
+# ===========================================================================
+
+statement ok
+CREATE SEQUENCE cmr_sq START 1
+
+
+query
+SELECT nextval('cmr_sq') AS v
+----
+v
+1
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE SEQUENCE cmr_sq START 100
+
+
+connection s1
+query
+SELECT nextval('cmr_sq') AS v
+----
+v
+100
+
+
+# The other session keeps drawing from the committed sequence.
+connection s2
+query
+SELECT nextval('cmr_sq') AS v
+----
+v
+2
+
+
+connection s2
+query
+SELECT start_value FROM duckdb_sequences() WHERE sequence_name = 'cmr_sq'
+----
+start_value
+1
+
+
+connection s3
+statement ok
+BEGIN
+
+
+connection s3
+query
+SELECT start_value FROM duckdb_sequences() WHERE sequence_name = 'cmr_sq'
+----
+start_value
+1
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT nextval('cmr_sq') AS v
+----
+v
+101
+
+
+connection s3
+query
+SELECT start_value FROM duckdb_sequences() WHERE sequence_name = 'cmr_sq'
+----
+start_value
+1
+
+
+connection s3
+statement ok
+COMMIT
+
+
+connection s3
+query
+SELECT start_value FROM duckdb_sequences() WHERE sequence_name = 'cmr_sq'
+----
+start_value
+100
+
+
+# --- ROLLBACK: the committed sequence goes on from where it was ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE SEQUENCE cmr_sq START 500
+
+
+connection s1
+query
+SELECT nextval('cmr_sq') AS v
+----
+v
+500
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+query
+SELECT nextval('cmr_sq') AS v
+----
+v
+102
+
+
+# --- conflicts ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE SEQUENCE cmr_sq START 500
+
+
+connection s2
+statement error
+CREATE OR REPLACE SEQUENCE cmr_sq START 600
+----
+db error: ERROR: Catalog write-write conflict on alter with ""Schema\0public\0public\0Sequence\0public\0cmr_sq""
+
+
+connection s2
+statement error
+DROP SEQUENCE cmr_sq
+----
+db error: ERROR: Catalog write-write conflict on alter with ""Schema\0public\0public\0Sequence\0public\0cmr_sq""
+
+
+connection s2
+statement error
+ALTER SEQUENCE cmr_sq RENAME TO cmr_sq_other
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_sq"
+
+
+connection s2
+statement ok
+CREATE SEQUENCE IF NOT EXISTS cmr_sq START 900
+
+
+connection s2
+query
+SELECT nextval('cmr_sq') AS v
+----
+v
+103
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+DROP SEQUENCE cmr_sq
+
+
+connection s1
+statement error
+CREATE OR REPLACE SEQUENCE cmr_sq START 700
+----
+db error: ERROR: Catalog write-write conflict on alter with ""Schema\0public\0public\0Sequence\0public\0cmr_sq""
+
+
+connection s2
+statement ok
+ROLLBACK
+
+
+# --- nextval does not hold the sequence against a replacement ---
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+query
+SELECT nextval('cmr_sq') AS v
+----
+v
+104
+
+
+connection s1
+statement ok
+CREATE OR REPLACE SEQUENCE cmr_sq START 700
+
+
+connection s2
+statement ok
+COMMIT
+
+
+connection s1
+query
+SELECT nextval('cmr_sq') AS v
+----
+v
+700
+
+
+statement ok
+DROP SEQUENCE cmr_sq
+
+
+# --- COMMENT, a pending RENAME, and a default created meanwhile ---
+
+statement ok
+CREATE SEQUENCE cmr_sq2
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE SEQUENCE cmr_sq2 START 50
+
+
+connection s2
+statement error
+COMMENT ON SEQUENCE cmr_sq2 IS 'late'
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_sq2"
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+ALTER SEQUENCE cmr_sq2 RENAME TO cmr_sq3
+
+
+connection s1
+statement error
+CREATE OR REPLACE SEQUENCE cmr_sq2 START 50
+----
+db error: ERROR: Catalog write-write conflict on alter with ""Schema\0public\0public\0Sequence\0public\0cmr_sq2""
+
+
+connection s1
+statement error
+CREATE OR REPLACE SEQUENCE cmr_sq3 START 50
+----
+db error: ERROR: Catalog write-write conflict on create with ""Schema\0public\0public\0Sequence\0public\0cmr_sq3""
+
+
+connection s2
+statement ok
+ROLLBACK
+
+
+# A table whose default draws from the old sequence, created while the
+# replacement is pending, is a dependency the replacement cannot commit over.
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE SEQUENCE cmr_sq2 START 100
+
+
+connection s2
+statement ok
+CREATE TABLE cmr_sqt(id BIGINT DEFAULT nextval('cmr_sq2'))
+
+
+connection s1
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit DROP of "cmr_sq2" because a dependency was created after the transaction started
+
+
+statement ok
+INSERT INTO cmr_sqt DEFAULT VALUES
+
+
+query
+SELECT id FROM cmr_sqt
+----
+id
+1
+
+
+statement ok
+DROP TABLE cmr_sqt
+
+
+statement ok
+DROP SEQUENCE cmr_sq2
+
+
+# ===========================================================================
+# TYPE
+# ===========================================================================
+
+statement ok
+CREATE TYPE cmr_ty AS ENUM ('a', 'b')
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TYPE cmr_ty AS ENUM ('x', 'y', 'z')
+
+
+connection s1
+query
+SELECT enum_range(NULL::cmr_ty) AS r
+----
+r
+{x,y,z}
+
+
+connection s2
+query
+SELECT enum_range(NULL::cmr_ty) AS r
+----
+r
+{a,b}
+
+
+connection s2
+query
+SELECT e.enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
+WHERE t.typname = 'cmr_ty' ORDER BY e.enumsortorder
+----
+enumlabel
+a
+b
+
+
+connection s3
+statement ok
+BEGIN
+
+
+connection s3
+query
+SELECT 'a'::cmr_ty AS v
+----
+v
+a
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT enum_range(NULL::cmr_ty) AS r
+----
+r
+{x,y,z}
+
+
+connection s3
+query
+SELECT enum_range(NULL::cmr_ty) AS r
+----
+r
+{a,b}
+
+
+connection s3
+statement ok
+COMMIT
+
+
+# --- ROLLBACK of a replacement that changes the kind of type ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TYPE cmr_ty AS STRUCT(i INTEGER)
+
+
+connection s1
+query
+SELECT logical_type FROM duckdb_types() WHERE type_name = 'cmr_ty'
+----
+logical_type
+STRUCT
+
+
+connection s2
+query
+SELECT logical_type FROM duckdb_types() WHERE type_name = 'cmr_ty'
+----
+logical_type
+ENUM
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+query
+SELECT enum_range(NULL::cmr_ty) AS r
+----
+r
+{x,y,z}
+
+
+# --- conflicts ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TYPE cmr_ty AS ENUM ('p')
+
+
+connection s2
+statement error
+CREATE OR REPLACE TYPE cmr_ty AS ENUM ('q')
+----
+db error: ERROR: Catalog write-write conflict on alter with ""Schema\0public\0public\0Type\0public\0cmr_ty""
+
+
+connection s2
+statement error
+DROP TYPE cmr_ty
+----
+db error: ERROR: Catalog write-write conflict on alter with ""Schema\0public\0public\0Type\0public\0cmr_ty""
+
+
+connection s2
+statement error
+CREATE TYPE cmr_ty AS ENUM ('q')
+----
+db error: ERROR: Catalog write-write conflict on alter with ""Type\0public\0cmr_ty\0Schema\0public\0public""
+
+
+connection s2
+statement ok
+CREATE TYPE IF NOT EXISTS cmr_ty AS ENUM ('q')
+
+
+connection s2
+query
+SELECT enum_range(NULL::cmr_ty) AS r
+----
+r
+{x,y,z}
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+DROP TYPE cmr_ty
+
+
+connection s1
+statement error
+CREATE OR REPLACE TYPE cmr_ty AS ENUM ('p')
+----
+db error: ERROR: Catalog write-write conflict on alter with ""Schema\0public\0public\0Type\0public\0cmr_ty""
+
+
+connection s2
+statement ok
+ROLLBACK
+
+
+connection s1
+query
+SELECT enum_range(NULL::cmr_ty) AS r
+----
+r
+{x,y,z}
+
+
+statement ok
+DROP TYPE cmr_ty
+
+
+# --- COMMENT, and tables created on either side of a pending replacement ---
+
+statement ok
+CREATE TYPE cmr_ty2 AS ENUM ('a', 'b')
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TYPE cmr_ty2 AS ENUM ('x', 'y')
+
+
+connection s2
+statement error
+COMMENT ON TYPE cmr_ty2 IS 'late'
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_ty2"
+
+
+# A table on the old type, created meanwhile, makes the replacement fail.
+connection s2
+statement ok
+CREATE TABLE cmr_tyt(e cmr_ty2)
+
+
+connection s2
+statement ok
+INSERT INTO cmr_tyt VALUES ('a')
+
+
+connection s1
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit DROP of "cmr_ty2" because a dependency was created after the transaction started
+
+
+connection s2
+query
+SELECT e, enum_range(NULL::cmr_ty2) AS r FROM cmr_tyt
+----
+e	r
+a	{a,b}
+
+
+statement ok
+DROP TABLE cmr_tyt
+
+
+# The other order: a pending table on the type cannot commit once another
+# session has replaced the type underneath it.
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE TABLE cmr_tyt(e cmr_ty2)
+
+
+connection s2
+statement ok
+CREATE OR REPLACE TYPE cmr_ty2 AS ENUM ('q')
+
+
+connection s1
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "cmr_ty2" was dropped and re-created by another transaction
+
+
+query
+SELECT (SELECT count(*) FROM pg_class WHERE relname = 'cmr_tyt') AS tables, enum_range(NULL::cmr_ty2) AS r
+----
+tables	r
+0	{q}
+
+
+statement ok
+DROP TYPE cmr_ty2
+
+
+# ===========================================================================
+# OR REPLACE of a name nobody holds yet is a plain create
+# ===========================================================================
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE VIEW cmr_nv AS SELECT 1 AS x
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_nt(a INTEGER)
+
+
+connection s1
+statement ok
+CREATE OR REPLACE MACRO cmr_nm() AS 1
+
+
+connection s1
+statement ok
+CREATE OR REPLACE SEQUENCE cmr_nsq
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TYPE cmr_nty AS ENUM ('a')
+
+
+connection s2
+query
+SELECT count(*) AS n FROM pg_class WHERE relname LIKE 'cmr\_n%'
+----
+n
+0
+
+
+connection s2
+query
+SELECT (SELECT count(*) FROM duckdb_functions() WHERE function_name = 'cmr_nm') AS macros,
+       (SELECT count(*) FROM duckdb_types() WHERE type_name = 'cmr_nty') AS types
+----
+macros	types
+0	0
+
+
+# The pending name is held: neither a create, IF NOT EXISTS, nor OR REPLACE
+# from another transaction can take it.
+connection s2
+statement error
+CREATE VIEW IF NOT EXISTS cmr_nv AS SELECT 2 AS x
+----
+db error: ERROR: Catalog write-write conflict on create with ""Schema\0public\0public\0View\0public\0cmr_nv""
+
+
+connection s2
+statement error
+CREATE OR REPLACE VIEW cmr_nv AS SELECT 2 AS x
+----
+db error: ERROR: Catalog write-write conflict on create with ""Schema\0public\0public\0View\0public\0cmr_nv""
+
+
+connection s2
+statement error
+CREATE TABLE IF NOT EXISTS cmr_nt(b INTEGER)
+----
+db error: ERROR: Catalog write-write conflict on create with ""Schema\0public\0public\0Table\0public\0cmr_nt""
+
+
+connection s2
+statement error
+CREATE OR REPLACE TABLE cmr_nt(b INTEGER)
+----
+db error: ERROR: Catalog write-write conflict on create with ""Schema\0public\0public\0Table\0public\0cmr_nt""
+
+
+connection s2
+statement error
+CREATE MACRO IF NOT EXISTS cmr_nm() AS 2
+----
+db error: ERROR: Catalog write-write conflict on create with ""Schema\0public\0public\0Macro Function\0public\0cmr_nm""
+
+
+connection s2
+statement error
+CREATE OR REPLACE MACRO cmr_nm() AS 2
+----
+db error: ERROR: Catalog write-write conflict on create with ""Schema\0public\0public\0Macro Function\0public\0cmr_nm""
+
+
+connection s2
+statement error
+CREATE SEQUENCE IF NOT EXISTS cmr_nsq
+----
+db error: ERROR: Catalog write-write conflict on create with ""Schema\0public\0public\0Sequence\0public\0cmr_nsq""
+
+
+connection s2
+statement error
+CREATE OR REPLACE SEQUENCE cmr_nsq
+----
+db error: ERROR: Catalog write-write conflict on create with ""Schema\0public\0public\0Sequence\0public\0cmr_nsq""
+
+
+connection s2
+statement error
+CREATE TYPE IF NOT EXISTS cmr_nty AS ENUM ('b')
+----
+db error: ERROR: Catalog write-write conflict on create with ""Schema\0public\0public\0Type\0public\0cmr_nty""
+
+
+connection s2
+statement error
+CREATE OR REPLACE TYPE cmr_nty AS ENUM ('b')
+----
+db error: ERROR: Catalog write-write conflict on create with ""Schema\0public\0public\0Type\0public\0cmr_nty""
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+# The rolled-back names are free again.
+connection s2
+query
+SELECT count(*) AS n FROM pg_class WHERE relname LIKE 'cmr\_n%'
+----
+n
+0
+
+
+connection s2
+statement ok
+CREATE VIEW cmr_nv AS SELECT 2 AS x
+
+
+connection s2
+statement ok
+CREATE TABLE cmr_nt(b INTEGER)
+
+
+# After the other transaction commits, IF NOT EXISTS finds the committed
+# object and leaves it as it is.
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE MACRO cmr_nm() AS 1
+
+
+connection s1
+statement ok
+CREATE OR REPLACE SEQUENCE cmr_nsq START 10
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+statement ok
+CREATE MACRO IF NOT EXISTS cmr_nm() AS 2
+
+
+connection s2
+statement ok
+CREATE SEQUENCE IF NOT EXISTS cmr_nsq START 20
+
+
+connection s2
+statement ok
+CREATE VIEW IF NOT EXISTS cmr_nv AS SELECT 3 AS x
+
+
+connection s2
+query
+SELECT cmr_nm() AS m, nextval('cmr_nsq') AS s, (SELECT x FROM cmr_nv) AS v
+----
+m	s	v
+1	10	2
+
+
+statement ok
+DROP VIEW cmr_nv
+
+
+statement ok
+DROP TABLE cmr_nt
+
+
+statement ok
+DROP MACRO cmr_nm
+
+
+statement ok
+DROP SEQUENCE cmr_nsq
+
+
+# ===========================================================================
+# Several steps on one entry inside one transaction
+# ===========================================================================
+
+statement ok
+CREATE TABLE cmr_mt(a INTEGER)
+
+
+statement ok
+INSERT INTO cmr_mt VALUES (1)
+
+
+statement ok
+CREATE VIEW cmr_mw AS SELECT 1 AS x
+
+
+# Two replacements in a row: the other session sees the original, then the last.
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE VIEW cmr_mw AS SELECT 2 AS x
+
+
+connection s1
+statement ok
+CREATE OR REPLACE VIEW cmr_mw AS SELECT 3 AS x
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_mt(b INTEGER)
+
+
+connection s1
+statement ok
+INSERT INTO cmr_mt VALUES (2)
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_mt(c INTEGER)
+
+
+connection s1
+statement ok
+INSERT INTO cmr_mt VALUES (3)
+
+
+connection s2
+query
+SELECT (SELECT x FROM cmr_mw) AS v, (SELECT a FROM cmr_mt) AS t
+----
+v	t
+1	1
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT (SELECT x FROM cmr_mw) AS v, (SELECT c FROM cmr_mt) AS t
+----
+v	t
+3	3
+
+
+# Replace then drop, rolled back: nothing changed for anybody.
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE VIEW cmr_mw AS SELECT 4 AS x
+
+
+connection s1
+statement ok
+DROP VIEW cmr_mw
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_mt(d INTEGER)
+
+
+connection s1
+statement ok
+DROP TABLE cmr_mt
+
+
+connection s2
+query
+SELECT (SELECT x FROM cmr_mw) AS v, (SELECT c FROM cmr_mt) AS t
+----
+v	t
+3	3
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+query
+SELECT (SELECT x FROM cmr_mw) AS v, (SELECT c FROM cmr_mt) AS t
+----
+v	t
+3	3
+
+
+# Drop then OR REPLACE under the same name, committed: swapped whole.
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+DROP VIEW cmr_mw
+
+
+connection s1
+statement ok
+CREATE OR REPLACE VIEW cmr_mw AS SELECT 5 AS x
+
+
+connection s1
+statement ok
+DROP TABLE cmr_mt
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_mt(e INTEGER)
+
+
+connection s2
+query
+SELECT (SELECT x FROM cmr_mw) AS v, (SELECT c FROM cmr_mt) AS t
+----
+v	t
+3	3
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT (SELECT x FROM cmr_mw) AS v, (SELECT count(*) FROM cmr_mt) AS t
+----
+v	t
+5	0
+
+
+# A refused replacement aborts only its own transaction.
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement error
+CREATE OR REPLACE VIEW cmr_mw AS SELECT 'text' AS x
+----
+db error: ERROR: cannot change data type of view column "x" from INTEGER to VARCHAR
+
+
+connection s1
+statement error
+CREATE OR REPLACE VIEW cmr_mw AS SELECT 6 AS x
+----
+db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+
+
+connection s2
+statement ok
+CREATE OR REPLACE VIEW cmr_mw AS SELECT 6 AS x, 7 AS y
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s1
+query
+SELECT x, y FROM cmr_mw
+----
+x	y
+6	7
+
+
+statement ok
+DROP VIEW cmr_mw
+
+
+statement ok
+DROP TABLE cmr_mt
+
+
+# ===========================================================================
+# A replacement from a snapshot older than a committed one is refused
+# ===========================================================================
+#
+# The late writer's snapshot never saw the version it would overwrite, so the
+# first committer wins and the late one gets a write-write conflict.
+
+statement ok
+CREATE VIEW cmr_ov AS SELECT 1 AS x
+
+
+statement ok
+CREATE TABLE cmr_ot(a INTEGER)
+
+
+statement ok
+CREATE MACRO cmr_om() AS 1
+
+
+statement ok
+CREATE SEQUENCE cmr_osq
+
+
+statement ok
+CREATE TYPE cmr_oty AS ENUM ('a')
+
+
+statement ok
+CREATE TABLE cmr_ott(a INTEGER)
+
+
+statement ok
+CREATE TABLE cmr_ota(a INTEGER)
+
+
+statement ok
+CREATE TRIGGER cmr_otr AFTER INSERT ON cmr_ott FOR EACH ROW
+  INSERT INTO cmr_ota VALUES (NEW.a)
+
+
+connection s3
+statement ok
+BEGIN
+
+
+connection s3
+query
+SELECT x FROM cmr_ov
+----
+x
+1
+
+
+connection s1
+statement ok
+CREATE OR REPLACE VIEW cmr_ov AS SELECT 2 AS x
+
+
+connection s3
+statement error
+CREATE OR REPLACE VIEW cmr_ov AS SELECT 3 AS x
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_ov"
+
+
+connection s3
+statement ok
+ROLLBACK
+
+
+connection s3
+statement ok
+BEGIN
+
+
+connection s3
+query
+SELECT count(*) AS n FROM cmr_ot
+----
+n
+0
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_ot(b INTEGER)
+
+
+connection s3
+statement error
+CREATE OR REPLACE TABLE cmr_ot(c INTEGER)
+----
+db error: ERROR: Catalog write-write conflict on alter with ""Schema\0public\0public\0Table\0public\0cmr_ot""
+
+
+connection s3
+statement ok
+ROLLBACK
+
+
+connection s3
+statement ok
+BEGIN
+
+
+connection s3
+query
+SELECT cmr_om() AS m
+----
+m
+1
+
+
+connection s1
+statement ok
+CREATE OR REPLACE MACRO cmr_om() AS 2
+
+
+connection s3
+statement error
+CREATE OR REPLACE MACRO cmr_om() AS 3
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_om"
+
+
+connection s3
+statement ok
+ROLLBACK
+
+
+connection s3
+statement ok
+BEGIN
+
+
+connection s3
+query
+SELECT start_value FROM duckdb_sequences() WHERE sequence_name = 'cmr_osq'
+----
+start_value
+1
+
+
+connection s1
+statement ok
+CREATE OR REPLACE SEQUENCE cmr_osq START 5
+
+
+connection s3
+statement error
+CREATE OR REPLACE SEQUENCE cmr_osq START 8
+----
+db error: ERROR: Catalog write-write conflict on alter with ""Schema\0public\0public\0Sequence\0public\0cmr_osq""
+
+
+connection s3
+statement ok
+ROLLBACK
+
+
+connection s3
+statement ok
+BEGIN
+
+
+connection s3
+query
+SELECT enum_range(NULL::cmr_oty) AS r
+----
+r
+{a}
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TYPE cmr_oty AS ENUM ('b')
+
+
+connection s3
+statement error
+CREATE OR REPLACE TYPE cmr_oty AS ENUM ('c')
+----
+db error: ERROR: Catalog write-write conflict on alter with ""Schema\0public\0public\0Type\0public\0cmr_oty""
+
+
+connection s3
+statement ok
+ROLLBACK
+
+
+connection s3
+statement ok
+BEGIN
+
+
+connection s3
+query
+SELECT count(*) AS n FROM cmr_ota
+----
+n
+0
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TRIGGER cmr_otr AFTER INSERT ON cmr_ott FOR EACH ROW
+  INSERT INTO cmr_ota VALUES (NEW.a * 2)
+
+
+connection s3
+statement error
+CREATE OR REPLACE TRIGGER cmr_otr AFTER INSERT ON cmr_ott FOR EACH ROW
+  INSERT INTO cmr_ota VALUES (NEW.a * 3)
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_otr"
+
+
+connection s3
+statement ok
+ROLLBACK
+
+
+# A DROP from the old snapshot is refused the same way.
+connection s3
+statement ok
+BEGIN
+
+
+connection s3
+query
+SELECT x FROM cmr_ov
+----
+x
+2
+
+
+connection s1
+statement ok
+CREATE OR REPLACE VIEW cmr_ov AS SELECT 4 AS x
+
+
+connection s3
+statement error
+DROP VIEW cmr_ov
+----
+db error: ERROR: Catalog write-write conflict on alter with ""Schema\0public\0public\0View\0public\0cmr_ov""
+
+
+connection s3
+statement ok
+ROLLBACK
+
+
+# So is OR REPLACE, or IF NOT EXISTS, of a name another session created
+# after the snapshot was taken.
+connection s3
+statement ok
+BEGIN
+
+
+connection s3
+query
+SELECT x FROM cmr_ov
+----
+x
+4
+
+
+connection s1
+statement ok
+CREATE VIEW cmr_onv AS SELECT 1 AS x
+
+
+connection s3
+statement error
+CREATE OR REPLACE VIEW cmr_onv AS SELECT 2 AS x
+----
+db error: ERROR: Catalog write-write conflict on create with ""Schema\0public\0public\0View\0public\0cmr_onv""
+
+
+connection s3
+statement ok
+ROLLBACK
+
+
+connection s3
+statement ok
+BEGIN
+
+
+connection s3
+query
+SELECT x FROM cmr_ov
+----
+x
+4
+
+
+connection s1
+statement ok
+CREATE VIEW cmr_onv2 AS SELECT 1 AS x
+
+
+connection s3
+statement error
+CREATE VIEW IF NOT EXISTS cmr_onv2 AS SELECT 2 AS x
+----
+db error: ERROR: Catalog write-write conflict on create with ""Schema\0public\0public\0View\0public\0cmr_onv2""
+
+
+connection s3
+statement ok
+ROLLBACK
+
+
+# Only the first committer's versions are left.
+statement ok
+INSERT INTO cmr_ott VALUES (1)
+
+
+query
+SELECT (SELECT x FROM cmr_ov) AS v, cmr_om() AS m, enum_range(NULL::cmr_oty) AS ty,
+       (SELECT start_value FROM duckdb_sequences() WHERE sequence_name = 'cmr_osq') AS sq,
+       (SELECT a FROM cmr_ota) AS fired, (SELECT x FROM cmr_onv) AS nv, (SELECT x FROM cmr_onv2) AS nv2
+----
+v	m	ty	sq	fired	nv	nv2
+4	2	{b}	5	2	1	1
+
+
+query
+SELECT column_name FROM information_schema.columns WHERE table_name = 'cmr_ot'
+----
+column_name
+b
+
+
+statement ok
+DROP VIEW cmr_ov
+
+
+statement ok
+DROP VIEW cmr_onv
+
+
+statement ok
+DROP VIEW cmr_onv2
+
+
+statement ok
+DROP TABLE cmr_ot
+
+
+statement ok
+DROP MACRO cmr_om
+
+
+statement ok
+DROP SEQUENCE cmr_osq
+
+
+statement ok
+DROP TYPE cmr_oty
+
+
+statement ok
+DROP TABLE cmr_ott
+
+
+statement ok
+DROP TABLE cmr_ota
+
+
+# ===========================================================================
+# TRIGGER
+# ===========================================================================
+
+statement ok
+CREATE TABLE cmr_tt(a INTEGER)
+
+
+statement ok
+CREATE TABLE cmr_ta(tag TEXT, a INTEGER)
+
+
+# --- an uncommitted trigger does not fire for the other session ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
+  INSERT INTO cmr_ta VALUES ('v1', NEW.a)
+
+
+connection s1
+statement ok
+INSERT INTO cmr_tt VALUES (100)
+
+
+connection s1
+query
+SELECT tag, a FROM cmr_ta
+----
+tag	a
+v1	100
+
+
+connection s2
+query
+SELECT count(*) AS n FROM pg_trigger WHERE tgname LIKE 'cmr\_%'
+----
+n
+0
+
+
+connection s2
+statement ok
+INSERT INTO cmr_tt VALUES (1)
+
+
+# Neither s2's insert fired it nor is s1's trigger write visible yet.
+connection s2
+query
+SELECT count(*) AS n FROM cmr_ta
+----
+n
+0
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+v1	100
+
+
+connection s2
+statement ok
+INSERT INTO cmr_tt VALUES (2)
+
+
+connection s2
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+v1	2
+v1	100
+
+
+connection s2
+query
+SELECT a FROM cmr_tt ORDER BY a
+----
+a
+1
+2
+100
+
+
+# --- a trigger's writes share the fate of the transaction that fired it ---
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+INSERT INTO cmr_tt VALUES (3)
+
+
+connection s2
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+v1	2
+v1	3
+v1	100
+
+
+connection s1
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+v1	2
+v1	100
+
+
+connection s2
+statement ok
+ROLLBACK
+
+
+connection s1
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+v1	2
+v1	100
+
+
+connection s1
+query
+SELECT a FROM cmr_tt ORDER BY a
+----
+a
+1
+2
+100
+
+
+# A trigger created and fired in a transaction that rolls back leaves nothing:
+# no trigger, no audit rows, and the rows it deleted are back.
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE TRIGGER cmr_trd AFTER DELETE ON cmr_tt FOR EACH ROW
+  INSERT INTO cmr_ta VALUES ('del', OLD.a)
+
+
+connection s1
+statement ok
+DELETE FROM cmr_tt WHERE a < 100
+
+
+connection s1
+query
+SELECT tag, a FROM cmr_ta WHERE tag = 'del' ORDER BY a
+----
+tag	a
+del	1
+del	2
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+query
+SELECT tgname FROM pg_trigger WHERE tgname LIKE 'cmr\_%' ORDER BY 1
+----
+tgname
+cmr_tr
+
+
+connection s2
+query
+SELECT count(*) AS n FROM cmr_ta WHERE tag = 'del'
+----
+n
+0
+
+
+connection s2
+query
+SELECT a FROM cmr_tt ORDER BY a
+----
+a
+1
+2
+100
+
+
+statement ok
+DELETE FROM cmr_ta
+
+
+# --- OR REPLACE TRIGGER: the other session fires the old body until COMMIT ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
+  INSERT INTO cmr_ta VALUES ('v2', NEW.a)
+
+
+connection s1
+query
+SELECT sql FROM duckdb_triggers() WHERE trigger_name = 'cmr_tr'
+----
+sql
+CREATE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW INSERT INTO cmr_ta (VALUES ('v2', "new".a));
+
+
+connection s2
+query
+SELECT sql FROM duckdb_triggers() WHERE trigger_name = 'cmr_tr'
+----
+sql
+CREATE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW INSERT INTO cmr_ta (VALUES ('v1', "new".a));
+
+
+connection s2
+statement ok
+INSERT INTO cmr_tt VALUES (4)
+
+
+connection s2
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+v1	4
+
+
+connection s1
+statement ok
+INSERT INTO cmr_tt VALUES (5)
+
+
+connection s1
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+v2	5
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+statement ok
+INSERT INTO cmr_tt VALUES (6)
+
+
+connection s2
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+v1	4
+v1	6
+
+
+statement ok
+DELETE FROM cmr_ta
+
+
+# Committed, the new body fires for the next statements; a snapshot older than
+# the commit still fires the old one.
+connection s3
+statement ok
+BEGIN
+
+
+connection s3
+query
+SELECT count(*) AS n FROM cmr_ta
+----
+n
+0
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
+  INSERT INTO cmr_ta VALUES ('v2', NEW.a)
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+statement ok
+INSERT INTO cmr_tt VALUES (7)
+
+
+connection s2
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+v2	7
+
+
+connection s3
+statement ok
+INSERT INTO cmr_tt VALUES (8)
+
+
+connection s3
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+v1	8
+
+
+connection s3
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+v2	7
+v1	8
+
+
+statement ok
+DELETE FROM cmr_ta
+
+
+# --- DROP TRIGGER: it keeps firing for the other session until COMMIT ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+DROP TRIGGER cmr_tr ON cmr_tt
+
+
+connection s1
+statement ok
+INSERT INTO cmr_tt VALUES (9)
+
+
+connection s2
+statement ok
+INSERT INTO cmr_tt VALUES (10)
+
+
+connection s2
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+v2	10
+
+
+connection s1
+query
+SELECT count(*) AS n FROM cmr_ta
+----
+n
+0
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+statement ok
+INSERT INTO cmr_tt VALUES (11)
+
+
+connection s2
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+v2	10
+v2	11
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+DROP TRIGGER cmr_tr ON cmr_tt
+
+
+connection s2
+statement ok
+INSERT INTO cmr_tt VALUES (12)
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+statement ok
+INSERT INTO cmr_tt VALUES (13)
+
+
+connection s2
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+v2	10
+v2	11
+v2	12
+
+
+connection s2
+query
+SELECT count(*) AS n FROM pg_trigger WHERE tgname LIKE 'cmr\_%'
+----
+n
+0
+
+
+statement ok
+DELETE FROM cmr_ta
+
+
+statement ok
+CREATE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
+  INSERT INTO cmr_ta VALUES ('v1', NEW.a)
+
+
+# --- a pending replacement holds the trigger against every other writer ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
+  INSERT INTO cmr_ta VALUES ('v2', NEW.a)
+
+
+connection s2
+statement error
+CREATE OR REPLACE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
+  INSERT INTO cmr_ta VALUES ('v3', NEW.a)
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_tr"
+
+
+connection s2
+statement error
+DROP TRIGGER cmr_tr ON cmr_tt
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_tr"
+
+
+connection s2
+statement error
+DROP TRIGGER IF EXISTS cmr_tr ON cmr_tt
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_tr"
+
+
+connection s2
+statement error
+CREATE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
+  INSERT INTO cmr_ta VALUES ('v3', NEW.a)
+----
+db error: ERROR: Catalog write-write conflict on create with "cmr_tr"
+
+
+# IF NOT EXISTS finds the committed trigger and leaves it alone.
+connection s2
+statement ok
+CREATE TRIGGER IF NOT EXISTS cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
+  INSERT INTO cmr_ta VALUES ('v3', NEW.a)
+
+
+# A trigger of another name on the same table is a different entry.
+connection s2
+statement ok
+CREATE TRIGGER cmr_tr2 AFTER DELETE ON cmr_tt FOR EACH ROW
+  INSERT INTO cmr_ta VALUES ('del2', OLD.a)
+
+
+connection s2
+statement ok
+INSERT INTO cmr_tt VALUES (14)
+
+
+connection s2
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+v1	14
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+query
+SELECT sql FROM duckdb_triggers() WHERE trigger_name = 'cmr_tr'
+----
+sql
+CREATE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW INSERT INTO cmr_ta (VALUES ('v1', "new".a));
+
+
+statement ok
+DELETE FROM cmr_ta
+
+
+# --- the other order: the replacement loses against a pending DROP TRIGGER ---
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+DROP TRIGGER cmr_tr ON cmr_tt
+
+
+connection s1
+statement error
+CREATE OR REPLACE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
+  INSERT INTO cmr_ta VALUES ('v2', NEW.a)
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_tr"
+
+
+connection s1
+statement ok
+CREATE TRIGGER IF NOT EXISTS cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
+  INSERT INTO cmr_ta VALUES ('v2', NEW.a)
+
+
+connection s2
+statement ok
+ROLLBACK
+
+
+connection s1
+query
+SELECT sql FROM duckdb_triggers() WHERE trigger_name = 'cmr_tr'
+----
+sql
+CREATE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW INSERT INTO cmr_ta (VALUES ('v1', "new".a));
+
+
+# --- two new triggers from two sessions: a name is held, other names are not ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE TRIGGER cmr_tr3 AFTER INSERT ON cmr_tt FOR EACH ROW
+  INSERT INTO cmr_ta VALUES ('ins3', NEW.a)
+
+
+connection s2
+statement error
+CREATE TRIGGER IF NOT EXISTS cmr_tr3 AFTER INSERT ON cmr_tt FOR EACH ROW
+  INSERT INTO cmr_ta VALUES ('ins3b', NEW.a)
+----
+db error: ERROR: Catalog write-write conflict on create with "cmr_tr3"
+
+
+connection s2
+statement error
+CREATE OR REPLACE TRIGGER cmr_tr3 AFTER INSERT ON cmr_tt FOR EACH ROW
+  INSERT INTO cmr_ta VALUES ('ins3b', NEW.a)
+----
+db error: ERROR: Catalog write-write conflict on create with "cmr_tr3"
+
+
+# s2 does not see the pending trigger, so there is nothing for it to drop.
+connection s2
+statement ok
+DROP TRIGGER IF EXISTS cmr_tr3 ON cmr_tt
+
+
+connection s2
+statement error
+DROP TRIGGER cmr_tr3 ON cmr_tt
+----
+db error: ERROR: Trigger with name "cmr_tr3" does not exist on table "cmr_tt"
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+CREATE TRIGGER cmr_tr4 AFTER INSERT ON cmr_tt FOR EACH ROW
+  INSERT INTO cmr_ta VALUES ('ins4', NEW.a)
+
+
+connection s1
+query
+SELECT tgname FROM pg_trigger WHERE tgname LIKE 'cmr\_%' ORDER BY 1
+----
+tgname
+cmr_tr
+cmr_tr2
+cmr_tr3
+
+
+connection s2
+query
+SELECT tgname FROM pg_trigger WHERE tgname LIKE 'cmr\_%' ORDER BY 1
+----
+tgname
+cmr_tr
+cmr_tr2
+cmr_tr4
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+statement ok
+COMMIT
+
+
+statement count 2
+INSERT INTO cmr_tt VALUES (15), (16)
+
+
+statement count 1
+DELETE FROM cmr_tt WHERE a = 15
+
+
+query
+SELECT tag, a FROM cmr_ta ORDER BY tag, a
+----
+tag	a
+del2	15
+ins3	15
+ins3	16
+ins4	15
+ins4	16
+v1	15
+v1	16
+
+
+statement ok
+DROP TRIGGER cmr_tr2 ON cmr_tt
+
+
+statement ok
+DROP TRIGGER cmr_tr3 ON cmr_tt
+
+
+statement ok
+DROP TRIGGER cmr_tr4 ON cmr_tt
+
+
+statement ok
+DELETE FROM cmr_ta
+
+
+# --- a READ COMMITTED transaction that has written keeps the body it fired ---
+
+connection s1
+statement ok
+CREATE OR REPLACE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
+  INSERT INTO cmr_ta VALUES ('v3', NEW.a)
+
+
+connection s3
+statement ok
+BEGIN ISOLATION LEVEL READ COMMITTED
+
+
+connection s3
+statement ok
+INSERT INTO cmr_tt VALUES (17)
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
+  INSERT INTO cmr_ta VALUES ('v4', NEW.a)
+
+
+# The first write pinned the catalog view, so the new body is not seen.
+connection s3
+statement ok
+INSERT INTO cmr_tt VALUES (18)
+
+
+connection s3
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+v3	17
+v3	18
+
+
+connection s3
+statement ok
+COMMIT
+
+
+connection s2
+statement ok
+INSERT INTO cmr_tt VALUES (19)
+
+
+connection s2
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+v3	17
+v3	18
+v4	19
+
+
+statement ok
+DELETE FROM cmr_ta
+
+
+# --- a snapshot older than a committed DROP TRIGGER still fires it ---
+
+connection s3
+statement ok
+BEGIN
+
+
+connection s3
+query
+SELECT count(*) AS n FROM cmr_ta
+----
+n
+0
+
+
+connection s1
+statement ok
+DROP TRIGGER cmr_tr ON cmr_tt
+
+
+connection s3
+statement ok
+INSERT INTO cmr_tt VALUES (30)
+
+
+connection s3
+query
+SELECT tag, a FROM cmr_ta
+----
+tag	a
+v4	30
+
+
+connection s3
+statement ok
+COMMIT
+
+
+connection s2
+statement ok
+INSERT INTO cmr_tt VALUES (31)
+
+
+connection s2
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+v4	30
+
+
+statement ok
+DELETE FROM cmr_ta
+
+
+# --- a trigger created after a writer took its snapshot does not fire for it ---
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+INSERT INTO cmr_tt VALUES (32)
+
+
+connection s1
+statement ok
+CREATE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
+  INSERT INTO cmr_ta VALUES ('v4', NEW.a)
+
+
+connection s2
+statement ok
+INSERT INTO cmr_tt VALUES (33)
+
+
+connection s2
+query
+SELECT count(*) AS n FROM cmr_ta
+----
+n
+0
+
+
+connection s2
+statement ok
+COMMIT
+
+
+connection s2
+statement ok
+INSERT INTO cmr_tt VALUES (34)
+
+
+connection s2
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+v4	34
+
+
+statement ok
+DELETE FROM cmr_ta
+
+
+# --- a trigger created while another session reshapes its table ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE TRIGGER cmr_tr5 AFTER DELETE ON cmr_tt FOR EACH ROW
+  INSERT INTO cmr_ta VALUES ('del5', OLD.a)
+
+
+connection s2
+statement ok
+ALTER TABLE cmr_tt ADD COLUMN b INTEGER
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+statement count 1
+DELETE FROM cmr_tt WHERE a = 100
+
+
+connection s2
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+del5	100
+
+
+statement ok
+DROP TRIGGER cmr_tr5 ON cmr_tt
+
+
+statement ok
+DELETE FROM cmr_ta
+
+
+# --- OR REPLACE TABLE takes the table's triggers with it only at COMMIT ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_tt(a INTEGER, c INTEGER)
+
+
+connection s1
+query
+SELECT count(*) AS n FROM pg_trigger WHERE tgname LIKE 'cmr\_%'
+----
+n
+0
+
+
+connection s1
+statement ok
+INSERT INTO cmr_tt VALUES (20, 20)
+
+
+connection s1
+query
+SELECT count(*) AS n FROM cmr_ta
+----
+n
+0
+
+
+connection s2
+query
+SELECT tgname FROM pg_trigger WHERE tgname LIKE 'cmr\_%' ORDER BY 1
+----
+tgname
+cmr_tr
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+statement ok
+INSERT INTO cmr_tt VALUES (21, 21)
+
+
+connection s2
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+v4	21
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_tt(a INTEGER, c INTEGER)
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT count(*) AS n FROM pg_trigger WHERE tgname LIKE 'cmr\_%'
+----
+n
+0
+
+
+connection s2
+statement ok
+INSERT INTO cmr_tt VALUES (22, 22)
+
+
+connection s2
+query
+SELECT tag, a FROM cmr_ta ORDER BY a
+----
+tag	a
+v4	21
+
+
+statement ok
+DROP TABLE cmr_tt
+
+
+statement ok
+DELETE FROM cmr_ta
+
+
+# --- a trigger whose target table another session is replacing ---
+
+statement ok
+CREATE TABLE cmr_gt(a INTEGER)
+
+
+statement ok
+CREATE TABLE cmr_ga(a INTEGER)
+
+
+statement ok
+CREATE TRIGGER cmr_gtr AFTER INSERT ON cmr_gt FOR EACH ROW
+  INSERT INTO cmr_ga VALUES (NEW.a)
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_ga(a INTEGER)
+
+
+# The trigger writes into the old table, so the firing statement is refused as
+# a whole, its own row included.
+connection s2
+statement error
+INSERT INTO cmr_gt VALUES (1)
+----
+db error: ERROR: Failed to commit: Attempting to modify table cmr_ga but another transaction has no changes this table
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+INSERT INTO cmr_gt VALUES (2)
+
+
+connection s2
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Attempting to modify table cmr_ga but another transaction has no changes this table
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+query
+SELECT (SELECT count(*) FROM cmr_gt) AS base, (SELECT count(*) FROM cmr_ga) AS fired
+----
+base	fired
+0	0
+
+
+connection s2
+statement ok
+BEGIN
+
+
+connection s2
+statement ok
+INSERT INTO cmr_gt VALUES (3)
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE cmr_ga(a INTEGER)
+
+
+connection s2
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Transaction conflict: attempting to insert into table "cmr_ga" but it has been dropped by a different transaction
+
+
+query
+SELECT (SELECT count(*) FROM cmr_gt) AS base, (SELECT count(*) FROM cmr_ga) AS fired
+----
+base	fired
+0	0
+
+
+statement ok
+INSERT INTO cmr_gt VALUES (4)
+
+
+query
+SELECT a FROM cmr_ga
+----
+a
+4
+
+
+# --- OR REPLACE TRIGGER that moves the trigger to another event ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TRIGGER cmr_gtr AFTER DELETE ON cmr_gt FOR EACH ROW
+  INSERT INTO cmr_ga VALUES (-OLD.a)
+
+
+connection s2
+statement ok
+INSERT INTO cmr_gt VALUES (5)
+
+
+connection s2
+statement ok
+DELETE FROM cmr_gt WHERE a = 5
+
+
+connection s2
+query
+SELECT a FROM cmr_ga ORDER BY a
+----
+a
+4
+5
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+statement ok
+INSERT INTO cmr_gt VALUES (6)
+
+
+connection s2
+statement ok
+DELETE FROM cmr_gt WHERE a = 6
+
+
+connection s2
+query
+SELECT a FROM cmr_ga ORDER BY a
+----
+a
+-6
+4
+5
+
+
+# --- a pending trigger follows its table through another session's RENAME ---
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE TRIGGER cmr_gtr2 AFTER INSERT ON cmr_gt FOR EACH ROW
+  INSERT INTO cmr_ga VALUES (NEW.a * 100)
+
+
+connection s2
+statement ok
+ALTER TABLE cmr_gt RENAME TO cmr_gt2
+
+
+connection s1
+statement ok
+COMMIT
+
+
+query
+SELECT t.tgname, c.relname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+WHERE t.tgname LIKE 'cmr\_gtr%' ORDER BY 1
+----
+tgname	relname
+cmr_gtr	cmr_gt2
+cmr_gtr2	cmr_gt2
+
+
+statement ok
+INSERT INTO cmr_gt2 VALUES (7)
+
+
+query
+SELECT a FROM cmr_ga ORDER BY a
+----
+a
+-6
+4
+5
+700
+
+
+statement ok
+DROP TABLE cmr_gt2
+
+
+statement ok
+DROP TABLE cmr_ga
+
+
+# --- BEFORE and AFTER statement triggers on UPDATE follow the same rules ---
+
+statement ok
+CREATE TABLE cmr_ut(a INTEGER)
+
+
+statement ok
+CREATE TABLE cmr_ua(tag TEXT)
+
+
+statement ok
+INSERT INTO cmr_ut VALUES (1)
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE TRIGGER cmr_utb BEFORE UPDATE ON cmr_ut FOR EACH STATEMENT
+  INSERT INTO cmr_ua VALUES ('before')
+
+
+connection s1
+statement ok
+CREATE TRIGGER cmr_uta AFTER UPDATE ON cmr_ut FOR EACH STATEMENT
+  INSERT INTO cmr_ua VALUES ('after')
+
+
+connection s2
+statement count 1
+UPDATE cmr_ut SET a = a + 1
+
+
+connection s2
+query
+SELECT count(*) AS n FROM cmr_ua
+----
+n
+0
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+statement count 1
+UPDATE cmr_ut SET a = a + 1
+
+
+connection s2
+query
+SELECT tag FROM cmr_ua ORDER BY tag
+----
+tag
+after
+before
+
+
+# With one trigger replaced and the other dropped, both pending, the other
+# session still fires both committed ones.
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TRIGGER cmr_uta AFTER UPDATE ON cmr_ut FOR EACH STATEMENT
+  INSERT INTO cmr_ua VALUES ('after2')
+
+
+connection s1
+statement ok
+DROP TRIGGER cmr_utb ON cmr_ut
+
+
+connection s2
+statement ok
+DELETE FROM cmr_ua
+
+
+connection s2
+statement count 1
+UPDATE cmr_ut SET a = a + 1
+
+
+connection s2
+query
+SELECT tag FROM cmr_ua ORDER BY tag
+----
+tag
+after
+before
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+statement ok
+DELETE FROM cmr_ua
+
+
+connection s2
+statement count 1
+UPDATE cmr_ut SET a = a + 1
+
+
+connection s2
+query
+SELECT (SELECT string_agg(tag, ',') FROM cmr_ua) AS tags, (SELECT a FROM cmr_ut) AS a
+----
+tags	a
+after2	5
+
+
+statement ok
+DROP TABLE cmr_ut
+
+
+statement ok
+DROP TABLE cmr_ua
+
+
+# --- triggers on a search table follow the same rules ---
+
+statement ok
+CREATE TABLE cmr_st(a INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE TRIGGER cmr_str AFTER INSERT ON cmr_st FOR EACH STATEMENT
+  INSERT INTO cmr_ta VALUES ('search', 0)
+
+
+connection s2
+statement ok
+INSERT INTO cmr_st VALUES (1)
+
+
+connection s2
+query
+SELECT count(*) AS n FROM cmr_ta
+----
+n
+0
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+statement ok
+INSERT INTO cmr_st VALUES (2)
+
+
+connection s2
+query
+SELECT tag, a FROM cmr_ta
+----
+tag	a
+search	0
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+DROP TRIGGER cmr_str ON cmr_st
+
+
+connection s2
+statement ok
+INSERT INTO cmr_st VALUES (3)
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+query
+SELECT count(*) AS n FROM cmr_ta WHERE tag = 'search'
+----
+n
+2
+
+
+connection s2
+statement ok
+VACUUM (REFRESH_TABLE) cmr_st
+
+
+connection s2
+query
+SELECT a FROM cmr_st ORDER BY a
+----
+a
+1
+2
+3
+
+
+statement ok
+DROP TABLE cmr_st
+
+
+statement ok
+DROP TABLE cmr_ta
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname LIKE 'cmr\_%'
+----
+n
+0

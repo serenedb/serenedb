@@ -356,4 +356,8 @@ std::optional<TSQueryMerge> TryGetMergeModifier(
   const duckdb::LogicalType& type);
 std::optional<uint32_t> TryGetMinMatchModifier(const duckdb::LogicalType& type);
 
+bool HasGroupModifier(const duckdb::LogicalType& type);
+
+const duckdb::Expression& PeelGroupModifiers(const duckdb::Expression& expr);
+
 }  // namespace sdb::connector

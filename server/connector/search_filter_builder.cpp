@@ -364,9 +364,7 @@ const duckdb::Expression& UnwrapBoostBoolCoercion(
     return expr;
   }
   const auto& child = duckdb::BoundCastExpression::Child(cast);
-  if (!TryGetBoostModifier(child.GetReturnType()) &&
-      !TryGetScoreModifier(child.GetReturnType()) &&
-      !TryGetMergeModifier(child.GetReturnType()) &&
+  if (!HasGroupModifier(child.GetReturnType()) &&
       !TryGetMinMatchModifier(child.GetReturnType())) {
     return expr;
   }
@@ -385,6 +383,21 @@ irs::bytes_view NullMarkerTerm() noexcept {
 }
 
 }  // namespace
+
+bool HasGroupModifier(const duckdb::LogicalType& type) {
+  return TryGetBoostModifier(type) || TryGetScoreModifier(type) ||
+         TryGetMergeModifier(type);
+}
+
+const duckdb::Expression& PeelGroupModifiers(const duckdb::Expression& expr) {
+  const auto* cur = &UnwrapBoostBoolCoercion(expr);
+  while (duckdb::BoundCastExpression::IsCast(*cur) &&
+         HasGroupModifier(cur->GetReturnType())) {
+    cur = &UnwrapBoostBoolCoercion(duckdb::BoundCastExpression::Child(
+      cur->Cast<duckdb::BoundFunctionExpression>()));
+  }
+  return *cur;
+}
 
 void AddNullMarkerTerm(BoolTarget parent, irs::field_id null_field_id) {
   AddTerm(parent, null_field_id, NullMarkerTerm(), irs::kNoBoost,
@@ -571,21 +584,6 @@ void CheckMinMatchGroup(const duckdb::BoundFunctionExpression& cast,
 constexpr std::string_view kMinMatchUnclaimedHint =
   "min_match counts the branches of an OR the inverted index answers; every "
   "branch has to be an index predicate.";
-
-bool HasGroupModifier(const duckdb::LogicalType& type) {
-  return TryGetBoostModifier(type) || TryGetScoreModifier(type) ||
-         TryGetMergeModifier(type);
-}
-
-const duckdb::Expression& PeelGroupModifiers(const duckdb::Expression& expr) {
-  const auto* cur = &UnwrapBoostBoolCoercion(expr);
-  while (duckdb::BoundCastExpression::IsCast(*cur) &&
-         HasGroupModifier(cur->GetReturnType())) {
-    cur = &UnwrapBoostBoolCoercion(duckdb::BoundCastExpression::Child(
-      cur->Cast<duckdb::BoundFunctionExpression>()));
-  }
-  return *cur;
-}
 
 struct StrictMinMatchGroup {
   const duckdb::BoundFunctionExpression* cast = nullptr;
@@ -1823,8 +1821,7 @@ bool TryDispatchSqlMinMatchCast(BoolTarget filter, const FilterContext& ctx,
 }
 
 bool HasQueryModifier(const duckdb::LogicalType& type) {
-  return TryGetBoostModifier(type) || TryGetSlopModifier(type) ||
-         TryGetScoreModifier(type) || TryGetMergeModifier(type) ||
+  return HasGroupModifier(type) || TryGetSlopModifier(type) ||
          TryGetMinMatchModifier(type);
 }
 

@@ -157,27 +157,17 @@ TSQueryRowView ComposeParts(const TSQueryRowView& inner,
                           "predicates the inverted index answers."));
 }
 
-bool HasGroupModifier(const duckdb::LogicalType& type) {
-  return TryGetBoostModifier(type) || TryGetScoreModifier(type) ||
-         TryGetMergeModifier(type);
-}
-
 const duckdb::Expression* SqlMinMatchOperand(const duckdb::Expression& expr) {
   if (!duckdb::BoundCastExpression::IsCast(expr) ||
       !TryGetMinMatchModifier(expr.GetReturnType())) {
     return nullptr;
   }
-  const auto* cur = &duckdb::BoundCastExpression::Child(
-    expr.Cast<duckdb::BoundFunctionExpression>());
-  while (duckdb::BoundCastExpression::IsCast(*cur) &&
-         HasGroupModifier(cur->GetReturnType())) {
-    cur = &duckdb::BoundCastExpression::Child(
-      cur->Cast<duckdb::BoundFunctionExpression>());
-  }
-  if (cur->GetReturnType().id() != duckdb::LogicalTypeId::BOOLEAN) {
+  const auto& operand = PeelGroupModifiers(duckdb::BoundCastExpression::Child(
+    expr.Cast<duckdb::BoundFunctionExpression>()));
+  if (operand.GetReturnType().id() != duckdb::LogicalTypeId::BOOLEAN) {
     return nullptr;
   }
-  return cur;
+  return &operand;
 }
 
 TSQueryCastData* MinMatchCastData(duckdb::BoundFunctionExpression& cast) {

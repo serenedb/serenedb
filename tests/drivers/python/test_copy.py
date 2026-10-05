@@ -359,3 +359,129 @@ def test_copy_from_stdin_parquet_does_not_crash(conn: psycopg.Connection,
                 assert cur.fetchone() == (1,)
     finally:
         _drop(conn, table_name)
+
+
+_ROWS = 300_000
+_STORAGES = ["", "WITH (storage = 'search')"]
+
+
+def _text_rows(count: int, first: int = 0) -> bytes:
+    return b"".join(
+        b"%d\tname\\t%d\n" % (i, i) for i in range(first, first + count))
+
+
+def _copy_in_pieces(cur, table: str, payload: bytes, options: str = "") -> None:
+    with cur.copy(f'COPY public."{table}" FROM STDIN (FORMAT TEXT{options})'
+                  ) as cp:
+        for start in range(0, len(payload), 64 * 1024):
+            cp.write(payload[start:start + 64 * 1024])
+
+
+def _count(cur, table: str, storage: str, where: str = "") -> int:
+    if storage:
+        cur.execute(f'VACUUM (REFRESH_TABLE) public."{table}"')
+    cur.execute(f'SELECT count(*) FROM public."{table}" {where}')
+    return cur.fetchone()[0]
+
+
+@pytest.mark.parametrize("storage", _STORAGES, ids=["duckdb", "search"])
+def test_large_text_copy_keeps_every_row(conn: psycopg.Connection,
+                                         table_name: str,
+                                         storage: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)'
+                    f" {storage}")
+        try:
+            _copy_in_pieces(cur, table_name, _text_rows(_ROWS))
+            assert _count(cur, table_name, storage) == _ROWS
+            cur.execute(f'SELECT sum(x), count(DISTINCT x) FROM '
+                        f'public."{table_name}"')
+            assert cur.fetchone() == (_ROWS * (_ROWS - 1) // 2, _ROWS)
+            assert _count(cur, table_name, storage,
+                          "WHERE label = 'name' || chr(9) || x::VARCHAR"
+                          ) == _ROWS
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
+def test_large_text_copy_header_and_last_row_without_newline(
+        conn: psycopg.Connection, table_name: str) -> None:
+    payload = b"x\tlabel\n" + _text_rows(_ROWS) + b"%d\tlast" % _ROWS
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)')
+        try:
+            _copy_in_pieces(cur, table_name, payload, ", HEADER")
+            assert _count(cur, table_name, "") == _ROWS + 1
+            cur.execute(f'SELECT label FROM public."{table_name}" '
+                        f"WHERE x = {_ROWS}")
+            assert cur.fetchone()[0] == "last"
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
+@pytest.mark.parametrize("storage", _STORAGES, ids=["duckdb", "search"])
+def test_large_text_copy_bad_row_inserts_nothing(conn: psycopg.Connection,
+                                                 table_name: str,
+                                                 storage: str) -> None:
+    payload = (_text_rows(200_000) + b"oops\n" +
+               _text_rows(_ROWS - 200_000, 200_000))
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)'
+                    f" {storage}")
+        try:
+            with pytest.raises(psycopg.Error):
+                _copy_in_pieces(cur, table_name, payload)
+            assert _count(cur, table_name, storage) == 0
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
+def _binary_rows(cur, count: int) -> bytes:
+    with cur.copy(f"COPY (SELECT i::INT AS x, 'name' || i::VARCHAR AS label "
+                  f"FROM range({count}) t(i)) TO STDOUT (FORMAT BINARY)") as cp:
+        return b"".join(bytes(part) for part in cp)
+
+
+def _binary_copy_in_pieces(cur, table: str, payload: bytes) -> None:
+    with cur.copy(f'COPY public."{table}" FROM STDIN (FORMAT BINARY)') as cp:
+        for start in range(0, len(payload), 64 * 1024):
+            cp.write(payload[start:start + 64 * 1024])
+
+
+@pytest.mark.parametrize("storage", _STORAGES, ids=["duckdb", "search"])
+def test_large_binary_copy_keeps_every_row(conn: psycopg.Connection,
+                                           table_name: str,
+                                           storage: str) -> None:
+    with conn.cursor() as cur:
+        payload = _binary_rows(cur, _ROWS)
+        cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)'
+                    f" {storage}")
+        try:
+            _binary_copy_in_pieces(cur, table_name, payload)
+            assert _count(cur, table_name, storage) == _ROWS
+            cur.execute(f'SELECT sum(x), count(DISTINCT label) FROM '
+                        f'public."{table_name}"')
+            assert cur.fetchone() == (_ROWS * (_ROWS - 1) // 2, _ROWS)
+            assert _count(cur, table_name, storage,
+                          "WHERE label = 'name' || x::VARCHAR") == _ROWS
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
+@pytest.mark.parametrize("storage", _STORAGES, ids=["duckdb", "search"])
+@pytest.mark.parametrize("damage", ["after_trailer", "truncated"])
+def test_large_binary_copy_damaged_stream_inserts_nothing(
+        conn: psycopg.Connection, table_name: str, storage: str,
+        damage: str) -> None:
+    with conn.cursor() as cur:
+        payload = _binary_rows(cur, _ROWS)
+        payload = (payload + b"\x00\x01" if damage == "after_trailer"
+                   else payload[:len(payload) * 2 // 3])
+        cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)'
+                    f" {storage}")
+        try:
+            with pytest.raises(psycopg.Error):
+                _binary_copy_in_pieces(cur, table_name, payload)
+            assert _count(cur, table_name, storage) == 0
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')

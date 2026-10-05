@@ -321,16 +321,9 @@ query
 EXPLAIN SELECT count(*) FROM cfm_st;
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ────╮
-│ Aggregates: count_star() │
-│ ~1 row                   │
-╰─────────────┬────────────╯
-╭─ IRESEARCH_SCAN ─────────╮
-│ Index: cfm_st            │
-│ Lookup: search           │
-│ Output: row-count only   │
-│ ~200 rows                │
-╰──────────────────────────╯
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
 
 
 query

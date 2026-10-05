@@ -1,0 +1,95 @@
+# COUNT(*) over a whole search table is answered from the reader's live
+# document count at planning time. Every count is checked against count(i),
+# which still scans, after inserts, deletes, updates, inside a transaction and
+# with a filter that keeps the scan.
+
+statement ok
+CREATE TABLE scs (i BIGINT PRIMARY KEY, v VARCHAR)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+query
+SELECT count(*) AS n, count(i) AS n_i FROM scs;
+----
+n	n_i
+0	0
+
+statement count 3000
+INSERT INTO scs SELECT i, 'v' || (i % 7)::VARCHAR FROM generate_series(1, 3000) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) scs;
+
+query
+SELECT count(*) AS n, count(i) AS n_i FROM scs;
+----
+n	n_i
+3000	3000
+
+query
+SELECT count(*) AS n FROM scs;
+----
+n
+3000
+
+statement count 300
+DELETE FROM scs WHERE i % 10 = 0;
+
+statement ok
+VACUUM (REFRESH_TABLE) scs;
+
+query
+SELECT count(*) AS n FROM scs;
+----
+n
+2700
+
+query
+SELECT count(i) AS n FROM scs;
+----
+n
+2700
+
+statement count 101
+UPDATE scs SET v = 'updated' WHERE i % 27 = 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) scs;
+
+query
+SELECT count(*) AS n, count(i) AS n_i FROM scs;
+----
+n	n_i
+2700	2700
+
+query
+SELECT count(*) AS n FROM scs WHERE v = 'updated';
+----
+n
+101
+
+query
+SELECT count(*) AS n, min(i) AS min_i FROM scs;
+----
+n	min_i
+2700	1
+
+statement ok
+BEGIN;
+
+statement count 5
+INSERT INTO scs SELECT i, 'txn' FROM generate_series(10001, 10005) g(i);
+
+query
+SELECT count(*) = count(i) AS same FROM scs;
+----
+same
+t
+
+statement ok
+ROLLBACK;
+
+query
+SELECT count(*) AS n, count(i) AS n_i FROM scs;
+----
+n	n_i
+2700	2700

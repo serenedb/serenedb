@@ -272,7 +272,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
     absl::MutexLock lock{&_refresh_mutex};
     return {_writer->GetSnapshot(), _last_committed_tick};
   }
-  std::vector<int64_t> TakeDeleteLog();
   void CloseDeleteLog();
 
   irs::IndexWriter::CompactionFloorGuard ArmCompactionFloor() {

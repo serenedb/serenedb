@@ -332,11 +332,6 @@ void SearchTable::AppendDeleteLog(std::span<const int64_t> rows) {
   _delete_log.insert(_delete_log.end(), rows.begin(), rows.end());
 }
 
-std::vector<int64_t> SearchTable::TakeDeleteLog() {
-  absl::MutexLock lock{&_delete_log_mutex};
-  return std::exchange(_delete_log, {});
-}
-
 void SearchTable::CloseDeleteLog() {
   absl::MutexLock lock{&_delete_log_mutex};
   _delete_log_open.store(false, std::memory_order_release);

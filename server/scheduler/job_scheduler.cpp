@@ -155,7 +155,7 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
       return duckdb::ErrorData{duckdb::ExceptionType::INTERRUPT,
                                "Interrupted!"};
     }
-    state.contexts.push_back(context);
+    state.contexts.emplace_back(context);
   }
   auto result = pending->Execute();
   return result->HasError() ? result->GetErrorObject() : duckdb::ErrorData{};
@@ -199,10 +199,6 @@ void VerifySchedule(const duckdb::JobSchedule& schedule) {
   }
   NextRun(schedule, duckdb::Timestamp::GetCurrentTimestamp());
 }
-
-JobScheduler::JobScheduler() { gInstance = this; }
-
-JobScheduler::~JobScheduler() { gInstance = nullptr; }
 
 void JobScheduler::Start() {
   ForAllJobs([&](catalog::JobCatalogEntry& job) { Schedule(job); });
@@ -344,7 +340,7 @@ duckdb::ErrorData JobScheduler::RunBody(
     run.error = error.RawMessage();
   }
   absl::MutexLock lock{&_mutex};
-  _history.push_back(run);
+  _history.emplace_back(run);
   if (_history.size() > _history_size) {
     _history.pop_front();
   }

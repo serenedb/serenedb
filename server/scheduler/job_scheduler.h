@@ -97,8 +97,8 @@ class JobScheduler final {
 
   static JobScheduler* Instance() noexcept { return gInstance; }
 
-  JobScheduler();
-  ~JobScheduler();
+  JobScheduler() { gInstance = this; }
+  ~JobScheduler() { gInstance = nullptr; }
 
   void Start();
   void Schedule(catalog::JobCatalogEntry& job);

@@ -36,6 +36,7 @@
 #include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -75,9 +76,9 @@ duckdb::unique_ptr<duckdb::FunctionData> JobsBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<std::string>& names) {
-  const auto add = [&](std::string name, duckdb::LogicalType type) {
-    names.push_back(std::move(name));
-    return_types.push_back(std::move(type));
+  const auto add = [&](std::string_view name, duckdb::LogicalType type) {
+    names.emplace_back(name);
+    return_types.emplace_back(std::move(type));
   };
   add("database_name", duckdb::LogicalType::VARCHAR);
   add("database_oid", duckdb::LogicalType::BIGINT);
@@ -172,9 +173,9 @@ duckdb::unique_ptr<duckdb::FunctionData> JobRunsBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<std::string>& names) {
-  const auto add = [&](std::string name, duckdb::LogicalType type) {
-    names.push_back(std::move(name));
-    return_types.push_back(std::move(type));
+  const auto add = [&](std::string_view name, duckdb::LogicalType type) {
+    names.emplace_back(name);
+    return_types.emplace_back(std::move(type));
   };
   add("database_name", duckdb::LogicalType::VARCHAR);
   add("schema_name", duckdb::LogicalType::VARCHAR);
@@ -201,7 +202,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobRunsInit(
   }
   for (auto& run : scheduler->GetHistory()) {
     if (databases.contains(run.database_oid)) {
-      result->runs.push_back(std::move(run));
+      result->runs.emplace_back(std::move(run));
     }
   }
   return result;
@@ -238,8 +239,8 @@ duckdb::unique_ptr<duckdb::FunctionData> ExecuteJobBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<std::string>& names) {
-  return_types.push_back(duckdb::LogicalType::BOOLEAN);
-  names.push_back("Success");
+  return_types.emplace_back(duckdb::LogicalType::BOOLEAN);
+  names.emplace_back("Success");
   if (input.inputs[0].IsNull()) {
     throw duckdb::BinderException("Job name cannot be NULL");
   }

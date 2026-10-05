@@ -25,6 +25,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
+#include <tuple>
 
 #include "ts_common.hpp"
 
@@ -37,6 +38,7 @@ absl::Status SetupTermClause(irs::TermClause& clause,
 void BuildFtsTerm(BoolTarget parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::Value& value) {
+  std::ignore = TakeMinMatch(ctx);
   if (value.IsNull()) {
     AddFilter<irs::Empty>(parent);
     return;
@@ -151,12 +153,12 @@ void AddTokenGroups(BoolTarget parent, irs::field_id field, TokenGroups& groups,
 void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info, std::string_view text,
                     bool require_all) {
-  const uint32_t value_min_match = require_all ? 0 : TakeMinMatch(ctx);
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
       column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     BuildFtsTerm(parent, ctx, column_info, duckdb::Value(std::string{text}));
     return;
   }
+  const uint32_t value_min_match = require_all ? 0 : TakeMinMatch(ctx);
   irs::ValueTokens<irs::TokenLayout::TermsPos> tokens{ctx.tokenizer.Traits()};
   AnalyzeText(ctx.tokenizer, text, tokens);
   if (tokens.terms().empty()) {

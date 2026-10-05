@@ -44,6 +44,21 @@ Additional build presets are defined in `CMakePresets.json`:
 - `clangd` -- RelWithDebInfo build (`build_clangd/`), works well with the clangd language server in VSCode
 - `bench` -- Release build (`build_bench/`), static linking, production-like performance
 
+### Debug info and disk use
+
+Every binary links most of the server statically, so debug info dominates its size. Two settings keep a build directory small:
+
+- **Split DWARF** (`SDB_SPLIT_DWARF`, on by default except on macOS, off in CI): debug info is written once, into a `.dwo` file beside each object, and the binaries only point at those files. lldb, gdb, perf, `llvm-symbolizer` and `addr2line` follow the pointers on their own, as long as the build directory is there. A binary copied out of it keeps its symbols and line numbers but loses inlined frames, variables and types; to keep those too, pack the debug info next to the copy:
+
+  ```bash
+  llvm-dwp -e build/bin/serened -o /path/to/copy/serened.dwp
+  ```
+
+  lldb and gdb pick up `<binary>.dwp` beside the binary automatically.
+- **Thin archives**: static libraries (except on macOS) only reference their objects instead of holding copies, so they cannot be moved or installed without the build directory -- nothing in the build does that.
+
+Tools and benchmarks share binaries instead of each linking their own: `serenedb-bench-micro <bench> [args...]` runs one micro benchmark (see [Performance](#performance)), and `iresearch-examples <example>` runs one of the iresearch examples. Both print what they offer when run without arguments.
+
 ### The embedded documentation index
 
 `docs/` is compiled into the binary together with a prebuilt search index of it.

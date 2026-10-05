@@ -140,7 +140,7 @@ OLLAMA_CONTAINER_NAME=""
 OLLAMA_LOG_FILE=""
 KEV_CONTAINER_NAME=""
 KEV_LOG_FILE=""
-KEV_IMAGE="serenedb-test-kev:0.5b-09ff745d52a0"
+KEV_IMAGE="serenedb/serenedb-test-kev:1.0-0.5b-1534a08c"
 POSTGRES_CONTAINER_NAME=""
 POSTGRES_LOG_FILE=""
 CLICKHOUSE_CONTAINER_NAME=""
@@ -718,11 +718,6 @@ launch_kev() {
 	prefix="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
 	KEV_CONTAINER_NAME="${prefix}-serenedb-test-kev-$$"
 	KEV_LOG_FILE="${LOG_DIR:-/tmp}/${KEV_CONTAINER_NAME}.log"
-
-	if ! docker image inspect "$KEV_IMAGE" >/dev/null 2>&1; then
-		echo "Building $KEV_IMAGE..."
-		docker build -t "$KEV_IMAGE" "${SCRIPT_DIR}/fixtures/kev"
-	fi
 
 	local network_args=()
 	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then

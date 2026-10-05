@@ -63,7 +63,7 @@ reap_stale_docker_orphans() {
 
 	# Pass 2: standalone test deps spawned with mounted docker socket from
 	# inside the tests container. Names follow:
-	#   <4char>-serenedb-test-(minio|iceberg-rest|ollama|clickhouse|postgres|azurite)-<pid>
+	#   <4char>-serenedb-test-(minio|iceberg-rest|ollama|kev|clickhouse|postgres|azurite)-<pid>
 	local cutoff=$(($(date +%s) - REAP_STALE_AGE_HOURS * 3600))
 	local name status created_raw created_ts
 	while IFS=$'\t' read -r name status; do
@@ -103,7 +103,7 @@ reap_stale_docker_orphans() {
 		fi
 	done < <(docker ps -a \
 		--format '{{.Names}}{{"\t"}}{{.Status}}' 2>/dev/null |
-		grep -E '^[a-z0-9]{4}-serenedb-test-(minio|iceberg-rest|ollama|clickhouse|postgres|azurite)-[0-9]+\b')
+		grep -E '^[a-z0-9]{4}-serenedb-test-(minio|iceberg-rest|ollama|kev|clickhouse|postgres|azurite)-[0-9]+\b')
 
 	# Pass 3: test-networks left dangling. The compose down in pass 1 removes
 	# its own; standalone-spawned networks (sqllogic local-network mode)

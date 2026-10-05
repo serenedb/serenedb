@@ -33,9 +33,9 @@ Release binaries are statically linked and built for a baseline architecture:
 | Architecture | Requirement |
 |---|---|
 | **x86-64** | Intel Haswell or newer — SSE 4.2 and AVX2 are required |
-| **ARM64** | ARMv8-A (AArch64) |
+| **ARM64** | ARMv8-A with the CRC32 and cryptography extensions (AWS Graviton, Ampere Altra or newer) |
 
-On an older x86-64 CPU without AVX2 (pre-Haswell) the binary fails to start with an illegal-instruction error. More cores mean faster search and analytics — SereneDB parallelizes queries across the available CPUs.
+On an older x86-64 CPU without AVX2 (pre-Haswell) the binary fails to start with an illegal-instruction error. Newer CPUs run faster code paths chosen at runtime: AVX-512 on x86-64 and SVE/SVE2 on ARM64 speed up vector search, matrix math and text analysis. More cores mean faster search and analytics — SereneDB parallelizes queries across the available CPUs.
 
 ### Memory
 

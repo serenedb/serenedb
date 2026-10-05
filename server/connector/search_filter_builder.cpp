@@ -1548,13 +1548,6 @@ void BuildWithValueMinMatch(const FilterContext& ctx, uint32_t min_match,
   if (ctx.min_match) {
     ThrowRepeatedMinMatch();
   }
-  if (ctx.negated) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("NOT on a ::min_match(K) query is not supported"),
-      ERR_HINT("Fewer than K of n alternatives is at least n-K+1 of their "
-               "negations: (!! a || !! b || ...)::min_match(n-K+1)."));
-  }
   MinMatchSlot slot{.value = min_match};
   build(ctx.WithMinMatch(&slot));
   if (!slot.taken && min_match > 1) {
@@ -1638,6 +1631,43 @@ bool TryDispatchSqlMergeCast(BoolTarget filter, const FilterContext& ctx,
   return true;
 }
 
+const duckdb::BoundFunctionExpression* AsMinMatchGroup(
+  const duckdb::Expression& expr) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION ||
+      duckdb::BoundCastExpression::IsCast(expr)) {
+    return nullptr;
+  }
+  const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
+  if (func.Function().GetName().GetIdentifierName() != kMinMatchGroupFn) {
+    return nullptr;
+  }
+  return &func;
+}
+
+absl::Status FromMinMatchGroup(BoolTarget parent, const FilterContext& ctx,
+                               const duckdb::BoundFunctionExpression& group) {
+  SDB_ASSERT(!ctx.negated);
+  auto sub_ctx = ctx;
+  sub_ctx.boost = irs::kNoBoost;
+  const auto node = AddGroup(parent, irs::Occur::Should);
+  node.node->SetBoost(ctx.boost);
+  for (const auto& branch : group.GetChildren()) {
+    if (const auto* val = TryGetConstant(*branch)) {
+      if (!val->IsNull() && val->GetValue<bool>()) {
+        AddFilter<irs::All>(node);
+      } else {
+        AddFilter<irs::Empty>(node);
+      }
+      continue;
+    }
+    if (auto s = FromExpression(node, sub_ctx, *branch); !s.ok()) {
+      return s;
+    }
+  }
+  SetMinMatch(*node.node, 1);
+  return absl::OkStatus();
+}
+
 size_t CountMinMatchBranches(const duckdb::Expression& operand) {
   const auto* cur = &UnwrapBoostBoolCoercion(operand);
   while (duckdb::BoundCastExpression::IsCast(*cur)) {
@@ -1657,13 +1687,11 @@ size_t CountMinMatchBranches(const duckdb::Expression& operand) {
     cur = &UnwrapBoostBoolCoercion(duckdb::BoundCastExpression::Child(
       cur->Cast<duckdb::BoundFunctionExpression>()));
   }
+  if (const auto* group = AsMinMatchGroup(*cur)) {
+    return group->GetChildren().size();
+  }
   if (cur->GetExpressionType() != duckdb::ExpressionType::CONJUNCTION_OR) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("::min_match(K) applies to an OR of predicates"),
-      ERR_HINT("Write it on an OR group, e.g. (a @@ 'x' OR b @@ 'y' OR c @@ "
-               "'z')::min_match(2). To count the words or alternatives of one "
-               "@@ match, put it on the query: col @@ 'x y z'::min_match(2)."));
+    ThrowMinMatchNotOnOr();
   }
   return cur->Cast<duckdb::BoundConjunctionExpression>().GetChildren().size();
 }
@@ -1910,6 +1938,9 @@ absl::Status FromExpression(BoolTarget filter, const FilterContext& ctx,
   }
   if (TryDispatchSqlMinMatchCast(filter, ctx, UnwrapBoostBoolCoercion(expr))) {
     return absl::OkStatus();
+  }
+  if (const auto* group = AsMinMatchGroup(expr)) {
+    return FromMinMatchGroup(filter, ctx, *group);
   }
 
   if (TryDispatchSqlScoreCast(filter, ctx, UnwrapBoostBoolCoercion(expr))) {
@@ -2269,6 +2300,15 @@ void ThrowRepeatedMinMatch() {
     ERR_HINT("A query takes one threshold. To count a group as one branch of "
              "another, put it inside the outer `||`: (('a'::TSQUERY || 'b' || "
              "'c')::min_match(2) || 'd')::min_match(2)."));
+}
+
+void ThrowMinMatchNotOnOr() {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+    ERR_MSG("::min_match(K) applies to an OR of predicates"),
+    ERR_HINT("Write it on an OR group, e.g. (a @@ 'x' OR b @@ 'y' OR c @@ "
+             "'z')::min_match(2). To count the words or alternatives of one "
+             "@@ match, put it on the query: col @@ 'x y z'::min_match(2)."));
 }
 
 void ThrowMinMatchAboveBranches(uint32_t min_match, size_t branches,

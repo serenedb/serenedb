@@ -36,6 +36,8 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
+#include <duckdb/planner/expression/bound_cast_expression.hpp>
+#include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/logical_operator_visitor.hpp>
@@ -150,11 +152,50 @@ bool ThrowingSlopCast(duckdb::Vector&, duckdb::Vector&, duckdb::idx_t,
                           "against an inverted-indexed column."));
 }
 
-bool ThrowingMinMatchCast(duckdb::Vector&, duckdb::Vector&, duckdb::idx_t,
-                          duckdb::CastParameters&) {
+[[noreturn]] void ThrowMinMatchOutsideIndex() {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                   ERR_MSG("::min_match(K) is only meaningful on an OR of "
                           "predicates the inverted index answers."));
+}
+
+bool ThrowingMinMatchCast(duckdb::Vector&, duckdb::Vector&, duckdb::idx_t,
+                          duckdb::CastParameters&) {
+  ThrowMinMatchOutsideIndex();
+}
+
+void MinMatchGroupStubFn(duckdb::DataChunk&, duckdb::ExpressionState&,
+                         duckdb::Vector&) {
+  ThrowMinMatchOutsideIndex();
+}
+
+void FreezeMinMatchGroup(duckdb::BoundFunctionExpression& cast) {
+  if (!TryGetMinMatchModifier(cast.GetReturnType())) {
+    return;
+  }
+  auto* slot = &duckdb::BoundCastExpression::ChildMutable(cast);
+  while (duckdb::BoundCastExpression::IsCast(**slot)) {
+    auto& inner = (*slot)->Cast<duckdb::BoundFunctionExpression>();
+    const auto& type = inner.GetReturnType();
+    if (!TryGetBoostModifier(type) && !TryGetScoreModifier(type) &&
+        !TryGetMergeModifier(type)) {
+      break;
+    }
+    slot = &duckdb::BoundCastExpression::ChildMutable(inner);
+  }
+  if ((*slot)->GetReturnType().id() != duckdb::LogicalTypeId::BOOLEAN) {
+    return;
+  }
+  if ((*slot)->GetExpressionType() != duckdb::ExpressionType::CONJUNCTION_OR) {
+    ThrowMinMatchNotOnOr();
+  }
+  auto branches = std::move(
+    (*slot)->Cast<duckdb::BoundConjunctionExpression>().GetChildrenMutable());
+  duckdb::ScalarFunction fn(duckdb::Identifier{kMinMatchGroupFn}, {},
+                            duckdb::LogicalType::BOOLEAN, MinMatchGroupStubFn);
+  duckdb::BoundScalarFunction bound_fn(fn);
+  bound_fn.SetName(duckdb::Identifier{kMinMatchGroupFn});
+  *slot = duckdb::make_uniq<duckdb::BoundFunctionExpression>(
+    std::move(bound_fn), std::move(branches), nullptr);
 }
 
 bool ThrowingScoreCast(duckdb::Vector&, duckdb::Vector&, duckdb::idx_t,
@@ -400,6 +441,10 @@ class TSQueryFoldVisitor final : public duckdb::LogicalOperatorVisitor {
     VisitExpressionChildren(**slot);
     const auto& expr = **slot;
     if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
+      return;
+    }
+    if (duckdb::BoundCastExpression::IsCast(expr)) {
+      FreezeMinMatchGroup((*slot)->Cast<duckdb::BoundFunctionExpression>());
       return;
     }
     const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
@@ -716,12 +761,6 @@ void RegisterTSQueryBoolCasts(duckdb::ExtensionLoader& loader) {
                               bool_cast_bind,
                               /*implicit_cast_cost=*/0);
 
-  // BOOLEAN <-> TSQUERY_MODIFIER: lets `(predicate)::boost(K)` apply
-  // to plain SQL conditions outside `@@`. Both directions throw at
-  // runtime -- the optimizer extension claims the boost cast at
-  // bind time when the inner predicate is index-claimable; if it
-  // isn't, the throwing stub fires with a specific message
-  // pointing the user back to `@@`.
   auto boost_bool_cast_bind =
     +[](duckdb::BindCastInput&, const duckdb::LogicalType& source,
         const duckdb::LogicalType& target) -> duckdb::BoundCastInfo {

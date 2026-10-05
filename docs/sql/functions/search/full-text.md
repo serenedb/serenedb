@@ -544,7 +544,7 @@ Turns an `OR` of index predicates into an "at least `K` of `N`" filter. The bran
 
 **How it works.** [`ts_any(list, K)`](#ts_any) counts alternatives within one column. `::min_match(K)` does the same across columns, on an `OR` written in SQL. The index evaluates the whole `OR` as a single node that requires `K` of its branches, so no row is fetched to count them. `K = 1` is the plain `OR`, and `K` equal to the number of branches is the `AND` of all of them. This is the cross-field form of Elasticsearch's `minimum_should_match` on a `bool` query's `should` clauses.
 
-Count the branches as written after the `OR`s are flattened: in `((a OR b) OR c)::min_match(2)` there are three branches. To count `a OR b` as one branch, give it a modifier of its own: `((a OR b)::min_match(1) OR c)::min_match(2)`.
+Count the branches as written after the `OR`s are flattened: in `((a OR b) OR c)::min_match(2)` there are three branches. A branch that is always false, such as a bound `$1 AND ...` with `$1 = false`, still counts and never matches, and two identical branches count twice. To count `a OR b` as one branch, give it a modifier of its own: `((a OR b)::min_match(1) OR c)::min_match(2)`.
 
 Groups nest. A group is one branch of the `OR` around it, so `((a OR b OR c)::min_match(2) OR d)::min_match(2)` matches rows that have `d` and at least two of `a`, `b` and `c`. A group can also stand in a plain `OR` or an `AND`, next to other groups or next to an `AND` branch. `::merge` and `::boost` combine with `::min_match` on the same group, in either order.
 
@@ -582,7 +582,7 @@ The same threshold on a `TSQUERY` value, inside one `@@`. Like the other [`TSQUE
 - **[`ts_any(list)`](#ts_any)**: one alternative per element, the same as `ts_any(list, K)`. Giving both thresholds is an error.
 - **Anything else** (a phrase, `&&`, `!!`, a range, `to_tsquery`) is one alternative: `K = 1` changes nothing, a larger `K` is an error.
 
-A second `::min_match` on the same query is an error, and so is `NOT` or `!!` applied directly to a `::min_match` query, whatever `K` is. A `!!` around a larger query that contains one is fine: `!! (('a'::TSQUERY || 'b')::min_match(2) || 'c')` matches rows that have neither both `a` and `b` nor `c`. A SQL `NOT` is pushed down to each predicate, so `NOT (body @@ 'a b'::min_match(2) OR id > 1)` is an error too. `::merge`, `::boost` and `::score` combine with it.
+A second `::min_match` on the same query is an error. `NOT` and `!!` negate the whole threshold: `NOT body @@ 'quick red grey'::min_match(2)` matches rows that have fewer than two of the words, and `!! (('a'::TSQUERY || 'b')::min_match(2) || 'c')` matches rows that have neither both `a` and `b` nor `c`. `::merge`, `::boost` and `::score` combine with it.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |

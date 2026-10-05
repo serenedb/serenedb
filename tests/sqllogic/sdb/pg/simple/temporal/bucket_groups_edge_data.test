@@ -86,7 +86,7 @@ k	b	m	c
 infinity	infinity	null	1
 null	null	null	1
 
-statement error db error: ERROR: Type INT64 with value infinity can't be cast to the destination type INT64
+statement error db error: ERROR: Can't get TIME of infinite TIMESTAMP
 SELECT date_trunc('hour', ts)::TIME AS k, count(*) AS c FROM edge_inf GROUP BY 1;
 
 query

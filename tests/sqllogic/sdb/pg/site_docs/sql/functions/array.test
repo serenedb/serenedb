@@ -4,7 +4,7 @@ query
 SELECT array_cosine_distance(array_value(1.0::FLOAT, 2.0::FLOAT, 3.0::FLOAT), array_value(2.0::FLOAT, 3.0::FLOAT, 4.0::FLOAT)) AS array_cosine_distance;
 ----
 array_cosine_distance
-0.007416606
+0.0074166656
 
 # DOCS_TEST: array_cosine_similarity
 # DOCS_TEST_BODY
@@ -12,7 +12,7 @@ query
 SELECT array_cosine_similarity(array_value(1.0::FLOAT, 2.0::FLOAT, 3.0::FLOAT), array_value(2.0::FLOAT, 3.0::FLOAT, 4.0::FLOAT)) AS array_cosine_similarity;
 ----
 array_cosine_similarity
-0.9925834
+0.99258333
 
 # DOCS_TEST: array_cross_product
 # DOCS_TEST_BODY

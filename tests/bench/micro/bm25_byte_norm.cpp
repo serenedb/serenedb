@@ -58,7 +58,7 @@
 // smaller column to read and gather -- is outside this kernel and deliberately
 // not modelled.
 //
-//   taskset -c N ./serenedb-bench-micro-bm25_byte_norm \
+//   taskset -c N ./serenedb-bench-micro bm25_byte_norm \
 //     --benchmark_min_time=0.3s --benchmark_repetitions=12 \
 //     --benchmark_report_aggregates_only=true
 
@@ -502,5 +502,3 @@ REGISTER(Runtime, kPostingBlock);
 
 #undef REGISTER
 #undef REGISTER_ONE
-
-BENCHMARK_MAIN();

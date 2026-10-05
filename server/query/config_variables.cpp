@@ -59,9 +59,8 @@ duckdb::Value SettingRef::Read(duckdb::ClientContext& context) const {
   auto slot = _slot.load(std::memory_order_relaxed);
   if (slot.config != &config) [[unlikely]] {
     duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-    const auto index = config.TryGetSettingIndex(
-      duckdb::String{_name.data(), static_cast<uint32_t>(_name.size())},
-      option);
+    const auto index =
+      config.TryGetSettingIndex(duckdb::Identifier{_name}, option);
     SDB_ASSERT(index.IsValid());
     slot = {.config = &config, .index = index.GetIndex()};
     _slot.store(slot, std::memory_order_relaxed);
@@ -70,7 +69,7 @@ duckdb::Value SettingRef::Read(duckdb::ClientContext& context) const {
   auto found = context.config.user_settings.TryGetSetting(config.user_settings,
                                                           slot.index, value);
   if (!found) [[unlikely]] {
-    auto res = context.TryGetCurrentSetting(std::string{_name}, value);
+    auto res = context.TryGetCurrentSetting(duckdb::Identifier{_name}, value);
     SDB_ASSERT(res);
   }
   SDB_ASSERT(!value.IsNull());
@@ -130,7 +129,7 @@ void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
                  duckdb::Value& value) {
   constexpr std::string_view kName{Name};
   duckdb::Value current;
-  if (!ctx.TryGetCurrentSetting(std::string{kName}, current)) {
+  if (!ctx.TryGetCurrentSetting(duckdb::Identifier{kName}, current)) {
     return;
   }
   bool equal = false;
@@ -1180,22 +1179,40 @@ std::string_view GetOriginalName(std::string_view name) {
   return *it;
 }
 
+// Settings a client may never change, refused for the lifetime of the process
+// by the setting_change_handler.
+const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
+  // Describes how this process is wired rather than a preference, and is pinned
+  // at startup in
+  // ConfigureServerDBConfig.
+  "external_threads",
+  // Read-only in PostgreSQL, where reporting the value is the whole point of
+  // the GUC.
+  "in_hot_standby",
+  "is_superuser",
+  "server_encoding",
+  "server_version",
+  "server_version_num",
+};
+
+bool IsUnchangeableSetting(std::string_view name) {
+  return kUnchangeableSettings.contains(name);
+}
+
 namespace {
 
 void TryRegister(duckdb::DBConfig& config, std::string_view name,
                  const VariableDescription& desc) {
   duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-  if (config
-        .TryGetSettingIndex(duckdb::String::Reference(name.data(), name.size()),
-                            option)
-        .IsValid()) {
+  const duckdb::Identifier setting{name};
+  if (config.TryGetSettingIndex(setting, option).IsValid()) {
     return;  // already registered or built-in
   }
   config.AddExtensionOption(
-    std::string{name}, std::string{desc.description},
-    duckdb::LogicalType{desc.type},
+    setting, std::string{desc.description}, duckdb::LogicalType{desc.type},
     desc.default_value ? desc.default_value() : duckdb::Value{},
-    desc.set_callback, desc.reset_callback, desc.scope);
+    desc.set_callback, desc.reset_callback, desc.scope,
+    IsUnchangeableSetting(name));
 }
 
 }  // namespace
@@ -1211,8 +1228,8 @@ duckdb::Value ValidateSetting(duckdb::ClientContext& context,
                               std::string_view name,
                               const duckdb::Value& value) {
   duckdb::ExtensionOption option;
-  duckdb::DBConfig::GetConfig(context).TryGetExtensionOption(std::string{name},
-                                                             option);
+  duckdb::DBConfig::GetConfig(context).TryGetExtensionOption(
+    duckdb::Identifier{name}, option);
   auto result = value.CastAs(context, option.type);
   option.set_function(context, duckdb::SetScope::AUTOMATIC, result);
   return result;

@@ -51,15 +51,17 @@
 namespace sdb::connector {
 
 bool TryCastExactInt64(const duckdb::Value& v, duckdb::Value& out) {
-  if (v.IsNull() || !v.type().IsNumeric() ||
-      !v.DefaultTryCastAs(duckdb::LogicalType::BIGINT, out,
-                          /*error_message=*/nullptr, /*strict=*/true)) {
+  if (v.IsNull() || !v.type().IsNumeric()) {
     return false;
   }
-  duckdb::Value back;
-  return out.DefaultTryCastAs(v.type(), back,
-                              /*error_message=*/nullptr, /*strict=*/false) &&
-         duckdb::Value::NotDistinctFrom(back, v);
+  auto cast = v.DefaultTryCastAs(duckdb::LogicalType::BIGINT,
+                                 /*error_message=*/nullptr, /*strict=*/true);
+  if (!cast) {
+    return false;
+  }
+  out = std::move(*cast);
+  const auto back = out.DefaultTryCastAs(v.type());
+  return back && duckdb::Value::NotDistinctFrom(*back, v);
 }
 namespace {
 
@@ -106,15 +108,7 @@ bool IsWhitelistedTypeName(std::string_view name) {
            duckdb::TransformStringToLogicalTypeId(std::string{name}));
 }
 
-bool IsWhitelistedCastType(const duckdb::LogicalType& type) {
-  if (type.id() != duckdb::LogicalTypeId::UNBOUND || !type.AuxInfo()) {
-    return false;
-  }
-  const auto& expr = duckdb::UnboundType::GetTypeExpression(type);
-  if (!expr || expr->GetExpressionClass() != duckdb::ExpressionClass::TYPE) {
-    return false;
-  }
-  const auto& type_expr = expr->Cast<duckdb::TypeExpression>();
+bool IsWhitelistedCastType(const duckdb::TypeExpression& type_expr) {
   if (!type_expr.GetSchema().empty() || !type_expr.GetCatalog().empty()) {
     return false;
   }
@@ -186,7 +180,7 @@ duckdb::unique_ptr<duckdb::ParsedExpression> ParseWhitelisted(
     return nullptr;
   }
   try {
-    auto exprs = duckdb::Parser::ParseExpressionList(text);
+    auto exprs = duckdb::Parser::ParseExpressionList(std::string{text});
     if (exprs.size() != 1 || !exprs[0]) {
       return nullptr;
     }
@@ -246,7 +240,24 @@ std::optional<std::string> RenderPlainValue(const duckdb::Value& value) {
   if (!IsRenderableValueType(value.type())) {
     return std::nullopt;
   }
-  return value.ToSQLString();
+  const auto type_id = value.type().id();
+  if (type_id != duckdb::LogicalTypeId::LIST &&
+      type_id != duckdb::LogicalTypeId::ARRAY) {
+    return value.ToSQLString();
+  }
+  std::string out = "[";
+  for (const auto& child : ListOrArrayChildren(value)) {
+    if (out.size() > 1) {
+      out += ", ";
+    }
+    auto rendered = RenderPlainValue(child);
+    if (!rendered) {
+      return std::nullopt;
+    }
+    out += *rendered;
+  }
+  out += "]";
+  return out;
 }
 
 std::string BoostOperand(std::string rendered) {
@@ -357,15 +368,16 @@ std::optional<duckdb::Value> TryEvaluateScalar(duckdb::ClientContext& context,
   return result;
 }
 
-std::optional<std::string> RenderCast(duckdb::ClientContext& context,
-                                      const duckdb::BoundCastExpression& cast) {
+std::optional<std::string> RenderCast(
+  duckdb::ClientContext& context, const duckdb::BoundFunctionExpression& cast) {
   const auto& target = cast.GetReturnType();
-  const auto& source = cast.Child().GetReturnType();
+  const auto& inner = duckdb::BoundCastExpression::Child(cast);
+  const auto& source = inner.GetReturnType();
   if (const auto boost = TryGetBoostModifier(target)) {
     if (*boost < 0.0) {
       return std::nullopt;
     }
-    auto child = RenderTSQueryExpression(context, cast.Child());
+    auto child = RenderTSQueryExpression(context, inner);
     if (!child) {
       return std::nullopt;
     }
@@ -373,21 +385,21 @@ std::optional<std::string> RenderCast(duckdb::ClientContext& context,
   }
   if (const auto tokenizer = TryGetTokenizerModifier(target);
       !tokenizer.empty()) {
-    auto child = RenderTSQueryExpression(context, cast.Child());
+    auto child = RenderTSQueryExpression(context, inner);
     if (!child) {
       return std::nullopt;
     }
     return RenderTokenized(std::move(*child), tokenizer);
   }
   if (const auto slop = TryGetSlopModifier(target)) {
-    auto child = RenderTSQueryExpression(context, cast.Child());
+    auto child = RenderTSQueryExpression(context, inner);
     if (!child) {
       return std::nullopt;
     }
     return absl::StrCat(std::move(*child), "::slop(", *slop, ")");
   }
   if (const auto merge = TryGetMergeModifier(target)) {
-    auto child = RenderTSQueryExpression(context, cast.Child());
+    auto child = RenderTSQueryExpression(context, inner);
     if (!child) {
       return std::nullopt;
     }
@@ -397,7 +409,7 @@ std::optional<std::string> RenderCast(duckdb::ClientContext& context,
       ")");
   }
   if (const auto scorer = TryGetScoreModifier(target)) {
-    auto child = RenderTSQueryExpression(context, cast.Child());
+    auto child = RenderTSQueryExpression(context, inner);
     if (!child) {
       return std::nullopt;
     }
@@ -408,7 +420,7 @@ std::optional<std::string> RenderCast(duckdb::ClientContext& context,
                         ")");
   }
   if (IsTSQueryStructType(target)) {
-    auto child = RenderTSQueryExpression(context, cast.Child());
+    auto child = RenderTSQueryExpression(context, inner);
     if (!child || IsTSQueryStructType(source)) {
       return child;
     }
@@ -417,7 +429,7 @@ std::optional<std::string> RenderCast(duckdb::ClientContext& context,
   if ((IsTSQueryStructType(source) && IsStringishTypeId(target.id())) ||
       (IsTSQueryishType(target) && !IsTSQueryishType(source) &&
        IsRenderableValueType(source))) {
-    return RenderTSQueryExpression(context, cast.Child());
+    return RenderTSQueryExpression(context, inner);
   }
   return std::nullopt;
 }
@@ -448,9 +460,9 @@ void FoldStructuredConstants(duckdb::ClientContext& context,
     return;
   }
   const auto& type = expr->GetReturnType();
-  const bool list_of_tsquery =
-    IsTSQueryishType(type) && !IsTSQueryStructType(type) &&
-    expr->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST;
+  const bool list_of_tsquery = IsTSQueryishType(type) &&
+                               !IsTSQueryStructType(type) &&
+                               duckdb::BoundCastExpression::IsCast(*expr);
   if (!IsTSQueryishType(type) || list_of_tsquery) {
     if (auto value = TryEvaluateScalar(context, *expr)) {
       auto alias = expr->GetAlias();
@@ -474,16 +486,16 @@ std::optional<std::string> RenderTSQueryExpression(
     case duckdb::ExpressionClass::BOUND_CONSTANT:
       return RenderConstant(
         expr.Cast<duckdb::BoundConstantExpression>().GetValue());
-    case duckdb::ExpressionClass::BOUND_CAST: {
-      const auto& cast = expr.Cast<duckdb::BoundCastExpression>();
-      if (IsTSQueryishType(cast.GetReturnType()) ||
-          IsTSQueryishType(cast.Child().GetReturnType())) {
-        return RenderCast(context, cast);
-      }
-      break;
-    }
     case duckdb::ExpressionClass::BOUND_FUNCTION: {
       const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
+      if (duckdb::BoundCastExpression::IsCast(func)) {
+        if (IsTSQueryishType(func.GetReturnType()) ||
+            IsTSQueryishType(
+              duckdb::BoundCastExpression::Child(func).GetReturnType())) {
+          return RenderCast(context, func);
+        }
+        break;
+      }
       if (IsTSQueryishType(func.GetReturnType())) {
         return RenderTSQueryCall(context,
                                  func.Function().GetName().GetIdentifierName(),
@@ -539,13 +551,12 @@ std::optional<std::string> RenderTSQueryCall(
       if (!inner || !factor || factor->IsNull()) {
         return std::nullopt;
       }
-      duckdb::Value coerced;
-      if (!factor->DefaultTryCastAs(duckdb::LogicalType::DOUBLE, coerced,
-                                    nullptr) ||
-          coerced.GetValue<double>() < 0.0) {
+      const auto coerced =
+        factor->DefaultTryCastAs(duckdb::LogicalType::DOUBLE);
+      if (!coerced || coerced->GetValue<double>() < 0.0) {
         return std::nullopt;
       }
-      return RenderBoosted(std::move(*inner), coerced.GetValue<double>());
+      return RenderBoosted(std::move(*inner), coerced->GetValue<double>());
     }
     case TSQueryOp::Or:
     case TSQueryOp::And:

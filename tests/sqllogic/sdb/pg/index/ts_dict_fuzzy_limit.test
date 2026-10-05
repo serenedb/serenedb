@@ -31,32 +31,30 @@ FROM fl_words_idx WHERE w @@ ts_levenshtein('cats', 1)
 ORDER BY s DESC LIMIT 1;
 ----
 QUERY PLAN
-╭─ TOP_N ─────────────────────────────────────╮
-│ Top: 1                                      │
-│ Order By:                                   │
-│ unnest(ts_dict_score(fl_words_idx.w)) DESC, │
-│ t ASC                                       │
-│ ~0 rows                                     │
-╰──────────────────────┬──────────────────────╯
-╭─ HASH_GROUP_BY ──────┴──────────────────────╮
-│ Groups: #0                                  │
-│ Aggregates: max(#1)                         │
-│ ~0 rows                                     │
-╰──────────────────────┬──────────────────────╯
-╭─ IRESEARCH_SCAN ─────┴──────────────────────╮
-│ Index: fl_words_idx                         │
-│ Index Filter:                               │
-│ ╭─ Levenshtein ────╮                        │
-│ │ Field: w(string) │                        │
-│ │ Target: cats     │                        │
-│ │ Max Terms: 1     │                        │
-│ ╰──────────────────╯                        │
-│ TsDict: w                                   │
-│ Projections:                                │
-│ sdb_inverted_index_term$w,                  │
-│ sdb_inverted_index_term_score$w             │
-│ ~1 row                                      │
-╰─────────────────────────────────────────────╯
+╭─ TOP_N ──────────────────────────╮
+│ Top: 1                           │
+│ Order By: s DESC, t ASC          │
+│ ~0 rows                          │
+╰─────────────────┬────────────────╯
+╭─ HASH_GROUP_BY ─┴────────────────╮
+│ Groups: #0                       │
+│ Aggregates: max(#1)              │
+│ ~0 rows                          │
+╰─────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Index: fl_words_idx              │
+│ Index Filter:                    │
+│ ╭─ Levenshtein ────╮             │
+│ │ Field: w(string) │             │
+│ │ Target: cats     │             │
+│ │ Max Terms: 1     │             │
+│ ╰──────────────────╯             │
+│ TsDict: w                        │
+│ Projections:                     │
+│ sdb_inverted_index_term$w,       │
+│ sdb_inverted_index_term_score$w  │
+│ ~1 row                           │
+╰──────────────────────────────────╯
 
 query
 SELECT unnest(ts_dict_agg(w)) AS t, unnest(ts_dict_score(w)) AS s,
@@ -96,9 +94,7 @@ ORDER BY s DESC, c DESC LIMIT 1;
 QUERY PLAN
 ╭─ TOP_N ───────────────────────────────────────────╮
 │ Top: 1                                            │
-│ Order By:                                         │
-│ unnest(ts_dict_score(fl_words_idx.w)) DESC,       │
-│ unnest(ts_dict_count(fl_words_idx.w)) DESC        │
+│ Order By: s DESC, c DESC                          │
 │ ~0 rows                                           │
 ╰─────────────────────────┬─────────────────────────╯
 ╭─ PROJECTION ────────────┴─────────────────────────╮
@@ -144,36 +140,35 @@ FROM fl_words_idx WHERE w @@ ts_levenshtein('cats', 1) AND length(w) > 0
 ORDER BY s DESC LIMIT 1;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────────╮
-│ Top: 1                                     │
-│ Order By:                                  │
-│ unnest(ts_dict_score(fl_words_idx.w)) DESC │
-│ ~0 rows                                    │
-╰──────────────────────┬─────────────────────╯
-╭─ HASH_GROUP_BY ──────┴─────────────────────╮
-│ Groups: #0                                 │
-│ Aggregates: max(#1)                        │
-│ ~0 rows                                    │
-╰──────────────────────┬─────────────────────╯
-╭─ FILTER ─────────────┴─────────────────────╮
-│ Expression:                                │
-│ length(sdb_inverted_index_term$w) > 0      │
-│ ~1 row                                     │
-╰──────────────────────┬─────────────────────╯
-╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
-│ Index: fl_words_idx                        │
-│ Index Filter:                              │
-│ ╭─ Levenshtein ────╮                       │
-│ │ Field: w(string) │                       │
-│ │ Target: cats     │                       │
-│ │ Max Terms: 0     │                       │
-│ ╰──────────────────╯                       │
-│ TsDict: w                                  │
-│ Projections:                               │
-│ sdb_inverted_index_term$w,                 │
-│ sdb_inverted_index_term_score$w            │
-│ ~1 row                                     │
-╰────────────────────────────────────────────╯
+╭─ TOP_N ───────────────────────────────╮
+│ Top: 1                                │
+│ Order By: s DESC                      │
+│ ~0 rows                               │
+╰───────────────────┬───────────────────╯
+╭─ HASH_GROUP_BY ───┴───────────────────╮
+│ Groups: #0                            │
+│ Aggregates: max(#1)                   │
+│ ~0 rows                               │
+╰───────────────────┬───────────────────╯
+╭─ FILTER ──────────┴───────────────────╮
+│ Expression:                           │
+│ length(sdb_inverted_index_term$w) > 0 │
+│ ~1 row                                │
+╰───────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ──┴───────────────────╮
+│ Index: fl_words_idx                   │
+│ Index Filter:                         │
+│ ╭─ Levenshtein ────╮                  │
+│ │ Field: w(string) │                  │
+│ │ Target: cats     │                  │
+│ │ Max Terms: 0     │                  │
+│ ╰──────────────────╯                  │
+│ TsDict: w                             │
+│ Projections:                          │
+│ sdb_inverted_index_term$w,            │
+│ sdb_inverted_index_term_score$w       │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
 
 query
 SELECT unnest(ts_dict_agg(w)) AS t, unnest(ts_dict_score(w)) AS s,

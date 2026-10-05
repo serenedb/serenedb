@@ -43,6 +43,8 @@ class SystemTableEntry final : public duckdb::TableCatalogEntry {
                    duckdb::CreateTableInfo& info,
                    const pg::VirtualTable& table);
 
+  const duckdb::ColumnList& GetColumns() const final { return _columns; }
+
   duckdb::unique_ptr<duckdb::BaseStatistics> GetStatistics(
     duckdb::ClientContext&, duckdb::column_t) final {
     return nullptr;
@@ -61,6 +63,7 @@ class SystemTableEntry final : public duckdb::TableCatalogEntry {
   const pg::VirtualTable& Table() const noexcept { return _table; }
 
  private:
+  duckdb::ColumnList _columns;
   const pg::VirtualTable& _table;
 };
 

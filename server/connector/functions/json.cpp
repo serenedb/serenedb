@@ -595,7 +595,7 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
   {
     duckdb::ScalarFunction func{
       "json_extract_path", {JSON}, JSON, JsonExtractPathFunction};
-    func.SetVarArgs(VARCHAR);
+    func.GetSignature().AddArgs("args", VARCHAR).AddKwargs("kwargs", VARCHAR);
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     loader.RegisterFunction(func);
   }
@@ -604,7 +604,7 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
   {
     duckdb::ScalarFunction func{
       "json_extract_path_text", {JSON}, VARCHAR, JsonExtractPathTextFunction};
-    func.SetVarArgs(VARCHAR);
+    func.GetSignature().AddArgs("args", VARCHAR).AddKwargs("kwargs", VARCHAR);
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     loader.RegisterFunction(func);
   }

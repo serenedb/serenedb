@@ -22,15 +22,16 @@
 
 #pragma once
 
-#include <deque>
 #include <set>
 #include <variant>
+#include <vector>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/filters/automaton_filter.hpp"
 #include "iresearch/search/filters/levenshtein_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/range_filter.hpp"
+#include "iresearch/search/filters/regexp_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/filters/wildcard_filter.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
@@ -55,8 +56,8 @@ class ByPhraseOptions {
  public:
   using PhrasePart =
     std::variant<ByTermOptions, ByPrefixOptions, ByWildcardOptions,
-                 ByEditDistanceOptions, TermSetOptions, ByRangeOptions,
-                 AutomatonOptions, LevenshteinAutomatonOptions>;
+                 ByRegexpOptions, ByEditDistanceOptions, TermSetOptions,
+                 ByRangeOptions, AutomatonOptions, LevenshteinAutomatonOptions>;
 
   struct PhrasePartInfo {
     PhrasePart part;
@@ -93,15 +94,14 @@ class ByPhraseOptions {
     return insert(std::forward<PhrasePart>(t), offs + 1, offs + 1);
   }
 
-  bool operator==(const ByPhraseOptions& rhs) const noexcept {
-    return _phrase == rhs._phrase && _slop == rhs._slop;
-  }
+  bool operator==(const ByPhraseOptions& rhs) const noexcept = default;
 
   bool LowerParts();
 
   void clear() noexcept {
     _phrase.clear();
     _slop = 0;
+    _word_separator.clear();
   }
 
   bool simple() const noexcept {
@@ -124,6 +124,9 @@ class ByPhraseOptions {
   PosAttr::value_t slop() const noexcept { return _slop; }
   void set_slop(PosAttr::value_t value) noexcept { _slop = value; }
 
+  bytes_view word_separator() const noexcept { return _word_separator; }
+  void set_word_separator(bytes_view value) { _word_separator = value; }
+
  private:
   template<typename PhrasePart>
   PhrasePart& insert(PhrasePart&& t, PosAttr::value_t offs_min,
@@ -131,15 +134,18 @@ class ByPhraseOptions {
     SDB_ASSERT(offs_max >= offs_min);
     if (_phrase.empty()) {
       offs_max = offs_min = 0;
+      _phrase.reserve(kReservedParts);
     }
-    _phrase.push_back(PhrasePartInfo{.part = std::forward<PhrasePart>(t),
-                                     .offs_min = offs_min,
-                                     .offs_max = offs_max});
-    return std::get<std::decay_t<PhrasePart>>(_phrase.back().part);
+    return std::get<std::decay_t<PhrasePart>>(
+      _phrase.emplace_back(std::forward<PhrasePart>(t), offs_min, offs_max)
+        .part);
   }
 
-  std::deque<PhrasePartInfo> _phrase;
+  static constexpr size_t kReservedParts = 4;
+
+  std::vector<PhrasePartInfo> _phrase;
   PosAttr::value_t _slop{0};
+  bstring _word_separator;
 };
 
 class ByPhrase : public FilterWithField<ByPhraseOptions> {

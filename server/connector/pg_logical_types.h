@@ -44,11 +44,10 @@ namespace sdb::pg {
   }
 
 // Factory function (only safe where Velox types.h is NOT included)
-#define DECLARE_PG_TYPE_FACTORY(UPPER, alias_str, BaseTypeId)           \
-  inline duckdb::LogicalType UPPER() {                                  \
-    auto type = duckdb::LogicalType(duckdb::LogicalTypeId::BaseTypeId); \
-    type.SetAlias(alias_str);                                           \
-    return type;                                                        \
+#define DECLARE_PG_TYPE_FACTORY(UPPER, alias_str, BaseTypeId)     \
+  inline duckdb::LogicalType UPPER() {                            \
+    return duckdb::LogicalType(duckdb::LogicalTypeId::BaseTypeId) \
+      .WithAlias(alias_str);                                      \
   }
 
 #ifdef SDB_PG_LOGICAL_TYPES_NO_FACTORY
@@ -120,13 +119,11 @@ inline constexpr std::string_view kCtidAlias = "ctid";
 
 #ifndef SDB_PG_LOGICAL_TYPES_NO_FACTORY
 inline duckdb::LogicalType CTID() {
-  static const auto kType = [] {
-    auto type = duckdb::LogicalType::STRUCT(
+  static const auto kType =
+    duckdb::LogicalType::STRUCT(
       {{"block_number", duckdb::LogicalType::UINTEGER},
-       {"tuple_offset", duckdb::LogicalType::USMALLINT}});
-    type.SetAlias(std::string{kCtidAlias});
-    return type;
-  }();
+       {"tuple_offset", duckdb::LogicalType::USMALLINT}})
+      .WithAlias(std::string{kCtidAlias});
   return kType;
 }
 #endif

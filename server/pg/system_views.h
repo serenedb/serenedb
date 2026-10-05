@@ -3142,8 +3142,8 @@ inline constexpr SystemView kExternalViews[] = {
                  ELSE null END
                AS character_data) AS action_condition,
              CAST(
-               substring(pg_get_triggerdef(t.oid) from
-                         position('EXECUTE FUNCTION' in substring(pg_get_triggerdef(t.oid) from 48)) + 47)
+               regexp_extract(pg_get_triggerdef(t.oid),
+                              '(?s) FOR EACH (?:ROW|STATEMENT) (.*)$', 1)
                AS character_data) AS action_statement,
              CAST(
                -- hard-wired reference to TRIGGER_TYPE_ROW

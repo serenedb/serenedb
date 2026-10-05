@@ -79,7 +79,7 @@ Match a run of tokens in their indexed order, optionally separated by token gaps
 | `text, ...` | `VARCHAR`/`BLOB` | — | Further segments, each preceded by its own `gap`. |
 | `slop` | `INTEGER` (named) | `0` | Budget of position moves allowed when lining the query up with the document. Must be `>= 0`; incompatible with `[min, max]` interval gaps. |
 
-**How it works.** `ts_phrase` matches positions, so the column's dictionary must have `position` enabled. The tokens of each `text` segment must appear adjacent and in order. A dictionary can put several tokens at one position — the synonyms of [`expand_solr_synonyms`](./tokenizers/expand_solr_synonyms.md), or the n-grams of [`generate_ngrams`](./tokenizers/generate_ngrams.md) that start at the same character — and any one of them matches that position: with the synonyms `car, automobile`, `ts_phrase('red car')` also matches `red automobile`. The optional `gap` arguments control how far apart consecutive segments may sit. The gap counts the tokens *between* the two segments — `0` is immediate adjacency, `2` means exactly two intervening tokens. A `[min, max]` array accepts any gap in that inclusive range. Without `slop`, order is always preserved: `ts_phrase('a', 0, 'b')` does not match `b a`.
+**How it works.** `ts_phrase` matches positions, so the column's dictionary must have `position` enabled. A [`generate_shingles`](./tokenizers/generate_shingles.md#phrase-search) dictionary without `position` still answers a phrase that one of its shingles covers. The tokens of each `text` segment must appear adjacent and in order. A dictionary can put several tokens at one position — the synonyms of [`expand_solr_synonyms`](./tokenizers/expand_solr_synonyms.md), or the n-grams of [`generate_ngrams`](./tokenizers/generate_ngrams.md) that start at the same character — and any one of them matches that position: with the synonyms `car, automobile`, `ts_phrase('red car')` also matches `red automobile`. The optional `gap` arguments control how far apart consecutive segments may sit. The gap counts the tokens *between* the two segments — `0` is immediate adjacency, `2` means exactly two intervening tokens. A `[min, max]` array accepts any gap in that inclusive range. Without `slop`, order is always preserved: `ts_phrase('a', 0, 'b')` does not match `b a`.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -193,6 +193,10 @@ On a column indexed with [`generate_wildcard_ngrams`](./tokenizers/generate_wild
 Use the `'posix'` dialect for a POSIX ERE bracket expression:
 
 <SqlLogicTest id="sql/functions/full_text_search/ts_regexp_posix" />
+
+In a [`##`](../../indexes/inverted/full-text-search.md#phrase-parts) phrase, `ts_regexp` matches the token at its position:
+
+<SqlLogicTest id="sql/functions/full_text_search/ts_regexp_phrase" />
 
 #### `ts_levenshtein(text[, distance[, transpositions[, prefix]]])` {#ts_levenshtein}
 

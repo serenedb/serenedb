@@ -44,38 +44,37 @@ Additional build presets are defined in `CMakePresets.json`:
 - `clangd` -- RelWithDebInfo build (`build_clangd/`), works well with the clangd language server in VSCode
 - `bench` -- Release build (`build_bench/`), static linking, production-like performance
 
+### Debug info and disk use
+
+Every binary links most of the server statically, so debug info dominates its size. Two settings keep a build directory small:
+
+- **Split DWARF** (`SDB_SPLIT_DWARF`, on by default except on macOS, off in CI): debug info is written once, into a `.dwo` file beside each object, and the binaries only point at those files. lldb, gdb, perf, `llvm-symbolizer` and `addr2line` follow the pointers on their own, as long as the build directory is there. A binary copied out of it keeps its symbols and line numbers but loses inlined frames, variables and types; to keep those too, pack the debug info next to the copy:
+
+  ```bash
+  llvm-dwp -e build/bin/serened -o /path/to/copy/serened.dwp
+  ```
+
+  lldb and gdb pick up `<binary>.dwp` beside the binary automatically.
+- **Thin archives**: static libraries (except on macOS) only reference their objects instead of holding copies, so they cannot be moved or installed without the build directory -- nothing in the build does that.
+
+Tools and benchmarks share binaries instead of each linking their own: `serenedb-bench-micro <bench> [args...]` runs one micro benchmark (see [Performance](#performance)), and `iresearch-examples <example>` runs one of the iresearch examples. Both print what they offer when run without arguments.
+
 ### The embedded documentation index
 
-`docs/` is compiled into the binary together with a prebuilt search index of it.
-The read-only `sdb_docs` functions and the shell's `.docs` read that image straight
-from the binary, so the server indexes nothing at startup and leaves nothing in the
-datadir.
+`docs/` is compiled into the binary together with a prebuilt search index of it. The read-only `sdb_docs` functions and the shell's `.docs` read that image straight from the binary, so the server indexes nothing at startup and leaves nothing in the datadir.
 
-The index cannot be produced from the sources the way the documentation text is,
-because building it needs the indexer that lives in the server being built. So
-the build does it in two passes:
+The index cannot be produced from the sources the way the documentation text is, because building it needs the indexer that lives in the server being built. So `serened` builds it itself, right after it is linked:
 
-1. `serened-docs-bootstrap` links the same server with an empty index.
-2. `serened-docs-bootstrap <datadir> --build_docs_index=<out>` boots it on a
-   throwaway datadir, indexes the documentation and the catalog of the objects
-   it documents, and writes them to `<out>/docs` and `<out>/objects`, each
-   with a layout file naming its column and field ids. It then exits before
-   any listener is started.
-3. `scripts/generate_docs_index.py` packs both directories with `#embed`, so
-   the generated translation unit stays a few hundred bytes whatever the
-   indexes weigh.
-4. `serened` links the generated unit.
+1. `scripts/generate_docs.py --corpus` writes the documentation text to a file in the build directory.
+2. `serened` is linked with an empty `.sdb_docs` section for the index (`server/docs/docs_index_image.cpp`); `server/docs/docs_index.ld` places it after `.bss`, alone in the last loadable segment.
+3. `serened <datadir> --build_docs_index=<out> --docs_corpus=<file>` boots it on a throwaway datadir, indexes the documentation and the catalog of the objects it documents, and writes them to `<out>/docs` and `<out>/objects`, each with a layout file naming its column and field ids. It then exits before any listener is started.
+4. `scripts/embed_docs_index.py` writes both directories into `.sdb_docs` of the binary that built them and grows the section and its segment to exactly their size. Nothing is loaded after that segment, so only the non-loaded sections behind it in the file move.
 
-The code behind the first two steps lives in `server/docs/builder/`: the
-documentation corpus, the indexer and the `--build_docs_index` flag. None of it
-is linked into `serened`.
+macOS has no linker scripts, so there `serened` reserves a fixed 4 MiB region instead and step 4 fills it in place. If the index outgrows it, the macOS build fails and says so; raise `kCapacity` in `docs_index_image.cpp`.
 
-Every step is an ordinary build dependency -- the index is rebuilt whenever the
-bootstrap binary changes, which includes every change to `docs/`. So the image
-always matches the documentation compiled in beside it, and there is nothing to
-keep in sync by hand. It also means an edit anywhere in the server re-runs the
-whole chain. To skip it, configure with `-DSDB_EMBEDDED_DOCS=OFF`: that build
-carries no documentation, so `.docs` and `sdb_docs` have nothing to read.
+`serenedb-tests` is linked and embedded the same way, so the documentation tests run against what `serened` ships.
+
+Steps 3 and 4 run every time `serened` is linked, which includes every change to `docs/`. So the image always matches the server it lives in, and there is nothing to keep in sync by hand. To skip it, configure with `-DSDB_EMBEDDED_DOCS=OFF`: that build carries no documentation, so `.docs` and `sdb_docs` have nothing to read.
 
 ### Launch
 
@@ -529,7 +528,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - Prefer contiguous memory (vectors, arrays) over node-based containers (lists, maps)
 - Measure before optimizing -- don't guess
 - Binary size matters: excessive inlining/templates hurt icache and build times
-- Validate performance claims with microbenchmarks under `tests/bench/micro/` (Google Benchmark). Register one with `add_bench(<name>)` in that directory's `CMakeLists.txt`, build with `ninja serenedb-bench-micro`, run from `build/bin/serenedb-bench-micro-<name>`.
+- Validate performance claims with microbenchmarks under `tests/bench/micro/` (Google Benchmark). Register one with `add_bench(<name>)` in that directory's `CMakeLists.txt` -- `<name>.cpp` either registers `BENCHMARK`s or defines its own `Main` with `sdb::bench::AddMain` -- build with `ninja serenedb-bench-micro`, run it as `build/bin/serenedb-bench-micro <name> [--benchmark_filter=...]`. The same binary answers to `search-benchmark-game-build` and `search-benchmark-game-query`, the search benchmark game's tools.
 - Use the `bench` cmake preset for production-like numbers.
 - A microbench fits when the change is a few well-scoped functions. When the
   change is broader (a whole query path, an end-to-end pipeline, anything that

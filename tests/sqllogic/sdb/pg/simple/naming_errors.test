@@ -152,7 +152,7 @@ FROM
   VALUES ('clickclack', 666), ('deadinside', 993)
 ) AS kek(vedernikoff);
 ----
-db error: ERROR: Ambiguous reference to column name "vedernikoff" (use: "lol.vedernikoff" or "kek.vedernikoff")
+db error: ERROR: Ambiguous reference to column name "vedernikoff" (use: 'lol.vedernikoff' or 'kek.vedernikoff')
 
 
 query
@@ -199,7 +199,7 @@ FROM
   ) AS lol(vedernikoff)
 ) as kekes;
 ----
-db error: ERROR: Ambiguous reference to column name "vedernikoff" (use: "lmao.vedernikoff" or "kekes.vedernikoff")
+db error: ERROR: Ambiguous reference to column name "vedernikoff" (use: 'lmao.vedernikoff' or 'kekes.vedernikoff')
 
 
 query error
@@ -250,7 +250,7 @@ FROM
   ) AS lol(vedernikoff)
 ) as kekes;
 ----
-db error: ERROR: Ambiguous reference to column name "vedernikoff" (use: "lmao.vedernikoff" or "kekes.vedernikoff")
+db error: ERROR: Ambiguous reference to column name "vedernikoff" (use: 'lmao.vedernikoff' or 'kekes.vedernikoff')
 
 
 query error
@@ -346,7 +346,7 @@ FROM
   ) AS lol(vedernikoff, kostya)
 ) as kek(vedernikoff);
 ----
-db error: ERROR: Ambiguous reference to column name "notkostya" (use: "lmao.notkostya" or "kek.notkostya")
+db error: ERROR: Ambiguous reference to column name "notkostya" (use: 'lmao.notkostya' or 'kek.notkostya')
 
 
 query error
@@ -354,7 +354,7 @@ SELECT iq  FROM
   generate_series(1, 2) as kostya(iq),
   generate_series(1, 2) as vedernikoff(iq);
 ----
-db error: ERROR: Ambiguous reference to column name "iq" (use: "kostya.iq" or "vedernikoff.iq")
+db error: ERROR: Ambiguous reference to column name "iq" (use: 'kostya.iq' or 'vedernikoff.iq')
 
 
 query error
@@ -452,7 +452,7 @@ SELECT vedernikoff
 FROM cte1
 INNER JOIN cte2 ON cte1.vedernikoff = cte2.vedernikoff;
 ----
-db error: ERROR: Ambiguous reference to column name "vedernikoff" (use: "cte1.vedernikoff" or "cte2.vedernikoff")
+db error: ERROR: Ambiguous reference to column name "vedernikoff" (use: 'cte1.vedernikoff' or 'cte2.vedernikoff')
 
 
 query error
@@ -465,7 +465,7 @@ INNER JOIN (
   SELECT vedernikoff, babsky FROM (VALUES (5, 6), (7, 8)) AS t(vedernikoff, babsky)
 ) AS cte2 ON cte.vedernikoff = cte2.vedernikoff;
 ----
-db error: ERROR: Ambiguous reference to column name "vedernikoff" (use: "cte.vedernikoff" or "cte2.vedernikoff")
+db error: ERROR: Ambiguous reference to column name "vedernikoff" (use: 'cte.vedernikoff' or 'cte2.vedernikoff')
 
 
 query error
@@ -478,7 +478,7 @@ INNER JOIN (
   SELECT kostya, vedernikoff FROM (VALUES (3, 'babsky'), (4, 'deadinside')) AS t(kostya, vedernikoff)
 ) AS cte2 ON cte.kostya = cte2.kostya;
 ----
-db error: ERROR: Ambiguous reference to column name "vedernikoff" (use: "cte.vedernikoff" or "cte2.vedernikoff")
+db error: ERROR: Ambiguous reference to column name "vedernikoff" (use: 'cte.vedernikoff' or 'cte2.vedernikoff')
 
 
 query error
@@ -491,7 +491,7 @@ INNER JOIN (
   SELECT babsky FROM (VALUES (3), (4)) AS t(babsky)
 ) AS cte2 ON cte.babsky = cte2.babsky;
 ----
-db error: ERROR: Ambiguous reference to column name "babsky" (use: "cte.babsky" or "cte2.babsky")
+db error: ERROR: Ambiguous reference to column name "babsky" (use: 'cte.babsky' or 'cte2.babsky')
 
 
 query error
@@ -517,7 +517,7 @@ t2 AS (
 )
 SELECT kostya_iq FROM t1, t2;
 ----
-db error: ERROR: Ambiguous reference to column name "kostya_iq" (use: "t1.kostya_iq" or "t2.kostya_iq")
+db error: ERROR: Ambiguous reference to column name "kostya_iq" (use: 't1.kostya_iq' or 't2.kostya_iq')
 
 
 query error

@@ -5,6 +5,7 @@
 #include "clickhouse_connection.hpp"
 #include "clickhouse_types.hpp"
 
+#include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/planner/operator/logical_update.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 
@@ -42,7 +43,8 @@ unique_ptr<GlobalSinkState> ClickHouseUpdate::GetGlobalSinkState(ClientContext &
 	auto &ch_table = table.Cast<ClickHouseTableEntry>();
 	auto result = make_uniq<ClickHouseUpdateGlobalState>(ch_table);
 	for (auto &column : columns) {
-		result->column_names.push_back(ch_table.GetColumns().GetColumn(LogicalIndex(column.index)).GetName().GetIdentifierName());
+		result->column_names.push_back(
+		    ch_table.GetColumns().GetColumn(LogicalIndex(column.index)).GetName().GetIdentifierName());
 	}
 	result->values.resize(columns.size());
 	return std::move(result);

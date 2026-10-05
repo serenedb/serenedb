@@ -33,8 +33,8 @@
 // Validity tracks are benched as segments of their own; a null column's arm
 // cost composes as data-segment cost + validity-segment cost.
 //
-// Build in build_perf: ninja serenedb-bench-micro-select_thresholds
-// Run: ./bin/serenedb-bench-micro-select_thresholds [--benchmark_filter=...]
+// Build in build_perf: ninja serenedb-bench-micro
+// Run: ./bin/serenedb-bench-micro select_thresholds [--benchmark_filter=...]
 
 #include <benchmark/benchmark.h>
 
@@ -111,7 +111,7 @@ std::unique_ptr<Blk> BuildBlk(const Shape& shape, uint64_t w) {
                  qr->GetError().c_str());
     std::abort();
   }
-  const auto col_type = qr->types[0];
+  const auto col_type = qr->GetTypes()[0];
   {
     irs::ColWriter writer{blk->dir, kSegName, CsDb()};
     auto& cw = writer.OpenColumn(kField, col_type);
@@ -360,7 +360,7 @@ void RegisterAll() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+static int Main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Initialize();
   RegisterAll();
   benchmark::Initialize(&argc, argv);
@@ -369,3 +369,6 @@ int main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }
+
+[[maybe_unused]] static const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

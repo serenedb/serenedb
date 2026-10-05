@@ -69,5 +69,3 @@ void BmRunLengthGeneric(benchmark::State& state) { Consume<PlainRows>(state); }
 BENCHMARK(BmRunLengthGeneric)->Range(64, 1 << 16);
 
 }  // namespace
-
-BENCHMARK_MAIN();

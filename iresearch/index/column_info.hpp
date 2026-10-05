@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <core_functions/array_kernels.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <functional>
@@ -32,7 +33,6 @@
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 #include "iresearch/utils/type_limits.hpp"
-#include "iresearch/utils/vector.hpp"
 
 namespace irs {
 
@@ -44,26 +44,23 @@ enum class VectorMetric : uint8_t {
 };
 
 template<VectorMetric Metric>
-auto ComputeDistance(const byte_type* l, const byte_type* r, uint16_t d) {
+float ComputeDistance(const float* l, const float* r, uint16_t d) {
   if constexpr (Metric == VectorMetric::L2Sqr) {
-    return -vector::L2Space<float, float, float>::Dist(l, r, d);
+    return -duckdb::DistanceSquaredOp::Operation(l, r, d);
   } else if constexpr (Metric == VectorMetric::L1) {
-    return -vector::L1Space<float, float, float>::Dist(l, r, d);
+    return -duckdb::L1DistanceOp::Operation(l, r, d);
   } else if constexpr (Metric == VectorMetric::InnerProduct) {
-    return vector::DotProductImpl<float, float>::Compute(l, r, d);
+    return duckdb::InnerProductOp::Operation(l, r, d);
   } else if constexpr (Metric == VectorMetric::Cosine) {
-    auto [ll, lr, rr] =
-      vector::CosineDistanceImpl<float, float, float>::Compute(l, r, d);
-    const float denom = std::sqrt(ll) * std::sqrt(rr);
-    return denom == 0.f ? 0.f : lr / denom;
+    return duckdb::CosineSimilarityOp::Operation(l, r, d);
   }
   SDB_UNREACHABLE();
 }
 
 template<VectorMetric Metric>
-auto ComputeDistance(const float* l, const float* r, uint16_t d) {
-  return ComputeDistance<Metric>(reinterpret_cast<const byte_type*>(l),
-                                 reinterpret_cast<const byte_type*>(r), d);
+float ComputeDistance(const byte_type* l, const byte_type* r, uint16_t d) {
+  return ComputeDistance<Metric>(reinterpret_cast<const float*>(l),
+                                 reinterpret_cast<const float*>(r), d);
 }
 
 enum class VectorQuantization : uint8_t {

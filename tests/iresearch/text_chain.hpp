@@ -20,11 +20,10 @@
 
 #pragma once
 
-#include <unicode/locid.h>
-
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <memory>
 #include <string>
+#include <text_locale.hpp>
 #include <utility>
 #include <vector>
 
@@ -42,7 +41,7 @@ struct TextChain {
 
 inline irs::analysis::TokenizerConfig TextChainConfig(TextChain chain) {
   using namespace irs::analysis;
-  const auto locale = icu::Locale::createFromName(chain.locale.c_str());
+  const auto locale = duckdb::text::Locale::FromName(chain.locale.c_str());
   PipelineTokenizer::Options opts;
   const auto add = [&](TokenizerConfig cfg) {
     opts.children.push_back(std::make_unique<TokenizerConfig>(std::move(cfg)));

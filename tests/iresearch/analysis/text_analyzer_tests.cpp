@@ -21,8 +21,6 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <unicode/locid.h>
-
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
@@ -31,6 +29,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <text_locale.hpp>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -57,8 +56,8 @@ struct TextOpts {
 
 irs::analysis::Tokenizer::ptr MakeText(TextOpts opts = {}) {
   using namespace irs::analysis;
-  const auto locale = icu::Locale::createFromName(opts.locale.c_str());
-  const std::string lang = locale.getLanguage();
+  const auto locale = duckdb::text::Locale::FromName(opts.locale.c_str());
+  const std::string lang{locale.GetLanguage()};
   const bool locale_case =
     lang == "tr" || lang == "az" || lang == "lt" || lang == "el";
   PipelineTokenizer::Options pipeline;

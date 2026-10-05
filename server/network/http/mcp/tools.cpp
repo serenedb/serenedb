@@ -33,7 +33,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
-#include <duckdb/main/materialized_query_result.hpp>
+#include <duckdb/main/query_result.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <string>
 #include <string_view>
@@ -58,12 +58,13 @@ constexpr std::string_view kKinds =
   "function, statement, tokenizer, type, setting, index_type, command";
 constexpr int64_t kContentChars = 4000;
 
-std::string Cell(duckdb::MaterializedQueryResult& result,
-                 std::string_view column, size_t row) {
-  const auto it = absl::c_find(result.names, column);
-  SDB_ASSERT(it != result.names.end(), "no column ", column);
+std::string Cell(duckdb::QueryResult& result, std::string_view column,
+                 size_t row) {
+  const auto& names = result.GetNames();
+  const auto it = absl::c_find(names, column);
+  SDB_ASSERT(it != names.end(), "no column ", column);
   const auto value =
-    result.GetValue(static_cast<size_t>(it - result.names.begin()), row);
+    result.Collection().GetValue(static_cast<size_t>(it - names.begin()), row);
   return value.IsNull() ? std::string{} : duckdb::StringValue::Get(value);
 }
 
@@ -274,14 +275,14 @@ yaclib::Task<ToolResult> DescribeObject(RequestContext& ctx,
       absl::StrCat("describe_object failed: ", result->GetError()));
   }
   const auto exact = [&](size_t row) {
-    return !result->GetValue(3, row).IsNull();
+    return !result->Collection().GetValue(3, row).IsNull();
   };
   if (result->RowCount() == 0 || !exact(0)) {
     std::string text = absl::StrCat(
       "No documented ", kind.empty() ? "object" : kind, " named: ", name, ".");
     const bool functions = kind.empty() || kind == "function";
     const bool settings = kind.empty() || kind == "setting";
-    duckdb::unique_ptr<duckdb::MaterializedQueryResult> live;
+    duckdb::unique_ptr<duckdb::QueryResult> live;
     if (functions || settings) {
       live = co_await ctx.RunQuery(
         absl::StrCat(
@@ -391,7 +392,7 @@ yaclib::Task<ToolResult> DescribeObject(RequestContext& ctx,
     if (const auto content = Cell(*bodies, "content", body->second);
         !content.empty()) {
       absl::StrAppend(&text, "\n", connector::AbsoluteLinks(content, path));
-      if (bodies->GetValue(2, body->second).GetValue<bool>()) {
+      if (bodies->Collection().GetValue(2, body->second).GetValue<bool>()) {
         absl::StrAppend(&text,
                         "\n\n(truncated; read the full page with "
                         "read_doc on the path above)");
@@ -530,7 +531,9 @@ yaclib::Task<ToolResult> CheckSql(RequestContext& ctx, const ToolArgs& args) {
   std::string text = "Valid. The plan:\n";
   for (size_t row = 0; row < result->RowCount(); ++row) {
     absl::StrAppend(
-      &text, result->GetValue(result->ColumnCount() - 1, row).ToString(), "\n");
+      &text,
+      result->Collection().GetValue(result->ColumnCount() - 1, row).ToString(),
+      "\n");
   }
   co_return ToolResult{std::move(text)};
 }

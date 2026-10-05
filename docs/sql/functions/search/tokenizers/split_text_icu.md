@@ -7,11 +7,11 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 # split_text_icu
 
-The `split_text_icu` template segments text with the ICU break iterator for a locale and emits the surviving segments verbatim. It is the locale-aware counterpart of [`split_text`](./split_text.md): where that template runs one language-agnostic UAX#29 algorithm, `split_text_icu` asks ICU for the rules of `LOCALE`, and ICU brings a segmentation dictionary for the languages that do not separate words with spaces — Chinese, Japanese and Thai. This, not `split_text`, is the template that splits `中文测试` into `中文` and `测试`.
+The `split_text_icu` template segments text with the word or sentence break rules of a locale and emits the surviving segments verbatim. The rules and the segmentation dictionaries are those of ICU 78.3, built into SereneDB. It is the locale-aware counterpart of [`split_text`](./split_text.md): where that template runs one language-agnostic UAX#29 algorithm, `split_text_icu` takes the rules of `LOCALE` and the dictionaries for the languages that do not separate words with spaces — Chinese, Japanese, Thai, Lao, Khmer and Burmese. This, not `split_text`, is the template that splits `中文测试` into `中文` and `测试`.
 
 Nothing is transformed on the way out. There is no case, accent, normalization or stemming step in this template, so every token is a substring of the input value and its bytes are exactly the source bytes. To fold case or normalize on top of the split, make `split_text_icu` the first step of a [`pipeline`](../../../statements/create_text_search_dictionary/pipeline/index.md) and add a [`normalize_tokens`](./normalize_tokens.md) step after it.
 
-`BREAK` picks between two jobs. The three word modes — `'alpha'` (the default), `'graphic'` and `'all'` — cut the value at every word boundary and differ only in which segments are kept. `'sentence'` switches to the ICU sentence iterator and emits whole sentences instead.
+`BREAK` picks between two jobs. The three word modes — `'alpha'` (the default), `'graphic'` and `'all'` — cut the value at every word boundary and differ only in which segments are kept. `'sentence'` switches to the sentence rules and emits whole sentences instead.
 
 All four [feature flags](../../../statements/create_text_search_dictionary/index.md#feature-flags) are supported — `FREQUENCY`, `POSITION`, `NORM` and `OFFSET` — as long as their dependencies hold: `OFFSET` requires `POSITION`, and `POSITION` and `NORM` require `FREQUENCY`. The tokenizer records offsets, so `OFFSET` is available in every mode.
 
@@ -23,22 +23,22 @@ All four [feature flags](../../../statements/create_text_search_dictionary/index
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `LOCALE` | string | **required** | ICU locale whose break rules segment the value (e.g., `'en_US.UTF-8'`, `'ja'`, `'th'`) |
+| `LOCALE` | string | **required** | Locale whose break rules segment the value (e.g., `'en_US.UTF-8'`, `'ja'`, `'th'`) |
 | `BREAK` | string | `'alpha'` | Unit of segmentation and which segments are kept. Word segments, filtered: `'alpha'` (segments holding a letter or a digit), `'graphic'` (segments holding a non-whitespace, non-control character), `'all'` (every segment, whitespace runs included). Whole sentences, every segment kept: `'sentence'` |
 
-`LOCALE` has no usable default. Omitting it, or passing an empty string, leaves the locale unset and `CREATE` fails with `split_text_icu: locale is required`. A string ICU cannot parse at all fails earlier with `Invalid locale "<value>" for option "locale"`, and a locale ICU parses but cannot open a break iterator for fails with `split_text_icu: failed to create a break iterator for locale '<name>': <icu error>`. Missing break data is not such a failure: ICU falls back to the closest available rules — the root rules in the worst case — so the locale is accepted and its boundaries follow that fallback.
+`LOCALE` has no usable default. Omitting it, or passing an empty string, leaves the locale unset and `CREATE` fails with `split_text_icu: locale is required`. A value that is not a valid locale fails with `Invalid locale "<value>" for option "locale"`, see [Locales](#locales). Rules are looked up by shortening the locale step by step, and most locales end at the root rules: only `en_US_POSIX` has word rules of its own (a full stop joins digits, as in `3.14`, but not letters, and a colon never joins letters) and only `el` sentence rules of its own. With the `ss=standard` keyword — `LOCALE = 'en@ss=standard'` — the sentence mode does not break after the abbreviations of the language (`Mr.`, `etc.`, `z.B.`); abbreviation lists exist for `de`, `en`, `es`, `fr`, `it`, `pt` and `ru`.
 
 `BREAK` matches its value case-insensitively, so `'Sentence'` and `'ALPHA'` also work; anything outside the four listed values fails with `invalid value in "break" parameter` and the hint `Token boundary detection mode: all, graphic, alpha, sentence`. These two options are all the template takes, and any other one — `CASE`, `ACCENT`, `MIN_GRAM` — fails with `split_text_icu(): unknown option "<name>"`.
 
 ## Tokenization
 
-In the three word modes the ICU word break iterator for `LOCALE` cuts the value at every word boundary, and the mode decides which of the resulting segments are emitted. `'alpha'` keeps a segment only when ICU reports a word rule status for it — letters, numbers, kana or ideographs, which is where the segmentation dictionary applies — and the segment holds at least one letter or digit, so punctuation and whitespace are discarded. `'graphic'` keeps every segment holding at least one character that is neither whitespace nor an ASCII control character, which additionally keeps each punctuation mark as its own token. `'all'` keeps every segment, so a run of consecutive spaces is one token and each punctuation character is a token of its own.
+In the three word modes the word break rules of `LOCALE` cut the value at every word boundary, and the mode decides which of the resulting segments are emitted. `'alpha'` keeps a segment only when the rule that ends it marks a word — letters, numbers, kana or ideographs, which is where the segmentation dictionary applies — and the segment holds at least one letter or digit, so punctuation and whitespace are discarded. `'graphic'` keeps every segment holding at least one character that is neither whitespace nor an ASCII control character, which additionally keeps each punctuation mark as its own token. `'all'` keeps every segment, so a run of consecutive spaces is one token and each punctuation character is a token of its own.
 
-`BREAK = 'sentence'` changes the unit instead of filtering. The ICU sentence break iterator for `LOCALE` splits the value into UAX#29 sentences, no accept test applies, and each sentence is emitted with leading and trailing bytes up to and including the space character trimmed off; a segment that trims away to nothing is dropped.
+`BREAK = 'sentence'` changes the unit instead of filtering. The sentence break rules of `LOCALE` split the value into UAX#29 sentences, no accept test applies, and each sentence is emitted with leading and trailing bytes up to and including the space character trimmed off; a segment that trims away to nothing is dropped.
 
-The word modes take a shortcut on ASCII input: when `LOCALE` resolves to break rules ICU does not tailor, ASCII-only input is segmented by the built-in UAX#29 scanner that also backs [`split_text`](./split_text.md) rather than by ICU. A locale with tailored rules goes through ICU, and so does any input carrying non-ASCII bytes; `BREAK = 'sentence'` always goes through ICU. Both paths implement UAX#29 word boundaries, and only text that is not ASCII can need a segmentation dictionary, so the shortcut does not change which mode you should choose.
+The word modes take a shortcut on ASCII input: when `LOCALE` resolves to the root word rules, ASCII-only input is segmented by the built-in UAX#29 scanner that also backs [`split_text`](./split_text.md). A locale with word rules of its own goes through its rules, and so does any input carrying non-ASCII bytes; `BREAK = 'sentence'` always goes through the sentence rules. Both paths implement UAX#29 word boundaries, and only text that is not ASCII can need a segmentation dictionary, so the shortcut does not change which mode you should choose.
 
-Each emitted token gets one index position, in input order, and its offsets are the token's byte range in the value — the trimmed range in sentence mode. Because no transformation runs, a token is always byte-identical to that range, casing and accent marks included. Empty input yields no tokens. A value whose UTF-8 cannot be converted — malformed input — is skipped whole: it produces no tokens and no error, and the other values are unaffected.
+Each emitted token gets one index position, in input order, and its offsets are the token's byte range in the value — the trimmed range in sentence mode. Because no transformation runs, a token is always byte-identical to that range, casing and accent marks included. Empty input yields no tokens. A value that is not valid UTF-8 is skipped whole: it produces no tokens and no error, and the other values are unaffected.
 
 The table below shows how each mode tokenizes, with `LOCALE = 'en_US.UTF-8'` throughout:
 
@@ -52,11 +52,17 @@ The table below shows how each mode tokenizes, with `LOCALE = 'en_US.UTF-8'` thr
 
 Because the tokens keep their original case, a query for `quick` does not match the indexed `Quick`: both sides run through the same dictionary, and nothing in it folds case. Add a [`normalize_tokens`](./normalize_tokens.md) step with `CASE = 'lower'` after `split_text_icu` in a [`pipeline`](../../../statements/create_text_search_dictionary/pipeline/index.md) to match case-insensitively.
 
+## Locales
+
+The templates that take a `LOCALE` — `split_text_icu`, [`normalize_tokens`](./normalize_tokens.md), [`collate_tokens`](./collate_tokens.md) and [`stem_words`](./stem_words.md) — accept a locale identifier of the form `language[_Script][_REGION][_VARIANT][.charset][@key=value;...]`, with `-` accepted in place of `_`: `en`, `en_US`, `en_US.UTF-8`, `sr_Latn_RS`, `de-DE`, `en@ss=standard`. The letter case of the language, script and region does not matter, and the stored identifier is canonical (`EN-us` becomes `en_US`).
+
+`CREATE` checks the identifier and fails with `Invalid locale "<value>" for option "locale"`, naming the reason in the error detail, when the language is not a current ISO 639 code (`definitely_not_a_locale`, `C`), the region is not an ISO 3166 code or a three-digit UN M.49 area (`en_XX`), a variant is not 1 to 8 letters or digits, anything is left over after the identifier, or the value uses a BCP 47 extension (spell `en-u-ss-standard` as the keyword form `en@ss=standard`). Dictionaries created before this check keep the locale they were created with.
+
 ## Examples
 
 ### Word segmentation with dictionary support
 
-The default `BREAK = 'alpha'` keeps the word segments and drops the space. The Han text has no spaces, so its split comes from ICU's segmentation dictionary:
+The default `BREAK = 'alpha'` keeps the word segments and drops the space. The Han text has no spaces, so its split comes from the segmentation dictionary:
 
 <SqlLogicTest id="sql/functions/search/tokenizers/split_text_icu/example_001" />
 
@@ -68,7 +74,7 @@ The default `BREAK = 'alpha'` keeps the word segments and drops the space. The H
 
 ## See also
 
-- [`split_text`](./split_text.md) — the same word and sentence modes with no locale and no ICU
+- [`split_text`](./split_text.md) — the same word and sentence modes with no locale and no dictionaries
 - [`normalize_tokens`](./normalize_tokens.md) — normalize a value; chain it after `split_text_icu` in a pipeline to fold case
 - [`split_text_csv`](./split_text_csv.md) — split space-separated text on a literal character
 - [`pipeline`](../../../statements/create_text_search_dictionary/pipeline/index.md) — compose `split_text_icu` with the filters that transform its tokens

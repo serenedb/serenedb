@@ -26,7 +26,6 @@
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
-#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
 #include <duckdb/function/function_set.hpp>
 #include <duckdb/function/scalar_function.hpp>
@@ -272,19 +271,15 @@ duckdb::unique_ptr<duckdb::FunctionData> TsLexizeBind(
   DynamicCtx ctx{.db_id = conn_ctx.GetDatabaseId()};
 
   auto bind = duckdb::make_uniq<TsLexizeBindData>();
-  auto& args = input.GetArguments();
-  if (args[0]->IsFoldable()) {
-    auto val = duckdb::ExpressionExecutor::EvaluateScalar(context, *args[0]);
-    if (!val.IsNull()) {
-      auto dict = LookupTokenizerDict(context, duckdb::StringValue::Get(val));
-      const auto output = AcquireTokenizer(context, *dict)->Traits().output;
-      bind->state = std::move(dict);
-      auto& fn = input.GetBoundFunction();
-      fn.SetReturnType(duckdb::LogicalType::LIST(output));
-      fn.SetFunctionCallback(ConstantFn);
-      fn.SetInitStateCallback(InitTsLexizeLocalState);
-      return bind;
-    }
+  if (auto val = input.TryGetConstant(0); val && !val->IsNull()) {
+    auto dict = LookupTokenizerDict(context, duckdb::StringValue::Get(*val));
+    const auto output = AcquireTokenizer(context, *dict)->Traits().output;
+    bind->state = std::move(dict);
+    auto& fn = input.GetBoundFunction();
+    fn.SetReturnType(duckdb::LogicalType::LIST(output));
+    fn.SetFunctionCallback(ConstantFn);
+    fn.SetInitStateCallback(InitTsLexizeLocalState);
+    return bind;
   }
   bind->state = std::move(ctx);
   return bind;

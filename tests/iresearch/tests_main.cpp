@@ -33,9 +33,7 @@
 #endif
 
 #include <absl/strings/str_cat.h>
-#include <signal.h>          // for signal(...)/raise(...)
-#include <unicode/uclean.h>  // for u_cleanup
-#include <unicode/udata.h>
+#include <signal.h>  // for signal(...)/raise(...)
 
 #include <ctime>
 #include <filesystem>
@@ -73,9 +71,6 @@ ABSL_FLAG(std::string, ires_resource_dir, IRS_TEST_RESOURCE_DIR,
           "resource directory");
 
 namespace {
-
-// Custom ICU data
-irs::mmap_utils::MMapHandle gIcuData{irs::IResourceManager::gNoop};
 
 struct IterationTracker final : ::testing::Environment {
   static uint32_t gSIteration;

@@ -55,7 +55,6 @@
 #include "connector/functions/ts_offsets.h"
 #include "connector/functions/ts_query.h"
 #include "connector/functions/ts_query_codec.h"
-#include "connector/functions/vector.h"
 
 namespace sdb::connector {
 
@@ -86,10 +85,9 @@ void ScorerStubFn(duckdb::DataChunk& /*args*/, duckdb::ExpressionState& state,
 // (e.g. ts_dict_min/ts_dict_max) into one before the optimizer can claim them.
 template<int Tag>
 struct TsDictStub {
-  static duckdb::idx_t StateSize(const duckdb::BoundAggregateFunction&) {
-    return 1;
-  }
-  static void Init(const duckdb::BoundAggregateFunction&, duckdb::data_ptr_t) {}
+  static duckdb::idx_t StateSize(duckdb::AggregateStateInput&) { return 1; }
+  static void Init(duckdb::AggregateStateInput&, duckdb::data_ptr_t*,
+                   duckdb::idx_t) {}
   static void Update(duckdb::Vector[], duckdb::AggregateInputData&,
                      duckdb::idx_t, duckdb::Vector&, duckdb::idx_t) {
     Throw();
@@ -250,22 +248,14 @@ void RegisterGeoFunctions(duckdb::ExtensionLoader& loader) {
   }
 
   // ST_Distance_Centroid(field, centroid) -> DOUBLE
-  //   and its operator-form synonym `field <-> centroid`.
   //
   // Returns the geodesic distance from the indexed value's centroid to the
   // centroid argument. Pseudo-function: outside an inverted-index scan it
   // throws via the stub. The filter builder recognizes
-  // `ST_Distance_Centroid(...) OP <const>` (and the `<->` form) and
-  // rewrites them into iresearch GeoDistanceFilter range bounds.
-  //
-  // The `<->` set extends the vector-distance set registered in
-  // RegisterVectorFunctions (vector.cpp); DuckDB merges overloads under
-  // the same name via OnCreateConflict::ALTER_ON_CONFLICT, so vector
-  // (ARRAY(FLOAT/DOUBLE)) and geo (VARCHAR / GEOMETRY) overloads coexist
-  // and bind by argument types. IsVectorDistanceFunction(...) in
-  // iresearch_plan.cpp keeps the geo overloads off the vector-ANN paths.
-  for (auto name : {kGeoDistance, kL2DistanceOp}) {
-    duckdb::ScalarFunctionSet set{duckdb::Identifier{name}};
+  // `ST_Distance_Centroid(...) OP <const>` and rewrites it into iresearch
+  // GeoDistanceFilter range bounds.
+  {
+    duckdb::ScalarFunctionSet set{duckdb::Identifier{kGeoDistance}};
     for (const auto& field_t : geo_arg_types) {
       for (const auto& centroid_t : geo_arg_types) {
         set.AddFunction(duckdb::ScalarFunction(

@@ -360,14 +360,15 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ EXTENSION ───────────╮
-│ 1 row             0µs │
-╰───────────┒┎──────────╯
-╭─ TABLE_SCAN ──────────╮
-│ Table: biksalen_memes │
-│ Type: Sequential Scan │
-│ 3 rows            0µs │
-╰───────────────────────╯
+╭─ EXTENSION ───────────────╮
+│ 1 row                 0µs │
+╰─────────────┒┎────────────╯
+╭─ TABLE_SCAN ┚┖────────────╮
+│ Table: biksalen_memes     │
+│ Type: Sequential Scan     │
+│ Row Groups Scanned: 1 / 1 │
+│ 3 rows                0µs │
+╰───────────────────────────╯
 
 
 # EXPLAIN ANALYZE must actually create the index
@@ -584,7 +585,7 @@ EXPLAIN SELECT a, BM25(score_parquet_idx.tableoid) > 0 AS has_score FROM score_p
 ----
 QUERY PLAN
 ╭─ ORDER_BY ─────────────────────────────╮
-│ Order By: score_parquet_idx.a ASC      │
+│ Order By: a ASC                        │
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ PROJECTION ───────┴───────────────────╮
@@ -879,7 +880,7 @@ EXPLAIN SELECT a, b FROM dense_csv_idx WHERE b @@ ts_phrase('shared term') ORDER
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────╮
-│ Order By: dense_csv_idx.a ASC            │
+│ Order By: a ASC                          │
 │ ~1 row                                   │
 ╰─────────────────────┬────────────────────╯
 ╭─ PROJECTION ────────┴────────────────────╮

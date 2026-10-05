@@ -32,9 +32,11 @@
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
+#include <duckdb/storage/table/index_entry.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -47,22 +49,27 @@
 namespace sdb::search {
 namespace {
 
+using BoundIndexHandle =
+  duckdb::IndexWriteHandle<connector::InvertedStoreIndex>;
+
 struct FinishReplayTask final : duckdb::BaseExecutorTask {
   FinishReplayTask(duckdb::TaskExecutor& executor,
-                   connector::InvertedStoreIndex* index,
+                   std::optional<BoundIndexHandle> index,
                    std::shared_ptr<InvertedIndexStorage> storage)
-    : BaseExecutorTask{executor}, index{index}, storage{std::move(storage)} {}
+    : BaseExecutorTask{executor},
+      index{std::move(index)},
+      storage{std::move(storage)} {}
 
   void ExecuteTask() final {
     if (index) {
-      index->FinishReplay();
+      (*index)->FinishReplay();
     }
     storage->Refresh();
   }
 
   std::string TaskType() const final { return "InvertedFinishReplay"; }
 
-  connector::InvertedStoreIndex* index;
+  std::optional<BoundIndexHandle> index;
   std::shared_ptr<InvertedIndexStorage> storage;
 };
 
@@ -94,16 +101,16 @@ InvertedIndexEntries() {
   return indexes;
 }
 
-connector::InvertedStoreIndex* BoundIndexOf(
+std::optional<BoundIndexHandle> BoundIndexOf(
   catalog::InvertedIndexEntry& entry) {
-  for (auto& index : entry.info->info->GetIndexes().Indexes()) {
-    if (index.IsBound() &&
-        index.GetIndexType() == connector::InvertedStoreIndex::kTypeName &&
-        index.Cast<connector::InvertedStoreIndex>().IndexId() == entry.oid) {
-      return &index.Cast<connector::InvertedStoreIndex>();
+  for (auto index : entry.info->info->GetIndexes().IndexEntries()) {
+    const auto oid = index->GetCatalogIndexOid();
+    if (index->GetBindState() == duckdb::IndexBindState::BOUND &&
+        oid.IsValid() && oid.GetIndex() == entry.oid) {
+      return index->GetWriteHandle<connector::InvertedStoreIndex>();
     }
   }
-  return nullptr;
+  return std::nullopt;
 }
 
 }  // namespace
@@ -111,7 +118,7 @@ connector::InvertedStoreIndex* BoundIndexOf(
 void InitInvertedIndexes() {
   const auto begin = std::chrono::steady_clock::now();
   std::vector<std::shared_ptr<InvertedIndexStorage>> storages;
-  std::vector<std::pair<connector::InvertedStoreIndex*,
+  std::vector<std::pair<std::optional<BoundIndexHandle>,
                         std::shared_ptr<InvertedIndexStorage>>>
     recovering;
   for (auto& index : InvertedIndexEntries()) {
@@ -136,7 +143,7 @@ void InitInvertedIndexes() {
     irs::DuckDBEngine::Instance().instance())};
   for (auto& [index, storage] : recovering) {
     executor.ScheduleTask(
-      duckdb::make_uniq<FinishReplayTask>(executor, index, storage));
+      duckdb::make_uniq<FinishReplayTask>(executor, std::move(index), storage));
   }
   executor.WorkOnTasks();
   if (recovering.empty()) {

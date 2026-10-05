@@ -18,7 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
+#include <iresearch/analysis/shingle_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
@@ -246,10 +249,19 @@ class IndexFields final : public irs::ParserContext::FieldProvider {
     if (!info) {
       return false;
     }
-    out = {.id = PickPerKindFieldId(*info, duckdb::LogicalTypeId::VARCHAR),
-           .tokenizer = info->tokenizer.analyzer.get()};
+    auto* shingle = ShingleOf(*info);
+    out = {
+      .id = PickPerKindFieldId(*info, duckdb::LogicalTypeId::VARCHAR),
+      .tokenizer = shingle ? &shingle->Base() : info->tokenizer.analyzer.get()};
     _held.push_back(std::move(*info));
     return true;
+  }
+
+  const SearchColumnInfo* Find(irs::field_id field) const {
+    const auto it = absl::c_find_if(_held, [&](const SearchColumnInfo& info) {
+      return PickPerKindFieldId(info, duckdb::LogicalTypeId::VARCHAR) == field;
+    });
+    return it == _held.end() ? nullptr : &*it;
   }
 
  private:
@@ -271,7 +283,7 @@ void FromToTsquery(BoolTarget parent, const FilterContext& ctx,
   root.SetBoost(ctx.boost);
   irs::ParserContext parser_ctx{
     root, PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
-    ctx.tokenizer};
+    PhraseAnalyzer(ctx, column_info)};
   std::optional<IndexFields> provider;
   if (column_info.index_fields) {
     provider.emplace(*column_info.index_fields);
@@ -285,6 +297,12 @@ void FromToTsquery(BoolTarget parent, const FilterContext& ctx,
       ERR_MSG("to_tsquery parse error: ", parser_ctx.error_message),
       ERR_HINT(kSyntaxHint));
   }
+  PlanShinglePhrases(root, [&](irs::field_id field) -> const SearchColumnInfo* {
+    if (field == parser_ctx.default_field_id) {
+      return QueryShingle(ctx, column_info) ? &column_info : nullptr;
+    }
+    return provider ? provider->Find(field) : nullptr;
+  });
 }
 
 }  // namespace sdb::connector

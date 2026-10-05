@@ -23,8 +23,11 @@
 #include "phrase_filter.hpp"
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/strings/str_format.h>
 
+#include <memory>
 #include <span>
+#include <string_view>
 
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -43,7 +46,9 @@
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/regexp_acceptor.hpp"
 #include "iresearch/utils/system_compiler.hpp"
+#include "iresearch/utils/utf8_utils.hpp"
 #include "iresearch/utils/wildcard_utils.hpp"
 
 namespace irs {
@@ -102,8 +107,157 @@ struct TopTermsVisitor final : FilterVisitor {
   TopTermsSelector<TopTerm<score_t>> _impl;
 };
 
+struct PrefixBounds {
+  bytes_view prefix;
+
+  bool Start(SeekTermIterator& terms) const {
+    return SeekResult::End != terms.seek_ge(prefix);
+  }
+
+  bool Contains(bytes_view term) const noexcept {
+    return term.starts_with(prefix);
+  }
+};
+
+struct RangeBounds {
+  const ByRangeOptions::range_type* range;
+
+  bool Start(SeekTermIterator& terms) const {
+    switch (range->min_type) {
+      case BoundType::Unbounded:
+        return terms.next();
+      case BoundType::Inclusive:
+        return seek_min<true>(terms, range->min);
+      case BoundType::Exclusive:
+        return seek_min<false>(terms, range->min);
+    }
+    return false;
+  }
+
+  bool Contains(bytes_view term) const noexcept {
+    return RangeMaxAcceptor{range}(term);
+  }
+};
+
+std::shared_ptr<const RegexpAcceptor> WordAcceptor(bytes_view separator) {
+  if (separator.empty()) {
+    return nullptr;
+  }
+  const auto* it = separator.data();
+  const auto* end = it + separator.size();
+  const auto cp = utf8_utils::ToChar32(it, end);
+  if (cp == utf8_utils::kInvalidChar32 || it != end) {
+    return nullptr;
+  }
+  const auto pattern = absl::StrFormat("[^\\x{%x}]*", cp);
+  auto acceptor = PatternCache::Instance().Get(
+    ViewCast<byte_type>(std::string_view{pattern}), PatternKind::RegexpPerl);
+  return acceptor->ok() ? std::move(acceptor) : nullptr;
+}
+
+template<typename Bounds>
+class WordIterator final : public WrappedTermIterator {
+ public:
+  WordIterator(const TermReader& reader, Bounds bounds, bytes_view separator)
+    : WrappedTermIterator{reader.iterator()},
+      _bounds{bounds},
+      _separator{separator} {}
+
+  bool next() final {
+    if (_started) {
+      if (!_impl->next()) {
+        return false;
+      }
+    } else {
+      _started = true;
+      if (!_bounds.Start(*_impl)) {
+        return false;
+      }
+    }
+    return SkipShingles();
+  }
+
+ private:
+  bool SkipShingles() {
+    while (true) {
+      const auto term = _impl->value();
+      if (!_bounds.Contains(term)) {
+        return false;
+      }
+      const auto at = term.find(_separator);
+      if (at == bytes_view::npos) {
+        return true;
+      }
+      const auto upper = UpperBoundOf(term.substr(0, at + _separator.size()));
+      if (upper.empty() || SeekResult::End == _impl->seek_ge(upper)) {
+        return false;
+      }
+    }
+  }
+
+  Bounds _bounds;
+  bytes_view _separator;
+  bool _started = false;
+};
+
+class WordTermsVisitor final : public FilterVisitor {
+ public:
+  WordTermsVisitor(FilterVisitor& words, bytes_view separator) noexcept
+    : _words{words}, _separator{separator} {}
+
+  void Prepare(const SubReader& segment, const TermReader& field,
+               TermIterator& terms) final {
+    _terms = &terms;
+    _words.Prepare(segment, field, terms);
+  }
+
+  bool Visit(score_t boost) final {
+    SDB_ASSERT(_terms);
+    if (_terms->value().find(_separator) != bytes_view::npos) {
+      return true;
+    }
+    return _words.Visit(boost);
+  }
+
+ private:
+  FilterVisitor& _words;
+  bytes_view _separator;
+  TermIterator* _terms = nullptr;
+};
+
 struct GetVisitor {
+  bytes_view separator;
+
+  field_visitor Words(field_visitor visitor) const {
+    if (separator.empty()) {
+      return visitor;
+    }
+    return [visitor = std::move(visitor), separator = separator](
+             const SubReader& segment, const TermReader& field,
+             FilterVisitor& out) mutable {
+      WordTermsVisitor words{out, separator};
+      visitor(segment, field, words);
+    };
+  }
+
+  template<typename Bounds>
+  field_visitor WordWalk(Bounds bounds) const {
+    return [bounds, separator = separator](const SubReader& segment,
+                                           const TermReader& field,
+                                           FilterVisitor& visitor) {
+      WordIterator<Bounds> terms{field, bounds, separator};
+      if (!terms.next()) {
+        return;
+      }
+      visitor.Prepare(segment, field, terms.GetImpl());
+      VisitTerms(terms, visitor);
+    };
+  }
+
   field_visitor operator()(const ByPrefixOptions& options) const {
+    if (!separator.empty()) {
+      return WordWalk(PrefixBounds{options.term});
+    }
     return [&](const SubReader& segment, const TermReader& field,
                FilterVisitor& visitor) {
       return ByPrefix::visit(segment, field, options, visitor);
@@ -113,17 +267,20 @@ struct GetVisitor {
 
   field_visitor operator()(const AutomatonOptions& options) const {
     SDB_ASSERT(options.source);
-    return AutomatonFilter::visitor(options.source);
+    return Words(AutomatonFilter::visitor(options.source));
   }
 
   field_visitor operator()(const LevenshteinAutomatonOptions& options) const {
     if (options.max_terms != 0) {
       return {};
     }
-    return LevenshteinAutomatonFilter::visitor(options);
+    return Words(LevenshteinAutomatonFilter::visitor(options));
   }
 
   field_visitor operator()(const ByRangeOptions& options) const {
+    if (!separator.empty()) {
+      return WordWalk(RangeBounds{&options.range});
+    }
     return [&](const SubReader& segment, const TermReader& field,
                FilterVisitor& visitor) {
       return ByRange::visit(segment, field, options, visitor);
@@ -314,15 +471,15 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
   std::vector<std::vector<bstring>> part_terms;
   if (counts.expanded != 0) {
     expand_visitors.reserve(counts.expanded);
+    const GetVisitor get{options.word_separator()};
     for (const auto& word : options) {
       if (ByPhraseOptions::KindOf(word.part) != SlotKind::Expansion) {
         continue;
       }
-      auto& visitor =
-        expand_visitors.emplace_back(std::visit(GetVisitor{}, word.part));
+      auto& visitor = expand_visitors.emplace_back(std::visit(get, word.part));
       if (!visitor) {
         auto& opts = std::get<LevenshteinAutomatonOptions>(word.part);
-        visitor = LevenshteinAutomatonFilter::visitor(opts);
+        visitor = get.Words(LevenshteinAutomatonFilter::visitor(opts));
         all_terms_visitors.push_back(&visitor);
         top_terms_visitors.emplace_back(opts.max_terms);
       }
@@ -477,26 +634,35 @@ bool ByPhraseOptions::LowerParts() {
   for (auto& info : _phrase) {
     if (const auto* t = std::get_if<TermSetOptions>(&info.part);
         t != nullptr && t->terms.size() == 1) {
-      ByTermOptions opts;
-      opts.term = *t->terms.begin();
-      info.part = std::move(opts);
+      info.part = ByTermOptions{*t->terms.begin()};
       changed = true;
     } else if (const auto* w = std::get_if<ByWildcardOptions>(&info.part); w) {
       bstring buf;
       info.part = ExecuteWildcard(
         buf, bytes_view{w->term},
         [](bytes_view term) -> PhrasePart {
-          ByTermOptions opts;
-          opts.term = term;
-          return opts;
+          return ByTermOptions{bstring{term}};
         },
         [](bytes_view prefix) -> PhrasePart {
-          ByPrefixOptions opts;
-          opts.term = prefix;
-          return opts;
+          return ByPrefixOptions{{bstring{prefix}}};
         },
         [](bytes_view term) -> PhrasePart {
           return AutomatonOptions{term, PatternKind::Wildcard};
+        });
+      changed = true;
+    } else if (const auto* r = std::get_if<ByRegexpOptions>(&info.part); r) {
+      bstring buf;
+      const auto kind = RegexpPattern(r->syntax);
+      info.part = ExecuteRegexp(
+        buf, bytes_view{r->pattern},
+        [](bytes_view term) -> PhrasePart {
+          return ByTermOptions{bstring{term}};
+        },
+        [](bytes_view prefix) -> PhrasePart {
+          return ByPrefixOptions{{bstring{prefix}}};
+        },
+        [kind](bytes_view pattern) -> PhrasePart {
+          return AutomatonOptions{pattern, kind};
         });
       changed = true;
     } else if (const auto* e = std::get_if<ByEditDistanceOptions>(&info.part);
@@ -519,6 +685,30 @@ bool ByPhraseOptions::LowerParts() {
         });
       changed = true;
     }
+  }
+  if (_word_separator.empty()) {
+    return changed;
+  }
+  std::shared_ptr<const RegexpAcceptor> words;
+  for (auto& info : _phrase) {
+    auto* automaton = std::get_if<AutomatonOptions>(&info.part);
+    if (!automaton || !automaton->source) {
+      continue;
+    }
+    auto pattern = automaton->source->Automaton();
+    if (!pattern) {
+      continue;
+    }
+    if (!words) {
+      words = WordAcceptor(_word_separator);
+      if (!words) {
+        break;
+      }
+    }
+    const std::shared_ptr<const RegexpAcceptor> parts[] = {std::move(pattern),
+                                                           words};
+    automaton->source = MakeJointSource(parts, nullptr);
+    changed = true;
   }
   return changed;
 }

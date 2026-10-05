@@ -99,7 +99,10 @@ bool NamesSequence(const duckdb::ParsedExpression& expression,
         if (argument.GetExpressionClass() ==
             duckdb::ExpressionClass::CONSTANT) {
           const auto name = duckdb::QualifiedName::Parse(
-            argument.Cast<duckdb::ConstantExpression>().GetValue().ToString());
+            argument.Cast<duckdb::ConstantExpression>()
+              .GetLiteral()
+              .ToValue()
+              .ToString());
           named = named || name.Name() == sequence;
         }
       });

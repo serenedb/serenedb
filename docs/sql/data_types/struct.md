@@ -133,7 +133,7 @@ The following produces the same result as above:
 
 <SqlLogicTest id="sql/data_types/struct/example_020" />
 
-Initializing a struct column with the `row` function will fail:
+Initializing a column with the `row` function creates an unnamed struct (`record`) column:
 
 <SqlLogicTest id="sql/data_types/struct/example_021" />
 

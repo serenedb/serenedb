@@ -15,7 +15,7 @@ A union is a list of analyzers, `[split_text_csv(' '), keyword()]`, and each ele
 
 The template has no options of its own; the members are the list elements. A member may be any template call, a chain, another list, or a bare dictionary name that runs a stored dictionary's analyzer. A list element that is not an analyzer — a string, say — fails with `a list stage must hold analyzers`, and so does the empty list `[]`.
 
-The template supports the `FREQUENCY`, `POSITION` and `NORM` [feature flags](./index.md#feature-flags); `POSITION` and `NORM` each require `FREQUENCY`. `OFFSET` is not supported: setting it fails when the dictionary is created, with `Unsupported index features are specified: <mask>`. [`ts_offsets()`](../../functions/search/highlighting.md#ts_offsets) and [`ts_highlight()`](../../functions/search/highlighting.md#ts_highlight) are not available for a `union` dictionary either — the tokenizer produces no offsets, so both fail rather than re-analyzing the value.
+The template supports the `FREQUENCY`, `POSITION` and `NORM` [feature flags](./index.md#feature-flags); `POSITION` and `NORM` each require `FREQUENCY`. `OFFSET` is not supported: setting it fails when the dictionary is created, with `Unsupported index features are specified: offset`. [`ts_offsets()`](../../functions/search/highlighting.md#ts_offsets) and [`ts_highlight()`](../../functions/search/highlighting.md#ts_highlight) are not available for a `union` dictionary either — the tokenizer produces no offsets, so both fail rather than re-analyzing the value.
 
 ## Tokenization
 

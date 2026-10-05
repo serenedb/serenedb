@@ -33,6 +33,7 @@
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/storage/data_table.hpp>
@@ -157,9 +158,8 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
   irs::containers::FlatHashSet<duckdb::idx_t> indexed_relations;
   VisitEntries<duckdb::DuckIndexEntry>(
     context, database, [&](const duckdb::DuckIndexEntry& entry) {
-      const auto host = entry.ParentSchema(context).GetEntry(
-        entry.catalog.GetCatalogTransaction(context),
-        duckdb::CatalogType::TABLE_ENTRY, entry.GetTableName());
+      const auto host =
+        entry.GetRelation(entry.catalog.GetCatalogTransaction(context));
       const auto host_id =
         host && (host->type == duckdb::CatalogType::TABLE_ENTRY ||
                  host->type == duckdb::CatalogType::VIEW_ENTRY)
@@ -220,7 +220,8 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
                 strings.emplace_back(
                   absl::StrCat(name, "=",
                                it->second->Cast<duckdb::ConstantExpression>()
-                                 .GetValue()
+                                 .GetLiteral()
+                                 .ToValue()
                                  .ToString()));
               }
             }
@@ -329,6 +330,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
         auto row = MakeBaseRow(schema_id, unique.index_oid, names.back(),
                                table->permissions.owner);
         row.relkind = PgClass::Relkind::Index;
+        row.relam = pg::kPgAmSecondary;
         row.relnatts =
           static_cast<int16_t>(KeyConstraintAttnums(*table, unique).size());
         values.push_back(std::move(row));

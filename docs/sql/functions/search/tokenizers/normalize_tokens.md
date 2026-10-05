@@ -21,12 +21,12 @@ The template name is unrelated to the `NORM` [feature flag](../../../statements/
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `LOCALE` | string | `''` | ICU locale for case conversion; omit for locale-independent simple case |
+| `LOCALE` | string | `''` | Locale for case conversion; omit for locale-independent simple case |
 | `CASE` | string | `'none'` | Case conversion: `'none'`, `'lower'`, `'upper'`, `'fold'` |
 | `ACCENT` | boolean | `true` | Preserve accent marks (`false` folds them away) |
 | `FORM` | string | `'nfc'` | Unicode normalization form: `'nfc'`, `'nfd'`, `'nfkc'`, `'nfkd'`, `'nfkc_cf'` |
 
-`LOCALE` is optional and affects nothing but case conversion — the normalization form and accent folding are locale-independent. A value ICU cannot parse is rejected with `Invalid locale "<value>" for option "locale"`. `CASE` and `FORM` accept their values case-insensitively, so `'Lower'` and `'NFKC'` also work.
+`LOCALE` is optional and affects nothing but case conversion — the normalization form and accent folding are locale-independent. A value that is not a valid locale is rejected with `Invalid locale "<value>" for option "locale"`, see [locales](./split_text_icu.md#locales). `CASE` and `FORM` accept their values case-insensitively, so `'Lower'` and `'NFKC'` also work.
 
 ## Tokenization
 
@@ -59,13 +59,13 @@ Because two values collide only when their normalized forms are identical, a `no
 
 `CASE = 'fold'` applies Unicode full case folding, the mapping Unicode defines for caseless matching. It is not the same as lowercasing: `ß` folds to `ss`, the ligature `ﬁ` to `fi`, and the final sigma `ς` to `σ`, so `STRASSE`, `Straße` and `strasse` all compare equal, where `CASE = 'lower'` would keep `straße` and `strasse` apart. Folding is locale-independent except for Turkish and Azerbaijani: with `LOCALE = 'tr_TR'` or `'az'` the dotted and dotless `i` fold the Turkic way, so `ISPARTA` becomes `ısparta`. Folding can make a token longer than its input, up to three times for Greek letters with a combining mark.
 
-`FORM = 'nfkc_cf'` is NFKC_Casefold, Unicode's recommended normalization for caseless identifier matching: NFKC, full case folding and the removal of default-ignorable characters in one step. It folds case by itself, so `CASE = 'none'` already produces lowercase-folded output — `ＦＵＬＬ Straße ﬁ` becomes `full strasse fi` — and `CASE = 'upper'` upper-cases the folded text. `CASE = 'lower'` changes it only in the rare scripts whose case folding maps to capitals, such as Cherokee. Non-ASCII values with this form always go through ICU.
+`FORM = 'nfkc_cf'` is NFKC_Casefold, Unicode's recommended normalization for caseless identifier matching: NFKC, full case folding and the removal of default-ignorable characters in one step. It folds case by itself, so `CASE = 'none'` already produces lowercase-folded output — `ＦＵＬＬ Straße ﬁ` becomes `full strasse fi` — and `CASE = 'upper'` upper-cases the folded text. `CASE = 'lower'` changes it only in the rare scripts whose case folding maps to capitals, such as Cherokee. Non-ASCII values with this form always take the full Unicode path.
 
 ### Case conversion and the locale
 
-`CASE = 'none'` does no case work at all, whatever the locale. When case conversion is on, every locale except Turkish/Azerbaijani, Lithuanian and Greek uses simple 1:1 Unicode mappings, which is observable: `straße` with `CASE = 'upper'` becomes `STRAßE`, and `ΟΔΟΣ` with `CASE = 'lower'` becomes `οδοσ` with a non-final sigma. Turkish/Azerbaijani and Lithuanian locales always use ICU's locale-tailored full casing, so with `LOCALE = 'tr_TR'` and `CASE = 'lower'` `ISPARTA` becomes `ısparta` and `İSTANBUL` becomes `istanbul`. A Greek locale uses it for values that contain non-ASCII, so `ΟΔΟΣ` with `LOCALE = 'el'` becomes `οδος`. `İ` (U+0130) splits the same way: the simple mappings and the Turkish/Azerbaijani tailoring both lowercase it to a plain `i`, so `İstanbul` becomes `istanbul`, while a Lithuanian locale — and a Greek locale on non-ASCII input — keeps the canonical dot above, leaving an `i` followed by a combining mark that only `ACCENT = false` removes.
+`CASE = 'none'` does no case work at all, whatever the locale. When case conversion is on, every locale except Turkish/Azerbaijani, Lithuanian and Greek uses simple 1:1 Unicode mappings, which is observable: `straße` with `CASE = 'upper'` becomes `STRAßE`, and `ΟΔΟΣ` with `CASE = 'lower'` becomes `οδοσ` with a non-final sigma. Turkish/Azerbaijani and Lithuanian locales always use locale-tailored full casing, so with `LOCALE = 'tr_TR'` and `CASE = 'lower'` `ISPARTA` becomes `ısparta` and `İSTANBUL` becomes `istanbul`. A Greek locale uses it for values that contain non-ASCII, so `ΟΔΟΣ` with `LOCALE = 'el'` becomes `οδος`. `İ` (U+0130) splits the same way: the simple mappings and the Turkish/Azerbaijani tailoring both lowercase it to a plain `i`, so `İstanbul` becomes `istanbul`, while a Lithuanian locale — and a Greek locale on non-ASCII input — keeps the canonical dot above, leaving an `i` followed by a combining mark that only `ACCENT = false` removes.
 
-Malformed UTF-8 is not rejected. Values that go through ICU — case conversion on with a Turkish/Azerbaijani or Lithuanian locale, or with a Greek locale and non-ASCII content — have illegal sequences replaced by U+FFFD. Everywhere else, bytes that need no normalization or case work are emitted unchanged.
+Malformed UTF-8 is not rejected. Values that take the full casing path — case conversion on with a Turkish/Azerbaijani or Lithuanian locale, or with a Greek locale and non-ASCII content — have illegal sequences replaced by U+FFFD. Everywhere else, bytes that need no normalization or case work are emitted unchanged.
 
 ## Examples
 
@@ -89,7 +89,7 @@ Folding to upper case while keeping accent marks turns `café` into `CAFÉ`:
 
 ## See also
 
-- [`split_text`](./split_text.md) — per-word tokenization, with full ICU case mapping instead of the simple mappings
+- [`split_text`](./split_text.md) — per-word tokenization, with full case mapping instead of the simple mappings
 - [keyword](../../../statements/create_text_search_dictionary/keyword.md) — keeps the value as one token without normalizing it
 - [`collate_tokens`](./collate_tokens.md) — one opaque sort-key token per value, for locale-aware ordering
 - [CREATE TEXT SEARCH DICTIONARY](../../../statements/create_text_search_dictionary/index.md)

@@ -19,7 +19,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <iresearch/analysis/geo_tokenizer.hpp>
-#include <iresearch/analysis/shingle_tokenizer.hpp>
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
 #include <iresearch/utils/geo/coding.hpp>
 #include <optional>
@@ -83,25 +82,6 @@ std::optional<std::vector<std::string>> DecodeWildcardStore(
       return std::nullopt;
     }
     ++p;
-  }
-  return out;
-}
-
-std::optional<std::vector<std::string>> DecodeShingleStore(irs::bytes_view blob,
-                                                           std::string& error) {
-  std::vector<std::string> out;
-  const auto* p = blob.data();
-  const auto* const end = p + blob.size();
-  while (p != end) {
-    irs::bytes_view token;
-    const auto* next =
-      irs::analysis::ShingleTokenizer::ReadTokenChecked(p, end, token);
-    if (next == nullptr) {
-      error = "truncated token record";
-      return std::nullopt;
-    }
-    out.emplace_back(reinterpret_cast<const char*>(token.data()), token.size());
-    p = next;
   }
   return out;
 }
@@ -237,7 +217,7 @@ TEST(TokenizerStore, WildcardBlobDecodesToTheBaseTerms) {
   }
 }
 
-TEST(TokenizerStore, ShingleBlobDecodesToTheBaseTokensWithFillers) {
+TEST(TokenizerStore, ShingleStoresNothing) {
   for (const auto* spec : SelectedSpecs()) {
     if (!IsShingleSpec(*spec)) {
       continue;
@@ -245,17 +225,7 @@ TEST(TokenizerStore, ShingleBlobDecodesToTheBaseTokensWithFillers) {
     SCOPED_TRACE(spec->name);
     auto tokenizer = Make(*spec);
     ASSERT_NE(nullptr, tokenizer);
-    if (!tokenizer->Traits().store) {
-      continue;
-    }
-    ASSERT_TRUE(spec->model_children)
-      << "a shingle spec must publish its base analyzer";
-    auto children = spec->model_children();
-    ASSERT_EQ(1u, children.size());
-    auto& base = *children.front();
-    const auto filler = spec->params.delim == 0
-                          ? std::string{}
-                          : std::string(1, spec->params.delim);
+    ASSERT_FALSE(tokenizer->Traits().store);
 
     const auto values = SpecCorpus(*spec, Seed(), 96);
     for (size_t i = 0; i < values.size(); ++i) {
@@ -263,31 +233,7 @@ TEST(TokenizerStore, ShingleBlobDecodesToTheBaseTokensWithFillers) {
                    << "value=" << i << " " << Describe(values[i]));
       const auto res =
         AnalyzeValue(*tokenizer, values[i], irs::TokenLayout::TermsPos);
-      if (!res.ok || res.store.empty()) {
-        continue;
-      }
-      std::vector<uint32_t> positions;
-      const auto base_terms = BaseTerms(base, values[i], positions);
-
-      std::vector<std::string> expected;
-      uint32_t previous = 0;
-      for (size_t k = 0; k < base_terms.size(); ++k) {
-        for (uint32_t gap =
-               positions[k] > previous ? positions[k] - previous - 1 : 0;
-             gap != 0; --gap) {
-          expected.push_back(filler);
-        }
-        previous = positions[k];
-        expected.push_back(base_terms[k]);
-      }
-
-      std::string error;
-      const auto decoded = DecodeShingleStore(AsBytes(res.store), error);
-      ASSERT_TRUE(decoded.has_value()) << "malformed shingle store: " << error;
-      ASSERT_EQ(expected.size(), decoded->size());
-      for (size_t k = 0; k < expected.size(); ++k) {
-        ASSERT_EQ(expected[k], (*decoded)[k]) << "token " << k;
-      }
+      EXPECT_TRUE(res.store.empty());
     }
   }
 }

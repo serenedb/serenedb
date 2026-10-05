@@ -21,7 +21,6 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
-#include <unicode/timezone.h>
 
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/common/typedefs.hpp>
@@ -30,6 +29,7 @@
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
+#include <tz_calendar.hpp>
 
 #include "query/config.h"
 #include "server/utils/message_buffer.h"
@@ -85,13 +85,12 @@ struct SerializationContext {
   char copy_delim = '\t';
   std::string copy_null = "\\N";
   // Null means UTC (the default) and keeps the cheap ToString + "+00" path.
-  std::unique_ptr<icu::TimeZone> time_zone;
+  duckdb::unique_ptr<duckdb::TimeZone> time_zone;
   duckdb::shared_ptr<const duckdb::ZoneLUT> zone_lut;
   std::unique_ptr<TypesSerializationCache> types_cache;
   std::vector<duckdb::RecursiveUnifiedVectorFormat> decoded;
 };
 
-// UTC fast-path spellings; other zero-offset aliases just take the ICU path.
 inline bool IsUtcTimeZoneName(std::string_view name) noexcept {
   return name == "UTC" || name == "GMT" || name == "Etc/UTC";
 }

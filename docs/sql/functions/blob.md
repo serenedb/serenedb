@@ -25,6 +25,7 @@ This section describes functions and operators for examining and manipulating [`
 | [`md5(blob)`](#md5blob)                            | Returns the MD5 hash of the `blob` as a `VARCHAR`.                                                                                                                                                                                      |
 | [`md5_number(blob)`](#md5_numberblob)              | Returns the MD5 hash of the `blob` as a `HUGEINT`.                                                                                                                                                                                      |
 | [`octet_length(blob)`](#octet_lengthblob)          | Number of bytes in `blob`.                                                                                                                                                                                                              |
+| [`position(search IN blob)`](#positionsearch-in-blob) | Returns the byte position of the first occurrence of `search` in `blob`, counting from 1, or 0 if no match is found. |
 | [`read_blob(source)`](#read_blobsource)            | Returns the content from `source` (a filename, a list of filenames, or a glob pattern) as a `BLOB`. See the [`read_blob` guide](../../cookbook/file_formats/read_file.md#read_blob) for more details.                                   |
 | [`repeat(blob, count)`](#repeatblob-count)         | Repeats the `blob` `count` number of times.                                                                                                                                                                                             |
 | [`sha1(blob)`](#sha1blob)                          | Returns a `VARCHAR` with the SHA-1 hash of the `blob`.                                                                                                                                                                                  |
@@ -83,6 +84,12 @@ Returns the MD5 hash of the `blob` as a `HUGEINT`.
 Number of bytes in `blob`.
 
 <SqlLogicTest id="sql/functions/blob/octet_length" />
+
+#### `position(search IN blob)`
+
+Returns the byte position of the first occurrence of `search` in `blob`, counting from 1. Returns 0 if no match is found.
+
+<SqlLogicTest id="sql/functions/blob/position" />
 
 #### `read_blob(source)`
 

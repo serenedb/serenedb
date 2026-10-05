@@ -154,6 +154,9 @@ class SystemSchemaGenerator final : public duckdb::DefaultGenerator {
     duckdb::CreateSchemaInfo info;
     info.SetQualifiedName(duckdb::QualifiedName({name}, duckdb::Identifier()));
     info.internal = true;
+    info.oid = name == duckdb::Identifier{irs::StaticStrings::kPgCatalogSchema}
+                 ? pg::kPgCatalogSchema
+                 : pg::kPgInformationSchema;
     info.permissions.owner = pg::kRootUser;
     auto schema = duckdb::make_uniq<duckdb::DuckSchemaEntry>(catalog, info);
     for (const auto set :
@@ -177,7 +180,9 @@ SystemTableEntry::SystemTableEntry(duckdb::Catalog& catalog,
                                    duckdb::SchemaCatalogEntry& schema,
                                    duckdb::CreateTableInfo& info,
                                    const pg::VirtualTable& table)
-  : duckdb::TableCatalogEntry{catalog, schema, info}, _table{table} {
+  : duckdb::TableCatalogEntry{catalog, schema, info},
+    _columns{std::move(info.columns)},
+    _table{table} {
   internal = true;
   permissions.owner = pg::kRootUser;
   const auto acl = table.GetAcl();

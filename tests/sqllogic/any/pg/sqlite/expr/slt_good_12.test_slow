@@ -2595,7 +2595,8 @@ SELECT - - 96 * 11 * + CASE WHEN NOT + 84 NOT BETWEEN 27 / 0 AND COALESCE ( + 61
 NULL
 
 skipif mysql # not compatible
-skipif postgres # TODO(mbkkt)
+skipif postgres # division by zero
+skipif serenedb # division by zero
 query I rowsort label-276
 SELECT - - 96 * 11 * + CASE WHEN NOT + 84 NOT BETWEEN 27 / 0 AND COALESCE ( + 61, + AVG ( 81 ) / + 39 + COUNT ( * ) ) THEN - 69 WHEN NULL > ( - 15 ) THEN NULL ELSE NULL END AS col2
 ----

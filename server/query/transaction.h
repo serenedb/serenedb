@@ -166,12 +166,10 @@ class Transaction : public Config {
     return it->second.slots;
   }
 
-  void RegisterSearchFlush() noexcept {
-    for (auto& [index_id, entry] : _search_transactions) {
-      for (auto& slot : entry.slots) {
-        if (slot.transaction) {
-          slot.transaction->RegisterFlush();
-        }
+  void RegisterIndexFlush(duckdb::idx_t index_id) noexcept {
+    for (auto& slot : IndexSlots(index_id)) {
+      if (slot.transaction) {
+        slot.transaction->RegisterFlush();
       }
     }
   }

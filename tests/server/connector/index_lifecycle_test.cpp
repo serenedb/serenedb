@@ -34,6 +34,7 @@
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/index/bound_index.hpp>
+#include <duckdb/execution/index/index_lock.hpp>
 #include <duckdb/execution/index/index_type.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
@@ -128,7 +129,7 @@ class ProbeIndex final : public duckdb::BoundIndex {
     return chunk.size();
   }
   std::string GetConstraintViolationMessage(duckdb::VerifyExistenceType, idx_t,
-                                            duckdb::DataChunk&) final {
+                                            duckdb::DataChunk&) const final {
     return "probe constraint violation";
   }
   void ResetStorage(duckdb::IndexLock&) final {}
@@ -136,7 +137,7 @@ class ProbeIndex final : public duckdb::BoundIndex {
     return true;
   }
   void Vacuum(duckdb::IndexLock&) final {}
-  idx_t GetInMemorySize(duckdb::IndexLock&) final { return 0; }
+  idx_t GetInMemorySize(duckdb::IndexLock&) const final { return 0; }
   void Verify(duckdb::IndexLock&) final {}
   std::string ToString(duckdb::IndexLock&, bool) final { return "probe"; }
   void VerifyAllocations(duckdb::IndexLock&) final {}
@@ -187,8 +188,7 @@ void RegisterProbeIndexType(duckdb::DatabaseInstance& db) {
                        duckdb::DataChunk& key_chunk,
                        duckdb::DataChunk& row_chunk) {
     auto& gstate = input.global_state.Cast<ProbeBuildGlobalState>();
-    duckdb::IndexLock lock;
-    gstate.index->InitializeLock(lock);
+    duckdb::IndexLock lock{*gstate.index};
     auto err = gstate.index->Append(lock, key_chunk, row_chunk.data[0]);
     if (err.HasError()) {
       err.Throw();

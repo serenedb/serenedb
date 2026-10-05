@@ -1,8 +1,3 @@
-# ALTER TABLE ADD COLUMN with an inline constraint other than DEFAULT is not
-# supported: serenedb errors instead of silently dropping the constraint (the PG
-# grammar used to parse e.g. NOT NULL and then discard it). DEFAULT and a plain
-# add are supported; any other constraint must be added in a separate ALTER step.
-
 statement ok
 CREATE TABLE acc (a INT);
 
@@ -20,11 +15,36 @@ ALTER TABLE acc ADD COLUMN b INT PRIMARY KEY;
 
 
 statement error
-ALTER TABLE acc ADD COLUMN b INT UNIQUE;
-
-
-statement error
 ALTER TABLE acc ADD COLUMN b INT CHECK (b > 0);
+
+
+# UNIQUE is supported inline and enforced from the start
+statement ok
+CREATE TABLE acc_u (a INT);
+
+
+statement ok
+INSERT INTO acc_u VALUES (1), (2);
+
+
+statement ok
+ALTER TABLE acc_u ADD COLUMN b INT UNIQUE;
+
+
+statement error duplicate key
+UPDATE acc_u SET b = 5;
+
+
+statement ok
+UPDATE acc_u SET b = a;
+
+
+statement error violates unique constraint
+INSERT INTO acc_u VALUES (3, 1);
+
+
+statement ok
+DROP TABLE acc_u;
 
 
 # DEFAULT is supported
@@ -55,3 +75,67 @@ INSERT INTO acc (a, d) VALUES (2, NULL);
 
 statement ok
 DROP TABLE acc;
+
+
+statement ok
+CREATE TABLE acc_pk (a INT);
+
+
+statement ok
+ALTER TABLE acc_pk ADD COLUMN id INT PRIMARY KEY;
+
+
+statement ok
+INSERT INTO acc_pk VALUES (1, 1);
+
+
+statement error violates primary key constraint
+INSERT INTO acc_pk VALUES (2, 1);
+
+
+statement error NOT NULL constraint failed
+INSERT INTO acc_pk VALUES (3, NULL);
+
+
+query
+SELECT conname, contype FROM pg_constraint WHERE conrelid = 'acc_pk'::regclass ORDER BY conname;
+----
+conname	contype
+acc_pk_id_not_null	n
+acc_pk_pkey	p
+
+
+statement ok
+CREATE TABLE acc_rows (a INT);
+
+
+statement ok
+INSERT INTO acc_rows VALUES (1), (2);
+
+
+statement error contains duplicates
+ALTER TABLE acc_rows ADD COLUMN id INT DEFAULT 5 PRIMARY KEY;
+
+
+statement error not supported
+ALTER TABLE acc_rows ADD COLUMN c INT CHECK (c > 0);
+
+
+statement error not supported
+ALTER TABLE acc_rows ADD COLUMN u INT CONSTRAINT u_named UNIQUE;
+
+
+query
+SELECT * FROM acc_rows ORDER BY a;
+----
+a
+1
+2
+
+
+statement ok
+DROP TABLE acc_pk;
+
+
+statement ok
+DROP TABLE acc_rows;

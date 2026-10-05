@@ -54,6 +54,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   ~ClusterCatalog() override;
 
   std::string GetCatalogType() final { return kStorageType; }
+  duckdb::idx_t DefaultSchemaOid() const final;
 
   bool UsesCatalogLog() const final { return true; }
   duckdb::shared_ptr<duckdb::WriteAheadLog> CatalogLog() final {
@@ -99,7 +100,8 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   duckdb::CatalogTransaction LoginTransaction() {
     return duckdb::CatalogTransaction{
       GetDatabase(), duckdb::TRANSACTION_ID_START - 1,
-      duckdb::DuckTransactionManager::Get(GetAttached()).GetLastCommit() + 1};
+      duckdb::VisibilityBound::Through(
+        duckdb::DuckTransactionManager::Get(GetAttached()).GetLastCommit())};
   }
 
   uint64_t CatalogGeneration() const {
@@ -180,7 +182,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
                                std::shared_ptr<const auth::RoleClosure>>
     _closures;
   bool _compactable = false;
-  duckdb::idx_t _live_bytes = 0;
+  std::atomic<duckdb::idx_t> _live_bytes{0};
   std::mutex _artifacts_mutex;
   std::vector<Artifact> _artifacts;
   std::unordered_set<duckdb::idx_t> _replayed_drops;

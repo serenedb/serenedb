@@ -150,7 +150,7 @@ SELECT
     ) AS filename
 FROM read_csv(['${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_005_1_flights1_csv.csv', '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_005_2_flights2_csv.csv'], union_by_name = true, filename = true);
 ----
-flightdate	uniquecarrier	origincityname	destcityname	distance	filename
+FlightDate	UniqueCarrier	OriginCityName	DestCityName	Distance	filename
 2024-02-01	DL	Boston, MA	Chicago, IL	867	flights1.csv
 2024-02-01	DL	Boston, MA	Chicago, IL	867	flights2.csv
 
@@ -448,7 +448,7 @@ SELECT
     ) AS filename
 FROM read_csv(['${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_013_1_flights1_csv.csv', '${__TEST_DIR__}/data_import_and_export_multiple_files_overview_example_013_2_flights2_csv.csv'], union_by_name = true, filename = true);
 ----
-flightdate	uniquecarrier	origincityname	destcityname	distance	filename
+FlightDate	UniqueCarrier	OriginCityName	DestCityName	Distance	filename
 2024-02-01	DL	Boston, MA	Chicago, IL	867	flights1.csv
 2024-02-01	DL	Boston, MA	Chicago, IL	867	flights2.csv
 

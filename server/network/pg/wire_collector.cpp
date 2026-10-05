@@ -25,8 +25,8 @@
 #include <duckdb/execution/operator/helper/physical_result_collector.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/main/materialized_query_result.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
+#include <duckdb/main/query_result.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/debugging.hpp>
 
@@ -47,7 +47,7 @@ sdb::pg::SerializationContext CloneProto(
   context.extra_float_digits = proto.extra_float_digits;
   context.bytea_output = proto.bytea_output;
   if (proto.time_zone) {
-    context.time_zone.reset(proto.time_zone->clone());
+    context.time_zone = proto.time_zone->Copy();
   }
   context.client = proto.client;
   context.quote_seq = proto.quote_seq;
@@ -132,9 +132,9 @@ class PhysicalPgWireCollector final : public duckdb::PhysicalResultCollector {
         std::min<duckdb::idx_t>(chunk.size() - start, budget - sent);
       WriteDataChunk(out, chunk, lstate.serializers, lstate.sctx, start,
                      start + take);
-      ctx.rows.fetch_add(take, std::memory_order_relaxed);
       ctx.direct_committed.store(out.TotalCommitted(),
                                  std::memory_order_release);
+      ctx.rows.fetch_add(take, std::memory_order_release);
       if (start + take < chunk.size() || sent + take == budget) {
         ctx.page_offset = start + take;
         ctx.BlockSink(input.interrupt_state);
@@ -208,9 +208,9 @@ class PhysicalPgWireCollector final : public duckdb::PhysicalResultCollector {
     duckdb::GlobalSinkState& state) const override {
     auto collection = duckdb::make_uniq<duckdb::ColumnDataCollection>(
       duckdb::Allocator::DefaultAllocator(), types);
-    return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
-      statement_type, properties, duckdb::IdentifiersToStrings(names),
-      std::move(collection), duckdb::ClientProperties{});
+    return duckdb::make_uniq<duckdb::QueryResult>(statement_type, properties,
+                                                  names, std::move(collection),
+                                                  duckdb::ClientProperties{});
   }
 
   bool ParallelSink() const override {

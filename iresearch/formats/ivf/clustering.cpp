@@ -127,8 +127,7 @@ faiss::PCAMatrix TrainPcaRotation(const float* data, size_t n, uint32_t d) {
 void NormalizeRows(float* data, size_t n, uint32_t d) {
   for (size_t i = 0; i < n; ++i) {
     float* row = data + i * d;
-    vector::L2Space<float, float, float>::Normalize(
-      reinterpret_cast<const byte_type*>(row), static_cast<uint16_t>(d), row);
+    duckdb::L2NormalizeOp::Operation(row, row, d);
   }
 }
 

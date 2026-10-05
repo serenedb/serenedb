@@ -23,7 +23,7 @@ It wraps an inner tokenizer to split the input into terms, then emits boundary-m
 
 The nested tokenizer is the first argument and `NGRAM_SIZE` the second: `generate_wildcard_ngrams(split_text_csv(' '), 3)`.
 
-An `NGRAM_SIZE` below `2` is rejected with `"ngram_size" must be at least 2`; there is no upper bound. The nested tokenizer is required for a new dictionary — `generate_wildcard_ngrams(3)` fails with `generate_wildcard_ngrams() requires a nested analyzer as its first argument`. The template supports the `FREQUENCY` and `POSITION` [feature flags](../../../statements/create_text_search_dictionary/index.md#feature-flags), with `POSITION` requiring `FREQUENCY`; `NORM` and `OFFSET` are rejected at `CREATE TEXT SEARCH DICTIONARY` time with `Unsupported index features are specified: <mask>`.
+An `NGRAM_SIZE` below `2` is rejected with `"ngram_size" must be at least 2`; there is no upper bound. The nested tokenizer is required for a new dictionary — `generate_wildcard_ngrams(3)` fails with `generate_wildcard_ngrams() requires a nested analyzer as its first argument`. The template supports the `FREQUENCY` and `POSITION` [feature flags](../../../statements/create_text_search_dictionary/index.md#feature-flags), with `POSITION` requiring `FREQUENCY`; `NORM` and `OFFSET` are rejected at `CREATE TEXT SEARCH DICTIONARY` time with an error that names them, such as `Unsupported index features are specified: offset, norm`.
 
 ## Tokenization
 

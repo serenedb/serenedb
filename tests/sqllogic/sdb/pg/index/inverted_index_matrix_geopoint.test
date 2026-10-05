@@ -48,7 +48,7 @@ count
 
 query
 SELECT pk FROM g4_j_col_geo_st
-WHERE j <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+WHERE ST_Distance_Centroid(j, '{"type":"Point","coordinates":[37.616,55.704]}') < 500.0
 ORDER BY pk;
 ----
 pk
@@ -57,7 +57,7 @@ pk
 
 query
 SELECT pk FROM g4_j_expr_geo_ns
-WHERE j <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+WHERE ST_Distance_Centroid(j, '{"type":"Point","coordinates":[37.616,55.704]}') < 500.0
 ORDER BY pk;
 ----
 pk
@@ -115,9 +115,6 @@ db error: ERROR: Column 'i' uses a geo analyzer; must be JSON (GeoJSON) or GEOME
 #   (h) INTEGER scalar                          -- reject, generic geo error
 #   (i) GEOMETRY scalar (CRS84)                 -- reject, geopoint-specific
 #                                                  "JSON-only" message
-# Probe lane mirrors g4_j_col_geo_st: `<->` distance to a GeoJSON Point
-# literal (ts_within / ts_distance are not exposed as standalone functions;
-# the `<->` operator is the established geopoint accept-verification path).
 # geopoint_dict is reused from line 1979 -- not redeclared.
 # ============================================================================
 
@@ -148,7 +145,7 @@ count
 
 query
 SELECT pk, tag FROM g12_j_col_geo_st
-WHERE j <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+WHERE ST_Distance_Centroid(j, '{"type":"Point","coordinates":[37.616,55.704]}') < 500.0
 ORDER BY pk;
 ----
 pk	tag
@@ -157,7 +154,7 @@ pk	tag
 
 query
 SELECT pk, tag FROM g12_j_expr_geo_st
-WHERE j <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+WHERE ST_Distance_Centroid(j, '{"type":"Point","coordinates":[37.616,55.704]}') < 500.0
 ORDER BY pk;
 ----
 pk	tag

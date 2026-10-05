@@ -22,7 +22,7 @@
 // measured as throughput over a 4 KiB buffer. Each is correctness-checked
 // against a scalar reference over all 256 byte values before timing.
 //
-//   taskset -c N ./serenedb-bench-micro-ci_fold128 --benchmark_min_time=0.3s \
+//   taskset -c N ./serenedb-bench-micro ci_fold128 --benchmark_min_time=0.3s \
 //     --benchmark_repetitions=12 --benchmark_report_aggregates_only=true
 
 #include <benchmark/benchmark.h>
@@ -206,5 +206,3 @@ BENCHMARK_TEMPLATE(BmSimd, FoldB)->Name("B_bias_loadfoldstore");
 BENCHMARK(BmSwar)->Name("C_uint128_swar_loadfoldstore");
 BENCHMARK_TEMPLATE(BmLoadFold, FoldA)->Name("A_two_cmpgt_loadfold_NOSTORE");
 BENCHMARK_TEMPLATE(BmLoadFold, FoldB)->Name("B_bias_loadfold_NOSTORE");
-
-BENCHMARK_MAIN();

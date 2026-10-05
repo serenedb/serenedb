@@ -135,16 +135,16 @@ t
 # An empty token stream has no shingles, as in a dictionary; an empty element is still a token.
 
 query
-SELECT generate_shingles([]::VARCHAR[], 2, 2, store_tokens := false) AS empty_list,
-       generate_shingles(remove_stopwords(['the'], ['the']), 2, 2, store_tokens := false) AS emptied,
-       list_transform(generate_shingles(['', 'b'], 2, 2, store_tokens := false), x -> hex(x::BLOB)) AS kept;
+SELECT generate_shingles([]::VARCHAR[], 2, 2) AS empty_list,
+       generate_shingles(remove_stopwords(['the'], ['the']), 2, 2) AS emptied,
+       list_transform(generate_shingles(['', 'b'], 2, 2), x -> hex(x::BLOB)) AS kept;
 ----
 empty_list	emptied	kept
 {}	{}	{"",2062,62}
 
 query
-SELECT list_transform(generate_shingles(['"q"', 'x'], 2, 2, store_tokens := false), x -> hex(x::BLOB)) AS quoted,
-       list_transform(generate_shingles(['a' || chr(30) || 'b', 'c'], 2, 2, store_tokens := false), x -> hex(x::BLOB)) AS separator,
+SELECT list_transform(generate_shingles(['"q"', 'x'], 2, 2), x -> hex(x::BLOB)) AS quoted,
+       list_transform(generate_shingles(['a' || chr(30) || 'b', 'c'], 2, 2), x -> hex(x::BLOB)) AS separator,
        generate_wildcard_ngrams(['search', NULL, 'engine'], 3) = list_concat(generate_wildcard_ngrams('search', 3), generate_wildcard_ngrams('engine', 3)) AS wildcard;
 ----
 quoted	separator	wildcard
@@ -163,9 +163,9 @@ t	t	{}
 # token_separator reaches the function form: an explicit '' is not folded away.
 
 query
-SELECT generate_shingles(['a', 'b'], 2, 2, store_tokens := false) AS spaced,
-       generate_shingles(['a', 'b'], 2, 2, store_tokens := false, token_separator := '') AS joined,
-       generate_shingles(['a', 'b'], 2, 2, store_tokens := false, token_separator := ' ') AS explicit_space;
+SELECT generate_shingles(['a', 'b'], 2, 2) AS spaced,
+       generate_shingles(['a', 'b'], 2, 2, token_separator := '') AS joined,
+       generate_shingles(['a', 'b'], 2, 2, token_separator := ' ') AS explicit_space;
 ----
 spaced	joined	explicit_space
 {a,"a b",b}	{a,ab,b}	{a,"a b",b}
@@ -211,7 +211,7 @@ SELECT split_text(v, case := c) FROM (VALUES ('A', 'lower')) AS t(v, c);
 statement error
 SELECT split_text('a', locale := 'en');
 ----
-db error: ERROR: No function matches the given name and argument types 'split_text(STRING_LITERAL, locale := STRING_LITERAL)'. You might need to add explicit type casts.
+db error: ERROR: No function matches the given name and argument types 'split_text(STRING_LITERAL, "locale" := STRING_LITERAL)'. You might need to add explicit type casts.
 	Candidate functions:
 	split_text("value" VARCHAR, "case" VARCHAR := none, break VARCHAR := alpha) -> VARCHAR[]
 	split_text("value" VARCHAR[], "case" VARCHAR := none, break VARCHAR := alpha) -> VARCHAR[]
@@ -364,7 +364,7 @@ t
 statement error
 SELECT remove_stopwords(['a'], stopwords := 42);
 ----
-db error: ERROR: No function matches the given name and argument types 'remove_stopwords(VARCHAR[], stopwords := INTEGER_LITERAL)'. You might need to add explicit type casts.
+db error: ERROR: No function matches the given name and argument types 'remove_stopwords(VARCHAR[], "stopwords" := INTEGER_LITERAL)'. You might need to add explicit type casts.
 	Candidate functions:
 	remove_stopwords("value" VARCHAR, stopwords UNION(str VARCHAR, list VARCHAR[]) := [], stopwords_path VARCHAR := , hex BOOLEAN := false) -> VARCHAR[]
 	remove_stopwords("value" VARCHAR[], stopwords UNION(str VARCHAR, list VARCHAR[]) := [], stopwords_path VARCHAR := , hex BOOLEAN := false) -> VARCHAR[]
@@ -380,7 +380,7 @@ same_value	array_option
 t	{fox}
 
 query
-SELECT generate_shingles(array_value('a', 'b'), 2, 2, store_tokens := false) AS wrapped;
+SELECT generate_shingles(array_value('a', 'b'), 2, 2) AS wrapped;
 ----
 wrapped
 {a,"a b",b}

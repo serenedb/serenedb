@@ -1,0 +1,199 @@
+hash-threshold 100
+
+control substitution on
+
+statement ok
+SET threads = 1;
+
+statement ok
+CREATE TEMP TABLE bloom_source AS
+SELECT (i // 50)::BIGINT AS small_id,
+       (1000000000 + i // 50)::BIGINT AS user_id
+FROM range(4096) r(i);
+
+statement count 4096
+COPY bloom_source TO '${__TEST_DIR__}/bloom_expression.parquet'
+(FORMAT PARQUET, ROW_GROUP_SIZE 2048, WRITE_BLOOM_FILTER TRUE);
+
+statement count 4096
+COPY bloom_source TO '${__TEST_DIR__}/no_bloom_expression.parquet'
+(FORMAT PARQUET, ROW_GROUP_SIZE 2048, WRITE_BLOOM_FILTER FALSE);
+
+query
+SELECT count(DISTINCT row_group_id) AS row_groups,
+       bool_and(bloom_filter_offset IS NOT NULL) AS has_bloom,
+       bool_and(encodings LIKE '%DICTIONARY%') AS dictionary_encoded
+FROM parquet_metadata('${__TEST_DIR__}/bloom_expression.parquet');
+----
+row_groups	has_bloom	dictionary_encoded
+2	t	t
+
+query
+SELECT bool_and(bloom_filter_offset IS NULL) AS no_bloom
+FROM parquet_metadata('${__TEST_DIR__}/no_bloom_expression.parquet');
+----
+no_bloom
+t
+
+query
+SELECT count(*) AS n
+FROM read_parquet('${__TEST_DIR__}/bloom_expression.parquet')
+WHERE user_id % 7 = 1;
+----
+n
+600
+
+query
+SELECT count(*) AS n
+FROM read_parquet('${__TEST_DIR__}/bloom_expression.parquet')
+WHERE hash(user_id) % 3 = 1;
+----
+n
+1246
+
+query
+SELECT count(*) FILTER (WHERE user_id % 7 = 1) AS mod_rows,
+       count(*) FILTER (WHERE hash(user_id) % 3 = 1) AS hash_rows
+FROM read_parquet('${__TEST_DIR__}/bloom_expression.parquet');
+----
+mod_rows	hash_rows
+600	1246
+
+query
+SELECT
+  (SELECT count(*) FROM read_parquet('${__TEST_DIR__}/no_bloom_expression.parquet')
+   WHERE user_id % 7 = 1) AS mod_rows,
+  (SELECT count(*) FROM read_parquet('${__TEST_DIR__}/no_bloom_expression.parquet')
+   WHERE hash(user_id) % 3 = 1) AS hash_rows;
+----
+mod_rows	hash_rows
+600	1246
+
+query
+SELECT 'small_mod' AS predicate,
+  (SELECT count(*) FROM (
+    SELECT small_id FROM bloom_source WHERE small_id % 7 = 1
+    EXCEPT ALL
+    SELECT small_id FROM read_parquet('${__TEST_DIR__}/bloom_expression.parquet')
+    WHERE small_id % 7 = 1
+  ) missing) AS missing_rows,
+  (SELECT count(*) FROM (
+    SELECT small_id FROM read_parquet('${__TEST_DIR__}/bloom_expression.parquet')
+    WHERE small_id % 7 = 1
+    EXCEPT ALL
+    SELECT small_id FROM bloom_source WHERE small_id % 7 = 1
+  ) extra) AS extra_rows
+UNION ALL
+SELECT 'small_hash',
+  (SELECT count(*) FROM (
+    SELECT small_id FROM bloom_source WHERE hash(small_id) % 3 = 1
+    EXCEPT ALL
+    SELECT small_id FROM read_parquet('${__TEST_DIR__}/bloom_expression.parquet')
+    WHERE hash(small_id) % 3 = 1
+  ) missing),
+  (SELECT count(*) FROM (
+    SELECT small_id FROM read_parquet('${__TEST_DIR__}/bloom_expression.parquet')
+    WHERE hash(small_id) % 3 = 1
+    EXCEPT ALL
+    SELECT small_id FROM bloom_source WHERE hash(small_id) % 3 = 1
+  ) extra)
+UNION ALL
+SELECT 'large_mod',
+  (SELECT count(*) FROM (
+    SELECT user_id FROM bloom_source WHERE user_id % 7 = 1
+    EXCEPT ALL
+    SELECT user_id FROM read_parquet('${__TEST_DIR__}/bloom_expression.parquet')
+    WHERE user_id % 7 = 1
+  ) missing),
+  (SELECT count(*) FROM (
+    SELECT user_id FROM read_parquet('${__TEST_DIR__}/bloom_expression.parquet')
+    WHERE user_id % 7 = 1
+    EXCEPT ALL
+    SELECT user_id FROM bloom_source WHERE user_id % 7 = 1
+  ) extra)
+UNION ALL
+SELECT 'large_hash',
+  (SELECT count(*) FROM (
+    SELECT user_id FROM bloom_source WHERE hash(user_id) % 3 = 1
+    EXCEPT ALL
+    SELECT user_id FROM read_parquet('${__TEST_DIR__}/bloom_expression.parquet')
+    WHERE hash(user_id) % 3 = 1
+  ) missing),
+  (SELECT count(*) FROM (
+    SELECT user_id FROM read_parquet('${__TEST_DIR__}/bloom_expression.parquet')
+    WHERE hash(user_id) % 3 = 1
+    EXCEPT ALL
+    SELECT user_id FROM bloom_source WHERE hash(user_id) % 3 = 1
+  ) extra)
+ORDER BY predicate;
+----
+predicate	missing_rows	extra_rows
+large_hash	0	0
+large_mod	0	0
+small_hash	0	0
+small_mod	0	0
+
+query
+SELECT count(*) AS n
+FROM read_parquet('${__TEST_DIR__}/bloom_expression.parquet')
+WHERE user_id = 1000000042;
+----
+n
+50
+
+query
+SELECT count(*) AS n
+FROM read_parquet('${__TEST_DIR__}/bloom_expression.parquet')
+WHERE user_id % 7 = 1 OR user_id = 1000000000;
+----
+n
+650
+
+query
+SELECT count(*) AS n
+FROM read_parquet('${__TEST_DIR__}/bloom_expression.parquet')
+WHERE user_id % 7 = 1 AND user_id >= 1000000000;
+----
+n
+600
+
+statement count 4096
+COPY (SELECT user_id, hash(user_id) % 3 AS b FROM bloom_source)
+TO '${__TEST_DIR__}/bloom_partitions'
+(FORMAT PARQUET, PARTITION_BY (b), ROW_GROUP_SIZE 2048, WRITE_BLOOM_FILTER TRUE);
+
+query
+SELECT bool_and(bloom_filter_offset IS NOT NULL) AS has_bloom
+FROM parquet_metadata('${__TEST_DIR__}/bloom_partitions/b=1/*.parquet')
+WHERE path_in_schema = 'user_id';
+----
+has_bloom
+t
+
+query
+SELECT
+  (SELECT count(*) FROM read_parquet('${__TEST_DIR__}/bloom_partitions/b=1/*.parquet')) AS all_rows,
+  (SELECT count(*) FROM read_parquet('${__TEST_DIR__}/bloom_partitions/b=1/*.parquet')
+   WHERE hash(user_id) % 3 = 1) AS filtered_rows;
+----
+all_rows	filtered_rows
+1246	1246
+
+statement ok
+SET threads = 4;
+
+query
+SELECT
+  (SELECT count(*) FROM read_parquet('${__TEST_DIR__}/bloom_expression.parquet')
+   WHERE user_id % 7 = 1) AS mod_rows,
+  (SELECT count(*) FROM read_parquet('${__TEST_DIR__}/bloom_expression.parquet')
+   WHERE hash(user_id) % 3 = 1) AS hash_rows;
+----
+mod_rows	hash_rows
+600	1246
+
+statement ok
+RESET threads;
+
+statement ok
+DROP TABLE bloom_source;

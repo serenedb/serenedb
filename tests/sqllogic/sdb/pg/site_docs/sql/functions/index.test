@@ -82,7 +82,7 @@ query error
 SELECT (2).ifnull(0);
 ----
 db error: ERROR: Scalar Function with name ifnull does not exist!
-Did you mean "fill"?
+Did you mean "if"?
 
 
 # DOCS_TEST: example_008
@@ -104,6 +104,7 @@ function_name	function_type	return_type	parameter_types
 bar	scalar	VARCHAR	{DOUBLE,DOUBLE,DOUBLE,DOUBLE}
 base64	scalar	VARCHAR	{BLOB}
 bin	scalar	VARCHAR	{VARCHAR}
+binom	scalar	HUGEINT	{INTEGER,INTEGER}
 bit_count	scalar	TINYINT	{TINYINT}
 bit_length	scalar	BIGINT	{VARCHAR}
 bit_position	scalar	INTEGER	{BIT,BIT}

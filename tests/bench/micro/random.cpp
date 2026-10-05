@@ -477,5 +477,3 @@ BM_EXTENDED(pcg32);
 */
 
 }  // namespace
-
-BENCHMARK_MAIN();

@@ -5,6 +5,8 @@
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
+#include "duckdb/main/attached_database.hpp"
+#include "duckdb/main/database_manager.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -344,7 +346,8 @@ void ClickHouseDiscoverColumns(ClickHouseConnection &connection, const string &d
 }
 
 static unique_ptr<FunctionData> ClickHouseBind(ClientContext &context, TableFunctionBindInput &input,
-                                               vector<LogicalType> &return_types, vector<string> &names) {
+                                               vector<LogicalType> &return_types, vector<Identifier> &names) {
+	vector<string> column_names;
 	auto bind_data = make_uniq<ClickHouseBindData>();
 
 	auto connection_string = input.inputs[0].GetValue<string>();
@@ -360,8 +363,8 @@ static unique_ptr<FunctionData> ClickHouseBind(ClientContext &context, TableFunc
 	    context.TryGetCurrentSetting("ch_binary_as_blob", binary_setting) && BooleanValue::Get(binary_setting);
 	try {
 		auto connection = ClickHouseConnection::Open(bind_data->params);
-		ClickHouseDiscoverColumns(connection, describe_sql, return_types, names, binary_as_blob, bind_data->stringified,
-		                          bind_data->clickhouse_types);
+		ClickHouseDiscoverColumns(connection, describe_sql, return_types, column_names, binary_as_blob,
+		                          bind_data->stringified, bind_data->clickhouse_types);
 		// Cardinality estimate for the optimizer, mirroring the catalog path
 		// (clickhouse_table_entry): without it an ad-hoc clickhouse_scan reports ~1
 		// row and joins plan badly. Stats-only -- a failure must never fail the bind.
@@ -389,7 +392,10 @@ static unique_ptr<FunctionData> ClickHouseBind(ClientContext &context, TableFunc
 		ClickHouseConnection::ThrowError("describing table", describe_sql, e);
 	}
 
-	bind_data->names = names;
+	for (auto &name : column_names) {
+		names.emplace_back(name);
+	}
+	bind_data->names = std::move(column_names);
 	bind_data->types = return_types;
 	return std::move(bind_data);
 }
@@ -613,8 +619,7 @@ OperatorResultType ClickHouseLookupScan(ExecutionContext &context, TableFunction
 			while (gstate.block_offset < block_rows && dst + run_len < STANDARD_VECTOR_SIZE) {
 				const auto row = gstate.block_offset;
 				const auto ord = ord_col->At(row);
-				if (ord >= 1 && static_cast<idx_t>(ord) <= gstate.lookup_key_count &&
-				    !gstate.lookup_seen[ord - 1]) {
+				if (ord >= 1 && static_cast<idx_t>(ord) <= gstate.lookup_key_count && !gstate.lookup_seen[ord - 1]) {
 					gstate.lookup_seen[ord - 1] = true;
 					data.pk_survivors[dst + run_len] = static_cast<idx_t>(ord) - 1;
 					if (run_len == 0) {
@@ -703,11 +708,11 @@ static BindInfo ClickHouseGetBindInfo(const optional_ptr<FunctionData> bind_data
 }
 
 static void ClickHouseScanSerialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data_p,
-                                    const TableFunction &function) {
+                                    const BoundTableFunction &function) {
 	throw NotImplementedException("ClickHouseScanSerialize");
 }
 
-static unique_ptr<FunctionData> ClickHouseScanDeserialize(Deserializer &deserializer, TableFunction &function) {
+static unique_ptr<FunctionData> ClickHouseScanDeserialize(Deserializer &deserializer, BoundTableFunction &function) {
 	throw NotImplementedException("ClickHouseScanDeserialize");
 }
 
@@ -744,7 +749,7 @@ static double ClickHouseScanProgress(ClientContext &context, const FunctionData 
 // appending its own Projections/Filters sections after these keys.
 static InsertionOrderPreservingMap<string> ClickHouseScanToString(TableFunctionToStringInput &input) {
 	InsertionOrderPreservingMap<string> result;
-	result["Function"] = StringUtil::Upper(input.table_function.name.GetIdentifierName());
+	result["Function"] = StringUtil::Upper(input.table_function.GetName().GetIdentifierName());
 	if (!input.bind_data) {
 		return result;
 	}

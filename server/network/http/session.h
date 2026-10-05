@@ -33,9 +33,9 @@
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
-#include <duckdb/main/materialized_query_result.hpp>
-#include <duckdb/main/pending_query_result.hpp>
 #include <duckdb/main/prepared_statement.hpp>
+#include <duckdb/main/query_parameters.hpp>
+#include <duckdb/main/query_result.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -209,7 +209,7 @@ class HttpSession final
   // until the executor's on_reschedule wake re-runs us. A blocking
   // Connection().Query() would instead pin this scheduler worker for the
   // whole query and starve the pool under concurrent requests.
-  yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>> RunQuery(
+  yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunQuery(
     std::string sql, bool /*writes*/) final {
     // Connection::Query() captures execution exceptions into the result's
     // ErrorData; the manual drive must do the same (table functions
@@ -219,23 +219,19 @@ class HttpSession final
     // as an ErrorData result too, not an escaped exception.
     try {
       auto& conn = Connection();
-      co_return co_await Drive(
-        conn.PendingQuery(sql, /*allow_stream_result=*/false));
+      co_return co_await Drive(conn.Submit(sql, MaterializedQuery()));
     } catch (const std::exception& ex) {
-      co_return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
-        duckdb::ErrorData{ex});
+      co_return duckdb::make_uniq<duckdb::QueryResult>(duckdb::ErrorData{ex});
     }
   }
 
-  yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>> RunPrepared(
+  yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunPrepared(
     duckdb::PreparedStatement& statement) final {
     try {
       duckdb::vector<duckdb::Value> params;
-      co_return co_await Drive(
-        statement.PendingQuery(params, /*allow_stream_result=*/false));
+      co_return co_await Drive(statement.Submit(params, MaterializedQuery()));
     } catch (const std::exception& ex) {
-      co_return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
-        duckdb::ErrorData{ex});
+      co_return duckdb::make_uniq<duckdb::QueryResult>(duckdb::ErrorData{ex});
     }
   }
 
@@ -252,8 +248,15 @@ class HttpSession final
   }
 
  private:
-  yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>> Drive(
-    duckdb::unique_ptr<duckdb::PendingQueryResult> pending) {
+  static duckdb::QueryParameters MaterializedQuery() {
+    duckdb::QueryParameters parameters;
+    parameters.result_eagerness = duckdb::ResultEagerness::FORCED;
+    parameters.caller_drives = true;
+    return parameters;
+  }
+
+  yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> Drive(
+    duckdb::unique_ptr<duckdb::QueryResult> pending) {
     try {
       if (!pending->HasError()) {
         // In debug interleave queries more often to see more bugs.
@@ -266,10 +269,10 @@ class HttpSession final
         for (;;) {
           const auto status =
             pending->ExecuteTask([this] { _task->RequestRun(); });
-          if (duckdb::PendingQueryResult::IsResultReady(status)) {
+          if (duckdb::IsObservable(status)) {
             break;
           }
-          if (status == duckdb::PendingExecutionResult::RESULT_NOT_READY) {
+          if (status == duckdb::QueryResultState::NOT_READY) {
             if (++inline_slices < kInlineSliceBudget) {
               continue;
             }
@@ -281,20 +284,14 @@ class HttpSession final
           }
         }
       }
-      // An execution error leaves the pending result un-executable; pull the
-      // error directly (it preserves the typed exception) instead of calling
-      // Execute(), which would throw "unsuccessful pending result".
-      if (pending->HasError()) {
-        co_return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
-          pending->GetErrorObject());
+      auto result = pending->TakeCollectorResult();
+      if (!result) {
+        pending->Complete();
+        result = std::move(pending);
       }
-      auto result = pending->Execute();
-      co_return duckdb::unique_ptr_cast<duckdb::QueryResult,
-                                        duckdb::MaterializedQueryResult>(
-        std::move(result));
+      co_return result;
     } catch (const std::exception& ex) {
-      co_return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
-        duckdb::ErrorData{ex});
+      co_return duckdb::make_uniq<duckdb::QueryResult>(duckdb::ErrorData{ex});
     }
   }
 

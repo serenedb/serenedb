@@ -28,8 +28,10 @@
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/exception.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/constraint.hpp>
@@ -48,16 +50,18 @@
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/logical_operator.hpp>
 #include <duckdb/planner/logical_operator_visitor.hpp>
+#include <duckdb/planner/operator/logical_alter.hpp>
 #include <duckdb/planner/operator/logical_copy_to_file.hpp>
 #include <duckdb/planner/operator/logical_create.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <duckdb/planner/operator/logical_create_table.hpp>
 #include <duckdb/planner/operator/logical_delete.hpp>
+#include <duckdb/planner/operator/logical_detach.hpp>
+#include <duckdb/planner/operator/logical_drop.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
 #include <duckdb/planner/operator/logical_merge_into.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
-#include <duckdb/planner/operator/logical_simple.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -187,7 +191,16 @@ std::vector<std::span<const duckdb::AclItem>> AllColumnAcls(
 }
 
 bool IsRename(const duckdb::AlterInfo& info) {
-  return info.type == duckdb::AlterType::RENAME;
+  return static_cast<bool>(info.GetNewName());
+}
+
+duckdb::LogicalOperator& StatementRoot(duckdb::LogicalOperator& root) {
+  if ((root.type == LogicalOperatorType::LOGICAL_PREPARE ||
+       root.type == LogicalOperatorType::LOGICAL_EXECUTE) &&
+      !root.children.empty()) {
+    return *root.children[0];
+  }
+  return root;
 }
 
 class Enforcer {
@@ -197,7 +210,7 @@ class Enforcer {
     : _context{context},
       _connection{connection},
       _props{binder.GetStatementProperties()},
-      _root{root},
+      _root{StatementRoot(root)},
       _caller{connection.GetRoleId()},
       _roles{RolesOf(&context)},
       _caller_closure_owner{ClosureFor(&context, _caller)},
@@ -305,7 +318,13 @@ class Enforcer {
             expr.Cast<duckdb::BoundColumnRefExpression>().Binding();
           if (auto it = _dml_tables.find(binding.table_index.index);
               it != _dml_tables.end()) {
-            _returning[it->second].insert(binding.column_index.GetIndex());
+            auto entry = std::ranges::find(_returning, it->second,
+                                           &ReturningColumns::first);
+            if (entry == _returning.end()) {
+              entry = _returning.emplace(_returning.end(), it->second,
+                                         ReturningColumns::second_type{});
+            }
+            entry->second.insert(binding.column_index.GetIndex());
           }
           _scan_refs[binding.table_index.index].insert(
             binding.column_index.GetIndex());
@@ -340,7 +359,7 @@ class Enforcer {
                                                           visit);
         }
       }
-    } else {
+    } else if (op.type != LogicalOperatorType::LOGICAL_DELETE) {
       duckdb::LogicalOperatorVisitor::EnumerateExpressions(
         op, [&](duckdb::unique_ptr<duckdb::Expression>* child) {
           duckdb::ExpressionIterator::EnumerateExpression(*child, visit);
@@ -432,16 +451,14 @@ class Enforcer {
         break;
       }
       case LogicalOperatorType::LOGICAL_DROP: {
-        auto& info =
-          op.Cast<duckdb::LogicalSimple>().info->Cast<duckdb::DropInfo>();
+        auto& info = *op.Cast<duckdb::LogicalDrop>().info;
         if (_enforce) {
           CheckDrop(info);
         }
         break;
       }
       case LogicalOperatorType::LOGICAL_ALTER: {
-        auto& info =
-          op.Cast<duckdb::LogicalSimple>().info->Cast<duckdb::AlterInfo>();
+        auto& info = *op.Cast<duckdb::LogicalAlter>().info;
         if (info.type == duckdb::AlterType::ALTER_DATABASE) {
           THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                           ERR_MSG("renaming a database is not supported"));
@@ -472,9 +489,8 @@ class Enforcer {
         break;
       case LogicalOperatorType::LOGICAL_DETACH:
         if (_enforce) {
-          RequireDatabaseOwner(op.Cast<duckdb::LogicalSimple>()
-                                 .info->Cast<duckdb::DetachInfo>()
-                                 .name.GetIdentifierName());
+          RequireDatabaseOwner(
+            op.Cast<duckdb::LogicalDetach>().info->name.GetIdentifierName());
         }
         break;
       case LogicalOperatorType::LOGICAL_COPY_TO_FILE:
@@ -576,7 +592,7 @@ class Enforcer {
   }
 
   void CheckIndexScan(duckdb::LogicalGet& get) {
-    if (get.function.name != "iresearch_scan") {
+    if (get.function.GetName() != "iresearch_scan") {
       return;
     }
     const auto& bind = get.bind_data->Cast<connector::ScanBindData>();
@@ -584,9 +600,8 @@ class Enforcer {
       return;
     }
     const auto& index = *bind.relation.inverted_index;
-    auto view = index.ParentSchema(_context).GetEntry(
-      index.catalog.GetCatalogTransaction(_context), CatalogType::TABLE_ENTRY,
-      index.GetTableName());
+    auto view =
+      index.GetRelation(index.catalog.GetCatalogTransaction(_context));
     if (!view || view->type != CatalogType::VIEW_ENTRY || Unowned(*view)) {
       return;
     }
@@ -777,19 +792,27 @@ class Enforcer {
       _root.type == LogicalOperatorType::LOGICAL_ALTER;
     irs::containers::FlatHashSet<const duckdb::CatalogEntry*> seen;
     if (_root.type == LogicalOperatorType::LOGICAL_CREATE_TABLE) {
-      const auto& dependencies =
-        _root.Cast<duckdb::LogicalCreateTable>().info->dependencies.Set();
+      const auto& dependencies = _root.Cast<duckdb::LogicalCreateTable>()
+                                   .info->Base()
+                                   .dependencies.Set();
       for (const auto& dependency : dependencies) {
         if (dependency.entry.type != CatalogType::TYPE_ENTRY) {
           continue;
         }
-        auto entry = duckdb::Catalog::GetEntry(
-          _context,
-          duckdb::EntryLookupInfo{
-            CatalogType::TYPE_ENTRY,
-            duckdb::QualifiedName{dependency.catalog, dependency.entry.schema,
-                                  dependency.entry.name}},
-          duckdb::OnEntryNotFound::RETURN_NULL);
+        auto& catalog =
+          duckdb::Catalog::GetCatalog(_context, dependency.catalog);
+        auto dependency_manager = catalog.GetDependencyManager();
+        auto entry = dependency_manager
+                       ? dependency_manager->LookupEntry(
+                           catalog.GetCatalogTransaction(_context), dependency)
+                       : duckdb::Catalog::GetEntry(
+                           _context,
+                           duckdb::EntryLookupInfo{
+                             CatalogType::TYPE_ENTRY,
+                             duckdb::QualifiedName::FromCatalogSchema(
+                               dependency.catalog, dependency.entry.schema_path,
+                               dependency.entry.name)},
+                           duckdb::OnEntryNotFound::RETURN_NULL);
         if (!entry || Unowned(*entry) || !seen.insert(entry.get()).second) {
           continue;
         }
@@ -1107,8 +1130,11 @@ class Enforcer {
     info.entry_catalog_type = entry->type == CatalogType::VIEW_ENTRY
                                 ? CatalogType::TABLE_ENTRY
                                 : entry->type;
-    info.SetQualifiedName(entry->ParentCatalog().GetName(),
-                          entry->ParentSchemaName(), entry->name);
+    info.SetQualifiedName(duckdb::QualifiedName::FromCatalogSchema(
+      entry->ParentCatalog().GetName(),
+      entry->ParentSchemaPath(
+        entry->ParentCatalog().GetCatalogTransaction(_context)),
+      entry->name));
     return *entry;
   }
 
@@ -1227,9 +1253,8 @@ class Enforcer {
   void RequireOwner(const duckdb::CatalogEntry& entry) {
     if (entry.type == CatalogType::INDEX_ENTRY) {
       auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
-      auto host = index.ParentSchema(_context).GetEntry(
-        index.catalog.GetCatalogTransaction(_context), CatalogType::TABLE_ENTRY,
-        index.GetTableName());
+      auto host =
+        index.GetRelation(index.catalog.GetCatalogTransaction(_context));
       if (host && !_caller_closure.Owns(host->permissions.owner)) {
         MustOwn(*host);
       }
@@ -1356,9 +1381,10 @@ class Enforcer {
     _target_scans;
   irs::containers::FlatHashMap<duckdb::idx_t, const duckdb::TableCatalogEntry*>
     _dml_tables;
-  irs::containers::FlatHashMap<const duckdb::TableCatalogEntry*,
-                               irs::containers::FlatHashSet<duckdb::idx_t>>
-    _returning;
+  using ReturningColumns =
+    std::pair<const duckdb::TableCatalogEntry*,
+              irs::containers::FlatHashSet<duckdb::idx_t>>;
+  std::vector<ReturningColumns> _returning;
   irs::containers::FlatHashMap<duckdb::idx_t,
                                irs::containers::FlatHashSet<duckdb::idx_t>>
     _scan_refs;

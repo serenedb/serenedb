@@ -28,7 +28,7 @@ struct ClickHouseFilterPushdown {
 	//! Filters that are optional by design (zonemap/TopN/join advisory prunes) are
 	//! never reported: dropping them only loses pruning, not correctness.
 	static string TransformFilters(const vector<column_t> &column_ids, optional_ptr<TableFilterSet> filters,
-	                                    const ClickHouseBindData &bind_data, vector<idx_t> &inexact_filters);
+	                               const ClickHouseBindData &bind_data, vector<idx_t> &inexact_filters);
 };
 
 } // namespace duckdb

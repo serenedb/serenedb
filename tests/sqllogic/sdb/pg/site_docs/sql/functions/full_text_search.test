@@ -900,16 +900,16 @@ ORDER BY id;
 id
 1
 
-# DOCS_TEST: st_distance_centroid_op
+# DOCS_TEST: geometry_distance_operator
 # DOCS_TEST_BODY
 query
-SELECT id
-FROM geo_idx
-WHERE (geo <-> 'POINT(37.6 55.7)'::GEOMETRY('OGC:CRS84')) < 5000
-ORDER BY id;
+SELECT id, round(geo <-> 'POINT(37.6 55.7)'::GEOMETRY('OGC:CRS84'), 4) AS degrees
+FROM geo
+ORDER BY geo <-> 'POINT(37.6 55.7)'::GEOMETRY('OGC:CRS84');
 ----
-id
-1
+id	degrees
+1	0
+2	0.1414
 
 # DOCS_TEST: st_intersects_matrix
 # DOCS_TEST_BODY
@@ -1062,6 +1062,18 @@ ORDER BY id;
 ----
 id
 3
+
+# DOCS_TEST: ts_regexp_phrase
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM docs_idx
+WHERE body @@ ('quick' ## ts_regexp('(brown|red)') ## 'fox')
+ORDER BY id;
+----
+id
+1
+2
 
 # DOCS_TEST: ts_levenshtein_prefix
 # DOCS_TEST_BODY

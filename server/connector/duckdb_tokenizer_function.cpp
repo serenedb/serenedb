@@ -46,9 +46,11 @@ void CreateTSDictionaryPragma(duckdb::ClientContext& context,
   auto if_not_exists = args[1].GetValue<bool>();
   const auto spec = args[2].GetValue<std::string>();
 
+  const duckdb::named_parameter_map_t features(params.named_parameters.begin(),
+                                               params.named_parameters.end());
   pg::CreateTokenizer(GetSereneDBContext(context),
                       duckdb::QualifiedName::Parse(dict_name), if_not_exists,
-                      params.named_parameters, spec);
+                      features, spec);
 }
 
 }  // namespace
@@ -61,7 +63,7 @@ void RegisterTokenizerPragma(duckdb::DatabaseInstance& db) {
     {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BOOLEAN,
      duckdb::LogicalType::VARCHAR});
   // Tokenizer-specific kwargs are validated by CreateTSDictionaryPragma itself.
-  create_pragma.accept_arbitrary_named_parameters = true;
+  create_pragma.GetSignature().AddKwargs("options", duckdb::LogicalType::ANY);
   loader.RegisterFunction(create_pragma);
 }
 

@@ -472,6 +472,49 @@ DROP TABLE p_bad_empty;
 
 
 statement ok
+CREATE TABLE pe_t (x bigint, label text);
+
+
+statement ok
+CREATE INDEX pe_empty_table ON pe_t USING inverted(label) WHERE x > 5;
+
+
+statement ok
+INSERT INTO pe_t VALUES (1, 'one'), (2, 'two');
+
+
+statement ok
+CREATE INDEX pe_below_range ON pe_t USING inverted(label) WHERE x > 5;
+
+
+statement ok
+CREATE INDEX pe_false ON pe_t USING inverted(label) WHERE false;
+
+
+statement ok
+CREATE INDEX pe_null ON pe_t USING inverted(label) WHERE NULL;
+
+
+statement ok
+INSERT INTO pe_t VALUES (10, 'ten');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pe_t;
+
+
+query
+SELECT (SELECT count(*) FROM pe_empty_table) AS empty_table, (SELECT count(*) FROM pe_below_range) AS below_range, (SELECT count(*) FROM pe_false) AS never, (SELECT count(*) FROM pe_null) AS null_predicate;
+----
+empty_table	below_range	never	null_predicate
+1	1	0	0
+
+
+statement ok
+DROP TABLE pe_t CASCADE;
+
+
+statement ok
 DROP VIEW vsub_v;
 
 

@@ -39,6 +39,7 @@
 #include <string>
 #include <vector>
 
+#include "examples.h"
 #include "s2/s2latlng.h"
 #include "s2/s2loop.h"
 #include "s2/s2polygon.h"
@@ -264,7 +265,7 @@ void PrintHits(std::string_view label, const std::vector<std::string>& hits) {
 
 }  // namespace
 
-int main() {
+int GeoMain() {
   // Bracket the process-wide duckdb::DuckDB lifetime; Db() reads it back.
   auto& engine = irs::DuckDBEngine::Instance();
   engine.Initialize();

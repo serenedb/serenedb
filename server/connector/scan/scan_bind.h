@@ -215,7 +215,7 @@ struct ScanBindData final : duckdb::FunctionData {
 duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names);
+  duckdb::vector<duckdb::Identifier>& names);
 
 inline bool IsSereneDBScan(const duckdb::LogicalGet& get) {
   return get.function.bind == &ScanBind;

@@ -117,9 +117,11 @@ irs::NullCheckKind DetectNullCheck(const duckdb::Expression& expr) {
     return irs::NullCheckKind::None;
   }
   const auto* ref = children.front().get();
-  while (ref->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST &&
-         !ref->Cast<duckdb::BoundCastExpression>().IsTryCast()) {
-    ref = &ref->Cast<duckdb::BoundCastExpression>().Child();
+  while (duckdb::BoundCastExpression::IsCast(*ref) &&
+         !duckdb::BoundCastExpression::IsTryCast(
+           ref->Cast<duckdb::BoundFunctionExpression>())) {
+    ref = &duckdb::BoundCastExpression::Child(
+      ref->Cast<duckdb::BoundFunctionExpression>());
   }
   if (ref->GetExpressionClass() != duckdb::ExpressionClass::BOUND_REF) {
     return irs::NullCheckKind::None;
@@ -305,8 +307,9 @@ float StaticScoreFloor(const duckdb::Expression& expr, bool& exact) {
       type != duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO) {
     return kNone;
   }
-  while (ref->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
-    ref = &ref->Cast<duckdb::BoundCastExpression>().Child();
+  while (duckdb::BoundCastExpression::IsCast(*ref)) {
+    ref = &duckdb::BoundCastExpression::Child(
+      ref->Cast<duckdb::BoundFunctionExpression>());
   }
   if (ref->GetExpressionClass() != duckdb::ExpressionClass::BOUND_REF ||
       cst->GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {

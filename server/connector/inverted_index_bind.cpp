@@ -105,9 +105,8 @@ T GetIndexOption(std::string_view index_kind, std::string_view column_name,
                  std::string_view key, const duckdb::Value& v,
                  duckdb::LogicalTypeId target_type,
                  std::string_view type_name) {
-  auto value = v.Copy();
-  if (value.DefaultTryCastAs(target_type)) {
-    return value.GetValue<T>();
+  if (const auto value = v.DefaultTryCastAs(target_type)) {
+    return value->GetValue<T>();
   }
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
@@ -1159,7 +1158,8 @@ void DeriveKeys(
     if (dict) {
       field.text_dictionary = dict->oid;
     }
-    ApplyOpclassToEntry(context, entry.ParentSchemaName().GetIdentifierName(),
+    ApplyOpclassToEntry(context,
+                        entry.ParentSchema(context).name.GetIdentifierName(),
                         label, value_type, opclass, dict, next_id, field);
     if (auto& ivf = field.column_options.ann_info) {
       ivf->centroids_id = record.field_id;

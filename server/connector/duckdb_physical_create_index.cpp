@@ -33,6 +33,7 @@
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/execution/execution_context.hpp>
 #include <duckdb/execution/operator/projection/physical_projection.hpp>
+#include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
@@ -51,10 +52,7 @@
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/storage_lock.hpp>
 #include <duckdb/storage/storage_manager.hpp>
-#include <duckdb/transaction/duck_transaction.hpp>
-#include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
-#include <duckdb/transaction/undo_buffer.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -281,7 +279,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         backfill.group_bytes = uint64_t{1} << 30;
         duckdb::Value group_bytes;
         if (context.TryGetCurrentSetting(
-              std::string{kSearchBackfillGroupBytesSetting}, group_bytes) &&
+              duckdb::Identifier{kSearchBackfillGroupBytesSetting},
+              group_bytes) &&
             !group_bytes.IsNull()) {
           backfill.group_bytes = group_bytes.GetValue<uint64_t>();
         }
@@ -297,13 +296,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
             static_cast<int64_t>(published.rowid_horizon);
           state->uncommitted_min_rowids = std::vector<std::atomic<int64_t>>(
             duckdb::TaskScheduler::QueryThreads(context));
-          auto& store_db = _relation.ParentCatalog().GetAttached();
-          auto& store_txn = duckdb::DuckTransaction::Get(context, store_db);
-          const auto undo = store_txn.GetUndoProperties();
-          if (!undo.has_updates && !undo.has_deletes) {
-            duckdb::DuckTransactionManager::Get(store_db)
-              .RefreshCheckpointSnapshot(store_txn);
-          }
         }
       }
     }

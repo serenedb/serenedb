@@ -90,18 +90,17 @@ SqlVerdict SqlOracle::Evaluate(const std::string& expression,
   try {
     duckdb::vector<duckdb::Value> params;
     params.emplace_back(std::string{value});
-    auto result = stmt->Execute(params, false);
+    auto result = stmt->Execute(params);
     if (result->HasError()) {
       out.error = result->GetError();
       return out;
     }
-    auto& rows = result->Cast<duckdb::MaterializedQueryResult>();
-    if (rows.RowCount() != 1 || rows.ColumnCount() != 1) {
+    if (result->RowCount() != 1 || result->ColumnCount() != 1) {
       out.error = std::format("oracle query returned {} rows x {} columns",
-                              rows.RowCount(), rows.ColumnCount());
+                              result->RowCount(), result->ColumnCount());
       return out;
     }
-    const auto cell = rows.GetValue(0, 0);
+    const auto cell = result->Collection().GetValue(0, 0);
     if (cell.IsNull()) {
       out.kind = SqlVerdict::Kind::Rejected;
       return out;

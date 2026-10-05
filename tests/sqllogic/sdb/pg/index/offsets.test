@@ -67,24 +67,24 @@ WHERE body @@ ts_phrase('fox')
 ORDER BY id;
 ----
 QUERY PLAN
-╭─ ORDER_BY ────────────────────────╮
-│ Order By: offsets_test_idx.id ASC │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ IRESEARCH_SCAN ┴─────────────────╮
-│ Index: offsets_test_idx           │
-│ Lookup: table                     │
-│ Index Filter:                     │
-│ ╭─ Term ──────────────╮           │
-│ │ Field: body(string) │           │
-│ │ Value: fox          │           │
-│ ╰─────────────────────╯           │
-│ Offsets: body                     │
-│ Projections:                      │
-│ id,                               │
+╭─ ORDER_BY ───────────────────────╮
+│ Order By: id ASC                 │
+│ ~1 row                           │
+╰─────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Index: offsets_test_idx          │
+│ Lookup: table                    │
+│ Index Filter:                    │
+│ ╭─ Term ──────────────╮          │
+│ │ Field: body(string) │          │
+│ │ Value: fox          │          │
+│ ╰─────────────────────╯          │
+│ Offsets: body                    │
+│ Projections:                     │
+│ id,                              │
 │ sdb_inverted_index_offsets$<slt:ignore>
-│ ~1 row                            │
-╰───────────────────────────────────╯
+│ ~1 row                           │
+╰──────────────────────────────────╯
 
 
 query

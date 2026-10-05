@@ -103,6 +103,10 @@ ClusterCatalog::~ClusterCatalog() {
   }
 }
 
+duckdb::idx_t ClusterCatalog::DefaultSchemaOid() const {
+  return pg::kPgMainSchema;
+}
+
 void ClusterCatalog::RequestCatalogLogSync(
   duckdb::shared_ptr<duckdb::WriteAheadLog> log, duckdb::idx_t offset) {
   absl::MutexLock lock{&_sync_mutex};
@@ -133,7 +137,7 @@ void ClusterCatalog::SyncCatalogLogLoop() {
     }
     SDB_WAIT_ON_FAILURE("pause_catalog_log_sync");
     try {
-      log->GroupSync(offset);
+      log->SyncUpTo(offset);
     } catch (...) {
     }
   }
@@ -146,7 +150,8 @@ void ClusterCatalog::OpenCatalogLog(
     _catalog_log = std::move(log);
   }
   _compactable = compactable;
-  _live_bytes = GetAttached().GetStorageManager().GetWALSize();
+  _live_bytes.store(GetAttached().GetStorageManager().GetWALSize(),
+                    std::memory_order_relaxed);
   _catalog_generation.fetch_add(1, std::memory_order_acq_rel);
 }
 
@@ -185,13 +190,17 @@ void ClusterCatalog::MaybeCompactCatalogLog() {
   SDB_IF_FAILURE("compact_inside_ddl") { force = true; }
   SDB_IF_FAILURE("compact_inside_drop") { force = true; }
   auto& storage = GetAttached().GetStorageManager();
-  const auto threshold =
-    force ? 0 : std::max<duckdb::idx_t>(kCompactionFloor, 2 * _live_bytes);
-  if (storage.GetWALSize() < threshold) {
+  const auto threshold = [&] {
+    return force ? 0
+                 : std::max<duckdb::idx_t>(
+                     kCompactionFloor,
+                     2 * _live_bytes.load(std::memory_order_relaxed));
+  };
+  if (storage.GetWALSize() < threshold()) {
     return;
   }
-  auto lock = storage.GetWALLock();
-  if (storage.GetWALSize() < threshold ||
+  auto lock = storage.GetCommitLock();
+  if (storage.GetWALSize() < threshold() ||
       _commits_in_flight.load(std::memory_order_acquire) > 0) {
     return;
   }
@@ -262,7 +271,7 @@ void ClusterCatalog::CompactCatalogLog() {
     _catalog_log = duckdb::make_shared_ptr<duckdb::WriteAheadLog>(
       storage, path, size, duckdb::WALInitState::UNINITIALIZED);
   }
-  _live_bytes = size;
+  _live_bytes.store(size, std::memory_order_relaxed);
   SyncDirectory(std::filesystem::path{path}.parent_path().string());
 }
 
@@ -302,9 +311,9 @@ void ClusterCatalog::LogArtifact(
   const std::filesystem::path root{ClusterLayout(GetAttached()).directory};
   auto relative = RelativePaths(root, paths);
   {
-    auto lock = GetAttached().GetStorageManager().GetWALLock();
+    auto lock = GetAttached().GetStorageManager().GetCommitLock();
     _catalog_log->WriteArtifact(type, catalog_oid, oid, relative);
-    _catalog_log->GroupSync(_catalog_log->FlushAppendNoSync());
+    _catalog_log->SyncUpTo(_catalog_log->FlushMarker());
   }
   std::lock_guard guard{_artifacts_mutex};
   _artifacts.push_back({type, catalog_oid, oid, std::move(relative), drop});

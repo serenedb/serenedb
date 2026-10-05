@@ -21,6 +21,8 @@ public:
 	ClickHouseTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info);
 
 public:
+	const ColumnList &GetColumns() const override;
+
 	unique_ptr<BaseStatistics> GetStatistics(ClientContext &context, column_t column_id) override;
 
 	TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) override;
@@ -33,6 +35,7 @@ public:
 	bool TryGetRowIdColumn(string &result) const;
 
 public:
+	ColumnList columns;
 	ClickHouseConnectionParams params;
 	string database;
 	string table;

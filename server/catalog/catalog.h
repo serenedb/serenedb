@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_set.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
@@ -59,6 +60,16 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   duckdb::SqlCompatibility Compatibility() const final {
     return duckdb::SqlCompatibility::POSTGRES;
   }
+
+  bool UsesCatalogLog() const final { return true; }
+  duckdb::shared_ptr<duckdb::WriteAheadLog> CatalogLog() final;
+  void RequestCatalogLogSync(duckdb::shared_ptr<duckdb::WriteAheadLog> log,
+                             duckdb::idx_t offset) final;
+  bool AppendLocalIndexes(
+    duckdb::DuckTransaction& transaction, duckdb::TableIndexList& index_list,
+    duckdb::RowGroupCollection& source,
+    const duckdb::vector<duckdb::StorageIndex>& mapped_column_ids,
+    duckdb::row_t row_start, duckdb::ErrorData& error) final;
 
   void Initialize(bool load_builtin) final;
 
@@ -135,6 +146,15 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     duckdb::CatalogEntry& table,
     duckdb::unique_ptr<duckdb::LogicalOperator> plan) final;
 
+  void RefuseUnsupportedAlter(duckdb::ClientContext& context,
+                              duckdb::AlterInfo& info);
+
+  duckdb::unique_ptr<duckdb::LogicalOperator> BindAlterAddIndex(
+    duckdb::Binder& binder, duckdb::TableCatalogEntry& table_entry,
+    duckdb::unique_ptr<duckdb::LogicalOperator> plan,
+    duckdb::unique_ptr<duckdb::CreateIndexInfo> create_info,
+    duckdb::unique_ptr<duckdb::AlterTableInfo> alter_info) final;
+
   duckdb::ErrorData SupportsCreateTable(
     duckdb::BoundCreateTableInfo& info) final;
 
@@ -148,6 +168,9 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
 
   void DropForeignServer(duckdb::CatalogTransaction transaction,
                          duckdb::DropInfo& info);
+
+ private:
+  std::atomic_bool _detached{false};
 };
 
 }  // namespace sdb::catalog

@@ -76,7 +76,7 @@ Add a primary key to a column of a table:
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_014" />
 
-The `RENAME TO` clause renames an entire table, changing its name in the schema. Note that any views that rely on the table are **not** automatically updated.
+The `RENAME TO` clause renames an entire table, changing its name in the schema. Indexes follow the rename. A table that a view, a function or another table's `DEFAULT`, `CHECK` or generated column uses can't be renamed: the error lists those dependents, which have to be dropped first and recreated afterwards.
 
 <DocCallout type="tip">
     `ALTER TABLE` changes the schema of an existing table.
@@ -94,7 +94,7 @@ To rename a column of a table, use the `RENAME` or `RENAME COLUMN` clauses:
 
 <SqlLogicTest id="sql/statements/alter_table/rename_column_short/example_016" />
 
-The `RENAME [COLUMN]` clause renames a single column within a table. Any constraints that rely on this name (e.g., `CHECK` constraints) are automatically updated. However, note that any views that rely on this column name are **not** automatically updated.
+The `RENAME [COLUMN]` clause renames a single column within a table. Constraints and indexes that use the column are updated automatically. A column that a view or a table function reads can't be renamed, and neither can its type be changed; the error lists the dependents. A column that no dependent reads can be renamed or retyped freely.
 
 ## `ADD COLUMN`
 
@@ -126,8 +126,8 @@ Or:
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_021" />
 
-The `DROP [COLUMN]` clause can be used to remove a column from a table. Note that columns can only be removed if they do not have any indexes that rely on them. This includes any indexes created as part of a `PRIMARY KEY` or `UNIQUE` constraint. Columns that are part of multi-column check constraints cannot be dropped either.
-If you attempt to drop a column with an index on it, SereneDB returns a `Catalog Error` reporting that the column is referenced by that index or constraint.
+The `DROP [COLUMN]` clause can be used to remove a column from a table. As in PostgreSQL, every index created with `CREATE INDEX` that uses the column (as a key, in an indexed expression or in its `WHERE` predicate) is dropped along with it. A column cannot be removed while an index created as part of a `PRIMARY KEY` or `UNIQUE` constraint relies on it, or while a remaining plain index (not an [inverted index](../../indexes/inverted/maintenance.md#schema-changes-on-an-indexed-table)) uses a column that comes after it. Columns that are part of multi-column check constraints cannot be dropped either.
+In those cases SereneDB returns a `Catalog Error` reporting that an index or constraint depends on the column.
 
 ## `[SET [DATA]] TYPE`
 
@@ -227,6 +227,10 @@ For a table created with `WITH (storage = 'search')`, `SET (option = value, …)
 <SqlLogicTest id="sql/statements/alter_table/index/example_036" />
 
 `SET` and `RESET` of storage options are supported only for search tables.
+
+## Search tables
+
+A search table's columns are fixed: `ADD COLUMN`, `DROP COLUMN`, `ALTER COLUMN TYPE`, `DROP CONSTRAINT` and adding a `PRIMARY KEY` or `UNIQUE` constraint are rejected. Renaming the table or a column, `ALTER COLUMN SET DEFAULT` / `DROP DEFAULT`, `SET NOT NULL` / `DROP NOT NULL`, adding a `CHECK` constraint and `COMMENT ON COLUMN` change only the table's definition. A search table does not check `NOT NULL` and `CHECK` constraints when rows are written, whether they were declared at `CREATE TABLE` or added later.
 
 ## Limitations
 

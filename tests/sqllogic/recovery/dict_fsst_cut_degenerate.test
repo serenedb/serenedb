@@ -13,7 +13,7 @@ control substitution on
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/dfd_degen.db' AS dfd (TYPE duckdb, STORAGE_VERSION 'serenedb_latest');
+CREATE DATABASE dfd;
 
 
 statement ok
@@ -152,7 +152,7 @@ own_nulls	own_empties	nat_nulls	nat_empties
 
 
 statement ok
-DETACH dfd;
+DROP DATABASE dfd;
 
 
 statement ok

@@ -7,6 +7,7 @@
 #include <clickhouse/client.h>
 #include <clickhouse/exceptions.h>
 
+#include <atomic>
 #include <cctype>
 
 #include <absl/strings/numbers.h>
@@ -271,10 +272,14 @@ clickhouse::Client &ClickHouseConnection::GetClient() {
 	return *client;
 }
 
-static bool debug_clickhouse_print_queries = false;
+// Written by SET on whichever thread runs the statement, read by LogQuery on
+// every worker that issues a query -- a plain bool is a data race (tsan:
+// "Location is global 'duckdb::debug_clickhouse_print_queries'"). Relaxed is
+// enough: the flag guards nothing but itself.
+static std::atomic<bool> debug_clickhouse_print_queries{false};
 
 void ClickHouseConnection::DebugSetPrintQueries(bool print) {
-	debug_clickhouse_print_queries = print;
+	debug_clickhouse_print_queries.store(print, std::memory_order_relaxed);
 }
 
 clickhouse::Query ClickHouseConnection::MakeQuery(duckdb::ClientContext &context, const string &sql) {
@@ -293,7 +298,7 @@ clickhouse::Query ClickHouseConnection::MakeQuery(duckdb::ClientContext &context
 }
 
 void ClickHouseConnection::LogQuery(const string &sql) {
-	if (debug_clickhouse_print_queries) {
+	if (debug_clickhouse_print_queries.load(std::memory_order_relaxed)) {
 		Printer::Print(sql + "\n");
 	}
 }
@@ -302,14 +307,15 @@ void ClickHouseConnection::ThrowError(const char *op, const string &sql, const s
 	throw IOException("ClickHouse error %s: %s\nSQL: %s", op, error.what(), sql);
 }
 
-static bool clickhouse_connection_cache_enabled = true;
+// Same as above: SET writes it, connection setup reads it from worker threads.
+static std::atomic<bool> clickhouse_connection_cache_enabled{true};
 
 void ClickHouseConnection::SetConnectionCache(bool enabled) {
-	clickhouse_connection_cache_enabled = enabled;
+	clickhouse_connection_cache_enabled.store(enabled, std::memory_order_relaxed);
 }
 
 bool ClickHouseConnection::ConnectionCacheEnabled() {
-	return clickhouse_connection_cache_enabled;
+	return clickhouse_connection_cache_enabled.load(std::memory_order_relaxed);
 }
 
 } // namespace duckdb

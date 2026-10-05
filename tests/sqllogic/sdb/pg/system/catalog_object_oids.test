@@ -1,0 +1,105 @@
+# Constraints, key indexes and user types carry oids allocated from the catalog
+# counter, not values derived from their table or position.
+
+
+statement ok
+CREATE TABLE coo(id INT PRIMARY KEY, u INT UNIQUE, v INT CHECK (v > 0), w INT);
+
+
+statement ok
+CREATE TABLE coo_before AS
+SELECT conname, oid, conindid FROM pg_constraint WHERE conrelid = 'coo'::regclass;
+
+
+query
+SELECT count(*) FROM pg_constraint c JOIN pg_index i ON i.indexrelid = c.conindid
+JOIN pg_class x ON x.oid = i.indexrelid
+WHERE c.conrelid = 'coo'::regclass AND c.contype IN ('p', 'u') AND x.relname = c.conname;
+----
+count
+2
+
+
+query
+SELECT count(*) FROM pg_constraint WHERE conrelid = 'coo'::regclass AND oid >= 4294967296;
+----
+count
+0
+
+
+statement ok
+ALTER TABLE coo DROP CONSTRAINT coo_v_check;
+
+
+query
+SELECT c.conname, c.oid = b.oid AS same_oid, c.conindid = b.conindid AS same_index
+FROM pg_constraint c JOIN coo_before b USING (conname)
+WHERE c.conrelid = 'coo'::regclass ORDER BY c.conname;
+----
+conname	same_oid	same_index
+coo_id_not_null	t	t
+coo_pkey	t	t
+coo_u_key	t	t
+
+
+statement ok
+CREATE SCHEMA coo_s1;
+
+
+statement ok
+CREATE SCHEMA coo_s2;
+
+
+statement ok
+CREATE TYPE coo_s1.mood AS ENUM ('a', 'b');
+
+
+statement ok
+CREATE TYPE coo_s2.mood AS ENUM ('x', 'y');
+
+
+statement ok
+CREATE TABLE coo_typed(m1 coo_s1.mood, m2 coo_s2.mood);
+
+
+statement ok
+INSERT INTO coo_typed VALUES ('a', 'x');
+
+
+statement ok
+SET search_path = coo_s2, public;
+
+
+query
+SELECT pg_typeof(m1)::oid = (SELECT oid FROM pg_type WHERE typname = 'mood'
+                               AND typnamespace = 'coo_s1'::regnamespace) AS m1_own,
+       pg_typeof(m2)::oid = (SELECT oid FROM pg_type WHERE typname = 'mood'
+                               AND typnamespace = 'coo_s2'::regnamespace) AS m2_own
+FROM coo_typed;
+----
+m1_own	m2_own
+t	t
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+DROP TABLE coo_typed;
+
+
+statement ok
+DROP SCHEMA coo_s1 CASCADE;
+
+
+statement ok
+DROP SCHEMA coo_s2 CASCADE;
+
+
+statement ok
+DROP TABLE coo;
+
+
+statement ok
+DROP TABLE coo_before;

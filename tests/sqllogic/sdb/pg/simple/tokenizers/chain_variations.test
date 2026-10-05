@@ -209,10 +209,10 @@ same
 t
 
 statement error pipeline: stage 0 produces a per-document store blob
-CREATE TEXT SEARCH DICTIONARY shingle_then_filter AS generate_shingles(split_text_csv(' '), 2, 2) | remove_stopwords(['quick']);
+CREATE TEXT SEARCH DICTIONARY wildcard_then_filter AS generate_wildcard_ngrams(split_text_csv(' '), 3) | remove_stopwords(['quick']);
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY shingle_then_filter AS generate_shingles(split_text_csv(' '), 2, 2, store_tokens := false) | remove_stopwords(['quick']);
+CREATE TEXT SEARCH DICTIONARY shingle_then_filter AS generate_shingles(split_text_csv(' '), 2, 2) | remove_stopwords(['quick']);
 
 query
 SELECT array_length(ts_lexize('shingle_then_filter', 'quick brown fox'), 1) AS n,

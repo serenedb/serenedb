@@ -245,6 +245,8 @@ export interface SearchResultItem {
     /** Top-level group label the item is bucketed under. */
     group: string;
     kind: SectionKind;
+    /** Heading level of the section: 1 is the page's own title (0 = untitled preamble). */
+    level?: number;
     /** BM25 relevance (fulltext hits). */
     score?: number;
     /** Vector similarity 0..1 (semantic hits). */

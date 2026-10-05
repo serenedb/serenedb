@@ -129,6 +129,9 @@ statement error
 ALTER INDEX pudge RENAME TO pudge_tmp;
 ----
 db error: ERROR: Cannot alter entry "pudge" because there are entries that depend on it.
+table macro function "clickclack" depends on table "pudge".
+view "pudge_view" depends on table "pudge".
+Drop the dependent entries first and recreate them after the change.
 
 
 
@@ -200,7 +203,7 @@ db error: ERROR: Macro Function with name nonexistent does not exist!
 statement error
 ALTER TABLE pudge RENAME TO invoker;
 ----
-db error: ERROR: Could not rename "pudge" to ""invoker"": another entry with this name already exists!
+db error: ERROR: Could not rename "pudge" to "invoker": another entry with this name already exists!
 
 
 statement error
@@ -218,17 +221,19 @@ db error: ERROR: Could not rename "deadinside" to "pudge": another entry with th
 statement error
 ALTER TABLE pudge RENAME TO pudge;
 ----
-db error: ERROR: Cannot alter entry "pudge" because there are entries that depend on it.
+db error: ERROR: Could not rename "pudge" to "pudge": another entry with this name already exists!
 
 
-# A rename to the entry's own name is a plain alter for duckdb (CatalogSet::AlterEntry
-# only enters the rename path when the name changes), so it succeeds where PG
-# answers "relation already exists".
-statement ok
+statement error
 ALTER VIEW pudge_view RENAME TO pudge_view;
+----
+db error: ERROR: Could not rename "pudge_view" to "pudge_view": another entry with this name already exists!
 
-statement ok
+
+statement error
 ALTER FUNCTION clickclack RENAME TO clickclack;
+----
+db error: ERROR: Could not rename "clickclack" to "clickclack": another entry with this name already exists!
 
 
 statement error
@@ -247,6 +252,9 @@ statement error
 ALTER TABLE pudge RENAME COLUMN a TO a_renamed;
 ----
 db error: ERROR: Cannot alter entry "pudge" because there are entries that depend on it.
+table macro function "clickclack" depends on table "pudge".
+view "pudge_view" depends on table "pudge".
+Drop the dependent entries first and recreate them after the change.
 
 
 query
@@ -280,6 +288,9 @@ statement error
 ALTER TABLE pudge RENAME COLUMN a TO a;
 ----
 db error: ERROR: Cannot alter entry "pudge" because there are entries that depend on it.
+table macro function "clickclack" depends on table "pudge".
+view "pudge_view" depends on table "pudge".
+Drop the dependent entries first and recreate them after the change.
 
 
 statement ok
@@ -318,18 +329,16 @@ statement ok
 ALTER TABLE IF EXISTS vedernikoff RENAME CONSTRAINT a TO b;
 
 
-# ALTER TABLE on a view reaches CatalogEntry::AlterEntry's default, which has no
-# column or constraint alters; PG 18 renames a view's column here.
 statement error
 ALTER TABLE pudge_view RENAME COLUMN a TO a_renamed;
 ----
-db error: ERROR: Unsupported alter type for catalog entry!
+db error: ERROR: cannot rename columns of a non-table relation
 
 
 statement error
 ALTER TABLE pudge_view RENAME CONSTRAINT foo TO bar;
 ----
-db error: ERROR: Unsupported alter type for catalog entry!
+db error: ERROR: constraint "foo" for table "pudge_view" does not exist
 
 
 statement ok
@@ -352,3 +361,66 @@ DROP TABLE invoker;
 
 statement ok
 DROP TABLE pudge;
+
+
+# A column no dependent view or table function reads can be renamed or
+# retyped; one they read is refused with the dependents listed. A function an
+# index expression calls can't be renamed: the expression names it.
+statement ok
+CREATE TABLE arc(a INT, b INT, c INT);
+
+
+statement ok
+CREATE VIEW arc_v AS SELECT a FROM arc;
+
+
+statement ok
+ALTER TABLE arc RENAME COLUMN b TO b2;
+
+
+statement ok
+ALTER TABLE arc ALTER COLUMN c TYPE BIGINT;
+
+
+statement error
+ALTER TABLE arc RENAME COLUMN a TO a2;
+----
+db error: ERROR: Cannot alter entry "arc" because there are entries that depend on it.
+view "arc_v" depends on table "arc".
+Drop the dependent entries first and recreate them after the change.
+
+
+statement ok
+CREATE MACRO arc_f(x) AS x + 1;
+
+
+statement ok
+CREATE TABLE arc_ft(a INT);
+
+
+statement ok
+CREATE INDEX arc_ft_idx ON arc_ft ((arc_f(a)));
+
+
+statement error
+ALTER FUNCTION arc_f RENAME TO arc_f2;
+----
+db error: ERROR: Cannot alter entry "arc_f" because there are entries that depend on it.
+index "arc_ft_idx" depends on macro function "arc_f".
+Drop the dependent entries first and recreate them after the change.
+
+
+statement ok
+DROP TABLE arc_ft;
+
+
+statement ok
+DROP MACRO arc_f;
+
+
+statement ok
+DROP VIEW arc_v;
+
+
+statement ok
+DROP TABLE arc;

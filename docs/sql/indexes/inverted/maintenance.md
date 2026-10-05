@@ -84,6 +84,7 @@ An inverted index pins every column it reads, including columns reached only thr
 - **`ALTER COLUMN … TYPE`** on a pinned column — rejected; the index stores values of the old type. Drop the index first, change the type, then recreate it.
 - **`ADD` / `DROP` / `RENAME` of a struct field** on a pinned column — rejected for the same reason, even when the indexed expression targets a *different* sub-field (the whole column is pinned). Drop the index first.
 - **`DROP COLUMN`** on a pinned column — allowed; it cascade-drops every index that covers the column.
+- **`DROP COLUMN`** on any other column — allowed, including one that comes before a pinned column; the index keeps its columns by stable id.
 
 ## Performance
 

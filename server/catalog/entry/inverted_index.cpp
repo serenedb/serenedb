@@ -43,10 +43,13 @@
 #include <string>
 
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/persistence/blob.h"
 #include "connector/column_id.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/primary_key.h"
+#include "pg/connection_context.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
@@ -172,6 +175,9 @@ void BindInvertedIndexOptions(
   for (const auto name : kInvertedIndexSettings) {
     const auto it = options.find(name);
     if (it == options.end()) {
+      if (name == kReindexIntervalSetting && !view_backed) {
+        continue;
+      }
       context.TryGetCurrentSetting(std::string{name},
                                    options[std::string{name}]);
     } else {
@@ -186,10 +192,12 @@ InvertedIndexSettings ResolveSettings(
   const auto get = [&](std::string_view name) -> const duckdb::Value& {
     return options.find(name)->second;
   };
+  const auto reindex = options.find(kReindexIntervalSetting);
   return {
     .row_group_size = get(kRowGroupSizeSetting).GetValue<uint32_t>(),
     .refresh_interval_ms = get(kRefreshIntervalSetting).GetValue<uint32_t>(),
-    .reindex_interval_ms = get(kReindexIntervalSetting).GetValue<uint32_t>(),
+    .reindex_interval_ms =
+      reindex == options.end() ? 0 : reindex->second.GetValue<uint32_t>(),
     .compaction_interval_ms =
       get(kCompactionIntervalSetting).GetValue<uint32_t>(),
     .cleanup_interval_step =
@@ -289,6 +297,11 @@ IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
 }
 
 ColumnTokenizer IndexTokenizers::Acquire(irs::field_id field_id) const {
+  return Acquire(field_id, *_context);
+}
+
+ColumnTokenizer IndexTokenizers::Acquire(irs::field_id field_id,
+                                         duckdb::ClientContext& context) const {
   const auto it = _fields.find(field_id);
   if (it == _fields.end()) {
     return {};
@@ -299,9 +312,19 @@ ColumnTokenizer IndexTokenizers::Acquire(irs::field_id field_id) const {
               std::make_unique<irs::KeywordTokenizer>().release(),
               Tokenizer::Deleter{}}};
   }
-  return {.analyzer = field.tokenizer->Acquire(*_context),
+  return {.analyzer = field.tokenizer->Acquire(context),
           .features = field.features,
           .tokenizer_column = field.tokenizer_column};
+}
+
+IndexTokenizers::Bound IndexTokenizers::AcquireAll(
+  duckdb::ClientContext& context) const {
+  Bound bound;
+  bound.reserve(_fields.size());
+  for (const auto& [field_id, field] : _fields) {
+    bound.emplace(field_id, Acquire(field_id, context));
+  }
+  return bound;
 }
 
 irs::field_id InvertedIndexConfig::FindFieldIdByExpression(
@@ -327,18 +350,6 @@ irs::field_id InvertedIndexConfig::TermField(
     return key.column_id == column_id;
   });
   return it == keys.end() ? column_id : it->field_id;
-}
-
-std::vector<irs::field_id> InvertedIndexConfig::TermFields(
-  irs::field_id column_id) const {
-  std::vector<irs::field_id> result;
-  for (const auto& key : keys) {
-    const auto* entry = FindEntry(key.field_id);
-    if (key.column_id == column_id && entry && entry->IsTermDict()) {
-      result.emplace_back(key.field_id);
-    }
-  }
-  return result;
 }
 
 irs::field_id InvertedIndexConfig::ColumnOf(
@@ -470,7 +481,15 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
       return duckdb::CatalogEntry::AlterEntry(transaction, info);
   }
   if (_storage) {
-    _storage->ApplyOptions(ResolveSettings(new_options));
+    auto settings = ResolveSettings(new_options);
+    if (auto* connection = connector::GetSereneDBContextPtr(context)) {
+      connection->DeferToCommit(
+        [storage = _storage, settings = std::move(settings)] {
+          storage->ApplyOptions(settings);
+        });
+    } else {
+      _storage->ApplyOptions(settings);
+    }
   }
   return result;
 }
@@ -491,6 +510,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::Copy(
 
 void InvertedIndexEntry::OnDrop() {
   if (_storage) {
+    ClusterOf(catalog.GetDatabase())
+      .NoteDroppedArtifact(duckdb::CatalogType::INDEX_ENTRY, catalog.GetOid(),
+                           oid, {_storage->Path()});
     _storage->MarkDropped();
   }
   if (_search_table) {

@@ -16,8 +16,6 @@ statement ok
 CREATE SCHEMA vedernikoff_iceberg_lake;
 
 
-# SERIAL table -- its owned sequence triggers the crash fault when the
-# cascade drop walks TableDrop::Finalize.
 statement ok
 CREATE TABLE vedernikoff_iceberg_lake.anchor (
   id SERIAL PRIMARY KEY,
@@ -75,7 +73,7 @@ INSERT INTO vedernikoff_solid_survivor.bookings VALUES (1, 'still_here');
 
 
 statement ok
-SET sdb_faults = 'crash_after_commit';
+SET sdb_faults = 'crash_on_drop';
 
 
 # DROP SCHEMA CASCADE -- biggest auto-drop closure in this DB.

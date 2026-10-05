@@ -106,6 +106,9 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);
   }
+  std::filesystem::path Path() const {
+    return GetPath(_db_id, _schema_id, GetTableId());
+  }
 
   // `exclusive_segment` is required of a writer that will record its flushed
   // segments in the WAL -- see irs::IndexWriter::GetBatch.
@@ -207,8 +210,12 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   void VacuumRefresh();
   void VacuumCompact(uint32_t target_segments);
 
-  [[nodiscard]] unsigned RegisterWriter() { return _writers.Register(); }
+  [[nodiscard]] std::optional<unsigned> RegisterWriter() {
+    return _writers.Register();
+  }
   void DeregisterWriter(unsigned slot) noexcept { _writers.Deregister(slot); }
+  [[nodiscard]] bool ClaimTruncate() { return _writers.ClaimTruncate(); }
+  void ReleaseTruncate() noexcept { _writers.ReleaseTruncate(); }
   void DrainPriorWriters(absl::FunctionRef<bool()> cancelled);
 
   class [[nodiscard]] BuildClaim {

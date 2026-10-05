@@ -81,7 +81,8 @@ QUERY PLAN
 │ ╰─────────────────────╯           │
 │ Offsets: body                     │
 │ Projections:                      │
-│ id, sdb_inverted_index_offsets$<slt:ignore>
+│ id,                               │
+│ sdb_inverted_index_offsets$<slt:ignore>
 │ ~1 row                            │
 ╰───────────────────────────────────╯
 
@@ -320,25 +321,25 @@ QUERY PLAN
 ╰─────────────────┬─────────────────╯
 ╭─ UNION ─────────┴─────────────────╮
 ╰─────────────────┬─────────────────╯
-                  ├─────────────────────────────────────╮
-╭─ PROJECTION ────┴─────────────────╮  ╭─ PROJECTION ───┴───────────────╮
-│ Projections: id, lim, body_offs   │  │ Projections: id, 4, #1         │
-│ ~1 row                            │  │ ~1 row                         │
-╰─────────────────┬─────────────────╯  ╰────────────────┬───────────────╯
-╭─ IRESEARCH_SCAN ┴─────────────────╮  ╭─ IRESEARCH_SCAN ───────────────╮
-│ Index: offsets_test_idx           │  │ Index: offsets_test_idx        │
-│ Lookup: table                     │  │ Lookup: table                  │
-│ Index Filter:                     │  │ Index Filter:                  │
-│ ╭─ Term ──────────────╮           │  │ ╭─ Term ──────────────╮        │
-│ │ Field: body(string) │           │  │ │ Field: body(string) │        │
-│ │ Value: fox          │           │  │ │ Value: fox          │        │
-│ ╰─────────────────────╯           │  │ ╰─────────────────────╯        │
-│ Offsets: body                     │  │ Offsets: body                  │
-│ Projections:                      │  │ Projections:                   │
-│ id, sdb_inverted_index_offsets$<slt:ignore>
-│ ~1 row                            │  │ sdb_inverted_index_offsets<slt:ignore>
-╰───────────────────────────────────╯  │ ~1 row                         │
-                                       ╰────────────────────────────────╯
+                  ├──────────────────────────────────────╮
+╭─ PROJECTION ────┴─────────────────╮  ╭─ PROJECTION ────┴────────────────╮
+│ Projections: id, lim, body_offs   │  │ Projections: id, 4, #1           │
+│ ~1 row                            │  │ ~1 row                           │
+╰─────────────────┬─────────────────╯  ╰─────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮  ╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Index: offsets_test_idx           │  │ Index: offsets_test_idx          │
+│ Lookup: table                     │  │ Lookup: table                    │
+│ Index Filter:                     │  │ Index Filter:                    │
+│ ╭─ Term ──────────────╮           │  │ ╭─ Term ──────────────╮          │
+│ │ Field: body(string) │           │  │ │ Field: body(string) │          │
+│ │ Value: fox          │           │  │ │ Value: fox          │          │
+│ ╰─────────────────────╯           │  │ ╰─────────────────────╯          │
+│ Offsets: body                     │  │ Offsets: body                    │
+│ Projections:                      │  │ Projections:                     │
+│ id,                               │  │ id,                              │
+│ sdb_inverted_index_offsets<slt:ignore>
+│ ~1 row                            │  │ ~1 row                           │
+╰───────────────────────────────────╯  ╰──────────────────────────────────╯
 
 
 query
@@ -627,27 +628,27 @@ WHERE body @@ ts_phrase('fox')
 ORDER BY BM25(offsets_test_idx.tableoid) DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────╮
-│ Projections: id, bo, pos       │
-│ ~1 row                         │
-╰────────────────┬───────────────╯
-╭─ IRESEARCH_SCAN ───────────────╮
-│ Index: offsets_test_idx        │
-│ Lookup: table                  │
-│ Index Filter:                  │
-│ ╭─ Term ──────────────╮        │
-│ │ Field: body(string) │        │
-│ │ Value: fox          │        │
-│ ╰─────────────────────╯        │
-│ Score: bm25(k1=1.2, b=0.75)    │
-│ Top: 3                         │
-│ Offsets: body                  │
-│ Projections:                   │
-│ id,                            │
+╭─ PROJECTION ─────────────────────╮
+│ Projections: id, bo, pos         │
+│ ~1 row                           │
+╰─────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Index: offsets_test_idx          │
+│ Lookup: table                    │
+│ Index Filter:                    │
+│ ╭─ Term ──────────────╮          │
+│ │ Field: body(string) │          │
+│ │ Value: fox          │          │
+│ ╰─────────────────────╯          │
+│ Score: bm25(k1=1.2, b=0.75)      │
+│ Top: 3                           │
+│ Offsets: body                    │
+│ Projections:                     │
+│ id,                              │
 │ sdb_inverted_index_offsets$<slt:ignore>
-│ sdb_inverted_index_score       │
-│ ~1 row                         │
-╰────────────────────────────────╯
+│ sdb_inverted_index_score         │
+│ ~1 row                           │
+╰──────────────────────────────────╯
 
 
 # --- Inline OFFSETS per FilterEntry variant (SearchScan path) ---

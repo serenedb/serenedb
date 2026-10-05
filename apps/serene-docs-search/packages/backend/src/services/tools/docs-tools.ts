@@ -1,11 +1,8 @@
-import type { SearchResultItem } from "@serenedb/docs-search-core";
-import { SearchRepository } from "@repositories/search";
 import { SectionsRepository } from "@repositories/sections";
-import { RankingService } from "@services/ranking";
+import { SearchService } from "@services/search";
 
 const MAX_TOOL_RESULTS = 5;
 const MAX_SECTION_CHARS = 8000;
-const PER_PAGE_CAP = 3;
 
 export interface DocsSearchHit {
     id: string;
@@ -21,25 +18,14 @@ export interface DocsSearchHit {
  */
 export const DocsTools = {
     /**
-     * The same ranking pipeline the widget search uses (fused RRF, title
-     * rerank, per-page cap) — raw vector kNN alone buries exact-title pages.
+     * Exactly the widget's search (SearchService: fused RRF, known objects
+     * first, title rerank, per-page cap) — raw vector kNN alone buries
+     * exact-title pages, and a second copy of the pipeline drifts.
      */
     search: async (query: string, hybrid: boolean, limit = MAX_TOOL_RESULTS): Promise<DocsSearchHit[]> => {
         const capped = Math.max(1, Math.min(limit, 10));
-        let hits: SearchResultItem[] = [];
-        if (hybrid) {
-            try {
-                hits = (await SearchRepository.searchHybrid(query, capped * 3)).items;
-            } catch {
-                /* fall back to fulltext */
-            }
-        }
-        if (hits.length === 0) {
-            hits = (await SearchRepository.searchFulltext(query, capped * 3)).items;
-        }
-        hits = RankingService.rerankByTitle(query, hits);
-        hits = RankingService.capPerPage(hits, PER_PAGE_CAP).slice(0, capped);
-        return hits.map((h) => ({
+        const { results } = await SearchService.search(query, hybrid ? "hybrid" : "fulltext", capped);
+        return results.map((h) => ({
             id: h.id,
             title: h.title,
             crumb: h.crumb,

@@ -152,7 +152,7 @@ connection s2
 statement error
 COMMIT;
 ----
-db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "i4" has been deleted
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "t2" has been deleted
 
 
 connection s2

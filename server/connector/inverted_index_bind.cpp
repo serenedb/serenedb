@@ -1048,9 +1048,18 @@ void DeriveKeys(
   InvertedIndexConfig& config) {
   const auto* search_table =
     dynamic_cast<const catalog::SearchTableEntry*>(&relation);
-  static_assert(std::is_same_v<connector::ColumnId, duckdb::column_t>);
-  const std::span<const connector::ColumnId> column_ids{
-    entry.column_ids.data(), entry.column_ids.size()};
+  const auto* table = relation.type == duckdb::CatalogType::TABLE_ENTRY
+                        ? &relation.Cast<duckdb::TableCatalogEntry>()
+                        : nullptr;
+  std::vector<connector::ColumnId> relation_column_ids;
+  relation_column_ids.reserve(entry.column_ids.size());
+  for (const auto column : entry.column_ids) {
+    relation_column_ids.push_back(
+      table ? connector::TableColumnId(
+                table->GetColumns().GetColumn(duckdb::LogicalIndex(column)))
+            : connector::ColumnId{column});
+  }
+  const std::span<const connector::ColumnId> column_ids{relation_column_ids};
 
   const size_t keys = entry.parsed_expressions.size();
   config.keys.reserve(keys);
@@ -1074,8 +1083,8 @@ void DeriveKeys(
     value_type = exprs[i]->GetReturnType();
     if (const auto colref = AsColumnRef(*exprs[i])) {
       const auto pos = colref->Binding().column_index.GetIndex();
-      SDB_ASSERT(pos < entry.column_ids.size());
-      record.column_id = entry.column_ids[pos];
+      SDB_ASSERT(pos < column_ids.size());
+      record.column_id = column_ids[pos];
       label = colref->GetName().GetIdentifierName();
       bare_column = true;
     }

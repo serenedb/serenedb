@@ -32,6 +32,7 @@ class SereneDBSearchTruncate final : public duckdb::PhysicalOperator {
  public:
   SereneDBSearchTruncate(duckdb::PhysicalPlan& plan,
                          std::shared_ptr<search::SearchTable> data,
+                         duckdb::Identifier table_name,
                          duckdb::idx_t estimated_cardinality,
                          bool clears_shard);
 
@@ -42,6 +43,7 @@ class SereneDBSearchTruncate final : public duckdb::PhysicalOperator {
 
  private:
   std::shared_ptr<search::SearchTable> _data;
+  duckdb::Identifier _table_name;
   bool _clears_shard;
 };
 

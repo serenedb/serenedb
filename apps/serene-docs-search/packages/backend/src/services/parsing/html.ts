@@ -1,6 +1,7 @@
 import * as cheerio from "cheerio";
 import type { Cheerio } from "cheerio";
 import type { AnyNode, Element as DomElement, Text as DomText } from "domhandler";
+import { objectsFromTable, type DocObject } from "./objects";
 import { classifyKind, slugify, type RawSection } from "./section";
 
 export interface HtmlParseOptions {
@@ -15,6 +16,8 @@ export interface HtmlParseOptions {
 export interface HtmlParseResult {
     docTitle: string | null;
     sections: RawSection[];
+    /** href of every link in the scoped content (page popularity input). */
+    links: string[];
 }
 
 const DEFAULT_TAGS = ["h1", "h2", "h3", "h4", "p", "li", "pre", "code", "table"];
@@ -58,6 +61,20 @@ export function parseHtml(html: string, opts: HtmlParseOptions = {}): HtmlParseR
 
     const docTitle =
         cleanText($("h1").first().text()) || cleanText($("title").first().text()) || null;
+    // links of the indexed text only: chrome inside the scope (a post's
+    // tag chips in its <header>, a TOC <aside>) would make tag listings
+    // and the TOC targets look popular
+    const linkContainers = contentTags.filter((t) => t !== "code" && t !== "pre").join(", ");
+    const links = scope
+        .find("a[href]")
+        .toArray()
+        .filter(
+            (a) =>
+                $(a).closest("header, nav, footer, aside").length === 0 &&
+                (!linkContainers || $(a).closest(linkContainers).length > 0),
+        )
+        .map((a) => $(a).attr("href") ?? "")
+        .filter(Boolean);
 
     const sections: RawSection[] = [];
     const slugCounts = new Map<string, number>();
@@ -66,12 +83,15 @@ export function parseHtml(html: string, opts: HtmlParseOptions = {}): HtmlParseR
     let currentAnchor: string | undefined;
     let buf: string[] = [];
     let codeBuf: string[] = [];
+    let objBuf: DocObject[] = [];
 
     const flush = () => {
         const content = buf.join("\n").replace(/\n{3,}/g, "\n\n").trim();
         const code = codeBuf.join("\n").trim();
+        const objects = objBuf;
         buf = [];
         codeBuf = [];
+        objBuf = [];
         // a heading-less preamble with almost no text is page chrome that
         // slipped past the removal rules — as a section it would duplicate
         // the page title and trip the duplicate-title demotion downstream
@@ -85,8 +105,18 @@ export function parseHtml(html: string, opts: HtmlParseOptions = {}): HtmlParseR
             level: currentLevel,
             content,
             code: code || undefined,
+            objects: objects.length ? objects : undefined,
         });
     };
+
+    // headings per id'd element, counted once (a per-heading subtree scan
+    // of a big container is quadratic): an id'd ancestor names a heading
+    // only when it wraps that heading alone
+    const headingsUnder = new Map<AnyNode, number>();
+    scope.find(headingTags.join(", ")).each((_, h) => {
+        const owner = $(h).parent().closest("[id]").get(0);
+        if (owner) headingsUnder.set(owner, (headingsUnder.get(owner) ?? 0) + 1);
+    });
 
     const selector = [...new Set([...headingTags, ...contentTags])].join(", ");
     const seen = new Set<AnyNode>();
@@ -110,11 +140,16 @@ export function parseHtml(html: string, opts: HtmlParseOptions = {}): HtmlParseR
                     currentLevel = Number(tag[1]);
                     currentTitle = cleanText(text);
                     // h1 is the page itself — no anchor unless it carries an
-                    // explicit id (a layout ancestor's id would be junk)
+                    // explicit id. An id'd ancestor only counts when it wraps
+                    // this heading alone: a layout container's id (Docusaurus'
+                    // __docusaurus_skipToContent_fallback <main>) would send
+                    // every id-less heading to the top of the page
+                    const wrapper = currentLevel > 1 ? $(el).parent().closest("[id]") : null;
+                    const owner = wrapper?.get(0);
                     const id =
                         $(el).attr("id") ||
                         $(el).find("[id]").first().attr("id") ||
-                        (currentLevel > 1 ? $(el).closest("[id]").attr("id") : undefined);
+                        (owner && headingsUnder.get(owner) === 1 ? wrapper!.attr("id") : undefined);
                     currentAnchor =
                         id ||
                         (currentLevel > 1 ? uniqueSlug(slugify(currentTitle), slugCounts) : undefined);
@@ -134,11 +169,12 @@ export function parseHtml(html: string, opts: HtmlParseOptions = {}): HtmlParseR
                     }
                     buf.push(text);
                     if (tag === "pre") codeBuf.push(text);
+                    if (tag === "table") objBuf.push(...tableObjects($, el));
                 }
             });
     });
     flush();
-    return { docTitle, sections };
+    return { docTitle, sections, links };
 }
 
 function uniqueSlug(slug: string, counts: Map<string, number>): string {
@@ -166,6 +202,25 @@ function tableText($: cheerio.CheerioAPI, el: AnyNode): string {
             if (cells.length) rows.push(cells.join(" · "));
         });
     return rows.join("\n");
+}
+
+/** Reference-table rows that name objects (first header Function / Name / …). */
+function tableObjects($: cheerio.CheerioAPI, el: AnyNode): DocObject[] {
+    const rows = $(el)
+        .find("tr")
+        .toArray()
+        .map((tr) =>
+            $(tr)
+                .find("th, td")
+                .toArray()
+                .map((cell) => ({ th: (cell as DomElement).tagName === "th", text: cleanText($(cell).text()) })),
+        )
+        .filter((cells) => cells.length > 0);
+    if (rows.length < 2 || !rows[0].every((c) => c.th)) return [];
+    return objectsFromTable(
+        rows[0].map((c) => c.text),
+        rows.slice(1).map((cells) => cells.map((c) => c.text)),
+    );
 }
 
 function cleanText(text: string): string {

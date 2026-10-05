@@ -369,6 +369,25 @@ SELECT $1::int AS v<NL>\bind 7<NL>\g
 > +---+
 > (1 row)
 
+CREATE TABLE {schema}.bind_once (id bigint, body text);<NL>INSERT INTO {schema}.bind_once VALUES ($1::bigint, 'token' || $2)<NL>\bind 1 2<NL>\g<NL>\echo :ROW_COUNT<NL>SELECT count(*) AS n FROM {schema}.bind_once;<NL>DROP TABLE {schema}.bind_once;
+----
+> 1
+> +---+
+> | n |
+> +---+
+> | 1 |
+> +---+
+> (1 row)
+
+CREATE SEQUENCE {schema}.bind_seq;<NL>SELECT nextval('{schema}.bind_seq') AS v, 'x' || $1 AS w<NL>\bind 1<NL>\g<NL>DROP SEQUENCE {schema}.bind_seq;
+----
+> +---+----+
+> | v | w  |
+> +---+----+
+> | 1 | x1 |
+> +---+----+
+> (1 row)
+
 SELECT 'r' AS rowcat, 'c' AS colcat, 1 AS val<NL>\crosstabview
 ----
 > +--------+---+

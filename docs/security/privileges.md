@@ -37,6 +37,8 @@ Privileges are enforced on every query. Acting as the role, reading works and wr
 
 `ALL PRIVILEGES` grants everything applicable to the object type.
 
+`USAGE` on a schema is needed to use any object in it: a role with `SELECT` on `s.t` but no `USAGE` on `s` gets `permission denied for schema s`. As in PostgreSQL, `public` grants `USAGE` to everyone, and a view reads its sources with its owner's privileges, so reading through a view needs `USAGE` only on the view's own schema.
+
 `USAGE` on a [foreign server](../sql/statements/create_server/index.md#privileges) is checked whenever a query reads through it, in any database. Creating a server is gated on `CREATE` on the **database**, not on a schema.
 
 ## Column privileges

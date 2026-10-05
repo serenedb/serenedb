@@ -1,0 +1,128 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE SEQUENCE spf_seq;
+
+
+statement ok
+CREATE TABLE spf_ids (id BIGINT PRIMARY KEY, src TEXT);
+
+
+statement ok
+SET sdb_faults = 'pause_catalog_log_sync';
+
+
+statement count 20000
+INSERT INTO spf_ids SELECT nextval('spf_seq'), 'paused flush' FROM generate_series(1, 20000);
+
+
+connection w1
+statement ok
+BEGIN;
+
+
+connection w1
+query
+SELECT count(nextval('spf_seq')) AS n FROM generate_series(1, 5000);
+----
+n
+5000
+
+
+connection default
+statement count 100
+INSERT INTO spf_ids SELECT nextval('spf_seq'), 'after pending' FROM generate_series(1, 100);
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT count(*) AS n, min(id) AS lo, max(id) AS hi FROM spf_ids WHERE src = 'after pending';
+----
+n	lo	hi
+100	25001	25100
+
+
+connection after_crash
+query
+SELECT count(*) AS n, count(DISTINCT id) AS d, max(id) AS m FROM spf_ids;
+----
+n	d	m
+20100	20100	25100
+
+
+connection after_crash
+query
+SELECT nextval('spf_seq') > 25100 AS above;
+----
+above
+t
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'pause_catalog_log_sync';
+
+
+connection after_crash
+statement count 20000
+INSERT INTO spf_ids SELECT nextval('spf_seq'), 'before shutdown' FROM generate_series(1, 20000);
+
+
+connection after_crash
+statement ok
+SET sdb_faults = '-pause_catalog_log_sync';
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_shutdown
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_shutdown
+query
+SELECT count(*) AS n, count(DISTINCT id) AS d FROM spf_ids;
+----
+n	d
+40100	40100
+
+
+connection after_shutdown
+query
+SELECT nextval('spf_seq') > (SELECT max(id) FROM spf_ids) AS above;
+----
+above
+t
+
+
+connection after_shutdown
+statement count 10
+INSERT INTO spf_ids SELECT nextval('spf_seq'), 'after shutdown' FROM generate_series(1, 10);

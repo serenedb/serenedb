@@ -61,6 +61,7 @@
 #include "connector/inverted_store_index.h"
 #include "connector/optimizer/iresearch_plan_common.hpp"
 #include "connector/optimizer/ts_dict_plan.hpp"
+#include "connector/scan/deferred_verify.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/search_filter_builder.hpp"
 #include "pg/connection_context.h"
@@ -112,9 +113,9 @@ connector::ColumnId ColumnIdByName(const connector::ScanBindData& bind_data,
   }
   const auto& columns = bind_data.relation.table_entry->GetColumns();
   const duckdb::Identifier key{name};
-  return columns.ColumnExists(key) ? static_cast<connector::ColumnId>(
-                                       columns.GetColumn(key).Logical().index)
-                                   : connector::kInvalidColumnId;
+  return columns.ColumnExists(key)
+           ? connector::TableColumnId(columns.GetColumn(key))
+           : connector::kInvalidColumnId;
 }
 
 std::vector<connector::ColumnId> BuildProjectedColumnIds(
@@ -778,7 +779,8 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
   }
 
   const auto col_type = connector::MakeOffsetsType();
-  const auto offsets_col_name = connector::MakeOffsetsName(target_col_id);
+  const auto offsets_col_name = connector::MakeOffsetsName(
+    found.bind_data->DisplayColumnName(target_col_id));
   if (get_col_idx == duckdb::DConstants::INVALID_INDEX) {
     get_col_idx = AppendVirtualGetColumn(*found.bind_data, *found.get,
                                          connector::kInvertedIndexOffsetsId,
@@ -1075,6 +1077,9 @@ bool ClaimSearchConjuncts(
   irs::Optimize(root, {.scored = scan.score.text.has_value(),
                        .analyzed_fields = std::move(analyzed_fields),
                        .null_markers = &null_markers});
+  if (scan.offsets.requests.empty() && !scan.score.vector) {
+    connector::DeferWildcardVerify(*root);
+  }
 
   scan.search.filter = std::move(root);
   scan.search.filter_scorers = std::move(filter_scorers);

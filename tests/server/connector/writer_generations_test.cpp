@@ -35,7 +35,7 @@ constexpr auto kJoin = std::chrono::seconds(10);
 
 TEST(WriterGenerationsTest, DrainWaitsForPriorWritersOnly) {
   WriterGenerations gens;
-  const auto prior = gens.Register();
+  const auto prior = *gens.Register();
 
   absl::Notification polled;
   auto drain = std::async(std::launch::async, [&] {
@@ -50,7 +50,7 @@ TEST(WriterGenerationsTest, DrainWaitsForPriorWritersOnly) {
   });
   polled.WaitForNotification();
 
-  const auto later = gens.Register();
+  const auto later = *gens.Register();
   gens.Deregister(prior);
 
   const bool returned = drain.wait_for(kJoin) == std::future_status::ready;
@@ -61,7 +61,7 @@ TEST(WriterGenerationsTest, DrainWaitsForPriorWritersOnly) {
 
 TEST(WriterGenerationsTest, TheNextDrainWaitsForWritersLeftByACancelledOne) {
   WriterGenerations gens;
-  const auto before = gens.Register();
+  const auto before = *gens.Register();
 
   absl::Notification polled;
   auto first = std::async(std::launch::async, [&] {
@@ -77,7 +77,7 @@ TEST(WriterGenerationsTest, TheNextDrainWaitsForWritersLeftByACancelledOne) {
       kPoll);
   });
   polled.WaitForNotification();
-  const auto straddler = gens.Register();
+  const auto straddler = *gens.Register();
   EXPECT_FALSE(first.get());
   gens.Deregister(before);
 
@@ -91,6 +91,23 @@ TEST(WriterGenerationsTest, TheNextDrainWaitsForWritersLeftByACancelledOne) {
   EXPECT_EQ(polls, 1);
 
   gens.Deregister(straddler);
+  EXPECT_TRUE(gens.Drain([] { return true; }, kPoll));
+}
+
+TEST(WriterGenerationsTest, TruncateClaimExcludesOtherWriters) {
+  WriterGenerations gens;
+  const auto truncator = *gens.Register();
+  const auto writer = *gens.Register();
+  EXPECT_FALSE(gens.ClaimTruncate());
+  gens.Deregister(writer);
+  EXPECT_TRUE(gens.ClaimTruncate());
+  EXPECT_FALSE(gens.Register().has_value());
+  EXPECT_FALSE(gens.ClaimTruncate());
+  gens.ReleaseTruncate();
+  const auto after = gens.Register();
+  ASSERT_TRUE(after.has_value());
+  gens.Deregister(*after);
+  gens.Deregister(truncator);
   EXPECT_TRUE(gens.Drain([] { return true; }, kPoll));
 }
 

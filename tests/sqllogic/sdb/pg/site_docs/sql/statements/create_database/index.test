@@ -21,3 +21,19 @@ CREATE DATABASE IF NOT EXISTS app_production;
 
 statement ok
 USE app_production;
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP DATABASE IF EXISTS app_archive;
+
+statement ok
+CREATE DATABASE app_archive WITH (BLOCK_SIZE = 16384, ROW_GROUP_SIZE = 1048576);
+
+query
+SELECT block_size FROM pragma_database_size() WHERE database_name = 'app_archive';
+----
+block_size
+16384

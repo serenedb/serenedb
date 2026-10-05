@@ -39,6 +39,7 @@
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/types/uuid.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
@@ -86,7 +87,7 @@ constexpr std::string_view kTextTokenizer = "standard";
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry> EsSchema(
   duckdb::ClientContext& context) {
   auto& db_catalog = duckdb::Catalog::GetCatalog(
-    context, duckdb::Identifier{GetSereneDBContext(context).GetDatabase()});
+    context, duckdb::DatabaseManager::GetDefaultDatabase(context));
   return db_catalog.GetSchema(context, duckdb::Identifier{kEsSchema},
                               duckdb::OnEntryNotFound::RETURN_NULL);
 }
@@ -95,9 +96,9 @@ duckdb::optional_ptr<duckdb::TableCatalogEntry> FindEsTable(
   duckdb::ClientContext& context, std::string_view index) {
   return duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
     context,
-    duckdb::QualifiedName{
-      duckdb::Identifier{GetSereneDBContext(context).GetDatabase()},
-      duckdb::Identifier{kEsSchema}, duckdb::Identifier{index}},
+    duckdb::QualifiedName{duckdb::DatabaseManager::GetDefaultDatabase(context),
+                          duckdb::Identifier{kEsSchema},
+                          duckdb::Identifier{index}},
     duckdb::OnEntryNotFound::RETURN_NULL);
 }
 
@@ -284,7 +285,7 @@ duckdb::unique_ptr<duckdb::FunctionData> EsAcknowledgedBind(
   if (input.binder) {
     input.binder->GetStatementProperties().RegisterDBModify(
       duckdb::Catalog::GetCatalog(
-        context, duckdb::Identifier{GetSereneDBContext(context).GetDatabase()}),
+        context, duckdb::DatabaseManager::GetDefaultDatabase(context)),
       context,
       duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY |
         duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
@@ -369,12 +370,10 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   ValidateIndexName(data.index);
   auto request = ParseCreateIndexBody(data.index, data.body);
 
-  auto& conn_ctx = GetSereneDBContext(context);
-
   // Through the database's own catalog: CREATE SCHEMA and CREATE TABLE are
   // duckdb's operations, and serenedb's are the same ones.
   auto& db_catalog = duckdb::Catalog::GetCatalog(
-    context, duckdb::Identifier{conn_ctx.GetDatabase()});
+    context, duckdb::DatabaseManager::GetDefaultDatabase(context));
   {
     duckdb::CreateSchemaInfo info;
     info.SetSchema(duckdb::Identifier{std::string{kEsSchema}});
@@ -434,9 +433,8 @@ void EsDropIndexExecute(duckdb::ClientContext& context,
 
   ValidateIndexName(data.index);
 
-  auto& conn_ctx = GetSereneDBContext(context);
   auto& db_catalog = duckdb::Catalog::GetCatalog(
-    context, duckdb::Identifier{conn_ctx.GetDatabase()});
+    context, duckdb::DatabaseManager::GetDefaultDatabase(context));
   const duckdb::QualifiedName qname{db_catalog.GetName(),
                                     duckdb::Identifier{kEsSchema},
                                     duckdb::Identifier{data.index}};

@@ -1,15 +1,3 @@
-# A single transaction may write to only one database. Each serenedb database
-# owns the duckdb file its rows live in, so this covers two serenedb databases
-# as well as a serenedb database and an attached duckdb one. There is no
-# two-phase commit across attachments, so the alternative would be a
-# transaction whose halves can land separately -- PostgreSQL refuses the shape
-# outright (a session reaches exactly one database), and refusing the write is
-# the closest we get while still allowing cross-database reads.
-#
-# Cluster-global objects -- roles, the database list -- stay exempt: they live
-# in a storage-less attachment that forwards its writes, so CREATE ROLE beside
-# a table write is still one writable database.
-
 control substitution on
 
 
@@ -105,8 +93,6 @@ statement ok
 DETACH db71;
 
 
-# two serenedb databases in one transaction are rejected the same way, on both
-# the data and the definition side
 statement ok
 CREATE DATABASE cdw_other;
 
@@ -123,14 +109,42 @@ statement ok
 INSERT INTO local_t VALUES (4);
 
 
-statement error
+statement ok
 INSERT INTO cdw_other.public.other_t VALUES (4);
-----
-db error: ERROR: Attempting to write to database "<slt:ignore>" in a transaction that has already modified database "<slt:ignore>" - a single transaction can only write to a single attached database.
 
 
 statement ok
 ROLLBACK;
+
+
+query
+SELECT (SELECT count(*) FROM local_t WHERE x = 4) AS l, (SELECT count(*) FROM cdw_other.public.other_t) AS o;
+----
+l	o
+0	0
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO local_t VALUES (4);
+
+
+statement ok
+INSERT INTO cdw_other.public.other_t VALUES (4);
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT (SELECT count(*) FROM local_t WHERE x = 4) AS l, (SELECT count(*) FROM cdw_other.public.other_t) AS o;
+----
+l	o
+1	1
 
 
 statement ok
@@ -141,17 +155,48 @@ statement ok
 CREATE TABLE cdw_ddl_t(x INTEGER);
 
 
-statement error
+statement ok
 CREATE TABLE cdw_other.public.other_ddl_t(x INTEGER);
-----
-db error: ERROR: Attempting to write to database "<slt:ignore>" in a transaction that has already modified database "<slt:ignore>" - a single transaction can only write to a single attached database.
 
 
 statement ok
 ROLLBACK;
 
 
-# reading the other database in the same transaction stays legal
+query
+SELECT count(*) FROM duckdb_tables() WHERE table_name IN ('cdw_ddl_t', 'other_ddl_t');
+----
+count
+0
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TABLE cdw_ddl_t(x INTEGER);
+
+
+statement ok
+CREATE TABLE cdw_other.public.other_ddl_t(x INTEGER);
+
+
+statement ok
+INSERT INTO cdw_other.public.other_ddl_t VALUES (6);
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT count(*) FROM cdw_other.public.other_ddl_t;
+----
+count
+1
+
+
 statement ok
 BEGIN;
 
@@ -164,11 +209,15 @@ query
 SELECT count(*) FROM cdw_other.public.other_t;
 ----
 count
-0
+1
 
 
 statement ok
 ROLLBACK;
+
+
+statement ok
+DROP TABLE cdw_ddl_t;
 
 
 statement ok

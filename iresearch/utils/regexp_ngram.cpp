@@ -412,12 +412,22 @@ class Extractor {
       _poisoned = _poisoned || IsSurrogate(rune);
       if (fold && MayFold(rune)) {
         flush();
-        pieces.push_back(AnyChar());
+        pieces.push_back(rune < 0x80 ? AsciiCases(rune) : AnyChar());
       } else {
         run.push_back(static_cast<char32_t>(rune));
       }
     }
     flush();
+  }
+
+  // RE2 maps A-Z to a-z before comparing a folded ASCII byte, so the letter
+  // matches its two cases and nothing else.
+  Info AsciiCases(re2::Rune rune) {
+    const auto c = static_cast<unsigned char>(rune);
+    return Exact({
+      Runes(1, static_cast<char32_t>(absl::ascii_tolower(c))),
+      Runes(1, static_cast<char32_t>(absl::ascii_toupper(c))),
+    });
   }
 
   Info Class(re2::CharClass& cc) {

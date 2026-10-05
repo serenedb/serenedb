@@ -30,6 +30,19 @@ As an alternative to reconnecting, switch to the new database within the current
 
 <SqlLogicTest id="sql/statements/create_database/index/example_003" />
 
+## Storage options
+
+`WITH` sets how the new database stores its tables:
+
+<SqlLogicTest id="sql/statements/create_database/index/example_004" />
+
+| Option           | Description                                                                         | Default  |
+|------------------|-------------------------------------------------------------------------------------|----------|
+| `BLOCK_SIZE`     | The block size of the database file in bytes: a power of two from 16384 to 262144. | `262144` |
+| `ROW_GROUP_SIZE` | The number of rows in a row group: a multiple of 2048.                              | `122880` |
+
+The options are stored with the database, so the server opens it with them again after a restart. `BLOCK_SIZE` is fixed once the file exists; `ROW_GROUP_SIZE` applies to the row groups written from then on. Any other option is refused.
+
 ## See also
 
 - [ATTACH / DETACH](../attach/index.md) — attach an existing database file

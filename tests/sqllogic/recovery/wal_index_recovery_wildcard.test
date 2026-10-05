@@ -50,7 +50,7 @@ QUERY PLAN
 │ │ Has Pos: false                         │ │
 │ │ Query:                                 │ │
 │ │ And("\\x1fpercent", "alpha", "one\\x1f") │ │
-│ │ Verify: true                           │ │
+│ │ Verify: table filter                   │ │
 │ ╰────────────────────────────────────────╯ │
 │ Projections: pk                            │
 │ ~1 row                                     │

@@ -15,7 +15,7 @@ control substitution on
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/dfs_flip.db' AS dfs (TYPE duckdb, STORAGE_VERSION 'serenedb_latest');
+CREATE DATABASE dfs;
 
 
 statement ok
@@ -117,7 +117,7 @@ t	t
 
 
 statement ok
-DETACH dfs;
+DROP DATABASE dfs;
 
 
 statement ok

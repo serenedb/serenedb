@@ -48,6 +48,7 @@
 #include "connector/column_id.h"
 #include "connector/index_source_factory.h"
 #include "connector/offsets_writer.hpp"
+#include "connector/scan/deferred_verify.h"
 #include "connector/scan/scan_state.h"
 #include "connector/term_dict.h"
 
@@ -399,6 +400,15 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
       state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
       state.projected_types.push_back(duckdb::LogicalType::BOOLEAN);
       continue;
+    } else if (col_id == duckdb::COLUMN_IDENTIFIER_ROW_ID &&
+               bind_data.relation.IsInvertedIndex() &&
+               bind_data.relation.inverted_index) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+        ERR_MSG("cannot open relation \"",
+                bind_data.relation.inverted_index->name.GetIdentifierName(),
+                "\""),
+        ERR_DETAIL("This operation is not supported for indexes."));
     } else if (col_id >= duckdb::VIRTUAL_COLUMN_START) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -448,6 +458,9 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
   state.pushed_filters = input.filters.get();
   if (input.filters && input.filters->HasFilters()) {
     BuildTableFilter(state, bind_data, *input.filters);
+  }
+  if (bind_data.search.filter) {
+    AddDeferredVerifyFilters(state, *bind_data.search.filter);
   }
   if (bind_data.IsHnswScored()) {
     if (state.has_lookup_filter ||

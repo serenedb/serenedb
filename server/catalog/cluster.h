@@ -20,15 +20,25 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+
+#include <atomic>
 #include <duckdb/catalog/catalog_set.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
+#include <duckdb/storage/write_ahead_log.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
+#include <filesystem>
+#include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <unordered_set>
+#include <vector>
 
+#include "auth/role_closure.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
 
@@ -41,8 +51,37 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
 
   explicit ClusterCatalog(duckdb::AttachedDatabase& db)
     : duckdb::DuckCatalog{db, true} {}
+  ~ClusterCatalog() override;
 
   std::string GetCatalogType() final { return kStorageType; }
+
+  bool UsesCatalogLog() const final { return true; }
+  duckdb::shared_ptr<duckdb::WriteAheadLog> CatalogLog() final {
+    std::lock_guard guard{_log_mutex};
+    return _catalog_log;
+  }
+  duckdb::Catalog& ReplayUseCatalog(duckdb::ClientContext& context,
+                                    duckdb::idx_t catalog_oid) final;
+  void OnCatalogLogPrepared() final;
+  void OnCatalogLogDecided() final;
+  void BeginCatalogLogCommit() final;
+  void EndCatalogLogCommit() final;
+  void RequestCatalogLogSync(duckdb::shared_ptr<duckdb::WriteAheadLog> log,
+                             duckdb::idx_t offset) final;
+  void OpenCatalogLog(duckdb::unique_ptr<duckdb::WriteAheadLog> log,
+                      bool compactable);
+  void MaybeCompactCatalogLog();
+
+  void LogArtifact(duckdb::CatalogType type, duckdb::idx_t catalog_oid,
+                   duckdb::idx_t oid,
+                   const std::vector<std::filesystem::path>& paths, bool drop);
+  void NoteDroppedArtifact(duckdb::CatalogType type, duckdb::idx_t catalog_oid,
+                           duckdb::idx_t oid,
+                           const std::vector<std::filesystem::path>& paths);
+  void ReplayArtifact(duckdb::CatalogType type, duckdb::idx_t catalog_oid,
+                      duckdb::idx_t oid,
+                      duckdb::vector<std::string> paths) final;
+  void ResolveArtifacts();
 
   duckdb::unique_ptr<duckdb::InCatalogEntry> MakeRoleEntry(
     duckdb::CreateRoleInfo& info) final {
@@ -53,7 +92,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
     return duckdb::make_uniq<DatabaseCatalogEntry>(*this, info);
   }
 
-  void FinalizeLoad(duckdb::optional_ptr<duckdb::ClientContext> context) final;
+  void Bootstrap(duckdb::ClientContext& context);
   void Alter(duckdb::CatalogTransaction transaction,
              duckdb::AlterInfo& info) final;
 
@@ -63,6 +102,41 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
       duckdb::DuckTransactionManager::Get(GetAttached()).GetLastCommit() + 1};
   }
 
+  uint64_t CatalogGeneration() const {
+    return _catalog_generation.load(std::memory_order_acquire);
+  }
+  std::shared_ptr<const auth::RoleGraph> CachedRoles(uint64_t generation) {
+    std::lock_guard guard{_roles_mutex};
+    return _roles_generation == generation ? _roles : nullptr;
+  }
+  void CacheRoles(uint64_t generation,
+                  std::shared_ptr<const auth::RoleGraph> roles) {
+    std::lock_guard guard{_roles_mutex};
+    if (generation > _roles_generation) {
+      _closures.clear();
+    }
+    if (generation >= _roles_generation) {
+      _roles_generation = generation;
+      _roles = std::move(roles);
+    }
+  }
+  std::shared_ptr<const auth::RoleClosure> CachedClosure(uint64_t generation,
+                                                         duckdb::idx_t role) {
+    std::lock_guard guard{_roles_mutex};
+    if (generation != _roles_generation) {
+      return nullptr;
+    }
+    const auto it = _closures.find(role);
+    return it == _closures.end() ? nullptr : it->second;
+  }
+  void CacheClosure(uint64_t generation, duckdb::idx_t role,
+                    std::shared_ptr<const auth::RoleClosure> closure) {
+    std::lock_guard guard{_roles_mutex};
+    if (generation == _roles_generation) {
+      _closures.try_emplace(role, std::move(closure));
+    }
+  }
+
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateRole(
     duckdb::CatalogTransaction transaction, duckdb::CreateRoleInfo& info);
   void DropRole(duckdb::CatalogTransaction transaction, duckdb::DropInfo& info);
@@ -70,6 +144,46 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
     duckdb::CatalogTransaction transaction, duckdb::CreateDatabaseInfo& info);
   void DropDatabase(duckdb::CatalogTransaction transaction,
                     duckdb::DropInfo& info);
+
+ private:
+  struct Artifact {
+    duckdb::CatalogType type;
+    duckdb::idx_t catalog_oid;
+    duckdb::idx_t oid;
+    duckdb::vector<std::string> paths;
+    bool drop;
+  };
+
+  void CompactCatalogLog();
+  bool IsLive(const Artifact& artifact);
+  bool HoldsPreparedBatch(duckdb::idx_t oid, duckdb::idx_t generation);
+  void SyncCatalogLogLoop();
+  bool SyncPending() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_sync_mutex) {
+    return _sync_stop || _sync_log;
+  }
+
+  absl::Mutex _sync_mutex;
+  duckdb::shared_ptr<duckdb::WriteAheadLog> _sync_log
+    ABSL_GUARDED_BY(_sync_mutex);
+  duckdb::idx_t _sync_offset ABSL_GUARDED_BY(_sync_mutex) = 0;
+  bool _sync_stop ABSL_GUARDED_BY(_sync_mutex) = false;
+  std::thread _sync_thread;
+  std::mutex _log_mutex;
+  duckdb::shared_ptr<duckdb::WriteAheadLog> _catalog_log;
+  std::atomic_size_t _commits_in_flight{0};
+  std::atomic_uint64_t _catalog_generation{1};
+  std::atomic<duckdb::idx_t> _generation_version{0};
+  std::mutex _roles_mutex;
+  uint64_t _roles_generation = 0;
+  std::shared_ptr<const auth::RoleGraph> _roles;
+  irs::containers::FlatHashMap<duckdb::idx_t,
+                               std::shared_ptr<const auth::RoleClosure>>
+    _closures;
+  bool _compactable = false;
+  duckdb::idx_t _live_bytes = 0;
+  std::mutex _artifacts_mutex;
+  std::vector<Artifact> _artifacts;
+  std::unordered_set<duckdb::idx_t> _replayed_drops;
 };
 
 ClusterCatalog& ClusterOf(duckdb::ClientContext& context);

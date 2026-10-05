@@ -172,6 +172,11 @@ struct PhrasePartVisitor : util::Noncopyable {
       ERR_MSG("Wildcard phrase part must be lowered by the optimizer before "
               "printing"));
   }
+  auto operator()(const ByRegexpOptions&) const {
+    THROW_SQL_ERROR(
+      ERR_MSG("Regexp phrase part must be lowered by the optimizer before "
+              "printing"));
+  }
   auto operator()(const ByEditDistanceOptions&) const {
     THROW_SQL_ERROR(
       ERR_MSG("Levenshtein phrase part must be lowered by the optimizer before "
@@ -268,7 +273,7 @@ struct FilterPrinter {
     for (const auto& part : filter.options()) {
       std::string part_str;
       part.part.visit(PhrasePartVisitor{.out = &part_str});
-      absl::StrAppend(&s, part_str, "(", part.offs_max, ", ", part.offs_min,
+      absl::StrAppend(&s, part_str, "(", part.offs_min, ", ", part.offs_max,
                       ")", "; ");
     }
     return s;
@@ -512,7 +517,9 @@ struct FilterPrinter {
         options.syntax == RegexpSyntax::Perl ? "perl" : "posix";
       node.attributes["Has Pos"] = options.has_pos ? "true" : "false";
       node.attributes["Query"] = irs::ToString(options.query);
-      node.attributes["Verify"] = options.matcher ? "true" : "false";
+      node.attributes["Verify"] = !options.matcher          ? "false"
+                                  : options.deferred_verify ? "table filter"
+                                                            : "inline";
       return node;
     }
     if (type == Type<Empty>::id()) {
@@ -523,6 +530,11 @@ struct FilterPrinter {
       ExplainNode node{"Phrase"};
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Parts"] = PhraseParts(f);
+      if (const auto separator = f.options().word_separator();
+          !separator.empty()) {
+        node.attributes["Separator"] =
+          absl::StrCat("'", TermToString(separator), "'");
+      }
       if (const auto slop = f.options().slop(); slop > 0) {
         node.attributes["Slop"] = absl::StrCat(slop);
       }

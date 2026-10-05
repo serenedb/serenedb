@@ -590,7 +590,6 @@ class CreateTSDictionaryOptions : public OptionsParser {
     opts.output_unigrams = Value<tokenizer_options::kOutputUnigrams>();
     opts.fallback_unigrams =
       Value<tokenizer_options::kOutputUnigramsIfNoShingles>();
-    opts.store_tokens = Value<tokenizer_options::kStoreTokens>();
     if (OptionsParser::HasOption(tokenizer_options::kFrequentWords)) {
       ForEachListItem<tokenizer_options::kFrequentWords>(
         [&](std::string_view w) {
@@ -598,15 +597,6 @@ class CreateTSDictionaryOptions : public OptionsParser {
             reinterpret_cast<const irs::byte_type*>(w.data()), w.size());
         });
     }
-    if (!opts.store_tokens && !opts.frequent_words.empty()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("\"store_tokens\" = false cannot be combined with "
-                "\"frequent_words\""),
-        ERR_HINT("Without the stored token stream every shingle size must be "
-                 "dense so phrases up to max_gram stay exact."));
-    }
-    ResolveStringInto<tokenizer_options::kFillerToken>(opts.filler_token);
     if (OptionsParser::HasOption(tokenizer_options::kTokenSeparator)) {
       const auto raw = OptionsParser::EraseOptionOrDefault<
         tokenizer_options::kTokenSeparator>();
@@ -781,8 +771,10 @@ void CreateTokenizer(ConnectionContext& conn_ctx, duckdb::QualifiedName name,
 
   if (features.HasFeatures(irs::IndexFeatures::Offs) &&
       !test_analyzer->Traits().offsets) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("Unsupported index features are specified"));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Unsupported index features are specified: offset"),
+      ERR_HINT("A step of this dictionary produces no text offsets."));
   }
 
   if (features.HasFeatures(irs::IndexFeatures::Norm) &&
@@ -791,8 +783,8 @@ void CreateTokenizer(ConnectionContext& conn_ctx, duckdb::QualifiedName name,
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("the 'norm' feature cannot be combined with an analyzer that "
               "stores a per-document blob"),
-      ERR_HINT("norm and the stored blob share one synthetic column; disable "
-               "the analyzer's token storage or drop the 'norm' feature."));
+      ERR_HINT("norm and the stored blob share one synthetic column; drop "
+               "the 'norm' feature."));
   }
 
   duckdb::CreateTokenizerInfo tokenizer;

@@ -148,6 +148,13 @@ struct EmitKSlotOffs {
   Offs offs;
 };
 
+struct EmitKSlotPosOffs {
+  uint32_t begin;
+  uint32_t end;
+  uint32_t pos;
+  Offs offs;
+};
+
 struct EmitRun {
   uint32_t begin;
   uint32_t end;

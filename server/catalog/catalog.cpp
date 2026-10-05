@@ -314,6 +314,17 @@ void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
   if (inverted) {
     BindInvertedIndexOptions(binder.context, info.options,
                              table.type == duckdb::CatalogType::VIEW_ENTRY);
+  } else {
+    for (auto i = info.column_opclasses.size(); i-- > 0;) {
+      if (info.column_opclasses[i] != kIncludedKind) {
+        continue;
+      }
+      info.column_opclasses.erase(info.column_opclasses.begin() + i);
+      info.column_opclass_options.erase(info.column_opclass_options.begin() +
+                                        i);
+      info.expressions.erase(info.expressions.begin() + i);
+      info.parsed_expressions.erase(info.parsed_expressions.begin() + i);
+    }
   }
   for (const auto& opclass : info.column_opclasses) {
     if (opclass.empty() || opclass == kIncludedKind || opclass == kIVFKind ||

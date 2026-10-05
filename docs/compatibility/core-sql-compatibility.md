@@ -70,6 +70,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Unique Indexes          | Yes           |                                                    |
 | Indexes on Expressions  | Yes           |                                                    |
 | Partial Indexes         | Partial       | [Inverted indexes](../sql/statements/create_index/inverted.md#partial-indexes) honor `WHERE`. A plain index accepts it but filters only the rows present when it is built: rows written later are indexed whether or not they match, keyed on the value and on whether the predicate holds, so a partial `UNIQUE` index also rejects duplicates outside its predicate |
+| INCLUDE                 | Partial       | [Inverted indexes](../sql/statements/create_index/inverted.md) store `INCLUDE` columns. A plain index accepts `INCLUDE` but keeps only its key columns, so a `UNIQUE` index is unique on the keys alone, as in PostgreSQL |
 
 ### Misc
 | Feature                    | Support State | Details                                         |

@@ -577,10 +577,12 @@ The same threshold on a `TSQUERY` value, inside one `@@`. Like the other [`TSQUE
 
 **How it works.** The threshold goes to the `OR` at the top of the query, and what counts as one alternative depends on its shape:
 
-- **Several words** (a bare string, [`ts_tokenize`](#ts_tokenize)): one alternative per word, with the synonyms of a word counting once. `K` above the number of words is capped at that number, so a one-word search with `::min_match(2)` matches that word, as Elasticsearch does.
+- **Several words** (a bare string, [`ts_tokenize`](#ts_tokenize), `::tokenize`, `ts_any(ts_tokenize([...]))`): one alternative per word, with the synonyms of a word counting once. `K` above the number of words is capped at that number, so a one-word search with `::min_match(2)` matches that word.
 - **A `||` chain**: one alternative per operand of the whole chain, so `(a || b || c)::min_match(2)` has three. A parenthesized group with a modifier of its own is one operand. A bound parameter that holds a `||` chain adds its operands to the count. `K` above the number of operands is an error.
-- **[`ts_any(list)`](#ts_any)**: one alternative per element, the same as `ts_any(list, K)`. Given both, `::min_match` wins: `ts_any(list, 1)::min_match(2)` requires two elements.
+- **[`ts_any(list)`](#ts_any)**: one alternative per element, the same as `ts_any(list, K)`. Given both, `::min_match` wins: `ts_any(list, 1)::min_match(2)` requires two elements. `K` above the number of elements is an error.
 - **Anything else** (a phrase, `&&`, `!!`, a range, `to_tsquery`) is one alternative: `K = 1` changes nothing, a larger `K` is an error.
+
+**`K` above the count.** Where you list the alternatives yourself (the operands of `||`, the elements of `ts_any(list)`, the branches of an [`OR` of predicates](#min-match)), their number is in the query text, so a larger `K` is a mistake and the query fails. Where the dictionary derives them from text (the words of a string or of `ts_tokenize`), their number depends on stopwords, repeated words, synonyms and the column's dictionary, and is often unknown when the query is written, for example for text a user typed into a search box. There a larger `K` is capped: a row has to contain all of the words. Elasticsearch documents the same cap for `minimum_should_match`, but its implementation returns no hits when `K` exceeds the terms of a query with several terms.
 
 A second `::min_match` replaces the first, like a second `::merge` or `::score`: `'a b c'::min_match(2)::min_match(1)` requires one word, and so does a bound parameter `$1::min_match(1)` whose value already carries `::min_match(2)`. `NOT` and `!!` negate the whole threshold: `NOT body @@ 'quick red grey'::min_match(2)` matches rows that have fewer than two of the words, and `!! (('a'::TSQUERY || 'b')::min_match(2) || 'c')` matches rows that have neither both `a` and `b` nor `c`. `::merge`, `::boost` and `::score` combine with it.
 

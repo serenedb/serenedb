@@ -46,9 +46,9 @@
 #include "catalog/entry/tokenizer.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/list_token_sink.hpp"
-#include "pg/commands/create_tsdictionary.h"
 #include "pg/connection_context.h"
 #include "pg/tokenizer_options.h"
+#include "pg/tsdictionary.h"
 
 namespace sdb::connector {
 namespace {

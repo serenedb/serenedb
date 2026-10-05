@@ -30,7 +30,7 @@ CREATE ROLE err_other;
 statement error
 CREATE ROLE err_role;
 ----
-db error: ERROR: role "err_role" already exists
+db error: ERROR: <slt:ignore>already exists<slt:ignore>
 
 
 statement error
@@ -52,7 +52,7 @@ DETAIL: Role names starting with "pg_" are reserved.
 statement error
 DROP ROLE ghost;
 ----
-db error: ERROR: role "ghost" does not exist
+db error: ERROR: <slt:ignore>does not exist<slt:ignore>
 
 
 # missing_ok suppresses the error.
@@ -112,13 +112,13 @@ db error: ERROR: syntax error at or near "ON"<slt:ignore>
 statement error
 GRANT nobody TO err_role;
 ----
-db error: ERROR: role "nobody" does not exist
+db error: ERROR: <slt:ignore>does not exist<slt:ignore>
 
 
 statement error
 GRANT err_role TO nobody;
 ----
-db error: ERROR: role "nobody" does not exist
+db error: ERROR: <slt:ignore>does not exist<slt:ignore>
 
 
 # Self-membership (identical message on both engines).

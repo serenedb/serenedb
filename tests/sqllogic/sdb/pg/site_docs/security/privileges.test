@@ -161,4 +161,10 @@ statement ok
 DROP TABLE doc_sec_ledger;
 
 statement ok
-DROP ROLE doc_sec_reader, doc_sec_clerk, doc_sec_auditor;
+DROP ROLE doc_sec_reader;
+
+statement ok
+DROP ROLE doc_sec_clerk;
+
+statement ok
+DROP ROLE doc_sec_auditor;

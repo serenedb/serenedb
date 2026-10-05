@@ -53,4 +53,6 @@ target_sources(
         option_help.cpp
         tokenizer_options.cpp
         geo_tokenizer_options.cpp
+        tsdictionary.cpp
+        tsdictionary_spec.cpp
 )

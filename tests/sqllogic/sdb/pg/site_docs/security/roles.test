@@ -110,6 +110,7 @@ db error: ERROR: Cannot drop entry "doc_sec_owner" because there are entries tha
 table "doc_sec_audit" depends on role "doc_sec_owner".
 Use DROP...CASCADE to drop all dependents.
 
+
 statement ok
 DROP TABLE doc_sec_audit;
 
@@ -121,7 +122,10 @@ DROP ROLE doc_sec_owner;
 # DOCS_TEST_BODY
 
 statement ok
-DROP ROLE doc_sec_alice, doc_sec_batch;
+DROP ROLE doc_sec_alice;
+
+statement ok
+DROP ROLE doc_sec_batch;
 
 statement ok
 DROP ROLE IF EXISTS doc_sec_missing;

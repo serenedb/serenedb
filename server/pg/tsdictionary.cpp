@@ -25,8 +25,7 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
 
-#include <duckdb/catalog/catalog_transaction.hpp>
-#include <duckdb/planner/binder.hpp>
+#include <duckdb/main/database.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
@@ -71,15 +70,12 @@
 #include <utility>
 #include <vector>
 
-#include "auth/role_closure.h"
-#include "catalog/catalog.h"
 #include "catalog/entry/tokenizer.h"
-#include "pg/commands/tsdictionary_spec.h"
-#include "pg/connection_context.h"
 #include "pg/option_help.h"
 #include "pg/options_parser.h"
 #include "pg/sql_utils.h"
 #include "pg/tokenizer_options.h"
+#include "pg/tsdictionary_spec.h"
 #include "search/search_analyzer_impl.h"
 
 namespace sdb::pg {
@@ -775,21 +771,17 @@ irs::analysis::TokenizerConfig BuildStage(duckdb::ClientContext& context,
     .Result();
 }
 
-void CreateTokenizer(ConnectionContext& conn_ctx, duckdb::QualifiedName name,
-                     bool if_not_exists,
-                     const duckdb::named_parameter_map_t& with,
-                     std::string_view spec) {
-  auto& client_ctx = conn_ctx.GetClientContext();
-
-  CheckWithClause(with);
-  const auto [cfg, definition] = CompileTSDictionarySpec(client_ctx, spec);
-  auto features = ParseFeatures(with, TypeNameOf(cfg));
+void CompileTokenizer(duckdb::ClientContext& context,
+                      duckdb::CreateTokenizerInfo& info) {
+  CheckWithClause(info.options);
+  auto [cfg, definition] = CompileTSDictionarySpec(context, info.definition);
+  auto features = ParseFeatures(info.options, TypeNameOf(cfg));
 
   auto test_analyzer = irs::analysis::CreateTokenizer(
     irs::analysis::Clone(cfg),
-    duckdb::DatabaseInstance::GetDatabase(client_ctx).GetSharedObjectCache());
+    duckdb::DatabaseInstance::GetDatabase(context).GetSharedObjectCache());
   SDB_ASSERT(test_analyzer);
-  test_analyzer->Bind(client_ctx);
+  test_analyzer->Bind(context);
   irs::Finally unbind = [&]() noexcept { test_analyzer->Unbind(); };
 
   if (features.HasFeatures(irs::IndexFeatures::Offs) &&
@@ -810,29 +802,9 @@ void CreateTokenizer(ConnectionContext& conn_ctx, duckdb::QualifiedName name,
                "the 'norm' feature."));
   }
 
-  duckdb::CreateTokenizerInfo tokenizer;
-  tokenizer.SetQualifiedName(std::move(name));
-  tokenizer.features = std::to_underlying(features.GetIndexFeatures());
-  tokenizer.config = catalog::PackTokenizerConfig(cfg);
-  tokenizer.definition = definition;
-  tokenizer.on_conflict = if_not_exists
-                            ? duckdb::OnCreateConflict::IGNORE_ON_CONFLICT
-                            : duckdb::OnCreateConflict::ERROR_ON_CONFLICT;
-
-  auto& target =
-    duckdb::Binder::CreateBinder(client_ctx)->BindSchema(tokenizer);
-  const auto role = conn_ctx.GetRoleId();
-  if (!auth::ClosureFor(&client_ctx, role)
-         ->Can(duckdb::CatalogType::SCHEMA_ENTRY, target.permissions,
-               duckdb::AclMode::Create)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied for schema ",
-                            target.name.GetIdentifierName()));
-  }
-  tokenizer.permissions.owner = role;
-  auto& catalog = target.catalog.Cast<catalog::SereneDBCatalog>();
-  catalog.CreateTokenizer(catalog.GetCatalogTransaction(client_ctx),
-                          target.Cast<duckdb::DuckSchemaEntry>(), tokenizer);
+  info.features = std::to_underlying(features.GetIndexFeatures());
+  info.config = catalog::PackTokenizerConfig(cfg);
+  info.definition = std::move(definition);
 }
 
 }  // namespace sdb::pg

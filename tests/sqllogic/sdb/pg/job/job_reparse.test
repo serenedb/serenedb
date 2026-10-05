@@ -15,7 +15,7 @@ DROP TABLE IF EXISTS jrp_kostya;
 
 
 statement ok
-SET debug_verify_statement = 'REPARSE_STATEMENT';
+SET SESSION debug_verify_statement = 'REPARSE_STATEMENT';
 
 
 statement ok
@@ -75,7 +75,7 @@ n
 
 
 statement ok
-RESET debug_verify_statement;
+RESET SESSION debug_verify_statement;
 
 
 statement ok

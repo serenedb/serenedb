@@ -25,6 +25,8 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <compare>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/types/value.hpp>
@@ -395,15 +397,52 @@ struct InheritedColumns {
   std::string scope_attributes;
 };
 
-// Walks resources -> scopes -> records.
+struct RecordPosition {
+  size_t resource = 0;
+  size_t scope = 0;
+  size_t record = 0;
+
+  auto operator<=>(const RecordPosition&) const = default;
+};
+
+inline constexpr size_t kMorselRows = 8 * STANDARD_VECTOR_SIZE;
+
+template<typename Source>
+std::vector<RecordPosition> SplitIntoMorsels(
+  const typename Source::Request& request) {
+  std::vector<RecordPosition> bounds{RecordPosition{}};
+  size_t rows = 0;
+  for (size_t r = 0; r < request.resources.size(); ++r) {
+    const auto& scopes = request.resources[r].scopes;
+    for (size_t s = 0; s < scopes.size(); ++s) {
+      const auto& records = scopes[s].records;
+      for (size_t i = 0; i < records.size(); ++i) {
+        if (rows >= kMorselRows) {
+          bounds.push_back(RecordPosition{r, s, i});
+          rows = 0;
+        }
+        rows += Source::Rows(records[i]);
+      }
+    }
+  }
+  bounds.push_back(RecordPosition{request.resources.size(), 0, 0});
+  return bounds;
+}
+
+// Walks resources -> scopes -> records from `begin` up to `end`.
 template<typename Record>
 class RecordCursor {
  public:
-  explicit RecordCursor(const otel::ExportRequest<Record>* request)
-    : _request{request} {}
+  RecordCursor(const otel::ExportRequest<Record>* request, RecordPosition begin,
+               RecordPosition end)
+    : _request{request},
+      _resource{begin.resource},
+      _scope{begin.scope},
+      _record{begin.record},
+      _end{end} {}
 
   const Record* Next() {
-    while (_request != nullptr && _resource < _request->resources.size()) {
+    while (_resource < _request->resources.size()) {
       const auto& scopes = _request->resources[_resource].scopes;
       if (_scope >= scopes.size()) {
         ++_resource;
@@ -415,6 +454,9 @@ class RecordCursor {
         _record = 0;
         _ready = false;
         continue;
+      }
+      if (RecordPosition{_resource, _scope, _record} >= _end) {
+        return nullptr;
       }
       if (!_ready) {
         const auto& resource = Resources().resource;
@@ -444,9 +486,10 @@ class RecordCursor {
 
  private:
   const otel::ExportRequest<Record>* _request;
-  size_t _resource = 0;
-  size_t _scope = 0;
-  size_t _record = 0;
+  size_t _resource;
+  size_t _scope;
+  size_t _record;
+  RecordPosition _end;
   bool _ready = false;
   InheritedColumns _shared;
 };
@@ -506,6 +549,8 @@ struct LogsSource {
   using Column = schema::LogsColumn;
   using Request = otel::ExportLogsRequest;
 
+  static size_t Rows(const Record&) { return 1; }
+
   template<Column C>
   static void Put(Out& out, const Cursor& cursor, const Record& record) {
     using enum Column;
@@ -563,6 +608,8 @@ struct TracesSource {
   using Cursor = RecordCursor<Record>;
   using Column = schema::TracesColumn;
   using Request = otel::ExportTracesRequest;
+
+  static size_t Rows(const Record&) { return 1; }
 
   template<Column C>
   static void Put(Out& out, const Cursor& cursor, const Record& span) {
@@ -633,8 +680,9 @@ class PointCursor {
   using Data = typename MetricShape::Data;
   using Point = std::remove_cvref_t<decltype(Data{}.data_points[0])>;
 
-  explicit PointCursor(const otel::ExportMetricsRequest* request)
-    : _metrics{request} {}
+  PointCursor(const otel::ExportMetricsRequest* request, RecordPosition begin,
+              RecordPosition end)
+    : _metrics{request, begin, end} {}
 
   // The next point; `metric` and `data` are its metric and shape data.
   const Point* Next() {
@@ -667,6 +715,11 @@ struct MetricsSource {
   using Cursor = PointCursor<MetricShape>;
   using Column = typename MetricShape::Column;
   using Request = otel::ExportMetricsRequest;
+
+  static size_t Rows(const otel::Metric& metric) {
+    const auto* data = std::get_if<typename MetricShape::Data>(&metric.data);
+    return data == nullptr ? 0 : data->data_points.size();
+  }
 
   template<Column C>
   static void Put(Out& out, const Cursor& cursor,
@@ -825,7 +878,19 @@ struct SummarySource {
 
 template<typename Source>
 struct SourceState final : duckdb::GlobalTableFunctionState {
-  typename Source::Cursor cursor{nullptr};
+  const typename Source::Request* request = nullptr;
+  std::vector<RecordPosition> bounds;
+  std::atomic<size_t> next{0};
+
+  duckdb::idx_t MaxThreads() const final { return bounds.size() - 1; }
+
+  std::optional<typename Source::Cursor> Claim() {
+    const size_t morsel = next.fetch_add(1, std::memory_order_relaxed);
+    if (morsel + 1 >= bounds.size()) {
+      return std::nullopt;
+    }
+    return typename Source::Cursor{request, bounds[morsel], bounds[morsel + 1]};
+  }
 
   static duckdb::unique_ptr<duckdb::GlobalTableFunctionState> Init(
     duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
@@ -842,8 +907,20 @@ struct SourceState final : duckdb::GlobalTableFunctionState {
         ERR_MSG("OpenTelemetry source functions can only be called by the "
                 "OTLP/HTTP endpoint"));
     }
-    state->cursor = typename Source::Cursor{request};
+    state->request = request;
+    state->bounds = SplitIntoMorsels<Source>(*request);
     return state;
+  }
+};
+
+template<typename Source>
+struct SourceLocalState final : duckdb::LocalTableFunctionState {
+  std::optional<typename Source::Cursor> cursor;
+
+  static duckdb::unique_ptr<duckdb::LocalTableFunctionState> Init(
+    duckdb::ExecutionContext&, duckdb::TableFunctionInitInput&,
+    duckdb::GlobalTableFunctionState*) {
+    return duckdb::make_uniq<SourceLocalState>();
   }
 };
 
@@ -865,12 +942,18 @@ void SourceExecute(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
                    duckdb::DataChunk& output) {
   const auto& data = input.bind_data->Cast<SourceBindData>();
   auto& state = input.global_state->Cast<SourceState<Source>>();
+  auto& local = input.local_state->Cast<SourceLocalState<Source>>();
   PrepareChunk(output);
   Out out{output, data};
   duckdb::idx_t row = 0;
-  for (; row < STANDARD_VECTOR_SIZE; ++row) {
+  while (row < STANDARD_VECTOR_SIZE) {
     out.Row(row);
-    if (!Source::WriteNext(state.cursor, out)) {
+    if (local.cursor && Source::WriteNext(*local.cursor, out)) {
+      ++row;
+      continue;
+    }
+    local.cursor = state.Claim();
+    if (!local.cursor) {
       break;
     }
   }
@@ -944,9 +1027,9 @@ void RegisterOtelFunctions(duckdb::DatabaseInstance& db) {
          {duckdb::vector<duckdb::LogicalType>{duckdb::LogicalType::VARCHAR},
           duckdb::vector<duckdb::LogicalType>{duckdb::LogicalType::VARCHAR,
                                               duckdb::LogicalType::VARCHAR}}) {
-      loader.RegisterFunction(
-        duckdb::TableFunction{name, std::move(arguments), SourceExecute<Source>,
-                              ParseBind<Source>, SourceState<Source>::Init});
+      loader.RegisterFunction(duckdb::TableFunction{
+        name, std::move(arguments), SourceExecute<Source>, ParseBind<Source>,
+        SourceState<Source>::Init, SourceLocalState<Source>::Init});
     }
   };
 
@@ -954,7 +1037,8 @@ void RegisterOtelFunctions(duckdb::DatabaseInstance& db) {
     loader.RegisterFunction(duckdb::TableFunction{
       duckdb::Identifier{std::string{name}},
       duckdb::vector<duckdb::LogicalType>{duckdb::LogicalType::VARCHAR},
-      SourceExecute<Source>, SourceBind<Source>, SourceState<Source>::Init});
+      SourceExecute<Source>, SourceBind<Source>, SourceState<Source>::Init,
+      SourceLocalState<Source>::Init});
   };
   source.operator()<LogsSource>(kOtelSourceLogsFunction);
   source.operator()<TracesSource>(kOtelSourceTracesFunction);

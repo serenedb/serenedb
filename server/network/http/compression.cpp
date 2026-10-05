@@ -22,6 +22,7 @@
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
+#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
 
@@ -33,7 +34,6 @@
 #include <optional>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "network/http/codecs/codec.h"
 
@@ -50,6 +50,9 @@ constexpr std::array kContentCodings = {
                 .make_decoder = MakeBrotliDecoder},
   ContentCoding{
     .token = "gzip", .make = MakeGzipEncoder, .make_decoder = MakeGzipDecoder},
+  ContentCoding{.token = "deflate",
+                .make = MakeDeflateEncoder,
+                .make_decoder = MakeDeflateDecoder},
   ContentCoding{
     .token = "zxc", .make = MakeZxcEncoder, .make_decoder = MakeZxcDecoder},
   ContentCoding{
@@ -61,6 +64,7 @@ constexpr std::array kContentCodings = {
 
 struct AcceptedCoding {
   std::string_view token;
+  std::optional<int> level;
   double quality = 1.0;
 };
 
@@ -92,6 +96,28 @@ std::optional<double> ParseQValue(std::string_view text) {
   return one ? 1.0 : fraction;
 }
 
+std::string_view CanonicalToken(std::string_view token) {
+  return absl::EqualsIgnoreCase(token, "x-gzip") ? "gzip" : token;
+}
+
+bool SplitLevel(std::string_view& token, std::optional<int>& level) {
+  const auto open = token.find('(');
+  if (open == std::string_view::npos) {
+    return true;
+  }
+  if (token.back() != ')') {
+    return false;
+  }
+  int value = 0;
+  if (!absl::SimpleAtoi(token.substr(open + 1, token.size() - open - 2),
+                        &value)) {
+    return false;
+  }
+  token = absl::StripTrailingAsciiWhitespace(token.substr(0, open));
+  level = value;
+  return true;
+}
+
 std::optional<AcceptedCoding> ParseAccepted(std::string_view element) {
   element = absl::StripAsciiWhitespace(element);
   if (element.empty()) {
@@ -102,7 +128,10 @@ std::optional<AcceptedCoding> ParseAccepted(std::string_view element) {
   for (std::string_view part : absl::StrSplit(element, ';')) {
     part = absl::StripAsciiWhitespace(part);
     if (std::exchange(first, false)) {
-      accepted.token = part;
+      if (!SplitLevel(part, accepted.level)) {
+        return std::nullopt;
+      }
+      accepted.token = CanonicalToken(part);
       continue;
     }
     if (absl::StartsWithIgnoreCase(part, "q=")) {
@@ -120,6 +149,7 @@ std::optional<AcceptedCoding> ParseAccepted(std::string_view element) {
 }  // namespace
 
 const ContentCoding* FindContentCoding(std::string_view token) {
+  token = CanonicalToken(token);
   for (const auto& coding : kContentCodings) {
     if (absl::EqualsIgnoreCase(coding.token, token)) {
       return &coding;
@@ -136,7 +166,9 @@ Negotiation NegotiateContentCoding(std::string_view accept_encoding) {
     return {};
   }
 
-  std::vector<AcceptedCoding> accepted;
+  std::array<std::optional<double>, kContentCodings.size()> weights;
+  std::array<std::optional<int>, kContentCodings.size()> levels;
+  std::optional<double> identity;
   std::optional<double> wildcard;
   for (const auto element : absl::StrSplit(accept_encoding, ',')) {
     if (absl::StripAsciiWhitespace(element).empty()) {
@@ -148,51 +180,62 @@ Negotiation NegotiateContentCoding(std::string_view accept_encoding) {
     }
     if (parsed->token == "*") {
       wildcard = parsed->quality;
-    } else {
-      accepted.push_back(*parsed);
+      continue;
+    }
+    if (absl::EqualsIgnoreCase(parsed->token, "identity")) {
+      if (!identity) {
+        identity = parsed->quality;
+      }
+      continue;
+    }
+    for (size_t i = 0; i < kContentCodings.size(); ++i) {
+      if (!weights[i] &&
+          absl::EqualsIgnoreCase(kContentCodings[i].token, parsed->token)) {
+        weights[i] = parsed->quality;
+        levels[i] = parsed->level;
+      }
     }
   }
 
   // An explicit weight wins over the wildcard, whatever their order.
-  const auto quality_of = [&](std::string_view token) -> std::optional<double> {
-    for (const auto& candidate : accepted) {
-      if (absl::EqualsIgnoreCase(candidate.token, token)) {
-        return candidate.quality;
-      }
-    }
-    return wildcard;
+  const auto quality_of = [&](const std::optional<double>& weight) {
+    return weight ? weight : wildcard;
   };
 
   // "the acceptable content coding with the highest non-zero qvalue is
   // preferred"; server order breaks ties, which is the usual case since most
   // clients send no weights at all.
-  const ContentCoding* best = nullptr;
+  size_t best = kContentCodings.size();
   double best_quality = 0.0;
-  for (const auto& coding : kContentCodings) {
-    const double quality = quality_of(coding.token).value_or(0.0);
+  for (size_t i = 0; i < kContentCodings.size(); ++i) {
+    const double quality = quality_of(weights[i]).value_or(0.0);
     if (quality > best_quality) {
-      best = &coding;
+      best = i;
       best_quality = quality;
     }
   }
-  if (best != nullptr) {
-    return {.coding = best};
+  if (best != kContentCodings.size()) {
+    return {.coding = &kContentCodings[best], .level = levels[best]};
   }
 
   // Nothing we encode is acceptable. The uncompressed form still is, unless
   // the client ruled it out too -- then there is no representation to send.
   // https://www.rfc-editor.org/rfc/rfc9110#name-accept-encoding
-  if (quality_of("identity").value_or(1.0) > 0.0) {
+  if (quality_of(identity).value_or(1.0) > 0.0) {
     return {};
   }
   return {.acceptance = Acceptance::NotAcceptable};
 }
 
-std::optional<std::vector<const ContentCoding*>> ParseContentEncoding(
+std::optional<ContentCodings> ParseContentEncoding(
   std::string_view content_encoding) {
-  std::vector<const ContentCoding*> codings;
+  ContentCodings codings;
   for (const auto element : absl::StrSplit(content_encoding, ',')) {
-    const auto token = absl::StripAsciiWhitespace(element);
+    auto token = absl::StripAsciiWhitespace(element);
+    std::optional<int> level;
+    if (!SplitLevel(token, level)) {
+      return std::nullopt;
+    }
     if (token.empty() || absl::EqualsIgnoreCase(token, "identity")) {
       continue;
     }

@@ -14,13 +14,14 @@ that asks for none is answered uncompressed.
 |---|---|---|
 | Zstandard | `zstd` | best ratio, and fast; the default pick |
 | Brotli | `br` | supported by every modern browser; compresses at quality 5 |
-| gzip | `gzip` | zlib-ng; understood by every HTTP client and browser |
+| gzip | `gzip` | zlib-ng; understood by every HTTP client and browser; `x-gzip` is accepted as the same coding |
+| Deflate | `deflate` | the zlib-wrapped format RFC 9110 defines; a request body in raw deflate, which some clients send under this name, is accepted too |
 | ZXC | `zxc` | [serenedb/zxc](https://github.com/serenedb/zxc), the fastest decode; not an IANA-registered coding, so only clients that opt in ask for it |
 | LZ4 frame | `lz4` | fastest to compress; same caveat as `zxc` |
 | Snappy | `snappy` | the raw block format, as Prometheus remote write sends it; a body is compressed or decompressed whole, so a streamed response is sent only once it is complete |
 
-Server preference is the order above: `zstd`, `br`, `gzip`, `zxc`, `lz4`,
-`snappy`. It picks
+Server preference is the order above: `zstd`, `br`, `gzip`, `deflate`,
+`zxc`, `lz4`, `snappy`. It picks
 between codings the client accepts equally — the client's own `q` weights come
 first, so `Accept-Encoding: gzip;q=1.0, zstd;q=0.1` answers gzip.
 
@@ -39,6 +40,27 @@ sent as-is.
 Compressed responses carry `Content-Encoding: <token>` and
 `Vary: Accept-Encoding`.
 
+### Compression level
+
+A client can pick the level by writing it in parentheses after the coding:
+`Accept-Encoding: zstd(1)` asks for the fastest zstd, `gzip(9);q=0.5, br(4)`
+for brotli at quality 4. This is a SereneDB extension, so standard clients
+never send it; without a level each coding uses its default. A level outside a
+coding's range is clamped to it, `snappy` has no levels and ignores one, and a
+malformed one (`zstd(x)`, `zstd(1`) answers `400 Bad Request`. The response
+names the bare coding (`Content-Encoding: zstd`), since decoding does not
+depend on the level.
+
+| Coding | Levels | Default |
+|---|---|---|
+| `zstd` | negative (fastest) to 22 | 3 |
+| `br` | 0 to 11 | 5 |
+| `gzip`, `deflate` | 0 (store) to 9 | 6 |
+| `zxc` | 1 to 7 | 3 |
+| `lz4` | 0 (fast) to 12 (high compression) | 0 |
+
+A request body's `Content-Encoding` may carry a level too; it is ignored.
+
 ## Compressed request bodies
 
 A request body sent with `Content-Encoding` is decompressed once the request
@@ -46,7 +68,10 @@ is authenticated, before it reaches the endpoint, so every API accepts
 compressed bodies the same way. The field may list up to two codings in the
 order they were applied (`Content-Encoding: gzip, zstd`); `identity` is
 ignored, and the tokens are case-insensitive. A decompressed body is held to
-the same size limit as an uncompressed one (64 MiB).
+the same size limit as an uncompressed one (64 MiB). A `zstd` body must use a
+window of at most 8 MiB, the limit RFC 8878 sets for HTTP: levels 1 to 19
+fit, while `--ultra` levels and frames made with `--long` or a larger
+`--window` are rejected.
 
 ## Rejected requests
 
@@ -59,7 +84,7 @@ the same size limit as an uncompressed one (64 MiB).
 | `Content-Encoding` | Response |
 |---|---|
 | a coding we do not have (`compress`), or more than two codings | `415 Unsupported Media Type` |
-| a body that is corrupt or truncated for its coding | `400 Bad Request` |
+| a body that is corrupt or truncated for its coding, or a `zstd` window above 8 MiB | `400 Bad Request` |
 | a body that decompresses past the body size limit | `413 Content Too Large` |
 
 These errors are answered after authentication and before the endpoint runs, as

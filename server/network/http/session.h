@@ -634,7 +634,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           break;
         }
         if (negotiated.coding != nullptr) {
-          writer.SetContentCoding(*negotiated.coding);
+          writer.SetContentCoding(*negotiated.coding, negotiated.level);
         }
         if (_max_conn != 0 && _active &&
             _active->load(std::memory_order_relaxed) > _max_conn) {

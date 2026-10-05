@@ -76,8 +76,10 @@ class HttpResponseWriter {
   // The content-coding negotiated from Accept-Encoding; set before the head.
   // Bodies are compressed unless the response is HEAD, bodiless, or a fixed
   // body under kMinCompressBytes.
-  void SetContentCoding(const ContentCoding& coding) noexcept {
+  void SetContentCoding(const ContentCoding& coding,
+                        std::optional<int> level = {}) noexcept {
     _coding = &coding;
+    _level = level;
   }
 
   // --- one-shot responses -------------------------------------------------
@@ -100,7 +102,7 @@ class HttpResponseWriter {
     // encoding is never smaller) would re-enter here forever.
     if (_encoder == nullptr && ShouldEncode(status, body.size())) {
       std::string compressed;
-      auto encoder = _coding->make();
+      auto encoder = _coding->make(_level);
       encoder->Encode(body, true,
                       [&](std::string_view out) { compressed.append(out); });
       if (compressed.size() < body.size()) {
@@ -178,7 +180,7 @@ class HttpResponseWriter {
   void WriteHeadChunked(HttpStatus status, std::string_view content_type,
                         std::string_view extra_headers = {}) {
     if (_encoder == nullptr && ShouldEncode(status, kMinCompressBytes)) {
-      _encoder = _coding->make();
+      _encoder = _coding->make(_level);
     }
     EncodeHead(status, content_type, nullptr, extra_headers);
     _state = State::kChunkedBody;
@@ -335,6 +337,7 @@ class HttpResponseWriter {
   message::Buffer& _send;
   ResponseSink& _sink;
   const ContentCoding* _coding = nullptr;
+  std::optional<int> _level;
   std::unique_ptr<ContentEncoder> _encoder;
   // The in-progress chunk's Writer (live between BeginChunk and EndChunk).
   std::optional<message::Writer> _chunk;

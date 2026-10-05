@@ -22,34 +22,44 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string_view>
 
 #include "network/http/compression.h"
+#include "server/utils/thread_local_pool.h"
 
 namespace sdb::network::http {
 
 inline constexpr size_t kOutBlock = 16 * 1024;
+
+inline int ClampLevel(std::optional<int> level, int fallback, int min,
+                      int max) {
+  return std::clamp(level.value_or(fallback), min, max);
+}
 
 [[noreturn]] void ThrowCodecError(std::string_view coding,
                                   std::string_view detail);
 [[noreturn]] void ThrowCorrupt(std::string_view coding,
                                std::string_view detail);
 
-std::unique_ptr<ContentEncoder> MakeGzipEncoder();
+std::unique_ptr<ContentEncoder> MakeGzipEncoder(std::optional<int> level);
 std::unique_ptr<ContentDecoder> MakeGzipDecoder();
-std::unique_ptr<ContentEncoder> MakeZstdEncoder();
+std::unique_ptr<ContentEncoder> MakeDeflateEncoder(std::optional<int> level);
+std::unique_ptr<ContentDecoder> MakeDeflateDecoder();
+std::unique_ptr<ContentEncoder> MakeZstdEncoder(std::optional<int> level);
 std::unique_ptr<ContentDecoder> MakeZstdDecoder();
-std::unique_ptr<ContentEncoder> MakeLz4Encoder();
+std::unique_ptr<ContentEncoder> MakeLz4Encoder(std::optional<int> level);
 std::unique_ptr<ContentDecoder> MakeLz4Decoder();
-std::unique_ptr<ContentEncoder> MakeZxcEncoder();
+std::unique_ptr<ContentEncoder> MakeZxcEncoder(std::optional<int> level);
 std::unique_ptr<ContentDecoder> MakeZxcDecoder();
-std::unique_ptr<ContentEncoder> MakeBrotliEncoder();
+std::unique_ptr<ContentEncoder> MakeBrotliEncoder(std::optional<int> level);
 std::unique_ptr<ContentDecoder> MakeBrotliDecoder();
-std::unique_ptr<ContentEncoder> MakeSnappyEncoder();
+std::unique_ptr<ContentEncoder> MakeSnappyEncoder(std::optional<int> level);
 std::unique_ptr<ContentDecoder> MakeSnappyDecoder();
 
 }  // namespace sdb::network::http

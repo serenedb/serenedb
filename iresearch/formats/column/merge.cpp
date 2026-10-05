@@ -125,15 +125,17 @@ void SampleDictionary(std::span<const MergeSource> sources, field_id id,
     const auto& range = ranges[r];
     auto state = range.col->InitScan(ctxs[range.source]);
     uint64_t row = target - base;
+    const uint64_t stop =
+      std::min(range.rows, total * (w + 1) / kSampleWindows - base);
     range.col->Skip(state, row);
     ColumnReader::VectorScratch scratch{range.col->Type()};
     seen.clear();
     size_t bytes = 0;
-    for (size_t v = 0; v < kSampleWindowVectors && row < range.rows &&
-                       bytes < kSampleWindowBytes;
+    for (size_t v = 0;
+         v < kSampleWindowVectors && row < stop && bytes < kSampleWindowBytes;
          ++v) {
       const auto take =
-        std::min<duckdb::idx_t>(range.rows - row, STANDARD_VECTOR_SIZE);
+        std::min<duckdb::idx_t>(stop - row, STANDARD_VECTOR_SIZE);
       auto& batch = scratch.Reset();
       range.col->Scan(state, batch, take);
       duckdb::UnifiedVectorFormat format;

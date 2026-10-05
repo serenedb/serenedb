@@ -31,6 +31,7 @@
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
+#include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
@@ -52,6 +53,7 @@
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "connector/column_id.h"
+#include "connector/inverted_index_bind.h"
 #include "connector/primary_key.h"
 #include "connector/scan/scan_bind.h"
 #include "query/config.h"
@@ -132,6 +134,31 @@ duckdb::Identifier FreePkSequenceName(duckdb::CatalogTransaction transaction,
   return candidate;
 }
 
+void ValidateKey(const duckdb::TableCatalogEntry& table,
+                 const duckdb::CreateTableInfo& base) {
+  for (const auto& constraint : base.constraints) {
+    if (constraint->type != duckdb::ConstraintType::UNIQUE) {
+      continue;
+    }
+    if (!constraint->Cast<duckdb::UniqueConstraint>().IsPrimaryKey()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("unique constraint on a search-backed table is "
+                              "not yet supported"));
+    }
+  }
+  for (const auto index : connector::primary_key::KeyColumns(table)) {
+    const auto& column = table.GetColumn(index);
+    const auto label = column.Name().GetIdentifierName();
+    if (column.Type().IsNested()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                      ERR_MSG("Column '", label, "' has unsupported type ",
+                              column.Type().ToString(),
+                              " and can not be indexed"));
+    }
+    connector::ValidateTermDictKey(label, column.Type(), /*opclass=*/{});
+  }
+}
+
 std::shared_ptr<const InvertedIndexConfig> PrimaryKeyConfig(
   const duckdb::TableCatalogEntry& table) {
   auto config = std::make_shared<InvertedIndexConfig>();
@@ -181,6 +208,7 @@ SearchTableEntry::SearchTableEntry(
   dependencies = info.dependencies;
   if (base.oid == 0) {
     BindOptions(*transaction.context, base.options);
+    ValidateKey(*this, base);
   }
   _options = ResolveOptions(base.options);
   if (const auto tag = tags.find(std::string{kGeneratedPkSequenceTag});
@@ -376,13 +404,14 @@ void SearchTableEntry::BindUpdateConstraints(duckdb::Binder&,
   // iresearch cannot edit a document in place, so every update rewrites the
   // whole row.
   update.update_is_del_and_insert = true;
-  update.update_column_count = 0;
+  const auto set_list_size = update.columns.size();
   duckdb::physical_index_set_t all_columns;
   for (const auto& column : GetColumns().Physical()) {
     all_columns.insert(column.Physical());
   }
   duckdb::LogicalUpdate::BindExtraColumns(*this, get, proj, update,
                                           all_columns);
+  update.update_column_count = set_list_size;
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
@@ -437,6 +466,35 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
     return duckdb::TableCatalogEntry::AlterEntry(context, info);
   }
   auto& alter = info.Cast<duckdb::AlterTableInfo>();
+  // A search table has a fixed iresearch schema, so structural ALTERs are
+  // rejected. Renames (table/column/constraint) are catalog-only metadata --
+  // iresearch fields and the scan are keyed by column id, not name -- so they
+  // stay allowed.
+  std::string_view unsupported;
+  switch (alter.alter_table_type) {
+    case duckdb::AlterTableType::ADD_COLUMN:
+      unsupported = "ALTER TABLE ADD COLUMN";
+      break;
+    case duckdb::AlterTableType::REMOVE_COLUMN:
+      unsupported = "ALTER TABLE DROP COLUMN";
+      break;
+    case duckdb::AlterTableType::ADD_CONSTRAINT:
+      unsupported = "ALTER TABLE ADD CONSTRAINT";
+      break;
+    case duckdb::AlterTableType::DROP_CONSTRAINT:
+      unsupported = "ALTER TABLE DROP CONSTRAINT";
+      break;
+    case duckdb::AlterTableType::ALTER_COLUMN_TYPE:
+      unsupported = "ALTER TABLE ALTER COLUMN TYPE";
+      break;
+    default:
+      break;
+  }
+  if (!unsupported.empty()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG(unsupported, " on a search-backed table is not yet supported"));
+  }
   if (alter.alter_table_type != duckdb::AlterTableType::SET_TABLE_OPTIONS &&
       alter.alter_table_type != duckdb::AlterTableType::RESET_TABLE_OPTIONS) {
     return duckdb::TableCatalogEntry::AlterEntry(context, info);

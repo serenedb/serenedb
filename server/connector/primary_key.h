@@ -75,4 +75,16 @@ inline duckdb::string_t GeneratedKeyTerm(uint64_t generated_id) noexcept {
 // The leading bytes every row key of one source file shares.
 std::string PkFilePrefix(uint64_t file_id);
 
+// The chunk slot a declared-key column arrives in, with the name to report it
+// under.
+struct KeySlot {
+  duckdb::idx_t input_col_idx;
+  std::string name;
+};
+
+std::vector<KeySlot> KeySlots(const duckdb::TableCatalogEntry& entry);
+
+void VerifyNotNull(duckdb::DataChunk& chunk, std::span<const KeySlot> slots,
+                   duckdb::idx_t count);
+
 }  // namespace sdb::connector::primary_key

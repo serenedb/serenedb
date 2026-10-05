@@ -49,6 +49,7 @@
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
@@ -66,6 +67,7 @@ struct SearchInsertGlobalState final : duckdb::GlobalSinkState {
   query::Transaction* sdb_txn = nullptr;
   std::vector<ColumnId> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
+  std::vector<primary_key::KeySlot> pk_slots;
   duckdb::optional_ptr<duckdb::SequenceCatalogEntry> generated_pk_seq;
   std::shared_lock<std::shared_mutex> table_lock;
   uint64_t write_buffer_max_bytes = 0;
@@ -142,6 +144,7 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
     state->column_ids.emplace_back(column.Oid());
   }
   state->chunk_types = columns.GetColumnTypes();
+  state->pk_slots = primary_key::KeySlots(*table);
   state->generated_pk_seq = table->GeneratedPkSequence(context);
   SDB_ASSERT(state->generated_pk_seq);
   state->write_buffer_max_bytes = state->search_table->GetWriteBufferMaxBytes();
@@ -190,6 +193,7 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
   if (num_rows == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
+  primary_key::VerifyNotNull(chunk, gstate.pk_slots, num_rows);
   auto& search_txn = gstate.sdb_txn->SearchTxn();
   const uint64_t pk_base = gstate.generated_pk_seq->NextValues(
     duckdb::DuckTransaction::Get(context.client,

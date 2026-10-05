@@ -25,6 +25,7 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <memory>
+#include <string_view>
 
 #include "catalog/entry/inverted_index.h"
 
@@ -44,5 +45,9 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>&
     bound_expressions,
   const duckdb::LogicalType& generated_pk_type);
+
+void ValidateTermDictKey(std::string_view label,
+                         const duckdb::LogicalType& type,
+                         std::string_view opclass);
 
 }  // namespace sdb::connector

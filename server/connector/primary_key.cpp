@@ -21,6 +21,8 @@
 #include "connector/primary_key.h"
 
 #include <duckdb/parser/constraints/unique_constraint.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "connector/key_encoding.h"
 
@@ -51,6 +53,34 @@ void Create(std::span<const duckdb::UnifiedVectorFormat> formats,
             std::string& key) {
   for (size_t i = 0; i != columns.size(); ++i) {
     key_encoding::AppendScalarValue(key, formats[i], row, columns[i].type);
+  }
+}
+
+std::vector<KeySlot> KeySlots(const duckdb::TableCatalogEntry& entry) {
+  const auto& columns = entry.GetColumns();
+  std::vector<KeySlot> slots;
+  for (const auto index : KeyColumns(entry)) {
+    const auto& column = columns.GetColumn(index);
+    slots.emplace_back(static_cast<duckdb::idx_t>(index.index),
+                       column.Name().GetIdentifierName());
+  }
+  return slots;
+}
+
+void VerifyNotNull(duckdb::DataChunk& chunk, std::span<const KeySlot> slots,
+                   duckdb::idx_t count) {
+  if (count == 0) {
+    return;
+  }
+  duckdb::UnifiedVectorFormat format;
+  for (const auto& slot : slots) {
+    chunk.data[slot.input_col_idx].ToUnifiedFormat(count, format);
+    if (format.validity.CheckAllValid(count)) {
+      continue;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NOT_NULL_VIOLATION),
+                    ERR_MSG("null value in column \"", slot.name,
+                            "\" violates not-null constraint"));
   }
 }
 

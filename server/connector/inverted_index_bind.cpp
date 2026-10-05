@@ -691,37 +691,6 @@ void FillEntryFromTokenizer(const catalog::TokenizerCatalogEntry& dict,
   }
 }
 
-void ValidateTermDictKey(std::string_view label,
-                         const duckdb::LogicalType& type,
-                         std::string_view opclass) {
-  const auto kind = type.id();
-  const auto unsupported = [&]() -> void {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
-                    ERR_MSG("Column '", label, "' has unsupported type ",
-                            type.ToString(), " and can not be indexed"));
-  };
-
-  if (kind == duckdb::LogicalTypeId::LIST ||
-      kind == duckdb::LogicalTypeId::ARRAY) {
-    const auto child = (kind == duckdb::LogicalTypeId::LIST
-                          ? duckdb::ListType::GetChildType(type)
-                          : duckdb::ArrayType::GetChildType(type))
-                         .id();
-    if (child == duckdb::LogicalTypeId::GEOMETRY ||
-        !term_dict::IsSupported(term_dict::Classify(child))) {
-      unsupported();
-    }
-    return;
-  }
-
-  if (!term_dict::IsSupported(term_dict::Classify(kind))) {
-    unsupported();
-  }
-  if (kind == duckdb::LogicalTypeId::GEOMETRY && opclass.empty()) {
-    unsupported();
-  }
-}
-
 void ValidateIncludedKey(std::string_view label,
                          const duckdb::LogicalType& type) {
   using enum duckdb::LogicalTypeId;
@@ -1163,6 +1132,37 @@ void DeriveKeys(
 }
 
 }  // namespace
+
+void ValidateTermDictKey(std::string_view label,
+                         const duckdb::LogicalType& type,
+                         std::string_view opclass) {
+  const auto kind = type.id();
+  const auto unsupported = [&]() -> void {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                    ERR_MSG("Column '", label, "' has unsupported type ",
+                            type.ToString(), " and can not be indexed"));
+  };
+
+  if (kind == duckdb::LogicalTypeId::LIST ||
+      kind == duckdb::LogicalTypeId::ARRAY) {
+    const auto child = (kind == duckdb::LogicalTypeId::LIST
+                          ? duckdb::ListType::GetChildType(type)
+                          : duckdb::ArrayType::GetChildType(type))
+                         .id();
+    if (child == duckdb::LogicalTypeId::GEOMETRY ||
+        !term_dict::IsSupported(term_dict::Classify(child))) {
+      unsupported();
+    }
+    return;
+  }
+
+  if (!term_dict::IsSupported(term_dict::Classify(kind))) {
+    unsupported();
+  }
+  if (kind == duckdb::LogicalTypeId::GEOMETRY && opclass.empty()) {
+    unsupported();
+  }
+}
 
 std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
   duckdb::ClientContext& context, const duckdb::IndexCatalogEntry& entry,

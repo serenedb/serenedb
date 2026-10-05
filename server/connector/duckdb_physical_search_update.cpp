@@ -54,6 +54,7 @@ struct SearchUpdateGlobalState final : duckdb::GlobalSinkState {
   duckdb::optional_ptr<duckdb::SequenceCatalogEntry> generated_pk_seq;
 
   std::vector<primary_key::PKColumn> old_pk_columns;
+  std::vector<primary_key::KeySlot> pk_slots;
 
   std::shared_lock<std::shared_mutex> table_lock;
   uint64_t write_buffer_max_bytes = 0;
@@ -73,13 +74,15 @@ SereneDBSearchUpdate::SereneDBSearchUpdate(
   duckdb::vector<duckdb::PhysicalIndex> columns,
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions,
   duckdb::vector<duckdb::LogicalType> types,
-  duckdb::idx_t estimated_cardinality, bool return_chunk)
+  duckdb::idx_t estimated_cardinality, bool return_chunk,
+  bool updates_key_columns)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              std::move(types), estimated_cardinality),
     _table(table),
     _columns(std::move(columns)),
     _expressions(std::move(expressions)),
-    _return_chunk(return_chunk) {}
+    _return_chunk(return_chunk),
+    _updates_key_columns(updates_key_columns) {}
 
 duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
@@ -96,6 +99,7 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
     state->column_ids.emplace_back(column.Oid());
   }
   state->chunk_types = columns.GetColumnTypes();
+  state->pk_slots = primary_key::KeySlots(_table);
   state->write_buffer_max_bytes = state->search_table->GetWriteBufferMaxBytes();
 
   const auto p = state->column_ids.size();
@@ -138,6 +142,11 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   auto& gstate = input.global_state.Cast<SearchUpdateGlobalState>();
   const auto num_rows = chunk.size();
 
+  duckdb::DataChunk new_row;
+  new_row.InitializeEmpty(gstate.chunk_types);
+  new_row.ReferenceColumns(chunk, gstate.new_row_src);
+  primary_key::VerifyNotNull(new_row, gstate.pk_slots, num_rows);
+
   // Buffered, not removed here: the removal reaches iresearch when the write
   // buffer is replayed, ordered against exactly the rows that precede it. The
   // new row is buffered straight after, so it still outranks the removal of the
@@ -153,10 +162,6 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
     old_rows.push_back(old_pk_data[old_pk.sel->get_index(row)]);
   }
   gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, old_rows);
-
-  duckdb::DataChunk new_row;
-  new_row.InitializeEmpty(gstate.chunk_types);
-  new_row.ReferenceColumns(chunk, gstate.new_row_src);
 
   const uint64_t pk_base = gstate.generated_pk_seq->NextValues(
     duckdb::DuckTransaction::Get(context.client,

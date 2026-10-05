@@ -245,9 +245,25 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   if (!entry) {
     return duckdb::DuckCatalog::PlanUpdate(context, planner, op, plan);
   }
+  SDB_ASSERT(op.update_column_count != 0,
+             "search UPDATE lost its SET-list size; carry the flag on "
+             "LogicalUpdate instead");
+  SDB_ASSERT(op.update_column_count <= op.columns.size(),
+             "SET-list size exceeds the widened update column list");
+  const auto& columns = entry->GetColumns();
+  const bool updates_key_columns = absl::c_any_of(
+    connector::primary_key::KeyColumns(*entry), [&](auto key) {
+      const auto physical = columns.GetColumn(key).Physical();
+      for (duckdb::idx_t i = 0; i < op.update_column_count; ++i) {
+        if (op.columns[i] == physical) {
+          return true;
+        }
+      }
+      return false;
+    });
   auto& update = planner.Make<connector::SereneDBSearchUpdate>(
     *entry, op.columns, std::move(op.expressions), op.types,
-    op.estimated_cardinality, op.return_chunk);
+    op.estimated_cardinality, op.return_chunk, updates_key_columns);
   update.children.emplace_back(plan);
   return update;
 }

@@ -1855,6 +1855,7 @@ bool TryDispatchTokenizeCast(BoolTarget parent, const FilterContext& ctx,
     if (val && !val->IsNull() &&
         val->type().id() == duckdb::LogicalTypeId::VARCHAR) {
       RejectSlopOnNonPhrase(ctx);
+      TakeMinMatch(ctx);
       BuildFtsTerm(parent, ctx, column_info, *val);
       return true;
     }

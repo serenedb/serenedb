@@ -259,7 +259,8 @@ struct TSQueryStructWriter {
       min_match{
         duckdb::StructVector::GetEntries(result)[kTSQueryMinMatchChild]} {}
 
-  void Write(duckdb::idx_t row, const TSQueryRowView& parts) {
+  template<typename Str>
+  void Write(duckdb::idx_t row, const TSQueryFields<Str>& parts) {
     WriteStr(text, row, parts.text);
     WriteStr(tokenizer, row, parts.tokenizer);
     WriteFlat(boost, row, parts.boost);
@@ -1229,6 +1230,11 @@ void RegisterTSQueryConstantFolding(duckdb::ExtensionLoader& loader) {
 
 duckdb::LogicalType MakeTSQueryType() {
   return MakeTSQueryStructType(kTSQueryTypeName);
+}
+
+void WriteTSQueryRow(duckdb::Vector& result, duckdb::idx_t row,
+                     const TSQueryParts& parts) {
+  TSQueryStructWriter{result}.Write(row, parts);
 }
 
 void RecordWrittenMinMatchBranches(duckdb::Expression& expr) {

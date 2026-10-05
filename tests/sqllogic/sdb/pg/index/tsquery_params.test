@@ -739,7 +739,7 @@ DROP TEXT SEARCH DICTIONARY tqp_english;
 
 # A tsquery value reaches the client two ways -- the pgwire row serializer for a
 # tsquery-typed column, and the TSQUERY -> VARCHAR cast -- and both must render
-# the same six fields. The row serializer used to read five of them, silently
+# the same seven fields. The row serializer used to read five of them, silently
 # dropping ::merge, so the same value printed differently depending on how it
 # was returned.
 
@@ -757,6 +757,22 @@ SELECT ('fox'::tsquery)::slop(3)::merge('sum') AS wire,
 ----
 wire	cast
 'fox'::slop(3)::merge('sum')	'fox'::slop(3)::merge('sum')
+
+
+query
+SELECT ('fox red'::tsquery)::min_match(2) AS wire,
+       ('fox red'::tsquery)::min_match(2)::VARCHAR AS cast;
+----
+wire	cast
+'fox red'::min_match(2)	'fox red'::min_match(2)
+
+
+query
+SELECT ('fox red'::tsquery)::boost(2)::merge('max')::min_match(2) AS wire,
+       ('fox red'::tsquery)::boost(2)::merge('max')::min_match(2)::VARCHAR AS cast;
+----
+wire	cast
+('fox red'::tsquery ^ 2)::merge('max')::min_match(2)	('fox red'::tsquery ^ 2)::merge('max')::min_match(2)
 
 
 # An unmodified value still renders as its bare text, in both paths.

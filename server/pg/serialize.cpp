@@ -1534,36 +1534,24 @@ std::string RenderTsqueryRow(const duckdb::RecursiveUnifiedVectorFormat& vdata,
       duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(unified)[idx];
     return std::string{raw.GetData(), raw.GetSize()};
   };
+  const auto read_flat = [&]<typename T>(duckdb::idx_t child, T fallback) {
+    const auto& unified = vdata.children[child].unified;
+    const auto idx = unified.sel->get_index(row);
+    if (!unified.validity.RowIsValid(idx)) {
+      return fallback;
+    }
+    return duckdb::UnifiedVectorFormat::GetData<T>(unified)[idx];
+  };
   connector::TSQueryParts parts;
   parts.text = read_string(connector::kTSQueryTextChild);
   parts.tokenizer = read_string(connector::kTSQueryTokenizerChild);
   parts.scorer = read_string(connector::kTSQueryScorerChild);
-  const auto& boost_child =
-    vdata.children[connector::kTSQueryBoostChild].unified;
-  if (const auto idx = boost_child.sel->get_index(row);
-      boost_child.validity.RowIsValid(idx)) {
-    parts.boost = duckdb::UnifiedVectorFormat::GetData<float>(boost_child)[idx];
-  }
-  const auto& slop_child = vdata.children[connector::kTSQuerySlopChild].unified;
-  if (const auto idx = slop_child.sel->get_index(row);
-      slop_child.validity.RowIsValid(idx)) {
-    parts.slop =
-      duckdb::UnifiedVectorFormat::GetData<uint16_t>(slop_child)[idx];
-  }
-  const auto& merge_child =
-    vdata.children[connector::kTSQueryMergeChild].unified;
-  if (const auto idx = merge_child.sel->get_index(row);
-      merge_child.validity.RowIsValid(idx)) {
-    parts.merge = static_cast<connector::TSQueryMerge>(
-      duckdb::UnifiedVectorFormat::GetData<uint8_t>(merge_child)[idx]);
-  }
-  const auto& min_match_child =
-    vdata.children[connector::kTSQueryMinMatchChild].unified;
-  if (const auto idx = min_match_child.sel->get_index(row);
-      min_match_child.validity.RowIsValid(idx)) {
-    parts.min_match =
-      duckdb::UnifiedVectorFormat::GetData<uint32_t>(min_match_child)[idx];
-  }
+  parts.boost = read_flat(connector::kTSQueryBoostChild, parts.boost);
+  parts.slop = read_flat(connector::kTSQuerySlopChild, parts.slop);
+  parts.merge = static_cast<connector::TSQueryMerge>(read_flat(
+    connector::kTSQueryMergeChild, static_cast<uint8_t>(parts.merge)));
+  parts.min_match =
+    read_flat(connector::kTSQueryMinMatchChild, parts.min_match);
   return connector::RenderTSQueryValueText(parts);
 }
 

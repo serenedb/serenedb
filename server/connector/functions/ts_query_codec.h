@@ -34,6 +34,7 @@ namespace duckdb {
 
 class ClientContext;
 class Expression;
+class Vector;
 
 }  // namespace duckdb
 namespace sdb::connector {
@@ -107,6 +108,9 @@ std::optional<TSQueryParts> TryGetTSQueryParts(const duckdb::Value& value);
 
 TSQueryParts TSQueryPartsForType(const duckdb::LogicalType& type,
                                  std::string_view text);
+
+void WriteTSQueryRow(duckdb::Vector& result, duckdb::idx_t row,
+                     const TSQueryParts& parts);
 
 duckdb::Value MakeTSQueryValue(const duckdb::LogicalType& type,
                                std::string_view text);

@@ -50,7 +50,6 @@
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
 #include "connector/duckdb_client_state.h"
-#include "network/credentials.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
 
@@ -296,13 +295,7 @@ void ClusterCatalog::Bootstrap(duckdb::ClientContext& context) {
                    RoleOption::BypassRls;
     if (const char* password = std::getenv("POSTGRES_PASSWORD");
         password && *password) {
-      auto verifier = network::BuildScramVerifierString(password);
-      if (!verifier) {
-        SDB_FATAL(GENERAL,
-                  "could not derive a password verifier from "
-                  "POSTGRES_PASSWORD");
-      }
-      info.password = std::move(*verifier);
+      info.password = password;
       SDB_INFO(GENERAL, "bootstrap: initial password set for role '", kRootRole,
                "' from POSTGRES_PASSWORD");
     }
@@ -319,106 +312,17 @@ void ClusterCatalog::Bootstrap(duckdb::ClientContext& context) {
   }
 }
 
-namespace {
-
-void RequireUnreservedRoleName(const duckdb::Identifier& name) {
-  if (name.GetIdentifierName().starts_with("pg_")) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_RESERVED_NAME),
-      ERR_MSG("role name \"", name.GetIdentifierName(), "\" is reserved"),
-      ERR_DETAIL("Role names starting with \"pg_\" are reserved."));
-  }
-}
-
-std::string StoredPassword(std::string_view password) {
-  if (network::IsScramVerifier(password) || network::IsMd5Verifier(password)) {
-    return std::string{password};
-  }
-  auto verifier = network::BuildScramVerifierString(password);
-  if (!verifier) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("could not hash the password"));
-  }
-  return *verifier;
-}
-
-ConnectionContext* SessionOf(duckdb::CatalogTransaction transaction) {
-  return transaction.HasContext()
-           ? connector::GetSereneDBContextPtr(transaction.GetContext())
-           : nullptr;
-}
-
-duckdb::idx_t GrantorOf(duckdb::CatalogTransaction transaction) {
-  auto* session = SessionOf(transaction);
-  if (!session ||
-      auth::ClosureFor(&transaction.GetContext(), session->GetRoleId())
-        ->is_superuser) {
-    return pg::kRootUser;
-  }
-  return session->GetRoleId();
-}
-
-void ResolveAlterRole(ClusterCatalog& cluster,
-                      duckdb::CatalogTransaction transaction,
-                      duckdb::AlterRoleInfo& info) {
-  if (!info.new_name.empty()) {
-    RequireUnreservedRoleName(info.new_name);
-  }
-  if (info.set_password) {
-    info.password =
-      info.null_password ? std::string{} : StoredPassword(info.password);
-  }
-  auto& roles = cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY);
-  auto role = roles.GetEntry(transaction, info.GetQualifiedName().Name());
-  if (!role) {
-    return;
-  }
-  if (!info.new_name.empty()) {
-    auto* session = SessionOf(transaction);
-    if (session && (role->oid == session->GetRoleId() ||
-                    role->oid == session->GetSessionRoleId())) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      ERR_MSG("session user cannot be renamed"));
-    }
-    if (role->oid == pg::kRootUser) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_OBJECT_IN_USE),
-        ERR_MSG("cannot rename role \"", role->name.GetIdentifierName(),
-                "\" because it is required by the database system"));
-    }
-  }
-  if (info.grant_role.empty() || info.grant_role_id != 0) {
-    return;
-  }
-  const duckdb::Identifier granted{info.grant_role};
-  auto target = roles.GetEntry(transaction, granted);
-  if (!target) {
-    throw duckdb::CatalogException::MissingEntry(
-      duckdb::CatalogType::ROLE_ENTRY, granted, std::string{});
-  }
-  if (!info.revoke && (role->oid == target->oid ||
-                       auth::ComputeRoleClosure(
-                         *auth::RolesOf(&transaction.GetContext()), target->oid)
-                         .IsMember(role->oid))) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_GRANT_OPERATION),
-                    ERR_MSG("role \"", target->name.GetIdentifierName(),
-                            "\" is a member of role \"",
-                            role->name.GetIdentifierName(), "\""));
-  }
-  info.grant_role_id = target->oid;
-  if (!info.grantor_id) {
-    info.grantor_id = GrantorOf(transaction);
-  }
-}
-
-}  // namespace
-
-duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
-  duckdb::CatalogTransaction transaction, duckdb::CreateRoleInfo& info) {
+duckdb::unique_ptr<duckdb::InCatalogEntry> ClusterCatalog::MakeRoleEntry(
+  duckdb::CreateRoleInfo& info) {
   RequireUnreservedRoleName(info.GetQualifiedName().Name());
   if (!info.password.empty()) {
     info.password = StoredPassword(info.password);
   }
+  return duckdb::make_uniq<RoleCatalogEntry>(*this, info);
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
+  duckdb::CatalogTransaction transaction, duckdb::CreateRoleInfo& info) {
   DeclareModified(transaction, *this);
   auto role = duckdb::DuckCatalog::CreateRole(transaction, info);
   if (!role) {
@@ -440,9 +344,11 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
   for (const auto& name : info.admin_members) {
     grant(name, role->name, true);
   }
-  if (const auto creator = GrantorOf(transaction); creator != pg::kRootUser) {
-    duckdb::AlterRoleInfo alter{duckdb::Identifier{
-      auth::RolesOf(&transaction.GetContext())->NameOf(creator)}};
+  auto& context = transaction.GetContext();
+  if (const auto creator = GrantorOfMembership(context);
+      creator != pg::kRootUser) {
+    duckdb::AlterRoleInfo alter{
+      duckdb::Identifier{auth::RolesOf(&context)->NameOf(creator)}};
     alter.grant_role = role->name.GetIdentifierName();
     alter.grantor_id = pg::kRootUser;
     alter.admin_option = true;
@@ -459,7 +365,10 @@ void ClusterCatalog::DropRole(duckdb::CatalogTransaction transaction,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   auto& roles = GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY);
   if (auto role = roles.GetEntry(transaction, info.GetQualifiedName().Name())) {
-    auto* session = SessionOf(transaction);
+    auto* session =
+      transaction.HasContext()
+        ? connector::GetSereneDBContextPtr(transaction.GetContext())
+        : nullptr;
     if (session && (role->oid == session->GetRoleId() ||
                     role->oid == session->GetSessionRoleId() ||
                     role->oid == session->GetLoginRoleId())) {
@@ -493,9 +402,6 @@ void ClusterCatalog::DropRole(duckdb::CatalogTransaction transaction,
 
 void ClusterCatalog::Alter(duckdb::CatalogTransaction transaction,
                            duckdb::AlterInfo& info) {
-  if (info.type == duckdb::AlterType::ALTER_ROLE) {
-    ResolveAlterRole(*this, transaction, info.Cast<duckdb::AlterRoleInfo>());
-  }
   DeclareModified(transaction, *this);
   const auto type = info.GetCatalogType();
   const auto& name = info.GetQualifiedName().Name();

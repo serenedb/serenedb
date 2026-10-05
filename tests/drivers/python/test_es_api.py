@@ -343,6 +343,34 @@ def test_bulk_after_index_recreated(conn):
         _request(conn, "DELETE", f"/{name}")
 
 
+def test_bulk_alternating_indexes(conn):
+    names = [f"drv_es_alt_{i}" for i in range(3)]
+    for name in names:
+        _request(conn, "DELETE", f"/{name}")
+        status, _ = _request(conn, "PUT", f"/{name}", MAPPINGS)
+        assert status == 200
+    try:
+        for round_ in range(3):
+            for name in names:
+                status, body = _bulk(
+                    conn, name, '{"index":{}}\n{"year":%d}\n' % round_,
+                    refresh=True)
+                assert status == 200 and body["errors"] is False, body
+        _request(conn, "DELETE", f"/{names[0]}")
+        status, _ = _request(conn, "PUT", f"/{names[0]}", {
+            "mappings": {"properties": {"code": {"type": "keyword"}}}})
+        assert status == 200
+        status, body = _bulk(conn, names[0], '{"index":{}}\n{"code":"x"}\n',
+                             refresh=True)
+        assert status == 200 and body["errors"] is False, body
+        for name, count in zip(names, (1, 3, 3)):
+            status, body = _request(conn, "GET", f"/{name}/_count")
+            assert body["count"] == count, name
+    finally:
+        for name in names:
+            _request(conn, "DELETE", f"/{name}")
+
+
 def test_bulk_bare_url_with_line_index(conn, index):
     """helpers.bulk posts to bare /_bulk and routes via per-line _index."""
     payload = (

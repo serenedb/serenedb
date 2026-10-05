@@ -59,6 +59,7 @@
 #include "network/http/auth.h"
 #include "network/http/common.h"
 #include "network/http/h1_codec.h"
+#include "network/http/prepared_source.h"
 #include "network/http/response_writer.h"
 #include "network/http/router.h"
 #include "network/io_executor.h"
@@ -235,10 +236,10 @@ class HttpSession final
     }
   }
 
-  PreparedEntry& PreparedSlot(PreparedSlotId slot) final {
+  PreparedEntry& PreparedSlot(PreparedSlotId slot, std::string_view sql) final {
     const auto index = static_cast<size_t>(slot);
     SDB_ASSERT(index < _prepared.size());
-    return _prepared[index];
+    return _prepared[index].Get(sql, PreparedSlotCapacity(slot));
   }
 
   std::string_view User() const final { return _user; }
@@ -378,7 +379,7 @@ class HttpSession final
   std::shared_ptr<ConnectionContext> _connection_ctx;
   // Statements prepared on _conn; declared after it so they are destroyed
   // first.
-  std::array<PreparedEntry, kPreparedSlots> _prepared;
+  std::array<PreparedCache, kPreparedSlots> _prepared;
   std::string _user;
   std::string _conn_user;
 };

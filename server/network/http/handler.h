@@ -25,6 +25,7 @@
 #include <duckdb/main/query_result.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <string>
+#include <string_view>
 #include <yaclib/async/future.hpp>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/coro.hpp>
@@ -56,6 +57,12 @@ enum class PreparedSlotId : uint8_t {
 inline constexpr size_t kPreparedSlots =
   magic_enum::enum_count<PreparedSlotId>();
 
+inline constexpr size_t kEsBulkStatements = 8;
+
+constexpr size_t PreparedSlotCapacity(PreparedSlotId slot) noexcept {
+  return slot == PreparedSlotId::EsBulk ? kEsBulkStatements : 1;
+}
+
 struct PreparedEntry {
   std::string sql;
   duckdb::unique_ptr<duckdb::PreparedStatement> statement;
@@ -83,7 +90,8 @@ class RequestContext {
     duckdb::PreparedStatement& statement) = 0;
   // A per-session slot for a statement prepared on Connection(); a handler
   // prepares into it once and re-executes it on later requests.
-  virtual PreparedEntry& PreparedSlot(PreparedSlotId slot) = 0;
+  virtual PreparedEntry& PreparedSlot(PreparedSlotId slot,
+                                      std::string_view sql) = 0;
   virtual std::string_view Schema() const = 0;
   // Authenticated user; empty = trust/anonymous.
   virtual std::string_view User() const = 0;

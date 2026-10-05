@@ -36,7 +36,9 @@ The table below shows the available mathematical operators for [numeric types](.
 
 There are two division operators: `/` and `//`.
 They are equivalent when at least one of the operands is a `FLOAT` or a `DOUBLE`.
-When both operands are integers, `//` performs integer division (`5 // 2 = 2`) and `/` follows the [`integer_division`](../../configuration/overview.md) setting: a server truncates like PostgreSQL (`5 / 2 = 2`), while `serened shell` divides as floats (`5 / 2 = 2.5`). Write `5 / 2.0` for a fractional result on both. Integer division or modulo by zero returns `NULL`.
+When both operands are integers, `//` performs integer division (`5 // 2 = 2`) and `/` follows the [`integer_division`](../../configuration/overview.md) setting: a server truncates like PostgreSQL (`5 / 2 = 2`), while `serened shell` divides as floats (`5 / 2 = 2.5`). Write `5 / 2.0` for a fractional result on both. Integer division or modulo by zero fails with a `Division by zero` error. To return `NULL` instead, wrap the expression in `TRY(...)`, or run `SET error_on_division_by_zero = false` to return `NULL` for all divisions by zero:
+
+<SqlLogicTest id="sql/functions/numeric/division_by_zero" />
 
 ### Supported Types
 

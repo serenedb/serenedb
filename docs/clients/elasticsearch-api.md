@@ -181,7 +181,7 @@ EOF
 
 - `?refresh=true`, `?refresh=wait_for` or a bare `?refresh` on a write refreshes the index before the response returns, so the new documents are searchable at once. `POST /<index>/_refresh` refreshes one index and `POST /_refresh` all of them. See [Visibility](#visibility).
 - A request body is at most 64 MiB. A larger one gets `413`.
-- The API does not decode `Content-Encoding`, so a gzip-compressed body fails. Leave request compression off in the client.
+- A request body can be compressed. A body sent with `Content-Encoding` is decompressed before the request reaches the API; see [HTTP Compression](../configuration/http_compression.md#compressed-request-bodies) for the codings and limits.
 
 ## Reading documents
 
@@ -451,7 +451,7 @@ for hit in resp["hits"]["hits"]:
 5 0.1333625465631485 Faceted search with SQL
 ```
 
-The client's defaults fit the API: `helpers.bulk` posts to `/_bulk` with `_index` on every action line, and request compression is off. The client raises its usual exceptions for the [errors](#errors) below, such as `ConflictError` for an existing ID and `NotFoundError` for a missing index.
+The client's defaults fit the API: `helpers.bulk` posts to `/_bulk` with `_index` on every action line. The client raises its usual exceptions for the [errors](#errors) below, such as `ConflictError` for an existing ID and `NotFoundError` for a missing index.
 
 ## Cluster endpoints
 
@@ -476,7 +476,6 @@ None of them reflects the real state of the server.
 - The `q` URL parameter and query clauses or parameters beyond the ones listed above.
 - `highlight`, `search_after`, `fields`, `collapse` and other search body keys beyond the ones listed above.
 - Sub-aggregations and other aggregation types.
-- Compressed request bodies.
 
 ## Errors
 

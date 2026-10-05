@@ -25,11 +25,16 @@
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/parser/parsed_data/create_role_info.hpp>
 #include <string>
+#include <string_view>
 
 namespace sdb::catalog {
 
 using RoleOption = duckdb::RoleOption;
 using duckdb::HasOption;
+
+void RequireUnreservedRoleName(const duckdb::Identifier& name);
+std::string StoredPassword(std::string_view password);
+duckdb::idx_t GrantorOfMembership(duckdb::ClientContext& context);
 
 class RoleCatalogEntry final : public duckdb::InCatalogEntry {
  public:

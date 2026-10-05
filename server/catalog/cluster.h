@@ -72,9 +72,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   void MaybeCompactCatalogLog();
 
   duckdb::unique_ptr<duckdb::InCatalogEntry> MakeRoleEntry(
-    duckdb::CreateRoleInfo& info) final {
-    return duckdb::make_uniq<RoleCatalogEntry>(*this, info);
-  }
+    duckdb::CreateRoleInfo& info) final;
   duckdb::unique_ptr<duckdb::InCatalogEntry> MakeDatabaseEntry(
     duckdb::CreateDatabaseInfo& info) final {
     return duckdb::make_uniq<DatabaseCatalogEntry>(*this, info);

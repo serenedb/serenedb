@@ -21,11 +21,51 @@
 #include "catalog/entry/role.h"
 
 #include <algorithm>
+#include <duckdb/catalog/duck_catalog.hpp>
+#include <duckdb/common/exception.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string_view>
 #include <utility>
 
+#include "auth/role_closure.h"
+#include "connector/duckdb_client_state.h"
+#include "network/credentials.h"
+#include "pg/connection_context.h"
+#include "pg/pg_types.h"
+
 namespace sdb::catalog {
+
+void RequireUnreservedRoleName(const duckdb::Identifier& name) {
+  if (name.GetIdentifierName().starts_with("pg_")) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_RESERVED_NAME),
+      ERR_MSG("role name \"", name.GetIdentifierName(), "\" is reserved"),
+      ERR_DETAIL("Role names starting with \"pg_\" are reserved."));
+  }
+}
+
+std::string StoredPassword(std::string_view password) {
+  if (network::IsScramVerifier(password) || network::IsMd5Verifier(password)) {
+    return std::string{password};
+  }
+  auto verifier = network::BuildScramVerifierString(password);
+  if (!verifier) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("could not hash the password"));
+  }
+  return *verifier;
+}
+
+duckdb::idx_t GrantorOfMembership(duckdb::ClientContext& context) {
+  auto* session = connector::GetSereneDBContextPtr(context);
+  if (!session ||
+      auth::ClosureFor(&context, session->GetRoleId())->is_superuser) {
+    return pg::kRootUser;
+  }
+  return session->GetRoleId();
+}
 
 RoleCatalogEntry::RoleCatalogEntry(duckdb::Catalog& catalog,
                                    duckdb::CreateRoleInfo& info)
@@ -76,7 +116,49 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
   if (info.type != duckdb::AlterType::ALTER_ROLE) {
     return duckdb::InCatalogEntry::AlterEntry(context, info);
   }
-  const auto& alter = info.Cast<duckdb::AlterRoleInfo>();
+  auto& alter = info.Cast<duckdb::AlterRoleInfo>();
+  if (!alter.new_name.empty()) {
+    RequireUnreservedRoleName(alter.new_name);
+    auto* session = connector::GetSereneDBContextPtr(context);
+    if (session &&
+        (oid == session->GetRoleId() || oid == session->GetSessionRoleId())) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("session user cannot be renamed"));
+    }
+    if (oid == pg::kRootUser) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_OBJECT_IN_USE),
+        ERR_MSG("cannot rename role \"", name.GetIdentifierName(),
+                "\" because it is required by the database system"));
+    }
+  }
+  if (alter.set_password) {
+    alter.password =
+      alter.null_password ? std::string{} : StoredPassword(alter.password);
+  }
+  if (!alter.grant_role.empty() && alter.grant_role_id == 0) {
+    const duckdb::Identifier granted{alter.grant_role};
+    auto target = catalog.Cast<duckdb::DuckCatalog>()
+                    .GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+                    .GetEntry(catalog.GetCatalogTransaction(context), granted);
+    if (!target) {
+      throw duckdb::CatalogException::MissingEntry(
+        duckdb::CatalogType::ROLE_ENTRY, granted, std::string{});
+    }
+    if (!alter.revoke &&
+        (oid == target->oid ||
+         auth::ComputeRoleClosure(*auth::RolesOf(&context), target->oid)
+           .IsMember(oid))) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_GRANT_OPERATION),
+        ERR_MSG("role \"", target->name.GetIdentifierName(),
+                "\" is a member of role \"", name.GetIdentifierName(), "\""));
+    }
+    alter.grant_role_id = target->oid;
+    if (!alter.grantor_id) {
+      alter.grantor_id = GrantorOfMembership(context);
+    }
+  }
   auto copy = GetInfo();
   auto& next = copy->Cast<duckdb::CreateRoleInfo>();
   next.options = (next.options | alter.set_options) & ~alter.clear_options;

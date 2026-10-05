@@ -76,7 +76,7 @@ Upstream merges pull requests as merge commits (duckdb's PR titles are the merge
 | `third_party/duckdb_inet` | duckdb/duckdb-inet | `61ce2d7245` | none | none | `61ce2d7245` |
 | `third_party/duckdb_markdown` | teaguesterling/duckdb_markdown | `5f045685e5` | none | none | `5f045685e5` |
 | `third_party/duckdb_azure` | duckdb/duckdb-azure | `951a0ab` | `v1.5-variegata` `73bd62b` | 0001-fix-azure-storage-cstdint | `5a0c59d34e` |
-| `third_party/duckdb_spatial` | duckdb/duckdb-spatial | `2b072abd2a` | `v1.5-variegata` `9bfcf30e` | all 17: 0003 to 0013 in file order, then 0007-function-set-shared-ptr | `c5d22e92` |
+| `third_party/duckdb_spatial` | duckdb/duckdb-spatial | `2b072abd2a` | `v1.5-variegata` `9bfcf30e` | all 17: 0003 to 0013 in file order, then 0007-function-set-shared-ptr | `dae76d3f` |
 | `third_party/database-connector` | duckdb/database-connector | `73d27b7` | `v1.5-variegata` `0a8505f` | none | `5ee92ce63e` |
 | `third_party/avro` | apache/avro | `28cb08c15` | duckdb/duckdb-avro-c's 18 commits `35ff8b997..51ab9b2d3`, cherry-picked (its merges carry no resolutions) | none | `36e295afc` |
 

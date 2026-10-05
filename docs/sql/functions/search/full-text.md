@@ -546,7 +546,7 @@ Turns an `OR` of index predicates into an "at least `K` of `N`" filter. The bran
 
 Count the branches as written after the `OR`s are flattened: in `((a OR b) OR c)::min_match(2)` there are three branches. A branch that is always false, such as a bound `$1 AND ...` with `$1 = false`, still counts and never matches, and two identical branches count twice. To count `a OR b` as one branch, give it a modifier of its own: `((a OR b)::min_match(1) OR c)::min_match(2)`.
 
-Groups nest. A group is one branch of the `OR` around it, so `((a OR b OR c)::min_match(2) OR d)::min_match(2)` matches rows that have `d` and at least two of `a`, `b` and `c`. A group can also stand in a plain `OR` or an `AND`, next to other groups or next to an `AND` branch. `::merge` and `::boost` combine with `::min_match` on the same group, in either order.
+Groups nest. A group is one branch of the `OR` around it, so `((a OR b OR c)::min_match(2) OR d)::min_match(2)` matches rows that have `d` and at least two of `a`, `b` and `c`. A group can also stand in a plain `OR` or an `AND`, next to other groups or next to an `AND` branch. `::merge`, `::boost` and `::score` combine with `::min_match` on the same group, in either order.
 
 Where the threshold has no meaning, the query fails instead of ignoring the modifier:
 

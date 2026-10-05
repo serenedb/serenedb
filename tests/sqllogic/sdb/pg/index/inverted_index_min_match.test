@@ -256,6 +256,33 @@ id
 6
 
 
+query
+SELECT id FROM mm_idx
+WHERE (skills @@ 'gcp' OR skills @@ 'python' OR title @@ ts_phrase('data engineer'))::min_match(2)::score('bm25()')
+ORDER BY id;
+----
+id
+1
+5
+6
+
+
+query
+SELECT id FROM mm_idx
+WHERE (skills @@ 'gcp' OR skills @@ 'python' OR title @@ ts_phrase('data engineer'))::score('bm25()')::min_match(2)
+ORDER BY id;
+----
+id
+1
+5
+6
+
+
+query error ::min_match\(K\) on a group that already has a ::min_match
+SELECT id FROM mm_idx
+WHERE (skills @@ 'gcp' OR skills @@ 'python')::min_match(2)::score('bm25()')::min_match(1);
+
+
 query error ::min_match\(K\) on a group that already has a ::min_match
 SELECT id FROM mm_idx
 WHERE (title @@ ts_phrase('data engineer') OR skills @@ 'gcp' OR edu @@ ts_like('%engineer%'))::min_match(2)::min_match(1);
@@ -937,9 +964,34 @@ id
 6
 
 
+query
+SELECT id FROM nm_idx
+WHERE NOT ((skills @@ 'gcp' OR bonus > 5)::min_match(2)::boost(2) OR tenure <= 10)
+ORDER BY id;
+----
+id
+2
+4
+
+
+query
+SELECT id FROM nm_idx
+WHERE NOT ((skills @@ 'gcp' OR bonus > 5)::boost(2)::min_match(2) OR tenure <= 10)
+ORDER BY id;
+----
+id
+2
+4
+
+
 query error negated group over nullable columns mixes index-only search predicates
 SELECT id FROM nm_idx
 WHERE NOT ((skills @@ 'gcp' OR bonus IS NULL)::min_match(2) OR tenure <= 10);
+
+
+query error ::min_match used on a predicate the inverted index could not claim
+SELECT id FROM nm_idx
+WHERE NOT ((skills @@ 'gcp' OR bonus > bonus)::min_match(2) OR tenure <= 10);
 
 
 query error ::min_match\(3\) on an OR of 2 branches

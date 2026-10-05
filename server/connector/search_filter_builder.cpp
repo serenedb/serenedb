@@ -546,6 +546,47 @@ void RejectRewrittenMinMatch(const duckdb::BoundFunctionExpression& cast,
   }
 }
 
+void CheckMinMatchGroup(const duckdb::BoundFunctionExpression& cast,
+                        uint32_t min_match, size_t branches) {
+  RejectRewrittenMinMatch(cast, branches);
+  if (min_match > branches) {
+    ThrowMinMatchAboveBranches(
+      min_match, branches,
+      "K must be between 1 and the number of OR branches. A branch of several "
+      "predicates is grouped with its own ::min_match(1).");
+  }
+}
+
+[[noreturn]] void ThrowUnclaimedModifier(std::string_view modifier,
+                                         const absl::Status& status,
+                                         std::string_view hint) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                  ERR_MSG(modifier,
+                          " used on a predicate the inverted index could not "
+                          "claim: ",
+                          status.message()),
+                  ERR_HINT(hint));
+}
+
+constexpr std::string_view kMinMatchUnclaimedHint =
+  "min_match counts the branches of an OR the inverted index answers; every "
+  "branch has to be an index predicate.";
+
+bool HasGroupModifier(const duckdb::LogicalType& type) {
+  return TryGetBoostModifier(type) || TryGetScoreModifier(type) ||
+         TryGetMergeModifier(type);
+}
+
+const duckdb::Expression& PeelGroupModifiers(const duckdb::Expression& expr) {
+  const auto* cur = &UnwrapBoostBoolCoercion(expr);
+  while (duckdb::BoundCastExpression::IsCast(*cur) &&
+         HasGroupModifier(cur->GetReturnType())) {
+    cur = &UnwrapBoostBoolCoercion(duckdb::BoundCastExpression::Child(
+      cur->Cast<duckdb::BoundFunctionExpression>()));
+  }
+  return *cur;
+}
+
 struct StrictMinMatchGroup {
   const duckdb::BoundFunctionExpression* cast = nullptr;
   const duckdb::BoundConjunctionExpression* branches = nullptr;
@@ -554,7 +595,7 @@ struct StrictMinMatchGroup {
 
 std::optional<StrictMinMatchGroup> AsStrictMinMatchGroup(
   const duckdb::Expression& expr) {
-  const auto& peeled = UnwrapBoostBoolCoercion(expr);
+  const auto& peeled = PeelGroupModifiers(expr);
   if (!duckdb::BoundCastExpression::IsCast(peeled)) {
     return std::nullopt;
   }
@@ -563,21 +604,12 @@ std::optional<StrictMinMatchGroup> AsStrictMinMatchGroup(
     return std::nullopt;
   }
   const auto& cast = peeled.Cast<duckdb::BoundFunctionExpression>();
-  const auto* cur =
-    &UnwrapBoostBoolCoercion(duckdb::BoundCastExpression::Child(cast));
-  while (duckdb::BoundCastExpression::IsCast(*cur)) {
-    const auto& type = cur->GetReturnType();
-    if (!TryGetBoostModifier(type) && !TryGetScoreModifier(type) &&
-        !TryGetMergeModifier(type)) {
-      break;
-    }
-    cur = &UnwrapBoostBoolCoercion(duckdb::BoundCastExpression::Child(
-      cur->Cast<duckdb::BoundFunctionExpression>()));
-  }
-  if (cur->GetExpressionType() != duckdb::ExpressionType::CONJUNCTION_OR) {
+  const auto& operand =
+    PeelGroupModifiers(duckdb::BoundCastExpression::Child(cast));
+  if (operand.GetExpressionType() != duckdb::ExpressionType::CONJUNCTION_OR) {
     return std::nullopt;
   }
-  const auto& branches = cur->Cast<duckdb::BoundConjunctionExpression>();
+  const auto& branches = operand.Cast<duckdb::BoundConjunctionExpression>();
   if (!absl::c_all_of(branches.GetChildren(), [](const auto& branch) {
         return IsStrictPredicate(*branch);
       })) {
@@ -591,18 +623,12 @@ absl::Status FromNullAwareMinMatchGroup(BoolTarget parent,
                                         const FilterContext& ctx,
                                         const StrictMinMatchGroup& group) {
   const auto& branches = group.branches->GetChildren();
-  RejectRewrittenMinMatch(*group.cast, branches.size());
-  if (group.min_match > branches.size()) {
-    ThrowMinMatchAboveBranches(
-      group.min_match, branches.size(),
-      "K must be between 1 and the number of OR branches. A branch of several "
-      "predicates is grouped with its own ::min_match(1).");
-  }
+  CheckMinMatchGroup(*group.cast, group.min_match, branches.size());
   const auto node = AddGroup(parent, irs::Occur::Should);
   for (const auto& branch : branches) {
     const auto alternative = AddGroup(node, irs::Occur::Should);
     if (auto s = FromExpression(alternative, ctx, *branch); !s.ok()) {
-      return s;
+      ThrowUnclaimedModifier("::min_match", s, kMinMatchUnclaimedHint);
     }
     std::vector<irs::field_id> markers;
     CollectNullableMarkers(ctx, *branch, markers);
@@ -1695,12 +1721,7 @@ std::unique_ptr<irs::BooleanFilter> BuildSqlModifierScope(
   std::string_view modifier, std::string_view hint) {
   auto scope = OpenScope();
   if (auto s = FromExpression(ScopeTarget(scope), ctx, child); !s.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(modifier,
-                            " used on a predicate the inverted index could not "
-                            "claim: ",
-                            s.message()),
-                    ERR_HINT(hint));
+    ThrowUnclaimedModifier(modifier, s, hint);
   }
   return scope;
 }
@@ -1755,8 +1776,7 @@ size_t CountMinMatchBranches(const duckdb::Expression& operand) {
                  "of another, put it inside the outer OR: ((a OR b OR "
                  "c)::min_match(2) OR d)::min_match(2)."));
     }
-    if (!TryGetBoostModifier(type) && !TryGetScoreModifier(type) &&
-        !TryGetMergeModifier(type)) {
+    if (!HasGroupModifier(type)) {
       break;
     }
     cur = &UnwrapBoostBoolCoercion(duckdb::BoundCastExpression::Child(
@@ -1792,17 +1812,9 @@ bool TryDispatchSqlMinMatchCast(BoolTarget filter, const FilterContext& ctx,
   }
   const auto& operand = duckdb::BoundCastExpression::Child(cast_expr);
   const auto branches = CountMinMatchBranches(operand);
-  RejectRewrittenMinMatch(cast_expr, branches);
-  if (*min_match > branches) {
-    ThrowMinMatchAboveBranches(
-      *min_match, branches,
-      "K must be between 1 and the number of OR branches. A branch of several "
-      "predicates is grouped with its own ::min_match(1).");
-  }
-  auto scope = BuildSqlModifierScope(
-    ctx, operand, "::min_match",
-    "min_match counts the branches of an OR the inverted index answers; every "
-    "branch has to be an index predicate.");
+  CheckMinMatchGroup(cast_expr, *min_match, branches);
+  auto scope =
+    BuildSqlModifierScope(ctx, operand, "::min_match", kMinMatchUnclaimedHint);
   auto* group = InnermostGroup(*scope);
   SDB_ASSERT(group && group->Size(irs::Occur::Should) == branches);
   SetMinMatch(*group, *min_match);

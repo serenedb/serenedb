@@ -253,12 +253,12 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   irs::IndexWriter::CompactionFloorGuard ArmCompactionFloor() {
     return _writer->ArmCompactionFloor();
   }
-  bool ReplaceSegments(std::span<const std::string_view> replaced,
-                       std::span<const std::string_view> adopted_metas,
-                       irs::IndexWriter::Transaction* removals = nullptr,
-                       uint64_t removals_tick = irs::writer_limits::kMinTick) {
-    return _writer->ReplaceSegments(replaced, adopted_metas, removals,
-                                    removals_tick);
+  bool ReplaceSegments(
+    std::span<const std::string_view> replaced,
+    std::span<const std::string_view> adopted_metas,
+    irs::IndexWriter::QueryContext::FilterPtr removal = nullptr) {
+    return _writer->ReplaceSegments(replaced, adopted_metas,
+                                    std::move(removal));
   }
 
  private:

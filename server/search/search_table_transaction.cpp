@@ -324,6 +324,7 @@ void SearchTableTransaction::Commit() {
   }
 
   SDB_IF_FAILURE("crash_before_search_wal_commit") { SDB_IMMEDIATE_ABORT(); }
+  SDB_PARK_ONCE_ON_FAILURE("pause_search_commit_before_wal");
 
   const uint64_t record_tick = AppendCommit();
   SDB_IF_FAILURE("crash_after_search_wal_commit") { SDB_IMMEDIATE_ABORT(); }

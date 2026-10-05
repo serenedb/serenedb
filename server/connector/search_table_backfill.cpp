@@ -48,6 +48,7 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/full_scanner.h"
 #include "connector/primary_key.h"
+#include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/term_dict.h"
 #include "pg/connection_context.h"
@@ -150,25 +151,22 @@ void Publish(search::SearchTable& shard) {
   }
 }
 
-void StageDeletes(irs::IndexWriter::Transaction& trx,
-                  std::vector<int64_t> rowids) {
+std::shared_ptr<SearchRemoveFilter> MakeRemoval(std::vector<int64_t> rowids) {
   if (rowids.empty()) {
-    return;
+    return nullptr;
   }
   // Sorted rowids encode to sorted terms, so the remove filter walks each
   // segment's term dictionary sequentially.
   absl::c_sort(rowids);
-  SearchSinkDeleteBaseImpl remover{trx};
-  remover.InitImpl(rowids.size());
+  auto removal =
+    std::make_shared<SearchRemoveFilter>(rowids.size(), term_dict::kPKFieldId);
   std::string key;
   for (const auto rowid : rowids) {
     key.clear();
     primary_key::AppendGenerated(key, static_cast<uint64_t>(rowid));
-    remover.DeleteRowImpl(key);
+    removal->Add(key);
   }
-  remover.FinishImpl();
-  // Deliberately not RegisterFlush. Registering would also bind the removals to
-  // whatever context is current here, not the one the incoming segments go to.
+  return removal;
 }
 
 struct Slice {
@@ -302,16 +300,12 @@ void RebuildGroup(duckdb::ClientContext& context,
   // the delete-log rather than the adopt tick is what saves the row.
   SDB_WAIT_ON_FAILURE("pause_search_backfill_before_swap");
 
-  auto deletes = shard.GetTransaction();
-  absl::Cleanup abort_deletes = [&deletes] { deletes.Abort(); };
-
   // Drain and swap under one hold of the delete log, so no removal can be
   // lost while we are swapping
   const bool swapped =
     shard.SwapWithDrainedDeletes([&](std::vector<int64_t> rowids) {
-      StageDeletes(deletes, std::move(rowids));
-      return shard.ReplaceSegments(replaced, adopted, &deletes,
-                                   shard.Wal().CurrentTick());
+      return shard.ReplaceSegments(replaced, adopted,
+                                   MakeRemoval(std::move(rowids)));
     });
   // Need explicit call here so on Publish we don't have pending transactions.
   abort_all();

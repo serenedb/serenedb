@@ -42,6 +42,7 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/type_limits.hpp>
 #include <limits>
 #include <mutex>
 #include <system_error>
@@ -261,7 +262,8 @@ ResultWithTime SearchTable::RefreshUnsafe(
       // and any later batch lands at a higher tick, so advancing to it never
       // over-claims.
       const auto tick_before = _wal->CurrentTick();
-      if (_writer->RefreshCommit()) {
+      if (tick_before != irs::writer_limits::kMinTick &&
+          _writer->RefreshCommit({.tick = tick_before})) {
         _wal->OnShardCommit(GetTableId(), _last_committed_tick);
         code = RefreshResult::Done;
       } else {

@@ -20,6 +20,9 @@
 
 #include "search/search_table_transaction.h"
 
+#include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
+
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -56,12 +59,18 @@ uint64_t ShardTickSpan(const SearchShardWrites& w) {
 // The rowids this transaction deleted. The buffer already holds them raw, so a
 // build's log takes them as they are.
 void RecordDeletesForBuild(SearchTable& shard,
-                           const LocalTableChangesEntry& changes) {
+                           const LocalTableChangesEntry& changes,
+                           uint64_t record_tick) {
   std::vector<int64_t> rows;
+  bool truncated = false;
   for (const auto& op : changes.ops) {
+    truncated |= op.IsTruncate();
     rows.insert(rows.end(), op.delete_rows.begin(), op.delete_rows.end());
   }
   shard.AppendDeleteLog(rows);
+  if (truncated) {
+    shard.RecordTruncateForBuild(record_tick);
+  }
 }
 
 }  // namespace
@@ -270,7 +279,8 @@ void SearchTableTransaction::AddSearchTruncate(
   }
   w.transactions.clear();
   w.buffer_trx = nullptr;
-  _changes[shard->GetTableId()].AppendTruncate(clears_shard);
+  _changes[shard->GetTableId()].AppendTruncate(clears_shard &&
+                                               !shard->BuildInFlight());
 }
 
 void SearchTableTransaction::RegisterFlush() noexcept {
@@ -348,23 +358,47 @@ void SearchTableTransaction::Commit() {
   SDB_IF_FAILURE("crash_before_search_wal_commit") { SDB_IMMEDIATE_ABORT(); }
   SDB_PARK_ONCE_ON_FAILURE("pause_search_commit_before_wal");
 
+  std::vector<std::pair<SearchTable*, const LocalTableChangesEntry*>> logged;
+  for (auto& [table_id, w] : _writes) {
+    auto cit = _changes.find(table_id);
+    if (cit != _changes.end() && w.shard->IsDeleteLogOpen()) {
+      logged.emplace_back(w.shard.get(), &cit->second);
+    }
+  }
+  absl::c_sort(logged, [](const auto& l, const auto& r) {
+    return l.first->GetTableId() < r.first->GetTableId();
+  });
+  for (const auto& [shard, changes] : logged) {
+    shard->EnterCommitGap();
+  }
+  absl::Cleanup leave_gaps = [&logged] {
+    for (const auto& [shard, changes] : logged) {
+      shard->LeaveCommitGap();
+    }
+  };
+
   const uint64_t record_tick = AppendCommit();
   SDB_IF_FAILURE("crash_after_search_wal_commit") { SDB_IMMEDIATE_ABORT(); }
+  SDB_PARK_ONCE_ON_FAILURE("pause_search_commit_before_delete_log");
+
+  // Before the iresearch commit, never after. Once a removal is queued, the
+  // next RefreshCommit applies it -- including the one a running build
+  // publishes its own swap with -- and a build that drained the log before
+  // this ran would never reissue it, leaving the rows it had already copied
+  // resurrected for good. AppendCommit has made these durable, so the log can
+  // only ever name rows that are certainly deleted; that, not the position
+  // relative to the iresearch commit, is what keeps a reissue from removing a
+  // live row.
+  for (const auto& [shard, changes] : logged) {
+    RecordDeletesForBuild(*shard, *changes, record_tick);
+  }
+  std::move(leave_gaps).Invoke();
 
   for (auto& [table_id, w] : _writes) {
     auto cit = _changes.find(table_id);
-    // Before the iresearch commit, never after. Once a removal is queued, the
-    // next RefreshCommit applies it -- including the one a running build
-    // publishes its own swap with -- and a build that drained the log before
-    // this ran would never reissue it, leaving the rows it had already copied
-    // resurrected for good. AppendCommit has made these durable, so the log can
-    // only ever name rows that are certainly deleted; that, not the position
-    // relative to the iresearch commit, is what keeps a reissue from removing a
-    // live row.
-    if (cit != _changes.end() && w.shard->IsDeleteLogOpen()) {
-      RecordDeletesForBuild(*w.shard, cit->second);
+    if (cit == _changes.end()) {
+      continue;
     }
-
     uint64_t tick = record_tick;
     for (size_t i = w.transactions.size(); i-- > 0;) {
       auto& trx = *w.transactions[i];
@@ -384,7 +418,7 @@ void SearchTableTransaction::Commit() {
     // recovery/search_table_backfill_concurrent_dml.test loses a row.
     SDB_WAIT_ON_FAILURE("pause_search_commit_after_irs");
 
-    if (cit != _changes.end() && cit->second.ClearsShard()) {
+    if (cit->second.ClearsShard()) {
       w.shard->Clear(record_tick);
     }
   }

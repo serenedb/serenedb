@@ -248,11 +248,29 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   }
   void OpenDeleteLog();
   void AppendDeleteLog(std::span<const int64_t> rows);
+  void RecordTruncateForBuild(uint64_t tick);
+  bool TruncatedAfter(uint64_t tick) const noexcept {
+    return _build_truncate_tick.load(std::memory_order_acquire) > tick;
+  }
+
+  void EnterCommitGap() ABSL_NO_THREAD_SAFETY_ANALYSIS {
+    _commit_gap_mutex.ReaderLock();
+  }
+  void LeaveCommitGap() noexcept ABSL_NO_THREAD_SAFETY_ANALYSIS {
+    _commit_gap_mutex.ReaderUnlock();
+  }
 
   template<typename Fn>
-  bool SwapWithDrainedDeletes(Fn&& swap) {
+  auto SwapWithDrainedDeletes(Fn&& swap) {
+    absl::WriterMutexLock gap{&_commit_gap_mutex};
     absl::MutexLock lock{&_delete_log_mutex};
-    return swap(std::exchange(_delete_log, {}));
+    return swap(std::exchange(_delete_log, {}),
+                _build_truncate_tick.load(std::memory_order_relaxed));
+  }
+
+  std::pair<irs::DirectoryReader, uint64_t> GetSnapshotWithTick() {
+    absl::MutexLock lock{&_refresh_mutex};
+    return {_writer->GetSnapshot(), _last_committed_tick};
   }
   std::vector<int64_t> TakeDeleteLog();
   void CloseDeleteLog();
@@ -310,6 +328,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   std::atomic<bool> _delete_log_open{false};
   absl::Mutex _delete_log_mutex;
   std::vector<int64_t> _delete_log ABSL_GUARDED_BY(_delete_log_mutex);
+  std::atomic<uint64_t> _build_truncate_tick{0};
+  absl::Mutex _commit_gap_mutex;
   // How often a waiting rebuild surfaces to check for cancellation. The
   // CondVar does the blocking; this only bounds how long a cancelled statement
   // keeps waiting.

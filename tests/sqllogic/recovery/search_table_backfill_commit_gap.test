@@ -1,0 +1,96 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE bcg (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO bcg VALUES (1, 'keep'), (2, 'gone');
+
+statement ok
+VACUUM (REFRESH_TABLE) bcg;
+
+statement ok
+SET sdb_faults = 'pause_search_backfill_before_swap';
+
+connection builder
+statement async ok
+CREATE INDEX bcg_idx ON bcg USING inverted (tag);
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT tuples_done FROM pg_stat_progress_create_index
+WHERE relid = 'bcg'::regclass;
+----
+tuples_done
+2
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_delete_log';
+
+connection deleter
+statement async ok
+DELETE FROM bcg WHERE id = 2;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_delete_log:parked';
+
+connection default
+statement ok
+SET sdb_faults = 'pause_irs_commit_after_flush_switch';
+
+connection refresher
+statement async ok
+VACUUM (REFRESH_TABLE) bcg;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_irs_commit_after_flush_switch:parked';
+
+connection default
+statement ok
+SET sdb_faults = 'pause_irs_commit_after_flush_switch:release';
+
+connection default
+statement ok
+SET sdb_faults = '-pause_search_backfill_before_swap';
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_delete_log:release';
+
+wait
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) bcg;
+
+connection default
+query
+SELECT id, tag FROM bcg ORDER BY id;
+----
+id	tag
+1	keep
+
+connection default
+query
+SELECT count(*) AS n FROM bcg_idx WHERE tag @@ 'gone';
+----
+n
+0
+
+connection default
+query
+SELECT id FROM bcg_idx WHERE tag @@ 'keep';
+----
+id
+1
+
+connection default
+statement ok
+DROP TABLE bcg;

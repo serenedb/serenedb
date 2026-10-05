@@ -307,7 +307,18 @@ void SearchTable::DrainPriorWriters(absl::FunctionRef<bool()> cancelled) {
 void SearchTable::OpenDeleteLog() {
   absl::MutexLock lock{&_delete_log_mutex};
   _delete_log.clear();
+  _build_truncate_tick.store(0, std::memory_order_relaxed);
   _delete_log_open.store(true, std::memory_order_release);
+}
+
+void SearchTable::RecordTruncateForBuild(uint64_t tick) {
+  absl::MutexLock lock{&_delete_log_mutex};
+  if (!_delete_log_open.load(std::memory_order_relaxed)) {
+    return;
+  }
+  if (_build_truncate_tick.load(std::memory_order_relaxed) < tick) {
+    _build_truncate_tick.store(tick, std::memory_order_release);
+  }
 }
 
 void SearchTable::AppendDeleteLog(std::span<const int64_t> rows) {

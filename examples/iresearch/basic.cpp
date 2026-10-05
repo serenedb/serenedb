@@ -47,6 +47,8 @@
 #include <iresearch/utils/type_limits.hpp>
 #include <memory>
 
+#include "examples.h"
+
 // This example demonstrates the core iresearch workflow:
 //   1. Create a directory and index writer
 //   2. Define fields and index documents (inverted index + cs stored values)
@@ -411,7 +413,7 @@ void CompactIndex(irs::IndexWriter& writer, irs::Directory& dir) {
   std::cout << "  Live documents:  " << after.live_docs_count() << "\n";
 }
 
-int main() {
+int BasicMain() {
   // Bracket the process-wide duckdb::DuckDB lifetime; Db() reads it back.
   auto& engine = irs::DuckDBEngine::Instance();
   engine.Initialize();

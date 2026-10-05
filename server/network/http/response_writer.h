@@ -74,7 +74,7 @@ class HttpResponseWriter {
   // Bodies are compressed unless the response is HEAD, bodiless, or a fixed
   // body under kMinCompressBytes.
   void SetContentCoding(const ContentCoding& coding,
-                        std::optional<int> level = {}) noexcept {
+                        int level = kNoLevel) noexcept {
     _coding = &coding;
     _level = level;
   }
@@ -143,7 +143,7 @@ class HttpResponseWriter {
   message::Buffer& _send;
   ResponseSink& _sink;
   const ContentCoding* _coding = nullptr;
-  std::optional<int> _level;
+  int _level = kNoLevel;
   std::unique_ptr<ContentEncoder> _encoder;
   // The in-progress chunk's Writer (live between BeginChunk and EndChunk).
   std::optional<message::Writer> _chunk;

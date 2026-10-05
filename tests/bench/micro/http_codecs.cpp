@@ -50,9 +50,8 @@ std::string JsonDocs(size_t bytes) {
 
 std::string Encode(const ContentCoding& coding, std::string_view body) {
   std::string out;
-  coding.make(std::nullopt)->Encode(body, true, [&](std::string_view part) {
-    out.append(part);
-  });
+  coding.make(sdb::network::http::kNoLevel)
+    ->Encode(body, true, [&](std::string_view part) { out.append(part); });
   return out;
 }
 
@@ -74,7 +73,7 @@ void BM_Fixed(benchmark::State& state, const ContentCoding* coding,
   const auto body = JsonDocs(size);
   std::string out;
   for (auto _ : state) {
-    coding->make(std::nullopt)->EncodeAll(body, out);
+    coding->make(sdb::network::http::kNoLevel)->EncodeAll(body, out);
     benchmark::DoNotOptimize(out.data());
   }
   state.SetBytesProcessed(static_cast<int64_t>(state.iterations() * size));

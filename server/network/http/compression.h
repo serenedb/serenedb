@@ -35,20 +35,28 @@
 
 namespace sdb::network::http {
 
-// One response's compression stream: Encode appends compressed bytes to sink,
-// finish=true closes the stream.
+inline constexpr int kNoLevel = 0;
+
+class EncodeOutput {
+ public:
+  virtual void Write(size_t capacity,
+                     absl::FunctionRef<size_t(uint8_t*)> fill) = 0;
+
+ protected:
+  ~EncodeOutput() = default;
+};
+
 class ContentEncoder {
  public:
   virtual ~ContentEncoder() = default;
 
-  virtual void Encode(std::string_view in, bool finish,
-                      absl::FunctionRef<void(std::string_view)> sink) = 0;
+  virtual void Encode(std::string_view in, bool finish, EncodeOutput& out) = 0;
+
+  void Encode(std::string_view in, bool finish,
+              absl::FunctionRef<void(std::string_view)> sink);
 
   // Compresses a whole body into `out` (replacing its contents).
-  virtual void EncodeAll(std::string_view in, std::string& out) {
-    out.clear();
-    Encode(in, true, [&](std::string_view part) { out.append(part); });
-  }
+  virtual void EncodeAll(std::string_view in, std::string& out);
 };
 
 class ContentDecoder {
@@ -62,7 +70,7 @@ class ContentDecoder {
 // https://www.rfc-editor.org/rfc/rfc9110#name-content-codings
 struct ContentCoding {
   std::string_view token;
-  std::unique_ptr<ContentEncoder> (*make)(std::optional<int> level);
+  std::unique_ptr<ContentEncoder> (*make)(int level);
   std::unique_ptr<ContentDecoder> (*make_decoder)();
 };
 
@@ -86,7 +94,7 @@ enum class Acceptance : uint8_t {
 
 struct Negotiation {
   const ContentCoding* coding = nullptr;
-  std::optional<int> level;
+  int level = kNoLevel;
   Acceptance acceptance = Acceptance::Ok;
 };
 

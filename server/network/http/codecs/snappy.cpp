@@ -32,8 +32,7 @@ namespace {
 
 class SnappyEncoder final : public ContentEncoder {
  public:
-  void Encode(std::string_view in, bool finish,
-              absl::FunctionRef<void(std::string_view)> sink) override {
+  void Encode(std::string_view in, bool finish, EncodeOutput& out) override {
     if (!finish) {
       _pending.append(in);
       return;
@@ -42,10 +41,13 @@ class SnappyEncoder final : public ContentEncoder {
       _pending.append(in);
       in = _pending;
     }
-    std::string out;
-    snappy::Compress(in.data(), in.size(), &out);
+    out.Write(snappy::MaxCompressedLength(in.size()), [&](uint8_t* dst) {
+      size_t size = 0;
+      snappy::RawCompress(in.data(), in.size(), reinterpret_cast<char*>(dst),
+                          &size);
+      return size;
+    });
     _pending.clear();
-    sink(out);
   }
 
   void EncodeAll(std::string_view in, std::string& out) override {
@@ -96,7 +98,7 @@ class SnappyDecoder final : public ContentDecoder {
 
 }  // namespace
 
-std::unique_ptr<ContentEncoder> MakeSnappyEncoder(std::optional<int>) {
+std::unique_ptr<ContentEncoder> MakeSnappyEncoder(int) {
   return std::make_unique<SnappyEncoder>();
 }
 

@@ -31,9 +31,9 @@ namespace {
 // https://github.com/google/brotli/blob/master/c/include/brotli/encode.h
 class BrotliEncoder final : public ContentEncoder {
  public:
-  explicit BrotliEncoder(std::optional<int> level)
-    : _quality{static_cast<uint32_t>(ClampLevel(
-        level, kDefaultQuality, BROTLI_MIN_QUALITY, BROTLI_MAX_QUALITY))} {}
+  explicit BrotliEncoder(int level)
+    : _quality{static_cast<uint32_t>(
+        ClampLevel(level, kDefaultQuality, BROTLI_MIN_QUALITY, kMaxQuality))} {}
 
   ~BrotliEncoder() override {
     if (_state != nullptr) {
@@ -41,8 +41,7 @@ class BrotliEncoder final : public ContentEncoder {
     }
   }
 
-  void Encode(std::string_view in, bool finish,
-              absl::FunctionRef<void(std::string_view)> sink) override {
+  void Encode(std::string_view in, bool finish, EncodeOutput& out) override {
     if (_state == nullptr) {
       _state = BrotliEncoderCreateInstance(nullptr, nullptr, nullptr);
       if (_state == nullptr) {
@@ -54,16 +53,15 @@ class BrotliEncoder final : public ContentEncoder {
     const auto* next_in = reinterpret_cast<const uint8_t*>(in.data());
     const auto op = finish ? BROTLI_OPERATION_FINISH : BROTLI_OPERATION_PROCESS;
     for (;;) {
-      size_t avail_out = _out.size();
-      uint8_t* next_out = _out.data();
-      if (!BrotliEncoderCompressStream(_state, op, &avail_in, &next_in,
-                                       &avail_out, &next_out, nullptr)) {
-        ThrowCodecError("br", "compression failed");
-      }
-      const size_t produced = _out.size() - avail_out;
-      if (produced != 0) {
-        sink({reinterpret_cast<const char*>(_out.data()), produced});
-      }
+      out.Write(kOutBlock, [&](uint8_t* dst) {
+        size_t avail_out = kOutBlock;
+        uint8_t* next_out = dst;
+        if (!BrotliEncoderCompressStream(_state, op, &avail_in, &next_in,
+                                         &avail_out, &next_out, nullptr)) {
+          ThrowCodecError("br", "compression failed");
+        }
+        return kOutBlock - avail_out;
+      });
       if (avail_in == 0 && !BrotliEncoderHasMoreOutput(_state) &&
           (!finish || BrotliEncoderIsFinished(_state))) {
         return;
@@ -91,11 +89,11 @@ class BrotliEncoder final : public ContentEncoder {
 
  private:
   static constexpr int kDefaultQuality = 5;
+  static constexpr int kMaxQuality = 6;
 
   uint32_t _quality;
 
   BrotliEncoderState* _state = nullptr;
-  std::array<uint8_t, kOutBlock> _out;
 };
 
 // https://github.com/google/brotli/blob/master/c/include/brotli/decode.h
@@ -154,7 +152,7 @@ class BrotliDecoder final : public ContentDecoder {
 
 }  // namespace
 
-std::unique_ptr<ContentEncoder> MakeBrotliEncoder(std::optional<int> level) {
+std::unique_ptr<ContentEncoder> MakeBrotliEncoder(int level) {
   return std::make_unique<BrotliEncoder>(level);
 }
 

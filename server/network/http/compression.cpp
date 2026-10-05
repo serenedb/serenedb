@@ -31,6 +31,7 @@
 #include <cstdint>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/string_utils.hpp>
 #include <optional>
 #include <string>
 #include <utility>
@@ -62,9 +63,23 @@ constexpr std::array kContentCodings = {
                 .make_decoder = MakeSnappyDecoder},
 };
 
+class StringOutput final : public EncodeOutput {
+ public:
+  explicit StringOutput(std::string& out) : _out{out} {}
+
+  void Write(size_t capacity, absl::FunctionRef<size_t(uint8_t*)> fill) final {
+    const size_t size = _out.size();
+    irs::utils::StrResize(_out, size + capacity);
+    _out.resize(size + fill(reinterpret_cast<uint8_t*>(_out.data() + size)));
+  }
+
+ private:
+  std::string& _out;
+};
+
 struct AcceptedCoding {
   std::string_view token;
-  std::optional<int> level;
+  int level = kNoLevel;
   double quality = 1.0;
 };
 
@@ -100,7 +115,7 @@ std::string_view CanonicalToken(std::string_view token) {
   return absl::EqualsIgnoreCase(token, "x-gzip") ? "gzip" : token;
 }
 
-bool SplitLevel(std::string_view& token, std::optional<int>& level) {
+bool SplitLevel(std::string_view& token, int& level) {
   const auto open = token.find('(');
   if (open == std::string_view::npos) {
     return true;
@@ -148,6 +163,22 @@ std::optional<AcceptedCoding> ParseAccepted(std::string_view element) {
 
 }  // namespace
 
+void ContentEncoder::Encode(std::string_view in, bool finish,
+                            absl::FunctionRef<void(std::string_view)> sink) {
+  std::string out;
+  StringOutput output{out};
+  Encode(in, finish, output);
+  if (!out.empty()) {
+    sink(out);
+  }
+}
+
+void ContentEncoder::EncodeAll(std::string_view in, std::string& out) {
+  out.clear();
+  StringOutput output{out};
+  Encode(in, true, output);
+}
+
 const ContentCoding* FindContentCoding(std::string_view token) {
   token = CanonicalToken(token);
   for (const auto& coding : kContentCodings) {
@@ -167,7 +198,7 @@ Negotiation NegotiateContentCoding(std::string_view accept_encoding) {
   }
 
   std::array<std::optional<double>, kContentCodings.size()> weights;
-  std::array<std::optional<int>, kContentCodings.size()> levels;
+  std::array<int, kContentCodings.size()> levels{};
   std::optional<double> identity;
   std::optional<double> wildcard;
   for (const auto element : absl::StrSplit(accept_encoding, ',')) {
@@ -232,7 +263,7 @@ std::optional<ContentCodings> ParseContentEncoding(
   ContentCodings codings;
   for (const auto element : absl::StrSplit(content_encoding, ',')) {
     auto token = absl::StripAsciiWhitespace(element);
-    std::optional<int> level;
+    int level = kNoLevel;
     if (!SplitLevel(token, level)) {
       return std::nullopt;
     }

@@ -45,19 +45,25 @@ Compressed responses carry `Content-Encoding: <token>` and
 A client can pick the level by writing it in parentheses after the coding:
 `Accept-Encoding: zstd(1)` asks for the fastest zstd, `gzip(9);q=0.5, br(4)`
 for brotli at quality 4. This is a SereneDB extension, so standard clients
-never send it; without a level each coding uses its default. A level outside a
-coding's range is clamped to it, `snappy` has no levels and ignores one, and a
-malformed one (`zstd(x)`, `zstd(1`) answers `400 Bad Request`. The response
+never send it; without a level, or with level 0, each coding uses its default.
+A level outside the range below is clamped to it, `snappy` has no levels and
+ignores one, and
+a malformed one (`zstd(x)`, `zstd(1`) answers `400 Bad Request`. The response
 names the bare coding (`Content-Encoding: zstd`), since decoding does not
 depend on the level.
 
+The ranges stop below each library's maximum. Higher levels compress a few
+percent better but cost far more memory or CPU per response: zstd 22 needs
+over 800 MiB for a streamed response, and brotli 11 compresses at about
+1 MB/s.
+
 | Coding | Levels | Default |
 |---|---|---|
-| `zstd` | negative (fastest) to 22 | 3 |
-| `br` | 0 to 11 | 5 |
-| `gzip`, `deflate` | 0 (store) to 9 | 6 |
-| `zxc` | 1 to 7 | 3 |
-| `lz4` | 0 (fast) to 12 (high compression) | 0 |
+| `zstd` | negative (fastest) to 8 | 3 |
+| `br` | 1 to 6 | 5 |
+| `gzip`, `deflate` | 1 to 9 | 6 |
+| `zxc` | 1 to 5 | 3 |
+| `lz4` | 0 (fast) to 9 (high compression) | 0 |
 
 A request body's `Content-Encoding` may carry a level too; it is ignored.
 

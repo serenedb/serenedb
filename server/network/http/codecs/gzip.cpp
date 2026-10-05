@@ -69,7 +69,6 @@ struct DeflateState {
 
   z_stream stream{};
   int level = kDefaultLevel;
-  std::array<uint8_t, kOutBlock> out;
 };
 
 template<typename Format>
@@ -93,36 +92,31 @@ struct InflateState {
 template<typename Format>
 class DeflateEncoder final : public ContentEncoder {
  public:
-  explicit DeflateEncoder(std::optional<int> level) {
+  explicit DeflateEncoder(int level) {
     _state->SetLevel(
-      ClampLevel(level, kDefaultLevel, Z_NO_COMPRESSION, Z_BEST_COMPRESSION));
+      ClampLevel(level, kDefaultLevel, Z_BEST_SPEED, Z_BEST_COMPRESSION));
   }
 
-  void Encode(std::string_view in, bool finish,
-              absl::FunctionRef<void(std::string_view)> sink) override {
+  void Encode(std::string_view in, bool finish, EncodeOutput& out) override {
     auto& stream = _state->stream;
-    auto& out = _state->out;
     stream.next_in =
       const_cast<Bytef*>(reinterpret_cast<const Bytef*>(in.data()));
     stream.avail_in = static_cast<uInt>(in.size());
     const int flush = finish ? Z_FINISH : Z_NO_FLUSH;
+    int rc = Z_OK;
     do {
-      stream.next_out = out.data();
-      stream.avail_out = static_cast<uInt>(out.size());
-      const int rc = deflate(&stream, flush);
-      // Z_BUF_ERROR only reports "no progress possible", which is expected
-      // once the input is drained; anything else is fatal.
-      if (rc != Z_OK && rc != Z_STREAM_END && rc != Z_BUF_ERROR) {
-        ThrowCodecError(Format::kName, zError(rc));
-      }
-      const size_t produced = out.size() - stream.avail_out;
-      if (produced != 0) {
-        sink({reinterpret_cast<const char*>(out.data()), produced});
-      }
-      if (rc == Z_BUF_ERROR) {
-        break;
-      }
-    } while (stream.avail_out == 0);
+      out.Write(kOutBlock, [&](uint8_t* dst) {
+        stream.next_out = dst;
+        stream.avail_out = static_cast<uInt>(kOutBlock);
+        rc = deflate(&stream, flush);
+        // Z_BUF_ERROR only reports "no progress possible", which is expected
+        // once the input is drained; anything else is fatal.
+        if (rc != Z_OK && rc != Z_STREAM_END && rc != Z_BUF_ERROR) {
+          ThrowCodecError(Format::kName, zError(rc));
+        }
+        return kOutBlock - stream.avail_out;
+      });
+    } while (rc != Z_BUF_ERROR && stream.avail_out == 0);
     if (stream.avail_in != 0) {
       ThrowCodecError(Format::kName, "input not consumed");
     }
@@ -219,7 +213,7 @@ class InflateDecoder final : public ContentDecoder {
 
 }  // namespace
 
-std::unique_ptr<ContentEncoder> MakeGzipEncoder(std::optional<int> level) {
+std::unique_ptr<ContentEncoder> MakeGzipEncoder(int level) {
   return std::make_unique<DeflateEncoder<GzipFormat>>(level);
 }
 
@@ -227,7 +221,7 @@ std::unique_ptr<ContentDecoder> MakeGzipDecoder() {
   return std::make_unique<InflateDecoder<GzipFormat>>();
 }
 
-std::unique_ptr<ContentEncoder> MakeDeflateEncoder(std::optional<int> level) {
+std::unique_ptr<ContentEncoder> MakeDeflateEncoder(int level) {
   return std::make_unique<DeflateEncoder<ZlibFormat>>(level);
 }
 

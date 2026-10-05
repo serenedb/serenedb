@@ -31,7 +31,7 @@ namespace {
 
 // https://github.com/lz4/lz4/blob/dev/lib/lz4frame.h
 inline constexpr size_t kSlice = kOutBlock;
-inline constexpr int kMaxLevel = 12;
+inline constexpr int kMaxLevel = 9;
 
 struct CompressState {
   CompressState() {
@@ -41,7 +41,6 @@ struct CompressState {
     }
     out_size = std::max(LZ4F_compressBound(kSlice, &prefs),
                         LZ4F_compressBound(0, &prefs));
-    out = std::make_unique_for_overwrite<uint8_t[]>(out_size);
   }
 
   ~CompressState() { LZ4F_freeCompressionContext(cctx); }
@@ -50,7 +49,6 @@ struct CompressState {
 
   LZ4F_cctx* cctx = nullptr;
   LZ4F_preferences_t prefs{};
-  std::unique_ptr<uint8_t[]> out;
   size_t out_size = 0;
 };
 
@@ -75,30 +73,32 @@ struct DecompressState {
 
 class Lz4Encoder final : public ContentEncoder {
  public:
-  explicit Lz4Encoder(std::optional<int> level) {
+  explicit Lz4Encoder(int level) {
     _state->prefs.compressionLevel = ClampLevel(level, 0, 0, kMaxLevel);
   }
 
-  void Encode(std::string_view in, bool finish,
-              absl::FunctionRef<void(std::string_view)> sink) override {
+  void Encode(std::string_view in, bool finish, EncodeOutput& out) override {
     auto& state = *_state;
     if (!_started) {
-      Emit(LZ4F_compressBegin(state.cctx, state.out.get(), state.out_size,
-                              &state.prefs),
-           sink);
+      out.Write(LZ4F_HEADER_SIZE_MAX, [&](uint8_t* dst) {
+        return Check(LZ4F_compressBegin(state.cctx, dst, LZ4F_HEADER_SIZE_MAX,
+                                        &state.prefs));
+      });
       _started = true;
     }
     while (!in.empty()) {
       const auto slice = in.substr(0, kSlice);
-      Emit(LZ4F_compressUpdate(state.cctx, state.out.get(), state.out_size,
-                               slice.data(), slice.size(), nullptr),
-           sink);
+      out.Write(state.out_size, [&](uint8_t* dst) {
+        return Check(LZ4F_compressUpdate(state.cctx, dst, state.out_size,
+                                         slice.data(), slice.size(), nullptr));
+      });
       in.remove_prefix(slice.size());
     }
     if (finish) {
-      Emit(
-        LZ4F_compressEnd(state.cctx, state.out.get(), state.out_size, nullptr),
-        sink);
+      out.Write(state.out_size, [&](uint8_t* dst) {
+        return Check(
+          LZ4F_compressEnd(state.cctx, dst, state.out_size, nullptr));
+      });
     }
   }
 
@@ -122,12 +122,6 @@ class Lz4Encoder final : public ContentEncoder {
       ThrowCodecError("lz4", LZ4F_getErrorName(rc));
     }
     return rc;
-  }
-
-  void Emit(size_t rc, absl::FunctionRef<void(std::string_view)> sink) {
-    if (Check(rc) != 0) {
-      sink({reinterpret_cast<const char*>(_state->out.get()), rc});
-    }
   }
 
   Pooled<CompressState> _state;
@@ -170,7 +164,7 @@ class Lz4Decoder final : public ContentDecoder {
 
 }  // namespace
 
-std::unique_ptr<ContentEncoder> MakeLz4Encoder(std::optional<int> level) {
+std::unique_ptr<ContentEncoder> MakeLz4Encoder(int level) {
   return std::make_unique<Lz4Encoder>(level);
 }
 

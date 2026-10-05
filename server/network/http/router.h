@@ -43,7 +43,7 @@ class HttpRouter {
 
   // Parses the query string into request.query, matches method + path,
   // fills request.params from the pattern's named groups. nullptr = no
-  // route. Routes are tried in insertion order, first match wins.
+  // route.
   HttpHandler* Match(HttpRequest& request);
 
  private:
@@ -51,19 +51,22 @@ class HttpRouter {
 
   static constexpr size_t kMethods = magic_enum::enum_count<HttpMethod>();
 
+  using Handlers = std::array<HttpHandler*, kMethods>;
+
   // Fully literal routes are matched first, so one api's `/:index` cannot
   // swallow another's reserved `/_mcp` whichever order the apis were
-  // registered in; within each of the two classes, insertion order still
-  // decides.
+  // registered in.
   struct Entry {
-    HttpMethod method;
     PathPattern path;
-    HttpHandler* handler;
+    size_t handlers;
   };
 
+  size_t HandlersOf(std::string_view pattern);
+
   std::vector<std::unique_ptr<HttpHandler>> _handlers;
-  irs::containers::FlatHashMap<std::string, std::array<HttpHandler*, kMethods>>
-    _literal;
+  std::vector<Handlers> _methods;
+  irs::containers::FlatHashMap<std::string, size_t> _patterns;
+  irs::containers::FlatHashMap<std::string, size_t> _literal;
   std::vector<Entry> _parameterized;
 };
 

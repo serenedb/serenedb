@@ -60,6 +60,7 @@ using network::http::DecodeContent;
 using network::http::FindContentCoding;
 using network::http::HttpStatus;
 using network::http::kMinCompressBytes;
+using network::http::kNoLevel;
 using network::http::NegotiateContentCoding;
 using network::http::ParseContentEncoding;
 
@@ -879,7 +880,7 @@ TEST(NetworkHttpCompression, NegotiateLevels) {
 
   negotiated = NegotiateContentCoding("zstd");
   ASSERT_NE(negotiated.coding, nullptr);
-  EXPECT_FALSE(negotiated.level.has_value());
+  EXPECT_EQ(negotiated.level, kNoLevel);
 
   for (const auto header : {"zstd(x)", "zstd(1", "zstd()", "zstd(1)x"}) {
     EXPECT_EQ(NegotiateContentCoding(header).acceptance, Acceptance::Malformed)
@@ -903,29 +904,29 @@ TEST(NetworkHttpCompression, EveryLevelRoundTrips) {
   for (const auto token : kCodings) {
     const auto* coding = FindContentCoding(token);
     ASSERT_NE(coding, nullptr) << token;
-    for (const std::optional<int> level :
-         {std::optional<int>{}, std::optional<int>{-100000},
-          std::optional<int>{0}, std::optional<int>{1}, std::optional<int>{3},
-          std::optional<int>{100000}}) {
+    for (const int level : {kNoLevel, -100000, 1, 3, 100000}) {
       std::string encoded;
       coding->make(level)->EncodeAll(kLarge, encoded);
-      EXPECT_EQ(Decode(token, encoded), kLarge)
-        << token << " level " << level.value_or(-1);
+      EXPECT_EQ(Decode(token, encoded), kLarge) << token << " level " << level;
       std::string streamed;
       coding->make(level)->Encode(
         kLarge, true, [&](std::string_view part) { streamed.append(part); });
-      EXPECT_EQ(Decode(token, streamed), kLarge)
-        << token << " level " << level.value_or(-1);
+      EXPECT_EQ(Decode(token, streamed), kLarge) << token << " level " << level;
     }
   }
 }
 
-TEST(NetworkHttpCompression, LevelChangesTheOutput) {
+std::string VariedJson() {
   std::string body;
   for (size_t i = 0; body.size() < 256 * 1024; ++i) {
     absl::StrAppend(&body, R"({"id":)", i * 7919 % 100003, R"(,"size":)",
                     i * 104729 % 65536, R"(,"path":"/img/)", i % 977, "\"}\n");
   }
+  return body;
+}
+
+TEST(NetworkHttpCompression, LevelChangesTheOutput) {
+  const auto body = VariedJson();
   for (const auto token : {"zstd", "gzip", "deflate", "br"}) {
     const auto* coding = FindContentCoding(token);
     std::string fast;
@@ -933,6 +934,22 @@ TEST(NetworkHttpCompression, LevelChangesTheOutput) {
     coding->make(1)->EncodeAll(body, fast);
     coding->make(100000)->EncodeAll(body, dense);
     EXPECT_LT(dense.size(), fast.size()) << token;
+  }
+}
+
+TEST(NetworkHttpCompression, LevelsAreCappedToBoundMemory) {
+  const auto body = VariedJson();
+  for (const auto& [token, cap, beyond] :
+       {std::tuple{"zstd", 8, 22}, std::tuple{"br", 6, 11},
+        std::tuple{"lz4", 9, 12}, std::tuple{"zxc", 5, 7},
+        std::tuple{"gzip", 1, -5}, std::tuple{"deflate", 1, -5}}) {
+    const auto* coding = FindContentCoding(token);
+    ASSERT_NE(coding, nullptr) << token;
+    std::string capped;
+    std::string clamped;
+    coding->make(cap)->EncodeAll(body, capped);
+    coding->make(beyond)->EncodeAll(body, clamped);
+    EXPECT_EQ(clamped, capped) << token;
   }
 }
 

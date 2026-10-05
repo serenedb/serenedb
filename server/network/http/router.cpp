@@ -33,21 +33,33 @@ void HttpRouter::Add(HttpMethod method, std::string_view pattern,
                      std::unique_ptr<HttpHandler> handler) {
   SDB_VERIFY(!pattern.empty() && pattern.front() == '/',
              "HTTP route pattern must start with '/': '", pattern, "'");
+  auto* raw = _handlers.emplace_back(std::move(handler)).get();
+  auto& slot = _methods[HandlersOf(pattern)][static_cast<size_t>(method)];
+  if (slot == nullptr) {
+    slot = raw;
+  }
+}
+
+size_t HttpRouter::HandlersOf(std::string_view pattern) {
+  if (const auto it = _patterns.find(pattern); it != _patterns.end()) {
+    return it->second;
+  }
   ada::url_pattern_init init{};
   init.pathname = std::string{pattern};
   auto parsed = ada::parse_url_pattern<AdaRe2Provider>(std::move(init));
   SDB_VERIFY(parsed.has_value(), "invalid HTTP route pattern: '", pattern, "'");
   auto& path = parsed->pathname_component;
-  auto* raw = _handlers.emplace_back(std::move(handler)).get();
+  size_t index = _methods.size();
   if (path.type == ada::url_pattern_component_type::EXACT_MATCH) {
-    auto [it, _] = _literal.try_emplace(path.exact_match_value);
-    auto& slot = it->second[static_cast<size_t>(method)];
-    if (slot == nullptr) {
-      slot = raw;
-    }
-    return;
+    index = _literal.try_emplace(path.exact_match_value, index).first->second;
+  } else {
+    _parameterized.push_back({std::move(path), index});
   }
-  _parameterized.push_back({method, std::move(path), raw});
+  if (index == _methods.size()) {
+    _methods.emplace_back();
+  }
+  _patterns.emplace(std::string{pattern}, index);
+  return index;
 }
 
 HttpHandler* HttpRouter::Match(HttpRequest& request) {
@@ -80,12 +92,13 @@ HttpHandler* HttpRouter::Match(HttpRequest& request) {
   const std::string_view path = *canonical;
   const auto method = static_cast<size_t>(request.method);
   if (const auto it = _literal.find(path); it != _literal.end()) {
-    if (auto* handler = it->second[method]) {
+    if (auto* handler = _methods[it->second][method]) {
       return handler;
     }
   }
   for (auto& route : _parameterized) {
-    if (route.method != request.method || !route.path.fast_test(path)) {
+    auto* handler = _methods[route.handlers][method];
+    if (handler == nullptr || !route.path.fast_test(path)) {
       continue;
     }
     auto groups = route.path.fast_match(path);
@@ -98,7 +111,7 @@ HttpHandler* HttpRouter::Match(HttpRequest& request) {
         request.params.emplace_back(names[i], std::move(*value));
       }
     }
-    return route.handler;
+    return handler;
   }
   return nullptr;
 }

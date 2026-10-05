@@ -82,6 +82,22 @@ std::string_view ReasonPhrase(HttpStatus status) noexcept {
   }
 }
 
+namespace {
+
+class WriterOutput final : public EncodeOutput {
+ public:
+  explicit WriterOutput(message::Writer& writer) : _writer{writer} {}
+
+  void Write(size_t capacity, absl::FunctionRef<size_t(uint8_t*)> fill) final {
+    _writer.Write(capacity, [&](uint8_t* out) { return fill(out); });
+  }
+
+ private:
+  message::Writer& _writer;
+};
+
+}  // namespace
+
 struct HttpResponseWriter::Scratch {
   static constexpr size_t kMaxRetainedBytes = 1 << 20;
 
@@ -286,14 +302,19 @@ void HttpResponseWriter::EndRawChunk() {
 }
 
 void HttpResponseWriter::EncodeChunks(std::string_view data, bool finish) {
+  SDB_ASSERT(!_head_only);
   if (data.empty() && !finish) {
     return;
   }
-  _encoder->Encode(data, finish, [&](std::string_view out) {
-    if (!out.empty() && !_head_only) {
-      WriteChunk(out);
-    }
-  });
+  BeginRawChunk();
+  WriterOutput output{*_chunk};
+  _encoder->Encode(data, finish, output);
+  if (_chunk->Written() == _chunk_start) {
+    _chunk.reset();
+    _chunk_header = nullptr;
+    return;
+  }
+  EndRawChunk();
 }
 
 bool HttpResponseWriter::EncodeHead(HttpStatus status,

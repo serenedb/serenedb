@@ -404,7 +404,7 @@ def test_vacuum_progress(obs, faults, va_schema, driver):
         obs, fault_name=VACUUM_FAULT, use_fault=faults, run=run,
         view_sql=(
             f"SELECT phase, indexes_total FROM pg_stat_progress_vacuum "
-            f"WHERE indexes_processed <= indexes_total"),
+            f"WHERE indexes_total > 0 AND indexes_processed <= indexes_total"),
         expect=("vacuuming indexes", VA_TABLES),
         empty_sql="SELECT count(*) FROM pg_stat_progress_vacuum")
 

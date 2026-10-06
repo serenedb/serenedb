@@ -138,12 +138,24 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
     _wal->OnShardCommit(GetTableId(), _last_committed_tick);
   }
 
+  void BeginClear() {
+    absl::MutexLock lock{&_refresh_mutex};
+    SDB_ASSERT(_clear_bound == irs::writer_limits::kMaxTick);
+    _clear_bound = _wal->CurrentTick();
+  }
+
+  void AbandonClear() {
+    absl::MutexLock lock{&_refresh_mutex};
+    _clear_bound = irs::writer_limits::kMaxTick;
+  }
+
   void Clear(uint64_t tick) {
     absl::MutexLock lock{&_refresh_mutex};
     _writer->Clear(tick);
     if (tick > _last_committed_tick) {
       _last_committed_tick = tick;
     }
+    _clear_bound = irs::writer_limits::kMaxTick;
   }
 
   SearchDbWal& Wal() noexcept { return *_wal; }
@@ -319,6 +331,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   TasksSettings _maint_settings;
   MaintenanceCounters _maintenance;
   absl::Mutex _refresh_mutex;
+  uint64_t _clear_bound ABSL_GUARDED_BY(_refresh_mutex) =
+    irs::writer_limits::kMaxTick;
 
   WriterGenerations _writers;
   std::atomic<bool> _build_in_flight{false};

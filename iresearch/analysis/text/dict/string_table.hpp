@@ -139,6 +139,10 @@ IRS_FORCE_INLINE decltype(auto) Dispatch(duckdb::string_t term, F&& f) {
   return f(PackKey(p, size));
 }
 
+template<typename Key>
+inline constexpr bool kIsLongKey =
+  std::is_same_v<std::decay_t<Key>, std::string_view>;
+
 template<template<typename...> typename Table, typename LongKey,
          typename... Mapped>
 class StringTable {
@@ -280,6 +284,16 @@ class StringSet
       this->TableFor(key).emplace(key);
     });
   }
+
+  void Insert(LongKey&& word) {
+    detail::Dispatch(detail::TermOf(word), [&](const auto& key) {
+      if constexpr (detail::kIsLongKey<decltype(key)>) {
+        this->TableFor(key).emplace(std::move(word));
+      } else {
+        this->TableFor(key).emplace(key);
+      }
+    });
+  }
 };
 
 template<typename LongKey, typename Mapped>
@@ -290,6 +304,18 @@ class StringMap final
     return detail::Dispatch(
       detail::TermOf(word),
       [&](const auto& key) -> Mapped& { return this->TableFor(key)[key]; });
+  }
+
+  Mapped& operator[](LongKey&& word) {
+    return detail::Dispatch(detail::TermOf(word),
+                            [&](const auto& key) -> Mapped& {
+                              auto& table = this->TableFor(key);
+                              if constexpr (detail::kIsLongKey<decltype(key)>) {
+                                return table[std::move(word)];
+                              } else {
+                                return table[key];
+                              }
+                            });
   }
 
   IRS_FORCE_INLINE const Mapped* Find(this const auto& self,

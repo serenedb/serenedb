@@ -20,7 +20,9 @@
 
 #include "auth/enforce.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
+#include <absl/strings/str_cat.h>
 
 #include <algorithm>
 #include <duckdb/catalog/catalog.hpp>
@@ -38,6 +40,7 @@
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/parsed_data/alter_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
+#include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_trigger_info.hpp>
@@ -51,6 +54,7 @@
 #include <duckdb/planner/logical_operator.hpp>
 #include <duckdb/planner/logical_operator_visitor.hpp>
 #include <duckdb/planner/operator/logical_alter.hpp>
+#include <duckdb/planner/operator/logical_attach.hpp>
 #include <duckdb/planner/operator/logical_copy_to_file.hpp>
 #include <duckdb/planner/operator/logical_create.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
@@ -82,6 +86,7 @@
 #include "pg/commands/rbac.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
+#include "pg/progress_registry.h"
 
 namespace sdb::auth {
 namespace {
@@ -486,13 +491,29 @@ class Enforcer {
           THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                           ERR_MSG("permission denied to create database"));
         }
+        RequireDatabaseNotBeingCreated(
+          op.Cast<duckdb::LogicalAttach>().info->name);
         break;
-      case LogicalOperatorType::LOGICAL_DETACH:
+      case LogicalOperatorType::LOGICAL_DETACH: {
+        const auto& name = op.Cast<duckdb::LogicalDetach>().info->name;
+        auto database =
+          duckdb::DatabaseManager::Get(_context).GetDatabase(name);
+        const bool drops_database =
+          database && database->GetCatalog().GetCatalogType() ==
+                        catalog::SereneDBCatalog::kStorageType;
+        if (drops_database && !_context.transaction.IsAutoCommit()) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+            ERR_MSG("DROP DATABASE cannot run inside a transaction block"));
+        }
         if (_enforce) {
-          RequireDatabaseOwner(
-            op.Cast<duckdb::LogicalDetach>().info->name.GetIdentifierName());
+          RequireDatabaseOwner(name.GetIdentifierName());
+        }
+        if (drops_database) {
+          RequireDatabaseUnused(*database);
         }
         break;
+      }
       case LogicalOperatorType::LOGICAL_COPY_TO_FILE:
         if (_enforce &&
             op.Cast<duckdb::LogicalCopyToFile>().file_path != "/dev/stdout") {
@@ -1288,6 +1309,46 @@ class Enforcer {
     if (database && !_caller_closure.Owns(database->permissions.owner)) {
       MustOwn(*database);
     }
+  }
+
+  void RequireDatabaseNotBeingCreated(const duckdb::Identifier& name) {
+    auto database = duckdb::DatabaseManager::Get(_context).GetDatabase(name);
+    if (!database || database->GetCatalog().GetCatalogType() !=
+                       catalog::SereneDBCatalog::kStorageType) {
+      return;
+    }
+    if (!DatabaseEntry(name.GetIdentifierName())) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_DATABASE),
+                      ERR_MSG("database \"", name.GetIdentifierName(),
+                              "\" is being created by another transaction"));
+    }
+  }
+
+  void RequireDatabaseUnused(const duckdb::AttachedDatabase& database) {
+    if (duckdb::DatabaseManager::GetDefaultDatabase(_context) ==
+        database.GetName()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
+                      ERR_MSG("cannot drop the currently open database"));
+    }
+    const auto self = _connection.GetBackendPid();
+    const auto others = absl::c_count_if(
+      pg::ProgressRegistry::Instance().GetSnapshots(),
+      [&](const pg::ProgressSnapshot& session) {
+        return session.datid == static_cast<int64_t>(database.oid) &&
+               session.pid != self;
+      });
+    if (others == 0) {
+      return;
+    }
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_IN_USE),
+      ERR_MSG("database \"", database.GetName().GetIdentifierName(),
+              "\" is being accessed by other users"),
+      ERR_DETAIL(others == 1 ? std::string{"There is 1 other session using "
+                                           "the database."}
+                             : absl::StrCat("There are ", others,
+                                            " other sessions using the "
+                                            "database.")));
   }
   duckdb::optional_ptr<duckdb::CatalogEntry> ServerEntry(
     std::string_view name) {

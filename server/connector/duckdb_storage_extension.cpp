@@ -55,7 +55,8 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   duckdb::ClientContext& context, duckdb::AttachedDatabase& db,
   const duckdb::string& name, duckdb::AttachInfo& info,
   duckdb::AttachOptions& options) {
-  if (!info.path.empty() && info.path != IN_MEMORY_PATH) {
+  if (!info.path.empty() &&
+      (info.path != IN_MEMORY_PATH || options.original_path)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("cannot attach \"", info.path,

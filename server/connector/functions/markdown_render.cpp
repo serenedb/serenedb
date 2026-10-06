@@ -237,12 +237,11 @@ size_t LongestWordWidth(std::string_view text) {
 }
 
 std::string_view TakeWidth(std::string_view& text, size_t max_width) {
-  const std::string value{text};
   duckdb::idx_t pos = 0;
   duckdb::idx_t used = 0;
-  duckdb::BoxRenderer::TruncateValue(value, max_width, pos, used);
+  duckdb::BoxRenderer::TruncateValue(text, max_width, pos, used);
   if (pos == 0) {
-    pos = duckdb::Utf8Proc::NextGraphemeCluster(value.c_str(), value.size(), 0);
+    pos = duckdb::Utf8Proc::NextGraphemeCluster(text.data(), text.size(), 0);
   }
   const auto head = text.substr(0, pos);
   text.remove_prefix(pos);

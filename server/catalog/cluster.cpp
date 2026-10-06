@@ -36,7 +36,9 @@
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/storage/checkpoint_manager.hpp>
+#include <duckdb/storage/storage_lock.hpp>
 #include <duckdb/storage/storage_manager.hpp>
+#include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -166,6 +168,7 @@ void ClusterCatalog::OnCatalogLogPrepared() {
 void ClusterCatalog::OnCatalogLogDecided() {
   SDB_IF_FAILURE("crash_after_catalog_before_data") { SDB_IMMEDIATE_ABORT(); }
   SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
+  SDB_WAIT_ON_FAILURE("pause_after_catalog_decision");
 }
 
 void ClusterCatalog::BeginCatalogLogCommit() {
@@ -203,6 +206,25 @@ void ClusterCatalog::MaybeCompactCatalogLog() {
   if (storage.GetWALSize() < threshold() ||
       _commits_in_flight.load(std::memory_order_acquire) > 0) {
     return;
+  }
+  std::vector<duckdb::unique_ptr<duckdb::StorageLockKey>> quiescent;
+  auto quiesce = [&](duckdb::AttachedDatabase& db) {
+    auto key = duckdb::DuckTransactionManager::Get(db).TryGetCheckpointLock();
+    if (!key) {
+      return false;
+    }
+    quiescent.push_back(std::move(key));
+    return true;
+  };
+  if (!quiesce(GetAttached())) {
+    return;
+  }
+  for (const auto& db :
+       duckdb::DatabaseManager::Get(GetDatabase()).GetDatabases()) {
+    if (db->GetCatalog().GetCatalogType() == SereneDBCatalog::kStorageType &&
+        !quiesce(*db)) {
+      return;
+    }
   }
   try {
     CompactCatalogLog();

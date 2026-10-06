@@ -84,8 +84,4 @@ ok
 # ---- cleanup
 connection default
 statement ok
-DROP DATABASE dbc_vault;
-
-
-statement ok
 DROP ROLE dbc_vedernikoff;

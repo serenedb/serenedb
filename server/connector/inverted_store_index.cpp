@@ -47,6 +47,7 @@
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iterator>
 #include <span>
 #include <string>
@@ -305,11 +306,15 @@ struct InvertedStoreIndex::FeedTask final : duckdb::BaseExecutorTask {
         index.Apply(queue, *op);
       }
     } catch (...) {
-      absl::MutexLock lock{&queue.mutex};
-      queue.ops.clear();
-      queue.running = false;
+      Cancel();
       throw;
     }
+  }
+
+  void Cancel() final {
+    absl::MutexLock lock{&queue.mutex};
+    queue.ops.clear();
+    queue.running = false;
   }
 
   std::string TaskType() const final { return "InvertedIndexFeed"; }
@@ -402,12 +407,14 @@ struct InvertedStoreIndex::RangeTask final : duckdb::BaseExecutorTask {
 
 InvertedStoreIndex::InvertedStoreIndex(
   duckdb::CreateIndexInput& input, duckdb::idx_t index_id,
+  duckdb::idx_t table_oid,
   std::shared_ptr<search::InvertedIndexStorage> storage,
   std::shared_ptr<const InvertedIndexConfig> config,
   catalog::IndexTokenizers tokenizers, bool has_predicate)
   : BoundIndex(input.name, kTypeName, input.constraint_type, input.column_ids,
                input.table_io_manager, input.unbound_expressions, input.db),
     _index_id{index_id},
+    _table_oid{table_oid},
     _storage{std::move(storage)},
     _config{std::move(config)},
     _tokenizers{std::move(tokenizers)},
@@ -547,6 +554,10 @@ void InvertedStoreIndex::Enqueue(duckdb::TaskExecutor& executor,
 }
 
 void InvertedStoreIndex::Apply(FeedQueue& queue, ReplayOp& op) {
+  SDB_IF_FAILURE("inverted_feed_fails") {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                    ERR_MSG("inverted index feed failed"));
+  }
   Feed(queue.insert_writer, queue.trx, op.results, op.rows, op.count);
 }
 
@@ -582,8 +593,8 @@ InvertedStoreIndex::CopyInsertShared(query::Transaction& transaction,
     if (expression.GetExpressionClass() == duckdb::ExpressionClass::BOUND_REF) {
       const auto column =
         expression.Cast<duckdb::BoundReferenceExpression>().Index();
-      target.Reference(transaction.FeedColumn(
-        &table_io_manager, first_row, count, column, chunk.data[column]));
+      target.Reference(transaction.FeedColumn(&db, _table_oid, first_row, count,
+                                              column, chunk.data[column]));
     } else {
       duckdb::VectorOperations::Copy(results.data[i], target, count, 0, 0);
       duckdb::FlatVector::SetSize(target, count);
@@ -923,8 +934,8 @@ duckdb::unique_ptr<duckdb::BoundIndex> InvertedStoreIndex::Create(
   const auto& index_entry = entry->Cast<catalog::InvertedIndexEntry>();
   SDB_ENSURE(index_entry.Storage());
   auto index = duckdb::make_uniq<InvertedStoreIndex>(
-    input, index_id, index_entry.Storage(), index_entry.Config(),
-    index_entry.ResolveTokenizers(input.context),
+    input, index_id, index_entry.table_oid, index_entry.Storage(),
+    index_entry.Config(), index_entry.ResolveTokenizers(input.context),
     static_cast<bool>(index_entry.where_clause));
   index->_replay = std::make_unique<ReplaySession>(*index, input.context);
   return std::move(index);
@@ -934,7 +945,7 @@ duckdb::IndexStorageInfo InvertedStoreIndex::SerializeToDisk(
   duckdb::QueryContext, const duckdb::case_insensitive_map_t<duckdb::Value>&) {
   SDB_ENSURE(!_storage->IsOutOfSync(), "inverted index ", _index_id,
              " is out of sync with its store table; refusing to checkpoint");
-  _storage->CheckpointRefresh();
+  _storage->Refresh();
   return StorageRecord(*this);
 }
 
@@ -973,16 +984,18 @@ PublishedInvertedIndex PublishInvertedIndex(
       !relation.Cast<duckdb::TableCatalogEntry>().IsDuckTable()) {
     return {std::move(storage), 0};
   }
-  auto& data = relation.Cast<duckdb::DuckTableEntry>().GetStorage();
+  auto& table = relation.Cast<duckdb::DuckTableEntry>();
+  auto& data = table.GetStorage();
+  const auto storage_ids = table.StorageColumnIds(entry);
   duckdb::CreateIndexInput input{
     context,      duckdb::TableIOManager::Get(data),
     data.db,      entry.index_constraint_type,
-    entry.name,   entry.column_ids,
+    entry.name,   storage_ids,
     bound_exprs,  duckdb::IndexStorageInfo{entry.name},
     entry.options};
   auto index = duckdb::make_uniq<InvertedStoreIndex>(
-    input, entry.oid, storage, entry.Config(), entry.ResolveTokenizers(context),
-    static_cast<bool>(entry.where_clause));
+    input, entry.oid, entry.table_oid, storage, entry.Config(),
+    entry.ResolveTokenizers(context), static_cast<bool>(entry.where_clause));
   auto commit_lock = data.db.GetStorageManager().GetCommitLock();
   data.AddIndex(std::move(index), entry.oid);
   const auto rowid_horizon = data.GetNextRowId();

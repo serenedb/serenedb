@@ -39,16 +39,14 @@ class Model final : public fasttext::ImmutableFastText,
 
   std::string GetObjectType() final { return std::string{ObjectType()}; }
 
-  explicit Model(std::string_view location) {
-    loadModel(std::string{location});
-  }
+  explicit Model(const std::string& location) { loadModel(location); }
 
   duckdb::optional_idx GetEstimatedCacheMemory() const final;
 };
 
 template<typename T>
 duckdb::shared_ptr<const T> GetOrBuildModel(duckdb::SharedObjectCache& cache,
-                                            std::string_view location) {
+                                            const std::string& location) {
   try {
     auto model = cache.GetOrBuild<Model>(
       location, [&] { return duckdb::make_uniq<Model>(location); });

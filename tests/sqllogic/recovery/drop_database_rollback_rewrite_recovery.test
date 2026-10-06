@@ -1,0 +1,58 @@
+control substitution on
+
+statement ok
+CREATE DATABASE ddrr_db;
+
+
+statement ok
+CREATE TABLE ddrr_db.public.ddrr_t (a INTEGER);
+
+
+statement ok
+INSERT INTO ddrr_db.public.ddrr_t VALUES (1), (2);
+
+
+statement ok
+BEGIN;
+
+
+statement error
+DROP DATABASE ddrr_db;
+----
+db error: ERROR: DROP DATABASE cannot run inside a transaction block
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+statement ok
+CREATE TABLE ddrr_trigger (x INTEGER);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'ddrr_db';
+----
+n
+1
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM ddrr_db.public.ddrr_t;
+----
+n
+2

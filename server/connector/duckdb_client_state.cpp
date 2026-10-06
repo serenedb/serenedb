@@ -200,6 +200,33 @@ void SereneDBClientState::TransactionPreCommit(
   // so catalog lookups performed by custom-impl settings (e.g. search_path)
   // can succeed via their normal set_local path.
   _connection_ctx->PreCommit();
+  std::vector<std::reference_wrapper<duckdb::AttachedDatabase>> written;
+  for (auto& db : transaction.OpenedTransactions()) {
+    if (db.get().GetCatalog().GetCatalogType() !=
+        catalog::SereneDBCatalog::kStorageType) {
+      continue;
+    }
+    auto opened = transaction.TryGetTransaction(db);
+    if (opened && opened->IsDuckTransaction() &&
+        opened->Cast<duckdb::DuckTransaction>().ChangesMade()) {
+      written.emplace_back(db);
+    }
+  }
+  for (auto& db : written) {
+    const auto& name = db.get().GetName();
+    if (db.get().GetCatalog().IsDropped()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
+                      ERR_MSG("database \"", name.GetIdentifierName(),
+                              "\" was dropped by another transaction"));
+    }
+    auto& cluster = catalog::ClusterOf(context);
+    if (!cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+           .GetEntry(cluster.GetCatalogTransaction(context), name)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
+        ERR_MSG("database \"", name.GetIdentifierName(), "\" does not exist"));
+    }
+  }
   if (InvertedStoreIndex::AnyBound()) {
     for (auto& db : transaction.OpenedTransactions()) {
       if (db.get().GetCatalog().GetCatalogType() !=
@@ -241,13 +268,14 @@ void SereneDBClientState::TransactionPreCheckpoint(
   // This commit's exact WAL position, captured under the WAL lock by the
   // engine: with overlapping commits, reading the WAL size here would include
   // later transactions' bytes and over-claim the recovery cursor (skipping
-  // their re-stream after a crash). A commit whose changes are carried by its
-  // in-commit checkpoint (wal_end_offset == 0) recovers from the start of the
-  // post-checkpoint WAL generation.
-  const auto cursor = wal_end_offset > 0
-                        ? search::WalCursor{wal_generation, wal_end_offset}
-                        : search::WalCursor{wal_generation + 1, 0};
-  _connection_ctx->CommitSearch(cursor, db.oid);
+  // their re-stream after a crash).
+  _connection_ctx->CommitSearch(
+    search::WalCursor{wal_generation, wal_end_offset}, db.oid);
+}
+
+void SereneDBClientState::TransactionPreWalWrite(duckdb::AttachedDatabase& db,
+                                                 duckdb::ClientContext&) {
+  _connection_ctx->RefreshCreatedIndexes(db.oid);
 }
 
 void SereneDBClientState::TransactionPreRollback(
@@ -285,6 +313,9 @@ void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {
   if (pending_copy_command != pg::ProgressCommand::None) {
     auto& metrics = progress_source->metrics;
     metrics.SetCommand(pending_copy_command);
+    if (pending_copy_command == pg::ProgressCommand::CreateTableAs) {
+      metrics.SetPhase(pg::progress_phase::CreateTableAs::Ingesting);
+    }
     metrics.SetIoType(pending_copy_io);
     pg::ProgressMetrics::Set(metrics.relid,
                              static_cast<int64_t>(pending_copy_relid));

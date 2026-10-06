@@ -654,10 +654,15 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   inverted_storage.Refresh();
   SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
   inverted_storage.FinishCreation();
+  if (IsDuckDBTable() && !IsReindexPass()) {
+    GetSereneDBContext(context).AddCreatedIndex(
+      _relation.ParentCatalog().GetAttached().oid, gstate.index_storage);
+  }
 
   if (gstate.progress) {
     gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Finalizing);
   }
+  SDB_WAIT_ON_FAILURE("pause_create_index_before_commit");
   if (!IsReindexPass()) {
     SDB_IF_FAILURE("crash_before_commit") { SDB_IMMEDIATE_ABORT(); }
   }

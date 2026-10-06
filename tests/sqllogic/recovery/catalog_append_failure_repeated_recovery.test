@@ -1,0 +1,86 @@
+control substitution on
+
+statement ok
+CREATE TABLE cafr_t (a INTEGER);
+
+
+statement ok
+CREATE ROLE cafr_a;
+
+
+statement ok
+SET sdb_faults = 'catalog_append_fails';
+
+
+statement error could not append the transaction
+CREATE TABLE cafr_x1 (a INTEGER);
+
+
+statement error could not append the transaction
+CREATE TABLE cafr_x2 (a INTEGER);
+
+
+statement error could not append the transaction
+CREATE TABLE cafr_x3 (a INTEGER);
+
+
+statement ok
+SET sdb_faults = '-catalog_append_fails';
+
+
+statement ok
+CREATE ROLE cafr_b;
+
+
+statement ok
+SET sdb_faults = 'catalog_append_fails';
+
+
+statement error could not append the transaction
+CREATE ROLE cafr_x4;
+
+
+statement ok
+SET sdb_faults = '-catalog_append_fails';
+
+
+statement ok
+CREATE TABLE cafr_y (a INTEGER);
+
+
+statement ok
+INSERT INTO cafr_y VALUES (1);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT relname FROM pg_class WHERE relname LIKE 'cafr_%' ORDER BY relname;
+----
+relname
+cafr_t
+cafr_y
+
+
+connection after_crash
+query
+SELECT rolname FROM pg_roles WHERE rolname LIKE 'cafr_%' ORDER BY rolname;
+----
+rolname
+cafr_a
+cafr_b
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM cafr_y;
+----
+n
+1

@@ -24,7 +24,7 @@
 #include <absl/strings/str_join.h>
 #include <simdjson.h>
 
-#include <optional>
+#include <string_view>
 
 #include "network/http/common.h"
 #include "network/http/es/common.h"
@@ -127,14 +127,13 @@ struct Clause {
   bool uses_match = false;
 };
 
-std::optional<std::string_view> FieldType(const FieldTypes& fields,
-                                          std::string_view name) {
+std::string_view FieldType(const FieldTypes& fields, std::string_view name) {
   if (name == "_id") {
     return "keyword";
   }
   const auto it = fields.find(name);
   if (it == fields.end()) {
-    return std::nullopt;
+    return {};
   }
   return it->second;
 }
@@ -188,10 +187,10 @@ Clause TranslateMatch(JsonValue value, const FieldTypes& fields, bool phrase) {
     Fail(absl::StrCat("[", what, "] requires a field"));
   }
   const auto type = FieldType(fields, field);
-  if (!type) {
+  if (type.data() == nullptr) {
     return {std::string{kMatchNone}, false};
   }
-  if (*type != "text") {
+  if (type != "text") {
     // ES analyzes the match needle with the field's analyzer; for keyword
     // (and other exact) fields that is the identity, i.e. equality.
     return {absl::StrCat(SqlIdentifier(field), " = ", SqlLiteral(query)),
@@ -239,9 +238,9 @@ Clause TranslateTerm(JsonValue value, const FieldTypes& fields) {
       literal = Scalar(body, field);
     }
     const auto field_type = FieldType(fields, field);
-    if (!field_type) {
+    if (field_type.data() == nullptr) {
       out.sql = kMatchNone;
-    } else if (*field_type == "text") {
+    } else if (field_type == "text") {
       out.sql = absl::StrCat(
         SqlIdentifier(field), " @@ ts_tokenize(",
         literal.front() == '\'' ? literal : SqlLiteral(literal), ")");
@@ -266,7 +265,7 @@ Clause TranslateRange(JsonValue value, const FieldTypes& fields) {
       Fail("[range] supports exactly one field");
     }
     const auto field = Key(entry);
-    unmapped = !FieldType(fields, field);
+    unmapped = FieldType(fields, field).data() == nullptr;
     const auto ident = SqlIdentifier(field);
     std::vector<std::string> parts;
     for (auto param : Object(Value(entry), "range")) {

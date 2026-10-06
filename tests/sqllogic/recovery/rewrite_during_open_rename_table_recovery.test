@@ -1,0 +1,105 @@
+control substitution on
+
+statement ok
+CREATE TABLE papich_stream (id INT, chat TEXT);
+
+
+statement ok
+CREATE INDEX papich_chat ON papich_stream USING inverted (chat);
+
+
+statement ok
+INSERT INTO papich_stream VALUES (1, 'arthas'), (2, 'dota');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) papich_stream;
+
+
+connection donsimon
+statement ok
+BEGIN;
+
+
+connection donsimon
+statement ok
+ALTER TABLE papich_stream RENAME TO papich_offline;
+
+
+connection default
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection default
+statement ok
+CREATE TABLE goshandr_bunker (x INT);
+
+
+connection default
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+
+connection donsimon
+statement ok
+ROLLBACK;
+
+
+connection default
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection default
+statement ok
+CREATE TABLE goshandr_bunker_again (x INT);
+
+
+connection default
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM papich_stream;
+----
+n
+2
+
+
+connection after_crash
+query
+SELECT tablename FROM pg_indexes WHERE indexname = 'papich_chat';
+----
+tablename
+papich_stream
+
+
+connection after_crash
+statement ok
+INSERT INTO papich_stream VALUES (3, 'arthas');
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) papich_stream;
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM papich_chat WHERE chat @@ 'arthas') AS arthas, (SELECT count(*) FROM papich_chat WHERE chat @@ 'dota') AS dota;
+----
+arthas	dota
+2	1

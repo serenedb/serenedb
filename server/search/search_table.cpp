@@ -257,11 +257,12 @@ ResultWithTime SearchTable::RefreshUnsafe(
       }
     }
     if (lock.owns_lock()) {
+      _refresh_mutex.AssertHeld();
       // Snapshot the WAL tick before publishing: a RefreshCommit that reports
       // no changes proves this shard has nothing un-published up to that tick,
       // and any later batch lands at a higher tick, so advancing to it never
       // over-claims.
-      const auto tick_before = _wal->CurrentTick();
+      const auto tick_before = std::min(_wal->CurrentTick(), _clear_bound);
       SDB_PARK_ONCE_ON_FAILURE("pause_search_refresh_after_tick");
       if (tick_before != irs::writer_limits::kMinTick &&
           _writer->RefreshCommit({.tick = tick_before})) {

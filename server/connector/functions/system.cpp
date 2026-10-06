@@ -494,7 +494,7 @@ void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     args.data[0], args.data[1], args.data[2], result, args.size(),
     [&](duckdb::string_t name, duckdb::string_t value,
         bool is_local) -> duckdb::string_t {
-      duckdb::Value val{std::string_view{value.GetData(), value.GetSize()}};
+      duckdb::Value val{value};
       const duckdb::Identifier setting{name.GetString()};
       duckdb::PhysicalSet::SetVariable(
         context, setting,
@@ -955,7 +955,7 @@ void HasTablePrivilege2Function(duckdb::DataChunk& args,
                                 duckdb::ExpressionState& state,
                                 duckdb::Vector& result) {
   auto& conn_ctx = GetSereneDBContext(state.GetContext());
-  const std::string current{conn_ctx.user()};
+  const std::string_view current = conn_ctx.user();
   duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t, bool>(
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t table, duckdb::string_t priv) -> bool {
@@ -1247,7 +1247,7 @@ void HasObjectPrivilege2Function(duckdb::DataChunk& args,
                                  duckdb::ExpressionState& state,
                                  duckdb::Vector& result) {
   auto& conn_ctx = GetSereneDBContext(state.GetContext());
-  const std::string current{conn_ctx.user()};
+  const std::string_view current = conn_ctx.user();
   duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t, bool>(
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t obj, duckdb::string_t priv) -> bool {

@@ -37,3 +37,38 @@ SELECT block_size FROM pragma_database_size() WHERE database_name = 'app_archive
 ----
 block_size
 16384
+
+# DOCS_TEST: example_005
+
+statement ok
+DROP DATABASE IF EXISTS app_scratch;
+
+statement ok
+CREATE DATABASE app_scratch;
+
+# DOCS_TEST_BODY
+
+statement ok
+BEGIN;
+
+statement error db error: ERROR: DROP DATABASE cannot run inside a transaction block
+DROP DATABASE app_scratch;
+
+statement ok
+ROLLBACK;
+
+statement ok
+DROP DATABASE app_scratch;
+
+query
+SELECT count(*) AS n FROM pg_database WHERE datname = 'app_scratch';
+----
+n
+0
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement error db error: ERROR: cannot drop the currently open database
+DROP DATABASE app_production;

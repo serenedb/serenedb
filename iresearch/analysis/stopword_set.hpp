@@ -43,9 +43,9 @@ struct StopwordSet final : duckdb::ObjectCacheEntry,
                                          [&] { return std::move(set); });
   }
 
-  explicit StopwordSet(const std::vector<std::string>& mask) {
-    for (const auto& word : mask) {
-      Insert(word);
+  explicit StopwordSet(std::vector<std::string> mask) {
+    for (auto& word : mask) {
+      Insert(std::move(word));
     }
   }
 

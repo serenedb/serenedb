@@ -71,14 +71,14 @@ db error: ERROR: syntax error at or near "."
 
 # DOCS_TEST_BODY
 
-query I
+query
 SELECT (NULL::INTEGER).coalesce(0);
 ----
 coalesce
 0
 
 
-query I
+query
 SELECT (2).ifnull(0);
 ----
 coalesce

@@ -376,14 +376,6 @@ In this case, floating point division by zero (e.g., `1.0 / 0.0`, `0.0 / 0.0` an
 
 The following `PRAGMA`s are mostly used for development and internal testing.
 
-Enable query verification:
-
-<SqlLogicTest id="configuration/pragmas/example_065" />
-
-Disable query verification:
-
-<SqlLogicTest id="configuration/pragmas/example_066" />
-
 Enable force parallel query processing:
 
 <SqlLogicTest id="configuration/pragmas/example_067" />

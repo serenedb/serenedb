@@ -1,0 +1,76 @@
+control substitution on
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE DATABASE ctd_a;
+
+
+statement ok
+CREATE DATABASE ctd_b;
+
+
+statement ok
+CREATE TABLE ctd_a.public.t (a INTEGER);
+
+
+statement ok
+CREATE TABLE ctd_b.public.t (b INTEGER);
+
+
+statement ok
+INSERT INTO ctd_a.public.t VALUES (1), (2);
+
+
+statement ok
+INSERT INTO ctd_b.public.t VALUES (10);
+
+
+statement ok
+CREATE TABLE ctd_local (c INTEGER);
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT (SELECT count(*) FROM ctd_a.public.t) AS a, (SELECT count(*) FROM ctd_b.public.t) AS b, (SELECT count(*) FROM ctd_local) AS l;
+----
+a	b	l
+2	1	0
+
+
+connection after_crash
+statement ok
+INSERT INTO ctd_b.public.t VALUES (11);
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash2
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT b FROM ctd_b.public.t ORDER BY b;
+----
+b
+10
+11

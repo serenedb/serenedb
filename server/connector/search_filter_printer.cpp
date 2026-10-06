@@ -536,7 +536,8 @@ struct FilterPrinter {
         node.attributes["Slop"] = absl::StrCat(slop);
       }
       if (const auto& tokens = f.options().tokens()) {
-        node.attributes["Verify"] = "stored text";
+        node.attributes["Verify"] =
+          tokens->deferred ? "table filter" : "inline";
         if (tokens->spec) {
           node.attributes["Words"] = PhraseParts(*tokens->spec);
         }

@@ -354,6 +354,7 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
       make_info(config.TermField(col_id), info, std::move(type), col_id);
     if (bind_data.relation.IsSearchTable() || info->IsStored()) {
       column_info.stored_field_id = col_id;
+      column_info.stored_type = column_info.logical_type;
     }
     return column_info;
   };
@@ -392,6 +393,7 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
       make_info(field_id, entry, std::move(return_type), std::nullopt);
     if (entry && entry->IsStored()) {
       column_info.stored_field_id = field_id;
+      column_info.stored_type = column_info.logical_type;
     }
     return column_info;
   };
@@ -1187,7 +1189,7 @@ bool ClaimSearchConjuncts(
                        .analyzed_fields = std::move(analyzed_fields),
                        .null_markers = &null_markers});
   if (scan.offsets.requests.empty() && !scan.score.vector) {
-    connector::DeferWildcardVerify(*root);
+    connector::DeferVerify(*root, scan.score.text.has_value());
   }
 
   scan.search.filter = std::move(root);

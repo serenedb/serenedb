@@ -21,8 +21,10 @@
 #pragma once
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/functional/function_ref.h>
 
 #include <deque>
+#include <duckdb/common/types.hpp>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -36,7 +38,10 @@
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/phrase_slop_matcher.hpp"
+#include "iresearch/search/detail/term_acceptor.hpp"
+#include "iresearch/search/detail/term_predicate.hpp"
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -55,12 +60,19 @@ struct PhraseTokens {
   using Factory = std::function<std::shared_ptr<analysis::Tokenizer>()>;
 
   field_id column = field_limits::invalid();
+  duckdb::LogicalType type;
   Factory tokenizer;
   std::optional<ByPhraseOptions> spec;
   std::optional<PhraseMatch> match;
+  bool deferred = false;
+
+  const ByPhraseOptions& Check(const ByPhraseOptions& phrase) const noexcept {
+    return spec ? *spec : phrase;
+  }
 
   bool operator==(const PhraseTokens& rhs) const noexcept {
-    return column == rhs.column && spec == rhs.spec && match == rhs.match;
+    return column == rhs.column && type == rhs.type && spec == rhs.spec &&
+           match == rhs.match && deferred == rhs.deferred;
   }
 };
 
@@ -72,14 +84,21 @@ struct PhraseVerdict {
 class TokenPhraseMatcher {
  public:
   using Mode = PhraseMatch;
+  using Lookup = absl::FunctionRef<PostingMeta(bytes_view)>;
 
   TokenPhraseMatcher(const ByPhraseOptions& phrase,
                      std::span<const std::vector<bstring>> expanded,
                      const TermReader& reader,
                      std::optional<PhraseMatch> match = std::nullopt);
 
+  TokenPhraseMatcher(const ByPhraseOptions& phrase, bytes_view separator,
+                     Lookup lookup,
+                     std::optional<PhraseMatch> match = std::nullopt);
+
   TokenPhraseMatcher(TokenPhraseMatcher&&) = delete;
   TokenPhraseMatcher& operator=(TokenPhraseMatcher&&) = delete;
+
+  static bool Standalone(const ByPhraseOptions& phrase) noexcept;
 
   Mode Primary() const noexcept { return _primary; }
   Mode Fallback() const noexcept { return _fallback; }
@@ -104,21 +123,48 @@ class TokenPhraseMatcher {
     uint32_t index = 0;
   };
 
+  static bytes_view View(const duckdb::string_t& term) noexcept {
+    return {reinterpret_cast<const byte_type*>(term.GetData()), term.GetSize()};
+  }
+
   const Accept* Find(const duckdb::string_t& term) const noexcept {
-    const auto it = _accept.find(bytes_view{
-      reinterpret_cast<const byte_type*>(term.GetData()), term.GetSize()});
+    const auto it = _accept.find(View(term));
     return it == _accept.end() ? nullptr : &it->second;
   }
 
-  bool Accepts(uint32_t slot, const duckdb::string_t& term) const noexcept;
+  bool Pattern(uint32_t slot, const duckdb::string_t& term) const;
+  bool Accepts(uint32_t slot, const duckdb::string_t& term) const;
+  uint64_t MaskOf(const duckdb::string_t& term) const;
 
+  template<typename Visitor>
+  void ForEachSlot(const duckdb::string_t& term, Visitor&& visit) const {
+    if (const auto* accept = Find(term)) {
+      for (uint32_t i = 0; i != accept->size; ++i) {
+        visit(_slot_ids[accept->begin + i]);
+      }
+    }
+    for (const auto slot : _pattern_slots) {
+      if (Pattern(slot, term)) {
+        visit(slot);
+      }
+    }
+  }
+
+  void Init(const ByPhraseOptions& phrase,
+            std::span<const std::vector<bstring>> expanded, bool patterns,
+            Lookup lookup, std::optional<PhraseMatch> match);
+  void AddPattern(uint32_t slot, const ByPhraseOptions::PhrasePart& part);
   void Index(std::span<const uint32_t> slots);
   void Layout();
-  void PickAnchor(const TermReader& reader);
+  void PickAnchor(Lookup lookup);
 
   std::vector<bstring> _owned;
   absl::flat_hash_map<bytes_view, Accept> _accept;
   std::vector<uint32_t> _slot_ids;
+  std::vector<TermAcceptorSource::ptr> _sources;
+  std::vector<TermPredicate::ptr> _patterns;
+  std::vector<uint32_t> _pattern_slots;
+  bstring _separator;
   std::vector<duckdb::string_t> _words;
   std::vector<uint8_t> _is_word;
   std::vector<PosAttr::value_t> _offs_min;
@@ -219,6 +265,24 @@ class TokenPhraseSink final : public TokenConsumer {
   detail::slop::MatchScratch _slop;
 };
 
+bool CheckValues(TokenPhraseSink& sink, ValueAnalyzer& analyzer,
+                 analysis::Tokenizer& tokenizer,
+                 std::span<const duckdb::string_t> values, bool count,
+                 PhraseVerdict& out);
+
+class TextRows {
+ public:
+  void Bind(duckdb::Vector& values, duckdb::idx_t count);
+
+  bool Values(duckdb::idx_t row, std::vector<duckdb::string_t>& out) const;
+
+ private:
+  duckdb::UnifiedVectorFormat _format;
+  duckdb::UnifiedVectorFormat _children;
+  duckdb::LogicalTypeId _type = duckdb::LogicalTypeId::VARCHAR;
+  uint64_t _array_size = 0;
+};
+
 class TokenPhraseReader {
  public:
   TokenPhraseReader(const ColReader& col_reader, const ColumnReader& column,
@@ -230,9 +294,12 @@ class TokenPhraseReader {
 
   bool Match(doc_id_t doc, bool count, PhraseVerdict& out);
 
+  void Match(std::span<const doc_id_t> docs, bool count,
+             std::span<PhraseVerdict> verdicts, std::span<uint8_t> matched);
+
  private:
-  bool Fetch(doc_id_t doc);
-  bool Analyze();
+  void Gather(std::span<const doc_id_t> docs, bool count,
+              std::span<PhraseVerdict> verdicts, std::span<uint8_t> matched);
 
   ReadContext _ctx;
   const ColumnReader* _column;
@@ -242,14 +309,8 @@ class TokenPhraseReader {
   std::shared_ptr<analysis::Tokenizer> _tokenizer;
   ValueAnalyzer _analyzer;
   TokenPhraseSink _sink;
+  TextRows _rows;
   std::vector<duckdb::string_t> _values;
-  doc_id_t _doc = doc_limits::invalid();
-  bool _fetched = false;
-  bool _checked = false;
-  bool _counted = false;
-  bool _matched = false;
-  PhraseVerdict _verdict;
-  uint32_t _loads = 0;
 };
 
 }  // namespace irs

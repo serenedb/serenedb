@@ -463,7 +463,8 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
     BuildTableFilter(state, bind_data, *input.filters);
   }
   if (bind_data.search.filter) {
-    AddDeferredVerifyFilters(state, *bind_data.search.filter);
+    AddDeferredVerifyFilters(state, *bind_data.search.filter,
+                             bind_data.search.snapshot->reader);
   }
   if (bind_data.IsHnswScored()) {
     if (state.has_lookup_filter ||

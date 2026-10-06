@@ -505,6 +505,9 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
   if (!approx || QueryBuilder::IsEmpty(*approx)) {
     return QueryBuilder::Empty();
   }
+  if (tokens->deferred) {
+    return approx;
+  }
   const auto make = [&](const ByPhraseOptions& phrase,
                         std::span<const std::vector<bstring>> expanded) {
     auto query = memory::make_tracked<TokenPhraseQuery>(

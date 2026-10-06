@@ -36,6 +36,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
+#include <utility>
 
 #include "catalog/entry/tokenizer.h"
 #include "connector/functions/ts_query_codec.h"
@@ -177,34 +178,14 @@ bool HasText(const SearchColumnInfo& column_info) {
          !irs::field_limits::valid(column_info.numeric_field_id);
 }
 
-irs::PhraseTokens::Factory TokenizerFactory(const SearchColumnInfo& column_info,
-                                            duckdb::ClientContext& context,
-                                            bool words) {
-  if (!HasText(column_info)) {
-    return {};
-  }
-  auto source = column_info.tokenizer.analyzer.get_deleter().tokenizer;
-  return [source = std::move(source), context = &context,
-          words] -> std::shared_ptr<irs::analysis::Tokenizer> {
-    auto acquired = source->Acquire(*context);
-    auto deleter = acquired.get_deleter();
-    std::shared_ptr<irs::analysis::Tokenizer> tokenizer{acquired.release(),
-                                                        std::move(deleter)};
-    if (!words) {
-      return tokenizer;
-    }
-    auto& shingle =
-      irs::utils::downCast<irs::analysis::ShingleTokenizer>(*tokenizer);
-    return {tokenizer, &shingle.Base()};
-  };
-}
-
 void CheckTokens(const SearchColumnInfo& column_info,
                  duckdb::ClientContext& context, irs::ByPhraseOptions& options,
                  std::optional<irs::ByPhraseOptions> spec, bool words,
                  std::string_view label, std::string_view hint) {
-  auto tokenizer = TokenizerFactory(column_info, context, words);
-  if (!tokenizer) {
+  if (HasPositions(column_info)) {
+    return;
+  }
+  if (!HasText(column_info)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG(label,
@@ -216,7 +197,18 @@ void CheckTokens(const SearchColumnInfo& column_info,
   }
   auto tokens = std::make_shared<irs::PhraseTokens>();
   tokens->text = column_info.text;
-  tokens->tokenizer = std::move(tokenizer);
+  tokens->tokenizer =
+    [source = column_info.tokenizer.analyzer.get_deleter().tokenizer,
+     context = &context, words] -> std::shared_ptr<irs::analysis::Tokenizer> {
+    std::shared_ptr<irs::analysis::Tokenizer> tokenizer =
+      source->Acquire(*context);
+    if (!words) {
+      return tokenizer;
+    }
+    auto& shingle =
+      irs::utils::downCast<irs::analysis::ShingleTokenizer>(*tokenizer);
+    return {tokenizer, &shingle.Base()};
+  };
   tokens->spec = std::move(spec);
   options.set_tokens(std::move(tokens));
 }
@@ -241,14 +233,8 @@ void PlanShingles(const irs::analysis::ShingleTokenizer& shingle,
     }
     return;
   }
-  const bool positions = HasPositions(column_info);
   if (auto cover = irs::ShingleCover(shingle, options)) {
-    if (positions) {
-      options = std::move(*cover);
-      return;
-    }
-    auto words = std::move(options);
-    options = std::move(*cover);
+    auto words = std::exchange(options, std::move(*cover));
     CheckTokens(column_info, context, options, std::move(words), true, label,
                 kHint);
     return;
@@ -272,16 +258,13 @@ void PlanShingles(const irs::analysis::ShingleTokenizer& shingle,
                "`token_separator`."));
   }
   options.set_word_separator(shingle.Separator());
-  if (!positions) {
-    CheckTokens(column_info, context, options, std::nullopt, true, label,
-                kHint);
-  }
+  CheckTokens(column_info, context, options, std::nullopt, true, label, kHint);
 }
 
 void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 irs::ByPhraseOptions&& options, std::string_view label,
-                std::string_view single_hint) {
+                std::string_view hint) {
   if (const auto* shingle = QueryShingle(ctx, column_info)) {
     if (auto term = irs::ShingleTerm(*shingle, options)) {
       AddTerm(MaybeNegated(parent, ctx, column_info),
@@ -290,9 +273,9 @@ void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
       return;
     }
     PlanShingles(*shingle, column_info, options, label, ctx.client_context);
-  } else if (options.size() > 1 && !HasPositions(column_info)) {
+  } else if (options.size() > 1) {
     CheckTokens(column_info, ctx.client_context, options, std::nullopt, false,
-                label, absl::StrCat("or query with ", single_hint));
+                label, hint);
   }
   AddPhrase(parent, ctx, column_info, std::move(options));
 }
@@ -301,6 +284,11 @@ void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
 
 bool MatchesPhrases(const SearchColumnInfo& column_info) {
   return HasPositions(column_info) || HasText(column_info);
+}
+
+bool PhrasesNeedText(const SearchColumnInfo& column_info) {
+  return !HasPositions(column_info) &&
+         column_info.tokenizer.analyzer.get_deleter().tokenizer;
 }
 
 irs::analysis::Tokenizer& PhraseAnalyzer(const FilterContext& ctx,
@@ -323,7 +311,7 @@ void PlanPhrases(irs::Filter& root, duckdb::ClientContext& context,
       return;
     }
     if (!shingle) {
-      if (options.size() > 1 && !HasPositions(*column_info)) {
+      if (options.size() > 1) {
         CheckTokens(*column_info, context, options, std::nullopt, false,
                     "to_tsquery", "or search for single words");
       }
@@ -456,7 +444,7 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
     options.set_slop(slop);
   }
   EmitPhrase(filter, ctx, column_info, std::move(options), "ts_phrase",
-             "a single-term ts_phrase / ts_like");
+             "or query with a single-term ts_phrase / ts_like");
 }
 
 namespace {
@@ -498,7 +486,7 @@ void BuildFtsPhrase(BoolTarget parent, const FilterContext& ctx,
   irs::ByPhraseOptions options;
   EmitPhraseTokens(options, ctx, column_info, text, PhraseGap{});
   EmitPhrase(parent, ctx, column_info, std::move(options), "ts_phrase",
-             "a single-term ts_phrase / ts_like");
+             "or query with a single-term ts_phrase / ts_like");
 }
 
 PhraseGap ParsePhraseSeqGap(const duckdb::Expression& expr) {
@@ -859,7 +847,7 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
     }
   }
   EmitPhrase(parent, ctx, column_info, std::move(options), "##",
-             "a single phrase part");
+             "or query with a single phrase part");
 }
 
 void FromTSQueryPhraseSeq(BoolTarget parent, const FilterContext& ctx,

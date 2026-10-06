@@ -464,8 +464,8 @@ std::vector<std::vector<bstring>> SpecTerms(
   auto source = sources.begin();
   slot = 0;
   for (const auto& info : spec) {
-    if (ByPhraseOptions::KindOf(info.part) == SlotKind::Expansion &&
-        source != sources.end() && *source < part_terms.size()) {
+    if (ByPhraseOptions::KindOf(info.part) == SlotKind::Expansion) {
+      SDB_ASSERT(source != sources.end());
       out[slot] = std::move(part_terms[*source++]);
     }
     ++slot;
@@ -473,18 +473,30 @@ std::vector<std::vector<bstring>> SpecTerms(
   return out;
 }
 
+std::vector<const ColumnReader*> TextColumns(const SubReader& segment,
+                                             const TextSource& text) {
+  const auto* col_reader = segment.GetColReader();
+  if (!col_reader) {
+    return {};
+  }
+  std::vector<const ColumnReader*> columns;
+  columns.reserve(text.columns.size());
+  for (const auto id : text.columns) {
+    const auto* column = col_reader->Column(id);
+    if (!column) {
+      return {};
+    }
+    columns.push_back(column);
+  }
+  return columns;
+}
+
 QueryBuilder::ptr MakeTokenPhraseQuery(
   const SubReader& segment, const PrepareContext& ctx, const TermReader& reader,
   const PhraseState& state, const ByPhraseOptions& options,
+  std::vector<const ColumnReader*> columns,
   std::span<std::vector<bstring>> part_terms) {
   const auto& tokens = options.tokens();
-  const auto* col_reader = segment.GetColReader();
-  if (!col_reader ||
-      !absl::c_all_of(tokens->text.columns, [&](field_id id) -> bool {
-        return col_reader->Column(id);
-      })) {
-    return QueryBuilder::Empty();
-  }
   auto sub = ctx;
   sub.collector = nullptr;
   BooleanBuilder builder{segment,        ctx.memory,           0,
@@ -515,8 +527,8 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
   const auto make = [&](const ByPhraseOptions& phrase,
                         std::span<const std::vector<bstring>> expanded) {
     auto query = memory::make_tracked<TokenPhraseQuery>(
-      ctx.memory, segment, reader, std::move(approx), tokens, phrase, expanded,
-      ctx.boost);
+      ctx.memory, segment, reader, std::move(approx), tokens,
+      std::move(columns), phrase, expanded, ctx.boost);
     query->SetStats(ctx.Record());
     return query;
   };
@@ -540,8 +552,13 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
   const auto* reader = segment.field(field);
   state.reader = reader;
   const auto& tokens = options.tokens();
+  std::vector<const ColumnReader*> columns;
   if (tokens) {
     if (!reader || !detail::DocOf(*reader)) {
+      return QueryBuilder::Empty();
+    }
+    columns = TextColumns(segment, tokens->text);
+    if (columns.empty()) {
       return QueryBuilder::Empty();
     }
   } else if (!detail::ResolvePhrase(reader, state.handles)) {
@@ -584,13 +601,13 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
       }
     }
 
-    if (options.slop() != 0 || tokens) {
+    if (options.slop() != 0 || (tokens && !tokens->deferred)) {
       part_terms.resize(phrase_size);
     }
   }
 
   state.metas.reserve(counts.terms);
-  const bool boosted = counts.boosted && !is_ord_empty;
+  const bool boosted = counts.boosted && !is_ord_empty && !tokens;
   if (boosted) {
     state.boosts.reserve(counts.terms);
   }
@@ -664,7 +681,7 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
 
   if (tokens) {
     return MakeTokenPhraseQuery(segment, ctx, *reader, state, options,
-                                part_terms);
+                                std::move(columns), part_terms);
   }
 
   if (phrase_size == 1 && state.metas.size() == 1) {

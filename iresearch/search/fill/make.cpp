@@ -47,7 +47,6 @@
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/search/queries/term_query.hpp"
-#include "iresearch/search/queries/token_phrase_query.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::fill {
@@ -169,18 +168,6 @@ Node::ptr Make(const WildcardNGramQuery& query) {
 Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge) {
   return MakeWildcardNGramScored(query, ctx, merge);
-}
-
-Node::ptr Make(const TokenPhraseQuery& query) {
-  return MakeTokenPhraseDocs(query);
-}
-
-Node::ptr Make(const TokenPhraseQuery& query, const detail::ScoredCtx& ctx,
-               ScoreMergeType merge) {
-  if (!query.Stats().stats) {
-    return Make(query);
-  }
-  return MakeTokenPhraseScored(query, ctx, merge);
 }
 
 }  // namespace irs::fill

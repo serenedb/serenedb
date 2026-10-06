@@ -21,26 +21,35 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/detail/token_phrase_of.hpp"
-#include "iresearch/search/fill/plan.hpp"
+#include "iresearch/search/fill/make.hpp"
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/lead/two_phase_scored.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::fill {
 
-Node::ptr MakeTokenPhraseScored(const TokenPhraseQuery& query,
-                                const detail::ScoredCtx& ctx,
-                                ScoreMergeType merge) {
+Node::ptr Make(const TokenPhraseQuery& query) {
+  return detail::MakeTokenPhrase<ByWalkDocs, Node::ptr>(query, 0);
+}
+
+Node::ptr Make(const TokenPhraseQuery& query, const detail::ScoredCtx& ctx,
+               ScoreMergeType merge) {
   const auto record = query.Stats(ctx);
-  if (!record.stats) {
-    return {};
+  const detail::ScoreArgs args{.scorer = record.scorer,
+                               .stats = record.stats,
+                               .fetcher = ctx.fetcher,
+                               .boost = query.Boost()};
+  if (!args.stats) {
+    return Make(query);
+  }
+  if (const auto value =
+        detail::ConstantOf(query.Segment(), query.Reader(), args)) {
+    return detail::MakeTokenPhrase<WalkConstantScored, Node::ptr>(
+      query, 0, merge, *ctx.fetcher, *value);
   }
   return detail::MakeTokenPhrase<ByWalkScored, Node::ptr, true,
                                  lead::TwoPhaseScored>(
-    query, 0, merge, *ctx.fetcher, query.Segment(), query.Reader(),
-    detail::ScoreArgs{.scorer = record.scorer,
-                      .stats = record.stats,
-                      .fetcher = ctx.fetcher,
-                      .boost = query.Boost()});
+    query, 0, merge, *ctx.fetcher, query.Segment(), query.Reader(), args);
 }
 
 }  // namespace irs::fill

@@ -23,28 +23,18 @@
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
 
-#include <atomic>
-#include <bit>
+#include <duckdb/common/allocator.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
 #include <iresearch/analysis/text/term_view.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/empty_term_reader.hpp>
-#include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/search/count/root.hpp>
 #include <iresearch/search/detail/phrase_slop_matcher.hpp>
 #include <iresearch/search/detail/token_phrase.hpp>
-#include <iresearch/search/detail/window.hpp>
-#include <iresearch/search/docs/root.hpp>
-#include <iresearch/search/fill/node.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
-#include <iresearch/search/hits/root.hpp>
-#include <iresearch/search/probe/node.hpp>
-#include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/search/top/root.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/string.hpp>
 #include <limits>
@@ -58,6 +48,7 @@
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "insert_field.hpp"
+#include "phrase_families.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -168,10 +159,10 @@ Outcome Check(const irs::ByPhraseOptions& phrase, std::string_view text,
   const irs::TokenPhraseMatcher matcher{phrase, expanded, reader, match};
   Words tokenizer;
   irs::ValueAnalyzer analyzer;
-  irs::TokenPhraseSink sink{matcher, tokenizer.Traits()};
+  irs::TokenPhraseSink sink{matcher, tokenizer.Traits(), count};
   const duckdb::string_t value{text.data(), static_cast<uint32_t>(text.size())};
   Outcome out;
-  sink.Begin(count);
+  sink.Begin();
   EXPECT_TRUE(analyzer.Analyze(tokenizer, value, sink));
   if (sink.Restart()) {
     out.restarted = true;
@@ -533,13 +524,12 @@ TEST(TokenPhraseMatcherTest, standalone_patterns_skip_shingles) {
     [&](irs::bytes_view term) { return reader.Lookup(term); }};
   DenseWords tokenizer;
   irs::ValueAnalyzer analyzer;
-  irs::TokenPhraseSink sink{matcher, tokenizer.Traits()};
+  irs::TokenPhraseSink sink{matcher, tokenizer.Traits(), true};
   const auto check = [&](std::string_view text) {
     const duckdb::string_t value{text.data(),
                                  static_cast<uint32_t>(text.size())};
     irs::PhraseVerdict verdict;
-    return irs::CheckValues(sink, analyzer, tokenizer, {&value, 1}, true,
-                            verdict);
+    return irs::CheckValues(sink, analyzer, tokenizer, {&value, 1}, verdict);
   };
   EXPECT_TRUE(check("the quick brown fox"));
   EXPECT_FALSE(check("the quick brown_fox"));
@@ -552,66 +542,24 @@ inline constexpr irs::field_id kStoreId = 1;
 inline constexpr irs::field_id kPlainId = 2;
 inline constexpr irs::field_id kPositionalId = 3;
 inline constexpr irs::field_id kDecoyId = 4;
-inline constexpr size_t kTop = 5;
 
-struct Field {
-  irs::field_id Id() const { return id; }
-
-  irs::analysis::Tokenizer& GetTokens() const { return *analyzer; }
-
-  std::string_view Value() const noexcept { return value; }
-
-  irs::IndexFeatures GetIndexFeatures() const noexcept { return features; }
-
-  bool Write(irs::DataOutput& out) const {
-    out.WriteData(reinterpret_cast<const irs::byte_type*>(value.data()),
-                  value.size());
-    return true;
-  }
-
-  irs::analysis::Tokenizer* analyzer{};
-  std::string_view value;
-  irs::field_id id{};
-  irs::IndexFeatures features = irs::IndexFeatures::Freq;
-};
-
-struct Families {
-  uint64_t count = 0;
-  std::vector<irs::doc_id_t> docs;
-  std::vector<irs::doc_id_t> fill;
-  std::vector<irs::doc_id_t> probe;
-  std::map<irs::doc_id_t, irs::score_t> hits;
-  std::map<irs::doc_id_t, irs::score_t> fill_scores;
-  std::map<irs::doc_id_t, irs::score_t> probe_scores;
-  std::vector<irs::score_t> top;
-  uint64_t top_total = 0;
-};
-
-void ExpectScores(const std::map<irs::doc_id_t, irs::score_t>& expected,
-                  const std::map<irs::doc_id_t, irs::score_t>& actual) {
-  ASSERT_EQ(expected.size(), actual.size());
-  for (const auto& [doc, score] : expected) {
-    ASSERT_TRUE(actual.contains(doc)) << doc;
-    EXPECT_FLOAT_EQ(score, actual.at(doc)) << doc;
-  }
-}
-
-void ExpectFamilies(const Families& expected, const Families& actual) {
+void ExpectFamilies(const tests::Families& expected,
+                    const tests::Families& actual) {
   EXPECT_EQ(expected.count, actual.count);
   EXPECT_EQ(expected.docs, actual.docs);
   EXPECT_EQ(expected.docs, actual.fill);
   EXPECT_EQ(expected.docs, actual.probe);
   {
     SCOPED_TRACE("hits");
-    ExpectScores(expected.hits, actual.hits);
+    tests::ExpectScores(expected.hits, actual.hits);
   }
   {
     SCOPED_TRACE("fill");
-    ExpectScores(expected.hits, actual.fill_scores);
+    tests::ExpectScores(expected.hits, actual.fill_scores);
   }
   {
     SCOPED_TRACE("probe");
-    ExpectScores(expected.hits, actual.probe_scores);
+    tests::ExpectScores(expected.hits, actual.probe_scores);
   }
   EXPECT_EQ(expected.top_total, actual.top_total);
   ASSERT_EQ(expected.top.size(), actual.top.size());
@@ -630,24 +578,31 @@ std::shared_ptr<const irs::PhraseTokens> Tokens(
   return tokens;
 }
 
-class Index {
+struct Layout {
+  size_t segment_docs = std::numeric_limits<size_t>::max();
+  irs::IndexFeatures plain = irs::IndexFeatures::Freq;
+  bool decoy = false;
+};
+
+class Index : public tests::FamilyIndex {
  public:
   template<typename Words>
   Index(std::span<const std::string> docs, std::type_identity<Words>,
-        size_t segment_docs = std::numeric_limits<size_t>::max()) {
+        Layout layout = {}) {
     auto writer = irs::IndexWriter::Make(_dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     EXPECT_NE(nullptr, writer);
     Words plain;
     Words positional;
-    Field plain_field{.analyzer = &plain, .id = kPlainId};
-    Field positional_field{
+    tests::AnalyzedField plain_field{
+      .analyzer = &plain, .id = kPlainId, .features = layout.plain};
+    tests::AnalyzedField positional_field{
       .analyzer = &positional,
       .id = kPositionalId,
       .features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
-    for (size_t begin = 0; begin < docs.size(); begin += segment_docs) {
+    for (size_t begin = 0; begin < docs.size(); begin += layout.segment_docs) {
       auto ctx = writer->GetBatch();
-      const auto end = std::min(docs.size(), begin + segment_docs);
+      const auto end = std::min(docs.size(), begin + layout.segment_docs);
       for (auto i = begin; i != end; ++i) {
         plain_field.value = docs[i];
         positional_field.value = docs[i];
@@ -656,198 +611,22 @@ class Index {
         EXPECT_TRUE(tests::InsertField(doc, positional_field));
         irs::tests::StoreFieldAt(*doc.GetColWriter(), kStoreId, doc.DocId(),
                                  plain_field);
-        std::vector<std::string_view> words =
-          absl::StrSplit(docs[i], ' ', absl::SkipEmpty());
-        absl::c_reverse(words);
-        const auto decoy = absl::StrJoin(words, " ");
-        const Field decoy_field{.value = decoy, .id = kDecoyId};
-        irs::tests::StoreFieldAt(*doc.GetColWriter(), kDecoyId, doc.DocId(),
-                                 decoy_field);
+        if (layout.decoy) {
+          std::vector<std::string_view> words =
+            absl::StrSplit(docs[i], ' ', absl::SkipEmpty());
+          absl::c_reverse(words);
+          const auto reversed = absl::StrJoin(words, " ");
+          const tests::AnalyzedField decoy_field{.value = reversed,
+                                                 .id = kDecoyId};
+          irs::tests::StoreFieldAt(*doc.GetColWriter(), kDecoyId, doc.DocId(),
+                                   decoy_field);
+        }
       }
       ctx.Commit();
       writer->RefreshCommit();
     }
-    _reader = irs::DirectoryReader{_dir, irs::tests::DefaultReaderOptions()};
+    Open();
   }
-
-  const irs::IndexReader& Reader() const noexcept { return _reader; }
-
-  std::vector<irs::doc_id_t> Docs(const irs::Filter& filter) const {
-    tests::PreparedFilter prepared{filter, *_reader};
-    std::vector<irs::doc_id_t> out;
-    for (size_t i = 0; i != prepared.size(); ++i) {
-      auto docs = prepared.Execute(i);
-      while (!irs::doc_limits::eof(docs->Next())) {
-        out.push_back(Global(i, docs->Value()));
-      }
-    }
-    return out;
-  }
-
-  std::map<irs::doc_id_t, irs::score_t> Freqs(const irs::Filter& filter) const {
-    tests::sort::FrequencyScore scorer;
-    MaxMemoryCounter counter;
-    tests::PreparedFilter prepared{filter, *_reader, &scorer, counter};
-    std::map<irs::doc_id_t, irs::score_t> out;
-    for (size_t i = 0; i != prepared.size(); ++i) {
-      irs::ColumnArgsFetcher fetcher;
-      auto docs = prepared.ExecuteScored(i, fetcher);
-      auto score = docs->PrepareScore();
-      while (!irs::doc_limits::eof(docs->Next())) {
-        docs->FetchScoreArgs(0);
-        fetcher.Fetch(docs->Value());
-        irs::score_t value{};
-        score.Score(&value, 1);
-        out.emplace(Global(i, docs->Value()), value);
-      }
-    }
-    return out;
-  }
-
-  Families Run(const irs::Filter& filter) const {
-    Families out;
-    {
-      tests::PreparedFilter prepared{filter, *_reader};
-      for (size_t i = 0; i != prepared.size(); ++i) {
-        const auto* query = prepared.Query(i);
-        if (!query || irs::QueryBuilder::IsEmpty(*query)) {
-          continue;
-        }
-        const auto end = End(i);
-        out.count += query->PlanCount({})->Run(irs::doc_limits::min(), end);
-
-        auto docs = query->PlanDocs({});
-        std::vector<irs::doc_id_t> buf(irs::detail::kWindowDocs +
-                                       irs::doc_limits::kDocsSlack);
-        auto fill = query->PlanFill({}, irs::ScoreMergeType::Noop);
-        std::vector<uint64_t> mask(irs::detail::kWindowWords);
-        for (auto min = irs::doc_limits::min(); min < end;
-             min += irs::detail::kWindowDocs) {
-          const auto max = std::min(min + irs::detail::kWindowDocs, end);
-          const auto n = docs->Run(min, max, buf.data());
-          for (uint32_t j = 0; j != n; ++j) {
-            out.docs.push_back(Global(i, buf[j]));
-          }
-          absl::c_fill(mask, 0);
-          fill->FillOr(min, max, mask.data());
-          ForEachBit(mask, min, [&](irs::doc_id_t doc) {
-            out.fill.push_back(Global(i, doc));
-          });
-        }
-
-        auto probe = query->PlanProbe({}, end - irs::doc_limits::min());
-        for (auto doc = irs::doc_limits::min(); doc < end; ++doc) {
-          if (probe->Probe(doc) == doc) {
-            out.probe.push_back(Global(i, doc));
-          }
-        }
-      }
-    }
-
-    irs::BM25 scorer;
-    MaxMemoryCounter counter;
-    tests::PreparedFilter prepared{filter, *_reader, &scorer, counter};
-    for (size_t i = 0; i != prepared.size(); ++i) {
-      const auto* query = prepared.Query(i);
-      if (!query || irs::QueryBuilder::IsEmpty(*query)) {
-        continue;
-      }
-      const auto end = End(i);
-      {
-        irs::ColumnArgsFetcher fetcher;
-        auto hits = query->PlanScored({.scorer = scorer, .fetcher = fetcher});
-        std::vector<irs::doc_id_t> docs(irs::detail::kWindowDocs +
-                                        irs::doc_limits::kDocsSlack);
-        std::vector<irs::score_t> scores(irs::detail::kWindowDocs +
-                                         irs::doc_limits::kScoresSlack);
-        for (auto min = irs::doc_limits::min(); min < end;
-             min += irs::detail::kWindowDocs) {
-          const auto max = std::min(min + irs::detail::kWindowDocs, end);
-          const auto n = hits->Run(min, max, docs.data(), scores.data());
-          for (uint32_t j = 0; j != n; ++j) {
-            out.hits.emplace(Global(i, docs[j]), scores[j]);
-          }
-        }
-      }
-      {
-        irs::ColumnArgsFetcher fetcher;
-        auto fill = query->PlanFill({.scorer = &scorer, .fetcher = &fetcher},
-                                    irs::ScoreMergeType::Sum);
-        std::vector<uint64_t> mask(irs::detail::kWindowWords);
-        std::vector<irs::score_t> scores(irs::detail::kWindowDocs);
-        for (auto min = irs::doc_limits::min(); min < end;
-             min += irs::detail::kWindowDocs) {
-          const auto max = std::min(min + irs::detail::kWindowDocs, end);
-          absl::c_fill(mask, 0);
-          absl::c_fill(scores, 0.f);
-          fill->Fill(min, max, mask.data(), scores.data());
-          ForEachBit(mask, min, [&](irs::doc_id_t doc) {
-            out.fill_scores.emplace(Global(i, doc), scores[doc - min]);
-          });
-        }
-      }
-      {
-        irs::ColumnArgsFetcher fetcher;
-        auto probe = query->PlanProbe({.scorer = &scorer, .fetcher = &fetcher},
-                                      end - irs::doc_limits::min());
-        auto score = probe->PrepareScore();
-        for (auto doc = irs::doc_limits::min(); doc < end; ++doc) {
-          if (probe->Probe(doc) != doc) {
-            continue;
-          }
-          probe->FetchScoreArgs(0);
-          fetcher.Fetch(doc);
-          irs::score_t value{};
-          score.Score(&value, 1);
-          out.probe_scores.emplace(Global(i, doc), value);
-        }
-      }
-      {
-        irs::ColumnArgsFetcher fetcher;
-        auto top = query->PlanTop(
-          {.scorer = scorer, .fetcher = fetcher, .prune = false, .k = kTop});
-        std::vector<irs::ScoreDoc> hits(kTop);
-        std::atomic<irs::score_t> threshold{
-          std::numeric_limits<irs::score_t>::lowest()};
-        irs::LoserScoreCollector collector{threshold, hits};
-        top->Run(irs::doc_limits::min(), end, collector);
-        out.top_total += collector.TotalMatches();
-        for (size_t j = 0; j != collector.AcceptedCount(); ++j) {
-          out.top.push_back(hits[j].score);
-        }
-      }
-    }
-    absl::c_sort(out.top, std::greater<>{});
-    return out;
-  }
-
- private:
-  irs::doc_id_t End(size_t segment) const {
-    return static_cast<irs::doc_id_t>(irs::doc_limits::min() +
-                                      (*_reader)[segment].docs_count());
-  }
-
-  irs::doc_id_t Global(size_t segment, irs::doc_id_t doc) const {
-    irs::doc_id_t base = 0;
-    for (size_t i = 0; i != segment; ++i) {
-      base += static_cast<irs::doc_id_t>((*_reader)[i].docs_count());
-    }
-    return base + doc - irs::doc_limits::min();
-  }
-
-  template<typename Visit>
-  static void ForEachBit(std::span<const uint64_t> mask, irs::doc_id_t base,
-                         Visit&& visit) {
-    for (size_t w = 0; w != mask.size(); ++w) {
-      for (auto bits = mask[w]; bits; bits = irs::PopBit(bits)) {
-        visit(base +
-              static_cast<irs::doc_id_t>(w * 64 + std::countr_zero(bits)));
-      }
-    }
-  }
-
-  irs::MemoryDirectory _dir;
-  irs::DirectoryReader _reader;
 };
 
 irs::ByPhrase PhraseOn(irs::field_id field, irs::ByPhraseOptions options,
@@ -883,19 +662,6 @@ void Defer(irs::Filter& filter) {
   auto tokens = std::make_shared<irs::PhraseTokens>(*options.tokens());
   tokens->deferred = true;
   options.set_tokens(std::move(tokens));
-}
-
-irs::PostingMeta Summed(const irs::IndexReader& reader, irs::field_id field,
-                        irs::bytes_view term) {
-  irs::PostingMeta out;
-  for (const auto& segment : reader) {
-    if (const auto* terms = segment.field(field)) {
-      const auto meta = terms->Lookup(term);
-      out.docs_count += meta.docs_count;
-      out.freq += meta.freq;
-    }
-  }
-  return out;
 }
 
 std::string RandomText(std::mt19937& rng,
@@ -993,7 +759,7 @@ void ExpectLikePositions(const Index& index,
     const auto checked =
       Lowered(PhraseOn(kPlainId, phrase, Tokens<Words>(match)));
     ExpectFamilies(expected, index.Run(*checked));
-    ExpectScores(freqs, index.Freqs(*checked));
+    tests::ExpectScores(freqs, index.Freqs(*checked));
   }
 }
 
@@ -1065,23 +831,26 @@ void ExpectDeferredLikeInline(const Index& index,
       irs::utils::downCast<irs::ByPhrase>(*deferred).options();
     ASSERT_TRUE(irs::TokenPhraseMatcher::Standalone(options));
     const irs::TokenPhraseMatcher matcher{options, options.word_separator(),
-                                          [&](irs::bytes_view term) {
-                                            return Summed(index.Reader(),
-                                                          kPlainId, term);
-                                          },
-                                          match};
-    Words tokenizer;
-    irs::ValueAnalyzer analyzer;
-    irs::TokenPhraseSink sink{matcher, tokenizer.Traits()};
+                                          index.Reader(), kPlainId, match};
+    irs::PhraseCheck check{matcher, *options.tokens(), false};
+    const auto candidates = index.Docs(*deferred);
+    ASSERT_LE(candidates.size(), STANDARD_VECTOR_SIZE);
+    duckdb::DataChunk chunk;
+    chunk.Initialize(duckdb::Allocator::DefaultAllocator(),
+                     {duckdb::LogicalType::VARCHAR});
+    chunk.SetChildCardinality(candidates.size());
+    auto* values =
+      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(chunk.data[0]);
+    for (size_t i = 0; i != candidates.size(); ++i) {
+      const auto& text = docs[candidates[i]];
+      values[i] = {text.data(), static_cast<uint32_t>(text.size())};
+    }
+    check.Bind(chunk);
     std::vector<irs::doc_id_t> actual;
-    for (const auto doc : index.Docs(*deferred)) {
-      const auto& text = docs[doc];
-      const duckdb::string_t value{text.data(),
-                                   static_cast<uint32_t>(text.size())};
+    for (size_t i = 0; i != candidates.size(); ++i) {
       irs::PhraseVerdict verdict;
-      if (irs::CheckValues(sink, analyzer, tokenizer, {&value, 1}, false,
-                           verdict)) {
-        actual.push_back(doc);
+      if (check.Check(i, verdict)) {
+        actual.push_back(candidates[i]);
       }
     }
     EXPECT_EQ(expected, actual);
@@ -1098,7 +867,8 @@ TEST(TokenPhraseIndexTest, agrees_with_positions) {
   for (size_t i = 0; i != 300; ++i) {
     docs.push_back(RandomText(rng, kWords, 1 + rng() % 30));
   }
-  const Index index{docs, std::type_identity<DenseWords>{}, 128};
+  const Index index{
+    docs, std::type_identity<DenseWords>{}, {.segment_docs = 128}};
   for (size_t i = 0; i != 60; ++i) {
     const auto phrase = RandomPhrase(rng, kWords);
     SCOPED_TRACE(i);
@@ -1140,8 +910,8 @@ TEST(TokenPhraseIndexTest, stacked_set_slots_count_each_position_once) {
         ? std::map<irs::doc_id_t, irs::score_t>{{0, 1}, {1, 1}, {3, 1}, {4, 1}}
         : std::map<irs::doc_id_t, irs::score_t>{
             {0, 1}, {1, 1}, {2, 1}, {3, 1}, {4, 5}};
-    ExpectScores(expected,
-                 index.Freqs(*Lowered(PhraseOn(kPositionalId, phrase))));
+    tests::ExpectScores(expected,
+                        index.Freqs(*Lowered(PhraseOn(kPositionalId, phrase))));
     ExpectLikePositions<StackedWords>(index, phrase);
   }
 }
@@ -1177,7 +947,8 @@ TEST(TokenPhraseIndexTest, conjunctions_seek_into_checked_batches) {
     }
     docs.push_back(std::move(text));
   }
-  const Index index{docs, std::type_identity<DenseWords>{}, 1500};
+  const Index index{
+    docs, std::type_identity<DenseWords>{}, {.segment_docs = 1500}};
   for (const auto* text :
        {"quick brown", "x x", "the quick", "brown fox dog"}) {
     SCOPED_TRACE(text);
@@ -1194,6 +965,36 @@ TEST(TokenPhraseIndexTest, conjunctions_seek_into_checked_batches) {
   }
 }
 
+TEST(TokenPhraseIndexTest, without_frequency_every_family_scores_constant) {
+  const std::vector<std::string> docs{"quick brown quick brown rare",
+                                      "quick brown rare", "brown quick rare",
+                                      "quick brown quick brown", "quick brown"};
+  const Index index{docs,
+                    std::type_identity<DenseWords>{},
+                    {.plain = irs::IndexFeatures::None}};
+  for (const auto match : kMatches) {
+    SCOPED_TRACE(MatchName(match));
+    const auto phrase = [&] {
+      return PhraseOn(kPlainId, Phrase("quick brown"),
+                      Tokens<DenseWords>(match));
+    };
+    const auto expect_constant = [&](const irs::Filter& filter,
+                                     std::vector<irs::doc_id_t> expected) {
+      const auto families = index.Run(filter);
+      EXPECT_EQ(expected, families.docs);
+      ASSERT_EQ(expected.size(), families.hits.size());
+      const auto score = families.hits.begin()->second;
+      for (const auto& [doc, value] : families.hits) {
+        EXPECT_FLOAT_EQ(score, value) << doc;
+      }
+      tests::ExpectScores(families.hits, families.fill_scores);
+      tests::ExpectScores(families.hits, families.probe_scores);
+    };
+    expect_constant(*Lowered(phrase()), {0, 1, 3, 4});
+    expect_constant(*LoweredAnd(phrase(), "rare"), {0, 1});
+  }
+}
+
 TEST(TokenPhraseIndexTest, deferred_check_agrees_with_inline) {
   constexpr std::string_view kWords[] = {"quick", "quack", "brown", "brawn",
                                          "fox",   "box",   "the",   "dog"};
@@ -1202,7 +1003,8 @@ TEST(TokenPhraseIndexTest, deferred_check_agrees_with_inline) {
   for (size_t i = 0; i != 300; ++i) {
     docs.push_back(RandomText(rng, kWords, 1 + rng() % 20));
   }
-  const Index index{docs, std::type_identity<DenseWords>{}, 64};
+  const Index index{
+    docs, std::type_identity<DenseWords>{}, {.segment_docs = 64}};
   for (size_t i = 0; i != 80; ++i) {
     const auto phrase = RandomPatternPhrase(rng, kWords);
     SCOPED_TRACE(i);
@@ -1218,7 +1020,8 @@ TEST(TokenPhraseIndexTest, deferred_check_on_stacked_tokens) {
   for (size_t i = 0; i != 200; ++i) {
     docs.push_back(RandomText(rng, kWords, 1 + rng() % 20));
   }
-  const Index index{docs, std::type_identity<StackedWords>{}, 64};
+  const Index index{
+    docs, std::type_identity<StackedWords>{}, {.segment_docs = 64}};
   constexpr std::string_view kTerms[] = {"red", "car", "auto", "big"};
   for (size_t i = 0; i != 40; ++i) {
     const auto phrase = RandomPatternPhrase(rng, kTerms);
@@ -1241,7 +1044,9 @@ TEST(TokenPhraseIndexTest, expression_over_stored_columns) {
   for (size_t i = 0; i != 300; ++i) {
     docs.push_back(RandomText(rng, kWords, 1 + rng() % 20));
   }
-  const Index index{docs, std::type_identity<DenseWords>{}, 64};
+  const Index index{docs,
+                    std::type_identity<DenseWords>{},
+                    {.segment_docs = 64, .decoy = true}};
   for (const auto* text : {"quick brown", "the fox", "brown fox dog"}) {
     SCOPED_TRACE(text);
     const auto expected =

@@ -48,6 +48,7 @@
 #include <duckdb/planner/expression_iterator.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <memory>
 #include <utility>
 
 #include "connector/column_id.h"
@@ -109,8 +110,10 @@ duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
     stream, context, params);
 }
 
+namespace {
+
 duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefs(
-  const duckdb::Expression& expr, duckdb::idx_t table_id,
+  duckdb::unique_ptr<duckdb::Expression> expr, duckdb::idx_t table_id,
   std::span<const ColumnId> slot_to_col_id,
   std::span<const duckdb::LogicalType> slot_types) {
   SDB_ASSERT(slot_types.size() >= slot_to_col_id.size());
@@ -125,18 +128,32 @@ duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefs(
     types.emplace_back(slot_types[slot]);
   }
   ChunkBindingResolver resolver(std::move(bindings), std::move(types));
-  auto copy = expr.Copy();
-  resolver.Resolve(copy);
-  return copy;
+  resolver.Resolve(expr);
+  return expr;
 }
 
-duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
-  const duckdb::Expression& expr, const duckdb::DataChunk& chunk,
-  duckdb::idx_t table_id, std::span<const ColumnId> slot_to_col_id) {
-  SDB_ASSERT(chunk.ColumnCount() >= slot_to_col_id.size());
-  return ResolveBoundColumnRefs(expr, table_id, slot_to_col_id,
-                                chunk.GetTypes());
-}
+class EvaluatedText final : public irs::TextExpression {
+ public:
+  EvaluatedText(duckdb::ClientContext& context,
+                std::shared_ptr<const duckdb::Expression> expr)
+    : _expr{std::move(expr)}, _executor{context, *_expr} {
+    _result.Initialize(duckdb::Allocator::Get(context),
+                       {_expr->GetReturnType()});
+  }
+
+  duckdb::Vector& Evaluate(duckdb::DataChunk& columns) final {
+    _result.Reset();
+    _executor.Execute(columns, _result);
+    return _result.data[0];
+  }
+
+ private:
+  std::shared_ptr<const duckdb::Expression> _expr;
+  duckdb::ExpressionExecutor _executor;
+  duckdb::DataChunk _result;
+};
+
+}  // namespace
 
 duckdb::Vector EvaluateExprOverChunk(const duckdb::Expression& bound_expr,
                                      duckdb::DataChunk& chunk,
@@ -144,8 +161,8 @@ duckdb::Vector EvaluateExprOverChunk(const duckdb::Expression& bound_expr,
                                      std::span<const ColumnId> slot_to_col_id,
                                      duckdb::ClientContext& context,
                                      bool is_geojson) {
-  auto resolved =
-    ResolveBoundColumnRefsForChunk(bound_expr, chunk, table_id, slot_to_col_id);
+  auto resolved = ResolveBoundColumnRefs(bound_expr.Copy(), table_id,
+                                         slot_to_col_id, chunk.GetTypes());
   const auto num_rows = chunk.size();
   duckdb::Vector result(resolved->GetReturnType(), num_rows);
   duckdb::ExpressionExecutor executor(context, *resolved);
@@ -154,6 +171,18 @@ duckdb::Vector EvaluateExprOverChunk(const duckdb::Expression& bound_expr,
     RejectJsonObjectArrayLeaves(result, num_rows);
   }
   return result;
+}
+
+irs::TextSource::Expression TextExpressionOf(
+  duckdb::unique_ptr<duckdb::Expression> expr, duckdb::idx_t table_id,
+  std::span<const ColumnId> slot_to_col_id,
+  std::span<const duckdb::LogicalType> slot_types,
+  duckdb::ClientContext& context) {
+  std::shared_ptr<const duckdb::Expression> resolved = ResolveBoundColumnRefs(
+    std::move(expr), table_id, slot_to_col_id, slot_types);
+  return [context = &context, resolved = std::move(resolved)] {
+    return std::make_unique<EvaluatedText>(*context, resolved);
+  };
 }
 
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(

@@ -28,15 +28,7 @@
 
 namespace irs::top {
 
-Root::ptr MakeTokenPhrase(const TokenPhraseQuery& query, const Context& ctx) {
-  if (!query.Stats().stats) {
-    if (ctx.table) {
-      return irs::detail::MakeTokenPhrase<FilteredConstantWalk, Root::ptr>(
-        query, 0, ctx.table, score_t{0});
-    }
-    return irs::detail::MakeTokenPhrase<PlainConstantWalk, Root::ptr>(
-      query, 0, utils::Empty{}, score_t{0});
-  }
+Root::ptr Make(const TokenPhraseQuery& query, const Context& ctx) {
   const auto record = query.Stats(ScoredOf(ctx));
   const irs::detail::ScoreArgs args{.scorer = record.scorer,
                                     .stats = record.stats,

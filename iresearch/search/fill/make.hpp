@@ -111,9 +111,4 @@ Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
                                   const detail::ScoredCtx& ctx,
                                   ScoreMergeType merge);
 
-Node::ptr MakeTokenPhraseDocs(const TokenPhraseQuery& query);
-Node::ptr MakeTokenPhraseScored(const TokenPhraseQuery& query,
-                                const detail::ScoredCtx& ctx,
-                                ScoreMergeType merge);
-
 }  // namespace irs::fill

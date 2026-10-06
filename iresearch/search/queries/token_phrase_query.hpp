@@ -36,12 +36,13 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
     const TokenPhraseMatcher* matcher = nullptr;
     const PhraseTokens* tokens = nullptr;
     const ColReader* col_reader = nullptr;
-    std::vector<const ColumnReader*> columns;
+    std::span<const ColumnReader* const> columns;
   };
 
   TokenPhraseQuery(const SubReader& segment, const TermReader& reader,
                    QueryBuilder::ptr&& approx,
                    std::shared_ptr<const PhraseTokens> tokens,
+                   std::vector<const ColumnReader*> columns,
                    const ByPhraseOptions& phrase,
                    std::span<const std::vector<bstring>> expanded,
                    score_t boost)
@@ -49,6 +50,7 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
       _approx{std::move(approx)},
       _reader{&reader},
       _tokens{std::move(tokens)},
+      _columns{std::move(columns)},
       _matcher{phrase, expanded, reader, _tokens->match},
       _boost{boost} {
     _estimate_matches = _approx->EstimateMatches();
@@ -60,21 +62,10 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
 
   const TermReader& Reader() const noexcept { return *_reader; }
 
-  const TokenPhraseMatcher& Matcher() const noexcept { return _matcher; }
-
   bool Sloppy() const noexcept { return _matcher.Sloppy(); }
 
   Recipe MakeRecipe() const {
-    const auto* col_reader = _segment.GetColReader();
-    SDB_ASSERT(col_reader);
-    Recipe recipe{&_matcher, _tokens.get(), col_reader, {}};
-    recipe.columns.reserve(_tokens->text.columns.size());
-    for (const auto id : _tokens->text.columns) {
-      const auto* column = col_reader->Column(id);
-      SDB_ASSERT(column);
-      recipe.columns.push_back(column);
-    }
-    return recipe;
+    return {&_matcher, _tokens.get(), _segment.GetColReader(), _columns};
   }
 
   void Visit(PreparedStateVisitor&, score_t) const final {}
@@ -87,6 +78,7 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
   QueryBuilder::ptr _approx;
   const TermReader* _reader;
   std::shared_ptr<const PhraseTokens> _tokens;
+  std::vector<const ColumnReader*> _columns;
   TokenPhraseMatcher _matcher;
   score_t _boost;
 };

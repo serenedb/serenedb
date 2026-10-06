@@ -23,9 +23,9 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/functional/function_ref.h>
 
-#include <deque>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/storage/arena_allocator.hpp>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -34,6 +34,7 @@
 #include <string>
 #include <vector>
 
+#include "iresearch/analysis/text/term_view.hpp"
 #include "iresearch/analysis/token_sinks.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
@@ -50,6 +51,7 @@
 
 namespace irs {
 
+struct IndexReader;
 struct TermReader;
 
 enum class PhraseMatch : uint8_t {
@@ -84,7 +86,6 @@ struct PhraseVerdict {
 
 class TokenPhraseMatcher {
  public:
-  using Mode = PhraseMatch;
   using Lookup = absl::FunctionRef<PostingMeta(bytes_view)>;
 
   TokenPhraseMatcher(const ByPhraseOptions& phrase,
@@ -96,13 +97,17 @@ class TokenPhraseMatcher {
                      Lookup lookup,
                      std::optional<PhraseMatch> match = std::nullopt);
 
+  TokenPhraseMatcher(const ByPhraseOptions& phrase, bytes_view separator,
+                     const IndexReader& index, field_id field,
+                     std::optional<PhraseMatch> match = std::nullopt);
+
   TokenPhraseMatcher(TokenPhraseMatcher&&) = delete;
   TokenPhraseMatcher& operator=(TokenPhraseMatcher&&) = delete;
 
   static bool Standalone(const ByPhraseOptions& phrase) noexcept;
 
-  Mode Primary() const noexcept { return _primary; }
-  Mode Fallback() const noexcept { return _fallback; }
+  PhraseMatch Primary() const noexcept { return _primary; }
+  PhraseMatch Fallback() const noexcept { return _fallback; }
   bool Sloppy() const noexcept { return _slop != 0; }
   size_t Slots() const noexcept { return _offs_min.size(); }
 
@@ -124,28 +129,31 @@ class TokenPhraseMatcher {
     uint32_t index = 0;
   };
 
-  static bytes_view View(const duckdb::string_t& term) noexcept {
-    return {reinterpret_cast<const byte_type*>(term.GetData()), term.GetSize()};
-  }
-
-  const Accept* Find(const duckdb::string_t& term) const noexcept {
-    const auto it = _accept.find(View(term));
+  const Accept* Find(bytes_view term) const noexcept {
+    const auto it = _accept.find(term);
     return it == _accept.end() ? nullptr : &it->second;
   }
 
-  bool Pattern(uint32_t slot, const duckdb::string_t& term) const;
+  bool Plain(bytes_view term) const noexcept {
+    return _separator.empty() || term.find(_separator) == bytes_view::npos;
+  }
+
   bool Accepts(uint32_t slot, const duckdb::string_t& term) const;
   uint64_t MaskOf(const duckdb::string_t& term) const;
 
   template<typename Visitor>
   void ForEachSlot(const duckdb::string_t& term, Visitor&& visit) const {
-    if (const auto* accept = Find(term)) {
+    const auto view = AsBytesView(term);
+    if (const auto* accept = Find(view)) {
       for (uint32_t i = 0; i != accept->size; ++i) {
         visit(_slot_ids[accept->begin + i]);
       }
     }
+    if (_pattern_slots.empty() || !Plain(view)) {
+      return;
+    }
     for (const auto slot : _pattern_slots) {
-      if (Pattern(slot, term)) {
+      if (_patterns[slot]->Accepts(view)) {
         visit(slot);
       }
     }
@@ -156,6 +164,7 @@ class TokenPhraseMatcher {
             Lookup lookup, std::optional<PhraseMatch> match);
   void AddPattern(uint32_t slot, const ByPhraseOptions::PhrasePart& part);
   void Index(std::span<const uint32_t> slots);
+  void SlopLayout();
   void Layout();
   void PickAnchor(Lookup lookup);
 
@@ -170,8 +179,8 @@ class TokenPhraseMatcher {
   std::vector<uint8_t> _is_word;
   std::vector<PosAttr::value_t> _offs_min;
   std::vector<PosAttr::value_t> _offs_max;
-  std::vector<PosAttr::value_t> _steps;
-  std::vector<uint32_t> _groups;
+  std::vector<int64_t> _offsets;
+  std::vector<detail::slop::GroupPair> _pairs;
   PosAttr::value_t _slop = 0;
   uint32_t _anchor = kNoSlot;
   uint64_t _left = 0;
@@ -181,19 +190,19 @@ class TokenPhraseMatcher {
   uint64_t _wild = 0;
   uint64_t _last = 0;
   uint32_t _length = 0;
-  Mode _primary = Mode::Positions;
-  Mode _fallback = Mode::Positions;
+  PhraseMatch _primary = PhraseMatch::Positions;
+  PhraseMatch _fallback = PhraseMatch::Positions;
 };
 
 class TokenPhraseSink final : public TokenConsumer {
  public:
   static constexpr TokenLayout kLayout = TokenLayout::TermsPos;
-  static constexpr uint64_t kStepsPerToken = 4;
-  static constexpr uint64_t kStepSlack = 256;
 
-  TokenPhraseSink(const TokenPhraseMatcher& matcher, TokenTraits producer);
+  TokenPhraseSink(const TokenPhraseMatcher& matcher, TokenTraits producer,
+                  bool count);
 
-  void Begin(bool count);
+  void Begin();
+  bool Done() const noexcept { return _done; }
   bool Restart();
   bool End(PhraseVerdict& out);
 
@@ -202,9 +211,10 @@ class TokenPhraseSink final : public TokenConsumer {
   void Consume(TokenBatch& batch, DocRuns runs) final;
 
  private:
-  using Mode = TokenPhraseMatcher::Mode;
+  static constexpr uint64_t kStepsPerToken = 4;
+  static constexpr uint64_t kStepSlack = 256;
 
-  void Start(Mode mode);
+  void Start(PhraseMatch mode);
 
   void AnchorBatch(const TokenBatch& batch);
   bool Hit(size_t at);
@@ -229,9 +239,9 @@ class TokenPhraseSink final : public TokenConsumer {
   bool EndPositions(PhraseVerdict& out);
 
   const TokenPhraseMatcher* _matcher;
-  Mode _mode = Mode::Positions;
+  PhraseMatch _mode = PhraseMatch::Positions;
   bool _dense;
-  bool _count = false;
+  bool _count;
   bool _done = false;
   bool _restart = false;
   uint32_t _last_pos = 0;
@@ -247,7 +257,7 @@ class TokenPhraseSink final : public TokenConsumer {
   std::vector<uint32_t> _carry_pos;
   std::vector<duckdb::string_t> _next_terms;
   std::vector<uint32_t> _next_pos;
-  std::deque<std::string> _interned;
+  duckdb::ArenaAllocator _arena{duckdb::Allocator::DefaultAllocator()};
   std::vector<size_t> _pending;
   uint32_t _last_anchor = 0;
   uint64_t _steps = 0;
@@ -268,37 +278,51 @@ class TokenPhraseSink final : public TokenConsumer {
 
 bool CheckValues(TokenPhraseSink& sink, ValueAnalyzer& analyzer,
                  analysis::Tokenizer& tokenizer,
-                 std::span<const duckdb::string_t> values, bool count,
-                 PhraseVerdict& out);
+                 std::span<const duckdb::string_t> values, PhraseVerdict& out);
 
 class TextRows {
  public:
   void Bind(duckdb::Vector& values, duckdb::idx_t count);
 
-  bool Values(duckdb::idx_t row, std::vector<duckdb::string_t>& out) const;
+  std::span<const duckdb::string_t> Values(duckdb::idx_t row);
 
  private:
   duckdb::UnifiedVectorFormat _format;
   duckdb::UnifiedVectorFormat _children;
   duckdb::LogicalTypeId _type = duckdb::LogicalTypeId::VARCHAR;
   uint64_t _array_size = 0;
+  std::vector<duckdb::string_t> _values;
+};
+
+class PhraseCheck {
+ public:
+  PhraseCheck(const TokenPhraseMatcher& matcher, const PhraseTokens& tokens,
+              bool count);
+
+  void Bind(duckdb::DataChunk& columns);
+  bool Check(duckdb::idx_t row, PhraseVerdict& out);
+
+ private:
+  std::shared_ptr<analysis::Tokenizer> _tokenizer;
+  std::unique_ptr<TextExpression> _expression;
+  ValueAnalyzer _analyzer;
+  TokenPhraseSink _sink;
+  TextRows _rows;
 };
 
 class TokenPhraseReader {
  public:
   TokenPhraseReader(const ColReader& col_reader,
                     std::span<const ColumnReader* const> columns,
-                    std::shared_ptr<analysis::Tokenizer> tokenizer,
                     const TokenPhraseMatcher& matcher,
-                    std::unique_ptr<TextExpression> expression);
+                    const PhraseTokens& tokens, bool count);
 
   TokenPhraseReader(TokenPhraseReader&&) = delete;
   TokenPhraseReader& operator=(TokenPhraseReader&&) = delete;
 
-  bool Match(doc_id_t doc, bool count, PhraseVerdict& out);
+  bool Match(doc_id_t doc, PhraseVerdict& out);
 
-  void Match(std::span<const doc_id_t> docs, bool count,
-             std::span<PhraseVerdict> verdicts, std::span<uint8_t> matched);
+  void Match(std::span<const doc_id_t> docs, std::span<PhraseVerdict> verdicts);
 
  private:
   struct Input {
@@ -309,20 +333,12 @@ class TokenPhraseReader {
     std::unique_ptr<ColumnReader::VectorScratch> out;
   };
 
-  void Gather(std::span<const doc_id_t> docs, bool count,
-              std::span<PhraseVerdict> verdicts, std::span<uint8_t> matched);
-
   ReadContext _ctx;
   std::vector<Input> _inputs;
   uint64_t _row_count = std::numeric_limits<uint64_t>::max();
-  std::unique_ptr<TextExpression> _expression;
   duckdb::DataChunk _chunk;
   duckdb::SelectionVector _sel;
-  std::shared_ptr<analysis::Tokenizer> _tokenizer;
-  ValueAnalyzer _analyzer;
-  TokenPhraseSink _sink;
-  TextRows _rows;
-  std::vector<duckdb::string_t> _values;
+  PhraseCheck _check;
 };
 
 }  // namespace irs

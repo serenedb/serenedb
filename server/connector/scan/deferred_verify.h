@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/filters/filter.hpp>
 
 namespace sdb::connector {

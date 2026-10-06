@@ -22,7 +22,6 @@
 
 #include <absl/algorithm/container.h>
 
-#include <algorithm>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
@@ -36,10 +35,8 @@
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/wildcard_ngram_filter.hpp>
 #include <iresearch/utils/down_cast.hpp>
-#include <limits>
 #include <memory>
 #include <utility>
-#include <vector>
 
 #include "connector/scan/scan_state.h"
 
@@ -75,30 +72,29 @@ void VerifyStoredTerms(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     });
 }
 
-duckdb::unique_ptr<duckdb::TableFilter> MakeVerifyFilter(
-  std::shared_ptr<const re2::RE2> matcher) {
-  duckdb::ScalarFunction fn(duckdb::Identifier{"sdb_wildcard_ngram_verify"},
-                            {duckdb::LogicalType::BLOB},
-                            duckdb::LogicalType::BOOLEAN, VerifyStoredTerms);
+duckdb::unique_ptr<duckdb::TableFilter> MakeColumnCheck(
+  const char* name, const duckdb::LogicalType& type,
+  duckdb::scalar_function_t function,
+  duckdb::unique_ptr<duckdb::FunctionData> bind,
+  duckdb::init_local_state_t init = nullptr) {
+  duckdb::ScalarFunction fn(duckdb::Identifier{name}, {type},
+                            duckdb::LogicalType::BOOLEAN, std::move(function));
+  fn.SetInitStateCallback(init);
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> children;
-  children.push_back(duckdb::make_uniq<duckdb::BoundReferenceExpression>(
-    duckdb::LogicalType::BLOB, 0ULL));
+  children.push_back(
+    duckdb::make_uniq<duckdb::BoundReferenceExpression>(type, 0ULL));
   auto expr = duckdb::make_uniq<duckdb::BoundFunctionExpression>(
-    duckdb::BoundScalarFunction(fn), std::move(children),
-    duckdb::make_uniq<VerifyBindData>(std::move(matcher)));
+    duckdb::BoundScalarFunction(fn), std::move(children), std::move(bind));
   return duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(expr));
 }
 
 struct PhraseCheckBind final : duckdb::FunctionData {
   PhraseCheckBind(std::shared_ptr<const irs::TokenPhraseMatcher> matcher,
-                  irs::PhraseTokens::Factory tokenizer,
-                  irs::TextSource::Expression expression)
-    : matcher{std::move(matcher)},
-      tokenizer{std::move(tokenizer)},
-      expression{std::move(expression)} {}
+                  std::shared_ptr<const irs::PhraseTokens> tokens)
+    : matcher{std::move(matcher)}, tokens{std::move(tokens)} {}
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
-    return duckdb::make_uniq<PhraseCheckBind>(matcher, tokenizer, expression);
+    return duckdb::make_uniq<PhraseCheckBind>(matcher, tokens);
   }
 
   bool Equals(const duckdb::FunctionData& other) const final {
@@ -106,22 +102,14 @@ struct PhraseCheckBind final : duckdb::FunctionData {
   }
 
   std::shared_ptr<const irs::TokenPhraseMatcher> matcher;
-  irs::PhraseTokens::Factory tokenizer;
-  irs::TextSource::Expression expression;
+  std::shared_ptr<const irs::PhraseTokens> tokens;
 };
 
 struct PhraseCheckState final : duckdb::FunctionLocalState {
   explicit PhraseCheckState(const PhraseCheckBind& bind)
-    : tokenizer{bind.tokenizer()},
-      expression{bind.expression ? bind.expression() : nullptr},
-      sink{*bind.matcher, tokenizer->Traits()} {}
+    : check{*bind.matcher, *bind.tokens, false} {}
 
-  std::shared_ptr<irs::analysis::Tokenizer> tokenizer;
-  std::unique_ptr<irs::TextExpression> expression;
-  irs::ValueAnalyzer analyzer;
-  irs::TokenPhraseSink sink;
-  irs::TextRows rows;
-  std::vector<duckdb::string_t> values;
+  irs::PhraseCheck check;
 };
 
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitPhraseCheck(
@@ -133,60 +121,28 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitPhraseCheck(
 
 void CheckPhrase(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                  duckdb::Vector& result) {
-  auto& local = duckdb::ExecuteFunctionState::GetFunctionState(state)
-                  ->Cast<PhraseCheckState>();
-  const auto count = args.size();
-  auto* values = &args.data[0];
-  if (local.expression) {
-    values = &local.expression->Evaluate(args);
-  }
-  local.rows.Bind(*values, count);
+  auto& check = duckdb::ExecuteFunctionState::GetFunctionState(state)
+                  ->Cast<PhraseCheckState>()
+                  .check;
+  check.Bind(args);
   auto* out = duckdb::FlatVector::GetDataMutable<bool>(result);
   irs::PhraseVerdict verdict;
-  for (duckdb::idx_t row = 0; row != count; ++row) {
-    out[row] = local.rows.Values(row, local.values) &&
-               irs::CheckValues(local.sink, local.analyzer, *local.tokenizer,
-                                local.values, false, verdict);
+  for (duckdb::idx_t row = 0, count = args.size(); row != count; ++row) {
+    out[row] = check.Check(row, verdict);
   }
-}
-
-uint32_t Clamp(uint64_t value) noexcept {
-  return static_cast<uint32_t>(
-    std::min<uint64_t>(value, std::numeric_limits<uint32_t>::max()));
 }
 
 duckdb::unique_ptr<duckdb::TableFilter> MakePhraseCheck(
   const irs::ByPhrase& filter, const irs::IndexReader& reader) {
   const auto& options = filter.options();
-  const auto& tokens = *options.tokens();
-  const auto field = filter.field_id();
+  const auto& tokens = options.tokens();
   auto matcher = std::make_shared<const irs::TokenPhraseMatcher>(
-    tokens.Check(options), options.word_separator(),
-    [&](irs::bytes_view term) {
-      uint64_t docs = 0;
-      uint64_t freq = 0;
-      for (const auto& segment : reader) {
-        if (const auto* terms = segment.field(field)) {
-          const auto meta = terms->Lookup(term);
-          docs += meta.docs_count;
-          freq += meta.freq;
-        }
-      }
-      return irs::PostingMeta{.docs_count = Clamp(docs), .freq = Clamp(freq)};
-    },
-    tokens.match);
-  const auto& type = tokens.text.types.front();
-  duckdb::ScalarFunction fn(duckdb::Identifier{"sdb_phrase_check"}, {type},
-                            duckdb::LogicalType::BOOLEAN, CheckPhrase);
-  fn.SetInitStateCallback(InitPhraseCheck);
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> children;
-  children.push_back(
-    duckdb::make_uniq<duckdb::BoundReferenceExpression>(type, 0ULL));
-  auto expr = duckdb::make_uniq<duckdb::BoundFunctionExpression>(
-    duckdb::BoundScalarFunction(fn), std::move(children),
-    duckdb::make_uniq<PhraseCheckBind>(std::move(matcher), tokens.tokenizer,
-                                       tokens.text.expression));
-  return duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(expr));
+    tokens->Check(options), options.word_separator(), reader, filter.field_id(),
+    tokens->match);
+  return MakeColumnCheck(
+    "sdb_phrase_check", tokens->text.types.front(), CheckPhrase,
+    duckdb::make_uniq<PhraseCheckBind>(std::move(matcher), tokens),
+    InitPhraseCheck);
 }
 
 template<typename F, typename Visitor>
@@ -238,7 +194,9 @@ void AddDeferred(ScanGlobalState& state, const irs::Filter& filter,
       downCast<const irs::ByWildcardNGram>(filter).options();
     if (options.deferred_verify) {
       add(options.store_field_id, duckdb::LogicalType::BLOB,
-          MakeVerifyFilter(options.matcher));
+          MakeColumnCheck("sdb_wildcard_ngram_verify",
+                          duckdb::LogicalType::BLOB, VerifyStoredTerms,
+                          duckdb::make_uniq<VerifyBindData>(options.matcher)));
     }
   } else if (filter.type() == irs::Type<irs::ByPhrase>::id()) {
     const auto& phrase = downCast<const irs::ByPhrase>(filter);

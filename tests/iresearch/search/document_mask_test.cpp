@@ -183,6 +183,8 @@ std::vector<Case> Cases() {
     {"single_run", Every(70000, 90000, 1), kEof, MaskKind::Runs},
     {"dense_bitsets", Every(1, 196608, 3), kEof, MaskKind::Bitsets},
     {"dense_bitsets_tail", Every(1, 196608, 3), 150001, MaskKind::Bitsets},
+    {"offset_bitsets", Every(65536, 196608, 3), kEof, MaskKind::Bitsets},
+    {"offset_bitsets_tail", Every(65536, 196608, 3), 250001, MaskKind::Bitsets},
     {"dense_arrays", Every(5, kLimit, 997), kEof, MaskKind::Arrays, false,
      kArrays},
     {"dense_arrays_random", Random(1, kLimit, 0.002, 7), 290000,
@@ -366,6 +368,11 @@ TEST_P(DocumentMaskTest, filter_block_matches_reference) {
       ASSERT_EQ(
         docs.size() - expected.size(),
         mask.CountMasked(docs.data(), static_cast<uint32_t>(docs.size())));
+      auto filtered = docs;
+      auto filtered_scores = scores;
+      filtered.resize(mask.FilterBlock(filtered.data(), filtered_scores.data(),
+                                       static_cast<uint32_t>(docs.size())));
+      ASSERT_EQ(expected, filtered);
       const auto kept = irs::detail::ExcludeBlock(
         mask, docs.data(), scores.data(), static_cast<uint32_t>(docs.size()));
       docs.resize(kept);
@@ -644,6 +651,21 @@ TEST(document_mask_test, builder_copies_a_published_mask) {
     ASSERT_EQ(200000, docs.Probe(65536));
     ASSERT_EQ(kEof, docs.Probe(200001));
   });
+}
+
+TEST(document_mask_test, builder_merges_a_published_mask) {
+  const auto published = Build(Every(1, 65536, 3));
+  auto builder = Builder({1, 2, 200000});
+  builder.Merge(published);
+  ASSERT_EQ(published.Count() + 2, builder.Count());
+  ASSERT_TRUE(builder.Contains(1));
+  ASSERT_TRUE(builder.Contains(2));
+  ASSERT_TRUE(builder.Contains(4));
+  ASSERT_TRUE(builder.Contains(200000));
+  ASSERT_FALSE(builder.Contains(5));
+  ASSERT_FALSE(published.Contains(2));
+  builder.Merge(Build({}));
+  ASSERT_EQ(published.Count() + 2, builder.Count());
 }
 
 }  // namespace

@@ -171,6 +171,8 @@ inline ClauseCost MaskClauseCost(const SubReader& segment,
       case MaskKind::Runs:
         fill += runs * kMaskRunCost;
         break;
+      default:
+        SDB_UNREACHABLE();
     }
   }
   return {.docs = masked,
@@ -184,7 +186,8 @@ inline ClauseCost MaskClauseCost(const SubReader& segment,
           .leaves = 1,
           .exact = false,
           .nested = false,
-          .mask = true};
+          .mask = true,
+        };
 }
 
 inline ClauseCost ChildClauseCost(const QueryBuilder& child,

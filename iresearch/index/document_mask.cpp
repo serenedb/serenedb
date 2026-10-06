@@ -27,6 +27,7 @@
 #include <utility>
 
 #include "iresearch/error/error.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 
 namespace irs {
 namespace {
@@ -77,10 +78,12 @@ uint64_t SpansAt(const roaring_bitmap_t& set, int32_t i) noexcept {
       return static_cast<uint64_t>(
         static_cast<const roaring::internal::run_container_t*>(container)
           ->n_runs);
-    default:
+    case BITSET_CONTAINER_TYPE:
       return static_cast<uint64_t>(
         static_cast<const roaring::internal::bitset_container_t*>(container)
           ->cardinality);
+    default:
+      SDB_UNREACHABLE();
   }
 }
 
@@ -143,9 +146,10 @@ MaskKind KindOf(const roaring_bitmap_t& set) noexcept {
                : MaskKind::Mixed;
     case ARRAY_CONTAINER_TYPE:
       return MaskKind::Arrays;
-    default:
-      SDB_ASSERT(type == RUN_CONTAINER_TYPE);
+    case RUN_CONTAINER_TYPE:
       return MaskKind::Runs;
+    default:
+      SDB_UNREACHABLE();
   }
 }
 
@@ -322,6 +326,14 @@ void DocumentMaskBuilder::Merge(const DocumentMaskBuilder& other) {
     return;
   }
   roaring::api::roaring_bitmap_or_inplace(&_set, &other._set);
+  _count = roaring::api::roaring_bitmap_get_cardinality(&_set);
+}
+
+void DocumentMaskBuilder::Merge(const DocumentMask& published) {
+  if (published.Empty()) {
+    return;
+  }
+  roaring::api::roaring_bitmap_or_inplace(&_set, &published._set);
   _count = roaring::api::roaring_bitmap_get_cardinality(&_set);
 }
 

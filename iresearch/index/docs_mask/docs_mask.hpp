@@ -97,10 +97,9 @@ class DocsMask<MaskKind::Bitsets> final
     if (doc >= _end) [[unlikely]] {
       return true;
     }
-    doc_id_t offset = doc - _base;
+    const doc_id_t offset = doc - _base;
     if (offset >= docs_mask::kChunkDocs) [[unlikely]] {
-      Rebase(doc);
-      offset = doc - _base;
+      return TestSlow(doc);
     }
     return Bit(_words, offset);
   }
@@ -162,22 +161,24 @@ class DocsMask<MaskKind::Bitsets> final
     return ((words[offset / 64] >> (offset % 64)) & 1) != 0;
   }
 
-  IRS_FORCE_INLINE bool PinBlock(doc_id_t first, doc_id_t last) noexcept {
+  enum class Block : uint8_t { kSpread, kLive, kPinned };
+
+  IRS_FORCE_INLINE Block PinBlock(doc_id_t first, doc_id_t last) noexcept {
     if (last >= _end || ((first ^ last) >> docs_mask::kChunkShift) != 0) {
-      return false;
+      return Block::kSpread;
     }
-    if (first - _base >= docs_mask::kChunkDocs) {
-      Rebase(first);
+    if (first - _base < docs_mask::kChunkDocs || Rebase(first)) {
+      return Block::kPinned;
     }
-    return true;
+    return Block::kLive;
   }
 
-  IRS_NO_INLINE void Rebase(doc_id_t doc) noexcept;
+  IRS_NO_INLINE bool TestSlow(doc_id_t doc) noexcept;
 
-  alignas(64) static constexpr uint64_t kNoWords[docs_mask::kChunkWords] = {};
+  bool Rebase(doc_id_t doc) noexcept;
 
-  doc_id_t _base = 0;
-  const uint64_t* _words = kNoWords;
+  doc_id_t _base;
+  const uint64_t* _words;
 };
 
 using GenericDocsMask = DocsMask<MaskKind::Mixed>;

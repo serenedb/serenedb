@@ -1198,8 +1198,10 @@ TEST(docs_mask_test, one_cursor_serves_interleaved_probes_and_windows) {
                doc % (64 * kBits) == 5;
       case 1:
         return doc % 1024 < 40;
-      default:
-        return dense(rng);
+      default: {
+        const auto chunk = doc >> 16;
+        return chunk != 0 && chunk != 5 && dense(rng);
+      }
     }
   };
 

@@ -35,6 +35,7 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::docs_mask {
@@ -302,9 +303,11 @@ class MixedChunk {
         _array =
           ArrayChunk{static_cast<const ArrayChunk::Container*>(container)};
         break;
-      default:
+      case RunChunk::kType:
         _run = RunChunk{static_cast<const RunChunk::Container*>(container)};
         break;
+      default:
+        SDB_UNREACHABLE();
     }
   }
 
@@ -314,8 +317,10 @@ class MixedChunk {
         return _bitset.Next(low, out);
       case ArrayChunk::kType:
         return _array.Next(low, out);
-      default:
+      case RunChunk::kType:
         return _run.Next(low, out);
+      default:
+        SDB_UNREACHABLE();
     }
   }
 
@@ -328,8 +333,10 @@ class MixedChunk {
         return _bitset.Apply<kAndNot>(base, lo, hi, min, max, dst);
       case ArrayChunk::kType:
         return _array.Apply<kAndNot>(base, lo, hi, min, max, dst);
-      default:
+      case RunChunk::kType:
         return _run.Apply<kAndNot>(base, lo, hi, min, max, dst);
+      default:
+        SDB_UNREACHABLE();
     }
   }
 
@@ -340,8 +347,10 @@ class MixedChunk {
         return _bitset.Count(first, last);
       case ArrayChunk::kType:
         return _array.Count(first, last);
-      default:
+      case RunChunk::kType:
         return _run.Count(first, last);
+      default:
+        SDB_UNREACHABLE();
     }
   }
 
@@ -499,11 +508,11 @@ class Chunked : public DocsMaskBase<Derived> {
       auto i = Locate(min);
       _cursor.from = static_cast<doc_id_t>(stop);
       for (; i < count; ++i) {
+        Select(i);
         const auto base = uint64_t{_layout.KeyAt(i)} << kChunkShift;
         if (base >= stop) {
           break;
         }
-        Select(i);
         _cursor.chunk.template Apply<kAndNot>(
           base, std::max<uint64_t>(min, base),
           std::min<uint64_t>(stop, base + kChunkDocs), min, max, words);

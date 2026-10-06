@@ -160,6 +160,7 @@ class DocumentMaskBuilder final {
   void AddRange(doc_id_t first, doc_id_t last);
   void Truncate(doc_id_t first) noexcept;
   void Merge(const DocumentMaskBuilder& other);
+  void Merge(const DocumentMask& published);
   void Clear() noexcept;
 
   DocumentMask Finish(uint32_t bitset_from = kBitsetFrom) && noexcept;

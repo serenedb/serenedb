@@ -56,17 +56,21 @@ namespace irs {
 
 DocsMask<MaskKind::Bitsets>::DocsMask(const DocumentMask* mask,
                                       doc_id_t visible_end) noexcept
-  : Base{mask, visible_end} {
-  Rebase(doc_limits::min());
-}
+  : Base{mask, visible_end},
+    _base{_layout.Begin()},
+    _words{_layout.At(0).Words()} {}
 
 uint32_t DocsMask<MaskKind::Bitsets>::CountMasked(
   const doc_id_t* IRS_RESTRICT docs, uint32_t len) noexcept {
   if (len == 0) {
     return 0;
   }
+  const auto block = PinBlock(docs[0], docs[len - 1]);
+  if (block == Block::kLive) {
+    return 0;
+  }
   uint32_t masked = 0;
-  if (PinBlock(docs[0], docs[len - 1])) {
+  if (block == Block::kPinned) {
     const auto* words = _words;
     const auto base = _base;
     for (uint32_t i = 0; i != len; ++i) {
@@ -86,8 +90,12 @@ uint32_t DocsMask<MaskKind::Bitsets>::FilterBlock(
   if (len == 0) {
     return 0;
   }
+  const auto block = PinBlock(docs[0], docs[len - 1]);
+  if (block == Block::kLive) {
+    return len;
+  }
   uint32_t kept = 0;
-  if (PinBlock(docs[0], docs[len - 1])) {
+  if (block == Block::kPinned) {
     const auto* words = _words;
     const auto base = _base;
     for (uint32_t i = 0; i != len; ++i) {
@@ -107,13 +115,20 @@ uint32_t DocsMask<MaskKind::Bitsets>::FilterBlock(
   return kept;
 }
 
-void DocsMask<MaskKind::Bitsets>::Rebase(doc_id_t doc) noexcept {
-  _base = doc & ~docs_mask::kChunkLow;
+bool DocsMask<MaskKind::Bitsets>::TestSlow(doc_id_t doc) noexcept {
+  return Rebase(doc) && Bit(_words, doc - _base);
+}
+
+bool DocsMask<MaskKind::Bitsets>::Rebase(doc_id_t doc) noexcept {
   const auto begin = _layout.Begin();
   const doc_id_t offset = doc - begin;
   const auto chunk = offset >> docs_mask::kChunkShift;
-  _words = doc >= begin && chunk < _layout.Count() ? _layout.At(chunk).Words()
-                                                   : kNoWords;
+  if (doc < begin || chunk >= _layout.Count()) {
+    return false;
+  }
+  _base = doc & ~docs_mask::kChunkLow;
+  _words = _layout.At(chunk).Words();
+  return true;
 }
 
 }  // namespace irs

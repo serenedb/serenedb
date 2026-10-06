@@ -556,7 +556,7 @@ AddIncomingResult AddIncoming(
     SDB_ASSERT(incoming.reader);
     auto& meta = incoming.segment.meta;
     auto& reader = incoming.reader;
-    auto docs_mask = CopyMask(*reader);
+    DocumentMaskBuilder docs_mask;
 
     bool docs_mask_modified = false;
 
@@ -619,9 +619,19 @@ AddIncomingResult AddIncoming(
       }
     }
 
+    const auto* published = reader->docs_mask();
+    size_t masked = InvisibleCount(meta);
+    if (docs_mask_modified) {
+      if (published != nullptr) {
+        docs_mask.Merge(*published);
+      }
+      masked += docs_mask.Count();
+    } else if (published != nullptr) {
+      masked += published->Count();
+    }
+
     // Skip empty segments
-    if (const auto masked = docs_mask.Count() + InvisibleCount(meta);
-        meta.docs_count <= masked) {
+    if (meta.docs_count <= masked) {
       SDB_ASSERT(meta.docs_count == masked);
       result.modified = true;  // FIXME(gnusi): looks strange
       continue;

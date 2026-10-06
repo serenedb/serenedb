@@ -119,10 +119,6 @@ Node::ptr MakeWildcardNGramDocs(const WildcardNGramQuery& query);
 Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
                                   score_t score);
 
-Node::ptr MakeTokenPhraseDocs(const TokenPhraseQuery& query);
-Node::ptr MakeTokenPhraseScored(const TokenPhraseQuery& query,
-                                const detail::ScoreArgs& args);
-
 Node::ptr MakeRequiredDocs(std::span<const detail::PostingClause> must,
                            std::span<const QueryBuilder::ptr> must_filters,
                            std::span<const detail::PostingClause> should,

@@ -24,18 +24,11 @@
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
 
-#include <atomic>
-#include <bit>
 #include <functional>
 #include <iresearch/analysis/shingle_tokenizer.hpp>
-#include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/iterators.hpp>
-#include <iresearch/search/count/root.hpp>
 #include <iresearch/search/detail/token_phrase.hpp>
-#include <iresearch/search/detail/window.hpp>
-#include <iresearch/search/docs/root.hpp>
-#include <iresearch/search/fill/node.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/filters/levenshtein_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
@@ -44,11 +37,7 @@
 #include <iresearch/search/filters/shingle_phrase.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
-#include <iresearch/search/hits/root.hpp>
-#include <iresearch/search/probe/node.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/search/top/root.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/string.hpp>
 #include <limits>
 #include <map>
@@ -62,6 +51,7 @@
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "insert_field.hpp"
+#include "phrase_families.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
 
@@ -207,7 +197,6 @@ inline constexpr irs::field_id kStoreId = 1;
 inline constexpr irs::field_id kShingleId = 2;
 inline constexpr irs::field_id kPlainId = 3;
 inline constexpr irs::field_id kPositionalId = 4;
-inline constexpr size_t kTop = 5;
 
 std::shared_ptr<const irs::PhraseTokens> StoredWords(
   std::optional<irs::ByPhraseOptions> spec = std::nullopt) {
@@ -233,49 +222,7 @@ std::optional<irs::ByPhraseOptions> CoverOf(const ShingleTokenizer& shingles,
   return irs::ShingleCover(shingles, Phrase(text));
 }
 
-struct Field {
-  irs::field_id Id() const { return id; }
-
-  irs::analysis::Tokenizer& GetTokens() const { return *analyzer; }
-
-  std::string_view Value() const noexcept { return value; }
-
-  irs::IndexFeatures GetIndexFeatures() const noexcept { return features; }
-
-  bool Write(irs::DataOutput& out) const {
-    out.WriteData(reinterpret_cast<const irs::byte_type*>(value.data()),
-                  value.size());
-    return true;
-  }
-
-  irs::analysis::Tokenizer* analyzer{};
-  std::string_view value;
-  irs::field_id id{};
-  irs::IndexFeatures features = irs::IndexFeatures::Freq;
-};
-
-struct Families {
-  uint64_t count = 0;
-  std::vector<irs::doc_id_t> docs;
-  std::vector<irs::doc_id_t> fill;
-  std::vector<irs::doc_id_t> probe;
-  std::map<irs::doc_id_t, irs::score_t> hits;
-  std::map<irs::doc_id_t, irs::score_t> fill_scores;
-  std::map<irs::doc_id_t, irs::score_t> probe_scores;
-  std::vector<irs::score_t> top;
-  uint64_t top_total = 0;
-};
-
-void ExpectScores(const std::map<irs::doc_id_t, irs::score_t>& expected,
-                  const std::map<irs::doc_id_t, irs::score_t>& actual) {
-  ASSERT_EQ(expected.size(), actual.size());
-  for (const auto& [doc, score] : expected) {
-    ASSERT_TRUE(actual.contains(doc)) << doc;
-    EXPECT_FLOAT_EQ(score, actual.at(doc)) << doc;
-  }
-}
-
-void ExpectConsistent(const Families& families) {
+void ExpectConsistent(const tests::Families& families) {
   EXPECT_EQ(families.docs.size(), families.count);
   EXPECT_EQ(families.docs, families.fill);
   EXPECT_EQ(families.docs, families.probe);
@@ -288,22 +235,22 @@ void ExpectConsistent(const Families& families) {
   EXPECT_EQ(families.docs, scored);
   {
     SCOPED_TRACE("fill");
-    ExpectScores(families.hits, families.fill_scores);
+    tests::ExpectScores(families.hits, families.fill_scores);
   }
   {
     SCOPED_TRACE("probe");
-    ExpectScores(families.hits, families.probe_scores);
+    tests::ExpectScores(families.hits, families.probe_scores);
   }
   EXPECT_EQ(families.count, families.top_total);
   absl::c_sort(best, std::greater<>{});
-  best.resize(std::min(best.size(), kTop));
+  best.resize(std::min(best.size(), tests::kTop));
   ASSERT_EQ(best.size(), families.top.size());
   for (size_t i = 0; i != best.size(); ++i) {
     EXPECT_FLOAT_EQ(best[i], families.top[i]) << i;
   }
 }
 
-class Index {
+class Index : public tests::FamilyIndex {
  public:
   template<typename Words = WhitespaceTokenizer>
   Index(std::span<const std::string_view> docs, ShingleTokenizer& shingles,
@@ -313,10 +260,10 @@ class Index {
     EXPECT_NE(nullptr, writer);
     Words plain;
     Words positional;
-    Field shingle_field{
+    tests::AnalyzedField shingle_field{
       .analyzer = &shingles, .id = kShingleId, .features = shingle_features};
-    Field plain_field{.analyzer = &plain, .id = kPlainId};
-    Field positional_field{
+    tests::AnalyzedField plain_field{.analyzer = &plain, .id = kPlainId};
+    tests::AnalyzedField positional_field{
       .analyzer = &positional,
       .id = kPositionalId,
       .features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
@@ -334,22 +281,8 @@ class Index {
     }
     ctx.Commit();
     writer->RefreshCommit();
-    _reader = irs::DirectoryReader{_dir, irs::tests::DefaultReaderOptions()};
-    EXPECT_EQ(1U, _reader->size());
-  }
-
-  const irs::DirectoryReader& Reader() const noexcept { return _reader; }
-
-  std::vector<irs::doc_id_t> Docs(const irs::Filter& filter) const {
-    tests::PreparedFilter prepared{filter, *_reader};
-    std::vector<irs::doc_id_t> out;
-    for (size_t i = 0; i != prepared.size(); ++i) {
-      auto docs = prepared.Execute(i);
-      while (!irs::doc_limits::eof(docs->Next())) {
-        out.push_back(docs->Value() - irs::doc_limits::min());
-      }
-    }
-    return out;
+    Open();
+    EXPECT_EQ(1U, Reader().size());
   }
 
   std::vector<irs::doc_id_t> PhraseDocs(irs::field_id field,
@@ -368,168 +301,6 @@ class Index {
     const irs::Filter& filter) const {
     return ScoresBy(irs::BM25{}, filter);
   }
-
-  std::map<irs::doc_id_t, irs::score_t> Freqs(const irs::Filter& filter) const {
-    return ScoresBy(tests::sort::FrequencyScore{}, filter);
-  }
-
-  std::map<irs::doc_id_t, irs::score_t> ScoresBy(
-    const irs::Scorer& scorer, const irs::Filter& filter) const {
-    MaxMemoryCounter counter;
-    tests::PreparedFilter prepared{filter, *_reader, &scorer, counter};
-    std::map<irs::doc_id_t, irs::score_t> out;
-    for (size_t i = 0; i != prepared.size(); ++i) {
-      irs::ColumnArgsFetcher fetcher;
-      auto docs = prepared.ExecuteScored(i, fetcher);
-      auto score = docs->PrepareScore();
-      while (!irs::doc_limits::eof(docs->Next())) {
-        docs->FetchScoreArgs(0);
-        fetcher.Fetch(docs->Value());
-        irs::score_t value{};
-        score.Score(&value, 1);
-        out.emplace(docs->Value() - irs::doc_limits::min(), value);
-      }
-    }
-    return out;
-  }
-
-  Families Run(const irs::Filter& filter) const {
-    Families out;
-    {
-      tests::PreparedFilter prepared{filter, *_reader};
-      for (size_t i = 0; i != prepared.size(); ++i) {
-        const auto* query = prepared.Query(i);
-        if (!query || irs::QueryBuilder::IsEmpty(*query)) {
-          continue;
-        }
-        const auto end = End(i);
-        out.count += query->PlanCount({})->Run(irs::doc_limits::min(), end);
-
-        auto docs = query->PlanDocs({});
-        std::vector<irs::doc_id_t> buf(irs::detail::kWindowDocs +
-                                       irs::doc_limits::kDocsSlack);
-        auto fill = query->PlanFill({}, irs::ScoreMergeType::Noop);
-        std::vector<uint64_t> mask(irs::detail::kWindowWords);
-        for (auto min = irs::doc_limits::min(); min < end;
-             min += irs::detail::kWindowDocs) {
-          const auto max = std::min(min + irs::detail::kWindowDocs, end);
-          const auto n = docs->Run(min, max, buf.data());
-          for (uint32_t j = 0; j != n; ++j) {
-            out.docs.push_back(buf[j] - irs::doc_limits::min());
-          }
-          absl::c_fill(mask, 0);
-          fill->FillOr(min, max, mask.data());
-          ForEachBit(mask, min, [&](irs::doc_id_t doc) {
-            out.fill.push_back(doc - irs::doc_limits::min());
-          });
-        }
-
-        auto probe = query->PlanProbe({}, end - irs::doc_limits::min());
-        for (auto doc = irs::doc_limits::min(); doc < end; ++doc) {
-          if (probe->Probe(doc) == doc) {
-            out.probe.push_back(doc - irs::doc_limits::min());
-          }
-        }
-      }
-    }
-
-    irs::BM25 scorer;
-    MaxMemoryCounter counter;
-    tests::PreparedFilter prepared{filter, *_reader, &scorer, counter};
-    for (size_t i = 0; i != prepared.size(); ++i) {
-      const auto* query = prepared.Query(i);
-      if (!query || irs::QueryBuilder::IsEmpty(*query)) {
-        continue;
-      }
-      const auto end = End(i);
-      {
-        irs::ColumnArgsFetcher fetcher;
-        auto hits = query->PlanScored({.scorer = scorer, .fetcher = fetcher});
-        std::vector<irs::doc_id_t> docs(irs::detail::kWindowDocs +
-                                        irs::doc_limits::kDocsSlack);
-        std::vector<irs::score_t> scores(irs::detail::kWindowDocs +
-                                         irs::doc_limits::kScoresSlack);
-        for (auto min = irs::doc_limits::min(); min < end;
-             min += irs::detail::kWindowDocs) {
-          const auto max = std::min(min + irs::detail::kWindowDocs, end);
-          const auto n = hits->Run(min, max, docs.data(), scores.data());
-          for (uint32_t j = 0; j != n; ++j) {
-            out.hits.emplace(docs[j] - irs::doc_limits::min(), scores[j]);
-          }
-        }
-      }
-      {
-        irs::ColumnArgsFetcher fetcher;
-        auto fill = query->PlanFill({.scorer = &scorer, .fetcher = &fetcher},
-                                    irs::ScoreMergeType::Sum);
-        std::vector<uint64_t> mask(irs::detail::kWindowWords);
-        std::vector<irs::score_t> scores(irs::detail::kWindowDocs);
-        for (auto min = irs::doc_limits::min(); min < end;
-             min += irs::detail::kWindowDocs) {
-          const auto max = std::min(min + irs::detail::kWindowDocs, end);
-          absl::c_fill(mask, 0);
-          absl::c_fill(scores, 0.f);
-          fill->Fill(min, max, mask.data(), scores.data());
-          ForEachBit(mask, min, [&](irs::doc_id_t doc) {
-            out.fill_scores.emplace(doc - irs::doc_limits::min(),
-                                    scores[doc - min]);
-          });
-        }
-      }
-      {
-        irs::ColumnArgsFetcher fetcher;
-        auto probe = query->PlanProbe({.scorer = &scorer, .fetcher = &fetcher},
-                                      end - irs::doc_limits::min());
-        auto score = probe->PrepareScore();
-        for (auto doc = irs::doc_limits::min(); doc < end; ++doc) {
-          if (probe->Probe(doc) != doc) {
-            continue;
-          }
-          probe->FetchScoreArgs(0);
-          fetcher.Fetch(doc);
-          irs::score_t value{};
-          score.Score(&value, 1);
-          out.probe_scores.emplace(doc - irs::doc_limits::min(), value);
-        }
-      }
-      {
-        irs::ColumnArgsFetcher fetcher;
-        auto top = query->PlanTop(
-          {.scorer = scorer, .fetcher = fetcher, .prune = false, .k = kTop});
-        std::vector<irs::ScoreDoc> hits(kTop);
-        std::atomic<irs::score_t> threshold{
-          std::numeric_limits<irs::score_t>::lowest()};
-        irs::LoserScoreCollector collector{threshold, hits};
-        top->Run(irs::doc_limits::min(), end, collector);
-        out.top_total += collector.TotalMatches();
-        for (size_t j = 0; j != collector.AcceptedCount(); ++j) {
-          out.top.push_back(hits[j].score);
-        }
-      }
-    }
-    absl::c_sort(out.top, std::greater<>{});
-    return out;
-  }
-
- private:
-  irs::doc_id_t End(size_t segment) const {
-    return static_cast<irs::doc_id_t>(irs::doc_limits::min() +
-                                      (*_reader)[segment].docs_count());
-  }
-
-  template<typename Visit>
-  static void ForEachBit(std::span<const uint64_t> mask, irs::doc_id_t base,
-                         Visit&& visit) {
-    for (size_t w = 0; w != mask.size(); ++w) {
-      for (auto bits = mask[w]; bits; bits = irs::PopBit(bits)) {
-        visit(base +
-              static_cast<irs::doc_id_t>(w * 64 + std::countr_zero(bits)));
-      }
-    }
-  }
-
-  irs::MemoryDirectory _dir;
-  irs::DirectoryReader _reader;
 };
 
 irs::Filter::ptr PlanFilter(const ShingleTokenizer& shingles,

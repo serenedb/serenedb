@@ -217,10 +217,6 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
       continue;
     }
     if (f.nested) {
-      // Children-backed column (struct/list parent): GatherFilter's codec /
-      // segment machinery does not apply. Decode the current survivors through
-      // the virtual gather the materialization path uses, narrow on the
-      // compact vector, and map the surviving positions back to span offsets.
       if (f.row_gather) {
         const auto rows = f.reader->RowCount();
         while (survivors != 0 &&

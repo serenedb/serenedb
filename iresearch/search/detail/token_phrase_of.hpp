@@ -28,6 +28,7 @@
 
 #include "iresearch/search/detail/node_of.hpp"
 #include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/token_phrase.hpp"
 #include "iresearch/search/queries/token_phrase_query.hpp"
 #include "iresearch/utils/memory.hpp"
@@ -43,11 +44,8 @@ class TokenPhraseSlots {
   TokenPhraseSlots(std::piecewise_construct_t, ApproxArgs&& approx,
                    const TokenPhraseQuery::Recipe& recipe, bool count)
     : _approx{std::make_from_tuple<Approx>(std::forward<ApproxArgs>(approx))},
-      _reader{*recipe.col_reader, recipe.columns, recipe.tokens->tokenizer(),
-              *recipe.matcher,
-              recipe.tokens->text.expression ? recipe.tokens->text.expression()
-                                             : nullptr},
-      _count{count} {}
+      _reader{*recipe.col_reader, recipe.columns, *recipe.matcher,
+              *recipe.tokens, count} {}
 
   TokenPhraseSlots(TokenPhraseSlots&&) = delete;
   TokenPhraseSlots& operator=(TokenPhraseSlots&&) = delete;
@@ -55,11 +53,10 @@ class TokenPhraseSlots {
   doc_id_t Seek(doc_id_t target)
     requires requires(Approx& approx, doc_id_t doc) { approx.Seek(doc); }
   {
-    while (_pos < _docs.size() && _docs[_pos] < target) {
-      ++_pos;
-    }
-    if (_pos < _docs.size()) {
-      return _docs[_pos];
+    const auto it = std::lower_bound(_docs.begin() + _pos, _docs.end(), target);
+    _pos = static_cast<size_t>(it - _docs.begin());
+    if (it != _docs.end()) {
+      return *it;
     }
     _batch = 1;
     return Fill(_end ? doc_limits::eof() : _approx.Seek(target));
@@ -84,9 +81,9 @@ class TokenPhraseSlots {
   bool Match(doc_id_t doc) {
     if (_pos < _docs.size() && _docs[_pos] == doc) {
       _verdict = _verdicts[_pos];
-      return _matched[_pos] != 0;
+      return _verdict.freq != 0;
     }
-    return _reader.Match(doc, _count, _verdict);
+    return _reader.Match(doc, _verdict);
   }
 
   uint32_t Freq() const noexcept { return _verdict.freq; }
@@ -115,8 +112,7 @@ class TokenPhraseSlots {
       _docs.push_back(doc);
     }
     _verdicts.resize(_docs.size());
-    _matched.resize(_docs.size());
-    _reader.Match(_docs, _count, _verdicts, _matched);
+    _reader.Match(_docs, _verdicts);
     return first;
   }
 
@@ -125,10 +121,8 @@ class TokenPhraseSlots {
   PhraseVerdict _verdict;
   std::vector<doc_id_t> _docs;
   std::vector<PhraseVerdict> _verdicts;
-  std::vector<uint8_t> _matched;
   size_t _pos = 0;
   size_t _batch = 1;
-  bool _count;
   bool _end = false;
 };
 
@@ -137,28 +131,28 @@ template<template<typename> class Impl, typename Result, bool Scored = false,
 Result MakeTokenPhrase(const TokenPhraseQuery& query, uint64_t interrogations,
                        Prefix&&... prefix) {
   constexpr bool kProbed = std::is_same_v<Result, ProbeNode::ptr>;
-  const auto recipe = query.MakeRecipe();
-  const auto make = [&]<bool Sloppy> -> Result {
-    auto node = [&] {
-      if constexpr (kProbed) {
-        return query.Approx().PlanProbe({}, interrogations);
-      } else {
-        return query.Approx().PlanLead({});
-      }
-    }();
-    if (!node) {
-      return {};
+  auto node = [&] {
+    if constexpr (kProbed) {
+      return query.Approx().PlanProbe({}, interrogations);
+    } else {
+      return query.Approx().PlanLead({});
     }
-    using Approx = std::conditional_t<kProbed, probe::Erased, lead::Erased>;
+  }();
+  if (!node) {
+    return {};
+  }
+  using Approx = std::conditional_t<kProbed, probe::Erased, lead::Erased>;
+  const auto make = [&]<bool Sloppy> -> Result {
     using Slots = TokenPhraseSlots<Approx, Sloppy>;
     return memory::make_managed<Impl<NodeOf<Wrap, Result, Slots>>>(
       std::forward<Prefix>(prefix)..., std::piecewise_construct,
-      std::forward_as_tuple(std::move(node)), recipe, Scored);
+      std::forward_as_tuple(std::move(node)), query.MakeRecipe(), Scored);
   };
-  if (query.Sloppy()) {
-    return make.template operator()<true>();
+  if constexpr (Scored) {
+    return ResolveBool(query.Sloppy(), make);
+  } else {
+    return make.template operator()<false>();
   }
-  return make.template operator()<false>();
 }
 
 }  // namespace irs::detail

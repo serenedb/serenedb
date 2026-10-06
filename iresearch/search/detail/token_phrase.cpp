@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cstring>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <limits>
@@ -31,13 +32,10 @@
 #include <utility>
 
 #include "iresearch/formats/term_reader.hpp"
+#include "iresearch/index/index_reader.hpp"
 
 namespace irs {
 namespace {
-
-bool Equals(const duckdb::string_t& lhs, const duckdb::string_t& rhs) noexcept {
-  return duckdb::string_t::StringComparisonOperators::Equals(lhs, rhs);
-}
 
 duckdb::string_t AsString(bytes_view term) noexcept {
   return {reinterpret_cast<const char*>(term.data()),
@@ -67,6 +65,26 @@ TokenPhraseMatcher::TokenPhraseMatcher(const ByPhraseOptions& phrase,
   SDB_ASSERT(Standalone(phrase));
   Init(phrase, {}, true, lookup, match);
 }
+
+TokenPhraseMatcher::TokenPhraseMatcher(const ByPhraseOptions& phrase,
+                                       bytes_view separator,
+                                       const IndexReader& index, field_id field,
+                                       std::optional<PhraseMatch> match)
+  : TokenPhraseMatcher{phrase, separator,
+                       [&](bytes_view term) {
+                         uint64_t docs = 0;
+                         uint64_t freq = 0;
+                         for (const auto& segment : index) {
+                           if (const auto* terms = segment.field(field)) {
+                             const auto meta = terms->Lookup(term);
+                             docs += meta.docs_count;
+                             freq += meta.freq;
+                           }
+                         }
+                         return PostingMeta{.docs_count = Clamp(docs),
+                                            .freq = Clamp(freq)};
+                       },
+                       match} {}
 
 bool TokenPhraseMatcher::Standalone(const ByPhraseOptions& phrase) noexcept {
   return absl::c_all_of(phrase, [&](const auto& info) {
@@ -147,27 +165,27 @@ void TokenPhraseMatcher::Init(const ByPhraseOptions& phrase,
 
   if (_slop != 0 || stacked) {
     if (_slop != 0 && n > 1) {
-      _steps.assign(_offs_max.begin() + 1, _offs_max.end());
+      SlopLayout();
     }
     return;
   }
   Layout();
   PickAnchor(lookup);
-  _fallback = _length != 0 ? Mode::Automaton : Mode::Positions;
-  _primary = _anchor != kNoSlot ? Mode::Anchor : _fallback;
+  _fallback = _length != 0 ? PhraseMatch::Automaton : PhraseMatch::Positions;
+  _primary = _anchor != kNoSlot ? PhraseMatch::Anchor : _fallback;
   if (!match) {
     return;
   }
   switch (*match) {
-    case Mode::Anchor:
+    case PhraseMatch::Anchor:
       break;
-    case Mode::Automaton:
+    case PhraseMatch::Automaton:
       if (_length != 0) {
-        _primary = Mode::Automaton;
+        _primary = PhraseMatch::Automaton;
       }
       break;
-    case Mode::Positions:
-      _primary = Mode::Positions;
+    case PhraseMatch::Positions:
+      _primary = PhraseMatch::Positions;
       break;
   }
 }
@@ -184,8 +202,7 @@ void TokenPhraseMatcher::AddPattern(uint32_t slot,
       } else if constexpr (std::is_same_v<Part, ByRangeOptions>) {
         _patterns[slot] =
           MakeTermPredicate([range = options.range](bytes_view term) {
-            return RangeMinAcceptor{&range}(term) &&
-                   RangeMaxAcceptor{&range}(term);
+            return RangeAcceptor{{&range}, {&range}}(term);
           });
       } else if constexpr (std::is_same_v<Part, AutomatonOptions> ||
                            std::is_same_v<Part, LevenshteinAutomatonOptions>) {
@@ -201,38 +218,32 @@ void TokenPhraseMatcher::AddPattern(uint32_t slot,
   }
 }
 
-bool TokenPhraseMatcher::Pattern(uint32_t slot,
-                                 const duckdb::string_t& term) const {
-  const auto view = View(term);
-  if (!_separator.empty() && view.find(_separator) != bytes_view::npos) {
-    return false;
-  }
-  return _patterns[slot]->Accepts(view);
-}
-
 bool TokenPhraseMatcher::Accepts(uint32_t slot,
                                  const duckdb::string_t& term) const {
   if (_is_word[slot]) {
-    return Equals(_words[slot], term);
+    return _words[slot] == term;
   }
+  const auto view = AsBytesView(term);
   if (!_patterns.empty() && _patterns[slot]) {
-    return Pattern(slot, term);
+    return Plain(view) && _patterns[slot]->Accepts(view);
   }
-  const auto* accept = Find(term);
-  if (!accept) {
-    return false;
-  }
-  const auto* ids = _slot_ids.data() + accept->begin;
-  return std::find(ids, ids + accept->size, slot) != ids + accept->size;
+  const auto* accept = Find(view);
+  return accept &&
+         absl::c_linear_search(
+           std::span{_slot_ids}.subspan(accept->begin, accept->size), slot);
 }
 
 uint64_t TokenPhraseMatcher::MaskOf(const duckdb::string_t& term) const {
+  const auto view = AsBytesView(term);
   uint64_t mask = 0;
-  if (const auto* accept = Find(term)) {
+  if (const auto* accept = Find(view)) {
     mask = accept->mask;
   }
+  if (_pattern_slots.empty() || !Plain(view)) {
+    return mask;
+  }
   for (const auto slot : _pattern_slots) {
-    if (Pattern(slot, term)) {
+    if (_patterns[slot]->Accepts(view)) {
       mask |= _slot_bits[slot];
     }
   }
@@ -247,42 +258,47 @@ void TokenPhraseMatcher::Index(std::span<const uint32_t> slots) {
   }
   absl::c_sort(pending);
 
-  const auto n = static_cast<uint32_t>(_offs_min.size());
-  _groups.resize(n);
-  std::iota(_groups.begin(), _groups.end(), 0);
-  const auto find = [&](uint32_t x) {
-    while (_groups[x] != x) {
-      _groups[x] = _groups[_groups[x]];
-      x = _groups[x];
-    }
-    return x;
-  };
-
   _accept.reserve(pending.size());
   for (size_t i = 0; i != pending.size();) {
     const auto term = pending[i].first;
     Accept accept{.begin = static_cast<uint32_t>(_slot_ids.size())};
     for (; i != pending.size() && pending[i].first == term; ++i) {
       const auto slot = pending[i].second;
-      if (accept.size != 0 && _slot_ids.back() == slot) {
-        continue;
+      if (accept.size == 0 || _slot_ids.back() != slot) {
+        _slot_ids.push_back(slot);
+        ++accept.size;
       }
-      if (accept.size != 0) {
-        const auto a = find(_slot_ids[accept.begin]);
-        const auto b = find(slot);
-        if (a != b) {
-          _groups[b] = a;
-        }
-      }
-      _slot_ids.push_back(slot);
-      ++accept.size;
     }
     _accept.emplace(term, accept);
   }
+}
 
-  for (uint32_t i = 0; i != n; ++i) {
-    _groups[i] = find(i);
+void TokenPhraseMatcher::SlopLayout() {
+  const auto n = static_cast<uint32_t>(Slots());
+  _offsets.assign(n, 0);
+  for (uint32_t i = 1; i != n; ++i) {
+    _offsets[i] = _offsets[i - 1] + _offs_max[i];
   }
+
+  std::vector<uint32_t> groups(n);
+  std::iota(groups.begin(), groups.end(), 0);
+  const auto find = [&](uint32_t x) {
+    while (groups[x] != x) {
+      groups[x] = groups[groups[x]];
+      x = groups[x];
+    }
+    return x;
+  };
+  for (const auto& [term, accept] : _accept) {
+    const auto root = find(_slot_ids[accept.begin]);
+    for (uint32_t i = 1; i < accept.size; ++i) {
+      groups[find(_slot_ids[accept.begin + i])] = root;
+    }
+  }
+  for (uint32_t i = 0; i != n; ++i) {
+    groups[i] = find(i);
+  }
+  detail::slop::BuildGroupPairs(groups, n, _pairs);
 }
 
 void TokenPhraseMatcher::Layout() {
@@ -331,7 +347,7 @@ void TokenPhraseMatcher::PickAnchor(Lookup lookup) {
       continue;
     }
     const auto& word = _words[k];
-    const auto meta = lookup(View(word));
+    const auto meta = lookup(AsBytesView(word));
     double cost = kUnknown;
     if (meta.docs_count != 0) {
       cost = meta.freq != 0 ? static_cast<double>(meta.freq) /
@@ -347,24 +363,18 @@ void TokenPhraseMatcher::PickAnchor(Lookup lookup) {
   if (_anchor == kNoSlot) {
     return;
   }
-  for (uint32_t k = 1; k <= _anchor; ++k) {
-    _left += _offs_max[k];
-  }
-  for (auto k = _anchor + 1; k < _offs_max.size(); ++k) {
-    _right += _offs_max[k];
-  }
+  const auto anchor = _offs_max.begin() + _anchor + 1;
+  _left = std::accumulate(_offs_max.begin() + 1, anchor, uint64_t{0});
+  _right = std::accumulate(anchor, _offs_max.end(), uint64_t{0});
 }
 
 TokenPhraseSink::TokenPhraseSink(const TokenPhraseMatcher& matcher,
-                                 TokenTraits producer)
-  : _matcher{&matcher}, _dense{!producer.explicit_pos} {}
+                                 TokenTraits producer, bool count)
+  : _matcher{&matcher}, _dense{!producer.explicit_pos}, _count{count} {}
 
-void TokenPhraseSink::Begin(bool count) {
-  _count = count;
-  Start(_matcher->_primary);
-}
+void TokenPhraseSink::Begin() { Start(_matcher->_primary); }
 
-void TokenPhraseSink::Start(Mode mode) {
+void TokenPhraseSink::Start(PhraseMatch mode) {
   const auto& m = *_matcher;
   _mode = mode;
   _done = false;
@@ -373,7 +383,7 @@ void TokenPhraseSink::Start(Mode mode) {
   _value_base = 0;
   _freq = 0;
   switch (mode) {
-    case Mode::Anchor:
+    case PhraseMatch::Anchor:
       _batch_terms = nullptr;
       _batch_pos = nullptr;
       _batch_base = 0;
@@ -381,12 +391,12 @@ void TokenPhraseSink::Start(Mode mode) {
       _carry_base = 0;
       _carry_terms.clear();
       _carry_pos.clear();
-      _interned.clear();
+      _arena.Reset();
       _pending.clear();
       _last_anchor = 0;
       _steps = 0;
       break;
-    case Mode::Automaton:
+    case PhraseMatch::Automaton:
       _d = 0;
       _mask = 0;
       _at = 0;
@@ -395,7 +405,7 @@ void TokenPhraseSink::Start(Mode mode) {
         _sums.assign(m._extras.size(), 0);
       }
       break;
-    case Mode::Positions:
+    case PhraseMatch::Positions:
       _slots.resize(m.Slots());
       for (auto& slot : _slots) {
         slot.clear();
@@ -419,20 +429,20 @@ void TokenPhraseSink::Consume(TokenBatch& batch, DocRuns) {
     _last_pos = std::max(_last_pos, batch.pos[count - 1]);
   }
   switch (_mode) {
-    case Mode::Anchor:
+    case PhraseMatch::Anchor:
       AnchorBatch(batch);
       break;
-    case Mode::Automaton:
+    case PhraseMatch::Automaton:
       AutomatonBatch(batch);
       break;
-    case Mode::Positions:
+    case PhraseMatch::Positions:
       PositionsBatch(batch);
       break;
   }
 }
 
 bool TokenPhraseSink::Restart() {
-  if (_mode == Mode::Anchor && !_done) {
+  if (_mode == PhraseMatch::Anchor && !_done) {
     _batch_terms = nullptr;
     _batch_pos = nullptr;
     _batch_base = _carry_base + _carry_terms.size();
@@ -455,15 +465,15 @@ bool TokenPhraseSink::Restart() {
 bool TokenPhraseSink::End(PhraseVerdict& out) {
   out = {};
   switch (_mode) {
-    case Mode::Anchor:
+    case PhraseMatch::Anchor:
       SDB_ASSERT(_done && !_restart);
       break;
-    case Mode::Automaton:
+    case PhraseMatch::Automaton:
       if (!_done) {
         Flush();
       }
       break;
-    case Mode::Positions:
+    case PhraseMatch::Positions:
       return EndPositions(out);
   }
   if (_freq == 0) {
@@ -493,7 +503,7 @@ void TokenPhraseSink::AnchorBatch(const TokenBatch& batch) {
   _pending.resize(keep);
   const auto& word = m._words[m._anchor];
   for (uint32_t i = 0; i != batch.count; ++i) {
-    if (!Equals(batch.terms[i], word)) {
+    if (batch.terms[i] != word) {
       continue;
     }
     const auto pos = batch.pos[i];
@@ -515,28 +525,11 @@ void TokenPhraseSink::AnchorBatch(const TokenBatch& batch) {
 
 bool TokenPhraseSink::Hit(size_t at) {
   const auto anchor = _matcher->_anchor;
-  const auto left = Left(anchor, at);
-  if (_restart) {
-    _done = true;
-    return true;
+  if (const auto left = Left(anchor, at)) {
+    _freq += left * Right(anchor, at);
   }
-  if (left == 0) {
-    return false;
-  }
-  const auto right = Right(anchor, at);
-  if (_restart) {
-    _done = true;
-    return true;
-  }
-  if (right == 0) {
-    return false;
-  }
-  _freq += left * right;
-  if (!_count) {
-    _done = true;
-    return true;
-  }
-  return false;
+  _done |= !_count && _freq != 0;
+  return _done;
 }
 
 uint64_t TokenPhraseSink::Right(uint32_t slot, size_t at) {
@@ -614,6 +607,7 @@ bool TokenPhraseSink::Over() noexcept {
     return false;
   }
   _restart = true;
+  _done = true;
   return true;
 }
 
@@ -631,10 +625,10 @@ void TokenPhraseSink::Carry() {
   for (auto at = from; at != _end; ++at) {
     auto term = TermAt(at);
     if (at >= _batch_base && !term.IsInlined()) {
-      const auto& owned =
-        _interned.emplace_back(term.GetData(), term.GetSize());
-      term =
-        duckdb::string_t{owned.data(), static_cast<uint32_t>(owned.size())};
+      const auto size = static_cast<uint32_t>(term.GetSize());
+      auto* data = _arena.Allocate(size);
+      std::memcpy(data, term.GetData(), size);
+      term = {reinterpret_cast<const char*>(data), size};
     }
     _next_terms.push_back(term);
     _next_pos.push_back(PosAt(at));
@@ -729,10 +723,8 @@ void TokenPhraseSink::PositionsBatch(const TokenBatch& batch) {
 bool TokenPhraseSink::EndPositions(PhraseVerdict& out) {
   const auto& m = *_matcher;
   const auto n = m.Slots();
-  for (const auto& slot : _slots) {
-    if (slot.empty()) {
-      return false;
-    }
+  if (absl::c_any_of(_slots, [](const auto& slot) { return slot.empty(); })) {
+    return false;
   }
   if (n == 1) {
     out.freq = _count ? Clamp(_slots.front().size()) : 1;
@@ -740,8 +732,9 @@ bool TokenPhraseSink::EndPositions(PhraseVerdict& out) {
   }
 
   if (m._slop != 0) {
-    const auto res =
-      detail::slop::Run(_slots, m._slop, m._steps, _slop, !_count, m._groups);
+    detail::slop::SpanCursors cursors{_slots, _slop};
+    const auto res = detail::slop::Sweep<0>(cursors, m._offsets, m._slop,
+                                            m._pairs, _slop, !_count, [] {});
     if (!res.any) {
       return false;
     }
@@ -790,23 +783,21 @@ bool TokenPhraseSink::EndPositions(PhraseVerdict& out) {
 
 bool CheckValues(TokenPhraseSink& sink, ValueAnalyzer& analyzer,
                  analysis::Tokenizer& tokenizer,
-                 std::span<const duckdb::string_t> values, bool count,
-                 PhraseVerdict& out) {
-  out = {};
-  if (values.empty()) {
-    return false;
-  }
+                 std::span<const duckdb::string_t> values, PhraseVerdict& out) {
   const auto analyze = [&] {
-    return absl::c_all_of(values, [&](const duckdb::string_t& value) {
-      return analyzer.Analyze(tokenizer, value, sink);
-    });
+    for (const auto& value : values) {
+      if (sink.Done()) {
+        return;
+      }
+      analyzer.Analyze(tokenizer, value, sink);
+    }
   };
-  sink.Begin(count);
-  auto analyzed = analyze();
-  if (analyzed && sink.Restart()) {
-    analyzed = analyze();
+  sink.Begin();
+  analyze();
+  if (sink.Restart()) {
+    analyze();
   }
-  return analyzed && sink.End(out);
+  return sink.End(out);
 }
 
 void TextRows::Bind(duckdb::Vector& values, duckdb::idx_t count) {
@@ -823,12 +814,10 @@ void TextRows::Bind(duckdb::Vector& values, duckdb::idx_t count) {
   }
 }
 
-bool TextRows::Values(duckdb::idx_t row,
-                      std::vector<duckdb::string_t>& out) const {
-  out.clear();
+std::span<const duckdb::string_t> TextRows::Values(duckdb::idx_t row) {
   const auto idx = _format.sel->get_index(row);
   if (!_format.validity.RowIsValid(idx)) {
-    return false;
+    return {};
   }
   uint64_t begin = 0;
   uint64_t end = 0;
@@ -841,19 +830,34 @@ bool TextRows::Values(duckdb::idx_t row,
     begin = idx * _array_size;
     end = begin + _array_size;
   } else {
-    out.push_back(
-      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(_format)[idx]);
-    return true;
+    return {
+      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(_format) + idx, 1};
   }
+  _values.clear();
   const auto* data =
     duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(_children);
   for (auto i = begin; i != end; ++i) {
     const auto child = _children.sel->get_index(i);
     if (_children.validity.RowIsValid(child)) {
-      out.push_back(data[child]);
+      _values.push_back(data[child]);
     }
   }
-  return !out.empty();
+  return _values;
+}
+
+PhraseCheck::PhraseCheck(const TokenPhraseMatcher& matcher,
+                         const PhraseTokens& tokens, bool count)
+  : _tokenizer{tokens.tokenizer()},
+    _expression{tokens.text.expression ? tokens.text.expression() : nullptr},
+    _sink{matcher, _tokenizer->Traits(), count} {}
+
+void PhraseCheck::Bind(duckdb::DataChunk& columns) {
+  auto& values = _expression ? _expression->Evaluate(columns) : columns.data[0];
+  _rows.Bind(values, columns.size());
+}
+
+bool PhraseCheck::Check(duckdb::idx_t row, PhraseVerdict& out) {
+  return CheckValues(_sink, _analyzer, *_tokenizer, _rows.Values(row), out);
 }
 
 TokenPhraseReader::Input::Input(const ColumnReader& column, ReadContext& ctx)
@@ -863,16 +867,12 @@ TokenPhraseReader::Input::Input(const ColumnReader& column, ReadContext& ctx)
 
 TokenPhraseReader::TokenPhraseReader(
   const ColReader& col_reader, std::span<const ColumnReader* const> columns,
-  std::shared_ptr<analysis::Tokenizer> tokenizer,
-  const TokenPhraseMatcher& matcher, std::unique_ptr<TextExpression> expression)
+  const TokenPhraseMatcher& matcher, const PhraseTokens& tokens, bool count)
   : _ctx{col_reader},
-    _expression{std::move(expression)},
     _sel{STANDARD_VECTOR_SIZE},
-    _tokenizer{std::move(tokenizer)},
-    _sink{matcher, _tokenizer->Traits()} {
-  SDB_ASSERT(_tokenizer);
+    _check{matcher, tokens, count} {
   SDB_ASSERT(!columns.empty());
-  SDB_ASSERT(_expression || columns.size() == 1);
+  SDB_ASSERT(tokens.text.expression || columns.size() == 1);
   _inputs.reserve(columns.size());
   std::vector<duckdb::LogicalType> types;
   types.reserve(columns.size());
@@ -881,59 +881,40 @@ TokenPhraseReader::TokenPhraseReader(
     _row_count = std::min(_row_count, column->RowCount());
     types.push_back(column->Type());
   }
-  if (_expression) {
-    _chunk.InitializeEmpty(types);
-  }
+  _chunk.InitializeEmpty(types);
 }
 
-bool TokenPhraseReader::Match(doc_id_t doc, bool count, PhraseVerdict& out) {
-  uint8_t matched = 0;
-  Match({&doc, 1}, count, {&out, 1}, {&matched, 1});
-  return matched != 0;
+bool TokenPhraseReader::Match(doc_id_t doc, PhraseVerdict& out) {
+  Match({&doc, 1}, {&out, 1});
+  return out.freq != 0;
 }
 
-void TokenPhraseReader::Match(std::span<const doc_id_t> docs, bool count,
-                              std::span<PhraseVerdict> verdicts,
-                              std::span<uint8_t> matched) {
+void TokenPhraseReader::Match(std::span<const doc_id_t> docs,
+                              std::span<PhraseVerdict> verdicts) {
   SDB_ASSERT(docs.size() == verdicts.size());
-  SDB_ASSERT(docs.size() == matched.size());
   SDB_ASSERT(docs.size() <= STANDARD_VECTOR_SIZE);
   auto n = docs.size();
   while (n != 0 && docs[n - 1] - doc_limits::min() >= _row_count) {
     --n;
   }
-  std::fill(verdicts.begin() + n, verdicts.end(), PhraseVerdict{});
-  std::fill(matched.begin() + n, matched.end(), 0);
-  if (n != 0) {
-    Gather(docs.first(n), count, verdicts.first(n), matched.first(n));
+  std::ranges::fill(verdicts.subspan(n), PhraseVerdict{});
+  if (n == 0) {
+    return;
   }
-}
-
-void TokenPhraseReader::Gather(std::span<const doc_id_t> docs, bool count,
-                               std::span<PhraseVerdict> verdicts,
-                               std::span<uint8_t> matched) {
   const uint64_t anchor = docs.front() - doc_limits::min();
-  for (size_t i = 0; i != docs.size(); ++i) {
-    _sel.set_index(i, docs[i] - doc_limits::min() - anchor);
+  for (size_t i = 0; i != n; ++i) {
+    _sel.set_index(i, docs[i] - docs.front());
   }
-  for (auto& input : _inputs) {
+  for (size_t i = 0; i != _inputs.size(); ++i) {
+    auto& input = _inputs[i];
     auto& out = input.out->Reset();
-    input.column->GatherScatter(input.state, anchor, _sel, docs.size(), out, 0);
+    input.column->GatherScatter(input.state, anchor, _sel, n, out, 0);
+    _chunk.data[i].Reference(out);
   }
-  auto* values = &_inputs.front().out->vector;
-  if (_expression) {
-    for (size_t i = 0; i != _inputs.size(); ++i) {
-      _chunk.data[i].Reference(_inputs[i].out->vector);
-    }
-    _chunk.SetChildCardinality(docs.size());
-    values = &_expression->Evaluate(_chunk);
-  }
-  _rows.Bind(*values, docs.size());
-  for (size_t i = 0; i != docs.size(); ++i) {
-    verdicts[i] = {};
-    matched[i] =
-      _rows.Values(i, _values) &&
-      CheckValues(_sink, _analyzer, *_tokenizer, _values, count, verdicts[i]);
+  _chunk.SetChildCardinality(n);
+  _check.Bind(_chunk);
+  for (size_t i = 0; i != n; ++i) {
+    _check.Check(i, verdicts[i]);
   }
 }
 

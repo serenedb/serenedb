@@ -745,12 +745,9 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsAppliesRemovalsInTheAdoptGeneration) {
   ASSERT_EQ(1, _writer->GetSnapshot().live_docs_count());
 
   // Reissued into the swap itself rather than after it.
-  auto removals = _writer->GetBatch();
-  removals.Remove(ByName("doomed"));
   _dir->TakeSynced();
   ASSERT_TRUE(_writer->ReplaceSegments(Views(sources), Views(replacement),
-                                       &removals,
-                                       /*removals_tick=*/30));
+                                       ByName("doomed")));
   ASSERT_TRUE(_writer->RefreshCommit());
 
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count())
@@ -762,6 +759,43 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsAppliesRemovalsInTheAdoptGeneration) {
   ASSERT_EQ(2, synced.size());
   EXPECT_EQ(snapshot.Meta().index_meta.segments.front().filename, synced[0]);
   EXPECT_TRUE(synced[1].starts_with("pending_segments_"));
+}
+
+TEST_F(IndexAdoptTest, ReplaceSegmentsRemovalReachesOnlyTheAdopted) {
+  Restart(/*cleanup_on_open=*/false);
+
+  auto bystander = _writer->GetBatch(/*exclusive_segment=*/true);
+  ASSERT_TRUE(InsertDoc(bystander, "twin"));
+  ASSERT_TRUE(bystander.Commit(10));
+  ASSERT_TRUE(_writer->RefreshCommit());
+  const auto bystanders = CommittedNames(*_writer);
+  ASSERT_EQ(1, bystanders.size());
+
+  auto seed = _writer->GetBatch(/*exclusive_segment=*/true);
+  ASSERT_TRUE(InsertDoc(seed, "source"));
+  ASSERT_TRUE(seed.Commit(20));
+  ASSERT_TRUE(_writer->RefreshCommit());
+  std::vector<std::string> sources;
+  for (auto& name : CommittedNames(*_writer)) {
+    if (name != bystanders.front()) {
+      sources.push_back(std::move(name));
+    }
+  }
+  ASSERT_EQ(1, sources.size());
+
+  auto build = _writer->GetBatch(/*exclusive_segment=*/true);
+  ASSERT_TRUE(InsertDoc(build, "source"));
+  ASSERT_TRUE(InsertDoc(build, "twin"));
+  const auto replacement = MetaFilesOf(build.FlushAndFsync());
+  build.Abort();
+
+  ASSERT_TRUE(_writer->ReplaceSegments(Views(sources), Views(replacement),
+                                       ByName("twin")));
+  ASSERT_TRUE(_writer->RefreshCommit());
+
+  EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count());
+  const auto after = CommittedNames(*_writer);
+  EXPECT_NE(after.end(), std::ranges::find(after, bystanders.front()));
 }
 
 // A source that is no longer in the index is what a concurrent DELETE of every

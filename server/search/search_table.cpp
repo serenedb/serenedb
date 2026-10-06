@@ -42,6 +42,7 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/type_limits.hpp>
 #include <limits>
 #include <mutex>
 #include <system_error>
@@ -261,7 +262,9 @@ ResultWithTime SearchTable::RefreshUnsafe(
       // and any later batch lands at a higher tick, so advancing to it never
       // over-claims.
       const auto tick_before = _wal->CurrentTick();
-      if (_writer->RefreshCommit()) {
+      SDB_PARK_ONCE_ON_FAILURE("pause_search_refresh_after_tick");
+      if (tick_before != irs::writer_limits::kMinTick &&
+          _writer->RefreshCommit({.tick = tick_before})) {
         _wal->OnShardCommit(GetTableId(), _last_committed_tick);
         code = RefreshResult::Done;
       } else {
@@ -305,7 +308,18 @@ void SearchTable::DrainPriorWriters(absl::FunctionRef<bool()> cancelled) {
 void SearchTable::OpenDeleteLog() {
   absl::MutexLock lock{&_delete_log_mutex};
   _delete_log.clear();
+  _build_truncate_tick.store(0, std::memory_order_relaxed);
   _delete_log_open.store(true, std::memory_order_release);
+}
+
+void SearchTable::RecordTruncateForBuild(uint64_t tick) {
+  absl::MutexLock lock{&_delete_log_mutex};
+  if (!_delete_log_open.load(std::memory_order_relaxed)) {
+    return;
+  }
+  if (_build_truncate_tick.load(std::memory_order_relaxed) < tick) {
+    _build_truncate_tick.store(tick, std::memory_order_release);
+  }
 }
 
 void SearchTable::AppendDeleteLog(std::span<const int64_t> rows) {
@@ -317,11 +331,6 @@ void SearchTable::AppendDeleteLog(std::span<const int64_t> rows) {
     return;
   }
   _delete_log.insert(_delete_log.end(), rows.begin(), rows.end());
-}
-
-std::vector<int64_t> SearchTable::TakeDeleteLog() {
-  absl::MutexLock lock{&_delete_log_mutex};
-  return std::exchange(_delete_log, {});
 }
 
 void SearchTable::CloseDeleteLog() {

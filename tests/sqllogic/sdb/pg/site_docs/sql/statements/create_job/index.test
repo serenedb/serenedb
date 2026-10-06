@@ -109,6 +109,7 @@ EXECUTE JOB doc_broken;
 ----
 db error: ERROR: Could not convert string 'not a number' to INT64<slt:ignore>
 
+
 query
 SELECT job_name, run_count, failure_count, last_status
 FROM duckdb_jobs() WHERE job_name IN ('doc_rollup_6h', 'doc_broken') ORDER BY job_name;
@@ -188,6 +189,7 @@ statement error
 CREATE TEMPORARY JOB doc_session_job AFTER 1 HOUR AS SELECT 1;
 ----
 db error: ERROR: <slt:ignore>Jobs are not supported by this catalog<slt:ignore>
+
 
 # DOCS_TEST: example_007
 

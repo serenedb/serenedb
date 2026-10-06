@@ -2,9 +2,13 @@
 name: review
 description: Review a SereneDB pull request, branch or diff for correctness, crash safety, concurrency, performance and test coverage, with findings verified against the code. Use when asked to review a PR, a branch, a commit range or the working-tree diff.
 argument-hint: "[PR-number | branch | diff-spec]"
+context: fork
+background: false
 ---
 
 # Reviewing a SereneDB change
+
+Review target: $ARGUMENTS (nothing given: the working tree against `origin/main`). This runs in a fresh context, without the conversation that produced the change: judge the code, not the intent behind it.
 
 High signal only: real problems in correctness, durability, concurrency, resources, performance and tests. Formatting and naming are enforced by pre-commit and `.clang-tidy`; don't spend findings on them.
 

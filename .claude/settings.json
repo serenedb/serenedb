@@ -3,6 +3,12 @@
     "commit": "",
     "pr": ""
   },
+  "enabledPlugins": {
+    "clangd-lsp@claude-plugins-official": true
+  },
+  "env": {
+    "CLANGD_FLAGS": "-j=8 --background-index-priority=background --pch-storage=disk"
+  },
   "permissions": {
     "allow": [
       "Bash(git status:*)",

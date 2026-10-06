@@ -361,7 +361,8 @@ void SearchTableTransaction::Commit() {
   std::vector<std::pair<SearchTable*, const LocalTableChangesEntry*>> logged;
   for (auto& [table_id, w] : _writes) {
     auto cit = _changes.find(table_id);
-    if (cit != _changes.end() && w.shard->IsDeleteLogOpen()) {
+    if (cit != _changes.end() && !cit->second.ops.empty() &&
+        w.shard->IsDeleteLogOpen()) {
       logged.emplace_back(w.shard.get(), &cit->second);
     }
   }

@@ -229,7 +229,7 @@ std::vector<asio_ns::ip::tcp::endpoint> ResolveTcp(
     return eps;
   }
   asio_ns::error_code ec;
-  const auto addr = asio_ns::ip::make_address(std::string{host}, ec);
+  const auto addr = asio_ns::ip::make_address(host, ec);
   if (!ec) {
     eps.emplace_back(addr, port);
     v6_only_out = addr.is_v6();

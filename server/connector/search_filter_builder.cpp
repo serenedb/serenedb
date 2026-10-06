@@ -1523,8 +1523,8 @@ const irs::Scorer* ResolveScoreOverride(const FilterContext& ctx,
       ERR_HINT("Use ::score(...) inside a WHERE predicate on an inverted "
                "index."));
   }
-  auto owned = search::MakeScorer(search::ParseScorerExpression(
-    &ctx.client_context, std::string{expr}, "::score"));
+  auto owned = search::MakeScorer(
+    search::ParseScorerExpression(&ctx.client_context, expr, "::score"));
   if (!owned) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("::score(...) is not a known scorer"));

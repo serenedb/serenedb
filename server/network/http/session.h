@@ -196,7 +196,7 @@ class HttpSession final
       }
       connector::SereneDBClientState::Register(*_conn->context,
                                                _connection_ctx);
-      _conn->context->session_user = std::string{user};
+      _conn->context->session_user.assign(user);
       connector::SetDefaultSearchPath(*_conn->context, dbname);
       _conn_user = _user;
     }

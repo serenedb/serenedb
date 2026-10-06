@@ -366,7 +366,7 @@ duckdb::unique_ptr<SourceBindData> BindSource(
   auto data = duckdb::make_uniq<SourceBindData>();
   data->slots.reserve(table.columns.size());
   for (const auto& column : table.columns) {
-    const auto it = target.columns.find(std::string{column.name});
+    const auto it = target.columns.find(column.name);
     if (it == target.columns.end()) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_TABLE_DEFINITION),

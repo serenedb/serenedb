@@ -190,7 +190,7 @@ struct Run {
 
 size_t Width(std::string_view text) {
   try {
-    return duckdb::Utf8Proc::RenderWidth(std::string{text});
+    return duckdb::Utf8Proc::RenderWidth(text);
   } catch (...) {
     return text.size();
   }
@@ -479,8 +479,7 @@ Document Parse(std::string_view markdown) {
     cmark_gfm_core_extensions_ensure_registered();
     return cmark_find_syntax_extension("table");
   }();
-  const auto body =
-    duckdb::markdown_utils::StripFrontmatter(std::string{markdown});
+  const auto body = duckdb::markdown_utils::StripFrontmatter(markdown);
   auto* parser = cmark_parser_new(CMARK_OPT_DEFAULT);
   if (kTable) {
     cmark_parser_attach_syntax_extension(parser, kTable);
@@ -545,7 +544,7 @@ class Renderer {
         runs[i].url = link.url;
       }
     }
-    link.label = std::string{absl::StripAsciiWhitespace(link.label)};
+    absl::StripAsciiWhitespace(&link.label);
     auto& links = _links->links;
     const auto same = absl::c_find_if(links, [&](const MarkdownLink& other) {
       return std::tie(other.page, other.anchor, other.url) ==

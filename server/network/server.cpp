@@ -140,7 +140,7 @@ class CatalogCredentialProvider final : public network::CredentialProvider {
     if (auto verifier = network::ParseScramVerifier(stored)) {
       credential.scram = std::move(*verifier);
     } else if (network::IsMd5Verifier(stored)) {
-      credential.md5 = std::string{stored};
+      credential.md5.emplace(stored);
     } else {
       return std::nullopt;
     }

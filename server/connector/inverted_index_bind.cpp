@@ -156,8 +156,7 @@ uint32_t ParsePositiveUintOption(std::string_view kind,
 duckdb::CompressionType ParseCompressionName(duckdb::ClientContext& context,
                                              std::string_view column_name,
                                              std::string_view name) {
-  const auto type = duckdb::EnumUtil::FromString<duckdb::CompressionType>(
-    std::string{name}.c_str());
+  const auto type = duckdb::EnumUtil::FromString<duckdb::CompressionType>(name);
   auto& storage =
     duckdb::Catalog::GetCatalog(context, duckdb::Identifier::InvalidCatalog())
       .GetAttached()
@@ -915,7 +914,7 @@ duckdb::optional_ptr<const TokenizerCatalogEntry> ResolveOpclassTokenizer(
   retriever.SetSearchPath({{schema.ParentCatalog().GetName(), schema.name}});
   auto dict = retriever.GetEntry(
     duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
-                            duckdb::QualifiedName::Parse(std::string{name})},
+                            duckdb::QualifiedName::Parse(name)},
     duckdb::OnEntryNotFound::RETURN_NULL);
   if (!dict || &dict->ParentCatalog() != &schema.ParentCatalog()) {
     return nullptr;

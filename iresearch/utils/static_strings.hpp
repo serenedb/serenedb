@@ -21,93 +21,26 @@
 
 #pragma once
 
-#include <string>
 #include <string_view>
 
-namespace irs {
+// TODO(mbkkt) remove it, use per constant where they used, avoid single place
+// with all string constants
+namespace irs::StaticStrings {  // NOLINT
 
-class StaticStrings {
-  StaticStrings() = delete;
+// Datadir subtrees: the data DB (store tables), the catalog WAL, and the
+// iresearch storages.
+inline constexpr std::string_view kDataStoreRoot = "engine_duckdb";
+inline constexpr std::string_view kCatalogRoot = "engine_catalog";
+inline constexpr std::string_view kSearchRoot = "engine_search";
 
- public:
-  // Datadir subtrees: the data DB (store tables), the catalog WAL, and the
-  // iresearch storages.
-  static constexpr std::string_view kDataStoreRoot = "engine_duckdb";
-  static constexpr std::string_view kCatalogRoot = "engine_catalog";
-  static constexpr std::string_view kSearchRoot = "engine_search";
+// database names
+inline constexpr std::string_view kDefaultDatabase = "postgres";
+// user names
+inline constexpr std::string_view kDefaultUser = "postgres";
+// system schema names
+inline constexpr std::string_view kPublic = "public";
+inline constexpr std::string_view kPgCatalogSchema = "pg_catalog";
+inline constexpr std::string_view kInformationSchema = "information_schema";
+inline constexpr std::string_view kDocsSchema = "sdb_docs";
 
-  // constants
-  inline static const std::string kEmpty;
-
-  // URL parameter names
-  static const std::string kUserString;
-
-  // database names
-  static constexpr std::string_view kDefaultDatabase = "postgres";
-  // user names
-  static constexpr std::string_view kDefaultUser = "postgres";
-  // system schema names
-  static constexpr std::string_view kPublic = "public";
-  static constexpr std::string_view kPgCatalogSchema = "pg_catalog";
-  static constexpr std::string_view kInformationSchema = "information_schema";
-  static constexpr std::string_view kDocsSchema = "sdb_docs";
-
-  static const std::string kDataSourceId;
-
-  // HTTP headers
-  static const std::string kAccept;
-  static const std::string kAcceptEncoding;
-  static const std::string kAccessControlAllowCredentials;
-  static const std::string kAccessControlAllowHeaders;
-  static const std::string kAccessControlAllowMethods;
-  static const std::string kAccessControlAllowOrigin;
-  static const std::string kAccessControlExposeHeaders;
-  static const std::string kAccessControlMaxAge;
-  static const std::string kAccessControlRequestHeaders;
-  static const std::string kAllow;
-  static const std::string kAsync;
-  static const std::string kAsyncId;
-  static const std::string kAuthorization;
-  static const std::string kCacheControl;
-  static const std::string kCode;
-  static const std::string kConnection;
-  static const std::string kContentEncoding;
-  static const std::string kContentLength;
-  static const std::string kContentTypeHeader;
-  static const std::string kCookie;
-  static const std::string kCorsMethods;
-  static const std::string kError;
-  static const std::string kErrorMessage;
-  static const std::string kErrorNum;
-  static const std::string kExpect;
-  static const std::string kExposedCorsHeaders;
-  static const std::string kNoSniff;
-  static const std::string kOrigin;
-  static const std::string kServer;
-  static const std::string kTransferEncoding;
-  static const std::string kWwwAuthenticate;
-  static const std::string kXContentTypeOptions;
-  static const std::string kXSereneFrontend;
-  static const std::string kXSereneQueueTimeSeconds;
-  static const std::string kContentSecurityPolicy;
-  static const std::string kPragma;
-  static const std::string kExpires;
-  static const std::string kHsts;
-
-  // mime types
-  static const std::string kMimeTypeDump;
-  static const std::string kMimeTypeDumpNoEncoding;
-  static const std::string kMimeTypeHtml;
-  static const std::string kMimeTypeHtmlNoEncoding;
-  static const std::string kMimeTypeJson;
-  static const std::string kMimeTypeJsonNoEncoding;
-  static const std::string kMimeTypeText;
-  static const std::string kMimeTypeTextNoEncoding;
-
-  // encodings
-  static const std::string kEncodingSereneLz4;
-  static const std::string kEncodingDeflate;
-  static const std::string kEncodingGzip;
-};
-
-}  // namespace irs
+}  // namespace irs::StaticStrings

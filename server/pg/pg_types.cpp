@@ -688,7 +688,7 @@ std::string RelationName(duckdb::ClientContext& context,
 
 uint64_t RegclassIn(const ConnectionContext& ctx, std::string_view name) {
   return ResolveRelation(ctx.GetClientContext(),
-                         duckdb::QualifiedName::Parse(std::string{name}));
+                         duckdb::QualifiedName::Parse(name));
 }
 
 std::string RegnamespaceOut(duckdb::ClientContext* context, uint64_t oid) {

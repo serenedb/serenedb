@@ -344,7 +344,7 @@ SystemConnection MakeSystemConnection(std::string_view database,
     context, irs::StaticStrings::kDefaultUser, pg::kRootUser, database,
     database_id, nullptr, 0, nullptr);
   SereneDBClientState::Register(context, system.ctx);
-  context.session_user = std::string{irs::StaticStrings::kDefaultUser};
+  context.session_user.assign(irs::StaticStrings::kDefaultUser);
   SetDefaultSearchPath(context, database);
   return system;
 }

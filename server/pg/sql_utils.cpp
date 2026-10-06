@@ -88,8 +88,7 @@ std::string QuoteIdentifier(std::string_view ident) {
     }
   }
   if (safe) {
-    const auto category =
-      duckdb::KeywordHelper::KeywordCategoryType(std::string{ident});
+    const auto category = duckdb::KeywordHelper::KeywordCategoryType(ident);
     safe = category == duckdb::KeywordCategory::KEYWORD_NONE ||
            category == duckdb::KeywordCategory::KEYWORD_UNRESERVED;
   }

@@ -65,7 +65,7 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
                          const duckdb::named_parameter_map_t& options) {
   duckdb::CreateForeignServerInfo info;
   info.SetName(duckdb::Identifier{name});
-  info.fdw_name = std::string{fdw_name};
+  info.fdw_name.assign(fdw_name);
   info.options = MakeServerOptions(options);
   info.on_conflict = if_not_exists
                        ? duckdb::OnCreateConflict::IGNORE_ON_CONFLICT

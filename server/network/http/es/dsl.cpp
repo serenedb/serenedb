@@ -24,6 +24,8 @@
 #include <absl/strings/str_join.h>
 #include <simdjson.h>
 
+#include <optional>
+
 #include "network/http/common.h"
 #include "network/http/es/common.h"
 
@@ -125,16 +127,16 @@ struct Clause {
   bool uses_match = false;
 };
 
-// nullptr = unmapped field (matches nothing, like ES); "_id" is implicitly
-// a keyword.
-const std::string* FieldType(const FieldTypes& fields,
-                             const std::string& name) {
-  static const std::string kKeyword = "keyword";
+std::optional<std::string_view> FieldType(const FieldTypes& fields,
+                                          std::string_view name) {
   if (name == "_id") {
-    return &kKeyword;
+    return "keyword";
   }
   const auto it = fields.find(name);
-  return it == fields.end() ? nullptr : &it->second;
+  if (it == fields.end()) {
+    return std::nullopt;
+  }
+  return it->second;
 }
 
 constexpr std::string_view kMatchNone = "FALSE";
@@ -148,7 +150,7 @@ Clause TranslateQuery(JsonValue value, const FieldTypes& fields);
 Clause TranslateMatch(JsonValue value, const FieldTypes& fields, bool phrase) {
   const std::string_view what = phrase ? "match_phrase" : "match";
   auto object = Object(value, what);
-  std::string field;
+  std::string_view field;
   std::string query;
   bool conjunction = false;
   for (auto entry : object) {
@@ -185,8 +187,8 @@ Clause TranslateMatch(JsonValue value, const FieldTypes& fields, bool phrase) {
   if (field.empty()) {
     Fail(absl::StrCat("[", what, "] requires a field"));
   }
-  const auto* type = FieldType(fields, field);
-  if (type == nullptr) {
+  const auto type = FieldType(fields, field);
+  if (!type) {
     return {std::string{kMatchNone}, false};
   }
   if (*type != "text") {
@@ -214,7 +216,7 @@ Clause TranslateTerm(JsonValue value, const FieldTypes& fields) {
     if (!out.sql.empty()) {
       Fail("[term] supports exactly one field");
     }
-    const auto field = std::string{Key(entry)};
+    const auto field = Key(entry);
     auto body = Value(entry);
     simdjson::ondemand::json_type type;
     if (body.type().get(type) != simdjson::SUCCESS) {
@@ -236,8 +238,8 @@ Clause TranslateTerm(JsonValue value, const FieldTypes& fields) {
     } else {
       literal = Scalar(body, field);
     }
-    const auto* field_type = FieldType(fields, field);
-    if (field_type == nullptr) {
+    const auto field_type = FieldType(fields, field);
+    if (!field_type) {
       out.sql = kMatchNone;
     } else if (*field_type == "text") {
       out.sql = absl::StrCat(
@@ -263,8 +265,8 @@ Clause TranslateRange(JsonValue value, const FieldTypes& fields) {
     if (!sql.empty()) {
       Fail("[range] supports exactly one field");
     }
-    const auto field = std::string{Key(entry)};
-    unmapped = FieldType(fields, field) == nullptr;
+    const auto field = Key(entry);
+    unmapped = !FieldType(fields, field);
     const auto ident = SqlIdentifier(field);
     std::vector<std::string> parts;
     for (auto param : Object(Value(entry), "range")) {
@@ -643,7 +645,7 @@ bool ParseFieldTypes(std::string_view mappings_json, FieldTypes& out) {
             if (param.value().get_string().get(type) != simdjson::SUCCESS) {
               return false;
             }
-            out.emplace(std::string{name}, std::string{type});
+            out.emplace(name, type);
           }
         }
       }

@@ -790,8 +790,7 @@ struct PrivCheckModes {
 duckdb::AclMode PrivCheckKeyword(std::string_view keyword,
                                  duckdb::CatalogType type) {
   duckdb::AclMode mode;
-  if (!duckdb::Permissions::TryParsePrivilege(std::string{keyword}, type,
-                                              mode)) {
+  if (!duckdb::Permissions::TryParsePrivilege(keyword, type, mode)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("unrecognized privilege type: \"", keyword, "\""));
   }
@@ -918,7 +917,7 @@ bool HasTablePrivilegeImpl(ConnectionContext& conn_ctx,
   if (!role_id) {
     ThrowRoleNotFound(role_name);
   }
-  const auto name = duckdb::QualifiedName::Parse(std::string{table_name});
+  const auto name = duckdb::QualifiedName::Parse(table_name);
   auto entry = FindRelation(conn_ctx.GetClientContext(), name);
   try {
     if (const auto* perm = RelationPermissions(entry.get())) {
@@ -1142,8 +1141,7 @@ bool HasObjectPrivilegeByName(duckdb::ClientContext& context,
   if (type == duckdb::CatalogType::SEQUENCE_ENTRY) {
     if (auto sequence = duckdb::Catalog::GetEntry(
           context,
-          duckdb::EntryLookupInfo{
-            type, duckdb::QualifiedName::Parse(std::string{obj_name})},
+          duckdb::EntryLookupInfo{type, duckdb::QualifiedName::Parse(obj_name)},
           duckdb::OnEntryNotFound::RETURN_NULL)) {
       try {
         return HasAnyPermissionsPrivilegeText(
@@ -1162,8 +1160,8 @@ bool HasObjectPrivilegeByName(duckdb::ClientContext& context,
     const auto bare = type == duckdb::CatalogType::MACRO_ENTRY
                         ? obj_name.substr(0, obj_name.find('('))
                         : obj_name;
-    const auto name = duckdb::QualifiedName::Parse(
-      std::string{absl::StripAsciiWhitespace(bare)});
+    const auto name =
+      duckdb::QualifiedName::Parse(absl::StripAsciiWhitespace(bare));
     auto entry =
       duckdb::Catalog::GetEntry(context, duckdb::EntryLookupInfo{type, name},
                                 duckdb::OnEntryNotFound::RETURN_NULL);
@@ -1701,7 +1699,7 @@ std::optional<bool> ColumnPrivByNameTableAttnum(ConnectionContext& conn_ctx,
                                                 std::string_view table_name,
                                                 int64_t attnum,
                                                 std::string_view priv) {
-  const auto name = duckdb::QualifiedName::Parse(std::string{table_name});
+  const auto name = duckdb::QualifiedName::Parse(table_name);
   const auto* table = FindTable(conn_ctx.GetClientContext(), name);
   if (table) {
     if (!AttnumExists(*table, attnum)) {

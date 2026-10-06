@@ -237,7 +237,7 @@ std::vector<Criterion> ParseLabels(const duckdb::Value& value,
   auto criteria = ParseCriteria(value, spec.name, spec.second);
   irs::containers::FlatHashSet<std::string> seen;
   for (auto& criterion : criteria) {
-    criterion.label = std::string{absl::StripAsciiWhitespace(criterion.label)};
+    absl::StripAsciiWhitespace(&criterion.label);
     if (criterion.label.empty()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG(spec.name, ": \"", spec.second,
@@ -353,7 +353,7 @@ duckdb::unique_ptr<duckdb::FunctionData> TextBind(
   auto& system = bind->system;
   switch (spec.kind) {
     case TextKind::Generate:
-      system = option.value_or(std::string{kDefaultSystemPrompt});
+      system.assign(option ? *option : kDefaultSystemPrompt);
       break;
     case TextKind::Classify:
     case TextKind::ClassifyLabels: {
@@ -393,10 +393,9 @@ duckdb::unique_ptr<duckdb::FunctionData> TextBind(
       if (categories.empty()) {
         categories.assign(std::begin(kDefaultPii), std::end(kDefaultPii));
       }
-      system = absl::Substitute(
-        kRedactPrompt,
-        ToJson(option.value_or(std::string{kDefaultReplacement})),
-        absl::StrJoin(categories, ", "));
+      system = absl::Substitute(kRedactPrompt,
+                                ToJson(option ? *option : kDefaultReplacement),
+                                absl::StrJoin(categories, ", "));
       break;
     }
     case TextKind::Score:

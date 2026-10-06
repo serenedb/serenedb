@@ -145,7 +145,8 @@ The skips fall into a few kinds, and the `reason` on every entry says which:
 
 The `cpp` suite is DuckDB's C++ test cases (`test/api`, `test/sql_export`, the
 storage and appender tests, ...): every Catch2 case of the same `unittest`
-binary that is not a sqllogic file. It has no skip list: every case passes.
+binary that is not a sqllogic file, hidden (`[.]`) cases included. It has no
+skip list: every case passes. CI runs it whenever it runs `core`.
 
 `SDB_BUILD_DUCKDB_BENCHMARKS` (on by default) also builds DuckDB's
 `benchmark_runner` (`$BUILD_DIR/third_party/duckdb/benchmark/benchmark_runner`)

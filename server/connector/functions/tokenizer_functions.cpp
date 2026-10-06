@@ -123,8 +123,7 @@ const pg::OptionGroup& FindGroup(std::string_view function) {
 }
 
 void Put(pg::Options& options, std::string_view key, duckdb::Value value) {
-  options.try_emplace(std::string{key},
-                      std::make_unique<duckdb::Value>(std::move(value)));
+  options.try_emplace(key, std::make_unique<duckdb::Value>(std::move(value)));
 }
 
 struct TokenizerFunctionBindData final : public duckdb::FunctionData {

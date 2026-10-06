@@ -249,19 +249,18 @@ std::shared_ptr<const re2::RE2> CompileRegex(std::string_view pattern,
 // Address parsing (hba.c:1509-1666).
 // ---------------------------------------------------------------------------
 
-bool PtonAny(const std::string& s, int& family, std::array<uint8_t, 16>& out) {
-  if (s.find(':') != std::string::npos) {
-    if (inet_pton(AF_INET6, s.c_str(), out.data()) == 1) {
-      family = AF_INET6;
-      return true;
-    }
+bool PtonAny(std::string_view s, int& family, std::array<uint8_t, 16>& out) {
+  std::array<char, INET6_ADDRSTRLEN> buf;
+  if (s.size() >= buf.size()) {
     return false;
   }
-  if (inet_pton(AF_INET, s.c_str(), out.data()) == 1) {
-    family = AF_INET;
-    return true;
+  buf[s.copy(buf.data(), s.size())] = '\0';
+  const int af = s.find(':') == std::string_view::npos ? AF_INET : AF_INET6;
+  if (inet_pton(af, buf.data(), out.data()) != 1) {
+    return false;
   }
-  return false;
+  family = af;
+  return true;
 }
 
 int FamilyWidth(int family) { return family == AF_INET6 ? 128 : 32; }
@@ -397,8 +396,8 @@ std::optional<Rule> ParseLine(const std::vector<std::vector<Token>>& fields,
       rule.address.kind = AddrMatcher::Kind::SameNet;
     } else {
       const auto slash = addr_tok.find('/');
-      const std::string left{addr_tok.substr(
-        0, slash == std::string_view::npos ? addr_tok.size() : slash)};
+      const auto left = addr_tok.substr(
+        0, slash == std::string_view::npos ? addr_tok.size() : slash);
       int fam = 0;
       std::array<uint8_t, 16> raw{};
       const bool numeric = PtonAny(left, fam, raw);
@@ -410,7 +409,7 @@ std::optional<Rule> ParseLine(const std::vector<std::vector<Token>>& fields,
           return fail("specifying both host name and CIDR mask is invalid");
         }
         rule.address.kind = AddrMatcher::Kind::Hostname;
-        rule.address.hostname = left;
+        rule.address.hostname.assign(left);
       } else if (slash != std::string_view::npos) {
         // CIDR.
         const std::string_view pfx = addr_tok.substr(slash + 1);
@@ -437,7 +436,7 @@ std::optional<Rule> ParseLine(const std::vector<std::vector<Token>>& fields,
         ++idx;
         int mfam = 0;
         std::array<uint8_t, 16> mraw{};
-        if (!PtonAny(std::string{mask_tok}, mfam, mraw) || mfam != fam) {
+        if (!PtonAny(mask_tok, mfam, mraw) || mfam != fam) {
           return fail("IP address and mask do not match");
         }
         rule.address.kind = AddrMatcher::Kind::Mask;
@@ -806,7 +805,7 @@ std::optional<Ruleset> Parse(std::string_view text, ParseError& error) {
     }
     // Verbatim line for the view (strip a trailing comment for readability).
     std::string_view raw = logical.text;
-    rule->raw = std::string{raw};
+    rule->raw.assign(raw);
     ruleset.rules.push_back(std::move(*rule));
     ++seq;
   }

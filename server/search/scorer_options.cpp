@@ -201,7 +201,7 @@ std::optional<irs::ScorerOptions> ExtractScorerFromBound(
 }
 
 irs::ScorerOptions ParseScorerExpression(duckdb::ClientContext* context,
-                                         std::string input,
+                                         std::string_view input,
                                          std::string_view what) {
   using namespace duckdb;
   auto exprs = Parser::GetBuiltinParser().ParseExpressionList(input);

@@ -42,6 +42,7 @@
 #include <filesystem>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -61,9 +62,6 @@ ABSL_FLAG(std::string, missing_database, "refuse",
 
 namespace sdb::catalog {
 namespace {
-
-constexpr const char* kCatalogDir = "engine_catalog";
-constexpr const char* kDatabaseDir = "engine_duckdb";
 
 struct MissingDatabases {
   bool fresh_cluster = false;
@@ -135,11 +133,12 @@ void RequestSereneDBStorageVersion(duckdb::AttachOptions& options) {
 }
 
 std::string DataDirectory::CatalogLogFile() const {
-  return absl::StrCat(directory, "/", kCatalogDir, "/catalog.wal");
+  return absl::StrCat(directory, "/", irs::StaticStrings::kCatalogRoot,
+                      "/catalog.wal");
 }
 
 std::string DataDirectory::DatabaseDir() const {
-  return absl::StrCat(directory, "/", kDatabaseDir);
+  return absl::StrCat(directory, "/", irs::StaticStrings::kDataStoreRoot);
 }
 
 std::string DataDirectory::DatabaseFile(duckdb::idx_t oid) const {
@@ -150,7 +149,7 @@ void Attach(duckdb::ClientContext& context, duckdb::AttachInfo& info,
             std::string_view type, duckdb::AttachVisibility visibility,
             bool defer_storage_load) {
   duckdb::AttachOptions options{info.options, duckdb::AccessMode::READ_WRITE};
-  options.db_type = std::string{type};
+  options.db_type.assign(type);
   options.visibility = visibility;
   options.defer_storage_load = defer_storage_load;
   duckdb::DatabaseManager::Get(context).AttachDatabase(context, info, options);
@@ -219,7 +218,7 @@ void RegisterClusterStorage(duckdb::DBConfig& config,
 void InitCatalog(std::string_view directory) {
   const DataDirectory layout{std::string{directory}};
   std::filesystem::create_directories(
-    absl::StrCat(directory, "/", kCatalogDir));
+    absl::StrCat(directory, "/", irs::StaticStrings::kCatalogRoot));
   std::filesystem::create_directories(layout.DatabaseDir());
   auto conn = irs::DuckDBEngine::Instance().CreateConnection();
   auto& context = *conn->context;

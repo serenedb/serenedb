@@ -452,7 +452,7 @@ bool PgWireSession<Kind>::SetupConnection() {
       }
     };
 
-  _conn->context->session_user = std::string{UserName()};
+  _conn->context->session_user.assign(UserName());
   connector::SetDefaultSearchPath(*_conn->context, DatabaseName());
 
   _connection_ctx->SetSetting("session_authorization", std::string{UserName()},
@@ -1330,8 +1330,8 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
   // through the catalog (TryReparsePragma), so the snapshot must be held
   // before ExtractStatements.
   duckdb::vector<duckdb::idx_t> raw_statement_ends;
-  auto extracted = _conn->ExtractStatements(
-    std::string{query}, &raw_statement_ends, /*wrap_multi=*/false);
+  auto extracted = _conn->ExtractStatements(query, &raw_statement_ends,
+                                            /*wrap_multi=*/false);
   if (extracted.empty()) {
     // A non-empty but statement-less query (";", a bare comment): postgres
     // replies EmptyQueryResponse, not just a bare ReadyForQuery.
@@ -1922,8 +1922,8 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   // and bound at Execute via RunCopyFromStdin. Everything else binds the
   // already-parsed statement now, so the common path parses once.
   duckdb::vector<duckdb::idx_t> raw_statement_ends;
-  auto extracted = _conn->ExtractStatements(
-    std::string{query}, &raw_statement_ends, /*wrap_multi=*/false);
+  auto extracted = _conn->ExtractStatements(query, &raw_statement_ends,
+                                            /*wrap_multi=*/false);
   if (raw_statement_ends.size() > 1) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_SYNTAX_ERROR),

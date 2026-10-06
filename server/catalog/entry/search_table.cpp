@@ -211,13 +211,12 @@ SearchTableEntry::SearchTableEntry(
     BindOptions(*transaction.context, base.options);
   }
   _options = ResolveOptions(base.options);
-  if (const auto tag = tags.find(std::string{kGeneratedPkSequenceTag});
-      tag != tags.end()) {
+  if (const auto tag = tags.find(kGeneratedPkSequenceTag); tag != tags.end()) {
     _pk_sequence = duckdb::Identifier{tag->second};
   } else if (base.oid == 0) {
     _pk_sequence = FreePkSequenceName(transaction, schema, name);
-    tags[std::string{kGeneratedPkSequenceTag}] =
-      _pk_sequence.GetIdentifierName();
+    tags.insert_or_assign(kGeneratedPkSequenceTag,
+                          _pk_sequence.GetIdentifierName());
   }
   if (!_storage) {
     if (base.oid == 0) {
@@ -264,7 +263,7 @@ void AppendIResearchBlockRows(
     info.column_id = column_id;
     info.column_path = path_str;
     info.segment_idx = segment;
-    info.segment_type = std::string{type_name};
+    info.segment_type.assign(type_name);
     info.segment_start = row_base + node.DataBlockFirstRow(block);
     info.segment_count = meta.tuple_count;
     info.compression_type =
@@ -579,9 +578,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
     case duckdb::AlterTableType::DROP_NOT_NULL: {
       const bool set =
         alter.alter_table_type == duckdb::AlterTableType::SET_NOT_NULL;
-      const auto& column_path =
-        set ? alter.Cast<duckdb::SetNotNullInfo>().column_path
-            : alter.Cast<duckdb::DropNotNullInfo>().column_path;
+      auto& column_path = set
+                            ? alter.Cast<duckdb::SetNotNullInfo>().column_path
+                            : alter.Cast<duckdb::DropNotNullInfo>().column_path;
       if (column_path.size() > 1) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                         ERR_MSG(set ? "Setting a NOT NULL constraint on a "

@@ -173,7 +173,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   auto state = duckdb::make_uniq<CreateIndexGlobalState>();
   state->database_id = _database_id;
   state->schema_name = _schema_entry.name.GetIdentifierName();
-  state->table_name = std::string{_relation.name.GetIdentifierName()};
+  state->table_name = _relation.name.GetIdentifierName();
   state->index_name = _info->GetIndexName().GetIdentifierName();
 
   if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(

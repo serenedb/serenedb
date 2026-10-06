@@ -22,6 +22,7 @@
 
 #include <re2/re2.h>
 
+#include <charconv>
 #include <duckdb/common/types/blob.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
@@ -548,7 +549,11 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
         i++;
       }
       if (i < fmt.size() && fmt[i] == '$' && i > save_i) {
-        arg_pos = std::stoul(std::string{fmt.substr(save_i, i - save_i)});
+        if (std::from_chars(fmt.data() + save_i, fmt.data() + i, arg_pos).ec !=
+            std::errc{}) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                          ERR_MSG("number is out of range"));
+        }
         has_position = true;
         i++;  // skip $
       } else {

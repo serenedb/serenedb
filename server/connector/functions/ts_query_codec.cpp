@@ -28,6 +28,7 @@
 
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/logical_type_info.hpp>
+#include <duckdb/common/sql_identifier.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/expression/cast_expression.hpp>
@@ -121,8 +122,7 @@ bool IsNumericTypeId(duckdb::LogicalTypeId id) {
 
 bool IsWhitelistedTypeName(std::string_view name) {
   return IsTSQueryFamilyTypeName(name) ||
-         IsNumericTypeId(
-           duckdb::TransformStringToLogicalTypeId(std::string{name}));
+         IsNumericTypeId(duckdb::TransformStringToLogicalTypeId(name));
 }
 
 bool IsWhitelistedCastType(const duckdb::TypeExpression& type_expr) {
@@ -197,8 +197,7 @@ duckdb::unique_ptr<duckdb::ParsedExpression> ParseWhitelisted(
     return nullptr;
   }
   try {
-    auto exprs =
-      duckdb::Parser::GetBuiltinParser().ParseExpressionList(std::string{text});
+    auto exprs = duckdb::Parser::GetBuiltinParser().ParseExpressionList(text);
     if (exprs.size() != 1 || !exprs[0]) {
       return nullptr;
     }
@@ -293,7 +292,7 @@ std::string RenderBoosted(std::string operand, double factor) {
 
 std::string RenderTokenized(std::string operand, std::string_view tokenizer) {
   return absl::StrCat(std::move(operand), "::tokenize(",
-                      duckdb::Value(std::string{tokenizer}).ToSQLString(), ")");
+                      duckdb::SQLString::ToString(tokenizer), ")");
 }
 
 }  // namespace
@@ -317,9 +316,7 @@ std::string RenderTSQueryPartsSQL(const TSQueryParts& parts) {
   if (parts.merge != TSQueryMerge::Default) {
     absl::StrAppend(
       &out, "::merge(",
-      duckdb::Value(std::string{magic_enum::enum_name(parts.merge)})
-        .ToSQLString(),
-      ")");
+      duckdb::SQLString::ToString(magic_enum::enum_name(parts.merge)), ")");
   }
   if (parts.min_match != 0) {
     absl::StrAppend(&out, "::min_match(", parts.min_match, ")");
@@ -425,8 +422,7 @@ std::optional<std::string> RenderCast(
     }
     return absl::StrCat(
       std::move(*child), "::merge(",
-      duckdb::Value(std::string{magic_enum::enum_name(*merge)}).ToSQLString(),
-      ")");
+      duckdb::SQLString::ToString(magic_enum::enum_name(*merge)), ")");
   }
   if (const auto min_match = TryGetMinMatchModifier(target)) {
     auto child = RenderTSQueryExpression(context, inner);
@@ -669,8 +665,8 @@ std::optional<TSQueryParts> TryGetTSQueryParts(const duckdb::Value& value) {
 TSQueryParts TSQueryPartsForType(const duckdb::LogicalType& type,
                                  std::string_view text) {
   TSQueryParts parts;
-  parts.text = std::string{text};
-  parts.tokenizer = std::string{TryGetTokenizerModifier(type)};
+  parts.text.assign(text);
+  parts.tokenizer.assign(TryGetTokenizerModifier(type));
   if (const auto boost = TryGetBoostModifier(type)) {
     parts.boost = static_cast<float>(*boost);
   }

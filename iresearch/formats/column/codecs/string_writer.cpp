@@ -263,13 +263,7 @@ class Encoder {
       _tuning{tuning},
       _history{tuning.history[static_cast<size_t>(C)]},
       _dedup{dedup},
-      _target{target} {
-    if constexpr (kFsst) {
-      _codec.emplace();
-    } else {
-      _codec.emplace(uint8_t{0});
-    }
-  }
+      _target{target} {}
 
   void Begin(Shape shape, uint8_t level, FrameLayout layout, uint64_t begin) {
     _shape = shape;
@@ -277,12 +271,12 @@ class Encoder {
     _frame_layout = layout;
     _next = begin;
     if constexpr (!kFsst) {
-      _codec->SetLevel(level);
+      _codec.SetLevel(level);
       _trained = Trained(layout);
       _layout = FrameShapeOf(_trained, layout);
       if constexpr (kTrainable) {
         if (_trained) {
-          _codec->LoadTrained(*_trained);
+          _codec.LoadTrained(*_trained);
         }
       }
     }
@@ -315,7 +309,7 @@ class Encoder {
 
   void Retrain() noexcept {
     if constexpr (kFsst) {
-      _codec->Reset();
+      _codec.Reset();
     }
   }
 
@@ -323,12 +317,12 @@ class Encoder {
                  uint64_t seed)
     requires(!kFsst)
   {
-    _codec->SetLevel(level);
+    _codec.SetLevel(level);
     const auto* trained = Trained(frame_layout);
     const auto frame_shape = FrameShapeOf(trained, frame_layout);
     if constexpr (kTrainable) {
       if (trained) {
-        _codec->LoadTrained(*trained);
+        _codec.LoadTrained(*trained);
       }
     }
     SplitFrames(p, frame_shape);
@@ -338,7 +332,7 @@ class Encoder {
       data += CompressFrame(_price_dictionary);
       if (frame_shape.dictionary != 0 && !_price_dictionary.empty() &&
           _spans.size() > 1) {
-        _codec->LoadDictionary(_price_dictionary, frame_shape.frame);
+        _codec.LoadDictionary(_price_dictionary);
       }
       const size_t rest = _spans.size() - 1;
       if (rest <= kPriceFrames) {
@@ -372,7 +366,6 @@ class Encoder {
                                           static_cast<double>(rest_raw) /
                                           static_cast<double>(sampled_raw));
       }
-      _codec->ClearDictionary();
       auto& hist = _history[static_cast<size_t>(p.shape)];
       hist.raw += p.raw;
       hist.comp += data;
@@ -399,7 +392,7 @@ class Encoder {
     std::string_view symtab;
     if constexpr (kFsst) {
       EncodeFsst();
-      symtab = _codec->SymbolTable();
+      symtab = _codec.SymbolTable();
     } else {
       if (_frame_entries != 0) {
         CloseFrame();
@@ -535,9 +528,6 @@ class Encoder {
     _frames.clear();
     _data.clear();
     _dictionary.clear();
-    if constexpr (!kFsst) {
-      _codec->ClearDictionary();
-    }
     _rows = 0;
     _runs = 0;
     _raw = 0;
@@ -647,7 +637,7 @@ class Encoder {
     const auto comp_off = _data.size();
     size_t n = 0;
     _data.resize_and_overwrite(comp_off + bound, [&](char* buf, size_t) {
-      n = _codec->Compress(_frame.data(), _frame.size(), buf + comp_off, bound);
+      n = _codec.Compress(_frame.data(), _frame.size(), buf + comp_off, bound);
       return comp_off + n;
     });
     _frames.push_back(
@@ -658,7 +648,7 @@ class Encoder {
     hist.comp += n;
     if (_frames.size() == 1 && _layout.dictionary != 0 && !_frame.empty()) {
       _dictionary.swap(_frame);
-      _codec->LoadDictionary(_dictionary, _layout.frame);
+      _codec.LoadDictionary(_dictionary);
     }
     _frame.clear();
     _frame_entries = 0;
@@ -708,7 +698,7 @@ class Encoder {
     const auto bound = Leaf<C>::Bound(frame.size());
     size_t n = 0;
     _price_out.resize_and_overwrite(bound, [&](char* buf, size_t) {
-      n = _codec->Compress(frame.data(), frame.size(), buf, bound);
+      n = _codec.Compress(frame.data(), frame.size(), buf, bound);
       return n;
     });
     return n;
@@ -802,7 +792,7 @@ class Encoder {
       _frames.push_back(FrameMeta{static_cast<uint32_t>(frame_first),
                                   static_cast<uint32_t>(frame_raw), 0, 0});
     }
-    _codec->Encode(_suffixes, _data, _entry_lengths);
+    _codec.Encode(_suffixes, _data, _entry_lengths);
     size_t off = 0;
     size_t next = 0;
     for (size_t f = 0; f < _frames.size(); ++f) {
@@ -830,7 +820,7 @@ class Encoder {
   uint8_t _level = 0;
   uint64_t _next = 0;
   using Codec = std::conditional_t<kFsst, FsstEncoder, LeafCompressor<C>>;
-  std::optional<Codec> _codec;
+  Codec _codec;
   duckdb::StatsWriter<string_t> _stats;
   duckdb::LogicalType _type;
   const StringTuning& _tuning;

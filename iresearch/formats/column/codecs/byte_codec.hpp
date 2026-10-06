@@ -86,8 +86,7 @@ class LeafCompressor;
 template<>
 class LeafCompressor<ByteCodec::Lz4> {
  public:
-  explicit LeafCompressor(uint8_t level) noexcept
-    : _level{EffectiveLevel<ByteCodec::Lz4>(level)} {}
+  LeafCompressor() = default;
   ~LeafCompressor();
 
   LeafCompressor(const LeafCompressor&) = delete;
@@ -98,14 +97,13 @@ class LeafCompressor<ByteCodec::Lz4> {
     _dictionary = false;
   }
 
-  void LoadDictionary(std::string_view dictionary, size_t frame_bytes);
+  void LoadDictionary(std::string_view dictionary);
   void LoadTrained(const TrainedDictionary& dictionary);
-  void ClearDictionary() noexcept { _dictionary = false; }
 
   size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 
  private:
-  uint8_t _level;
+  uint8_t _level = Leaf<ByteCodec::Lz4>::kDefaultLevel;
   bool _dictionary = false;
   uint64_t _trained = 0;
   uint8_t _trained_level = 0;
@@ -118,9 +116,7 @@ class LeafCompressor<ByteCodec::Lz4> {
 template<>
 class LeafCompressor<ByteCodec::Zstd> {
  public:
-  explicit LeafCompressor(uint8_t level)
-    : _level{EffectiveLevel<ByteCodec::Zstd>(level)},
-      _ctx{utils::MakeZstdCCtx()} {}
+  LeafCompressor() : _ctx{utils::MakeZstdCCtx()} {}
   ~LeafCompressor();
 
   LeafCompressor(const LeafCompressor&) = delete;
@@ -128,29 +124,28 @@ class LeafCompressor<ByteCodec::Zstd> {
 
   void SetLevel(uint8_t level) noexcept {
     _level = EffectiveLevel<ByteCodec::Zstd>(level);
-    ClearDictionary();
+    _active = nullptr;
   }
 
-  void LoadDictionary(std::string_view dictionary, size_t frame_bytes);
+  void LoadDictionary(std::string_view dictionary);
   void LoadTrained(const TrainedDictionary& dictionary);
-  void ClearDictionary() noexcept;
 
   size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 
  private:
-  uint8_t _level;
+  uint8_t _level = Leaf<ByteCodec::Zstd>::kDefaultLevel;
   utils::ZstdCCtxPtr _ctx;
   ZSTD_CDict_s* _cdict = nullptr;
   ZSTD_CDict_s* _trained_cdict = nullptr;
+  const ZSTD_CDict_s* _active = nullptr;
   uint64_t _trained = 0;
   uint8_t _trained_level = 0;
-  bool _use_trained = false;
 };
 
 template<>
 class LeafCompressor<ByteCodec::Zxc> {
  public:
-  explicit LeafCompressor(uint8_t level);
+  LeafCompressor();
   ~LeafCompressor();
 
   LeafCompressor(const LeafCompressor&) = delete;
@@ -161,13 +156,12 @@ class LeafCompressor<ByteCodec::Zxc> {
     _dictionary = {};
   }
 
-  void LoadDictionary(std::string_view dictionary, size_t frame_bytes);
-  void ClearDictionary() noexcept { _dictionary = {}; }
+  void LoadDictionary(std::string_view dictionary);
 
   size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 
  private:
-  uint8_t _level;
+  uint8_t _level = Leaf<ByteCodec::Zxc>::kDefaultLevel;
   zxc_cctx_s* _ctx;
   zxc_cctx_s* _block_ctx = nullptr;
   std::string_view _dictionary;
@@ -203,7 +197,7 @@ class LeafDecompressor<ByteCodec::Zstd> {
 
   void SetDictionary(std::string_view dictionary);
   void SetTrained(const TrainedDictionary& dictionary) noexcept {
-    _trained = dictionary.ZstdDictionary();
+    _active = dictionary.ZstdDictionary();
   }
 
   bool Decompress(const char* src, size_t size, char* dst,
@@ -213,10 +207,9 @@ class LeafDecompressor<ByteCodec::Zstd> {
 
  private:
   utils::ZstdDCtxPtr _ctx;
-  const ZSTD_DDict_s* _trained = nullptr;
   ZSTD_DDict_s* _ddict = nullptr;
+  const ZSTD_DDict_s* _active = nullptr;
   std::string_view _loaded;
-  bool _use = false;
 };
 
 template<>

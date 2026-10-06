@@ -57,23 +57,17 @@ void FsstEncoder::Encode(std::span<const std::string_view> strings,
     _table_size = duckdb_fsst_export(_encoder, _table);
   }
 
-  _out_lengths.assign(n, 0);
-  _out_ptrs.assign(n, nullptr);
-  size_t capacity = 2 * total + 8;
+  _out_lengths.resize(n);
+  _out_ptrs.resize(n);
   size_t done = 0;
-  for (;;) {
-    out.resize_and_overwrite(capacity, [&](char* buf, size_t size) {
-      done =
-        duckdb_fsst_compress(_encoder, n, _in_lengths.data(), _in_ptrs.data(),
-                             size, reinterpret_cast<unsigned char*>(buf),
-                             _out_lengths.data(), _out_ptrs.data());
-      return size;
-    });
-    if (done == n) {
-      break;
-    }
-    capacity *= 2;
-  }
+  out.resize_and_overwrite(2 * total + 8, [&](char* buf, size_t size) {
+    done =
+      duckdb_fsst_compress(_encoder, n, _in_lengths.data(), _in_ptrs.data(),
+                           size, reinterpret_cast<unsigned char*>(buf),
+                           _out_lengths.data(), _out_ptrs.data());
+    return size;
+  });
+  SDB_ENSURE(done == n, "fsst: compression ran out of space");
   size_t used = 0;
   lengths.resize(n);
   for (size_t i = 0; i < n; ++i) {
@@ -84,14 +78,9 @@ void FsstEncoder::Encode(std::span<const std::string_view> strings,
 }
 
 bool FsstDecoder::Import(std::string_view table) noexcept {
-  if (table.size() > sizeof(duckdb_fsst_decoder_t)) {
-    return false;
-  }
-  const auto consumed = duckdb_fsst_import(
-    &_decoder, reinterpret_cast<const unsigned char*>(table.data()),
-    table.size());
-  return consumed != 0 && consumed != DUCKDB_FSST_IMPORT_VERSION_MISMATCH &&
-         consumed != DUCKDB_FSST_IMPORT_OUT_OF_BOUNDS;
+  return duckdb_fsst_import(
+           &_decoder, reinterpret_cast<const unsigned char*>(table.data()),
+           table.size()) == table.size();
 }
 
 }  // namespace irs::codecs

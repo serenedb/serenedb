@@ -290,21 +290,20 @@ struct InvertedStoreIndex::FeedTask final : duckdb::BaseExecutorTask {
            FeedQueue& queue)
     : BaseExecutorTask{executor}, index{index}, queue{queue} {}
 
-  void ExecuteTask() final {
+  duckdb::TaskExecutionResult ExecuteTaskStep() final {
     try {
-      while (true) {
-        std::unique_ptr<ReplayOp> op;
-        {
-          absl::MutexLock lock{&queue.mutex};
-          if (queue.ops.empty()) {
-            queue.running = false;
-            return;
-          }
-          op = std::move(queue.ops.front());
-          queue.ops.pop_front();
+      std::unique_ptr<ReplayOp> op;
+      {
+        absl::MutexLock lock{&queue.mutex};
+        if (queue.ops.empty()) {
+          queue.running = false;
+          return duckdb::TaskExecutionResult::TASK_FINISHED;
         }
-        index.Apply(queue, *op);
+        op = std::move(queue.ops.front());
+        queue.ops.pop_front();
       }
+      index.Apply(queue, *op);
+      return duckdb::TaskExecutionResult::TASK_NOT_FINISHED;
     } catch (...) {
       Cancel();
       throw;
@@ -338,15 +337,10 @@ struct InvertedStoreIndex::RangeTask final : duckdb::BaseExecutorTask {
             duckdb::row_t row_start)
     : BaseExecutorTask{executor},
       transaction{transaction},
-      context{context},
-      source{source},
       columns{columns},
       targets{std::move(targets)},
-      begin{begin},
-      end{end},
-      row_start{row_start} {}
-
-  void ExecuteTask() final {
+      results(this->targets.size()),
+      row{row_start + static_cast<duckdb::row_t>(begin)} {
     const auto& table_types = source.GetTypes();
     duckdb::vector<duckdb::LogicalType> scan_types;
     scan_types.reserve(columns.size());
@@ -354,55 +348,52 @@ struct InvertedStoreIndex::RangeTask final : duckdb::BaseExecutorTask {
       scan_types.push_back(table_types[column.GetPrimaryIndex()]);
     }
     const auto base = static_cast<duckdb::idx_t>(duckdb::MAX_ROW_ID);
-    duckdb::TableScanState state;
     state.Initialize(columns);
     source.InitializeScanWithOffset(duckdb::QueryContext{}, state.local_state,
                                     columns, base + begin, base + end);
-    duckdb::DataChunk scanned;
     scanned.Initialize(source.GetAllocator(), scan_types);
-    duckdb::DataChunk view;
     view.InitializeEmpty(table_types);
-    std::vector<std::unique_ptr<duckdb::ExpressionExecutor>> executors;
-    executors.reserve(targets.size());
-    for (const auto& target : targets) {
+    executors.reserve(this->targets.size());
+    for (const auto& target : this->targets) {
       executors.push_back(std::make_unique<duckdb::ExpressionExecutor>(
         context, target.index->bound_expressions));
     }
-    std::vector<duckdb::DataChunk> results(targets.size());
-    duckdb::Vector row_ids{duckdb::LogicalType::ROW_TYPE};
-    auto row = row_start + static_cast<duckdb::row_t>(begin);
-    while (true) {
-      scanned.Reset();
-      state.local_state.Scan(transaction, scanned);
-      const auto size = scanned.size();
-      if (size == 0) {
-        break;
-      }
-      for (duckdb::idx_t i = 0; i < columns.size(); ++i) {
-        view.data[columns[i].GetPrimaryIndex()].Reference(scanned.data[i]);
-      }
-      duckdb::VectorOperations::GenerateSequence(row_ids, size, row, 1);
-      for (size_t t = 0; t < targets.size(); ++t) {
-        duckdb::Vector rows{duckdb::LogicalType::ROW_TYPE, nullptr, 0};
-        const auto fed = targets[t].index->Evaluate(view, row_ids, results[t],
-                                                    rows, executors[t].get());
-        targets[t].index->Feed(*targets[t].writer, *targets[t].transaction,
-                               results[t], rows, fed);
-      }
-      row += static_cast<duckdb::row_t>(size);
+  }
+
+  duckdb::TaskExecutionResult ExecuteTaskStep() final {
+    scanned.Reset();
+    state.local_state.Scan(transaction, scanned);
+    const auto size = scanned.size();
+    if (size == 0) {
+      return duckdb::TaskExecutionResult::TASK_FINISHED;
     }
+    for (duckdb::idx_t i = 0; i < columns.size(); ++i) {
+      view.data[columns[i].GetPrimaryIndex()].Reference(scanned.data[i]);
+    }
+    duckdb::VectorOperations::GenerateSequence(row_ids, size, row, 1);
+    for (size_t t = 0; t < targets.size(); ++t) {
+      duckdb::Vector rows{duckdb::LogicalType::ROW_TYPE, nullptr, 0};
+      const auto fed = targets[t].index->Evaluate(view, row_ids, results[t],
+                                                  rows, executors[t].get());
+      targets[t].index->Feed(*targets[t].writer, *targets[t].transaction,
+                             results[t], rows, fed);
+    }
+    row += static_cast<duckdb::row_t>(size);
+    return duckdb::TaskExecutionResult::TASK_NOT_FINISHED;
   }
 
   std::string TaskType() const final { return "InvertedIndexRangeFeed"; }
 
   duckdb::DuckTransaction& transaction;
-  duckdb::ClientContext& context;
-  duckdb::RowGroupCollection& source;
   const duckdb::vector<duckdb::StorageIndex>& columns;
   std::vector<Target> targets;
-  const duckdb::idx_t begin;
-  const duckdb::idx_t end;
-  const duckdb::row_t row_start;
+  duckdb::TableScanState state;
+  duckdb::DataChunk scanned;
+  duckdb::DataChunk view;
+  std::vector<std::unique_ptr<duckdb::ExpressionExecutor>> executors;
+  std::vector<duckdb::DataChunk> results;
+  duckdb::Vector row_ids{duckdb::LogicalType::ROW_TYPE};
+  duckdb::row_t row;
 };
 
 InvertedStoreIndex::InvertedStoreIndex(

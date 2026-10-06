@@ -31,6 +31,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <optional>
@@ -122,11 +123,11 @@ class Transport : public TransportBase {
  public:
   explicit Transport(IoExecutor& exec)
     requires(Kind == SocketKind::Tcp || Kind == SocketKind::Unix)
-    : _socket{exec.Context()}, _ioexec{&exec} {}
+    : _socket{exec.Context()}, _ioexec{&exec}, _task{MakeResumer(exec)} {}
 
   Transport(IoExecutor& exec, asio_ns::ssl::context& ssl)
     requires(Kind == SocketKind::Ssl || Kind == SocketKind::MaybeTls)
-    : _socket{exec.Context(), ssl}, _ioexec{&exec} {}
+    : _socket{exec.Context(), ssl}, _ioexec{&exec}, _task{MakeResumer(exec)} {}
 
   void Close() noexcept { _socket.Close(); }
   auto& Lowest() noexcept { return _socket.Lowest(); }
@@ -143,9 +144,7 @@ class Transport : public TransportBase {
     }
     _write_gate.Kick();
     _producer_gate.Kick();
-    if (auto* task = _spawned.load(std::memory_order_acquire)) {
-      task->RequestRun();
-    }
+    _task->RequestRun();
     static_cast<Session*>(this)->OnStop();
   }
 
@@ -322,7 +321,7 @@ class Transport : public TransportBase {
         // May immediately re-arm via the send callback -- the pending kick is
         // consumed by the next Wait.
         _send.FlushDone();
-        if (!_spawned.load(std::memory_order_acquire)) {
+        if (!_handed_off) {
           _producer_gate.Kick();
         }
         // Wake the cpu task only when it declared interest (ArmSendWaiter): the
@@ -333,9 +332,7 @@ class Transport : public TransportBase {
         const auto seen = _send_waiter.load(std::memory_order_relaxed);
         if (seen != kSendWaiterIdle &&
             _send_written.load(std::memory_order_relaxed) > seen) {
-          if (auto* task = _spawned.load(std::memory_order_acquire)) {
-            task->RequestRun();
-          }
+          _task->RequestRun();
         }
       }
     }
@@ -366,8 +363,16 @@ class Transport : public TransportBase {
   // SendWriter so a waiting Flush wakes.
   Gate _producer_gate;
 
-  duckdb::shared_ptr<CpuResumer> _task;
-  std::atomic<CpuResumer*> _spawned{nullptr};
+  const duckdb::shared_ptr<CpuResumer> _task;
+  bool _handed_off = false;
+
+ private:
+  static duckdb::shared_ptr<CpuResumer> MakeResumer(IoExecutor& exec) {
+    return duckdb::make_shared_ptr<CpuResumer>(
+      duckdb::TaskScheduler::GetScheduler(
+        irs::DuckDBEngine::Instance().instance()),
+      exec);
+  }
 };
 
 }  // namespace sdb::network

@@ -2814,15 +2814,9 @@ auto PgWireSession<Kind>::NegotiateStartup(StartupRequest& startup)
 
 template<SocketKind Kind>
 yaclib::Future<> PgWireSession<Kind>::SpawnSession() noexcept {
-  this->_task = duckdb::make_shared_ptr<CpuResumer>(
-    duckdb::TaskScheduler::GetScheduler(
-      irs::DuckDBEngine::Instance().instance()),
-    *this->_ioexec);
-  // SessionMain (eager) runs to its first Park, setting the resume job; the one
-  // bootstrap kick then schedules it onto a duck worker.
   auto cpu = SessionMain();
-  this->_spawned.store(this->_task.get(), std::memory_order_release);
-  this->_task->RequestRun();
+  this->_handed_off = true;
+  this->_task->Start();
   return cpu;
 }
 

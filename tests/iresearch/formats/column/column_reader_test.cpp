@@ -1417,6 +1417,56 @@ TEST_F(ColumnReaderTest, VariantGatherSparse) {
   }
 }
 
+size_t PinnedSegments(const irs::ColumnReader::ScanState& s) {
+  auto n = s.segments.size();
+  for (const auto& child : s.child_states) {
+    n += PinnedSegments(child);
+  }
+  if (s.variant) {
+    for (const auto& rg : s.variant->rgs) {
+      for (const auto* state :
+           {rg.unshredded.get(), rg.shredded.get(), rg.leaf.get()}) {
+        if (state) {
+          n += PinnedSegments(*state);
+        }
+      }
+    }
+  }
+  return n;
+}
+
+TEST_F(ColumnReaderTest, VariantGathersReleaseBlocks) {
+  SetShreddingSize(Db(), -1);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteVariantViaSql(Db(), dir, "vseg", /*id=*/35,
+                     "SELECT (SELECT string_agg(md5((i * 8 + j)::VARCHAR), '') "
+                     "FROM range(8) u(j))::VARIANT FROM range(20000) t(i)",
+                     /*rg_size=*/8192, expected);
+  ASSERT_EQ(expected.size(), 20000u);
+
+  irs::ColReader r{dir, "vseg", Db()};
+  const auto* col = r.Column(35);
+  ASSERT_NE(col, nullptr);
+
+  auto state = col->InitScan(r.Ctx());
+  duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+  sel.set_index(0, 0);
+  constexpr uint64_t kRowGroup = 8192;
+  size_t first = 0;
+  for (uint64_t row = 0; row < expected.size(); row += 97) {
+    duckdb::Vector out{duckdb::LogicalType::VARIANT(), STANDARD_VECTOR_SIZE};
+    col->GatherScatter(state, row, sel, 1, out, 0);
+    ASSERT_EQ(out.GetValue(0).ToString(), expected[row].ToString())
+      << "row=" << row;
+    const auto pinned = PinnedSegments(state);
+    if (row % kRowGroup < 97) {
+      first = pinned;
+    }
+    EXPECT_LE(pinned, first + 1) << "row=" << row;
+  }
+}
+
 // Per-column HyperLogLog distinct-count sketch: built by hashing rows at seal
 // time, persisted in the footer, recovered + queryable on read.
 TEST_F(ColumnReaderTest, HyperLogLogDistinctCount) {

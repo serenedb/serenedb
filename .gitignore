@@ -64,7 +64,6 @@ tests/drivers/c/harness
 /.claude/*
 !/.claude/skills/
 !/.claude/rules/
-!/.claude/tools/
 !/.claude/settings.json
 /CLAUDE.local.md
 /compile_commands.json

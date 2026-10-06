@@ -19,7 +19,7 @@ These are rulings from the maintainers' reviews; CONTRIBUTING.md stays the base.
 
 ## Errors
 
-- Anything that can reach a client: `THROW_SQL_ERROR(ERR_CODE(...), ERR_MSG(...))`, so the real SQLSTATE goes on the wire. DuckDB exception types only inside scalar-function and cast execution callbacks.
+- `THROW_SQL_ERROR(ERR_CODE(...), ERR_MSG(...))`, so the real SQLSTATE goes on the wire. Pre-commit `check-no-raw-throw` rejects any other `throw` in `server/` except a rethrow (`throw;`) and `duckdb::NotImplementedException`.
 - Keep the message at the throw site; don't fold duplicated error text into a throwing helper.
 
 ## Concurrency
@@ -32,8 +32,6 @@ These are rulings from the maintainers' reviews; CONTRIBUTING.md stays the base.
 
 - Reuse or patch DuckDB machinery; don't build a parallel copy of it. Host behaviour for fork catalog objects goes through `DuckCatalog::Make<X>Entry` plus a serenedb entry subclass; per-session behaviour through `ClientContextState`. New SQL commands are Create/Drop/Alter statements with their own operator, not PRAGMA callbacks.
 - Pass `duckdb::ClientContext&` as the first parameter and look resources up where used. Never open extra `duckdb::Connection`s for internal work.
-- Vectors: branch on FLAT and CONSTANT before falling back to `UnifiedVectorFormat`; no `Flatten` or per-cell `GetValue` on hot paths.
-- Table functions: size the chunk with `output.SetChildCardinality(n)` before writing rows (`SetCardinality` is deprecated; rows past the vector size read back as NULL); at most `STANDARD_VECTOR_SIZE` rows per call (a macro, not `duckdb::STANDARD_VECTOR_SIZE`); a NULL string slot still holds `duckdb::string_t{}`.
 - Caps and limits are `sdb_` SET variables read through `SettingRef`, not constants.
 
 ## Shape

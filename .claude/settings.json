@@ -7,7 +7,8 @@
     "clangd-lsp@claude-plugins-official": true
   },
   "env": {
-    "CLANGD_FLAGS": "-j=8 --background-index-priority=background --pch-storage=disk"
+    "CLANGD_FLAGS": "-j=8 --background-index-priority=background --pch-storage=disk",
+    "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR": "1"
   },
   "permissions": {
     "allow": [
@@ -32,6 +33,7 @@
       "Bash(gh issue list:*)",
       "Bash(gh run view:*)",
       "Bash(gh run list:*)",
+      "Bash(gh run download:*)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:www.postgresql.org)",

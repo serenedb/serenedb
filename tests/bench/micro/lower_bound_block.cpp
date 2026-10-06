@@ -233,5 +233,3 @@ BENCHMARK(Bench<Kernel::Near>)->Apply(Args);
 BENCHMARK(Bench<Kernel::All>)->Apply(Args);
 
 }  // namespace
-
-BENCHMARK_MAIN();

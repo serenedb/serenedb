@@ -1273,5 +1273,3 @@ BENCHMARK(BmBiasSet)->Apply(BiasArgs);
 BENCHMARK(BmBiasClear)->Apply(BiasArgs);
 
 }  // namespace
-
-BENCHMARK_MAIN();

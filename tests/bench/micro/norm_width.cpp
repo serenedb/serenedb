@@ -812,5 +812,3 @@ BENCHMARK(BenchFused)->Apply(IndexedArgs);
 BENCHMARK(BenchPlain16)->Apply(Plain16Args);
 
 }  // namespace
-
-BENCHMARK_MAIN();

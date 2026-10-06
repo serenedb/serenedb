@@ -393,5 +393,3 @@ BENCHMARK(BmFind<1>)->Name("Narrow16")->Apply(Args);
 BENCHMARK(BmFind<2>)->Name("Wide32")->Apply(Args);
 
 }  // namespace
-
-BENCHMARK_MAIN();

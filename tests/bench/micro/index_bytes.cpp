@@ -141,7 +141,7 @@ void Walk(const irs::SubReader& segment, irs::Directory& dir, Totals& t) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+static int Main(int argc, char** argv) {
   if (argc < 2) {
     std::fprintf(stderr, "usage: %s <index directory>\n", argv[0]);
     return 1;
@@ -213,3 +213,6 @@ int main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }
+
+[[maybe_unused]] static const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

@@ -392,5 +392,3 @@ BENCHMARK(BmFetch<64>)->Name("Group64")->Apply(Args);
 BENCHMARK(BmFetch<0>)->Name("GroupPerDocBlock")->Apply(Args);
 
 }  // namespace
-
-BENCHMARK_MAIN();

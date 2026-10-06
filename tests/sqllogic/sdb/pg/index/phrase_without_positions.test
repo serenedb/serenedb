@@ -244,6 +244,39 @@ id
 8
 
 query
+SELECT id FROM pwp_text_idx WHERE body @@ websearch_to_tsquery('quick-brown') ORDER BY id
+----
+id
+1
+2
+5
+7
+8
+
+query
+SELECT id FROM pwp_pos_idx WHERE body @@ websearch_to_tsquery('quick-brown') ORDER BY id
+----
+id
+1
+2
+5
+7
+8
+
+query
+SELECT id FROM pwp_bare_idx WHERE body @@ websearch_to_tsquery('quick-brown') ORDER BY id
+----
+id
+1
+2
+3
+4
+5
+6
+7
+8
+
+query
 SELECT id FROM pwp_text_idx WHERE body @@ phraseto_tsquery('quick brown fox') ORDER BY id
 ----
 id

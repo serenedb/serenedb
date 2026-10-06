@@ -170,15 +170,20 @@ bool HasPositions(const SearchColumnInfo& column_info) {
                          column_info.tokenizer.features);
 }
 
+bool HasText(const SearchColumnInfo& column_info) {
+  return column_info.tokenizer.analyzer.get_deleter().tokenizer &&
+         irs::field_limits::valid(column_info.stored_field_id) &&
+         !column_info.logical_type.IsJSONType() &&
+         !irs::field_limits::valid(column_info.numeric_field_id);
+}
+
 irs::PhraseTokens::Factory TokenizerFactory(const SearchColumnInfo& column_info,
                                             duckdb::ClientContext& context,
                                             bool words) {
-  auto source = column_info.tokenizer.analyzer.get_deleter().tokenizer;
-  if (!source || !irs::field_limits::valid(column_info.stored_field_id) ||
-      column_info.logical_type.IsJSONType() ||
-      irs::field_limits::valid(column_info.numeric_field_id)) {
+  if (!HasText(column_info)) {
     return {};
   }
+  auto source = column_info.tokenizer.analyzer.get_deleter().tokenizer;
   return [source = std::move(source), context = &context,
           words] -> std::shared_ptr<irs::analysis::Tokenizer> {
     auto acquired = source->Acquire(*context);
@@ -294,6 +299,10 @@ void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
 }
 
 }  // namespace
+
+bool MatchesPhrases(const SearchColumnInfo& column_info) {
+  return HasPositions(column_info) || HasText(column_info);
+}
 
 irs::analysis::Tokenizer& PhraseAnalyzer(const FilterContext& ctx,
                                          const SearchColumnInfo& column_info) {

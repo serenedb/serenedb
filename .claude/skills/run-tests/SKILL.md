@@ -5,7 +5,7 @@ description: Run SereneDB tests locally - sqllogic (run.sh), recovery, gtest, py
 
 # Running SereneDB tests
 
-Run only what covers the change unless the user asked for a suite.
+Run only what covers the change unless the user asked for a suite. CONTRIBUTING.md "Build", "Launch" and "Test" give the base commands (presets, `serened` launch, `run.sh`, gtest filters); this skill adds what they leave out. On a shared machine use a free port instead of its 7890.
 
 ## Pick the binary
 

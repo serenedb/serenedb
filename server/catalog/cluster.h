@@ -31,10 +31,13 @@
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
+#include <filesystem>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <mutex>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 #include "auth/role_closure.h"
 #include "catalog/entry/database.h"
@@ -161,6 +164,9 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
     _closures;
   bool _compactable = false;
   std::atomic<duckdb::idx_t> _live_bytes{0};
+  std::mutex _artifacts_mutex;
+  std::vector<Artifact> _artifacts;
+  irs::containers::FlatHashSet<duckdb::idx_t> _replayed_drops;
 };
 
 ClusterCatalog& ClusterOf(duckdb::ClientContext& context);

@@ -7,15 +7,15 @@ paths:
 
 # SereneDB C++: review rules beyond CONTRIBUTING.md
 
-These are rulings from the maintainers' reviews; CONTRIBUTING.md stays the base.
+These are rulings from the maintainers' reviews; CONTRIBUTING.md stays the base. In `server/` and `iresearch/`, pre-commit `check-banned-calls` rejects `std::unordered_*`, the printf family and `std::sto*`/`std::from_chars`/`strto*`/`ato*`, and `fix-template-typename` rewrites `template <class T>`.
 
 ## Containers, strings, formatting
 
-- Maps and sets: `containers::FlatHashMap`, `FlatHashSet`, `NodeHashMap` (`iresearch/utils/containers/`). Never `std::unordered_map` or DuckDB's `case_insensitive_map_t`/`unordered_map`.
-- Look up with the borrowed key (`map.find(sv)`, `set.contains(sv)`, `map.try_emplace(sv)`); never build a temporary `std::string` key, never `find` followed by an insert of the same key.
+- Our own maps and sets: `irs::containers::FlatHashMap`, `FlatHashSet`, `NodeHashMap` (`iresearch/utils/containers/`), never `std::unordered_*`. DuckDB's `case_insensitive_map_t` stays only where a DuckDB API hands it over (`CreateInfo::options`).
+- Containers with heterogeneous lookup (absl, `irs::containers`): look up with the borrowed key (`map.find(sv)`, `set.contains(sv)`, `map.try_emplace(sv)`), never a temporary `std::string` key, never `find` followed by an insert of the same key. DuckDB's maps have no such lookup and need the `std::string`.
 - Borrowed strings are `std::string_view` (parameters too). Avoid every unnecessary copy and allocation, however small.
-- Formatted output: `absl::StrFormat`, `absl::StrCat`, `absl::FPrintF`, `absl::PrintF`. Never `std::printf`, `std::fprintf`, `std::snprintf`.
-- Number parsing: `fast_float::from_chars` (`third_party/fast_float`), never `std::sto*` or `std::from_chars`.
+- Formatted output: `absl::StrFormat`, `absl::StrCat`, `absl::FPrintF`, `absl::PrintF`, `absl::SNPrintF` into a fixed buffer. A signal handler, which must not allocate, is the exception.
+- Number parsing: `fast_float::from_chars` (`third_party/fast_float`, integers with a base too); check its `ec`.
 
 ## Errors
 

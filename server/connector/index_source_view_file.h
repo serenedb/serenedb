@@ -22,6 +22,7 @@
 
 #include <duckdb/common/types.hpp>
 #include <duckdb/function/table_function.hpp>
+#include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <span>
@@ -46,9 +47,26 @@ class ViewFileIndexSourceBase : public ViewIndexSourceBase {
   // column -- forwarding those to the reader mismatches column types.
   void BuildPushedFilters(const duckdb::TableFilterSet* input_filters);
 
+  struct PartitionColumn {
+    duckdb::idx_t column;
+    std::string key;
+    duckdb::unique_ptr<duckdb::ExpressionFilter> filter;
+  };
+
+  duckdb::vector<duckdb::LogicalType> LookupTypes() const;
+  bool BindPartitionValues(duckdb::ClientContext& context,
+                           const std::string& path,
+                           std::vector<duckdb::Value>& values) const;
+  void CopyLookupColumns(duckdb::DataChunk& source, duckdb::idx_t count,
+                         duckdb::idx_t offset);
+  void FillPartitionColumns(std::span<const duckdb::Value> values,
+                            duckdb::idx_t count, duckdb::idx_t offset);
+
   duckdb::TableFunction _lookup_func;
   duckdb::unique_ptr<duckdb::FunctionData> _bind_data;
   duckdb::vector<duckdb::ColumnIndex> _column_indexes;
+  std::vector<duckdb::idx_t> _lookup_columns;
+  std::vector<PartitionColumn> _partition_columns;
   // Lookup-column filters forwarded to the underlying reader (parquet row-group
   // pruning + native FilterSelection); the lookup scan compacts to survivors.
   // Null when none.
@@ -70,6 +88,9 @@ class ViewFileSingleFileIndexSource final : public ViewFileIndexSourceBase {
 
  private:
   duckdb::unique_ptr<duckdb::GlobalTableFunctionState> _lookup_gstate;
+  duckdb::DataChunk _lookup_target;
+  std::vector<duckdb::Value> _partition_values;
+  bool _partitions_match = true;
 };
 
 class ViewFileGlobIndexSource final : public ViewFileIndexSourceBase {
@@ -91,6 +112,8 @@ class ViewFileGlobIndexSource final : public ViewFileIndexSourceBase {
   struct CachedFileLookup {
     duckdb::unique_ptr<duckdb::FunctionData> bind_data;
     duckdb::unique_ptr<duckdb::GlobalTableFunctionState> gstate;
+    std::vector<duckdb::Value> partition_values;
+    bool partitions_match = true;
   };
   irs::containers::FlatHashMap<uint64_t, CachedFileLookup> _file_cache;
   // The pinned snapshot's source manifest: docs store manifest file_ids, so

@@ -20,6 +20,9 @@
 
 #include "connector/index_source_view_file.h"
 
+#include <absl/algorithm/container.h>
+
+#include <duckdb/common/hive_partitioning.hpp>
 #include <duckdb/common/multi_file/multi_file_states.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
@@ -38,15 +41,41 @@ ViewFileIndexSourceBase::ViewFileIndexSourceBase(
   _lookup_func = MakeFastPathLookupFunction(_fast_path);
 
   auto& multi_bd = _bind_data->Cast<duckdb::MultiFileBindData>();
+  const auto& partitions = multi_bd.reader_bind.hive_partitioning_indexes;
+  const auto partition_of = [&](duckdb::idx_t file_col_idx) {
+    return absl::c_find_if(partitions,
+                           [&](const duckdb::HivePartitioningIndex& candidate) {
+                             return candidate.index == file_col_idx;
+                           });
+  };
   _column_indexes.reserve(projected_columns.size());
+  duckdb::idx_t column = 0;
   InitProjection(
     context, projected_columns, projected_types, bind_column_ids,
     SourceColumns{multi_bd.names, &duckdb::Identifier::GetIdentifierName},
     [&](duckdb::idx_t file_col_idx) {
       SDB_ASSERT(file_col_idx < multi_bd.types.size());
-      _column_indexes.emplace_back(file_col_idx);
+      if (const auto partition = partition_of(file_col_idx);
+          partition != partitions.end()) {
+        _partition_columns.push_back(
+          {.column = column, .key = partition->value});
+      } else {
+        _lookup_columns.push_back(column);
+        _column_indexes.emplace_back(file_col_idx);
+      }
+      ++column;
       return multi_bd.types[file_col_idx];
     });
+  if (_column_indexes.empty() && !_partition_columns.empty()) {
+    for (duckdb::idx_t file_col_idx = 0; file_col_idx < multi_bd.types.size();
+         ++file_col_idx) {
+      if (partition_of(file_col_idx) == partitions.end()) {
+        _lookup_columns.push_back(duckdb::DConstants::INVALID_INDEX);
+        _column_indexes.emplace_back(file_col_idx);
+        break;
+      }
+    }
+  }
   BuildPushedFilters(pushed_filters);
 }
 
@@ -55,16 +84,17 @@ void ViewFileIndexSourceBase::BuildPushedFilters(
   if (!input_filters || !input_filters->HasFilters()) {
     return;
   }
-  // Source columns sit at output slot `_real_proj_slots[k]` and reader column
-  // `_column_indexes[k]` (its k-th projected column). The scan's pushed filters
-  // are keyed by output slot; re-key those hitting a source column to the
-  // reader's projected-column index. Non-source slots (e.g. the score) are
-  // skipped -- they have no reader column and would mismatch on type.
-  SDB_ASSERT(_real_proj_slots.size() == _column_indexes.size());
+  SDB_ASSERT(_lookup_columns.size() == _column_indexes.size());
+  const auto filter_of = [&](duckdb::idx_t column) {
+    return input_filters->TryGetFilterByColumnIndex(
+      duckdb::ProjectionIndex(_real_proj_slots[column]));
+  };
   auto set = duckdb::make_uniq<duckdb::TableFilterSet>();
-  for (duckdb::idx_t k = 0; k < _real_proj_slots.size(); ++k) {
-    auto filter = input_filters->TryGetFilterByColumnIndex(
-      duckdb::ProjectionIndex(_real_proj_slots[k]));
+  for (duckdb::idx_t k = 0; k < _lookup_columns.size(); ++k) {
+    if (_lookup_columns[k] == duckdb::DConstants::INVALID_INDEX) {
+      continue;
+    }
+    auto filter = filter_of(_lookup_columns[k]);
     if (!filter) {
       continue;
     }
@@ -72,8 +102,79 @@ void ViewFileIndexSourceBase::BuildPushedFilters(
       *filter, "ViewFileIndexSourceBase::BuildPushedFilters");
     set->PushFilter(duckdb::ProjectionIndex(k), expr_filter.Copy());
   }
+  for (auto& partition : _partition_columns) {
+    if (auto filter = filter_of(partition.column)) {
+      partition.filter =
+        duckdb::ExpressionFilter::GetExpressionFilter(
+          *filter, "ViewFileIndexSourceBase::BuildPushedFilters")
+          .Copy();
+    }
+  }
   if (set->HasFilters()) {
     _pushed_filters = std::move(set);
+  }
+}
+
+duckdb::vector<duckdb::LogicalType> ViewFileIndexSourceBase::LookupTypes()
+  const {
+  const auto& multi_bd = _bind_data->Cast<duckdb::MultiFileBindData>();
+  duckdb::vector<duckdb::LogicalType> types;
+  types.reserve(_column_indexes.size());
+  for (const auto& column : _column_indexes) {
+    types.push_back(multi_bd.types[column.GetPrimaryIndex()]);
+  }
+  return types;
+}
+
+bool ViewFileIndexSourceBase::BindPartitionValues(
+  duckdb::ClientContext& context, const std::string& path,
+  std::vector<duckdb::Value>& values) const {
+  if (_partition_columns.empty()) {
+    return true;
+  }
+  const auto& multi_bd = _bind_data->Cast<duckdb::MultiFileBindData>();
+  const auto partitions = duckdb::HivePartitioning::Parse(path);
+  values.clear();
+  values.reserve(_partition_columns.size());
+  bool match = true;
+  for (const auto& partition : _partition_columns) {
+    const auto& type = _scratch_types[partition.column];
+    const auto entry = partitions.find(partition.key);
+    auto value =
+      entry == partitions.end()
+        ? duckdb::Value(type)
+        : multi_bd.file_options
+            .GetHivePartitionValue(entry->second, partition.key, context)
+            .DefaultCastAs(type);
+    if (partition.filter &&
+        !partition.filter->EvaluateWithConstant(context, value)) {
+      match = false;
+    }
+    values.push_back(std::move(value));
+  }
+  return match;
+}
+
+void ViewFileIndexSourceBase::CopyLookupColumns(duckdb::DataChunk& source,
+                                                duckdb::idx_t count,
+                                                duckdb::idx_t offset) {
+  for (duckdb::idx_t k = 0; k < _lookup_columns.size(); ++k) {
+    if (_lookup_columns[k] == duckdb::DConstants::INVALID_INDEX) {
+      continue;
+    }
+    duckdb::VectorOperations::Copy(
+      source.data[k], _tf_target.data[_lookup_columns[k]], count, 0, offset);
+  }
+}
+
+void ViewFileIndexSourceBase::FillPartitionColumns(
+  std::span<const duckdb::Value> values, duckdb::idx_t count,
+  duckdb::idx_t offset) {
+  for (size_t p = 0; p < _partition_columns.size(); ++p) {
+    duckdb::Vector constant(values[p], duckdb::count_t(count));
+    duckdb::VectorOperations::Copy(
+      constant, _tf_target.data[_partition_columns[p].column], count, 0,
+      offset);
   }
 }
 
@@ -89,6 +190,15 @@ ViewFileSingleFileIndexSource::ViewFileSingleFileIndexSource(
                                       /*projection_ids=*/{},
                                       _pushed_filters.get());
   _lookup_gstate = _lookup_func.init_global(context, init);
+  if (!_partition_columns.empty()) {
+    _lookup_target.Initialize(context, LookupTypes());
+    _partitions_match =
+      BindPartitionValues(context,
+                          _bind_data->Cast<duckdb::MultiFileBindData>()
+                            .file_list->GetFirstFile()
+                            .path,
+                          _partition_values);
+  }
 }
 
 duckdb::idx_t ViewFileSingleFileIndexSource::Materialize(
@@ -106,13 +216,26 @@ duckdb::idx_t ViewFileSingleFileIndexSource::Materialize(
   // cardinality and the sorted-pk index of each via pk_survivors.
   _tf_target.SetCardinality(0);
   _survivor_idx.resize(count);
+  if (!_partitions_match) {
+    return 0;
+  }
+  auto& target = _partition_columns.empty() ? _tf_target : _lookup_target;
+  if (!_partition_columns.empty()) {
+    _lookup_target.Reset();
+    _lookup_target.SetCardinality(0);
+  }
 
   duckdb::TableFunctionInput in(_bind_data.get(), /*local_state=*/nullptr,
                                 _lookup_gstate.get());
   in.pk_lookups = keys;
   in.pk_survivors = _survivor_idx;
-  _lookup_func.function(context, in, _tf_target);
-  const auto rows = _tf_target.size();
+  _lookup_func.function(context, in, target);
+  const auto rows = target.size();
+  if (!_partition_columns.empty()) {
+    CopyLookupColumns(_lookup_target, rows, 0);
+    FillPartitionColumns(_partition_values, rows, 0);
+    _tf_target.SetCardinality(rows);
+  }
 
   RunCastPass(output, rows);
   GatherNonLookupColumns(output, rows);
@@ -143,7 +266,7 @@ duckdb::idx_t ViewFileGlobIndexSource::Materialize(
 
   AliasOutput(output);
   if (_file_target.ColumnCount() == 0) {
-    _file_target.Initialize(context, _scratch_types);
+    _file_target.Initialize(context, LookupTypes());
   }
   _survivor_idx.resize(count);
 
@@ -185,6 +308,12 @@ duckdb::idx_t ViewFileGlobIndexSource::Materialize(
         cached.bind_data.get(), _column_indexes,
         /*projection_ids=*/{}, _pushed_filters.get());
       cached.gstate = _lookup_func.init_global(context, init);
+      cached.partitions_match =
+        BindPartitionValues(context, file_path, cached.partition_values);
+    }
+    if (!cached.partitions_match) {
+      i = j;
+      continue;
     }
 
     const auto file_count = j - i;
@@ -200,11 +329,8 @@ duckdb::idx_t ViewFileGlobIndexSource::Materialize(
     _lookup_func.function(context, in, _file_target);
 
     const auto file_rows = _file_target.size();
-    for (duckdb::idx_t c = 0; c < _real_proj_slots.size(); ++c) {
-      duckdb::VectorOperations::Copy(_file_target.data[c], _tf_target.data[c],
-                                     file_rows, /*source_offset=*/0,
-                                     /*target_offset=*/total);
-    }
+    CopyLookupColumns(_file_target, file_rows, total);
+    FillPartitionColumns(cached.partition_values, file_rows, total);
     // The reader wrote survivors as 0-based indices into this file's pk_lookups
     // span (which starts at _sorted_rows[i]); shift to batch-global sorted-pk
     // indices so GatherNonLookupColumns can reorder the doc-id-keyed columns.

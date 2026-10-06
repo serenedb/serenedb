@@ -715,8 +715,8 @@ id	body
 # Hive partitioning synthesises a `color` column from the path components
 # `.../color=red/...` and `.../color=blue/...`. The resolver glob-mode
 # fast path threads (file_index, file_row_number); the lookup TF reads
-# just the data columns, so partition columns work as long as we don't
-# index them.
+# the data columns and the partition column comes from each file's path
+# (inverted_index_view_hive.test).
 statement ok
 COPY (SELECT 1::int4 AS id, 'pudge hp alpha' AS body, 'red' AS color
       UNION ALL SELECT 2, 'manga hp beta', 'blue')

@@ -609,10 +609,13 @@ class Encoder {
       ++_rows;
       return;
     }
-    if (_dedup.epoch[code - 1] != _dedup.current) {
+    const string_t value{sv.data(), static_cast<uint32_t>(sv.size())};
+    if (_dedup.epoch[code - 1] == _dedup.current) {
+      _stats.UpdateRepeated(value);
+    } else {
       _dedup.epoch[code - 1] = _dedup.current;
       _dedup.local[code - 1] = static_cast<uint32_t>(_entries.size()) + 1;
-      _stats.Update(string_t{sv.data(), static_cast<uint32_t>(sv.size())});
+      _stats.Update(value);
       AppendEntry(sv);
     }
     PushCode(_dedup.local[code - 1]);

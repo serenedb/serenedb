@@ -164,6 +164,12 @@ struct ListRep {
   uint32_t length;
 };
 
+constexpr uint64_t Mix(uint64_t h, uint64_t v) noexcept {
+  h ^= h >> 32;
+  h *= 0xd6e8feb86659fd93ULL;
+  return h ^ v;
+}
+
 class ListKeys {
  public:
   static bool Supported(const duckdb::LogicalType& type) {
@@ -292,24 +298,24 @@ class ListKeys {
 
     uint64_t Hash(uint64_t h, uint64_t e) const {
       if (!Valid(e)) {
-        return duckdb::CombineHash(h, 0x9e3779b97f4a7c15ULL);
+        return Mix(h, 0x9e3779b97f4a7c15ULL);
       }
       switch (kind) {
         case Kind::Fixed:
-          return duckdb::CombineHash(
-            h, duckdb::Hash(reinterpret_cast<const char*>(At(e)), width));
+          return Mix(h,
+                     duckdb::Hash(reinterpret_cast<const char*>(At(e)), width));
         case Kind::String:
-          return duckdb::CombineHash(
+          return Mix(
             h, duckdb::Hash(*reinterpret_cast<const duckdb::string_t*>(At(e))));
         case Kind::Struct:
-          h = duckdb::CombineHash(h, 1);
+          h = Mix(h, 1);
           for (const auto& child : children) {
             h = child.Hash(h, e);
           }
           return h;
         case Kind::List: {
           const auto& entry = Entry(e);
-          h = duckdb::CombineHash(h, entry.length);
+          h = Mix(h, entry.length);
           return children[0].HashRange(h, entry.offset, entry.length);
         }
         case Kind::Array:
@@ -320,7 +326,7 @@ class ListKeys {
 
     uint64_t HashRange(uint64_t h, uint64_t e, uint64_t length) const {
       if (kind == Kind::Struct && RangeValid(e, length)) {
-        h = duckdb::CombineHash(h, 2);
+        h = Mix(h, 2);
         for (const auto& child : children) {
           h = child.HashRange(h, e, length);
         }
@@ -337,13 +343,13 @@ class ListKeys {
         const auto* x =
           reinterpret_cast<const duckdb::string_t*>(format.data) + e;
         for (uint64_t k = 0; k < length; ++k) {
-          h = duckdb::CombineHash(h, duckdb::Hash(x[k]));
+          h = Mix(h, duckdb::Hash(x[k]));
         }
         return h;
       }
       const auto* x = format.data + e * width;
       for (uint64_t k = 0; k < length; ++k) {
-        h = duckdb::CombineHash(
+        h = Mix(
           h, duckdb::Hash(reinterpret_cast<const char*>(x + k * width), width));
       }
       return h;

@@ -1252,6 +1252,54 @@ TEST_F(ColCodecsTest, GatherFilterReleasesPassedSegments) {
   EXPECT_EQ(kept, expected);
 }
 
+TEST_F(ColCodecsTest, ZxcFramesAfterAnOversizedEntryCanBeEmpty) {
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g == 0) {
+      return std::string(40000, 'a') + "z";
+    }
+    if (g % 2 == 0) {
+      return std::nullopt;
+    }
+    return std::string{};
+  };
+  for (const auto codec : {duckdb::CompressionType::COMPRESSION_ZXC,
+                           duckdb::CompressionType::COMPRESSION_DICT_ZXC}) {
+    irs::MemoryDirectory dir;
+    Write(dir, codec, {}, 5000, 2048, value);
+    Verify(dir, codec, 5000, value);
+  }
+}
+
+TEST_F(ColCodecsTest, DictionarySegmentsCountEveryRowInTotalStringLength) {
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 11 == 0) {
+      return std::nullopt;
+    }
+    return "status-" + std::to_string(g % 5);
+  };
+  constexpr uint64_t kRows = 20000;
+  uint64_t expected = 0;
+  for (uint64_t g = 0; g < kRows; ++g) {
+    expected += value(g).value_or("").size();
+  }
+  for (const auto codec : {duckdb::CompressionType::COMPRESSION_DICT_LZ4,
+                           duckdb::CompressionType::COMPRESSION_DICT_FSST}) {
+    irs::MemoryDirectory dir;
+    Write(dir, codec, {}, kRows, 4096, value);
+    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    uint64_t total = 0;
+    for (const auto& block : col->DataBlocks()) {
+      const auto length =
+        duckdb::StringStats::TotalStringLength(block.statistics);
+      ASSERT_TRUE(length.IsValid());
+      total += length.GetIndex();
+    }
+    EXPECT_EQ(total, expected) << duckdb::CompressionTypeToString(codec);
+  }
+}
+
 TEST_F(ColCodecsTest, MappedFileAlignedBlocks) {
   const auto path = test_dir() / "col_codecs_mmap";
   std::filesystem::create_directories(path);

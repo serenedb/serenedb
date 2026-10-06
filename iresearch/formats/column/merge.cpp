@@ -112,8 +112,8 @@ void SampleDictionary(std::span<const MergeSource> sources, field_id id,
   if (total == 0) {
     return;
   }
-  absl::flat_hash_set<std::string> seen;
-  std::vector<std::string_view> entries;
+  absl::flat_hash_set<uint64_t> seen;
+  std::string window;
   size_t r = 0;
   uint64_t base = 0;
   for (size_t w = 0; w < kSampleWindows; ++w) {
@@ -130,9 +130,9 @@ void SampleDictionary(std::span<const MergeSource> sources, field_id id,
     range.col->Skip(state, row);
     ColumnReader::VectorScratch scratch{range.col->Type()};
     seen.clear();
-    size_t bytes = 0;
-    for (size_t v = 0;
-         v < kSampleWindowVectors && row < stop && bytes < kSampleWindowBytes;
+    window.clear();
+    for (size_t v = 0; v < kSampleWindowVectors && row < stop &&
+                       window.size() < kSampleWindowBytes;
          ++v) {
       const auto take =
         std::min<duckdb::idx_t>(stop - row, STANDARD_VECTOR_SIZE);
@@ -142,20 +142,21 @@ void SampleDictionary(std::span<const MergeSource> sources, field_id id,
       batch.ToUnifiedFormat(take, format);
       const auto* data =
         duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(format);
-      for (duckdb::idx_t i = 0; i < take && bytes < kSampleWindowBytes; ++i) {
+      for (duckdb::idx_t i = 0; i < take && window.size() < kSampleWindowBytes;
+           ++i) {
         const auto idx = format.sel->get_index(i);
         if (!format.validity.RowIsValid(idx)) {
           continue;
         }
         const auto& s = data[idx];
-        if (seen.emplace(s.GetData(), s.GetSize()).second) {
-          bytes += s.GetSize();
+        if (seen.insert(duckdb::Hash(s)).second) {
+          window.append(s.GetData(), s.GetSize());
         }
       }
       row += take;
     }
-    entries.assign(seen.begin(), seen.end());
-    cw.SampleDictionary(entries);
+    const std::string_view view{window};
+    cw.SampleDictionary({&view, 1});
   }
 }
 

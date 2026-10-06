@@ -82,7 +82,7 @@ size_t LeafCompressor<ByteCodec::Zxc>::Compress(const char* src, size_t size,
                                                 char* dst, size_t capacity) {
   zxc_compress_opts_t opts{};
   opts.level = _level;
-  if (_dictionary.empty() || size > ZXC_BLOCK_SIZE_MAX) {
+  if (_dictionary.empty() || size == 0 || size > ZXC_BLOCK_SIZE_MAX) {
     const auto n = zxc_compress_cctx(_ctx, src, size, dst, capacity, &opts);
     SDB_ENSURE(n > 0, "zxc compression failed: ", n);
     return static_cast<size_t>(n);
@@ -116,7 +116,7 @@ void LeafDecompressor<ByteCodec::Zxc>::SetDictionary(
 bool LeafDecompressor<ByteCodec::Zxc>::Decompress(const char* src, size_t size,
                                                   char* dst,
                                                   size_t raw_size) noexcept {
-  if (_dictionary.empty() || raw_size > ZXC_BLOCK_SIZE_MAX) {
+  if (_dictionary.empty() || raw_size == 0 || raw_size > ZXC_BLOCK_SIZE_MAX) {
     const auto n = zxc_decompress_dctx(_ctx, src, size, dst, raw_size, nullptr);
     return n >= 0 && static_cast<size_t>(n) == raw_size;
   }

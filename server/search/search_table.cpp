@@ -154,7 +154,7 @@ void SearchTable::OpenWriter() {
                             GetTableId(), ": ", ec.message()));
   }
   if (!path_exists) {
-    std::filesystem::create_directories(path, ec);
+    CreateStorageDir(path, ec);
     if (ec) {
       THROW_SQL_ERROR(ERR_MSG("Failed to create directory '", path.string(),
                               "' while initializing search table for table ",

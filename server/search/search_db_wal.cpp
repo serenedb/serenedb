@@ -47,6 +47,8 @@
 #include <utility>
 #include <vector>
 
+#include "search/inverted_index_storage.h"
+
 namespace sdb::search {
 namespace {
 
@@ -390,7 +392,7 @@ void SearchDbWal::EnsureActiveSegmentLocked(uint64_t first_tick) {
     return;
   }
   std::error_code ec;
-  std::filesystem::create_directories(_wal_dir, ec);
+  CreateStorageDir(_wal_dir, ec);
   SDB_ENSURE(!ec, "create wal dir '", _wal_dir.string(), "': ", ec.message());
   auto seg_path = _wal_dir / SegmentName(first_tick);
   std::error_code exists_ec;

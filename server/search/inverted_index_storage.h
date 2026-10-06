@@ -85,6 +85,8 @@ struct WalCursor {
 // never reissued.
 void RemoveDroppedStorageDir(const std::filesystem::path& path,
                              size_t parent_levels);
+void RemoveStorageDir(const std::filesystem::path& path, size_t parent_levels);
+bool CreateStorageDir(const std::filesystem::path& path, std::error_code& ec);
 
 inline std::filesystem::path DroppedStoragePath(std::filesystem::path path) {
   path += ".dropped";

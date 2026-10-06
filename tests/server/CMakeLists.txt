@@ -33,6 +33,7 @@ add_executable(
     pointer_union_test.cpp
     random_test.cpp
     scorer_bounds_test.cpp
+    search_storage_dir_test.cpp
     serializer_binary_test.cpp
     serializer_test.cpp
     storage_version_test.cpp

@@ -153,7 +153,7 @@ InvertedIndexStorage::InvertedIndexStorage(
                             _index_id, "': ", ec.message()));
   }
   if (!path_exists) {
-    std::filesystem::create_directories(path, ec);
+    CreateStorageDir(path, ec);
     if (ec) {
       THROW_SQL_ERROR(ERR_MSG("Failed to create directory '", path.string(),
                               "' while initializing data store '", _index_id,
@@ -279,31 +279,42 @@ InvertedIndexStorage::InvertedIndexStorage(
     std::move(reader), std::move(file_manifest)));
 }
 
-void RemoveDroppedStorageDir(const std::filesystem::path& path,
-                             size_t parent_levels) {
-  auto remove = [path, parent_levels] {
-    std::error_code ec;
-    const auto tombstone = DroppedStoragePath(path);
-    std::filesystem::rename(path, tombstone, ec);
-    std::filesystem::remove_all(ec ? path : tombstone, ec);
-    if (ec) {
-      SDB_WARN(GENERAL, "could not remove dropped storage '", path.string(),
-               "': ", ec.message());
-      return;
-    }
-    auto parent = path;
-    for (size_t level = 0; level < parent_levels; ++level) {
-      parent = parent.parent_path();
-      if (!std::filesystem::remove(parent, ec) || ec) {
-        return;
-      }
-    }
-  };
-  if (lifecycle::IsStopping() || BackgroundScheduler::instance().IsStopping()) {
-    remove();
+bool CreateStorageDir(const std::filesystem::path& path, std::error_code& ec) {
+  bool created = false;
+  do {
+    created = std::filesystem::create_directories(path, ec);
+  } while (ec == std::errc::no_such_file_or_directory);
+  return created;
+}
+
+void RemoveStorageDir(const std::filesystem::path& path, size_t parent_levels) {
+  std::error_code ec;
+  const auto tombstone = DroppedStoragePath(path);
+  std::filesystem::rename(path, tombstone, ec);
+  std::filesystem::remove_all(ec ? path : tombstone, ec);
+  if (ec) {
+    SDB_WARN(GENERAL, "could not remove dropped storage '", path.string(),
+             "': ", ec.message());
     return;
   }
-  BackgroundScheduler::instance().Run(std::move(remove)).Detach();
+  auto parent = path;
+  for (size_t level = 0; level < parent_levels; ++level) {
+    parent = parent.parent_path();
+    if (!std::filesystem::remove(parent, ec) || ec) {
+      return;
+    }
+  }
+}
+
+void RemoveDroppedStorageDir(const std::filesystem::path& path,
+                             size_t parent_levels) {
+  if (lifecycle::IsStopping() || BackgroundScheduler::instance().IsStopping()) {
+    RemoveStorageDir(path, parent_levels);
+    return;
+  }
+  BackgroundScheduler::instance()
+    .Run([path, parent_levels] { RemoveStorageDir(path, parent_levels); })
+    .Detach();
 }
 
 InvertedIndexStorage::~InvertedIndexStorage() {

@@ -37,6 +37,7 @@
 #include <utility>
 
 #include "iresearch/formats/column/codecs/fsst_codec.hpp"
+#include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -125,27 +126,13 @@ uint64_t Packed(uint64_t count, uint32_t max_value) noexcept {
     count, BitpackingPrimitives::MinimumBitWidth<uint32_t>(max_value));
 }
 
-uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries, uint64_t runs,
-                    CodesEncoding* chosen = nullptr) noexcept {
-  if (shape != Shape::Dedup) {
-    return 0;
-  }
-  const auto max_code = static_cast<uint32_t>(entries);
-  const auto bitpack = Packed(rows, max_code);
-  const auto rle =
-    Packed(runs, max_code) + Packed(runs, static_cast<uint32_t>(rows));
-  if (chosen) {
-    *chosen = rle < bitpack ? CodesEncoding::Rle : CodesEncoding::Bitpack;
-  }
-  return std::min(bitpack, rle);
-}
-
 struct CodesPlan {
   CodesEncoding encoding = CodesEncoding::Bitpack;
   uint8_t code_width = 0;
   uint8_t run_width = 0;
   uint64_t codes_count = 0;
   uint64_t run_count = 0;
+  uint64_t bytes = 0;
 };
 
 CodesPlan PlanCodes(Shape shape, uint64_t rows, uint64_t entries,
@@ -154,42 +141,37 @@ CodesPlan PlanCodes(Shape shape, uint64_t rows, uint64_t entries,
   if (shape != Shape::Dedup) {
     return plan;
   }
-  CodesBytes(shape, rows, entries, runs, &plan.encoding);
-  plan.code_width = BitpackingPrimitives::MinimumBitWidth<uint32_t>(
-    static_cast<uint32_t>(entries));
-  if (plan.encoding == CodesEncoding::Rle) {
+  const auto max_code = static_cast<uint32_t>(entries);
+  const auto bitpack = Packed(rows, max_code);
+  const auto rle =
+    Packed(runs, max_code) + Packed(runs, static_cast<uint32_t>(rows));
+  plan.code_width = BitpackingPrimitives::MinimumBitWidth<uint32_t>(max_code);
+  if (rle < bitpack) {
+    plan.encoding = CodesEncoding::Rle;
     plan.run_width = BitpackingPrimitives::MinimumBitWidth<uint32_t>(
       static_cast<uint32_t>(rows));
     plan.codes_count = runs;
     plan.run_count = runs;
+    plan.bytes = rle;
   } else {
     plan.codes_count = rows;
+    plan.bytes = bitpack;
   }
   return plan;
 }
 
-struct SegmentLayout {
-  uint32_t off_lengths;
-  uint32_t off_lcps;
-  uint32_t off_codes;
-  uint32_t off_runs;
-  uint32_t off_symtab;
-  uint32_t off_data;
-};
-
-SegmentLayout LayOut(uint64_t frames, uint64_t lengths_bytes,
-                     uint64_t lcps_bytes, const CodesPlan& codes,
-                     uint64_t symtab_bytes) noexcept {
-  SegmentLayout l;
-  l.off_lengths = Align8(kHeaderSize + frames * kFrameMetaSize);
-  l.off_lcps = Align8(l.off_lengths + lengths_bytes);
-  l.off_codes = Align8(l.off_lcps + lcps_bytes);
-  l.off_runs = Align8(l.off_codes + BitpackingPrimitives::GetRequiredSize(
+void LayOut(Header& h, uint64_t frames, uint64_t lengths_bytes,
+            uint64_t lcps_bytes, const CodesPlan& codes,
+            uint64_t symtab_bytes) noexcept {
+  h.off_frames = kHeaderSize;
+  h.off_lengths = Align8(kHeaderSize + frames * kFrameMetaSize);
+  h.off_lcps = Align8(h.off_lengths + lengths_bytes);
+  h.off_codes = Align8(h.off_lcps + lcps_bytes);
+  h.off_runs = Align8(h.off_codes + BitpackingPrimitives::GetRequiredSize(
                                       codes.codes_count, codes.code_width));
-  l.off_symtab = Align8(l.off_runs + BitpackingPrimitives::GetRequiredSize(
+  h.off_symtab = Align8(h.off_runs + BitpackingPrimitives::GetRequiredSize(
                                        codes.run_count, codes.run_width));
-  l.off_data = Align8(l.off_symtab + symtab_bytes);
-  return l;
+  h.off_data = Align8(h.off_symtab + symtab_bytes);
 }
 
 void Record(RatioHistory& hist, uint64_t raw, uint64_t comp,
@@ -208,10 +190,32 @@ void Record(RatioHistory& hist, uint64_t raw, uint64_t comp,
   hist.comp += comp;
 }
 
-struct DedupScratch {
-  std::vector<uint32_t> epoch;
-  std::vector<uint32_t> local;
-  uint32_t current = 0;
+class DedupScratch {
+ public:
+  void Begin(size_t entries) {
+    if (_slots.size() != entries) {
+      _slots.assign(entries, Slot{});
+    }
+    ++_epoch;
+  }
+
+  std::pair<uint32_t, bool> Local(uint32_t code, uint32_t next) noexcept {
+    auto& slot = _slots[code - 1];
+    if (slot.epoch == _epoch) {
+      return {slot.local, false};
+    }
+    slot = {_epoch, next};
+    return {next, true};
+  }
+
+ private:
+  struct Slot {
+    uint32_t epoch = 0;
+    uint32_t local = 0;
+  };
+
+  std::vector<Slot> _slots;
+  uint32_t _epoch = 0;
 };
 
 struct Segment {
@@ -252,8 +256,7 @@ template<ByteCodec C>
 class Encoder {
  public:
   static constexpr bool kFsst = C == ByteCodec::Fsst;
-  static constexpr bool kTrainable =
-    C == ByteCodec::Lz4 || C == ByteCodec::Zstd;
+  static constexpr bool kTrainable = Trainable(C);
 
   Encoder(const StringAccumulator& acc, const duckdb::LogicalType& type,
           StringTuning& tuning, DedupScratch& dedup, uint32_t target)
@@ -271,23 +274,12 @@ class Encoder {
     _frame_layout = layout;
     _next = begin;
     if constexpr (!kFsst) {
-      _codec.SetLevel(level);
-      _trained = Trained(layout);
-      _layout = FrameShapeOf(_trained, layout);
-      if constexpr (kTrainable) {
-        if (_trained) {
-          _codec.LoadTrained(*_trained);
-        }
-      }
+      _layout = Configure(level, layout);
     }
     _dictionary.clear();
     _data.clear();
     if (shape == Shape::Dedup) {
-      if (_dedup.epoch.size() != _acc.entries.size()) {
-        _dedup.epoch.assign(_acc.entries.size(), 0);
-        _dedup.local.assign(_acc.entries.size(), 0);
-      }
-      ++_dedup.current;
+      _dedup.Begin(_acc.entries.size());
     }
   }
 
@@ -317,14 +309,7 @@ class Encoder {
                  uint64_t seed)
     requires(!kFsst)
   {
-    _codec.SetLevel(level);
-    const auto* trained = Trained(frame_layout);
-    const auto frame_shape = FrameShapeOf(trained, frame_layout);
-    if constexpr (kTrainable) {
-      if (trained) {
-        _codec.LoadTrained(*trained);
-      }
-    }
+    const auto frame_shape = Configure(level, frame_layout);
     SplitFrames(p, frame_shape);
     uint64_t data = 0;
     if (!_spans.empty()) {
@@ -372,13 +357,13 @@ class Encoder {
     }
     const auto entry_count =
       p.entries.size() + (p.shape == Shape::Dedup ? 1 : 0);
-    const auto layout =
-      LayOut(_spans.size(),
-             BitpackingPrimitives::GetRequiredSize(
-               entry_count,
-               BitpackingPrimitives::MinimumBitWidth<uint32_t>(p.max_len)),
-             0, PlanCodes(p.shape, p.rows, p.entries.size(), p.runs), 0);
-    return layout.off_data + data;
+    Header h{};
+    LayOut(h, _spans.size(),
+           BitpackingPrimitives::GetRequiredSize(
+             entry_count,
+             BitpackingPrimitives::MinimumBitWidth<uint32_t>(p.max_len)),
+           0, PlanCodes(p.shape, p.rows, p.entries.size(), p.runs), 0);
+    return h.off_data + data;
   }
 
   void AddUntil(uint64_t end) {
@@ -397,13 +382,7 @@ class Encoder {
       if (_frame_entries != 0) {
         CloseFrame();
       }
-      _entry_lengths.resize(_entries.size());
-      for (size_t i = 0; i < _entries.size(); ++i) {
-        _entry_lengths[i] = static_cast<uint32_t>(_entries[i].size());
-      }
       _max_enc = _max_len;
-      _max_lcp = 0;
-      _lcps.clear();
     }
     const auto entry_count = _entries.size() + FirstEntry();
     SDB_ENSURE(_rows <= std::numeric_limits<uint32_t>::max() &&
@@ -449,27 +428,22 @@ class Encoder {
     h.run_width = codes.run_width;
 
     _lengths.assign(GroupPadded(entry_count), 0);
-    std::copy(_entry_lengths.begin(), _entry_lengths.end(),
-              _lengths.begin() + FirstEntry());
-    _lcp_stream.assign(kFsst ? GroupPadded(entry_count) : 0, 0);
     if constexpr (kFsst) {
-      std::copy(_lcps.begin(), _lcps.end(), _lcp_stream.begin() + FirstEntry());
+      std::copy(_entry_lengths.begin(), _entry_lengths.end(),
+                _lengths.begin() + FirstEntry());
+      _lcp_stream.resize(GroupPadded(entry_count), 0);
+    } else {
+      for (size_t i = 0; i < _entries.size(); ++i) {
+        _lengths[FirstEntry() + i] = static_cast<uint32_t>(_entries[i].size());
+      }
     }
-    const auto layout = LayOut(
-      _frames.size(),
-      BitpackingPrimitives::GetRequiredSize(entry_count, h.length_width),
-      kFsst ? BitpackingPrimitives::GetRequiredSize(entry_count, h.lcp_width)
-            : 0,
-      codes, symtab.size());
-
-    h.off_frames = kHeaderSize;
-    h.off_lengths = layout.off_lengths;
-    h.off_lcps = layout.off_lcps;
-    h.off_codes = layout.off_codes;
-    h.off_runs = layout.off_runs;
-    h.off_symtab = layout.off_symtab;
+    LayOut(h, _frames.size(),
+           BitpackingPrimitives::GetRequiredSize(entry_count, h.length_width),
+           kFsst
+             ? BitpackingPrimitives::GetRequiredSize(entry_count, h.lcp_width)
+             : 0,
+           codes, symtab.size());
     h.symtab_size = static_cast<uint32_t>(symtab.size());
-    h.off_data = layout.off_data;
     h.data_size = static_cast<uint32_t>(_data.size());
 
     _bytes.assign(static_cast<size_t>(h.off_data), '\0');
@@ -537,19 +511,17 @@ class Encoder {
   }
 
  private:
-  const TrainedDictionary* Trained(FrameLayout layout) const noexcept {
+  FrameShape Configure(uint8_t level, FrameLayout layout)
+    requires(!kFsst)
+  {
+    _codec.SetLevel(level);
+    _trained = nullptr;
     if constexpr (kTrainable) {
-      if (layout == FrameLayout::Dictionary) {
-        return _tuning.dictionary.get();
+      if (layout == FrameLayout::Dictionary && _tuning.dictionary) {
+        _trained = _tuning.dictionary.get();
+        _codec.LoadTrained(*_trained);
+        return {kTrainedFrameBytes, 0};
       }
-    }
-    return nullptr;
-  }
-
-  static FrameShape FrameShapeOf(const TrainedDictionary* trained,
-                                 FrameLayout layout) noexcept {
-    if (trained) {
-      return {kTrainedFrameBytes, 0};
     }
     if (layout == FrameLayout::Wide) {
       return {kFrameRawBytes, 0};
@@ -603,15 +575,15 @@ class Encoder {
       return;
     }
     const string_t value{sv.data(), static_cast<uint32_t>(sv.size())};
-    if (_dedup.epoch[code - 1] == _dedup.current) {
-      _stats.UpdateRepeated(value);
-    } else {
-      _dedup.epoch[code - 1] = _dedup.current;
-      _dedup.local[code - 1] = static_cast<uint32_t>(_entries.size()) + 1;
+    const auto [local, fresh] =
+      _dedup.Local(code, static_cast<uint32_t>(_entries.size()) + 1);
+    if (fresh) {
       _stats.Update(value);
       AppendEntry(sv);
+    } else {
+      _stats.UpdateRepeated(value);
     }
-    PushCode(_dedup.local[code - 1]);
+    PushCode(local);
     ++_rows;
   }
 
@@ -708,7 +680,7 @@ class Encoder {
     const auto entry_count = _entries.size() + FirstEntry();
     const auto ratio = Ratio();
     uint64_t est = kHeaderSize + Packed(entry_count, _max_len) +
-                   CodesBytes(_shape, _rows, _entries.size(), _runs);
+                   PlanCodes(_shape, _rows, _entries.size(), _runs).bytes;
     if constexpr (kFsst) {
       est += Packed(entry_count, _max_len) +
              (_raw / kFsstFrameRawBytes + 1) * kFrameMetaSize +
@@ -765,7 +737,8 @@ class Encoder {
       SortEntries();
     }
     _suffixes.clear();
-    _lcps.clear();
+    _lcp_stream.assign(FirstEntry(), 0);
+    _max_lcp = 0;
     _frames.clear();
     std::string_view prev;
     uint64_t frame_raw = 0;
@@ -783,7 +756,8 @@ class Encoder {
       if ((i - frame_first) % kChainRestart == 0) {
         lcp = 0;
       }
-      _lcps.push_back(lcp);
+      _lcp_stream.push_back(lcp);
+      _max_lcp = std::max(_max_lcp, lcp);
       _suffixes.push_back(sv.substr(lcp));
       frame_raw += sv.size();
       prev = sv;
@@ -795,23 +769,17 @@ class Encoder {
     _codec.Encode(_suffixes, _data, _entry_lengths);
     size_t off = 0;
     size_t next = 0;
+    _max_enc = 0;
     for (size_t f = 0; f < _frames.size(); ++f) {
       const auto end =
         f + 1 < _frames.size() ? _frames[f + 1].first_entry : _entries.size();
       _frames[f].comp_off = static_cast<uint32_t>(off);
       for (; next < end; ++next) {
         off += _entry_lengths[next];
+        _max_enc = std::max(_max_enc, _entry_lengths[next]);
       }
       _frames[f].comp_len = static_cast<uint32_t>(off - _frames[f].comp_off);
       _frames[f].first_entry += FirstEntry();
-    }
-    _max_enc = 0;
-    for (const auto len : _entry_lengths) {
-      _max_enc = std::max(_max_enc, len);
-    }
-    _max_lcp = 0;
-    for (const auto lcp : _lcps) {
-      _max_lcp = std::max(_max_lcp, lcp);
     }
   }
 
@@ -849,7 +817,6 @@ class Encoder {
   std::string _data;
   std::vector<uint32_t> _entry_lengths;
   std::vector<std::string_view> _suffixes;
-  std::vector<uint32_t> _lcps;
   uint32_t _max_enc = 0;
   uint32_t _max_lcp = 0;
 
@@ -996,7 +963,8 @@ class SegmentWriter {
     auto* best = Smallest(shape, shape == Shape::Dedup ? dedup : plain);
     if (_params.objective == AutoObjective::Balanced &&
         best->choice.leaf != ByteCodec::Fsst) {
-      if (auto* fsst = Fsst(shape);
+      if (auto* fsst = Cached({shape, ByteCodec::Fsst}, 0, begin, end,
+                              FrameLayout::Dictionary);
           fsst &&
           static_cast<double>(fsst->Size()) <=
             static_cast<double>(best->Size()) * (1.0 + kFsstPreference)) {
@@ -1097,10 +1065,6 @@ class SegmentWriter {
     return {leaf, tuned, layout, *bytes};
   }
 
-  static bool Trainable(ByteCodec leaf) noexcept {
-    return leaf == ByteCodec::Lz4 || leaf == ByteCodec::Zstd;
-  }
-
   void Measure(Shape shape, uint64_t begin, uint64_t end) {
     if (_measured) {
       return;
@@ -1120,22 +1084,18 @@ class SegmentWriter {
       }
       return;
     }
-    if (_dedup.epoch.size() != _acc.entries.size()) {
-      _dedup.epoch.assign(_acc.entries.size(), 0);
-      _dedup.local.assign(_acc.entries.size(), 0);
-    }
-    ++_dedup.current;
+    _dedup.Begin(_acc.entries.size());
     uint32_t last = 0;
     for (auto row = begin; row < end; ++row) {
       const auto code = _acc.codes[row];
       uint32_t local = 0;
       if (code != 0) {
-        if (_dedup.epoch[code - 1] != _dedup.current) {
-          _dedup.epoch[code - 1] = _dedup.current;
-          _dedup.local[code - 1] = static_cast<uint32_t>(p.entries.size()) + 1;
+        bool fresh = false;
+        std::tie(local, fresh) =
+          _dedup.Local(code, static_cast<uint32_t>(p.entries.size()) + 1);
+        if (fresh) {
           Append(_acc.entries[code - 1]);
         }
-        local = _dedup.local[code - 1];
       }
       if (row == begin || local != last) {
         ++p.runs;
@@ -1177,17 +1137,6 @@ class SegmentWriter {
       _smallest = {leaf, level, layout, bytes};
     }
     return bytes;
-  }
-
-  Segment* Fsst(Shape shape) const noexcept {
-    Segment* found = nullptr;
-    for (auto* seg : _live) {
-      if (seg->choice.shape == shape && seg->choice.leaf == ByteCodec::Fsst &&
-          (!found || seg->Size() < found->Size())) {
-        found = seg;
-      }
-    }
-    return found;
   }
 
   Segment* Smallest(Shape shape, Segment* best) const noexcept {
@@ -1380,8 +1329,7 @@ bool TrainsDictionary(std::optional<StringChoice> named,
       params.tier == WriteTier::Flush) {
     return false;
   }
-  return !named || named->leaf == ByteCodec::Lz4 ||
-         named->leaf == ByteCodec::Zstd;
+  return !named || Trainable(named->leaf);
 }
 
 SealOutcome SealSegments(const StringAccumulator& acc,

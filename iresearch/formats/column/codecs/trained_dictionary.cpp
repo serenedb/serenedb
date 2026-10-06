@@ -70,9 +70,6 @@ void DictionarySampler::Add(std::span<const std::string_view> entries) {
       fill += take;
       e.remove_prefix(take);
       if (fill == kSamplePieceBytes) {
-        if (keep) {
-          _sizes.push_back(kSamplePieceBytes);
-        }
         fill = 0;
         ++piece;
       }
@@ -93,11 +90,12 @@ std::optional<std::string> DictionarySampler::Train() {
   params.nbThreads = 1;
   params.splitPoint = 1.0;
   params.zParams.compressionLevel = 3;
+  const std::vector<size_t> sizes(_samples.size() / kSamplePieceBytes,
+                                  kSamplePieceBytes);
   const auto n = ZDICT_trainFromBuffer_fastCover(
-    dictionary.data(), dictionary.size(), _samples.data(), _sizes.data(),
-    static_cast<unsigned>(_sizes.size()), params);
+    dictionary.data(), dictionary.size(), _samples.data(), sizes.data(),
+    static_cast<unsigned>(sizes.size()), params);
   std::string{}.swap(_samples);
-  std::vector<size_t>{}.swap(_sizes);
   if (ZDICT_isError(n)) {
     return std::nullopt;
   }

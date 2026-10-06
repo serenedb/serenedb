@@ -68,7 +68,6 @@ class DictionarySampler {
 
  private:
   std::string _samples;
-  std::vector<size_t> _sizes;
 };
 
 }  // namespace irs::codecs

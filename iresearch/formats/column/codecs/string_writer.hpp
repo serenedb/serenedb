@@ -29,12 +29,11 @@
 #include <memory>
 #include <optional>
 #include <span>
-#include <string>
 #include <string_view>
 #include <vector>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
-#include "iresearch/formats/column/codecs/string_layout.hpp"
+#include "iresearch/formats/column/codecs/string_choice.hpp"
 #include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"

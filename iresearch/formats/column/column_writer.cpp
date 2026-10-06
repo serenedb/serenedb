@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cstring>
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/immutable_strings.hpp>
@@ -934,6 +935,15 @@ void EmitEmptyValidity(const duckdb::LogicalType& validity_type,
   sink.push_back(std::move(m));
 }
 
+duckdb::CompressionType ForcedMethod(duckdb::DatabaseInstance& db,
+                                     duckdb::CompressionType forced) {
+  if (forced != duckdb::CompressionType::COMPRESSION_AUTO) {
+    return forced;
+  }
+  return duckdb::Settings::Get<duckdb::ForceCompressionSetting>(
+    duckdb::DBConfig::GetConfig(db));
+}
+
 }  // namespace
 
 WriteContext& ColumnWriter::WriteCtx() const noexcept {
@@ -953,10 +963,7 @@ duckdb::optional_ptr<const duckdb::CompressionFunction> ColumnWriter::PickCodec(
   std::vector<duckdb::reference<const duckdb::CompressionFunction>> candidates =
     config.GetCompressionFunctions(codec_type.InternalType());
 
-  auto forced_method =
-    forced != duckdb::CompressionType::COMPRESSION_AUTO
-      ? forced
-      : duckdb::Settings::Get<duckdb::ForceCompressionSetting>(config);
+  auto forced_method = ForcedMethod(db, forced);
   if (forced_method != duckdb::CompressionType::COMPRESSION_AUTO) {
     const bool available = std::ranges::any_of(
       candidates, [&](const auto& f) { return f.get().type == forced_method; });
@@ -1028,11 +1035,7 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
                               duckdb::CompressionType forced,
                               ColumnMeta& meta) {
   auto& db = WriteCtx().Database();
-  const auto& config = duckdb::DBConfig::GetConfig(db);
-  const auto forced_method =
-    forced != duckdb::CompressionType::COMPRESSION_AUTO
-      ? forced
-      : duckdb::Settings::Get<duckdb::ForceCompressionSetting>(config);
+  const auto forced_method = ForcedMethod(db, forced);
   const auto named = codecs::ChoiceOf(forced_method);
   if (!named && forced_method != duckdb::CompressionType::COMPRESSION_AUTO) {
     return CompressData(type, chunks, forced, meta);
@@ -1718,8 +1721,9 @@ bool ColumnWriter::TrainsDictionary() const noexcept {
   if (_is_nested || _type.InternalType() != duckdb::PhysicalType::VARCHAR) {
     return false;
   }
-  const auto named = codecs::ChoiceOf(_forced);
-  if (!named && _forced != duckdb::CompressionType::COMPRESSION_AUTO) {
+  const auto forced_method = ForcedMethod(WriteCtx().Database(), _forced);
+  const auto named = codecs::ChoiceOf(forced_method);
+  if (!named && forced_method != duckdb::CompressionType::COMPRESSION_AUTO) {
     return false;
   }
   return codecs::TrainsDictionary(named, _codec_params);

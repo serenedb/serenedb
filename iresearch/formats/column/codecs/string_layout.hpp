@@ -131,8 +131,7 @@ struct Header {
          (h.flags == kFrameDictionary && h.frame_count > 1 &&
           h.codec != static_cast<uint8_t>(ByteCodec::Fsst)) ||
          (h.flags == kTrainedDictionary && h.dictionary != 0 &&
-          (h.codec == static_cast<uint8_t>(ByteCodec::Lz4) ||
-           h.codec == static_cast<uint8_t>(ByteCodec::Zstd)))) &&
+          Trainable(static_cast<ByteCodec>(h.codec)))) &&
         (h.flags == kTrainedDictionary) == (h.dictionary != 0) &&
         static_cast<uint64_t>(h.off_data) + h.data_size <= segment_size &&
         h.off_frames + static_cast<uint64_t>(h.frame_count) * kFrameMetaSize <=

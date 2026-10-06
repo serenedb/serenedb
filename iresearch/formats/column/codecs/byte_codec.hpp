@@ -45,6 +45,10 @@ enum class ByteCodec : uint8_t {
 
 inline constexpr uint8_t kByteCodecCount = 4;
 
+constexpr bool Trainable(ByteCodec leaf) noexcept {
+  return leaf == ByteCodec::Lz4 || leaf == ByteCodec::Zstd;
+}
+
 template<ByteCodec C>
 struct Leaf;
 

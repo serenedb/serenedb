@@ -707,7 +707,7 @@ Parse forgiving, web-search-bar syntax into a `TSQUERY`.
 | :--- | :--- | :--- | :--- |
 | `text` | `VARCHAR` | — | A search-engine-style string. Quoted substrings become phrases, the `OR` keyword separates alternatives, a leading `-` excludes a term and unquoted words are otherwise combined with `AND`. |
 
-**How it works.** This is the parser for untrusted, user-facing input: unlike [`to_tsquery`](#to_tsquery) it never raises on malformed syntax — stray operators are simply treated as text. It recognizes `"quoted phrases"`, the literal `OR` keyword, and a leading `-` for exclusion; everything else is `AND`-ed. An unquoted word that the dictionary splits into several tokens, such as `wi-fi`, matches as a phrase, as in PostgreSQL; on a column without the `position` feature every part is required instead. Synonyms of a word are alternatives, and a row matching several of them scores as its best match.
+**How it works.** This is the parser for untrusted, user-facing input: unlike [`to_tsquery`](#to_tsquery) it never raises on malformed syntax — stray operators are simply treated as text. It recognizes `"quoted phrases"`, the literal `OR` keyword, and a leading `-` for exclusion; everything else is `AND`-ed. An unquoted word that the dictionary splits into several tokens, such as `wi-fi`, matches as a phrase, as in PostgreSQL; on a column with neither the `position` feature nor [its text in the index](../../indexes/inverted/full-text-search.md#phrases-without-positions) every part is required instead. Synonyms of a word are alternatives, and a row matching several of them scores as its best match.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |

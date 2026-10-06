@@ -106,10 +106,14 @@ inline constexpr uint64_t kMaxPrefetch = uint64_t{16} << 20;
 
 template<typename Input>
 void Hint(const Input& in, uint64_t offset, uint64_t size) noexcept {
-  if (size > file_utils::kPrefetchChunk && in.Resident(offset, size)) {
+  if (in.Warm(offset, size)) {
+    file_utils::PollResidency();
     return;
   }
-  in.Prefetch(offset, size);
+  if (size <= file_utils::kPrefetchChunk || !in.Resident(offset, size)) {
+    in.Prefetch(offset, size);
+  }
+  in.MarkWarm(offset, size);
 }
 
 inline uint64_t DocExtent(const PostingMeta& meta) noexcept {

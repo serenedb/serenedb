@@ -124,6 +124,9 @@ class NormReaderBase : public NormReader {
 
   static constexpr size_t kCalls = 16;
   static constexpr size_t kMaxProbe = 64;
+  static constexpr size_t kProbePages =
+    ((kMaxProbe << kNormWindowShift) * sizeof(uint32_t)) / file_utils::kPage +
+    1;
   static constexpr uint64_t kMaxSpanPerPage = 2;
   static constexpr uint64_t kMaxGapPages = 2;
   static constexpr size_t kBits = BitsRequired<uint64_t>();
@@ -138,10 +141,13 @@ class NormReaderBase : public NormReader {
     return At(doc) + _bytes;
   }
 
+  IRS_FORCE_INLINE uint64_t PageAt(const byte_type* at) const noexcept {
+    return _region->page + ((reinterpret_cast<uintptr_t>(at) >> kPageShift) -
+                            _region->first_page);
+  }
+
   IRS_FORCE_INLINE uint64_t PageOf(doc_id_t doc) const noexcept {
-    return _region->page +
-           ((reinterpret_cast<uintptr_t>(At(doc)) >> kPageShift) -
-            _region->first_page);
+    return PageAt(At(doc));
   }
 
   IRS_FORCE_INLINE void Touched(const doc_id_t* docs, size_t n) noexcept {
@@ -151,7 +157,7 @@ class NormReaderBase : public NormReader {
     if (docs[0] < _window_first || docs[0] >= _window_end) [[unlikely]] {
       Enter(docs[0]);
     }
-    if (_window_done) [[likely]] {
+    if (_window_done && docs[n - 1] < _window_end) [[likely]] {
       return;
     }
     Cold(docs, n);
@@ -161,38 +167,36 @@ class NormReaderBase : public NormReader {
     if (_seen.empty()) {
       Init();
     }
-    if (!Test(_probed_at + _window)) {
-      Set(_probed_at + _window);
-      const auto* at = At(docs[0]);
-      const auto resident = [&](size_t last) {
-        const auto span = _column->Window(last);
-        return file_utils::IsResident(
-          at, static_cast<size_t>(span.data() + span.size() - at));
-      };
-      _probe = _window == _probe_end ? std::min(_probe * 2, kMaxProbe) : 1;
-      auto last = _window + _probe - 1;
-      if (n > 1 && (uint64_t{docs[n - 1] - docs[0]} + 1) * _bytes <=
-                     uint64_t{n} * file_utils::kPage) {
-        last = std::max<size_t>(
-          last, _region->window +
-                  ((docs[n - 1] - _region->first_doc) >> kNormWindowShift));
-      }
-      last = std::min(last, _region->window + _region->windows - 1);
-      if (resident(last)) {
-        for (auto window = _window; window <= last; ++window) {
-          Set(_probed_at + window);
-          Done(window);
+    const auto epoch = file_utils::ResidencyEpoch();
+    const bool valid = _column->Residency().Valid(epoch);
+    if (_verified && valid) {
+      const auto& residency = _column->Residency();
+      if (docs[n - 1] < _window_end) {
+        const auto span = _column->Window(_window);
+        if (residency.Test(PageAt(span.data()),
+                           PageAt(span.data() + span.size() - 1))) {
+          Set(_probed_at + _window);
+          Done(_window);
+          return;
         }
-        _probe_end = last + 1;
+      } else if (residency.Test(PageOf(docs[0]), PageOf(docs[n - 1]))) {
         return;
       }
-      _probe = 1;
-      if (last != _window && resident(_window)) {
-        Done(_window);
-        _probe_end = _window + 1;
+      if (Trusted(docs, n)) {
         return;
       }
     }
+    if (Test(_probed_at + _window) || !Probe(docs, n, epoch, valid)) {
+      Bring(docs, n, valid);
+    }
+    if (valid || _column->Residency().Adopt(epoch)) {
+      for (size_t i = 0; i != n; ++i) {
+        _column->Residency().Set(PageOf(docs[i]));
+      }
+    }
+  }
+
+  void Bring(const doc_id_t* docs, size_t n, bool valid) noexcept {
     const bool spread = PageOf(docs[0]) != PageOf(docs[n - 1]);
     auto first = std::numeric_limits<uint64_t>::max();
     uint64_t last = 0;
@@ -202,6 +206,7 @@ class NormReaderBase : public NormReader {
         ++i;
         continue;
       }
+      const auto begin = end;
       first = std::min(first, end);
       size_t j = i + 1;
       for (; j != n; ++j) {
@@ -213,7 +218,7 @@ class NormReaderBase : public NormReader {
         end = page;
       }
       last = std::max(last, end);
-      if (spread) {
+      if (spread && !(valid && _column->Residency().Test(begin, end))) {
         const auto* from = At(docs[i]);
         file_utils::Prefetch(from,
                              static_cast<size_t>(End(docs[j - 1]) - from));
@@ -243,6 +248,83 @@ class NormReaderBase : public NormReader {
                          static_cast<size_t>(span.data() + span.size() - at));
     Done(_window);
     Ahead(_window + 1);
+  }
+
+  bool Trusted(const doc_id_t* docs, size_t n) const noexcept {
+    for (size_t i = 0; i != n; ++i) {
+      if (!_column->Residency().Test(PageOf(docs[i]))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool Probe(const doc_id_t* docs, size_t n, uint32_t epoch,
+             bool valid) noexcept {
+    Set(_probed_at + _window);
+    _verified = true;
+    _probe = _window == _probe_end ? std::min(_probe * 2, kMaxProbe) : 1;
+    auto last = _window + _probe - 1;
+    if (n > 1 && (uint64_t{docs[n - 1] - docs[0]} + 1) * _bytes <=
+                   uint64_t{n} * file_utils::kPage) {
+      last = std::max<size_t>(
+        last, _region->window +
+                ((docs[n - 1] - _region->first_doc) >> kNormWindowShift));
+    }
+    last = std::min(
+      {last, _window + kMaxProbe - 1, _region->window + _region->windows - 1});
+    const auto* begin = _column->Window(_window).data();
+    const auto tail = _column->Window(last);
+    const auto* end = tail.data() + tail.size();
+    std::array<unsigned char, kProbePages> pages;
+    const auto page =
+      file_utils::Residency(begin, static_cast<size_t>(end - begin), pages);
+    if (page == 0) {
+      return false;
+    }
+    const auto base = reinterpret_cast<uintptr_t>(begin) / page;
+    const auto resident = [&](const byte_type* from, const byte_type* to) {
+      unsigned char all = 1;
+      for (auto i = reinterpret_cast<uintptr_t>(from) / page - base,
+                e = reinterpret_cast<uintptr_t>(to - 1) / page - base;
+           i <= e; ++i) {
+        all &= pages[i];
+      }
+      return (all & 1) != 0;
+    };
+    bool stale = false;
+    const bool marks = valid || _column->Residency().Adopt(epoch);
+    for (auto p = reinterpret_cast<uintptr_t>(begin) >> kPageShift,
+              e = reinterpret_cast<uintptr_t>(end - 1) >> kPageShift;
+         p <= e; ++p) {
+      const auto column_page =
+        PageAt(reinterpret_cast<const byte_type*>(p << kPageShift));
+      if ((pages[(p << kPageShift) / page - base] & 1) == 0) {
+        stale |= valid && _column->Residency().Test(column_page);
+      } else if (marks) {
+        _column->Residency().Set(column_page);
+      }
+    }
+    if (stale) {
+      file_utils::InvalidateResidency();
+    }
+    const auto* at = At(docs[0]);
+    if (resident(at, end)) {
+      for (auto window = _window; window <= last; ++window) {
+        Set(_probed_at + window);
+        Done(window);
+      }
+      _probe_end = last + 1;
+      return true;
+    }
+    _probe = 1;
+    const auto head = _column->Window(_window);
+    if (last != _window && resident(at, head.data() + head.size())) {
+      Done(_window);
+      _probe_end = _window + 1;
+      return true;
+    }
+    return false;
   }
 
   void Ahead(size_t window) noexcept {
@@ -276,6 +358,7 @@ class NormReaderBase : public NormReader {
   }
 
   void Init() {
+    file_utils::SyncResidency();
     const auto windows = _column->WindowCount();
     _probed_at = (windows + kBits - 1) / kBits * kBits;
     _seen_at = 2 * _probed_at;
@@ -345,6 +428,7 @@ class NormReaderBase : public NormReader {
   uint32_t _bytes = 0;
   bool _window_done = false;
   bool _dense = false;
+  bool _verified = false;
   doc_id_t _window_first = 0;
   doc_id_t _window_end = 0;
   size_t _window = 0;

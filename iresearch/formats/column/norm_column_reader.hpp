@@ -30,6 +30,7 @@
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -125,6 +126,10 @@ class NormColumnReader final {
     return _windows[i];
   }
 
+  const file_utils::ResidencyMap& Residency() const noexcept {
+    return _residency;
+  }
+
   uint32_t Get(uint64_t row) const noexcept;
 
   void Decode(doc_id_t first, size_t n, uint32_t* values) const noexcept;
@@ -136,6 +141,7 @@ class NormColumnReader final {
   std::vector<NormRegion> _regions;
   std::vector<NormStats> _stats;
   std::vector<std::span<const byte_type>> _windows;
+  file_utils::ResidencyMap _residency;
   std::vector<std::unique_ptr<byte_type[]>> _owned;
   uint64_t _row_count = 0;
   uint64_t _sum = 0;

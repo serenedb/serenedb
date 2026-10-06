@@ -124,6 +124,10 @@ class IndexInput : public DataInput {
 
   virtual bool Resident(uint64_t, uint64_t) const noexcept { return false; }
 
+  virtual bool Warm(uint64_t, uint64_t) const noexcept { return false; }
+
+  virtual void MarkWarm(uint64_t, uint64_t) const noexcept {}
+
   virtual void Advise(IOAdvice) noexcept {}
 
   IndexInput& operator=(const IndexInput&) = delete;

@@ -26,6 +26,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <utility>
 
@@ -52,6 +53,7 @@
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <unistd.h>
 
 #endif  // _WIN32
@@ -243,12 +245,18 @@ void HintWriteback(void* fd, uint64_t offset, size_t size) noexcept {
 #ifndef _WIN32
 namespace {
 
-std::pair<uintptr_t, size_t> PageRange(const void* addr, size_t size) noexcept {
+size_t SystemPage() noexcept {
   static const size_t kPageSize = ::sysconf(_SC_PAGESIZE);
+  return kPageSize;
+}
+
+std::pair<uintptr_t, size_t> PageRange(const void* addr, size_t size) noexcept {
   const auto begin = reinterpret_cast<uintptr_t>(addr);
-  const auto aligned = begin & ~(kPageSize - 1);
+  const auto aligned = begin & ~(SystemPage() - 1);
   return {aligned, size + (begin - aligned)};
 }
+
+std::atomic<uint32_t> gResidencyEpoch{1};
 
 }  // namespace
 #endif
@@ -298,6 +306,87 @@ bool IsResident(const void* addr, size_t size) noexcept {
 #else
   return false;
 #endif
+}
+
+size_t Residency(const void* addr, size_t size,
+                 std::span<unsigned char> pages) noexcept {
+#ifndef _WIN32
+  if (size == 0) {
+    return 0;
+  }
+  const auto page = SystemPage();
+  const auto [aligned, total] = PageRange(addr, size);
+  if ((total + page - 1) / page > pages.size() ||
+      ::mincore(reinterpret_cast<void*>(aligned), total, pages.data()) != 0) {
+    return 0;
+  }
+  return page;
+#else
+  return 0;
+#endif
+}
+
+uint32_t ResidencyEpoch() noexcept {
+#ifndef _WIN32
+  return gResidencyEpoch.load(std::memory_order_relaxed);
+#else
+  return 0;
+#endif
+}
+
+void InvalidateResidency() noexcept {
+#ifndef _WIN32
+  gResidencyEpoch.fetch_add(1, std::memory_order_relaxed);
+#endif
+}
+
+void SyncResidency() noexcept {
+#ifdef RUSAGE_THREAD
+  thread_local long faults = 0;
+  rusage usage;
+  if (::getrusage(RUSAGE_THREAD, &usage) != 0) {
+    InvalidateResidency();
+  } else if (usage.ru_majflt != faults) {
+    faults = usage.ru_majflt;
+    InvalidateResidency();
+  }
+#else
+  InvalidateResidency();
+#endif
+}
+
+void PollResidency() noexcept {
+  constexpr uint32_t kPollEvery = 64;
+  thread_local uint32_t polls = 0;
+  if (++polls % kPollEvery == 0) {
+    SyncResidency();
+  }
+}
+
+void ResidencyMap::Reset(size_t pages) {
+  _pages = pages;
+  _bits =
+    std::make_unique<std::atomic<uint64_t>[]>((pages + kBits - 1) / kBits);
+  _epoch.store(0, std::memory_order_relaxed);
+}
+
+bool ResidencyMap::Adopt(uint32_t epoch) const noexcept {
+  auto current = _epoch.load(std::memory_order_acquire);
+  while (current != epoch) {
+    if (current == kClearing || current > epoch) {
+      return false;
+    }
+    if (_epoch.compare_exchange_weak(current, kClearing,
+                                     std::memory_order_acq_rel,
+                                     std::memory_order_acquire)) {
+      for (size_t i = 0, n = (_pages + kBits - 1) / kBits; i != n; ++i) {
+        _bits[i].store(0, std::memory_order_relaxed);
+      }
+      _epoch.store(epoch, std::memory_order_release);
+      return true;
+    }
+  }
+  return true;
 }
 
 size_t Fread(void* fd, void* buf, size_t size) {

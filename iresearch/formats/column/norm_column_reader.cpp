@@ -133,6 +133,7 @@ NormColumnReader::NormColumnReader(field_id id, const NormColumnMeta& meta,
                  " are corrupt at ", k);
     }
   }
+  _residency.Reset(_pages);
 }
 
 const NormRegion& NormColumnReader::Locate(doc_id_t doc) const noexcept {

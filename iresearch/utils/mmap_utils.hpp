@@ -76,6 +76,10 @@ class MMapHandle : private util::Noncopyable {
     return 0 == ::madvise(_addr, _size, advice);
   }
 
+  const file_utils::ResidencyMap& residency() const noexcept {
+    return _residency;
+  }
+
   void dontneed(bool value) noexcept { _dontneed = value; }
 
  private:
@@ -86,6 +90,7 @@ class MMapHandle : private util::Noncopyable {
   ptrdiff_t _fd;   // file descriptor
   bool _dontneed;  // request to free pages on close
   IResourceManager& _rm;
+  file_utils::ResidencyMap _residency;
 };
 
 }  // namespace irs::mmap_utils

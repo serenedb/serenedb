@@ -99,6 +99,7 @@ bool MMapHandle::open(const path_char_t* path) noexcept try {
     }
 
     _addr = addr;
+    _residency.Reset((size + file_utils::kPage - 1) / file_utils::kPage);
   }
 
   return true;

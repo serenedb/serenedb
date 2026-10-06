@@ -180,7 +180,32 @@ class MMapIndexInput final : public BytesViewInput {
     }
   }
 
+  bool Warm(uint64_t offset, uint64_t count) const noexcept final {
+    if (!_handle || count == 0 || offset >= _handle->size()) {
+      return false;
+    }
+    const auto& residency = _handle->residency();
+    return residency.Valid(file_utils::ResidencyEpoch()) &&
+           residency.Test(offset / file_utils::kPage, Last(offset, count));
+  }
+
+  void MarkWarm(uint64_t offset, uint64_t count) const noexcept final {
+    if (!_handle || count == 0 || offset >= _handle->size()) {
+      return;
+    }
+    const auto& residency = _handle->residency();
+    const auto epoch = file_utils::ResidencyEpoch();
+    if (residency.Valid(epoch) || residency.Adopt(epoch)) {
+      residency.Set(offset / file_utils::kPage, Last(offset, count));
+    }
+  }
+
  private:
+  uint64_t Last(uint64_t offset, uint64_t count) const noexcept {
+    return (std::min<uint64_t>(offset + count, _handle->size()) - 1) /
+           file_utils::kPage;
+  }
+
   std::shared_ptr<mmap_utils::MMapHandle> _handle;
 };
 

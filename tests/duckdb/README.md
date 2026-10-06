@@ -64,6 +64,29 @@ The first-parent history of a version branch, oldest first:
 
 Upstream merges pull requests as merge commits (duckdb's PR titles are the merge subjects), so `git log --first-parent` reads as one entry per PR.
 
+### Review PRs
+
+An update is reviewed patchset by patchset. Every fork whose upstream is in the `duckdb` organization, or that is a DuckDB extension (`duckdb_markdown`), has one review PR from `mbkkt/update-duckdb` into `mbkkt/update-duckdb-base`. Other vendored forks (re2, OpenBLAS) have none. The review PRs are permanent: they are never merged or closed, and every update reuses them, so a patch's review history stays in one place.
+
+1. Build the update on `mbkkt/update-duckdb` (the recipe below) and force-push it while the update is in review.
+2. Force-push `mbkkt/update-duckdb-base` to the fork's boundary. The PR then shows exactly our patchset.
+3. Link every review PR from the serenedb PR of the update. Its gitlinks point at the `mbkkt/update-duckdb` heads while it is in review, so `check-submodule-pointers` fails until the next step.
+4. Before the serenedb PR merges, push each head as a new `vYYYY.MM.DD` branch, the date of the update, and move the gitlinks to it. A version branch is never force-pushed.
+
+| fork | review PR |
+|---|---|
+| `third_party/duckdb` | https://github.com/serenedb/duckdb/pull/137 |
+| `third_party/duckdb_httpfs` | https://github.com/serenedb/duckdb-httpfs/pull/5 |
+| `third_party/duckdb_avro` | https://github.com/serenedb/duckdb-avro/pull/2 |
+| `third_party/duckdb_iceberg` | https://github.com/serenedb/duckdb-iceberg/pull/26 |
+| `third_party/duckdb_postgres` | https://github.com/serenedb/duckdb-postgres/pull/10 |
+| `third_party/duckdb_inet` | https://github.com/serenedb/duckdb-inet/pull/2 |
+| `third_party/duckdb_markdown` | https://github.com/serenedb/duckdb_markdown/pull/2 |
+| `third_party/duckdb_azure` | https://github.com/serenedb/duckdb-azure/pull/2 |
+| `third_party/duckdb_spatial` | https://github.com/serenedb/duckdb-spatial/pull/4 |
+| `third_party/database-connector` | https://github.com/serenedb/database-connector/pull/3 |
+| `third_party/avro` | https://github.com/serenedb/avro/pull/1 |
+
 ### The update of 2026-10-05
 
 | submodule | upstream | `main` | merged | ext patches | boundary |
@@ -107,7 +130,7 @@ Run it in every fork, the parents first (duckdb, then the extensions, then seren
 cd third_party/<submodule>
 git config rerere.enabled true
 git fetch upstream                                  # by URL if there is no remote: the table's upstream column
-git switch -c mbkkt/update-duckdb upstream/main
+git switch --no-track -C mbkkt/update-duckdb upstream/main
 for p in <new duckdb>/.github/patches/extensions/<ext>/*.patch; do    # skip what upstream already has
   git apply "$p" && git add -A && git commit -m "duckdb ext patch: $(basename "$p" .patch)"
 done
@@ -116,7 +139,7 @@ git merge upstream/v1.5-variegata
 git cherry-pick <previous boundary>..<previous vYYYY.MM.DD>   # duckdb: stop before its regen: commit
 ```
 
-Then regenerate, format, build, run every suite here and the serenedb sqllogic, recovery and gtest runs, and push. Once CI is green, the head becomes `vYYYY.MM.DD` (created, never forced) and serenedb's gitlinks move to it.
+Then regenerate, format, build, run every suite here and the serenedb sqllogic, recovery and gtest runs, and push the head and the boundary to the review PR's branches. Once the review and CI are done, the head becomes `vYYYY.MM.DD` (created, never forced) and serenedb's gitlinks move to it, before the serenedb PR merges.
 
 Rules for the rebuilt series:
 

@@ -175,7 +175,8 @@ void AliasTableMacros(duckdb::ExtensionLoader& loader) {
   }
 }
 
-void AliasViews(duckdb::DatabaseInstance& db, duckdb::Parser& parser) {
+void AliasViews(duckdb::DatabaseInstance& db) {
+  auto parser = duckdb::Parser::GetBuiltinParser();
   auto& system_catalog = duckdb::Catalog::GetSystemCatalog(db);
   auto transaction = duckdb::CatalogTransaction::GetSystemTransaction(db);
   for (const auto name : kViews) {
@@ -208,8 +209,7 @@ void RegisterDuckDBAliases(duckdb::DatabaseInstance& db) {
   AliasScalarFunctions(loader);
 
   AliasTableMacros(loader);
-  auto parser = duckdb::Parser::GetBuiltinParser();
-  AliasViews(db, parser);
+  AliasViews(db);
 }
 
 }  // namespace sdb::connector

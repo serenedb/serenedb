@@ -22,11 +22,11 @@
 
 #include <absl/strings/str_cat.h>
 #include <arpa/inet.h>
+#include <fast_float/fast_float.h>
 #include <sys/socket.h>
 
 #include <algorithm>
 #include <atomic>
-#include <charconv>
 #include <exception>
 #include <filesystem>
 #include <iresearch/utils/log.hpp>
@@ -415,7 +415,7 @@ std::optional<Rule> ParseLine(const std::vector<std::vector<Token>>& fields,
         const std::string_view pfx = addr_tok.substr(slash + 1);
         unsigned prefix = 0;
         const auto [p, ec] =
-          std::from_chars(pfx.data(), pfx.data() + pfx.size(), prefix);
+          fast_float::from_chars(pfx.data(), pfx.data() + pfx.size(), prefix);
         if (ec != std::errc{} || p != pfx.data() + pfx.size() ||
             prefix > static_cast<unsigned>(FamilyWidth(fam))) {
           return fail("invalid CIDR mask in address");

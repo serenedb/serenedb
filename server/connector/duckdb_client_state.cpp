@@ -228,7 +228,8 @@ void SereneDBClientState::TransactionPreCommit(
     }
   }
   if (InvertedStoreIndex::AnyBound()) {
-    for (auto& db : transaction.OpenedTransactions()) {
+    const auto opened_databases = transaction.OpenedTransactions();
+    for (auto& db : opened_databases) {
       if (db.get().GetCatalog().GetCatalogType() !=
           catalog::SereneDBCatalog::kStorageType) {
         continue;

@@ -25,8 +25,8 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_cat.h>
+#include <fast_float/fast_float.h>
 
-#include <charconv>
 #include <cstdint>
 #include <ranges>
 #include <shared_mutex>
@@ -420,7 +420,7 @@ bool ParseSegmentId(std::string_view name, uint64_t& id) noexcept {
   }
   const auto* begin = name.data() + 1;
   const auto* end = name.data() + name.size();
-  const auto [ptr, ec] = std::from_chars(begin, end, id);
+  const auto [ptr, ec] = fast_float::from_chars(begin, end, id);
   return ec == std::errc{} && (ptr == end || *ptr == '.');
 }
 

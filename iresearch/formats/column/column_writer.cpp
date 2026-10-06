@@ -1480,8 +1480,9 @@ WriteChunk& ColumnWriter::OpenChunk() {
   }
   if (_staged_chunks == _staged.size()) {
     auto& alloc = duckdb::Allocator::Get(WriteCtx().Database());
-    auto& cache =
-      _staged_caches.emplace_back(alloc, _type, STANDARD_VECTOR_SIZE);
+    auto& cache = _staged_caches.emplace_back(
+      alloc, _list_ingest ? duckdb::LogicalType::BOOLEAN : _type,
+      STANDARD_VECTOR_SIZE);
     _staged.push_back(WriteChunk{duckdb::Vector{cache}, 0});
   }
   auto& chunk = _staged[_staged_chunks];

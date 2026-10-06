@@ -26,6 +26,7 @@
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/numeric_utils.hpp>
 #include <duckdb/function/table_function.hpp>
@@ -57,10 +58,9 @@ struct JobRunsState final : duckdb::GlobalTableFunctionState {
 };
 
 struct ExecuteJobData final : duckdb::TableFunctionData {
-  explicit ExecuteJobData(duckdb::QualifiedName name_p)
-    : name{std::move(name_p)} {}
+  explicit ExecuteJobData(catalog::JobCatalogEntry& job_p) : job{job_p} {}
 
-  duckdb::QualifiedName name;
+  catalog::JobCatalogEntry& job;
 };
 
 duckdb::Value OptionalTimestamp(bool valid, duckdb::timestamp_t value) {
@@ -141,9 +141,7 @@ void JobsExecute(duckdb::ClientContext& context,
     output.SetValue(col++, count, duckdb::Value{job.Schedule().ToString()});
     output.SetValue(
       col++, count,
-      duckdb::Value{job.Schedule().kind == duckdb::JobScheduleKind::EVERY
-                      ? "EVERY"
-                      : "AFTER"});
+      duckdb::Value{duckdb::EnumUtil::ToString(job.Schedule().kind)});
     output.SetValue(col++, count, job.Schedule().interval);
     output.SetValue(col++, count, job.Schedule().offset);
     output.SetValue(col++, count, duckdb::Value::BOOLEAN(job.Suspended()));
@@ -250,8 +248,8 @@ duckdb::unique_ptr<duckdb::FunctionData> ExecuteJobBind(
   auto entry = input.binder->EntryRetriever().GetEntry(
     duckdb::EntryLookupInfo{duckdb::CatalogType::JOB_ENTRY, name},
     duckdb::OnEntryNotFound::THROW_EXCEPTION);
-  return duckdb::make_uniq<ExecuteJobData>(duckdb::QualifiedName{
-    entry->ParentCatalog().GetName(), entry->ParentSchemaName(), entry->name});
+  return duckdb::make_uniq<ExecuteJobData>(
+    entry->Cast<catalog::JobCatalogEntry>());
 }
 
 void ExecuteJobExecute(duckdb::ClientContext& context,
@@ -261,10 +259,7 @@ void ExecuteJobExecute(duckdb::ClientContext& context,
   if (!scheduler) {
     throw duckdb::InvalidInputException("Jobs run only in the server");
   }
-  auto& data = input.bind_data->Cast<ExecuteJobData>();
-  scheduler->Execute(
-    context,
-    duckdb::Catalog::GetEntry<catalog::JobCatalogEntry>(context, data.name));
+  scheduler->Execute(context, input.bind_data->Cast<ExecuteJobData>().job);
 }
 
 }  // namespace

@@ -35,6 +35,10 @@ DROP JOB IF EXISTS jd_renamed;
 
 
 statement ok
+DROP SCHEMA IF EXISTS jd_outer CASCADE;
+
+
+statement ok
 DROP TABLE IF EXISTS jd_skuf;
 
 
@@ -618,3 +622,37 @@ DROP JOB jd_called;
 
 statement ok
 DROP TABLE jd_calls;
+
+
+statement ok
+CREATE SCHEMA jd_outer;
+
+
+statement ok
+CREATE SCHEMA jd_outer.jd_inner;
+
+
+statement ok
+CREATE JOB jd_outer.jd_inner.jd_nested EVERY 1 HOUR AS SELECT 1;
+
+
+query
+SELECT schema_name, job_name, schedule FROM duckdb_jobs() WHERE job_name = 'jd_nested';
+----
+schema_name	job_name	schedule
+jd_inner	jd_nested	EVERY INTERVAL '01:00:00'
+
+
+statement ok
+DROP JOB jd_outer.jd_inner.jd_nested;
+
+
+query
+SELECT count(*) FROM duckdb_jobs() WHERE job_name = 'jd_nested';
+----
+count
+0
+
+
+statement ok
+DROP SCHEMA jd_outer CASCADE;

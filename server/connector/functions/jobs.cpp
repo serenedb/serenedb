@@ -75,7 +75,7 @@ duckdb::Value Count(uint64_t value) {
 duckdb::unique_ptr<duckdb::FunctionData> JobsBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<std::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   const auto add = [&](std::string_view name, duckdb::LogicalType type) {
     names.emplace_back(name);
     return_types.emplace_back(std::move(type));
@@ -172,7 +172,7 @@ void JobsExecute(duckdb::ClientContext& context,
 duckdb::unique_ptr<duckdb::FunctionData> JobRunsBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<std::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   const auto add = [&](std::string_view name, duckdb::LogicalType type) {
     names.emplace_back(name);
     return_types.emplace_back(std::move(type));
@@ -238,7 +238,7 @@ void JobRunsExecute(duckdb::ClientContext& context,
 duckdb::unique_ptr<duckdb::FunctionData> ExecuteJobBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<std::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   return_types.emplace_back(duckdb::LogicalType::BOOLEAN);
   names.emplace_back("Success");
   if (input.inputs[0].IsNull()) {

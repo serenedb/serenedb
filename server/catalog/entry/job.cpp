@@ -93,6 +93,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> JobCatalogEntry::AlterEntry(
       VerifySchedule(alter.schedule);
       next.schedule = alter.schedule;
       break;
+    case duckdb::AlterJobType::RENAME:
+      return duckdb::StandardEntry::AlterEntry(context, info);
   }
   return duckdb::make_uniq<JobCatalogEntry>(catalog, ParentSchema(context),
                                             next, _state);

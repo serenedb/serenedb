@@ -1,0 +1,595 @@
+statement ok
+DROP VIEW IF EXISTS rls_vm_nested_invoker;
+
+
+statement ok
+DROP VIEW IF EXISTS rls_vm_nested_owner;
+
+
+statement ok
+DROP VIEW IF EXISTS rls_vm_by_super;
+
+
+statement ok
+DROP VIEW IF EXISTS rls_vm_by_owner;
+
+
+statement ok
+DROP VIEW IF EXISTS rls_vm_invoker;
+
+
+statement ok
+DROP VIEW IF EXISTS rls_vm_filtered;
+
+
+statement ok
+DROP VIEW IF EXISTS rls_vm_joined;
+
+
+statement ok
+DROP VIEW IF EXISTS rls_vm_summary;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_vm_notes;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_vm_tags;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_vm_arelav;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_vm_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_vm_keeper;
+
+
+statement ok
+CREATE ROLE rls_vm_arelav;
+
+
+statement ok
+CREATE ROLE rls_vm_babsky;
+
+
+statement ok
+CREATE ROLE rls_vm_keeper;
+
+
+statement ok
+CREATE TABLE rls_vm_notes (id int, author text, topic text, stars int, body text);
+
+
+statement ok
+INSERT INTO rls_vm_notes VALUES
+  (1, 'rls_vm_arelav', 'skuf', 5, '1'),
+  (2, 'rls_vm_babsky', 'boss', 4, 'babsky'),
+  (3, 'rls_vm_arelav', 'boss', 3, '3'),
+  (4, 'rls_vm_keeper', 'skuf', 2, 'keeper'),
+  (5, 'rls_vm_babsky', 'skuf', 1, 'babsky'),
+  (6, 'kostya', 'intern', 5, 'kostya');
+
+
+statement ok
+CREATE TABLE rls_vm_tags (note_id int, author text, tag text);
+
+
+statement ok
+INSERT INTO rls_vm_tags VALUES (1, 'rls_vm_arelav', 'hot'), (2, 'rls_vm_babsky', 'hot'), (3, 'rls_vm_arelav', 'cold'), (4, 'rls_vm_keeper', 'hot'), (6, 'kostya', 'cold');
+
+
+statement ok
+GRANT SELECT ON rls_vm_notes TO rls_vm_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_vm_notes TO rls_vm_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_vm_notes TO rls_vm_keeper;
+
+
+statement ok
+GRANT SELECT ON rls_vm_tags TO rls_vm_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_vm_tags TO rls_vm_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_vm_tags TO rls_vm_keeper;
+
+
+statement ok
+ALTER TABLE rls_vm_notes ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+ALTER TABLE rls_vm_tags ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_vm_notes_author ON rls_vm_notes FOR SELECT USING (author = current_user);
+
+
+statement ok
+CREATE POLICY rls_vm_notes_keeper ON rls_vm_notes FOR SELECT TO rls_vm_keeper USING (topic = 'skuf');
+
+
+statement ok
+CREATE POLICY rls_vm_tags_author ON rls_vm_tags FOR SELECT USING (author = current_user);
+
+
+statement ok
+CREATE VIEW rls_vm_by_super AS SELECT id, author, topic, stars, body FROM rls_vm_notes;
+
+
+statement ok
+CREATE VIEW rls_vm_by_owner AS SELECT id, author, topic, stars, body FROM rls_vm_notes;
+
+
+statement ok
+ALTER VIEW rls_vm_by_owner OWNER TO rls_vm_keeper;
+
+
+statement ok
+CREATE VIEW rls_vm_invoker WITH (security_invoker = true) AS SELECT id, author, topic, stars, body FROM rls_vm_notes;
+
+
+statement ok
+CREATE VIEW rls_vm_filtered WITH (security_invoker = true) AS SELECT id, stars FROM rls_vm_notes WHERE stars >= 3;
+
+
+statement ok
+CREATE VIEW rls_vm_joined WITH (security_invoker = true) AS SELECT n.id, n.topic, t.tag FROM rls_vm_notes n JOIN rls_vm_tags t ON t.note_id = n.id;
+
+
+statement ok
+CREATE VIEW rls_vm_summary WITH (security_invoker = true) AS SELECT topic, count(*) AS n, max(stars) AS best FROM rls_vm_notes GROUP BY topic;
+
+
+statement ok
+CREATE VIEW rls_vm_nested_owner AS SELECT id, topic FROM rls_vm_invoker;
+
+
+statement ok
+ALTER VIEW rls_vm_nested_owner OWNER TO rls_vm_keeper;
+
+
+statement ok
+CREATE VIEW rls_vm_nested_invoker WITH (security_invoker = true) AS SELECT id, topic FROM rls_vm_by_owner;
+
+
+statement ok
+GRANT SELECT ON rls_vm_by_super TO rls_vm_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_vm_by_super TO rls_vm_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_vm_by_owner TO rls_vm_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_vm_by_owner TO rls_vm_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_vm_invoker TO rls_vm_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_vm_invoker TO rls_vm_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_vm_filtered TO rls_vm_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_vm_joined TO rls_vm_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_vm_joined TO rls_vm_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_vm_summary TO rls_vm_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_vm_summary TO rls_vm_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_vm_invoker TO rls_vm_keeper;
+
+
+statement ok
+GRANT SELECT ON rls_vm_nested_owner TO rls_vm_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_vm_nested_invoker TO rls_vm_arelav;
+
+
+statement ok
+SET ROLE rls_vm_arelav;
+
+
+query
+SELECT id FROM rls_vm_notes ORDER BY id;
+----
+id
+1
+3
+
+
+query
+SELECT id FROM rls_vm_by_super ORDER BY id;
+----
+id
+1
+2
+3
+4
+5
+6
+
+
+query
+SELECT id FROM rls_vm_by_owner ORDER BY id;
+----
+id
+1
+3
+4
+5
+
+
+query
+SELECT id FROM rls_vm_invoker ORDER BY id;
+----
+id
+1
+3
+
+
+query
+SELECT id FROM rls_vm_filtered ORDER BY id;
+----
+id
+1
+3
+
+
+query
+SELECT id, tag FROM rls_vm_joined ORDER BY id;
+----
+id	tag
+1	hot
+3	cold
+
+
+query
+SELECT topic, n, best FROM rls_vm_summary ORDER BY topic;
+----
+topic	n	best
+boss	1	3
+skuf	1	5
+
+
+query
+SELECT id FROM rls_vm_nested_owner ORDER BY id;
+----
+id
+1
+3
+
+
+query
+SELECT id FROM rls_vm_nested_invoker ORDER BY id;
+----
+id
+1
+3
+4
+5
+
+
+query
+SELECT count(*) AS n FROM rls_vm_invoker WHERE body::int > 0;
+----
+n
+2
+
+
+query
+SELECT count(*) AS n FROM rls_vm_by_owner WHERE topic = 'skuf';
+----
+n
+3
+
+
+query
+SELECT v.id FROM rls_vm_invoker v JOIN rls_vm_by_super s ON s.id = v.id ORDER BY v.id;
+----
+id
+1
+3
+
+
+query
+SELECT id FROM rls_vm_by_super WHERE id NOT IN (SELECT id FROM rls_vm_invoker) ORDER BY id;
+----
+id
+2
+4
+5
+6
+
+
+query
+SELECT id FROM rls_vm_invoker ORDER BY stars DESC, id LIMIT 1;
+----
+id
+1
+
+
+query
+SELECT id FROM rls_vm_by_owner ORDER BY stars DESC, id LIMIT 2;
+----
+id
+1
+3
+
+
+statement ok
+SET ROLE rls_vm_babsky;
+
+
+query
+SELECT id FROM rls_vm_by_super ORDER BY id;
+----
+id
+1
+2
+3
+4
+5
+6
+
+
+query
+SELECT id FROM rls_vm_by_owner ORDER BY id;
+----
+id
+1
+2
+4
+5
+
+
+query
+SELECT id FROM rls_vm_invoker ORDER BY id;
+----
+id
+2
+5
+
+
+query
+SELECT id, tag FROM rls_vm_joined ORDER BY id;
+----
+id	tag
+2	hot
+
+
+query
+SELECT topic, n, best FROM rls_vm_summary ORDER BY topic;
+----
+topic	n	best
+boss	1	4
+skuf	1	1
+
+
+statement error
+SELECT id FROM rls_vm_filtered ORDER BY id;
+----
+db error: ERROR: permission denied for view rls_vm_filtered<slt:ignore>
+
+
+statement ok
+SET ROLE rls_vm_keeper;
+
+
+query
+SELECT id FROM rls_vm_notes ORDER BY id;
+----
+id
+1
+4
+5
+
+
+query
+SELECT id FROM rls_vm_by_owner ORDER BY id;
+----
+id
+1
+4
+5
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE OR REPLACE VIEW rls_vm_invoker WITH (security_invoker = false) AS SELECT id, author, topic, stars, body FROM rls_vm_notes;
+
+
+statement ok
+SET ROLE rls_vm_arelav;
+
+
+query
+SELECT id FROM rls_vm_invoker ORDER BY id;
+----
+id
+1
+2
+3
+4
+5
+6
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE OR REPLACE VIEW rls_vm_invoker WITH (security_invoker = true) AS SELECT id, author, topic, stars, body FROM rls_vm_notes;
+
+
+statement ok
+ALTER VIEW rls_vm_by_owner OWNER TO rls_vm_babsky;
+
+
+statement ok
+SET ROLE rls_vm_arelav;
+
+
+query
+SELECT id FROM rls_vm_by_owner ORDER BY id;
+----
+id
+1
+3
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP POLICY rls_vm_notes_keeper ON rls_vm_notes;
+
+
+statement ok
+ALTER VIEW rls_vm_by_owner OWNER TO rls_vm_keeper;
+
+
+statement ok
+SET ROLE rls_vm_arelav;
+
+
+query
+SELECT id FROM rls_vm_by_owner ORDER BY id;
+----
+id
+1
+3
+
+
+query
+SELECT id FROM rls_vm_nested_owner ORDER BY id;
+----
+id
+1
+3
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER TABLE rls_vm_notes DISABLE ROW LEVEL SECURITY;
+
+
+statement ok
+SET ROLE rls_vm_arelav;
+
+
+query
+SELECT count(*) AS n FROM rls_vm_invoker;
+----
+n
+6
+
+
+query
+SELECT id, tag FROM rls_vm_joined ORDER BY id;
+----
+id	tag
+1	hot
+3	cold
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP VIEW rls_vm_nested_invoker;
+
+
+statement ok
+DROP VIEW rls_vm_nested_owner;
+
+
+statement ok
+DROP VIEW rls_vm_by_super;
+
+
+statement ok
+DROP VIEW rls_vm_by_owner;
+
+
+statement ok
+DROP VIEW rls_vm_invoker;
+
+
+statement ok
+DROP VIEW rls_vm_filtered;
+
+
+statement ok
+DROP VIEW rls_vm_joined;
+
+
+statement ok
+DROP VIEW rls_vm_summary;
+
+
+statement ok
+DROP TABLE rls_vm_notes;
+
+
+statement ok
+DROP TABLE rls_vm_tags;
+
+
+statement ok
+DROP ROLE rls_vm_arelav;
+
+
+statement ok
+DROP ROLE rls_vm_babsky;
+
+
+statement ok
+DROP ROLE rls_vm_keeper;

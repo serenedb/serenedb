@@ -1,0 +1,667 @@
+statement ok
+DROP TABLE IF EXISTS rls_tn_board;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_tn_members;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_tn_big;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_tn_arelav;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_tn_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_tn_kostya;
+
+
+statement ok
+CREATE ROLE rls_tn_arelav;
+
+
+statement ok
+CREATE ROLE rls_tn_babsky;
+
+
+statement ok
+CREATE ROLE rls_tn_kostya;
+
+
+statement ok
+CREATE TABLE rls_tn_board (id int, owner text, squad text, points int, bonus int, note text);
+
+
+statement ok
+INSERT INTO rls_tn_board VALUES
+  (1, 'rls_tn_arelav', 'clickclack', 10, 1, '10'),
+  (2, 'rls_tn_babsky', 'clickclack', 99, NULL, 'boss'),
+  (3, 'rls_tn_arelav', 'deadinside', 55, 5, '55'),
+  (4, 'rls_tn_kostya', 'salam', 98, 2, 'intern'),
+  (5, 'rls_tn_arelav', 'clickclack', 70, NULL, '70'),
+  (6, 'rls_tn_babsky', 'deadinside', 97, 9, 'overseer'),
+  (7, 'rls_tn_arelav', 'salam', 30, 3, '30'),
+  (8, 'rls_tn_kostya', 'clickclack', 96, NULL, 'skuf'),
+  (9, 'rls_tn_arelav', 'deadinside', 70, 7, '70'),
+  (10, 'rls_tn_babsky', 'salam', 1, 1, 'vedernikoff'),
+  (11, 'rls_tn_arelav', 'salam', 85, NULL, '85'),
+  (12, 'rls_tn_kostya', 'deadinside', 0, 0, 'babsky'),
+  (13, 'rls_tn_arelav', 'clickclack', 40, 4, '40'),
+  (14, 'rls_tn_babsky', 'clickclack', 95, 6, 'arelav'),
+  (15, 'rls_tn_arelav', 'deadinside', 5, NULL, '5');
+
+
+statement ok
+CREATE TABLE rls_tn_members (member text, squad text);
+
+
+statement ok
+INSERT INTO rls_tn_members VALUES
+  ('rls_tn_arelav', 'clickclack'),
+  ('rls_tn_arelav', 'salam'),
+  ('rls_tn_babsky', 'deadinside'),
+  ('rls_tn_kostya', 'salam');
+
+
+statement ok
+CREATE TABLE rls_tn_big (id int, owner text, points int, tag text);
+
+
+statement ok
+INSERT INTO rls_tn_big SELECT n, CASE n % 3 WHEN 0 THEN 'rls_tn_arelav' WHEN 1 THEN 'rls_tn_babsky' ELSE 'rls_tn_kostya' END, (n * 37) % 101, CASE WHEN n % 3 = 0 THEN n::text ELSE 'hidden' || n::text END FROM generate_series(1, 300) AS g(n);
+
+
+statement ok
+GRANT SELECT ON rls_tn_board TO rls_tn_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_tn_board TO rls_tn_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_tn_board TO rls_tn_kostya;
+
+
+statement ok
+GRANT SELECT ON rls_tn_members TO rls_tn_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_tn_members TO rls_tn_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_tn_members TO rls_tn_kostya;
+
+
+statement ok
+GRANT SELECT ON rls_tn_big TO rls_tn_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_tn_big TO rls_tn_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_tn_big TO rls_tn_kostya;
+
+
+statement ok
+ALTER TABLE rls_tn_board ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+ALTER TABLE rls_tn_big ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_tn_own ON rls_tn_board FOR SELECT USING (owner = current_user);
+
+
+statement ok
+CREATE POLICY rls_tn_big_own ON rls_tn_big FOR SELECT USING (owner = current_user);
+
+
+statement ok
+SET ROLE rls_tn_arelav;
+
+
+query
+SELECT id, points FROM rls_tn_board ORDER BY points DESC, id LIMIT 3;
+----
+id	points
+11	85
+5	70
+9	70
+
+
+query
+SELECT id, points FROM rls_tn_board ORDER BY points ASC, id LIMIT 3;
+----
+id	points
+15	5
+1	10
+7	30
+
+
+query
+SELECT id, points FROM rls_tn_board ORDER BY points DESC, id LIMIT 3 OFFSET 2;
+----
+id	points
+9	70
+3	55
+13	40
+
+
+query
+SELECT id FROM rls_tn_board ORDER BY points DESC LIMIT 0;
+----
+id
+
+
+query
+SELECT id FROM rls_tn_board ORDER BY points DESC, id LIMIT 100;
+----
+id
+11
+5
+9
+3
+13
+7
+1
+15
+
+
+query
+SELECT id FROM rls_tn_board ORDER BY points DESC, id LIMIT 5 OFFSET 7;
+----
+id
+15
+
+
+query
+SELECT id FROM rls_tn_board ORDER BY points DESC, id LIMIT 5 OFFSET 8;
+----
+id
+
+
+query
+SELECT id, bonus FROM rls_tn_board ORDER BY bonus ASC NULLS FIRST, id LIMIT 4;
+----
+id	bonus
+5	NULL
+11	NULL
+15	NULL
+1	1
+
+
+query
+SELECT id, bonus FROM rls_tn_board ORDER BY bonus DESC NULLS LAST, id LIMIT 4;
+----
+id	bonus
+9	7
+3	5
+13	4
+7	3
+
+
+query
+SELECT id, bonus FROM rls_tn_board ORDER BY bonus DESC NULLS FIRST, id LIMIT 4;
+----
+id	bonus
+5	NULL
+11	NULL
+15	NULL
+9	7
+
+
+query
+SELECT id FROM rls_tn_board ORDER BY points + coalesce(bonus, 0) DESC, id LIMIT 3;
+----
+id
+11
+9
+5
+
+
+query
+SELECT id, note::int AS n FROM rls_tn_board ORDER BY note::int DESC, id LIMIT 2;
+----
+id	n
+11	85
+5	70
+
+
+query
+SELECT id FROM rls_tn_board ORDER BY note::int, id LIMIT 3;
+----
+id
+15
+1
+7
+
+
+query
+SELECT id FROM rls_tn_board WHERE note::int > 20 ORDER BY points DESC, id LIMIT 3;
+----
+id
+11
+5
+9
+
+
+query
+SELECT id FROM rls_tn_board WHERE squad = 'clickclack' ORDER BY points DESC, id LIMIT 2;
+----
+id
+5
+13
+
+
+query
+SELECT id FROM rls_tn_board WHERE points < 90 ORDER BY points DESC, id LIMIT 3;
+----
+id
+11
+5
+9
+
+
+query
+SELECT DISTINCT ON (squad) squad, id, points FROM rls_tn_board ORDER BY squad, points DESC, id;
+----
+squad	id	points
+clickclack	5	70
+deadinside	9	70
+salam	11	85
+
+
+query
+SELECT squad, id, points FROM (SELECT squad, id, points, row_number() OVER (PARTITION BY squad ORDER BY points DESC, id) AS rn FROM rls_tn_board) s WHERE rn <= 2 ORDER BY squad, rn;
+----
+squad	id	points
+clickclack	5	70
+clickclack	13	40
+deadinside	9	70
+deadinside	3	55
+salam	11	85
+salam	7	30
+
+
+query
+SELECT id FROM (SELECT id, points FROM rls_tn_board ORDER BY points DESC, id LIMIT 2) s ORDER BY id;
+----
+id
+5
+11
+
+
+query
+WITH top AS (SELECT id, points FROM rls_tn_board ORDER BY points DESC, id LIMIT 3) SELECT count(*) AS n, sum(points) AS total FROM top;
+----
+n	total
+3	225
+
+
+query
+WITH top AS MATERIALIZED (SELECT id, points FROM rls_tn_board ORDER BY points DESC, id LIMIT 3) SELECT id FROM top ORDER BY points, id;
+----
+id
+5
+9
+11
+
+
+query
+SELECT m.squad, t.id, t.points FROM rls_tn_members m CROSS JOIN LATERAL (SELECT b.id, b.points FROM rls_tn_board b WHERE b.squad = m.squad ORDER BY b.points DESC, b.id LIMIT 1) t ORDER BY m.squad, m.member;
+----
+squad	id	points
+clickclack	5	70
+deadinside	9	70
+salam	11	85
+salam	11	85
+
+
+query
+SELECT m.member, b.id FROM rls_tn_board b JOIN rls_tn_members m ON m.squad = b.squad ORDER BY b.points DESC, b.id, m.member LIMIT 4;
+----
+member	id
+rls_tn_arelav	11
+rls_tn_kostya	11
+rls_tn_arelav	5
+rls_tn_babsky	9
+
+
+query
+SELECT id FROM (SELECT id, points FROM rls_tn_board WHERE squad = 'clickclack' UNION ALL SELECT id, points FROM rls_tn_board WHERE squad = 'salam') u ORDER BY points DESC, id LIMIT 3;
+----
+id
+11
+5
+13
+
+
+query
+SELECT squad, max(points) AS top FROM rls_tn_board GROUP BY squad ORDER BY top DESC, squad LIMIT 2;
+----
+squad	top
+salam	85
+clickclack	70
+
+
+query
+SELECT squad, count(*) AS n FROM rls_tn_board GROUP BY squad ORDER BY n DESC, squad LIMIT 1;
+----
+squad	n
+clickclack	3
+
+
+query
+SELECT (SELECT id FROM rls_tn_board ORDER BY points DESC, id LIMIT 1) AS best, (SELECT id FROM rls_tn_board ORDER BY points ASC, id LIMIT 1) AS worst;
+----
+best	worst
+11	15
+
+
+query
+SELECT id FROM rls_tn_board WHERE points = (SELECT max(points) FROM rls_tn_board) ORDER BY id;
+----
+id
+11
+
+
+query
+SELECT id FROM rls_tn_board ORDER BY points DESC, id LIMIT (SELECT count(*) FROM rls_tn_members WHERE member = 'rls_tn_arelav');
+----
+id
+11
+5
+
+
+query
+SELECT id, points FROM rls_tn_big ORDER BY points DESC, id LIMIT 5;
+----
+id	points
+30	100
+60	99
+90	98
+120	97
+150	96
+
+
+query
+SELECT id, points FROM rls_tn_big ORDER BY points ASC, id LIMIT 5;
+----
+id	points
+273	1
+243	2
+213	3
+183	4
+153	5
+
+
+query
+SELECT id FROM rls_tn_big ORDER BY points DESC, id LIMIT 5 OFFSET 95;
+----
+id
+153
+183
+213
+243
+273
+
+
+query
+SELECT id FROM rls_tn_big ORDER BY points DESC, id LIMIT 5 OFFSET 100;
+----
+id
+
+
+query
+SELECT id, tag::int AS t FROM rls_tn_big ORDER BY tag::int DESC LIMIT 3;
+----
+id	t
+300	300
+297	297
+294	294
+
+
+query
+SELECT count(*) AS n, min(points) AS lo, max(points) AS hi FROM (SELECT points FROM rls_tn_big ORDER BY points DESC, id LIMIT 20) s;
+----
+n	lo	hi
+20	81	100
+
+
+query
+SELECT id FROM rls_tn_big WHERE points > 90 ORDER BY points, id LIMIT 4;
+----
+id
+300
+270
+240
+210
+
+
+query
+SELECT id FROM rls_tn_big WHERE id BETWEEN 100 AND 200 ORDER BY points DESC, id LIMIT 4;
+----
+id
+120
+150
+180
+117
+
+
+statement ok
+SET ROLE rls_tn_babsky;
+
+
+query
+SELECT id, points FROM rls_tn_board ORDER BY points DESC, id LIMIT 3;
+----
+id	points
+2	99
+6	97
+14	95
+
+
+query
+SELECT id FROM rls_tn_board ORDER BY points ASC, id LIMIT 2;
+----
+id
+10
+14
+
+
+query
+SELECT id, points FROM rls_tn_big ORDER BY points DESC, id LIMIT 5;
+----
+id	points
+232	100
+262	99
+292	98
+19	97
+49	96
+
+
+query
+SELECT count(*) AS n FROM rls_tn_big WHERE tag = 'hidden1';
+----
+n
+1
+
+
+statement ok
+SET ROLE rls_tn_kostya;
+
+
+query
+SELECT id, points FROM rls_tn_board ORDER BY points DESC, id LIMIT 3;
+----
+id	points
+4	98
+8	96
+12	0
+
+
+query
+SELECT id FROM rls_tn_board ORDER BY points DESC, id LIMIT 1 OFFSET 2;
+----
+id
+12
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_tn_squad ON rls_tn_board FOR SELECT USING (squad IN (SELECT squad FROM rls_tn_members WHERE member = current_user));
+
+
+statement ok
+SET ROLE rls_tn_arelav;
+
+
+query
+SELECT id, points FROM rls_tn_board ORDER BY points DESC, id LIMIT 5;
+----
+id	points
+2	99
+4	98
+8	96
+14	95
+11	85
+
+
+query
+SELECT id FROM rls_tn_board ORDER BY points ASC, id LIMIT 3;
+----
+id
+10
+15
+1
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_tn_no_boss ON rls_tn_board AS RESTRICTIVE FOR SELECT USING (points < 99);
+
+
+statement ok
+SET ROLE rls_tn_arelav;
+
+
+query
+SELECT id, points FROM rls_tn_board ORDER BY points DESC, id LIMIT 5;
+----
+id	points
+4	98
+8	96
+14	95
+11	85
+5	70
+
+
+statement ok
+SET ROLE rls_tn_babsky;
+
+
+query
+SELECT id, points FROM rls_tn_board ORDER BY points DESC, id LIMIT 3;
+----
+id	points
+6	97
+14	95
+9	70
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT id, points FROM rls_tn_board ORDER BY points DESC, id LIMIT 3;
+----
+id	points
+2	99
+4	98
+6	97
+
+
+statement ok
+ALTER TABLE rls_tn_board OWNER TO rls_tn_kostya;
+
+
+statement ok
+SET ROLE rls_tn_kostya;
+
+
+query
+SELECT id, points FROM rls_tn_board ORDER BY points DESC, id LIMIT 3;
+----
+id	points
+2	99
+4	98
+6	97
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER TABLE rls_tn_board FORCE ROW LEVEL SECURITY;
+
+
+statement ok
+SET ROLE rls_tn_kostya;
+
+
+query
+SELECT id, points FROM rls_tn_board ORDER BY points DESC, id LIMIT 3;
+----
+id	points
+4	98
+8	96
+11	85
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP TABLE rls_tn_board;
+
+
+statement ok
+DROP TABLE rls_tn_members;
+
+
+statement ok
+DROP TABLE rls_tn_big;
+
+
+statement ok
+DROP ROLE rls_tn_arelav;
+
+
+statement ok
+DROP ROLE rls_tn_babsky;
+
+
+statement ok
+DROP ROLE rls_tn_kostya;

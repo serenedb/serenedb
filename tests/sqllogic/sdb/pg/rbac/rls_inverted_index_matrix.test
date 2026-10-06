@@ -1,0 +1,664 @@
+statement ok
+DROP TABLE IF EXISTS rls_ixm_docs;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_ixm_teams;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS rls_ixm_english;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_ixm_arelav;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_ixm_babsky;
+
+
+statement ok
+CREATE ROLE rls_ixm_arelav;
+
+
+statement ok
+CREATE ROLE rls_ixm_babsky;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rls_ixm_english AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
+
+
+statement ok
+CREATE TABLE rls_ixm_docs (pk int PRIMARY KEY, author text, team text, level int, body text, tags text);
+
+
+statement ok
+INSERT INTO rls_ixm_docs VALUES
+  (1, 'rls_ixm_arelav', 'clickclack', 1, 'arelav is a skuf', 'mine'),
+  (2, 'rls_ixm_babsky', 'clickclack', 2, 'babsky calls every skuf to the meeting', 'boss'),
+  (3, 'rls_ixm_arelav', 'deadinside', 3, 'clickclack deadinside salam', 'mine'),
+  (4, 'rls_ixm_babsky', 'salam', 4, 'vedernikoff is no skuf', 'boss'),
+  (5, 'rls_ixm_arelav', 'salam', 5, 'the skuf boss meeting is over', 'mine'),
+  (6, 'rls_ixm_babsky', 'deadinside', 1, 'skufina meets the boss', 'boss'),
+  (7, 'rls_ixm_arelav', 'clickclack', 2, 'skuff typo skuf', 'mine'),
+  (8, 'rls_ixm_babsky', 'clickclack', 3, 'deadinside meeting with skuf skuf skuf', 'boss'),
+  (9, 'rls_ixm_arelav', 'deadinside', 4, 'intern writes about the boss', 'mine'),
+  (10, 'rls_ixm_babsky', 'salam', 5, 'salam salam salam', 'boss'),
+  (11, 'rls_ixm_arelav', 'salam', 1, 'boss skuf boss skuf', 'mine'),
+  (12, 'rls_ixm_babsky', 'deadinside', 2, 'the meeting of skufs', 'boss');
+
+
+statement ok
+CREATE INDEX rls_ixm_docs_idx ON rls_ixm_docs USING inverted(pk, level, body rls_ixm_english) INCLUDE (author, team);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) rls_ixm_docs;
+
+
+statement ok
+CREATE TABLE rls_ixm_teams (member text, team text);
+
+
+statement ok
+INSERT INTO rls_ixm_teams VALUES ('rls_ixm_arelav', 'clickclack'), ('rls_ixm_arelav', 'salam'), ('rls_ixm_babsky', 'deadinside');
+
+
+statement ok
+GRANT SELECT ON rls_ixm_docs TO rls_ixm_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_ixm_docs TO rls_ixm_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_ixm_teams TO rls_ixm_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_ixm_teams TO rls_ixm_babsky;
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf') ORDER BY pk;
+----
+pk
+1
+2
+4
+5
+7
+8
+11
+
+
+statement ok
+ALTER TABLE rls_ixm_docs ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_ixm_author ON rls_ixm_docs FOR SELECT USING (author = current_user);
+
+
+statement ok
+SET ROLE rls_ixm_arelav;
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf') ORDER BY pk;
+----
+pk
+1
+5
+7
+11
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf meeting') ORDER BY pk;
+----
+pk
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('boss meeting') ORDER BY pk;
+----
+pk
+5
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_any(['salam', 'intern']) ORDER BY pk;
+----
+pk
+3
+9
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_all([ts_phrase('skuf'), ts_phrase('boss')]) ORDER BY pk;
+----
+pk
+5
+11
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_starts_with('skuf') ORDER BY pk;
+----
+pk
+1
+5
+7
+11
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_like('sk%') ORDER BY pk;
+----
+pk
+1
+5
+7
+11
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_levenshtein('skuff', 1) ORDER BY pk;
+----
+pk
+1
+5
+7
+11
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ to_tsquery('skuf AND boss') ORDER BY pk;
+----
+pk
+5
+11
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ websearch_to_tsquery('boss -skuf') ORDER BY pk;
+----
+pk
+9
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('salam') OR body @@ ts_phrase('intern') ORDER BY pk;
+----
+pk
+3
+9
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf') AND level >= 2 ORDER BY pk;
+----
+pk
+5
+7
+
+
+query
+EXPLAIN SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf') AND level >= 2;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────────╮
+│ Index: rls_ixm_docs_idx                            │
+│ Lookup: table                                      │
+│ Index Filter:                                      │
+│ ╭─ And ───────────────╮                            │
+│ ╰──────────┬──────────╯                            │
+│            ├─────────────────────────╮             │
+│ ╭─ Terms ──┴──────────╮  ╭─ Granular Range ──────╮ │
+│ │ Field: body(string) │  │ Field: level(numeric) │ │
+│ │ Values: 'skuf'      │  │ Range: >=2            │ │
+│ ╰─────────────────────╯  ╰───────────────────────╯ │
+│ Column Filter: author = 'rls_ixm_arelav'           │
+│ Projections: pk                                    │
+│ ~1 row                                             │
+╰────────────────────────────────────────────────────╯
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf') AND team = 'salam' ORDER BY pk;
+----
+pk
+5
+11
+
+
+query
+EXPLAIN SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf') AND team = 'salam';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────╮
+│ Index: rls_ixm_docs_idx                   │
+│ Lookup: table                             │
+│ Index Filter:                             │
+│ ╭─ Term ──────────────╮                   │
+│ │ Field: body(string) │                   │
+│ │ Value: skuf         │                   │
+│ ╰─────────────────────╯                   │
+│ Column Filter: author = 'rls_ixm_arelav', │
+│                team = 'salam'             │
+│ Projections: pk                           │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+
+query
+SELECT pk, team FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('boss') ORDER BY pk;
+----
+pk	team
+5	salam
+9	deadinside
+11	salam
+
+
+query
+SELECT count(*) AS n FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('meeting');
+----
+n
+1
+
+
+query
+SELECT team, count(*) AS n FROM rls_ixm_docs_idx WHERE body @@ ts_like('%') GROUP BY team ORDER BY team;
+----
+team	n
+clickclack	2
+deadinside	2
+salam	2
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf') ORDER BY BM25(rls_ixm_docs_idx.tableoid) DESC, pk LIMIT 2;
+----
+pk
+11
+7
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf') ORDER BY TFIDF(rls_ixm_docs_idx.tableoid) DESC, pk LIMIT 2;
+----
+pk
+11
+1
+
+
+query
+EXPLAIN SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf') ORDER BY TFIDF(rls_ixm_docs_idx.tableoid) DESC LIMIT 2;
+----
+QUERY PLAN
+╭─ TOP_N ──────────────────────────────────╮
+│ Top: 2                                   │
+│ Order By: #1 DESC                        │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: rls_ixm_docs_idx                  │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ Term ──────────────╮                  │
+│ │ Field: body(string) │                  │
+│ │ Value: skuf         │                  │
+│ ╰─────────────────────╯                  │
+│ Column Filter: author = 'rls_ixm_arelav' │
+│ Score: tfidf(with_norms=false)           │
+│ Projections: pk,                         │
+│              sdb_inverted_index_score    │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+
+query
+SELECT pk FROM iresearch_scan(current_database(), 'public', 'rls_ixm_docs_idx') ORDER BY pk;
+----
+pk
+1
+3
+5
+7
+9
+11
+
+
+query
+SELECT count(*) AS n FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf') AND CASE WHEN author <> current_user THEN error('leak author') ELSE true END;
+----
+n
+4
+
+
+query
+SELECT d.pk FROM rls_ixm_docs_idx d JOIN rls_ixm_teams t ON t.team = d.team AND t.member = current_user WHERE d.body @@ ts_phrase('skuf') ORDER BY d.pk;
+----
+pk
+1
+5
+7
+11
+
+
+query
+SELECT pk FROM rls_ixm_docs WHERE body LIKE '%boss%' ORDER BY pk;
+----
+pk
+5
+9
+11
+
+
+statement ok
+SET ROLE rls_ixm_babsky;
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf') ORDER BY pk;
+----
+pk
+2
+4
+8
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_any(['salam', 'intern']) ORDER BY pk;
+----
+pk
+10
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf') ORDER BY BM25(rls_ixm_docs_idx.tableoid) DESC, pk LIMIT 2;
+----
+pk
+8
+4
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP POLICY rls_ixm_author ON rls_ixm_docs;
+
+
+statement ok
+CREATE POLICY rls_ixm_low ON rls_ixm_docs FOR SELECT USING (level <= 2);
+
+
+statement ok
+SET ROLE rls_ixm_arelav;
+
+
+query
+EXPLAIN SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────────╮
+│ Index: rls_ixm_docs_idx                            │
+│ Lookup: table                                      │
+│ Index Filter:                                      │
+│ ╭─ And ───────────────╮                            │
+│ ╰──────────┬──────────╯                            │
+│            ├─────────────────────────╮             │
+│ ╭─ Terms ──┴──────────╮  ╭─ Granular Range ──────╮ │
+│ │ Field: body(string) │  │ Field: level(numeric) │ │
+│ │ Values: 'skuf'      │  │ Range: <=2            │ │
+│ ╰─────────────────────╯  ╰───────────────────────╯ │
+│ Projections: pk                                    │
+│ ~2 rows                                            │
+╰────────────────────────────────────────────────────╯
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf') ORDER BY pk;
+----
+pk
+1
+2
+7
+11
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP POLICY rls_ixm_low ON rls_ixm_docs;
+
+
+statement ok
+CREATE POLICY rls_ixm_tagged ON rls_ixm_docs FOR SELECT USING (tags = 'mine');
+
+
+statement ok
+SET ROLE rls_ixm_arelav;
+
+
+query
+EXPLAIN SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────╮
+│ Index: rls_ixm_docs_idx      │
+│ Lookup: table                │
+│ Index Filter:                │
+│ ╭─ Term ──────────────╮      │
+│ │ Field: body(string) │      │
+│ │ Value: skuf         │      │
+│ ╰─────────────────────╯      │
+│ Column Filter: tags = 'mine' │
+│ Projections: pk              │
+│ ~1 row                       │
+╰──────────────────────────────╯
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf') ORDER BY pk;
+----
+pk
+1
+5
+7
+11
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP POLICY rls_ixm_tagged ON rls_ixm_docs;
+
+
+statement ok
+CREATE POLICY rls_ixm_team ON rls_ixm_docs FOR SELECT USING (team IN (SELECT team FROM rls_ixm_teams WHERE member = current_user));
+
+
+statement ok
+SET ROLE rls_ixm_arelav;
+
+
+query
+EXPLAIN SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf');
+----
+QUERY PLAN
+╭─ HASH_JOIN ──────────────────────────────╮
+│ Join Type: SEMI                          │
+│ Conditions: team = #0                    │
+│ ~0 rows                                  │
+╰─────────────────────┬────────────────────╯
+                      ├─────────────────────────────────────────────╮
+╭─ PROJECTION ────────┴────────────────────╮  ╭─ PROJECTION ────────┴────────────────────╮
+│ Projections:                             │  │ Projections:                             │
+│ __internal_compress_string_uhugeint(#0), │  │ __internal_compress_string_uhugeint(#0)  │
+│ #1                                       │  │ ~2 rows                                  │
+│ ~2 rows                                  │  ╰─────────────────────┬────────────────────╯
+╰─────────────────────┬────────────────────╯  ╭─ SEQ_SCAN ──────────┴────────────────────╮
+╭─ IRESEARCH_SCAN ────┴────────────────────╮  │ Table: rls_ixm_teams                     │
+│ Index: rls_ixm_docs_idx                  │  │ Type: Sequential Scan                    │
+│ Lookup: table                            │  │ Projections: team                        │
+│ Index Filter:                            │  │ Column Filter: member = 'rls_ixm_arelav' │
+│ ╭─ Term ──────────────╮                  │  │ ~2 rows                                  │
+│ │ Field: body(string) │                  │  ╰──────────────────────────────────────────╯
+│ │ Value: skuf         │                  │
+│ ╰─────────────────────╯                  │
+│ Projections: team (i), pk (l)            │
+│ ~2 rows                                  │
+╰──────────────────────────────────────────╯
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf') ORDER BY pk;
+----
+pk
+1
+2
+4
+5
+7
+8
+11
+
+
+statement ok
+SET ROLE rls_ixm_babsky;
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf') ORDER BY pk;
+----
+pk
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_ixm_not_five ON rls_ixm_docs AS RESTRICTIVE FOR SELECT USING (level <> 5);
+
+
+statement ok
+SET ROLE rls_ixm_arelav;
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf') ORDER BY pk;
+----
+pk
+1
+2
+4
+7
+8
+11
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP POLICY rls_ixm_not_five ON rls_ixm_docs;
+
+
+statement ok
+DROP POLICY rls_ixm_team ON rls_ixm_docs;
+
+
+statement ok
+CREATE POLICY rls_ixm_author ON rls_ixm_docs FOR SELECT USING (author = current_user);
+
+
+statement ok
+INSERT INTO rls_ixm_docs VALUES (13, 'rls_ixm_arelav', 'salam', 3, 'a brand new skuf', 'mine'), (14, 'rls_ixm_babsky', 'salam', 3, 'a brand new skuf too', 'boss');
+
+
+statement ok
+DELETE FROM rls_ixm_docs WHERE pk = 1;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) rls_ixm_docs;
+
+
+statement ok
+SET ROLE rls_ixm_arelav;
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('skuf') ORDER BY pk;
+----
+pk
+5
+7
+11
+13
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('brand new') ORDER BY pk;
+----
+pk
+13
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER TABLE rls_ixm_docs DISABLE ROW LEVEL SECURITY;
+
+
+statement ok
+SET ROLE rls_ixm_arelav;
+
+
+query
+SELECT pk FROM rls_ixm_docs_idx WHERE body @@ ts_phrase('brand new') ORDER BY pk;
+----
+pk
+13
+14
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP TABLE rls_ixm_docs;
+
+
+statement ok
+DROP TABLE rls_ixm_teams;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rls_ixm_english;
+
+
+statement ok
+DROP ROLE rls_ixm_arelav;
+
+
+statement ok
+DROP ROLE rls_ixm_babsky;

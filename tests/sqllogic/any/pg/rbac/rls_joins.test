@@ -1,0 +1,784 @@
+statement ok
+DROP TABLE IF EXISTS rls_jn_orders;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_jn_items;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_jn_teams;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_jn_regions;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_jn_tags;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_jn_arelav;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_jn_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_jn_kostya;
+
+
+statement ok
+CREATE ROLE rls_jn_arelav;
+
+
+statement ok
+CREATE ROLE rls_jn_babsky;
+
+
+statement ok
+CREATE ROLE rls_jn_kostya;
+
+
+statement ok
+CREATE TABLE rls_jn_orders (oid int, owner text, team text, total int, status text, code text);
+
+
+statement ok
+INSERT INTO rls_jn_orders VALUES
+  (1, 'rls_jn_arelav', 'clickclack', 100, 'open', '1'),
+  (2, 'rls_jn_babsky', 'clickclack', 200, 'open', 'boss'),
+  (3, 'rls_jn_arelav', 'deadinside', 300, 'shipped', '3'),
+  (4, 'rls_jn_kostya', 'salam', 400, 'open', 'intern'),
+  (5, 'rls_jn_arelav', 'salam', 500, 'cancelled', '5'),
+  (6, 'rls_jn_babsky', 'deadinside', 600, 'shipped', 'overseer'),
+  (7, 'rls_jn_arelav', 'clickclack', NULL, 'open', '7'),
+  (8, 'rls_jn_kostya', 'clickclack', 800, 'shipped', 'skuf');
+
+
+statement ok
+CREATE TABLE rls_jn_items (iid int, oid int, sku text, qty int, secret text);
+
+
+statement ok
+INSERT INTO rls_jn_items VALUES
+  (10, 1, 'skuf', 1, '10'),
+  (11, 1, 'boss', 2, '11'),
+  (12, 2, 'skuf', 3, 'babsky'),
+  (13, 3, 'intern', 4, '13'),
+  (14, 4, 'skuf', 5, 'kostya'),
+  (15, 6, 'boss', 6, 'babsky'),
+  (16, 8, 'intern', 7, 'kostya'),
+  (17, 5, 'skuf', NULL, '17'),
+  (18, 99, 'ghost', 9, 'nobody'),
+  (19, 3, 'boss', 1, '19');
+
+
+statement ok
+CREATE TABLE rls_jn_teams (owner text, team text, lead bool);
+
+
+statement ok
+INSERT INTO rls_jn_teams VALUES
+  ('rls_jn_arelav', 'clickclack', true),
+  ('rls_jn_arelav', 'salam', false),
+  ('rls_jn_babsky', 'deadinside', true),
+  ('rls_jn_kostya', 'salam', true),
+  ('rls_jn_kostya', 'clickclack', false);
+
+
+statement ok
+CREATE TABLE rls_jn_regions (team text, region text, hidden bool);
+
+
+statement ok
+INSERT INTO rls_jn_regions VALUES
+  ('clickclack', 'north', false),
+  ('deadinside', 'south', true),
+  ('salam', 'east', false),
+  ('salam', 'west', true);
+
+
+statement ok
+CREATE TABLE rls_jn_tags (oid int, tag text);
+
+
+statement ok
+INSERT INTO rls_jn_tags VALUES (1, 'urgent'), (2, 'urgent'), (3, 'fragile'), (5, NULL), (6, 'fragile'), (NULL, 'orphan');
+
+
+statement ok
+GRANT SELECT ON rls_jn_orders TO rls_jn_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_jn_orders TO rls_jn_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_jn_orders TO rls_jn_kostya;
+
+
+statement ok
+GRANT SELECT ON rls_jn_items TO rls_jn_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_jn_items TO rls_jn_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_jn_items TO rls_jn_kostya;
+
+
+statement ok
+GRANT SELECT ON rls_jn_teams TO rls_jn_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_jn_teams TO rls_jn_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_jn_teams TO rls_jn_kostya;
+
+
+statement ok
+GRANT SELECT ON rls_jn_regions TO rls_jn_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_jn_regions TO rls_jn_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_jn_regions TO rls_jn_kostya;
+
+
+statement ok
+GRANT SELECT ON rls_jn_tags TO rls_jn_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_jn_tags TO rls_jn_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_jn_tags TO rls_jn_kostya;
+
+
+statement ok
+ALTER TABLE rls_jn_orders ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+ALTER TABLE rls_jn_items ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+ALTER TABLE rls_jn_regions ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_jn_orders_own ON rls_jn_orders FOR SELECT USING (owner = current_user);
+
+
+statement ok
+CREATE POLICY rls_jn_items_of_orders ON rls_jn_items FOR SELECT USING (oid IN (SELECT oid FROM rls_jn_orders));
+
+
+statement ok
+CREATE POLICY rls_jn_regions_shown ON rls_jn_regions FOR SELECT USING (NOT hidden);
+
+
+statement ok
+SET ROLE rls_jn_arelav;
+
+
+query
+SELECT oid FROM rls_jn_orders ORDER BY oid;
+----
+oid
+1
+3
+5
+7
+
+
+query
+SELECT iid, oid FROM rls_jn_items ORDER BY iid;
+----
+iid	oid
+10	1
+11	1
+13	3
+17	5
+19	3
+
+
+query
+SELECT o.oid, i.iid FROM rls_jn_orders o JOIN rls_jn_items i ON i.oid = o.oid ORDER BY o.oid, i.iid;
+----
+oid	iid
+1	10
+1	11
+3	13
+3	19
+5	17
+
+
+query
+SELECT o.oid, i.iid FROM rls_jn_orders o LEFT JOIN rls_jn_items i ON i.oid = o.oid ORDER BY o.oid, i.iid;
+----
+oid	iid
+1	10
+1	11
+3	13
+3	19
+5	17
+7	NULL
+
+
+query
+SELECT i.iid, o.oid, o.total FROM rls_jn_items i LEFT JOIN rls_jn_orders o ON o.oid = i.oid ORDER BY i.iid;
+----
+iid	oid	total
+10	1	100
+11	1	100
+13	3	300
+17	5	500
+19	3	300
+
+
+query
+SELECT o.oid, i.iid FROM rls_jn_orders o RIGHT JOIN rls_jn_items i ON i.oid = o.oid ORDER BY i.iid;
+----
+oid	iid
+1	10
+1	11
+3	13
+5	17
+3	19
+
+
+query
+SELECT o.oid, t.tag FROM rls_jn_orders o FULL JOIN rls_jn_tags t ON t.oid = o.oid ORDER BY o.oid NULLS LAST, t.tag NULLS LAST;
+----
+oid	tag
+1	urgent
+3	fragile
+5	NULL
+7	NULL
+NULL	fragile
+NULL	orphan
+NULL	urgent
+
+
+query
+SELECT t.owner, t.team, o.oid FROM rls_jn_teams t LEFT JOIN rls_jn_orders o ON o.team = t.team AND o.owner = t.owner ORDER BY t.owner, t.team, o.oid;
+----
+owner	team	oid
+rls_jn_arelav	clickclack	1
+rls_jn_arelav	clickclack	7
+rls_jn_arelav	salam	5
+rls_jn_babsky	deadinside	NULL
+rls_jn_kostya	clickclack	NULL
+rls_jn_kostya	salam	NULL
+
+
+query
+SELECT t.team, count(o.oid) AS n FROM rls_jn_teams t LEFT JOIN rls_jn_orders o ON o.team = t.team GROUP BY t.team ORDER BY t.team;
+----
+team	n
+clickclack	4
+deadinside	1
+salam	2
+
+
+query
+SELECT o.oid, r.region FROM rls_jn_orders o JOIN rls_jn_regions r ON r.team = o.team ORDER BY o.oid, r.region;
+----
+oid	region
+1	north
+5	east
+7	north
+
+
+query
+SELECT o.oid, r.region FROM rls_jn_orders o LEFT JOIN rls_jn_regions r ON r.team = o.team ORDER BY o.oid, r.region NULLS LAST;
+----
+oid	region
+1	north
+3	NULL
+5	east
+7	north
+
+
+query
+SELECT o.oid, i.iid, r.region FROM rls_jn_orders o JOIN rls_jn_items i ON i.oid = o.oid JOIN rls_jn_regions r ON r.team = o.team ORDER BY o.oid, i.iid, r.region;
+----
+oid	iid	region
+1	10	north
+1	11	north
+5	17	east
+
+
+query
+SELECT o.oid, i.iid, t.tag, r.region FROM rls_jn_orders o LEFT JOIN rls_jn_items i ON i.oid = o.oid LEFT JOIN rls_jn_tags t ON t.oid = o.oid LEFT JOIN rls_jn_regions r ON r.team = o.team ORDER BY o.oid, i.iid NULLS LAST, r.region NULLS LAST;
+----
+oid	iid	tag	region
+1	10	urgent	north
+1	11	urgent	north
+3	13	fragile	NULL
+3	19	fragile	NULL
+5	17	NULL	east
+7	NULL	NULL	north
+
+
+query
+SELECT a.oid AS first, b.oid AS second FROM rls_jn_orders a JOIN rls_jn_orders b ON a.team = b.team AND a.oid < b.oid ORDER BY a.oid, b.oid;
+----
+first	second
+1	7
+
+
+query
+SELECT count(*) AS n FROM rls_jn_orders a CROSS JOIN rls_jn_items b;
+----
+n
+20
+
+
+query
+SELECT count(*) AS n FROM rls_jn_orders, rls_jn_items, rls_jn_regions;
+----
+n
+40
+
+
+query
+SELECT oid, iid FROM rls_jn_orders JOIN rls_jn_items USING (oid) ORDER BY oid, iid;
+----
+oid	iid
+1	10
+1	11
+3	13
+3	19
+5	17
+
+
+query
+SELECT oid, tag FROM rls_jn_orders NATURAL JOIN rls_jn_tags ORDER BY oid, tag NULLS LAST;
+----
+oid	tag
+1	urgent
+3	fragile
+5	NULL
+
+
+query
+SELECT o.oid FROM rls_jn_orders o WHERE EXISTS (SELECT 1 FROM rls_jn_items i WHERE i.oid = o.oid) ORDER BY o.oid;
+----
+oid
+1
+3
+5
+
+
+query
+SELECT o.oid FROM rls_jn_orders o WHERE NOT EXISTS (SELECT 1 FROM rls_jn_items i WHERE i.oid = o.oid) ORDER BY o.oid;
+----
+oid
+7
+
+
+query
+SELECT oid FROM rls_jn_orders WHERE oid IN (SELECT oid FROM rls_jn_items WHERE sku = 'skuf') ORDER BY oid;
+----
+oid
+1
+5
+
+
+query
+SELECT oid FROM rls_jn_orders WHERE oid NOT IN (SELECT oid FROM rls_jn_items) ORDER BY oid;
+----
+oid
+7
+
+
+query
+SELECT oid FROM rls_jn_orders WHERE oid NOT IN (SELECT oid FROM rls_jn_tags) ORDER BY oid;
+----
+oid
+
+
+query
+SELECT oid FROM rls_jn_orders WHERE oid NOT IN (SELECT oid FROM rls_jn_tags WHERE oid IS NOT NULL) ORDER BY oid;
+----
+oid
+7
+
+
+query
+SELECT iid FROM rls_jn_items WHERE oid NOT IN (SELECT oid FROM rls_jn_orders) ORDER BY iid;
+----
+iid
+
+
+query
+SELECT oid FROM rls_jn_tags WHERE oid NOT IN (SELECT oid FROM rls_jn_orders) ORDER BY oid;
+----
+oid
+2
+6
+
+
+query
+SELECT tag, oid FROM rls_jn_tags t WHERE NOT EXISTS (SELECT 1 FROM rls_jn_orders o WHERE o.oid = t.oid) ORDER BY oid NULLS LAST, tag;
+----
+tag	oid
+urgent	2
+fragile	6
+orphan	NULL
+
+
+query
+SELECT o.oid, i.iid FROM rls_jn_orders o JOIN rls_jn_items i ON i.oid = o.oid AND i.secret::int > 10 ORDER BY o.oid, i.iid;
+----
+oid	iid
+1	11
+3	13
+3	19
+5	17
+
+
+query
+SELECT o.oid, i.iid FROM rls_jn_orders o LEFT JOIN rls_jn_items i ON i.oid = o.oid AND o.code::int > 1 ORDER BY o.oid, i.iid NULLS LAST;
+----
+oid	iid
+1	NULL
+3	13
+3	19
+5	17
+7	NULL
+
+
+query
+SELECT count(*) AS n FROM rls_jn_items i JOIN rls_jn_orders o ON o.oid = i.oid WHERE i.secret::int + o.code::int > 0;
+----
+n
+5
+
+
+query
+SELECT o.oid, i.iid FROM rls_jn_orders o JOIN rls_jn_items i ON i.qty BETWEEN 1 AND 2 AND i.oid <= o.oid ORDER BY o.oid, i.iid;
+----
+oid	iid
+1	10
+1	11
+3	10
+3	11
+3	19
+5	10
+5	11
+5	19
+7	10
+7	11
+7	19
+
+
+query
+SELECT o.oid, i.iid FROM rls_jn_orders o JOIN rls_jn_items i ON i.oid = o.oid OR i.qty = o.oid ORDER BY o.oid, i.iid;
+----
+oid	iid
+1	10
+1	11
+1	19
+3	13
+3	19
+5	17
+
+
+query
+SELECT o.oid, i.iid FROM rls_jn_orders o JOIN rls_jn_items i ON i.oid = o.oid WHERE o.status = 'shipped' AND i.sku = 'boss' ORDER BY o.oid, i.iid;
+----
+oid	iid
+3	19
+
+
+query
+SELECT o.team, sum(i.qty) AS qty, count(DISTINCT o.oid) AS orders FROM rls_jn_orders o JOIN rls_jn_items i ON i.oid = o.oid GROUP BY o.team ORDER BY o.team;
+----
+team	qty	orders
+clickclack	3	1
+deadinside	5	1
+salam	NULL	1
+
+
+query
+SELECT o.oid, o.total FROM rls_jn_orders o JOIN rls_jn_teams t ON t.team = o.team AND t.owner = current_user WHERE t.lead ORDER BY o.oid;
+----
+oid	total
+1	100
+7	NULL
+
+
+query
+SELECT o.oid, x.iid FROM rls_jn_orders o CROSS JOIN LATERAL (SELECT i.iid FROM rls_jn_items i WHERE i.oid = o.oid ORDER BY i.iid DESC LIMIT 1) x ORDER BY o.oid;
+----
+oid	iid
+1	11
+3	19
+5	17
+
+
+query
+SELECT o.oid, x.n FROM rls_jn_orders o LEFT JOIN LATERAL (SELECT count(*) AS n FROM rls_jn_items i WHERE i.oid = o.oid) x ON true ORDER BY o.oid;
+----
+oid	n
+1	2
+3	2
+5	1
+7	0
+
+
+query
+SELECT s.oid, s.items FROM (SELECT o.oid, count(i.iid) AS items FROM rls_jn_orders o LEFT JOIN rls_jn_items i ON i.oid = o.oid GROUP BY o.oid) s WHERE s.items = 0 ORDER BY s.oid;
+----
+oid	items
+7	0
+
+
+query
+SELECT o.oid, i.iid FROM rls_jn_orders o JOIN (SELECT * FROM rls_jn_items WHERE qty > 1) i ON i.oid = o.oid ORDER BY o.oid, i.iid;
+----
+oid	iid
+1	11
+3	13
+
+
+query
+SELECT o.oid FROM rls_jn_orders o JOIN rls_jn_tags t ON t.oid = o.oid WHERE t.tag IS NULL ORDER BY o.oid;
+----
+oid
+5
+
+
+query
+SELECT o.oid, coalesce(t.tag, 'none') AS tag FROM rls_jn_orders o LEFT JOIN rls_jn_tags t ON t.oid = o.oid ORDER BY o.oid, tag;
+----
+oid	tag
+1	urgent
+3	fragile
+5	none
+7	none
+
+
+query
+SELECT o.oid, i.iid FROM rls_jn_orders o JOIN rls_jn_items i ON i.oid = o.oid ORDER BY o.total DESC NULLS LAST, i.iid LIMIT 2;
+----
+oid	iid
+5	17
+3	13
+
+
+statement ok
+SET ROLE rls_jn_babsky;
+
+
+query
+SELECT o.oid, i.iid FROM rls_jn_orders o JOIN rls_jn_items i ON i.oid = o.oid ORDER BY o.oid, i.iid;
+----
+oid	iid
+2	12
+6	15
+
+
+query
+SELECT o.oid, i.iid FROM rls_jn_orders o LEFT JOIN rls_jn_items i ON i.oid = o.oid ORDER BY o.oid, i.iid;
+----
+oid	iid
+2	12
+6	15
+
+
+query
+SELECT count(*) AS n FROM rls_jn_items i WHERE NOT EXISTS (SELECT 1 FROM rls_jn_orders o WHERE o.oid = i.oid);
+----
+n
+0
+
+
+query
+SELECT o.oid, r.region FROM rls_jn_orders o LEFT JOIN rls_jn_regions r ON r.team = o.team ORDER BY o.oid, r.region NULLS LAST;
+----
+oid	region
+2	north
+6	NULL
+
+
+statement ok
+SET ROLE rls_jn_kostya;
+
+
+query
+SELECT o.oid, i.iid, i.secret FROM rls_jn_orders o JOIN rls_jn_items i ON i.oid = o.oid ORDER BY o.oid, i.iid;
+----
+oid	iid	secret
+4	14	kostya
+8	16	kostya
+
+
+query
+SELECT a.oid AS first, b.oid AS second FROM rls_jn_orders a JOIN rls_jn_orders b ON a.oid < b.oid ORDER BY a.oid, b.oid;
+----
+first	second
+4	8
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_jn_items_light ON rls_jn_items AS RESTRICTIVE FOR SELECT USING (qty < 5);
+
+
+statement ok
+SET ROLE rls_jn_arelav;
+
+
+query
+SELECT o.oid, i.iid FROM rls_jn_orders o LEFT JOIN rls_jn_items i ON i.oid = o.oid ORDER BY o.oid, i.iid;
+----
+oid	iid
+1	10
+1	11
+3	13
+3	19
+5	NULL
+7	NULL
+
+
+query
+SELECT o.oid FROM rls_jn_orders o WHERE NOT EXISTS (SELECT 1 FROM rls_jn_items i WHERE i.oid = o.oid) ORDER BY o.oid;
+----
+oid
+5
+7
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP POLICY rls_jn_orders_own ON rls_jn_orders;
+
+
+statement ok
+CREATE POLICY rls_jn_orders_team ON rls_jn_orders FOR SELECT USING (team IN (SELECT team FROM rls_jn_teams WHERE owner = current_user));
+
+
+statement ok
+SET ROLE rls_jn_arelav;
+
+
+query
+SELECT oid, owner FROM rls_jn_orders ORDER BY oid;
+----
+oid	owner
+1	rls_jn_arelav
+2	rls_jn_babsky
+4	rls_jn_kostya
+5	rls_jn_arelav
+7	rls_jn_arelav
+8	rls_jn_kostya
+
+
+query
+SELECT o.oid, i.iid FROM rls_jn_orders o JOIN rls_jn_items i ON i.oid = o.oid ORDER BY o.oid, i.iid;
+----
+oid	iid
+1	10
+1	11
+2	12
+
+
+statement ok
+SET ROLE rls_jn_kostya;
+
+
+query
+SELECT o.oid, i.iid FROM rls_jn_orders o LEFT JOIN rls_jn_items i ON i.oid = o.oid ORDER BY o.oid, i.iid;
+----
+oid	iid
+1	10
+1	11
+2	12
+4	NULL
+5	NULL
+7	NULL
+8	NULL
+
+
+query
+SELECT o.team, count(*) AS n FROM rls_jn_orders o JOIN rls_jn_regions r ON r.team = o.team GROUP BY o.team ORDER BY o.team;
+----
+team	n
+clickclack	4
+salam	2
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT o.oid, i.iid FROM rls_jn_orders o JOIN rls_jn_items i ON i.oid = o.oid ORDER BY o.oid, i.iid;
+----
+oid	iid
+1	10
+1	11
+2	12
+3	13
+3	19
+4	14
+5	17
+6	15
+8	16
+
+
+statement ok
+DROP TABLE rls_jn_items;
+
+
+statement ok
+DROP TABLE rls_jn_orders;
+
+
+statement ok
+DROP TABLE rls_jn_teams;
+
+
+statement ok
+DROP TABLE rls_jn_regions;
+
+
+statement ok
+DROP TABLE rls_jn_tags;
+
+
+statement ok
+DROP ROLE rls_jn_arelav;
+
+
+statement ok
+DROP ROLE rls_jn_babsky;
+
+
+statement ok
+DROP ROLE rls_jn_kostya;

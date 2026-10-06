@@ -1,0 +1,1053 @@
+statement ok
+DROP TABLE IF EXISTS rls_px_docs;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_px_arelav;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_px_babsky;
+
+
+statement ok
+CREATE ROLE rls_px_arelav;
+
+
+statement ok
+CREATE ROLE rls_px_babsky;
+
+
+statement ok
+CREATE TABLE rls_px_docs (id int, owner text, readers text[], level int, title text, flag bool, opened date, code text);
+
+
+statement ok
+INSERT INTO rls_px_docs VALUES
+  (1, 'rls_px_arelav', ARRAY['rls_px_babsky'], 1, 'skuf', true, DATE '2026-01-15', NULL),
+  (2, 'rls_px_babsky', ARRAY['rls_px_arelav', 'rls_px_babsky'], 2, 'Boss', false, DATE '2026-03-01', 'x'),
+  (3, 'rls_px_arelav', ARRAY[]::text[], 3, 'salam', NULL, DATE '2026-06-01', 'y'),
+  (4, 'rls_px_babsky', NULL, 4, 'skufina', true, DATE '2026-07-20', NULL),
+  (5, 'kostya', ARRAY['rls_px_arelav'], 5, 'intern', false, DATE '2026-09-09', 'x'),
+  (6, NULL, ARRAY['rls_px_babsky'], NULL, 'deadinside', true, NULL, 'z'),
+  (7, 'rls_px_arelav', ARRAY['kostya'], 2, 'clickclack', false, DATE '2025-12-31', 'x'),
+  (8, 'vedernikoff', ARRAY['rls_px_arelav', 'kostya'], 4, 'SKUF', NULL, DATE '2026-06-02', NULL);
+
+
+statement ok
+GRANT SELECT ON rls_px_docs TO rls_px_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_px_docs TO rls_px_babsky;
+
+
+statement ok
+ALTER TABLE rls_px_docs ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT count(*) AS n FROM rls_px_docs;
+----
+n
+0
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_px_p ON rls_px_docs FOR SELECT USING (owner = current_user);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+3
+7
+
+
+statement ok
+SET ROLE rls_px_babsky;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+2
+4
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (owner <> current_user);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+2
+4
+5
+8
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (owner IS DISTINCT FROM current_user);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+2
+4
+5
+6
+8
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (current_user = ANY (readers));
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+2
+5
+8
+
+
+statement ok
+SET ROLE rls_px_babsky;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+2
+6
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (owner = current_user OR current_user = ANY (readers));
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+2
+3
+5
+7
+8
+
+
+statement ok
+SET ROLE rls_px_babsky;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+2
+4
+6
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (level BETWEEN 2 AND 4);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+2
+3
+4
+7
+8
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (level NOT BETWEEN 2 AND 4);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+5
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (level IN (1, 3, 5));
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+3
+5
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (level NOT IN (1, 3, 5));
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+2
+4
+7
+8
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (title LIKE 'sk%');
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+4
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (title ILIKE 'SK%');
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+4
+8
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (title NOT LIKE '%a%');
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+2
+5
+8
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (title ~ '^s.*$');
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+3
+4
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (flag);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+4
+6
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (NOT flag);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+2
+5
+7
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (flag IS NOT TRUE);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+2
+3
+5
+7
+8
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (flag IS NULL);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+3
+8
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (code IS NULL);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+4
+8
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (code IS NOT NULL AND code <> 'x');
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+3
+6
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (coalesce(code, 'x') = 'x');
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+2
+4
+5
+7
+8
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (nullif(code, 'x') IS NULL);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+2
+4
+5
+7
+8
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (CASE WHEN level > 3 THEN owner = current_user ELSE true END);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+2
+3
+6
+7
+
+
+statement ok
+SET ROLE rls_px_babsky;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+2
+3
+4
+6
+7
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (lower(title) = title);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+3
+4
+5
+6
+7
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (upper(owner) = upper(current_user));
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+3
+7
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (length(title) > 5);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+4
+5
+6
+7
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (id % 2 = 0);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+2
+4
+6
+8
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (id * 10 + level > 40);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+4
+5
+7
+8
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (id::text || title LIKE '%k%');
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+4
+7
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (opened >= DATE '2026-06-01');
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+3
+4
+5
+8
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (opened < DATE '2026-06-01' OR opened IS NULL);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+2
+6
+7
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (extract(month FROM opened) BETWEEN 6 AND 9);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+3
+4
+5
+8
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (current_user IN ('rls_px_arelav', 'kostya'));
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT count(*) AS n FROM rls_px_docs;
+----
+n
+8
+
+
+statement ok
+SET ROLE rls_px_babsky;
+
+
+query
+SELECT count(*) AS n FROM rls_px_docs;
+----
+n
+0
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (owner = session_user);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT count(*) AS n FROM rls_px_docs;
+----
+n
+0
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (true);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT count(*) AS n FROM rls_px_docs;
+----
+n
+8
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (false);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT count(*) AS n FROM rls_px_docs;
+----
+n
+0
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (NULL::boolean);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT count(*) AS n FROM rls_px_docs;
+----
+n
+0
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (level > (SELECT 2));
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+3
+4
+5
+8
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (level = (SELECT max(level) FROM rls_px_docs));
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+statement error
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+db error: ERROR: infinite recursion detected in policy for relation "rls_px_docs"<slt:ignore>
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_px_p ON rls_px_docs USING (owner = current_user);
+
+
+statement ok
+CREATE POLICY rls_px_q ON rls_px_docs FOR SELECT USING (flag);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+3
+4
+6
+7
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_px_r ON rls_px_docs AS RESTRICTIVE FOR SELECT USING (level < 4);
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+3
+7
+
+
+statement ok
+SET ROLE rls_px_babsky;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+1
+2
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_px_s ON rls_px_docs AS RESTRICTIVE FOR SELECT USING (title <> 'skuf');
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT id FROM rls_px_docs ORDER BY id;
+----
+id
+3
+7
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP POLICY rls_px_p ON rls_px_docs;
+
+
+statement ok
+DROP POLICY rls_px_q ON rls_px_docs;
+
+
+statement ok
+SET ROLE rls_px_arelav;
+
+
+query
+SELECT count(*) AS n FROM rls_px_docs;
+----
+n
+0
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP TABLE rls_px_docs;
+
+
+statement ok
+DROP ROLE rls_px_arelav;
+
+
+statement ok
+DROP ROLE rls_px_babsky;

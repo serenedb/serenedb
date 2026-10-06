@@ -1,0 +1,635 @@
+statement ok
+DROP TABLE IF EXISTS rls_ag_loot;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_ag_squads;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_ag_arelav;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_ag_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_ag_kostya;
+
+
+statement ok
+CREATE ROLE rls_ag_arelav;
+
+
+statement ok
+CREATE ROLE rls_ag_babsky;
+
+
+statement ok
+CREATE ROLE rls_ag_kostya;
+
+
+statement ok
+CREATE TABLE rls_ag_loot (id int, owner text, squad text, amount int, weight int, note text, flag bool);
+
+
+statement ok
+INSERT INTO rls_ag_loot SELECT n, CASE n % 3 WHEN 0 THEN 'rls_ag_arelav' WHEN 1 THEN 'rls_ag_babsky' ELSE 'rls_ag_kostya' END, CASE n % 4 WHEN 0 THEN 'clickclack' WHEN 1 THEN 'deadinside' WHEN 2 THEN 'salam' ELSE 'skuf' END, (n * 7) % 50, CASE WHEN n % 5 = 0 THEN NULL ELSE n % 7 END, CASE WHEN n % 3 = 0 THEN ((n * 7) % 50)::text ELSE 'hidden' END, n % 2 = 0 FROM generate_series(1, 60) AS g(n);
+
+
+statement ok
+CREATE TABLE rls_ag_squads (member text, squad text);
+
+
+statement ok
+INSERT INTO rls_ag_squads VALUES ('rls_ag_arelav', 'clickclack'), ('rls_ag_arelav', 'salam'), ('rls_ag_babsky', 'deadinside'), ('rls_ag_kostya', 'skuf');
+
+
+statement ok
+GRANT SELECT ON rls_ag_loot TO rls_ag_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_ag_loot TO rls_ag_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_ag_loot TO rls_ag_kostya;
+
+
+statement ok
+GRANT SELECT ON rls_ag_squads TO rls_ag_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_ag_squads TO rls_ag_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_ag_squads TO rls_ag_kostya;
+
+
+query
+SELECT count(*) AS n, sum(amount) AS total FROM rls_ag_loot;
+----
+n	total
+60	1460
+
+
+statement ok
+ALTER TABLE rls_ag_loot ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_ag_own ON rls_ag_loot FOR SELECT USING (owner = current_user);
+
+
+statement ok
+SET ROLE rls_ag_arelav;
+
+
+query
+SELECT count(*) AS n FROM rls_ag_loot;
+----
+n
+20
+
+
+query
+SELECT count(id) AS n, count(weight) AS w, count(DISTINCT squad) AS squads FROM rls_ag_loot;
+----
+n	w	squads
+20	16	4
+
+
+query
+SELECT sum(amount) AS total, min(amount) AS lo, max(amount) AS hi FROM rls_ag_loot;
+----
+total	lo	hi
+510	2	49
+
+
+query
+SELECT round(avg(amount))::int AS mean FROM rls_ag_loot;
+----
+mean
+26
+
+
+query
+SELECT min(id) AS first, max(id) AS last FROM rls_ag_loot;
+----
+first	last
+3	60
+
+
+query
+SELECT min(owner) AS lo, max(owner) AS hi, count(DISTINCT owner) AS owners FROM rls_ag_loot;
+----
+lo	hi	owners
+rls_ag_arelav	rls_ag_arelav	1
+
+
+query
+SELECT bool_and(flag) AS all_even, bool_or(flag) AS any_even FROM rls_ag_loot;
+----
+all_even	any_even
+f	t
+
+
+query
+SELECT string_agg(id::text, ',' ORDER BY id) AS ids FROM rls_ag_loot WHERE amount > 30;
+----
+ids
+6,12,21,27,33,42,48,57
+
+
+query
+SELECT count(*) FILTER (WHERE flag) AS even, count(*) FILTER (WHERE NOT flag) AS odd, count(*) FILTER (WHERE owner <> current_user) AS foreign_rows FROM rls_ag_loot;
+----
+even	odd	foreign_rows
+10	10	0
+
+
+query
+SELECT sum(amount) FILTER (WHERE squad = 'clickclack') AS click, sum(amount) FILTER (WHERE squad = 'deadinside') AS dead FROM rls_ag_loot;
+----
+click	dead
+110	155
+
+
+query
+SELECT squad, count(*) AS n, sum(amount) AS total FROM rls_ag_loot GROUP BY squad ORDER BY squad;
+----
+squad	n	total
+clickclack	5	110
+deadinside	5	155
+salam	5	150
+skuf	5	95
+
+
+query
+SELECT owner, count(*) AS n FROM rls_ag_loot GROUP BY owner ORDER BY owner;
+----
+owner	n
+rls_ag_arelav	20
+
+
+query
+SELECT flag, count(*) AS n, max(amount) AS hi FROM rls_ag_loot GROUP BY flag ORDER BY flag;
+----
+flag	n	hi
+f	10	49
+t	10	44
+
+
+query
+SELECT weight, count(*) AS n FROM rls_ag_loot GROUP BY weight ORDER BY weight NULLS FIRST;
+----
+weight	n
+NULL	4
+0	2
+1	2
+2	2
+3	2
+4	2
+5	3
+6	3
+
+
+query
+SELECT squad, count(*) AS n FROM rls_ag_loot GROUP BY squad HAVING count(*) > 4 ORDER BY squad;
+----
+squad	n
+clickclack	5
+deadinside	5
+salam	5
+skuf	5
+
+
+query
+SELECT squad, max(note::int) AS hi FROM rls_ag_loot GROUP BY squad HAVING max(note::int) > 30 ORDER BY squad;
+----
+squad	hi
+clickclack	36
+deadinside	49
+salam	44
+skuf	39
+
+
+query
+SELECT sum(note::int) AS total FROM rls_ag_loot;
+----
+total
+510
+
+
+query
+SELECT squad, sum(note::int) AS total FROM rls_ag_loot WHERE note::int > 10 GROUP BY squad ORDER BY squad;
+----
+squad	total
+clickclack	108
+deadinside	155
+salam	140
+skuf	83
+
+
+query
+SELECT squad, flag, count(*) AS n FROM rls_ag_loot GROUP BY GROUPING SETS ((squad), (flag), ()) ORDER BY squad NULLS FIRST, flag NULLS FIRST;
+----
+squad	flag	n
+NULL	NULL	20
+NULL	f	10
+NULL	t	10
+clickclack	NULL	5
+deadinside	NULL	5
+salam	NULL	5
+skuf	NULL	5
+
+
+query
+SELECT squad, flag, count(*) AS n FROM rls_ag_loot GROUP BY ROLLUP (squad, flag) ORDER BY squad NULLS FIRST, flag NULLS FIRST;
+----
+squad	flag	n
+NULL	NULL	20
+clickclack	NULL	5
+clickclack	t	5
+deadinside	NULL	5
+deadinside	f	5
+salam	NULL	5
+salam	t	5
+skuf	NULL	5
+skuf	f	5
+
+
+query
+SELECT squad, flag, sum(amount) AS total FROM rls_ag_loot GROUP BY CUBE (squad, flag) ORDER BY squad NULLS FIRST, flag NULLS FIRST;
+----
+squad	flag	total
+NULL	NULL	510
+NULL	f	250
+NULL	t	260
+clickclack	NULL	110
+clickclack	t	110
+deadinside	NULL	155
+deadinside	f	155
+salam	NULL	150
+salam	t	150
+skuf	NULL	95
+skuf	f	95
+
+
+query
+SELECT squad, grouping(squad) AS g, count(*) AS n FROM rls_ag_loot GROUP BY ROLLUP (squad) ORDER BY g, squad;
+----
+squad	g	n
+clickclack	0	5
+deadinside	0	5
+salam	0	5
+skuf	0	5
+NULL	1	20
+
+
+query
+SELECT DISTINCT squad FROM rls_ag_loot ORDER BY squad;
+----
+squad
+clickclack
+deadinside
+salam
+skuf
+
+
+query
+SELECT DISTINCT owner FROM rls_ag_loot ORDER BY owner;
+----
+owner
+rls_ag_arelav
+
+
+query
+SELECT count(*) AS n FROM (SELECT DISTINCT squad, flag FROM rls_ag_loot) s;
+----
+n
+4
+
+
+query
+SELECT count(*) AS n, sum(amount) AS total FROM rls_ag_loot WHERE owner = 'rls_ag_babsky';
+----
+n	total
+0	NULL
+
+
+query
+SELECT count(*) AS n FROM rls_ag_loot WHERE note = 'hidden';
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM rls_ag_loot WHERE id > 1000;
+----
+n
+0
+
+
+query
+SELECT sum(amount) AS total, max(amount) AS hi, bool_or(flag) AS any FROM rls_ag_loot WHERE id > 1000;
+----
+total	hi	any
+NULL	NULL	NULL
+
+
+query
+SELECT EXISTS (SELECT 1 FROM rls_ag_loot WHERE owner = 'rls_ag_kostya') AS kostya_visible;
+----
+kostya_visible
+f
+
+
+query
+SELECT (SELECT count(*) FROM rls_ag_loot) AS n, (SELECT max(amount) FROM rls_ag_loot WHERE squad = 'skuf') AS skuf_hi;
+----
+n	skuf_hi
+20	39
+
+
+query
+SELECT s.squad, (SELECT count(*) FROM rls_ag_loot l WHERE l.squad = s.squad) AS n FROM rls_ag_squads s ORDER BY s.member, s.squad;
+----
+squad	n
+clickclack	5
+salam	5
+deadinside	5
+skuf	5
+
+
+query
+SELECT s.member, count(l.id) AS n FROM rls_ag_squads s LEFT JOIN rls_ag_loot l ON l.squad = s.squad GROUP BY s.member ORDER BY s.member;
+----
+member	n
+rls_ag_arelav	10
+rls_ag_babsky	5
+rls_ag_kostya	5
+
+
+query
+SELECT s.member, sum(l.amount) AS total FROM rls_ag_squads s JOIN rls_ag_loot l ON l.squad = s.squad GROUP BY s.member ORDER BY s.member;
+----
+member	total
+rls_ag_arelav	260
+rls_ag_babsky	155
+rls_ag_kostya	95
+
+
+query
+SELECT count(*) AS n FROM rls_ag_loot a JOIN rls_ag_loot b ON a.squad = b.squad AND a.id < b.id;
+----
+n
+40
+
+
+query
+SELECT max(n) AS biggest FROM (SELECT squad, count(*) AS n FROM rls_ag_loot GROUP BY squad) s;
+----
+biggest
+5
+
+
+query
+SELECT count(*) AS n FROM rls_ag_loot WHERE amount > (SELECT round(avg(amount))::int FROM rls_ag_loot);
+----
+n
+9
+
+
+query
+SELECT squad, count(*) AS n FROM rls_ag_loot l WHERE amount >= (SELECT max(amount) FROM rls_ag_loot i WHERE i.squad = l.squad) GROUP BY squad ORDER BY squad;
+----
+squad	n
+clickclack	1
+deadinside	1
+salam	1
+skuf	1
+
+
+statement ok
+SET ROLE rls_ag_babsky;
+
+
+query
+SELECT count(*) AS n, sum(amount) AS total, min(id) AS first FROM rls_ag_loot;
+----
+n	total	first
+20	480	1
+
+
+query
+SELECT squad, count(*) AS n FROM rls_ag_loot GROUP BY squad ORDER BY squad;
+----
+squad	n
+clickclack	5
+deadinside	5
+salam	5
+skuf	5
+
+
+query
+SELECT count(*) AS n FROM rls_ag_loot WHERE note <> 'hidden';
+----
+n
+0
+
+
+statement ok
+SET ROLE rls_ag_kostya;
+
+
+query
+SELECT count(*) AS n, sum(amount) AS total, max(id) AS last FROM rls_ag_loot;
+----
+n	total	last
+20	470	59
+
+
+query
+SELECT flag, count(*) AS n FROM rls_ag_loot GROUP BY flag ORDER BY flag;
+----
+flag	n
+f	10
+t	10
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP POLICY rls_ag_own ON rls_ag_loot;
+
+
+statement ok
+CREATE POLICY rls_ag_by_squad ON rls_ag_loot FOR SELECT USING (squad IN (SELECT squad FROM rls_ag_squads WHERE member = current_user));
+
+
+statement ok
+SET ROLE rls_ag_arelav;
+
+
+query
+SELECT count(*) AS n, count(DISTINCT owner) AS owners, sum(amount) AS total FROM rls_ag_loot;
+----
+n	owners	total
+30	3	710
+
+
+query
+SELECT squad, owner, count(*) AS n FROM rls_ag_loot GROUP BY squad, owner ORDER BY squad, owner;
+----
+squad	owner	n
+clickclack	rls_ag_arelav	5
+clickclack	rls_ag_babsky	5
+clickclack	rls_ag_kostya	5
+salam	rls_ag_arelav	5
+salam	rls_ag_babsky	5
+salam	rls_ag_kostya	5
+
+
+query
+SELECT count(*) AS n FROM rls_ag_loot WHERE squad = 'deadinside';
+----
+n
+0
+
+
+statement ok
+SET ROLE rls_ag_babsky;
+
+
+query
+SELECT squad, count(*) AS n FROM rls_ag_loot GROUP BY ROLLUP (squad) ORDER BY squad NULLS FIRST;
+----
+squad	n
+NULL	15
+deadinside	15
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_ag_light ON rls_ag_loot AS RESTRICTIVE FOR SELECT USING (amount < 40);
+
+
+statement ok
+SET ROLE rls_ag_arelav;
+
+
+query
+SELECT count(*) AS n, max(amount) AS hi FROM rls_ag_loot;
+----
+n	hi
+24	38
+
+
+query
+SELECT squad, max(amount) AS hi FROM rls_ag_loot GROUP BY squad ORDER BY squad;
+----
+squad	hi
+clickclack	36
+salam	38
+
+
+statement ok
+SET ROLE rls_ag_kostya;
+
+
+query
+SELECT count(*) AS n, max(amount) AS hi, min(amount) AS lo FROM rls_ag_loot;
+----
+n	hi	lo
+13	39	1
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_ag_everyone ON rls_ag_loot FOR SELECT TO rls_ag_kostya USING (true);
+
+
+statement ok
+SET ROLE rls_ag_kostya;
+
+
+query
+SELECT count(*) AS n, max(amount) AS hi FROM rls_ag_loot;
+----
+n	hi
+48	39
+
+
+statement ok
+SET ROLE rls_ag_arelav;
+
+
+query
+SELECT count(*) AS n FROM rls_ag_loot;
+----
+n
+24
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT count(*) AS n, sum(amount) AS total FROM rls_ag_loot;
+----
+n	total
+60	1460
+
+
+statement ok
+ALTER TABLE rls_ag_loot DISABLE ROW LEVEL SECURITY;
+
+
+statement ok
+SET ROLE rls_ag_arelav;
+
+
+query
+SELECT count(*) AS n, sum(amount) AS total FROM rls_ag_loot;
+----
+n	total
+60	1460
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP TABLE rls_ag_loot;
+
+
+statement ok
+DROP TABLE rls_ag_squads;
+
+
+statement ok
+DROP ROLE rls_ag_arelav;
+
+
+statement ok
+DROP ROLE rls_ag_babsky;
+
+
+statement ok
+DROP ROLE rls_ag_kostya;

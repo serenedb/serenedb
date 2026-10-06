@@ -1,0 +1,574 @@
+statement ok
+DROP TABLE IF EXISTS rls_pi_crew;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_pi_arelav;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_pi_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_pi_squad;
+
+
+statement ok
+CREATE ROLE rls_pi_squad;
+
+
+statement ok
+CREATE ROLE rls_pi_arelav;
+
+
+statement ok
+CREATE ROLE rls_pi_babsky;
+
+
+statement ok
+CREATE TABLE rls_pi_crew (id int, member text, squad text, grade int);
+
+
+statement ok
+INSERT INTO rls_pi_crew VALUES
+  (1, 'rls_pi_arelav', 'clickclack', 10),
+  (2, 'rls_pi_babsky', 'clickclack', 20),
+  (3, 'rls_pi_arelav', 'deadinside', 30),
+  (4, 'kostya', 'salam', 40),
+  (5, 'rls_pi_babsky', 'salam', 50);
+
+
+statement ok
+GRANT SELECT ON rls_pi_crew TO rls_pi_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_pi_crew TO rls_pi_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_pi_crew TO rls_pi_squad;
+
+
+statement ok
+PREPARE rls_pi_all AS SELECT id FROM rls_pi_crew ORDER BY id;
+
+
+statement ok
+PREPARE rls_pi_count AS SELECT count(*) AS n FROM rls_pi_crew;
+
+
+statement ok
+PREPARE rls_pi_top AS SELECT id FROM rls_pi_crew ORDER BY grade DESC, id LIMIT 2;
+
+
+query
+EXECUTE rls_pi_all;
+----
+id
+1
+2
+3
+4
+5
+
+
+statement ok
+ALTER TABLE rls_pi_crew ENABLE ROW LEVEL SECURITY;
+
+
+query
+EXECUTE rls_pi_count;
+----
+n
+5
+
+
+statement ok
+SET ROLE rls_pi_arelav;
+
+
+query
+EXECUTE rls_pi_count;
+----
+n
+0
+
+
+query
+EXECUTE rls_pi_all;
+----
+id
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_pi_self ON rls_pi_crew FOR SELECT USING (member = current_user);
+
+
+statement ok
+SET ROLE rls_pi_arelav;
+
+
+query
+EXECUTE rls_pi_all;
+----
+id
+1
+3
+
+
+query
+EXECUTE rls_pi_top;
+----
+id
+3
+1
+
+
+statement ok
+SET ROLE rls_pi_babsky;
+
+
+query
+EXECUTE rls_pi_all;
+----
+id
+2
+5
+
+
+query
+EXECUTE rls_pi_top;
+----
+id
+5
+2
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_pi_self ON rls_pi_crew USING (member = current_user OR grade >= 40);
+
+
+statement ok
+SET ROLE rls_pi_arelav;
+
+
+query
+EXECUTE rls_pi_all;
+----
+id
+1
+3
+4
+5
+
+
+query
+EXECUTE rls_pi_top;
+----
+id
+5
+4
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_pi_self ON rls_pi_crew TO rls_pi_babsky;
+
+
+statement ok
+SET ROLE rls_pi_arelav;
+
+
+query
+EXECUTE rls_pi_count;
+----
+n
+0
+
+
+statement ok
+SET ROLE rls_pi_babsky;
+
+
+query
+EXECUTE rls_pi_all;
+----
+id
+2
+4
+5
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_pi_squad_view ON rls_pi_crew FOR SELECT TO rls_pi_squad USING (squad = 'clickclack');
+
+
+statement ok
+SET ROLE rls_pi_arelav;
+
+
+query
+EXECUTE rls_pi_all;
+----
+id
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+GRANT rls_pi_squad TO rls_pi_arelav;
+
+
+statement ok
+SET ROLE rls_pi_arelav;
+
+
+query
+SELECT id FROM rls_pi_crew ORDER BY id;
+----
+id
+1
+2
+
+
+onlyif serenedb
+query
+EXECUTE rls_pi_all;
+----
+id
+1
+2
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+REVOKE rls_pi_squad FROM rls_pi_arelav;
+
+
+statement ok
+SET ROLE rls_pi_arelav;
+
+
+query
+SELECT id FROM rls_pi_crew ORDER BY id;
+----
+id
+
+
+onlyif serenedb
+query
+EXECUTE rls_pi_all;
+----
+id
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_pi_mid ON rls_pi_crew AS RESTRICTIVE FOR SELECT USING (grade < 50);
+
+
+statement ok
+SET ROLE rls_pi_babsky;
+
+
+query
+EXECUTE rls_pi_all;
+----
+id
+2
+4
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP POLICY rls_pi_mid ON rls_pi_crew;
+
+
+statement ok
+SET ROLE rls_pi_babsky;
+
+
+query
+EXECUTE rls_pi_all;
+----
+id
+2
+4
+5
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER ROLE rls_pi_babsky BYPASSRLS;
+
+
+statement ok
+SET ROLE rls_pi_babsky;
+
+
+query
+EXECUTE rls_pi_count;
+----
+n
+5
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER ROLE rls_pi_babsky NOBYPASSRLS;
+
+
+statement ok
+SET ROLE rls_pi_babsky;
+
+
+query
+SELECT count(*) AS n FROM rls_pi_crew;
+----
+n
+3
+
+
+onlyif serenedb
+query
+EXECUTE rls_pi_count;
+----
+n
+3
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER TABLE rls_pi_crew OWNER TO rls_pi_babsky;
+
+
+statement ok
+SET ROLE rls_pi_babsky;
+
+
+query
+EXECUTE rls_pi_count;
+----
+n
+5
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER TABLE rls_pi_crew FORCE ROW LEVEL SECURITY;
+
+
+statement ok
+SET ROLE rls_pi_babsky;
+
+
+query
+EXECUTE rls_pi_all;
+----
+id
+2
+4
+5
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER TABLE rls_pi_crew NO FORCE ROW LEVEL SECURITY;
+
+
+statement ok
+SET ROLE rls_pi_babsky;
+
+
+query
+EXECUTE rls_pi_count;
+----
+n
+5
+
+
+statement ok
+SET ROLE rls_pi_arelav;
+
+
+query
+EXECUTE rls_pi_count;
+----
+n
+0
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER TABLE rls_pi_crew DISABLE ROW LEVEL SECURITY;
+
+
+statement ok
+SET ROLE rls_pi_arelav;
+
+
+query
+EXECUTE rls_pi_count;
+----
+n
+5
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER TABLE rls_pi_crew ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+SET ROLE rls_pi_arelav;
+
+
+query
+EXECUTE rls_pi_count;
+----
+n
+0
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DEALLOCATE rls_pi_all;
+
+
+statement ok
+DEALLOCATE rls_pi_count;
+
+
+statement ok
+DEALLOCATE rls_pi_top;
+
+
+statement ok
+DROP TABLE rls_pi_crew;
+
+
+statement ok
+CREATE TABLE rls_pi_crew (id int, member text);
+
+
+statement ok
+INSERT INTO rls_pi_crew VALUES (1, 'rls_pi_arelav'), (2, 'rls_pi_babsky');
+
+
+statement ok
+GRANT SELECT ON rls_pi_crew TO rls_pi_arelav;
+
+
+statement ok
+PREPARE rls_pi_again AS SELECT id FROM rls_pi_crew ORDER BY id;
+
+
+statement ok
+SET ROLE rls_pi_arelav;
+
+
+query
+EXECUTE rls_pi_again;
+----
+id
+1
+2
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER TABLE rls_pi_crew ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_pi_again_self ON rls_pi_crew USING (member = current_user);
+
+
+statement ok
+SET ROLE rls_pi_arelav;
+
+
+query
+EXECUTE rls_pi_again;
+----
+id
+1
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DEALLOCATE rls_pi_again;
+
+
+statement ok
+DROP TABLE rls_pi_crew;
+
+
+statement ok
+DROP ROLE rls_pi_arelav;
+
+
+statement ok
+DROP ROLE rls_pi_babsky;
+
+
+statement ok
+DROP ROLE rls_pi_squad;

@@ -1,0 +1,410 @@
+statement ok
+DROP TABLE IF EXISTS rls_ds_accounts;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_ds_transfers;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_ds_archive;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_ds_scratch;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_ds_arelav;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_ds_babsky;
+
+
+statement ok
+CREATE ROLE rls_ds_arelav;
+
+
+statement ok
+CREATE ROLE rls_ds_babsky;
+
+
+statement ok
+CREATE TABLE rls_ds_accounts (id int, owner text DEFAULT current_user, balance int);
+
+
+statement ok
+INSERT INTO rls_ds_accounts VALUES
+  (1, 'rls_ds_arelav', 100),
+  (2, 'rls_ds_babsky', 200),
+  (3, 'rls_ds_arelav', 300),
+  (4, 'rls_ds_babsky', 400),
+  (5, 'kostya', 500);
+
+
+statement ok
+CREATE TABLE rls_ds_transfers (id int, owner text, account_id int, amount int);
+
+
+statement ok
+INSERT INTO rls_ds_transfers VALUES
+  (10, 'rls_ds_arelav', 1, 10),
+  (11, 'rls_ds_arelav', 3, 30),
+  (12, 'rls_ds_babsky', 2, 20),
+  (13, 'rls_ds_babsky', 1, 99),
+  (14, 'rls_ds_arelav', 4, 40),
+  (15, 'kostya', 5, 50);
+
+
+statement ok
+CREATE TABLE rls_ds_archive (id int, owner text, balance int);
+
+
+statement ok
+CREATE TABLE rls_ds_scratch (id int, owner text);
+
+
+statement ok
+INSERT INTO rls_ds_scratch VALUES (1, 'rls_ds_arelav'), (2, 'rls_ds_babsky');
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON rls_ds_accounts TO rls_ds_arelav;
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON rls_ds_accounts TO rls_ds_babsky;
+
+
+statement ok
+GRANT SELECT, INSERT ON rls_ds_transfers TO rls_ds_arelav;
+
+
+statement ok
+GRANT SELECT, INSERT ON rls_ds_transfers TO rls_ds_babsky;
+
+
+statement ok
+GRANT SELECT, INSERT ON rls_ds_archive TO rls_ds_arelav;
+
+
+statement ok
+GRANT SELECT, INSERT ON rls_ds_archive TO rls_ds_babsky;
+
+
+statement ok
+GRANT SELECT, TRUNCATE ON rls_ds_scratch TO rls_ds_arelav;
+
+
+statement ok
+ALTER TABLE rls_ds_accounts ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+ALTER TABLE rls_ds_transfers ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+ALTER TABLE rls_ds_archive ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+ALTER TABLE rls_ds_scratch ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_ds_accounts_own ON rls_ds_accounts FOR ALL USING (owner = current_user) WITH CHECK (owner = current_user AND balance >= 0);
+
+
+statement ok
+CREATE POLICY rls_ds_transfers_read ON rls_ds_transfers FOR SELECT USING (owner = current_user);
+
+
+statement ok
+CREATE POLICY rls_ds_transfers_write ON rls_ds_transfers FOR INSERT WITH CHECK (owner = current_user);
+
+
+statement ok
+CREATE POLICY rls_ds_archive_read ON rls_ds_archive FOR SELECT USING (owner = current_user);
+
+
+statement ok
+CREATE POLICY rls_ds_archive_write ON rls_ds_archive FOR INSERT WITH CHECK (owner = current_user);
+
+
+statement ok
+CREATE POLICY rls_ds_scratch_own ON rls_ds_scratch FOR SELECT USING (owner = current_user);
+
+
+statement ok
+SET ROLE rls_ds_arelav;
+
+
+query rowsort
+UPDATE rls_ds_accounts a SET balance = a.balance + t.amount FROM rls_ds_transfers t WHERE t.account_id = a.id RETURNING a.id, a.balance;
+----
+id	balance
+1	110
+3	330
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT id, balance FROM rls_ds_accounts ORDER BY id;
+----
+id	balance
+1	110
+2	200
+3	330
+4	400
+5	500
+
+
+statement ok
+SET ROLE rls_ds_arelav;
+
+
+query rowsort
+UPDATE rls_ds_accounts SET balance = balance - (SELECT sum(amount) FROM rls_ds_transfers WHERE account_id = rls_ds_accounts.id) WHERE id IN (SELECT account_id FROM rls_ds_transfers) RETURNING id, balance;
+----
+id	balance
+1	100
+3	300
+
+
+query rowsort
+UPDATE rls_ds_accounts SET balance = (SELECT max(balance) FROM rls_ds_accounts) WHERE id = 1 RETURNING id, balance;
+----
+id	balance
+1	300
+
+
+statement error
+UPDATE rls_ds_accounts SET balance = balance - 1000 WHERE id = 3;
+----
+db error: ERROR: <slt:ignore>row violates row-level security policy<slt:ignore>
+
+
+query
+SELECT id, balance FROM rls_ds_accounts ORDER BY id;
+----
+id	balance
+1	300
+3	300
+
+
+query rowsort
+DELETE FROM rls_ds_accounts a USING rls_ds_transfers t WHERE t.account_id = a.id AND t.amount > 25 RETURNING a.id;
+----
+id
+3
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT id, owner, balance FROM rls_ds_accounts ORDER BY id;
+----
+id	owner	balance
+1	rls_ds_arelav	300
+2	rls_ds_babsky	200
+4	rls_ds_babsky	400
+5	kostya	500
+
+
+statement ok
+SET ROLE rls_ds_arelav;
+
+
+statement ok
+INSERT INTO rls_ds_archive SELECT id, owner, balance FROM rls_ds_accounts;
+
+
+statement error
+INSERT INTO rls_ds_archive SELECT id, 'rls_ds_babsky', balance FROM rls_ds_accounts;
+----
+db error: ERROR: <slt:ignore>row violates row-level security policy<slt:ignore>
+
+
+statement ok
+INSERT INTO rls_ds_accounts (id, balance) VALUES (6, 60);
+
+
+query
+SELECT id, owner, balance FROM rls_ds_accounts ORDER BY id;
+----
+id	owner	balance
+1	rls_ds_arelav	300
+6	rls_ds_arelav	60
+
+
+statement error
+INSERT INTO rls_ds_accounts VALUES (7, 'rls_ds_arelav', 70), (8, 'rls_ds_babsky', 80);
+----
+db error: ERROR: <slt:ignore>row violates row-level security policy<slt:ignore>
+
+
+statement error
+INSERT INTO rls_ds_accounts VALUES (7, 'rls_ds_arelav', 70), (9, 'rls_ds_arelav', -1);
+----
+db error: ERROR: <slt:ignore>row violates row-level security policy<slt:ignore>
+
+
+query
+SELECT count(*) AS n FROM rls_ds_accounts WHERE id >= 7;
+----
+n
+0
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO rls_ds_accounts VALUES (20, 'rls_ds_arelav', 1);
+
+
+statement ok
+UPDATE rls_ds_accounts SET balance = balance + 1 WHERE id = 20;
+
+
+query
+SELECT id, balance FROM rls_ds_accounts WHERE id = 20;
+----
+id	balance
+20	2
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) AS n FROM rls_ds_accounts WHERE id = 20;
+----
+n
+0
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO rls_ds_accounts VALUES (21, 'rls_ds_arelav', 1);
+
+
+statement error
+INSERT INTO rls_ds_accounts VALUES (22, 'rls_ds_babsky', 1);
+----
+db error: ERROR: <slt:ignore>row violates row-level security policy<slt:ignore>
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) AS n FROM rls_ds_accounts WHERE id IN (21, 22);
+----
+n
+0
+
+
+query
+SELECT id, balance FROM rls_ds_archive ORDER BY id;
+----
+id	balance
+1	300
+
+
+statement ok
+SET ROLE rls_ds_babsky;
+
+
+query
+SELECT id, balance FROM rls_ds_archive ORDER BY id;
+----
+id	balance
+
+
+query rowsort
+UPDATE rls_ds_accounts SET balance = 0 RETURNING id;
+----
+id
+2
+4
+
+
+query rowsort
+DELETE FROM rls_ds_accounts WHERE balance = 0 RETURNING id;
+----
+id
+2
+4
+
+
+statement ok
+SET ROLE rls_ds_arelav;
+
+
+query
+SELECT count(*) AS n FROM rls_ds_scratch;
+----
+n
+1
+
+
+statement ok
+TRUNCATE rls_ds_scratch;
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT count(*) AS n FROM rls_ds_scratch;
+----
+n
+0
+
+
+query
+SELECT id, owner, balance FROM rls_ds_accounts ORDER BY id;
+----
+id	owner	balance
+1	rls_ds_arelav	300
+5	kostya	500
+6	rls_ds_arelav	60
+
+
+statement ok
+DROP TABLE rls_ds_accounts;
+
+
+statement ok
+DROP TABLE rls_ds_transfers;
+
+
+statement ok
+DROP TABLE rls_ds_archive;
+
+
+statement ok
+DROP TABLE rls_ds_scratch;
+
+
+statement ok
+DROP ROLE rls_ds_arelav;
+
+
+statement ok
+DROP ROLE rls_ds_babsky;

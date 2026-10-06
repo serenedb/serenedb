@@ -1,0 +1,685 @@
+statement ok
+DROP TABLE IF EXISTS rls_sc_audit;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_sc_staff;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_sc_depts;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_sc_plain;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_sc_arelav;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_sc_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_sc_kostya;
+
+
+statement ok
+CREATE ROLE rls_sc_arelav;
+
+
+statement ok
+CREATE ROLE rls_sc_babsky;
+
+
+statement ok
+CREATE ROLE rls_sc_kostya;
+
+
+statement ok
+CREATE TABLE rls_sc_depts (dept text, head text, budget int);
+
+
+statement ok
+INSERT INTO rls_sc_depts VALUES
+  ('clickclack', 'rls_sc_arelav', 100),
+  ('deadinside', 'rls_sc_babsky', 200),
+  ('salam', 'rls_sc_kostya', 300),
+  ('skuf', 'nobody', 400);
+
+
+statement ok
+CREATE TABLE rls_sc_staff (id int, boss int, name text, owner text, dept text, salary int, memo text);
+
+
+statement ok
+INSERT INTO rls_sc_staff VALUES
+  (1, NULL, 'vedernikoff', 'nobody', 'skuf', 1000, 'ceo'),
+  (2, 1, 'babsky', 'rls_sc_babsky', 'deadinside', 900, 'boss'),
+  (3, 2, 'arelav', 'rls_sc_arelav', 'clickclack', 500, '3'),
+  (4, 3, 'kostya', 'rls_sc_kostya', 'salam', 300, 'intern'),
+  (5, 3, 'clickclack', 'rls_sc_arelav', 'clickclack', 400, '5'),
+  (6, 2, 'deadinside', 'rls_sc_babsky', 'deadinside', 700, 'overseer'),
+  (7, 5, 'skuf', 'rls_sc_arelav', 'clickclack', 200, '7'),
+  (8, 4, 'salam', 'rls_sc_kostya', 'salam', 100, 'salam'),
+  (9, 7, 'intern', 'rls_sc_arelav', 'clickclack', 50, '9'),
+  (10, 6, 'boss', 'rls_sc_babsky', 'deadinside', 600, 'babsky');
+
+
+statement ok
+CREATE TABLE rls_sc_audit (id int, staff_id int, owner text, kind text);
+
+
+statement ok
+INSERT INTO rls_sc_audit VALUES
+  (1, 3, 'rls_sc_arelav', 'login'),
+  (2, 2, 'rls_sc_babsky', 'login'),
+  (3, 5, 'rls_sc_arelav', 'raise'),
+  (4, 4, 'rls_sc_kostya', 'login'),
+  (5, 9, 'rls_sc_arelav', 'login'),
+  (6, 6, 'rls_sc_babsky', 'raise'),
+  (7, 1, 'nobody', 'raise');
+
+
+statement ok
+CREATE TABLE rls_sc_plain (n int, label text);
+
+
+statement ok
+INSERT INTO rls_sc_plain VALUES (1, 'one'), (2, 'two'), (3, 'three'), (4, 'four'), (5, 'five'), (11, 'eleven');
+
+
+statement ok
+GRANT SELECT ON rls_sc_depts TO rls_sc_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_sc_depts TO rls_sc_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_sc_depts TO rls_sc_kostya;
+
+
+statement ok
+GRANT SELECT ON rls_sc_staff TO rls_sc_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_sc_staff TO rls_sc_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_sc_staff TO rls_sc_kostya;
+
+
+statement ok
+GRANT SELECT ON rls_sc_audit TO rls_sc_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_sc_audit TO rls_sc_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_sc_audit TO rls_sc_kostya;
+
+
+statement ok
+GRANT SELECT ON rls_sc_plain TO rls_sc_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_sc_plain TO rls_sc_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_sc_plain TO rls_sc_kostya;
+
+
+statement ok
+ALTER TABLE rls_sc_staff ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+ALTER TABLE rls_sc_audit ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_sc_staff_visible ON rls_sc_staff FOR SELECT USING (owner = current_user OR dept IN (SELECT dept FROM rls_sc_depts WHERE head = current_user));
+
+
+statement ok
+CREATE POLICY rls_sc_audit_own ON rls_sc_audit FOR SELECT USING (owner = current_user);
+
+
+statement ok
+SET ROLE rls_sc_arelav;
+
+
+query
+SELECT id, name FROM rls_sc_staff ORDER BY id;
+----
+id	name
+3	arelav
+5	clickclack
+7	skuf
+9	intern
+
+
+query
+SELECT id, (SELECT count(*) FROM rls_sc_audit a WHERE a.staff_id = s.id) AS events FROM rls_sc_staff s ORDER BY id;
+----
+id	events
+3	1
+5	1
+7	0
+9	1
+
+
+query
+SELECT (SELECT max(salary) FROM rls_sc_staff) AS top_salary, (SELECT count(*) FROM rls_sc_audit) AS events, (SELECT count(*) FROM rls_sc_plain) AS plain;
+----
+top_salary	events	plain
+500	3	6
+
+
+query
+SELECT id, (SELECT b.name FROM rls_sc_staff b WHERE b.id = s.boss) AS boss_name FROM rls_sc_staff s ORDER BY id;
+----
+id	boss_name
+3	NULL
+5	arelav
+7	clickclack
+9	skuf
+
+
+query
+SELECT id FROM rls_sc_staff WHERE id IN (SELECT staff_id FROM rls_sc_audit) ORDER BY id;
+----
+id
+3
+5
+9
+
+
+query
+SELECT id FROM rls_sc_staff WHERE id NOT IN (SELECT staff_id FROM rls_sc_audit) ORDER BY id;
+----
+id
+7
+
+
+query
+SELECT staff_id FROM rls_sc_audit WHERE staff_id NOT IN (SELECT id FROM rls_sc_staff) ORDER BY staff_id;
+----
+staff_id
+
+
+query
+SELECT id FROM rls_sc_staff WHERE salary > ALL (SELECT salary FROM rls_sc_staff WHERE dept = 'clickclack' AND id <> rls_sc_staff.id) ORDER BY id;
+----
+id
+3
+5
+7
+9
+
+
+query
+SELECT id FROM rls_sc_staff WHERE salary < ANY (SELECT salary FROM rls_sc_staff WHERE name = 'arelav') ORDER BY id;
+----
+id
+5
+7
+9
+
+
+query
+SELECT id FROM rls_sc_staff s WHERE EXISTS (SELECT 1 FROM rls_sc_staff c WHERE c.boss = s.id) ORDER BY id;
+----
+id
+3
+5
+7
+
+
+query
+SELECT id FROM rls_sc_staff s WHERE NOT EXISTS (SELECT 1 FROM rls_sc_staff c WHERE c.boss = s.id) ORDER BY id;
+----
+id
+9
+
+
+query
+SELECT id FROM rls_sc_staff s WHERE boss IS NOT NULL AND NOT EXISTS (SELECT 1 FROM rls_sc_staff b WHERE b.id = s.boss) ORDER BY id;
+----
+id
+3
+
+
+query
+SELECT id FROM rls_sc_staff WHERE memo::int > (SELECT min(memo::int) FROM rls_sc_staff) ORDER BY id;
+----
+id
+5
+7
+9
+
+
+query
+SELECT id FROM rls_sc_staff WHERE salary > (SELECT avg(salary) FROM rls_sc_staff) ORDER BY id;
+----
+id
+3
+5
+
+
+query
+SELECT dept, count(*) AS n FROM rls_sc_staff GROUP BY dept HAVING count(*) >= (SELECT count(*) FROM rls_sc_audit WHERE kind = 'raise') ORDER BY dept;
+----
+dept	n
+clickclack	4
+
+
+query
+SELECT id FROM rls_sc_staff ORDER BY (SELECT count(*) FROM rls_sc_audit a WHERE a.staff_id = rls_sc_staff.id) DESC, id;
+----
+id
+3
+5
+9
+7
+
+
+query
+WITH mine AS (SELECT id, salary FROM rls_sc_staff) SELECT count(*) AS n, sum(salary) AS total FROM mine;
+----
+n	total
+4	1150
+
+
+query
+WITH mine AS MATERIALIZED (SELECT id, salary, memo FROM rls_sc_staff) SELECT id FROM mine WHERE memo::int > 4 ORDER BY id;
+----
+id
+5
+7
+9
+
+
+query
+WITH mine AS NOT MATERIALIZED (SELECT id, salary, memo FROM rls_sc_staff) SELECT id FROM mine WHERE memo::int > 4 ORDER BY id;
+----
+id
+5
+7
+9
+
+
+query
+WITH s AS (SELECT id, boss FROM rls_sc_staff), a AS (SELECT staff_id FROM rls_sc_audit) SELECT s.id FROM s JOIN a ON a.staff_id = s.id ORDER BY s.id;
+----
+id
+3
+5
+9
+
+
+query
+WITH s AS (SELECT id, salary FROM rls_sc_staff) SELECT x.id AS a, y.id AS b FROM s x JOIN s y ON y.salary > x.salary AND y.id < x.id ORDER BY a, b;
+----
+a	b
+5	3
+7	3
+7	5
+9	3
+9	5
+9	7
+
+
+query
+WITH RECURSIVE chain(id, depth) AS (SELECT id, 0 FROM rls_sc_staff WHERE name = 'arelav' UNION ALL SELECT s.id, c.depth + 1 FROM rls_sc_staff s JOIN chain c ON s.boss = c.id) SELECT id, depth FROM chain ORDER BY depth, id;
+----
+id	depth
+3	0
+5	1
+7	2
+9	3
+
+
+query
+WITH RECURSIVE up(id, boss, depth) AS (SELECT id, boss, 0 FROM rls_sc_staff WHERE name = 'intern' UNION ALL SELECT s.id, s.boss, u.depth + 1 FROM rls_sc_staff s JOIN up u ON s.id = u.boss) SELECT id, depth FROM up ORDER BY depth;
+----
+id	depth
+9	0
+7	1
+5	2
+3	3
+
+
+query
+WITH RECURSIVE counter(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM counter WHERE n < (SELECT count(*) FROM rls_sc_staff)) SELECT max(n) AS n FROM counter;
+----
+n
+4
+
+
+query
+SELECT id FROM rls_sc_staff UNION SELECT staff_id FROM rls_sc_audit ORDER BY 1;
+----
+id
+3
+5
+7
+9
+
+
+query
+SELECT id FROM rls_sc_staff UNION ALL SELECT staff_id FROM rls_sc_audit ORDER BY 1;
+----
+id
+3
+3
+5
+5
+7
+9
+9
+
+
+query
+SELECT id FROM rls_sc_staff INTERSECT SELECT staff_id FROM rls_sc_audit ORDER BY 1;
+----
+id
+3
+5
+9
+
+
+query
+SELECT id FROM rls_sc_staff EXCEPT SELECT staff_id FROM rls_sc_audit ORDER BY 1;
+----
+id
+7
+
+
+query
+SELECT n FROM rls_sc_plain EXCEPT SELECT id FROM rls_sc_staff ORDER BY 1;
+----
+n
+1
+2
+4
+11
+
+
+query
+SELECT n FROM rls_sc_plain INTERSECT SELECT id FROM rls_sc_staff ORDER BY 1;
+----
+n
+3
+5
+
+
+query
+SELECT dept FROM rls_sc_staff INTERSECT ALL SELECT dept FROM rls_sc_staff WHERE salary > 100 ORDER BY 1;
+----
+dept
+clickclack
+clickclack
+clickclack
+
+
+query
+SELECT dept FROM rls_sc_staff EXCEPT ALL SELECT dept FROM rls_sc_staff WHERE salary > 100 ORDER BY 1;
+----
+dept
+clickclack
+
+
+query
+SELECT count(*) AS n FROM (SELECT id FROM rls_sc_staff UNION SELECT n FROM rls_sc_plain) u;
+----
+n
+8
+
+
+query
+SELECT s.id, p.label FROM rls_sc_staff s JOIN rls_sc_plain p ON p.n = s.id ORDER BY s.id;
+----
+id	label
+3	three
+5	five
+
+
+query
+SELECT v.k, s.name FROM (VALUES (3), (4), (7), (99)) AS v(k) LEFT JOIN rls_sc_staff s ON s.id = v.k ORDER BY v.k;
+----
+k	name
+3	arelav
+4	NULL
+7	skuf
+99	NULL
+
+
+query
+SELECT x.id FROM (SELECT id FROM (SELECT id, salary FROM (SELECT * FROM rls_sc_staff) a WHERE salary > 100) b) x ORDER BY x.id;
+----
+id
+3
+5
+7
+
+
+query
+SELECT id FROM rls_sc_staff WHERE dept IN (SELECT dept FROM rls_sc_depts WHERE budget > (SELECT min(budget) FROM rls_sc_depts)) ORDER BY id;
+----
+id
+
+
+query
+SELECT d.dept, (SELECT count(*) FROM rls_sc_staff s WHERE s.dept = d.dept) AS n FROM rls_sc_depts d ORDER BY d.dept;
+----
+dept	n
+clickclack	4
+deadinside	0
+salam	0
+skuf	0
+
+
+query
+SELECT d.dept FROM rls_sc_depts d WHERE NOT EXISTS (SELECT 1 FROM rls_sc_staff s WHERE s.dept = d.dept) ORDER BY d.dept;
+----
+dept
+deadinside
+salam
+skuf
+
+
+statement ok
+SET ROLE rls_sc_babsky;
+
+
+query
+SELECT id, name FROM rls_sc_staff ORDER BY id;
+----
+id	name
+2	babsky
+6	deadinside
+10	boss
+
+
+query
+WITH RECURSIVE chain(id, depth) AS (SELECT id, 0 FROM rls_sc_staff WHERE name = 'babsky' UNION ALL SELECT s.id, c.depth + 1 FROM rls_sc_staff s JOIN chain c ON s.boss = c.id) SELECT id, depth FROM chain ORDER BY depth, id;
+----
+id	depth
+2	0
+6	1
+10	2
+
+
+query
+SELECT id FROM rls_sc_staff EXCEPT SELECT staff_id FROM rls_sc_audit ORDER BY 1;
+----
+id
+10
+
+
+query
+SELECT d.dept, (SELECT count(*) FROM rls_sc_staff s WHERE s.dept = d.dept) AS n FROM rls_sc_depts d ORDER BY d.dept;
+----
+dept	n
+clickclack	0
+deadinside	3
+salam	0
+skuf	0
+
+
+statement ok
+SET ROLE rls_sc_kostya;
+
+
+query
+SELECT id, name FROM rls_sc_staff ORDER BY id;
+----
+id	name
+4	kostya
+8	salam
+
+
+query
+SELECT id, (SELECT b.name FROM rls_sc_staff b WHERE b.id = s.boss) AS boss_name FROM rls_sc_staff s ORDER BY id;
+----
+id	boss_name
+4	NULL
+8	kostya
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER TABLE rls_sc_depts ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_sc_depts_rich ON rls_sc_depts FOR SELECT USING (budget >= 200);
+
+
+statement ok
+SET ROLE rls_sc_arelav;
+
+
+query
+SELECT dept FROM rls_sc_depts ORDER BY dept;
+----
+dept
+deadinside
+salam
+skuf
+
+
+query
+SELECT id, name FROM rls_sc_staff ORDER BY id;
+----
+id	name
+3	arelav
+5	clickclack
+7	skuf
+9	intern
+
+
+query
+SELECT d.dept, (SELECT count(*) FROM rls_sc_staff s WHERE s.dept = d.dept) AS n FROM rls_sc_depts d ORDER BY d.dept;
+----
+dept	n
+deadinside	0
+salam	0
+skuf	0
+
+
+statement ok
+SET ROLE rls_sc_babsky;
+
+
+query
+SELECT id, name FROM rls_sc_staff ORDER BY id;
+----
+id	name
+2	babsky
+6	deadinside
+10	boss
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_sc_audit_logins ON rls_sc_audit FOR SELECT USING (kind = 'login' AND staff_id IN (SELECT id FROM rls_sc_staff));
+
+
+statement ok
+SET ROLE rls_sc_babsky;
+
+
+query
+SELECT id, staff_id, kind FROM rls_sc_audit ORDER BY id;
+----
+id	staff_id	kind
+2	2	login
+6	6	raise
+
+
+statement ok
+SET ROLE rls_sc_kostya;
+
+
+query
+SELECT id, staff_id, kind FROM rls_sc_audit ORDER BY id;
+----
+id	staff_id	kind
+4	4	login
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT count(*) AS n FROM rls_sc_staff;
+----
+n
+10
+
+
+statement ok
+DROP TABLE rls_sc_audit;
+
+
+statement ok
+DROP TABLE rls_sc_staff;
+
+
+statement ok
+DROP TABLE rls_sc_depts;
+
+
+statement ok
+DROP TABLE rls_sc_plain;
+
+
+statement ok
+DROP ROLE rls_sc_arelav;
+
+
+statement ok
+DROP ROLE rls_sc_babsky;
+
+
+statement ok
+DROP ROLE rls_sc_kostya;

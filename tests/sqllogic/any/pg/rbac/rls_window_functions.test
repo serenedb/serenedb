@@ -1,0 +1,520 @@
+statement ok
+DROP TABLE IF EXISTS rls_wf_scores;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_wf_arelav;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_wf_babsky;
+
+
+statement ok
+CREATE ROLE rls_wf_arelav;
+
+
+statement ok
+CREATE ROLE rls_wf_babsky;
+
+
+statement ok
+CREATE TABLE rls_wf_scores (id int, owner text, team text, round int, score int, note text);
+
+
+statement ok
+INSERT INTO rls_wf_scores SELECT n, CASE WHEN n % 2 = 0 THEN 'rls_wf_arelav' ELSE 'rls_wf_babsky' END, CASE n % 3 WHEN 0 THEN 'clickclack' WHEN 1 THEN 'deadinside' ELSE 'salam' END, (n - 1) / 6 + 1, (n * 13) % 40, CASE WHEN n % 2 = 0 THEN ((n * 13) % 40)::text ELSE 'hidden' END FROM generate_series(1, 24) AS g(n);
+
+
+statement ok
+GRANT SELECT ON rls_wf_scores TO rls_wf_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_wf_scores TO rls_wf_babsky;
+
+
+statement ok
+ALTER TABLE rls_wf_scores ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_wf_own ON rls_wf_scores FOR SELECT USING (owner = current_user);
+
+
+statement ok
+SET ROLE rls_wf_arelav;
+
+
+query
+SELECT id, team, score FROM rls_wf_scores ORDER BY id;
+----
+id	team	score
+2	salam	26
+4	deadinside	12
+6	clickclack	38
+8	salam	24
+10	deadinside	10
+12	clickclack	36
+14	salam	22
+16	deadinside	8
+18	clickclack	34
+20	salam	20
+22	deadinside	6
+24	clickclack	32
+
+
+query
+SELECT id, row_number() OVER (ORDER BY score DESC, id) AS rn FROM rls_wf_scores ORDER BY rn;
+----
+id	rn
+6	1
+12	2
+18	3
+24	4
+2	5
+8	6
+14	7
+20	8
+4	9
+10	10
+16	11
+22	12
+
+
+query
+SELECT id, rank() OVER (ORDER BY round) AS r, dense_rank() OVER (ORDER BY round) AS dr FROM rls_wf_scores ORDER BY id;
+----
+id	r	dr
+2	1	1
+4	1	1
+6	1	1
+8	4	2
+10	4	2
+12	4	2
+14	7	3
+16	7	3
+18	7	3
+20	10	4
+22	10	4
+24	10	4
+
+
+query
+SELECT id, team, row_number() OVER (PARTITION BY team ORDER BY score DESC, id) AS rn FROM rls_wf_scores ORDER BY team, rn;
+----
+id	team	rn
+6	clickclack	1
+12	clickclack	2
+18	clickclack	3
+24	clickclack	4
+4	deadinside	1
+10	deadinside	2
+16	deadinside	3
+22	deadinside	4
+2	salam	1
+8	salam	2
+14	salam	3
+20	salam	4
+
+
+query
+SELECT id, count(*) OVER () AS total, count(*) OVER (PARTITION BY team) AS in_team FROM rls_wf_scores ORDER BY id;
+----
+id	total	in_team
+2	12	4
+4	12	4
+6	12	4
+8	12	4
+10	12	4
+12	12	4
+14	12	4
+16	12	4
+18	12	4
+20	12	4
+22	12	4
+24	12	4
+
+
+query
+SELECT id, sum(score) OVER (ORDER BY id) AS running, sum(score) OVER (PARTITION BY team ORDER BY id) AS team_running FROM rls_wf_scores ORDER BY id;
+----
+id	running	team_running
+2	26	26
+4	38	12
+6	76	38
+8	100	50
+10	110	22
+12	146	74
+14	168	72
+16	176	30
+18	210	108
+20	230	92
+22	236	36
+24	268	140
+
+
+query
+SELECT id, sum(score) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS around FROM rls_wf_scores ORDER BY id;
+----
+id	around
+2	38
+4	76
+6	74
+8	72
+10	70
+12	68
+14	66
+16	64
+18	62
+20	60
+22	58
+24	38
+
+
+query
+SELECT id, max(score) OVER (ORDER BY round RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) AS best_after FROM rls_wf_scores ORDER BY id;
+----
+id	best_after
+2	38
+4	38
+6	38
+8	36
+10	36
+12	36
+14	34
+16	34
+18	34
+20	32
+22	32
+24	32
+
+
+query
+SELECT id, count(*) OVER (ORDER BY round GROUPS BETWEEN 1 PRECEDING AND CURRENT ROW) AS recent FROM rls_wf_scores ORDER BY id;
+----
+id	recent
+2	3
+4	3
+6	3
+8	6
+10	6
+12	6
+14	6
+16	6
+18	6
+20	6
+22	6
+24	6
+
+
+query
+SELECT id, lag(id) OVER (ORDER BY id) AS prev, lead(id) OVER (ORDER BY id) AS next FROM rls_wf_scores ORDER BY id;
+----
+id	prev	next
+2	NULL	4
+4	2	6
+6	4	8
+8	6	10
+10	8	12
+12	10	14
+14	12	16
+16	14	18
+18	16	20
+20	18	22
+22	20	24
+24	22	NULL
+
+
+query
+SELECT id, lag(score, 2, -1) OVER (PARTITION BY team ORDER BY id) AS two_back FROM rls_wf_scores ORDER BY id;
+----
+id	two_back
+2	-1
+4	-1
+6	-1
+8	-1
+10	-1
+12	-1
+14	26
+16	12
+18	38
+20	24
+22	10
+24	36
+
+
+query
+SELECT id, first_value(id) OVER (PARTITION BY team ORDER BY score DESC, id) AS best, last_value(id) OVER (PARTITION BY team ORDER BY score DESC, id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS worst FROM rls_wf_scores ORDER BY id;
+----
+id	best	worst
+2	2	20
+4	4	22
+6	6	24
+8	2	20
+10	4	22
+12	6	24
+14	2	20
+16	4	22
+18	6	24
+20	2	20
+22	4	22
+24	6	24
+
+
+query
+SELECT id, nth_value(id, 2) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS second FROM rls_wf_scores ORDER BY id LIMIT 1;
+----
+id	second
+2	4
+
+
+query
+SELECT id, ntile(3) OVER (ORDER BY id) AS bucket FROM rls_wf_scores ORDER BY id;
+----
+id	bucket
+2	1
+4	1
+6	1
+8	1
+10	2
+12	2
+14	2
+16	2
+18	3
+20	3
+22	3
+24	3
+
+
+query
+SELECT id, percent_rank() OVER (ORDER BY score, id) AS pr, cume_dist() OVER (ORDER BY score, id) AS cd FROM rls_wf_scores ORDER BY id;
+----
+id	pr	cd
+2	0.6363636363636364	0.6666666666666666
+4	0.2727272727272727	0.3333333333333333
+6	1	1
+8	0.5454545454545454	0.5833333333333334
+10	0.18181818181818182	0.25
+12	0.9090909090909091	0.9166666666666666
+14	0.45454545454545453	0.5
+16	0.09090909090909091	0.16666666666666666
+18	0.8181818181818182	0.8333333333333334
+20	0.36363636363636365	0.4166666666666667
+22	0	0.08333333333333333
+24	0.7272727272727273	0.75
+
+
+query
+SELECT id, sum(note::int) OVER (PARTITION BY team) AS team_notes FROM rls_wf_scores ORDER BY id;
+----
+id	team_notes
+2	92
+4	36
+6	140
+8	92
+10	36
+12	140
+14	92
+16	36
+18	140
+20	92
+22	36
+24	140
+
+
+query
+SELECT id, max(note::int) OVER (ORDER BY id ROWS 2 PRECEDING) AS recent_max FROM rls_wf_scores ORDER BY id;
+----
+id	recent_max
+2	26
+4	26
+6	38
+8	38
+10	38
+12	36
+14	36
+16	36
+18	34
+20	34
+22	34
+24	32
+
+
+query
+SELECT team, id, score FROM (SELECT team, id, score, rank() OVER (PARTITION BY team ORDER BY score DESC) AS r FROM rls_wf_scores) s WHERE r = 1 ORDER BY team, id;
+----
+team	id	score
+clickclack	6	38
+deadinside	4	12
+salam	2	26
+
+
+query
+SELECT round, count(*) AS n, max(rn) AS max_rn FROM (SELECT round, row_number() OVER (PARTITION BY round ORDER BY id) AS rn FROM rls_wf_scores) s GROUP BY round ORDER BY round;
+----
+round	n	max_rn
+1	3	3
+2	3	3
+3	3	3
+4	3	3
+
+
+query
+SELECT id, score - avg(score) OVER (PARTITION BY team) > 0 AS above FROM rls_wf_scores ORDER BY id;
+----
+id	above
+2	t
+4	t
+6	t
+8	t
+10	t
+12	t
+14	f
+16	f
+18	f
+20	f
+22	f
+24	f
+
+
+query
+SELECT id, row_number() OVER w AS rn, sum(score) OVER w AS s FROM rls_wf_scores WINDOW w AS (PARTITION BY round ORDER BY id) ORDER BY id;
+----
+id	rn	s
+2	1	26
+4	2	38
+6	3	76
+8	1	24
+10	2	34
+12	3	70
+14	1	22
+16	2	30
+18	3	64
+20	1	20
+22	2	26
+24	3	58
+
+
+query
+SELECT id, count(*) FILTER (WHERE score > 20) OVER (ORDER BY id) AS high_so_far FROM rls_wf_scores ORDER BY id;
+----
+id	high_so_far
+2	1
+4	1
+6	2
+8	3
+10	3
+12	4
+14	5
+16	5
+18	6
+20	6
+22	6
+24	7
+
+
+query
+SELECT id FROM rls_wf_scores WHERE score > 10 ORDER BY row_number() OVER (ORDER BY score DESC, id) LIMIT 3;
+----
+id
+6
+12
+18
+
+
+query
+SELECT DISTINCT team, count(*) OVER (PARTITION BY team) AS n FROM rls_wf_scores ORDER BY team;
+----
+team	n
+clickclack	4
+deadinside	4
+salam	4
+
+
+statement ok
+SET ROLE rls_wf_babsky;
+
+
+query
+SELECT id, row_number() OVER (ORDER BY score DESC, id) AS rn FROM rls_wf_scores ORDER BY rn LIMIT 4;
+----
+id	rn
+3	1
+9	2
+15	3
+21	4
+
+
+query
+SELECT id, count(*) OVER () AS total, lag(id) OVER (ORDER BY id) AS prev FROM rls_wf_scores ORDER BY id LIMIT 4;
+----
+id	total	prev
+1	12	NULL
+3	12	1
+5	12	3
+7	12	5
+
+
+query
+SELECT team, id FROM (SELECT team, id, rank() OVER (PARTITION BY team ORDER BY score DESC) AS r FROM rls_wf_scores) s WHERE r = 1 ORDER BY team, id;
+----
+team	id
+clickclack	3
+deadinside	1
+salam	5
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_wf_late ON rls_wf_scores AS RESTRICTIVE FOR SELECT USING (round >= 3);
+
+
+statement ok
+SET ROLE rls_wf_arelav;
+
+
+query
+SELECT id, round, row_number() OVER (ORDER BY id) AS rn, count(*) OVER () AS total FROM rls_wf_scores ORDER BY id;
+----
+id	round	rn	total
+14	3	1	6
+16	3	2	6
+18	3	3	6
+20	4	4	6
+22	4	5	6
+24	4	6	6
+
+
+query
+SELECT id, lag(id) OVER (ORDER BY id) AS prev FROM rls_wf_scores ORDER BY id LIMIT 2;
+----
+id	prev
+14	NULL
+16	14
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT count(*) AS n, max(rn) AS max_rn FROM (SELECT row_number() OVER () AS rn FROM rls_wf_scores) s;
+----
+n	max_rn
+24	24
+
+
+statement ok
+DROP TABLE rls_wf_scores;
+
+
+statement ok
+DROP ROLE rls_wf_arelav;
+
+
+statement ok
+DROP ROLE rls_wf_babsky;

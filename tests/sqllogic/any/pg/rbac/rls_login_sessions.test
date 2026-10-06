@@ -1,0 +1,315 @@
+statement ok
+DROP TABLE IF EXISTS rls_ls_inbox;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_ls_arelav;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_ls_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_ls_ops;
+
+
+statement ok
+CREATE ROLE rls_ls_ops;
+
+
+statement ok
+CREATE ROLE rls_ls_arelav LOGIN PASSWORD 'rls_ls_arelav_pw';
+
+
+statement ok
+CREATE ROLE rls_ls_babsky LOGIN PASSWORD 'rls_ls_babsky_pw';
+
+
+statement ok
+GRANT rls_ls_ops TO rls_ls_arelav;
+
+
+statement ok
+CREATE TABLE rls_ls_inbox (id int, recipient text, queue text, body text);
+
+
+statement ok
+INSERT INTO rls_ls_inbox VALUES
+  (1, 'rls_ls_arelav', 'personal', 'skuf'),
+  (2, 'rls_ls_babsky', 'personal', 'boss'),
+  (3, 'rls_ls_arelav', 'ops', 'deploy'),
+  (4, 'rls_ls_babsky', 'ops', 'rollback'),
+  (5, 'kostya', 'ops', 'pager'),
+  (6, 'rls_ls_ops', 'ops', 'oncall');
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON rls_ls_inbox TO rls_ls_arelav;
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON rls_ls_inbox TO rls_ls_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_ls_inbox TO rls_ls_ops;
+
+
+statement ok
+ALTER TABLE rls_ls_inbox ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_ls_mine ON rls_ls_inbox USING (recipient = current_user);
+
+
+statement ok
+CREATE POLICY rls_ls_ops_queue ON rls_ls_inbox FOR SELECT TO rls_ls_ops USING (queue = 'ops');
+
+
+connection arelav user=rls_ls_arelav password=rls_ls_arelav_pw
+query
+SELECT current_user AS cu, session_user AS su;
+----
+cu	su
+rls_ls_arelav	rls_ls_arelav
+
+
+connection arelav
+query
+SELECT id FROM rls_ls_inbox ORDER BY id;
+----
+id
+1
+3
+4
+5
+6
+
+
+connection babsky user=rls_ls_babsky password=rls_ls_babsky_pw
+query
+SELECT current_user AS cu, session_user AS su;
+----
+cu	su
+rls_ls_babsky	rls_ls_babsky
+
+
+connection babsky
+query
+SELECT id FROM rls_ls_inbox ORDER BY id;
+----
+id
+2
+4
+
+
+connection arelav
+statement ok
+INSERT INTO rls_ls_inbox VALUES (7, 'rls_ls_arelav', 'personal', 'new');
+
+
+connection babsky
+query
+SELECT id FROM rls_ls_inbox ORDER BY id;
+----
+id
+2
+4
+
+
+connection babsky
+statement error
+INSERT INTO rls_ls_inbox VALUES (8, 'rls_ls_arelav', 'personal', 'forged');
+----
+db error: ERROR: <slt:ignore>row violates row-level security policy<slt:ignore>
+
+
+connection babsky
+query rowsort
+UPDATE rls_ls_inbox SET body = 'seen' RETURNING id;
+----
+id
+2
+4
+
+
+connection arelav
+query
+SELECT id, body FROM rls_ls_inbox ORDER BY id;
+----
+id	body
+1	skuf
+3	deploy
+4	seen
+5	pager
+6	oncall
+7	new
+
+
+connection arelav
+statement ok
+SET ROLE rls_ls_ops;
+
+
+connection arelav
+query
+SELECT current_user AS cu, session_user AS su;
+----
+cu	su
+rls_ls_ops	rls_ls_arelav
+
+
+connection arelav
+query
+SELECT id FROM rls_ls_inbox ORDER BY id;
+----
+id
+3
+4
+5
+6
+
+
+connection arelav
+statement error
+INSERT INTO rls_ls_inbox VALUES (9, 'rls_ls_ops', 'ops', 'nope');
+----
+db error: ERROR: permission denied for table rls_ls_inbox<slt:ignore>
+
+
+connection arelav
+statement ok
+RESET ROLE;
+
+
+connection arelav
+query
+SELECT id FROM rls_ls_inbox ORDER BY id;
+----
+id
+1
+3
+4
+5
+6
+7
+
+
+connection babsky
+statement error
+SET ROLE rls_ls_ops;
+----
+db error: ERROR: permission denied to set role "rls_ls_ops"<slt:ignore>
+
+
+connection babsky
+query
+SELECT count(*) AS n FROM rls_ls_inbox;
+----
+n
+2
+
+
+statement ok
+ALTER POLICY rls_ls_mine ON rls_ls_inbox USING (recipient = session_user);
+
+
+connection arelav
+statement ok
+SET ROLE rls_ls_ops;
+
+
+connection arelav
+query
+SELECT id FROM rls_ls_inbox ORDER BY id;
+----
+id
+1
+3
+4
+5
+6
+7
+
+
+connection arelav
+statement ok
+RESET ROLE;
+
+
+connection babsky
+query
+SELECT id FROM rls_ls_inbox ORDER BY id;
+----
+id
+2
+4
+
+
+statement ok
+SET SESSION AUTHORIZATION rls_ls_babsky;
+
+
+query
+SELECT current_user AS cu, session_user AS su;
+----
+cu	su
+rls_ls_babsky	rls_ls_babsky
+
+
+query
+SELECT id FROM rls_ls_inbox ORDER BY id;
+----
+id
+2
+4
+
+
+statement ok
+RESET SESSION AUTHORIZATION;
+
+
+query
+SELECT count(*) AS n FROM rls_ls_inbox;
+----
+n
+7
+
+
+statement ok
+ALTER POLICY rls_ls_mine ON rls_ls_inbox USING (recipient = current_user);
+
+
+connection arelav
+query
+SELECT id FROM rls_ls_inbox WHERE body = 'seen' ORDER BY id;
+----
+id
+4
+
+
+connection babsky
+query
+SELECT id FROM rls_ls_inbox WHERE body = 'seen' ORDER BY id;
+----
+id
+2
+4
+
+
+statement ok
+DROP TABLE rls_ls_inbox;
+
+
+statement ok
+DROP ROLE rls_ls_arelav;
+
+
+statement ok
+DROP ROLE rls_ls_babsky;
+
+
+statement ok
+DROP ROLE rls_ls_ops;

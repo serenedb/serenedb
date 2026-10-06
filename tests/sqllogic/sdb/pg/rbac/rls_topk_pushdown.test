@@ -1,0 +1,864 @@
+statement ok
+DROP TABLE IF EXISTS rls_tk_board;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_tk_squads;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_tk_posts;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_tk_notes;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS rls_tk_english;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_tk_arelav;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_tk_babsky;
+
+
+statement ok
+CREATE ROLE rls_tk_arelav;
+
+
+statement ok
+CREATE ROLE rls_tk_babsky;
+
+
+statement ok
+CREATE TABLE rls_tk_board (id int, owner text, squad text, points int, note text);
+
+
+statement ok
+INSERT INTO rls_tk_board SELECT n, CASE WHEN n % 3 = 0 THEN 'rls_tk_arelav' ELSE 'rls_tk_babsky' END, CASE n % 4 WHEN 0 THEN 'clickclack' WHEN 1 THEN 'deadinside' WHEN 2 THEN 'salam' ELSE 'skuf' END, (n * 37) % 101, CASE WHEN n % 3 = 0 THEN n::text ELSE 'hidden' END FROM generate_series(1, 300) AS g(n);
+
+
+statement ok
+CREATE TABLE rls_tk_squads (member text, squad text);
+
+
+statement ok
+INSERT INTO rls_tk_squads VALUES ('rls_tk_arelav', 'clickclack'), ('rls_tk_arelav', 'salam'), ('rls_tk_babsky', 'skuf');
+
+
+statement ok
+GRANT SELECT ON rls_tk_board TO rls_tk_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_tk_board TO rls_tk_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_tk_squads TO rls_tk_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_tk_squads TO rls_tk_babsky;
+
+
+statement ok
+ALTER TABLE rls_tk_board ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_tk_own ON rls_tk_board FOR SELECT USING (owner = current_user);
+
+
+query
+SELECT id, points FROM rls_tk_board WHERE owner = 'rls_tk_arelav' ORDER BY points DESC, id LIMIT 5;
+----
+id	points
+30	100
+60	99
+90	98
+120	97
+150	96
+
+
+query
+SELECT id, points FROM rls_tk_board ORDER BY points DESC, id LIMIT 5;
+----
+id	points
+30	100
+131	100
+232	100
+60	99
+161	99
+
+
+statement ok
+SET ROLE rls_tk_arelav;
+
+
+query
+EXPLAIN SELECT id FROM rls_tk_board ORDER BY points DESC LIMIT 5;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 5                                 │
+│ Order By: #1 DESC                      │
+│ ~5 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ SEQ_SCAN ─────────┴───────────────────╮
+│ Table: rls_tk_board                    │
+│ Type: Sequential Scan                  │
+│ Projections: id, points                │
+│ Column Filter: owner = 'rls_tk_arelav' │
+│ ~150 rows                              │
+╰────────────────────────────────────────╯
+
+
+query
+SELECT id, points FROM rls_tk_board ORDER BY points DESC, id LIMIT 5;
+----
+id	points
+30	100
+60	99
+90	98
+120	97
+150	96
+
+
+query
+EXPLAIN SELECT id FROM rls_tk_board ORDER BY points LIMIT 5 OFFSET 10;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 5                                 │
+│ Offset: 10                             │
+│ Order By: #1 ASC                       │
+│ ~5 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ SEQ_SCAN ─────────┴───────────────────╮
+│ Table: rls_tk_board                    │
+│ Type: Sequential Scan                  │
+│ Projections: id, points                │
+│ Column Filter: owner = 'rls_tk_arelav' │
+│ ~150 rows                              │
+╰────────────────────────────────────────╯
+
+
+query
+SELECT id, points FROM rls_tk_board ORDER BY points, id LIMIT 5 OFFSET 10;
+----
+id	points
+276	11
+246	12
+216	13
+186	14
+156	15
+
+
+query
+EXPLAIN SELECT id FROM rls_tk_board WHERE points > 50 AND squad = 'salam' ORDER BY points DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ─────────────────────────────────╮
+│ Top: 3                                  │
+│ Order By: #1 DESC                       │
+│ ~3 rows                                 │
+╰────────────────────┬────────────────────╯
+╭─ PROJECTION ───────┴────────────────────╮
+│ Projections: id, points                 │
+│ ~75 rows                                │
+╰────────────────────┬────────────────────╯
+╭─ SEQ_SCAN ─────────┴────────────────────╮
+│ Table: rls_tk_board                     │
+│ Type: Sequential Scan                   │
+│ Projections: points, id                 │
+│ Column Filter: owner = 'rls_tk_arelav', │
+│                points > 50,             │
+│                squad = 'salam'          │
+│ ~75 rows                                │
+╰─────────────────────────────────────────╯
+
+
+query
+SELECT id, points FROM rls_tk_board WHERE points > 50 AND squad = 'salam' ORDER BY points DESC, id LIMIT 3;
+----
+id	points
+30	100
+90	98
+150	96
+
+
+query
+EXPLAIN SELECT id FROM rls_tk_board WHERE note::int > 100 ORDER BY points DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ─────────────────────────────────╮
+│ Top: 3                                  │
+│ Order By: #1 DESC                       │
+│ ~3 rows                                 │
+╰────────────────────┬────────────────────╯
+╭─ PROJECTION ───────┴────────────────────╮
+│ Projections: #1, #2                     │
+│ ~30 rows                                │
+╰────────────────────┬────────────────────╯
+╭─ FILTER ───────────┴────────────────────╮
+│ Expression: CAST(note AS INTEGER) > 100 │
+│ ~30 rows                                │
+╰────────────────────┬────────────────────╯
+╭─ SEQ_SCAN ─────────┴────────────────────╮
+│ Table: rls_tk_board                     │
+│ Type: Sequential Scan                   │
+│ Projections: note, id, points           │
+│ Column Filter: owner = 'rls_tk_arelav'  │
+│ ~150 rows                               │
+╰─────────────────────────────────────────╯
+
+
+query
+SELECT id, points FROM rls_tk_board WHERE note::int > 100 ORDER BY points DESC, id LIMIT 3;
+----
+id	points
+120	97
+150	96
+180	95
+
+
+query
+EXPLAIN SELECT id FROM rls_tk_board ORDER BY note::int DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 3                                 │
+│ Order By: #1 DESC                      │
+│ ~3 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ PROJECTION ───────┴───────────────────╮
+│ Projections: id, CAST(note AS INTEGER) │
+│ ~150 rows                              │
+╰────────────────────┬───────────────────╯
+╭─ SEQ_SCAN ─────────┴───────────────────╮
+│ Table: rls_tk_board                    │
+│ Type: Sequential Scan                  │
+│ Projections: id, note                  │
+│ Column Filter: owner = 'rls_tk_arelav' │
+│ ~150 rows                              │
+╰────────────────────────────────────────╯
+
+
+query
+SELECT id FROM rls_tk_board ORDER BY note::int DESC LIMIT 3;
+----
+id
+300
+297
+294
+
+
+query
+EXPLAIN SELECT id FROM rls_tk_board ORDER BY CASE WHEN points > 90 THEN error('leak order') ELSE points END DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ───────────────────────────────────────────────────────────────────────────────────╮
+│ Top: 3                                                                                    │
+│ Order By: #1 DESC                                                                         │
+│ ~3 rows                                                                                   │
+╰─────────────────────────────────────────────┬─────────────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────────────┴─────────────────────────────────────────────╮
+│ Projections:                                                                              │
+│ id,                                                                                       │
+│ CASE  WHEN ((points > 90)) THEN (CAST("error"('leak order') AS INTEGER)) ELSE points END  │
+│ ~150 rows                                                                                 │
+╰─────────────────────────────────────────────┬─────────────────────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────────────────────┴─────────────────────────────────────────────╮
+│ Table: rls_tk_board                                                                       │
+│ Type: Sequential Scan                                                                     │
+│ Projections: id, points                                                                   │
+│ Column Filter: owner = 'rls_tk_arelav'                                                    │
+│ ~150 rows                                                                                 │
+╰───────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+query
+SELECT id FROM rls_tk_board WHERE points < 95 ORDER BY points DESC, id LIMIT 3;
+----
+id
+210
+240
+270
+
+
+query
+EXPLAIN SELECT id FROM rls_tk_board WHERE CASE WHEN points = 100 THEN error('leak where') ELSE true END ORDER BY points DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ─────────────────────────────────────────────────────────────────────────────────╮
+│ Top: 3                                                                                  │
+│ Order By: #1 DESC                                                                       │
+│ ~3 rows                                                                                 │
+╰────────────────────────────────────────────┬────────────────────────────────────────────╯
+╭─ PROJECTION ───────────────────────────────┴────────────────────────────────────────────╮
+│ Projections: id, points                                                                 │
+│ ~30 rows                                                                                │
+╰────────────────────────────────────────────┬────────────────────────────────────────────╯
+╭─ FILTER ───────────────────────────────────┴────────────────────────────────────────────╮
+│ Expression:                                                                             │
+│ CASE  WHEN ((points = 100)) THEN (CAST("error"('leak where') AS BOOLEAN)) ELSE true END │
+│ ~30 rows                                                                                │
+╰────────────────────────────────────────────┬────────────────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────────────┴────────────────────────────────────────────╮
+│ Table: rls_tk_board                                                                     │
+│ Type: Sequential Scan                                                                   │
+│ Projections: points, id                                                                 │
+│ Column Filter: owner = 'rls_tk_arelav'                                                  │
+│ ~150 rows                                                                               │
+╰─────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+query
+SELECT count(*) AS n FROM (SELECT id FROM rls_tk_board WHERE CASE WHEN owner <> current_user THEN error('leak where') ELSE true END ORDER BY points DESC LIMIT 3) s;
+----
+n
+3
+
+
+query
+EXPLAIN SELECT b.id FROM rls_tk_board b JOIN rls_tk_squads s ON s.squad = b.squad AND s.member = current_user ORDER BY b.points DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 3                                 │
+│ Order By: #1 DESC                      │
+│ ~3 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ PROJECTION ───────┴───────────────────╮
+│ Projections: id, points                │
+│ ~75 rows                               │
+╰────────────────────┬───────────────────╯
+╭─ HASH_JOIN ────────┴───────────────────╮
+│ Join Type: INNER                       │
+│ Conditions: squad = squad              │
+│ ~75 rows                               │
+╰────────────────────┬───────────────────╯
+                     ├───────────────────────────────────────────╮
+╭─ SEQ_SCAN ─────────┴───────────────────╮  ╭─ SEQ_SCAN ─────────┴────────────────────╮
+│ Table: rls_tk_board                    │  │ Table: rls_tk_squads                    │
+│ Type: Sequential Scan                  │  │ Type: Sequential Scan                   │
+│ Projections: squad, id, points         │  │ Projections: squad                      │
+│ Column Filter: owner = 'rls_tk_arelav' │  │ Column Filter: member = 'rls_tk_arelav' │
+│ ~150 rows                              │  │ ~2 rows                                 │
+╰────────────────────────────────────────╯  ╰─────────────────────────────────────────╯
+
+
+query
+SELECT b.id, b.points FROM rls_tk_board b JOIN rls_tk_squads s ON s.squad = b.squad AND s.member = current_user ORDER BY b.points DESC, b.id LIMIT 3;
+----
+id	points
+30	100
+60	99
+90	98
+
+
+query
+SELECT squad, id, points FROM (SELECT squad, id, points, row_number() OVER (PARTITION BY squad ORDER BY points DESC, id) AS rn FROM rls_tk_board) s WHERE rn = 1 ORDER BY squad;
+----
+squad	id	points
+clickclack	60	99
+deadinside	57	89
+salam	30	100
+skuf	27	90
+
+
+statement ok
+SET ROLE rls_tk_babsky;
+
+
+query
+SELECT id, points FROM rls_tk_board ORDER BY points DESC, id LIMIT 5;
+----
+id	points
+131	100
+232	100
+161	99
+262	99
+191	98
+
+
+query
+SELECT id, points FROM rls_tk_board WHERE owner = 'rls_tk_arelav' ORDER BY points DESC LIMIT 5;
+----
+id	points
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_tk_no_top ON rls_tk_board AS RESTRICTIVE FOR SELECT USING (points < 90);
+
+
+statement ok
+SET ROLE rls_tk_arelav;
+
+
+query
+EXPLAIN SELECT id FROM rls_tk_board ORDER BY points DESC LIMIT 5;
+----
+QUERY PLAN
+╭─ TOP_N ─────────────────────────────────╮
+│ Top: 5                                  │
+│ Order By: #1 DESC                       │
+│ ~5 rows                                 │
+╰────────────────────┬────────────────────╯
+╭─ PROJECTION ───────┴────────────────────╮
+│ Projections: id, points                 │
+│ ~150 rows                               │
+╰────────────────────┬────────────────────╯
+╭─ SEQ_SCAN ─────────┴────────────────────╮
+│ Table: rls_tk_board                     │
+│ Type: Sequential Scan                   │
+│ Projections: points, id                 │
+│ Column Filter: owner = 'rls_tk_arelav', │
+│                points < 90              │
+│ ~150 rows                               │
+╰─────────────────────────────────────────╯
+
+
+query
+SELECT id, points FROM rls_tk_board ORDER BY points DESC, id LIMIT 5;
+----
+id	points
+57	89
+87	88
+117	87
+147	86
+177	85
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP POLICY rls_tk_no_top ON rls_tk_board;
+
+
+statement ok
+DROP POLICY rls_tk_own ON rls_tk_board;
+
+
+statement ok
+CREATE POLICY rls_tk_by_squad ON rls_tk_board FOR SELECT USING (squad IN (SELECT squad FROM rls_tk_squads WHERE member = current_user));
+
+
+statement ok
+SET ROLE rls_tk_arelav;
+
+
+query
+EXPLAIN SELECT id FROM rls_tk_board ORDER BY points DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ──────────────────────────────────╮
+│ Top: 3                                   │
+│ Order By: #1 DESC                        │
+│ ~3 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ HASH_JOIN ─────────┴────────────────────╮
+│ Join Type: SEMI                          │
+│ Conditions: squad = #0                   │
+│ ~60 rows                                 │
+╰─────────────────────┬────────────────────╯
+                      ├────────────────────────────────────────────╮
+╭─ PROJECTION ────────┴────────────────────╮  ╭─ PROJECTION ───────┴────────────────────╮
+│ Projections:                             │  │ Projections:                            │
+│ __internal_compress_string_uhugeint(#0), │  │ __internal_compress_string_uhugeint(#0) │
+│ #1, #2                                   │  │ ~2 rows                                 │
+│ ~300 rows                                │  ╰────────────────────┬────────────────────╯
+╰─────────────────────┬────────────────────╯  ╭─ SEQ_SCAN ─────────┴────────────────────╮
+╭─ SEQ_SCAN ──────────┴────────────────────╮  │ Table: rls_tk_squads                    │
+│ Table: rls_tk_board                      │  │ Type: Sequential Scan                   │
+│ Type: Sequential Scan                    │  │ Projections: squad                      │
+│ Projections: squad, id, points           │  │ Column Filter: member = 'rls_tk_arelav' │
+│ ~300 rows                                │  │ ~2 rows                                 │
+╰──────────────────────────────────────────╯  ╰─────────────────────────────────────────╯
+
+
+query
+SELECT id, squad, points FROM rls_tk_board ORDER BY points DESC, id LIMIT 3;
+----
+id	squad	points
+30	salam	100
+232	clickclack	100
+60	clickclack	99
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT id, squad, points FROM rls_tk_board WHERE squad IN ('clickclack', 'salam') ORDER BY points DESC, id LIMIT 3;
+----
+id	squad	points
+30	salam	100
+232	clickclack	100
+60	clickclack	99
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rls_tk_english AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
+
+
+statement ok
+CREATE TABLE rls_tk_posts (pk int PRIMARY KEY, author text, body text);
+
+
+statement ok
+INSERT INTO rls_tk_posts VALUES
+  (1, 'rls_tk_arelav', 'skuf'),
+  (2, 'rls_tk_babsky', 'skuf skuf skuf skuf skuf'),
+  (3, 'rls_tk_arelav', 'skuf skuf boss'),
+  (4, 'rls_tk_babsky', 'skuf skuf skuf skuf'),
+  (5, 'rls_tk_arelav', 'intern skuf deadinside clickclack salam'),
+  (6, 'rls_tk_babsky', 'skuf skuf skuf'),
+  (7, 'rls_tk_arelav', 'skuf skuf skuf boss'),
+  (8, 'rls_tk_babsky', 'boss salam'),
+  (9, 'rls_tk_arelav', 'skuf boss boss'),
+  (10, 'rls_tk_babsky', 'skuf skuf skuf skuf skuf skuf');
+
+
+statement ok
+CREATE INDEX rls_tk_posts_idx ON rls_tk_posts USING inverted(pk, body rls_tk_english) INCLUDE (author);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) rls_tk_posts;
+
+
+statement ok
+CREATE TABLE rls_tk_notes (pk int PRIMARY KEY, author text, body text);
+
+
+statement ok
+INSERT INTO rls_tk_notes SELECT pk, author, body FROM rls_tk_posts;
+
+
+statement ok
+CREATE INDEX rls_tk_notes_idx ON rls_tk_notes USING inverted(pk, body rls_tk_english);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) rls_tk_notes;
+
+
+statement ok
+GRANT SELECT ON rls_tk_posts TO rls_tk_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_tk_posts TO rls_tk_babsky;
+
+
+statement ok
+GRANT SELECT ON rls_tk_notes TO rls_tk_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_tk_notes TO rls_tk_babsky;
+
+
+query
+SELECT pk FROM rls_tk_posts_idx WHERE body @@ ts_phrase('skuf') ORDER BY BM25(rls_tk_posts_idx.tableoid) DESC, pk LIMIT 3;
+----
+pk
+10
+2
+4
+
+
+query
+SELECT pk, author FROM rls_tk_posts_idx WHERE body @@ ts_phrase('skuf') AND author = 'rls_tk_arelav' ORDER BY BM25(rls_tk_posts_idx.tableoid) DESC, pk LIMIT 3;
+----
+pk	author
+7	rls_tk_arelav
+3	rls_tk_arelav
+1	rls_tk_arelav
+
+
+statement ok
+ALTER TABLE rls_tk_posts ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_tk_author ON rls_tk_posts FOR SELECT USING (author = current_user);
+
+
+statement ok
+ALTER TABLE rls_tk_notes ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_tk_note_author ON rls_tk_notes FOR SELECT USING (author = current_user);
+
+
+statement ok
+SET ROLE rls_tk_arelav;
+
+
+query
+EXPLAIN SELECT pk FROM rls_tk_posts_idx WHERE body @@ ts_phrase('skuf') ORDER BY BM25(rls_tk_posts_idx.tableoid) DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ─────────────────────────────────╮
+│ Top: 3                                  │
+│ Order By: #1 DESC                       │
+│ ~1 row                                  │
+╰────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ───┴────────────────────╮
+│ Index: rls_tk_posts_idx                 │
+│ Lookup: table                           │
+│ Index Filter:                           │
+│ ╭─ Term ──────────────╮                 │
+│ │ Field: body(string) │                 │
+│ │ Value: skuf         │                 │
+│ ╰─────────────────────╯                 │
+│ Column Filter: author = 'rls_tk_arelav' │
+│ Score: bm25(k1=1.2, b=0.75)             │
+│ Projections: pk,                        │
+│              sdb_inverted_index_score   │
+│ ~1 row                                  │
+╰─────────────────────────────────────────╯
+
+
+query
+SELECT pk FROM rls_tk_posts_idx WHERE body @@ ts_phrase('skuf') ORDER BY BM25(rls_tk_posts_idx.tableoid) DESC, pk LIMIT 3;
+----
+pk
+7
+3
+1
+
+
+query
+SELECT pk FROM rls_tk_posts_idx WHERE body @@ ts_phrase('skuf') ORDER BY BM25(rls_tk_posts_idx.tableoid) ASC, pk LIMIT 2;
+----
+pk
+5
+9
+
+
+query
+SELECT pk FROM rls_tk_posts_idx WHERE body @@ ts_phrase('skuf') ORDER BY BM25(rls_tk_posts_idx.tableoid) DESC, pk LIMIT 2 OFFSET 2;
+----
+pk
+1
+9
+
+
+query
+SELECT count(*) AS n FROM (SELECT pk FROM rls_tk_posts_idx WHERE body @@ ts_phrase('skuf') ORDER BY BM25(rls_tk_posts_idx.tableoid) DESC LIMIT 100) s;
+----
+n
+5
+
+
+query
+SELECT pk FROM rls_tk_posts_idx WHERE body @@ ts_phrase('boss') ORDER BY BM25(rls_tk_posts_idx.tableoid) DESC, pk LIMIT 5;
+----
+pk
+9
+3
+7
+
+
+query
+EXPLAIN SELECT pk FROM rls_tk_posts_idx WHERE body @@ ts_phrase('skuf') AND pk > 2 ORDER BY BM25(rls_tk_posts_idx.tableoid) DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ─────────────────────────────────────────╮
+│ Top: 3                                          │
+│ Order By: #1 DESC                               │
+│ ~1 row                                          │
+╰────────────────────────┬────────────────────────╯
+╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
+│ Index: rls_tk_posts_idx                         │
+│ Lookup: table                                   │
+│ Index Filter:                                   │
+│ ╭─ And ───────────────╮                         │
+│ ╰──────────┬──────────╯                         │
+│            ├────────────────────────╮           │
+│ ╭─ Terms ──┴──────────╮  ╭─ Granular Range ───╮ │
+│ │ Field: body(string) │  │ Field: pk(numeric) │ │
+│ │ Values: 'skuf'      │  │ Range: >2          │ │
+│ ╰─────────────────────╯  ╰────────────────────╯ │
+│ Column Filter: author = 'rls_tk_arelav'         │
+│ Score: bm25(k1=1.2, b=0.75)                     │
+│ Projections: pk, sdb_inverted_index_score       │
+│ ~1 row                                          │
+╰─────────────────────────────────────────────────╯
+
+
+query
+SELECT pk FROM rls_tk_posts_idx WHERE body @@ ts_phrase('skuf') AND pk > 2 ORDER BY BM25(rls_tk_posts_idx.tableoid) DESC, pk LIMIT 3;
+----
+pk
+7
+3
+9
+
+
+query
+SELECT count(*) AS n FROM rls_tk_posts_idx WHERE body @@ ts_phrase('skuf') AND CASE WHEN pk = 10 THEN error('leak through the score') ELSE true END;
+----
+n
+5
+
+
+query
+EXPLAIN SELECT pk FROM rls_tk_notes_idx WHERE body @@ ts_phrase('skuf') ORDER BY BM25(rls_tk_notes_idx.tableoid) DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ─────────────────────────────────╮
+│ Top: 3                                  │
+│ Order By: #1 DESC                       │
+│ ~1 row                                  │
+╰────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ───┴────────────────────╮
+│ Index: rls_tk_notes_idx                 │
+│ Lookup: table                           │
+│ Index Filter:                           │
+│ ╭─ Term ──────────────╮                 │
+│ │ Field: body(string) │                 │
+│ │ Value: skuf         │                 │
+│ ╰─────────────────────╯                 │
+│ Column Filter: author = 'rls_tk_arelav' │
+│ Score: bm25(k1=1.2, b=0.75)             │
+│ Projections: pk,                        │
+│              sdb_inverted_index_score   │
+│ ~1 row                                  │
+╰─────────────────────────────────────────╯
+
+
+query
+SELECT pk FROM rls_tk_notes_idx WHERE body @@ ts_phrase('skuf') ORDER BY BM25(rls_tk_notes_idx.tableoid) DESC, pk LIMIT 3;
+----
+pk
+7
+3
+1
+
+
+statement ok
+SET ROLE rls_tk_babsky;
+
+
+query
+SELECT pk FROM rls_tk_posts_idx WHERE body @@ ts_phrase('skuf') ORDER BY BM25(rls_tk_posts_idx.tableoid) DESC, pk LIMIT 3;
+----
+pk
+10
+2
+4
+
+
+query
+SELECT pk FROM rls_tk_notes_idx WHERE body @@ ts_phrase('skuf') ORDER BY BM25(rls_tk_notes_idx.tableoid) DESC, pk LIMIT 3;
+----
+pk
+10
+2
+4
+
+
+query
+SELECT pk FROM rls_tk_posts_idx WHERE body @@ ts_phrase('boss') ORDER BY BM25(rls_tk_posts_idx.tableoid) DESC, pk LIMIT 5;
+----
+pk
+8
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_tk_short ON rls_tk_posts AS RESTRICTIVE FOR SELECT USING (pk < 9);
+
+
+statement ok
+SET ROLE rls_tk_arelav;
+
+
+query
+EXPLAIN SELECT pk FROM rls_tk_posts_idx WHERE body @@ ts_phrase('skuf') ORDER BY BM25(rls_tk_posts_idx.tableoid) DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ─────────────────────────────────────────╮
+│ Top: 3                                          │
+│ Order By: #1 DESC                               │
+│ ~1 row                                          │
+╰────────────────────────┬────────────────────────╯
+╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
+│ Index: rls_tk_posts_idx                         │
+│ Lookup: table                                   │
+│ Index Filter:                                   │
+│ ╭─ And ───────────────╮                         │
+│ ╰──────────┬──────────╯                         │
+│            ├────────────────────────╮           │
+│ ╭─ Terms ──┴──────────╮  ╭─ Granular Range ───╮ │
+│ │ Field: body(string) │  │ Field: pk(numeric) │ │
+│ │ Values: 'skuf'      │  │ Range: <9          │ │
+│ ╰─────────────────────╯  ╰────────────────────╯ │
+│ Column Filter: author = 'rls_tk_arelav'         │
+│ Score: bm25(k1=1.2, b=0.75)                     │
+│ Projections: pk, sdb_inverted_index_score       │
+│ ~1 row                                          │
+╰─────────────────────────────────────────────────╯
+
+
+query
+SELECT pk FROM rls_tk_posts_idx WHERE body @@ ts_phrase('skuf') ORDER BY BM25(rls_tk_posts_idx.tableoid) DESC, pk LIMIT 3;
+----
+pk
+7
+3
+1
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP TABLE rls_tk_board;
+
+
+statement ok
+DROP TABLE rls_tk_squads;
+
+
+statement ok
+DROP TABLE rls_tk_posts;
+
+
+statement ok
+DROP TABLE rls_tk_notes;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rls_tk_english;
+
+
+statement ok
+DROP ROLE rls_tk_arelav;
+
+
+statement ok
+DROP ROLE rls_tk_babsky;

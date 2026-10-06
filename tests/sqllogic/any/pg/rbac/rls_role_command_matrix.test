@@ -1,0 +1,693 @@
+statement ok
+DROP TABLE IF EXISTS rls_mx_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_mx_arelav;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_mx_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_mx_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_mx_loner;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_mx_auditor;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_mx_crew;
+
+
+statement ok
+CREATE ROLE rls_mx_crew;
+
+
+statement ok
+CREATE ROLE rls_mx_arelav;
+
+
+statement ok
+CREATE ROLE rls_mx_babsky;
+
+
+statement ok
+CREATE ROLE rls_mx_kostya;
+
+
+statement ok
+CREATE ROLE rls_mx_loner NOINHERIT;
+
+
+statement ok
+CREATE ROLE rls_mx_auditor BYPASSRLS;
+
+
+statement ok
+GRANT rls_mx_crew TO rls_mx_arelav;
+
+
+statement ok
+GRANT rls_mx_crew TO rls_mx_babsky;
+
+
+statement ok
+GRANT rls_mx_crew TO rls_mx_loner;
+
+
+statement ok
+CREATE TABLE rls_mx_ledger (id int, owner text, team text, amount int);
+
+
+statement ok
+INSERT INTO rls_mx_ledger VALUES
+  (1, 'rls_mx_arelav', 'clickclack', 10),
+  (2, 'rls_mx_babsky', 'clickclack', 20),
+  (3, 'rls_mx_arelav', 'salam', 0),
+  (4, 'rls_mx_kostya', 'clickclack', 40),
+  (5, 'rls_mx_babsky', 'deadinside', 0),
+  (6, 'rls_mx_arelav', 'clickclack', 0),
+  (7, 'rls_mx_loner', 'clickclack', 70),
+  (8, 'rls_mx_kostya', 'salam', 80);
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON rls_mx_ledger TO rls_mx_crew;
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON rls_mx_ledger TO rls_mx_kostya;
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON rls_mx_ledger TO rls_mx_loner;
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON rls_mx_ledger TO rls_mx_auditor;
+
+
+statement ok
+ALTER TABLE rls_mx_ledger ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+SET ROLE rls_mx_arelav;
+
+
+query
+SELECT count(*) AS n FROM rls_mx_ledger;
+----
+n
+0
+
+
+statement error
+INSERT INTO rls_mx_ledger VALUES (100, 'rls_mx_arelav', 'clickclack', 1);
+----
+db error: ERROR: <slt:ignore>row violates row-level security policy<slt:ignore>
+
+
+query rowsort
+UPDATE rls_mx_ledger SET amount = amount + 1 RETURNING id;
+----
+id
+
+
+query rowsort
+DELETE FROM rls_mx_ledger RETURNING id;
+----
+id
+
+
+statement ok
+SET ROLE rls_mx_auditor;
+
+
+query
+SELECT count(*) AS n FROM rls_mx_ledger;
+----
+n
+8
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_mx_sel ON rls_mx_ledger FOR SELECT TO rls_mx_crew USING (team = 'clickclack');
+
+
+statement ok
+SET ROLE rls_mx_arelav;
+
+
+query
+SELECT id FROM rls_mx_ledger ORDER BY id;
+----
+id
+1
+2
+4
+6
+7
+
+
+statement ok
+SET ROLE rls_mx_babsky;
+
+
+query
+SELECT id FROM rls_mx_ledger ORDER BY id;
+----
+id
+1
+2
+4
+6
+7
+
+
+statement ok
+SET ROLE rls_mx_kostya;
+
+
+query
+SELECT id FROM rls_mx_ledger ORDER BY id;
+----
+id
+
+
+statement ok
+SET ROLE rls_mx_loner;
+
+
+query
+SELECT id FROM rls_mx_ledger ORDER BY id;
+----
+id
+
+
+statement ok
+SET ROLE rls_mx_crew;
+
+
+query
+SELECT id FROM rls_mx_ledger ORDER BY id;
+----
+id
+1
+2
+4
+6
+7
+
+
+statement ok
+SET ROLE rls_mx_arelav;
+
+
+statement error
+INSERT INTO rls_mx_ledger VALUES (100, 'rls_mx_arelav', 'clickclack', 1);
+----
+db error: ERROR: <slt:ignore>row violates row-level security policy<slt:ignore>
+
+
+query
+UPDATE rls_mx_ledger SET amount = amount + 1 WHERE id = 1 RETURNING id;
+----
+id
+
+
+query
+DELETE FROM rls_mx_ledger WHERE id = 1 RETURNING id;
+----
+id
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_mx_ins ON rls_mx_ledger FOR INSERT TO rls_mx_crew WITH CHECK (owner = current_user);
+
+
+statement ok
+SET ROLE rls_mx_arelav;
+
+
+statement ok
+INSERT INTO rls_mx_ledger VALUES (100, 'rls_mx_arelav', 'clickclack', 1);
+
+
+statement error
+INSERT INTO rls_mx_ledger VALUES (101, 'rls_mx_babsky', 'clickclack', 1);
+----
+db error: ERROR: <slt:ignore>row violates row-level security policy<slt:ignore>
+
+
+statement ok
+INSERT INTO rls_mx_ledger VALUES (102, 'rls_mx_arelav', 'salam', 1);
+
+
+query
+INSERT INTO rls_mx_ledger VALUES (103, 'rls_mx_arelav', 'clickclack', 1) RETURNING id, team;
+----
+id	team
+103	clickclack
+
+
+statement error
+INSERT INTO rls_mx_ledger VALUES (104, 'rls_mx_arelav', 'salam', 1) RETURNING id;
+----
+db error: ERROR: <slt:ignore>row violates row-level security policy<slt:ignore>
+
+
+statement ok
+INSERT INTO rls_mx_ledger SELECT 105, current_user, 'clickclack', 5;
+
+
+statement error
+INSERT INTO rls_mx_ledger SELECT id + 1000, owner, team, amount FROM rls_mx_ledger WHERE id = 2;
+----
+db error: ERROR: <slt:ignore>row violates row-level security policy<slt:ignore>
+
+
+statement ok
+SET ROLE rls_mx_kostya;
+
+
+statement error
+INSERT INTO rls_mx_ledger VALUES (106, 'rls_mx_kostya', 'clickclack', 1);
+----
+db error: ERROR: <slt:ignore>row violates row-level security policy<slt:ignore>
+
+
+statement ok
+SET ROLE rls_mx_loner;
+
+
+statement error
+INSERT INTO rls_mx_ledger VALUES (107, 'rls_mx_loner', 'clickclack', 1);
+----
+db error: ERROR: <slt:ignore>row violates row-level security policy<slt:ignore>
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT id, owner, team, amount FROM rls_mx_ledger WHERE id >= 100 ORDER BY id;
+----
+id	owner	team	amount
+100	rls_mx_arelav	clickclack	1
+102	rls_mx_arelav	salam	1
+103	rls_mx_arelav	clickclack	1
+105	rls_mx_arelav	clickclack	5
+
+
+statement ok
+CREATE POLICY rls_mx_upd ON rls_mx_ledger FOR UPDATE TO rls_mx_crew USING (owner = current_user) WITH CHECK (amount >= 0);
+
+
+statement ok
+SET ROLE rls_mx_arelav;
+
+
+query rowsort
+UPDATE rls_mx_ledger SET amount = amount + 1 WHERE team = 'clickclack' RETURNING id, amount;
+----
+id	amount
+1	11
+100	2
+103	2
+105	6
+6	1
+
+
+query
+UPDATE rls_mx_ledger SET amount = 7 WHERE id = 102 RETURNING id;
+----
+id
+
+
+query
+UPDATE rls_mx_ledger SET amount = 9 WHERE id = 2 RETURNING id;
+----
+id
+
+
+statement error
+UPDATE rls_mx_ledger SET amount = -1 WHERE id = 1;
+----
+db error: ERROR: <slt:ignore>row violates row-level security policy<slt:ignore>
+
+
+statement error
+UPDATE rls_mx_ledger SET team = 'salam' WHERE id = 6 RETURNING id;
+----
+db error: ERROR: <slt:ignore>row violates row-level security policy<slt:ignore>
+
+
+query rowsort
+UPDATE rls_mx_ledger SET owner = 'rls_mx_arelav' WHERE owner = 'rls_mx_babsky' RETURNING id;
+----
+id
+
+
+statement ok
+SET ROLE rls_mx_babsky;
+
+
+query rowsort
+UPDATE rls_mx_ledger SET amount = amount * 2 RETURNING id, amount;
+----
+id	amount
+2	40
+
+
+statement ok
+SET ROLE rls_mx_kostya;
+
+
+query rowsort
+UPDATE rls_mx_ledger SET amount = 0 RETURNING id;
+----
+id
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT id, owner, team, amount FROM rls_mx_ledger ORDER BY id;
+----
+id	owner	team	amount
+1	rls_mx_arelav	clickclack	11
+2	rls_mx_babsky	clickclack	40
+3	rls_mx_arelav	salam	0
+4	rls_mx_kostya	clickclack	40
+5	rls_mx_babsky	deadinside	0
+6	rls_mx_arelav	clickclack	1
+7	rls_mx_loner	clickclack	70
+8	rls_mx_kostya	salam	80
+100	rls_mx_arelav	clickclack	2
+102	rls_mx_arelav	salam	1
+103	rls_mx_arelav	clickclack	2
+105	rls_mx_arelav	clickclack	6
+
+
+statement ok
+CREATE POLICY rls_mx_del ON rls_mx_ledger FOR DELETE TO rls_mx_crew USING (amount = 0);
+
+
+statement ok
+SET ROLE rls_mx_arelav;
+
+
+query rowsort
+DELETE FROM rls_mx_ledger WHERE team = 'clickclack' RETURNING id;
+----
+id
+
+
+query
+DELETE FROM rls_mx_ledger WHERE id = 3 RETURNING id;
+----
+id
+
+
+statement ok
+SET ROLE rls_mx_babsky;
+
+
+query rowsort
+DELETE FROM rls_mx_ledger RETURNING id;
+----
+id
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT id, owner, team, amount FROM rls_mx_ledger ORDER BY id;
+----
+id	owner	team	amount
+1	rls_mx_arelav	clickclack	11
+2	rls_mx_babsky	clickclack	40
+3	rls_mx_arelav	salam	0
+4	rls_mx_kostya	clickclack	40
+5	rls_mx_babsky	deadinside	0
+6	rls_mx_arelav	clickclack	1
+7	rls_mx_loner	clickclack	70
+8	rls_mx_kostya	salam	80
+100	rls_mx_arelav	clickclack	2
+102	rls_mx_arelav	salam	1
+103	rls_mx_arelav	clickclack	2
+105	rls_mx_arelav	clickclack	6
+
+
+statement ok
+CREATE POLICY rls_mx_all ON rls_mx_ledger FOR ALL TO PUBLIC USING (owner = current_user) WITH CHECK (owner = current_user AND amount < 1000);
+
+
+statement ok
+SET ROLE rls_mx_kostya;
+
+
+query
+SELECT id FROM rls_mx_ledger ORDER BY id;
+----
+id
+4
+8
+
+
+statement ok
+INSERT INTO rls_mx_ledger VALUES (200, 'rls_mx_kostya', 'salam', 1);
+
+
+statement error
+INSERT INTO rls_mx_ledger VALUES (201, 'rls_mx_kostya', 'salam', 5000);
+----
+db error: ERROR: <slt:ignore>row violates row-level security policy<slt:ignore>
+
+
+query rowsort
+UPDATE rls_mx_ledger SET amount = amount + 1 RETURNING id, amount;
+----
+id	amount
+200	2
+4	41
+8	81
+
+
+query
+DELETE FROM rls_mx_ledger WHERE id = 200 RETURNING id;
+----
+id
+200
+
+
+statement ok
+SET ROLE rls_mx_arelav;
+
+
+query
+SELECT id FROM rls_mx_ledger ORDER BY id;
+----
+id
+1
+2
+3
+4
+6
+7
+100
+102
+103
+105
+
+
+statement ok
+INSERT INTO rls_mx_ledger VALUES (202, 'rls_mx_arelav', 'deadinside', 3);
+
+
+query
+SELECT id FROM rls_mx_ledger WHERE id >= 200 ORDER BY id;
+----
+id
+202
+
+
+statement ok
+SET ROLE rls_mx_loner;
+
+
+query
+SELECT id FROM rls_mx_ledger ORDER BY id;
+----
+id
+7
+
+
+statement ok
+SET ROLE rls_mx_crew;
+
+
+query
+SELECT id FROM rls_mx_ledger ORDER BY id;
+----
+id
+1
+2
+4
+6
+7
+100
+103
+105
+
+
+statement ok
+SET ROLE rls_mx_auditor;
+
+
+query
+SELECT count(*) AS n FROM rls_mx_ledger;
+----
+n
+13
+
+
+query rowsort
+UPDATE rls_mx_ledger SET amount = amount WHERE team = 'salam' RETURNING id;
+----
+id
+102
+3
+8
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER POLICY rls_mx_sel ON rls_mx_ledger TO rls_mx_arelav;
+
+
+statement ok
+SET ROLE rls_mx_babsky;
+
+
+query
+SELECT id FROM rls_mx_ledger ORDER BY id;
+----
+id
+2
+5
+
+
+statement ok
+SET ROLE rls_mx_arelav;
+
+
+query
+SELECT id FROM rls_mx_ledger ORDER BY id;
+----
+id
+1
+2
+3
+4
+6
+7
+100
+102
+103
+105
+202
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+REVOKE rls_mx_crew FROM rls_mx_babsky;
+
+
+statement ok
+SET ROLE rls_mx_babsky;
+
+
+statement error
+SELECT id FROM rls_mx_ledger ORDER BY id;
+----
+db error: ERROR: permission denied for table rls_mx_ledger<slt:ignore>
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+GRANT SELECT ON rls_mx_ledger TO rls_mx_babsky;
+
+
+statement ok
+SET ROLE rls_mx_babsky;
+
+
+query
+SELECT id FROM rls_mx_ledger ORDER BY id;
+----
+id
+2
+5
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP TABLE rls_mx_ledger;
+
+
+statement ok
+DROP ROLE rls_mx_arelav;
+
+
+statement ok
+DROP ROLE rls_mx_babsky;
+
+
+statement ok
+DROP ROLE rls_mx_kostya;
+
+
+statement ok
+DROP ROLE rls_mx_loner;
+
+
+statement ok
+DROP ROLE rls_mx_auditor;
+
+
+statement ok
+DROP ROLE rls_mx_crew;

@@ -1,0 +1,1037 @@
+statement ok
+DROP TABLE IF EXISTS rls_pm_vault;
+
+
+statement ok
+DROP TABLE IF EXISTS rls_pm_owners;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_pm_arelav;
+
+
+statement ok
+CREATE ROLE rls_pm_arelav;
+
+
+statement ok
+CREATE TABLE rls_pm_vault (id int, owner text, squad text, points int, bonus int, note text, opened date);
+
+
+statement ok
+INSERT INTO rls_pm_vault SELECT n, CASE WHEN n % 2 = 0 THEN 'rls_pm_arelav' ELSE 'babsky' END, CASE n % 3 WHEN 0 THEN 'clickclack' WHEN 1 THEN 'deadinside' ELSE 'salam' END, (n * 7) % 50, CASE WHEN n % 4 = 0 THEN NULL ELSE n % 5 END, CASE WHEN n % 2 = 0 THEN n::text ELSE 'secret' END, DATE '2026-01-01' + n::int FROM generate_series(1, 40) AS g(n);
+
+
+statement ok
+CREATE TABLE rls_pm_owners (owner text, squad text);
+
+
+statement ok
+INSERT INTO rls_pm_owners VALUES ('rls_pm_arelav', 'clickclack'), ('rls_pm_arelav', 'salam'), ('babsky', 'deadinside');
+
+
+statement ok
+GRANT SELECT ON rls_pm_vault TO rls_pm_arelav;
+
+
+statement ok
+GRANT SELECT ON rls_pm_owners TO rls_pm_arelav;
+
+
+statement ok
+ALTER TABLE rls_pm_vault ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY rls_pm_own ON rls_pm_vault FOR SELECT USING (owner = current_user);
+
+
+statement ok
+SET ROLE rls_pm_arelav;
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault;
+----
+QUERY PLAN
+╭─ SEQ_SCAN ─────────────────────────────╮
+│ Table: rls_pm_vault                    │
+│ Type: Sequential Scan                  │
+│ Projections: id                        │
+│ Column Filter: owner = 'rls_pm_arelav' │
+│ ~20 rows                               │
+╰────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT count(*) FROM rls_pm_vault;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────────────╮
+│ Aggregates: count_star()               │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ SEQ_SCAN ─────────┴───────────────────╮
+│ Table: rls_pm_vault                    │
+│ Type: Sequential Scan                  │
+│ Column Filter: owner = 'rls_pm_arelav' │
+│ ~20 rows                               │
+╰────────────────────────────────────────╯
+
+
+query
+SELECT count(*) AS n FROM rls_pm_vault;
+----
+n
+20
+
+
+query
+EXPLAIN SELECT min(points), max(points) FROM rls_pm_vault;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────────────╮
+│ Aggregates: min(#0), max(#0)           │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ SEQ_SCAN ─────────┴───────────────────╮
+│ Table: rls_pm_vault                    │
+│ Type: Sequential Scan                  │
+│ Projections: points                    │
+│ Column Filter: owner = 'rls_pm_arelav' │
+│ ~20 rows                               │
+╰────────────────────────────────────────╯
+
+
+query
+SELECT min(points) AS lo, max(points) AS hi, min(id) AS first, max(id) AS last FROM rls_pm_vault;
+----
+lo	hi	first	last
+2	48	2	40
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE id = 8;
+----
+QUERY PLAN
+╭─ SEQ_SCAN ──────────────────────────────╮
+│ Table: rls_pm_vault                     │
+│ Type: Sequential Scan                   │
+│ Projections: id                         │
+│ Column Filter: owner = 'rls_pm_arelav', │
+│                id = 8                   │
+│ ~1 row                                  │
+╰─────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE id <> 8;
+----
+QUERY PLAN
+╭─ SEQ_SCAN ──────────────────────────────╮
+│ Table: rls_pm_vault                     │
+│ Type: Sequential Scan                   │
+│ Projections: id                         │
+│ Column Filter: owner = 'rls_pm_arelav', │
+│                id != 8                  │
+│ ~20 rows                                │
+╰─────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE points >= 20 AND points < 40;
+----
+QUERY PLAN
+╭─ SEQ_SCAN ────────────────────────╮
+│ Table: rls_pm_vault               │
+│ Type: Sequential Scan             │
+│ Projections: id                   │
+│ Column Filter:                    │
+│ owner = 'rls_pm_arelav',          │
+│ (points >= 20) AND (points < 40)  │
+│ ~20 rows                          │
+╰───────────────────────────────────╯
+
+
+query
+SELECT id FROM rls_pm_vault WHERE points >= 20 AND points < 40 ORDER BY id;
+----
+id
+4
+10
+12
+18
+26
+32
+34
+40
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE points BETWEEN 10 AND 30;
+----
+QUERY PLAN
+╭─ SEQ_SCAN ─────────────────────────╮
+│ Table: rls_pm_vault                │
+│ Type: Sequential Scan              │
+│ Projections: id                    │
+│ Column Filter:                     │
+│ owner = 'rls_pm_arelav',           │
+│ (points >= 10) AND (points <= 30)  │
+│ ~20 rows                           │
+╰────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE squad IN ('clickclack', 'salam');
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────╮
+│ Projections: #1                               │
+│ ~4 rows                                       │
+╰───────────────────────┬───────────────────────╯
+╭─ FILTER ──────────────┴───────────────────────╮
+│ Expression:                                   │
+│ (squad = 'clickclack') OR (squad = 'salam')   │
+│ ~4 rows                                       │
+╰───────────────────────┬───────────────────────╯
+╭─ SEQ_SCAN ────────────┴───────────────────────╮
+│ Table: rls_pm_vault                           │
+│ Type: Sequential Scan                         │
+│ Projections: squad, id                        │
+│ Column Filter:                                │
+│ owner = 'rls_pm_arelav',                      │
+│ optional: (squad IN ('clickclack', 'salam'))  │
+│ ~20 rows                                      │
+╰───────────────────────────────────────────────╯
+
+
+query
+SELECT id FROM rls_pm_vault WHERE squad IN ('clickclack', 'salam') ORDER BY id;
+----
+id
+2
+6
+8
+12
+14
+18
+20
+24
+26
+30
+32
+36
+38
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE bonus IS NULL;
+----
+QUERY PLAN
+╭─ SEQ_SCAN ──────────────────────────────╮
+│ Table: rls_pm_vault                     │
+│ Type: Sequential Scan                   │
+│ Projections: id                         │
+│ Column Filter: owner = 'rls_pm_arelav', │
+│                bonus IS NULL            │
+│ ~20 rows                                │
+╰─────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE bonus IS NOT NULL;
+----
+QUERY PLAN
+╭─ SEQ_SCAN ──────────────────────────────╮
+│ Table: rls_pm_vault                     │
+│ Type: Sequential Scan                   │
+│ Projections: id                         │
+│ Column Filter: owner = 'rls_pm_arelav', │
+│                bonus IS NOT NULL        │
+│ ~20 rows                                │
+╰─────────────────────────────────────────╯
+
+
+query
+SELECT id FROM rls_pm_vault WHERE bonus IS NULL ORDER BY id;
+----
+id
+4
+8
+12
+16
+20
+24
+28
+32
+36
+40
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE squad LIKE 'sal%';
+----
+QUERY PLAN
+╭─ SEQ_SCAN ────────────────────────────╮
+│ Table: rls_pm_vault                   │
+│ Type: Sequential Scan                 │
+│ Projections: id                       │
+│ Column Filter:                        │
+│ owner = 'rls_pm_arelav',              │
+│ (squad >= 'sal') AND (squad < 'sam')  │
+│ ~20 rows                              │
+╰───────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE squad LIKE '%ick%';
+----
+QUERY PLAN
+╭─ SEQ_SCAN ──────────────────────────────╮
+│ Table: rls_pm_vault                     │
+│ Type: Sequential Scan                   │
+│ Projections: id                         │
+│ Column Filter: owner = 'rls_pm_arelav', │
+│                contains(squad, 'ick')   │
+│ ~20 rows                                │
+╰─────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE points < 5 OR points > 45;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────╮
+│ Projections: #1                            │
+│ ~4 rows                                    │
+╰──────────────────────┬─────────────────────╯
+╭─ FILTER ─────────────┴─────────────────────╮
+│ Expression:                                │
+│ (points < 5) OR (points > 45)              │
+│ ~4 rows                                    │
+╰──────────────────────┬─────────────────────╯
+╭─ SEQ_SCAN ───────────┴─────────────────────╮
+│ Table: rls_pm_vault                        │
+│ Type: Sequential Scan                      │
+│ Projections: points, id                    │
+│ Column Filter:                             │
+│ owner = 'rls_pm_arelav',                   │
+│ optional: ((points < 5) OR (points > 45))  │
+│ ~20 rows                                   │
+╰────────────────────────────────────────────╯
+
+
+query
+SELECT id FROM rls_pm_vault WHERE points < 5 OR points > 45 ORDER BY id;
+----
+id
+14
+22
+28
+36
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE NOT (points > 10);
+----
+QUERY PLAN
+╭─ SEQ_SCAN ──────────────────────────────╮
+│ Table: rls_pm_vault                     │
+│ Type: Sequential Scan                   │
+│ Projections: id                         │
+│ Column Filter: owner = 'rls_pm_arelav', │
+│                NOT (points > 10)        │
+│ ~20 rows                                │
+╰─────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE bonus < points;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────╮
+│ Projections: #2                        │
+│ ~4 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ FILTER ───────────┴───────────────────╮
+│ Expression: bonus < points             │
+│ ~4 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ SEQ_SCAN ─────────┴───────────────────╮
+│ Table: rls_pm_vault                    │
+│ Type: Sequential Scan                  │
+│ Projections: bonus, points, id         │
+│ Column Filter: owner = 'rls_pm_arelav' │
+│ ~20 rows                               │
+╰────────────────────────────────────────╯
+
+
+query
+SELECT id FROM rls_pm_vault WHERE bonus < points AND points < 10 ORDER BY id;
+----
+id
+22
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE points + bonus > 40;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────╮
+│ Projections: #2                        │
+│ ~4 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ FILTER ───────────┴───────────────────╮
+│ Expression: (points + bonus) > 40      │
+│ ~4 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ SEQ_SCAN ─────────┴───────────────────╮
+│ Table: rls_pm_vault                    │
+│ Type: Sequential Scan                  │
+│ Projections: points, bonus, id         │
+│ Column Filter: owner = 'rls_pm_arelav' │
+│ ~20 rows                               │
+╰────────────────────────────────────────╯
+
+
+query
+SELECT id FROM rls_pm_vault WHERE points + bonus > 40 ORDER BY id;
+----
+id
+6
+14
+34
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE points::bigint > 40;
+----
+QUERY PLAN
+╭─ SEQ_SCAN ──────────────────────────────╮
+│ Table: rls_pm_vault                     │
+│ Type: Sequential Scan                   │
+│ Projections: id                         │
+│ Column Filter: owner = 'rls_pm_arelav', │
+│                points >= 41             │
+│ ~20 rows                                │
+╰─────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE note::int > 30;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────╮
+│ Projections: #1                        │
+│ ~4 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ FILTER ───────────┴───────────────────╮
+│ Expression: CAST(note AS INTEGER) > 30 │
+│ ~4 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ SEQ_SCAN ─────────┴───────────────────╮
+│ Table: rls_pm_vault                    │
+│ Type: Sequential Scan                  │
+│ Projections: note, id                  │
+│ Column Filter: owner = 'rls_pm_arelav' │
+│ ~20 rows                               │
+╰────────────────────────────────────────╯
+
+
+query
+SELECT id FROM rls_pm_vault WHERE note::int > 30 ORDER BY id;
+----
+id
+32
+34
+36
+38
+40
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE lower(squad) = 'salam';
+----
+QUERY PLAN
+╭─ SEQ_SCAN ──────────────────────────────╮
+│ Table: rls_pm_vault                     │
+│ Type: Sequential Scan                   │
+│ Projections: id                         │
+│ Column Filter: owner = 'rls_pm_arelav', │
+│                lower(squad) = 'salam'   │
+│ ~14 rows                                │
+╰─────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE length(note) = 2;
+----
+QUERY PLAN
+╭─ SEQ_SCAN ──────────────────────────────╮
+│ Table: rls_pm_vault                     │
+│ Type: Sequential Scan                   │
+│ Projections: id                         │
+│ Column Filter: owner = 'rls_pm_arelav', │
+│                length(note) = 2         │
+│ ~2 rows                                 │
+╰─────────────────────────────────────────╯
+
+
+query
+SELECT id FROM rls_pm_vault WHERE length(note) = 2 AND id < 20 ORDER BY id;
+----
+id
+10
+12
+14
+16
+18
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE coalesce(bonus, 0) = 0;
+----
+QUERY PLAN
+╭─ SEQ_SCAN ──────────────────────────────╮
+│ Table: rls_pm_vault                     │
+│ Type: Sequential Scan                   │
+│ Projections: id                         │
+│ Column Filter: owner = 'rls_pm_arelav', │
+│                COALESCE(bonus, 0) = 0   │
+│ ~8 rows                                 │
+╰─────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE CASE WHEN bonus IS NULL THEN points ELSE bonus END > 30;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────────────╮
+│ Projections: #2                                                │
+│ ~4 rows                                                        │
+╰────────────────────────────────┬───────────────────────────────╯
+╭─ FILTER ───────────────────────┴───────────────────────────────╮
+│ Expression:                                                    │
+│ CASE  WHEN ((bonus IS NULL)) THEN (points) ELSE bonus END > 30 │
+│ ~4 rows                                                        │
+╰────────────────────────────────┬───────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────┴───────────────────────────────╮
+│ Table: rls_pm_vault                                            │
+│ Type: Sequential Scan                                          │
+│ Projections: bonus, points, id                                 │
+│ Column Filter: owner = 'rls_pm_arelav'                         │
+│ ~20 rows                                                       │
+╰────────────────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE CASE WHEN bonus IS NULL THEN note::int ELSE 0 END > 30;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────────────────────╮
+│ Projections: #2                                                           │
+│ ~4 rows                                                                   │
+╰─────────────────────────────────────┬─────────────────────────────────────╯
+╭─ FILTER ────────────────────────────┴─────────────────────────────────────╮
+│ Expression:                                                               │
+│ CASE  WHEN ((bonus IS NULL)) THEN (CAST(note AS INTEGER)) ELSE 0 END > 30 │
+│ ~4 rows                                                                   │
+╰─────────────────────────────────────┬─────────────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────────────┴─────────────────────────────────────╮
+│ Table: rls_pm_vault                                                       │
+│ Type: Sequential Scan                                                     │
+│ Projections: bonus, note, id                                              │
+│ Column Filter: owner = 'rls_pm_arelav'                                    │
+│ ~20 rows                                                                  │
+╰───────────────────────────────────────────────────────────────────────────╯
+
+
+query
+SELECT id FROM rls_pm_vault WHERE CASE WHEN bonus IS NULL THEN note::int ELSE 0 END > 30 ORDER BY id;
+----
+id
+32
+36
+40
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE regexp_matches(note, '^[0-9]+$');
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────╮
+│ Projections: #1                        │
+│ ~4 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ FILTER ───────────┴───────────────────╮
+│ Expression:                            │
+│ regexp_matches(note, '^[0-9]+$')       │
+│ ~4 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ SEQ_SCAN ─────────┴───────────────────╮
+│ Table: rls_pm_vault                    │
+│ Type: Sequential Scan                  │
+│ Projections: note, id                  │
+│ Column Filter: owner = 'rls_pm_arelav' │
+│ ~20 rows                               │
+╰────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE opened >= DATE '2026-02-01';
+----
+QUERY PLAN
+╭─ SEQ_SCAN ─────────────────────╮
+│ Table: rls_pm_vault            │
+│ Type: Sequential Scan          │
+│ Projections: id                │
+│ Column Filter:                 │
+│ owner = 'rls_pm_arelav',       │
+│ opened >= '2026-02-01'::DATE   │
+│ ~20 rows                       │
+╰────────────────────────────────╯
+
+
+query
+SELECT id FROM rls_pm_vault WHERE opened >= DATE '2026-02-01' ORDER BY id;
+----
+id
+32
+34
+36
+38
+40
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE squad || '!' = 'salam!';
+----
+QUERY PLAN
+╭─ SEQ_SCAN ────────────────────────────────╮
+│ Table: rls_pm_vault                       │
+│ Type: Sequential Scan                     │
+│ Projections: id                           │
+│ Column Filter: owner = 'rls_pm_arelav',   │
+│                (squad || '!') = 'salam!'  │
+│ ~14 rows                                  │
+╰───────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE random() < 2;
+----
+QUERY PLAN
+╭─ FILTER ───────────────────────────────╮
+│ Expression: random() < 2               │
+│ ~4 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ SEQ_SCAN ─────────┴───────────────────╮
+│ Table: rls_pm_vault                    │
+│ Type: Sequential Scan                  │
+│ Projections: id                        │
+│ Column Filter: owner = 'rls_pm_arelav' │
+│ ~20 rows                               │
+╰────────────────────────────────────────╯
+
+
+query
+SELECT count(*) AS n FROM rls_pm_vault WHERE random() < 2;
+----
+n
+20
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE id = 8 AND note::int > 0;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────╮
+│ Projections: #0                         │
+│ ~0 rows                                 │
+╰────────────────────┬────────────────────╯
+╭─ FILTER ───────────┴────────────────────╮
+│ Expression: CAST(note AS INTEGER) > 0   │
+│ ~0 rows                                 │
+╰────────────────────┬────────────────────╯
+╭─ SEQ_SCAN ─────────┴────────────────────╮
+│ Table: rls_pm_vault                     │
+│ Type: Sequential Scan                   │
+│ Projections: id, note                   │
+│ Column Filter: owner = 'rls_pm_arelav', │
+│                id = 8                   │
+│ ~1 row                                  │
+╰─────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE points > (SELECT 20);
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────╮
+│ Projections: id                        │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ NESTED_LOOP_JOIN ─┴───────────────────╮
+│ Join Type: INNER                       │
+│ Conditions: points > SUBQUERY          │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+                     ├───────────────────────────────╮
+╭─ SEQ_SCAN ─────────┴───────────────────╮  ╭─ PROJECTION ────╮
+│ Table: rls_pm_vault                    │  │ Projections: 20 │
+│ Type: Sequential Scan                  │  │ ~1 row          │
+│ Projections: points, id                │  ╰────────┬────────╯
+│ Column Filter: owner = 'rls_pm_arelav' │  ╭─ DUMMY_SCAN ────╮
+│ ~20 rows                               │  ╰─────────────────╯
+╰────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE points > (SELECT avg(points) FROM rls_pm_vault);
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────╮
+│ Projections: id                        │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ NESTED_LOOP_JOIN ─┴───────────────────╮
+│ Join Type: INNER                       │
+│ Conditions:                            │
+│ CAST(points AS DOUBLE) > SUBQUERY      │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+                     ├─────────────────────────────────────────────╮
+╭─ SEQ_SCAN ─────────┴───────────────────╮  ╭─ PROJECTION ─────────┴──────────────────────╮
+│ Table: rls_pm_vault                    │  │ Projections:                                │
+│ Type: Sequential Scan                  │  │ "/"(CAST(#0 AS DOUBLE), CAST(#1 AS DOUBLE)) │
+│ Projections: points, id                │  │ ~1 row                                      │
+│ Column Filter: owner = 'rls_pm_arelav' │  ╰──────────────────────┬──────────────────────╯
+│ ~20 rows                               │  ╭─ UNGROUPED_AGGREGATE ┴──────────────────────╮
+╰────────────────────────────────────────╯  │ Aggregates: sum(#0), count(#0)              │
+                                            │ ~1 row                                      │
+                                            ╰──────────────────────┬──────────────────────╯
+                                            ╭─ SEQ_SCAN ───────────┴──────────────────────╮
+                                            │ Table: rls_pm_vault                         │
+                                            │ Type: Sequential Scan                       │
+                                            │ Projections: points                         │
+                                            │ Column Filter: owner = 'rls_pm_arelav'      │
+                                            │ ~20 rows                                    │
+                                            ╰─────────────────────────────────────────────╯
+
+
+query
+SELECT id FROM rls_pm_vault WHERE points > (SELECT avg(points) FROM rls_pm_vault) ORDER BY id;
+----
+id
+4
+6
+12
+14
+18
+20
+26
+28
+34
+40
+
+
+query
+EXPLAIN SELECT id FROM (SELECT id, points * 2 AS doubled FROM rls_pm_vault) s WHERE doubled > 60;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────╮
+│ Projections: #0                        │
+│ ~4 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ FILTER ───────────┴───────────────────╮
+│ Expression: (points * 2) > 60          │
+│ ~4 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ SEQ_SCAN ─────────┴───────────────────╮
+│ Table: rls_pm_vault                    │
+│ Type: Sequential Scan                  │
+│ Projections: id, points                │
+│ Column Filter: owner = 'rls_pm_arelav' │
+│ ~20 rows                               │
+╰────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM (SELECT id, note::int AS n FROM rls_pm_vault) s WHERE n > 30;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────╮
+│ Projections: #0                        │
+│ ~4 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ FILTER ───────────┴───────────────────╮
+│ Expression: CAST(note AS INTEGER) > 30 │
+│ ~4 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ SEQ_SCAN ─────────┴───────────────────╮
+│ Table: rls_pm_vault                    │
+│ Type: Sequential Scan                  │
+│ Projections: id, note                  │
+│ Column Filter: owner = 'rls_pm_arelav' │
+│ ~20 rows                               │
+╰────────────────────────────────────────╯
+
+
+query
+SELECT id FROM (SELECT id, note::int AS n FROM rls_pm_vault) s WHERE n > 30 ORDER BY id;
+----
+id
+32
+34
+36
+38
+40
+
+
+query
+EXPLAIN SELECT v.id FROM rls_pm_vault v JOIN rls_pm_owners o ON o.squad = v.squad WHERE o.owner = 'rls_pm_arelav' AND v.points > 25;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────╮
+│ Projections: id                         │
+│ ~13 rows                                │
+╰────────────────────┬────────────────────╯
+╭─ HASH_JOIN ────────┴────────────────────╮
+│ Join Type: INNER                        │
+│ Conditions: squad = squad               │
+│ ~13 rows                                │
+╰────────────────────┬────────────────────╯
+                     ├────────────────────────────────────────────╮
+╭─ SEQ_SCAN ─────────┴────────────────────╮  ╭─ SEQ_SCAN ─────────┴───────────────────╮
+│ Table: rls_pm_vault                     │  │ Table: rls_pm_owners                   │
+│ Type: Sequential Scan                   │  │ Type: Sequential Scan                  │
+│ Projections: squad, id                  │  │ Projections: squad                     │
+│ Column Filter: owner = 'rls_pm_arelav', │  │ Column Filter: owner = 'rls_pm_arelav' │
+│                points > 25              │  │ ~2 rows                                │
+│ ~20 rows                                │  ╰────────────────────────────────────────╯
+╰─────────────────────────────────────────╯
+
+
+query
+SELECT v.id FROM rls_pm_vault v JOIN rls_pm_owners o ON o.squad = v.squad WHERE o.owner = 'rls_pm_arelav' AND v.points > 25 ORDER BY v.id;
+----
+id
+6
+12
+14
+18
+20
+26
+
+
+query
+EXPLAIN SELECT v.id FROM rls_pm_vault v JOIN rls_pm_owners o ON o.squad = v.squad AND v.note::int > 20;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────╮
+│ Projections: id                        │
+│ ~4 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ HASH_JOIN ────────┴───────────────────╮
+│ Join Type: INNER                       │
+│ Conditions: squad = squad              │
+│ ~4 rows                                │
+╰────────────────────┬───────────────────╯
+                     ├──────────────────────────────────╮
+╭─ PROJECTION ───────┴───────────────────╮  ╭─ SEQ_SCAN ┴───────────╮
+│ Projections: #0, #2                    │  │ Table: rls_pm_owners  │
+│ ~4 rows                                │  │ Type: Sequential Scan │
+╰────────────────────┬───────────────────╯  │ Projections: squad    │
+╭─ FILTER ───────────┴───────────────────╮  │ ~3 rows               │
+│ Expression: CAST(note AS INTEGER) > 20 │  ╰───────────────────────╯
+│ ~4 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ SEQ_SCAN ─────────┴───────────────────╮
+│ Table: rls_pm_vault                    │
+│ Type: Sequential Scan                  │
+│ Projections: squad, note, id           │
+│ Column Filter: owner = 'rls_pm_arelav' │
+│ ~20 rows                               │
+╰────────────────────────────────────────╯
+
+
+query
+SELECT v.id FROM rls_pm_vault v JOIN rls_pm_owners o ON o.squad = v.squad AND v.note::int > 20 ORDER BY v.id;
+----
+id
+22
+24
+26
+28
+30
+32
+34
+36
+38
+40
+
+
+query
+EXPLAIN SELECT o.owner FROM rls_pm_owners o WHERE EXISTS (SELECT 1 FROM rls_pm_vault v WHERE v.squad = o.squad AND v.points > 40);
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────╮
+│ Projections:                            │
+│ __internal_decompress_string(#0)        │
+│ ~0 rows                                 │
+╰────────────────────┬────────────────────╯
+╭─ HASH_JOIN ────────┴────────────────────╮
+│ Join Type: RIGHT_SEMI                   │
+│ Conditions: squad = squad               │
+│ ~0 rows                                 │
+╰────────────────────┬────────────────────╯
+                     ├─────────────────────────────────────────────╮
+╭─ SEQ_SCAN ─────────┴────────────────────╮  ╭─ PROJECTION ────────┴────────────────────╮
+│ Table: rls_pm_vault                     │  │ Projections:                             │
+│ Type: Sequential Scan                   │  │ #0,                                      │
+│ Projections: squad                      │  │ __internal_compress_string_uhugeint(#1)  │
+│ Column Filter: owner = 'rls_pm_arelav', │  │ ~3 rows                                  │
+│                points > 40              │  ╰─────────────────────┬────────────────────╯
+│ ~20 rows                                │  ╭─ SEQ_SCAN ──────────┴────────────────────╮
+╰─────────────────────────────────────────╯  │ Table: rls_pm_owners                     │
+                                             │ Type: Sequential Scan                    │
+                                             │ Projections: squad, owner                │
+                                             │ ~3 rows                                  │
+                                             ╰──────────────────────────────────────────╯
+
+
+query
+SELECT o.owner, o.squad FROM rls_pm_owners o WHERE EXISTS (SELECT 1 FROM rls_pm_vault v WHERE v.squad = o.squad AND v.points > 40) ORDER BY o.squad;
+----
+owner	squad
+rls_pm_arelav	clickclack
+babsky	deadinside
+rls_pm_arelav	salam
+
+
+query
+EXPLAIN SELECT squad, count(*) FROM rls_pm_vault WHERE points > 10 GROUP BY squad;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ─────────────────────────╮
+│ Groups: #0                              │
+│ Aggregates: count_star()                │
+│ ~2 rows                                 │
+╰────────────────────┬────────────────────╯
+╭─ SEQ_SCAN ─────────┴────────────────────╮
+│ Table: rls_pm_vault                     │
+│ Type: Sequential Scan                   │
+│ Projections: squad                      │
+│ Column Filter: owner = 'rls_pm_arelav', │
+│                points > 10              │
+│ ~20 rows                                │
+╰─────────────────────────────────────────╯
+
+
+query
+SELECT squad, count(*) AS n FROM rls_pm_vault WHERE points > 10 GROUP BY squad ORDER BY squad;
+----
+squad	n
+clickclack	4
+deadinside	6
+salam	6
+
+
+query
+EXPLAIN SELECT DISTINCT squad FROM rls_pm_vault;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ────────────────────────╮
+│ Groups: #0                             │
+│ ~20 rows                               │
+╰────────────────────┬───────────────────╯
+╭─ SEQ_SCAN ─────────┴───────────────────╮
+│ Table: rls_pm_vault                    │
+│ Type: Sequential Scan                  │
+│ Projections: squad                     │
+│ Column Filter: owner = 'rls_pm_arelav' │
+│ ~20 rows                               │
+╰────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE id IN (SELECT id FROM rls_pm_vault WHERE points > 40);
+----
+QUERY PLAN
+╭─ HASH_JOIN ────────────────────────────╮
+│ Join Type: SEMI                        │
+│ Conditions: id = #0                    │
+│ ~4 rows                                │
+╰────────────────────┬───────────────────╯
+                     ├───────────────────────────────────────────╮
+╭─ SEQ_SCAN ─────────┴───────────────────╮  ╭─ SEQ_SCAN ─────────┴────────────────────╮
+│ Table: rls_pm_vault                    │  │ Table: rls_pm_vault                     │
+│ Type: Sequential Scan                  │  │ Type: Sequential Scan                   │
+│ Projections: id                        │  │ Projections: id                         │
+│ Column Filter: owner = 'rls_pm_arelav' │  │ Column Filter: owner = 'rls_pm_arelav', │
+│ ~20 rows                               │  │                points > 40              │
+╰────────────────────────────────────────╯  │ ~20 rows                                │
+                                            ╰─────────────────────────────────────────╯
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE POLICY rls_pm_cheap ON rls_pm_vault AS RESTRICTIVE FOR SELECT USING (points < 30 OR bonus IS NULL);
+
+
+statement ok
+SET ROLE rls_pm_arelav;
+
+
+query
+EXPLAIN SELECT id FROM rls_pm_vault WHERE squad = 'salam';
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────╮
+│ Projections: #2                         │
+│ ~2 rows                                 │
+╰────────────────────┬────────────────────╯
+╭─ FILTER ───────────┴────────────────────╮
+│ Expression:                             │
+│ (bonus IS NULL) OR (points < 30)        │
+│ ~2 rows                                 │
+╰────────────────────┬────────────────────╯
+╭─ SEQ_SCAN ─────────┴────────────────────╮
+│ Table: rls_pm_vault                     │
+│ Type: Sequential Scan                   │
+│ Projections: points, bonus, id          │
+│ Column Filter: owner = 'rls_pm_arelav', │
+│                squad = 'salam'          │
+│ ~14 rows                                │
+╰─────────────────────────────────────────╯
+
+
+query
+SELECT id, points, bonus FROM rls_pm_vault WHERE squad = 'salam' ORDER BY id;
+----
+id	points	bonus
+2	14	2
+8	6	NULL
+20	40	NULL
+32	24	NULL
+38	16	3
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP TABLE rls_pm_vault;
+
+
+statement ok
+DROP TABLE rls_pm_owners;
+
+
+statement ok
+DROP ROLE rls_pm_arelav;

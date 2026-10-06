@@ -25,7 +25,7 @@ All examples on this page use a `sentences` table whose `b` column is indexed wi
 
 ## Term and phrase search {#phrase-search}
 
-[`ts_phrase`](../../functions/search/full-text.md#ts_phrase) matches a run of tokens in order. It requires `position` to be enabled on the column ([feature flags](./text-analysis.md#token-positions-and-feature-flags)):
+[`ts_phrase`](../../functions/search/full-text.md#ts_phrase) matches a run of tokens in order. It is fastest with `position` enabled on the column ([feature flags](./text-analysis.md#token-positions-and-feature-flags)); a column without it still answers phrases when the index keeps its text, see [Phrases without positions](#phrases-without-positions):
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/example_002" />
 
@@ -69,6 +69,20 @@ The boolean operators `&&`, `||` and `!!` are **not** phrase parts — they comb
 | AND / OR / NOT *around* a phrase | `('quick' ## 'brown') && 'dog'` | `'quick' ## ('brown' && 'dog')` |
 
 In short: build the phrase with `##` and the allowed parts, then combine the finished phrase with other queries using `&&` / `||` / `!!` on the **outside**.
+
+### Phrases without positions {#phrases-without-positions}
+
+A column indexed without `position` answers every phrase query when the index also keeps the column's text. A table created `WITH (storage = 'search')` keeps every column. In an inverted index, list the column in `INCLUDE` as well as in `USING inverted`:
+
+<SqlLogicTest id="sql/indexes/inverted/full-text-search/phrase_without_positions" />
+
+The index finds the rows that contain every word of the phrase. Then it reads the text of each of those rows, analyzes it with the column's dictionary and keeps the rows where the words line up. Matches and scores are the same as with `position`, for every phrase form: gaps, `[min, max]` intervals and `slop` in `ts_phrase`, `##` chains with pattern parts, `phraseto_tsquery` and the quoted phrases of `to_tsquery` and `websearch_to_tsquery`. `EXPLAIN` marks such a phrase with `Verify: stored text`:
+
+<SqlLogicTest id="sql/indexes/inverted/full-text-search/phrase_without_positions_plan" />
+
+The index stays smaller without `position`, but a phrase reads more data: the fewer rows contain all of its words, the cheaper it is. A phrase of common words over long texts is where `position` pays off.
+
+Without `position` and without the column's text, a phrase of two or more words fails with `ts_phrase on a column without positions needs the column's text in the index`.
 
 ## Prefix, wildcard and regex
 

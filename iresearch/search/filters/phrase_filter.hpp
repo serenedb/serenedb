@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <memory>
 #include <set>
 #include <variant>
 #include <vector>
@@ -45,6 +46,7 @@ struct TermSetOptions {
 };
 
 class ByPhrase;
+struct PhraseTokens;
 
 enum class SlotKind : uint8_t {
   Term,
@@ -94,7 +96,7 @@ class ByPhraseOptions {
     return insert(std::forward<PhrasePart>(t), offs + 1, offs + 1);
   }
 
-  bool operator==(const ByPhraseOptions& rhs) const noexcept = default;
+  bool operator==(const ByPhraseOptions& rhs) const noexcept;
 
   bool LowerParts();
 
@@ -102,6 +104,7 @@ class ByPhraseOptions {
     _phrase.clear();
     _slop = 0;
     _word_separator.clear();
+    _tokens.reset();
   }
 
   bool simple() const noexcept {
@@ -127,6 +130,13 @@ class ByPhraseOptions {
   bytes_view word_separator() const noexcept { return _word_separator; }
   void set_word_separator(bytes_view value) { _word_separator = value; }
 
+  const std::shared_ptr<const PhraseTokens>& tokens() const noexcept {
+    return _tokens;
+  }
+  void set_tokens(std::shared_ptr<const PhraseTokens> tokens) noexcept {
+    _tokens = std::move(tokens);
+  }
+
  private:
   template<typename PhrasePart>
   PhrasePart& insert(PhrasePart&& t, PosAttr::value_t offs_min,
@@ -146,6 +156,7 @@ class ByPhraseOptions {
   std::vector<PhrasePartInfo> _phrase;
   PosAttr::value_t _slop{0};
   bstring _word_separator;
+  std::shared_ptr<const PhraseTokens> _tokens;
 };
 
 class ByPhrase : public FilterWithField<ByPhraseOptions> {

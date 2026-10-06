@@ -127,8 +127,8 @@ id	scored
 statement error
 SELECT id FROM sp_cars_nopos_idx WHERE body @@ ts_phrase('red car');
 ----
-db error: ERROR: ts_phrase field should have Positions and Frequency features enabled for multi-term phrases
-HINT: Recreate the inverted index with both `Positions` and `Frequency` features attached to the column, or query with a single-term ts_phrase / ts_like.
+db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
+HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE`, or query with a single-term ts_phrase / ts_like.
 
 
 statement ok

@@ -128,6 +128,7 @@ set(iresearch-tests_sources
     ./search/phrase_slop_matcher_fuzz.cpp
     ./search/phrase_positions_test.cpp
     ./search/shingle_phrase_test.cpp
+    ./search/token_phrase_test.cpp
     ./search/ngram_similarity_filter_tests.cpp
     ./search/top_terms_selector_test.cpp
     ./search/geo_filter_test.cpp

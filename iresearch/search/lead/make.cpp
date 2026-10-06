@@ -43,6 +43,7 @@
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/search/queries/term_query.hpp"
+#include "iresearch/search/queries/token_phrase_query.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::lead {
@@ -176,6 +177,22 @@ Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx) {
                                                   .stats = record.stats,
                                                   .fetcher = ctx.fetcher,
                                                   .boost = query.Boost()}));
+}
+
+Node::ptr Make(const TokenPhraseQuery& query) {
+  return MakeTokenPhraseDocs(query);
+}
+
+Node::ptr Make(const TokenPhraseQuery& query, const detail::ScoredCtx& ctx) {
+  const auto record = query.Stats(ctx);
+  const detail::ScoreArgs args{.scorer = record.scorer,
+                               .stats = record.stats,
+                               .fetcher = ctx.fetcher,
+                               .boost = query.Boost()};
+  if (!args.stats) {
+    return Make(query);
+  }
+  return MakeTokenPhraseScored(query, args);
 }
 
 }  // namespace irs::lead

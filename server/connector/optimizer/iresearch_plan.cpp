@@ -350,7 +350,12 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     if (!info || !info->IsTermDict()) {
       return std::nullopt;
     }
-    return make_info(config.TermField(col_id), info, std::move(type), col_id);
+    auto column_info =
+      make_info(config.TermField(col_id), info, std::move(type), col_id);
+    if (bind_data.relation.IsSearchTable() || info->IsStored()) {
+      column_info.stored_field_id = col_id;
+    }
+    return column_info;
   };
 
   connector::FieldSetGetter field_set = [&](std::string_view name) {
@@ -382,8 +387,13 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     if (return_type.id() == duckdb::LogicalTypeId::INVALID) {
       return std::nullopt;
     }
-    return make_info(field_id, config.FindEntry(field_id),
-                     std::move(return_type), std::nullopt);
+    const auto* entry = config.FindEntry(field_id);
+    auto column_info =
+      make_info(field_id, entry, std::move(return_type), std::nullopt);
+    if (entry && entry->IsStored()) {
+      column_info.stored_field_id = field_id;
+    }
+    return column_info;
   };
 
   return fn(SearchGetters{getter, expr_getter, analyzed_fields, null_markers});

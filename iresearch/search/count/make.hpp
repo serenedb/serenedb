@@ -52,6 +52,7 @@ Root::ptr Make(const VariadicPhraseQuery& query, const Context& ctx);
 Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx);
 Root::ptr Make(const AllQuery& query, const Context& ctx);
 Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx);
+Root::ptr Make(const TokenPhraseQuery& query, const Context& ctx);
 Root::ptr Make(const ByNestedQuery& query, const Context& ctx);
 Root::ptr Make(const RangeVectorQuery& query, const Context& ctx);
 

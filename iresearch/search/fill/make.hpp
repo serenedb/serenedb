@@ -39,6 +39,7 @@ Node::ptr Make(const VariadicPhraseQuery& query);
 Node::ptr Make(const NGramSimilarityQuery& query);
 Node::ptr Make(const AllQuery& query);
 Node::ptr Make(const WildcardNGramQuery& query);
+Node::ptr Make(const TokenPhraseQuery& query);
 Node::ptr Make(const ByNestedQuery& query);
 inline Node::ptr Make(const HnswQuery&) { return {}; }
 inline Node::ptr Make(const KnnVectorQuery&) { return {}; }
@@ -61,6 +62,8 @@ Node::ptr Make(const NGramSimilarityQuery& query, const detail::ScoredCtx& ctx,
 Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge);
 Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx,
+               ScoreMergeType merge);
+Node::ptr Make(const TokenPhraseQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge);
 Node::ptr Make(const ByNestedQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge);
@@ -107,5 +110,10 @@ Node::ptr MakeWildcardNGramDocs(const WildcardNGramQuery& query);
 Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
                                   const detail::ScoredCtx& ctx,
                                   ScoreMergeType merge);
+
+Node::ptr MakeTokenPhraseDocs(const TokenPhraseQuery& query);
+Node::ptr MakeTokenPhraseScored(const TokenPhraseQuery& query,
+                                const detail::ScoredCtx& ctx,
+                                ScoreMergeType merge);
 
 }  // namespace irs::fill

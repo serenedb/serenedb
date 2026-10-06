@@ -26,6 +26,7 @@
 
 #include <iresearch/search/detail/pattern_cache.hpp>
 #include <iresearch/search/detail/search_range.hpp>
+#include <iresearch/search/detail/token_phrase.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/automaton_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
@@ -264,9 +265,9 @@ struct FilterPrinter {
     return kind_of(sdb::connector::ColumnId{fid});
   }
 
-  std::string PhraseParts(const ByPhrase& filter) const {
+  std::string PhraseParts(const ByPhraseOptions& options) const {
     std::string s;
-    for (const auto& part : filter.options()) {
+    for (const auto& part : options) {
       std::string part_str;
       part.part.visit(PhrasePartVisitor{.out = &part_str});
       absl::StrAppend(&s, part_str, "(", part.offs_min, ", ", part.offs_max,
@@ -525,7 +526,7 @@ struct FilterPrinter {
       const auto& f = downCast<const ByPhrase>(filter);
       ExplainNode node{"Phrase"};
       node.attributes["Field"] = FieldName(f.field_id());
-      node.attributes["Parts"] = PhraseParts(f);
+      node.attributes["Parts"] = PhraseParts(f.options());
       if (const auto separator = f.options().word_separator();
           !separator.empty()) {
         node.attributes["Separator"] =
@@ -533,6 +534,12 @@ struct FilterPrinter {
       }
       if (const auto slop = f.options().slop(); slop > 0) {
         node.attributes["Slop"] = absl::StrCat(slop);
+      }
+      if (const auto& tokens = f.options().tokens()) {
+        node.attributes["Verify"] = "stored text";
+        if (tokens->spec) {
+          node.attributes["Words"] = PhraseParts(*tokens->spec);
+        }
       }
       return node;
     }

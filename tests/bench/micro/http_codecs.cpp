@@ -55,8 +55,7 @@ class StringOutput final : public sdb::network::http::EncodeOutput {
  public:
   explicit StringOutput(std::string& out) : _out{out} {}
 
-  void Write(size_t capacity,
-             absl::FunctionRef<size_t(uint8_t*)> fill) final {
+  void Write(size_t capacity, absl::FunctionRef<size_t(uint8_t*)> fill) final {
     const size_t size = _out.size();
     irs::utils::StrResize(_out, size + capacity);
     _out.resize(size + fill(reinterpret_cast<uint8_t*>(_out.data() + size)));

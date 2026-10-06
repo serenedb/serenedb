@@ -43,6 +43,12 @@ test or an expectation just to make a failure go away.
 - Issues labelled `student-task` (epic #1134) are reserved for students: don't
 implement one unless the user names that issue.
 
+- C++ navigation and diagnostics come from the `clangd-lsp` plugin (enabled in
+`.claude/settings.json`; `clangd` is installed on the dev machines). Prefer
+the LSP tool's definitions and references over grepping for a symbol. clangd
+reads `build/compile_commands.json`; with another build dir, run
+`ln -s <build dir>/compile_commands.json .` in the checkout once.
+
 - Repo-wide knowledge goes into the repo, not into personal memory, which is
 per machine and invisible to the team: propose the line for this file, the
 matching `.claude/rules/*.md` or the skill in `.claude/skills/` in the same PR.

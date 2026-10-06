@@ -67,6 +67,7 @@ tests/drivers/c/harness
 !/.claude/tools/
 !/.claude/settings.json
 /CLAUDE.local.md
+/compile_commands.json
 
 # Local act secrets (fakes for local CI runs)
 .secrets

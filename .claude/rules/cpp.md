@@ -7,19 +7,15 @@ paths:
 
 # SereneDB C++: review rules beyond CONTRIBUTING.md
 
-These are rulings from the maintainers' reviews; CONTRIBUTING.md stays the base. In `server/` and `iresearch/`, pre-commit `check-banned-calls` rejects `std::unordered_*`, the printf family and `std::sto*`/`std::from_chars`/`strto*`/`ato*`, and `fix-template-typename` rewrites `template <class T>`.
+Read CONTRIBUTING.md "C++ Code Style" first; these are the maintainers' review rulings it doesn't cover.
 
-## Containers, strings, formatting
+## Containers and copies
 
-- Our own maps and sets: `irs::containers::FlatHashMap`, `FlatHashSet`, `NodeHashMap` (`iresearch/utils/containers/`), never `std::unordered_*`.
 - Containers with heterogeneous lookup (absl, `irs::containers`): look up with the borrowed key (`map.find(sv)`, `set.contains(sv)`, `map.try_emplace(sv)`), never a temporary `std::string` key, never `find` followed by an insert of the same key. DuckDB's maps have no such lookup and need the `std::string`.
 - Avoid every unnecessary copy and allocation, however small.
-- Formatted output: `absl::StrFormat`, `absl::StrCat`, `absl::FPrintF`, `absl::PrintF`, `absl::SNPrintF` into a fixed buffer.
-- Number parsing: `fast_float::from_chars` (`third_party/fast_float`, integers with a base too); check its `ec`.
 
 ## Errors
 
-- `THROW_SQL_ERROR(ERR_CODE(...), ERR_MSG(...))`, so the real SQLSTATE goes on the wire. Pre-commit `check-no-raw-throw` rejects any other `throw` in `server/` except a rethrow (`throw;`) and `duckdb::NotImplementedException`.
 - Keep the message at the throw site; don't fold duplicated error text into a throwing helper.
 
 ## Concurrency

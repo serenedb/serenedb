@@ -40,7 +40,6 @@ namespace irs {
 
 class ColWriter;
 class ListIngest;
-struct ListParts;
 
 struct WriteChunk {
   duckdb::Vector data;
@@ -91,6 +90,8 @@ class ColumnWriter final {
  private:
   friend class ColWriter;
 
+  template<typename Fill>
+  void Stage(uint64_t count, Fill&& fill);
   void AppendDense(const duckdb::Vector& vec, duckdb::idx_t count);
   void AppendList(const duckdb::Vector& vec, duckdb::idx_t count);
   void AppendStruct(const duckdb::Vector& vec, duckdb::idx_t count);
@@ -104,8 +105,6 @@ class ColumnWriter final {
     const duckdb::LogicalType& codec_type, std::span<WriteChunk> chunks,
     duckdb::CompressionType forced,
     duckdb::unique_ptr<duckdb::AnalyzeState>& out_state);
-
-  static duckdb::CompressionType CodesCodec(const ListParts& parts) noexcept;
 
   const duckdb::CompressionFunction* PlainCodec(
     const duckdb::LogicalType& type, duckdb::CompressionType codec) const;
@@ -130,6 +129,8 @@ class ColumnWriter final {
   void SealValidity(std::span<WriteChunk> chunks, uint64_t row_count,
                     std::vector<ColumnBlockMeta>& sink);
 
+  void Claim(ColumnMeta& meta, const duckdb::LogicalType& type) const;
+
   void SealNestedValidity(std::span<WriteChunk> chunks, uint64_t row_count,
                           bool skip_validity, size_t child_count,
                           ColumnMeta& meta);
@@ -148,7 +149,9 @@ class ColumnWriter final {
                 uint64_t row_count, bool skip_validity,
                 duckdb::CompressionType forced, ColumnMeta& meta);
 
-  void SealListParts(const duckdb::LogicalType& type, ListParts& parts,
+  void SealListParts(const duckdb::LogicalType& type,
+                     std::span<WriteChunk> chunks, uint64_t row_count,
+                     bool skip_validity, ListIngest& ingest,
                      duckdb::CompressionType forced, ColumnMeta& meta);
 
   void SealVariant(const duckdb::LogicalType& type,

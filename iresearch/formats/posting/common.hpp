@@ -372,8 +372,8 @@ IRS_FORCE_INLINE It BranchlessLowerBound(It begin, const T& value,
   }
 }
 
-template<typename FormatTraits, bool Freq, bool Pos, bool Offs>
-struct IteratorTraitsImpl : FormatTraits {
+template<bool Freq, bool Pos, bool Offs>
+struct IteratorTraitsImpl {
   static constexpr bool Frequency() noexcept { return Freq; }
   static constexpr bool Position() noexcept { return Freq && Pos; }
   static constexpr bool Offset() noexcept { return Position() && Offs; }

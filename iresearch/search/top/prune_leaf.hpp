@@ -30,9 +30,9 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/block_index.hpp"
+#include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/doc_input.hpp"
-#include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
@@ -298,8 +298,8 @@ class PruneLeafBase {
     auto& in = In();
     _hint.Advance(in, in.Position());
     const auto len = std::min(_left_in_list, doc_limits::kBlockSize);
-    FormatTraits128::ReadTailDelta(len, in, _enc.data, _docs, prev);
-    FormatTraits128::ReadTail(len, in, _enc.data, _freqs.data);
+    block_io::ReadTailDelta(len, in, _enc.data, _docs, prev);
+    block_io::ReadTail(len, in, _enc.data, _freqs.data);
     _left_in_leaf = len;
     _len = len;
     _left_in_list -= len;

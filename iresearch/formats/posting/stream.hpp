@@ -25,6 +25,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/block_codec.hpp"
+#include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/doc_input.hpp"
 #include "iresearch/formats/posting/iterator_pos.hpp"
@@ -133,13 +134,13 @@ class PostingsStream : public TermPostings {
   void ReadLeaf(doc_id_t prev) {
     auto& in = In();
     if (_left_in_list >= doc_limits::kBlockSize) [[likely]] {
-      IteratorTraits::ReadBlockDelta(in, _enc_buf, _docs, prev);
+      block_io::ReadBlockDelta(in, _enc_buf, _docs, prev);
       _left_in_leaf = doc_limits::kBlockSize;
       _left_in_list -= doc_limits::kBlockSize;
       ReadLeafFreqs(doc_limits::kBlockSize);
     } else {
       const auto tail = _left_in_list;
-      IteratorTraits::ReadTailDelta(tail, in, _enc_buf, _docs, prev);
+      block_io::ReadTailDelta(tail, in, _enc_buf, _docs, prev);
       _left_in_leaf = tail;
       _left_in_list = 0;
       ReadLeafFreqs(tail);
@@ -149,17 +150,17 @@ class PostingsStream : public TermPostings {
 
   void ReadLeafFreqs(uint32_t len) {
     if constexpr (IteratorTraits::Frequency()) {
-      IteratorTraits::ReadTail(len, In(), _enc_buf, _freqs);
+      block_io::ReadTail(len, In(), _enc_buf, _freqs);
     } else if constexpr (FieldTraits::Frequency()) {
       // Only a full block is followed by more of this term's documents, so
       // only a full block has to be stepped over.
       if (len == doc_limits::kBlockSize) {
-        FieldTraits::SkipBlock(In());
+        block_io::SkipBlock(In());
       }
     }
   }
 
-  ABSL_CACHELINE_ALIGNED uint32_t _enc_buf[IteratorTraits::kEncWords];
+  ABSL_CACHELINE_ALIGNED uint32_t _enc_buf[block_io::kEncWords];
   [[no_unique_address]] ABSL_CACHELINE_ALIGNED utils::Need<
     IteratorTraits::Frequency(),
     SlackBuf<uint32_t, doc_limits::kBlockSize, block_codec::kOutSlack>> _freqs;

@@ -21,8 +21,8 @@
 #pragma once
 
 #include "iresearch/formats/format_utils.hpp"
+#include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
-#include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting/stream.hpp"
 #include "iresearch/formats/posting/writer.hpp"
 #include "iresearch/formats/reader_state.hpp"
@@ -53,7 +53,7 @@ inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
 class PostingsReader final {
  public:
   template<bool Freq, bool Pos, bool Offs>
-  using IteratorTraits = IteratorTraitsImpl<FormatTraits128, Freq, Pos, Offs>;
+  using IteratorTraits = IteratorTraitsImpl<Freq, Pos, Offs>;
 
   PostingsHandles Handles() const noexcept {
     return {.doc = _doc_in.get(), .pos = _pos_in.get(), .pay = _pay_in.get()};

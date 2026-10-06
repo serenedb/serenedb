@@ -68,7 +68,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
       _leaf = {.bitset = nullptr,
                .words = 0,
                .max = _last,
-               .kind = FormatTraits128::FillLeaf::Kind::Docs};
+               .kind = block_io::FillLeaf::Kind::Docs};
       _leaf_base = _last - 1;
       _leaf_len = 1;
       return;
@@ -159,7 +159,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
       if (leaf.Maskable()) {
         if constexpr (!Scored) {
           if (base >= min) [[likely]] {
-            const auto live = FormatTraits128::MaskLeaf<Clear>(
+            const auto live = block_io::MaskLeaf<Clear>(
               leaf, base, len, min, max, mask, std::end(_docs));
             SkipFreqsAfterFill(len);
             if (live == 0) {
@@ -229,16 +229,15 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
   }
 
  private:
-  IRS_FORCE_INLINE FormatTraits128::FillLeaf ReadFill(const byte_type*& at,
-                                                      uint32_t len,
-                                                      doc_id_t base) {
+  IRS_FORCE_INLINE block_io::FillLeaf ReadFill(const byte_type*& at,
+                                               uint32_t len, doc_id_t base) {
     _hint.Advance(In(), In().Position());
     if constexpr (InputType::kVolatileAlways) {
-      return FormatTraits128::FillView(In(), at, len, this->Holes(), _docs,
-                                       base, len == this->_freq_len.value);
+      return block_io::FillView(In(), at, len, this->Holes(), _docs, base,
+                                len == this->_freq_len.value);
     } else {
-      return FormatTraits128::ReadTailForFill(len, In(), Enc(), this->Holes(),
-                                              _docs, base);
+      return block_io::ReadTailForFill(len, In(), Enc(), this->Holes(), _docs,
+                                       base);
     }
   }
 
@@ -326,16 +325,16 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
     return _last;
   }
 
-  void Materialize(const FormatTraits128::FillLeaf& leaf, doc_id_t base,
+  void Materialize(const block_io::FillLeaf& leaf, doc_id_t base,
                    uint32_t len) noexcept {
     auto* const out = std::end(_docs) - len;
     if (leaf.IsRun()) {
-      FormatTraits128::FillSameDelta(out, len, base, 1);
+      block_io::FillSameDelta(out, len, base, 1);
       return;
     }
     SDB_ASSERT(leaf.IsBitset());
-    FormatTraits128::MaterializeBitsetFrom(base, leaf.bitset, 0, leaf.bitset[0],
-                                           leaf.words, out);
+    block_io::MaterializeBitsetFrom(base, leaf.bitset, 0, leaf.bitset[0],
+                                    leaf.words, out);
   }
 
   template<bool Clear>
@@ -389,7 +388,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
       });
   }
 
-  FormatTraits128::FillLeaf _leaf{};
+  block_io::FillLeaf _leaf{};
   doc_id_t _leaf_base = 0;
   uint32_t _leaf_len = 0;
 };

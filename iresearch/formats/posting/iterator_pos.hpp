@@ -22,6 +22,7 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
+#include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -120,7 +121,7 @@ class PositionImpl final : public PosAttr {
       throw IoError("failed to reopen positions input");
     }
 
-    _pos.view = IteratorTraits::View(*_pos.in);
+    _pos.view = block_io::View(*_pos.in);
     _pos.hint.Arm(state.term_state->pos_start,
                   state.term_state->pos_start + PosExtent(*state.term_state));
     _enc_buf = state.enc_buf;
@@ -136,7 +137,7 @@ class PositionImpl final : public PosAttr {
         throw IoError("failed to reopen payload input");
       }
 
-      _pay.view = IteratorTraits::View(*_pay.in);
+      _pay.view = block_io::View(*_pay.in);
       _pay.hint.Arm(state.term_state->pay_start,
                     state.term_state->pay_start + PayExtent(*state.term_state));
     }
@@ -298,10 +299,10 @@ class PositionImpl final : public PosAttr {
 
   template<typename Input>
   IRS_FORCE_INLINE void Decode(Input& pos, Input* pay) {
-    IteratorTraits::ReadBlock(pos, _enc_buf, _pos_deltas);
+    block_io::ReadBlock(pos, _enc_buf, _pos_deltas);
     if constexpr (IteratorTraits::Offset()) {
-      IteratorTraits::ReadBlock(*pay, _enc_buf, _offs_start_deltas);
-      IteratorTraits::ReadBlock(*pay, _enc_buf, _offs_lengths);
+      block_io::ReadBlock(*pay, _enc_buf, _offs_start_deltas);
+      block_io::ReadBlock(*pay, _enc_buf, _offs_lengths);
     }
   }
 

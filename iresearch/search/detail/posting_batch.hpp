@@ -26,9 +26,9 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
+#include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/doc_input.hpp"
-#include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
@@ -203,20 +203,20 @@ class PostingBatch {
     static_assert(!Scored);
     SDB_ASSERT(len != 0);
     if (len == _freq_len.value) {
-      FormatTraits128::SkipBlock(In());
+      block_io::SkipBlock(In());
     }
   }
 
   IRS_FORCE_INLINE void ReadDocs(doc_id_t* IRS_RESTRICT dest, uint32_t len) {
     _hint.Advance(In(), In().Position());
-    FormatTraits128::ReadTailDeltaAt(len, In(), Enc(), dest, _last);
+    block_io::ReadTailDeltaAt(len, In(), Enc(), dest, _last);
     _last = dest[len - 1];
     _left_in_list -= len;
   }
 
   void ScoreBlock(const doc_id_t* docs, score_t* scores) {
     static_assert(Scored);
-    FormatTraits128::ReadBlock(In(), Enc(), _freqs.data);
+    block_io::ReadBlock(In(), Enc(), _freqs.data);
     _score.fetcher->FetchPostingBlock(
       std::span<const doc_id_t, kBlock>{docs, kBlock});
     _score.score.ScorePostingBlock(scores);
@@ -224,7 +224,7 @@ class PostingBatch {
 
   void ScoreTail(const doc_id_t* docs, score_t* scores, uint32_t len) {
     static_assert(Scored);
-    FormatTraits128::ReadTail(len, In(), Enc(), _freqs.data);
+    block_io::ReadTail(len, In(), Enc(), _freqs.data);
     _provider.freq.value = _freqs.data + (kBlock - len);
     _score.fetcher->Fetch(std::span<const doc_id_t>{docs, len});
     _score.score.Score(scores, static_cast<scores_size_t>(len));

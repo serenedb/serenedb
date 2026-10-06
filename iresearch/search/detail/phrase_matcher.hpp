@@ -28,8 +28,8 @@
 #include <memory>
 
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
-#include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting/iterator_pos.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
@@ -48,7 +48,7 @@ struct TermInterval {
 };
 
 template<bool Offs>
-using FixedTermTraits = IteratorTraitsImpl<FormatTraits128, true, true, Offs>;
+using FixedTermTraits = IteratorTraitsImpl<true, true, Offs>;
 
 template<bool Offs>
 using FixedTermPositionImpl = PositionImpl<FixedTermTraits<Offs>>;

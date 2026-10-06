@@ -28,8 +28,8 @@
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/posting/block_index.hpp"
+#include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
-#include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/iterators.hpp"
@@ -326,7 +326,7 @@ class PostingsWriter final {
   // Scratch list of the current term's document ids (collected when
   // HasVector).
   std::vector<doc_id_t> _term_docs;
-  uint32_t _enc_buf[FormatTraits128::kEncWords];
+  uint32_t _enc_buf[block_io::kEncWords];
   bool _volatile_attributes;
 };
 
@@ -540,7 +540,7 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
                            uint32_t blocks) {
       const uint64_t bytes =
         out.Position() - start + PosGroup::kHeaderBytes + group.Bytes() +
-        (partial ? blocks * FormatTraits128::Codec::kMaxBlockBytes : 0);
+        (partial ? blocks * block_io::Codec::kMaxBlockBytes : 0);
       SDB_ENSURE(bytes <= std::numeric_limits<uint32_t>::max(),
                  "postings writer: a single term's positions footprint of ",
                  bytes, " bytes exceeds the ",
@@ -567,20 +567,19 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
 inline void PostingsWriter::FlushTailDoc() {
   const auto tail = _doc.size;
   SDB_ASSERT(tail != 0);
-  FormatTraits128::WriteTailDelta(tail, *_doc_out, _doc.docs, _doc.block_last,
-                                  _enc_buf);
+  block_io::WriteTailDelta(tail, *_doc_out, _doc.docs, _doc.block_last,
+                           _enc_buf);
   if (_features.HasFrequency()) {
-    FormatTraits128::WriteTail(tail, *_doc_out, _doc.freqs, _enc_buf);
+    block_io::WriteTail(tail, *_doc_out, _doc.freqs, _enc_buf);
   }
 }
 
 inline void PostingsWriter::AppendTailDoc(BytesOutput& out) {
   const auto tail = _doc.size;
   SDB_ASSERT(tail != 0);
-  FormatTraits128::WriteTailDelta(tail, out, _doc.docs, _doc.block_last,
-                                  _enc_buf);
+  block_io::WriteTailDelta(tail, out, _doc.docs, _doc.block_last, _enc_buf);
   if (_features.HasFrequency()) {
-    FormatTraits128::WriteTail(tail, out, _doc.freqs, _enc_buf);
+    block_io::WriteTail(tail, out, _doc.freqs, _enc_buf);
   }
 }
 
@@ -610,17 +609,17 @@ inline void PostingsWriter::FlushTailPay() {
 
 inline void PostingsWriter::WritePosBlock() {
   SDB_ASSERT(_pos_out);
-  _pos_group.Append(_enc_buf, FormatTraits128::EncodeBlock(_pos.buf, _enc_buf));
+  _pos_group.Append(_enc_buf, block_io::EncodeBlock(_pos.buf, _enc_buf));
   _pos_group.Close(*_pos_out);
   _pos.size = 0;
 }
 
 inline void PostingsWriter::WritePayBlock() {
   SDB_ASSERT(_pay_out);
-  _pay_group.Append(
-    _enc_buf, FormatTraits128::EncodeBlock(_pay.offs_start_buf, _enc_buf));
   _pay_group.Append(_enc_buf,
-                    FormatTraits128::EncodeBlock(_pay.offs_len_buf, _enc_buf));
+                    block_io::EncodeBlock(_pay.offs_start_buf, _enc_buf));
+  _pay_group.Append(_enc_buf,
+                    block_io::EncodeBlock(_pay.offs_len_buf, _enc_buf));
   _pay_group.Close(*_pay_out);
   _pay.size = 0;
 }
@@ -742,7 +741,7 @@ inline void PostingsWriter::AddPosition(uint32_t pos) {
 }
 
 inline void PostingsWriter::End() {
-  FormatTraits128::WriteSlack(*_doc_out);
+  block_io::WriteSlack(*_doc_out);
   format_utils::WriteFooter(*_doc_out);
   _doc_out.reset();  // ensure stream is closed
 
@@ -753,7 +752,7 @@ inline void PostingsWriter::End() {
     if (!_pos_group.Empty()) {
       _pos_group.Flush(*_pos_out);
     }
-    FormatTraits128::WriteSlack(*_pos_out);
+    block_io::WriteSlack(*_pos_out);
     format_utils::WriteFooter(*_pos_out);
     _pos_out.reset();  // ensure stream is closed
   } else {
@@ -769,7 +768,7 @@ inline void PostingsWriter::End() {
     if (!_pay_group.Empty()) {
       _pay_group.Flush(*_pay_out);
     }
-    FormatTraits128::WriteSlack(*_pay_out);
+    block_io::WriteSlack(*_pay_out);
     format_utils::WriteFooter(*_pay_out);
     _pay_out.reset();  // ensure stream is closed
   } else {
@@ -798,10 +797,9 @@ IRS_FORCE_INLINE inline void PostingsWriter::BeginDocInTerm(doc_id_t doc,
     _doc.Push(doc);
   }
   if (_doc.Full()) {
-    FormatTraits128::WriteBlockDelta(*_doc_out, _doc.docs, _doc.block_last,
-                                     _enc_buf);
+    block_io::WriteBlockDelta(*_doc_out, _doc.docs, _doc.block_last, _enc_buf);
     if (has_freq) {
-      FormatTraits128::WriteBlock(*_doc_out, _doc.freqs, _enc_buf);
+      block_io::WriteBlock(*_doc_out, _doc.freqs, _enc_buf);
     }
     _doc.block_last = _doc.last;
     _doc.size = 0;

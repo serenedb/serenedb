@@ -25,9 +25,9 @@
 
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/block_index.hpp"
+#include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/doc_input.hpp"
-#include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting/iterator_pos.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
@@ -42,7 +42,7 @@ namespace irs::detail {
 template<typename InputType, bool Bounds, bool Offs = false>
 class PostingPos {
  public:
-  using PosTraits = IteratorTraitsImpl<FormatTraits128, true, true, Offs>;
+  using PosTraits = IteratorTraitsImpl<true, true, Offs>;
   using Position = PositionImpl<PosTraits>;
 
   static constexpr bool kOffsets = Offs;
@@ -220,16 +220,16 @@ class PostingPos {
     auto& in = In();
     _hint.Advance(in, in.Position());
     if (_left_in_list >= doc_limits::kBlockSize) [[likely]] {
-      FormatTraits128::ReadBlockDelta(in, Enc(), _docs, prev);
+      block_io::ReadBlockDelta(in, Enc(), _docs, prev);
       _left_in_leaf = doc_limits::kBlockSize;
       _left_in_list -= doc_limits::kBlockSize;
-      FormatTraits128::ReadBlock(in, Enc(), _freqs.data);
+      block_io::ReadBlock(in, Enc(), _freqs.data);
     } else {
       const auto tail = _left_in_list;
-      FormatTraits128::ReadTailDelta(tail, in, Enc(), _docs, prev);
+      block_io::ReadTailDelta(tail, in, Enc(), _docs, prev);
       _left_in_leaf = tail;
       _left_in_list = 0;
-      FormatTraits128::ReadTail(tail, in, Enc(), _freqs.data);
+      block_io::ReadTail(tail, in, Enc(), _freqs.data);
     }
     _max_in_leaf = *(std::end(_docs) - 1);
   }

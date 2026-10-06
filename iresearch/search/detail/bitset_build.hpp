@@ -28,9 +28,9 @@
 #include <vector>
 
 #include "iresearch/error/error.hpp"
+#include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/doc_input.hpp"
-#include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
@@ -223,14 +223,13 @@ void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
              fetched += kFillLine) {
           __builtin_prefetch(fetched);
         }
-        return FormatTraits128::FillView(
-          in, at, len, holes, docs, prev,
-          has_freq && len == doc_limits::kBlockSize);
+        return block_io::FillView(in, at, len, holes, docs, prev,
+                                  has_freq && len == doc_limits::kBlockSize);
       } else {
         const auto read =
-          FormatTraits128::ReadTailForFill(len, in, enc, holes, docs, prev);
+          block_io::ReadTailForFill(len, in, enc, holes, docs, prev);
         if (has_freq && len == doc_limits::kBlockSize) {
-          FormatTraits128::SkipBlock(in);
+          block_io::SkipBlock(in);
         }
         return read;
       }

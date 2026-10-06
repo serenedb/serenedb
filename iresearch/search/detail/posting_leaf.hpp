@@ -28,9 +28,9 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/block_index.hpp"
+#include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/doc_input.hpp"
-#include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
@@ -219,7 +219,7 @@ class PostingLeaf {
   }
 
   IRS_FORCE_INLINE const uint64_t* StableBitset(
-    const FormatTraits128::FillLeaf& leaf) noexcept {
+    const block_io::FillLeaf& leaf) noexcept {
     if constexpr (InputType::kVolatileAlways) {
       return leaf.bitset;
     } else {
@@ -351,13 +351,13 @@ class PostingLeaf {
     static_assert(!Shape.freqs);
     SDB_ASSERT(len != 0);
     if (len == _freq_len.value) {
-      FormatTraits128::SkipBlock(In());
+      block_io::SkipBlock(In());
     }
   }
 
   IRS_FORCE_INLINE void TakeFreqs(uint32_t len) {
     if constexpr (Shape.freqs) {
-      FormatTraits128::ReadTail(len, In(), Enc(), _freqs.data);
+      block_io::ReadTail(len, In(), Enc(), _freqs.data);
     } else {
       SkipFreqs(len);
     }
@@ -373,13 +373,13 @@ class PostingLeaf {
       _hint.Advance(in, in.Position());
     }
     if (_left_in_list >= kBlock) [[likely]] {
-      FormatTraits128::ReadBlockDelta(in, Enc(), _docs, prev);
+      block_io::ReadBlockDelta(in, Enc(), _docs, prev);
       _left_in_leaf = kBlock;
       _left_in_list -= kBlock;
       TakeFreqs(kBlock);
     } else {
       const auto tail = _left_in_list;
-      FormatTraits128::ReadTailDelta(tail, in, Enc(), _docs, prev);
+      block_io::ReadTailDelta(tail, in, Enc(), _docs, prev);
       _left_in_leaf = tail;
       _left_in_list = 0;
       TakeFreqs(tail);
@@ -390,13 +390,13 @@ class PostingLeaf {
   bool ReadLeafBelow(uint32_t len, doc_id_t min) {
     static_assert(Shape.scored && Shape.freqs && Shape.enc);
     auto& in = In();
-    FormatTraits128::ReadTailDelta(len, in, _enc.data, _docs, _last);
+    block_io::ReadTailDelta(len, in, _enc.data, _docs, _last);
     _last = *(std::cend(_docs) - 1);
     if (_last < min) {
-      FormatTraits128::SkipTail(len, in);
+      block_io::SkipTail(len, in);
       return false;
     }
-    FormatTraits128::ReadTail(len, in, _enc.data, _freqs.data);
+    block_io::ReadTail(len, in, _enc.data, _freqs.data);
     ScoreLeaf(kBlock - len, len);
     return true;
   }
@@ -513,7 +513,7 @@ class PostingLeaf {
   }
 
   struct FillRead {
-    FormatTraits128::FillLeaf leaf;
+    block_io::FillLeaf leaf;
     const uint64_t* bitset;
     uint32_t len;
   };
@@ -524,7 +524,7 @@ class PostingLeaf {
     _hint.Advance(in, in.Position());
     const auto len = std::min(_left_in_list, kBlock);
     const auto leaf =
-      FormatTraits128::ReadTailForFill(len, in, Enc(), Holes(), _docs, prev);
+      block_io::ReadTailForFill(len, in, Enc(), Holes(), _docs, prev);
     _left_in_list -= len;
     const auto* const bitset = StableBitset(leaf);
     TakeFreqs(len);

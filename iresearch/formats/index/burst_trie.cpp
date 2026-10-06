@@ -858,7 +858,7 @@ void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
   }
   _blocks_out->WriteData(_inline.data(), _inline.size());
   if (!_inline.empty()) {
-    FormatTraits128::WriteSlack(*_blocks_out);
+    block_io::WriteSlack(*_blocks_out);
   }
   _inline.clear();
 

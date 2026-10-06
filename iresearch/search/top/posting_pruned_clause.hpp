@@ -178,8 +178,8 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
     auto& in = In();
     _hint.Advance(in, in.Position());
     const auto len = std::min(_left_in_list, kBlock);
-    const auto leaf = FormatTraits128::ReadTailForFill(len, in, _enc.data,
-                                                       nullptr, _docs, prev);
+    const auto leaf =
+      block_io::ReadTailForFill(len, in, _enc.data, nullptr, _docs, prev);
     _left_in_list -= len;
     _bitset = leaf.bitset;
     if constexpr (!InputType::kVolatileAlways) {
@@ -191,9 +191,9 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
     }
     if constexpr (InputType::kVolatileAlways) {
       _lazy = in.Current();
-      FormatTraits128::SkipTail(len, in);
+      block_io::SkipTail(len, in);
     } else {
-      FormatTraits128::ReadTail(len, in, _enc.data, _freqs.data);
+      block_io::ReadTail(len, in, _enc.data, _freqs.data);
     }
     _base = prev;
     _max_in_leaf = leaf.max;
@@ -207,7 +207,7 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
   }
 
   IRS_NO_INLINE void DecodeFreqs() noexcept {
-    using Codec = FormatTraits128::Codec;
+    using Codec = block_io::Codec;
     if (_len == kBlock) {
       Codec::DecodeValuesBlock(_lazy, _freqs.data);
     } else {

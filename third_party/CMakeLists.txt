@@ -313,11 +313,23 @@ set(NO_LAPACK 1 CACHE BOOL "" FORCE)
 set(BUILD_SINGLE 1 CACHE BOOL "" FORCE) # only sgemm_ is ever called; drops DOUBLE/COMPLEX/COMPLEX16
 set(NO_CBLAS 1 CACHE BOOL "" FORCE) # only the Fortran-ABI sgemm_ is called, never cblas_sgemm
 set(CMAKE_Fortran_COMPILER NOTFOUND CACHE FILEPATH "" FORCE)
-set(DYNAMIC_ARCH OFF CACHE BOOL "" FORCE)
+set(DYNAMIC_ARCH ON CACHE BOOL "" FORCE)
 if(ARCH_AARCH64)
     set(TARGET ARMV8 CACHE STRING "" FORCE)
+    set(DYNAMIC_LIST
+        "NEOVERSEN1;NEOVERSEV1;NEOVERSEN2;ARMV8SVE"
+        CACHE STRING
+        ""
+        FORCE
+    )
 elseif(ARCH_AMD64)
     set(TARGET HASWELL CACHE STRING "" FORCE)
+    set(DYNAMIC_LIST
+        "HASWELL;ZEN;SKYLAKEX;COOPERLAKE;SAPPHIRERAPIDS"
+        CACHE STRING
+        ""
+        FORCE
+    )
 endif()
 add_subdirectory(OpenBLAS)
 target_link_libraries(sdb_blas INTERFACE openblas)
@@ -325,15 +337,8 @@ target_link_libraries(sdb_blas INTERFACE openblas)
 ################################################################################
 ### faiss library
 ################################################################################
-set(FAISS_LIB faiss)
-if(ARCH_AMD64)
-    set(FAISS_OPT_LEVEL "avx2")
-    set(FAISS_LIB faiss_avx2)
-elseif(ARCH_AARCH64)
-    set(FAISS_OPT_LEVEL "generic")
-    set(FAISS_LIB faiss)
-endif()
-set(FAISS_LIB "${FAISS_LIB}" CACHE INTERNAL "faiss target to link" FORCE)
+set(FAISS_OPT_LEVEL "dd")
+set(FAISS_LIB faiss CACHE INTERNAL "faiss target to link" FORCE)
 
 sdb_update_module(${GIT_EXECUTABLE} "faiss" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 set(FAISS_ENABLE_GPU OFF CACHE BOOL "" FORCE)

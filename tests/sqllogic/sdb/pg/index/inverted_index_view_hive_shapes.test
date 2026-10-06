@@ -1,0 +1,344 @@
+control substitution on
+
+# Query shapes over a hive partition column read back from a view-backed
+# inverted index: projections, expressions, aggregates, filters pushed to the
+# source, top-k, windows, joins, subqueries and prepared statements. The
+# partition value of every row comes from its file's path, as in the view.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ivhs_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+COPY (SELECT * FROM (VALUES
+        (1, 'pudge goes mid', 'red'),
+        (2, 'anchin reads manga', 'blue'),
+        (3, 'techies plants mines', 'green'),
+        (4, 'pudge plays pudge again', 'red'),
+        (5, 'lina burns pudge', 'blue'),
+        (6, 'kostya types all night', 'green'),
+        (7, 'vedernikoff ships delta', 'red'),
+        (8, 'pudge buys blink', 'blue'),
+        (9, 'gayazov skips stand up', 'green'),
+        (10, 'krivda closes tickets', 'red'),
+        (11, 'pudge hooks pudge and pudge techies', 'blue'),
+        (12, 'babsky parses csv', 'green')) t(id, body, color))
+TO '${__TEST_DIR__}/ivhs' (FORMAT PARQUET, PARTITION_BY (color));
+
+statement ok
+CREATE VIEW ivhs_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/ivhs/*/*.parquet', hive_partitioning=true);
+
+statement ok
+CREATE INDEX ivhs_idx ON ivhs_v USING inverted(id, body ivhs_en);
+
+query
+SELECT * FROM ivhs_idx ORDER BY id;
+----
+id	body	color
+1	pudge goes mid	red
+2	anchin reads manga	blue
+3	techies plants mines	green
+4	pudge plays pudge again	red
+5	lina burns pudge	blue
+6	kostya types all night	green
+7	vedernikoff ships delta	red
+8	pudge buys blink	blue
+9	gayazov skips stand up	green
+10	krivda closes tickets	red
+11	pudge hooks pudge and pudge techies	blue
+12	babsky parses csv	green
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivhs_v EXCEPT SELECT * FROM ivhs_idx)
+                      UNION ALL (SELECT * FROM ivhs_idx EXCEPT SELECT * FROM ivhs_v));
+----
+count
+0
+
+query
+SELECT color, id FROM ivhs_idx WHERE id <= 3 ORDER BY id;
+----
+color	id
+red	1
+blue	2
+green	3
+
+query
+SELECT color, count(*) AS n, string_agg(id::text, ',' ORDER BY id) AS ids
+FROM ivhs_idx GROUP BY color ORDER BY color;
+----
+color	n	ids
+blue	4	2,5,8,11
+green	4	3,6,9,12
+red	4	1,4,7,10
+
+query
+SELECT DISTINCT color FROM ivhs_idx ORDER BY color;
+----
+color
+blue
+green
+red
+
+query
+SELECT id, upper(color) || ':' || id AS tag, length(color) AS len,
+       CASE WHEN color = 'red' THEN 'hot' ELSE 'cold' END AS feel
+FROM ivhs_idx WHERE id IN (1, 2, 3) ORDER BY id;
+----
+id	tag	len	feel
+1	RED:1	3	hot
+2	BLUE:2	4	cold
+3	GREEN:3	5	cold
+
+query
+SELECT id, color FROM ivhs_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	color
+1	red
+4	red
+5	blue
+8	blue
+11	blue
+
+# Filters on the partition column skip whole files.
+query
+SELECT string_agg(id::text, ',' ORDER BY id) AS ids FROM ivhs_idx WHERE color = 'blue';
+----
+ids
+2,5,8,11
+
+query
+SELECT string_agg(id::text, ',' ORDER BY id) AS ids FROM ivhs_idx WHERE color <> 'blue';
+----
+ids
+1,3,4,6,7,9,10,12
+
+query
+SELECT string_agg(id::text, ',' ORDER BY id) AS ids FROM ivhs_idx WHERE color IN ('red', 'green');
+----
+ids
+1,3,4,6,7,9,10,12
+
+query
+SELECT string_agg(id::text, ',' ORDER BY id) AS ids FROM ivhs_idx WHERE color NOT IN ('red', 'green');
+----
+ids
+2,5,8,11
+
+query
+SELECT string_agg(id::text, ',' ORDER BY id) AS ids FROM ivhs_idx WHERE color LIKE 'gr%';
+----
+ids
+3,6,9,12
+
+query
+SELECT string_agg(id::text, ',' ORDER BY id) AS ids FROM ivhs_idx WHERE color BETWEEN 'blue' AND 'green';
+----
+ids
+2,3,5,6,8,9,11,12
+
+query
+SELECT count(*) FROM ivhs_idx WHERE color IS NOT NULL;
+----
+count
+12
+
+query
+SELECT count(*) FROM ivhs_idx WHERE color = 'purple';
+----
+count
+0
+
+query
+SELECT string_agg(id::text, ',' ORDER BY id) AS ids FROM ivhs_idx
+WHERE body @@ ts_phrase('pudge') AND color = 'blue';
+----
+ids
+5,8,11
+
+query
+SELECT string_agg(id::text, ',' ORDER BY id) AS ids FROM ivhs_idx
+WHERE body @@ ts_phrase('pudge') AND color <> 'blue';
+----
+ids
+1,4
+
+query
+SELECT count(*) FROM ivhs_idx WHERE color = 'red' AND body @@ ts_phrase('pudge');
+----
+count
+2
+
+# A partition filter next to a filter on a data column and on a key.
+query
+SELECT id, color FROM ivhs_idx WHERE body LIKE 'k%' AND color = 'green';
+----
+id	color
+6	green
+
+query
+SELECT id, color FROM ivhs_idx WHERE body LIKE 'k%' AND color <> 'green';
+----
+id	color
+10	red
+
+query
+SELECT id, color FROM ivhs_idx WHERE id > 6 AND color = 'red' ORDER BY id;
+----
+id	color
+7	red
+10	red
+
+query
+SELECT id, color FROM ivhs_idx ORDER BY color DESC, id LIMIT 3 OFFSET 2;
+----
+id	color
+7	red
+10	red
+3	green
+
+# Top-k by score: the rows arrive out of key order, and each keeps its own
+# partition value.
+query
+SELECT id, color FROM ivhs_idx WHERE body @@ ts_phrase('pudge')
+ORDER BY bm25(ivhs_idx.tableoid) DESC, id LIMIT 2;
+----
+id	color
+11	blue
+4	red
+
+query
+SELECT id, color, row_number() OVER (PARTITION BY color ORDER BY id) AS rn
+FROM ivhs_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	color	rn
+1	red	1
+4	red	2
+5	blue	1
+8	blue	2
+11	blue	3
+
+statement ok
+CREATE TABLE ivhs_colors (color TEXT, hex TEXT);
+
+statement ok
+INSERT INTO ivhs_colors VALUES ('red', '#f00'), ('blue', '#00f');
+
+query
+SELECT i.id, c.hex FROM ivhs_idx i JOIN ivhs_colors c USING (color)
+WHERE i.body @@ ts_phrase('pudge') ORDER BY i.id;
+----
+id	hex
+1	#f00
+4	#f00
+5	#00f
+8	#00f
+11	#00f
+
+query
+SELECT i.id, i.color, c.hex FROM ivhs_idx i LEFT JOIN ivhs_colors c ON c.color = i.color
+WHERE i.body @@ ts_phrase('techies') ORDER BY i.id;
+----
+id	color	hex
+3	green	NULL
+11	blue	#00f
+
+query
+SELECT string_agg(id::text, ',' ORDER BY id) AS ids FROM ivhs_idx
+WHERE color = (SELECT color FROM ivhs_colors WHERE hex = '#f00');
+----
+ids
+1,4,7,10
+
+query
+SELECT string_agg(id::text, ',' ORDER BY id) AS ids FROM ivhs_idx
+WHERE color IN (SELECT color FROM ivhs_colors) AND body @@ ts_phrase('pudge');
+----
+ids
+1,4,5,8,11
+
+query
+WITH even AS (SELECT color, id FROM ivhs_idx WHERE id % 2 = 0)
+SELECT color, sum(id) AS total FROM even GROUP BY color ORDER BY color;
+----
+color	total
+blue	10
+green	18
+red	14
+
+query
+SELECT color FROM ivhs_idx WHERE body @@ ts_phrase('techies')
+UNION SELECT color FROM ivhs_colors ORDER BY 1;
+----
+color
+blue
+green
+red
+
+statement ok
+PREPARE ivhs_q AS SELECT id FROM ivhs_idx WHERE color = $1 AND body @@ ts_phrase('pudge') ORDER BY id;
+
+query
+EXECUTE ivhs_q('red');
+----
+id
+1
+4
+
+query
+EXECUTE ivhs_q('blue');
+----
+id
+5
+8
+11
+
+statement ok
+DEALLOCATE ivhs_q;
+
+# The partition column INCLUDE'd or indexed: the same rows either way.
+statement ok
+CREATE INDEX ivhs_inc_idx ON ivhs_v USING inverted(id, body ivhs_en) INCLUDE (color);
+
+statement ok
+CREATE INDEX ivhs_key_idx ON ivhs_v USING inverted(id, body ivhs_en, color);
+
+query
+SELECT string_agg(id::text, ',' ORDER BY id) AS ids FROM ivhs_inc_idx WHERE color = 'green';
+----
+ids
+3,6,9,12
+
+query
+SELECT id, body, color FROM ivhs_key_idx WHERE color = 'green' AND body @@ ts_phrase('techies');
+----
+id	body	color
+3	techies plants mines	green
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivhs_idx EXCEPT SELECT * FROM ivhs_inc_idx)
+                      UNION ALL (SELECT * FROM ivhs_inc_idx EXCEPT SELECT * FROM ivhs_key_idx)
+                      UNION ALL (SELECT * FROM ivhs_key_idx EXCEPT SELECT * FROM ivhs_idx));
+----
+count
+0
+
+statement ok
+DROP INDEX ivhs_key_idx;
+
+statement ok
+DROP INDEX ivhs_inc_idx;
+
+statement ok
+DROP TABLE ivhs_colors;
+
+statement ok
+DROP INDEX ivhs_idx;
+
+statement ok
+DROP VIEW ivhs_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ivhs_en;

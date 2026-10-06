@@ -1,0 +1,123 @@
+control substitution on
+
+# Hive partitions, file names and row numbers read back from view-backed
+# inverted indexes over S3 objects: the values come from the object keys,
+# as in the view.
+
+statement ok
+CREATE OR REPLACE SECRET minio_${__DATABASE__} (
+  TYPE s3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/${__DATABASE__}_'
+);
+
+statement ok
+SET s3_use_ssl=false;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ivh3_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE TABLE ivh3_src AS SELECT * FROM (VALUES
+  (1, 'pudge goes mid', 'red'),
+  (2, 'anchin reads manga', 'blue'),
+  (3, 'pudge plays again', 'red'),
+  (4, 'techies plants mines', 'green'),
+  (5, 'lina burns pudge', 'blue')) t(id, body, color);
+
+statement ok
+COPY ivh3_src TO 's3://${MINIO_BUCKET}/${__DATABASE__}_hive_pq' (FORMAT PARQUET, PARTITION_BY (color));
+
+statement ok
+COPY ivh3_src TO 's3://${MINIO_BUCKET}/${__DATABASE__}_hive_csv' (FORMAT CSV, HEADER, PARTITION_BY (color));
+
+statement ok
+CREATE VIEW ivh3_pq_v AS
+  SELECT * FROM read_parquet('s3://${MINIO_BUCKET}/${__DATABASE__}_hive_pq/*/*.parquet',
+                             hive_partitioning=true, filename=true, file_row_number=true);
+
+statement ok
+CREATE INDEX ivh3_pq_idx ON ivh3_pq_v USING inverted(id, body ivh3_en);
+
+query
+SELECT id, color, file_row_number,
+       replace(filename, 's3://${MINIO_BUCKET}/${__DATABASE__}_', '') AS file
+FROM ivh3_pq_idx ORDER BY id;
+----
+id	color	file_row_number	file
+1	red	0	hive_pq/color=red/data_0.parquet
+2	blue	0	hive_pq/color=blue/data_0.parquet
+3	red	1	hive_pq/color=red/data_0.parquet
+4	green	0	hive_pq/color=green/data_0.parquet
+5	blue	1	hive_pq/color=blue/data_0.parquet
+
+query
+SELECT id, color FROM ivh3_pq_idx WHERE color = 'blue' AND body @@ ts_phrase('pudge');
+----
+id	color
+5	blue
+
+query
+SELECT id FROM ivh3_pq_idx WHERE file_row_number = 1 ORDER BY id;
+----
+id
+3
+5
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivh3_pq_v EXCEPT SELECT * FROM ivh3_pq_idx)
+                      UNION ALL (SELECT * FROM ivh3_pq_idx EXCEPT SELECT * FROM ivh3_pq_v));
+----
+count
+0
+
+statement ok
+CREATE VIEW ivh3_csv_v AS
+  SELECT * FROM read_csv('s3://${MINIO_BUCKET}/${__DATABASE__}_hive_csv/*/*.csv',
+                         hive_partitioning=true, filename=true);
+
+statement ok
+CREATE INDEX ivh3_csv_idx ON ivh3_csv_v USING inverted(id, body ivh3_en);
+
+query
+SELECT id, color, replace(filename, 's3://${MINIO_BUCKET}/${__DATABASE__}_', '') AS file
+FROM ivh3_csv_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	color	file
+1	red	hive_csv/color=red/data_0.csv
+3	red	hive_csv/color=red/data_0.csv
+5	blue	hive_csv/color=blue/data_0.csv
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivh3_csv_v EXCEPT SELECT * FROM ivh3_csv_idx)
+                      UNION ALL (SELECT * FROM ivh3_csv_idx EXCEPT SELECT * FROM ivh3_csv_v));
+----
+count
+0
+
+statement ok
+DROP INDEX ivh3_csv_idx;
+
+statement ok
+DROP VIEW ivh3_csv_v;
+
+statement ok
+DROP INDEX ivh3_pq_idx;
+
+statement ok
+DROP VIEW ivh3_pq_v;
+
+statement ok
+DROP TABLE ivh3_src;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ivh3_en;
+
+statement ok
+DROP SECRET minio_${__DATABASE__};

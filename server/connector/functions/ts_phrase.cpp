@@ -35,7 +35,6 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
-#include <limits>
 
 #include "connector/functions/ts_query_codec.h"
 #include "search.h"
@@ -308,9 +307,10 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
                       ERR_MSG("ts_phrase slop must be >= 0, got ", slop_raw),
                       ERR_HINT(kSyntaxHint));
     }
-    if (slop_raw > std::numeric_limits<irs::PosAttr::value_t>::max()) {
+    if (slop_raw > kMaxSlop) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("ts_phrase slop too large: ", slop_raw),
+                      ERR_MSG("ts_phrase slop too large: ", slop_raw,
+                              " (at most ", kMaxSlop, ")"),
                       ERR_HINT(kSyntaxHint));
     }
     arg_slop = slop_raw;
@@ -738,13 +738,13 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
         // token, so min_match > 1 is unsatisfiable).
         std::vector<const duckdb::Expression*> sub_args;
         std::vector<duckdb::unique_ptr<duckdb::Expression>> sub_synth;
-        std::optional<size_t> sub_min_match;
+        uint32_t sub_min_match = 0;
         ExtractAnyAllOfArgs(*f, true, sub_args, sub_synth, sub_min_match);
-        if (sub_min_match && *sub_min_match != 1) {
+        if (sub_min_match > 1) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
             ERR_MSG("## ts_any phrase part requires min_match=1 (got ",
-                    *sub_min_match,
+                    sub_min_match,
                     "); a phrase position can match only "
                     "one token"),
             ERR_HINT("Drop the min_match argument or set it to 1."));

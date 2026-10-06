@@ -11,7 +11,10 @@ in .pre-commit-config.yaml):
 
   2. Test -> Source: every fault NAME activated in a recovery .test must be
      defined in C++ source (SDB_IF_FAILURE / SDB_WAIT_ON_FAILURE /
-     WaitWhileFailurePointDebugging string literal in server/ or iresearch/).
+     SDB_PARK_ONCE_ON_FAILURE / WaitWhileFailurePointDebugging /
+     ParkOnceOnFailurePointDebugging string literal in server/ or iresearch/).
+     A park-once point NAME also defines NAME:parked and NAME:release, the
+     names a test polls and arms to observe and release the parked thread.
 
   3. Source -> Test: every fault NAME defined in C++ source must be exercised by
      at least one test (a recovery .test, or a C++/Python test under tests/).
@@ -45,14 +48,23 @@ SET_FAULT_HEAD = re.compile(r"SET\s+(?:(?:LOCAL|SESSION)\s+)?sdb_faults\b", re.I
 # Source-side definitions: SDB_IF_FAILURE("NAME") / SDB_WAIT_ON_FAILURE("NAME")
 # / WaitWhile...("NAME").
 SOURCE_DEF = re.compile(
-    r'(?:SDB_IF_FAILURE|SDB_WAIT_ON_FAILURE|WaitWhileFailurePointDebugging)'
+    r'(?:SDB_IF_FAILURE|SDB_WAIT_ON_FAILURE|SDB_PARK_ONCE_ON_FAILURE|'
+    r'WaitWhileFailurePointDebugging|ParkOnceOnFailurePointDebugging)'
     r'\s*\(\s*"([^"]+)"'
 )
+# Park-once definitions, whose companion names are defined along with them.
+PARK_DEF = re.compile(
+    r'(?:SDB_PARK_ONCE_ON_FAILURE|ParkOnceOnFailurePointDebugging)'
+    r'\s*\(\s*"([^"]+)"'
+)
+PARK_SUFFIXES = (":parked", ":release")
 # Names referenced by C++/python tests (string literal in any of these calls,
 # or a SET sdb_faults activation).
 TESTNET_LITERAL = re.compile(
-    r'(?:SDB_IF_FAILURE|SDB_WAIT_ON_FAILURE|AddFailurePointDebugging|'
-    r'ShouldFailDebugging|WaitWhileFailurePointDebugging)\s*\(\s*"([^"]+)"'
+    r'(?:SDB_IF_FAILURE|SDB_WAIT_ON_FAILURE|SDB_PARK_ONCE_ON_FAILURE|'
+    r'AddFailurePointDebugging|ShouldFailDebugging|'
+    r'WaitWhileFailurePointDebugging|ParkOnceOnFailurePointDebugging)'
+    r'\s*\(\s*"([^"]+)"'
 )
 # Python driver tests activate faults through f-strings (`SET sdb_faults =
 # '{name}'`), so the SET literal itself carries no name; the names live in
@@ -123,12 +135,15 @@ def main():
     # ~630MB of sqlite-derived .test_slow files) contains no fault points, and a
     # plain `in` is far cheaper than running finditer over every byte.
     source_faults = {}  # name -> "path:line"
+    park_faults = set()
     for path in (p for d in SOURCE_DIRS for p in walk_files(d, SOURCE_EXTS)):
         text = read(path)
         if "FAIL" not in text and "Fail" not in text:
             continue
         for m in SOURCE_DEF.finditer(text):
             source_faults.setdefault(m.group(1), f"{rel(path)}:{lineno(text, m.start())}")
+        for m in PARK_DEF.finditer(text):
+            park_faults.add(m.group(1))
 
     # ----- single pass over tests/ (checks #1 and the #3 test net) -----
     test_faults = {}  # name -> "path:line" (recovery activations only)
@@ -171,12 +186,15 @@ def main():
             continue  # framework test: synthetic names by design
         if name in source_faults:
             continue
+        if any(name.endswith(s) and name[: -len(s)] in park_faults for s in PARK_SUFFIXES):
+            continue
         if name in KNOWN_MISSING_SOURCE_FAULTS:
             continue  # documented pending gap, issue #847
         errors.append(
             f"{loc}: fault '{name}' is activated by a test but is not defined in "
             "C++ source (no SDB_IF_FAILURE/SDB_WAIT_ON_FAILURE/"
-            "WaitWhileFailurePointDebugging literal in server/ or iresearch/)"
+            "SDB_PARK_ONCE_ON_FAILURE/WaitWhileFailurePointDebugging/"
+            "ParkOnceOnFailurePointDebugging literal in server/ or iresearch/)"
         )
 
     # ----- check #3: source -> test -----

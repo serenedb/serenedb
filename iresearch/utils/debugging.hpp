@@ -35,11 +35,16 @@
 
 #define SDB_WAIT_ON_FAILURE(what) irs::WaitWhileFailurePointDebugging(what)
 
+#define SDB_PARK_ONCE_ON_FAILURE(what) \
+  irs::ParkOnceOnFailurePointDebugging(what)
+
 #else
 
 #define SDB_IF_FAILURE(what) if constexpr (false)
 
 #define SDB_WAIT_ON_FAILURE(what)
+
+#define SDB_PARK_ONCE_ON_FAILURE(what)
 
 #endif
 
@@ -88,6 +93,12 @@ constexpr std::vector<std::string> GetFailurePointsDebugging() { return {}; }
 void WaitWhileFailurePointDebugging(std::string_view value);
 #else
 constexpr void WaitWhileFailurePointDebugging(std::string_view) noexcept {}
+#endif
+
+#ifdef SDB_FAULT_INJECTION
+void ParkOnceOnFailurePointDebugging(std::string_view value);
+#else
+constexpr void ParkOnceOnFailurePointDebugging(std::string_view) noexcept {}
 #endif
 
 constexpr bool CanUseFailurePointsDebugging() {

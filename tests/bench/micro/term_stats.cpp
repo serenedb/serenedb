@@ -49,6 +49,7 @@ struct Stats {
   uint64_t pos_start;
   uint32_t pos_offset;
   uint32_t doc_delta;
+  uint32_t pos_extent;
   uint8_t inline_size;
 };
 
@@ -71,18 +72,63 @@ std::vector<Stats> MakeBlock(std::mt19937_64& rng, uint64_t& doc_at,
     if (s.docs >= 2 && s.inline_size == 0) {
       doc_at += s.docs * 2 + 40;
     }
-    pos_index += s.freq;
-    if (pos_index >= 4096) {
-      pos_at += 3000 * (pos_index / 4096);
-      pos_index %= 4096;
-    }
     s.pos_start = pos_at;
     s.pos_offset = pos_index;
+    s.pos_extent = s.freq > irs::pos_limits::kBlockSize ? s.freq * 2 : 0;
+    pos_index += s.freq;
+    if (pos_index >= irs::PosGroup::kPositions) {
+      pos_at += 3000 * (pos_index / irs::PosGroup::kPositions);
+      pos_index %= irs::PosGroup::kPositions;
+    }
   }
   return terms;
 }
 
 void EncodeVarint(const std::vector<Stats>& terms, irs::bstring& out) {
+  irs::BytesOutput o{out};
+  irs::PostingMeta last;
+  for (const auto& s : terms) {
+    const bool inlined = s.inline_size != 0;
+    const bool single = s.docs == 1;
+    const uint64_t next = uint64_t{last.pos_offset} + last.freq;
+    const bool follows =
+      last.docs_count != 0 &&
+      s.pos_offset == next % irs::PosGroup::kPositions &&
+      (next >= irs::PosGroup::kPositions || s.pos_start == last.pos_start);
+    const uint64_t flags = uint64_t{follows} << 2 | uint64_t{s.freq == s.docs}
+                                                      << 1;
+    o.WriteV64(single ? uint64_t{s.doc_delta} << 3 | flags | 1
+                      : uint64_t{s.docs} << 4 | uint64_t{inlined} << 3 | flags);
+    if (s.freq != s.docs) {
+      o.WriteV32(s.freq - s.docs - 1);
+    }
+    if (inlined) {
+      o.WriteByte(s.inline_size);
+    } else if (!single) {
+      o.WriteV64(s.doc_start - last.doc_start);
+    }
+    if (!follows || next >= irs::PosGroup::kPositions) {
+      o.WriteV64(s.pos_start - last.pos_start);
+    }
+    if (!follows) {
+      o.WriteV32(s.pos_offset);
+    }
+    if (s.docs > irs::doc_limits::kBlockSize) {
+      o.WriteV32(s.doc_delta);
+    }
+    if (s.freq > irs::pos_limits::kBlockSize) {
+      o.WriteV32(s.pos_extent);
+    }
+    const auto doc_start = last.doc_start;
+    last.docs_count = s.docs;
+    last.freq = s.freq;
+    last.doc_start = inlined || single ? doc_start : s.doc_start;
+    last.pos_start = s.pos_start;
+    last.pos_offset = static_cast<uint16_t>(s.pos_offset);
+  }
+}
+
+void EncodeLegacy(const std::vector<Stats>& terms, irs::bstring& out) {
   irs::BytesOutput o{out};
   irs::PostingMeta last;
   for (const auto& s : terms) {
@@ -100,12 +146,56 @@ void EncodeVarint(const std::vector<Stats>& terms, irs::bstring& out) {
     if (s.docs == 1 || s.docs > irs::doc_limits::kBlockSize) {
       o.WriteV32(s.doc_delta);
     }
+    if (s.freq > irs::pos_limits::kBlockSize) {
+      o.WriteV32(s.pos_extent);
+    }
     const auto doc_start = last.doc_start;
-    last.docs_count = s.docs;
     last.doc_start = inlined ? doc_start : s.doc_start;
     last.pos_start = s.pos_start;
-    last.pos_offset = s.pos_offset;
+    last.pos_offset = static_cast<uint16_t>(s.pos_offset);
   }
+}
+
+IRS_NO_INLINE size_t DecodeLegacy(const irs::byte_type* in,
+                                  irs::IndexFeatures features,
+                                  irs::PostingMeta& meta) {
+  using irs::IndexFeatures;
+  const auto* p = in;
+  const auto head = irs::vread<uint32_t>(p);
+  meta.docs_count = head >> 1;
+  if (IndexFeatures::None != (features & IndexFeatures::Freq)) {
+    meta.freq = meta.docs_count + irs::vread<uint32_t>(p);
+  }
+  if ((head & 1) != 0) {
+    meta.inline_size = *p++;
+  } else {
+    meta.inline_size = 0;
+    meta.doc_start += irs::vread<uint64_t>(p);
+  }
+  if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
+    const auto pos_delta = irs::vread<uint64_t>(p);
+    meta.pos_start += pos_delta;
+    if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
+      meta.pay_start += irs::vread<uint64_t>(p);
+    }
+    const auto pos_offset = irs::vread<uint32_t>(p);
+    meta.pos_offset = static_cast<uint16_t>(
+      pos_delta == 0 ? meta.pos_offset + pos_offset : pos_offset);
+  } else if (IndexFeatures::None != (features & IndexFeatures::Vec)) {
+    meta.pay_start += irs::vread<uint64_t>(p);
+    meta.pos_offset = *p++;
+  }
+  if (meta.docs_count == 1 || meta.docs_count > irs::doc_limits::kBlockSize) {
+    meta.doc_delta = irs::vread<uint32_t>(p);
+  }
+  if (IndexFeatures::None != (features & IndexFeatures::Pos) &&
+      meta.freq > irs::pos_limits::kBlockSize) {
+    meta.pos_extent = irs::vread<uint32_t>(p);
+    if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
+      meta.pay_extent = irs::vread<uint32_t>(p);
+    }
+  }
+  return static_cast<size_t>(p - in);
 }
 
 struct Columns {
@@ -124,7 +214,7 @@ uint64_t FieldValue(const Stats& s, uint32_t field, const Columns& c) {
     case 2:
       return s.inline_size;
     case 3:
-      return s.inline_size != 0 ? 0 : s.doc_start - c.doc_base;
+      return s.inline_size != 0 || s.docs == 1 ? 0 : s.doc_start - c.doc_base;
     case 4:
       return s.pos_start - c.pos_base;
     case 5:
@@ -214,7 +304,7 @@ void EncodeDeltaColumns(const std::vector<Stats>& terms, irs::bstring& out) {
     values[0].push_back(s.docs);
     values[1].push_back(s.freq - s.docs);
     values[2].push_back(s.inline_size);
-    if (s.inline_size == 0) {
+    if (s.inline_size == 0 && s.docs != 1) {
       values[3].push_back(s.doc_start - doc_prev);
       doc_prev = s.doc_start;
     } else {
@@ -331,6 +421,7 @@ std::vector<std::vector<Stats>> LoadIndex(const char* path, const char* field) {
                          .pos_start = meta.pos_start,
                          .pos_offset = meta.pos_offset,
                          .doc_delta = meta.doc_delta,
+                         .pos_extent = meta.pos_extent,
                          .inline_size = meta.inline_size});
         if (block.size() == kTerms) {
           blocks.push_back(std::move(block));
@@ -345,6 +436,7 @@ std::vector<std::vector<Stats>> LoadIndex(const char* path, const char* field) {
 struct Fixture {
   std::vector<std::vector<Stats>> stats;
   std::vector<irs::bstring> varint;
+  std::vector<irs::bstring> legacy;
   std::vector<irs::bstring> columns;
   std::vector<irs::bstring> delta_columns;
   std::vector<uint32_t> picks;
@@ -365,6 +457,7 @@ struct Fixture {
     blocks = stats.size();
     for (const auto& block : stats) {
       EncodeVarint(block, varint.emplace_back());
+      EncodeLegacy(block, legacy.emplace_back());
       EncodeColumns(block, columns.emplace_back());
       EncodeDeltaColumns(block, delta_columns.emplace_back());
     }
@@ -392,7 +485,7 @@ Fixture& GetFixture() {
 bool Same(const irs::PostingMeta& meta, const Stats& s) {
   return meta.docs_count == s.docs && meta.freq == s.freq &&
          meta.inline_size == s.inline_size &&
-         (s.inline_size != 0 || meta.doc_start == s.doc_start) &&
+         (s.inline_size != 0 || s.docs == 1 || meta.doc_start == s.doc_start) &&
          meta.pos_start == s.pos_start && meta.pos_offset == s.pos_offset &&
          (s.docs == 1 || s.docs > irs::doc_limits::kBlockSize
             ? meta.doc_delta == s.doc_delta
@@ -419,6 +512,45 @@ void BmVarintAll(benchmark::State& state) {
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) * kTerms);
   state.counters["bytes_per_term"] =
     static_cast<double>(f.Bytes(f.varint)) / (f.blocks * kTerms);
+}
+
+void BmLegacyAll(benchmark::State& state) {
+  auto& f = GetFixture();
+  size_t b = 0;
+  uint64_t sink = 0;
+  for (auto _ : state) {
+    irs::PostingMeta meta;
+    const auto* p = f.legacy[b].data();
+    for (uint32_t i = 0; i != kTerms; ++i) {
+      p += DecodeLegacy(p, kFeatures, meta);
+      sink += meta.doc_start + meta.pos_offset;
+    }
+    if (++b == f.blocks) {
+      b = 0;
+    }
+  }
+  benchmark::DoNotOptimize(sink);
+  state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) * kTerms);
+  state.counters["bytes_per_term"] =
+    static_cast<double>(f.Bytes(f.legacy)) / (f.blocks * kTerms);
+}
+
+void BmLegacyOne(benchmark::State& state) {
+  auto& f = GetFixture();
+  size_t b = 0;
+  uint64_t sink = 0;
+  for (auto _ : state) {
+    irs::PostingMeta meta;
+    const auto* p = f.legacy[b].data();
+    for (uint32_t i = 0; i <= f.picks[b]; ++i) {
+      p += DecodeLegacy(p, kFeatures, meta);
+    }
+    sink += meta.doc_start + meta.pos_offset;
+    if (++b == f.blocks) {
+      b = 0;
+    }
+  }
+  benchmark::DoNotOptimize(sink);
 }
 
 void BmColumnsAll(benchmark::State& state) {
@@ -483,17 +615,21 @@ void BmCheck(benchmark::State& state) {
   irs::PostingsReader reader;
   for (uint32_t b = 0; b < f.blocks; b += 101) {
     irs::PostingMeta varint;
+    irs::PostingMeta legacy;
     irs::PostingMeta column;
     const auto* p = f.varint[b].data();
+    const auto* q = f.legacy[b].data();
     irs::PostingMeta all[kTerms];
     DecodeDeltaAll(f.delta_columns[b].data(), all);
     for (uint32_t i = 0; i != kTerms; ++i) {
       p += reader.decode(p, kFeatures, varint);
+      q += DecodeLegacy(q, kFeatures, legacy);
       DecodeColumn(f.columns[b].data(), i, column);
       irs::PostingMeta delta;
       DecodeDeltaColumn(f.delta_columns[b].data(), i, delta);
-      if (!Same(varint, f.stats[b][i]) || !Same(column, f.stats[b][i]) ||
-          !Same(delta, f.stats[b][i]) || !Same(all[i], f.stats[b][i])) {
+      if (!Same(varint, f.stats[b][i]) || !Same(legacy, f.stats[b][i]) ||
+          !Same(column, f.stats[b][i]) || !Same(delta, f.stats[b][i]) ||
+          !Same(all[i], f.stats[b][i])) {
         state.SkipWithError("mismatch");
         return;
       }
@@ -540,9 +676,11 @@ void BmDeltaOne(benchmark::State& state) {
 
 BENCHMARK(BmCheck)->Iterations(1);
 BENCHMARK(BmVarintAll);
+BENCHMARK(BmLegacyAll);
 BENCHMARK(BmColumnsAll);
 BENCHMARK(BmDeltaAll);
 BENCHMARK(BmVarintOne);
+BENCHMARK(BmLegacyOne);
 BENCHMARK(BmColumnsOne);
 BENCHMARK(BmDeltaOne);
 

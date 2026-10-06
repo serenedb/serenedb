@@ -411,36 +411,51 @@ inline void PostingsWriter::Encode(BufferedOutput& out,
              (!_features.HasPosition() && !_features.HasOffset()));
 
   const bool inlined = meta.inline_size != 0;
-  SDB_ASSERT(meta.docs_count <= std::numeric_limits<uint32_t>::max() / 2);
-  out.WriteV32(meta.docs_count << 1 | static_cast<uint32_t>(inlined));
-  if (_features.HasFrequency()) {
-    SDB_ASSERT(meta.freq >= meta.docs_count);
-    out.WriteV32(meta.freq - meta.docs_count);
+  const bool single = meta.docs_count == 1;
+  SDB_ASSERT(meta.docs_count != 0);
+  SDB_ASSERT(!single || !inlined);
+  const bool same_freq =
+    _features.HasFrequency() && meta.freq == meta.docs_count;
+  const uint64_t next = uint64_t{_last_state.pos_offset} + _last_state.freq;
+  const bool follows =
+    _features.HasPosition() && _last_state.docs_count != 0 &&
+    meta.pos_offset == next % PosGroup::kPositions &&
+    (next >= PosGroup::kPositions || meta.pos_start == _last_state.pos_start);
+  const uint64_t flags = uint64_t{follows} << 2 | uint64_t{same_freq} << 1;
+  out.WriteV64(single ? uint64_t{meta.doc_delta} << 3 | flags | 1
+                      : uint64_t{meta.docs_count} << 4 |
+                          uint64_t{inlined} << 3 | flags);
+  if (_features.HasFrequency() && !same_freq) {
+    SDB_ASSERT(meta.freq > meta.docs_count);
+    out.WriteV32(meta.freq - meta.docs_count - 1);
   }
 
   const auto doc_start = _last_state.doc_start;
   if (inlined) {
     out.WriteByte(meta.inline_size);
-  } else {
+  } else if (!single) {
     out.WriteV64(meta.doc_start - doc_start);
   }
   if (_features.HasPosition()) {
-    const uint64_t pos_delta = meta.pos_start - _last_state.pos_start;
-    out.WriteV64(pos_delta);
-    if (_features.HasOffset()) {
-      out.WriteV64(meta.pay_start - _last_state.pay_start);
+    if (!follows || next >= PosGroup::kPositions) {
+      out.WriteV64(meta.pos_start - _last_state.pos_start);
+      if (_features.HasOffset()) {
+        out.WriteV64(meta.pay_start - _last_state.pay_start);
+      }
+    } else {
+      SDB_ASSERT(!_features.HasOffset() ||
+                 meta.pay_start == _last_state.pay_start);
     }
-    SDB_ASSERT(pos_delta != 0 || _last_state.pos_offset <= meta.pos_offset);
-    out.WriteV32(pos_delta == 0 ? static_cast<uint32_t>(meta.pos_offset -
-                                                        _last_state.pos_offset)
-                                : meta.pos_offset);
+    if (!follows) {
+      out.WriteV32(meta.pos_offset);
+    }
   } else if (_features.HasVector()) {
     out.WriteV64(meta.pay_start - _last_state.pay_start);
     SDB_ASSERT(meta.pos_offset <= std::numeric_limits<uint8_t>::max());
     out.WriteByte(static_cast<byte_type>(meta.pos_offset));
   }
 
-  if (meta.docs_count == 1 || meta.docs_count > doc_limits::kBlockSize) {
+  if (meta.docs_count > doc_limits::kBlockSize) {
     out.WriteV32(meta.doc_delta);
   }
 
@@ -452,7 +467,7 @@ inline void PostingsWriter::Encode(BufferedOutput& out,
   }
 
   _last_state = meta;
-  if (inlined) {
+  if (inlined || single) {
     _last_state.doc_start = doc_start;
   }
 }

@@ -132,7 +132,7 @@ class Format10TestCase : public tests::FormatTestCase {
         {
           ASSERT_EQ(posting_meta.docs_count, read_meta.docs_count);
           ASSERT_EQ(posting_meta.Inline(), read_meta.Inline());
-          if (posting_meta.inline_size == 0) {
+          if (posting_meta.inline_size == 0 && posting_meta.docs_count != 1) {
             ASSERT_EQ(posting_meta.doc_start, read_meta.doc_start);
           }
           ASSERT_EQ(posting_meta.pos_start, read_meta.pos_start);

@@ -127,45 +127,54 @@ inline void PostingsReader::prepare(const ReaderState& state,
   }
 }
 
-inline size_t PostingsReader::decode(const byte_type* in,
-                                     IndexFeatures features,
-                                     PostingMeta& posting_meta) {
+IRS_FORCE_INLINE inline size_t PostingsReader::decode(
+  const byte_type* in, IndexFeatures features, PostingMeta& posting_meta) {
   const auto* p = in;
 
   SDB_ASSERT(IndexFeatures::None == (features & IndexFeatures::Vec) ||
              IndexFeatures::None ==
                (features & (IndexFeatures::Pos | IndexFeatures::Offs)));
 
-  const auto head = vread<uint32_t>(p);
-  posting_meta.docs_count = head >> 1;
+  const uint64_t next = uint64_t{posting_meta.pos_offset} + posting_meta.freq;
+  const auto head = vread<uint64_t>(p);
+  const bool single = (head & 1) != 0;
+  const bool follows = (head & 4) != 0;
+  if (single) {
+    posting_meta.docs_count = 1;
+    posting_meta.doc_delta = static_cast<uint32_t>(head >> 3);
+  } else {
+    posting_meta.docs_count = static_cast<uint32_t>(head >> 4);
+  }
   if (IndexFeatures::None != (features & IndexFeatures::Freq)) {
-    posting_meta.freq = posting_meta.docs_count + vread<uint32_t>(p);
+    posting_meta.freq =
+      posting_meta.docs_count + ((head & 2) != 0 ? 0 : 1 + vread<uint32_t>(p));
   }
 
-  if ((head & 1) != 0) {
+  if (!single && (head & 8) != 0) {
     const auto size = *p++;
     SDB_ASSERT(size != 0 && size <= PostingMeta::kInlineBytes);
     posting_meta.inline_size = size;
   } else {
     posting_meta.inline_size = 0;
-    posting_meta.doc_start += vread<uint64_t>(p);
+    if (!single) {
+      posting_meta.doc_start += vread<uint64_t>(p);
+    }
   }
   if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
-    const auto pos_delta = vread<uint64_t>(p);
-    posting_meta.pos_start += pos_delta;
-    if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
-      posting_meta.pay_start += vread<uint64_t>(p);
+    if (!follows || next >= PosGroup::kPositions) {
+      posting_meta.pos_start += vread<uint64_t>(p);
+      if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
+        posting_meta.pay_start += vread<uint64_t>(p);
+      }
     }
-    const auto pos_offset = vread<uint32_t>(p);
     posting_meta.pos_offset = static_cast<uint16_t>(
-      pos_delta == 0 ? posting_meta.pos_offset + pos_offset : pos_offset);
+      follows ? next % PosGroup::kPositions : vread<uint32_t>(p));
   } else if (IndexFeatures::None != (features & IndexFeatures::Vec)) {
     posting_meta.pay_start += vread<uint64_t>(p);
     posting_meta.pos_offset = *p++;
   }
 
-  if (1 == posting_meta.docs_count ||
-      doc_limits::kBlockSize < posting_meta.docs_count) {
+  if (doc_limits::kBlockSize < posting_meta.docs_count) {
     posting_meta.doc_delta = vread<uint32_t>(p);
   }
 

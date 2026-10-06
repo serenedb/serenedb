@@ -195,6 +195,9 @@ CREATE INDEX clickclack_ranks_idx ON clickclack_ranks(rank);
 statement ok
 CREATE INDEX IF NOT EXISTS clickclack_ranks_idx ON clickclack_ranks(rank);
 
+statement ok
+CREATE INDEX IF NOT EXISTS clickclack_ranks ON clickclack_ranks(rank);
+
 statement error
 CREATE INDEX clickclack_ranks_idx ON clickclack_ranks(rank);
 

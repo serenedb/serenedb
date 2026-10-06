@@ -1,0 +1,194 @@
+statement ok
+CREATE TABLE cinx_t(i INTEGER, t TEXT);
+
+
+statement ok
+INSERT INTO cinx_t SELECT s.i, 'doc ' || s.i FROM range(5000) s(i);
+
+
+statement ok
+CREATE TABLE cinx_s(i INTEGER PRIMARY KEY, t TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO cinx_s SELECT s.i, 'doc ' || s.i FROM range(5000) s(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cinx_s;
+
+
+statement ok
+CREATE INDEX cinx_t_inv ON cinx_t USING inverted (i);
+
+
+statement ok
+CREATE INDEX cinx_t_art ON cinx_t (i);
+
+
+statement ok
+CREATE INDEX cinx_s_inv ON cinx_s USING inverted (i);
+
+
+statement ok
+CREATE SEQUENCE cinx_seq;
+
+
+statement ok
+CREATE VIEW cinx_v AS SELECT 1 AS x;
+
+
+statement ok
+SET profiling_renderer_settings = {'deterministic': true};
+
+
+query
+EXPLAIN ANALYZE CREATE INDEX IF NOT EXISTS cinx_t_inv ON cinx_t USING inverted (i);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+
+
+query
+EXPLAIN ANALYZE CREATE INDEX IF NOT EXISTS cinx_t_art ON cinx_t (i);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+
+
+query
+EXPLAIN ANALYZE CREATE INDEX IF NOT EXISTS cinx_s_inv ON cinx_s USING inverted (i);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+
+
+query
+EXPLAIN ANALYZE CREATE INDEX IF NOT EXISTS cinx_t_inv ON cinx_t (i);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+
+
+query
+EXPLAIN ANALYZE CREATE INDEX IF NOT EXISTS cinx_t_art ON cinx_t USING inverted (i);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+
+
+query
+EXPLAIN ANALYZE CREATE INDEX IF NOT EXISTS cinx_t ON cinx_t (i);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+
+
+query
+EXPLAIN ANALYZE CREATE INDEX IF NOT EXISTS cinx_t ON cinx_t USING inverted (i);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+
+
+query
+EXPLAIN ANALYZE CREATE INDEX IF NOT EXISTS cinx_seq ON cinx_t USING inverted (i);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+
+
+query
+EXPLAIN ANALYZE CREATE INDEX IF NOT EXISTS cinx_v ON cinx_t (i);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+
+
+query
+EXPLAIN ANALYZE CREATE INDEX IF NOT EXISTS cinx_s ON cinx_s USING inverted (i);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+
+
+statement error
+CREATE INDEX IF NOT EXISTS cinx_s_inv ON cinx_s (i);
+----
+db error: ERROR: only inverted indexes are supported on a search-backed table
+
+
+statement error
+CREATE INDEX cinx_seq ON cinx_t (i);
+----
+db error: ERROR: Sequence with name "cinx_seq" already exists!
+
+
+statement error
+CREATE INDEX cinx_t_art ON cinx_t USING inverted (i);
+----
+db error: ERROR: Index with name "cinx_t_art" already exists!
+
+
+query
+SELECT relname, relkind FROM pg_class WHERE relname LIKE 'cinx\_%' ORDER BY 1;
+----
+relname	relkind
+cinx_s	r
+cinx_s_inv	i
+cinx_s_pkey	i
+cinx_seq	S
+cinx_t	r
+cinx_t_art	i
+cinx_t_inv	i
+cinx_v	v
+
+
+query
+SELECT count(*) AS n FROM cinx_t WHERE i = 1234;
+----
+n
+1
+
+
+query
+SELECT i, t FROM cinx_s_inv WHERE i = 4321;
+----
+i	t
+4321	doc 4321
+
+
+statement ok
+DROP VIEW cinx_v;
+
+
+statement ok
+DROP SEQUENCE cinx_seq;
+
+
+statement ok
+DROP TABLE cinx_s;
+
+
+statement ok
+DROP TABLE cinx_t;

@@ -303,16 +303,6 @@ Disable query logging:
 
 <SqlLogicTest id="configuration/pragmas/example_049" />
 
-## Object Cache
-
-Enable caching of objects for e.g., Parquet metadata:
-
-<SqlLogicTest id="configuration/pragmas/example_054" />
-
-Disable caching of objects:
-
-<SqlLogicTest id="configuration/pragmas/example_055" />
-
 ## Checkpointing
 
 #### Compression

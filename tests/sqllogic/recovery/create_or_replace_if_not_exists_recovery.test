@@ -1,0 +1,3906 @@
+control substitution on
+
+# CREATE OR REPLACE and CREATE ... IF NOT EXISTS across a crash.
+#
+# A replace is the next version of the entry and a skipped IF NOT EXISTS is no
+# version at all, so after a restart the catalog has to hold exactly what was
+# committed: the replacing definition when the replace committed, the replaced
+# one when it rolled back, failed to commit, or was still open at the crash,
+# and the untouched original when IF NOT EXISTS skipped. Every kind is asserted
+# once in memory and again after the restart.
+#
+# The restarts cover both ways the catalog comes back: WAL replay (sections 1
+# to 3, and the tail in section 5) and a checkpoint (sections 4 and 6). The two
+# commit crash windows sit in between: crash_before_commit loses a whole
+# transaction of replaces, crash_after_commit keeps all of it.
+
+
+statement ok
+CREATE ROLE coinr_reader;
+
+
+statement ok
+CREATE TABLE coinr_base (n INT);
+
+
+statement ok
+INSERT INTO coinr_base VALUES (1), (2), (3);
+
+
+# ----------------------------------------------------------------------
+# 1. WAL replay. Views.
+# ----------------------------------------------------------------------
+
+# A committed replace keeps the view's oid, comment and grants, as in PG.
+statement ok
+CREATE VIEW coinr_v AS SELECT n FROM coinr_base;
+
+
+statement ok
+COMMENT ON VIEW coinr_v IS 'kept across replace';
+
+
+statement ok
+GRANT SELECT ON coinr_v TO coinr_reader;
+
+
+statement ok
+CREATE TABLE coinr_v_oid AS SELECT 'coinr_v'::regclass::oid AS o;
+
+
+statement ok
+CREATE OR REPLACE VIEW coinr_v AS SELECT n * 10 AS n, 'second' AS tag FROM coinr_base;
+
+
+query
+SELECT n, tag FROM coinr_v ORDER BY n;
+----
+n	tag
+10	second
+20	second
+30	second
+
+
+# A rolled-back replace is visible inside its transaction only.
+statement ok
+CREATE VIEW coinr_v_rb AS SELECT n FROM coinr_base;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE VIEW coinr_v_rb AS SELECT n * 10 AS n FROM coinr_base;
+
+
+query
+SELECT sum(n) AS s FROM coinr_v_rb;
+----
+s
+60
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT sum(n) AS s FROM coinr_v_rb;
+----
+s
+6
+
+
+# PG's view column rule refuses a replace that renames or retypes a column.
+statement error
+CREATE OR REPLACE VIEW coinr_v_rb AS SELECT n AS z FROM coinr_base;
+----
+db error: ERROR: cannot change name of view column "n" to "z"
+
+
+statement error
+CREATE OR REPLACE VIEW coinr_v_rb AS SELECT 'x' AS n FROM coinr_base;
+----
+db error: ERROR: cannot change data type of view column "n" from INTEGER to VARCHAR
+
+
+# IF NOT EXISTS skips an existing view without touching its definition.
+statement ok
+CREATE VIEW coinr_v_ine AS SELECT n FROM coinr_base;
+
+
+statement ok
+CREATE VIEW IF NOT EXISTS coinr_v_ine AS SELECT n * 10 AS n, 'skipped' AS tag FROM coinr_base;
+
+
+query
+SELECT sum(n) AS s, count(*) AS c FROM coinr_v_ine;
+----
+s	c
+6	3
+
+
+# Created and replaced again inside one transaction: the last version commits.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE VIEW coinr_v_twice AS SELECT n + 100 AS n FROM coinr_base;
+
+
+statement ok
+CREATE OR REPLACE VIEW coinr_v_twice AS SELECT n + 200 AS n FROM coinr_base;
+
+
+statement ok
+COMMIT;
+
+
+# A view built on a replaced view reads the new definition.
+statement ok
+CREATE VIEW coinr_v_inner AS SELECT n FROM coinr_base;
+
+
+statement ok
+CREATE VIEW coinr_v_outer AS SELECT n + 1 AS m FROM coinr_v_inner;
+
+
+statement ok
+CREATE OR REPLACE VIEW coinr_v_inner AS SELECT n * 100 AS n FROM coinr_base;
+
+
+query
+SELECT m FROM coinr_v_outer ORDER BY m;
+----
+m
+101
+201
+301
+
+
+# Two writers replacing one view: the second is refused while the first holds
+# its version, and only the first reaches the log.
+statement ok
+CREATE VIEW coinr_v_ww AS SELECT 1 AS k;
+
+
+connection w1
+statement ok
+BEGIN;
+
+
+connection w1
+statement ok
+CREATE OR REPLACE VIEW coinr_v_ww AS SELECT 2 AS k;
+
+
+connection w2
+statement error
+CREATE OR REPLACE VIEW coinr_v_ww AS SELECT 3 AS k;
+----
+db error: ERROR: Catalog write-write conflict on alter with "coinr_v_ww"
+
+
+connection w2
+query
+SELECT k FROM coinr_v_ww;
+----
+k
+1
+
+
+connection w1
+statement ok
+COMMIT;
+
+
+query
+SELECT k FROM coinr_v_ww;
+----
+k
+2
+
+
+# ----------------------------------------------------------------------
+# 1. WAL replay. Tables.
+# ----------------------------------------------------------------------
+
+# OR REPLACE TABLE is a new table: new columns, new rows, no old comment.
+statement ok
+CREATE TABLE coinr_t (a INT);
+
+
+statement ok
+INSERT INTO coinr_t VALUES (1), (2);
+
+
+statement ok
+COMMENT ON TABLE coinr_t IS 'first table';
+
+
+statement ok
+CREATE OR REPLACE TABLE coinr_t (b TEXT, c INT);
+
+
+statement ok
+INSERT INTO coinr_t VALUES ('second', 20);
+
+
+query
+SELECT b, c FROM coinr_t;
+----
+b	c
+second	20
+
+
+# A view cannot replace a table, and the table is left as it was.
+statement error
+CREATE OR REPLACE VIEW coinr_t AS SELECT 1 AS b;
+----
+db error: ERROR: Existing object "coinr_t" is of type Table, trying to replace with type View
+
+
+# Nor can a table a view still reads be replaced.
+statement ok
+CREATE TABLE coinr_t_dep (a INT);
+
+
+statement ok
+INSERT INTO coinr_t_dep VALUES (8);
+
+
+statement ok
+CREATE VIEW coinr_t_dep_v AS SELECT a FROM coinr_t_dep;
+
+
+statement error
+CREATE OR REPLACE TABLE coinr_t_dep (z INT);
+----
+db error: ERROR: Cannot drop entry "coinr_t_dep" because there are entries that depend on it.
+view "coinr_t_dep_v" depends on table "coinr_t_dep".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+CREATE TABLE coinr_t_rb (a INT);
+
+
+statement ok
+INSERT INTO coinr_t_rb VALUES (1), (2);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE TABLE coinr_t_rb (b TEXT);
+
+
+statement ok
+INSERT INTO coinr_t_rb VALUES ('rolled back');
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT a FROM coinr_t_rb ORDER BY a;
+----
+a
+1
+2
+
+
+# Neither form of IF NOT EXISTS changes the table or adds rows to it.
+statement ok
+CREATE TABLE coinr_t_ine (a INT);
+
+
+statement ok
+INSERT INTO coinr_t_ine VALUES (1), (2);
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS coinr_t_ine (b TEXT);
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS coinr_t_ine AS SELECT 'skipped' AS b;
+
+
+query
+SELECT a FROM coinr_t_ine ORDER BY a;
+----
+a
+1
+2
+
+
+statement ok
+CREATE OR REPLACE TABLE coinr_t_ctas AS SELECT n, 'c' || n AS s FROM coinr_base;
+
+
+statement ok
+CREATE OR REPLACE TABLE coinr_t_ctas AS SELECT n * 2 AS d FROM coinr_base WHERE n > 1;
+
+
+# IF NOT EXISTS on a free name creates; rolled back, it leaves nothing.
+statement ok
+CREATE TABLE IF NOT EXISTS coinr_t_fresh (a INT);
+
+
+statement ok
+INSERT INTO coinr_t_fresh VALUES (5);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS coinr_t_gone (a INT);
+
+
+statement ok
+INSERT INTO coinr_t_gone VALUES (1);
+
+
+statement ok
+ROLLBACK;
+
+
+# Two writers creating one name IF NOT EXISTS: the second is refused while the
+# first is open, and the first one's definition and rows are what commit.
+connection w1
+statement ok
+BEGIN;
+
+
+connection w1
+statement ok
+CREATE TABLE IF NOT EXISTS coinr_t_race (a INT);
+
+
+connection w1
+statement ok
+INSERT INTO coinr_t_race VALUES (1);
+
+
+connection w2
+statement error
+CREATE TABLE IF NOT EXISTS coinr_t_race (b TEXT);
+----
+db error: ERROR: Catalog write-write conflict on create with "Schema\0public\0Table\0public\0coinr_t_race"
+
+
+connection w1
+statement ok
+COMMIT;
+
+
+# A write into the table another transaction is replacing cannot commit.
+statement ok
+CREATE TABLE coinr_t_ww (a INT);
+
+
+statement ok
+INSERT INTO coinr_t_ww VALUES (1);
+
+
+connection w1
+statement ok
+BEGIN;
+
+
+connection w1
+statement ok
+CREATE OR REPLACE TABLE coinr_t_ww (b TEXT);
+
+
+connection w1
+statement ok
+INSERT INTO coinr_t_ww VALUES ('w1');
+
+
+connection w2
+statement error
+INSERT INTO coinr_t_ww VALUES (2);
+----
+db error: ERROR: Failed to commit: Attempting to modify table "coinr_t_ww" but another transaction has no changes this table
+
+
+connection w1
+statement ok
+COMMIT;
+
+
+query
+SELECT b FROM coinr_t_ww;
+----
+b
+w1
+
+
+# ----------------------------------------------------------------------
+# 1. WAL replay. Macros and functions.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE MACRO coinr_m(x) AS x + 1;
+
+
+statement ok
+CREATE OR REPLACE MACRO coinr_m(x) AS x + 100;
+
+
+statement ok
+CREATE MACRO coinr_m_rb(x) AS x + 1;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE MACRO coinr_m_rb(x) AS x + 100;
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+CREATE MACRO coinr_m_ine(x) AS x + 1;
+
+
+statement ok
+CREATE MACRO IF NOT EXISTS coinr_m_ine(x) AS x + 100;
+
+
+query
+SELECT coinr_m(1) AS m, coinr_m_rb(1) AS m_rb, coinr_m_ine(1) AS m_ine;
+----
+m	m_rb	m_ine
+101	2	2
+
+
+statement ok
+CREATE MACRO coinr_tm(k) AS TABLE SELECT n FROM coinr_base WHERE n <= k;
+
+
+statement ok
+CREATE OR REPLACE MACRO coinr_tm(k) AS TABLE SELECT n FROM coinr_base WHERE n >= k;
+
+
+query
+SELECT n FROM coinr_tm(2) ORDER BY n;
+----
+n
+2
+3
+
+
+# A PG function replaced with the same signature keeps its comment.
+statement ok
+CREATE FUNCTION coinr_pf(x INTEGER) RETURNS INTEGER AS 'SELECT x * 2' LANGUAGE SQL;
+
+
+statement ok
+COMMENT ON FUNCTION coinr_pf IS 'kept across replace';
+
+
+statement ok
+CREATE OR REPLACE FUNCTION coinr_pf(x INTEGER) RETURNS INTEGER AS 'SELECT x * 3' LANGUAGE SQL;
+
+
+# A different argument type is a second overload, not a replacement.
+statement ok
+CREATE FUNCTION coinr_ov(x INTEGER) RETURNS INTEGER AS 'SELECT x + 1' LANGUAGE SQL;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION coinr_ov(x TEXT) RETURNS TEXT AS 'SELECT x || ''!''' LANGUAGE SQL;
+
+
+query
+SELECT coinr_pf(5) AS pf, coinr_ov(1) AS ov_int, coinr_ov('a') AS ov_text;
+----
+pf	ov_int	ov_text
+15	2	a!
+
+
+# A view that calls a macro picks up the replaced body.
+statement ok
+CREATE MACRO coinr_mv(x) AS x + 1;
+
+
+statement ok
+CREATE VIEW coinr_mv_v AS SELECT coinr_mv(n) AS k FROM coinr_base;
+
+
+statement ok
+CREATE OR REPLACE MACRO coinr_mv(x) AS x + 500;
+
+
+query
+SELECT k FROM coinr_mv_v ORDER BY k;
+----
+k
+501
+502
+503
+
+
+# A second writer's replace is refused while the first is open; its IF NOT
+# EXISTS still finds the committed macro and skips.
+statement ok
+CREATE MACRO coinr_m_ww(x) AS x + 1;
+
+
+connection w1
+statement ok
+BEGIN;
+
+
+connection w1
+statement ok
+CREATE OR REPLACE MACRO coinr_m_ww(x) AS x + 2;
+
+
+connection w2
+statement error
+CREATE OR REPLACE MACRO coinr_m_ww(x) AS x + 3;
+----
+db error: ERROR: Catalog write-write conflict on alter with "coinr_m_ww"
+
+
+connection w2
+statement ok
+CREATE MACRO IF NOT EXISTS coinr_m_ww(x) AS x + 4;
+
+
+connection w2
+query
+SELECT coinr_m_ww(0) AS m;
+----
+m
+1
+
+
+connection w1
+statement ok
+COMMIT;
+
+
+query
+SELECT coinr_m_ww(0) AS m;
+----
+m
+2
+
+
+# ----------------------------------------------------------------------
+# 1. WAL replay. Sequences.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE SEQUENCE coinr_s START 10;
+
+
+query
+SELECT nextval('coinr_s') AS v;
+----
+v
+10
+
+
+statement ok
+CREATE OR REPLACE SEQUENCE coinr_s START 500 INCREMENT 5;
+
+
+query
+SELECT nextval('coinr_s') AS v;
+----
+v
+500
+
+
+# The rolled-back replacement hands out its own values; the old counter goes on.
+statement ok
+CREATE SEQUENCE coinr_s_rb START 10;
+
+
+query
+SELECT nextval('coinr_s_rb') AS v;
+----
+v
+10
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE SEQUENCE coinr_s_rb START 500;
+
+
+query
+SELECT nextval('coinr_s_rb') AS v;
+----
+v
+500
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT nextval('coinr_s_rb') AS v;
+----
+v
+11
+
+
+statement ok
+CREATE SEQUENCE coinr_s_ine START 10;
+
+
+query
+SELECT nextval('coinr_s_ine') AS v;
+----
+v
+10
+
+
+statement ok
+CREATE SEQUENCE IF NOT EXISTS coinr_s_ine START 500 INCREMENT 7;
+
+
+query
+SELECT nextval('coinr_s_ine') AS v;
+----
+v
+11
+
+
+# A sequence a column default still draws from cannot be replaced.
+statement ok
+CREATE SEQUENCE coinr_s_used;
+
+
+statement ok
+CREATE TABLE coinr_s_user (id INT DEFAULT nextval('coinr_s_used'), v TEXT);
+
+
+statement ok
+INSERT INTO coinr_s_user (v) VALUES ('first');
+
+
+statement error
+CREATE OR REPLACE SEQUENCE coinr_s_used START 100;
+----
+db error: ERROR: Cannot drop entry "coinr_s_used" because there are entries that depend on it.
+table "coinr_s_user" depends on sequence "coinr_s_used".
+Use DROP...CASCADE to drop all dependents.
+
+
+# ----------------------------------------------------------------------
+# 1. WAL replay. Types.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TYPE coinr_ty AS ENUM ('a', 'b');
+
+
+statement ok
+CREATE OR REPLACE TYPE coinr_ty AS ENUM ('x', 'y', 'z');
+
+
+statement ok
+CREATE TYPE coinr_ty_rb AS ENUM ('a', 'b');
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE TYPE coinr_ty_rb AS ENUM ('x', 'y', 'z');
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+CREATE TYPE coinr_ty_ine AS ENUM ('a', 'b');
+
+
+statement ok
+CREATE TYPE IF NOT EXISTS coinr_ty_ine AS ENUM ('q');
+
+
+query
+SELECT array_to_string(enum_range(NULL::coinr_ty), ',') AS ty,
+       array_to_string(enum_range(NULL::coinr_ty_rb), ',') AS ty_rb,
+       array_to_string(enum_range(NULL::coinr_ty_ine), ',') AS ty_ine;
+----
+ty	ty_rb	ty_ine
+x,y,z	a,b	a,b
+
+
+# A type a column still uses cannot be replaced.
+statement ok
+CREATE TYPE coinr_ty_used AS ENUM ('on', 'off');
+
+
+statement ok
+CREATE TABLE coinr_ty_user (s coinr_ty_used);
+
+
+statement ok
+INSERT INTO coinr_ty_user VALUES ('on');
+
+
+statement error
+CREATE OR REPLACE TYPE coinr_ty_used AS ENUM ('other');
+----
+db error: ERROR: Cannot drop entry "coinr_ty_used" because there are entries that depend on it.
+table "coinr_ty_user" depends on type "coinr_ty_used".
+Use DROP...CASCADE to drop all dependents.
+
+
+# ----------------------------------------------------------------------
+# 1. WAL replay. Triggers.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE coinr_audit (tag TEXT, a INT);
+
+
+statement ok
+CREATE TABLE coinr_trt (a INT);
+
+
+statement ok
+CREATE TABLE coinr_trt2 (a INT);
+
+
+statement ok
+CREATE TABLE coinr_trt3 (a INT);
+
+
+statement ok
+CREATE TABLE coinr_trt4 (a INT);
+
+
+statement ok
+CREATE TRIGGER coinr_trg AFTER DELETE ON coinr_trt FOR EACH ROW
+  INSERT INTO coinr_audit VALUES ('del_v1', OLD.a);
+
+
+statement ok
+CREATE OR REPLACE TRIGGER coinr_trg AFTER DELETE ON coinr_trt FOR EACH ROW
+  INSERT INTO coinr_audit VALUES ('del_v2', OLD.a);
+
+
+statement ok
+CREATE TRIGGER coinr_trg_rb AFTER INSERT ON coinr_trt FOR EACH STATEMENT
+  INSERT INTO coinr_audit VALUES ('ins_v1', 0);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE TRIGGER coinr_trg_rb AFTER INSERT ON coinr_trt FOR EACH STATEMENT
+  INSERT INTO coinr_audit VALUES ('ins_v2', 0);
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+CREATE TRIGGER coinr_trg_ine AFTER DELETE ON coinr_trt2 FOR EACH ROW
+  INSERT INTO coinr_audit VALUES ('ine_v1', OLD.a);
+
+
+statement ok
+CREATE TRIGGER IF NOT EXISTS coinr_trg_ine AFTER DELETE ON coinr_trt2 FOR EACH ROW
+  INSERT INTO coinr_audit VALUES ('ine_v2', OLD.a);
+
+
+# A replace can move the trigger to another event.
+statement ok
+CREATE TRIGGER coinr_trg_ev AFTER INSERT ON coinr_trt3 FOR EACH ROW
+  INSERT INTO coinr_audit VALUES ('ev_ins', NEW.a);
+
+
+statement ok
+CREATE OR REPLACE TRIGGER coinr_trg_ev AFTER DELETE ON coinr_trt3 FOR EACH ROW
+  INSERT INTO coinr_audit VALUES ('ev_del', OLD.a);
+
+
+# Replacing the table drops the triggers the old table owned.
+statement ok
+CREATE TRIGGER coinr_trg_gone AFTER DELETE ON coinr_trt4 FOR EACH ROW
+  INSERT INTO coinr_audit VALUES ('gone', OLD.a);
+
+
+statement ok
+CREATE OR REPLACE TABLE coinr_trt4 (a INT);
+
+
+statement ok
+INSERT INTO coinr_trt4 VALUES (9);
+
+
+query
+SELECT trigger_name, table_name, event_manipulation, for_each
+  FROM duckdb_triggers() WHERE trigger_name LIKE 'coinr_trg%' ORDER BY trigger_name;
+----
+trigger_name	table_name	event_manipulation	for_each
+coinr_trg	coinr_trt	DELETE	ROW
+coinr_trg_ev	coinr_trt3	DELETE	ROW
+coinr_trg_ine	coinr_trt2	DELETE	ROW
+coinr_trg_rb	coinr_trt	INSERT	STATEMENT
+
+
+statement count 3
+INSERT INTO coinr_trt VALUES (1), (2), (3);
+
+
+statement count 1
+DELETE FROM coinr_trt WHERE a = 1;
+
+
+statement count 2
+INSERT INTO coinr_trt2 VALUES (1), (2);
+
+
+statement count 1
+DELETE FROM coinr_trt2 WHERE a = 1;
+
+
+statement count 1
+INSERT INTO coinr_trt3 VALUES (1);
+
+
+statement count 1
+DELETE FROM coinr_trt3 WHERE a = 1;
+
+
+query
+SELECT tag, a FROM coinr_audit ORDER BY tag, a;
+----
+tag	a
+del_v2	1
+ev_del	1
+ine_v1	1
+ins_v1	0
+
+
+statement ok
+DELETE FROM coinr_audit;
+
+
+# ----------------------------------------------------------------------
+# 1. WAL replay. Schemas, indexes, dictionaries.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE SCHEMA coinr_sch;
+
+
+statement ok
+CREATE TABLE coinr_sch.t (a INT);
+
+
+statement ok
+INSERT INTO coinr_sch.t VALUES (5);
+
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS coinr_sch;
+
+
+# The skipped index keeps the table it was created on.
+statement ok
+CREATE INDEX coinr_idx ON coinr_base (n);
+
+
+statement ok
+CREATE INDEX IF NOT EXISTS coinr_idx ON coinr_t_ine (a);
+
+
+query
+SELECT tablename FROM pg_indexes WHERE indexname = 'coinr_idx';
+----
+tablename
+coinr_base
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY coinr_dict AS split_text(case := 'lower');
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY IF NOT EXISTS coinr_dict AS split_text(case := 'upper');
+
+
+query
+SELECT array_to_string(ts_lexize('coinr_dict', 'Hello World'), ',') AS tokens;
+----
+tokens
+hello,world
+
+
+# ----------------------------------------------------------------------
+# 1. WAL replay. Search tables.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE coinr_st (id INT, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO coinr_st VALUES (1, 'old one'), (2, 'old two');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coinr_st;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE TABLE coinr_st (id INT, body TEXT, extra INT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO coinr_st VALUES (10, 'new ten', 100), (11, 'new eleven', 110);
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coinr_st;
+
+
+query
+SELECT id, body, extra FROM coinr_st ORDER BY id;
+----
+id	body	extra
+10	new ten	100
+11	new eleven	110
+
+
+# Written after the last refresh: only the search WAL holds it at the crash.
+statement ok
+INSERT INTO coinr_st VALUES (12, 'new twelve', 120);
+
+
+statement ok
+CREATE TABLE coinr_st_rb (id INT, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO coinr_st_rb VALUES (1, 'kept one'), (2, 'kept two');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coinr_st_rb;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE TABLE coinr_st_rb (id INT, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO coinr_st_rb VALUES (9, 'rolled back');
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+CREATE TABLE coinr_st_ine (id INT, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO coinr_st_ine VALUES (1, 'kept');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coinr_st_ine;
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS coinr_st_ine (x INT) WITH (storage = 'search');
+
+
+# A plain table replaced by a search table, and the other way round.
+statement ok
+CREATE TABLE coinr_st_to_search (id INT, body TEXT);
+
+
+statement ok
+INSERT INTO coinr_st_to_search VALUES (1, 'plain');
+
+
+statement ok
+CREATE OR REPLACE TABLE coinr_st_to_search (id INT, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO coinr_st_to_search VALUES (2, 'searchable');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coinr_st_to_search;
+
+
+statement ok
+CREATE TABLE coinr_st_to_plain (id INT, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO coinr_st_to_plain VALUES (1, 'searchable');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coinr_st_to_plain;
+
+
+statement ok
+CREATE OR REPLACE TABLE coinr_st_to_plain (id INT, body TEXT);
+
+
+statement ok
+INSERT INTO coinr_st_to_plain VALUES (2, 'plain');
+
+
+# ----------------------------------------------------------------------
+# 1. WAL replay. Persistent secrets.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE PERSISTENT SECRET coinr_sec (TYPE s3, KEY_ID 'coinr_k1', SECRET 'coinr_s1', REGION 'coinr_r1');
+
+
+statement ok
+CREATE OR REPLACE PERSISTENT SECRET coinr_sec (TYPE s3, KEY_ID 'coinr_k2', SECRET 'coinr_s2', REGION 'coinr_r2');
+
+
+statement ok
+CREATE PERSISTENT SECRET IF NOT EXISTS coinr_sec (TYPE s3, KEY_ID 'coinr_k3', SECRET 'coinr_s3', REGION 'coinr_r3');
+
+
+query
+SELECT name, persistent, secret_string LIKE '%key_id=coinr_k2;%region=coinr_r2;%' AS second_def
+  FROM duckdb_secrets() WHERE name LIKE 'coinr%';
+----
+name	persistent	second_def
+coinr_sec	t	t
+
+
+# ----------------------------------------------------------------------
+# 1. WAL replay. Both forms on a free name.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE coinr_fr_audit (tag TEXT, a INT);
+
+
+statement ok
+CREATE TABLE coinr_fr_trt (a INT);
+
+
+# IF NOT EXISTS on a free name creates, for every kind.
+statement ok
+CREATE VIEW IF NOT EXISTS coinr_fr_v AS SELECT n + 1 AS n FROM coinr_base;
+
+
+statement ok
+CREATE MACRO IF NOT EXISTS coinr_fr_m(x) AS x * 3;
+
+
+statement ok
+CREATE SEQUENCE IF NOT EXISTS coinr_fr_s START 40;
+
+
+query
+SELECT nextval('coinr_fr_s') AS v;
+----
+v
+40
+
+
+statement ok
+CREATE TYPE IF NOT EXISTS coinr_fr_ty AS ENUM ('f1', 'f2');
+
+
+statement ok
+CREATE TRIGGER IF NOT EXISTS coinr_fr_trg AFTER INSERT ON coinr_fr_trt FOR EACH ROW
+  INSERT INTO coinr_fr_audit VALUES ('fr_ine', NEW.a);
+
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS coinr_fr_sch;
+
+
+statement ok
+CREATE INDEX IF NOT EXISTS coinr_fr_idx ON coinr_fr_trt (a);
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS coinr_fr_st (id INT, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO coinr_fr_st VALUES (1, 'fresh');
+
+
+# OR REPLACE on a free name creates too.
+statement ok
+CREATE OR REPLACE VIEW coinr_fr_v2 AS SELECT n + 2 AS n FROM coinr_base;
+
+
+statement ok
+CREATE OR REPLACE MACRO coinr_fr_m2(x) AS x * 4;
+
+
+statement ok
+CREATE OR REPLACE SEQUENCE coinr_fr_s2 START 60;
+
+
+query
+SELECT nextval('coinr_fr_s2') AS v;
+----
+v
+60
+
+
+statement ok
+CREATE OR REPLACE TYPE coinr_fr_ty2 AS ENUM ('g1');
+
+
+statement ok
+CREATE OR REPLACE TRIGGER coinr_fr_trg2 AFTER DELETE ON coinr_fr_trt FOR EACH ROW
+  INSERT INTO coinr_fr_audit VALUES ('fr_or', OLD.a);
+
+
+statement ok
+CREATE OR REPLACE FUNCTION coinr_fr_pf(x INTEGER) RETURNS INTEGER AS 'SELECT x * 5' LANGUAGE SQL;
+
+
+statement ok
+CREATE OR REPLACE TABLE coinr_fr_t (a INT, b TEXT DEFAULT 'fr');
+
+
+statement ok
+INSERT INTO coinr_fr_t (a) VALUES (1);
+
+
+query
+SELECT (SELECT sum(n) FROM coinr_fr_v) AS v, coinr_fr_m(1) AS m,
+       array_to_string(enum_range(NULL::coinr_fr_ty), ',') AS ty,
+       (SELECT sum(n) FROM coinr_fr_v2) AS v2, coinr_fr_m2(1) AS m2,
+       array_to_string(enum_range(NULL::coinr_fr_ty2), ',') AS ty2, coinr_fr_pf(1) AS pf;
+----
+v	m	ty	v2	m2	ty2	pf
+9	3	f1,f2	12	4	g1	5
+
+
+# Rolled back, neither form leaves anything behind.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE VIEW IF NOT EXISTS coinr_gone_v AS SELECT 1 AS k;
+
+
+statement ok
+CREATE MACRO IF NOT EXISTS coinr_gone_m(x) AS x;
+
+
+statement ok
+CREATE SEQUENCE IF NOT EXISTS coinr_gone_s;
+
+
+statement ok
+CREATE TYPE IF NOT EXISTS coinr_gone_ty AS ENUM ('g');
+
+
+statement ok
+CREATE TRIGGER IF NOT EXISTS coinr_gone_trg AFTER INSERT ON coinr_fr_trt FOR EACH ROW
+  INSERT INTO coinr_fr_audit VALUES ('gone', NEW.a);
+
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS coinr_gone_sch;
+
+
+statement ok
+CREATE INDEX IF NOT EXISTS coinr_gone_idx ON coinr_fr_trt (a);
+
+
+statement ok
+CREATE OR REPLACE VIEW coinr_gone_v2 AS SELECT 2 AS k;
+
+
+statement ok
+CREATE OR REPLACE MACRO coinr_gone_m2(x) AS x;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION coinr_gone_pf(x INTEGER) RETURNS INTEGER AS 'SELECT x' LANGUAGE SQL;
+
+
+statement ok
+CREATE OR REPLACE TABLE coinr_gone_t (a INT);
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT (SELECT count(*) FROM pg_class WHERE relname LIKE 'coinr_gone%') AS rels,
+       (SELECT count(*) FROM duckdb_functions() WHERE function_name LIKE 'coinr_gone%') AS funcs,
+       (SELECT count(*) FROM pg_type WHERE typname LIKE 'coinr_gone%') AS types,
+       (SELECT count(*) FROM duckdb_triggers() WHERE trigger_name LIKE 'coinr_gone%') AS trgs,
+       (SELECT count(*) FROM pg_namespace WHERE nspname LIKE 'coinr_gone%') AS schemas;
+----
+rels	funcs	types	trgs	schemas
+0	0	0	0	0
+
+
+# An IF NOT EXISTS skip inside a transaction that rolls back leaves the object
+# it skipped exactly as it was: the skip made no version to undo.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE VIEW IF NOT EXISTS coinr_v_ine AS SELECT -1 AS n;
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS coinr_t_ine (b TEXT);
+
+
+statement ok
+CREATE MACRO IF NOT EXISTS coinr_m_ine(x) AS x - 1;
+
+
+statement ok
+CREATE SEQUENCE IF NOT EXISTS coinr_s_ine START 1;
+
+
+statement ok
+CREATE TYPE IF NOT EXISTS coinr_ty_ine AS ENUM ('rb');
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT (SELECT sum(n) FROM coinr_v_ine) AS v_ine, (SELECT count(*) FROM coinr_t_ine) AS t_ine,
+       coinr_m_ine(1) AS m_ine, array_to_string(enum_range(NULL::coinr_ty_ine), ',') AS ty_ine;
+----
+v_ine	t_ine	m_ine	ty_ine
+6	2	2	a,b
+
+
+# Dropped earlier in the same transaction, the name is free for IF NOT EXISTS.
+statement ok
+CREATE VIEW coinr_dq_v AS SELECT 1 AS k;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP VIEW coinr_dq_v;
+
+
+statement ok
+CREATE VIEW IF NOT EXISTS coinr_dq_v AS SELECT 2 AS k;
+
+
+statement ok
+COMMIT;
+
+
+# A replace and a skip of one name in one transaction: the replace is what
+# commits.
+statement ok
+CREATE MACRO coinr_mix_m(x) AS x + 1;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE MACRO coinr_mix_m(x) AS x + 2;
+
+
+statement ok
+CREATE MACRO IF NOT EXISTS coinr_mix_m(x) AS x + 3;
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT (SELECT k FROM coinr_dq_v) AS dq, coinr_mix_m(0) AS mix;
+----
+dq	mix
+2	2
+
+
+# ----------------------------------------------------------------------
+# 1. WAL replay. One relation namespace across kinds.
+# ----------------------------------------------------------------------
+
+# Tables, views and sequences share one namespace, as PG's pg_class does, so
+# IF NOT EXISTS of one kind skips over a relation of another kind.
+statement ok
+CREATE TABLE coinr_ns_t (a INT);
+
+
+statement ok
+INSERT INTO coinr_ns_t VALUES (1);
+
+
+statement ok
+CREATE VIEW IF NOT EXISTS coinr_ns_t AS SELECT 'view' AS a;
+
+
+statement ok
+CREATE SEQUENCE IF NOT EXISTS coinr_ns_t;
+
+
+statement ok
+CREATE SEQUENCE coinr_ns_s START 3;
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS coinr_ns_s (k INT);
+
+
+statement ok
+CREATE VIEW IF NOT EXISTS coinr_ns_s AS SELECT 1 AS k;
+
+
+statement error
+CREATE OR REPLACE VIEW coinr_ns_s AS SELECT 1 AS k;
+----
+db error: ERROR: Existing object "coinr_ns_s" is of type Sequence, trying to replace with type View
+
+
+statement error
+CREATE OR REPLACE TABLE coinr_ns_s (k INT);
+----
+db error: ERROR: Existing object "coinr_ns_s" is of type Sequence, trying to replace with type Table
+
+
+query
+SELECT relname, relkind FROM pg_class WHERE relname IN ('coinr_ns_t', 'coinr_ns_s') ORDER BY relname;
+----
+relname	relkind
+coinr_ns_s	S
+coinr_ns_t	r
+
+
+# ----------------------------------------------------------------------
+# 1. WAL replay. What a replaced definition carries with it.
+# ----------------------------------------------------------------------
+
+# A replaced view depends on what its new query reads, not on what the old
+# one read.
+statement ok
+CREATE TABLE coinr_dep_a (x INT);
+
+
+statement ok
+CREATE TABLE coinr_dep_b (x INT);
+
+
+statement ok
+INSERT INTO coinr_dep_a VALUES (1);
+
+
+statement ok
+INSERT INTO coinr_dep_b VALUES (2);
+
+
+statement ok
+CREATE VIEW coinr_dep_v AS SELECT x FROM coinr_dep_a;
+
+
+statement ok
+CREATE OR REPLACE VIEW coinr_dep_v AS SELECT x FROM coinr_dep_b;
+
+
+query
+SELECT x FROM coinr_dep_v;
+----
+x
+2
+
+
+# A replaced table enforces the new table's constraints and default.
+statement ok
+CREATE TABLE coinr_pk (id INT, v TEXT);
+
+
+statement ok
+INSERT INTO coinr_pk VALUES (1, 'a'), (1, 'b');
+
+
+statement ok
+CREATE OR REPLACE TABLE coinr_pk (id INT PRIMARY KEY, v TEXT DEFAULT 'dflt', CHECK (id > 0));
+
+
+statement ok
+INSERT INTO coinr_pk (id) VALUES (1);
+
+
+statement error
+INSERT INTO coinr_pk (id) VALUES (1);
+----
+db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+
+
+# The old table's indexes go with it, which frees their names.
+statement ok
+CREATE TABLE coinr_ixr (a INT);
+
+
+statement ok
+CREATE UNIQUE INDEX coinr_ixr_uq ON coinr_ixr (a);
+
+
+statement ok
+INSERT INTO coinr_ixr VALUES (1);
+
+
+statement ok
+CREATE OR REPLACE TABLE coinr_ixr (a INT, b INT);
+
+
+statement ok
+CREATE INDEX coinr_ixr_uq ON coinr_ixr (b);
+
+
+statement ok
+INSERT INTO coinr_ixr VALUES (1, 1), (1, 2);
+
+
+query
+SELECT index_name, is_unique, sql FROM duckdb_indexes() WHERE index_name LIKE 'coinr_ixr%';
+----
+index_name	is_unique	sql
+coinr_ixr_uq	f	CREATE INDEX coinr_ixr_uq ON public.coinr_ixr(b);
+
+
+# The serial column of a replaced table draws from a new sequence of its own,
+# and the old table's sequence is gone.
+statement ok
+CREATE TABLE coinr_ser (id SERIAL, v TEXT);
+
+
+statement ok
+INSERT INTO coinr_ser (v) VALUES ('old1'), ('old2');
+
+
+statement ok
+CREATE OR REPLACE TABLE coinr_ser (id SERIAL, v TEXT);
+
+
+statement ok
+INSERT INTO coinr_ser (v) VALUES ('new1');
+
+
+query
+SELECT id, v, (SELECT count(*) FROM duckdb_sequences() WHERE sequence_name LIKE 'coinr_ser%') AS seqs
+  FROM coinr_ser;
+----
+id	v	seqs
+1	new1	1
+
+
+# Trigger names are per table, as in PG: OR REPLACE on another table adds a
+# second trigger, and a replace can switch a trigger from ROW to STATEMENT.
+statement ok
+CREATE TABLE coinr_tg_a (a INT);
+
+
+statement ok
+CREATE TABLE coinr_tg_b (a INT);
+
+
+statement ok
+CREATE TRIGGER coinr_tg AFTER INSERT ON coinr_tg_a FOR EACH ROW
+  INSERT INTO coinr_fr_audit VALUES ('tg_a_row', NEW.a);
+
+
+statement ok
+CREATE OR REPLACE TRIGGER coinr_tg AFTER INSERT ON coinr_tg_b FOR EACH ROW
+  INSERT INTO coinr_fr_audit VALUES ('tg_b_row', NEW.a);
+
+
+statement ok
+CREATE OR REPLACE TRIGGER coinr_tg AFTER INSERT ON coinr_tg_a FOR EACH STATEMENT
+  INSERT INTO coinr_fr_audit VALUES ('tg_a_stmt', 0);
+
+
+query
+SELECT table_name, event_manipulation, for_each FROM duckdb_triggers()
+  WHERE trigger_name = 'coinr_tg' ORDER BY table_name;
+----
+table_name	event_manipulation	for_each
+coinr_tg_a	INSERT	STATEMENT
+coinr_tg_b	INSERT	ROW
+
+
+# Replaces of objects outside public, next to a public object of the same name.
+statement ok
+CREATE VIEW coinr_same AS SELECT 'public' AS s;
+
+
+statement ok
+CREATE VIEW coinr_sch.coinr_same AS SELECT 'sch_v1' AS s;
+
+
+statement ok
+CREATE OR REPLACE VIEW coinr_sch.coinr_same AS SELECT 'sch_v2' AS s;
+
+
+statement ok
+CREATE MACRO coinr_sch.coinr_sm(x) AS x + 1;
+
+
+statement ok
+CREATE OR REPLACE MACRO coinr_sch.coinr_sm(x) AS x + 2;
+
+
+query
+SELECT (SELECT s FROM coinr_same) AS pub, (SELECT s FROM coinr_sch.coinr_same) AS sch,
+       coinr_sch.coinr_sm(1) AS sm;
+----
+pub	sch	sm
+public	sch_v2	3
+
+
+# ----------------------------------------------------------------------
+# 1. WAL replay. Other connections around a replace.
+# ----------------------------------------------------------------------
+
+# Interleaved writers on different objects: each commit or rollback decides
+# only its own replace, and a later committer's replace of the same view wins.
+statement ok
+CREATE VIEW coinr_il_v AS SELECT 1 AS k;
+
+
+statement ok
+CREATE MACRO coinr_il_m(x) AS x + 1;
+
+
+connection m1
+statement ok
+BEGIN;
+
+
+connection m1
+statement ok
+CREATE OR REPLACE VIEW coinr_il_v AS SELECT 2 AS k;
+
+
+connection m2
+statement ok
+BEGIN;
+
+
+connection m2
+statement ok
+CREATE OR REPLACE MACRO coinr_il_m(x) AS x + 2;
+
+
+connection m1
+statement ok
+COMMIT;
+
+
+connection m2
+statement ok
+ROLLBACK;
+
+
+connection m2
+statement ok
+CREATE OR REPLACE VIEW coinr_il_v AS SELECT 3 AS k;
+
+
+query
+SELECT k, coinr_il_m(0) AS m FROM coinr_il_v;
+----
+k	m
+3	1
+
+
+# While a sequence and a trigger are being replaced, another connection still
+# draws from the old counter and fires the old trigger; once the replace
+# commits it gets the new ones.
+statement ok
+CREATE SEQUENCE coinr_mv_s START 10;
+
+
+query
+SELECT nextval('coinr_mv_s') AS v;
+----
+v
+10
+
+
+statement ok
+CREATE TABLE coinr_mv_t (a INT);
+
+
+statement ok
+INSERT INTO coinr_mv_t VALUES (1), (2), (3);
+
+
+statement ok
+CREATE TRIGGER coinr_mv_trg AFTER DELETE ON coinr_mv_t FOR EACH ROW
+  INSERT INTO coinr_fr_audit VALUES ('mv_v1', OLD.a);
+
+
+connection m1
+statement ok
+BEGIN;
+
+
+connection m1
+statement ok
+CREATE OR REPLACE SEQUENCE coinr_mv_s START 100;
+
+
+connection m1
+statement ok
+CREATE OR REPLACE TRIGGER coinr_mv_trg AFTER DELETE ON coinr_mv_t FOR EACH ROW
+  INSERT INTO coinr_fr_audit VALUES ('mv_v2', OLD.a);
+
+
+connection m1
+query
+SELECT nextval('coinr_mv_s') AS v;
+----
+v
+100
+
+
+connection m2
+query
+SELECT nextval('coinr_mv_s') AS v;
+----
+v
+11
+
+
+connection m2
+statement count 1
+DELETE FROM coinr_mv_t WHERE a = 1;
+
+
+connection m1
+statement ok
+COMMIT;
+
+
+connection m2
+query
+SELECT nextval('coinr_mv_s') AS v;
+----
+v
+101
+
+
+connection m2
+statement count 1
+DELETE FROM coinr_mv_t WHERE a = 2;
+
+
+connection m2
+query
+SELECT tag, a FROM coinr_fr_audit WHERE tag LIKE 'mv%' ORDER BY a;
+----
+tag	a
+mv_v1	1
+mv_v2	2
+
+
+connection m2
+statement ok
+DELETE FROM coinr_fr_audit;
+
+
+# ----------------------------------------------------------------------
+# 1. WAL replay. Replaces still open at the crash.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE VIEW coinr_v_open AS SELECT n FROM coinr_base;
+
+
+statement ok
+CREATE TABLE coinr_t_open (a INT);
+
+
+statement ok
+INSERT INTO coinr_t_open VALUES (1);
+
+
+statement ok
+CREATE MACRO coinr_m_open(x) AS x + 1;
+
+
+statement ok
+CREATE TYPE coinr_ty_open AS ENUM ('a');
+
+
+statement ok
+CREATE SEQUENCE coinr_s_open START 10;
+
+
+query
+SELECT nextval('coinr_s_open') AS v;
+----
+v
+10
+
+
+statement ok
+CREATE TABLE coinr_trt_open (a INT);
+
+
+statement ok
+INSERT INTO coinr_trt_open VALUES (1), (2);
+
+
+statement ok
+CREATE TRIGGER coinr_trg_open AFTER DELETE ON coinr_trt_open FOR EACH ROW
+  INSERT INTO coinr_audit VALUES ('open_v1', OLD.a);
+
+
+statement ok
+CREATE TABLE coinr_st_open (id INT, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO coinr_st_open VALUES (1, 'committed');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coinr_st_open;
+
+
+connection w_open
+statement ok
+BEGIN;
+
+
+connection w_open
+statement ok
+CREATE OR REPLACE VIEW coinr_v_open AS SELECT n * 1000 AS n FROM coinr_base;
+
+
+connection w_open
+statement ok
+CREATE OR REPLACE TABLE coinr_t_open (b TEXT);
+
+
+connection w_open
+statement ok
+INSERT INTO coinr_t_open VALUES ('uncommitted');
+
+
+connection w_open
+statement ok
+CREATE OR REPLACE MACRO coinr_m_open(x) AS x + 1000;
+
+
+connection w_open
+statement ok
+CREATE OR REPLACE TYPE coinr_ty_open AS ENUM ('uncommitted');
+
+
+connection w_open
+statement ok
+CREATE OR REPLACE SEQUENCE coinr_s_open START 900;
+
+
+connection w_open
+query
+SELECT nextval('coinr_s_open') AS v;
+----
+v
+900
+
+
+connection w_open
+statement ok
+CREATE OR REPLACE TRIGGER coinr_trg_open AFTER DELETE ON coinr_trt_open FOR EACH ROW
+  INSERT INTO coinr_audit VALUES ('open_v2', OLD.a);
+
+
+connection w_open
+statement ok
+CREATE OR REPLACE TABLE coinr_st_open (id INT, body TEXT) WITH (storage = 'search');
+
+
+connection w_open
+statement ok
+INSERT INTO coinr_st_open VALUES (2, 'uncommitted');
+
+
+connection w_open
+statement ok
+CREATE TABLE IF NOT EXISTS coinr_t_open_new (a INT);
+
+
+connection w_open
+query
+SELECT sum(n) AS s, coinr_m_open(1) AS m FROM coinr_v_open;
+----
+s	m
+6000	1001
+
+
+# Nobody else sees the open versions.
+query
+SELECT sum(n) AS s, coinr_m_open(1) AS m FROM coinr_v_open;
+----
+s	m
+6	2
+
+
+query
+SELECT a FROM coinr_t_open;
+----
+a
+1
+
+
+# A reader whose transaction began before a committed replace keeps the old
+# version for as long as it is open, and is still open at the crash.
+statement ok
+CREATE VIEW coinr_snap_v AS SELECT 1 AS k;
+
+
+statement ok
+CREATE MACRO coinr_snap_m(x) AS x + 1;
+
+
+connection r_snap
+statement ok
+BEGIN;
+
+
+connection r_snap
+query
+SELECT k, coinr_snap_m(0) AS m FROM coinr_snap_v;
+----
+k	m
+1	1
+
+
+statement ok
+CREATE OR REPLACE VIEW coinr_snap_v AS SELECT 2 AS k;
+
+
+statement ok
+CREATE OR REPLACE MACRO coinr_snap_m(x) AS x + 2;
+
+
+connection r_snap
+query
+SELECT k, coinr_snap_m(0) AS m FROM coinr_snap_v;
+----
+k	m
+1	1
+
+
+query
+SELECT k, coinr_snap_m(0) AS m FROM coinr_snap_v;
+----
+k	m
+2	2
+
+
+# Under the extended protocol the Sync that follows the SET is already the
+# next packet, so the SET itself is what the connection dies on.
+skipif pg-wire-extended
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+skipif pg-wire-extended
+statement error connection closed
+SELECT 1;
+
+
+onlyif pg-wire-extended
+statement error connection closed
+SET sdb_faults = 'crash_on_packet';
+
+
+# --- restart: WAL replay ---
+
+connection after_replay
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT n, tag FROM coinr_v ORDER BY n;
+----
+n	tag
+10	second
+20	second
+30	second
+
+
+connection after_replay
+query
+SELECT obj_description('coinr_v'::regclass) AS comment,
+       has_table_privilege('coinr_reader', 'coinr_v', 'SELECT') AS granted,
+       (SELECT o FROM coinr_v_oid) = 'coinr_v'::regclass::oid AS same_oid;
+----
+comment	granted	same_oid
+kept across replace	t	t
+
+
+# Each replaced name came back as exactly one entry.
+connection after_replay
+query
+SELECT (SELECT count(*) FROM pg_class WHERE relname = 'coinr_v') AS v,
+       (SELECT count(*) FROM duckdb_tables() WHERE table_name = 'coinr_t') AS t,
+       (SELECT count(*) FROM duckdb_functions() WHERE function_name = 'coinr_m') AS m,
+       (SELECT count(*) FROM duckdb_sequences() WHERE sequence_name = 'coinr_s') AS s,
+       (SELECT count(*) FROM pg_type WHERE typname = 'coinr_ty') AS ty,
+       (SELECT count(*) FROM duckdb_triggers() WHERE trigger_name = 'coinr_trg') AS trg,
+       (SELECT count(*) FROM duckdb_tables() WHERE table_name = 'coinr_st') AS st;
+----
+v	t	m	s	ty	trg	st
+1	1	1	1	1	1	1
+
+
+connection after_replay
+query
+SELECT (SELECT sum(n) FROM coinr_v_rb) AS v_rb,
+       (SELECT sum(n) FROM coinr_v_ine) AS v_ine,
+       (SELECT sum(n) FROM coinr_v_twice) AS v_twice,
+       (SELECT sum(n) FROM coinr_v_open) AS v_open,
+       (SELECT k FROM coinr_v_ww) AS v_ww;
+----
+v_rb	v_ine	v_twice	v_open	v_ww
+6	6	606	6	2
+
+
+connection after_replay
+query
+SELECT column_name FROM duckdb_columns()
+  WHERE table_name = 'coinr_v_ine' ORDER BY column_index;
+----
+column_name
+n
+
+
+connection after_replay
+query
+SELECT m FROM coinr_v_outer ORDER BY m;
+----
+m
+101
+201
+301
+
+
+# The edge from the outer view to the replaced one came back with them.
+connection after_replay
+statement error
+DROP VIEW coinr_v_inner;
+----
+db error: ERROR: Cannot drop entry "coinr_v_inner" because there are entries that depend on it.
+view "coinr_v_outer" depends on view "coinr_v_inner".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection after_replay
+query
+SELECT b, c, obj_description('coinr_t'::regclass) IS NULL AS no_comment FROM coinr_t;
+----
+b	c	no_comment
+second	20	t
+
+
+connection after_replay
+query
+SELECT column_name FROM information_schema.columns
+  WHERE table_name = 'coinr_t' ORDER BY ordinal_position;
+----
+column_name
+b
+c
+
+
+connection after_replay
+query
+SELECT a FROM coinr_t_rb ORDER BY a;
+----
+a
+1
+2
+
+
+connection after_replay
+query
+SELECT a FROM coinr_t_ine ORDER BY a;
+----
+a
+1
+2
+
+
+connection after_replay
+query
+SELECT d FROM coinr_t_ctas ORDER BY d;
+----
+d
+4
+6
+
+
+connection after_replay
+query
+SELECT (SELECT a FROM coinr_t_fresh) AS fresh,
+       (SELECT a FROM coinr_t_race) AS race,
+       (SELECT b FROM coinr_t_ww) AS ww,
+       (SELECT a FROM coinr_t_open) AS open;
+----
+fresh	race	ww	open
+5	1	w1	1
+
+
+connection after_replay
+query
+SELECT count(*) AS c FROM pg_class WHERE relname IN ('coinr_t_gone', 'coinr_t_open_new');
+----
+c
+0
+
+
+connection after_replay
+statement ok
+INSERT INTO coinr_t_rb VALUES (3);
+
+
+connection after_replay
+query
+SELECT a FROM coinr_t_dep_v;
+----
+a
+8
+
+
+connection after_replay
+query
+SELECT coinr_m(1) AS m, coinr_m_rb(1) AS m_rb, coinr_m_ine(1) AS m_ine,
+       coinr_m_open(1) AS m_open, coinr_m_ww(0) AS m_ww;
+----
+m	m_rb	m_ine	m_open	m_ww
+101	2	2	2	2
+
+
+connection after_replay
+query
+SELECT n FROM coinr_tm(2) ORDER BY n;
+----
+n
+2
+3
+
+
+connection after_replay
+query
+SELECT coinr_pf(5) AS pf, coinr_ov(1) AS ov_int, coinr_ov('a') AS ov_text,
+       (SELECT count(*) FROM pg_proc WHERE proname = 'coinr_pf') AS pf_defs;
+----
+pf	ov_int	ov_text	pf_defs
+15	2	a!	1
+
+
+connection after_replay
+query
+SELECT obj_description(p.oid, 'pg_proc') AS comment FROM pg_proc p WHERE p.proname = 'coinr_pf';
+----
+comment
+kept across replace
+
+
+connection after_replay
+query
+SELECT k FROM coinr_mv_v ORDER BY k;
+----
+k
+501
+502
+503
+
+
+connection after_replay
+query
+SELECT nextval('coinr_s') AS s, nextval('coinr_s_rb') AS s_rb,
+       nextval('coinr_s_ine') AS s_ine, nextval('coinr_s_open') AS s_open;
+----
+s	s_rb	s_ine	s_open
+665	43	43	43
+
+
+connection after_replay
+statement ok
+INSERT INTO coinr_s_user (v) VALUES ('second');
+
+
+connection after_replay
+query
+SELECT id, v FROM coinr_s_user ORDER BY id;
+----
+id	v
+1	first
+34	second
+
+
+connection after_replay
+query
+SELECT sequencename, start_value, increment_by FROM pg_sequences
+  WHERE sequencename IN ('coinr_s', 'coinr_s_rb', 'coinr_s_ine') ORDER BY sequencename;
+----
+sequencename	start_value	increment_by
+coinr_s	500	5
+coinr_s_ine	10	1
+coinr_s_rb	10	1
+
+
+connection after_replay
+query
+SELECT array_to_string(enum_range(NULL::coinr_ty), ',') AS ty,
+       array_to_string(enum_range(NULL::coinr_ty_rb), ',') AS ty_rb,
+       array_to_string(enum_range(NULL::coinr_ty_ine), ',') AS ty_ine,
+       array_to_string(enum_range(NULL::coinr_ty_open), ',') AS ty_open,
+       array_to_string(enum_range(NULL::coinr_ty_used), ',') AS ty_used;
+----
+ty	ty_rb	ty_ine	ty_open	ty_used
+x,y,z	a,b	a,b	a	on,off
+
+
+connection after_replay
+query
+SELECT e.enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
+  WHERE t.typname = 'coinr_ty' ORDER BY e.enumsortorder;
+----
+enumlabel
+x
+y
+z
+
+
+connection after_replay
+query
+SELECT s FROM coinr_ty_user;
+----
+s
+on
+
+
+connection after_replay
+query
+SELECT trigger_name, table_name, event_manipulation, for_each
+  FROM duckdb_triggers() WHERE trigger_name LIKE 'coinr_trg%' ORDER BY trigger_name;
+----
+trigger_name	table_name	event_manipulation	for_each
+coinr_trg	coinr_trt	DELETE	ROW
+coinr_trg_ev	coinr_trt3	DELETE	ROW
+coinr_trg_ine	coinr_trt2	DELETE	ROW
+coinr_trg_open	coinr_trt_open	DELETE	ROW
+coinr_trg_rb	coinr_trt	INSERT	STATEMENT
+
+
+connection after_replay
+statement count 1
+INSERT INTO coinr_trt VALUES (4);
+
+
+connection after_replay
+statement count 1
+DELETE FROM coinr_trt WHERE a = 2;
+
+
+connection after_replay
+statement count 1
+DELETE FROM coinr_trt2 WHERE a = 2;
+
+
+connection after_replay
+statement count 1
+INSERT INTO coinr_trt3 VALUES (5);
+
+
+connection after_replay
+statement count 1
+DELETE FROM coinr_trt3 WHERE a = 5;
+
+
+connection after_replay
+statement count 1
+DELETE FROM coinr_trt4 WHERE a = 9;
+
+
+connection after_replay
+statement count 1
+DELETE FROM coinr_trt_open WHERE a = 1;
+
+
+connection after_replay
+query
+SELECT tag, a FROM coinr_audit ORDER BY tag, a;
+----
+tag	a
+del_v2	2
+ev_del	5
+ine_v1	2
+ins_v1	0
+open_v1	1
+
+
+connection after_replay
+statement ok
+DELETE FROM coinr_audit;
+
+
+connection after_replay
+query
+SELECT a FROM coinr_sch.t;
+----
+a
+5
+
+
+connection after_replay
+query
+SELECT tablename FROM pg_indexes WHERE indexname = 'coinr_idx';
+----
+tablename
+coinr_base
+
+
+connection after_replay
+query
+SELECT array_to_string(ts_lexize('coinr_dict', 'Hello World'), ',') AS tokens;
+----
+tokens
+hello,world
+
+
+# The replaced search table holds its own documents and none of the old ones.
+connection after_replay
+statement ok
+VACUUM (REFRESH_TABLE) coinr_st;
+
+
+connection after_replay
+query
+SELECT id, body, extra FROM coinr_st ORDER BY id;
+----
+id	body	extra
+10	new ten	100
+11	new eleven	110
+12	new twelve	120
+
+
+connection after_replay
+query
+SELECT id, body FROM coinr_st_rb ORDER BY id;
+----
+id	body
+1	kept one
+2	kept two
+
+
+connection after_replay
+query
+SELECT id, body FROM coinr_st_ine ORDER BY id;
+----
+id	body
+1	kept
+
+
+connection after_replay
+query
+SELECT id, body FROM coinr_st_open ORDER BY id;
+----
+id	body
+1	committed
+
+
+connection after_replay
+query
+SELECT (SELECT string_agg(body, ',') FROM coinr_st_to_search) AS to_search,
+       (SELECT string_agg(body, ',') FROM coinr_st_to_plain) AS to_plain;
+----
+to_search	to_plain
+searchable	plain
+
+
+connection after_replay
+query
+SELECT name, persistent, secret_string LIKE '%key_id=coinr_k2;%region=coinr_r2;%' AS second_def
+  FROM duckdb_secrets() WHERE name LIKE 'coinr%';
+----
+name	persistent	second_def
+coinr_sec	t	t
+
+
+# Created on a free name by either form, every kind came back.
+connection after_replay
+query
+SELECT (SELECT sum(n) FROM coinr_fr_v) AS v, coinr_fr_m(1) AS m, nextval('coinr_fr_s') AS s,
+       array_to_string(enum_range(NULL::coinr_fr_ty), ',') AS ty,
+       (SELECT sum(n) FROM coinr_fr_v2) AS v2, coinr_fr_m2(1) AS m2, nextval('coinr_fr_s2') AS s2,
+       array_to_string(enum_range(NULL::coinr_fr_ty2), ',') AS ty2, coinr_fr_pf(1) AS pf;
+----
+v	m	s	ty	v2	m2	s2	ty2	pf
+9	3	73	f1,f2	12	4	93	g1	5
+
+
+connection after_replay
+query
+SELECT (SELECT count(*) FROM pg_namespace WHERE nspname = 'coinr_fr_sch') AS sch,
+       (SELECT tablename FROM pg_indexes WHERE indexname = 'coinr_fr_idx') AS idx;
+----
+sch	idx
+1	coinr_fr_trt
+
+
+connection after_replay
+statement ok
+INSERT INTO coinr_fr_t (a) VALUES (2);
+
+
+connection after_replay
+query
+SELECT a, b FROM coinr_fr_t ORDER BY a;
+----
+a	b
+1	fr
+2	fr
+
+
+connection after_replay
+statement ok
+VACUUM (REFRESH_TABLE) coinr_fr_st;
+
+
+connection after_replay
+query
+SELECT id, body FROM coinr_fr_st;
+----
+id	body
+1	fresh
+
+
+connection after_replay
+query
+SELECT trigger_name, event_manipulation FROM duckdb_triggers()
+  WHERE table_name = 'coinr_fr_trt' ORDER BY trigger_name;
+----
+trigger_name	event_manipulation
+coinr_fr_trg	INSERT
+coinr_fr_trg2	DELETE
+
+
+connection after_replay
+statement count 1
+INSERT INTO coinr_fr_trt VALUES (7);
+
+
+connection after_replay
+statement count 1
+DELETE FROM coinr_fr_trt WHERE a = 7;
+
+
+# Rolled back on a free name, nothing reached the log.
+connection after_replay
+query
+SELECT (SELECT count(*) FROM pg_class WHERE relname LIKE 'coinr_gone%') AS rels,
+       (SELECT count(*) FROM duckdb_functions() WHERE function_name LIKE 'coinr_gone%') AS funcs,
+       (SELECT count(*) FROM pg_type WHERE typname LIKE 'coinr_gone%') AS types,
+       (SELECT count(*) FROM duckdb_triggers() WHERE trigger_name LIKE 'coinr_gone%') AS trgs,
+       (SELECT count(*) FROM pg_namespace WHERE nspname LIKE 'coinr_gone%') AS schemas;
+----
+rels	funcs	types	trgs	schemas
+0	0	0	0	0
+
+
+connection after_replay
+query
+SELECT (SELECT k FROM coinr_dq_v) AS dq, coinr_mix_m(0) AS mix;
+----
+dq	mix
+2	2
+
+
+# The relation that IF NOT EXISTS of another kind skipped is the only one.
+connection after_replay
+query
+SELECT relname, relkind FROM pg_class WHERE relname IN ('coinr_ns_t', 'coinr_ns_s') ORDER BY relname;
+----
+relname	relkind
+coinr_ns_s	S
+coinr_ns_t	r
+
+
+connection after_replay
+query
+SELECT (SELECT a FROM coinr_ns_t) AS t, nextval('coinr_ns_s') AS s;
+----
+t	s
+1	3
+
+
+# The old dependency edge is gone and the new one came back.
+connection after_replay
+query
+SELECT x FROM coinr_dep_v;
+----
+x
+2
+
+
+connection after_replay
+statement error
+DROP TABLE coinr_dep_b;
+----
+db error: ERROR: Cannot drop entry "coinr_dep_b" because there are entries that depend on it.
+view "coinr_dep_v" depends on table "coinr_dep_b".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection after_replay
+statement ok
+DROP TABLE coinr_dep_a;
+
+
+connection after_replay
+statement error
+INSERT INTO coinr_pk (id) VALUES (1);
+----
+db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+
+
+connection after_replay
+statement error
+INSERT INTO coinr_pk (id) VALUES (-1);
+----
+db error: ERROR: CHECK constraint failed on table "coinr_pk" with expression CHECK((id > 0))
+
+
+connection after_replay
+statement ok
+INSERT INTO coinr_pk (id) VALUES (2);
+
+
+connection after_replay
+query
+SELECT id, v FROM coinr_pk ORDER BY id;
+----
+id	v
+1	dflt
+2	dflt
+
+
+# Only the new table's index came back: the old unique one no longer refuses.
+connection after_replay
+query
+SELECT index_name, is_unique, sql FROM duckdb_indexes() WHERE index_name LIKE 'coinr_ixr%';
+----
+index_name	is_unique	sql
+coinr_ixr_uq	f	CREATE INDEX coinr_ixr_uq ON public.coinr_ixr(b);
+
+
+connection after_replay
+statement ok
+INSERT INTO coinr_ixr VALUES (1, 3);
+
+
+connection after_replay
+query
+SELECT count(*) AS c FROM coinr_ixr WHERE a = 1;
+----
+c
+3
+
+
+connection after_replay
+statement ok
+INSERT INTO coinr_ser (v) VALUES ('new2');
+
+
+connection after_replay
+query
+SELECT id, v, (SELECT count(*) FROM duckdb_sequences() WHERE sequence_name LIKE 'coinr_ser%') AS seqs
+  FROM coinr_ser ORDER BY id;
+----
+id	v	seqs
+1	new1	1
+34	new2	1
+
+
+connection after_replay
+query
+SELECT table_name, event_manipulation, for_each FROM duckdb_triggers()
+  WHERE trigger_name = 'coinr_tg' ORDER BY table_name;
+----
+table_name	event_manipulation	for_each
+coinr_tg_a	INSERT	STATEMENT
+coinr_tg_b	INSERT	ROW
+
+
+connection after_replay
+statement count 2
+INSERT INTO coinr_tg_a VALUES (1), (2);
+
+
+connection after_replay
+statement count 1
+INSERT INTO coinr_tg_b VALUES (3);
+
+
+connection after_replay
+query
+SELECT tag, a FROM coinr_fr_audit ORDER BY tag, a;
+----
+tag	a
+fr_ine	7
+fr_or	7
+tg_a_stmt	0
+tg_b_row	3
+
+
+connection after_replay
+statement ok
+DELETE FROM coinr_fr_audit;
+
+
+connection after_replay
+query
+SELECT (SELECT s FROM coinr_same) AS pub, (SELECT s FROM coinr_sch.coinr_same) AS sch,
+       coinr_sch.coinr_sm(1) AS sm;
+----
+pub	sch	sm
+public	sch_v2	3
+
+
+# The reader open at the crash pins nothing: the committed replace is what
+# came back.
+connection after_replay
+query
+SELECT k, coinr_snap_m(0) AS m FROM coinr_snap_v;
+----
+k	m
+2	2
+
+
+connection after_replay
+query
+SELECT k, coinr_il_m(0) AS m FROM coinr_il_v;
+----
+k	m
+3	1
+
+
+connection after_replay
+query
+SELECT nextval('coinr_mv_s') AS v;
+----
+v
+134
+
+
+connection after_replay
+statement count 1
+DELETE FROM coinr_mv_t WHERE a = 3;
+
+
+connection after_replay
+query
+SELECT tag, a FROM coinr_fr_audit ORDER BY a;
+----
+tag	a
+mv_v2	3
+
+
+connection after_replay
+statement ok
+DELETE FROM coinr_fr_audit;
+
+
+# ----------------------------------------------------------------------
+# 2. A transaction of replaces that crashes before its commit is durable
+#    loses every one of them. A refused commit loses its replace too.
+# ----------------------------------------------------------------------
+
+connection after_replay
+statement ok
+SET debug_force_commit_failure = true;
+
+
+connection after_replay
+statement error
+CREATE OR REPLACE VIEW coinr_v_rb AS SELECT n * 7 AS n FROM coinr_base;
+----
+db error: ERROR: Failed to commit: Forced commit failure (debug_force_commit_failure)
+
+
+connection after_replay
+statement ok
+SET debug_force_commit_failure = false;
+
+
+connection after_replay
+query
+SELECT sum(n) AS s FROM coinr_v_rb;
+----
+s
+6
+
+
+connection after_replay
+statement ok
+BEGIN;
+
+
+connection after_replay
+statement ok
+CREATE OR REPLACE VIEW coinr_v AS SELECT -1 AS n, 'before_commit' AS tag;
+
+
+connection after_replay
+statement ok
+CREATE OR REPLACE TABLE coinr_t (b TEXT, c INT);
+
+
+connection after_replay
+statement ok
+INSERT INTO coinr_t VALUES ('before_commit', 0);
+
+
+connection after_replay
+statement ok
+CREATE OR REPLACE MACRO coinr_m(x) AS x - 1;
+
+
+connection after_replay
+statement ok
+CREATE OR REPLACE SEQUENCE coinr_s START 9000;
+
+
+connection after_replay
+statement ok
+CREATE OR REPLACE TYPE coinr_ty AS ENUM ('before_commit');
+
+
+connection after_replay
+statement ok
+CREATE OR REPLACE TRIGGER coinr_trg AFTER DELETE ON coinr_trt FOR EACH ROW
+  INSERT INTO coinr_audit VALUES ('del_before_commit', OLD.a);
+
+
+connection after_replay
+statement ok
+CREATE TABLE IF NOT EXISTS coinr_t_before_commit (a INT);
+
+
+connection after_replay
+statement ok
+CREATE OR REPLACE FUNCTION coinr_pf(x INTEGER) RETURNS INTEGER AS 'SELECT x * 9' LANGUAGE SQL;
+
+
+connection after_replay
+statement ok
+CREATE OR REPLACE TABLE coinr_st_rb (id INT, body TEXT) WITH (storage = 'search');
+
+
+connection after_replay
+statement ok
+INSERT INTO coinr_st_rb VALUES (8, 'before_commit');
+
+
+connection after_replay
+statement ok
+CREATE OR REPLACE VIEW coinr_bc_new_v AS SELECT 1 AS k;
+
+
+connection after_replay
+statement ok
+CREATE SEQUENCE IF NOT EXISTS coinr_bc_new_s;
+
+
+connection after_replay
+statement ok
+SET sdb_faults = 'crash_before_commit';
+
+
+connection after_replay
+statement error connection closed
+COMMIT;
+
+
+# --- restart: nothing of that transaction ---
+
+connection after_before_commit
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT n, tag FROM coinr_v ORDER BY n;
+----
+n	tag
+10	second
+20	second
+30	second
+
+
+connection after_before_commit
+query
+SELECT b, c FROM coinr_t;
+----
+b	c
+second	20
+
+
+connection after_before_commit
+query
+SELECT coinr_m(1) AS m, nextval('coinr_s') AS s,
+       array_to_string(enum_range(NULL::coinr_ty), ',') AS ty,
+       (SELECT sum(n) FROM coinr_v_rb) AS v_rb;
+----
+m	s	ty	v_rb
+101	830	x,y,z	6
+
+
+connection after_before_commit
+query
+SELECT count(*) AS c FROM pg_class
+  WHERE relname IN ('coinr_t_before_commit', 'coinr_bc_new_v', 'coinr_bc_new_s');
+----
+c
+0
+
+
+connection after_before_commit
+query
+SELECT coinr_pf(5) AS pf;
+----
+pf
+15
+
+
+# The replaced search table kept its committed documents, and the lost
+# replace's document is nowhere.
+connection after_before_commit
+statement ok
+VACUUM (REFRESH_TABLE) coinr_st_rb;
+
+
+connection after_before_commit
+query
+SELECT id, body FROM coinr_st_rb ORDER BY id;
+----
+id	body
+1	kept one
+2	kept two
+
+
+connection after_before_commit
+statement count 1
+DELETE FROM coinr_trt WHERE a = 3;
+
+
+connection after_before_commit
+query
+SELECT tag, a FROM coinr_audit ORDER BY tag, a;
+----
+tag	a
+del_v2	3
+
+
+connection after_before_commit
+statement ok
+DELETE FROM coinr_audit;
+
+
+# ----------------------------------------------------------------------
+# 3. The same transaction crashing after its commit is durable keeps every
+#    replace, and the IF NOT EXISTS skip inside it stays a skip.
+# ----------------------------------------------------------------------
+
+connection after_before_commit
+statement ok
+CREATE TABLE coinr_ac_st (id INT, body TEXT) WITH (storage = 'search');
+
+
+connection after_before_commit
+statement ok
+INSERT INTO coinr_ac_st VALUES (1, 'old');
+
+
+connection after_before_commit
+statement ok
+VACUUM (REFRESH_TABLE) coinr_ac_st;
+
+
+connection after_before_commit
+statement ok
+BEGIN;
+
+
+connection after_before_commit
+statement ok
+CREATE OR REPLACE FUNCTION coinr_pf(x INTEGER) RETURNS INTEGER AS 'SELECT x * 4' LANGUAGE SQL;
+
+
+connection after_before_commit
+statement ok
+CREATE OR REPLACE MACRO coinr_ac_new(x) AS x * 11;
+
+
+connection after_before_commit
+statement ok
+CREATE OR REPLACE TABLE coinr_ac_st (id INT, body TEXT, extra INT) WITH (storage = 'search');
+
+
+connection after_before_commit
+statement ok
+CREATE OR REPLACE VIEW coinr_v AS SELECT n * 1000 AS n, 'after_commit' AS tag FROM coinr_base;
+
+
+connection after_before_commit
+statement ok
+CREATE OR REPLACE TABLE coinr_t (b TEXT, c INT);
+
+
+connection after_before_commit
+statement ok
+INSERT INTO coinr_t VALUES ('after_commit', 30);
+
+
+connection after_before_commit
+statement ok
+CREATE OR REPLACE MACRO coinr_m(x) AS x + 1000;
+
+
+connection after_before_commit
+statement ok
+CREATE OR REPLACE SEQUENCE coinr_s START 9000;
+
+
+connection after_before_commit
+statement ok
+CREATE OR REPLACE TYPE coinr_ty AS ENUM ('after_commit');
+
+
+connection after_before_commit
+statement ok
+CREATE OR REPLACE TRIGGER coinr_trg AFTER DELETE ON coinr_trt FOR EACH ROW
+  INSERT INTO coinr_audit VALUES ('del_after_commit', OLD.a);
+
+
+connection after_before_commit
+statement ok
+CREATE TABLE IF NOT EXISTS coinr_t_after_commit (a INT);
+
+
+connection after_before_commit
+statement ok
+INSERT INTO coinr_t_after_commit VALUES (7);
+
+
+connection after_before_commit
+statement ok
+CREATE VIEW IF NOT EXISTS coinr_v_ine AS SELECT -5 AS n;
+
+
+connection after_before_commit
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+
+connection after_before_commit
+statement error connection closed
+COMMIT;
+
+
+# --- restart: all of that transaction ---
+
+connection after_after_commit
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT n, tag FROM coinr_v ORDER BY n;
+----
+n	tag
+1000	after_commit
+2000	after_commit
+3000	after_commit
+
+
+connection after_after_commit
+query
+SELECT b, c FROM coinr_t;
+----
+b	c
+after_commit	30
+
+
+connection after_after_commit
+query
+SELECT coinr_m(1) AS m, nextval('coinr_s') AS s,
+       array_to_string(enum_range(NULL::coinr_ty), ',') AS ty,
+       (SELECT a FROM coinr_t_after_commit) AS created,
+       (SELECT sum(n) FROM coinr_v_ine) AS v_ine;
+----
+m	s	ty	created	v_ine
+1001	9000	after_commit	7	6
+
+
+connection after_after_commit
+query
+SELECT obj_description('coinr_v'::regclass) AS comment,
+       has_table_privilege('coinr_reader', 'coinr_v', 'SELECT') AS granted,
+       (SELECT o FROM coinr_v_oid) = 'coinr_v'::regclass::oid AS same_oid;
+----
+comment	granted	same_oid
+kept across replace	t	t
+
+
+connection after_after_commit
+query
+SELECT coinr_pf(5) AS pf, coinr_ac_new(1) AS new_m;
+----
+pf	new_m
+20	11
+
+
+# A search table replaced without documents comes back as the new, empty
+# definition; the old table's documents went with it.
+connection after_after_commit
+statement ok
+VACUUM (REFRESH_TABLE) coinr_ac_st;
+
+
+connection after_after_commit
+query
+SELECT (SELECT count(*) FROM coinr_ac_st) AS docs,
+       (SELECT count(*) FROM duckdb_columns() WHERE table_name = 'coinr_ac_st') AS cols;
+----
+docs	cols
+0	3
+
+
+connection after_after_commit
+statement count 1
+DELETE FROM coinr_trt WHERE a = 4;
+
+
+connection after_after_commit
+query
+SELECT tag, a FROM coinr_audit ORDER BY tag, a;
+----
+tag	a
+del_after_commit	4
+
+
+connection after_after_commit
+statement ok
+DELETE FROM coinr_audit;
+
+
+# ----------------------------------------------------------------------
+# 4. Checkpoint. The replaced definitions are the ones the checkpoint
+#    writes, and a replace still open after it is not in it.
+# ----------------------------------------------------------------------
+
+connection after_after_commit
+statement ok
+CREATE VIEW coinr_c_v AS SELECT n FROM coinr_base;
+
+
+connection after_after_commit
+statement ok
+CREATE OR REPLACE VIEW coinr_c_v AS SELECT n * 10 AS n FROM coinr_base;
+
+
+connection after_after_commit
+statement ok
+CREATE VIEW coinr_c_v_ine AS SELECT n FROM coinr_base;
+
+
+connection after_after_commit
+statement ok
+CREATE VIEW IF NOT EXISTS coinr_c_v_ine AS SELECT 0 AS n;
+
+
+connection after_after_commit
+statement ok
+CREATE TABLE coinr_c_t (a INT);
+
+
+connection after_after_commit
+statement ok
+INSERT INTO coinr_c_t VALUES (1), (2);
+
+
+connection after_after_commit
+statement ok
+CREATE OR REPLACE TABLE coinr_c_t (b TEXT);
+
+
+connection after_after_commit
+statement ok
+INSERT INTO coinr_c_t VALUES ('checkpoint');
+
+
+connection after_after_commit
+statement ok
+CREATE TABLE coinr_c_t_ine (a INT);
+
+
+connection after_after_commit
+statement ok
+INSERT INTO coinr_c_t_ine VALUES (1);
+
+
+connection after_after_commit
+statement ok
+CREATE TABLE IF NOT EXISTS coinr_c_t_ine AS SELECT 'skipped' AS b;
+
+
+connection after_after_commit
+statement ok
+CREATE MACRO coinr_c_m(x) AS x + 1;
+
+
+connection after_after_commit
+statement ok
+CREATE OR REPLACE MACRO coinr_c_m(x) AS x + 10;
+
+
+connection after_after_commit
+statement ok
+BEGIN;
+
+
+connection after_after_commit
+statement ok
+CREATE OR REPLACE MACRO coinr_c_m(x) AS x - 5;
+
+
+connection after_after_commit
+statement ok
+ROLLBACK;
+
+
+connection after_after_commit
+statement ok
+CREATE SEQUENCE coinr_c_s START 10;
+
+
+connection after_after_commit
+query
+SELECT nextval('coinr_c_s') AS v;
+----
+v
+10
+
+
+connection after_after_commit
+statement ok
+CREATE OR REPLACE SEQUENCE coinr_c_s START 70 INCREMENT 7;
+
+
+connection after_after_commit
+query
+SELECT nextval('coinr_c_s') AS v;
+----
+v
+70
+
+
+connection after_after_commit
+statement ok
+CREATE TYPE coinr_c_ty AS ENUM ('a');
+
+
+connection after_after_commit
+statement ok
+CREATE OR REPLACE TYPE coinr_c_ty AS ENUM ('c1', 'c2');
+
+
+connection after_after_commit
+statement ok
+CREATE TABLE coinr_c_trt (a INT);
+
+
+connection after_after_commit
+statement ok
+INSERT INTO coinr_c_trt VALUES (1), (2), (3), (4);
+
+
+connection after_after_commit
+statement ok
+CREATE TRIGGER coinr_c_trg AFTER DELETE ON coinr_c_trt FOR EACH ROW
+  INSERT INTO coinr_audit VALUES ('c_v1', OLD.a);
+
+
+connection after_after_commit
+statement ok
+CREATE OR REPLACE TRIGGER coinr_c_trg AFTER DELETE ON coinr_c_trt FOR EACH ROW
+  INSERT INTO coinr_audit VALUES ('c_v2', OLD.a);
+
+
+connection after_after_commit
+statement ok
+CREATE TRIGGER IF NOT EXISTS coinr_c_trg AFTER DELETE ON coinr_c_trt FOR EACH ROW
+  INSERT INTO coinr_audit VALUES ('c_skipped', OLD.a);
+
+
+connection after_after_commit
+statement ok
+CREATE TABLE coinr_c_st (id INT, body TEXT) WITH (storage = 'search');
+
+
+connection after_after_commit
+statement ok
+INSERT INTO coinr_c_st VALUES (1, 'old one');
+
+
+connection after_after_commit
+statement ok
+VACUUM (REFRESH_TABLE) coinr_c_st;
+
+
+connection after_after_commit
+statement ok
+CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT) WITH (storage = 'search');
+
+
+connection after_after_commit
+statement ok
+INSERT INTO coinr_c_st VALUES (20, 'checkpoint twenty'), (21, 'checkpoint twentyone');
+
+
+connection after_after_commit
+statement ok
+VACUUM (REFRESH_TABLE) coinr_c_st;
+
+
+connection after_after_commit
+statement ok
+CREATE TABLE IF NOT EXISTS coinr_c_st (x INT) WITH (storage = 'search');
+
+
+connection after_after_commit
+statement ok
+CREATE SEQUENCE IF NOT EXISTS coinr_c_s START 1 INCREMENT 100;
+
+
+connection after_after_commit
+statement ok
+CREATE TYPE IF NOT EXISTS coinr_c_ty AS ENUM ('skipped');
+
+
+connection after_after_commit
+statement ok
+CREATE TABLE coinr_c_ctas AS SELECT n FROM coinr_base;
+
+
+connection after_after_commit
+statement ok
+CREATE OR REPLACE TABLE coinr_c_ctas AS SELECT n * 3 AS t FROM coinr_base WHERE n < 3;
+
+
+connection after_after_commit
+statement ok
+CREATE TABLE coinr_c_t_rb (a INT);
+
+
+connection after_after_commit
+statement ok
+INSERT INTO coinr_c_t_rb VALUES (1), (2);
+
+
+connection after_after_commit
+statement ok
+BEGIN;
+
+
+connection after_after_commit
+statement ok
+CREATE OR REPLACE TABLE coinr_c_t_rb (b TEXT);
+
+
+connection after_after_commit
+statement ok
+INSERT INTO coinr_c_t_rb VALUES ('rolled back');
+
+
+connection after_after_commit
+statement ok
+ROLLBACK;
+
+
+connection after_after_commit
+statement ok
+FORCE CHECKPOINT;
+
+
+connection ckpt_open
+statement ok
+BEGIN;
+
+
+connection ckpt_open
+statement ok
+CREATE OR REPLACE VIEW coinr_c_v AS SELECT -1 AS n;
+
+
+connection ckpt_open
+statement ok
+CREATE OR REPLACE MACRO coinr_c_m(x) AS x - 1;
+
+
+connection ckpt_open
+statement ok
+CREATE OR REPLACE TABLE coinr_c_t (b TEXT);
+
+
+connection ckpt_open
+statement ok
+CREATE OR REPLACE TYPE coinr_c_ty AS ENUM ('uncommitted');
+
+
+connection ckpt_open
+statement ok
+CREATE TABLE IF NOT EXISTS coinr_c_open_new (a INT);
+
+
+connection ckpt_open
+statement ok
+CREATE OR REPLACE SEQUENCE coinr_c_s START 5000;
+
+
+connection ckpt_open
+query
+SELECT nextval('coinr_c_s') AS v;
+----
+v
+5000
+
+
+connection ckpt_open
+statement ok
+CREATE OR REPLACE TRIGGER coinr_c_trg AFTER DELETE ON coinr_c_trt FOR EACH ROW
+  INSERT INTO coinr_audit VALUES ('c_open', OLD.a);
+
+
+connection ckpt_open
+statement ok
+CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT) WITH (storage = 'search');
+
+
+connection ckpt_open
+statement ok
+INSERT INTO coinr_c_st VALUES (99, 'uncommitted');
+
+
+connection after_after_commit
+query
+SELECT sum(n) AS s, coinr_c_m(1) AS m FROM coinr_c_v;
+----
+s	m
+60	11
+
+
+# A plain CHECKPOINT does not run over the open replaces, so it cannot write
+# them either.
+connection after_after_commit
+statement error
+CHECKPOINT;
+----
+db error: ERROR: Cannot CHECKPOINT: there are other write transactions active. Try using FORCE CHECKPOINT to wait until all active transactions are finished
+
+
+skipif pg-wire-extended
+connection after_after_commit
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+skipif pg-wire-extended
+connection after_after_commit
+statement error connection closed
+SELECT 1;
+
+
+onlyif pg-wire-extended
+connection after_after_commit
+statement error connection closed
+SET sdb_faults = 'crash_on_packet';
+
+
+# --- restart: from the checkpoint ---
+
+connection after_checkpoint
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT n FROM coinr_c_v ORDER BY n;
+----
+n
+10
+20
+30
+
+
+connection after_checkpoint
+query
+SELECT (SELECT sum(n) FROM coinr_c_v_ine) AS v_ine,
+       (SELECT b FROM coinr_c_t) AS t,
+       (SELECT a FROM coinr_c_t_ine) AS t_ine,
+       coinr_c_m(1) AS m,
+       nextval('coinr_c_s') AS s,
+       array_to_string(enum_range(NULL::coinr_c_ty), ',') AS ty;
+----
+v_ine	t	t_ine	m	s	ty
+6	checkpoint	1	11	301	c1,c2
+
+
+connection after_checkpoint
+query
+SELECT column_name FROM information_schema.columns
+  WHERE table_name = 'coinr_c_t_ine' ORDER BY ordinal_position;
+----
+column_name
+a
+
+
+connection after_checkpoint
+query
+SELECT count(*) AS c FROM pg_class WHERE relname = 'coinr_c_open_new';
+----
+c
+0
+
+
+connection after_checkpoint
+query
+SELECT (SELECT string_agg(t::TEXT, ',' ORDER BY t) FROM coinr_c_ctas) AS ctas,
+       (SELECT string_agg(a::TEXT, ',' ORDER BY a) FROM coinr_c_t_rb) AS t_rb;
+----
+ctas	t_rb
+3,6	1,2
+
+
+connection after_checkpoint
+statement count 1
+DELETE FROM coinr_c_trt WHERE a = 1;
+
+
+connection after_checkpoint
+query
+SELECT tag, a FROM coinr_audit ORDER BY tag, a;
+----
+tag	a
+c_v2	1
+
+
+connection after_checkpoint
+statement ok
+DELETE FROM coinr_audit;
+
+
+connection after_checkpoint
+query
+SELECT id, body FROM coinr_c_st ORDER BY id;
+----
+id	body
+20	checkpoint twenty
+21	checkpoint twentyone
+
+
+# What sections 1 and 3 replayed went through the checkpoint unchanged.
+connection after_checkpoint
+query
+SELECT n, tag FROM coinr_v ORDER BY n;
+----
+n	tag
+1000	after_commit
+2000	after_commit
+3000	after_commit
+
+
+connection after_checkpoint
+query
+SELECT obj_description('coinr_v'::regclass) AS comment,
+       has_table_privilege('coinr_reader', 'coinr_v', 'SELECT') AS granted,
+       (SELECT o FROM coinr_v_oid) = 'coinr_v'::regclass::oid AS same_oid;
+----
+comment	granted	same_oid
+kept across replace	t	t
+
+
+connection after_checkpoint
+query
+SELECT coinr_m(1) AS m, coinr_m_rb(1) AS m_rb, coinr_m_ine(1) AS m_ine,
+       coinr_pf(5) AS pf, nextval('coinr_s') AS s, nextval('coinr_s_ine') AS s_ine;
+----
+m	m_rb	m_ine	pf	s	s_ine
+1001	2	2	20	9033	76
+
+
+connection after_checkpoint
+query
+SELECT m FROM coinr_v_outer ORDER BY m;
+----
+m
+101
+201
+301
+
+
+connection after_checkpoint
+statement error
+DROP VIEW coinr_v_inner;
+----
+db error: ERROR: Cannot drop entry "coinr_v_inner" because there are entries that depend on it.
+view "coinr_v_outer" depends on view "coinr_v_inner".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection after_checkpoint
+query
+SELECT (SELECT sum(n) FROM coinr_fr_v2) AS fr_v2, coinr_fr_pf(1) AS fr_pf, coinr_mix_m(0) AS mix,
+       (SELECT k FROM coinr_snap_v) AS snap, (SELECT s FROM coinr_sch.coinr_same) AS sch,
+       coinr_ac_new(1) AS ac_new;
+----
+fr_v2	fr_pf	mix	snap	sch	ac_new
+12	5	2	2	sch_v2	11
+
+
+connection after_checkpoint
+statement ok
+INSERT INTO coinr_ser (v) VALUES ('new3');
+
+
+connection after_checkpoint
+query
+SELECT max(id) AS id,
+       (SELECT count(*) FROM duckdb_sequences() WHERE sequence_name LIKE 'coinr_ser%') AS seqs
+  FROM coinr_ser;
+----
+id	seqs
+67	1
+
+
+connection after_checkpoint
+query
+SELECT id, body, extra FROM coinr_st ORDER BY id;
+----
+id	body	extra
+10	new ten	100
+11	new eleven	110
+12	new twelve	120
+
+
+connection after_checkpoint
+query
+SELECT trigger_name, table_name, event_manipulation
+  FROM duckdb_triggers() WHERE trigger_name LIKE 'coinr_%' ORDER BY trigger_name, table_name;
+----
+trigger_name	table_name	event_manipulation
+coinr_c_trg	coinr_c_trt	DELETE
+coinr_fr_trg	coinr_fr_trt	INSERT
+coinr_fr_trg2	coinr_fr_trt	DELETE
+coinr_mv_trg	coinr_mv_t	DELETE
+coinr_tg	coinr_tg_a	INSERT
+coinr_tg	coinr_tg_b	INSERT
+coinr_trg	coinr_trt	DELETE
+coinr_trg_ev	coinr_trt3	DELETE
+coinr_trg_ine	coinr_trt2	DELETE
+coinr_trg_open	coinr_trt_open	DELETE
+coinr_trg_rb	coinr_trt	INSERT
+
+
+# ----------------------------------------------------------------------
+# 5. Checkpoint plus WAL tail. Replaces committed after the checkpoint are
+#    replayed on top of the checkpointed versions.
+# ----------------------------------------------------------------------
+
+connection after_checkpoint
+statement ok
+CREATE OR REPLACE VIEW coinr_c_v AS SELECT n * 100 AS n FROM coinr_base;
+
+
+connection after_checkpoint
+statement ok
+CREATE VIEW IF NOT EXISTS coinr_c_v AS SELECT 0 AS n;
+
+
+connection after_checkpoint
+statement ok
+CREATE OR REPLACE TABLE coinr_c_t (b TEXT);
+
+
+connection after_checkpoint
+statement ok
+INSERT INTO coinr_c_t VALUES ('tail');
+
+
+connection after_checkpoint
+statement ok
+CREATE OR REPLACE MACRO coinr_c_m(x) AS x + 100;
+
+
+connection after_checkpoint
+statement ok
+CREATE OR REPLACE SEQUENCE coinr_c_s START 300 INCREMENT 3;
+
+
+connection after_checkpoint
+query
+SELECT nextval('coinr_c_s') AS v;
+----
+v
+300
+
+
+connection after_checkpoint
+statement ok
+CREATE OR REPLACE TYPE coinr_c_ty AS ENUM ('t1');
+
+
+connection after_checkpoint
+statement ok
+CREATE OR REPLACE TRIGGER coinr_c_trg AFTER DELETE ON coinr_c_trt FOR EACH ROW
+  INSERT INTO coinr_audit VALUES ('c_v3', OLD.a);
+
+
+# Skipped creates in the tail write nothing over the tail's replaces.
+connection after_checkpoint
+statement ok
+CREATE MACRO IF NOT EXISTS coinr_c_m(x) AS x + 999;
+
+
+connection after_checkpoint
+statement ok
+CREATE SEQUENCE IF NOT EXISTS coinr_c_s START 1;
+
+
+connection after_checkpoint
+statement ok
+CREATE TYPE IF NOT EXISTS coinr_c_ty AS ENUM ('skipped');
+
+
+connection after_checkpoint
+statement ok
+CREATE TABLE IF NOT EXISTS coinr_c_t (skipped INT);
+
+
+connection after_checkpoint
+statement ok
+CREATE TRIGGER IF NOT EXISTS coinr_c_trg AFTER DELETE ON coinr_c_trt FOR EACH ROW
+  INSERT INTO coinr_audit VALUES ('c_skipped', OLD.a);
+
+
+connection after_checkpoint
+statement ok
+CREATE VIEW IF NOT EXISTS coinr_c_fresh_v AS SELECT 5 AS k;
+
+
+connection after_checkpoint
+statement ok
+CREATE OR REPLACE FUNCTION coinr_pf(x INTEGER) RETURNS INTEGER AS 'SELECT x * 6' LANGUAGE SQL;
+
+
+connection after_checkpoint
+statement ok
+BEGIN;
+
+
+connection after_checkpoint
+statement ok
+CREATE OR REPLACE VIEW coinr_c_v_ine AS SELECT -1 AS n;
+
+
+connection after_checkpoint
+statement ok
+ROLLBACK;
+
+
+# A drop and a create of the same name in one transaction: the create wins.
+connection after_checkpoint
+statement ok
+BEGIN;
+
+
+connection after_checkpoint
+statement ok
+DROP TABLE coinr_c_t_ine;
+
+
+connection after_checkpoint
+statement ok
+CREATE TABLE coinr_c_t_ine (z TEXT);
+
+
+connection after_checkpoint
+statement ok
+INSERT INTO coinr_c_t_ine VALUES ('recreated');
+
+
+connection after_checkpoint
+statement ok
+COMMIT;
+
+
+# A replace followed by a drop in one transaction leaves nothing.
+connection after_checkpoint
+statement ok
+CREATE MACRO coinr_c_m_gone(x) AS x;
+
+
+connection after_checkpoint
+statement ok
+BEGIN;
+
+
+connection after_checkpoint
+statement ok
+CREATE OR REPLACE MACRO coinr_c_m_gone(x) AS x + 1;
+
+
+connection after_checkpoint
+statement ok
+DROP MACRO coinr_c_m_gone;
+
+
+connection after_checkpoint
+statement ok
+COMMIT;
+
+
+connection after_checkpoint
+statement ok
+CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT) WITH (storage = 'search');
+
+
+connection after_checkpoint
+statement ok
+INSERT INTO coinr_c_st VALUES (30, 'tail thirty');
+
+
+connection after_checkpoint
+statement ok
+VACUUM (REFRESH_TABLE) coinr_c_st;
+
+
+connection after_checkpoint
+statement ok
+INSERT INTO coinr_c_st VALUES (31, 'tail thirtyone');
+
+
+skipif pg-wire-extended
+connection after_checkpoint
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+skipif pg-wire-extended
+connection after_checkpoint
+statement error connection closed
+SELECT 1;
+
+
+onlyif pg-wire-extended
+connection after_checkpoint
+statement error connection closed
+SET sdb_faults = 'crash_on_packet';
+
+
+# --- restart: checkpoint plus the replayed tail ---
+
+connection after_tail
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT n FROM coinr_c_v ORDER BY n;
+----
+n
+100
+200
+300
+
+
+connection after_tail
+query
+SELECT (SELECT sum(n) FROM coinr_c_v_ine) AS v_ine,
+       (SELECT b FROM coinr_c_t) AS t,
+       (SELECT z FROM coinr_c_t_ine) AS t_ine,
+       coinr_c_m(1) AS m,
+       nextval('coinr_c_s') AS s,
+       array_to_string(enum_range(NULL::coinr_c_ty), ',') AS ty;
+----
+v_ine	t	t_ine	m	s	ty
+6	tail	recreated	101	399	t1
+
+
+connection after_tail
+query
+SELECT count(*) AS c FROM duckdb_functions() WHERE function_name = 'coinr_c_m_gone';
+----
+c
+0
+
+
+connection after_tail
+query
+SELECT coinr_pf(5) AS pf, (SELECT k FROM coinr_c_fresh_v) AS fresh,
+       (SELECT count(*) FROM pg_proc WHERE proname = 'coinr_pf') AS pf_defs;
+----
+pf	fresh	pf_defs
+30	5	1
+
+
+connection after_tail
+statement count 1
+DELETE FROM coinr_c_trt WHERE a = 2;
+
+
+connection after_tail
+query
+SELECT tag, a FROM coinr_audit ORDER BY tag, a;
+----
+tag	a
+c_v3	2
+
+
+connection after_tail
+statement ok
+DELETE FROM coinr_audit;
+
+
+connection after_tail
+statement ok
+VACUUM (REFRESH_TABLE) coinr_c_st;
+
+
+connection after_tail
+query
+SELECT id, body FROM coinr_c_st ORDER BY id;
+----
+id	body
+30	tail thirty
+31	tail thirtyone
+
+
+# ----------------------------------------------------------------------
+# 6. The replayed tail checkpointed: a checkpoint written right after
+#    replay holds the replayed versions, not the ones they replaced.
+# ----------------------------------------------------------------------
+
+connection after_tail
+statement ok
+FORCE CHECKPOINT;
+
+
+skipif pg-wire-extended
+connection after_tail
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+skipif pg-wire-extended
+connection after_tail
+statement error connection closed
+SELECT 1;
+
+
+onlyif pg-wire-extended
+connection after_tail
+statement error connection closed
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_tail_checkpoint
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT (SELECT sum(n) FROM coinr_c_v) AS v,
+       (SELECT b FROM coinr_c_t) AS t,
+       (SELECT z FROM coinr_c_t_ine) AS t_ine,
+       coinr_c_m(1) AS m,
+       nextval('coinr_c_s') AS s,
+       array_to_string(enum_range(NULL::coinr_c_ty), ',') AS ty;
+----
+v	t	t_ine	m	s	ty
+600	tail	recreated	101	522	t1
+
+
+connection after_tail_checkpoint
+query
+SELECT coinr_pf(5) AS pf, (SELECT k FROM coinr_c_fresh_v) AS fresh;
+----
+pf	fresh
+30	5
+
+
+connection after_tail_checkpoint
+statement count 1
+DELETE FROM coinr_c_trt WHERE a = 3;
+
+
+connection after_tail_checkpoint
+query
+SELECT tag, a FROM coinr_audit ORDER BY tag, a;
+----
+tag	a
+c_v3	3
+
+
+connection after_tail_checkpoint
+query
+SELECT id, body FROM coinr_c_st ORDER BY id;
+----
+id	body
+30	tail thirty
+31	tail thirtyone
+
+
+connection after_tail_checkpoint
+query
+SELECT n, tag FROM coinr_v ORDER BY n;
+----
+n	tag
+1000	after_commit
+2000	after_commit
+3000	after_commit
+
+
+connection after_tail_checkpoint
+query
+SELECT name, persistent, secret_string LIKE '%key_id=coinr_k2;%region=coinr_r2;%' AS second_def
+  FROM duckdb_secrets() WHERE name LIKE 'coinr%';
+----
+name	persistent	second_def
+coinr_sec	t	t

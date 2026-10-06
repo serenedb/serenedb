@@ -18,8 +18,7 @@ page in the same change, following the **Documentation** section of
 but never in a form GitHub links back from: no `#N` meant for another
 repository, no `owner/repo#N`, no issue or PR URL. Write it as plain text
 (`serenedb/duckdb PR 89`) or inside backticks. Link code by commit SHA, not by
-branch. `gh pr edit` can fail on GitHub's retired projects-classic API; edit a
-PR with `gh api -X PATCH repos/serenedb/serenedb/pulls/<N> -f title=... -F body=@body.md`.
+branch.
 
 - Build and run only what the task needs: the touched targets and the tests that
 cover the change. Full sqllogic/recovery suites, benchmarks and sanitizer
@@ -44,6 +43,53 @@ checkout root or `build/`; with another build dir, run
 - Repo-wide knowledge goes into the repo, not into personal memory, which is
 per machine and invisible to the team: propose the line for this file, the
 matching `.claude/rules/*.md` or the skill in `.claude/skills/` in the same PR.
+
+## When you change ...
+
+Each of these changes has a follow-up step that nothing runs for you.
+
+- **The DuckDB fork's grammar** (`third_party/duckdb/src/parser/peg/grammar/`)
+  or a source of its generated code (settings, serialization, enum_util,
+  functions, metrics, storage info): from `third_party/duckdb`, run
+  `./scripts/parser/build_grammar.sh`, then
+  `DUCKDB_FORMAT_SKIP_FETCH=1 make generate-files` (without the variable it
+  first runs `git fetch origin main:main`). Generated files are never edited by
+  hand.
+- **A fork under `third_party/`**: the change is a PR in that fork against its
+  current `vYYYY.MM.DD` branch. The hand-written change goes in its own
+  commits, each formatted; for DuckDB everything the generators produced goes
+  in one `regen:` commit, last. After the fork PR merges, serenedb moves the
+  gitlink in a commit of its own: pre-commit `check-submodule-pointers` rejects
+  a gitlink that no version branch contains. Submodules are cloned shallow
+  (CONTRIBUTING.md "Working with Submodules"), and a cmake reconfigure checks
+  the gitlink out over a clean submodule: configure with
+  `-DAUTO_UPDATE_MODULES=OFF` while one is on a work branch.
+- **Anything written to disk**: CONTRIBUTING.md "Storage compatibility"; for
+  DuckDB files also `tests/duckdb/README.md` "Changing the DuckDB on-disk
+  format".
+- **A new C++ file**: add it to `target_sources` in its directory's
+  `CMakeLists.txt`. `scripts/find_unused_sources.py` lists the files nothing
+  compiles.
+- **A setting**: it is defined in `server/query/config_variables.cpp` and
+  documented in the table in `docs/configuration/overview.md`.
+- **A serened command-line flag**:
+  `python3 tests/drivers/python/cli_help.py override --bin <build dir>/bin/serened`
+  rewrites the reference that `docs/configuration/cli.mdx` renders; the python
+  driver suite fails until it matches.
+- **The OpenTelemetry schema** (`resources/otel/otel_schema.sql`):
+  `scripts/otel/schema.py generate`. Its conformance fixtures
+  (`resources/otel/conformance/*.json`): `scripts/otel/fixtures.py generate`.
+- **What pg_catalog and information_schema support**: update
+  `docs/compatibility/system-table-compatibility.md`, then
+  `python3 scripts/generate_system_table_claims.py` regenerates the test that
+  pins it.
+- **A python driver test file**: add it to the list in
+  `tests/drivers/python/run.sh`, or no suite runs it.
+- **Other generated sources**: the word-break and case tables in `iresearch/`
+  come from `scripts/generate_unicode_tables.py`, `third_party/libstemmer_c`
+  from `scripts/update_libstemmer.sh`, and the PostgreSQL views and functions in
+  `server/pg/system_views.h` and `server/pg/system_functions.h` from
+  `scripts/update_system_catalog.py`.
 
 ## Parallel work
 
@@ -76,16 +122,9 @@ over their files.
   ellipsis, curly quotes) to ASCII, rejects `/tmp` in sqllogic tests and checks
   the license header. As a git hook it stashes unstaged changes, so in a
   checkout another session also edits, use `--files`.
-- The DuckDB fork: from `third_party/duckdb`,
-  `DUCKDB_FORMAT_SKIP_FETCH=1 make generate-files` regenerates the PEG grammar
-  and transformer, settings, serialization, enum_util, functions, metrics and
-  storage info, then formats the files that differ from the local `main` branch
-  (without the variable it first runs `git fetch origin main:main`). Commit
-  regenerated artifacts separately from the change that caused them
-  (`regen: ...`), as upstream does.
-- Then, from the repo root, `./scripts/format_duckdb.sh` -- clang-format 11.0.1
-  (in docker) over the changed files of every duckdb submodule and
-  `duckdb_clickhouse`, each with its own `.clang-format`.
+- The duckdb submodules and `duckdb_clickhouse`: `./scripts/format_duckdb.sh`
+  from the repo root -- clang-format 11.0.1 (in docker) over their changed
+  files, each with its own `.clang-format`.
 
 ## Before writing tests
 

@@ -30,7 +30,7 @@ Run the tests that cover the change unless the user asks for a suite; CI runs th
 ### gtest (CI steps 042, 043, 046)
 
 - `./build_clangd/bin/serenedb-tests --gtest_filter='Suite.Name'`; all of them: `./scripts/gtest-parallel/gtest-parallel ./build_clangd/bin/serenedb-tests`.
-- iresearch: `( cd build_clangd/bin && python3 ../../scripts/gtest-parallel/gtest_parallel.py ./iresearch-tests -- --gtest_filter='Suite.*' )`. Run them through gtest-parallel as CI does: in one process they share state.
+- iresearch: `( cd build_clangd/bin && python3 ../../scripts/gtest-parallel/gtest_parallel.py ./iresearch-tests -- --gtest_filter='Suite.*' )`.
 - iresearch load test: `CORPUS_PATH=$(scripts/ci/steps/iresearch-load-fetch-corpus.bash) build_clangd/bin/iresearch-load-tests --gtest_filter='LoadTest*'`; the corpus fetch needs `SEARCHBENCH_S3_KEY_ID` and `SEARCHBENCH_S3_SECRET`.
 
 ### sqllogic (044)
@@ -42,7 +42,7 @@ Run the tests that cover the change unless the user asks for a suite; CI runs th
   --test 'tests/sqllogic/sdb/pg/index/*.test' --test 'tests/sqllogic/sdb/pg/ddl/alter_table.test'
 ```
 
-- Scope only with repeatable `--test '<glob>'`. There are no positional arguments: `--fast <path>` makes `<path>` the value of `--fast` and runs the whole tree.
+- Scope with repeatable `--test '<glob>'`; the runner takes no positional arguments.
 - `--fast` drops `.test_slow` files. Both wire engines run by default (`pg-wire-simple,pg-wire-extended`).
 - The exit code says nothing when nothing ran: count one `[OK]`/`[FAILED]` line per file you asked for.
 - CI's scopes (`tests/sqllogic/run_sdb_tests.sh`): `ours` is `sdb/**` without the sqlite subtree, `all` adds `sdb/pg/any/sqlite/**`, `biglake` runs `*_iceberg.test_slow` against Google BigLake and needs its credentials.
@@ -65,10 +65,7 @@ Run the tests that cover the change unless the user asks for a suite; CI runs th
 
 ### drivers and sqlsmith (047)
 
-`tests/drivers/run.sh --port <port> --lang python` against a running serened. The default port is 5432; the languages are python, java, js, go, rust, php, csharp, c, ruby, r and psql, and `--lang sqlsmith` is the fuzzer.
-
-- `tests/drivers/python/run.sh` runs a fixed file list (`for extra in ...`): add a new test file there, or CI never runs it.
-- It also checks fixtures. After changing a serened flag, regenerate the CLI help with `python3 tests/drivers/python/cli_help.py override --bin <build dir>/bin/serened`; the OTel ones come from `scripts/otel/fixtures.py generate` and `scripts/otel/schema.py generate`.
+`tests/drivers/run.sh --port <port> --lang python` against a running serened. The default port is 5432; the languages are python, java, js, go, rust, php, csharp, c, ruby, r and psql, and `--lang sqlsmith` is the fuzzer. The python suite also checks the CLI-help and OpenTelemetry fixtures (CLAUDE.md "When you change ...").
 
 ### network (049)
 

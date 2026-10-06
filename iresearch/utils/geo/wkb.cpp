@@ -191,7 +191,7 @@ void WithGeometryReader(WkbCursor& cursor, Func&& func) {
 // The byte-order byte is consumed by WithGeometryReader before this is
 // called -- the templated reader's Byteswap value already reflects it.
 // Rejects Z/M dimensions and non-CRS84 SRIDs.
-template<class R>
+template<typename R>
 void ReadHeader(R& r, WkbType& type) {
   uint32_t raw_type;
   if (!r.ReadU32(raw_type)) {
@@ -221,14 +221,14 @@ void ReadHeader(R& r, WkbType& type) {
   type = static_cast<WkbType>(bare);
 }
 
-template<class R>
+template<typename R>
 void ReadPoint(R& r, S2LatLng& out) {
   if (!r.ReadLatLng(out)) {
     THROW_SQL_ERROR(ERR_MSG("WKB: truncated Point coordinates"));
   }
 }
 
-template<class R>
+template<typename R>
 void ReadLineStringVertices(R& r, std::vector<S2LatLng>& cache) {
   uint32_t count;
   if (!r.ReadU32(count)) {
@@ -254,7 +254,7 @@ void ReadLineStringVertices(R& r, std::vector<S2LatLng>& cache) {
 // coordinates: the outer loop is left as-given (so polygons whose intended
 // interior covers more than half the earth survive), and subsequent loops are
 // inverted only when they aren't already contained in the outer.
-template<class R>
+template<typename R>
 void ReadPolygonLoops(R& r, std::vector<std::unique_ptr<S2Loop>>& out) {
   uint32_t ring_count;
   if (!r.ReadU32(ring_count)) {
@@ -308,17 +308,17 @@ void ReadPolygonLoops(R& r, std::vector<std::unique_ptr<S2Loop>>& out) {
   }
 }
 
-template<class R>
+template<typename R>
 void ParseGeometry(R& r, ShapeContainer& region);
 
-template<class R>
+template<typename R>
 void ParsePoint(R& r, ShapeContainer& region) {
   S2LatLng ll;
   ReadPoint(r, ll);
   region.reset(ll.ToPoint());
 }
 
-template<class R>
+template<typename R>
 void ParseLineString(R& r, ShapeContainer& region) {
   std::vector<S2LatLng> verts;
   ReadLineStringVertices(r, verts);
@@ -334,7 +334,7 @@ void ParseLineString(R& r, ShapeContainer& region) {
   region.reset(std::move(line), ShapeContainer::Type::S2Polyline);
 }
 
-template<class R>
+template<typename R>
 void ParsePolygon(R& r, ShapeContainer& region) {
   std::vector<std::unique_ptr<S2Loop>> loops;
   ReadPolygonLoops(r, loops);
@@ -349,7 +349,7 @@ void ParsePolygon(R& r, ShapeContainer& region) {
 // over the parent's cursor for the duration of the sub-parse. The
 // outer reader (`r`) is unused inside the lambda but its cursor flows
 // through transparently.
-template<class R>
+template<typename R>
 void ParseMultiPoint(R& r, ShapeContainer& region) {
   uint32_t count;
   if (!r.ReadU32(count)) {
@@ -358,7 +358,7 @@ void ParseMultiPoint(R& r, ShapeContainer& region) {
   auto multi = std::make_unique<S2MultiPointRegion>();
   multi->Impl().reserve(count);
   for (uint32_t i = 0; i < count; ++i) {
-    WithGeometryReader(r.cursor(), [&]<class Sub>(Sub& sub) {
+    WithGeometryReader(r.cursor(), [&]<typename Sub>(Sub& sub) {
       WkbType sub_type;
       ReadHeader(sub, sub_type);
       if (sub_type != WkbType::Point) {
@@ -373,7 +373,7 @@ void ParseMultiPoint(R& r, ShapeContainer& region) {
   region.reset(std::move(multi), ShapeContainer::Type::S2Multipoint);
 }
 
-template<class R>
+template<typename R>
 void ParseMultiLineString(R& r, ShapeContainer& region) {
   uint32_t count;
   if (!r.ReadU32(count)) {
@@ -385,7 +385,7 @@ void ParseMultiLineString(R& r, ShapeContainer& region) {
   // hit the allocator inside the loop.
   std::vector<S2LatLng> verts;
   for (uint32_t i = 0; i < count; ++i) {
-    WithGeometryReader(r.cursor(), [&]<class Sub>(Sub& sub) {
+    WithGeometryReader(r.cursor(), [&]<typename Sub>(Sub& sub) {
       WkbType sub_type;
       ReadHeader(sub, sub_type);
       if (sub_type != WkbType::LineString) {
@@ -409,7 +409,7 @@ void ParseMultiLineString(R& r, ShapeContainer& region) {
   region.reset(std::move(multi), ShapeContainer::Type::S2Multipolyline);
 }
 
-template<class R>
+template<typename R>
 void ParseMultiPolygon(R& r, ShapeContainer& region) {
   uint32_t count;
   if (!r.ReadU32(count)) {
@@ -419,7 +419,7 @@ void ParseMultiPolygon(R& r, ShapeContainer& region) {
   // polygons natively through S2Polygon::InitNested.
   std::vector<std::unique_ptr<S2Loop>> all_loops;
   for (uint32_t i = 0; i < count; ++i) {
-    WithGeometryReader(r.cursor(), [&]<class Sub>(Sub& sub) {
+    WithGeometryReader(r.cursor(), [&]<typename Sub>(Sub& sub) {
       WkbType sub_type;
       ReadHeader(sub, sub_type);
       if (sub_type != WkbType::Polygon) {
@@ -438,7 +438,7 @@ void ParseMultiPolygon(R& r, ShapeContainer& region) {
   region.reset(std::move(poly), ShapeContainer::Type::S2Polygon);
 }
 
-template<class R>
+template<typename R>
 void ParseGeometry(R& r, ShapeContainer& region) {
   WkbType type;
   ReadHeader(r, type);
@@ -468,7 +468,7 @@ bool ParseShapeWKB(std::string_view bytes, ShapeContainer& region) {
   try {
     WkbCursor cursor{bytes};
     WithGeometryReader(cursor,
-                       [&]<class R>(R& r) { ParseGeometry(r, region); });
+                       [&]<typename R>(R& r) { ParseGeometry(r, region); });
     if (!S2::IsUnitLength(region.centroid())) {
       THROW_SQL_ERROR(ERR_MSG("WKB: degenerate geometry has no centroid"));
     }

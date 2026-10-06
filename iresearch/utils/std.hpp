@@ -151,7 +151,7 @@ class BackEmplaceIterator {
   explicit BackEmplaceIterator(Container& cont) noexcept
     : _cont{std::addressof(cont)} {}
 
-  template<class T>
+  template<typename T>
   auto& operator=(T&& t) {
     _cont->emplace_back(std::forward<T>(t));
     return *this;

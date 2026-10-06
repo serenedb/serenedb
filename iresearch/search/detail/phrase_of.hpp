@@ -101,8 +101,8 @@ auto ResolveMatcherOf(const Query& query, F&& f) {
 }
 
 template<PhraseMatch M, typename Leaf, typename Result,
-         template<typename> class Impl, bool Scored = false,
-         template<typename> class Wrap = DeducedNode, typename Query,
+         template<typename> typename Impl, bool Scored = false,
+         template<typename> typename Wrap = DeducedNode, typename Query,
          typename... Prefix>
 Result MakePhraseNodeOf(const Query& query, std::span<const PostingMeta> metas,
                         std::span<const TermInterval> intervals,
@@ -121,8 +121,8 @@ Result MakePhraseNodeOf(const Query& query, std::span<const PostingMeta> metas,
     });
 }
 
-template<PhraseMatch M, template<typename> class Impl, typename Result,
-         bool Scored = false, template<typename> class Wrap = DeducedNode,
+template<PhraseMatch M, template<typename> typename Impl, typename Result,
+         bool Scored = false, template<typename> typename Wrap = DeducedNode,
          typename... Prefix>
 Result MakeFixedPhraseOf(const FixedPhraseQuery& query, Prefix&&... prefix) {
   const auto& state = query.state;
@@ -138,8 +138,8 @@ Result MakeFixedPhraseOf(const FixedPhraseQuery& query, Prefix&&... prefix) {
   });
 }
 
-template<PhraseMatch M, template<typename> class Impl, typename Result,
-         bool Scored = false, template<typename> class Wrap = DeducedNode,
+template<PhraseMatch M, template<typename> typename Impl, typename Result,
+         bool Scored = false, template<typename> typename Wrap = DeducedNode,
          typename... Prefix>
 Result MakeVariadicPhraseOf(const VariadicPhraseQuery& query,
                             Prefix&&... prefix) {
@@ -186,8 +186,8 @@ Result MakeVariadicPhraseOf(const VariadicPhraseQuery& query,
   });
 }
 
-template<template<typename> class Impl, typename Result, bool Scored = false,
-         template<typename> class Wrap = DeducedNode, typename... Prefix>
+template<template<typename> typename Impl, typename Result, bool Scored = false,
+         template<typename> typename Wrap = DeducedNode, typename... Prefix>
 Result MakeFixedPhrase(const FixedPhraseQuery& query, Prefix&&... prefix) {
   switch (MatchOf(query)) {
     case PhraseMatch::Slop:
@@ -203,8 +203,8 @@ Result MakeFixedPhrase(const FixedPhraseQuery& query, Prefix&&... prefix) {
     query, std::forward<Prefix>(prefix)...);
 }
 
-template<template<typename> class Impl, typename Result, bool Scored = false,
-         template<typename> class Wrap = DeducedNode, typename... Prefix>
+template<template<typename> typename Impl, typename Result, bool Scored = false,
+         template<typename> typename Wrap = DeducedNode, typename... Prefix>
 Result MakeVariadicPhrase(const VariadicPhraseQuery& query,
                           Prefix&&... prefix) {
   switch (MatchOf(query)) {

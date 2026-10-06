@@ -75,7 +75,7 @@ Result<Api> MakeScoredNegation(
       })));
 }
 
-template<typename Api, template<typename> class Group, typename Set,
+template<typename Api, template<typename> typename Group, typename Set,
          typename... Args>
 Result<Api> MakeScoredThresholdWindow(const Context<Api>& ctx,
                                       ScoreMergeType merge, uint32_t min_match,

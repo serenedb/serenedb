@@ -743,13 +743,13 @@ class ScalarQuantizerReader final : public QuantizerReader {
   std::unique_ptr<faiss::ScalarQuantizer::SQDistanceComputer> _dc;
 };
 
-template<class Codebook, class Reader>
+template<typename Codebook, typename Reader>
 std::unique_ptr<QuantizerReader> MakeReaderT(const Codebook* self) {
   return std::make_unique<Reader>(
     std::static_pointer_cast<const Codebook>(self->shared_from_this()));
 }
 
-template<class Stats, class Codebook>
+template<typename Stats, typename Codebook>
 std::shared_ptr<const QuantizerCodebook> MakeCodebookT(
   const Stats* self, std::span<const float> query) {
   return std::make_shared<const Codebook>(
@@ -2603,7 +2603,7 @@ std::shared_ptr<const QuantizerCodebook> RaBitQuantizerStats<M>::MakeCodebook(
     this, query);
 }
 
-template<template<VectorMetric> class Writer, typename... Args>
+template<template<VectorMetric> typename Writer, typename... Args>
 std::unique_ptr<QuantizerWriter> MakeWriterWithMetric(VectorMetric metric,
                                                       Args&&... args) {
   switch (EffectiveQuantMetric(metric)) {
@@ -2628,7 +2628,7 @@ std::shared_ptr<const QuantizerStats> MakePanoramaStats(
   return stats;
 }
 
-template<template<VectorMetric> class Stats, typename... Args>
+template<template<VectorMetric> typename Stats, typename... Args>
 std::shared_ptr<const QuantizerStats> MakeStatsWithMetric(VectorMetric metric,
                                                           Args&&... args) {
   switch (EffectiveQuantMetric(metric)) {

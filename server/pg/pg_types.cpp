@@ -680,7 +680,7 @@ uint64_t ResolveRelation(duckdb::ClientContext& context,
 std::string RelationName(duckdb::ClientContext& context,
                          std::string_view schema, std::string_view name,
                          uint64_t oid) {
-  if (ResolveRelation(context, duckdb::Identifier{std::string{name}}) == oid) {
+  if (ResolveRelation(context, duckdb::Identifier{name}) == oid) {
     return QuoteIdentifier(name);
   }
   return absl::StrCat(QuoteIdentifier(schema), ".", QuoteIdentifier(name));
@@ -717,9 +717,8 @@ uint64_t RegnamespaceIn(const ConnectionContext& ctx, std::string_view name) {
   auto& client = ctx.GetClientContext();
   auto& database = duckdb::Catalog::GetCatalog(
     client, duckdb::DatabaseManager::GetDefaultDatabase(client));
-  if (auto schema =
-        database.GetSchema(client, duckdb::Identifier{std::string{name}},
-                           duckdb::OnEntryNotFound::RETURN_NULL)) {
+  if (auto schema = database.GetSchema(client, duckdb::Identifier{name},
+                                       duckdb::OnEntryNotFound::RETURN_NULL)) {
     return schema->oid;
   }
   return kInvalidOid;

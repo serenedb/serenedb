@@ -552,7 +552,7 @@ class SpecCompiler {
       expr, [&](duckdb::unique_ptr<duckdb::ParsedExpression>& child) {
         if (IsParameterRef(*child, param)) {
           child = duckdb::make_uniq<duckdb::ColumnRefExpression>(
-            duckdb::Identifier{std::string{kInput}});
+            duckdb::Identifier{kInput});
           return;
         }
         SubstituteParameter(*child, param);
@@ -604,7 +604,7 @@ class SpecCompiler {
     auto& args = copy->Cast<duckdb::FunctionExpression>().GetArgumentsMutable();
     args.insert(args.begin(), duckdb::FunctionArgument{
                                 duckdb::make_uniq<duckdb::ColumnRefExpression>(
-                                  duckdb::Identifier{std::string{kInput}})});
+                                  duckdb::Identifier{kInput})});
     return {.kind = Stage::Kind::Sql, .name = copy->ToString()};
   }
 

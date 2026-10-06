@@ -155,7 +155,7 @@ void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
                     bool require_all) {
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
       column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
-    BuildFtsTerm(parent, ctx, column_info, duckdb::Value(std::string{text}));
+    BuildFtsTerm(parent, ctx, column_info, duckdb::Value(text));
     return;
   }
   const uint32_t value_min_match = require_all ? 0 : TakeMinMatch(ctx);

@@ -274,9 +274,7 @@ struct State final : duckdb::GlobalTableFunctionState {
   size_t batch = STANDARD_VECTOR_SIZE;
 };
 
-duckdb::Value Text(std::string_view text) {
-  return duckdb::Value{std::string{text}};
-}
+duckdb::Value Text(std::string_view text) { return duckdb::Value{text}; }
 
 duckdb::Value Nullable(const std::string& text) {
   return text.empty() ? duckdb::Value{duckdb::LogicalType::VARCHAR}

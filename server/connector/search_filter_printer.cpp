@@ -541,8 +541,8 @@ struct FilterPrinter {
       ExplainNode node{"Geo"};
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Op"].assign(GeoFilterTypeName(f.options().type));
-      node.attributes["Shape"] =
-        std::string{GeoShapeTypeName(f.options().shape.type())};
+      node.attributes["Shape"].assign(
+        GeoShapeTypeName(f.options().shape.type()));
       return node;
     }
     if (type == Type<GeoDistanceFilter>::id()) {

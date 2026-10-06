@@ -1154,7 +1154,7 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSStartsWith(
   std::string_view literal) {
   return MakeTSQueryCall(
     kTSQPrefix, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
-                  duckdb::Value(std::string{literal}))));
+                  duckdb::Value(literal))));
 }
 
 void AppendEscapedLikePattern(std::string_view s, std::string& out) {
@@ -1193,14 +1193,14 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSRegexp(
   std::string_view literal) {
   return MakeTSQueryCall(
     kTSQRegexp, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
-                  duckdb::Value(std::string{literal}))));
+                  duckdb::Value(literal))));
 }
 
 duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSLike(
   std::string_view literal) {
   return MakeTSQueryCall(
     kTSQLike, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
-                duckdb::Value(std::string{literal}))));
+                duckdb::Value(literal))));
 }
 
 using AnalyzerPredicate = bool (*)(irs::TypeInfo::type_id);

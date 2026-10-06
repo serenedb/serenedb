@@ -115,7 +115,7 @@ template<int Tag>
 void RegisterTsDictStub(duckdb::ExtensionLoader& loader, std::string_view name,
                         const duckdb::LogicalType& ret) {
   duckdb::AggregateFunction fn(
-    duckdb::Identifier{std::string{name}}, {duckdb::LogicalType::ANY}, ret,
+    duckdb::Identifier{name}, {duckdb::LogicalType::ANY}, ret,
     TsDictStub<Tag>::StateSize, TsDictStub<Tag>::Init, TsDictStub<Tag>::Update,
     TsDictStub<Tag>::Combine, TsDictStub<Tag>::Finalize,
     duckdb::FunctionNullHandling::DEFAULT_NULL_HANDLING);

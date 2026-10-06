@@ -1106,9 +1106,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::VARCHAR,
         "Sets the current session's user name.",
-        [] {
-          return duckdb::Value{std::string{irs::StaticStrings::kDefaultUser}};
-        },
+        [] { return duckdb::Value{irs::StaticStrings::kDefaultUser}; },
         SetSessionAuthCallback,
         ResetSessionAuthCallback,
       },

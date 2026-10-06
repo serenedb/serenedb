@@ -20,6 +20,8 @@
 
 #include "pg/pg_catalog/pg_type.h"
 
+#include <absl/strings/str_cat.h>
+
 #include <deque>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
@@ -1817,7 +1819,7 @@ MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
   });
   std::deque<std::string> array_names;
   auto make_array_name = [&](std::string_view scalar) -> std::string_view {
-    std::string name = "_" + std::string{scalar};
+    auto name = absl::StrCat("_", scalar);
     while (taken.contains(name)) {
       name.insert(0, "_");
     }

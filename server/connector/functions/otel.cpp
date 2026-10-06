@@ -952,7 +952,7 @@ void RegisterOtelFunctions(duckdb::DatabaseInstance& db) {
 
   const auto source = [&]<typename Source>(std::string_view name) {
     loader.RegisterFunction(duckdb::TableFunction{
-      duckdb::Identifier{std::string{name}},
+      duckdb::Identifier{name},
       duckdb::vector<duckdb::LogicalType>{duckdb::LogicalType::VARCHAR},
       SourceExecute<Source>, SourceBind<Source>, SourceState<Source>::Init});
   };

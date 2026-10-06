@@ -217,8 +217,8 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
 
 duckdb::Catalog& LookupDatabase(duckdb::ClientContext& context,
                                 std::string_view name) {
-  auto found = duckdb::Catalog::GetCatalogEntry(
-    context, duckdb::Identifier{std::string{name}});
+  auto found =
+    duckdb::Catalog::GetCatalogEntry(context, duckdb::Identifier{name});
   if (!found) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                     ERR_MSG("database \"", name, "\" does not exist"));

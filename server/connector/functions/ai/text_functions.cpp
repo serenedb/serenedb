@@ -537,7 +537,7 @@ duckdb::Value ExtractSchemaReply(const TextBindData& bind,
     builder.append_raw(MinifyJson(raw));
   }
   builder.end_object();
-  return duckdb::Value{std::string{builder.view().value()}}.WithType(
+  return duckdb::Value{builder.view().value()}.WithType(
     duckdb::LogicalType::JSON());
 }
 
@@ -565,7 +565,7 @@ duckdb::Value ExtractReply(const TextBindData& bind, std::string_view text) {
   if (text.empty() || absl::EqualsIgnoreCase(Unquote(text), "NONE")) {
     return duckdb::Value{duckdb::LogicalType::VARCHAR};
   }
-  return duckdb::Value{std::string{text}};
+  return duckdb::Value{text};
 }
 
 duckdb::Value FilterReply(std::string_view text) {
@@ -600,7 +600,7 @@ duckdb::Value Interpret(const TextBindData& bind, std::string_view text) {
     case TextKind::Generate:
     case TextKind::Translate:
     case TextKind::Redact:
-      return duckdb::Value{std::string{text}};
+      return duckdb::Value{text};
     case TextKind::Classify:
       return ClassifyReply(bind, text);
     case TextKind::ClassifyLabels:

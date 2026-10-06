@@ -83,7 +83,7 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
              duckdb::AlterInfo& info) final;
 
   duckdb::optional<duckdb::Identifier> GetDefaultSchema() const final {
-    return duckdb::Identifier{std::string{irs::StaticStrings::kPublic}};
+    return duckdb::Identifier{irs::StaticStrings::kPublic};
   }
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateSchema(

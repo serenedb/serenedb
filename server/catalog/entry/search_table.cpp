@@ -105,7 +105,7 @@ void BindOptions(duckdb::ClientContext& context, WithOptions& options) {
     } else {
       context.TryGetCurrentSetting(duckdb::Identifier{name}, value);
     }
-    options[std::string{name}] = OptionConstant(value);
+    options.insert_or_assign(name, OptionConstant(value));
   }
   if (const auto constant = FindConstant(options, kOptimizeTopKSetting)) {
     search::ParseScorerExpression(
@@ -453,9 +453,9 @@ duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
   auto info = duckdb::TableCatalogEntry::GetInfo();
   auto& options = info->Cast<duckdb::CreateTableInfo>().options;
   const auto set = [&](std::string_view name, const duckdb::Value& value) {
-    options[std::string{name}] = OptionConstant(value);
+    options.insert_or_assign(name, OptionConstant(value));
   };
-  set(kStorageOption, duckdb::Value{std::string{kEngineSearch}});
+  set(kStorageOption, duckdb::Value{kEngineSearch});
   set(kRefreshIntervalSetting,
       duckdb::Value::UINTEGER(_options.refresh_interval_ms));
   set(kCompactionIntervalSetting,

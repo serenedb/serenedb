@@ -494,7 +494,7 @@ void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     args.data[0], args.data[1], args.data[2], result, args.size(),
     [&](duckdb::string_t name, duckdb::string_t value,
         bool is_local) -> duckdb::string_t {
-      duckdb::Value val{std::string{value.GetData(), value.GetSize()}};
+      duckdb::Value val{std::string_view{value.GetData(), value.GetSize()}};
       const duckdb::Identifier setting{name.GetString()};
       duckdb::PhysicalSet::SetVariable(
         context, setting,

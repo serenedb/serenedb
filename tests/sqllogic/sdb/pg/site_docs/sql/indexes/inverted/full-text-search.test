@@ -499,7 +499,7 @@ QUERY PLAN
 │ │ Field: body(string)                                  │ │
 │ │ Parts:                                               │ │
 │ │ Term:quick(0, 0); Term:brown(1, 1); Term:fox(1, 1);  │ │
-│ │ Verify: stored text                                  │ │
+│ │ Verify: table filter                                 │ │
 │ ╰──────────────────────────────────────────────────────╯ │
 │ Projections: id                                          │
 │ ~1 row                                                   │

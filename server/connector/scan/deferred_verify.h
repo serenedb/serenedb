@@ -20,18 +20,16 @@
 
 #pragma once
 
+#include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/filters/filter.hpp>
 
 namespace sdb::connector {
 
 struct ScanGlobalState;
 
-// Moves the stored-terms check of wildcard and regexp n-gram filters out of
-// the query into a table filter. Only the root and the Must children of a
-// root BooleanFilter qualify: a document passes the root only if it passes
-// each of them, so checking it after the rest of the tree gives the same set.
-void DeferWildcardVerify(irs::Filter& root);
+void DeferVerify(irs::Filter& root, bool scored);
 
-void AddDeferredVerifyFilters(ScanGlobalState& state, const irs::Filter& root);
+void AddDeferredVerifyFilters(ScanGlobalState& state, const irs::Filter& root,
+                              const irs::IndexReader& reader);
 
 }  // namespace sdb::connector

@@ -36,6 +36,7 @@
 #include <iresearch/search/detail/window.hpp>
 #include <iresearch/search/docs/root.hpp>
 #include <iresearch/search/fill/node.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/hits/root.hpp>
@@ -43,6 +44,7 @@
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/top/root.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/string.hpp>
 #include <limits>
 #include <map>
@@ -490,6 +492,59 @@ TEST(TokenPhraseMatcherTest, routes) {
   EXPECT_EQ(irs::PhraseMatch::Positions, matcher.Fallback());
 }
 
+TEST(TokenPhraseMatcherTest, standalone_parts) {
+  using irs::TokenPhraseMatcher;
+  EXPECT_TRUE(TokenPhraseMatcher::Standalone(Phrase("a b")));
+  auto sloppy = Phrase("a b");
+  sloppy.set_slop(2);
+  EXPECT_TRUE(TokenPhraseMatcher::Standalone(sloppy));
+
+  auto prefix = Phrase("a");
+  prefix.push_back<irs::ByPrefixOptions>().term = Bytes("b");
+  EXPECT_TRUE(TokenPhraseMatcher::Standalone(prefix));
+  prefix.set_slop(1);
+  EXPECT_FALSE(TokenPhraseMatcher::Standalone(prefix));
+
+  auto like = Phrase("a");
+  like.push_back<irs::ByWildcardOptions>().term = Bytes("%b");
+  EXPECT_FALSE(TokenPhraseMatcher::Standalone(like));
+  EXPECT_TRUE(like.LowerParts());
+  EXPECT_TRUE(TokenPhraseMatcher::Standalone(like));
+
+  for (const size_t max_terms : {0, 3}) {
+    SCOPED_TRACE(max_terms);
+    auto fuzzy = Phrase("a");
+    auto& part = fuzzy.push_back<irs::ByEditDistanceOptions>();
+    part.term = Bytes("bob");
+    part.max_distance = 1;
+    part.max_terms = max_terms;
+    EXPECT_TRUE(fuzzy.LowerParts());
+    EXPECT_EQ(max_terms == 0, TokenPhraseMatcher::Standalone(fuzzy));
+  }
+}
+
+TEST(TokenPhraseMatcherTest, standalone_patterns_skip_shingles) {
+  auto phrase = Phrase("quick");
+  phrase.push_back<irs::ByPrefixOptions>().term = Bytes("br");
+  const irs::EmptyTermReader reader{0};
+  const irs::TokenPhraseMatcher matcher{
+    phrase, Bytes("_"),
+    [&](irs::bytes_view term) { return reader.Lookup(term); }};
+  DenseWords tokenizer;
+  irs::ValueAnalyzer analyzer;
+  irs::TokenPhraseSink sink{matcher, tokenizer.Traits()};
+  const auto check = [&](std::string_view text) {
+    const duckdb::string_t value{text.data(),
+                                 static_cast<uint32_t>(text.size())};
+    irs::PhraseVerdict verdict;
+    return irs::CheckValues(sink, analyzer, tokenizer, {&value, 1}, true,
+                            verdict);
+  };
+  EXPECT_TRUE(check("the quick brown fox"));
+  EXPECT_FALSE(check("the quick brown_fox"));
+  EXPECT_FALSE(check("the quick dread"));
+}
+
 namespace {
 
 inline constexpr irs::field_id kStoreId = 1;
@@ -605,6 +660,8 @@ class Index {
     }
     _reader = irs::DirectoryReader{_dir, irs::tests::DefaultReaderOptions()};
   }
+
+  const irs::IndexReader& Reader() const noexcept { return _reader; }
 
   std::vector<irs::doc_id_t> Docs(const irs::Filter& filter) const {
     tests::PreparedFilter prepared{filter, *_reader};
@@ -799,6 +856,39 @@ irs::Filter::ptr Lowered(irs::ByPhrase phrase) {
   return root;
 }
 
+irs::Filter::ptr LoweredAnd(irs::ByPhrase phrase, std::string_view term) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  root->Add(std::make_unique<irs::ByPhrase>(std::move(phrase)),
+            irs::Occur::Must);
+  root->Add(
+    irs::TermClause{.field = kPlainId, .term = irs::bstring{Bytes(term)}},
+    irs::Occur::Must);
+  irs::Filter::ptr out = std::move(root);
+  irs::Optimize(out);
+  return out;
+}
+
+void Defer(irs::Filter& filter) {
+  auto& options =
+    *irs::utils::downCast<irs::ByPhrase>(filter).mutable_options();
+  auto tokens = std::make_shared<irs::PhraseTokens>(*options.tokens());
+  tokens->deferred = true;
+  options.set_tokens(std::move(tokens));
+}
+
+irs::PostingMeta Summed(const irs::IndexReader& reader, irs::field_id field,
+                        irs::bytes_view term) {
+  irs::PostingMeta out;
+  for (const auto& segment : reader) {
+    if (const auto* terms = segment.field(field)) {
+      const auto meta = terms->Lookup(term);
+      out.docs_count += meta.docs_count;
+      out.freq += meta.freq;
+    }
+  }
+  return out;
+}
+
 std::string RandomText(std::mt19937& rng,
                        std::span<const std::string_view> words, size_t length) {
   std::string text;
@@ -857,6 +947,24 @@ std::string Describe(const irs::ByPhraseOptions& phrase) {
         absl::StrAppend(&out, irs::ViewCast<char>(irs::bytes_view{term}), ",");
       }
       absl::StrAppend(&out, "}");
+    } else if (const auto* like =
+                 std::get_if<irs::ByWildcardOptions>(&info.part)) {
+      absl::StrAppend(
+        &out, "like:", irs::ViewCast<char>(irs::bytes_view{like->term}));
+    } else if (const auto* regex =
+                 std::get_if<irs::ByRegexpOptions>(&info.part)) {
+      absl::StrAppend(
+        &out, "regex:", irs::ViewCast<char>(irs::bytes_view{regex->pattern}));
+    } else if (const auto* fuzzy =
+                 std::get_if<irs::ByEditDistanceOptions>(&info.part)) {
+      absl::StrAppend(
+        &out, "fuzzy:", irs::ViewCast<char>(irs::bytes_view{fuzzy->term}), "~",
+        fuzzy->max_distance);
+    } else if (const auto* range =
+                 std::get_if<irs::ByRangeOptions>(&info.part)) {
+      absl::StrAppend(
+        &out, "range:", irs::ViewCast<char>(irs::bytes_view{range->range.min}),
+        "..", irs::ViewCast<char>(irs::bytes_view{range->range.max}));
     }
     absl::StrAppend(&out, " ");
   }
@@ -877,6 +985,97 @@ void ExpectLikePositions(const Index& index,
       Lowered(PhraseOn(kPlainId, phrase, Tokens<Words>(match)));
     ExpectFamilies(expected, index.Run(*checked));
     ExpectScores(freqs, index.Freqs(*checked));
+  }
+}
+
+irs::ByPhraseOptions RandomPatternPhrase(
+  std::mt19937& rng, std::span<const std::string_view> words) {
+  irs::ByPhraseOptions phrase;
+  const auto size = 1 + rng() % 3;
+  for (size_t k = 0; k != size; ++k) {
+    const irs::PosAttr::value_t offs_min = k == 0 ? 0 : 1 + rng() % 2;
+    irs::PosAttr::value_t offs_max = offs_min;
+    if (k != 0 && rng() % 3 == 0) {
+      offs_max += rng() % 3;
+    }
+    const auto word = words[rng() % words.size()];
+    switch (rng() % 8) {
+      case 0:
+        phrase.push_back<irs::ByWildcardOptions>(offs_min, offs_max).term =
+          Bytes(absl::StrCat("%", word.substr(word.size() - 3)));
+        break;
+      case 1:
+        phrase.push_back<irs::ByRegexpOptions>(offs_min, offs_max).pattern =
+          Bytes(absl::StrCat(".", word.substr(1, 2), ".*"));
+        break;
+      case 2: {
+        auto& fuzzy =
+          phrase.push_back<irs::ByEditDistanceOptions>(offs_min, offs_max);
+        fuzzy.term = Bytes(word);
+        fuzzy.max_distance = 1;
+      } break;
+      case 3: {
+        auto& range =
+          phrase.push_back<irs::ByRangeOptions>(offs_min, offs_max).range;
+        range.min = Bytes("b");
+        range.min_type = irs::BoundType::Inclusive;
+        range.max = Bytes("f");
+        range.max_type = irs::BoundType::Exclusive;
+      } break;
+      case 4:
+        phrase.push_back<irs::ByPrefixOptions>(offs_min, offs_max).term =
+          Bytes(word.substr(0, 2));
+        break;
+      case 5: {
+        auto& set =
+          phrase.push_back<irs::TermSetOptions>(offs_min, offs_max).terms;
+        set.emplace(Bytes(word));
+        set.emplace(Bytes(words[rng() % words.size()]));
+      } break;
+      default:
+        PushTerm(phrase, word, offs_min, offs_max);
+        break;
+    }
+  }
+  return phrase;
+}
+
+template<typename Words>
+void ExpectDeferredLikeInline(const Index& index,
+                              std::span<const std::string> docs,
+                              const irs::ByPhraseOptions& phrase) {
+  SCOPED_TRACE(Describe(phrase));
+  for (const auto match : kMatches) {
+    SCOPED_TRACE(MatchName(match));
+    const auto expected =
+      index.Docs(*Lowered(PhraseOn(kPlainId, phrase, Tokens<Words>(match))));
+    auto deferred = Lowered(PhraseOn(kPlainId, phrase, Tokens<Words>(match)));
+    ASSERT_EQ(irs::Type<irs::ByPhrase>::id(), deferred->type());
+    Defer(*deferred);
+    const auto& options =
+      irs::utils::downCast<irs::ByPhrase>(*deferred).options();
+    ASSERT_TRUE(irs::TokenPhraseMatcher::Standalone(options));
+    const irs::TokenPhraseMatcher matcher{options, options.word_separator(),
+                                          [&](irs::bytes_view term) {
+                                            return Summed(index.Reader(),
+                                                          kPlainId, term);
+                                          },
+                                          match};
+    Words tokenizer;
+    irs::ValueAnalyzer analyzer;
+    irs::TokenPhraseSink sink{matcher, tokenizer.Traits()};
+    std::vector<irs::doc_id_t> actual;
+    for (const auto doc : index.Docs(*deferred)) {
+      const auto& text = docs[doc];
+      const duckdb::string_t value{text.data(),
+                                   static_cast<uint32_t>(text.size())};
+      irs::PhraseVerdict verdict;
+      if (irs::CheckValues(sink, analyzer, tokenizer, {&value, 1}, false,
+                           verdict)) {
+        actual.push_back(doc);
+      }
+    }
+    EXPECT_EQ(expected, actual);
   }
 }
 
@@ -955,6 +1154,68 @@ TEST(TokenPhraseIndexTest, long_documents_agree_with_positions) {
   PushTerm(interval, "b", 1, 6);
   PushTerm(interval, "c", 1, 6);
   ExpectLikePositions<DenseWords>(index, interval);
+}
+
+TEST(TokenPhraseIndexTest, conjunctions_seek_into_checked_batches) {
+  constexpr std::string_view kWords[] = {"the", "quick", "brown", "fox",
+                                         "x",   "x",     "dog",   "a"};
+  std::mt19937 rng{5};
+  std::vector<std::string> docs;
+  for (size_t i = 0; i != 4000; ++i) {
+    auto text = RandomText(rng, kWords, 1 + rng() % 12);
+    if (rng() % 9 == 0) {
+      absl::StrAppend(&text, " rare");
+    }
+    docs.push_back(std::move(text));
+  }
+  const Index index{docs, std::type_identity<DenseWords>{}, 1500};
+  for (const auto* text :
+       {"quick brown", "x x", "the quick", "brown fox dog"}) {
+    SCOPED_TRACE(text);
+    const auto expected =
+      index.Run(*LoweredAnd(PhraseOn(kPositionalId, Phrase(text)), "rare"));
+    for (const auto match : kMatches) {
+      SCOPED_TRACE(MatchName(match));
+      ExpectFamilies(
+        expected, index.Run(*LoweredAnd(
+                    PhraseOn(kPlainId, Phrase(text), Tokens<DenseWords>(match)),
+                    "rare")));
+    }
+    ExpectLikePositions<DenseWords>(index, Phrase(text));
+  }
+}
+
+TEST(TokenPhraseIndexTest, deferred_check_agrees_with_inline) {
+  constexpr std::string_view kWords[] = {"quick", "quack", "brown", "brawn",
+                                         "fox",   "box",   "the",   "dog"};
+  std::mt19937 rng{3};
+  std::vector<std::string> docs;
+  for (size_t i = 0; i != 300; ++i) {
+    docs.push_back(RandomText(rng, kWords, 1 + rng() % 20));
+  }
+  const Index index{docs, std::type_identity<DenseWords>{}, 64};
+  for (size_t i = 0; i != 80; ++i) {
+    const auto phrase = RandomPatternPhrase(rng, kWords);
+    SCOPED_TRACE(i);
+    ExpectDeferredLikeInline<DenseWords>(index, docs, phrase);
+  }
+}
+
+TEST(TokenPhraseIndexTest, deferred_check_on_stacked_tokens) {
+  constexpr std::string_view kWords[] = {"red", "car|auto", "car", "auto",
+                                         "~",   "red|car",  "big", "red"};
+  std::mt19937 rng{9};
+  std::vector<std::string> docs;
+  for (size_t i = 0; i != 200; ++i) {
+    docs.push_back(RandomText(rng, kWords, 1 + rng() % 20));
+  }
+  const Index index{docs, std::type_identity<StackedWords>{}, 64};
+  constexpr std::string_view kTerms[] = {"red", "car", "auto", "big"};
+  for (size_t i = 0; i != 40; ++i) {
+    const auto phrase = RandomPatternPhrase(rng, kTerms);
+    SCOPED_TRACE(i);
+    ExpectDeferredLikeInline<StackedWords>(index, docs, phrase);
+  }
 }
 
 TEST(TokenPhraseIndexTest, without_stored_column_matches_nothing) {

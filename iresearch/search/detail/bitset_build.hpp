@@ -219,10 +219,12 @@ void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
                                        doc_id_t prev) IRS_FORCE_INLINE {
     const auto leaf = [&] IRS_FORCE_INLINE {
       if constexpr (Input::kVolatileAlways) {
-        for (const auto* const ahead = at + kFillPrefetch; fetched < ahead;
-             fetched += kFillLine) {
-          __builtin_prefetch(fetched);
+        const auto* const from = std::max(fetched, at);
+        for (uint64_t offset = 0; offset != kFillPrefetch;
+             offset += kFillLine) {
+          __builtin_prefetch(from + offset);
         }
+        fetched = at + kFillPrefetch;
         return block_io::FillView(in, at, len, holes, docs, prev,
                                   has_freq && len == doc_limits::kBlockSize);
       } else {

@@ -45,7 +45,9 @@ implement one unless the user names that issue.
 
 - C++ navigation and diagnostics come from the `clangd-lsp` plugin (enabled in
 `.claude/settings.json`; `clangd` is installed on the dev machines). Prefer
-the LSP tool's definitions and references over grepping for a symbol. clangd
+the LSP tool's definitions and references over grepping for a symbol. Without
+the LSP tool, the plugin is not installed: tell the user to run
+`claude plugin install clangd-lsp@claude-plugins-official` once. clangd
 reads `build/compile_commands.json`; with another build dir, run
 `ln -s <build dir>/compile_commands.json .` in the checkout once.
 

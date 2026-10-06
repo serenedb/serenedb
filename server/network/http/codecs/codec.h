@@ -30,7 +30,6 @@
 #include <string_view>
 
 #include "network/http/compression.h"
-#include "server/utils/thread_local_pool.h"
 
 namespace sdb::network::http {
 

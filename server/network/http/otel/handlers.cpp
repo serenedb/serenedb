@@ -41,6 +41,8 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <variant>
 
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/otel.h"
@@ -194,9 +196,15 @@ InsertOutcome Failed(const duckdb::ErrorData& error) {
   return {HttpStatus::InternalError, kCodeInternal, std::move(sql.errmsg)};
 }
 
-yaclib::Task<InsertOutcome> RunStatement(RequestContext& ctx,
-                                         std::string_view sql) {
-  auto result = co_await ctx.RunQuery(std::string{sql}, /*writes=*/true);
+yaclib::Task<InsertOutcome> RunTransaction(RequestContext& ctx,
+                                           PreparedSlotId slot,
+                                           std::string_view text) {
+  const std::string sql{text};
+  auto& entry = ctx.PreparedSlot(slot, sql);
+  if (auto error = network::EnsurePrepared(ctx, entry, sql)) {
+    co_return Failed(*error);
+  }
+  auto result = co_await ctx.RunPrepared(*entry.statement);
   if (!result->HasError()) {
     co_return InsertOutcome{};
   }
@@ -291,6 +299,26 @@ struct MetricsSignal {
       ParseMetricsRequest(raw, parser, out, /*padded=*/true);
     }
   }
+
+  static std::array<bool, kSlots.size()> Present(const Request& request) {
+    std::array<bool, kSlots.size()> present{};
+    for (const auto& resource : request.resources) {
+      for (const auto& scope : resource.scopes) {
+        for (const auto& metric : scope.records) {
+          std::visit(
+            [&]<typename Data>(const Data& data) {
+              if constexpr (!std::is_same_v<Data, std::monostate>) {
+                if (!data.data_points.empty()) {
+                  present[metric.data.index() - 1] = true;
+                }
+              }
+            },
+            metric.data);
+        }
+      }
+    }
+    return present;
+  }
 };
 
 // Answers a failed insert; false when there is nothing to answer.
@@ -336,22 +364,35 @@ class ExportHandler final : public HttpHandler {
       co_return {};
     }
     if constexpr (Signal::kTargets.size() == 1) {
+      // Logs and Traces
       const auto outcome = co_await RunSourceInsert<Signal>(ctx, 0, decoded);
       if (WriteFailure(writer, outcome, protobuf)) {
         co_return {};
       }
     } else {
-      auto outcome = co_await RunStatement(ctx, "BEGIN");
+      // Metrics. Insert into multiple table in single commit
+      const auto present = Signal::Present(decoded);
+      const bool transaction =
+        std::count(present.begin(), present.end(), true) > 1;
+      InsertOutcome outcome;
+      if (transaction) {
+        outcome = co_await RunTransaction(ctx, PreparedSlotId::Begin, "BEGIN");
+      }
       for (size_t target = 0;
            outcome.status == HttpStatus::Ok && target < Signal::kTargets.size();
            ++target) {
-        outcome = co_await RunSourceInsert<Signal>(ctx, target, decoded);
+        if (present[target]) {
+          outcome = co_await RunSourceInsert<Signal>(ctx, target, decoded);
+        }
       }
-      if (outcome.status == HttpStatus::Ok) {
-        outcome = co_await RunStatement(ctx, "COMMIT");
-      }
-      if (outcome.status != HttpStatus::Ok) {
-        co_await RunStatement(ctx, "ROLLBACK");
+      if (transaction) {
+        if (outcome.status == HttpStatus::Ok) {
+          outcome =
+            co_await RunTransaction(ctx, PreparedSlotId::Commit, "COMMIT");
+        }
+        if (outcome.status != HttpStatus::Ok) {
+          co_await RunTransaction(ctx, PreparedSlotId::Rollback, "ROLLBACK");
+        }
       }
       if (WriteFailure(writer, outcome, protobuf)) {
         co_return {};

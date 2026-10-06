@@ -170,9 +170,12 @@ class BulkHandler final : public HttpHandler {
     size_t parts = 0;
     for (const auto& part : items) {
       if (!part.empty()) {
-        length += part.size() + (parts++ != 0 ? 1 : 0);
+        length += part.size();
+        ++parts;
       }
     }
+    const size_t commas = parts == 0 ? 0 : parts - 1;
+    length += commas;
     writer.WriteHead(HttpStatus::Ok, kJsonContentType, length, kProductHeader);
     writer.Write(head);
     bool first = true;
@@ -180,10 +183,11 @@ class BulkHandler final : public HttpHandler {
       if (part.empty()) {
         continue;
       }
-      if (!std::exchange(first, false)) {
+      if (!first) {
         writer.Write(",");
       }
       writer.Write(part);
+      first = false;
     }
     writer.Write(kTail);
     writer.Finish();

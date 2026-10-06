@@ -195,6 +195,29 @@ def test_failed_metrics_export_writes_no_table(tmp_path: Path) -> None:
         server.close()
 
 
+def test_metrics_export_inserts_only_its_kinds(tmp_path: Path) -> None:
+    server = _Server(tmp_path, "api=otel")
+    try:
+        server.pg.execute("DROP TABLE otel_metrics_summary")
+        export = json.loads((FIXTURES / "metrics/mixed_batch.json").read_text())
+        for resource in export["resourceMetrics"]:
+            for scope in resource["scopeMetrics"]:
+                scope["metrics"] = [
+                    metric for metric in scope["metrics"] if "gauge" in metric]
+        conn = http.client.HTTPConnection("127.0.0.1", server.http_port,
+                                          timeout=60)
+        conn.request("POST", "/v1/metrics", body=json.dumps(export),
+                     headers={"Content-Type": "application/json",
+                              "Authorization": "Basic cG9zdGdyZXM6"})
+        response = conn.getresponse()
+        response.read()
+        conn.close()
+        assert response.status == 200
+        assert server.count("otel_metrics_gauge") > 0
+    finally:
+        server.close()
+
+
 def _logs_export(resources: int, scopes: int, records: int) -> bytes:
     return json.dumps({"resourceLogs": [{
         "resource": {"attributes": [

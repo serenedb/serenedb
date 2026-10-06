@@ -52,6 +52,9 @@ enum class PreparedSlotId : uint8_t {
   OtelMetricsExponentialHistogram,
   OtelMetricsSummary,
   EsBulk,
+  Begin,
+  Commit,
+  Rollback,
 };
 
 inline constexpr size_t kPreparedSlots =

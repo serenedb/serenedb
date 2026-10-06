@@ -25,6 +25,7 @@
 #include <memory>
 
 #include "network/http/codecs/codec.h"
+#include "server/utils/thread_local_pool.h"
 
 namespace sdb::network::http {
 namespace {

@@ -235,7 +235,6 @@ class HttpSession final
       co_return duckdb::make_uniq<duckdb::QueryResult>(duckdb::ErrorData{ex});
     }
   }
-
   PreparedEntry& PreparedSlot(PreparedSlotId slot, std::string_view sql) final {
     const auto index = static_cast<size_t>(slot);
     SDB_ASSERT(index < _prepared.size());

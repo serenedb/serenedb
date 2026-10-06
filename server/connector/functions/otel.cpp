@@ -716,6 +716,7 @@ struct MetricsSource {
   using Column = typename MetricShape::Column;
   using Request = otel::ExportMetricsRequest;
 
+  // Single metric may have multiple datapoints
   static size_t Rows(const otel::Metric& metric) {
     const auto* data = std::get_if<typename MetricShape::Data>(&metric.data);
     return data == nullptr ? 0 : data->data_points.size();

@@ -262,6 +262,7 @@ ResultWithTime SearchTable::RefreshUnsafe(
       // and any later batch lands at a higher tick, so advancing to it never
       // over-claims.
       const auto tick_before = _wal->CurrentTick();
+      SDB_PARK_ONCE_ON_FAILURE("pause_search_refresh_after_tick");
       if (tick_before != irs::writer_limits::kMinTick &&
           _writer->RefreshCommit({.tick = tick_before})) {
         _wal->OnShardCommit(GetTableId(), _last_committed_tick);

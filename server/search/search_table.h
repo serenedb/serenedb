@@ -139,6 +139,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   }
 
   void Clear(uint64_t tick) {
+    absl::MutexLock lock{&_refresh_mutex};
     _writer->Clear(tick);
     if (tick > _last_committed_tick) {
       _last_committed_tick = tick;

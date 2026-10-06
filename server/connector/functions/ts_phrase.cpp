@@ -211,6 +211,7 @@ void CheckTokens(const SearchColumnInfo& column_info,
   }
   auto tokens = std::make_shared<irs::PhraseTokens>();
   tokens->column = column_info.stored_field_id;
+  tokens->type = column_info.stored_type;
   tokens->tokenizer = std::move(tokenizer);
   tokens->spec = std::move(spec);
   options.set_tokens(std::move(tokens));

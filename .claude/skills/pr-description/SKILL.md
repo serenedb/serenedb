@@ -23,14 +23,13 @@ Explain why, not what; the diff shows what.
 - The approach, and the alternative it beat when that's not obvious.
 - Evidence: the tests that cover it (paths), and for `perf:` the measured end-to-end numbers against main with the build and machine load.
 - User-visible changes: the `docs/` page added or updated.
-- Fork changes: the fork PR or commit, by URL.
+- Fork changes: the fork commit by SHA, or its PR as plain text (see below).
 - Plain paragraphs, one line per paragraph (no hard wraps), lists where they help.
 
 ## Never
 
-- `owner/repo#N`, or a `#N` that refers to another repository: GitHub notifies every one of them. Write the URL, or plain `PR 25222`.
+- Another repository's issue or PR as `#N`, `owner/repo#N` or a URL: GitHub links all three back from the target. Write it as plain text (`serenedb/duckdb PR 89`) or inside backticks.
 - Links to code on a branch: pin them to a commit SHA.
-- AI attribution, "Generated with ..." footers or session links.
 
 ## Apply
 

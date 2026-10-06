@@ -105,6 +105,30 @@ duckdb::unique_ptr<duckdb::TableFilter> MakeNotNullReplacement(
   return duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(not_null));
 }
 
+constexpr size_t kMaxExactInListSize = 32;
+
+duckdb::unique_ptr<duckdb::TableFilter> TryExactInListFilter(
+  const duckdb::Expression& expr) {
+  const auto child = duckdb::ExpressionFilter::GetOptionalFilterChild(expr);
+  if (!child ||
+      child->GetExpressionType() != duckdb::ExpressionType::COMPARE_IN ||
+      child->CanThrow()) {
+    return nullptr;
+  }
+  const auto& in = child->Cast<duckdb::BoundOperatorExpression>();
+  const auto& children = in.GetChildren();
+  if (children.size() < 2 || children.size() - 1 > kMaxExactInListSize) {
+    return nullptr;
+  }
+  for (size_t i = 1; i < children.size(); ++i) {
+    if (children[i]->GetExpressionClass() !=
+        duckdb::ExpressionClass::BOUND_CONSTANT) {
+      return nullptr;
+    }
+  }
+  return duckdb::make_uniq<duckdb::ExpressionFilter>(child->Copy());
+}
+
 irs::NullCheckKind DetectNullCheck(const duckdb::Expression& expr) {
   const auto type = expr.GetExpressionType();
   if ((type != duckdb::ExpressionType::OPERATOR_IS_NULL &&
@@ -253,7 +277,17 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
       cf.zonemap_only =
         duckdb::ExpressionFilter::IsRootNonSelectivityOptionalFilter(
           entry.Filter());
-      cf.null_check = DetectNullCheck(expr);
+      if (cf.zonemap_only && !cf.is_dynamic) {
+        cf.exact = TryExactInListFilter(expr);
+        if (cf.exact) {
+          cf.filter = cf.exact.get();
+          cf.zonemap_only = false;
+        }
+      }
+      cf.null_check =
+        DetectNullCheck(*duckdb::ExpressionFilter::GetExpressionFilter(
+                           *cf.filter, "BuildTableFilter")
+                           .expr);
       cf.type = bind_data.columns.types[bind_index];
       if (proj_idx < state.projected_column_indexes.size()) {
         const auto& column_index = state.projected_column_indexes[proj_idx];
@@ -263,7 +297,7 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
           cf.type = column_index.GetScanType();
         }
       }
-      cf.not_null = MakeNotNullReplacement(entry.Filter(), cf.type);
+      cf.not_null = MakeNotNullReplacement(*cf.filter, cf.type);
     }
   }
   // Each column filter only evaluates the rows the earlier ones kept, so run

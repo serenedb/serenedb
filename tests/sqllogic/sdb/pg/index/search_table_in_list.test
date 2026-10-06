@@ -1,0 +1,52 @@
+statement ok
+CREATE TABLE sin (i BIGINT PRIMARY KEY, s VARCHAR, r INTEGER)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement count 30000
+INSERT INTO sin SELECT i, CASE WHEN i % 13 = 0 THEN NULL ELSE 'w' || (i % 50)::VARCHAR END, CASE WHEN i % 17 = 0 THEN NULL ELSE (i % 300)::INTEGER END FROM generate_series(1, 30000) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sin;
+
+query
+SELECT (SELECT count(*) FROM sin WHERE s IN ('w1', 'w7', 'w49', 'nope')) AS n,
+       (SELECT sum(CASE WHEN s = 'w1' OR s = 'w7' OR s = 'w49' OR s = 'nope' THEN 1 ELSE 0 END) FROM sin) AS n_scan;
+----
+n	n_scan
+1662	1662
+
+query
+SELECT (SELECT count(*) FROM sin WHERE r IN (1, 2, 3, 229, 2, 208, 158, 34, 51, 47)) AS n,
+       (SELECT sum(CASE WHEN r = 1 OR r = 2 OR r = 3 OR r = 229 OR r = 208 OR r = 158 OR r = 34 OR r = 51 OR r = 47 THEN 1 ELSE 0 END) FROM sin) AS n_scan;
+----
+n	n_scan
+847	847
+
+query
+SELECT (SELECT count(*) FROM sin WHERE r IN (0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45, 48, 51, 54, 57, 60, 63, 66, 69, 72, 75, 78, 81, 84, 87, 90, 93, 96, 99, 102, 105, 108, 111, 114, 117)) AS n,
+       (SELECT sum(CASE WHEN r % 3 = 0 AND r < 120 THEN 1 ELSE 0 END) FROM sin) AS n_scan;
+----
+n	n_scan
+3765	3765
+
+query
+SELECT (SELECT count(*) FROM sin WHERE s NOT IN ('w1', 'w7')) AS n,
+       (SELECT sum(CASE WHEN s <> 'w1' AND s <> 'w7' THEN 1 ELSE 0 END) FROM sin) AS n_scan;
+----
+n	n_scan
+26585	26585
+
+query
+SELECT (SELECT count(*) FROM sin WHERE s IN ('w1', 'w2') AND r IN (1, 2, 51, 52)) AS n,
+       (SELECT sum(CASE WHEN (s = 'w1' OR s = 'w2') AND (r = 1 OR r = 2 OR r = 51 OR r = 52) THEN 1 ELSE 0 END) FROM sin) AS n_scan;
+----
+n	n_scan
+346	346
+
+query
+SELECT i, s, r FROM sin WHERE s IN ('w3', 'w4') AND r IN (3, 4) ORDER BY i LIMIT 3;
+----
+i	s	r
+3	w3	3
+4	w4	4
+303	w3	3

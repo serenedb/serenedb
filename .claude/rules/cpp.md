@@ -20,9 +20,8 @@ Read CONTRIBUTING.md "C++ Code Style" first; these are the maintainers' review r
 - Work runs on the existing pools, never on a hand-rolled `std::thread` pool: query execution on DuckDB's `TaskExecutor`/`BaseExecutorTask`; blocking or latency-tolerant background work on `BackgroundScheduler` (`server/scheduler/background_scheduler.h`), whose retry loops back off with `Delay` and stop once `IsStopping()`; the io threads only do socket IO.
 - No new `thread_local`.
 
-## Working with DuckDB
+## Settings
 
-- Reuse or patch DuckDB machinery; don't build a parallel copy of it.
 - Caps and limits are `sdb_` SET variables read through `SettingRef`, not constants.
 
 ## Shape

@@ -106,6 +106,53 @@ struct PackedReader {
   uint32_t values[kGroup];
 };
 
+uint64_t ChainCapacity(PackedReader& lengths, PackedReader& lcps,
+                       uint32_t first, uint32_t end) {
+  uint64_t capacity = 0;
+  for (auto e = first; e < end; ++e) {
+    capacity += (e == first ? 0 : lcps.At(e)) +
+                uint64_t{lengths.At(e)} * kFsstMaxExpansion;
+  }
+  return std::max<uint64_t>(capacity, string_t::INLINE_LENGTH + 1);
+}
+
+struct ChainEnd {
+  uint32_t stop;
+  uint64_t written;
+  uint64_t enc_off;
+};
+
+template<typename Visit>
+ChainEnd WalkChain(const FsstDecoder& fsst, const char* in,
+                   PackedReader& lengths, PackedReader& lcps, uint32_t first,
+                   uint32_t end, uint64_t enc_off, uint64_t enc_end, char* out,
+                   uint64_t capacity, Visit&& visit) {
+  uint64_t off = 0;
+  uint64_t prev_off = 0;
+  uint64_t prev_len = 0;
+  for (auto e = first; e < end; ++e) {
+    const uint64_t lcp = e == first ? 0 : lcps.At(e);
+    const uint64_t enc = lengths.At(e);
+    SDB_ENSURE(
+      lcp <= prev_len && enc_off + enc <= enc_end && off + lcp <= capacity,
+      "col codec: corrupted front coding");
+    std::memcpy(out + off, out + prev_off, lcp);
+    const auto room = capacity - (off + lcp);
+    const auto dec =
+      enc == 0 ? 0 : fsst.Decode(in + enc_off, enc, out + off + lcp, room);
+    SDB_ENSURE(dec <= room, "col codec: corrupted entry");
+    const std::string_view value{out + off, lcp + dec};
+    if (!visit(e, value)) {
+      return {e, off, enc_off};
+    }
+    prev_off = off;
+    prev_len = value.size();
+    off += value.size();
+    enc_off += enc;
+  }
+  return {end, off, enc_off};
+}
+
 const ReadContext::CacheSlot& CacheSlotOf(
   duckdb::ColumnSegment& segment) noexcept {
   const auto& block = segment.GetBlockHandle();
@@ -427,37 +474,23 @@ struct ScanState final : duckdb::SegmentScanState {
     }
   }
 
-  void EnsureEntries(uint32_t first, uint32_t last) {
+  template<bool kCodes, typename EntryAt>
+  void EnsureEach(idx_t count, EntryAt entry_at) {
     if (decoded_count == frames.size()) {
-      return;
-    }
-    const bool sparse = last - first < kSparseEntries;
-    uint32_t f = kNoFrame;
-    for (auto e = first; e <= last; ++e) {
-      EnsureEntry(e, f, sparse);
-    }
-  }
-
-  void EnsureSelected(idx_t start, const duckdb::SelectionVector& rows,
-                      idx_t count) {
-    if (decoded_count == frames.size() || count == 0) {
       return;
     }
     const bool sparse = count <= kSparseEntries;
     uint32_t f = kNoFrame;
     for (idx_t i = 0; i < count; ++i) {
-      EnsureEntry(static_cast<uint32_t>(start + rows.get_index(i)), f, sparse);
+      const auto e = static_cast<uint32_t>(entry_at(i));
+      if (!kCodes || e != 0) {
+        EnsureEntry(e, f, sparse);
+      }
     }
   }
 
   void EnsureCodes(const duckdb::SelectionVector& codes, idx_t count) {
-    const bool sparse = count <= kSparseEntries;
-    uint32_t f = kNoFrame;
-    for (idx_t i = 0; i < count; ++i) {
-      if (const auto code = codes.get_index(i); code != 0) {
-        EnsureEntry(static_cast<uint32_t>(code), f, sparse);
-      }
-    }
+    EnsureEach<true>(count, [&](idx_t i) { return codes.get_index(i); });
   }
 
   bool FrameDictionary() const noexcept {
@@ -542,9 +575,7 @@ struct ScanState final : duckdb::SegmentScanState {
   void DecodeBlobFrame(Decompressor& d, const FrameMeta& m, uint32_t end,
                        char* out, char* staging) {
     SDB_ENSURE(
-      d.Decompress(
-        reinterpret_cast<const char*>(base + header.off_data) + m.comp_off,
-        m.comp_len, staging, m.raw_len),
+      d.Decompress(Data() + m.comp_off, m.comp_len, staging, m.raw_len),
       "col codec: corrupted frame");
     if (staging != out) {
       std::memcpy(out, staging, m.raw_len);
@@ -559,37 +590,25 @@ struct ScanState final : duckdb::SegmentScanState {
     SDB_ENSURE(off == m.raw_len, "col codec: corrupted entry lengths");
   }
 
+  const char* Data() const noexcept {
+    return reinterpret_cast<const char*>(base + header.off_data);
+  }
+
+  bool Keep(uint32_t e, std::string_view v) noexcept {
+    values[e] = string_t{v.data(), static_cast<uint32_t>(v.size())};
+    return true;
+  }
+
   void DecodeFsstFrame(const FrameMeta& m, uint32_t end, char* out) {
-    const auto* in = reinterpret_cast<const char*>(base + header.off_data);
-    uint64_t enc_off = m.comp_off;
     const uint64_t enc_end = static_cast<uint64_t>(m.comp_off) + m.comp_len;
-    uint64_t off = 0;
-    uint64_t prev_off = 0;
-    uint64_t prev_len = 0;
-    for (uint32_t e = m.first_entry; e < end; ++e) {
-      const uint64_t lcp = lcp_reader.At(e);
-      const uint64_t enc = length_reader.At(e);
-      SDB_ENSURE(
-        lcp <= prev_len && enc_off + enc <= enc_end && off + lcp <= m.raw_len,
-        "col codec: corrupted front coding");
-      std::memcpy(out + off, out + prev_off, lcp);
-      const auto capacity = m.raw_len - (off + lcp);
-      const auto dec =
-        enc == 0 ? 0
-                 : fsst->Decode(in + enc_off, enc, out + off + lcp, capacity);
-      SDB_ENSURE(dec <= capacity, "col codec: corrupted entry");
-      const auto len = lcp + dec;
-      SDB_ASSERT(!Dedup() || e == m.first_entry ||
-                   std::string_view(out + prev_off, prev_len) <
-                     std::string_view(out + off, len),
-                 "col codec: dictionary entries out of order");
-      values[e] = string_t{out + off, static_cast<uint32_t>(len)};
-      prev_off = off;
-      prev_len = len;
-      off += len;
-      enc_off += enc;
-    }
-    SDB_ENSURE(off == m.raw_len && enc_off == enc_end,
+    const auto chain = WalkChain(
+      *fsst, Data(), length_reader, lcp_reader, m.first_entry, end, m.comp_off,
+      enc_end, out, m.raw_len, [&](uint32_t e, std::string_view v) {
+        SDB_ASSERT(!Dedup() || e == m.first_entry || View(values[e - 1]) < v,
+                   "col codec: dictionary entries out of order");
+        return Keep(e, v);
+      });
+    SDB_ENSURE(chain.written == m.raw_len && chain.enc_off == enc_end,
                "col codec: corrupted frame");
   }
 
@@ -617,38 +636,13 @@ struct ScanState final : duckdb::SegmentScanState {
     EnsureGroupOffsets(f);
     const auto first = frames[f].first_entry + g * kChainRestart;
     const auto end = std::min<uint32_t>(first + kChainRestart, FrameEnd(f));
-    uint64_t capacity = 0;
-    for (auto e = first; e < end; ++e) {
-      capacity += (e == first ? 0 : lcp_reader.At(e)) +
-                  uint64_t{length_reader.At(e)} * kFsstMaxExpansion;
-    }
-    capacity = std::max<uint64_t>(capacity, string_t::INLINE_LENGTH + 1);
+    const auto capacity = ChainCapacity(length_reader, lcp_reader, first, end);
     group_heap_bytes += capacity;
     char* out = duckdb::StringVector::EmptyString(dictionary->data, capacity)
                   .GetDataWriteable();
-    const auto* in = reinterpret_cast<const char*>(base + header.off_data);
-    uint64_t enc_off = group_enc_off[group_base[f] + g];
-    uint64_t off = 0;
-    uint64_t prev_off = 0;
-    uint64_t prev_len = 0;
-    for (auto e = first; e < end; ++e) {
-      const uint64_t lcp = e == first ? 0 : lcp_reader.At(e);
-      const uint64_t enc = length_reader.At(e);
-      SDB_ENSURE(lcp <= prev_len && enc_off + enc <= header.data_size &&
-                   off + lcp <= capacity,
-                 "col codec: corrupted front coding");
-      std::memcpy(out + off, out + prev_off, lcp);
-      const auto room = capacity - (off + lcp);
-      const auto dec =
-        enc == 0 ? 0 : fsst->Decode(in + enc_off, enc, out + off + lcp, room);
-      SDB_ENSURE(dec <= room, "col codec: corrupted entry");
-      const auto len = lcp + dec;
-      values[e] = string_t{out + off, static_cast<uint32_t>(len)};
-      prev_off = off;
-      prev_len = len;
-      off += len;
-      enc_off += enc;
-    }
+    WalkChain(*fsst, Data(), length_reader, lcp_reader, first, end,
+              group_enc_off[group_base[f] + g], header.data_size, out, capacity,
+              [&](uint32_t e, std::string_view v) { return Keep(e, v); });
     group_decoded[group_base[f] + g] = 1;
   }
 
@@ -662,17 +656,15 @@ struct ScanState final : duckdb::SegmentScanState {
       EnsureGroupOffsets(f);
       enc_off = group_enc_off[group_base[f] + g];
     }
-    const auto enc = length_reader.At(e);
-    SDB_ENSURE(enc_off + enc <= header.data_size,
-               "col codec: corrupted front coding");
-    probe.resize(uint64_t{enc} * kFsstMaxExpansion + 1);
-    const auto* in = reinterpret_cast<const char*>(base + header.off_data);
-    const auto n =
-      enc == 0 ? 0
-               : fsst->Decode(in + enc_off, enc, probe.data(), probe.size());
-    SDB_ENSURE(n <= probe.size(), "col codec: corrupted entry");
-    probe.resize(n);
-    return probe;
+    probe.resize(ChainCapacity(length_reader, lcp_reader, e, e + 1));
+    std::string_view head;
+    WalkChain(*fsst, Data(), length_reader, lcp_reader, e, e + 1, enc_off,
+              header.data_size, probe.data(), probe.size(),
+              [&](uint32_t, std::string_view v) {
+                head = v;
+                return true;
+              });
+    return head;
   }
 
   template<typename Before>
@@ -730,29 +722,12 @@ struct ScanState final : duckdb::SegmentScanState {
       return end;
     }
     EnsureGroupOffsets(f);
-    const auto* in = reinterpret_cast<const char*>(base + header.off_data);
-    uint64_t enc_off = group_enc_off[group_base[f] + g];
-    probe_prev.clear();
-    for (auto e = first; e < end; ++e) {
-      const uint64_t lcp = e == first ? 0 : lcp_reader.At(e);
-      const uint64_t enc = length_reader.At(e);
-      SDB_ENSURE(lcp <= probe_prev.size() && enc_off + enc <= header.data_size,
-                 "col codec: corrupted front coding");
-      probe.assign(probe_prev, 0, lcp);
-      probe.resize(lcp + enc * kFsstMaxExpansion);
-      const auto dec = enc == 0
-                         ? 0
-                         : fsst->Decode(in + enc_off, enc, probe.data() + lcp,
-                                        probe.size() - lcp);
-      SDB_ENSURE(lcp + dec <= probe.size(), "col codec: corrupted entry");
-      probe.resize(lcp + dec);
-      if (!before(std::string_view{probe})) {
-        return e;
-      }
-      probe_prev.swap(probe);
-      enc_off += enc;
-    }
-    return end;
+    probe.resize(ChainCapacity(length_reader, lcp_reader, first, end));
+    return WalkChain(*fsst, Data(), length_reader, lcp_reader, first, end,
+                     group_enc_off[group_base[f] + g], header.data_size,
+                     probe.data(), probe.size(),
+                     [&](uint32_t, std::string_view v) { return before(v); })
+      .stop;
   }
 
   uint32_t Lower(std::string_view key) {
@@ -933,10 +908,7 @@ struct ScanState final : duckdb::SegmentScanState {
   void ScanFlat(duckdb::Vector& result, idx_t result_offset, idx_t start,
                 idx_t count) {
     if (!Dedup()) {
-      if (count != 0) {
-        EnsureEntries(static_cast<uint32_t>(start),
-                      static_cast<uint32_t>(start + count - 1));
-      }
+      EnsureEach<false>(count, [&](idx_t i) { return start + i; });
       duckdb::StringVector::AddHeapReference(result, dictionary->data);
       auto writer =
         duckdb::FlatVector::Writer<string_t>(result, count, result_offset);
@@ -959,13 +931,8 @@ struct ScanState final : duckdb::SegmentScanState {
   void ScanFiltered(duckdb::Vector& result,
                     const duckdb::SelectionVector& codes, idx_t count,
                     const duckdb::SelectionVector& rows, idx_t row_count) {
-    const bool sparse = row_count <= kSparseEntries;
-    uint32_t f = kNoFrame;
-    for (idx_t i = 0; i < row_count; ++i) {
-      if (const auto code = codes.get_index(rows.get_index(i)); code != 0) {
-        EnsureEntry(static_cast<uint32_t>(code), f, sparse);
-      }
-    }
+    EnsureEach<true>(
+      row_count, [&](idx_t i) { return codes.get_index(rows.get_index(i)); });
     duckdb::StringVector::AddHeapReference(result, dictionary->data);
     auto writer = duckdb::FlatVector::Writer<string_t>(result, count);
     idx_t next = 0;
@@ -984,7 +951,8 @@ struct ScanState final : duckdb::SegmentScanState {
   void SelectFlat(duckdb::Vector& result, idx_t start,
                   const duckdb::SelectionVector& rows, idx_t count) {
     SDB_ASSERT(!Dedup());
-    EnsureSelected(start, rows, count);
+    EnsureEach<false>(count,
+                      [&](idx_t i) { return start + rows.get_index(i); });
     duckdb::StringVector::AddHeapReference(result, dictionary->data);
     auto writer = duckdb::FlatVector::Writer<string_t>(result, count);
     for (idx_t i = 0; i < count; ++i) {
@@ -1017,7 +985,6 @@ struct ScanState final : duckdb::SegmentScanState {
   std::vector<uint8_t> group_offsets_ready;
   uint64_t group_heap_bytes = 0;
   std::string probe;
-  std::string probe_prev;
   std::optional<LeafDecompressor<ByteCodec::Lz4>> lz4;
   std::optional<LeafDecompressor<ByteCodec::Zstd>> zstd;
   std::optional<LeafDecompressor<ByteCodec::Zxc>> zxc;
@@ -1210,8 +1177,7 @@ struct FetchCache final : duckdb::SegmentScanState {
   std::vector<uint32_t> fsst_group_base;
   std::vector<uint32_t> fsst_known;
   std::vector<uint64_t> fsst_offsets;
-  std::string prev;
-  std::string cur;
+  std::string chain;
 
   template<typename Decompressor>
   void Decode(Decompressor& d, const FrameMeta& f, const Header& h,
@@ -1399,29 +1365,17 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
       }
       offsets[known] = off;
     }
-    uint64_t enc_off = offsets[group];
-    auto& prev = cache.prev;
-    auto& cur = cache.cur;
-    prev.clear();
-    for (uint32_t e = restart; e <= entry; ++e) {
-      const uint64_t lcp = e == restart ? 0 : lcps.At(e);
-      const uint64_t enc = lengths.At(e);
-      SDB_ENSURE(lcp <= prev.size() && enc_off + enc <= h.data_size,
-                 "col codec: corrupted front coding");
-      cur.assign(prev, 0, lcp);
-      const auto capacity = enc * kFsstMaxExpansion;
-      cur.resize(lcp + capacity);
-      const auto dec =
-        enc == 0
-          ? 0
-          : cache.fsst->Decode(in + enc_off, enc, cur.data() + lcp, capacity);
-      SDB_ENSURE(dec <= capacity, "col codec: corrupted entry");
-      cur.resize(lcp + dec);
-      prev.swap(cur);
-      enc_off += enc;
-    }
+    auto& chain = cache.chain;
+    chain.resize(ChainCapacity(lengths, lcps, restart, entry + 1));
+    std::string_view value;
+    WalkChain(*cache.fsst, in, lengths, lcps, restart, entry + 1,
+              offsets[group], h.data_size, chain.data(), chain.size(),
+              [&](uint32_t, std::string_view v) {
+                value = v;
+                return true;
+              });
     out[result_idx] =
-      duckdb::StringVector::AddStringOrBlob(result, prev.data(), prev.size());
+      duckdb::StringVector::AddStringOrBlob(result, value.data(), value.size());
     return;
   }
 

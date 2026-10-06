@@ -28,6 +28,8 @@
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/function/compression_function.hpp>
 #include <duckdb/main/config.hpp>
+#include <duckdb/planner/expression/bound_comparison_expression.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
@@ -1250,6 +1252,85 @@ TEST_F(ColCodecsTest, GatherFilterReleasesPassedSegments) {
     expected += value(g).has_value() ? 1 : 0;
   }
   EXPECT_EQ(kept, expected);
+}
+
+TEST_F(ColCodecsTest, SortedDictionaryFiltersMatchTheValues) {
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 13 == 0) {
+      return std::nullopt;
+    }
+    char buf[48];
+    std::snprintf(buf, sizeof buf, "tenant-%05llu/item",
+                  static_cast<unsigned long long>((g * 7919) % 3000));
+    return std::string{buf};
+  };
+  constexpr uint64_t kRows = 30000;
+  irs::MemoryDirectory dir{};
+  Write(dir, duckdb::CompressionType::COMPRESSION_DICT_FSST, {}, kRows, 8192,
+        value);
+  irs::ColReader r{dir, std::string{kSeg}, Db()};
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  duckdb::Connection con{_db};
+  using Cmp = duckdb::ExpressionType;
+  const auto holds = [](Cmp cmp, std::string_view v, std::string_view key) {
+    switch (cmp) {
+      case Cmp::COMPARE_EQUAL:
+        return v == key;
+      case Cmp::COMPARE_NOTEQUAL:
+        return v != key;
+      case Cmp::COMPARE_LESSTHAN:
+        return v < key;
+      case Cmp::COMPARE_LESSTHANOREQUALTO:
+        return v <= key;
+      case Cmp::COMPARE_GREATERTHAN:
+        return v > key;
+      default:
+        return v >= key;
+    }
+  };
+  for (const std::string key :
+       {"tenant-00000/item", "tenant-01499/item", "tenant-01499/itex",
+        "tenant-02999/item", "a", "z"}) {
+    for (const auto cmp :
+         {Cmp::COMPARE_EQUAL, Cmp::COMPARE_NOTEQUAL, Cmp::COMPARE_LESSTHAN,
+          Cmp::COMPARE_LESSTHANOREQUALTO, Cmp::COMPARE_GREATERTHAN,
+          Cmp::COMPARE_GREATERTHANOREQUALTO}) {
+      const duckdb::ExpressionFilter filter{
+        duckdb::BoundComparisonExpression::Create(
+          cmp,
+          duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+            duckdb::LogicalType::VARCHAR, 0),
+          duckdb::make_uniq<duckdb::BoundConstantExpression>(
+            duckdb::Value{key}))};
+      auto filter_state =
+        duckdb::TableFilterState::Initialize(*con.context, filter);
+      auto state = col->InitScan(r.Ctx());
+      for (uint64_t anchor = 0; anchor < kRows;
+           anchor += STANDARD_VECTOR_SIZE) {
+        const auto span =
+          std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+        duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+        for (duckdb::idx_t i = 0; i < span; ++i) {
+          sel.set_index(i, i);
+        }
+        duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+        const auto kept =
+          col->GatherFilter(state, anchor, span, sel, span, filter,
+                            *filter_state, irs::NullCheckKind::None, out);
+        duckdb::idx_t next = 0;
+        for (duckdb::idx_t i = 0; i < span; ++i) {
+          const auto v = value(anchor + i);
+          const bool expected = v && holds(cmp, *v, key);
+          const bool got = next < kept && sel.get_index(next) == i;
+          next += got ? 1 : 0;
+          ASSERT_EQ(got, expected)
+            << "row " << anchor + i << " key " << key << " cmp "
+            << duckdb::EnumUtil::ToString(cmp);
+        }
+      }
+    }
+  }
 }
 
 TEST_F(ColCodecsTest, ZxcFramesAfterAnOversizedEntryCanBeEmpty) {

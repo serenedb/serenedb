@@ -185,7 +185,7 @@ bool PhraseSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     }
   }
   if (phrase.options().size() != 1 ||
-      !phrase.options().word_separator().empty()) {
+      !phrase.options().word_separator().empty() || phrase.options().tokens()) {
     return false;
   }
   const auto field = phrase.field_id();

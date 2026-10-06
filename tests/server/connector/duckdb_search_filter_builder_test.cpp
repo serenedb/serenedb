@@ -1990,7 +1990,7 @@ TEST_F(SearchFilterBuilderTest, test_SimplePhraseNoFeatures) {
     expected,
     "SELECT * FROM foo WHERE category @@ ts_phrase('quick brown fox')", columns,
     false, SegmentationAnalyzerProviderBase<irs::IndexFeatures::Freq>,
-    "Positions and Frequency");
+    "needs the column's text in the index");
 }
 
 TEST_F(SearchFilterBuilderTest, test_SimpleAndPhrase) {
@@ -6789,8 +6789,6 @@ TEST_F(SearchFilterBuilderTest, test_SloppyPhraseOnNonStringField) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_SloppyPhraseOnNonAnalyzedField) {
-  // VARCHAR column without the Positions+Frequency index features is
-  // rejected. Mirrors the existing test_SimplePhraseNoFeatures setup.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
   irs::BooleanFilter expected;  // unused on the negative path
@@ -6799,7 +6797,7 @@ TEST_F(SearchFilterBuilderTest, test_SloppyPhraseOnNonAnalyzedField) {
                "ts_phrase('quick brown fox', slop := 2)",
                columns, false,
                SegmentationAnalyzerProviderBase<irs::IndexFeatures::Freq>,
-               "Positions and Frequency");
+               "needs the column's text in the index");
 }
 
 TEST_F(SearchFilterBuilderTest, test_SloppyPhraseMultipleChunksMultipleGaps) {
@@ -6929,10 +6927,6 @@ TEST_F(SearchFilterBuilderTest, test_SloppyPhraseIntervalGapZeroSlop) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_SloppyPhraseSingleTokenFreqOnly) {
-  // A single-term sloppy phrase reduces to a term query at prepare
-  // time (GetKind -> kSingleWord) and the matcher ignores slop for
-  // phrase_size == 1, so a Freq-only column is accepted -- mirrors
-  // ts_phrase, which only requires Positions for multi-term phrases.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
   irs::BooleanFilter expected;

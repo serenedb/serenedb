@@ -26,6 +26,7 @@
 #include <iresearch/analysis/shingle_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
+#include <iresearch/search/detail/token_phrase.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/filters/shingle_phrase.hpp>
@@ -36,6 +37,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
 
+#include "catalog/entry/tokenizer.h"
 #include "connector/functions/ts_query_codec.h"
 #include "search.h"
 #include "string.h"
@@ -163,9 +165,63 @@ bool HasPatternParts(const irs::ByPhraseOptions& options) {
   });
 }
 
+bool HasPositions(const SearchColumnInfo& column_info) {
+  return irs::IsSubsetOf(irs::PhraseQuery::kRequiredFeatures,
+                         column_info.tokenizer.features);
+}
+
+irs::PhraseTokens::Factory TokenizerFactory(const SearchColumnInfo& column_info,
+                                            duckdb::ClientContext& context,
+                                            bool words) {
+  auto source = column_info.tokenizer.analyzer.get_deleter().tokenizer;
+  if (!source || !irs::field_limits::valid(column_info.stored_field_id) ||
+      column_info.logical_type.IsJSONType() ||
+      irs::field_limits::valid(column_info.numeric_field_id)) {
+    return {};
+  }
+  return [source = std::move(source), context = &context,
+          words] -> std::shared_ptr<irs::analysis::Tokenizer> {
+    auto acquired = source->Acquire(*context);
+    auto deleter = acquired.get_deleter();
+    std::shared_ptr<irs::analysis::Tokenizer> tokenizer{acquired.release(),
+                                                        std::move(deleter)};
+    if (!words) {
+      return tokenizer;
+    }
+    auto& shingle =
+      irs::utils::downCast<irs::analysis::ShingleTokenizer>(*tokenizer);
+    return {tokenizer, &shingle.Base()};
+  };
+}
+
+void CheckTokens(const SearchColumnInfo& column_info,
+                 duckdb::ClientContext& context, irs::ByPhraseOptions& options,
+                 std::optional<irs::ByPhraseOptions> spec, bool words,
+                 std::string_view label, std::string_view hint) {
+  auto tokenizer = TokenizerFactory(column_info, context, words);
+  if (!tokenizer) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(label,
+              " on a column without positions needs the column's text in "
+              "the index"),
+      ERR_HINT("Add `position` to the dictionary, keep the column's text in "
+               "the index with `INCLUDE`, ",
+               hint, "."));
+  }
+  auto tokens = std::make_shared<irs::PhraseTokens>();
+  tokens->column = column_info.stored_field_id;
+  tokens->tokenizer = std::move(tokenizer);
+  tokens->spec = std::move(spec);
+  options.set_tokens(std::move(tokens));
+}
+
 void PlanShingles(const irs::analysis::ShingleTokenizer& shingle,
                   const SearchColumnInfo& column_info,
-                  irs::ByPhraseOptions& options, std::string_view label) {
+                  irs::ByPhraseOptions& options, std::string_view label,
+                  duckdb::ClientContext& context) {
+  static constexpr std::string_view kHint =
+    "or raise `max_gram` to the phrase length";
   if (options.size() == 1) {
     if (!shingle.OutputUnigrams()) {
       THROW_SQL_ERROR(
@@ -180,18 +236,16 @@ void PlanShingles(const irs::analysis::ShingleTokenizer& shingle,
     }
     return;
   }
-  if (!irs::IsSubsetOf(irs::PhraseQuery::kRequiredFeatures,
-                       column_info.tokenizer.features)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG(label,
-              " on this shingle column needs positions: its shingles do "
-              "not cover the phrase"),
-      ERR_HINT("Add `position` to the dictionary, or raise `max_gram` to "
-               "the phrase length."));
-  }
+  const bool positions = HasPositions(column_info);
   if (auto cover = irs::ShingleCover(shingle, options)) {
+    if (positions) {
+      options = std::move(*cover);
+      return;
+    }
+    auto words = std::move(options);
     options = std::move(*cover);
+    CheckTokens(column_info, context, options, std::move(words), true, label,
+                kHint);
     return;
   }
   if (!shingle.OutputUnigrams()) {
@@ -213,6 +267,10 @@ void PlanShingles(const irs::analysis::ShingleTokenizer& shingle,
                "`token_separator`."));
   }
   options.set_word_separator(shingle.Separator());
+  if (!positions) {
+    CheckTokens(column_info, context, options, std::nullopt, true, label,
+                kHint);
+  }
 }
 
 void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
@@ -226,18 +284,10 @@ void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
               *term, ctx.boost);
       return;
     }
-    PlanShingles(*shingle, column_info, options, label);
-  } else if (options.size() > 1 &&
-             !irs::IsSubsetOf(irs::PhraseQuery::kRequiredFeatures,
-                              column_info.tokenizer.features)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG(label,
-              " field should have Positions and Frequency features "
-              "enabled for multi-term phrases"),
-      ERR_HINT("Recreate the inverted index with both `Positions` and "
-               "`Frequency` features attached to the column, or query with ",
-               single_hint, "."));
+    PlanShingles(*shingle, column_info, options, label, ctx.client_context);
+  } else if (options.size() > 1 && !HasPositions(column_info)) {
+    CheckTokens(column_info, ctx.client_context, options, std::nullopt, false,
+                label, absl::StrCat("or query with ", single_hint));
   }
   AddPhrase(parent, ctx, column_info, std::move(options));
 }
@@ -250,21 +300,27 @@ irs::analysis::Tokenizer& PhraseAnalyzer(const FilterContext& ctx,
   return shingle ? shingle->Base() : ctx.tokenizer;
 }
 
-void PlanShinglePhrases(
-  irs::Filter& root,
-  absl::FunctionRef<const SearchColumnInfo*(irs::field_id)> column_of) {
+void PlanPhrases(irs::Filter& root, duckdb::ClientContext& context,
+                 absl::FunctionRef<PhraseField(irs::field_id)> field_of) {
   root.VisitChildren([&](irs::Filter::ptr& child, bool) {
     if (child->type() != irs::Type<irs::ByPhrase>::id()) {
-      PlanShinglePhrases(*child, column_of);
+      PlanPhrases(*child, context, field_of);
       return;
     }
     auto& phrase = irs::utils::downCast<irs::ByPhrase>(*child);
-    const auto* column_info = column_of(phrase.field_id());
-    const auto* shingle = column_info ? ShingleOf(*column_info) : nullptr;
-    if (!shingle || phrase.options().empty()) {
+    const auto [column_info, shingle] = field_of(phrase.field_id());
+    auto& options = *phrase.mutable_options();
+    if (!column_info || options.empty()) {
       return;
     }
-    if (auto term = irs::ShingleTerm(*shingle, phrase.options())) {
+    if (!shingle) {
+      if (options.size() > 1 && !HasPositions(*column_info)) {
+        CheckTokens(*column_info, context, options, std::nullopt, false,
+                    "to_tsquery", "or search for single words");
+      }
+      return;
+    }
+    if (auto term = irs::ShingleTerm(*shingle, options)) {
       auto filter = std::make_unique<irs::ByTerm>();
       *filter->mutable_field_id() = phrase.field_id();
       filter->mutable_options()->term = std::move(*term);
@@ -273,8 +329,7 @@ void PlanShinglePhrases(
       child = std::move(filter);
       return;
     }
-    PlanShingles(*shingle, *column_info, *phrase.mutable_options(),
-                 "to_tsquery");
+    PlanShingles(*shingle, *column_info, options, "to_tsquery", context);
   });
 }
 

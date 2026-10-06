@@ -297,11 +297,12 @@ void FromToTsquery(BoolTarget parent, const FilterContext& ctx,
       ERR_MSG("to_tsquery parse error: ", parser_ctx.error_message),
       ERR_HINT(kSyntaxHint));
   }
-  PlanShinglePhrases(root, [&](irs::field_id field) -> const SearchColumnInfo* {
+  PlanPhrases(root, ctx.client_context, [&](irs::field_id field) {
     if (field == parser_ctx.default_field_id) {
-      return QueryShingle(ctx, column_info) ? &column_info : nullptr;
+      return PhraseField{&column_info, QueryShingle(ctx, column_info)};
     }
-    return provider ? provider->Find(field) : nullptr;
+    const auto* info = provider ? provider->Find(field) : nullptr;
+    return PhraseField{info, info ? ShingleOf(*info) : nullptr};
   });
 }
 

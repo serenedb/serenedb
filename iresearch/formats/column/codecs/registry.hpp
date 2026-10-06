@@ -37,4 +37,6 @@ std::optional<StringChoice> ChoiceOf(duckdb::CompressionType type);
 
 duckdb::CompressionType TypeOf(StringChoice choice) noexcept;
 
+uint8_t MaxLevel(duckdb::CompressionType type);
+
 }  // namespace irs::codecs

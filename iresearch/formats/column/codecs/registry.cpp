@@ -90,4 +90,22 @@ duckdb::CompressionType TypeOf(StringChoice choice) noexcept {
   return duckdb::CompressionType::COMPRESSION_AUTO;
 }
 
+uint8_t MaxLevel(duckdb::CompressionType type) {
+  const auto choice = ChoiceOf(type);
+  if (!choice) {
+    return 0;
+  }
+  switch (choice->leaf) {
+    case ByteCodec::Lz4:
+      return Leaf<ByteCodec::Lz4>::kMaxLevel;
+    case ByteCodec::Zstd:
+      return Leaf<ByteCodec::Zstd>::kMaxLevel;
+    case ByteCodec::Zxc:
+      return Leaf<ByteCodec::Zxc>::kMaxLevel;
+    case ByteCodec::Fsst:
+      return 0;
+  }
+  return 0;
+}
+
 }  // namespace irs::codecs

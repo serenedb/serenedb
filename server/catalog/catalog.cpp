@@ -567,6 +567,29 @@ static void RefuseViewAlter(const duckdb::AlterTableInfo& info,
                   ERR_DETAIL("This operation is not supported for views."));
 }
 
+static void CheckAlterCompression(const duckdb::AlterTableInfo& info,
+                                  const duckdb::TableCatalogEntry& table) {
+  const auto engine = dynamic_cast<const SearchTableEntry*>(&table)
+                        ? TableEngine::Search
+                        : TableEngine::Transactional;
+  if (info.alter_table_type == duckdb::AlterTableType::ADD_COLUMN) {
+    CheckColumnCompression(info.Cast<duckdb::AddColumnInfo>().new_column,
+                           engine);
+    return;
+  }
+  if (info.alter_table_type != duckdb::AlterTableType::SET_COLUMN_COMPRESSION) {
+    return;
+  }
+  const auto& set = info.Cast<duckdb::SetColumnCompressionInfo>();
+  if (!table.ColumnExists(set.column_name)) {
+    return;
+  }
+  auto column = table.GetColumn(set.column_name).Copy();
+  column.SetCompressionType(set.compression_type);
+  column.SetCompressionLevel(set.compression_level);
+  CheckColumnCompression(column, engine);
+}
+
 void SereneDBCatalog::RefuseUnsupportedAlter(duckdb::ClientContext& context,
                                              duckdb::AlterInfo& info) {
   duckdb::CatalogEntryRetriever retriever{context};
@@ -588,6 +611,11 @@ void SereneDBCatalog::RefuseUnsupportedAlter(duckdb::ClientContext& context,
   }
   if (lookup.entry->type == duckdb::CatalogType::VIEW_ENTRY) {
     RefuseViewAlter(info.Cast<duckdb::AlterTableInfo>(), name);
+    return;
+  }
+  if (lookup.entry->type == duckdb::CatalogType::TABLE_ENTRY) {
+    CheckAlterCompression(info.Cast<duckdb::AlterTableInfo>(),
+                          lookup.entry->Cast<duckdb::TableCatalogEntry>());
   }
 }
 
@@ -622,34 +650,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateForeignServer(
 
 void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
                             duckdb::AlterInfo& info) {
-  if (info.type == duckdb::AlterType::ALTER_TABLE && transaction.context) {
-    const auto alter_type =
-      info.Cast<duckdb::AlterTableInfo>().alter_table_type;
-    const bool add = alter_type == duckdb::AlterTableType::ADD_COLUMN;
-    const bool set_compression =
-      alter_type == duckdb::AlterTableType::SET_COLUMN_COMPRESSION;
-    const auto table = add || set_compression
-                         ? duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
-                             *transaction.context, info.GetQualifiedName(),
-                             duckdb::OnEntryNotFound::RETURN_NULL)
-                         : nullptr;
-    const auto engine = dynamic_cast<const SearchTableEntry*>(table.get())
-                          ? TableEngine::Search
-                          : TableEngine::Transactional;
-    if (add) {
-      CheckColumnCompression(info.Cast<duckdb::AddColumnInfo>().new_column,
-                             engine);
-    }
-    const auto* set = set_compression
-                        ? &info.Cast<duckdb::SetColumnCompressionInfo>()
-                        : nullptr;
-    if (set && table && table->ColumnExists(set->column_name)) {
-      auto column = table->GetColumn(set->column_name).Copy();
-      column.SetCompressionType(set->compression_type);
-      column.SetCompressionLevel(set->compression_level);
-      CheckColumnCompression(column, engine);
-    }
-  }
   const auto type = info.GetCatalogType();
   if (const auto new_name = info.GetNewName();
       new_name && type == duckdb::CatalogType::SCHEMA_ENTRY &&

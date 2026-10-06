@@ -21,6 +21,7 @@
 #include "catalog/entry/search_table.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/functional/function_ref.h>
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
@@ -45,6 +46,7 @@
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table/row_group_collection.hpp>
+#include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
@@ -97,68 +99,65 @@ duckdb::unique_ptr<duckdb::ConstantExpression> OptionConstant(
   return duckdb::ConstantExpression::String(value.ToString());
 }
 
-constexpr uint32_t kMaxCompressionLevel = 22;
+constexpr uint32_t kMaxCompressionLevel =
+  irs::codecs::Leaf<irs::codecs::ByteCodec::Zstd>::kMaxLevel;
 constexpr uint32_t kSegmentTargetGranule = 4096;
 constexpr uint32_t kMinSegmentTarget = 16 * 1024;
 
-std::optional<uint32_t> UintOption(const WithOptions& options,
-                                   std::string_view name) {
+void BindCodecOption(
+  WithOptions& options, std::string_view name, const duckdb::LogicalType& type,
+  std::string_view rule,
+  absl::FunctionRef<std::optional<duckdb::Value>(const duckdb::Value&)> canon) {
   if (!options.contains(name)) {
-    return std::nullopt;
+    return;
   }
+  std::optional<duckdb::Value> value;
   if (const auto constant = FindConstant(options, name)) {
-    if (const auto value = constant->GetLiteral().ToValue().DefaultTryCastAs(
-          duckdb::LogicalType::UINTEGER)) {
-      return value->GetValue<uint32_t>();
+    if (const auto cast =
+          constant->GetLiteral().ToValue().DefaultTryCastAs(type)) {
+      value = canon(*cast);
     }
   }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-    ERR_MSG("WITH option \"", name, "\" expects a non-negative integer"));
+  if (!value) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("WITH option \"", name, "\" ", rule));
+  }
+  options[std::string{name}] = OptionConstant(*value);
 }
 
 void BindCodecOptions(WithOptions& options) {
-  const auto store = [&](std::string_view name, const duckdb::Value& value) {
-    options[std::string{name}] = OptionConstant(value);
-  };
-  if (const auto level = UintOption(options, kCompressionLevelSetting)) {
-    if (*level > kMaxCompressionLevel) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("WITH option \"", kCompressionLevelSetting,
-                "\" must be between 0 and ", kMaxCompressionLevel));
-    }
-    store(kCompressionLevelSetting, duckdb::Value::UINTEGER(*level));
-  }
-  if (const auto target = UintOption(options, kSegmentTargetSetting)) {
-    if (*target < kMinSegmentTarget || *target % kSegmentTargetGranule != 0) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("WITH option \"", kSegmentTargetSetting,
-                "\" must be a multiple of ", kSegmentTargetGranule,
-                " bytes of at least ", kMinSegmentTarget));
-    }
-    store(kSegmentTargetSetting, duckdb::Value::UINTEGER(*target));
-  }
-  if (!options.contains(kCompressionObjectiveSetting)) {
-    return;
-  }
-  std::optional<irs::AutoObjective> objective;
-  if (const auto constant =
-        FindConstant(options, kCompressionObjectiveSetting)) {
-    if (const auto text = constant->GetLiteral().ToValue().DefaultTryCastAs(
-          duckdb::LogicalType::VARCHAR)) {
-      objective = ParseCompressionObjective(
-        duckdb::StringUtil::Lower(text->GetValue<std::string>()));
-    }
-  }
-  if (!objective) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("WITH option \"", kCompressionObjectiveSetting,
-                            "\" must be one of balanced, size, speed"));
-  }
-  store(kCompressionObjectiveSetting,
-        duckdb::Value{std::string{CompressionObjectiveName(*objective)}});
+  using Canon = std::optional<duckdb::Value>;
+  BindCodecOption(options, kCompressionLevelSetting,
+                  duckdb::LogicalType::UINTEGER,
+                  absl::StrCat("must be between 0 and ", kMaxCompressionLevel),
+                  [](const duckdb::Value& v) -> Canon {
+                    if (v.GetValue<uint32_t>() > kMaxCompressionLevel) {
+                      return std::nullopt;
+                    }
+                    return v;
+                  });
+  BindCodecOption(
+    options, kSegmentTargetSetting, duckdb::LogicalType::UINTEGER,
+    absl::StrCat("must be a multiple of ", kSegmentTargetGranule,
+                 " bytes of at least ", kMinSegmentTarget),
+    [](const duckdb::Value& v) -> Canon {
+      const auto target = v.GetValue<uint32_t>();
+      if (target < kMinSegmentTarget || target % kSegmentTargetGranule != 0) {
+        return std::nullopt;
+      }
+      return v;
+    });
+  BindCodecOption(
+    options, kCompressionObjectiveSetting, duckdb::LogicalType::VARCHAR,
+    "must be one of balanced, size, speed",
+    [](const duckdb::Value& v) -> Canon {
+      const auto objective = ParseCompressionObjective(
+        duckdb::StringUtil::Lower(v.GetValue<std::string>()));
+      if (!objective) {
+        return std::nullopt;
+      }
+      return duckdb::Value{std::string{CompressionObjectiveName(*objective)}};
+    });
 }
 
 void BindOptions(duckdb::ClientContext& context, WithOptions& options) {
@@ -208,19 +207,19 @@ SearchTableOptions ResolveOptions(const WithOptions& options) {
       constant->GetLiteral().ToValue().GetValue<std::string>();
   }
   if (const auto constant = FindConstant(options, kCompressionLevelSetting)) {
-    result.compression_level = static_cast<uint8_t>(
+    result.codec.compression_level = static_cast<uint8_t>(
       constant->GetLiteral().ToValue().GetValue<uint32_t>());
   }
   if (const auto constant = FindConstant(options, kSegmentTargetSetting)) {
-    result.segment_target =
+    result.codec.segment_target =
       constant->GetLiteral().ToValue().GetValue<uint32_t>();
   }
   if (const auto constant =
         FindConstant(options, kCompressionObjectiveSetting)) {
-    result.compression_objective = static_cast<uint8_t>(
+    result.codec.objective =
       ParseCompressionObjective(
         constant->GetLiteral().ToValue().GetValue<std::string>())
-        .value_or(irs::AutoObjective::Balanced));
+        .value_or(irs::AutoObjective::Balanced);
   }
   return result;
 }
@@ -299,8 +298,6 @@ void RequireSearchTableIndexOption(std::string_view name) {
   }
 }
 
-namespace {
-
 duckdb::PhysicalType LeafPhysicalType(const duckdb::LogicalType& type) {
   switch (type.id()) {
     case duckdb::LogicalTypeId::ARRAY:
@@ -312,7 +309,10 @@ duckdb::PhysicalType LeafPhysicalType(const duckdb::LogicalType& type) {
   }
 }
 
-}  // namespace
+bool SearchTableOnly(duckdb::CompressionType type) noexcept {
+  return duckdb::IsSereneDBCompressionType(type) ||
+         type == duckdb::CompressionType::COMPRESSION_FSST;
+}
 
 void CheckCompressionLevel(std::string_view column_name,
                            duckdb::CompressionType type, uint8_t level,
@@ -320,27 +320,10 @@ void CheckCompressionLevel(std::string_view column_name,
   if (level == 0) {
     return;
   }
-  uint8_t max_level = 0;
-  switch (type) {
-    case duckdb::CompressionType::COMPRESSION_DICT_LZ4:
-    case duckdb::CompressionType::COMPRESSION_LZ4:
-      max_level = 12;
-      break;
-    case duckdb::CompressionType::COMPRESSION_ZSTD:
-      if (!columnstore) {
-        break;
-      }
-      [[fallthrough]];
-    case duckdb::CompressionType::COMPRESSION_DICT_ZSTD:
-      max_level = 22;
-      break;
-    case duckdb::CompressionType::COMPRESSION_DICT_ZXC:
-    case duckdb::CompressionType::COMPRESSION_ZXC:
-      max_level = 7;
-      break;
-    default:
-      break;
-  }
+  const uint8_t max_level =
+    columnstore || type != duckdb::CompressionType::COMPRESSION_ZSTD
+      ? irs::codecs::MaxLevel(type)
+      : 0;
   const auto name =
     duckdb::StringUtil::Lower(duckdb::CompressionTypeToString(type));
   if (max_level == 0) {
@@ -363,8 +346,7 @@ void CheckColumnCompression(const duckdb::ColumnDefinition& column,
   const auto& name = column.Name().GetIdentifierName();
   CheckCompressionLevel(name, type, column.CompressionLevel(),
                         engine == TableEngine::Search);
-  if (!duckdb::IsSereneDBCompressionType(type) &&
-      type != duckdb::CompressionType::COMPRESSION_FSST) {
+  if (!SearchTableOnly(type)) {
     return;
   }
   if (engine != TableEngine::Search) {
@@ -656,14 +638,10 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::SetColumnCompression(
   auto result = Rebuilt(context, info, std::move(create));
   auto declared =
     search::SearchTable::DeclaredCompression(result->GetColumns());
-  if (auto* connection = connector::GetSereneDBContextPtr(context)) {
-    connection->DeferToCommit(
-      [storage = _storage, declared = std::move(declared)]() mutable {
-        storage->SetDeclaredCompression(std::move(declared));
-      });
-  } else {
-    _storage->SetDeclaredCompression(std::move(declared));
-  }
+  connector::RunAtCommit(
+    context, [storage = _storage, declared = std::move(declared)]() mutable {
+      storage->SetDeclaredCompression(std::move(declared));
+    });
   return result;
 }
 
@@ -709,18 +687,17 @@ duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
   if (!_options.optimize_top_k.empty()) {
     set(kOptimizeTopKSetting, duckdb::Value{_options.optimize_top_k});
   }
-  if (_options.compression_level != 0) {
+  const auto& codec = _options.codec;
+  if (codec.compression_level != 0) {
     set(kCompressionLevelSetting,
-        duckdb::Value::UINTEGER(_options.compression_level));
+        duckdb::Value::UINTEGER(codec.compression_level));
   }
-  if (_options.segment_target != SearchTableOptions{}.segment_target) {
-    set(kSegmentTargetSetting,
-        duckdb::Value::UINTEGER(_options.segment_target));
+  if (codec.segment_target != irs::kDefaultColSegmentTarget) {
+    set(kSegmentTargetSetting, duckdb::Value::UINTEGER(codec.segment_target));
   }
-  if (_options.compression_objective != 0) {
+  if (codec.objective != irs::AutoObjective::Balanced) {
     set(kCompressionObjectiveSetting,
-        duckdb::Value{std::string{CompressionObjectiveName(
-          static_cast<irs::AutoObjective>(_options.compression_objective))}});
+        duckdb::Value{std::string{CompressionObjectiveName(codec.objective)}});
   }
   return info;
 }
@@ -931,13 +908,10 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterOptions(
   auto result = duckdb::make_uniq<SearchTableEntry>(
     catalog, ParentSchema(context), *bound,
     catalog.GetCatalogTransaction(context), _storage, triggers);
-  if (auto* connection = connector::GetSereneDBContextPtr(context)) {
-    connection->DeferToCommit([storage = _storage, options = result->_options] {
-      storage->ApplyOptions(options);
-    });
-  } else {
-    _storage->ApplyOptions(result->_options);
-  }
+  connector::RunAtCommit(context,
+                         [storage = _storage, options = result->_options] {
+                           storage->ApplyOptions(options);
+                         });
   return result;
 }
 

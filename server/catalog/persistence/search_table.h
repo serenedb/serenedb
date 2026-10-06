@@ -21,6 +21,7 @@
 #pragma once
 
 #include <cstdint>
+#include <iresearch/index/column_info.hpp>
 #include <string>
 
 namespace sdb::catalog::persistence {
@@ -35,9 +36,7 @@ struct SearchTableOptions {
   uint64_t compaction_max_segments_bytes{5368709120};
   uint64_t compaction_floor_segment_bytes{2097152};
   std::string optimize_top_k;
-  uint8_t compression_level{0};
-  uint32_t segment_target{262144};
-  uint8_t compression_objective{0};
+  irs::ColCodecParams codec;
 
   bool operator==(const SearchTableOptions& rhs) const = default;
 };

@@ -89,10 +89,7 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
     _segment_memory_max{options.segment_memory_max},
     _row_group_size{options.row_group_size},
     _compression{std::move(compression)},
-    _codec_params{.compression_level = options.compression_level,
-                  .segment_target = options.segment_target,
-                  .objective = static_cast<irs::AutoObjective>(
-                    options.compression_objective)} {
+    _codec_params{options.codec} {
   if (!options.optimize_top_k.empty()) {
     _topk_options = ParseScorerExpression(nullptr, options.optimize_top_k);
     _topk_scorer = MakeScorer(*_topk_options);
@@ -111,15 +108,10 @@ void SearchTable::ApplyOptions(const catalog::SearchTableOptions& options) {
     options.compaction_max_segments_bytes;
   _maint_settings.compaction_floor_segment_bytes =
     options.compaction_floor_segment_bytes;
-  const irs::ColCodecParams codec_params{
-    .compression_level = options.compression_level,
-    .segment_target = options.segment_target,
-    .objective =
-      static_cast<irs::AutoObjective>(options.compression_objective)};
   {
     std::unique_lock lock(_table_lock);
-    if (_codec_params != codec_params) {
-      _codec_params = codec_params;
+    if (_codec_params != options.codec) {
+      _codec_params = options.codec;
       RebuildConfig();
     }
   }

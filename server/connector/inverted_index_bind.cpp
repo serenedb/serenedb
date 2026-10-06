@@ -159,8 +159,7 @@ duckdb::CompressionType ParseCompressionName(duckdb::ClientContext& context,
                                              std::string_view column_name,
                                              std::string_view name) {
   const auto type = duckdb::EnumUtil::FromString<duckdb::CompressionType>(name);
-  if (duckdb::IsSereneDBCompressionType(type) ||
-      type == duckdb::CompressionType::COMPRESSION_FSST) {
+  if (catalog::SearchTableOnly(type)) {
     return type;
   }
   auto& storage =
@@ -175,21 +174,6 @@ duckdb::CompressionType ParseCompressionName(duckdb::ClientContext& context,
   return type;
 }
 
-// The "data" physical type that a forced codec must support. Composite
-// types (ARRAY/LIST) recurse to their child; the codec is only applied
-// to the leaf data column, while validity/length sub-columns inside
-// FlushNode keep COMPRESSION_AUTO regardless of `forced`.
-duckdb::PhysicalType LeafDataPhysicalType(const duckdb::LogicalType& type) {
-  switch (type.id()) {
-    case duckdb::LogicalTypeId::ARRAY:
-      return LeafDataPhysicalType(duckdb::ArrayType::GetChildType(type));
-    case duckdb::LogicalTypeId::LIST:
-      return LeafDataPhysicalType(duckdb::ListType::GetChildType(type));
-    default:
-      return type.InternalType();
-  }
-}
-
 // Reject the `compression` option if the named codec doesn't support
 // the column's leaf physical type. Without this check, the failure
 // surfaces only during the asynchronous segment commit (logged, not
@@ -202,9 +186,8 @@ void ValidateColumnCompression(duckdb::ClientContext& context,
     return;
   }
   const auto& db_config = duckdb::DBConfig::GetConfig(context);
-  const auto leaf = LeafDataPhysicalType(column_type);
-  if (duckdb::IsSereneDBCompressionType(compression) ||
-      compression == duckdb::CompressionType::COMPRESSION_FSST) {
+  const auto leaf = catalog::LeafPhysicalType(column_type);
+  if (catalog::SearchTableOnly(compression)) {
     if (leaf == duckdb::PhysicalType::VARCHAR) {
       return;
     }

@@ -221,7 +221,6 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
       // segment machinery does not apply. Decode the current survivors through
       // the virtual gather the materialization path uses, narrow on the
       // compact vector, and map the surviving positions back to span offsets.
-      auto gather_span = span;
       if (f.row_gather) {
         const auto rows = f.reader->RowCount();
         while (survivors != 0 &&
@@ -231,7 +230,6 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
         if (survivors == 0) {
           break;
         }
-        gather_span = sel.get_index(survivors - 1) + 1;
       }
       auto& scratch = f.scratch->Reset();
       if (f.list_like) {
@@ -239,9 +237,8 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
       }
       if (f.extract) {
         f.extract->MaterializeSelected(anchor, sel, survivors, scratch);
-      } else if (gather_span <= STANDARD_VECTOR_SIZE) {
-        f.reader->GatherDense(f.scan, anchor, sel, survivors, gather_span,
-                              scratch);
+      } else if (!f.row_gather && span <= STANDARD_VECTOR_SIZE) {
+        f.reader->GatherDense(f.scan, anchor, sel, survivors, span, scratch);
       } else {
         f.reader->GatherScatter(f.scan, anchor, sel, survivors, scratch, 0);
       }

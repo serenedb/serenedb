@@ -1134,6 +1134,23 @@ id
 3
 4
 
+# DOCS_TEST: min_match_negated_nullable
+# DOCS_TEST_BODY
+query error negated group over nullable columns mixes index-only search predicates with a shape that must stay a row filter
+SELECT id
+FROM docs_idx
+WHERE NOT ((body @@ 'quick' OR dual IS NULL)::min_match(2) OR category = 'drama');
+
+query
+SELECT id
+FROM docs_idx
+WHERE (NOT body @@ 'quick' OR dual IS NOT NULL)::min_match(1) AND category <> 'drama'
+ORDER BY id;
+----
+id
+1
+4
+
 # DOCS_TEST: min_match_tsquery
 # DOCS_TEST_BODY
 query

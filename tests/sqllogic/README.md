@@ -110,6 +110,13 @@ To modify test parameters in Docker:
 command: /sqllogic/_execute_tests_in_docker.sh --your-parameters-here
 ```
 
+## Tests that run alone
+
+A test whose file has a `# exclusive` line runs after the parallel pool of its engine, by itself
+(`--jobs 1`). Use it for a test that leaves server-wide state other tests can observe, such as
+`catalog_listing_unreachable_iceberg.test_slow`, which keeps an unreachable catalog attached:
+while it is, a listing that is not scoped to one database fails in every session.
+
 ## Iceberg tests: fixture or Google BigLake
 
 `*_iceberg.test_slow` files do not spell out the catalog. They begin with

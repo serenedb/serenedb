@@ -945,7 +945,6 @@ duckdb::IndexStorageInfo InvertedStoreIndex::SerializeToDisk(
   duckdb::QueryContext, const duckdb::case_insensitive_map_t<duckdb::Value>&) {
   SDB_ENSURE(!_storage->IsOutOfSync(), "inverted index ", _index_id,
              " is out of sync with its store table; refusing to checkpoint");
-  _storage->Refresh();
   return StorageRecord(*this);
 }
 

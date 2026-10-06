@@ -21,12 +21,17 @@
 #include "connector/duckdb_storage_extension.h"
 
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
+#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
+#include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/storage_extension.hpp>
 #include <duckdb/storage/storage_manager.hpp>
+#include <duckdb/storage/table/data_table_info.hpp>
+#include <duckdb/storage/table/index_entry.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -34,17 +39,21 @@
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
+#include <memory>
+#include <vector>
 
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/foreign_server.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/inverted_store_index.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/optimizer/wrap_unsupported_types.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
 #include "pg/sql_utils.h"
+#include "search/inverted_index_storage.h"
 #include "server/utils/app_server.h"
 
 namespace sdb::connector {
@@ -111,11 +120,46 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
   return duckdb::make_uniq<duckdb::DuckTransactionManager>(db);
 }
 
+class SereneDBStorageExtension final : public duckdb::StorageExtension {
+ public:
+  void OnCheckpointBeforeHeader(duckdb::AttachedDatabase& db,
+                                duckdb::CheckpointOptions) final {
+    if (!InvertedStoreIndex::AnyBound()) {
+      return;
+    }
+    std::vector<std::shared_ptr<search::InvertedIndexStorage>> storages;
+    db.GetCatalog().Cast<duckdb::DuckCatalog>().ScanSchemas(
+      [&](duckdb::SchemaCatalogEntry& schema) {
+        schema.Scan(
+          duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
+            if (entry.type != duckdb::CatalogType::TABLE_ENTRY ||
+                !entry.Cast<duckdb::TableCatalogEntry>().IsDuckTable()) {
+              return;
+            }
+            auto& indexes = entry.Cast<duckdb::DuckTableEntry>()
+                              .GetStorage()
+                              .GetDataTableInfo()
+                              ->GetIndexes();
+            for (auto index : indexes.IndexEntries()) {
+              if (index->GetBindState() == duckdb::IndexBindState::BOUND &&
+                  index->GetIndexType() == InvertedStoreIndex::kTypeName) {
+                const auto handle = index->GetReadHandle<InvertedStoreIndex>();
+                storages.push_back(handle->Storage());
+              }
+            }
+          });
+      });
+    for (auto& storage : storages) {
+      storage->Refresh();
+    }
+  }
+};
+
 }  // namespace
 
 void RegisterSereneDBStorage(
   duckdb::DBConfig& config, duckdb::shared_ptr<catalog::DataDirectory> layout) {
-  auto extension = duckdb::make_shared_ptr<duckdb::StorageExtension>();
+  auto extension = duckdb::make_shared_ptr<SereneDBStorageExtension>();
   extension->attach = AttachSereneDB;
   extension->create_transaction_manager = CreateTransactionManager;
   extension->storage_info = std::move(layout);

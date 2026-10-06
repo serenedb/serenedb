@@ -1458,10 +1458,12 @@ TEST_F(ColumnReaderTest, VariantGathersReleaseBlocks) {
     ASSERT_EQ(out.GetValue(0).ToString(), expected[row].ToString())
       << "row=" << row;
     const auto pinned = PinnedSegments(state);
-    if (row % kRowGroup < 97) {
+    if (row == 0) {
       first = pinned;
     }
-    EXPECT_LE(pinned, first + 1) << "row=" << row;
+    if (row % kRowGroup >= 97) {
+      EXPECT_LE(pinned, first + 1) << "row=" << row;
+    }
   }
 }
 

@@ -22,6 +22,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <functional>
+#include <queue>
 #include <vector>
 
 #include "iresearch/analysis/token_attributes.hpp"
@@ -74,6 +76,26 @@ class Stream {
     return bits;
   }
 
+  double Huffman() const {
+    std::priority_queue<uint64_t, std::vector<uint64_t>, std::greater<>> nodes;
+    double bits = 0;
+    for (uint32_t w = 0; w != 33; ++w) {
+      if (_bits_hist[w] != 0) {
+        nodes.push(_bits_hist[w]);
+        bits += static_cast<double>(_bits_hist[w]) * (w > 1 ? w - 1 : 0);
+      }
+    }
+    while (nodes.size() > 1) {
+      const auto a = nodes.top();
+      nodes.pop();
+      const auto b = nodes.top();
+      nodes.pop();
+      bits += static_cast<double>(a + b);
+      nodes.push(a + b);
+    }
+    return bits;
+  }
+
  private:
   std::vector<uint32_t> _pending;
   uint64_t _bytes = 0;
@@ -85,10 +107,11 @@ class Stream {
 void Report(const char* name, const Stream& s, uint64_t positions) {
   std::printf(
     "  %-8s %12lu values %10.1f MB %7.3f bits/pos  (bucketed entropy "
-    "%7.3f bits/pos)\n",
+    "%7.3f, huffman %7.3f bits/pos)\n",
     name, s.Values(), static_cast<double>(s.Bytes()) / 1e6,
     8.0 * static_cast<double>(s.Bytes()) / static_cast<double>(positions),
-    s.Entropy() / static_cast<double>(positions));
+    s.Entropy() / static_cast<double>(positions),
+    s.Huffman() / static_cast<double>(positions));
 }
 
 }  // namespace

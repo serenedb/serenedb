@@ -42,6 +42,12 @@ missing, or ask the user to. clangd reads `compile_commands.json` from the
 checkout root or `build/`; with another build dir, run
 `ln -s <build dir>/compile_commands.json .` once.
 
+- Never implement what already exists. Before writing a helper, container,
+algorithm or utility, look for it in abseil (`absl::c_*` algorithms, strings,
+containers, synchronization), `server/utils/`, `iresearch/utils/` and DuckDB,
+and use or extend that instead. A hand-written loop that an `absl::c_*`
+algorithm already expresses is a duplicate too.
+
 - Repo-wide knowledge goes into the repo, not into personal memory, which is
 per machine and invisible to the team. What every contributor needs goes into
 `CONTRIBUTING.md`; instructions only for Claude go into this file,

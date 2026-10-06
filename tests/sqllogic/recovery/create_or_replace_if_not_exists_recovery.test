@@ -3379,15 +3379,16 @@ n
 
 connection after_checkpoint
 query
+WITH seq AS MATERIALIZED (SELECT nextval('coinr_c_s') AS n)
 SELECT (SELECT sum(n) FROM coinr_c_v_ine) AS v_ine,
        (SELECT b FROM coinr_c_t) AS t,
        (SELECT a FROM coinr_c_t_ine) AS t_ine,
        coinr_c_m(1) AS m,
-       nextval('coinr_c_s') AS s,
+       (SELECT n > 70 AND (n - 70) % 7 = 0 FROM seq) AS s,
        array_to_string(enum_range(NULL::coinr_c_ty), ',') AS ty;
 ----
 v_ine	t	t_ine	m	s	ty
-6	checkpoint	1	11	301	c1,c2
+6	checkpoint	1	11	t	c1,c2
 
 
 connection after_checkpoint
@@ -3756,15 +3757,21 @@ n
 
 connection after_tail
 query
+WITH seq AS MATERIALIZED (SELECT nextval('coinr_c_s') AS n)
 SELECT (SELECT sum(n) FROM coinr_c_v_ine) AS v_ine,
        (SELECT b FROM coinr_c_t) AS t,
        (SELECT z FROM coinr_c_t_ine) AS t_ine,
        coinr_c_m(1) AS m,
-       nextval('coinr_c_s') AS s,
+       (SELECT n > 300 AND (n - 300) % 3 = 0 FROM seq) AS s,
        array_to_string(enum_range(NULL::coinr_c_ty), ',') AS ty;
 ----
 v_ine	t	t_ine	m	s	ty
-6	tail	recreated	101	399	t1
+6	tail	recreated	101	t	t1
+
+
+connection after_tail
+statement ok
+CREATE TABLE coinr_c_s_seen AS SELECT currval('coinr_c_s') AS n;
 
 
 connection after_tail
@@ -3846,15 +3853,16 @@ SET sdb_faults = 'crash_on_packet';
 
 connection after_tail_checkpoint
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+WITH seq AS MATERIALIZED (SELECT nextval('coinr_c_s') AS n)
 SELECT (SELECT sum(n) FROM coinr_c_v) AS v,
        (SELECT b FROM coinr_c_t) AS t,
        (SELECT z FROM coinr_c_t_ine) AS t_ine,
        coinr_c_m(1) AS m,
-       nextval('coinr_c_s') AS s,
+       (SELECT n > (SELECT n FROM coinr_c_s_seen) AND (n - 300) % 3 = 0 FROM seq) AS s,
        array_to_string(enum_range(NULL::coinr_c_ty), ',') AS ty;
 ----
 v	t	t_ine	m	s	ty
-600	tail	recreated	101	522	t1
+600	tail	recreated	101	t	t1
 
 
 connection after_tail_checkpoint

@@ -145,7 +145,9 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
   context->client_data->catalog_search_path->Set(
     {duckdb::CatalogSearchEntry{job.catalog, job.schema->Name()}},
     duckdb::CatalogSetPathType::SET_DIRECTLY);
-  auto pending = context->PendingQuery(job.body->Copy(), false);
+  duckdb::QueryParameters parameters;
+  parameters.caller_drives = true;
+  auto pending = context->Submit(job.body->Copy(), parameters);
   if (pending->HasError()) {
     return pending->GetErrorObject();
   }
@@ -157,8 +159,8 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
     }
     state.contexts.emplace_back(context);
   }
-  auto result = pending->Execute();
-  return result->HasError() ? result->GetErrorObject() : duckdb::ErrorData{};
+  pending->Complete();
+  return pending->HasError() ? pending->GetErrorObject() : duckdb::ErrorData{};
 }
 
 }  // namespace
@@ -288,7 +290,7 @@ void JobScheduler::Execute(duckdb::ClientContext& caller,
   {
     absl::MutexLock lock{&state->mutex};
     if (state->status.running > 0 && !state->status.schedule.concurrent) {
-      throw duckdb::InvalidInputException("Job \"%s\" is already running",
+      throw duckdb::InvalidInputException("Job %s is already running",
                                           definition.name);
     }
     ++state->status.running;

@@ -502,8 +502,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
       auto& options = index_alter.Cast<duckdb::ResetIndexOptionsInfo>().options;
       if (options.extract(duckdb::Identifier{kReindexIntervalSetting}) &&
           view_backed) {
-        context.TryGetCurrentSetting(std::string{kReindexIntervalSetting},
-                                     reindex_interval.emplace());
+        context.TryGetCurrentSetting(
+          duckdb::Identifier{kReindexIntervalSetting},
+          reindex_interval.emplace());
       }
       for (const auto& identifier : options) {
         const auto& name = identifier.GetIdentifierName();
@@ -546,7 +547,7 @@ void InvertedIndexEntry::CreateReindexJob(
   auto body = duckdb::make_uniq<duckdb::PragmaStatement>();
   body->info->name = duckdb::Identifier{connector::kReindexByIdPragma};
   body->info->parameters.emplace_back(
-    duckdb::make_uniq<duckdb::ConstantExpression>(duckdb::Value::BIGINT(oid)));
+    duckdb::ConstantExpression::FromValue(duckdb::Value::BIGINT(oid)));
   create.body = std::move(body);
   create.permissions.owner =
     ParentSchema(transaction)

@@ -23,6 +23,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstring>
 #include <duckdb/common/bitpacking.hpp>
@@ -57,6 +58,7 @@
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/dictionary_cache.hpp"
 #include "iresearch/formats/column/codecs/fsst_codec.hpp"
+#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -106,11 +108,7 @@ struct PackedReader {
 
 const ReadContext::CacheSlot& CacheSlotOf(
   duckdb::ColumnSegment& segment) noexcept {
-  static const ReadContext::CacheSlot kNone;
   const auto& block = segment.GetBlockHandle();
-  if (!block) {
-    return kNone;
-  }
   return static_cast<const ReadContext&>(block->GetBlockManager())
     .CacheSlotOf(block->BlockId());
 }
@@ -132,7 +130,14 @@ char* TrainedWindow(const TrainedDictionary& dictionary, size_t frame_bytes) {
     size_t capacity = 0;
     duckdb::unsafe_unique_array<char> buffer;
   };
-  thread_local Window w;
+  thread_local std::array<Window, 4> windows;
+  thread_local size_t next = 0;
+  auto it = std::ranges::find(windows, dictionary.Id(), &Window::dictionary);
+  if (it == windows.end()) {
+    it = windows.begin() + next;
+    next = (next + 1) % windows.size();
+  }
+  auto& w = *it;
   const auto bytes = dictionary.Bytes();
   const size_t need = bytes.size() + frame_bytes;
   if (w.capacity < need) {
@@ -227,8 +232,14 @@ struct ScanState final : duckdb::SegmentScanState {
         return;
       }
     }
-    dictionary = duckdb::DictionaryVector::CreateReusableDictionary(
-      type, header.entry_count);
+    if (Dedup()) {
+      dictionary = duckdb::DictionaryVector::CreateReusableDictionary(
+        type, header.entry_count);
+    } else {
+      dictionary = duckdb::make_buffer<duckdb::DictionaryEntry>(
+        duckdb::Vector{type, header.entry_count});
+      duckdb::FlatVector::SetSize(dictionary->data, header.entry_count);
+    }
     auto& dict_data = dictionary->data;
     values = duckdb::FlatVector::GetDataMutable<string_t>(dict_data);
     const auto heap_bytes =
@@ -454,17 +465,30 @@ struct ScanState final : duckdb::SegmentScanState {
   }
 
   std::string_view DictionaryFor(uint32_t f) const noexcept {
-    if (trained) {
-      return trained->Bytes();
-    }
     if (f == 0 || !FrameDictionary()) {
       return {};
     }
     return {heap + frame_off[0], frames[0].raw_len};
   }
 
-  bool UsesWindow(uint32_t f) const noexcept {
-    return trained || (f > 1 && FrameDictionary());
+  template<typename Decompressor>
+  void DecodeStaged(Decompressor& d, uint32_t f, const FrameMeta& m,
+                    uint32_t end, char* out) {
+    constexpr uint32_t kFirstWindowed =
+      std::is_same_v<Decompressor, LeafDecompressor<ByteCodec::Zstd>> ? 1 : 2;
+    auto dictionary = DictionaryFor(f);
+    char* staging = out;
+    if (trained) {
+      dictionary = trained->Bytes();
+      staging = TrainedWindow(*trained, m.raw_len);
+    } else if (f >= kFirstWindowed && !dictionary.empty()) {
+      staging = Window(dictionary);
+    }
+    d.SetDictionary(
+      staging == out
+        ? dictionary
+        : std::string_view{staging - dictionary.size(), dictionary.size()});
+    DecodeBlobFrame(d, m, end, out, staging);
   }
 
   void DecodeFrame(uint32_t f) {
@@ -477,33 +501,14 @@ struct ScanState final : duckdb::SegmentScanState {
     char* out = heap + frame_off[f];
     switch (static_cast<ByteCodec>(header.codec)) {
       case ByteCodec::Lz4:
-        if (trained) {
-          const auto dictionary = trained->Bytes();
-          char* staging = TrainedWindow(*trained, m.raw_len);
-          lz4->SetDictionary({staging - dictionary.size(), dictionary.size()});
-          DecodeBlobFrame(*lz4, m, end, out, staging);
-        } else if (UsesWindow(f)) {
-          const auto dictionary = DictionaryFor(f);
-          char* staging = Window(dictionary);
-          lz4->SetDictionary({staging - dictionary.size(), dictionary.size()});
-          DecodeBlobFrame(*lz4, m, end, out, staging);
-        } else {
-          lz4->SetDictionary(DictionaryFor(f));
-          DecodeBlobFrame(*lz4, m, end, out, out);
-        }
+        DecodeStaged(*lz4, f, m, end, out);
         break;
       case ByteCodec::Zstd:
         if (trained) {
           zstd->SetTrained(*trained);
           DecodeBlobFrame(*zstd, m, end, out, out);
-        } else if (UsesWindow(f)) {
-          const auto dictionary = DictionaryFor(f);
-          char* staging = Window(dictionary);
-          zstd->SetDictionary({staging - dictionary.size(), dictionary.size()});
-          DecodeBlobFrame(*zstd, m, end, out, staging);
         } else {
-          zstd->SetDictionary(DictionaryFor(f));
-          DecodeBlobFrame(*zstd, m, end, out, out);
+          DecodeStaged(*zstd, f, m, end, out);
         }
         break;
       case ByteCodec::Zxc:
@@ -523,7 +528,7 @@ struct ScanState final : duckdb::SegmentScanState {
   char* Window(std::string_view dictionary) {
     if (!window) {
       uint32_t largest = 0;
-      for (uint32_t f = trained ? 0 : 1; f < frames.size(); ++f) {
+      for (uint32_t f = 1; f < frames.size(); ++f) {
         largest = std::max(largest, frames[f].raw_len);
       }
       window =
@@ -648,18 +653,23 @@ struct ScanState final : duckdb::SegmentScanState {
   }
 
   std::string_view DecodeHead(uint32_t f, uint32_t g) {
-    EnsureGroupOffsets(f);
     const auto e = frames[f].first_entry + g * kChainRestart;
     if (decoded[f] || group_decoded[group_base[f] + g]) {
       return View(values[e]);
     }
+    uint64_t enc_off = frames[f].comp_off;
+    if (g != 0) {
+      EnsureGroupOffsets(f);
+      enc_off = group_enc_off[group_base[f] + g];
+    }
     const auto enc = length_reader.At(e);
+    SDB_ENSURE(enc_off + enc <= header.data_size,
+               "col codec: corrupted front coding");
     probe.resize(uint64_t{enc} * kFsstMaxExpansion + 1);
     const auto* in = reinterpret_cast<const char*>(base + header.off_data);
-    const auto n = enc == 0
-                     ? 0
-                     : fsst->Decode(in + group_enc_off[group_base[f] + g], enc,
-                                    probe.data(), probe.size());
+    const auto n =
+      enc == 0 ? 0
+               : fsst->Decode(in + enc_off, enc, probe.data(), probe.size());
     SDB_ENSURE(n <= probe.size(), "col codec: corrupted entry");
     probe.resize(n);
     return probe;
@@ -745,9 +755,16 @@ struct ScanState final : duckdb::SegmentScanState {
     return end;
   }
 
+  uint32_t Lower(std::string_view key) {
+    return Bound([&](std::string_view v) { return v < key; });
+  }
+
+  uint32_t Upper(std::string_view key) {
+    return Bound([&](std::string_view v) { return v <= key; });
+  }
+
   std::pair<uint32_t, uint32_t> EqualRange(std::string_view key) {
-    return {Bound([&](std::string_view v) { return v < key; }),
-            Bound([&](std::string_view v) { return v <= key; })};
+    return {Lower(key), Upper(key)};
   }
 
   std::optional<EntryRanges> ResolveFilter(const duckdb::TableFilter& filter) {
@@ -831,12 +848,6 @@ struct ScanState final : duckdb::SegmentScanState {
           return EntryRanges{};
         }
         const std::string_view key = duckdb::StringValue::Get(*value);
-        const auto below = [&] {
-          return Bound([&](std::string_view v) { return v < key; });
-        };
-        const auto upto = [&] {
-          return Bound([&](std::string_view v) { return v <= key; });
-        };
         switch (comparison) {
           case duckdb::ExpressionType::COMPARE_EQUAL:
             return Normalize({EqualRange(key)});
@@ -845,13 +856,13 @@ struct ScanState final : duckdb::SegmentScanState {
             return Normalize({{1, lo}, {hi, n}});
           }
           case duckdb::ExpressionType::COMPARE_LESSTHAN:
-            return Normalize({{1, below()}});
+            return Normalize({{1, Lower(key)}});
           case duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO:
-            return Normalize({{1, upto()}});
+            return Normalize({{1, Upper(key)}});
           case duckdb::ExpressionType::COMPARE_GREATERTHAN:
-            return Normalize({{upto(), n}});
+            return Normalize({{Upper(key), n}});
           default:
-            return Normalize({{below(), n}});
+            return Normalize({{Lower(key), n}});
         }
       }
       case duckdb::ExpressionClass::BOUND_CONJUNCTION: {
@@ -1064,16 +1075,16 @@ struct ScanState final : duckdb::SegmentScanState {
 };
 
 duckdb::unique_ptr<duckdb::SegmentScanState> InitScan(
-  const duckdb::QueryContext& /*context*/, duckdb::ColumnSegment& segment) {
+  const duckdb::QueryContext&, duckdb::ColumnSegment& segment) {
   auto& buffer_manager =
     duckdb::BufferManager::GetBufferManager(segment.GetDatabase());
   return duckdb::make_uniq<ScanState>(
     segment, buffer_manager.Pin(segment.GetBlockHandle()));
 }
 
-void ScanPartial(duckdb::ColumnSegment& /*segment*/,
-                 duckdb::ColumnScanState& state, idx_t scan_count,
-                 duckdb::Vector& result, idx_t result_offset) {
+void ScanPartial(duckdb::ColumnSegment&, duckdb::ColumnScanState& state,
+                 idx_t scan_count, duckdb::Vector& result,
+                 idx_t result_offset) {
   auto& scan = state.scan_state->Cast<ScanState>();
   scan.ScanFlat(result, result_offset, state.GetPositionInSegment(),
                 scan_count);
@@ -1091,7 +1102,7 @@ void ScanVector(duckdb::ColumnSegment& segment, duckdb::ColumnScanState& state,
   result.Dictionary(scan.dictionary, scan.Codes(start, scan_count), scan_count);
 }
 
-void Select(duckdb::ColumnSegment& /*segment*/, duckdb::ColumnScanState& state,
+void Select(duckdb::ColumnSegment&, duckdb::ColumnScanState& state,
             idx_t vector_count, duckdb::Vector& result,
             const duckdb::SelectionVector& sel, idx_t sel_count) {
   auto& scan = state.scan_state->Cast<ScanState>();
@@ -1165,7 +1176,7 @@ void Filter(duckdb::ColumnSegment& segment, duckdb::ColumnScanState& state,
         sel.set_index(kept++, row);
       }
     }
-    sel_count = std::min(kept, sel_count);
+    sel_count = kept;
   }
   if (!scan.full && scan.filter_match_count * 4 >= dict_count) {
     scan.EnsureDictionary();
@@ -1178,7 +1189,7 @@ void Filter(duckdb::ColumnSegment& segment, duckdb::ColumnScanState& state,
 }
 
 struct FetchCache final : duckdb::SegmentScanState {
-  const duckdb::ColumnSegment* segment = nullptr;
+  duckdb::block_id_t block = INVALID_BLOCK;
   uint32_t frame = std::numeric_limits<uint32_t>::max();
   uint32_t first_entry = 0;
   uint32_t hits = 0;
@@ -1208,7 +1219,9 @@ struct FetchCache final : duckdb::SegmentScanState {
               const TrainedDictionary* trained) {
     SDB_ENSURE(static_cast<uint64_t>(f.comp_off) + f.comp_len <= h.data_size,
                "col codec: corrupted frame table");
-    if (trained) {
+    constexpr bool kZstd =
+      std::is_same_v<Decompressor, LeafDecompressor<ByteCodec::Zstd>>;
+    if (trained && !kZstd) {
       if (trained_loaded != trained->Id()) {
         const auto bytes = trained->Bytes();
         const size_t need = bytes.size() + f.raw_len;
@@ -1251,8 +1264,7 @@ struct FetchCache final : duckdb::SegmentScanState {
     const std::string_view prefix =
       with_dictionary ? std::string_view{dictionary.get(), dictionary_size}
                       : std::string_view{};
-    if constexpr (std::is_same_v<Decompressor,
-                                 LeafDecompressor<ByteCodec::Zstd>>) {
+    if constexpr (kZstd) {
       if (trained) {
         d.SetTrained(*trained);
       } else {
@@ -1275,13 +1287,14 @@ struct FetchCache final : duckdb::SegmentScanState {
 };
 
 FetchCache& CacheFor(duckdb::ColumnFetchState& state,
-                     const duckdb::ColumnSegment& segment) {
+                     duckdb::ColumnSegment& segment) {
   if (!state.codec_state) {
     state.codec_state = duckdb::make_uniq<FetchCache>();
   }
   auto& cache = state.codec_state->Cast<FetchCache>();
-  if (cache.segment != &segment) {
-    cache.segment = &segment;
+  if (const auto block = segment.GetBlockHandle()->BlockId();
+      cache.block != block) {
+    cache.block = block;
     cache.frame = std::numeric_limits<uint32_t>::max();
     cache.dictionary_ready = false;
     cache.fsst.reset();
@@ -1472,29 +1485,18 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
 }
 
 duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
-  duckdb::QueryContext /*context*/, duckdb::ColumnSegment& segment) {
+  duckdb::QueryContext, duckdb::ColumnSegment& segment) {
   auto& buffer_manager =
     duckdb::BufferManager::GetBufferManager(segment.GetDatabase());
   auto handle = buffer_manager.Pin(segment.GetBlockHandle());
   const auto h = Header::Parse(handle.Ptr() + segment.GetBlockOffset(),
                                segment.SegmentSize());
   duckdb::InsertionOrderPreservingMap<std::string> info;
+  constexpr std::array<std::string_view, kByteCodecCount> kLeafNames{
+    "lz4", "zstd", "fsst", "zxc"};
   info["shape"] =
     h.shape == static_cast<uint8_t>(Shape::Dedup) ? "dedup" : "plain";
-  switch (static_cast<ByteCodec>(h.codec)) {
-    case ByteCodec::Lz4:
-      info["codec"] = "lz4";
-      break;
-    case ByteCodec::Zstd:
-      info["codec"] = "zstd";
-      break;
-    case ByteCodec::Zxc:
-      info["codec"] = "zxc";
-      break;
-    case ByteCodec::Fsst:
-      info["codec"] = "fsst";
-      break;
-  }
+  info["codec"] = std::string{kLeafNames[h.codec]};
   info["level"] = absl::StrCat(static_cast<uint32_t>(h.level));
   info["codes"] = h.codes_encoding == static_cast<uint8_t>(CodesEncoding::Rle)
                     ? "rle"
@@ -1517,12 +1519,12 @@ duckdb::CompressionFunction MakeScanFunction(
   duckdb::CompressionFunction f{
     type,
     duckdb::PhysicalType::VARCHAR,
-    /*init_analyze=*/nullptr,
-    /*analyze=*/nullptr,
-    /*final_analyze=*/nullptr,
-    /*init_compression=*/nullptr,
-    /*compress=*/nullptr,
-    /*compress_finalize=*/nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
     InitScan,
     ScanVector,
     ScanPartial,
@@ -1540,50 +1542,25 @@ duckdb::CompressionFunction MakeScanFunction(
 
 const duckdb::CompressionFunction& StringScanFunction(
   duckdb::CompressionType type) {
-  static const auto dict_lz4 =
-    MakeScanFunction(duckdb::CompressionType::COMPRESSION_DICT_LZ4,
-                     duckdb::CompressionValidity::NO_VALIDITY_REQUIRED);
-  static const auto dict_zstd =
-    MakeScanFunction(duckdb::CompressionType::COMPRESSION_DICT_ZSTD,
-                     duckdb::CompressionValidity::NO_VALIDITY_REQUIRED);
-  static const auto lz4 =
-    MakeScanFunction(duckdb::CompressionType::COMPRESSION_LZ4,
-                     duckdb::CompressionValidity::REQUIRES_VALIDITY);
-  static const auto dict_fsst =
-    MakeScanFunction(duckdb::CompressionType::COMPRESSION_COL_DICT_FSST,
-                     duckdb::CompressionValidity::NO_VALIDITY_REQUIRED);
-  static const auto fsst =
-    MakeScanFunction(duckdb::CompressionType::COMPRESSION_COL_FSST,
-                     duckdb::CompressionValidity::REQUIRES_VALIDITY);
-  static const auto dict_zxc =
-    MakeScanFunction(duckdb::CompressionType::COMPRESSION_DICT_ZXC,
-                     duckdb::CompressionValidity::NO_VALIDITY_REQUIRED);
-  static const auto zxc =
-    MakeScanFunction(duckdb::CompressionType::COMPRESSION_ZXC,
-                     duckdb::CompressionValidity::REQUIRES_VALIDITY);
-  static const auto zstd =
-    MakeScanFunction(duckdb::CompressionType::COMPRESSION_COL_ZSTD,
-                     duckdb::CompressionValidity::REQUIRES_VALIDITY);
-  switch (type) {
-    case duckdb::CompressionType::COMPRESSION_DICT_LZ4:
-      return dict_lz4;
-    case duckdb::CompressionType::COMPRESSION_DICT_ZSTD:
-      return dict_zstd;
-    case duckdb::CompressionType::COMPRESSION_LZ4:
-      return lz4;
-    case duckdb::CompressionType::COMPRESSION_COL_DICT_FSST:
-      return dict_fsst;
-    case duckdb::CompressionType::COMPRESSION_COL_FSST:
-      return fsst;
-    case duckdb::CompressionType::COMPRESSION_DICT_ZXC:
-      return dict_zxc;
-    case duckdb::CompressionType::COMPRESSION_ZXC:
-      return zxc;
-    case duckdb::CompressionType::COMPRESSION_COL_ZSTD:
-      return zstd;
-    default:
-      SDB_UNREACHABLE();
-  }
+  constexpr auto kFirst =
+    static_cast<size_t>(duckdb::CompressionType::COMPRESSION_DICT_LZ4);
+  constexpr auto kLast =
+    static_cast<size_t>(duckdb::CompressionType::COMPRESSION_COL_ZSTD);
+  static const auto functions = [] {
+    std::vector<duckdb::CompressionFunction> out;
+    out.reserve(kLast - kFirst + 1);
+    for (auto t = kFirst; t <= kLast; ++t) {
+      const auto string_type = static_cast<duckdb::CompressionType>(t);
+      out.emplace_back(MakeScanFunction(
+        string_type, ChoiceOf(string_type)->shape == Shape::Dedup
+                       ? duckdb::CompressionValidity::NO_VALIDITY_REQUIRED
+                       : duckdb::CompressionValidity::REQUIRES_VALIDITY));
+    }
+    return out;
+  }();
+  const auto index = static_cast<size_t>(type) - kFirst;
+  SDB_ASSERT(index < functions.size());
+  return functions[index];
 }
 
 }  // namespace irs::codecs

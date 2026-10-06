@@ -43,7 +43,6 @@
 #include <duckdb/storage/buffer/buffer_handle.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
-#include <duckdb/storage/object_cache.hpp>
 #include <duckdb/storage/segment/uncompressed.hpp>
 #include <duckdb/storage/statistics/array_stats.hpp>
 #include <duckdb/storage/statistics/list_stats.hpp>
@@ -886,7 +885,7 @@ bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
   _window = _reader->Locate(row, _window);
   if (_window.block != _cached_block) {
     _block = _reader->Open(_window, _ctx);
-    _fetch_state = duckdb::ColumnFetchState{};
+    _fetch_state.handles.clear();
     _cached_block = _window.block;
   }
   _block->FetchRow(_fetch_state,

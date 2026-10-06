@@ -46,7 +46,6 @@
 namespace duckdb {
 
 class CompressionFunction;
-class ObjectCache;
 
 }  // namespace duckdb
 namespace irs {
@@ -370,7 +369,7 @@ class ColumnReader {
 
   field_id _id;
   uint64_t _file_id = 0;
-  mutable std::unique_ptr<std::atomic<bool>[]> _touched;
+  std::unique_ptr<std::atomic<bool>[]> _touched;
   duckdb::LogicalType _type;
   std::vector<ColumnBlockMeta> _segments;
   std::vector<uint64_t> _offsets;

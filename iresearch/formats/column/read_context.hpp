@@ -29,6 +29,7 @@
 #include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/formats/column/internal/block_manager.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace duckdb {
 
@@ -77,13 +78,10 @@ class ReadContext final : public BlockManager,
   duckdb::shared_ptr<duckdb::BlockHandle> RegisterColBlock(uint64_t offset,
                                                            uint64_t size,
                                                            CacheSlot slot);
-  duckdb::shared_ptr<duckdb::BlockHandle> RegisterColBlock(uint64_t offset,
-                                                           uint64_t size) {
-    return RegisterColBlock(offset, size, CacheSlot{});
-  }
   const CacheSlot& CacheSlotOf(duckdb::block_id_t block) const noexcept {
     const auto id = static_cast<size_t>(block);
-    return id < _cache_slots.size() ? _cache_slots[id] : _no_slot;
+    SDB_ASSERT(id < _cache_slots.size());
+    return _cache_slots[id];
   }
 
   duckdb::unique_ptr<duckdb::Block> CreateBlock(
@@ -113,7 +111,6 @@ class ReadContext final : public BlockManager,
   duckdb::unique_ptr<duckdb::MemoryMappedFile> _mapping;
   std::vector<std::pair<uint64_t, uint64_t>> _ranges;
   std::vector<CacheSlot> _cache_slots;
-  CacheSlot _no_slot;
   bool _random_access = false;
   std::atomic<size_t> _live_handles{0};
 };

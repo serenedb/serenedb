@@ -60,6 +60,13 @@ connection default
 statement ok
 SET sdb_faults = '-pause_search_backfill_before_swap';
 
+# Best effort: nothing observable says the build has reached the swap and is
+# waiting on the commit-gap lock, so the sleep only gives it time to get there.
+# If the deleter wins anyway, it records its delete before the swap drains the
+# log and the test passes even without the gap lock -- it misses a regression
+# on that run rather than failing spuriously.
+sleep 1s
+
 connection default
 statement ok
 SET sdb_faults = 'pause_search_commit_before_delete_log:release';

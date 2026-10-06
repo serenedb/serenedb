@@ -86,6 +86,10 @@ struct WalCursor {
 void RemoveDroppedStorageDir(const std::filesystem::path& path,
                              size_t parent_levels);
 
+std::error_code CreateStorageDir(const std::filesystem::path& path);
+
+void RemoveEmptyAncestors(std::filesystem::path path, size_t levels);
+
 inline std::filesystem::path DroppedStoragePath(std::filesystem::path path) {
   path += ".dropped";
   return path;

@@ -82,7 +82,27 @@ constexpr duckdb::field_id_t kFieldWalGeneration = 1;
 constexpr duckdb::field_id_t kFieldWalOffset = 2;
 constexpr duckdb::field_id_t kFieldManifest = 3;
 
+constinit absl::Mutex gStorageDirsLock{absl::kConstInit};
+
 }  // namespace
+
+std::error_code CreateStorageDir(const std::filesystem::path& path) {
+  std::error_code ec;
+  absl::MutexLock lock{&gStorageDirsLock};
+  std::filesystem::create_directories(path, ec);
+  return ec;
+}
+
+void RemoveEmptyAncestors(std::filesystem::path path, size_t levels) {
+  std::error_code ec;
+  absl::MutexLock lock{&gStorageDirsLock};
+  for (size_t level = 0; level < levels; ++level) {
+    path = path.parent_path();
+    if (!std::filesystem::remove(path, ec) || ec) {
+      return;
+    }
+  }
+}
 
 void InvertedIndexStorage::RecordFlushCursor(Tick tick,
                                              WalCursor cursor) noexcept {
@@ -153,7 +173,7 @@ InvertedIndexStorage::InvertedIndexStorage(
                             _index_id, "': ", ec.message()));
   }
   if (!path_exists) {
-    std::filesystem::create_directories(path, ec);
+    ec = CreateStorageDir(path);
     if (ec) {
       THROW_SQL_ERROR(ERR_MSG("Failed to create directory '", path.string(),
                               "' while initializing data store '", _index_id,
@@ -291,13 +311,7 @@ void RemoveDroppedStorageDir(const std::filesystem::path& path,
                "': ", ec.message());
       return;
     }
-    auto parent = path;
-    for (size_t level = 0; level < parent_levels; ++level) {
-      parent = parent.parent_path();
-      if (!std::filesystem::remove(parent, ec) || ec) {
-        return;
-      }
-    }
+    RemoveEmptyAncestors(path, parent_levels);
   };
   if (lifecycle::IsStopping() || BackgroundScheduler::instance().IsStopping()) {
     remove();

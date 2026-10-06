@@ -6,11 +6,11 @@ argument-hint: "[PR-number | branch]"
 
 # PR title and description
 
-PRs are squash-merged: the title becomes the commit subject on `main` and the description becomes its body (`.github/PULL_REQUEST_TEMPLATE.md`).
+Read CONTRIBUTING.md "Branching, commits, PRs" first: the title prefixes, squash-merge, and how to refer to other repositories. The template is `.github/PULL_REQUEST_TEMPLATE.md`.
 
 ## Title
 
-`<prefix>: <what changed>`, with one of the prefixes from CONTRIBUTING.md: `feat:`, `fix:`, `perf:` (most common), or `refactor:`, `chore:`, `docs:`, `test:`, `ci:`, `build:`, `style:`, `misc:`. Don't invent prefixes; ask if none fits.
+`<prefix>: <what changed>`.
 
 - Name the exact thing: `fix: jobs and text search dictionaries in nested schemas`, `perf: n-gram prefilter for case-insensitive ASCII letters in ts_regexp`.
 - Not vague (`fix: bugs`, `improvements`), not a sentence about the PR (`This PR adds ...`).
@@ -23,13 +23,8 @@ Explain why, not what; the diff shows what.
 - The approach, and the alternative it beat when that's not obvious.
 - Evidence: the tests that cover it (paths), and for `perf:` the measured end-to-end numbers against main with the build and machine load.
 - User-visible changes: the `docs/` page added or updated.
-- Fork changes: the fork commit by SHA, or its PR as plain text (see below).
+- Fork changes: the fork commit by SHA, or its PR written as CONTRIBUTING.md says.
 - Plain paragraphs, one line per paragraph (no hard wraps), lists where they help.
-
-## Never
-
-- Another repository's issue or PR as `#N`, `owner/repo#N` or a URL: GitHub links all three back from the target. Write it as plain text (`serenedb/duckdb PR 89`) or inside backticks.
-- Links to code on a branch: pin them to a commit SHA.
 
 ## Apply
 

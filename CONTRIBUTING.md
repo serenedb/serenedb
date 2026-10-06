@@ -42,7 +42,10 @@ ninja
 Additional build presets are defined in `CMakePresets.json`:
 - `lldb` -- Debug build (`build/`), works with lldb, gdb, or any debugger
 - `clangd` -- RelWithDebInfo build (`build_clangd/`), works well with the clangd language server in VSCode
-- `bench` -- Release build (`build_bench/`), static linking, production-like performance
+- `bench` -- Release build (`build_bench/`), static linking, production-like performance; no frame pointers
+- `perf` -- RelWithDebInfo build (`build_perf/`), static linking, `-O3` with frame pointers, for profiling
+
+`lldb` and `clangd` build with dev asserts, fault injection and the gtest binaries; `bench` and `perf` build none of them, so recovery tests and anything that sets `sdb_faults` can't run there.
 
 ### Debug info and disk use
 
@@ -88,20 +91,21 @@ Connect via psql: `psql -h localhost -p 7890 -U postgres`
 
 The test tree is split by what runs the test and what it covers:
 
-- `tests/sqllogic/any/...` -- sqllogic against any engine (PG and SereneDB); use for behaviour we expect from both.
+- `tests/sqllogic/any/...` -- sqllogic against any engine (PG and SereneDB); use for behaviour we expect from both. `any/pg` runs through the symlinks `sdb/pg/any` and `pg/any`, never directly. Validate new SQL behaviour on real PostgreSQL before pinning it (`./tests/sqllogic/run_pg_tests.sh --host <host> --single-port <port>`, or docker `postgres:18`): outcomes must match, error text may differ.
 - `tests/sqllogic/sdb/...` -- sqllogic against SereneDB only (SereneDB-specific syntax / extensions).
 - `tests/sqllogic/pg/...` -- sqllogic against Postgres only (used to validate the spec).
-- `tests/sqllogic/recovery/...` -- sqllogic with crash injection (`SET sdb_faults = '...'`) plus a restart; each test runs against a fresh serened + datadir.
+- `tests/sqllogic/recovery/...` -- sqllogic with crash injection (`SET sdb_faults = '...'`) plus a restart; each test runs against a fresh serened + datadir. `SET sdb_faults` is allowed only here (pre-commit `check-fault-points`).
 - `tests/server/<area>/...`, `tests/iresearch/...` -- gtest unit tests; use for isolated C++ logic where a sqllogic test would be awkward (library classes / pure functions / hard-to-reproduce bugs).
 - `tests/bench/micro/...` -- microbenchmarks for performance claims.
-- `tests/duckdb/` -- driver for the **DuckDB-level** suites: DuckDB core's own test tree and each vendored extension's, via DuckDB's `unittest` binary. Built only when configured with `-DSDB_BUILD_DUCKDB_UNITTESTS=ON`.
+- `tests/duckdb/` -- driver for the **DuckDB-level** suites: DuckDB core's own test tree and each vendored extension's, via DuckDB's `unittest` binary. Built by default; configure with `-DSDB_BUILD_DUCKDB_UNITTESTS=OFF` to skip it.
 
 When a change needs a test:
 
 - Bug fix: always, unless you can argue the bug is uncoverable. Crash / recovery bugs go under `tests/sqllogic/recovery/`.
 - New feature / behaviour change: sqllogic test in the right subtree above. Add a unit test too if there's isolated C++ logic worth pinning.
 - CMake-only changes: rely on CI.
-- Doc-only changes live in a separate repo and don't apply here.
+- Doc-only changes: their SQL examples are sqllogic tests (see [Documenting with runnable examples](#documenting-with-runnable-examples)).
+- Code that goes away takes its gtests with it (port them when there is a replacement). A sqllogic test changes only when the behaviour it pins changes, such as an error that no longer happens or a feature that is now implemented: rewrite it to the new behaviour. Don't add tests that only assert that something no longer exists.
 
 Races are testable in sqllogic, so a concurrency bug still gets a test:
 
@@ -122,7 +126,16 @@ Races are testable in sqllogic, so a concurrency bug still gets a test:
 
 # Recovery tests (auto-restarts serened on injected crashes; needs build/bin/serened)
 ./tests/sqllogic/run_recovery_tests.sh --runner ../../third_party/sqllogictest-rs
+
+# One recovery test against another build
+BUILD_DIR=build_clangd ./tests/sqllogic/run_recovery_tests.sh recovery/<file>.test
 ```
+
+- `run.sh` connects to a serened that is already running (see [Launch](#launch)). Scope it with repeatable `--test '<glob>'`; it takes no positional arguments. `--fast` drops `.test_slow` files, and both wire engines (`pg-wire-simple,pg-wire-extended`) run by default.
+- The exit code says nothing when no file matched: count one `[OK]`/`[FAILED]` line per file you asked for.
+- `run_recovery_tests.sh` starts an auto-restarting serened per file. Its test paths are relative to `tests/sqllogic`; a path that matches nothing still prints PASS. Arguments it doesn't know go to `run.sh`, so `--help` starts the full suite. Server logs stay in `/tmp/serened-logs-XXXXXX/` (`worker-N-test-M.log` per test, `failures-wN.txt` for the failures).
+- One recovery run per account at a time: at start and at exit the script `kill -9`s every `recovery-worker-*` and `run_serened_loop.sh` process the account owns and deletes `/tmp/recovery-worker-*`.
+- The runners default to `nproc` jobs; on a busy machine use `nproc / 2`. Never lower parallelism to make a flaky test pass: a test that fails under load is a bug.
 
 C++ unit tests:
 
@@ -130,7 +143,46 @@ C++ unit tests:
 ./build/bin/iresearch-tests "--gtest_filter=*PhraseFilterTestCase*"
 ./build/bin/serenedb-tests "--gtest_filter=*VPackLoadInspectorTest*"
 ./build/bin/serenedb-tests "--gtest_filter=*DataSourceWithSearchTest*"
+
+# All of them, as CI runs them
+./scripts/gtest-parallel/gtest-parallel ./build/bin/serenedb-tests
+(cd build/bin && python3 ../../scripts/gtest-parallel/gtest_parallel.py ./iresearch-tests)
 ```
+
+`ninja serened` doesn't relink the test binaries: build the test target you run.
+
+#### Other suites
+
+- **Drivers:** `tests/drivers/run.sh --port <port> --lang python` against a running serened (default port 5432). Languages: python, java, js, go, rust, php, csharp, c, ruby, r and psql; `--lang sqlsmith` is the fuzzer.
+- **Network:** `tests/drivers/network/run.sh` starts its own serened and checks pg_hba CIDR and mask matching from different `127.x` source addresses.
+- **Stress:** `tests/drivers/stress/run.sh --profile smoke` (`smoke`, `soak`, `soak-tsan`, `wedge-probe`, `biglake-reindex-smoke`; `--seconds` and `--workers` override the profile). Parallel DDL, DML and RBAC churn with a consistency oracle and a hang detector, against a serened it starts, kills and crashes itself. It saturates the machine.
+- **iresearch load test:** `CORPUS_PATH=$(scripts/ci/steps/iresearch-load-fetch-corpus.bash) build/bin/iresearch-load-tests --gtest_filter='LoadTest*'`; fetching the corpus needs `SEARCHBENCH_S3_KEY_ID` and `SEARCHBENCH_S3_SECRET`.
+- **Packages (RTA):** `scripts/ci/steps/08-ci-{deb,docker,tarball}-rta.bash` install the `.deb`, the Docker image or the tarball built by `05-ci-in-docker-package.bash`, start it, and run sqllogic and the network tests against it (the drivers too with `RTA_DRIVERS`).
+- The recovery, network and stress runners take `BUILD_DIR=<dir>` (default `build`).
+
+#### Writing sqllogic tests
+
+Read a sibling `.test` in the same directory first and match its style.
+
+- Write bare `query`, without type letters. Expected results start with the column-name header line.
+- Separate records with two blank lines; with one, an expected block swallows the next record.
+- Errors use the block form, matched as exact text:
+
+  ```
+  statement error
+  DROP TABLE missing_t;
+  ----
+  db error: ERROR: <exact message>
+  ```
+
+  `<slt:ignore>` wildcards a volatile tail (a "Did you mean" list, oids, generated names); use it sparingly, since an ignored tail asserts nothing. The one exception to exact text is `any/pg/` when PostgreSQL and SereneDB word an error differently: a one-line `statement error <regex>` that matches both, or a `skipif`/`onlyif` pair.
+- Fill expectations with `run.sh ... --override` against a live server, then rerun without it and review the diff.
+- `connection <name>` applies to the next record only; repeat it before every record that needs that connection.
+- Retries: `statement ok retry 10 backoff 200ms`, `query ok retry 10 backoff 200ms`.
+- Results must not depend on execution order: `ORDER BY` every multi-row result and round floating-point aggregates.
+- Each file gets its own database, but secrets, ATTACH aliases, roles and databases are server-global, and both wire engines run against one server: name them after the test file, guard with `DROP ... IF EXISTS`, and build ATTACH paths as `${__TEST_DIR__}/${__RUN_ID__}_<name>`.
+- Files go under `${__TEST_DIR__}`, never a literal `/tmp` (pre-commit `check-no-tmp-in-sqllogic`). Any `${...}` needs `control substitution on` before its first use (pre-commit `check-substitution-directive`).
+- Outside `recovery/`, every file shares one suite server: a `SET GLOBAL` must not change another test's result and is undone with `RESET GLOBAL` at the end of the file. A test that needs more goes under `recovery/`.
 
 ### Testing CI workflows locally
 
@@ -209,6 +261,33 @@ The serened-level postgres_scanner tests
 sqllogic runner -- the `_pgscan.` filename suffix triggers
 `launch_postgres()` in `tests/sqllogic/run.sh` automatically.
 
+### What CI runs
+
+- Every push to a PR runs `auto | pre-commit`, the pre-commit hooks.
+- Ticking **Trigger Jobs** in the PR's "CI Triggers" comment runs `serenedb | build & test` (`build-manual.yml`) with the configs `dev`, `asan`, `tsan` and `perf`, plus `validate pg` when `any/pg` tests changed. `scripts/ci/classify-changes.sh origin/main` prints the gates a diff opens (iresearch, DuckDB suites, changed pg tests); a DuckDB `core` hit also opens the sqlite subtree and sqlsmith.
+- `scripts/ci/steps/run-suites.sh` picks the suites per config:
+  - `dev`: gtest, network, sqllogic, drivers and recovery, plus the gated iresearch tests and load test, DuckDB suites, sqlite subtree and sqlsmith.
+  - `asan`, `tsan`: sqllogic and drivers; the "Extra ASAN" / "Extra TSAN" checkboxes add the rest except recovery.
+  - `perf` (optimized, no asserts): sqllogic and drivers, plus the gated sqlite subtree and sqlsmith.
+- At night (`jobs-schedule.yml`) everything runs on `dev`, plus the stress soak, a macOS build and the package tests; Monday to Thursday nights also run msan, asan, ubsan and tsan with the full set and stress. Stress runs only at night.
+- The CI steps run the suites in Docker with the service containers they need (PostgreSQL, MinIO, iceberg-rest, ClickHouse). The same wrappers run locally:
+
+  ```bash
+  SDB_SQLLOGIC_SCOPE=ours BUILD_DIR=build_clangd tests/sqllogic/run_in_docker.sh
+  TEST_KIND=recovery BUILD_DIR=build_clangd tests/sqllogic/run_in_docker.sh
+  TEST_KIND=duckdb DUCKDB_SUITES=core BUILD_DIR=build_clangd tests/sqllogic/run_in_docker.sh
+  BUILD_DIR=build_clangd tests/drivers/run_in_docker.sh
+  ```
+
+  The sqllogic scopes: `ours` is `sdb/**` without the sqlite subtree, `all` adds `sdb/pg/any/sqlite/**`, and `biglake` runs `*_iceberg.test_slow` against Google BigLake, which needs its credentials.
+
+A red run:
+
+- `gh pr checks <N> --repo serenedb/serenedb` finds a PR's run. Fork PRs dispatch on the base branch, so `gh run list --branch <branch>` misses them.
+- `gh run view <run-id> --repo serenedb/serenedb --log-failed` prints the failed jobs' logs. Every step ends with a verdict line (`UNIT_TESTS=`, `IRESEARCH_TESTS=`, `IRESEARCH_LOAD_TESTS=`, `SQLLOGIC_TESTS=`, `RECOVERY_TESTS=`, `DRIVER_TESTS=`, `DUCKDB_TESTS=`, `NETWORK_TESTS=`, `STRESS_TESTS=` with `PASSED` or `FAILED`); a sqllogic failure prints `failed to run` followed by the record, the expected and the actual output.
+- `gh run view <run-id>` lists the artifacts (service logs, sanitizer reports, junit); `gh run download <run-id> -n <name> -D <dir>` fetches one.
+- Main's baseline is the nightly: `gh run list --repo serenedb/serenedb --workflow jobs-schedule.yml --limit 10`.
+
 ## Third-party dependencies
 
 Dependencies are git submodules under `third_party/`, usually forks under `github.com/serenedb`, so build fixes can go into the fork. `third_party/CMakeLists.txt` builds them from source (`sdb_update_module` + `add_subdirectory`), so every file gets the same compiler, flags and standard library as our own code. Configure a dependency there with `set(<OPTION> <value> CACHE <type> "" FORCE)` before its `add_subdirectory`.
@@ -232,6 +311,22 @@ Dependencies are git submodules under `third_party/`, usually forks under `githu
   - Exception: if your branch has exactly one commit and you let GitHub open the PR for you, GitHub will pre-fill the PR title and description from that commit -- so in that case keep the commit message PR-ready.
 - **Pre-commit hooks** run as a PR check. You don't have to install them locally; if you want to check before pushing, run `pre-commit run --all-files`.
 - **CI must pass** and one maintainer must approve before merge.
+- **Other repositories:** refer to another repository's issue or PR as plain text (`serenedb/duckdb PR 89`) or inside backticks, never as `#N`, `owner/repo#N` or its URL: GitHub links all three back from the target. This holds for commit messages, PR descriptions and comments. Link code by commit SHA, not by branch.
+
+## When you change ...
+
+Each of these changes has a follow-up step that nothing runs for you.
+
+- **The DuckDB fork's grammar** (`third_party/duckdb/src/parser/peg/grammar/`) or a source of its generated code (settings, serialization, enum_util, functions, metrics, storage info): from `third_party/duckdb`, run `./scripts/parser/build_grammar.sh`, then `DUCKDB_FORMAT_SKIP_FETCH=1 make generate-files` (without the variable it first runs `git fetch origin main:main`). Generated files are never edited by hand.
+- **A fork under `third_party/`:** the change is a PR in that fork against its current `vYYYY.MM.DD` branch. The hand-written change goes in its own commits, each formatted (`./scripts/format_duckdb.sh` for the duckdb family); for DuckDB everything the generators produced goes in one `regen:` commit, last. After the fork PR merges, serenedb moves the gitlink in a commit of its own: pre-commit `check-submodule-pointers` rejects a gitlink that no version branch contains. Submodules are cloned shallow (see [Working with Submodules](#working-with-submodules)), and a cmake reconfigure checks the gitlink out over a clean submodule: configure with `-DAUTO_UPDATE_MODULES=OFF` while one is on a work branch.
+- **Anything written to disk:** [Storage compatibility](#storage-compatibility); for DuckDB files also "Changing the DuckDB on-disk format" in [tests/duckdb/README.md](tests/duckdb/README.md).
+- **A new C++ file:** add it to `target_sources` in its directory's `CMakeLists.txt`. `scripts/find_unused_sources.py` lists the files nothing compiles.
+- **A setting:** it is defined in `server/query/config_variables.cpp` and documented in the table in `docs/configuration/overview.md`.
+- **A serened command-line flag:** `python3 tests/drivers/python/cli_help.py override --bin <build dir>/bin/serened` rewrites the reference that `docs/configuration/cli.mdx` renders; the python driver suite fails until it matches.
+- **The OpenTelemetry schema** (`resources/otel/otel_schema.sql`): `scripts/otel/schema.py generate`. Its conformance fixtures (`resources/otel/conformance/*.json`): `scripts/otel/fixtures.py generate`.
+- **What pg_catalog and information_schema support:** update `docs/compatibility/system-table-compatibility.md`, then `python3 scripts/generate_system_table_claims.py` regenerates the test that pins it.
+- **A python driver test file:** add it to the list in `tests/drivers/python/run.sh`, or no suite runs it.
+- **Other generated sources:** the word-break and case tables in `iresearch/` come from `scripts/generate_unicode_tables.py`, `third_party/libstemmer_c` from `scripts/update_libstemmer.sh`, and the PostgreSQL views and functions in `server/pg/system_views.h` and `server/pg/system_functions.h` from `scripts/update_system_catalog.py`.
 
 ## Documentation
 
@@ -507,8 +602,8 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 
 ### Error Handling
 
-- PostgreSQL/frontend code: use `THROW_SQL_ERROR`
-- Common/backend code: both `absl::Status` and `throw` are acceptable
+- PostgreSQL/frontend code: use `THROW_SQL_ERROR`, so the real SQLSTATE goes on the wire. In `server/`, pre-commit `check-no-raw-throw` rejects any other `throw` except a rethrow (`throw;`), `irs::SqlException` and `duckdb::NotImplementedException`
+- Common/backend code outside `server/`: both `absl::Status` and `throw` are acceptable
 - Consider performance: `absl::Status` with a only code is not allocate
 - `SDB_ASSERT` for debug-only checks
 - `SDB_ENSURE` for debug crash + release throw
@@ -543,14 +638,15 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 
 ### Library Preferences
 
-- `absl::Hash` over `std::hash`; `absl::*_hash_*` over `std::unordered_*`
+- `absl::Hash` over `std::hash`; `irs::containers::FlatHashMap`, `FlatHashSet` or `NodeHashMap` (absl underneath) over `std::unordered_*`, which pre-commit `check-banned-calls` rejects in `server/` and `iresearch/`
 - `absl::btree_*` over `std::set`/`std::map` when appropriate
 - `std::span<const T>` over `std::initializer_list<T>` in parameters
 - `magic_enum` for enum names
 - `absl::c_any_of` (etc.) over `std::any_of(begin, end)`. Fall back to `std::ranges` when no `absl::c_*` exists (e.g. `std::ranges::sort(range, {}, proj)`).
 - Prefer imperative loops over ranges pipelines
 - String operations: `absl::StrCat`, `absl::Substitute`, `absl::StrJoin`, `absl::StrSplit`
-- No `fmt`/`printf` unless necessary; use `absl::SPrintf` or `std::format` (Velox code)
+- No `fmt`; the `printf` family is rejected by `check-banned-calls`: use `absl::StrFormat`, `absl::FPrintF`, or `absl::SNPrintF` into a fixed buffer
+- Number parsing: `fast_float::from_chars`, checking its `ec`; `std::sto*`, `std::from_chars`, `strto*` and `ato*` are rejected by `check-banned-calls`
 - Avoid streams API (`operator<<`/`>>`) in new code. See also `absl::StreamFormat`
 - Implicit conversion to bool: prefer `if (auto x = something())` over `if (auto x = something(); x)`
 - Nullptrs: [Google style](https://google.github.io/styleguide/cppguide.html#0_and_nullptr/NULL), default constructor is ok for smart pointers
@@ -604,7 +700,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - Measure before optimizing -- don't guess
 - Binary size matters: excessive inlining/templates hurt icache and build times
 - Validate performance claims with microbenchmarks under `tests/bench/micro/` (Google Benchmark). Register one with `add_bench(<name>)` in that directory's `CMakeLists.txt` -- `<name>.cpp` either registers `BENCHMARK`s or defines its own `Main` with `sdb::bench::AddMain` -- build with `ninja serenedb-bench-micro`, run it as `build/bin/serenedb-bench-micro <name> [--benchmark_filter=...]`. The same binary answers to `search-benchmark-game-build` and `search-benchmark-game-query`, the search benchmark game's tools.
-- Use the `bench` cmake preset for production-like numbers.
+- Use the `bench` cmake preset for production-like numbers and `perf` to profile: `bench` omits frame pointers, so `perf record -g` call graphs break there.
 - A microbench fits when the change is a few well-scoped functions. When the
   change is broader (a whole query path, an end-to-end pipeline, anything that
   doesn't sit neatly inside one fixture), drive a small standalone repro script

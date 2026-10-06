@@ -36,7 +36,7 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
     const TokenPhraseMatcher* matcher = nullptr;
     const PhraseTokens* tokens = nullptr;
     const ColReader* col_reader = nullptr;
-    const ColumnReader* column = nullptr;
+    std::vector<const ColumnReader*> columns;
   };
 
   TokenPhraseQuery(const SubReader& segment, const TermReader& reader,
@@ -67,9 +67,14 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
   Recipe MakeRecipe() const {
     const auto* col_reader = _segment.GetColReader();
     SDB_ASSERT(col_reader);
-    const auto* column = col_reader->Column(_tokens->column);
-    SDB_ASSERT(column);
-    return {&_matcher, _tokens.get(), col_reader, column};
+    Recipe recipe{&_matcher, _tokens.get(), col_reader, {}};
+    recipe.columns.reserve(_tokens->text.columns.size());
+    for (const auto id : _tokens->text.columns) {
+      const auto* column = col_reader->Column(id);
+      SDB_ASSERT(column);
+      recipe.columns.push_back(column);
+    }
+    return recipe;
   }
 
   void Visit(PreparedStateVisitor&, score_t) const final {}

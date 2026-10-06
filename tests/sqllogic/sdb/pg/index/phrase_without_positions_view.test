@@ -1,0 +1,146 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pwpv_words AS split_text(case := 'lower') WITH (frequency)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pwpv_words_pos AS split_text(case := 'lower') WITH (frequency, position)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pwpv_raw AS split_text() WITH (frequency)
+
+statement count 5
+COPY (SELECT 1 AS id, 'the quick brown fox jumps over the lazy dog' AS body
+      UNION ALL SELECT 2, 'quick brown dog'
+      UNION ALL SELECT 3, 'brown fox quick'
+      UNION ALL SELECT 4, 'the fox is quick and brown'
+      UNION ALL SELECT 5, 'quick brown cat brown fox')
+TO '${__TEST_DIR__}/pwpv.parquet' (FORMAT parquet)
+
+statement ok
+CREATE VIEW pwpv AS SELECT id, body FROM read_parquet('${__TEST_DIR__}/pwpv.parquet')
+
+statement ok
+CREATE INDEX pwpv_text ON pwpv USING inverted (id, body pwpv_words) INCLUDE (body)
+
+statement ok
+CREATE INDEX pwpv_pos ON pwpv USING inverted (id, body pwpv_words_pos)
+
+statement ok
+CREATE INDEX pwpv_upper ON pwpv USING inverted (id, (upper(body)) pwpv_raw) INCLUDE (body)
+
+statement ok
+CREATE INDEX pwpv_bare ON pwpv USING inverted (id, body pwpv_words)
+
+query
+SELECT id FROM pwpv_text WHERE body @@ ts_phrase('quick brown') ORDER BY id
+----
+id
+1
+2
+5
+
+query
+SELECT id FROM pwpv_pos WHERE body @@ ts_phrase('quick brown') ORDER BY id
+----
+id
+1
+2
+5
+
+query
+SELECT count(*) FROM pwpv_text WHERE body @@ ts_phrase('brown fox')
+----
+count
+3
+
+query
+SELECT id FROM pwpv_text WHERE NOT body @@ ts_phrase('quick brown') ORDER BY id
+----
+id
+3
+4
+
+query
+SELECT id FROM pwpv_text
+WHERE body @@ ts_phrase('lazy dog') OR body @@ ts_phrase('brown dog') ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id, round(BM25(pwpv_text.tableoid)::numeric, 4) AS score
+FROM pwpv_text WHERE body @@ ts_phrase('quick brown') ORDER BY id
+----
+id	score
+1	0.118
+2	0.118
+5	0.118
+
+query
+SELECT id, round(BM25(pwpv_pos.tableoid)::numeric, 4) AS score
+FROM pwpv_pos WHERE body @@ ts_phrase('quick brown') ORDER BY id
+----
+id	score
+1	0.118
+2	0.118
+5	0.118
+
+query
+EXPLAIN SELECT id FROM pwpv_text WHERE body @@ ts_phrase('quick brown')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: pwpv_text                         │
+│ Lookup: parquet                          │
+│ Index Filter:                            │
+│ ╭─ Phrase ─────────────────────────────╮ │
+│ │ Field: body(string)                  │ │
+│ │ Parts:                               │ │
+│ │ Term:quick(0, 0); Term:brown(1, 1);  │ │
+│ │ Verify: table filter                 │ │
+│ ╰──────────────────────────────────────╯ │
+│ Projections: id                          │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM pwpv_text
+WHERE body @@ ts_phrase('lazy dog') OR body @@ ts_phrase('brown dog')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────╮
+│ Index: pwpv_text                                                                     │
+│ Lookup: parquet                                                                      │
+│ Index Filter:                                                                        │
+│ ╭─ Or ─────────────────────────────────────╮                                         │
+│ ╰─────────────────────┬────────────────────╯                                         │
+│                       ├──────────────────────────────────────────╮                   │
+│ ╭─ Phrase ────────────┴────────────────────╮  ╭─ Phrase ─────────┴─────────────────╮ │
+│ │ Field: body(string)                      │  │ Field: body(string)                │ │
+│ │ Parts: Term:lazy(0, 0); Term:dog(1, 1);  │  │ Parts:                             │ │
+│ │ Verify: inline                           │  │ Term:brown(0, 0); Term:dog(1, 1);  │ │
+│ ╰──────────────────────────────────────────╯  │ Verify: inline                     │ │
+│                                               ╰────────────────────────────────────╯ │
+│ Projections: id                                                                      │
+│ ~1 row                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT id FROM pwpv_upper WHERE upper(body) @@ ts_phrase('QUICK BROWN') ORDER BY id
+----
+id
+1
+2
+5
+
+statement error
+SELECT id FROM pwpv_bare WHERE body @@ ts_phrase('quick brown')
+----
+db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
+HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE`, or query with a single-term ts_phrase / ts_like.
+
+
+statement ok
+DROP VIEW pwpv

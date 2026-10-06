@@ -20,6 +20,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
 
 #include <atomic>
@@ -550,6 +551,7 @@ namespace {
 inline constexpr irs::field_id kStoreId = 1;
 inline constexpr irs::field_id kPlainId = 2;
 inline constexpr irs::field_id kPositionalId = 3;
+inline constexpr irs::field_id kDecoyId = 4;
 inline constexpr size_t kTop = 5;
 
 struct Field {
@@ -622,7 +624,7 @@ template<typename Words>
 std::shared_ptr<const irs::PhraseTokens> Tokens(
   std::optional<irs::PhraseMatch> match, irs::field_id column = kStoreId) {
   auto tokens = std::make_shared<irs::PhraseTokens>();
-  tokens->column = column;
+  tokens->text = {.columns = {column}, .types = {duckdb::LogicalType::VARCHAR}};
   tokens->tokenizer = [] { return std::make_shared<Words>(); };
   tokens->match = match;
   return tokens;
@@ -654,6 +656,13 @@ class Index {
         EXPECT_TRUE(tests::InsertField(doc, positional_field));
         irs::tests::StoreFieldAt(*doc.GetColWriter(), kStoreId, doc.DocId(),
                                  plain_field);
+        std::vector<std::string_view> words =
+          absl::StrSplit(docs[i], ' ', absl::SkipEmpty());
+        absl::c_reverse(words);
+        const auto decoy = absl::StrJoin(words, " ");
+        const Field decoy_field{.value = decoy, .id = kDecoyId};
+        irs::tests::StoreFieldAt(*doc.GetColWriter(), kDecoyId, doc.DocId(),
+                                 decoy_field);
       }
       ctx.Commit();
       writer->RefreshCommit();
@@ -1215,6 +1224,40 @@ TEST(TokenPhraseIndexTest, deferred_check_on_stacked_tokens) {
     const auto phrase = RandomPatternPhrase(rng, kTerms);
     SCOPED_TRACE(i);
     ExpectDeferredLikeInline<StackedWords>(index, docs, phrase);
+  }
+}
+
+TEST(TokenPhraseIndexTest, expression_over_stored_columns) {
+  class SecondColumn final : public irs::TextExpression {
+   public:
+    duckdb::Vector& Evaluate(duckdb::DataChunk& columns) final {
+      return columns.data[1];
+    }
+  };
+  constexpr std::string_view kWords[] = {"the", "quick", "brown", "fox",
+                                         "the", "dog",   "a"};
+  std::mt19937 rng{13};
+  std::vector<std::string> docs;
+  for (size_t i = 0; i != 300; ++i) {
+    docs.push_back(RandomText(rng, kWords, 1 + rng() % 20));
+  }
+  const Index index{docs, std::type_identity<DenseWords>{}, 64};
+  for (const auto* text : {"quick brown", "the fox", "brown fox dog"}) {
+    SCOPED_TRACE(text);
+    const auto expected =
+      index.Run(*Lowered(PhraseOn(kPositionalId, Phrase(text))));
+    for (const auto match : kMatches) {
+      SCOPED_TRACE(MatchName(match));
+      auto tokens =
+        std::make_shared<irs::PhraseTokens>(*Tokens<DenseWords>(match));
+      tokens->text = {
+        .columns = {kDecoyId, kStoreId},
+        .types = {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
+        .expression = [] { return std::make_unique<SecondColumn>(); }};
+      ExpectFamilies(
+        expected,
+        index.Run(*Lowered(PhraseOn(kPlainId, Phrase(text), tokens))));
+    }
   }
 }
 

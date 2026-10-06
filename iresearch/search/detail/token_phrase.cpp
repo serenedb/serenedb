@@ -856,18 +856,34 @@ bool TextRows::Values(duckdb::idx_t row,
   return !out.empty();
 }
 
+TokenPhraseReader::Input::Input(const ColumnReader& column, ReadContext& ctx)
+  : column{&column},
+    state{column.InitScan(ctx)},
+    out{std::make_unique<ColumnReader::VectorScratch>(column.Type())} {}
+
 TokenPhraseReader::TokenPhraseReader(
-  const ColReader& col_reader, const ColumnReader& column,
+  const ColReader& col_reader, std::span<const ColumnReader* const> columns,
   std::shared_ptr<analysis::Tokenizer> tokenizer,
-  const TokenPhraseMatcher& matcher)
+  const TokenPhraseMatcher& matcher, std::unique_ptr<TextExpression> expression)
   : _ctx{col_reader},
-    _column{&column},
-    _state{column.InitScan(_ctx)},
-    _out{column.Type()},
+    _expression{std::move(expression)},
     _sel{STANDARD_VECTOR_SIZE},
     _tokenizer{std::move(tokenizer)},
     _sink{matcher, _tokenizer->Traits()} {
   SDB_ASSERT(_tokenizer);
+  SDB_ASSERT(!columns.empty());
+  SDB_ASSERT(_expression || columns.size() == 1);
+  _inputs.reserve(columns.size());
+  std::vector<duckdb::LogicalType> types;
+  types.reserve(columns.size());
+  for (const auto* column : columns) {
+    _inputs.emplace_back(*column, _ctx);
+    _row_count = std::min(_row_count, column->RowCount());
+    types.push_back(column->Type());
+  }
+  if (_expression) {
+    _chunk.InitializeEmpty(types);
+  }
 }
 
 bool TokenPhraseReader::Match(doc_id_t doc, bool count, PhraseVerdict& out) {
@@ -882,9 +898,8 @@ void TokenPhraseReader::Match(std::span<const doc_id_t> docs, bool count,
   SDB_ASSERT(docs.size() == verdicts.size());
   SDB_ASSERT(docs.size() == matched.size());
   SDB_ASSERT(docs.size() <= STANDARD_VECTOR_SIZE);
-  const auto rows = _column->RowCount();
   auto n = docs.size();
-  while (n != 0 && docs[n - 1] - doc_limits::min() >= rows) {
+  while (n != 0 && docs[n - 1] - doc_limits::min() >= _row_count) {
     --n;
   }
   std::fill(verdicts.begin() + n, verdicts.end(), PhraseVerdict{});
@@ -901,9 +916,19 @@ void TokenPhraseReader::Gather(std::span<const doc_id_t> docs, bool count,
   for (size_t i = 0; i != docs.size(); ++i) {
     _sel.set_index(i, docs[i] - doc_limits::min() - anchor);
   }
-  auto& values = _out.Reset();
-  _column->GatherScatter(_state, anchor, _sel, docs.size(), values, 0);
-  _rows.Bind(values, docs.size());
+  for (auto& input : _inputs) {
+    auto& out = input.out->Reset();
+    input.column->GatherScatter(input.state, anchor, _sel, docs.size(), out, 0);
+  }
+  auto* values = &_inputs.front().out->vector;
+  if (_expression) {
+    for (size_t i = 0; i != _inputs.size(); ++i) {
+      _chunk.data[i].Reference(_inputs[i].out->vector);
+    }
+    _chunk.SetChildCardinality(docs.size());
+    values = &_expression->Evaluate(_chunk);
+  }
+  _rows.Bind(*values, docs.size());
   for (size_t i = 0; i != docs.size(); ++i) {
     verdicts[i] = {};
     matched[i] =

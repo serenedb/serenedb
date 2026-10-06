@@ -109,24 +109,33 @@ duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
     stream, context, params);
 }
 
-duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
-  const duckdb::Expression& expr, const duckdb::DataChunk& chunk,
-  duckdb::idx_t table_id, std::span<const ColumnId> slot_to_col_id) {
+duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefs(
+  const duckdb::Expression& expr, duckdb::idx_t table_id,
+  std::span<const ColumnId> slot_to_col_id,
+  std::span<const duckdb::LogicalType> slot_types) {
+  SDB_ASSERT(slot_types.size() >= slot_to_col_id.size());
   duckdb::vector<duckdb::ColumnBinding> bindings;
   duckdb::vector<duckdb::LogicalType> types;
-  SDB_ASSERT(chunk.ColumnCount() >= slot_to_col_id.size());
   const auto count = slot_to_col_id.size();
   bindings.reserve(count);
   types.reserve(count);
   for (duckdb::idx_t slot = 0; slot < count; ++slot) {
     bindings.emplace_back(duckdb::TableIndex(table_id),
                           duckdb::ProjectionIndex(slot_to_col_id[slot]));
-    types.emplace_back(chunk.data[slot].GetType());
+    types.emplace_back(slot_types[slot]);
   }
   ChunkBindingResolver resolver(std::move(bindings), std::move(types));
   auto copy = expr.Copy();
   resolver.Resolve(copy);
   return copy;
+}
+
+duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
+  const duckdb::Expression& expr, const duckdb::DataChunk& chunk,
+  duckdb::idx_t table_id, std::span<const ColumnId> slot_to_col_id) {
+  SDB_ASSERT(chunk.ColumnCount() >= slot_to_col_id.size());
+  return ResolveBoundColumnRefs(expr, table_id, slot_to_col_id,
+                                chunk.GetTypes());
 }
 
 duckdb::Vector EvaluateExprOverChunk(const duckdb::Expression& bound_expr,

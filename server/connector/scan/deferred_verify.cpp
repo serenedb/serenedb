@@ -91,11 +91,14 @@ duckdb::unique_ptr<duckdb::TableFilter> MakeVerifyFilter(
 
 struct PhraseCheckBind final : duckdb::FunctionData {
   PhraseCheckBind(std::shared_ptr<const irs::TokenPhraseMatcher> matcher,
-                  irs::PhraseTokens::Factory tokenizer)
-    : matcher{std::move(matcher)}, tokenizer{std::move(tokenizer)} {}
+                  irs::PhraseTokens::Factory tokenizer,
+                  irs::TextSource::Expression expression)
+    : matcher{std::move(matcher)},
+      tokenizer{std::move(tokenizer)},
+      expression{std::move(expression)} {}
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
-    return duckdb::make_uniq<PhraseCheckBind>(matcher, tokenizer);
+    return duckdb::make_uniq<PhraseCheckBind>(matcher, tokenizer, expression);
   }
 
   bool Equals(const duckdb::FunctionData& other) const final {
@@ -104,13 +107,17 @@ struct PhraseCheckBind final : duckdb::FunctionData {
 
   std::shared_ptr<const irs::TokenPhraseMatcher> matcher;
   irs::PhraseTokens::Factory tokenizer;
+  irs::TextSource::Expression expression;
 };
 
 struct PhraseCheckState final : duckdb::FunctionLocalState {
   explicit PhraseCheckState(const PhraseCheckBind& bind)
-    : tokenizer{bind.tokenizer()}, sink{*bind.matcher, tokenizer->Traits()} {}
+    : tokenizer{bind.tokenizer()},
+      expression{bind.expression ? bind.expression() : nullptr},
+      sink{*bind.matcher, tokenizer->Traits()} {}
 
   std::shared_ptr<irs::analysis::Tokenizer> tokenizer;
+  std::unique_ptr<irs::TextExpression> expression;
   irs::ValueAnalyzer analyzer;
   irs::TokenPhraseSink sink;
   irs::TextRows rows;
@@ -129,7 +136,11 @@ void CheckPhrase(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   auto& local = duckdb::ExecuteFunctionState::GetFunctionState(state)
                   ->Cast<PhraseCheckState>();
   const auto count = args.size();
-  local.rows.Bind(args.data[0], count);
+  auto* values = &args.data[0];
+  if (local.expression) {
+    values = &local.expression->Evaluate(args);
+  }
+  local.rows.Bind(*values, count);
   auto* out = duckdb::FlatVector::GetDataMutable<bool>(result);
   irs::PhraseVerdict verdict;
   for (duckdb::idx_t row = 0; row != count; ++row) {
@@ -164,16 +175,17 @@ duckdb::unique_ptr<duckdb::TableFilter> MakePhraseCheck(
       return irs::PostingMeta{.docs_count = Clamp(docs), .freq = Clamp(freq)};
     },
     tokens.match);
-  duckdb::ScalarFunction fn(duckdb::Identifier{"sdb_phrase_check"},
-                            {tokens.type}, duckdb::LogicalType::BOOLEAN,
-                            CheckPhrase);
+  const auto& type = tokens.text.types.front();
+  duckdb::ScalarFunction fn(duckdb::Identifier{"sdb_phrase_check"}, {type},
+                            duckdb::LogicalType::BOOLEAN, CheckPhrase);
   fn.SetInitStateCallback(InitPhraseCheck);
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> children;
   children.push_back(
-    duckdb::make_uniq<duckdb::BoundReferenceExpression>(tokens.type, 0ULL));
+    duckdb::make_uniq<duckdb::BoundReferenceExpression>(type, 0ULL));
   auto expr = duckdb::make_uniq<duckdb::BoundFunctionExpression>(
     duckdb::BoundScalarFunction(fn), std::move(children),
-    duckdb::make_uniq<PhraseCheckBind>(std::move(matcher), tokens.tokenizer));
+    duckdb::make_uniq<PhraseCheckBind>(std::move(matcher), tokens.tokenizer,
+                                       tokens.text.expression));
   return duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(expr));
 }
 
@@ -192,7 +204,8 @@ void VisitConjuncts(F& root, Visitor&& visit) {
 void DeferPhrase(irs::ByPhrase& filter) {
   auto& options = *filter.mutable_options();
   const auto& tokens = options.tokens();
-  if (!tokens || !irs::TokenPhraseMatcher::Standalone(tokens->Check(options))) {
+  if (!tokens || tokens->text.columns.size() != 1 ||
+      !irs::TokenPhraseMatcher::Standalone(tokens->Check(options))) {
     return;
   }
   auto deferred = std::make_shared<irs::PhraseTokens>(*tokens);
@@ -231,7 +244,8 @@ void AddDeferred(ScanGlobalState& state, const irs::Filter& filter,
     const auto& phrase = downCast<const irs::ByPhrase>(filter);
     const auto& tokens = phrase.options().tokens();
     if (tokens && tokens->deferred) {
-      add(tokens->column, tokens->type, MakePhraseCheck(phrase, reader));
+      add(tokens->text.columns.front(), tokens->text.types.front(),
+          MakePhraseCheck(phrase, reader));
     }
   }
 }

@@ -76,12 +76,14 @@ A column indexed without `position` answers every phrase query when the index al
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/phrase_without_positions" />
 
+An [indexed expression](../../statements/create_index/inverted.md) such as `(lower(body))` works the same way when the index keeps every column the expression reads: the expression is computed from them before the check.
+
 The index finds the rows that contain every word of the phrase. Then it reads the text of each of those rows, analyzes it with the column's dictionary and keeps the rows where the words line up. Matches and scores are the same as with `position`, for every phrase form: gaps, `[min, max]` intervals and `slop` in `ts_phrase`, `##` chains with pattern parts, `phraseto_tsquery` and the quoted phrases of `to_tsquery` and `websearch_to_tsquery`. `EXPLAIN` shows where the text is checked in the phrase's `Verify`:
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/phrase_without_positions_plan" />
 
 - `Verify: table filter`: the text is checked last, only for the rows that pass every other condition of the query. A phrase gets this when the query doesn't rank by score and every row has to match the phrase.
-- `Verify: inline`: the text is checked as the index finds the rows. A query ranked by score gets this, because the score counts the phrase's occurrences. So do a query ranked by vector distance, a phrase under `OR` or `NOT`, a query that calls [`ts_offsets`](../../functions/search/highlighting.md), a phrase in `ts_dict_agg`, a phrase with both `slop` and a pattern part and a phrase with a `ts_levenshtein` part while [`sdb_levenshtein_max_terms`](./maintenance.md#session-settings) isn't `0`.
+- `Verify: inline`: the text is checked as the index finds the rows. A query ranked by score gets this, because the score counts the phrase's occurrences. So do a query ranked by vector distance, a phrase under `OR` or `NOT`, a query that calls [`ts_offsets`](../../functions/search/highlighting.md), a phrase in `ts_dict_agg`, a phrase on an expression that reads more than one column, a phrase with both `slop` and a pattern part and a phrase with a `ts_levenshtein` part while [`sdb_levenshtein_max_terms`](./maintenance.md#session-settings) isn't `0`.
 
 The index stays smaller without `position`, but a phrase reads more data: the fewer rows contain all of its words, the cheaper it is. A phrase of common words over long texts is where `position` pays off. Compressing the kept text, for example with `INCLUDE (body included (compression = 'zstd'))`, shrinks the index further, but every row a phrase checks is decompressed first, so phrases run several times slower.
 

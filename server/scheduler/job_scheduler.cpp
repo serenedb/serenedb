@@ -178,12 +178,9 @@ void VerifySchedule(const duckdb::JobSchedule& schedule) {
       "job schedule offset must not be negative, got %s",
       schedule.offset.ToString());
   }
-  if (schedule.kind == duckdb::JobScheduleKind::AFTER) {
-    if (shift != duckdb::interval_t()) {
-      throw duckdb::InvalidInputException("OFFSET is not allowed with AFTER");
-    }
-  } else if (every.months != 0) {
-    if (every.days != 0 || every.micros != 0) {
+  if (every.months != 0) {
+    if (schedule.kind == duckdb::JobScheduleKind::EVERY &&
+        (every.days != 0 || every.micros != 0)) {
       throw duckdb::InvalidInputException(
         "EVERY interval cannot mix months with days or time, got %s",
         schedule.interval.ToString());
@@ -225,62 +222,40 @@ void JobScheduler::Schedule(catalog::JobCatalogEntry& job) {
   if (status.suspended) {
     return;
   }
-  if (status.schedule.concurrent) {
-    BackgroundScheduler::instance().RunAt(
-      status.next_run, [this, state, timer] { RunConcurrent(state, timer); });
-  } else {
-    BackgroundScheduler::instance().RunAt(
-      status.next_run,
-      [this, state, timer] { RunNotConcurrent(state, timer); });
-  }
-}
-
-void JobScheduler::RunConcurrent(std::shared_ptr<JobState> state,
-                                 uint64_t timer) {
-  absl::MutexLock lock{&state->mutex};
-  if (state->dropped || state->timer != timer) {
-    return;
-  }
-  auto& status = state->status;
-  const auto now = duckdb::Timestamp::GetCurrentTimestamp();
-  if (now >= status.next_run) {
-    status.next_run = NextRun(status.schedule, now);
-    ++status.running;
-    _runs.Add();
-    BackgroundScheduler::instance()
-      .Run([this, state, job = state->definition] {
-        RunBody(state, job, nullptr, 0);
-      })
-      .Detach();
-  }
   BackgroundScheduler::instance().RunAt(
-    status.next_run, [this, state, timer] { RunConcurrent(state, timer); });
+    status.next_run, [this, state, timer] { Run(state, timer); });
 }
 
-void JobScheduler::RunNotConcurrent(std::shared_ptr<JobState> state,
-                                    uint64_t timer) {
+void JobScheduler::Run(std::shared_ptr<JobState> state, uint64_t timer) {
   JobDefinition job;
+  bool concurrent = false;
   {
     absl::MutexLock lock{&state->mutex};
     if (state->dropped || state->timer != timer) {
       return;
     }
     auto& status = state->status;
+    concurrent = status.schedule.concurrent;
     const auto now = duckdb::Timestamp::GetCurrentTimestamp();
-    if (status.running > 0 || now < status.next_run) {
-      if (status.running > 0) {
+    const bool busy = !concurrent && status.running > 0;
+    if (busy || now < status.next_run) {
+      if (busy) {
         status.next_run = NextRun(status.schedule, now);
       }
       BackgroundScheduler::instance().RunAt(
-        status.next_run,
-        [this, state, timer] { RunNotConcurrent(state, timer); });
+        status.next_run, [this, state, timer] { Run(state, timer); });
       return;
     }
     ++status.running;
     _runs.Add();
     job = state->definition;
+    if (concurrent) {
+      status.next_run = NextRun(status.schedule, now);
+      BackgroundScheduler::instance().RunAt(
+        status.next_run, [this, state, timer] { Run(state, timer); });
+    }
   }
-  RunBody(state, std::move(job), nullptr, timer);
+  RunBody(state, std::move(job), nullptr, concurrent ? 0 : timer);
 }
 
 void JobScheduler::Execute(duckdb::ClientContext& caller,
@@ -330,8 +305,7 @@ duckdb::ErrorData JobScheduler::RunBody(
     --status.running;
     if (timer != 0 && !state->dropped && state->timer == timer) {
       BackgroundScheduler::instance().RunAt(
-        status.next_run,
-        [this, state, timer] { RunNotConcurrent(state, timer); });
+        status.next_run, [this, state, timer] { Run(state, timer); });
     }
     _runs.Done();
   };

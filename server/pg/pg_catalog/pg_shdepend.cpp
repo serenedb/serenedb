@@ -34,14 +34,8 @@
 #include "catalog/cluster.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_catalog/pg_authid.h"
-#include "pg/pg_catalog/pg_class.h"
-#include "pg/pg_catalog/pg_database.h"
 #include "pg/pg_catalog/pg_default_acl.h"
-#include "pg/pg_catalog/pg_foreign_server.h"
-#include "pg/pg_catalog/pg_namespace.h"
-#include "pg/pg_catalog/pg_proc.h"
-#include "pg/pg_catalog/pg_ts_dict.h"
-#include "pg/pg_catalog/pg_type.h"
+#include "pg/pg_catalog/pg_depend.h"
 #include "pg/pg_types.h"
 
 namespace sdb::pg {
@@ -49,26 +43,11 @@ namespace {
 
 uint64_t ClassOf(duckdb::CatalogType type) {
   using enum duckdb::CatalogType;
-  if (type == SCHEMA_ENTRY) {
-    return PgNamespace::kId;
-  }
-  if (type == TABLE_ENTRY || type == VIEW_ENTRY || type == SEQUENCE_ENTRY) {
-    return PgClass::kId;
-  }
-  if (type == TYPE_ENTRY) {
-    return PgType::kId;
-  }
-  if (type == MACRO_ENTRY || type == TABLE_MACRO_ENTRY) {
-    return PgProc::kId;
-  }
-  if (type == TOKENIZER_ENTRY) {
-    return PgTsDict::kId;
-  }
-  if (type == FOREIGN_SERVER_ENTRY) {
-    return PgForeignServer::kId;
-  }
-  if (type == DATABASE_ENTRY) {
-    return PgDatabase::kId;
+  if (type == SCHEMA_ENTRY || type == TABLE_ENTRY || type == VIEW_ENTRY ||
+      type == SEQUENCE_ENTRY || type == TYPE_ENTRY || type == MACRO_ENTRY ||
+      type == TABLE_MACRO_ENTRY || type == TOKENIZER_ENTRY ||
+      type == FOREIGN_SERVER_ENTRY || type == DATABASE_ENTRY) {
+    return CatalogClassOid(type);
   }
   return kInvalidOid;
 }

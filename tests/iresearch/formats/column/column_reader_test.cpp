@@ -1453,6 +1453,8 @@ TEST_F(ColumnReaderTest, RepeatedMapsAreStoredOnce) {
                  false);
   ExpectGathered(*col, r.Ctx(), expected,
                  Rows{{8200, 8201, 8205, 8250, 8300, 9000, 10000}}, true);
+  ExpectGathered(*col, r.Ctx(), expected, Rows{{8200, 8201, 8206, 8210, 8230}},
+                 true);
 }
 
 TEST_F(ColumnReaderTest, RepeatedListsGatherAndSkip) {
@@ -1476,6 +1478,8 @@ TEST_F(ColumnReaderTest, RepeatedListsGatherAndSkip) {
   ExpectGathered(*col, r.Ctx(), expected, sparse, false);
   ExpectGathered(*col, r.Ctx(), expected,
                  Rows{{5000, 5001, 5002, 5003, 5100, 6000, 7000}}, true);
+  ExpectGathered(*col, r.Ctx(), expected, Rows{{5000, 5001, 5004, 5010, 5020}},
+                 true);
 }
 
 TEST_F(ColumnReaderTest, RepeatedNestedLists) {

@@ -81,19 +81,14 @@ void DenseRuns(const Kind& self, ColumnReader::ScanState& s, uint64_t anchor,
   SDB_ASSERT(hits <= span && span <= STANDARD_VECTOR_SIZE);
   const uint64_t cur = self.Kind::GatherCursor(s);
   SDB_ASSERT(anchor >= cur, "GatherDense requires ascending rows");
-  if (hits == span) {
-    if (anchor > cur) {
-      self.Kind::Skip(s, anchor - cur);
-    }
-    self.Kind::Scan(s, out, span);
-    return;
-  }
   if (hits * 32 >= span) {
     if (anchor > cur) {
       self.Kind::Skip(s, anchor - cur);
     }
-    self.Kind::ScanCount(s, out, span, 0);
-    out.Slice(sel, hits);
+    self.Kind::Scan(s, out, span);
+    if (hits != span) {
+      out.Slice(sel, hits);
+    }
     return;
   }
   ScatterRuns(self, s, anchor, sel, hits, out, 0);

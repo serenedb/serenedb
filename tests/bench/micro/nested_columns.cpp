@@ -296,6 +296,34 @@ void SparseGather(benchmark::State& state, Shape shape) {
                           static_cast<int64_t>(rows.size()));
 }
 
+void DenseGather(benchmark::State& state, Shape shape) {
+  const auto& seg = GetSeg(shape);
+  std::vector<uint64_t> rows;
+  for (uint64_t r = 0; r < Rows(); r += 3) {
+    rows.emplace_back(r);
+  }
+  irs::ReadContext ctx{*seg.reader};
+  for (auto _ : state) {
+    auto st = seg.col->InitScan(ctx);
+    size_t i = 0;
+    while (i < rows.size()) {
+      const auto window = rows[i] / STANDARD_VECTOR_SIZE;
+      size_t take = 0;
+      while (i + take < rows.size() &&
+             rows[i + take] / STANDARD_VECTOR_SIZE == window) {
+        ++take;
+      }
+      duckdb::Vector batch{seg.col->Type(), STANDARD_VECTOR_SIZE};
+      irs::column_internal::GatherRows(*seg.col, st, RowSpan{&rows[i], take},
+                                       batch, 0, true);
+      benchmark::DoNotOptimize(batch);
+      i += take;
+    }
+  }
+  state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) *
+                          static_cast<int64_t>(rows.size()));
+}
+
 }  // namespace
 
 #define NESTED_CASES(fn)                                        \
@@ -323,6 +351,7 @@ NESTED_CASES(WriteSealSparse);
 NESTED_CASES(Rewrite);
 NESTED_CASES(FullScan);
 NESTED_CASES(SparseGather);
+NESTED_CASES(DenseGather);
 
 static int Main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Initialize();

@@ -22,6 +22,7 @@
 
 #include "phrase_filter.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_format.h>
 
@@ -478,7 +479,10 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
   std::span<std::vector<bstring>> part_terms) {
   const auto& tokens = options.tokens();
   const auto* col_reader = segment.GetColReader();
-  if (!col_reader || !col_reader->Column(tokens->column)) {
+  if (!col_reader ||
+      !absl::c_all_of(tokens->text.columns, [&](field_id id) -> bool {
+        return col_reader->Column(id);
+      })) {
     return QueryBuilder::Empty();
   }
   auto sub = ctx;

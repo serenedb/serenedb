@@ -172,7 +172,7 @@ bool HasPositions(const SearchColumnInfo& column_info) {
 
 bool HasText(const SearchColumnInfo& column_info) {
   return column_info.tokenizer.analyzer.get_deleter().tokenizer &&
-         irs::field_limits::valid(column_info.stored_field_id) &&
+         !column_info.text.columns.empty() &&
          !column_info.logical_type.IsJSONType() &&
          !irs::field_limits::valid(column_info.numeric_field_id);
 }
@@ -215,8 +215,7 @@ void CheckTokens(const SearchColumnInfo& column_info,
                hint, "."));
   }
   auto tokens = std::make_shared<irs::PhraseTokens>();
-  tokens->column = column_info.stored_field_id;
-  tokens->type = column_info.stored_type;
+  tokens->text = column_info.text;
   tokens->tokenizer = std::move(tokenizer);
   tokens->spec = std::move(spec);
   options.set_tokens(std::move(tokens));

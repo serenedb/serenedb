@@ -98,23 +98,19 @@ count
 3
 
 
-statement error
+query
 SELECT count(*) FROM logs_idx
 WHERE (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) @@ ts_phrase('connection', 1, 'reset');
 ----
-db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE`, or query with a single-term ts_phrase / ts_like.
+count
+0
 
-
-# Same multi-term limitation surfaces via the `##` phrase-sequence operator
-# (two distinct phrase parts always means multi-position).
-statement error
+query
 SELECT count(*) FROM logs_idx
 WHERE (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) @@ (ts_phrase('connection') ## 'reset');
 ----
-db error: ERROR: ## on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE`, or query with a single phrase part.
-
+count
+3
 
 # A whitespace-bearing literal still tokenises to ONE keyword token under
 # the keyword dict, so this stays in the single-term fast path.

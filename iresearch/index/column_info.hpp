@@ -153,6 +153,7 @@ struct ColCodecParams {
   uint8_t compression_level = 0;
   uint32_t segment_target = kDefaultColSegmentTarget;
   AutoObjective objective = AutoObjective::Balanced;
+  WriteTier tier = WriteTier::Merge;
 
   friend bool operator==(const ColCodecParams&,
                          const ColCodecParams&) = default;

@@ -120,7 +120,7 @@ WHERE column_name = 'v' AND segment_type <> 'VALIDITY'
 GROUP BY ALL ORDER BY ALL;
 ----
 row_group_id	compression	cut
-0	DICT_LZ4	f
+0	DICT_FSST	f
 1	DICT_ZSTD	t
 
 statement ok
@@ -183,7 +183,7 @@ WHERE column_name = 'v' AND segment_type <> 'VALIDITY'
   AND row_group_id = (SELECT max(row_group_id) FROM pragma_storage_info('alc'));
 ----
 compression
-LZ4
+FSST
 
 query
 SELECT count(*) AS mismatches FROM alc

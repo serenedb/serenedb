@@ -79,6 +79,8 @@ struct LeafPlan {
 };
 
 constexpr LeafPlan kSpeedPlan[] = {{ByteCodec::Lz4, kLz4Fast}};
+constexpr LeafPlan kRefreshPlan[] = {{ByteCodec::Fsst, kNoLevel},
+                                     {ByteCodec::Lz4, kLz4Fast}};
 constexpr LeafPlan kBalancedPlan[] = {{ByteCodec::Fsst, kNoLevel},
                                       {ByteCodec::Lz4, kLz4Balanced},
                                       {ByteCodec::Zxc, kZxcBalanced}};
@@ -101,14 +103,15 @@ constexpr FrameShape ShapeOf() noexcept {
   }
 }
 
-std::span<const LeafPlan> PlanFor(AutoObjective objective) noexcept {
-  switch (objective) {
-    case AutoObjective::Speed:
-      return kSpeedPlan;
-    case AutoObjective::Size:
-      return kSizePlan;
-    case AutoObjective::Balanced:
-      break;
+std::span<const LeafPlan> PlanFor(const ColCodecParams& params) noexcept {
+  if (params.objective == AutoObjective::Speed) {
+    return kSpeedPlan;
+  }
+  if (params.tier == WriteTier::Flush) {
+    return kRefreshPlan;
+  }
+  if (params.objective == AutoObjective::Size) {
+    return kSizePlan;
   }
   return kBalancedPlan;
 }
@@ -957,7 +960,7 @@ class SegmentWriter {
     if (leaf != ByteCodec::Fsst && _params.compression_level != 0) {
       return _fixed;
     }
-    for (const auto& plan : PlanFor(_params.objective)) {
+    for (const auto& plan : PlanFor(_params)) {
       if (plan.leaf == leaf) {
         return plan.ladder;
       }
@@ -992,7 +995,7 @@ class SegmentWriter {
     _measured = false;
     _smallest = {.bytes = std::numeric_limits<uint64_t>::max()};
     Candidate chosen{.bytes = std::numeric_limits<uint64_t>::max()};
-    for (const auto& plan : PlanFor(_params.objective)) {
+    for (const auto& plan : PlanFor(_params)) {
       const auto c = Tune(shape, plan.leaf, begin, end, retune);
       if (c.bytes < chosen.bytes) {
         chosen = c;
@@ -1383,7 +1386,8 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
 
 bool TrainsDictionary(std::optional<StringChoice> named,
                       const ColCodecParams& params) noexcept {
-  if (params.objective == AutoObjective::Speed) {
+  if (params.objective == AutoObjective::Speed ||
+      params.tier == WriteTier::Flush) {
     return false;
   }
   return !named || named->leaf == ByteCodec::Lz4 ||

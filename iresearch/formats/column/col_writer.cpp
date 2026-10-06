@@ -149,9 +149,7 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
     opts = _field_options->GetColumnOptions(id);
     row_group_size = _field_options->row_group_size;
     codec_params = _field_options->CodecParams(opts);
-    if (_tier == WriteTier::Flush) {
-      codec_params.objective = AutoObjective::Speed;
-    }
+    codec_params.tier = _tier;
   }
   auto& cw =
     OpenColumnInternal(id, std::move(type), opts.skip_validity, row_group_size,

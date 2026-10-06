@@ -455,9 +455,9 @@ WHERE segment_type <> 'VALIDITY' AND column_name IN ('host', 'body', 'url')
 GROUP BY column_name ORDER BY column_name;
 ----
 column_name	compression
-body	LZ4
-host	DICT_LZ4
-url	DICT_LZ4
+body	FSST
+host	DICT_FSST
+url	DICT_FSST
 
 query
 SELECT column_name, string_agg(DISTINCT compression, ',') AS compression
@@ -466,9 +466,9 @@ WHERE segment_type <> 'VALIDITY' AND column_name IN ('host', 'body', 'url')
 GROUP BY column_name ORDER BY column_name;
 ----
 column_name	compression
-body	LZ4
+body	FSST
 host	DICT_LZ4
-url	DICT_LZ4
+url	DICT_FSST
 
 query
 SELECT column_name, string_agg(DISTINCT compression, ',') AS compression

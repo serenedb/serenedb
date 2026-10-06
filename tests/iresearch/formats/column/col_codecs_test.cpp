@@ -1752,6 +1752,43 @@ TEST_F(ColCodecsTest, SpeedObjectiveDoesNotTrain) {
   Verify(dir, duckdb::CompressionType::COMPRESSION_AUTO, kRows, value);
 }
 
+TEST_F(ColCodecsTest, RefreshMeasuresOnlyTheCheapLeaves) {
+  constexpr uint64_t kRows = 60000;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    return "2026-10-05T12:" + std::to_string(g % 60) + " INFO service-" +
+           std::to_string(g % 17) + " handled request /api/v1/orders/" +
+           std::to_string(g) + " for customer " +
+           std::to_string((g * 31) % 5000) + " in " + std::to_string(g % 997) +
+           "ms with status 200 and payload size " +
+           std::to_string((g * 13) % 65536) + " bytes";
+  };
+  for (const auto objective :
+       {irs::AutoObjective::Balanced, irs::AutoObjective::Size,
+        irs::AutoObjective::Speed}) {
+    irs::MemoryDirectory dir{};
+    Write(dir, duckdb::CompressionType::COMPRESSION_AUTO,
+          {.objective = objective, .tier = irs::WriteTier::Flush}, kRows, 8192,
+          value);
+    for (const auto& d : SegmentInfo(dir, "dictionary")) {
+      EXPECT_FALSE(d.starts_with("trained")) << d;
+    }
+    const auto codecs = SegmentInfo(dir, "codec");
+    const auto levels = SegmentInfo(dir, "level");
+    ASSERT_EQ(codecs.size(), levels.size());
+    for (size_t i = 0; i < codecs.size(); ++i) {
+      if (objective == irs::AutoObjective::Speed) {
+        EXPECT_EQ(codecs[i], "lz4");
+      } else {
+        EXPECT_TRUE(codecs[i] == "lz4" || codecs[i] == "fsst") << codecs[i];
+      }
+      if (codecs[i] == "lz4") {
+        EXPECT_EQ(levels[i], "1");
+      }
+    }
+    Verify(dir, duckdb::CompressionType::COMPRESSION_AUTO, kRows, value);
+  }
+}
+
 TEST_F(ColCodecsTest, AutoCompressesLogTextWithATrainedDictionary) {
   constexpr uint64_t kRows = 60000;
   const Value value = [](uint64_t g) -> std::optional<std::string> {

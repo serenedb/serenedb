@@ -36,6 +36,8 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
+#include <duckdb/planner/expression/bound_cast_expression.hpp>
+#include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/logical_operator_visitor.hpp>
@@ -43,6 +45,7 @@
 #include <iresearch/search/scorers/unscored.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <limits>
 
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
@@ -56,9 +59,10 @@ duckdb::LogicalType MakeTSQueryStructType(std::string_view alias) {
   children.emplace_back("text", duckdb::LogicalType::VARCHAR);
   children.emplace_back("tokenizer", duckdb::LogicalType::VARCHAR);
   children.emplace_back("boost", duckdb::LogicalType::FLOAT);
-  children.emplace_back("slop", duckdb::LogicalType::BIGINT);
+  children.emplace_back("slop", duckdb::LogicalType::USMALLINT);
   children.emplace_back("scorer", duckdb::LogicalType::VARCHAR);
   children.emplace_back("merge", duckdb::LogicalType::UTINYINT);
+  children.emplace_back("min_match", duckdb::LogicalType::UINTEGER);
   return duckdb::LogicalType::STRUCT(std::move(children))
     .WithAlias(std::string{alias});
 }
@@ -68,7 +72,10 @@ duckdb::LogicalType MakeModifierTSQueryType() {
 }
 
 struct TSQueryCastData final : duckdb::BoundCastData {
+  explicit TSQueryCastData(TSQueryParts parts) : parts{std::move(parts)} {}
+
   TSQueryParts parts;
+  uint32_t written_branches = 0;
 
   duckdb::unique_ptr<duckdb::BoundCastData> Copy() const final {
     return duckdb::make_uniq<TSQueryCastData>(*this);
@@ -101,37 +108,8 @@ bool HasScoreModifier(const duckdb::LogicalType& type) {
   return mod && mod->type().id() == duckdb::LogicalTypeId::BLOB;
 }
 
-TSQueryCastData ReadTargetModifiers(const duckdb::LogicalType& target) {
-  TSQueryCastData data;
-  const auto* mod = TryGetTypeModifier(target);
-  if (!mod) {
-    return data;
-  }
-  switch (mod->type().id()) {
-    case duckdb::LogicalTypeId::DOUBLE:
-      data.parts.boost = static_cast<float>(mod->GetValue<double>());
-      break;
-    case duckdb::LogicalTypeId::VARCHAR:
-      data.parts.tokenizer = mod->GetValue<std::string>();
-      break;
-    case duckdb::LogicalTypeId::BIGINT:
-      data.parts.slop = mod->GetValue<int64_t>();
-      break;
-    case duckdb::LogicalTypeId::BLOB:
-      data.parts.scorer = std::string{duckdb::StringValue::Get(*mod)};
-      break;
-    case duckdb::LogicalTypeId::UTINYINT:
-      data.parts.merge = static_cast<TSQueryMerge>(mod->GetValue<uint8_t>());
-      break;
-    default:
-      break;
-  }
-  return data;
-}
-
 TSQueryRowView ComposeParts(const TSQueryRowView& inner,
-                            const TSQueryCastData& cast) {
-  const auto& outer = cast.parts;
+                            const TSQueryParts& outer) {
   TSQueryRowView parts = inner;
   parts.boost = inner.boost * outer.boost;
   if (!outer.tokenizer.empty()) {
@@ -151,26 +129,64 @@ TSQueryRowView ComposeParts(const TSQueryRowView& inner,
   if (outer.merge != TSQueryMerge::Default) {
     parts.merge = outer.merge;
   }
+  if (outer.min_match != 0) {
+    parts.min_match = outer.min_match;
+  }
   return parts;
 }
 
-bool ThrowingTokenizeCast(duckdb::Vector&, duckdb::Vector&, duckdb::idx_t,
-                          duckdb::CastParameters&) {
+[[noreturn]] bool ThrowingTokenizeCast(duckdb::Vector&, duckdb::Vector&,
+                                       duckdb::idx_t, duckdb::CastParameters&) {
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
     ERR_MSG("::tokenize(...) is only meaningful inside an `@@` match "
             "against an inverted-indexed column."));
 }
 
-bool ThrowingSlopCast(duckdb::Vector&, duckdb::Vector&, duckdb::idx_t,
-                      duckdb::CastParameters&) {
+[[noreturn]] bool ThrowingSlopCast(duckdb::Vector&, duckdb::Vector&,
+                                   duckdb::idx_t, duckdb::CastParameters&) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                   ERR_MSG("::slop(N) is only meaningful inside an `@@` match "
                           "against an inverted-indexed column."));
 }
 
-bool ThrowingScoreCast(duckdb::Vector&, duckdb::Vector&, duckdb::idx_t,
-                       duckdb::CastParameters&) {
+[[noreturn]] bool ThrowingMinMatchCast(duckdb::Vector&, duckdb::Vector&,
+                                       duckdb::idx_t, duckdb::CastParameters&) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  ERR_MSG("::min_match(K) is only meaningful on an OR of "
+                          "predicates the inverted index answers."));
+}
+
+const duckdb::Expression* SqlMinMatchOperand(const duckdb::Expression& expr) {
+  if (!duckdb::BoundCastExpression::IsCast(expr) ||
+      !TryGetMinMatchModifier(expr.GetReturnType())) {
+    return nullptr;
+  }
+  const auto& operand = PeelGroupModifiers(duckdb::BoundCastExpression::Child(
+    expr.Cast<duckdb::BoundFunctionExpression>()));
+  if (operand.GetReturnType().id() != duckdb::LogicalTypeId::BOOLEAN) {
+    return nullptr;
+  }
+  return &operand;
+}
+
+TSQueryCastData* MinMatchCastData(duckdb::BoundFunctionExpression& cast) {
+  auto data =
+    duckdb::BoundCastExpression::GetBoundCastMutable(cast).GetCastData();
+  return data ? &data->Cast<TSQueryCastData>() : nullptr;
+}
+
+bool MinMatchRewriteBarrier(const duckdb::Expression& parent,
+                            bool parent_frozen) {
+  if (SqlMinMatchOperand(parent)) {
+    return true;
+  }
+  return parent_frozen && duckdb::BoundCastExpression::IsCast(parent) &&
+         HasGroupModifier(parent.GetReturnType());
+}
+
+[[noreturn]] bool ThrowingScoreCast(duckdb::Vector&, duckdb::Vector&,
+                                    duckdb::idx_t, duckdb::CastParameters&) {
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
     ERR_MSG("::score(...) is only meaningful inside an `@@` match "
@@ -220,6 +236,7 @@ struct TSQueryStructWriter {
   duckdb::Vector& slop;
   duckdb::Vector& scorer;
   duckdb::Vector& merge;
+  duckdb::Vector& min_match;
 
   explicit TSQueryStructWriter(duckdb::Vector& result)
     : text{duckdb::StructVector::GetEntries(result)[kTSQueryTextChild]},
@@ -228,15 +245,19 @@ struct TSQueryStructWriter {
       boost{duckdb::StructVector::GetEntries(result)[kTSQueryBoostChild]},
       slop{duckdb::StructVector::GetEntries(result)[kTSQuerySlopChild]},
       scorer{duckdb::StructVector::GetEntries(result)[kTSQueryScorerChild]},
-      merge{duckdb::StructVector::GetEntries(result)[kTSQueryMergeChild]} {}
+      merge{duckdb::StructVector::GetEntries(result)[kTSQueryMergeChild]},
+      min_match{
+        duckdb::StructVector::GetEntries(result)[kTSQueryMinMatchChild]} {}
 
-  void Write(duckdb::idx_t row, const TSQueryRowView& parts) {
+  template<typename Str>
+  void Write(duckdb::idx_t row, const TSQueryFields<Str>& parts) {
     WriteStr(text, row, parts.text);
     WriteStr(tokenizer, row, parts.tokenizer);
     WriteFlat(boost, row, parts.boost);
     WriteFlat(slop, row, parts.slop);
     WriteStrOrNull(scorer, row, parts.scorer);
     WriteFlat(merge, row, static_cast<uint8_t>(parts.merge));
+    WriteFlat(min_match, row, parts.min_match);
   }
 };
 
@@ -258,11 +279,14 @@ std::optional<TSQueryRowView> ReadTSQueryRow(const duckdb::Vector& vec,
   if (auto v = ReadFlat<float>(entries[kTSQueryBoostChild], row)) {
     parts.boost = *v;
   }
-  if (auto v = ReadFlat<int64_t>(entries[kTSQuerySlopChild], row)) {
+  if (auto v = ReadFlat<uint16_t>(entries[kTSQuerySlopChild], row)) {
     parts.slop = *v;
   }
   if (auto v = ReadStr(entries[kTSQueryScorerChild], row)) {
     parts.scorer = *v;
+  }
+  if (auto v = ReadFlat<uint32_t>(entries[kTSQueryMinMatchChild], row)) {
+    parts.min_match = *v;
   }
   if (auto v = ReadFlat<uint8_t>(entries[kTSQueryMergeChild], row)) {
     parts.merge = static_cast<TSQueryMerge>(*v);
@@ -284,7 +308,7 @@ bool TSQueryFromStringCast(duckdb::Vector& source, duckdb::Vector& result,
     }
     TSQueryRowView parts;
     parts.text = {value.GetValue().GetData(), value.GetValue().GetSize()};
-    writer.Write(i, ComposeParts(parts, data));
+    writer.Write(i, ComposeParts(parts, data.parts));
   }
   return true;
 }
@@ -302,7 +326,7 @@ duckdb::BoundCastInfo BindTSQueryFromStringCast(
     return duckdb::BoundCastInfo(ThrowingScoreCast);
   }
   return {TSQueryFromStringCast,
-          duckdb::make_uniq<TSQueryCastData>(ReadTargetModifiers(target))};
+          duckdb::make_uniq<TSQueryCastData>(TSQueryPartsForType(target, {}))};
 }
 
 bool TSQueryBoostCast(duckdb::Vector& source, duckdb::Vector& result,
@@ -316,7 +340,7 @@ bool TSQueryBoostCast(duckdb::Vector& source, duckdb::Vector& result,
       duckdb::FlatVector::SetNull(result, i, true);
       continue;
     }
-    writer.Write(i, ComposeParts(*parts, data));
+    writer.Write(i, ComposeParts(*parts, data.parts));
   }
   return true;
 }
@@ -325,7 +349,7 @@ duckdb::BoundCastInfo BindTSQueryBoostCast(duckdb::BindCastInput&,
                                            const duckdb::LogicalType&,
                                            const duckdb::LogicalType& target) {
   return {TSQueryBoostCast,
-          duckdb::make_uniq<TSQueryCastData>(ReadTargetModifiers(target))};
+          duckdb::make_uniq<TSQueryCastData>(TSQueryPartsForType(target, {}))};
 }
 
 bool TSQueryToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
@@ -344,6 +368,7 @@ bool TSQueryToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
       .slop = parts->slop,
       .boost = parts->boost,
       .merge = parts->merge,
+      .min_match = parts->min_match,
     });
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result)[i] =
       duckdb::StringVector::AddString(result, rendered);
@@ -384,9 +409,8 @@ void TSQueryBoostFn(duckdb::DataChunk& args, duckdb::ExpressionState&,
                       ERR_MSG("boost factor must be >= 0, got ", factor),
                       ERR_HINT("Example: ts_phrase('text') ^ 2.0."));
     }
-    TSQueryCastData factor_data;
-    factor_data.parts.boost = static_cast<float>(factor);
-    writer.Write(i, ComposeParts(*parts, factor_data));
+    writer.Write(i,
+                 ComposeParts(*parts, {.boost = static_cast<float>(factor)}));
   }
 }
 
@@ -403,6 +427,7 @@ class TSQueryFoldVisitor final : public duckdb::LogicalOperatorVisitor {
 
   void VisitExpression(duckdb::unique_ptr<duckdb::Expression>* slot) final {
     VisitExpressionChildren(**slot);
+    RecordWrittenMinMatchBranches(**slot);
     const auto& expr = **slot;
     if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
       return;
@@ -435,9 +460,9 @@ void FoldTSQueryConstants(duckdb::OptimizerExtensionInput& input,
   }
 }
 
-void TSQueryStubFn(duckdb::DataChunk& /*args*/,
-                   duckdb::ExpressionState& /*state*/,
-                   duckdb::Vector& /*result*/) {
+[[noreturn]] void TSQueryStubFn(duckdb::DataChunk& /*args*/,
+                                duckdb::ExpressionState& /*state*/,
+                                duckdb::Vector& /*result*/) {
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
     ERR_MSG("TSQUERY expression evaluated outside an `@@` match against an "
@@ -609,6 +634,41 @@ void RegisterTSQueryTypes(duckdb::ExtensionLoader& loader) {
     });
 
   loader.RegisterType(
+    std::string{kMinMatchTypeName}, MakeTSQueryType(),
+    +[](duckdb::BindLogicalTypeInput& input) -> duckdb::LogicalType {
+      const auto& modifiers = input.modifiers;
+      if (modifiers.size() != 1) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("min_match(<count>) requires exactly one integer argument"));
+      }
+      const auto raw = modifiers[0].GetValue();
+      duckdb::Value count;
+      if (!TryCastExactInt64(raw, count)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("min_match() count must be a non-null "
+                                "integer, got ",
+                                raw.ToString()));
+      }
+      const auto value = count.GetValue<int64_t>();
+      if (value < 1) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("min_match() count must be >= 1, got ", value));
+      }
+      if (value > std::numeric_limits<uint32_t>::max()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("min_match() count too large: ", value, " (at most ",
+                  std::numeric_limits<uint32_t>::max(), ")"));
+      }
+      auto type = MakeModifierTSQueryType();
+      auto info = duckdb::make_uniq<duckdb::ExtensionTypeInfo>();
+      info->modifiers.emplace_back(
+        duckdb::Value::UINTEGER(static_cast<uint32_t>(value)));
+      return type.WithExtensionInfo(std::move(info));
+    });
+
+  loader.RegisterType(
     std::string{kScoreTypeName}, MakeTSQueryType(),
     +[](duckdb::BindLogicalTypeInput& input) -> duckdb::LogicalType {
       const auto& modifiers = input.modifiers;
@@ -688,15 +748,13 @@ void RegisterTSQueryBoolCasts(duckdb::ExtensionLoader& loader) {
                               bool_cast_bind,
                               /*implicit_cast_cost=*/0);
 
-  // BOOLEAN <-> TSQUERY_MODIFIER: lets `(predicate)::boost(K)` apply
-  // to plain SQL conditions outside `@@`. Both directions throw at
-  // runtime -- the optimizer extension claims the boost cast at
-  // bind time when the inner predicate is index-claimable; if it
-  // isn't, the throwing stub fires with a specific message
-  // pointing the user back to `@@`.
   auto boost_bool_cast_bind =
-    +[](duckdb::BindCastInput&, const duckdb::LogicalType&,
-        const duckdb::LogicalType&) -> duckdb::BoundCastInfo {
+    +[](duckdb::BindCastInput&, const duckdb::LogicalType& source,
+        const duckdb::LogicalType& target) -> duckdb::BoundCastInfo {
+    if (TryGetMinMatchModifier(source) || TryGetMinMatchModifier(target)) {
+      return {ThrowingMinMatchCast,
+              duckdb::make_uniq<TSQueryCastData>(TSQueryParts{})};
+    }
     return duckdb::BoundCastInfo(+[](duckdb::Vector&, duckdb::Vector&,
                                      duckdb::idx_t,
                                      duckdb::CastParameters&) -> bool {
@@ -1151,6 +1209,7 @@ void RegisterPredicateFunctions(duckdb::ExtensionLoader& loader) {
 void RegisterTSQueryConstantFolding(duckdb::ExtensionLoader& loader) {
   duckdb::OptimizerExtension fold;
   fold.pre_optimize_function = FoldTSQueryConstants;
+  fold.rewrite_barrier = MinMatchRewriteBarrier;
   duckdb::OptimizerExtension::Register(loader.GetDatabaseInstance().config,
                                        std::move(fold));
 }
@@ -1163,6 +1222,30 @@ void RegisterTSQueryConstantFolding(duckdb::ExtensionLoader& loader) {
 
 duckdb::LogicalType MakeTSQueryType() {
   return MakeTSQueryStructType(kTSQueryTypeName);
+}
+
+void WriteTSQueryRow(duckdb::Vector& result, duckdb::idx_t row,
+                     const TSQueryParts& parts) {
+  TSQueryStructWriter{result}.Write(row, parts);
+}
+
+void RecordWrittenMinMatchBranches(duckdb::Expression& expr) {
+  const auto* operand = SqlMinMatchOperand(expr);
+  if (!operand ||
+      operand->GetExpressionType() != duckdb::ExpressionType::CONJUNCTION_OR) {
+    return;
+  }
+  if (auto* data =
+        MinMatchCastData(expr.Cast<duckdb::BoundFunctionExpression>())) {
+    data->written_branches = static_cast<uint32_t>(
+      operand->Cast<duckdb::BoundConjunctionExpression>().GetChildren().size());
+  }
+}
+
+uint32_t WrittenMinMatchBranches(const duckdb::BoundFunctionExpression& cast) {
+  const auto data =
+    duckdb::BoundCastExpression::GetBoundCast(cast).GetCastData();
+  return data ? data->Cast<TSQueryCastData>().written_branches : 0;
 }
 
 void RegisterTSQueryFunctions(duckdb::ExtensionLoader& loader) {

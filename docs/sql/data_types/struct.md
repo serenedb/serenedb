@@ -120,7 +120,6 @@ Any extra parts (e.g., `.part4.part5`, etc.) are always treated as properties
 
 The `row` function can be used to automatically convert multiple columns to a single struct column.
 When using `row` the keys will be empty strings allowing for easy insertion into a table with a struct column.
-Columns, however, cannot be initialized with the `row` function, and must be explicitly named.
 For example, inserting values into a struct column using the `row` function:
 
 <SqlLogicTest id="sql/data_types/struct/example_018" />

@@ -112,7 +112,7 @@ Add a new column with name `l` to the table integers, it will be filled with the
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_019" />
 
-The `ADD [COLUMN]` clause can be used to add a new column of a specified type to a table. The new column will be filled with the specified default value, or `NULL` if none is specified. Besides `DEFAULT`, only a `UNIQUE` constraint can be declared on the new column itself; add `NOT NULL`, `PRIMARY KEY` or `CHECK` constraints in a separate `ALTER TABLE` step.
+The `ADD [COLUMN]` clause can be used to add a new column of a specified type to a table. The new column will be filled with the specified default value, or `NULL` if none is specified. Besides `DEFAULT`, the new column can declare `UNIQUE` or `PRIMARY KEY`, and the constraint is enforced from the start. A `PRIMARY KEY` is also checked against the rows already in the table, which all get the default value: adding `id INT DEFAULT 5 PRIMARY KEY` to a table of two rows fails because the key contains duplicates. An inline `CHECK` constraint and a named constraint (`CONSTRAINT ⟨name⟩ UNIQUE`) are not supported; add them with [`ADD CONSTRAINT`](#add-constraint), and `NOT NULL` with `ALTER COLUMN ... SET NOT NULL`, in a separate `ALTER TABLE` step.
 
 ## `DROP COLUMN`
 

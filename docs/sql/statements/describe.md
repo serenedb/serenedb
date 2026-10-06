@@ -17,7 +17,7 @@ To describe a query, prepend `DESCRIBE` to a query.
 
 ## Alias
 
-The `SHOW` statement is an alias for `DESCRIBE`.
+`SHOW TABLE <name>` returns the same as `DESCRIBE TABLE <name>`. A name after `SHOW` without the `TABLE` keyword is read as a setting instead: see [`SHOW`](show.md).
 
 ## See Also
 

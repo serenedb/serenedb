@@ -1,0 +1,82 @@
+control substitution on
+
+statement ok
+CREATE OR REPLACE SECRET minio_${__DATABASE__} (
+  TYPE s3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/${__DATABASE__}_'
+);
+
+statement ok
+SET logging_storage = 'memory';
+
+statement ok
+SET logging_level = 'debug';
+
+statement ok
+COPY (SELECT range AS id FROM range(300000)) TO 's3://${MINIO_BUCKET}/${__DATABASE__}_fresh'
+(FORMAT parquet, PER_THREAD_OUTPUT, FILENAME_PATTERN 'part_{uuid}');
+
+query
+SELECT count(*) FILTER (WHERE request.type = 'HEAD') AS head,
+       count(*) FILTER (WHERE request.type = 'PUT') > 0 AS written
+FROM duckdb_logs_parsed('HTTP') WHERE request.url LIKE '%/${__DATABASE__}_fresh/%';
+----
+head	written
+0	t
+
+query
+SELECT count(*), sum(id) FROM read_parquet('s3://${MINIO_BUCKET}/${__DATABASE__}_fresh/*.parquet');
+----
+count	sum
+300000	44999850000
+
+statement ok
+COPY (SELECT range % 3 AS p, range AS id FROM range(1000)) TO 's3://${MINIO_BUCKET}/${__DATABASE__}_parts'
+(FORMAT parquet, PARTITION_BY (p), FILENAME_PATTERN 'f_{uuid}');
+
+query
+SELECT count(*) FILTER (WHERE request.type = 'HEAD') AS head,
+       count(*) FILTER (WHERE request.type = 'PUT') AS put
+FROM duckdb_logs_parsed('HTTP') WHERE request.url LIKE '%/${__DATABASE__}_parts/%';
+----
+head	put
+0	3
+
+query
+SELECT p, count(*) FROM read_parquet('s3://${MINIO_BUCKET}/${__DATABASE__}_parts/*/*.parquet', hive_partitioning = true)
+GROUP BY p ORDER BY p;
+----
+p	count
+0	334
+1	333
+2	333
+
+statement ok
+COPY (SELECT 1 AS a) TO 's3://${MINIO_BUCKET}/${__DATABASE__}_explicit.parquet' (FORMAT parquet);
+
+query
+SELECT request.type, count(*) FROM duckdb_logs_parsed('HTTP')
+WHERE request.url LIKE '%/${__DATABASE__}_explicit.parquet' GROUP BY 1 ORDER BY 1;
+----
+type	count
+HEAD	1
+PUT	1
+
+statement error
+COPY (SELECT CASE WHEN id = 20000 THEN error('boom') ELSE id END AS a
+      FROM (SELECT unnest(generate_series(0, 29999)) AS id))
+TO 's3://${MINIO_BUCKET}/${__DATABASE__}_explicit.parquet' (FORMAT parquet);
+----
+db error: ERROR: boom
+
+
+query
+SELECT a FROM read_parquet('s3://${MINIO_BUCKET}/${__DATABASE__}_explicit.parquet');
+----
+a
+1

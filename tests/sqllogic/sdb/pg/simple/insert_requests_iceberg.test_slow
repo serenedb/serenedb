@@ -1,0 +1,39 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+SET logging_storage = 'memory';
+
+statement ok
+SET logging_level = 'debug';
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.ins_t (id INTEGER, body TEXT);
+
+statement count 3
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.ins_t VALUES (1, 'pudge'), (2, 'anchin'), (3, 'vedernikoff');
+
+query
+SELECT count(*) FILTER (WHERE request.type = 'HEAD') AS head,
+       count(*) FILTER (WHERE request.type = 'PUT') AS put
+FROM duckdb_logs_parsed('HTTP')
+WHERE request.url LIKE '%${__DATABASE__}%' AND request.url LIKE '%.parquet';
+----
+head	put
+0	1
+
+query
+SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.ins_t ORDER BY id;
+----
+id	body
+1	pudge
+2	anchin
+3	vedernikoff

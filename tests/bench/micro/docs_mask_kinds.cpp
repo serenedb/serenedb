@@ -39,23 +39,40 @@ constexpr doc_id_t kDocs = 1 << 20;
 constexpr doc_id_t kBegin = irs::doc_limits::min();
 constexpr doc_id_t kEnd = kBegin + kDocs;
 
-const irs::DocumentMask& MaskOf(int64_t per_chunk, int64_t bitsets) {
+const irs::DocumentMask& MaskOf(int64_t per_chunk, int64_t layout) {
   static std::map<std::pair<int64_t, int64_t>, irs::DocumentMask> gCache;
-  const std::pair key{per_chunk, bitsets};
+  const std::pair key{per_chunk, layout};
   if (const auto it = gCache.find(key); it != gCache.end()) {
     return it->second;
   }
   std::mt19937_64 rng{static_cast<uint64_t>(per_chunk)};
   std::bernoulli_distribution pick{static_cast<double>(per_chunk) /
                                    static_cast<double>(1 << 16)};
-  irs::DocumentMask mask;
+  std::bernoulli_distribution dense{1.0 / 8};
+  const auto run = static_cast<doc_id_t>(std::min<int64_t>(per_chunk, 64));
+  const auto period =
+    static_cast<doc_id_t>((int64_t{1} << 16) * run / per_chunk);
+  const auto masked = [&](doc_id_t doc) {
+    if (layout == 2) {
+      switch ((doc >> 16) % 3) {
+        case 1:
+          return dense(rng);
+        case 2:
+          return doc % period < run;
+      }
+    }
+    return pick(rng);
+  };
+  irs::DocumentMaskBuilder mask;
   for (auto doc = kBegin; doc < kEnd; ++doc) {
-    if (pick(rng)) {
+    if (masked(doc)) {
       mask.Add(doc);
     }
   }
-  mask.Trim(bitsets != 0 ? 1 : irs::DocumentMask::kCanonical);
-  return gCache.emplace(key, std::move(mask)).first->second;
+  return gCache
+    .emplace(key, std::move(mask).Finish(
+                    layout == 1 ? 1 : irs::DocumentMaskBuilder::kCanonical))
+    .first->second;
 }
 
 template<typename Fn>
@@ -140,8 +157,8 @@ void BmFilterBlock(benchmark::State& state) {
 
 void PerChunk(benchmark::internal::Benchmark* bench) {
   for (const int64_t n : {16, 32, 64, 128, 256, 512, 1024, 2048, 4096}) {
-    for (const int64_t bitsets : {0, 1}) {
-      bench->Args({n, 1, bitsets});
+    for (const int64_t layout : {0, 1, 2}) {
+      bench->Args({n, 1, layout});
     }
   }
 }
@@ -149,8 +166,8 @@ void PerChunk(benchmark::internal::Benchmark* bench) {
 void PerChunkAndStride(benchmark::internal::Benchmark* bench) {
   for (const int64_t n : {16, 32, 64, 128, 256, 512, 1024, 2048, 4096}) {
     for (const int64_t stride : {1, 8, 64}) {
-      for (const int64_t bitsets : {0, 1}) {
-        bench->Args({n, stride, bitsets});
+      for (const int64_t layout : {0, 1, 2}) {
+        bench->Args({n, stride, layout});
       }
     }
   }
@@ -161,5 +178,3 @@ BENCHMARK(BmCandidates)->Apply(PerChunkAndStride);
 BENCHMARK(BmFilterBlock)->Apply(PerChunkAndStride);
 
 }  // namespace
-
-BENCHMARK_MAIN();

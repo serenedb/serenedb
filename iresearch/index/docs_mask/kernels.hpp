@@ -27,6 +27,7 @@
 
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/shared.hpp"
 
@@ -63,12 +64,14 @@ inline void ApplyWords(const uint64_t* IRS_RESTRICT src, uint32_t src_words,
     static_cast<int64_t>(min) - static_cast<int64_t>(src_base);
   const auto stop = std::min(last, full);
   auto w = first;
-  for (; w < stop && offset + static_cast<int64_t>(w) * 64 < 0; ++w) {
+  if (w < stop && offset + static_cast<int64_t>(w) * 64 < 0) {
     Apply<kAndNot>(
       dst[w],
       detail::WordAt(src, src_words, offset + static_cast<int64_t>(w) * 64));
+    ++w;
   }
   if (w < stop) {
+    SDB_ASSERT(offset + static_cast<int64_t>(w) * 64 >= 0);
     auto* IRS_RESTRICT out = dst + w;
     const auto start =
       static_cast<uint32_t>(offset + static_cast<int64_t>(w) * 64);
@@ -85,20 +88,6 @@ inline void ApplyWords(const uint64_t* IRS_RESTRICT src, uint32_t src_words,
       detail::WordAt(src, src_words, offset + static_cast<int64_t>(full) * 64) &
         (~uint64_t{0} >> (64 - rest)));
   }
-}
-
-template<bool kAndNot>
-IRS_FORCE_INLINE void ApplyTail(doc_id_t visible_end, doc_id_t min,
-                                doc_id_t max,
-                                uint64_t* IRS_RESTRICT words) noexcept {
-  if (visible_end < max) {
-    ApplyRange<kAndNot>(words, std::max(min, visible_end) - min, max - min);
-  }
-}
-
-inline IRS_FORCE_INLINE uint64_t TailCount(doc_id_t visible_end, doc_id_t min,
-                                           doc_id_t max) noexcept {
-  return visible_end < max ? max - std::max(min, visible_end) : 0;
 }
 
 template<typename T, typename Less>

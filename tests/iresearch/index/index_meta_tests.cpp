@@ -103,11 +103,10 @@ TEST(index_meta_tests, invisible_count_round_trip) {
     segment.meta.docs_count = 10;
     segment.meta.byte_size = 42;
     segment.meta.visible_end = visible_end;
-    segment.meta.docs_mask = std::make_shared<irs::DocumentMask>([] {
-      irs::DocumentMask mask;
+    segment.meta.docs_mask = std::make_shared<const irs::DocumentMask>([] {
+      irs::DocumentMaskBuilder mask;
       mask.Add(irs::doc_limits::min() + 1);
-      mask.Trim();
-      return mask;
+      return std::move(mask).Finish();
     }());
     segment.meta.live_docs_count =
       segment.meta.docs_count - irs::RemovalCount(segment.meta);

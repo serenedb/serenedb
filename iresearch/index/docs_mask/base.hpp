@@ -24,7 +24,6 @@
 #include <bit>
 #include <concepts>
 #include <cstdint>
-#include <type_traits>
 
 #include "iresearch/index/docs_mask/kernels.hpp"
 #include "iresearch/index/document_mask.hpp"
@@ -46,26 +45,7 @@ struct MaskedSpan {
 };
 
 template<typename T>
-concept DocsMaskType =
-  requires { T::kKind; } && std::same_as<T, DocsMask<T::kKind>> &&
-  !std::is_polymorphic_v<T> &&
-  requires(T& mask, doc_id_t doc, doc_id_t* docs, score_t* scores, uint32_t len,
-           uint64_t* words, uint32_t* out) {
-    { T::kSkipsSpans } -> std::convertible_to<bool>;
-    { mask.Test(doc) } -> std::same_as<bool>;
-    { mask.Probe(doc) } -> std::same_as<doc_id_t>;
-    { mask.NextLive(doc) } -> std::same_as<doc_id_t>;
-    { mask.NextSpan(doc) } -> std::same_as<MaskedSpan>;
-    { mask.FilterBlock(docs, scores, len) } -> std::same_as<uint32_t>;
-    { mask.CountMasked(docs, len) } -> std::same_as<uint32_t>;
-    { mask.Remove(doc, doc, words) } -> std::same_as<void>;
-    { mask.Remove(doc, doc, words, scores, score_t{}) } -> std::same_as<void>;
-    { mask.FillOr(doc, doc, words) } -> std::same_as<doc_id_t>;
-    { mask.FillRange(doc, doc, words) } -> std::same_as<void>;
-    { mask.AndNot(doc, doc, words) } -> std::same_as<void>;
-    { mask.CountIn(doc, doc) } -> std::same_as<uint64_t>;
-    { mask.FillLive(doc, len, out) } -> std::same_as<uint32_t>;
-  };
+concept DocsMaskType = std::same_as<T, DocsMask<T::kKind>>;
 
 template<typename Derived>
 class DocsMaskBase {
@@ -88,62 +68,6 @@ class DocsMaskBase {
   IRS_FORCE_INLINE MaskedSpan NextSpan(doc_id_t doc) noexcept {
     const auto first = SpanProbe(doc);
     return {first, doc_limits::eof(first) ? first : _hi};
-  }
-
-  uint32_t FilterBlock(doc_id_t* IRS_RESTRICT docs,
-                       score_t* IRS_RESTRICT scores, uint32_t len) noexcept {
-    if constexpr (Derived::kSkipsSpans) {
-      uint32_t kept = 0;
-      uint32_t i = 0;
-      while (i != len) {
-        const auto masked = SpanProbe(docs[i]);
-        for (; i != len && docs[i] < masked; ++i, ++kept) {
-          docs[kept] = docs[i];
-          scores[kept] = scores[i];
-        }
-        if (i == len) {
-          break;
-        }
-        const auto end = _hi;
-        while (i != len && docs[i] < end) {
-          ++i;
-        }
-      }
-      return kept;
-    } else {
-      if (len == 0) {
-        return 0;
-      }
-      return Self().WithBlockTest(docs[0], docs[len - 1], [&](auto test) {
-        uint32_t kept = 0;
-        for (uint32_t i = 0; i != len; ++i) {
-          const auto doc = docs[i];
-          docs[kept] = doc;
-          scores[kept] = scores[i];
-          kept += static_cast<uint32_t>(!test(doc));
-        }
-        return kept;
-      });
-    }
-  }
-
-  uint32_t CountMasked(const doc_id_t* IRS_RESTRICT docs,
-                       uint32_t len) noexcept {
-    if (len == 0) {
-      return 0;
-    }
-    return Self().WithBlockTest(docs[0], docs[len - 1], [&](auto test) {
-      uint32_t masked = 0;
-      for (uint32_t i = 0; i != len; ++i) {
-        masked += static_cast<uint32_t>(test(docs[i]));
-      }
-      return masked;
-    });
-  }
-
-  template<typename Fn>
-  IRS_FORCE_INLINE auto WithBlockTest(doc_id_t, doc_id_t, Fn&& fn) {
-    return fn([this](doc_id_t doc) noexcept { return Self().Test(doc); });
   }
 
   doc_id_t FillOr(doc_id_t min, doc_id_t max,
@@ -233,7 +157,7 @@ class DocsMaskBase {
     }
   }
 
- protected:
+ private:
   IRS_FORCE_INLINE doc_id_t SpanProbe(doc_id_t doc) noexcept {
     const doc_id_t offset = doc - _from;
     if (offset < _gap) {
@@ -245,7 +169,6 @@ class DocsMaskBase {
     return Refill(doc);
   }
 
- private:
   IRS_NO_INLINE doc_id_t Refill(doc_id_t doc) noexcept {
     if (doc_limits::eof(doc)) {
       return doc;

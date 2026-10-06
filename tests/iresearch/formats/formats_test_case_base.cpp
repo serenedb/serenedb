@@ -948,12 +948,11 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     meta.live_docs_count = 451;
     meta.byte_size = 666;
     meta.version = 100;
-    meta.docs_mask = std::make_shared<irs::DocumentMask>([&] {
-      irs::DocumentMask docs_mask;
+    meta.docs_mask = std::make_shared<const irs::DocumentMask>([&] {
+      irs::DocumentMaskBuilder docs_mask;
       docs_mask.Add(42);
       docs_mask.Add(100);
-      docs_mask.Trim();
-      return docs_mask;
+      return std::move(docs_mask).Finish();
     }());
     meta.files.emplace_back("file1");
     meta.files.emplace_back("index_file2");
@@ -1011,12 +1010,11 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     meta.byte_size = 666;
     meta.version = 100;
     meta.visible_end = 400;
-    meta.docs_mask = std::make_shared<irs::DocumentMask>([&] {
-      irs::DocumentMask docs_mask;
+    meta.docs_mask = std::make_shared<const irs::DocumentMask>([&] {
+      irs::DocumentMaskBuilder docs_mask;
       docs_mask.Add(42);
       docs_mask.Add(100);
-      docs_mask.Trim();
-      return docs_mask;
+      return std::move(docs_mask).Finish();
     }());
     ASSERT_EQ(56, irs::RemovalCount(meta));
     meta.files.emplace_back("file1");
@@ -1042,11 +1040,10 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     constexpr irs::doc_id_t kDocs = 30000;
 
     auto scattered = [](irs::doc_id_t first, irs::doc_id_t step) {
-      irs::DocumentMask mask;
+      irs::DocumentMaskBuilder mask;
       for (auto doc = first; doc < kDocs; doc += step) {
         mask.Add(doc);
       }
-      mask.Trim();
       return mask;
     };
 
@@ -1066,8 +1063,9 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
 
     std::string filename;
 
-    auto flush = [&](const irs::DocumentMask* patch, uint64_t parent) {
-      meta.docs_mask = std::make_shared<irs::DocumentMask>(mask);
+    auto flush = [&](const irs::DocumentMaskBuilder* patch, uint64_t parent) {
+      meta.docs_mask = std::make_shared<const irs::DocumentMask>(
+        irs::DocumentMaskBuilder{mask}.Finish());
       meta.live_docs_count =
         meta.docs_count - static_cast<irs::doc_id_t>(mask.Count());
       irs::segment_meta::Write(dir(), filename, meta, patch, parent);
@@ -1078,13 +1076,11 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
 
     const auto first_patch = scattered(2, 9);
     mask.Merge(first_patch);
-    mask.Trim();
     meta.version = 101;
     flush(&first_patch, 100);
 
     const auto second_patch = scattered(5, 9);
     mask.Merge(second_patch);
-    mask.Trim();
     meta.version = 105;
     flush(&second_patch, 101);
 
@@ -1148,7 +1144,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       ASSERT_EQ(meta.byte_size, read_meta.byte_size);
       ASSERT_EQ(meta.docs_mask_size, read_meta.docs_mask_size);
       ASSERT_EQ(expected_files, read_meta.files);
-      ASSERT_EQ(mask, *read_meta.docs_mask);
+      ASSERT_EQ(*meta.docs_mask, *read_meta.docs_mask);
     }
 
     ASSERT_TRUE(
@@ -1354,13 +1350,12 @@ TEST_P(FormatTestCase, segment_meta_derives_from_listed_links) {
   irs::SegmentMeta meta;
   sm::Read(dir(), meta, irs::FileName(kName, 5, sm::kExt));
 
-  irs::DocumentMask expected;
+  irs::DocumentMaskBuilder expected;
   expected.Add(1);
   expected.Add(3);
   expected.Add(5);
-  expected.Trim();
   ASSERT_NE(nullptr, meta.docs_mask);
-  ASSERT_EQ(expected, *meta.docs_mask);
+  ASSERT_EQ(std::move(expected).Finish(), *meta.docs_mask);
   ASSERT_EQ(97, meta.live_docs_count);
   ASSERT_EQ(
     (std::vector<std::string>{"file1", irs::FileName(kName, 1, sm::kExt),

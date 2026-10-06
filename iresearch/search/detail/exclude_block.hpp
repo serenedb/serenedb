@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <type_traits>
 
+#include "iresearch/index/docs_mask/base.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -40,8 +41,10 @@ IRS_FORCE_INLINE bool IsExcluded(Excludes& excludes, doc_id_t doc) {
 }
 
 template<typename Excludes>
-inline constexpr bool kSkipsExcluded =
-  requires { requires Excludes::kSkipsSpans; };
+inline constexpr bool kSkipsExcluded = false;
+
+template<MaskKind K>
+inline constexpr bool kSkipsExcluded<DocsMask<K>> = K != MaskKind::Bitsets;
 
 template<typename Excludes, typename Lead>
 IRS_FORCE_INLINE bool SkipSpan(Excludes& excludes, Lead& lead, doc_id_t& doc) {

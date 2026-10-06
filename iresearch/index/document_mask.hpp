@@ -44,12 +44,12 @@ enum class MaskKind : uint8_t {
   Mixed,
 };
 
+class DocumentMaskBuilder;
+
 class DocumentMask final {
  public:
   static constexpr uint32_t kChunkShift = 16;
   static constexpr uint64_t kChunkDocs = uint64_t{1} << kChunkShift;
-  static constexpr uint32_t kCanonical = 4097;
-  static constexpr uint32_t kBitsetFrom = 16;
 
   class Iterator final {
    public:
@@ -73,17 +73,14 @@ class DocumentMask final {
     doc_id_t _visible_end = doc_limits::eof();
   };
 
-  DocumentMask() noexcept;
   ~DocumentMask();
 
   DocumentMask(DocumentMask&& other) noexcept;
   DocumentMask& operator=(DocumentMask&& other) noexcept;
-  DocumentMask(const DocumentMask& other);
-  DocumentMask& operator=(const DocumentMask& other);
+  DocumentMask(const DocumentMask&) = delete;
+  DocumentMask& operator=(const DocumentMask&) = delete;
 
   friend bool operator==(const DocumentMask& lhs, const DocumentMask& rhs);
-
-  static DocumentMask Read(const char* buf, size_t size);
 
   roaring::Roaring Compress() const;
 
@@ -97,17 +94,8 @@ class DocumentMask final {
 
   size_t ByteCapacity() const noexcept;
 
-  bool Add(doc_id_t doc);
-  void AddRange(doc_id_t first, doc_id_t last);
-  void Truncate(doc_id_t first) noexcept;
-  void Merge(const DocumentMask& other);
-  void Clear() noexcept;
-  void Trim() noexcept { Trim(kBitsetFrom); }
-  void Trim(uint32_t bitset_from) noexcept;
-
   MaskKind Kind() const noexcept { return _kind; }
 
-  uint64_t SpansAt(uint32_t i) const noexcept;
   uint64_t RunsBound() const noexcept;
 
   uint32_t ContainerCount() const noexcept {
@@ -125,29 +113,62 @@ class DocumentMask final {
     return _set.high_low_container.typecodes;
   }
 
-  uint8_t TypeAt(uint32_t i) const noexcept {
-    SDB_ASSERT(i < ContainerCount());
-    return _set.high_low_container.typecodes[i];
-  }
-
-  const void* ContainerAt(uint32_t i) const noexcept {
-    SDB_ASSERT(i < ContainerCount());
-    return _set.high_low_container.containers[i];
-  }
-
   const void* const* Containers() const noexcept {
     return reinterpret_cast<const void* const*>(
       _set.high_low_container.containers);
   }
 
-  const roaring::api::roaring_bitmap_t& Bitmap() const noexcept { return _set; }
+ private:
+  friend class DocumentMaskBuilder;
+
+  DocumentMask(roaring::api::roaring_bitmap_t& set, size_t count) noexcept;
+
+  roaring::api::roaring_bitmap_t _set;
+  size_t _count;
+  MaskKind _kind;
+};
+
+class DocumentMaskBuilder final {
+ public:
+  static constexpr uint32_t kCanonical = 4097;
+  static constexpr uint32_t kBitsetFrom = 16;
+
+  DocumentMaskBuilder() noexcept;
+  explicit DocumentMaskBuilder(const DocumentMask& published);
+  ~DocumentMaskBuilder();
+
+  DocumentMaskBuilder(DocumentMaskBuilder&& other) noexcept;
+  DocumentMaskBuilder& operator=(DocumentMaskBuilder&& other) noexcept;
+  DocumentMaskBuilder(const DocumentMaskBuilder& other);
+  DocumentMaskBuilder& operator=(const DocumentMaskBuilder& other);
+
+  static DocumentMaskBuilder Read(const char* buf, size_t size);
+
+  roaring::Roaring Compress() const;
+
+  bool Contains(doc_id_t doc) const noexcept;
+
+  size_t Count() const noexcept { return _count; }
+
+  bool Empty() const noexcept { return _count == 0; }
+
+  size_t ByteSize() const noexcept;
+
+  size_t ByteCapacity() const noexcept;
+
+  bool Add(doc_id_t doc);
+  void AddRange(doc_id_t first, doc_id_t last);
+  void Truncate(doc_id_t first) noexcept;
+  void Merge(const DocumentMaskBuilder& other);
+  void Clear() noexcept;
+
+  DocumentMask Finish(uint32_t bitset_from = kBitsetFrom) && noexcept;
 
  private:
-  void Refresh() noexcept;
+  DocumentMaskBuilder(const roaring::api::roaring_bitmap_t& set, size_t count);
 
   roaring::api::roaring_bitmap_t _set;
   size_t _count = 0;
-  MaskKind _kind = MaskKind::Runs;
 };
 
 }  // namespace irs

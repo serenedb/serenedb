@@ -58,7 +58,7 @@ std::string FileName(const SegmentMeta& meta) {
 }
 
 void Write(Directory& dir, std::string& meta_file, SegmentMeta& meta,
-           const DocumentMask* patch, uint64_t parent) {
+           const DocumentMaskBuilder* patch, uint64_t parent) {
   SDB_ASSERT(meta.live_docs_count <= meta.docs_count);
   SDB_ASSERT(meta.docs_count - meta.live_docs_count == RemovalCount(meta));
   SDB_ASSERT(RemovalCount(meta) < doc_limits::eof());

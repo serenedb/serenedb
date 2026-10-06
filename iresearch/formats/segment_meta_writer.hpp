@@ -29,7 +29,7 @@
 namespace irs {
 
 struct Directory;
-class DocumentMask;
+class DocumentMaskBuilder;
 struct SegmentMeta;
 
 namespace segment_meta {
@@ -46,7 +46,7 @@ inline constexpr duckdb::field_id_t kFieldByteSize = 3;
 std::string FileName(const SegmentMeta& meta);
 
 void Write(Directory& dir, std::string& filename, SegmentMeta& meta,
-           const DocumentMask* patch = nullptr, uint64_t parent = 0);
+           const DocumentMaskBuilder* patch = nullptr, uint64_t parent = 0);
 
 }  // namespace segment_meta
 }  // namespace irs

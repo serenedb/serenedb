@@ -39,15 +39,16 @@
 namespace irs::segment_meta {
 namespace {
 
-DocumentMask ReadDocumentMask(IndexInput& in, uint64_t mask_size) {
+DocumentMaskBuilder ReadDocumentMask(IndexInput& in, uint64_t mask_size) {
   if (const auto* data = in.ReadVolatile(0, mask_size)) {
-    return DocumentMask::Read(reinterpret_cast<const char*>(data), mask_size);
+    return DocumentMaskBuilder::Read(reinterpret_cast<const char*>(data),
+                                     mask_size);
   }
   bstring blob;
   irs::utils::StrResize(blob, mask_size);
   in.ReadData(0, blob.data(), mask_size);
-  return DocumentMask::Read(reinterpret_cast<const char*>(blob.data()),
-                            blob.size());
+  return DocumentMaskBuilder::Read(reinterpret_cast<const char*>(blob.data()),
+                                   blob.size());
 }
 
 bool ReadFiles(duckdb::BinaryDeserializer& meta_in,
@@ -133,7 +134,7 @@ void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
                                   parents.size(), " link(s)")};
   }
 
-  std::shared_ptr<DocumentMask> docs_mask;
+  std::shared_ptr<const DocumentMask> docs_mask;
   uint64_t docs_mask_size = 0;
 
   if (mask_size != 0) {
@@ -174,8 +175,7 @@ void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
 
     files.insert(files.end(), std::make_move_iterator(links.begin()),
                  std::make_move_iterator(links.end()));
-    builder.Trim();
-    docs_mask = std::make_shared<DocumentMask>(std::move(builder));
+    docs_mask = std::make_shared<const DocumentMask>(std::move(builder).Finish());
   }
 
   if (!has_files) [[unlikely]] {

@@ -555,8 +555,7 @@ TEST_P(DocsMaskPlanTest, small_segments_clustered) {
 INSTANTIATE_TEST_SUITE_P(
   docs_mask_plan_test, DocsMaskPlanTest,
   ::testing::Combine(
-    ::testing::Values(&tests::Directory<&tests::MemoryDirectory>),
-    ::testing::Values("1_5simd")),
+    ::testing::Values(&tests::Directory<&tests::MemoryDirectory>)),
   DocsMaskPlanTest::to_string);
 
 }  // namespace

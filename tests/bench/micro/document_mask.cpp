@@ -49,12 +49,11 @@ namespace {
 using irs::doc_id_t;
 
 irs::DocumentMask MakeMask(std::span<const doc_id_t> docs) {
-  irs::DocumentMask mask;
+  irs::DocumentMaskBuilder mask;
   for (const auto doc : docs) {
     mask.Add(doc);
   }
-  mask.Trim();
-  return mask;
+  return std::move(mask).Finish();
 }
 
 constexpr doc_id_t kDocs = 1'000'000;
@@ -739,19 +738,18 @@ std::vector<std::vector<doc_id_t>> SplitChain(
 
 void BmMergeDocumentMask(benchmark::State& state) {
   const auto parts = SplitChain(Deleted(state.range(0), state.range(1)));
-  std::vector<irs::DocumentMask> links;
+  std::vector<irs::DocumentMaskBuilder> links;
   links.reserve(kChainLinks);
   for (const auto& part : parts) {
     links.emplace_back(MakeMask(part));
   }
 
   for (auto _ : state) {
-    irs::DocumentMask builder;
+    irs::DocumentMaskBuilder builder;
     for (const auto& link : links) {
       builder.Merge(link);
     }
-    builder.Trim();
-    const auto mask = std::move(builder);
+    const auto mask = std::move(builder).Finish();
     benchmark::DoNotOptimize(mask.Count());
   }
 }
@@ -1072,7 +1070,7 @@ void BmDeserializeRead(benchmark::State& state) {
   const auto blob = SerializeMask(mask.Set());
 
   for (auto _ : state) {
-    auto restored = irs::DocumentMask::Read(blob.data(), blob.size());
+    auto restored = irs::DocumentMaskBuilder::Read(blob.data(), blob.size());
     benchmark::DoNotOptimize(restored.Count());
   }
 
@@ -1128,12 +1126,12 @@ void BmChainFold(benchmark::State& state) {
   }
 
   for (auto _ : state) {
-    irs::DocumentMask builder;
+    irs::DocumentMaskBuilder builder;
     for (const auto& blob : blobs) {
-      builder.Merge(irs::DocumentMask::Read(blob.data(), blob.size()));
+      builder.Merge(irs::DocumentMaskBuilder::Read(blob.data(), blob.size()));
     }
-    builder.Trim();
-    benchmark::DoNotOptimize(builder.Count());
+    const auto mask = std::move(builder).Finish();
+    benchmark::DoNotOptimize(mask.Count());
   }
 
   state.counters["serialized_bytes"] = static_cast<double>(total);
@@ -1254,7 +1252,7 @@ size_t ScanWithIterator(const irs::DocumentMask& mask, doc_id_t end) {
 }
 
 void BmScanTailAsBound(benchmark::State& state) {
-  const irs::DocumentMask mask;
+  const auto mask = irs::DocumentMaskBuilder{}.Finish();
   constexpr auto kVisibleEnd = kBegin + kTailVisible;
 
   for (auto _ : state) {
@@ -1272,10 +1270,9 @@ BENCHMARK(BmScanTailAsBound);
 
 void BmScanTailAsBits(benchmark::State& state) {
   const auto mask = [] {
-    irs::DocumentMask builder;
+    irs::DocumentMaskBuilder builder;
     builder.AddRange(kBegin + kTailVisible, kBegin + kTailDocs);
-    builder.Trim();
-    return builder;
+    return std::move(builder).Finish();
   }();
 
   for (auto _ : state) {
@@ -1293,10 +1290,9 @@ BENCHMARK(BmScanTailAsBits);
 
 void BmScanTailAsBitsIterator(benchmark::State& state) {
   const auto mask = [] {
-    irs::DocumentMask builder;
+    irs::DocumentMaskBuilder builder;
     builder.AddRange(kBegin + kTailVisible, kBegin + kTailDocs);
-    builder.Trim();
-    return builder;
+    return std::move(builder).Finish();
   }();
 
   for (auto _ : state) {

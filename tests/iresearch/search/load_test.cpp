@@ -803,8 +803,9 @@ double Quantile(std::vector<double> values, double q) {
 std::vector<double> TimeQueries(bench::Executor& executor, BenchMode mode,
                                 const std::vector<ParsedQuery>& queries,
                                 std::span<const size_t> selected, size_t runs,
-                                uint64_t& hits) {
-  std::vector<std::vector<double>> samples(selected.size());
+                                uint64_t& hits,
+                                std::vector<std::vector<double>>& samples) {
+  samples.assign(selected.size(), {});
   std::vector<std::pair<uint32_t, uint32_t>> order;
   order.reserve(selected.size() * runs);
   for (uint32_t run = 0; run != runs; ++run) {
@@ -828,8 +829,8 @@ std::vector<double> TimeQueries(bench::Executor& executor, BenchMode mode,
 
   std::vector<double> medians;
   medians.reserve(selected.size());
-  for (auto& sample : samples) {
-    medians.push_back(Quantile(std::move(sample), 0.5));
+  for (const auto& sample : samples) {
+    medians.push_back(Quantile(sample, 0.5));
   }
   return medians;
 }
@@ -1443,7 +1444,7 @@ TEST_F(LoadTest, DeleteRatioLatency) {
   std::ofstream csv{gDeleteOut};
   ASSERT_TRUE(csv.is_open()) << "Cannot write: " << gDeleteOut;
   csv << "per_mille,mode,tag,queries,median_ms,p95_ms,docs,live_docs,segments,"
-         "mask_bytes,hits\n";
+         "mask_bytes,hits,p90_ms,p99_ms,exec_p50_ms,exec_p90_ms,exec_p99_ms\n";
 
   std::vector<size_t> steps{0};
   steps.insert(steps.end(), gDeleteRatios.begin(), gDeleteRatios.end());
@@ -1490,28 +1491,39 @@ TEST_F(LoadTest, DeleteRatioLatency) {
     for (const auto mode : gModes) {
       const auto& selected = mode == BenchMode::Count ? all_idx : topk_idx;
       uint64_t hits = 0;
-      const auto medians =
-        TimeQueries(*gExecutor, mode, queries, selected, gDeleteRuns, hits);
+      std::vector<std::vector<double>> samples;
+      const auto medians = TimeQueries(*gExecutor, mode, queries, selected,
+                                       gDeleteRuns, hits, samples);
       const auto name = kModeNames[static_cast<size_t>(mode)];
 
-      auto emit = [&](std::string_view tag, const std::vector<double>& v) {
+      auto emit = [&](std::string_view tag, const std::vector<double>& v,
+                      const std::vector<double>& execs) {
         csv << per_mille << ',' << name << ',' << tag << ',' << v.size() << ','
             << Quantile(v, 0.5) << ',' << Quantile(v, 0.95) << ',' << docs
             << ',' << live << ',' << reader.size() << ',' << mask_bytes << ','
-            << hits << '\n';
+            << hits << ',' << Quantile(v, 0.9) << ',' << Quantile(v, 0.99)
+            << ',' << Quantile(execs, 0.5) << ',' << Quantile(execs, 0.9) << ','
+            << Quantile(execs, 0.99) << '\n';
       };
-      emit("all", medians);
+      std::vector<double> all_execs;
+      for (const auto& sample : samples) {
+        all_execs.insert(all_execs.end(), sample.begin(), sample.end());
+      }
+      emit("all", medians, all_execs);
 
       absl::flat_hash_map<std::string_view, std::vector<double>> by_tag;
+      absl::flat_hash_map<std::string_view, std::vector<double>> execs_by_tag;
       for (size_t at = 0; at != selected.size(); ++at) {
         for (const auto& tag : queries[selected[at]].tags) {
           if (!absl::StrContains(tag, ':')) {
             by_tag[tag].push_back(medians[at]);
+            auto& execs = execs_by_tag[tag];
+            execs.insert(execs.end(), samples[at].begin(), samples[at].end());
           }
         }
       }
       for (const auto& [tag, v] : by_tag) {
-        emit(tag, v);
+        emit(tag, v, execs_by_tag[tag]);
       }
       std::cout << absl::StrCat("  ", name, " median=", Quantile(medians, 0.5),
                                 " ms p95=", Quantile(medians, 0.95), " ms\n");

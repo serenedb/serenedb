@@ -40,7 +40,7 @@ using irs::doc_id_t;
 using irs::MaskKind;
 
 constexpr doc_id_t kLimit = 300000;
-constexpr uint32_t kArrays = irs::DocumentMask::kCanonical;
+constexpr uint32_t kArrays = irs::DocumentMaskBuilder::kCanonical;
 constexpr doc_id_t kEof = irs::doc_limits::eof();
 constexpr doc_id_t kBits = irs::detail::kWindowBits;
 constexpr doc_id_t kSpan = irs::detail::kWindowDocs;
@@ -56,7 +56,7 @@ struct Case {
   doc_id_t visible_end;
   MaskKind kind;
   bool null = false;
-  uint32_t bitset_from = irs::DocumentMask::kBitsetFrom;
+  uint32_t bitset_from = irs::DocumentMaskBuilder::kBitsetFrom;
 };
 
 class Reference {
@@ -121,14 +121,22 @@ class Reference {
   doc_id_t _visible_end;
 };
 
-irs::DocumentMask Build(const std::vector<doc_id_t>& docs,
-                        uint32_t bitset_from = irs::DocumentMask::kBitsetFrom) {
-  irs::DocumentMask mask;
+irs::DocumentMaskBuilder Builder(const std::vector<doc_id_t>& docs) {
+  irs::DocumentMaskBuilder mask;
   for (const auto doc : docs) {
     mask.Add(doc);
   }
-  mask.Trim(bitset_from);
   return mask;
+}
+
+irs::DocumentMask Build(
+  const std::vector<doc_id_t>& docs,
+  uint32_t bitset_from = irs::DocumentMaskBuilder::kBitsetFrom) {
+  return Builder(docs).Finish(bitset_from);
+}
+
+MaskKind KindOf(irs::DocumentMaskBuilder mask, uint32_t bitset_from = kArrays) {
+  return std::move(mask).Finish(bitset_from).Kind();
 }
 
 std::vector<doc_id_t> Every(doc_id_t first, doc_id_t last, doc_id_t step) {
@@ -262,7 +270,7 @@ class DocumentMaskTest : public ::testing::TestWithParam<Case> {
     fn(generic);
   }
 
-  irs::DocumentMask _mask;
+  irs::DocumentMask _mask = irs::DocumentMaskBuilder{}.Finish();
   const irs::DocumentMask* _ptr = nullptr;
   std::optional<Reference> _ref;
 };
@@ -530,105 +538,106 @@ INSTANTIATE_TEST_SUITE_P(document_mask, DocumentMaskTest,
                          ::testing::ValuesIn(Cases()),
                          [](const auto& info) { return info.param.name; });
 
-TEST(document_mask_test, kind_follows_every_write) {
-  irs::DocumentMask mask;
-  ASSERT_EQ(MaskKind::Runs, mask.Kind());
+TEST(document_mask_test, kind_is_resolved_on_finish) {
+  constexpr auto kDense = irs::DocumentMaskBuilder::kBitsetFrom;
+
+  irs::DocumentMaskBuilder mask;
+  ASSERT_EQ(MaskKind::Runs, KindOf(mask));
 
   ASSERT_TRUE(mask.Add(3));
-  ASSERT_EQ(MaskKind::Arrays, mask.Kind());
-  mask.Trim();
-  ASSERT_EQ(MaskKind::Arrays, mask.Kind());
+  ASSERT_EQ(MaskKind::Arrays, KindOf(mask));
+  ASSERT_EQ(MaskKind::Arrays, KindOf(mask, kDense));
 
   for (doc_id_t doc = 1; doc < 65536; doc += 3) {
     mask.Add(doc);
   }
-  ASSERT_EQ(MaskKind::Bitsets, mask.Kind());
-  mask.Trim();
-  ASSERT_EQ(MaskKind::Bitsets, mask.Kind());
+  ASSERT_EQ(MaskKind::Bitsets, KindOf(mask));
+  ASSERT_EQ(MaskKind::Bitsets, KindOf(mask, kDense));
 
-  mask.Merge(Build(Every(65536, 65536 + 30000, 3)));
-  ASSERT_EQ(MaskKind::Bitsets, mask.Kind());
+  mask.Merge(Builder(Every(65536, 65536 + 30000, 3)));
+  ASSERT_EQ(MaskKind::Bitsets, KindOf(mask));
 
-  mask.Merge(Build({200000}));
-  ASSERT_EQ(MaskKind::Mixed, mask.Kind());
+  mask.Merge(Builder({200000}));
+  ASSERT_EQ(MaskKind::Mixed, KindOf(mask));
 
   mask.Truncate(131072);
-  ASSERT_EQ(MaskKind::Bitsets, mask.Kind());
+  ASSERT_EQ(MaskKind::Bitsets, KindOf(mask));
 
   mask.Truncate(65536);
-  ASSERT_EQ(MaskKind::Bitsets, mask.Kind());
+  ASSERT_EQ(MaskKind::Bitsets, KindOf(mask));
 
-  irs::DocumentMask runs;
+  irs::DocumentMaskBuilder runs;
   runs.AddRange(10, 2000);
-  ASSERT_EQ(MaskKind::Runs, runs.Kind());
+  ASSERT_EQ(MaskKind::Runs, KindOf(runs));
   runs.AddRange(200000, 200100);
-  ASSERT_EQ(MaskKind::Runs, runs.Kind());
+  ASSERT_EQ(MaskKind::Runs, KindOf(runs));
   runs.AddRange(65536, 200000);
-  ASSERT_EQ(MaskKind::Runs, runs.Kind());
+  ASSERT_EQ(MaskKind::Runs, KindOf(runs));
   ASSERT_TRUE(runs.Add(300000));
-  ASSERT_EQ(MaskKind::Mixed, runs.Kind());
+  ASSERT_EQ(MaskKind::Mixed, KindOf(runs));
 
-  irs::DocumentMask clustered;
+  irs::DocumentMaskBuilder clustered;
   for (doc_id_t doc = 1; doc < 196608; doc += 1000) {
     clustered.AddRange(doc, doc + 10);
   }
-  clustered.Trim(kArrays);
-  ASSERT_EQ(MaskKind::Runs, clustered.Kind());
-  clustered.Trim();
-  ASSERT_EQ(MaskKind::Bitsets, clustered.Kind());
-  ASSERT_EQ(1970, clustered.Count());
-  const auto clustered_blob = clustered.Compress();
+  ASSERT_EQ(MaskKind::Runs, KindOf(clustered));
+  const auto clustered_mask = std::move(clustered).Finish();
+  ASSERT_EQ(MaskKind::Bitsets, clustered_mask.Kind());
+  ASSERT_EQ(1970, clustered_mask.Count());
+  const auto clustered_blob = clustered_mask.Compress();
   std::string clustered_bytes(clustered_blob.getSizeInBytes(true), '\0');
   clustered_blob.write(clustered_bytes.data(), true);
-  auto clustered_read =
-    irs::DocumentMask::Read(clustered_bytes.data(), clustered_bytes.size());
-  ASSERT_TRUE(clustered_read == clustered);
+  const auto clustered_read =
+    irs::DocumentMaskBuilder::Read(clustered_bytes.data(),
+                                   clustered_bytes.size())
+      .Finish(kArrays);
+  ASSERT_TRUE(clustered_read == clustered_mask);
   ASSERT_EQ(MaskKind::Runs, clustered_read.Kind());
 
-  irs::DocumentMask sparse;
+  irs::DocumentMaskBuilder sparse;
   for (doc_id_t doc = 1; doc < 300000; doc += 1000) {
     sparse.Add(doc);
   }
-  sparse.Trim(kArrays);
-  ASSERT_EQ(MaskKind::Arrays, sparse.Kind());
-  sparse.Trim();
-  ASSERT_EQ(MaskKind::Bitsets, sparse.Kind());
-  const auto compressed = sparse.Compress();
+  ASSERT_EQ(MaskKind::Arrays, KindOf(sparse));
+  const auto sparse_mask = std::move(sparse).Finish();
+  ASSERT_EQ(MaskKind::Bitsets, sparse_mask.Kind());
+  const auto compressed = sparse_mask.Compress();
   std::string blob(compressed.getSizeInBytes(true), '\0');
   compressed.write(blob.data(), true);
-  auto restored = irs::DocumentMask::Read(blob.data(), blob.size());
-  ASSERT_TRUE(restored == sparse);
-  ASSERT_EQ(MaskKind::Arrays, restored.Kind());
+  auto restored = irs::DocumentMaskBuilder::Read(blob.data(), blob.size());
   for (doc_id_t doc = 1; doc < 300000; doc += 1000) {
     ASSERT_TRUE(restored.Contains(doc));
   }
-  restored.Trim();
-  ASSERT_EQ(MaskKind::Bitsets, restored.Kind());
+  ASSERT_EQ(MaskKind::Arrays, KindOf(restored));
+  const auto restored_mask = std::move(restored).Finish();
+  ASSERT_TRUE(restored_mask == sparse_mask);
+  ASSERT_EQ(MaskKind::Bitsets, restored_mask.Kind());
 
-  irs::DocumentMask arrays;
+  irs::DocumentMaskBuilder arrays;
   for (doc_id_t doc = 1; doc < 1000; ++doc) {
     arrays.Add(doc);
   }
-  ASSERT_EQ(MaskKind::Arrays, arrays.Kind());
+  ASSERT_EQ(MaskKind::Runs, KindOf(arrays));
   arrays.Add(300000);
-  ASSERT_EQ(MaskKind::Arrays, arrays.Kind());
-  arrays.Trim();
-  ASSERT_EQ(MaskKind::Mixed, arrays.Kind());
+  ASSERT_EQ(MaskKind::Mixed, KindOf(arrays, kDense));
   arrays.Truncate(200000);
-  ASSERT_EQ(MaskKind::Runs, arrays.Kind());
+  ASSERT_EQ(MaskKind::Runs, KindOf(arrays, kDense));
 
   mask.Clear();
-  ASSERT_EQ(MaskKind::Runs, mask.Kind());
+  ASSERT_EQ(MaskKind::Runs, KindOf(mask));
 }
 
-TEST(document_mask_test, mutated_after_trim_still_answers) {
-  auto mask = Build(Every(1, 65536, 3));
-  ASSERT_TRUE(mask.Add(2));
-  ASSERT_TRUE(mask.Add(200000));
-  ASSERT_TRUE(mask.Contains(2));
-  ASSERT_TRUE(mask.Contains(200000));
-  ASSERT_FALSE(mask.Contains(5));
-  mask.Trim();
+TEST(document_mask_test, builder_copies_a_published_mask) {
+  const auto published = Build(Every(1, 65536, 3));
+  irs::DocumentMaskBuilder builder{published};
+  ASSERT_TRUE(builder.Add(2));
+  ASSERT_TRUE(builder.Add(200000));
+  ASSERT_TRUE(builder.Contains(2));
+  ASSERT_TRUE(builder.Contains(200000));
+  ASSERT_FALSE(builder.Contains(5));
+  ASSERT_FALSE(published.Contains(2));
+  ASSERT_FALSE(published.Contains(200000));
+  const auto mask = std::move(builder).Finish();
   irs::ResolveDocsMask(&mask, kEof, [&]<irs::DocsMaskType Mask>(Mask docs) {
     ASSERT_EQ(MaskKind::Mixed, Mask::kKind);
     ASSERT_EQ(1, docs.Probe(1));

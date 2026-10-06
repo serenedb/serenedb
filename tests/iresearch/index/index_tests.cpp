@@ -11976,8 +11976,8 @@ TEST_P(IndexTestCase11, partial_commit_tail_replayed_once) {
   }
   ASSERT_TRUE(writer->RefreshCommit());
 
-  auto reader = irs::DirectoryReader(directory, nullptr,
-                                     irs::tests::DefaultReaderOptions());
+  auto reader =
+    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
   ASSERT_EQ(2, reader.size());
   EXPECT_EQ(3, reader.live_docs_count());
 

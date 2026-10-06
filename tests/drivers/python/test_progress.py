@@ -377,6 +377,9 @@ def va_schema(obs, faults) -> str:
 
 @pytest.mark.parametrize("driver", DRIVERS, ids=lambda d: d.name)
 def test_recompute_stats_progress(obs, faults, va_schema, driver):
+    if not faults:
+        pytest.skip("recomputing statistics of a test-sized table ends before "
+                    "the observer can poll it; needs SDB_FAULT_INJECTION")
     table = f"{va_schema}.t0"
     relid = relid_of(obs, table)
     obs.execute(
@@ -527,6 +530,9 @@ def test_cancel_create_index(obs, faults, src, driver):
 
 @pytest.mark.parametrize("driver", DRIVERS, ids=lambda d: d.name)
 def test_cancel_recompute_stats(obs, faults, va_schema, driver):
+    if not faults:
+        pytest.skip("recomputing statistics of test-sized tables ends before "
+                    "the observer can poll it; needs SDB_FAULT_INJECTION")
     for i in range(VA_TABLES):
         obs.execute(
             f"INSERT INTO {va_schema}.t{i} "

@@ -143,8 +143,8 @@ class Transport : public TransportBase {
     }
     _write_gate.Kick();
     _producer_gate.Kick();
-    if (_task) {
-      _task->RequestRun();
+    if (auto* task = _spawned.load(std::memory_order_acquire)) {
+      task->RequestRun();
     }
     static_cast<Session*>(this)->OnStop();
   }
@@ -322,10 +322,7 @@ class Transport : public TransportBase {
         // May immediately re-arm via the send callback -- the pending kick is
         // consumed by the next Wait.
         _send.FlushDone();
-        // _producer_gate has a waiter only pre-handoff (Flush, before the
-        // SessionTask exists). Once _task is set the steady-state drive parks
-        // on the task, not here, so skip the seq_cst-fenced Kick per flush.
-        if (!_task) {
+        if (!_spawned.load(std::memory_order_acquire)) {
           _producer_gate.Kick();
         }
         // Wake the cpu task only when it declared interest (ArmSendWaiter): the
@@ -334,9 +331,11 @@ class Transport : public TransportBase {
         // ArmSendWaiter, seq_cst-fenced, so a wake is never lost.
         std::atomic_thread_fence(std::memory_order_seq_cst);
         const auto seen = _send_waiter.load(std::memory_order_relaxed);
-        if (seen != kSendWaiterIdle && _task &&
+        if (seen != kSendWaiterIdle &&
             _send_written.load(std::memory_order_relaxed) > seen) {
-          _task->RequestRun();
+          if (auto* task = _spawned.load(std::memory_order_acquire)) {
+            task->RequestRun();
+          }
         }
       }
     }
@@ -367,10 +366,8 @@ class Transport : public TransportBase {
   // SendWriter so a waiting Flush wakes.
   Gate _producer_gate;
 
-  // Hosts the cpu coroutine as a duckdb::Task; created just before it spawns.
-  // Null == not spawned yet, so it also gates RequestRun wakes from io-side
-  // code. Standalone shared_ptr, co-owned with the DuckDB scheduler.
   duckdb::shared_ptr<CpuResumer> _task;
+  std::atomic<CpuResumer*> _spawned{nullptr};
 };
 
 }  // namespace sdb::network

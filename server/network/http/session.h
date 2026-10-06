@@ -307,6 +307,7 @@ class HttpSession final
   using Transport<Kind, HttpSession<Kind>>::_stopping;
   using Transport<Kind, HttpSession<Kind>>::_producer_gate;
   using Transport<Kind, HttpSession<Kind>>::_task;
+  using Transport<Kind, HttpSession<Kind>>::_spawned;
   using Transport<Kind, HttpSession<Kind>>::KickSend;
   using Transport<Kind, HttpSession<Kind>>::HasUnsentBytes;
   using Transport<Kind, HttpSession<Kind>>::SendBroken;
@@ -439,6 +440,7 @@ yaclib::Task<> HttpSession<Kind>::Run() {
     // SessionMain (eager) runs to its first Park; the bootstrap kick schedules
     // it onto a duck worker.
     cpu = SessionMain();
+    _spawned.store(_task.get(), std::memory_order_release);
     _task->RequestRun();
 
     for (;;) {

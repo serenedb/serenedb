@@ -2821,6 +2821,7 @@ yaclib::Future<> PgWireSession<Kind>::SpawnSession() noexcept {
   // SessionMain (eager) runs to its first Park, setting the resume job; the one
   // bootstrap kick then schedules it onto a duck worker.
   auto cpu = SessionMain();
+  this->_spawned.store(this->_task.get(), std::memory_order_release);
   this->_task->RequestRun();
   return cpu;
 }

@@ -55,6 +55,7 @@
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/column/array_column_reader.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/dictionary_cache.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/formats/column/list_column_reader.hpp"
 #include "iresearch/formats/column/struct_column_reader.hpp"
@@ -210,6 +211,8 @@ ColumnReader::ScanState& ColumnReader::ScanState::operator=(ScanState&&) =
   default;
 ColumnReader::ScanState::~ScanState() = default;
 
+ColumnReader::~ColumnReader() = default;
+
 ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
                            std::vector<ColumnBlockMeta> segments,
                            std::unique_ptr<ColumnReader> validity,
@@ -224,6 +227,11 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
                   : 0} {
   auto stats = duckdb::BaseStatistics::CreateEmpty(
     _segments.empty() ? _type : _segments.front().statistics.GetType());
+  if (_type.InternalType() == duckdb::PhysicalType::VARCHAR &&
+      !_segments.empty()) {
+    _dictionary_caches =
+      std::make_unique<BlockDictionaryCache[]>(_segments.size());
+  }
   _offsets.reserve(_segments.size() + 1);
   _offsets.push_back(0);
   for (const auto& m : _segments) {
@@ -327,6 +335,9 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
         seg_state->Cast<duckdb::UncompressedStringSegmentState>();
       str_state.overflow_reader = &ctx;
       str_state.stream_reader = &ctx;
+      if (_dictionary_caches) {
+        str_state.dictionary_cache = &_dictionary_caches[w.block];
+      }
     }
   }
   return segment;

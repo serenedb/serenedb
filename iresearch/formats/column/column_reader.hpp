@@ -47,6 +47,8 @@ class CompressionFunction;
 }  // namespace duckdb
 namespace irs {
 
+class BlockDictionaryCache;
+
 struct BlockWindow {
   size_t block = 0;
   duckdb::idx_t begin = 0;
@@ -155,7 +157,7 @@ class ColumnReader {
     std::unique_ptr<VectorScratch> list_offsets;
   };
 
-  virtual ~ColumnReader() = default;
+  virtual ~ColumnReader();
 
   static std::unique_ptr<ColumnReader> Make(ColumnMeta&& meta);
 
@@ -352,6 +354,7 @@ class ColumnReader {
   uint64_t _array_size = 0;
   duckdb::shared_ptr<duckdb::HyperLogLog> _hyperloglog;
   duckdb::unique_ptr<duckdb::BaseStatistics> _stats;
+  std::unique_ptr<BlockDictionaryCache[]> _dictionary_caches;
 
  private:
   void Readahead(size_t block, ReadContext& ctx, ScanState* s) const noexcept;

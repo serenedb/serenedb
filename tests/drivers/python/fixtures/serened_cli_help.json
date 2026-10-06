@@ -220,6 +220,16 @@
           "categoryLabel": "Server"
         },
         {
+          "name": "search_dictionary_cache_bytes",
+          "flag": "--search_dictionary_cache_bytes",
+          "type": "",
+          "defaultValue": "-1",
+          "description": "Memory for decoded string dictionaries of search-table blocks, kept across queries so repeated scans skip FSST decoding. -1 = 1/16 of physical memory, 0 = disabled.",
+          "source": "server",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
           "name": "server_directory",
           "flag": "--server_directory",
           "type": "",

@@ -58,6 +58,7 @@ set(iresearch-tests_sources
     ./analysis/sql_tokenizer_fuzz_tests.cpp
     ./analysis/wildcard_tokenizer_tests.cpp
     ./formats/column/column_reader_test.cpp
+    ./formats/column/dictionary_cache_test.cpp
     ./formats/column/test_cs_helpers.cpp
     ./formats/columnstore2_test.cpp
     ./formats/posting_alloc_test.cpp

@@ -233,6 +233,7 @@ void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
                     bool require_all);
 void BuildFtsWord(BoolTarget parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info, std::string_view text);
+bool MatchesPhrases(const SearchColumnInfo& column_info);
 
 using TokenGroups = std::vector<std::vector<irs::bstring>>;
 

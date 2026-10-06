@@ -20,16 +20,30 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/token_phrase_of.hpp"
-#include "iresearch/search/lead/impl.hpp"
-#include "iresearch/search/lead/plan.hpp"
+#include "iresearch/search/lead/constant_scored.hpp"
+#include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/lead/two_phase_scored.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::lead {
 
-Node::ptr MakeTokenPhraseScored(const TokenPhraseQuery& query,
-                                const detail::ScoreArgs& args) {
+Node::ptr Make(const TokenPhraseQuery& query) {
+  return detail::MakeTokenPhrase<Impl, Node::ptr>(query, 0);
+}
+
+Node::ptr Make(const TokenPhraseQuery& query, const detail::ScoredCtx& ctx) {
+  const auto record = query.Stats(ctx);
+  const detail::ScoreArgs args{.scorer = record.scorer,
+                               .stats = record.stats,
+                               .fetcher = ctx.fetcher,
+                               .boost = query.Boost()};
   if (!args.stats) {
-    return {};
+    return Make(query);
+  }
+  if (const auto value =
+        detail::ConstantOf(query.Segment(), query.Reader(), args)) {
+    return detail::MakeTokenPhrase<ConstantScoredImpl, Node::ptr>(query, 0,
+                                                                  *value);
   }
   return detail::MakeTokenPhrase<Impl, Node::ptr, true, TwoPhaseScored>(
     query, 0, query.Segment(), query.Reader(), args);

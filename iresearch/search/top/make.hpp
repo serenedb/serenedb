@@ -132,8 +132,6 @@ Root::ptr MakeNGramAll(const NGramSimilarityQuery& query, const Context& ctx);
 Root::ptr MakeWildcardNGram(const WildcardNGramQuery& query,
                             const Context& ctx);
 
-Root::ptr MakeTokenPhrase(const TokenPhraseQuery& query, const Context& ctx);
-
 Root::ptr MakePrunedPosting(const irs::detail::PostingClause& posting,
                             const SubReader& segment, const Context& ctx);
 Root::ptr MakePrunedPosting(

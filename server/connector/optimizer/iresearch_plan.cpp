@@ -22,9 +22,6 @@
 
 #include <absl/algorithm/container.h>
 
-#include <duckdb/common/allocator.hpp>
-#include <duckdb/common/types/data_chunk.hpp>
-#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/optimizer/optimizer.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
@@ -38,7 +35,6 @@
 #include <duckdb/planner/operator/logical_order.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_top_n.hpp>
-#include <functional>
 #include <iresearch/formats/ivf/ivf_reader.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/boolean_rules.hpp>
@@ -60,6 +56,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/search.h"
+#include "connector/functions/ts_common.hpp"
 #include "connector/functions/ts_offsets.h"
 #include "connector/functions/vector.h"
 #include "connector/index_expression.hpp"
@@ -303,66 +300,33 @@ bool TryClaimIResearchConjunct(
 
 namespace {
 
-class EvaluatedText final : public irs::TextExpression {
- public:
-  EvaluatedText(duckdb::ClientContext& context,
-                std::shared_ptr<const duckdb::Expression> expr)
-    : _expr{std::move(expr)}, _executor{context, *_expr} {
-    _result.Initialize(duckdb::Allocator::Get(context),
-                       {_expr->GetReturnType()});
-  }
-
-  duckdb::Vector& Evaluate(duckdb::DataChunk& columns) final {
-    _result.Reset();
-    _executor.Execute(columns, _result);
-    return _result.data[0];
-  }
-
- private:
-  std::shared_ptr<const duckdb::Expression> _expr;
-  duckdb::ExpressionExecutor _executor;
-  duckdb::DataChunk _result;
-};
-
-irs::TextSource ExpressionSource(const duckdb::Expression& normalized,
-                                 const connector::ScanBindData& bind_data,
-                                 duckdb::ClientContext& context) {
-  std::vector<connector::ColumnId> columns;
-  const std::function<void(const duckdb::Expression&)> collect =
-    [&](const duckdb::Expression& e) {
-      if (e.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-        const auto id = static_cast<connector::ColumnId>(
-          e.Cast<duckdb::BoundColumnRefExpression>()
-            .Binding()
-            .column_index.GetIndex());
-        if (absl::c_find(columns, id) == columns.end()) {
-          columns.push_back(id);
-        }
+irs::TextSource ExpressionSource(
+  duckdb::unique_ptr<duckdb::Expression> normalized,
+  const connector::ScanBindData& bind_data, duckdb::ClientContext& context) {
+  const auto& relation = bind_data.relation;
+  irs::TextSource text;
+  duckdb::ExpressionIterator::VisitExpression<duckdb::BoundColumnRefExpression>(
+    *normalized, [&](const duckdb::BoundColumnRefExpression& ref) {
+      const auto id =
+        static_cast<connector::ColumnId>(ref.Binding().column_index.GetIndex());
+      if (!absl::c_linear_search(text.columns, id)) {
+        text.columns.push_back(id);
       }
-      duckdb::ExpressionIterator::EnumerateChildren(e, collect);
-    };
-  collect(normalized);
-  if (columns.empty()) {
+    });
+  if (text.columns.empty() ||
+      (!relation.IsSearchTable() &&
+       !absl::c_all_of(text.columns, [&](connector::ColumnId id) {
+         const auto* info = relation.inverted_config->FindColumnInfo(id);
+         return info && info->IsStored();
+       }))) {
     return {};
   }
-  const auto& config = *bind_data.relation.inverted_config;
-  irs::TextSource text;
-  for (const auto id : columns) {
-    if (!bind_data.relation.IsSearchTable()) {
-      const auto* info = config.FindColumnInfo(id);
-      if (!info || !info->IsStored()) {
-        return {};
-      }
-    }
-    text.columns.push_back(id);
+  for (const auto id : text.columns) {
     text.types.push_back(bind_data.ColumnTypeById(id));
   }
-  std::shared_ptr<const duckdb::Expression> resolved =
-    connector::ResolveBoundColumnRefs(normalized, bind_data.RelationId(),
-                                      columns, text.types);
-  text.expression = [context = &context, resolved = std::move(resolved)] {
-    return std::make_unique<EvaluatedText>(*context, resolved);
-  };
+  text.expression =
+    connector::TextExpressionOf(std::move(normalized), bind_data.RelationId(),
+                                text.columns, text.types, context);
   return text;
 }
 
@@ -465,8 +429,9 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     if (entry && entry->IsStored()) {
       column_info.text = {.columns = {field_id},
                           .types = {column_info.logical_type}};
-    } else {
-      column_info.text = ExpressionSource(*normalized, bind_data, context);
+    } else if (connector::PhrasesNeedText(column_info)) {
+      column_info.text =
+        ExpressionSource(std::move(normalized), bind_data, context);
     }
     return column_info;
   };

@@ -24,6 +24,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
 #include <duckdb/planner/expression.hpp>
+#include <iresearch/search/detail/text_source.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <span>
@@ -44,14 +45,11 @@ std::string SerializeBoundExpression(const duckdb::Expression& expr);
 duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
   std::string_view bytes, duckdb::ClientContext& context);
 
-duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefs(
-  const duckdb::Expression& expr, duckdb::idx_t table_id,
+irs::TextSource::Expression TextExpressionOf(
+  duckdb::unique_ptr<duckdb::Expression> expr, duckdb::idx_t table_id,
   std::span<const ColumnId> slot_to_col_id,
-  std::span<const duckdb::LogicalType> slot_types);
-
-duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
-  const duckdb::Expression& expr, const duckdb::DataChunk& chunk,
-  duckdb::idx_t table_id, std::span<const ColumnId> slot_to_col_id);
+  std::span<const duckdb::LogicalType> slot_types,
+  duckdb::ClientContext& context);
 
 duckdb::Vector EvaluateExprOverChunk(const duckdb::Expression& bound_expr,
                                      duckdb::DataChunk& chunk,

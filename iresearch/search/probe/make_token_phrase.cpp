@@ -18,15 +18,37 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/token_phrase_of.hpp"
+#include "iresearch/search/probe/constant_scored.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/make.hpp"
+#include "iresearch/search/probe/two_phase_scored.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::probe {
 
-Node::ptr MakeTokenPhraseDocs(const TokenPhraseQuery& query,
-                              uint64_t interrogations) {
+Node::ptr Make(const TokenPhraseQuery& query, uint64_t interrogations) {
   return detail::MakeTokenPhrase<Impl, Node::ptr>(query, interrogations);
+}
+
+Node::ptr Make(const TokenPhraseQuery& query, const detail::ScoredCtx& ctx,
+               uint64_t interrogations) {
+  const auto record = query.Stats(ctx);
+  const detail::ScoreArgs args{.scorer = record.scorer,
+                               .stats = record.stats,
+                               .fetcher = ctx.fetcher,
+                               .boost = query.Boost()};
+  if (!args.stats) {
+    return Make(query, interrogations);
+  }
+  if (const auto value =
+        detail::ConstantOf(query.Segment(), query.Reader(), args)) {
+    return detail::MakeTokenPhrase<ConstantScoredImpl, Node::ptr>(
+      query, interrogations, *value);
+  }
+  return detail::MakeTokenPhrase<Impl, Node::ptr, true, TwoPhaseScored>(
+    query, interrogations, query.Segment(), query.Reader(), args);
 }
 
 }  // namespace irs::probe

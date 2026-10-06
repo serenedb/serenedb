@@ -95,7 +95,5 @@ Root::ptr MakeNGramAll(const NGramSimilarityQuery& query, const Context& ctx);
 Root::ptr MakeWildcardNGram(const WildcardNGramQuery& query,
                             const Context& ctx);
 
-Root::ptr MakeTokenPhrase(const TokenPhraseQuery& query, const Context& ctx);
-
 }  // namespace hits
 }  // namespace irs

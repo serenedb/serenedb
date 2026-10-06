@@ -32,6 +32,7 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/count/root.hpp>
+#include <iresearch/search/detail/token_phrase.hpp>
 #include <iresearch/search/detail/window.hpp>
 #include <iresearch/search/docs/root.hpp>
 #include <iresearch/search/fill/node.hpp>
@@ -202,10 +203,20 @@ std::vector<std::string> RandomTexts(std::mt19937& rng,
   return texts;
 }
 
+inline constexpr irs::field_id kStoreId = 1;
 inline constexpr irs::field_id kShingleId = 2;
 inline constexpr irs::field_id kPlainId = 3;
 inline constexpr irs::field_id kPositionalId = 4;
 inline constexpr size_t kTop = 5;
+
+std::shared_ptr<const irs::PhraseTokens> StoredWords(
+  std::optional<irs::ByPhraseOptions> spec = std::nullopt) {
+  auto tokens = std::make_shared<irs::PhraseTokens>();
+  tokens->column = kStoreId;
+  tokens->tokenizer = [] { return std::make_shared<WhitespaceTokenizer>(); };
+  tokens->spec = std::move(spec);
+  return tokens;
+}
 
 std::optional<std::string> TermOf(const ShingleTokenizer& shingles,
                                   std::string_view text) {
@@ -229,6 +240,12 @@ struct Field {
   std::string_view Value() const noexcept { return value; }
 
   irs::IndexFeatures GetIndexFeatures() const noexcept { return features; }
+
+  bool Write(irs::DataOutput& out) const {
+    out.WriteData(reinterpret_cast<const irs::byte_type*>(value.data()),
+                  value.size());
+    return true;
+  }
 
   irs::analysis::Tokenizer* analyzer{};
   std::string_view value;
@@ -311,6 +328,8 @@ class Index {
       EXPECT_TRUE(tests::InsertField(doc, shingle_field));
       EXPECT_TRUE(tests::InsertField(doc, plain_field));
       EXPECT_TRUE(tests::InsertField(doc, positional_field));
+      irs::tests::StoreFieldAt(*doc.GetColWriter(), kStoreId, doc.DocId(),
+                               plain_field);
     }
     ctx.Commit();
     writer->RefreshCommit();
@@ -521,9 +540,6 @@ irs::Filter::ptr PlanFilter(const ShingleTokenizer& shingles,
     filter->mutable_options()->term = std::move(*term);
     return filter;
   }
-  if (!positional) {
-    return nullptr;
-  }
   auto cover = irs::ShingleCover(shingles, phrase);
   if (!cover) {
     return nullptr;
@@ -531,6 +547,9 @@ irs::Filter::ptr PlanFilter(const ShingleTokenizer& shingles,
   auto filter = std::make_unique<irs::ByPhrase>();
   *filter->mutable_field_id() = kShingleId;
   *filter->mutable_options() = std::move(*cover);
+  if (!positional) {
+    filter->mutable_options()->set_tokens(StoredWords(phrase));
+  }
   return filter;
 }
 
@@ -542,14 +561,18 @@ irs::ByPhrase PlainPhrase(irs::field_id field, std::string_view text) {
 }
 
 irs::Filter::ptr ShingleFilter(const ShingleTokenizer& shingles,
-                               const irs::ByPhraseOptions& phrase) {
-  if (auto filter = PlanFilter(shingles, phrase, true)) {
+                               const irs::ByPhraseOptions& phrase,
+                               bool positional = true) {
+  if (auto filter = PlanFilter(shingles, phrase, positional)) {
     return filter;
   }
   auto fallback = std::make_unique<irs::ByPhrase>();
   *fallback->mutable_field_id() = kShingleId;
   *fallback->mutable_options() = phrase;
   fallback->mutable_options()->set_word_separator(Bytes(" "));
+  if (!positional) {
+    fallback->mutable_options()->set_tokens(StoredWords());
+  }
   return fallback;
 }
 
@@ -805,18 +828,12 @@ TEST(ShinglePhraseIndexTest, covers_match_with_and_without_positions) {
       }
       return index.Docs(*filter);
     };
-    const auto covered = [&](std::vector<irs::doc_id_t> expected) -> Docs {
-      if (!positional) {
-        return std::nullopt;
-      }
-      return expected;
-    };
-    EXPECT_EQ(covered({0, 2, 4}), docs("quick brown fox"));
+    EXPECT_EQ((Docs{{0, 2, 4}}), docs("quick brown fox"));
     EXPECT_EQ((Docs{{0, 1, 2, 3, 4}}), docs("brown fox"));
-    EXPECT_EQ(covered({3}), docs("brown fox quick"));
-    EXPECT_EQ(covered({1}), docs("quick brown cat brown fox"));
-    EXPECT_EQ(covered({}), docs("fox jumps quick"));
-    EXPECT_EQ(covered({0}), docs("brown fox jumps"));
+    EXPECT_EQ((Docs{{3}}), docs("brown fox quick"));
+    EXPECT_EQ((Docs{{1}}), docs("quick brown cat brown fox"));
+    EXPECT_EQ((Docs{{}}), docs("fox jumps quick"));
+    EXPECT_EQ((Docs{{0}}), docs("brown fox jumps"));
   }
 }
 
@@ -950,6 +967,84 @@ TEST(ShinglePhraseIndexTest, cover_agrees_with_positions) {
       EXPECT_EQ(index.Freqs(positional), index.Freqs(*shingle_filter));
     }
   }
+}
+
+TEST(ShinglePhraseIndexTest, checked_covers_agree_with_positions) {
+  static constexpr std::string_view kWords[] = {"a", "b", "c", "d", "e"};
+  for (const std::string_view separator : {" ", "\xC2\xB7", "--"}) {
+    SCOPED_TRACE(separator);
+    std::mt19937 rng{42};
+    const auto texts = RandomTexts(rng, kWords, 300, 3, 10);
+    const std::vector<std::string_view> docs{texts.begin(), texts.end()};
+    auto shingles = MakeShingles(2, 3, true, {}, separator);
+    const Index index{docs, *shingles, irs::IndexFeatures::Freq};
+
+    for (size_t i = 0; i != 200; ++i) {
+      const auto phrase = RandomText(rng, kWords, 2, 4);
+      SCOPED_TRACE(phrase);
+      const auto positional = PlainPhrase(kPositionalId, phrase);
+      auto checked = PlanFilter(*shingles, Phrase(phrase), false);
+      ASSERT_NE(nullptr, checked);
+      EXPECT_EQ(index.Docs(positional), index.Docs(*checked));
+      EXPECT_EQ(index.Freqs(positional), index.Freqs(*checked));
+      ExpectConsistent(index.Run(*checked));
+    }
+  }
+}
+
+TEST(ShinglePhraseIndexTest, checked_phrases_agree_with_positions) {
+  static constexpr std::string_view kWords[] = {"a", "b", "c", "d", "e"};
+  std::mt19937 rng{19};
+  const auto texts = RandomTexts(rng, kWords, 400, 3, 12);
+  const std::vector<std::string_view> docs{texts.begin(), texts.end()};
+  auto shingles = MakeShingles(2, 3);
+  const Index index{docs, *shingles, irs::IndexFeatures::Freq};
+
+  size_t covered = 0;
+  for (size_t i = 0; i != 150; ++i) {
+    irs::ByPhraseOptions phrase;
+    const auto slots = 2 + rng() % 4;
+    const bool sloppy = i % 5 == 4;
+    for (size_t j = 0; j != slots; ++j) {
+      irs::PosAttr::value_t offs_min =
+        j == 0 ? 0 : 1 + (sloppy ? 0 : rng() % 2);
+      irs::PosAttr::value_t offs_max =
+        offs_min + (!sloppy && rng() % 5 == 0 ? 2 : 0);
+      const auto word = kWords[rng() % 5];
+      switch (rng() % 8) {
+        case 0:
+          PushPrefix(phrase, word, offs_min, offs_max);
+          break;
+        case 1: {
+          auto& set = phrase.push_back<irs::TermSetOptions>(offs_min, offs_max);
+          set.terms.emplace(Bytes(word));
+          set.terms.emplace(Bytes(kWords[rng() % 5]));
+        } break;
+        case 2:
+          phrase.push_back<irs::ByWildcardOptions>(offs_min, offs_max) =
+            irs::ByWildcardOptions{Bytes(absl::StrCat("%", word))};
+          break;
+        default:
+          PushTerm(phrase, word, offs_min, offs_max);
+      }
+    }
+    if (sloppy) {
+      phrase.set_slop(1 + rng() % 2);
+    }
+    SCOPED_TRACE(i);
+    auto words = std::make_unique<irs::ByPhrase>();
+    *words->mutable_field_id() = kPositionalId;
+    *words->mutable_options() = phrase;
+    irs::Filter::ptr positional = std::move(words);
+    irs::Optimize(positional);
+    irs::Filter::ptr checked = ShingleFilter(*shingles, phrase, false);
+    irs::Optimize(checked);
+    EXPECT_EQ(index.Docs(*positional), index.Docs(*checked));
+    EXPECT_EQ(index.Freqs(*positional), index.Freqs(*checked));
+    ExpectConsistent(index.Run(*checked));
+    covered += irs::ShingleCover(*shingles, phrase).has_value();
+  }
+  EXPECT_GT(covered, 30U);
 }
 
 TEST(ShinglePhraseIndexTest, covers_run_in_every_family) {
@@ -1165,7 +1260,7 @@ TEST(ShinglePhraseIndexTest, one_slot_pattern_skips_shingles) {
   EXPECT_EQ((std::vector<irs::doc_id_t>{0}), docs("br"));
 }
 
-TEST(ShinglePhraseIndexTest, phrase_without_positions_matches_nothing) {
+TEST(ShinglePhraseIndexTest, phrase_without_positions_needs_stored_text) {
   static constexpr std::string_view kDocs[] = {"quick brown fox"};
   auto shingles = MakeShingles(2, 2);
   const Index index{kDocs, *shingles, irs::IndexFeatures::Freq};
@@ -1183,6 +1278,12 @@ TEST(ShinglePhraseIndexTest, phrase_without_positions_matches_nothing) {
   }
   EXPECT_EQ((std::vector<irs::doc_id_t>{0}),
             index.Docs(PlainPhrase(kPositionalId, "quick brown")));
+  plain.mutable_options()->set_tokens(StoredWords());
+  cover.mutable_options()->set_tokens(StoredWords(Phrase("quick brown fox")));
+  for (const auto* filter : {&plain, &cover}) {
+    EXPECT_EQ((std::vector<irs::doc_id_t>{0}), index.Docs(*filter));
+    EXPECT_EQ(1U, index.Run(*filter).count);
+  }
 }
 
 TEST(ShinglePhraseIndexTest, every_pattern_kind_skips_shingles) {

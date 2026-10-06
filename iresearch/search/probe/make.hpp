@@ -41,6 +41,7 @@ Node::ptr Make(const VariadicPhraseQuery& query, uint64_t interrogations);
 Node::ptr Make(const NGramSimilarityQuery& query, uint64_t interrogations);
 Node::ptr Make(const AllQuery& query, uint64_t interrogations);
 Node::ptr Make(const WildcardNGramQuery& query, uint64_t interrogations);
+Node::ptr Make(const TokenPhraseQuery& query, uint64_t interrogations);
 Node::ptr Make(const ByNestedQuery& query, uint64_t interrogations);
 inline Node::ptr Make(const HnswQuery&, uint64_t) { return {}; }
 inline Node::ptr Make(const KnnVectorQuery&, uint64_t) { return {}; }
@@ -64,6 +65,8 @@ Node::ptr Make(const NGramSimilarityQuery& query, const detail::ScoredCtx& ctx,
 Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations);
 Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx,
+               uint64_t interrogations);
+Node::ptr Make(const TokenPhraseQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations);
 Node::ptr Make(const ByNestedQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations);
@@ -129,6 +132,8 @@ Node::ptr MakeNGramAllDocs(const NGramSimilarityQuery& query);
 
 Node::ptr MakeWildcardNGramDocs(const WildcardNGramQuery& query,
                                 uint64_t interrogations);
+Node::ptr MakeTokenPhraseDocs(const TokenPhraseQuery& query,
+                              uint64_t interrogations);
 
 Node::ptr MakeRequiredDocs(std::span<const detail::PostingClause> must,
                            std::span<const QueryBuilder::ptr> must_filters,
@@ -224,5 +229,8 @@ Node::ptr MakeNGramAllScored(const NGramSimilarityQuery& query,
 
 Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
                                   score_t score, uint64_t interrogations);
+Node::ptr MakeTokenPhraseScored(const TokenPhraseQuery& query,
+                                const detail::ScoreArgs& args,
+                                uint64_t interrogations);
 
 }  // namespace irs::probe

@@ -312,9 +312,14 @@ irs::analysis::ShingleTokenizer* QueryShingle(
   const FilterContext& ctx, const SearchColumnInfo& column_info);
 irs::analysis::Tokenizer& PhraseAnalyzer(const FilterContext& ctx,
                                          const SearchColumnInfo& column_info);
-void PlanShinglePhrases(
-  irs::Filter& root,
-  absl::FunctionRef<const SearchColumnInfo*(irs::field_id)> column_of);
+
+struct PhraseField {
+  const SearchColumnInfo* info = nullptr;
+  const irs::analysis::ShingleTokenizer* shingle = nullptr;
+};
+
+void PlanPhrases(irs::Filter& root, duckdb::ClientContext& context,
+                 absl::FunctionRef<PhraseField(irs::field_id)> field_of);
 
 enum class TSQueryOp {
   Unknown,

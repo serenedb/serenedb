@@ -173,7 +173,11 @@ for sm in "${ALL_DIRS[@]}"; do
 		if [[ "$STAGED" -eq 1 ]]; then
 			git -C "$REPO_ROOT" diff --cached --name-only -- "third_party/$sm" | sed "s#^third_party/$sm/##" >"$raw"
 		else
-			git -C "$REPO_ROOT" diff --name-only "${BASE_REF:-origin/HEAD}...HEAD" -- "third_party/$sm" | sed "s#^third_party/$sm/##" >"$raw"
+			intree_base="$(git -C "$REPO_ROOT" merge-base "${BASE_REF:-origin/HEAD}" HEAD)"
+			{
+				git -C "$REPO_ROOT" diff --name-only "$intree_base" -- "third_party/$sm"
+				git -C "$REPO_ROOT" ls-files --others --exclude-standard -- "third_party/$sm"
+			} | sed "s#^third_party/$sm/##" >"$raw"
 		fi
 	elif [[ "$STAGED" -eq 1 ]]; then
 		git -C "$sm_dir" diff --cached --name-only >"$raw"
@@ -183,9 +187,15 @@ for sm in "${ALL_DIRS[@]}"; do
 			echo "error: origin/main's merge base does not pin third_party/$sm; pass --base" >&2
 			exit 1
 		fi
-		git -C "$sm_dir" diff --name-only "$sm_base" HEAD >"$raw"
+		{
+			git -C "$sm_dir" diff --name-only "$sm_base"
+			git -C "$sm_dir" ls-files --others --exclude-standard
+		} >"$raw"
 	else
-		git -C "$sm_dir" diff --name-only "${BASE_REF}...HEAD" >"$raw"
+		{
+			git -C "$sm_dir" diff --name-only "$(git -C "$sm_dir" merge-base "$BASE_REF" HEAD)"
+			git -C "$sm_dir" ls-files --others --exclude-standard
+		} >"$raw"
 	fi
 
 	grep -E "$EXT_RE" "$raw" 2>/dev/null |

@@ -1,6 +1,5 @@
-# exclusive
-
 control substitution on
+
 
 statement ok
 CREATE OR REPLACE SECRET clu_sec_${__DATABASE__} (
@@ -21,6 +20,7 @@ SET s3_use_ssl=false;
 statement ok
 DETACH DATABASE IF EXISTS clu_cat_${__DATABASE__};
 
+
 statement ok
 ATTACH '${ICEBERG_WAREHOUSE}' AS clu_cat_${__DATABASE__} (
   TYPE ICEBERG,
@@ -35,8 +35,10 @@ ATTACH '${ICEBERG_WAREHOUSE}' AS clu_cat_${__DATABASE__} (
 statement ok
 CREATE SCHEMA clu_cat_${__DATABASE__}.${__DATABASE__};
 
+
 statement ok
 CREATE TABLE clu_cat_${__DATABASE__}.${__DATABASE__}.t_${__DATABASE__} (id INTEGER);
+
 
 statement ok
 INSERT INTO clu_cat_${__DATABASE__}.${__DATABASE__}.t_${__DATABASE__} VALUES (1);
@@ -61,12 +63,33 @@ SELECT count(*) AS n FROM clu_cat_${__DATABASE__}.${__DATABASE__}.t_${__DATABASE
 db error: ERROR: No secret by the name of '<slt:ignore>' could be found, consider changing the 'secret'
 
 
-# A listing that wants nothing from it survives.
+# Listings leave out what they cannot read and list everything else.
 query
-SELECT count(*) AS n FROM duckdb_tables() WHERE database_name = 'clu_no_such_database';
+SELECT count(*) AS n FROM duckdb_tables() WHERE database_name = 'clu_cat_${__DATABASE__}';
 ----
 n
 0
+
+
+query
+SELECT count(*) AS n FROM duckdb_schemas() WHERE database_name = 'clu_cat_${__DATABASE__}';
+----
+n
+0
+
+
+query
+SELECT count(*) > 0 AS listed FROM duckdb_tables();
+----
+listed
+t
+
+
+query
+SELECT count(*) > 0 AS listed FROM duckdb_columns();
+----
+listed
+t
 
 
 query
@@ -74,12 +97,6 @@ SELECT count(*) > 0 AS listed FROM duckdb_tables() WHERE database_name = current
 ----
 listed
 t
-
-
-statement error
-SELECT count(*) AS n FROM duckdb_tables();
-----
-db error: ERROR: No secret by the name of '<slt:ignore>' could be found, consider changing the 'secret'
 
 
 # A missing table reports its own error, not the unreachable catalog's.

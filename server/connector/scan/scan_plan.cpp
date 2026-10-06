@@ -28,6 +28,7 @@
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/scalar/generic_common.hpp>
+#include <duckdb/function/scalar/lower_equality_to_ilike.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/optimizer/expression_heuristics.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -282,6 +283,12 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
         if (cf.exact) {
           cf.filter = cf.exact.get();
           cf.zonemap_only = false;
+        }
+      } else if (!cf.zonemap_only && !cf.is_dynamic) {
+        if (auto ilike = duckdb::LowerEqualityToILike::TryRewrite(expr)) {
+          cf.exact =
+            duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(ilike));
+          cf.filter = cf.exact.get();
         }
       }
       cf.null_check =

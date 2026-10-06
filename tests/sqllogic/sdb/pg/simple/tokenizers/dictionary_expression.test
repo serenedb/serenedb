@@ -748,3 +748,21 @@ statement error
 CREATE TEXT SEARCH DICTIONARY bad_option_value AS split_text(case := 'x'::INTEGER);
 ----
 db error: ERROR: split_text(): option "case": Could not convert string 'x' to INT32
+
+statement ok
+CREATE SCHEMA expr_outer;
+
+statement ok
+CREATE SCHEMA expr_outer.expr_inner;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_outer.expr_inner.expr_nested AS split_text(case := 'lower');
+
+query
+SELECT count(*) FROM pg_ts_dict WHERE dictname = 'expr_nested';
+----
+count
+1
+
+statement ok
+DROP SCHEMA expr_outer CASCADE;

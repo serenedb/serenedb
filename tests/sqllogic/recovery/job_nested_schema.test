@@ -1,0 +1,80 @@
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+DROP SCHEMA IF EXISTS jns_outer CASCADE;
+
+
+statement ok
+CREATE SCHEMA jns_outer;
+
+
+statement ok
+CREATE SCHEMA jns_outer.jns_inner;
+
+
+statement ok
+CREATE JOB jns_outer.jns_inner.jns_kept EVERY 1 HOUR AS SELECT 1;
+
+
+statement ok
+CREATE JOB jns_outer.jns_inner.jns_dropped AFTER 2 HOURS AS SELECT 1;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY jns_outer.jns_inner.jns_dict AS split_text(case := 'lower');
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection r1
+query
+SELECT schema_name, job_name, schedule FROM duckdb_jobs()
+WHERE starts_with(job_name, 'jns_') ORDER BY job_name;
+----
+schema_name	job_name	schedule
+jns_inner	jns_dropped	AFTER INTERVAL '02:00:00'
+jns_inner	jns_kept	EVERY INTERVAL '01:00:00'
+
+
+connection r1
+query
+SELECT count(*) FROM pg_ts_dict WHERE dictname = 'jns_dict';
+----
+count
+1
+
+
+connection r1
+statement ok
+DROP JOB jns_outer.jns_inner.jns_dropped;
+
+
+connection r1
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection r1
+statement error connection closed
+SELECT 1;
+
+
+connection r2
+query
+SELECT schema_name, job_name FROM duckdb_jobs() WHERE starts_with(job_name, 'jns_');
+----
+schema_name	job_name
+jns_inner	jns_kept
+
+
+connection r2
+statement ok
+DROP SCHEMA jns_outer CASCADE;

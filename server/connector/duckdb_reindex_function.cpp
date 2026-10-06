@@ -962,7 +962,7 @@ std::optional<Source> ResolveSource(duckdb::ClientContext& context,
       if (!schema) {
         return std::nullopt;
       }
-      ic_catalog->table_request_cache.Evict(duckdb::IcebergTable::GetTableKey(
+      ic_catalog->table_request_cache.Expire(duckdb::IcebergTable::GetTableKey(
         *ic_catalog, schema->Cast<duckdb::IcebergSchemaEntry>().namespace_items,
         fp->catalog_ref->table));
     }

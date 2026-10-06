@@ -1,0 +1,81 @@
+control substitution on
+
+# The periodic refresh picks up a new partition directory and a file gone
+# from another; the rows it brings in read back their partition and file
+# name from their paths.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rvhp_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+system ok
+mkdir -p $__TEST_DIR__/rvhp/color=red $__TEST_DIR__/rvhp/color=blue $__TEST_DIR__/rvhp/color=green
+
+statement ok
+COPY (SELECT * FROM (VALUES (1, 'pudge goes mid'), (2, 'anchin reads manga')) t(id, body))
+TO '${__TEST_DIR__}/rvhp/color=red/a.parquet' (FORMAT PARQUET);
+
+statement ok
+COPY (SELECT * FROM (VALUES (3, 'pudge plays again')) t(id, body))
+TO '${__TEST_DIR__}/rvhp/color=blue/b.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvhp_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/rvhp/*/*.parquet', hive_partitioning=true, filename=true);
+
+statement ok
+CREATE INDEX rvhp_idx ON rvhp_v USING inverted(id, body rvhp_en) WITH (reindex_interval=100);
+
+statement ok
+COPY (SELECT * FROM (VALUES (4, 'pudge buys blink'), (5, 'lina burns pudge')) t(id, body))
+TO '${__TEST_DIR__}/rvhp/color=green/c.parquet' (FORMAT PARQUET);
+
+query ok retry 400 backoff 250ms
+SELECT count(*) FROM rvhp_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+4
+
+query
+SELECT id, color, replace(filename, '${__TEST_DIR__}/', '') AS file FROM rvhp_idx
+WHERE color = 'green' ORDER BY id;
+----
+id	color	file
+4	green	rvhp/color=green/c.parquet
+5	green	rvhp/color=green/c.parquet
+
+system ok
+rm $__TEST_DIR__/rvhp/color=blue/b.parquet
+
+query ok retry 400 backoff 250ms
+SELECT count(*) FROM rvhp_idx;
+----
+count
+4
+
+query
+SELECT color, string_agg(id::text, ',' ORDER BY id) AS ids FROM rvhp_idx GROUP BY color ORDER BY color;
+----
+color	ids
+green	4,5
+red	1,2
+
+query
+SELECT count(*) FROM ((SELECT * FROM rvhp_v EXCEPT SELECT * FROM rvhp_idx)
+                      UNION ALL (SELECT * FROM rvhp_idx EXCEPT SELECT * FROM rvhp_v));
+----
+count
+0
+
+statement ok
+ALTER INDEX rvhp_idx SET (reindex_interval=0);
+
+statement ok
+DROP INDEX rvhp_idx;
+
+statement ok
+DROP VIEW rvhp_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rvhp_en;

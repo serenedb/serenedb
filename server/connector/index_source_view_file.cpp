@@ -22,10 +22,12 @@
 
 #include <absl/algorithm/container.h>
 
+#include <algorithm>
 #include <duckdb/common/hive_partitioning.hpp>
 #include <duckdb/common/multi_file/multi_file_states.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
+#include <duckdb/storage/table/column_segment.hpp>
 #include <iresearch/utils/assert.hpp>
 
 namespace sdb::connector {
@@ -41,12 +43,18 @@ ViewFileIndexSourceBase::ViewFileIndexSourceBase(
   _lookup_func = MakeFastPathLookupFunction(_fast_path);
 
   auto& multi_bd = _bind_data->Cast<duckdb::MultiFileBindData>();
-  const auto& partitions = multi_bd.reader_bind.hive_partitioning_indexes;
+  const auto& reader_bind = multi_bd.reader_bind;
+  const auto& partitions = reader_bind.hive_partitioning_indexes;
   const auto partition_of = [&](duckdb::idx_t file_col_idx) {
     return absl::c_find_if(partitions,
                            [&](const duckdb::HivePartitioningIndex& candidate) {
                              return candidate.index == file_col_idx;
                            });
+  };
+  const auto is_derived = [&](duckdb::idx_t file_col_idx) {
+    return reader_bind.filename_idx == file_col_idx ||
+           reader_bind.file_row_number_idx == file_col_idx ||
+           partition_of(file_col_idx) != partitions.end();
   };
   _column_indexes.reserve(projected_columns.size());
   duckdb::idx_t column = 0;
@@ -55,10 +63,14 @@ ViewFileIndexSourceBase::ViewFileIndexSourceBase(
     SourceColumns{multi_bd.names, &duckdb::Identifier::GetIdentifierName},
     [&](duckdb::idx_t file_col_idx) {
       SDB_ASSERT(file_col_idx < multi_bd.types.size());
-      if (const auto partition = partition_of(file_col_idx);
-          partition != partitions.end()) {
-        _partition_columns.push_back(
-          {.column = column, .key = partition->value});
+      if (reader_bind.file_row_number_idx == file_col_idx) {
+        _row_number.emplace(RowNumber{.column = column});
+      } else if (reader_bind.filename_idx == file_col_idx) {
+        _file_constants.push_back({.column = column});
+      } else if (const auto partition = partition_of(file_col_idx);
+                 partition != partitions.end()) {
+        _file_constants.push_back(
+          {.column = column, .partition = partition->value});
       } else {
         _lookup_columns.push_back(column);
         _column_indexes.emplace_back(file_col_idx);
@@ -66,48 +78,53 @@ ViewFileIndexSourceBase::ViewFileIndexSourceBase(
       ++column;
       return multi_bd.types[file_col_idx];
     });
-  if (_column_indexes.empty() && !_partition_columns.empty()) {
+  if (_column_indexes.empty() && HasDerivedColumns()) {
     for (duckdb::idx_t file_col_idx = 0; file_col_idx < multi_bd.types.size();
          ++file_col_idx) {
-      if (partition_of(file_col_idx) == partitions.end()) {
+      if (!is_derived(file_col_idx)) {
         _lookup_columns.push_back(duckdb::DConstants::INVALID_INDEX);
         _column_indexes.emplace_back(file_col_idx);
         break;
       }
     }
   }
-  BuildPushedFilters(pushed_filters);
+  BuildPushedFilters(context, pushed_filters);
 }
 
 void ViewFileIndexSourceBase::BuildPushedFilters(
-  const duckdb::TableFilterSet* input_filters) {
+  duckdb::ClientContext& context, const duckdb::TableFilterSet* input_filters) {
   if (!input_filters || !input_filters->HasFilters()) {
     return;
   }
   SDB_ASSERT(_lookup_columns.size() == _column_indexes.size());
-  const auto filter_of = [&](duckdb::idx_t column) {
-    return input_filters->TryGetFilterByColumnIndex(
+  const auto filter_of =
+    [&](duckdb::idx_t column) -> duckdb::unique_ptr<duckdb::ExpressionFilter> {
+    const auto filter = input_filters->TryGetFilterByColumnIndex(
       duckdb::ProjectionIndex(_real_proj_slots[column]));
+    if (!filter) {
+      return nullptr;
+    }
+    return duckdb::ExpressionFilter::GetExpressionFilter(
+             *filter, "ViewFileIndexSourceBase::BuildPushedFilters")
+      .Copy();
   };
   auto set = duckdb::make_uniq<duckdb::TableFilterSet>();
   for (duckdb::idx_t k = 0; k < _lookup_columns.size(); ++k) {
     if (_lookup_columns[k] == duckdb::DConstants::INVALID_INDEX) {
       continue;
     }
-    auto filter = filter_of(_lookup_columns[k]);
-    if (!filter) {
-      continue;
+    if (auto filter = filter_of(_lookup_columns[k])) {
+      set->PushFilter(duckdb::ProjectionIndex(k), std::move(filter));
     }
-    const auto& expr_filter = duckdb::ExpressionFilter::GetExpressionFilter(
-      *filter, "ViewFileIndexSourceBase::BuildPushedFilters");
-    set->PushFilter(duckdb::ProjectionIndex(k), expr_filter.Copy());
   }
-  for (auto& partition : _partition_columns) {
-    if (auto filter = filter_of(partition.column)) {
-      partition.filter =
-        duckdb::ExpressionFilter::GetExpressionFilter(
-          *filter, "ViewFileIndexSourceBase::BuildPushedFilters")
-          .Copy();
+  for (auto& constant : _file_constants) {
+    constant.filter = filter_of(constant.column);
+  }
+  if (_row_number) {
+    _row_number->filter = filter_of(_row_number->column);
+    if (_row_number->filter) {
+      _row_number->filter_state =
+        duckdb::TableFilterState::Initialize(context, *_row_number->filter);
     }
   }
   if (set->HasFilters()) {
@@ -126,33 +143,75 @@ duckdb::vector<duckdb::LogicalType> ViewFileIndexSourceBase::LookupTypes()
   return types;
 }
 
-bool ViewFileIndexSourceBase::BindPartitionValues(
+bool ViewFileIndexSourceBase::BindFileConstants(
   duckdb::ClientContext& context, const std::string& path,
   std::vector<duckdb::Value>& values) const {
-  if (_partition_columns.empty()) {
+  if (_file_constants.empty()) {
     return true;
   }
   const auto& multi_bd = _bind_data->Cast<duckdb::MultiFileBindData>();
   const auto partitions = duckdb::HivePartitioning::Parse(path);
   values.clear();
-  values.reserve(_partition_columns.size());
+  values.reserve(_file_constants.size());
   bool match = true;
-  for (const auto& partition : _partition_columns) {
-    const auto& type = _scratch_types[partition.column];
-    const auto entry = partitions.find(partition.key);
-    auto value =
-      entry == partitions.end()
-        ? duckdb::Value(type)
-        : multi_bd.file_options
-            .GetHivePartitionValue(entry->second, partition.key, context)
-            .DefaultCastAs(type);
-    if (partition.filter &&
-        !partition.filter->EvaluateWithConstant(context, value)) {
+  for (const auto& constant : _file_constants) {
+    const auto& type = _scratch_types[constant.column];
+    duckdb::Value value{type};
+    if (!constant.partition) {
+      value = duckdb::Value(path);
+    } else if (const auto entry = partitions.find(*constant.partition);
+               entry != partitions.end()) {
+      value =
+        multi_bd.file_options
+          .GetHivePartitionValue(entry->second, *constant.partition, context)
+          .DefaultCastAs(type);
+    }
+    if (constant.filter &&
+        !constant.filter->EvaluateWithConstant(context, value)) {
       match = false;
     }
     values.push_back(std::move(value));
   }
   return match;
+}
+
+std::span<const int64_t> ViewFileIndexSourceBase::SelectRows(
+  std::span<const int64_t> rows) {
+  if (!_row_number || !_row_number->filter_state) {
+    return rows;
+  }
+  _selected_rows.clear();
+  _selected_positions.clear();
+  for (duckdb::idx_t offset = 0; offset < rows.size();
+       offset += STANDARD_VECTOR_SIZE) {
+    const auto count =
+      std::min<duckdb::idx_t>(STANDARD_VECTOR_SIZE, rows.size() - offset);
+    duckdb::Vector numbers(duckdb::LogicalType::BIGINT, count);
+    {
+      auto writer = duckdb::FlatVector::Writer<int64_t>(numbers, count);
+      for (duckdb::idx_t k = 0; k < count; ++k) {
+        writer.WriteValue(rows[offset + k]);
+      }
+    }
+    duckdb::SelectionVector sel;
+    auto approved = count;
+    duckdb::ColumnSegment::FilterSelection(
+      sel, numbers, *_row_number->filter_state, count, approved);
+    for (duckdb::idx_t k = 0; k < approved; ++k) {
+      const auto position = offset + sel.get_index(k);
+      _selected_rows.push_back(rows[position]);
+      _selected_positions.push_back(position);
+    }
+  }
+  return _selected_rows;
+}
+
+duckdb::idx_t ViewFileIndexSourceBase::SelectedPosition(
+  duckdb::idx_t row) const {
+  if (!_row_number || !_row_number->filter_state) {
+    return row;
+  }
+  return _selected_positions[row];
 }
 
 void ViewFileIndexSourceBase::CopyLookupColumns(duckdb::DataChunk& source,
@@ -167,14 +226,21 @@ void ViewFileIndexSourceBase::CopyLookupColumns(duckdb::DataChunk& source,
   }
 }
 
-void ViewFileIndexSourceBase::FillPartitionColumns(
-  std::span<const duckdb::Value> values, duckdb::idx_t count,
-  duckdb::idx_t offset) {
-  for (size_t p = 0; p < _partition_columns.size(); ++p) {
-    duckdb::Vector constant(values[p], duckdb::count_t(count));
+void ViewFileIndexSourceBase::FillDerivedColumns(
+  std::span<const duckdb::Value> constants, std::span<const int64_t> rows,
+  std::span<const duckdb::idx_t> survivors, duckdb::idx_t offset) {
+  const auto count = survivors.size();
+  for (size_t c = 0; c < _file_constants.size(); ++c) {
+    duckdb::Vector constant(constants[c], duckdb::count_t(count));
     duckdb::VectorOperations::Copy(
-      constant, _tf_target.data[_partition_columns[p].column], count, 0,
-      offset);
+      constant, _tf_target.data[_file_constants[c].column], count, 0, offset);
+  }
+  if (_row_number) {
+    auto numbers = duckdb::FlatVector::Writer<int64_t>(
+      _tf_target.data[_row_number->column], count, offset);
+    for (const auto survivor : survivors) {
+      numbers.WriteValue(rows[survivor]);
+    }
   }
 }
 
@@ -190,14 +256,14 @@ ViewFileSingleFileIndexSource::ViewFileSingleFileIndexSource(
                                       /*projection_ids=*/{},
                                       _pushed_filters.get());
   _lookup_gstate = _lookup_func.init_global(context, init);
-  if (!_partition_columns.empty()) {
+  if (HasDerivedColumns()) {
     _lookup_target.Initialize(context, LookupTypes());
-    _partitions_match =
-      BindPartitionValues(context,
-                          _bind_data->Cast<duckdb::MultiFileBindData>()
-                            .file_list->GetFirstFile()
-                            .path,
-                          _partition_values);
+    _constants_match =
+      BindFileConstants(context,
+                        _bind_data->Cast<duckdb::MultiFileBindData>()
+                          .file_list->GetFirstFile()
+                          .path,
+                        _constants);
   }
 }
 
@@ -211,30 +277,32 @@ duckdb::idx_t ViewFileSingleFileIndexSource::Materialize(
   const auto keys = SortRows(pk, count);
 
   AliasOutput(output);
-  // Dense: the lookup TF applies the pushed filters natively and appends
-  // survivors from size 0, then reports the survivor count via the chunk's
-  // cardinality and the sorted-pk index of each via pk_survivors.
   _tf_target.SetCardinality(0);
   _survivor_idx.resize(count);
-  if (!_partitions_match) {
+  if (!_constants_match) {
     return 0;
   }
-  auto& target = _partition_columns.empty() ? _tf_target : _lookup_target;
-  if (!_partition_columns.empty()) {
+  const auto selected = SelectRows(keys);
+  auto& target = HasDerivedColumns() ? _lookup_target : _tf_target;
+  if (HasDerivedColumns()) {
     _lookup_target.Reset();
     _lookup_target.SetCardinality(0);
   }
 
   duckdb::TableFunctionInput in(_bind_data.get(), /*local_state=*/nullptr,
                                 _lookup_gstate.get());
-  in.pk_lookups = keys;
-  in.pk_survivors = _survivor_idx;
+  in.pk_lookups = selected;
+  in.pk_survivors = std::span{_survivor_idx}.first(selected.size());
   _lookup_func.function(context, in, target);
   const auto rows = target.size();
-  if (!_partition_columns.empty()) {
+  const auto survivors = std::span{_survivor_idx}.first(rows);
+  if (HasDerivedColumns()) {
     CopyLookupColumns(_lookup_target, rows, 0);
-    FillPartitionColumns(_partition_values, rows, 0);
+    FillDerivedColumns(_constants, selected, survivors, 0);
     _tf_target.SetCardinality(rows);
+  }
+  for (auto& survivor : survivors) {
+    survivor = SelectedPosition(survivor);
   }
 
   RunCastPass(output, rows);
@@ -308,34 +376,32 @@ duckdb::idx_t ViewFileGlobIndexSource::Materialize(
         cached.bind_data.get(), _column_indexes,
         /*projection_ids=*/{}, _pushed_filters.get());
       cached.gstate = _lookup_func.init_global(context, init);
-      cached.partitions_match =
-        BindPartitionValues(context, file_path, cached.partition_values);
+      cached.constants_match =
+        BindFileConstants(context, file_path, cached.constants);
     }
-    if (!cached.partitions_match) {
+    if (!cached.constants_match) {
       i = j;
       continue;
     }
 
-    const auto file_count = j - i;
-    _file_survivor_idx.resize(file_count);
+    const auto selected =
+      SelectRows(std::span<const int64_t>{_sorted_rows.data() + i, j - i});
+    _file_survivor_idx.resize(selected.size());
     _file_target.Reset();
     _file_target.SetCardinality(0);
 
     duckdb::TableFunctionInput in(cached.bind_data.get(),
                                   /*local_state=*/nullptr, cached.gstate.get());
-    in.pk_lookups =
-      std::span<const int64_t>{_sorted_rows.data() + i, file_count};
+    in.pk_lookups = selected;
     in.pk_survivors = _file_survivor_idx;
     _lookup_func.function(context, in, _file_target);
 
     const auto file_rows = _file_target.size();
+    const auto survivors = std::span{_file_survivor_idx}.first(file_rows);
     CopyLookupColumns(_file_target, file_rows, total);
-    FillPartitionColumns(cached.partition_values, file_rows, total);
-    // The reader wrote survivors as 0-based indices into this file's pk_lookups
-    // span (which starts at _sorted_rows[i]); shift to batch-global sorted-pk
-    // indices so GatherNonLookupColumns can reorder the doc-id-keyed columns.
+    FillDerivedColumns(cached.constants, selected, survivors, total);
     for (duckdb::idx_t k = 0; k < file_rows; ++k) {
-      _survivor_idx[total + k] = i + _file_survivor_idx[k];
+      _survivor_idx[total + k] = i + SelectedPosition(survivors[k]);
     }
     total += file_rows;
     i = j;

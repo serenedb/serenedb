@@ -43,8 +43,10 @@ class TokenPhraseSlots {
   TokenPhraseSlots(std::piecewise_construct_t, ApproxArgs&& approx,
                    const TokenPhraseQuery::Recipe& recipe, bool count)
     : _approx{std::make_from_tuple<Approx>(std::forward<ApproxArgs>(approx))},
-      _reader{*recipe.col_reader, *recipe.column, recipe.tokens->tokenizer(),
-              *recipe.matcher},
+      _reader{*recipe.col_reader, recipe.columns, recipe.tokens->tokenizer(),
+              *recipe.matcher,
+              recipe.tokens->text.expression ? recipe.tokens->text.expression()
+                                             : nullptr},
       _count{count} {}
 
   TokenPhraseSlots(TokenPhraseSlots&&) = delete;

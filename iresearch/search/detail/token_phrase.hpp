@@ -25,6 +25,7 @@
 
 #include <deque>
 #include <duckdb/common/types.hpp>
+#include <duckdb/common/types/data_chunk.hpp>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -42,6 +43,7 @@
 #include "iresearch/search/detail/phrase_slop_matcher.hpp"
 #include "iresearch/search/detail/term_acceptor.hpp"
 #include "iresearch/search/detail/term_predicate.hpp"
+#include "iresearch/search/detail/text_source.hpp"
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -59,8 +61,7 @@ enum class PhraseMatch : uint8_t {
 struct PhraseTokens {
   using Factory = std::function<std::shared_ptr<analysis::Tokenizer>()>;
 
-  field_id column = field_limits::invalid();
-  duckdb::LogicalType type;
+  TextSource text;
   Factory tokenizer;
   std::optional<ByPhraseOptions> spec;
   std::optional<PhraseMatch> match;
@@ -71,8 +72,8 @@ struct PhraseTokens {
   }
 
   bool operator==(const PhraseTokens& rhs) const noexcept {
-    return column == rhs.column && type == rhs.type && spec == rhs.spec &&
-           match == rhs.match && deferred == rhs.deferred;
+    return text == rhs.text && spec == rhs.spec && match == rhs.match &&
+           deferred == rhs.deferred;
   }
 };
 
@@ -285,9 +286,11 @@ class TextRows {
 
 class TokenPhraseReader {
  public:
-  TokenPhraseReader(const ColReader& col_reader, const ColumnReader& column,
+  TokenPhraseReader(const ColReader& col_reader,
+                    std::span<const ColumnReader* const> columns,
                     std::shared_ptr<analysis::Tokenizer> tokenizer,
-                    const TokenPhraseMatcher& matcher);
+                    const TokenPhraseMatcher& matcher,
+                    std::unique_ptr<TextExpression> expression);
 
   TokenPhraseReader(TokenPhraseReader&&) = delete;
   TokenPhraseReader& operator=(TokenPhraseReader&&) = delete;
@@ -298,13 +301,22 @@ class TokenPhraseReader {
              std::span<PhraseVerdict> verdicts, std::span<uint8_t> matched);
 
  private:
+  struct Input {
+    Input(const ColumnReader& column, ReadContext& ctx);
+
+    const ColumnReader* column;
+    ColumnReader::ScanState state;
+    std::unique_ptr<ColumnReader::VectorScratch> out;
+  };
+
   void Gather(std::span<const doc_id_t> docs, bool count,
               std::span<PhraseVerdict> verdicts, std::span<uint8_t> matched);
 
   ReadContext _ctx;
-  const ColumnReader* _column;
-  ColumnReader::ScanState _state;
-  ColumnReader::VectorScratch _out;
+  std::vector<Input> _inputs;
+  uint64_t _row_count = std::numeric_limits<uint64_t>::max();
+  std::unique_ptr<TextExpression> _expression;
+  duckdb::DataChunk _chunk;
   duckdb::SelectionVector _sel;
   std::shared_ptr<analysis::Tokenizer> _tokenizer;
   ValueAnalyzer _analyzer;

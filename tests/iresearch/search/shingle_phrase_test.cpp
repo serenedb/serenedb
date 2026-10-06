@@ -212,7 +212,8 @@ inline constexpr size_t kTop = 5;
 std::shared_ptr<const irs::PhraseTokens> StoredWords(
   std::optional<irs::ByPhraseOptions> spec = std::nullopt) {
   auto tokens = std::make_shared<irs::PhraseTokens>();
-  tokens->column = kStoreId;
+  tokens->text = {.columns = {kStoreId},
+                  .types = {duckdb::LogicalType::VARCHAR}};
   tokens->tokenizer = [] { return std::make_shared<WhitespaceTokenizer>(); };
   tokens->spec = std::move(spec);
   return tokens;

@@ -368,13 +368,81 @@ void TokenPhraseMatcher::PickAnchor(Lookup lookup) {
   _right = std::accumulate(anchor, _offs_max.end(), uint64_t{0});
 }
 
-TokenPhraseSink::TokenPhraseSink(const TokenPhraseMatcher& matcher,
-                                 TokenTraits producer, bool count)
-  : _matcher{&matcher}, _dense{!producer.explicit_pos}, _count{count} {}
+PhraseCheck::PhraseCheck(const TokenPhraseMatcher& matcher,
+                         const PhraseTokens& tokens, bool count)
+  : _matcher{&matcher},
+    _tokenizer{tokens.tokenizer()},
+    _expression{tokens.text.expression ? tokens.text.expression() : nullptr},
+    _dense{!_tokenizer->Traits().explicit_pos},
+    _count{count} {}
 
-void TokenPhraseSink::Begin() { Start(_matcher->_primary); }
+void PhraseCheck::Bind(duckdb::DataChunk& columns) {
+  auto& values = _expression ? _expression->Evaluate(columns) : columns.data[0];
+  const auto& type = values.GetType();
+  _type = type.id();
+  values.ToUnifiedFormat(columns.size(), _format);
+  if (_type == duckdb::LogicalTypeId::LIST) {
+    duckdb::ListVector::GetEntry(values).ToUnifiedFormat(
+      duckdb::ListVector::GetListSize(values), _children);
+  } else if (_type == duckdb::LogicalTypeId::ARRAY) {
+    _array_size = duckdb::ArrayType::GetSize(type);
+    duckdb::ArrayVector::GetEntry(values).ToUnifiedFormat(
+      duckdb::ArrayVector::GetTotalSize(values), _children);
+  }
+}
 
-void TokenPhraseSink::Start(PhraseMatch mode) {
+bool PhraseCheck::Check(duckdb::idx_t row, PhraseVerdict& out) {
+  const auto values = Values(row);
+  Start(_matcher->_primary);
+  Analyze(values);
+  _restarted = Restart();
+  if (_restarted) {
+    Analyze(values);
+  }
+  return End(out);
+}
+
+void PhraseCheck::Analyze(std::span<const duckdb::string_t> values) {
+  for (const auto& value : values) {
+    if (_done) {
+      return;
+    }
+    _analyzer.Analyze(*_tokenizer, value, *this);
+  }
+}
+
+std::span<const duckdb::string_t> PhraseCheck::Values(duckdb::idx_t row) {
+  const auto idx = _format.sel->get_index(row);
+  if (!_format.validity.RowIsValid(idx)) {
+    return {};
+  }
+  uint64_t begin = 0;
+  uint64_t end = 0;
+  if (_type == duckdb::LogicalTypeId::LIST) {
+    const auto entry =
+      duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(_format)[idx];
+    begin = entry.offset;
+    end = entry.offset + entry.length;
+  } else if (_type == duckdb::LogicalTypeId::ARRAY) {
+    begin = idx * _array_size;
+    end = begin + _array_size;
+  } else {
+    return {
+      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(_format) + idx, 1};
+  }
+  _values.clear();
+  const auto* data =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(_children);
+  for (auto i = begin; i != end; ++i) {
+    const auto child = _children.sel->get_index(i);
+    if (_children.validity.RowIsValid(child)) {
+      _values.push_back(data[child]);
+    }
+  }
+  return _values;
+}
+
+void PhraseCheck::Start(PhraseMatch mode) {
   const auto& m = *_matcher;
   _mode = mode;
   _done = false;
@@ -414,7 +482,7 @@ void TokenPhraseSink::Start(PhraseMatch mode) {
   }
 }
 
-void TokenPhraseSink::Consume(TokenBatch& batch, DocRuns) {
+void PhraseCheck::Consume(TokenBatch& batch, DocRuns) {
   const auto count = batch.count;
   if (_done || count == 0) {
     return;
@@ -441,7 +509,7 @@ void TokenPhraseSink::Consume(TokenBatch& batch, DocRuns) {
   }
 }
 
-bool TokenPhraseSink::Restart() {
+bool PhraseCheck::Restart() {
   if (_mode == PhraseMatch::Anchor && !_done) {
     _batch_terms = nullptr;
     _batch_pos = nullptr;
@@ -462,7 +530,7 @@ bool TokenPhraseSink::Restart() {
   return true;
 }
 
-bool TokenPhraseSink::End(PhraseVerdict& out) {
+bool PhraseCheck::End(PhraseVerdict& out) {
   out = {};
   switch (_mode) {
     case PhraseMatch::Anchor:
@@ -483,7 +551,7 @@ bool TokenPhraseSink::End(PhraseVerdict& out) {
   return true;
 }
 
-void TokenPhraseSink::AnchorBatch(const TokenBatch& batch) {
+void PhraseCheck::AnchorBatch(const TokenBatch& batch) {
   const auto& m = *_matcher;
   _batch_terms = batch.terms;
   _batch_pos = batch.pos;
@@ -523,7 +591,7 @@ void TokenPhraseSink::AnchorBatch(const TokenBatch& batch) {
   Carry();
 }
 
-bool TokenPhraseSink::Hit(size_t at) {
+bool PhraseCheck::Hit(size_t at) {
   const auto anchor = _matcher->_anchor;
   if (const auto left = Left(anchor, at)) {
     _freq += left * Right(anchor, at);
@@ -532,7 +600,7 @@ bool TokenPhraseSink::Hit(size_t at) {
   return _done;
 }
 
-uint64_t TokenPhraseSink::Right(uint32_t slot, size_t at) {
+uint64_t PhraseCheck::Right(uint32_t slot, size_t at) {
   const auto& m = *_matcher;
   const auto next = slot + 1;
   if (next == m.Slots()) {
@@ -567,7 +635,7 @@ uint64_t TokenPhraseSink::Right(uint32_t slot, size_t at) {
   return ways;
 }
 
-uint64_t TokenPhraseSink::Left(uint32_t slot, size_t at) {
+uint64_t PhraseCheck::Left(uint32_t slot, size_t at) {
   const auto& m = *_matcher;
   if (slot == 0) {
     return 1;
@@ -602,7 +670,7 @@ uint64_t TokenPhraseSink::Left(uint32_t slot, size_t at) {
   return ways;
 }
 
-bool TokenPhraseSink::Over() noexcept {
+bool PhraseCheck::Over() noexcept {
   if (_steps <= kStepsPerToken * _end + kStepSlack) {
     return false;
   }
@@ -611,7 +679,7 @@ bool TokenPhraseSink::Over() noexcept {
   return true;
 }
 
-void TokenPhraseSink::Carry() {
+void PhraseCheck::Carry() {
   const auto& m = *_matcher;
   const uint64_t last = PosAt(_end - 1);
   const auto span = m._left + m._right;
@@ -638,7 +706,7 @@ void TokenPhraseSink::Carry() {
   _carry_base = from;
 }
 
-void TokenPhraseSink::AutomatonBatch(const TokenBatch& batch) {
+void PhraseCheck::AutomatonBatch(const TokenBatch& batch) {
   const auto& m = *_matcher;
   for (uint32_t i = 0; i != batch.count; ++i) {
     const auto pos = batch.pos[i];
@@ -658,7 +726,7 @@ void TokenPhraseSink::AutomatonBatch(const TokenBatch& batch) {
   }
 }
 
-void TokenPhraseSink::Flush() {
+void PhraseCheck::Flush() {
   if (_at == 0 || (_d == 0 && _mask == 0)) {
     _mask = 0;
     return;
@@ -667,7 +735,7 @@ void TokenPhraseSink::Flush() {
   _mask = 0;
 }
 
-void TokenPhraseSink::Step(uint64_t b) {
+void PhraseCheck::Step(uint64_t b) {
   const auto& m = *_matcher;
   auto next = ((_d << 1) | 1) & (b | m._wild);
   for (const auto& e : m._extras) {
@@ -707,7 +775,7 @@ void TokenPhraseSink::Step(uint64_t b) {
   _freq += _c[m._length - 1];
 }
 
-void TokenPhraseSink::PositionsBatch(const TokenBatch& batch) {
+void PhraseCheck::PositionsBatch(const TokenBatch& batch) {
   const auto& m = *_matcher;
   for (uint32_t i = 0; i != batch.count; ++i) {
     const auto pos = batch.pos[i];
@@ -720,7 +788,7 @@ void TokenPhraseSink::PositionsBatch(const TokenBatch& batch) {
   }
 }
 
-bool TokenPhraseSink::EndPositions(PhraseVerdict& out) {
+bool PhraseCheck::EndPositions(PhraseVerdict& out) {
   const auto& m = *_matcher;
   const auto n = m.Slots();
   if (absl::c_any_of(_slots, [](const auto& slot) { return slot.empty(); })) {
@@ -779,143 +847,6 @@ bool TokenPhraseSink::EndPositions(PhraseVerdict& out) {
   }
   out.freq = _count ? Clamp(absl::c_accumulate(_ways, uint64_t{0})) : 1;
   return true;
-}
-
-bool CheckValues(TokenPhraseSink& sink, ValueAnalyzer& analyzer,
-                 analysis::Tokenizer& tokenizer,
-                 std::span<const duckdb::string_t> values, PhraseVerdict& out) {
-  const auto analyze = [&] {
-    for (const auto& value : values) {
-      if (sink.Done()) {
-        return;
-      }
-      analyzer.Analyze(tokenizer, value, sink);
-    }
-  };
-  sink.Begin();
-  analyze();
-  if (sink.Restart()) {
-    analyze();
-  }
-  return sink.End(out);
-}
-
-void TextRows::Bind(duckdb::Vector& values, duckdb::idx_t count) {
-  const auto& type = values.GetType();
-  _type = type.id();
-  values.ToUnifiedFormat(count, _format);
-  if (_type == duckdb::LogicalTypeId::LIST) {
-    duckdb::ListVector::GetEntry(values).ToUnifiedFormat(
-      duckdb::ListVector::GetListSize(values), _children);
-  } else if (_type == duckdb::LogicalTypeId::ARRAY) {
-    _array_size = duckdb::ArrayType::GetSize(type);
-    duckdb::ArrayVector::GetEntry(values).ToUnifiedFormat(
-      duckdb::ArrayVector::GetTotalSize(values), _children);
-  }
-}
-
-std::span<const duckdb::string_t> TextRows::Values(duckdb::idx_t row) {
-  const auto idx = _format.sel->get_index(row);
-  if (!_format.validity.RowIsValid(idx)) {
-    return {};
-  }
-  uint64_t begin = 0;
-  uint64_t end = 0;
-  if (_type == duckdb::LogicalTypeId::LIST) {
-    const auto entry =
-      duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(_format)[idx];
-    begin = entry.offset;
-    end = entry.offset + entry.length;
-  } else if (_type == duckdb::LogicalTypeId::ARRAY) {
-    begin = idx * _array_size;
-    end = begin + _array_size;
-  } else {
-    return {
-      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(_format) + idx, 1};
-  }
-  _values.clear();
-  const auto* data =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(_children);
-  for (auto i = begin; i != end; ++i) {
-    const auto child = _children.sel->get_index(i);
-    if (_children.validity.RowIsValid(child)) {
-      _values.push_back(data[child]);
-    }
-  }
-  return _values;
-}
-
-PhraseCheck::PhraseCheck(const TokenPhraseMatcher& matcher,
-                         const PhraseTokens& tokens, bool count)
-  : _tokenizer{tokens.tokenizer()},
-    _expression{tokens.text.expression ? tokens.text.expression() : nullptr},
-    _sink{matcher, _tokenizer->Traits(), count} {}
-
-void PhraseCheck::Bind(duckdb::DataChunk& columns) {
-  auto& values = _expression ? _expression->Evaluate(columns) : columns.data[0];
-  _rows.Bind(values, columns.size());
-}
-
-bool PhraseCheck::Check(duckdb::idx_t row, PhraseVerdict& out) {
-  return CheckValues(_sink, _analyzer, *_tokenizer, _rows.Values(row), out);
-}
-
-TokenPhraseReader::Input::Input(const ColumnReader& column, ReadContext& ctx)
-  : column{&column},
-    state{column.InitScan(ctx)},
-    out{std::make_unique<ColumnReader::VectorScratch>(column.Type())} {}
-
-TokenPhraseReader::TokenPhraseReader(
-  const ColReader& col_reader, std::span<const ColumnReader* const> columns,
-  const TokenPhraseMatcher& matcher, const PhraseTokens& tokens, bool count)
-  : _ctx{col_reader},
-    _sel{STANDARD_VECTOR_SIZE},
-    _check{matcher, tokens, count} {
-  SDB_ASSERT(!columns.empty());
-  SDB_ASSERT(tokens.text.expression || columns.size() == 1);
-  _inputs.reserve(columns.size());
-  std::vector<duckdb::LogicalType> types;
-  types.reserve(columns.size());
-  for (const auto* column : columns) {
-    _inputs.emplace_back(*column, _ctx);
-    _row_count = std::min(_row_count, column->RowCount());
-    types.push_back(column->Type());
-  }
-  _chunk.InitializeEmpty(types);
-}
-
-bool TokenPhraseReader::Match(doc_id_t doc, PhraseVerdict& out) {
-  Match({&doc, 1}, {&out, 1});
-  return out.freq != 0;
-}
-
-void TokenPhraseReader::Match(std::span<const doc_id_t> docs,
-                              std::span<PhraseVerdict> verdicts) {
-  SDB_ASSERT(docs.size() == verdicts.size());
-  SDB_ASSERT(docs.size() <= STANDARD_VECTOR_SIZE);
-  auto n = docs.size();
-  while (n != 0 && docs[n - 1] - doc_limits::min() >= _row_count) {
-    --n;
-  }
-  std::ranges::fill(verdicts.subspan(n), PhraseVerdict{});
-  if (n == 0) {
-    return;
-  }
-  const uint64_t anchor = docs.front() - doc_limits::min();
-  for (size_t i = 0; i != n; ++i) {
-    _sel.set_index(i, docs[i] - docs.front());
-  }
-  for (size_t i = 0; i != _inputs.size(); ++i) {
-    auto& input = _inputs[i];
-    auto& out = input.out->Reset();
-    input.column->GatherScatter(input.state, anchor, _sel, n, out, 0);
-    _chunk.data[i].Reference(out);
-  }
-  _chunk.SetChildCardinality(n);
-  _check.Bind(_chunk);
-  for (size_t i = 0; i != n; ++i) {
-    _check.Check(i, verdicts[i]);
-  }
 }
 
 }  // namespace irs

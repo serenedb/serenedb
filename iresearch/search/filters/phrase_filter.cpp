@@ -31,6 +31,7 @@
 #include <span>
 #include <string_view>
 
+#include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collectors.hpp"

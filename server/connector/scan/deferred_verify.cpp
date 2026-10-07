@@ -137,8 +137,8 @@ duckdb::unique_ptr<duckdb::TableFilter> MakePhraseCheck(
   const auto& options = filter.options();
   const auto& tokens = options.tokens();
   auto matcher = std::make_shared<const irs::TokenPhraseMatcher>(
-    tokens->Check(options), options.word_separator(), reader, filter.field_id(),
-    tokens->match);
+    tokens->Check(options), options.word_separator(), reader,
+    filter.field_id());
   return MakeColumnCheck(
     "sdb_phrase_check", tokens->text.types.front(), CheckPhrase,
     duckdb::make_uniq<PhraseCheckBind>(std::move(matcher), tokens),

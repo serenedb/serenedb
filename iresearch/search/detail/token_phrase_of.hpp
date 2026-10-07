@@ -21,11 +21,16 @@
 #pragma once
 
 #include <algorithm>
+#include <limits>
+#include <memory>
+#include <span>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/search/detail/node_of.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
@@ -42,10 +47,22 @@ class TokenPhraseSlots {
 
   template<typename ApproxArgs>
   TokenPhraseSlots(std::piecewise_construct_t, ApproxArgs&& approx,
-                   const TokenPhraseQuery::Recipe& recipe, bool count)
+                   const TokenPhraseQuery& query, bool count)
     : _approx{std::make_from_tuple<Approx>(std::forward<ApproxArgs>(approx))},
-      _reader{*recipe.col_reader, recipe.columns, *recipe.matcher,
-              *recipe.tokens, count} {}
+      _ctx{*query.Segment().GetColReader()},
+      _sel{STANDARD_VECTOR_SIZE},
+      _check{query.Matcher(), query.Tokens(), count} {
+    const auto columns = query.Columns();
+    _inputs.reserve(columns.size());
+    std::vector<duckdb::LogicalType> types;
+    types.reserve(columns.size());
+    for (const auto* column : columns) {
+      _inputs.emplace_back(*column, _ctx);
+      _row_count = std::min(_row_count, column->RowCount());
+      types.push_back(column->Type());
+    }
+    _chunk.InitializeEmpty(types);
+  }
 
   TokenPhraseSlots(TokenPhraseSlots&&) = delete;
   TokenPhraseSlots& operator=(TokenPhraseSlots&&) = delete;
@@ -81,9 +98,10 @@ class TokenPhraseSlots {
   bool Match(doc_id_t doc) {
     if (_pos < _docs.size() && _docs[_pos] == doc) {
       _verdict = _verdicts[_pos];
-      return _verdict.freq != 0;
+    } else {
+      Check({&doc, 1}, {&_verdict, 1});
     }
-    return _reader.Match(doc, _verdict);
+    return _verdict.freq != 0;
   }
 
   uint32_t Freq() const noexcept { return _verdict.freq; }
@@ -112,12 +130,56 @@ class TokenPhraseSlots {
       _docs.push_back(doc);
     }
     _verdicts.resize(_docs.size());
-    _reader.Match(_docs, _verdicts);
+    Check(_docs, _verdicts);
     return first;
   }
 
+  void Check(std::span<const doc_id_t> docs,
+             std::span<PhraseVerdict> verdicts) {
+    SDB_ASSERT(docs.size() <= STANDARD_VECTOR_SIZE);
+    auto n = docs.size();
+    while (n != 0 && docs[n - 1] - doc_limits::min() >= _row_count) {
+      --n;
+    }
+    std::ranges::fill(verdicts.subspan(n), PhraseVerdict{});
+    if (n == 0) {
+      return;
+    }
+    const uint64_t anchor = docs.front() - doc_limits::min();
+    for (size_t i = 0; i != n; ++i) {
+      _sel.set_index(i, docs[i] - docs.front());
+    }
+    for (size_t i = 0; i != _inputs.size(); ++i) {
+      auto& input = _inputs[i];
+      auto& out = input.out->Reset();
+      input.column->GatherScatter(input.state, anchor, _sel, n, out, 0);
+      _chunk.data[i].Reference(out);
+    }
+    _chunk.SetChildCardinality(n);
+    _check.Bind(_chunk);
+    for (size_t i = 0; i != n; ++i) {
+      _check.Check(i, verdicts[i]);
+    }
+  }
+
+  struct Input {
+    Input(const ColumnReader& column, ReadContext& ctx)
+      : column{&column},
+        state{column.InitScan(ctx)},
+        out{std::make_unique<ColumnReader::VectorScratch>(column.Type())} {}
+
+    const ColumnReader* column;
+    ColumnReader::ScanState state;
+    std::unique_ptr<ColumnReader::VectorScratch> out;
+  };
+
   Approx _approx;
-  TokenPhraseReader _reader;
+  ReadContext _ctx;
+  std::vector<Input> _inputs;
+  uint64_t _row_count = std::numeric_limits<uint64_t>::max();
+  duckdb::DataChunk _chunk;
+  duckdb::SelectionVector _sel;
+  PhraseCheck _check;
   PhraseVerdict _verdict;
   std::vector<doc_id_t> _docs;
   std::vector<PhraseVerdict> _verdicts;
@@ -146,7 +208,7 @@ Result MakeTokenPhrase(const TokenPhraseQuery& query, uint64_t interrogations,
     using Slots = TokenPhraseSlots<Approx, Sloppy>;
     return memory::make_managed<Impl<NodeOf<Wrap, Result, Slots>>>(
       std::forward<Prefix>(prefix)..., std::piecewise_construct,
-      std::forward_as_tuple(std::move(node)), query.MakeRecipe(), Scored);
+      std::forward_as_tuple(std::move(node)), query, Scored);
   };
   if constexpr (Scored) {
     return ResolveBool(query.Sloppy(), make);

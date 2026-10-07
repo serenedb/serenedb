@@ -32,13 +32,6 @@ namespace irs {
 
 class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
  public:
-  struct Recipe {
-    const TokenPhraseMatcher* matcher = nullptr;
-    const PhraseTokens* tokens = nullptr;
-    const ColReader* col_reader = nullptr;
-    std::span<const ColumnReader* const> columns;
-  };
-
   TokenPhraseQuery(const SubReader& segment, const TermReader& reader,
                    QueryBuilder::ptr&& approx,
                    std::shared_ptr<const PhraseTokens> tokens,
@@ -51,7 +44,7 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
       _reader{&reader},
       _tokens{std::move(tokens)},
       _columns{std::move(columns)},
-      _matcher{phrase, expanded, reader, _tokens->match},
+      _matcher{phrase, expanded, reader},
       _boost{boost} {
     _estimate_matches = _approx->EstimateMatches();
     _postings = _approx->Postings();
@@ -62,11 +55,15 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
 
   const TermReader& Reader() const noexcept { return *_reader; }
 
-  bool Sloppy() const noexcept { return _matcher.Sloppy(); }
+  const TokenPhraseMatcher& Matcher() const noexcept { return _matcher; }
 
-  Recipe MakeRecipe() const {
-    return {&_matcher, _tokens.get(), _segment.GetColReader(), _columns};
+  const PhraseTokens& Tokens() const noexcept { return *_tokens; }
+
+  std::span<const ColumnReader* const> Columns() const noexcept {
+    return _columns;
   }
+
+  bool Sloppy() const noexcept { return _matcher.Sloppy(); }
 
   void Visit(PreparedStateVisitor&, score_t) const final {}
 

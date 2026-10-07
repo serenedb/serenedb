@@ -296,8 +296,8 @@ IRS_FORCE_INLINE void VisitDocs(uint32_t size, Visitor&& visit) {
       visit(i);
     }
   } else {
-    static constexpr size_t kChains = 8;
-    static constexpr size_t kSlice = N / kChains;
+    static constexpr size_t kSlice = 16;
+    static constexpr size_t kChains = N / kSlice;
     uint32_t i = 0;
     for (; i != kSlice; ++i) {
       for (uint32_t chain = 0; chain != kChains; ++chain) {

@@ -67,22 +67,11 @@ std::optional<DeferredCheck> DeferWildcard(irs::Filter::ptr& filter,
   if (!options.matcher) {
     return std::nullopt;
   }
-  auto index = std::make_unique<irs::ByWildcardNGram>();
-  *index->mutable_field_id() = wildcard.field_id();
-  *index->mutable_options() = options;
+  auto index = std::make_unique<irs::ByWildcardNGram>(wildcard);
   index->mutable_options()->matcher = nullptr;
-  index->SetBoost(wildcard.GetBoost());
-  index->SetScorer(wildcard.GetScorer());
-  const auto column = options.store_field_id;
-  auto check = MakeColumnCheck(
-    "sdb_wildcard_check", duckdb::LogicalType::BLOB, CheckWildcard,
-    duckdb::make_uniq<WildcardCheckBind>(options.matcher));
-  DeferredCheck deferred{.source = std::move(filter),
-                         .column = column,
-                         .type = duckdb::LogicalType::BLOB,
-                         .check = std::move(check)};
-  filter = std::move(index);
-  return deferred;
+  return Split(filter, std::move(index), options.store_field_id,
+               duckdb::LogicalType::BLOB, "sdb_wildcard_check", CheckWildcard,
+               duckdb::make_uniq<WildcardCheckBind>(options.matcher));
 }
 
 }  // namespace sdb::connector

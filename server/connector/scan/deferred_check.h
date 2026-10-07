@@ -51,11 +51,11 @@ std::vector<DeferredCheck> DeferChecks(irs::Filter::ptr& root,
 void AddDeferredChecks(ScanGlobalState& state,
                        std::span<const DeferredCheck> checks);
 
-std::shared_ptr<const duckdb::TableFilter> MakeColumnCheck(
-  const char* name, const duckdb::LogicalType& type,
-  duckdb::scalar_function_t function,
-  duckdb::unique_ptr<duckdb::FunctionData> bind,
-  duckdb::init_local_state_t init = nullptr);
+DeferredCheck Split(irs::Filter::ptr& filter, irs::Filter::ptr index,
+                    irs::field_id column, const duckdb::LogicalType& type,
+                    const char* name, duckdb::scalar_function_t function,
+                    duckdb::unique_ptr<duckdb::FunctionData> bind,
+                    duckdb::init_local_state_t init = nullptr);
 
 std::optional<DeferredCheck> DeferWildcard(irs::Filter::ptr& filter,
                                            const DeferContext& ctx);

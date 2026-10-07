@@ -27,7 +27,7 @@ statement ok
 CREATE INDEX pwpv_pos ON pwpv USING inverted (id, body pwpv_words_pos)
 
 statement ok
-CREATE INDEX pwpv_upper ON pwpv USING inverted (id, (upper(body)) pwpv_raw) INCLUDE (body)
+CREATE INDEX pwpv_upper ON pwpv USING inverted (id, (upper(body)) pwpv_raw, (upper(body)) included())
 
 statement ok
 CREATE INDEX pwpv_bare ON pwpv USING inverted (id, body pwpv_words)
@@ -146,7 +146,7 @@ statement error
 SELECT id FROM pwpv_bare WHERE body @@ ts_phrase('quick brown')
 ----
 db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE`, or query with a single-term ts_phrase / ts_like.
+HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or query with a single-term ts_phrase / ts_like.
 
 
 statement ok

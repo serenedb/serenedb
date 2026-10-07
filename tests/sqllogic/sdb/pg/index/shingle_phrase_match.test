@@ -109,42 +109,42 @@ statement error
 SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown fox')
 ----
 db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE`, or raise `max_gram` to the phrase length.
+HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or raise `max_gram` to the phrase length.
 
 
 statement error
 SELECT id FROM test_shingle_idx WHERE body @@ phraseto_tsquery('quick brown fox')
 ----
 db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE`, or raise `max_gram` to the phrase length.
+HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or raise `max_gram` to the phrase length.
 
 
 statement error
 SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick', 1, 'fox')
 ----
 db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE`, or raise `max_gram` to the phrase length.
+HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or raise `max_gram` to the phrase length.
 
 
 statement error
 SELECT id FROM test_shingle_idx WHERE body @@ (ts_phrase('quick') ## 1 ## ts_phrase('fox'))
 ----
 db error: ERROR: ## on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE`, or raise `max_gram` to the phrase length.
+HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or raise `max_gram` to the phrase length.
 
 
 statement error
 SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick fox', slop := 1)
 ----
 db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE`, or raise `max_gram` to the phrase length.
+HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or raise `max_gram` to the phrase length.
 
 
 statement error
 SELECT id FROM test_shingle_idx WHERE body @@ (ts_phrase('quick brown') ## ts_like('%ox'))
 ----
 db error: ERROR: ## on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE`, or raise `max_gram` to the phrase length.
+HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or raise `max_gram` to the phrase length.
 
 
 query
@@ -176,7 +176,7 @@ statement error
 SELECT id FROM test_shingle_idx WHERE body @@ to_tsquery('"quick brown fox"')
 ----
 db error: ERROR: to_tsquery on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE`, or raise `max_gram` to the phrase length.
+HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or raise `max_gram` to the phrase length.
 
 
 query
@@ -1183,7 +1183,7 @@ statement error
 SELECT id FROM test_shingle_terms_idx WHERE body @@ ts_phrase('quick brown fox jumps')
 ----
 db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE`, or raise `max_gram` to the phrase length.
+HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or raise `max_gram` to the phrase length.
 
 
 statement ok

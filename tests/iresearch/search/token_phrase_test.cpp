@@ -159,7 +159,7 @@ struct Outcome {
 template<typename Words>
 irs::PhraseTokens TextOf() {
   irs::PhraseTokens tokens;
-  tokens.text = {.columns = {0}, .types = {duckdb::LogicalType::VARCHAR}};
+  tokens.text = 0;
   tokens.tokenizer = [] { return std::make_shared<Words>(); };
   return tokens;
 }
@@ -172,7 +172,7 @@ bool CheckText(irs::PhraseCheck& check, std::string_view text,
   chunk.SetChildCardinality(1);
   duckdb::FlatVector::GetDataMutable<duckdb::string_t>(chunk.data[0])[0] = {
     text.data(), static_cast<uint32_t>(text.size())};
-  check.Bind(chunk);
+  check.Bind(chunk.data[0], 1);
   return check.Check(0, verdict);
 }
 
@@ -573,7 +573,7 @@ template<typename Words>
 std::shared_ptr<const irs::PhraseTokens> Tokens(
   irs::field_id column = kStoreId) {
   auto tokens = std::make_shared<irs::PhraseTokens>(TextOf<Words>());
-  tokens->text.columns = {column};
+  tokens->text = column;
   return tokens;
 }
 
@@ -833,7 +833,7 @@ void ExpectDeferredLikeInline(const Index& index,
       const auto& text = docs[candidates[i]];
       values[i] = {text.data(), static_cast<uint32_t>(text.size())};
     }
-    check.Bind(chunk);
+    check.Bind(chunk.data[0], candidates.size());
     std::vector<irs::doc_id_t> actual;
     for (size_t i = 0; i != candidates.size(); ++i) {
       irs::PhraseVerdict verdict;
@@ -1160,13 +1160,7 @@ TEST(TokenPhraseIndexTest, constant_score_conjunction_scores_like_the_phrase) {
   }
 }
 
-TEST(TokenPhraseIndexTest, expression_over_stored_columns) {
-  class SecondColumn final : public irs::TextExpression {
-   public:
-    duckdb::Vector& Evaluate(duckdb::DataChunk& columns) final {
-      return columns.data[1];
-    }
-  };
+TEST(TokenPhraseIndexTest, reads_only_the_named_stored_field) {
   constexpr std::string_view kWords[] = {"the", "quick", "brown", "fox",
                                          "the", "dog",   "a"};
   std::mt19937 rng{13};
@@ -1181,13 +1175,12 @@ TEST(TokenPhraseIndexTest, expression_over_stored_columns) {
     SCOPED_TRACE(text);
     const auto expected =
       index.Run(*Lowered(PhraseOn(kPositionalId, Phrase(text))));
-    auto tokens = std::make_shared<irs::PhraseTokens>(*Tokens<DenseWords>());
-    tokens->text = {
-      .columns = {kDecoyId, kStoreId},
-      .types = {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-      .expression = [] { return std::make_unique<SecondColumn>(); }};
-    ExpectFamilies(
-      expected, index.Run(*Lowered(PhraseOn(kPlainId, Phrase(text), tokens))));
+    ExpectFamilies(expected, index.Run(*Lowered(PhraseOn(
+                               kPlainId, Phrase(text), Tokens<DenseWords>()))));
+    EXPECT_NE(index.Docs(*Lowered(
+                PhraseOn(kPlainId, Phrase(text), Tokens<DenseWords>()))),
+              index.Docs(*Lowered(PhraseOn(kPlainId, Phrase(text),
+                                           Tokens<DenseWords>(kDecoyId)))));
   }
 }
 

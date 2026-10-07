@@ -408,15 +408,13 @@ PhraseCheck::PhraseCheck(const CompiledPhrase& phrase,
                          const PhraseTokens& tokens, bool count)
   : _phrase{&phrase},
     _tokenizer{tokens.tokenizer()},
-    _expression{tokens.text.expression ? tokens.text.expression() : nullptr},
     _dense{!_tokenizer->Traits().explicit_pos},
     _count{count} {}
 
-void PhraseCheck::Bind(duckdb::DataChunk& columns) {
-  auto& values = _expression ? _expression->Evaluate(columns) : columns.data[0];
+void PhraseCheck::Bind(duckdb::Vector& values, duckdb::idx_t count) {
   const auto& type = values.GetType();
   _rows.type = type.id();
-  values.ToUnifiedFormat(columns.size(), _rows.format);
+  values.ToUnifiedFormat(count, _rows.format);
   if (_rows.type == duckdb::LogicalTypeId::LIST) {
     duckdb::ListVector::GetEntry(values).ToUnifiedFormat(
       duckdb::ListVector::GetListSize(values), _rows.children);

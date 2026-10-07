@@ -128,7 +128,7 @@ statement error
 SELECT id FROM sp_cars_nopos_idx WHERE body @@ ts_phrase('red car');
 ----
 db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE`, or query with a single-term ts_phrase / ts_like.
+HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or query with a single-term ts_phrase / ts_like.
 
 
 statement ok

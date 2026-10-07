@@ -36,10 +36,10 @@
 #include "iresearch/search/detail/phrase_slop_matcher.hpp"
 #include "iresearch/search/detail/term_acceptor.hpp"
 #include "iresearch/search/detail/term_predicate.hpp"
-#include "iresearch/search/detail/text_source.hpp"
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
@@ -55,7 +55,7 @@ enum class PhraseMatch : uint8_t {
 struct PhraseTokens {
   using Factory = std::function<std::shared_ptr<analysis::Tokenizer>()>;
 
-  TextSource text;
+  field_id text = field_limits::invalid();
   Factory tokenizer;
   std::optional<ByPhraseOptions> spec;
 
@@ -186,7 +186,7 @@ class PhraseCheck final : public TokenConsumer {
   PhraseCheck(const CompiledPhrase& phrase, const PhraseTokens& tokens,
               bool count);
 
-  void Bind(duckdb::DataChunk& columns);
+  void Bind(duckdb::Vector& values, duckdb::idx_t count);
   bool Check(duckdb::idx_t row, PhraseVerdict& out);
   bool Restarted() const noexcept { return _restarted; }
 
@@ -289,7 +289,6 @@ class PhraseCheck final : public TokenConsumer {
 
   const CompiledPhrase* _phrase;
   std::shared_ptr<analysis::Tokenizer> _tokenizer;
-  std::unique_ptr<TextExpression> _expression;
   ValueAnalyzer _analyzer;
   Rows _rows;
   std::variant<Anchor, Automaton, Positions> _state;

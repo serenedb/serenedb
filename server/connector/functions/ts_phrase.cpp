@@ -173,7 +173,7 @@ bool HasPositions(const SearchColumnInfo& column_info) {
 
 bool HasText(const SearchColumnInfo& column_info) {
   return column_info.tokenizer.analyzer.get_deleter().tokenizer &&
-         !column_info.text.columns.empty() &&
+         irs::field_limits::valid(column_info.text) &&
          !column_info.logical_type.IsJSONType() &&
          !irs::field_limits::valid(column_info.numeric_field_id);
 }
@@ -192,7 +192,8 @@ void CheckTokens(const SearchColumnInfo& column_info,
               " on a column without positions needs the column's text in "
               "the index"),
       ERR_HINT("Add `position` to the dictionary, keep the column's text in "
-               "the index with `INCLUDE`, ",
+               "the index with `INCLUDE` or an expression's value with "
+               "`included()`, ",
                hint, "."));
   }
   auto tokens = std::make_shared<irs::PhraseTokens>();
@@ -284,11 +285,6 @@ void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
 
 bool MatchesPhrases(const SearchColumnInfo& column_info) {
   return HasPositions(column_info) || HasText(column_info);
-}
-
-bool PhrasesNeedText(const SearchColumnInfo& column_info) {
-  return !HasPositions(column_info) &&
-         column_info.tokenizer.analyzer.get_deleter().tokenizer;
 }
 
 irs::analysis::Tokenizer& PhraseAnalyzer(const FilterContext& ctx,

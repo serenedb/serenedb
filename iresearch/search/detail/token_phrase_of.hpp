@@ -50,19 +50,11 @@ class TokenPhraseSlots {
                    const TokenPhraseQuery& query, bool count)
     : _approx{std::make_from_tuple<Approx>(std::forward<ApproxArgs>(approx))},
       _ctx{*query.Segment().GetColReader()},
+      _column{&query.Column()},
+      _state{_column->InitScan(_ctx)},
+      _out{_column->Type()},
       _sel{STANDARD_VECTOR_SIZE},
-      _check{query.Compiled(), query.Tokens(), count} {
-    const auto columns = query.Columns();
-    _inputs.reserve(columns.size());
-    std::vector<duckdb::LogicalType> types;
-    types.reserve(columns.size());
-    for (const auto* column : columns) {
-      _inputs.emplace_back(*column, _ctx);
-      _row_count = std::min(_row_count, column->RowCount());
-      types.push_back(column->Type());
-    }
-    _chunk.InitializeEmpty(types);
-  }
+      _check{query.Compiled(), query.Tokens(), count} {}
 
   TokenPhraseSlots(TokenPhraseSlots&&) = delete;
   TokenPhraseSlots& operator=(TokenPhraseSlots&&) = delete;
@@ -138,7 +130,7 @@ class TokenPhraseSlots {
              std::span<PhraseVerdict> verdicts) {
     SDB_ASSERT(docs.size() <= STANDARD_VECTOR_SIZE);
     auto n = docs.size();
-    while (n != 0 && docs[n - 1] - doc_limits::min() >= _row_count) {
+    while (n != 0 && docs[n - 1] - doc_limits::min() >= _column->RowCount()) {
       --n;
     }
     std::ranges::fill(verdicts.subspan(n), PhraseVerdict{});
@@ -149,35 +141,19 @@ class TokenPhraseSlots {
     for (size_t i = 0; i != n; ++i) {
       _sel.set_index(i, docs[i] - docs.front());
     }
-    for (size_t i = 0; i != _inputs.size(); ++i) {
-      auto& input = _inputs[i];
-      auto& out = input.out->Reset();
-      input.column->GatherScatter(input.state, anchor, _sel, n, out, 0);
-      _chunk.data[i].Reference(out);
-    }
-    _chunk.SetChildCardinality(n);
-    _check.Bind(_chunk);
+    auto& out = _out.Reset();
+    _column->GatherScatter(_state, anchor, _sel, n, out, 0);
+    _check.Bind(out, n);
     for (size_t i = 0; i != n; ++i) {
       _check.Check(i, verdicts[i]);
     }
   }
 
-  struct Input {
-    Input(const ColumnReader& column, ReadContext& ctx)
-      : column{&column},
-        state{column.InitScan(ctx)},
-        out{std::make_unique<ColumnReader::VectorScratch>(column.Type())} {}
-
-    const ColumnReader* column;
-    ColumnReader::ScanState state;
-    std::unique_ptr<ColumnReader::VectorScratch> out;
-  };
-
   Approx _approx;
   ReadContext _ctx;
-  std::vector<Input> _inputs;
-  uint64_t _row_count = std::numeric_limits<uint64_t>::max();
-  duckdb::DataChunk _chunk;
+  const ColumnReader* _column;
+  ColumnReader::ScanState _state;
+  ColumnReader::VectorScratch _out;
   duckdb::SelectionVector _sel;
   PhraseCheck _check;
   PhraseVerdict _verdict;

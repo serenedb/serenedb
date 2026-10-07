@@ -301,38 +301,6 @@ bool TryClaimIResearchConjunct(
   return true;
 }
 
-namespace {
-
-irs::TextSource ExpressionSource(
-  duckdb::unique_ptr<duckdb::Expression> normalized,
-  const connector::ScanBindData& bind_data, duckdb::ClientContext& context) {
-  const auto& relation = bind_data.relation;
-  irs::TextSource text;
-  duckdb::ExpressionIterator::VisitExpression<duckdb::BoundColumnRefExpression>(
-    *normalized, [&](const duckdb::BoundColumnRefExpression& ref) {
-      const auto id =
-        static_cast<connector::ColumnId>(ref.Binding().column_index.GetIndex());
-      if (!absl::c_linear_search(text.columns, id)) {
-        text.columns.push_back(id);
-      }
-    });
-  if (text.columns.empty() ||
-      !absl::c_all_of(text.columns, [&](connector::ColumnId id) {
-        return relation.Stores(id);
-      })) {
-    return {};
-  }
-  for (const auto id : text.columns) {
-    text.types.push_back(bind_data.ColumnTypeById(id));
-  }
-  text.expression =
-    connector::TextExpressionOf(std::move(normalized), bind_data.RelationId(),
-                                text.columns, text.types, context);
-  return text;
-}
-
-}  // namespace
-
 bool WithSearchGetters(duckdb::LogicalGet& get,
                        connector::ScanBindData& bind_data,
                        duckdb::ClientContext& context,
@@ -389,8 +357,7 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     auto column_info =
       make_info(config.TermField(col_id), info, std::move(type), col_id);
     if (bind_data.relation.Stores(col_id)) {
-      column_info.text = {.columns = {col_id},
-                          .types = {column_info.logical_type}};
+      column_info.text = col_id;
     }
     return column_info;
   };
@@ -428,11 +395,7 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     auto column_info =
       make_info(field_id, entry, std::move(return_type), std::nullopt);
     if (entry && entry->IsStored()) {
-      column_info.text = {.columns = {field_id},
-                          .types = {column_info.logical_type}};
-    } else if (connector::PhrasesNeedText(column_info)) {
-      column_info.text =
-        ExpressionSource(std::move(normalized), bind_data, context);
+      column_info.text = field_id;
     }
     return column_info;
   };

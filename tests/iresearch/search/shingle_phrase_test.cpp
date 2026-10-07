@@ -201,8 +201,7 @@ inline constexpr irs::field_id kPositionalId = 4;
 std::shared_ptr<const irs::PhraseTokens> StoredWords(
   std::optional<irs::ByPhraseOptions> spec = std::nullopt) {
   auto tokens = std::make_shared<irs::PhraseTokens>();
-  tokens->text = {.columns = {kStoreId},
-                  .types = {duckdb::LogicalType::VARCHAR}};
+  tokens->text = kStoreId;
   tokens->tokenizer = [] { return std::make_shared<WhitespaceTokenizer>(); };
   tokens->spec = std::move(spec);
   return tokens;

@@ -69,7 +69,7 @@ void CheckPhrase(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   auto& check = duckdb::ExecuteFunctionState::GetFunctionState(state)
                   ->Cast<PhraseCheckState>()
                   .check;
-  check.Bind(args);
+  check.Bind(args.data[0], args.size());
   auto* out = duckdb::FlatVector::GetDataMutable<bool>(result);
   irs::PhraseVerdict verdict;
   for (duckdb::idx_t row = 0, count = args.size(); row != count; ++row) {
@@ -84,7 +84,11 @@ std::optional<DeferredCheck> DeferPhrase(irs::Filter::ptr& filter,
   const auto& phrase = irs::utils::downCast<irs::ByPhrase>(*filter);
   const auto& options = phrase.options();
   const auto& tokens = options.tokens();
-  if (!tokens || tokens->text.columns.size() != 1) {
+  if (!tokens) {
+    return std::nullopt;
+  }
+  const auto type = StoredType(ctx.reader, tokens->text);
+  if (!type) {
     return std::nullopt;
   }
   const auto& checked = tokens->Check(options);
@@ -97,8 +101,8 @@ std::optional<DeferredCheck> DeferPhrase(irs::Filter::ptr& filter,
   }
   auto compiled = std::make_shared<const irs::CompiledPhrase>(
     checked, options.word_separator(), ctx.reader, phrase.field_id());
-  return Split(filter, std::move(index), tokens->text.columns.front(),
-               tokens->text.types.front(), "sdb_phrase_check", CheckPhrase,
+  return Split(filter, std::move(index), tokens->text, *type,
+               "sdb_phrase_check", CheckPhrase,
                duckdb::make_uniq<PhraseCheckBind>(std::move(compiled), tokens),
                InitPhraseCheck);
 }

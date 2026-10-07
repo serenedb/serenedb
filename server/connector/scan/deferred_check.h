@@ -51,6 +51,9 @@ std::vector<DeferredCheck> DeferChecks(irs::Filter::ptr& root,
 void AddDeferredChecks(ScanGlobalState& state,
                        std::span<const DeferredCheck> checks);
 
+std::optional<duckdb::LogicalType> StoredType(const irs::IndexReader& reader,
+                                              irs::field_id column);
+
 DeferredCheck Split(irs::Filter::ptr& filter, irs::Filter::ptr index,
                     irs::field_id column, const duckdb::LogicalType& type,
                     const char* name, duckdb::scalar_function_t function,

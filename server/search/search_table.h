@@ -250,19 +250,10 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
     return _build_truncate_tick.load(std::memory_order_acquire) > tick;
   }
 
-  void EnterCommitGap() ABSL_NO_THREAD_SAFETY_ANALYSIS {
-    _commit_gap_mutex.ReaderLock();
-  }
-  void LeaveCommitGap() noexcept ABSL_NO_THREAD_SAFETY_ANALYSIS {
-    _commit_gap_mutex.ReaderUnlock();
-  }
-
-  template<typename Fn>
-  auto SwapWithDrainedDeletes(Fn&& swap) {
-    absl::WriterMutexLock gap{&_commit_gap_mutex};
+  std::pair<std::vector<int64_t>, uint64_t> DrainDeleteLog() {
     absl::MutexLock lock{&_delete_log_mutex};
-    return swap(std::exchange(_delete_log, {}),
-                _build_truncate_tick.load(std::memory_order_relaxed));
+    return {std::exchange(_delete_log, {}),
+            _build_truncate_tick.load(std::memory_order_relaxed)};
   }
 
   std::pair<irs::DirectoryReader, uint64_t> GetSnapshotWithTick() {
@@ -277,9 +268,9 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   bool ReplaceSegments(
     std::span<const std::string_view> replaced,
     std::span<const std::string_view> adopted_metas,
-    irs::IndexWriter::QueryContext::FilterPtr removal = nullptr) {
-    return _writer->ReplaceSegments(replaced, adopted_metas,
-                                    std::move(removal));
+    absl::FunctionRef<bool(irs::IndexWriter::QueryContext::FilterPtr&)>
+      removal_provider) {
+    return _writer->ReplaceSegments(replaced, adopted_metas, removal_provider);
   }
 
  private:
@@ -325,7 +316,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   absl::Mutex _delete_log_mutex;
   std::vector<int64_t> _delete_log ABSL_GUARDED_BY(_delete_log_mutex);
   std::atomic<uint64_t> _build_truncate_tick{0};
-  absl::Mutex _commit_gap_mutex;
   // How often a waiting rebuild surfaces to check for cancellation. The
   // CondVar does the blocking; this only bounds how long a cancelled statement
   // keeps waiting.

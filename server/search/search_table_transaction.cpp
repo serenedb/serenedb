@@ -20,9 +20,6 @@
 
 #include "search/search_table_transaction.h"
 
-#include <absl/algorithm/container.h>
-#include <absl/cleanup/cleanup.h>
-
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -366,17 +363,6 @@ void SearchTableTransaction::Commit() {
       logged.emplace_back(w.shard.get(), &cit->second);
     }
   }
-  absl::c_sort(logged, [](const auto& l, const auto& r) {
-    return l.first->GetTableId() < r.first->GetTableId();
-  });
-  for (const auto& [shard, changes] : logged) {
-    shard->EnterCommitGap();
-  }
-  absl::Cleanup leave_gaps = [&logged] {
-    for (const auto& [shard, changes] : logged) {
-      shard->LeaveCommitGap();
-    }
-  };
 
   const uint64_t record_tick = AppendCommit([&](uint64_t tick) noexcept {
     RegisterFlush();
@@ -407,7 +393,6 @@ void SearchTableTransaction::Commit() {
   for (const auto& [shard, changes] : logged) {
     RecordDeletesForBuild(*shard, *changes, record_tick);
   }
-  std::move(leave_gaps).Invoke();
 
   for (auto& [table_id, w] : _writes) {
     auto cit = _changes.find(table_id);

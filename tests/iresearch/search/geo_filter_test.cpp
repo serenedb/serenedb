@@ -18,6 +18,7 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <algorithm>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/iterators.hpp>
@@ -201,6 +202,24 @@ TEST(GeoFilterTest, equal) {
     *q1.mutable_field_id() = 1;
     ASSERT_NE(q, q1);
   }
+}
+
+TEST(GeoFilterTest, copy_clones_the_shape) {
+  GeoFilter q;
+  q.mutable_options()->type = GeoFilterType::Contains;
+  q.mutable_options()->shape.reset(
+    std::make_unique<S2PointRegion>(S2Point{1., 0., 0.}),
+    irs::geo::ShapeContainer::Type::S2Point);
+  *q.mutable_field_id() = 1;
+
+  const auto copy = q;
+  EXPECT_EQ(q, copy);
+  EXPECT_NE(q.options().shape.region(), copy.options().shape.region());
+
+  GeoFilter assigned;
+  assigned = q;
+  EXPECT_EQ(q, assigned);
+  EXPECT_NE(q.options().shape.region(), assigned.options().shape.region());
 }
 
 TEST(GeoFilterTest, boost) {
@@ -447,6 +466,11 @@ TEST(GeoFilterTest, query) {
     q.mutable_options()->store_field_id = kGeo;
 
     ASSERT_EQ(expected, execute_query(q, {1, 1}));
+
+    auto cells = q;
+    ASSERT_EQ(q, cells);
+    cells.mutable_options()->store_field_id = irs::field_limits::invalid();
+    EXPECT_TRUE(std::ranges::includes(execute_query(cells, {1, 1}), expected));
   }
 
   {

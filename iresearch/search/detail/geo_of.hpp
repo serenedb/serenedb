@@ -33,17 +33,39 @@
 
 namespace irs::detail {
 
-template<template<typename> class Impl, typename Result, typename Parser,
-         typename Acceptor, typename... Prefix>
+template<template<typename> class Impl, typename Result,
+         bool kErasedCells = true, typename Parser, typename Acceptor,
+         typename... Prefix>
 Result MakeGeo(const GeoQuery<Parser, Acceptor>& query, uint64_t interrogations,
                Prefix&&... prefix) {
   constexpr bool kProbed = std::is_same_v<Result, ProbeNode::ptr>;
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
+  const auto& cells = query.Cells();
+  SDB_ASSERT(cells.Kind() != QueryKind::Empty);
+  if constexpr (kErasedCells) {
+    if (!query.HasCheck()) {
+      if constexpr (kProbed) {
+        auto node = cells.PlanProbe({}, interrogations);
+        if (!node) {
+          return {};
+        }
+        return memory::make_managed<Impl<probe::Erased>>(
+          std::forward<Prefix>(prefix)..., std::move(node));
+      } else {
+        auto node = cells.PlanLead({});
+        if (!node) {
+          return {};
+        }
+        return memory::make_managed<Impl<lead::Erased>>(
+          std::forward<Prefix>(prefix)..., std::move(node));
+      }
+    }
+  } else {
+    SDB_ASSERT(query.HasCheck());
+  }
   const auto check = query.MakeCheck();
   SDB_ASSERT(check.recipe.has_value());
   const auto& recipe = *check.recipe;
-  const auto& cells = query.Cells();
-  SDB_ASSERT(cells.Kind() != QueryKind::Empty);
 
   if constexpr (kProbed) {
     auto approx = cells.PlanProbe({}, interrogations);

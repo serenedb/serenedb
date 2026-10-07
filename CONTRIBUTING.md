@@ -101,7 +101,8 @@ The test tree is split by what runs the test and what it covers:
 
 When a change needs a test:
 
-- Bug fix: always, unless you can argue the bug is uncoverable. Crash / recovery bugs go under `tests/sqllogic/recovery/`.
+- Bug fix: always, unless you can argue the bug is uncoverable. The test fails before the fix, for the reason the fix claims. Crash / recovery bugs go under `tests/sqllogic/recovery/`.
+- Never edit a test or an expectation just to make a failure go away.
 - New feature / behaviour change: sqllogic test in the right subtree above. Add a unit test too if there's isolated C++ logic worth pinning.
 - CMake-only changes: rely on CI.
 - Doc-only changes: their SQL examples are sqllogic tests (see [Documenting with runnable examples](#documenting-with-runnable-examples)).
@@ -311,6 +312,8 @@ Dependencies are git submodules under `third_party/`, usually forks under `githu
   - Exception: if your branch has exactly one commit and you let GitHub open the PR for you, GitHub will pre-fill the PR title and description from that commit -- so in that case keep the commit message PR-ready.
 - **Pre-commit hooks** run as a PR check. You don't have to install them locally; if you want to check before pushing, run `pre-commit run --all-files`.
 - **CI must pass** and one maintainer must approve before merge.
+- **PR title:** name the exact thing (`fix: jobs and text search dictionaries in nested schemas`, `perf: n-gram prefilter for case-insensitive ASCII letters in ts_regexp`), not `fix: bugs` and not a sentence about the PR.
+- **PR description:** why, not what -- the diff shows what. The problem and who hits it (for a fix, the failing behaviour and the root cause); the approach, and the alternative it beat when that's not obvious; the tests that cover it, and for `perf:` the end-to-end numbers against main with the build and machine load; the `docs/` page added or updated; fork changes by commit SHA. One line per paragraph, no hard wraps.
 - **Other repositories:** refer to another repository's issue or PR as plain text (`serenedb/duckdb PR 89`) or inside backticks, never as `#N`, `owner/repo#N` or its URL: GitHub links all three back from the target. This holds for commit messages, PR descriptions and comments. Link code by commit SHA, not by branch.
 
 ## When you change ...
@@ -335,6 +338,9 @@ A user-visible change lands with its documentation in the same PR. New SQL synta
 - **`docs/` is the source of truth**, and two consumers read it: the website, which renders it as its Docusaurus tree, and the server itself, which embeds it as the `sdb_docs` schema when built with `SDB_EMBEDDED_DOCS`.
 - **Frontmatter:** every page needs `title` and `split`, where `split` is `page` (index the whole page as one unit) or `headings` (index each heading separately -- use it for long reference pages). `scripts/generate_docs.py` rejects anything else, which fails the build.
 - **New folder:** add a `_category_.json` beside the pages with `label` and `position`, or the sidebar falls back to the folder name.
+- **Content:** only what a user can act on -- what works, what an option does, requirements, errors, trade-offs. No engine internals, project history or comparisons with earlier behaviour.
+- **SereneDB on its own terms:** don't cite other databases as design references or as the origin of a dataset. Other systems as data sources (connectors, ATTACH) are product features and belong in the docs.
+- **Style:** SQL keywords in UPPER CASE, multi-line formatted `SELECT`s rather than one-liners, one line per paragraph or list item (no hard wraps).
 
 ### Documenting with runnable examples
 
@@ -614,6 +620,9 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - Use C++20 coroutines (`co_await` / `co_return`) with `yaclib::Future` for async code
 - Avoid raw threads and callbacks in database logic
 - Sync primitives are for deep implementation details only
+- Locks: `absl::Mutex` (`duckdb::mutex` is the same type); wait with `Await`/`LockWhen`, an `absl::CondVar` only when really needed. Never `std::mutex`, `std::condition_variable(_any)` or yield loops
+- Work runs on the existing pools, never on a hand-rolled `std::thread` pool: query execution on DuckDB's `TaskExecutor`/`BaseExecutorTask`; blocking or latency-tolerant background work on `BackgroundScheduler` (`server/scheduler/background_scheduler.h`), whose retry loops back off with `Delay` and stop once `IsStopping()`; the io threads only do socket IO
+- No new `thread_local`
 
 ### Logging
 
@@ -635,9 +644,11 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - Prefer `template + static_assert` over concepts when possible -- gives better errors and compiles faster
 - Use C++20 concepts when `static_assert` would be awkward (e.g. constrained overload sets)
 - Avoid SFINAE / `enable_if` in new code
+- `template <typename T>`, never `template <class T>` (pre-commit `fix-template-typename` rewrites it)
 
 ### Library Preferences
 
+- Never implement what already exists: look for it in abseil (`absl::c_*` algorithms, strings, containers, synchronization), `server/utils/`, `iresearch/utils/` and DuckDB, and use, extend or patch that instead of building a parallel copy. A hand-written loop that an `absl::c_*` algorithm expresses is a duplicate too.
 - `absl::Hash` over `std::hash`; `irs::containers::FlatHashMap`, `FlatHashSet` or `NodeHashMap` (absl underneath) over `std::unordered_*`, which pre-commit `check-banned-calls` rejects in `server/` and `iresearch/`
 - `absl::btree_*` over `std::set`/`std::map` when appropriate
 - `std::span<const T>` over `std::initializer_list<T>` in parameters
@@ -681,6 +692,13 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
   `set.contains(std::string{sv})`).
 - Don't add includes speculatively -- only when clangd or the compiler
   asks for them.
+- Containers with heterogeneous lookup (absl, `irs::containers`): look up with the borrowed key (`map.find(sv)`, `map.try_emplace(sv)`), never a temporary `std::string` key, and never `find` followed by an insert of the same key. DuckDB's maps have no such lookup and need the `std::string`.
+- `emplace_back`, with aggregate members passed positionally.
+- A const/non-const accessor pair is one deducing-`this` template.
+- No virtual, hook, field or setting without a named consumer outside its own file; delete settings that stopped doing anything.
+- Caps and limits are `sdb_` SET variables read through `SettingRef`, not constants.
+- Production headers carry no test-only accessors or helpers.
+- Never hand-edit generated files; change the source of truth and rerun the generator (see [When you change ...](#when-you-change-)).
 
 ### Memory and Ownership
 
@@ -693,11 +711,12 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 
 ### Performance
 
-- Avoid allocations in hot paths
+- Avoid every unnecessary copy and allocation, however small; in hot paths avoid allocations altogether
 - Avoid virtual calls in hot paths (prevents inlining, which is the main cost)
 - Large buffers should be heap-allocated separately, not inlined as arrays/members in objects (inflates object size, fitting poorly into allocator size classes)
 - Prefer contiguous memory (vectors, arrays) over node-based containers (lists, maps)
 - Measure before optimizing -- don't guess
+- Measure on a quiet machine: check `uptime` and `ps -eo user,pcpu,comm --sort=-pcpu | head` first, never time while a build or test runs on the box, and discard numbers that overlapped one
 - Binary size matters: excessive inlining/templates hurt icache and build times
 - Validate performance claims with microbenchmarks under `tests/bench/micro/` (Google Benchmark). Register one with `add_bench(<name>)` in that directory's `CMakeLists.txt` -- `<name>.cpp` either registers `BENCHMARK`s or defines its own `Main` with `sdb::bench::AddMain` -- build with `ninja serenedb-bench-micro`, run it as `build/bin/serenedb-bench-micro <name> [--benchmark_filter=...]`. The same binary answers to `search-benchmark-game-build` and `search-benchmark-game-query`, the search benchmark game's tools.
 - Use the `bench` cmake preset for production-like numbers and `perf` to profile: `bench` omits frame pointers, so `perf record -g` call graphs break there.

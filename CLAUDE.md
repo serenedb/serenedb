@@ -2,10 +2,11 @@
 
 ## Rules
 
-- You don't allowed to write any comments until you explictly asked to write them.
-If you noticed outdated comment or make some comment outdated, just remove it until explicitly asked to keep it.
+- Don't write comments unless explicitly asked to. When a comment is outdated,
+or your change makes it outdated, remove it unless asked to keep it.
 
-- Don't use python/sed for normal code editing/reading, only for real scripting changes
+- Don't use python/sed for normal code editing or reading, only for real
+scripting changes.
 
 - Read `CONTRIBUTING.md` -- it covers build, tests, branches, commits, PRs, and
 C++ style. This file only flags traps that aren't in there.
@@ -26,9 +27,6 @@ repository's issues and PRs without GitHub linking back.
 cover the change. Full sqllogic/recovery suites, benchmarks and sanitizer
 builds only when the user asks; CI runs the suites.
 
-- A bug fix starts with a test that fails for the claimed reason. Never edit a
-test or an expectation just to make a failure go away.
-
 - C++ symbols are looked up with the LSP tool (`clangd-lsp` plugin), not grep:
 `goToDefinition`, `findReferences`, `incomingCalls`, `goToImplementation` for
 the overrides of a virtual, `hover` for types. grep stays the tool for strings,
@@ -42,11 +40,9 @@ missing, or ask the user to. clangd reads `compile_commands.json` from the
 checkout root or `build/`; with another build dir, run
 `ln -s <build dir>/compile_commands.json .` once.
 
-- Never implement what already exists. Before writing a helper, container,
-algorithm or utility, look for it in abseil (`absl::c_*` algorithms, strings,
-containers, synchronization), `server/utils/`, `iresearch/utils/` and DuckDB,
-and use or extend that instead. A hand-written loop that an `absl::c_*`
-algorithm already expresses is a duplicate too.
+- Before writing C++, read `CONTRIBUTING.md` "C++ Code Style". Before writing a
+helper, container, algorithm or utility, search abseil, `server/utils/`,
+`iresearch/utils/` and DuckDB for it: never implement what already exists.
 
 - Repo-wide knowledge goes into the repo, not into personal memory, which is
 per machine and invisible to the team. What every contributor needs goes into
@@ -70,8 +66,8 @@ created.
   never a fixed `/tmp/<name>`.
 - Kill only pids you started, never by name or pattern: `pkill serened` also
   stops the servers of the user's other sessions.
-- Before timing anything: `uptime` and `ps -eo user,pcpu,comm --sort=-pcpu | head`.
-  Never measure while a build or test runs on the box; discard overlapped numbers.
+- Before timing anything, follow `CONTRIBUTING.md` "Performance" (quiet
+  machine, discard overlapped numbers).
 
 ## Formatting
 

@@ -960,7 +960,6 @@ bool PushdownStoredExpression(duckdb::unique_ptr<duckdb::Expression>& expr,
   }
   const auto found = FindIResearchScan(root, *table_index);
   if (!found || found->get->table_index != *table_index ||
-      found->bind_data->IsViewBacked() ||
       !found->bind_data->relation.inverted_config) {
     return false;
   }

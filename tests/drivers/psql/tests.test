@@ -955,7 +955,7 @@ skipif postgres
 > Enter it again:
 > ERROR:  unrecognized configuration parameter "password_encryption"
 >
-> Did you mean: "password"
+> Did you mean: "s3_endpoint"
 
 \cd
 ----

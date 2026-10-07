@@ -9,10 +9,7 @@ control substitution on
 # catalog; this is what made tstz_pushdown_pgscan's cleanup DROP DATABASE flaky.
 # Here the holder reads only its own catalog, so it does not do the same to
 # other tests.
-#
-# It lives in the recovery tree for a server of its own: on the shared server,
-# another test's statement that listed every catalog while this one's was
-# attached would trip over what this test breaks.
+# exclusive
 
 statement ok
 ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pgdda_${__DATABASE__} (TYPE postgres);

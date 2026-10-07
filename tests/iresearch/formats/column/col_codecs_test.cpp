@@ -950,21 +950,6 @@ TEST_F(ColCodecsTest, AutoLevelsFollowTheData) {
   EXPECT_GT(top(text), 1) << ::testing::PrintToString(text);
 }
 
-TEST_F(ColCodecsTest, FixedLevelPinsAutoLevels) {
-  using duckdb::CompressionType;
-  irs::MemoryDirectory dir{};
-  Write(dir, CompressionType::COMPRESSION_AUTO,
-        {.compression_level = 5, .segment_target = 16 * 1024}, 8000, 2048,
-        kWordSoup);
-  for (const auto& [type, level] : BlockLevels(dir)) {
-    if (level.empty() || type == CompressionType::COMPRESSION_COL_FSST ||
-        type == CompressionType::COMPRESSION_COL_DICT_FSST) {
-      continue;
-    }
-    EXPECT_EQ(level, "5") << duckdb::CompressionTypeToString(type);
-  }
-}
-
 TEST_F(ColCodecsTest, AutoPicksColumnstoreLeaves) {
   using duckdb::CompressionType;
   const std::set<CompressionType> leaves{

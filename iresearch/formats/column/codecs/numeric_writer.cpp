@@ -57,9 +57,8 @@ constexpr LeafOption kCompactionPlan[] = {
   {NumericLeaf::Zstd, 1, kZstdPenalty},
 };
 
-std::span<const LeafOption> Plan(const ColCodecParams& params, bool floating,
-                                 bool codes) {
-  if (params.tier == WriteTier::Flush || floating || codes) {
+std::span<const LeafOption> Plan(bool leafless) noexcept {
+  if (leafless) {
     return kLeaflessPlan;
   }
   return kCompactionPlan;
@@ -157,12 +156,18 @@ class TypedSealer final : public NumericSealer {
   std::optional<NumericSegment> Seal(const ColCodecParams& params,
                                      uint64_t rival_bytes,
                                      NumericTuning& tuning, bool due) final {
-    if (!_any_valid || _values.empty() ||
-        _values.size() > std::numeric_limits<uint32_t>::max()) {
+    return SealWith(
+      params.tier == WriteTier::Flush || std::is_floating_point_v<T>,
+      rival_bytes, tuning, due);
+  }
+
+  std::optional<NumericSegment> SealWith(bool leafless, uint64_t rival_bytes,
+                                         NumericTuning& tuning, bool due) {
+    if (!_any_valid || _values.size() > std::numeric_limits<uint32_t>::max()) {
       return std::nullopt;
     }
     const auto rows = static_cast<double>(_values.size());
-    const auto plan = Plan(params, std::is_floating_point_v<T>, _codes_only);
+    const auto plan = Plan(leafless);
     if (!due) {
       if (!tuning.pick) {
         return std::nullopt;
@@ -172,24 +177,22 @@ class TypedSealer final : public NumericSealer {
       const auto option = std::ranges::find_if(plan, [&](const auto& o) {
         return o.leaf == tuning.pick->leaf && o.level == tuning.pick->level;
       });
+      std::optional<NumericSegment> out;
+      bool drift = true;
       if (c && option != plan.end()) {
-        auto out = Emit(*c, *option);
-        const auto bytes = static_cast<double>(out.bytes.size());
-        const bool drift = bytes > tuning.bytes_per_row * rows * 1.25;
-        if (drift || bytes * (1.0 + option->penalty) >=
-                       static_cast<double>(rival_bytes)) {
-          tuning.gap = 1;
-          tuning.since = 0;
-        }
-        if (bytes * (1.0 + option->penalty) <
+        out = Emit(*c, *option);
+        const auto bytes = static_cast<double>(out->bytes.size());
+        drift = bytes > tuning.bytes_per_row * rows * 1.25;
+        if (bytes * (1.0 + option->penalty) >=
             static_cast<double>(rival_bytes)) {
-          return out;
+          out.reset();
         }
-        return std::nullopt;
       }
-      tuning.gap = 1;
-      tuning.since = 0;
-      return std::nullopt;
+      if (drift || !out) {
+        tuning.gap = 1;
+        tuning.since = 0;
+      }
+      return out;
     }
 
     BuildCandidates(std::nullopt);
@@ -299,8 +302,7 @@ class TypedSealer final : public NumericSealer {
     c.transform = NumericTransform::Raw;
     c.stored = kWidth;
     c.values = raw;
-    if (wanted(NumericTransform::Raw) &&
-        !(_codes_only && for_stored < kWidth)) {
+    if (wanted(NumericTransform::Raw)) {
       AddWithShuffle(c);
     }
 
@@ -508,13 +510,11 @@ class TypedSealer final : public NumericSealer {
 
     out.clear();
     out.resize(h.off_data);
-    auto* head = reinterpret_cast<duckdb::data_ptr_t>(out.data());
     if (!c.dict.empty()) {
-      std::memcpy(head + h.off_dict, c.dict.data(), c.dict.size());
+      std::memcpy(out.data() + h.off_dict, c.dict.data(), c.dict.size());
     }
     auto& leaves = ThreadLeaves();
     std::vector<NumericFrameMeta> metas(frames);
-    std::string data;
     for (uint32_t f = 0; f < frames; ++f) {
       const auto begin = f * per;
       auto& m = metas[f];
@@ -525,18 +525,18 @@ class TypedSealer final : public NumericSealer {
           begin == 0 ? static_cast<U>(_values[0] - c.base) : _values[begin - 1];
       }
       const auto bytes = FrameRaw(c, f);
-      m.frame.comp_off = static_cast<uint32_t>(data.size());
+      m.frame.comp_off = static_cast<uint32_t>(out.size() - h.off_data);
       m.frame.raw_len = static_cast<uint32_t>(bytes.size());
       if (option.leaf != NumericLeaf::None) {
         const auto n = leaves.Compress(option.leaf, option.level, bytes.data(),
                                        bytes.size());
         if (n < bytes.size()) {
-          data.append(leaves.Out(), n);
+          out.append(leaves.Out(), n);
           m.frame.comp_len = static_cast<uint32_t>(n);
           continue;
         }
       }
-      data.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+      out.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
       m.frame.comp_len = m.frame.raw_len;
     }
     for (uint32_t f = 0; f < frames; ++f) {
@@ -556,14 +556,14 @@ class TypedSealer final : public NumericSealer {
       m.min = lo;
       m.max = hi;
     }
-    SDB_ENSURE(h.off_data + data.size() <= std::numeric_limits<uint32_t>::max(),
+    SDB_ENSURE(out.size() <= std::numeric_limits<uint32_t>::max(),
                "numeric codec: segment too large");
-    h.data_size = static_cast<uint32_t>(data.size());
+    h.data_size = static_cast<uint32_t>(out.size() - h.off_data);
+    auto* head = reinterpret_cast<duckdb::data_ptr_t>(out.data());
     h.Write(head);
     for (uint32_t f = 0; f < frames; ++f) {
       metas[f].Store(head + h.off_frames + f * kNumericFrameMetaSize);
     }
-    out.append(data);
   }
 
   duckdb::LogicalType _type;
@@ -588,15 +588,11 @@ class TypedSealer final : public NumericSealer {
 }  // namespace
 
 std::optional<NumericSegment> EncodeCodes(std::span<const uint32_t> codes,
-                                          const ColCodecParams& params,
                                           uint64_t rival_bytes,
                                           NumericTuning& tuning) {
-  if (codes.empty()) {
-    return std::nullopt;
-  }
   TypedSealer<uint32_t> sealer{duckdb::LogicalType::UINTEGER, codes.size()};
   sealer.AddCodes(codes);
-  return sealer.Seal(params, rival_bytes, tuning, tuning.Due());
+  return sealer.SealWith(true, rival_bytes, tuning, tuning.Due());
 }
 
 bool NumericApplies(duckdb::PhysicalType physical) noexcept {

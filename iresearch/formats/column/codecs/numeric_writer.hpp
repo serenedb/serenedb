@@ -63,7 +63,6 @@ struct NumericTuning {
 };
 
 std::optional<NumericSegment> EncodeCodes(std::span<const uint32_t> codes,
-                                          const ColCodecParams& params,
                                           uint64_t rival_bytes,
                                           NumericTuning& tuning);
 

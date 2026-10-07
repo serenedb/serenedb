@@ -219,6 +219,7 @@ struct Segment {
   uint32_t max_len = 0;
   std::string head;
   std::string data;
+  std::vector<uint32_t> codes;
   std::optional<duckdb::BaseStatistics> stats;
 
   uint64_t Size() const noexcept { return head.size() + data.size(); }
@@ -396,8 +397,7 @@ class Encoder {
     h.dictionary = _trained ? _tuning.dictionary_id : 0;
     h.raw_bytes = _raw;
 
-    const auto codes_encoding = codes.encoding;
-    if (_shape == Shape::Dedup && codes_encoding == CodesEncoding::Rle) {
+    if (codes.encoding == CodesEncoding::Rle) {
       _run_values.clear();
       _run_ends.clear();
       for (size_t i = 0; i < _codes.size(); ++i) {
@@ -412,7 +412,7 @@ class Encoder {
       _run_ends.push_back(static_cast<uint32_t>(_codes.size()));
       SDB_ASSERT(_run_values.size() == codes.run_count);
     }
-    h.codes_encoding = static_cast<uint8_t>(codes_encoding);
+    h.codes_encoding = static_cast<uint8_t>(codes.encoding);
     h.run_count = static_cast<uint32_t>(codes.run_count);
     h.run_width = codes.run_width;
 
@@ -448,7 +448,7 @@ class Encoder {
         base + h.off_lcps, _lcp_stream.data(), _lcp_stream.size(), h.lcp_width);
     }
     if (_shape == Shape::Dedup) {
-      if (codes_encoding == CodesEncoding::Rle) {
+      if (codes.encoding == CodesEncoding::Rle) {
         _run_values.resize(GroupPadded(_run_values.size()), 0);
         _run_ends.resize(GroupPadded(_run_ends.size()), 0);
         BitpackingPrimitives::PackBuffer<uint32_t, true>(
@@ -460,6 +460,7 @@ class Encoder {
         _codes.resize(GroupPadded(_rows), 0);
         BitpackingPrimitives::PackBuffer<uint32_t, true>(
           base + h.off_codes, _codes.data(), _codes.size(), h.code_width);
+        _codes.resize(_rows);
       }
     }
     if (!symtab.empty()) {
@@ -483,6 +484,7 @@ class Encoder {
     out.stats.emplace(std::move(stats));
     out.head.swap(_bytes);
     out.data.swap(_data);
+    out.codes.swap(_codes);
 
     _stats.Clear();
     _codes.clear();
@@ -829,12 +831,7 @@ class SegmentWriter {
   SegmentWriter(const StringAccumulator& acc, std::optional<StringChoice> named,
                 const ColCodecParams& params, const duckdb::LogicalType& type,
                 StringTuning& tuning)
-    : _acc{acc},
-      _named{named},
-      _params{params},
-      _type{type},
-      _tuning{tuning},
-      _fixed{params.compression_level} {}
+    : _acc{acc}, _named{named}, _params{params}, _type{type}, _tuning{tuning} {}
 
   SealOutcome Run(SegmentSink sink) {
     SealOutcome outcome{.sealed = true};
@@ -895,30 +892,9 @@ class SegmentWriter {
     }
     auto* base = reinterpret_cast<duckdb::data_ptr_t>(seg.head.data());
     auto h = Header::Parse(base, seg.Size());
-    if (h.codes_encoding != static_cast<uint8_t>(CodesEncoding::Bitpack) &&
-        h.codes_encoding != static_cast<uint8_t>(CodesEncoding::Rle)) {
-      return;
-    }
-    const auto unpack = [&](uint32_t off, uint64_t count, uint8_t width) {
-      std::vector<uint32_t> out(GroupPadded(count));
-      BitpackingPrimitives::UnPackBuffer<uint32_t>(
-        duckdb::data_ptr_cast(out.data()), base + off, out.size(), width);
-      out.resize(count);
-      return out;
-    };
-    std::vector<uint32_t> codes;
-    if (h.codes_encoding == static_cast<uint8_t>(CodesEncoding::Rle)) {
-      const auto values = unpack(h.off_codes, h.run_count, h.code_width);
-      const auto ends = unpack(h.off_runs, h.run_count, h.run_width);
-      codes.reserve(h.row_count);
-      for (size_t r = 0; r < values.size(); ++r) {
-        codes.resize(ends[r], values[r]);
-      }
-    } else {
-      codes = unpack(h.off_codes, h.row_count, h.code_width);
-    }
+    SDB_ASSERT(seg.codes.size() == h.row_count);
     const uint64_t current = h.off_symtab - h.off_codes;
-    auto encoded = EncodeCodes(codes, _params, current, _tuning.codes);
+    auto encoded = EncodeCodes(seg.codes, current, _tuning.codes);
     if (!encoded) {
       return;
     }
@@ -948,22 +924,10 @@ class SegmentWriter {
       return {*_tuning.choice, _tuning.level[leaf], _tuning.layout[leaf]};
     }
     const bool repeats =
-      _acc.entries.size() * kDedupMinRepeat <= _acc.row_count - _acc.null_count;
+      Repeats(_acc.entries.size(), _acc.row_count - _acc.null_count);
     return {{repeats ? Shape::Dedup : Shape::Plain, ByteCodec::Lz4},
-            Ladder(ByteCodec::Lz4)[0],
+            kLz4Fast[0],
             FrameLayout::Dictionary};
-  }
-
-  std::span<const uint8_t> Ladder(ByteCodec leaf) const noexcept {
-    if (leaf != ByteCodec::Fsst && _params.compression_level != 0) {
-      return _fixed;
-    }
-    for (const auto& plan : PlanFor(_params)) {
-      if (plan.leaf == leaf) {
-        return plan.ladder;
-      }
-    }
-    return kNoLevel;
   }
 
   bool CalibrationDue() noexcept {
@@ -977,7 +941,7 @@ class SegmentWriter {
                      bool drift) {
     _live.clear();
     _live.push_back(cut);
-    const auto base = Ladder(ByteCodec::Lz4)[0];
+    const auto base = kLz4Fast[0];
     const auto tuned = _tuning.layout[Index(ByteCodec::Lz4)];
     const auto layout = retune || tuned == FrameLayout::Dictionary
                           ? FrameLayout::FirstFrame
@@ -994,7 +958,7 @@ class SegmentWriter {
     _smallest = {.bytes = std::numeric_limits<uint64_t>::max()};
     Candidate chosen{.bytes = std::numeric_limits<uint64_t>::max()};
     for (const auto& plan : PlanFor(_params)) {
-      const auto c = Tune(shape, plan.leaf, begin, end, retune);
+      const auto c = Tune(shape, plan, begin, end, retune);
       if (c.bytes < chosen.bytes) {
         chosen = c;
       }
@@ -1047,9 +1011,10 @@ class SegmentWriter {
             EffectiveLevel<ByteCodec::Lz4>(level) <= 1);
   }
 
-  Candidate Tune(Shape shape, ByteCodec leaf, uint64_t begin, uint64_t end,
-                 bool retune) {
-    const auto ladder = Ladder(leaf);
+  Candidate Tune(Shape shape, const LeafPlan& plan, uint64_t begin,
+                 uint64_t end, bool retune) {
+    const auto leaf = plan.leaf;
+    const auto ladder = plan.ladder;
     auto& tuned = _tuning.level[Index(leaf)];
     auto& tuned_layout = _tuning.layout[Index(leaf)];
     size_t rung = 0;
@@ -1218,8 +1183,12 @@ class SegmentWriter {
     return seg;
   }
 
+  static bool Repeats(uint64_t entries, uint64_t values) noexcept {
+    return entries * kDedupMinRepeat <= values;
+  }
+
   static bool Repeats(const Segment& dedup) noexcept {
-    return dedup.entries * kDedupMinRepeat <= dedup.rows - dedup.nulls;
+    return Repeats(dedup.entries, dedup.rows - dedup.nulls);
   }
 
   static bool PlainMayWin(const Segment& dedup) noexcept {
@@ -1300,7 +1269,6 @@ class SegmentWriter {
   const ColCodecParams& _params;
   const duckdb::LogicalType& _type;
   StringTuning& _tuning;
-  uint8_t _fixed[1];
   DedupScratch _dedup;
   std::tuple<std::optional<Encoder<ByteCodec::Lz4>>,
              std::optional<Encoder<ByteCodec::Zstd>>,

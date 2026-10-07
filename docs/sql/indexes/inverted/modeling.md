@@ -30,6 +30,8 @@ You can index an **expression** over one or more columns, not just a bare column
 
 <SqlLogicTest id="sql/indexes/inverted/modeling/example_001" />
 
+To keep an indexed expression's value in the index, list it a second time with `included()`, as in `(lower(s)) words, (lower(s)) included()`. The index then stores the value like an `INCLUDE` column. A query that returns or filters on the same expression reads the stored value instead of computing it from the columns, so those columns don't have to be in the index, and [phrases without positions](./full-text-search.md#phrases-without-positions) check it directly.
+
 Indexed expressions must be deterministic and reference at least one column. Aggregates, subqueries and volatile functions are rejected at `CREATE INDEX`:
 
 <SqlLogicTest id="sql/indexes/inverted/modeling/example_006" />

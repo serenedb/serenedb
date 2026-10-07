@@ -1313,6 +1313,176 @@ CREATE INDEX inc_e_dict_with_opts ON inc_e_num USING inverted(
 db error: ERROR: Unknown built-in opclass 'verbatim_dict' on '(a + b)' (known: included, ivf, hnsw)
 
 
+# --- A stored expression is read back by scans: projections and filters use the stored value, not its columns.
+
+statement ok
+CREATE TABLE inc_e_read(id INT PRIMARY KEY, title VARCHAR, n INT);
+
+statement ok
+CREATE INDEX inc_e_read_idx ON inc_e_read USING inverted(
+    id, (lower(title)) verbatim_dict, (lower(title)) included(), (n + 1) included());
+
+statement ok
+INSERT INTO inc_e_read VALUES (1, 'New York', 10), (2, 'Boston', 20), (3, 'NEWARK', 30), (4, 'abc', 40);
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_read;
+
+query
+SELECT id, lower(title) AS l, upper(lower(title)) AS u, n + 1 AS m FROM inc_e_read_idx ORDER BY id;
+----
+id	l	u	m
+1	new york	NEW YORK	11
+2	boston	BOSTON	21
+3	newark	NEWARK	31
+4	abc	ABC	41
+
+query
+EXPLAIN SELECT id, lower(title), n + 1 FROM inc_e_read_idx;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: inc_e_read_idx          │
+│ Lookup: table                  │
+│ Projections: id (l),           │
+│              lower(title) (i), │
+│              (n + 1) (i)       │
+│ ~4 rows                        │
+╰────────────────────────────────╯
+
+query
+SELECT id FROM inc_e_read_idx WHERE lower(title) = 'boston';
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM inc_e_read_idx WHERE lower(title) = 'boston';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: inc_e_read_idx                  │
+│ Lookup: table                          │
+│ Projections: id                        │
+│ Column Filter: lower(title) = 'boston' │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+query
+SELECT id FROM inc_e_read_idx WHERE lower(title) LIKE 'new%' ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM inc_e_read_idx WHERE lower(title) @@ 'boston' AND n + 1 > 15;
+----
+id
+2
+
+statement ok
+UPDATE inc_e_read SET title = 'Berlin' WHERE id = 2;
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_read;
+
+query
+SELECT id, lower(title) AS l FROM inc_e_read_idx WHERE id = 2;
+----
+id	l
+2	berlin
+
+query
+SELECT id FROM inc_e_read_idx WHERE lower(title) = 'boston';
+----
+id
+
+
+statement ok
+CREATE INDEX inc_e_read_plain ON inc_e_read USING inverted(id, (lower(title)) verbatim_dict) INCLUDE (title);
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_read;
+
+query
+EXPLAIN SELECT id, lower(title) FROM inc_e_read_plain;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────╮
+│ Projections: id,           │
+│              lower(title)  │
+│ ~4 rows                    │
+╰──────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ───────────╮
+│ Index: inc_e_read_plain    │
+│ Lookup: table              │
+│ Projections: id (l),       │
+│              title (i)     │
+│ ~4 rows                    │
+╰────────────────────────────╯
+
+
+statement error
+CREATE INDEX inc_e_read_dup ON inc_e_read USING inverted(
+    id, (lower(title)) verbatim_dict, (LOWER(title)) verbatim_dict);
+----
+db error: ERROR: Expression 'lower(title)' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed expression. Stack `included(...)` on the same expression instead, or remove the duplicate.
+
+
+statement ok
+CREATE TABLE inc_e_search(id INT, title VARCHAR) WITH (storage = 'search');
+
+statement ok
+INSERT INTO inc_e_search VALUES (1, 'New York');
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_search;
+
+statement ok
+CREATE INDEX inc_e_search_idx ON inc_e_search USING inverted(
+    id, (lower(title)) verbatim_dict, (lower(title)) included());
+
+statement ok
+INSERT INTO inc_e_search VALUES (2, 'Boston'), (3, 'NEWARK');
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_search;
+
+query
+SELECT id, lower(title) AS l FROM inc_e_search_idx ORDER BY id;
+----
+id	l
+1	new york
+2	boston
+3	newark
+
+query
+SELECT id FROM inc_e_search_idx WHERE lower(title) @@ 'boston';
+----
+id
+2
+
+query
+SELECT id FROM inc_e_search_idx WHERE lower(title) LIKE 'new%' ORDER BY id;
+----
+id
+1
+3
+
+query
+EXPLAIN SELECT id, lower(title) FROM inc_e_search_idx WHERE lower(title) = 'boston';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: inc_e_search_idx                │
+│ Lookup: search                         │
+│ Projections: id, lower(title)          │
+│ Column Filter: lower(title) = 'boston' │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+
 # --- IVF on an indexed expression: `(expr) ivf(metric='l2')` builds an ANN graph over the expression's value.
 
 statement ok

@@ -103,6 +103,8 @@ When a change needs a test:
 
 - Bug fix: always, unless you can argue the bug is uncoverable. The test fails before the fix, for the reason the fix claims. Crash / recovery bugs go under `tests/sqllogic/recovery/`.
 - Never edit a test or an expectation just to make a failure go away.
+- Anything checked by hand (a crash/restart loop, a driver check) ends up as a committed recovery or driver test.
+- After an upstream update, a changed error text is fine (update the test); ok -> error is a regression to fix; error -> ok needs understanding before the expectation changes.
 - New feature / behaviour change: sqllogic test in the right subtree above. Add a unit test too if there's isolated C++ logic worth pinning.
 - CMake-only changes: rely on CI.
 - Doc-only changes: their SQL examples are sqllogic tests (see [Documenting with runnable examples](#documenting-with-runnable-examples)).
@@ -649,6 +651,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 ### Library Preferences
 
 - Never implement what already exists: look for it in abseil (`absl::c_*` algorithms, strings, containers, synchronization), `server/utils/`, `iresearch/utils/` and DuckDB, and use, extend or patch that instead of building a parallel copy. A hand-written loop that an `absl::c_*` algorithm expresses is a duplicate too.
+- No trivial pass-through wrappers around a library call: call the library directly.
 - `absl::Hash` over `std::hash`; `irs::containers::FlatHashMap`, `FlatHashSet` or `NodeHashMap` (absl underneath) over `std::unordered_*`, which pre-commit `check-banned-calls` rejects in `server/` and `iresearch/`
 - `absl::btree_*` over `std::set`/`std::map` when appropriate
 - `std::span<const T>` over `std::initializer_list<T>` in parameters
@@ -698,6 +701,8 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - No virtual, hook, field or setting without a named consumer outside its own file; delete settings that stopped doing anything.
 - Caps and limits are `sdb_` SET variables read through `SettingRef`, not constants.
 - Production headers carry no test-only accessors or helpers.
+- SQL is handled by the parser: never detect or rewrite SQL with text or regex matching; patch the parser or transformer instead.
+- No time-based heuristics: never gate engine behaviour on measured durations or wall-clock freshness; use exact, structural signals.
 - Never hand-edit generated files; change the source of truth and rerun the generator (see [When you change ...](#when-you-change-)).
 
 ### Memory and Ownership

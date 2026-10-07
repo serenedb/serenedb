@@ -227,6 +227,18 @@ target_include_directories(
 )
 
 ################################################################################
+### geographiclib-c library -- geodesic computations, used by duckdb_spatial
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "geographiclib-c" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_library(geographiclib STATIC "${CMAKE_CURRENT_SOURCE_DIR}/geographiclib-c/src/geodesic.c")
+target_include_directories(
+    geographiclib
+    SYSTEM
+    INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/geographiclib-c/src"
+)
+
+################################################################################
 ### re2 library
 ################################################################################
 

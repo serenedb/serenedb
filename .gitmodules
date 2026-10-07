@@ -194,3 +194,7 @@
 	path = third_party/zxc
 	url = https://github.com/serenedb/zxc.git
 	shallow = true
+[submodule "third_party/geographiclib-c"]
+	path = third_party/geographiclib-c
+	url = https://github.com/serenedb/geographiclib-c.git
+	shallow = true

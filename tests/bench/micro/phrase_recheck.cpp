@@ -285,14 +285,11 @@ irs::ByPhraseOptions Parse(std::string_view text,
 struct Mode {
   const char* name;
   bool positional;
-  std::optional<irs::PhraseMatch> match;
 };
 
 constexpr Mode kModes[] = {
-  {"positional", true, std::nullopt},
-  {"auto", false, std::nullopt},
-  {"automaton", false, irs::PhraseMatch::Automaton},
-  {"lists", false, irs::PhraseMatch::Positions},
+  {"positional", true},
+  {"checked", false},
 };
 
 irs::Filter::ptr MakeFilter(size_t dictionary,
@@ -309,7 +306,6 @@ irs::Filter::ptr MakeFilter(size_t dictionary,
       return std::shared_ptr<irs::analysis::Tokenizer>{
         kDictionaries[dictionary].make()};
     };
-    tokens->match = mode.match;
     filter->mutable_options()->set_tokens(std::move(tokens));
   }
   irs::Filter::ptr root = std::move(filter);

@@ -152,24 +152,36 @@ struct Outcome {
 };
 
 template<typename Words>
+irs::PhraseTokens TextOf() {
+  irs::PhraseTokens tokens;
+  tokens.text = {.columns = {0}, .types = {duckdb::LogicalType::VARCHAR}};
+  tokens.tokenizer = [] { return std::make_shared<Words>(); };
+  return tokens;
+}
+
+bool CheckText(irs::PhraseCheck& check, std::string_view text,
+               irs::PhraseVerdict& verdict) {
+  duckdb::DataChunk chunk;
+  chunk.Initialize(duckdb::Allocator::DefaultAllocator(),
+                   {duckdb::LogicalType::VARCHAR});
+  chunk.SetChildCardinality(1);
+  duckdb::FlatVector::GetDataMutable<duckdb::string_t>(chunk.data[0])[0] = {
+    text.data(), static_cast<uint32_t>(text.size())};
+  check.Bind(chunk);
+  return check.Check(0, verdict);
+}
+
+template<typename Words>
 Outcome Check(const irs::ByPhraseOptions& phrase, std::string_view text,
               bool count, std::optional<irs::PhraseMatch> match,
               std::span<const std::vector<irs::bstring>> expanded) {
   const irs::EmptyTermReader reader{0};
   const irs::TokenPhraseMatcher matcher{phrase, expanded, reader, match};
-  Words tokenizer;
-  irs::ValueAnalyzer analyzer;
-  irs::TokenPhraseSink sink{matcher, tokenizer.Traits(), count};
-  const duckdb::string_t value{text.data(), static_cast<uint32_t>(text.size())};
-  Outcome out;
-  sink.Begin();
-  EXPECT_TRUE(analyzer.Analyze(tokenizer, value, sink));
-  if (sink.Restart()) {
-    out.restarted = true;
-    EXPECT_TRUE(analyzer.Analyze(tokenizer, value, sink));
-  }
+  irs::PhraseCheck check{matcher, TextOf<Words>(), count};
   irs::PhraseVerdict verdict;
-  out.matched = sink.End(verdict);
+  Outcome out;
+  out.matched = CheckText(check, text, verdict);
+  out.restarted = check.Restarted();
   out.freq = verdict.freq;
   out.scale = verdict.scale;
   return out;
@@ -522,14 +534,10 @@ TEST(TokenPhraseMatcherTest, standalone_patterns_skip_shingles) {
   const irs::TokenPhraseMatcher matcher{
     phrase, Bytes("_"),
     [&](irs::bytes_view term) { return reader.Lookup(term); }};
-  DenseWords tokenizer;
-  irs::ValueAnalyzer analyzer;
-  irs::TokenPhraseSink sink{matcher, tokenizer.Traits(), true};
+  irs::PhraseCheck phrase_check{matcher, TextOf<DenseWords>(), true};
   const auto check = [&](std::string_view text) {
-    const duckdb::string_t value{text.data(),
-                                 static_cast<uint32_t>(text.size())};
     irs::PhraseVerdict verdict;
-    return irs::CheckValues(sink, analyzer, tokenizer, {&value, 1}, verdict);
+    return CheckText(phrase_check, text, verdict);
   };
   EXPECT_TRUE(check("the quick brown fox"));
   EXPECT_FALSE(check("the quick brown_fox"));
@@ -570,11 +578,9 @@ void ExpectFamilies(const tests::Families& expected,
 
 template<typename Words>
 std::shared_ptr<const irs::PhraseTokens> Tokens(
-  std::optional<irs::PhraseMatch> match, irs::field_id column = kStoreId) {
-  auto tokens = std::make_shared<irs::PhraseTokens>();
-  tokens->text = {.columns = {column}, .types = {duckdb::LogicalType::VARCHAR}};
-  tokens->tokenizer = [] { return std::make_shared<Words>(); };
-  tokens->match = match;
+  irs::field_id column = kStoreId) {
+  auto tokens = std::make_shared<irs::PhraseTokens>(TextOf<Words>());
+  tokens->text.columns = {column};
   return tokens;
 }
 
@@ -754,13 +760,9 @@ void ExpectLikePositions(const Index& index,
   const auto positional = Lowered(PhraseOn(kPositionalId, phrase));
   const auto expected = index.Run(*positional);
   const auto freqs = index.Freqs(*positional);
-  for (const auto match : kMatches) {
-    SCOPED_TRACE(MatchName(match));
-    const auto checked =
-      Lowered(PhraseOn(kPlainId, phrase, Tokens<Words>(match)));
-    ExpectFamilies(expected, index.Run(*checked));
-    tests::ExpectScores(freqs, index.Freqs(*checked));
-  }
+  const auto checked = Lowered(PhraseOn(kPlainId, phrase, Tokens<Words>()));
+  ExpectFamilies(expected, index.Run(*checked));
+  tests::ExpectScores(freqs, index.Freqs(*checked));
 }
 
 irs::ByPhraseOptions RandomPatternPhrase(
@@ -820,16 +822,16 @@ void ExpectDeferredLikeInline(const Index& index,
                               std::span<const std::string> docs,
                               const irs::ByPhraseOptions& phrase) {
   SCOPED_TRACE(Describe(phrase));
+  const auto expected =
+    index.Docs(*Lowered(PhraseOn(kPlainId, phrase, Tokens<Words>())));
+  auto deferred = Lowered(PhraseOn(kPlainId, phrase, Tokens<Words>()));
+  ASSERT_EQ(irs::Type<irs::ByPhrase>::id(), deferred->type());
+  Defer(*deferred);
+  const auto& options =
+    irs::utils::downCast<irs::ByPhrase>(*deferred).options();
+  ASSERT_TRUE(irs::TokenPhraseMatcher::Standalone(options));
   for (const auto match : kMatches) {
     SCOPED_TRACE(MatchName(match));
-    const auto expected =
-      index.Docs(*Lowered(PhraseOn(kPlainId, phrase, Tokens<Words>(match))));
-    auto deferred = Lowered(PhraseOn(kPlainId, phrase, Tokens<Words>(match)));
-    ASSERT_EQ(irs::Type<irs::ByPhrase>::id(), deferred->type());
-    Defer(*deferred);
-    const auto& options =
-      irs::utils::downCast<irs::ByPhrase>(*deferred).options();
-    ASSERT_TRUE(irs::TokenPhraseMatcher::Standalone(options));
     const irs::TokenPhraseMatcher matcher{options, options.word_separator(),
                                           index.Reader(), kPlainId, match};
     irs::PhraseCheck check{matcher, *options.tokens(), false};
@@ -954,13 +956,10 @@ TEST(TokenPhraseIndexTest, conjunctions_seek_into_checked_batches) {
     SCOPED_TRACE(text);
     const auto expected =
       index.Run(*LoweredAnd(PhraseOn(kPositionalId, Phrase(text)), "rare"));
-    for (const auto match : kMatches) {
-      SCOPED_TRACE(MatchName(match));
-      ExpectFamilies(
-        expected, index.Run(*LoweredAnd(
-                    PhraseOn(kPlainId, Phrase(text), Tokens<DenseWords>(match)),
-                    "rare")));
-    }
+    ExpectFamilies(
+      expected,
+      index.Run(*LoweredAnd(
+        PhraseOn(kPlainId, Phrase(text), Tokens<DenseWords>()), "rare")));
     ExpectLikePositions<DenseWords>(index, Phrase(text));
   }
 }
@@ -972,27 +971,23 @@ TEST(TokenPhraseIndexTest, without_frequency_every_family_scores_constant) {
   const Index index{docs,
                     std::type_identity<DenseWords>{},
                     {.plain = irs::IndexFeatures::None}};
-  for (const auto match : kMatches) {
-    SCOPED_TRACE(MatchName(match));
-    const auto phrase = [&] {
-      return PhraseOn(kPlainId, Phrase("quick brown"),
-                      Tokens<DenseWords>(match));
-    };
-    const auto expect_constant = [&](const irs::Filter& filter,
-                                     std::vector<irs::doc_id_t> expected) {
-      const auto families = index.Run(filter);
-      EXPECT_EQ(expected, families.docs);
-      ASSERT_EQ(expected.size(), families.hits.size());
-      const auto score = families.hits.begin()->second;
-      for (const auto& [doc, value] : families.hits) {
-        EXPECT_FLOAT_EQ(score, value) << doc;
-      }
-      tests::ExpectScores(families.hits, families.fill_scores);
-      tests::ExpectScores(families.hits, families.probe_scores);
-    };
-    expect_constant(*Lowered(phrase()), {0, 1, 3, 4});
-    expect_constant(*LoweredAnd(phrase(), "rare"), {0, 1});
-  }
+  const auto phrase = [] {
+    return PhraseOn(kPlainId, Phrase("quick brown"), Tokens<DenseWords>());
+  };
+  const auto expect_constant = [&](const irs::Filter& filter,
+                                   std::vector<irs::doc_id_t> expected) {
+    const auto families = index.Run(filter);
+    EXPECT_EQ(expected, families.docs);
+    ASSERT_EQ(expected.size(), families.hits.size());
+    const auto score = families.hits.begin()->second;
+    for (const auto& [doc, value] : families.hits) {
+      EXPECT_FLOAT_EQ(score, value) << doc;
+    }
+    tests::ExpectScores(families.hits, families.fill_scores);
+    tests::ExpectScores(families.hits, families.probe_scores);
+  };
+  expect_constant(*Lowered(phrase()), {0, 1, 3, 4});
+  expect_constant(*LoweredAnd(phrase(), "rare"), {0, 1});
 }
 
 TEST(TokenPhraseIndexTest, deferred_check_agrees_with_inline) {
@@ -1051,52 +1046,48 @@ TEST(TokenPhraseIndexTest, expression_over_stored_columns) {
     SCOPED_TRACE(text);
     const auto expected =
       index.Run(*Lowered(PhraseOn(kPositionalId, Phrase(text))));
-    for (const auto match : kMatches) {
-      SCOPED_TRACE(MatchName(match));
-      auto tokens =
-        std::make_shared<irs::PhraseTokens>(*Tokens<DenseWords>(match));
-      tokens->text = {
-        .columns = {kDecoyId, kStoreId},
-        .types = {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-        .expression = [] { return std::make_unique<SecondColumn>(); }};
-      ExpectFamilies(
-        expected,
-        index.Run(*Lowered(PhraseOn(kPlainId, Phrase(text), tokens))));
-    }
+    auto tokens = std::make_shared<irs::PhraseTokens>(*Tokens<DenseWords>());
+    tokens->text = {
+      .columns = {kDecoyId, kStoreId},
+      .types = {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
+      .expression = [] { return std::make_unique<SecondColumn>(); }};
+    ExpectFamilies(
+      expected, index.Run(*Lowered(PhraseOn(kPlainId, Phrase(text), tokens))));
   }
 }
 
 TEST(TokenPhraseIndexTest, without_stored_column_matches_nothing) {
   const std::vector<std::string> docs{"quick brown fox", "quick brown"};
   const Index index{docs, std::type_identity<DenseWords>{}};
-  const auto filter =
-    PhraseOn(kPlainId, Phrase("quick brown"),
-             Tokens<DenseWords>(std::nullopt, irs::field_id{42}));
+  const auto filter = PhraseOn(kPlainId, Phrase("quick brown"),
+                               Tokens<DenseWords>(irs::field_id{42}));
   EXPECT_TRUE(index.Docs(filter).empty());
   const auto checked =
-    PhraseOn(kPlainId, Phrase("quick brown"), Tokens<DenseWords>(std::nullopt));
+    PhraseOn(kPlainId, Phrase("quick brown"), Tokens<DenseWords>());
   EXPECT_EQ((std::vector<irs::doc_id_t>{0, 1}), index.Docs(checked));
   EXPECT_TRUE(index.Docs(PhraseOn(kPlainId, Phrase("quick brown"))).empty());
 }
 
 TEST(TokenPhraseFilterTest, equality_covers_tokens) {
   const auto base = Phrase("quick brown");
-  const auto tokens = Tokens<DenseWords>(std::nullopt);
+  const auto tokens = Tokens<DenseWords>();
   auto checked = base;
   checked.set_tokens(tokens);
   EXPECT_NE(base, checked);
 
   auto twin = base;
-  twin.set_tokens(Tokens<DenseWords>(std::nullopt));
+  twin.set_tokens(Tokens<DenseWords>());
   EXPECT_EQ(checked, twin);
 
   auto elsewhere = base;
-  elsewhere.set_tokens(Tokens<DenseWords>(std::nullopt, irs::field_id{42}));
+  elsewhere.set_tokens(Tokens<DenseWords>(irs::field_id{42}));
   EXPECT_NE(checked, elsewhere);
 
-  auto forced = base;
-  forced.set_tokens(Tokens<DenseWords>(irs::PhraseMatch::Automaton));
-  EXPECT_NE(checked, forced);
+  auto later = std::make_shared<irs::PhraseTokens>(*tokens);
+  later->deferred = true;
+  auto deferred = base;
+  deferred.set_tokens(std::move(later));
+  EXPECT_NE(checked, deferred);
 
   auto spec = std::make_shared<irs::PhraseTokens>(*tokens);
   spec->spec = Phrase("quick brown fox");
@@ -1111,15 +1102,14 @@ TEST(TokenPhraseFilterTest, equality_covers_tokens) {
 
 TEST(TokenPhraseFilterTest, simplify_keeps_one_slot_phrases_with_tokens) {
   const auto checked =
-    Lowered(PhraseOn(kPlainId, Phrase("quick"), Tokens<DenseWords>({})));
+    Lowered(PhraseOn(kPlainId, Phrase("quick"), Tokens<DenseWords>()));
   EXPECT_EQ(irs::Type<irs::ByPhrase>::id(), checked->type());
   const auto plain = Lowered(PhraseOn(kPlainId, Phrase("quick")));
   EXPECT_NE(irs::Type<irs::ByPhrase>::id(), plain->type());
 }
 
 TEST(TokenPhraseFilterTest, lowering_reaches_the_checked_words) {
-  auto tokens =
-    std::make_shared<irs::PhraseTokens>(*Tokens<DenseWords>(std::nullopt));
+  auto tokens = std::make_shared<irs::PhraseTokens>(*Tokens<DenseWords>());
   irs::ByPhraseOptions words;
   PushTerm(words, "quick", 0, 0);
   words.push_back<irs::ByWildcardOptions>().term = Bytes("br%");

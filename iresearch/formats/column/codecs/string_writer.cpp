@@ -81,7 +81,6 @@ struct LeafPlan {
   std::span<const uint8_t> ladder;
 };
 
-constexpr LeafPlan kSpeedPlan[] = {{ByteCodec::Lz4, kLz4Fast}};
 constexpr LeafPlan kRefreshPlan[] = {{ByteCodec::Fsst, kNoLevel},
                                      {ByteCodec::Lz4, kLz4Fast}};
 constexpr LeafPlan kBalancedPlan[] = {{ByteCodec::Fsst, kNoLevel},
@@ -108,9 +107,6 @@ constexpr FrameShape ShapeOf() noexcept {
 }
 
 std::span<const LeafPlan> PlanFor(const ColCodecParams& params) noexcept {
-  if (params.objective == AutoObjective::Speed) {
-    return kSpeedPlan;
-  }
   if (params.tier == WriteTier::Flush) {
     return kRefreshPlan;
   }
@@ -1380,8 +1376,7 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
 
 bool TrainsDictionary(std::optional<StringChoice> named,
                       const ColCodecParams& params) noexcept {
-  if (params.objective == AutoObjective::Speed ||
-      params.tier == WriteTier::Flush) {
+  if (params.tier == WriteTier::Flush) {
     return false;
   }
   return !named || Trainable(named->leaf);

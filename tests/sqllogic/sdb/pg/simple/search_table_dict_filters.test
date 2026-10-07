@@ -3,7 +3,7 @@ CREATE TABLE df_s (a INTEGER PRIMARY KEY,
                    k TEXT USING COMPRESSION dict_fsst,
                    l TEXT USING COMPRESSION dict_lz4,
                    p TEXT USING COMPRESSION fsst)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, segment_target = 65536);
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, row_group_size = 16384);
 
 statement ok
 CREATE TABLE df_d (a INTEGER PRIMARY KEY, k TEXT, l TEXT, p TEXT);

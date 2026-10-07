@@ -1014,9 +1014,6 @@ TEST_F(ColCodecsTest, AutoObjectivePicksTheLeaf) {
     }
     return bytes;
   };
-  const std::set<CompressionType> lz4{
-    CompressionType::COMPRESSION_LZ4, CompressionType::COMPRESSION_DICT_LZ4,
-    CompressionType::COMPRESSION_UNCOMPRESSED};
   const std::set<CompressionType> balanced{
     CompressionType::COMPRESSION_LZ4,
     CompressionType::COMPRESSION_DICT_LZ4,
@@ -1039,19 +1036,12 @@ TEST_F(ColCodecsTest, AutoObjectivePicksTheLeaf) {
     {"long-text", &kLongTextWithNulls, 3000},
   };
   for (const auto& corpus : corpora) {
-    std::set<CompressionType> speed_types;
     std::set<CompressionType> balanced_types;
     std::set<CompressionType> size_types;
-    const auto speed_bytes = written(irs::AutoObjective::Speed, *corpus.value,
-                                     corpus.rows, speed_types);
     const auto balanced_bytes = written(
       irs::AutoObjective::Balanced, *corpus.value, corpus.rows, balanced_types);
     const auto size_bytes =
       written(irs::AutoObjective::Size, *corpus.value, corpus.rows, size_types);
-    for (const auto t : speed_types) {
-      EXPECT_TRUE(lz4.contains(t))
-        << corpus.name << " " << duckdb::CompressionTypeToString(t);
-    }
     for (const auto t : balanced_types) {
       EXPECT_TRUE(balanced.contains(t))
         << corpus.name << " " << duckdb::CompressionTypeToString(t);
@@ -1059,9 +1049,6 @@ TEST_F(ColCodecsTest, AutoObjectivePicksTheLeaf) {
     EXPECT_LE(size_bytes, balanced_bytes + balanced_bytes / 20)
       << corpus.name << " size " << size_bytes << " balanced "
       << balanced_bytes;
-    EXPECT_LE(balanced_bytes, speed_bytes + speed_bytes / 20)
-      << corpus.name << " balanced " << balanced_bytes << " speed "
-      << speed_bytes;
   }
 }
 
@@ -1972,22 +1959,6 @@ TEST_F(ColCodecsTest, LargeColumnsTrainADictionary) {
   }
 }
 
-TEST_F(ColCodecsTest, SpeedObjectiveDoesNotTrain) {
-  constexpr uint64_t kRows = 120000;
-  const Value value = [](uint64_t g) -> std::optional<std::string> {
-    return "https://shop" + std::to_string(g % 997) + ".example.org/catalog/" +
-           std::to_string((g * 7919) % 100003) +
-           "/item?id=" + std::to_string(g);
-  };
-  irs::MemoryDirectory dir{};
-  Write(dir, duckdb::CompressionType::COMPRESSION_AUTO,
-        {.objective = irs::AutoObjective::Speed}, kRows, 16384, value);
-  for (const auto& d : SegmentInfo(dir, "dictionary")) {
-    EXPECT_FALSE(d.starts_with("trained")) << d;
-  }
-  Verify(dir, duckdb::CompressionType::COMPRESSION_AUTO, kRows, value);
-}
-
 TEST_F(ColCodecsTest, RefreshMeasuresOnlyTheCheapLeaves) {
   constexpr uint64_t kRows = 60000;
   const Value value = [](uint64_t g) -> std::optional<std::string> {
@@ -1999,8 +1970,7 @@ TEST_F(ColCodecsTest, RefreshMeasuresOnlyTheCheapLeaves) {
            std::to_string((g * 13) % 65536) + " bytes";
   };
   for (const auto objective :
-       {irs::AutoObjective::Balanced, irs::AutoObjective::Size,
-        irs::AutoObjective::Speed}) {
+       {irs::AutoObjective::Balanced, irs::AutoObjective::Size}) {
     irs::MemoryDirectory dir{};
     Write(dir, duckdb::CompressionType::COMPRESSION_AUTO,
           {.objective = objective, .tier = irs::WriteTier::Flush}, kRows, 8192,
@@ -2012,11 +1982,7 @@ TEST_F(ColCodecsTest, RefreshMeasuresOnlyTheCheapLeaves) {
     const auto levels = SegmentInfo(dir, "level");
     ASSERT_EQ(codecs.size(), levels.size());
     for (size_t i = 0; i < codecs.size(); ++i) {
-      if (objective == irs::AutoObjective::Speed) {
-        EXPECT_EQ(codecs[i], "lz4");
-      } else {
-        EXPECT_TRUE(codecs[i] == "lz4" || codecs[i] == "fsst") << codecs[i];
-      }
+      EXPECT_TRUE(codecs[i] == "lz4" || codecs[i] == "fsst") << codecs[i];
       if (codecs[i] == "lz4") {
         EXPECT_EQ(levels[i], "1");
       }

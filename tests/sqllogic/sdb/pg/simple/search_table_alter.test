@@ -83,7 +83,7 @@ reloptions
 statement ok
 DROP TABLE alt;
 
-# Codec options. Two batches with the same values land in two segments; the
+# Column codecs. Two batches with the same values land in two segments; the
 # second is written after the ALTER.
 statement ok
 CREATE TABLE alc (a INTEGER PRIMARY KEY, v TEXT, n INTEGER)
@@ -96,16 +96,7 @@ statement ok
 VACUUM (REFRESH_TABLE) alc;
 
 statement ok
-ALTER TABLE alc ALTER COLUMN v SET COMPRESSION dict_zstd;
-
-statement ok
-ALTER TABLE alc SET (compression_level = 19, segment_target = 16384, compression_objective = 'size');
-
-query
-SELECT reloptions FROM pg_class WHERE relname = 'alc';
-----
-reloptions
-{refresh_interval=0,compaction_interval=0,cleanup_interval_step=1,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152,row_group_size=122880,segment_memory_max=268435456,compression_level=19,segment_target=16384,compression_objective=size}
+ALTER TABLE alc ALTER COLUMN v SET COMPRESSION dict_zstd(compression_level = 19);
 
 statement ok
 INSERT INTO alc SELECT a, 'event ' || (a % 3000) || ' completed for user ' || (a % 1000) || ' status ok', a FROM range(9000, 18000) t(a);
@@ -114,14 +105,14 @@ statement ok
 VACUUM (REFRESH_TABLE) alc;
 
 query
-SELECT row_group_id, compression, count(*) > 1 AS cut
+SELECT row_group_id, compression
 FROM pragma_storage_info('alc')
 WHERE column_name = 'v' AND segment_type <> 'VALIDITY'
 GROUP BY ALL ORDER BY ALL;
 ----
-row_group_id	compression	cut
-0	DICT_FSST	f
-1	DICT_ZSTD	t
+row_group_id	compression
+0	DICT_FSST
+1	DICT_ZSTD
 
 statement ok
 VACUUM (COMPACT_TABLE) alc;
@@ -158,12 +149,9 @@ WHERE column_name = 'v' AND segment_type <> 'VALIDITY';
 compression
 DICT_ZSTD
 
-# DEFAULT returns the column to auto; RESET restores the table defaults.
+# DEFAULT returns the column to auto.
 statement ok
 ALTER TABLE alc ALTER COLUMN v SET COMPRESSION DEFAULT;
-
-statement ok
-ALTER TABLE alc RESET (compression_level, segment_target, compression_objective);
 
 query
 SELECT reloptions FROM pg_class WHERE relname = 'alc';
@@ -200,21 +188,9 @@ CREATE TABLE public.alc(a INTEGER PRIMARY KEY, v VARCHAR, n INTEGER)
 
 # Rejections.
 statement error
-ALTER TABLE alc SET (segment_target = 1000);
+ALTER TABLE alc SET (compression_level = 3);
 ----
-db error: ERROR: WITH option "segment_target" must be a multiple of 4096 bytes of at least 16384
-
-
-statement error
-ALTER TABLE alc SET (compression_objective = 'fast');
-----
-db error: ERROR: WITH option "compression_objective" must be one of balanced, size, speed
-
-
-statement error
-ALTER TABLE alc SET (compression_level = 23);
-----
-db error: ERROR: WITH option "compression_level" must be between 0 and 22
+db error: ERROR: unrecognized parameter "compression_level"
 
 
 statement error

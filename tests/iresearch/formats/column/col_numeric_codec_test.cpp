@@ -328,8 +328,7 @@ class ColNumericCodecTest : public TestBase {
 TEST_F(ColNumericCodecTest, EveryTypeEveryShapeEveryObjective) {
   constexpr uint64_t kRows = 50000;
   for (const auto objective :
-       {irs::AutoObjective::Speed, irs::AutoObjective::Balanced,
-        irs::AutoObjective::Size}) {
+       {irs::AutoObjective::Balanced, irs::AutoObjective::Size}) {
     for (const auto& type : Types()) {
       for (const auto& shape : Shapes()) {
         SCOPED_TRACE(std::string{shape.name} + " " + type.ToString() + " " +

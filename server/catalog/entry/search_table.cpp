@@ -149,8 +149,7 @@ void BindCodecOptions(WithOptions& options) {
     });
   BindCodecOption(
     options, kCompressionObjectiveSetting, duckdb::LogicalType::VARCHAR,
-    "must be one of balanced, size, speed",
-    [](const duckdb::Value& v) -> Canon {
+    "must be one of balanced, size", [](const duckdb::Value& v) -> Canon {
       const auto objective = ParseCompressionObjective(
         duckdb::StringUtil::Lower(v.GetValue<std::string>()));
       if (!objective) {
@@ -371,8 +370,7 @@ void CheckColumnCompression(const duckdb::ColumnDefinition& column,
 std::optional<irs::AutoObjective> ParseCompressionObjective(
   std::string_view name) noexcept {
   for (const auto objective :
-       {irs::AutoObjective::Balanced, irs::AutoObjective::Size,
-        irs::AutoObjective::Speed}) {
+       {irs::AutoObjective::Balanced, irs::AutoObjective::Size}) {
     if (name == CompressionObjectiveName(objective)) {
       return objective;
     }
@@ -385,8 +383,6 @@ std::string_view CompressionObjectiveName(
   switch (objective) {
     case irs::AutoObjective::Size:
       return "size";
-    case irs::AutoObjective::Speed:
-      return "speed";
     case irs::AutoObjective::Balanced:
       break;
   }

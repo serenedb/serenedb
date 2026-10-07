@@ -172,8 +172,6 @@ struct ColArm {
 
 constexpr ColArm kNumArms[] = {
   {"auto", duckdb::CompressionType::COMPRESSION_AUTO, 0},
-  {"auto_speed", duckdb::CompressionType::COMPRESSION_AUTO, 0,
-   irs::AutoObjective::Speed},
   {"auto_size", duckdb::CompressionType::COMPRESSION_AUTO, 0,
    irs::AutoObjective::Size},
   {"bitpacking", duckdb::CompressionType::COMPRESSION_BITPACKING, 0},
@@ -185,8 +183,6 @@ constexpr ColArm kNumArms[] = {
 
 constexpr ColArm kColArms[] = {
   {"auto", duckdb::CompressionType::COMPRESSION_AUTO, 0},
-  {"auto_speed", duckdb::CompressionType::COMPRESSION_AUTO, 0,
-   irs::AutoObjective::Speed},
   {"auto_size", duckdb::CompressionType::COMPRESSION_AUTO, 0,
    irs::AutoObjective::Size},
   {"dict_fsst", duckdb::CompressionType::COMPRESSION_DICT_FSST, 0},

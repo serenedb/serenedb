@@ -98,8 +98,6 @@ constexpr Arm kArms[] = {
   {"auto", duckdb::CompressionType::COMPRESSION_AUTO, 0},
   {"auto_size", duckdb::CompressionType::COMPRESSION_AUTO, 0,
    irs::AutoObjective::Size},
-  {"auto_speed", duckdb::CompressionType::COMPRESSION_AUTO, 0,
-   irs::AutoObjective::Speed},
   {"zstd1", duckdb::CompressionType::COMPRESSION_ZSTD, 1},
   {"zstd3", duckdb::CompressionType::COMPRESSION_ZSTD, 3},
   {"uncompressed", duckdb::CompressionType::COMPRESSION_UNCOMPRESSED, 0},

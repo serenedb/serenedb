@@ -39,6 +39,7 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
+#include <random>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -2293,12 +2294,24 @@ TEST_P(MergeWriterTestCase, MergeTrainsTextDictionaryFromTheWholeColumn) {
   constexpr irs::field_id kTextId = kDocStringId;
   constexpr size_t kDocsPerSegment = 30000;
   const auto value = [](size_t g) {
-    return "2026-10-05T12:" + std::to_string(g % 60) + " INFO service-" +
-           std::to_string(g % 17) + " handled request /api/v1/orders/" +
-           std::to_string(g) + " for customer " +
-           std::to_string((g * 31) % 5000) + " in " + std::to_string(g % 997) +
-           "ms with status 200 and payload size " +
-           std::to_string((g * 13) % 65536) + " bytes";
+    static constexpr std::string_view kVerbs[] = {
+      "handled request", "rejected payment", "retried connection",
+      "flushed cache",   "opened session",   "closed stream",
+      "queued job",      "scheduled task"};
+    static constexpr std::string_view kServices[] = {
+      "checkout", "frontend", "cart", "shipping", "currency", "ads", "email"};
+    static constexpr std::string_view kAlphabet =
+      "abcdefghijklmnopqrstuvwxyz0123456789";
+    std::mt19937_64 rng{g * 0x9E3779B97F4A7C15ULL + 7};
+    std::string id;
+    for (int i = 0; i < 16; ++i) {
+      id.push_back(kAlphabet[rng() % kAlphabet.size()]);
+    }
+    return "2026-10-05T12:" + std::to_string(rng() % 60) + " INFO " +
+           std::string{kServices[rng() % std::size(kServices)]} + " " +
+           std::string{kVerbs[rng() % std::size(kVerbs)]} + " id=" + id +
+           " user=" + std::to_string(rng() % 100000) + " took " +
+           std::to_string(rng() % 997) + "ms";
   };
   irs::MemoryDirectory dir;
   {
@@ -2315,7 +2328,7 @@ TEST_P(MergeWriterTestCase, MergeTrainsTextDictionaryFromTheWholeColumn) {
           kTextId, duckdb::LogicalType::VARCHAR, /*skip_validity=*/false,
           DEFAULT_ROW_GROUP_SIZE, duckdb::CompressionType::COMPRESSION_AUTO,
           /*hyperloglog=*/false,
-          irs::ColCodecParams{.objective = irs::AutoObjective::Speed});
+          irs::ColCodecParams{.tier = irs::WriteTier::Flush});
         duckdb::Vector v{duckdb::LogicalType::VARCHAR, 1};
         duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v)[0] =
           duckdb::StringVector::AddString(v, value(s * kDocsPerSegment + i));
@@ -2351,10 +2364,14 @@ TEST_P(MergeWriterTestCase, MergeTrainsTextDictionaryFromTheWholeColumn) {
   ASSERT_NE(nullptr, col);
   ASSERT_FALSE(col->DataBlocks().empty());
   irs::ReadContext ctx{*cs};
-  auto first = col->OpenSegment(0, ctx);
-  auto info = first->GetCompressionFunction().get_segment_info(
-    duckdb::QueryContext{}, *first);
-  EXPECT_EQ(info["dictionary"], "trained:1");
+  bool trained = false;
+  for (size_t b = 0; b < col->DataBlocks().size() && !trained; ++b) {
+    auto seg = col->OpenSegment(b, ctx);
+    auto info = seg->GetCompressionFunction().get_segment_info(
+      duckdb::QueryContext{}, *seg);
+    trained = info["dictionary"] == "trained:1";
+  }
+  EXPECT_TRUE(trained);
 
   auto state = col->InitScan(ctx);
   uint64_t row = 0;

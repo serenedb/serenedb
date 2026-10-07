@@ -228,10 +228,6 @@ The background maintenance options are `refresh_interval`, `compaction_interval`
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_036" />
 
-The codec options are `compression_objective`, `compression_level` and `segment_target` (see [Columnstore storage and compression](../../indexes/inverted/columnstore.md)); `RESET` returns them to `'balanced'`, per-column tuning and 262144 bytes. They apply to the segments written after the change, by refreshes and by compaction; existing segments keep their encoding until compaction rewrites them, so `VACUUM (COMPACT_TABLE)` converts the whole table.
-
-<SqlLogicTest id="sql/statements/alter_table/index/example_037" />
-
 `row_group_size`, `segment_memory_max` and `optimize_top_k` are fixed at `CREATE TABLE`. An inverted index on the table does not prevent the change. The current values are listed in `pg_class.reloptions`. `SET` and `RESET` of storage options are supported only for search tables.
 
 ## `ALTER COLUMN … SET COMPRESSION`

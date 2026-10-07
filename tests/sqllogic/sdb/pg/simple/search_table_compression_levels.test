@@ -1,7 +1,6 @@
 # Per-column compression levels on search tables: USING COMPRESSION
 # codec(compression_level = N) on a column, 'codec(compression_level = N)' on
-# an INCLUDE column, the table-level WITH (compression_level) as the default,
-# and every rejection: codecs that take no level, levels out of each codec's
+# an INCLUDE column, and every rejection: codecs that take no level, levels out of each codec's
 # range, unknown or malformed options, and levels on transactional tables.
 
 statement ok
@@ -21,7 +20,7 @@ CREATE TABLE lvl_columns (a INTEGER PRIMARY KEY,
                           zstd_3 TEXT USING COMPRESSION zstd(compression_level = 3),
                           zstd_22 TEXT USING COMPRESSION zstd(compression_level = 22),
                           zstd_tbl TEXT USING COMPRESSION zstd)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, compression_level = 3);
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
 
 statement ok
 INSERT INTO lvl_columns SELECT a,
@@ -95,27 +94,6 @@ count
 
 statement ok
 DROP TABLE lvl_columns;
-
-# The table-level level is a default, and a codec clamps it to its own range;
-# a level named on the column is checked against that range instead.
-statement ok
-CREATE TABLE lvl_table_default (a INTEGER PRIMARY KEY, v_lz4 TEXT USING COMPRESSION lz4, v_zxc TEXT USING COMPRESSION dict_zxc, v_zstd TEXT USING COMPRESSION dict_zstd, v_own TEXT USING COMPRESSION lz4(compression_level = 2))
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, compression_level = 22);
-
-statement ok
-INSERT INTO lvl_table_default SELECT a, repeat('a' || a, 5), 'b' || (a % 9), 'c' || (a % 7), repeat('d' || a, 5) FROM range(5000) t(a);
-
-statement ok
-VACUUM (REFRESH_TABLE) lvl_table_default;
-
-query
-SELECT count(*) FROM lvl_table_default WHERE v_lz4 IS DISTINCT FROM repeat('a' || a, 5) OR v_zxc IS DISTINCT FROM 'b' || (a % 9) OR v_zstd IS DISTINCT FROM 'c' || (a % 7) OR v_own IS DISTINCT FROM repeat('d' || a, 5);
-----
-count
-0
-
-statement ok
-DROP TABLE lvl_table_default;
 
 # A level named on a column holds through compaction: two columns with the
 # same values at levels 1 and 19 stay apart after their segments merge.

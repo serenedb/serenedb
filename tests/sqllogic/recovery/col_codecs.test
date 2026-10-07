@@ -1,7 +1,6 @@
 # The .col string codecs (dict_lz4, dict_zstd, lz4, and the columnstore's own
 # dict_fsst / fsst) on search tables: named per column, on an INCLUDE column,
-# forced globally, tuned by the table-level compression_level / segment_target
-# options, refused on a transactional table, and read back after a restart so
+# forced globally, cut into several segments, refused on a transactional table, and read back after a restart so
 # the frames are decoded from disk rather than from the writer's memory.
 # force_compression is a global setting, so this file owns its serened
 # instance.
@@ -18,7 +17,7 @@ CREATE TABLE cc_named (a INTEGER PRIMARY KEY,
                        bn TEXT USING COMPRESSION lz4,
                        k TEXT USING COMPRESSION dict_fsst,
                        s TEXT USING COMPRESSION fsst)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, compression_level = 3);
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
 
 
 statement ok
@@ -188,10 +187,10 @@ mismatches
 0
 
 
-# --- segment_target cuts a column into several segments -----------------------
+# --- a long column is cut into several segments --------------------------------
 statement ok
 CREATE TABLE cc_small (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_lz4)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, segment_target = 65536);
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
 
 
 statement ok
@@ -216,19 +215,7 @@ mismatches
 0
 
 
-# --- option validation and where the codecs are refused -----------------------
-statement error
-CREATE TABLE cc_bad (a INTEGER PRIMARY KEY, v TEXT) WITH (storage = 'search', compression_level = 23);
-----
-db error: ERROR: WITH option "compression_level" must be between 0 and 22
-
-
-statement error
-CREATE TABLE cc_bad (a INTEGER PRIMARY KEY, v TEXT) WITH (storage = 'search', segment_target = 1000);
-----
-db error: ERROR: WITH option "segment_target" must be a multiple of 4096 bytes of at least 16384
-
-
+# --- where the codecs are refused ---------------------------------------------
 statement error
 CREATE TABLE cc_int (a INTEGER PRIMARY KEY, v INTEGER USING COMPRESSION dict_lz4) WITH (storage = 'search');
 ----

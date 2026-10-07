@@ -80,11 +80,7 @@ inline constexpr auto kSearchTableMaintenanceSettings = std::to_array({
   kCompactionFloorSegmentBytesSetting,
 });
 
-inline constexpr auto kSearchTableCodecOptions = std::to_array({
-  kCompressionLevelSetting,
-  kSegmentTargetSetting,
-  kCompressionObjectiveSetting,
-});
+inline constexpr std::array<std::string_view, 0> kSearchTableCodecOptions{};
 
 inline constexpr auto kSearchTableSettings = std::to_array({
   kRefreshIntervalSetting,
@@ -107,9 +103,6 @@ inline constexpr auto kSearchTableOptions = std::to_array({
   kRowGroupSizeSetting,
   kSegmentMemoryMaxSetting,
   kOptimizeTopKSetting,
-  kCompressionLevelSetting,
-  kSegmentTargetSetting,
-  kCompressionObjectiveSetting,
 });
 
 TableEngine ReadStorageEngine(

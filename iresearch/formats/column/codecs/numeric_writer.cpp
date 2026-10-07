@@ -50,7 +50,7 @@ struct LeafOption {
   double penalty;
 };
 
-constexpr LeafOption kSpeedPlan[] = {{NumericLeaf::None, 0, 0}};
+constexpr LeafOption kLeaflessPlan[] = {{NumericLeaf::None, 0, 0}};
 constexpr LeafOption kBalancedPlan[] = {
   {NumericLeaf::None, 0, 0},
   {NumericLeaf::Lz4, 1, kLz4Penalty},
@@ -64,10 +64,9 @@ constexpr LeafOption kSizePlan[] = {
 
 std::span<const LeafOption> Plan(const ColCodecParams& params, bool floating,
                                  bool codes) {
-  if (params.objective == AutoObjective::Speed ||
-      params.tier == WriteTier::Flush ||
+  if (params.tier == WriteTier::Flush ||
       ((floating || codes) && params.objective == AutoObjective::Balanced)) {
-    return kSpeedPlan;
+    return kLeaflessPlan;
   }
   if (params.objective == AutoObjective::Size) {
     return kSizePlan;

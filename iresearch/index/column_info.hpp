@@ -141,7 +141,6 @@ inline constexpr uint32_t kDefaultColSegmentTarget = 256 * 1024;
 enum class AutoObjective : uint8_t {
   Balanced = 0,
   Size = 1,
-  Speed = 2,
 };
 
 enum class WriteTier : uint8_t {

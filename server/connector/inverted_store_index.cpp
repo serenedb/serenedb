@@ -959,15 +959,10 @@ PublishedInvertedIndex PublishInvertedIndex(
   duckdb::CatalogEntry& relation,
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& bound_exprs) {
   const auto options = catalog::ResolveSettings(entry.options);
-  catalog::ClusterOf(context).LogArtifact(
-    duckdb::CatalogType::INDEX_ENTRY, entry.catalog.GetOid(), entry.oid,
-    {search::InvertedIndexStorage::GetPath(entry.catalog.GetOid(),
-                                           entry.ParentSchemaOid(),
-                                           relation.oid, entry.oid)},
-    false);
   auto storage = search::InvertedIndexStorage::Create(
-    entry.catalog.GetOid(), entry.ParentSchemaOid(), relation.oid, entry.oid,
-    options, entry.Config()->top_k_scorer, /*is_new=*/true);
+    entry.catalog.Cast<catalog::SereneDBCatalog>().Directory(),
+    entry.catalog.InMemory(), entry.catalog.GetOid(), entry.oid, options,
+    entry.Config()->top_k_scorer, /*is_new=*/true);
   storage->ApplyOptions(options);
   entry.AdoptStorage(storage);
   if (relation.type != duckdb::CatalogType::TABLE_ENTRY ||

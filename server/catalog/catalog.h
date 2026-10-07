@@ -26,8 +26,11 @@
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <iresearch/utils/static_strings.hpp>
+#include <memory>
 #include <string>
+#include <utility>
 
+#include "catalog/database_directory.h"
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/tokenizer.h"
 
@@ -52,8 +55,13 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
  public:
   static constexpr const char* kStorageType = "serenedb";
 
-  explicit SereneDBCatalog(duckdb::AttachedDatabase& db)
-    : duckdb::DuckCatalog{db, true} {}
+  SereneDBCatalog(duckdb::AttachedDatabase& db,
+                  std::shared_ptr<DatabaseDirectory> directory)
+    : duckdb::DuckCatalog{db, true}, _directory{std::move(directory)} {}
+
+  const std::shared_ptr<DatabaseDirectory>& Directory() const noexcept {
+    return _directory;
+  }
 
   std::string GetCatalogType() final { return kStorageType; }
 
@@ -183,6 +191,7 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
                          duckdb::DropInfo& info);
 
  private:
+  std::shared_ptr<DatabaseDirectory> _directory;
   std::atomic_bool _detached{false};
 };
 

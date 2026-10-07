@@ -39,6 +39,7 @@
 #include <iresearch/index/norm.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/fs_directory.hpp>
+#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/async.hpp>
@@ -49,17 +50,14 @@
 #include <iresearch/utils/serializer.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <memory>
-#include <system_error>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "query/transaction.h"
-#include "scheduler/background_scheduler.h"
 #include "search/scorer_options.h"
 #include "search/tick_domain.h"
-#include "server/utils/lifecycle.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
@@ -118,31 +116,15 @@ Tick InvertedIndexStorage::FlushBound(uint64_t generation,
   return unbounded;
 }
 
-std::filesystem::path InvertedIndexStorage::GetPath(duckdb::idx_t db_id,
-                                                    duckdb::idx_t schema_id,
-                                                    duckdb::idx_t table_id,
-                                                    duckdb::idx_t index_id) {
-  SDB_ASSERT(db_id != 0);
-  auto path = search::GetSearchEngine().GetPersistedPath(db_id);
-  if (schema_id != 0) {
-    path /= absl::StrCat(schema_id);
-  }
-  if (table_id != 0) {
-    SDB_ASSERT(schema_id != 0);
-    path /= absl::StrCat(table_id);
-  }
-  if (index_id != 0) {
-    SDB_ASSERT(table_id != 0);
-    path /= absl::StrCat(index_id);
-  }
-  return path;
-}
-
 InvertedIndexStorage::InvertedIndexStorage(
-  duckdb::idx_t db_id, duckdb::idx_t schema_id, duckdb::idx_t table_id,
-  duckdb::idx_t index_id, const catalog::InvertedIndexSettings& options,
+  std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
+  duckdb::idx_t db_id, duckdb::idx_t index_id,
+  const catalog::InvertedIndexSettings& options,
   const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new)
-  : _index_id{index_id}, _db_id{db_id}, _search{GetSearchEngine()} {
+  : _index_id{index_id},
+    _db_id{db_id},
+    _directory{std::move(directory)},
+    _search{GetSearchEngine()} {
   _tasks_settings.refresh_interval_msec = options.refresh_interval_ms;
   _tasks_settings.compaction_interval_msec = options.compaction_interval_ms;
   _tasks_settings.reindex_interval_msec = options.reindex_interval_ms;
@@ -154,30 +136,6 @@ InvertedIndexStorage::InvertedIndexStorage(
     options.compaction_floor_segment_bytes;
 
   SDB_ASSERT(index_id != 0);
-  _path = GetPath(db_id, schema_id, table_id, index_id);
-  const auto& path = _path;
-  // TODO(mbkkt) maybe we should use create_directories result instead of
-  // exists?
-  std::error_code ec;
-  bool path_exists = std::filesystem::exists(path, ec);
-  if (ec) {
-    THROW_SQL_ERROR(ERR_MSG("Failed to check existence of path '",
-                            path.string(), "' while initializing data store '",
-                            _index_id, "': ", ec.message()));
-  }
-  if (!path_exists) {
-    CreateStorageDir(path, ec);
-    if (ec) {
-      THROW_SQL_ERROR(ERR_MSG("Failed to create directory '", path.string(),
-                              "' while initializing data store '", _index_id,
-                              "': ", ec.message()));
-    }
-  }
-
-  const bool reopen = path_exists && !is_new;
-  const auto open_mode =
-    reopen ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
-           : irs::OpenMode::kOmCreate;
 
   // New indexes start at the current tick; existing directories override
   // both values from the persisted segment meta below.
@@ -189,8 +147,14 @@ InvertedIndexStorage::InvertedIndexStorage(
   resource_manager.readers = _readers_memory;
   resource_manager.compactions = _compactions_memory;
   resource_manager.file_descriptors = _file_descriptors_count;
-  _dir = std::make_unique<irs::MMapDirectory>(path, irs::DirectoryAttributes{},
-                                              resource_manager);
+  auto opened = OpenStorageDirectory(*_directory, index_id, is_new, in_memory,
+                                     resource_manager);
+  _dir = std::move(opened.directory);
+  _absent = opened.absent;
+  const bool reopen = opened.on_disk && !is_new;
+  const auto open_mode =
+    reopen ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
+           : irs::OpenMode::kOmCreate;
 
   irs::IndexWriterOptions writer_options;
   writer_options.ann_env = &AnnBuildEnv();
@@ -291,49 +255,28 @@ InvertedIndexStorage::InvertedIndexStorage(
     std::move(reader), std::move(file_manifest)));
 }
 
-bool CreateStorageDir(const std::filesystem::path& path, std::error_code& ec) {
-  bool created = false;
-  do {
-    created = std::filesystem::create_directories(path, ec);
-  } while (ec == std::errc::no_such_file_or_directory);
-  return created;
-}
-
-void RemoveStorageDir(const std::filesystem::path& path, size_t parent_levels) {
-  std::error_code ec;
-  const auto tombstone = DroppedStoragePath(path);
-  std::filesystem::rename(path, tombstone, ec);
-  std::filesystem::remove_all(ec ? path : tombstone, ec);
-  if (ec) {
-    SDB_WARN(GENERAL, "could not remove dropped storage '", path.string(),
-             "': ", ec.message());
-    return;
+StorageDirectory OpenStorageDirectory(
+  const catalog::DatabaseDirectory& database, duckdb::idx_t oid, bool is_new,
+  bool in_memory, const irs::ResourceManagementOptions& resources) {
+  std::optional<std::filesystem::path> path;
+  if (!in_memory) {
+    path = is_new ? database.CreateStorage(oid) : database.OpenStorage(oid);
   }
-  auto parent = path;
-  for (size_t level = 0; level < parent_levels; ++level) {
-    parent = parent.parent_path();
-    if (!std::filesystem::remove(parent, ec) || ec) {
-      return;
-    }
+  if (!path) {
+    return {.directory = std::make_unique<irs::MemoryDirectory>(
+              irs::DirectoryAttributes{}, resources),
+            .absent = !in_memory};
   }
-}
-
-void RemoveDroppedStorageDir(const std::filesystem::path& path,
-                             size_t parent_levels) {
-  if (lifecycle::IsStopping() || BackgroundScheduler::instance().IsStopping()) {
-    RemoveStorageDir(path, parent_levels);
-    return;
-  }
-  BackgroundScheduler::instance()
-    .Run([path, parent_levels] { RemoveStorageDir(path, parent_levels); })
-    .Detach();
+  return {.directory = std::make_unique<irs::MMapDirectory>(
+            *path, irs::DirectoryAttributes{}, resources),
+          .on_disk = true};
 }
 
 InvertedIndexStorage::~InvertedIndexStorage() {
   _writer.reset();
   _dir.reset();
   if (_dropped.load(std::memory_order_acquire)) {
-    RemoveDroppedStorageDir(_path, 3);
+    catalog::DatabaseDirectory::RemoveStorage(std::move(_directory), _index_id);
   }
 }
 

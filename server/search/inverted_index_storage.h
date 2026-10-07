@@ -32,7 +32,9 @@
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/resource_manager.hpp>
 #include <limits>
 #include <map>
 #include <memory>
@@ -41,6 +43,7 @@
 #include <utility>
 #include <vector>
 
+#include "catalog/database_directory.h"
 #include "catalog/persistence/inverted_index.h"
 #include "connector/file_manifest.h"
 #include "search/maintenance.h"
@@ -79,19 +82,15 @@ struct WalCursor {
   uint64_t offset = 0;
 };
 
-// Removes a dropped storage's directory tree, then up to `parent_levels`
-// ancestors that emptied out with it -- a still-populated ancestor stops the
-// walk. A failed removal is only logged, because a dropped object's ids are
-// never reissued.
-void RemoveDroppedStorageDir(const std::filesystem::path& path,
-                             size_t parent_levels);
-void RemoveStorageDir(const std::filesystem::path& path, size_t parent_levels);
-bool CreateStorageDir(const std::filesystem::path& path, std::error_code& ec);
+struct StorageDirectory {
+  std::unique_ptr<irs::Directory> directory;
+  bool on_disk = false;
+  bool absent = false;
+};
 
-inline std::filesystem::path DroppedStoragePath(std::filesystem::path path) {
-  path += ".dropped";
-  return path;
-}
+StorageDirectory OpenStorageDirectory(
+  const catalog::DatabaseDirectory& database, duckdb::idx_t oid, bool is_new,
+  bool in_memory, const irs::ResourceManagementOptions& resources);
 
 // Physical representation of a search index (InvertedIndex). Owns the
 // iresearch writer/reader and all mutable index state; lives in the
@@ -99,8 +98,9 @@ inline std::filesystem::path DroppedStoragePath(std::filesystem::path path) {
 class InvertedIndexStorage final
   : public std::enable_shared_from_this<InvertedIndexStorage> {
  public:
-  InvertedIndexStorage(duckdb::idx_t db_id, duckdb::idx_t schema_id,
-                       duckdb::idx_t table_id, duckdb::idx_t index_id,
+  InvertedIndexStorage(std::shared_ptr<catalog::DatabaseDirectory> directory,
+                       bool in_memory, duckdb::idx_t db_id,
+                       duckdb::idx_t index_id,
                        const catalog::InvertedIndexSettings& options,
                        const std::optional<irs::ScorerOptions>& top_k_scorer,
                        bool is_new);
@@ -112,22 +112,22 @@ class InvertedIndexStorage final
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);
   }
-  const std::filesystem::path& Path() const noexcept { return _path; }
-
-  static std::filesystem::path GetPath(duckdb::idx_t db_id,
-                                       duckdb::idx_t schema_id,
-                                       duckdb::idx_t table_id,
-                                       duckdb::idx_t index_id);
+  std::filesystem::path Path() const {
+    return _directory->StoragePath(_index_id);
+  }
+  bool Absent() const noexcept { return _absent; }
 
   // `db_id` is passed in rather than derived from the catalog: an index
   // created inside a transaction lives in that transaction's overlay, and so
   // may the schema its database has to be walked through.
   static std::shared_ptr<InvertedIndexStorage> Create(
-    duckdb::idx_t db_id, duckdb::idx_t schema_id, duckdb::idx_t table_id,
-    duckdb::idx_t index_id, const catalog::InvertedIndexSettings& options,
+    std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
+    duckdb::idx_t db_id, duckdb::idx_t index_id,
+    const catalog::InvertedIndexSettings& options,
     const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new) {
     return std::make_shared<InvertedIndexStorage>(
-      db_id, schema_id, table_id, index_id, options, top_k_scorer, is_new);
+      std::move(directory), in_memory, db_id, index_id, options, top_k_scorer,
+      is_new);
   }
 
   auto GetTransaction() {
@@ -331,7 +331,8 @@ class InvertedIndexStorage final
   // The database whose duckdb file backs the indexed table: its checkpoint
   // iteration bounds what a refresh makes durable.
   duckdb::idx_t _db_id;
-  std::filesystem::path _path;
+  std::shared_ptr<catalog::DatabaseDirectory> _directory;
+  bool _absent = false;
   std::atomic<bool> _dropped{false};
   SearchEngine& _search;
   // Accessed via std::atomic_load/std::atomic_store (libc++ lacks

@@ -4,6 +4,7 @@ add_executable(
     # SDB_* macro fires -- see tests_main.cpp comment.
     tests_main.cpp
     assertions_tests.cpp
+    database_directory_test.cpp
     docs_search_test.cpp
     duckdb_roundtrip_test.cpp
     duckdb_threads_test.cpp
@@ -33,7 +34,6 @@ add_executable(
     pointer_union_test.cpp
     random_test.cpp
     scorer_bounds_test.cpp
-    search_storage_dir_test.cpp
     serializer_binary_test.cpp
     serializer_test.cpp
     storage_version_test.cpp

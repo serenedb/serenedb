@@ -43,7 +43,6 @@
 #include <string>
 
 #include "catalog/catalog.h"
-#include "catalog/cluster.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/persistence/blob.h"
 #include "connector/column_id.h"
@@ -509,9 +508,6 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::Copy(
 
 void InvertedIndexEntry::OnDrop() {
   if (_storage) {
-    ClusterOf(catalog.GetDatabase())
-      .NoteDroppedArtifact(duckdb::CatalogType::INDEX_ENTRY, catalog.GetOid(),
-                           oid, {_storage->Path()});
     _storage->MarkDropped();
   }
   if (_search_table) {

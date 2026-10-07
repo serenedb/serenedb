@@ -26,7 +26,6 @@
 #include <absl/strings/escaping.h>
 
 #include <algorithm>
-#include <duckdb/common/file_system.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
@@ -35,15 +34,12 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/static_strings.hpp>
 #include <utility>
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
-#include "rest_server/database_path_feature.h"
 #include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
-#include "search/search_db_wal.h"
 #include "search/search_table_recovery.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
@@ -55,9 +51,7 @@ ABSL_DECLARE_FLAG(bool, skip_search_recovery);
 
 namespace sdb::search {
 
-SearchEngine::SearchEngine() : _dir_feature{DatabasePathFeature::instance()} {
-  gInstance = this;
-}
+SearchEngine::SearchEngine() { gInstance = this; }
 
 int SearchEngine::MaxConcurrentCompactions() noexcept {
   // The background pool is max(logical/4, 2) threads (--background_threads,
@@ -95,9 +89,6 @@ void SearchEngine::stop() {
   _stopping.store(true, std::memory_order_release);
   _loops.Done();
   _loops.Wait();
-  // Close the per-database WALs (flush + release file handles) before shutdown.
-  absl::MutexLock lock(&_db_wals_mu);
-  _db_wals.clear();
 }
 
 template<class Storage>
@@ -115,30 +106,5 @@ void SearchEngine::StartTasks(const std::shared_ptr<Storage>& storage) {
 template void SearchEngine::StartTasks(
   const std::shared_ptr<InvertedIndexStorage>&);
 template void SearchEngine::StartTasks(const std::shared_ptr<SearchTable>&);
-
-std::filesystem::path SearchEngine::GetPersistedPath(
-  duckdb::idx_t database_id) const {
-  std::filesystem::path path = _dir_feature.directory();
-  path /= irs::StaticStrings::kSearchRoot;
-  path /= absl::StrCat(database_id);
-  return path;
-}
-
-SearchDbWal& SearchEngine::GetDbWal(duckdb::idx_t database_id) {
-  absl::MutexLock lock(&_db_wals_mu);
-  auto it = _db_wals.find(database_id);
-  if (it == _db_wals.end()) {
-    // Borrow the process-wide FileSystem (owned by the DuckDB instance, which
-    // outlives the engine). The WAL lives at GetPersistedPath(db)/wal/.
-    auto& fs = duckdb::FileSystem::GetFileSystem(
-      irs::DuckDBEngine::Instance().instance());
-    auto wal_dir = GetPersistedPath(database_id) / "wal";
-    it = _db_wals
-           .emplace(database_id,
-                    std::make_unique<SearchDbWal>(fs, std::move(wal_dir)))
-           .first;
-  }
-  return *it->second;
-}
 
 }  // namespace sdb::search

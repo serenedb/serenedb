@@ -415,9 +415,7 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
                 table_name, " is not a search table in the catalog");
       return;
     }
-    const auto store = search::SearchTable::GetPath(
-      table->ParentCatalog().GetAttached().oid,
-      table->ParentSchema(context).oid, table->oid);
+    const auto store = table->Storage()->Path();
     for (const auto& file : std::filesystem::directory_iterator{store}) {
       if (file.is_regular_file()) {
         image.push_back(

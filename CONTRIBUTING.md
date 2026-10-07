@@ -216,7 +216,7 @@ A file never holds stale memory, though: a compression method writes every byte 
 
 Only two places record a storage version, a `serenedb_vN` value of DuckDB's `StorageVersion`:
 
-- The headers of each database file (`engine_duckdb/<oid>.db`). The file's write-ahead log and the database's search-table WAL follow it.
+- The headers of each database file (`engine_v1/<oid>/data.db`). The file's write-ahead log and the database's search-table WAL follow it.
 - `segments_N` of each search index directory. The directory's other files are only reached through it.
 
 SereneDB always writes `SERENEDB_LATEST`, and only into its own databases (`CREATE DATABASE`): an `ATTACH` of a DuckDB database refuses a SereneDB storage version, and nothing attaches a SereneDB database by path. A reader opens the versions from `SERENEDB_VERSION_LOWER` to `SERENEDB_VERSION_UPPER` and refuses the rest: a higher one as written by a newer release, a lower one as older than it reads (`duckdb::StorageVersionError`; the constants are in `third_party/duckdb/src/include/duckdb/storage/storage_info.hpp`).
@@ -258,13 +258,28 @@ A database file with a DuckDB storage version (a plain `ATTACH`, `serened shell`
 
 `tests/duckdb/run.sh --suite interop` checks both directions against the official `duckdb/duckdb` image; see [tests/duckdb/README.md](tests/duckdb/README.md).
 
+### Data directory
+
+```
+engine_v1/
+  catalog.wal          the catalog log: the definitions of every database
+  <database oid>/      one database
+    data.db            its DuckDB file, with data.db.wal beside it
+    search.wal.<tick>  its search-table WAL
+    <object oid>/      a search table, or an inverted index on a table or view
+```
+
+- Every directory has one owner, and only the owner creates or removes it. `catalog::DatabaseDirectory` owns `<database oid>/`. The database's catalog entry, its attachment (until DuckDB has closed the files, through `AttachedDatabase::HoldUntilClosed`), every storage of the database and every pending removal hold it, so after a drop it removes the directory last, once all of them let go. A storage removes its `<object oid>/` after its own drop or a rolled-back create; `DROP DATABASE` marks only the database.
+- A directory is created, and its parent fsynced, before the statement that creates its object commits. Paths are oids, so a rename moves nothing.
+- Boot removes what no live object owns: each `<database oid>/` that names no database right after the catalog log replays, before bootstrap may create the default database again, and each `<object oid>/` that names no storage inside an attached database once its objects are loaded. That covers a crash between a create and its commit and one between a drop and the removal. A missing catalog log beside database directories that hold anything stops the boot.
+
 ### Serialized structs
 
 Blobs stored in catalog entries (tokenizer configs, the inverted index payload), the view-backed index manifest and the segment references of the search-table WAL are written with `irs::utils::WriteTuple` and read with `ReadTuple`. An aggregate is a `BinarySerializer` object whose field ids are the positions of its members, and a member equal to its value in a value-initialized aggregate is not written. A struct boost::pfr cannot reflect (one holding a `std::vector<std::unique_ptr<T>>`) declares `SerdeFields(value)` returning `std::tie` of its members, in declaration order.
 
 ### Search-table WAL
 
-Each `.swal` frame is `[u64 size][u64 checksum][record]`. The record is a `BinarySerializer` object holding `tick` and then its sections and their ops, each with their own field ids. It records no storage version: the WAL belongs to one database and follows that database's file. The frame and the leading `tick` field never change.
+The WAL of a database's search tables is a series of segments in the database's directory, `search.wal.<first tick>` with the tick as 16 hex digits. Each frame is `[u64 size][u64 checksum][record]`. The record is a `BinarySerializer` object holding `tick` and then its sections and their ops, each with their own field ids. It records no storage version: the WAL belongs to one database and follows that database's file. The frame and the leading `tick` field never change.
 
 ## VSCode Setup
 

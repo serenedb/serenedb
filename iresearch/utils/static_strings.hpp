@@ -27,12 +27,6 @@
 // with all string constants
 namespace irs::StaticStrings {  // NOLINT
 
-// Datadir subtrees: the data DB (store tables), the catalog WAL, and the
-// iresearch storages.
-inline constexpr std::string_view kDataStoreRoot = "engine_duckdb";
-inline constexpr std::string_view kCatalogRoot = "engine_catalog";
-inline constexpr std::string_view kSearchRoot = "engine_search";
-
 // database names
 inline constexpr std::string_view kDefaultDatabase = "postgres";
 // user names

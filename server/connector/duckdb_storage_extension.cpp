@@ -95,23 +95,22 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
     database.permissions.owner =
       connection ? connection->GetRoleId() : pg::kRootUser;
     entry = cluster.CreateDatabase(transaction, database);
-    cluster.LogArtifact(
-      duckdb::CatalogType::DATABASE_ENTRY, cluster.GetAttached().oid,
-      entry->oid, catalog::DatabaseArtifacts(cluster.GetAttached(), entry->oid),
-      false);
     SDB_IF_FAILURE("unable_to_create") {
       THROW_SQL_ERROR(ERR_MSG("internal error"));
     }
   }
   db.oid = entry->oid;
+  const auto& directory =
+    entry->Cast<catalog::DatabaseCatalogEntry>().Directory();
   if (info.path.empty()) {
-    info.path = static_cast<const catalog::DataDirectory&>(*storage_info)
-                  .DatabaseFile(entry->oid);
+    info.path = directory->DataFile();
   }
+  db.HoldUntilClosed(duckdb::shared_ptr<duckdb::StorageExtensionInfo>{
+    std::shared_ptr<duckdb::StorageExtensionInfo>{directory}});
   // Every serenedb on-disk format sits behind our storage version, so a
   // duckdb-version database is unaffected by anything we change.
   catalog::RequestSereneDBStorageVersion(options);
-  return duckdb::make_uniq<catalog::SereneDBCatalog>(db);
+  return duckdb::make_uniq<catalog::SereneDBCatalog>(db, directory);
 }
 
 duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(

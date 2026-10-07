@@ -68,43 +68,13 @@ inline S2Cap FromPoint(S2Point origin, double distance) noexcept {
   return {origin, S1Angle::Radians(MetersToRadians(distance))};
 }
 
-template<typename Options, typename Acceptor>
-QueryBuilder::ptr MakeQuery(const SubReader& segment, const PrepareContext& ctx,
-                            QueryBuilder::ptr&& cells, score_t boost,
-                            const Options& options, Acceptor&& acceptor) {
-  if (!cells || cells->Kind() == QueryKind::Empty) {
-    return QueryBuilder::Empty();
+GeoPlan Cells(std::vector<std::string> terms, GeoAcceptor acceptor) {
+  if (terms.empty()) {
+    return {};
   }
-  const auto store_field_id = options.store_field_id;
-  const auto* col_reader = segment.GetColReader();
-  if (!col_reader || !col_reader->Column(store_field_id)) {
-    return QueryBuilder::Empty();
-  }
-  const auto make = [&]<typename Parser>(Parser parser) -> QueryBuilder::ptr {
-    auto query = memory::make_tracked<GeoQuery<Parser, Acceptor>>(
-      ctx.memory, segment, std::move(cells), store_field_id, std::move(parser),
-      std::forward<Acceptor>(acceptor), boost);
-    query->SetStats(ctx.Record());
-    return query;
-  };
-  switch (options.stored) {
-    case StoredType::Source:
-      if (options.source_is_wkb) {
-        return make(SourceWkbParser{});
-      }
-      if (options.source_is_point) {
-        return make(
-          SourcePointParser{options.point_latitude, options.point_longitude});
-      }
-      return make(SourceJsonParser{});
-    case StoredType::S2Region:
-      return make(S2ShapeParser{});
-    case StoredType::S2Point:
-    case StoredType::S2Centroid:
-      return make(S2PointParser{});
-  }
-  SDB_ASSERT(false);
-  return QueryBuilder::Empty();
+  return {.kind = GeoPlan::Kind::Cells,
+          .terms = std::move(terms),
+          .acceptor = acceptor};
 }
 
 QueryBuilder::ptr PrepareCells(const SubReader& segment,
@@ -145,6 +115,36 @@ QueryBuilder::ptr PrepareCells(const SubReader& segment,
   return MultiTermQuery::Finish(std::move(query), cells);
 }
 
+QueryBuilder::ptr MakeQuery(const SubReader& segment, const PrepareContext& ctx,
+                            irs::field_id field, score_t boost,
+                            const GeoFilterOptionsBase& options,
+                            const GeoPlan& plan) {
+  if (plan.kind != GeoPlan::Kind::Cells) {
+    return QueryBuilder::Empty();
+  }
+  auto cells = PrepareCells(segment, ctx, plan.terms, field);
+  if (!cells || cells->Kind() == QueryKind::Empty) {
+    return QueryBuilder::Empty();
+  }
+  const auto store_field_id = options.store_field_id;
+  if (field_limits::valid(store_field_id)) {
+    const auto* col_reader = segment.GetColReader();
+    if (!col_reader || !col_reader->Column(store_field_id)) {
+      return QueryBuilder::Empty();
+    }
+  }
+  return std::visit(
+    [&]<typename Parser, typename Acceptor>(
+      Parser&& parser, const Acceptor& acceptor) -> QueryBuilder::ptr {
+      auto query = memory::make_tracked<GeoQuery<Parser, Acceptor>>(
+        ctx.memory, segment, std::move(cells), store_field_id,
+        std::move(parser), Acceptor{acceptor}, boost);
+      query->SetStats(ctx.Record());
+      return query;
+    },
+    ParserOf(options), plan.acceptor);
+}
+
 std::pair<S2Cap, bool> GetBound(BoundType type, S2Point origin,
                                 double distance) {
   if (BoundType::Unbounded == type) {
@@ -171,11 +171,8 @@ BooleanFilter ExcludeCentre(irs::field_id id,
   return root;
 }
 
-QueryBuilder::ptr PrepareOpenInterval(const SubReader& segment,
-                                      const PrepareContext& ctx,
-                                      irs::field_id id,
-                                      const GeoDistanceFilterOptions& options,
-                                      bool greater) {
+GeoPlan PlanOpenInterval(const GeoDistanceFilterOptions& options,
+                         bool greater) {
   const auto& range = options.range;
   const auto& origin = options.origin;
 
@@ -185,40 +182,36 @@ QueryBuilder::ptr PrepareOpenInterval(const SubReader& segment,
 
   S2Cap bound;
 
-  bool incl;
+  bool incl = false;
 
   if (dist < 0.) {
     bound = greater ? S2Cap::Full() : S2Cap::Empty();
   } else if (0. == dist) {
     switch (type) {
       case BoundType::Unbounded:
-        incl = false;
         SDB_ASSERT(false);
         break;
       case BoundType::Inclusive:
         bound = greater ? S2Cap::Full() : FromPoint(origin);
 
         if (!bound.is_valid()) {
-          return QueryBuilder::Empty();
+          return {};
         }
 
         incl = true;
         break;
       case BoundType::Exclusive:
         if (greater) {
-          return ExcludeCentre(id, options).PrepareSegment(segment, ctx);
-        } else {
-          bound = S2Cap::Empty();
+          return {.kind = GeoPlan::Kind::AllButCentre};
         }
-
-        incl = false;
+        bound = S2Cap::Empty();
         break;
     }
   } else {
     std::tie(bound, incl) = GetBound(type, origin, dist);
 
     if (!bound.is_valid()) {
-      return QueryBuilder::Empty();
+      return {};
     }
 
     if (greater) {
@@ -229,42 +222,30 @@ QueryBuilder::ptr PrepareOpenInterval(const SubReader& segment,
   SDB_ASSERT(bound.is_valid());
 
   if (bound.is_full()) {
-    return MatchAll(segment, ctx);
+    return {.kind = GeoPlan::Kind::All};
   }
 
   if (bound.is_empty()) {
-    return QueryBuilder::Empty();
+    return {};
   }
 
-  const auto geo_terms =
+  auto terms =
     irs::geo_terms::QueryTerms(options.options, bound, options.prefix);
-
-  if (geo_terms.empty()) {
-    return QueryBuilder::Empty();
-  }
-
-  auto cells = PrepareCells(segment, ctx, geo_terms, id);
-
   if (incl) {
-    return MakeQuery(segment, ctx, std::move(cells), ctx.boost, options,
-                     GeoDistanceAcceptor<true>{bound});
-  } else {
-    return MakeQuery(segment, ctx, std::move(cells), ctx.boost, options,
-                     GeoDistanceAcceptor<false>{bound});
+    return Cells(std::move(terms), GeoDistanceAcceptor<true>{bound});
   }
+  return Cells(std::move(terms), GeoDistanceAcceptor<false>{bound});
 }
 
-QueryBuilder::ptr PrepareInterval(const SubReader& segment,
-                                  const PrepareContext& ctx, irs::field_id id,
-                                  const GeoDistanceFilterOptions& options) {
+GeoPlan PlanInterval(const GeoDistanceFilterOptions& options) {
   const auto& range = options.range;
   SDB_ASSERT(BoundType::Unbounded != range.min_type);
   SDB_ASSERT(BoundType::Unbounded != range.max_type);
 
   if (range.max < 0.) {
-    return QueryBuilder::Empty();
+    return {};
   } else if (range.min < 0.) {
-    return PrepareOpenInterval(segment, ctx, id, options, false);
+    return PlanOpenInterval(options, false);
   }
 
   const bool min_incl = range.min_type == BoundType::Inclusive;
@@ -272,10 +253,10 @@ QueryBuilder::ptr PrepareInterval(const SubReader& segment,
 
   if (math::ApproxEquals(range.min, range.max)) {
     if (!min_incl || !max_incl) {
-      return QueryBuilder::Empty();
+      return {};
     }
   } else if (range.min > range.max) {
-    return QueryBuilder::Empty();
+    return {};
   }
 
   const auto& origin = options.origin;
@@ -284,24 +265,16 @@ QueryBuilder::ptr PrepareInterval(const SubReader& segment,
     SDB_ASSERT(min_incl);
     SDB_ASSERT(max_incl);
 
-    const auto geo_terms =
-      irs::geo_terms::QueryTerms(options.options, origin, options.prefix);
-
-    if (geo_terms.empty()) {
-      return QueryBuilder::Empty();
-    }
-
-    auto cells = PrepareCells(segment, ctx, geo_terms, id);
-
-    return MakeQuery(segment, ctx, std::move(cells), ctx.boost, options,
-                     GeoDistanceAcceptor<false>{FromPoint(origin)});
+    return Cells(
+      irs::geo_terms::QueryTerms(options.options, origin, options.prefix),
+      GeoDistanceAcceptor<false>{FromPoint(origin)});
   }
 
   auto min_bound = FromPoint(origin, range.min);
   auto max_bound = FromPoint(origin, range.max);
 
   if (!min_bound.is_valid() || !max_bound.is_valid()) {
-    return QueryBuilder::Empty();
+    return {};
   }
 
   S2RegionCoverer coverer(options.options);
@@ -311,81 +284,92 @@ QueryBuilder::ptr PrepareInterval(const SubReader& segment,
 
   const auto ring = coverer.GetCovering(max_bound).Difference(
     coverer.GetInteriorCovering(min_bound));
-  const auto geo_terms =
+  auto terms =
     irs::geo_terms::QueryTerms(options.options, ring, options.prefix);
-
-  if (geo_terms.empty()) {
-    return QueryBuilder::Empty();
-  }
-
-  auto cells = PrepareCells(segment, ctx, geo_terms, id);
 
   switch (size_t(min_incl) + 2 * size_t(max_incl)) {
     case 0:
-      return MakeQuery(
-        segment, ctx, std::move(cells), ctx.boost, options,
-        GeoDistanceRangeAcceptor<false, false>{min_bound, max_bound});
+      return Cells(std::move(terms), GeoDistanceRangeAcceptor<false, false>{
+                                       min_bound, max_bound});
     case 1:
-      return MakeQuery(
-        segment, ctx, std::move(cells), ctx.boost, options,
-        GeoDistanceRangeAcceptor<true, false>{min_bound, max_bound});
+      return Cells(std::move(terms),
+                   GeoDistanceRangeAcceptor<true, false>{min_bound, max_bound});
     case 2:
-      return MakeQuery(
-        segment, ctx, std::move(cells), ctx.boost, options,
-        GeoDistanceRangeAcceptor<false, true>{min_bound, max_bound});
+      return Cells(std::move(terms),
+                   GeoDistanceRangeAcceptor<false, true>{min_bound, max_bound});
     case 3:
-      return MakeQuery(
-        segment, ctx, std::move(cells), ctx.boost, options,
-        GeoDistanceRangeAcceptor<true, true>{min_bound, max_bound});
+      return Cells(std::move(terms),
+                   GeoDistanceRangeAcceptor<true, true>{min_bound, max_bound});
     default:
       SDB_ASSERT(false);
-      return QueryBuilder::Empty();
+      return {};
   }
 }
 
 }  // namespace
 
-QueryBuilder::ptr GeoFilter::PrepareSegment(const SubReader& segment,
-                                            const PrepareContext& ctx) const {
-  const auto& shape = options().shape;
-  if (shape.empty()) {
-    return QueryBuilder::Empty();
-  }
-
-  const auto& options = this->options();
-
-  std::vector<std::string> geo_terms;
-  const auto type = shape.type();
-  if (type == ShapeContainer::Type::S2Point) {
-    const auto& region = irs::utils::downCast<S2PointRegion>(*shape.region());
-    geo_terms = irs::geo_terms::QueryTerms(options.options, region.point(),
-                                           options.prefix);
-  } else {
-    geo_terms =
-      irs::geo_terms::QueryTerms(options.options, *shape.region(), {});
-  }
-
-  if (geo_terms.empty()) {
-    return QueryBuilder::Empty();
-  }
-
-  auto cells = PrepareCells(segment, ctx, geo_terms, field_id());
-
-  const auto boost = ctx.boost * this->GetBoost();
-
-  switch (options.type) {
-    case GeoFilterType::Intersects:
-      return MakeQuery(segment, ctx, std::move(cells), boost, options,
-                       GeoIntersectsAcceptor{&shape});
-    case GeoFilterType::Contains:
-      return MakeQuery(segment, ctx, std::move(cells), boost, options,
-                       GeoContainsAcceptor{&shape});
-    case GeoFilterType::IsContained:
-      return MakeQuery(segment, ctx, std::move(cells), boost, options,
-                       GeoIsContainedAcceptor{&shape});
+GeoParser ParserOf(const GeoFilterOptionsBase& options) {
+  switch (options.stored) {
+    case StoredType::Source:
+      if (options.source_is_wkb) {
+        return GeoParser{std::in_place_type<SourceWkbParser>};
+      }
+      if (options.source_is_point) {
+        return GeoParser{std::in_place_type<SourcePointParser>,
+                         options.point_latitude, options.point_longitude};
+      }
+      return GeoParser{std::in_place_type<SourceJsonParser>};
+    case StoredType::S2Region:
+      return GeoParser{std::in_place_type<S2ShapeParser>};
+    case StoredType::S2Point:
+    case StoredType::S2Centroid:
+      return GeoParser{std::in_place_type<S2PointParser>};
   }
   SDB_ASSERT(false);
-  return QueryBuilder::Empty();
+  return {};
+}
+
+GeoPlan PlanGeo(const GeoFilterOptions& options) {
+  const auto& shape = options.shape;
+  if (shape.empty()) {
+    return {};
+  }
+  auto terms =
+    shape.type() == ShapeContainer::Type::S2Point
+      ? irs::geo_terms::QueryTerms(
+          options.options,
+          irs::utils::downCast<S2PointRegion>(*shape.region()).point(),
+          options.prefix)
+      : irs::geo_terms::QueryTerms(options.options, *shape.region(), {});
+  switch (options.type) {
+    case GeoFilterType::Intersects:
+      return Cells(std::move(terms), GeoIntersectsAcceptor{&shape});
+    case GeoFilterType::Contains:
+      return Cells(std::move(terms), GeoContainsAcceptor{&shape});
+    case GeoFilterType::IsContained:
+      return Cells(std::move(terms), GeoIsContainedAcceptor{&shape});
+  }
+  SDB_ASSERT(false);
+  return {};
+}
+
+GeoPlan PlanGeo(const GeoDistanceFilterOptions& options) {
+  const auto& range = options.range;
+  const auto lower_bound = BoundType::Unbounded != range.min_type;
+  const auto upper_bound = BoundType::Unbounded != range.max_type;
+  if (!lower_bound && !upper_bound) {
+    return {.kind = GeoPlan::Kind::All};
+  }
+  if (lower_bound && upper_bound) {
+    return PlanInterval(options);
+  }
+  return PlanOpenInterval(options, lower_bound);
+}
+
+QueryBuilder::ptr GeoFilter::PrepareSegment(const SubReader& segment,
+                                            const PrepareContext& ctx) const {
+  return MakeQuery(segment, ctx, field_id(), ctx.boost * GetBoost(), options(),
+                   PlanGeo(options()));
 }
 
 PrepareCollector::ptr GeoFilter::MakeCollectorImpl(const Scorer* scorer,
@@ -396,22 +380,22 @@ PrepareCollector::ptr GeoFilter::MakeCollectorImpl(const Scorer* scorer,
 
 QueryBuilder::ptr GeoDistanceFilter::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
-  const auto& options = this->options();
-  const auto& range = options.range;
-  const auto lower_bound = BoundType::Unbounded != range.min_type;
-  const auto upper_bound = BoundType::Unbounded != range.max_type;
   auto sub_ctx = ctx;
   sub_ctx.Boost(GetBoost());
-
-  if (!lower_bound && !upper_bound) {
-    return MatchAll(segment, sub_ctx);
+  const auto plan = PlanGeo(options());
+  switch (plan.kind) {
+    case GeoPlan::Kind::All:
+      return MatchAll(segment, sub_ctx);
+    case GeoPlan::Kind::AllButCentre:
+      return ExcludeCentre(field_id(), options())
+        .PrepareSegment(segment, sub_ctx);
+    case GeoPlan::Kind::Empty:
+    case GeoPlan::Kind::Cells:
+      return MakeQuery(segment, sub_ctx, field_id(), sub_ctx.boost, options(),
+                       plan);
   }
-  if (lower_bound && upper_bound) {
-    return PrepareInterval(segment, sub_ctx, field_id(), options);
-  } else {
-    return PrepareOpenInterval(segment, sub_ctx, field_id(), options,
-                               lower_bound);
-  }
+  SDB_ASSERT(false);
+  return QueryBuilder::Empty();
 }
 
 PrepareCollector::ptr GeoDistanceFilter::MakeCollectorImpl(const Scorer* scorer,

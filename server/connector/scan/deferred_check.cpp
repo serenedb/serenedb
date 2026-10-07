@@ -27,6 +27,7 @@
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/geo_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/wildcard_ngram_filter.hpp>
 #include <iresearch/utils/down_cast.hpp>
@@ -47,6 +48,12 @@ std::optional<DeferredCheck> Defer(irs::Filter::ptr& filter,
   }
   if (type == irs::Type<irs::ByPhrase>::id()) {
     return DeferPhrase(filter, ctx);
+  }
+  if (type == irs::Type<irs::GeoFilter>::id()) {
+    return DeferGeo(filter, ctx);
+  }
+  if (type == irs::Type<irs::GeoDistanceFilter>::id()) {
+    return DeferGeoDistance(filter, ctx);
   }
   return std::nullopt;
 }

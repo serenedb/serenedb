@@ -209,6 +209,10 @@ struct PhrasePartVisitor : util::Noncopyable {
   std::string* out;
 };
 
+std::string_view GeoVerify(const GeoFilterOptionsBase& options) {
+  return field_limits::valid(options.store_field_id) ? "inline" : "false";
+}
+
 std::string_view GeoFilterTypeName(GeoFilterType type) {
   switch (type) {
     case GeoFilterType::Intersects:
@@ -548,6 +552,7 @@ struct FilterPrinter {
       node.attributes["Op"].assign(GeoFilterTypeName(f.options().type));
       node.attributes["Shape"].assign(
         GeoShapeTypeName(f.options().shape.type()));
+      node.attributes["Verify"].assign(GeoVerify(f.options()));
       return node;
     }
     if (type == Type<GeoDistanceFilter>::id()) {
@@ -555,6 +560,7 @@ struct FilterPrinter {
       ExplainNode node{"Geo Distance"};
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Range"] = GeoDistanceRange(f);
+      node.attributes["Verify"].assign(GeoVerify(f.options()));
       return node;
     }
     if (type == Type<ByRadius>::id()) {

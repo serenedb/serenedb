@@ -34,7 +34,10 @@ namespace irs::fill {
 template<typename Parser, typename Acceptor>
 Node::ptr Make(const GeoQuery<Parser, Acceptor>& query) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  return detail::MakeGeo<ByWalkDocs, Node::ptr>(query, 0);
+  if (!query.HasCheck()) {
+    return query.Cells().PlanFill({}, ScoreMergeType::Sum);
+  }
+  return detail::MakeGeo<ByWalkDocs, Node::ptr, false>(query, 0);
 }
 
 template<typename Parser, typename Acceptor>

@@ -63,4 +63,10 @@ std::optional<DeferredCheck> DeferWildcard(irs::Filter::ptr& filter,
 std::optional<DeferredCheck> DeferPhrase(irs::Filter::ptr& filter,
                                          const DeferContext& ctx);
 
+std::optional<DeferredCheck> DeferGeo(irs::Filter::ptr& filter,
+                                      const DeferContext& ctx);
+
+std::optional<DeferredCheck> DeferGeoDistance(irs::Filter::ptr& filter,
+                                              const DeferContext& ctx);
+
 }  // namespace sdb::connector

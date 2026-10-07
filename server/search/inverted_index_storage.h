@@ -32,17 +32,20 @@
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/utils/async.hpp>
 #include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
 #include "catalog/persistence/inverted_index.h"
 #include "search/maintenance.h"
+#include "search/source_files.h"
 #include "search/source_position.h"
 #include "search/store_stats.h"
 #include "search/tick_domain.h"
@@ -64,11 +67,15 @@ class InvertedIndexStorage;
 
 struct InvertedIndexSnapshot {
   explicit InvertedIndexSnapshot(irs::DirectoryReader&& index,
-                                 SourcePosition position = {})
-    : reader{std::move(index)}, position{position} {}
+                                 SourcePosition position = {},
+                                 SourceFilesPtr source_files = {})
+    : reader{std::move(index)},
+      position{position},
+      files{std::move(source_files)} {}
 
   irs::DirectoryReader reader;
   const SourcePosition position;
+  const SourceFilesPtr files;
 };
 using InvertedIndexSnapshotPtr = std::shared_ptr<InvertedIndexSnapshot>;
 
@@ -230,9 +237,11 @@ class InvertedIndexStorage final
 
   void BeginPass();
   void PublishDelta(irs::IndexWriter::Transaction removals,
-                    const SourcePosition& position);
-  void PublishRebuild(const SourcePosition& position);
-  void CommitPosition(const SourcePosition& position);
+                    const SourcePosition& position, SourceFilesUpdate files);
+  void PublishRebuild(const SourcePosition& position, SourceFilesUpdate files);
+  void CommitPosition(const SourcePosition& position,
+                      SourceFilesUpdate files = {});
+  uint64_t NextSourceFileId();
 
   auto& GetTasksSettings() { return _tasks_settings; }
 
@@ -328,9 +337,15 @@ class InvertedIndexStorage final
   std::optional<irs::SegmentIdRange> UnpublishedPassSegments() const;
   RefreshResult CommitPayloadLocked(
     const SourcePosition& position,
-    std::optional<irs::SegmentIdRange> drop_segments);
+    std::optional<irs::SegmentIdRange> drop_segments,
+    const SourceFilesUpdate& files);
   void PublishLocked(const SourcePosition& position,
-                     std::optional<irs::SegmentIdRange> drop_segments);
+                     std::optional<irs::SegmentIdRange> drop_segments,
+                     const SourceFilesUpdate& files = {});
+  void OpenSourceFiles();
+  void AppendSourceFilesLocked(std::span<const SourceFile> added);
+  void CompactSourceFilesLocked(std::span<const uint64_t> live);
+  void RewriteSourceFilesLocked(std::vector<SourceFile> files);
   void StoreInvertedIndexSnapshot(
     InvertedIndexSnapshotPtr inverted_index_snapshot) {
     std::atomic_store(&_snapshot, std::move(inverted_index_snapshot));
@@ -348,6 +363,8 @@ class InvertedIndexStorage final
   // std::atomic<std::shared_ptr>).
   InvertedIndexSnapshotPtr _snapshot;
   SourcePosition _position;
+  SourceFilesPtr _files{std::make_shared<const SourceFiles>()};
+  irs::IndexFileRefs::ref_t _files_ref;
   uint64_t _pass_floor{0};
   irs::IndexWriter::CompactionFloorGuard _pass;
   std::unique_ptr<irs::Directory> _dir;

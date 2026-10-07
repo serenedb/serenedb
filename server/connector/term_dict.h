@@ -31,7 +31,6 @@ namespace sdb::connector::term_dict {
 // The pk term dictionary and the stored pk column are written under the same
 // reserved field id.
 inline constexpr irs::field_id kPKFieldId = kGeneratedPKId;
-inline constexpr irs::field_id kSourceFileFieldId = kSourceFileId;
 
 // How a duckdb type reaches the term dictionary. The numeric kinds name the
 // width the sink encoded the value at, so a query rebuilds the exact same

@@ -249,25 +249,28 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindView(
 irs::IndexWriter::Transaction BuildRemovals(
   search::InvertedIndexStorage& storage, RefreshPlan& plan) {
   auto trx = storage.GetTransaction();
-  if (!plan.drop.empty()) {
-    absl::c_sort(plan.drop);
-    plan.drop.erase(std::unique(plan.drop.begin(), plan.drop.end()),
-                    plan.drop.end());
-    auto remove =
-      std::make_shared<SearchRemovePrefixFilter>(term_dict::kSourceFileFieldId);
-    for (const auto id : plan.drop) {
-      remove->AddFile(primary_key::PkFilePrefix(id));
-    }
-    trx.Remove(std::move(remove));
+  if (plan.drop.empty() && plan.masks.empty()) {
+    return trx;
   }
-  if (!plan.masks.empty()) {
-    auto remove =
-      std::make_shared<SearchRemovePrefixFilter>(term_dict::kPKFieldId);
-    for (auto& [file_id, rows] : plan.masks) {
-      remove->AddFileRows(primary_key::PkFilePrefix(file_id), std::move(rows));
+  absl::c_sort(plan.drop);
+  plan.drop.erase(std::unique(plan.drop.begin(), plan.drop.end()),
+                  plan.drop.end());
+  auto remove =
+    std::make_shared<SearchRemovePrefixFilter>(term_dict::kPKFieldId);
+  auto drop = plan.drop.begin();
+  auto mask = plan.masks.begin();
+  while (drop != plan.drop.end() || mask != plan.masks.end()) {
+    if (mask == plan.masks.end() ||
+        (drop != plan.drop.end() && *drop < mask->first)) {
+      remove->AddFile(primary_key::PkFilePrefix(*drop++));
+      continue;
     }
-    trx.Remove(std::move(remove));
+    SDB_ASSERT(drop == plan.drop.end() || *drop != mask->first);
+    remove->AddFileRows(primary_key::PkFilePrefix(mask->first),
+                        std::move(mask->second));
+    ++mask;
   }
+  trx.Remove(std::move(remove));
   return trx;
 }
 
@@ -290,7 +293,7 @@ duckdb::unique_ptr<SereneDBCreateIndexInfo> PassInfo(
   info->table = target.view.Name();
   info->SetSchema(target.view.Schema());
   info->SetCatalog(target.view.Catalog());
-  info->pass_terms = std::move(plan.scan_terms);
+  info->pass_files = plan.scan_files;
   return info;
 }
 
@@ -374,6 +377,7 @@ ReindexOutcome RefreshIndex(
       .bind = bind,
       .snapshot = *snapshot,
       .definition = definition,
+      .next_file_id = storage->NextSourceFileId(),
       // Delta needs the view's support (recorded at fast-path
       // resolution) and pk terms (term-less indexes take the rebuild
       // road).
@@ -388,7 +392,7 @@ ReindexOutcome RefreshIndex(
   SDB_WAIT_ON_FAILURE("pause_reindex_before_pass");
   storage->BeginPass();
   if (refresh.outcome.action == ReindexAction::Rebuild ||
-      !refresh.scan_terms.empty()) {
+      !refresh.scan_files.empty()) {
     Fill(context, conn, *binder, *target.view_entry, PassInfo(target, refresh),
          std::move(plan));
   }
@@ -399,10 +403,13 @@ ReindexOutcome RefreshIndex(
     storage->Refresh();
     SDB_IMMEDIATE_ABORT();
   }
+  search::SourceFilesUpdate files{.added = std::move(refresh.scan_files),
+                                  .live = std::move(refresh.live)};
   if (refresh.outcome.action == ReindexAction::Rebuild) {
-    storage->PublishRebuild(refresh.position);
+    storage->PublishRebuild(refresh.position, std::move(files));
   } else {
-    storage->PublishDelta(BuildRemovals(*storage, refresh), refresh.position);
+    storage->PublishDelta(BuildRemovals(*storage, refresh), refresh.position,
+                          std::move(files));
   }
   return refresh.outcome;
 }

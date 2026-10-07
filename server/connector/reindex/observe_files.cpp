@@ -54,22 +54,41 @@ std::vector<uint64_t> DiffFiles(RefreshPlan& plan, const SourceListing& listing,
 
 }  // namespace
 
-void PlanRebuild(RefreshPlan& plan, const SourceListing& listing) {
+void PlanRebuild(RefreshPlan& plan, const SourceListing& listing,
+                 uint64_t next_id) {
   plan.outcome.action = ReindexAction::Rebuild;
   plan.outcome.files_rescanned = static_cast<int64_t>(listing.files.size());
-  plan.scan_terms = SourceFileTerms(listing);
+  plan.scan_files = ListedFiles(listing, next_id);
+  plan.live.clear();
+  for (const auto& file : plan.scan_files) {
+    plan.live.push_back(file.id);
+  }
 }
 
 void PlanDelta(RefreshPlan& plan, const SourceListing& listing,
-               std::vector<uint64_t> scan, uint64_t next_id) {
+               std::vector<uint64_t> scan, uint64_t next_id,
+               const HeldFiles& held) {
   plan.outcome.action = ReindexAction::Delta;
   plan.outcome.files_rescanned =
     static_cast<int64_t>(scan.size()) - plan.outcome.files_added;
   absl::c_sort(scan);
-  plan.scan_terms.reserve(scan.size());
+  plan.scan_files.reserve(scan.size());
   for (const auto ordinal : scan) {
-    plan.scan_terms.push_back(SourceFileTerm(
-      next_id++, listing.files[ordinal].path, listing.versions[ordinal]));
+    plan.scan_files.push_back({.id = next_id++,
+                               .path = listing.files[ordinal].path,
+                               .version = listing.versions[ordinal]});
+  }
+  const irs::containers::FlatHashSet<uint64_t> dropped(plan.drop.begin(),
+                                                       plan.drop.end());
+  for (const auto& [path, file] : held.by_path) {
+    for (const auto id : file.ids) {
+      if (!dropped.contains(id)) {
+        plan.live.push_back(id);
+      }
+    }
+  }
+  for (const auto& file : plan.scan_files) {
+    plan.live.push_back(file.id);
   }
 }
 
@@ -90,14 +109,16 @@ void DropUnlisted(RefreshPlan& plan, const SourceListing& listing,
 
 RefreshPlan PlanFileDiff(const ObserveInput& in, const SourceListing& listing,
                          RefreshPlan plan) {
-  const auto held = CollectHeldFiles(in.snapshot.reader);
+  const auto held = IsGlobPK(in.fast_path->pk_spec)
+                      ? CollectHeldFiles(in.snapshot.reader, *in.snapshot.files)
+                      : KnownFiles(*in.snapshot.files);
   auto scan = DiffFiles(plan, listing, held);
   const bool changed = plan.outcome.FilesChanged();
   if (in.snapshot.position.definition != in.definition ||
       (changed && !in.delta)) {
-    PlanRebuild(plan, listing);
+    PlanRebuild(plan, listing, in.next_file_id);
   } else if (changed) {
-    PlanDelta(plan, listing, std::move(scan), held.next_id);
+    PlanDelta(plan, listing, std::move(scan), in.next_file_id, held);
   }
   return plan;
 }
@@ -107,8 +128,10 @@ RefreshPlan ObserveRebuild(const ObserveInput& in) {
   plan.outcome.action = ReindexAction::Rebuild;
   plan.position.definition = in.definition;
   if (in.bind && IsFilePkSpec(in.fast_path->pk_spec)) {
-    PlanRebuild(plan, ListSource(in.context, *in.bind->file_list,
-                                 /*versioned=*/false));
+    PlanRebuild(plan,
+                ListSource(in.context, *in.bind->file_list,
+                           /*versioned=*/false),
+                in.next_file_id);
   }
   return plan;
 }

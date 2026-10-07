@@ -20,15 +20,15 @@
 
 #include "connector/source_file.h"
 
-#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
+#include <absl/container/flat_hash_set.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/multi_file/multi_file_list.hpp>
 #include <duckdb/common/types/hash.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <iresearch/utils/assert.hpp>
+#include <limits>
 
 #include "connector/primary_key.h"
 #include "connector/term_dict.h"
@@ -65,29 +65,50 @@ std::string FileVersion(duckdb::ClientContext& context,
   return absl::StrCat(fs.GetLastModifiedTime(*handle).value);
 }
 
+bool HasLiveDoc(irs::SeekTermIterator& terms, irs::bytes_view prefix,
+                const irs::DocumentMask::Iterator& masked, bool& more) {
+  while (more && terms.value().starts_with(prefix)) {
+    auto postings = terms.postings(irs::IndexFeatures::None);
+    for (auto doc = postings->Next(); !irs::doc_limits::eof(doc);
+         doc = postings->Next()) {
+      if (!masked.Contains(doc)) {
+        return true;
+      }
+    }
+    more = terms.next();
+  }
+  return false;
+}
+
+void CollectLiveFileIds(const irs::SubReader& segment,
+                        absl::flat_hash_set<uint64_t>& live) {
+  const auto* field = segment.field(term_dict::kPKFieldId);
+  if (!field) {
+    return;
+  }
+  const auto masked = segment.MaskedDocs();
+  auto terms = field->iterator();
+  bool more = terms->next();
+  while (more) {
+    const auto id = absl::big_endian::Load64(terms->value().data());
+    const auto prefix = primary_key::PkFilePrefix(id);
+    if (masked.Empty() ||
+        HasLiveDoc(*terms,
+                   irs::ViewCast<irs::byte_type>(std::string_view{prefix}),
+                   masked, more)) {
+      live.insert(id);
+    }
+    if (!more || id == std::numeric_limits<uint64_t>::max()) {
+      return;
+    }
+    const auto next = primary_key::PkFilePrefix(id + 1);
+    more =
+      terms->seek_ge(irs::ViewCast<irs::byte_type>(std::string_view{next})) !=
+      irs::SeekResult::End;
+  }
+}
+
 }  // namespace
-
-std::string SourceFileTerm(uint64_t id, std::string_view path,
-                           std::string_view version) {
-  auto term = primary_key::PkFilePrefix(id);
-  absl::StrAppend(&term, path, std::string_view{"\0", 1}, version);
-  return term;
-}
-
-uint64_t SourceFileTermId(std::string_view term) {
-  SDB_ASSERT(term.size() > sizeof(uint64_t));
-  return absl::big_endian::Load64(term.data());
-}
-
-SourceFile ParseSourceFileTerm(irs::bytes_view term) {
-  const auto bytes = irs::ViewCast<char>(term);
-  const auto rest = bytes.substr(sizeof(uint64_t));
-  const auto separator = rest.find('\0');
-  SDB_ASSERT(separator != std::string_view::npos);
-  return {.id = SourceFileTermId(bytes),
-          .path = rest.substr(0, separator),
-          .version = rest.substr(separator + 1)};
-}
 
 SourceListing ListSource(duckdb::ClientContext& context,
                          const duckdb::MultiFileList& list, bool versioned) {
@@ -119,67 +140,43 @@ SourceListing ListSource(duckdb::ClientContext& context,
   return listing;
 }
 
-std::vector<std::string> SourceFileTerms(const SourceListing& listing) {
-  std::vector<std::string> terms;
-  terms.reserve(listing.files.size());
+std::vector<search::SourceFile> ListedFiles(const SourceListing& listing,
+                                            uint64_t first_id) {
+  std::vector<search::SourceFile> files;
+  files.reserve(listing.files.size());
   for (size_t i = 0; i < listing.files.size(); ++i) {
-    terms.push_back(
-      SourceFileTerm(i, listing.files[i].path, listing.versions[i]));
+    files.push_back({.id = first_id + i,
+                     .path = listing.files[i].path,
+                     .version = listing.versions[i]});
   }
-  return terms;
+  return files;
 }
 
-HeldFiles CollectHeldFiles(const irs::IndexReader& reader) {
-  HeldFiles held;
+HeldFiles CollectHeldFiles(const irs::IndexReader& reader,
+                           const search::SourceFiles& files) {
+  absl::flat_hash_set<uint64_t> live;
   for (const auto& segment : reader) {
-    const auto* field = segment.field(term_dict::kSourceFileFieldId);
-    if (!field) {
+    CollectLiveFileIds(segment, live);
+  }
+  HeldFiles held;
+  for (const auto id : live) {
+    const auto* file = files.Find(id);
+    if (!file) {
       continue;
     }
-    held.next_id = std::max(
-      held.next_id, SourceFileTermId(irs::ViewCast<char>(field->max())) + 1);
-    const auto masked = segment.MaskedDocs();
-    auto terms = field->iterator();
-    while (terms->next()) {
-      if (!masked.Empty()) {
-        auto postings = terms->postings(irs::IndexFeatures::None);
-        auto doc = postings->Next();
-        while (!irs::doc_limits::eof(doc) && masked.Contains(doc)) {
-          doc = postings->Next();
-        }
-        if (irs::doc_limits::eof(doc)) {
-          continue;
-        }
-      }
-      const auto file = ParseSourceFileTerm(terms->value());
-      auto& entry = held.by_path[std::string{file.path}];
-      if (!absl::c_linear_search(entry.ids, file.id)) {
-        entry.ids.push_back(file.id);
-      }
-      entry.version = file.version;
-    }
+    auto& entry = held.by_path[file->path];
+    entry.ids.push_back(id);
+    entry.version = file->version;
   }
   return held;
 }
 
-std::optional<std::string> FindSourceFilePath(const irs::IndexReader& reader,
-                                              uint64_t id) {
-  const auto prefix = primary_key::PkFilePrefix(id);
-  const irs::bytes_view key{
-    reinterpret_cast<const irs::byte_type*>(prefix.data()), prefix.size()};
-  for (const auto& segment : reader) {
-    const auto* field = segment.field(term_dict::kSourceFileFieldId);
-    if (!field) {
-      continue;
-    }
-    auto terms = field->iterator();
-    if (terms->seek_ge(key) == irs::SeekResult::End ||
-        !terms->value().starts_with(key)) {
-      continue;
-    }
-    return std::string{ParseSourceFileTerm(terms->value()).path};
+HeldFiles KnownFiles(const search::SourceFiles& files) {
+  HeldFiles held;
+  for (const auto& file : files.Files()) {
+    held.by_path[file.path];
   }
-  return std::nullopt;
+  return held;
 }
 
 }  // namespace sdb::connector

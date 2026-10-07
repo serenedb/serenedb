@@ -24,11 +24,10 @@
 #include <duckdb/common/open_file_info.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
-#include <iresearch/utils/string.hpp>
-#include <optional>
 #include <string>
-#include <string_view>
 #include <vector>
+
+#include "search/source_files.h"
 
 namespace duckdb {
 
@@ -37,19 +36,6 @@ class MultiFileList;
 
 }  // namespace duckdb
 namespace sdb::connector {
-
-struct SourceFile {
-  uint64_t id = 0;
-  std::string_view path;
-  std::string_view version;
-};
-
-std::string SourceFileTerm(uint64_t id, std::string_view path,
-                           std::string_view version);
-
-SourceFile ParseSourceFileTerm(irs::bytes_view term);
-
-uint64_t SourceFileTermId(std::string_view term);
 
 struct SourceListing {
   duckdb::vector<duckdb::OpenFileInfo> files;
@@ -60,7 +46,8 @@ struct SourceListing {
 SourceListing ListSource(duckdb::ClientContext& context,
                          const duckdb::MultiFileList& list, bool versioned);
 
-std::vector<std::string> SourceFileTerms(const SourceListing& listing);
+std::vector<search::SourceFile> ListedFiles(const SourceListing& listing,
+                                            uint64_t first_id);
 
 struct HeldFile {
   std::vector<uint64_t> ids;
@@ -69,12 +56,11 @@ struct HeldFile {
 
 struct HeldFiles {
   irs::containers::NodeHashMap<std::string, HeldFile> by_path;
-  uint64_t next_id = 0;
 };
 
-HeldFiles CollectHeldFiles(const irs::IndexReader& reader);
+HeldFiles CollectHeldFiles(const irs::IndexReader& reader,
+                           const search::SourceFiles& files);
 
-std::optional<std::string> FindSourceFilePath(const irs::IndexReader& reader,
-                                              uint64_t id);
+HeldFiles KnownFiles(const search::SourceFiles& files);
 
 }  // namespace sdb::connector

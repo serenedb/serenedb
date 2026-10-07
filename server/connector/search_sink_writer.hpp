@@ -222,7 +222,6 @@ class SearchSinkInsertBaseImpl {
   void AppendPkColumn(const duckdb::Vector& pk, duckdb::idx_t count);
   void EmitPkTerms(const Field& pk_field,
                    std::span<const duckdb::string_t> keys);
-  void EmitFileTerms(std::span<const duckdb::string_t> terms);
   void AppendBlobAt(irs::ColumnWriter& writer, irs::doc_id_t doc,
                     duckdb::string_t bytes);
 
@@ -252,7 +251,6 @@ class SearchSinkInsertBaseImpl {
   irs::containers::FlatHashMap<irs::field_id, catalog::ColumnTokenizer>
     _tokenizer_cache;
   Field _pk_field;
-  Field _file_field;
   Field _field;
   Field _null_field;
   irs::IndexWriter::Transaction* _trx;

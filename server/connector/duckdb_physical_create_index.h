@@ -31,6 +31,7 @@
 #include <optional>
 
 #include "catalog/catalog.h"
+#include "search/source_files.h"
 #include "search/source_position.h"
 
 namespace sdb::catalog {
@@ -54,9 +55,9 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
   // the schema this statement is qualified with, so the name is the whole
   // handle.
   duckdb::Identifier source_index;
-  std::vector<std::string> pass_terms;
+  std::vector<search::SourceFile> pass_files;
 
-  std::vector<std::string> file_terms;
+  std::vector<search::SourceFile> files;
   search::SourcePosition position;
 
   duckdb::LogicalType generated_pk_type;
@@ -68,8 +69,8 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
     auto result = duckdb::make_uniq<SereneDBCreateIndexInfo>(
       std::move(base->Cast<duckdb::CreateIndexInfo>()));
     result->source_index = source_index;
-    result->pass_terms = pass_terms;
-    result->file_terms = file_terms;
+    result->pass_files = pass_files;
+    result->files = files;
     result->position = position;
     result->generated_pk_type = generated_pk_type;
     return result;

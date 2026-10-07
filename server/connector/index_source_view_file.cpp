@@ -32,8 +32,6 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
-#include "connector/source_file.h"
-
 namespace sdb::connector {
 
 ViewFileIndexSourceBase::ViewFileIndexSourceBase(
@@ -357,8 +355,9 @@ duckdb::idx_t ViewFileGlobIndexSource::Materialize(
     const uint64_t fi = _sorted_files[i];
     auto& cached = _file_cache[fi];
     if (!cached.bind_data) {
-      const auto file_path = FindSourceFilePath(_snapshot->reader, fi);
-      if (!file_path) {
+      const auto* file =
+        _snapshot->files ? _snapshot->files->Find(fi) : nullptr;
+      if (!file) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
           ERR_MSG("this view-backed inverted index was built by an older "
@@ -367,7 +366,7 @@ duckdb::idx_t ViewFileGlobIndexSource::Materialize(
       }
       ViewFastPath single_fp = _fast_path;
       single_fp.args.clear();
-      single_fp.args.push_back(duckdb::Value{*file_path});
+      single_fp.args.push_back(duckdb::Value{file->path});
       single_fp.is_glob = false;
       if (single_fp.function_name == "iceberg_scan") {
         single_fp.function_name = "read_parquet";
@@ -380,7 +379,7 @@ duckdb::idx_t ViewFileGlobIndexSource::Materialize(
         /*projection_ids=*/{}, _pushed_filters.get());
       cached.gstate = _lookup_func.init_global(context, init);
       cached.constants_match =
-        BindFileConstants(context, *file_path, cached.constants);
+        BindFileConstants(context, file->path, cached.constants);
     }
     if (!cached.constants_match) {
       i = j;

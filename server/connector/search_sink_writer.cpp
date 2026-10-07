@@ -222,7 +222,6 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
     _pk_policy{pk_policy},
     _indexed_expressions{std::move(indexed_exprs)} {
   _pk_field.PrepareForKeywordStringValue(term_dict::kPKFieldId);
-  _file_field.PrepareForKeywordStringValue(term_dict::kSourceFileFieldId);
   if (!config) {
     return;
   }
@@ -244,20 +243,6 @@ void SearchSinkInsertBaseImpl::EmitPkTerms(
   const irs::doc_id_t first_doc = _document->DocId();
   InvertField(pk_field, [&](irs::FieldInverter& fld) {
     return fld.InvertPrimaryKeyBlock(keys, first_doc);
-  });
-}
-
-void SearchSinkInsertBaseImpl::EmitFileTerms(
-  std::span<const duckdb::string_t> terms) {
-  SDB_ASSERT(_document);
-  _document->NextFieldBatch();
-  const irs::doc_id_t first_doc = _document->DocId();
-  InvertField(_file_field, [&](irs::FieldInverter& fld) {
-    return fld.InvertKeywords([&](auto&& emit) {
-      for (size_t i = 0; i < terms.size(); ++i) {
-        emit(terms[i], first_doc + static_cast<irs::doc_id_t>(i));
-      }
-    });
   });
 }
 
@@ -832,10 +817,6 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk,
       SDB_ASSERT(pk.key_terms.size() == batch_size);
       EmitPkTerms(_pk_field, pk.key_terms);
     }
-  }
-  if (!pk.file_terms.empty()) {
-    SDB_ASSERT(pk.file_terms.size() == batch_size);
-    EmitFileTerms(pk.file_terms);
   }
 }
 

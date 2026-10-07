@@ -25,6 +25,7 @@
 #include <absl/time/time.h>
 
 #include <chrono>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -43,6 +44,7 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -196,6 +198,9 @@ InvertedIndexStorage::InvertedIndexStorage(
   resource_manager.file_descriptors = _file_descriptors_count;
   _dir = std::make_unique<irs::MMapDirectory>(path, irs::DirectoryAttributes{},
                                               resource_manager);
+  if (reopen) {
+    OpenSourceFiles();
+  }
 
   irs::IndexWriterOptions writer_options;
   writer_options.ann_env = &AnnBuildEnv();
@@ -313,8 +318,8 @@ InvertedIndexStorage::InvertedIndexStorage(
 
   auto reader = _writer->GetSnapshot();
   SDB_ASSERT(reader);
-  StoreInvertedIndexSnapshot(
-    std::make_shared<InvertedIndexSnapshot>(std::move(reader), _position));
+  StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
+    std::move(reader), _position, _files));
 }
 
 void RemoveDroppedStorageDir(const std::filesystem::path& path,
@@ -421,7 +426,8 @@ void InvertedIndexStorage::BeginPass() {
 }
 
 void InvertedIndexStorage::PublishDelta(irs::IndexWriter::Transaction removals,
-                                        const SourcePosition& position) {
+                                        const SourcePosition& position,
+                                        SourceFilesUpdate files) {
   std::lock_guard lock{_refresh_mutex};
   SDB_ASSERT(_pass.Held());
   removals.RegisterFlush();
@@ -432,25 +438,98 @@ void InvertedIndexStorage::PublishDelta(irs::IndexWriter::Transaction removals,
       ERR_MSG("search index '", GetId(),
               "': the removals of a REINDEX pass failed to commit"));
   }
-  PublishLocked(position, std::nullopt);
+  PublishLocked(position, std::nullopt, files);
 }
 
-void InvertedIndexStorage::PublishRebuild(const SourcePosition& position) {
+void InvertedIndexStorage::PublishRebuild(const SourcePosition& position,
+                                          SourceFilesUpdate files) {
   std::lock_guard lock{_refresh_mutex};
   SDB_ASSERT(_pass.Held());
-  PublishLocked(position, irs::SegmentIdRange{.last = _pass.Floor()});
+  PublishLocked(position, irs::SegmentIdRange{.last = _pass.Floor()}, files);
 }
 
-void InvertedIndexStorage::CommitPosition(const SourcePosition& position) {
+void InvertedIndexStorage::CommitPosition(const SourcePosition& position,
+                                          SourceFilesUpdate files) {
   std::lock_guard lock{_refresh_mutex};
-  PublishLocked(position, UnpublishedPassSegments());
+  PublishLocked(position, UnpublishedPassSegments(), files);
+}
+
+uint64_t InvertedIndexStorage::NextSourceFileId() {
+  std::lock_guard lock{_refresh_mutex};
+  return _files->NextId();
+}
+
+void InvertedIndexStorage::OpenSourceFiles() {
+  _files_ref = irs::directory_utils::Reference(*_dir, kSourceFilesName);
+  if (!_files_ref) {
+    return;
+  }
+  auto stored = ReadSourceFiles(
+    duckdb::FileSystem::GetFileSystem(irs::DuckDBEngine::Instance().instance()),
+    (_path / kSourceFilesName).string());
+  if (stored.torn) {
+    RewriteSourceFilesLocked(std::move(stored.files));
+    return;
+  }
+  _files = std::make_shared<const SourceFiles>(std::move(stored.files));
+}
+
+void InvertedIndexStorage::AppendSourceFilesLocked(
+  std::span<const SourceFile> added) {
+  if (added.empty()) {
+    return;
+  }
+  if (!_files_ref) {
+    _files_ref = _dir->attributes().refs().add(kSourceFilesName);
+  }
+  const auto path = _path / kSourceFilesName;
+  AppendSourceFiles(
+    duckdb::FileSystem::GetFileSystem(irs::DuckDBEngine::Instance().instance()),
+    path.string(), added);
+  SDB_IF_FAILURE("crash_torn_source_files_append") {
+    std::filesystem::resize_file(path, std::filesystem::file_size(path) - 1);
+    SDB_IMMEDIATE_ABORT();
+  }
+  SDB_IF_FAILURE("crash_after_source_files_append") { SDB_IMMEDIATE_ABORT(); }
+  std::vector<SourceFile> files{_files->Files().begin(), _files->Files().end()};
+  files.insert(files.end(), added.begin(), added.end());
+  _files = std::make_shared<const SourceFiles>(std::move(files));
+}
+
+void InvertedIndexStorage::CompactSourceFilesLocked(
+  std::span<const uint64_t> live) {
+  std::vector<SourceFile> kept;
+  kept.reserve(live.size());
+  for (const auto id : live) {
+    if (const auto* file = _files->Find(id)) {
+      kept.push_back(*file);
+    }
+  }
+  if (_files->Size() - kept.size() <= kept.size()) {
+    return;
+  }
+  RewriteSourceFilesLocked(std::move(kept));
+}
+
+void InvertedIndexStorage::RewriteSourceFilesLocked(
+  std::vector<SourceFile> files) {
+  const auto tmp_ref = _dir->attributes().refs().add(kSourceFilesTmpName);
+  WriteSourceFiles(
+    duckdb::FileSystem::GetFileSystem(irs::DuckDBEngine::Instance().instance()),
+    (_path / kSourceFilesTmpName).string(), (_path / kSourceFilesName).string(),
+    files);
+  if (!_files_ref) {
+    _files_ref = _dir->attributes().refs().add(kSourceFilesName);
+  }
+  _files = std::make_shared<const SourceFiles>(std::move(files));
 }
 
 void InvertedIndexStorage::PublishLocked(
   const SourcePosition& position,
-  std::optional<irs::SegmentIdRange> drop_segments) {
+  std::optional<irs::SegmentIdRange> drop_segments,
+  const SourceFilesUpdate& files) {
   const auto begin = std::chrono::steady_clock::now();
-  const auto code = CommitPayloadLocked(position, drop_segments);
+  const auto code = CommitPayloadLocked(position, drop_segments, files);
   _maintenance.RecordCommit(
     absl::OkStatus(), code,
     std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -473,7 +552,9 @@ InvertedIndexStorage::UnpublishedPassSegments() const {
 
 RefreshResult InvertedIndexStorage::CommitPayloadLocked(
   const SourcePosition& position,
-  std::optional<irs::SegmentIdRange> drop_segments) {
+  std::optional<irs::SegmentIdRange> drop_segments,
+  const SourceFilesUpdate& files) {
+  AppendSourceFilesLocked(files.added);
   const bool payload_changed = position != _position || _pass_floor != 0;
   absl::Cleanup restore = [&, previous_position = _position,
                            previous_floor = _pass_floor] {
@@ -486,6 +567,9 @@ RefreshResult InvertedIndexStorage::CommitPayloadLocked(
     {.payload_changed = payload_changed, .drop_segments = drop_segments});
   std::move(restore).Cancel();
   _pass = {};
+  if (files.live) {
+    CompactSourceFilesLocked(*files.live);
+  }
   return code;
 }
 
@@ -622,7 +706,7 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
       refresh_lock.lock();
     }
     if (_pass.Held() && !ReindexInFlight()) {
-      code = CommitPayloadLocked(_position, UnpublishedPassSegments());
+      code = CommitPayloadLocked(_position, UnpublishedPassSegments(), {});
     } else {
       code = RefreshLocked({.progress = progress}, for_checkpoint);
     }
@@ -720,8 +804,8 @@ RefreshResult InvertedIndexStorage::RefreshLocked(irs::CommitInfo info,
   // update reader
   if (_pass_floor == 0) {
     SDB_ASSERT(!were_changes || GetInvertedIndexSnapshot()->reader != reader);
-    StoreInvertedIndexSnapshot(
-      std::make_shared<InvertedIndexSnapshot>(std::move(reader), _position));
+    StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
+      std::move(reader), _position, _files));
   }
   return were_changes ? RefreshResult::Done : RefreshResult::NoChanges;
 }

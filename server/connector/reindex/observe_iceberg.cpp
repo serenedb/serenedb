@@ -508,10 +508,10 @@ RefreshPlan ObserveRowDeletes(const ObserveInput& in,
   const auto& held_position = in.snapshot.position;
   if (held_position.snapshot_id != 0 && plan.position.snapshot_id != 0 &&
       !SnapshotIsAncestor(planner, held_position.snapshot_id)) {
-    PlanRebuild(plan, listing);
+    PlanRebuild(plan, listing, in.next_file_id);
     return plan;
   }
-  const auto held = CollectHeldFiles(in.snapshot.reader);
+  const auto held = CollectHeldFiles(in.snapshot.reader, *in.snapshot.files);
   const auto deletes_from =
     static_cast<duckdb::sequence_number_t>(baseline + 1);
   const bool new_deletes = planner.HasDeleteManifestsFrom(deletes_from);
@@ -554,13 +554,13 @@ RefreshPlan ObserveRowDeletes(const ObserveInput& in,
     return plan;
   }
   if (!in.delta) {
-    PlanRebuild(plan, listing);
+    PlanRebuild(plan, listing, in.next_file_id);
     return plan;
   }
   if (!touched.empty()) {
     ApplyRowDeletes(in, list, touched, plan, scan);
   }
-  PlanDelta(plan, listing, std::move(scan), held.next_id);
+  PlanDelta(plan, listing, std::move(scan), in.next_file_id, held);
   return plan;
 }
 
@@ -583,7 +583,7 @@ RefreshPlan ObserveIceberg(const ObserveInput& in) {
   }
   const auto listing = ListSource(in.context, list, /*versioned=*/false);
   if (in.snapshot.position.definition != in.definition) {
-    PlanRebuild(plan, listing);
+    PlanRebuild(plan, listing, in.next_file_id);
     return plan;
   }
   switch (planner.GetMetadata().iceberg_version) {
@@ -593,7 +593,7 @@ RefreshPlan ObserveIceberg(const ObserveInput& in) {
     case 3:
       return ObserveRowDeletes(in, list, baseline, listing, std::move(plan));
     default:
-      PlanRebuild(plan, listing);
+      PlanRebuild(plan, listing, in.next_file_id);
       return plan;
   }
 }

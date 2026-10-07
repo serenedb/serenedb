@@ -47,7 +47,6 @@ struct ColumnDescriptor {
 struct PkChunk {
   std::span<const duckdb::string_t> key_terms;
   const duckdb::Vector* column = nullptr;
-  std::span<const duckdb::string_t> file_terms;
 };
 
 struct ExpressionDescriptor {

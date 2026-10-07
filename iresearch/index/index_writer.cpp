@@ -495,7 +495,6 @@ PublishResult UpdateExisting(
 
     // skip already masked segments
     if (segment_mask.contains(existing_segment->Meta().name)) {
-      result.modified = true;
       continue;
     }
 

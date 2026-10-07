@@ -69,7 +69,8 @@ struct RefreshPlan {
   ReindexOutcome outcome;
   search::SourcePosition position;
   std::vector<uint64_t> drop;
-  std::vector<std::string> scan_terms;
+  std::vector<search::SourceFile> scan_files;
+  std::vector<uint64_t> live;
   std::map<uint64_t, roaring::Roaring64Map> masks;
 };
 
@@ -81,6 +82,7 @@ struct ObserveInput {
   duckdb::MultiFileBindData* bind = nullptr;
   const search::InvertedIndexSnapshot& snapshot;
   uint64_t definition = 0;
+  uint64_t next_file_id = 0;
   bool delta = false;
 };
 
@@ -90,10 +92,12 @@ RefreshPlan ObserveFiles(const ObserveInput& in);
 
 RefreshPlan ObserveIceberg(const ObserveInput& in);
 
-void PlanRebuild(RefreshPlan& plan, const SourceListing& listing);
+void PlanRebuild(RefreshPlan& plan, const SourceListing& listing,
+                 uint64_t next_id);
 
 void PlanDelta(RefreshPlan& plan, const SourceListing& listing,
-               std::vector<uint64_t> scan, uint64_t next_id);
+               std::vector<uint64_t> scan, uint64_t next_id,
+               const HeldFiles& held);
 
 void DropUnlisted(RefreshPlan& plan, const SourceListing& listing,
                   const HeldFiles& held);

@@ -54,6 +54,8 @@ inline void Spit(const std::string& filename, std::string_view content,
   return Spit(filename.c_str(), content, sync);
 }
 
+void SyncDirectory(const std::string& directory);
+
 // creates a new directory
 
 // checks if path is a directory

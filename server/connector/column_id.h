@@ -45,9 +45,9 @@ inline ColumnId TableColumnId(const duckdb::ColumnDefinition& column) {
 
 // Real column ids are duckdb catalog oids and view column positions, all far
 // below the threshold; every id above it names a synthetic column no relation
-// can ever hold. The fifteen slots directly above the threshold are
-// deliberately left unnamed, for sentinels that only need an id nothing else
-// can claim.
+// can ever hold. The values are freshly chosen -- no on-disk format depends on
+// them -- and the fifteen slots directly above the threshold are deliberately
+// left unnamed, for sentinels that only need an id nothing else can claim.
 inline constexpr ColumnId kMaxRealColumnIdValue = 0xFFFF'FFFF;
 inline constexpr ColumnId kFirstSyntheticColumnId =
   kMaxRealColumnIdValue + 0x10;
@@ -63,7 +63,6 @@ inline constexpr ColumnId kInvertedIndexTermCountId =
   kFirstSyntheticColumnId + 6;
 inline constexpr ColumnId kInvertedIndexTermScoreId =
   kFirstSyntheticColumnId + 7;
-inline constexpr ColumnId kSourceFileId = kFirstSyntheticColumnId + 8;
 inline constexpr ColumnId kFirstIndexFieldId = kFirstSyntheticColumnId + 0x100;
 
 // The SQL-visible names of those synthetic columns. The score is a whole

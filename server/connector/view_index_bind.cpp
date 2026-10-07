@@ -114,20 +114,18 @@ duckdb::ColumnBinding CarryUp(duckdb::LogicalOperator& op,
 void SelectPassFiles(duckdb::ClientContext& context,
                      SereneDBCreateIndexInfo& info,
                      duckdb::MultiFileBindData& bind) {
-  irs::containers::FlatHashMap<std::string_view, const std::string*> by_path;
-  by_path.reserve(info.pass_terms.size());
-  for (const auto& term : info.pass_terms) {
-    by_path.emplace(
-      ParseSourceFileTerm(irs::ViewCast<irs::byte_type>(std::string_view{term}))
-        .path,
-      &term);
+  irs::containers::FlatHashMap<std::string_view, const search::SourceFile*>
+    by_path;
+  by_path.reserve(info.pass_files.size());
+  for (const auto& file : info.pass_files) {
+    by_path.emplace(file.path, &file);
   }
   if (const auto* iceberg_list =
         dynamic_cast<const duckdb::IcebergMultiFileList*>(
           bind.file_list.get())) {
     auto paths = duckdb::make_shared_ptr<duckdb::unordered_set<std::string>>();
     paths->reserve(by_path.size());
-    for (const auto& [path, term] : by_path) {
+    for (const auto& [path, file] : by_path) {
       paths->emplace(path);
     }
     bind.file_list = iceberg_list->SelectDataFiles(std::move(paths));
@@ -139,7 +137,7 @@ void SelectPassFiles(duckdb::ClientContext& context,
   for (const auto& file : listing.files) {
     if (const auto it = by_path.find(file.path); it != by_path.end()) {
       selected.push_back(file);
-      info.file_terms.push_back(*it->second);
+      info.files.push_back(*it->second);
     }
   }
   if (selected.size() != listing.files.size()) {
@@ -159,7 +157,7 @@ void PrepareSourceFiles(duckdb::ClientContext& context,
   SDB_IF_FAILURE("legacy_view_index_payload") { return; }
   const bool versioned = fp.refresh_source == RefreshSource::Files;
   const auto listing = ListSource(context, *bind.file_list, versioned);
-  info.file_terms = SourceFileTerms(listing);
+  info.files = ListedFiles(listing, 0);
   if (versioned) {
     info.position.listing = listing.digest;
   }

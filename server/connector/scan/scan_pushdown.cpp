@@ -162,11 +162,7 @@ bool IResearchPushdownExpression(duckdb::ClientContext&,
   if (col_id > kMaxRealColumnIdValue) {
     return false;
   }
-  if (bind.relation.IsSearchTable()) {
-    return true;
-  }
-  const auto* info = bind.relation.ScannedIndex().FindColumnInfo(col_id);
-  return info && info->IsStored();
+  return bind.relation.Stores(col_id);
 }
 
 }  // namespace sdb::connector

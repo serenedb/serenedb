@@ -163,6 +163,13 @@ struct RelationSpec {
     SDB_ASSERT(inverted_config);
     return *inverted_config;
   }
+  bool Stores(ColumnId column) const noexcept {
+    if (IsSearchTable()) {
+      return true;
+    }
+    const auto* info = ScannedIndex().FindColumnInfo(column);
+    return info && info->IsStored();
+  }
   catalog::IndexTokenizers ResolveTokenizers(
     duckdb::ClientContext& context) const {
     return {context,

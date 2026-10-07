@@ -178,9 +178,6 @@ void WrapScoreRefsWithEmit(duckdb::unique_ptr<duckdb::Expression>& expr,
 
 void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
                       const duckdb::TableFilterSet& filters) {
-  const catalog::InvertedIndexConfig* index_meta =
-    bind_data.relation.IsInvertedIndex() ? &bind_data.relation.ScannedIndex()
-                                         : nullptr;
   const auto score_emit = bind_data.score.vector
                             ? bind_data.score.vector->score_emit
                             : ScoreEmit::Identity;
@@ -234,11 +231,7 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
       push_score_filter(entry.Filter());
       continue;
     }
-    const auto* info =
-      index_meta ? index_meta->FindColumnInfo(col_id) : nullptr;
-    const bool index_stored =
-      bind_data.relation.IsSearchTable() || (info && info->IsStored());
-    if (!index_stored) {
+    if (!bind_data.relation.Stores(col_id)) {
       state.has_lookup_filter = true;
     } else {
       auto& cf = state.col_filters.emplace_back();

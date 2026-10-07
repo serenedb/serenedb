@@ -314,11 +314,9 @@ irs::TextSource ExpressionSource(
       }
     });
   if (text.columns.empty() ||
-      (!relation.IsSearchTable() &&
-       !absl::c_all_of(text.columns, [&](connector::ColumnId id) {
-         const auto* info = relation.inverted_config->FindColumnInfo(id);
-         return info && info->IsStored();
-       }))) {
+      !absl::c_all_of(text.columns, [&](connector::ColumnId id) {
+        return relation.Stores(id);
+      })) {
     return {};
   }
   for (const auto id : text.columns) {
@@ -387,7 +385,7 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     }
     auto column_info =
       make_info(config.TermField(col_id), info, std::move(type), col_id);
-    if (bind_data.relation.IsSearchTable() || info->IsStored()) {
+    if (bind_data.relation.Stores(col_id)) {
       column_info.text = {.columns = {col_id},
                           .types = {column_info.logical_type}};
     }

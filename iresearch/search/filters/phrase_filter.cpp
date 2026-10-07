@@ -56,6 +56,7 @@
 #include "iresearch/search/queries/token_phrase_query.hpp"
 #include "iresearch/search/scorers/constant_score.hpp"
 #include "iresearch/search/scorers/unscored.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/regexp_acceptor.hpp"
 #include "iresearch/utils/system_compiler.hpp"
@@ -507,11 +508,17 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
   BooleanBuilder builder{segment,        ctx.memory,           0,
                          kNoBoost,       ScoreMergeType::Noop, nullptr,
                          ctx.needs_terms};
-  for (size_t slot = 0, n = state.Slots(); slot != n; ++slot) {
+  SDB_ASSERT(state.Slots() == options.size());
+  containers::FlatHashSet<bytes_view> words;
+  size_t slot = 0;
+  for (const auto& info : options) {
     const auto begin = state.offsets[slot];
-    const auto end = state.offsets[slot + 1];
+    const auto end = state.offsets[++slot];
     if (end - begin == 1) {
-      builder.AddTerm(&reader, state.metas[begin], kNoBoost, Occur::Must, {});
+      const auto* word = std::get_if<ByTermOptions>(&info.part);
+      if (!word || words.emplace(word->term).second) {
+        builder.AddTerm(&reader, state.metas[begin], kNoBoost, Occur::Must, {});
+      }
       continue;
     }
     auto terms = memory::make_tracked<MultiTermQuery>(

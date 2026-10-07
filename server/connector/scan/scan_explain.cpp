@@ -232,12 +232,8 @@ bool ProjectionIsFromIndex(const ScanBindData& bind,
     return false;
   }
   const auto catalog_col_id = bind.columns.ids[col_id];
-  if (catalog_col_id == kGeneratedPKId || bind.relation.IsSearchTable()) {
-    return true;
-  }
-  const auto* info =
-    bind.relation.inverted_config->FindColumnInfo(catalog_col_id);
-  return info && info->IsStored();
+  return catalog_col_id == kGeneratedPKId ||
+         bind.relation.Stores(catalog_col_id);
 }
 
 bool ProjectionIsVirtual(const ScanBindData& bind,

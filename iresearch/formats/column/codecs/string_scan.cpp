@@ -161,6 +161,14 @@ const ReadContext::CacheSlot& CacheSlotOf(
     .CacheSlotOf(block->BlockId());
 }
 
+NumericHeader CodesHeader(duckdb::const_data_ptr_t base, const Header& h) {
+  const auto codes =
+    NumericHeader::Parse(base + h.off_codes, h.off_runs - h.off_codes);
+  SDB_ENSURE(codes.row_count == h.row_count && codes.leaf == NumericLeaf::None,
+             "col codec: corrupted row codes");
+  return codes;
+}
+
 const TrainedDictionary* TrainedOf(duckdb::ColumnSegment& segment,
                                    const Header& header) {
   if (header.flags != kTrainedDictionary) {
@@ -373,11 +381,7 @@ struct ScanState final : duckdb::SegmentScanState {
 
   void LoadCodes() {
     if (header.codes_encoding == static_cast<uint8_t>(CodesEncoding::Numeric)) {
-      const auto codes_header = NumericHeader::Parse(
-        base + header.off_codes, header.off_runs - header.off_codes);
-      SDB_ENSURE(codes_header.row_count == header.row_count,
-                 "col codec: corrupted row codes");
-      code_frames.emplace(base + header.off_codes, codes_header);
+      code_frames.emplace(base + header.off_codes, CodesHeader(base, header));
       return;
     }
     if (!Rle()) {
@@ -1317,9 +1321,7 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
   if (h.shape == static_cast<uint8_t>(Shape::Dedup)) {
     if (h.codes_encoding == static_cast<uint8_t>(CodesEncoding::Numeric)) {
       if (!cache.code_frames) {
-        cache.code_frames.emplace(
-          base + h.off_codes,
-          NumericHeader::Parse(base + h.off_codes, h.off_runs - h.off_codes));
+        cache.code_frames.emplace(base + h.off_codes, CodesHeader(base, h));
       }
       cache.code_frames->Seek(row);
       entry = cache.code_frames->At(row);
@@ -1502,13 +1504,9 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   if (h.codes_encoding == static_cast<uint8_t>(CodesEncoding::Numeric)) {
     constexpr std::array<std::string_view, 5> kTransforms{"raw", "for", "delta",
                                                           "rle", "dict"};
-    constexpr std::array<std::string_view, 3> kLeaves{"none", "lz4", "zstd"};
-    const auto codes = NumericHeader::Parse(
-      handle.Ptr() + segment.GetBlockOffset() + h.off_codes,
-      h.off_runs - h.off_codes);
+    const auto codes = CodesHeader(handle.Ptr() + segment.GetBlockOffset(), h);
     info["codes_transform"] =
       std::string{kTransforms[static_cast<uint8_t>(codes.transform)]};
-    info["codes_leaf"] = std::string{kLeaves[static_cast<uint8_t>(codes.leaf)]};
   }
   info["runs"] = absl::StrCat(h.run_count);
   info["entries"] = absl::StrCat(h.entry_count);

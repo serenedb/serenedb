@@ -104,6 +104,8 @@ const std::vector<Shape>& Shapes() {
        }
        return static_cast<int64_t>(Mix(g / 4000) % 100000);
      }},
+    {"periodic_runs",
+     [](uint64_t g) { return static_cast<int64_t>(g / 7 % 4) * 1'000'003; }},
     {"hashes_with_repeats",
      [](uint64_t g) { return static_cast<int64_t>(Mix(Mix(g) % 5000)); }},
     {"negative", [](uint64_t g) { return -static_cast<int64_t>(g * 977); }},
@@ -325,16 +327,15 @@ class ColNumericCodecTest : public TestBase {
   duckdb::DuckDB _db;
 };
 
-TEST_F(ColNumericCodecTest, EveryTypeEveryShapeEveryObjective) {
+TEST_F(ColNumericCodecTest, EveryTypeEveryShapeEveryTier) {
   constexpr uint64_t kRows = 50000;
-  for (const auto objective :
-       {irs::AutoObjective::Balanced, irs::AutoObjective::Size}) {
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
     for (const auto& type : Types()) {
       for (const auto& shape : Shapes()) {
         SCOPED_TRACE(std::string{shape.name} + " " + type.ToString() + " " +
-                     std::to_string(static_cast<int>(objective)));
+                     std::to_string(static_cast<int>(tier)));
         irs::MemoryDirectory dir{};
-        Write(dir, type, {.objective = objective}, kRows, 8192, shape.gen);
+        Write(dir, type, {.tier = tier}, kRows, 8192, shape.gen);
         Verify(dir, type, kRows, shape.gen);
       }
     }
@@ -348,8 +349,7 @@ TEST_F(ColNumericCodecTest, EveryTransformIsReachable) {
     for (const auto& type :
          {duckdb::LogicalType::BIGINT, duckdb::LogicalType::INTEGER}) {
       irs::MemoryDirectory dir{};
-      Write(dir, type, {.objective = irs::AutoObjective::Size}, kRows, 8192,
-            shape.gen);
+      Write(dir, type, {}, kRows, 8192, shape.gen);
       for (const auto& t : Transforms(dir)) {
         seen.insert(t.substr(0, t.find('/')));
       }
@@ -366,24 +366,18 @@ TEST_F(ColNumericCodecTest, CompactsClusteredTimestamps) {
     return static_cast<int64_t>(1'700'000'000'000'000LL + (g / 4) * 1000 +
                                 Mix(g / 4) % 3 * 100);
   };
-  for (const auto objective :
-       {irs::AutoObjective::Balanced, irs::AutoObjective::Size}) {
-    irs::MemoryDirectory dir{};
-    Write(dir, duckdb::LogicalType::BIGINT, {.objective = objective}, kRows,
-          16384, clustered);
-    irs::ColReader r{dir, std::string{kSeg}, Db()};
-    const auto* col = r.Column(kField);
-    ASSERT_NE(col, nullptr);
-    uint64_t bytes = 0;
-    for (const auto& block : col->DataBlocks()) {
-      if (objective == irs::AutoObjective::Size) {
-        EXPECT_EQ(block.codec->type,
-                  duckdb::CompressionType::COMPRESSION_COL_NUMERIC);
-      }
-      bytes += block.byte_size;
-    }
-    EXPECT_LT(bytes, kRows * 2);
+  irs::MemoryDirectory dir{};
+  Write(dir, duckdb::LogicalType::BIGINT, {}, kRows, 16384, clustered);
+  irs::ColReader r{dir, std::string{kSeg}, Db()};
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  uint64_t bytes = 0;
+  for (const auto& block : col->DataBlocks()) {
+    EXPECT_EQ(block.codec->type,
+              duckdb::CompressionType::COMPRESSION_COL_NUMERIC);
+    bytes += block.byte_size;
   }
+  EXPECT_LT(bytes, kRows * 2);
 }
 
 TEST_F(ColNumericCodecTest, FiltersMatchTheValues) {
@@ -409,8 +403,7 @@ TEST_F(ColNumericCodecTest, FiltersMatchTheValues) {
   for (const auto& shape : Shapes()) {
     const auto type = duckdb::LogicalType::BIGINT;
     irs::MemoryDirectory dir{};
-    Write(dir, type, {.objective = irs::AutoObjective::Size}, kRows, 8192,
-          shape.gen);
+    Write(dir, type, {}, kRows, 8192, shape.gen);
     irs::ColReader r{dir, std::string{kSeg}, Db()};
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
@@ -485,8 +478,7 @@ TEST_F(ColNumericCodecTest, CorruptedFrameTableIsRejected) {
   uint64_t size = 0;
   {
     irs::MMapDirectory dir{path};
-    Write(dir, duckdb::LogicalType::BIGINT,
-          {.objective = irs::AutoObjective::Size}, 20000, 20000, clustered);
+    Write(dir, duckdb::LogicalType::BIGINT, {}, 20000, 20000, clustered);
     irs::ColReader r{dir, std::string{kSeg}, Db()};
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);

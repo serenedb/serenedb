@@ -68,12 +68,9 @@ constexpr double kFsstPreference = 0.05;
 constexpr size_t kPriceFrames = 8;
 
 constexpr uint8_t kLz4Fast[] = {1};
-constexpr uint8_t kLz4Balanced[] = {1, 4, 6};
-constexpr uint8_t kLz4Ladder[] = {1, 4, 9};
-constexpr uint8_t kZstdBalanced[] = {9};
-constexpr uint8_t kZstdLadder[] = {1, 3, 6, 9, 12};
-constexpr uint8_t kZxcBalanced[] = {1, 3};
-constexpr uint8_t kZxcLadder[] = {1, 3, 5, 7};
+constexpr uint8_t kLz4Levels[] = {1, 4, 6};
+constexpr uint8_t kZstdLevels[] = {9};
+constexpr uint8_t kZxcLevels[] = {1, 3};
 constexpr uint8_t kNoLevel[] = {0};
 
 struct LeafPlan {
@@ -83,14 +80,10 @@ struct LeafPlan {
 
 constexpr LeafPlan kRefreshPlan[] = {{ByteCodec::Fsst, kNoLevel},
                                      {ByteCodec::Lz4, kLz4Fast}};
-constexpr LeafPlan kBalancedPlan[] = {{ByteCodec::Fsst, kNoLevel},
-                                      {ByteCodec::Lz4, kLz4Balanced},
-                                      {ByteCodec::Zstd, kZstdBalanced},
-                                      {ByteCodec::Zxc, kZxcBalanced}};
-constexpr LeafPlan kSizePlan[] = {{ByteCodec::Fsst, kNoLevel},
-                                  {ByteCodec::Lz4, kLz4Ladder},
-                                  {ByteCodec::Zstd, kZstdLadder},
-                                  {ByteCodec::Zxc, kZxcLadder}};
+constexpr LeafPlan kCompactionPlan[] = {{ByteCodec::Fsst, kNoLevel},
+                                        {ByteCodec::Lz4, kLz4Levels},
+                                        {ByteCodec::Zstd, kZstdLevels},
+                                        {ByteCodec::Zxc, kZxcLevels}};
 
 struct FrameShape {
   size_t frame;
@@ -110,10 +103,7 @@ std::span<const LeafPlan> PlanFor(const ColCodecParams& params) noexcept {
   if (params.tier == WriteTier::Flush) {
     return kRefreshPlan;
   }
-  if (params.objective == AutoObjective::Size) {
-    return kSizePlan;
-  }
-  return kBalancedPlan;
+  return kCompactionPlan;
 }
 
 constexpr size_t Index(ByteCodec leaf) noexcept {
@@ -1012,8 +1002,7 @@ class SegmentWriter {
     const auto& write = _smallest.bytes < chosen.bytes ? _smallest : chosen;
     Trial({shape, write.leaf}, write.level, begin, end, write.layout);
     auto* best = Smallest(shape, shape == Shape::Dedup ? dedup : plain);
-    if (_params.objective == AutoObjective::Balanced &&
-        best->choice.leaf != ByteCodec::Fsst) {
+    if (best->choice.leaf != ByteCodec::Fsst) {
       if (auto* fsst = Cached({shape, ByteCodec::Fsst}, 0, begin, end,
                               FrameLayout::Dictionary);
           fsst &&

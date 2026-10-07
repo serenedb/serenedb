@@ -167,13 +167,10 @@ struct ColArm {
   const char* name;
   duckdb::CompressionType codec;
   uint8_t level;
-  irs::AutoObjective objective = irs::AutoObjective::Balanced;
 };
 
 constexpr ColArm kNumArms[] = {
   {"auto", duckdb::CompressionType::COMPRESSION_AUTO, 0},
-  {"auto_size", duckdb::CompressionType::COMPRESSION_AUTO, 0,
-   irs::AutoObjective::Size},
   {"bitpacking", duckdb::CompressionType::COMPRESSION_BITPACKING, 0},
   {"rle", duckdb::CompressionType::COMPRESSION_RLE, 0},
   {"alp", duckdb::CompressionType::COMPRESSION_ALP, 0},
@@ -183,8 +180,6 @@ constexpr ColArm kNumArms[] = {
 
 constexpr ColArm kColArms[] = {
   {"auto", duckdb::CompressionType::COMPRESSION_AUTO, 0},
-  {"auto_size", duckdb::CompressionType::COMPRESSION_AUTO, 0,
-   irs::AutoObjective::Size},
   {"dict_fsst", duckdb::CompressionType::COMPRESSION_DICT_FSST, 0},
   {"fsst", duckdb::CompressionType::COMPRESSION_FSST, 0},
   {"dict_lz4", duckdb::CompressionType::COMPRESSION_DICT_LZ4, 0},
@@ -307,7 +302,6 @@ Built ColBuild(irs::Directory& dir, const ColArm& arm) {
                           arm.codec, /*hyperloglog=*/false,
                           irs::ColCodecParams{.compression_level = arm.level,
                                               .segment_target = SegmentTarget(),
-                                              .objective = arm.objective,
                                               .tier = Tier()});
   uint64_t pos = 0;
   for (size_t i = 0; i < data.vectors.size(); ++i) {
@@ -537,9 +531,8 @@ void PrintSegmentInfo(const ColArm& arm, const ColSeg& seg) {
       auto segment = seg.col->OpenSegment(window.block, ctx);
       auto info =
         block.codec->get_segment_info(duckdb::QueryContext{}, *segment);
-      for (const auto* name :
-           {"transform", "leaf", "codec", "shape", "dictionary", "codes",
-            "codes_transform", "codes_leaf"}) {
+      for (const auto* name : {"transform", "leaf", "codec", "shape",
+                               "dictionary", "codes", "codes_transform"}) {
         if (info.contains(name)) {
           key += std::string{" "} + name + "=" + info[name];
         }

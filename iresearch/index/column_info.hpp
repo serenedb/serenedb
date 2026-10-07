@@ -138,11 +138,6 @@ struct ColumnOptions {
 
 inline constexpr uint32_t kDefaultColSegmentTarget = 256 * 1024;
 
-enum class AutoObjective : uint8_t {
-  Balanced = 0,
-  Size = 1,
-};
-
 enum class WriteTier : uint8_t {
   Flush,
   Merge,
@@ -151,7 +146,6 @@ enum class WriteTier : uint8_t {
 struct ColCodecParams {
   uint8_t compression_level = 0;
   uint32_t segment_target = kDefaultColSegmentTarget;
-  AutoObjective objective = AutoObjective::Balanced;
   WriteTier tier = WriteTier::Merge;
 
   friend bool operator==(const ColCodecParams&,

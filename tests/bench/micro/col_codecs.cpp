@@ -83,7 +83,6 @@ struct Arm {
   const char* name;
   duckdb::CompressionType codec;
   uint8_t level;
-  irs::AutoObjective objective = irs::AutoObjective::Balanced;
 };
 
 constexpr Arm kArms[] = {
@@ -96,8 +95,6 @@ constexpr Arm kArms[] = {
   {"zxc3", duckdb::CompressionType::COMPRESSION_ZXC, 3},
   {"fsst", duckdb::CompressionType::COMPRESSION_FSST, 0},
   {"auto", duckdb::CompressionType::COMPRESSION_AUTO, 0},
-  {"auto_size", duckdb::CompressionType::COMPRESSION_AUTO, 0,
-   irs::AutoObjective::Size},
   {"zstd1", duckdb::CompressionType::COMPRESSION_ZSTD, 1},
   {"zstd3", duckdb::CompressionType::COMPRESSION_ZSTD, 3},
   {"uncompressed", duckdb::CompressionType::COMPRESSION_UNCOMPRESSED, 0},
@@ -160,12 +157,12 @@ struct Seg {
 uint64_t Build(irs::Directory& dir, Corpus corpus, const Arm& arm,
                uint64_t rows) {
   irs::ColWriter w{dir, kSeg, CsDb()};
-  auto& cw = w.OpenColumn(kField, duckdb::LogicalType::VARCHAR,
-                          /*skip_validity=*/false, DEFAULT_ROW_GROUP_SIZE,
-                          arm.codec, /*hyperloglog=*/false,
-                          irs::ColCodecParams{.compression_level = arm.level,
-                                              .segment_target = SegmentTarget(),
-                                              .objective = arm.objective});
+  auto& cw =
+    w.OpenColumn(kField, duckdb::LogicalType::VARCHAR,
+                 /*skip_validity=*/false, DEFAULT_ROW_GROUP_SIZE, arm.codec,
+                 /*hyperloglog=*/false,
+                 irs::ColCodecParams{.compression_level = arm.level,
+                                     .segment_target = SegmentTarget()});
   uint64_t pos = 0;
   while (pos < rows) {
     const auto take = std::min<uint64_t>(rows - pos, STANDARD_VECTOR_SIZE);

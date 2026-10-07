@@ -51,27 +51,18 @@ struct LeafOption {
 };
 
 constexpr LeafOption kLeaflessPlan[] = {{NumericLeaf::None, 0, 0}};
-constexpr LeafOption kBalancedPlan[] = {
+constexpr LeafOption kCompactionPlan[] = {
   {NumericLeaf::None, 0, 0},
   {NumericLeaf::Lz4, 1, kLz4Penalty},
   {NumericLeaf::Zstd, 1, kZstdPenalty},
 };
-constexpr LeafOption kSizePlan[] = {
-  {NumericLeaf::None, 0, 0}, {NumericLeaf::Lz4, 1, 0},
-  {NumericLeaf::Zstd, 1, 0}, {NumericLeaf::Zstd, 3, 0},
-  {NumericLeaf::Zstd, 9, 0},
-};
 
 std::span<const LeafOption> Plan(const ColCodecParams& params, bool floating,
                                  bool codes) {
-  if (params.tier == WriteTier::Flush ||
-      ((floating || codes) && params.objective == AutoObjective::Balanced)) {
+  if (params.tier == WriteTier::Flush || floating || codes) {
     return kLeaflessPlan;
   }
-  if (params.objective == AutoObjective::Size) {
-    return kSizePlan;
-  }
-  return kBalancedPlan;
+  return kCompactionPlan;
 }
 
 struct Candidate {

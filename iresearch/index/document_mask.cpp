@@ -21,65 +21,242 @@
 #include "iresearch/index/document_mask.hpp"
 
 #include <absl/strings/str_cat.h>
-#include <roaring/bitset_util.h>
+#include <roaring/containers/containers.h>
 
-#include <algorithm>
-#include <cstring>
-#include <iterator>
 #include <roaring/roaring.hh>
 #include <utility>
 
 #include "iresearch/error/error.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 
 namespace irs {
+namespace {
 
-DocumentMask::~DocumentMask() { roaring_free(_bits.array); }
+using roaring::api::roaring_bitmap_t;
+
+constexpr size_t kSlotBytes =
+  sizeof(void*) + sizeof(uint16_t) + sizeof(uint8_t);
+
+size_t ContainerBytes(const roaring_bitmap_t& set) noexcept {
+  roaring::api::roaring_statistics_t stats{};
+  roaring::api::roaring_bitmap_statistics(&set, &stats);
+  return stats.n_bytes_array_containers + stats.n_bytes_run_containers +
+         stats.n_bytes_bitset_containers;
+}
+
+size_t ByteSizeOf(const roaring_bitmap_t& set) noexcept {
+  return ContainerBytes(set) + size_t(set.high_low_container.size) * kSlotBytes;
+}
+
+size_t ByteCapacityOf(const roaring_bitmap_t& set) noexcept {
+  return ContainerBytes(set) +
+         size_t(set.high_low_container.allocation_size) * kSlotBytes;
+}
+
+roaring::Roaring CompressSet(const roaring_bitmap_t& set) {
+  roaring::Roaring out;
+  if (!roaring::api::roaring_bitmap_overwrite(&out.roaring, &set))
+    [[unlikely]] {
+    throw IllegalState{"Failed to allocate a copy of the document mask"};
+  }
+  roaring::api::roaring_bitmap_repair_after_lazy(&out.roaring);
+  out.runOptimize();
+  out.shrinkToFit();
+  return out;
+}
+
+uint64_t SpansAt(const roaring_bitmap_t& set, int32_t i) noexcept {
+  const auto& ra = set.high_low_container;
+  const auto* container = ra.containers[i];
+  switch (ra.typecodes[i]) {
+    case ARRAY_CONTAINER_TYPE:
+      return static_cast<uint64_t>(
+        static_cast<const roaring::internal::array_container_t*>(container)
+          ->cardinality);
+    case RUN_CONTAINER_TYPE:
+      return static_cast<uint64_t>(
+        static_cast<const roaring::internal::run_container_t*>(container)
+          ->n_runs);
+    case BITSET_CONTAINER_TYPE:
+      return static_cast<uint64_t>(
+        static_cast<const roaring::internal::bitset_container_t*>(container)
+          ->cardinality);
+    default:
+      SDB_UNREACHABLE();
+  }
+}
+
+void Densify(roaring_bitmap_t& set, uint32_t bitset_from) noexcept {
+  auto& ra = set.high_low_container;
+  uint64_t sparse = 0;
+  uint64_t spans = 0;
+  for (int32_t i = 0; i != ra.size; ++i) {
+    if (ra.typecodes[i] != BITSET_CONTAINER_TYPE) {
+      ++sparse;
+      spans += SpansAt(set, i);
+    }
+  }
+  if (sparse == 0 || spans < sparse * bitset_from) {
+    return;
+  }
+  for (int32_t i = 0; i != ra.size; ++i) {
+    roaring::internal::bitset_container_t* bits = nullptr;
+    if (ra.typecodes[i] == ARRAY_CONTAINER_TYPE) {
+      auto* array =
+        static_cast<roaring::internal::array_container_t*>(ra.containers[i]);
+      bits = roaring::internal::bitset_container_from_array(array);
+      if (bits != nullptr) [[likely]] {
+        roaring::internal::array_container_free(array);
+      }
+    } else if (ra.typecodes[i] == RUN_CONTAINER_TYPE) {
+      auto* runs =
+        static_cast<roaring::internal::run_container_t*>(ra.containers[i]);
+      bits = roaring::internal::bitset_container_from_run(runs);
+      if (bits != nullptr) [[likely]] {
+        roaring::internal::run_container_free(runs);
+      }
+    }
+    if (bits != nullptr) {
+      ra.containers[i] = bits;
+      ra.typecodes[i] = BITSET_CONTAINER_TYPE;
+    }
+  }
+}
+
+MaskKind KindOf(const roaring_bitmap_t& set) noexcept {
+  const auto& ra = set.high_low_container;
+  const auto count = static_cast<uint32_t>(ra.size);
+  if (count == 0) {
+    return MaskKind::Runs;
+  }
+  const auto type = ra.typecodes[0];
+  bool same = true;
+  for (uint32_t i = 0; i != count; ++i) {
+    SDB_ASSERT(ra.typecodes[i] != SHARED_CONTAINER_TYPE);
+    same = same && ra.typecodes[i] == type;
+  }
+  if (!same) {
+    return MaskKind::Mixed;
+  }
+  const bool single = count == 1;
+  switch (type) {
+    case BITSET_CONTAINER_TYPE:
+      if (single) {
+        return MaskKind::Bitset;
+      }
+      return uint32_t{ra.keys[count - 1]} - uint32_t{ra.keys[0]} == count - 1
+               ? MaskKind::Bitsets
+               : MaskKind::Mixed;
+    case ARRAY_CONTAINER_TYPE:
+      return single ? MaskKind::Array : MaskKind::Arrays;
+    case RUN_CONTAINER_TYPE:
+      return single ? MaskKind::Run : MaskKind::Runs;
+    default:
+      SDB_UNREACHABLE();
+  }
+}
+
+}  // namespace
+
+DocumentMask::DocumentMask(roaring_bitmap_t& set, size_t count) noexcept
+  : _set{set}, _count{count}, _kind{KindOf(_set)} {
+  roaring::api::roaring_bitmap_init_cleared(&set);
+}
+
+DocumentMask::~DocumentMask() { roaring::api::roaring_bitmap_clear(&_set); }
 
 DocumentMask::DocumentMask(DocumentMask&& other) noexcept
-  : _bits{std::exchange(other._bits, {})},
-    _count{std::exchange(other._count, 0)} {}
+  : _set{other._set},
+    _count{std::exchange(other._count, 0)},
+    _kind{std::exchange(other._kind, MaskKind::Runs)} {
+  roaring::api::roaring_bitmap_init_cleared(&other._set);
+}
 
 DocumentMask& DocumentMask::operator=(DocumentMask&& other) noexcept {
   if (this != &other) {
-    roaring_free(_bits.array);
-    _bits = std::exchange(other._bits, {});
+    roaring::api::roaring_bitmap_clear(&_set);
+    _set = other._set;
+    roaring::api::roaring_bitmap_init_cleared(&other._set);
+    _count = std::exchange(other._count, 0);
+    _kind = std::exchange(other._kind, MaskKind::Runs);
+  }
+  return *this;
+}
+
+bool operator==(const DocumentMask& lhs, const DocumentMask& rhs) {
+  return lhs._count == rhs._count &&
+         roaring::api::roaring_bitmap_equals(&lhs._set, &rhs._set);
+}
+
+roaring::Roaring DocumentMask::Compress() const { return CompressSet(_set); }
+
+bool DocumentMask::Contains(doc_id_t doc) const noexcept {
+  return roaring::api::roaring_bitmap_contains(&_set, doc);
+}
+
+size_t DocumentMask::ByteSize() const noexcept { return ByteSizeOf(_set); }
+
+size_t DocumentMask::ByteCapacity() const noexcept {
+  return ByteCapacityOf(_set);
+}
+
+uint64_t DocumentMask::RunsBound() const noexcept {
+  uint64_t runs = 0;
+  for (int32_t i = 0; i != _set.high_low_container.size; ++i) {
+    runs += SpansAt(_set, i);
+  }
+  return runs;
+}
+
+DocumentMaskBuilder::DocumentMaskBuilder() noexcept {
+  roaring::api::roaring_bitmap_init_cleared(&_set);
+}
+
+DocumentMaskBuilder::DocumentMaskBuilder(const roaring_bitmap_t& set,
+                                         size_t count)
+  : DocumentMaskBuilder{} {
+  if (count == 0) {
+    return;
+  }
+  if (!roaring::api::roaring_bitmap_overwrite(&_set, &set)) [[unlikely]] {
+    throw IllegalState{"Failed to allocate a copy of the document mask"};
+  }
+  _count = count;
+}
+
+DocumentMaskBuilder::DocumentMaskBuilder(const DocumentMask& published)
+  : DocumentMaskBuilder{published._set, published._count} {}
+
+DocumentMaskBuilder::~DocumentMaskBuilder() {
+  roaring::api::roaring_bitmap_clear(&_set);
+}
+
+DocumentMaskBuilder::DocumentMaskBuilder(DocumentMaskBuilder&& other) noexcept
+  : _set{other._set}, _count{std::exchange(other._count, 0)} {
+  roaring::api::roaring_bitmap_init_cleared(&other._set);
+}
+
+DocumentMaskBuilder& DocumentMaskBuilder::operator=(
+  DocumentMaskBuilder&& other) noexcept {
+  if (this != &other) {
+    roaring::api::roaring_bitmap_clear(&_set);
+    _set = other._set;
+    roaring::api::roaring_bitmap_init_cleared(&other._set);
     _count = std::exchange(other._count, 0);
   }
   return *this;
 }
 
-DocumentMask::DocumentMask(const DocumentMask& other) : _count{other._count} {
-  Assign(other._bits);
+DocumentMaskBuilder::DocumentMaskBuilder(const DocumentMaskBuilder& other)
+  : DocumentMaskBuilder{other._set, other._count} {}
+
+DocumentMaskBuilder& DocumentMaskBuilder::operator=(
+  const DocumentMaskBuilder& other) {
+  return *this = DocumentMaskBuilder{other};
 }
 
-DocumentMask& DocumentMask::operator=(const DocumentMask& other) {
-  return *this = DocumentMask{other};
-}
-
-void DocumentMask::Assign(const roaring::api::bitset_t& other) {
-  if (other.arraysize == 0) {
-    return;
-  }
-  const auto bytes = other.arraysize * sizeof(uint64_t);
-  auto* array = static_cast<uint64_t*>(roaring_malloc(bytes));
-  if (array == nullptr) [[unlikely]] {
-    throw IllegalState{"Failed to allocate a copy of the document mask"};
-  }
-  std::memcpy(array, other.array, bytes);
-  _bits.array = array;
-  _bits.arraysize = other.arraysize;
-  _bits.capacity = other.arraysize;
-}
-
-bool operator==(const DocumentMask& lhs, const DocumentMask& rhs) {
-  const auto common = std::min(lhs._bits.arraysize, rhs._bits.arraysize);
-  return lhs._count == rhs._count &&
-         (common == 0 || std::memcmp(lhs._bits.array, rhs._bits.array,
-                                     common * sizeof(uint64_t)) == 0);
-}
-
-DocumentMask DocumentMask::Read(const char* buf, size_t size) {
-  const auto compressed = [&] {
+DocumentMaskBuilder DocumentMaskBuilder::Read(const char* buf, size_t size) {
+  auto compressed = [&] {
     try {
       return roaring::Roaring::readSafe(buf, size);
     } catch (const std::exception& e) {
@@ -88,7 +265,7 @@ DocumentMask DocumentMask::Read(const char* buf, size_t size) {
     }
   }();
 
-  DocumentMask mask;
+  DocumentMaskBuilder mask;
   if (!compressed.isEmpty()) {
     const auto max = compressed.maximum();
 
@@ -98,75 +275,81 @@ DocumentMask DocumentMask::Read(const char* buf, size_t size) {
                                     compressed.minimum(), ", ", max, "]")};
     }
 
-    if (!roaring::api::roaring_bitmap_to_bitset(&compressed.roaring,
-                                                &mask._bits)) [[unlikely]] {
-      throw IllegalState{"Failed to allocate the document mask"};
-    }
     mask._count = compressed.cardinality();
+    mask._set = compressed.roaring;
+    roaring::api::roaring_bitmap_init_cleared(&compressed.roaring);
   }
   return mask;
 }
 
-roaring::Roaring DocumentMask::Compress() const {
-  roaring::Roaring out;
-  size_t found[256];
-  uint32_t docs[std::size(found)];
-  for (size_t at = 0, n = 0; (n = roaring::api::bitset_next_set_bits(
-                                &_bits, found, std::size(found), &at)) != 0;
-       ++at) {
-    std::copy_n(found, n, docs);
-    out.addMany(n, docs);
-  }
-  out.runOptimize();
-  out.shrinkToFit();
-  return out;
+roaring::Roaring DocumentMaskBuilder::Compress() const {
+  return CompressSet(_set);
 }
 
-void DocumentMask::Merge(const DocumentMask& other) {
-  if (!roaring::api::bitset_inplace_union(&_bits, &other._bits)) [[unlikely]] {
-    throw IllegalState{"Failed to grow the document mask while merging"};
-  }
-  _count = roaring::api::bitset_count(&_bits);
+bool DocumentMaskBuilder::Contains(doc_id_t doc) const noexcept {
+  return roaring::api::roaring_bitmap_contains(&_set, doc);
 }
 
-void DocumentMask::Trim() noexcept {
-  if (Empty()) {
-    roaring_free(_bits.array);
-    _bits = {};
-    return;
-  }
-  roaring::api::bitset_trim(&_bits);
+size_t DocumentMaskBuilder::ByteSize() const noexcept {
+  return ByteSizeOf(_set);
 }
 
-void DocumentMask::Grow(size_t words) {
-  if (words <= _bits.arraysize) {
-    return;
-  }
-  if (!roaring::api::bitset_grow(&_bits, words)) [[unlikely]] {
-    throw IllegalState{"Failed to grow the document mask"};
-  }
+size_t DocumentMaskBuilder::ByteCapacity() const noexcept {
+  return ByteCapacityOf(_set);
 }
 
-void DocumentMask::AddRange(doc_id_t first, doc_id_t last) {
+bool DocumentMaskBuilder::Add(doc_id_t doc) {
+  SDB_ASSERT(doc_limits::valid(doc));
+  SDB_ASSERT(!doc_limits::eof(doc));
+  if (!roaring::api::roaring_bitmap_add_checked(&_set, doc)) {
+    return false;
+  }
+  ++_count;
+  return true;
+}
+
+void DocumentMaskBuilder::AddRange(doc_id_t first, doc_id_t last) {
   SDB_ASSERT(doc_limits::valid(first));
   SDB_ASSERT(first <= last);
   if (first == last) {
     return;
   }
-  Grow(WordsFor(last - 1));
-  roaring::internal::bitset_set_range(_bits.array, first, last);
-  _count = roaring::api::bitset_count(&_bits);
+  roaring::api::roaring_bitmap_add_range(&_set, first, last);
+  _count = roaring::api::roaring_bitmap_get_cardinality(&_set);
 }
 
-void DocumentMask::Truncate(doc_id_t first) noexcept {
+void DocumentMaskBuilder::Truncate(doc_id_t first) noexcept {
   SDB_ASSERT(doc_limits::valid(first));
-  const size_t word = first / 64;
-  if (word >= _bits.arraysize) {
+  roaring::api::roaring_bitmap_remove_range(&_set, first, uint64_t{1} << 32);
+  _count = roaring::api::roaring_bitmap_get_cardinality(&_set);
+}
+
+void DocumentMaskBuilder::Merge(const DocumentMaskBuilder& other) {
+  if (other.Empty()) {
     return;
   }
-  _bits.array[word] &= (uint64_t{1} << (first % 64)) - 1;
-  std::fill(_bits.array + word + 1, _bits.array + _bits.arraysize, 0);
-  _count = roaring::api::bitset_count(&_bits);
+  roaring::api::roaring_bitmap_or_inplace(&_set, &other._set);
+  _count = roaring::api::roaring_bitmap_get_cardinality(&_set);
+}
+
+void DocumentMaskBuilder::Merge(const DocumentMask& published) {
+  if (published.Empty()) {
+    return;
+  }
+  roaring::api::roaring_bitmap_or_inplace(&_set, &published._set);
+  _count = roaring::api::roaring_bitmap_get_cardinality(&_set);
+}
+
+void DocumentMaskBuilder::Clear() noexcept {
+  roaring::api::roaring_bitmap_clear(&_set);
+  _count = 0;
+}
+
+DocumentMask DocumentMaskBuilder::Finish(uint32_t bitset_from) && noexcept {
+  roaring::api::roaring_bitmap_run_optimize(&_set);
+  roaring::api::roaring_bitmap_shrink_to_fit(&_set);
+  Densify(_set, bitset_from);
+  return DocumentMask{_set, std::exchange(_count, 0)};
 }
 
 }  // namespace irs

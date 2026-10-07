@@ -24,10 +24,8 @@
 
 #include <absl/strings/str_cat.h>
 
-#include <algorithm>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <roaring/roaring.hh>
-#include <span>
 #include <vector>
 
 #include "iresearch/error/error.hpp"
@@ -36,6 +34,7 @@
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/store/directory.hpp"
+#include "iresearch/utils/string_utils.hpp"
 
 namespace irs::segment_meta {
 namespace {
@@ -46,7 +45,8 @@ void WriteDocumentMask(IndexOutput& out, const roaring::Roaring& compressed,
     compressed.write(reinterpret_cast<char*>(buf));
     return;
   }
-  bstring blob(size, 0);
+  bstring blob;
+  irs::utils::StrResize(blob, size);
   compressed.write(reinterpret_cast<char*>(blob.data()));
   out.WriteData(blob.data(), size);
 }
@@ -58,7 +58,7 @@ std::string FileName(const SegmentMeta& meta) {
 }
 
 void Write(Directory& dir, std::string& meta_file, SegmentMeta& meta,
-           const DocumentMask* patch, uint64_t parent) {
+           const DocumentMaskBuilder* patch, uint64_t parent) {
   SDB_ASSERT(meta.live_docs_count <= meta.docs_count);
   SDB_ASSERT(meta.docs_count - meta.live_docs_count == RemovalCount(meta));
   SDB_ASSERT(RemovalCount(meta) < doc_limits::eof());
@@ -68,9 +68,8 @@ void Write(Directory& dir, std::string& meta_file, SegmentMeta& meta,
   const auto& docs_mask = meta.docs_mask;
   const bool has_mask = docs_mask && !docs_mask->Empty();
 
-  const bool append = has_mask && patch != nullptr &&
-                      meta.docs_mask_chain != 0 &&
-                      meta.docs_mask_size > kMinChainBytes;
+  const bool append =
+    has_mask && patch != nullptr && meta.docs_mask_size > kMinChainBytes;
 
   roaring::Roaring compressed;
   if (append) {
@@ -80,40 +79,26 @@ void Write(Directory& dir, std::string& meta_file, SegmentMeta& meta,
   }
   const uint64_t mask_size = has_mask ? compressed.getSizeInBytes() : 0;
 
-  const size_t ancestors =
-    meta.docs_mask_chain != 0 ? meta.docs_mask_chain - 1 : 0;
-
-  SDB_ASSERT(ancestors <= meta.files.size());
-  SDB_ASSERT(std::all_of(
-    meta.files.end() - ancestors, meta.files.end(), [&](const auto& file) {
-      uint64_t link = 0;
-      std::string_view name;
-      return ParseFileName(file, kExt, name, link) && name == meta.name;
-    }));
-
   std::vector<std::string> files;
   std::vector<uint64_t> parents;
-  uint64_t chain_bytes = 0;
-  size_t chain_files = 0;
-  if (append) {
-    SDB_ASSERT(parent < meta.version);
-    parents.reserve(ancestors + 1);
-    for (const auto& file : std::span{meta.files}.last(ancestors)) {
-      std::string_view name;
-      uint64_t link = 0;
-      ParseFileName(file, kExt, name, link);
+  for (const auto& file : meta.files) {
+    std::string_view name;
+    uint64_t link = 0;
+    const bool is_link = ParseFileName(file, kExt, name, link);
+    SDB_ASSERT(!is_link || name == meta.name);
+    if (is_link && append) {
       parents.push_back(link);
     }
+    if (!is_link || append) {
+      files.push_back(file);
+    }
+  }
+  uint64_t chain_bytes = 0;
+  if (append) {
+    SDB_ASSERT(parent < meta.version);
     parents.push_back(parent);
-    files.reserve(meta.files.size() + 1);
-    files.assign(meta.files.begin(), meta.files.end());
     files.emplace_back(irs::FileName(meta.name, parent, kExt));
     chain_bytes = meta.docs_mask_size;
-    chain_files = ancestors + 1;
-  } else {
-    const auto data =
-      std::span{meta.files}.first(meta.files.size() - ancestors);
-    files.assign(data.begin(), data.end());
   }
 
   meta_file = FileName(meta);
@@ -150,7 +135,6 @@ void Write(Directory& dir, std::string& meta_file, SegmentMeta& meta,
 
   meta.files = std::move(files);
   meta.docs_mask_size = chain_bytes + mask_size;
-  meta.docs_mask_chain = has_mask ? static_cast<uint32_t>(chain_files) + 1 : 0;
   meta.byte_size = size_without_mask + meta.docs_mask_size;
 }
 

@@ -97,6 +97,7 @@ Node::ptr MakeSinglePostingScored(const detail::PostingClause& posting,
                                   ScoreMergeType merge);
 
 Node::ptr MakeAllDocs(const SubReader& segment);
+Node::ptr MakeLiveDocs(const SubReader& segment);
 Node::ptr MakeAllScored(const SubReader& segment, const detail::ScoredCtx& ctx,
                         const detail::StatsRecord& record, ScoreMergeType merge,
                         score_t boost);

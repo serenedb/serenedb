@@ -20,69 +20,11 @@
 
 #include "iresearch/search/docs/make_boolean.hpp"
 
-#include <span>
-
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/boolean_builder.hpp"
-#include "iresearch/search/docs/boolean_sparse.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 
 namespace irs::docs {
-namespace {
-
-struct Api {
-  using Result = Root::ptr;
-  using Context = docs::Context;
-
-  static constexpr bool kWindowNodes = true;
-  static constexpr bool kWindowLeadDrains = true;
-  static constexpr double kSparseLeadCost = 1.0;
-  static constexpr bool kWindowLeadRefills = true;
-
-  template<typename Lead, typename Others, typename Optional, typename Excludes,
-           typename... Args>
-  static Result MakeWindow(const Context& ctx, Args&&... args) {
-    return MakeShape<BooleanWindow, Lead, Others, Optional, Excludes>(
-      ctx, std::piecewise_construct, std::forward<Args>(args)...);
-  }
-
-  template<typename Lead, typename Probes, typename Excludes, typename... Args>
-  static Result MakeSparse(const Context& ctx, Args&&... args) {
-    return MakeShape<BooleanSparse, Lead, Probes, Excludes>(
-      ctx, std::piecewise_construct, std::forward<Args>(args)...);
-  }
-
-  static Result PlanChild(const QueryBuilder& child, const Context& ctx) {
-    return child.PlanDocs(ctx);
-  }
-
-  static Result MakeTerm(const detail::PostingClause& term,
-                         const SubReader& segment, const Context& ctx) {
-    return MakePosting(term, segment, ctx);
-  }
-
-  static Result MakeAll(const SubReader& segment, const Context& ctx) {
-    return docs::MakeAll(static_cast<doc_id_t>(segment.docs_count()), ctx);
-  }
-
-  static detail::TableFilter* BitsetTable(const Context&) noexcept {
-    return nullptr;
-  }
-
-  static doc_id_t BitsetSpan(const Context& ctx, doc_id_t docs_count) noexcept {
-    return FoldSpan(ctx, docs_count);
-  }
-
-  static Result MakeNegation(
-    std::span<const detail::PostingClause> exclude_terms,
-    std::span<const QueryBuilder::ptr> exclude_filters,
-    const SubReader& segment, uint64_t, const Context& ctx) {
-    return detail::builder::MakeWindowNegation<Api>(
-      exclude_terms, exclude_filters, segment, ctx);
-  }
-};
-
-}  // namespace
 
 Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
   return detail::builder::Make<Api>(query, ctx);

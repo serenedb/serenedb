@@ -351,10 +351,10 @@ TEST(segment_reader_test, segment_reader_has) {
     expected.live_docs_count = 42;
     expected.version = 0;
     expected.docs_mask = [&] {
-      irs::DocumentMask docs_mask;
+      irs::DocumentMaskBuilder docs_mask;
       docs_mask.Add(4);
-      docs_mask.Trim();
-      return std::make_shared<irs::DocumentMask>(std::move(docs_mask));
+      return std::make_shared<const irs::DocumentMask>(
+        std::move(docs_mask).Finish());
     }();
     irs::segment_meta::Write(dir, filename, expected);
 
@@ -376,10 +376,10 @@ TEST(segment_reader_test, segment_reader_has) {
     expected.live_docs_count = 42;
     expected.version = 1;
     expected.docs_mask = [&] {
-      irs::DocumentMask docs_mask;
+      irs::DocumentMaskBuilder docs_mask;
       docs_mask.Add(4);
-      docs_mask.Trim();
-      return std::make_shared<irs::DocumentMask>(std::move(docs_mask));
+      return std::make_shared<const irs::DocumentMask>(
+        std::move(docs_mask).Finish());
     }();
     irs::segment_meta::Write(dir, filename, expected);
 

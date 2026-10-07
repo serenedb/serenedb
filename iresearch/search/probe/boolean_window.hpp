@@ -105,7 +105,9 @@ class BooleanWindow {
     requires kScored
   {
     SDB_ASSERT(slot < kScoreBlock);
-    _gathered[slot] = _window[_doc - _min];
+    const auto offset = _doc - _min;
+    _gathered[slot] =
+      offset < detail::kWindowDocs ? _window[offset] : score_t{0};
   }
 
   ScoreFunction PrepareScore()

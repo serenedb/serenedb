@@ -70,6 +70,7 @@ inline constexpr irs::field_id kIdId = 1;
 inline constexpr irs::field_id kBucketId = 3;
 inline constexpr size_t kBucketCount = 1000;
 
+size_t gBucketCount = kBucketCount;
 bool gBucketField = false;
 
 uint64_t Fnv1a(std::string_view value) noexcept {
@@ -84,7 +85,50 @@ uint64_t Fnv1a(std::string_view value) noexcept {
 std::string BucketToken(size_t bucket) { return absl::StrCat("bkt", bucket); }
 
 size_t BucketOf(std::string_view id) noexcept {
-  return static_cast<size_t>(Fnv1a(id) % kBucketCount);
+  return static_cast<size_t>(Fnv1a(id) % gBucketCount);
+}
+
+enum class DeletePattern {
+  Uniform,
+  Clustered,
+  Range,
+};
+
+inline constexpr uint64_t kClusterRun = 512;
+
+DeletePattern gDeletePattern = DeletePattern::Uniform;
+uint32_t gSegmentDocs = 0;
+std::vector<std::string> gTags;
+uint64_t gCorpusDocs = 0;
+uint64_t gDocPosition = 0;
+
+size_t BucketAt(std::string_view id, uint64_t position) noexcept {
+  switch (gDeletePattern) {
+    case DeletePattern::Uniform:
+      return BucketOf(id);
+    case DeletePattern::Clustered: {
+      const auto run = position / kClusterRun;
+      return static_cast<size_t>(
+        Fnv1a({reinterpret_cast<const char*>(&run), sizeof(run)}) %
+        gBucketCount);
+    }
+    case DeletePattern::Range:
+      return static_cast<size_t>(position * gBucketCount /
+                                 std::max<uint64_t>(gCorpusDocs, 1));
+  }
+  return 0;
+}
+
+uint64_t CountLines(const std::string& path) {
+  std::ifstream in{path, std::ios::binary};
+  std::vector<char> buf(size_t{1} << 20);
+  uint64_t lines = 0;
+  while (in.read(buf.data(), static_cast<std::streamsize>(buf.size())) ||
+         in.gcount() > 0) {
+    lines += static_cast<uint64_t>(
+      std::count(buf.data(), buf.data() + in.gcount(), '\n'));
+  }
+  return lines;
 }
 
 void DecodeMask(const uint64_t* mask, size_t mask_words, irs::doc_id_t base,
@@ -580,7 +624,7 @@ struct StoredIdBatchHandler : bench::IBatchHandler {
                                doc.fields[0]);
       ::tests::InsertField(trx, doc.fields[1]);
       if (gBucketField) {
-        token = BucketToken(BucketOf(doc.fields[0].text));
+        token = BucketToken(BucketAt(doc.fields[0].text, gDocPosition++));
         bucket.value = token;
         ::tests::InsertField(trx, bucket);
       }
@@ -598,7 +642,8 @@ void BuildIndex(const std::string& corpus_path,
     .refresh_interval_ms = 0,
     .compaction_interval_ms = 5000,
     .compaction_threads = 0,
-    .compact_all = true,
+    .compact_all = gSegmentDocs == 0,
+    .segment_docs_max = gSegmentDocs,
   };
 
   out = std::make_unique<bench::IndexBuilder>(index_dir.string(),
@@ -745,14 +790,11 @@ size_t RunOne(bench::Executor& executor, BenchMode mode,
   return 0;
 }
 
-double Quantile(std::vector<double> values, double q) {
+double Mean(std::span<const double> values) {
   if (values.empty()) {
     return 0.0;
   }
-  absl::c_sort(values);
-  const auto at =
-    static_cast<size_t>(q * static_cast<double>(values.size() - 1) + 0.5);
-  return values[std::min(at, values.size() - 1)];
+  return absl::c_accumulate(values, 0.0) / static_cast<double>(values.size());
 }
 
 std::vector<double> TimeQueries(bench::Executor& executor, BenchMode mode,
@@ -781,12 +823,12 @@ std::vector<double> TimeQueries(bench::Executor& executor, BenchMode mode,
   }
   hits = total;
 
-  std::vector<double> medians;
-  medians.reserve(selected.size());
-  for (auto& sample : samples) {
-    medians.push_back(Quantile(std::move(sample), 0.5));
+  std::vector<double> means;
+  means.reserve(selected.size());
+  for (const auto& sample : samples) {
+    means.push_back(Mean(sample));
   }
-  return medians;
+  return means;
 }
 
 void WarmUp(bench::Executor& executor, const std::vector<ParsedQuery>& queries,
@@ -822,7 +864,7 @@ std::vector<size_t> ParseRatios(std::string_view spec) {
   std::vector<size_t> out;
   for (const auto part : absl::StrSplit(spec, ',', absl::SkipEmpty())) {
     size_t value = 0;
-    if (absl::SimpleAtoi(part, &value) && value > 0 && value < kBucketCount) {
+    if (absl::SimpleAtoi(part, &value) && value > 0 && value < gBucketCount) {
       out.push_back(value);
     }
   }
@@ -1116,6 +1158,11 @@ class LoadTest : public TestBase {
     if (const char* gzip = std::getenv("GENERATE_GZIP"); gzip != nullptr) {
       gGzip = std::string_view{gzip} != "0";
     }
+    if (const char* scale = std::getenv("DELETE_BENCH_SCALE");
+        scale != nullptr) {
+      gBucketCount = static_cast<size_t>(std::stoul(scale));
+      ASSERT_GT(gBucketCount, 0U) << "DELETE_BENCH_SCALE";
+    }
     if (const char* ratios = std::getenv("DELETE_BENCH_RATIOS");
         ratios != nullptr) {
       gDeleteRatios = ParseRatios(ratios);
@@ -1141,8 +1188,30 @@ class LoadTest : public TestBase {
         gModes = std::move(parsed);
       }
     }
+    if (const char* p = std::getenv("DELETE_BENCH_PATTERN"); p != nullptr) {
+      const std::string_view pattern{p};
+      if (pattern == "clustered") {
+        gDeletePattern = DeletePattern::Clustered;
+      } else if (pattern == "range") {
+        gDeletePattern = DeletePattern::Range;
+      } else {
+        ASSERT_EQ(pattern, "uniform") << "unknown DELETE_BENCH_PATTERN";
+      }
+    }
+    if (const char* d = std::getenv("DELETE_BENCH_SEGMENT_DOCS");
+        d != nullptr) {
+      gSegmentDocs = static_cast<uint32_t>(std::stoul(d));
+      ASSERT_LE(gSegmentDocs, 65535U) << "DELETE_BENCH_SEGMENT_DOCS";
+    }
+    if (const char* t = std::getenv("DELETE_BENCH_TAGS"); t != nullptr) {
+      gTags = absl::StrSplit(t, ',', absl::SkipEmpty());
+    }
     if (!std::filesystem::exists(gCorpusPath)) {
       GTEST_SKIP() << "Path does not exist: " << gCorpusPath;
+    }
+    if (gDeletePattern == DeletePattern::Range) {
+      gCorpusDocs = CountLines(gCorpusPath);
+      ASSERT_GT(gCorpusDocs, 0);
     }
 
     std::string index_dir;
@@ -1356,6 +1425,11 @@ TEST_F(LoadTest, DeleteRatioLatency) {
   all_idx.reserve(queries.size());
   topk_idx.reserve(queries.size());
   for (size_t i = 0; i != queries.size(); ++i) {
+    if (!gTags.empty() && !absl::c_any_of(gTags, [&](const auto& tag) {
+          return absl::c_linear_search(queries[i].tags, tag);
+        })) {
+      continue;
+    }
     all_idx.push_back(i);
     if (!absl::c_linear_search(queries[i].tags, kSkipTopK)) {
       topk_idx.push_back(i);
@@ -1365,7 +1439,7 @@ TEST_F(LoadTest, DeleteRatioLatency) {
 
   std::ofstream csv{gDeleteOut};
   ASSERT_TRUE(csv.is_open()) << "Cannot write: " << gDeleteOut;
-  csv << "per_mille,mode,tag,queries,median_ms,p95_ms,docs,live_docs,segments,"
+  csv << "per_mille,mode,tag,queries,mean_ms,docs,live_docs,segments,"
          "mask_bytes,hits\n";
 
   std::vector<size_t> steps{0};
@@ -1400,9 +1474,9 @@ TEST_F(LoadTest, DeleteRatioLatency) {
       mask_bytes += MaskBytes(segment);
     }
     ASSERT_GT(docs, 0);
-    const auto removed_pm = (docs - live) * 1000 / docs;
-    EXPECT_NEAR(static_cast<double>(removed_pm), static_cast<double>(per_mille),
-                5.0)
+    const auto removed = (docs - live) * gBucketCount / docs;
+    EXPECT_NEAR(static_cast<double>(removed), static_cast<double>(per_mille),
+                5.0 * static_cast<double>(gBucketCount) / 1000.0)
       << "deleted fraction does not match the requested ratio";
     std::cout << absl::StrCat("per_mille=", per_mille, " docs=", docs,
                               " live=", live, " segments=", reader.size(),
@@ -1413,31 +1487,29 @@ TEST_F(LoadTest, DeleteRatioLatency) {
     for (const auto mode : gModes) {
       const auto& selected = mode == BenchMode::Count ? all_idx : topk_idx;
       uint64_t hits = 0;
-      const auto medians =
+      const auto means =
         TimeQueries(*gExecutor, mode, queries, selected, gDeleteRuns, hits);
       const auto name = kModeNames[static_cast<size_t>(mode)];
 
       auto emit = [&](std::string_view tag, const std::vector<double>& v) {
         csv << per_mille << ',' << name << ',' << tag << ',' << v.size() << ','
-            << Quantile(v, 0.5) << ',' << Quantile(v, 0.95) << ',' << docs
-            << ',' << live << ',' << reader.size() << ',' << mask_bytes << ','
-            << hits << '\n';
+            << Mean(v) << ',' << docs << ',' << live << ',' << reader.size()
+            << ',' << mask_bytes << ',' << hits << '\n';
       };
-      emit("all", medians);
+      emit("all", means);
 
       absl::flat_hash_map<std::string_view, std::vector<double>> by_tag;
       for (size_t at = 0; at != selected.size(); ++at) {
         for (const auto& tag : queries[selected[at]].tags) {
           if (!absl::StrContains(tag, ':')) {
-            by_tag[tag].push_back(medians[at]);
+            by_tag[tag].push_back(means[at]);
           }
         }
       }
       for (const auto& [tag, v] : by_tag) {
         emit(tag, v);
       }
-      std::cout << absl::StrCat("  ", name, " median=", Quantile(medians, 0.5),
-                                " ms p95=", Quantile(medians, 0.95), " ms\n");
+      std::cout << absl::StrCat("  ", name, " mean=", Mean(means), " ms\n");
     }
     csv.flush();
   }

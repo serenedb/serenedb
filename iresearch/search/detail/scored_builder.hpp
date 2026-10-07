@@ -59,20 +59,14 @@ Result<Api> MakeScoredNegation(
   std::span<const PostingClause> excludes,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   ScoreMergeType merge, score_t absorbed, const Context<Api>& ctx) {
-  SDB_ASSERT(!excludes.empty() || !exclude_filters.empty());
-  std::vector<FillNode::ptr> nodes;
-  if (!CollectFills(excludes, exclude_filters, nullptr, segment, nodes)) {
-    return {};
-  }
-  using Excludes = fill::FilledAndNot<fill::SetLeaves<fill::Erased>>;
-  return Api::template MakeWindow<fill::AllDocs, utils::Empty, Excludes>(
-    ctx, merge, absorbed, std::forward_as_tuple(segment),
-    std::forward_as_tuple(),
-    std::forward_as_tuple(
-      std::piecewise_construct,
-      std::forward_as_tuple(nodes.size(), [&](fill::Erased& leaf, size_t i) {
-        leaf = fill::Erased{std::move(nodes[i])};
-      })));
+  return BuildNegationWindow<Result<Api>>(
+    excludes, exclude_filters, segment,
+    [&]<typename Lead, typename Excludes>(auto&& lead,
+                                          auto&& excluded) -> Result<Api> {
+      return Api::template MakeWindow<Lead, utils::Empty, Excludes>(
+        ctx, merge, absorbed, std::forward<decltype(lead)>(lead),
+        std::forward_as_tuple(), std::forward<decltype(excluded)>(excluded));
+    });
 }
 
 template<typename Api, template<typename> class Group, typename Set,
@@ -426,11 +420,10 @@ Result<Api> MakeScored(const BooleanQuery& query, const Context<Api>& ctx) {
         }
       }
     }
-    if (auto windowed = MakeScoredExclusionWindow<Api>(query, segment, ctx,
-                                                       merge, absorbed)) {
+    if (auto windowed = Api::MakeExclusionWindow(query, ctx)) {
       return windowed;
     }
-    return MakeScoredExclusion<Api>(query, segment, ctx, merge, absorbed);
+    return Api::MakeExclusion(query, ctx);
   }
   if (no_must && !only_scores) {
     if (!optional) {

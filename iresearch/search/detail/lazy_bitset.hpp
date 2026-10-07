@@ -25,10 +25,10 @@
 #include <cstdint>
 #include <utility>
 
+#include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/window.hpp"
-#include "iresearch/search/fill/docs_mask.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -58,19 +58,19 @@ class LazyBitset {
   static constexpr auto kBits = BitsetStorage::kBits;
   static constexpr auto kMin = BitsetStorage::kMin;
 
-  LazyBitset(BitsetStorage&& set, fill::DocsMask&& mask) noexcept
+  LazyBitset(BitsetStorage&& set, GenericDocsMask&& mask) noexcept
     : _set{std::move(set)},
       _mask{std::move(mask)},
-      _has_removals{!_mask.Empty()},
+      _has_removals{!doc_limits::eof(_mask.Probe(doc_limits::min()))},
       _filled{_set.End()} {
     Drop(0, _set.WordCount());
   }
 
-  LazyBitset(FillNode::ptr&& node, doc_id_t docs_count, fill::DocsMask&& mask)
+  LazyBitset(FillNode::ptr&& node, doc_id_t docs_count, GenericDocsMask&& mask)
     : _set{docs_count},
       _node{std::move(node)},
       _mask{std::move(mask)},
-      _has_removals{!_mask.Empty()} {
+      _has_removals{!doc_limits::eof(_mask.Probe(doc_limits::min()))} {
     SDB_ASSERT(_node);
   }
 
@@ -163,16 +163,13 @@ class LazyBitset {
     if (!_has_removals) {
       return;
     }
-    auto* const words = _set.Words();
     last = std::min(last, size_t{_set.WordCount()});
-    for (auto w = first; w < last; w += kWindowWords) {
-      const auto n = std::min(kWindowWords, last - w);
-      const auto min = static_cast<doc_id_t>(kMin + w * kBits);
-      uint64_t dead[kWindowWords];
-      std::fill_n(dead, n, uint64_t{0});
-      _mask.FillOr(min, static_cast<doc_id_t>(min + n * kBits), dead);
-      FoldAndNot(words + w, dead, n);
+    if (first >= last) {
+      return;
     }
+    _mask.Remove(static_cast<doc_id_t>(kMin + first * kBits),
+                 static_cast<doc_id_t>(kMin + last * kBits),
+                 _set.Words() + first);
   }
 
   void Finish() noexcept {
@@ -184,7 +181,7 @@ class LazyBitset {
 
   BitsetStorage _set;
   FillNode::ptr _node;
-  fill::DocsMask _mask;
+  GenericDocsMask _mask;
   bool _has_removals = false;
   doc_id_t _filled = kMin;
 };

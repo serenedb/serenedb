@@ -122,6 +122,11 @@ struct Api {
                             score_t absorbed) {
     return MakeBoostedPosting(query, segment, ctx, merge, absorbed);
   }
+
+  static Result MakeExclusionWindow(const BooleanQuery& query,
+                                    const Context& ctx);
+
+  static Result MakeExclusion(const BooleanQuery& query, const Context& ctx);
 };
 
 template<typename Term>

@@ -29,12 +29,12 @@
 #include <duckdb/planner/filter/table_filter_functions.hpp>
 #include <duckdb/planner/table_filter.hpp>
 #include <iresearch/index/column_extract.hpp>
+#include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/index/hit_batcher.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_source.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/index/table_filter_iterator.hpp>
-#include <iresearch/search/fill/docs_mask.hpp>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/types.hpp>
@@ -341,7 +341,8 @@ struct ColScanLocalState final : public ScanLocalState {
   uint64_t doc_cursor = 0;
   uint64_t doc_end = 0;
   FullScanner* scanner = nullptr;
-  irs::fill::DocsMask mask{nullptr, irs::doc_limits::eof()};
+  irs::GenericDocsMask mask =
+    irs::MakeGenericDocsMask(nullptr, irs::doc_limits::eof());
   bool has_mask = false;
   std::vector<std::unique_ptr<FullScanner>> full_scanners;
   duckdb::buffer_ptr<duckdb::SelectionData> live_sel_data;

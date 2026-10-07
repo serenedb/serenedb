@@ -61,7 +61,7 @@ struct PrepareContext {
   PrepareCollector* collector = nullptr;
   IResourceManager& memory = IResourceManager::gNoop;
   const AttributeProvider* ctx = nullptr;
-  const DocumentMask* pending_docs_mask = nullptr;
+  const DocumentMaskBuilder* pending_docs_mask = nullptr;
   score_t boost = kNoBoost;
   uint32_t thread = 0;
   bool needs_terms = false;

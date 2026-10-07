@@ -49,6 +49,70 @@
 
 namespace irs::fill {
 
+struct Api {
+  using Result = Node::ptr;
+  using Context = utils::Empty;
+
+  static constexpr bool kWindowNodes = false;
+  static constexpr bool kWindowLeadDrains = false;
+  static constexpr double kSparseLeadCost = 6.0;
+  static constexpr bool kWindowLeadRefills = false;
+
+  template<typename Lead, typename Others, typename Optional, typename Excludes,
+           typename... Args>
+  static Result MakeWindow(const Context&, Args&&... args) {
+    using Window = BooleanWindow<Lead, Others, Optional, Excludes>;
+    return memory::make_managed<Impl<Window>>(std::piecewise_construct,
+                                              std::forward<Args>(args)...);
+  }
+
+  template<typename Lead, typename Probes, typename Excludes, typename LeadArgs,
+           typename ProbesArgs, typename ExcludesArgs>
+  static Result MakeSparse(const Context&, LeadArgs&& lead, ProbesArgs&& probes,
+                           ExcludesArgs&& excludes) {
+    using Sparse = lead::BooleanSparse<Lead, Probes, utils::Empty, Excludes>;
+    return memory::make_managed<ByWalkDocs<Sparse>>(
+      std::piecewise_construct, std::forward<LeadArgs>(lead),
+      std::forward<ProbesArgs>(probes), std::forward_as_tuple(),
+      std::forward<ExcludesArgs>(excludes));
+  }
+
+  static Result PlanChild(const QueryBuilder& child, const Context&) {
+    return child.PlanFill({}, ScoreMergeType::Noop);
+  }
+
+  static Result MakeTerm(const detail::PostingClause& term,
+                         const SubReader& segment, const Context&) {
+    return FillOf(term, nullptr, segment);
+  }
+
+  static Result MakeAll(const SubReader& segment, const Context&) {
+    return MakeAllDocs(segment);
+  }
+
+  static detail::TableFilter* BitsetTable(const Context&) noexcept {
+    return nullptr;
+  }
+
+  static doc_id_t BitsetSpan(const Context&, doc_id_t docs_count) noexcept {
+    return docs_count;
+  }
+
+  static Result MakeExclusion(const BooleanQuery& query, const Context& ctx);
+
+  static Result MakeWindowExclusion(
+    std::span<const detail::PostingClause> terms,
+    std::span<const QueryBuilder::ptr> filters,
+    std::span<const detail::PostingClause> exclude_terms,
+    std::span<const QueryBuilder::ptr> exclude_filters,
+    const SubReader& segment, uint64_t candidates, const Context& ctx);
+
+  static Result MakeNegation(
+    std::span<const detail::PostingClause> exclude_terms,
+    std::span<const QueryBuilder::ptr> exclude_filters,
+    const SubReader& segment, uint64_t candidates, const Context& ctx);
+};
+
 struct ScoredApi {
   using Result = Node::ptr;
   using Context = detail::ScoredCtx;

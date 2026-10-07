@@ -42,6 +42,7 @@
 #include "iresearch/formats/hnsw/hnsw_reader.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -641,19 +642,21 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
 
   std::vector<uint32_t> remap(src_rows, kHnswInvalidNode);
   uint64_t rank = 0;
-  auto it_mask = donor.reader->MaskedDocs();
-  for (size_t r = 0; r < src_rows; ++r) {
-    const auto doc = static_cast<doc_id_t>(r) + doc_limits::min();
-    if (it_mask.Contains(doc)) {
-      continue;
-    }
-    if (donor.out_base + rank >= rows) {
-      co_return false;
-    }
-    remap[r] = static_cast<uint32_t>(donor.out_base + rank);
-    ++rank;
-  }
-  if (rank != donor.alive) {
+  VisitLiveRanges(donor.reader->docs_mask(), donor.reader->Meta().visible_end,
+                  doc_limits::min(),
+                  static_cast<doc_id_t>(src_rows + doc_limits::min()),
+                  [&](doc_id_t first, doc_id_t last) {
+                    const auto base = donor.out_base + rank;
+                    const auto count = last - first;
+                    if (base + count <= rows) {
+                      auto* out = remap.data() + (first - doc_limits::min());
+                      for (doc_id_t i = 0; i != count; ++i) {
+                        out[i] = static_cast<uint32_t>(base + i);
+                      }
+                    }
+                    rank += count;
+                  });
+  if (donor.out_base + rank > rows || rank != donor.alive) {
     co_return false;
   }
 

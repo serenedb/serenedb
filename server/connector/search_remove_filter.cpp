@@ -38,7 +38,7 @@ template<typename Filter>
 class SearchRemoveQuery : public irs::QueryBuilder {
  public:
   SearchRemoveQuery(const irs::SubReader& segment, const Filter& filter,
-                    const irs::DocumentMask* pending)
+                    const irs::DocumentMaskBuilder* pending)
     : irs::QueryBuilder{segment}, _filter{filter}, _pending{pending} {}
 
   irs::lead::Node::ptr PlanLead(const irs::detail::ScoredCtx&) const final {
@@ -72,7 +72,7 @@ class SearchRemoveQuery : public irs::QueryBuilder {
 
  private:
   const Filter& _filter;
-  const irs::DocumentMask* _pending;
+  const irs::DocumentMaskBuilder* _pending;
 };
 
 }  // namespace
@@ -87,9 +87,10 @@ irs::QueryBuilder::ptr SearchRemoveFilter::PrepareSegment(
 }
 
 irs::lead::Node::ptr SearchRemoveFilter::MakeLead(
-  const irs::SubReader& segment, const irs::DocumentMask* pending) const {
+  const irs::SubReader& segment,
+  const irs::DocumentMaskBuilder* pending) const {
   _segment_mask = segment.MaskedDocs();
-  _pending_mask = irs::DocumentMask::Iterator{pending};
+  _pending = pending;
   _pk_field = segment.field(_pk_field_id);
   SDB_ASSERT(_pk_field);
   _pos = 0;
@@ -133,7 +134,7 @@ irs::doc_id_t SearchRemoveFilter::Next() {
     auto doc = irs::doc_limits::eof();
     auto acceptor = [&](irs::doc_id_t found_doc) {
       if (_segment_mask.Contains(found_doc) ||
-          _pending_mask.Contains(found_doc)) {
+          (_pending != nullptr && _pending->Contains(found_doc))) {
         return true;  // skip deleted, including by this batch's earlier queries
       }
       // found alive document with this PK
@@ -185,9 +186,10 @@ irs::QueryBuilder::ptr SearchRemovePrefixFilter::PrepareSegment(
 }
 
 irs::lead::Node::ptr SearchRemovePrefixFilter::MakeLead(
-  const irs::SubReader& segment, const irs::DocumentMask* pending) const {
+  const irs::SubReader& segment,
+  const irs::DocumentMaskBuilder* pending) const {
   _segment_mask = segment.MaskedDocs();
-  _pending_mask = irs::DocumentMask::Iterator{pending};
+  _pending = pending;
   _pk_field = segment.field(_pk_field_id);
   SDB_ASSERT(_pk_field);
   _terms.reset();
@@ -207,7 +209,8 @@ irs::doc_id_t SearchRemovePrefixFilter::Next() {
         if (irs::doc_limits::eof(doc)) {
           break;
         }
-        if (_segment_mask.Contains(doc) || _pending_mask.Contains(doc)) {
+        if (_segment_mask.Contains(doc) ||
+            (_pending != nullptr && _pending->Contains(doc))) {
           continue;
         }
         return _doc = doc;

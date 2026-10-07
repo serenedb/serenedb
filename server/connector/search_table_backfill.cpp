@@ -34,6 +34,7 @@
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -108,7 +109,6 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
   SDB_ENSURE(col_reader, "search-table build: segment has no columnstore");
   FullScanner scanner{
     *col_reader, source.projections, {}, &context, source.filter_states};
-  auto it_mask = sub.MaskedDocs();
   const bool has_mask = sub.docs_mask() != nullptr;
   const uint64_t docs = irs::VisibleCount(sub.Meta());
   uint64_t fed = 0;
@@ -124,13 +124,15 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
     chunk.SetCardinality(produced);
     if (has_mask) {
       duckdb::idx_t keep = 0;
-      for (duckdb::idx_t i = 0; i < produced; ++i) {
-        const auto doc =
-          static_cast<irs::doc_id_t>(row + i + irs::doc_limits::min());
-        if (!it_mask.Contains(doc)) {
-          source.live.set_index(keep++, i);
-        }
-      }
+      const auto first_doc =
+        static_cast<irs::doc_id_t>(row + irs::doc_limits::min());
+      irs::VisitLiveRanges(sub.docs_mask(), sub.Meta().visible_end, first_doc,
+                           static_cast<irs::doc_id_t>(first_doc + produced),
+                           [&](irs::doc_id_t first, irs::doc_id_t last) {
+                             for (auto doc = first; doc != last; ++doc) {
+                               source.live.set_index(keep++, doc - first_doc);
+                             }
+                           });
       if (keep == 0) {
         continue;
       }

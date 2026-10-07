@@ -89,6 +89,6 @@ void FlushIndexSegment(Directory& dir, IndexSegment& segment,
                        bool increment_version = true);
 
 void FlushIndexSegmentPatch(Directory& dir, IndexSegment& segment,
-                            const DocumentMask& patch);
+                            const DocumentMaskBuilder& patch);
 
 }  // namespace irs::index_utils

@@ -117,9 +117,9 @@ Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
   const auto uniformity = irs::detail::UniformityOf(*state.Reader(), scorer);
   if (ctx.prune) {
     if (merge == ScoreMergeType::Sum) {
-      if (auto pruned =
-            MakePrunedDisjunction(terms, {}, uniformity, field, scorer, boost,
-                                  {}, {}, query.Segment(), ctx, merge)) {
+      if (auto pruned = MakePrunedDisjunction<false>(
+            terms, {}, uniformity, field, scorer, boost, {}, {},
+            query.Segment(), ctx, merge)) {
         return pruned;
       }
     }

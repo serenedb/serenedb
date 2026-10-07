@@ -29,18 +29,19 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <random>
 #include <roaring/roaring.hh>
 #include <span>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
+#include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/window.hpp"
-#include "iresearch/search/fill/docs_mask.hpp"
 #include "iresearch/search/probe/bitset_docs.hpp"
-#include "iresearch/search/probe/docs_mask.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
 
 namespace {
@@ -48,12 +49,11 @@ namespace {
 using irs::doc_id_t;
 
 irs::DocumentMask MakeMask(std::span<const doc_id_t> docs) {
-  irs::DocumentMask mask;
+  irs::DocumentMaskBuilder mask;
   for (const auto doc : docs) {
     mask.Add(doc);
   }
-  mask.Trim();
-  return mask;
+  return std::move(mask).Finish();
 }
 
 constexpr doc_id_t kDocs = 1'000'000;
@@ -171,12 +171,12 @@ class DocumentMaskArm {
   explicit DocumentMaskArm(std::span<const doc_id_t> deleted)
     : _mask{MakeMask(deleted)} {}
 
-  irs::probe::DocsMask Probes() const noexcept {
-    return irs::probe::DocsMask{&_mask, irs::doc_limits::eof()};
+  irs::GenericDocsMask Probes() const noexcept {
+    return irs::MakeGenericDocsMask(&_mask, irs::doc_limits::eof());
   }
 
-  irs::fill::DocsMask Fills() const noexcept {
-    return irs::fill::DocsMask{&_mask, irs::doc_limits::eof()};
+  irs::GenericDocsMask Fills() const noexcept {
+    return irs::MakeGenericDocsMask(&_mask, irs::doc_limits::eof());
   }
 
   bool Test(doc_id_t doc) const noexcept { return _mask.Contains(doc); }
@@ -522,15 +522,15 @@ class RoaringRangeFillMask {
 };
 
 template<typename Cursor>
-size_t CountLive(Cursor& cursor) {
+size_t CountLive(Cursor& cursor, doc_id_t end = kEnd) {
   size_t live = 0;
-  for (auto doc = kBegin; doc < kEnd;) {
+  for (auto doc = kBegin; doc < end;) {
     const auto probe = cursor.Probe(doc);
     if (probe == doc) {
       ++doc;
       continue;
     }
-    const auto stop = std::min(probe, kEnd);
+    const auto stop = std::min(probe, end);
     live += static_cast<size_t>(stop - doc);
     doc = stop;
   }
@@ -556,10 +556,10 @@ size_t CountLiveBlocks(Cursor& cursor, std::span<const doc_id_t> candidates) {
 
 template<typename Cursor>
 size_t FillWindows(Cursor& cursor, uint64_t* IRS_RESTRICT dst,
-                   uint64_t* IRS_RESTRICT own) {
+                   uint64_t* IRS_RESTRICT own, doc_id_t end = kEnd) {
   size_t live = 0;
-  for (auto min = kBegin; min < kEnd; min += irs::detail::kWindowDocs) {
-    const auto max = std::min(min + irs::detail::kWindowDocs, kEnd);
+  for (auto min = kBegin; min < end; min += irs::detail::kWindowDocs) {
+    const auto max = std::min(min + irs::detail::kWindowDocs, end);
     const auto words = irs::detail::WindowWords(min, max);
     for (size_t w = 0; w != words; ++w) {
       dst[w] = ~uint64_t{0};
@@ -738,19 +738,18 @@ std::vector<std::vector<doc_id_t>> SplitChain(
 
 void BmMergeDocumentMask(benchmark::State& state) {
   const auto parts = SplitChain(Deleted(state.range(0), state.range(1)));
-  std::vector<irs::DocumentMask> links;
+  std::vector<irs::DocumentMaskBuilder> links;
   links.reserve(kChainLinks);
   for (const auto& part : parts) {
     links.emplace_back(MakeMask(part));
   }
 
   for (auto _ : state) {
-    irs::DocumentMask builder;
+    irs::DocumentMaskBuilder builder;
     for (const auto& link : links) {
       builder.Merge(link);
     }
-    builder.Trim();
-    const auto mask = std::move(builder);
+    const auto mask = std::move(builder).Finish();
     benchmark::DoNotOptimize(mask.Count());
   }
 }
@@ -952,10 +951,10 @@ void BmDocumentMaskSeekRaw(benchmark::State& state) {
   size_t hits = 0;
 
   for (auto _ : state) {
-    irs::DocumentMask::Iterator it{&mask.Set()};
+    const irs::DocumentMask::Iterator it{&mask.Set()};
     hits = 0;
     for (const auto doc : candidates) {
-      hits += static_cast<size_t>(it.Seek(doc) == doc);
+      hits += static_cast<size_t>(it.Contains(doc));
     }
     benchmark::DoNotOptimize(hits);
   }
@@ -968,19 +967,6 @@ void BmDocumentMaskSeekRaw(benchmark::State& state) {
 BENCHMARK(BmDocumentMaskSeekRaw)
   ->Name("LookupProbe/document_mask_raw")
   ->Apply(RatioShapeStrideWide);
-
-void BmDocumentMaskIteratorInit(benchmark::State& state) {
-  const DocumentMaskArm mask{Deleted(state.range(0), state.range(1))};
-
-  for (auto _ : state) {
-    irs::DocumentMask::Iterator it{&mask.Set()};
-    benchmark::DoNotOptimize(it.Seek(kBegin));
-  }
-}
-
-BENCHMARK(BmDocumentMaskIteratorInit)
-  ->Name("LookupInit/document_mask")
-  ->Apply(RatioShape);
 
 void BmRoaringIteratorInit(benchmark::State& state) {
   const RoaringHybridMask mask{Deleted(state.range(0), state.range(1))};
@@ -1084,7 +1070,7 @@ void BmDeserializeRead(benchmark::State& state) {
   const auto blob = SerializeMask(mask.Set());
 
   for (auto _ : state) {
-    auto restored = irs::DocumentMask::Read(blob.data(), blob.size());
+    auto restored = irs::DocumentMaskBuilder::Read(blob.data(), blob.size());
     benchmark::DoNotOptimize(restored.Count());
   }
 
@@ -1140,12 +1126,12 @@ void BmChainFold(benchmark::State& state) {
   }
 
   for (auto _ : state) {
-    irs::DocumentMask builder;
+    irs::DocumentMaskBuilder builder;
     for (const auto& blob : blobs) {
-      builder.Merge(irs::DocumentMask::Read(blob.data(), blob.size()));
+      builder.Merge(irs::DocumentMaskBuilder::Read(blob.data(), blob.size()));
     }
-    builder.Trim();
-    benchmark::DoNotOptimize(builder.Count());
+    const auto mask = std::move(builder).Finish();
+    benchmark::DoNotOptimize(mask.Count());
   }
 
   state.counters["serialized_bytes"] = static_cast<double>(total);
@@ -1257,21 +1243,16 @@ BENCHMARK_TEMPLATE(BmLookupScale, 2)->Name("Scale/hashset")->Apply(ScaleArgs);
 BENCHMARK_TEMPLATE(BmLookupScale, 3)->Name("Scale/bitset")->Apply(ScaleArgs);
 
 size_t ScanWithIterator(const irs::DocumentMask& mask, doc_id_t end) {
-  irs::DocumentMask::Iterator it_mask{&mask};
-  auto next = it_mask.Seek(kBegin);
+  const irs::DocumentMask::Iterator it_mask{&mask};
   size_t live = 0;
   for (auto doc = kBegin; doc < end; ++doc) {
-    if (doc < next) {
-      ++live;
-      continue;
-    }
-    next = it_mask.Seek(doc + 1);
+    live += static_cast<size_t>(!it_mask.Contains(doc));
   }
   return live;
 }
 
 void BmScanTailAsBound(benchmark::State& state) {
-  const irs::DocumentMask mask;
+  const auto mask = irs::DocumentMaskBuilder{}.Finish();
   constexpr auto kVisibleEnd = kBegin + kTailVisible;
 
   for (auto _ : state) {
@@ -1289,10 +1270,9 @@ BENCHMARK(BmScanTailAsBound);
 
 void BmScanTailAsBits(benchmark::State& state) {
   const auto mask = [] {
-    irs::DocumentMask builder;
+    irs::DocumentMaskBuilder builder;
     builder.AddRange(kBegin + kTailVisible, kBegin + kTailDocs);
-    builder.Trim();
-    return builder;
+    return std::move(builder).Finish();
   }();
 
   for (auto _ : state) {
@@ -1310,10 +1290,9 @@ BENCHMARK(BmScanTailAsBits);
 
 void BmScanTailAsBitsIterator(benchmark::State& state) {
   const auto mask = [] {
-    irs::DocumentMask builder;
+    irs::DocumentMaskBuilder builder;
     builder.AddRange(kBegin + kTailVisible, kBegin + kTailDocs);
-    builder.Trim();
-    return builder;
+    return std::move(builder).Finish();
   }();
 
   for (auto _ : state) {
@@ -1324,5 +1303,227 @@ void BmScanTailAsBitsIterator(benchmark::State& state) {
 }
 
 BENCHMARK(BmScanTailAsBitsIterator);
+
+constexpr int64_t kMillion = 1'000'000;
+constexpr size_t kRandomProbes = 65536;
+
+using SizedKey = std::tuple<doc_id_t, int64_t, int64_t>;
+
+const std::vector<doc_id_t>& DeletedAt(doc_id_t docs, int64_t per_mille,
+                                       int64_t shape) {
+  static std::map<SizedKey, std::vector<doc_id_t>> gCache;
+  const SizedKey key{docs, per_mille, shape};
+  if (const auto it = gCache.find(key); it != gCache.end()) {
+    return it->second;
+  }
+  return gCache.emplace(key, MakeDeletedAt(docs, per_mille, shape))
+    .first->second;
+}
+
+template<typename Mask>
+const Mask& MaskAt(doc_id_t docs, int64_t per_mille, int64_t shape) {
+  static std::map<SizedKey, std::unique_ptr<Mask>> gCache;
+  auto& slot = gCache[SizedKey{docs, per_mille, shape}];
+  if (!slot) {
+    slot = std::make_unique<Mask>(DeletedAt(docs, per_mille, shape));
+  }
+  return *slot;
+}
+
+const std::vector<doc_id_t>& RandomAt(doc_id_t docs) {
+  static std::map<doc_id_t, std::vector<doc_id_t>> gCache;
+  auto& probes = gCache[docs];
+  if (probes.empty()) {
+    std::mt19937_64 rng{42};
+    std::uniform_int_distribution<doc_id_t> pick{kBegin, kBegin + docs - 1};
+    probes.resize(kRandomProbes);
+    for (auto& doc : probes) {
+      doc = pick(rng);
+    }
+  }
+  return probes;
+}
+
+doc_id_t DocsOf(const benchmark::State& state) {
+  return static_cast<doc_id_t>(state.range(0) * kMillion);
+}
+
+void DocsRatioShape(benchmark::internal::Benchmark* b) {
+  b->ArgsProduct({{1, 16, 128, 1024},
+                  {10, 50, 200, 500, 990},
+                  {kUniform, kClustered, kTail}})
+    ->ArgNames({"docs_m", "per_mille", "shape"});
+}
+
+void DocsRatioShapeBlocks(benchmark::internal::Benchmark* b) {
+  b->ArgsProduct({{1, 16, 128, 1024},
+                  {10, 50, 200, 500, 990},
+                  {kUniform, kClustered, kTail},
+                  {16, 256}})
+    ->ArgNames({"docs_m", "per_mille", "shape", "stride"});
+}
+
+void DocsRatioShapeStride(benchmark::internal::Benchmark* b) {
+  b->ArgsProduct({{1, 16, 128, 1024},
+                  {10, 50, 200, 500, 990},
+                  {kUniform, kClustered, kTail},
+                  {1, 16, 256, 4096}})
+    ->ArgNames({"docs_m", "per_mille", "shape", "stride"});
+}
+
+template<typename Cursor>
+size_t CountLiveStrided(Cursor& cursor, doc_id_t docs, doc_id_t stride) {
+  const uint64_t count = (uint64_t{docs} + stride - 1) / stride;
+  size_t live = 0;
+  for (uint64_t at = 0; at < count; at += kBlock) {
+    const auto len = std::min<uint64_t>(kBlock, count - at);
+    const auto front = static_cast<doc_id_t>(kBegin + at * stride);
+    const auto back = static_cast<doc_id_t>(front + (len - 1) * stride);
+    if (cursor.Probe(front) > back) {
+      live += len;
+      continue;
+    }
+    for (uint64_t i = 0; i != len; ++i) {
+      const auto doc = static_cast<doc_id_t>(front + i * stride);
+      live += static_cast<size_t>(cursor.Probe(doc) != doc);
+    }
+  }
+  return live;
+}
+
+template<typename Mask>
+void BmSeekDenseAt(benchmark::State& state) {
+  const auto docs = DocsOf(state);
+  const auto& mask = MaskAt<Mask>(docs, state.range(1), state.range(2));
+  size_t live = 0;
+
+  for (auto _ : state) {
+    auto cursor = mask.Probes();
+    live = CountLive(cursor, kBegin + docs);
+    benchmark::DoNotOptimize(live);
+  }
+
+  state.counters["live"] = static_cast<double>(live);
+  state.counters["bytes"] = static_cast<double>(mask.Bytes());
+  state.SetItemsProcessed(state.iterations() * docs);
+}
+
+template<typename Mask>
+void BmSeekBlocksAt(benchmark::State& state) {
+  const auto docs = DocsOf(state);
+  const auto& mask = MaskAt<Mask>(docs, state.range(1), state.range(2));
+  const auto stride = static_cast<doc_id_t>(state.range(3));
+  size_t live = 0;
+
+  for (auto _ : state) {
+    auto cursor = mask.Probes();
+    live = CountLiveStrided(cursor, docs, stride);
+    benchmark::DoNotOptimize(live);
+  }
+
+  state.counters["live"] = static_cast<double>(live);
+  state.SetItemsProcessed(state.iterations() *
+                          static_cast<int64_t>((docs + stride - 1) / stride));
+}
+
+template<typename Mask>
+void BmFillWindowAt(benchmark::State& state) {
+  const auto docs = DocsOf(state);
+  const auto& mask = MaskAt<Mask>(docs, state.range(1), state.range(2));
+  std::vector<uint64_t> dst(irs::detail::kWindowWords);
+  std::vector<uint64_t> own(irs::detail::kWindowWords);
+  size_t live = 0;
+
+  for (auto _ : state) {
+    auto cursor = mask.Fills();
+    live = FillWindows(cursor, dst.data(), own.data(), kBegin + docs);
+    benchmark::DoNotOptimize(live);
+  }
+
+  state.counters["live"] = static_cast<double>(live);
+  state.SetItemsProcessed(state.iterations() * docs);
+}
+
+template<typename Mask>
+void BmLookupProbeAt(benchmark::State& state) {
+  const auto docs = DocsOf(state);
+  const auto& mask = MaskAt<Mask>(docs, state.range(1), state.range(2));
+  const auto stride = static_cast<doc_id_t>(state.range(3));
+  const auto end = kBegin + docs;
+  size_t hits = 0;
+
+  for (auto _ : state) {
+    auto cursor = mask.Probes();
+    hits = 0;
+    for (auto doc = kBegin; doc < end; doc += stride) {
+      hits += static_cast<size_t>(cursor.Probe(doc) == doc);
+    }
+    benchmark::DoNotOptimize(hits);
+  }
+
+  state.counters["hits"] = static_cast<double>(hits);
+  state.SetItemsProcessed(state.iterations() *
+                          static_cast<int64_t>((docs + stride - 1) / stride));
+}
+
+template<typename Mask>
+void BmLookupTestAt(benchmark::State& state) {
+  const auto docs = DocsOf(state);
+  const auto& mask = MaskAt<Mask>(docs, state.range(1), state.range(2));
+  const auto stride = static_cast<doc_id_t>(state.range(3));
+  const auto end = kBegin + docs;
+  size_t hits = 0;
+
+  for (auto _ : state) {
+    hits = 0;
+    for (auto doc = kBegin; doc < end; doc += stride) {
+      hits += static_cast<size_t>(mask.Test(doc));
+    }
+    benchmark::DoNotOptimize(hits);
+  }
+
+  state.counters["hits"] = static_cast<double>(hits);
+  state.SetItemsProcessed(state.iterations() *
+                          static_cast<int64_t>((docs + stride - 1) / stride));
+}
+
+template<typename Mask>
+void BmLookupRandomAt(benchmark::State& state) {
+  const auto docs = DocsOf(state);
+  const auto& mask = MaskAt<Mask>(docs, state.range(1), state.range(2));
+  const auto& probes = RandomAt(docs);
+  size_t hits = 0;
+
+  for (auto _ : state) {
+    hits = 0;
+    for (const auto doc : probes) {
+      hits += static_cast<size_t>(mask.Test(doc));
+    }
+    benchmark::DoNotOptimize(hits);
+  }
+
+  state.counters["hits"] = static_cast<double>(hits);
+  state.SetItemsProcessed(state.iterations() *
+                          static_cast<int64_t>(probes.size()));
+}
+
+BENCHMARK_TEMPLATE(BmSeekDenseAt, DocumentMaskArm)
+  ->Name("AtSeekDense/document_mask")
+  ->Apply(DocsRatioShape);
+BENCHMARK_TEMPLATE(BmSeekBlocksAt, DocumentMaskArm)
+  ->Name("AtSeekBlocks/document_mask")
+  ->Apply(DocsRatioShapeBlocks);
+BENCHMARK_TEMPLATE(BmFillWindowAt, DocumentMaskArm)
+  ->Name("AtFillWindow/document_mask")
+  ->Apply(DocsRatioShape);
+BENCHMARK_TEMPLATE(BmLookupProbeAt, DocumentMaskArm)
+  ->Name("AtLookupProbe/document_mask")
+  ->Apply(DocsRatioShapeStride);
+BENCHMARK_TEMPLATE(BmLookupTestAt, DocumentMaskArm)
+  ->Name("AtLookupTest/document_mask")
+  ->Apply(DocsRatioShapeStride);
+BENCHMARK_TEMPLATE(BmLookupRandomAt, DocumentMaskArm)
+  ->Name("AtLookupRandom/document_mask")
+  ->Apply(DocsRatioShape);
 
 }  // namespace

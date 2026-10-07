@@ -21,50 +21,30 @@
 #include "iresearch/search/count/make_boolean.hpp"
 
 #include <span>
-#include <utility>
 
+#include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/count/boolean_sparse.hpp"
-#include "iresearch/search/count/subtract.hpp"
+#include "iresearch/search/count/live_count.hpp"
+#include "iresearch/search/count/make.hpp"
 #include "iresearch/search/detail/boolean_builder.hpp"
+#include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 
 namespace irs::count {
+namespace {
 
-Root::ptr Api::MakeNegation(
-  std::span<const detail::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t candidates, const Context& ctx) {
-  if (detail::builder::ExcludesDocsMask(exclude_terms, exclude_filters)) {
-    return detail::builder::MakeWindowNegation<Api>(
-      exclude_terms, exclude_filters, segment, ctx);
+bool FewRuns(const detail::PostingClause& term,
+             const SubReader& segment) noexcept {
+  const auto* mask = segment.docs_mask();
+  uint64_t runs = mask != nullptr ? mask->RunsBound() : 0;
+  if (segment.Meta().visible_end < LiveEnd(segment)) {
+    ++runs;
   }
-  if (ctx.table != nullptr) {
-    return detail::builder::MakeSparseNegation<Api>(
-      exclude_terms, exclude_filters, segment, candidates, ctx);
-  }
-  Root::ptr excluded;
-  if (exclude_terms.size() + exclude_filters.size() == 1) {
-    excluded = exclude_terms.empty()
-                 ? exclude_filters.front()->PlanCount(ctx)
-                 : count::MakeTerm(exclude_terms.front(), segment, ctx);
-  } else {
-    if (exclude_filters.empty() && SubtractsPair(exclude_terms)) {
-      excluded = MakeSubtractDisjunction(exclude_terms.front(),
-                                         exclude_terms.back(), segment, ctx);
-    }
-    if (!excluded) {
-      excluded = detail::builder::MakeDisjunction<Api>(
-        exclude_terms, exclude_filters, segment, ctx);
-    }
-  }
-  if (!excluded) {
-    return {};
-  }
-  return memory::make_managed<Subtract>(
-    MakeAllCount(static_cast<doc_id_t>(segment.docs_count())),
-    std::move(excluded), ctx.partial);
+  return runs * doc_limits::kBlockSize <
+         uint64_t{kDenseRuns} * detail::CookieOf(term).docs_count;
 }
+
+}  // namespace
 
 Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
   const auto& segment = query.Segment();
@@ -73,6 +53,26 @@ Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
   const auto should_terms = query.Terms(Occur::Should);
   const auto should_filters = query.Queries(Occur::Should);
   const bool no_must = must_terms.empty() && must_filters.empty();
+  if (ctx.table == nullptr && must_terms.size() == 1 && must_filters.empty() &&
+      should_terms.empty() && should_filters.empty() &&
+      detail::OnlyMask(query.Terms(Occur::MustNot),
+                       query.Queries(Occur::MustNot))) {
+    const auto& term = must_terms.front();
+    if (FewRuns(term, segment)) {
+      if (auto live = MakeLiveTerm(term, segment)) {
+        return live;
+      }
+    }
+    if (auto folded = detail::builder::MakeBitset<Api>(
+          {.must = must_terms,
+           .must_not_filters = query.Queries(Occur::MustNot)},
+          segment, ctx)) {
+      return folded;
+    }
+    if (auto live = MakeLiveTerm(term, segment)) {
+      return live;
+    }
+  }
   if (query.Terms(Occur::MustNot).empty() &&
       query.Queries(Occur::MustNot).empty()) {
     if (ctx.table == nullptr && should_terms.empty() &&

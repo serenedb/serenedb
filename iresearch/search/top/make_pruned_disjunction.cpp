@@ -18,7 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <cstddef>
+#include <cstdint>
+#include <span>
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/resolve.hpp"
@@ -27,4 +28,17 @@
 #include "iresearch/search/top/posting_pruned_disj.hpp"
 #include "iresearch/search/top/pruned_disjunction.hpp"
 
-namespace irs::top {}  // namespace irs::top
+namespace irs::top {
+
+Root::ptr MakePrunedDisjunction(
+  std::span<const irs::detail::PostingClause> terms,
+  std::span<const QueryBuilder::ptr> filters, irs::detail::Terms uniformity,
+  std::span<const irs::detail::PostingClause> excludes,
+  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
+  const Context& ctx, ScoreMergeType merge, uint32_t min_match) {
+  return MakePrunedDisjunction<true>(
+    terms, filters, uniformity, nullptr, nullptr, kNoBoost, excludes,
+    exclude_filters, segment, ctx, merge, min_match);
+}
+
+}  // namespace irs::top

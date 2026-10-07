@@ -59,6 +59,7 @@ add_bench(vector_access)
 add_bench(crc32c)
 add_bench(delimited_scan)
 add_bench(document_mask)
+add_bench(docs_mask_kinds)
 add_bench(function)
 add_bench(hash_map)
 add_bench(tokenizer_pool)
@@ -137,4 +138,50 @@ set_property(
     SOURCE vector_distances.cpp
     APPEND
     PROPERTY COMPILE_OPTIONS -fassociative-math -fno-signed-zeros
+)
+
+add_library(
+    serenedb-bench-docs-mask-iresearch
+    STATIC
+    ${CMAKE_SOURCE_DIR}/iresearch/error/error.cpp
+    ${CMAKE_SOURCE_DIR}/iresearch/index/docs_mask/chunks.cpp
+    ${CMAKE_SOURCE_DIR}/iresearch/index/document_mask.cpp
+    ${CMAKE_SOURCE_DIR}/iresearch/utils/crash_handler.cpp
+    ${CMAKE_SOURCE_DIR}/iresearch/utils/log.cpp
+)
+target_include_directories(
+    serenedb-bench-docs-mask-iresearch
+    PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/third_party/magic_enum
+)
+target_include_directories(
+    serenedb-bench-docs-mask-iresearch
+    SYSTEM
+    PUBLIC
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/core_functions/include
+)
+target_link_libraries(
+    serenedb-bench-docs-mask-iresearch
+    PUBLIC
+        absl::failure_signal_handler
+        absl::flat_hash_map
+        absl::flat_hash_set
+        absl::strings
+        duckdb_static
+        re2
+        roaring::roaring
+)
+
+add_executable(
+    serenedb-bench-docs-mask
+    main.cpp
+    docs_mask_kinds.cpp
+    document_mask.cpp
+)
+target_link_libraries(
+    serenedb-bench-docs-mask
+    PRIVATE
+        serenedb-bench-docs-mask-iresearch
+        absl::btree
+        absl::str_format
+        benchmark
 )

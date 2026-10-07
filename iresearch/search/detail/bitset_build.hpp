@@ -296,6 +296,7 @@ class PostingReader {
       return;
     }
     auto& in = In();
+    PrefetchDocs(in, meta);
     in.Seek(meta.doc_start);
     ReadPosting(meta, in, Enc(), Holes(), Docs(), has_score_bounds, has_freq,
                 sink);

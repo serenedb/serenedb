@@ -26,6 +26,7 @@
 #include <duckdb/common/helper.hpp>
 #include <duckdb/common/typedefs.hpp>
 
+#include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/string_choice.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -39,7 +40,6 @@ enum class CodesEncoding : uint8_t {
 
 inline constexpr uint8_t kSegmentVersion = 1;
 inline constexpr size_t kHeaderSize = 72;
-inline constexpr size_t kFrameMetaSize = 16;
 inline constexpr size_t kFrameRawBytes = 64 * 1024;
 inline constexpr size_t kFsstFrameRawBytes = 16 * 1024;
 inline constexpr size_t kFrameDictionaryBytes = 32 * 1024;
@@ -60,62 +60,39 @@ constexpr duckdb::idx_t GroupPadded(duckdb::idx_t count) noexcept {
 }
 
 struct Header {
-  uint8_t shape;
-  uint8_t codec;
-  uint8_t level;
-  uint8_t code_width;
-  uint8_t length_width;
-  uint8_t codes_encoding;
-  uint8_t run_width;
-  uint8_t lcp_width;
-  uint8_t flags;
+  uint8_t version = kSegmentVersion;
+  uint8_t shape = 0;
+  uint8_t codec = 0;
+  uint8_t level = 0;
+  uint8_t code_width = 0;
+  uint8_t length_width = 0;
+  uint8_t codes_encoding = 0;
+  uint8_t run_width = 0;
+  uint32_t row_count = 0;
+  uint32_t entry_count = 0;
+  uint32_t frame_count = 0;
+  uint32_t run_count = 0;
+  uint32_t off_frames = 0;
+  uint32_t off_lengths = 0;
+  uint32_t off_lcps = 0;
+  uint32_t off_codes = 0;
+  uint32_t off_runs = 0;
+  uint32_t off_symtab = 0;
+  uint32_t symtab_size = 0;
+  uint32_t off_data = 0;
+  uint32_t data_size = 0;
+  uint8_t lcp_width = 0;
+  uint8_t flags = 0;
   uint16_t dictionary = 0;
-  uint32_t row_count;
-  uint32_t entry_count;
-  uint32_t frame_count;
-  uint32_t run_count;
-  uint32_t off_frames;
-  uint32_t off_lengths;
-  uint32_t off_lcps;
-  uint32_t off_codes;
-  uint32_t off_runs;
-  uint32_t off_symtab;
-  uint32_t symtab_size;
-  uint32_t off_data;
-  uint32_t data_size;
-  uint64_t raw_bytes;
+  uint64_t raw_bytes = 0;
 
   static Header Parse(duckdb::const_data_ptr_t p, duckdb::idx_t segment_size) {
     using duckdb::BitpackingPrimitives;
-    using duckdb::Load;
-    Header h;
-    const auto version = Load<uint8_t>(p);
-    SDB_ENSURE(version == kSegmentVersion,
-               "col codec: unsupported segment version ", version);
-    h.shape = Load<uint8_t>(p + 1);
-    h.codec = Load<uint8_t>(p + 2);
-    h.level = Load<uint8_t>(p + 3);
-    h.code_width = Load<uint8_t>(p + 4);
-    h.length_width = Load<uint8_t>(p + 5);
-    h.codes_encoding = Load<uint8_t>(p + 6);
-    h.run_width = Load<uint8_t>(p + 7);
-    h.row_count = Load<uint32_t>(p + 8);
-    h.entry_count = Load<uint32_t>(p + 12);
-    h.frame_count = Load<uint32_t>(p + 16);
-    h.run_count = Load<uint32_t>(p + 20);
-    h.off_frames = Load<uint32_t>(p + 24);
-    h.off_lengths = Load<uint32_t>(p + 28);
-    h.off_lcps = Load<uint32_t>(p + 32);
-    h.off_codes = Load<uint32_t>(p + 36);
-    h.off_runs = Load<uint32_t>(p + 40);
-    h.off_symtab = Load<uint32_t>(p + 44);
-    h.symtab_size = Load<uint32_t>(p + 48);
-    h.off_data = Load<uint32_t>(p + 52);
-    h.data_size = Load<uint32_t>(p + 56);
-    h.lcp_width = Load<uint8_t>(p + 60);
-    h.flags = Load<uint8_t>(p + 61);
-    h.dictionary = Load<uint16_t>(p + 62);
-    h.raw_bytes = Load<uint64_t>(p + 64);
+    SDB_ENSURE(segment_size >= kHeaderSize,
+               "col codec: segment smaller than its header");
+    const auto h = LoadLayout<Header>(p);
+    SDB_ENSURE(h.version == kSegmentVersion,
+               "col codec: unsupported segment version ", h.version);
     const bool rle =
       h.codes_encoding == static_cast<uint8_t>(CodesEncoding::Rle);
     const bool numeric =
@@ -158,52 +135,34 @@ struct Header {
     return h;
   }
 
-  void Write(duckdb::data_ptr_t p) const {
-    using duckdb::Store;
-    Store<uint8_t>(kSegmentVersion, p);
-    Store<uint8_t>(shape, p + 1);
-    Store<uint8_t>(codec, p + 2);
-    Store<uint8_t>(level, p + 3);
-    Store<uint8_t>(code_width, p + 4);
-    Store<uint8_t>(length_width, p + 5);
-    Store<uint8_t>(codes_encoding, p + 6);
-    Store<uint8_t>(run_width, p + 7);
-    Store<uint32_t>(row_count, p + 8);
-    Store<uint32_t>(entry_count, p + 12);
-    Store<uint32_t>(frame_count, p + 16);
-    Store<uint32_t>(run_count, p + 20);
-    Store<uint32_t>(off_frames, p + 24);
-    Store<uint32_t>(off_lengths, p + 28);
-    Store<uint32_t>(off_lcps, p + 32);
-    Store<uint32_t>(off_codes, p + 36);
-    Store<uint32_t>(off_runs, p + 40);
-    Store<uint32_t>(off_symtab, p + 44);
-    Store<uint32_t>(symtab_size, p + 48);
-    Store<uint32_t>(off_data, p + 52);
-    Store<uint32_t>(data_size, p + 56);
-    Store<uint8_t>(lcp_width, p + 60);
-    Store<uint8_t>(flags, p + 61);
-    Store<uint16_t>(dictionary, p + 62);
-    Store<uint64_t>(raw_bytes, p + 64);
-  }
+  void Write(duckdb::data_ptr_t p) const { StoreLayout(*this, p); }
 };
 
-struct FrameMeta {
-  uint32_t first_entry;
-  uint32_t raw_len;
-  uint32_t comp_off;
-  uint32_t comp_len;
-
-  static FrameMeta Load(duckdb::const_data_ptr_t p) {
-    return {duckdb::Load<uint32_t>(p), duckdb::Load<uint32_t>(p + 4),
-            duckdb::Load<uint32_t>(p + 8), duckdb::Load<uint32_t>(p + 12)};
-  }
-  void Store(duckdb::data_ptr_t p) const {
-    duckdb::Store<uint32_t>(first_entry, p);
-    duckdb::Store<uint32_t>(raw_len, p + 4);
-    duckdb::Store<uint32_t>(comp_off, p + 8);
-    duckdb::Store<uint32_t>(comp_len, p + 12);
-  }
-};
+static_assert(sizeof(Header) == kHeaderSize);
+static_assert(offsetof(Header, version) == 0);
+static_assert(offsetof(Header, shape) == 1);
+static_assert(offsetof(Header, codec) == 2);
+static_assert(offsetof(Header, level) == 3);
+static_assert(offsetof(Header, code_width) == 4);
+static_assert(offsetof(Header, length_width) == 5);
+static_assert(offsetof(Header, codes_encoding) == 6);
+static_assert(offsetof(Header, run_width) == 7);
+static_assert(offsetof(Header, row_count) == 8);
+static_assert(offsetof(Header, entry_count) == 12);
+static_assert(offsetof(Header, frame_count) == 16);
+static_assert(offsetof(Header, run_count) == 20);
+static_assert(offsetof(Header, off_frames) == 24);
+static_assert(offsetof(Header, off_lengths) == 28);
+static_assert(offsetof(Header, off_lcps) == 32);
+static_assert(offsetof(Header, off_codes) == 36);
+static_assert(offsetof(Header, off_runs) == 40);
+static_assert(offsetof(Header, off_symtab) == 44);
+static_assert(offsetof(Header, symtab_size) == 48);
+static_assert(offsetof(Header, off_data) == 52);
+static_assert(offsetof(Header, data_size) == 56);
+static_assert(offsetof(Header, lcp_width) == 60);
+static_assert(offsetof(Header, flags) == 61);
+static_assert(offsetof(Header, dictionary) == 62);
+static_assert(offsetof(Header, raw_bytes) == 64);
 
 }  // namespace irs::codecs

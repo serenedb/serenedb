@@ -506,7 +506,9 @@ TEST_F(ColNumericCodecTest, CorruptedFrameTableIsRejected) {
   auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
   const auto h = irs::codecs::NumericHeader::Parse(block, size);
   ASSERT_GT(h.frame_count, 0);
-  duckdb::Store<uint32_t>(h.data_size + 1, block + h.off_frames + 4);
+  auto meta = irs::codecs::NumericFrameMeta::Load(block + h.off_frames);
+  meta.frame.comp_len = h.data_size + 1;
+  meta.Store(block + h.off_frames);
   {
     std::ofstream out{file, std::ios::binary | std::ios::trunc};
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));

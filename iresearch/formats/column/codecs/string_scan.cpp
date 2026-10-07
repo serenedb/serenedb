@@ -1188,6 +1188,7 @@ void Filter(duckdb::ColumnSegment& segment, duckdb::ColumnScanState& state,
 
 struct FetchCache final : duckdb::SegmentScanState {
   duckdb::block_id_t block = INVALID_BLOCK;
+  Header header;
   uint32_t frame = std::numeric_limits<uint32_t>::max();
   uint32_t first_entry = 0;
   uint32_t hits = 0;
@@ -1285,13 +1286,15 @@ struct FetchCache final : duckdb::SegmentScanState {
 };
 
 FetchCache& CacheFor(duckdb::ColumnFetchState& state,
-                     duckdb::ColumnSegment& segment) {
+                     duckdb::ColumnSegment& segment,
+                     duckdb::const_data_ptr_t base) {
   if (!state.codec_state) {
     state.codec_state = duckdb::make_uniq<FetchCache>();
   }
   auto& cache = state.codec_state->Cast<FetchCache>();
   if (const auto block = segment.GetBlockHandle()->BlockId();
       cache.block != block) {
+    cache.header = Header::Parse(base, segment.SegmentSize());
     cache.block = block;
     cache.frame = std::numeric_limits<uint32_t>::max();
     cache.dictionary_ready = false;
@@ -1306,13 +1309,13 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
               duckdb::row_t row_id, duckdb::Vector& result, idx_t result_idx) {
   auto& handle = state.GetOrInsertHandle(segment);
   auto* base = handle.GetDataMutable() + segment.GetBlockOffset();
-  const auto h = Header::Parse(base, segment.SegmentSize());
+  auto& cache = CacheFor(state, segment, base);
+  const auto& h = cache.header;
   const auto row = static_cast<idx_t>(row_id);
   SDB_ENSURE(row < h.row_count, "col codec: row out of range");
   uint32_t entry = static_cast<uint32_t>(row);
   if (h.shape == static_cast<uint8_t>(Shape::Dedup)) {
     if (h.codes_encoding == static_cast<uint8_t>(CodesEncoding::Numeric)) {
-      auto& cache = CacheFor(state, segment);
       if (!cache.code_frames) {
         cache.code_frames.emplace(
           base + h.off_codes,
@@ -1361,7 +1364,6 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
 
   PackedReader lengths{base + h.off_lengths, h.length_width};
   auto* out = duckdb::FlatVector::GetDataMutable<string_t>(result);
-  auto& cache = CacheFor(state, segment);
   if (h.codec == static_cast<uint8_t>(ByteCodec::Fsst)) {
     if (!cache.fsst) {
       cache.fsst.emplace();

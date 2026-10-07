@@ -78,7 +78,7 @@ class FrameDecoder {
 
   uint64_t FirstRow(uint32_t f) const noexcept {
     return duckdb::Load<uint32_t>(_base + _h.off_frames +
-                                  f * kNumericFrameMetaSize + 12);
+                                  f * kNumericFrameMetaSize);
   }
 
   uint64_t EndRow(uint32_t f) const noexcept {
@@ -88,8 +88,8 @@ class FrameDecoder {
   uint64_t Begin() const noexcept { return _begin; }
   uint64_t End() const noexcept { return _end; }
 
-  T FrameMin(uint32_t f) const noexcept { return Bound(f, 24); }
-  T FrameMax(uint32_t f) const noexcept { return Bound(f, 32); }
+  T FrameMin(uint32_t f) const noexcept { return Bound(f, kNumericFrameMinAt); }
+  T FrameMax(uint32_t f) const noexcept { return Bound(f, kNumericFrameMaxAt); }
 
   void Seek(uint64_t row) {
     if (row < _begin || row >= _end) {
@@ -144,7 +144,7 @@ class FrameDecoder {
     }
     const auto m = Meta(f);
     const auto end = EndRow(f);
-    const auto rows = static_cast<uint32_t>(end - m.first_row);
+    const auto rows = static_cast<uint32_t>(end - m.frame.first_entry);
     if (_h.transform == NumericTransform::Rle) {
       LoadRuns(m, rows);
     } else {
@@ -153,7 +153,7 @@ class FrameDecoder {
       }
       DecodeInto(m, rows, _rows.data());
     }
-    _begin = m.first_row;
+    _begin = m.frame.first_entry;
     _end = end;
     _frame = f;
   }
@@ -187,9 +187,9 @@ class FrameDecoder {
     const auto m =
       NumericFrameMeta::Load(_base + _h.off_frames + f * kNumericFrameMetaSize);
     const auto end = EndRow(f);
-    SDB_ENSURE(m.first_row < end && end <= _h.row_count &&
-                 m.raw_len <= _h.FrameBytes() &&
-                 uint64_t{m.comp_off} + m.comp_len <= _h.data_size,
+    SDB_ENSURE(m.frame.first_entry < end && end <= _h.row_count &&
+                 m.frame.raw_len <= _h.FrameBytes() &&
+                 uint64_t{m.frame.comp_off} + m.frame.comp_len <= _h.data_size,
                "numeric codec: corrupted frame table");
     return m;
   }
@@ -198,36 +198,37 @@ class FrameDecoder {
     const auto* in = reinterpret_cast<const char*>(src);
     auto* out = reinterpret_cast<char*>(dst);
     const bool ok =
-      _lz4 ? _lz4->Decompress(in, m.comp_len, out, m.raw_len)
-           : _zstd && _zstd->Decompress(in, m.comp_len, out, m.raw_len);
+      _lz4 ? _lz4->Decompress(in, m.frame.comp_len, out, m.frame.raw_len)
+           : _zstd &&
+               _zstd->Decompress(in, m.frame.comp_len, out, m.frame.raw_len);
     SDB_ENSURE(ok, "numeric codec: corrupted frame");
   }
 
   void DecodeInto(const NumericFrameMeta& m, uint32_t rows, U* out) {
-    const auto* src = _base + _h.off_data + m.comp_off;
-    const bool compressed = m.comp_len != m.raw_len;
+    const auto* src = _base + _h.off_data + m.frame.comp_off;
+    const bool compressed = m.frame.comp_len != m.frame.raw_len;
     if (_h.transform != NumericTransform::Rle) {
-      SDB_ENSURE(m.raw_len == rows * _h.stored,
+      SDB_ENSURE(m.frame.raw_len == rows * _h.stored,
                  "numeric codec: corrupted frame size");
     }
     if (_h.transform == NumericTransform::Raw && !_h.Shuffled()) {
       if (compressed) {
         Inflate(src, m, reinterpret_cast<uint8_t*>(out));
       } else {
-        std::memcpy(out, src, m.raw_len);
+        std::memcpy(out, src, m.frame.raw_len);
       }
       return;
     }
     if (compressed) {
-      if (_raw.size() < m.raw_len) {
-        _raw.resize(m.raw_len);
+      if (_raw.size() < m.frame.raw_len) {
+        _raw.resize(m.frame.raw_len);
       }
       Inflate(src, m, _raw.data());
       src = _raw.data();
     }
     if (_h.Shuffled()) {
-      if (_shuffled.size() < m.raw_len) {
-        _shuffled.resize(m.raw_len);
+      if (_shuffled.size() < m.frame.raw_len) {
+        _shuffled.resize(m.frame.raw_len);
       }
       numeric::Unshuffle(src, rows, _h.stored, _shuffled.data());
       src = _shuffled.data();
@@ -270,18 +271,18 @@ class FrameDecoder {
   }
 
   void LoadRuns(const NumericFrameMeta& m, uint32_t rows) {
-    const uint8_t* src = _base + _h.off_data + m.comp_off;
-    if (m.comp_len != m.raw_len) {
-      if (_raw.size() < m.raw_len) {
-        _raw.resize(m.raw_len);
+    const uint8_t* src = _base + _h.off_data + m.frame.comp_off;
+    if (m.frame.comp_len != m.frame.raw_len) {
+      if (_raw.size() < m.frame.raw_len) {
+        _raw.resize(m.frame.raw_len);
       }
       Inflate(src, m, _raw.data());
       src = _raw.data();
     }
     const uint32_t item = _h.stored + _h.run_width;
-    SDB_ENSURE(m.raw_len % item == 0 && m.raw_len != 0,
+    SDB_ENSURE(m.frame.raw_len % item == 0 && m.frame.raw_len != 0,
                "numeric codec: corrupted runs");
-    const uint32_t runs = m.raw_len / item;
+    const uint32_t runs = m.frame.raw_len / item;
     _run_values.resize(runs);
     _run_ends.resize(runs);
     numeric::Widen(src, runs, _h.stored, _run_values.data());

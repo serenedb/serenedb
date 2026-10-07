@@ -527,34 +527,34 @@ class TypedSealer final : public NumericSealer {
     for (uint32_t f = 0; f < frames; ++f) {
       const auto begin = f * per;
       auto& m = metas[f];
-      m.first_row =
+      m.frame.first_entry =
         c.transform == NumericTransform::Rle ? c.run_rows[begin] : begin;
       if (c.transform == NumericTransform::Delta) {
         m.base =
           begin == 0 ? static_cast<U>(_values[0] - c.base) : _values[begin - 1];
       }
       const auto bytes = FrameRaw(c, f);
-      m.comp_off = static_cast<uint32_t>(data.size());
-      m.raw_len = static_cast<uint32_t>(bytes.size());
+      m.frame.comp_off = static_cast<uint32_t>(data.size());
+      m.frame.raw_len = static_cast<uint32_t>(bytes.size());
       if (option.leaf != NumericLeaf::None) {
         const auto n = leaves.Compress(option.leaf, option.level, bytes.data(),
                                        bytes.size());
         if (n < bytes.size()) {
           data.append(leaves.Out(), n);
-          m.comp_len = static_cast<uint32_t>(n);
+          m.frame.comp_len = static_cast<uint32_t>(n);
           continue;
         }
       }
       data.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-      m.comp_len = m.raw_len;
+      m.frame.comp_len = m.frame.raw_len;
     }
     for (uint32_t f = 0; f < frames; ++f) {
       auto& m = metas[f];
       const uint32_t end =
-        f + 1 < frames ? metas[f + 1].first_row : h.row_count;
-      U lo = _values[m.first_row];
+        f + 1 < frames ? metas[f + 1].frame.first_entry : h.row_count;
+      U lo = _values[m.frame.first_entry];
       U hi = lo;
-      for (auto r = m.first_row + 1; r < end; ++r) {
+      for (auto r = m.frame.first_entry + 1; r < end; ++r) {
         if (Less(_values[r], lo)) {
           lo = _values[r];
         }

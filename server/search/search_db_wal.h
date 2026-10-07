@@ -136,6 +136,9 @@ class SearchDbWal {
   // tick_span).
   uint64_t AppendCommit(std::span<const ShardSection> sections,
                         uint64_t tick_span);
+  uint64_t AppendCommit(std::span<const ShardSection> sections,
+                        uint64_t tick_span,
+                        absl::AnyInvocable<void(uint64_t) noexcept> on_durable);
   uint64_t Recover(const ShardExistsFn& exists_of,
                    const ShardCommittedFn& committed_of,
                    const ReplayCallback& insert_cb,

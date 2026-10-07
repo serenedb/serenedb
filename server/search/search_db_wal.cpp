@@ -20,6 +20,7 @@
 
 #include "search/search_db_wal.h"
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
 
@@ -408,7 +409,11 @@ void SearchDbWal::WriteFrameLocked(const uint8_t* payload, uint64_t size) {
   _active->Write<uint64_t>(size);
   _active->Write<uint64_t>(checksum);
   _active->WriteData(payload, size);
-  _active->Sync();  // commit point
+  try {
+    _active->Sync();  // commit point
+  } catch (const std::exception& e) {
+    SDB_FATAL(SEARCH, "search WAL: failed to sync a commit record: ", e.what());
+  }
 
   if (_active->GetTotalWritten() > _seal_threshold) {
     _active->Close();
@@ -419,12 +424,19 @@ void SearchDbWal::WriteFrameLocked(const uint8_t* payload, uint64_t size) {
 
 uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
                                    uint64_t tick_span) {
+  return AppendCommit(sections, tick_span, [](uint64_t) noexcept {});
+}
+
+uint64_t SearchDbWal::AppendCommit(
+  std::span<const ShardSection> sections, uint64_t tick_span,
+  absl::AnyInvocable<void(uint64_t) noexcept> on_durable) {
   SDB_ASSERT(!sections.empty(), "AppendCommit with no shard sections");
   SDB_ASSERT(tick_span >= 1, "every commit advances the tick by at least 1");
   absl::MutexLock lock(&_append_mu);
 
-  uint64_t base = _tick.fetch_add(tick_span, std::memory_order_relaxed);
-  uint64_t tick = base + tick_span;
+  const uint64_t tick = _tick.load(std::memory_order_relaxed) + tick_span;
+  // Always burn tick, on error we do not want this value to be reused.
+  absl::Cleanup publish = [&] { _tick.store(tick, std::memory_order_release); };
   EnsureActiveSegmentLocked(tick);
 
   duckdb::MemoryStream payload;
@@ -452,6 +464,7 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
     });
   record.End();
   WriteFrameLocked(payload.GetData(), payload.GetPosition());
+  on_durable(tick);
   return tick;
 }
 

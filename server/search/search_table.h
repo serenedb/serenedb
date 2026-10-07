@@ -135,20 +135,16 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
 
   void Commit() {
     _writer->RefreshCommit();
-    _wal->OnShardCommit(GetTableId(), _last_committed_tick);
+    _wal->OnShardCommit(GetTableId(), CommittedTick());
   }
 
-  void Clear(uint64_t tick) {
-    absl::MutexLock lock{&_refresh_mutex};
-    _writer->Clear(tick);
-    if (tick > _last_committed_tick) {
-      _last_committed_tick = tick;
-    }
-  }
+  void Clear(uint64_t tick) { _writer->Clear(tick); }
 
   SearchDbWal& Wal() noexcept { return *_wal; }
 
-  uint64_t CommittedTick() const noexcept { return _last_committed_tick; }
+  uint64_t CommittedTick() const noexcept {
+    return _last_committed_tick.load(std::memory_order_acquire);
+  }
 
   // --- Background maintenance ---
   // Mirrors the interface InvertedIndexStorage exposes, so the shared refresh /
@@ -271,7 +267,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
 
   std::pair<irs::DirectoryReader, uint64_t> GetSnapshotWithTick() {
     absl::MutexLock lock{&_refresh_mutex};
-    return {_writer->GetSnapshot(), _last_committed_tick};
+    return {_writer->GetSnapshot(), CommittedTick()};
   }
   void CloseDeleteLog();
 
@@ -312,7 +308,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   std::unique_ptr<irs::Scorer> _topk_scorer;
   // Borrowed from the search engine (set in OpenWriter). Outlives this object.
   SearchDbWal* _wal = nullptr;
-  uint64_t _last_committed_tick = 0;
+  std::atomic<uint64_t> _last_committed_tick{0};
 
   // Background maintenance state (mirrors InvertedIndexStorage). A zero
   // refresh/compaction interval disables the loops.

@@ -555,7 +555,11 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
       if (!entry || entry->IsTokenized()) {
         RejectJsonObjectArrayLeaves(chunk.data[slot], num_rows);
       }
-      expression_values.push_back({keys[k].field_id, &chunk.data[slot]});
+      if (absl::c_none_of(expression_values, [&](const ExpressionValue& value) {
+            return value.field_id == keys[k].field_id;
+          })) {
+        expression_values.push_back({keys[k].field_id, &chunk.data[slot]});
+      }
       ++slot;
     }
   }

@@ -20,6 +20,8 @@
 
 #include "search_sink_writer.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include <cstdio>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -948,7 +950,10 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   auto config = shard.Config();
   std::vector<IndexedExpression> indexed_exprs;
   for (const auto& key : config->keys) {
-    if (key.normalized_expression.empty()) {
+    if (key.normalized_expression.empty() ||
+        absl::c_any_of(indexed_exprs, [&](const IndexedExpression& indexed) {
+          return indexed.field_id == key.field_id;
+        })) {
       continue;
     }
     const auto* entry = config->FindEntry(key.field_id);

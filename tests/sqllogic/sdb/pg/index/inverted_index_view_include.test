@@ -198,3 +198,67 @@ SELECT pk, attrs FROM inc_base_idx WHERE body @@ ts_phrase('pudge') ORDER BY pk;
 pk	attrs
 1	{"(kills,7)","(deaths,2)"}
 3	{"(kills,3)","(deaths,5)"}
+
+
+# -----------------------------------------------------------------------------
+# Stored expressions on a view-backed index: projections and filters on the
+# expression read its stored value, not the view's columns.
+# -----------------------------------------------------------------------------
+
+statement ok
+CREATE INDEX pq_inc_expr ON pq_inc_v USING inverted (
+    id, (lower(body)) view_inc_en, (lower(body)) included(), (price * 2) included());
+
+query
+SELECT id, lower(body) AS l, price * 2 AS p FROM pq_inc_expr ORDER BY id;
+----
+id	l	p
+1	pudge goes mid	19.98
+2	anchin reads manga	39.98
+3	pudge plays again	9
+
+query
+EXPLAIN SELECT id, lower(body), price * 2 FROM pq_inc_expr;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────╮
+│ Index: pq_inc_expr            │
+│ Lookup: parquet               │
+│ Projections: id (l),          │
+│              lower(body) (i), │
+│              (price * 2) (i)  │
+│ ~3 rows                       │
+╰───────────────────────────────╯
+
+query
+SELECT id FROM pq_inc_expr WHERE lower(body) = 'anchin reads manga';
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM pq_inc_expr WHERE lower(body) = 'anchin reads manga';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────╮
+│ Index: pq_inc_expr                 │
+│ Lookup: parquet                    │
+│ Projections: id                    │
+│ Column Filter:                     │
+│ lower(body) = 'anchin reads manga' │
+│ ~1 row                             │
+╰────────────────────────────────────╯
+
+query
+SELECT id, upper(lower(body)) AS u FROM pq_inc_expr WHERE lower(body) @@ 'pudge' ORDER BY id;
+----
+id	u
+1	PUDGE GOES MID
+3	PUDGE PLAYS AGAIN
+
+query
+SELECT id, extra FROM pq_inc_expr WHERE price * 2 > 15 ORDER BY id;
+----
+id	extra
+1	cat-a
+2	cat-b

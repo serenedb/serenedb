@@ -120,7 +120,9 @@ duckdb::TableFilterPushdown IResearchSupportsPushdownFilter(
     return HandleScoreFilter(bind, filter);
   }
   if (col_id > kMaxRealColumnIdValue) {
-    return duckdb::TableFilterPushdown::Reject;
+    return bind.relation.StoresExpression(col_id)
+             ? duckdb::TableFilterPushdown::BeforeLimit
+             : duckdb::TableFilterPushdown::Reject;
   }
   if (bind.relation.IsSearchTable()) {
     return duckdb::TableFilterPushdown::BeforeLimit;
@@ -160,7 +162,7 @@ bool IResearchPushdownExpression(duckdb::ClientContext&,
     return true;
   }
   if (col_id > kMaxRealColumnIdValue) {
-    return false;
+    return bind.relation.StoresExpression(col_id);
   }
   return bind.relation.Stores(col_id);
 }

@@ -35,15 +35,14 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
   TokenPhraseQuery(const SubReader& segment, const TermReader& reader,
                    QueryBuilder::ptr&& approx,
                    std::shared_ptr<const PhraseTokens> tokens,
-                   std::vector<const ColumnReader*> columns,
-                   const ByPhraseOptions& phrase,
+                   const ColumnReader& column, const ByPhraseOptions& phrase,
                    std::span<const std::vector<bstring>> expanded,
                    score_t boost)
     : QueryBuilderImpl{segment, approx->EstimateMax(), QueryKind::Other},
       _approx{std::move(approx)},
       _reader{&reader},
       _tokens{std::move(tokens)},
-      _columns{std::move(columns)},
+      _column{&column},
       _compiled{phrase, expanded, reader},
       _boost{boost} {
     _estimate_matches = _approx->EstimateMatches();
@@ -59,9 +58,7 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
 
   const PhraseTokens& Tokens() const noexcept { return *_tokens; }
 
-  std::span<const ColumnReader* const> Columns() const noexcept {
-    return _columns;
-  }
+  const ColumnReader& Column() const noexcept { return *_column; }
 
   void Visit(PreparedStateVisitor&, score_t) const final {}
 
@@ -73,7 +70,7 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
   QueryBuilder::ptr _approx;
   const TermReader* _reader;
   std::shared_ptr<const PhraseTokens> _tokens;
-  std::vector<const ColumnReader*> _columns;
+  const ColumnReader* _column;
   CompiledPhrase _compiled;
   score_t _boost;
 };

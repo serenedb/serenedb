@@ -26,6 +26,9 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
+#include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/geo_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
@@ -67,6 +70,18 @@ bool Spliceable(const irs::Filter& filter, const irs::BooleanFilter& parent) {
 }
 
 }  // namespace
+
+std::optional<duckdb::LogicalType> StoredType(const irs::IndexReader& reader,
+                                              irs::field_id column) {
+  for (const auto& segment : reader) {
+    const auto* col_reader = segment.GetColReader();
+    if (const auto* stored =
+          col_reader ? col_reader->Column(column) : nullptr) {
+      return stored->Type();
+    }
+  }
+  return std::nullopt;
+}
 
 DeferredCheck Split(irs::Filter::ptr& filter, irs::Filter::ptr index,
                     irs::field_id column, const duckdb::LogicalType& type,

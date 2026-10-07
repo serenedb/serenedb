@@ -132,27 +132,6 @@ duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefs(
   return expr;
 }
 
-class EvaluatedText final : public irs::TextExpression {
- public:
-  EvaluatedText(duckdb::ClientContext& context,
-                std::shared_ptr<const duckdb::Expression> expr)
-    : _expr{std::move(expr)}, _executor{context, *_expr} {
-    _result.Initialize(duckdb::Allocator::Get(context),
-                       {_expr->GetReturnType()});
-  }
-
-  duckdb::Vector& Evaluate(duckdb::DataChunk& columns) final {
-    _result.Reset();
-    _executor.Execute(columns, _result);
-    return _result.data[0];
-  }
-
- private:
-  std::shared_ptr<const duckdb::Expression> _expr;
-  duckdb::ExpressionExecutor _executor;
-  duckdb::DataChunk _result;
-};
-
 }  // namespace
 
 duckdb::Vector EvaluateExprOverChunk(const duckdb::Expression& bound_expr,
@@ -171,18 +150,6 @@ duckdb::Vector EvaluateExprOverChunk(const duckdb::Expression& bound_expr,
     RejectJsonObjectArrayLeaves(result, num_rows);
   }
   return result;
-}
-
-irs::TextSource::Expression TextExpressionOf(
-  duckdb::unique_ptr<duckdb::Expression> expr, duckdb::idx_t table_id,
-  std::span<const ColumnId> slot_to_col_id,
-  std::span<const duckdb::LogicalType> slot_types,
-  duckdb::ClientContext& context) {
-  std::shared_ptr<const duckdb::Expression> resolved = ResolveBoundColumnRefs(
-    std::move(expr), table_id, slot_to_col_id, slot_types);
-  return [context = &context, resolved = std::move(resolved)] {
-    return std::make_unique<EvaluatedText>(*context, resolved);
-  };
 }
 
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(

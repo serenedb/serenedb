@@ -30,7 +30,8 @@ CREATE VIEW logs AS SELECT ts AS Ts, id AS Id, body AS Body
 # columnstore paths for the niche type.
 statement ok
 CREATE INDEX logs_idx ON logs USING inverted(
-    (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) kw
+    (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) kw,
+    (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) included()
 ) INCLUDE (Ts, Id, Body);
 
 
@@ -167,7 +168,8 @@ CREATE VIEW logs2 AS
 
 statement ok
 CREATE INDEX logs2_idx ON logs2 USING inverted(
-    (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) kw
+    (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) kw,
+    (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) included()
 ) INCLUDE (Ts, Id, Body);
 
 

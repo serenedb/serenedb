@@ -91,7 +91,7 @@ An update is reviewed patchset by patchset. Every fork whose upstream is in the 
 
 | submodule | upstream | `main` | merged | ext patches | boundary |
 |---|---|---|---|---|---|
-| `third_party/duckdb` | duckdb/duckdb | `e829ad1529` | `v2.0-cyanoptera` `36265ef34d`, `v1.5-variegata` `069cc9f9b5` | none | `a6955106d7` |
+| `third_party/duckdb` | duckdb/duckdb | `e829ad1529` | `v2.0-cyanoptera` `36265ef34d`, `v1.5-variegata` `069cc9f9b5` | none | `0a82d6a5dc` |
 | `third_party/duckdb_httpfs` | duckdb/duckdb-httpfs | `53b78e97a5` | `v1.5-variegata` `b26737e` | 0003-duplicate-secret-option-error | `954e6d913b` |
 | `third_party/duckdb_avro` | duckdb/duckdb-avro | `859d56d` | `v1.5-variegata` `a54bd17` | none | `b108c9d5e3` |
 | `third_party/duckdb_iceberg` | duckdb/duckdb-iceberg | `221db9bb4f` | `v1.5-variegata` `5dcf5070c5` | 0002-alter-info-column-path, 0002-logical-type-info-header | `72e8d691f2` |
@@ -146,8 +146,8 @@ Rules for the rebuilt series:
 - Resolve conflicts toward the final state; history is free. Fold a fix into the commit that introduced the problem (`fixup!` + autosquash), drop what upstream has (compare content with `git patch-id --stable`, never reachability: rewritten copies of upstream commits are not reachable from upstream), and keep a commit we still need even when upstream has a similar change, reduced to what upstream lacks.
 - Nothing of ours is lost. Before pushing, account for every commit of the previous series in every fork: carried (same patch-id or subject), folded into another commit, or superseded by upstream, naming the upstream code that does the same. Then compare the two series as net diffs against their boundaries: a line ours added that is gone from the new tree needs one of those explanations, and passing tests are not one. Where upstream built the same thing as we did (WAL group commit, the curl client), keep upstream's design and port our improvements onto it (parallel syncs on network file systems, no body copies) instead of keeping only upstream's.
 - No settings or pragmas that do nothing. A setting that upstream keeps only for DuckDB compatibility (a deprecated no-op, one "kept for legacy compatibility", a selector with one choice in our build) is deleted, together with its tests, goldens and docs, so `SET` reports it as unknown.
-- Generated files never carry hand edits. During the cherry-picks, take upstream's side of a fully generated file; at the end, from `third_party/duckdb`, run `./scripts/parser/build_grammar.sh` (the PEG grammar and transformer) and then `make generate-files` (settings, serialization, enum_util, functions, metrics, storage info), and commit everything they changed as the one `regen:` commit.
-- Format each commit with `./scripts/format_duckdb.sh` from the repo root (clang-format 11.0.1 in docker over the changed files of every duckdb submodule and `duckdb_clickhouse`). Upstream's own unformatted lines are left to a final `--all` pass.
+- Generated files never carry hand edits. In the merges and the cherry-picks, take upstream's side of a fully generated file; at the end, `scripts/duckdb_family.sh regen` runs DuckDB's generators in DuckDB's order on the last patch commit (`make generate-files`, then `scripts/capi_v2_regen.sh`) and commits everything they change as the one `regen:` commit. `regen --check` proves the commit is what the generators produce.
+- Format each commit with `scripts/duckdb_family.sh format` before committing: DuckDB's own `scripts/format.py` with its pinned clang-format 11.0.1, black, cmake-format and typos. Before pushing, `scripts/duckdb_family.sh format --check --range <upstream main>..HEAD <fork>` proves every merge and commit of the series is formatted on its own. Upstream's own unformatted lines are left to a final `--all` pass.
 - Never derive a boundary from authorship or from a local `main`: those refs are stale, and `git merge-base main HEAD` answers far too early.
 
 ## Suites and their configs

@@ -358,6 +358,8 @@ Enforced by [`.clang-tidy`](.clang-tidy) and [pre-commit](.pre-commit-config.yam
 
 Handled by [`.clang-format`](.clang-format) and [pre-commit](.pre-commit-config.yaml). No style discussions in PRs.
 
+The DuckDB family (the duckdb submodules, `database-connector`, `duckdb_clickhouse`) follows DuckDB's own style and generators instead: [`scripts/duckdb_family.sh`](scripts/duckdb_family.sh) formats it with DuckDB's `scripts/format.py` and builds the duckdb fork's `regen:` commit; [`tests/duckdb/README.md`](tests/duckdb/README.md) has the rules for a DuckDB update.
+
 ### Include Ordering
 
 Handled by [`.clang-format`](.clang-format).

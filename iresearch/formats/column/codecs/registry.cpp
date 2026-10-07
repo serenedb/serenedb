@@ -22,6 +22,7 @@
 
 #include <duckdb/main/config.hpp>
 
+#include "iresearch/formats/column/codecs/numeric_scan.hpp"
 #include "iresearch/formats/column/codecs/sequence_codec.hpp"
 #include "iresearch/formats/column/codecs/string_scan.hpp"
 
@@ -32,6 +33,9 @@ const duckdb::CompressionFunction* GetCodec(duckdb::DatabaseInstance& db,
                                             duckdb::PhysicalType physical) {
   if (type == duckdb::CompressionType::COMPRESSION_COL_SEQUENCE) {
     return SequenceFunction(physical);
+  }
+  if (type == duckdb::CompressionType::COMPRESSION_COL_NUMERIC) {
+    return NumericScanFunction(physical);
   }
   if (physical == duckdb::PhysicalType::VARCHAR &&
       duckdb::IsSereneDBCompressionType(type)) {

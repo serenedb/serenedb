@@ -104,7 +104,8 @@ class ColumnWriter final {
   duckdb::optional_ptr<const duckdb::CompressionFunction> PickCodec(
     const duckdb::LogicalType& codec_type, std::span<WriteChunk> chunks,
     duckdb::CompressionType forced,
-    duckdb::unique_ptr<duckdb::AnalyzeState>& out_state);
+    duckdb::unique_ptr<duckdb::AnalyzeState>& out_state,
+    duckdb::idx_t* out_score = nullptr);
 
   const duckdb::CompressionFunction* PlainCodec(
     const duckdb::LogicalType& type, duckdb::CompressionType codec) const;
@@ -115,6 +116,10 @@ class ColumnWriter final {
 
   bool SealString(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
                   duckdb::CompressionType forced, ColumnMeta& meta);
+
+  bool SealNumeric(const duckdb::LogicalType& type,
+                   std::span<WriteChunk> chunks, duckdb::CompressionType forced,
+                   ColumnMeta& meta);
 
   void SealLeafValidity(std::span<WriteChunk> chunks, uint64_t row_count,
                         bool skip_validity, bool nulls_covered_by_data,

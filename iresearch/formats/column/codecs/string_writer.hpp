@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/numeric_writer.hpp"
 #include "iresearch/formats/column/codecs/string_choice.hpp"
 #include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/index/column_info.hpp"
@@ -65,6 +66,7 @@ struct StringTuning {
   bool sampling_done = false;
   std::shared_ptr<const TrainedDictionary> dictionary;
   uint16_t dictionary_id = 0;
+  NumericTuning codes;
 };
 
 struct SealOutcome {

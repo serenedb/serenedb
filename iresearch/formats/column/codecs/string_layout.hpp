@@ -34,6 +34,7 @@ namespace irs::codecs {
 enum class CodesEncoding : uint8_t {
   Bitpack = 0,
   Rle = 1,
+  Numeric = 2,
 };
 
 inline constexpr uint8_t kSegmentVersion = 1;
@@ -117,14 +118,18 @@ struct Header {
     h.raw_bytes = Load<uint64_t>(p + 64);
     const bool rle =
       h.codes_encoding == static_cast<uint8_t>(CodesEncoding::Rle);
-    const uint64_t codes_count = h.shape != static_cast<uint8_t>(Shape::Dedup)
-                                   ? 0
-                                 : rle ? h.run_count
-                                       : h.row_count;
+    const bool numeric =
+      h.codes_encoding == static_cast<uint8_t>(CodesEncoding::Numeric);
+    const uint64_t codes_count =
+      h.shape != static_cast<uint8_t>(Shape::Dedup) || numeric ? 0
+      : rle                                                    ? h.run_count
+                                                               : h.row_count;
     SDB_ENSURE(
       h.shape <= static_cast<uint8_t>(Shape::Plain) &&
         h.codec < kByteCodecCount &&
-        h.codes_encoding <= static_cast<uint8_t>(CodesEncoding::Rle) &&
+        h.codes_encoding <= static_cast<uint8_t>(CodesEncoding::Numeric) &&
+        (!numeric || (h.shape == static_cast<uint8_t>(Shape::Dedup) &&
+                      h.run_count == 0 && h.off_runs > h.off_codes)) &&
         h.code_width <= 32 && h.length_width <= 32 && h.run_width <= 32 &&
         h.lcp_width <= 32 &&
         (h.flags == 0 ||

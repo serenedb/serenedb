@@ -37,6 +37,7 @@
 #include <utility>
 
 #include "iresearch/formats/column/codecs/fsst_codec.hpp"
+#include "iresearch/formats/column/codecs/numeric_writer.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -69,6 +70,7 @@ constexpr size_t kPriceFrames = 8;
 constexpr uint8_t kLz4Fast[] = {1};
 constexpr uint8_t kLz4Balanced[] = {1, 4, 6};
 constexpr uint8_t kLz4Ladder[] = {1, 4, 9};
+constexpr uint8_t kZstdBalanced[] = {9};
 constexpr uint8_t kZstdLadder[] = {1, 3, 6, 9, 12};
 constexpr uint8_t kZxcBalanced[] = {1, 3};
 constexpr uint8_t kZxcLadder[] = {1, 3, 5, 7};
@@ -84,6 +86,7 @@ constexpr LeafPlan kRefreshPlan[] = {{ByteCodec::Fsst, kNoLevel},
                                      {ByteCodec::Lz4, kLz4Fast}};
 constexpr LeafPlan kBalancedPlan[] = {{ByteCodec::Fsst, kNoLevel},
                                       {ByteCodec::Lz4, kLz4Balanced},
+                                      {ByteCodec::Zstd, kZstdBalanced},
                                       {ByteCodec::Zxc, kZxcBalanced}};
 constexpr LeafPlan kSizePlan[] = {{ByteCodec::Fsst, kNoLevel},
                                   {ByteCodec::Lz4, kLz4Ladder},
@@ -863,7 +866,8 @@ class SegmentWriter {
       });
       if (!_named) {
         const bool scheduled = first && due;
-        const bool drift = !scheduled && Drifted(*seg, first);
+        const bool drift =
+          !scheduled && Drifted(*seg, first || end < _acc.row_count);
         const bool retune = drift && !first;
         if (retune) {
           if (auto& fsst =
@@ -882,6 +886,7 @@ class SegmentWriter {
       }
       outcome.all_dedup =
         outcome.all_dedup && seg->choice.shape == Shape::Dedup;
+      RecodeCodes(*seg);
       const std::string_view parts[] = {seg->head, seg->data};
       sink(seg->choice, std::move(*seg->stats), seg->rows, parts);
       Release(seg);
@@ -897,6 +902,56 @@ class SegmentWriter {
     uint8_t level;
     FrameLayout layout;
   };
+
+  void RecodeCodes(Segment& seg) const {
+    if (seg.choice.shape != Shape::Dedup) {
+      return;
+    }
+    auto* base = reinterpret_cast<duckdb::data_ptr_t>(seg.head.data());
+    auto h = Header::Parse(base, seg.Size());
+    if (h.codes_encoding != static_cast<uint8_t>(CodesEncoding::Bitpack) &&
+        h.codes_encoding != static_cast<uint8_t>(CodesEncoding::Rle)) {
+      return;
+    }
+    const auto unpack = [&](uint32_t off, uint64_t count, uint8_t width) {
+      std::vector<uint32_t> out(GroupPadded(count));
+      BitpackingPrimitives::UnPackBuffer<uint32_t>(
+        duckdb::data_ptr_cast(out.data()), base + off, out.size(), width);
+      out.resize(count);
+      return out;
+    };
+    std::vector<uint32_t> codes;
+    if (h.codes_encoding == static_cast<uint8_t>(CodesEncoding::Rle)) {
+      const auto values = unpack(h.off_codes, h.run_count, h.code_width);
+      const auto ends = unpack(h.off_runs, h.run_count, h.run_width);
+      codes.reserve(h.row_count);
+      for (size_t r = 0; r < values.size(); ++r) {
+        codes.resize(ends[r], values[r]);
+      }
+    } else {
+      codes = unpack(h.off_codes, h.row_count, h.code_width);
+    }
+    const uint64_t current = h.off_symtab - h.off_codes;
+    auto encoded = EncodeCodes(codes, _params, current, _tuning.codes);
+    if (!encoded) {
+      return;
+    }
+    const auto symtab =
+      std::string_view{seg.head}.substr(h.off_symtab, h.symtab_size);
+    std::string head{seg.head, 0, h.off_codes};
+    head.append(encoded->bytes);
+    head.resize(Align8(head.size()), '\0');
+    h.off_runs = static_cast<uint32_t>(head.size());
+    h.off_symtab = h.off_runs;
+    head.append(symtab);
+    head.resize(Align8(head.size()), '\0');
+    h.off_data = static_cast<uint32_t>(head.size());
+    h.codes_encoding = static_cast<uint8_t>(CodesEncoding::Numeric);
+    h.run_count = 0;
+    h.run_width = 0;
+    h.Write(reinterpret_cast<duckdb::data_ptr_t>(head.data()));
+    seg.head.swap(head);
+  }
 
   Pick Cutter() const noexcept {
     if (_named) {
@@ -1204,9 +1259,9 @@ class SegmentWriter {
            plain + kPlainMinSaving <= dedup;
   }
 
-  bool Drifted(const Segment& seg, bool first) const noexcept {
+  bool Drifted(const Segment& seg, bool full) const noexcept {
     if (seg.input == 0 || _tuning.bytes_per_input == 0 ||
-        (!first && seg.Size() * kDriftMinFraction < _params.segment_target)) {
+        (!full && seg.Size() * kDriftMinFraction < _params.segment_target)) {
       return false;
     }
     const auto ratio =

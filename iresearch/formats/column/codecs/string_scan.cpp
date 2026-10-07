@@ -58,6 +58,7 @@
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/dictionary_cache.hpp"
 #include "iresearch/formats/column/codecs/fsst_codec.hpp"
+#include "iresearch/formats/column/codecs/numeric_decoder.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/read_context.hpp"
@@ -371,6 +372,14 @@ struct ScanState final : duckdb::SegmentScanState {
   }
 
   void LoadCodes() {
+    if (header.codes_encoding == static_cast<uint8_t>(CodesEncoding::Numeric)) {
+      const auto codes_header = NumericHeader::Parse(
+        base + header.off_codes, header.off_runs - header.off_codes);
+      SDB_ENSURE(codes_header.row_count == header.row_count,
+                 "col codec: corrupted row codes");
+      code_frames.emplace(base + header.off_codes, codes_header);
+      return;
+    }
     if (!Rle()) {
       return;
     }
@@ -993,6 +1002,7 @@ struct ScanState final : duckdb::SegmentScanState {
   idx_t sel_size = 0;
   std::vector<uint32_t> run_values;
   std::vector<uint32_t> run_ends;
+  std::optional<FrameDecoder<uint32_t>> code_frames;
   duckdb::unsafe_unique_array<bool> filter_result;
   idx_t filter_match_count = 0;
 
@@ -1006,6 +1016,27 @@ struct ScanState final : duckdb::SegmentScanState {
 
   idx_t UnpackCodes(idx_t start, idx_t count) {
     SDB_ASSERT(Dedup());
+    if (code_frames) {
+      ReserveCodes(count);
+      auto* codes = sel->data();
+      uint64_t row = start;
+      idx_t done = 0;
+      while (done < count) {
+        code_frames->Seek(row);
+        const auto take =
+          std::min<uint64_t>(count - done, code_frames->End() - row);
+        code_frames->Copy(row, take, codes + done);
+        done += take;
+        row += take;
+      }
+      duckdb::sel_t max_code = 0;
+      for (idx_t i = 0; i < count; ++i) {
+        max_code = std::max(max_code, codes[i]);
+      }
+      SDB_ENSURE(max_code < header.entry_count,
+                 "col codec: corrupted row codes");
+      return 0;
+    }
     if (Rle()) {
       ReserveCodes(count);
       auto* codes = sel->data();
@@ -1178,6 +1209,7 @@ struct FetchCache final : duckdb::SegmentScanState {
   std::vector<uint32_t> fsst_known;
   std::vector<uint64_t> fsst_offsets;
   std::string chain;
+  std::optional<FrameDecoder<uint32_t>> code_frames;
 
   template<typename Decompressor>
   void Decode(Decompressor& d, const FrameMeta& f, const Header& h,
@@ -1265,6 +1297,7 @@ FetchCache& CacheFor(duckdb::ColumnFetchState& state,
     cache.dictionary_ready = false;
     cache.fsst.reset();
     cache.fsst_group_base.clear();
+    cache.code_frames.reset();
   }
   return cache;
 }
@@ -1278,7 +1311,16 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
   SDB_ENSURE(row < h.row_count, "col codec: row out of range");
   uint32_t entry = static_cast<uint32_t>(row);
   if (h.shape == static_cast<uint8_t>(Shape::Dedup)) {
-    if (h.codes_encoding == static_cast<uint8_t>(CodesEncoding::Rle)) {
+    if (h.codes_encoding == static_cast<uint8_t>(CodesEncoding::Numeric)) {
+      auto& cache = CacheFor(state, segment);
+      if (!cache.code_frames) {
+        cache.code_frames.emplace(
+          base + h.off_codes,
+          NumericHeader::Parse(base + h.off_codes, h.off_runs - h.off_codes));
+      }
+      cache.code_frames->Seek(row);
+      entry = cache.code_frames->At(row);
+    } else if (h.codes_encoding == static_cast<uint8_t>(CodesEncoding::Rle)) {
       PackedReader ends{base + h.off_runs, h.run_width};
       idx_t lo = 0;
       idx_t hi = h.run_count;
@@ -1452,9 +1494,20 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
     h.shape == static_cast<uint8_t>(Shape::Dedup) ? "dedup" : "plain";
   info["codec"] = std::string{kLeafNames[h.codec]};
   info["level"] = absl::StrCat(static_cast<uint32_t>(h.level));
-  info["codes"] = h.codes_encoding == static_cast<uint8_t>(CodesEncoding::Rle)
-                    ? "rle"
-                    : "bitpack";
+  constexpr std::array<std::string_view, 3> kCodesNames{"bitpack", "rle",
+                                                        "numeric"};
+  info["codes"] = std::string{kCodesNames[h.codes_encoding]};
+  if (h.codes_encoding == static_cast<uint8_t>(CodesEncoding::Numeric)) {
+    constexpr std::array<std::string_view, 5> kTransforms{"raw", "for", "delta",
+                                                          "rle", "dict"};
+    constexpr std::array<std::string_view, 3> kLeaves{"none", "lz4", "zstd"};
+    const auto codes = NumericHeader::Parse(
+      handle.Ptr() + segment.GetBlockOffset() + h.off_codes,
+      h.off_runs - h.off_codes);
+    info["codes_transform"] =
+      std::string{kTransforms[static_cast<uint8_t>(codes.transform)]};
+    info["codes_leaf"] = std::string{kLeaves[static_cast<uint8_t>(codes.leaf)]};
+  }
   info["runs"] = absl::StrCat(h.run_count);
   info["entries"] = absl::StrCat(h.entry_count);
   info["frames"] = absl::StrCat(h.frame_count);

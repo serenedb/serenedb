@@ -3172,7 +3172,8 @@ TEST_F(ColumnReaderTest, VectorColumnAutoPicksFloatCodec) {
     ASSERT_NE(blocks[rg].codec, nullptr) << "row-group " << rg;
     const auto codec = blocks[rg].codec->type;
     EXPECT_TRUE(codec == duckdb::CompressionType::COMPRESSION_ALP ||
-                codec == duckdb::CompressionType::COMPRESSION_ALPRD)
+                codec == duckdb::CompressionType::COMPRESSION_ALPRD ||
+                codec == duckdb::CompressionType::COMPRESSION_COL_NUMERIC)
       << "row-group " << rg
       << " codec=" << duckdb::CompressionTypeToString(codec);
   }

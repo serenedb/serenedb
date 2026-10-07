@@ -51,6 +51,7 @@ class CompressionFunction;
 namespace irs {
 namespace codecs {
 
+struct NumericTuning;
 struct StringTuning;
 
 }  // namespace codecs
@@ -126,6 +127,7 @@ struct ColumnMeta {
   duckdb::shared_ptr<duckdb::HyperLogLog> hyperloglog;
   uint64_t write_list_running = 0;
   std::shared_ptr<codecs::StringTuning> write_string_tuning;
+  std::shared_ptr<codecs::NumericTuning> write_numeric_tuning;
   uint64_t write_list_distinct = 0;
 };
 

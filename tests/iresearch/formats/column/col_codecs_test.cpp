@@ -883,7 +883,8 @@ TEST_F(ColCodecsTest, AutoLevelsComeFromTheLadders) {
   using duckdb::CompressionType;
   const std::set<std::string> lz4_balanced{"1", "4", "6"};
   const std::set<std::string> lz4_size{"1", "4", "9"};
-  const std::set<std::string> zstd{"1", "3", "6", "9", "12"};
+  const std::set<std::string> zstd_balanced{"9"};
+  const std::set<std::string> zstd_size{"1", "3", "6", "9", "12"};
   const std::set<std::string> zxc_balanced{"1", "3"};
   const std::set<std::string> zxc_size{"1", "3", "5", "7"};
   const std::pair<const char*, const Value*> corpora[] = {
@@ -912,8 +913,8 @@ TEST_F(ColCodecsTest, AutoLevelsComeFromTheLadders) {
             break;
           case CompressionType::COMPRESSION_COL_ZSTD:
           case CompressionType::COMPRESSION_DICT_ZSTD:
-            EXPECT_TRUE(size) << label;
-            EXPECT_TRUE(zstd.contains(level)) << label;
+            EXPECT_TRUE((size ? zstd_size : zstd_balanced).contains(level))
+              << label;
             break;
           case CompressionType::COMPRESSION_ZXC:
           case CompressionType::COMPRESSION_DICT_ZXC:
@@ -1021,6 +1022,8 @@ TEST_F(ColCodecsTest, AutoObjectivePicksTheLeaf) {
     CompressionType::COMPRESSION_DICT_LZ4,
     CompressionType::COMPRESSION_COL_FSST,
     CompressionType::COMPRESSION_COL_DICT_FSST,
+    CompressionType::COMPRESSION_COL_ZSTD,
+    CompressionType::COMPRESSION_DICT_ZSTD,
     CompressionType::COMPRESSION_ZXC,
     CompressionType::COMPRESSION_DICT_ZXC,
     CompressionType::COMPRESSION_UNCOMPRESSED};
@@ -1552,7 +1555,7 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
   const auto listed = duckdb::ListCompressionTypes();
   EXPECT_EQ(listed.size(),
             static_cast<size_t>(duckdb::CompressionType::ENUM_SIZE) +
-              std::size(names) + 1);
+              std::size(names) + 2);
   EXPECT_TRUE(duckdb::IsSereneDBCompressionType(
     duckdb::CompressionType::COMPRESSION_COL_SEQUENCE));
   EXPECT_EQ(duckdb::CompressionTypeToString(
@@ -1560,6 +1563,13 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
             "Sequence");
   EXPECT_ANY_THROW(
     duckdb::EnumUtil::FromString<duckdb::CompressionType>("sequence"));
+  EXPECT_TRUE(duckdb::IsSereneDBCompressionType(
+    duckdb::CompressionType::COMPRESSION_COL_NUMERIC));
+  EXPECT_EQ(duckdb::CompressionTypeToString(
+              duckdb::CompressionType::COMPRESSION_COL_NUMERIC),
+            "Numeric");
+  EXPECT_ANY_THROW(
+    duckdb::EnumUtil::FromString<duckdb::CompressionType>("numeric"));
   for (const auto& [type, name] : names) {
     SCOPED_TRACE(name);
     EXPECT_TRUE(duckdb::IsSereneDBCompressionType(type));
@@ -1588,12 +1598,18 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
 TEST_F(ColCodecsTest, CorruptedDictionaryCodesAreRejected) {
   const auto path = test_dir() / "col_codecs_corrupt_codes";
   std::filesystem::create_directories(path);
+  const Value random_codes = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 9 == 0) {
+      return std::nullopt;
+    }
+    return "value-" + std::to_string((g * 0x9E3779B97F4A7C15ULL >> 40) % 1000);
+  };
   uint64_t offset = 0;
   uint64_t size = 0;
   {
     irs::MMapDirectory dir{path};
     Write(dir, duckdb::CompressionType::COMPRESSION_DICT_LZ4, {}, 5000, 2048,
-          kLowCardinalityWithNulls);
+          random_codes);
     irs::ColReader r{dir, std::string{kSeg}, Db()};
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
@@ -1611,6 +1627,8 @@ TEST_F(ColCodecsTest, CorruptedDictionaryCodesAreRejected) {
   auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
   const auto h = irs::codecs::Header::Parse(block, size);
   ASSERT_EQ(h.shape, static_cast<uint8_t>(irs::codecs::Shape::Dedup));
+  ASSERT_EQ(h.codes_encoding,
+            static_cast<uint8_t>(irs::codecs::CodesEncoding::Bitpack));
   ASSERT_GT(h.code_width, 0);
   ASSERT_GE((uint64_t{1} << h.code_width) - 1, uint64_t{h.entry_count});
   uint32_t word = 0;
@@ -1632,6 +1650,143 @@ TEST_F(ColCodecsTest, CorruptedDictionaryCodesAreRejected) {
 #ifdef SDB_DEV
   GTEST_FLAG_SET(death_test_style, "threadsafe");
   EXPECT_DEATH(scan(), "corrupted row codes");
+#else
+  EXPECT_ANY_THROW(scan());
+#endif
+}
+
+const Value kClusteredCountries = [](uint64_t g) -> std::optional<std::string> {
+  if (g % 17 == 0) {
+    return std::nullopt;
+  }
+  constexpr std::string_view kCountries[] = {"DE", "RU", "US", "BY", "KZ",
+                                             "UA", "TR", "FR", "GB", "PL"};
+  return std::string{kCountries[(g / 40 + g % 3) % std::size(kCountries)]};
+};
+
+TEST_F(ColCodecsTest, DictionaryCodesUseTheNumericCodec) {
+  for (const auto codec : {duckdb::CompressionType::COMPRESSION_AUTO,
+                           duckdb::CompressionType::COMPRESSION_DICT_FSST,
+                           duckdb::CompressionType::COMPRESSION_DICT_LZ4}) {
+    SCOPED_TRACE(duckdb::EnumUtil::ToString(codec));
+    irs::MemoryDirectory dir{};
+    Write(dir, codec, {.objective = irs::AutoObjective::Size}, 60000, 16384,
+          kClusteredCountries);
+    Verify(dir, codec, 60000, kClusteredCountries);
+    const auto codes = SegmentInfo(dir, "codes");
+    EXPECT_TRUE(std::ranges::all_of(
+      codes, [](const std::string& c) { return c == "numeric"; }))
+      << codes.front();
+  }
+}
+
+TEST_F(ColCodecsTest, BalancedDictionaryCodesStayLeafless) {
+  for (const auto codec : {duckdb::CompressionType::COMPRESSION_AUTO,
+                           duckdb::CompressionType::COMPRESSION_DICT_LZ4}) {
+    SCOPED_TRACE(duckdb::EnumUtil::ToString(codec));
+    irs::MemoryDirectory dir{};
+    Write(dir, codec, {.objective = irs::AutoObjective::Balanced}, 60000, 16384,
+          kClusteredCountries);
+    Verify(dir, codec, 60000, kClusteredCountries);
+    for (const auto& leaf : SegmentInfo(dir, "codes_leaf")) {
+      EXPECT_TRUE(leaf.empty() || leaf == "none") << leaf;
+    }
+  }
+}
+
+TEST_F(ColCodecsTest, NumericCodesFilterTheValues) {
+  constexpr uint64_t kRows = 30000;
+  irs::MemoryDirectory dir{};
+  Write(dir, duckdb::CompressionType::COMPRESSION_DICT_LZ4,
+        {.objective = irs::AutoObjective::Size}, kRows, 8192,
+        kClusteredCountries);
+  irs::ColReader r{dir, std::string{kSeg}, Db()};
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  duckdb::Connection con{_db};
+  for (const std::string key : {"DE", "KZ", "PL", "ZZ"}) {
+    for (const auto cmp : {duckdb::ExpressionType::COMPARE_EQUAL,
+                           duckdb::ExpressionType::COMPARE_NOTEQUAL}) {
+      const duckdb::ExpressionFilter filter{
+        duckdb::BoundComparisonExpression::Create(
+          cmp,
+          duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+            duckdb::LogicalType::VARCHAR, 0),
+          duckdb::make_uniq<duckdb::BoundConstantExpression>(
+            duckdb::Value{key}))};
+      auto filter_state =
+        duckdb::TableFilterState::Initialize(*con.context, filter);
+      auto state = col->InitScan(r.Ctx());
+      for (uint64_t anchor = 0; anchor < kRows;
+           anchor += STANDARD_VECTOR_SIZE) {
+        const auto span =
+          std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+        duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+        for (duckdb::idx_t i = 0; i < span; ++i) {
+          sel.set_index(i, i);
+        }
+        duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+        const auto kept =
+          col->GatherFilter(state, anchor, span, sel, span, filter,
+                            *filter_state, irs::NullCheckKind::None, out);
+        duckdb::idx_t next = 0;
+        for (duckdb::idx_t i = 0; i < span; ++i) {
+          const auto v = kClusteredCountries(anchor + i);
+          const bool expected =
+            v && (cmp == duckdb::ExpressionType::COMPARE_EQUAL ? *v == key
+                                                               : *v != key);
+          const bool got = next < kept && sel.get_index(next) == i;
+          next += got ? 1 : 0;
+          ASSERT_EQ(got, expected) << "row " << anchor + i << " key " << key;
+        }
+      }
+    }
+  }
+}
+
+TEST_F(ColCodecsTest, CorruptedNumericCodesAreRejected) {
+  const auto path = test_dir() / "col_codecs_corrupt_numeric_codes";
+  std::filesystem::create_directories(path);
+  uint64_t offset = 0;
+  uint64_t size = 0;
+  {
+    irs::MMapDirectory dir{path};
+    Write(dir, duckdb::CompressionType::COMPRESSION_DICT_LZ4,
+          {.objective = irs::AutoObjective::Size}, 5000, 5000,
+          kClusteredCountries);
+    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    offset = col->DataBlocks().front().file_offset;
+    size = col->DataBlocks().front().byte_size;
+  }
+  const auto file = path / irs::FileName(kSeg);
+  std::string bytes;
+  {
+    std::ifstream in{file, std::ios::binary};
+    bytes.assign(std::istreambuf_iterator<char>{in}, {});
+  }
+  ASSERT_LE(offset + size, bytes.size());
+  auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
+  const auto h = irs::codecs::Header::Parse(block, size);
+  ASSERT_EQ(h.codes_encoding,
+            static_cast<uint8_t>(irs::codecs::CodesEncoding::Numeric));
+  duckdb::Store<uint32_t>(h.row_count + 1, block + h.off_codes + 8);
+  {
+    std::ofstream out{file, std::ios::binary | std::ios::trunc};
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+  }
+  irs::MMapDirectory dir{path};
+  const auto scan = [&] {
+    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    const auto* col = r.Column(kField);
+    auto state = col->InitScan(r.Ctx());
+    duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+    col->Scan(state, out, STANDARD_VECTOR_SIZE);
+  };
+#ifdef SDB_DEV
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  EXPECT_DEATH(scan(), "corrupted");
 #else
   EXPECT_ANY_THROW(scan());
 #endif
@@ -1837,8 +1992,8 @@ TEST_F(ColCodecsTest, RefreshMeasuresOnlyTheCheapLeaves) {
   constexpr uint64_t kRows = 60000;
   const Value value = [](uint64_t g) -> std::optional<std::string> {
     return "2026-10-05T12:" + std::to_string(g % 60) + " INFO service-" +
-           std::to_string(g % 17) + " handled request /api/v1/orders/" +
-           std::to_string(g) + " for customer " +
+           std::to_string(g % 17) + " handled request " + Pseudo(g, 12) +
+           " /api/v1/orders/" + std::to_string(g) + " for customer " +
            std::to_string((g * 31) % 5000) + " in " + std::to_string(g % 997) +
            "ms with status 200 and payload size " +
            std::to_string((g * 13) % 65536) + " bytes";
@@ -1873,12 +2028,19 @@ TEST_F(ColCodecsTest, RefreshMeasuresOnlyTheCheapLeaves) {
 TEST_F(ColCodecsTest, AutoCompressesLogTextWithATrainedDictionary) {
   constexpr uint64_t kRows = 60000;
   const Value value = [](uint64_t g) -> std::optional<std::string> {
-    return "2026-10-05T12:" + std::to_string(g % 60) + " INFO service-" +
-           std::to_string(g % 17) + " handled request /api/v1/orders/" +
-           std::to_string(g) + " for customer " +
-           std::to_string((g * 31) % 5000) + " in " + std::to_string(g % 997) +
-           "ms with status 200 and payload size " +
-           std::to_string((g * 13) % 65536) + " bytes";
+    static constexpr std::string_view kVerbs[] = {
+      "handled request", "rejected payment", "retried connection",
+      "flushed cache",   "opened session",   "closed stream",
+      "queued job",      "scheduled task"};
+    static constexpr std::string_view kServices[] = {
+      "checkout", "frontend", "cart", "shipping", "currency", "ads", "email"};
+    std::mt19937_64 rng{g * 0x9E3779B97F4A7C15ULL + 7};
+    return "2026-10-05T12:" + std::to_string(rng() % 60) + " INFO " +
+           std::string{kServices[rng() % std::size(kServices)]} + " " +
+           std::string{kVerbs[rng() % std::size(kVerbs)]} +
+           " id=" + Pseudo(rng(), 16) +
+           " user=" + std::to_string(rng() % 100000) + " took " +
+           std::to_string(rng() % 997) + "ms";
   };
   irs::MemoryDirectory dir{};
   Write(dir, duckdb::CompressionType::COMPRESSION_AUTO, {}, kRows, 8192, value);

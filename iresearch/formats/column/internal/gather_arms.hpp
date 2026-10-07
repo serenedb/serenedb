@@ -43,6 +43,7 @@ inline GatherBands BandsFor(duckdb::CompressionType codec,
       return {2, 70};
     case duckdb::CompressionType::COMPRESSION_DICT_FSST:
     case duckdb::CompressionType::COMPRESSION_FSST:
+    case duckdb::CompressionType::COMPRESSION_COL_NUMERIC:
       return {10, 1000};
     default:
       return type.InternalType() == duckdb::PhysicalType::VARCHAR

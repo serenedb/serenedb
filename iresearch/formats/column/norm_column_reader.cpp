@@ -69,6 +69,12 @@ const byte_type* NormColumnReader::Map(IndexInput& in, uint64_t offset,
 NormColumnReader::NormColumnReader(field_id id, const NormColumnMeta& meta,
                                    IndexInput& in)
   : _id{id}, _row_count{meta.row_count} {
+  for (const auto& m : meta.regions) {
+    if (m.bits != 0 && m.exceptions != 0) {
+      in.Prefetch(m.table_offset,
+                  (uint64_t{NormBuckets(m)} + m.overflow) * sizeof(uint32_t));
+    }
+  }
   _regions.reserve(meta.regions.size());
   _stats.reserve(meta.regions.size());
   auto first = doc_limits::min();

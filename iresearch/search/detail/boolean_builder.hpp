@@ -594,7 +594,7 @@ Result<Api> MakeExclusion(const BooleanQuery& query, const Context<Api>& ctx) {
     return folded;
   }
   if (auto windowed =
-        MakeWindowExclusion<Api>(must_terms, must_filters, exclude_terms,
+        Api::MakeWindowExclusion(must_terms, must_filters, exclude_terms,
                                  exclude_filters, segment, candidates, ctx)) {
     return windowed;
   }
@@ -608,7 +608,7 @@ Result<Api> Make(const BooleanQuery& query, const Context<Api>& ctx) {
       query.Queries(Occur::MustNot).empty()) {
     return MakeRequired<Api>(query, ctx);
   }
-  return MakeExclusion<Api>(query, ctx);
+  return Api::MakeExclusion(query, ctx);
 }
 
 }  // namespace irs::detail::builder

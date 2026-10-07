@@ -790,22 +790,18 @@ size_t RunOne(bench::Executor& executor, BenchMode mode,
   return 0;
 }
 
-double Quantile(std::vector<double> values, double q) {
+double Mean(std::span<const double> values) {
   if (values.empty()) {
     return 0.0;
   }
-  absl::c_sort(values);
-  const auto at =
-    static_cast<size_t>(q * static_cast<double>(values.size() - 1) + 0.5);
-  return values[std::min(at, values.size() - 1)];
+  return absl::c_accumulate(values, 0.0) / static_cast<double>(values.size());
 }
 
 std::vector<double> TimeQueries(bench::Executor& executor, BenchMode mode,
                                 const std::vector<ParsedQuery>& queries,
                                 std::span<const size_t> selected, size_t runs,
-                                uint64_t& hits,
-                                std::vector<std::vector<double>>& samples) {
-  samples.assign(selected.size(), {});
+                                uint64_t& hits) {
+  std::vector<std::vector<double>> samples(selected.size());
   std::vector<std::pair<uint32_t, uint32_t>> order;
   order.reserve(selected.size() * runs);
   for (uint32_t run = 0; run != runs; ++run) {
@@ -827,12 +823,12 @@ std::vector<double> TimeQueries(bench::Executor& executor, BenchMode mode,
   }
   hits = total;
 
-  std::vector<double> medians;
-  medians.reserve(selected.size());
+  std::vector<double> means;
+  means.reserve(selected.size());
   for (const auto& sample : samples) {
-    medians.push_back(Quantile(sample, 0.5));
+    means.push_back(Mean(sample));
   }
-  return medians;
+  return means;
 }
 
 void WarmUp(bench::Executor& executor, const std::vector<ParsedQuery>& queries,
@@ -1443,8 +1439,8 @@ TEST_F(LoadTest, DeleteRatioLatency) {
 
   std::ofstream csv{gDeleteOut};
   ASSERT_TRUE(csv.is_open()) << "Cannot write: " << gDeleteOut;
-  csv << "per_mille,mode,tag,queries,median_ms,p95_ms,docs,live_docs,segments,"
-         "mask_bytes,hits,p90_ms,p99_ms,exec_p50_ms,exec_p90_ms,exec_p99_ms\n";
+  csv << "per_mille,mode,tag,queries,mean_ms,docs,live_docs,segments,"
+         "mask_bytes,hits\n";
 
   std::vector<size_t> steps{0};
   steps.insert(steps.end(), gDeleteRatios.begin(), gDeleteRatios.end());
@@ -1491,42 +1487,29 @@ TEST_F(LoadTest, DeleteRatioLatency) {
     for (const auto mode : gModes) {
       const auto& selected = mode == BenchMode::Count ? all_idx : topk_idx;
       uint64_t hits = 0;
-      std::vector<std::vector<double>> samples;
-      const auto medians = TimeQueries(*gExecutor, mode, queries, selected,
-                                       gDeleteRuns, hits, samples);
+      const auto means =
+        TimeQueries(*gExecutor, mode, queries, selected, gDeleteRuns, hits);
       const auto name = kModeNames[static_cast<size_t>(mode)];
 
-      auto emit = [&](std::string_view tag, const std::vector<double>& v,
-                      const std::vector<double>& execs) {
+      auto emit = [&](std::string_view tag, const std::vector<double>& v) {
         csv << per_mille << ',' << name << ',' << tag << ',' << v.size() << ','
-            << Quantile(v, 0.5) << ',' << Quantile(v, 0.95) << ',' << docs
-            << ',' << live << ',' << reader.size() << ',' << mask_bytes << ','
-            << hits << ',' << Quantile(v, 0.9) << ',' << Quantile(v, 0.99)
-            << ',' << Quantile(execs, 0.5) << ',' << Quantile(execs, 0.9) << ','
-            << Quantile(execs, 0.99) << '\n';
+            << Mean(v) << ',' << docs << ',' << live << ',' << reader.size()
+            << ',' << mask_bytes << ',' << hits << '\n';
       };
-      std::vector<double> all_execs;
-      for (const auto& sample : samples) {
-        all_execs.insert(all_execs.end(), sample.begin(), sample.end());
-      }
-      emit("all", medians, all_execs);
+      emit("all", means);
 
       absl::flat_hash_map<std::string_view, std::vector<double>> by_tag;
-      absl::flat_hash_map<std::string_view, std::vector<double>> execs_by_tag;
       for (size_t at = 0; at != selected.size(); ++at) {
         for (const auto& tag : queries[selected[at]].tags) {
           if (!absl::StrContains(tag, ':')) {
-            by_tag[tag].push_back(medians[at]);
-            auto& execs = execs_by_tag[tag];
-            execs.insert(execs.end(), samples[at].begin(), samples[at].end());
+            by_tag[tag].push_back(means[at]);
           }
         }
       }
       for (const auto& [tag, v] : by_tag) {
-        emit(tag, v, execs_by_tag[tag]);
+        emit(tag, v);
       }
-      std::cout << absl::StrCat("  ", name, " median=", Quantile(medians, 0.5),
-                                " ms p95=", Quantile(medians, 0.95), " ms\n");
+      std::cout << absl::StrCat("  ", name, " mean=", Mean(means), " ms\n");
     }
     csv.flush();
   }

@@ -139,15 +139,19 @@ MaskKind KindOf(const roaring_bitmap_t& set) noexcept {
   if (!same) {
     return MaskKind::Mixed;
   }
+  const bool single = count == 1;
   switch (type) {
     case BITSET_CONTAINER_TYPE:
+      if (single) {
+        return MaskKind::Bitset;
+      }
       return uint32_t{ra.keys[count - 1]} - uint32_t{ra.keys[0]} == count - 1
                ? MaskKind::Bitsets
                : MaskKind::Mixed;
     case ARRAY_CONTAINER_TYPE:
-      return MaskKind::Arrays;
+      return single ? MaskKind::Array : MaskKind::Arrays;
     case RUN_CONTAINER_TYPE:
-      return MaskKind::Runs;
+      return single ? MaskKind::Run : MaskKind::Runs;
     default:
       SDB_UNREACHABLE();
   }

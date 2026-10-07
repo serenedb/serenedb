@@ -127,6 +127,9 @@ set(IResearch_core_sources
     ./search/count/make_ivf.cpp
     ./search/count/make_constant.cpp
     ./search/count/make_boolean.cpp
+    ./search/count/make_boolean_exclusion.cpp
+    ./search/count/make_boolean_exclusion_window.cpp
+    ./search/count/make_boolean_negation.cpp
     ./search/count/make_subtract_conjunction.cpp
     ./search/count/make_subtract_disjunction.cpp
     ./search/count/make_fixed_phrase.cpp
@@ -151,6 +154,9 @@ set(IResearch_core_sources
     ./search/lead/make_all_docs.cpp
     ./search/lead/make_all_scored.cpp
     ./search/lead/make_boolean.cpp
+    ./search/lead/make_boolean_exclusion.cpp
+    ./search/lead/make_boolean_exclusion_window.cpp
+    ./search/lead/make_boolean_negation.cpp
     ./search/lead/make_boolean_scored.cpp
     ./search/lead/make_fixed_phrase_docs.cpp
     ./search/lead/make_fixed_phrase_scored.cpp
@@ -197,6 +203,7 @@ set(IResearch_core_sources
     ./search/probe/make_all_scored.cpp
     ./search/probe/make_boolean.cpp
     ./search/probe/make_boolean_sparse.cpp
+    ./search/probe/make_boolean_sparse_exclusion.cpp
     ./search/probe/make_boolean_scored.cpp
     ./search/probe/make_boolean_sparse_scored.cpp
     ./search/probe/make_fixed_phrase_docs.cpp
@@ -234,6 +241,9 @@ set(IResearch_core_sources
     ./search/fill/make_all_docs.cpp
     ./search/fill/make_all_scored.cpp
     ./search/fill/make_boolean.cpp
+    ./search/fill/make_boolean_exclusion.cpp
+    ./search/fill/make_boolean_exclusion_window.cpp
+    ./search/fill/make_boolean_negation.cpp
     ./search/fill/make_boolean_scored.cpp
     ./search/fill/make_fixed_phrase_docs.cpp
     ./search/fill/make_fixed_phrase_scored.cpp
@@ -268,6 +278,9 @@ set(IResearch_core_sources
     ./search/docs/make_single_posting.cpp
     ./search/docs/make_all.cpp
     ./search/docs/make_boolean.cpp
+    ./search/docs/make_boolean_exclusion.cpp
+    ./search/docs/make_boolean_exclusion_window.cpp
+    ./search/docs/make_boolean_negation.cpp
     ./search/docs/make_fixed_phrase.cpp
     ./search/docs/make_fixed_phrase_intervals.cpp
     ./search/docs/make_fixed_phrase_slop.cpp
@@ -288,6 +301,8 @@ set(IResearch_core_sources
     ./search/hits/make_single_posting.cpp
     ./search/hits/make_all.cpp
     ./search/hits/make_boolean.cpp
+    ./search/hits/make_boolean_exclusion.cpp
+    ./search/hits/make_boolean_exclusion_window.cpp
     ./search/hits/make_boosted_posting.cpp
     ./search/hits/make_fixed_phrase.cpp
     ./search/hits/make_fixed_phrase_intervals.cpp
@@ -309,6 +324,8 @@ set(IResearch_core_sources
     ./search/top/make_single_posting.cpp
     ./search/top/make_all.cpp
     ./search/top/make_boolean.cpp
+    ./search/top/make_boolean_exclusion.cpp
+    ./search/top/make_boolean_exclusion_window.cpp
     ./search/top/make_fixed_phrase.cpp
     ./search/top/make_fixed_phrase_intervals.cpp
     ./search/top/make_fixed_phrase_slop.cpp

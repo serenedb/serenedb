@@ -44,7 +44,8 @@ template<typename Excludes>
 inline constexpr bool kSkipsExcluded = false;
 
 template<MaskKind K>
-inline constexpr bool kSkipsExcluded<DocsMask<K>> = K != MaskKind::Bitsets;
+inline constexpr bool kSkipsExcluded<DocsMask<K>> =
+  docs_mask::Plural(K) != MaskKind::Bitsets;
 
 template<typename Excludes, typename Lead>
 IRS_FORCE_INLINE bool SkipSpan(Excludes& excludes, Lead& lead, doc_id_t& doc) {

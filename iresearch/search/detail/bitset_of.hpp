@@ -158,7 +158,7 @@ inline ClauseCost MaskClauseCost(const SubReader& segment,
     const auto chunk_words =
       static_cast<double>(DocumentMask::kChunkDocs / kWindowBits);
     const auto chunks = static_cast<double>(mask->ContainerCount());
-    switch (mask->Kind()) {
+    switch (docs_mask::Plural(mask->Kind())) {
       case MaskKind::Bitsets:
         words = true;
         [[fallthrough]];

@@ -175,12 +175,17 @@ std::vector<Case> Cases() {
     {"null", {}, kEof, MaskKind::Runs, true},
     {"tail_only", {}, 70000, MaskKind::Runs, true},
     {"empty_mask", {}, 90000, MaskKind::Runs},
-    {"single_bitset", Every(1, 65536, 3), kEof, MaskKind::Bitsets},
-    {"single_bitset_tail", Every(1, 65536, 3), 40001, MaskKind::Bitsets},
-    {"single_array", Random(65536, 131072, 0.002, 1), kEof, MaskKind::Arrays,
+    {"single_bitset", Every(1, 65536, 3), kEof, MaskKind::Bitset},
+    {"single_bitset_tail", Every(1, 65536, 3), 40001, MaskKind::Bitset},
+    {"offset_bitset", Every(131072, 196608, 3), kEof, MaskKind::Bitset},
+    {"single_array", Random(65536, 131072, 0.002, 1), kEof, MaskKind::Array,
      false, kArrays},
+    {"single_array_tail", Random(65536, 131072, 0.002, 1), 100001,
+     MaskKind::Array, false, kArrays},
     {"sparse_arrays", Every(5, kLimit, 9973), kEof, MaskKind::Arrays},
-    {"single_run", Every(70000, 90000, 1), kEof, MaskKind::Runs},
+    {"single_run", Every(70000, 90000, 1), kEof, MaskKind::Run},
+    {"single_run_tail", Join({Every(70000, 70100, 1), Every(80000, 90000, 1)}),
+     85001, MaskKind::Run},
     {"dense_bitsets", Every(1, 196608, 3), kEof, MaskKind::Bitsets},
     {"dense_bitsets_tail", Every(1, 196608, 3), 150001, MaskKind::Bitsets},
     {"offset_bitsets", Every(65536, 196608, 3), kEof, MaskKind::Bitsets},
@@ -546,14 +551,14 @@ TEST(document_mask_test, kind_is_resolved_on_finish) {
   ASSERT_EQ(MaskKind::Runs, KindOf(mask));
 
   ASSERT_TRUE(mask.Add(3));
-  ASSERT_EQ(MaskKind::Arrays, KindOf(mask));
-  ASSERT_EQ(MaskKind::Arrays, KindOf(mask, kDense));
+  ASSERT_EQ(MaskKind::Array, KindOf(mask));
+  ASSERT_EQ(MaskKind::Array, KindOf(mask, kDense));
 
   for (doc_id_t doc = 1; doc < 65536; doc += 3) {
     mask.Add(doc);
   }
-  ASSERT_EQ(MaskKind::Bitsets, KindOf(mask));
-  ASSERT_EQ(MaskKind::Bitsets, KindOf(mask, kDense));
+  ASSERT_EQ(MaskKind::Bitset, KindOf(mask));
+  ASSERT_EQ(MaskKind::Bitset, KindOf(mask, kDense));
 
   mask.Merge(Builder(Every(65536, 65536 + 30000, 3)));
   ASSERT_EQ(MaskKind::Bitsets, KindOf(mask));
@@ -565,11 +570,11 @@ TEST(document_mask_test, kind_is_resolved_on_finish) {
   ASSERT_EQ(MaskKind::Bitsets, KindOf(mask));
 
   mask.Truncate(65536);
-  ASSERT_EQ(MaskKind::Bitsets, KindOf(mask));
+  ASSERT_EQ(MaskKind::Bitset, KindOf(mask));
 
   irs::DocumentMaskBuilder runs;
   runs.AddRange(10, 2000);
-  ASSERT_EQ(MaskKind::Runs, KindOf(runs));
+  ASSERT_EQ(MaskKind::Run, KindOf(runs));
   runs.AddRange(200000, 200100);
   ASSERT_EQ(MaskKind::Runs, KindOf(runs));
   runs.AddRange(65536, 200000);
@@ -617,11 +622,11 @@ TEST(document_mask_test, kind_is_resolved_on_finish) {
   for (doc_id_t doc = 1; doc < 1000; ++doc) {
     arrays.Add(doc);
   }
-  ASSERT_EQ(MaskKind::Runs, KindOf(arrays));
+  ASSERT_EQ(MaskKind::Run, KindOf(arrays));
   arrays.Add(300000);
   ASSERT_EQ(MaskKind::Mixed, KindOf(arrays, kDense));
   arrays.Truncate(200000);
-  ASSERT_EQ(MaskKind::Runs, KindOf(arrays, kDense));
+  ASSERT_EQ(MaskKind::Run, KindOf(arrays, kDense));
 
   mask.Clear();
   ASSERT_EQ(MaskKind::Runs, KindOf(mask));

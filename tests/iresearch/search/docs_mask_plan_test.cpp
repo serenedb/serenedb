@@ -524,7 +524,7 @@ TEST_P(DocsMaskPlanTest, clustered) {
 
 TEST_P(DocsMaskPlanTest, range) {
   Build(Pattern::Range, 0);
-  Check(irs::MaskKind::Runs);
+  Check(irs::MaskKind::Run);
 }
 
 TEST_P(DocsMaskPlanTest, gapped) {

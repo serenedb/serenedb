@@ -420,11 +420,10 @@ Result<Api> MakeScored(const BooleanQuery& query, const Context<Api>& ctx) {
         }
       }
     }
-    if (auto windowed = MakeScoredExclusionWindow<Api>(query, segment, ctx,
-                                                       merge, absorbed)) {
+    if (auto windowed = Api::MakeExclusionWindow(query, ctx)) {
       return windowed;
     }
-    return MakeScoredExclusion<Api>(query, segment, ctx, merge, absorbed);
+    return Api::MakeExclusion(query, ctx);
   }
   if (no_must && !only_scores) {
     if (!optional) {

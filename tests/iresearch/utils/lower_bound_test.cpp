@@ -55,6 +55,11 @@ TEST(lower_bound_test, runtime_length_matches_std) {
                   begin, len, [&](uint16_t v) { return v < target; }) -
                   begin)
         << len << " " << target;
+      ASSERT_EQ(expected,
+                irs::PartitionPoint(begin, len,
+                                    [&](uint16_t v) { return v < target; }) -
+                  begin)
+        << len << " " << target;
     }
   }
 }

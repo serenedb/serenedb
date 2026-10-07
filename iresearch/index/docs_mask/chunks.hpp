@@ -273,7 +273,7 @@ class RunChunk {
       pos = static_cast<int32_t>(
         LowerBound(runs, static_cast<uint32_t>(size), before));
     } else if (pos < size && before(runs[pos])) {
-      pos = static_cast<int32_t>(Gallop(runs, static_cast<uint32_t>(pos),
+      pos = static_cast<int32_t>(Gallop(runs, static_cast<uint32_t>(pos) + 1,
                                         static_cast<uint32_t>(size), before));
     }
     return _pos = pos;
@@ -360,10 +360,10 @@ class MixedChunk {
 
 template<MaskKind K>
 using ChunkOf = std::conditional_t<
-  K == MaskKind::Bitsets, BitsetChunk,
+  Plural(K) == MaskKind::Bitsets, BitsetChunk,
   std::conditional_t<
-    K == MaskKind::Arrays, ArrayChunk,
-    std::conditional_t<K == MaskKind::Runs, RunChunk, MixedChunk>>>;
+    Plural(K) == MaskKind::Arrays, ArrayChunk,
+    std::conditional_t<Plural(K) == MaskKind::Runs, RunChunk, MixedChunk>>>;
 
 class DenseLayout {
  public:
@@ -436,13 +436,42 @@ class GappedLayout {
   uint32_t _count;
 };
 
+template<typename Chunk>
+class SingleLayout {
+ public:
+  explicit SingleLayout(const DocumentMask* mask) noexcept
+    : _container{mask->Containers()[0]}, _key{mask->Keys()[0]} {
+    SDB_ASSERT(mask->ContainerCount() == 1);
+  }
+
+  static constexpr uint32_t Count() noexcept { return 1; }
+  IRS_FORCE_INLINE uint32_t KeyAt(uint32_t) const noexcept { return _key; }
+  IRS_FORCE_INLINE doc_id_t Begin() const noexcept {
+    return static_cast<doc_id_t>(_key << kChunkShift);
+  }
+  IRS_FORCE_INLINE Chunk At(uint32_t) const noexcept {
+    return Chunk{static_cast<const typename Chunk::Container*>(_container)};
+  }
+  IRS_FORCE_INLINE uint32_t LowerBound(uint32_t key) const noexcept {
+    return static_cast<uint32_t>(key > _key);
+  }
+
+ private:
+  const void* _container;
+  uint32_t _key;
+};
+
 template<typename Derived, MaskKind K>
 class Chunked : public DocsMaskBase<Derived> {
   friend class DocsMaskBase<Derived>;
 
+  static constexpr bool kSingle = IsSingle(K);
+
   using Chunk = ChunkOf<K>;
-  using Layout = std::conditional_t<K == MaskKind::Bitsets, DenseLayout,
-                                    GappedLayout<Chunk>>;
+  using Layout =
+    std::conditional_t<kSingle, SingleLayout<Chunk>,
+                       std::conditional_t<K == MaskKind::Bitsets, DenseLayout,
+                                          GappedLayout<Chunk>>>;
 
  public:
   uint64_t CountIn(doc_id_t min, doc_id_t max) const noexcept {
@@ -467,7 +496,12 @@ class Chunked : public DocsMaskBase<Derived> {
 
  protected:
   Chunked(const DocumentMask* mask, doc_id_t visible_end) noexcept
-    : _layout{mask}, _end{visible_end} {}
+    : _layout{mask}, _end{visible_end} {
+    if constexpr (kSingle) {
+      _cursor.index = 0;
+      _cursor.chunk = _layout.At(0);
+    }
+  }
 
   MaskedSpan NextMasked(doc_id_t doc) noexcept {
     if (doc >= _end) {
@@ -475,7 +509,9 @@ class Chunked : public DocsMaskBase<Derived> {
     }
     const auto count = _layout.Count();
     auto i = Locate(doc);
-    _cursor.from = doc;
+    if constexpr (!kSingle) {
+      _cursor.from = doc;
+    }
     for (; i < count; ++i) {
       Select(i);
       const auto base = uint64_t{_layout.KeyAt(i)} << kChunkShift;
@@ -501,7 +537,9 @@ class Chunked : public DocsMaskBase<Derived> {
     if (min < stop) {
       const auto count = _layout.Count();
       auto i = Locate(min);
-      _cursor.from = static_cast<doc_id_t>(stop);
+      if constexpr (!kSingle) {
+        _cursor.from = static_cast<doc_id_t>(stop);
+      }
       for (; i < count; ++i) {
         Select(i);
         const auto base = uint64_t{_layout.KeyAt(i)} << kChunkShift;
@@ -533,17 +571,23 @@ class Chunked : public DocsMaskBase<Derived> {
 
   IRS_FORCE_INLINE uint32_t Locate(doc_id_t doc) const noexcept {
     const auto key = doc >> kChunkShift;
-    const auto index = _cursor.index;
-    if (doc < _cursor.from || index >= _layout.Count()) {
+    if constexpr (kSingle) {
       return _layout.LowerBound(key);
+    } else {
+      const auto index = _cursor.index;
+      if (doc < _cursor.from || index >= _layout.Count()) {
+        return _layout.LowerBound(key);
+      }
+      return _layout.KeyAt(index) >= key ? index : _layout.Find(key, index + 1);
     }
-    return _layout.KeyAt(index) >= key ? index : _layout.Find(key, index + 1);
   }
 
   IRS_FORCE_INLINE void Select(uint32_t i) noexcept {
-    if (i != _cursor.index) {
-      _cursor.index = i;
-      _cursor.chunk = _layout.At(i);
+    if constexpr (!kSingle) {
+      if (i != _cursor.index) {
+        _cursor.index = i;
+        _cursor.chunk = _layout.At(i);
+      }
     }
   }
 

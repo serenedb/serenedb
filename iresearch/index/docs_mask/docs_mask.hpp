@@ -41,7 +41,7 @@ namespace irs {
 
 template<typename Make>
 decltype(auto) ResolveDocsMask(const DocumentMask* mask, doc_id_t visible_end,
-                               Make&& make);
+                               Make&& make, bool single = true);
 
 inline DocsMask<MaskKind::Mixed> MakeGenericDocsMask(
   const DocumentMask* mask, doc_id_t visible_end) noexcept;
@@ -52,7 +52,8 @@ class DocsMask final : public docs_mask::Chunked<DocsMask<K>, K> {
 
   template<typename Make>
   friend decltype(auto) ResolveDocsMask(const DocumentMask* mask,
-                                        doc_id_t visible_end, Make&& make);
+                                        doc_id_t visible_end, Make&& make,
+                                        bool single);
   friend DocsMask<MaskKind::Mixed> MakeGenericDocsMask(
     const DocumentMask* mask, doc_id_t visible_end) noexcept;
 
@@ -106,20 +107,33 @@ class DocsMask final : public docs_mask::Chunked<DocsMask<K>, K> {
     : Base{mask, visible_end} {}
 };
 
-template<>
-class DocsMask<MaskKind::Bitsets> final
-  : public docs_mask::Chunked<DocsMask<MaskKind::Bitsets>, MaskKind::Bitsets> {
-  using Base =
-    docs_mask::Chunked<DocsMask<MaskKind::Bitsets>, MaskKind::Bitsets>;
+namespace docs_mask {
+
+alignas(64) inline constexpr uint64_t kNoWords[kChunkWords] = {};
+alignas(64) inline constexpr auto kAllWords = [] {
+  std::array<uint64_t, kChunkWords> words{};
+  words.fill(~uint64_t{0});
+  return words;
+}();
+
+}  // namespace docs_mask
+
+template<MaskKind K>
+  requires(docs_mask::Plural(K) == MaskKind::Bitsets)
+class DocsMask<K> final : public docs_mask::Chunked<DocsMask<K>, K> {
+  using Base = docs_mask::Chunked<DocsMask<K>, K>;
+  using Base::_end;
+  using Base::_layout;
 
   template<typename Make>
   friend decltype(auto) ResolveDocsMask(const DocumentMask* mask,
-                                        doc_id_t visible_end, Make&& make);
+                                        doc_id_t visible_end, Make&& make,
+                                        bool single);
   friend DocsMask<MaskKind::Mixed> MakeGenericDocsMask(
     const DocumentMask* mask, doc_id_t visible_end) noexcept;
 
  public:
-  static constexpr MaskKind kKind = MaskKind::Bitsets;
+  static constexpr MaskKind kKind = K;
 
   using Base::Remove;
 
@@ -132,11 +146,56 @@ class DocsMask<MaskKind::Bitsets> final
     return Bit(_words, offset);
   }
 
-  uint32_t FilterBlock(doc_id_t* IRS_RESTRICT docs,
-                       score_t* IRS_RESTRICT scores, uint32_t len) noexcept;
+  IRS_NO_INLINE uint32_t FilterBlock(doc_id_t* IRS_RESTRICT docs,
+                                     score_t* IRS_RESTRICT scores,
+                                     uint32_t len) noexcept {
+    if (len == 0) {
+      return 0;
+    }
+    uint32_t kept = 0;
+    if (PinBlock(docs[0], docs[len - 1])) {
+      const auto* words = _words;
+      const auto base = _base;
+      // The loop body fits one 64-byte uop cache window only when aligned;
+      // straddling two windows measured ~15% slower.
+      [[clang::code_align(64)]] for (uint32_t i = 0; i != len; ++i) {
+        const auto doc = docs[i];
+        docs[kept] = doc;
+        scores[kept] = scores[i];
+        kept += static_cast<uint32_t>(!Bit(words, doc - base));
+      }
+    } else {
+      for (uint32_t i = 0; i != len; ++i) {
+        const auto doc = docs[i];
+        docs[kept] = doc;
+        scores[kept] = scores[i];
+        kept += static_cast<uint32_t>(!Test(doc));
+      }
+    }
+    return kept;
+  }
 
-  uint32_t CountMasked(const doc_id_t* IRS_RESTRICT docs,
-                       uint32_t len) noexcept;
+  IRS_NO_INLINE uint32_t CountMasked(const doc_id_t* IRS_RESTRICT docs,
+                                     uint32_t len) noexcept {
+    if (len == 0) {
+      return 0;
+    }
+    uint32_t masked = 0;
+    if (PinBlock(docs[0], docs[len - 1])) {
+      const auto* words = _words;
+      const auto base = _base;
+      // The loop body fits one 64-byte uop cache window only when aligned;
+      // straddling two windows measured ~15% slower.
+      [[clang::code_align(64)]] for (uint32_t i = 0; i != len; ++i) {
+        masked += static_cast<uint32_t>(Bit(words, docs[i] - base));
+      }
+    } else {
+      for (uint32_t i = 0; i != len; ++i) {
+        masked += static_cast<uint32_t>(Test(docs[i]));
+      }
+    }
+    return masked;
+  }
 
   IRS_FORCE_INLINE doc_id_t Probe(doc_id_t doc) const noexcept {
     if (doc >= _end) [[unlikely]] {
@@ -178,11 +237,14 @@ class DocsMask<MaskKind::Bitsets> final
 
   void Remove(doc_id_t min, doc_id_t max,
               uint64_t* IRS_RESTRICT words) noexcept {
-    Apply<true>(min, max, words);
+    this->template Apply<true>(min, max, words);
   }
 
  private:
-  DocsMask(const DocumentMask* mask, doc_id_t visible_end) noexcept;
+  DocsMask(const DocumentMask* mask, doc_id_t visible_end) noexcept
+    : Base{mask, visible_end} {
+    Rebase(doc_limits::min());
+  }
 
   IRS_FORCE_INLINE static bool Bit(const uint64_t* words,
                                    doc_id_t offset) noexcept {
@@ -196,35 +258,49 @@ class DocsMask<MaskKind::Bitsets> final
     return last - _base < _limit;
   }
 
-  IRS_NO_INLINE void Rebase(doc_id_t doc) noexcept;
-
-  alignas(64) static constexpr uint64_t kNoWords[docs_mask::kChunkWords] = {};
-  alignas(64) static constexpr auto kAllWords = [] {
-    std::array<uint64_t, docs_mask::kChunkWords> words{};
-    words.fill(~uint64_t{0});
-    return words;
-  }();
+  IRS_NO_INLINE void Rebase(doc_id_t doc) noexcept {
+    if (doc >= _end) {
+      _base = doc;
+      _limit = static_cast<doc_id_t>(docs_mask::kChunkDocs);
+      _words = docs_mask::kAllWords.data();
+      return;
+    }
+    _base = doc & ~docs_mask::kChunkLow;
+    _limit =
+      std::min(static_cast<doc_id_t>(docs_mask::kChunkDocs), _end - _base);
+    const auto begin = _layout.Begin();
+    const doc_id_t offset = doc - begin;
+    const auto chunk = offset >> docs_mask::kChunkShift;
+    _words = doc >= begin && chunk < _layout.Count() ? _layout.At(chunk).Words()
+                                                     : docs_mask::kNoWords;
+  }
 
   doc_id_t _base = 0;
   doc_id_t _limit = 0;
-  const uint64_t* _words = kNoWords;
+  const uint64_t* _words = docs_mask::kNoWords;
 };
 
 using GenericDocsMask = DocsMask<MaskKind::Mixed>;
 
 template<typename Make>
 decltype(auto) ResolveDocsMask(const DocumentMask* mask, doc_id_t visible_end,
-                               Make&& make) {
+                               Make&& make, bool single) {
   if (mask == nullptr || mask->Empty()) {
     return make(DocsMask<MaskKind::Runs>{nullptr, visible_end});
   }
-  switch (mask->Kind()) {
+  switch (single ? mask->Kind() : docs_mask::Plural(mask->Kind())) {
     case MaskKind::Bitsets:
       return make(DocsMask<MaskKind::Bitsets>{mask, visible_end});
     case MaskKind::Arrays:
       return make(DocsMask<MaskKind::Arrays>{mask, visible_end});
     case MaskKind::Runs:
       return make(DocsMask<MaskKind::Runs>{mask, visible_end});
+    case MaskKind::Bitset:
+      return make(DocsMask<MaskKind::Bitset>{mask, visible_end});
+    case MaskKind::Array:
+      return make(DocsMask<MaskKind::Array>{mask, visible_end});
+    case MaskKind::Run:
+      return make(DocsMask<MaskKind::Run>{mask, visible_end});
     case MaskKind::Mixed:
       break;
   }

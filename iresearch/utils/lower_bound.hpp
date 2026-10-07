@@ -33,16 +33,14 @@ IRS_FORCE_INLINE It BranchlessLowerBound(It begin, const T& value,
                                          Cmp&& compare = {}) {
   static_assert(std::has_single_bit(N));
   for (size_t step = N / 2; step != 0; step /= 2) {
-    if (compare(begin[step], value)) {
-      begin += step;
-    }
+    begin =
+      IRS_UNPREDICTABLE(compare(begin[step], value)) ? begin + step : begin;
   }
   return begin + compare(*begin, value);
 }
 
 template<typename It, typename Pred>
-IRS_FORCE_INLINE It BranchlessPartitionPoint(It begin, size_t len,
-                                             Pred&& pred) {
+IRS_FORCE_INLINE It PartitionPoint(It begin, size_t len, Pred&& pred) {
   if (len == 0) {
     return begin;
   }
@@ -60,6 +58,30 @@ IRS_FORCE_INLINE It BranchlessPartitionPoint(It begin, size_t len,
     if (pred(begin[step])) {
       begin += step;
     }
+  }
+  return begin + pred(*begin);
+}
+
+template<typename It, typename Pred>
+IRS_FORCE_INLINE It BranchlessPartitionPoint(It begin, size_t len,
+                                             Pred&& pred) {
+  if (len == 0) {
+    return begin;
+  }
+  const auto end = begin + len;
+  size_t step = std::bit_floor(len);
+  if (step != len) {
+    const bool right = IRS_UNPREDICTABLE(pred(begin[step]));
+    const size_t tail = std::bit_ceil(len - step - 1);
+    begin = right ? end - tail : begin;
+    step = right ? tail : step;
+  }
+  for (step /= 2; step != 0; step /= 2) {
+    __builtin_prefetch(&begin[step / 4]);
+    __builtin_prefetch(&begin[step / 2 + step / 4]);
+    __builtin_prefetch(&begin[step + step / 4]);
+    __builtin_prefetch(&begin[step + step / 2 + step / 4]);
+    begin = IRS_UNPREDICTABLE(pred(begin[step])) ? begin + step : begin;
   }
   return begin + pred(*begin);
 }

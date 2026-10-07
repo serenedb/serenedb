@@ -38,6 +38,9 @@ using irs::doc_id_t;
 constexpr doc_id_t kDocs = 1 << 20;
 constexpr doc_id_t kBegin = irs::doc_limits::min();
 constexpr doc_id_t kEnd = kBegin + kDocs;
+constexpr doc_id_t kSingleEnd = doc_id_t{1} << 16;
+
+doc_id_t EndOf(int64_t layout) { return layout >= 3 ? kSingleEnd : kEnd; }
 
 const irs::DocumentMask& MaskOf(int64_t per_chunk, int64_t layout) {
   static std::map<std::pair<int64_t, int64_t>, irs::DocumentMask> gCache;
@@ -53,6 +56,9 @@ const irs::DocumentMask& MaskOf(int64_t per_chunk, int64_t layout) {
   const auto period =
     static_cast<doc_id_t>((int64_t{1} << 16) * run / per_chunk);
   const auto masked = [&](doc_id_t doc) {
+    if (layout == 5) {
+      return doc % period < run;
+    }
     if (layout == 2) {
       switch ((doc >> 16) % 3) {
         case 1:
@@ -64,52 +70,66 @@ const irs::DocumentMask& MaskOf(int64_t per_chunk, int64_t layout) {
     return pick(rng);
   };
   irs::DocumentMaskBuilder mask;
-  for (auto doc = kBegin; doc < kEnd; ++doc) {
+  for (auto doc = kBegin; doc < EndOf(layout); ++doc) {
     if (masked(doc)) {
       mask.Add(doc);
     }
   }
   return gCache
-    .emplace(key, std::move(mask).Finish(
-                    layout == 1 ? 1 : irs::DocumentMaskBuilder::kCanonical))
+    .emplace(key,
+             std::move(mask).Finish(layout == 1 || layout == 3
+                                      ? 1
+                                      : irs::DocumentMaskBuilder::kCanonical))
     .first->second;
+}
+
+benchmark::Counter PerStep(doc_id_t end, doc_id_t step) {
+  return benchmark::Counter(
+    static_cast<double>((end - kBegin + step - 1) / step),
+    benchmark::Counter::kIsIterationInvariantRate |
+      benchmark::Counter::kInvert);
 }
 
 template<typename Fn>
 void WithMask(benchmark::State& state, Fn&& fn) {
-  const auto& mask = MaskOf(state.range(0), state.range(2));
+  const auto layout = state.range(2);
+  const auto& mask = MaskOf(state.range(0), layout >= 6 ? layout - 3 : layout);
   irs::ResolveDocsMask(
-    &mask, irs::doc_limits::eof(), [&]<irs::DocsMaskType Mask>(Mask docs_mask) {
+    &mask, irs::doc_limits::eof(),
+    [&]<irs::DocsMaskType Mask>(Mask docs_mask) {
       state.SetLabel(std::to_string(static_cast<int>(Mask::kKind)));
       fn(docs_mask);
-    });
+    },
+    layout < 6);
 }
 
 void BmWindowRemove(benchmark::State& state) {
+  const auto end = EndOf(state.range(2));
   WithMask(state, [&]<typename Mask>(Mask& mask) {
     irs::detail::Scratch words;
     for (auto _ : state) {
       Mask cursor = mask;
-      for (doc_id_t min = kBegin; min < kEnd; min += irs::detail::kWindowDocs) {
+      for (doc_id_t min = kBegin; min < end; min += irs::detail::kWindowDocs) {
         std::fill(words.begin(), words.end(), ~uint64_t{0});
         cursor.Remove(min, min + irs::detail::kWindowDocs, words.data());
         benchmark::DoNotOptimize(words.words[0]);
       }
     }
-    state.counters["ns/window"] =
-      benchmark::Counter(static_cast<double>(kDocs / irs::detail::kWindowDocs),
-                         benchmark::Counter::kIsIterationInvariantRate |
-                           benchmark::Counter::kInvert);
+    state.counters["ns/window"] = PerStep(end, irs::detail::kWindowDocs);
   });
 }
 
 void BmCandidates(benchmark::State& state) {
   const auto stride = static_cast<doc_id_t>(state.range(1));
+  const auto end = EndOf(state.range(2));
   WithMask(state, [&]<typename Mask>(Mask& mask) {
     for (auto _ : state) {
       Mask cursor = mask;
       uint64_t kept = 0;
-      for (auto doc = kBegin; doc < kEnd;) {
+      // Without the alignment this loop lands wherever the linker puts it,
+      // and straddling two 64-byte uop cache windows costs ~13%, which hides
+      // the differences between mask kinds.
+      [[clang::code_align(64)]] for (auto doc = kBegin; doc < end;) {
         if constexpr (irs::detail::kSkipsExcluded<Mask>) {
           if (const auto live = cursor.NextLive(doc); live != doc) {
             doc = live + (stride - (live - kBegin) % stride) % stride;
@@ -123,24 +143,22 @@ void BmCandidates(benchmark::State& state) {
       }
       benchmark::DoNotOptimize(kept);
     }
-    state.counters["ns/candidate"] =
-      benchmark::Counter(static_cast<double>(kDocs / stride),
-                         benchmark::Counter::kIsIterationInvariantRate |
-                           benchmark::Counter::kInvert);
+    state.counters["ns/candidate"] = PerStep(end, stride);
   });
 }
 
 void BmFilterBlock(benchmark::State& state) {
   const auto stride = static_cast<doc_id_t>(state.range(1));
+  const auto end = EndOf(state.range(2));
   WithMask(state, [&]<typename Mask>(Mask& mask) {
     std::vector<doc_id_t> docs(irs::doc_limits::kBlockSize);
     std::vector<irs::score_t> scores(irs::doc_limits::kBlockSize);
     for (auto _ : state) {
       Mask cursor = mask;
       uint64_t kept = 0;
-      for (auto doc = kBegin; doc < kEnd;) {
+      for (auto doc = kBegin; doc < end;) {
         uint32_t len = 0;
-        for (; len != docs.size() && doc < kEnd; ++len, doc += stride) {
+        for (; len != docs.size() && doc < end; ++len, doc += stride) {
           docs[len] = doc;
         }
         kept +=
@@ -148,39 +166,34 @@ void BmFilterBlock(benchmark::State& state) {
       }
       benchmark::DoNotOptimize(kept);
     }
-    state.counters["ns/candidate"] =
-      benchmark::Counter(static_cast<double>(kDocs / stride),
-                         benchmark::Counter::kIsIterationInvariantRate |
-                           benchmark::Counter::kInvert);
+    state.counters["ns/candidate"] = PerStep(end, stride);
   });
 }
 
 void BmCountMasked(benchmark::State& state) {
   const auto stride = static_cast<doc_id_t>(state.range(1));
+  const auto end = EndOf(state.range(2));
   WithMask(state, [&]<typename Mask>(Mask& mask) {
     std::vector<doc_id_t> docs(irs::doc_limits::kBlockSize);
     for (auto _ : state) {
       Mask cursor = mask;
       uint64_t masked = 0;
-      for (auto doc = kBegin; doc < kEnd;) {
+      for (auto doc = kBegin; doc < end;) {
         uint32_t len = 0;
-        for (; len != docs.size() && doc < kEnd; ++len, doc += stride) {
+        for (; len != docs.size() && doc < end; ++len, doc += stride) {
           docs[len] = doc;
         }
         masked += cursor.CountMasked(docs.data(), len);
       }
       benchmark::DoNotOptimize(masked);
     }
-    state.counters["ns/candidate"] =
-      benchmark::Counter(static_cast<double>(kDocs / stride),
-                         benchmark::Counter::kIsIterationInvariantRate |
-                           benchmark::Counter::kInvert);
+    state.counters["ns/candidate"] = PerStep(end, stride);
   });
 }
 
 void PerChunk(benchmark::internal::Benchmark* bench) {
   for (const int64_t n : {16, 32, 64, 128, 256, 512, 1024, 2048, 4096}) {
-    for (const int64_t layout : {0, 1, 2}) {
+    for (const int64_t layout : {0, 1, 2, 3, 4, 5, 6, 7, 8}) {
       bench->Args({n, 1, layout});
     }
   }
@@ -189,7 +202,7 @@ void PerChunk(benchmark::internal::Benchmark* bench) {
 void PerChunkAndStride(benchmark::internal::Benchmark* bench) {
   for (const int64_t n : {16, 32, 64, 128, 256, 512, 1024, 2048, 4096}) {
     for (const int64_t stride : {1, 8, 64, 1024}) {
-      for (const int64_t layout : {0, 1, 2}) {
+      for (const int64_t layout : {0, 1, 2, 3, 4, 5, 6, 7, 8}) {
         bench->Args({n, stride, layout});
       }
     }

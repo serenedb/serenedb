@@ -42,6 +42,9 @@ enum class MaskKind : uint8_t {
   Arrays,
   Runs,
   Mixed,
+  Bitset,
+  Array,
+  Run,
 };
 
 class DocumentMaskBuilder;

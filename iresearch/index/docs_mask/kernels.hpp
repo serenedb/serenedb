@@ -100,19 +100,40 @@ IRS_FORCE_INLINE uint32_t LowerBound(const T* values, uint32_t len,
 template<typename T, typename Less>
 IRS_FORCE_INLINE uint32_t Gallop(const T* values, uint32_t from, uint32_t len,
                                  Less&& less) noexcept {
-  if (from == len || !less(values[from])) {
-    return from;
-  }
-  auto lo = from;
+  constexpr uint32_t kLanes = 16;
+  SDB_ASSERT(from != 0 && less(values[from - 1]));
+  auto lo = from - 1;
   uint32_t step = 1;
-  auto hi = from + 1;
-  while (hi < len && less(values[hi])) {
+  for (auto hi = lo + step; hi < len; hi = lo + step) {
+    if (!less(values[hi])) {
+      while (step > kLanes) {
+        step /= 2;
+        if (less(values[lo + step])) {
+          lo += step;
+        }
+      }
+      if (step == kLanes) {
+        const T* window = values + lo + 1;
+        uint32_t below = 0;
+        for (uint32_t i = 0; i != kLanes; ++i) {
+          below += less(window[i]);
+        }
+        return lo + 1 + below;
+      }
+      while (step > 1) {
+        step /= 2;
+        if (less(values[lo + step])) {
+          lo += step;
+        }
+      }
+      return lo + 1;
+    }
     lo = hi;
-    step <<= 1;
-    hi = lo + step;
+    step *= 2;
   }
-  hi = std::min(hi, len);
-  return lo + 1 + LowerBound(values + lo + 1, hi - lo - 1, less);
+  const T* tail = values + lo + 1;
+  return lo + 1 +
+         static_cast<uint32_t>(PartitionPoint(tail, len - lo - 1, less) - tail);
 }
 
 }  // namespace irs::docs_mask

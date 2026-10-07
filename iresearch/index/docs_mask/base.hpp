@@ -35,6 +35,28 @@
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
+namespace docs_mask {
+
+constexpr MaskKind Plural(MaskKind kind) noexcept {
+  switch (kind) {
+    case MaskKind::Bitset:
+      return MaskKind::Bitsets;
+    case MaskKind::Array:
+      return MaskKind::Arrays;
+    case MaskKind::Run:
+      return MaskKind::Runs;
+    case MaskKind::Bitsets:
+    case MaskKind::Arrays:
+    case MaskKind::Runs:
+    case MaskKind::Mixed:
+      return kind;
+  }
+  return kind;
+}
+
+constexpr bool IsSingle(MaskKind kind) noexcept { return Plural(kind) != kind; }
+
+}  // namespace docs_mask
 
 template<MaskKind K>
 class DocsMask;
@@ -59,6 +81,9 @@ class DocsMaskBase {
   }
 
   IRS_FORCE_INLINE doc_id_t NextLive(doc_id_t doc) noexcept {
+    if (doc - _from < _gap) [[likely]] {
+      return doc;
+    }
     while (!doc_limits::eof(doc) && SpanProbe(doc) == doc) {
       doc = _hi;
     }

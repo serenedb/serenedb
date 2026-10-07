@@ -1208,18 +1208,21 @@ TEST(docs_mask_test, one_cursor_serves_interleaved_probes_and_windows) {
   for (const auto [layout, kind] : {std::pair{0u, irs::MaskKind::Arrays},
                                     {1u, irs::MaskKind::Runs},
                                     {2u, irs::MaskKind::Bitsets},
-                                    {3u, irs::MaskKind::Mixed}}) {
+                                    {3u, irs::MaskKind::Mixed},
+                                    {4u, irs::MaskKind::Array},
+                                    {5u, irs::MaskKind::Run},
+                                    {6u, irs::MaskKind::Bitset}}) {
     std::vector<bool> masked(kInterleavedEnd, false);
     irs::DocumentMaskBuilder builder;
     for (auto doc = irs::doc_limits::min(); doc < kInterleavedEnd; ++doc) {
-      const auto chunk_layout = layout == 3 ? (doc >> 16) % 3 : layout;
-      if (masked_by(chunk_layout, doc)) {
+      const auto chunk_layout = layout == 3 ? (doc >> 16) % 3 : layout % 4;
+      if ((layout < 4 || doc >> 16 == 2) && masked_by(chunk_layout, doc)) {
         masked[doc] = true;
         builder.Add(doc);
       }
     }
     const auto mask = std::move(builder).Finish(
-      layout == 2 ? 1 : irs::DocumentMaskBuilder::kCanonical);
+      layout % 4 == 2 ? 1 : irs::DocumentMaskBuilder::kCanonical);
     ASSERT_EQ(kind, mask.Kind()) << "layout " << layout;
 
     for (uint64_t seed = 0; seed != 8; ++seed) {

@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
@@ -93,6 +95,13 @@ std::optional<DeferredCheck> DeferPhrase(irs::Filter::ptr& filter,
   }
   const auto& checked = tokens->Check(options);
   if (!irs::CompiledPhrase::Standalone(checked)) {
+    return std::nullopt;
+  }
+  const bool patterns = absl::c_any_of(checked, [](const auto& info) {
+    return irs::ByPhraseOptions::KindOf(info.part) == irs::SlotKind::Expansion;
+  });
+  if (checked.slop() != 0 && patterns &&
+      tokens->tokenizer()->Traits().explicit_pos) {
     return std::nullopt;
   }
   auto index = irs::PartsConjunction(phrase, ctx.scorer);

@@ -479,11 +479,6 @@ std::vector<std::vector<bstring>> SpecTerms(
   return out;
 }
 
-const ColumnReader* TextColumn(const SubReader& segment, field_id text) {
-  const auto* col_reader = segment.GetColReader();
-  return col_reader ? col_reader->Column(text) : nullptr;
-}
-
 QueryBuilder::ptr MakeTokenPhraseQuery(
   const SubReader& segment, const PrepareContext& ctx, const TermReader& reader,
   const PhraseState& state, const ByPhraseOptions& options,
@@ -519,18 +514,18 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
   if (!approx || QueryBuilder::IsEmpty(*approx)) {
     return QueryBuilder::Empty();
   }
-  const auto make = [&](const ByPhraseOptions& phrase,
-                        std::span<const std::vector<bstring>> expanded) {
-    auto query = memory::make_tracked<TokenPhraseQuery>(
-      ctx.memory, segment, reader, std::move(approx), tokens, column, phrase,
-      expanded, ctx.boost);
-    query->SetStats(ctx.Record());
-    return query;
-  };
+  std::vector<std::vector<bstring>> spec_terms;
   if (tokens->spec) {
-    return make(*tokens->spec, SpecTerms(options, *tokens->spec, part_terms));
+    spec_terms = SpecTerms(options, *tokens->spec, part_terms);
   }
-  return make(options, part_terms);
+  auto query = memory::make_tracked<TokenPhraseQuery>(
+    ctx.memory, segment, reader, std::move(approx), tokens, column,
+    tokens->Check(options),
+    tokens->spec ? std::span<const std::vector<bstring>>{spec_terms}
+                 : std::span<const std::vector<bstring>>{part_terms},
+    ctx.boost);
+  query->SetStats(ctx.Record());
+  return query;
 }
 
 QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
@@ -552,7 +547,8 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
     if (!reader || !detail::DocOf(*reader)) {
       return QueryBuilder::Empty();
     }
-    column = TextColumn(segment, tokens->text);
+    const auto* col_reader = segment.GetColReader();
+    column = col_reader ? col_reader->Column(tokens->text) : nullptr;
     if (!column) {
       return QueryBuilder::Empty();
     }

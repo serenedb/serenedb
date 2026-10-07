@@ -21,7 +21,7 @@
 #pragma once
 
 #include <duckdb/common/types.hpp>
-#include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/types/vector.hpp>
 #include <duckdb/storage/arena_allocator.hpp>
 #include <functional>
 #include <memory>
@@ -76,6 +76,15 @@ struct PhraseVerdict {
 struct CompiledPhrase {
   static constexpr uint32_t kMaxBits = 64;
 
+  struct Slot {
+    PosAttr::value_t offs_min = 0;
+    PosAttr::value_t offs_max = 0;
+    std::optional<duckdb::string_t> word;
+    TermAcceptorSource::ptr source;
+    TermPredicate::ptr pattern;
+    uint64_t bit = 0;
+  };
+
   struct Accept {
     uint32_t begin = 0;
     uint32_t size = 0;
@@ -101,7 +110,6 @@ struct CompiledPhrase {
       uint32_t index = 0;
     };
 
-    std::vector<uint64_t> slot_bits;
     std::vector<Extra> extras;
     uint64_t wild = 0;
     uint64_t last = 0;
@@ -133,28 +141,21 @@ struct CompiledPhrase {
         visit(slot_ids[found->begin + i]);
       }
     }
-    if (pattern_slots.empty() || !Plain(view)) {
-      return;
-    }
-    for (const auto slot : pattern_slots) {
-      if (patterns[slot]->Accepts(view)) {
-        visit(slot);
+    const bool plain = Plain(view);
+    for (uint32_t i = 0; i != slots.size(); ++i) {
+      const auto& pattern = slots[i].pattern;
+      if (plain && pattern && pattern->Accepts(view)) {
+        visit(i);
       }
     }
   }
 
+  std::vector<Slot> slots;
   std::vector<bstring> terms;
-  std::vector<TermAcceptorSource::ptr> sources;
-  std::vector<PosAttr::value_t> offs_min;
-  std::vector<PosAttr::value_t> offs_max;
   Slop slop;
   bstring separator;
-  std::vector<duckdb::string_t> words;
-  std::vector<uint8_t> is_word;
   containers::FlatHashMap<bytes_view, Accept> accept;
   std::vector<uint32_t> slot_ids;
-  std::vector<TermPredicate::ptr> patterns;
-  std::vector<uint32_t> pattern_slots;
   std::optional<Anchor> anchor;
   std::optional<Automaton> automaton;
 
@@ -173,7 +174,7 @@ struct CompiledPhrase {
             std::span<const TermReader* const> readers,
             std::optional<PhraseMatch> match);
   void AddPattern(uint32_t slot, const ByPhraseOptions::PhrasePart& part);
-  void Index(std::span<const uint32_t> slots);
+  void Index(std::span<const uint32_t> term_slots);
   void LayoutSlop();
   void LayoutAutomaton();
   void PickAnchor(std::span<const TermReader* const> readers);
@@ -206,17 +207,27 @@ class PhraseCheck final : public TokenConsumer {
     std::vector<duckdb::string_t> values;
   };
 
+  struct Token {
+    duckdb::string_t term;
+    uint32_t pos;
+  };
+
+  struct Way {
+    PosAttr::value_t pos;
+    uint64_t ways;
+  };
+
   struct Anchor {
     void Reset();
     void Carry(uint64_t span);
 
     const duckdb::string_t& TermAt(size_t at) const noexcept {
-      return at < batch_base ? carry_terms[at - carry_base]
+      return at < batch_base ? carry[at - carry_base].term
                              : batch_terms[at - batch_base];
     }
 
     uint32_t PosAt(size_t at) const noexcept {
-      return at < batch_base ? carry_pos[at - carry_base]
+      return at < batch_base ? carry[at - carry_base].pos
                              : batch_pos[at - batch_base];
     }
 
@@ -225,10 +236,8 @@ class PhraseCheck final : public TokenConsumer {
     size_t batch_base = 0;
     size_t end = 0;
     size_t carry_base = 0;
-    std::vector<duckdb::string_t> carry_terms;
-    std::vector<uint32_t> carry_pos;
-    std::vector<duckdb::string_t> next_terms;
-    std::vector<uint32_t> next_pos;
+    std::vector<Token> carry;
+    std::vector<Token> next;
     duckdb::ArenaAllocator arena{duckdb::Allocator::DefaultAllocator()};
     std::vector<size_t> pending;
     uint32_t last = 0;
@@ -249,10 +258,8 @@ class PhraseCheck final : public TokenConsumer {
     void Reset(size_t slots);
 
     std::vector<std::vector<PosAttr::value_t>> slots;
-    std::vector<PosAttr::value_t> valid;
-    std::vector<PosAttr::value_t> next;
-    std::vector<uint64_t> ways;
-    std::vector<uint64_t> next_ways;
+    std::vector<Way> valid;
+    std::vector<Way> next;
     detail::slop::MatchScratch scratch;
   };
 

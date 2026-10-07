@@ -90,27 +90,21 @@ void CompiledPhrase::Init(const ByPhraseOptions& phrase,
                           std::span<const TermReader* const> readers,
                           std::optional<PhraseMatch> match) {
   const auto n = static_cast<uint32_t>(phrase.size());
-  offs_min.reserve(n);
-  offs_max.reserve(n);
-  is_word.assign(n, 0);
-  if (predicates) {
-    patterns.resize(n);
-  }
-  std::vector<uint32_t> slots;
-  std::vector<size_t> word_of(n);
+  slots.resize(n);
+  std::vector<uint32_t> term_slots;
+  std::vector<std::optional<size_t>> word_of(n);
   bool stacked = false;
   uint32_t slot = 0;
   const auto add = [&](bytes_view term) {
     terms.emplace_back(term);
-    slots.push_back(slot);
+    term_slots.push_back(slot);
   };
   for (const auto& info : phrase) {
-    offs_min.push_back(info.offs_min);
-    offs_max.push_back(info.offs_max);
+    slots[slot].offs_min = info.offs_min;
+    slots[slot].offs_max = info.offs_max;
     stacked |= slot != 0 && info.offs_min == 0;
     switch (ByPhraseOptions::KindOf(info.part)) {
       case SlotKind::Term:
-        is_word[slot] = 1;
         word_of[slot] = terms.size();
         add(std::get<ByTermOptions>(info.part).term);
         break;
@@ -131,13 +125,13 @@ void CompiledPhrase::Init(const ByPhraseOptions& phrase,
     }
     ++slot;
   }
-  words.resize(n);
   for (uint32_t i = 0; i != n; ++i) {
-    if (is_word[i]) {
-      words[i] = MakeTermView(ViewCast<char>(bytes_view{terms[word_of[i]]}));
+    if (word_of[i]) {
+      slots[i].word =
+        MakeTermView(ViewCast<char>(bytes_view{terms[*word_of[i]]}));
     }
   }
-  Index(slots);
+  Index(term_slots);
 
   if (slop.max != 0 || stacked) {
     if (slop.max != 0 && n > 1) {
@@ -167,40 +161,39 @@ void CompiledPhrase::Init(const ByPhraseOptions& phrase,
 
 void CompiledPhrase::AddPattern(uint32_t slot,
                                 const ByPhraseOptions::PhrasePart& part) {
+  auto& target = slots[slot];
   std::visit(
     [&]<typename Part>(const Part& options) {
       if constexpr (std::is_same_v<Part, ByPrefixOptions>) {
-        patterns[slot] =
+        target.pattern =
           MakeTermPredicate([prefix = bstring{options.term}](bytes_view term) {
             return term.starts_with(prefix);
           });
       } else if constexpr (std::is_same_v<Part, ByRangeOptions>) {
-        patterns[slot] =
+        target.pattern =
           MakeTermPredicate([range = options.range](bytes_view term) {
             return RangeAcceptor{{&range}, {&range}}(term);
           });
       } else if constexpr (std::is_same_v<Part, AutomatonOptions> ||
                            std::is_same_v<Part, LevenshteinAutomatonOptions>) {
         if (options.source) {
-          sources.push_back(options.source);
-          patterns[slot] = options.source->Predicate();
+          target.source = options.source;
+          target.pattern = options.source->Predicate();
         }
       }
     },
     part);
-  if (patterns[slot]) {
-    pattern_slots.push_back(slot);
-  }
 }
 
 bool CompiledPhrase::Accepts(uint32_t slot,
                              const duckdb::string_t& term) const {
-  if (is_word[slot]) {
-    return words[slot] == term;
+  const auto& target = slots[slot];
+  if (target.word) {
+    return *target.word == term;
   }
   const auto view = AsBytesView(term);
-  if (!patterns.empty() && patterns[slot]) {
-    return Plain(view) && patterns[slot]->Accepts(view);
+  if (target.pattern) {
+    return Plain(view) && target.pattern->Accepts(view);
   }
   const auto* found = Find(view);
   return found &&
@@ -214,22 +207,22 @@ uint64_t CompiledPhrase::MaskOf(const duckdb::string_t& term) const {
   if (const auto* found = Find(view)) {
     mask = found->mask;
   }
-  if (pattern_slots.empty() || !Plain(view)) {
+  if (!Plain(view)) {
     return mask;
   }
-  for (const auto slot : pattern_slots) {
-    if (patterns[slot]->Accepts(view)) {
-      mask |= automaton->slot_bits[slot];
+  for (const auto& slot : slots) {
+    if (slot.pattern && slot.pattern->Accepts(view)) {
+      mask |= slot.bit;
     }
   }
   return mask;
 }
 
-void CompiledPhrase::Index(std::span<const uint32_t> slots) {
+void CompiledPhrase::Index(std::span<const uint32_t> term_slots) {
   std::vector<std::pair<bytes_view, uint32_t>> pending;
   pending.reserve(terms.size());
   for (size_t i = 0; i != terms.size(); ++i) {
-    pending.emplace_back(terms[i], slots[i]);
+    pending.emplace_back(terms[i], term_slots[i]);
   }
   absl::c_sort(pending);
 
@@ -249,10 +242,10 @@ void CompiledPhrase::Index(std::span<const uint32_t> slots) {
 }
 
 void CompiledPhrase::LayoutSlop() {
-  const auto n = static_cast<uint32_t>(offs_max.size());
+  const auto n = static_cast<uint32_t>(slots.size());
   slop.offsets.assign(n, 0);
   for (uint32_t i = 1; i != n; ++i) {
-    slop.offsets[i] = slop.offsets[i - 1] + offs_max[i];
+    slop.offsets[i] = slop.offsets[i - 1] + slots[i].offs_max;
   }
 
   std::vector<uint32_t> groups(n);
@@ -277,23 +270,22 @@ void CompiledPhrase::LayoutSlop() {
 }
 
 void CompiledPhrase::LayoutAutomaton() {
-  const auto n = offs_max.size();
   Automaton layout;
-  layout.slot_bits.assign(n, 0);
   uint64_t bit = 0;
-  for (size_t k = 0; k != n; ++k) {
+  for (size_t k = 0; k != slots.size(); ++k) {
+    auto& slot = slots[k];
     if (k != 0) {
       const auto prev = bit;
-      bit = prev + offs_max[k];
+      bit = prev + slot.offs_max;
       if (bit >= kMaxBits) {
         return;
       }
       for (auto g = prev + 1; g < bit; ++g) {
         layout.wild |= uint64_t{1} << g;
       }
-      if (offs_min[k] < offs_max[k]) {
+      if (slot.offs_min < slot.offs_max) {
         uint64_t range = 0;
-        for (auto j = prev + offs_min[k] - 1; j + 2 <= bit; ++j) {
+        for (auto j = prev + slot.offs_min - 1; j + 2 <= bit; ++j) {
           range |= uint64_t{1} << j;
         }
         layout.extras.push_back({.range = range,
@@ -301,13 +293,13 @@ void CompiledPhrase::LayoutAutomaton() {
                                  .index = static_cast<uint32_t>(bit)});
       }
     }
-    layout.slot_bits[k] = uint64_t{1} << bit;
+    slot.bit = uint64_t{1} << bit;
   }
   layout.length = static_cast<uint32_t>(bit + 1);
   layout.last = uint64_t{1} << bit;
   for (auto& [term, entry] : accept) {
     for (uint32_t i = 0; i != entry.size; ++i) {
-      entry.mask |= layout.slot_bits[slot_ids[entry.begin + i]];
+      entry.mask |= slots[slot_ids[entry.begin + i]].bit;
     }
   }
   automaton = std::move(layout);
@@ -316,11 +308,11 @@ void CompiledPhrase::LayoutAutomaton() {
 void CompiledPhrase::PickAnchor(std::span<const TermReader* const> readers) {
   constexpr auto kUnknown = std::numeric_limits<double>::max();
   double best = kUnknown;
-  for (uint32_t k = 0; k != words.size(); ++k) {
-    if (!is_word[k]) {
+  for (uint32_t k = 0; k != slots.size(); ++k) {
+    if (!slots[k].word) {
       continue;
     }
-    const auto& word = words[k];
+    const auto& word = *slots[k].word;
     uint64_t docs = 0;
     uint64_t freq = 0;
     for (const auto* reader : readers) {
@@ -334,7 +326,8 @@ void CompiledPhrase::PickAnchor(std::span<const TermReader* const> readers) {
                        : static_cast<double>(docs);
     }
     if (!anchor || cost < best ||
-        (cost == best && word.GetSize() > words[anchor->slot].GetSize())) {
+        (cost == best &&
+         word.GetSize() > slots[anchor->slot].word->GetSize())) {
       anchor = Anchor{.slot = k};
       best = cost;
     }
@@ -342,9 +335,9 @@ void CompiledPhrase::PickAnchor(std::span<const TermReader* const> readers) {
   if (!anchor) {
     return;
   }
-  const auto split = offs_max.begin() + anchor->slot + 1;
-  anchor->left = std::accumulate(offs_max.begin() + 1, split, uint64_t{0});
-  anchor->right = std::accumulate(split, offs_max.end(), uint64_t{0});
+  for (uint32_t k = 1; k != slots.size(); ++k) {
+    (k <= anchor->slot ? anchor->left : anchor->right) += slots[k].offs_max;
+  }
 }
 
 void PhraseCheck::Anchor::Reset() {
@@ -353,8 +346,7 @@ void PhraseCheck::Anchor::Reset() {
   batch_base = 0;
   end = 0;
   carry_base = 0;
-  carry_terms.clear();
-  carry_pos.clear();
+  carry.clear();
   arena.Reset();
   pending.clear();
   last = 0;
@@ -368,8 +360,7 @@ void PhraseCheck::Anchor::Carry(uint64_t span) {
   while (from > carry_base && PosAt(from - 1) >= keep) {
     --from;
   }
-  next_terms.clear();
-  next_pos.clear();
+  next.clear();
   for (auto at = from; at != end; ++at) {
     auto term = TermAt(at);
     if (at >= batch_base && !term.IsInlined()) {
@@ -378,11 +369,9 @@ void PhraseCheck::Anchor::Carry(uint64_t span) {
       std::memcpy(data, term.GetData(), size);
       term = {reinterpret_cast<const char*>(data), size};
     }
-    next_terms.push_back(term);
-    next_pos.push_back(PosAt(at));
+    next.push_back({.term = term, .pos = PosAt(at)});
   }
-  std::swap(carry_terms, next_terms);
-  std::swap(carry_pos, next_pos);
+  std::swap(carry, next);
   carry_base = from;
 }
 
@@ -490,7 +479,7 @@ void PhraseCheck::Start(bool anchored) {
   } else if (_phrase->automaton) {
     Use<Automaton>().Reset(*_phrase->automaton, _count);
   } else {
-    Use<Positions>().Reset(_phrase->offs_min.size());
+    Use<Positions>().Reset(_phrase->slots.size());
   }
 }
 
@@ -515,7 +504,7 @@ bool PhraseCheck::Restart() {
   if (auto* anchor = std::get_if<Anchor>(&_state); anchor && !_done) {
     anchor->batch_terms = nullptr;
     anchor->batch_pos = nullptr;
-    anchor->batch_base = anchor->carry_base + anchor->carry_terms.size();
+    anchor->batch_base = anchor->carry_base + anchor->carry.size();
     anchor->end = anchor->batch_base;
     for (const auto at : anchor->pending) {
       if (Hit(*anchor, at)) {
@@ -549,7 +538,7 @@ void PhraseCheck::Feed(Anchor& anchor, const TokenBatch& batch) {
   const auto& layout = *_phrase->anchor;
   anchor.batch_terms = batch.terms;
   anchor.batch_pos = batch.pos;
-  anchor.batch_base = anchor.carry_base + anchor.carry_terms.size();
+  anchor.batch_base = anchor.carry_base + anchor.carry.size();
   anchor.end = anchor.batch_base + batch.count;
   const uint64_t last = batch.pos[batch.count - 1];
   size_t keep = 0;
@@ -563,7 +552,7 @@ void PhraseCheck::Feed(Anchor& anchor, const TokenBatch& batch) {
     }
   }
   anchor.pending.resize(keep);
-  const auto& word = _phrase->words[layout.slot];
+  const auto& word = *_phrase->slots[layout.slot].word;
   for (uint32_t i = 0; i != batch.count; ++i) {
     if (batch.terms[i] != word) {
       continue;
@@ -602,12 +591,12 @@ bool PhraseCheck::Hit(Anchor& anchor, size_t at) {
 uint64_t PhraseCheck::Right(Anchor& anchor, uint32_t slot, size_t at) {
   const auto& phrase = *_phrase;
   const auto next = slot + 1;
-  if (next == phrase.offs_min.size()) {
+  if (next == phrase.slots.size()) {
     return 1;
   }
   const uint64_t pos = anchor.PosAt(at);
-  const auto from = pos + phrase.offs_min[next];
-  const auto to = pos + phrase.offs_max[next];
+  const auto from = pos + phrase.slots[next].offs_min;
+  const auto to = pos + phrase.slots[next].offs_max;
   uint64_t ways = 0;
   uint64_t accepted = 0;
   for (auto j = at + 1; j < anchor.end; ++j) {
@@ -645,13 +634,13 @@ uint64_t PhraseCheck::Left(Anchor& anchor, uint32_t slot, size_t at) {
   for (auto j = at; j-- > anchor.carry_base;) {
     const uint64_t p = anchor.PosAt(j);
     const auto distance = pos - p;
-    if (distance > phrase.offs_max[slot]) {
+    if (distance > phrase.slots[slot].offs_max) {
       break;
     }
     if (Over(anchor)) {
       return 0;
     }
-    if (distance < phrase.offs_min[slot] || p == accepted ||
+    if (distance < phrase.slots[slot].offs_min || p == accepted ||
         !phrase.Accepts(prev, anchor.TermAt(j))) {
       continue;
     }
@@ -768,7 +757,7 @@ void PhraseCheck::Feed(Positions& positions, const TokenBatch& batch) {
 
 bool PhraseCheck::Finish(Positions& positions, PhraseVerdict& out) {
   const auto& phrase = *_phrase;
-  const auto n = phrase.offs_min.size();
+  const auto n = phrase.slots.size();
   if (absl::c_any_of(positions.slots,
                      [](const auto& slot) { return slot.empty(); })) {
     return false;
@@ -798,39 +787,39 @@ bool PhraseCheck::Finish(Positions& positions, PhraseVerdict& out) {
   }
 
   auto& valid = positions.valid;
-  auto& ways = positions.ways;
-  valid.assign(positions.slots.back().begin(), positions.slots.back().end());
-  ways.assign(valid.size(), 1);
+  valid.clear();
+  for (const auto p : positions.slots.back()) {
+    valid.push_back({.pos = p, .ways = 1});
+  }
   for (size_t i = n - 1; i != 0; --i) {
-    const auto& prev = positions.slots[i - 1];
+    const auto& slot = phrase.slots[i];
     positions.next.clear();
-    positions.next_ways.clear();
     size_t lo = 0;
     size_t hi = 0;
     uint64_t window = 0;
-    for (const auto p : prev) {
-      const uint64_t min = uint64_t{p} + phrase.offs_min[i];
-      const uint64_t max = uint64_t{p} + phrase.offs_max[i];
-      for (; hi != valid.size() && valid[hi] <= max; ++hi) {
-        window += ways[hi];
+    for (const auto p : positions.slots[i - 1]) {
+      const uint64_t min = uint64_t{p} + slot.offs_min;
+      const uint64_t max = uint64_t{p} + slot.offs_max;
+      for (; hi != valid.size() && valid[hi].pos <= max; ++hi) {
+        window += valid[hi].ways;
       }
-      for (; lo != hi && valid[lo] < min; ++lo) {
-        window -= ways[lo];
+      for (; lo != hi && valid[lo].pos < min; ++lo) {
+        window -= valid[lo].ways;
       }
       if (window != 0) {
-        positions.next.push_back(p);
-        positions.next_ways.push_back(window);
+        positions.next.push_back({.pos = p, .ways = window});
       }
     }
     std::swap(valid, positions.next);
-    std::swap(ways, positions.next_ways);
     if (valid.empty()) {
       return false;
     }
   }
-  out.freq =
-    _count ? std::saturate_cast<uint32_t>(absl::c_accumulate(ways, uint64_t{0}))
-           : 1;
+  uint64_t total = 0;
+  for (const auto& way : valid) {
+    total += way.ways;
+  }
+  out.freq = _count ? std::saturate_cast<uint32_t>(total) : 1;
   return true;
 }
 

@@ -23,6 +23,13 @@ nothing runs them for you.
 `CONTRIBUTING.md` "Branching, commits, PRs"; it says how to refer to another
 repository's issues and PRs without GitHub linking back.
 
+- Code is the evidence: PR descriptions, comments, docstrings, review notes and
+memory are claims. Read the implementation and its callers before relying on
+them.
+
+- Never present an estimated or remembered number as measured: measure it or
+say it is unknown.
+
 - Build and run only what the task needs: the touched targets and the tests that
 cover the change. Full sqllogic/recovery suites, benchmarks and sanitizer
 builds only when the user asks; CI runs the suites.

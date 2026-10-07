@@ -23,10 +23,8 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
-#include <type_traits>
 #include <variant>
 
-#include "iresearch/search/filters/automaton_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/boolean_rules.hpp"
 #include "iresearch/search/filters/common.hpp"
@@ -35,7 +33,6 @@
 #include "iresearch/search/filters/ngram_similarity_filter.hpp"
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
-#include "iresearch/search/filters/range_filter.hpp"
 #include "iresearch/search/filters/regexp_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/filters/wildcard_filter.hpp"
@@ -188,47 +185,15 @@ bool PhraseSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
       !phrase.options().word_separator().empty() || phrase.options().tokens()) {
     return false;
   }
-  const auto field = phrase.field_id();
-  const auto boost = phrase.GetBoost();
-  const auto* scorer = phrase.GetScorer();
-  const bool scores = ScoreDependsOnTerms(phrase, ctx);
-  const bool constant = ScoreIsConstant(phrase, ctx);
-  auto lowered = std::visit(
-    [&]<typename Options>(Options& options) -> Filter::ptr {
-      using Opts = std::remove_cvref_t<Options>;
-      if constexpr (std::is_same_v<Opts, TermSetOptions>) {
-        if (scores) {
-          return nullptr;
-        }
-        auto node = std::make_unique<BooleanFilter>();
-        for (auto& term : options.terms) {
-          node->Add(TermClause{.field = field, .term = term}, Occur::Should);
-        }
-        node->SetMinShouldMatch(1);
-        if (constant) {
-          node->SetMergeType(ScoreMergeType::Max);
-        }
-        node->SetBoost(boost);
-        node->SetScorer(scorer);
-        return node;
-      } else {
-        if constexpr (!std::is_same_v<Opts, ByTermOptions>) {
-          if (scores) {
-            return nullptr;
-          }
-        }
-        auto node = std::make_unique<typename Opts::FilterType>();
-        *node->mutable_field_id() = field;
-        *node->mutable_options() = std::move(options);
-        node->SetBoost(boost);
-        node->SetScorer(scorer);
-        return node;
-      }
-    },
-    phrase.mutable_options()->begin()->part);
-  if (!lowered) {
+  auto& part = phrase.mutable_options()->begin()->part;
+  if (!std::holds_alternative<ByTermOptions>(part) &&
+      ScoreDependsOnTerms(phrase, ctx)) {
     return false;
   }
+  auto lowered = PartFilter(phrase.field_id(), std::move(part),
+                            ScoreIsConstant(phrase, ctx));
+  lowered->SetBoost(phrase.GetBoost());
+  lowered->SetScorer(phrase.GetScorer());
   slot = std::move(lowered);
   return true;
 }

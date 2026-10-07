@@ -58,14 +58,13 @@ struct PhraseTokens {
   TextSource text;
   Factory tokenizer;
   std::optional<ByPhraseOptions> spec;
-  bool deferred = false;
 
   const ByPhraseOptions& Check(const ByPhraseOptions& phrase) const noexcept {
     return spec ? *spec : phrase;
   }
 
   bool operator==(const PhraseTokens& rhs) const noexcept {
-    return text == rhs.text && spec == rhs.spec && deferred == rhs.deferred;
+    return text == rhs.text && spec == rhs.spec;
   }
 };
 

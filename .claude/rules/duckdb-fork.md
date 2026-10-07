@@ -7,4 +7,4 @@ paths:
 
 # Editing the DuckDB-family forks
 
-Before changing a fork, read `tests/duckdb/README.md` ("Branches", "Changing a fork", "Traps") and `CONTRIBUTING.md` "When you change ...".
+Before changing a fork, read `CONTRIBUTING.md` "When you change ...".

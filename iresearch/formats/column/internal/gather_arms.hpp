@@ -63,7 +63,7 @@ inline bool FewerRuns(const duckdb::SelectionVector& sel, duckdb::idx_t hits,
       return false;
     }
   }
-  return runs < limit;
+  return true;
 }
 
 inline bool ScatterWins(const GatherBands& bands, const ColumnBlockMeta& block,

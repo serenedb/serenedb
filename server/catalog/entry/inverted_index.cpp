@@ -40,6 +40,7 @@
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <span>
 #include <string>
 
 #include "catalog/catalog.h"
@@ -335,6 +336,20 @@ irs::field_id InvertedIndexConfig::FindFieldIdByExpression(
     return key.normalized_expression == normalized;
   });
   return it == keys.end() ? irs::field_limits::invalid() : it->field_id;
+}
+
+bool InvertedIndexConfig::FirstKeyOf(size_t key) const noexcept {
+  return absl::c_none_of(std::span{keys}.first(key),
+                         [&](const InvertedIndexKey& earlier) {
+                           return earlier.field_id == keys[key].field_id;
+                         });
+}
+
+bool InvertedIndexConfig::StoresExpressions() const noexcept {
+  return absl::c_any_of(keys, [&](const InvertedIndexKey& key) {
+    const auto* entry = FindEntry(key.field_id);
+    return !key.normalized_expression.empty() && entry && entry->IsStored();
+  });
 }
 
 const InvertedIndexField* InvertedIndexConfig::FindEntry(

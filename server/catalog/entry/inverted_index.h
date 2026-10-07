@@ -156,6 +156,8 @@ struct InvertedIndexConfig final : irs::IndexFieldOptions {
 
   irs::field_id FindFieldIdByExpression(
     std::string_view normalized) const noexcept;
+  bool FirstKeyOf(size_t key) const noexcept;
+  bool StoresExpressions() const noexcept;
 
   PkPolicy pk;
   std::vector<InvertedIndexKey> keys;

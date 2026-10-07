@@ -484,11 +484,7 @@ void InvertedStoreIndex::Feed(DuckDBSinkIndexWriter& writer,
     std::vector<ExpressionValue> values;
     values.reserve(keys.size());
     for (size_t i = 0; i < keys.size(); ++i) {
-      const auto first = absl::c_none_of(
-        keys.first(i), [&](const catalog::InvertedIndexKey& earlier) {
-          return earlier.field_id == keys[i].field_id;
-        });
-      if (first) {
+      if (_config->FirstKeyOf(i)) {
         values.emplace_back(keys[i].field_id, &results.data[i]);
       }
     }

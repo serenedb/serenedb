@@ -62,20 +62,19 @@ CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
 }
 
 bool CompiledPhrase::Standalone(const ByPhraseOptions& phrase) noexcept {
-  return absl::c_all_of(phrase, [&](const auto& info) {
+  return absl::c_all_of(phrase, [](const auto& info) {
     return std::visit(
-      [&]<typename Part>(const Part& part) {
+      []<typename Part>(const Part& part) {
         if constexpr (std::is_same_v<Part, ByTermOptions> ||
-                      std::is_same_v<Part, TermSetOptions>) {
+                      std::is_same_v<Part, TermSetOptions> ||
+                      std::is_same_v<Part, ByPrefixOptions> ||
+                      std::is_same_v<Part, ByRangeOptions>) {
           return true;
-        } else if constexpr (std::is_same_v<Part, ByPrefixOptions> ||
-                             std::is_same_v<Part, ByRangeOptions>) {
-          return phrase.slop() == 0;
         } else if constexpr (std::is_same_v<Part, AutomatonOptions>) {
-          return phrase.slop() == 0 && part.source;
+          return static_cast<bool>(part.source);
         } else if constexpr (std::is_same_v<Part,
                                             LevenshteinAutomatonOptions>) {
-          return phrase.slop() == 0 && part.max_terms == 0 && part.source;
+          return part.max_terms == 0 && part.source;
         } else {
           return false;
         }
@@ -261,6 +260,23 @@ void CompiledPhrase::LayoutSlop() {
     const auto root = find(slot_ids[entry.begin]);
     for (uint32_t i = 1; i < entry.size; ++i) {
       groups[find(slot_ids[entry.begin + i])] = root;
+    }
+  }
+  std::optional<uint32_t> first_pattern;
+  for (uint32_t p = 0; p != n; ++p) {
+    const auto& pattern = slots[p].pattern;
+    if (!pattern) {
+      continue;
+    }
+    if (first_pattern) {
+      groups[find(p)] = find(*first_pattern);
+    } else {
+      first_pattern = p;
+    }
+    for (const auto& [term, entry] : accept) {
+      if (Plain(term) && pattern->Accepts(term)) {
+        groups[find(slot_ids[entry.begin])] = find(p);
+      }
     }
   }
   for (uint32_t i = 0; i != n; ++i) {

@@ -517,7 +517,7 @@ TEST(PhraseCheckTest, standalone_parts) {
   prefix.push_back<irs::ByPrefixOptions>().term = Bytes("b");
   EXPECT_TRUE(CompiledPhrase::Standalone(prefix));
   prefix.set_slop(1);
-  EXPECT_FALSE(CompiledPhrase::Standalone(prefix));
+  EXPECT_TRUE(CompiledPhrase::Standalone(prefix));
 
   auto like = Phrase("a");
   like.push_back<irs::ByWildcardOptions>().term = Bytes("%b");
@@ -990,6 +990,32 @@ TEST(TokenPhraseIndexTest, deferred_check_agrees_with_inline) {
     const auto phrase = RandomPatternPhrase(rng, kWords);
     SCOPED_TRACE(i);
     ExpectDeferredLikeInline<DenseWords>(index, docs, phrase);
+  }
+}
+
+TEST(TokenPhraseIndexTest, deferred_check_agrees_with_inline_under_slop) {
+  constexpr std::string_view kWords[] = {"quick", "quack", "brown", "brawn",
+                                         "fox",   "box",   "the",   "dog"};
+  for (const uint32_t seed : {5, 11, 17, 23}) {
+    SCOPED_TRACE(seed);
+    std::mt19937 rng{seed};
+    std::vector<std::string> docs;
+    for (size_t i = 0; i != 300; ++i) {
+      docs.push_back(RandomText(rng, kWords, 1 + rng() % 20));
+    }
+    const Index index{
+      docs, std::type_identity<DenseWords>{}, {.segment_docs = 64}};
+    for (size_t i = 0; i != 200; ++i) {
+      auto phrase = RandomPatternPhrase(rng, kWords);
+      if (absl::c_any_of(phrase, [](const auto& info) {
+            return info.offs_min != info.offs_max;
+          })) {
+        continue;
+      }
+      phrase.set_slop(1 + rng() % 3);
+      SCOPED_TRACE(i);
+      ExpectDeferredLikeInline<DenseWords>(index, docs, phrase);
+    }
   }
 }
 

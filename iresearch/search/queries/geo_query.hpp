@@ -76,7 +76,7 @@ class GeoQuery : public QueryBuilderImpl<GeoQuery<Parser, Acceptor>> {
       _store_field_id{store_field_id} {
     SDB_ASSERT(_cells);
     SDB_ASSERT(_cells->Kind() != QueryKind::Empty);
-    SDB_ASSERT(MakeCheck().possible);
+    SDB_ASSERT(!HasCheck() || MakeCheck().possible);
     this->_estimate_max = _cells->EstimateMax();
   }
 
@@ -100,6 +100,10 @@ class GeoQuery : public QueryBuilderImpl<GeoQuery<Parser, Acceptor>> {
   };
 
   const QueryBuilder& Cells() const noexcept { return *_cells; }
+
+  bool HasCheck() const noexcept {
+    return irs::field_limits::valid(_store_field_id);
+  }
 
   Check MakeCheck() const {
     SDB_ASSERT(irs::field_limits::valid(_store_field_id));

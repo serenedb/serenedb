@@ -24,6 +24,11 @@
 #include <s2/s2cap.h>
 #include <s2/s2region_term_indexer.h>
 
+#include <string>
+#include <variant>
+#include <vector>
+
+#include "iresearch/search/detail/geo_parsers.hpp"
 #include "iresearch/search/detail/search_range.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -152,5 +157,33 @@ struct GeoDistanceAcceptor {
     return Incl ? filter.Contains(point) : filter.InteriorContains(point);
   }
 };
+
+using GeoAcceptor = std::variant<
+  GeoIntersectsAcceptor, GeoContainsAcceptor, GeoIsContainedAcceptor,
+  GeoDistanceAcceptor<false>, GeoDistanceAcceptor<true>,
+  GeoDistanceRangeAcceptor<false, false>, GeoDistanceRangeAcceptor<false, true>,
+  GeoDistanceRangeAcceptor<true, false>, GeoDistanceRangeAcceptor<true, true>>;
+
+using GeoParser = std::variant<SourceJsonParser, SourceWkbParser,
+                               SourcePointParser, S2ShapeParser, S2PointParser>;
+
+struct GeoPlan {
+  enum class Kind : uint8_t {
+    Empty,
+    All,
+    AllButCentre,
+    Cells,
+  };
+
+  Kind kind = Kind::Empty;
+  std::vector<std::string> terms;
+  GeoAcceptor acceptor;
+};
+
+GeoParser ParserOf(const GeoFilterOptionsBase& options);
+
+GeoPlan PlanGeo(const GeoFilterOptions& options);
+
+GeoPlan PlanGeo(const GeoDistanceFilterOptions& options);
 
 }  // namespace irs

@@ -52,8 +52,13 @@ class ShapeContainer final {
     S2Multipolyline = 5,
   };
 
-  ShapeContainer(const ShapeContainer& other) = delete;
-  ShapeContainer& operator=(const ShapeContainer& other) = delete;
+  ShapeContainer(const ShapeContainer& other)
+    : _data{other._data ? other._data->Clone() : nullptr},
+      _type{other._type},
+      _options{other._options} {}
+  ShapeContainer& operator=(const ShapeContainer& other) {
+    return *this = ShapeContainer{other};
+  }
 
   ShapeContainer() noexcept = default;
   ShapeContainer(ShapeContainer&& other) noexcept

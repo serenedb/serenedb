@@ -38,6 +38,7 @@ inline constexpr std::string_view kSlopTypeName = "slop";
 
 inline constexpr std::string_view kScoreTypeName = "score";
 inline constexpr std::string_view kMergeTypeName = "merge";
+inline constexpr std::string_view kMinMatchTypeName = "min_match";
 
 // TSQUERY leaf constructors (unprefixed). Produce a TSQUERY value;
 // stubs throw at runtime -- the filter builder claims them at bind.
@@ -129,8 +130,9 @@ duckdb::LogicalType MakeTSQueryType();
 
 // Stub body shared by optimizer-claimed search functions across TUs:
 // throws if a claimed function is ever executed as a plain scalar.
-void SearchStubFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
-                  duckdb::Vector& result);
+[[noreturn]] void SearchStubFn(duckdb::DataChunk& args,
+                               duckdb::ExpressionState& state,
+                               duckdb::Vector& result);
 
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name);

@@ -1,0 +1,118 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE bfs (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 50, compaction_interval = 0);
+
+statement ok
+INSERT INTO bfs VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) bfs;
+
+statement ok
+SET sdb_faults = 'pause_search_backfill_before_publish';
+
+connection builder
+statement async ok
+CREATE INDEX bfs_idx ON bfs USING inverted (tag);
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_backfill_before_publish:parked';
+
+connection truncater
+statement ok
+BEGIN;
+
+connection truncater
+statement ok
+TRUNCATE bfs;
+
+connection truncater
+statement ok
+COMMIT;
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_backfill_before_publish:release';
+
+wait
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) bfs;
+
+connection default
+query
+SELECT count(*) AS n FROM bfs;
+----
+n
+0
+
+connection default
+query
+SELECT count(*) AS n FROM bfs_idx WHERE tag @@ 'a';
+----
+n
+0
+
+connection default
+statement ok
+DROP TABLE bfs;
+
+statement ok
+CREATE TABLE bfu (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 50, compaction_interval = 0);
+
+statement ok
+INSERT INTO bfu VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) bfu;
+
+statement ok
+SET sdb_faults = 'pause_search_backfill_before_publish';
+
+connection builder
+statement async ok
+CREATE INDEX bfu_idx ON bfu USING inverted (tag);
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_backfill_before_publish:parked';
+
+connection truncater
+statement ok
+TRUNCATE bfu;
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_backfill_before_publish:release';
+
+wait
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) bfu;
+
+connection default
+query
+SELECT count(*) AS n FROM bfu;
+----
+n
+0
+
+connection default
+query
+SELECT count(*) AS n FROM bfu_idx WHERE tag @@ 'a';
+----
+n
+0
+
+connection default
+statement ok
+DROP TABLE bfu;

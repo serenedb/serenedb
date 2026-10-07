@@ -42,8 +42,12 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression_binder/constant_binder.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
+#include <exception>
 #include <iresearch/search/scorers/unscored.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
@@ -63,6 +67,17 @@ bool TryCastExactInt64(const duckdb::Value& v, duckdb::Value& out) {
   const auto back = out.DefaultTryCastAs(v.type());
   return back && duckdb::Value::NotDistinctFrom(*back, v);
 }
+
+uint16_t CheckedSlop(int64_t value) {
+  SDB_ASSERT(value >= 0);
+  if (value > kMaxSlop) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("::slop too large: ", value, " (at most ", kMaxSlop, ")"));
+  }
+  return static_cast<uint16_t>(value);
+}
+
 namespace {
 
 constexpr size_t kMaxStructuredNodes = 4096;
@@ -80,7 +95,9 @@ bool IsTSQueryFamilyTypeName(std::string_view name) {
          absl::EqualsIgnoreCase(name, kTokenizerTypeName) ||
          absl::EqualsIgnoreCase(name, kBoostTypeName) ||
          absl::EqualsIgnoreCase(name, kSlopTypeName) ||
-         absl::EqualsIgnoreCase(name, kScoreTypeName);
+         absl::EqualsIgnoreCase(name, kScoreTypeName) ||
+         absl::EqualsIgnoreCase(name, kMergeTypeName) ||
+         absl::EqualsIgnoreCase(name, kMinMatchTypeName);
 }
 
 bool IsNumericTypeId(duckdb::LogicalTypeId id) {
@@ -303,6 +320,9 @@ std::string RenderTSQueryPartsSQL(const TSQueryParts& parts) {
         .ToSQLString(),
       ")");
   }
+  if (parts.min_match != 0) {
+    absl::StrAppend(&out, "::min_match(", parts.min_match, ")");
+  }
   if (!parts.scorer.empty()) {
     absl::StrAppend(&out, "::score(",
                     parts.scorer == irs::Unscored::type_name()
@@ -314,8 +334,7 @@ std::string RenderTSQueryPartsSQL(const TSQueryParts& parts) {
 }
 
 std::string RenderTSQueryValueText(const TSQueryParts& parts) {
-  if (parts.tokenizer.empty() && parts.boost == 1.0f && parts.slop == 0 &&
-      parts.scorer.empty() && parts.merge == TSQueryMerge::Default) {
+  if (!HasModifiers(parts)) {
     return parts.text;
   }
   return RenderTSQueryPartsSQL(parts);
@@ -407,6 +426,13 @@ std::optional<std::string> RenderCast(
       std::move(*child), "::merge(",
       duckdb::Value(std::string{magic_enum::enum_name(*merge)}).ToSQLString(),
       ")");
+  }
+  if (const auto min_match = TryGetMinMatchModifier(target)) {
+    auto child = RenderTSQueryExpression(context, inner);
+    if (!child) {
+      return std::nullopt;
+    }
+    return absl::StrCat(std::move(*child), "::min_match(", *min_match, ")");
   }
   if (const auto scorer = TryGetScoreModifier(target)) {
     auto child = RenderTSQueryExpression(context, inner);
@@ -621,7 +647,7 @@ std::optional<TSQueryParts> TryGetTSQueryParts(const duckdb::Value& value) {
   }
   if (children.size() > kTSQuerySlopChild &&
       !children[kTSQuerySlopChild].IsNull()) {
-    parts.slop = children[kTSQuerySlopChild].GetValue<int64_t>();
+    parts.slop = children[kTSQuerySlopChild].GetValue<uint16_t>();
   }
   if (children.size() > kTSQueryScorerChild &&
       !children[kTSQueryScorerChild].IsNull()) {
@@ -631,6 +657,10 @@ std::optional<TSQueryParts> TryGetTSQueryParts(const duckdb::Value& value) {
       !children[kTSQueryMergeChild].IsNull()) {
     parts.merge = static_cast<TSQueryMerge>(
       children[kTSQueryMergeChild].GetValue<uint8_t>());
+  }
+  if (children.size() > kTSQueryMinMatchChild &&
+      !children[kTSQueryMinMatchChild].IsNull()) {
+    parts.min_match = children[kTSQueryMinMatchChild].GetValue<uint32_t>();
   }
   return parts;
 }
@@ -644,13 +674,16 @@ TSQueryParts TSQueryPartsForType(const duckdb::LogicalType& type,
     parts.boost = static_cast<float>(*boost);
   }
   if (const auto slop = TryGetSlopModifier(type)) {
-    parts.slop = *slop;
+    parts.slop = CheckedSlop(*slop);
   }
   if (auto scorer = TryGetScoreModifier(type)) {
     parts.scorer = std::move(*scorer);
   }
   if (const auto merge = TryGetMergeModifier(type)) {
     parts.merge = *merge;
+  }
+  if (const auto min_match = TryGetMinMatchModifier(type)) {
+    parts.min_match = *min_match;
   }
   return parts;
 }
@@ -660,16 +693,17 @@ duckdb::Value MakeTSQueryValue(const duckdb::LogicalType& type,
   SDB_ASSERT(IsTSQueryStructType(type));
   const auto parts = TSQueryPartsForType(type, text);
   duckdb::vector<duckdb::Value> children;
-  children.reserve(6);
+  children.reserve(7);
   children.emplace_back(parts.text);
   children.emplace_back(parts.tokenizer);
   children.emplace_back(duckdb::Value::FLOAT(parts.boost));
-  children.emplace_back(duckdb::Value::BIGINT(parts.slop));
+  children.emplace_back(duckdb::Value::USMALLINT(parts.slop));
   children.emplace_back(parts.scorer.empty()
                           ? duckdb::Value{duckdb::LogicalType::VARCHAR}
                           : duckdb::Value{parts.scorer});
   children.emplace_back(
     duckdb::Value::UTINYINT(static_cast<uint8_t>(parts.merge)));
+  children.emplace_back(duckdb::Value::UINTEGER(parts.min_match));
   return duckdb::Value::STRUCT(type, std::move(children));
 }
 
@@ -705,6 +739,11 @@ duckdb::unique_ptr<duckdb::Expression> TryParseStructuredTSQueryText(
     if (bound) {
       FoldStructuredConstants(context, bound);
     }
+  } catch (const irs::SqlException&) {
+    if (begin_transaction) {
+      context.transaction.Rollback(nullptr);
+    }
+    throw;
   } catch (const std::exception&) {
     bound = nullptr;
   }
@@ -714,6 +753,9 @@ duckdb::unique_ptr<duckdb::Expression> TryParseStructuredTSQueryText(
     } catch (const std::exception&) {
       bound = nullptr;
     }
+  }
+  if (bound && !IsTSQueryStructType(bound->GetReturnType())) {
+    return nullptr;
   }
   return bound;
 }

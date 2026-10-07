@@ -617,6 +617,10 @@ AddIncomingResult AddIncoming(
           docs_mask_modified |= RemoveFromSegment(docs_mask, *query, *reader);
         }
       }
+      if (incoming.removal) {
+        docs_mask_modified |= RemoveFromSegment(
+          docs_mask, {incoming.removal, writer_limits::kMinTick}, *reader);
+      }
     }
 
     const auto* published = reader->docs_mask();
@@ -946,31 +950,6 @@ bool IndexWriter::Transaction::CommitImpl(uint64_t last_tick) noexcept try {
   // TODO(mbkkt) Use intrusive list to avoid possibility bad_alloc here
   Abort();
   return false;
-}
-
-bool IndexWriter::Transaction::CommitLocked(uint64_t last_tick,
-                                            FlushContext& flush) noexcept {
-  auto* segment = _active.Segment();
-  if (segment == nullptr) {
-    return true;
-  }
-  // An unregistered transaction is queued into whichever context the caller
-  // holds. A registered one belongs to the context current when it registered,
-  // which may not be this one -- PrepareEmplace would then release it, and the
-  // caller would publish an adoption without the removals meant to mask it.
-  SDB_ASSERT(_active.Flush() == nullptr || _active.Flush() == &flush,
-             "CommitLocked on a transaction registered with another context");
-  try {
-    segment->Commit(_queries, last_tick);
-    if (flush.PrepareEmplace(_active)) {
-      flush.EmplaceLocked(std::move(_active));
-    }
-  } catch (...) {
-    // No Abort here: it takes the lock the caller is holding.
-    return false;
-  }
-  _queries = 0;
-  return true;
 }
 
 void IndexWriter::Transaction::Abort() noexcept {
@@ -1910,8 +1889,8 @@ IndexWriter::CompactionFloorGuard IndexWriter::ArmCompactionFloor() {
 
 bool IndexWriter::ReplaceSegments(
   std::span<const std::string_view> replaced,
-  std::span<const std::string_view> adopted_metas, Transaction* removals,
-  uint64_t removals_tick) {
+  std::span<const std::string_view> adopted_metas,
+  QueryContext::FilterPtr removal) {
   if (replaced.empty() && adopted_metas.empty()) {
     return true;
   }
@@ -1990,14 +1969,6 @@ bool IndexWriter::ReplaceSegments(
   auto flush = GetFlushContext();
   std::lock_guard lock{flush->pending_mutex};
 
-  // In the same critical section as the incoming segments below, so removals
-  // queued here mask the adopted segments in the generation that publishes
-  // them. As rowids are not reused - even if this succeeds but allocations
-  // below fails - removes are harmless without adoption passed.
-  if (removals != nullptr && !removals->CommitLocked(removals_tick, *flush)) {
-    return false;
-  }
-
   // Pre-allocation so tail is allocation-free
   auto& segment_mask = flush->segment_mask;
   flush->incoming.reserve(flush->incoming.size() + adopted.size());
@@ -2018,10 +1989,12 @@ bool IndexWriter::ReplaceSegments(
     // A copy per segment: the ctor takes the pin by rvalue, and every segment
     // needs its own so the files stay referenced until the commit.
     // MinTick used here as pending removes must reach replaced segments.
-    flush->incoming.emplace_back(std::move(entry.segment),
-                                 writer_limits::kMinTick, std::move(entry.refs),
-                                 Compaction{}, std::move(entry.reader),
-                                 decltype(committed_reader){committed_reader});
+    flush->incoming
+      .emplace_back(std::move(entry.segment), writer_limits::kMinTick,
+                    std::move(entry.refs), Compaction{},
+                    std::move(entry.reader),
+                    decltype(committed_reader){committed_reader})
+      .removal = removal;
   }
   for (const auto name : masked) {
     segment_mask.emplace(name);
@@ -2145,6 +2118,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
   // noexcept block: I'm not sure is it really necessary or not
   auto ctx = SwitchFlushContext();
+  SDB_PARK_ONCE_ON_FAILURE("pause_irs_commit_after_flush_switch");
   // ensure there are no active struct update operations
   ctx->pending.Done();
   ctx->pending.Wait();

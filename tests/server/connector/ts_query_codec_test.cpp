@@ -80,15 +80,21 @@ TEST(ts_query_codec_test, named_scorer_renders_with_its_parameters) {
     RenderTSQueryValueText({.text = "fox", .scorer = "bm25(1.2, 0.75)"}));
 }
 
+TEST(ts_query_codec_test, min_match_renders_as_its_modifier) {
+  EXPECT_EQ("'quick fox'::min_match(2)",
+            RenderTSQueryValueText({.text = "quick fox", .min_match = 2}));
+}
+
 duckdb::LogicalType TruncatedTSQueryType(size_t n) {
   duckdb::child_list_t<duckdb::LogicalType> ch;
-  const std::array<std::pair<const char*, duckdb::LogicalType>, 6> all{{
+  const std::array<std::pair<const char*, duckdb::LogicalType>, 7> all{{
     {"text", duckdb::LogicalType::VARCHAR},
     {"tokenizer", duckdb::LogicalType::VARCHAR},
     {"boost", duckdb::LogicalType::FLOAT},
-    {"slop", duckdb::LogicalType::BIGINT},
+    {"slop", duckdb::LogicalType::USMALLINT},
     {"scorer", duckdb::LogicalType::VARCHAR},
     {"merge", duckdb::LogicalType::UTINYINT},
+    {"min_match", duckdb::LogicalType::UINTEGER},
   }};
   for (size_t i = 0; i < n; ++i) {
     ch.emplace_back(all[i].first, all[i].second);
@@ -102,14 +108,15 @@ duckdb::Value FullStruct(const duckdb::Value& scorer) {
   children.emplace_back("fox");
   children.emplace_back("en");
   children.emplace_back(duckdb::Value::FLOAT(2.5f));
-  children.emplace_back(duckdb::Value::BIGINT(3));
+  children.emplace_back(duckdb::Value::USMALLINT(3));
   children.emplace_back(scorer);
   children.emplace_back(
     duckdb::Value::UTINYINT(static_cast<uint8_t>(TSQueryMerge::Max)));
+  children.emplace_back(duckdb::Value::UINTEGER(2));
   return duckdb::Value::STRUCT(MakeTSQueryType(), std::move(children));
 }
 
-TEST(ts_query_codec_test, all_six_children_decode) {
+TEST(ts_query_codec_test, all_seven_children_decode) {
   const auto parts = TryGetTSQueryParts(FullStruct(duckdb::Value("bm25(1.2)")));
   ASSERT_TRUE(parts.has_value());
   EXPECT_EQ("fox", parts->text);
@@ -118,6 +125,7 @@ TEST(ts_query_codec_test, all_six_children_decode) {
   EXPECT_EQ(3, parts->slop);
   EXPECT_EQ("bm25(1.2)", parts->scorer);
   EXPECT_EQ(TSQueryMerge::Max, parts->merge);
+  EXPECT_EQ(2u, parts->min_match);
 }
 
 TEST(ts_query_codec_test, null_and_empty_scorer_both_decode_to_empty) {
@@ -143,6 +151,7 @@ TEST(ts_query_codec_test, a_struct_missing_trailing_children_keeps_defaults) {
   EXPECT_EQ(0, parts->slop);
   EXPECT_TRUE(parts->scorer.empty());
   EXPECT_EQ(TSQueryMerge::Default, parts->merge);
+  EXPECT_EQ(0u, parts->min_match);
 }
 
 TEST(ts_query_codec_test, null_text_is_not_a_tsquery) {

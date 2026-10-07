@@ -128,6 +128,8 @@ Selecting a real source column that is neither indexed nor `INCLUDE`d **material
 
 Because the read is live, if the underlying source changed after the index was built, materialized values reflect the *current* source: rows deleted from the source come back as `NULL`, and edited content shows its new value (or raises an error if a file became unreadable). Counts and scores, by contrast, still reflect the frozen build-time snapshot.
 
+Columns a file reader adds on its own materialize too, with the values the view gives them: a hive partition column (`hive_partitioning`) comes from the path of the row's file, `filename` is that path, and `file_row_number` is the position the reader reports for the row. Filters on these columns work like filters on any other materialized column.
+
 ## Generic views
 
 A generic view (no fast-path source) still indexes and answers the non-materializing queries — no extra options are needed, the postings key on a synthetic row id:

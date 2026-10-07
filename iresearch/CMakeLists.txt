@@ -502,7 +502,10 @@ if(ARCH_AMD64)
         PUBLIC SZ_USE_HASWELL=1 SZ_USE_SKYLAKE=1 SZ_USE_ICELAKE=1
     )
 elseif(ARCH_AARCH64)
-    target_compile_definitions(iresearch-static PUBLIC SZ_USE_NEON=1)
+    target_compile_definitions(
+        iresearch-static
+        PUBLIC SZ_USE_NEON=1 SZ_USE_SVE=1 SZ_USE_SVE2=1
+    )
 endif()
 
 target_link_libraries(

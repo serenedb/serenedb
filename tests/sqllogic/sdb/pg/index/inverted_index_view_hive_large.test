@@ -1,0 +1,143 @@
+control substitution on
+
+# Partition values, file names and row numbers read back in bulk: 24000 rows
+# in two files per partition, several row groups per file, lookups over
+# thousands of keys per file and per batch. Every row's partition is a
+# function of its id, so any row given another row's values shows up.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ivhl_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+COPY (SELECT id, 'p' || (id % 8) AS part,
+             CASE WHEN id % 7 = 0 THEN repeat('pudge ', 1 + id % 3) || 'mid ' || id
+                  ELSE 'techies plants ' || id END AS body
+      FROM range(0, 20000) t(id))
+TO '${__TEST_DIR__}/ivhl' (FORMAT PARQUET, PARTITION_BY (part), ROW_GROUP_SIZE 1000);
+
+statement ok
+COPY (SELECT id, 'p' || (id % 8) AS part,
+             CASE WHEN id % 7 = 0 THEN repeat('pudge ', 1 + id % 3) || 'mid ' || id
+                  ELSE 'techies plants ' || id END AS body
+      FROM range(20000, 24000) t(id))
+TO '${__TEST_DIR__}/ivhl' (FORMAT PARQUET, PARTITION_BY (part), ROW_GROUP_SIZE 1000,
+                           FILENAME_PATTERN 'extra_{i}', OVERWRITE_OR_IGNORE);
+
+statement ok
+CREATE VIEW ivhl_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/ivhl/*/*.parquet', hive_partitioning=true,
+                             filename=true, file_row_number=true);
+
+statement ok
+CREATE INDEX ivhl_idx ON ivhl_v USING inverted(id, body ivhl_en);
+
+query
+SELECT count(DISTINCT filename) AS files, count(*) AS n FROM ivhl_v;
+----
+files	n
+16	24000
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivhl_v EXCEPT SELECT * FROM ivhl_idx)
+                      UNION ALL (SELECT * FROM ivhl_idx EXCEPT SELECT * FROM ivhl_v));
+----
+count
+0
+
+query
+SELECT count(*) FROM ivhl_idx WHERE part <> 'p' || (id % 8);
+----
+count
+0
+
+query
+SELECT part, count(*) AS n, sum(id) AS total FROM ivhl_idx GROUP BY part ORDER BY part;
+----
+part	n	total
+p0	3000	35988000
+p1	3000	35991000
+p2	3000	35994000
+p3	3000	35997000
+p4	3000	36000000
+p5	3000	36003000
+p6	3000	36006000
+p7	3000	36009000
+
+query
+SELECT count(*) FROM ivhl_idx WHERE part IN ('p1', 'p6') AND body @@ ts_phrase('pudge');
+----
+count
+857
+
+query
+SELECT count(*) FROM ivhl_idx WHERE part = 'p5' AND id % 7 <> 0 AND body @@ ts_phrase('techies');
+----
+count
+2571
+
+# Row-number filters over more keys than one lookup batch holds.
+query
+SELECT count(*) FROM ivhl_idx WHERE file_row_number < 2100;
+----
+count
+20800
+
+query
+SELECT (SELECT sum(id) FROM ivhl_idx WHERE file_row_number < 2100)
+     = (SELECT sum(id) FROM ivhl_v WHERE file_row_number < 2100) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT count(*) || ':' || sum(id) FROM ivhl_idx WHERE file_row_number BETWEEN 400 AND 2399 AND part <> 'p0')
+     = (SELECT count(*) || ':' || sum(id) FROM ivhl_v WHERE file_row_number BETWEEN 400 AND 2399 AND part <> 'p0') AS same;
+----
+same
+t
+
+query
+SELECT (SELECT count(*) FROM ivhl_idx WHERE body @@ ts_phrase('pudge') AND part = 'p3' AND file_row_number % 2 = 0)
+     = (SELECT count(*) FROM ivhl_v WHERE id % 7 = 0 AND part = 'p3' AND file_row_number % 2 = 0) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT count(*) || ':' || sum(id) FROM ivhl_idx WHERE filename = (SELECT min(filename) FROM ivhl_v))
+     = (SELECT count(*) || ':' || sum(id) FROM ivhl_v WHERE filename = (SELECT min(filename) FROM ivhl_v)) AS same;
+----
+same
+t
+
+# Top-k by score: rows leave the index in score order, each with its own
+# partition, file and position.
+query
+SELECT count(*) FROM (
+  SELECT id, part, filename, file_row_number FROM ivhl_idx
+  WHERE body @@ ts_phrase('pudge') ORDER BY bm25(ivhl_idx.tableoid) DESC LIMIT 300) t
+JOIN ivhl_v v USING (id)
+WHERE t.part <> v.part OR t.filename <> v.filename OR t.file_row_number <> v.file_row_number;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  SELECT id, part FROM ivhl_idx WHERE body @@ ts_phrase('pudge') AND part IN ('p2', 'p4')
+  ORDER BY bm25(ivhl_idx.tableoid) DESC LIMIT 100) t
+WHERE t.part <> 'p' || (t.id % 8);
+----
+count
+0
+
+statement ok
+DROP INDEX ivhl_idx;
+
+statement ok
+DROP VIEW ivhl_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ivhl_en;

@@ -380,10 +380,6 @@ class IndexWriter : private util::Noncopyable {
       _field_options = std::move(options);
     }
 
-    // Queues this transaction into `flush` with its `pending_mutex` already
-    // held by the caller
-    bool CommitLocked(uint64_t last_tick, FlushContext& flush) noexcept;
-
    private:
     bool CommitImpl(uint64_t last_tick) noexcept;
     void UpdateSegment(bool disable_flush, CommitOnFlush* commit_on_flush);
@@ -463,8 +459,7 @@ class IndexWriter : private util::Noncopyable {
 
   bool ReplaceSegments(std::span<const std::string_view> replaced,
                        std::span<const std::string_view> adopted_metas,
-                       Transaction* removals = nullptr,
-                       uint64_t removals_tick = writer_limits::kMinTick);
+                       QueryContext::FilterPtr removal = nullptr);
 
   static IndexWriter::ptr Make(Directory& dir, OpenMode mode,
                                IndexWriterOptions opts = {});
@@ -552,6 +547,7 @@ class IndexWriter : private util::Noncopyable {
     FileRefs refs;
     std::shared_ptr<const SegmentReaderImpl> reader;
     CompactionContext compaction_ctx;
+    QueryContext::FilterPtr removal;
   };
 
   static_assert(std::is_nothrow_move_constructible_v<IncomingSegment>);

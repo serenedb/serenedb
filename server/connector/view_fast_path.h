@@ -100,10 +100,9 @@ constexpr bool IsExternalPK(PkSpec spec) noexcept {
   }
 }
 
-// The file-shaped pk specs: row identity comes from (file, row-ish) -- the
-// shapes whose builds capture a file manifest. NOTE: the stored pk COLUMN
-// is the two-component struct below only for the glob variants;
-// single-file sources store a scalar row pk.
+// The file-shaped pk specs: row identity comes from (file, row-ish). NOTE:
+// the stored pk COLUMN is the two-component struct below only for the glob
+// variants; single-file sources store a scalar row pk.
 constexpr bool IsFilePkSpec(PkSpec spec) noexcept {
   switch (spec) {
     case PkSpec::FileRowNumber:
@@ -118,6 +117,12 @@ constexpr bool IsFilePkSpec(PkSpec spec) noexcept {
       return false;
   }
 }
+
+enum class RefreshSource : uint8_t {
+  Rebuild,
+  Files,
+  Iceberg,
+};
 
 inline const duckdb::LogicalType& FileIndexRowNumberStructType() {
   static const auto kType = [] {
@@ -151,9 +156,9 @@ struct ViewFastPath {
   // source file: glob pk shape, no union_by_name, no LIMIT. LIMIT is the
   // only admitted construct that couples rows ACROSS files (GROUP BY /
   // HAVING / QUALIFY / SAMPLE / CTEs / DISTINCT never get a fast path at
-  // all; WHERE re-applies when a pass binds the view narrowed to one file;
-  // ORDER BY drops no rows). Everything else refreshes by rebuild.
+  // all; ORDER BY drops no rows). Everything else refreshes by rebuild.
   bool supports_delta = false;
+  RefreshSource refresh_source = RefreshSource::Rebuild;
 
   // The stored pk column's type -- what the create sink stages and
   // generated_pk declares/projects: one case per pk spec. A new spec must

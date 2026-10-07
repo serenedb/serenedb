@@ -30,8 +30,8 @@
 #include <span>
 
 #include "connector/column_id.h"
-#include "connector/file_manifest.h"
 #include "connector/index_source_view.h"
+#include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
 
@@ -114,13 +114,13 @@ class ViewFileSingleFileIndexSource final : public ViewFileIndexSourceBase {
 
 class ViewFileGlobIndexSource final : public ViewFileIndexSourceBase {
  public:
-  ViewFileGlobIndexSource(
-    duckdb::ClientContext& context, ViewFastPath fast_path,
-    std::span<const duckdb::idx_t> projected_columns,
-    std::span<const duckdb::LogicalType> projected_types,
-    std::span<const ColumnId> bind_column_ids,
-    duckdb::TableFilterSet* pushed_filters = nullptr,
-    std::shared_ptr<const search::FileManifest> file_manifest = nullptr);
+  ViewFileGlobIndexSource(duckdb::ClientContext& context,
+                          ViewFastPath fast_path,
+                          std::span<const duckdb::idx_t> projected_columns,
+                          std::span<const duckdb::LogicalType> projected_types,
+                          std::span<const ColumnId> bind_column_ids,
+                          duckdb::TableFilterSet* pushed_filters,
+                          search::InvertedIndexSnapshotPtr snapshot);
 
   duckdb::idx_t Materialize(duckdb::ClientContext& context, duckdb::Vector& pk,
                             duckdb::idx_t count,
@@ -135,9 +135,7 @@ class ViewFileGlobIndexSource final : public ViewFileIndexSourceBase {
     bool constants_match = true;
   };
   irs::containers::FlatHashMap<uint64_t, CachedFileLookup> _file_cache;
-  // The pinned snapshot's source manifest: docs store manifest file_ids, so
-  // paths resolve through it (never through the live glob expansion).
-  std::shared_ptr<const search::FileManifest> _file_manifest;
+  search::InvertedIndexSnapshotPtr _snapshot;
 
   // Each per-file lookup writes its survivors compactly from row 0 (the lookup
   // TF's per-call contract). We run each file into `_file_target` and append

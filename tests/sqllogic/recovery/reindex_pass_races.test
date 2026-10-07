@@ -1,0 +1,313 @@
+control substitution on
+
+# A REINDEX pass racing other work: a DROP INDEX while the pass waits on its
+# claim or sits between observing and filling, a source file rewritten or
+# deleted between the two, and a crash before a delta publishes.
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rpr_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+# ---- DROP INDEX while the pass holds the claim, before its transaction
+# starts: the pass no longer finds the index.
+
+system ok
+mkdir -p $__TEST_DIR__/rpr_claim
+
+statement ok
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body) TO '${__TEST_DIR__}/rpr_claim/a.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW rpr_claim_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rpr_claim/*.parquet');
+
+statement ok
+CREATE INDEX rpr_claim_idx ON rpr_claim_v USING inverted(id, body rpr_en);
+
+statement ok
+SET sdb_faults = 'pause_reindex_claimed';
+
+connection claimed
+statement async error
+SELECT * FROM serenedb_reindex('rpr_claim_idx');
+----
+db error: ERROR: index "rpr_claim_idx" does not exist
+
+
+connection default
+sleep 2s
+
+statement ok
+DROP INDEX rpr_claim_idx;
+
+statement ok
+SET sdb_faults = '-pause_reindex_claimed';
+
+wait
+
+# ---- DROP INDEX after the pass observed the source: the pass finishes
+# against the snapshot it started in, the index stays dropped, and its name
+# is free again.
+
+system ok
+mkdir -p $__TEST_DIR__/rpr_drop
+
+statement ok
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body) TO '${__TEST_DIR__}/rpr_drop/a.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW rpr_drop_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rpr_drop/*.parquet');
+
+statement ok
+CREATE INDEX rpr_drop_idx ON rpr_drop_v USING inverted(id, body rpr_en);
+
+statement ok
+COPY (SELECT 2 AS id, 'anchin reads manga' AS body) TO '${__TEST_DIR__}/rpr_drop/b.parquet' (FORMAT parquet);
+
+statement ok
+SET sdb_faults = 'pause_reindex_before_pass';
+
+connection dropper
+statement async ok
+SELECT * FROM serenedb_reindex('rpr_drop_idx');
+
+connection default
+sleep 2s
+
+statement ok
+DROP INDEX rpr_drop_idx;
+
+statement ok
+SET sdb_faults = '-pause_reindex_before_pass';
+
+wait
+
+query
+SELECT count(*) FROM pg_class WHERE relname = 'rpr_drop_idx';
+----
+count
+0
+
+statement ok
+CREATE INDEX rpr_drop_idx ON rpr_drop_v USING inverted(id, body rpr_en);
+
+query
+SELECT id FROM rpr_drop_idx ORDER BY id;
+----
+id
+1
+2
+
+# ---- A file rewritten between observing and filling: the fill reads its
+# current content under the version the pass observed, so the next pass
+# rescans it once and the one after is up_to_date.
+
+system ok
+mkdir -p $__TEST_DIR__/rpr_rw
+
+statement ok
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body) TO '${__TEST_DIR__}/rpr_rw/a.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW rpr_rw_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rpr_rw/*.parquet');
+
+statement ok
+CREATE INDEX rpr_rw_idx ON rpr_rw_v USING inverted(id, body rpr_en);
+
+statement ok
+COPY (SELECT 2 AS id, 'anchin first draft' AS body) TO '${__TEST_DIR__}/rpr_rw/b.parquet' (FORMAT parquet);
+
+statement ok
+SET sdb_faults = 'pause_reindex_before_pass';
+
+connection rewriter
+statement async ok
+SELECT * FROM serenedb_reindex('rpr_rw_idx');
+
+connection default
+sleep 2s
+
+statement ok
+COPY (SELECT 2 AS id, 'anchin final draft' AS body UNION ALL SELECT 3, 'anchin adds an appendix')
+TO '${__TEST_DIR__}/rpr_rw/b.parquet' (FORMAT parquet);
+
+statement ok
+SET sdb_faults = '-pause_reindex_before_pass';
+
+wait
+
+query
+SELECT id, body FROM rpr_rw_idx ORDER BY id;
+----
+id	body
+1	pudge goes mid
+2	anchin final draft
+3	anchin adds an appendix
+
+query
+SELECT * FROM serenedb_reindex('rpr_rw_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	1
+
+query
+SELECT count(*), count(DISTINCT id) FROM rpr_rw_idx WHERE body @@ ts_phrase('anchin');
+----
+count	count
+2	2
+
+query
+SELECT action FROM serenedb_reindex('rpr_rw_idx');
+----
+action
+up_to_date
+
+# ---- A file deleted between observing and filling: the fill cannot open it,
+# the pass fails and leaves the index as it was, and the next pass sees the
+# listing it already holds.
+
+system ok
+mkdir -p $__TEST_DIR__/rpr_rm
+
+statement ok
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body) TO '${__TEST_DIR__}/rpr_rm/a.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW rpr_rm_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rpr_rm/*.parquet');
+
+statement ok
+CREATE INDEX rpr_rm_idx ON rpr_rm_v USING inverted(id, body rpr_en);
+
+statement ok
+COPY (SELECT 2 AS id, 'anchin vanishes' AS body) TO '${__TEST_DIR__}/rpr_rm/b.parquet' (FORMAT parquet);
+
+statement ok
+SET sdb_faults = 'pause_reindex_before_pass';
+
+connection remover
+statement async error
+SELECT * FROM serenedb_reindex('rpr_rm_idx');
+----
+db error: ERROR: Cannot open file "<slt:ignore>
+
+
+connection default
+sleep 2s
+
+system ok
+rm $__TEST_DIR__/rpr_rm/b.parquet
+
+statement ok
+SET sdb_faults = '-pause_reindex_before_pass';
+
+wait
+
+query
+SELECT id FROM rpr_rm_idx ORDER BY id;
+----
+id
+1
+
+query
+SELECT * FROM serenedb_reindex('rpr_rm_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+# ---- A crash after a delta filled but before it published: the restarted
+# server serves the index as it was, and the next pass applies the delta.
+
+system ok
+mkdir -p $__TEST_DIR__/rpr_crash
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(3) t(i)) TO '${__TEST_DIR__}/rpr_crash/a.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW rpr_crash_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rpr_crash/*.parquet');
+
+statement ok
+CREATE INDEX rpr_crash_idx ON rpr_crash_v USING inverted(id, body rpr_en);
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(3, 5) t(i)) TO '${__TEST_DIR__}/rpr_crash/b.parquet' (FORMAT parquet);
+
+statement ok
+SET sdb_faults = 'crash_reindex_before_publish';
+
+statement error
+SELECT * FROM serenedb_reindex('rpr_crash_idx');
+----
+connection closed
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM rpr_crash_idx WHERE body @@ ts_phrase('doc');
+----
+count
+3
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('rpr_crash_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+connection after_crash
+query
+SELECT count(*), count(DISTINCT id) FROM rpr_crash_idx WHERE body @@ ts_phrase('doc');
+----
+count	count
+5	5
+
+connection after_crash
+query
+SELECT action FROM serenedb_reindex('rpr_crash_idx');
+----
+action
+up_to_date
+
+connection after_crash
+statement ok
+DROP INDEX rpr_crash_idx;
+
+connection after_crash
+statement ok
+DROP VIEW rpr_crash_v;
+
+connection after_crash
+statement ok
+DROP INDEX rpr_rm_idx;
+
+connection after_crash
+statement ok
+DROP VIEW rpr_rm_v;
+
+connection after_crash
+statement ok
+DROP INDEX rpr_rw_idx;
+
+connection after_crash
+statement ok
+DROP VIEW rpr_rw_v;
+
+connection after_crash
+statement ok
+DROP INDEX rpr_drop_idx;
+
+connection after_crash
+statement ok
+DROP VIEW rpr_drop_v;
+
+connection after_crash
+statement ok
+DROP VIEW rpr_claim_v;
+
+connection after_crash
+statement ok
+DROP TEXT SEARCH DICTIONARY rpr_en;

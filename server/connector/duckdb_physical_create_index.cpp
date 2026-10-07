@@ -29,10 +29,12 @@
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/common/multi_file/multi_file_states.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/execution/execution_context.hpp>
 #include <duckdb/execution/operator/projection/physical_projection.hpp>
+#include <duckdb/execution/operator/scan/physical_table_scan.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -53,8 +55,8 @@
 #include <duckdb/storage/storage_lock.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
-#include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -74,6 +76,7 @@
 #include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "connector/search_table_backfill.h"
+#include "connector/source_file.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
@@ -112,7 +115,9 @@ struct CreateIndexGlobalState final : public duckdb::GlobalSinkState {
   PkShape pk_shape = PkShape::Single;
   duckdb::idx_t pk_base_col_idx = 0;
   duckdb::LogicalType generated_pk_type;
-  std::shared_ptr<const search::FileManifest> file_manifest;
+  bool file_keyed = false;
+  std::span<const std::string> file_terms;
+  search::SourcePosition position;
 
   std::atomic<duckdb::idx_t> backfill_count_atomic{0};
   // Rows at or above this rowid committed after the index was published and
@@ -144,6 +149,8 @@ struct CreateIndexLocalState final : public duckdb::LocalSinkState {
   // and throw away exactly the buffers the pooling is for.
   std::vector<std::string> row_keys;
   std::vector<duckdb::string_t> key_views;
+  std::vector<duckdb::string_t> file_term_views;
+  duckdb::Vector file_ids{duckdb::LogicalType::UBIGINT};
   std::vector<FeedColumn> columns;
   std::vector<ExpressionValue> expression_values;
   duckdb::SelectionVector backfill_sel{STANDARD_VECTOR_SIZE};
@@ -237,6 +244,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     pk_type.id() == duckdb::LogicalTypeId::STRUCT && pk_type != pg::CTID()
       ? PkShape::Struct
       : PkShape::Single;
+  state->generated_pk_type = pk_type;
+  state->file_keyed = state->pk_shape == PkShape::Struct &&
+                      pk_type == FileIndexRowNumberStructType();
   if (IsReindexPass()) {
     // The pass carries the index's name, resolved in the schema the statement
     // is qualified with -- the same pair every other lookup in this operator
@@ -288,7 +298,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       } else {
         const auto published = PublishInvertedIndex(
           context, index_entry, _relation, _bound_expressions);
-        published.storage->SetFileManifest(extras ? extras->manifest : nullptr);
         published.storage->StartTasks();
         if (IsDuckDBTable()) {
           published.storage->SetDeleteLogRowidEnd(published.rowid_horizon);
@@ -318,8 +327,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   state->pk_term = policy.index_term;
   state->pk_column = policy.column;
   if (extras) {
-    state->generated_pk_type = extras->generated_pk_type;
-    state->file_manifest = extras->manifest;
+    state->file_terms = extras->file_terms;
+    state->position = extras->position;
   }
 
   auto storage = created->Cast<catalog::InvertedIndexEntry>().Storage();
@@ -333,19 +342,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     return state;
   }
   state->index_storage = storage;
-  if (extras && extras->Pass() == ReindexPass::Rebuild) {
-    auto trx = storage->GetTransaction();
-    trx.Remove(std::make_shared<irs::All>());
-    trx.RegisterFlush();
-    if (!trx.Commit(
-          search::TickDomain::Instance().Next(trx.GetQueries() + 1))) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INTERNAL_ERROR),
-        ERR_MSG("REINDEX of \"", extras->source_index.GetIdentifierName(),
-                "\": failed to commit the remove-all"));
-    }
-  }
-
   state->table_id = _relation.oid;
   // One slot per entry of info.column_ids, in that order, then the row
   // identifier the bind appends. Position i is column_ids[i] -- nothing here
@@ -392,6 +388,28 @@ void AdvanceUncommittedMin(CreateIndexGlobalState& gstate, size_t slot,
   gstate.index_storage->SetDeleteLogRowidBegin(begin);
 }
 
+void ResolveChunkFiles(const CreateIndexGlobalState& gstate,
+                       duckdb::Vector& file_index, duckdb::idx_t num_rows,
+                       CreateIndexLocalState& lstate) {
+  duckdb::UnifiedVectorFormat format;
+  file_index.ToUnifiedFormat(num_rows, format);
+  const auto* ordinals = duckdb::UnifiedVectorFormat::GetData<uint64_t>(format);
+  auto* ids = duckdb::FlatVector::GetDataMutable<uint64_t>(lstate.file_ids);
+  if (gstate.file_terms.empty()) {
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      ids[row] = ordinals[format.sel->get_index(row)];
+    }
+    return;
+  }
+  lstate.file_term_views.resize(num_rows);
+  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+    const auto& term = gstate.file_terms[ordinals[format.sel->get_index(row)]];
+    ids[row] = SourceFileTermId(term);
+    lstate.file_term_views[row] =
+      duckdb::string_t{term.data(), static_cast<uint32_t>(term.size())};
+  }
+}
+
 }  // namespace
 
 duckdb::unique_ptr<duckdb::LocalSinkState>
@@ -406,7 +424,7 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
 
   auto lstate = duckdb::make_uniq<CreateIndexLocalState>();
   lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
-    inverted_storage.GetTransaction());
+    inverted_storage.GetTransaction(/*exclusive_segment=*/IsReindexPass()));
   lstate->search_trx->SetFieldOptions(gstate.config);
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
     *lstate->search_trx,
@@ -460,6 +478,18 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   PkChunk pk;
   auto& key_views = lstate->key_views;
   key_views.clear();
+  auto& file_term_views = lstate->file_term_views;
+  file_term_views.clear();
+  const bool file_keyed = gstate.file_keyed;
+  if (file_keyed) {
+    ResolveChunkFiles(gstate, chunk.data[gstate.pk_base_col_idx], num_rows,
+                      *lstate);
+  } else if (!gstate.file_terms.empty()) {
+    const auto& term = gstate.file_terms.front();
+    file_term_views.assign(
+      num_rows,
+      duckdb::string_t{term.data(), static_cast<uint32_t>(term.size())});
+  }
   if (gstate.pk_column == connector::PkColumnKind::Has) {
     switch (gstate.pk_shape) {
       case PkShape::Single:
@@ -483,7 +513,8 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
         }
         auto& entries = duckdb::StructVector::GetEntries(*lstate->pk_scratch);
         for (duckdb::idx_t i = 0; i < entries.size(); ++i) {
-          entries[i].Reference(chunk.data[base + i]);
+          entries[i].Reference(i == 0 && file_keyed ? lstate->file_ids
+                                                    : chunk.data[base + i]);
         }
         pk.column = lstate->pk_scratch.get();
       } break;
@@ -503,22 +534,21 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
       case PkShape::Struct: {
         // The glob (file, row) halves; pk_term is never set for external
         // key structs.
-        SDB_ASSERT(gstate.generated_pk_type == FileIndexRowNumberStructType());
-        const auto base = gstate.pk_base_col_idx;
-        duckdb::UnifiedVectorFormat file_fmt;
-        chunk.data[base].ToUnifiedFormat(num_rows, file_fmt);
-        auto* files = duckdb::UnifiedVectorFormat::GetData<uint64_t>(file_fmt);
+        SDB_ASSERT(file_keyed);
         duckdb::UnifiedVectorFormat row_fmt;
-        chunk.data[base + 1].ToUnifiedFormat(num_rows, row_fmt);
+        chunk.data[gstate.pk_base_col_idx + 1].ToUnifiedFormat(num_rows,
+                                                               row_fmt);
         auto* rows = duckdb::UnifiedVectorFormat::GetData<int64_t>(row_fmt);
         auto& row_keys = lstate->row_keys;
         if (row_keys.size() < num_rows) {
           row_keys.resize(num_rows);
         }
+        const auto* file_ids =
+          duckdb::FlatVector::GetData<uint64_t>(lstate->file_ids);
         for (duckdb::idx_t row = 0; row < num_rows; ++row) {
           auto& key = row_keys[row];
           key.clear();
-          primary_key::AppendUnsigned(key, files[file_fmt.sel->get_index(row)]);
+          primary_key::AppendUnsigned(key, file_ids[row]);
           primary_key::AppendSigned(key, rows[row_fmt.sel->get_index(row)]);
           key_views.emplace_back(key.data(), static_cast<uint32_t>(key.size()));
         }
@@ -526,6 +556,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     }
     pk.key_terms = key_views;
   }
+  pk.file_terms = file_term_views;
 
   auto& columns = lstate->columns;
   if (columns.empty()) {
@@ -617,7 +648,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
       gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Committing);
     }
   }
-  if (!gstate.index_storage) {
+  if (!gstate.index_storage || IsReindexPass()) {
     return duckdb::SinkFinalizeType::READY;
   }
 
@@ -645,22 +676,17 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
                               gstate.index_name, "'"));
     }
   }
-  SDB_IF_FAILURE("refresh_before_manifest_publish") {
+  SDB_IF_FAILURE("refresh_before_position_publish") {
     inverted_storage.Refresh();
   }
-  if (gstate.file_manifest) {
-    inverted_storage.SetFileManifest(gstate.file_manifest);
-  }
-  inverted_storage.Refresh();
+  inverted_storage.CommitPosition(gstate.position);
   SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
   inverted_storage.FinishCreation();
 
   if (gstate.progress) {
     gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Finalizing);
   }
-  if (!IsReindexPass()) {
-    SDB_IF_FAILURE("crash_before_commit") { SDB_IMMEDIATE_ABORT(); }
-  }
+  SDB_IF_FAILURE("crash_before_commit") { SDB_IMMEDIATE_ABORT(); }
   return duckdb::SinkFinalizeType::READY;
 }
 
@@ -675,9 +701,54 @@ duckdb::SourceResultType SereneDBPhysicalCreateIndex::GetDataInternal(
   return duckdb::SourceResultType::FINISHED;
 }
 
+namespace {
+
+void AlignFileTerms(duckdb::ClientContext& context,
+                    duckdb::PhysicalOperator& input,
+                    SereneDBCreateIndexInfo& info) {
+  if (info.file_terms.empty()) {
+    return;
+  }
+  auto* scan = &input;
+  while (scan->type != duckdb::PhysicalOperatorType::TABLE_SCAN) {
+    if (scan->children.size() != 1) {
+      return;
+    }
+    scan = &scan->children[0].get();
+  }
+  const auto* bind = dynamic_cast<const duckdb::MultiFileBindData*>(
+    scan->Cast<duckdb::PhysicalTableScan>().bind_data.get());
+  if (!bind) {
+    return;
+  }
+  const auto listing = ListSource(context, *bind->file_list, false);
+  if (listing.files.size() == info.file_terms.size()) {
+    return;
+  }
+  irs::containers::FlatHashMap<std::string_view, const std::string*> by_path;
+  by_path.reserve(info.file_terms.size());
+  for (const auto& term : info.file_terms) {
+    by_path.emplace(
+      ParseSourceFileTerm(irs::ViewCast<irs::byte_type>(std::string_view{term}))
+        .path,
+      &term);
+  }
+  std::vector<std::string> aligned;
+  aligned.reserve(listing.files.size());
+  for (const auto& file : listing.files) {
+    aligned.push_back(*by_path.at(file.path));
+  }
+  info.file_terms = std::move(aligned);
+}
+
+}  // namespace
+
 duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   duckdb::PlanIndexInput& input) {
   auto& op = input.op;
+  if (auto* extras = dynamic_cast<SereneDBCreateIndexInfo*>(op.info.get())) {
+    AlignFileTerms(input.context, input.table_scan, *extras);
+  }
   auto& table_catalog = op.table.ParentCatalog();
   if (table_catalog.GetCatalogType() !=
       catalog::SereneDBCatalog::kStorageType) {

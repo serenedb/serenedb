@@ -32,10 +32,6 @@ SELECT count(*) FROM reindex_idx WHERE body @@ ts_phrase('pudge');
 count
 2
 
-# Rewrite the source file wholesale: the index is static, so counts stay at
-# the indexed state. (Materialisation through stale positional keys against
-# rewritten bytes is undefined by design until the manifest read path lands
-# -- only the count staleness is asserted here.)
 statement count 5
 COPY (SELECT 10 AS id, 'pudge goes mid' AS body
       UNION ALL SELECT 11, 'pudge farms jungle'
@@ -73,8 +69,6 @@ SELECT id FROM reindex_idx WHERE body @@ ts_phrase('vedernikoff');
 id
 14
 
-# REINDEX against an unchanged source detects it via the manifest
-# fingerprints and is a no-op.
 query
 SELECT * FROM serenedb_reindex('reindex_idx');
 ----
@@ -168,8 +162,7 @@ SELECT * FROM serenedb_reindex('reindex_glob_idx');
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
 
-# A delta creates NO catalog object: no sibling, no new oid -- the synthesized
-# statement's temp name is a bind-time placeholder only.
+# A delta creates NO catalog object: no sibling, no new oid.
 query
 SELECT count(*) FROM pg_class WHERE relname LIKE '%reindex_d%';
 ----
@@ -224,7 +217,7 @@ count
 3
 
 # EVERY doc of the rewritten file died with its file_id -- not just the first
-# posting (SearchRemoveAllFilter vs the unique-PK remove).
+# posting.
 query
 SELECT count(*) FROM reindex_glob_idx WHERE body @@ ts_phrase('mines');
 ----
@@ -377,9 +370,8 @@ count
 0
 
 
-# Partial index (WHERE): the synthesized REINDEX statement carries no WHERE
-# clause -- rebuild and delta passes re-apply the persisted predicate at the
-# sink, so refreshed docs keep respecting it.
+# Partial index (WHERE): rebuild and delta passes re-apply the persisted
+# predicate, so refreshed docs keep respecting it.
 
 statement count 3
 COPY (SELECT 1 AS id, 'pudge goes mid' AS body
@@ -506,7 +498,7 @@ id
 2
 
 
-# COMMENT ON INDEX survives the recreate-and-switch (the clone carries it).
+# COMMENT ON INDEX survives a REINDEX.
 
 statement ok
 COMMENT ON INDEX reindex_idx IS 'vedernikoff approves';

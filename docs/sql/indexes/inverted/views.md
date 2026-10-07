@@ -152,7 +152,7 @@ A pass always compares against the source's **current committed state** — for 
 
 A pass reads the source in a transaction of its own, not the caller's. Inside an explicit transaction it still sees every commit made before it started, and it never sees the caller's own uncommitted writes to the source. The index itself must be committed: an index created in the same, still-open transaction cannot be refreshed yet.
 
-Only one pass runs per index at a time. A `REINDEX` that finds another pass running — manual or [automatic](#automatic-refresh) — waits for it to finish and then runs its own pass against the source as it is at that moment. While it waits, `pg_stat_progress_create_index` shows it with `command = 'REINDEX'` and phase `waiting for running reindex`; it can be cancelled during the wait. If the source changes while a pass is running, the pass is repeated automatically.
+Only one pass runs per index at a time. A `REINDEX` that finds another pass running — manual or [automatic](#automatic-refresh) — waits for it to finish and then runs its own pass against the source as it is at that moment. While it waits, `pg_stat_progress_create_index` shows it with `command = 'REINDEX'` and phase `waiting for running reindex`. It can be cancelled while it waits and while its pass runs; a cancelled, failed or interrupted pass leaves the index exactly as it was, and a server restart in the middle of a pass discards the pass's partial work. A `REINDEX` runs one pass over the source as it finds it when the pass starts; a change that arrives while the pass runs is picked up by the next `REINDEX` or refresh.
 
 <SqlLogicTest id="sql/indexes/inverted/views/reindex_setup" />
 
@@ -170,10 +170,17 @@ What a pass detects — and how much work it does — depends on the source:
 | **File glob** (Parquet/CSV/JSON, local or S3) | files that appeared, changed or disappeared | **delta** — unchanged files are not re-read |
 | **Everything else** (base tables, attached databases, generic views) | any change | **full rebuild** each pass |
 
-Two caveats:
+A pass lists the source once: the comparison and the scan of the files it re-reads share one listing, so a glob's directory or bucket is listed once per pass and an Iceberg table's metadata is loaded once.
 
-- If an Iceberg table's indexed snapshot has left the table's history (rollback, snapshot expiration), the pass falls back to a full rebuild — no sequence comparison can see deletes that were undone.
+Iceberg metadata files, manifest lists and data manifests never change once written, so SereneDB keeps them parsed in memory, shared by queries and passes and released under memory pressure. A pass therefore decodes only the data manifests committed since the previous one. Of the delete manifests it reads only those newer than the indexed snapshot, plus, for each data file it re-reads, the ones that can apply to that file.
+
+Caveats:
+
+- If an Iceberg format-version 2 or 3 table's indexed snapshot has left the table's history (rollback, snapshot expiration), the pass falls back to a full rebuild — no sequence comparison can see deletes that were undone. A format-version 1 table has no row-level deletes, so its pass stays a delta.
 - An index that cannot re-derive row identity takes the rebuild road regardless of source: one built `WITH (store_pk = 'none')`, or over a view whose body caps rows with `LIMIT`.
+- Redefining the view (`CREATE OR REPLACE VIEW`) or the index's predicate makes the next pass a full rebuild, so no document built from the old definition survives a refresh.
+- An index built over a fast-path source stores each row's identity, and every rebuild has to recompute it. If the view is redefined into a shape that no longer provides it (for example, an expression in the select list), `REINDEX` fails with an error, the index keeps serving its last state, and it has to be dropped and recreated.
+- An index created by a server version that did not yet record its source files inside the index is rebuilt by its first pass. Until then, queries that return the view's source columns from it fail with a hint to run `REINDEX`.
 
 ### Automatic refresh
 

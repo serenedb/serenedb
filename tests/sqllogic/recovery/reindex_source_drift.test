@@ -42,6 +42,18 @@ query
 SELECT count(*) FROM rsd_idx WHERE body @@ ts_phrase('doc');
 ----
 count
+8
+
+query
+SELECT * FROM serenedb_reindex('rsd_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT count(*) FROM rsd_idx WHERE body @@ ts_phrase('doc');
+----
+count
 10
 
 query

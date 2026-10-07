@@ -130,9 +130,6 @@ count
 2
 
 
-# Single csv file: manifest-backed up_to_date, changes rebuild (delta is a
-# glob concept; one changed file IS the whole source).
-
 statement count 2
 COPY (SELECT 1 AS id, 'pudge goes mid' AS body
       UNION ALL SELECT 2, 'vedernikoff checks singles')

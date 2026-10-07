@@ -136,10 +136,26 @@ struct IndexWriterOptions : public SegmentOptions {
   IndexWriterOptions() {}
 };
 
+struct SegmentIdRange {
+  uint64_t first = 0;
+  uint64_t last = std::numeric_limits<uint64_t>::max();
+
+  bool Contains(uint64_t id) const noexcept {
+    return first <= id && id <= last;
+  }
+};
+
 struct CommitInfo {
   uint64_t tick = writer_limits::kMaxTick;
   ProgressReportCallback progress;
   bool reopen_reader = false;
+  bool payload_changed = false;
+  std::optional<SegmentIdRange> drop_segments;
+};
+
+enum class FloorArming : uint8_t {
+  WhenIdle,
+  Now,
 };
 
 struct CommitOnFlush {
@@ -453,7 +469,8 @@ class IndexWriter : private util::Noncopyable {
     uint64_t _floor = 0;
   };
 
-  CompactionFloorGuard ArmCompactionFloor();
+  CompactionFloorGuard ArmCompactionFloor(
+    FloorArming arming = FloorArming::WhenIdle);
 
   uint64_t CurrentSegmentId() const noexcept;
 

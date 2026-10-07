@@ -1,0 +1,378 @@
+control substitution on
+
+# An index refreshed by deltas answers exactly like one built fresh over the
+# same files: the same rows, the same phrase matches, the same BM25 scores.
+# Then glob shapes a pass must keep: many files at once, a recursive glob, a
+# view that picks and reorders columns under a function predicate, INCLUDE
+# columns and stored row keys through rescans.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rvc_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+# ---- One pass that adds, rewrites and removes files at the same time.
+
+system ok
+mkdir -p $__TEST_DIR__/rvc_mix
+
+statement count 40
+COPY (SELECT i AS id, repeat('pudge ', (i % 4) + 1) || repeat('filler ', i % 7) || 'end' AS body
+      FROM range(40) t(i))
+TO '${__TEST_DIR__}/rvc_mix/a.parquet' (FORMAT PARQUET);
+
+statement count 40
+COPY (SELECT i AS id, repeat('pudge ', (i % 3) + 1) || repeat('filler ', i % 5) || 'end' AS body
+      FROM range(100, 140) t(i))
+TO '${__TEST_DIR__}/rvc_mix/b.parquet' (FORMAT PARQUET);
+
+statement count 40
+COPY (SELECT i AS id, 'pudge ' || repeat('filler ', i % 9) || 'end' AS body
+      FROM range(200, 240) t(i))
+TO '${__TEST_DIR__}/rvc_mix/c.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvc_mix_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvc_mix/*.parquet');
+
+statement ok
+CREATE INDEX rvc_old ON rvc_mix_v USING inverted(id, body rvc_en) WITH (compaction_interval = 0);
+
+statement count 25
+COPY (SELECT i AS id, repeat('pudge ', (i % 3) + 1) || 'tail ' || repeat('word ', i % 5) AS body
+      FROM range(25) t(i))
+TO '${__TEST_DIR__}/rvc_mix/a.parquet' (FORMAT PARQUET);
+
+system ok
+rm $__TEST_DIR__/rvc_mix/b.parquet
+
+statement count 30
+COPY (SELECT i AS id, 'pudge ' || repeat('extra ', i % 9) || 'tail' AS body
+      FROM range(300, 330) t(i))
+TO '${__TEST_DIR__}/rvc_mix/d.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('rvc_old');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	1	1	1
+
+statement ok
+CREATE INDEX rvc_new ON rvc_mix_v USING inverted(id, body rvc_en) WITH (compaction_interval = 0);
+
+query
+SELECT count(*), count(DISTINCT id) FROM rvc_old WHERE body @@ ts_phrase('pudge');
+----
+count	count
+95	95
+
+query
+SELECT count(DISTINCT s) > 1 AS varied FROM (SELECT round(bm25(rvc_new.tableoid), 6) AS s FROM rvc_new WHERE body @@ ts_phrase('pudge'));
+----
+varied
+t
+
+query
+SELECT count(*) FROM (
+  (SELECT id, round(bm25(rvc_old.tableoid), 6) AS s FROM rvc_old WHERE body @@ ts_phrase('pudge')
+   EXCEPT
+   SELECT id, round(bm25(rvc_new.tableoid), 6) AS s FROM rvc_new WHERE body @@ ts_phrase('pudge'))
+  UNION ALL
+  (SELECT id, round(bm25(rvc_new.tableoid), 6) AS s FROM rvc_new WHERE body @@ ts_phrase('pudge')
+   EXCEPT
+   SELECT id, round(bm25(rvc_old.tableoid), 6) AS s FROM rvc_old WHERE body @@ ts_phrase('pudge')));
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rvc_old WHERE body @@ ts_phrase('pudge tail')
+   EXCEPT SELECT id FROM rvc_new WHERE body @@ ts_phrase('pudge tail'))
+  UNION ALL
+  (SELECT id FROM rvc_new WHERE body @@ ts_phrase('pudge tail')
+   EXCEPT SELECT id FROM rvc_old WHERE body @@ ts_phrase('pudge tail')));
+----
+count
+0
+
+query
+SELECT count(*) FROM rvc_old WHERE body @@ ts_phrase('pudge tail');
+----
+count
+28
+
+query
+SELECT count(*) FROM rvc_old WHERE body @@ ts_phrase('filler');
+----
+count
+36
+
+# ---- Text outside ASCII refreshes the same way it indexes at creation.
+
+system ok
+mkdir -p $__TEST_DIR__/rvc_text
+
+statement count 1
+COPY (SELECT 1 AS id, 'Pudge élève 中文 straße' AS body)
+TO '${__TEST_DIR__}/rvc_text/a.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvc_text_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvc_text/*.parquet');
+
+statement ok
+CREATE INDEX rvc_text_old ON rvc_text_v USING inverted(id, body rvc_en);
+
+statement count 1
+COPY (SELECT 2 AS id, 'Élève café naïve 中文 ünïcödé' AS body)
+TO '${__TEST_DIR__}/rvc_text/b.parquet' (FORMAT PARQUET);
+
+query
+SELECT action FROM serenedb_reindex('rvc_text_old');
+----
+action
+delta
+
+statement ok
+CREATE INDEX rvc_text_new ON rvc_text_v USING inverted(id, body rvc_en);
+
+query
+SELECT count(*) FROM (
+  (SELECT 'élève' AS w, id FROM rvc_text_old WHERE body @@ ts_phrase('élève')
+   UNION ALL SELECT 'Élève', id FROM rvc_text_old WHERE body @@ ts_phrase('Élève')
+   UNION ALL SELECT 'cafe', id FROM rvc_text_old WHERE body @@ ts_phrase('cafe')
+   UNION ALL SELECT '中文', id FROM rvc_text_old WHERE body @@ ts_phrase('中文')
+   UNION ALL SELECT 'straße', id FROM rvc_text_old WHERE body @@ ts_phrase('straße'))
+  EXCEPT
+  (SELECT 'élève' AS w, id FROM rvc_text_new WHERE body @@ ts_phrase('élève')
+   UNION ALL SELECT 'Élève', id FROM rvc_text_new WHERE body @@ ts_phrase('Élève')
+   UNION ALL SELECT 'cafe', id FROM rvc_text_new WHERE body @@ ts_phrase('cafe')
+   UNION ALL SELECT '中文', id FROM rvc_text_new WHERE body @@ ts_phrase('中文')
+   UNION ALL SELECT 'straße', id FROM rvc_text_new WHERE body @@ ts_phrase('straße')));
+----
+count
+0
+
+query
+SELECT id FROM rvc_text_old WHERE body @@ ts_phrase('中文') ORDER BY id;
+----
+id
+1
+2
+
+# ---- Forty files arrive in one pass, then every other one leaves.
+
+system ok
+mkdir -p $__TEST_DIR__/rvc_many
+
+statement count 1
+COPY (SELECT 0 AS id, 'doc number zero' AS body)
+TO '${__TEST_DIR__}/rvc_many/f000.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvc_many_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvc_many/*.parquet');
+
+statement ok
+CREATE INDEX rvc_many_idx ON rvc_many_v USING inverted(id, body rvc_en);
+
+system ok
+for i in $(seq -w 1 40); do cp $__TEST_DIR__/rvc_many/f000.parquet $__TEST_DIR__/rvc_many/f0$i.parquet; done
+
+query
+SELECT * FROM serenedb_reindex('rvc_many_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	40	0	0	0
+
+query
+SELECT count(*) FROM rvc_many_idx WHERE body @@ ts_phrase('doc');
+----
+count
+41
+
+system ok
+for i in $(seq -w 1 2 40); do rm $__TEST_DIR__/rvc_many/f0$i.parquet; done
+
+query
+SELECT * FROM serenedb_reindex('rvc_many_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	0	20	0
+
+query
+SELECT count(*) FROM rvc_many_idx WHERE body @@ ts_phrase('doc');
+----
+count
+21
+
+query
+SELECT action FROM serenedb_reindex('rvc_many_idx');
+----
+action
+up_to_date
+
+# ---- A recursive glob: a file in a new nested directory is an added file.
+
+system ok
+mkdir -p $__TEST_DIR__/rvc_rec/x
+
+statement count 1
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body)
+TO '${__TEST_DIR__}/rvc_rec/x/a.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvc_rec_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvc_rec/**/*.parquet');
+
+statement ok
+CREATE INDEX rvc_rec_idx ON rvc_rec_v USING inverted(id, body rvc_en);
+
+system ok
+mkdir -p $__TEST_DIR__/rvc_rec/y/z
+
+statement count 1
+COPY (SELECT 2 AS id, 'anchin reads manga' AS body)
+TO '${__TEST_DIR__}/rvc_rec/y/z/b.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('rvc_rec_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id, body FROM rvc_rec_idx ORDER BY id;
+----
+id	body
+1	pudge goes mid
+2	anchin reads manga
+
+# ---- A view that picks and reorders columns, a mixed-case column name and
+# a predicate with a function: deltas keep all three.
+
+system ok
+mkdir -p $__TEST_DIR__/rvc_pick
+
+statement count 2
+COPY (SELECT 1 AS id, 'Pudge goes mid' AS "Body", 'x' AS extra
+      UNION ALL SELECT 2, 'tiny', 'y')
+TO '${__TEST_DIR__}/rvc_pick/a.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvc_pick_v AS SELECT "Body", id FROM read_parquet('${__TEST_DIR__}/rvc_pick/*.parquet');
+
+statement ok
+CREATE INDEX rvc_pick_idx ON rvc_pick_v USING inverted(id, "Body" rvc_en) WHERE length("Body") > 5;
+
+statement count 2
+COPY (SELECT 3 AS id, 'Anchin reads manga' AS "Body", 'z' AS extra
+      UNION ALL SELECT 4, 'abc', 'w')
+TO '${__TEST_DIR__}/rvc_pick/b.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('rvc_pick_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id, "Body" FROM rvc_pick_idx ORDER BY id;
+----
+id	Body
+1	Pudge goes mid
+3	Anchin reads manga
+
+# ---- INCLUDE columns and stored (file, row) keys follow a rescanned file.
+
+system ok
+mkdir -p $__TEST_DIR__/rvc_inc
+
+statement count 1
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body, 10 AS rank)
+TO '${__TEST_DIR__}/rvc_inc/a.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvc_inc_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvc_inc/*.parquet');
+
+statement ok
+CREATE INDEX rvc_inc_idx ON rvc_inc_v USING inverted(body rvc_en) INCLUDE (id, rank);
+
+statement ok
+CREATE INDEX rvc_key_idx ON rvc_inc_v USING inverted(id, body rvc_en) WITH (store_pk = 'i64i64');
+
+statement count 2
+COPY (SELECT 1 AS id, 'pudge goes top' AS body, 20 AS rank
+      UNION ALL SELECT 2, 'pudge plays support', 30)
+TO '${__TEST_DIR__}/rvc_inc/a.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('rvc_inc_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	1
+
+query
+SELECT id, rank FROM rvc_inc_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	rank
+1	20
+2	30
+
+query
+SELECT * FROM serenedb_reindex('rvc_key_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	1
+
+query
+SELECT id, body FROM rvc_key_idx ORDER BY id;
+----
+id	body
+1	pudge goes top
+2	pudge plays support
+
+statement ok
+DROP INDEX rvc_key_idx;
+
+statement ok
+DROP INDEX rvc_inc_idx;
+
+statement ok
+DROP VIEW rvc_inc_v;
+
+statement ok
+DROP INDEX rvc_pick_idx;
+
+statement ok
+DROP VIEW rvc_pick_v;
+
+statement ok
+DROP INDEX rvc_rec_idx;
+
+statement ok
+DROP VIEW rvc_rec_v;
+
+statement ok
+DROP INDEX rvc_many_idx;
+
+statement ok
+DROP VIEW rvc_many_v;
+
+statement ok
+DROP INDEX rvc_text_new;
+
+statement ok
+DROP INDEX rvc_text_old;
+
+statement ok
+DROP VIEW rvc_text_v;
+
+statement ok
+DROP INDEX rvc_new;
+
+statement ok
+DROP INDEX rvc_old;
+
+statement ok
+DROP VIEW rvc_mix_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rvc_en;

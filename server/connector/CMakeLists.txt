@@ -51,8 +51,10 @@ target_sources(
         duckdb_foreign_server_function.cpp
         duckdb_physical_create_index.cpp
         duckdb_index_utils.cpp
-        duckdb_reindex_function.cpp
-        file_manifest.cpp
+        reindex/observe_files.cpp
+        reindex/observe_iceberg.cpp
+        reindex/reindex.cpp
+        source_file.cpp
         duckdb_vacuum_function.cpp
         duckdb_physical_search_truncate.cpp
         highlight/highlight_options.cpp

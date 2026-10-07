@@ -1,0 +1,135 @@
+control substitution on
+
+# A table's partition spec changes between two refreshes. Manifests decoded
+# before the change are cached; the passes after it read manifests of both
+# specs, and every refresh must still land on the source's content.
+
+statement ok
+CREATE OR REPLACE PERSISTENT SECRET pe_${__DATABASE__} (
+  TYPE S3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/'
+);
+
+statement ok
+SET s3_use_ssl=false;
+
+statement ok
+SET unsafe_enable_version_guessing=true;
+
+statement ok
+DETACH DATABASE IF EXISTS pe_${__DATABASE__};
+
+statement ok
+ATTACH '${ICEBERG_WAREHOUSE}' AS pe_${__DATABASE__} (
+  TYPE ICEBERG,
+  ENDPOINT '${ICEBERG_REST_URL}',
+  AUTHORIZATION_TYPE 'none'
+);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pe_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE SCHEMA pe_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+SET search_path TO public, pe_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE pe_${__DATABASE__}.${__DATABASE__}.pe (part TEXT, id INTEGER, body TEXT);
+
+statement count 2
+INSERT INTO pe VALUES ('a', 1, 'pudge one'), ('b', 2, 'anchin one');
+
+statement ok
+CREATE VIEW pe_v AS SELECT * FROM iceberg_scan(
+  's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/pe',
+  allow_moved_paths=true);
+
+statement ok
+CREATE INDEX pe_idx ON pe_v USING inverted(id, body pe_en) WITH (compaction_interval=0);
+
+statement ok
+ALTER TABLE pe_${__DATABASE__}.${__DATABASE__}.pe SET PARTITIONED BY (part);
+
+statement count 1
+INSERT INTO pe VALUES ('a', 3, 'vedernikoff two');
+
+statement count 1
+INSERT INTO pe VALUES ('c', 4, 'techies two');
+
+query
+SELECT * FROM serenedb_reindex('pe_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	2	0	0	0
+
+query
+SELECT count(*) FROM pe_v;
+----
+count
+4
+
+statement ok
+DELETE FROM pe WHERE id = 1;
+
+query
+SELECT * FROM serenedb_reindex('pe_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	0
+
+statement ok
+DELETE FROM pe WHERE id = 3;
+
+query
+SELECT * FROM serenedb_reindex('pe_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	0
+
+query
+SELECT id FROM pe_idx WHERE body @@ ts_phrase('one') ORDER BY id;
+----
+id
+2
+
+query
+SELECT id FROM pe_idx WHERE body @@ ts_phrase('two') ORDER BY id;
+----
+id
+4
+
+query
+SELECT count(*) FROM pe_v;
+----
+count
+2
+
+query
+SELECT action FROM serenedb_reindex('pe_idx');
+----
+action
+up_to_date
+
+statement ok
+DROP INDEX pe_idx;
+
+statement ok
+DROP VIEW pe_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY pe_en;
+
+statement ok
+DETACH DATABASE pe_${__DATABASE__};
+
+statement ok
+DROP PERSISTENT SECRET pe_${__DATABASE__};

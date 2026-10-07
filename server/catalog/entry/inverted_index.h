@@ -121,6 +121,8 @@ inline constexpr auto kInvertedIndexSettings = std::to_array({
   kCompactionFloorSegmentBytesSetting,
 });
 
+inline constexpr std::string_view kKeyColumnsOption = "key_columns";
+
 std::vector<std::string> ParseKeyColumns(
   const duckdb::case_insensitive_map_t<duckdb::Value>& options);
 

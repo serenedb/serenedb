@@ -81,6 +81,7 @@ struct RegistryEntry {
   // columns must NOT be pushed (they'd be silently dropped) -- see
   // supports_pushdown.
   bool supports_filters = false;
+  RefreshSource refresh_source = RefreshSource::Rebuild;
 };
 
 const RegistryEntry kRegistry[] = {
@@ -90,36 +91,42 @@ const RegistryEntry kRegistry[] = {
     .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
     .make_lookup = duckdb::MakeParquetLookupTableFunction,
     .supports_filters = true,
+    .refresh_source = RefreshSource::Files,
   },
   {
     .function_name = "read_csv",
     .single_pk_spec = PkSpec::FileOffset,
     .glob_pk_spec = PkSpec::FileIndexPlusOffset,
     .make_lookup = duckdb::MakeCSVLookupTableFunction,
+    .refresh_source = RefreshSource::Files,
   },
   {
     .function_name = "read_json",
     .single_pk_spec = PkSpec::FileOffset,
     .glob_pk_spec = PkSpec::FileIndexPlusOffset,
     .make_lookup = duckdb::MakeJSONLookupTableFunction,
+    .refresh_source = RefreshSource::Files,
   },
   {
     .function_name = "read_ndjson",
     .single_pk_spec = PkSpec::FileOffset,
     .glob_pk_spec = PkSpec::FileIndexPlusOffset,
     .make_lookup = duckdb::MakeJSONLookupTableFunction,
+    .refresh_source = RefreshSource::Files,
   },
   {
     .function_name = "read_json_objects",
     .single_pk_spec = PkSpec::FileOffset,
     .glob_pk_spec = PkSpec::FileIndexPlusOffset,
     .make_lookup = duckdb::MakeJSONObjectsLookupTableFunction,
+    .refresh_source = RefreshSource::Files,
   },
   {
     .function_name = "read_ndjson_objects",
     .single_pk_spec = PkSpec::FileOffset,
     .glob_pk_spec = PkSpec::FileIndexPlusOffset,
     .make_lookup = duckdb::MakeJSONObjectsLookupTableFunction,
+    .refresh_source = RefreshSource::Files,
   },
   // Iceberg data files are parquet; reuse the parquet lookup TF.
   {
@@ -128,6 +135,7 @@ const RegistryEntry kRegistry[] = {
     .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
     .make_lookup = duckdb::MakeParquetLookupTableFunction,
     .supports_filters = true,
+    .refresh_source = RefreshSource::Iceberg,
   },
   // read_text emits one row per file; PK is (file_index, 0) in glob mode.
   {
@@ -135,6 +143,7 @@ const RegistryEntry kRegistry[] = {
     .single_pk_spec = PkSpec::FileRowNumber,
     .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
     .make_lookup = duckdb::MakeTextLookupTableFunction,
+    .refresh_source = RefreshSource::Files,
   },
   {
     .function_name = "read_duckdb",
@@ -276,6 +285,7 @@ ViewFastPath IcebergFastPath(ViewFastPath out, bool has_limit) {
   out.pk_spec = registry_entry->glob_pk_spec;
   out.supports_filters = registry_entry->supports_filters;
   out.supports_delta = IsGlobPK(out.pk_spec) && !has_limit;
+  out.refresh_source = registry_entry->refresh_source;
   return out;
 }
 
@@ -475,6 +485,7 @@ std::optional<ViewFastPath> ResolveFunctionSource(duckdb::Binder& binder,
   out.supports_delta = IsGlobPK(out.pk_spec) &&
                        !out.named_params.contains("union_by_name") &&
                        !body.has_limit;
+  out.refresh_source = entry->refresh_source;
   return out;
 }
 

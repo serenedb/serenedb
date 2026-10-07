@@ -1,0 +1,465 @@
+control substitution on
+
+# REINDEX beyond the plain parquet glob: a view on a native table (rebuilt
+# every pass), read_text and read_json_objects globs (file deltas),
+# expression keys (a pass evaluates the index's own expressions), files that
+# yield no documents, an emptied glob, and a view that no longer yields the
+# row identity its index was built with.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rvs_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+# ---- A native table has no file identity: every pass rebuilds, and the
+# rebuild reflects inserts, updates and deletes.
+
+statement ok
+CREATE TABLE rvs_t (id INTEGER, body TEXT);
+
+statement ok
+INSERT INTO rvs_t VALUES (1, 'pudge goes mid'), (2, 'anchin reads manga');
+
+statement ok
+CREATE VIEW rvs_t_v AS SELECT * FROM rvs_t;
+
+statement ok
+CREATE INDEX rvs_t_idx ON rvs_t_v USING inverted(id, body rvs_en);
+
+query
+SELECT * FROM serenedb_reindex('rvs_t_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+rebuild	0	0	0	0
+
+statement ok
+INSERT INTO rvs_t VALUES (3, 'pudge plays again');
+
+statement ok
+UPDATE rvs_t SET body = 'anchin writes manga' WHERE id = 2;
+
+statement ok
+DELETE FROM rvs_t WHERE id = 1;
+
+query
+SELECT * FROM serenedb_reindex('rvs_t_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+rebuild	0	0	0	0
+
+query
+SELECT id, body FROM rvs_t_idx ORDER BY id;
+----
+id	body
+2	anchin writes manga
+3	pudge plays again
+
+query
+SELECT id FROM rvs_t_idx WHERE body @@ ts_phrase('pudge');
+----
+id
+3
+
+# ---- read_text: one document per file, refreshed by file deltas.
+
+system ok
+mkdir -p $__TEST_DIR__/rvs_txt && printf 'pudge goes mid' > $__TEST_DIR__/rvs_txt/a.txt && printf 'anchin reads manga' > $__TEST_DIR__/rvs_txt/b.txt
+
+statement ok
+CREATE VIEW rvs_txt_v AS SELECT * FROM read_text('${__TEST_DIR__}/rvs_txt/*.txt');
+
+statement ok
+CREATE INDEX rvs_txt_idx ON rvs_txt_v USING inverted(content rvs_en);
+
+system ok
+printf 'pudge plays again' > $__TEST_DIR__/rvs_txt/c.txt
+
+query
+SELECT * FROM serenedb_reindex('rvs_txt_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+system ok
+printf 'anchin writes long manga' > $__TEST_DIR__/rvs_txt/b.txt
+
+query
+SELECT * FROM serenedb_reindex('rvs_txt_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	1
+
+system ok
+rm $__TEST_DIR__/rvs_txt/a.txt
+
+query
+SELECT * FROM serenedb_reindex('rvs_txt_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	0	1	0
+
+query
+SELECT content FROM rvs_txt_idx WHERE content @@ ts_phrase('manga') ORDER BY content;
+----
+content
+anchin writes long manga
+
+
+query
+SELECT count(*) FROM rvs_txt_idx WHERE content @@ ts_phrase('pudge');
+----
+count
+1
+
+query
+SELECT action FROM serenedb_reindex('rvs_txt_idx');
+----
+action
+up_to_date
+
+# ---- Expression keys: the pass evaluates the index's own expressions, also
+# next to a plain key on the same column.
+
+system ok
+mkdir -p $__TEST_DIR__/rvs_expr
+
+statement count 1
+COPY (SELECT 1 AS id, 'Pudge Goes Mid' AS body)
+TO '${__TEST_DIR__}/rvs_expr/a.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvs_expr_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvs_expr/*.parquet');
+
+statement ok
+CREATE INDEX rvs_expr_idx ON rvs_expr_v USING inverted(id, body rvs_en, (upper(body)) rvs_en);
+
+statement count 1
+COPY (SELECT 2 AS id, 'Pudge Plays Again' AS body)
+TO '${__TEST_DIR__}/rvs_expr/b.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('rvs_expr_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id FROM rvs_expr_idx WHERE upper(body) @@ ts_phrase('PUDGE') ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM rvs_expr_idx WHERE body @@ ts_phrase('Plays') ORDER BY id;
+----
+id
+2
+
+# A rebuild evaluates them too.
+statement ok
+CREATE OR REPLACE VIEW rvs_expr_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvs_expr/*.parquet') WHERE id > 1;
+
+query
+SELECT * FROM serenedb_reindex('rvs_expr_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+rebuild	0	0	0	2
+
+query
+SELECT id FROM rvs_expr_idx WHERE upper(body) @@ ts_phrase('PUDGE') ORDER BY id;
+----
+id
+2
+
+# read_json_objects yields one JSON column; the key is a leaf of it.
+system ok
+mkdir -p $__TEST_DIR__/rvs_obj && printf '{"id": 1, "body": "pudge goes mid"}\n{"id": 2, "body": "anchin reads manga"}\n' > $__TEST_DIR__/rvs_obj/a.json
+
+statement ok
+CREATE VIEW rvs_obj_v AS SELECT * FROM read_json_objects('${__TEST_DIR__}/rvs_obj/*.json');
+
+statement ok
+CREATE INDEX rvs_obj_idx ON rvs_obj_v USING inverted((json->>'body') rvs_en);
+
+system ok
+printf '{"id": 3, "body": "pudge plays again"}\n' > $__TEST_DIR__/rvs_obj/b.json
+
+query
+SELECT * FROM serenedb_reindex('rvs_obj_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+system ok
+printf '{"id": 1, "body": "pudge left the lane"}\n{"id": 2, "body": "anchin reads manga"}\n' > $__TEST_DIR__/rvs_obj/a.json
+
+query
+SELECT * FROM serenedb_reindex('rvs_obj_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	1
+
+query
+SELECT json FROM rvs_obj_idx WHERE (json->>'body') @@ ts_phrase('pudge') ORDER BY json;
+----
+json
+{"id": 1, "body": "pudge left the lane"}
+{"id": 3, "body": "pudge plays again"}
+
+query
+SELECT action FROM serenedb_reindex('rvs_obj_idx');
+----
+action
+up_to_date
+
+# ---- A hive-partitioned glob: a new partition directory and a file moved to
+# another partition are file deltas.
+
+system ok
+mkdir -p $__TEST_DIR__/rvs_hive/part=a $__TEST_DIR__/rvs_hive/part=b
+
+statement count 1
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body)
+TO '${__TEST_DIR__}/rvs_hive/part=a/f1.parquet' (FORMAT PARQUET);
+
+statement count 1
+COPY (SELECT 2 AS id, 'anchin reads manga' AS body)
+TO '${__TEST_DIR__}/rvs_hive/part=b/f1.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvs_hive_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvs_hive/*/*.parquet', hive_partitioning=true);
+
+statement ok
+CREATE INDEX rvs_hive_idx ON rvs_hive_v USING inverted(id, body rvs_en, part);
+
+system ok
+mkdir -p $__TEST_DIR__/rvs_hive/part=c
+
+statement count 1
+COPY (SELECT 3 AS id, 'pudge plays again' AS body)
+TO '${__TEST_DIR__}/rvs_hive/part=c/f1.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('rvs_hive_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+system ok
+mv $__TEST_DIR__/rvs_hive/part=a/f1.parquet $__TEST_DIR__/rvs_hive/part=b/f2.parquet
+
+query
+SELECT * FROM serenedb_reindex('rvs_hive_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	1	0
+
+query
+SELECT id FROM rvs_hive_idx WHERE part = 'b' ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM rvs_hive_idx WHERE part = 'a';
+----
+id
+
+query
+SELECT id FROM rvs_hive_idx WHERE body @@ ts_phrase('pudge') AND part = 'c';
+----
+id
+3
+
+query
+SELECT action FROM serenedb_reindex('rvs_hive_idx');
+----
+action
+up_to_date
+
+# ---- Files that yield no documents -- an empty file, and a file whose rows
+# all fall outside the index predicate -- hold no source-file term. Idle
+# passes still see an unchanged listing; a pass that runs reads them again.
+
+system ok
+mkdir -p $__TEST_DIR__/rvs_nodoc
+
+statement count 1
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body)
+TO '${__TEST_DIR__}/rvs_nodoc/a.parquet' (FORMAT PARQUET);
+
+statement count 0
+COPY (SELECT * FROM (SELECT 1 AS id, 'never' AS body) WHERE false)
+TO '${__TEST_DIR__}/rvs_nodoc/b_empty.parquet' (FORMAT PARQUET);
+
+statement count 1
+COPY (SELECT 500 AS id, 'outside the predicate' AS body)
+TO '${__TEST_DIR__}/rvs_nodoc/c_out.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvs_nodoc_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvs_nodoc/*.parquet');
+
+statement ok
+CREATE INDEX rvs_nodoc_idx ON rvs_nodoc_v USING inverted(id, body rvs_en) WHERE id < 100;
+
+query
+SELECT * FROM serenedb_reindex('rvs_nodoc_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement count 1
+COPY (SELECT 2 AS id, 'anchin reads manga' AS body)
+TO '${__TEST_DIR__}/rvs_nodoc/d.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('rvs_nodoc_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	3	0	0	0
+
+query
+SELECT id FROM rvs_nodoc_idx ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT action FROM serenedb_reindex('rvs_nodoc_idx');
+----
+action
+up_to_date
+
+# ---- An emptied glob fails the pass; the index keeps serving what it had.
+
+system ok
+mkdir -p $__TEST_DIR__/rvs_gone
+
+statement count 1
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body)
+TO '${__TEST_DIR__}/rvs_gone/a.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvs_gone_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvs_gone/*.parquet');
+
+statement ok
+CREATE INDEX rvs_gone_idx ON rvs_gone_v USING inverted(id, body rvs_en);
+
+system ok
+rm $__TEST_DIR__/rvs_gone/a.parquet
+
+statement error
+SELECT * FROM serenedb_reindex('rvs_gone_idx');
+----
+db error: ERROR: No files found that match the pattern "<slt:ignore>
+
+
+query
+SELECT count(*) FROM rvs_gone_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+1
+
+statement count 1
+COPY (SELECT 2 AS id, 'anchin reads manga' AS body)
+TO '${__TEST_DIR__}/rvs_gone/b.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('rvs_gone_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	1	0
+
+query
+SELECT id FROM rvs_gone_idx ORDER BY id;
+----
+id
+2
+
+# ---- A view redefined without a fast path cannot give back the row
+# identity its index stores: the pass refuses before touching the index.
+
+system ok
+mkdir -p $__TEST_DIR__/rvs_shape
+
+statement count 1
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body)
+TO '${__TEST_DIR__}/rvs_shape/a.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvs_shape_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvs_shape/*.parquet');
+
+statement ok
+CREATE INDEX rvs_shape_idx ON rvs_shape_v USING inverted(id, body rvs_en);
+
+statement ok
+CREATE OR REPLACE VIEW rvs_shape_v AS SELECT id, upper(body) AS body FROM read_parquet('${__TEST_DIR__}/rvs_shape/*.parquet');
+
+statement error
+SELECT * FROM serenedb_reindex('rvs_shape_idx');
+----
+db error: ERROR: REINDEX of "rvs_shape_idx": the view no longer yields the row identity the index was built with; drop and recreate the index
+
+
+query
+SELECT count(*) FROM rvs_shape_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+1
+
+statement ok
+DROP INDEX rvs_shape_idx;
+
+statement ok
+DROP VIEW rvs_shape_v;
+
+statement ok
+DROP INDEX rvs_gone_idx;
+
+statement ok
+DROP VIEW rvs_gone_v;
+
+statement ok
+DROP INDEX rvs_hive_idx;
+
+statement ok
+DROP VIEW rvs_hive_v;
+
+statement ok
+DROP INDEX rvs_nodoc_idx;
+
+statement ok
+DROP VIEW rvs_nodoc_v;
+
+statement ok
+DROP INDEX rvs_obj_idx;
+
+statement ok
+DROP VIEW rvs_obj_v;
+
+statement ok
+DROP INDEX rvs_expr_idx;
+
+statement ok
+DROP VIEW rvs_expr_v;
+
+statement ok
+DROP INDEX rvs_txt_idx;
+
+statement ok
+DROP VIEW rvs_txt_v;
+
+statement ok
+DROP INDEX rvs_t_idx;
+
+statement ok
+DROP VIEW rvs_t_v;
+
+statement ok
+DROP TABLE rvs_t;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rvs_en;

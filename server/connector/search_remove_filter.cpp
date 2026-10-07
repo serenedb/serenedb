@@ -20,9 +20,9 @@
 
 #include "search_remove_filter.hpp"
 
+#include <algorithm>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/utils/memory.hpp>
-#include <limits>
 
 #include "server/utils/primary_key.h"
 
@@ -156,8 +156,8 @@ irs::doc_id_t SearchRemoveFilter::Next() {
   }
 }
 
-SearchRemovePrefixFilter::SearchRemovePrefixFilter(irs::field_id pk_field_id)
-  : _pk_field_id{pk_field_id} {}
+SearchRemovePrefixFilter::SearchRemovePrefixFilter(irs::field_id field_id)
+  : _field_id{field_id} {}
 
 SearchRemovePrefixFilter::~SearchRemovePrefixFilter() = default;
 
@@ -172,7 +172,7 @@ SearchRemovePrefixFilter::Entry& SearchRemovePrefixFilter::PushEntry(
 void SearchRemovePrefixFilter::NextEntry() const noexcept {
   ++_pos;
   _terms.reset();
-  _resume_row = std::numeric_limits<int64_t>::min();
+  _next_row = 0;
 }
 
 irs::QueryBuilder::ptr SearchRemovePrefixFilter::PrepareSegment(
@@ -188,12 +188,24 @@ irs::lead::Node::ptr SearchRemovePrefixFilter::MakeLead(
   const irs::SubReader& segment, const irs::DocumentMask* pending) const {
   _segment_mask = segment.MaskedDocs();
   _pending_mask = irs::DocumentMask::Iterator{pending};
-  _pk_field = segment.field(_pk_field_id);
-  SDB_ASSERT(_pk_field);
+  _field = segment.field(_field_id);
+  SDB_ASSERT(_field);
   _terms.reset();
   _postings.reset();
-  _pos = 0;
-  _resume_row = std::numeric_limits<int64_t>::min();
+  const auto min = _field->min();
+  const auto max = _field->max();
+  const auto first = std::partition_point(
+    _entries.begin(), _entries.end(), [&](const Entry& entry) {
+      return irs::bytes_view{entry.prefix} < min.substr(0, entry.prefix.size());
+    });
+  const auto last =
+    std::partition_point(first, _entries.end(), [&](const Entry& entry) {
+      return irs::bytes_view{entry.prefix} <=
+             max.substr(0, entry.prefix.size());
+    });
+  _pos = first - _entries.begin();
+  _end = last - _entries.begin();
+  _next_row = 0;
   auto& self = const_cast<SearchRemovePrefixFilter&>(*this);
   self._doc = irs::doc_limits::invalid();
   return irs::memory::to_managed<irs::lead::Node>(self);
@@ -214,28 +226,24 @@ irs::doc_id_t SearchRemovePrefixFilter::Next() {
       }
       _postings.reset();
     }
-    if (_pos == _entries.size()) {
+    if (_pos == _end) {
       return _doc = irs::doc_limits::eof();
     }
     auto& entry = _entries[_pos];
     const irs::bytes_view prefix{entry.prefix};
     if (entry.dead) {
-      // Leapfrog: the cursor names the next dead row, seek_ge jumps to its
-      // term, a landed alive term gallops the cursor forward. Only a seek that
-      // lands on the term leaves the iterator usable: the other outcomes
-      // advance it internally and leave its floor-block state stale, so the
-      // iterator is dropped and the next dead row starts from a fresh one.
       while (true) {
-        const auto dead_row = (*entry.dead)(_resume_row);
-        if (!dead_row) {
+        auto next_dead = entry.dead->begin();
+        if (!next_dead.move_equalorlarger(_next_row)) {
           break;
         }
-        _resume_row = *dead_row + 1;
+        const auto dead_row = *next_dead;
+        _next_row = dead_row + 1;
         _key_scratch.assign(reinterpret_cast<const char*>(prefix.data()),
                             prefix.size());
-        primary_key::AppendSigned(_key_scratch, *dead_row);
+        primary_key::AppendSigned(_key_scratch, static_cast<int64_t>(dead_row));
         if (!_terms) {
-          _terms = _pk_field->iterator();
+          _terms = _field->iterator();
         }
         const auto res = _terms->seek_ge(irs::bytes_view{
           reinterpret_cast<const irs::byte_type*>(_key_scratch.data()),
@@ -250,11 +258,11 @@ irs::doc_id_t SearchRemovePrefixFilter::Next() {
             _terms.reset();
             break;  // no terms of this file at or above the dead row
           }
-          // An alive row's term: gallop the cursor to it and re-check.
           SDB_ASSERT(term.size() == prefix.size() + sizeof(int64_t));
-          _resume_row = primary_key::ReadSigned<int64_t>(std::string_view{
-            reinterpret_cast<const char*>(term.data()) + prefix.size(),
-            sizeof(int64_t)});
+          _next_row = static_cast<uint64_t>(
+            primary_key::ReadSigned<int64_t>(std::string_view{
+              reinterpret_cast<const char*>(term.data()) + prefix.size(),
+              sizeof(int64_t)}));
           _terms.reset();
           continue;
         }
@@ -269,7 +277,7 @@ irs::doc_id_t SearchRemovePrefixFilter::Next() {
     // Whole file: seek the prefix once, then walk -- every term under it
     // dies.
     if (!_terms) {
-      _terms = _pk_field->iterator();
+      _terms = _field->iterator();
       if (_terms->seek_ge(prefix) == irs::SeekResult::End) {
         NextEntry();
         continue;

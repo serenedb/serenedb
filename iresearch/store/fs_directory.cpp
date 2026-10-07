@@ -25,6 +25,10 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <atomic>
+#include <thread>
+#include <vector>
+
 #include "iresearch/error/error.hpp"
 #include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/store/directory_cleaner.hpp"
@@ -657,9 +661,29 @@ bool FSDirectory::sync(std::string_view name) noexcept {
 }
 
 bool FSDirectory::sync(std::span<const std::string_view> files) noexcept {
-  return absl::c_all_of(files, [this](std::string_view name) mutable noexcept {
-    return this->sync(name);
-  });
+  constexpr size_t kMaxSyncThreads = 64;
+  std::atomic_size_t next{0};
+  std::atomic_bool synced{true};
+  const auto drain = [&]() noexcept {
+    for (auto i = next.fetch_add(1, std::memory_order_relaxed);
+         i < files.size(); i = next.fetch_add(1, std::memory_order_relaxed)) {
+      if (!sync(files[i])) {
+        synced.store(false, std::memory_order_relaxed);
+      }
+    }
+  };
+  {
+    std::vector<std::jthread> helpers;
+    for (size_t i = 1; i < std::min(files.size(), kMaxSyncThreads); ++i) {
+      try {
+        helpers.emplace_back(drain);
+      } catch (...) {
+        break;
+      }
+    }
+    drain();
+  }
+  return synced.load(std::memory_order_relaxed);
 }
 
 }  // namespace irs

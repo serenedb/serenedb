@@ -42,8 +42,8 @@
 #include <vector>
 
 #include "catalog/persistence/inverted_index.h"
-#include "connector/file_manifest.h"
 #include "search/maintenance.h"
+#include "search/source_position.h"
 #include "search/store_stats.h"
 #include "search/tick_domain.h"
 #include "storage_engine/search_engine.h"
@@ -63,12 +63,12 @@ namespace sdb::search {
 class InvertedIndexStorage;
 
 struct InvertedIndexSnapshot {
-  InvertedIndexSnapshot(irs::DirectoryReader&& index,
-                        std::shared_ptr<const FileManifest> manifest)
-    : reader{std::move(index)}, file_manifest{std::move(manifest)} {}
+  explicit InvertedIndexSnapshot(irs::DirectoryReader&& index,
+                                 SourcePosition position = {})
+    : reader{std::move(index)}, position{position} {}
 
   irs::DirectoryReader reader;
-  const std::shared_ptr<const FileManifest> file_manifest;
+  const SourcePosition position;
 };
 using InvertedIndexSnapshotPtr = std::shared_ptr<InvertedIndexSnapshot>;
 
@@ -128,9 +128,9 @@ class InvertedIndexStorage final
       db_id, schema_id, table_id, index_id, options, top_k_scorer, is_new);
   }
 
-  auto GetTransaction() {
+  auto GetTransaction(bool exclusive_segment = false) {
     SDB_ASSERT(_writer);
-    return _writer->GetBatch();
+    return _writer->GetBatch(exclusive_segment);
   }
 
   // Delete-log for online CREATE INDEX: open while the build runs, drained
@@ -192,7 +192,7 @@ class InvertedIndexStorage final
   // Refresh driven by the checkpoint barrier: the store WAL is about to be
   // truncated and its iteration bumped, so the stamped durable cursor must
   // carry the NEXT generation (offset 0), not the live one (see
-  // RefreshUnsafeImpl). Synchronous; the flag is consumed by this call.
+  // RefreshLocked). Synchronous; the flag is consumed by this call.
   void CheckpointRefresh();
 
   duckdb::idx_t GetId() const noexcept { return _index_id; }
@@ -228,17 +228,11 @@ class InvertedIndexStorage final
     InvertedIndexStorage* _storage;
   };
 
-  void StoreInvertedIndexSnapshot(
-    InvertedIndexSnapshotPtr inverted_index_snapshot) {
-    std::atomic_store(&_snapshot, std::move(inverted_index_snapshot));
-  }
-
-  std::shared_ptr<const FileManifest> GetFileManifest() const {
-    return std::atomic_load(&_file_manifest);
-  }
-  void SetFileManifest(std::shared_ptr<const FileManifest> manifest) {
-    std::atomic_store(&_file_manifest, std::move(manifest));
-  }
+  void BeginPass();
+  void PublishDelta(irs::IndexWriter::Transaction removals,
+                    const SourcePosition& position);
+  void PublishRebuild(const SourcePosition& position);
+  void CommitPosition(const SourcePosition& position);
 
   auto& GetTasksSettings() { return _tasks_settings; }
 
@@ -278,7 +272,7 @@ class InvertedIndexStorage final
   // from the segment meta at open. Recovery replays only operations at or past
   // it (operations strictly below are already durable in the segments). The
   // refresh stamps the exact WAL end offset of the highest batch it flushed
-  // (see RefreshUnsafeImpl).
+  // (see RefreshLocked).
   WalCursor GetRecoveryWalCursor() const noexcept {
     return _recovery_wal_cursor;
   }
@@ -328,6 +322,19 @@ class InvertedIndexStorage final
   absl::Status RefreshUnsafeImpl(bool wait,
                                  const irs::ProgressReportCallback& progress,
                                  RefreshResult& code, bool for_checkpoint);
+  RefreshResult RefreshLocked(irs::CommitInfo info,
+                              bool for_checkpoint = false);
+  bool ReindexInFlight();
+  std::optional<irs::SegmentIdRange> UnpublishedPassSegments() const;
+  RefreshResult CommitPayloadLocked(
+    const SourcePosition& position,
+    std::optional<irs::SegmentIdRange> drop_segments);
+  void PublishLocked(const SourcePosition& position,
+                     std::optional<irs::SegmentIdRange> drop_segments);
+  void StoreInvertedIndexSnapshot(
+    InvertedIndexSnapshotPtr inverted_index_snapshot) {
+    std::atomic_store(&_snapshot, std::move(inverted_index_snapshot));
+  }
   absl::Status CleanupUnsafeImpl();
 
   duckdb::idx_t _index_id;
@@ -340,7 +347,9 @@ class InvertedIndexStorage final
   // Accessed via std::atomic_load/std::atomic_store (libc++ lacks
   // std::atomic<std::shared_ptr>).
   InvertedIndexSnapshotPtr _snapshot;
-  std::shared_ptr<const FileManifest> _file_manifest;
+  SourcePosition _position;
+  uint64_t _pass_floor{0};
+  irs::IndexWriter::CompactionFloorGuard _pass;
   std::unique_ptr<irs::Directory> _dir;
   std::unique_ptr<irs::Scorer> _topk_scorer;
   std::shared_ptr<irs::IndexWriter> _writer;
@@ -362,7 +371,7 @@ class InvertedIndexStorage final
   // When true, the meta payload provider stamps _pending_wal_cursor from
   // CursorAtOrBelow(_last_durable_tick) -- the durable tick it is persisting in
   // that same call. When false (checkpoint refresh), _pending_wal_cursor was
-  // already set by RefreshUnsafeImpl (next generation, offset 0) and is left
+  // already set by RefreshLocked (next generation, offset 0) and is left
   // as-is.
   bool _stamp_cursor_from_flush{false};
   // Per-index commit-tick -> store-WAL cursor table. Recorded by

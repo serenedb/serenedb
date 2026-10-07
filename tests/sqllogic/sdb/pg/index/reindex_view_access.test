@@ -1,0 +1,125 @@
+control substitution on
+
+# Who can refresh which index: a role that owns its view and index, a
+# superuser over another role's index, and an index in another database
+# named through serenedb_reindex's database argument.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rva_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE ROLE rva_owner LOGIN PASSWORD 'rva_owner_pw';
+
+statement ok
+GRANT CREATE, USAGE ON SCHEMA public TO rva_owner;
+
+system ok
+mkdir -p $__TEST_DIR__/rva
+
+statement count 1
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body)
+TO '${__TEST_DIR__}/rva/a.parquet' (FORMAT PARQUET);
+
+connection rva_c user=rva_owner password=rva_owner_pw
+statement ok
+CREATE VIEW rva_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rva/*.parquet');
+
+connection rva_c user=rva_owner password=rva_owner_pw
+statement ok
+CREATE INDEX rva_idx ON rva_v USING inverted(id, body rva_en);
+
+statement count 1
+COPY (SELECT 2 AS id, 'anchin reads manga' AS body)
+TO '${__TEST_DIR__}/rva/b.parquet' (FORMAT PARQUET);
+
+connection rva_c user=rva_owner password=rva_owner_pw
+query
+SELECT * FROM serenedb_reindex('rva_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+statement count 1
+COPY (SELECT 3 AS id, 'techies plants mines' AS body)
+TO '${__TEST_DIR__}/rva/c.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('rva_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+connection rva_c user=rva_owner password=rva_owner_pw
+query
+SELECT id FROM rva_idx ORDER BY id;
+----
+id
+1
+2
+3
+
+connection rva_c user=rva_owner password=rva_owner_pw
+statement ok
+DROP INDEX rva_idx;
+
+connection rva_c user=rva_owner password=rva_owner_pw
+statement ok
+DROP VIEW rva_v;
+
+statement ok
+REVOKE CREATE, USAGE ON SCHEMA public FROM rva_owner;
+
+statement ok
+DROP ROLE rva_owner;
+
+# ---- A session in another database refreshes this database's index by
+# naming the database; the bare name resolves in its own database only.
+
+system ok
+mkdir -p $__TEST_DIR__/rva_other
+
+statement count 1
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body)
+TO '${__TEST_DIR__}/rva_other/a.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rva_other_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rva_other/*.parquet');
+
+statement ok
+CREATE INDEX rva_other_idx ON rva_other_v USING inverted(id, body rva_en);
+
+statement count 1
+COPY (SELECT 2 AS id, 'anchin reads manga' AS body)
+TO '${__TEST_DIR__}/rva_other/b.parquet' (FORMAT PARQUET);
+
+connection rva_pg database=postgres
+statement error
+SELECT * FROM serenedb_reindex('rva_other_idx');
+----
+db error: ERROR: index "rva_other_idx" does not exist
+
+
+connection rva_pg database=postgres
+query
+SELECT * FROM serenedb_reindex('rva_other_idx', 'public', '${__DATABASE__}');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id FROM rva_other_idx ORDER BY id;
+----
+id
+1
+2
+
+statement ok
+DROP INDEX rva_other_idx;
+
+statement ok
+DROP VIEW rva_other_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rva_en;

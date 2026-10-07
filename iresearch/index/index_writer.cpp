@@ -495,6 +495,7 @@ PublishResult UpdateExisting(
 
     // skip already masked segments
     if (segment_mask.contains(existing_segment->Meta().name)) {
+      result.modified = true;
       continue;
     }
 
@@ -1551,6 +1552,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   Compaction candidates;
   const auto run_id = reinterpret_cast<uintptr_t>(&candidates);
 
+  IndexSegment compaction_segment;
   decltype(_committed_reader) committed_reader;
   // collect a list of compaction candidates
   {
@@ -1619,6 +1621,8 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
     for (const auto* candidate : candidates) {
       _compacting.segments.emplace(candidate->Meta().name);
     }
+    // Increment active meta
+    compaction_segment.meta.name = FileName(NextSegmentId());
   }
 
   // unregisterer for all registered candidates
@@ -1652,11 +1656,6 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   // do lock-free merge
 
   CompactionResult result{candidates.size(), CompactionError::Fail};
-
-  IndexSegment compaction_segment;
-  compaction_segment.meta.version = 0;  // Reset version for new segment
-  // Increment active meta
-  compaction_segment.meta.name = FileName(NextSegmentId());
 
   RefTrackingDirectory dir{_dir};  // Track references for new segment
 
@@ -1863,12 +1862,10 @@ void IndexWriter::CompactionFloorGuard::Release() noexcept {
   _writer = nullptr;
 }
 
-IndexWriter::CompactionFloorGuard IndexWriter::ArmCompactionFloor() {
+IndexWriter::CompactionFloorGuard IndexWriter::ArmCompactionFloor(
+  FloorArming arming) {
   std::lock_guard lock{_compacting.lock};
-  if (!_compacting.segments.empty()) {
-    // A compaction is between selecting candidates and minting its output id,
-    // so it could still stamp a fresh id on segments below the floor we are
-    // about to set. The caller should retry once it finishes.
+  if (arming == FloorArming::WhenIdle && !_compacting.segments.empty()) {
     return {};
   }
   if (_compacting.floor != 0) {
@@ -2183,6 +2180,15 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
                   std::make_move_iterator(flushed.segments.begin()),
                   std::make_move_iterator(flushed.segments.end()));
 
+  bool dropped = false;
+  if (const auto& drop = info.drop_segments) {
+    dropped = std::erase_if(segments, [&](const PublishedSegment& entry) {
+                uint64_t id = 0;
+                return ParseSegmentId(entry.segment.meta.name, id) &&
+                       drop->Contains(id);
+              }) != 0;
+  }
+
   IndexMeta pending_meta;
   pending_meta.segments.reserve(segments.size());
   std::vector<SegmentReader> readers;
@@ -2220,7 +2226,8 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   //  partially committed, and free query memory which already was applied.
   //  But when I start thinking about rollback stuff it looks almost impossible
 
-  const bool modified = IsInitialCommit(committed_reader.Meta()) ||
+  const bool modified = info.payload_changed || dropped ||
+                        IsInitialCommit(committed_reader.Meta()) ||
                         existing.modified || incoming.modified ||
                         flushed.modified || !files_to_sync.empty();
 

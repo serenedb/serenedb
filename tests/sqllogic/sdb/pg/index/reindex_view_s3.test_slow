@@ -1,6 +1,6 @@
 control substitution on
 
-# REFRESH over S3: fingerprints come from the S3 listing (size/mtime/etag),
+# REFRESH over S3: file versions come from the S3 listing (etag or mtime),
 # the delta's per-file rescans and the read path's file_id->path lookups all
 # open s3:// objects through the same virtual filesystem + secret as the
 # original CREATE INDEX.
@@ -24,8 +24,6 @@ CREATE TEXT SEARCH DICTIONARY reindex_s3_en AS
     split_text() | normalize_tokens('en_US.UTF-8', accent := false)
     WITH (frequency, position);
 
-
-# Single S3 file: manifest-backed up_to_date, rewrite -> rebuild.
 
 statement count 3
 COPY (SELECT 1 AS id, 'pudge goes mid' AS body
@@ -83,9 +81,6 @@ SELECT id FROM reindex_s3_idx WHERE body @@ ts_phrase('vedernikoff');
 id
 4
 
-
-# S3 glob: appends run as a delta; unchanged objects' docs stay put and still
-# materialize through their manifest-pinned s3 paths.
 
 statement count 3
 COPY (SELECT 1 AS id, 'pudge goes mid' AS body

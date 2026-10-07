@@ -1,0 +1,282 @@
+control substitution on
+
+# How REINDEX finds its index and what it requires of the caller: the
+# statement and function forms, the schema and database arguments, quoted
+# names, renames of the index and of its schema, the caller's transaction,
+# and the MAINTAIN check.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rvt_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+system ok
+mkdir -p $__TEST_DIR__/rvt
+
+statement count 1
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body)
+TO '${__TEST_DIR__}/rvt/a.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvt_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvt/*.parquet');
+
+statement ok
+CREATE INDEX rvt_idx ON rvt_v USING inverted(id, body rvt_en);
+
+# The function form takes the index name, then optionally its schema and its
+# database.
+query
+SELECT * FROM serenedb_reindex('rvt_idx', 'public', '${__DATABASE__}');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement error
+SELECT * FROM serenedb_reindex('');
+----
+db error: ERROR: serenedb_reindex requires an index name
+
+
+statement error
+SELECT * FROM serenedb_reindex(NULL);
+----
+db error: ERROR: serenedb_reindex requires an index name
+
+
+statement error
+SELECT * FROM serenedb_reindex();
+----
+db error: ERROR: serenedb_reindex requires an index name
+
+
+statement error
+PRAGMA serenedb_reindex('');
+----
+db error: ERROR: serenedb_reindex requires an index name
+
+
+statement error
+SELECT * FROM serenedb_reindex('rvt_idx', 'public', 'rvt_no_db');
+----
+db error: ERROR: database "rvt_no_db" does not exist
+
+
+statement error
+SELECT * FROM serenedb_reindex('rvt_idx', 'rvt_no_schema');
+----
+db error: ERROR: index "rvt_idx" does not exist
+
+
+# Quoted names keep their case in both forms.
+statement ok
+CREATE SCHEMA "RvtSch";
+
+statement ok
+CREATE VIEW "RvtSch"."RvtV" AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvt/*.parquet');
+
+statement ok
+CREATE INDEX "RvtIdx" ON "RvtSch"."RvtV" USING inverted(id, body rvt_en);
+
+statement ok
+REINDEX INDEX "RvtSch"."RvtIdx";
+
+query
+SELECT action FROM serenedb_reindex('RvtIdx', 'RvtSch');
+----
+action
+up_to_date
+
+statement error
+REINDEX INDEX "RvtSch".rvtidx;
+----
+db error: ERROR: index "rvtidx" does not exist
+
+
+statement error
+SELECT * FROM serenedb_reindex('RvtIdx', 'rvtsch');
+----
+db error: ERROR: index "RvtIdx" does not exist
+
+
+# An unqualified name resolves through search_path.
+statement error
+REINDEX INDEX "RvtIdx";
+----
+db error: ERROR: index "RvtIdx" does not exist
+
+
+statement ok
+SET search_path TO "RvtSch", public;
+
+statement count 1
+COPY (SELECT 2 AS id, 'anchin reads manga' AS body)
+TO '${__TEST_DIR__}/rvt/b.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('RvtIdx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+statement ok
+RESET search_path;
+
+# A renamed index refreshes under its new name; the old name names nothing.
+statement ok
+ALTER INDEX rvt_idx RENAME TO rvt_renamed_idx;
+
+statement count 1
+COPY (SELECT 3 AS id, 'vedernikoff renames things' AS body)
+TO '${__TEST_DIR__}/rvt/c.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('rvt_renamed_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	2	0	0	0
+
+statement error
+SELECT * FROM serenedb_reindex('rvt_idx');
+----
+db error: ERROR: index "rvt_idx" does not exist
+
+
+query
+SELECT id FROM rvt_renamed_idx ORDER BY id;
+----
+id
+1
+2
+3
+
+# A renamed schema: the index resolves through the schema's new name.
+statement ok
+ALTER SCHEMA "RvtSch" RENAME TO "RvtSch2";
+
+query
+SELECT * FROM serenedb_reindex('RvtIdx', 'RvtSch2');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id FROM "RvtSch2"."RvtIdx" ORDER BY id;
+----
+id
+1
+2
+3
+
+# A pass runs in a transaction of its own: rolling back the caller's
+# transaction keeps the refresh.
+statement count 1
+COPY (SELECT 4 AS id, 'techies plants mines' AS body)
+TO '${__TEST_DIR__}/rvt/d.parquet' (FORMAT PARQUET);
+
+statement ok
+BEGIN;
+
+query
+SELECT * FROM serenedb_reindex('rvt_renamed_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+statement ok
+ROLLBACK;
+
+query
+SELECT id FROM rvt_renamed_idx ORDER BY id;
+----
+id
+1
+2
+3
+4
+
+query
+SELECT action FROM serenedb_reindex('rvt_renamed_idx');
+----
+action
+up_to_date
+
+# An index created in the caller's still-open transaction is invisible to
+# the pass's own transaction until it commits.
+statement ok
+BEGIN;
+
+statement ok
+CREATE INDEX rvt_txn_idx ON rvt_v USING inverted(id, body rvt_en);
+
+statement error
+REINDEX INDEX rvt_txn_idx;
+----
+db error: ERROR: index "rvt_txn_idx" does not exist
+
+
+statement ok
+ROLLBACK;
+
+statement ok
+BEGIN;
+
+statement ok
+CREATE INDEX rvt_txn_idx ON rvt_v USING inverted(id, body rvt_en);
+
+statement ok
+COMMIT;
+
+query
+SELECT * FROM serenedb_reindex('rvt_txn_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+# REINDEX needs MAINTAIN on the view: a role without it is refused before
+# any pass starts, in both forms.
+statement ok
+CREATE ROLE rvt_reader LOGIN PASSWORD 'rvt_reader_pw';
+
+statement ok
+GRANT USAGE ON SCHEMA public TO rvt_reader;
+
+connection rvt_c user=rvt_reader password=rvt_reader_pw
+statement error
+REINDEX INDEX rvt_renamed_idx;
+----
+db error: ERROR: permission denied for index "rvt_renamed_idx"
+
+
+connection rvt_c user=rvt_reader password=rvt_reader_pw
+statement error
+SELECT * FROM serenedb_reindex('rvt_renamed_idx');
+----
+db error: ERROR: permission denied for index "rvt_renamed_idx"
+
+
+statement ok
+DROP INDEX rvt_txn_idx;
+
+statement ok
+DROP INDEX rvt_renamed_idx;
+
+statement ok
+DROP VIEW rvt_v;
+
+statement ok
+DROP INDEX "RvtSch2"."RvtIdx";
+
+statement ok
+DROP VIEW "RvtSch2"."RvtV";
+
+statement ok
+DROP SCHEMA "RvtSch2";
+
+statement ok
+REVOKE USAGE ON SCHEMA public FROM rvt_reader;
+
+statement ok
+DROP ROLE rvt_reader;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rvt_en;

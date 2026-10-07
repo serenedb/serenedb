@@ -552,10 +552,9 @@ TEST_P(DocsMaskPlanTest, small_segments_clustered) {
   Check(std::nullopt);
 }
 
-INSTANTIATE_TEST_SUITE_P(
-  docs_mask_plan_test, DocsMaskPlanTest,
-  ::testing::Combine(
-    ::testing::Values(&tests::Directory<&tests::MemoryDirectory>)),
-  DocsMaskPlanTest::to_string);
+INSTANTIATE_TEST_SUITE_P(docs_mask_plan_test, DocsMaskPlanTest,
+                         ::testing::Combine(::testing::Values(
+                           &tests::Directory<&tests::MemoryDirectory>)),
+                         DocsMaskPlanTest::to_string);
 
 }  // namespace

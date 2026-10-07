@@ -126,14 +126,13 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
       duckdb::idx_t keep = 0;
       const auto first_doc =
         static_cast<irs::doc_id_t>(row + irs::doc_limits::min());
-      irs::VisitLiveRanges(
-        sub.docs_mask(), sub.Meta().visible_end, first_doc,
-        static_cast<irs::doc_id_t>(first_doc + produced),
-        [&](irs::doc_id_t first, irs::doc_id_t last) {
-          for (auto doc = first; doc != last; ++doc) {
-            source.live.set_index(keep++, doc - first_doc);
-          }
-        });
+      irs::VisitLiveRanges(sub.docs_mask(), sub.Meta().visible_end, first_doc,
+                           static_cast<irs::doc_id_t>(first_doc + produced),
+                           [&](irs::doc_id_t first, irs::doc_id_t last) {
+                             for (auto doc = first; doc != last; ++doc) {
+                               source.live.set_index(keep++, doc - first_doc);
+                             }
+                           });
       if (keep == 0) {
         continue;
       }

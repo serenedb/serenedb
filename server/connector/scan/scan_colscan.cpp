@@ -19,8 +19,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
-#include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
+#include <iresearch/index/index_reader.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "connector/full_scanner.h"

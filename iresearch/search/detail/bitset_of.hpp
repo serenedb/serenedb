@@ -175,19 +175,20 @@ inline ClauseCost MaskClauseCost(const SubReader& segment,
         SDB_UNREACHABLE();
     }
   }
-  return {.docs = masked,
-          .matches = static_cast<double>(masked),
-          .sparse = spans,
-          .fill = fill,
-          .lazy_fill = fill,
-          .probe = words ? kMaskWordProbeCost : kMaskCursorProbeCost,
-          .block_probe = kMaskBlockProbeCost,
-          .hit = 0.0,
-          .leaves = 1,
-          .exact = false,
-          .nested = false,
-          .mask = true,
-        };
+  return {
+    .docs = masked,
+    .matches = static_cast<double>(masked),
+    .sparse = spans,
+    .fill = fill,
+    .lazy_fill = fill,
+    .probe = words ? kMaskWordProbeCost : kMaskCursorProbeCost,
+    .block_probe = kMaskBlockProbeCost,
+    .hit = 0.0,
+    .leaves = 1,
+    .exact = false,
+    .nested = false,
+    .mask = true,
+  };
 }
 
 inline ClauseCost ChildClauseCost(const QueryBuilder& child,

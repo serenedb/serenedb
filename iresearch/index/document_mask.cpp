@@ -45,8 +45,7 @@ size_t ContainerBytes(const roaring_bitmap_t& set) noexcept {
 }
 
 size_t ByteSizeOf(const roaring_bitmap_t& set) noexcept {
-  return ContainerBytes(set) +
-         size_t(set.high_low_container.size) * kSlotBytes;
+  return ContainerBytes(set) + size_t(set.high_low_container.size) * kSlotBytes;
 }
 
 size_t ByteCapacityOf(const roaring_bitmap_t& set) noexcept {

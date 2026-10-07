@@ -175,7 +175,8 @@ void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
 
     files.insert(files.end(), std::make_move_iterator(links.begin()),
                  std::make_move_iterator(links.end()));
-    docs_mask = std::make_shared<const DocumentMask>(std::move(builder).Finish());
+    docs_mask =
+      std::make_shared<const DocumentMask>(std::move(builder).Finish());
   }
 
   if (!has_files) [[unlikely]] {

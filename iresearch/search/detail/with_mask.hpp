@@ -160,7 +160,6 @@ class LiveDocs {
 };
 
 }  // namespace irs::detail
-
 namespace irs::fill {
 
 template<DocsMaskType Mask>

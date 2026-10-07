@@ -87,7 +87,8 @@ irs::QueryBuilder::ptr SearchRemoveFilter::PrepareSegment(
 }
 
 irs::lead::Node::ptr SearchRemoveFilter::MakeLead(
-  const irs::SubReader& segment, const irs::DocumentMaskBuilder* pending) const {
+  const irs::SubReader& segment,
+  const irs::DocumentMaskBuilder* pending) const {
   _segment_mask = segment.MaskedDocs();
   _pending = pending;
   _pk_field = segment.field(_pk_field_id);
@@ -185,7 +186,8 @@ irs::QueryBuilder::ptr SearchRemovePrefixFilter::PrepareSegment(
 }
 
 irs::lead::Node::ptr SearchRemovePrefixFilter::MakeLead(
-  const irs::SubReader& segment, const irs::DocumentMaskBuilder* pending) const {
+  const irs::SubReader& segment,
+  const irs::DocumentMaskBuilder* pending) const {
   _segment_mask = segment.MaskedDocs();
   _pending = pending;
   _pk_field = segment.field(_pk_field_id);

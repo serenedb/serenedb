@@ -51,7 +51,7 @@ class TokenPhraseSlots {
     : _approx{std::make_from_tuple<Approx>(std::forward<ApproxArgs>(approx))},
       _ctx{*query.Segment().GetColReader()},
       _sel{STANDARD_VECTOR_SIZE},
-      _check{query.Matcher(), query.Tokens(), count} {
+      _check{query.Compiled(), query.Tokens(), count} {
     const auto columns = query.Columns();
     _inputs.reserve(columns.size());
     std::vector<duckdb::LogicalType> types;
@@ -211,7 +211,7 @@ Result MakeTokenPhrase(const TokenPhraseQuery& query, uint64_t interrogations,
       std::forward_as_tuple(std::move(node)), query, Scored);
   };
   if constexpr (Scored) {
-    return ResolveBool(query.Sloppy(), make);
+    return ResolveBool(query.Compiled().slop.max != 0, make);
   } else {
     return make.template operator()<false>();
   }

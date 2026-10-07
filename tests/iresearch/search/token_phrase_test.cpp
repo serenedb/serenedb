@@ -176,8 +176,8 @@ Outcome Check(const irs::ByPhraseOptions& phrase, std::string_view text,
               bool count, std::optional<irs::PhraseMatch> match,
               std::span<const std::vector<irs::bstring>> expanded) {
   const irs::EmptyTermReader reader{0};
-  const irs::TokenPhraseMatcher matcher{phrase, expanded, reader, match};
-  irs::PhraseCheck check{matcher, TextOf<Words>(), count};
+  const irs::CompiledPhrase compiled{phrase, expanded, reader, match};
+  irs::PhraseCheck check{compiled, TextOf<Words>(), count};
   irs::PhraseVerdict verdict;
   Outcome out;
   out.matched = CheckText(check, text, verdict);
@@ -216,7 +216,7 @@ bool Matches(const irs::ByPhraseOptions& phrase, std::string_view text) {
 
 }  // namespace
 
-TEST(TokenPhraseMatcherTest, adjacent_terms) {
+TEST(PhraseCheckTest, adjacent_terms) {
   const auto phrase = Phrase("quick brown fox");
   EXPECT_TRUE(Matches(phrase, "the quick brown fox jumps"));
   EXPECT_FALSE(Matches(phrase, "quick brown dog fox"));
@@ -225,7 +225,7 @@ TEST(TokenPhraseMatcherTest, adjacent_terms) {
   EXPECT_FALSE(Matches(phrase, ""));
 }
 
-TEST(TokenPhraseMatcherTest, backtracks_over_repeated_tokens) {
+TEST(PhraseCheckTest, backtracks_over_repeated_tokens) {
   EXPECT_TRUE(Matches(Phrase("a a b"), "a a a b"));
   EXPECT_TRUE(Matches(Phrase("a b a b c"), "a b a b a b c"));
   EXPECT_TRUE(Matches(Phrase("x x y"), "x x x x y"));
@@ -233,13 +233,13 @@ TEST(TokenPhraseMatcherTest, backtracks_over_repeated_tokens) {
   EXPECT_FALSE(Matches(Phrase("the the the the"), "the the the quick"));
 }
 
-TEST(TokenPhraseMatcherTest, counts_every_start) {
+TEST(PhraseCheckTest, counts_every_start) {
   EXPECT_EQ(2U, Verify(Phrase("a a"), "a a a").freq);
   EXPECT_EQ(2U, Verify(Phrase("quick fox"), "quick fox and a quick fox").freq);
   EXPECT_EQ(1U, Verify(Phrase("quick fox"), "quick fox").freq);
 }
 
-TEST(TokenPhraseMatcherTest, exact_gap) {
+TEST(PhraseCheckTest, exact_gap) {
   irs::ByPhraseOptions phrase;
   PushTerm(phrase, "quick", 0, 0);
   PushTerm(phrase, "fox", 2, 2);
@@ -249,7 +249,7 @@ TEST(TokenPhraseMatcherTest, exact_gap) {
   EXPECT_EQ(2U, Verify(phrase, "quick a fox quick b fox").freq);
 }
 
-TEST(TokenPhraseMatcherTest, interval_gap) {
+TEST(PhraseCheckTest, interval_gap) {
   irs::ByPhraseOptions phrase;
   PushTerm(phrase, "fox", 0, 0);
   PushTerm(phrase, "dog", 1, 3);
@@ -260,7 +260,7 @@ TEST(TokenPhraseMatcherTest, interval_gap) {
   EXPECT_FALSE(Matches(phrase, "dog fox"));
 }
 
-TEST(TokenPhraseMatcherTest, interval_gap_counts_every_combination) {
+TEST(PhraseCheckTest, interval_gap_counts_every_combination) {
   irs::ByPhraseOptions phrase;
   PushTerm(phrase, "a", 0, 0);
   PushTerm(phrase, "c", 2, 3);
@@ -271,7 +271,7 @@ TEST(TokenPhraseMatcherTest, interval_gap_counts_every_combination) {
   EXPECT_EQ(0U, Verify(phrase, "a x c x x d").freq);
 }
 
-TEST(TokenPhraseMatcherTest, anchor_on_any_word) {
+TEST(PhraseCheckTest, anchor_on_any_word) {
   irs::ByPhraseOptions phrase;
   PushTerm(phrase, "a", 0, 0);
   PushTerm(phrase, "b", 1, 2);
@@ -288,7 +288,7 @@ TEST(TokenPhraseMatcherTest, anchor_on_any_word) {
   EXPECT_EQ(4U, Verify(phrase, "a a b c d d").freq);
 }
 
-TEST(TokenPhraseMatcherTest, stacked_document_tokens) {
+TEST(PhraseCheckTest, stacked_document_tokens) {
   EXPECT_TRUE(Matches<StackedWords>(Phrase("red car"), "a red car|automobile"));
   EXPECT_TRUE(
     Matches<StackedWords>(Phrase("red automobile"), "a red car|automobile"));
@@ -298,7 +298,7 @@ TEST(TokenPhraseMatcherTest, stacked_document_tokens) {
     Matches<StackedWords>(Phrase("car auto"), "car|auto fast|quick"));
 }
 
-TEST(TokenPhraseMatcherTest, stacked_duplicates_count_once) {
+TEST(PhraseCheckTest, stacked_duplicates_count_once) {
   EXPECT_EQ(1U,
             Verify<StackedWords>(Phrase("red car"), "red|red car|car").freq);
   irs::ByPhraseOptions phrase;
@@ -311,7 +311,7 @@ TEST(TokenPhraseMatcherTest, stacked_duplicates_count_once) {
             Verify<StackedWords>(phrase, "red car|automobile red car").freq);
 }
 
-TEST(TokenPhraseMatcherTest, gaps_in_explicit_positions) {
+TEST(PhraseCheckTest, gaps_in_explicit_positions) {
   irs::ByPhraseOptions phrase;
   PushTerm(phrase, "quick", 0, 0);
   PushTerm(phrase, "fox", 2, 2);
@@ -320,7 +320,7 @@ TEST(TokenPhraseMatcherTest, gaps_in_explicit_positions) {
   EXPECT_FALSE(Matches<StackedWords>(Phrase("quick fox"), "quick ~ fox"));
 }
 
-TEST(TokenPhraseMatcherTest, term_set_slot) {
+TEST(PhraseCheckTest, term_set_slot) {
   irs::ByPhraseOptions phrase;
   PushTerm(phrase, "red", 0, 0);
   auto& set = phrase.push_back<irs::TermSetOptions>();
@@ -331,7 +331,7 @@ TEST(TokenPhraseMatcherTest, term_set_slot) {
   EXPECT_FALSE(Matches(phrase, "a red bike"));
 }
 
-TEST(TokenPhraseMatcherTest, expansion_slot_accepts_expanded_terms) {
+TEST(PhraseCheckTest, expansion_slot_accepts_expanded_terms) {
   irs::ByPhraseOptions phrase;
   PushTerm(phrase, "quick", 0, 0);
   phrase.push_back<irs::ByPrefixOptions>().term = Bytes("br");
@@ -342,7 +342,7 @@ TEST(TokenPhraseMatcherTest, expansion_slot_accepts_expanded_terms) {
   EXPECT_FALSE(Verify(phrase, "the quick bread", expanded).matched);
 }
 
-TEST(TokenPhraseMatcherTest, no_words_runs_without_anchor) {
+TEST(PhraseCheckTest, no_words_runs_without_anchor) {
   irs::ByPhraseOptions phrase;
   auto& first = phrase.push_back<irs::TermSetOptions>();
   first.terms.emplace(Bytes("quick"));
@@ -354,7 +354,7 @@ TEST(TokenPhraseMatcherTest, no_words_runs_without_anchor) {
   EXPECT_FALSE(Verify(phrase, "quick x x brown", expanded).matched);
 }
 
-TEST(TokenPhraseMatcherTest, wide_layouts_check_positions) {
+TEST(PhraseCheckTest, wide_layouts_check_positions) {
   irs::ByPhraseOptions phrase;
   PushTerm(phrase, "a", 0, 0);
   PushTerm(phrase, "b", 1, 40);
@@ -366,7 +366,7 @@ TEST(TokenPhraseMatcherTest, wide_layouts_check_positions) {
     Verify(phrase, absl::StrCat("a ", Repeat("x", 40), " b c")).matched);
 }
 
-TEST(TokenPhraseMatcherTest, slop) {
+TEST(PhraseCheckTest, slop) {
   auto phrase = Phrase("quick fox");
   phrase.set_slop(1);
   EXPECT_TRUE(Matches(phrase, "quick brown fox"));
@@ -380,7 +380,7 @@ TEST(TokenPhraseMatcherTest, slop) {
   EXPECT_TRUE(Matches(triple, "quick fox brown"));
 }
 
-TEST(TokenPhraseMatcherTest, slop_agrees_with_engine_sweep) {
+TEST(PhraseCheckTest, slop_agrees_with_engine_sweep) {
   auto phrase = Phrase("a b a");
   phrase.set_slop(2);
   const auto out = Verify(phrase, "a x b a b a");
@@ -398,7 +398,7 @@ TEST(TokenPhraseMatcherTest, slop_agrees_with_engine_sweep) {
                   out.scale);
 }
 
-TEST(TokenPhraseMatcherTest, matches_across_token_batches) {
+TEST(PhraseCheckTest, matches_across_token_batches) {
   constexpr size_t kBatch = irs::TokenBatch::kCapacity;
   const auto text = absl::StrCat(Repeat("x", kBatch - 2), " quick brown fox ",
                                  Repeat("x", kBatch - 3), " quick brown fox ",
@@ -416,7 +416,7 @@ TEST(TokenPhraseMatcherTest, matches_across_token_batches) {
     Verify(Phrase("brown fox x x"), absl::StrCat(text, " fox")).matched);
 }
 
-TEST(TokenPhraseMatcherTest, anchor_left_context_spans_batches) {
+TEST(PhraseCheckTest, anchor_left_context_spans_batches) {
   constexpr size_t kBatch = irs::TokenBatch::kCapacity;
   irs::ByPhraseOptions phrase;
   PushTerm(phrase, "a", 0, 0);
@@ -430,7 +430,7 @@ TEST(TokenPhraseMatcherTest, anchor_left_context_spans_batches) {
   }
 }
 
-TEST(TokenPhraseMatcherTest, dense_positions_continue_across_batches) {
+TEST(PhraseCheckTest, dense_positions_continue_across_batches) {
   constexpr auto kBatch =
     static_cast<irs::PosAttr::value_t>(irs::TokenBatch::kCapacity);
   irs::ByPhraseOptions gapped;
@@ -442,7 +442,7 @@ TEST(TokenPhraseMatcherTest, dense_positions_continue_across_batches) {
     Verify(gapped, absl::StrCat("a ", Repeat("x", kBatch), " b")).matched);
 }
 
-TEST(TokenPhraseMatcherTest, adversarial_repetition_restarts) {
+TEST(PhraseCheckTest, adversarial_repetition_restarts) {
   irs::ByPhraseOptions phrase;
   PushTerm(phrase, "the", 0, 0);
   PushTerm(phrase, "the", 1, 11);
@@ -462,17 +462,17 @@ TEST(TokenPhraseMatcherTest, adversarial_repetition_restarts) {
       .restarted);
 }
 
-TEST(TokenPhraseMatcherTest, empty_value_matches_nothing) {
+TEST(PhraseCheckTest, empty_value_matches_nothing) {
   const auto out = Verify(Phrase("a b"), "");
   EXPECT_FALSE(out.matched);
   EXPECT_EQ(0U, out.freq);
 }
 
-TEST(TokenPhraseMatcherTest, routes) {
+TEST(PhraseCheckTest, routes) {
   const irs::EmptyTermReader reader{0};
   const auto mode = [&](const irs::ByPhraseOptions& phrase,
                         std::optional<irs::PhraseMatch> match = {}) {
-    return irs::TokenPhraseMatcher{phrase, {}, reader, match}.Primary();
+    return irs::CompiledPhrase{phrase, {}, reader, match}.primary;
   };
   EXPECT_EQ(irs::PhraseMatch::Anchor, mode(Phrase("a b")));
   EXPECT_EQ(irs::PhraseMatch::Automaton,
@@ -492,28 +492,28 @@ TEST(TokenPhraseMatcherTest, routes) {
   PushTerm(wide, "a", 0, 0);
   PushTerm(wide, "b", 1, 70);
   EXPECT_EQ(irs::PhraseMatch::Anchor, mode(wide));
-  const irs::TokenPhraseMatcher matcher{wide, {}, reader};
-  EXPECT_EQ(irs::PhraseMatch::Positions, matcher.Fallback());
+  const irs::CompiledPhrase compiled{wide, {}, reader};
+  EXPECT_EQ(irs::PhraseMatch::Positions, compiled.fallback);
 }
 
-TEST(TokenPhraseMatcherTest, standalone_parts) {
-  using irs::TokenPhraseMatcher;
-  EXPECT_TRUE(TokenPhraseMatcher::Standalone(Phrase("a b")));
+TEST(PhraseCheckTest, standalone_parts) {
+  using irs::CompiledPhrase;
+  EXPECT_TRUE(CompiledPhrase::Standalone(Phrase("a b")));
   auto sloppy = Phrase("a b");
   sloppy.set_slop(2);
-  EXPECT_TRUE(TokenPhraseMatcher::Standalone(sloppy));
+  EXPECT_TRUE(CompiledPhrase::Standalone(sloppy));
 
   auto prefix = Phrase("a");
   prefix.push_back<irs::ByPrefixOptions>().term = Bytes("b");
-  EXPECT_TRUE(TokenPhraseMatcher::Standalone(prefix));
+  EXPECT_TRUE(CompiledPhrase::Standalone(prefix));
   prefix.set_slop(1);
-  EXPECT_FALSE(TokenPhraseMatcher::Standalone(prefix));
+  EXPECT_FALSE(CompiledPhrase::Standalone(prefix));
 
   auto like = Phrase("a");
   like.push_back<irs::ByWildcardOptions>().term = Bytes("%b");
-  EXPECT_FALSE(TokenPhraseMatcher::Standalone(like));
+  EXPECT_FALSE(CompiledPhrase::Standalone(like));
   EXPECT_TRUE(like.LowerParts());
-  EXPECT_TRUE(TokenPhraseMatcher::Standalone(like));
+  EXPECT_TRUE(CompiledPhrase::Standalone(like));
 
   for (const size_t max_terms : {0, 3}) {
     SCOPED_TRACE(max_terms);
@@ -523,25 +523,8 @@ TEST(TokenPhraseMatcherTest, standalone_parts) {
     part.max_distance = 1;
     part.max_terms = max_terms;
     EXPECT_TRUE(fuzzy.LowerParts());
-    EXPECT_EQ(max_terms == 0, TokenPhraseMatcher::Standalone(fuzzy));
+    EXPECT_EQ(max_terms == 0, CompiledPhrase::Standalone(fuzzy));
   }
-}
-
-TEST(TokenPhraseMatcherTest, standalone_patterns_skip_shingles) {
-  auto phrase = Phrase("quick");
-  phrase.push_back<irs::ByPrefixOptions>().term = Bytes("br");
-  const irs::EmptyTermReader reader{0};
-  const irs::TokenPhraseMatcher matcher{
-    phrase, Bytes("_"),
-    [&](irs::bytes_view term) { return reader.Lookup(term); }};
-  irs::PhraseCheck phrase_check{matcher, TextOf<DenseWords>(), true};
-  const auto check = [&](std::string_view text) {
-    irs::PhraseVerdict verdict;
-    return CheckText(phrase_check, text, verdict);
-  };
-  EXPECT_TRUE(check("the quick brown fox"));
-  EXPECT_FALSE(check("the quick brown_fox"));
-  EXPECT_FALSE(check("the quick dread"));
 }
 
 namespace {
@@ -829,12 +812,12 @@ void ExpectDeferredLikeInline(const Index& index,
   Defer(*deferred);
   const auto& options =
     irs::utils::downCast<irs::ByPhrase>(*deferred).options();
-  ASSERT_TRUE(irs::TokenPhraseMatcher::Standalone(options));
+  ASSERT_TRUE(irs::CompiledPhrase::Standalone(options));
   for (const auto match : kMatches) {
     SCOPED_TRACE(MatchName(match));
-    const irs::TokenPhraseMatcher matcher{options, options.word_separator(),
-                                          index.Reader(), kPlainId, match};
-    irs::PhraseCheck check{matcher, *options.tokens(), false};
+    const irs::CompiledPhrase compiled{options, options.word_separator(),
+                                       index.Reader(), kPlainId, match};
+    irs::PhraseCheck check{compiled, *options.tokens(), false};
     const auto candidates = index.Docs(*deferred);
     ASSERT_LE(candidates.size(), STANDARD_VECTOR_SIZE);
     duckdb::DataChunk chunk;
@@ -1054,6 +1037,23 @@ TEST(TokenPhraseIndexTest, expression_over_stored_columns) {
     ExpectFamilies(
       expected, index.Run(*Lowered(PhraseOn(kPlainId, Phrase(text), tokens))));
   }
+}
+
+TEST(TokenPhraseIndexTest, standalone_patterns_skip_shingles) {
+  const std::vector<std::string> docs{"the quick brown fox"};
+  const Index index{docs, std::type_identity<DenseWords>{}};
+  auto phrase = Phrase("quick");
+  phrase.push_back<irs::ByPrefixOptions>().term = Bytes("br");
+  const irs::CompiledPhrase compiled{phrase, Bytes("_"), index.Reader(),
+                                     kPlainId};
+  irs::PhraseCheck phrase_check{compiled, TextOf<DenseWords>(), true};
+  const auto check = [&](std::string_view text) {
+    irs::PhraseVerdict verdict;
+    return CheckText(phrase_check, text, verdict);
+  };
+  EXPECT_TRUE(check("the quick brown fox"));
+  EXPECT_FALSE(check("the quick brown_fox"));
+  EXPECT_FALSE(check("the quick dread"));
 }
 
 TEST(TokenPhraseIndexTest, without_stored_column_matches_nothing) {

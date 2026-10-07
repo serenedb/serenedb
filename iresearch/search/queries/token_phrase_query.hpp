@@ -44,7 +44,7 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
       _reader{&reader},
       _tokens{std::move(tokens)},
       _columns{std::move(columns)},
-      _matcher{phrase, expanded, reader},
+      _compiled{phrase, expanded, reader},
       _boost{boost} {
     _estimate_matches = _approx->EstimateMatches();
     _postings = _approx->Postings();
@@ -55,15 +55,13 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
 
   const TermReader& Reader() const noexcept { return *_reader; }
 
-  const TokenPhraseMatcher& Matcher() const noexcept { return _matcher; }
+  const CompiledPhrase& Compiled() const noexcept { return _compiled; }
 
   const PhraseTokens& Tokens() const noexcept { return *_tokens; }
 
   std::span<const ColumnReader* const> Columns() const noexcept {
     return _columns;
   }
-
-  bool Sloppy() const noexcept { return _matcher.Sloppy(); }
 
   void Visit(PreparedStateVisitor&, score_t) const final {}
 
@@ -76,7 +74,7 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
   const TermReader* _reader;
   std::shared_ptr<const PhraseTokens> _tokens;
   std::vector<const ColumnReader*> _columns;
-  TokenPhraseMatcher _matcher;
+  CompiledPhrase _compiled;
   score_t _boost;
 };
 

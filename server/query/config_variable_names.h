@@ -33,11 +33,6 @@ inline constexpr std::string_view kCleanupIntervalStepSetting =
   "cleanup_interval_step";
 inline constexpr std::string_view kSegmentMemoryMaxSetting =
   "segment_memory_max";
-inline constexpr std::string_view kCompressionLevelSetting =
-  "compression_level";
-inline constexpr std::string_view kSegmentTargetSetting = "segment_target";
-inline constexpr std::string_view kCompressionObjectiveSetting =
-  "compression_objective";
 inline constexpr std::string_view kObjectCacheSizeSetting =
   "sdb_object_cache_size";
 inline constexpr std::string_view kSearchBackfillGroupBytesSetting =

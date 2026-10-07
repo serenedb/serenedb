@@ -32,9 +32,7 @@
 #include <duckdb/parser/parsed_expression.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
-#include <iresearch/index/column_info.hpp>
 #include <memory>
-#include <optional>
 #include <string>
 #include <string_view>
 
@@ -80,8 +78,6 @@ inline constexpr auto kSearchTableMaintenanceSettings = std::to_array({
   kCompactionFloorSegmentBytesSetting,
 });
 
-inline constexpr std::array<std::string_view, 0> kSearchTableCodecOptions{};
-
 inline constexpr auto kSearchTableSettings = std::to_array({
   kRefreshIntervalSetting,
   kCompactionIntervalSetting,
@@ -117,10 +113,6 @@ void CheckCompressionLevel(std::string_view column_name,
                            bool columnstore);
 void CheckColumnCompression(const duckdb::ColumnDefinition& column,
                             TableEngine engine);
-std::optional<irs::AutoObjective> ParseCompressionObjective(
-  std::string_view name) noexcept;
-std::string_view CompressionObjectiveName(
-  irs::AutoObjective objective) noexcept;
 
 inline constexpr std::string_view kGeneratedPkSequenceTag =
   "sdb_generated_pk_seq";

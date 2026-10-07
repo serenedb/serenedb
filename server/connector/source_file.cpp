@@ -162,6 +162,7 @@ HeldFiles CollectHeldFiles(const irs::IndexReader& reader,
   for (const auto id : live) {
     const auto* file = files.Find(id);
     if (!file) {
+      held.complete = false;
       continue;
     }
     auto& entry = held.by_path[file->path];

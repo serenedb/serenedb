@@ -114,7 +114,7 @@ RefreshPlan PlanFileDiff(const ObserveInput& in, const SourceListing& listing,
                       : KnownFiles(*in.snapshot.files);
   auto scan = DiffFiles(plan, listing, held);
   const bool changed = plan.outcome.FilesChanged();
-  if (in.snapshot.position.definition != in.definition ||
+  if (in.snapshot.position.definition != in.definition || !held.complete ||
       (changed && !in.delta)) {
     PlanRebuild(plan, listing, in.next_file_id);
   } else if (changed) {

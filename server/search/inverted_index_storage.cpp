@@ -479,6 +479,7 @@ void InvertedIndexStorage::AppendSourceFilesLocked(
   if (added.empty()) {
     return;
   }
+  SDB_IF_FAILURE("skip_source_files_append") { return; }
   if (!_files_ref) {
     _files_ref = _dir->attributes().refs().add(kSourceFilesName);
   }

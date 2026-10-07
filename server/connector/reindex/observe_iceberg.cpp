@@ -512,6 +512,10 @@ RefreshPlan ObserveRowDeletes(const ObserveInput& in,
     return plan;
   }
   const auto held = CollectHeldFiles(in.snapshot.reader, *in.snapshot.files);
+  if (!held.complete) {
+    PlanRebuild(plan, listing, in.next_file_id);
+    return plan;
+  }
   const auto deletes_from =
     static_cast<duckdb::sequence_number_t>(baseline + 1);
   const bool new_deletes = planner.HasDeleteManifestsFrom(deletes_from);

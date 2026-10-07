@@ -56,6 +56,7 @@ struct HeldFile {
 
 struct HeldFiles {
   irs::containers::NodeHashMap<std::string, HeldFile> by_path;
+  bool complete = true;
 };
 
 HeldFiles CollectHeldFiles(const irs::IndexReader& reader,

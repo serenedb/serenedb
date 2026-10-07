@@ -184,6 +184,48 @@ d	50	50
 
 connection after_compaction
 statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body, 'e' AS src FROM range(500, 520) t(i)) TO '${__TEST_DIR__}/rsf/e.parquet' (FORMAT parquet);
+
+connection after_compaction
+statement ok
+SET sdb_faults = 'skip_source_files_append';
+
+connection after_compaction
+query
+SELECT * FROM serenedb_reindex('rsf_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+connection after_compaction
+statement ok
+RESET sdb_faults;
+
+connection after_compaction
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body, 'f' AS src FROM range(600, 610) t(i)) TO '${__TEST_DIR__}/rsf/f.parquet' (FORMAT parquet);
+
+connection after_compaction
+query
+SELECT * FROM serenedb_reindex('rsf_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+rebuild	2	0	0	6
+
+connection after_compaction
+query
+SELECT src, count(*), count(DISTINCT id) FROM rsf_idx WHERE body @@ ts_phrase('doc') GROUP BY src ORDER BY src;
+----
+src	count	count
+a	100	100
+b3	103	103
+c	100	100
+d	50	50
+e	20	20
+f	10	10
+
+connection after_compaction
+statement ok
 DROP INDEX rsf_idx;
 
 connection after_compaction

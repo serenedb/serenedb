@@ -170,6 +170,13 @@ struct RelationSpec {
     const auto* info = ScannedIndex().FindColumnInfo(column);
     return info && info->IsStored();
   }
+  bool StoresExpression(ColumnId field) const noexcept {
+    const auto* entry =
+      inverted_config ? inverted_config->FindEntry(field) : nullptr;
+    return entry && entry->IsStored() &&
+           inverted_config->ExpressionType(field).id() !=
+             duckdb::LogicalTypeId::INVALID;
+  }
   catalog::IndexTokenizers ResolveTokenizers(
     duckdb::ClientContext& context) const {
     return {context,

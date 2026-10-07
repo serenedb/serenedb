@@ -60,6 +60,13 @@ QUERY PLAN
 │ Index: pwp_text_idx                      │
 │ Lookup: table                            │
 │ Index Filter:                            │
+│ ╭─ And ────────────────────╮             │
+│ ╰─────────────┬────────────╯             │
+│ ╭─ Terms ─────┴────────────╮             │
+│ │ Field: body(string)      │             │
+│ │ Values: 'brown', 'quick' │             │
+│ ╰──────────────────────────╯             │
+│ Table Filter:                            │
 │ ╭─ Phrase ─────────────────────────────╮ │
 │ │ Field: body(string)                  │ │
 │ │ Parts:                               │ │
@@ -92,6 +99,155 @@ QUERY PLAN
 ╰──────────────────────────────────────────╯
 
 query
+SELECT id, constant(pwp_text_idx.tableoid, 2.0) AS score
+FROM pwp_text_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
+----
+id	score
+1	2
+2	2
+5	2
+7	2
+8	2
+
+query
+EXPLAIN SELECT id FROM pwp_text_idx WHERE body @@ ts_phrase('quick brown')
+ORDER BY constant(pwp_text_idx.tableoid, 2.0) DESC LIMIT 2
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: pwp_text_idx                      │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ And ────────────────────╮             │
+│ │ Merge: max               │             │
+│ ╰─────────────┬────────────╯             │
+│ ╭─ Terms ─────┴────────────╮             │
+│ │ Field: body(string)      │             │
+│ │ Values: 'brown', 'quick' │             │
+│ ╰──────────────────────────╯             │
+│ Table Filter:                            │
+│ ╭─ Phrase ─────────────────────────────╮ │
+│ │ Field: body(string)                  │ │
+│ │ Parts:                               │ │
+│ │ Term:quick(0, 0); Term:brown(1, 1);  │ │
+│ │ Verify: table filter                 │ │
+│ ╰──────────────────────────────────────╯ │
+│ Score: constant(value=2)                 │
+│ Top: 2                                   │
+│ Projections: id                          │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query
+SELECT id, round(BM25(pwp_text_idx.tableoid)::numeric, 4) AS score
+FROM pwp_text_idx
+WHERE (body @@ ts_phrase('quick brown'))::score('constant(1)') AND body @@ 'fox'
+ORDER BY id
+----
+id	score
+1	1.335
+5	1.335
+
+query
+SELECT id, round(BM25(pwp_pos_idx.tableoid)::numeric, 4) AS score
+FROM pwp_pos_idx
+WHERE (body @@ ts_phrase('quick brown'))::score('constant(1)') AND body @@ 'fox'
+ORDER BY id
+----
+id	score
+1	1.335
+5	1.335
+
+query
+EXPLAIN SELECT id FROM pwp_text_idx
+WHERE (body @@ ts_phrase('quick brown'))::score('constant(1)') AND body @@ 'fox'
+ORDER BY BM25(pwp_text_idx.tableoid) DESC LIMIT 2
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────╮
+│ Index: pwp_text_idx                                   │
+│ Lookup: table                                         │
+│ Index Filter:                                         │
+│ ╭─ And ───────────────╮                               │
+│ ╰──────────┬──────────╯                               │
+│            ├───────────────────────────╮              │
+│ ╭─ Terms ──┴──────────╮  ╭─ And ───────┴────────────╮ │
+│ │ Field: body(string) │  │ Merge: max               │ │
+│ │ Values: 'fox'       │  │ Score: constant(value=1) │ │
+│ ╰─────────────────────╯  ╰─────────────┬────────────╯ │
+│                          ╭─ Terms ─────┴────────────╮ │
+│                          │ Field: body(string)      │ │
+│                          │ Values: 'brown', 'quick' │ │
+│                          ╰──────────────────────────╯ │
+│ Table Filter:                                         │
+│ ╭─ Phrase ─────────────────────────────╮              │
+│ │ Field: body(string)                  │              │
+│ │ Parts:                               │              │
+│ │ Term:quick(0, 0); Term:brown(1, 1);  │              │
+│ │ Verify: table filter                 │              │
+│ │ Score: constant(value=1)             │              │
+│ ╰──────────────────────────────────────╯              │
+│ Score: bm25(k1=1.2, b=0.75)                           │
+│ Top: 2                                                │
+│ Projections: id                                       │
+│ ~1 row                                                │
+╰───────────────────────────────────────────────────────╯
+
+query
+SELECT id, round(BM25(pwp_text_idx.tableoid)::numeric, 4) AS score
+FROM pwp_text_idx
+WHERE (body @@ ts_phrase('quick brown'))::score(NULL) AND body @@ 'fox'
+ORDER BY id
+----
+id	score
+1	0.335
+5	0.335
+
+query
+SELECT id, round(BM25(pwp_pos_idx.tableoid)::numeric, 4) AS score
+FROM pwp_pos_idx
+WHERE (body @@ ts_phrase('quick brown'))::score(NULL) AND body @@ 'fox'
+ORDER BY id
+----
+id	score
+1	0.335
+5	0.335
+
+query
+EXPLAIN SELECT id FROM pwp_text_idx
+WHERE (body @@ ts_phrase('quick brown'))::score(NULL) AND body @@ 'fox'
+ORDER BY BM25(pwp_text_idx.tableoid) DESC LIMIT 2
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────╮
+│ Index: pwp_text_idx                                   │
+│ Lookup: table                                         │
+│ Index Filter:                                         │
+│ ╭─ And ───────────────╮                               │
+│ ╰──────────┬──────────╯                               │
+│            ├───────────────────────────╮              │
+│ ╭─ Terms ──┴──────────╮  ╭─ And ───────┴────────────╮ │
+│ │ Field: body(string) │  │ Score: unscored          │ │
+│ │ Values: 'fox'       │  ╰─────────────┬────────────╯ │
+│ ╰─────────────────────╯  ╭─ Terms ─────┴────────────╮ │
+│                          │ Field: body(string)      │ │
+│                          │ Values: 'brown', 'quick' │ │
+│                          ╰──────────────────────────╯ │
+│ Table Filter:                                         │
+│ ╭─ Phrase ─────────────────────────────╮              │
+│ │ Field: body(string)                  │              │
+│ │ Parts:                               │              │
+│ │ Term:quick(0, 0); Term:brown(1, 1);  │              │
+│ │ Verify: table filter                 │              │
+│ │ Score: unscored                      │              │
+│ ╰──────────────────────────────────────╯              │
+│ Score: bm25(k1=1.2, b=0.75)                           │
+│ Top: 2                                                │
+│ Projections: id                                       │
+│ ~1 row                                                │
+╰───────────────────────────────────────────────────────╯
+
+query
 EXPLAIN SELECT id FROM pwp_text_idx
 WHERE body @@ ts_phrase('quick brown') OR body @@ ts_phrase('lazy dog')
 ----
@@ -122,6 +278,14 @@ QUERY PLAN
 │ Index: pwp_text_idx                                     │
 │ Lookup: table                                           │
 │ Index Filter:                                           │
+│ ╭─ And ──────────────────╮                              │
+│ ╰────────────┬───────────╯                              │
+│              ├─────────────────────────╮                │
+│ ╭─ Terms ────┴───────────╮  ╭─ Starts With ───────╮     │
+│ │ Field: body(string)    │  │ Field: body(string) │     │
+│ │ Values: 'fox', 'quick' │  │ Prefix: br          │     │
+│ ╰────────────────────────╯  ╰─────────────────────╯     │
+│ Table Filter:                                           │
 │ ╭─ Phrase ────────────────────────────────────────────╮ │
 │ │ Field: body(string)                                 │ │
 │ │ Parts:                                              │ │
@@ -499,6 +663,13 @@ QUERY PLAN
 │ Index: pwp_expr_lower                  │
 │ Lookup: table                          │
 │ Index Filter:                          │
+│ ╭─ And ──────────────────────╮         │
+│ ╰──────────────┬─────────────╯         │
+│ ╭─ Terms ──────┴─────────────╮         │
+│ │ Field: lower(body)(string) │         │
+│ │ Values: 'brown', 'fox'     │         │
+│ ╰────────────────────────────╯         │
+│ Table Filter:                          │
 │ ╭─ Phrase ───────────────────────────╮ │
 │ │ Field: lower(body)(string)         │ │
 │ │ Parts:                             │ │
@@ -747,6 +918,13 @@ QUERY PLAN
 │ Index: pwp_shingled_idx                                  │
 │ Lookup: table                                            │
 │ Index Filter:                                            │
+│ ╭─ And ──────────────────────────────╮                   │
+│ ╰──────────────────┬─────────────────╯                   │
+│ ╭─ Terms ──────────┴─────────────────╮                   │
+│ │ Field: body(string)                │                   │
+│ │ Values: 'brown fox', 'quick brown' │                   │
+│ ╰────────────────────────────────────╯                   │
+│ Table Filter:                                            │
 │ ╭─ Phrase ─────────────────────────────────────────────╮ │
 │ │ Field: body(string)                                  │ │
 │ │ Parts:                                               │ │

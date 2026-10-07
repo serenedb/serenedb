@@ -39,6 +39,7 @@
 #include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/search/detail/token_phrase.hpp"
 #include "iresearch/search/detail/top_terms_selector.hpp"
+#include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/filters/levenshtein_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
@@ -52,6 +53,8 @@
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
 #include "iresearch/search/queries/token_phrase_query.hpp"
+#include "iresearch/search/scorers/constant_score.hpp"
+#include "iresearch/search/scorers/unscored.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/regexp_acceptor.hpp"
 #include "iresearch/utils/system_compiler.hpp"
@@ -522,9 +525,6 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
   if (!approx || QueryBuilder::IsEmpty(*approx)) {
     return QueryBuilder::Empty();
   }
-  if (tokens->deferred) {
-    return approx;
-  }
   const auto make = [&](const ByPhraseOptions& phrase,
                         std::span<const std::vector<bstring>> expanded) {
     auto query = memory::make_tracked<TokenPhraseQuery>(
@@ -602,7 +602,7 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
       }
     }
 
-    if (options.slop() != 0 || (tokens && !tokens->deferred)) {
+    if (options.slop() != 0 || tokens) {
       part_terms.resize(phrase_size);
     }
   }
@@ -738,6 +738,56 @@ PrepareCollector::ptr ByPhrase::MakeCollectorImpl(const Scorer* scorer,
   }
   return std::make_unique<ExpandedSlotsCollector>(
     scorer, counts.terms, counts.expanded, stats, threads);
+}
+
+Filter::ptr PartFilter(field_id field, ByPhraseOptions::PhrasePart part,
+                       bool constant) {
+  return std::visit(
+    [&]<typename Options>(Options& options) -> Filter::ptr {
+      if constexpr (std::is_same_v<Options, TermSetOptions>) {
+        if (options.terms.empty()) {
+          return Filter::empty();
+        }
+        auto node = std::make_unique<BooleanFilter>();
+        for (const auto& term : options.terms) {
+          node->Add(TermClause{.field = field, .term = term}, Occur::Should);
+        }
+        node->SetMinShouldMatch(1);
+        if (constant) {
+          node->SetMergeType(ScoreMergeType::Max);
+        }
+        return node;
+      } else {
+        auto node = std::make_unique<typename Options::FilterType>();
+        *node->mutable_field_id() = field;
+        *node->mutable_options() = std::move(options);
+        return node;
+      }
+    },
+    part);
+}
+
+Filter::ptr PartsConjunction(const ByPhrase& phrase, const Scorer* scorer) {
+  const auto* own = phrase.GetScorer();
+  const auto* effective = own ? own : scorer;
+  const bool constant =
+    effective && effective->type() == Type<ConstantScore>::id();
+  if (effective && !constant && !IsUnscored(*effective)) {
+    return nullptr;
+  }
+  auto conjunction = std::make_unique<BooleanFilter>();
+  for (const auto& info : phrase.options()) {
+    conjunction->Add(PartFilter(phrase.field_id(), info.part, constant),
+                     Occur::Must);
+  }
+  if (effective) {
+    conjunction->SetScorer(own);
+    conjunction->SetBoost(phrase.GetBoost());
+    if (constant) {
+      conjunction->SetMergeType(ScoreMergeType::Max);
+    }
+  }
+  return conjunction;
 }
 
 bool ByPhraseOptions::operator==(const ByPhraseOptions& rhs) const noexcept {

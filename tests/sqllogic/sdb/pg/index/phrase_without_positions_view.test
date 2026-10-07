@@ -95,6 +95,13 @@ QUERY PLAN
 │ Index: pwpv_text                         │
 │ Lookup: parquet                          │
 │ Index Filter:                            │
+│ ╭─ And ────────────────────╮             │
+│ ╰─────────────┬────────────╯             │
+│ ╭─ Terms ─────┴────────────╮             │
+│ │ Field: body(string)      │             │
+│ │ Values: 'brown', 'quick' │             │
+│ ╰──────────────────────────╯             │
+│ Table Filter:                            │
 │ ╭─ Phrase ─────────────────────────────╮ │
 │ │ Field: body(string)                  │ │
 │ │ Parts:                               │ │

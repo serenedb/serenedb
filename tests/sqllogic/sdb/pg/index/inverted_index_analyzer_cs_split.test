@@ -257,6 +257,16 @@ QUERY PLAN
 │ │ Has Pos: false                         │ │
 │ │ Query:                                 │ │
 │ │ And("\\x1fpercent", "alpha", "one\\x1f") │ │
+│ │ Verify: false                          │ │
+│ ╰────────────────────────────────────────╯ │
+│ Table Filter:                              │
+│ ╭─ Wildcard NGram ───────────────────────╮ │
+│ │ Field: b(string)                       │ │
+│ │ Pattern: (?s)\\Apercent.alpha.one\\z     │ │
+│ │ Syntax: perl                           │ │
+│ │ Has Pos: false                         │ │
+│ │ Query:                                 │ │
+│ │ And("\\x1fpercent", "alpha", "one\\x1f") │ │
 │ │ Verify: table filter                   │ │
 │ ╰────────────────────────────────────────╯ │
 │ Projections: b (i), pk (l)                 │
@@ -296,6 +306,16 @@ QUERY PLAN
 │ Index: t_wild_noi_idx                      │
 │ Lookup: table                              │
 │ Index Filter:                              │
+│ ╭─ Wildcard NGram ───────────────────────╮ │
+│ │ Field: b(string)                       │ │
+│ │ Pattern: (?s)\\Apercent.alpha.one\\z     │ │
+│ │ Syntax: perl                           │ │
+│ │ Has Pos: false                         │ │
+│ │ Query:                                 │ │
+│ │ And("\\x1fpercent", "alpha", "one\\x1f") │ │
+│ │ Verify: false                          │ │
+│ ╰────────────────────────────────────────╯ │
+│ Table Filter:                              │
 │ ╭─ Wildcard NGram ───────────────────────╮ │
 │ │ Field: b(string)                       │ │
 │ │ Pattern: (?s)\\Apercent.alpha.one\\z     │ │

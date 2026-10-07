@@ -1044,6 +1044,20 @@ TEST(TokenPhraseFilterTest, parts_conjunction_has_one_filter_per_part) {
   EXPECT_EQ(Bytes("fo"), prefix.options().term);
 }
 
+TEST(TokenPhraseFilterTest, parts_conjunction_keeps_one_clause_per_word) {
+  const auto phrase =
+    PhraseOn(kPlainId, Phrase("the cat in the hat"), Tokens<DenseWords>());
+  const auto conjunction = irs::PartsConjunction(phrase, nullptr);
+  ASSERT_NE(nullptr, conjunction);
+  const auto& all = irs::utils::downCast<irs::BooleanFilter>(*conjunction);
+  EXPECT_EQ((std::vector<irs::bstring>{
+              irs::bstring{Bytes("cat")}, irs::bstring{Bytes("hat")},
+              irs::bstring{Bytes("in")}, irs::bstring{Bytes("the")}}),
+            std::ranges::to<std::vector>(
+              all.Terms(irs::Occur::Must) |
+              std::views::transform(&irs::TermClause::term)));
+}
+
 TEST(TokenPhraseFilterTest, part_filter_of_every_kind) {
   const auto term = irs::PartFilter(
     kPlainId, irs::ByTermOptions{.term = irs::bstring{Bytes("fox")}}, false);

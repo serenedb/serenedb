@@ -26,6 +26,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_format.h>
 
+#include <algorithm>
 #include <boost/utility/compare_pointees.hpp>
 #include <memory>
 #include <span>
@@ -780,6 +781,8 @@ Filter::ptr PartsConjunction(const ByPhrase& phrase, const Scorer* scorer) {
     conjunction->Add(PartFilter(phrase.field_id(), info.part, constant),
                      Occur::Must);
   }
+  auto& terms = conjunction->Bucket(Occur::Must).terms;
+  terms.erase(std::ranges::unique(terms).begin(), terms.end());
   if (effective) {
     conjunction->SetScorer(own);
     conjunction->SetBoost(phrase.GetBoost());

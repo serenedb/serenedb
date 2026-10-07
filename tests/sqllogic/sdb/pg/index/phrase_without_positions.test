@@ -78,6 +78,81 @@ QUERY PLAN
 ╰──────────────────────────────────────────╯
 
 query
+EXPLAIN SELECT id FROM pwp_text_idx
+WHERE body @@ 'quick' AND body @@ ts_phrase('quick brown')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: pwp_text_idx                      │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ And ────────────────────╮             │
+│ ╰─────────────┬────────────╯             │
+│ ╭─ Terms ─────┴────────────╮             │
+│ │ Field: body(string)      │             │
+│ │ Values: 'brown', 'quick' │             │
+│ ╰──────────────────────────╯             │
+│ Table Filter:                            │
+│ ╭─ Phrase ─────────────────────────────╮ │
+│ │ Field: body(string)                  │ │
+│ │ Parts:                               │ │
+│ │ Term:quick(0, 0); Term:brown(1, 1);  │ │
+│ │ Verify: table filter                 │ │
+│ ╰──────────────────────────────────────╯ │
+│ Projections: id                          │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query
+SELECT id FROM pwp_text_idx
+WHERE body @@ 'quick' AND body @@ ts_phrase('quick brown') ORDER BY id
+----
+id
+1
+2
+5
+7
+8
+
+query
+EXPLAIN SELECT id FROM pwp_text_idx
+WHERE body @@ ts_phrase('quick brown') AND body @@ ts_phrase('brown fox')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────╮
+│ Index: pwp_text_idx                                                              │
+│ Lookup: table                                                                    │
+│ Index Filter:                                                                    │
+│ ╭─ And ───────────────────────────╮                                              │
+│ ╰────────────────┬────────────────╯                                              │
+│ ╭─ Terms ────────┴────────────────╮                                              │
+│ │ Field: body(string)             │                                              │
+│ │ Values: 'brown', 'fox', 'quick' │                                              │
+│ ╰─────────────────────────────────╯                                              │
+│ Table Filter:                                                                    │
+│ ╭─ And ────────────────────────────────╮                                         │
+│ ╰───────────────────┬──────────────────╯                                         │
+│                     ├────────────────────────────────────────╮                   │
+│ ╭─ Phrase ──────────┴──────────────────╮  ╭─ Phrase ─────────┴─────────────────╮ │
+│ │ Field: body(string)                  │  │ Field: body(string)                │ │
+│ │ Parts:                               │  │ Parts:                             │ │
+│ │ Term:quick(0, 0); Term:brown(1, 1);  │  │ Term:brown(0, 0); Term:fox(1, 1);  │ │
+│ │ Verify: table filter                 │  │ Verify: table filter               │ │
+│ ╰──────────────────────────────────────╯  ╰────────────────────────────────────╯ │
+│ Projections: id                                                                  │
+│ ~1 row                                                                           │
+╰──────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT id FROM pwp_text_idx
+WHERE body @@ ts_phrase('quick brown') AND body @@ ts_phrase('brown fox')
+ORDER BY id
+----
+id
+1
+5
+
+query
 EXPLAIN SELECT id FROM pwp_text_idx WHERE body @@ ts_phrase('quick brown')
 ORDER BY BM25(pwp_text_idx.tableoid) DESC LIMIT 2
 ----
@@ -246,6 +321,108 @@ QUERY PLAN
 │ Projections: id                                       │
 │ ~1 row                                                │
 ╰───────────────────────────────────────────────────────╯
+
+query
+SELECT id, constant(pwp_text_idx.tableoid, 2.0) AS score
+FROM pwp_text_idx WHERE body @@ ts_phrase('quick brown quick') ORDER BY id
+----
+id	score
+7	2
+
+query
+SELECT id, constant(pwp_pos_idx.tableoid, 2.0) AS score
+FROM pwp_pos_idx WHERE body @@ ts_phrase('quick brown quick') ORDER BY id
+----
+id	score
+7	2
+
+query
+SELECT id, constant(pwp_text_idx.tableoid, 2.0) AS score FROM pwp_text_idx
+WHERE (body @@ 'quick' AND body @@ ts_phrase('quick brown'))::merge('max')
+ORDER BY id
+----
+id	score
+1	2
+2	2
+5	2
+7	2
+8	2
+
+query
+SELECT id, constant(pwp_pos_idx.tableoid, 2.0) AS score FROM pwp_pos_idx
+WHERE (body @@ 'quick' AND body @@ ts_phrase('quick brown'))::merge('max')
+ORDER BY id
+----
+id	score
+1	2
+2	2
+5	2
+7	2
+8	2
+
+query
+EXPLAIN SELECT id FROM pwp_text_idx
+WHERE (body @@ 'quick' AND body @@ ts_phrase('quick brown'))::merge('max')
+ORDER BY constant(pwp_text_idx.tableoid, 2.0) DESC LIMIT 2
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: pwp_text_idx                      │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ And ────────────────────╮             │
+│ │ Merge: max               │             │
+│ ╰─────────────┬────────────╯             │
+│ ╭─ Terms ─────┴────────────╮             │
+│ │ Field: body(string)      │             │
+│ │ Values: 'brown', 'quick' │             │
+│ ╰──────────────────────────╯             │
+│ Table Filter:                            │
+│ ╭─ Phrase ─────────────────────────────╮ │
+│ │ Field: body(string)                  │ │
+│ │ Parts:                               │ │
+│ │ Term:quick(0, 0); Term:brown(1, 1);  │ │
+│ │ Verify: table filter                 │ │
+│ ╰──────────────────────────────────────╯ │
+│ Score: constant(value=2)                 │
+│ Top: 2                                   │
+│ Projections: id                          │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query
+SELECT id, constant(pwp_text_idx.tableoid, 2.0) AS score FROM pwp_text_idx
+WHERE body @@ 'quick' AND body @@ ts_phrase('quick brown quick') ORDER BY id
+----
+id	score
+7	4
+
+query
+SELECT id, constant(pwp_pos_idx.tableoid, 2.0) AS score FROM pwp_pos_idx
+WHERE body @@ 'quick' AND body @@ ts_phrase('quick brown quick') ORDER BY id
+----
+id	score
+7	4
+
+query
+SELECT id, round(BM25(pwp_text_idx.tableoid)::numeric, 4) AS score
+FROM pwp_text_idx
+WHERE (body @@ ts_phrase('quick brown quick'))::score('constant(1)')
+  AND body @@ 'quick'
+ORDER BY id
+----
+id	score
+7	1.049
+
+query
+SELECT id, round(BM25(pwp_pos_idx.tableoid)::numeric, 4) AS score
+FROM pwp_pos_idx
+WHERE (body @@ ts_phrase('quick brown quick'))::score('constant(1)')
+  AND body @@ 'quick'
+ORDER BY id
+----
+id	score
+7	1.049
 
 query
 EXPLAIN SELECT id FROM pwp_text_idx

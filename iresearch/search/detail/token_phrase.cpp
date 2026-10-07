@@ -147,9 +147,6 @@ void CompiledPhrase::Init(const ByPhraseOptions& phrase,
   }
   LayoutAutomaton();
   PickAnchor(readers);
-  fallback =
-    automaton.length != 0 ? PhraseMatch::Automaton : PhraseMatch::Positions;
-  primary = anchor.slot != kNoSlot ? PhraseMatch::Anchor : fallback;
   if (!match) {
     return;
   }
@@ -157,12 +154,13 @@ void CompiledPhrase::Init(const ByPhraseOptions& phrase,
     case PhraseMatch::Anchor:
       break;
     case PhraseMatch::Automaton:
-      if (automaton.length != 0) {
-        primary = PhraseMatch::Automaton;
+      if (automaton) {
+        anchor.reset();
       }
       break;
     case PhraseMatch::Positions:
-      primary = PhraseMatch::Positions;
+      anchor.reset();
+      automaton.reset();
       break;
   }
 }
@@ -221,7 +219,7 @@ uint64_t CompiledPhrase::MaskOf(const duckdb::string_t& term) const {
   }
   for (const auto slot : pattern_slots) {
     if (patterns[slot]->Accepts(view)) {
-      mask |= automaton.slot_bits[slot];
+      mask |= automaton->slot_bits[slot];
     }
   }
   return mask;
@@ -280,7 +278,7 @@ void CompiledPhrase::LayoutSlop() {
 
 void CompiledPhrase::LayoutAutomaton() {
   const auto n = offs_max.size();
-  auto& layout = automaton;
+  Automaton layout;
   layout.slot_bits.assign(n, 0);
   uint64_t bit = 0;
   for (size_t k = 0; k != n; ++k) {
@@ -288,7 +286,6 @@ void CompiledPhrase::LayoutAutomaton() {
       const auto prev = bit;
       bit = prev + offs_max[k];
       if (bit >= kMaxBits) {
-        layout = {};
         return;
       }
       for (auto g = prev + 1; g < bit; ++g) {
@@ -313,6 +310,7 @@ void CompiledPhrase::LayoutAutomaton() {
       entry.mask |= layout.slot_bits[slot_ids[entry.begin + i]];
     }
   }
+  automaton = std::move(layout);
 }
 
 void CompiledPhrase::PickAnchor(std::span<const TermReader* const> readers) {
@@ -335,18 +333,18 @@ void CompiledPhrase::PickAnchor(std::span<const TermReader* const> readers) {
       cost = freq != 0 ? static_cast<double>(freq) / static_cast<double>(docs)
                        : static_cast<double>(docs);
     }
-    if (anchor.slot == kNoSlot || cost < best ||
-        (cost == best && word.GetSize() > words[anchor.slot].GetSize())) {
-      anchor.slot = k;
+    if (!anchor || cost < best ||
+        (cost == best && word.GetSize() > words[anchor->slot].GetSize())) {
+      anchor = Anchor{.slot = k};
       best = cost;
     }
   }
-  if (anchor.slot == kNoSlot) {
+  if (!anchor) {
     return;
   }
-  const auto split = offs_max.begin() + anchor.slot + 1;
-  anchor.left = std::accumulate(offs_max.begin() + 1, split, uint64_t{0});
-  anchor.right = std::accumulate(split, offs_max.end(), uint64_t{0});
+  const auto split = offs_max.begin() + anchor->slot + 1;
+  anchor->left = std::accumulate(offs_max.begin() + 1, split, uint64_t{0});
+  anchor->right = std::accumulate(split, offs_max.end(), uint64_t{0});
 }
 
 void PhraseCheck::Anchor::Reset() {
@@ -431,7 +429,7 @@ void PhraseCheck::Bind(duckdb::DataChunk& columns) {
 
 bool PhraseCheck::Check(duckdb::idx_t row, PhraseVerdict& out) {
   const auto values = Values(row);
-  Start(_phrase->primary);
+  Start(_phrase->anchor.has_value());
   Analyze(values);
   _restarted = Restart();
   if (_restarted) {
@@ -483,22 +481,18 @@ std::span<const duckdb::string_t> PhraseCheck::Values(duckdb::idx_t row) {
   return rows.values;
 }
 
-void PhraseCheck::Start(PhraseMatch mode) {
+void PhraseCheck::Start(bool anchored) {
   _done = false;
   _restart = false;
   _last_pos = 0;
   _value_base = 0;
   _freq = 0;
-  switch (mode) {
-    case PhraseMatch::Anchor:
-      Use<Anchor>().Reset();
-      break;
-    case PhraseMatch::Automaton:
-      Use<Automaton>().Reset(_phrase->automaton, _count);
-      break;
-    case PhraseMatch::Positions:
-      Use<Positions>().Reset(_phrase->offs_min.size());
-      break;
+  if (anchored) {
+    Use<Anchor>().Reset();
+  } else if (_phrase->automaton) {
+    Use<Automaton>().Reset(*_phrase->automaton, _count);
+  } else {
+    Use<Positions>().Reset(_phrase->offs_min.size());
   }
 }
 
@@ -536,7 +530,7 @@ bool PhraseCheck::Restart() {
   if (!_restart) {
     return false;
   }
-  Start(_phrase->fallback);
+  Start(false);
   return true;
 }
 
@@ -554,7 +548,7 @@ bool PhraseCheck::Counted(PhraseVerdict& out) const noexcept {
 }
 
 void PhraseCheck::Feed(Anchor& anchor, const TokenBatch& batch) {
-  const auto& layout = _phrase->anchor;
+  const auto& layout = *_phrase->anchor;
   anchor.batch_terms = batch.terms;
   anchor.batch_pos = batch.pos;
   anchor.batch_base = anchor.carry_base + anchor.carry_terms.size();
@@ -599,7 +593,7 @@ bool PhraseCheck::Finish(Anchor&, PhraseVerdict& out) {
 }
 
 bool PhraseCheck::Hit(Anchor& anchor, size_t at) {
-  const auto slot = _phrase->anchor.slot;
+  const auto slot = _phrase->anchor->slot;
   if (const auto left = Left(anchor, slot, at)) {
     _freq += left * Right(anchor, slot, at);
   }
@@ -721,7 +715,7 @@ void PhraseCheck::Flush(Automaton& automaton) {
 }
 
 void PhraseCheck::Step(Automaton& automaton, uint64_t mask) {
-  const auto& layout = _phrase->automaton;
+  const auto& layout = *_phrase->automaton;
   auto next = ((automaton.state << 1) | 1) & (mask | layout.wild);
   for (const auto& extra : layout.extras) {
     if (automaton.state & extra.range) {

@@ -24,7 +24,6 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/storage/arena_allocator.hpp>
 #include <functional>
-#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -76,7 +75,6 @@ struct PhraseVerdict {
 };
 
 struct CompiledPhrase {
-  static constexpr uint32_t kNoSlot = std::numeric_limits<uint32_t>::max();
   static constexpr uint32_t kMaxBits = 64;
 
   struct Accept {
@@ -92,7 +90,7 @@ struct CompiledPhrase {
   };
 
   struct Anchor {
-    uint32_t slot = kNoSlot;
+    uint32_t slot = 0;
     uint64_t left = 0;
     uint64_t right = 0;
   };
@@ -158,10 +156,8 @@ struct CompiledPhrase {
   std::vector<uint32_t> slot_ids;
   std::vector<TermPredicate::ptr> patterns;
   std::vector<uint32_t> pattern_slots;
-  Anchor anchor;
-  Automaton automaton;
-  PhraseMatch primary = PhraseMatch::Positions;
-  PhraseMatch fallback = PhraseMatch::Positions;
+  std::optional<Anchor> anchor;
+  std::optional<Automaton> automaton;
 
  private:
   const Accept* Find(bytes_view term) const noexcept {
@@ -272,7 +268,7 @@ class PhraseCheck final : public TokenConsumer {
   std::span<const duckdb::string_t> Values(duckdb::idx_t row);
   void Analyze(std::span<const duckdb::string_t> values);
 
-  void Start(PhraseMatch mode);
+  void Start(bool anchored);
   bool Restart();
   bool End(PhraseVerdict& out);
   bool Counted(PhraseVerdict& out) const noexcept;

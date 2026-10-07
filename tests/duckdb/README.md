@@ -87,22 +87,24 @@ An update is reviewed patchset by patchset. Every fork whose upstream is in the 
 | `third_party/database-connector` | https://github.com/serenedb/database-connector/pull/3 |
 | `third_party/avro` | https://github.com/serenedb/avro/pull/1 |
 
-### The update of 2026-10-05
+### The update of 2026-10-07
 
 | submodule | upstream | `main` | merged | ext patches | boundary |
 |---|---|---|---|---|---|
-| `third_party/duckdb` | duckdb/duckdb | `e829ad1529` | `v2.0-cyanoptera` `36265ef34d`, `v1.5-variegata` `069cc9f9b5` | none | `0a82d6a5dc` |
+| `third_party/duckdb` | duckdb/duckdb | `a770db1197` | `v2.0-cyanoptera` `57c755a991`, which contains `v1.5-variegata` `069cc9f9b5` | none | `039e6d6b06` |
 | `third_party/duckdb_httpfs` | duckdb/duckdb-httpfs | `53b78e97a5` | `v1.5-variegata` `b26737e` | 0003-duplicate-secret-option-error | `954e6d913b` |
-| `third_party/duckdb_avro` | duckdb/duckdb-avro | `859d56d` | `v1.5-variegata` `a54bd17` | none | `b108c9d5e3` |
-| `third_party/duckdb_iceberg` | duckdb/duckdb-iceberg | `221db9bb4f` | `v1.5-variegata` `5dcf5070c5` | 0002-alter-info-column-path, 0002-logical-type-info-header | `72e8d691f2` |
-| `third_party/duckdb_postgres` | duckdb/duckdb-postgres | `f9db66ec5a` | `v1.5-variegata` `1ddd672176` | 0002-builtin-parser | `e72abd6178` |
+| `third_party/duckdb_avro` | duckdb/duckdb-avro | `0eb4902b25` | `v1.5-variegata` `a54bd17` | none | `4a0e73dc6a` |
+| `third_party/duckdb_iceberg` | duckdb/duckdb-iceberg | `25509bdb99` | `v1.5-variegata` `5dcf5070c5` | 0002-alter-info-column-path, 0002-logical-type-info-header | `0f916a28eb` |
+| `third_party/duckdb_postgres` | duckdb/duckdb-postgres | `a0fcfdece4` | `v1.5-variegata` `1ddd672176` | none | `5c0e19c377` |
 | `third_party/duckdb_inet` | duckdb/duckdb-inet | `61ce2d7245` | none | none | `61ce2d7245` |
 | `third_party/duckdb_markdown` | teaguesterling/duckdb_markdown | `769f8c0e39` | none | none | `769f8c0e39` |
-| `third_party/duckdb_azure` | duckdb/duckdb-azure | `951a0ab` | `v1.5-variegata` `73bd62b` | 0001-fix-azure-storage-cstdint | `5a0c59d34e` |
+| `third_party/duckdb_azure` | duckdb/duckdb-azure | `0ce9955c44` | `v1.5-variegata` `73bd62b` | none | `e3f6f2cc18` |
 | `third_party/duckdb_spatial` | duckdb/duckdb-spatial | `2b072abd2a` | `v1.5-variegata` `9bfcf30e` | all 17: 0003 to 0013 in file order, then 0007-function-set-shared-ptr | `dae76d3f` |
 | `third_party/database-connector` | duckdb/database-connector | `73d27b7` | `v1.5-variegata` `0a8505f` | none | `5ee92ce63e` |
 | `third_party/avro` | apache/avro | `28cb08c15` | duckdb/duckdb-avro-c's 18 commits `35ff8b997..51ab9b2d3`, cherry-picked (its merges carry no resolutions) | none | `36e295afc` |
 
+- DuckDB's `v1.5-variegata` is contained in its `v2.0-cyanoptera`, so only `v2.0-cyanoptera` is merged. Its conflicts with `main` (`main`'s DEFERRED constraints against `v2.0-cyanoptera`'s constraint index oids) are resolved as in upstream's open pull request that merges `v2.0-cyanoptera` into `main` ([26558](https://github.com/duckdb/duckdb/pull/26558), with its window evaluation fixes), and the newer `v2.0-cyanoptera` commits are merged on top.
+- Upstream already has DuckDB's postgres_scanner patches (0002-builtin-parser, 0003-catalog-set-concurrent-clear) and its azure patch (0001-fix-azure-storage-cstdint), so none of them is applied.
 - inet has no release branches, and markdown's `v1.5-variegata` and spatial's `v2.0-cyanoptera` are contained in their `main`, so none of them is merged. DuckDB's inet patches target the v1.4 C++ layout while inet `main` is a C-API extension, so they are not applied; our port commit carries that adaptation.
 - In spatial, `0007-function-set-shared-ptr` applies only after `0013`, and `0014-spatial-join-logical-cast` is not applied: `v1.5-variegata` already has its change.
 - DuckDB writes its iceberg patches against the iceberg commit it pins, older than iceberg `main`. Iceberg `main` already has `0001-can-autoload-extension-database` and its own port of `0001-table-function-signature-options`, so neither is applied, and `0002-alter-info-column-path` goes in with `git apply --3way`.

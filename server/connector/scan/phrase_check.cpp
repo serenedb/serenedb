@@ -95,20 +95,12 @@ std::optional<DeferredCheck> DeferPhrase(irs::Filter::ptr& filter,
   if (!index) {
     return std::nullopt;
   }
-  const auto column = tokens->text.columns.front();
-  const auto type = tokens->text.types.front();
   auto compiled = std::make_shared<const irs::CompiledPhrase>(
     checked, options.word_separator(), ctx.reader, phrase.field_id());
-  auto check = MakeColumnCheck(
-    "sdb_phrase_check", type, CheckPhrase,
-    duckdb::make_uniq<PhraseCheckBind>(std::move(compiled), tokens),
-    InitPhraseCheck);
-  DeferredCheck deferred{.source = std::move(filter),
-                         .column = column,
-                         .type = type,
-                         .check = std::move(check)};
-  filter = std::move(index);
-  return deferred;
+  return Split(filter, std::move(index), tokens->text.columns.front(),
+               tokens->text.types.front(), "sdb_phrase_check", CheckPhrase,
+               duckdb::make_uniq<PhraseCheckBind>(std::move(compiled), tokens),
+               InitPhraseCheck);
 }
 
 }  // namespace sdb::connector

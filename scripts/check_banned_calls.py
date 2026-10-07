@@ -9,11 +9,15 @@ from fix_enum_trailing_comma import blanked  # noqa: E402
 BANNED = [
     (
         re.compile(r"\bstd::(unordered_(?:map|set|multimap|multiset))\b"),
-        "irs::containers::FlatHashMap, FlatHashSet or NodeHashMap",
+        "irs::containers::FlatHashMap, FlatHashSet, NodeHashMap or NodeHashSet",
     ),
     (
         re.compile(r"(?<![\w:])(?:std::)?(v?(?:f|s|sn)?printf)\s*\("),
-        "absl::StrFormat, absl::StrCat, absl::FPrintF, absl::PrintF or absl::SNPrintF",
+        "absl::StrFormat, absl::StrAppendFormat, absl::FPrintF or absl::SNPrintF",
+    ),
+    (
+        re.compile(r"\bstd::(v?format(?:_to(?:_n)?)?|print(?:ln)?)\s*\("),
+        "absl::StrFormat or absl::StrAppendFormat (fmt only where neither fits)",
     ),
     (
         re.compile(

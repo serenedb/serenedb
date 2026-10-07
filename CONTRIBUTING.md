@@ -652,14 +652,17 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 
 - Never implement what already exists: look for it in abseil (`absl::c_*` algorithms, strings, containers, synchronization), `server/utils/`, `iresearch/utils/` and DuckDB, and use, extend or patch that instead of building a parallel copy. A hand-written loop that an `absl::c_*` algorithm expresses is a duplicate too.
 - No trivial pass-through wrappers around a library call: call the library directly.
-- `absl::Hash` over `std::hash`; `irs::containers::FlatHashMap`, `FlatHashSet` or `NodeHashMap` (absl underneath) over `std::unordered_*`, which pre-commit `check-banned-calls` rejects in `server/` and `iresearch/`
+- `absl::Hash` over `std::hash`; `irs::containers::FlatHashMap`, `FlatHashSet`, `NodeHashMap` or `NodeHashSet` (absl underneath) over `std::unordered_*`, which pre-commit `check-banned-calls` rejects in `server/` and `iresearch/`
 - `absl::btree_*` over `std::set`/`std::map` when appropriate
 - `std::span<const T>` over `std::initializer_list<T>` in parameters
 - `magic_enum` for enum names
 - `absl::c_any_of` (etc.) over `std::any_of(begin, end)`. Fall back to `std::ranges` when no `absl::c_*` exists (e.g. `std::ranges::sort(range, {}, proj)`).
 - Prefer imperative loops over ranges pipelines
-- String operations: `absl::StrCat`, `absl::Substitute`, `absl::StrJoin`, `absl::StrSplit`
-- No `fmt`; the `printf` family is rejected by `check-banned-calls`: use `absl::StrFormat`, `absl::FPrintF`, or `absl::SNPrintF` into a fixed buffer
+- Strings: `absl::StrCat`, `absl::StrAppend`, `absl::StrJoin`, `absl::StrSplit`
+- `absl::Substitute` when one argument appears in several positions and no printf-like formatting is needed
+- printf-like formatting: `absl::StrFormat`, `absl::StrAppendFormat`, `absl::StreamFormat`, `absl::FPrintF`, or `absl::SNPrintF` into a fixed buffer
+- `fmt` only where none of those fits, as the replacement for `std::format`
+- Never `printf`, `fprintf`, `snprintf` or `std::format` (pre-commit `check-banned-calls` rejects them); the one exception is the crash handler, which must not allocate
 - Number parsing: `fast_float::from_chars`, checking its `ec`; `std::sto*`, `std::from_chars`, `strto*` and `ato*` are rejected by `check-banned-calls`
 - Avoid streams API (`operator<<`/`>>`) in new code. See also `absl::StreamFormat`
 - Implicit conversion to bool: prefer `if (auto x = something())` over `if (auto x = something(); x)`

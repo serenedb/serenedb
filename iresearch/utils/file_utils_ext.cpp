@@ -245,6 +245,8 @@ void HintWriteback(void* fd, uint64_t offset, size_t size) noexcept {
 #ifndef _WIN32
 namespace {
 
+constexpr size_t kWillNeedChunk = 32 * 1024;
+
 size_t SystemPage() noexcept {
   static const size_t kPageSize = ::sysconf(_SC_PAGESIZE);
   return kPageSize;
@@ -267,19 +269,19 @@ void Prefetch(const void* addr, size_t size) noexcept {
     return;
   }
   const auto [aligned, total] = PageRange(addr, size);
-  for (size_t offset = 0; offset < total; offset += kPrefetchChunk) {
+  for (size_t offset = 0; offset < total; offset += kWillNeedChunk) {
     ::madvise(reinterpret_cast<void*>(aligned + offset),
-              std::min(kPrefetchChunk, total - offset), MADV_WILLNEED);
+              std::min(kWillNeedChunk, total - offset), MADV_WILLNEED);
   }
 #endif
 }
 
 void Prefetch(int fd, uint64_t offset, uint64_t size) noexcept {
 #ifndef _WIN32
-  for (uint64_t at = 0; at < size; at += kPrefetchChunk) {
+  for (uint64_t at = 0; at < size; at += kWillNeedChunk) {
     ::posix_fadvise(
       fd, static_cast<off_t>(offset + at),
-      static_cast<off_t>(std::min<uint64_t>(kPrefetchChunk, size - at)),
+      static_cast<off_t>(std::min<uint64_t>(kWillNeedChunk, size - at)),
       POSIX_FADV_WILLNEED);
   }
 #endif

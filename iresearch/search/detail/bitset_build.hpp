@@ -410,7 +410,7 @@ inline BitsetStorage BuildBitset(BitsetBuckets& buckets, const IndexInput& doc,
 
   if (buckets.masked != nullptr) {
     ResolveDocsMask(*buckets.masked, [&]<DocsMaskType Mask>(Mask mask) {
-      mask.AndNot(BitsetStorage::kMin, bits.End(), words);
+      mask.Remove(BitsetStorage::kMin, bits.End(), words);
     });
   }
   bits.Trim();

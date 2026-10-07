@@ -155,6 +155,29 @@ void BmFilterBlock(benchmark::State& state) {
   });
 }
 
+void BmCountMasked(benchmark::State& state) {
+  const auto stride = static_cast<doc_id_t>(state.range(1));
+  WithMask(state, [&]<typename Mask>(Mask& mask) {
+    std::vector<doc_id_t> docs(irs::doc_limits::kBlockSize);
+    for (auto _ : state) {
+      Mask cursor = mask;
+      uint64_t masked = 0;
+      for (auto doc = kBegin; doc < kEnd;) {
+        uint32_t len = 0;
+        for (; len != docs.size() && doc < kEnd; ++len, doc += stride) {
+          docs[len] = doc;
+        }
+        masked += cursor.CountMasked(docs.data(), len);
+      }
+      benchmark::DoNotOptimize(masked);
+    }
+    state.counters["ns/candidate"] =
+      benchmark::Counter(static_cast<double>(kDocs / stride),
+                         benchmark::Counter::kIsIterationInvariantRate |
+                           benchmark::Counter::kInvert);
+  });
+}
+
 void PerChunk(benchmark::internal::Benchmark* bench) {
   for (const int64_t n : {16, 32, 64, 128, 256, 512, 1024, 2048, 4096}) {
     for (const int64_t layout : {0, 1, 2}) {
@@ -165,7 +188,7 @@ void PerChunk(benchmark::internal::Benchmark* bench) {
 
 void PerChunkAndStride(benchmark::internal::Benchmark* bench) {
   for (const int64_t n : {16, 32, 64, 128, 256, 512, 1024, 2048, 4096}) {
-    for (const int64_t stride : {1, 8, 64}) {
+    for (const int64_t stride : {1, 8, 64, 1024}) {
       for (const int64_t layout : {0, 1, 2}) {
         bench->Args({n, stride, layout});
       }
@@ -176,5 +199,6 @@ void PerChunkAndStride(benchmark::internal::Benchmark* bench) {
 BENCHMARK(BmWindowRemove)->Apply(PerChunk);
 BENCHMARK(BmCandidates)->Apply(PerChunkAndStride);
 BENCHMARK(BmFilterBlock)->Apply(PerChunkAndStride);
+BENCHMARK(BmCountMasked)->Apply(PerChunkAndStride);
 
 }  // namespace

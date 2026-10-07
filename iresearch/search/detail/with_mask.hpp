@@ -38,17 +38,15 @@ namespace irs::detail {
 
 struct MaskSplit {
   std::span<const QueryBuilder::ptr> rest;
-  const QueryBuilder* mask = nullptr;
-
-  bool Masked() const noexcept { return mask != nullptr; }
+  bool masked = false;
 };
 
 inline MaskSplit SplitMask(
   std::span<const QueryBuilder::ptr> filters) noexcept {
   if (!filters.empty() && filters.back()->Kind() == QueryKind::DocsMask) {
-    return {filters.first(filters.size() - 1), filters.back().get()};
+    return {filters.first(filters.size() - 1), true};
   }
-  return {filters, nullptr};
+  return {filters, false};
 }
 
 template<typename Term>

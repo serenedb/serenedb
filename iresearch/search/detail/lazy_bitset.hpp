@@ -167,7 +167,7 @@ class LazyBitset {
     if (first >= last) {
       return;
     }
-    _mask.AndNot(static_cast<doc_id_t>(kMin + first * kBits),
+    _mask.Remove(static_cast<doc_id_t>(kMin + first * kBits),
                  static_cast<doc_id_t>(kMin + last * kBits),
                  _set.Words() + first);
   }

@@ -227,20 +227,15 @@ class RunChunk {
     const auto* runs = _runs;
     const auto size = _size;
     auto pos = Seek(static_cast<uint32_t>(lo - base));
-    for (; pos < size; ++pos) {
-      const auto start = base + runs[pos].value;
-      if (start >= hi) {
-        break;
-      }
-      const auto stop = base + End(runs[pos]);
-      const auto first = static_cast<uint32_t>(std::max(start, lo) - min);
-      const auto last = static_cast<uint32_t>(std::min(stop, hi) - min);
-      if (first < last) {
-        ApplyRange<kAndNot>(dst, first, last);
-      }
-      if (stop > hi) {
-        break;
-      }
+    for (; pos < size && base + runs[pos].value < hi; ++pos) {
+      const auto first =
+        static_cast<uint32_t>(std::max(base + runs[pos].value, lo) - min);
+      const auto last =
+        static_cast<uint32_t>(std::min(base + End(runs[pos]), hi) - min);
+      ApplyRange<kAndNot>(dst, first, last);
+    }
+    if (pos != 0 && base + End(runs[pos - 1]) > hi) {
+      --pos;
     }
     _pos = pos;
   }

@@ -88,7 +88,7 @@ Root::ptr Api::MakeNegation(
   if (detail::OnlyMask(exclude_terms, exclude_filters)) {
     return MakeLiveCount(segment);
   }
-  if (const auto split = detail::SplitMask(exclude_filters); split.Masked()) {
+  if (const auto split = detail::SplitMask(exclude_filters); split.masked) {
     if (exclude_terms.size() == 1 && split.rest.empty()) {
       if (auto live = MakeLiveTerm(exclude_terms.front(), segment)) {
         return memory::make_managed<Subtract>(MakeLiveCount(segment),

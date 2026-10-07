@@ -1043,13 +1043,13 @@ TEST(docs_mask_test, and_not_agrees_with_fill_across_chunks) {
         {65537, 131137}}) {
     auto fill = irs::MakeGenericDocsMask(&removals, kVisibleEnd);
     std::vector<uint64_t> words((max - min + kBits - 1) / kBits, ~uint64_t{0});
-    fill.AndNot(min, max, words.data());
+    fill.Remove(min, max, words.data());
     const auto expected = expect(min, max);
     ASSERT_EQ(expected, words) << "range [" << min << ", " << max << ")";
 
     auto bulk = irs::MakeGenericDocsMask(&removals, kVisibleEnd);
     std::vector<uint64_t> filled(words.size(), 0);
-    bulk.FillRange(min, max, filled.data());
+    bulk.FillOr(min, max, filled.data());
     for (size_t w = 0; w != filled.size(); ++w) {
       const auto used = std::min<uint64_t>(kBits, max - min - w * kBits);
       const auto keep =

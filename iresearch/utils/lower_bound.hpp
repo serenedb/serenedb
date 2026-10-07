@@ -64,11 +64,4 @@ IRS_FORCE_INLINE It BranchlessPartitionPoint(It begin, size_t len,
   return begin + pred(*begin);
 }
 
-template<typename It, typename T, typename Cmp = std::less<>>
-IRS_FORCE_INLINE It BranchlessLowerBound(It begin, size_t len, const T& value,
-                                         Cmp&& compare = {}) {
-  return BranchlessPartitionPoint(
-    begin, len, [&](const auto& item) { return compare(item, value); });
-}
-
 }  // namespace irs

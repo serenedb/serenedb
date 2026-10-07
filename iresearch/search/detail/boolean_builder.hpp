@@ -192,7 +192,7 @@ Result BuildNegationWindow(std::span<const Term> terms,
           leaf = fill::Erased{std::move(nodes[i])};
         })));
   };
-  if (!split.Masked()) {
+  if (!split.masked) {
     return with_lead.template operator()<fill::AllDocs>(
       std::forward_as_tuple(segment));
   }
@@ -383,7 +383,7 @@ Result<Api> MakeSparseNegation(
                                    ctx);
   }
   const auto split = SplitMask(exclude_filters);
-  if (!split.Masked()) {
+  if (!split.masked) {
     auto driven = lead::MakeAllDocs(segment);
     if (!driven) {
       return {};
@@ -395,9 +395,10 @@ Result<Api> MakeSparseNegation(
   return ResolveDocsMask(
     segment, [&]<DocsMaskType Mask>(Mask docs_mask) -> Result<Api> {
       using Lead = LiveDocs<Mask>;
-      return BuildErasedExcludeSide<Result<Api>>(
-        exclude_terms, split.rest, exclude_filters, nullptr, segment,
-        candidates, [&]<typename Exclude>(auto&& exclude) -> Result<Api> {
+      return BuildRestExcludes<Result<Api>, void, false>(
+        ExcludeUse::PerDoc, exclude_terms, split.rest, exclude_filters, nullptr,
+        segment, candidates, candidates, kNoMaskFold,
+        [&]<typename Exclude>(auto&& exclude) -> Result<Api> {
           return Api::template MakeSparse<Lead, utils::Empty, Exclude>(
             ctx, std::forward_as_tuple(std::move(docs_mask), LiveEnd(segment)),
             std::forward_as_tuple(), std::forward<decltype(exclude)>(exclude));

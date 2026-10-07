@@ -386,7 +386,6 @@ TEST_P(DocumentMaskTest, filter_block_matches_reference) {
 
 TEST_P(DocumentMaskTest, windows_match_reference) {
   ForEachMask([&]<typename Mask>(Mask& mask) {
-    Mask and_not = mask;
     Mask remove = mask;
     Mask scored = mask;
     Mask live = mask;
@@ -404,11 +403,6 @@ TEST_P(DocumentMaskTest, windows_match_reference) {
       ExpectWindow(*_ref, min, max, filled, false);
       ASSERT_GE(next, max);
       ASSERT_LE(next, _ref->NextMasked(max)) << min;
-
-      std::vector<uint64_t> cleared(words, ~uint64_t{0});
-      and_not.AndNot(min, max, cleared.data());
-      clip(cleared);
-      ExpectWindow(*_ref, min, max, cleared, true);
 
       std::vector<uint64_t> removed(words, ~uint64_t{0});
       clip(removed);
@@ -453,11 +447,11 @@ TEST_P(DocumentMaskTest, bulk_ranges_match_reference) {
                                   {1 + 1000 * kBits, 1 + 4000 * kBits + 17}}) {
       const auto words = (max - min + kBits - 1) / kBits;
       std::vector<uint64_t> filled(words, 0);
-      Mask{mask}.FillRange(min, max, filled.data());
+      Mask{mask}.FillOr(min, max, filled.data());
       ExpectWindow(*_ref, min, max, filled, false);
 
       std::vector<uint64_t> cleared(words, ~uint64_t{0});
-      Mask{mask}.AndNot(min, max, cleared.data());
+      Mask{mask}.Remove(min, max, cleared.data());
       if (const auto rest = (max - min) % kBits; rest != 0) {
         cleared.back() &= ~uint64_t{0} >> (kBits - rest);
       }
@@ -594,10 +588,9 @@ TEST(document_mask_test, kind_is_resolved_on_finish) {
   const auto clustered_blob = clustered_mask.Compress();
   std::string clustered_bytes(clustered_blob.getSizeInBytes(true), '\0');
   clustered_blob.write(clustered_bytes.data(), true);
-  const auto clustered_read =
-    irs::DocumentMaskBuilder::Read(clustered_bytes.data(),
-                                   clustered_bytes.size())
-      .Finish(kArrays);
+  const auto clustered_read = irs::DocumentMaskBuilder::Read(
+                                clustered_bytes.data(), clustered_bytes.size())
+                                .Finish(kArrays);
   ASSERT_TRUE(clustered_read == clustered_mask);
   ASSERT_EQ(MaskKind::Runs, clustered_read.Kind());
 

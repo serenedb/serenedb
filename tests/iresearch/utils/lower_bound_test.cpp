@@ -50,8 +50,6 @@ TEST(lower_bound_test, runtime_length_matches_std) {
     for (uint32_t target = 0; target <= top; ++target) {
       const auto expected =
         std::lower_bound(values.begin(), values.end(), target) - values.begin();
-      ASSERT_EQ(expected, irs::BranchlessLowerBound(begin, len, target) - begin)
-        << len << " " << target;
       ASSERT_EQ(expected,
                 irs::BranchlessPartitionPoint(
                   begin, len, [&](uint16_t v) { return v < target; }) -

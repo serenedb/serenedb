@@ -224,7 +224,7 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
   ExcludeFills fills;
   CollectExcludeBuckets(groups.must_not, split.rest, nullptr, docs_count,
                         buckets, fills);
-  if (split.Masked()) {
+  if (split.masked) {
     buckets.masked = &segment;
     fills.cost += MaskClauseCost(segment, docs_count).fill;
   }

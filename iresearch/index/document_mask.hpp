@@ -102,11 +102,6 @@ class DocumentMask final {
     return static_cast<uint32_t>(_set.high_low_container.size);
   }
 
-  uint16_t KeyAt(uint32_t i) const noexcept {
-    SDB_ASSERT(i < ContainerCount());
-    return _set.high_low_container.keys[i];
-  }
-
   const uint16_t* Keys() const noexcept { return _set.high_low_container.keys; }
 
   const uint8_t* Types() const noexcept {

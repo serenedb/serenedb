@@ -44,10 +44,10 @@ int32_t ArrayChunk::Forward(const uint16_t* values, int32_t pos, int32_t size,
 
 DenseLayout::DenseLayout(const DocumentMask* mask) noexcept
   : _containers{mask->Containers()},
-    _first{mask->KeyAt(0)},
+    _first{mask->Keys()[0]},
     _count{mask->ContainerCount()} {
   SDB_ASSERT(_count != 0);
-  SDB_ASSERT(uint32_t{mask->KeyAt(_count - 1)} - _first == _count - 1);
+  SDB_ASSERT(uint32_t{mask->Keys()[_count - 1]} - _first == _count - 1);
 }
 
 }  // namespace irs::docs_mask
@@ -56,21 +56,17 @@ namespace irs {
 
 DocsMask<MaskKind::Bitsets>::DocsMask(const DocumentMask* mask,
                                       doc_id_t visible_end) noexcept
-  : Base{mask, visible_end},
-    _base{_layout.Begin()},
-    _words{_layout.At(0).Words()} {}
+  : Base{mask, visible_end} {
+  Rebase(doc_limits::min());
+}
 
 uint32_t DocsMask<MaskKind::Bitsets>::CountMasked(
   const doc_id_t* IRS_RESTRICT docs, uint32_t len) noexcept {
   if (len == 0) {
     return 0;
   }
-  const auto block = PinBlock(docs[0], docs[len - 1]);
-  if (block == Block::kLive) {
-    return 0;
-  }
   uint32_t masked = 0;
-  if (block == Block::kPinned) {
+  if (PinBlock(docs[0], docs[len - 1])) {
     const auto* words = _words;
     const auto base = _base;
     for (uint32_t i = 0; i != len; ++i) {
@@ -84,18 +80,14 @@ uint32_t DocsMask<MaskKind::Bitsets>::CountMasked(
   return masked;
 }
 
-uint32_t DocsMask<MaskKind::Bitsets>::FilterBlock(
-  doc_id_t* IRS_RESTRICT docs, score_t* IRS_RESTRICT scores,
-  uint32_t len) noexcept {
+uint32_t DocsMask<MaskKind::Bitsets>::FilterBlock(doc_id_t* IRS_RESTRICT docs,
+                                                  score_t* IRS_RESTRICT scores,
+                                                  uint32_t len) noexcept {
   if (len == 0) {
     return 0;
   }
-  const auto block = PinBlock(docs[0], docs[len - 1]);
-  if (block == Block::kLive) {
-    return len;
-  }
   uint32_t kept = 0;
-  if (block == Block::kPinned) {
+  if (PinBlock(docs[0], docs[len - 1])) {
     const auto* words = _words;
     const auto base = _base;
     for (uint32_t i = 0; i != len; ++i) {
@@ -115,20 +107,20 @@ uint32_t DocsMask<MaskKind::Bitsets>::FilterBlock(
   return kept;
 }
 
-bool DocsMask<MaskKind::Bitsets>::TestSlow(doc_id_t doc) noexcept {
-  return Rebase(doc) && Bit(_words, doc - _base);
-}
-
-bool DocsMask<MaskKind::Bitsets>::Rebase(doc_id_t doc) noexcept {
+void DocsMask<MaskKind::Bitsets>::Rebase(doc_id_t doc) noexcept {
+  if (doc >= _end) {
+    _base = doc;
+    _limit = static_cast<doc_id_t>(docs_mask::kChunkDocs);
+    _words = kAllWords.data();
+    return;
+  }
+  _base = doc & ~docs_mask::kChunkLow;
+  _limit = std::min(static_cast<doc_id_t>(docs_mask::kChunkDocs), _end - _base);
   const auto begin = _layout.Begin();
   const doc_id_t offset = doc - begin;
   const auto chunk = offset >> docs_mask::kChunkShift;
-  if (doc < begin || chunk >= _layout.Count()) {
-    return false;
-  }
-  _base = doc & ~docs_mask::kChunkLow;
-  _words = _layout.At(chunk).Words();
-  return true;
+  _words = doc >= begin && chunk < _layout.Count() ? _layout.At(chunk).Words()
+                                                   : kNoWords;
 }
 
 }  // namespace irs

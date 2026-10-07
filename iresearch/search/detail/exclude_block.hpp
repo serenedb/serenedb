@@ -85,12 +85,12 @@ IRS_FORCE_INLINE uint32_t ExcludeBlock(Excludes& excludes,
                                        doc_id_t* IRS_RESTRICT docs,
                                        score_t* IRS_RESTRICT scores,
                                        uint32_t len) {
-  if (len == 0 || excludes.Probe(docs[0]) > docs[len - 1]) {
-    return len;
-  }
   if constexpr (requires { excludes.FilterBlock(docs, scores, len); }) {
     return excludes.FilterBlock(docs, scores, len);
   } else {
+    if (len == 0 || excludes.Probe(docs[0]) > docs[len - 1]) {
+      return len;
+    }
     uint32_t kept = 0;
     for (uint32_t i = 0; i != len; ++i) {
       const auto doc = docs[i];

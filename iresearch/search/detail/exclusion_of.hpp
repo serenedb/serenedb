@@ -339,7 +339,7 @@ Result PeelMask(std::span<const Term> metas,
                 const SubReader& segment, Build&& build, Make&& make) {
   SDB_ASSERT(!metas.empty() || !filters.empty());
   const auto split = SplitMask(filters);
-  if (!split.Masked()) {
+  if (!split.masked) {
     return build.template operator()<true>(filters, kNoMaskFold, make);
   }
   return ResolveDocsMask(
@@ -351,7 +351,7 @@ Result PeelMask(std::span<const Term> metas,
       return build.template operator()<false>(
         split.rest,
         [&](BitsetStorage& set) noexcept {
-          docs_mask.FillRange(BitsetStorage::kMin, set.End(), set.Words());
+          docs_mask.FillOr(BitsetStorage::kMin, set.End(), set.Words());
         },
         [&]<typename Rest>(auto&& rest) -> Result {
           if constexpr (std::is_same_v<Rest, Folded>) {
@@ -401,17 +401,6 @@ Result BuildExcludeSideOf(std::span<const Term> metas,
   return BuildExcludeSideOf<Result, Input, Term>(metas, filters, field, segment,
                                                  candidates, candidates,
                                                  std::forward<Make>(make));
-}
-
-template<typename Result, typename Term, typename Make>
-Result BuildErasedExcludeSide(std::span<const Term> terms,
-                              std::span<const QueryBuilder::ptr> filters,
-                              std::span<const QueryBuilder::ptr> costed,
-                              const TermReader* field, const SubReader& segment,
-                              uint64_t candidates, Make&& make) {
-  return BuildRestExcludes<Result, void, false>(
-    ExcludeUse::PerDoc, terms, filters, costed, field, segment, candidates,
-    candidates, kNoMaskFold, std::forward<Make>(make));
 }
 
 template<typename Result, typename Term, typename Make>

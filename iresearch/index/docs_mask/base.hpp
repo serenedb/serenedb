@@ -76,16 +76,6 @@ class DocsMaskBase {
     return Self().Probe(max);
   }
 
-  void FillRange(doc_id_t min, doc_id_t max,
-                 uint64_t* IRS_RESTRICT words) noexcept {
-    Self().template Apply<false>(min, max, words);
-  }
-
-  void AndNot(doc_id_t min, doc_id_t max,
-              uint64_t* IRS_RESTRICT words) noexcept {
-    Self().template Apply<true>(min, max, words);
-  }
-
   void Remove(doc_id_t min, doc_id_t max,
               uint64_t* IRS_RESTRICT words) noexcept {
     if (Self().Probe(min) < max) {

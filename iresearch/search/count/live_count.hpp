@@ -187,7 +187,8 @@ class LiveTermCount : public Root,
 
   uint32_t Find(doc_id_t doc, uint32_t from, uint32_t to) const noexcept {
     return static_cast<uint32_t>(
-      BranchlessLowerBound(_block.data() + from, to - from, doc) -
+      BranchlessPartitionPoint(_block.data() + from, to - from,
+                               [doc](doc_id_t d) noexcept { return d < doc; }) -
       _block.data());
   }
 

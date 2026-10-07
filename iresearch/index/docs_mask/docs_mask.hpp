@@ -21,6 +21,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstdint>
 #include <type_traits>
@@ -38,39 +39,64 @@
 
 namespace irs {
 
-class DocsMaskFactory;
+template<typename Make>
+decltype(auto) ResolveDocsMask(const DocumentMask* mask, doc_id_t visible_end,
+                               Make&& make);
+
+inline DocsMask<MaskKind::Mixed> MakeGenericDocsMask(
+  const DocumentMask* mask, doc_id_t visible_end) noexcept;
 
 template<MaskKind K>
 class DocsMask final : public docs_mask::Chunked<DocsMask<K>, K> {
   using Base = docs_mask::Chunked<DocsMask<K>, K>;
 
-  friend class DocsMaskFactory;
+  template<typename Make>
+  friend decltype(auto) ResolveDocsMask(const DocumentMask* mask,
+                                        doc_id_t visible_end, Make&& make);
+  friend DocsMask<MaskKind::Mixed> MakeGenericDocsMask(
+    const DocumentMask* mask, doc_id_t visible_end) noexcept;
 
  public:
   static constexpr MaskKind kKind = K;
 
   uint32_t FilterBlock(doc_id_t* IRS_RESTRICT docs,
                        score_t* IRS_RESTRICT scores, uint32_t len) noexcept {
+    if (len == 0) {
+      return 0;
+    }
+    auto span = this->NextSpan(docs[0]);
+    if (span.first > docs[len - 1]) {
+      return len;
+    }
     uint32_t kept = 0;
-    uint32_t i = 0;
-    while (i != len) {
-      const auto span = this->NextSpan(docs[i]);
-      for (; i != len && docs[i] < span.first; ++i, ++kept) {
-        docs[kept] = docs[i];
-        scores[kept] = scores[i];
+    for (uint32_t i = 0; i != len; ++i) {
+      const auto doc = docs[i];
+      if (doc >= span.last) {
+        span = this->NextSpan(doc);
       }
-      while (i != len && docs[i] < span.last) {
-        ++i;
-      }
+      docs[kept] = doc;
+      scores[kept] = scores[i];
+      kept += static_cast<uint32_t>(doc < span.first);
     }
     return kept;
   }
 
   uint32_t CountMasked(const doc_id_t* IRS_RESTRICT docs,
                        uint32_t len) noexcept {
+    if (len == 0) {
+      return 0;
+    }
+    auto span = this->NextSpan(docs[0]);
+    if (span.first > docs[len - 1]) {
+      return 0;
+    }
     uint32_t masked = 0;
     for (uint32_t i = 0; i != len; ++i) {
-      masked += static_cast<uint32_t>(this->Test(docs[i]));
+      const auto doc = docs[i];
+      if (doc >= span.last) {
+        span = this->NextSpan(doc);
+      }
+      masked += static_cast<uint32_t>(doc >= span.first);
     }
     return masked;
   }
@@ -86,7 +112,11 @@ class DocsMask<MaskKind::Bitsets> final
   using Base =
     docs_mask::Chunked<DocsMask<MaskKind::Bitsets>, MaskKind::Bitsets>;
 
-  friend class DocsMaskFactory;
+  template<typename Make>
+  friend decltype(auto) ResolveDocsMask(const DocumentMask* mask,
+                                        doc_id_t visible_end, Make&& make);
+  friend DocsMask<MaskKind::Mixed> MakeGenericDocsMask(
+    const DocumentMask* mask, doc_id_t visible_end) noexcept;
 
  public:
   static constexpr MaskKind kKind = MaskKind::Bitsets;
@@ -94,12 +124,10 @@ class DocsMask<MaskKind::Bitsets> final
   using Base::Remove;
 
   IRS_FORCE_INLINE bool Test(doc_id_t doc) noexcept {
-    if (doc >= _end) [[unlikely]] {
-      return true;
-    }
-    const doc_id_t offset = doc - _base;
-    if (offset >= docs_mask::kChunkDocs) [[unlikely]] {
-      return TestSlow(doc);
+    doc_id_t offset = doc - _base;
+    if (offset >= _limit) [[unlikely]] {
+      Rebase(doc);
+      offset = doc - _base;
     }
     return Bit(_words, offset);
   }
@@ -161,75 +189,61 @@ class DocsMask<MaskKind::Bitsets> final
     return ((words[offset / 64] >> (offset % 64)) & 1) != 0;
   }
 
-  enum class Block : uint8_t { kSpread, kLive, kPinned };
-
-  IRS_FORCE_INLINE Block PinBlock(doc_id_t first, doc_id_t last) noexcept {
-    if (last >= _end || ((first ^ last) >> docs_mask::kChunkShift) != 0) {
-      return Block::kSpread;
+  IRS_FORCE_INLINE bool PinBlock(doc_id_t first, doc_id_t last) noexcept {
+    if (first - _base >= _limit) {
+      Rebase(first);
     }
-    if (first - _base < docs_mask::kChunkDocs || Rebase(first)) {
-      return Block::kPinned;
-    }
-    return Block::kLive;
+    return last - _base < _limit;
   }
 
-  IRS_NO_INLINE bool TestSlow(doc_id_t doc) noexcept;
+  IRS_NO_INLINE void Rebase(doc_id_t doc) noexcept;
 
-  bool Rebase(doc_id_t doc) noexcept;
+  alignas(64) static constexpr uint64_t kNoWords[docs_mask::kChunkWords] = {};
+  alignas(64) static constexpr auto kAllWords = [] {
+    std::array<uint64_t, docs_mask::kChunkWords> words{};
+    words.fill(~uint64_t{0});
+    return words;
+  }();
 
-  doc_id_t _base;
-  const uint64_t* _words;
+  doc_id_t _base = 0;
+  doc_id_t _limit = 0;
+  const uint64_t* _words = kNoWords;
 };
 
 using GenericDocsMask = DocsMask<MaskKind::Mixed>;
 
-class DocsMaskFactory {
- public:
-  template<typename Make>
-  static decltype(auto) Resolve(const DocumentMask* mask, doc_id_t visible_end,
-                                Make&& make) {
-    if (mask == nullptr || mask->Empty()) {
-      return make(DocsMask<MaskKind::Runs>{nullptr, visible_end});
-    }
-    switch (mask->Kind()) {
-      case MaskKind::Bitsets:
-        return make(DocsMask<MaskKind::Bitsets>{mask, visible_end});
-      case MaskKind::Arrays:
-        return make(DocsMask<MaskKind::Arrays>{mask, visible_end});
-      case MaskKind::Runs:
-        return make(DocsMask<MaskKind::Runs>{mask, visible_end});
-      case MaskKind::Mixed:
-        break;
-    }
-    return make(DocsMask<MaskKind::Mixed>{mask, visible_end});
-  }
-
-  static GenericDocsMask Generic(const DocumentMask* mask,
-                                 doc_id_t visible_end) noexcept {
-    return GenericDocsMask{mask, visible_end};
-  }
-};
-
 template<typename Make>
 decltype(auto) ResolveDocsMask(const DocumentMask* mask, doc_id_t visible_end,
                                Make&& make) {
-  return DocsMaskFactory::Resolve(mask, visible_end, std::forward<Make>(make));
+  if (mask == nullptr || mask->Empty()) {
+    return make(DocsMask<MaskKind::Runs>{nullptr, visible_end});
+  }
+  switch (mask->Kind()) {
+    case MaskKind::Bitsets:
+      return make(DocsMask<MaskKind::Bitsets>{mask, visible_end});
+    case MaskKind::Arrays:
+      return make(DocsMask<MaskKind::Arrays>{mask, visible_end});
+    case MaskKind::Runs:
+      return make(DocsMask<MaskKind::Runs>{mask, visible_end});
+    case MaskKind::Mixed:
+      break;
+  }
+  return make(DocsMask<MaskKind::Mixed>{mask, visible_end});
 }
 
 template<typename Make>
 decltype(auto) ResolveDocsMask(const SubReader& segment, Make&& make) {
-  return DocsMaskFactory::Resolve(
-    segment.docs_mask(), segment.Meta().visible_end, std::forward<Make>(make));
+  return ResolveDocsMask(segment.docs_mask(), segment.Meta().visible_end,
+                         std::forward<Make>(make));
 }
 
 inline GenericDocsMask MakeGenericDocsMask(const DocumentMask* mask,
                                            doc_id_t visible_end) noexcept {
-  return DocsMaskFactory::Generic(mask, visible_end);
+  return GenericDocsMask{mask, visible_end};
 }
 
 inline GenericDocsMask MakeGenericDocsMask(const SubReader& segment) noexcept {
-  return DocsMaskFactory::Generic(segment.docs_mask(),
-                                  segment.Meta().visible_end);
+  return MakeGenericDocsMask(segment.docs_mask(), segment.Meta().visible_end);
 }
 
 inline doc_id_t LiveEnd(const SubReader& segment) noexcept {

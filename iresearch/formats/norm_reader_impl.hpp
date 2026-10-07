@@ -128,6 +128,8 @@ class NormReaderBase : public NormReader {
     ((kMaxProbe << kNormWindowShift) * sizeof(uint32_t)) / file_utils::kPage +
     1;
   static constexpr uint64_t kMaxSpanPerPage = 2;
+  static constexpr uint64_t kAheadBytes = 16 * 1024;
+  static constexpr uint64_t kLine = 64;
   static constexpr uint64_t kMaxGapPages = 2;
   static constexpr size_t kBits = BitsRequired<uint64_t>();
   static constexpr uint32_t kPageShift =
@@ -408,6 +410,18 @@ class NormReaderBase : public NormReader {
     }
   }
 
+  IRS_FORCE_INLINE void PrefetchNext(const doc_id_t* docs,
+                                     size_t n) const noexcept {
+    const auto* const last = At(docs[n - 1]);
+    const auto span = static_cast<uint64_t>(last - At(docs[0]));
+    if (span > kAheadBytes) {
+      return;
+    }
+    for (uint64_t offset = kLine; offset <= span; offset += kLine) {
+      __builtin_prefetch(last + offset);
+    }
+  }
+
   IRS_FORCE_INLINE uint32_t ReadOne(doc_id_t doc) const noexcept {
     const auto value = _region->Slot(doc);
     return _region->exceptions && value >= _region->first_code
@@ -474,6 +488,7 @@ class SingleRegionNormReader : public NormReaderBase {
     std::span<const doc_id_t, kPostingBlock> docs,
     std::span<uint32_t, kPostingBlock> values) noexcept final {
     Fetch(docs.data(), values.data(), docs.size());
+    PrefetchNext(docs.data(), docs.size());
   }
 
  private:
@@ -519,6 +534,7 @@ class MultiRegionNormReader : public NormReaderBase {
     std::span<const doc_id_t, kPostingBlock> docs,
     std::span<uint32_t, kPostingBlock> values) noexcept final {
     Fetch(docs.data(), values.data(), docs.size());
+    PrefetchNext(docs.data(), docs.size());
   }
 
  private:

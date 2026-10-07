@@ -25,7 +25,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <duckdb/common/checksum.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
@@ -46,6 +45,8 @@
 #include <system_error>
 #include <utility>
 #include <vector>
+
+#include "search/frame.h"
 
 namespace sdb::search {
 namespace {
@@ -158,23 +159,6 @@ void EncodeRows(duckdb::MemoryStream& out,
   serializer.OnListEnd();
   serializer.OnPropertyEnd();
   serializer.End();
-}
-
-// Read one [u64 size][u64 checksum][payload] frame into `payload`. Returns
-// false at EOF or on a torn/corrupt tail -- the caller stops the segment there.
-bool ReadFrame(duckdb::BufferedFileReader& reader,
-               std::vector<uint8_t>& payload) {
-  if (reader.FileSize() - reader.CurrentOffset() < 2 * sizeof(uint64_t)) {
-    return false;
-  }
-  auto size = reader.Read<uint64_t>();
-  auto checksum = reader.Read<uint64_t>();
-  if (reader.FileSize() - reader.CurrentOffset() < size) {
-    return false;
-  }
-  payload.resize(size);
-  reader.ReadData(payload.data(), size);
-  return duckdb::Checksum(payload.data(), size) == checksum;
 }
 
 [[noreturn]] void ThrowUnreadable(const std::filesystem::path& path,
@@ -404,10 +388,7 @@ void SearchDbWal::EnsureActiveSegmentLocked(uint64_t first_tick) {
 
 void SearchDbWal::WriteFrameLocked(const uint8_t* payload, uint64_t size) {
   SDB_ASSERT(_active);
-  auto checksum = duckdb::Checksum(payload, size);
-  _active->Write<uint64_t>(size);
-  _active->Write<uint64_t>(checksum);
-  _active->WriteData(payload, size);
+  WriteFrame(*_active, payload, size);
   _active->Sync();  // commit point
 
   if (_active->GetTotalWritten() > _seal_threshold) {

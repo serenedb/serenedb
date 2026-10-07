@@ -554,6 +554,11 @@ set(ENABLE_ROARING_TESTS OFF CACHE BOOL "" FORCE)
 set(ROARING_USE_CPM OFF CACHE BOOL "" FORCE)
 sdb_update_module(${GIT_EXECUTABLE} "croaring" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(croaring)
+set_target_properties(
+    roaring-headers
+    roaring-headers-cpp
+    PROPERTIES SYSTEM TRUE
+)
 
 ################################################################################
 ## fmt

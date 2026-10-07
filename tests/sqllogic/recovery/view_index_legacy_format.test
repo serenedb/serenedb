@@ -1,0 +1,95 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vilf_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+system ok
+mkdir -p $__TEST_DIR__/vilf
+
+statement count 3
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 2, 'arrives before the restart'
+      UNION ALL SELECT 3, 'lands after the restart')
+TO '${__TEST_DIR__}/vilf/a.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW vilf_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/vilf/*.parquet');
+
+statement ok
+SET sdb_faults = 'legacy_view_index_payload';
+
+statement ok
+CREATE INDEX vilf_idx ON vilf_v USING inverted(id, body vilf_en);
+
+statement ok
+SET sdb_faults = '-legacy_view_index_payload';
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error
+SELECT 1;
+----
+connection closed
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM vilf_idx WHERE body @@ ts_phrase('restart');
+----
+count
+2
+
+connection after_crash
+statement error
+SELECT body FROM vilf_idx WHERE id = 1;
+----
+db error: ERROR: this view-backed inverted index was built by an older version and does not record its source files
+HINT: Run REINDEX on the index to rebuild it.
+
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('vilf_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+rebuild	1	0	0	1
+
+connection after_crash
+query
+SELECT body FROM vilf_idx WHERE id = 1;
+----
+body
+pudge goes mid
+
+connection after_crash
+query
+SELECT id FROM vilf_idx WHERE body @@ ts_phrase('restart') ORDER BY id;
+----
+id
+2
+3
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('vilf_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+connection after_crash
+statement ok
+DROP INDEX vilf_idx;
+
+connection after_crash
+statement ok
+DROP VIEW vilf_v;
+
+connection after_crash
+statement ok
+DROP TEXT SEARCH DICTIONARY vilf_en;

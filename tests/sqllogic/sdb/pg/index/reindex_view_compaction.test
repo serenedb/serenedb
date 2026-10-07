@@ -1,0 +1,102 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rvc_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+system ok
+mkdir -p $__TEST_DIR__/rvc
+
+statement count 2000
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(2000) t(i))
+TO '${__TEST_DIR__}/rvc/a.parquet' (FORMAT PARQUET);
+
+statement count 2000
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(2000, 4000) t(i))
+TO '${__TEST_DIR__}/rvc/b.parquet' (FORMAT PARQUET);
+
+statement count 2000
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(4000, 6000) t(i))
+TO '${__TEST_DIR__}/rvc/c.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvc_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvc/*.parquet');
+
+statement ok
+CREATE INDEX rvc_idx ON rvc_v USING inverted(id, body rvc_en)
+WITH (refresh_interval = 0, compaction_interval = 50, segment_docs_max = 200);
+
+query
+SELECT count(*) FROM rvc_idx WHERE body @@ ts_phrase('doc');
+----
+count
+6000
+
+system ok
+sleep 1
+
+statement count 2000
+COPY (SELECT i AS id, 'moved ' || i AS body FROM range(2000) t(i))
+TO '${__TEST_DIR__}/rvc/a.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('rvc_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	1
+
+system ok
+sleep 1
+
+statement count 2000
+COPY (SELECT i AS id, 'shifted ' || i AS body FROM range(2000, 4000) t(i))
+TO '${__TEST_DIR__}/rvc/b.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('rvc_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	1
+
+system ok
+sleep 1
+
+query
+SELECT * FROM serenedb_reindex('rvc_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+query
+SELECT count(*) FROM rvc_idx WHERE body @@ ts_phrase('doc');
+----
+count
+2000
+
+query
+SELECT count(*) FROM rvc_idx WHERE body @@ ts_phrase('moved');
+----
+count
+2000
+
+query
+SELECT count(*) FROM rvc_idx WHERE body @@ ts_phrase('shifted');
+----
+count
+2000
+
+query
+SELECT id, body FROM rvc_idx WHERE body @@ ts_phrase('shifted') AND id = 2001;
+----
+id	body
+2001	shifted 2001
+
+statement ok
+DROP INDEX rvc_idx;
+
+statement ok
+DROP VIEW rvc_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rvc_en;

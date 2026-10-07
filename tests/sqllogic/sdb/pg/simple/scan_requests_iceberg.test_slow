@@ -1,0 +1,79 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+SET logging_storage = 'memory';
+
+statement ok
+SET logging_level = 'debug';
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.whole_small (id INTEGER, emb FLOAT[]);
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.pruned_small (id INTEGER, emb FLOAT[]);
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.whole_large (id INTEGER, emb FLOAT[]);
+
+statement count 4000
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.whole_small
+SELECT i, list_transform(range(256), x -> random()::FLOAT) FROM range(4000) t(i);
+
+statement count 4000
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.pruned_small
+SELECT i, list_transform(range(256), x -> random()::FLOAT) FROM range(4000) t(i);
+
+statement count 5000
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.whole_large
+SELECT i, list_transform(range(1024), x -> random()::FLOAT) FROM range(5000) t(i);
+
+query
+SELECT count(*), max(id), count(emb) FROM srv_${__DATABASE__}.${__DATABASE__}.whole_small;
+----
+count	max	count
+4000	3999	4000
+
+query
+SELECT count(*) AS requests, min(TRY_CAST(response.headers['Content-Length'] AS BIGINT)) > 2097152 AS whole_file
+FROM duckdb_logs_parsed('HTTP')
+WHERE request.type = 'GET' AND request.url LIKE '%${__DATABASE__}%whole_small%.parquet';
+----
+requests	whole_file
+1	t
+
+query
+SELECT max(id) FROM srv_${__DATABASE__}.${__DATABASE__}.pruned_small;
+----
+max
+3999
+
+query
+SELECT sum(TRY_CAST(response.headers['Content-Length'] AS BIGINT)) < 1048576 AS read_part_of_file
+FROM duckdb_logs_parsed('HTTP')
+WHERE request.type = 'GET' AND request.url LIKE '%${__DATABASE__}%pruned_small%.parquet';
+----
+read_part_of_file
+t
+
+query
+SELECT count(*), max(id), count(emb) FROM srv_${__DATABASE__}.${__DATABASE__}.whole_large;
+----
+count	max	count
+5000	4999	5000
+
+query
+SELECT count(*) > 1 AS ranged_reads
+FROM duckdb_logs_parsed('HTTP')
+WHERE request.type = 'GET' AND request.url LIKE '%${__DATABASE__}%whole_large%.parquet';
+----
+ranged_reads
+t

@@ -1,0 +1,237 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rsf_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+system ok
+mkdir -p $__TEST_DIR__/rsf
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body, 'a' AS src FROM range(100) t(i)) TO '${__TEST_DIR__}/rsf/a.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW rsf_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rsf/*.parquet');
+
+statement ok
+CREATE INDEX rsf_idx ON rsf_v USING inverted(id, body rsf_en);
+
+query
+SELECT src, count(*) FROM rsf_idx WHERE body @@ ts_phrase('doc') GROUP BY src ORDER BY src;
+----
+src	count
+a	100
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body, 'b' AS src FROM range(100, 200) t(i)) TO '${__TEST_DIR__}/rsf/b.parquet' (FORMAT parquet);
+
+statement ok
+SET sdb_faults = 'crash_after_source_files_append';
+
+statement error
+SELECT * FROM serenedb_reindex('rsf_idx');
+----
+connection closed
+
+
+connection after_append
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT src, count(*) FROM rsf_idx WHERE body @@ ts_phrase('doc') GROUP BY src ORDER BY src;
+----
+src	count
+a	100
+
+connection after_append
+query
+SELECT * FROM serenedb_reindex('rsf_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+connection after_append
+query
+SELECT src, count(*), count(DISTINCT id) FROM rsf_idx WHERE body @@ ts_phrase('doc') GROUP BY src ORDER BY src;
+----
+src	count	count
+a	100	100
+b	100	100
+
+connection after_append
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body, 'c' AS src FROM range(200, 300) t(i)) TO '${__TEST_DIR__}/rsf/c.parquet' (FORMAT parquet);
+
+connection after_append
+statement ok
+SET sdb_faults = 'crash_torn_source_files_append';
+
+connection after_append
+statement error
+SELECT * FROM serenedb_reindex('rsf_idx');
+----
+connection closed
+
+
+connection after_torn
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT src, count(*) FROM rsf_idx WHERE body @@ ts_phrase('doc') GROUP BY src ORDER BY src;
+----
+src	count
+a	100
+b	100
+
+connection after_torn
+query
+SELECT * FROM serenedb_reindex('rsf_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+connection after_torn
+query
+SELECT src, count(*), count(DISTINCT id) FROM rsf_idx WHERE body @@ ts_phrase('doc') GROUP BY src ORDER BY src;
+----
+src	count	count
+a	100	100
+b	100	100
+c	100	100
+
+connection after_torn
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body, 'b1' AS src FROM range(100, 201) t(i)) TO '${__TEST_DIR__}/rsf/b.parquet' (FORMAT parquet);
+
+connection after_torn
+query
+SELECT * FROM serenedb_reindex('rsf_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	1
+
+connection after_torn
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body, 'b2' AS src FROM range(100, 202) t(i)) TO '${__TEST_DIR__}/rsf/b.parquet' (FORMAT parquet);
+
+connection after_torn
+query
+SELECT * FROM serenedb_reindex('rsf_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	1
+
+connection after_torn
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body, 'b3' AS src FROM range(100, 203) t(i)) TO '${__TEST_DIR__}/rsf/b.parquet' (FORMAT parquet);
+
+connection after_torn
+query
+SELECT * FROM serenedb_reindex('rsf_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	1
+
+connection after_torn
+query
+SELECT src, count(*), count(DISTINCT id) FROM rsf_idx WHERE body @@ ts_phrase('doc') GROUP BY src ORDER BY src;
+----
+src	count	count
+a	100	100
+b3	103	103
+c	100	100
+
+connection after_torn
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body, 'd' AS src FROM range(400, 450) t(i)) TO '${__TEST_DIR__}/rsf/d.parquet' (FORMAT parquet);
+
+connection after_torn
+statement ok
+SET sdb_faults = 'crash_reindex_before_publish';
+
+connection after_torn
+statement error
+SELECT * FROM serenedb_reindex('rsf_idx');
+----
+connection closed
+
+
+connection after_compaction
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT src, count(*), count(DISTINCT id) FROM rsf_idx WHERE body @@ ts_phrase('doc') GROUP BY src ORDER BY src;
+----
+src	count	count
+a	100	100
+b3	103	103
+c	100	100
+
+connection after_compaction
+query
+SELECT * FROM serenedb_reindex('rsf_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+connection after_compaction
+query
+SELECT src, count(*), count(DISTINCT id) FROM rsf_idx WHERE body @@ ts_phrase('doc') GROUP BY src ORDER BY src;
+----
+src	count	count
+a	100	100
+b3	103	103
+c	100	100
+d	50	50
+
+connection after_compaction
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body, 'e' AS src FROM range(500, 520) t(i)) TO '${__TEST_DIR__}/rsf/e.parquet' (FORMAT parquet);
+
+connection after_compaction
+statement ok
+SET sdb_faults = 'skip_source_files_append';
+
+connection after_compaction
+query
+SELECT * FROM serenedb_reindex('rsf_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+connection after_compaction
+statement ok
+RESET sdb_faults;
+
+connection after_compaction
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body, 'f' AS src FROM range(600, 610) t(i)) TO '${__TEST_DIR__}/rsf/f.parquet' (FORMAT parquet);
+
+connection after_compaction
+query
+SELECT * FROM serenedb_reindex('rsf_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+rebuild	2	0	0	6
+
+connection after_compaction
+query
+SELECT src, count(*), count(DISTINCT id) FROM rsf_idx WHERE body @@ ts_phrase('doc') GROUP BY src ORDER BY src;
+----
+src	count	count
+a	100	100
+b3	103	103
+c	100	100
+d	50	50
+e	20	20
+f	10	10
+
+connection after_compaction
+statement ok
+DROP INDEX rsf_idx;
+
+connection after_compaction
+statement ok
+DROP VIEW rsf_v;
+
+connection after_compaction
+statement ok
+DROP TEXT SEARCH DICTIONARY rsf_en;

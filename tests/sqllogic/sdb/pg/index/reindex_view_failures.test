@@ -1,0 +1,124 @@
+control substitution on
+
+# A file the reader cannot use fails the pass that meets it; the index keeps
+# serving what it had, and the pass after the file is fixed or removed
+# converges.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rvf_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+# ---- A corrupt file.
+
+system ok
+mkdir -p $__TEST_DIR__/rvf_bad
+
+statement count 1
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body)
+TO '${__TEST_DIR__}/rvf_bad/a.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvf_bad_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvf_bad/*.parquet');
+
+statement ok
+CREATE INDEX rvf_bad_idx ON rvf_bad_v USING inverted(id, body rvf_en);
+
+system ok
+printf 'this is not parquet' > $__TEST_DIR__/rvf_bad/b.parquet
+
+statement error
+SELECT * FROM serenedb_reindex('rvf_bad_idx');
+----
+db error: ERROR: No magic bytes found at end of file '<slt:ignore>
+
+
+query
+SELECT id, body FROM rvf_bad_idx WHERE body @@ ts_phrase('pudge');
+----
+id	body
+1	pudge goes mid
+
+system ok
+rm $__TEST_DIR__/rvf_bad/b.parquet
+
+query
+SELECT * FROM serenedb_reindex('rvf_bad_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+# ---- A file whose columns do not cast to the view's types.
+
+system ok
+mkdir -p $__TEST_DIR__/rvf_drift
+
+statement count 1
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body)
+TO '${__TEST_DIR__}/rvf_drift/a.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvf_drift_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvf_drift/*.parquet');
+
+statement ok
+CREATE INDEX rvf_drift_idx ON rvf_drift_v USING inverted(id, body rvf_en);
+
+statement count 1
+COPY (SELECT 'two' AS id, 42 AS body)
+TO '${__TEST_DIR__}/rvf_drift/b.parquet' (FORMAT PARQUET);
+
+statement error
+SELECT * FROM serenedb_reindex('rvf_drift_idx');
+----
+db error: ERROR: Error while reading file "<slt:ignore>": failed to cast column "id" from type VARCHAR to INTEGER<slt:ignore>
+
+
+query
+SELECT id FROM rvf_drift_idx ORDER BY id;
+----
+id
+1
+
+statement count 1
+COPY (SELECT 2 AS id, 'anchin reads manga' AS body)
+TO '${__TEST_DIR__}/rvf_drift/b.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('rvf_drift_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+# A file with an extra column reads with the view's columns.
+statement count 1
+COPY (SELECT 3 AS id, 'techies plants mines' AS body, 'ignored' AS extra)
+TO '${__TEST_DIR__}/rvf_drift/c.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('rvf_drift_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id, body FROM rvf_drift_idx ORDER BY id;
+----
+id	body
+1	pudge goes mid
+2	anchin reads manga
+3	techies plants mines
+
+statement ok
+DROP INDEX rvf_drift_idx;
+
+statement ok
+DROP VIEW rvf_drift_v;
+
+statement ok
+DROP INDEX rvf_bad_idx;
+
+statement ok
+DROP VIEW rvf_bad_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rvf_en;

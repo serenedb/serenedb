@@ -65,10 +65,6 @@ count
 3
 
 
-# The in-flight reader keeps the pre-REINDEX view of the index to the end of
-# its transaction. (Only the count class is asserted mid-transaction: the old
-# index's positional keys point into a rewritten file, so materialisation
-# through them is undefined by design until the manifest read path lands.)
 connection reader
 query
 SELECT count(*) FROM reindex_iso_idx WHERE body @@ ts_phrase('pudge');

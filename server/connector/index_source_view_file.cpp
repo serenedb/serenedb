@@ -29,6 +29,8 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 namespace sdb::connector {
 
@@ -316,10 +318,10 @@ ViewFileGlobIndexSource::ViewFileGlobIndexSource(
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const ColumnId> bind_column_ids,
   duckdb::TableFilterSet* pushed_filters,
-  std::shared_ptr<const search::FileManifest> file_manifest)
+  search::InvertedIndexSnapshotPtr snapshot)
   : ViewFileIndexSourceBase(context, std::move(fast_path), projected_columns,
                             projected_types, bind_column_ids, pushed_filters),
-    _file_manifest(std::move(file_manifest)) {}
+    _snapshot(std::move(snapshot)) {}
 
 duckdb::idx_t ViewFileGlobIndexSource::Materialize(
   duckdb::ClientContext& context, duckdb::Vector& pk, duckdb::idx_t count,
@@ -330,7 +332,7 @@ duckdb::idx_t ViewFileGlobIndexSource::Materialize(
 
   SortFilesRows(pk, count);
 
-  SDB_ASSERT(_file_manifest);
+  SDB_ASSERT(_snapshot);
 
   AliasOutput(output);
   if (_file_target.ColumnCount() == 0) {
@@ -351,20 +353,20 @@ duckdb::idx_t ViewFileGlobIndexSource::Materialize(
       ++j;
     }
     const uint64_t fi = _sorted_files[i];
-    const auto* entry = _file_manifest->FindById(fi);
-    if (!entry) {
-      // A doc committed by an in-flight (or died) pass: its id is not part
-      // of the published manifest version, so it is not readable until the
-      // pass's Finalize publishes -- reads reflect complete versions only.
-      i = j;
-      continue;
-    }
-    const std::string& file_path = entry->path;
     auto& cached = _file_cache[fi];
     if (!cached.bind_data) {
+      const auto* file =
+        _snapshot->files ? _snapshot->files->Find(fi) : nullptr;
+      if (!file) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+          ERR_MSG("this view-backed inverted index was built by an older "
+                  "version and does not record its source files"),
+          ERR_HINT("Run REINDEX on the index to rebuild it."));
+      }
       ViewFastPath single_fp = _fast_path;
       single_fp.args.clear();
-      single_fp.args.push_back(duckdb::Value{file_path});
+      single_fp.args.push_back(duckdb::Value{file->path});
       single_fp.is_glob = false;
       if (single_fp.function_name == "iceberg_scan") {
         single_fp.function_name = "read_parquet";
@@ -377,7 +379,7 @@ duckdb::idx_t ViewFileGlobIndexSource::Materialize(
         /*projection_ids=*/{}, _pushed_filters.get());
       cached.gstate = _lookup_func.init_global(context, init);
       cached.constants_match =
-        BindFileConstants(context, file_path, cached.constants);
+        BindFileConstants(context, file->path, cached.constants);
     }
     if (!cached.constants_match) {
       i = j;

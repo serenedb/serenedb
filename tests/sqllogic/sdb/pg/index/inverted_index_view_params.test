@@ -739,6 +739,50 @@ id	body	color
 2	manga hp beta	blue
 
 
+# A partition filter prunes the scanned files after the bind listed them;
+# every document must keep the file it was read from.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge hf alpha' AS body, 'red' AS color
+      UNION ALL SELECT 2, 'manga hf beta', 'blue'
+      UNION ALL SELECT 3, 'pudge hf gamma', 'red')
+TO '${__TEST_DIR__}/hive_filter' (FORMAT PARQUET, PARTITION_BY (color));
+
+statement ok
+CREATE VIEW p_pq_hive_red_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/hive_filter/**/*.parquet',
+                              hive_partitioning=true)
+  WHERE color = 'red';
+
+statement ok
+CREATE INDEX p_pq_hive_red_idx ON p_pq_hive_red_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_pq_hive_red_idx ORDER BY id;
+----
+id	body
+1	pudge hf alpha
+3	pudge hf gamma
+
+statement ok
+COPY (SELECT 4::int4 AS id, 'pudge hf delta' AS body)
+TO '${__TEST_DIR__}/hive_filter/color=red/extra.parquet' (FORMAT PARQUET);
+
+query
+SELECT action FROM serenedb_reindex('p_pq_hive_red_idx');
+----
+action
+delta
+
+query
+SELECT id, body FROM p_pq_hive_red_idx ORDER BY id;
+----
+id	body
+1	pudge hf alpha
+3	pudge hf gamma
+4	pudge hf delta
+
+
 # ============================================================================
 # Parquet: file_row_number=true (already implicit virtual column)
 # ============================================================================

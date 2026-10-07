@@ -1,0 +1,190 @@
+control substitution on
+
+# REINDEX over iceberg views of several shapes on a REST catalog: an index
+# predicate, a filter in the view body, a pass started inside a transaction
+# that has uncommitted writes to the source, and a redefined view.
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rvsh_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.rvsh_t (id INTEGER, body TEXT);
+
+statement count 2
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.rvsh_t VALUES (1, 'pudge goes mid'), (150, 'pudge outside the predicate');
+
+statement ok
+CREATE VIEW rvsh_v AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.rvsh_t;
+
+# ---- An index predicate: passes index only the rows that satisfy it, for
+# appended files and for files rescanned after a delete alike.
+
+statement ok
+CREATE INDEX rvsh_part_idx ON rvsh_v USING inverted(id, body rvsh_en) WITH (compaction_interval=0) WHERE id < 100;
+
+statement count 2
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.rvsh_t VALUES (2, 'pudge plays again'), (200, 'pudge outside again');
+
+query
+SELECT * FROM serenedb_reindex('rvsh_part_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id FROM rvsh_part_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id
+1
+2
+
+statement count 1
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.rvsh_t WHERE id = 1;
+
+query
+SELECT * FROM serenedb_reindex('rvsh_part_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	0
+
+query
+SELECT id FROM rvsh_part_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id
+2
+
+statement count 1
+UPDATE srv_${__DATABASE__}.${__DATABASE__}.rvsh_t SET body = 'pudge buys blink' WHERE id = 2;
+
+query
+SELECT * FROM serenedb_reindex('rvsh_part_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	1	0	0
+
+query
+SELECT id, body FROM rvsh_part_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+2	pudge buys blink
+
+query
+SELECT action FROM serenedb_reindex('rvsh_part_idx');
+----
+action
+up_to_date
+
+# ---- A filter in the view body: the view's rows, not the table's.
+
+statement ok
+CREATE VIEW rvsh_even_v AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.rvsh_t WHERE id % 2 = 0;
+
+statement ok
+CREATE INDEX rvsh_even_idx ON rvsh_even_v USING inverted(id, body rvsh_en) WITH (compaction_interval=0);
+
+statement count 3
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.rvsh_t VALUES (4, 'anchin reads manga'), (5, 'anchin skips it'), (6, 'anchin writes manga');
+
+query
+SELECT * FROM serenedb_reindex('rvsh_even_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id FROM rvsh_even_idx WHERE body @@ ts_phrase('anchin') ORDER BY id;
+----
+id
+4
+6
+
+# ---- A pass runs in a transaction of its own: the caller's uncommitted
+# insert into the source is invisible to it, and lands with the next pass
+# after the commit.
+
+statement ok
+BEGIN;
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.rvsh_t VALUES (8, 'anchin waits for the commit');
+
+query
+SELECT * FROM serenedb_reindex('rvsh_even_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement ok
+COMMIT;
+
+query
+SELECT * FROM serenedb_reindex('rvsh_even_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id FROM rvsh_even_idx WHERE body @@ ts_phrase('anchin') ORDER BY id;
+----
+id
+4
+6
+8
+
+# ---- A redefined view: the next pass rebuilds over the new definition.
+
+statement ok
+CREATE OR REPLACE VIEW rvsh_even_v AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.rvsh_t WHERE id % 2 = 1;
+
+query
+SELECT action FROM serenedb_reindex('rvsh_even_idx');
+----
+action
+rebuild
+
+query
+SELECT id FROM rvsh_even_idx WHERE body @@ ts_phrase('anchin') ORDER BY id;
+----
+id
+5
+
+query
+SELECT action FROM serenedb_reindex('rvsh_even_idx');
+----
+action
+up_to_date
+
+statement ok
+DROP INDEX rvsh_even_idx;
+
+statement ok
+DROP VIEW rvsh_even_v;
+
+statement ok
+DROP INDEX rvsh_part_idx;
+
+statement ok
+DROP VIEW rvsh_v;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.rvsh_t;
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+DROP SERVER srv_${__DATABASE__};
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rvsh_en;

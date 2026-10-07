@@ -1,0 +1,377 @@
+control substitution on
+
+# REINDEX over local iceberg tables from the generated fixture
+# (scripts/gen_iceberg_fixture.py); each step re-points a symlink at the
+# table's next version.
+#   hist/      a pinned delete, then the table rolled back to before it (v3),
+#              then a child of the deleted state whose parent snapshot has been
+#              expired (v4): the indexed snapshot leaves the history.
+#   rescan/    one data file; an old positional delete (v2), then an equality
+#              delete on `tag`, a column the view does not project (v3).
+#   rescaneq/  the same with an old equality delete on `id` at v2.
+#   eqbig/     an equality delete of 2500 ids.
+#   fmt1/      a format-version 1 table: an append, then a whole-file delete.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rvis_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+# ---- The indexed snapshot leaves the table's history: no sequence number
+# can tell which deletes were undone, so the pass rebuilds.
+
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/hist_v1 $__TEST_DIR__/rvis_hist
+
+statement ok
+CREATE VIEW rvis_hist_v AS SELECT * FROM iceberg_scan('${__TEST_DIR__}/rvis_hist', allow_moved_paths=true);
+
+statement ok
+CREATE INDEX rvis_hist_idx ON rvis_hist_v USING inverted(id, body rvis_en);
+
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/hist_v2 $__TEST_DIR__/rvis_hist
+
+query
+SELECT * FROM serenedb_reindex('rvis_hist_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	2	0	0
+
+query
+SELECT id FROM rvis_hist_idx ORDER BY id;
+----
+id
+1
+3
+
+# Rolled back to the snapshot before the delete: the deleted row returns.
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/hist_v3 $__TEST_DIR__/rvis_hist
+
+query
+SELECT * FROM serenedb_reindex('rvis_hist_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+rebuild	0	0	0	2
+
+query
+SELECT id, body FROM rvis_hist_idx ORDER BY id;
+----
+id	body
+1	pudge goes mid
+2	anchin reads manga
+3	vedernikoff pins snapshots
+
+# The current snapshot's parent was expired, so the history no longer reaches
+# the indexed snapshot.
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/hist_v4 $__TEST_DIR__/rvis_hist
+
+query
+SELECT * FROM serenedb_reindex('rvis_hist_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+rebuild	0	0	0	2
+
+query
+SELECT id FROM rvis_hist_idx ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT action FROM serenedb_reindex('rvis_hist_idx');
+----
+action
+up_to_date
+
+# A different table behind the same path, with the same metadata file name:
+# the view reads the new table, and the index, whose snapshot is in no
+# history of it, rebuilds.
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/plain_v1 $__TEST_DIR__/rvis_swap
+
+statement ok
+CREATE VIEW rvis_swap_v AS SELECT id, body FROM iceberg_scan('${__TEST_DIR__}/rvis_swap', allow_moved_paths=true);
+
+statement ok
+CREATE INDEX rvis_swap_idx ON rvis_swap_v USING inverted(id, body rvis_en);
+
+query
+SELECT count(*) FROM rvis_swap_v;
+----
+count
+3
+
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/part_v1 $__TEST_DIR__/rvis_swap
+
+query
+SELECT count(*) FROM rvis_swap_v;
+----
+count
+5
+
+query
+SELECT * FROM serenedb_reindex('rvis_swap_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+rebuild	0	0	0	4
+
+query
+SELECT id FROM rvis_swap_idx ORDER BY id;
+----
+id
+1
+2
+3
+4
+5
+
+query
+SELECT action FROM serenedb_reindex('rvis_swap_idx');
+----
+action
+up_to_date
+
+# ---- A file that rescans keeps the deletes it already had: the equality
+# delete on `tag` cannot be evaluated against the view, so its file is read
+# again, and that read applies the older delete as well.
+
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/rescan_v1 $__TEST_DIR__/rvis_rescan
+
+statement ok
+CREATE VIEW rvis_rescan_v AS SELECT id, body FROM iceberg_scan('${__TEST_DIR__}/rvis_rescan', allow_moved_paths=true);
+
+statement ok
+CREATE INDEX rvis_rescan_idx ON rvis_rescan_v USING inverted(id, body rvis_en);
+
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/rescan_v2 $__TEST_DIR__/rvis_rescan
+
+query
+SELECT * FROM serenedb_reindex('rvis_rescan_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	0
+
+query
+SELECT id FROM rvis_rescan_idx ORDER BY id;
+----
+id
+1
+3
+4
+
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/rescan_v3 $__TEST_DIR__/rvis_rescan
+
+query
+SELECT * FROM serenedb_reindex('rvis_rescan_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	1
+
+query
+SELECT id, body FROM rvis_rescan_idx ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	vedernikoff pins snapshots
+
+query
+SELECT action FROM serenedb_reindex('rvis_rescan_idx');
+----
+action
+up_to_date
+
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/rescaneq_v1 $__TEST_DIR__/rvis_rescaneq
+
+statement ok
+CREATE VIEW rvis_rescaneq_v AS SELECT id, body FROM iceberg_scan('${__TEST_DIR__}/rvis_rescaneq', allow_moved_paths=true);
+
+statement ok
+CREATE INDEX rvis_rescaneq_idx ON rvis_rescaneq_v USING inverted(id, body rvis_en);
+
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/rescaneq_v2 $__TEST_DIR__/rvis_rescaneq
+
+query
+SELECT * FROM serenedb_reindex('rvis_rescaneq_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	0
+
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/rescaneq_v3 $__TEST_DIR__/rvis_rescaneq
+
+query
+SELECT * FROM serenedb_reindex('rvis_rescaneq_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	1
+
+query
+SELECT id, body FROM rvis_rescaneq_idx ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	vedernikoff pins snapshots
+
+# A view column named file_index shadows the key the delete query addresses
+# rows by, so the files an equality delete covers rescan instead.
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/plain_v2 $__TEST_DIR__/rvis_fi
+
+statement ok
+CREATE VIEW rvis_fi_v AS SELECT id AS file_index, body FROM iceberg_scan('${__TEST_DIR__}/rvis_fi', allow_moved_paths=true);
+
+statement ok
+CREATE INDEX rvis_fi_idx ON rvis_fi_v USING inverted(file_index, body rvis_en);
+
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/plain_v3 $__TEST_DIR__/rvis_fi
+
+query
+SELECT * FROM serenedb_reindex('rvis_fi_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	2	0	2
+
+query
+SELECT file_index, body FROM rvis_fi_idx ORDER BY file_index;
+----
+file_index	body
+1	pudge reborn
+3	vedernikoff pins snapshots
+NULL	techies invisible
+
+query
+SELECT action FROM serenedb_reindex('rvis_fi_idx');
+----
+action
+up_to_date
+
+# ---- An equality delete with more rows than one vector holds: removed by
+# query, nothing rescans.
+
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/eqbig_v1 $__TEST_DIR__/rvis_eqbig
+
+statement ok
+CREATE VIEW rvis_eqbig_v AS SELECT * FROM iceberg_scan('${__TEST_DIR__}/rvis_eqbig', allow_moved_paths=true);
+
+statement ok
+CREATE INDEX rvis_eqbig_idx ON rvis_eqbig_v USING inverted(id, body rvis_en);
+
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/eqbig_v2 $__TEST_DIR__/rvis_eqbig
+
+query
+SELECT * FROM serenedb_reindex('rvis_eqbig_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	0
+
+query
+SELECT count(*), min(id), max(id) FROM rvis_eqbig_idx WHERE body @@ ts_phrase('doc');
+----
+count	min	max
+500	2500	2999
+
+query
+SELECT action FROM serenedb_reindex('rvis_eqbig_idx');
+----
+action
+up_to_date
+
+# ---- Format version 1 has no row deletes: a pass diffs the data files.
+
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/fmt1_v1 $__TEST_DIR__/rvis_fmt1
+
+statement ok
+CREATE VIEW rvis_fmt1_v AS SELECT * FROM iceberg_scan('${__TEST_DIR__}/rvis_fmt1', allow_moved_paths=true);
+
+statement ok
+CREATE INDEX rvis_fmt1_idx ON rvis_fmt1_v USING inverted(id, body rvis_en);
+
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/fmt1_v2 $__TEST_DIR__/rvis_fmt1
+
+query
+SELECT * FROM serenedb_reindex('rvis_fmt1_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/fmt1_v3 $__TEST_DIR__/rvis_fmt1
+
+query
+SELECT * FROM serenedb_reindex('rvis_fmt1_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	0	1	0
+
+query
+SELECT id, body FROM rvis_fmt1_idx ORDER BY id;
+----
+id	body
+3	vedernikoff pins snapshots
+4	techies plants mines
+
+query
+SELECT action FROM serenedb_reindex('rvis_fmt1_idx');
+----
+action
+up_to_date
+
+statement ok
+DROP INDEX rvis_fmt1_idx;
+
+statement ok
+DROP VIEW rvis_fmt1_v;
+
+statement ok
+DROP INDEX rvis_eqbig_idx;
+
+statement ok
+DROP VIEW rvis_eqbig_v;
+
+statement ok
+DROP INDEX rvis_fi_idx;
+
+statement ok
+DROP VIEW rvis_fi_v;
+
+statement ok
+DROP INDEX rvis_rescaneq_idx;
+
+statement ok
+DROP VIEW rvis_rescaneq_v;
+
+statement ok
+DROP INDEX rvis_rescan_idx;
+
+statement ok
+DROP VIEW rvis_rescan_v;
+
+statement ok
+DROP INDEX rvis_swap_idx;
+
+statement ok
+DROP VIEW rvis_swap_v;
+
+statement ok
+DROP INDEX rvis_hist_idx;
+
+statement ok
+DROP VIEW rvis_hist_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rvis_en;

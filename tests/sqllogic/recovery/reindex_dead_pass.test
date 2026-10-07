@@ -1,0 +1,118 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rdp_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+system ok
+mkdir -p $__TEST_DIR__/rdp
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(100) t(i)) TO '${__TEST_DIR__}/rdp/a.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW rdp_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rdp/*.parquet');
+
+statement ok
+CREATE INDEX rdp_idx ON rdp_v USING inverted(id, body rdp_en) WITH (segment_docs_max = 100, refresh_interval = 100, compaction_interval = 0);
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(100, 200) t(i)) TO '${__TEST_DIR__}/rdp/b.parquet' (FORMAT parquet);
+
+query
+SELECT action FROM serenedb_reindex('rdp_idx');
+----
+action
+delta
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(200, 300) t(i)) TO '${__TEST_DIR__}/rdp/c.parquet' (FORMAT parquet);
+
+query
+SELECT action FROM serenedb_reindex('rdp_idx');
+----
+action
+delta
+
+statement ok
+CREATE TABLE rdp_before AS
+SELECT value AS v FROM sdb_metrics
+WHERE metric = 'num_segments'
+  AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'rdp_idx');
+
+query
+SELECT v > 1 AS split FROM rdp_before;
+----
+split
+t
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(300, 5300) t(i)) TO '${__TEST_DIR__}/rdp/d.parquet' (FORMAT parquet);
+
+statement ok
+SET sdb_faults = 'pause_create_index_between_batches';
+
+connection canceled
+statement async error
+SELECT * FROM serenedb_reindex('rdp_idx');
+----
+db error: ERROR: canceling statement due to user request
+
+
+connection default
+sleep 2s
+
+statement ok
+SELECT pg_cancel_backend(pid) FROM pg_stat_progress_create_index
+WHERE command = 'REINDEX' AND index_relid = 'rdp_idx'::regclass;
+
+statement ok
+SET sdb_faults = '-pause_create_index_between_batches';
+
+wait
+
+statement ok
+ALTER INDEX rdp_idx SET (compaction_interval = 50);
+
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT (SELECT value FROM sdb_metrics
+        WHERE metric = 'num_segments'
+          AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'rdp_idx'))
+       < (SELECT v FROM rdp_before) AS compacted;
+----
+compacted
+t
+
+query
+SELECT count(*), count(DISTINCT id) FROM rdp_idx WHERE body @@ ts_phrase('doc');
+----
+count	count
+300	300
+
+query
+SELECT * FROM serenedb_reindex('rdp_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT count(*), count(DISTINCT id) FROM rdp_idx WHERE body @@ ts_phrase('doc');
+----
+count	count
+5300	5300
+
+statement ok
+DROP TABLE rdp_before;
+
+statement ok
+DROP INDEX rdp_idx;
+
+statement ok
+DROP VIEW rdp_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rdp_en;

@@ -1,0 +1,105 @@
+control substitution on
+
+# Two indexes over one view keep positions of their own: refreshing one
+# leaves the other where it was, and both refresh at the same time without
+# waiting on each other.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rvi_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+system ok
+mkdir -p $__TEST_DIR__/rvi
+
+statement count 10
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(10) t(i))
+TO '${__TEST_DIR__}/rvi/a.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvi_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvi/*.parquet');
+
+statement ok
+CREATE INDEX rvi_all_idx ON rvi_v USING inverted(id, body rvi_en);
+
+statement ok
+CREATE INDEX rvi_even_idx ON rvi_v USING inverted(id, body rvi_en) WHERE id % 2 = 0;
+
+statement count 10
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(10, 20) t(i))
+TO '${__TEST_DIR__}/rvi/b.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('rvi_all_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT
+  (SELECT count(*) FROM rvi_all_idx WHERE body @@ ts_phrase('doc')) AS all_docs,
+  (SELECT count(*) FROM rvi_even_idx WHERE body @@ ts_phrase('doc')) AS even_docs;
+----
+all_docs	even_docs
+20	5
+
+query
+SELECT * FROM serenedb_reindex('rvi_even_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT count(*) FROM rvi_even_idx WHERE body @@ ts_phrase('doc');
+----
+count
+10
+
+query
+SELECT action FROM serenedb_reindex('rvi_all_idx');
+----
+action
+up_to_date
+
+statement count 10
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(20, 30) t(i))
+TO '${__TEST_DIR__}/rvi/c.parquet' (FORMAT PARQUET);
+
+connection rvi_first
+statement async ok
+SELECT * FROM serenedb_reindex('rvi_all_idx');
+
+connection rvi_second
+statement async ok
+SELECT * FROM serenedb_reindex('rvi_even_idx');
+
+connection default
+wait
+
+query
+SELECT
+  (SELECT count(*) FROM rvi_all_idx WHERE body @@ ts_phrase('doc')) AS all_docs,
+  (SELECT count(*) FROM rvi_even_idx WHERE body @@ ts_phrase('doc')) AS even_docs;
+----
+all_docs	even_docs
+30	15
+
+query
+SELECT
+  (SELECT action FROM serenedb_reindex('rvi_all_idx')) AS all_action,
+  (SELECT action FROM serenedb_reindex('rvi_even_idx')) AS even_action;
+----
+all_action	even_action
+up_to_date	up_to_date
+
+statement ok
+DROP INDEX rvi_even_idx;
+
+statement ok
+DROP INDEX rvi_all_idx;
+
+statement ok
+DROP VIEW rvi_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rvi_en;

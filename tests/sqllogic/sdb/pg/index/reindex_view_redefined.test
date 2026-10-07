@@ -1,0 +1,82 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rvr_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+system ok
+mkdir -p $__TEST_DIR__/rvr
+
+statement count 4
+COPY (SELECT i AS id, 'pudge ' || i AS body FROM range(4) t(i))
+TO '${__TEST_DIR__}/rvr/a.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvr_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvr/*.parquet') WHERE id < 2;
+
+statement ok
+CREATE INDEX rvr_idx ON rvr_v USING inverted(id, body rvr_en);
+
+query
+SELECT id FROM rvr_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id
+0
+1
+
+query
+SELECT * FROM serenedb_reindex('rvr_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement ok
+CREATE OR REPLACE VIEW rvr_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvr/*.parquet') WHERE id >= 2;
+
+query
+SELECT * FROM serenedb_reindex('rvr_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+rebuild	0	0	0	1
+
+query
+SELECT id, body FROM rvr_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+2	pudge 2
+3	pudge 3
+
+query
+SELECT * FROM serenedb_reindex('rvr_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement count 2
+COPY (SELECT i AS id, 'pudge ' || i AS body FROM range(4, 6) t(i))
+TO '${__TEST_DIR__}/rvr/b.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('rvr_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id, body FROM rvr_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+2	pudge 2
+3	pudge 3
+4	pudge 4
+5	pudge 5
+
+statement ok
+DROP INDEX rvr_idx;
+
+statement ok
+DROP VIEW rvr_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rvr_en;

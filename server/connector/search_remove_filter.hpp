@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/functional/any_invocable.h>
-
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/filters/filter.hpp>
@@ -29,6 +27,7 @@
 #include <iresearch/utils/memory.hpp>
 #include <memory>
 #include <optional>
+#include <roaring/roaring64map.hh>
 #include <vector>
 
 namespace sdb::connector {
@@ -84,33 +83,17 @@ class SearchRemoveFilter : public irs::Filter, public irs::lead::Node {
   mutable std::vector<irs::bstring> _pks;
 };
 
-// Removals for pk-TERM view indexes: the kPKFieldId dictionary holds one
-// (file, row) term per row (two sortable signed halves), so the 8-byte
-// file half alone is a whole-file prefix AND terms under it ascend by row.
-// Entries ascend by prefix; each gets its own dictionary iterator:
-// a whole-file entry seeks the prefix once and walks, masking every
-// posting; a cursor entry LEAPFROGS -- the cursor names the next dead row,
-// seek_ge jumps to its term, and a landed alive term gallops the cursor
-// forward, so neither the row set nor the dictionary is enumerated.
-// Re-evaluated per segment at apply time like every remove filter, so
-// merges/compaction cannot invalidate it.
 class SearchRemovePrefixFilter final : public irs::Filter,
                                        public irs::lead::Node {
  public:
-  // "Smallest dead row >= min_row", nullopt once exhausted; called with
-  // non-decreasing arguments.
-  using DeadRowCursor = absl::AnyInvocable<std::optional<int64_t>(int64_t)>;
-
-  explicit SearchRemovePrefixFilter(irs::field_id pk_field_id);
+  explicit SearchRemovePrefixFilter(irs::field_id field_id);
   ~SearchRemovePrefixFilter() final;
 
   // Every row under `prefix` dies.
   void AddFile(std::string_view prefix) { PushEntry(prefix); }
 
-  // The cursor's rows under `prefix` die. Whatever the cursor reads must
-  // outlive the filter (the observe owns it until the remove commits).
-  void AddFileRows(std::string_view prefix, DeadRowCursor dead) {
-    PushEntry(prefix).dead = std::move(dead);
+  void AddFileRows(std::string_view prefix, roaring::Roaring64Map rows) {
+    PushEntry(prefix).dead = std::move(rows);
   }
 
   irs::lead::Node::ptr MakeLead(const irs::SubReader& segment,
@@ -136,24 +119,22 @@ class SearchRemovePrefixFilter final : public irs::Filter,
   struct Entry {
     irs::bstring prefix;
     // nullopt = whole file.
-    std::optional<DeadRowCursor> dead;
+    std::optional<roaring::Roaring64Map> dead;
   };
 
   Entry& PushEntry(std::string_view prefix);
 
   void NextEntry() const noexcept;
 
-  const irs::field_id _pk_field_id;
+  const irs::field_id _field_id;
   mutable irs::DocumentMask::Iterator _segment_mask;
   mutable irs::DocumentMask::Iterator _pending_mask;
-  mutable const irs::TermReader* _pk_field{};
-  // Per-ENTRY dictionary iterator: the whole-file arm seeks once then
-  // walks, the cursor arm issues seeks only -- one instance never mixes
-  // the two patterns.
+  mutable const irs::TermReader* _field{};
   mutable irs::SeekTermIterator::ptr _terms;
   mutable irs::TermPostings::ptr _postings;
   mutable size_t _pos{0};
-  mutable int64_t _resume_row{0};
+  mutable size_t _end{0};
+  mutable uint64_t _next_row{0};
   mutable std::string _key_scratch;
   mutable std::vector<Entry> _entries;
 };

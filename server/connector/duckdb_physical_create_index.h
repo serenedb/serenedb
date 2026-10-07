@@ -31,7 +31,8 @@
 #include <optional>
 
 #include "catalog/catalog.h"
-#include "connector/file_manifest.h"
+#include "search/source_files.h"
+#include "search/source_position.h"
 
 namespace sdb::catalog {
 
@@ -54,38 +55,23 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
   // the schema this statement is qualified with, so the name is the whole
   // handle.
   duckdb::Identifier source_index;
+  std::vector<search::SourceFile> pass_files;
 
-  std::vector<std::string> delta_files;
-  // New-file ids are `delta_file_base + listing ordinal` -- the pass scans
-  // `WHERE file_index IN (ordinals)` and projects `file_index + base`.
-  uint64_t delta_file_base = 0;
-
-  std::shared_ptr<const search::FileManifest> manifest;
+  std::vector<search::SourceFile> files;
+  search::SourcePosition position;
 
   duckdb::LogicalType generated_pk_type;
 
-  // What this statement is, derived from the driver-written fields: a plain
-  // CREATE INDEX, or one of the two REINDEX passes.
-  enum class ReindexPass : uint8_t {
-    None,
-    Delta,
-    Rebuild,
-  };
-  ReindexPass Pass() const noexcept {
-    if (source_index.empty()) {
-      return ReindexPass::None;
-    }
-    return delta_files.empty() ? ReindexPass::Rebuild : ReindexPass::Delta;
-  }
+  bool IsPass() const noexcept { return !source_index.empty(); }
 
   duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final {
     auto base = duckdb::CreateIndexInfo::Copy();
     auto result = duckdb::make_uniq<SereneDBCreateIndexInfo>(
       std::move(base->Cast<duckdb::CreateIndexInfo>()));
     result->source_index = source_index;
-    result->delta_files = delta_files;
-    result->delta_file_base = delta_file_base;
-    result->manifest = manifest;
+    result->pass_files = pass_files;
+    result->files = files;
+    result->position = position;
     result->generated_pk_type = generated_pk_type;
     return result;
   }
@@ -102,13 +88,6 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
 //                       transaction only, until it commits)
 //   Finalize:           Refresh (inverted)
 //   On error:           destructor drops the index (rollback)
-//
-// REINDEX passes (`SereneDBCreateIndexInfo::Pass()`) fill the EXISTING
-// index like a plain CREATE INDEX: no catalog object is touched, the
-// driver commits the removes before the pass, the sinks commit their
-// docs above them (domain ticks), and Finalize publishes the new
-// manifest. A died pass leaves the version mismatched, so the next tick
-// relaunches.
 class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
  public:
   // Set by the planner when it splices the expression projection under this
@@ -163,10 +142,9 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   duckdb::optional_ptr<const SereneDBCreateIndexInfo> Extras() const noexcept {
     return dynamic_cast<const SereneDBCreateIndexInfo*>(_info.get());
   }
-  using ReindexPass = SereneDBCreateIndexInfo::ReindexPass;
   bool IsReindexPass() const noexcept {
     const auto extras = Extras();
-    return extras && extras->Pass() != ReindexPass::None;
+    return extras && extras->IsPass();
   }
 
   // First chunk slot holding a pipeline-computed indexed expression (0 when the

@@ -1,0 +1,90 @@
+control substitution on
+
+# The periodic loop runs the same pass as REINDEX. Expression keys converge
+# through ticks alone; a view redefined without the row identity its index
+# stores fails every tick and the manual REINDEX, the loop stays up, and once
+# the view is restored the next tick catches up.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rvpk_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+system ok
+mkdir -p $__TEST_DIR__/rvpk
+
+statement count 1
+COPY (SELECT 1 AS id, 'Pudge Goes Mid' AS body)
+TO '${__TEST_DIR__}/rvpk/a.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvpk_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvpk/*.parquet');
+
+statement ok
+CREATE INDEX rvpk_idx ON rvpk_v USING inverted(id, (upper(body)) rvpk_en) WITH (reindex_interval=100);
+
+statement count 1
+COPY (SELECT 2 AS id, 'Pudge Plays Again' AS body)
+TO '${__TEST_DIR__}/rvpk/b.parquet' (FORMAT PARQUET);
+
+query ok retry 400 backoff 250ms
+SELECT id FROM rvpk_idx WHERE upper(body) @@ ts_phrase('PLAYS');
+----
+id
+2
+
+query
+SELECT id FROM rvpk_idx WHERE upper(body) @@ ts_phrase('PUDGE') ORDER BY id;
+----
+id
+1
+2
+
+statement ok
+CREATE OR REPLACE VIEW rvpk_v AS SELECT id, lower(body) AS body FROM read_parquet('${__TEST_DIR__}/rvpk/*.parquet');
+
+statement count 1
+COPY (SELECT 3 AS id, 'Techies Plants Mines' AS body)
+TO '${__TEST_DIR__}/rvpk/c.parquet' (FORMAT PARQUET);
+
+system ok
+sleep 0.6
+
+query
+SELECT count(*) FROM rvpk_idx;
+----
+count
+2
+
+statement error
+SELECT * FROM serenedb_reindex('rvpk_idx');
+----
+db error: ERROR: REINDEX of "rvpk_idx": the view no longer yields the row identity the index was built with; drop and recreate the index
+
+
+statement ok
+CREATE OR REPLACE VIEW rvpk_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvpk/*.parquet');
+
+query ok retry 400 backoff 250ms
+SELECT count(*) FROM rvpk_idx;
+----
+count
+3
+
+query
+SELECT id FROM rvpk_idx WHERE upper(body) @@ ts_phrase('MINES');
+----
+id
+3
+
+statement ok
+ALTER INDEX rvpk_idx SET (reindex_interval=0);
+
+statement ok
+DROP INDEX rvpk_idx;
+
+statement ok
+DROP VIEW rvpk_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rvpk_en;

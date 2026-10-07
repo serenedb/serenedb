@@ -24,13 +24,13 @@ statement ok
 CREATE VIEW vimp_v AS SELECT * FROM vimp.${__DATABASE__}.t;
 
 statement ok
-SET sdb_faults = 'refresh_before_manifest_publish';
+SET sdb_faults = 'refresh_before_position_publish';
 
 statement ok
 CREATE INDEX vimp_idx ON vimp_v USING inverted(id, body vimp_en);
 
 statement ok
-SET sdb_faults = '-refresh_before_manifest_publish';
+SET sdb_faults = '-refresh_before_position_publish';
 
 query
 SELECT id FROM vimp_idx WHERE body @@ ts_phrase('manifest') ORDER BY id;

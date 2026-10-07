@@ -1,0 +1,167 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rap_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+system ok
+mkdir -p $__TEST_DIR__/rap
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(3000) t(i)) TO '${__TEST_DIR__}/rap/a.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW rap_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rap/*.parquet');
+
+statement ok
+CREATE INDEX rap_idx ON rap_v USING inverted(id, body rap_en) WITH (segment_docs_max = 1000, refresh_interval = 100);
+
+query
+SELECT count(*) FROM rap_idx WHERE body @@ ts_phrase('doc');
+----
+count
+3000
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(3000, 6000) t(i)) TO '${__TEST_DIR__}/rap/b.parquet' (FORMAT parquet);
+
+statement ok
+SET sdb_faults = 'pause_create_index_between_batches';
+
+connection delta
+statement async ok
+SELECT * FROM serenedb_reindex('rap_idx');
+
+connection default
+sleep 2s
+
+query
+SELECT count(*) FROM rap_idx WHERE body @@ ts_phrase('doc');
+----
+count
+3000
+
+statement ok
+SET sdb_faults = '-pause_create_index_between_batches';
+
+wait
+
+query
+SELECT count(*), count(DISTINCT id) FROM rap_idx WHERE body @@ ts_phrase('doc');
+----
+count	count
+6000	6000
+
+statement ok
+CREATE OR REPLACE VIEW rap_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rap/*.parquet') WHERE id < 4500;
+
+statement ok
+SET sdb_faults = 'pause_create_index_between_batches';
+
+connection rebuild
+statement async ok
+SELECT * FROM serenedb_reindex('rap_idx');
+
+connection default
+sleep 2s
+
+query
+SELECT count(*) FROM rap_idx WHERE body @@ ts_phrase('doc');
+----
+count
+6000
+
+statement ok
+SET sdb_faults = '-pause_create_index_between_batches';
+
+wait
+
+query
+SELECT count(*), count(DISTINCT id) FROM rap_idx WHERE body @@ ts_phrase('doc');
+----
+count	count
+4500	4500
+
+statement ok
+CREATE OR REPLACE VIEW rap_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rap/*.parquet') WHERE id < 5000;
+
+statement ok
+SET sdb_faults = 'pause_create_index_between_batches';
+
+connection canceled
+statement async error
+SELECT * FROM serenedb_reindex('rap_idx');
+----
+db error: ERROR: canceling statement due to user request
+
+
+connection default
+sleep 2s
+
+statement ok
+SELECT pg_cancel_backend(pid) FROM pg_stat_progress_create_index
+WHERE command = 'REINDEX' AND index_relid = 'rap_idx'::regclass;
+
+statement ok
+SET sdb_faults = '-pause_create_index_between_batches';
+
+wait
+
+query
+SELECT count(*), count(DISTINCT id) FROM rap_idx WHERE body @@ ts_phrase('doc');
+----
+count	count
+4500	4500
+
+statement ok
+SET sdb_faults = 'crash_reindex_before_publish';
+
+statement error
+SELECT * FROM serenedb_reindex('rap_idx');
+----
+connection closed
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*), count(DISTINCT id) FROM rap_idx WHERE body @@ ts_phrase('doc');
+----
+count	count
+4500	4500
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('rap_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+rebuild	0	0	0	2
+
+connection after_crash
+query
+SELECT count(*), count(DISTINCT id) FROM rap_idx WHERE body @@ ts_phrase('doc');
+----
+count	count
+5000	5000
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('rap_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+connection after_crash
+statement ok
+DROP INDEX rap_idx;
+
+connection after_crash
+statement ok
+DROP VIEW rap_v;
+
+connection after_crash
+statement ok
+DROP TEXT SEARCH DICTIONARY rap_en;

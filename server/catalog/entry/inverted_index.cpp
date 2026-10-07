@@ -60,7 +60,6 @@ namespace sdb::catalog {
 namespace {
 
 constexpr std::string_view kPayloadOption = "sdb_payload";
-constexpr std::string_view kKeyColumnsOption = "key_columns";
 constexpr std::string_view kStorePkOption = "store_pk";
 
 duckdb::Value Pack(const persistence::InvertedIndexData& data) {

@@ -299,7 +299,7 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
   search::InvertedIndexSnapshotPtr snapshot;
   if (search_table) {
     snapshot = std::make_shared<search::InvertedIndexSnapshot>(
-      PinnedSearchReader(context, *search_table), nullptr);
+      PinnedSearchReader(context, *search_table));
   } else {
     snapshot = GetSereneDBContext(context).EnsureSearchSnapshot(
       entry.oid, entry.Storage());
@@ -334,7 +334,7 @@ duckdb::TableFunction BindSearchTableScan(
   auto data =
     MakeTableScanBindData(entry, ScanEntryKind::SearchTable, "search",
                           std::make_shared<search::InvertedIndexSnapshot>(
-                            PinnedSearchReader(context, entry), nullptr));
+                            PinnedSearchReader(context, entry)));
   data->score.prune = store->TopKScorer();
   data->relation.inverted_config = store->Config();
   data->relation.row_group_size =

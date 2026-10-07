@@ -8,9 +8,8 @@ control substitution on
 #   part/  partitioned: the delete scopes to partition a -> only that
 #          partition's files invalidate -> delta rescans just them.
 #   plain/ unpartitioned: the delete scopes globally -> every file
-#          invalidates -> rebuild.
-# Both must converge: the (re)build captures the same delete fingerprints
-# observe computes, so the next reindex is up_to_date.
+#          invalidates -> delta rescans all of them.
+# Both must converge: the next reindex is up_to_date.
 
 system ok
 ln -sfn ${RESOURCES}/tests/iceberg/plain_v1 $__TEST_DIR__/reil_plain && ln -sfn ${RESOURCES}/tests/iceberg/part_v1 $__TEST_DIR__/reil_part
@@ -100,9 +99,6 @@ id
 1
 3
 
-# Convergence: both roads stamp the delete fingerprints observe computes --
-# the delta on its rescans, a rebuild via its manifest capture (a refresh
-# that re-observed as changed would refresh forever).
 query
 SELECT action FROM serenedb_reindex('reil_plain_idx');
 ----
@@ -125,6 +121,22 @@ CREATE INDEX reil_plain_inc_idx ON reil_plain_v USING inverted(body reil_en)
 
 query
 SELECT count(*) FROM reil_plain_inc_idx;
+----
+count
+2
+
+# A view that casts the equality-delete column: in the view's type the
+# deleted id=1 and the live id=3 are both true, so the covered files rescan
+# instead of removing rows by value.
+statement ok
+CREATE VIEW reil_plain_cast_v AS SELECT CAST(id AS BOOLEAN) AS id, body
+  FROM iceberg_scan('${__TEST_DIR__}/reil_plain', allow_moved_paths=true);
+
+statement ok
+CREATE INDEX reil_plain_cast_idx ON reil_plain_cast_v USING inverted(id, body reil_en);
+
+query
+SELECT count(*) FROM reil_plain_cast_idx;
 ----
 count
 2
@@ -189,6 +201,25 @@ NULL	techies invisible
 
 query
 SELECT action FROM serenedb_reindex('reil_plain_inc_idx');
+----
+action
+up_to_date
+
+query
+SELECT * FROM serenedb_reindex('reil_plain_cast_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	2	0	2
+
+query
+SELECT body FROM reil_plain_cast_idx WHERE id ORDER BY body;
+----
+body
+pudge reborn
+vedernikoff pins snapshots
+
+query
+SELECT action FROM serenedb_reindex('reil_plain_cast_idx');
 ----
 action
 up_to_date
@@ -415,8 +446,7 @@ action
 up_to_date
 
 # Partition-scoped equality delete (snapshot 4): id=1, scoped to partition
-# a. Only partition a's files translate the remove query; partition b's
-# fingerprints never move.
+# a. Only partition a's files translate the remove query.
 system ok
 ln -sfn ${RESOURCES}/tests/iceberg/part_v4 $__TEST_DIR__/reil_part
 
@@ -482,7 +512,7 @@ query
 SELECT * FROM serenedb_reindex('reil_part_proj_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
-delta	0	2	0	2
+delta	0	2	0	1
 
 query
 SELECT count(*) FROM reil_part_proj_idx;

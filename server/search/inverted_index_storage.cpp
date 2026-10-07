@@ -25,6 +25,7 @@
 #include <absl/time/time.h>
 
 #include <chrono>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -42,9 +43,12 @@
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/serializer.hpp>
 #include <iresearch/utils/system_compiler.hpp>
@@ -80,7 +84,23 @@ duckdb::optional_ptr<duckdb::AttachedDatabase> AttachedDatabaseById(
 constexpr duckdb::field_id_t kFieldTick = 0;
 constexpr duckdb::field_id_t kFieldWalGeneration = 1;
 constexpr duckdb::field_id_t kFieldWalOffset = 2;
-constexpr duckdb::field_id_t kFieldManifest = 3;
+constexpr duckdb::field_id_t kFieldLegacyManifest = 3;
+constexpr duckdb::field_id_t kFieldDefinition = 4;
+constexpr duckdb::field_id_t kFieldSnapshotId = 5;
+constexpr duckdb::field_id_t kFieldListing = 6;
+constexpr duckdb::field_id_t kFieldPassFloor = 7;
+
+struct LegacyManifestEntry {
+  uint64_t file_id = 0;
+  std::string path;
+  std::string etag;
+  int64_t mtime_micros = 0;
+};
+
+struct LegacyManifest {
+  irs::containers::NodeHashMap<uint64_t, LegacyManifestEntry> entries;
+  int64_t version = 0;
+};
 
 }  // namespace
 
@@ -178,6 +198,9 @@ InvertedIndexStorage::InvertedIndexStorage(
   resource_manager.file_descriptors = _file_descriptors_count;
   _dir = std::make_unique<irs::MMapDirectory>(path, irs::DirectoryAttributes{},
                                               resource_manager);
+  if (reopen) {
+    OpenSourceFiles();
+  }
 
   irs::IndexWriterOptions writer_options;
   writer_options.ann_env = &AnnBuildEnv();
@@ -234,16 +257,23 @@ InvertedIndexStorage::InvertedIndexStorage(
                                 _pending_wal_cursor.generation);
     out.WriteProperty<uint64_t>(kFieldWalOffset, "wal_offset",
                                 _pending_wal_cursor.offset);
-    const auto manifest = GetFileManifest();
-    out.OnOptionalPropertyBegin(kFieldManifest, "manifest",
-                                manifest != nullptr);
-    if (manifest) {
-      manifest->Write(out);
+    SDB_IF_FAILURE("legacy_view_index_payload") {
+      out.OnOptionalPropertyBegin(kFieldLegacyManifest, "manifest", true);
+      irs::utils::WriteTuple(out, LegacyManifest{});
+      out.OnOptionalPropertyEnd(true);
+      return;
     }
-    out.OnOptionalPropertyEnd(manifest != nullptr);
+    out.WritePropertyWithDefault<uint64_t>(kFieldDefinition, "definition",
+                                           _position.definition);
+    out.WritePropertyWithDefault<int64_t>(kFieldSnapshotId, "snapshot_id",
+                                          _position.snapshot_id);
+    out.WritePropertyWithDefault<uint64_t>(kFieldListing, "listing",
+                                           _position.listing);
+    out.WritePropertyWithDefault<uint64_t>(kFieldPassFloor, "pass_floor",
+                                           _pass_floor);
   };
 
-  std::shared_ptr<const FileManifest> file_manifest;
+  uint64_t pass_floor = 0;
   writer_options.meta_payload_reader = [&](duckdb::BinaryDeserializer& in) {
     _recovery_tick = in.ReadProperty<uint64_t>(kFieldTick, "tick");
     _recovery_wal_cursor.generation =
@@ -251,11 +281,20 @@ InvertedIndexStorage::InvertedIndexStorage(
     _recovery_wal_cursor.offset =
       in.ReadProperty<uint64_t>(kFieldWalOffset, "wal_offset");
     const bool has_manifest =
-      in.OnOptionalPropertyBegin(kFieldManifest, "manifest");
+      in.OnOptionalPropertyBegin(kFieldLegacyManifest, "manifest");
     if (has_manifest) {
-      file_manifest = FileManifest::Read(in);
+      LegacyManifest manifest;
+      irs::utils::ReadTuple(in, manifest);
     }
     in.OnOptionalPropertyEnd(has_manifest);
+    _position.definition =
+      in.ReadPropertyWithDefault<uint64_t>(kFieldDefinition, "definition");
+    _position.snapshot_id =
+      in.ReadPropertyWithDefault<int64_t>(kFieldSnapshotId, "snapshot_id");
+    _position.listing =
+      in.ReadPropertyWithDefault<uint64_t>(kFieldListing, "listing");
+    pass_floor =
+      in.ReadPropertyWithDefault<uint64_t>(kFieldPassFloor, "pass_floor");
   };
 
   SDB_IF_FAILURE("segment_1000_docs_max") {
@@ -268,15 +307,19 @@ InvertedIndexStorage::InvertedIndexStorage(
     _writer->RefreshCommit();
   }
 
-  auto reader = _writer->GetSnapshot();
-  SDB_ASSERT(reader);
-
   if (reopen) {
     _last_durable_tick = _recovery_tick;
-    SetFileManifest(file_manifest);
+    if (pass_floor != 0) {
+      _writer->RefreshCommit(
+        {.payload_changed = true,
+         .drop_segments = irs::SegmentIdRange{.first = pass_floor + 1}});
+    }
   }
+
+  auto reader = _writer->GetSnapshot();
+  SDB_ASSERT(reader);
   StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
-    std::move(reader), std::move(file_manifest)));
+    std::move(reader), _position, _files));
 }
 
 void RemoveDroppedStorageDir(const std::filesystem::path& path,
@@ -307,6 +350,7 @@ void RemoveDroppedStorageDir(const std::filesystem::path& path,
 }
 
 InvertedIndexStorage::~InvertedIndexStorage() {
+  _pass = {};
   _writer.reset();
   _dir.reset();
   if (_dropped.load(std::memory_order_acquire)) {
@@ -369,6 +413,165 @@ InvertedIndexStorage::ReindexClaim::~ReindexClaim() {
   absl::MutexLock lock{&_storage->_reindex_mutex};
   _storage->_reindex_in_flight = false;
   _storage->_reindex_cv.SignalAll();
+}
+
+void InvertedIndexStorage::BeginPass() {
+  std::lock_guard lock{_refresh_mutex};
+  if (_pass.Held()) {
+    PublishLocked(_position, UnpublishedPassSegments());
+  }
+  _pass = _writer->ArmCompactionFloor(irs::FloorArming::Now);
+  SDB_ASSERT(_pass.Held());
+  _pass_floor = _pass.Floor();
+}
+
+void InvertedIndexStorage::PublishDelta(irs::IndexWriter::Transaction removals,
+                                        const SourcePosition& position,
+                                        SourceFilesUpdate files) {
+  std::lock_guard lock{_refresh_mutex};
+  SDB_ASSERT(_pass.Held());
+  removals.RegisterFlush();
+  if (!removals.Commit(
+        TickDomain::Instance().Next(removals.GetQueries() + 1))) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("search index '", GetId(),
+              "': the removals of a REINDEX pass failed to commit"));
+  }
+  PublishLocked(position, std::nullopt, files);
+}
+
+void InvertedIndexStorage::PublishRebuild(const SourcePosition& position,
+                                          SourceFilesUpdate files) {
+  std::lock_guard lock{_refresh_mutex};
+  SDB_ASSERT(_pass.Held());
+  PublishLocked(position, irs::SegmentIdRange{.last = _pass.Floor()}, files);
+}
+
+void InvertedIndexStorage::CommitPosition(const SourcePosition& position,
+                                          SourceFilesUpdate files) {
+  std::lock_guard lock{_refresh_mutex};
+  PublishLocked(position, UnpublishedPassSegments(), files);
+}
+
+uint64_t InvertedIndexStorage::NextSourceFileId() {
+  std::lock_guard lock{_refresh_mutex};
+  return _files->NextId();
+}
+
+void InvertedIndexStorage::OpenSourceFiles() {
+  _files_ref = irs::directory_utils::Reference(*_dir, kSourceFilesName);
+  if (!_files_ref) {
+    return;
+  }
+  auto stored = ReadSourceFiles(
+    duckdb::FileSystem::GetFileSystem(irs::DuckDBEngine::Instance().instance()),
+    (_path / kSourceFilesName).string());
+  if (stored.torn) {
+    RewriteSourceFilesLocked(std::move(stored.files));
+    return;
+  }
+  _files = std::make_shared<const SourceFiles>(std::move(stored.files));
+}
+
+void InvertedIndexStorage::AppendSourceFilesLocked(
+  std::span<const SourceFile> added) {
+  if (added.empty()) {
+    return;
+  }
+  SDB_IF_FAILURE("skip_source_files_append") { return; }
+  if (!_files_ref) {
+    _files_ref = _dir->attributes().refs().add(kSourceFilesName);
+  }
+  const auto path = _path / kSourceFilesName;
+  AppendSourceFiles(
+    duckdb::FileSystem::GetFileSystem(irs::DuckDBEngine::Instance().instance()),
+    path.string(), added);
+  SDB_IF_FAILURE("crash_torn_source_files_append") {
+    std::filesystem::resize_file(path, std::filesystem::file_size(path) - 1);
+    SDB_IMMEDIATE_ABORT();
+  }
+  SDB_IF_FAILURE("crash_after_source_files_append") { SDB_IMMEDIATE_ABORT(); }
+  std::vector<SourceFile> files{_files->Files().begin(), _files->Files().end()};
+  files.insert(files.end(), added.begin(), added.end());
+  _files = std::make_shared<const SourceFiles>(std::move(files));
+}
+
+void InvertedIndexStorage::CompactSourceFilesLocked(
+  std::span<const uint64_t> live) {
+  std::vector<SourceFile> kept;
+  kept.reserve(live.size());
+  for (const auto id : live) {
+    if (const auto* file = _files->Find(id)) {
+      kept.push_back(*file);
+    }
+  }
+  if (_files->Size() - kept.size() <= kept.size()) {
+    return;
+  }
+  RewriteSourceFilesLocked(std::move(kept));
+}
+
+void InvertedIndexStorage::RewriteSourceFilesLocked(
+  std::vector<SourceFile> files) {
+  const auto tmp_ref = _dir->attributes().refs().add(kSourceFilesTmpName);
+  WriteSourceFiles(
+    duckdb::FileSystem::GetFileSystem(irs::DuckDBEngine::Instance().instance()),
+    (_path / kSourceFilesTmpName).string(), (_path / kSourceFilesName).string(),
+    files);
+  if (!_files_ref) {
+    _files_ref = _dir->attributes().refs().add(kSourceFilesName);
+  }
+  _files = std::make_shared<const SourceFiles>(std::move(files));
+}
+
+void InvertedIndexStorage::PublishLocked(
+  const SourcePosition& position,
+  std::optional<irs::SegmentIdRange> drop_segments,
+  const SourceFilesUpdate& files) {
+  const auto begin = std::chrono::steady_clock::now();
+  const auto code = CommitPayloadLocked(position, drop_segments, files);
+  _maintenance.RecordCommit(
+    absl::OkStatus(), code,
+    std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - begin)
+      .count());
+}
+
+bool InvertedIndexStorage::ReindexInFlight() {
+  absl::MutexLock lock{&_reindex_mutex};
+  return _reindex_in_flight;
+}
+
+std::optional<irs::SegmentIdRange>
+InvertedIndexStorage::UnpublishedPassSegments() const {
+  if (!_pass.Held()) {
+    return std::nullopt;
+  }
+  return irs::SegmentIdRange{.first = _pass.Floor() + 1};
+}
+
+RefreshResult InvertedIndexStorage::CommitPayloadLocked(
+  const SourcePosition& position,
+  std::optional<irs::SegmentIdRange> drop_segments,
+  const SourceFilesUpdate& files) {
+  AppendSourceFilesLocked(files.added);
+  const bool payload_changed = position != _position || _pass_floor != 0;
+  absl::Cleanup restore = [&, previous_position = _position,
+                           previous_floor = _pass_floor] {
+    _position = previous_position;
+    _pass_floor = previous_floor;
+  };
+  _position = position;
+  _pass_floor = 0;
+  const auto code = RefreshLocked(
+    {.payload_changed = payload_changed, .drop_segments = drop_segments});
+  std::move(restore).Cancel();
+  _pass = {};
+  if (files.live) {
+    CompactSourceFilesLocked(*files.live);
+  }
+  return code;
 }
 
 void InvertedIndexStorage::Refresh(
@@ -503,100 +706,11 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
 
       refresh_lock.lock();
     }
-
-    const auto before_refresh = TickDomain::Instance().Current();
-    SDB_ASSERT(_last_durable_tick <= before_refresh);
-    SDB_IF_FAILURE("pause_index_refresh_after_tick") {
-      if (progress) {
-        progress("pause_index_refresh_after_tick", 0, 0);
-      }
-      SDB_WAIT_ON_FAILURE("pause_index_refresh_after_tick");
+    if (_pass.Held() && !ReindexInFlight()) {
+      code = CommitPayloadLocked(_position, UnpublishedPassSegments(), {});
+    } else {
+      code = RefreshLocked({.progress = progress}, for_checkpoint);
     }
-
-    // Stamp the EXACT durable WAL cursor consistently with the durable tick
-    // this refresh persists. RefreshCommit (below) flushes every staged batch
-    // with tick <= refresh_tick and, inside the meta payload provider, persists
-    // _last_durable_tick == the highest tick covered by the flushed segments.
-    // The per-index table recorded, per settled CommitSearch BEFORE the batch
-    // became flushable and after the store WAL was durable, the WAL end offset
-    // of that commit; commits serialize, so the cursor that matches the durable
-    // tick is the entry of the highest tick at/below it. The payload provider
-    // performs that CursorAtOrBelow(_last_durable_tick) lookup just before
-    // persisting (it has the exact durable tick in hand), gated by
-    // _stamp_cursor_from_flush.
-    //
-    // A checkpoint-driven refresh runs the moment before the checkpoint
-    // truncates the store WAL and bumps the iteration to
-    // GetCheckpointIteration()
-    // + 1. The post-checkpoint WAL starts fresh, so stamp that next generation
-    // with offset 0: the next boot loads iteration+1 and the cursor generation
-    // matches (the live iteration is still N here, but the persisted header
-    // will be N+1). The payload provider must NOT overwrite that, so disable
-    // the flush-driven stamping.
-    _stamp_cursor_from_flush = !for_checkpoint;
-    absl::Cleanup stamp_guard = [&]() noexcept {
-      _stamp_cursor_from_flush = false;
-    };
-    if (for_checkpoint) {
-      if (auto store = AttachedDatabaseById(_db_id)) {
-        const auto next_gen = store->GetStorageManager()
-                                .GetBlockManager()
-                                .GetCheckpointIteration() +
-                              1;
-        _pending_wal_cursor = WalCursor{next_gen, 0};
-      }
-    }
-    absl::Cleanup refresh_guard = [&, last = _last_durable_tick]() noexcept {
-      _last_durable_tick = last;
-    };
-
-    const auto refresh_tick = [&] {
-      switch (_phase) {
-        case Phase::Creating:
-        case Phase::Recovering:
-          return irs::writer_limits::kMaxTick;
-        case Phase::Active:
-          return before_refresh;
-      }
-    }();
-    const bool were_changes = _writer->RefreshCommit({
-      .tick = refresh_tick,
-      .progress = progress,
-      .reopen_reader = /* TODO(codeworse) */ false,
-    });
-    // get new reader
-    auto reader = _writer->GetSnapshot();
-    SDB_ASSERT(reader);
-    std::move(refresh_guard).Cancel();
-    if (!were_changes) {
-      SDB_TRACE(SEARCH, "Refresh for Search index '", GetId(),
-                "' is no changes, tick ", before_refresh, "'");
-      if (_phase != Phase::Recovering) {
-        _last_durable_tick = before_refresh;
-      }
-      StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
-        std::move(reader), GetFileManifest()));
-      return absl::OkStatus();
-    }
-    SDB_ASSERT(_phase != Phase::Active || _last_durable_tick == before_refresh);
-    code = RefreshResult::Done;
-
-    // update reader
-    SDB_ASSERT(GetInvertedIndexSnapshot()->reader != reader);
-    const auto reader_size = reader->size();
-    const auto docs_count = reader->docs_count();
-    const auto live_docs_count = reader->live_docs_count();
-
-    auto data = std::make_shared<InvertedIndexSnapshot>(std::move(reader),
-                                                        GetFileManifest());
-    StoreInvertedIndexSnapshot(data);
-
-    UpdateStatsUnsafe(std::move(data));
-
-    SDB_DEBUG(SEARCH, "successful sync of Search index '", GetId(),
-              "', segments '", reader_size, "', docs count '", docs_count,
-              "', live docs count '", live_docs_count,
-              "', last operation tick '", _last_durable_tick, "'");
   } catch (const irs::SqlException& e) {
     return absl::InternalError(
       absl::StrCat("caught exception while refreshing Search index '", GetId(),
@@ -610,6 +724,91 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
       "caught exception while refreshing Search index '", GetId(), "'"));
   }
   return absl::OkStatus();
+}
+
+RefreshResult InvertedIndexStorage::RefreshLocked(irs::CommitInfo info,
+                                                  bool for_checkpoint) {
+  const auto before_refresh = TickDomain::Instance().Current();
+  SDB_ASSERT(_last_durable_tick <= before_refresh);
+  SDB_IF_FAILURE("pause_index_refresh_after_tick") {
+    if (info.progress) {
+      info.progress("pause_index_refresh_after_tick", 0, 0);
+    }
+    SDB_WAIT_ON_FAILURE("pause_index_refresh_after_tick");
+  }
+
+  // Stamp the EXACT durable WAL cursor consistently with the durable tick
+  // this refresh persists. RefreshCommit (below) flushes every staged batch
+  // with tick <= info.tick and, inside the meta payload provider, persists
+  // _last_durable_tick == the highest tick covered by the flushed segments.
+  // The per-index table recorded, per settled CommitSearch BEFORE the batch
+  // became flushable and after the store WAL was durable, the WAL end offset
+  // of that commit; commits serialize, so the cursor that matches the durable
+  // tick is the entry of the highest tick at/below it. The payload provider
+  // performs that CursorAtOrBelow(_last_durable_tick) lookup just before
+  // persisting (it has the exact durable tick in hand), gated by
+  // _stamp_cursor_from_flush.
+  //
+  // A checkpoint-driven refresh runs the moment before the checkpoint
+  // truncates the store WAL and bumps the iteration to
+  // GetCheckpointIteration()
+  // + 1. The post-checkpoint WAL starts fresh, so stamp that next generation
+  // with offset 0: the next boot loads iteration+1 and the cursor generation
+  // matches (the live iteration is still N here, but the persisted header
+  // will be N+1). The payload provider must NOT overwrite that, so disable
+  // the flush-driven stamping.
+  _stamp_cursor_from_flush = !for_checkpoint;
+  absl::Cleanup stamp_guard = [&]() noexcept {
+    _stamp_cursor_from_flush = false;
+  };
+  if (for_checkpoint) {
+    if (auto store = AttachedDatabaseById(_db_id)) {
+      const auto next_gen =
+        store->GetStorageManager().GetBlockManager().GetCheckpointIteration() +
+        1;
+      _pending_wal_cursor = WalCursor{next_gen, 0};
+    }
+  }
+  absl::Cleanup refresh_guard = [&, last = _last_durable_tick]() noexcept {
+    _last_durable_tick = last;
+  };
+
+  info.tick = [&] {
+    switch (_phase) {
+      case Phase::Creating:
+      case Phase::Recovering:
+        return irs::writer_limits::kMaxTick;
+      case Phase::Active:
+        return before_refresh;
+    }
+  }();
+  info.reopen_reader = /* TODO(codeworse) */ false;
+  const bool were_changes = _writer->RefreshCommit(info);
+  // get new reader
+  auto reader = _writer->GetSnapshot();
+  SDB_ASSERT(reader);
+  std::move(refresh_guard).Cancel();
+  if (were_changes) {
+    SDB_ASSERT(_phase != Phase::Active || _last_durable_tick == before_refresh);
+    SDB_DEBUG(SEARCH, "successful sync of Search index '", GetId(),
+              "', segments '", reader->size(), "', docs count '",
+              reader->docs_count(), "', live docs count '",
+              reader->live_docs_count(), "', last operation tick '",
+              _last_durable_tick, "'");
+  } else {
+    SDB_TRACE(SEARCH, "Refresh for Search index '", GetId(),
+              "' is no changes, tick ", before_refresh, "'");
+    if (_phase != Phase::Recovering) {
+      _last_durable_tick = before_refresh;
+    }
+  }
+  // update reader
+  if (_pass_floor == 0) {
+    SDB_ASSERT(!were_changes || GetInvertedIndexSnapshot()->reader != reader);
+    StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
+      std::move(reader), _position, _files));
+  }
+  return were_changes ? RefreshResult::Done : RefreshResult::NoChanges;
 }
 
 void InvertedIndexStorage::FinishCreation() {

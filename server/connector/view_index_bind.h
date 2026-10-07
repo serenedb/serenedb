@@ -24,10 +24,22 @@
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/logical_operator.hpp>
+#include <span>
 
 #include "catalog/entry/search_table.h"
 
+namespace duckdb {
+
+class LogicalGet;
+
+}  // namespace duckdb
 namespace sdb::connector {
+
+duckdb::LogicalGet& LeafScan(duckdb::LogicalOperator& op);
+
+uint64_t ViewIndexDefinition(const duckdb::CreateViewInfo& view,
+                             std::span<const duckdb::column_t> column_ids,
+                             const duckdb::ParsedExpression* where);
 
 duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnView(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,

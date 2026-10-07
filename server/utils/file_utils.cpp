@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -208,6 +209,20 @@ void Spit(const char* filename, std::string_view s, bool sync) {
   if (sync) {
     // intentionally ignore this error -- nothing we can do about it.
     std::ignore = fsync(fd);
+  }
+}
+
+void SyncDirectory(const std::string& directory) {
+  const int fd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  const bool synced = fd >= 0 && ::fsync(fd) == 0;
+  const int error = errno;
+  if (fd >= 0) {
+    ::close(fd);
+  }
+  if (!synced) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                    ERR_MSG("could not fsync directory \"", directory,
+                            "\": ", std::strerror(error)));
   }
 }
 

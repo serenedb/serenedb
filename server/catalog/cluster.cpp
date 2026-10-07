@@ -21,13 +21,9 @@
 #include "catalog/cluster.h"
 
 #include <absl/algorithm/container.h>
-#include <fcntl.h>
-#include <unistd.h>
 
 #include <algorithm>
-#include <cerrno>
 #include <cstdlib>
-#include <cstring>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/file_system.hpp>
@@ -53,26 +49,13 @@
 #include "network/credentials.h"
 #include "pg/pg_types.h"
 #include "search/inverted_index_storage.h"
+#include "server/utils/file_utils.h"
 
 namespace sdb::catalog {
 namespace {
 
 constexpr std::string_view kRootRole = "postgres";
 constexpr duckdb::idx_t kCompactionFloor = duckdb::idx_t{1} << 20;
-
-void SyncDirectory(const std::string& directory) {
-  const int fd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-  const bool synced = fd >= 0 && ::fsync(fd) == 0;
-  const int error = errno;
-  if (fd >= 0) {
-    ::close(fd);
-  }
-  if (!synced) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                    ERR_MSG("could not fsync directory \"", directory,
-                            "\": ", std::strerror(error)));
-  }
-}
 
 }  // namespace
 
@@ -272,7 +255,8 @@ void ClusterCatalog::CompactCatalogLog() {
       storage, path, size, duckdb::WALInitState::UNINITIALIZED);
   }
   _live_bytes.store(size, std::memory_order_relaxed);
-  SyncDirectory(std::filesystem::path{path}.parent_path().string());
+  utils::file_utils::SyncDirectory(
+    std::filesystem::path{path}.parent_path().string());
 }
 
 namespace {

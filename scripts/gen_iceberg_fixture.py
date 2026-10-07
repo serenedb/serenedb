@@ -309,6 +309,43 @@ def noop_snapshot(table_dir, src_version, out_version):
         json.dump(meta, f)
 
 
+def rollback_snapshot(table_dir, src_version, out_version):
+    meta_dir = os.path.join(table_dir, "metadata")
+    with open(os.path.join(meta_dir, f"v{src_version}.metadata.json")) as f:
+        meta = json.load(f)
+    cur = [s for s in meta["snapshots"]
+           if s["snapshot-id"] == meta["current-snapshot-id"]][0]
+    target = cur["parent-snapshot-id"]
+    meta["current-snapshot-id"] = target
+    meta.setdefault("refs", {})["main"] = {"snapshot-id": target, "type": "branch"}
+    meta.setdefault("snapshot-log", []).append(
+        {"snapshot-id": target, "timestamp-ms": cur.get("timestamp-ms", 0) + 1})
+    with open(os.path.join(meta_dir, f"v{out_version}.metadata.json"), "w") as f:
+        json.dump(meta, f)
+
+
+def expire_current_snapshot(table_dir, src_version, out_version):
+    meta_dir = os.path.join(table_dir, "metadata")
+    with open(os.path.join(meta_dir, f"v{src_version}.metadata.json")) as f:
+        meta = json.load(f)
+    cur = [s for s in meta["snapshots"]
+           if s["snapshot-id"] == meta["current-snapshot-id"]][0]
+    new = dict(cur)
+    new["snapshot-id"] = max(s["snapshot-id"] for s in meta["snapshots"]) + 1
+    new["sequence-number"] = meta["last-sequence-number"] + 1
+    new["parent-snapshot-id"] = cur["snapshot-id"]
+    meta["snapshots"] = [s for s in meta["snapshots"]
+                         if s["snapshot-id"] != cur["snapshot-id"]] + [new]
+    meta["current-snapshot-id"] = new["snapshot-id"]
+    meta["last-sequence-number"] = new["sequence-number"]
+    meta.setdefault("refs", {})["main"] = {"snapshot-id": new["snapshot-id"], "type": "branch"}
+    meta["snapshot-log"] = [e for e in meta.get("snapshot-log", [])
+                            if e["snapshot-id"] != cur["snapshot-id"]] + [
+        {"snapshot-id": new["snapshot-id"], "timestamp-ms": cur.get("timestamp-ms", 0) + 1}]
+    with open(os.path.join(meta_dir, f"v{out_version}.metadata.json"), "w") as f:
+        json.dump(meta, f)
+
+
 def main():
     shutil.rmtree(WORK, ignore_errors=True)
     os.makedirs(WORK)
@@ -397,6 +434,51 @@ def main():
         part_dir, part,
         [{"equality": {"part": "b"}, "partition": {"part": "b"}}], [], 5, set())
 
+    id_body = pa.schema([pa.field("id", pa.int64()), pa.field("body", pa.string())])
+    hist = catalog.create_table("ns.hist", id_body)
+    hist.append(pa.table({"id": [1, 2], "body": ["pudge goes mid", "anchin reads manga"]}))
+    hist.append(pa.table({"id": [3], "body": ["vedernikoff pins snapshots"]}))
+    hist = catalog.load_table("ns.hist")
+    hist_dir = os.path.join(WORK, "wh", "ns", "hist")
+    craft_snapshot(hist_dir, hist, [{"dead_id": 2, "partition": {}, "pin": True}], [], 2, set())
+    rollback_snapshot(hist_dir, 2, 3)
+    expire_current_snapshot(hist_dir, 2, 4)
+
+    tag_id_body = pa.schema([pa.field("tag", pa.string()), pa.field("id", pa.int64()),
+                             pa.field("body", pa.string())])
+    tagged_rows = pa.table({"tag": ["keep", "keep", "keep", "drop"], "id": [1, 2, 3, 4],
+                            "body": ["pudge goes mid", "anchin reads manga",
+                                     "vedernikoff pins snapshots", "techies plants mines"]},
+                           schema=tag_id_body)
+    for name, first_delete in (("rescan", {"dead_id": 2, "partition": {}, "pin": True}),
+                               ("rescaneq", {"equality": {"id": 2}, "partition": {}})):
+        table = catalog.create_table(f"ns.{name}", tag_id_body)
+        table.append(tagged_rows)
+        table = catalog.load_table(f"ns.{name}")
+        table_dir = os.path.join(WORK, "wh", "ns", name)
+        craft_snapshot(table_dir, table, [first_delete], [], 2, set())
+        craft_snapshot(table_dir, table,
+                       [{"equality": {"tag": "drop"}, "partition": {}}], [], 3, set())
+
+    eqbig = catalog.create_table("ns.eqbig", id_body)
+    eqbig.append(pa.table({"id": list(range(3000)),
+                           "body": [f"doc {i}" for i in range(3000)]}, schema=id_body))
+    eqbig = catalog.load_table("ns.eqbig")
+    craft_snapshot(os.path.join(WORK, "wh", "ns", "eqbig"), eqbig,
+                   [{"equality": {"id": list(range(2500))}, "partition": {}}], [], 2, set())
+
+    fmt1 = catalog.create_table("ns.fmt1", id_body, properties={"format-version": "1"})
+    fmt1.append(pa.table({"id": [1, 2], "body": ["pudge goes mid", "anchin reads manga"]},
+                         schema=id_body))
+    fmt1.append(pa.table({"id": [3], "body": ["vedernikoff pins snapshots"]}, schema=id_body))
+    fmt1_hints = [catalog.load_table("ns.fmt1").metadata_location]
+    fmt1.append(pa.table({"id": [4], "body": ["techies plants mines"]}, schema=id_body))
+    fmt1_hints.append(catalog.load_table("ns.fmt1").metadata_location)
+    fmt1 = catalog.load_table("ns.fmt1")
+    fmt1.delete("id <= 2")
+    fmt1_hints.append(catalog.load_table("ns.fmt1").metadata_location)
+    fmt1_hints = [os.path.basename(local_path(m))[:-len(".metadata.json")] for m in fmt1_hints]
+
     shutil.rmtree(OUT, ignore_errors=True)
 
     # One directory per (table, version): tests flip versions by re-pointing
@@ -433,6 +515,15 @@ def main():
     # The manifest lists still read, so a scan reaches the manifests they name
     # and fails there -- inside the manifest-read tasks.
     emit("plain_badmanifest_v1", "plain", 1, None, True)
+    for n in range(1, 5):
+        emit(f"hist_v{n}", "hist", n, None, False)
+    for name in ("rescan", "rescaneq"):
+        for n in range(1, 4):
+            emit(f"{name}_v{n}", name, n, None, False)
+    for n in range(1, 3):
+        emit(f"eqbig_v{n}", "eqbig", n, None, False)
+    for n, hint in enumerate(fmt1_hints, start=1):
+        emit(f"fmt1_v{n}", "fmt1", hint, None, False)
     print("fixture written to", OUT)
 
 

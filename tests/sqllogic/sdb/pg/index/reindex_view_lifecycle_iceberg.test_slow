@@ -1,0 +1,172 @@
+control substitution on
+
+# An iceberg table's life under an index on a REST catalog: dropped and
+# created again under the same name, a column added between commits, and a
+# partitioned table indexed through a predicate on its partition column.
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rvl_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+# ---- The same name, a new table: its history has no snapshot the index
+# holds, so the pass rebuilds over the new table.
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.rvl_t (id INTEGER, body TEXT);
+
+statement count 2
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.rvl_t VALUES (1, 'pudge goes mid'), (2, 'anchin reads manga');
+
+statement ok
+CREATE VIEW rvl_v AS SELECT id, body FROM srv_${__DATABASE__}.${__DATABASE__}.rvl_t;
+
+statement ok
+CREATE INDEX rvl_idx ON rvl_v USING inverted(id, body rvl_en) WITH (compaction_interval=0);
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.rvl_t;
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.rvl_t (id INTEGER, body TEXT);
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.rvl_t VALUES (3, 'techies plants mines');
+
+query
+SELECT action FROM serenedb_reindex('rvl_idx');
+----
+action
+rebuild
+
+query
+SELECT id, body FROM rvl_idx ORDER BY id;
+----
+id	body
+3	techies plants mines
+
+query
+SELECT action FROM serenedb_reindex('rvl_idx');
+----
+action
+up_to_date
+
+# ---- A column added between commits: the view keeps its columns, and the
+# commits after the change refresh as deltas.
+
+statement ok
+ALTER TABLE srv_${__DATABASE__}.${__DATABASE__}.rvl_t ADD COLUMN tag TEXT;
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.rvl_t VALUES (4, 'pudge plays again', 'new');
+
+query
+SELECT * FROM serenedb_reindex('rvl_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+statement count 1
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.rvl_t WHERE id = 3;
+
+query
+SELECT * FROM serenedb_reindex('rvl_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	0
+
+query
+SELECT id, body FROM rvl_idx ORDER BY id;
+----
+id	body
+4	pudge plays again
+
+# ---- A partitioned table under an index predicate on the partition column.
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.rvl_p (part TEXT, id INTEGER, body TEXT);
+
+statement ok
+ALTER TABLE srv_${__DATABASE__}.${__DATABASE__}.rvl_p SET PARTITIONED BY (part);
+
+statement count 2
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.rvl_p VALUES ('a', 1, 'pudge goes mid'), ('b', 2, 'pudge stays b');
+
+statement ok
+CREATE VIEW rvl_p_v AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.rvl_p;
+
+statement ok
+CREATE INDEX rvl_p_idx ON rvl_p_v USING inverted(part, id, body rvl_en) WITH (compaction_interval=0) WHERE part = 'a';
+
+statement count 2
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.rvl_p VALUES ('a', 3, 'pudge plays a'), ('b', 4, 'pudge plays b');
+
+query
+SELECT action FROM serenedb_reindex('rvl_p_idx');
+----
+action
+delta
+
+query
+SELECT part, id FROM rvl_p_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+part	id
+a	1
+a	3
+
+statement count 2
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.rvl_p WHERE id IN (1, 4);
+
+query
+SELECT action FROM serenedb_reindex('rvl_p_idx');
+----
+action
+delta
+
+query
+SELECT part, id FROM rvl_p_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+part	id
+a	3
+
+query
+SELECT action FROM serenedb_reindex('rvl_p_idx');
+----
+action
+up_to_date
+
+statement ok
+DROP INDEX rvl_p_idx;
+
+statement ok
+DROP VIEW rvl_p_v;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.rvl_p;
+
+statement ok
+DROP INDEX rvl_idx;
+
+statement ok
+DROP VIEW rvl_v;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.rvl_t;
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+DROP SERVER srv_${__DATABASE__};
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rvl_en;

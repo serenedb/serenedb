@@ -472,7 +472,12 @@ TEST(PhraseCheckTest, routes) {
   const irs::EmptyTermReader reader{0};
   const auto mode = [&](const irs::ByPhraseOptions& phrase,
                         std::optional<irs::PhraseMatch> match = {}) {
-    return irs::CompiledPhrase{phrase, {}, reader, match}.primary;
+    const irs::CompiledPhrase compiled{phrase, {}, reader, match};
+    if (compiled.anchor) {
+      return irs::PhraseMatch::Anchor;
+    }
+    return compiled.automaton ? irs::PhraseMatch::Automaton
+                              : irs::PhraseMatch::Positions;
   };
   EXPECT_EQ(irs::PhraseMatch::Anchor, mode(Phrase("a b")));
   EXPECT_EQ(irs::PhraseMatch::Automaton,
@@ -493,7 +498,7 @@ TEST(PhraseCheckTest, routes) {
   PushTerm(wide, "b", 1, 70);
   EXPECT_EQ(irs::PhraseMatch::Anchor, mode(wide));
   const irs::CompiledPhrase compiled{wide, {}, reader};
-  EXPECT_EQ(irs::PhraseMatch::Positions, compiled.fallback);
+  EXPECT_FALSE(compiled.automaton.has_value());
 }
 
 TEST(PhraseCheckTest, standalone_parts) {

@@ -89,8 +89,7 @@ ByPhrase MakePhraseFilter(irs::field_id field, const ByPhraseOptions& part) {
 QueryBuilder::ptr Wrap(const SubReader& segment, const PrepareContext& ctx,
                        score_t boost,
                        const std::shared_ptr<const re2::RE2>& matcher,
-                       field_id store_field_id, bool deferred_verify,
-                       QueryBuilder::ptr&& approx) {
+                       field_id store_field_id, QueryBuilder::ptr&& approx) {
   if (!approx || QueryBuilder::IsEmpty(*approx)) {
     return QueryBuilder::Empty();
   }
@@ -101,8 +100,7 @@ QueryBuilder::ptr Wrap(const SubReader& segment, const PrepareContext& ctx,
     }
   }
   auto query = memory::make_tracked<WildcardNGramQuery>(
-    ctx.memory, segment, deferred_verify ? nullptr : matcher, std::move(approx),
-    store_field_id, boost);
+    ctx.memory, segment, matcher, std::move(approx), store_field_id, boost);
   query->SetStats(ctx.Record());
   return query;
 }
@@ -280,7 +278,7 @@ QueryBuilder::ptr ByWildcardNGram::PrepareSegment(
   auto approx =
     GramQueryPreparer{*this, segment, ctx, sub_ctx}.Prepare(opts.query);
   return Wrap(segment, ctx, sub_ctx.boost, opts.matcher, opts.store_field_id,
-              opts.deferred_verify, std::move(approx));
+              std::move(approx));
 }
 
 ByWildcardNGramOptions::ByWildcardNGramOptions(

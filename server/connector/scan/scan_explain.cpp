@@ -23,6 +23,7 @@
 
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <ranges>
+#include <span>
 
 #include "connector/column_id.h"
 #include "connector/functions/vector.h"
@@ -305,6 +306,24 @@ std::string FormatProjections(const std::vector<ProjectionEntry>& entries,
   return out;
 }
 
+duckdb::ExplainNode TableFilterNode(std::span<const DeferredCheck> checks,
+                                    const irs::FieldNameResolver& name_of,
+                                    const irs::FieldKindResolver& kind_of) {
+  const auto node_of = [&](const DeferredCheck& check) {
+    auto node = irs::ToExplainNode(*check.source, name_of, kind_of);
+    node.attributes["Verify"] = "table filter";
+    return node;
+  };
+  if (checks.size() == 1) {
+    return node_of(checks.front());
+  }
+  duckdb::ExplainNode node{"And"};
+  for (const auto& check : checks) {
+    node.children.push_back(node_of(check));
+  }
+  return node;
+}
+
 }  // namespace
 
 void ScanBindData::AppendSummary(
@@ -324,6 +343,10 @@ void ScanBindData::AppendSummary(
   } else if (search.filter) {
     out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
                                  *search.filter, name_of, kind_of)));
+  }
+  if (!search.deferred.empty()) {
+    out.insert("Table Filter", duckdb::ExplainValue(TableFilterNode(
+                                 search.deferred, name_of, kind_of)));
   }
   for (const auto& req : ts_dict.requests) {
     if (!req.having_filter) {

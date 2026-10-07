@@ -514,9 +514,7 @@ struct FilterPrinter {
         options.syntax == RegexpSyntax::Perl ? "perl" : "posix";
       node.attributes["Has Pos"] = options.has_pos ? "true" : "false";
       node.attributes["Query"] = irs::ToString(options.query);
-      node.attributes["Verify"] = !options.matcher          ? "false"
-                                  : options.deferred_verify ? "table filter"
-                                                            : "inline";
+      node.attributes["Verify"] = options.matcher ? "inline" : "false";
       return node;
     }
     if (type == Type<Empty>::id()) {
@@ -536,8 +534,7 @@ struct FilterPrinter {
         node.attributes["Slop"] = absl::StrCat(slop);
       }
       if (const auto& tokens = f.options().tokens()) {
-        node.attributes["Verify"] =
-          tokens->deferred ? "table filter" : "inline";
+        node.attributes["Verify"] = "inline";
         if (tokens->spec) {
           node.attributes["Words"] = PhraseParts(*tokens->spec);
         }

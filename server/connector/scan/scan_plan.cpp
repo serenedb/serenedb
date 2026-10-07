@@ -48,7 +48,7 @@
 #include "connector/column_id.h"
 #include "connector/index_source_factory.h"
 #include "connector/offsets_writer.hpp"
-#include "connector/scan/deferred_verify.h"
+#include "connector/scan/deferred_check.h"
 #include "connector/scan/scan_state.h"
 #include "connector/term_dict.h"
 
@@ -462,10 +462,7 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
   if (input.filters && input.filters->HasFilters()) {
     BuildTableFilter(state, bind_data, *input.filters);
   }
-  if (bind_data.search.filter) {
-    AddDeferredVerifyFilters(state, *bind_data.search.filter,
-                             bind_data.search.snapshot->reader);
-  }
+  AddDeferredChecks(state, bind_data.search.deferred);
   if (bind_data.IsHnswScored()) {
     if (state.has_lookup_filter ||
         absl::c_any_of(state.col_filters,

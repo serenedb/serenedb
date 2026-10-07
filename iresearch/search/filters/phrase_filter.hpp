@@ -169,4 +169,9 @@ class ByPhrase : public FilterWithField<ByPhraseOptions> {
                                           uint32_t threads) const final;
 };
 
+Filter::ptr PartFilter(field_id field, ByPhraseOptions::PhrasePart part,
+                       bool constant);
+
+Filter::ptr PartsConjunction(const ByPhrase& phrase, const Scorer* scorer);
+
 }  // namespace irs

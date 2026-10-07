@@ -134,15 +134,16 @@ struct ByWildcardNGramOptions {
   bool has_pos{false};
   std::shared_ptr<const re2::RE2> matcher;
   field_id store_field_id{irs::field_limits::invalid()};
-  bool deferred_verify{false};
 
   bool operator==(const ByWildcardNGramOptions& other) const noexcept {
     return pattern == other.pattern && syntax == other.syntax &&
            has_pos == other.has_pos && store_field_id == other.store_field_id &&
-           deferred_verify == other.deferred_verify && query == other.query;
+           query == other.query;
   }
 
   ByWildcardNGramOptions() noexcept = default;
+  ByWildcardNGramOptions(const ByWildcardNGramOptions&) = default;
+  ByWildcardNGramOptions& operator=(const ByWildcardNGramOptions&) = default;
   ByWildcardNGramOptions(ByWildcardNGramOptions&&) noexcept = default;
   ByWildcardNGramOptions& operator=(ByWildcardNGramOptions&&) noexcept =
     default;

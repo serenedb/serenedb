@@ -63,7 +63,7 @@
 #include "connector/inverted_store_index.h"
 #include "connector/optimizer/iresearch_plan_common.hpp"
 #include "connector/optimizer/ts_dict_plan.hpp"
-#include "connector/scan/deferred_verify.h"
+#include "connector/scan/deferred_check.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/search_filter_builder.hpp"
 #include "pg/connection_context.h"
@@ -1227,7 +1227,10 @@ bool ClaimSearchConjuncts(
                        .analyzed_fields = std::move(analyzed_fields),
                        .null_markers = &null_markers});
   if (scan.offsets.requests.empty() && !scan.score.vector) {
-    connector::DeferVerify(*root, scan.score.text.has_value());
+    const auto scorer =
+      scan.score.text ? search::MakeScorer(*scan.score.text) : nullptr;
+    scan.search.deferred = connector::DeferChecks(
+      root, {.reader = scan.search.snapshot->reader, .scorer = scorer.get()});
   }
 
   scan.search.filter = std::move(root);

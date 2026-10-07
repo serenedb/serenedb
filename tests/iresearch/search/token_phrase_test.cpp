@@ -23,6 +23,7 @@
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
 
+#include <algorithm>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <iresearch/analysis/text/term_view.hpp>
@@ -35,12 +36,16 @@
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
+#include <iresearch/search/scorers/bm25.hpp>
+#include <iresearch/search/scorers/constant_score.hpp>
+#include <iresearch/search/scorers/unscored.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/string.hpp>
 #include <limits>
 #include <map>
 #include <optional>
 #include <random>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -650,14 +655,6 @@ irs::Filter::ptr LoweredAnd(irs::ByPhrase phrase, std::string_view term) {
   return out;
 }
 
-void Defer(irs::Filter& filter) {
-  auto& options =
-    *irs::utils::downCast<irs::ByPhrase>(filter).mutable_options();
-  auto tokens = std::make_shared<irs::PhraseTokens>(*options.tokens());
-  tokens->deferred = true;
-  options.set_tokens(std::move(tokens));
-}
-
 std::string RandomText(std::mt19937& rng,
                        std::span<const std::string_view> words, size_t length) {
   std::string text;
@@ -810,21 +807,22 @@ void ExpectDeferredLikeInline(const Index& index,
                               std::span<const std::string> docs,
                               const irs::ByPhraseOptions& phrase) {
   SCOPED_TRACE(Describe(phrase));
-  const auto expected =
-    index.Docs(*Lowered(PhraseOn(kPlainId, phrase, Tokens<Words>())));
-  auto deferred = Lowered(PhraseOn(kPlainId, phrase, Tokens<Words>()));
-  ASSERT_EQ(irs::Type<irs::ByPhrase>::id(), deferred->type());
-  Defer(*deferred);
-  const auto& options =
-    irs::utils::downCast<irs::ByPhrase>(*deferred).options();
+  const auto lowered = Lowered(PhraseOn(kPlainId, phrase, Tokens<Words>()));
+  ASSERT_EQ(irs::Type<irs::ByPhrase>::id(), lowered->type());
+  const auto& filter = irs::utils::downCast<irs::ByPhrase>(*lowered);
+  const auto& options = filter.options();
   ASSERT_TRUE(irs::CompiledPhrase::Standalone(options));
+  const auto expected = index.Docs(filter);
+  const auto conjunction = irs::PartsConjunction(filter, nullptr);
+  ASSERT_NE(nullptr, conjunction);
+  const auto candidates = index.Docs(*conjunction);
+  ASSERT_LE(candidates.size(), STANDARD_VECTOR_SIZE);
+  EXPECT_TRUE(std::ranges::includes(candidates, expected));
   for (const auto match : kMatches) {
     SCOPED_TRACE(MatchName(match));
     const irs::CompiledPhrase compiled{options, options.word_separator(),
                                        index.Reader(), kPlainId, match};
     irs::PhraseCheck check{compiled, *options.tokens(), false};
-    const auto candidates = index.Docs(*deferred);
-    ASSERT_LE(candidates.size(), STANDARD_VECTOR_SIZE);
     duckdb::DataChunk chunk;
     chunk.Initialize(duckdb::Allocator::DefaultAllocator(),
                      {duckdb::LogicalType::VARCHAR});
@@ -1013,6 +1011,141 @@ TEST(TokenPhraseIndexTest, deferred_check_on_stacked_tokens) {
   }
 }
 
+TEST(TokenPhraseFilterTest, parts_conjunction_has_one_filter_per_part) {
+  irs::ByPhraseOptions options;
+  options.push_back<irs::ByTermOptions>().term = Bytes("quick");
+  auto& set = options.push_back<irs::TermSetOptions>();
+  set.terms.emplace(Bytes("brown"));
+  set.terms.emplace(Bytes("brawn"));
+  options.push_back<irs::ByPrefixOptions>().term = Bytes("fo");
+  const auto phrase =
+    PhraseOn(kPlainId, std::move(options), Tokens<DenseWords>());
+
+  const auto conjunction = irs::PartsConjunction(phrase, nullptr);
+  ASSERT_NE(nullptr, conjunction);
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), conjunction->type());
+  const auto& all = irs::utils::downCast<irs::BooleanFilter>(*conjunction);
+  EXPECT_TRUE(all.Transparent());
+  ASSERT_EQ(1U, all.Terms(irs::Occur::Must).size());
+  EXPECT_EQ(kPlainId, all.Terms(irs::Occur::Must).front().field);
+  EXPECT_EQ(Bytes("quick"), all.Terms(irs::Occur::Must).front().term);
+  const auto filters = all.Filters(irs::Occur::Must);
+  ASSERT_EQ(2U, filters.size());
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filters[0]->type());
+  const auto& any = irs::utils::downCast<irs::BooleanFilter>(*filters[0]);
+  EXPECT_EQ(2U, any.Terms(irs::Occur::Should).size());
+  EXPECT_EQ(1U, any.MinShouldMatch());
+  EXPECT_EQ(irs::ScoreMergeType::Sum, any.MergeType());
+
+  ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), filters[1]->type());
+  const auto& prefix = irs::utils::downCast<irs::ByPrefix>(*filters[1]);
+  EXPECT_EQ(kPlainId, prefix.field_id());
+  EXPECT_EQ(Bytes("fo"), prefix.options().term);
+}
+
+TEST(TokenPhraseFilterTest, part_filter_of_every_kind) {
+  const auto term = irs::PartFilter(
+    kPlainId, irs::ByTermOptions{.term = irs::bstring{Bytes("fox")}}, false);
+  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), term->type());
+  EXPECT_EQ(Bytes("fox"),
+            irs::utils::downCast<irs::ByTerm>(*term).options().term);
+
+  irs::TermSetOptions set;
+  set.terms.emplace(Bytes("fox"));
+  set.terms.emplace(Bytes("box"));
+  const auto any = irs::PartFilter(kPlainId, set, true);
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), any->type());
+  const auto& boolean = irs::utils::downCast<irs::BooleanFilter>(*any);
+  EXPECT_EQ(2U, boolean.Terms(irs::Occur::Should).size());
+  EXPECT_EQ(irs::ScoreMergeType::Max, boolean.MergeType());
+
+  const auto none = irs::PartFilter(kPlainId, irs::TermSetOptions{}, false);
+  EXPECT_EQ(irs::Type<irs::Empty>::id(), none->type());
+
+  irs::ByRangeOptions range;
+  range.range.min = irs::bstring{Bytes("b")};
+  range.range.max = irs::bstring{Bytes("d")};
+  const auto between = irs::PartFilter(kPlainId, range, false);
+  ASSERT_EQ(irs::Type<irs::ByRange>::id(), between->type());
+  EXPECT_EQ(range, irs::utils::downCast<irs::ByRange>(*between).options());
+}
+
+TEST(TokenPhraseFilterTest, parts_conjunction_follows_the_scorer) {
+  auto phrase = PhraseOn(kPlainId, Phrase("quick brown"), Tokens<DenseWords>());
+  phrase.SetBoost(2.f);
+  const irs::BM25 bm25;
+  const irs::ConstantScore constant{3.f};
+  const auto& unscored = irs::Unscored::Instance();
+  const auto conjunction = [&](const irs::Scorer* scorer) {
+    auto filter = irs::PartsConjunction(phrase, scorer);
+    EXPECT_TRUE(!filter ||
+                filter->type() == irs::Type<irs::BooleanFilter>::id());
+    return filter;
+  };
+  const auto merge = [](const irs::Filter& filter) {
+    return irs::utils::downCast<irs::BooleanFilter>(filter).MergeType();
+  };
+
+  EXPECT_EQ(nullptr, conjunction(&bm25));
+
+  const auto plain = conjunction(nullptr);
+  ASSERT_NE(nullptr, plain);
+  EXPECT_TRUE(irs::utils::downCast<irs::BooleanFilter>(*plain).Transparent());
+
+  const auto by_query = conjunction(&constant);
+  ASSERT_NE(nullptr, by_query);
+  EXPECT_EQ(nullptr, by_query->GetScorer());
+  EXPECT_EQ(2.f, by_query->GetBoost());
+  EXPECT_EQ(irs::ScoreMergeType::Max, merge(*by_query));
+
+  phrase.SetScorer(&constant);
+  const auto own = conjunction(&bm25);
+  ASSERT_NE(nullptr, own);
+  EXPECT_EQ(&constant, own->GetScorer());
+  EXPECT_EQ(irs::ScoreMergeType::Max, merge(*own));
+
+  phrase.SetScorer(&unscored);
+  const auto silent = conjunction(&bm25);
+  ASSERT_NE(nullptr, silent);
+  EXPECT_EQ(&unscored, silent->GetScorer());
+  EXPECT_EQ(irs::ScoreMergeType::Sum, merge(*silent));
+
+  phrase.SetScorer(&bm25);
+  EXPECT_EQ(nullptr, conjunction(&constant));
+}
+
+TEST(TokenPhraseIndexTest, constant_score_conjunction_scores_like_the_phrase) {
+  const std::vector<std::string> docs{"quick brown fox",
+                                      "quick brawn fox",
+                                      "brown quick",
+                                      "quick brown brawn",
+                                      "quick brown fox quick brawn",
+                                      "fox"};
+  const Index index{docs, std::type_identity<DenseWords>{}};
+  irs::ByPhraseOptions options;
+  options.push_back<irs::ByTermOptions>().term = Bytes("quick");
+  auto& set = options.push_back<irs::TermSetOptions>();
+  set.terms.emplace(Bytes("brown"));
+  set.terms.emplace(Bytes("brawn"));
+  auto phrase = PhraseOn(kPlainId, std::move(options), Tokens<DenseWords>());
+  phrase.SetBoost(2.f);
+  const irs::ConstantScore constant{3.f};
+  const auto conjunction = irs::PartsConjunction(phrase, &constant);
+  ASSERT_NE(nullptr, conjunction);
+
+  const auto expected = index.ScoresBy(constant, phrase);
+  const auto actual = index.ScoresBy(constant, *conjunction);
+  EXPECT_EQ((std::vector<irs::doc_id_t>{0, 1, 3, 4}),
+            std::ranges::to<std::vector>(std::views::keys(expected)));
+  for (const auto& [doc, score] : expected) {
+    const auto it = actual.find(doc);
+    ASSERT_NE(actual.end(), it) << doc;
+    EXPECT_FLOAT_EQ(score, it->second) << doc;
+    EXPECT_FLOAT_EQ(6.f, it->second) << doc;
+  }
+}
+
 TEST(TokenPhraseIndexTest, expression_over_stored_columns) {
   class SecondColumn final : public irs::TextExpression {
    public:
@@ -1087,12 +1220,6 @@ TEST(TokenPhraseFilterTest, equality_covers_tokens) {
   auto elsewhere = base;
   elsewhere.set_tokens(Tokens<DenseWords>(irs::field_id{42}));
   EXPECT_NE(checked, elsewhere);
-
-  auto later = std::make_shared<irs::PhraseTokens>(*tokens);
-  later->deferred = true;
-  auto deferred = base;
-  deferred.set_tokens(std::move(later));
-  EXPECT_NE(checked, deferred);
 
   auto spec = std::make_shared<irs::PhraseTokens>(*tokens);
   spec->spec = Phrase("quick brown fox");

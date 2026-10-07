@@ -89,25 +89,25 @@ duckdb::unique_ptr<duckdb::TableFilter> MakeColumnCheck(
 }
 
 struct PhraseCheckBind final : duckdb::FunctionData {
-  PhraseCheckBind(std::shared_ptr<const irs::TokenPhraseMatcher> matcher,
+  PhraseCheckBind(std::shared_ptr<const irs::CompiledPhrase> compiled,
                   std::shared_ptr<const irs::PhraseTokens> tokens)
-    : matcher{std::move(matcher)}, tokens{std::move(tokens)} {}
+    : compiled{std::move(compiled)}, tokens{std::move(tokens)} {}
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
-    return duckdb::make_uniq<PhraseCheckBind>(matcher, tokens);
+    return duckdb::make_uniq<PhraseCheckBind>(compiled, tokens);
   }
 
   bool Equals(const duckdb::FunctionData& other) const final {
-    return matcher == other.Cast<PhraseCheckBind>().matcher;
+    return compiled == other.Cast<PhraseCheckBind>().compiled;
   }
 
-  std::shared_ptr<const irs::TokenPhraseMatcher> matcher;
+  std::shared_ptr<const irs::CompiledPhrase> compiled;
   std::shared_ptr<const irs::PhraseTokens> tokens;
 };
 
 struct PhraseCheckState final : duckdb::FunctionLocalState {
   explicit PhraseCheckState(const PhraseCheckBind& bind)
-    : check{*bind.matcher, *bind.tokens, false} {}
+    : check{*bind.compiled, *bind.tokens, false} {}
 
   irs::PhraseCheck check;
 };
@@ -136,12 +136,12 @@ duckdb::unique_ptr<duckdb::TableFilter> MakePhraseCheck(
   const irs::ByPhrase& filter, const irs::IndexReader& reader) {
   const auto& options = filter.options();
   const auto& tokens = options.tokens();
-  auto matcher = std::make_shared<const irs::TokenPhraseMatcher>(
+  auto compiled = std::make_shared<const irs::CompiledPhrase>(
     tokens->Check(options), options.word_separator(), reader,
     filter.field_id());
   return MakeColumnCheck(
     "sdb_phrase_check", tokens->text.types.front(), CheckPhrase,
-    duckdb::make_uniq<PhraseCheckBind>(std::move(matcher), tokens),
+    duckdb::make_uniq<PhraseCheckBind>(std::move(compiled), tokens),
     InitPhraseCheck);
 }
 
@@ -161,7 +161,7 @@ void DeferPhrase(irs::ByPhrase& filter) {
   auto& options = *filter.mutable_options();
   const auto& tokens = options.tokens();
   if (!tokens || tokens->text.columns.size() != 1 ||
-      !irs::TokenPhraseMatcher::Standalone(tokens->Check(options))) {
+      !irs::CompiledPhrase::Standalone(tokens->Check(options))) {
     return;
   }
   auto deferred = std::make_shared<irs::PhraseTokens>(*tokens);

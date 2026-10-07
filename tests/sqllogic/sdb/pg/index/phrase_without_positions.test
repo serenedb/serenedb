@@ -816,6 +816,12 @@ statement ok
 CREATE INDEX pwp_expr_bare ON pwp_expr USING inverted (id, (lower(body)) pwp_raw)
 
 statement ok
+CREATE INDEX pwp_expr_stored ON pwp_expr USING inverted (id, (lower(body)) pwp_raw, (lower(body)) included())
+
+statement ok
+CREATE INDEX pwp_expr_concat_stored ON pwp_expr USING inverted (id, (lower(title || ' ' || body)) pwp_raw, (lower(title || ' ' || body)) included())
+
+statement ok
 VACUUM (REFRESH_TABLE) pwp_expr
 
 query
@@ -905,6 +911,95 @@ QUERY PLAN
 │ Projections: id                                          │
 │ ~1 row                                                   │
 ╰──────────────────────────────────────────────────────────╯
+
+query
+SELECT id FROM pwp_expr_stored WHERE lower(body) @@ ts_phrase('brown fox') ORDER BY id
+----
+id
+1
+5
+
+query
+SELECT id FROM pwp_expr_stored WHERE lower(body) @@ ts_phrase('brown fox') OR id = 3 ORDER BY id
+----
+id
+1
+3
+5
+
+query
+SELECT id, round(BM25(pwp_expr_stored.tableoid)::numeric, 4) AS score
+FROM pwp_expr_stored WHERE lower(body) @@ ts_phrase('brown fox') ORDER BY id
+----
+id	score
+1	0.665
+5	0.665
+
+query
+SELECT id, lower(body) AS text FROM pwp_expr_stored ORDER BY id
+----
+id	text
+1	brown fox jumps
+2	fox
+3	quick fox
+4	cat
+5	quick brown fox
+
+query
+SELECT id FROM pwp_expr_concat_stored WHERE lower(title || ' ' || body) @@ ts_phrase('quick brown fox') ORDER BY id
+----
+id
+1
+2
+
+query
+EXPLAIN SELECT id FROM pwp_expr_concat_stored WHERE lower(title || ' ' || body) @@ ts_phrase('quick brown fox')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
+│ Index: pwp_expr_concat_stored                            │
+│ Lookup: table                                            │
+│ Index Filter:                                            │
+│ ╭─ And ───────────────────────────────────╮              │
+│ ╰────────────────────┬────────────────────╯              │
+│ ╭─ Terms ────────────┴────────────────────╮              │
+│ │ Field:                                  │              │
+│ │ lower(((title || ' ') || body))(string) │              │
+│ │ Values: 'brown', 'fox', 'quick'         │              │
+│ ╰─────────────────────────────────────────╯              │
+│ Table Filter:                                            │
+│ ╭─ Phrase ─────────────────────────────────────────────╮ │
+│ │ Field:                                               │ │
+│ │ lower(((title || ' ') || body))(string)              │ │
+│ │ Parts:                                               │ │
+│ │ Term:quick(0, 0); Term:brown(1, 1); Term:fox(1, 1);  │ │
+│ │ Verify: table filter                                 │ │
+│ ╰──────────────────────────────────────────────────────╯ │
+│ Projections: id                                          │
+│ ~1 row                                                   │
+╰──────────────────────────────────────────────────────────╯
+
+statement ok
+INSERT INTO pwp_expr VALUES (6, 'brown', 'Quick Brown Fox later')
+
+statement ok
+VACUUM (REFRESH_TABLE) pwp_expr
+
+query
+SELECT id FROM pwp_expr_stored WHERE lower(body) @@ ts_phrase('brown fox') ORDER BY id
+----
+id
+1
+5
+6
+
+query
+SELECT id FROM pwp_expr_concat_stored WHERE lower(title || ' ' || body) @@ ts_phrase('quick brown fox') ORDER BY id
+----
+id
+1
+2
+6
 
 statement error
 SELECT id FROM pwp_expr_bare WHERE lower(body) @@ ts_phrase('brown fox')

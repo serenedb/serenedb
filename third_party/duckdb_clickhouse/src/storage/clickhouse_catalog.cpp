@@ -108,13 +108,9 @@ void ClickHouseCatalog::ClearCache() {
 		describe_cache.clear();
 	}
 	lock_guard<mutex> l(schema_lock);
-	// Retire every cached schema (and its cached table metadata) rather than
-	// freeing it, so bound statements keep working; the next lookup rebuilds a
-	// fresh entry from the server.
 	for (auto &entry : schemas) {
-		retired_schemas.push_back(std::move(entry.second));
+		entry.second->ClearCache();
 	}
-	schemas.clear();
 }
 
 unique_ptr<LogicalOperator> ClickHouseCatalog::BindCreateIndex(Binder &binder, CreateStatement &stmt,

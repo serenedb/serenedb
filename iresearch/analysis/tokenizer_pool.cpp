@@ -80,8 +80,9 @@ class TokenizerPool::ShrinkHandle final : public duckdb::ObjectCacheEntry {
 
 duckdb::shared_ptr<TokenizerPool> TokenizerPool::Get(
   duckdb::DatabaseInstance& db, std::string_view id) {
+  const auto key = absl::StrCat(ObjectType(), ":", id);
   return db.GetSharedObjectCache().GetOrBuild<TokenizerPool>(
-    id, [&] { return duckdb::make_uniq<TokenizerPool>(db, std::string{id}); });
+    key, [&] { return duckdb::make_uniq<TokenizerPool>(db, std::string{id}); });
 }
 
 size_t TokenizerPool::MaxIdle() noexcept {

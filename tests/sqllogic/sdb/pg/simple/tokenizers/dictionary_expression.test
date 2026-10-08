@@ -722,6 +722,9 @@ CREATE TEXT SEARCH DICTIONARY bad_option AS split_text(cas := 'lower');
 statement error required option "delimiter" not given
 CREATE TEXT SEARCH DICTIONARY bad_required AS split_text_csv();
 
+statement error required parameter "delimiters" was not found
+CREATE TEXT SEARCH DICTIONARY repro_delims_null AS split_by_delimiters(NULL);
+
 statement error requires a nested analyzer as its first argument
 CREATE TEXT SEARCH DICTIONARY bad_shingle AS generate_shingles(2, 3);
 

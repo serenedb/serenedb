@@ -769,6 +769,13 @@ db error: ERROR: Index keys cannot contain expressions with side effects.
 
 
 statement error
+CREATE INDEX bad_inc_setting ON bad USING inverted(
+    id, (a::VARCHAR || current_setting('application_name', true)) included());
+----
+db error: ERROR: Index keys cannot contain expressions with side effects.
+
+
+statement error
 CREATE INDEX bad_inc_agg ON bad USING inverted(id, (count(*)) included());
 ----
 db error: ERROR: aggregate functions are not allowed in index expressions
@@ -1769,6 +1776,44 @@ QUERY PLAN
 statement ok
 RESET TimeZone;
 
+# --- A cast of a bytea value to text follows bytea_output, so it is computed from the row too.
+
+statement ok
+CREATE TABLE inc_e_bytea(id INT PRIMARY KEY, b BYTEA);
+
+statement ok
+CREATE INDEX inc_e_bytea_idx ON inc_e_bytea USING inverted(id, (b::VARCHAR) included());
+
+statement ok
+INSERT INTO inc_e_bytea VALUES (1, 'abc'::BYTEA);
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_bytea;
+
+query
+SELECT b::VARCHAR AS s FROM inc_e_bytea_idx;
+----
+s
+\\x616263
+
+statement ok
+SET bytea_output = 'escape';
+
+query
+SELECT b::VARCHAR AS s FROM inc_e_bytea_idx;
+----
+s
+abc
+
+query
+SELECT id FROM inc_e_bytea_idx WHERE b::VARCHAR = 'abc';
+----
+id
+1
+
+statement ok
+RESET bytea_output;
+
 # --- Geo predicates on an indexed expression.
 
 statement ok
@@ -1817,7 +1862,7 @@ id	g
 1	{"type":"Point","coordinates":[37.615,55.705]}
 2	{"type":"Point","coordinates":[10,10]}
 
-# --- A search argument keeps its whole expression, even when a part of it is stored.
+# --- A search argument, and an indexed key in a filter, keep their whole expression even when a part of it is stored.
 
 statement ok
 CREATE TABLE inc_e_nest(id INT PRIMARY KEY, title VARCHAR);
@@ -1855,6 +1900,35 @@ QUERY PLAN
 │ Column Filter: lower(title) = 'boston' │
 │ ~1 row                                 │
 ╰────────────────────────────────────────╯
+
+query
+SELECT id FROM inc_e_nest_idx WHERE upper(lower(title)) = 'BOSTON';
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM inc_e_nest_idx WHERE upper(lower(title)) = 'BOSTON';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: inc_e_nest_idx                  │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Term ─────────────────────────────╮ │
+│ │ Field: upper(lower(title))(string) │ │
+│ │ Value: BOSTON                      │ │
+│ ╰────────────────────────────────────╯ │
+│ Projections: id                        │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+query
+SELECT upper(lower(title)) AS u FROM inc_e_nest_idx ORDER BY id;
+----
+u
+NEW YORK
+BOSTON
 
 statement error
 SELECT id FROM inc_e_nest_idx WHERE lower(title) @@ 'boston';

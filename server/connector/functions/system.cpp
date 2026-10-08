@@ -573,14 +573,14 @@ void NumNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 // Returns regtype OID. The serializer formats regtype as PG type name.
 void PgTypeofFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                       duckdb::Vector& result) {
-  auto oid = static_cast<int64_t>(pg::Type2Oid(args.data[0].GetType()));
+  const auto oid = pg::OidToSql(pg::Type2Oid(args.data[0].GetType()));
   result.Reference(duckdb::Value::BIGINT(oid), duckdb::count_t(args.size()));
 }
 
 duckdb::unique_ptr<duckdb::Expression> BindPgTypeof(
   duckdb::FunctionBindExpressionInput& input) {
-  auto oid =
-    static_cast<int64_t>(pg::Type2Oid(input.children[0]->GetReturnType()));
+  const auto oid =
+    pg::OidToSql(pg::Type2Oid(input.children[0]->GetReturnType()));
   return duckdb::make_uniq<duckdb::BoundConstantExpression>(
     duckdb::Value::BIGINT(oid).WithType(pg::REGTYPE()));
 }
@@ -594,7 +594,7 @@ void ToRegtypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       if (oid == pg::kInvalidOid) {
         return duckdb::nullopt;
       }
-      return static_cast<int64_t>(oid);
+      return pg::OidToSql(oid);
     });
 }
 
@@ -608,16 +608,8 @@ void FormatTypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   duckdb::UnaryExecutor::Execute<int64_t, duckdb::string_t>(
     args.data[0], result, args.size(),
     [&](int64_t type_oid) -> duckdb::string_t {
-      // User-defined types (enum, composite, ...) are catalog objects; resolve
-      // their real name there. Built-ins aren't catalog objects, so fall back
-      // to the static oid->name map (RegtypeOut, which otherwise renders an
-      // unknown oid as its bare number).
-      if (auto type = FindByOid<duckdb::TypeCatalogEntry>(
-            context, static_cast<duckdb::idx_t>(type_oid))) {
-        return duckdb::StringVector::AddString(result,
-                                               type->name.GetIdentifierName());
-      }
-      return duckdb::StringVector::AddString(result, pg::RegtypeOut(type_oid));
+      return duckdb::StringVector::AddString(
+        result, pg::RegtypeOut(&context, pg::OidFromSql(type_oid)));
     });
 }
 
@@ -628,11 +620,10 @@ void FormatTypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 // the session database's sets; null when it holds no such object.
 duckdb::optional_ptr<duckdb::CatalogEntry> RelationEntryByOid(
   duckdb::ClientContext& context, uint64_t oid) {
-  const auto id = static_cast<duckdb::idx_t>(oid);
   for (const auto type :
        {duckdb::CatalogType::TABLE_ENTRY, duckdb::CatalogType::VIEW_ENTRY,
         duckdb::CatalogType::INDEX_ENTRY}) {
-    if (auto entry = FindByOid(context, type, id)) {
+    if (auto entry = FindByOid(context, type, oid)) {
       return entry;
     }
   }
@@ -719,7 +710,7 @@ void PgDatabaseSizeOidFunction(duckdb::DataChunk& args,
   duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
     args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
       // Try our catalog by OID first
-      auto entry = FindDatabaseById(context, static_cast<duckdb::idx_t>(oid));
+      auto entry = FindDatabaseById(context, pg::OidFromSql(oid));
       // DuckDB's pg_database OIDs don't match ours -- fall back to
       // current database (covers the common pg_database_size(d.oid)
       // WHERE d.datname = current_database() pattern)
@@ -770,7 +761,7 @@ void PgSchemaSizeOidFunction(duckdb::DataChunk& args,
   duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
     args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
       auto schema = database->Cast<catalog::SereneDBCatalog>().FindSchemaById(
-        context, static_cast<duckdb::idx_t>(oid));
+        context, pg::OidFromSql(oid));
       if (!schema) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                         ERR_MSG("schema with OID ", oid, " does not exist"));
@@ -1005,7 +996,7 @@ void HasTablePrivilegeOid2Function(duckdb::DataChunk& args,
       }
       bool is_null = false;
       bool r = HasTablePrivilegeByOidImpl(
-        state.GetContext(), current->oid, static_cast<uint64_t>(toid),
+        state.GetContext(), current->oid, pg::OidFromSql(toid),
         {priv.GetData(), priv.GetSize()}, is_null);
       return is_null ? duckdb::nullopt : duckdb::optional<bool>{r};
     });
@@ -1020,8 +1011,8 @@ void HasTablePrivilegeOid3Function(duckdb::DataChunk& args,
         duckdb::string_t priv) -> duckdb::optional<bool> {
       bool is_null = false;
       bool r = HasTablePrivilegeByOidImpl(
-        state.GetContext(), static_cast<uint64_t>(roid),
-        static_cast<uint64_t>(toid), {priv.GetData(), priv.GetSize()}, is_null);
+        state.GetContext(), pg::OidFromSql(roid), pg::OidFromSql(toid),
+        {priv.GetData(), priv.GetSize()}, is_null);
       if (is_null) {
         return duckdb::nullopt;
       } else {
@@ -1040,7 +1031,7 @@ void HasTablePrivilegeOidName3Function(duckdb::DataChunk& args,
         duckdb::string_t priv) -> duckdb::optional<bool> {
       const auto name = duckdb::QualifiedName::Parse(tname.GetString());
       const auto* table = FindTable(state.GetContext(), name);
-      const duckdb::idx_t role{static_cast<uint64_t>(roid)};
+      const duckdb::idx_t role{pg::OidFromSql(roid)};
       const std::string_view priv_text{priv.GetData(), priv.GetSize()};
       try {
         if (table) {
@@ -1075,7 +1066,7 @@ void HasTablePrivilegeNameOid3Function(duckdb::DataChunk& args,
       }
       bool is_null = false;
       bool r = HasTablePrivilegeByOidImpl(
-        state.GetContext(), *role_id, static_cast<uint64_t>(toid),
+        state.GetContext(), *role_id, pg::OidFromSql(toid),
         {priv.GetData(), priv.GetSize()}, is_null);
       if (is_null) {
         return duckdb::nullopt;
@@ -1331,7 +1322,7 @@ void HasObjectPrivilegeOid2Function(duckdb::DataChunk& args,
       }
       bool is_null = false;
       bool r = HasObjectPrivilegeByOidImpl(
-        state.GetContext(), kType, current->oid, static_cast<uint64_t>(ooid),
+        state.GetContext(), kType, current->oid, pg::OidFromSql(ooid),
         {priv.GetData(), priv.GetSize()}, is_null);
       if (is_null) {
         return duckdb::nullopt;
@@ -1351,8 +1342,8 @@ void HasObjectPrivilegeOid3Function(duckdb::DataChunk& args,
         duckdb::string_t priv) -> duckdb::optional<bool> {
       bool is_null = false;
       bool r = HasObjectPrivilegeByOidImpl(
-        state.GetContext(), kType, static_cast<uint64_t>(roid),
-        static_cast<uint64_t>(ooid), {priv.GetData(), priv.GetSize()}, is_null);
+        state.GetContext(), kType, pg::OidFromSql(roid), pg::OidFromSql(ooid),
+        {priv.GetData(), priv.GetSize()}, is_null);
       if (is_null) {
         return duckdb::nullopt;
       } else {
@@ -1371,7 +1362,7 @@ void HasObjectPrivilegeOidName3Function(duckdb::DataChunk& args,
     [&](int64_t roid, duckdb::string_t obj,
         duckdb::string_t priv) -> duckdb::optional<bool> {
       return HasObjectPrivilegeByName(
-        state.GetContext(), kType, static_cast<uint64_t>(roid),
+        state.GetContext(), kType, pg::OidFromSql(roid),
         {obj.GetData(), obj.GetSize()}, {priv.GetData(), priv.GetSize()});
     });
 }
@@ -1675,10 +1666,9 @@ void HasColumnPrivilegeOidAttnum3Function(duckdb::DataChunk& args,
       if (!current) {
         return duckdb::nullopt;
       }
-      const auto* table =
-        FindByOid<duckdb::TableCatalogEntry>(state.GetContext(),
-                                             static_cast<duckdb::idx_t>(toid))
-          .get();
+      const auto* table = FindByOid<duckdb::TableCatalogEntry>(
+                            state.GetContext(), pg::OidFromSql(toid))
+                            .get();
       if (!table || !AttnumExists(*table, attnum)) {
         return duckdb::nullopt;
       }
@@ -1761,9 +1751,9 @@ void HasColumnPrivilegeOidNameAttnum4Function(duckdb::DataChunk& args,
     [&](int64_t roid, duckdb::string_t t, int16_t attnum,
         duckdb::string_t p) -> duckdb::optional<bool> {
       try {
-        auto r = ColumnPrivByNameTableAttnum(
-          conn_ctx, static_cast<uint64_t>(roid), {t.GetData(), t.GetSize()},
-          attnum, {p.GetData(), p.GetSize()});
+        auto r = ColumnPrivByNameTableAttnum(conn_ctx, pg::OidFromSql(roid),
+                                             {t.GetData(), t.GetSize()}, attnum,
+                                             {p.GetData(), p.GetSize()});
         if (r) {
           return *r;
         } else {
@@ -1783,17 +1773,16 @@ void HasColumnPrivilegeOidOidAttnum4Function(duckdb::DataChunk& args,
     args, result,
     [&](int64_t roid, int64_t toid, int16_t attnum,
         duckdb::string_t p) -> duckdb::optional<bool> {
-      const auto* table =
-        FindByOid<duckdb::TableCatalogEntry>(state.GetContext(),
-                                             static_cast<duckdb::idx_t>(toid))
-          .get();
+      const auto* table = FindByOid<duckdb::TableCatalogEntry>(
+                            state.GetContext(), pg::OidFromSql(toid))
+                            .get();
       if (!table || !AttnumExists(*table, attnum)) {
         return duckdb::nullopt;
       }
       try {
-        return HasColumnPrivByAttnum(state.GetContext(),
-                                     static_cast<uint64_t>(roid), *table,
-                                     attnum, {p.GetData(), p.GetSize()});
+        return HasColumnPrivByAttnum(state.GetContext(), pg::OidFromSql(roid),
+                                     *table, attnum,
+                                     {p.GetData(), p.GetSize()});
       } catch (const irs::SqlException& e) {
         ThrowInvalidPrivilege(e);
       }
@@ -1844,8 +1833,7 @@ void HasAnyColumnPrivilegeOid2Function(duckdb::DataChunk& args,
         return duckdb::nullopt;
       }
       const auto* perm = RelationPermissions(
-        RelationEntryByOid(state.GetContext(), static_cast<uint64_t>(toid))
-          .get());
+        RelationEntryByOid(state.GetContext(), pg::OidFromSql(toid)).get());
       if (!perm) {
         return duckdb::nullopt;
       }
@@ -2028,8 +2016,8 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
        duckdb::Vector& result) {
       duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
         args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-          return GetRelationForkSize(state.GetContext(),
-                                     static_cast<uint64_t>(oid), "main");
+          return GetRelationForkSize(state.GetContext(), pg::OidFromSql(oid),
+                                     "main");
         });
     }});
 
@@ -2044,8 +2032,8 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
         args.data[0], args.data[1], result, args.size(),
         [&](int64_t oid, duckdb::string_t fork) -> int64_t {
           std::string_view f{fork.GetData(), fork.GetSize()};
-          return GetRelationForkSize(state.GetContext(),
-                                     static_cast<uint64_t>(oid), f);
+          return GetRelationForkSize(state.GetContext(), pg::OidFromSql(oid),
+                                     f);
         });
     }});
 
@@ -2058,8 +2046,8 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
        duckdb::Vector& result) {
       duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
         args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-          return GetRelationForkSize(state.GetContext(),
-                                     static_cast<uint64_t>(oid), "main", true);
+          return GetRelationForkSize(state.GetContext(), pg::OidFromSql(oid),
+                                     "main", true);
         });
     }});
 
@@ -2072,8 +2060,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
        duckdb::Vector& result) {
       duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
         args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-          return GetRelationTotalSize(state.GetContext(),
-                                      static_cast<uint64_t>(oid));
+          return GetRelationTotalSize(state.GetContext(), pg::OidFromSql(oid));
         });
     }});
 
@@ -2086,8 +2073,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
        duckdb::Vector& result) {
       duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
         args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-          return GetTableIndexesSize(state.GetContext(),
-                                     static_cast<uint64_t>(oid));
+          return GetTableIndexesSize(state.GetContext(), pg::OidFromSql(oid));
         });
     }});
 

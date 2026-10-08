@@ -81,12 +81,11 @@ catalog::SereneDBCatalog& SessionCatalog(duckdb::ClientContext& context) {
 
 template<typename T>
 const T* EntryByOid(duckdb::ClientContext& context, duckdb::CatalogType type,
-                    int64_t oid) {
-  if (oid <= 0) {
+                    uint64_t oid) {
+  if (oid == pg::kInvalidOid) {
     return nullptr;
   }
-  auto entry = SessionCatalog(context).FindEntryById(
-    &context, type, static_cast<duckdb::idx_t>(oid));
+  auto entry = SessionCatalog(context).FindEntryById(&context, type, oid);
   return entry && entry->type == type ? &entry->Cast<T>() : nullptr;
 }
 
@@ -199,7 +198,7 @@ std::string ExpressionText(const duckdb::ParsedExpression& expression) {
 }
 
 const duckdb::ViewCatalogEntry* UserView(duckdb::ClientContext& context,
-                                         int64_t oid) {
+                                         uint64_t oid) {
   const auto* view = EntryByOid<duckdb::ViewCatalogEntry>(
     context, duckdb::CatalogType::VIEW_ENTRY, oid);
   if (!view) {
@@ -214,7 +213,7 @@ const duckdb::ViewCatalogEntry* UserView(duckdb::ClientContext& context,
   return view;
 }
 
-Definition ViewDefinition(duckdb::ClientContext& context, int64_t oid) {
+Definition ViewDefinition(duckdb::ClientContext& context, uint64_t oid) {
   const auto* view = UserView(context, oid);
   if (!view) {
     return std::nullopt;
@@ -222,7 +221,7 @@ Definition ViewDefinition(duckdb::ClientContext& context, int64_t oid) {
   return absl::StrCat(view->query->ToString(), ";");
 }
 
-Definition RuleDefinition(duckdb::ClientContext& context, int64_t oid,
+Definition RuleDefinition(duckdb::ClientContext& context, uint64_t oid,
                           bool pretty) {
   const auto* view = UserView(context, oid);
   if (!view) {
@@ -238,7 +237,7 @@ struct FoundConstraint {
   const duckdb::Constraint* constraint = nullptr;
 };
 
-FoundConstraint FindConstraint(duckdb::ClientContext& context, int64_t oid) {
+FoundConstraint FindConstraint(duckdb::ClientContext& context, uint64_t oid) {
   FoundConstraint found;
   if (oid <= 0) {
     return found;
@@ -248,7 +247,7 @@ FoundConstraint FindConstraint(duckdb::ClientContext& context, int64_t oid) {
       return;
     }
     for (const auto& constraint : table.GetConstraints()) {
-      if (constraint->oid != static_cast<duckdb::idx_t>(oid)) {
+      if (constraint->oid != oid) {
         continue;
       }
       if (constraint->type == duckdb::ConstraintType::FOREIGN_KEY &&
@@ -303,7 +302,7 @@ std::string ForeignKeyDefinition(duckdb::ClientContext& context,
                       absl::StrJoin(pk_columns, ", "), ")");
 }
 
-Definition ConstraintDefinition(duckdb::ClientContext& context, int64_t oid) {
+Definition ConstraintDefinition(duckdb::ClientContext& context, uint64_t oid) {
   const auto found = FindConstraint(context, oid);
   if (!found.table) {
     return std::nullopt;
@@ -427,15 +426,15 @@ IndexShape ShapeOf(const pg::KeyIndex& key) {
   return shape;
 }
 
-Definition IndexDefinition(duckdb::ClientContext& context, int64_t oid,
+Definition IndexDefinition(duckdb::ClientContext& context, uint64_t oid,
                            int64_t column, bool pretty) {
   std::optional<IndexShape> shape;
   if (const auto* index = EntryByOid<duckdb::IndexCatalogEntry>(
         context, duckdb::CatalogType::INDEX_ENTRY, oid)) {
     shape = ShapeOf(context, *index);
-  } else if (oid > 0) {
-    if (const auto key = pg::FindKeyIndex(context, SessionCatalog(context),
-                                          static_cast<duckdb::idx_t>(oid));
+  } else if (oid != pg::kInvalidOid) {
+    if (const auto key =
+          pg::FindKeyIndex(context, SessionCatalog(context), oid);
         key.table) {
       shape = ShapeOf(key);
     }
@@ -488,7 +487,7 @@ struct FoundTrigger {
   const duckdb::TriggerCatalogEntry* trigger = nullptr;
 };
 
-FoundTrigger FindTrigger(duckdb::ClientContext& context, int64_t oid) {
+FoundTrigger FindTrigger(duckdb::ClientContext& context, uint64_t oid) {
   FoundTrigger found;
   if (oid <= 0) {
     return found;
@@ -500,7 +499,7 @@ FoundTrigger FindTrigger(duckdb::ClientContext& context, int64_t oid) {
     table.ScanTriggers(
       duckdb::CatalogTransaction(table.ParentCatalog(), context),
       [&](duckdb::CatalogEntry& trigger) {
-        if (!found.table && trigger.oid == static_cast<duckdb::idx_t>(oid)) {
+        if (!found.table && trigger.oid == oid) {
           found = {&table, &trigger.Cast<duckdb::TriggerCatalogEntry>()};
         }
       });
@@ -508,7 +507,7 @@ FoundTrigger FindTrigger(duckdb::ClientContext& context, int64_t oid) {
   return found;
 }
 
-Definition TriggerDefinition(duckdb::ClientContext& context, int64_t oid,
+Definition TriggerDefinition(duckdb::ClientContext& context, uint64_t oid,
                              bool pretty) {
   const auto found = FindTrigger(context, oid);
   if (!found.table) {
@@ -570,7 +569,7 @@ Definition TriggerDefinition(duckdb::ClientContext& context, int64_t oid,
 }
 
 const duckdb::MacroCatalogEntry* FindMacro(duckdb::ClientContext& context,
-                                           int64_t oid) {
+                                           uint64_t oid) {
   for (const auto type : {duckdb::CatalogType::MACRO_ENTRY,
                           duckdb::CatalogType::TABLE_MACRO_ENTRY}) {
     if (const auto* entry =
@@ -581,17 +580,9 @@ const duckdb::MacroCatalogEntry* FindMacro(duckdb::ClientContext& context,
   return nullptr;
 }
 
-std::string FormatTypeOid(duckdb::ClientContext& context, uint64_t oid) {
-  if (const auto entry = SessionCatalog(context).FindEntryById(
-        &context, duckdb::CatalogType::TYPE_ENTRY, oid)) {
-    return entry->name.GetIdentifierName();
-  }
-  return pg::RegtypeOut(oid);
-}
-
 std::string FormatType(duckdb::ClientContext& context,
                        const duckdb::LogicalType& type) {
-  return FormatTypeOid(context, static_cast<uint64_t>(pg::Type2Oid(type)));
+  return pg::RegtypeOut(&context, pg::Type2Oid(type));
 }
 
 const duckdb::ParsedExpression* ParameterDefault(
@@ -652,7 +643,7 @@ Definition FunctionResult(duckdb::ClientContext& context,
   return absl::StrCat("TABLE(", absl::StrJoin(columns, ", "), ")");
 }
 
-Definition FunctionDefinition(duckdb::ClientContext& context, int64_t oid) {
+Definition FunctionDefinition(duckdb::ClientContext& context, uint64_t oid) {
   const auto* entry = FindMacro(context, oid);
   if (!entry) {
     return std::nullopt;
@@ -686,7 +677,7 @@ Definition BuiltinArguments(duckdb::ClientContext& context,
   std::vector<std::string> arguments;
   arguments.reserve(builtin.parameter_types.size());
   for (const auto& type : builtin.parameter_types) {
-    arguments.push_back(FormatTypeOid(context, pg::BuiltinTypeOid(type)));
+    arguments.push_back(pg::RegtypeOut(&context, pg::BuiltinTypeOid(type)));
   }
   return absl::StrJoin(arguments, ", ");
 }
@@ -696,7 +687,7 @@ Definition BuiltinResult(duckdb::ClientContext& context,
   if (builtin.returns_set) {
     return std::string{"SETOF record"};
   }
-  return FormatTypeOid(context, pg::BuiltinTypeOid(builtin.return_type));
+  return pg::RegtypeOut(&context, pg::BuiltinTypeOid(builtin.return_type));
 }
 
 template<typename MacroRenderer, typename BuiltinRenderer>
@@ -749,7 +740,7 @@ duckdb::scalar_function_t FunctionInfo(MacroRenderer macro_renderer,
   };
 }
 
-Definition FunctionArgDefault(duckdb::ClientContext& context, int64_t oid,
+Definition FunctionArgDefault(duckdb::ClientContext& context, uint64_t oid,
                               int64_t argument) {
   const auto* entry = FindMacro(context, oid);
   if (!entry || argument < 1) {
@@ -782,8 +773,9 @@ duckdb::scalar_function_t OidFunction(Builder builder) {
                    duckdb::Vector& result) {
     auto& context = state.GetContext();
     duckdb::UnaryExecutor::Execute<int64_t, duckdb::string_t>(
-      args.data[0], result, args.size(),
-      [&](int64_t oid) { return Emit(result, builder(context, oid)); });
+      args.data[0], result, args.size(), [&](int64_t oid) {
+        return Emit(result, builder(context, pg::OidFromSql(oid)));
+      });
   };
 }
 
@@ -795,12 +787,12 @@ duckdb::scalar_function_t OidArgFunction(Builder builder) {
     duckdb::BinaryExecutor::Execute<int64_t, Arg, duckdb::string_t>(
       args.data[0], args.data[1], result, args.size(),
       [&](int64_t oid, Arg arg) {
-        return Emit(result, builder(context, oid, arg));
+        return Emit(result, builder(context, pg::OidFromSql(oid), arg));
       });
   };
 }
 
-int64_t ViewOid(duckdb::ClientContext& context, duckdb::string_t name) {
+uint64_t ViewOid(duckdb::ClientContext& context, duckdb::string_t name) {
   const auto oid = pg::ResolveRelation(
     context, duckdb::QualifiedName::Parse(name.GetString()));
   if (oid == pg::kInvalidOid) {
@@ -808,7 +800,7 @@ int64_t ViewOid(duckdb::ClientContext& context, duckdb::string_t name) {
       ERR_CODE(ERRCODE_UNDEFINED_TABLE),
       ERR_MSG("relation \"", name.GetString(), "\" does not exist"));
   }
-  return static_cast<int64_t>(oid);
+  return oid;
 }
 
 void PgGetViewdefByName(duckdb::DataChunk& args, duckdb::ExpressionState& state,

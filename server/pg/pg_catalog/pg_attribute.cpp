@@ -53,7 +53,7 @@ struct PgTypePhysicalInfo {
   PgAttribute::Attstorage attstorage;
 };
 
-PgTypePhysicalInfo GetPhysicalInfo(int32_t type_oid) {
+PgTypePhysicalInfo GetPhysicalInfo(uint64_t type_oid) {
   switch (type_oid) {
     case PgTypeOID::kBool:
       return {1, true, PgType::Typalign::Char, PgAttribute::Attstorage::Plain};
@@ -91,7 +91,7 @@ PgTypePhysicalInfo GetPhysicalInfo(int32_t type_oid) {
   }
 }
 
-Oid GetCollationForType(int32_t type_oid) {
+Oid GetCollationForType(uint64_t type_oid) {
   switch (type_oid) {
     case PgTypeOID::kText:
     case PgTypeOID::kChar:

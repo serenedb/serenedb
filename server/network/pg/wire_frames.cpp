@@ -423,7 +423,7 @@ void WriteRowDescription(message::Buffer& out, duckdb::ClientContext& context,
     absl::big_endian::Store32(w.Alloc(kInt32), 0);
     absl::big_endian::Store16(w.Alloc(kInt16), 0);
     const auto type_info = sdb::pg::Logical2Pg(types[i]);
-    absl::big_endian::Store32(w.Alloc(kInt32), type_info.oid);
+    absl::big_endian::Store32(w.Alloc(kInt32), sdb::pg::WireOid(type_info.oid));
     absl::big_endian::Store16(w.Alloc(kInt16), type_info.typlen);
     absl::big_endian::Store32(w.Alloc(kInt32), type_info.typmod);
     const auto format = i < formats.size() ? formats[i] : default_format;
@@ -592,7 +592,7 @@ void WriteEmptyFrame(message::Buffer& out, char type) {
 }
 
 void WriteParameterDescription(message::Buffer& out,
-                               std::span<const int32_t> oids) {
+                               std::span<const uint64_t> oids) {
   message::Writer w{out};
   const auto count = static_cast<uint16_t>(oids.size());
   auto* prefix = w.Alloc(kFrameHeader + kInt16);
@@ -601,7 +601,7 @@ void WriteParameterDescription(message::Buffer& out,
     prefix + kFrameTag, static_cast<int32_t>(kInt32 + kInt16 + kInt32 * count));
   absl::big_endian::Store16(prefix + kFrameHeader, count);
   for (const auto oid : oids) {
-    absl::big_endian::Store32(w.Alloc(kInt32), oid);
+    absl::big_endian::Store32(w.Alloc(kInt32), sdb::pg::WireOid(oid));
   }
   w.Commit(false);
 }

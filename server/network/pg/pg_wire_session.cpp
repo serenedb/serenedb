@@ -1915,9 +1915,8 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
 
   duckdb::case_insensitive_map_t<duckdb::LogicalType> type_hints;
   for (uint16_t i = 0; i < num_params; ++i) {
-    const auto oid =
-      static_cast<int32_t>(absl::big_endian::Load32(payload.data()));
-    payload.remove_prefix(sizeof(int32_t));
+    const uint64_t oid = absl::big_endian::Load32(payload.data());
+    payload.remove_prefix(sizeof(uint32_t));
     if (oid != 0) {
       type_hints.emplace(
         absl::StrCat(i + 1),
@@ -2214,7 +2213,7 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
   }
   stmt.MarkDescribed(prepared);
   const auto param_count = prepared.GetNamedParameterMap().size();
-  std::vector<int32_t> oids;
+  std::vector<uint64_t> oids;
   oids.reserve(param_count);
   for (uint16_t i = 0; i < param_count; ++i) {
     oids.emplace_back(sdb::pg::Type2Oid(ResolveExpectedType(prepared, i)));

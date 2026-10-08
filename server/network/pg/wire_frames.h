@@ -131,7 +131,7 @@ void WriteCommandComplete(message::Buffer& out, const sdb::pg::CommandTag& tag,
 void WriteEmptyFrame(message::Buffer& out, char type);
 
 void WriteParameterDescription(message::Buffer& out,
-                               std::span<const int32_t> oids);
+                               std::span<const uint64_t> oids);
 
 void WriteFatalResponse(message::Buffer& out,
                         const irs::pg::SqlErrorData& error);

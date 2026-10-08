@@ -20,9 +20,6 @@
 
 #include "search/search_table_transaction.h"
 
-#include <absl/algorithm/container.h>
-#include <absl/cleanup/cleanup.h>
-
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -60,7 +57,7 @@ uint64_t ShardTickSpan(const SearchShardWrites& w) {
 // build's log takes them as they are.
 void RecordDeletesForBuild(SearchTable& shard,
                            const LocalTableChangesEntry& changes,
-                           uint64_t record_tick) {
+                           uint64_t record_tick) noexcept {
   std::vector<int64_t> rows;
   bool truncated = false;
   for (const auto& op : changes.ops) {
@@ -366,33 +363,22 @@ void SearchTableTransaction::Commit() {
       logged.emplace_back(w.shard.get(), &cit->second);
     }
   }
-  absl::c_sort(logged, [](const auto& l, const auto& r) {
-    return l.first->GetTableId() < r.first->GetTableId();
-  });
-  for (const auto& [shard, changes] : logged) {
-    shard->EnterCommitGap();
-  }
-  absl::Cleanup leave_gaps = [&logged] {
-    for (const auto& [shard, changes] : logged) {
-      shard->LeaveCommitGap();
-    }
-  };
 
-  std::vector<SearchTable*> clearing;
-  for (auto& [table_id, w] : _writes) {
-    if (auto cit = _changes.find(table_id);
-        cit != _changes.end() && cit->second.ClearsShard()) {
-      w.shard->BeginClear();
-      clearing.push_back(w.shard.get());
+  const uint64_t record_tick = AppendCommit([&](uint64_t tick) noexcept {
+    RegisterFlush();
+    for (auto& [table_id, w] : _writes) {
+      auto cit = _changes.find(table_id);
+      if (cit == _changes.end() || !cit->second.ClearsShard()) {
+        continue;
+      }
+      try {
+        w.shard->Clear(tick);
+      } catch (const std::exception& e) {
+        SDB_FATAL(SEARCH, "search-table commit: Clear failed for table ",
+                  table_id, " tick=", tick, ": ", e.what());
+      }
     }
-  }
-  absl::Cleanup abandon_clears = [&clearing] {
-    for (auto* shard : clearing) {
-      shard->AbandonClear();
-    }
-  };
-  const uint64_t record_tick = AppendCommit();
-  std::move(abandon_clears).Cancel();
+  });
   SDB_IF_FAILURE("crash_after_search_wal_commit") { SDB_IMMEDIATE_ABORT(); }
   SDB_PARK_ONCE_ON_FAILURE("pause_search_commit_before_delete_log");
 
@@ -407,7 +393,6 @@ void SearchTableTransaction::Commit() {
   for (const auto& [shard, changes] : logged) {
     RecordDeletesForBuild(*shard, *changes, record_tick);
   }
-  std::move(leave_gaps).Invoke();
 
   for (auto& [table_id, w] : _writes) {
     auto cit = _changes.find(table_id);
@@ -432,17 +417,14 @@ void SearchTableTransaction::Commit() {
     // loop -- move it below this point and
     // recovery/search_table_backfill_concurrent_dml.test loses a row.
     SDB_WAIT_ON_FAILURE("pause_search_commit_after_irs");
-
-    if (cit->second.ClearsShard()) {
-      w.shard->Clear(record_tick);
-    }
   }
   // Only now: a rebuild waiting on one of these registrations may proceed as
   // soon as it is released, so the rows have to be committed first.
   ReleaseWriters();
 }
 
-uint64_t SearchTableTransaction::AppendCommit() {
+uint64_t SearchTableTransaction::AppendCommit(
+  absl::AnyInvocable<void(uint64_t) noexcept> on_durable) {
   SDB_ASSERT(!_writes.empty());
   std::vector<SearchDbWal::ShardSection> sections;
   sections.reserve(_writes.size());
@@ -509,7 +491,7 @@ uint64_t SearchTableTransaction::AppendCommit() {
   }
 
   SDB_ASSERT(wal != nullptr);
-  return wal->AppendCommit(sections, tick_span);
+  return wal->AppendCommit(sections, tick_span, std::move(on_durable));
 }
 
 }  // namespace sdb::search

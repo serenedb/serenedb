@@ -265,13 +265,6 @@ void Transaction::Commit() {
   for (auto& action : _on_commit) {
     action();
   }
-  // Search-table segments commit on the database WAL tick; register their flush
-  // up-front -- before any commit point -- so a concurrent background
-  // RefreshCommit waits for them. They commit in the WAL block below.
-  if (_search_txn) {
-    _search_txn->RegisterFlush();
-  }
-
   // Inverted-index trxs: normally already settled inside the engine commit
   // (TransactionPreCheckpoint); this is the fallback for transactions that did
   // not commit the store database, so there is no store-WAL cursor to record.

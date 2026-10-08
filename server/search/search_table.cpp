@@ -41,7 +41,6 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/type_limits.hpp>
 #include <limits>
 #include <mutex>
 #include <utility>
@@ -144,11 +143,13 @@ void SearchTable::OpenWriter(bool in_memory) {
 
   writer_options.meta_payload_writer = [this](uint64_t tick,
                                               duckdb::BinarySerializer& out) {
-    _last_committed_tick = std::max(_last_committed_tick, tick);
-    out.WriteProperty<uint64_t>(kFieldTick, "tick", _last_committed_tick);
+    const auto committed = std::max(CommittedTick(), tick);
+    _last_committed_tick.store(committed, std::memory_order_release);
+    out.WriteProperty<uint64_t>(kFieldTick, "tick", committed);
   };
   writer_options.meta_payload_reader = [this](duckdb::BinaryDeserializer& in) {
-    _last_committed_tick = ReadCommittedTick(in);
+    _last_committed_tick.store(ReadCommittedTick(in),
+                               std::memory_order_release);
   };
 
   _writer = irs::IndexWriter::Make(*_dir, open_mode, std::move(writer_options));
@@ -177,9 +178,9 @@ void SearchTable::OpenWriter(bool in_memory) {
     // A brand-new shard has no WAL records, so seed its committed tick at the
     // database WAL's current tick (not 0) -- otherwise an unused table would
     // pin the shared WAL's GC floor.
-    _last_committed_tick = _wal->CurrentTick();
+    _last_committed_tick.store(_wal->CurrentTick(), std::memory_order_release);
   }
-  _wal->RegisterShard(GetTableId(), _last_committed_tick);
+  _wal->RegisterShard(GetTableId(), CommittedTick());
 
   if (_is_new) {
     _writer->RefreshCommit();
@@ -219,11 +220,10 @@ ResultWithTime SearchTable::RefreshUnsafe(
       // no changes proves this shard has nothing un-published up to that tick,
       // and any later batch lands at a higher tick, so advancing to it never
       // over-claims.
-      const auto tick_before = std::min(_wal->CurrentTick(), _clear_bound);
+      const auto tick_before = _wal->CurrentTick();
       SDB_PARK_ONCE_ON_FAILURE("pause_search_refresh_after_tick");
-      if (tick_before != irs::writer_limits::kMinTick &&
-          _writer->RefreshCommit({.tick = tick_before})) {
-        _wal->OnShardCommit(GetTableId(), _last_committed_tick);
+      if (_writer->RefreshCommit()) {
+        _wal->OnShardCommit(GetTableId(), CommittedTick());
         code = RefreshResult::Done;
       } else {
         _wal->OnShardCommit(GetTableId(), tick_before);

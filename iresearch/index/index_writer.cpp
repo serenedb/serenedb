@@ -1680,10 +1680,10 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   const auto current_committed_reader = _committed_reader;
   SDB_ASSERT(current_committed_reader != nullptr);
   const bool pending = _pending_state.Valid();
-  auto ctx = GetFlushContext();
-  lock.unlock();
   // Guard against concurrent Commit/etc
   if (pending) {
+    auto ctx = GetFlushContext();
+    lock.unlock();
     // after some transaction was started:
     if (committed_reader != current_committed_reader) {
       // If some segment already not in current reader
@@ -1768,6 +1768,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   }
 
   auto refs = dir.GetRefs();
+  auto ctx = GetFlushContext();
   std::lock_guard ctx_lock{ctx->pending_mutex};
   auto& segment_mask = ctx->segment_mask;
   segment_mask.reserve(segment_mask.size() + mappings.size() +
@@ -1882,41 +1883,9 @@ IndexWriter::CompactionFloorGuard IndexWriter::ArmCompactionFloor() {
 bool IndexWriter::ReplaceSegments(
   std::span<const std::string_view> replaced,
   std::span<const std::string_view> adopted_metas,
-  QueryContext::FilterPtr removal) {
+  absl::FunctionRef<bool(QueryContext::FilterPtr&)> removal_provider) {
   if (replaced.empty() && adopted_metas.empty()) {
     return true;
-  }
-
-  // Pin the committed state: the candidate names are masked as string_views
-  // into its metas, so it has to outlive the flush context that holds them --
-  // and holding it also keeps the cleaner off the files until the commit
-  // publishes them. Same reason Compact pins it.
-  decltype(_committed_reader) committed_reader;
-  Compaction candidates;
-  {
-    std::lock_guard lock{_compacting.lock};
-    committed_reader = GetSnapshotImpl();
-    candidates.reserve(replaced.size());
-    for (const auto name : replaced) {
-      const SubReader* found = nullptr;
-      for (const auto& segment : *committed_reader) {
-        if (segment.Meta().name == name) {
-          found = &segment;
-          break;
-        }
-      }
-      if (found == nullptr) {
-        // Not a lost race: a removal that takes a segment's last live doc masks
-        // the whole segment out rather than giving it a docs_mask (PrepareFlush
-        // stage 1), so a source whose rows were all deleted while the caller
-        // was rebuilding it is simply gone. Nothing left to mask, and the
-        // caller's replacement is still adopted -- whatever deleted those rows
-        // reaches the replacement too, by tick if the removal is still pending
-        // and through the host's own reissue if it was already applied.
-        continue;
-      }
-      candidates.push_back(found);
-    }
   }
 
   // Open every replacement before touching the flush context, so a failure
@@ -1956,6 +1925,47 @@ bool IndexWriter::ReplaceSegments(
     }
     entry.refs.emplace_back(std::move(meta_ref));
     adopted.push_back(std::move(entry));
+  }
+
+  _commit_lock.ForgetDeadlockInfo();
+  std::shared_lock commit_lock{_commit_lock};
+  if (_pending_state.Valid()) {
+    SDB_WARN(IRESEARCH,
+             "Cannot replace segments while a begun commit is not finished");
+    return false;
+  }
+
+  // Pin the committed state: the candidate names are masked as string_views
+  // into its metas, so it has to outlive the flush context that holds them --
+  // and holding it also keeps the cleaner off the files until the commit
+  // publishes them. Same reason Compact pins it.
+  auto committed_reader = GetSnapshotImpl();
+  Compaction candidates;
+  candidates.reserve(replaced.size());
+  for (const auto name : replaced) {
+    const SubReader* found = nullptr;
+    for (const auto& segment : *committed_reader) {
+      if (segment.Meta().name == name) {
+        found = &segment;
+        break;
+      }
+    }
+    if (found == nullptr) {
+      // Not a lost race: a removal that takes a segment's last live doc masks
+      // the whole segment out rather than giving it a docs_mask (PrepareFlush
+      // stage 1), so a source whose rows were all deleted while the caller was
+      // rebuilding it is simply gone. Nothing left to mask, and the caller's
+      // replacement is still adopted -- whatever deleted those rows reaches the
+      // replacement too, by tick if the removal is still pending and through
+      // the host's own reissue if it was already applied.
+      continue;
+    }
+    candidates.push_back(found);
+  }
+
+  QueryContext::FilterPtr removal;
+  if (!removal_provider(removal)) {
+    return true;
   }
 
   auto flush = GetFlushContext();

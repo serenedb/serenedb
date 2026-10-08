@@ -342,10 +342,17 @@ bool InvertedIndexConfig::FirstKeyOf(size_t key) const noexcept {
                          });
 }
 
+bool InvertedIndexConfig::StoresExpression(
+  irs::field_id field_id) const noexcept {
+  const auto* key = FindKey(*this, field_id);
+  const auto* entry = FindEntry(field_id);
+  return key && !key->normalized_expression.empty() && entry &&
+         entry->IsStored();
+}
+
 bool InvertedIndexConfig::StoresExpressions() const noexcept {
   return absl::c_any_of(keys, [&](const InvertedIndexKey& key) {
-    const auto* entry = FindEntry(key.field_id);
-    return !key.normalized_expression.empty() && entry && entry->IsStored();
+    return StoresExpression(key.field_id);
   });
 }
 

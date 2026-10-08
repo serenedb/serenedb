@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include <array>
+#include <duckdb/common/type_visitor.hpp>
 #include <duckdb/optimizer/optimizer.hpp>
 #include <duckdb/planner/expression/bound_aggregate_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -362,6 +363,22 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     return column_info;
   };
 
+  const auto expression_field =
+    [&](irs::field_id field_id) -> std::optional<connector::SearchColumnInfo> {
+    auto return_type = config.ExpressionType(field_id);
+    const auto* entry = config.FindEntry(field_id);
+    if (return_type.id() == duckdb::LogicalTypeId::INVALID || !entry ||
+        !entry->IsTermDict()) {
+      return std::nullopt;
+    }
+    auto column_info =
+      make_info(field_id, entry, std::move(return_type), std::nullopt);
+    if (entry->IsStored()) {
+      column_info.text = field_id;
+    }
+    return column_info;
+  };
+
   connector::FieldSetGetter field_set = [&](std::string_view name) {
     return index_field(ColumnIdByName(bind_data, name));
   };
@@ -375,7 +392,10 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
         .logical_type = duckdb::LogicalType::BIGINT,
         .index_fields = &field_set};
     }
-    return index_field(ResolveColumnId(ref.Binding(), bind_data, get));
+    const auto col_id = ResolveColumnId(ref.Binding(), bind_data, get);
+    return bind_data.relation.StoresExpression(col_id)
+             ? expression_field(col_id)
+             : index_field(col_id);
   };
 
   connector::ExpressionGetter expr_getter = [&](const duckdb::Expression& expr)
@@ -385,19 +405,8 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     }
     auto normalized = connector::NormalizeBoundExpression(
       expr, bind_data.RelationId(), projected_ids, context);
-    const auto field_id = config.FindFieldIdByExpression(
-      connector::SerializeBoundExpression(*normalized));
-    auto return_type = config.ExpressionType(field_id);
-    if (return_type.id() == duckdb::LogicalTypeId::INVALID) {
-      return std::nullopt;
-    }
-    const auto* entry = config.FindEntry(field_id);
-    auto column_info =
-      make_info(field_id, entry, std::move(return_type), std::nullopt);
-    if (entry && entry->IsStored()) {
-      column_info.text = field_id;
-    }
-    return column_info;
+    return expression_field(config.FindFieldIdByExpression(
+      connector::SerializeBoundExpression(*normalized)));
   };
 
   return fn(SearchGetters{getter, expr_getter, analyzed_fields, null_markers});
@@ -913,8 +922,36 @@ bool TakesIndexedExpression(std::string_view name) {
            std::array{connector::kTSQueryMatch, connector::kPhraseMatches,
                       connector::kNGramMatches, connector::kLevenshteinMatches,
                       connector::kHasAllTokens, connector::kHasAnyTokens,
-                      connector::kTsHighlight, connector::kOffsets},
+                      connector::kTsHighlight, connector::kOffsets,
+                      connector::kGeoInRange, connector::kGeoDistance,
+                      connector::kGeoIntersects, connector::kGeoContains},
            name);
+}
+
+bool MayCarryZone(const duckdb::LogicalType& type) {
+  return duckdb::TypeVisitor::Contains(type, [](const duckdb::LogicalType& t) {
+    return t.id() == duckdb::LogicalTypeId::TIMESTAMP_TZ ||
+           t.id() == duckdb::LogicalTypeId::TIME_TZ ||
+           t.id() == duckdb::LogicalTypeId::VARIANT;
+  });
+}
+
+bool ComputedFromRowAlone(const duckdb::Expression& expr) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
+    const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
+    if (MayCarryZone(func.GetReturnType()) ||
+        absl::c_any_of(func.GetChildren(), [](const auto& arg) {
+          return MayCarryZone(arg->GetReturnType());
+        })) {
+      return false;
+    }
+  }
+  bool alone = true;
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) {
+      alone = alone && ComputedFromRowAlone(child);
+    });
+  return alone;
 }
 
 bool PushdownStoredExpression(duckdb::unique_ptr<duckdb::Expression>& expr,
@@ -923,7 +960,8 @@ bool PushdownStoredExpression(duckdb::unique_ptr<duckdb::Expression>& expr,
   const auto cls = expr->GetExpressionClass();
   if (cls == duckdb::ExpressionClass::BOUND_COLUMN_REF ||
       cls == duckdb::ExpressionClass::BOUND_CONSTANT || expr->IsFoldable() ||
-      expr->IsVolatile() || expr->HasParameter()) {
+      !expr->IsConsistent() || expr->HasParameter() ||
+      !ComputedFromRowAlone(*expr)) {
     return false;
   }
   const auto table_index = SingleReferencedTableIndex(*expr);
@@ -1037,7 +1075,8 @@ void RewriteCallInExpr(duckdb::unique_ptr<duckdb::Expression>& expr,
   }
   duckdb::ExpressionIterator::EnumerateChildren(
     *expr, [&](duckdb::unique_ptr<duckdb::Expression>& child) {
-      RewriteCallInExpr(child, root, context, has_search_scan, keep_children);
+      RewriteCallInExpr(child, root, context, has_search_scan,
+                        keep_expression || keep_children);
     });
 }
 

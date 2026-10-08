@@ -161,7 +161,7 @@ class SearchDbWal {
   irs::containers::FlatHashMap<uint64_t, uint64_t> _committed;
 
   void EnsureActiveSegmentLocked(uint64_t first_tick);
-  void WriteFrameLocked(const uint8_t* payload, uint64_t payload_size);
+  void WriteFrameLocked(const uint8_t* frame, uint64_t frame_size);
   uint64_t MinCommittedTick();
   void RunGc();
 };

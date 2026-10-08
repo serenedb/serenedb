@@ -171,11 +171,7 @@ struct RelationSpec {
     return info && info->IsStored();
   }
   bool StoresExpression(ColumnId field) const noexcept {
-    const auto* entry =
-      inverted_config ? inverted_config->FindEntry(field) : nullptr;
-    return entry && entry->IsStored() &&
-           inverted_config->ExpressionType(field).id() !=
-             duckdb::LogicalTypeId::INVALID;
+    return inverted_config && inverted_config->StoresExpression(field);
   }
   catalog::IndexTokenizers ResolveTokenizers(
     duckdb::ClientContext& context) const {

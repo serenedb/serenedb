@@ -300,8 +300,7 @@ irs::Filter::ptr MakeFilter(size_t dictionary,
   *filter->mutable_options() = phrase;
   if (!mode.positional) {
     auto tokens = std::make_shared<irs::PhraseTokens>();
-    tokens->text = {.columns = {kStoreId},
-                    .types = {duckdb::LogicalType::VARCHAR}};
+    tokens->text = kStoreId;
     tokens->tokenizer = [dictionary] {
       return std::shared_ptr<irs::analysis::Tokenizer>{
         kDictionaries[dictionary].make()};

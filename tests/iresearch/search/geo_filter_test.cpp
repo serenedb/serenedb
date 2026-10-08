@@ -222,6 +222,28 @@ TEST(GeoFilterTest, copy_clones_the_shape) {
   EXPECT_NE(q.options().shape.region(), assigned.options().shape.region());
 }
 
+TEST(GeoFilterTest, copy_clones_multi_shapes) {
+  using Type = irs::geo::ShapeContainer::Type;
+  const std::pair<std::string_view, Type> shapes[] = {
+    {R"({"type": "MultiPoint",
+         "coordinates": [[37.61, 55.72], [37.62, 55.73]]})",
+     Type::S2Multipoint},
+    {R"({"type": "MultiLineString",
+         "coordinates": [[[37.61, 55.72], [37.62, 55.73]],
+                         [[37.63, 55.70], [37.64, 55.71]]]})",
+     Type::S2Multipolyline},
+  };
+  for (const auto& [text, type] : shapes) {
+    auto json = irs::tests::FromJson(text);
+    GeoFilter q;
+    json::ParseRegion(json.value(), q.mutable_options()->shape);
+    ASSERT_EQ(type, q.options().shape.type());
+    const auto copy = q;
+    EXPECT_EQ(q, copy);
+    EXPECT_NE(q.options().shape.region(), copy.options().shape.region());
+  }
+}
+
 TEST(GeoFilterTest, boost) {
   // no boost
   {

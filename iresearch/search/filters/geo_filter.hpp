@@ -24,6 +24,7 @@
 #include <s2/s2cap.h>
 #include <s2/s2region_term_indexer.h>
 
+#include <memory>
 #include <string>
 #include <variant>
 #include <vector>
@@ -45,6 +46,8 @@ enum class StoredType : uint8_t {
   S2Centroid,
 };
 
+struct GeoPlan;
+
 struct GeoFilterOptionsBase {
   std::string prefix;
   S2RegionTermIndexer::Options options;
@@ -55,6 +58,7 @@ struct GeoFilterOptionsBase {
   bool source_is_point{false};
   std::vector<std::string> point_latitude;
   std::vector<std::string> point_longitude;
+  std::shared_ptr<const GeoPlan> plan;
 };
 
 enum class GeoFilterType : uint8_t {
@@ -182,8 +186,8 @@ struct GeoPlan {
 
 GeoParser ParserOf(const GeoFilterOptionsBase& options);
 
-GeoPlan PlanGeo(const GeoFilterOptions& options);
+std::shared_ptr<const GeoPlan> PlanGeo(const GeoFilterOptions& options);
 
-GeoPlan PlanGeo(const GeoDistanceFilterOptions& options);
+std::shared_ptr<const GeoPlan> PlanGeo(const GeoDistanceFilterOptions& options);
 
 }  // namespace irs

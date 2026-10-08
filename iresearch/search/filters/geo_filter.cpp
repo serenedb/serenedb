@@ -162,6 +162,7 @@ BooleanFilter ExcludeCentre(irs::field_id id,
   *excl->mutable_field_id() = id;
   auto& opts = *excl->mutable_options();
   opts = options;
+  opts.plan.reset();
   opts.range.min = 0;
   opts.range.min_type = BoundType::Inclusive;
   opts.range.max = 0;
@@ -306,30 +307,7 @@ GeoPlan PlanInterval(const GeoDistanceFilterOptions& options) {
   }
 }
 
-}  // namespace
-
-GeoParser ParserOf(const GeoFilterOptionsBase& options) {
-  switch (options.stored) {
-    case StoredType::Source:
-      if (options.source_is_wkb) {
-        return GeoParser{std::in_place_type<SourceWkbParser>};
-      }
-      if (options.source_is_point) {
-        return GeoParser{std::in_place_type<SourcePointParser>,
-                         options.point_latitude, options.point_longitude};
-      }
-      return GeoParser{std::in_place_type<SourceJsonParser>};
-    case StoredType::S2Region:
-      return GeoParser{std::in_place_type<S2ShapeParser>};
-    case StoredType::S2Point:
-    case StoredType::S2Centroid:
-      return GeoParser{std::in_place_type<S2PointParser>};
-  }
-  SDB_ASSERT(false);
-  return {};
-}
-
-GeoPlan PlanGeo(const GeoFilterOptions& options) {
+GeoPlan PlanShape(const GeoFilterOptions& options) {
   const auto& shape = options.shape;
   if (shape.empty()) {
     return {};
@@ -353,7 +331,7 @@ GeoPlan PlanGeo(const GeoFilterOptions& options) {
   return {};
 }
 
-GeoPlan PlanGeo(const GeoDistanceFilterOptions& options) {
+GeoPlan PlanDistance(const GeoDistanceFilterOptions& options) {
   const auto& range = options.range;
   const auto lower_bound = BoundType::Unbounded != range.min_type;
   const auto upper_bound = BoundType::Unbounded != range.max_type;
@@ -366,10 +344,44 @@ GeoPlan PlanGeo(const GeoDistanceFilterOptions& options) {
   return PlanOpenInterval(options, lower_bound);
 }
 
+}  // namespace
+
+GeoParser ParserOf(const GeoFilterOptionsBase& options) {
+  switch (options.stored) {
+    case StoredType::Source:
+      if (options.source_is_wkb) {
+        return GeoParser{std::in_place_type<SourceWkbParser>};
+      }
+      if (options.source_is_point) {
+        return GeoParser{std::in_place_type<SourcePointParser>,
+                         options.point_latitude, options.point_longitude};
+      }
+      return GeoParser{std::in_place_type<SourceJsonParser>};
+    case StoredType::S2Region:
+      return GeoParser{std::in_place_type<S2ShapeParser>};
+    case StoredType::S2Point:
+    case StoredType::S2Centroid:
+      return GeoParser{std::in_place_type<S2PointParser>};
+  }
+  SDB_ASSERT(false);
+  return {};
+}
+
+std::shared_ptr<const GeoPlan> PlanGeo(const GeoFilterOptions& options) {
+  return options.plan ? options.plan
+                      : std::make_shared<const GeoPlan>(PlanShape(options));
+}
+
+std::shared_ptr<const GeoPlan> PlanGeo(
+  const GeoDistanceFilterOptions& options) {
+  return options.plan ? options.plan
+                      : std::make_shared<const GeoPlan>(PlanDistance(options));
+}
+
 QueryBuilder::ptr GeoFilter::PrepareSegment(const SubReader& segment,
                                             const PrepareContext& ctx) const {
   return MakeQuery(segment, ctx, field_id(), ctx.boost * GetBoost(), options(),
-                   PlanGeo(options()));
+                   *PlanGeo(options()));
 }
 
 PrepareCollector::ptr GeoFilter::MakeCollectorImpl(const Scorer* scorer,
@@ -383,7 +395,7 @@ QueryBuilder::ptr GeoDistanceFilter::PrepareSegment(
   auto sub_ctx = ctx;
   sub_ctx.Boost(GetBoost());
   const auto plan = PlanGeo(options());
-  switch (plan.kind) {
+  switch (plan->kind) {
     case GeoPlan::Kind::All:
       return MatchAll(segment, sub_ctx);
     case GeoPlan::Kind::AllButCentre:
@@ -392,7 +404,7 @@ QueryBuilder::ptr GeoDistanceFilter::PrepareSegment(
     case GeoPlan::Kind::Empty:
     case GeoPlan::Kind::Cells:
       return MakeQuery(segment, sub_ctx, field_id(), sub_ctx.boost, options(),
-                       plan);
+                       *plan);
   }
   SDB_ASSERT(false);
   return QueryBuilder::Empty();

@@ -31,7 +31,6 @@
 #include "iresearch/search/detail/geo_parsers.hpp"
 #include "iresearch/search/filters/geo_filter.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
-#include "iresearch/utils/log.hpp"
 
 namespace irs {
 
@@ -41,18 +40,11 @@ class GeoVerifier {
   GeoVerifier(const ColumnReader& stored_field, const ColReader& col_reader,
               Parser& parser, Acceptor& acceptor)
     : _cursor{col_reader, stored_field}, _acceptor{acceptor}, _parser{parser} {
-    if constexpr (std::is_same_v<std::decay_t<Parser>, S2PointParser>) {
-      _shape.reset(S2Point{1, 0, 0});
-    }
+    SeedShape(_parser, _shape);
   }
 
   bool Check(doc_id_t doc) {
-    const auto bytes = _cursor.FetchDoc(doc);
-    if (bytes.empty()) {
-      SDB_DEBUG(IRESEARCH, "Missing stored geo value, doc='", doc, "'");
-      return false;
-    }
-    return _parser(bytes, _shape) && _acceptor(_shape);
+    return MatchShape(_parser, _cursor.FetchDoc(doc), _shape, _acceptor);
   }
 
  private:

@@ -183,7 +183,8 @@ Read a sibling `.test` in the same directory first and match its style.
 - `connection <name>` applies to the next record only; repeat it before every record that needs that connection.
 - Retries: `statement ok retry 10 backoff 200ms`, `query ok retry 10 backoff 200ms`.
 - Results must not depend on execution order: `ORDER BY` every multi-row result and round floating-point aggregates.
-- Each file gets its own database, but secrets, ATTACH aliases, roles and databases are server-global, and both wire engines run against one server: name them after the test file, guard with `DROP ... IF EXISTS`, and build ATTACH paths as `${__TEST_DIR__}/${__RUN_ID__}_<name>`.
+- Each file runs in its own database, created per run under a unique name (`${__DATABASE__}`), but secrets, ATTACH aliases, roles, servers and databases are server-global, and other files and the other wire engine run against the same server at the same time: suffix their names with the database, `<name>_${__DATABASE__}`, and name attached files the same way, `${__TEST_DIR__}/<name>_${__DATABASE__}.db` (DuckDB names an attached database after the file's basename).
+- Server-wide listings (`duckdb_tables()`, `duckdb_databases()`, `pg_database`, ...) also show other files' objects: filter them, e.g. `WHERE database_name = current_database()`.
 - Files go under `${__TEST_DIR__}`, never a literal `/tmp` (pre-commit `check-no-tmp-in-sqllogic`). Any `${...}` needs `control substitution on` before its first use (pre-commit `check-substitution-directive`).
 - Outside `recovery/`, every file shares one suite server: a `SET GLOBAL` must not change another test's result and is undone with `RESET GLOBAL` at the end of the file. A test that needs more goes under `recovery/`.
 

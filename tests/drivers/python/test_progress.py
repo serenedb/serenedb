@@ -6,13 +6,6 @@ Matrix: protocol (simple via psycopg2 / extended via psycopg3) x direction
 json / parquet -- parquet is file-only). Every case asserts an IN-FLIGHT row
 (command, type, relid) in the progress view while the statement runs, and
 that the row is gone once it finishes.
-
-Two pacing modes:
-- failpoint (preferred, deterministic): the statement parks on its failpoint
-  after the first reported chunk, the observer reads the view, then releases.
-  Used when the server build has SDB_FAULT_INJECTION (SET sdb_faults works).
-- poll (fallback for faultless builds): larger dataset, observer polls until
-  the in-flight row appears.
 """
 
 from __future__ import annotations
@@ -34,6 +27,7 @@ FILE_PREFIX = f"/tmp/pgsp_{RUN}"
 
 FAULT_ROWS = 20_000
 POLL_ROWS = 400_000
+GATE_TIMEOUT = 60.0
 
 COPY_FROM_FAULT = "pause_copy_from_mid_stream"
 COPY_TO_FAULT = "pause_copy_to_mid_stream"
@@ -55,15 +49,28 @@ class Psycopg3Driver:
         with self.connect() as c:
             c.execute(sql)
 
-    def copy_in(self, sql: str, payload: bytes) -> None:
+    def copy_in(self, sql: str, payload: bytes,
+                gate: threading.Event | None = None) -> None:
         with self.connect() as c, c.cursor() as cur:
             with cur.copy(sql) as cp:
-                cp.write(payload)
+                if gate is None:
+                    cp.write(payload)
+                    return
+                half = len(payload) // 2
+                cp.write(payload[:half])
+                gate.wait(GATE_TIMEOUT)
+                cp.write(payload[half:])
 
-    def copy_out(self, sql: str) -> bytes:
+    def copy_out(self, sql: str, gate: threading.Event | None = None) -> bytes:
         with self.connect() as c, c.cursor() as cur:
             with cur.copy(sql) as cp:
-                return b"".join(bytes(block) for block in cp)
+                blocks = []
+                for block in cp:
+                    blocks.append(bytes(block))
+                    if gate is not None:
+                        gate.wait(GATE_TIMEOUT)
+                        gate = None
+                return b"".join(blocks)
 
 
 class Psycopg2Driver:
@@ -87,23 +94,52 @@ class Psycopg2Driver:
         finally:
             c.close()
 
-    def copy_in(self, sql: str, payload: bytes) -> None:
+    def copy_in(self, sql: str, payload: bytes,
+                gate: threading.Event | None = None) -> None:
         c = self.connect()
         try:
             with c.cursor() as cur:
-                cur.copy_expert(sql, io.BytesIO(payload))
+                cur.copy_expert(sql, GatedReader(payload, gate))
         finally:
             c.close()
 
-    def copy_out(self, sql: str) -> bytes:
+    def copy_out(self, sql: str, gate: threading.Event | None = None) -> bytes:
         c = self.connect()
         try:
-            sink = io.BytesIO()
+            sink = GatedSink(gate)
             with c.cursor() as cur:
                 cur.copy_expert(sql, sink)
             return sink.getvalue()
         finally:
             c.close()
+
+
+class GatedReader(io.BytesIO):
+    def __init__(self, payload: bytes, gate: threading.Event | None):
+        super().__init__(payload)
+        self._gate = gate
+        self._half = len(payload) // 2
+
+    def read(self, size: int | None = -1) -> bytes:
+        if self._gate is not None and self.tell() >= self._half:
+            self._gate.wait(GATE_TIMEOUT)
+            self._gate = None
+        if size is None or size < 0 or self._gate is None:
+            return super().read(size)
+        return super().read(min(size, self._half - self.tell()))
+
+
+class GatedSink(io.BytesIO):
+    def __init__(self, gate: threading.Event | None):
+        super().__init__()
+        self._gate = gate
+
+    def write(self, data) -> int:
+        written = super().write(data)
+        if self._gate is not None:
+            self._gate.wait(GATE_TIMEOUT)
+            self._gate = None
+        return written
 
 
 DRIVERS = [Psycopg3Driver(), Psycopg2Driver()]
@@ -170,8 +206,19 @@ def relid_of(obs, table: str) -> int:
         f"SELECT '{table}'::regclass::oid").fetchone()[0]
 
 
+def requires_faults(faults: bool) -> None:
+    if not faults:
+        pytest.skip("nothing holds the statement open without "
+                    "SDB_FAULT_INJECTION")
+
+
+def client_gate(faults: bool) -> threading.Event | None:
+    return None if faults else threading.Event()
+
+
 def assert_inflight(obs, *, fault_name: str, use_fault: bool, run,
                     view_sql: str, expect: tuple, empty_sql: str,
+                    gate: threading.Event | None = None,
                     timeout: float = 60.0):
     errors: list[BaseException] = []
 
@@ -186,14 +233,18 @@ def assert_inflight(obs, *, fault_name: str, use_fault: bool, run,
         thread.start()
         row = None
         deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            got = obs.execute(view_sql).fetchall()
-            if got:
-                row = got[0]
-                break
-            if not thread.is_alive() and not use_fault:
-                break
-            time.sleep(0.02)
+        try:
+            while time.monotonic() < deadline:
+                got = obs.execute(view_sql).fetchall()
+                if got:
+                    row = got[0]
+                    break
+                if not thread.is_alive() and not use_fault:
+                    break
+                time.sleep(0.02)
+        finally:
+            if gate is not None:
+                gate.set()
     thread.join(timeout=timeout)
     assert not thread.is_alive(), "statement did not finish after release"
     assert not errors, f"statement failed: {errors[0]}"
@@ -221,6 +272,9 @@ TO_CASES = [
 @pytest.mark.parametrize("channel,fmt", FROM_CASES,
                          ids=[f"{c}-{f}" for c, f in FROM_CASES])
 def test_copy_from_progress(obs, faults, src, payloads, driver, channel, fmt):
+    if channel == "file" or fmt in ("csv", "json"):
+        requires_faults(faults)
+    gate = client_gate(faults)
     dst = f"pgsp_dst_{uuid.uuid4().hex[:10]}"
     obs.execute(f"CREATE TABLE {dst}(x BIGINT, label TEXT)")
     try:
@@ -231,11 +285,12 @@ def test_copy_from_progress(obs, faults, src, payloads, driver, channel, fmt):
         else:
             payload = payloads[fmt]
             run = lambda: driver.copy_in(
-                f"COPY {dst} FROM STDIN (FORMAT {fmt})", payload)
+                f"COPY {dst} FROM STDIN (FORMAT {fmt})", payload, gate)
             expected_type = "PIPE"
         relid = relid_of(obs, dst)
         assert_inflight(
             obs, fault_name=COPY_FROM_FAULT, use_fault=faults, run=run,
+            gate=gate,
             view_sql=(
                 f"SELECT command, \"type\" FROM pg_stat_progress_copy "
                 f"WHERE relid = {relid} AND tuples_processed > 0"),
@@ -254,18 +309,20 @@ def test_copy_from_progress(obs, faults, src, payloads, driver, channel, fmt):
 @pytest.mark.parametrize("channel,fmt", TO_CASES,
                          ids=[f"{c}-{f}" for c, f in TO_CASES])
 def test_copy_to_progress(obs, faults, src, driver, channel, fmt):
+    gate = client_gate(faults)
     if channel == "file":
+        requires_faults(faults)
         out = f"{FILE_PREFIX}_out_{uuid.uuid4().hex[:8]}.{fmt}"
         run = lambda: driver.execute(
             f"COPY {src} TO '{out}' (FORMAT {fmt})")
         expected_type = "FILE"
     else:
         run = lambda: driver.copy_out(
-            f"COPY {src} TO STDOUT (FORMAT {fmt})")
+            f"COPY {src} TO STDOUT (FORMAT {fmt})", gate)
         expected_type = "PIPE"
     relid = relid_of(obs, src)
     assert_inflight(
-        obs, fault_name=COPY_TO_FAULT, use_fault=faults, run=run,
+        obs, fault_name=COPY_TO_FAULT, use_fault=faults, run=run, gate=gate,
         view_sql=(
             f"SELECT command, \"type\" FROM pg_stat_progress_copy "
             f"WHERE relid = {relid} AND tuples_processed > 0"),
@@ -277,10 +334,11 @@ def test_copy_to_progress(obs, faults, src, driver, channel, fmt):
 
 @pytest.mark.parametrize("driver", DRIVERS, ids=lambda d: d.name)
 def test_copy_to_query_form_relid_zero(obs, faults, src, driver):
+    gate = client_gate(faults)
     run = lambda: driver.copy_out(
-        f"COPY (SELECT * FROM {src}) TO STDOUT (FORMAT csv)")
+        f"COPY (SELECT * FROM {src}) TO STDOUT (FORMAT csv)", gate)
     assert_inflight(
-        obs, fault_name=COPY_TO_FAULT, use_fault=faults, run=run,
+        obs, fault_name=COPY_TO_FAULT, use_fault=faults, run=run, gate=gate,
         view_sql=(
             "SELECT command, relid FROM pg_stat_progress_copy "
             "WHERE tuples_processed > 0"),
@@ -290,6 +348,7 @@ def test_copy_to_query_form_relid_zero(obs, faults, src, driver):
 
 @pytest.mark.parametrize("driver", DRIVERS, ids=lambda d: d.name)
 def test_create_table_as_progress(obs, faults, src, driver):
+    requires_faults(faults)
     dst = f"pgsp_ctas_{uuid.uuid4().hex[:10]}"
     try:
         run = lambda: driver.execute(
@@ -311,6 +370,7 @@ def test_create_table_as_progress(obs, faults, src, driver):
 
 @pytest.mark.parametrize("driver", DRIVERS, ids=lambda d: d.name)
 def test_create_index_progress(obs, faults, src, driver):
+    requires_faults(faults)
     idx = f"pgsp_idx_{uuid.uuid4().hex[:10]}"
     relid = relid_of(obs, src)
     try:
@@ -379,9 +439,7 @@ def va_schema(obs, faults) -> str:
 
 @pytest.mark.parametrize("driver", DRIVERS, ids=lambda d: d.name)
 def test_recompute_stats_progress(obs, faults, va_schema, driver):
-    if not faults:
-        pytest.skip("recomputing statistics of a test-sized table ends before "
-                    "the observer can poll it; needs SDB_FAULT_INJECTION")
+    requires_faults(faults)
     table = f"{va_schema}.t0"
     relid = relid_of(obs, table)
     obs.execute(
@@ -399,6 +457,7 @@ def test_recompute_stats_progress(obs, faults, va_schema, driver):
 
 @pytest.mark.parametrize("driver", DRIVERS, ids=lambda d: d.name)
 def test_vacuum_progress(obs, faults, va_schema, driver):
+    requires_faults(faults)
     for i in range(VA_TABLES):
         obs.execute(
             f"INSERT INTO {va_schema}.t{i} "
@@ -457,6 +516,7 @@ def assert_cancelled(obs, *, fault_name: str, use_fault: bool, run,
 
 @pytest.mark.parametrize("driver", DRIVERS, ids=lambda d: d.name)
 def test_cancel_copy_from(obs, faults, src, driver):
+    requires_faults(faults)
     dst = f"pgsp_c_dst_{uuid.uuid4().hex[:10]}"
     obs.execute(f"CREATE TABLE {dst}(x BIGINT, label TEXT)")
     try:
@@ -479,6 +539,7 @@ def test_cancel_copy_from(obs, faults, src, driver):
 
 @pytest.mark.parametrize("driver", DRIVERS, ids=lambda d: d.name)
 def test_cancel_copy_to(obs, faults, src, driver):
+    requires_faults(faults)
     relid = relid_of(obs, src)
     out = f"{FILE_PREFIX}_cancel_{uuid.uuid4().hex[:8]}.csv"
     assert_cancelled(
@@ -494,6 +555,7 @@ def test_cancel_copy_to(obs, faults, src, driver):
 
 @pytest.mark.parametrize("driver", DRIVERS, ids=lambda d: d.name)
 def test_cancel_ctas(obs, faults, src, driver):
+    requires_faults(faults)
     dst = f"pgsp_c_ctas_{uuid.uuid4().hex[:10]}"
     assert_cancelled(
         obs, fault_name=CTAS_FAULT, use_fault=faults,
@@ -510,6 +572,7 @@ def test_cancel_ctas(obs, faults, src, driver):
 
 @pytest.mark.parametrize("driver", DRIVERS, ids=lambda d: d.name)
 def test_cancel_create_index(obs, faults, src, driver):
+    requires_faults(faults)
     idx = f"pgsp_c_idx_{uuid.uuid4().hex[:10]}"
     relid = relid_of(obs, src)
     try:
@@ -532,9 +595,7 @@ def test_cancel_create_index(obs, faults, src, driver):
 
 @pytest.mark.parametrize("driver", DRIVERS, ids=lambda d: d.name)
 def test_cancel_recompute_stats(obs, faults, va_schema, driver):
-    if not faults:
-        pytest.skip("recomputing statistics of test-sized tables ends before "
-                    "the observer can poll it; needs SDB_FAULT_INJECTION")
+    requires_faults(faults)
     for i in range(VA_TABLES):
         obs.execute(
             f"INSERT INTO {va_schema}.t{i} "
@@ -551,6 +612,7 @@ def test_cancel_recompute_stats(obs, faults, va_schema, driver):
 
 @pytest.mark.parametrize("driver", DRIVERS, ids=lambda d: d.name)
 def test_cancel_compact(obs, faults, va_schema, driver):
+    requires_faults(faults)
     for i in range(VA_TABLES):
         obs.execute(
             f"INSERT INTO {va_schema}.t{i} "

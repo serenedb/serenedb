@@ -28,7 +28,7 @@ System tables often contain many low-level details. For more accessible and frie
 | pg_amop                     | 🟡            | Stores information about operators associated with access methods. |
 | pg_amproc                   | 🟡            | Contains information about support procedures associated with access methods. |
 | pg_attrdef                  | 🟢            | Stores column default values. |
-| pg_attribute                | 🟢            | Contains information about table columns. |
+| pg_attribute                | 🟢            | Contains information about the columns of tables, views and composite types. |
 | pg_authid                   | 🟢            | Stores information about database roles. |
 | pg_auth_members             | 🟢            | Tracks role memberships. |
 | pg_cast                     | 🟡            | Contains information about type casts. |

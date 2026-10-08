@@ -177,6 +177,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
   std::vector<std::pair<duckdb::idx_t, const duckdb::TableCatalogEntry*>>
     tables;
   irs::containers::FlatHashSet<duckdb::idx_t> generated_pk_sequences;
+  std::vector<std::pair<size_t, duckdb::ViewCatalogEntry*>> views;
 
   VisitSchemas(context, database, [&](duckdb::SchemaCatalogEntry& schema_ref) {
     schema_ref.Scan(
@@ -233,8 +234,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
           values.emplace_back(std::move(row));
           return;
         }
-        const auto* view_entry =
-          dynamic_cast<const duckdb::ViewCatalogEntry*>(&entry);
+        auto* view_entry = dynamic_cast<duckdb::ViewCatalogEntry*>(&entry);
         if (!view_entry) {
           return;
         }
@@ -245,9 +245,15 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
                       view_entry->permissions.owner);
         row.relkind = PgClass::Relkind::View;
         row.relacl = {view_entry->permissions.acl};
+        views.emplace_back(values.size(), view_entry);
         values.emplace_back(std::move(row));
       });
   });
+
+  for (const auto& [row, view] : views) {
+    values[row].relnatts =
+      static_cast<int16_t>(GetViewColumns(context, *view).names.size());
+  }
 
   for (const auto& [entry, host_id] : indexes) {
     const auto owner = relation_owners.find(host_id);

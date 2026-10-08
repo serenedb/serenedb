@@ -23,10 +23,17 @@
 
 #include <unistd.h>
 
+#include <cstdio>
 #include <cstdlib>
+
+#include "iresearch/utils/log.hpp"
 
 namespace irs {
 
-[[noreturn]] void FatalErrorExit() noexcept { std::exit(EXIT_FAILURE); }
+[[noreturn]] void FatalErrorExit() noexcept {
+  log::Flush();
+  std::fflush(nullptr);
+  std::_Exit(EXIT_FAILURE);
+}
 
 }  // namespace irs

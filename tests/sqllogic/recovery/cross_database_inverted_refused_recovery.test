@@ -1,0 +1,117 @@
+control substitution on
+
+statement ok
+CREATE DATABASE cdir_other;
+
+
+statement ok
+CREATE TABLE cdir_local (id INTEGER PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE INDEX cdir_local_idx ON cdir_local USING inverted (body);
+
+
+statement ok
+CREATE TABLE cdir_other.public.cdir_remote (id INTEGER PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE INDEX cdir_remote_idx ON cdir_other.public.cdir_remote USING inverted (body);
+
+
+statement ok
+INSERT INTO cdir_local VALUES (1, 'base'), (2, 'base');
+
+
+statement ok
+INSERT INTO cdir_other.public.cdir_remote VALUES (1, 'base');
+
+
+connection t1
+statement ok
+BEGIN;
+
+
+connection t1
+statement ok
+DELETE FROM cdir_local WHERE id = 1;
+
+
+connection t1
+statement ok
+INSERT INTO cdir_local VALUES (10, 'refused');
+
+
+connection t1
+statement ok
+INSERT INTO cdir_other.public.cdir_remote VALUES (10, 'refused');
+
+
+connection t2
+statement ok
+ALTER TABLE cdir_local ADD COLUMN c INTEGER;
+
+
+connection t1
+statement error altered
+COMMIT;
+
+
+connection t2
+statement ok
+VACUUM (REFRESH_TABLE) cdir_local;
+
+
+connection t2
+statement ok
+VACUUM (REFRESH_TABLE) cdir_other.public.cdir_remote;
+
+
+connection t2
+query
+SELECT (SELECT count(*) FROM cdir_local_idx WHERE body @@ 'refused') AS l, (SELECT count(*) FROM cdir_other.public.cdir_remote_idx WHERE body @@ 'refused') AS r, (SELECT count(*) FROM cdir_local_idx WHERE body @@ 'base') AS lb;
+----
+l	r	lb
+0	0	2
+
+
+connection t2
+statement ok
+INSERT INTO cdir_other.public.cdir_remote VALUES (20, 'after');
+
+
+connection t2
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection t2
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) cdir_local;
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) cdir_other.public.cdir_remote;
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM cdir_local) AS lt, (SELECT count(*) FROM cdir_local_idx) AS li, (SELECT count(*) FROM cdir_other.public.cdir_remote) AS rt, (SELECT count(*) FROM cdir_other.public.cdir_remote_idx) AS ri;
+----
+lt	li	rt	ri
+2	2	2	2
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM cdir_local_idx WHERE body @@ 'refused') AS l, (SELECT count(*) FROM cdir_other.public.cdir_remote_idx WHERE body @@ 'refused') AS r;
+----
+l	r
+0	0

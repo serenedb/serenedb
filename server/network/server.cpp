@@ -22,6 +22,8 @@
 
 #include <absl/flags/declare.h>
 #include <absl/flags/flag.h>
+#include <absl/strings/ascii.h>
+#include <absl/strings/str_split.h>
 #include <absl/time/time.h>
 
 #include <algorithm>
@@ -38,11 +40,8 @@
 #include "catalog/entry/role.h"
 #include "network/connection.h"
 #include "network/credentials.h"
-#include "network/http/es/handlers.h"
-#include "network/http/mcp/handlers.h"
-#include "network/http/otel/handlers.h"
 #include "network/http/otel/schema.h"
-#include "network/http/test/handlers.h"
+#include "network/http/routes.h"
 #include "network/pg/hba.h"
 #include "network/socket.h"
 #include "network/tls_context.h"
@@ -141,7 +140,7 @@ class CatalogCredentialProvider final : public network::CredentialProvider {
     if (auto verifier = network::ParseScramVerifier(stored)) {
       credential.scram = std::move(*verifier);
     } else if (network::IsMd5Verifier(stored)) {
-      credential.md5 = std::string{stored};
+      credential.md5.emplace(stored);
     } else {
       return std::nullopt;
     }
@@ -253,22 +252,7 @@ asio_ns::ssl::context* Server::BuildTls(const network::ListenSpec& spec) {
 
 network::HttpRouter& Server::BuildRouter(const network::ListenSpec& spec) {
   network::HttpRouter& router = _routers.emplace_back();
-  for (const auto api : spec.apis) {
-    switch (api) {
-      case network::HttpApi::Es:
-        network::http::es::Register(router);
-        break;
-      case network::HttpApi::Test:
-        network::http::test::Register(router);
-        break;
-      case network::HttpApi::Mcp:
-        network::http::mcp::Register(router);
-        break;
-      case network::HttpApi::Otel:
-        otel::RegisterHandlers(router);
-        break;
-    }
-  }
+  network::http::AddRoutes(router, spec.apis);
   return router;
 }
 
@@ -315,6 +299,7 @@ void Server::AddUnixListener(const network::ListenSpec& spec) {
     deps.max_connections = spec.max_connections.value_or(_max_connections);
     deps.cors_origins = _cors_origins;
     deps.database = spec.database;
+    deps.schema = spec.schema;
     deps.proxy = spec.proxy;
     acceptor = std::make_shared<
       network::Acceptor<network::HttpSession<network::SocketKind::Unix>>>(
@@ -382,6 +367,7 @@ void Server::AddListener(const network::ListenSpec& spec) {
     deps.max_connections = spec.max_connections.value_or(_max_connections);
     deps.cors_origins = _cors_origins;
     deps.database = spec.database;
+    deps.schema = spec.schema;
     deps.proxy = spec.proxy;
     if (ssl != nullptr) {
       acceptor = std::make_shared<
@@ -433,7 +419,13 @@ void Server::StartListeners() {
                                         ? irs::StaticStrings::kDefaultDatabase
                                         : spec.database;
     if (absl::c_linear_search(spec.apis, network::HttpApi::Otel)) {
-      otel::EnsureSchema(database);
+      const std::string_view schema =
+        spec.schema.empty() ? std::string_view{"public"} : spec.schema;
+      if (const auto status = otel::EnsureSchema(database, schema);
+          !status.ok()) {
+        SDB_FATAL(GENERAL, "endpoint '", spec.url,
+                  "': OpenTelemetry schema: ", status.message());
+      }
     }
     if (!catalog::FindDatabase(database)) {
       SDB_FATAL(GENERAL, "endpoint '", spec.url, "': database '", database,

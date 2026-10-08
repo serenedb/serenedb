@@ -20,12 +20,15 @@
 
 #include "search/search_db_wal.h"
 
+#include <absl/cleanup/cleanup.h>
+#include <absl/crc/crc32c.h>
+#include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
-#include <zstd.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
-#include <duckdb/common/checksum.hpp>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
@@ -36,44 +39,53 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/serialization.hpp>
-#include <iresearch/utils/zstd_context.hpp>
+#include <iresearch/utils/serializer.hpp>
 #include <limits>
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <unordered_set>
 #include <utility>
 #include <vector>
+
+#include "catalog/database_directory.h"
 
 namespace sdb::search {
 namespace {
 
-constexpr uint8_t kKindInline = 0;
-constexpr uint8_t kKindReference = 1;
-constexpr uint8_t kKindDelete = 2;
-constexpr uint8_t kKindTruncate = 3;
+constexpr size_t kFrameSizeOffset = 0;
+constexpr size_t kFrameCrcOffset = kFrameSizeOffset + sizeof(uint64_t);
+constexpr size_t kFrameTickOffset = kFrameCrcOffset + sizeof(uint32_t);
+constexpr size_t kFrameHeaderSize = kFrameTickOffset + sizeof(uint64_t);
+constexpr std::array<uint8_t, kFrameHeaderSize> kEmptyFrameHeader{};
 
-constexpr uint8_t kChunkCodecNone = 0;
-constexpr uint8_t kChunkCodecZstd = 1;
-constexpr int kZstdLevel = 1;
+constexpr duckdb::field_id_t kBodySections = 0;
 
-constexpr std::string_view kSegSuffix = ".swal";
-constexpr std::string_view kChunkSuffix = ".swchunk";
+constexpr duckdb::field_id_t kSectionTableId = 0;
+constexpr duckdb::field_id_t kSectionOps = 1;
 
-constexpr duckdb::FileOpenFlags kAppendFlags =
-  duckdb::FileFlags::FILE_FLAGS_WRITE |
-  duckdb::FileFlags::FILE_FLAGS_FILE_CREATE |
-  duckdb::FileFlags::FILE_FLAGS_APPEND |
-  duckdb::FileFlags::FILE_FLAGS_MULTI_CLIENT_ACCESS;
+constexpr duckdb::field_id_t kOpKind = 0;
+constexpr duckdb::field_id_t kOpSegments = 3;
+constexpr duckdb::field_id_t kOpRows = 5;
+constexpr duckdb::field_id_t kOpDeleteRows = 6;
+
+constexpr duckdb::field_id_t kRowsSlices = 0;
+
+constexpr duckdb::field_id_t kSliceBase = 0;
+constexpr duckdb::field_id_t kSliceChunk = 1;
+
+constexpr std::string_view kSegPrefix = "search.wal.";
+
+constexpr duckdb::idx_t kAppendFlags =
+  duckdb::FileOpenFlags::FILE_FLAGS_WRITE |
+  duckdb::FileOpenFlags::FILE_FLAGS_FILE_CREATE |
+  duckdb::FileOpenFlags::FILE_FLAGS_APPEND |
+  duckdb::FileOpenFlags::FILE_FLAGS_MULTI_CLIENT_ACCESS;
 
 // PostgreSQL-style fixed-width 16-hex names: lexicographic order == numeric.
 std::string SegmentName(uint64_t first_tick) {
-  return absl::StrFormat("%016x%s", first_tick, kSegSuffix);
-}
-std::string ChunkName(uint64_t seg_id) {
-  return absl::StrFormat("%016x%s", seg_id, kChunkSuffix);
+  return absl::StrFormat("%s%016x", kSegPrefix, first_tick);
 }
 
 bool ParseHex(std::string_view s, uint64_t& out) {
@@ -97,12 +109,9 @@ bool ParseHex(std::string_view s, uint64_t& out) {
   return true;
 }
 
-// "<016x>.swal" -> first_tick; "<016x>.swchunk" -> seg_id.
-bool ParseName(std::string_view name, std::string_view suffix, uint64_t& out) {
-  if (name.size() <= suffix.size() || !name.ends_with(suffix)) {
-    return false;
-  }
-  return ParseHex(name.substr(0, name.size() - suffix.size()), out);
+bool ParseName(std::string_view name, uint64_t& out) {
+  return name.starts_with(kSegPrefix) &&
+         ParseHex(name.substr(kSegPrefix.size()), out);
 }
 
 // Central segments under `wal_dir`, sorted by first_tick (== tick order).
@@ -118,302 +127,233 @@ std::vector<std::pair<uint64_t, std::filesystem::path>> EnumerateSegments(
       continue;
     }
     uint64_t first_tick = 0;
-    if (ParseName(entry.path().filename().string(), kSegSuffix, first_tick)) {
+    if (ParseName(entry.path().filename().string(), first_tick)) {
       out.emplace_back(first_tick, entry.path());
     }
   }
-  std::sort(out.begin(), out.end(),
-            [](const auto& a, const auto& b) { return a.first < b.first; });
+  absl::c_sort(out,
+               [](const auto& a, const auto& b) { return a.first < b.first; });
   return out;
 }
 
-// Max seg_id among one shard's chunk dir (non-recursive).
-uint64_t MaxChunkSegId(const std::filesystem::path& chunk_dir) {
-  uint64_t mx = 0;
-  std::error_code ec;
-  if (!std::filesystem::exists(chunk_dir, ec)) {
-    return 0;
-  }
-  for (const auto& entry : std::filesystem::directory_iterator(chunk_dir, ec)) {
-    if (ec || !entry.is_regular_file(ec)) {
-      continue;
-    }
-    uint64_t seg_id = 0;
-    if (ParseName(entry.path().filename().string(), kChunkSuffix, seg_id)) {
-      mx = std::max(mx, seg_id);
-    }
-  }
-  return mx;
+// Serialise bands [first_band, last_band) of `cdc` as an object holding the
+// list of slices, each its rowid base and its rows chunk-major. Chunk at a
+// time, so nothing materialises the collection as Values the way
+// ColumnDataCollection::Serialize would.
+void EncodeRows(duckdb::MemoryStream& out,
+                const duckdb::ColumnDataCollection& cdc,
+                std::span<const SearchDbWal::InlinePk> bands, size_t first_band,
+                size_t last_band) {
+  duckdb::idx_t slices = 0;
+  VisitInlineSegments(cdc, bands, first_band, last_band,
+                      [&](duckdb::DataChunk&, uint64_t) { ++slices; });
+  duckdb::BinarySerializer serializer{out};
+  serializer.Begin();
+  serializer.OnPropertyBegin(kRowsSlices, "slices");
+  serializer.OnListBegin(slices);
+  VisitInlineSegments(
+    cdc, bands, first_band, last_band,
+    [&](duckdb::DataChunk& chunk, uint64_t base) {
+      serializer.OnObjectBegin();
+      serializer.WriteProperty<uint64_t>(kSliceBase, "base", base);
+      serializer.WriteObject(
+        kSliceChunk, "chunk",
+        [&](duckdb::BinarySerializer& obj) { chunk.Serialize(obj); });
+      serializer.OnObjectEnd();
+    });
+  serializer.OnListEnd();
+  serializer.OnPropertyEnd();
+  serializer.End();
 }
 
-// Read one [u64 size][u64 checksum][payload] frame into `payload`. Returns
-// false at EOF or on a torn/corrupt tail -- the caller stops the segment there.
-bool ReadFrame(duckdb::BufferedFileReader& reader,
-               std::vector<uint8_t>& payload) {
-  if (reader.FileSize() - reader.CurrentOffset() < 2 * sizeof(uint64_t)) {
+absl::crc32c_t TickCrc(uint64_t tick) {
+  return absl::ComputeCrc32c(
+    std::string_view{reinterpret_cast<const char*>(&tick), sizeof(tick)});
+}
+
+// Read one [u64 size][u32 crc32c][u64 tick][body] frame. Returns false at EOF
+// or on a torn/corrupt tail -- the caller stops the segment there.
+bool ReadFrame(duckdb::BufferedFileReader& reader, uint64_t& tick,
+               std::vector<uint8_t>& body) {
+  if (reader.FileSize() - reader.CurrentOffset() < kFrameHeaderSize) {
     return false;
   }
-  auto size = reader.Read<uint64_t>();
-  auto checksum = reader.Read<uint64_t>();
+  const auto size = reader.Read<uint64_t>();
+  const auto crc = reader.Read<uint32_t>();
+  tick = reader.Read<uint64_t>();
   if (reader.FileSize() - reader.CurrentOffset() < size) {
     return false;
   }
-  payload.resize(size);
-  reader.ReadData(payload.data(), size);
-  return duckdb::Checksum(payload.data(), size) == checksum;
+  body.resize(size);
+  reader.ReadData(body.data(), size);
+  const auto actual = absl::ExtendCrc32c(
+    TickCrc(tick),
+    std::string_view{reinterpret_cast<const char*>(body.data()), size});
+  return static_cast<uint32_t>(actual) == crc;
 }
 
-// Forward cursor over a record payload (mixed fixed fields + length-prefixed
-// blobs). Bounds-checked via SDB_ASSERT (payloads are checksum-verified).
-struct Cursor {
-  const uint8_t* p;
-  const uint8_t* end;
-  explicit Cursor(const std::vector<uint8_t>& buf)
-    : p(buf.data()), end(buf.data() + buf.size()) {}
-  template<typename T>
-  T Read() {
-    SDB_ASSERT(p + sizeof(T) <= end);
-    T v;
-    std::memcpy(&v, p, sizeof(T));
-    p += sizeof(T);
-    return v;
-  }
-  const uint8_t* ReadBlob(uint64_t len) {
-    SDB_ASSERT(p + len <= end);
-    const uint8_t* b = p;
-    p += len;
-    return b;
-  }
-  bool AtEnd() const { return p >= end; }
-};
-
-// One parsed shard-section header
-struct SectionHeader {
-  uint64_t table_id;
-};
-SectionHeader ReadSectionHeader(Cursor& c) {
-  SectionHeader h;
-  h.table_id = c.Read<uint64_t>();
-  return h;
+[[noreturn]] void ThrowUnreadable(const std::filesystem::path& path,
+                                  std::string_view reason) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                  ERR_MSG("search WAL segment '", path.string(),
+                          "' cannot be read: ", reason));
 }
 
+std::span<const uint8_t> ViewBytes(duckdb::MemoryStream& stream, uint64_t size,
+                                   const std::filesystem::path& path) {
+  const auto position = stream.GetPosition();
+  if (size > stream.GetCapacity() - position) {
+    ThrowUnreadable(path, "a length runs past the end of the record");
+  }
+  stream.SetPosition(position + size);
+  return {stream.GetData() + position, size};
+}
+
+// Scratch reused across every record of a sweep, so parsing a WAL allocates
+// once rather than per section.
+struct ParseScratch {
+  std::vector<SearchDbWal::SegmentRef> segments;
+  std::vector<int64_t> delete_rows;
+};
+
+// One parsed op. Ops are stored in issue order, so walking them in order is
+// the ordering -- nothing else has to be reconstructed.
 struct ParsedOp {
-  uint8_t kind = 0;
-  // INLINE
-  uint32_t seg_count = 0;  // # of (u64 base, u64 count) InlinePk pairs
-  const uint8_t* pk_blob = nullptr;  // seg_count * 2 * u64, packed
-  const uint8_t* inline_blob = nullptr;
-  uint64_t inline_blob_len = 0;
-  // REFERENCE (into seg_scratch -- alignment-safe)
-  std::span<const uint64_t> seg_ids;
-  // DELETE (views into the payload, into pk_scratch)
-  std::span<const std::string_view> delete_pks;
+  SearchDbWal::Op::Kind kind = SearchDbWal::Op::Kind::kRows;
+  // kRows: a view into the payload, an object holding the slices.
+  std::span<const uint8_t> rows;
+  // kDelete: into scratch.delete_rows.
+  std::span<const int64_t> delete_rows;
+  // kSegments: into scratch.segments, which owns its strings.
+  std::span<const SearchDbWal::SegmentRef> segments;
 };
 
-ParsedOp ParseOp(Cursor& c, std::vector<uint64_t>& seg_scratch,
-                 std::vector<std::string_view>& pk_scratch) {
+ParsedOp ReadOp(duckdb::BinaryDeserializer& in, duckdb::MemoryStream& stream,
+                ParseScratch& scratch, const std::filesystem::path& path) {
   ParsedOp op;
-  op.kind = c.Read<uint8_t>();
+  const auto kind = in.ReadProperty<uint8_t>(kOpKind, "kind");
+  op.kind = static_cast<SearchDbWal::Op::Kind>(kind);
   switch (op.kind) {
-    case kKindInline:
-      op.seg_count = c.Read<uint32_t>();
-      op.pk_blob = c.ReadBlob(op.seg_count * 2 * sizeof(uint64_t));
-      op.inline_blob_len = c.Read<uint64_t>();
-      op.inline_blob = c.ReadBlob(op.inline_blob_len);
+    case SearchDbWal::Op::Kind::kRows:
+      in.OnPropertyBegin(kOpRows, "rows");
+      op.rows = ViewBytes(stream, in.ReadUnsignedInt64(), path);
+      in.OnPropertyEnd();
       break;
-    case kKindReference: {
-      const auto n = c.Read<uint32_t>();
-      seg_scratch.clear();
-      seg_scratch.reserve(n);
-      for (uint32_t k = 0; k < n; ++k) {
-        seg_scratch.emplace_back(c.Read<uint64_t>());
+    case SearchDbWal::Op::Kind::kDelete: {
+      in.OnPropertyBegin(kOpDeleteRows, "delete_rows");
+      const auto bytes = ViewBytes(stream, in.ReadUnsignedInt64(), path);
+      in.OnPropertyEnd();
+      if (bytes.size() % sizeof(int64_t) != 0) {
+        ThrowUnreadable(path, "delete rows are not a whole number of rowids");
       }
-      op.seg_ids = seg_scratch;
+      // Fixed width, written in host order; copied out since the payload
+      // gives no alignment.
+      scratch.delete_rows.resize(bytes.size() / sizeof(int64_t));
+      std::memcpy(scratch.delete_rows.data(), bytes.data(), bytes.size());
+      op.delete_rows = scratch.delete_rows;
       break;
     }
-    case kKindDelete: {
-      const auto n = c.Read<uint32_t>();
-      pk_scratch.clear();
-      pk_scratch.reserve(n);
-      for (uint32_t i = 0; i < n; ++i) {
-        const auto len = c.Read<uint32_t>();
-        const uint8_t* bytes = c.ReadBlob(len);
-        pk_scratch.emplace_back(reinterpret_cast<const char*>(bytes), len);
-      }
-      op.delete_pks = pk_scratch;
+    case SearchDbWal::Op::Kind::kTruncate:
       break;
-    }
-    case kKindTruncate:
-      break;  // bodyless
+    case SearchDbWal::Op::Kind::kSegments:
+      in.OnPropertyBegin(kOpSegments, "segments");
+      irs::utils::ReadTuple(in, scratch.segments);
+      in.OnPropertyEnd();
+      op.segments = scratch.segments;
+      break;
     default:
-      SDB_ENSURE(false,
-                 "unknown search WAL op kind: ", static_cast<int>(op.kind));
+      ThrowUnreadable(path,
+                      absl::StrCat("unknown op kind ", static_cast<int>(kind)));
   }
   return op;
 }
 
-template<typename OpHandler>
-void VisitSectionsOps(Cursor& c, std::vector<uint64_t>& seg_scratch,
-                      std::vector<std::string_view>& pk_scratch,
-                      const OpHandler& on_op) {
-  const auto shard_count = c.Read<uint32_t>();
-  for (uint32_t s = 0; s < shard_count; ++s) {
-    const auto h = ReadSectionHeader(c);
-    const auto op_count = c.Read<uint32_t>();
-    for (uint32_t o = 0; o < op_count; ++o) {
-      const ParsedOp op = ParseOp(c, seg_scratch, pk_scratch);
-      on_op(h.table_id, op);
-    }
+// Replays a kRows object: each slice's rowid base and chunk.
+template<typename RowHandler>
+void DecodeRows(std::span<const uint8_t> rows,
+                const std::filesystem::path& path, const RowHandler& on_rows) {
+  duckdb::MemoryStream stream{const_cast<uint8_t*>(rows.data()), rows.size()};
+  duckdb::BinaryDeserializer in{stream};
+  in.Begin();
+  in.ReadList(
+    kRowsSlices, "slices",
+    [&](duckdb::BinaryDeserializer::List& slices, duckdb::idx_t) {
+      slices.ReadObject([&](duckdb::BinaryDeserializer& slice) {
+        const auto base = slice.ReadProperty<uint64_t>(kSliceBase, "base");
+        duckdb::DataChunk chunk;
+        slice.ReadObject(
+          kSliceChunk, "chunk",
+          [&](duckdb::BinaryDeserializer& obj) { chunk.Deserialize(obj); });
+        on_rows(base, chunk);
+      });
+    });
+  in.End();
+  if (stream.GetPosition() != rows.size()) {
+    ThrowUnreadable(path, "unexpected bytes after the end of the rows");
   }
 }
 
-void ReplayChunkFile(
-  duckdb::FileSystem& fs, const std::string& chunk_path, ZSTD_DCtx* dctx,
-  const absl::AnyInvocable<void(duckdb::DataChunk&, uint64_t pk_base) const>&
-    emit) {
-  SDB_ASSERT(dctx);
-  duckdb::BufferedFileReader reader(fs, chunk_path.c_str());
-  std::vector<uint8_t> comp_buf;
-  std::vector<uint8_t> raw_buf;
-  constexpr uint64_t kChunkHdr =
-    sizeof(uint8_t) + 2 * sizeof(uint64_t) + sizeof(uint64_t);
-  while (reader.CurrentOffset() < reader.FileSize()) {
-    uint64_t remaining = reader.FileSize() - reader.CurrentOffset();
-    SDB_ENSURE(remaining >= kChunkHdr, "corrupt search chunk file '",
-               chunk_path, "': trailing ", remaining, " bytes < frame header");
-    auto codec = reader.Read<uint8_t>();
-    auto raw_len = reader.Read<uint64_t>();
-    auto comp_len = reader.Read<uint64_t>();
-    auto pk_base = reader.Read<uint64_t>();
-    SDB_ENSURE(reader.FileSize() - reader.CurrentOffset() >= comp_len,
-               "corrupt search chunk file '", chunk_path, "': frame of ",
-               comp_len, " bytes exceeds remaining file");
-    comp_buf.resize(comp_len);
-    reader.ReadData(comp_buf.data(), comp_len);
+template<typename OpHandler>
+void VisitRecord(uint64_t tick, std::span<const uint8_t> body_bytes,
+                 const std::filesystem::path& path, ParseScratch& scratch,
+                 const OpHandler& on_op) {
+  duckdb::MemoryStream body{const_cast<uint8_t*>(body_bytes.data()),
+                            body_bytes.size()};
+  duckdb::BinaryDeserializer body_in{body};
+  body_in.Begin();
+  body_in.ReadList(
+    kBodySections, "sections",
+    [&](duckdb::BinaryDeserializer::List& sections, duckdb::idx_t) {
+      sections.ReadObject([&](duckdb::BinaryDeserializer& section) {
+        const auto table_id =
+          section.ReadProperty<uint64_t>(kSectionTableId, "table_id");
+        section.ReadList(
+          kSectionOps, "ops",
+          [&](duckdb::BinaryDeserializer::List& ops, duckdb::idx_t) {
+            ops.ReadObject([&](duckdb::BinaryDeserializer& op) {
+              on_op(tick, table_id, ReadOp(op, body, scratch, path));
+            });
+          });
+      });
+    });
+  body_in.End();
+  if (body.GetPosition() != body_bytes.size()) {
+    ThrowUnreadable(path, "unexpected bytes after the end of the record body");
+  }
+}
 
-    uint8_t* src = nullptr;
-    uint64_t src_len = 0;
-    if (codec == kChunkCodecZstd) {
-      raw_buf.resize(raw_len);
-      const size_t got = ZSTD_decompressDCtx(dctx, raw_buf.data(), raw_len,
-                                             comp_buf.data(), comp_len);
-      SDB_ENSURE(!ZSTD_isError(got) && got == raw_len,
-                 "corrupt search chunk file '", chunk_path,
-                 "': zstd decompress failed (", raw_len, " expected)");
-      src = raw_buf.data();
-      src_len = raw_len;
-    } else {
-      SDB_ENSURE(codec == kChunkCodecNone && comp_len == raw_len,
-                 "corrupt search chunk file '", chunk_path, "': unknown codec ",
-                 codec);
-      src = comp_buf.data();
-      src_len = comp_len;
-    }
-    duckdb::MemoryStream ms(src, src_len);
-    duckdb::BinaryDeserializer cdeser{ms};
-    cdeser.Begin();
-    duckdb::DataChunk chunk;
-    chunk.Deserialize(cdeser);
-    cdeser.End();
-    emit(chunk, pk_base);
+void WriteOp(duckdb::BinarySerializer& out, const SearchDbWal::ShardSection& s,
+             const SearchDbWal::Op& op, duckdb::MemoryStream& data) {
+  out.WriteProperty<uint8_t>(kOpKind, "kind", static_cast<uint8_t>(op.kind));
+  switch (op.kind) {
+    case SearchDbWal::Op::Kind::kRows:
+      SDB_ASSERT(s.inline_data != nullptr);
+      data.Rewind();
+      EncodeRows(data, *s.inline_data, s.inline_pks, op.first_band,
+                 op.last_band);
+      out.WriteProperty(kOpRows, "rows", data.GetData(), data.GetPosition());
+      break;
+    case SearchDbWal::Op::Kind::kDelete:
+      out.WriteProperty(
+        kOpDeleteRows, "delete_rows",
+        reinterpret_cast<duckdb::const_data_ptr_t>(op.delete_rows.data()),
+        op.delete_rows.size() * sizeof(int64_t));
+      break;
+    case SearchDbWal::Op::Kind::kTruncate:
+      break;
+    case SearchDbWal::Op::Kind::kSegments:
+      out.OnPropertyBegin(kOpSegments, "segments");
+      irs::utils::WriteTuple(out, op.segments);
+      out.OnPropertyEnd();
+      break;
   }
 }
 
 }  // namespace
 
-SearchDbWal::PendingChunk::PendingChunk(PendingChunk&& o) noexcept
-  : _seg_id(o._seg_id), _path(std::move(o._path)), _committed(o._committed) {
-  o._committed = true;  // the moved-from husk must not reclaim the file
-}
-
-SearchDbWal::PendingChunk& SearchDbWal::PendingChunk::operator=(
-  PendingChunk&& o) noexcept {
-  if (this != &o) {
-    ReclaimIfUncommitted();
-    _seg_id = o._seg_id;
-    _path = std::move(o._path);
-    _committed = o._committed;
-    o._committed = true;
-  }
-  return *this;
-}
-
-void SearchDbWal::PendingChunk::ReclaimIfUncommitted() noexcept {
-  if (_committed || _path.empty()) {
-    return;
-  }
-  std::error_code ec;
-  std::filesystem::remove(_path, ec);
-  if (ec) {
-    SDB_WARN(SEARCH, "search WAL: failed to remove uncommitted chunk file '",
-             _path.string(), "': ", ec.message());
-  }
-}
-
-SearchDbWal::ChunkWriter::ChunkWriter(
-  PendingChunk pending, std::unique_ptr<duckdb::BufferedFileWriter> writer)
-  : _pending(std::move(pending)),
-    _writer(std::move(writer)),
-    _stream(std::make_unique<duckdb::MemoryStream>()),
-    _cctx(irs::utils::MakeZstdCCtx()) {}
-SearchDbWal::ChunkWriter::ChunkWriter(ChunkWriter&&) noexcept = default;
-SearchDbWal::ChunkWriter& SearchDbWal::ChunkWriter::operator=(
-  ChunkWriter&&) noexcept = default;
-SearchDbWal::ChunkWriter::~ChunkWriter() = default;
-
-void SearchDbWal::ChunkWriter::Append(duckdb::DataChunk& chunk,
-                                      uint64_t pk_base) {
-  SDB_ASSERT(_writer);
-  _stream->Rewind();
-  duckdb::BinarySerializer serializer{*_stream,
-                                      duckdb::VersionStorageOptions()};
-  serializer.Begin();
-  chunk.Serialize(serializer);
-  serializer.End();
-  const uint64_t raw_len = _stream->GetPosition();
-
-  const auto bound = ZSTD_compressBound(raw_len);
-  if (_comp.size() < bound) {
-    _comp.resize(bound);
-  }
-  // Reuse this writer's context (ZSTD_compressCCtx resets it per call) so each
-  // chunk doesn't allocate + free its own.
-  SDB_ASSERT(_cctx);
-  const size_t comp =
-    ZSTD_compressCCtx(_cctx.get(), _comp.data(), _comp.size(),
-                      _stream->GetData(), raw_len, kZstdLevel);
-  uint8_t codec = kChunkCodecZstd;
-  const uint8_t* payload = _comp.data();
-  uint64_t payload_len = comp;
-  if (ZSTD_isError(comp) || comp >= raw_len) {
-    codec = kChunkCodecNone;
-    payload = _stream->GetData();
-    payload_len = raw_len;
-  }
-  _writer->Write<uint8_t>(codec);
-  _writer->Write<uint64_t>(raw_len);
-  _writer->Write<uint64_t>(payload_len);
-  _writer->Write<uint64_t>(pk_base);
-  _writer->WriteData(payload, payload_len);
-}
-
-SearchDbWal::PendingChunk SearchDbWal::ChunkWriter::Finish() {
-  SDB_ASSERT(_writer);
-  _writer->Sync();
-  _writer.reset();
-  return std::move(_pending);
-}
-
-//
-// SearchDbWal
-//
-
 SearchDbWal::SearchDbWal(duckdb::FileSystem& fs, std::filesystem::path wal_dir,
                          uint64_t seal_threshold)
-  : _fs(fs),
-    _wal_dir(std::move(wal_dir)),
-    _chunks_root(_wal_dir / "chunks"),
-    _seal_threshold(seal_threshold) {
+  : _fs(fs), _wal_dir(std::move(wal_dir)), _seal_threshold(seal_threshold) {
   const auto segments = EnumerateSegments(_wal_dir);
   uint64_t max_tick = 0;
   for (size_t i = segments.size(); i-- > 0;) {
@@ -422,13 +362,11 @@ SearchDbWal::SearchDbWal(duckdb::FileSystem& fs, std::filesystem::path wal_dir,
     bool any = false;
     {
       duckdb::BufferedFileReader reader(_fs, path.string().c_str());
-      std::vector<uint8_t> payload;
-      while (ReadFrame(reader, payload)) {
-        if (payload.size() >= sizeof(uint64_t)) {
-          Cursor c(payload);
-          last_tick = c.Read<uint64_t>();
-          any = true;
-        }
+      uint64_t tick = 0;
+      std::vector<uint8_t> body;
+      while (ReadFrame(reader, tick, body)) {
+        last_tick = tick;
+        any = true;
       }
     }
     if (any) {
@@ -449,9 +387,6 @@ void SearchDbWal::EnsureActiveSegmentLocked(uint64_t first_tick) {
   if (_active) {
     return;
   }
-  std::error_code ec;
-  std::filesystem::create_directories(_wal_dir, ec);
-  SDB_ENSURE(!ec, "create wal dir '", _wal_dir.string(), "': ", ec.message());
   auto seg_path = _wal_dir / SegmentName(first_tick);
   std::error_code exists_ec;
   SDB_ENSURE(!std::filesystem::exists(seg_path, exists_ec),
@@ -459,19 +394,20 @@ void SearchDbWal::EnsureActiveSegmentLocked(uint64_t first_tick) {
              "' already exists -- tick seed regressed");
   _active = std::make_unique<duckdb::BufferedFileWriter>(_fs, seg_path.string(),
                                                          kAppendFlags);
+  catalog::SyncDirectory(_wal_dir);
   _active_first_tick = first_tick;
-  _active_chunk_bytes = 0;  // fresh segment owns no chunks yet
 }
 
-void SearchDbWal::WriteFrameLocked(const uint8_t* payload, uint64_t size) {
+void SearchDbWal::WriteFrameLocked(const uint8_t* frame, uint64_t size) {
   SDB_ASSERT(_active);
-  auto checksum = duckdb::Checksum(payload, size);
-  _active->Write<uint64_t>(size);
-  _active->Write<uint64_t>(checksum);
-  _active->WriteData(payload, size);
-  _active->Sync();  // commit point
+  _active->WriteData(frame, size);
+  try {
+    _active->Sync();  // commit point
+  } catch (const std::exception& e) {
+    SDB_FATAL(SEARCH, "search WAL: failed to sync a commit record: ", e.what());
+  }
 
-  if (_active->GetTotalWritten() + _active_chunk_bytes > _seal_threshold) {
+  if (_active->GetTotalWritten() > _seal_threshold) {
     _active->Close();
     _active.reset();
     _active_first_tick = 0;
@@ -480,106 +416,62 @@ void SearchDbWal::WriteFrameLocked(const uint8_t* payload, uint64_t size) {
 
 uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
                                    uint64_t tick_span) {
-  SDB_ASSERT(!sections.empty(), "AppendCommit with no shard sections");
-  SDB_ASSERT(tick_span >= 1, "every commit advances the tick by at least 1");
-  absl::MutexLock lock(&_append_mu);
-
-  uint64_t base = _tick.fetch_add(tick_span, std::memory_order_relaxed);
-  uint64_t tick = base + tick_span;
-  EnsureActiveSegmentLocked(tick);
-
-  duckdb::MemoryStream payload;
-  payload.Write<uint64_t>(tick);
-  payload.Write<uint32_t>(static_cast<uint32_t>(sections.size()));
-  // Reused inline-CDC scratch across every INLINE op (Rewind keeps the buffer).
-  duckdb::MemoryStream tmp;
-  for (const auto& s : sections) {
-    payload.Write<uint64_t>(s.table_id);
-    SDB_ASSERT(!s.ops.empty(), "shard section with no ops");
-    payload.Write<uint32_t>(static_cast<uint32_t>(s.ops.size()));
-    for (const auto& op : s.ops) {
-      SDB_ASSERT((op.inline_data != nullptr) + (!op.reference_chunks.empty()) +
-                     (!op.delete_pks.empty()) + op.truncate ==
-                   1,
-                 "op must be exactly one of INLINE / REFERENCE / DELETE / "
-                 "TRUNCATE");
-      const uint8_t kind = op.truncate                    ? kKindTruncate
-                           : op.inline_data               ? kKindInline
-                           : !op.reference_chunks.empty() ? kKindReference
-                                                          : kKindDelete;
-      payload.Write<uint8_t>(kind);
-      if (kind == kKindInline) {
-        payload.Write<uint32_t>(static_cast<uint32_t>(op.inline_pks.size()));
-        for (const auto& pk : op.inline_pks) {
-          payload.Write<uint64_t>(pk.base);
-          payload.Write<uint64_t>(pk.count);
-        }
-        tmp.Rewind();
-        duckdb::BinarySerializer serializer{tmp,
-                                            duckdb::VersionStorageOptions()};
-        serializer.Begin();
-        op.inline_data->Serialize(serializer);
-        serializer.End();
-        auto len = static_cast<uint64_t>(tmp.GetPosition());
-        payload.Write<uint64_t>(len);
-        payload.WriteData(tmp.GetData(), len);
-      } else if (kind == kKindReference) {
-        payload.Write<uint32_t>(
-          static_cast<uint32_t>(op.reference_chunks.size()));
-        for (const auto& c : op.reference_chunks) {
-          const uint64_t sid = c.SegId();
-          payload.Write<uint64_t>(sid);
-          auto chunk_path = ChunkDir(s.table_id) / ChunkName(sid);
-          std::error_code se;
-          auto sz = std::filesystem::file_size(chunk_path, se);
-          if (se) {
-            SDB_WARN(SEARCH, "search WAL: file_size('", chunk_path.string(),
-                     "') failed: ", se.message(),
-                     " -- chunk excluded from seal accounting");
-          } else {
-            _active_chunk_bytes += sz;
-          }
-        }
-      } else if (kind == kKindDelete) {
-        payload.Write<uint32_t>(static_cast<uint32_t>(op.delete_pks.size()));
-        for (const auto& pk : op.delete_pks) {
-          payload.Write<uint32_t>(static_cast<uint32_t>(pk.size()));
-          payload.WriteData(reinterpret_cast<const uint8_t*>(pk.data()),
-                            pk.size());
-        }
-      }
-    }
-  }
-  WriteFrameLocked(payload.GetData(), payload.GetPosition());
-  for (const auto& s : sections) {
-    for (const auto& op : s.ops) {
-      for (auto& c : op.reference_chunks) {
-        c.MarkCommitted();
-      }
-    }
-  }
-  return tick;
+  return AppendCommit(sections, tick_span, [](uint64_t) noexcept {});
 }
 
-SearchDbWal::ChunkWriter SearchDbWal::NewChunkWriter(duckdb::idx_t table_id) {
-  auto dir = ChunkDir(table_id);
-  std::error_code ec;
-  std::filesystem::create_directories(dir, ec);
-  SDB_ENSURE(!ec, "create chunk dir '", dir.string(), "': ", ec.message());
+uint64_t SearchDbWal::AppendCommit(
+  std::span<const ShardSection> sections, uint64_t tick_span,
+  absl::AnyInvocable<void(uint64_t) noexcept> on_durable) {
+  SDB_ASSERT(!sections.empty(), "AppendCommit with no shard sections");
+  SDB_ASSERT(tick_span >= 1, "every commit advances the tick by at least 1");
 
-  uint64_t seg_id;
-  {
-    absl::MutexLock lock(&_seg_mu);
-    auto it = _seg_ids.find(table_id);
-    if (it == _seg_ids.end()) {
-      it = _seg_ids.emplace(table_id, MaxChunkSegId(dir)).first;
-    }
-    seg_id = ++it->second;
-  }
-  auto path = dir / ChunkName(seg_id);
-  auto writer = std::make_unique<duckdb::BufferedFileWriter>(_fs, path.string(),
-                                                             kAppendFlags);
-  return ChunkWriter{PendingChunk{seg_id, std::move(path)}, std::move(writer)};
+  duckdb::MemoryStream frame;
+  frame.WriteData(kEmptyFrameHeader.data(), kEmptyFrameHeader.size());
+  // Reused inline-CDC scratch across every INLINE op (Rewind keeps the buffer).
+  duckdb::MemoryStream tmp;
+  duckdb::BinarySerializer body_record{frame};
+  body_record.Begin();
+  body_record.WriteList(
+    kBodySections, "sections", sections.size(),
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+      const auto& s = sections[i];
+      SDB_ASSERT(!s.ops.empty(), "shard section with no ops");
+      list.WriteObject([&](duckdb::BinarySerializer& section) {
+        section.WriteProperty<uint64_t>(kSectionTableId, "table_id",
+                                        s.table_id);
+        section.WriteList(
+          kSectionOps, "ops", s.ops.size(),
+          [&](duckdb::BinarySerializer::List& ops, duckdb::idx_t j) {
+            ops.WriteObject([&](duckdb::BinarySerializer& out) {
+              WriteOp(out, s, s.ops[j], tmp);
+            });
+          });
+      });
+    });
+  body_record.End();
+
+  const uint64_t body_size = frame.GetPosition() - kFrameHeaderSize;
+  const auto body_crc = absl::ComputeCrc32c(std::string_view{
+    reinterpret_cast<const char*>(frame.GetData()) + kFrameHeaderSize,
+    body_size});
+
+  absl::MutexLock lock(&_append_mu);
+
+  const uint64_t tick = _tick.load(std::memory_order_relaxed) + tick_span;
+  // Always burn tick, on error we do not want this value to be reused.
+  absl::Cleanup publish = [&] { _tick.store(tick, std::memory_order_release); };
+  EnsureActiveSegmentLocked(tick);
+
+  const auto crc = static_cast<uint32_t>(
+    absl::ConcatCrc32c(TickCrc(tick), body_crc, body_size));
+  std::memcpy(frame.GetData() + kFrameSizeOffset, &body_size,
+              sizeof(body_size));
+  std::memcpy(frame.GetData() + kFrameCrcOffset, &crc, sizeof(crc));
+  std::memcpy(frame.GetData() + kFrameTickOffset, &tick, sizeof(tick));
+
+  WriteFrameLocked(frame.GetData(), frame.GetPosition());
+  on_durable(tick);
+  return tick;
 }
 
 void SearchDbWal::RegisterShard(duckdb::idx_t table_id,
@@ -599,7 +491,17 @@ void SearchDbWal::RegisterShard(duckdb::idx_t table_id,
 
 void SearchDbWal::OnShardCommit(duckdb::idx_t table_id,
                                 uint64_t committed_tick) {
-  RegisterShard(table_id, committed_tick);
+  {
+    absl::MutexLock lock(&_sub_mu);
+    auto& cur = _committed[table_id];
+    cur = std::max(cur, committed_tick);
+  }
+  {
+    absl::MutexLock lock(&_append_mu);
+    if (_tick.load(std::memory_order_relaxed) < committed_tick) {
+      _tick.store(committed_tick, std::memory_order_relaxed);
+    }
+  }
   RunGc();
 }
 
@@ -636,41 +538,23 @@ void SearchDbWal::RunGc() {
     active_first_tick = _active_first_tick;
   }
 
-  std::vector<uint64_t> seg_scratch;         // reused by ParseOp across records
-  std::vector<std::string_view> pk_scratch;  // (RunGc only consumes REFERENCE)
+  // Only the frame headers matter: a record owns no other files, and a SEGMENT
+  // op points at the index's own segments, which iresearch reclaims itself.
   for (const auto& [first_tick, path] : EnumerateSegments(_wal_dir)) {
     if (active_first_tick != 0 && first_tick == active_first_tick) {
       continue;  // the live, still-appended segment
     }
     bool consumed = true;
-    std::vector<std::filesystem::path> chunk_paths;
     {
       duckdb::BufferedFileReader reader(_fs, path.string().c_str());
-      std::vector<uint8_t> payload;
-      while (ReadFrame(reader, payload)) {
-        Cursor c(payload);
-        if (c.Read<uint64_t>() > min_tick) {  // tick (records are ascending)
-          consumed = false;
-          break;
-        }
-        VisitSectionsOps(
-          c, seg_scratch, pk_scratch,
-          [&](uint64_t table_id, const ParsedOp& op) {
-            if (op.kind != kKindReference) {
-              return;
-            }
-            for (uint64_t sid : op.seg_ids) {
-              chunk_paths.emplace_back(ChunkDir(table_id) / ChunkName(sid));
-            }
-          });
+      uint64_t tick = 0;
+      std::vector<uint8_t> body;
+      while (consumed && ReadFrame(reader, tick, body)) {
+        consumed = tick <= min_tick;
       }
     }
     if (!consumed) {
       break;  // this + every later (higher-tick) segment still un-published
-    }
-    for (const auto& cp : chunk_paths) {
-      std::error_code ec;
-      std::filesystem::remove(cp, ec);
     }
     std::error_code ec;
     std::filesystem::remove(path, ec);
@@ -681,98 +565,48 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
                               const ShardCommittedFn& committed_of,
                               const ReplayCallback& insert_cb,
                               const DeleteReplayCallback& delete_cb,
-                              const TruncateReplayCallback& truncate_cb) {
+                              const TruncateReplayCallback& truncate_cb,
+                              const AdoptReplayCallback& adopt_cb) {
   absl::MutexLock lock(&_append_mu);
   uint64_t max_tick = 0;
-  std::unordered_set<std::string> referenced;  // surviving chunk-file paths
-  std::vector<uint64_t> seg_scratch;           // reused by ParseOp across
-  std::vector<std::string_view> pk_scratch;    // records
-  auto dctx =
-    irs::utils::MakeZstdDCtx();  // reused across all chunk-file frames
+  ParseScratch scratch;  // reused across records
 
   for (const auto& [first_tick, path] : EnumerateSegments(_wal_dir)) {
     duckdb::BufferedFileReader reader(_fs, path.string().c_str());
-    std::vector<uint8_t> payload;
-    while (ReadFrame(reader, payload)) {
-      Cursor c(payload);
-      const uint64_t tick = c.Read<uint64_t>();
-      max_tick = std::max(max_tick, tick);
-      VisitSectionsOps(
-        c, seg_scratch, pk_scratch, [&](uint64_t table_id, const ParsedOp& op) {
-          const duckdb::idx_t tid{table_id};
-          const bool live = exists_of(tid) && tick > committed_of(tid);
-          switch (op.kind) {
-            case kKindInline: {
-              if (!live) {
-                return;
-              }
-              std::vector<InlinePk> segments(op.seg_count);
-              for (uint32_t i = 0; i < op.seg_count; ++i) {
-                std::memcpy(&segments[i].base,
-                            op.pk_blob + (2 * i) * sizeof(uint64_t),
-                            sizeof(uint64_t));
-                std::memcpy(&segments[i].count,
-                            op.pk_blob + (2 * i + 1) * sizeof(uint64_t),
-                            sizeof(uint64_t));
-              }
-              duckdb::MemoryStream ms(const_cast<uint8_t*>(op.inline_blob),
-                                      op.inline_blob_len);
-              duckdb::BinaryDeserializer deser{ms};
-              deser.Begin();
-              auto cdc = duckdb::ColumnDataCollection::Deserialize(deser);
-              deser.End();
-              VisitInlineSegments(
-                *cdc, segments,
-                [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
-                  insert_cb(tick, tid, pk_base, chunk);
-                });
-              break;
+    uint64_t frame_tick = 0;
+    std::vector<uint8_t> body;
+    while (ReadFrame(reader, frame_tick, body)) {
+      auto on_op = [&](uint64_t tick, uint64_t table_id, const ParsedOp& op) {
+        const duckdb::idx_t tid{table_id};
+        if (!exists_of(tid) || tick <= committed_of(tid)) {
+          return;
+        }
+        switch (op.kind) {
+          case Op::Kind::kRows:
+            DecodeRows(op.rows, path,
+                       [&](uint64_t base, duckdb::DataChunk& chunk) {
+                         insert_cb(tick, tid, base, chunk);
+                       });
+            break;
+          case Op::Kind::kDelete:
+            delete_cb(tick, tid, op.delete_rows);
+            break;
+          case Op::Kind::kTruncate:
+            truncate_cb(tick, tid);
+            break;
+          case Op::Kind::kSegments:
+            for (const auto& ref : op.segments) {
+              adopt_cb(tick, tid, ref);
             }
-            case kKindReference:
-              for (uint64_t sid : op.seg_ids) {
-                auto chunk_path =
-                  (ChunkDir(table_id) / ChunkName(sid)).string();
-                referenced.insert(chunk_path);  // survives the orphan sweep
-                if (live) {
-                  ReplayChunkFile(
-                    _fs, chunk_path, dctx.get(),
-                    [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
-                      insert_cb(tick, tid, pk_base, chunk);
-                    });
-                }
-              }
-              break;
-            case kKindDelete:
-              if (live) {
-                delete_cb(tick, tid, op.delete_pks);
-              }
-              break;
-            case kKindTruncate:
-              if (live) {
-                truncate_cb(tick, tid);
-              }
-              break;
-          }
-        });
-    }
-  }
-
-  std::error_code ec;
-  if (std::filesystem::exists(_chunks_root, ec)) {
-    for (const auto& entry :
-         std::filesystem::recursive_directory_iterator(_chunks_root, ec)) {
-      if (ec) {
-        break;
+            break;
+        }
+      };
+      try {
+        VisitRecord(frame_tick, body, path, scratch, on_op);
+      } catch (const duckdb::SerializationException& e) {
+        ThrowUnreadable(path, duckdb::ErrorData{e}.RawMessage());
       }
-      if (!entry.is_regular_file(ec)) {
-        continue;
-      }
-      uint64_t sid = 0;
-      if (ParseName(entry.path().filename().string(), kChunkSuffix, sid) &&
-          !referenced.contains(entry.path().string())) {
-        std::error_code remove_ec;
-        std::filesystem::remove(entry.path(), remove_ec);
-      }
+      max_tick = std::max(max_tick, frame_tick);
     }
   }
 
@@ -784,27 +618,48 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
 
 void VisitInlineSegments(
   const duckdb::ColumnDataCollection& cdc,
-  std::span<const SearchDbWal::InlinePk> segments,
+  std::span<const SearchDbWal::InlinePk> segments, size_t first_band,
+  size_t last_band,
   const absl::AnyInvocable<void(duckdb::DataChunk&, uint64_t base) const>&
     emit) {
   if (segments.empty()) {
+    SDB_ASSERT(first_band == 0);
     for (auto& chunk : cdc.Chunks()) {
       emit(chunk, 0);
     }
     return;
   }
-  size_t seg = 0;
-  uint64_t seg_off = 0;  // rows of the current segment already emitted
+  SDB_ASSERT(first_band <= last_band && last_band <= segments.size());
+  if (first_band == last_band) {
+    return;
+  }
+  // Rows the bands before `first_band` hold: the collection is one run of rows,
+  // so an op that starts mid-way has to walk past them.
+  uint64_t skip = 0;
+  for (size_t i = 0; i < first_band; ++i) {
+    skip += segments[i].count;
+  }
+
+  size_t seg = first_band;
+  uint64_t seg_off = 0;  // rows of the current band already emitted
   for (auto& chunk : cdc.Chunks()) {
     const uint64_t n = chunk.size();
-    uint64_t off = 0;  // rows of this (coalesced) chunk already consumed
-    while (off < n && seg < segments.size()) {
+    if (skip >= n) {
+      skip -= n;
+      continue;
+    }
+    uint64_t off = skip;  // rows of this (coalesced) chunk already consumed
+    skip = 0;
+    while (off < n && seg < last_band) {
       const auto take = static_cast<duckdb::idx_t>(
         std::min<uint64_t>(segments[seg].count - seg_off, n - off));
       if (off == 0 && seg_off == 0 && take == n) {
         emit(chunk, segments[seg].base);
       } else {
-        duckdb::SelectionVector sel(off, take);
+        duckdb::SelectionVector sel(take);
+        for (duckdb::idx_t r = 0; r < take; ++r) {
+          sel.set_index(r, off + r);
+        }
         duckdb::DataChunk slice;
         slice.InitializeEmpty(cdc.Types());
         slice.Slice(chunk, sel, take);
@@ -816,6 +671,9 @@ void VisitInlineSegments(
         ++seg;
         seg_off = 0;
       }
+    }
+    if (seg >= last_band) {
+      return;
     }
   }
 }

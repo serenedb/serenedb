@@ -59,7 +59,7 @@ CREATE SEQUENCE IF NOT EXISTS crn_t
 statement error
 CREATE OR REPLACE VIEW crn_i AS SELECT 1 AS x
 ----
-db error: ERROR: Existing object crn_i is of type Index, trying to replace with type View
+db error: ERROR: Existing object "crn_i" is of type Index, trying to replace with type View
 
 
 statement error

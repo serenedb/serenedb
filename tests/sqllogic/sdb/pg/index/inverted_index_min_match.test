@@ -1,0 +1,1003 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE mm (id INTEGER PRIMARY KEY, title VARCHAR, skills VARCHAR, edu VARCHAR, tenure INTEGER);
+
+
+statement ok
+INSERT INTO mm VALUES
+  (1, 'data engineer', 'gcp python', 'computer engineering', 5),
+  (2, 'data engineer', 'aws', 'computer engineering', 5),
+  (3, 'sales manager', 'gcp', 'business', 5),
+  (4, 'sales manager', 'aws', 'business', 50),
+  (5, 'data engineer', 'gcp', 'business', 50),
+  (6, 'sales manager', 'gcp python', 'business', 50);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mm_words AS split_text() WITH (frequency, position);
+
+
+statement ok
+CREATE INDEX mm_idx ON mm USING inverted(id, title mm_words, skills mm_words, edu mm_words, tenure)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mm;
+
+
+query
+SELECT id FROM mm_idx
+WHERE (title @@ ts_phrase('data engineer') OR skills @@ 'gcp'
+       OR edu @@ ts_like('%engineer%') OR tenure <= 10)::min_match(4)
+ORDER BY id;
+----
+id
+1
+
+
+query
+SELECT id FROM mm_idx
+WHERE (title @@ ts_phrase('data engineer') OR skills @@ 'gcp'
+       OR edu @@ ts_like('%engineer%') OR tenure <= 10)::min_match(3)
+ORDER BY id;
+----
+id
+1
+2
+
+
+query
+SELECT id FROM mm_idx
+WHERE (title @@ ts_phrase('data engineer') OR skills @@ 'gcp'
+       OR edu @@ ts_like('%engineer%') OR tenure <= 10)::min_match(2)
+ORDER BY id;
+----
+id
+1
+2
+3
+5
+
+
+query
+SELECT id FROM mm_idx
+WHERE (title @@ ts_phrase('data engineer') OR skills @@ 'gcp'
+       OR edu @@ ts_like('%engineer%') OR tenure <= 10)::min_match(1)
+ORDER BY id;
+----
+id
+1
+2
+3
+5
+6
+
+
+query
+SELECT id FROM mm_idx
+WHERE id <= 3
+  AND (title @@ ts_phrase('data engineer') OR skills @@ 'gcp'
+       OR edu @@ ts_like('%engineer%') OR tenure <= 10)::min_match(2)
+ORDER BY id;
+----
+id
+1
+2
+3
+
+
+query
+SELECT id FROM mm_idx
+WHERE (skills @@ 'gcp' OR skills @@ 'python' OR title @@ ts_phrase('data engineer'))::min_match(2)
+ORDER BY id;
+----
+id
+1
+5
+6
+
+
+query
+SELECT id FROM mm_idx
+WHERE ((skills @@ 'gcp' OR skills @@ 'python')::min_match(1)
+       OR title @@ ts_phrase('data engineer'))::min_match(2)
+ORDER BY id;
+----
+id
+1
+5
+
+
+query
+SELECT id FROM mm_idx
+WHERE (NOT skills @@ 'gcp' OR NOT tenure <= 10 OR NOT edu @@ ts_like('%engineer%'))::min_match(2)
+ORDER BY id;
+----
+id
+4
+5
+6
+
+
+query
+SELECT id FROM mm_idx
+WHERE ((title @@ ts_phrase('data engineer') OR skills @@ 'gcp' OR edu @@ ts_like('%engineer%'))::min_match(2)
+       OR tenure <= 10)::min_match(2)
+ORDER BY id;
+----
+id
+1
+2
+
+
+query
+SELECT id FROM mm_idx
+WHERE ((title @@ ts_phrase('data engineer') OR skills @@ 'gcp' OR edu @@ ts_like('%engineer%'))::min_match(2)
+       OR tenure <= 10 OR skills @@ 'aws')::min_match(2)
+ORDER BY id;
+----
+id
+1
+2
+
+
+query
+SELECT id FROM mm_idx
+WHERE (title @@ ts_phrase('data engineer') OR skills @@ 'gcp' OR edu @@ ts_like('%engineer%'))::min_match(2)
+   OR skills @@ 'aws'
+ORDER BY id;
+----
+id
+1
+2
+4
+5
+
+
+query
+SELECT id FROM mm_idx
+WHERE (title @@ ts_phrase('data engineer') OR skills @@ 'gcp' OR edu @@ ts_like('%engineer%'))::min_match(2)
+  AND tenure <= 10
+ORDER BY id;
+----
+id
+1
+2
+
+
+query
+SELECT id FROM mm_idx
+WHERE ((skills @@ 'gcp' OR skills @@ 'python')::min_match(2)
+       OR (title @@ ts_phrase('data engineer') OR edu @@ ts_like('%engineer%'))::min_match(2))::min_match(1)
+ORDER BY id;
+----
+id
+1
+2
+6
+
+
+query
+SELECT id FROM mm_idx
+WHERE ((skills @@ 'gcp' OR skills @@ 'python')::min_match(2)
+       OR (title @@ ts_phrase('data engineer') OR edu @@ ts_like('%engineer%'))::min_match(2))::min_match(2)
+ORDER BY id;
+----
+id
+1
+
+
+query
+SELECT id FROM mm_idx
+WHERE ((title @@ ts_phrase('data engineer') AND edu @@ ts_like('%engineer%'))
+       OR (skills @@ 'gcp' OR skills @@ 'python')::min_match(2) OR tenure <= 10)::min_match(2)
+ORDER BY id;
+----
+id
+1
+2
+
+
+query
+SELECT id FROM mm_idx
+WHERE (((skills @@ 'gcp' OR skills @@ 'python')::min_match(1) OR title @@ ts_phrase('data engineer')
+        OR skills @@ 'aws')::min_match(2)
+       OR edu @@ ts_like('%engineer%') OR tenure <= 10)::min_match(2)
+ORDER BY id;
+----
+id
+1
+2
+
+
+query
+SELECT id FROM mm_idx
+WHERE (skills @@ 'gcp' OR skills @@ 'python' OR title @@ ts_phrase('data engineer'))::min_match(2)::merge('max')
+ORDER BY id;
+----
+id
+1
+5
+6
+
+
+query
+SELECT id FROM mm_idx
+WHERE (skills @@ 'gcp' OR skills @@ 'python' OR title @@ ts_phrase('data engineer'))::merge('max')::min_match(2)
+ORDER BY id;
+----
+id
+1
+5
+6
+
+
+query
+SELECT id FROM mm_idx
+WHERE (skills @@ 'gcp' OR skills @@ 'python' OR title @@ ts_phrase('data engineer'))::min_match(2)::boost(2)
+ORDER BY id;
+----
+id
+1
+5
+6
+
+
+query
+SELECT id FROM mm_idx
+WHERE (skills @@ 'gcp' OR skills @@ 'python' OR title @@ ts_phrase('data engineer'))::boost(2)::min_match(2)
+ORDER BY id;
+----
+id
+1
+5
+6
+
+
+query
+SELECT id FROM mm_idx
+WHERE (skills @@ 'gcp' OR skills @@ 'python' OR title @@ ts_phrase('data engineer'))::min_match(2)::score('bm25()')
+ORDER BY id;
+----
+id
+1
+5
+6
+
+
+query
+SELECT id FROM mm_idx
+WHERE (skills @@ 'gcp' OR skills @@ 'python' OR title @@ ts_phrase('data engineer'))::score('bm25()')::min_match(2)
+ORDER BY id;
+----
+id
+1
+5
+6
+
+
+query error ::min_match\(K\) on a group that already has a ::min_match
+SELECT id FROM mm_idx
+WHERE (skills @@ 'gcp' OR skills @@ 'python')::min_match(2)::score('bm25()')::min_match(1);
+
+
+query error ::min_match\(K\) on a group that already has a ::min_match
+SELECT id FROM mm_idx
+WHERE (title @@ ts_phrase('data engineer') OR skills @@ 'gcp' OR edu @@ ts_like('%engineer%'))::min_match(2)::min_match(1);
+
+
+query error ::min_match\(K\) on a group that already has a ::min_match
+SELECT id FROM mm_idx
+WHERE ((title @@ ts_phrase('data engineer') OR skills @@ 'gcp' OR edu @@ ts_like('%engineer%'))::min_match(1))::min_match(3);
+
+
+query error ::min_match\(K\) on a group that already has a ::min_match
+SELECT id FROM mm_idx
+WHERE (title @@ ts_phrase('data engineer') OR skills @@ 'gcp' OR edu @@ ts_like('%engineer%'))::min_match(2)::merge('max')::min_match(1);
+
+
+statement ok
+PREPARE mm_param AS SELECT id FROM mm_idx WHERE skills @@ $1::min_match(2) ORDER BY id;
+
+
+query
+EXECUTE mm_param('gcp python');
+----
+id
+1
+6
+
+
+query
+EXECUTE mm_param('gcp');
+----
+id
+1
+3
+5
+6
+
+
+statement ok
+DEALLOCATE mm_param;
+
+
+statement ok
+PREPARE mm_param_max AS SELECT id FROM mm_idx WHERE skills @@ $1::min_match(4294967295) ORDER BY id;
+
+
+query
+EXECUTE mm_param_max('gcp python');
+----
+id
+1
+6
+
+
+statement ok
+DEALLOCATE mm_param_max;
+
+
+statement ok
+PREPARE mm_text AS SELECT id FROM mm_idx WHERE skills @@ $1::TSQUERY ORDER BY id;
+
+
+query
+EXECUTE mm_text('''gcp python''::min_match(2)');
+----
+id
+1
+6
+
+
+query
+EXECUTE mm_text('''gcp python''::min_match(4294967295)');
+----
+id
+1
+6
+
+
+query error min_match\(\) count must be >= 1, got 0
+EXECUTE mm_text('''gcp python''::min_match(0)');
+
+
+query error min_match\(\) count too large: 4294967296 \(at most 4294967295\)
+EXECUTE mm_text('''gcp python''::min_match(4294967296)');
+
+
+query error ::min_match\(3\) on an OR of 2 branches
+EXECUTE mm_text('(''gcp''::TSQUERY || ''python'')::min_match(3)');
+
+
+query
+EXECUTE mm_text('''gcp python''::min_match(2)::min_match(1)');
+----
+id
+1
+3
+5
+6
+
+
+query
+EXECUTE mm_text('(''gcp''::TSQUERY && ''python'')::merge(''max'')');
+----
+id
+1
+6
+
+
+query
+EXECUTE mm_text('((''gcp''::TSQUERY && ''python'')::merge(''max'') || ''aws'')::min_match(2)');
+----
+id
+
+
+statement ok
+DEALLOCATE mm_text;
+
+
+query error ::min_match\(3\) on an OR of 2 branches
+SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR tenure <= 10)::min_match(3);
+
+
+query error min_match\(\) count must be >= 1
+SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR tenure <= 10)::min_match(0);
+
+
+query error min_match\(\) count must be >= 1, got -1
+SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR tenure <= 10)::min_match(-1);
+
+
+query error min_match\(\) count must be a non-null integer, got NULL
+SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR tenure <= 10)::min_match(NULL);
+
+
+query error min_match\(\) count must be a non-null integer, got 2.5
+SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR tenure <= 10)::min_match(2.5);
+
+
+query error ::min_match\(4294967295\) on an OR of 2 branches
+SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR tenure <= 10)::min_match(4294967295);
+
+
+query error min_match\(\) count too large: 4294967296
+SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR tenure <= 10)::min_match(4294967296);
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ 'gcp python'::min_match(4294967295) ORDER BY id;
+----
+id
+1
+6
+
+
+query error min_match\(\) count too large: 4294967296
+SELECT id FROM mm_idx WHERE skills @@ 'gcp python'::min_match(4294967296);
+
+
+query error ::min_match\(4294967295\) on an OR of 2 branches
+SELECT id FROM mm_idx WHERE skills @@ ('gcp'::TSQUERY || 'python')::min_match(4294967295);
+
+
+query error ::min_match\(4294967295\) on an OR of 2 branches
+SELECT id FROM mm_idx WHERE skills @@ ts_any(['gcp', 'python'])::min_match(4294967295);
+
+
+query error ::min_match\(4294967295\) on a query with one branch
+SELECT id FROM mm_idx WHERE skills @@ ts_phrase('gcp')::min_match(4294967295);
+
+
+query error ::min_match\(K\) applies to an OR of predicates
+SELECT id FROM mm_idx WHERE (skills @@ 'gcp')::min_match(1);
+
+
+query error ::min_match\(K\) applies to an OR of predicates
+SELECT id FROM mm_idx WHERE (skills @@ 'gcp' AND tenure <= 10)::min_match(1);
+
+
+query error ::min_match\(K\) applies to an OR of predicates
+SELECT id FROM mm_idx WHERE (skills @@ 'gcp python')::min_match(2);
+
+
+query error ::min_match\(K\) applies to an OR of predicates
+SELECT id FROM mm_idx WHERE (skills @@ ts_any(['gcp', 'python', 'aws'], 2))::min_match(1);
+
+
+query error ::min_match\(K\) applies to an OR of predicates
+SELECT id FROM mm_idx WHERE (skills @@ ('gcp'::TSQUERY || 'python' || 'aws')::min_match(2))::min_match(1);
+
+
+query error ::min_match\(K\) applies to an OR of predicates
+SELECT id FROM mm_idx WHERE (id IN (1, 2, 3))::min_match(2);
+
+
+query error ::min_match\(K\) applies to an OR of predicates
+SELECT id FROM mm_idx WHERE (tenure BETWEEN 10 AND 60)::min_match(2);
+
+
+query error ::min_match\(K\) applies to an OR of predicates
+SELECT id FROM mm_idx WHERE (tenure NOT BETWEEN 10 AND 20)::min_match(2);
+
+
+query error ::min_match\(K\) applies to an OR of predicates
+SELECT id FROM mm_idx WHERE (tenure NOT BETWEEN 10 AND 20)::min_match(1);
+
+
+query
+SELECT id FROM mm_idx
+WHERE (tenure <= 10 AND skills @@ 'gcp' OR tenure <= 10 AND skills @@ 'aws')::min_match(1)
+ORDER BY id;
+----
+id
+1
+2
+3
+
+
+query
+SELECT id FROM mm_idx
+WHERE (tenure <= 10 AND skills @@ 'gcp' OR tenure <= 10 AND skills @@ 'aws')::min_match(2)
+ORDER BY id;
+----
+id
+
+
+statement ok
+PREPARE mm_folded AS SELECT id FROM mm_idx WHERE (skills @@ $1 OR ($2 AND title @@ $3))::min_match(2) ORDER BY id;
+
+
+query
+EXECUTE mm_folded('gcp python', false, 'data');
+----
+id
+
+
+query
+EXECUTE mm_folded('gcp', true, 'data');
+----
+id
+1
+5
+
+
+statement ok
+DEALLOCATE mm_folded;
+
+
+statement ok
+PREPARE mm_same AS SELECT id FROM mm_idx WHERE (skills @@ $1 OR skills @@ $2)::min_match(2) ORDER BY id;
+
+
+query
+EXECUTE mm_same('gcp', 'gcp');
+----
+id
+1
+3
+5
+6
+
+
+statement ok
+DEALLOCATE mm_same;
+
+
+statement ok
+PREPARE mm_single AS SELECT id FROM mm_idx WHERE (skills @@ $1)::min_match(2);
+
+
+query error ::min_match\(K\) applies to an OR of predicates
+EXECUTE mm_single('gcp python');
+
+
+statement ok
+DEALLOCATE mm_single;
+
+
+query error NOT on a ::min_match\(K\) group is not supported
+SELECT id FROM mm_idx
+WHERE NOT (skills @@ 'gcp' OR tenure <= 10 OR edu @@ ts_like('%engineer%'))::min_match(2);
+
+
+query
+SELECT id FROM mm_idx
+WHERE NOT (skills @@ 'gcp python'::min_match(2) OR tenure <= 10)
+ORDER BY id;
+----
+id
+4
+5
+
+
+
+query error ::min_match used on a predicate the inverted index could not claim
+SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR id > id)::min_match(1);
+
+
+query
+SELECT id FROM mm_idx
+WHERE skills @@ (ts_phrase('gcp') || ts_phrase('python') || ts_phrase('aws'))::min_match(2)
+ORDER BY id;
+----
+id
+1
+6
+
+
+query error ::min_match\(K\) is only meaningful on an OR of predicates the inverted index answers
+SELECT (id > 2 OR tenure <= 10)::min_match(2) FROM mm;
+
+
+query
+SELECT (ts_phrase('gcp')::min_match(2))::TSQUERY::VARCHAR AS rendered;
+----
+rendered
+(ts_phrase('gcp'))::min_match(2)
+
+
+query
+SELECT ('gcp python'::min_match(2))::TSQUERY::VARCHAR AS rendered;
+----
+rendered
+'gcp python'::min_match(2)
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ 'gcp python'::min_match(2) ORDER BY id;
+----
+id
+1
+6
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ 'gcp python aws'::min_match(2) ORDER BY id;
+----
+id
+1
+6
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ 'gcp'::min_match(3) ORDER BY id;
+----
+id
+1
+3
+5
+6
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ ts_tokenize('gcp', 'keyword')::min_match(2) ORDER BY id;
+----
+id
+1
+3
+5
+6
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ 'gcp'::tokenize('keyword')::min_match(2) ORDER BY id;
+----
+id
+1
+3
+5
+6
+
+
+query
+SELECT id FROM mm_idx WHERE tenure @@ '5'::min_match(2) ORDER BY id;
+----
+id
+1
+2
+3
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ ts_any(['gcp', 'python', 'aws'])::min_match(2) ORDER BY id;
+----
+id
+1
+6
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ ts_any(['gcp', 'python'], 1)::min_match(2) ORDER BY id;
+----
+id
+1
+6
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ ts_any(['gcp', 'python'], 2)::min_match(1) ORDER BY id;
+----
+id
+1
+3
+5
+6
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ ts_any(ts_tokenize(['gcp', 'python']), 1)::min_match(2) ORDER BY id;
+----
+id
+1
+6
+
+
+query error ::min_match\(3\) on an OR of 2 branches
+SELECT id FROM mm_idx WHERE skills @@ ts_any(['gcp', 'python'])::min_match(3);
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ ('gcp'::TSQUERY || 'python' || 'aws')::min_match(2) ORDER BY id;
+----
+id
+1
+6
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ ('gcp'::TSQUERY || 'python' || 'aws')::min_match(3) ORDER BY id;
+----
+id
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ (('gcp'::TSQUERY || 'python') || 'aws')::min_match(3) ORDER BY id;
+----
+id
+
+
+query error ::min_match\(3\) on an OR of 2 branches
+SELECT id FROM mm_idx WHERE skills @@ ('gcp'::TSQUERY || 'python')::min_match(3);
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ (('gcp'::TSQUERY || 'aws')::min_match(1) || 'python')::min_match(2) ORDER BY id;
+----
+id
+1
+6
+
+
+query
+SELECT id FROM mm_idx
+WHERE skills @@ (ts_phrase('gcp') || ts_phrase('python') || ts_phrase('aws'::BLOB))::min_match(2)
+ORDER BY id;
+----
+id
+1
+6
+
+
+query
+SELECT id FROM mm_idx
+WHERE skills @@ (ts_phrase('aws'::BLOB) || ts_phrase('gcp') || ts_phrase('python'))::min_match(2)
+ORDER BY id;
+----
+id
+1
+6
+
+
+query
+SELECT id FROM mm_idx
+WHERE skills @@ (ts_phrase('gcp') || ts_phrase('python') || ts_phrase('aws'::BLOB))::min_match(3)
+ORDER BY id;
+----
+id
+
+
+statement ok
+PREPARE mm_chain AS SELECT id FROM mm_idx WHERE skills @@ ($1 || 'aws')::min_match(2) ORDER BY id;
+
+
+query
+EXECUTE mm_chain('''gcp''::TSQUERY || ''python''');
+----
+id
+1
+6
+
+
+statement ok
+DEALLOCATE mm_chain;
+
+
+query
+SELECT id FROM mm_idx WHERE title @@ ts_phrase('data engineer')::min_match(1) ORDER BY id;
+----
+id
+1
+2
+5
+
+
+query error ::min_match\(2\) on a query with one branch
+SELECT id FROM mm_idx WHERE title @@ ts_phrase('data engineer')::min_match(2);
+
+
+query error ::min_match\(2\) on a query with one branch
+SELECT id FROM mm_idx WHERE skills @@ ('gcp'::TSQUERY && 'python')::min_match(2);
+
+
+query error ::min_match\(2\) on a query with one branch
+SELECT id FROM mm_idx WHERE skills @@ (!! ('gcp'::TSQUERY || 'python'))::min_match(2);
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ ('gcp python'::min_match(2))::min_match(1) ORDER BY id;
+----
+id
+1
+3
+5
+6
+
+
+query
+SELECT id FROM mm_idx WHERE NOT skills @@ 'gcp python'::min_match(2) ORDER BY id;
+----
+id
+2
+3
+4
+5
+
+
+query
+SELECT id FROM mm_idx WHERE NOT title @@ ts_phrase('data engineer')::min_match(1) ORDER BY id;
+----
+id
+3
+4
+6
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ (!! 'gcp python'::min_match(2)) ORDER BY id;
+----
+id
+2
+3
+4
+5
+
+
+query
+SELECT id FROM mm_idx
+WHERE skills @@ (!! (('gcp'::TSQUERY || 'python')::min_match(2) || 'aws'))
+ORDER BY id;
+----
+id
+3
+5
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ ('gcp'::TSQUERY || 'python' || 'aws')::min_match(2)::merge('max') ORDER BY id;
+----
+id
+1
+6
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ ('gcp'::TSQUERY || 'python' || 'aws')::merge('max')::min_match(2) ORDER BY id;
+----
+id
+1
+6
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ (('gcp'::TSQUERY && 'python')::merge('max') || 'aws') ORDER BY id;
+----
+id
+1
+2
+4
+6
+
+
+query
+SELECT id FROM mm_idx WHERE skills @@ (('gcp'::TSQUERY && 'python')::merge('max') || 'aws')::min_match(2) ORDER BY id;
+----
+id
+
+
+query
+SELECT ts_offsets('mm_words', 'quick blue fox', 'quick red grey'::min_match(2)::tokenize('mm_words')) AS offsets;
+----
+offsets
+{}
+
+
+query
+SELECT ts_offsets('mm_words', 'quick red fox', 'quick red grey'::min_match(2)::tokenize('mm_words')) AS offsets;
+----
+offsets
+{0,5,6,9}
+
+
+query
+SELECT ts_offsets('mm_words', 'quick red fox', 'quick a b'::min_match(3)::tokenize('mm_words')::min_match(1)) AS offsets;
+----
+offsets
+{0,5}
+
+
+query
+SELECT id FROM mm_idx
+WHERE (skills @@ 'gcp python'::min_match(2) OR tenure <= 10)::min_match(2)
+ORDER BY id;
+----
+id
+1
+
+
+statement ok
+DROP TABLE mm;
+
+
+statement ok
+CREATE TABLE nm (id INTEGER PRIMARY KEY, skills VARCHAR, bonus INTEGER, tenure INTEGER);
+
+
+statement ok
+INSERT INTO nm VALUES
+  (1, 'gcp', NULL, 5),
+  (2, 'aws', NULL, 50),
+  (3, 'gcp', 10, 50),
+  (4, 'aws', 1, 50),
+  (5, NULL, 10, 50),
+  (6, 'gcp', 1, 5);
+
+
+statement ok
+CREATE INDEX nm_idx ON nm USING inverted(id, skills mm_words, bonus, tenure)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) nm;
+
+
+query
+SELECT id FROM nm_idx
+WHERE NOT ((skills @@ 'gcp' OR bonus > 5)::min_match(2) OR tenure <= 10)
+ORDER BY id;
+----
+id
+2
+4
+
+
+query
+SELECT id FROM nm_idx
+WHERE NOT ((skills @@ 'gcp' OR bonus > 5)::min_match(1) OR tenure <= 10)
+ORDER BY id;
+----
+id
+4
+
+
+query
+SELECT id FROM nm_idx
+WHERE NOT ((skills @@ 'gcp' OR bonus > 5)::min_match(2) OR bonus < 0)
+ORDER BY id;
+----
+id
+4
+6
+
+
+query
+SELECT id FROM nm_idx
+WHERE NOT ((skills @@ 'gcp' OR bonus > 5)::min_match(2)::boost(2) OR tenure <= 10)
+ORDER BY id;
+----
+id
+2
+4
+
+
+query
+SELECT id FROM nm_idx
+WHERE NOT ((skills @@ 'gcp' OR bonus > 5)::boost(2)::min_match(2) OR tenure <= 10)
+ORDER BY id;
+----
+id
+2
+4
+
+
+query error negated group over nullable columns mixes index-only search predicates
+SELECT id FROM nm_idx
+WHERE NOT ((skills @@ 'gcp' OR bonus IS NULL)::min_match(2) OR tenure <= 10);
+
+
+query error ::min_match used on a predicate the inverted index could not claim
+SELECT id FROM nm_idx
+WHERE NOT ((skills @@ 'gcp' OR bonus > bonus)::min_match(2) OR tenure <= 10);
+
+
+query error ::min_match\(3\) on an OR of 2 branches
+SELECT id FROM nm_idx
+WHERE NOT ((skills @@ 'gcp' OR bonus > 5)::min_match(3) OR tenure <= 10);
+
+
+statement ok
+DROP TABLE nm;

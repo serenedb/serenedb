@@ -28,7 +28,7 @@ control substitution on
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/dfpw.db' AS dfpw (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+CREATE DATABASE dfpw;
 
 
 statement ok
@@ -111,4 +111,4 @@ DROP TABLE dfpw.t;
 
 
 statement ok
-DETACH dfpw;
+DROP DATABASE dfpw;

@@ -29,7 +29,7 @@
 
 #include <chrono>
 #include <duckdb/main/connection.hpp>
-#include <duckdb/main/materialized_query_result.hpp>
+#include <duckdb/main/query_result.hpp>
 #include <memory>
 #include <yaclib/async/make.hpp>
 #include <yaclib/coro/task.hpp>
@@ -41,6 +41,7 @@
 #include "network/http/es/common.h"
 #include "network/http/es/dsl.h"
 #include "network/http/handler.h"
+#include "network/http/prepared_source.h"
 #include "pg/connection_context.h"
 
 namespace sdb::network::http::es {
@@ -49,7 +50,7 @@ namespace {
 // One es_*() call per request, driven cooperatively (RunQuery yields the
 // scheduler worker between executor slices). A failed call has already been
 // written out as an ES error envelope when this resolves null.
-yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>> RunSql(
+yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunSql(
   RequestContext& ctx, std::string sql, http::HttpResponseWriter& writer,
   std::string_view index = {}, bool writes = false) {
   auto result = co_await ctx.RunQuery(std::move(sql), writes);
@@ -139,18 +140,25 @@ class BulkHandler final : public HttpHandler {
     }
     const auto start = std::chrono::steady_clock::now();
 
-    // es_bulk fills the items array through the side channel while the
-    // INSERT runs (serenedb INSERT has no RETURNING). The sink is on the
-    // ConnectionContext that RunQuery drives through.
-    auto& sdb_ctx = connector::GetSereneDBContext(*ctx.Connection().context);
+    auto& entry = ctx.PreparedSlot(PreparedSlotId::EsBulk);
+    if (auto error = EnsurePrepared(
+          ctx, entry,
+          absl::StrCat("INSERT INTO \"es\".", SqlIdentifier(index),
+                       " SELECT * FROM es_bulk_source(", SqlLiteral(index),
+                       ")"))) {
+      WriteSqlError(writer, *error, index);
+      co_return {};
+    }
     std::string items;
-    sdb_ctx.SetResponseSink(&items);
-    const absl::Cleanup clear_sink = [&] { sdb_ctx.SetResponseSink(nullptr); };
-
-    const auto sql = absl::StrCat("INSERT INTO \"es\".", SqlIdentifier(index),
-                                  " SELECT * FROM es_bulk(", SqlLiteral(index),
-                                  ", ", SqlLiteral(body), ")");
-    if (!co_await RunSql(ctx, sql, writer, index, /*writes=*/true)) {
+    const connector::EsBulkInput input{.body = body, .items = &items};
+    auto& connection = connector::GetSereneDBContext(*ctx.Connection().context);
+    connection.SetSideChannel(&input);
+    const absl::Cleanup clear = [&] {
+      connection.SetSideChannel<const connector::EsBulkInput>(nullptr);
+    };
+    auto result = co_await ctx.RunPrepared(*entry.statement);
+    if (result->HasError()) {
+      WriteSqlError(writer, result->GetErrorObject(), index);
       co_return {};
     }
     if (!co_await MaybeRefresh(ctx, request, index, writer)) {
@@ -236,7 +244,8 @@ class GetDocHandler final : public HttpHandler {
                 std::string_view{sb.view().value()});
       co_return {};
     }
-    const auto source = result->GetValue(0, 0).GetValue<std::string>();
+    const auto source =
+      result->Collection().GetValue(0, 0).GetValue<std::string>();
     sb.append_raw(R"(,"_version":1,"_seq_no":0,"_primary_term":1,)"
                   R"("found":true,"_source":)");
     sb.append_raw(source);
@@ -268,7 +277,7 @@ class GetSourceHandler final : public HttpHandler {
       co_return {};
     }
     WriteJson(writer, HttpStatus::Ok,
-              result->GetValue(0, 0).GetValue<std::string>());
+              result->Collection().GetValue(0, 0).GetValue<std::string>());
     co_return {};
   }
 };
@@ -415,14 +424,15 @@ bool DecodeScrollId(std::string_view id, ScrollState& state) {
 // One scroll page; rows == nullptr renders the empty terminal page. Advances
 // the cursor and embeds the refreshed id.
 void WriteScrollPage(http::HttpResponseWriter& writer, ScrollState& state,
-                     duckdb::MaterializedQueryResult* result, int64_t took) {
+                     duckdb::QueryResult* result, int64_t took) {
   const auto rows = result ? result->RowCount() : 0;
   if (result) {
     if (static_cast<int64_t>(rows) < state.size) {
       state.done = true;
     }
     if (rows > 0) {
-      state.last_id = duckdb::StringValue::Get(result->GetValue(0, rows - 1));
+      state.last_id =
+        duckdb::StringValue::Get(result->Collection().GetValue(0, rows - 1));
     }
   }
   simdjson::builder::string_builder sb;
@@ -441,13 +451,13 @@ void WriteScrollPage(http::HttpResponseWriter& writer, ScrollState& state,
     sb.append_raw(R"({"_index":)");
     sb.escape_and_append_with_quotes(std::string_view{state.index});
     sb.append_raw(R"(,"_id":)");
-    sb.escape_and_append_with_quotes(
-      std::string_view{duckdb::StringValue::Get(result->GetValue(0, row))});
+    sb.escape_and_append_with_quotes(std::string_view{
+      duckdb::StringValue::Get(result->Collection().GetValue(0, row))});
     sb.append_raw(",\"_score\":null");
     if (state.include_source) {
       sb.append_raw(",\"_source\":");
-      sb.append_raw(
-        std::string_view{duckdb::StringValue::Get(result->GetValue(1, row))});
+      sb.append_raw(std::string_view{
+        duckdb::StringValue::Get(result->Collection().GetValue(1, row))});
     }
     sb.append_raw("}");
   }
@@ -543,7 +553,7 @@ yaclib::Task<bool> RunAggregation(RequestContext& ctx, const Aggregation& agg,
       const auto rows = result->RowCount();
       int64_t shown = 0;
       const int64_t all =
-        rows > 0 ? result->GetValue(2, 0).GetValue<int64_t>() : 0;
+        rows > 0 ? result->Collection().GetValue(2, 0).GetValue<int64_t>() : 0;
       std::string buckets;
       simdjson::builder::string_builder bucket_sb;
       for (duckdb::idx_t row = 0; row < rows; ++row) {
@@ -551,9 +561,10 @@ yaclib::Task<bool> RunAggregation(RequestContext& ctx, const Aggregation& agg,
           bucket_sb.append_raw(",");
         }
         bucket_sb.append_raw(R"({"key":)");
-        AppendSortValue(bucket_sb, result->GetValue(0, row));
+        AppendSortValue(bucket_sb, result->Collection().GetValue(0, row));
         bucket_sb.append_raw(R"(,"doc_count":)");
-        const auto count = result->GetValue(1, row).GetValue<int64_t>();
+        const auto count =
+          result->Collection().GetValue(1, row).GetValue<int64_t>();
         shown += count;
         bucket_sb.append(count);
         bucket_sb.append_raw("}");
@@ -573,19 +584,19 @@ yaclib::Task<bool> RunAggregation(RequestContext& ctx, const Aggregation& agg,
           sb.append_raw(",");
         }
         sb.append_raw(R"({"key_as_string":)");
-        sb.escape_and_append_with_quotes(
-          std::string_view{duckdb::StringValue::Get(result->GetValue(1, row))});
+        sb.escape_and_append_with_quotes(std::string_view{
+          duckdb::StringValue::Get(result->Collection().GetValue(1, row))});
         sb.append_raw(R"(,"key":)");
-        sb.append(result->GetValue(0, row).GetValue<int64_t>());
+        sb.append(result->Collection().GetValue(0, row).GetValue<int64_t>());
         sb.append_raw(R"(,"doc_count":)");
-        sb.append(result->GetValue(2, row).GetValue<int64_t>());
+        sb.append(result->Collection().GetValue(2, row).GetValue<int64_t>());
         sb.append_raw("}");
       }
       sb.append_raw("]}");
       co_return true;
     }
     default: {
-      const auto value = result->GetValue(0, 0);
+      const auto value = result->Collection().GetValue(0, 0);
       sb.append_raw(R"({"value":)");
       if (value.IsNull()) {
         sb.append_raw("null");
@@ -616,7 +627,8 @@ yaclib::Task<bool> FetchFieldTypes(RequestContext& ctx, std::string_view index,
   if (!result) {
     co_return false;
   }
-  const auto mapping = result->GetValue(0, 0).GetValue<std::string>();
+  const auto mapping =
+    result->Collection().GetValue(0, 0).GetValue<std::string>();
   if (!ParseFieldTypes(mapping, fields)) {
     WriteError(writer, HttpStatus::InternalError, "exception",
                "malformed index mapping");
@@ -716,7 +728,8 @@ class SearchHandler final : public HttpHandler {
       for (duckdb::idx_t row = 0; row < rows; ++row) {
         absl::StrAppend(
           &ids, row > 0 ? "," : "",
-          SqlLiteral(result->GetValue(0, row).GetValue<std::string>()));
+          SqlLiteral(
+            result->Collection().GetValue(0, row).GetValue<std::string>()));
       }
       auto source_result = co_await RunSql(
         ctx,
@@ -729,8 +742,8 @@ class SearchHandler final : public HttpHandler {
       source_by_id.reserve(source_result->RowCount());
       for (duckdb::idx_t row = 0; row < source_result->RowCount(); ++row) {
         source_by_id.emplace(
-          source_result->GetValue(0, row).GetValue<std::string>(),
-          source_result->GetValue(1, row).GetValue<std::string>());
+          source_result->Collection().GetValue(0, row).GetValue<std::string>(),
+          source_result->Collection().GetValue(1, row).GetValue<std::string>());
       }
     }
 
@@ -747,7 +760,7 @@ class SearchHandler final : public HttpHandler {
       if (!count_result) {
         co_return {};
       }
-      total = count_result->GetValue(0, 0).GetValue<int64_t>();
+      total = count_result->Collection().GetValue(0, 0).GetValue<int64_t>();
     }
 
     // Filter-only queries score a constant 1.0; field sorts render null
@@ -755,7 +768,9 @@ class SearchHandler final : public HttpHandler {
     const bool scored = spec.order_by.empty();
     const duckdb::idx_t score_column = sort_base + spec.sort_fields.size();
     auto score_of = [&](duckdb::idx_t row) {
-      return result->GetValue(score_column, row).GetValue<double>();
+      return result->Collection()
+        .GetValue(score_column, row)
+        .GetValue<double>();
     };
     simdjson::builder::string_builder sb;
     sb.append_raw("{\"took\":");
@@ -786,8 +801,8 @@ class SearchHandler final : public HttpHandler {
       sb.append_raw(R"({"_index":)");
       sb.escape_and_append_with_quotes(index);
       sb.append_raw(R"(,"_id":)");
-      sb.escape_and_append_with_quotes(
-        std::string_view{duckdb::StringValue::Get(result->GetValue(0, row))});
+      sb.escape_and_append_with_quotes(std::string_view{
+        duckdb::StringValue::Get(result->Collection().GetValue(0, row))});
       sb.append_raw(",\"_score\":");
       if (!scored) {
         sb.append_raw("null");
@@ -798,7 +813,8 @@ class SearchHandler final : public HttpHandler {
       }
       if (spec.include_source) {
         sb.append_raw(",\"_source\":");
-        const auto id = result->GetValue(0, row).GetValue<std::string>();
+        const auto id =
+          result->Collection().GetValue(0, row).GetValue<std::string>();
         const auto it = source_by_id.find(id);
         // A doc deleted between rank and fetch leaves an empty object.
         sb.append_raw(it != source_by_id.end() ? std::string_view{it->second}
@@ -810,7 +826,8 @@ class SearchHandler final : public HttpHandler {
           if (i > 0) {
             sb.append_raw(",");
           }
-          AppendSortValue(sb, result->GetValue(sort_base + i, row));
+          AppendSortValue(sb,
+                          result->Collection().GetValue(sort_base + i, row));
         }
         sb.append_raw("]");
       }
@@ -869,7 +886,7 @@ class SearchHandler final : public HttpHandler {
       .index = std::string{index},
       .query = std::move(spec.query_raw),
       .size = spec.size,
-      .total = count_result->GetValue(0, 0).GetValue<int64_t>(),
+      .total = count_result->Collection().GetValue(0, 0).GetValue<int64_t>(),
       .include_source = spec.include_source,
     };
     auto result =
@@ -1002,7 +1019,7 @@ class CountHandler final : public HttpHandler {
     if (!result) {
       co_return {};
     }
-    const auto count = result->GetValue(0, 0).GetValue<int64_t>();
+    const auto count = result->Collection().GetValue(0, 0).GetValue<int64_t>();
     WriteJson(writer, HttpStatus::Ok,
               absl::StrCat("{\"count\":", count,
                            ",\"_shards\":{\"total\":1,\"successful\":1,"
@@ -1099,7 +1116,8 @@ class MappingHandler final : public HttpHandler {
     if (!result) {
       co_return {};
     }
-    const auto mappings = result->GetValue(0, 0).GetValue<std::string>();
+    const auto mappings =
+      result->Collection().GetValue(0, 0).GetValue<std::string>();
     WriteJson(
       writer, HttpStatus::Ok,
       absl::StrCat(R"({")", index, R"(":{"mappings":)", mappings, "}}"));
@@ -1124,8 +1142,10 @@ class CatIndicesHandler final : public HttpHandler {
       body.push_back('[');
     }
     for (duckdb::idx_t row = 0; row < result->RowCount(); ++row) {
-      const auto index = result->GetValue(0, row).GetValue<std::string>();
-      const auto docs = result->GetValue(1, row).GetValue<int64_t>();
+      const auto index =
+        result->Collection().GetValue(0, row).GetValue<std::string>();
+      const auto docs =
+        result->Collection().GetValue(1, row).GetValue<int64_t>();
       if (json) {
         absl::StrAppend(
           &body, row > 0 ? "," : "",
@@ -1236,8 +1256,9 @@ class MgetHandler final : public HttpHandler {
     irs::containers::FlatHashMap<std::string, std::string> source_by_id;
     source_by_id.reserve(result->RowCount());
     for (duckdb::idx_t row = 0; row < result->RowCount(); ++row) {
-      source_by_id.emplace(result->GetValue(0, row).GetValue<std::string>(),
-                           result->GetValue(1, row).GetValue<std::string>());
+      source_by_id.emplace(
+        result->Collection().GetValue(0, row).GetValue<std::string>(),
+        result->Collection().GetValue(1, row).GetValue<std::string>());
     }
     simdjson::builder::string_builder sb;
     sb.append_raw(R"({"docs":[)");
@@ -1354,7 +1375,8 @@ class IndexInfoHandler final : public HttpHandler {
     if (!result) {
       co_return {};
     }
-    const auto mappings = result->GetValue(0, 0).GetValue<std::string>();
+    const auto mappings =
+      result->Collection().GetValue(0, 0).GetValue<std::string>();
     WriteJson(
       writer, HttpStatus::Ok,
       absl::StrCat(R"({")", index, R"(":{"aliases":{},"mappings":)", mappings,
@@ -1375,7 +1397,7 @@ class CatCountHandler final : public HttpHandler {
     if (!result) {
       co_return {};
     }
-    const auto count = result->GetValue(0, 0).GetValue<int64_t>();
+    const auto count = result->Collection().GetValue(0, 0).GetValue<int64_t>();
     if (request.Query("format") == "json") {
       WriteJson(writer, HttpStatus::Ok,
                 absl::StrCat(R"([{"count":")", count, R"("}])"));
@@ -1388,82 +1410,58 @@ class CatCountHandler final : public HttpHandler {
 
 }  // namespace
 
-void Register(HttpRouter& router) {
-  router.Add(HttpMethod::Get, "/", std::make_unique<RootHandler>());
-  router.Add(HttpMethod::Head, "/", std::make_unique<RootHandler>());
-  router.Add(HttpMethod::Get, "/_cluster/health",
-             std::make_unique<HealthHandler>());
-  router.Add(HttpMethod::Get, "/_cat/indices",
-             std::make_unique<CatIndicesHandler>());
-  router.Add(HttpMethod::Get, "/_cat/count",
-             std::make_unique<CatCountHandler>());
-  router.Add(HttpMethod::Post, "/_bulk", std::make_unique<BulkHandler>());
-  router.Add(HttpMethod::Put, "/_bulk", std::make_unique<BulkHandler>());
-  router.Add(HttpMethod::Get, "/_nodes/stats",
-             std::make_unique<NodesStatsHandler>());
-  router.Add(HttpMethod::Get, "/_nodes/stats/:metric",
-             std::make_unique<NodesStatsHandler>());
-  router.Add(HttpMethod::Put, "/_cluster/settings",
-             std::make_unique<ClusterSettingsHandler>());
-  router.Add(HttpMethod::Get, "/_cluster/settings",
-             std::make_unique<ClusterSettingsHandler>());
-  router.Add(HttpMethod::Get, "/_cluster/health/:index",
-             std::make_unique<HealthHandler>());
-  router.Add(HttpMethod::Get, "/_stats", std::make_unique<IndexStatsHandler>());
-  router.Add(HttpMethod::Get, "/:index/_stats",
-             std::make_unique<IndexStatsHandler>());
-  router.Add(HttpMethod::Get, "/:index/_stats/:metric",
-             std::make_unique<IndexStatsHandler>());
-  router.Add(HttpMethod::Post, "/_forcemerge",
-             std::make_unique<ForceMergeHandler>());
-  router.Add(HttpMethod::Post, "/:index/_forcemerge",
-             std::make_unique<ForceMergeHandler>());
-  router.Add(HttpMethod::Post, "/_refresh", std::make_unique<RefreshHandler>());
-  router.Add(HttpMethod::Get, "/_refresh", std::make_unique<RefreshHandler>());
-  router.Add(HttpMethod::Put, "/:index",
-             std::make_unique<CreateIndexHandler>());
-  router.Add(HttpMethod::Delete, "/:index",
-             std::make_unique<DeleteIndexHandler>());
-  router.Add(HttpMethod::Head, "/:index",
-             std::make_unique<IndexExistsHandler>());
-  router.Add(HttpMethod::Get, "/:index", std::make_unique<IndexInfoHandler>());
-  router.Add(HttpMethod::Get, "/:index/_mapping",
-             std::make_unique<MappingHandler>());
-  router.Add(HttpMethod::Post, "/:index/_bulk",
-             std::make_unique<BulkHandler>());
-  router.Add(HttpMethod::Put, "/:index/_bulk", std::make_unique<BulkHandler>());
-  router.Add(HttpMethod::Post, "/:index/_doc", std::make_unique<DocHandler>());
-  router.Add(HttpMethod::Post, "/:index/_doc/:id",
-             std::make_unique<DocHandler>());
-  router.Add(HttpMethod::Put, "/:index/_doc/:id",
-             std::make_unique<DocHandler>());
-  router.Add(HttpMethod::Get, "/:index/_doc/:id",
-             std::make_unique<GetDocHandler>());
-  router.Add(HttpMethod::Head, "/:index/_doc/:id",
-             std::make_unique<ExistsDocHandler>());
-  router.Add(HttpMethod::Get, "/:index/_source/:id",
-             std::make_unique<GetSourceHandler>());
-  router.Add(HttpMethod::Get, "/:index/_mget", std::make_unique<MgetHandler>());
-  router.Add(HttpMethod::Post, "/:index/_mget",
-             std::make_unique<MgetHandler>());
-  router.Add(HttpMethod::Post, "/:index/_refresh",
-             std::make_unique<RefreshHandler>());
-  router.Add(HttpMethod::Get, "/:index/_refresh",
-             std::make_unique<RefreshHandler>());
-  router.Add(HttpMethod::Get, "/:index/_count",
-             std::make_unique<CountHandler>());
-  router.Add(HttpMethod::Post, "/:index/_count",
-             std::make_unique<CountHandler>());
-  router.Add(HttpMethod::Get, "/:index/_search",
-             std::make_unique<SearchHandler>());
-  router.Add(HttpMethod::Post, "/:index/_search",
-             std::make_unique<SearchHandler>());
-  router.Add(HttpMethod::Get, "/_search/scroll",
-             std::make_unique<ScrollHandler>());
-  router.Add(HttpMethod::Post, "/_search/scroll",
-             std::make_unique<ScrollHandler>());
-  router.Add(HttpMethod::Delete, "/_search/scroll",
-             std::make_unique<ClearScrollHandler>());
+std::unique_ptr<HttpHandler> Make(Endpoint endpoint) {
+  switch (endpoint) {
+    case Endpoint::Root:
+      return std::make_unique<RootHandler>();
+    case Endpoint::Health:
+      return std::make_unique<HealthHandler>();
+    case Endpoint::CatIndices:
+      return std::make_unique<CatIndicesHandler>();
+    case Endpoint::CatCount:
+      return std::make_unique<CatCountHandler>();
+    case Endpoint::Bulk:
+      return std::make_unique<BulkHandler>();
+    case Endpoint::NodesStats:
+      return std::make_unique<NodesStatsHandler>();
+    case Endpoint::ClusterSettings:
+      return std::make_unique<ClusterSettingsHandler>();
+    case Endpoint::IndexStats:
+      return std::make_unique<IndexStatsHandler>();
+    case Endpoint::ForceMerge:
+      return std::make_unique<ForceMergeHandler>();
+    case Endpoint::Refresh:
+      return std::make_unique<RefreshHandler>();
+    case Endpoint::CreateIndex:
+      return std::make_unique<CreateIndexHandler>();
+    case Endpoint::DeleteIndex:
+      return std::make_unique<DeleteIndexHandler>();
+    case Endpoint::IndexExists:
+      return std::make_unique<IndexExistsHandler>();
+    case Endpoint::IndexInfo:
+      return std::make_unique<IndexInfoHandler>();
+    case Endpoint::Mapping:
+      return std::make_unique<MappingHandler>();
+    case Endpoint::Doc:
+      return std::make_unique<DocHandler>();
+    case Endpoint::GetDoc:
+      return std::make_unique<GetDocHandler>();
+    case Endpoint::ExistsDoc:
+      return std::make_unique<ExistsDocHandler>();
+    case Endpoint::GetSource:
+      return std::make_unique<GetSourceHandler>();
+    case Endpoint::Mget:
+      return std::make_unique<MgetHandler>();
+    case Endpoint::Count:
+      return std::make_unique<CountHandler>();
+    case Endpoint::Search:
+      return std::make_unique<SearchHandler>();
+    case Endpoint::Scroll:
+      return std::make_unique<ScrollHandler>();
+    case Endpoint::ClearScroll:
+      return std::make_unique<ClearScrollHandler>();
+  }
+  SDB_UNREACHABLE();
 }
 
 }  // namespace sdb::network::http::es

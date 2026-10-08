@@ -30,11 +30,6 @@
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace irs {
 
 struct Directory;
@@ -42,8 +37,7 @@ class IndexOutput;
 
 class IdxWriter final {
  public:
-  IdxWriter(Directory& dir, std::string_view segment_name,
-            duckdb::DatabaseInstance& db);
+  IdxWriter(Directory& dir, std::string_view segment_name);
   ~IdxWriter();
 
   IdxWriter(const IdxWriter&) = delete;

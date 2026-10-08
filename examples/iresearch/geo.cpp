@@ -29,7 +29,6 @@
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/geo_filter.hpp>
@@ -40,6 +39,7 @@
 #include <string>
 #include <vector>
 
+#include "examples.h"
 #include "s2/s2latlng.h"
 #include "s2/s2loop.h"
 #include "s2/s2polygon.h"
@@ -181,9 +181,8 @@ irs::IndexWriterOptions MakeWriterOptions() {
 irs::DirectoryReader BuildIndex(irs::Directory& dir,
                                 const std::vector<GeoEntry>& docs,
                                 std::vector<std::string>& names_out) {
-  auto format = irs::formats::Get("1_5simd");
   auto writer =
-    irs::IndexWriter::Make(dir, format, irs::kOmCreate, MakeWriterOptions());
+    irs::IndexWriter::Make(dir, irs::kOmCreate, MakeWriterOptions());
 
   GeoField geo;
 
@@ -266,12 +265,10 @@ void PrintHits(std::string_view label, const std::vector<std::string>& hits) {
 
 }  // namespace
 
-int main() {
+int GeoMain() {
   // Bracket the process-wide duckdb::DuckDB lifetime; Db() reads it back.
   auto& engine = irs::DuckDBEngine::Instance();
   engine.Initialize();
-
-  irs::formats::Init();
 
   // Nested scope so reader/dir destruct before DuckDBEngine::Shutdown tears
   // down the duckdb::DuckDB they were dispatching through.

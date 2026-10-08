@@ -1,0 +1,556 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE SCHEMA rr1;
+
+
+statement ok
+CREATE TABLE rr1.t (a INTEGER);
+
+
+statement ok
+INSERT INTO rr1.t VALUES (1), (2), (3);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE INDEX rr1_i ON rr1.t (a);
+
+
+statement ok
+ALTER TABLE rr1.t RENAME TO t2;
+
+
+query
+SELECT schemaname, tablename, indexname FROM pg_indexes WHERE indexname = 'rr1_i';
+----
+schemaname	tablename	indexname
+rr1	t2	rr1_i
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+CREATE SCHEMA rr2;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TABLE rr2.x (a INTEGER PRIMARY KEY);
+
+
+statement ok
+ALTER SCHEMA rr2 RENAME TO rr2b;
+
+
+statement ok
+CREATE TABLE rr2b.y (a INTEGER);
+
+
+statement ok
+CREATE TYPE rr2b.mood AS ENUM ('ok', 'meh');
+
+
+statement ok
+CREATE TABLE rr2b.z (m rr2b.mood, x_ref INTEGER REFERENCES rr2b.x (a));
+
+
+statement ok
+CREATE VIEW rr2b.v AS SELECT a FROM rr2b.y;
+
+
+statement ok
+COMMIT;
+
+
+statement error Cannot drop entry "mood" because there are entries that depend on it
+DROP TYPE rr2b.mood;
+
+
+statement error Cannot drop entry "y" because there are entries that depend on it
+DROP TABLE rr2b.y;
+
+
+statement ok
+INSERT INTO rr2b.x VALUES (1);
+
+
+statement ok
+INSERT INTO rr2b.z VALUES ('ok', 1);
+
+
+statement error Violates foreign key constraint because key "a: 2" does not exist in the referenced table
+INSERT INTO rr2b.z VALUES ('meh', 2);
+
+
+statement ok
+CREATE SCHEMA rr3;
+
+
+statement ok
+CREATE TABLE rr3.t (a INTEGER);
+
+
+statement ok
+CREATE INDEX rr3_i ON rr3.t (a);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP INDEX rr3.rr3_i;
+
+
+statement ok
+ALTER SCHEMA rr3 RENAME TO rr3b;
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+CREATE SCHEMA rr9;
+
+
+statement ok
+CREATE TABLE rr9.gone (a INTEGER);
+
+
+statement ok
+CREATE TABLE rr9.kept (a INTEGER);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER SCHEMA rr9 RENAME TO rr9b;
+
+
+statement ok
+DROP TABLE rr9b.gone;
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+CREATE SCHEMA rr4;
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+ALTER SCHEMA rr4 RENAME TO rr4b;
+
+
+connection s2
+statement ok
+CREATE TABLE rr4.y (a INTEGER);
+
+
+connection s2
+query
+SELECT nspname FROM pg_namespace WHERE nspname LIKE 'rr4%' ORDER BY nspname;
+----
+nspname
+rr4
+
+
+connection s1
+query
+SELECT nspname FROM pg_namespace WHERE nspname LIKE 'rr4%' ORDER BY nspname;
+----
+nspname
+rr4b
+
+
+connection s1
+statement ok
+ROLLBACK;
+
+
+connection default
+statement ok
+CREATE TABLE rr5 (a INTEGER);
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+ALTER TABLE rr5 RENAME TO rr5b;
+
+
+connection s2
+statement error Attempting to modify table "rr5"
+INSERT INTO rr5 VALUES (1);
+
+
+connection s1
+statement ok
+ROLLBACK;
+
+
+connection s2
+statement ok
+INSERT INTO rr5 VALUES (1);
+
+
+connection default
+statement ok
+CREATE TABLE rr10 (a INTEGER);
+
+
+connection default
+statement ok
+CREATE INDEX rr10_i ON rr10 (a);
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+ALTER TABLE rr10 RENAME TO rr10b;
+
+
+connection s1
+query
+SELECT tablename FROM pg_indexes WHERE indexname = 'rr10_i';
+----
+tablename
+rr10b
+
+
+connection s2
+query
+SELECT tablename FROM pg_indexes WHERE indexname = 'rr10_i';
+----
+tablename
+rr10
+
+
+connection s1
+statement ok
+ROLLBACK;
+
+
+connection default
+statement ok
+CREATE TABLE rr6 (a INTEGER);
+
+
+connection default
+statement ok
+INSERT INTO rr6 VALUES (1), (2);
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+ALTER TABLE rr6 RENAME TO rr6b;
+
+
+connection s2
+statement ok
+CREATE INDEX rr6_i ON rr6 (a);
+
+
+connection s2
+query
+SELECT tablename, indexname FROM pg_indexes WHERE indexname = 'rr6_i';
+----
+tablename	indexname
+rr6	rr6_i
+
+
+connection s1
+statement error Could not commit DROP of "rr6" because a dependency was created after the transaction started
+COMMIT;
+
+
+connection default
+statement ok
+CREATE SCHEMA rr8a;
+
+
+connection default
+statement ok
+CREATE TABLE rr8a.t (x INTEGER);
+
+
+connection default
+statement ok
+CREATE SCHEMA rr8b;
+
+
+connection default
+statement ok
+CREATE TABLE rr8b.t (x INTEGER);
+
+
+connection s3
+statement ok
+BEGIN;
+
+
+connection s3
+statement ok
+ALTER SCHEMA rr8a RENAME TO rr8a_renamed;
+
+
+connection s3
+statement ok
+ALTER TABLE rr8a_renamed.t RENAME TO t_renamed;
+
+
+connection s4
+statement ok
+BEGIN;
+
+
+connection s4
+statement ok
+ALTER SCHEMA rr8b RENAME TO rr8b_renamed;
+
+
+connection s4
+statement ok
+ALTER TABLE rr8b_renamed.t RENAME TO t_renamed;
+
+
+connection s5
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection s5
+statement ok
+CREATE TABLE rr8_trigger (x INTEGER);
+
+
+connection s5
+statement ok
+RESET sdb_faults;
+
+
+connection s3
+statement ok
+ROLLBACK;
+
+
+connection s4
+statement ok
+COMMIT;
+
+
+connection default
+query
+SELECT nspname FROM pg_namespace WHERE nspname LIKE 'rr%' ORDER BY nspname;
+----
+nspname
+rr1
+rr2b
+rr3b
+rr4
+rr8a
+rr8b_renamed
+rr9b
+
+
+connection default
+query
+SELECT schemaname, tablename FROM pg_tables
+WHERE schemaname LIKE 'rr%' OR tablename LIKE 'rr%'
+ORDER BY schemaname, tablename;
+----
+schemaname	tablename
+public	rr10
+public	rr5
+public	rr6
+public	rr8_trigger
+rr1	t2
+rr2b	x
+rr2b	y
+rr2b	z
+rr3b	t
+rr4	y
+rr8a	t
+rr8b_renamed	t_renamed
+rr9b	kept
+
+
+connection default
+query
+SELECT schemaname, tablename, indexname FROM pg_indexes WHERE indexname LIKE 'rr%' ORDER BY indexname;
+----
+schemaname	tablename	indexname
+public	rr10	rr10_i
+rr1	t2	rr1_i
+public	rr6	rr6_i
+
+
+connection default
+query
+SELECT (SELECT count(*) FROM rr1.t2) AS t2, (SELECT count(*) FROM rr5) AS rr5, (SELECT count(*) FROM rr6) AS rr6;
+----
+t2	rr5	rr6
+3	1	2
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_crash
+query
+SELECT nspname FROM pg_namespace WHERE nspname LIKE 'rr%' ORDER BY nspname;
+----
+nspname
+rr1
+rr2b
+rr3b
+rr4
+rr8a
+rr8b_renamed
+rr9b
+
+
+connection after_crash
+query
+SELECT schemaname, tablename FROM pg_tables
+WHERE schemaname LIKE 'rr%' OR tablename LIKE 'rr%'
+ORDER BY schemaname, tablename;
+----
+schemaname	tablename
+public	rr10
+public	rr5
+public	rr6
+public	rr8_trigger
+rr1	t2
+rr2b	x
+rr2b	y
+rr2b	z
+rr3b	t
+rr4	y
+rr8a	t
+rr8b_renamed	t_renamed
+rr9b	kept
+
+
+connection after_crash
+query
+SELECT schemaname, tablename, indexname FROM pg_indexes WHERE indexname LIKE 'rr%' ORDER BY indexname;
+----
+schemaname	tablename	indexname
+public	rr10	rr10_i
+rr1	t2	rr1_i
+public	rr6	rr6_i
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM rr1.t2) AS t2, (SELECT count(*) FROM rr5) AS rr5, (SELECT count(*) FROM rr6) AS rr6;
+----
+t2	rr5	rr6
+3	1	2
+
+
+connection after_crash
+query
+SELECT a FROM rr1.t2 WHERE a = 2;
+----
+a
+2
+
+
+connection after_crash
+statement ok
+ALTER TABLE rr1.t2 RENAME TO t3;
+
+
+connection after_crash
+statement error Cannot drop entry "mood" because there are entries that depend on it
+DROP TYPE rr2b.mood;
+
+
+connection after_crash
+statement error Cannot drop entry "y" because there are entries that depend on it
+DROP TABLE rr2b.y;
+
+
+connection after_crash
+statement error Violates foreign key constraint because key "a: 2" does not exist in the referenced table
+INSERT INTO rr2b.z VALUES ('meh', 2);
+
+
+connection after_crash
+query
+SELECT m, x_ref FROM rr2b.z;
+----
+m	x_ref
+ok	1
+
+
+connection after_crash
+statement ok
+DROP SCHEMA rr2b CASCADE;
+
+
+connection after_crash
+statement ok
+DROP TABLE rr6;
+
+
+connection after_crash
+query
+SELECT schemaname, tablename, indexname FROM pg_indexes WHERE indexname LIKE 'rr%' ORDER BY indexname;
+----
+schemaname	tablename	indexname
+public	rr10	rr10_i
+rr1	t3	rr1_i

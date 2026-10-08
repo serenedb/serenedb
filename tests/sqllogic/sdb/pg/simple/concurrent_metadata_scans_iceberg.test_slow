@@ -1,0 +1,1457 @@
+control substitution on
+
+
+statement ok
+CREATE OR REPLACE SECRET iceberg_${__DATABASE__} (
+  TYPE S3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/'
+);
+
+
+statement ok
+DETACH DATABASE IF EXISTS iceberg_${__DATABASE__};
+
+
+statement ok
+ATTACH '${ICEBERG_WAREHOUSE}' AS iceberg_${__DATABASE__} (
+  TYPE ICEBERG,
+  ENDPOINT '${ICEBERG_REST_URL}',
+  AUTHORIZATION_TYPE 'none'
+);
+
+
+statement ok
+CREATE SCHEMA iceberg_${__DATABASE__}.${__DATABASE__}_a;
+
+
+statement ok
+CREATE SCHEMA iceberg_${__DATABASE__}.${__DATABASE__}_b;
+
+
+statement ok
+CREATE SCHEMA iceberg_${__DATABASE__}.${__DATABASE__}_c;
+
+
+statement ok
+CREATE SCHEMA iceberg_${__DATABASE__}.${__DATABASE__}_d;
+
+
+statement ok
+CREATE SCHEMA iceberg_${__DATABASE__}.${__DATABASE__}_e;
+
+
+statement ok
+CREATE SCHEMA iceberg_${__DATABASE__}.${__DATABASE__}_f;
+
+
+statement ok
+CREATE TABLE iceberg_${__DATABASE__}.${__DATABASE__}_a.t (a INTEGER, b VARCHAR);
+
+
+statement ok
+CREATE TABLE iceberg_${__DATABASE__}.${__DATABASE__}_b.t (a INTEGER, b VARCHAR);
+
+
+statement ok
+CREATE TABLE iceberg_${__DATABASE__}.${__DATABASE__}_c.t (a INTEGER, b VARCHAR);
+
+
+statement ok
+CREATE TABLE iceberg_${__DATABASE__}.${__DATABASE__}_d.t (a INTEGER, b VARCHAR);
+
+
+statement ok
+CREATE TABLE iceberg_${__DATABASE__}.${__DATABASE__}_e.t (a INTEGER, b VARCHAR);
+
+
+statement ok
+CREATE TABLE iceberg_${__DATABASE__}.${__DATABASE__}_f.t (a INTEGER, b VARCHAR);
+
+
+statement ok
+CREATE VIEW iceberg_${__DATABASE__}.${__DATABASE__}_a.v AS SELECT 1 AS x;
+
+
+statement ok
+CREATE VIEW iceberg_${__DATABASE__}.${__DATABASE__}_b.v AS SELECT 1 AS x;
+
+
+statement ok
+CREATE VIEW iceberg_${__DATABASE__}.${__DATABASE__}_c.v AS SELECT 1 AS x;
+
+
+statement ok
+CREATE VIEW iceberg_${__DATABASE__}.${__DATABASE__}_d.v AS SELECT 1 AS x;
+
+
+statement ok
+CREATE VIEW iceberg_${__DATABASE__}.${__DATABASE__}_e.v AS SELECT 1 AS x;
+
+
+statement ok
+CREATE VIEW iceberg_${__DATABASE__}.${__DATABASE__}_f.v AS SELECT 1 AS x;
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, table_name FROM duckdb_columns() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE table_name = 't' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+query I
+SELECT count(DISTINCT schema_name) AS schemas FROM (
+  SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+  UNION ALL SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'iceberg_${__DATABASE__}'
+) scans WHERE view_name = 'v' AND starts_with(schema_name, '${__DATABASE__}_');
+----
+schemas
+6
+
+
+statement ok
+DROP VIEW iceberg_${__DATABASE__}.${__DATABASE__}_a.v;
+
+
+statement ok
+DROP VIEW iceberg_${__DATABASE__}.${__DATABASE__}_b.v;
+
+
+statement ok
+DROP VIEW iceberg_${__DATABASE__}.${__DATABASE__}_c.v;
+
+
+statement ok
+DROP VIEW iceberg_${__DATABASE__}.${__DATABASE__}_d.v;
+
+
+statement ok
+DROP VIEW iceberg_${__DATABASE__}.${__DATABASE__}_e.v;
+
+
+statement ok
+DROP VIEW iceberg_${__DATABASE__}.${__DATABASE__}_f.v;
+
+
+statement ok
+DROP TABLE iceberg_${__DATABASE__}.${__DATABASE__}_a.t;
+
+
+statement ok
+DROP TABLE iceberg_${__DATABASE__}.${__DATABASE__}_b.t;
+
+
+statement ok
+DROP TABLE iceberg_${__DATABASE__}.${__DATABASE__}_c.t;
+
+
+statement ok
+DROP TABLE iceberg_${__DATABASE__}.${__DATABASE__}_d.t;
+
+
+statement ok
+DROP TABLE iceberg_${__DATABASE__}.${__DATABASE__}_e.t;
+
+
+statement ok
+DROP TABLE iceberg_${__DATABASE__}.${__DATABASE__}_f.t;
+
+
+statement ok
+DROP SCHEMA iceberg_${__DATABASE__}.${__DATABASE__}_a;
+
+
+statement ok
+DROP SCHEMA iceberg_${__DATABASE__}.${__DATABASE__}_b;
+
+
+statement ok
+DROP SCHEMA iceberg_${__DATABASE__}.${__DATABASE__}_c;
+
+
+statement ok
+DROP SCHEMA iceberg_${__DATABASE__}.${__DATABASE__}_d;
+
+
+statement ok
+DROP SCHEMA iceberg_${__DATABASE__}.${__DATABASE__}_e;
+
+
+statement ok
+DROP SCHEMA iceberg_${__DATABASE__}.${__DATABASE__}_f;
+
+
+statement ok
+DETACH DATABASE iceberg_${__DATABASE__};
+
+
+statement ok
+DROP SECRET iceberg_${__DATABASE__};

@@ -369,6 +369,25 @@ SELECT $1::int AS v<NL>\bind 7<NL>\g
 > +---+
 > (1 row)
 
+CREATE TABLE {schema}.bind_once (id bigint, body text);<NL>INSERT INTO {schema}.bind_once VALUES ($1::bigint, 'token' || $2)<NL>\bind 1 2<NL>\g<NL>\echo :ROW_COUNT<NL>SELECT count(*) AS n FROM {schema}.bind_once;<NL>DROP TABLE {schema}.bind_once;
+----
+> 1
+> +---+
+> | n |
+> +---+
+> | 1 |
+> +---+
+> (1 row)
+
+CREATE SEQUENCE {schema}.bind_seq;<NL>SELECT nextval('{schema}.bind_seq') AS v, 'x' || $1 AS w<NL>\bind 1<NL>\g<NL>DROP SEQUENCE {schema}.bind_seq;
+----
+> +---+----+
+> | v | w  |
+> +---+----+
+> | 1 | x1 |
+> +---+----+
+> (1 row)
+
 SELECT 'r' AS rowcat, 'c' AS colcat, 1 AS val<NL>\crosstabview
 ----
 > +--------+---+
@@ -936,7 +955,7 @@ skipif postgres
 > Enter it again:
 > ERROR:  unrecognized configuration parameter "password_encryption"
 >
-> Did you mean: "password"
+> Did you mean: "s3_endpoint"
 
 \cd
 ----
@@ -1184,9 +1203,8 @@ skipif postgres
 > | inverted | real[]     | [NULL]       | ivf            | no       |
 > | inverted | text       | [NULL]       | otel_body_dict | no       |
 > | inverted | text       | [NULL]       | simple_dict    | no       |
-> | inverted | text       | [NULL]       | tokenizer      | no       |
 > +----------+------------+--------------+----------------+----------+
-> (6 rows)
+> (5 rows)
 
 # AM-pattern form: scopes by access-method name.
 skipif postgres
@@ -1201,9 +1219,8 @@ skipif postgres
 > | inverted | real[]     | [NULL]       | ivf            | no       |
 > | inverted | text       | [NULL]       | otel_body_dict | no       |
 > | inverted | text       | [NULL]       | simple_dict    | no       |
-> | inverted | text       | [NULL]       | tokenizer      | no       |
 > +----------+------------+--------------+----------------+----------+
-> (6 rows)
+> (5 rows)
 
 # AM + type-pattern form: scopes to a single input type within the AM.
 skipif postgres
@@ -1215,9 +1232,8 @@ skipif postgres
 > +----------+------------+--------------+----------------+----------+
 > | inverted | text       | [NULL]       | otel_body_dict | no       |
 > | inverted | text       | [NULL]       | simple_dict    | no       |
-> | inverted | text       | [NULL]       | tokenizer      | no       |
 > +----------+------------+--------------+----------------+----------+
-> (3 rows)
+> (2 rows)
 
 # serened doesn't model operator classes/families/operators/support;
 # its `secondary` and `inverted` AMs dispatch implicitly.
@@ -1284,9 +1300,8 @@ skipif postgres
 > +--------------+----------------+-------------+
 > | SCHEMA | simple_dict    | [NULL]      |
 > | public       | otel_body_dict | [NULL]      |
-> | sdb_docs     | tokenizer      | [NULL]      |
 > +--------------+----------------+-------------+
-> (3 rows)
+> (2 rows)
 
 # serened's text-search model is just dictionaries (CREATE TEXT SEARCH
 # DICTIONARY -> pg_ts_dict). PG ships configurations/parsers/templates

@@ -362,7 +362,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     std::cout << "Path to timing log: " << path.string() << std::endl;
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     // not all commits might produce a new segment,
     ASSERT_LE(1, reader.size());
     // some might merge with concurrent commits
@@ -510,7 +510,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     }
 
     auto reader =
-      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(docs_count, reader[0].docs_count());
   }
@@ -525,9 +525,6 @@ TEST_P(IndexProfileTestCase, profile_bulk_index_singlethread_batched_mt) {
 }
 
 TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_cleanup_mt) {
-  tests::dir_param_f factory;
-  std::tie(factory, std::ignore) = GetParam();
-
   ProfileBulkIndexDedicatedCleanup(16, 10000, 100);
 }
 
@@ -569,9 +566,6 @@ TEST_P(IndexProfileTestCase, profile_bulk_index_singlethread_batched_mt_tick) {
 
 TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_cleanup_mt_tick) {
   SetOnTick(true);
-  tests::dir_param_f factory;
-  std::tie(factory, std::ignore) = GetParam();
-
   ProfileBulkIndexDedicatedCleanup(16, 10000, 100);
 }
 
@@ -612,6 +606,5 @@ TEST_P(IndexProfileTestCase,
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(index_profile_test, IndexProfileTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5simd")),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          IndexProfileTestCase::to_string);

@@ -24,27 +24,28 @@
 #include <utility>
 
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/detail/term_acceptor.hpp"
 #include "iresearch/search/filters/filter.hpp"
-#include "iresearch/utils/automaton.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
 
 class AutomatonFilter;
 struct FilterVisitor;
-struct CompiledAcceptor;
 
 struct AutomatonOptions {
   using FilterType = AutomatonFilter;
 
   bstring pattern;
-  std::shared_ptr<const CompiledAcceptor> compiled;
+  TermAcceptorSource::ptr source;
+  PatternKind kind{PatternKind::RegexpPerl};
 
   AutomatonOptions() = default;
-  AutomatonOptions(automaton acceptor, bytes_view pattern);
+  AutomatonOptions(bytes_view pattern, PatternKind kind);
+  AutomatonOptions(bytes_view pattern, TermAcceptorSource::ptr source);
 
   bool operator==(const AutomatonOptions& rhs) const noexcept {
-    return pattern == rhs.pattern;
+    return pattern == rhs.pattern && kind == rhs.kind;
   }
 };
 
@@ -52,7 +53,7 @@ class AutomatonFilter final : public FilterWithField<AutomatonOptions> {
  public:
   AutomatonFilter() noexcept { SetScorer(&DefaultConstScore()); }
 
-  static field_visitor visitor(const automaton& acceptor);
+  static field_visitor visitor(TermAcceptorSource::ptr source);
 
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
@@ -65,8 +66,5 @@ class AutomatonFilter final : public FilterWithField<AutomatonOptions> {
 
   TermIterator::ptr CompileTermIterator(const TermReader& reader) const final;
 };
-
-TermPredicate::ptr MakeAutomatonTermPredicate(
-  std::shared_ptr<const CompiledAcceptor> compiled);
 
 }  // namespace irs

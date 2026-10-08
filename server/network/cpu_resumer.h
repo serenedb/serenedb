@@ -61,8 +61,7 @@ class CpuResumer final : public duckdb::Task {
     : _scheduler{scheduler}, _io{io} {}
 
   // The coroutine's two suspends. Park lets Execute decide park-vs-requeue;
-  // Yield asks Execute to run it again (fairness between query slices). The
-  // first suspend is a Park -- the spawner does the one bootstrap RequestRun.
+  // Yield asks Execute to run it again (fairness between query slices).
   class [[nodiscard]] Awaiter {
    public:
     Awaiter(CpuResumer& runner, bool yield) noexcept
@@ -98,6 +97,11 @@ class CpuResumer final : public duckdb::Task {
     }
   }
 
+  void Start() noexcept {
+    _run.fetch_add(1, std::memory_order_acq_rel);
+    _scheduler.ScheduleTask(_io.DuckProducer(_scheduler), shared_from_this());
+  }
+
   duckdb::TaskExecutionResult Execute(duckdb::TaskExecutionMode) override {
     _run.exchange(1, std::memory_order_acq_rel);
     _result = duckdb::TaskExecutionResult::TASK_BLOCKED;
@@ -120,7 +124,7 @@ class CpuResumer final : public duckdb::Task {
   yaclib::Job* _job = nullptr;
   duckdb::TaskExecutionResult _result =
     duckdb::TaskExecutionResult::TASK_BLOCKED;
-  std::atomic<uint32_t> _run{0};
+  std::atomic<uint32_t> _run{1};
 };
 
 }  // namespace sdb::network

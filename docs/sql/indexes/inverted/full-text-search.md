@@ -17,7 +17,11 @@ Every query family below produces a `TSQUERY`. The simplest is a bare string lit
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/example_001" />
 
+<DocCallout type="tip">
+
 All examples on this page use a `sentences` table whose `b` column is indexed with a lower-casing, non-stemming dictionary. For a full reference of every function and operator, see [Full-Text Search Functions](../../functions/search/full-text.md).
+
+</DocCallout>
 
 ## Term and phrase search {#phrase-search}
 
@@ -52,7 +56,7 @@ The `##` operator builds a **proximity phrase** by chaining parts left to right:
 Each side of a `##` is a single **phrase part**. A part may be:
 
 - a **bare word** — but only a *single* token (a multi-word string is not a phrase part; use `ts_phrase` for that), or
-- one of [`ts_phrase`](../../functions/search/full-text.md#ts_phrase), [`ts_starts_with`](../../functions/search/full-text.md#ts_starts_with), [`ts_like`](../../functions/search/full-text.md#ts_like), [`ts_levenshtein`](../../functions/search/full-text.md#ts_levenshtein), [`ts_any`](../../functions/search/full-text.md#ts_any) or [`ts_between`](../../functions/search/full-text.md#ts_between).
+- one of [`ts_phrase`](../../functions/search/full-text.md#ts_phrase), [`ts_starts_with`](../../functions/search/full-text.md#ts_starts_with), [`ts_like`](../../functions/search/full-text.md#ts_like), [`ts_regexp`](../../functions/search/full-text.md#ts_regexp), [`ts_levenshtein`](../../functions/search/full-text.md#ts_levenshtein), [`ts_any`](../../functions/search/full-text.md#ts_any) or [`ts_between`](../../functions/search/full-text.md#ts_between).
 
 These part types **mix freely**: any of them can occupy any position in a single chain, in any combination, with an independent gap between any pair — for example `ts_starts_with('qu') ## 1 ## ts_any(['fox', 'dog'])` chains a prefix part, a gap and an alternatives part.
 
@@ -175,22 +179,11 @@ Several wrapper functions read more naturally than `col @@ ts_*(...)` and expand
 
 ## Inspecting the query plan
 
-A full-text search is a first-class part of the SQL query plan, not a black box bolted on the side. The `@@` predicate compiles to an **`IRESEARCH_SCAN`** over the inverted index, with the matched terms pushed into the scan as a filter. `EXPLAIN` shows it:
+A full-text search is a first-class part of the SQL query plan, not a black box bolted on the side. The `@@` predicate compiles to an **`IRESEARCH_SCAN`** over the inverted index, with the matched terms pushed into the scan as its `Index Filter`. `EXPLAIN` shows it:
 
-```sql
-EXPLAIN SELECT a FROM sentences_idx WHERE b @@ 'fox';
-```
+<SqlLogicTest id="sql/indexes/inverted/full-text-search/inspect_plan" />
 
-```text
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│      Index: sentences_idx │
-│          Filter:          │
-│        (Term) b = fox     │
-│      Projections: a       │
-└───────────────────────────┘
-```
+A predicate the index cannot serve shows up as a `Column Filter` instead, checked row by row after the scan.
 
 Because the search executes inside the scan, it composes with the rest of SQL: a `JOIN`, a `GROUP BY`, or an `ORDER BY <scorer>` over the same query is planned and run as one statement. See [Profiling](../../../cookbook/performance/profiling.md) for reading plans, and [Ranking](./ranking.md#top-k-queries-and-wand-pruning) for the WAND-optimized `Top: k, optimized` plan.
 

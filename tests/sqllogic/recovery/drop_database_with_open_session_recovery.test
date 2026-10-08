@@ -1,0 +1,81 @@
+control substitution on
+
+statement ok
+CREATE DATABASE ddos_db;
+
+
+statement ok
+CREATE TABLE ddos_db.public.t (a INTEGER);
+
+
+statement ok
+INSERT INTO ddos_db.public.t VALUES (1), (2);
+
+
+connection reader
+statement ok
+BEGIN;
+
+
+connection reader
+query
+SELECT count(*) AS n FROM ddos_db.public.t;
+----
+n
+2
+
+
+connection dropper
+statement ok
+DROP DATABASE ddos_db;
+
+
+connection dropper
+query
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'ddos_db';
+----
+n
+0
+
+
+connection reader
+statement ok
+ROLLBACK;
+
+
+connection reader
+statement error
+SELECT count(*) FROM ddos_db.public.t;
+
+
+connection dropper
+statement ok
+CREATE DATABASE ddos_db;
+
+
+connection dropper
+statement ok
+CREATE TABLE ddos_db.public.t (b INTEGER);
+
+
+connection dropper
+statement ok
+INSERT INTO ddos_db.public.t VALUES (9);
+
+
+connection dropper
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection dropper
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT b FROM ddos_db.public.t;
+----
+b
+9

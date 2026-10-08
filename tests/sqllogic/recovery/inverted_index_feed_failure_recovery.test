@@ -1,0 +1,95 @@
+control substitution on
+
+statement ok
+SET threads = 4;
+
+
+statement ok
+CREATE TABLE melstroi_donations (id INT PRIMARY KEY, msg TEXT);
+
+
+statement ok
+CREATE INDEX melstroi_donations_msg ON melstroi_donations USING inverted (msg);
+
+
+statement ok
+SET sdb_faults = 'inverted_feed_fails';
+
+
+statement error inverted index feed failed
+INSERT INTO melstroi_donations SELECT i, 'donat' || (i % 7) FROM range(0, 200000) t(i);
+
+
+statement error inverted index feed failed
+INSERT INTO melstroi_donations SELECT i, 'donat' || (i % 7) FROM range(0, 200000) t(i);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO melstroi_donations SELECT i, 'donat' || (i % 7) FROM range(0, 100000) t(i);
+
+
+statement ok
+INSERT INTO melstroi_donations SELECT i, 'donat' || (i % 7) FROM range(100000, 200000) t(i);
+
+
+statement error inverted index feed failed
+COMMIT;
+
+
+statement ok
+SET sdb_faults = '-inverted_feed_fails';
+
+
+query
+SELECT count(*) AS n FROM melstroi_donations;
+----
+n
+0
+
+
+statement ok
+INSERT INTO melstroi_donations SELECT i, 'donat' || (i % 7) FROM range(0, 200000) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) melstroi_donations;
+
+
+query
+SELECT (SELECT count(*) FROM melstroi_donations_msg) AS total, (SELECT count(*) FROM melstroi_donations_msg WHERE msg @@ 'donat3') AS three;
+----
+total	three
+200000	28571
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM melstroi_donations;
+----
+n
+200000
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) melstroi_donations;
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM melstroi_donations_msg) AS total, (SELECT count(*) FROM melstroi_donations_msg WHERE msg @@ 'donat3') AS three;
+----
+total	three
+200000	28571

@@ -3,8 +3,7 @@
 # none carrying any secondary index. The three CTAS paths exercise three write
 # engines:
 #   * storage='transactional' (default) -> the DuckDB store table in
-#                         __sdb_store (SereneDB's catalog-managed
-#                         engine_duckdb/store.db).
+#                         the database's data.db.
 #   * storage='search' -> SereneDBSearchInsert (CTAS mode, iresearch
 #                         columnstore via SearchTableSinkWriter)
 #   * ATTACH (TYPE duckdb) -> a standalone DuckDB database, isolated from
@@ -34,7 +33,7 @@
 #   5. ATTACH a fresh .duckdb file, CTAS the view into it   -- insert + commit.
 #   6. Sanity COUNT("watchid") over each table (one thread; see the scan note).
 #   7. Report on-disk size: parquet input vs the transactional table's
-#      engine_duckdb delta vs the search table's engine_search subtree (with the
+#      data.db delta vs the search table's storage directory (with the
 #      iresearch per-extension breakdown) vs the native .duckdb file.
 #
 # Run this AFTER scripts/perf/download_hits.sh and after the perf build is in
@@ -92,9 +91,9 @@ PERF_EXPLAIN="${PERF_EXPLAIN:-1}"
 # BOTH the transactional and the search table carry an inverted index over a
 # numeric + a text column, created BEFORE the load. It measures insert +
 # refresh on both; PERF_BACKFILL_RUN measures the other order. The size catch: a
-# transactional table's inverted index ALSO lands in engine_search (its own
-# subtree), so "transactional + index" = engine_duckdb columns + that subtree,
-# compared against the search table's single engine_search store. Off with 0.
+# transactional table's inverted index ALSO has a storage directory (its own),
+# so "transactional + index" = data.db columns + that directory, compared
+# against the search table's single store. Off with 0.
 PERF_INDEXED_RUN="${PERF_INDEXED_RUN:-1}"
 # The columns indexed in the second run. Defaults are hits-dataset columns: a
 # BIGINT (watchid) and a text column (url, keyword-indexed -- whole value as one
@@ -293,25 +292,30 @@ du_bytes() {
 	[[ -e "${p}" ]] && du -sb "${p}" | awk '{print $1}' || echo 0
 }
 
-du_search_committed() {
-	# engine_search bytes EXCLUDING the per-database WAL dir(s). The WAL holds
-	# the raw chunks until GC and can dwarf the committed index right after a
-	# load, so counting it would drown out the index-size comparison. Committed
-	# columnstore + term index only.
-	local dir="$1"
-	[[ -e "${dir}" ]] || {
-		echo 0
-		return
-	}
-	local total wal
-	total=$(du -sb "${dir}" | awk '{print $1}')
-	wal=$(find "${dir}" -type d -name wal -prune -exec du -sb {} + 2>/dev/null |
-		awk '{s+=$1} END{printf "%d", s+0}')
-	echo $((total - wal))
+sum_sizes() {
+	awk '{s+=$1} END{printf "%d\n", s+0}'
 }
 
-# Committed byte size of the connected database's transactional store (its file
-# under engine_duckdb), read from the store's own block accounting rather than a
+du_search_committed() {
+	find "$1" -mindepth 3 -type f -printf '%s\n' 2>/dev/null | sum_sizes
+}
+
+du_search_wal() {
+	find "$1" -mindepth 2 -maxdepth 2 -type f -name 'search.wal.*' \
+		-printf '%s\n' 2>/dev/null | sum_sizes
+}
+
+du_search_all() {
+	echo $(($(du_search_committed "$1") + $(du_search_wal "$1")))
+}
+
+du_duckdb_files() {
+	find "$1" -mindepth 2 -maxdepth 2 -type f -name 'data.db*' \
+		-printf '%s\n' 2>/dev/null | sum_sizes
+}
+
+# Committed byte size of the connected database's transactional store (its
+# data.db), read from the store's own block accounting rather than a
 # du of the directory. A du is unreliable here: an INSERT's committed rows can
 # sit in the store WAL / buffer and not enlarge the file on disk until a
 # checkpoint, so du reads ~0 for a fully-loaded table on slower storage
@@ -364,15 +368,11 @@ fi
 
 create_view
 
-TXN_DIR="${SERENED_DATA_DIR}/engine_duckdb"
-SEARCH_DIR="${SERENED_DATA_DIR}/engine_search"
+ENGINE_DIR="${SERENED_DATA_DIR}/engine_v1"
 
 # Baseline catalog/engine footprint before any user table exists. The
-# transactional table's storage is the delta against this (engine_duckdb is the
-# shared store.db single-file database -- it also holds catalog metadata for
-# every table, negligible next to the hits data; store.db.wal under the dir is
-# summed in too).
-TXN_BASELINE=$(du_bytes "${TXN_DIR}")
+# transactional table's storage is the delta against this.
+TXN_BASELINE=$(du_duckdb_files "${ENGINE_DIR}")
 
 # --- 2. CTAS: transactional table (insert only; the CTAS txn lands in the
 #        store WAL, durable at statement end) ---------------------------------
@@ -380,7 +380,7 @@ run_sql "transactional_insert" "${BUILD_THREADS}" "
 CREATE TABLE hits_transactional WITH (storage = 'transactional') AS
 SELECT * FROM hits_view;
 "
-TXN_AFTER=$(du_bytes "${TXN_DIR}")
+TXN_AFTER=$(du_duckdb_files "${ENGINE_DIR}")
 TXN_TABLE_BYTES=$((TXN_AFTER - TXN_BASELINE))
 
 # --- 3. CTAS: search table (insert, then commit) ------------------------------
@@ -397,7 +397,7 @@ SELECT * FROM hits_view;
 run_setup "search_commit" "${BUILD_THREADS}" "
 VACUUM (REFRESH_TABLE) hits_search;
 "
-SEARCH_BYTES=$(du_bytes "${SEARCH_DIR}")
+SEARCH_BYTES=$(du_search_all "${ENGINE_DIR}")
 
 # --- 4. ATTACH + CTAS: native DuckDB table (insert, then commit) --------------
 # A genuine DuckDB-native columnar table is reachable ONLY via ATTACH (TYPE
@@ -466,19 +466,17 @@ total=$(du_bytes "${SERENED_DATA_DIR}")
 	printf "native duckdb table:      %14d bytes (%s)\n" \
 		"${NATIVE_BYTES}" "$(human "${NATIVE_BYTES}")"
 	printf "serened data dir (total): %14d bytes (%s)\n" "${total}" "$(human "${total}")"
-	# Per-file-type breakdown for the search table (engine_search). This
+	# Per-file-type breakdown for the search table. This
 	# iresearch version consolidates a segment into:
 	#   .col typed columnstore (the column values -- the bulk of the data)
 	#   .idx terms + postings index   .doc doc-id stream   .sm segment meta
-	# .swal is the search-table WAL (engine_search/<db>/wal) -- transient, holds
-	# the raw chunks until GC, so right after a load it can dwarf the committed
-	# index. (segments_N commit-metadata files have no extension and are not
-	# summed here; they're in the engine_search total above.)
 	echo "  search table file breakdown:"
-	for ext in col idx doc sm swal; do
-		s=$(sum_ext "${SEARCH_DIR}" "${ext}")
+	for ext in col idx doc sm; do
+		s=$(sum_ext "${ENGINE_DIR}" "${ext}")
 		printf "    .%-5s %14d bytes (%s)\n" "${ext}" "${s}" "$(human "${s}")"
 	done
+	s=$(du_search_wal "${ENGINE_DIR}")
+	printf "    %-6s %14d bytes (%s)\n" "wal" "${s}" "$(human "${s}")"
 } | tee -a "${RUN_LOG}"
 
 # --- 7. Headline summary ------------------------------------------------------
@@ -562,14 +560,13 @@ ratio() {
 # (no native -- DuckDB's inverted index is a different feature).
 #
 # Size trick: a transactional table's inverted index is a per-index iresearch
-# store under engine_search/<db>/<schema>/<table_id>/<index_id>, while the
-# search table's whole store is engine_search/<db>/<schema>/<table_id> -- both
-# under engine_search but in disjoint table_id subtrees. So we read engine_search
-# (WAL excluded -- transient) at two checkpoints and take the delta: after the
-# transactional table+index it is exactly the transactional index; the further
-# growth after the search table+index is the search store. The transactional
-# TOTAL is then engine_duckdb columns + that index; the search table is its one
-# store (columns + index). That is the apples-to-apples size comparison.
+# store in engine_v1/<db>/<index_id>, while the search table's whole store is
+# engine_v1/<db>/<table_id> -- disjoint directories. So we read the storage
+# directories (WAL excluded -- transient) at two checkpoints and take the delta:
+# after the transactional table+index it is exactly the transactional index; the
+# further growth after the search table+index is the search store. The
+# transactional TOTAL is then data.db columns + that index; the search table is
+# its one store (columns + index). That is the apples-to-apples size comparison.
 run_indexed_comparison() {
 	printf '\n\n' | tee -a "${RUN_LOG}"
 	{
@@ -585,7 +582,7 @@ run_indexed_comparison() {
 	# Baselines before any indexed table exists.
 	local base_store base_search
 	base_store=$(store_used_bytes)
-	base_search=$(du_search_committed "${SEARCH_DIR}")
+	base_search=$(du_search_committed "${ENGINE_DIR}")
 
 	# --- transactional table + inverted index ---
 	# Empty table (schema only) -> index on the empty table -> load -> refresh.
@@ -606,7 +603,7 @@ VACUUM (REFRESH_TABLE) hits_txn_idx;
 "
 	local txn_cols search_after_txn txn_index
 	txn_cols=$(($(store_used_bytes) - base_store))
-	search_after_txn=$(du_search_committed "${SEARCH_DIR}")
+	search_after_txn=$(du_search_committed "${ENGINE_DIR}")
 	txn_index=$((search_after_txn - base_search))
 
 	# --- search table + inverted index ---
@@ -631,10 +628,10 @@ VACUUM (REFRESH_TABLE) hits_search_idx;
 	run_setup "idx_search_compact" "${BUILD_THREADS}" "
 VACUUM (COMPACT_TABLE) hits_search_idx;
 "
-	# engine_search growth since the transactional index (a disjoint table_id
-	# subtree) is the search table's single store (columns + index).
+	# Storage growth since the transactional index (a disjoint directory) is the
+	# search table's single store (columns + index).
 	local search_total
-	search_total=$(($(du_search_committed "${SEARCH_DIR}") - search_after_txn))
+	search_total=$(($(du_search_committed "${ENGINE_DIR}") - search_after_txn))
 
 	# --- report ---
 	local t_ins t_ref s_ins s_ref s_compact t_total s_total txn_total
@@ -700,7 +697,7 @@ run_backfill_comparison() {
 
 	local base_store base_search
 	base_store=$(store_used_bytes)
-	base_search=$(du_search_committed "${SEARCH_DIR}")
+	base_search=$(du_search_committed "${ENGINE_DIR}")
 
 	run_setup "backfill_create" "${BUILD_THREADS}" "
 CREATE TABLE hits_txn_bf WITH (storage = 'transactional') AS
@@ -719,7 +716,7 @@ CREATE INDEX hits_txn_bf_inv ON hits_txn_bf USING inverted (${idx_cols});
 	# segments the merge retires -- CompactInvertedStorage never reclaims.
 	local txn_cols search_after_txn txn_index
 	txn_cols=$(($(store_used_bytes) - base_store))
-	search_after_txn=$(du_search_committed "${SEARCH_DIR}")
+	search_after_txn=$(du_search_committed "${ENGINE_DIR}")
 	txn_index=$((search_after_txn - base_search))
 
 	run_setup "backfill_search_create" "${BUILD_THREADS}" "
@@ -745,7 +742,7 @@ CREATE INDEX hits_search_bf_inv ON hits_search_bf USING inverted (${idx_cols});
 	# size right here is the build's peak, not its steady state. Both are
 	# reported.
 	local search_dirty
-	search_dirty=$(($(du_search_committed "${SEARCH_DIR}") - search_after_txn))
+	search_dirty=$(($(du_search_committed "${ENGINE_DIR}") - search_after_txn))
 	# The transactional index arrives as one build; a sliced backfill leaves a
 	# segment set per worker plus the ones it replaced, and this table disables
 	# background compaction. VacuumCompact merges AND reclaims (it ends in
@@ -754,7 +751,7 @@ CREATE INDEX hits_search_bf_inv ON hits_search_bf USING inverted (${idx_cols});
 VACUUM (COMPACT_TABLE) hits_search_bf;
 "
 	local search_total
-	search_total=$(($(du_search_committed "${SEARCH_DIR}") - search_after_txn))
+	search_total=$(($(du_search_committed "${ENGINE_DIR}") - search_after_txn))
 
 	local b_ins b_idx b_total s_ins s_ref s_idx s_total s_compact txn_total
 	b_ins="${TIMINGS[backfill_insert]:-}"

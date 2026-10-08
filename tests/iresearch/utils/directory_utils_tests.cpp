@@ -242,9 +242,7 @@ TEST_F(DirectoryUtilsTests, test_ref_tracking_dir) {
     ASSERT_EQ(2, track_dir.GetRefs().size());
   }
 
-  // ...........................................................................
   // errors during file operations
-  // ...........................................................................
 
   struct ErrorDirectory : public irs::Directory {
     using Directory::Directory;

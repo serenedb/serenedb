@@ -30,7 +30,10 @@
 #include <duckdb/logging/log_manager.hpp>
 #include <duckdb/logging/logger.hpp>
 #include <duckdb/logging/logging.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/main/setting_info.hpp>
 
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/log.hpp"
@@ -86,15 +89,22 @@ void DuckDBEngine::Initialize(DBConfigMutator mutator) {
 
   _db = std::make_unique<duckdb::DuckDB>(nullptr, &config);
 
+  auto& db_config = duckdb::DBConfig::GetConfig(*_db->instance);
   // Extension settings register at load, and the pre-construct validation
   // rejects them as unrecognized
-  duckdb::DBConfig::GetConfig(*_db->instance)
-    .SetOptionByName("httpfs_connection_caching", duckdb::Value::BOOLEAN(true));
+  if (duckdb::ExtensionOption caching;
+      db_config.TryGetExtensionOption("httpfs_connection_caching", caching) &&
+      caching.set_function) {
+    auto enabled = duckdb::Value::BOOLEAN(true);
+    caching.set_function(*CreateConnection()->context, duckdb::SetScope::GLOBAL,
+                         enabled);
+    db_config.SetOptionByName("httpfs_connection_caching", enabled);
+  }
   // Attached iceberg tables read CURRENT metadata: the default txn-start
   // time travel errors out any catalog enumeration that walks a table
   // created after the reader's transaction began.
-  duckdb::DBConfig::GetConfig(*_db->instance)
-    .SetOptionByName("iceberg_use_metadata_log", duckdb::Value::BOOLEAN(false));
+  db_config.SetOptionByName("iceberg_use_metadata_log",
+                            duckdb::Value::BOOLEAN(false));
 
   auto& manager = _db->instance->GetLogManager();
 

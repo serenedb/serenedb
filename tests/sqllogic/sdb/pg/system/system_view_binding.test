@@ -1,0 +1,100 @@
+# Every database has its own pg_catalog and information_schema views, and all
+# of them share one binding: the first database that binds a view binds it for
+# every other one, so a database created afterwards lists the same columns
+# without binding its views again.
+
+statement ok
+CREATE DATABASE svb_first;
+
+
+query
+SELECT column_name, data_type FROM duckdb_columns()
+WHERE database_name = 'svb_first' AND schema_name = 'pg_catalog' AND table_name = 'pg_tables'
+ORDER BY column_index;
+----
+column_name	data_type
+schemaname	name
+tablename	name
+tableowner	name
+tablespace	name
+hasindexes	BOOLEAN
+hasrules	BOOLEAN
+hastriggers	BOOLEAN
+rowsecurity	BOOLEAN
+
+
+statement ok
+CREATE DATABASE svb_later;
+
+
+query
+SELECT column_name, data_type FROM duckdb_columns()
+WHERE database_name = 'svb_later' AND schema_name = 'pg_catalog' AND table_name = 'pg_tables'
+ORDER BY column_index;
+----
+column_name	data_type
+schemaname	name
+tablename	name
+tableowner	name
+tablespace	name
+hasindexes	BOOLEAN
+hasrules	BOOLEAN
+hastriggers	BOOLEAN
+rowsecurity	BOOLEAN
+
+
+query
+SELECT count(*) AS unbound FROM duckdb_columns()
+WHERE database_name IN ('svb_first', 'svb_later') AND data_type = 'INVALID';
+----
+unbound
+0
+
+
+query
+SELECT count(*) AS differing FROM (
+  (SELECT schema_name, table_name, column_index, column_name, data_type FROM duckdb_columns()
+   WHERE database_name = 'svb_first' AND schema_name IN ('pg_catalog', 'information_schema')
+   EXCEPT ALL
+   SELECT schema_name, table_name, column_index, column_name, data_type FROM duckdb_columns()
+   WHERE database_name = 'svb_later' AND schema_name IN ('pg_catalog', 'information_schema'))
+  UNION ALL
+  (SELECT schema_name, table_name, column_index, column_name, data_type FROM duckdb_columns()
+   WHERE database_name = 'svb_later' AND schema_name IN ('pg_catalog', 'information_schema')
+   EXCEPT ALL
+   SELECT schema_name, table_name, column_index, column_name, data_type FROM duckdb_columns()
+   WHERE database_name = 'svb_first' AND schema_name IN ('pg_catalog', 'information_schema'))
+);
+----
+differing
+0
+
+
+query
+SELECT count(*) > 0 AS listed FROM svb_later.pg_catalog.pg_tables;
+----
+listed
+t
+
+
+query
+SELECT column_name FROM duckdb_columns()
+WHERE database_name = 'svb_first' AND schema_name = 'information_schema' AND table_name = 'schemata'
+ORDER BY column_index;
+----
+column_name
+catalog_name
+schema_name
+schema_owner
+default_character_set_catalog
+default_character_set_schema
+default_character_set_name
+sql_path
+
+
+statement ok
+DROP DATABASE svb_later;
+
+
+statement ok
+DROP DATABASE svb_first;

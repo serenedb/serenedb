@@ -12,7 +12,7 @@ Conceptually, a `STRUCT` column contains an ordered list of columns called “en
 
 `STRUCT`s are similar to PostgreSQL's `ROW` type. The key difference is that SereneDB `STRUCT`s require the same keys in each row of a `STRUCT` column. This allows SereneDB to provide significantly improved performance by fully utilizing its vectorized execution engine, and also enforces type consistency for improved correctness. SereneDB includes a `row` function as a special way to produce a `STRUCT`, but does not have a `ROW` data type. See an example below and the [`STRUCT` functions documentation](../../sql/functions/struct.md) for details.
 
-See the [data types overview](../../sql/data_types/overview.md) for a comparison between nested data types.
+See the [data types overview](../../sql/data_types/index.md) for a comparison between nested data types.
 
 ## Creating Structs
 
@@ -120,7 +120,6 @@ Any extra parts (e.g., `.part4.part5`, etc.) are always treated as properties
 
 The `row` function can be used to automatically convert multiple columns to a single struct column.
 When using `row` the keys will be empty strings allowing for easy insertion into a table with a struct column.
-Columns, however, cannot be initialized with the `row` function, and must be explicitly named.
 For example, inserting values into a struct column using the `row` function:
 
 <SqlLogicTest id="sql/data_types/struct/example_018" />
@@ -133,7 +132,7 @@ The following produces the same result as above:
 
 <SqlLogicTest id="sql/data_types/struct/example_020" />
 
-Initializing a struct column with the `row` function will fail:
+Initializing a column with the `row` function creates an unnamed struct (`record`) column:
 
 <SqlLogicTest id="sql/data_types/struct/example_021" />
 

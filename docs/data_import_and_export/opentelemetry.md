@@ -20,14 +20,15 @@ Add an HTTP listener with the `otel` API and SereneDB serves the three OTLP
 export endpoints directly — no collector component to install:
 
 ```bash
-serened ./data --listen 'postgres://0.0.0.0:5432,http://0.0.0.0:4318?api=otel'
+serened ./data --listen 'postgres://0.0.0.0:7890,http://0.0.0.0:4318?api=otel'
 ```
 
-By default the tables live in the default database. `db=` puts the listener
-— and with it the OTel schema — in another one, created if it does not exist:
+By default the tables live in the `public` schema of the default database.
+`db=` puts the listener — and with it the OTel tables — in another database,
+and `schema=` in another schema; both are created if they do not exist:
 
 ```bash
-serened ./data --listen 'postgres://0.0.0.0:5432,http://0.0.0.0:4318?api=otel&db=telemetry'
+serened ./data --listen 'postgres://0.0.0.0:7890,http://0.0.0.0:4318?api=otel&db=telemetry&schema=otel'
 ```
 
 | Endpoint | Accepts | Writes to |
@@ -42,7 +43,6 @@ Point any OTel SDK or the collector's stock `otlphttp` exporter at it:
 exporters:
   otlphttp:
     endpoint: http://serenedb:4318
-    compression: none
     auth:
       authenticator: basicauth
 
@@ -64,7 +64,20 @@ the `otel` API creates nothing, and an export against a missing schema answers
 
 To run a schema of your own — extra promoted columns, expression indexes over
 hot attribute paths — apply it before the first start; startup leaves an
-existing schema alone.
+existing schema alone. All seven tables must exist, each with every shipped
+column in its shipped type: extra columns are left `NULL`, but a missing table,
+or a missing or retyped column, stops the server at startup with a message
+naming the database, the schema and the column. Fix the table, or leave it
+alone and start with the built-in schema somewhere new: `db=` or `schema=` on
+the listener creates it, e.g. `--listen='http://0.0.0.0:4318?api=otel&schema=otel'`.
+
+A table dropped or changed after startup fails each export to it with `500`:
+`the OpenTelemetry schema is missing: …` for a dropped table, and
+`invalid OpenTelemetry schema: column … is …, expected …` for a changed one.
+Other failures follow the OTLP retry rules: rejected data (a constraint or a
+value the column cannot hold) answers `400`, which clients do not retry, and
+a transient server condition (a transaction conflict, out of memory, shutdown)
+answers `503`, which they do.
 
 ### Encodings
 
@@ -88,11 +101,14 @@ Both decoders feed the same mapper, and the conformance fixtures ship as an
 `.json` and a `.pb` of the same payload: a test asserts that each
 row shape arrives twice, once per decoder.
 
-**No request compression yet.** A `Content-Encoding` header answers `400`, so
-set `compression: none` on the exporter.
+Request bodies may be compressed with any coding the HTTP listener supports —
+`gzip` (the collector's default), `zstd`, `br`, `lz4`, `zxc` or `snappy`; see
+[HTTP Compression](../configuration/http_compression.md). An unsupported
+`Content-Encoding` answers `415`, and a corrupt compressed body `400`, both
+before the payload is decoded.
 
-Errors use `google.rpc.Status`, encoded the same way as the request: `400` for
-an undecodable payload or an unsupported `Content-Encoding`.
+Errors of the export itself use `google.rpc.Status`, encoded the same way as
+the request: `400` for an undecodable payload.
 
 Authentication is the HTTP layer's usual Basic auth against the catalog roles.
 
@@ -271,9 +287,11 @@ WHERE metric_name @@ 'http.server.request_count'
 GROUP BY 1, 2 ORDER BY 1, 2;
 ```
 
-Use `@@` rather than `=` when you want a term lookup. A plain `=` on a
-non-primary-key column is a columnstore `Column Filter` — correct, but it reads
-the column instead of the term dictionary.
+On a column indexed without a dictionary, such as `service_name` or
+`severity_text`, a plain `=` is served by the index exactly like `@@`. On an
+analyzed column such as `body`, `=` compares the whole value as a columnstore
+`Column Filter`: correct, but it reads the column instead of the index. Use
+`@@` to search those.
 
 ## Visibility
 
@@ -288,9 +306,9 @@ VACUUM (REFRESH_TABLE) otel_logs;
 ## Schema evolution
 
 A search table's schema is fixed. `ALTER TABLE ADD COLUMN`, `DROP COLUMN` and
-`ALTER COLUMN TYPE` are rejected, and an inverted index can only be created
-while the table is still empty. To change the schema, create a new table with
-`CREATE TABLE ... AS SELECT`, switch writers to it, and rename.
+`ALTER COLUMN TYPE` are rejected; an inverted index can still be added later,
+and it indexes the rows already in the table. To change the schema, create a
+new table with `CREATE TABLE ... AS SELECT`, switch writers to it, and rename.
 
 Re-running the DDL is safe — every statement is `IF NOT EXISTS`, including on
 a table that already holds rows. Startup checks for the schema before running

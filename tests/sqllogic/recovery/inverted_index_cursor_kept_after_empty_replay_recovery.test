@@ -1,0 +1,111 @@
+control substitution on
+
+statement ok
+CREATE TABLE vjling_ward (id INTEGER, b TEXT);
+
+
+statement ok
+CREATE INDEX vjling_ward_b ON vjling_ward USING inverted (b) WITH (compaction_interval = 100);
+
+
+statement ok
+INSERT INTO vjling_ward SELECT i, 'w' || (i % 5) FROM range(0, 500) r(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) vjling_ward;
+
+
+statement ok
+INSERT INTO vjling_ward SELECT i, 'w' || (i % 5) FROM range(500, 1000) r(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) vjling_ward;
+
+
+statement ok
+INSERT INTO vjling_ward SELECT i, 'w' || (i % 5) FROM range(1000, 1500) r(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) vjling_ward;
+
+
+statement ok
+INSERT INTO vjling_ward SELECT i, 'w' || (i % 5) FROM range(1500, 2000) r(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) vjling_ward;
+
+
+statement ok
+DELETE FROM vjling_ward WHERE id % 3 = 0;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) vjling_ward;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM vjling_ward;
+----
+n
+1333
+
+
+sleep 1500ms
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) vjling_ward;
+
+
+connection after_crash
+query
+SELECT count(*) AS docs FROM vjling_ward_b;
+----
+docs
+1333
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_second_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM vjling_ward;
+----
+n
+1333
+
+
+connection after_second_crash
+statement ok
+VACUUM (REFRESH_TABLE) vjling_ward;
+
+
+connection after_second_crash
+query
+SELECT (SELECT count(*) FROM vjling_ward_b) AS docs, (SELECT count(*) FROM vjling_ward_b WHERE b @@ 'w3') AS three;
+----
+docs	three
+1333	266

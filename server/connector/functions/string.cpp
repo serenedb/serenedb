@@ -20,14 +20,16 @@
 
 #include "connector/functions/string.h"
 
+#include <fast_float/fast_float.h>
 #include <re2/re2.h>
 
 #include <duckdb/common/types/blob.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
-#include <duckdb/execution/expression_executor.hpp>
+#include <duckdb/execution/expression_executor_state.hpp>
+#include <duckdb/function/scalar/string_common.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-#include <duckdb/parser/keyword_helper.hpp>
+#include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -114,30 +116,19 @@ void ToOctFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-// to_hex(int32/int64) -> text -- PG-compatible lowercase hex
-template<typename T>
-void ToHexFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                   duckdb::Vector& result) {
-  duckdb::UnaryExecutor::Execute<T, duckdb::string_t>(
-    args.data[0], result, args.size(), [&](T value) -> duckdb::string_t {
-      using U = std::make_unsigned_t<T>;
-      U uval = static_cast<U>(value);
-      if (uval == 0) {
-        return duckdb::StringVector::AddString(result, "0");
-      }
-      char buf[sizeof(U) * 2];
-      int pos = sizeof(buf);
-      while (uval > 0) {
-        static constexpr char kHexDigits[] = "0123456789abcdef";
-        buf[--pos] = kHexDigits[uval & 0xf];
-        uval >>= 4;
-      }
-      return duckdb::StringVector::AddString(result, buf + pos,
-                                             sizeof(buf) - pos);
+// get_byte(bytea, offset) -> integer -- ported from PgGetByte
+void BlobPositionFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                          duckdb::Vector& result) {
+  duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t, int64_t>(
+    args.data[0], args.data[1], result, args.size(),
+    [](duckdb::string_t data, duckdb::string_t search) -> int64_t {
+      const auto location = duckdb::FindStrInStr(data, search);
+      return location == duckdb::DConstants::INVALID_INDEX
+               ? 0
+               : static_cast<int64_t>(location) + 1;
     });
 }
 
-// get_byte(bytea, offset) -> integer -- ported from PgGetByte
 void GetByteFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                      duckdb::Vector& result) {
   duckdb::BinaryExecutor::Execute<duckdb::string_t, int32_t, int32_t>(
@@ -270,36 +261,12 @@ void QuoteIdentFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
     args.data[0], result, args.size(),
     [&](duckdb::string_t input) -> duckdb::string_t {
-      std::string_view str(input.GetData(), input.GetSize());
-      bool needs_quoting = str.empty() || (str[0] >= '0' && str[0] <= '9');
-      if (!needs_quoting) {
-        for (auto c : str) {
-          if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
-            needs_quoting = true;
-            break;
-          }
-        }
-      }
-      if (!needs_quoting) {
-        if (duckdb::KeywordHelper::IsKeyword(std::string{str})) {
-          needs_quoting = true;
-        }
-      }
-      if (!needs_quoting) {
+      const std::string_view str(input.GetData(), input.GetSize());
+      const auto quoted = pg::QuoteIdentifier(str);
+      if (quoted == str) {
         return input;
       }
-      std::string out;
-      out.reserve(str.size() + 2);
-      out += '"';
-      for (auto c : str) {
-        if (c == '"') {
-          out += "\"\"";
-        } else {
-          out += c;
-        }
-      }
-      out += '"';
-      return duckdb::StringVector::AddString(result, out);
+      return duckdb::StringVector::AddString(result, quoted);
     });
 }
 
@@ -529,32 +496,6 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       return std::string{val.GetData(), val.GetSize()};
     };
 
-    // Helper: quote identifier (same as quote_ident)
-    auto quote_ident = [](const std::string& s) -> std::string {
-      bool needs_quoting = s.empty();
-      if (!needs_quoting) {
-        for (auto c : s) {
-          if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
-            needs_quoting = true;
-            break;
-          }
-        }
-      }
-      if (!needs_quoting) {
-        return s;
-      }
-      std::string out = "\"";
-      for (auto c : s) {
-        if (c == '"') {
-          out += "\"\"";
-        } else {
-          out += c;
-        }
-      }
-      out += '"';
-      return out;
-    };
-
     // Helper: quote literal
     auto quote_literal =
       [](const std::optional<std::string>& s) -> std::string {
@@ -608,7 +549,11 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
         i++;
       }
       if (i < fmt.size() && fmt[i] == '$' && i > save_i) {
-        arg_pos = std::stoul(std::string{fmt.substr(save_i, i - save_i)});
+        if (fast_float::from_chars(fmt.data() + save_i, fmt.data() + i, arg_pos)
+              .ec != std::errc{}) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                          ERR_MSG("number is out of range"));
+        }
         has_position = true;
         i++;  // skip $
       } else {
@@ -648,7 +593,7 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
               ERR_CODE(ERRCODE_NULL_VALUE_NOT_ALLOWED),
               ERR_MSG("null values cannot be formatted as an SQL identifier"));
           }
-          formatted = quote_ident(*val);
+          formatted = pg::QuoteIdentifier(*val);
         } break;
         case 'L': {
           auto val = get_arg(arg_idx);
@@ -804,22 +749,22 @@ size_t Utf8Advance(const char* begin, size_t byte_len, size_t n) {
 // ---------------------------------------------------------------------------
 
 // Bind data: caches the compiled RE2 when the pattern is a constant.
-struct RegexpInstrBindData : public duckdb::FunctionData {
+struct RegexpBindData : public duckdb::FunctionData {
   std::unique_ptr<re2::RE2> compiled;  // non-null when pattern is constant
 
-  explicit RegexpInstrBindData(std::unique_ptr<re2::RE2> re)
+  explicit RegexpBindData(std::unique_ptr<re2::RE2> re)
     : compiled(std::move(re)) {}
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     if (compiled) {
-      return duckdb::make_uniq<RegexpInstrBindData>(
+      return duckdb::make_uniq<RegexpBindData>(
         std::make_unique<re2::RE2>(compiled->pattern(), compiled->options()));
     }
-    return duckdb::make_uniq<RegexpInstrBindData>(nullptr);
+    return duckdb::make_uniq<RegexpBindData>(nullptr);
   }
 
   bool Equals(const duckdb::FunctionData& other_p) const final {
-    auto& other = other_p.Cast<RegexpInstrBindData>();
+    auto& other = other_p.Cast<RegexpBindData>();
     if (!compiled && !other.compiled) {
       return true;
     }
@@ -830,25 +775,54 @@ struct RegexpInstrBindData : public duckdb::FunctionData {
   }
 };
 
+struct RegexpLocalState final : duckdb::FunctionLocalState {
+  explicit RegexpLocalState(const re2::RE2& compiled)
+    : re{compiled.pattern(), compiled.options()} {}
+
+  re2::RE2 re;
+};
+
+re2::RE2::Options OwnedRegexOptions() {
+  re2::RE2::Options options{re2::RE2::Quiet};
+  options.set_thread_safe(false);
+  return options;
+}
+
+duckdb::unique_ptr<duckdb::FunctionLocalState> RegexpInitLocalState(
+  duckdb::ExpressionState&, const duckdb::BoundFunctionExpression&,
+  duckdb::FunctionData* bind_data) {
+  auto& info = bind_data->Cast<RegexpBindData>();
+  if (!info.compiled) {
+    return nullptr;
+  }
+  return duckdb::make_uniq<RegexpLocalState>(*info.compiled);
+}
+
+std::unique_ptr<re2::RE2> CompileConstantPattern(
+  duckdb::BindScalarFunctionInput& input) {
+  if (auto val = input.TryGetConstant(1); val && !val->IsNull()) {
+    return std::make_unique<re2::RE2>(val->ToString(), OwnedRegexOptions());
+  }
+  return nullptr;
+}
+
 duckdb::unique_ptr<duckdb::FunctionData> RegexpInstrBind(
   duckdb::BindScalarFunctionInput& input) {
-  auto& context = input.GetClientContext();
-  auto& arguments = input.GetArguments();
-  // Check if pattern argument is a constant
-  if (arguments[1]->IsFoldable()) {
-    auto val =
-      duckdb::ExpressionExecutor::EvaluateScalar(context, *arguments[1]);
-    if (!val.IsNull()) {
-      auto pattern_str = val.ToString();
-      auto re = std::make_unique<re2::RE2>(pattern_str, re2::RE2::Quiet);
-      if (!re->ok()) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
-                        ERR_MSG("invalid regular expression: ", re->error()));
-      }
-      return duckdb::make_uniq<RegexpInstrBindData>(std::move(re));
-    }
+  auto re = CompileConstantPattern(input);
+  if (re && !re->ok()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
+                    ERR_MSG("invalid regular expression: ", re->error()));
   }
-  return duckdb::make_uniq<RegexpInstrBindData>(nullptr);
+  return duckdb::make_uniq<RegexpBindData>(std::move(re));
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> RegexpMatchBind(
+  duckdb::BindScalarFunctionInput& input) {
+  auto re = CompileConstantPattern(input);
+  if (re && !re->ok()) {
+    re.reset();
+  }
+  return duckdb::make_uniq<RegexpBindData>(std::move(re));
 }
 
 void RegexpInstrFunction(duckdb::DataChunk& args,
@@ -856,8 +830,9 @@ void RegexpInstrFunction(duckdb::DataChunk& args,
                          duckdb::Vector& result) {
   bool has_start_n = args.ColumnCount() == 4;
 
-  auto& func_expr = state.expr.Cast<duckdb::BoundFunctionExpression>();
-  auto& info = func_expr.BindInfo()->Cast<RegexpInstrBindData>();
+  auto local = duckdb::ExecuteFunctionState::GetFunctionState(state);
+  re2::RE2* compiled = local ? &local->Cast<RegexpLocalState>().re : nullptr;
+  const auto row_options = OwnedRegexOptions();
 
   std::vector<duckdb::UnifiedVectorFormat> vdata(args.ColumnCount());
   for (duckdb::idx_t c = 0; c < args.ColumnCount(); c++) {
@@ -895,12 +870,11 @@ void RegexpInstrFunction(duckdb::DataChunk& args,
       n = duckdb::UnifiedVectorFormat::GetData<int64_t>(vdata[3])[n_idx];
     }
 
-    // Use precompiled from bind data, or compile per-row
     std::optional<re2::RE2> row_re;
-    re2::RE2* re = info.compiled.get();
+    re2::RE2* re = compiled;
     if (!re) {
       row_re.emplace(re2::StringPiece(pattern.GetData(), pattern.GetSize()),
-                     re2::RE2::Quiet);
+                     row_options);
       if (!row_re->ok()) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
@@ -940,7 +914,8 @@ void RegexpInstrFunction(duckdb::DataChunk& args,
 // Returns capture groups from the first match. If no capture groups,
 // returns the full match. Returns NULL if no match.
 // Ported from Velox PgRegexpMatch.
-void RegexpMatchFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+void RegexpMatchFunction(duckdb::DataChunk& args,
+                         duckdb::ExpressionState& state,
                          duckdb::Vector& result) {
   const auto count = args.size();
   auto texts = args.data[0].Values<duckdb::string_t>();
@@ -948,6 +923,9 @@ void RegexpMatchFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
   auto rows =
     duckdb::FlatVector::Writer<duckdb::VectorListType<duckdb::string_t>>(result,
                                                                          count);
+  auto local = duckdb::ExecuteFunctionState::GetFunctionState(state);
+  re2::RE2* compiled = local ? &local->Cast<RegexpLocalState>().re : nullptr;
+  const auto row_options = OwnedRegexOptions();
 
   for (duckdb::idx_t row = 0; row < count; row++) {
     auto text_value = texts[row];
@@ -957,21 +935,27 @@ void RegexpMatchFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       continue;
     }
     const auto& text = text_value.GetValue();
-    const auto& pattern = pattern_value.GetValue();
-    re2::RE2 re(re2::StringPiece(pattern.GetData(), pattern.GetSize()),
-                re2::RE2::Quiet);
-    if (!re.ok()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
-                      ERR_MSG("invalid regular expression: ", re.error()));
+    std::optional<re2::RE2> row_re;
+    re2::RE2* re = compiled;
+    if (!re) {
+      const auto& pattern = pattern_value.GetValue();
+      row_re.emplace(re2::StringPiece(pattern.GetData(), pattern.GetSize()),
+                     row_options);
+      if (!row_re->ok()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
+          ERR_MSG("invalid regular expression: ", row_re->error()));
+      }
+      re = &*row_re;
     }
 
     re2::StringPiece input(text.GetData(), text.GetSize());
-    const int num_groups = re.NumberOfCapturingGroups();
+    const int num_groups = re->NumberOfCapturingGroups();
 
     if (num_groups == 0) {
       re2::StringPiece match;
-      if (!re.Match(input, 0, text.GetSize(), re2::RE2::UNANCHORED, &match,
-                    1)) {
+      if (!re->Match(input, 0, text.GetSize(), re2::RE2::UNANCHORED, &match,
+                     1)) {
         rows.WriteNull();
         continue;
       }
@@ -983,8 +967,8 @@ void RegexpMatchFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     }
 
     std::vector<re2::StringPiece> groups(num_groups + 1);
-    if (!re.Match(input, 0, text.GetSize(), re2::RE2::UNANCHORED, groups.data(),
-                  num_groups + 1)) {
+    if (!re->Match(input, 0, text.GetSize(), re2::RE2::UNANCHORED,
+                   groups.data(), num_groups + 1)) {
       rows.WriteNull();
       continue;
     }
@@ -1056,9 +1040,11 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
                                 duckdb::LogicalType::VARCHAR,
                                 PgFormatFunction,
                                 PgFormatBind};
-    func.SetVarArgs(duckdb::LogicalType::ANY);
+    func.GetSignature().AddArgs("args", duckdb::LogicalType::ANY);
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    loader.RegisterFunction(func);
+    duckdb::CreateScalarFunctionInfo info{std::move(func)};
+    info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
+    loader.RegisterFunction(std::move(info));
   }
 
   // normalize(text [, form]) -> text
@@ -1117,15 +1103,11 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
                                                  duckdb::LogicalType::VARCHAR,
                                                  ToOctFunction<int64_t>});
 
-  // to_hex(int32), to_hex(int64)
-  loader.RegisterFunction(duckdb::ScalarFunction{"to_hex",
-                                                 {duckdb::LogicalType::INTEGER},
-                                                 duckdb::LogicalType::VARCHAR,
-                                                 ToHexFunction<int32_t>});
-  loader.RegisterFunction(duckdb::ScalarFunction{"to_hex",
-                                                 {duckdb::LogicalType::BIGINT},
-                                                 duckdb::LogicalType::VARCHAR,
-                                                 ToHexFunction<int64_t>});
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    "position",
+    {duckdb::LogicalType::BLOB, duckdb::LogicalType::BLOB},
+    duckdb::LogicalType::BIGINT,
+    BlobPositionFunction});
 
   // get_byte(bytea, int) -> int
   loader.RegisterFunction(duckdb::ScalarFunction{
@@ -1210,7 +1192,10 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
       "regexp_match",
       {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
       duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR),
-      RegexpMatchFunction};
+      RegexpMatchFunction,
+      RegexpMatchBind,
+      nullptr,
+      RegexpInitLocalState};
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     loader.RegisterFunction(func);
   }
@@ -1225,14 +1210,18 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
       {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
       duckdb::LogicalType::BIGINT,
       RegexpInstrFunction,
-      RegexpInstrBind});
+      RegexpInstrBind,
+      nullptr,
+      RegexpInitLocalState});
     regexp_instr_set.AddFunction(duckdb::ScalarFunction{
       "regexp_instr",
       {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
        duckdb::LogicalType::BIGINT, duckdb::LogicalType::BIGINT},
       duckdb::LogicalType::BIGINT,
       RegexpInstrFunction,
-      RegexpInstrBind});
+      RegexpInstrBind,
+      nullptr,
+      RegexpInitLocalState});
     loader.RegisterFunction(regexp_instr_set);
   }
 

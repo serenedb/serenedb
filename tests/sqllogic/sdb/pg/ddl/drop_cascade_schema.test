@@ -297,3 +297,120 @@ count
 
 statement ok
 DROP SCHEMA vedernikoff_workspace CASCADE;
+
+
+statement ok
+CREATE SCHEMA cascade_order_1;
+
+
+statement ok
+CREATE TABLE cascade_order_1.x (a INTEGER PRIMARY KEY);
+
+
+statement ok
+CREATE TYPE cascade_order_1.mood AS ENUM ('ok', 'meh');
+
+
+statement ok
+CREATE SEQUENCE cascade_order_1.seq;
+
+
+statement ok
+CREATE TABLE cascade_order_1.z (m cascade_order_1.mood, n BIGINT DEFAULT nextval('cascade_order_1.seq'), x_ref INTEGER REFERENCES cascade_order_1.x (a));
+
+
+statement ok
+CREATE INDEX cascade_order_1_z_x ON cascade_order_1.z (x_ref);
+
+
+statement ok
+CREATE VIEW cascade_order_1.v AS SELECT m, x_ref FROM cascade_order_1.z;
+
+
+statement ok
+DROP SCHEMA cascade_order_1 CASCADE;
+
+
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'cascade_order_1';
+----
+n
+0
+
+
+statement ok
+CREATE SCHEMA cascade_order_2;
+
+
+statement ok
+CREATE TABLE cascade_order_2.x (a INTEGER PRIMARY KEY);
+
+
+statement ok
+CREATE TYPE cascade_order_2.mood AS ENUM ('ok', 'meh');
+
+
+statement ok
+CREATE SEQUENCE cascade_order_2.seq;
+
+
+statement ok
+CREATE TABLE cascade_order_2.z (m cascade_order_2.mood, n BIGINT DEFAULT nextval('cascade_order_2.seq'), x_ref INTEGER REFERENCES cascade_order_2.x (a));
+
+
+statement ok
+CREATE INDEX cascade_order_2_z_x ON cascade_order_2.z (x_ref);
+
+
+statement ok
+CREATE VIEW cascade_order_2.v AS SELECT m, x_ref FROM cascade_order_2.z;
+
+
+statement ok
+DROP SCHEMA cascade_order_2 CASCADE;
+
+
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'cascade_order_2';
+----
+n
+0
+
+
+statement ok
+CREATE SCHEMA cascade_order_3;
+
+
+statement ok
+CREATE TABLE cascade_order_3.x (a INTEGER PRIMARY KEY);
+
+
+statement ok
+CREATE TYPE cascade_order_3.mood AS ENUM ('ok', 'meh');
+
+
+statement ok
+CREATE SEQUENCE cascade_order_3.seq;
+
+
+statement ok
+CREATE TABLE cascade_order_3.z (m cascade_order_3.mood, n BIGINT DEFAULT nextval('cascade_order_3.seq'), x_ref INTEGER REFERENCES cascade_order_3.x (a));
+
+
+statement ok
+CREATE INDEX cascade_order_3_z_x ON cascade_order_3.z (x_ref);
+
+
+statement ok
+CREATE VIEW cascade_order_3.v AS SELECT m, x_ref FROM cascade_order_3.z;
+
+
+statement ok
+DROP SCHEMA cascade_order_3 CASCADE;
+
+
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'cascade_order_3';
+----
+n
+0

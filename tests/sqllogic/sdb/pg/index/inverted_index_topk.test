@@ -79,7 +79,7 @@ EXPLAIN SELECT id, BM25(docs_topk_idx.tableoid) FROM docs_topk_idx WHERE body @@
 QUERY PLAN
 ╭─ TOP_N ────────────────────────────────╮
 │ Top: 5                                 │
-│ Order By: docs_topk_idx.id ASC         │
+│ Order By: id ASC                       │
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
@@ -105,7 +105,7 @@ EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM2
 QUERY PLAN
 ╭─ TOP_N ──────────────────────────────────────────────────╮
 │ Top: 5                                                   │
-│ Order By: #1 DESC, docs_topk_idx.id ASC                  │
+│ Order By: #1 DESC, id ASC                                │
 │ ~1 row                                                   │
 ╰─────────────────────────────┬────────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────────┴────────────────────────────╮
@@ -220,7 +220,7 @@ EXPLAIN SELECT id, score FROM (
 ----
 QUERY PLAN
 ╭─ ORDER_BY ─────────────────────────────╮
-│ Order By: sub.id ASC                   │
+│ Order By: id ASC                       │
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮

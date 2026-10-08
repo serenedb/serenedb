@@ -1,0 +1,102 @@
+control substitution on
+
+statement ok
+CREATE SCHEMA srr_a;
+
+
+statement ok
+CREATE SEQUENCE srr_a.q;
+
+
+statement ok
+CREATE SCHEMA srr_c;
+
+
+statement ok
+CREATE SEQUENCE srr_c.q;
+
+
+connection renamer
+statement ok
+BEGIN;
+
+
+connection renamer
+statement ok
+ALTER SCHEMA srr_a RENAME TO srr_b;
+
+
+connection user
+statement ok
+CREATE TABLE srr_committed AS SELECT nextval('srr_a.q') AS v FROM range(3000);
+
+
+connection renamer
+statement ok
+COMMIT;
+
+
+connection renamer
+statement ok
+BEGIN;
+
+
+connection renamer
+statement ok
+ALTER SCHEMA srr_c RENAME TO srr_d;
+
+
+connection user
+statement ok
+CREATE TABLE srr_rolled AS SELECT nextval('srr_c.q') AS v FROM range(3000);
+
+
+connection renamer
+statement ok
+ROLLBACK;
+
+
+connection user
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection user
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT nextval('srr_b.q') > (SELECT max(v) FROM srr_committed) AS fresh;
+----
+fresh
+t
+
+
+connection after_crash
+query ok
+SELECT nextval('srr_c.q') > (SELECT max(v) FROM srr_rolled) AS fresh;
+----
+fresh
+t
+
+
+connection after_crash
+statement ok
+DROP TABLE srr_committed;
+
+
+connection after_crash
+statement ok
+DROP TABLE srr_rolled;
+
+
+connection after_crash
+statement ok
+DROP SCHEMA srr_b CASCADE;
+
+
+connection after_crash
+statement ok
+DROP SCHEMA srr_c CASCADE;

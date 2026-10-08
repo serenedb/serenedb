@@ -61,3 +61,67 @@ Kat	1993
 
 statement ok
 TRUNCATE tbl;
+
+# DOCS_TEST: example_005
+
+statement ok
+DROP TABLE IF EXISTS order_lines;
+
+statement ok
+DROP TABLE IF EXISTS orders;
+
+statement ok
+CREATE TABLE orders (id INTEGER PRIMARY KEY);
+
+statement ok
+CREATE TABLE order_lines (order_id INTEGER REFERENCES orders (id), item VARCHAR);
+
+statement ok
+INSERT INTO orders VALUES (1);
+
+statement ok
+INSERT INTO order_lines VALUES (1, 'book');
+
+# DOCS_TEST_BODY
+
+statement error
+TRUNCATE orders;
+----
+db error: ERROR: cannot truncate a table referenced in a foreign key constraint
+DETAIL: Table "order_lines" references "orders".
+HINT: Truncate table "order_lines" at the same time, or use TRUNCATE ... CASCADE.
+
+
+statement ok
+TRUNCATE orders CASCADE;
+
+query
+SELECT (SELECT count(*) FROM orders) AS orders, (SELECT count(*) FROM order_lines) AS lines;
+----
+orders	lines
+0	0
+
+# DOCS_TEST: example_006
+
+statement ok
+DROP TABLE IF EXISTS tickets;
+
+statement ok
+CREATE TABLE tickets (id SERIAL PRIMARY KEY, title VARCHAR);
+
+statement ok
+INSERT INTO tickets (title) VALUES ('first'), ('second');
+
+# DOCS_TEST_BODY
+
+statement ok
+TRUNCATE tickets RESTART IDENTITY;
+
+statement ok
+INSERT INTO tickets (title) VALUES ('third');
+
+query
+SELECT id, title FROM tickets;
+----
+id	title
+1	third

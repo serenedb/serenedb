@@ -1,0 +1,163 @@
+statement ok
+CREATE TABLE tf_parent (id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE tf_child (id INT PRIMARY KEY, pid INT REFERENCES tf_parent (id));
+
+
+statement ok
+CREATE TABLE tf_grandchild (cid INT REFERENCES tf_child (id));
+
+
+statement ok
+INSERT INTO tf_parent VALUES (1), (2);
+
+
+statement ok
+INSERT INTO tf_child VALUES (10, 1), (20, 2);
+
+
+statement ok
+INSERT INTO tf_grandchild VALUES (10);
+
+
+statement error
+TRUNCATE tf_parent;
+----
+db error: ERROR: cannot truncate a table referenced in a foreign key constraint
+DETAIL: Table "tf_child" references "tf_parent".
+HINT: Truncate table "tf_child" at the same time, or use TRUNCATE ... CASCADE.
+
+
+statement error
+TRUNCATE tf_parent, tf_child;
+----
+db error: ERROR: cannot truncate a table referenced in a foreign key constraint
+DETAIL: Table "tf_grandchild" references "tf_child".
+HINT: Truncate table "tf_grandchild" at the same time, or use TRUNCATE ... CASCADE.
+
+
+statement ok
+TRUNCATE tf_grandchild;
+
+
+query
+SELECT (SELECT count(*) FROM tf_parent) AS p, (SELECT count(*) FROM tf_child) AS c, (SELECT count(*) FROM tf_grandchild) AS g;
+----
+p	c	g
+2	2	0
+
+
+statement ok
+TRUNCATE tf_grandchild, tf_child, tf_parent RESTRICT;
+
+
+query
+SELECT (SELECT count(*) FROM tf_parent) AS p, (SELECT count(*) FROM tf_child) AS c;
+----
+p	c
+0	0
+
+
+statement ok
+INSERT INTO tf_parent VALUES (1), (2);
+
+
+statement ok
+INSERT INTO tf_child VALUES (10, 1), (20, 2);
+
+
+statement ok
+INSERT INTO tf_grandchild VALUES (10);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+TRUNCATE tf_parent CASCADE;
+
+
+query
+SELECT (SELECT count(*) FROM tf_parent) AS p, (SELECT count(*) FROM tf_child) AS c, (SELECT count(*) FROM tf_grandchild) AS g;
+----
+p	c	g
+0	0	0
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT (SELECT count(*) FROM tf_parent) AS p, (SELECT count(*) FROM tf_child) AS c, (SELECT count(*) FROM tf_grandchild) AS g;
+----
+p	c	g
+2	2	1
+
+
+statement ok
+TRUNCATE tf_parent CASCADE;
+
+
+query
+SELECT (SELECT count(*) FROM tf_parent) AS p, (SELECT count(*) FROM tf_child) AS c, (SELECT count(*) FROM tf_grandchild) AS g;
+----
+p	c	g
+0	0	0
+
+
+statement ok
+INSERT INTO tf_parent VALUES (3);
+
+
+statement ok
+INSERT INTO tf_child VALUES (30, 3);
+
+
+query
+SELECT p.id, c.id AS cid FROM tf_parent p JOIN tf_child c ON c.pid = p.id;
+----
+id	cid
+3	30
+
+
+statement ok
+CREATE TABLE tf_self (id INT PRIMARY KEY, up INT REFERENCES tf_self (id));
+
+
+statement ok
+INSERT INTO tf_self VALUES (1, NULL);
+
+
+statement ok
+INSERT INTO tf_self VALUES (2, 1);
+
+
+statement ok
+TRUNCATE tf_self;
+
+
+query
+SELECT count(*) AS n FROM tf_self;
+----
+n
+0
+
+
+statement ok
+DROP TABLE tf_self;
+
+
+statement ok
+DROP TABLE tf_grandchild;
+
+
+statement ok
+DROP TABLE tf_child;
+
+
+statement ok
+DROP TABLE tf_parent;

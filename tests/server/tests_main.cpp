@@ -20,12 +20,14 @@
 
 #include <gtest/gtest.h>
 
+#include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 
 #include "query/config.h"
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
+  irs::InitOptimizeRules();
   irs::DuckDBEngine::Instance().Initialize(
     &sdb::connector::RegisterConfigVariables);
   const int rc = RUN_ALL_TESTS();

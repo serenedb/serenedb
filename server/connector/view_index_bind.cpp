@@ -134,7 +134,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnView(
 
   auto view_info = view.GetInfo();
   auto& view_base = view_info->Cast<duckdb::CreateViewInfo>();
-  const auto fp = ResolveViewFastPath(context, view_base,
+  const auto fp = ResolveViewFastPath(context, view.ParentCatalog(), view_base,
                                       catalog::ParseKeyColumns(info->options));
   duckdb::optional_ptr<duckdb::LogicalGet> leaf;
   std::vector<duckdb::unique_ptr<duckdb::Expression>> pk_refs;
@@ -214,8 +214,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnView(
   }
   info->scan_types.emplace_back(duckdb::LogicalType::ROW_TYPE);
   info->names = view_base.names;
-  info->SetQualifiedName(info->GetQualifiedName().WithQualification(
-    {view.ParentCatalog().GetName(), view.ParentSchemaName()}));
+  auto qualification =
+    view.ParentSchemaPath(view.ParentCatalog().GetCatalogTransaction(context));
+  qualification.insert(qualification.begin(), view.ParentCatalog().GetName());
+  info->SetQualifiedName(
+    info->GetQualifiedName().WithQualification(std::move(qualification)));
 
   auto projection = duckdb::make_uniq<duckdb::LogicalProjection>(
     kept_index, std::move(select_list));
@@ -311,8 +314,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
   }
   info->scan_types.emplace_back(duckdb::LogicalType::ROW_TYPE);
   info->names = get.names;
-  info->SetQualifiedName(info->GetQualifiedName().WithQualification(
-    {table.ParentCatalog().GetName(), table.ParentSchemaName()}));
+  auto qualification = table.ParentSchemaPath(
+    table.ParentCatalog().GetCatalogTransaction(context));
+  qualification.insert(qualification.begin(), table.ParentCatalog().GetName());
+  info->SetQualifiedName(
+    info->GetQualifiedName().WithQualification(std::move(qualification)));
   plan = duckdb::make_uniq<duckdb::LogicalEmptyResult>(std::move(plan));
   auto result = duckdb::make_uniq<duckdb::LogicalCreateIndex>(
     std::move(info), std::move(expressions), table, nullptr);

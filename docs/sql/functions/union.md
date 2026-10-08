@@ -28,12 +28,14 @@ Extract the value with the named tags from the union. `NULL` if the tag is not c
 
 #### `union_value(tag := any)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Create a single member `UNION` containing the argument value. The tag of the value will be the bound variable name. |
 | :--- | :--- |
 | **Example** | `union_value(k := 'hello')` |
 | **Result** | `'hello'::UNION(k VARCHAR)` |
+
+</div>
 
 #### `union_tag(union)`
 

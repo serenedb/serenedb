@@ -1,0 +1,76 @@
+control substitution on
+
+statement ok
+CREATE TABLE ncc_crash (a INT CONSTRAINT c_nn NOT NULL CONSTRAINT c_pos CHECK (a > 0) CONSTRAINT c_u UNIQUE);
+
+statement ok
+INSERT INTO ncc_crash VALUES (1);
+
+statement ok
+CREATE TABLE pk_crash (x INT);
+
+statement ok
+ALTER TABLE pk_crash ADD COLUMN id INT PRIMARY KEY;
+
+statement ok
+INSERT INTO pk_crash VALUES (1, 1);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT conname, contype FROM pg_constraint WHERE conrelid = 'ncc_crash'::regclass ORDER BY conname;
+----
+conname	contype
+c_nn	n
+c_pos	c
+c_u	u
+
+connection after_crash
+query
+SELECT conname, contype FROM pg_constraint WHERE conrelid = 'pk_crash'::regclass ORDER BY conname;
+----
+conname	contype
+pk_crash_id_not_null	n
+pk_crash_pkey	p
+
+connection after_crash
+statement error CHECK constraint failed
+INSERT INTO ncc_crash VALUES (-1);
+
+connection after_crash
+statement error violates unique constraint
+INSERT INTO ncc_crash VALUES (1);
+
+connection after_crash
+statement error violates primary key constraint
+INSERT INTO pk_crash VALUES (2, 1);
+
+connection after_crash
+statement ok
+ALTER TABLE ncc_crash DROP CONSTRAINT c_pos;
+
+connection after_crash
+statement ok
+INSERT INTO ncc_crash VALUES (-1);
+
+connection after_crash
+query
+SELECT a FROM ncc_crash ORDER BY a;
+----
+a
+-1
+1
+
+connection after_crash
+statement ok
+DROP TABLE ncc_crash;
+
+connection after_crash
+statement ok
+DROP TABLE pk_crash;

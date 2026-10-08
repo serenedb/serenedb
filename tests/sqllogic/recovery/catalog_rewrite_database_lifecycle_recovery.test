@@ -1,0 +1,116 @@
+control substitution on
+
+statement ok
+CREATE DATABASE crl_existing;
+
+
+statement ok
+CREATE TABLE crl_existing.public.t (a INTEGER);
+
+
+statement ok
+INSERT INTO crl_existing.public.t VALUES (1);
+
+
+statement ok
+CREATE DATABASE crl_dropped;
+
+
+statement ok
+CREATE TABLE crl_dropped.public.t (a INTEGER);
+
+
+connection creator
+statement ok
+BEGIN;
+
+
+connection creator
+statement ok
+CREATE DATABASE crl_new;
+
+
+connection creator
+statement ok
+CREATE TABLE crl_new.public.t (a INTEGER);
+
+
+connection dropper
+statement ok
+BEGIN;
+
+
+connection dropper
+statement error
+DROP DATABASE crl_existing;
+----
+db error: ERROR: DROP DATABASE cannot run inside a transaction block
+
+
+connection default
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection default
+statement ok
+CREATE TABLE crl_trigger1 (x INTEGER);
+
+
+connection creator
+statement ok
+INSERT INTO crl_new.public.t VALUES (7);
+
+
+connection creator
+statement ok
+COMMIT;
+
+
+connection dropper
+statement ok
+ROLLBACK;
+
+
+connection committer
+statement ok
+DROP DATABASE crl_dropped;
+
+
+connection default
+statement ok
+CREATE TABLE crl_trigger2 (x INTEGER);
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT (SELECT count(*) FROM crl_new.public.t) AS n, (SELECT count(*) FROM crl_existing.public.t) AS e;
+----
+n	e
+1	1
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'crl_dropped';
+----
+n
+0
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM duckdb_tables() WHERE table_name IN ('crl_trigger1', 'crl_trigger2');
+----
+n
+2

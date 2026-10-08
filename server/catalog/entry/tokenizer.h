@@ -35,8 +35,10 @@
 
 namespace sdb::catalog {
 
-std::string PackTokenizerConfig(std::string_view definition,
-                                const irs::analysis::TokenizerConfig& config);
+std::string PackTokenizerConfig(const irs::analysis::TokenizerConfig& config);
+
+irs::analysis::TokenizerConfig UnpackTokenizerConfig(std::string_view name,
+                                                     std::string_view bytes);
 
 class Tokenizer final : public std::enable_shared_from_this<Tokenizer> {
  public:

@@ -1,0 +1,94 @@
+statement ok
+CREATE TABLE ncc (a INT CONSTRAINT a_nn NOT NULL CONSTRAINT a_pos CHECK (a > 0) CONSTRAINT a_u UNIQUE, b INT);
+
+
+query
+SELECT conname, contype FROM pg_constraint WHERE conrelid = 'ncc'::regclass ORDER BY conname;
+----
+conname	contype
+a_nn	n
+a_pos	c
+a_u	u
+
+
+statement ok
+INSERT INTO ncc VALUES (1, 1);
+
+
+statement error CHECK constraint failed
+INSERT INTO ncc VALUES (-1, 2);
+
+
+statement error violates unique constraint
+INSERT INTO ncc VALUES (1, 3);
+
+
+statement error NOT NULL constraint failed
+INSERT INTO ncc VALUES (NULL, 4);
+
+
+statement ok
+ALTER TABLE ncc DROP CONSTRAINT a_pos;
+
+
+statement ok
+INSERT INTO ncc VALUES (-1, 5);
+
+
+statement ok
+ALTER TABLE ncc DROP CONSTRAINT a_u;
+
+
+statement ok
+INSERT INTO ncc VALUES (1, 6);
+
+
+query
+SELECT conname FROM pg_constraint WHERE conrelid = 'ncc'::regclass ORDER BY conname;
+----
+conname
+a_nn
+
+
+query
+SELECT a, b FROM ncc ORDER BY b;
+----
+a	b
+1	1
+-1	5
+1	6
+
+
+statement ok
+CREATE TABLE ncc_mixed (k INT CONSTRAINT k_pk PRIMARY KEY CONSTRAINT k_small CHECK (k < 100) DEFAULT 7, v INT);
+
+
+query
+SELECT conname, contype FROM pg_constraint WHERE conrelid = 'ncc_mixed'::regclass AND contype <> 'n' ORDER BY conname;
+----
+conname	contype
+k_pk	p
+k_small	c
+
+
+statement ok
+INSERT INTO ncc_mixed (v) VALUES (NULL);
+
+
+query
+SELECT k, v FROM ncc_mixed;
+----
+k	v
+7	NULL
+
+
+statement error CHECK constraint failed
+INSERT INTO ncc_mixed VALUES (100, NULL);
+
+
+statement ok
+DROP TABLE ncc_mixed;
+
+
+statement ok
+DROP TABLE ncc;

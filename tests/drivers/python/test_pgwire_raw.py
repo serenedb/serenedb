@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import socket
 import struct
+import time
 
 import pytest
 from spec_loader import conn_kwargs
@@ -110,6 +111,11 @@ class WireConn:
         self.execute("")
         self.sync()
         return self.drain_to_ready()
+
+    def run_ok(self, query: str):
+        msgs = self.run(query)
+        assert not errors(msgs), (query, errors(msgs))
+        return msgs
 
 
 def types(msgs):
@@ -427,6 +433,38 @@ def test_fast_path_function_call_rejected_gracefully(conn):
     assert rows(m2) and rows(m2)[0].endswith(b"1")
 
 
+def test_invalid_message_type_is_fatal_then_closed():
+    c = WireConn()
+    try:
+        c.send("z")
+        t, p = c.read_msg()
+        assert t == "E", (t, p)
+        assert b"SFATAL\0" in p and b"C08P01\0" in p, p
+        c.sock.settimeout(5)
+        assert c.sock.recv(1) == b""
+    finally:
+        c.sock.close()
+
+
+def test_terminate_closes_a_client_that_is_not_reading(conn):
+    # pg_terminate_backend on a session whose client stopped reading mid-result:
+    # once the client reads again it gets the rest and then EOF. The stop used to
+    # share one wake with the session's last write, so the send writer finished
+    # that write, went back to waiting, and never closed the socket.
+    victim = WireConn()
+    try:
+        pid = int(first_field(victim.run("select pg_backend_pid()")))
+        victim.send("Q", _cstr("select repeat('x', 1000) from range(40000)"))
+        time.sleep(1)
+        assert "E" not in types(conn.run(f"select pg_terminate_backend({pid})"))
+        time.sleep(1)
+        victim.sock.settimeout(10)
+        while victim.sock.recv(1 << 20):
+            pass
+    finally:
+        victim.sock.close()
+
+
 def test_set_local_revert_not_reported(conn):
     # PG emits GUC ParameterStatus only at ReadyForQuery, after the implicit
     # block commit reverts a SET LOCAL -- so a set-then-reverted SET LOCAL nets
@@ -461,7 +499,7 @@ def test_set_local_revert_not_reported(conn):
         m3 = conn.run("set search_path = 'sl_keep'")
         assert dict(param_status(m3)).get("search_path") == "sl_keep", param_status(m3)
     finally:
-        conn.run("reset search_path")
+        conn.run_ok("reset search_path")
 
 
 def test_rowdescription_numeric_typmod(conn):
@@ -597,10 +635,10 @@ def test_float_special_values_text(conn):
 def test_dml_command_complete_count_after_select(conn):
     # An extended-protocol UPDATE/DELETE reports its own affected-row count, even
     # after a full-drained prepared SELECT earlier in the session.
-    conn.run("drop table if exists t_dml")
+    conn.run_ok("drop table if exists t_dml")
     assert "E" not in types(conn.run("create table t_dml(i int)"))
     try:
-        conn.run("insert into t_dml select i from range(7) g(i)")
+        conn.run_ok("insert into t_dml select i from range(7) g(i)")
         conn.parse("sel_c", "select i from t_dml")
         conn.bind("", "sel_c")
         conn.execute("", 0)
@@ -617,7 +655,7 @@ def test_dml_command_complete_count_after_select(conn):
         conn.sync()
         assert any(b"DELETE 7" in t for t in tags(conn.drain_to_ready()))
     finally:
-        conn.run("drop table if exists t_dml")
+        conn.run_ok("drop table if exists t_dml")
 
 
 def test_binary_result_format(conn):
@@ -655,10 +693,10 @@ def test_paged_portal_flush_pages_sync_drops(conn):
     # (PreCommit_Portals), so a paged cursor is pulled with Flush -- which does
     # NOT commit -- between Execute calls; an Execute after a Sync hits 34000.
     # Both halves verified byte-identical to PostgreSQL.
-    conn.run("drop table if exists smoke_page")
+    conn.run_ok("drop table if exists smoke_page")
     assert "E" not in types(conn.run("create table smoke_page(i int)"))
     try:
-        conn.run("insert into smoke_page select i from generate_series(1,7) g(i)")
+        conn.run_ok("insert into smoke_page select i from generate_series(1,7) g(i)")
         # Paging via Flush keeps the portal alive across pages -> all 7 rows.
         conn.parse("", "SELECT i FROM smoke_page ORDER BY i")
         conn.bind("", "")
@@ -696,7 +734,7 @@ def test_paged_portal_flush_pages_sync_drops(conn):
         m2 = conn.drain_to_ready()
         assert sqlstates(m2) == ["34000"], (types(m2), sqlstates(m2))
     finally:
-        conn.run("drop table if exists smoke_page")
+        conn.run_ok("drop table if exists smoke_page")
 
 
 def test_paged_one_row_at_a_time(conn):
@@ -733,6 +771,31 @@ def test_paged_one_row_at_a_time(conn):
     vals = [int(first_field([("D", r)])) for r in collected]
     assert vals == list(range(1, 11)), vals
     assert suspends == 10, suspends
+
+
+def test_paged_portal_stops_at_chunk_boundary(conn):
+    conn.run("drop sequence if exists smoke_page_seq")
+    assert "E" not in types(conn.run("create sequence smoke_page_seq"))
+    try:
+        conn.parse("", "SELECT nextval('smoke_page_seq') FROM range(4096)")
+        conn.bind("", "")
+        conn.execute("", max_rows=2048)
+        conn.send("H")
+        page = []
+        while True:
+            t, p = conn.read_msg()
+            page.append((t, p))
+            if t in ("s", "C", "E"):
+                break
+        assert len(rows(page)) == 2048 and page[-1][0] == "s", types(page)[-3:]
+        conn.send("C", b"P" + _cstr(""))
+        conn.sync()
+        m = conn.drain_to_ready()
+        assert "E" not in types(m), errors(m)
+        m = conn.run("SELECT currval('smoke_page_seq')")
+        assert first_field(m) == b"2048", first_field(m)
+    finally:
+        conn.run("drop sequence if exists smoke_page_seq")
 
 
 # --- portal lifetime: independent of the statement, scoped to the txn --------
@@ -776,7 +839,7 @@ def test_portal_dropped_at_committing_sync(conn):
     # commits at Sync (PG PreCommit_Portals; CockroachDB closes all wire portals
     # at the txn boundary). Re-Execute -> 34000. Regression: serenedb kept portals
     # until session teardown, so a re-Executed DML portal reported "INSERT 0 0".
-    conn.run("drop table if exists t_pdrop")
+    conn.run_ok("drop table if exists t_pdrop")
     assert "E" not in types(conn.run("create table t_pdrop(id int)"))
     try:
         conn.parse("ins_pd", "insert into t_pdrop values (1)")
@@ -790,9 +853,10 @@ def test_portal_dropped_at_committing_sync(conn):
         m2 = conn.drain_to_ready()
         assert sqlstates(m2) == ["34000"], (types(m2), tags(m2), errors(m2))
     finally:
-        conn.run("drop table if exists t_pdrop")
+        conn.run_ok("drop table if exists t_pdrop")
 
 
+@pytest.mark.exclusive
 def test_implicit_block_commit_error_replaces_command_complete(conn):
     # PG commits the implicit block in finish_xact_command BEFORE EndCommand
     # (postgres.c:1304-1314), so a commit-time failure is reported as an
@@ -829,7 +893,7 @@ def test_implicit_block_commit_error_replaces_command_complete(conn):
 
 
 def test_copy_from_stdin_extended(conn):
-    conn.run("drop table if exists smoke_copy_ext")
+    conn.run_ok("drop table if exists smoke_copy_ext")
     assert "E" not in types(conn.run("create table smoke_copy_ext(a int, b text)"))
     try:
         conn.parse("", "copy smoke_copy_ext from stdin")
@@ -849,17 +913,45 @@ def test_copy_from_stdin_extended(conn):
         assert len(rows(m)) == 1
         assert b"2" in rows(m)[0] and b"one" in rows(m)[0]
     finally:
-        conn.run("drop table if exists smoke_copy_ext")
+        conn.run_ok("drop table if exists smoke_copy_ext")
+
+
+@pytest.mark.exclusive
+def test_copy_feeder_error_ends_the_copy(conn):
+    # A throw in the COPY FROM STDIN feeder, the io coroutine that hands the
+    # client's CopyData to the COPY, fails the COPY and closes the connection,
+    # whose place in the client's stream is lost. The throw used to end the
+    # feeder without telling the COPY: the worker waited for data forever, and
+    # the client for the COPY's answer.
+    if "E" in types(conn.run("set sdb_faults='copy_feeder_throw'")):
+        pytest.skip("fault injection not enabled in this build")
+    c = WireConn()
+    try:
+        c.run_ok("drop table if exists t_copy_feeder")
+        c.run_ok("create table t_copy_feeder(a int)")
+        c.send("Q", _cstr("copy t_copy_feeder from stdin"))
+        assert c.read_msg()[0] == "G"
+        c.send("d", b"1\n")
+        c.send("c")
+        c.sock.settimeout(10)
+        with pytest.raises(EOFError):
+            while True:
+                c.read_msg()
+        assert first_field(conn.run("select count(*) from t_copy_feeder")) == b"0"
+    finally:
+        conn.run("set sdb_faults='-copy_feeder_throw'")
+        c.sock.close()
+        conn.run("drop table if exists t_copy_feeder")
 
 
 def test_copy_to_stdout_extended(conn):
     # COPY ... TO STDOUT over the extended protocol: Parse/Bind/Execute must
     # route to the wire collector and emit CopyOutResponse(H) + CopyData(d) +
     # CopyDone(c) + CommandComplete("COPY N"), not a normal RowDescription path.
-    conn.run("drop table if exists smoke_copy_to_ext")
+    conn.run_ok("drop table if exists smoke_copy_to_ext")
     assert "E" not in types(conn.run("create table smoke_copy_to_ext(a int, b text)"))
     try:
-        conn.run("insert into smoke_copy_to_ext values (1,'one'),(2,'two')")
+        conn.run_ok("insert into smoke_copy_to_ext values (1,'one'),(2,'two')")
         conn.parse("", "copy smoke_copy_to_ext to stdout")
         conn.bind("", "")
         conn.execute("")
@@ -874,14 +966,14 @@ def test_copy_to_stdout_extended(conn):
         body = b"".join(p for tt, p in m if tt == "d")
         assert b"one" in body and b"two" in body, body
     finally:
-        conn.run("drop table if exists smoke_copy_to_ext")
+        conn.run_ok("drop table if exists smoke_copy_to_ext")
 
 
 def test_copy_to_stdout_binary_extended(conn):
-    conn.run("drop table if exists smoke_copy_tobin_ext")
+    conn.run_ok("drop table if exists smoke_copy_tobin_ext")
     assert "E" not in types(conn.run("create table smoke_copy_tobin_ext(a int, b text)"))
     try:
-        conn.run(
+        conn.run_ok(
             "insert into smoke_copy_tobin_ext values (1,'one'),(2,'two'),(3,'three')"
         )
         conn.parse("", "copy smoke_copy_tobin_ext to stdout (format binary)")
@@ -896,7 +988,7 @@ def test_copy_to_stdout_binary_extended(conn):
         assert blob.endswith(b"\xff\xff"), "PGCOPY -1 trailer"
         assert any(b"COPY 3" in tg for tg in tags(m)), tags(m)
     finally:
-        conn.run("drop table if exists smoke_copy_tobin_ext")
+        conn.run_ok("drop table if exists smoke_copy_tobin_ext")
 
 
 def test_copy_binary_round_trip_extended(conn):
@@ -904,12 +996,12 @@ def test_copy_binary_round_trip_extended(conn):
     # (FORMAT BINARY) produces the PGCOPY stream and FROM STDIN (FORMAT BINARY)
     # loads it back unchanged, including a NULL. Exercises both the deferred
     # COPY-FROM bind-at-Execute path and the extended COPY-TO routing.
-    conn.run("drop table if exists smoke_bin_src_ext")
-    conn.run("drop table if exists smoke_bin_dst_ext")
+    conn.run_ok("drop table if exists smoke_bin_src_ext")
+    conn.run_ok("drop table if exists smoke_bin_dst_ext")
     assert "E" not in types(conn.run("create table smoke_bin_src_ext(x int, label text)"))
     assert "E" not in types(conn.run("create table smoke_bin_dst_ext(x int, label text)"))
     try:
-        conn.run("insert into smoke_bin_src_ext values (1,'one'),(2,null),(3,'three')")
+        conn.run_ok("insert into smoke_bin_src_ext values (1,'one'),(2,null),(3,'three')")
         conn.parse("", "copy smoke_bin_src_ext to stdout (format binary)")
         conn.bind("", "")
         conn.execute("")
@@ -936,8 +1028,8 @@ def test_copy_binary_round_trip_extended(conn):
         # the NULL label survived the round trip (count(label) skips NULLs)
         assert first_field(conn.run("select count(label) from smoke_bin_dst_ext")) == b"2"
     finally:
-        conn.run("drop table if exists smoke_bin_src_ext")
-        conn.run("drop table if exists smoke_bin_dst_ext")
+        conn.run_ok("drop table if exists smoke_bin_src_ext")
+        conn.run_ok("drop table if exists smoke_bin_dst_ext")
 
 
 def test_copy_binary_header_flags_rejected(conn):
@@ -945,7 +1037,7 @@ def test_copy_binary_header_flags_rejected(conn):
     # high-16-bit "critical" flag, and a negative header-extension length are
     # each rejected with 22P04 rather than silently misparsed. A clean header
     # (flags 0, ext 0) still loads.
-    conn.run("drop table if exists smoke_copy_hdr")
+    conn.run_ok("drop table if exists smoke_copy_hdr")
     assert "E" not in types(conn.run("create table smoke_copy_hdr(a int)"))
     try:
 
@@ -981,7 +1073,7 @@ def test_copy_binary_header_flags_rejected(conn):
         assert any(b"COPY 1" in t for t in tags(m)), tags(m)
         assert first_field(conn.run("select count(*) from smoke_copy_hdr")) == b"1"
     finally:
-        conn.run("drop table if exists smoke_copy_hdr")
+        conn.run_ok("drop table if exists smoke_copy_hdr")
 
 
 def test_copy_csv_keeps_eod_marker_as_data(conn):
@@ -989,7 +1081,7 @@ def test_copy_csv_keeps_eod_marker_as_data(conn):
     # "\." is real data. Regression: serenedb stripped a trailing "\.\n" from the
     # CopyData frame for CSV too (the strip was gated on !binary), losing the
     # row. HEADER false avoids CSV header auto-detection masking the row count.
-    conn.run("drop table if exists smoke_csv_eod")
+    conn.run_ok("drop table if exists smoke_csv_eod")
     assert "E" not in types(conn.run("create table smoke_csv_eod(a text)"))
     try:
         conn.parse("", "copy smoke_csv_eod from stdin (format csv, header false)")
@@ -1010,14 +1102,14 @@ def test_copy_csv_keeps_eod_marker_as_data(conn):
             == b"1"
         )
     finally:
-        conn.run("drop table if exists smoke_csv_eod")
+        conn.run_ok("drop table if exists smoke_csv_eod")
 
 
 def test_copy_binary_data_after_eof_marker_rejected(conn):
     # PG requires CopyDone to follow the PGCOPY -1 trailer immediately; any bytes
     # between the trailer and CopyDone are rejected with 22P04. Regression:
     # serenedb used to silently drain them.
-    conn.run("drop table if exists smoke_copy_eofm")
+    conn.run_ok("drop table if exists smoke_copy_eofm")
     assert "E" not in types(conn.run("create table smoke_copy_eofm(a int)"))
     try:
         conn.parse("", "copy smoke_copy_eofm from stdin (format binary)")
@@ -1039,14 +1131,14 @@ def test_copy_binary_data_after_eof_marker_rejected(conn):
         conn.sync()
         assert sqlstates(conn.drain_to_ready()) == ["22P04"]
     finally:
-        conn.run("drop table if exists smoke_copy_eofm")
+        conn.run_ok("drop table if exists smoke_copy_eofm")
 
 
 def test_copy_text_eod_marker_mid_stream(conn):
     # TEXT COPY: "\." alone on a line is end-of-data; everything after it (even
     # in the same CopyData frame) is discarded. The streaming feeder's stateful
     # scanner handles a marker anywhere, not just a frame-trailing suffix.
-    conn.run("drop table if exists smoke_eod")
+    conn.run_ok("drop table if exists smoke_eod")
     assert "E" not in types(conn.run("create table smoke_eod(a text)"))
     try:
         conn.parse("", "copy smoke_eod from stdin (format text)")
@@ -1063,14 +1155,14 @@ def test_copy_text_eod_marker_mid_stream(conn):
         assert first_field(conn.run("select count(*) from smoke_eod")) == b"1"
         assert first_field(conn.run("select a from smoke_eod")) == b"x"
     finally:
-        conn.run("drop table if exists smoke_eod")
+        conn.run_ok("drop table if exists smoke_eod")
 
 
 def test_copy_text_eod_marker_split_across_frames(conn):
     # The "\.\n" marker is split across two CopyData frames ("\" ends the first,
     # ".\n" starts the second). The scanner must bridge the split and still treat
     # it as end-of-data, dropping the trailing row.
-    conn.run("drop table if exists smoke_eod2")
+    conn.run_ok("drop table if exists smoke_eod2")
     assert "E" not in types(conn.run("create table smoke_eod2(a text)"))
     try:
         conn.parse("", "copy smoke_eod2 from stdin (format text)")
@@ -1088,14 +1180,14 @@ def test_copy_text_eod_marker_split_across_frames(conn):
         assert first_field(conn.run("select count(*) from smoke_eod2")) == b"1"
         assert first_field(conn.run("select a from smoke_eod2")) == b"a"
     finally:
-        conn.run("drop table if exists smoke_eod2")
+        conn.run_ok("drop table if exists smoke_eod2")
 
 
 def test_copy_large_copydata_frame_uncapped(conn):
     # A single CopyData frame larger than the old 64MB whole-frame cap: the
     # streaming feeder loads it (PG/pgwire-rs accept ~1-2GB per message). ~70MB
     # binary in one frame; the old path FATAL'd with "exceeds maximum size".
-    conn.run("drop table if exists smoke_big_copy")
+    conn.run_ok("drop table if exists smoke_big_copy")
     assert "E" not in types(conn.run("create table smoke_big_copy(a bigint)"))
     try:
         rows = 5_000_000  # 5M * 14 bytes ≈ 70MB > 64MB cap
@@ -1118,7 +1210,7 @@ def test_copy_large_copydata_frame_uncapped(conn):
         m = conn.drain_to_ready()
         assert any(f"COPY {rows}".encode() in t for t in tags(m)), (tags(m), errors(m))
     finally:
-        conn.run("drop table if exists smoke_big_copy")
+        conn.run_ok("drop table if exists smoke_big_copy")
 
 
 def copy_out_response(msgs):
@@ -1135,10 +1227,10 @@ def test_copy_csv_to_stdout_reports_column_count(conn):
     # PG's COPY ... TO STDOUT (text/csv) CopyOutResponse carries the real column
     # count with a per-column format code each. Regression: serenedb's
     # DuckDB-format path (csv/json/parquet/...) hardcoded column count 0.
-    conn.run("drop table if exists csv_natts")
+    conn.run_ok("drop table if exists csv_natts")
     assert "E" not in types(conn.run("create table csv_natts(a int, b text, c int)"))
     try:
-        conn.run("insert into csv_natts values (1,'x',2)")
+        conn.run_ok("insert into csv_natts values (1,'x',2)")
         conn.parse("", "copy csv_natts to stdout (format csv)")
         conn.bind("", "")
         conn.execute("")
@@ -1150,7 +1242,7 @@ def test_copy_csv_to_stdout_reports_column_count(conn):
         assert len(codes) == 3, (overall, codes)  # one code per column, not zero
         assert all(c == 0 for c in codes), codes  # text -> per-column format 0
     finally:
-        conn.run("drop table if exists csv_natts")
+        conn.run_ok("drop table if exists csv_natts")
 
 
 def test_copy_to_stdout_error_emits_no_copydone(conn):
@@ -1158,10 +1250,10 @@ def test_copy_to_stdout_error_emits_no_copydone(conn):
     # yields ErrorResponse with NO CopyDone. Regression: serenedb's DuckDB-format
     # path emitted CopyDone unconditionally from the file-handle destructor, so a
     # failed COPY produced CopyOutResponse,[CopyData],CopyDone,ErrorResponse.
-    conn.run("drop table if exists copy_err")
+    conn.run_ok("drop table if exists copy_err")
     assert "E" not in types(conn.run("create table copy_err(i bigint)"))
     try:
-        conn.run("insert into copy_err select i from range(5000) g(i)")
+        conn.run_ok("insert into copy_err select i from range(5000) g(i)")
         # Lazy CASE: the i=4000 row overflows the ::int cast at runtime, so the
         # COPY opens (CopyOutResponse) then fails partway -- the case where the
         # old destructor wrongly emitted CopyDone before the ErrorResponse.
@@ -1175,16 +1267,16 @@ def test_copy_to_stdout_error_emits_no_copydone(conn):
         assert "H" in types(m), types(m)      # ...after CopyOutResponse went out
         assert "c" not in types(m), types(m)  # and NO CopyDone preceded the error
     finally:
-        conn.run("drop table if exists copy_err")
+        conn.run_ok("drop table if exists copy_err")
 
 
 def test_copy_text_escaping_to_stdout(conn):
     # PG text TO STDOUT: tab-separated, specials backslash-escaped, \N for NULL,
     # no header. Byte-exact against PostgreSQL's text format.
-    conn.run("drop table if exists smoke_text_esc")
+    conn.run_ok("drop table if exists smoke_text_esc")
     assert "E" not in types(conn.run("create table smoke_text_esc(i int, s text)"))
     try:
-        conn.run("insert into smoke_text_esc values (1, E'a\\tb\\nc\\\\d'), (2, NULL)")
+        conn.run_ok("insert into smoke_text_esc values (1, E'a\\tb\\nc\\\\d'), (2, NULL)")
         conn.parse("", "copy smoke_text_esc to stdout (format text)")
         conn.bind("", "")
         conn.execute("")
@@ -1194,16 +1286,16 @@ def test_copy_text_escaping_to_stdout(conn):
         body = b"".join(p for t, p in m if t == "d")
         assert body == b"1\ta\\tb\\nc\\\\d\n2\t\\N\n", body
     finally:
-        conn.run("drop table if exists smoke_text_esc")
+        conn.run_ok("drop table if exists smoke_text_esc")
 
 
 def test_copy_default_format_is_text(conn):
     # No FORMAT clause -> PG default is text (tab sep, \N for NULL, comma raw,
     # no header), NOT csv.
-    conn.run("drop table if exists smoke_text_def")
+    conn.run_ok("drop table if exists smoke_text_def")
     assert "E" not in types(conn.run("create table smoke_text_def(i int, s text)"))
     try:
-        conn.run("insert into smoke_text_def values (1,'a,b'), (2, NULL)")
+        conn.run_ok("insert into smoke_text_def values (1,'a,b'), (2, NULL)")
         conn.parse("", "copy smoke_text_def to stdout")
         conn.bind("", "")
         conn.execute("")
@@ -1213,18 +1305,18 @@ def test_copy_default_format_is_text(conn):
         body = b"".join(p for t, p in m if t == "d")
         assert body == b"1\ta,b\n2\t\\N\n", body
     finally:
-        conn.run("drop table if exists smoke_text_def")
+        conn.run_ok("drop table if exists smoke_text_def")
 
 
 def test_copy_text_round_trip(conn):
     # text TO STDOUT -> text FROM STDIN preserves everything incl. NULL, empty
     # string, and a value with embedded tab/newline/backslash.
-    conn.run("drop table if exists smoke_text_src")
-    conn.run("drop table if exists smoke_text_dst")
+    conn.run_ok("drop table if exists smoke_text_src")
+    conn.run_ok("drop table if exists smoke_text_dst")
     assert "E" not in types(conn.run("create table smoke_text_src(i int, s text)"))
     assert "E" not in types(conn.run("create table smoke_text_dst(i int, s text)"))
     try:
-        conn.run("insert into smoke_text_src values "
+        conn.run_ok("insert into smoke_text_src values "
                  "(1,'plain'),(2,NULL),(3,E'a\\tb\\nc\\\\d'),(4,'')")
         conn.parse("", "copy smoke_text_src to stdout (format text)")
         conn.bind("", "")
@@ -1252,14 +1344,14 @@ def test_copy_text_round_trip(conn):
             "(select * from smoke_text_dst except select * from smoke_text_src) b)")
         assert first_field(diff) == b"0", first_field(diff)
     finally:
-        conn.run("drop table if exists smoke_text_src")
-        conn.run("drop table if exists smoke_text_dst")
+        conn.run_ok("drop table if exists smoke_text_src")
+        conn.run_ok("drop table if exists smoke_text_dst")
 
 
 def test_copy_from_text_decode(conn):
     # text FROM STDIN decodes the full PG backslash-escape set, including octal
     # (\101) and hex (\x41), \N -> NULL, and unknown \q -> q.
-    conn.run("drop table if exists smoke_text_dec")
+    conn.run_ok("drop table if exists smoke_text_dec")
     assert "E" not in types(conn.run("create table smoke_text_dec(k text, v text)"))
     try:
         conn.parse("", "copy smoke_text_dec from stdin (format text)")
@@ -1285,7 +1377,7 @@ def test_copy_from_text_decode(conn):
         assert q("unk") == [b"q"]
         assert q("nul") == [None]
     finally:
-        conn.run("drop table if exists smoke_text_dec")
+        conn.run_ok("drop table if exists smoke_text_dec")
 
 
 def test_simple_protocol_empty_multi_and_copy(conn):
@@ -1539,7 +1631,7 @@ def test_copy_in_stray_message_aborts_and_resyncs(conn):
     # An out-of-band message mid COPY FROM STDIN ends the COPY with 08P01; the
     # message body is consumed so the stream stays framed -- the connection
     # recovers (ReadyForQuery) and the next query works (no desync/hang).
-    conn.run("drop table if exists smoke_copy_stray")
+    conn.run_ok("drop table if exists smoke_copy_stray")
     assert "E" not in types(conn.run("create table smoke_copy_stray(x int)"))
     try:
         conn.send("Q", _cstr("COPY smoke_copy_stray FROM STDIN"))
@@ -1551,7 +1643,7 @@ def test_copy_in_stray_message_aborts_and_resyncs(conn):
         # Stream re-synced: a fresh query on the same connection works.
         assert rows(conn.run("SELECT 42"))[0].endswith(b"42")
     finally:
-        conn.run("drop table if exists smoke_copy_stray")
+        conn.run_ok("drop table if exists smoke_copy_stray")
 
 
 def test_notice_precedes_command_complete(conn):
@@ -1566,7 +1658,7 @@ def test_notice_precedes_command_complete(conn):
 def test_copy_binary_rejects_format_options(conn):
     # serenedb's PGCOPY binary format honors no formatting option; PG rejects each
     # in BINARY mode. serenedb errors (no CopyOutResponse) before any data flows.
-    conn.run("drop table if exists smoke_copy_binopt")
+    conn.run_ok("drop table if exists smoke_copy_binopt")
     assert "E" not in types(conn.run("create table smoke_copy_binopt(x int)"))
     try:
         for opt in ("delimiter ','", "header", "null 'x'", "quote '\"'"):
@@ -1575,20 +1667,20 @@ def test_copy_binary_rejects_format_options(conn):
             assert "H" not in types(m), (opt, types(m))  # no CopyOutResponse
             assert sqlstates(m) == ["0A000"], (opt, sqlstates(m))
     finally:
-        conn.run("drop table if exists smoke_copy_binopt")
+        conn.run_ok("drop table if exists smoke_copy_binopt")
 
 
 def test_copy_text_rejects_unknown_option(conn):
     # An unrecognized COPY option is a hard error (PG "option not recognized",
     # ERRCODE_SYNTAX_ERROR 42601), not silently ignored.
-    conn.run("drop table if exists smoke_copy_txtopt")
+    conn.run_ok("drop table if exists smoke_copy_txtopt")
     assert "E" not in types(conn.run("create table smoke_copy_txtopt(x int)"))
     try:
         conn.send("Q", _cstr("COPY smoke_copy_txtopt TO STDOUT (FORMAT text, bogus_opt true)"))
         m = conn.drain_to_ready()
         assert sqlstates(m) == ["42601"], (types(m), sqlstates(m))
     finally:
-        conn.run("drop table if exists smoke_copy_txtopt")
+        conn.run_ok("drop table if exists smoke_copy_txtopt")
 
 
 def test_application_name_ascii_sanitized():
@@ -1671,7 +1763,8 @@ def _exists(conn, relname):
 def _drop(conn, *relnames):
     for r in relnames:
         conn.send("Q", _cstr(f"DROP TABLE IF EXISTS {r}"))
-        conn.drain_to_ready()
+        msgs = conn.drain_to_ready()
+        assert not errors(msgs), (r, errors(msgs))
 
 
 def test_ddl_implicit_block_commits(conn):

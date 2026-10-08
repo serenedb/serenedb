@@ -33,7 +33,7 @@
 //   XXH3_64bits
 //
 // Run pinned on a quiet box:
-//   taskset -c N ./serenedb-bench-micro-ci_hash --benchmark_min_time=0.3s \
+//   taskset -c N ./serenedb-bench-micro ci_hash --benchmark_min_time=0.3s \
 //     --benchmark_repetitions=12 --benchmark_report_aggregates_only=true
 
 #define XXH_INLINE_ALL
@@ -433,5 +433,3 @@ BENCHMARK_TEMPLATE(BmSet, StdSet, HashI)
   ->Name("set_std_I_fused");
 
 }  // namespace
-
-BENCHMARK_MAIN();

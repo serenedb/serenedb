@@ -1,0 +1,112 @@
+statement ok
+CREATE SEQUENCE sca_seq
+
+
+query
+SELECT nextval('sca_seq') AS n
+----
+n
+1
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+COMMENT ON SEQUENCE sca_seq IS 'ids'
+
+
+connection s2
+query
+SELECT nextval('sca_seq') AS n
+----
+n
+2
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT nextval('sca_seq') AS n
+----
+n
+3
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+ALTER SEQUENCE sca_seq RESTART WITH 100
+
+
+connection s2
+statement error
+SELECT nextval('sca_seq')
+----
+db error: ERROR: Transaction conflict: sequence "sca_seq" was altered by another transaction
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+query
+SELECT nextval('sca_seq') AS n
+----
+n
+4
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+ALTER SEQUENCE sca_seq RENAME TO sca_seq2
+
+
+connection s2
+statement error
+SELECT nextval('sca_seq')
+----
+db error: ERROR: Transaction conflict: sequence "sca_seq" was altered by another transaction
+
+
+connection s1
+query
+SELECT nextval('sca_seq2') AS n
+----
+n
+5
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT nextval('sca_seq2') AS n
+----
+n
+6
+
+
+statement ok
+DROP SEQUENCE sca_seq2

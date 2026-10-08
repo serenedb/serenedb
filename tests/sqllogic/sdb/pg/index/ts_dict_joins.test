@@ -74,7 +74,7 @@ ORDER BY at, bt
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────╮
-│ Order By: a.t ASC, b.t ASC               │
+│ Order By: at ASC, bt ASC                 │
 │ ~1 row                                   │
 ╰─────────────────────┬────────────────────╯
 ╭─ CROSS_PRODUCT ─────┴────────────────────╮
@@ -123,7 +123,7 @@ ORDER BY a.t
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────╮
-│ Order By: a.t ASC                        │
+│ Order By: t ASC                          │
 │ ~0 rows                                  │
 ╰─────────────────────┬────────────────────╯
 ╭─ PROJECTION ────────┴────────────────────╮

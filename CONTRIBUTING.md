@@ -44,6 +44,38 @@ Additional build presets are defined in `CMakePresets.json`:
 - `clangd` -- RelWithDebInfo build (`build_clangd/`), works well with the clangd language server in VSCode
 - `bench` -- Release build (`build_bench/`), static linking, production-like performance
 
+### Debug info and disk use
+
+Every binary links most of the server statically, so debug info dominates its size. Two settings keep a build directory small:
+
+- **Split DWARF** (`SDB_SPLIT_DWARF`, on by default except on macOS, off in CI): debug info is written once, into a `.dwo` file beside each object, and the binaries only point at those files. lldb, gdb, perf, `llvm-symbolizer` and `addr2line` follow the pointers on their own, as long as the build directory is there. A binary copied out of it keeps its symbols and line numbers but loses inlined frames, variables and types; to keep those too, pack the debug info next to the copy:
+
+  ```bash
+  llvm-dwp -e build/bin/serened -o /path/to/copy/serened.dwp
+  ```
+
+  lldb and gdb pick up `<binary>.dwp` beside the binary automatically.
+- **Thin archives**: static libraries (except on macOS) only reference their objects instead of holding copies, so they cannot be moved or installed without the build directory -- nothing in the build does that.
+
+Tools and benchmarks share binaries instead of each linking their own: `serenedb-bench-micro <bench> [args...]` runs one micro benchmark (see [Performance](#performance)), and `iresearch-examples <example>` runs one of the iresearch examples. Both print what they offer when run without arguments.
+
+### The embedded documentation index
+
+`docs/` is compiled into the binary together with a prebuilt search index of it. The read-only `sdb_docs` functions and the shell's `.docs` read that image straight from the binary, so the server indexes nothing at startup and leaves nothing in the datadir.
+
+The index cannot be produced from the sources the way the documentation text is, because building it needs the indexer that lives in the server being built. So `serened` builds it itself, right after it is linked:
+
+1. `scripts/generate_docs.py --corpus` writes the documentation text to a file in the build directory.
+2. `serened` is linked with an empty `.sdb_docs` section for the index (`server/docs/docs_index_image.cpp`); `server/docs/docs_index.ld` places it after `.bss`, alone in the last loadable segment.
+3. `serened <datadir> --build_docs_index=<out> --docs_corpus=<file>` boots it on a throwaway datadir, indexes the documentation and the catalog of the objects it documents, and writes them to `<out>/docs` and `<out>/objects`, each with a layout file naming its column and field ids. It then exits before any listener is started.
+4. `scripts/embed_docs_index.py` writes both directories into `.sdb_docs` of the binary that built them and grows the section and its segment to exactly their size. Nothing is loaded after that segment, so only the non-loaded sections behind it in the file move.
+
+macOS has no linker scripts, so there `serened` reserves a fixed 4 MiB region instead and step 4 fills it in place. If the index outgrows it, the macOS build fails and says so; raise `kCapacity` in `docs_index_image.cpp`.
+
+`serenedb-tests` is linked and embedded the same way, so the documentation tests run against what `serened` ships.
+
+Steps 3 and 4 run every time `serened` is linked, which includes every change to `docs/`. So the image always matches the server it lives in, and there is nothing to keep in sync by hand. To skip it, configure with `-DSDB_EMBEDDED_DOCS=OFF`: that build carries no documentation, so `.docs` and `sdb_docs` have nothing to read.
+
 ### Launch
 
 ```bash
@@ -119,6 +151,7 @@ through DuckDB's `unittest` binary, which is built by default (opt out with
 ```bash
 ./tests/duckdb/run.sh                    # every suite
 ./tests/duckdb/run.sh --suite core       # just duckdb core
+./tests/duckdb/run.sh --suite interop    # DuckDB files against the official duckdb/duckdb image
 ./tests/duckdb/run.sh --list             # suite names
 ```
 
@@ -131,6 +164,20 @@ The serened-level postgres_scanner tests
 (`tests/sqllogic/sdb/pg/duckdb_postgres/*_pgscan.test_slow`) ride the regular
 sqllogic runner -- the `_pgscan.` filename suffix triggers
 `launch_postgres()` in `tests/sqllogic/run.sh` automatically.
+
+## Third-party dependencies
+
+Dependencies are git submodules under `third_party/`, usually forks under `github.com/serenedb`, so build fixes can go into the fork. `third_party/CMakeLists.txt` builds them from source (`sdb_update_module` + `add_subdirectory`), so every file gets the same compiler, flags and standard library as our own code. Configure a dependency there with `set(<OPTION> <value> CACHE <type> "" FORCE)` before its `add_subdirectory`.
+
+- **One ISA baseline.** `cmake/OptimizeForArchitecture.cmake` puts the baseline into `CMAKE_C_FLAGS` and `CMAKE_CXX_FLAGS`: Haswell features on amd64, `-march=armv8-a+crc+crypto` on arm64. A dependency must not add its own `-march`, `-mcpu`, `-mtune` or `-mno-*` to the whole library: a later `-march` replaces ours, and a lower one drops below it. Turn such options off (`ZXC_NATIVE_ARCH OFF`, zlib-ng's `WITH_NATIVE_INSTRUCTIONS OFF`, `DUCKDB_OPTIMIZATION_PROFILE NONE`) or fix the fork.
+- **Runtime dispatch above it.** If a library can pick faster code for the CPU it runs on (AVX-512, SVE), enable that instead of building the whole library for one fixed level: OpenBLAS `DYNAMIC_ARCH` with a `DYNAMIC_LIST`, faiss `FAISS_OPT_LEVEL=dd`, zlib-ng `WITH_RUNTIME_CPU_DETECTION`. Flags above the baseline belong only on the kernels that the library reaches after a CPU check. For a header-only library that picks its backend at compile time, call the backends behind our own check, as `iresearch/analysis/text/sz/stringzilla.hpp` does for StringZilla.
+- **One C++ standard.** C++ builds with `CMAKE_CXX_STANDARD` (`-std=c++26`); the LLVM runtimes are the only exception. Pass it through the library's own variable when it has one (`SIMDUTF_CXX_STANDARD ${CMAKE_CXX_STANDARD}`). Otherwise remove the library's own `CMAKE_CXX_STANDARD` in the fork, as was done for ada. A dependency must not set `CMAKE_BUILD_TYPE` either.
+- **Check `compile_commands.json`** after adding or updating a dependency. Every file should carry the baseline and `-std=c++26`; only the dispatched kernels may go above the baseline:
+
+  ```bash
+  jq -r '.[] | select(.file | contains("third_party/<name>/")) | .command' build/compile_commands.json \
+    | grep -oE -- '-std=[^ ]+|-m(arch|cpu|tune)=[^ ]+|-mno-[^ ]+' | grep -v frame-pointer | sort | uniq -c
+  ```
 
 ## Branching, commits, PRs
 
@@ -158,6 +205,81 @@ SQL examples are backed by sqllogic tests, so an example that stops working fail
 - Reference it from the page as `<SqlLogicTest id="<file>/<name>" />`, where `<file>` is the test's path relative to `site_docs` with the extension dropped. So `tests/sqllogic/sdb/pg/site_docs/quick-start.test` plus `# DOCS_TEST: example_003` gives `id="quick-start/example_003"`.
 - Import the component once per page with `import SqlLogicTest from "@site/src/components/SqlLogicTest";`, and pass `hideResult` to render the query without its output.
 - An `id` that matches no marker renders **nothing** -- no error, no warning, just a missing example. Grep for the marker after you write the tag.
+
+## Storage compatibility
+
+These rules cover everything SereneDB writes: database files and their write-ahead logs, the search-table WAL and search index directories.
+
+Files are not reproducible byte for byte, and making them so is not a goal. The same data and statements can write different bytes: hash tables iterate in a different order in every process, and parallel builds, checkpoints, refreshes and merges run in a different order every time. Compatibility is about what a reader gets back, so compatibility tests compare contents, never the bytes of a file.
+
+A file never holds stale memory, though: a compression method writes every byte of the segment size it reports, padding and alignment gaps included, so no file carries bytes left in a buffer by another table or database. `StorageVersionTest.CheckpointWritesNoStaleBufferBytes` writes the same data with each compression method twice, from buffers filled with zeros and with ones, and requires identical data blocks. Legacy FSST is left out: it samples its input at random.
+
+Only two places record a storage version, a `serenedb_vN` value of DuckDB's `StorageVersion`:
+
+- The headers of each database file (`engine_v1/<oid>/data.db`). The file's write-ahead log and the database's search-table WAL follow it.
+- `segments_N` of each search index directory. The directory's other files are only reached through it.
+
+SereneDB always writes `SERENEDB_LATEST`, and only into its own databases (`CREATE DATABASE`): an `ATTACH` of a DuckDB database refuses a SereneDB storage version, and nothing attaches a SereneDB database by path. A reader opens the versions from `SERENEDB_VERSION_LOWER` to `SERENEDB_VERSION_UPPER` and refuses the rest: a higher one as written by a newer release, a lower one as older than it reads (`duckdb::StorageVersionError`; the constants are in `third_party/duckdb/src/include/duckdb/storage/storage_info.hpp`).
+
+Most changes need no new version:
+
+- **New field or option.** Give it a default that keeps today's behaviour, write it only when it differs from the default, and read the default when it is missing (`WritePropertyWithDefault` with `ReadPropertyWithDefault` or `ReadPropertyWithExplicitDefault`, or a struct member with a default member initializer). Newer releases read older data as the default, and older releases keep reading data that leaves it at the default. They refuse data that uses it, because every reader checks the end of each object. A new `generate_ngrams` option is added this way.
+- **Removed field.** Read it with `ReadDeletedProperty`; a struct member becomes `irs::utils::Deleted<T>` of its old type.
+- **New value** of an enum or a variant, or a new codec: append it. An older release refuses data that uses a value it does not know. A new compression method is added this way: older releases refuse the `.col` block or the column segment that uses it.
+- **Never** reuse a field id, reorder struct members, or change a default, a type or what a field means.
+
+Add a `serenedb_vN` only for a change that older releases would misread instead of refusing, or to stop reading old data. Add it to `third_party/duckdb/src/storage/version_map.json` and run `scripts/generate_storage_info.py` there; `SERENEDB_LATEST` and `SERENEDB_VERSION_UPPER` follow it, and older releases refuse everything the new one writes. To stop reading the data of earlier releases, also point `SERENEDB_VERSION_LOWER` at the new value; data below it has to be upgraded through an earlier release first. Keeping older database files readable (`SERENEDB_VERSION_LOWER` below `SERENEDB_LATEST`) takes one more change, which a `static_assert` in `RequestSereneDBStorageVersion` asks for: attach raises such a file only in memory, so it has to be checkpointed before anything writes to its logs. Make a version change in its own PR and list it in the release notes. A value is never reused.
+
+### Search index files
+
+Every file of an iresearch segment (`segments_N`, `.sm`, `.doc`, `.pos`, `.pay`, `.idx`, `.col`) is the file's data from offset 0, then a footer (a `BinarySerializer` object holding `data_crc32c` and the file's own fields in a `meta` object), then 8 bytes with the footer's CRC32C and its length. `format_utils::WriteFooter` writes it; `format_utils::ReadFooter` checks the checksum and reads the footer. Without a callback, neither side has a `meta` object, and a reader without a callback refuses a footer that has one. `segments_N` stores the storage version as its first field.
+
+- **Field ids:** every object numbers its fields from 0. Name them with `kField...` constants next to the file's writer (`index_meta::kFieldPayload`, `segment_meta::kFieldFiles`, ...), and read them through the same constants.
+- **Empty lists** are not written, and are read as optional (`ReadOptionalList`, `ReadOptionalObject`), unless the presence of the list itself means something (the file list of a `.sm`).
+- **Callbacks:** footer, list and payload callbacks take `duckdb::BinarySerializer&` and `duckdb::BinaryDeserializer&` (`BinarySerializer::List&` and `BinaryDeserializer::List&` for list elements), never the `Serializer` or `Deserializer` base or `auto&`, so every call into the serializer is direct.
+- **New data layout** (block encoding, term dictionary, ...): select it with a new field, and keep reading the old layout while it is supported.
+- **Every field is read:** `segments_N` is read with its payload reader. `DirectoryReader` and `DirectoryReader::Reopen` take one, and an index with a payload but no reader is refused.
+- The footer trailer and the leading `storage_version` field of `segments_N` never change.
+
+### Database files
+
+Database files are DuckDB database files. Their checkpoint and write-ahead log entries (`.wal`, and the `.wal.checkpoint` and `.wal.recovery` files beside it) are `BinarySerializer` objects with the field ids of `third_party/duckdb/src/include/duckdb/storage/serialization/*.json`: a new field is a json member with a new id and a `default`, and a removed one is marked deleted. A log entry that matches its checksum but cannot be read stops the database from opening instead of being dropped like a torn tail. The log header never gains a field; a framing change bumps `WAL_VERSION_NUMBER`. A file with a SereneDB storage version opens only at a SereneDB storage version, and a file with a DuckDB storage version only at a DuckDB one or with none given. SereneDB opens its own files at `SERENEDB_LATEST` (`RequestSereneDBStorageVersion`), so it refuses a plain DuckDB file, and a plain `ATTACH` refuses a SereneDB file, before anything is read from it.
+
+### DuckDB database files
+
+A database file with a DuckDB storage version (a plain `ATTACH`, `serened shell`) must stay readable by the DuckDB release of that version, and SereneDB reads what that release writes. Field ids and enum values outside SereneDB's ranges belong to upstream:
+
+- **Fields.** A SereneDB field of an upstream class takes 16384 plus the id upstream's numbering would give it: 16484 in a class whose fields start at 100, 16584 at 200. A field from 16384 (`SERENEDB_FIELD_ID_BASE`) up is refused when written to a DuckDB file. With `"version": "serenedb_v1"` on its json member it is skipped there instead: use that for state DuckDB drops as well, such as object ids, constraint names and sequence ownership. A class SereneDB added is reached only through a SereneDB enum value, so its fields keep the usual ids.
+- **Enum values.** A SereneDB value of a stored upstream enum starts at 200 (`SERENEDB_ENUM_VALUE_BASE`), and the enum is listed in `IsSereneDBEnumValue`. Writing such a value to a DuckDB file is refused.
+- **Data layouts.** A new compression method or block layout (the dict_fsst plus modes, FOR-packed RLE) is chosen only when `IsSereneDBStorageVersion` holds for the storage version being written.
+- **Log entries.** Where SereneDB logs an operation in another shape than DuckDB, a DuckDB file keeps DuckDB's: `CREATE SCHEMA` logs the name, and table and view renames log `RenameTableInfo` and `RenameViewInfo`. `ALTER TABLE ADD UNIQUE`, which DuckDB cannot replay, is refused.
+- **Catalog.** Objects in a DuckDB file get no owner or privileges (`StoresPermissions` in `server/auth/enforce.cpp`).
+- **In-memory databases** have a SereneDB storage version, so they take every SereneDB feature.
+
+`tests/duckdb/run.sh --suite interop` checks both directions against the official `duckdb/duckdb` image; see [tests/duckdb/README.md](tests/duckdb/README.md).
+
+### Data directory
+
+```
+engine_v1/
+  catalog.wal          the catalog log: the definitions of every database
+  <database oid>/      one database
+    data.db            its DuckDB file, with data.db.wal beside it
+    search.wal.<tick>  its search-table WAL
+    <object oid>/      a search table, or an inverted index on a table or view
+```
+
+- Every directory has one owner, and only the owner creates or removes it. `catalog::DatabaseDirectory` owns `<database oid>/`. The database's catalog entry, its attachment (until DuckDB has closed the files, through `AttachedDatabase::HoldUntilClosed`), every storage of the database and every pending removal hold it, so after a drop it removes the directory last, once all of them let go. A storage removes its `<object oid>/` after its own drop or a rolled-back create; `DROP DATABASE` marks only the database.
+- A directory is created, and its parent fsynced, before the statement that creates its object commits. Paths are oids, so a rename moves nothing.
+- Boot removes what no live object owns: each `<database oid>/` that names no database right after the catalog log replays, before bootstrap may create the default database again, and each `<object oid>/` that names no storage inside an attached database once its objects are loaded. That covers a crash between a create and its commit and one between a drop and the removal. A missing catalog log beside database directories that hold anything stops the boot.
+
+### Serialized structs
+
+Blobs stored in catalog entries (tokenizer configs, the inverted index payload), the view-backed index manifest and the segment references of the search-table WAL are written with `irs::utils::WriteTuple` and read with `ReadTuple`. An aggregate is a `BinarySerializer` object whose field ids are the positions of its members, and a member equal to its value in a value-initialized aggregate is not written. A struct boost::pfr cannot reflect (one holding a `std::vector<std::unique_ptr<T>>`) declares `SerdeFields(value)` returning `std::tie` of its members, in declaration order.
+
+### Search-table WAL
+
+The WAL of a database's search tables is a series of segments in the database's directory, `search.wal.<first tick>` with the tick as 16 hex digits. Each frame is `[u64 size][u64 checksum][record]`. The record is a `BinarySerializer` object holding `tick` and then its sections and their ops, each with their own field ids. It records no storage version: the WAL belongs to one database and follows that database's file. The frame and the leading `tick` field never change.
 
 ## VSCode Setup
 
@@ -250,6 +372,8 @@ Enforced by [`.clang-tidy`](.clang-tidy) and [pre-commit](.pre-commit-config.yam
 ### Formatting
 
 Handled by [`.clang-format`](.clang-format) and [pre-commit](.pre-commit-config.yaml). No style discussions in PRs.
+
+The DuckDB family (the duckdb submodules, `database-connector`, `duckdb_clickhouse`) follows DuckDB's own style and generators instead: [`scripts/duckdb_family.sh`](scripts/duckdb_family.sh) formats it with DuckDB's `scripts/format.py` and builds the duckdb fork's `regen:` commit; [`tests/duckdb/README.md`](tests/duckdb/README.md) has the rules for a DuckDB update.
 
 ### Include Ordering
 
@@ -435,7 +559,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - Prefer contiguous memory (vectors, arrays) over node-based containers (lists, maps)
 - Measure before optimizing -- don't guess
 - Binary size matters: excessive inlining/templates hurt icache and build times
-- Validate performance claims with microbenchmarks under `tests/bench/micro/` (Google Benchmark). Register one with `add_bench(<name>)` in that directory's `CMakeLists.txt`, build with `ninja serenedb-bench-micro`, run from `build/bin/serenedb-bench-micro-<name>`.
+- Validate performance claims with microbenchmarks under `tests/bench/micro/` (Google Benchmark). Register one with `add_bench(<name>)` in that directory's `CMakeLists.txt` -- `<name>.cpp` either registers `BENCHMARK`s or defines its own `Main` with `sdb::bench::AddMain` -- build with `ninja serenedb-bench-micro`, run it as `build/bin/serenedb-bench-micro <name> [--benchmark_filter=...]`. The same binary answers to `search-benchmark-game-build` and `search-benchmark-game-query`, the search benchmark game's tools.
 - Use the `bench` cmake preset for production-like numbers.
 - A microbench fits when the change is a few well-scoped functions. When the
   change is broader (a whole query path, an end-to-end pipeline, anything that

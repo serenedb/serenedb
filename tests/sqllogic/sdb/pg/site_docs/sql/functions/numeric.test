@@ -134,6 +134,37 @@ SELECT divide(5, 2) AS divide;
 divide
 2
 
+# DOCS_TEST: division_by_zero
+# DOCS_TEST_BODY
+statement error
+SELECT 1 // 0 AS quotient;
+----
+db error: ERROR: Division by zero in expression (1 // 0). Use TRY(...) to return NULL for this expression, or SET error_on_division_by_zero=false to return NULL for all divisions by zero.
+
+
+query
+SELECT TRY(1 // 0) AS quotient, TRY(5 % 0) AS remainder;
+----
+quotient	remainder
+NULL	NULL
+
+# DOCS_TEST_END
+
+statement error Division by zero
+SELECT 5 % 0 AS remainder;
+
+statement ok
+SET error_on_division_by_zero = false;
+
+query
+SELECT 1 // 0 AS quotient, 5 % 0 AS remainder;
+----
+quotient	remainder
+NULL	NULL
+
+statement ok
+RESET error_on_division_by_zero;
+
 # DOCS_TEST: even
 # DOCS_TEST_BODY
 query
@@ -421,6 +452,14 @@ SELECT tan(pi() / 4) AS tan;
 ----
 tan
 0.9999999999999999
+
+# DOCS_TEST: to_hex
+# DOCS_TEST_BODY
+query
+SELECT to_hex(-1) AS to_hex;
+----
+to_hex
+ffffffff
 
 # DOCS_TEST: trunc
 # DOCS_TEST_BODY

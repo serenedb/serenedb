@@ -15,6 +15,7 @@ target_sources(
         search_filter_printer.cpp
         duckdb_client_state.cpp
         scan/col_filter_verify.cpp
+        scan/deferred_verify.cpp
         scan/scan_barrier.cpp
         scan/scan_bind.cpp
         scan/scan_claim.cpp
@@ -67,6 +68,12 @@ target_include_directories(
     PRIVATE
         "${CMAKE_SOURCE_DIR}/third_party/duckdb_iceberg/src/include"
         "${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/yyjson/include"
+)
+
+target_include_directories(
+    sereneserver
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include"
 )
 
 add_subdirectory(functions)

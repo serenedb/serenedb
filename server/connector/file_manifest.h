@@ -37,8 +37,8 @@
 
 namespace duckdb {
 
-class Deserializer;
-class Serializer;
+class BinaryDeserializer;
+class BinarySerializer;
 
 }  // namespace duckdb
 namespace sdb::search {
@@ -66,9 +66,10 @@ struct FileManifest {
     return it == entries.end() ? nullptr : &it->second;
   }
 
-  void Write(duckdb::Serializer& out) const;
+  void Write(duckdb::BinarySerializer& out) const;
 
-  static std::shared_ptr<const FileManifest> Read(duckdb::Deserializer& in);
+  static std::shared_ptr<const FileManifest> Read(
+    duckdb::BinaryDeserializer& in);
 
   bool operator==(const FileManifest&) const = default;
 };
@@ -76,7 +77,6 @@ struct FileManifest {
 }  // namespace sdb::search
 namespace duckdb {
 
-struct IcebergDeletionVectorData;
 struct IcebergMultiFileList;
 struct MultiFileBindData;
 struct MultiFileColumnDefinition;
@@ -84,42 +84,6 @@ class MultiFileList;
 
 }  // namespace duckdb
 namespace sdb::connector {
-
-struct IcebergDeleteState {
-  // Newest delete sequence (watermark) for a scope wider than one file.
-  // `any` gates "file changed"; `mask_block` is the newest positional
-  // delete there -- its rows cannot be attributed to files from metadata,
-  // so it forces a rescan instead of a mask.
-  struct Watermarks {
-    uint64_t any = 0;
-    uint64_t mask_block = 0;
-  };
-  struct EqualityDelete {
-    uint64_t seq = 0;
-    std::string partition_key;  // empty = global
-  };
-  // File-scoped deletes: the newest sequence per data file.
-  irs::containers::FlatHashMap<std::string, uint64_t> per_file;
-  irs::containers::FlatHashMap<std::string, Watermarks> per_partition;
-  std::vector<EqualityDelete> equality;
-  const duckdb::IcebergMultiFileList* list = nullptr;
-  Watermarks global;
-
-  // The delete scopes covering one data file (global reads off the state).
-  struct Covering {
-    uint64_t file = 0;
-    Watermarks partition;
-  };
-  Covering CoveringFor(const std::string& path) const;
-
-  uint64_t SeqFor(const std::string& path) const;
-};
-
-IcebergDeleteState CollectIcebergDeleteState(
-  duckdb::IcebergMultiFileList& files);
-
-void ProcessIcebergDeletes(const duckdb::IcebergMultiFileList& list,
-                           const duckdb::MultiFileBindData& bind);
 
 void FillFileIdentity(duckdb::ClientContext& context,
                       const duckdb::OpenFileInfo& file,
@@ -167,9 +131,7 @@ class IcebergObserve {
   void Fill(const duckdb::OpenFileInfo&, search::FileManifestEntry&) const {}
 
   bool Same(const search::FileManifestEntry&,
-            const search::FileManifestEntry& live) const {
-    return _deletes.SeqFor(live.path) <= _sequence_number;
-  }
+            const search::FileManifestEntry& live) const;
 
   struct DeleteMask {
     uint64_t file_id;
@@ -180,20 +142,15 @@ class IcebergObserve {
   bool TryMask(size_t listing_idx, const search::FileManifestEntry& entry,
                const search::FileManifestEntry& live);
 
-  bool HasNewEquality(const std::string& path) const;
+  bool IsNew(std::optional<int64_t> sequence_number) const noexcept {
+    return !sequence_number ||
+           static_cast<uint64_t>(*sequence_number) > _sequence_number;
+  }
 
-  uint64_t SequenceNumber() const noexcept { return _sequence_number; }
+  duckdb::IcebergMultiFileList& List() const noexcept { return _list; }
 
   const duckdb::vector<duckdb::MultiFileColumnDefinition>& GlobalColumns()
     const;
-
-  void EnsureDeletesProcessed() {
-    ProcessIcebergDeletes(*_deletes.list, *_bind);
-  }
-
-  const IcebergDeleteState& Deletes() const noexcept { return _deletes; }
-
-  bool ExtractMaskRows(size_t listing_idx, DeleteMask& mask);
 
   std::vector<DeleteMask> del_masks;
 
@@ -205,7 +162,7 @@ class IcebergObserve {
   std::vector<EqCovered> eq_covered;
 
  private:
-  IcebergDeleteState _deletes;
+  duckdb::IcebergMultiFileList& _list;
   const duckdb::MultiFileBindData* _bind;
   uint64_t _sequence_number;
 };

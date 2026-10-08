@@ -1,0 +1,74 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wal_wild_list_dict AS
+    generate_wildcard_ngrams(split_text_csv(' '), 3);
+
+statement ok
+CREATE TABLE wal_wild_list_t(pk INTEGER PRIMARY KEY, tags VARCHAR[]);
+
+statement ok
+INSERT INTO wal_wild_list_t VALUES (1, ['alpha_one', 'omega_one']);
+
+statement ok
+CREATE INDEX wal_wild_list_idx ON wal_wild_list_t
+  USING inverted(tags wal_wild_list_dict)
+  INCLUDE (tags);
+
+statement ok
+VACUUM (REFRESH_TABLE) wal_wild_list_t;
+
+query
+SELECT pk FROM wal_wild_list_idx WHERE tags @@ ts_like('%mega_on%') ORDER BY pk;
+----
+pk
+1
+
+statement ok
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+
+statement ok
+INSERT INTO wal_wild_list_t VALUES (2, ['beta_two', 'omega_two']),
+                                   (3, ['gamma_three']);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection wal_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) wal_wild_list_t;
+
+connection wal_after
+query
+SELECT pk FROM wal_wild_list_idx WHERE tags @@ ts_like('%mega_on%') ORDER BY pk;
+----
+pk
+1
+
+connection wal_after
+query
+SELECT pk FROM wal_wild_list_idx WHERE tags @@ ts_like('%mega%') ORDER BY pk;
+----
+pk
+1
+2
+
+connection wal_after
+query
+SELECT pk FROM wal_wild_list_idx WHERE tags @@ ts_like('%amma_th%') ORDER BY pk;
+----
+pk
+3
+
+connection wal_after
+query
+SELECT pk, tags FROM wal_wild_list_idx ORDER BY pk;
+----
+pk	tags
+1	{alpha_one,omega_one}
+2	{beta_two,omega_two}
+3	{gamma_three}

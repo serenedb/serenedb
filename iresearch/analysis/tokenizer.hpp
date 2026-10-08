@@ -182,6 +182,17 @@ class Tokenizer {
     sink.EndValue();
     return ok;
   }
+
+  virtual void FillRow(const duckdb::UnifiedVectorFormat& values,
+                       duckdb::idx_t offset, uint32_t count, doc_id_t doc,
+                       TokenSink& sink, FillCtx ctx) {
+    const auto* data =
+      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(values);
+    ForEachValidRow(values, offset, count, [&](uint32_t, uint32_t idx) {
+      Fill(data[idx], doc, sink, ctx);
+      return true;
+    });
+  }
 };
 
 // The generic per-block preparation step: derive only the facts some
@@ -219,6 +230,16 @@ class TypedTokenizer : public Tokenizer {
 
   constexpr std::tuple<> PrepareBatch(BlockTraits) { return {}; }
 
+  IRS_NO_INLINE void FillRow(const duckdb::UnifiedVectorFormat& values,
+                             duckdb::idx_t offset, uint32_t count, doc_id_t doc,
+                             TokenSink& sink, FillCtx ctx) override {
+    auto* impl = static_cast<Impl*>(this);
+    FillValues(*impl, values, offset, count, doc, sink, ctx,
+               [&]<TokenLayout Layout, auto... Tags>(duckdb::string_t value) {
+                 return impl->template DoFill<Layout, Tags...>(value, sink);
+               });
+  }
+
   IRS_NO_INLINE bool Fill(const duckdb::string_t& value, TokenSink& sink,
                           FillCtx ctx) final {
     auto* impl = static_cast<Impl*>(this);
@@ -254,6 +275,34 @@ class TypedTokenizer : public Tokenizer {
                        return true;
                      });
                  });
+  }
+
+ protected:
+  template<typename AppendValue>
+  static bool FillValues(Impl& self, const duckdb::UnifiedVectorFormat& values,
+                         duckdb::idx_t offset, uint32_t count, doc_id_t doc,
+                         TokenSink& sink, FillCtx ctx, AppendValue&& append) {
+    const auto* data =
+      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(values);
+    bool filled = false;
+    ForEachValidRow(values, offset, count, [&](uint32_t, uint32_t idx) {
+      const auto& value = data[idx];
+      const auto traits =
+        ComputeValueTraits(value, self.Impl::WantedBlockTraits(), ctx.traits);
+      sink.BeginValue(doc, value.GetSize());
+      const bool ok = DispatchFill(
+        self, ctx.layout, traits,
+        [&](auto layout_tag, auto... tags) IRS_FORCE_INLINE {
+          return append.template operator()<layout_tag(), tags()...>(value);
+        });
+      if (!ok) [[unlikely]] {
+        sink.RejectValue();
+      }
+      filled |= ok;
+      sink.EndValue();
+      return true;
+    });
+    return filled;
   }
 };
 

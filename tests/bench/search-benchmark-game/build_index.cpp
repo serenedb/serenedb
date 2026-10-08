@@ -31,7 +31,7 @@
 #include "index_builder.h"
 #include "insert_field.hpp"
 
-int main(int argc, const char* argv[]) {
+static int Main(int argc, const char* argv[]) {
   irs::RemapExecutable();
   // DuckDBEngine owns the process-wide DuckDB the cs codec / writer use.
   // Bring it up before the first iresearch construction and tear it down
@@ -62,8 +62,6 @@ int main(int argc, const char* argv[]) {
     };
 
     SCOPED_TIMER("Total indexing time");
-
-    irs::formats::Init();
 
     struct IndexAllFields : bench::IBatchHandler {
       bench::Document doc;
@@ -103,3 +101,6 @@ int main(int argc, const char* argv[]) {
   irs::DuckDBEngine::Instance().Shutdown();
   return exit_code;
 }
+
+[[maybe_unused]] static const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

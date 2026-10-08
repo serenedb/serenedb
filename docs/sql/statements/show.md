@@ -9,7 +9,7 @@ The `SHOW` statement inspects the database — it lists tables, databases and sc
 
 ## `SHOW`
 
-`SHOW` is an alias for [`DESCRIBE`](describe.md): given a table, view or query it returns that relation's columns and their types.
+`SHOW TABLE <name>` returns the columns of a table and their types, the same as [`DESCRIBE TABLE <name>`](describe.md). Without the `TABLE` keyword, a name after `SHOW` is read as a setting, even if a table of that name exists: a server sets [`show_behavior`](../../configuration/overview.md) to `SETTING`, so `SHOW <name>` shows the setting `<name>` (see [Session variables](#session-variables)).
 
 ## `SHOW TABLES`
 
@@ -45,5 +45,5 @@ Each row pairs a database with one of its schemas; the `current` column marks th
 
 ## See also
 
-- [DESCRIBE](describe.md) — `SHOW` is an alias for it
+- [DESCRIBE](describe.md) — the columns of a table or query; `SHOW TABLE <name>` is the same as `DESCRIBE TABLE <name>`
 - [SET](set/index.md) — change a session variable

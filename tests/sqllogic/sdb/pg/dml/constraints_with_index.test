@@ -35,7 +35,7 @@ db error: ERROR: NOT NULL constraint failed: cwi_con.body
 statement error
 INSERT INTO cwi_con VALUES (3, 'bad check', -1);
 ----
-db error: ERROR: CHECK constraint failed on table cwi_con with expression CHECK((n > 0))
+db error: ERROR: CHECK constraint failed on table "cwi_con" with expression CHECK((n > 0))
 
 
 statement ok

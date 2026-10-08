@@ -27,8 +27,9 @@
 #include <span>
 
 #include "iresearch/formats/column/norm_reader.hpp"
-#include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
+#include "iresearch/formats/term_reader.hpp"
+#include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/types.hpp"

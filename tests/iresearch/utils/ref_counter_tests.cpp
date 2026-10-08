@@ -155,8 +155,9 @@ TEST_F(RefCounterTests, test_ref_counter_visit) {
   // test full visitation
   {
     std::unordered_map<int, size_t> expected = {{1, 2}, {2, 3}};
-    auto visitor = [&expected](const int& key, size_t count) -> bool {
-      auto itr = expected.find(key);
+    auto visitor = [&expected](const irs::RefCounter<int>::ref_t& ref,
+                               size_t count) -> bool {
+      auto itr = expected.find(*ref);
       EXPECT_EQ(itr->second, count);
       expected.erase(itr);
       return true;
@@ -169,8 +170,9 @@ TEST_F(RefCounterTests, test_ref_counter_visit) {
   // test early terminate
   {
     std::unordered_map<int, size_t> expected = {{1, 2}, {2, 3}};
-    auto visitor = [&expected](const int& key, size_t count) -> bool {
-      auto itr = expected.find(key);
+    auto visitor = [&expected](const irs::RefCounter<int>::ref_t& ref,
+                               size_t count) -> bool {
+      auto itr = expected.find(*ref);
       EXPECT_EQ(itr->second, count);
       expected.erase(itr);
       return false;
@@ -183,8 +185,9 @@ TEST_F(RefCounterTests, test_ref_counter_visit) {
   // test remove unused
   {
     std::unordered_map<int, size_t> expected = {{1, 0}, {2, 2}};
-    auto visitor = [&expected](const int& key, size_t count) -> bool {
-      auto itr = expected.find(key);
+    auto visitor = [&expected](const irs::RefCounter<int>::ref_t& ref,
+                               size_t count) -> bool {
+      auto itr = expected.find(*ref);
       EXPECT_EQ(itr->second, count);
       expected.erase(itr);
       return true;
@@ -200,9 +203,8 @@ TEST_F(RefCounterTests, test_ref_counter_visit) {
 
   // test empty
   {
-    auto visitor = [](const int& /*key*/, size_t /*count*/) -> bool {
-      return true;
-    };
+    auto visitor = [](const irs::RefCounter<int>::ref_t& /*ref*/,
+                      size_t /*count*/) -> bool { return true; };
 
     ASSERT_FALSE(refs.empty());
     ASSERT_TRUE(refs.visit(visitor, true));

@@ -20,92 +20,38 @@
 
 #include "catalog/entry/tokenizer.h"
 
-#include <absl/strings/str_cat.h>
-#include <absl/strings/str_join.h>
-
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <duckdb/common/serializer/binary_deserializer.hpp>
-#include <duckdb/common/serializer/binary_serializer.hpp>
-#include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <iresearch/utils/serializer.hpp>
 #include <string_view>
-#include <tuple>
 #include <utility>
+
+#include "catalog/persistence/blob.h"
 
 namespace sdb::catalog {
 
-std::string PackTokenizerConfig(std::string_view definition,
-                                const irs::analysis::TokenizerConfig& config) {
-  duckdb::MemoryStream stream;
-  duckdb::BinarySerializer serializer{stream};
-  irs::utils::WriteTuple(serializer, std::forward_as_tuple(definition, config));
-  return std::string{reinterpret_cast<const char*>(stream.GetData()),
-                     stream.GetPosition()};
+std::string PackTokenizerConfig(const irs::analysis::TokenizerConfig& config) {
+  return persistence::Pack(config);
 }
 
-namespace {
-
-struct PackedTokenizer {
-  std::string definition;
-  irs::analysis::TokenizerConfig config;
-};
-
-PackedTokenizer UnpackTokenizerConfig(std::string_view bytes) {
-  duckdb::MemoryStream stream{
-    const_cast<duckdb::data_ptr_t>(
-      reinterpret_cast<duckdb::const_data_ptr_t>(bytes.data())),
-    bytes.size()};
-  duckdb::BinaryDeserializer deserializer{stream};
-  PackedTokenizer packed;
-  irs::utils::ReadTuple(deserializer, packed);
-  return packed;
+irs::analysis::TokenizerConfig UnpackTokenizerConfig(std::string_view name,
+                                                     std::string_view bytes) {
+  return persistence::Unpack<irs::analysis::TokenizerConfig>(
+    "text search dictionary", name, bytes);
 }
-
-class TokenizerInfo final : public duckdb::CreateTokenizerInfo {
- public:
-  std::string definition;
-
-  duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final {
-    auto result = duckdb::make_uniq<TokenizerInfo>();
-    CopyProperties(*result);
-    result->features = features;
-    result->config = config;
-    result->definition = definition;
-    return std::move(result);
-  }
-
-  std::string ToString() const final {
-    auto sql =
-      absl::StrCat("CREATE TEXT SEARCH DICTIONARY ",
-                   on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT
-                     ? "IF NOT EXISTS "
-                     : "",
-                   QualifiedNameToString(), " AS ", definition);
-    const auto flags =
-      search::Features{static_cast<irs::IndexFeatures>(features)}.Names();
-    if (!flags.empty()) {
-      absl::StrAppend(&sql, " WITH (", absl::StrJoin(flags, ", "), ")");
-    }
-    absl::StrAppend(&sql, ";");
-    return sql;
-  }
-};
-
-}  // namespace
 
 TokenizerCatalogEntry::TokenizerCatalogEntry(duckdb::Catalog& catalog,
                                              duckdb::SchemaCatalogEntry& schema,
                                              duckdb::CreateTokenizerInfo& info)
   : duckdb::StandardEntry{duckdb::CatalogType::TOKENIZER_ENTRY, schema, catalog,
-                          info.GetQualifiedName().Name(), info.oid} {
-  auto [definition, config] = UnpackTokenizerConfig(info.config);
-  _tokenizer = std::make_shared<Tokenizer>(
-    search::Features{static_cast<irs::IndexFeatures>(info.features)},
-    std::move(config));
-  _definition = std::move(definition);
+                          info.GetQualifiedName().Name(), info.oid},
+    _tokenizer{std::make_shared<Tokenizer>(
+      search::Features{static_cast<irs::IndexFeatures>(info.features)},
+      UnpackTokenizerConfig(info.GetQualifiedName().Name().GetIdentifierName(),
+                            info.config))},
+    _definition{info.definition} {
   comment = info.comment;
   tags = info.tags;
   dependencies = info.dependencies;
@@ -139,12 +85,27 @@ void Tokenizer::Release(irs::analysis::Tokenizer::ptr analyzer) const noexcept {
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> TokenizerCatalogEntry::GetInfo() const {
-  auto info = duckdb::make_uniq<TokenizerInfo>();
+  auto info = duckdb::make_uniq<duckdb::CreateTokenizerInfo>();
   info->SetName(name);
   info->SetQualification(catalog.GetName(), ParentSchemaName());
   info->features = std::to_underlying(GetFeatures().GetIndexFeatures());
-  info->config = PackTokenizerConfig(_definition, Config());
+  info->config = PackTokenizerConfig(Config());
   info->definition = _definition;
+  SDB_IF_FAILURE("tokenizer_config_without_last_option") {
+    auto older = irs::analysis::Clone(Config());
+    std::visit(
+      [](auto& options) {
+        auto fields = irs::utils::FieldsOf(options);
+        if constexpr (constexpr auto kCount =
+                        std::tuple_size_v<decltype(fields)>;
+                      kCount != 0) {
+          auto& last = std::get<kCount - 1>(fields);
+          last = std::remove_cvref_t<decltype(last)>{};
+        }
+      },
+      older.config);
+    info->config = PackTokenizerConfig(older);
+  }
   info->comment = comment;
   info->tags = tags;
   info->dependencies = dependencies;

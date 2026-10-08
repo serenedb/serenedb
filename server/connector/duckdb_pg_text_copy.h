@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include <duckdb/common/case_insensitive_map.hpp>
+#include <duckdb/common/identifier.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/unique_ptr.hpp>
 #include <duckdb/common/vector.hpp>
@@ -47,14 +47,14 @@ struct TextCopyOptions {
 };
 
 TextCopyOptions ResolveTextCopyOptions(
-  const duckdb::case_insensitive_map_t<duckdb::vector<duckdb::Value>>& options);
+  const duckdb::identifier_map_t<duckdb::vector<duckdb::Value>>& options);
 
 void ResolveTextCopyOptions(
-  const duckdb::case_insensitive_map_t<duckdb::vector<duckdb::Value>>& options,
+  const duckdb::identifier_map_t<duckdb::vector<duckdb::Value>>& options,
   TextCopyOptions& out);
 
 TextCopyOptions ResolveTextCopyOptions(
-  const duckdb::case_insensitive_map_t<
-    duckdb::unique_ptr<duckdb::ParsedExpression>>& parsed_options);
+  const duckdb::identifier_map_t<duckdb::unique_ptr<duckdb::ParsedExpression>>&
+    parsed_options);
 
 }  // namespace sdb::connector

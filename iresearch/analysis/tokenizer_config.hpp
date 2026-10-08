@@ -79,16 +79,6 @@ struct TokenizerConfig {
     config;
 };
 
-template<typename Context>
-void SerdeWrite(Context ctx, const TokenizerConfig& cfg) {
-  irs::utils::WriteTupleOrObject(ctx, cfg.config);
-}
-
-template<typename Context>
-void SerdeRead(Context ctx, TokenizerConfig& cfg) {
-  irs::utils::ReadTupleOrObject(ctx, cfg.config);
-}
-
 TokenizerConfig Clone(const TokenizerConfig& cfg);
 
 namespace detail {
@@ -128,9 +118,7 @@ inline TokenizerConfig Clone(const TokenizerConfig& cfg) {
         copy.output_unigrams = opts.output_unigrams;
         copy.fallback_unigrams = opts.fallback_unigrams;
         copy.token_separator = opts.token_separator;
-        copy.filler_token = opts.filler_token;
         copy.frequent_words = opts.frequent_words;
-        copy.store_tokens = opts.store_tokens;
         copy.base_analyzer = detail::CloneChild(opts.base_analyzer);
         out.config = std::move(copy);
       } else {

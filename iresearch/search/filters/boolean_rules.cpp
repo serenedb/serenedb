@@ -22,9 +22,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/container/inlined_vector.h>
-#include <absl/strings/str_cat.h>
-#include <absl/strings/str_join.h>
-#include <re2/re2.h>
 
 #include <algorithm>
 #include <array>
@@ -37,6 +34,9 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/search/detail/pattern_cache.hpp"
+#include "iresearch/search/detail/term_acceptor.hpp"
+#include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/search/filters/automaton_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/common.hpp"
@@ -50,7 +50,7 @@
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/filters/wildcard_filter.hpp"
 #include "iresearch/search/scorers/constant_score.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
+#include "iresearch/utils/conjunction_acceptor.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/system_compiler.hpp"
@@ -712,9 +712,7 @@ struct OrAcceptorFusionRule {
   };
 
   static std::optional<AcceptorInfo> InfoOf(const Filter& child);
-  static void RenderQuoted(std::string& out, bytes_view bytes);
-  static bool RenderWildcard(std::string& out, bytes_view pattern);
-  static bool Render(std::string& out, const Filter& child);
+  static bool AppendParts(bstring& key, const Filter& child);
 };
 
 struct AndAcceptorFusionRule {
@@ -723,14 +721,20 @@ struct AndAcceptorFusionRule {
  private:
   struct Operand {
     field_id field;
-    automaton acceptor;
     bstring pattern;
+    TermBounds bounds;
+    TermAcceptorSource::ptr exact;
+    std::shared_ptr<const LevenshteinAcceptor> fuzzy;
   };
 
+  static Operand OperandOf(const TermClause& term);
   static std::optional<Operand> OperandOf(const Filter& child);
 };
 
 inline constexpr size_t kTermRank = 0;
+inline constexpr size_t kLiteralsRank = 1;
+inline constexpr size_t kPatternRank = 2;
+inline constexpr size_t kRangeRank = 3;
 
 bool IsAlternation(const BooleanFilter& node) noexcept {
   return node.MinShouldMatch() == 1 && node.Size(Occur::Must) == 0 &&
@@ -739,6 +743,22 @@ bool IsAlternation(const BooleanFilter& node) noexcept {
 
 bool IsAllRequired(const BooleanFilter& node) noexcept {
   return node.MinShouldMatch() == 0 && node.Size(Occur::Should) == 0;
+}
+
+size_t DriverRank(const Filter& filter) noexcept {
+  const auto type = filter.type();
+  if (type == Type<ByTerm>::id()) {
+    return kTermRank;
+  }
+  if (type == Type<AutomatonFilter>::id()) {
+    const auto& source =
+      irs::utils::downCast<AutomatonFilter>(filter).options().source;
+    return source && source->Automaton() ? kPatternRank : kLiteralsRank;
+  }
+  if (type == Type<ByPrefix>::id() || type == Type<ByRange>::id()) {
+    return kRangeRank;
+  }
+  return kRangeRank + 1;
 }
 
 }  // namespace
@@ -767,78 +787,51 @@ std::optional<OrAcceptorFusionRule::AcceptorInfo> OrAcceptorFusionRule::InfoOf(
   return std::nullopt;
 }
 
-void OrAcceptorFusionRule::RenderQuoted(std::string& out, bytes_view bytes) {
-  const auto chars = ViewCast<char>(bytes);
-  absl::StrAppend(&out, RE2::QuoteMeta({chars.data(), chars.size()}));
-}
-
-bool OrAcceptorFusionRule::RenderWildcard(std::string& out,
-                                          bytes_view pattern) {
-  bstring chunk;
-  const auto flush = [&] {
-    RenderQuoted(out, chunk);
-    chunk.clear();
+bool OrAcceptorFusionRule::AppendParts(bstring& key, const Filter& child) {
+  using Kind = RegexpAcceptor::PartKind;
+  const auto part = [&key](Kind kind) {
+    return [&key, kind](bytes_view pattern) {
+      AppendUnionPart(key, kind, pattern);
+      return true;
+    };
   };
-  for (size_t i = 0; i < pattern.size(); ++i) {
-    switch (pattern[i]) {
-      case '%':
-        flush();
-        absl::StrAppend(&out, "(?s:.)*");
-        break;
-      case '_':
-        flush();
-        absl::StrAppend(&out, "(?s:.)");
-        break;
-      case '\\':
-        if (++i == pattern.size()) {
-          return false;
-        }
-        chunk += pattern[i];
-        break;
-      default:
-        chunk += pattern[i];
-        break;
-    }
-  }
-  flush();
-  return true;
-}
-
-bool OrAcceptorFusionRule::Render(std::string& out, const Filter& child) {
   const auto type = child.type();
   if (type == Type<ByTerm>::id()) {
-    RenderQuoted(out, irs::utils::downCast<ByTerm>(child).options().term);
-    return true;
+    return part(Kind::Term)(irs::utils::downCast<ByTerm>(child).options().term);
   }
   if (type == Type<ByPrefix>::id()) {
-    RenderQuoted(out, irs::utils::downCast<ByPrefix>(child).options().term);
-    absl::StrAppend(&out, "(?s:.)*");
-    return true;
+    return part(Kind::Prefix)(
+      irs::utils::downCast<ByPrefix>(child).options().term);
   }
+  bstring buf;
   if (type == Type<ByWildcard>::id()) {
-    return RenderWildcard(
-      out, irs::utils::downCast<ByWildcard>(child).options().term);
+    return ExecuteWildcard(
+      buf, irs::utils::downCast<ByWildcard>(child).options().term,
+      part(Kind::Term), part(Kind::Prefix), part(Kind::Wildcard));
   }
   if (type == Type<AutomatonFilter>::id()) {
     const auto& options =
       irs::utils::downCast<AutomatonFilter>(child).options();
-    if (options.pattern.empty()) {
-      return false;
+    switch (options.kind) {
+      case PatternKind::RegexpPerl:
+        return part(Kind::Perl)(options.pattern);
+      case PatternKind::RegexpPosixEre:
+        return part(Kind::PosixEre)(options.pattern);
+      case PatternKind::Wildcard:
+        return part(Kind::Wildcard)(options.pattern);
+      case PatternKind::Union:
+        key += options.pattern;
+        return true;
+      case PatternKind::Fused:
+        return false;
     }
-    const auto chars = ViewCast<char>(bytes_view{options.pattern});
-    absl::StrAppend(&out, "(?:");
-    out.append(chars.data(), chars.size());
-    absl::StrAppend(&out, ")");
-    return true;
+    return false;
   }
   SDB_ASSERT(type == Type<ByRegexp>::id());
   const auto& options = irs::utils::downCast<ByRegexp>(child).options();
-  if (options.syntax != RegexpSyntax::Perl) {
-    return false;
-  }
-  const auto chars = ViewCast<char>(bytes_view{options.pattern});
-  out.append(chars.data(), chars.size());
-  return true;
+  return ExecuteRegexp(
+    buf, options.pattern, part(Kind::Term), part(Kind::Prefix),
+    part(options.syntax == RegexpSyntax::Perl ? Kind::Perl : Kind::PosixEre));
 }
 
 bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
@@ -894,33 +887,32 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
     return false;
   }
 
-  std::vector<std::string> fragments;
-  fragments.reserve(count);
+  bstring key;
   for (const auto& term : terms) {
-    auto& fragment = fragments.emplace_back("(?:");
-    RenderQuoted(fragment, term.term);
-    absl::StrAppend(&fragment, ")");
+    AppendUnionPart(key, RegexpAcceptor::PartKind::Term, term.term);
   }
   for (const auto& child : filters) {
-    auto& fragment = fragments.emplace_back("(?:");
-    if (!Render(fragment, *child)) {
+    if (!AppendParts(key, *child)) {
       return false;
     }
-    absl::StrAppend(&fragment, ")");
   }
-  const auto rendered = absl::StrJoin(fragments, "|");
-  const auto pattern = ViewCast<byte_type>(std::string_view{rendered});
-  auto dfa = FromRegexp(pattern, kDefaultMaxDfaStates, RegexpSyntax::Perl);
-  if (dfa.NumStates() == 0 || !Validate(dfa)) {
+  AutomatonOptions options{key, PatternKind::Union};
+  if (!options.source->ok()) {
     return false;
   }
   auto fused = std::make_unique<AutomatonFilter>();
   *fused->mutable_field_id() = field;
-  *fused->mutable_options() = AutomatonOptions{std::move(dfa), pattern};
+  *fused->mutable_options() = std::move(options);
   fused->SetBoost(scores ? node.GetBoost() * boost : node.GetBoost());
   fused->SetScorer(scorer);
   slot = std::move(fused);
   return true;
+}
+
+AndAcceptorFusionRule::Operand AndAcceptorFusionRule::OperandOf(
+  const TermClause& term) {
+  return Operand{term.field, term.term,
+                 TermBounds{term.term, AfterKey(term.term)}, nullptr};
 }
 
 std::optional<AndAcceptorFusionRule::Operand> AndAcceptorFusionRule::OperandOf(
@@ -928,22 +920,21 @@ std::optional<AndAcceptorFusionRule::Operand> AndAcceptorFusionRule::OperandOf(
   const auto type = child.type();
   if (type == Type<ByTerm>::id()) {
     const auto& filter = irs::utils::downCast<ByTerm>(child);
-    return Operand{filter.field_id(), MakeTermAcceptor(filter.options().term),
-                   filter.options().term};
+    const auto& term = filter.options().term;
+    return Operand{filter.field_id(), term, TermBounds{term, AfterKey(term)},
+                   nullptr};
   }
   if (type == Type<ByPrefix>::id()) {
     const auto& filter = irs::utils::downCast<ByPrefix>(child);
-    auto pattern = filter.options().term;
+    const auto& prefix = filter.options().term;
+    auto pattern = prefix;
     pattern += static_cast<byte_type>('%');
-    return Operand{filter.field_id(), MakePrefixAcceptor(filter.options().term),
-                   std::move(pattern)};
+    return Operand{filter.field_id(), std::move(pattern),
+                   TermBounds{prefix, UpperBoundOf(prefix)}, nullptr};
   }
   if (type == Type<ByRange>::id()) {
     const auto& filter = irs::utils::downCast<ByRange>(child);
     const auto& range = filter.options().range;
-    const auto bound = [](const bstring& value, BoundType type) {
-      return type == BoundType::Unbounded ? bytes_view{} : bytes_view{value};
-    };
     bstring pattern;
     pattern += static_cast<byte_type>(
       range.min_type == BoundType::Exclusive ? '(' : '[');
@@ -953,33 +944,41 @@ std::optional<AndAcceptorFusionRule::Operand> AndAcceptorFusionRule::OperandOf(
     pattern += range.max;
     pattern += static_cast<byte_type>(
       range.max_type == BoundType::Exclusive ? ')' : ']');
-    return Operand{filter.field_id(),
-                   MakeRangeAcceptor(bound(range.min, range.min_type),
-                                     bound(range.max, range.max_type),
-                                     range.min_type == BoundType::Inclusive,
-                                     range.max_type == BoundType::Inclusive),
-                   std::move(pattern)};
+    TermBounds bounds;
+    if (range.min_type != BoundType::Unbounded) {
+      bounds.lower = range.min;
+    }
+    if (range.max_type != BoundType::Unbounded) {
+      bounds.upper = range.max;
+      if (range.max_type == BoundType::Inclusive) {
+        bounds.upper += byte_type{0};
+      }
+    }
+    return Operand{filter.field_id(), std::move(pattern), std::move(bounds),
+                   nullptr};
   }
   if (type == Type<AutomatonFilter>::id()) {
     const auto& filter = irs::utils::downCast<AutomatonFilter>(child);
     const auto& options = filter.options();
-    if (!options.compiled) {
+    if (!options.source) {
       return std::nullopt;
     }
-    return Operand{filter.field_id(), options.compiled->acceptor,
-                   options.pattern};
+    return Operand{filter.field_id(), options.pattern, TermBounds{},
+                   options.source};
   }
   if (type == Type<LevenshteinAutomatonFilter>::id()) {
     const auto& filter =
       irs::utils::downCast<LevenshteinAutomatonFilter>(child);
     const auto& options = filter.options();
-    if (!options.compiled) {
+    if (!options.parametric) {
       return std::nullopt;
     }
     auto pattern = options.target;
     pattern += static_cast<byte_type>('~');
-    return Operand{filter.field_id(), options.compiled->acceptor,
-                   std::move(pattern)};
+    const auto prefix = options.parametric->LowerBound();
+    return Operand{filter.field_id(), std::move(pattern),
+                   TermBounds{bstring{prefix}, UpperBoundOf(prefix)}, nullptr,
+                   options.parametric};
   }
   return std::nullopt;
 }
@@ -1000,25 +999,24 @@ bool AndAcceptorFusionRule::Apply(Filter::ptr& slot,
 
   const auto term_count = must.terms.size();
   const auto is_term = [&](size_t index) { return index < term_count; };
-  const auto rank = [&](size_t index) {
-    return is_term(index) ? kTermRank
-                          : AcceptorRank(*must.filters[index - term_count]);
-  };
   const auto operand_of = [&](size_t index) -> std::optional<Operand> {
     if (!is_term(index)) {
       return OperandOf(*must.filters[index - term_count]);
     }
-    const auto& term = must.terms[index];
-    return Operand{term.field, MakeTermAcceptor(term.term), term.term};
+    return OperandOf(must.terms[index]);
   };
 
+  absl::InlinedVector<size_t, 8> ranks;
   absl::InlinedVector<size_t, 8> order;
+  ranks.reserve(must.size());
   order.reserve(must.size());
   for (size_t i = 0; i < must.size(); ++i) {
+    ranks.emplace_back(is_term(i) ? kTermRank
+                                  : DriverRank(*must.filters[i - term_count]));
     order.emplace_back(i);
   }
   absl::c_stable_sort(
-    order, [&](size_t lhs, size_t rhs) { return rank(lhs) < rank(rhs); });
+    order, [&](size_t lhs, size_t rhs) { return ranks[lhs] < ranks[rhs]; });
   if (!is_term(order.front()) &&
       must.filters[order.front() - term_count]->type() ==
         Type<LevenshteinAutomatonFilter>::id()) {
@@ -1029,36 +1027,87 @@ bool AndAcceptorFusionRule::Apply(Filter::ptr& slot,
     return false;
   }
 
-  auto fused = std::move(driver->acceptor);
+  const auto driver_rank = ranks[order.front()];
+  const bool walks = driver_rank >= kPatternRank;
   auto pattern = std::move(driver->pattern);
-  absl::InlinedVector<size_t, 8> consumed;
+  auto bounds = std::move(driver->bounds);
+  auto exact = std::move(driver->exact);
+  absl::InlinedVector<std::shared_ptr<const RegexpAcceptor>,
+                      RegexpConjunction::kMaxPatterns>
+    patterns;
+  if (driver_rank == kPatternRank) {
+    patterns.emplace_back(exact->Automaton());
+  }
+  std::shared_ptr<const LevenshteinAcceptor> fuzzy;
+  absl::InlinedVector<size_t, 8> checked;
+  absl::InlinedVector<size_t, 8> joined;
   for (const auto index : std::span{order}.subspan(1)) {
     auto operand = operand_of(index);
     if (!operand || operand->field != driver->field) {
       continue;
     }
-    auto product =
-      IntersectAcceptors(fused, operand->acceptor, kDefaultMaxDfaStates);
-    if (!product || !Validate(*product)) {
-      continue;
-    }
-    fused = std::move(*product);
     pattern += static_cast<byte_type>('&');
     pattern += operand->pattern;
-    consumed.emplace_back(index);
+    if (bounds.lower < operand->bounds.lower) {
+      bounds.lower = std::move(operand->bounds.lower);
+    }
+    if (!operand->bounds.upper.empty() &&
+        (bounds.upper.empty() || operand->bounds.upper < bounds.upper)) {
+      bounds.upper = std::move(operand->bounds.upper);
+    }
+    if (walks) {
+      if (auto automaton =
+            operand->exact ? operand->exact->Automaton() : nullptr;
+          automaton && patterns.size() != RegexpConjunction::kMaxPatterns) {
+        patterns.emplace_back(std::move(automaton));
+        joined.emplace_back(index);
+        continue;
+      }
+      if (operand->fuzzy && !fuzzy) {
+        fuzzy = std::move(operand->fuzzy);
+        joined.emplace_back(index);
+        continue;
+      }
+    }
+    checked.emplace_back(index);
   }
-  if (consumed.empty()) {
+  if (checked.empty() && joined.empty()) {
     return false;
+  }
+
+  if (exact) {
+    joined.emplace_back(order.front());
+  } else {
+    checked.emplace_back(order.front());
+  }
+  if (patterns.size() > 1 || fuzzy) {
+    exact = MakeJointSource(patterns, std::move(fuzzy));
+  }
+  Filter::ptr residual;
+  if (!checked.empty()) {
+    auto conjunction = std::make_unique<BooleanFilter>();
+    for (const auto index : checked) {
+      if (is_term(index)) {
+        conjunction->Add(std::move(must.terms[index]), Occur::Must);
+      } else {
+        conjunction->Add(std::move(must.filters[index - term_count]),
+                         Occur::Must);
+      }
+    }
+    residual = std::move(conjunction);
   }
 
   auto fused_filter = std::make_unique<AutomatonFilter>();
   *fused_filter->mutable_field_id() = driver->field;
-  *fused_filter->mutable_options() =
-    AutomatonOptions{std::move(fused), pattern};
+  *fused_filter->mutable_options() = AutomatonOptions{
+    pattern, MakeConjunctionSource(std::move(exact), std::move(bounds),
+                                   std::move(residual))};
 
-  consumed.emplace_back(order.front());
   std::vector<bool> dead(must.size(), false);
-  for (const auto index : consumed) {
+  for (const auto index : checked) {
+    dead[index] = true;
+  }
+  for (const auto index : joined) {
     dead[index] = true;
   }
   auto terms_out = must.terms.begin();

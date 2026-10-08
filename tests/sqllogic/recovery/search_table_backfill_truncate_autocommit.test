@@ -1,0 +1,83 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE bfa (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 50, compaction_interval = 0);
+
+statement ok
+INSERT INTO bfa VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) bfa;
+
+statement ok
+SET sdb_faults = 'pause_search_backfill_before_swap';
+
+connection builder
+statement async ok
+CREATE INDEX bfa_idx ON bfa USING inverted (tag);
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT tuples_done FROM pg_stat_progress_create_index
+WHERE relid = 'bfa'::regclass;
+----
+tuples_done
+3
+
+connection truncater
+statement ok
+TRUNCATE bfa;
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) AS n FROM bfa;
+----
+n
+0
+
+connection default
+statement ok
+SET sdb_faults = '-pause_search_backfill_before_swap';
+
+wait
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) bfa;
+
+connection default
+query
+SELECT count(*) AS n FROM bfa;
+----
+n
+0
+
+connection default
+query
+SELECT count(*) AS n FROM bfa_idx WHERE tag @@ 'a';
+----
+n
+0
+
+connection default
+statement ok
+INSERT INTO bfa VALUES (4, 'd');
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) bfa;
+
+connection default
+query
+SELECT id FROM bfa_idx WHERE tag @@ 'd';
+----
+id
+4
+
+connection default
+statement ok
+DROP TABLE bfa;

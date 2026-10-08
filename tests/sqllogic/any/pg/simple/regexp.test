@@ -225,3 +225,100 @@ SELECT regexp_count('абвгд', '', 3);
 ----
 regexp_count
 4
+
+
+# regexp_match over a column, with a constant pattern and a pattern per row
+statement ok
+CREATE TABLE regexp_match_rows (id INT PRIMARY KEY, txt VARCHAR, pat VARCHAR)
+
+
+statement count 6
+INSERT INTO regexp_match_rows VALUES
+  (1, 'row 1 code 17', 'code (\d+)'),
+  (2, 'row 2 code 29', '(\d+) code'),
+  (3, 'no digits', 'code (\d+)'),
+  (4, NULL, 'code (\d+)'),
+  (5, 'row 5 code 42', NULL),
+  (6, 'код 7 code 8', '(код) (\d)')
+
+
+query
+SELECT id, regexp_match(txt, 'code (\d+)') FROM regexp_match_rows ORDER BY id
+----
+id	regexp_match
+1	{17}
+2	{29}
+3	NULL
+4	NULL
+5	{42}
+6	{8}
+
+
+query
+SELECT id, regexp_match(txt, pat) FROM regexp_match_rows ORDER BY id
+----
+id	regexp_match
+1	{17}
+2	{2}
+3	NULL
+4	NULL
+5	NULL
+6	{код,7}
+
+
+query
+SELECT id, regexp_match(txt, NULL) FROM regexp_match_rows ORDER BY id
+----
+id	regexp_match
+1	NULL
+2	NULL
+3	NULL
+4	NULL
+5	NULL
+6	NULL
+
+
+query
+SELECT count(*) FROM generate_series(1, 5000) AS g(i)
+WHERE (regexp_match('item ' || i::text, 'item (\d+)'))[1] = i::text
+----
+count
+5000
+
+
+# an invalid constant pattern fails on the first row it is applied to
+statement ok
+CREATE TABLE regexp_match_empty (txt VARCHAR)
+
+
+query
+SELECT count(regexp_match(txt, '(')) FROM regexp_match_empty
+----
+count
+0
+
+
+statement error
+SELECT regexp_match(txt, '(') FROM regexp_match_rows
+----
+db error: ERROR: invalid regular expression: <slt:ignore>
+
+
+query
+SELECT CASE WHEN false THEN regexp_instr('abc', (1 / 0)::text) ELSE 0 END AS r;
+----
+r
+0
+
+
+query
+SELECT CASE WHEN false THEN regexp_match('abc', (1 / 0)::text) END AS r;
+----
+r
+NULL
+
+
+statement error
+SELECT regexp_instr('abc', (1 / 0)::text);
+----
+db error: ERROR: <slt:ignore>

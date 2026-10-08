@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/synchronization/mutex.h>
+#include <absl/time/time.h>
 
 #include <atomic>
 #include <cstdint>
@@ -45,6 +46,7 @@ enum class ProgressCommand : int64_t {
   CreateTableAs,
   Analyze,
   Vacuum,
+  Reindex,
 };
 
 enum class ProgressIoType : int64_t {
@@ -78,6 +80,11 @@ enum class Analyze : int64_t {
 enum class Vacuum : int64_t {
   Initializing = 0,
   VacuumingIndexes = 2,
+};
+
+enum class Reindex : int64_t {
+  WaitingForReindex = 1,
+  Refreshing = 2,
 };
 
 }  // namespace progress_phase
@@ -189,6 +196,8 @@ class ProgressRegistry {
   void Unregister(const ProgressSource* source);
 
   std::vector<ProgressSnapshot> GetSnapshots() const;
+
+  size_t OtherSessions(int64_t datid, int32_t pid, absl::Duration wait) const;
 
  private:
   mutable absl::Mutex _mu;

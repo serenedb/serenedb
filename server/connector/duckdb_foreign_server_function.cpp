@@ -42,9 +42,10 @@ void CreateForeignServerPragma(duckdb::ClientContext& context,
   const auto fdw_name = args[1].GetValue<std::string>();
   const auto if_not_exists = args[2].GetValue<bool>();
 
+  const duckdb::named_parameter_map_t options(params.named_parameters.begin(),
+                                              params.named_parameters.end());
   auto& conn_ctx = GetSereneDBContext(context);
-  pg::CreateForeignServer(conn_ctx, name, fdw_name, if_not_exists,
-                          params.named_parameters);
+  pg::CreateForeignServer(conn_ctx, name, fdw_name, if_not_exists, options);
 }
 
 // PRAGMA drop_foreign_server('name', missing_ok, cascade)
@@ -71,7 +72,7 @@ void RegisterForeignServerPragma(duckdb::DatabaseInstance& db) {
     "create_foreign_server", CreateForeignServerPragma,
     {kVarchar, kVarchar, kBoolean});
   // CREATE takes the connection options as arbitrary named parameters.
-  create.accept_arbitrary_named_parameters = true;
+  create.GetSignature().AddKwargs("options", duckdb::LogicalType::ANY);
   loader.RegisterFunction(create);
 
   auto drop = duckdb::PragmaFunction::PragmaCall(

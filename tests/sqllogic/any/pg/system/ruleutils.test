@@ -1,0 +1,173 @@
+statement ok
+CREATE SCHEMA ru;
+
+
+statement ok
+CREATE TABLE ru.parent (id integer PRIMARY KEY, code text UNIQUE);
+
+
+statement ok
+CREATE TABLE ru.child (
+  a integer NOT NULL,
+  b integer,
+  c text,
+  CONSTRAINT child_pk PRIMARY KEY (a, b),
+  CONSTRAINT child_uq UNIQUE (c),
+  CONSTRAINT child_fk FOREIGN KEY (b) REFERENCES ru.parent (id)
+);
+
+
+statement ok
+CREATE TABLE ru."Weird Tab" (id integer PRIMARY KEY, "Odd Col" integer UNIQUE);
+
+
+statement ok
+CREATE TABLE ru.weird_ref (x integer REFERENCES ru."Weird Tab" (id));
+
+
+statement ok
+CREATE INDEX odd_idx ON ru."Weird Tab" ("Odd Col", id);
+
+
+query
+SELECT conname, pg_get_constraintdef(oid) AS def, pg_get_constraintdef(oid, true) AS pretty
+FROM pg_constraint WHERE connamespace = 'ru'::regnamespace ORDER BY conname;
+----
+conname	def	pretty
+Weird Tab_Odd Col_key	UNIQUE ("Odd Col")	UNIQUE ("Odd Col")
+Weird Tab_id_not_null	NOT NULL id	NOT NULL id
+Weird Tab_pkey	PRIMARY KEY (id)	PRIMARY KEY (id)
+child_a_not_null	NOT NULL a	NOT NULL a
+child_b_not_null	NOT NULL b	NOT NULL b
+child_fk	FOREIGN KEY (b) REFERENCES ru.parent(id)	FOREIGN KEY (b) REFERENCES ru.parent(id)
+child_pk	PRIMARY KEY (a, b)	PRIMARY KEY (a, b)
+child_uq	UNIQUE (c)	UNIQUE (c)
+parent_code_key	UNIQUE (code)	UNIQUE (code)
+parent_id_not_null	NOT NULL id	NOT NULL id
+parent_pkey	PRIMARY KEY (id)	PRIMARY KEY (id)
+weird_ref_x_fkey	FOREIGN KEY (x) REFERENCES ru."Weird Tab"(id)	FOREIGN KEY (x) REFERENCES ru."Weird Tab"(id)
+
+
+statement ok
+SET search_path = ru, public;
+
+
+query
+SELECT conname, pg_get_constraintdef(oid) AS def
+FROM pg_constraint WHERE connamespace = 'ru'::regnamespace AND contype = 'f' ORDER BY conname;
+----
+conname	def
+child_fk	FOREIGN KEY (b) REFERENCES parent(id)
+weird_ref_x_fkey	FOREIGN KEY (x) REFERENCES "Weird Tab"(id)
+
+
+query
+SELECT 'ru.parent'::regclass::text AS t, 'ru."Weird Tab"'::regclass::text AS w, 'ru.parent_pkey'::regclass::text AS k;
+----
+t	w	k
+parent	"Weird Tab"	parent_pkey
+
+
+statement ok
+RESET search_path;
+
+
+query
+SELECT 'ru.parent'::regclass::text AS t, 'ru."Weird Tab"'::regclass::text AS w, 'ru.parent_pkey'::regclass::text AS k, 'ru.odd_idx'::regclass::text AS i;
+----
+t	w	k	i
+ru.parent	ru."Weird Tab"	ru.parent_pkey	ru.odd_idx
+
+
+query
+SELECT c.relname, i.indexrelid::regclass::text AS idx
+FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+WHERE i.indrelid = 'ru.child'::regclass ORDER BY c.relname;
+----
+relname	idx
+child_pk	ru.child_pk
+child_uq	ru.child_uq
+
+
+query
+SELECT pg_get_indexdef('ru.child_pk'::regclass, 1, false) AS c1,
+       pg_get_indexdef('ru.child_pk'::regclass, 2, true) AS c2,
+       pg_get_indexdef('ru.child_pk'::regclass, 3, true) AS past_end,
+       pg_get_indexdef('ru.odd_idx'::regclass, 1, false) AS odd1,
+       pg_get_indexdef('ru.odd_idx'::regclass, 2, false) AS odd2;
+----
+c1	c2	past_end	odd1	odd2
+a	b	(empty)	"Odd Col"	id
+
+
+query
+SELECT pg_get_indexdef('ru.child'::regclass) IS NULL AS on_table,
+       pg_get_indexdef(0) IS NULL AS zero,
+       pg_get_viewdef('ru.child'::regclass) IS NULL AS viewdef_of_table,
+       pg_get_viewdef(0) IS NULL AS viewdef_zero,
+       pg_get_constraintdef(0) IS NULL AS constraint_zero,
+       pg_get_ruledef(0) IS NULL AS rule_zero,
+       pg_get_triggerdef(0) IS NULL AS trigger_zero,
+       pg_get_functiondef(0) IS NULL AS function_zero,
+       pg_get_partkeydef('ru.child'::regclass) IS NULL AS partkey;
+----
+on_table	zero	viewdef_of_table	viewdef_zero	constraint_zero	rule_zero	trigger_zero	function_zero	partkey
+t	t	t	t	t	t	t	t	t
+
+
+query error
+SELECT pg_get_viewdef('ru.no_such_view');
+----
+db error: ERROR: relation "ru.no_such_view" does not exist
+
+
+statement ok
+CREATE FUNCTION ru.add1(x integer, y integer) RETURNS integer LANGUAGE sql AS 'SELECT x + y';
+
+
+statement ok
+CREATE FUNCTION ru.nonames(integer, text) RETURNS text LANGUAGE sql AS 'SELECT $2';
+
+
+statement ok
+CREATE FUNCTION ru.tf(n integer) RETURNS TABLE(i integer, s text) LANGUAGE sql AS 'SELECT n, ''x''';
+
+
+statement ok
+CREATE PROCEDURE ru.p(x integer) LANGUAGE sql AS 'SELECT 1';
+
+
+query
+SELECT proname, pg_get_function_arguments(oid) AS args,
+       pg_get_function_identity_arguments(oid) AS identity,
+       pg_get_function_result(oid) AS result,
+       pg_get_function_arg_default(oid, 1) AS default1
+FROM pg_proc WHERE pronamespace = 'ru'::regnamespace ORDER BY proname;
+----
+proname	args	identity	result	default1
+add1	x integer, y integer	x integer, y integer	integer	NULL
+nonames	integer, text	integer, text	text	NULL
+p	IN x integer	IN x integer	NULL	NULL
+tf	n integer	n integer	TABLE(i integer, s text)	NULL
+
+
+query
+SELECT proname, proargnames FROM pg_proc
+WHERE pronamespace = 'ru'::regnamespace AND proname IN ('add1', 'nonames', 'p') ORDER BY proname;
+----
+proname	proargnames
+add1	{x,y}
+nonames	NULL
+p	{x}
+
+
+query
+SELECT quote_ident('name') AS a, quote_ident('select') AS b, quote_ident('Mixed') AS c,
+       quote_ident('1abc') AS d, quote_ident('a"b') AS e, format('%I.%I', 'text', 'order') AS f;
+----
+a	b	c	d	e	f
+name	"select"	"Mixed"	"1abc"	"a""b"	text."order"
+
+
+statement ok
+DROP SCHEMA ru CASCADE;

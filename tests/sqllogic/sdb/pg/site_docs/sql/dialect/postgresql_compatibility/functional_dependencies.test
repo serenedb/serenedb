@@ -11,4 +11,4 @@ FROM tbl
 GROUP BY i;
 ----
 db error: ERROR: column "j" must appear in the GROUP BY clause or must be part of an aggregate function.
-Either add it to the GROUP BY list, or use "ANY_VALUE(j)" if the exact value of "j" is not important.
+Either add it to the GROUP BY list, or use ANY_VALUE("j") if the exact value of "j" is not important.

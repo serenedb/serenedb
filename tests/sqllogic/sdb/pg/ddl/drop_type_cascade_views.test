@@ -46,6 +46,8 @@ statement error
 ALTER TABLE dtc.records DROP COLUMN c;
 ----
 db error: ERROR: Cannot alter entry "records" because there are entries that depend on it.
+view "v_c" depends on table "records".
+Drop the dependent entries first and recreate them after the change.
 
 
 # A column no view reads goes without CASCADE.

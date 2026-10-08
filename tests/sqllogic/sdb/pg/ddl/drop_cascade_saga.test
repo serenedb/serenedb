@@ -436,7 +436,7 @@ INSERT INTO vedernikoff_iceberg_audit.runs VALUES (1, 42);
 statement error
 INSERT INTO vedernikoff_iceberg_audit.runs VALUES (2, -5);
 ----
-db error: ERROR: CHECK constraint failed on table runs with expression CHECK(vedernikoff_ml_paper.is_positive(score))
+db error: ERROR: CHECK constraint failed on table "runs" with expression CHECK(vedernikoff_ml_paper.is_positive(score))
 
 
 # Plain DROP fails: the CHECK constraint depends on the function.
@@ -1146,19 +1146,19 @@ CREATE TABLE vedernikoff_iceberg_t_gamma (
 statement error
 INSERT INTO vedernikoff_iceberg_t_alpha VALUES (500);
 ----
-db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t_alpha with expression CHECK(vedernikoff_iceberg_threshold(v))
+db error: ERROR: CHECK constraint failed on table "vedernikoff_iceberg_t_alpha" with expression CHECK(vedernikoff_iceberg_threshold(v))
 
 
 statement error
 INSERT INTO vedernikoff_iceberg_t_beta VALUES (-1);
 ----
-db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t_beta with expression CHECK(vedernikoff_iceberg_threshold(v))
+db error: ERROR: CHECK constraint failed on table "vedernikoff_iceberg_t_beta" with expression CHECK(vedernikoff_iceberg_threshold(v))
 
 
 statement error
 INSERT INTO vedernikoff_iceberg_t_gamma VALUES (10000);
 ----
-db error: ERROR: CHECK constraint failed on table vedernikoff_iceberg_t_gamma with expression CHECK(vedernikoff_iceberg_threshold(v))
+db error: ERROR: CHECK constraint failed on table "vedernikoff_iceberg_t_gamma" with expression CHECK(vedernikoff_iceberg_threshold(v))
 
 
 # RESTRICT refuses.

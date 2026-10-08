@@ -1,0 +1,261 @@
+control substitution on
+
+statement ok
+CREATE DATABASE eik_src;
+
+
+statement ok
+USE eik_src;
+
+
+statement ok
+CREATE SCHEMA eik;
+
+
+statement ok
+CREATE TYPE eik.mood AS ENUM ('ok', 'bad');
+
+
+statement ok
+CREATE SEQUENCE eik.q START 10 INCREMENT 5;
+
+
+query
+SELECT nextval('eik.q') AS n;
+----
+n
+10
+
+
+statement ok
+CREATE TABLE eik.parent (id INT PRIMARY KEY, code TEXT UNIQUE, m eik.mood DEFAULT 'ok', c INT CHECK (c > 0), g INT GENERATED ALWAYS AS (c * 2) STORED);
+
+
+statement ok
+CREATE TABLE eik.child (id SERIAL PRIMARY KEY, parent_id INT REFERENCES eik.parent (id), body TEXT, n BIGINT DEFAULT nextval('eik.q'));
+
+
+statement ok
+CREATE TABLE eik.st (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+CREATE TABLE eik.st_numbered (a INT, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO eik.parent (id, code, c) VALUES (1, 'a', 1), (2, 'b', 2);
+
+
+statement ok
+INSERT INTO eik.child (parent_id, body) VALUES (1, 'hello world'), (2, 'bye');
+
+
+statement ok
+INSERT INTO eik.st VALUES (1, 'search me');
+
+
+statement ok
+INSERT INTO eik.st_numbered VALUES (7, 'numbered');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) eik.st;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) eik.st_numbered;
+
+
+statement ok
+CREATE INDEX eik_child_body ON eik.child (body);
+
+
+statement ok
+CREATE INDEX eik_child_inv ON eik.child USING inverted (body);
+
+
+statement ok
+CREATE INDEX eik_st_inv ON eik.st USING inverted (body);
+
+
+statement ok
+CREATE VIEW eik.v AS SELECT p.id, c.body FROM eik.parent p JOIN eik.child c ON c.parent_id = p.id;
+
+
+statement ok
+CREATE FUNCTION eik.f(x INT) AS x + 1;
+
+
+statement ok
+CREATE FUNCTION eik.tf(n INT) AS TABLE SELECT * FROM range(n);
+
+
+statement ok
+COMMENT ON TABLE eik.parent IS 'parents';
+
+
+statement ok
+COMMENT ON COLUMN eik.parent.code IS 'the code';
+
+
+statement ok
+COMMENT ON VIEW eik.v IS 'it''s a view';
+
+
+statement ok
+EXPORT DATABASE '${__TEST_DIR__}/export_import_kinds';
+
+
+statement ok
+CREATE DATABASE eik_dst;
+
+
+statement ok
+USE eik_dst;
+
+
+statement ok
+IMPORT DATABASE '${__TEST_DIR__}/export_import_kinds';
+
+
+query
+SELECT id, code, m, c, g FROM eik.parent ORDER BY id;
+----
+id	code	m	c	g
+1	a	ok	1	2
+2	b	ok	2	4
+
+
+query
+SELECT id, parent_id, body, n FROM eik.child ORDER BY id;
+----
+id	parent_id	body	n
+1	1	hello world	15
+2	2	bye	20
+
+
+statement ok
+VACUUM (REFRESH_TABLE) eik.st;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) eik.st_numbered;
+
+
+query
+SELECT id, body FROM eik.st;
+----
+id	body
+1	search me
+
+
+query
+SELECT a, body FROM eik.st_numbered;
+----
+a	body
+7	numbered
+
+
+query
+SELECT id, body FROM eik.v ORDER BY id;
+----
+id	body
+1	hello world
+2	bye
+
+
+query
+SELECT eik.f(1) AS r, (SELECT count(*) FROM eik.tf(3)) AS n;
+----
+r	n
+2	3
+
+
+query
+SELECT index_name FROM duckdb_indexes() WHERE database_name = 'eik_dst' ORDER BY 1;
+----
+index_name
+eik_child_body
+eik_child_inv
+eik_st_inv
+
+
+query
+SELECT sequence_name FROM duckdb_sequences() WHERE database_name = 'eik_dst' ORDER BY 1;
+----
+sequence_name
+child_id_seq
+q
+st_numbered_pk_seq
+st_pk_seq
+
+
+query
+SELECT obj_description('eik.parent'::regclass) AS t, col_description('eik.parent'::regclass, 2) AS c,
+       obj_description('eik.v'::regclass) AS v;
+----
+t	c	v
+parents	the code	it's a view
+
+
+statement error
+INSERT INTO eik.parent (id, code, c) VALUES (3, 'a', 1);
+----
+db error: ERROR: Duplicate key "code: a" violates unique constraint.
+
+
+statement error
+INSERT INTO eik.child (parent_id, body) VALUES (99, 'orphan');
+----
+db error: ERROR: Violates foreign key constraint because key "id: 99" does not exist in the referenced table
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY eik.d AS split_text();
+
+
+query
+SELECT ts_lexize('eik.d', 'Hello World') AS tokens;
+----
+tokens
+{Hello,World}
+
+
+statement ok
+EXPORT DATABASE '${__TEST_DIR__}/export_import_kinds_dictionary';
+
+
+statement ok
+CREATE DATABASE eik_dict;
+
+
+statement ok
+USE eik_dict;
+
+
+statement ok
+IMPORT DATABASE '${__TEST_DIR__}/export_import_kinds_dictionary';
+
+
+query
+SELECT ts_lexize('eik.d', 'Hello World') AS tokens;
+----
+tokens
+{Hello,World}
+
+
+statement ok
+USE postgres;
+
+
+statement ok
+DROP DATABASE eik_dict;
+
+
+statement ok
+DROP DATABASE eik_dst;
+
+
+statement ok
+DROP DATABASE eik_src;

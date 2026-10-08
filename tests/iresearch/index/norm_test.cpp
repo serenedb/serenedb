@@ -978,16 +978,10 @@ TEST_P(NormTestCase, CheckNormsCompactionWithRemovals) {
   }
 }
 
-// Separate definition as MSVC parser fails to do conditional defines in macro
-// expansion
-const auto kNormTestCaseValues =
-  ::testing::Values(tests::FormatInfo{"1_5simd"});
-
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(NormTest, NormTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            kNormTestCaseValues),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          NormTestCase::to_string);
 
 }  // namespace

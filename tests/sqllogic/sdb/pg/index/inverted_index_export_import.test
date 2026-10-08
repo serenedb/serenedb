@@ -40,7 +40,7 @@ statement ok
 CREATE INDEX ie_pts_idx ON ie_pts USING inverted (id, emb hnsw (m = 16, metric = 'cosine', quant = 'none'));
 
 query
-SELECT regexp_replace(sql, ' WITH \(.*$', '') AS sql FROM sdb_indexes() WHERE database_name = current_database() ORDER BY index_name;
+SELECT replace(regexp_replace(sql, ' WITH \(.*$', ''), current_database() || '.', '') AS sql FROM sdb_indexes() WHERE database_name = current_database() ORDER BY index_name;
 ----
 sql
 CREATE INDEX ie_docs_idx ON public.ie_docs USING inverted (id, body ie_words, emb ivf (metric = 'l2'))
@@ -62,7 +62,6 @@ query
 SELECT rtrim(line, ';') AS line FROM (SELECT unnest(string_split(content, chr(10))) AS line FROM read_text('${__TEST_DIR__}/inverted_index_export_import/schema.sql')) WHERE line LIKE 'CREATE SCHEMA%' OR line LIKE 'CREATE TEXT SEARCH DICTIONARY%' ORDER BY 1;
 ----
 line
-CREATE SCHEMA IF NOT EXISTS public
 CREATE TEXT SEARCH DICTIONARY public.ie_derived AS split_text(case := 'lower') | remove_stopwords(stopwords := ['the']) | (lambda input: upper("input")) | (lambda input: ("input" || '!'))
 CREATE TEXT SEARCH DICTIONARY public.ie_filter AS split_text() | filter_tokens(predicate := lambda input: (length("input") > 2))
 CREATE TEXT SEARCH DICTIONARY public.ie_shingle AS generate_shingles(split_text_csv(delimiter := ' ') | normalize_tokens(case := 'lower'), min_gram := 2, max_gram := 3)
@@ -118,7 +117,7 @@ tokens
 {run}
 
 query
-SELECT regexp_replace(sql, ' WITH \(.*$', '') AS sql FROM sdb_indexes() WHERE database_name = current_database() ORDER BY index_name;
+SELECT replace(regexp_replace(sql, ' WITH \(.*$', ''), current_database() || '.', '') AS sql FROM sdb_indexes() WHERE database_name = current_database() ORDER BY index_name;
 ----
 sql
 CREATE INDEX ie_docs_idx ON public.ie_docs USING inverted (id, body ie_words, emb ivf (metric = 'l2'))

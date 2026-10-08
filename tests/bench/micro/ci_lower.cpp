@@ -25,7 +25,7 @@
 // sequence is fastest for the fused path. Folds an L-byte runtime buffer in
 // place; reports ns/buffer.
 //
-//   taskset -c N ./serenedb-bench-micro-ci_lower --benchmark_min_time=0.3s \
+//   taskset -c N ./serenedb-bench-micro ci_lower --benchmark_min_time=0.3s \
 //     --benchmark_repetitions=12 --benchmark_report_aggregates_only=true
 
 #include <benchmark/benchmark.h>
@@ -174,5 +174,3 @@ BENCHMARK_TEMPLATE(Bm, 8)->Arg(8)->Arg(16)->Arg(32)->Arg(64)->Name(
   "fold_swar8");
 BENCHMARK_TEMPLATE(Bm, 16)->Arg(16)->Arg(32)->Arg(64)->Name("fold_sse16");
 BENCHMARK_TEMPLATE(Bm, 32)->Arg(32)->Arg(64)->Name("fold_avx32");
-
-BENCHMARK_MAIN();

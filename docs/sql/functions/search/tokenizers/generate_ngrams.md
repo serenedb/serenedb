@@ -29,7 +29,7 @@ For substring search over code, logs or identifiers, prefer [`generate_sparse_ng
 | `END_MARKER` | string | `''` | Text appended to the grams that reach the last symbol of the token; empty means no marker |
 | `MODE` | string | `'all'` | Which grams to generate: `'all'`, `'only_prefix'`, `'only_suffix'`, `'only_prefix_and_suffix'` |
 
-Both lengths are clamped silently and are not otherwise validated: `MIN_GRAM = 0` behaves as `1`, and a positive `MAX_GRAM` below `MIN_GRAM` behaves as `MAX_GRAM = MIN_GRAM`. The template supports all four [feature flags](../../../statements/create_text_search_dictionary/index.md#feature-flags) — `FREQUENCY`, `POSITION`, `NORM` and `OFFSET` — subject to the usual dependencies: `OFFSET` requires `POSITION`, and both `POSITION` and `NORM` require `FREQUENCY`.
+Both lengths are clamped silently and are not otherwise validated: `MIN_GRAM = 0` behaves as `1`, and a positive `MAX_GRAM` below `MIN_GRAM` behaves as `MAX_GRAM = MIN_GRAM`. `INPUT_TYPE` and `MODE` match their values case-insensitively, and a value outside the listed ones fails with `invalid value in "input_type" parameter` or `invalid value in "mode" parameter`. The template supports all four [feature flags](../../../statements/create_text_search_dictionary/index.md#feature-flags) — `FREQUENCY`, `POSITION`, `NORM` and `OFFSET` — subject to the usual dependencies: `OFFSET` requires `POSITION`, and both `POSITION` and `NORM` require `FREQUENCY`.
 
 ## Tokenization
 

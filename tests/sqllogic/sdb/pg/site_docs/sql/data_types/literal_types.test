@@ -75,12 +75,13 @@ int4
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT 'Hello'
     ' '
     'World' AS greeting;
 ----
-db error: ERROR: syntax error at or near <slt:ignore>
+greeting
+Hello World
 
 
 # DOCS_TEST: example_005

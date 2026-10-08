@@ -304,6 +304,8 @@ statement error
 CREATE OR REPLACE FUNCTION babsky_or(x INT) AS x * 3;
 ----
 db error: ERROR: Cannot alter entry "babsky_or" because there are entries that depend on it.
+index "clickclack_or_idx" depends on macro function "babsky_or".
+Drop the dependent entries first and recreate them after the change.
 
 
 # After dropping the index, replace works.

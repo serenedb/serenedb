@@ -10,7 +10,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 | Name                                                                         | Description                                                                                                              |
 | :--------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------- |
 | [`struct.entry`](#structentry)                                               | Dot notation that serves as an alias for `struct_extract` from named `STRUCT`s.                                          |
-| [`struct[entry]`](#structentry)                                              | Bracket notation that serves as an alias for `struct_extract` from named `STRUCT`s.                                      |
+| [`struct[entry]`](#structentry-bracket)                                      | Bracket notation that serves as an alias for `struct_extract` from named `STRUCT`s.                                      |
 | [`struct[idx]`](#structidx)                                                  | Bracket notation that serves as an alias for `struct_extract` from unnamed `STRUCT`s (tuples), using an index (1-based). |
 | [`row(any, ...)`](#rowany-)                                                  | Create an unnamed `STRUCT` (tuple) containing the argument values.                                                       |
 | [`struct_concat(structs...)`](#struct_concatstructs)                         | Merge the multiple `structs` into a single `STRUCT`.                                                                     |
@@ -24,13 +24,13 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 | [`struct_update(struct, name := any, ...)`](#struct_updatestruct-name--any-) | Add or update field(s) of an existing `STRUCT`.                                                                          |
 | [`struct_values(struct)`](#struct_valuesstruct)                              | Return the values of a `STRUCT` as an unnamed `STRUCT` (tuple).                                                          |
 
-#### `struct.entry`
+#### `struct.entry` {#structentry}
 
 Dot notation that serves as an alias for `struct_extract` from named `STRUCT`s.
 
 <SqlLogicTest id="sql/functions/struct/structentry" />
 
-#### `struct[entry]`
+#### `struct[entry]` {#structentry-bracket}
 
 Bracket notation that serves as an alias for `struct_extract` from named `STRUCT`s.
 

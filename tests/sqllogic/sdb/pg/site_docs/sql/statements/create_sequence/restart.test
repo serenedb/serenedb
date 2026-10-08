@@ -1,0 +1,30 @@
+# DOCS_TEST: example_020
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE SEQUENCE invoice_ids START 100;
+
+query
+SELECT nextval('invoice_ids') AS a, nextval('invoice_ids') AS b;
+----
+a	b
+100	101
+
+statement ok
+ALTER SEQUENCE invoice_ids RESTART;
+
+query
+SELECT nextval('invoice_ids') AS nextval;
+----
+nextval
+100
+
+statement ok
+ALTER SEQUENCE invoice_ids RESTART WITH 500;
+
+query
+SELECT nextval('invoice_ids') AS nextval;
+----
+nextval
+500

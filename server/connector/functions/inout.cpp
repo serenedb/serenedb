@@ -25,6 +25,7 @@
 
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/function/cast/cast_function_set.hpp>
+#include <duckdb/function/cast/default_casts.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
@@ -391,6 +392,18 @@ void RegisterPgInOutFunctions(duckdb::DatabaseInstance& db) {
   // regnamespace -> VARCHAR
   casts.RegisterCastFunction(pg::REGNAMESPACE(), duckdb::LogicalType::VARCHAR,
                              PgRegnamespaceToVarcharBind, 50);
+
+  for (const auto& reg :
+       {pg::REGCLASS(), pg::REGTYPE(), pg::REGPROC(), pg::REGPROCEDURE(),
+        pg::REGNAMESPACE(), pg::REGROLE(), pg::REGOPER(), pg::REGOPERATOR(),
+        pg::REGCONFIG(), pg::REGDICTIONARY(), pg::REGCOLLATION()}) {
+    casts.RegisterCastFunction(
+      pg::OID(), reg,
+      duckdb::BoundCastInfo(duckdb::DefaultCasts::ReinterpretCast), 1);
+    casts.RegisterCastFunction(
+      reg, pg::OID(),
+      duckdb::BoundCastInfo(duckdb::DefaultCasts::ReinterpretCast), 1);
+  }
 
   // VARCHAR -> BLOB / BLOB -> VARCHAR (bytea)
   casts.RegisterCastFunction(duckdb::LogicalType::VARCHAR,

@@ -717,7 +717,7 @@ ORDER BY id;
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────╮
-│ Order By: hl_docs_idx.id ASC         │
+│ Order By: id ASC                     │
 │ ~1 row                               │
 ╰───────────────────┬──────────────────╯
 ╭─ PROJECTION ──────┴──────────────────╮
@@ -750,7 +750,7 @@ ORDER BY id;
 ----
 QUERY PLAN
 ╭─ ORDER_BY ─────────────────────────────────────────────────╮
-│ Order By: hl_docs_idx.id ASC                               │
+│ Order By: id ASC                                           │
 │ ~1 row                                                     │
 ╰──────────────────────────────┬─────────────────────────────╯
 ╭─ PROJECTION ─────────────────┴─────────────────────────────╮
@@ -840,7 +840,7 @@ ORDER BY id
 ----
 QUERY PLAN
 ╭─ ORDER_BY ────────────────────────────────────────╮
-│ Order By: hl_multi_idx.id ASC                     │
+│ Order By: id ASC                                  │
 │ ~1 row                                            │
 ╰─────────────────────────┬─────────────────────────╯
 ╭─ PROJECTION ────────────┴─────────────────────────╮
@@ -860,7 +860,8 @@ QUERY PLAN
 │ ╰──────────────────────╯  ╰─────────────────────╯ │
 │ Offsets: title, body                              │
 │ Projections:                                      │
-│ title, body, id, sdb_inverted_index_offsets$<slt:ignore>
+│ title, body, id,                                  │
+│ sdb_inverted_index_offsets$<slt:ignore>
 │ sdb_inverted_index_offsets$<slt:ignore>
 │ ~1 row                                            │
 ╰───────────────────────────────────────────────────╯
@@ -1187,17 +1188,17 @@ EXPLAIN SELECT ts_highlight('hl_inplace_dict', doc, ts_phrase('fox'))
 FROM hl_dyn
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────────────────────────────╮
-│ Projections:                                                │
-│ ts_highlight(doc, ts_offsets('hl_inplace_dict', doc, NULL)) │
-│ ~2 rows                                                     │
-╰──────────────────────────────┬──────────────────────────────╯
-╭─ SEQ_SCAN ───────────────────┴──────────────────────────────╮
-│ Table: hl_dyn                                               │
-│ Type: Sequential Scan                                       │
-│ Projections: doc                                            │
-│ ~2 rows                                                     │
-╰─────────────────────────────────────────────────────────────╯
+╭─ PROJECTION ─────────────────────────────────────────────────────────╮
+│ Projections:                                                         │
+│ ts_highlight(doc, ts_offsets('hl_inplace_dict', doc, NULL::TSQUERY)) │
+│ ~2 rows                                                              │
+╰───────────────────────────────────┬──────────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────┴──────────────────────────────────╮
+│ Table: hl_dyn                                                        │
+│ Type: Sequential Scan                                                │
+│ Projections: doc                                                     │
+│ ~2 rows                                                              │
+╰──────────────────────────────────────────────────────────────────────╯
 
 # Standalone form with MaxOffsets in the options string. The limit
 # flows into the inner ts_offsets() as a trailing INTEGER arg (= 2);
@@ -1209,17 +1210,17 @@ EXPLAIN SELECT ts_highlight('hl_inplace_dict', doc,
 FROM hl_dyn
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────────────────────────────────────────────╮
-│ Projections:                                                                   │
-│ ts_highlight(doc, ts_offsets('hl_inplace_dict', doc, NULL, 2), 'MaxOffsets=2') │
-│ ~2 rows                                                                        │
-╰────────────────────────────────────────┬───────────────────────────────────────╯
-╭─ SEQ_SCAN ─────────────────────────────┴───────────────────────────────────────╮
-│ Table: hl_dyn                                                                  │
-│ Type: Sequential Scan                                                          │
-│ Projections: doc                                                               │
-│ ~2 rows                                                                        │
-╰────────────────────────────────────────────────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                            │
+│ ts_highlight(doc, ts_offsets('hl_inplace_dict', doc, NULL::TSQUERY, 2), 'MaxOffsets=2') │
+│ ~2 rows                                                                                 │
+╰────────────────────────────────────────────┬────────────────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────────────┴────────────────────────────────────────────╮
+│ Table: hl_dyn                                                                           │
+│ Type: Sequential Scan                                                                   │
+│ Projections: doc                                                                        │
+│ ~2 rows                                                                                 │
+╰─────────────────────────────────────────────────────────────────────────────────────────╯
 
 # Standalone MaxOffsets behaviour: 5-fox body, MaxOffsets=2 caps to
 # the first two highlighted spans.

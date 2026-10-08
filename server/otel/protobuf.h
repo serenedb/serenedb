@@ -26,6 +26,7 @@
 
 namespace sdb::otel {
 
+// The decoded text fields point into `wire`, which must outlive `out`.
 void DecodeLogsRequest(std::string_view wire, ExportLogsRequest& out);
 void DecodeTracesRequest(std::string_view wire, ExportTracesRequest& out);
 void DecodeMetricsRequest(std::string_view wire, ExportMetricsRequest& out);

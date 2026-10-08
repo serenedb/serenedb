@@ -103,11 +103,8 @@ irs::DirectoryReader BuildIndex(irs::Directory& dir,
                                 irs::VectorMetric metric,
                                 irs::VectorQuantization quant,
                                 uint32_t nb_bits = 0) {
-  constexpr auto kFormatId = "1_5simd";
-  auto codec = irs::formats::Get(kFormatId);
-  EXPECT_NE(nullptr, codec);
   auto writer = irs::IndexWriter::Make(
-    dir, codec, irs::kOmCreate, MakeWriterOptions(metric, quant, nb_bits));
+    dir, irs::kOmCreate, MakeWriterOptions(metric, quant, nb_bits));
   EXPECT_NE(nullptr, writer);
   {
     auto trx = writer->GetBatch();
@@ -289,12 +286,9 @@ TEST_P(HnswIndexTest, MergeReusesDonorGraph) {
   constexpr size_t kK = 10;
 
   auto vecs = MakeVectors(kBig + kSmall, 31);
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
 
   irs::MemoryDirectory dir;
-  auto writer =
-    irs::IndexWriter::Make(dir, codec, irs::kOmCreate, WriterOptions());
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, WriterOptions());
   ASSERT_NE(nullptr, writer);
   for (const size_t bound : {kBig, kBig + kSmall}) {
     auto trx = writer->GetBatch();
@@ -359,12 +353,9 @@ TEST_P(HnswIndexTest, MergeOfManySourcesMatchesRebuild) {
   constexpr size_t kK = 10;
 
   auto vecs = MakeVectors(kRows, 41);
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
 
   irs::MemoryDirectory dir;
-  auto writer =
-    irs::IndexWriter::Make(dir, codec, irs::kOmCreate, WriterOptions());
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, WriterOptions());
   ASSERT_NE(nullptr, writer);
   for (size_t seg = 0; seg < kSegments; ++seg) {
     auto trx = writer->GetBatch();
@@ -426,11 +417,7 @@ TEST_P(HnswIndexTest, SerializedGraphSurvivesReopen) {
   auto filter = MakeKnnFilter(vecs[0], metric, Quant(), 64);
   const auto first = RunKnn(reader, filter);
   ASSERT_FALSE(first.empty());
-
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-  auto reopened =
-    irs::DirectoryReader{dir, codec, irs::tests::DefaultReaderOptions()};
+  auto reopened = irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()};
   ASSERT_NE(nullptr, reopened);
   auto filter2 = MakeKnnFilter(vecs[0], metric, Quant(), 64);
   const auto second = RunKnn(reopened, filter2);

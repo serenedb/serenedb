@@ -20,6 +20,8 @@
 
 #include <gtest/gtest.h>
 
+#include <iresearch/search/detail/term_acceptor.hpp>
+#include <iresearch/search/detail/term_iterator.hpp>
 #include <iresearch/search/detail/term_predicate.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/automaton_filter.hpp>
@@ -30,9 +32,10 @@
 #include <iresearch/search/filters/regexp_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
-#include <iresearch/utils/automaton_utils.hpp>
 #include <iresearch/utils/regexp_utils.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
+#include <string>
+#include <string_view>
 
 namespace {
 
@@ -159,7 +162,7 @@ TEST(term_predicate_test, by_range) {
 TEST(term_predicate_test, automaton) {
   irs::AutomatonFilter f;
   *f.mutable_options() =
-    irs::AutomatonOptions{irs::FromWildcard("a%b"), B("a%b")};
+    irs::AutomatonOptions{B("a%b"), irs::PatternKind::Wildcard};
 
   const auto pred = f.CompileTermPredicate();
   ASSERT_NE(nullptr, pred);
@@ -172,6 +175,30 @@ TEST(term_predicate_test, automaton) {
 TEST(term_predicate_test, automaton_without_compiled_not_compilable) {
   irs::AutomatonFilter f;
   ASSERT_EQ(nullptr, f.CompileTermPredicate());
+}
+
+TEST(term_predicate_test, automaton_fused_kind) {
+  auto source = irs::MakePatternSource(B("a%b"), irs::PatternKind::Wildcard);
+  ASSERT_NE(nullptr, source);
+
+  const irs::AutomatonOptions fused{B("a%b AND %b"), source};
+  EXPECT_EQ(irs::PatternKind::Fused, fused.kind);
+  EXPECT_EQ(source, fused.source);
+
+  const irs::AutomatonOptions wildcard{B("a%b AND %b"),
+                                       irs::PatternKind::Wildcard};
+  EXPECT_EQ(irs::PatternKind::Wildcard, wildcard.kind);
+  EXPECT_NE(fused, wildcard);
+  EXPECT_EQ(fused, (irs::AutomatonOptions{B("a%b AND %b"), source}));
+
+  irs::AutomatonFilter f;
+  *f.mutable_options() = fused;
+  const auto pred = f.CompileTermPredicate();
+  ASSERT_NE(nullptr, pred);
+  EXPECT_TRUE(Accepts(*pred, "ab"));
+  EXPECT_TRUE(Accepts(*pred, "axxb"));
+  EXPECT_FALSE(Accepts(*pred, "ba"));
+  EXPECT_FALSE(Accepts(*pred, "a"));
 }
 
 TEST(term_predicate_test, not_negates) {
@@ -283,6 +310,47 @@ TEST(term_predicate_test, wildcard) {
   EXPECT_FALSE(Accepts(*pred, "a"));
 }
 
+TEST(term_predicate_test, wildcard_matches_its_lowering) {
+  irs::ByWildcard prefix;
+  prefix.mutable_options()->term = irs::bstring{B("ab%")};
+  const auto starts = prefix.CompileTermPredicate();
+  ASSERT_NE(nullptr, starts);
+  EXPECT_TRUE(Accepts(*starts, "ab"));
+  EXPECT_TRUE(Accepts(*starts, "ab\xFF"));
+  EXPECT_TRUE(Accepts(*starts,
+                      "ab\xE0\x80\x80"
+                      "c"));
+  EXPECT_FALSE(Accepts(*starts, "a"));
+
+  irs::ByWildcard term;
+  term.mutable_options()->term = irs::bstring{B("a\\%b")};
+  const auto exact = term.CompileTermPredicate();
+  ASSERT_NE(nullptr, exact);
+  EXPECT_TRUE(Accepts(*exact, "a%b"));
+  EXPECT_FALSE(Accepts(*exact, "axb"));
+}
+
+TEST(term_predicate_test, regexp_matches_its_lowering) {
+  irs::ByRegexp prefix;
+  prefix.mutable_options()->pattern = irs::bstring{B("ab.*")};
+  const auto starts = prefix.CompileTermPredicate();
+  ASSERT_NE(nullptr, starts);
+  EXPECT_TRUE(Accepts(*starts, "ab"));
+  EXPECT_TRUE(Accepts(*starts, "ab\xFF"));
+  EXPECT_FALSE(Accepts(*starts, "a"));
+
+  irs::ByRegexp term;
+  term.mutable_options()->pattern = irs::bstring{B("abc")};
+  const auto exact = term.CompileTermPredicate();
+  ASSERT_NE(nullptr, exact);
+  EXPECT_TRUE(Accepts(*exact, "abc"));
+  EXPECT_FALSE(Accepts(*exact, "abcd"));
+
+  irs::ByRegexp broken;
+  broken.mutable_options()->pattern = irs::bstring{B("a(b")};
+  EXPECT_EQ(nullptr, broken.CompileTermPredicate());
+}
+
 TEST(term_predicate_test, regexp) {
   irs::ByRegexp f;
   f.mutable_options()->pattern = irs::bstring{B("a.*b")};
@@ -389,189 +457,261 @@ TEST(term_predicate_test, nested_tree) {
   EXPECT_FALSE(Accepts(*pred, "bx"));
 }
 
-TEST(acceptor_fusion_test, term_and_prefix_acceptors) {
-  const auto t = irs::MakeTermAcceptor(B("abc"));
-  EXPECT_TRUE(bool(irs::Accept(t, B("abc"))));
-  EXPECT_FALSE(bool(irs::Accept(t, B("ab"))));
-  EXPECT_FALSE(bool(irs::Accept(t, B("abcd"))));
-  EXPECT_FALSE(bool(irs::Accept(t, B(""))));
+TEST(term_predicate_test, and_prefix_with_wildcard) {
+  irs::BooleanFilter f;
+  f.Add(Prefix("a"), irs::Occur::Must);
+  {
+    auto w = std::make_unique<irs::ByWildcard>();
+    w->mutable_options()->term = irs::bstring{B("%e")};
+    f.Add(std::move(w), irs::Occur::Must);
+  }
 
-  const auto p = irs::MakePrefixAcceptor(B("ab"));
-  EXPECT_TRUE(bool(irs::Accept(p, B("ab"))));
-  EXPECT_TRUE(bool(irs::Accept(p, B("abzzz"))));
-  EXPECT_FALSE(bool(irs::Accept(p, B("a"))));
-  EXPECT_FALSE(bool(irs::Accept(p, B("ba"))));
+  const auto pred = f.CompileTermPredicate();
+  ASSERT_NE(nullptr, pred);
+  EXPECT_TRUE(Accepts(*pred, "aple"));
+  EXPECT_TRUE(Accepts(*pred, "ae"));
+  EXPECT_TRUE(Accepts(*pred, "apple"));
+  EXPECT_FALSE(Accepts(*pred, "apex"));
+  EXPECT_FALSE(Accepts(*pred, "e"));
+  EXPECT_FALSE(Accepts(*pred, "banana"));
 }
 
-TEST(acceptor_fusion_test, intersect_prefix_with_wildcard) {
-  const auto p = irs::MakePrefixAcceptor(B("a"));
-  const auto w = irs::FromWildcard("%e");
+TEST(term_predicate_test, and_disjoint_accepts_nothing) {
+  irs::BooleanFilter f;
+  f.Add(Prefix("a"), irs::Occur::Must);
+  f.Add(Term("b"), irs::Occur::Must);
 
-  const auto fused = irs::IntersectAcceptors(p, w, 10'000);
-  ASSERT_TRUE(fused.has_value());
-  EXPECT_TRUE(bool(irs::Accept(*fused, B("aple"))));
-  EXPECT_TRUE(bool(irs::Accept(*fused, B("ae"))));
-  EXPECT_TRUE(bool(irs::Accept(*fused, B("apple"))));
-  EXPECT_FALSE(bool(irs::Accept(*fused, B("apex"))));
-  EXPECT_FALSE(bool(irs::Accept(*fused, B("e"))));
-  EXPECT_FALSE(bool(irs::Accept(*fused, B("banana"))));
+  const auto pred = f.CompileTermPredicate();
+  ASSERT_NE(nullptr, pred);
+  EXPECT_FALSE(Accepts(*pred, "a"));
+  EXPECT_FALSE(Accepts(*pred, "b"));
+  EXPECT_FALSE(Accepts(*pred, ""));
 }
 
-TEST(acceptor_fusion_test, intersect_disjoint_is_empty_acceptor) {
-  const auto a = irs::MakePrefixAcceptor(B("a"));
-  const auto b = irs::MakeTermAcceptor(B("b"));
-
-  const auto fused = irs::IntersectAcceptors(a, b, 10'000);
-  ASSERT_TRUE(fused.has_value());
-  EXPECT_FALSE(bool(irs::Accept(*fused, B("a"))));
-  EXPECT_FALSE(bool(irs::Accept(*fused, B("b"))));
-  EXPECT_FALSE(bool(irs::Accept(*fused, B(""))));
+irs::Filter::ptr RangeOf(const char* min, const char* max, bool min_inclusive,
+                         bool max_inclusive) {
+  auto f = std::make_unique<irs::ByRange>();
+  auto& rng = f->mutable_options()->range;
+  if (min) {
+    rng.min = irs::bstring{B(min)};
+    rng.min_type =
+      min_inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
+  }
+  if (max) {
+    rng.max = irs::bstring{B(max)};
+    rng.max_type =
+      max_inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
+  }
+  return f;
 }
 
-irs::automaton RangeAcceptorOf(const char* min, const char* max,
-                               bool min_inclusive, bool max_inclusive) {
-  return irs::MakeRangeAcceptor(min ? B(min) : irs::bytes_view{},
-                                max ? B(max) : irs::bytes_view{}, min_inclusive,
-                                max_inclusive);
+struct RangePredicate {
+  irs::Filter::ptr filter;
+  irs::TermPredicate::ptr pred;
+
+  bool Accepts(std::string_view term) const { return pred->Accepts(B(term)); }
+};
+
+RangePredicate RangePredicateOf(const char* min, const char* max,
+                                bool min_inclusive, bool max_inclusive) {
+  auto filter = RangeOf(min, max, min_inclusive, max_inclusive);
+  auto pred = filter->CompileTermPredicate();
+  return {std::move(filter), std::move(pred)};
 }
 
-TEST(acceptor_fusion_test, range_acceptor_bounded) {
-  const auto a = RangeAcceptorOf("b", "d", true, false);
-  EXPECT_FALSE(bool(irs::Accept(a, B(""))));
-  EXPECT_FALSE(bool(irs::Accept(a, B("a"))));
-  EXPECT_FALSE(bool(irs::Accept(a, B("azzz"))));
-  EXPECT_TRUE(bool(irs::Accept(a, B("b"))));
-  EXPECT_TRUE(bool(irs::Accept(a, B("ba"))));
-  EXPECT_TRUE(bool(irs::Accept(a, B("c"))));
-  EXPECT_TRUE(bool(irs::Accept(a, B("czzz"))));
-  EXPECT_FALSE(bool(irs::Accept(a, B("d"))));
-  EXPECT_FALSE(bool(irs::Accept(a, B("da"))));
+TEST(term_predicate_test, range_bounded) {
+  const auto a = RangePredicateOf("b", "d", true, false);
+  ASSERT_NE(nullptr, a.pred);
+  EXPECT_FALSE(a.Accepts(""));
+  EXPECT_FALSE(a.Accepts("a"));
+  EXPECT_FALSE(a.Accepts("azzz"));
+  EXPECT_TRUE(a.Accepts("b"));
+  EXPECT_TRUE(a.Accepts("ba"));
+  EXPECT_TRUE(a.Accepts("c"));
+  EXPECT_TRUE(a.Accepts("czzz"));
+  EXPECT_FALSE(a.Accepts("d"));
+  EXPECT_FALSE(a.Accepts("da"));
 }
 
-TEST(acceptor_fusion_test, range_acceptor_exclusive_min) {
-  const auto a = RangeAcceptorOf("b", "d", false, true);
-  EXPECT_FALSE(bool(irs::Accept(a, B("b"))));
-  EXPECT_TRUE(bool(irs::Accept(a, B("ba"))));
-  EXPECT_TRUE(bool(irs::Accept(a, B("d"))));
-  EXPECT_FALSE(bool(irs::Accept(a, B("da"))));
+TEST(term_predicate_test, range_exclusive_min) {
+  const auto a = RangePredicateOf("b", "d", false, true);
+  ASSERT_NE(nullptr, a.pred);
+  EXPECT_FALSE(a.Accepts("b"));
+  EXPECT_TRUE(a.Accepts("ba"));
+  EXPECT_TRUE(a.Accepts("d"));
+  EXPECT_FALSE(a.Accepts("da"));
 }
 
-TEST(acceptor_fusion_test, range_acceptor_shared_prefix_bounds) {
-  const auto a = RangeAcceptorOf("ap", "az", true, true);
-  EXPECT_FALSE(bool(irs::Accept(a, B("a"))));
-  EXPECT_FALSE(bool(irs::Accept(a, B("ao"))));
-  EXPECT_TRUE(bool(irs::Accept(a, B("ap"))));
-  EXPECT_TRUE(bool(irs::Accept(a, B("apple"))));
-  EXPECT_TRUE(bool(irs::Accept(a, B("avocado"))));
-  EXPECT_TRUE(bool(irs::Accept(a, B("az"))));
-  EXPECT_FALSE(bool(irs::Accept(a, B("aza"))));
-  EXPECT_FALSE(bool(irs::Accept(a, B("b"))));
+TEST(term_predicate_test, range_shared_prefix_bounds) {
+  const auto a = RangePredicateOf("ap", "az", true, true);
+  ASSERT_NE(nullptr, a.pred);
+  EXPECT_FALSE(a.Accepts("a"));
+  EXPECT_FALSE(a.Accepts("ao"));
+  EXPECT_TRUE(a.Accepts("ap"));
+  EXPECT_TRUE(a.Accepts("apple"));
+  EXPECT_TRUE(a.Accepts("avocado"));
+  EXPECT_TRUE(a.Accepts("az"));
+  EXPECT_FALSE(a.Accepts("aza"));
+  EXPECT_FALSE(a.Accepts("b"));
 }
 
-TEST(acceptor_fusion_test, range_acceptor_min_is_prefix_of_max) {
-  const auto a = RangeAcceptorOf("ab", "abz", false, false);
-  EXPECT_FALSE(bool(irs::Accept(a, B("ab"))));
-  EXPECT_TRUE(bool(irs::Accept(a, B("aba"))));
-  EXPECT_TRUE(bool(irs::Accept(a, B("abyzzz"))));
-  EXPECT_FALSE(bool(irs::Accept(a, B("abz"))));
-  EXPECT_FALSE(bool(irs::Accept(a, B("abza"))));
+TEST(term_predicate_test, range_min_is_prefix_of_max) {
+  const auto a = RangePredicateOf("ab", "abz", false, false);
+  ASSERT_NE(nullptr, a.pred);
+  EXPECT_FALSE(a.Accepts("ab"));
+  EXPECT_TRUE(a.Accepts("aba"));
+  EXPECT_TRUE(a.Accepts("abyzzz"));
+  EXPECT_FALSE(a.Accepts("abz"));
+  EXPECT_FALSE(a.Accepts("abza"));
 }
 
-TEST(acceptor_fusion_test, range_acceptor_half_open) {
-  const auto lower = RangeAcceptorOf("m", nullptr, true, false);
-  EXPECT_FALSE(bool(irs::Accept(lower, B("lzz"))));
-  EXPECT_TRUE(bool(irs::Accept(lower, B("m"))));
-  EXPECT_TRUE(bool(irs::Accept(lower, B("zzz"))));
+TEST(term_predicate_test, range_half_open) {
+  const auto lower = RangePredicateOf("m", nullptr, true, false);
+  ASSERT_NE(nullptr, lower.pred);
+  EXPECT_FALSE(lower.Accepts("lzz"));
+  EXPECT_TRUE(lower.Accepts("m"));
+  EXPECT_TRUE(lower.Accepts("zzz"));
 
-  const auto upper = RangeAcceptorOf(nullptr, "m", false, false);
-  EXPECT_TRUE(bool(irs::Accept(upper, B(""))));
-  EXPECT_TRUE(bool(irs::Accept(upper, B("lzz"))));
-  EXPECT_FALSE(bool(irs::Accept(upper, B("m"))));
-  EXPECT_FALSE(bool(irs::Accept(upper, B("ma"))));
+  const auto upper = RangePredicateOf(nullptr, "m", false, false);
+  ASSERT_NE(nullptr, upper.pred);
+  EXPECT_TRUE(upper.Accepts(""));
+  EXPECT_TRUE(upper.Accepts("lzz"));
+  EXPECT_FALSE(upper.Accepts("m"));
+  EXPECT_FALSE(upper.Accepts("ma"));
 }
 
-TEST(acceptor_fusion_test, range_acceptor_degenerate) {
-  const auto point = RangeAcceptorOf("abc", "abc", true, true);
-  EXPECT_TRUE(bool(irs::Accept(point, B("abc"))));
-  EXPECT_FALSE(bool(irs::Accept(point, B("ab"))));
-  EXPECT_FALSE(bool(irs::Accept(point, B("abca"))));
+TEST(term_predicate_test, range_degenerate) {
+  const auto point = RangePredicateOf("abc", "abc", true, true);
+  ASSERT_NE(nullptr, point.pred);
+  EXPECT_TRUE(point.Accepts("abc"));
+  EXPECT_FALSE(point.Accepts("ab"));
+  EXPECT_FALSE(point.Accepts("abca"));
 
-  const auto none = RangeAcceptorOf("abc", "abc", true, false);
-  EXPECT_FALSE(bool(irs::Accept(none, B("abc"))));
+  const auto none = RangePredicateOf("abc", "abc", true, false);
+  ASSERT_NE(nullptr, none.pred);
+  EXPECT_FALSE(none.Accepts("abc"));
 
-  const auto inverted = RangeAcceptorOf("d", "b", true, true);
-  EXPECT_FALSE(bool(irs::Accept(inverted, B("c"))));
+  const auto inverted = RangePredicateOf("d", "b", true, true);
+  ASSERT_NE(nullptr, inverted.pred);
+  EXPECT_FALSE(inverted.Accepts("c"));
 
-  const auto everything = RangeAcceptorOf(nullptr, nullptr, false, false);
-  EXPECT_TRUE(bool(irs::Accept(everything, B(""))));
-  EXPECT_TRUE(bool(irs::Accept(everything, B("zzz"))));
+  const auto everything = RangePredicateOf(nullptr, nullptr, false, false);
+  ASSERT_NE(nullptr, everything.pred);
+  EXPECT_TRUE(everything.Accepts(""));
+  EXPECT_TRUE(everything.Accepts("zzz"));
 }
 
-TEST(acceptor_fusion_test, range_acceptor_utf8_bytewise_order) {
-  const auto a = RangeAcceptorOf("\xce\xb1", "\xcf\x89", true, true);
-  EXPECT_FALSE(bool(irs::Accept(a, B("z"))));
-  EXPECT_TRUE(bool(irs::Accept(a, B("\xce\xb1"))));
-  EXPECT_TRUE(bool(irs::Accept(a, B("\xce\xbc"))));
-  EXPECT_TRUE(bool(irs::Accept(a, B("\xce\xbc\xce\xb1"))));
-  EXPECT_TRUE(bool(irs::Accept(a, B("\xcf\x89"))));
-  EXPECT_FALSE(bool(irs::Accept(a, B("\xcf\x89\xce\xb1"))));
-  EXPECT_FALSE(bool(irs::Accept(a, B("\xf0\x9f\x98\x80"))));
+TEST(term_predicate_test, range_utf8_bytewise_order) {
+  const auto a = RangePredicateOf("\xce\xb1", "\xcf\x89", true, true);
+  ASSERT_NE(nullptr, a.pred);
+  EXPECT_FALSE(a.Accepts("z"));
+  EXPECT_TRUE(a.Accepts("\xce\xb1"));
+  EXPECT_TRUE(a.Accepts("\xce\xbc"));
+  EXPECT_TRUE(a.Accepts("\xce\xbc\xce\xb1"));
+  EXPECT_TRUE(a.Accepts("\xcf\x89"));
+  EXPECT_FALSE(a.Accepts("\xcf\x89\xce\xb1"));
+  EXPECT_FALSE(a.Accepts("\xf0\x9f\x98\x80"));
 }
 
-TEST(acceptor_fusion_test, range_intersects_with_prefix) {
-  const auto range = RangeAcceptorOf("ap", "az", true, true);
-  const auto prefix = irs::MakePrefixAcceptor(B("a"));
-  const auto fused = irs::IntersectAcceptors(prefix, range, 10'000);
-  ASSERT_TRUE(fused.has_value());
-  EXPECT_TRUE(bool(irs::Accept(*fused, B("apple"))));
-  EXPECT_FALSE(bool(irs::Accept(*fused, B("aa"))));
-  EXPECT_FALSE(bool(irs::Accept(*fused, B("b"))));
+TEST(term_predicate_test, and_range_with_prefix) {
+  irs::BooleanFilter f;
+  f.Add(Prefix("a"), irs::Occur::Must);
+  f.Add(RangeOf("ap", "az", true, true), irs::Occur::Must);
+
+  const auto pred = f.CompileTermPredicate();
+  ASSERT_NE(nullptr, pred);
+  EXPECT_TRUE(Accepts(*pred, "apple"));
+  EXPECT_FALSE(Accepts(*pred, "aa"));
+  EXPECT_FALSE(Accepts(*pred, "b"));
 }
 
 TEST(acceptor_fusion_test, union_of_prefixes) {
-  const auto fused = irs::FromRegexp(std::string_view{"(?:ax.*)|(?:ban.*)"});
-  ASSERT_NE(0, fused.NumStates());
-  EXPECT_TRUE(bool(irs::Accept(fused, B("ax"))));
-  EXPECT_TRUE(bool(irs::Accept(fused, B("axle"))));
-  EXPECT_TRUE(bool(irs::Accept(fused, B("banana"))));
-  EXPECT_FALSE(bool(irs::Accept(fused, B("apple"))));
-  EXPECT_FALSE(bool(irs::Accept(fused, B("b"))));
-  EXPECT_FALSE(bool(irs::Accept(fused, B("c"))));
+  irs::ByRegexp f;
+  f.mutable_options()->pattern = irs::bstring{B("(?:ax.*)|(?:ban.*)")};
+
+  const auto pred = f.CompileTermPredicate();
+  ASSERT_NE(nullptr, pred);
+  EXPECT_TRUE(Accepts(*pred, "ax"));
+  EXPECT_TRUE(Accepts(*pred, "axle"));
+  EXPECT_TRUE(Accepts(*pred, "banana"));
+  EXPECT_FALSE(Accepts(*pred, "apple"));
+  EXPECT_FALSE(Accepts(*pred, "b"));
+  EXPECT_FALSE(Accepts(*pred, "c"));
 }
 
 TEST(acceptor_fusion_test, union_regexp_with_regexp) {
-  const auto fused = irs::FromRegexp(std::string_view{"(?:.*x.*)|(?:a.*e)"});
-  ASSERT_NE(0, fused.NumStates());
-  EXPECT_TRUE(bool(irs::Accept(fused, B("axle"))));
-  EXPECT_TRUE(bool(irs::Accept(fused, B("apple"))));
-  EXPECT_FALSE(bool(irs::Accept(fused, B("banana"))));
+  irs::ByRegexp f;
+  f.mutable_options()->pattern = irs::bstring{B("(?:.*x.*)|(?:a.*e)")};
+
+  const auto pred = f.CompileTermPredicate();
+  ASSERT_NE(nullptr, pred);
+  EXPECT_TRUE(Accepts(*pred, "axle"));
+  EXPECT_TRUE(Accepts(*pred, "apple"));
+  EXPECT_FALSE(Accepts(*pred, "banana"));
 }
 
 TEST(acceptor_fusion_test, union_regexp_with_prefix) {
-  const auto fused = irs::FromRegexp(std::string_view{"(?:.*x.*)|(?:ban.*)"});
-  ASSERT_NE(0, fused.NumStates());
-  EXPECT_TRUE(bool(irs::Accept(fused, B("axle"))));
-  EXPECT_TRUE(bool(irs::Accept(fused, B("banana"))));
-  EXPECT_FALSE(bool(irs::Accept(fused, B("apple"))));
+  irs::ByRegexp f;
+  f.mutable_options()->pattern = irs::bstring{B("(?:.*x.*)|(?:ban.*)")};
+
+  const auto pred = f.CompileTermPredicate();
+  ASSERT_NE(nullptr, pred);
+  EXPECT_TRUE(Accepts(*pred, "axle"));
+  EXPECT_TRUE(Accepts(*pred, "banana"));
+  EXPECT_FALSE(Accepts(*pred, "apple"));
 }
 
-TEST(acceptor_fusion_test, union_respects_state_budget) {
-  ASSERT_EQ(
-    0, irs::FromRegexp(std::string_view{"(?:ax.*)|(?:ban.*)"}, 1).NumStates());
+TEST(acceptor_fusion_test, union_large_fan_in) {
+  std::string pattern;
+  for (char c = 'a'; c <= 'z'; ++c) {
+    pattern += pattern.empty() ? "(?:" : "|(?:";
+    pattern += c;
+    pattern += "[0-9]{3}.*)";
+  }
+
+  irs::ByRegexp f;
+  f.mutable_options()->pattern = irs::bstring{B(pattern)};
+
+  const auto pred = f.CompileTermPredicate();
+  ASSERT_NE(nullptr, pred);
+  for (char c = 'a'; c <= 'z'; ++c) {
+    const std::string term = std::string(1, c) + "123tail";
+    EXPECT_TRUE(Accepts(*pred, term)) << "term: " << term;
+  }
+  EXPECT_FALSE(Accepts(*pred, "a12tail"));
+  EXPECT_FALSE(Accepts(*pred, "0123tail"));
+  EXPECT_FALSE(Accepts(*pred, ""));
 }
 
-TEST(acceptor_fusion_test, intersect_respects_state_budget) {
-  const auto p = irs::MakePrefixAcceptor(B("a"));
-  const auto w = irs::FromWildcard("%e");
+TEST(term_bounds_test, upper_bound_of) {
+  const auto upper = [](std::string_view prefix) {
+    const auto bound = irs::UpperBoundOf(B(prefix));
+    return std::string{irs::ViewCast<char>(irs::bytes_view{bound})};
+  };
 
-  ASSERT_EQ(std::nullopt, irs::IntersectAcceptors(p, w, 1));
-}
+  EXPECT_EQ("bus", upper("bur"));
+  EXPECT_EQ("b", upper("a"));
+  EXPECT_EQ("ab", upper("aa"));
+  EXPECT_EQ("", upper(""));
+  EXPECT_EQ("", upper("\xFF"));
+  EXPECT_EQ("", upper("\xFF\xFF"));
+  EXPECT_EQ("b", upper("a\xFF"));
+  EXPECT_EQ("b", upper("a\xFF\xFF"));
 
-TEST(acceptor_fusion_test, epsilon_arcs_bail_out) {
-  const auto all = irs::MakeAll();
-  const auto p = irs::MakePrefixAcceptor(B("a"));
-
-  ASSERT_EQ(std::nullopt, irs::IntersectAcceptors(all, p, 10'000));
+  constexpr std::string_view kPrefixes[]{"bur", "a", "", "\xFF", "a\xFF", "az"};
+  constexpr std::string_view kKeys[]{
+    "",   "a",   "az",     "az\xFF", "a\xFF", "a\xFF\x01", "b",
+    "bu", "bur", "burden", "bus",    "\xFF",  "\xFF\xFF",
+  };
+  for (const auto prefix : kPrefixes) {
+    const auto bound = irs::UpperBoundOf(B(prefix));
+    for (const auto key : kKeys) {
+      const bool in_range = B(key) >= B(prefix) &&
+                            (bound.empty() || B(key) < irs::bytes_view{bound});
+      EXPECT_EQ(B(key).starts_with(B(prefix)), in_range)
+        << "prefix: '" << prefix << "' key: '" << key << "'";
+    }
+  }
 }
 
 }  // namespace

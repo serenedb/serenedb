@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "formats.hpp"
+#include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 
 namespace irs {
@@ -37,16 +37,27 @@ class EmptyTermReader final : public irs::TermReader {
     return SeekTermIterator::empty();
   }
 
+  SeekTermIterator::ptr iterator(const RegexpAcceptor&) const noexcept final {
+    return SeekTermIterator::empty();
+  }
+
   SeekTermIterator::ptr iterator(
-    const automaton_table_matcher&) const noexcept final {
+    const LevenshteinAcceptor&) const noexcept final {
+    return SeekTermIterator::empty();
+  }
+
+  SeekTermIterator::ptr iterator(
+    const RegexpConjunction&) const noexcept final {
+    return SeekTermIterator::empty();
+  }
+
+  SeekTermIterator::ptr iterator(const FuzzyConjunction&) const noexcept final {
     return SeekTermIterator::empty();
   }
 
   PostingMeta Lookup(bytes_view) const noexcept final { return {}; }
 
   void ReadDocs(bytes_view, Acceptor acceptor) const noexcept final {}
-
-  size_t BitUnion(CookieProvider, uint64_t*) const noexcept final { return 0; }
 
   const FieldMeta& meta() const noexcept final { return FieldMeta::kEmpty; }
 

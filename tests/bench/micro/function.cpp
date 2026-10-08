@@ -453,5 +453,3 @@ BENCHMARK(BmNonTrivialArgsFu2UniqueFunction);
 #endif
 
 }  // namespace
-
-BENCHMARK_MAIN();

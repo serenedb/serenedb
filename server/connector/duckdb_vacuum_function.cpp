@@ -126,7 +126,7 @@ struct VacuumBindData final : public duckdb::FunctionData {
 duckdb::unique_ptr<duckdb::FunctionData> VacuumBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   auto data = duckdb::make_uniq<VacuumBindData>();
 
   if (input.inputs.size() >= 1 && !input.inputs[0].IsNull()) {
@@ -162,8 +162,7 @@ struct ResolvedName {
 };
 
 ResolvedName ResolveName(duckdb::ClientContext& context,
-                         const VacuumBindData& bind, Scope scope,
-                         const ConnectionContext& conn_ctx) {
+                         const VacuumBindData& bind, Scope scope) {
   ResolvedName out;
   switch (scope) {
     case Scope::Database: {
@@ -210,15 +209,16 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
   }
 
   if (out.database.empty()) {
-    out.database = conn_ctx.GetDatabase();
+    out.database =
+      duckdb::DatabaseManager::GetDefaultDatabase(context).GetIdentifierName();
   }
   return out;
 }
 
 duckdb::Catalog& LookupDatabase(duckdb::ClientContext& context,
                                 std::string_view name) {
-  auto found = duckdb::Catalog::GetCatalogEntry(
-    context, duckdb::Identifier{std::string{name}});
+  auto found =
+    duckdb::Catalog::GetCatalogEntry(context, duckdb::Identifier{name});
   if (!found) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                     ERR_MSG("database \"", name, "\" does not exist"));
@@ -272,6 +272,7 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
     const auto [res, _] = irs::GetBlocking(inverted.CompactUnsafeAsync(
       kPolicy, tick, empty_compaction, &field_options, env_ptr));
     if (!res.ok()) {
+      context.InterruptCheck();
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INTERNAL_ERROR),
         ERR_MSG("compact_index: compaction failed: ", res.message()));
@@ -325,7 +326,7 @@ void CollectInvertedSteps(duckdb::ClientContext& context,
     context, duckdb::CatalogType::INDEX_ENTRY,
     [&](duckdb::CatalogEntry& entry) {
       auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
-      if (!IsInvertedIndex(index) || index.GetTableName() != table.name) {
+      if (!IsInvertedIndex(index) || index.table_oid != table.oid) {
         return;
       }
       const auto& inverted = index.Cast<catalog::InvertedIndexEntry>();
@@ -404,14 +405,8 @@ void DispatchInverted(duckdb::ClientContext& context,
       }
       // An index has no owner of its own; maintenance rides on its
       // relation (a table, or a view for view-backed indexes).
-      auto relation = duckdb::Catalog::GetEntry(
-        context,
-        duckdb::EntryLookupInfo{
-          duckdb::CatalogType::TABLE_ENTRY,
-          duckdb::QualifiedName{duckdb::Identifier{target.database},
-                                index->ParentSchemaName(),
-                                index->GetTableName()}},
-        duckdb::OnEntryNotFound::RETURN_NULL);
+      auto relation =
+        index->GetRelation(index->catalog.GetCatalogTransaction(context));
       if (relation && !MayMaintain(conn_ctx, relation->permissions,
                                    relation->name.GetIdentifierName(), verb)) {
         return;
@@ -641,7 +636,7 @@ void VacuumExecute(duckdb::ClientContext& context,
       ERR_MSG("VACUUM (", bind_data.option, ") does not take an argument"));
   }
 
-  auto target = ResolveName(context, bind_data, verb->scope, conn_ctx);
+  auto target = ResolveName(context, bind_data, verb->scope);
 
   pg::ProgressMetrics* progress = nullptr;
   if (auto client_state = context.registered_state->Get<SereneDBClientState>(
@@ -715,13 +710,15 @@ void VacuumPragma(duckdb::ClientContext& context,
 void RegisterVacuumFunction(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader(db, "serenedb");
 
-  duckdb::TableFunction func("serenedb_vacuum", {}, VacuumExecute, VacuumBind);
-  func.varargs = duckdb::LogicalType::VARCHAR;
+  duckdb::FunctionSignature signature;
+  signature.AddArgs("args", duckdb::LogicalType::VARCHAR);
+  duckdb::TableFunction func("serenedb_vacuum", std::move(signature),
+                             VacuumExecute, VacuumBind);
   loader.RegisterFunction(func);
 
   auto pragma = duckdb::PragmaFunction::PragmaCall(
-    "serenedb_vacuum", VacuumPragma, {duckdb::LogicalType::VARCHAR});
-  pragma.varargs = duckdb::LogicalType::VARCHAR;
+    "serenedb_vacuum", VacuumPragma, {duckdb::LogicalType::VARCHAR},
+    duckdb::LogicalType::VARCHAR);
   loader.RegisterFunction(pragma);
 }
 

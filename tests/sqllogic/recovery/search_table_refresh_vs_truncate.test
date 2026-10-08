@@ -1,0 +1,71 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE rvt (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO rvt VALUES (1, 'a'), (2, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) rvt;
+
+statement ok
+SET sdb_faults = 'pause_search_refresh_after_tick';
+
+connection refresher
+statement async ok
+VACUUM (REFRESH_TABLE) rvt;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_refresh_after_tick:parked';
+
+connection truncater
+statement async ok
+TRUNCATE rvt;
+
+# Best effort: a TRUNCATE that waits for the refresh is indistinguishable from
+# one that has not got to its Clear yet, so the sleep only gives an
+# unsynchronised Clear time to land inside the refresh window. If it has not,
+# the run misses a regression rather than failing spuriously.
+sleep 1s
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_refresh_after_tick:release';
+
+wait
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) rvt;
+
+connection default
+query
+SELECT count(*) AS n FROM rvt;
+----
+n
+0
+
+connection default
+statement ok
+INSERT INTO rvt VALUES (3, 'c');
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) rvt;
+
+connection default
+query
+SELECT id, tag FROM rvt ORDER BY id;
+----
+id	tag
+3	c
+
+connection default
+statement ok
+DROP TABLE rvt;

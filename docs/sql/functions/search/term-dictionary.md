@@ -58,7 +58,7 @@ Scalar forms of the same read. A field whose only consumers are `min`/`max` neve
 
 A `WHERE` clause splits by what each conjunct means:
 
-- **Term matching** — comparisons on the enumerated field (`=`, `IN`, `LIKE 'x%'`, `BETWEEN`, range comparisons and boolean combinations of them) select terms directly and push into the scan as one fused filter tree: the most selective seekable acceptor drives the enumeration, automaton-expressible acceptors fuse with it into one product automaton pruning the dictionary, disjunctions union into one automaton, and the rest are checked per emitted term. On a keyword column this is also exactly document filtering, since each document carries one term.
+- **Term matching** — comparisons on the enumerated field (`=`, `IN`, `LIKE 'x%'`, `BETWEEN`, range comparisons and boolean combinations of them) select terms directly and push into the scan as one fused filter tree: the conjuncts on the field become one dictionary walk — an exact `=` drives it by lookup, as does a pattern that can only match a short list of words, and otherwise up to four patterns (`LIKE` with wildcards, a regex) and one fuzzy match (`@@ ts_levenshtein` on a keyword column) step through the dictionary together, pruning every branch any of them rules out; `=`, prefix and range conjuncts bound the walk to their key range, disjunctions union into one automaton that matches exactly the terms each alternative matches on its own, and the rest are checked per emitted term. On a keyword column this is also exactly document filtering, since each document carries one term.
 - **Document filtering** — any [`@@ ts_*`](./full-text.md#tsquery-constructors) matcher on a tokenized column, and conditions on *other* indexed columns, filter documents: the aggregate returns **all terms of matching documents** with counts over that document set. `ts_dict_agg(cat) ... WHERE body @@ ts_starts_with('err')` is facet counting: category terms over the documents that match. The filter executes once per segment; each candidate term's postings are intersected with the cached result.
 - **Scalar predicates** on the enumerated field the index cannot claim (`length(col) = 5`, expressions over the term text) post-filter the emitted term rows.
 
@@ -86,6 +86,8 @@ WHERE cat @@ ts_levenshtein('phon', 2)      -- enumerates: uncapped
 ```
 
 Since the aggregate returns terms of *matching* documents, capping the second predicate also narrows the terms returned.
+
+A top-*k* by score bounds the enumeration instead: with `ORDER BY ts_dict_score(...) DESC LIMIT k` over one fuzzy-enumerated field and nothing else filtering its terms, the walk keeps only the terms that can still reach the first *k*, so EXPLAIN shows `Max Terms: k`, or `k with ties` when a later sort key such as `ts_dict_count` has to see every term tied with the *k*-th. The rows are the ones the unbounded query returns; when the score is the only sort key, ties are broken by term.
 :::
 
 ## Standard SQL served from the dictionary {#implicit-rewrites}

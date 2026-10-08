@@ -112,7 +112,7 @@ skipif postgres
 query error
 CREATE OR REPLACE VIEW chinchopa AS SELECT 1;
 ----
-db error: ERROR: Existing object chinchopa is of type Table, trying to replace with type View
+db error: ERROR: Existing object "chinchopa" is of type Table, trying to replace with type View
 
 
 statement ok

@@ -97,3 +97,78 @@ Did you mean: "a"
 
 statement ok
 DROP TABLE tinker;
+
+
+# An index or a view over the table does not block NOT NULL or constraint
+# changes; only ADD PRIMARY KEY still needs the indexes dropped first.
+statement ok
+CREATE TABLE lina(a integer, b integer, c text);
+
+
+statement ok
+CREATE INDEX lina_a ON lina(a);
+
+
+statement ok
+CREATE INDEX lina_c ON lina USING inverted(c);
+
+
+statement ok
+CREATE VIEW lina_v AS SELECT a, b FROM lina;
+
+
+statement ok
+INSERT INTO lina VALUES (1, 1, 'x');
+
+
+statement ok
+ALTER TABLE lina ALTER COLUMN b SET NOT NULL;
+
+
+statement error
+INSERT INTO lina VALUES (2, NULL, 'y');
+
+
+statement ok
+ALTER TABLE lina ALTER COLUMN b DROP NOT NULL;
+
+
+statement ok
+ALTER TABLE lina ADD CONSTRAINT lina_ck CHECK (a > 0);
+
+
+statement error
+INSERT INTO lina VALUES (0, 2, 'y');
+
+
+statement ok
+ALTER TABLE lina ADD CONSTRAINT lina_b_key UNIQUE (b);
+
+
+statement error
+INSERT INTO lina VALUES (3, 1, 'y');
+
+
+statement error
+ALTER TABLE lina ADD PRIMARY KEY (a);
+----
+db error: ERROR: Cannot alter entry "lina" because there are entries that depend on it.
+index "lina_a" depends on table "lina".
+index "lina_c" depends on table "lina".
+Drop the dependent entries first and recreate them after the change.
+
+
+statement ok
+INSERT INTO lina VALUES (4, NULL, 'z');
+
+
+query
+SELECT * FROM lina_v ORDER BY a;
+----
+a	b
+1	1
+4	NULL
+
+
+statement ok
+DROP TABLE lina CASCADE;

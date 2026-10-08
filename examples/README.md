@@ -25,6 +25,7 @@ End-to-end demos that show what SereneDB does, against real data, in scripts you
 | [demo4](demo4/) | **Hybrid vector + FTS** -- one index with BM25 and HNSW cosine ANN; vector top-K, range search, text+vector hybrid | Qdrant dbpedia-entities (~100k abstracts, 1536-dim OpenAI embeddings) |
 | [demo5](demo5/) | **Self-embedding semantic search** -- `ai_embed(...)` at ingest and query time against any OpenAI-compatible endpoint | neuralwork/arxiver (arXiv ML abstracts, Gemini 3072-dim embeddings) |
 | [demo6](demo6/) | **Code search + statistics with sparse ngrams** -- GitHub-style substring + fuzzy code search via the `sparse_ngram` tokenizer, BM25 over statements, per-problem runtime/memory statistics aggregated from index INCLUDE columns | UNION ALL views over open-r1/codeforces + deepmind/code_contests (~15k problems) and ~45k accepted submissions (open-r1 `selected_accepted`), all CC-BY-4.0 |
+| [demo7](demo7/) | **Support tickets triaged as they arrive with `ai_system_one`** -- a stored generated column asks yes/no, choice and score questions on every `INSERT`, an `UPDATE` re-triages only rewritten tickets, a new column is filled in place for one plan, and queries read the stored answers without requests; Jev on OpenRouter answers | 16 support tickets inserted by `demo.sql` |
 
 ## Running a demo
 
@@ -54,11 +55,11 @@ and query it in-process, so no server and no dataset are needed.
 | [text_filters.cpp](iresearch/text_filters.cpp) | The advanced text filters built by hand rather than through the parser -- `ByPhrase`, `ByNGramSimilarity`, `ByRegexp`, `ByWildcard`, `ByEditDistance` -- each against the same corpus so you can compare what they match |
 | [geo.cpp](iresearch/geo.cpp) | S2-based geospatial search: index GeoJSON points with the geojson analyzer, then run a shape `Intersects` filter against a polygon and a distance filter against a center and radius |
 
-Build them with the aggregate target and run from the build directory:
+They are built into one binary; pick an example by name and run from the build directory:
 
 ```bash
 cd build && ninja iresearch-examples
-./bin/iresearch-example-basic
-./bin/iresearch-example-text-filters
-./bin/iresearch-example-geo
+./bin/iresearch-examples basic
+./bin/iresearch-examples text_filters
+./bin/iresearch-examples geo
 ```

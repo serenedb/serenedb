@@ -51,13 +51,15 @@ Note that double quotes (`"`) cannot be used as string delimiter character: inst
 
 ### String Literal Concatenation
 
-SereneDB does not support implicit concatenation of adjacent string literals. Placing two single-quoted literals next to each other results in a syntax error, whether or not a newline separates them:
+As in PostgreSQL, adjacent string literals are concatenated when the whitespace between them contains at least one newline:
 
 <SqlLogicTest id="sql/data_types/literal_types/example_004" />
 
+On a single line, placing two single-quoted literals next to each other is a syntax error:
+
 <SqlLogicTest id="sql/data_types/literal_types/example_006" />
 
-To concatenate strings, use the `||` operator explicitly:
+To concatenate strings anywhere, use the `||` operator explicitly:
 
 <SqlLogicTest id="sql/data_types/literal_types/example_005" />
 

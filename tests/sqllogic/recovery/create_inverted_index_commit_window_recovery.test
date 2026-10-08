@@ -1,0 +1,79 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE melstroi_logs (id INTEGER, b TEXT);
+
+
+statement ok
+INSERT INTO melstroi_logs SELECT i, 'w' || (i % 5) FROM range(0, 1000) r(i);
+
+
+statement ok
+SET sdb_faults = 'pause_create_index_before_commit';
+
+
+connection builder
+statement async ok
+CREATE INDEX melstroi_logs_b ON melstroi_logs USING inverted (b) WITH (refresh_interval = 0);
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) AS n FROM pg_stat_progress_create_index WHERE phase = 'finalizing';
+----
+n
+1
+
+
+connection default
+statement ok
+DELETE FROM melstroi_logs WHERE id % 2 = 0;
+
+
+connection default
+statement ok
+INSERT INTO melstroi_logs SELECT i, 'w' || (i % 5) FROM range(1000, 1100) r(i);
+
+
+connection default
+statement ok
+SET sdb_faults = '-pause_create_index_before_commit';
+
+
+connection builder
+wait
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM melstroi_logs;
+----
+n
+600
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) melstroi_logs;
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM melstroi_logs_b) AS docs, (SELECT count(*) FROM melstroi_logs_b WHERE b @@ 'w1') AS one;
+----
+docs	one
+600	120

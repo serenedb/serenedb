@@ -30,7 +30,8 @@ CREATE TEXT SEARCH DICTIONARY sng_err3 AS
     generate_sparse_ngrams()
     WITH (frequency, position, offset)
 ----
-db error: ERROR: Unsupported index features are specified: 7
+db error: ERROR: Unsupported index features are specified: position, offset
+HINT: generate_sparse_ngrams supports frequency, norm.
 
 
 # --- position feature is not supported (grams have no meaningful positions) ---
@@ -40,7 +41,8 @@ CREATE TEXT SEARCH DICTIONARY sng_err4 AS
     generate_sparse_ngrams()
     WITH (frequency, position)
 ----
-db error: ERROR: Unsupported index features are specified: 3
+db error: ERROR: Unsupported index features are specified: position
+HINT: generate_sparse_ngrams supports frequency, norm.
 
 
 # --- min_ngram_length below minimum ---

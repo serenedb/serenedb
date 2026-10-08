@@ -121,6 +121,12 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
   const std::string_view subtype =
     subtype_it != extra.end() ? subtype_it->second : std::string_view{};
   if (error.Type() == duckdb::ExceptionType::CATALOG) {
+    if (subtype == "WRONG_OBJECT_TYPE") {
+      return ERRCODE_WRONG_OBJECT_TYPE;
+    }
+    if (subtype == "UNSUPPORTED") {
+      return ERRCODE_FEATURE_NOT_SUPPORTED;
+    }
     const auto kind_it = extra.find("type");
     const std::string_view kind =
       kind_it != extra.end() ? kind_it->second : std::string_view{};
@@ -416,7 +422,7 @@ void WriteRowDescription(message::Buffer& out, duckdb::ClientContext& context,
     w.Write(kNull);
     absl::big_endian::Store32(w.Alloc(kInt32), 0);
     absl::big_endian::Store16(w.Alloc(kInt16), 0);
-    const auto type_info = sdb::pg::Logical2Pg(types[i], &context);
+    const auto type_info = sdb::pg::Logical2Pg(types[i]);
     absl::big_endian::Store32(w.Alloc(kInt32), type_info.oid);
     absl::big_endian::Store16(w.Alloc(kInt16), type_info.typlen);
     absl::big_endian::Store32(w.Alloc(kInt32), type_info.typmod);
@@ -555,6 +561,13 @@ irs::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
     if (absl::SimpleAtoi(it->second, &pos)) {
       data.cursorpos = pos + 1;
     }
+  }
+  if (auto it = error.ExtraInfo().find("detail");
+      it != error.ExtraInfo().end()) {
+    data.errdetail = it->second;
+  }
+  if (auto it = error.ExtraInfo().find("hint"); it != error.ExtraInfo().end()) {
+    data.errhint = it->second;
   }
   return data;
 }

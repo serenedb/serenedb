@@ -5,13 +5,14 @@ split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
+import useBaseUrl from "@docusaurus/useBaseUrl";
 
 The SereneDB JSON reader can automatically infer which configuration flags to use by analyzing the JSON file. This will work correctly in most situations, and should be the first option attempted. In rare situations where the JSON reader cannot figure out the correct configuration, it is possible to manually configure the JSON reader to correctly parse the JSON file.
 
 ## The `read_json` Function
 
 The `read_json` is the simplest method of loading JSON files: it automatically attempts to figure out the correct configuration of the JSON reader. It also automatically deduces types of columns.
-In the following example, we use the <a href="/files/docs/todos.json" download>`todos.json`</a> file,
+In the following example, we use the <a href={useBaseUrl("/files/docs/todos.json")} download>`todos.json`</a> file,
 
 <SqlLogicTest id="data_import_and_export/json/loading_json/example_001" />
 

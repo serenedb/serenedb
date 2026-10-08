@@ -25,6 +25,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
+#include <tuple>
 
 #include "ts_common.hpp"
 
@@ -37,6 +38,7 @@ absl::Status SetupTermClause(irs::TermClause& clause,
 void BuildFtsTerm(BoolTarget parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::Value& value) {
+  std::ignore = TakeMinMatch(ctx);
   if (value.IsNull()) {
     AddFilter<irs::Empty>(parent);
     return;
@@ -153,9 +155,10 @@ void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
                     bool require_all) {
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
       column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
-    BuildFtsTerm(parent, ctx, column_info, duckdb::Value(std::string{text}));
+    BuildFtsTerm(parent, ctx, column_info, duckdb::Value(text));
     return;
   }
+  const uint32_t value_min_match = require_all ? 0 : TakeMinMatch(ctx);
   irs::ValueTokens<irs::TokenLayout::TermsPos> tokens{ctx.tokenizer.Traits()};
   AnalyzeText(ctx.tokenizer, text, tokens);
   if (tokens.terms().empty()) {
@@ -164,7 +167,9 @@ void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
   }
   TokenGroups groups;
   AppendTokenGroups(tokens.terms(), tokens.pos(), groups);
-  const auto min_match = require_all ? groups.size() : size_t{1};
+  const auto min_match = require_all
+                           ? groups.size()
+                           : size_t{std::max(value_min_match, uint32_t{1})};
   AddTokenGroups(
     MaybeNegated(parent, ctx, column_info),
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR), groups,

@@ -26,13 +26,16 @@
 #include <absl/time/time.h>
 
 #include <cstdint>
+#include <optional>
 
 namespace sdb::search {
 
 class WriterGenerations {
  public:
-  [[nodiscard]] unsigned Register();
+  [[nodiscard]] std::optional<unsigned> Register();
   void Deregister(unsigned slot) noexcept;
+  [[nodiscard]] bool ClaimTruncate();
+  void ReleaseTruncate() noexcept;
   [[nodiscard]] bool Drain(absl::FunctionRef<bool()> cancelled,
                            absl::Duration poll);
 
@@ -45,6 +48,7 @@ class WriterGenerations {
   absl::CondVar _cv;
   unsigned _generation ABSL_GUARDED_BY(_mutex) = 0;
   uint64_t _writers[2] ABSL_GUARDED_BY(_mutex) = {0, 0};
+  bool _truncating ABSL_GUARDED_BY(_mutex) = false;
 };
 
 }  // namespace sdb::search

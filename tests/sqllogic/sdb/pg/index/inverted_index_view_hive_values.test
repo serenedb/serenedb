@@ -1,0 +1,333 @@
+control substitution on
+
+# Hive partition values read back from a view-backed inverted index: nested
+# partitions, values the writer escapes in the path, the NULL and empty
+# partitions, and the types the reader gives a partition (detected, turned
+# off, or set through hive_types). The index returns what the view returns.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ivhv_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+# ---- Two partition levels. The reader orders partition columns by name.
+
+statement ok
+COPY (SELECT * FROM (VALUES
+        (1, 'pudge goes mid', 2021, 'eu'),
+        (2, 'anchin reads manga', 2021, 'us'),
+        (3, 'techies plants mines', 2021, 'eu'),
+        (4, 'pudge plays again', 2021, 'us'),
+        (5, 'lina burns pudge', 2022, 'eu'),
+        (6, 'kostya types all night', 2022, 'us'),
+        (7, 'vedernikoff ships delta', 2022, 'eu'),
+        (8, 'pudge buys blink', 2022, 'us'),
+        (9, 'gayazov skips stand up', 2023, 'eu'),
+        (10, 'krivda closes tickets', 2023, 'us'),
+        (11, 'pudge hooks techies', 2023, 'eu'),
+        (12, 'babsky parses csv', 2023, 'us')) t(id, body, year, region))
+TO '${__TEST_DIR__}/ivhv_nested' (FORMAT PARQUET, PARTITION_BY (year, region));
+
+statement ok
+CREATE VIEW ivhv_nested_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/ivhv_nested/*/*/*.parquet', hive_partitioning=true);
+
+statement ok
+CREATE INDEX ivhv_nested_idx ON ivhv_nested_v USING inverted(id, body ivhv_en);
+
+query
+SELECT * FROM ivhv_nested_idx WHERE id IN (1, 6, 11) ORDER BY id;
+----
+id	body	region	year
+1	pudge goes mid	eu	2021
+6	kostya types all night	us	2022
+11	pudge hooks techies	eu	2023
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivhv_nested_v EXCEPT SELECT * FROM ivhv_nested_idx)
+                      UNION ALL (SELECT * FROM ivhv_nested_idx EXCEPT SELECT * FROM ivhv_nested_v));
+----
+count
+0
+
+query
+SELECT year, region, string_agg(id::text, ',' ORDER BY id) AS ids
+FROM ivhv_nested_idx GROUP BY year, region ORDER BY year, region;
+----
+year	region	ids
+2021	eu	1,3
+2021	us	2,4
+2022	eu	5,7
+2022	us	6,8
+2023	eu	9,11
+2023	us	10,12
+
+query
+SELECT id FROM ivhv_nested_idx WHERE year = 2022 AND region = 'us' ORDER BY id;
+----
+id
+6
+8
+
+query
+SELECT id FROM ivhv_nested_idx
+WHERE year >= 2022 AND region = 'eu' AND body @@ ts_phrase('pudge') ORDER BY id;
+----
+id
+5
+11
+
+query
+SELECT year, count(*) AS n FROM ivhv_nested_idx WHERE body @@ ts_phrase('pudge')
+GROUP BY year ORDER BY year;
+----
+year	n
+2021	2
+2022	2
+2023	1
+
+query
+SELECT max(year) - min(year) AS span, sum(year + 1) AS shifted FROM ivhv_nested_idx;
+----
+span	shifted
+2	24276
+
+# ---- Values the writer escapes in the path, the NULL partition and the
+# empty one.
+
+statement ok
+COPY (SELECT * FROM (VALUES
+        (1, 'pudge goes mid', 'dark red'),
+        (2, 'anchin reads manga', 'a/b=c'),
+        (3, 'techies plants mines', NULL),
+        (4, 'lina burns pudge', 'émoji 🎉'),
+        (5, 'kostya types all night', ''),
+        (6, 'krivda closes tickets', '50%')) t(id, body, tag))
+TO '${__TEST_DIR__}/ivhv_escaped' (FORMAT PARQUET, PARTITION_BY (tag));
+
+statement ok
+CREATE VIEW ivhv_escaped_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/ivhv_escaped/*/*.parquet', hive_partitioning=true);
+
+statement ok
+CREATE INDEX ivhv_escaped_idx ON ivhv_escaped_v USING inverted(id, body ivhv_en);
+
+query
+SELECT id, tag, length(tag) AS len FROM ivhv_escaped_idx ORDER BY id;
+----
+id	tag	len
+1	dark red	8
+2	a/b=c	5
+3	NULL	NULL
+4	émoji 🎉	7
+5	(empty)	0
+6	50%	3
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivhv_escaped_v EXCEPT SELECT * FROM ivhv_escaped_idx)
+                      UNION ALL (SELECT * FROM ivhv_escaped_idx EXCEPT SELECT * FROM ivhv_escaped_v));
+----
+count
+0
+
+query
+SELECT
+  (SELECT string_agg(id::text, ',') FROM ivhv_escaped_idx WHERE tag = 'a/b=c') AS slash,
+  (SELECT string_agg(id::text, ',') FROM ivhv_escaped_idx WHERE tag IS NULL) AS null_tag,
+  (SELECT string_agg(id::text, ',') FROM ivhv_escaped_idx WHERE tag = '') AS empty_tag,
+  (SELECT string_agg(id::text, ',') FROM ivhv_escaped_idx WHERE tag = '50%') AS percent,
+  (SELECT string_agg(id::text, ',') FROM ivhv_escaped_idx WHERE tag = 'émoji 🎉') AS emoji;
+----
+slash	null_tag	empty_tag	percent	emoji
+2	3	5	6	4
+
+query
+SELECT id, tag FROM ivhv_escaped_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	tag
+1	dark red
+4	émoji 🎉
+
+# ---- Partition types: the reader detects BIGINT and DATE and keeps the
+# rest as text; turning detection off or naming the types changes the view
+# and the index alike.
+
+statement ok
+COPY (SELECT * FROM (VALUES
+        (1, 'pudge goes mid', 7::BIGINT, 1.5::DOUBLE, true, DATE '2024-01-01', TIMESTAMP '2024-01-01 10:00:00'),
+        (2, 'anchin reads manga', 9000000000::BIGINT, -2.25::DOUBLE, false, DATE '2024-02-29', TIMESTAMP '2025-06-30 23:59:59'))
+      t(id, body, big, dbl, flag, day, ts))
+TO '${__TEST_DIR__}/ivhv_typed' (FORMAT PARQUET, PARTITION_BY (big, dbl, flag, day, ts));
+
+statement ok
+CREATE VIEW ivhv_typed_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/ivhv_typed/**/*.parquet', hive_partitioning=true);
+
+statement ok
+CREATE INDEX ivhv_typed_idx ON ivhv_typed_v USING inverted(id, body ivhv_en);
+
+query
+SELECT id, big, typeof(big) AS big_t, dbl, typeof(dbl) AS dbl_t, flag, typeof(flag) AS flag_t,
+       day, typeof(day) AS day_t, ts, typeof(ts) AS ts_t
+FROM ivhv_typed_idx ORDER BY id;
+----
+id	big	big_t	dbl	dbl_t	flag	flag_t	day	day_t	ts	ts_t
+1	7	BIGINT	1.5	VARCHAR	true	VARCHAR	2024-01-01	DATE	2024-01-01 10:00:00	VARCHAR
+2	9000000000	BIGINT	-2.25	VARCHAR	false	VARCHAR	2024-02-29	DATE	2025-06-30 23:59:59	VARCHAR
+
+query
+SELECT id, big * 2 AS twice, day + 1 AS next_day FROM ivhv_typed_idx
+WHERE big > 8000000000 AND day < DATE '2024-03-01';
+----
+id	twice	next_day
+2	18000000000	2024-03-01
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivhv_typed_v EXCEPT SELECT * FROM ivhv_typed_idx)
+                      UNION ALL (SELECT * FROM ivhv_typed_idx EXCEPT SELECT * FROM ivhv_typed_v));
+----
+count
+0
+
+statement ok
+CREATE VIEW ivhv_detected_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/ivhv_typed/**/*.parquet');
+
+statement ok
+CREATE INDEX ivhv_detected_idx ON ivhv_detected_v USING inverted(id, body ivhv_en);
+
+query
+SELECT id, big, day FROM ivhv_detected_idx ORDER BY id;
+----
+id	big	day
+1	7	2024-01-01
+2	9000000000	2024-02-29
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivhv_detected_v EXCEPT SELECT * FROM ivhv_detected_idx)
+                      UNION ALL (SELECT * FROM ivhv_detected_idx EXCEPT SELECT * FROM ivhv_detected_v));
+----
+count
+0
+
+statement ok
+CREATE VIEW ivhv_text_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/ivhv_typed/**/*.parquet', hive_partitioning=true,
+                             hive_types_autocast=false);
+
+statement ok
+CREATE INDEX ivhv_text_idx ON ivhv_text_v USING inverted(id, body ivhv_en);
+
+query
+SELECT id, big || '|' || day AS joined, typeof(big) AS big_t FROM ivhv_text_idx ORDER BY id;
+----
+id	joined	big_t
+1	7|2024-01-01	VARCHAR
+2	9000000000|2024-02-29	VARCHAR
+
+statement ok
+CREATE VIEW ivhv_named_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/ivhv_typed/**/*.parquet', hive_partitioning=true,
+                             hive_types={'big': 'VARCHAR', 'flag': 'BOOLEAN', 'ts': 'DATE'});
+
+statement ok
+CREATE INDEX ivhv_named_idx ON ivhv_named_v USING inverted(id, body ivhv_en);
+
+query
+SELECT id, big, typeof(big) AS big_t, flag, typeof(flag) AS flag_t, ts, typeof(ts) AS ts_t
+FROM ivhv_named_idx ORDER BY id;
+----
+id	big	big_t	flag	flag_t	ts	ts_t
+1	7	VARCHAR	t	BOOLEAN	2024-01-01	DATE
+2	9000000000	VARCHAR	f	BOOLEAN	2025-06-30	DATE
+
+query
+SELECT id FROM ivhv_named_idx WHERE flag AND ts = DATE '2024-01-01';
+----
+id
+1
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivhv_named_v EXCEPT SELECT * FROM ivhv_named_idx)
+                      UNION ALL (SELECT * FROM ivhv_named_idx EXCEPT SELECT * FROM ivhv_named_v));
+----
+count
+0
+
+# A number written with leading zeros keeps the column text, zeros included.
+system ok
+mkdir -p $__TEST_DIR__/ivhv_code/code=007 $__TEST_DIR__/ivhv_code/code=12
+
+statement ok
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body)
+TO '${__TEST_DIR__}/ivhv_code/code=007/f.parquet' (FORMAT PARQUET);
+
+statement ok
+COPY (SELECT 2 AS id, 'anchin reads manga' AS body)
+TO '${__TEST_DIR__}/ivhv_code/code=12/f.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW ivhv_code_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/ivhv_code/*/*.parquet', hive_partitioning=true);
+
+statement ok
+CREATE INDEX ivhv_code_idx ON ivhv_code_v USING inverted(id, body ivhv_en);
+
+query
+SELECT id, code, typeof(code) AS code_t FROM ivhv_code_idx ORDER BY id;
+----
+id	code	code_t
+1	007	VARCHAR
+2	12	VARCHAR
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivhv_code_v EXCEPT SELECT * FROM ivhv_code_idx)
+                      UNION ALL (SELECT * FROM ivhv_code_idx EXCEPT SELECT * FROM ivhv_code_v));
+----
+count
+0
+
+statement ok
+DROP INDEX ivhv_code_idx;
+
+statement ok
+DROP VIEW ivhv_code_v;
+
+statement ok
+DROP INDEX ivhv_named_idx;
+
+statement ok
+DROP VIEW ivhv_named_v;
+
+statement ok
+DROP INDEX ivhv_text_idx;
+
+statement ok
+DROP VIEW ivhv_text_v;
+
+statement ok
+DROP INDEX ivhv_detected_idx;
+
+statement ok
+DROP VIEW ivhv_detected_v;
+
+statement ok
+DROP INDEX ivhv_typed_idx;
+
+statement ok
+DROP VIEW ivhv_typed_v;
+
+statement ok
+DROP INDEX ivhv_escaped_idx;
+
+statement ok
+DROP VIEW ivhv_escaped_v;
+
+statement ok
+DROP INDEX ivhv_nested_idx;
+
+statement ok
+DROP VIEW ivhv_nested_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ivhv_en;

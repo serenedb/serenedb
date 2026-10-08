@@ -42,6 +42,8 @@
 #include <duckdb/planner/operator/logical_cross_product.hpp>
 #include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
+#include <duckdb/planner/operator/logical_limit.hpp>
+#include <duckdb/planner/operator/logical_order.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_unnest.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
@@ -180,7 +182,7 @@ duckdb::unique_ptr<duckdb::Expression> BuildTsDictAggregate(
   auto& sys = duckdb::Catalog::GetSystemCatalog(context);
   auto& entry = sys.GetEntry<duckdb::AggregateFunctionCatalogEntry>(
     context, duckdb::QualifiedName(sys.GetName(), DEFAULT_SCHEMA,
-                                   duckdb::Identifier{std::string{agg_name}}));
+                                   duckdb::Identifier{agg_name}));
   duckdb::vector<
     std::pair<duckdb::Identifier, duckdb::unique_ptr<duckdb::Expression>>>
     args;
@@ -201,9 +203,9 @@ duckdb::unique_ptr<duckdb::Expression> BuildTsDictListAggregate(
   duckdb::ClientContext& context, std::string_view name,
   const duckdb::LogicalType& type, duckdb::ColumnBinding binding) {
   auto ref = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-    duckdb::Identifier{std::string{name}}, type, binding);
+    duckdb::Identifier{name}, type, binding);
   auto filter_ref = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-    duckdb::Identifier{std::string{name}}, type, binding);
+    duckdb::Identifier{name}, type, binding);
   auto is_not_null = duckdb::make_uniq<duckdb::BoundOperatorExpression>(
     duckdb::ExpressionType::OPERATOR_IS_NOT_NULL, duckdb::LogicalType::BOOLEAN);
   is_not_null->GetChildrenMutable().push_back(std::move(filter_ref));
@@ -511,8 +513,9 @@ void CollapseTsDictUnnest(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
       return;
     }
     const auto* inner = ba.GetChildren()[0].get();
-    if (inner->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
-      inner = &inner->Cast<duckdb::BoundCastExpression>().Child();
+    if (duckdb::BoundCastExpression::IsCast(*inner)) {
+      inner = &duckdb::BoundCastExpression::Child(
+        inner->Cast<duckdb::BoundFunctionExpression>());
     }
     if (inner->GetExpressionClass() !=
         duckdb::ExpressionClass::BOUND_COLUMN_REF) {
@@ -567,6 +570,163 @@ void CollapseTsDictUnnest(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   }
   proj->children.push_back(std::move(child));
   plan = std::move(proj);
+}
+
+namespace {
+
+void LimitByScore(duckdb::LogicalLimit& limit) {
+  if (limit.children.size() != 1 ||
+      limit.limit_val.Type() != duckdb::LimitNodeType::CONSTANT_VALUE) {
+    return;
+  }
+  auto rows = limit.limit_val.GetConstantValue();
+  switch (limit.offset_val.Type()) {
+    case duckdb::LimitNodeType::UNSET:
+      break;
+    case duckdb::LimitNodeType::CONSTANT_VALUE:
+      rows += limit.offset_val.GetConstantValue();
+      break;
+    default:
+      return;
+  }
+  const auto skip_projections = [](duckdb::LogicalOperator* op) {
+    while (op->type == duckdb::LogicalOperatorType::LOGICAL_PROJECTION &&
+           op->children.size() == 1) {
+      op = op->children[0].get();
+    }
+    return op;
+  };
+  auto* order_op = skip_projections(limit.children[0].get());
+  if (rows == 0 ||
+      order_op->type != duckdb::LogicalOperatorType::LOGICAL_ORDER_BY ||
+      order_op->children.size() != 1) {
+    return;
+  }
+  auto& order = order_op->Cast<duckdb::LogicalOrder>();
+  if (order.orders.empty() ||
+      order.orders.front().type != duckdb::OrderType::DESCENDING ||
+      order.orders.front().expression->GetExpressionType() !=
+        duckdb::ExpressionType::BOUND_COLUMN_REF) {
+    return;
+  }
+  auto* merge_op = skip_projections(order.children[0].get());
+  if (merge_op->type !=
+        duckdb::LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY ||
+      merge_op->children.size() != 1) {
+    return;
+  }
+  auto& merge = merge_op->Cast<duckdb::LogicalAggregate>();
+  auto& below = *merge.children[0];
+  auto found = FindTsDictFoundScan(below);
+  if (!found || found->bind_data->ts_dict.requests.size() != 1) {
+    return;
+  }
+  for (auto* op = &below; op != found->get; op = op->children[0].get()) {
+    if (op->type != duckdb::LogicalOperatorType::LOGICAL_PROJECTION ||
+        op->children.size() != 1) {
+      return;
+    }
+  }
+  auto& ss = *found->bind_data;
+  auto& req = ss.ts_dict.requests.front();
+  if (ss.search.filter || found->get->table_filters.HasFilters() ||
+      !req.having_filter ||
+      req.having_filter->type() !=
+        irs::Type<irs::LevenshteinAutomatonFilter>::id()) {
+    return;
+  }
+  const auto kind_of = [&](const duckdb::Expression& expr) {
+    std::optional<TsDictColKind> kind;
+    if (expr.GetExpressionType() != duckdb::ExpressionType::BOUND_COLUMN_REF) {
+      return kind;
+    }
+    const auto source = ResolveBindingThroughProjections(
+      below, expr.Cast<duckdb::BoundColumnRefExpression>().Binding());
+    if (source.table_index != found->get->table_index) {
+      return kind;
+    }
+    if (const auto col =
+          ClassifyTsDictGetCol(ss, source.column_index.GetIndex())) {
+      kind = col->kind;
+    }
+    return kind;
+  };
+  for (const auto& group : merge.groups) {
+    const auto kind = kind_of(*group);
+    if (kind != TsDictColKind::Term && kind != TsDictColKind::TermRaw) {
+      return;
+    }
+  }
+  const auto key = ResolveBindingThroughProjections(
+    *order.children[0], order.orders.front()
+                          .expression->Cast<duckdb::BoundColumnRefExpression>()
+                          .Binding());
+  if (key.table_index != merge.aggregate_index ||
+      key.column_index.GetIndex() >= merge.expressions.size()) {
+    return;
+  }
+  const auto& score = *merge.expressions[key.column_index.GetIndex()];
+  if (score.GetExpressionClass() != duckdb::ExpressionClass::BOUND_AGGREGATE) {
+    return;
+  }
+  const auto& max = score.Cast<duckdb::BoundAggregateExpression>();
+  if (max.Function().GetName() != "max" || max.GetChildren().size() != 1 ||
+      kind_of(*max.GetChildren()[0]) != TsDictColKind::Score) {
+    return;
+  }
+  const auto term_group = [&](const duckdb::ColumnBinding& binding) {
+    const auto resolved =
+      ResolveBindingThroughProjections(*order.children[0], binding);
+    return resolved.table_index == merge.group_index &&
+           resolved.column_index.GetIndex() < merge.groups.size() &&
+           kind_of(*merge.groups[resolved.column_index.GetIndex()]) ==
+             TsDictColKind::Term;
+  };
+  bool with_ties = true;
+  if (order.orders.size() > 1) {
+    const auto& next = order.orders[1];
+    with_ties =
+      next.type != duckdb::OrderType::ASCENDING ||
+      next.expression->GetExpressionType() !=
+        duckdb::ExpressionType::BOUND_COLUMN_REF ||
+      !term_group(
+        next.expression->Cast<duckdb::BoundColumnRefExpression>().Binding());
+  } else {
+    auto& input = *order.children[0];
+    input.ResolveOperatorTypes();
+    const auto bindings = input.GetColumnBindings();
+    for (size_t i = 0; i != bindings.size() && with_ties; ++i) {
+      if (!term_group(bindings[i])) {
+        continue;
+      }
+      auto ref =
+        input.type == duckdb::LogicalOperatorType::LOGICAL_PROJECTION
+          ? duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+              input.expressions[i]->GetAlias(), input.types[i], bindings[i])
+          : duckdb::make_uniq<duckdb::BoundColumnRefExpression>(input.types[i],
+                                                                bindings[i]);
+      order.orders.emplace_back(duckdb::OrderType::ASCENDING,
+                                duckdb::OrderByNullType::NULLS_LAST,
+                                std::move(ref));
+      with_ties = false;
+    }
+  }
+  auto capped = std::make_shared<irs::LevenshteinAutomatonFilter>(
+    irs::utils::downCast<irs::LevenshteinAutomatonFilter>(*req.having_filter));
+  capped->mutable_options()->max_terms = rows;
+  capped->mutable_options()->with_ties = with_ties;
+  req.having_filter = std::move(capped);
+}
+
+}  // namespace
+
+void LimitTsDictEnumerations(duckdb::LogicalOperator& plan) {
+  if (plan.type == duckdb::LogicalOperatorType::LOGICAL_LIMIT) {
+    LimitByScore(plan.Cast<duckdb::LogicalLimit>());
+  }
+  for (auto& child : plan.children) {
+    LimitTsDictEnumerations(*child);
+  }
 }
 
 namespace {
@@ -1593,19 +1753,6 @@ bool IsCompilableAcceptorOn(irs::Filter& filter, irs::field_id field) {
   return IsAcceptorTreeOn(filter, field) && filter.CompileTermPredicate();
 }
 
-bool ContainsNegation(irs::Filter& filter) {
-  if (filter.type() == irs::Type<irs::BooleanFilter>::id() &&
-      irs::utils::downCast<irs::BooleanFilter>(filter).Size(
-        irs::Occur::MustNot) != 0) {
-    return true;
-  }
-  bool found = false;
-  filter.VisitChildren([&](irs::Filter::ptr& child, bool) {
-    found = found || (child && ContainsNegation(*child));
-  });
-  return found;
-}
-
 // Dry-runs every WHERE conjunct: it must reference the scan, claim into
 // the index, and (in multi-key mode) route to exactly one non-nullable
 // enumerated field as a seekable acceptor. A single-key conjunct on the
@@ -1997,7 +2144,7 @@ class TsDictFilterClaim {
         continue;
       }
       auto one = ClaimConjunct(_filters[i], _term_getter, _term_expr_getter);
-      if (!one || (_multi_term[i] && ContainsNegation(*one))) {
+      if (!one || (_multi_term[i] && irs::ContainsNegation(*one))) {
         if (mandatory) {
           ThrowUnclaimableTsDictConjunct(EnumeratedFieldCount());
         }

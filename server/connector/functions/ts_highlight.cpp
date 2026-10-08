@@ -21,18 +21,14 @@
 #include "connector/functions/ts_highlight.h"
 
 #include <absl/algorithm/container.h>
-#include <unicode/brkiter.h>
-#include <unicode/locid.h>
-#include <unicode/ubrk.h>
-#include <unicode/utext.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <duckdb/common/constants.hpp>
-#include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
+#include <duckdb/common/vector_operations/binary_executor.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
 #include <duckdb/function/function_binder.hpp>
@@ -45,6 +41,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <span>
+#include <text_break_iterator.hpp>
 
 #include "connector/common.h"
 #include "connector/functions/search.h"
@@ -55,58 +52,11 @@
 namespace sdb::connector {
 namespace {
 
-struct UTextDeleter {
-  void operator()(UText* p) const noexcept { utext_close(p); }
-};
-using UTextPtr = std::unique_ptr<UText, UTextDeleter>;
-
-std::unique_ptr<icu::BreakIterator> CreateSentenceIterator() {
-  UErrorCode err = U_ZERO_ERROR;
-  std::unique_ptr<icu::BreakIterator> bi{
-    icu::BreakIterator::createSentenceInstance(icu::Locale::getRoot(), err)};
-  if (U_FAILURE(err) || !bi) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("ts_highlight: failed to create sentence iterator (icu err ", err,
-              ")"));
-  }
-  return bi;
-}
-
-std::unique_ptr<icu::BreakIterator> CreateWordIterator() {
-  UErrorCode err = U_ZERO_ERROR;
-  std::unique_ptr<icu::BreakIterator> bi{
-    icu::BreakIterator::createWordInstance(icu::Locale::getRoot(), err)};
-  if (U_FAILURE(err) || !bi) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("ts_highlight: failed to create word iterator (icu err ", err,
-              ")"));
-  }
-  return bi;
-}
-
-void BindIterator(icu::BreakIterator& bi, UTextPtr& utext,
-                  std::string_view doc) {
-  UErrorCode err = U_ZERO_ERROR;
-  auto* p = utext_openUTF8(utext.get(), doc.data(),
-                           static_cast<int64_t>(doc.size()), &err);
-  if (U_FAILURE(err) || !p) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("ts_highlight: failed to open UTF-8 text (icu err ", err, ")"));
-  }
-  if (!utext) {
-    utext.reset(p);
-  }
-  bi.setText(p, err);
-  if (U_FAILURE(err)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("ts_highlight: BreakIterator setText failed (icu err ", err,
-              ")"));
-  }
-}
+using duckdb::text::BreakIterator;
+using duckdb::text::BreakKind;
+using duckdb::text::BreakUnits;
+using duckdb::text::Locale;
+using duckdb::text::WORD_NONE_LIMIT;
 
 struct TsHighlightBindData final : public duckdb::FunctionData {
   highlight::HighlightOptions options;
@@ -120,9 +70,8 @@ struct TsHighlightBindData final : public duckdb::FunctionData {
 };
 
 struct HighlightState {
-  std::unique_ptr<icu::BreakIterator> sentence_iter;
-  std::unique_ptr<icu::BreakIterator> word_iter;
-  UTextPtr utext;
+  BreakIterator sentence_iter{BreakKind::SENTENCE, Locale{}, BreakUnits::UTF8};
+  BreakIterator word_iter{BreakKind::WORD, Locale{}, BreakUnits::UTF8};
   std::vector<highlight::DocToken> tokens;
   std::vector<highlight::Passage> passages;
 };
@@ -135,10 +84,7 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitTsHighlightLocalState(
   duckdb::ExpressionState& /*state*/,
   const duckdb::BoundFunctionExpression& /*expr*/,
   duckdb::FunctionData* /*bind_data*/) {
-  auto local = duckdb::make_uniq<TsHighlightLocalState>();
-  local->state.sentence_iter = CreateSentenceIterator();
-  local->state.word_iter = CreateWordIterator();
-  return local;
+  return duckdb::make_uniq<TsHighlightLocalState>();
 }
 
 const TsHighlightBindData& GetBindData(duckdb::ExpressionState& state) {
@@ -257,30 +203,28 @@ void Append(char* dst, size_t& pos, std::string_view src) {
 }
 
 // First max_words words of doc (or the whole doc if it has no words).
-std::string_view DiscoverPrefix(std::string_view doc, icu::BreakIterator& bi,
-                                UTextPtr& utext, size_t max_words) {
+std::string_view DiscoverPrefix(std::string_view doc, BreakIterator& bi,
+                                size_t max_words) {
   if (max_words == 0) {
     return doc;
   }
-  BindIterator(bi, utext, doc);
+  bi.SetText(doc.data(), doc.size());
 
-  // Skip leading non-word boundaries; `prev` ends at first word's start.
-  int32_t prev = bi.first();
-  int32_t cur = bi.next();
-  while (cur != icu::BreakIterator::DONE &&
-         bi.getRuleStatus() < UBRK_WORD_NONE_LIMIT) {
+  int64_t prev = 0;
+  int64_t cur = bi.Next();
+  while (cur != BreakIterator::DONE && bi.GetRuleStatus() < WORD_NONE_LIMIT) {
     prev = cur;
-    cur = bi.next();
+    cur = bi.Next();
   }
-  if (cur == icu::BreakIterator::DONE) {
+  if (cur == BreakIterator::DONE) {
     return doc;
   }
 
   const auto first_start = static_cast<size_t>(prev);
   size_t last_end = static_cast<size_t>(cur);
   for (size_t remaining = max_words - 1;
-       remaining > 0 && (cur = bi.next()) != icu::BreakIterator::DONE;) {
-    if (bi.getRuleStatus() >= UBRK_WORD_NONE_LIMIT) {
+       remaining > 0 && (cur = bi.Next()) != BreakIterator::DONE;) {
+    if (bi.GetRuleStatus() >= WORD_NONE_LIMIT) {
       last_end = static_cast<size_t>(cur);
       --remaining;
     }
@@ -290,22 +234,22 @@ std::string_view DiscoverPrefix(std::string_view doc, icu::BreakIterator& bi,
 }
 
 void TokenizeSentence(std::vector<highlight::DocToken>& out,
-                      icu::BreakIterator& word_iter, UTextPtr& utext,
-                      std::string_view doc, highlight::SentenceRange sentence,
-                      HitsView hits, size_t hit_lo, size_t hit_hi) {
+                      BreakIterator& word_iter, std::string_view doc,
+                      highlight::SentenceRange sentence, HitsView hits,
+                      size_t hit_lo, size_t hit_hi) {
   auto slice =
     doc.substr(sentence.byte_start, sentence.byte_end - sentence.byte_start);
   out.clear();
-  BindIterator(word_iter, utext, slice);
+  word_iter.SetText(slice.data(), slice.size());
   size_t hit_cursor = hit_lo;
   highlight::HitRange hit;
   if (hit_cursor < hit_hi) {
     hit = hits[hit_cursor];
   }
-  int32_t prev = word_iter.first();
-  for (int32_t cur = word_iter.next(); cur != icu::BreakIterator::DONE;
-       cur = word_iter.next()) {
-    if (word_iter.getRuleStatus() >= UBRK_WORD_NONE_LIMIT) {
+  int64_t prev = 0;
+  for (int64_t cur = word_iter.Next(); cur != BreakIterator::DONE;
+       cur = word_iter.Next()) {
+    if (word_iter.GetRuleStatus() >= WORD_NONE_LIMIT) {
       const auto start = static_cast<uint32_t>(prev) + sentence.byte_start;
       const auto end = static_cast<uint32_t>(cur) + sentence.byte_start;
       while (hit_cursor < hit_hi && hit.second <= start) {
@@ -366,29 +310,27 @@ double SloppyWeight(uint32_t hit_offset_in_passage) noexcept {
 }
 
 std::span<const highlight::Passage> GetPassages(
-  icu::BreakIterator& sentence_iter, UTextPtr& utext, std::string_view doc,
-  HitsView view, size_t max_fragments,
-  std::vector<highlight::Passage>& passages) {
+  BreakIterator& sentence_iter, std::string_view doc, HitsView view,
+  size_t max_fragments, std::vector<highlight::Passage>& passages) {
   passages.clear();
   if (view.empty()) {
     return {};
   }
   passages.reserve(
     std::min<size_t>(view.size(), std::max<size_t>(1, max_fragments)));
-  BindIterator(sentence_iter, utext, doc);
+  sentence_iter.SetText(doc.data(), doc.size());
   const auto doc_size =
     std::min<uint32_t>(doc.size(), std::numeric_limits<uint32_t>::max());
 
   for (size_t cursor = 0; cursor < view.size();) {
     highlight::Passage passage;
     const auto hit_start = view[cursor].first;
-    const auto start =
-      sentence_iter.preceding(static_cast<int32_t>(hit_start + 1));
+    const auto start = sentence_iter.Preceding(size_t{hit_start} + 1);
     passage.range.byte_start =
-      start == icu::BreakIterator::DONE ? 0 : static_cast<uint32_t>(start);
-    const auto end = sentence_iter.next();
+      start == BreakIterator::DONE ? 0 : static_cast<uint32_t>(start);
+    const auto end = sentence_iter.Next();
     passage.range.byte_end =
-      end == icu::BreakIterator::DONE ? doc_size : static_cast<uint32_t>(end);
+      end == BreakIterator::DONE ? doc_size : static_cast<uint32_t>(end);
     passage.start = static_cast<uint32_t>(cursor);
     double sum = 0.0;
     for (; cursor < view.size(); ++cursor) {
@@ -449,8 +391,7 @@ duckdb::string_t RenderHighlightAll(duckdb::Vector& result,
 
 duckdb::string_t RenderPrefix(duckdb::Vector& result, std::string_view doc,
                               HighlightState& state, size_t max_words) {
-  const auto prefix =
-    DiscoverPrefix(doc, *state.word_iter, state.utext, max_words);
+  const auto prefix = DiscoverPrefix(doc, state.word_iter, max_words);
   auto target = duckdb::StringVector::EmptyString(result, prefix.size());
   memcpy(target.GetDataWriteable(), prefix.data(), prefix.size());
   target.Finalize();
@@ -478,9 +419,8 @@ duckdb::string_t RenderPassages(duckdb::Vector& result, std::string_view doc,
     if (p > 0) {
       Append(dst, pos, opts.fragment_delim);
     }
-    TokenizeSentence(state.tokens, *state.word_iter, state.utext, doc,
-                     passages[p].range, view, passages[p].start,
-                     passages[p].end);
+    TokenizeSentence(state.tokens, state.word_iter, doc, passages[p].range,
+                     view, passages[p].start, passages[p].end);
     auto clipped = ClipToMaxWords(state.tokens, opts.max_words);
     WriteRenderTokens(dst, pos, doc, clipped, opts);
   }
@@ -491,49 +431,30 @@ duckdb::string_t RenderPassages(duckdb::Vector& result, std::string_view doc,
 void RenderChunk(HighlightState& state, duckdb::DataChunk& args,
                  const highlight::HighlightOptions& opts,
                  duckdb::Vector& result) {
-  const auto count = args.size();
-
-  auto docs = args.data[0].Values<duckdb::string_t>();
-  duckdb::UnifiedVectorFormat list_format;
-  args.data[1].ToUnifiedFormat(count, list_format);
-  const auto* list_entries =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(list_format);
-
-  auto& list_child = duckdb::ListVector::GetEntry(args.data[1]);
-  const auto child_size = duckdb::ListVector::GetListSize(args.data[1]);
   duckdb::UnifiedVectorFormat child_format;
-  list_child.ToUnifiedFormat(child_size, child_format);
+  duckdb::ListVector::GetChild(args.data[1]).ToUnifiedFormat(child_format);
   const auto* child_data =
     duckdb::UnifiedVectorFormat::GetData<int32_t>(child_format);
 
-  auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
-  auto* result_data =
-    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
+  duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::list_entry_t,
+                                  duckdb::string_t>(
+    args.data[0], args.data[1], result, args.size(),
+    [&](duckdb::string_t doc_value, duckdb::list_entry_t hits) {
+      const auto doc = AsView(doc_value);
+      const HitsView view{hits, child_format, child_data};
+      ValidateHits(doc, view);
 
-  for (size_t i = 0; i < count; ++i) {
-    auto doc_value = docs[i];
-    const auto list_idx = list_format.sel->get_index(i);
-    if (!doc_value.IsValid() || !list_format.validity.RowIsValid(list_idx)) {
-      result_validity.SetInvalid(i);
-      continue;
-    }
-    const auto doc = AsView(doc_value.GetValue());
-    const HitsView view{list_entries[list_idx], child_format, child_data};
-    ValidateHits(doc, view);
+      if (opts.highlight_all) {
+        return RenderHighlightAll(result, doc, view, opts);
+      }
 
-    if (opts.highlight_all) {
-      result_data[i] = RenderHighlightAll(result, doc, view, opts);
-      continue;
-    }
+      auto passages = GetPassages(state.sentence_iter, doc, view,
+                                  opts.max_fragments, state.passages);
 
-    auto passages = GetPassages(*state.sentence_iter, state.utext, doc, view,
-                                opts.max_fragments, state.passages);
-
-    result_data[i] =
-      passages.empty()
-        ? RenderPrefix(result, doc, state, opts.max_words)
-        : RenderPassages(result, doc, state, passages, view, opts);
-  }
+      return passages.empty()
+               ? RenderPrefix(result, doc, state, opts.max_words)
+               : RenderPassages(result, doc, state, passages, view, opts);
+    });
 }
 
 // POSTINGS form: doc + LIST<INTEGER> offsets [+ options]. Sugar forms
@@ -543,7 +464,6 @@ void TsHighlightOffsets(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   auto& local_state = duckdb::ExecuteFunctionState::GetFunctionState(state)
                         ->Cast<TsHighlightLocalState>();
   auto& bind = GetBindData(state);
-  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   RenderChunk(local_state.state, args, bind.options, result);
 }
 
@@ -582,9 +502,9 @@ duckdb::ScalarFunction MakeOffsetsFn(duckdb::vector<duckdb::LogicalType> args) {
 
 // Only runs if DuckDB ever invokes a sugar overload without firing
 // its bind_expression rewrite hook -- a clean failure mode.
-void TsHighlightStubFn(duckdb::DataChunk& /*args*/,
-                       duckdb::ExpressionState& /*state*/,
-                       duckdb::Vector& /*result*/) {
+[[noreturn]] void TsHighlightStubFn(duckdb::DataChunk& /*args*/,
+                                    duckdb::ExpressionState& /*state*/,
+                                    duckdb::Vector& /*result*/) {
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_INTERNAL_ERROR),
     ERR_MSG("ts_highlight() bind-time rewrite did not fire"),

@@ -182,7 +182,7 @@ void Do(std::string_view name, FormatFunc format, size_t n, uint64_t seed) {
 
 }  // namespace
 
-int main() {
+static int Main() {
   static constexpr uint64_t kSeed = 1234;
   static constexpr size_t kSize = 1'000'000;
 
@@ -193,4 +193,8 @@ int main() {
   Do("boost uuids detail", FormatBoostUUID, kSize, kSeed);
   Do("abseil hex stringify", FormatAbseilHexStringify, kSize, kSeed);
   Do("own", FormatOwn, kSize, kSeed);
+  return 0;
 }
+
+[[maybe_unused]] static const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

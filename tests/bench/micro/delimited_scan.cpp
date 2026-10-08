@@ -302,7 +302,7 @@ BENCHMARK(BmUnescapeNew);
 
 }  // namespace
 
-int main(int argc, char** argv) {
+static int Main(int argc, char** argv) {
   for (const auto& corpus :
        {MultiByteCorpus(), QuotedCsvCorpus(), QuotedTermCorpus()}) {
     for (const auto& v : corpus) {
@@ -337,3 +337,6 @@ int main(int argc, char** argv) {
   benchmark::RunSpecifiedBenchmarks();
   return 0;
 }
+
+[[maybe_unused]] static const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

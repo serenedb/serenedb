@@ -22,6 +22,16 @@ db error: ERROR: generate_ngrams(): unknown option "locale"
 HINT: known names: min_gram, max_gram, preserve_original, input_type, start_marker, end_marker, mode
 
 
+# --- Unknown input_type ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY repro_ngram_bad_input_type AS
+    generate_ngrams(2, 3, input_type := 'utf-8')
+----
+db error: ERROR: invalid value in "input_type" parameter
+HINT: Input stream encoding: binary, utf8
+
+
 # --- Basic min_gram / max_gram ---
 
 statement ok
@@ -103,3 +113,16 @@ SELECT ts_lexize('edge_ngram_only_prefix_and_suffix', 'abcd');
 ----
 ts_lexize
 {a,ab,abcd,cd,d}
+
+# --- input_type is matched case-insensitively ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY repro_ngram_binary AS
+    generate_ngrams(1, 1, input_type := 'Binary')
+
+
+query
+SELECT ts_lexize('repro_ngram_binary', 'abc');
+----
+ts_lexize
+{a,b,c}

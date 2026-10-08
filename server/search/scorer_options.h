@@ -43,7 +43,7 @@ std::optional<irs::ScorerOptions> ExtractScorerFromBound(
   const duckdb::BoundFunctionExpression& func, std::string_view name);
 
 irs::ScorerOptions ParseScorerExpression(
-  duckdb::ClientContext* context, std::string input,
+  duckdb::ClientContext* context, std::string_view input,
   std::string_view what = kOptimizeTopKSetting);
 
 }  // namespace sdb::search

@@ -21,14 +21,11 @@
 #include "connector/file_manifest.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/strings/str_cat.h>
 
 #include <duckdb/common/file_system.hpp>
-#include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/multi_file/multi_file_states.hpp>
-#include <duckdb/common/serializer/deserializer.hpp>
-#include <duckdb/common/serializer/serializer.hpp>
-#include <duckdb/common/string_util.hpp>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -43,7 +40,7 @@
 
 namespace sdb::search {
 
-void FileManifest::Write(duckdb::Serializer& out) const {
+void FileManifest::Write(duckdb::BinarySerializer& out) const {
   SDB_IF_FAILURE("manifest_version_only") {
     irs::utils::WriteTuple(out, FileManifest{.version = version});
     return;
@@ -52,7 +49,7 @@ void FileManifest::Write(duckdb::Serializer& out) const {
 }
 
 std::shared_ptr<const FileManifest> FileManifest::Read(
-  duckdb::Deserializer& in) {
+  duckdb::BinaryDeserializer& in) {
   auto manifest = std::make_shared<FileManifest>();
   irs::utils::ReadTuple(in, *manifest);
   return manifest;
@@ -62,20 +59,6 @@ std::shared_ptr<const FileManifest> FileManifest::Read(
 namespace sdb::connector {
 namespace {
 
-std::string_view FileKey(std::string_view path) noexcept {
-  const auto slash = path.rfind('/');
-  return slash == std::string_view::npos ? path : path.substr(slash + 1);
-}
-
-std::string PartitionKey(
-  const duckdb::vector<duckdb::IcebergPartitionInfo>& partition) {
-  std::string key;
-  for (const auto& part : partition) {
-    absl::StrAppend(&key, part.field_id, "=", part.value.ToString(), ";");
-  }
-  return key;
-}
-
 const duckdb::vector<duckdb::MultiFileColumnDefinition>& GlobalScanColumns(
   const duckdb::MultiFileBindData& bind) {
   return bind.reader_bind.schema.empty() ? bind.columns
@@ -83,97 +66,6 @@ const duckdb::vector<duckdb::MultiFileColumnDefinition>& GlobalScanColumns(
 }
 
 }  // namespace
-
-IcebergDeleteState::Covering IcebergDeleteState::CoveringFor(
-  const std::string& path) const {
-  Covering covering;
-  const auto it = per_file.find(FileKey(path));
-  if (it != per_file.end()) {
-    covering.file = it->second;
-  }
-  if (!per_partition.empty()) {
-    SDB_ASSERT(list);
-    const auto part_it =
-      per_partition.find(PartitionKey(list->GetPartitionInfoForDataFile(path)));
-    if (part_it != per_partition.end()) {
-      covering.partition = part_it->second;
-    }
-  }
-  return covering;
-}
-
-uint64_t IcebergDeleteState::SeqFor(const std::string& path) const {
-  const auto covering = CoveringFor(path);
-  return std::max({covering.file, covering.partition.any, global.any});
-}
-
-void ProcessIcebergDeletes(const duckdb::IcebergMultiFileList& list,
-                           const duckdb::MultiFileBindData& bind) {
-  const auto& columns = GlobalScanColumns(bind);
-  duckdb::vector<duckdb::ColumnIndex> ids;
-  ids.reserve(columns.size());
-  for (duckdb::idx_t i = 0; i < columns.size(); ++i) {
-    ids.emplace_back(i);
-  }
-  list.ProcessDeletes(columns, ids, {});
-}
-
-IcebergDeleteState CollectIcebergDeleteState(
-  duckdb::IcebergMultiFileList& iceberg_list) {
-  IcebergDeleteState state;
-  constexpr int32_t kIcebergFilePathFieldId = 2147483546;
-  const auto referenced_file = [&](const duckdb::IcebergDataFile& delete_file,
-                                   bool equality) -> std::string {
-    if (equality) {
-      return {};
-    }
-    if (!delete_file.referenced_data_file.empty()) {
-      return delete_file.referenced_data_file;
-    }
-    for (const auto id : {kIcebergFilePathFieldId,
-                          duckdb::MultiFileReader::FILENAME_FIELD_ID}) {
-      const auto lo = delete_file.lower_bounds.find(id);
-      const auto hi = delete_file.upper_bounds.find(id);
-      if (lo == delete_file.lower_bounds.end() ||
-          hi == delete_file.upper_bounds.end() || lo->second.IsNull() ||
-          hi->second.IsNull() || lo->second != hi->second) {
-        continue;
-      }
-      return lo->second.GetValue<std::string>();
-    }
-    return {};
-  };
-  const auto bump = [](uint64_t& slot, uint64_t seq) {
-    slot = std::max(slot, seq);
-  };
-  for (const auto& bound : iceberg_list.GetDeleteManifestEntries()) {
-    const auto& delete_file = bound.entry->data_file;
-    const auto seq = static_cast<uint64_t>(
-      bound.entry->GetSequenceNumber(iceberg_list.GetManifestFileForEntry(
-        bound, duckdb::IcebergManifestContentType::DELETE)));
-    const bool equality =
-      delete_file.content ==
-      duckdb::IcebergManifestEntryContentType::EQUALITY_DELETES;
-    if (auto file = referenced_file(delete_file, equality); !file.empty()) {
-      bump(state.per_file[FileKey(file)], seq);
-      continue;
-    }
-    std::string partition_key;
-    IcebergDeleteState::Watermarks* scope = &state.global;
-    if (!delete_file.partition_info.empty()) {
-      partition_key = PartitionKey(delete_file.partition_info);
-      scope = &state.per_partition[partition_key];
-    }
-    bump(scope->any, seq);
-    if (equality) {
-      state.equality.push_back({seq, std::move(partition_key)});
-    } else {
-      bump(scope->mask_block, seq);
-    }
-  }
-  state.list = &iceberg_list;
-  return state;
-}
 
 void FillFileIdentity(duckdb::ClientContext& context,
                       const duckdb::OpenFileInfo& file,
@@ -224,8 +116,9 @@ search::FileManifest CaptureManifest(duckdb::ClientContext& context,
   auto* iceberg_list =
     dynamic_cast<duckdb::IcebergMultiFileList*>(bind.file_list.get());
   if (iceberg_list) {
-    if (const auto& info = iceberg_list->GetSnapshot(); info.snapshot) {
-      manifest.version = info.snapshot->snapshot_id;
+    if (const auto& info = iceberg_list->GetScanPlanner().GetSnapshot();
+        info.snapshot) {
+      manifest.version = info.snapshot->snapshot_id.value_or(0);
     }
   }
   for (size_t i = 0; i < files.size(); ++i) {
@@ -241,16 +134,17 @@ search::FileManifest CaptureManifest(duckdb::ClientContext& context,
 
 bool SnapshotIsAncestor(const duckdb::IcebergMultiFileList& list,
                         int64_t snapshot_id) {
-  const auto& snapshots = list.GetMetadata().snapshots;
-  auto snapshot = list.GetSnapshot().snapshot;
+  const auto& planner = list.GetScanPlanner();
+  const auto& snapshots = planner.GetMetadata().snapshots;
+  auto snapshot = planner.GetSnapshot().snapshot;
   while (snapshot) {
     if (snapshot->snapshot_id == snapshot_id) {
       return true;
     }
-    if (!snapshot->has_parent_snapshot) {
+    if (!snapshot->parent_snapshot_id) {
       return false;
     }
-    const auto it = snapshots.find(snapshot->parent_snapshot_id);
+    const auto it = snapshots.find(*snapshot->parent_snapshot_id);
     snapshot = it == snapshots.end() ? nullptr : &it->second;
   }
   return false;
@@ -263,11 +157,11 @@ namespace {
 // 0 -- diff everything -- when it is not).
 uint64_t SequenceNumberOf(const duckdb::IcebergMultiFileList& list,
                           int64_t snapshot_id) {
-  const auto& snapshots = list.GetMetadata().snapshots;
+  const auto& snapshots = list.GetScanPlanner().GetMetadata().snapshots;
   const auto it = snapshots.find(snapshot_id);
   return it == snapshots.end()
            ? 0
-           : static_cast<uint64_t>(it->second.sequence_number);
+           : static_cast<uint64_t>(it->second.sequence_number.value_or(0));
 }
 
 }  // namespace
@@ -275,78 +169,33 @@ uint64_t SequenceNumberOf(const duckdb::IcebergMultiFileList& list,
 IcebergObserve::IcebergObserve(duckdb::IcebergMultiFileList& list,
                                const duckdb::MultiFileBindData& bind,
                                int64_t stored_version)
-  : _deletes{CollectIcebergDeleteState(list)},
+  : _list{list},
     _bind{&bind},
     _sequence_number{SequenceNumberOf(list, stored_version)} {}
 
-bool IcebergObserve::TryMask(size_t listing_idx,
-                             const search::FileManifestEntry& entry,
-                             const search::FileManifestEntry& live) {
-  const auto covering = _deletes.CoveringFor(live.path);
-  if (std::max(covering.partition.mask_block, _deletes.global.mask_block) >
-      _sequence_number) {
-    return false;
-  }
-  const bool pinned_new = covering.file > _sequence_number;
-  const bool eq_new = HasNewEquality(live.path);
-  if (!pinned_new && !eq_new) {
-    return false;
-  }
-  DeleteMask mask{.file_id = entry.file_id};
-  if (pinned_new && !ExtractMaskRows(listing_idx, mask)) {
-    return false;
-  }
-  if (eq_new) {
-    eq_covered.push_back({live, entry.file_id, listing_idx});
-  }
-  del_masks.push_back(std::move(mask));
-  return true;
-}
+namespace {
 
-bool IcebergObserve::HasNewEquality(const std::string& path) const {
-  std::optional<std::string> partition_key;
-  return absl::c_any_of(_deletes.equality, [&](const auto& eq) {
-    if (eq.seq <= _sequence_number) {
-      return false;
-    }
-    if (eq.partition_key.empty()) {
-      return true;
-    }
-    if (!partition_key) {
-      partition_key =
-        PartitionKey(_deletes.list->GetPartitionInfoForDataFile(path));
-    }
-    return eq.partition_key == *partition_key;
-  });
-}
-
-const duckdb::vector<duckdb::MultiFileColumnDefinition>&
-IcebergObserve::GlobalColumns() const {
-  return GlobalScanColumns(*_bind);
-}
-
-bool IcebergObserve::ExtractMaskRows(size_t listing_idx, DeleteMask& mask) {
-  EnsureDeletesProcessed();
-  const auto& recorded =
-    _deletes.list->GetManifestEntry(listing_idx).entry->data_file.file_path;
-  auto data = _deletes.list->GetExistingPositionalDeleteData(recorded);
+bool ExtractMaskRows(duckdb::IcebergMultiFileList& list,
+                     const duckdb::IcebergFileScanTask& task,
+                     IcebergObserve::DeleteMask& mask) {
+  list.ProcessDeletes(task);
+  auto data = list.GetExistingPositionalDeleteData(task.original_file_path);
   if (!data) {
-    return false;
+    return true;
   }
   switch (data->type) {
     case duckdb::IcebergDeleteType::POSITIONAL_DELETE: {
       // Like the DV arm: remove the WHOLE current row set. Rows the index
-      // already dropped match nothing -- pure re-pay, never wrong -- and
-      // the file-scoped watermark already proved something new arrived.
-      const auto& rows =
+      // already dropped match nothing -- pure re-pay, never wrong.
+      const auto* rows =
         static_cast<const duckdb::IcebergPositionalDeleteData&>(*data)
-          .invalid_rows;
-      if (rows.empty()) {
-        return false;
-      }
-      mask.rows.assign(rows.begin(), rows.end());
-      absl::c_sort(mask.rows);
-    } break;
+          .invalid_rows.get();
+      const auto count = roaring::api::roaring64_bitmap_get_cardinality(rows);
+      mask.rows.resize(count);
+      roaring::api::roaring64_bitmap_to_uint64_array(
+        rows, reinterpret_cast<uint64_t*>(mask.rows.data()));
+      return true;
+    }
     case duckdb::IcebergDeleteType::DELETION_VECTOR: {
       // A DV replaces its predecessor wholesale, and the manifest keeps no
       // copy of what was applied: remove the WHOLE current DV. Rows the
@@ -363,12 +212,55 @@ bool IcebergObserve::ExtractMaskRows(size_t listing_idx, DeleteMask& mask) {
         return lhs.first < rhs.first;
       });
       return true;
-    } break;
+    }
   }
-  absl::c_sort(mask.rows);
-  mask.rows.erase(std::unique(mask.rows.begin(), mask.rows.end()),
-                  mask.rows.end());
+  return false;
+}
+
+}  // namespace
+
+bool IcebergObserve::Same(const search::FileManifestEntry&,
+                          const search::FileManifestEntry& live) const {
+  const auto task = _list.GetScanPlanner().GetScanTask(live.file_id);
+  return task && absl::c_none_of(task->delete_files, [&](const auto& file) {
+           return IsNew(file.sequence_number);
+         });
+}
+
+bool IcebergObserve::TryMask(size_t listing_idx,
+                             const search::FileManifestEntry& entry,
+                             const search::FileManifestEntry& live) {
+  const auto task = _list.GetScanPlanner().GetScanTask(listing_idx);
+  if (!task) {
+    return false;
+  }
+  bool positional_new = false;
+  bool equality_new = false;
+  for (const auto& file : task->delete_files) {
+    if (!IsNew(file.sequence_number)) {
+      continue;
+    }
+    if (file.content ==
+        duckdb::IcebergManifestEntryContentType::EQUALITY_DELETES) {
+      equality_new = true;
+    } else {
+      positional_new = true;
+    }
+  }
+  DeleteMask mask{.file_id = entry.file_id};
+  if (positional_new && !ExtractMaskRows(_list, *task, mask)) {
+    return false;
+  }
+  if (equality_new) {
+    eq_covered.push_back({live, entry.file_id, listing_idx});
+  }
+  del_masks.push_back(std::move(mask));
   return true;
+}
+
+const duckdb::vector<duckdb::MultiFileColumnDefinition>&
+IcebergObserve::GlobalColumns() const {
+  return GlobalScanColumns(*_bind);
 }
 
 }  // namespace sdb::connector

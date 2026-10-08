@@ -689,6 +689,48 @@ extra_float_digits
 3
 
 
+# 25. RESET ALL inside a transaction keeps its isolation level
+statement ok
+BEGIN;
+
+
+statement ok
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+
+statement ok
+SET extra_float_digits = 2;
+
+
+statement ok
+RESET ALL;
+
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+repeatable read
+
+
+query
+SHOW extra_float_digits;
+----
+extra_float_digits
+1
+
+
+statement ok
+COMMIT;
+
+
+# 26. The transaction isolation level cannot be reset on its own
+statement error
+RESET transaction_isolation;
+----
+db error: ERROR: parameter "transaction_isolation" cannot be reset
+
+
 # Cleanup
 statement ok
 RESET extra_float_digits;

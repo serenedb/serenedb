@@ -251,7 +251,7 @@ class AsyncIndexOutput final : public IndexOutput {
 
   uint32_t Checksum() final {
     Flush();
-    return _crc.checksum();
+    return std::exchange(_crc, Crc32c{}).checksum();
   }
 
  private:

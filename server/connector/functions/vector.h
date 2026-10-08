@@ -20,39 +20,9 @@
 
 #pragma once
 
-#include <duckdb/function/scalar_function.hpp>
-#include <duckdb/main/database.hpp>
-#include <duckdb/planner/expression/bound_function_expression.hpp>
-#include <duckdb/planner/operator/logical_order.hpp>
-#include <iresearch/index/column_info.hpp>
-#include <optional>
-#include <string>
-
-#include "connector/score_emit.h"
+#include <string_view>
 
 namespace sdb::connector {
-
-struct AnnFunctionInfo : public duckdb::ScalarFunctionInfo {
-  irs::VectorMetric metric;
-  duckdb::OrderType order;
-  bool is_norm;  // unary norm form (l2_norm/l1_norm) vs binary distance
-  ScoreEmit score_emit;
-
-  AnnFunctionInfo(irs::VectorMetric m, duckdb::OrderType o, bool n, ScoreEmit e)
-    : metric(m), order(o), is_norm(n), score_emit(e) {}
-};
-
-inline std::optional<AnnFunctionInfo> GetAnnFunctionInfo(
-  const duckdb::BoundFunctionExpression& func) {
-  if (!func.Function().HasExtraFunctionInfo()) {
-    return std::nullopt;
-  }
-  if (const auto* info = dynamic_cast<const AnnFunctionInfo*>(
-        &func.Function().GetExtraFunctionInfo())) {
-    return *info;
-  }
-  return std::nullopt;
-}
 
 inline constexpr std::string_view kL2Distance = "l2_distance";
 inline constexpr std::string_view kL2DistanceOp = "<->";
@@ -67,9 +37,5 @@ inline constexpr std::string_view kNegativeIP = "negative_inner_product";
 inline constexpr std::string_view kNegativeIPDistanceOp = "<#>";
 inline constexpr std::string_view kL1Norm = "l1_norm";
 inline constexpr std::string_view kL2Norm = "l2_norm";
-inline constexpr std::string_view kL1Normalize = "l1_normalize";
-inline constexpr std::string_view kL2Normalize = "l2_normalize";
-
-void RegisterVectorFunctions(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::connector

@@ -1,0 +1,129 @@
+control substitution on
+
+# Nearest-neighbour search over a hive-partitioned view with filters on the
+# partition and on the row number. Such a filter is applied to a pool of the
+# sdb_rerank_factor * k nearest rows (inverted_index_ivf_filter.test); the
+# pool here covers every row, so the k rows returned are the nearest among
+# the rows that pass, each with its own partition and position.
+
+statement ok
+SET sdb_ivf_search_nprobe TO 2048;
+
+statement ok
+SET sdb_rerank_factor = 32;
+
+system ok
+mkdir -p $__TEST_DIR__/vsvh/part=p0 $__TEST_DIR__/vsvh/part=p1 $__TEST_DIR__/vsvh/part=p2 $__TEST_DIR__/vsvh/part=p3
+
+statement ok
+COPY (SELECT id, [id, 0, 0, 0]::FLOAT[4] AS emb FROM range(0, 64) t(id) WHERE id % 4 = 0 ORDER BY id)
+TO '${__TEST_DIR__}/vsvh/part=p0/f.parquet' (FORMAT PARQUET);
+
+statement ok
+COPY (SELECT id, [id, 0, 0, 0]::FLOAT[4] AS emb FROM range(0, 64) t(id) WHERE id % 4 = 1 ORDER BY id)
+TO '${__TEST_DIR__}/vsvh/part=p1/f.parquet' (FORMAT PARQUET);
+
+statement ok
+COPY (SELECT id, [id, 0, 0, 0]::FLOAT[4] AS emb FROM range(0, 64) t(id) WHERE id % 4 = 2 ORDER BY id)
+TO '${__TEST_DIR__}/vsvh/part=p2/f.parquet' (FORMAT PARQUET);
+
+statement ok
+COPY (SELECT id, [id, 0, 0, 0]::FLOAT[4] AS emb FROM range(0, 64) t(id) WHERE id % 4 = 3 ORDER BY id)
+TO '${__TEST_DIR__}/vsvh/part=p3/f.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW vsvh_v AS
+  SELECT id, emb::FLOAT[4] AS emb, part, file_row_number
+  FROM read_parquet('${__TEST_DIR__}/vsvh/*/*.parquet', hive_partitioning=true, file_row_number=true);
+
+statement ok
+CREATE INDEX vsvh_idx ON vsvh_v USING inverted(emb ivf (metric = 'l2'));
+
+query
+SELECT id, part FROM vsvh_idx ORDER BY emb <-> [10.2, 0, 0, 0]::FLOAT[4] LIMIT 3;
+----
+id	part
+10	p2
+11	p3
+9	p1
+
+query
+SELECT id, part FROM vsvh_idx WHERE part = 'p1' ORDER BY emb <-> [10, 0, 0, 0]::FLOAT[4] LIMIT 3;
+----
+id	part
+9	p1
+13	p1
+5	p1
+
+query
+SELECT id, part FROM vsvh_idx WHERE part IN ('p0', 'p3') ORDER BY emb <-> [10.2, 0, 0, 0]::FLOAT[4] LIMIT 4;
+----
+id	part
+11	p3
+12	p0
+8	p0
+7	p3
+
+query
+SELECT id, file_row_number FROM vsvh_idx WHERE file_row_number < 2
+ORDER BY emb <-> [10.2, 0, 0, 0]::FLOAT[4] LIMIT 3;
+----
+id	file_row_number
+7	1
+6	1
+5	1
+
+query
+SELECT id, part, file_row_number FROM vsvh_idx WHERE part = 'p2' AND file_row_number >= 3
+ORDER BY emb <-> [10.2, 0, 0, 0]::FLOAT[4] LIMIT 2;
+----
+id	part	file_row_number
+14	p2	3
+18	p2	4
+
+query
+SELECT count(*) FROM (SELECT id FROM vsvh_idx WHERE part = 'p9'
+                      ORDER BY emb <-> [10, 0, 0, 0]::FLOAT[4] LIMIT 3) t;
+----
+count
+0
+
+# The exact path: every row passes through the filters, no pool.
+statement ok
+SET sdb_disable_top_k_optimization = true;
+
+query
+SELECT id, part, file_row_number FROM vsvh_idx WHERE part = 'p2' AND file_row_number >= 3
+ORDER BY emb <-> [10.2, 0, 0, 0]::FLOAT[4] LIMIT 2;
+----
+id	part	file_row_number
+14	p2	3
+18	p2	4
+
+query
+SELECT id, part FROM vsvh_idx WHERE part IN ('p0', 'p3') ORDER BY emb <-> [10.2, 0, 0, 0]::FLOAT[4] LIMIT 4;
+----
+id	part
+11	p3
+12	p0
+8	p0
+7	p3
+
+statement ok
+RESET sdb_disable_top_k_optimization;
+
+statement ok
+RESET sdb_rerank_factor;
+
+query
+SELECT count(*) FROM ((SELECT * FROM vsvh_v EXCEPT SELECT * FROM vsvh_idx)
+                      UNION ALL (SELECT * FROM vsvh_idx EXCEPT SELECT * FROM vsvh_v));
+----
+count
+0
+
+statement ok
+DROP INDEX vsvh_idx;
+
+statement ok
+DROP VIEW vsvh_v;

@@ -834,8 +834,7 @@ TEST_P(ScorePruneNormMergeCase, BenchShape16SegmentsRealisticTfDl) {
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 static const auto kTestValues =
-  ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                     ::testing::Values(tests::FormatInfo{"1_5simd"}));
+  ::testing::Combine(::testing::ValuesIn(kTestDirs));
 INSTANTIATE_TEST_SUITE_P(ScorePruneNormMergeTest, ScorePruneNormMergeCase,
                          kTestValues, ScorePruneNormMergeCase::to_string);
 

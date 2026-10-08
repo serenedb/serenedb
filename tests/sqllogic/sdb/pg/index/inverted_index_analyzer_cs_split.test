@@ -51,7 +51,7 @@ VACUUM (REFRESH_TABLE) t_geo_inc;
 
 query
 EXPLAIN SELECT pk, geo FROM t_geo_inc_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 QUERY PLAN
 ╭─ PROJECTION ───────────╮
@@ -73,7 +73,7 @@ QUERY PLAN
 
 query
 SELECT pk, geo FROM t_geo_inc_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 pk	geo
 1	{"type":"Point","coordinates":[37.615895,55.703900]}
@@ -94,7 +94,7 @@ VACUUM (REFRESH_TABLE) t_geo_noi;
 
 query
 EXPLAIN SELECT pk, geo FROM t_geo_noi_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 QUERY PLAN
 ╭─ PROJECTION ───────────╮
@@ -115,7 +115,7 @@ QUERY PLAN
 
 query
 SELECT pk, geo FROM t_geo_noi_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 pk	geo
 1	{"type":"Point","coordinates":[37.615895,55.703900]}
@@ -139,7 +139,7 @@ VACUUM (REFRESH_TABLE) t_geo_src_noi;
 
 query
 EXPLAIN SELECT pk, geo FROM t_geo_src_noi_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 QUERY PLAN
 ╭─ PROJECTION ─────────────╮
@@ -161,7 +161,7 @@ QUERY PLAN
 
 query
 SELECT pk, geo FROM t_geo_src_noi_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 pk	geo
 1	{"type":"Point","coordinates":[37.615895,55.703900]}
@@ -188,7 +188,7 @@ VACUUM (REFRESH_TABLE) t_geo_src_zstd;
 
 query
 EXPLAIN SELECT pk, geo FROM t_geo_src_zstd_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 QUERY PLAN
 ╭─ PROJECTION ──────────────╮
@@ -210,7 +210,7 @@ QUERY PLAN
 
 query
 SELECT pk, geo FROM t_geo_src_zstd_idx
-WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 pk	geo
 1	{"type":"Point","coordinates":[37.615895,55.703900]}
@@ -242,24 +242,26 @@ EXPLAIN SELECT pk, b FROM t_wild_inc_idx
 WHERE b @@ ts_like('percent_alpha_one');
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Projections: pk, b                                                                                                                                                                                     │
-│ ~1 row                                                                                                                                                                                                 │
-╰────────────────────────────────────────────────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Index: t_wild_inc_idx                                                                                                                                                                                  │
-│ Lookup: table                                                                                                                                                                                          │
-│ Index Filter:                                                                                                                                                                                          │
-│ ╭─ Wildcard NGram ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
-│ │ Field: b(string)                                                                                                                                                                                   │ │
-│ │ Token:                                                                                                                                                                                             │ │
-│ │ Has Pos: false                                                                                                                                                                                     │ │
-│ │ Parts:                                                                                                                                                                                             │ │
-│ │ <Term:\\x1fpe(0, 0); Term:per(1, 1); Term:erc(1, 1); Term:rce(1, 1); Term:cen(1, 1); Term:ent(1, 1); >; <Term:alp(0, 0); Term:lph(1, 1); Term:pha(1, 1); >; <Term:one(0, 0); Term:ne\\x1f(1, 1); >;  │ │
-│ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
-│ Projections: b (i), pk (l)                                                                                                                                                                             │
-│ ~1 row                                                                                                                                                                                                 │
-╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ PROJECTION ───────────────────────────────╮
+│ Projections: pk, b                         │
+│ ~1 row                                     │
+╰──────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
+│ Index: t_wild_inc_idx                      │
+│ Lookup: table                              │
+│ Index Filter:                              │
+│ ╭─ Wildcard NGram ───────────────────────╮ │
+│ │ Field: b(string)                       │ │
+│ │ Pattern: (?s)\\Apercent.alpha.one\\z     │ │
+│ │ Syntax: perl                           │ │
+│ │ Has Pos: false                         │ │
+│ │ Query:                                 │ │
+│ │ And("\\x1fpercent", "alpha", "one\\x1f") │ │
+│ │ Verify: table filter                   │ │
+│ ╰────────────────────────────────────────╯ │
+│ Projections: b (i), pk (l)                 │
+│ ~1 row                                     │
+╰────────────────────────────────────────────╯
 
 query
 SELECT pk, b FROM t_wild_inc_idx WHERE b @@ ts_like('percent_alpha_one');
@@ -286,24 +288,26 @@ EXPLAIN SELECT pk, b FROM t_wild_noi_idx
 WHERE b @@ ts_like('percent_alpha_one');
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Projections: pk, b                                                                                                                                                                                     │
-│ ~1 row                                                                                                                                                                                                 │
-╰────────────────────────────────────────────────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Index: t_wild_noi_idx                                                                                                                                                                                  │
-│ Lookup: table                                                                                                                                                                                          │
-│ Index Filter:                                                                                                                                                                                          │
-│ ╭─ Wildcard NGram ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
-│ │ Field: b(string)                                                                                                                                                                                   │ │
-│ │ Token:                                                                                                                                                                                             │ │
-│ │ Has Pos: false                                                                                                                                                                                     │ │
-│ │ Parts:                                                                                                                                                                                             │ │
-│ │ <Term:\\x1fpe(0, 0); Term:per(1, 1); Term:erc(1, 1); Term:rce(1, 1); Term:cen(1, 1); Term:ent(1, 1); >; <Term:alp(0, 0); Term:lph(1, 1); Term:pha(1, 1); >; <Term:one(0, 0); Term:ne\\x1f(1, 1); >;  │ │
-│ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
-│ Projections: b, pk                                                                                                                                                                                     │
-│ ~1 row                                                                                                                                                                                                 │
-╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ PROJECTION ───────────────────────────────╮
+│ Projections: pk, b                         │
+│ ~1 row                                     │
+╰──────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
+│ Index: t_wild_noi_idx                      │
+│ Lookup: table                              │
+│ Index Filter:                              │
+│ ╭─ Wildcard NGram ───────────────────────╮ │
+│ │ Field: b(string)                       │ │
+│ │ Pattern: (?s)\\Apercent.alpha.one\\z     │ │
+│ │ Syntax: perl                           │ │
+│ │ Has Pos: false                         │ │
+│ │ Query:                                 │ │
+│ │ And("\\x1fpercent", "alpha", "one\\x1f") │ │
+│ │ Verify: table filter                   │ │
+│ ╰────────────────────────────────────────╯ │
+│ Projections: b, pk                         │
+│ ~1 row                                     │
+╰────────────────────────────────────────────╯
 
 query
 SELECT pk, b FROM t_wild_noi_idx WHERE b @@ ts_like('percent_alpha_one');

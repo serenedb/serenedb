@@ -20,6 +20,8 @@
 
 #include "pg/command_tag.h"
 
+#include <absl/strings/match.h>
+
 #include <duckdb/common/enums/catalog_type.hpp>
 #include <duckdb/common/enums/set_type.hpp>
 #include <duckdb/main/client_data.hpp>
@@ -30,12 +32,15 @@
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/statement/alter_statement.hpp>
+#include <duckdb/parser/statement/attach_statement.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/delete_statement.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
 #include <duckdb/parser/statement/execute_statement.hpp>
 #include <duckdb/parser/statement/set_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
+
+#include "catalog/catalog.h"
 
 namespace sdb::pg {
 namespace {
@@ -60,6 +65,8 @@ std::string_view CreateObjectTag(duckdb::CatalogType type) {
       return "CREATE FUNCTION";
     case CatalogType::DATABASE_ENTRY:
       return "CREATE DATABASE";
+    case CatalogType::TRIGGER_ENTRY:
+      return "CREATE TRIGGER";
     default:
       return "CREATE";
   }
@@ -85,27 +92,12 @@ std::string_view DropObjectTag(duckdb::CatalogType type) {
       return "DROP FUNCTION";
     case CatalogType::DATABASE_ENTRY:
       return "DROP DATABASE";
+    case CatalogType::TRIGGER_ENTRY:
+      return "DROP TRIGGER";
+    case CatalogType::TOKENIZER_ENTRY:
+      return "DROP TEXT SEARCH DICTIONARY";
     default:
       return "DROP";
-  }
-}
-
-std::string_view AlterObjectTag(duckdb::CatalogType type) {
-  using duckdb::CatalogType;
-  switch (type) {
-    case CatalogType::TABLE_ENTRY:
-      return "ALTER TABLE";
-    case CatalogType::VIEW_ENTRY:
-      return "ALTER VIEW";
-    case CatalogType::INDEX_ENTRY:
-      return "ALTER INDEX";
-    case CatalogType::SEQUENCE_ENTRY:
-      return "ALTER SEQUENCE";
-    case CatalogType::MACRO_ENTRY:
-    case CatalogType::TABLE_MACRO_ENTRY:
-      return "ALTER FUNCTION";
-    default:
-      return "ALTER";
   }
 }
 
@@ -176,6 +168,16 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
     case StatementType::ANALYZE_STATEMENT:
       return make("ANALYZE");
     case StatementType::ATTACH_STATEMENT:
+      if (unbound) {
+        const auto& options =
+          unbound->Cast<duckdb::AttachStatement>().info->options;
+        const auto type = options.find("type");
+        if (type != options.end() &&
+            absl::EqualsIgnoreCase(type->second.ToString(),
+                                   catalog::SereneDBCatalog::kStorageType)) {
+          return make("CREATE DATABASE");
+        }
+      }
       return make("ATTACH");
     case StatementType::DETACH_STATEMENT:
       return make("DETACH");
@@ -233,8 +235,13 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
               return make("ALTER TABLE");
             case duckdb::AlterType::ALTER_VIEW:
               return make("ALTER VIEW");
-            case duckdb::AlterType::RENAME:
-              return make(AlterObjectTag(alter_stmt.info->GetCatalogType()));
+            case duckdb::AlterType::ALTER_INDEX:
+              return make("ALTER INDEX");
+            case duckdb::AlterType::ALTER_SCALAR_FUNCTION:
+            case duckdb::AlterType::ALTER_TABLE_FUNCTION:
+              return make("ALTER FUNCTION");
+            case duckdb::AlterType::ALTER_SCHEMA:
+              return make("ALTER SCHEMA");
             case duckdb::AlterType::ALTER_SEQUENCE:
               return make("ALTER SEQUENCE");
             case duckdb::AlterType::ALTER_DATABASE:
@@ -275,9 +282,23 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
 }  // namespace
 
 CommandTag BuildCommandTag(const duckdb::PreparedStatement& prepared) {
-  return BuildCommandTagImpl(prepared.data->statement_type,
-                             prepared.data->unbound_statement.get(),
-                             prepared.context.get());
+  return BuildCommandTagImpl(prepared.GetStatementType(),
+                             UnboundStatement(prepared),
+                             prepared.TryGetContext().get());
+}
+
+const duckdb::SQLStatement* UnboundStatement(
+  const duckdb::PreparedStatement& prepared) {
+  const auto context = prepared.TryGetContext();
+  if (!context) {
+    return nullptr;
+  }
+  const auto& statements =
+    duckdb::ClientData::Get(*context).prepared_statements;
+  const auto it = statements.find(duckdb::Identifier{prepared.GetName()});
+  return it != statements.end() && it->second
+           ? it->second->unbound_statement.get()
+           : nullptr;
 }
 
 CommandTag BuildCommandTag(const duckdb::SQLStatement& statement,

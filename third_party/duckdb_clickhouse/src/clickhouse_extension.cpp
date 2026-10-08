@@ -42,8 +42,7 @@ public:
 class ClickHouseExtensionCallback : public ExtensionCallback {
 public:
 	void OnConnectionOpened(ClientContext &context) override {
-		context.registered_state->Insert("clickhouse_extension",
-		                                 make_shared_ptr<ClickHouseExtensionState>());
+		context.registered_state->Insert("clickhouse_extension", make_shared_ptr<ClickHouseExtensionState>());
 	}
 };
 
@@ -138,20 +137,17 @@ static void LoadInternal(ExtensionLoader &loader) {
 	// Read from the ClientContext at describe/catalog-load time; changing it clears
 	// the attached catalogs' cached column types (the pg_array_as_varchar pattern),
 	// so both ad-hoc scans and attached tables re-describe with the new mapping.
-	config.AddExtensionOption("ch_binary_as_blob",
-	                          "Read ClickHouse String/FixedString columns as BLOB instead of VARCHAR",
-	                          LogicalType::BOOLEAN, Value::BOOLEAN(false),
-	                          ClickHouseClearCacheFunction::ClearCacheOnSetting);
+	config.AddExtensionOption(
+	    "ch_binary_as_blob", "Read ClickHouse String/FixedString columns as BLOB instead of VARCHAR",
+	    LogicalType::BOOLEAN, Value::BOOLEAN(false), ClickHouseClearCacheFunction::ClearCacheOnSetting);
 
 	// Read by the shared OrderByAndLimitOptimizer config (the pg_order_pushdown analog).
-	config.AddExtensionOption("ch_order_pushdown",
-	                          "Push ORDER BY and LIMIT clauses to ClickHouse (default: true)",
+	config.AddExtensionOption("ch_order_pushdown", "Push ORDER BY and LIMIT clauses to ClickHouse (default: true)",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
 
 	// Read at GetScanFunction time (the pg_experimental_filter_pushdown analog).
-	config.AddExtensionOption("ch_experimental_filter_pushdown",
-	                          "Whether or not to use filter pushdown", LogicalType::BOOLEAN,
-	                          Value::BOOLEAN(true));
+	config.AddExtensionOption("ch_experimental_filter_pushdown", "Whether or not to use filter pushdown",
+	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
 
 	// Per-query max execution time applied to scan + execute (the pg_statement_
 	// timeout_millis analog). NULL/0 = unbounded. Rendered as ClickHouse's

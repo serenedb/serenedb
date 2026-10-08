@@ -81,7 +81,7 @@ inline constexpr OptionInfo kOffsetFeature{"offset", false,
 // Common
 
 inline constexpr OptionInfo kLocale{"locale", ""sv,
-                                    "ICU locale string (e.g. en_US.UTF-8)"};
+                                    "Locale identifier (e.g. en_US.UTF-8)"};
 
 inline constexpr OptionInfo kAccent{"accent", true, "Preserve accent marks"};
 
@@ -131,8 +131,11 @@ inline constexpr OptionInfo kMaxGram{"max_gram", 3, "Maximum n-gram length"};
 inline constexpr OptionInfo kPreserveOriginal{
   "preserve_original", false, "Emit the original token alongside n-grams"};
 
+void CheckInputType(std::string_view option, std::string_view value);
+
 inline constexpr OptionInfo kInputType{"input_type", "utf8"sv,
-                                       "Input stream encoding: binary, utf8"};
+                                       "Input stream encoding: binary, utf8",
+                                       CheckInputType};
 
 inline constexpr OptionInfo kStartMarker{
   "start_marker", ""sv, "Prefix marker appended at n-gram boundary"};
@@ -233,7 +236,7 @@ inline constexpr OptionInfo kBreak{
 
 inline constexpr OptionInfo kIcuTextLocale{
   "locale", OptionInfo::RequiredTag<std::string_view>{},
-  "ICU locale string (e.g. en_US.UTF-8)"};
+  "Locale identifier (e.g. en_US.UTF-8)"};
 
 inline constexpr OptionInfo kIcuTextBreak{
   "break", "alpha"sv,
@@ -284,23 +287,12 @@ inline constexpr OptionInfo kOutputUnigramsIfNoShingles{
   "fallback_unigrams", false,
   "Index unigrams only when the input is too short to form a shingle"};
 
-inline constexpr OptionInfo kStoreTokens{
-  "store_tokens", true,
-  "Persist the per-document token stream (verification source for phrases "
-  "longer than max_gram). When false the index stores terms only"};
-
 inline constexpr OptionInfo kFrequentWords{
   "frequent_words", OptionInfo::ListTag{},
   "Frequent words (typically stopwords): a list of strings, or a "
   "comma-separated string of double-quoted words. When non-empty, shingles "
   "of min_gram stay dense while wider sizes are indexed only for spans "
   "containing one of these words (adaptive width escalation)"};
-
-inline constexpr OptionInfo kFillerToken{
-  "filler_token", ""sv,
-  "Token standing in for positions the base analyzer removed (e.g. "
-  "stopwords) in the stored token stream; never indexed as a term. "
-  "Default '_'"};
 
 inline constexpr OptionInfo kTokenSeparator{
   "token_separator", " "sv,
@@ -384,7 +376,7 @@ inline constexpr OptionInfo kWildcardOptions[] = {kNGramSize};
 
 inline constexpr OptionInfo kNormLocale{
   "locale", ""sv,
-  "ICU locale for case conversion; omit for locale-independent simple case"};
+  "Locale for case conversion; omit for locale-independent simple case"};
 
 inline constexpr OptionInfo kNormOptions[] = {kNormLocale, kNormCase, kAccent,
                                               kForm};
@@ -409,8 +401,7 @@ inline constexpr OptionInfo kSqlOptions[] = {kSqlExpression};
 inline constexpr OptionInfo kShingleOptions[] = {
   kMinShingleSize, kMaxShingleSize,
   kOutputUnigrams, kOutputUnigramsIfNoShingles,
-  kStoreTokens,    kFrequentWords,
-  kFillerToken,    kTokenSeparator};
+  kFrequentWords,  kTokenSeparator};
 
 inline constexpr OptionInfo kSolrSynonymsOptions[] = {kSolrSynonyms};
 

@@ -20,13 +20,17 @@
 
 #pragma once
 
+#include <atomic>
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_set.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <iresearch/utils/static_strings.hpp>
+#include <memory>
 #include <string>
+#include <utility>
 
+#include "catalog/database_directory.h"
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/tokenizer.h"
 
@@ -51,8 +55,13 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
  public:
   static constexpr const char* kStorageType = "serenedb";
 
-  explicit SereneDBCatalog(duckdb::AttachedDatabase& db)
-    : duckdb::DuckCatalog{db, true} {}
+  SereneDBCatalog(duckdb::AttachedDatabase& db,
+                  std::shared_ptr<DatabaseDirectory> directory)
+    : duckdb::DuckCatalog{db, true}, _directory{std::move(directory)} {}
+
+  const std::shared_ptr<DatabaseDirectory>& Directory() const noexcept {
+    return _directory;
+  }
 
   std::string GetCatalogType() final { return kStorageType; }
 
@@ -60,15 +69,29 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     return duckdb::SqlCompatibility::POSTGRES;
   }
 
+  bool UsesCatalogLog() const final { return true; }
+  bool IsDropped() const final {
+    return _detached.load(std::memory_order_acquire);
+  }
+  duckdb::shared_ptr<duckdb::WriteAheadLog> CatalogLog() final;
+  void RequestCatalogLogSync(duckdb::shared_ptr<duckdb::WriteAheadLog> log,
+                             duckdb::idx_t offset) final;
+  bool AppendLocalIndexes(
+    duckdb::DuckTransaction& transaction, duckdb::TableIndexList& index_list,
+    duckdb::RowGroupCollection& source,
+    const duckdb::vector<duckdb::StorageIndex>& mapped_column_ids,
+    duckdb::row_t row_start, duckdb::ErrorData& error) final;
+
   void Initialize(bool load_builtin) final;
+  duckdb::idx_t DefaultSchemaOid() const final;
 
   void OnDetach(duckdb::ClientContext& context) final;
 
   void Alter(duckdb::CatalogTransaction transaction,
              duckdb::AlterInfo& info) final;
 
-  std::string GetDefaultSchema() const final {
-    return std::string{irs::StaticStrings::kPublic};
+  duckdb::optional<duckdb::Identifier> GetDefaultSchema() const final {
+    return duckdb::Identifier{irs::StaticStrings::kPublic};
   }
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateSchema(
@@ -132,8 +155,26 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
 
   duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndex(
     duckdb::Binder& binder, duckdb::CreateStatement& stmt,
-    duckdb::CatalogEntry& table,
+    duckdb::TableCatalogEntry& table,
     duckdb::unique_ptr<duckdb::LogicalOperator> plan) final;
+
+  duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateViewIndex(
+    duckdb::Binder& binder, duckdb::CreateStatement& stmt,
+    duckdb::ViewCatalogEntry& view,
+    duckdb::unique_ptr<duckdb::LogicalOperator> plan) final;
+
+  void BindIndexDefinition(duckdb::Binder& binder,
+                           duckdb::CreateStatement& stmt,
+                           duckdb::CatalogEntry& target);
+
+  void RefuseUnsupportedAlter(duckdb::ClientContext& context,
+                              duckdb::AlterInfo& info);
+
+  duckdb::unique_ptr<duckdb::LogicalOperator> BindAlterAddIndex(
+    duckdb::Binder& binder, duckdb::TableCatalogEntry& table_entry,
+    duckdb::unique_ptr<duckdb::LogicalOperator> plan,
+    duckdb::unique_ptr<duckdb::CreateIndexInfo> create_info,
+    duckdb::unique_ptr<duckdb::AlterTableInfo> alter_info) final;
 
   duckdb::ErrorData SupportsCreateTable(
     duckdb::BoundCreateTableInfo& info) final;
@@ -148,6 +189,10 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
 
   void DropForeignServer(duckdb::CatalogTransaction transaction,
                          duckdb::DropInfo& info);
+
+ private:
+  std::shared_ptr<DatabaseDirectory> _directory;
+  std::atomic_bool _detached{false};
 };
 
 }  // namespace sdb::catalog

@@ -675,6 +675,22 @@ TEST_F(ColumnReaderTest, GathersMatchScanAcrossBlocks) {
   con.Query("SET force_compression = 'auto'");
 }
 
+TEST(GatherArmsTest, FewerRunsCountsEveryRun) {
+  using irs::column_internal::FewerRuns;
+  duckdb::SelectionVector sel(4);
+  sel.set_index(0, 5);
+  sel.set_index(1, 6);
+  sel.set_index(2, 7);
+  sel.set_index(3, 9);
+  EXPECT_FALSE(FewerRuns(sel, 1, 1));
+  EXPECT_TRUE(FewerRuns(sel, 1, 2));
+  EXPECT_FALSE(FewerRuns(sel, 3, 1));
+  EXPECT_TRUE(FewerRuns(sel, 3, 2));
+  EXPECT_FALSE(FewerRuns(sel, 4, 2));
+  EXPECT_TRUE(FewerRuns(sel, 4, 3));
+  EXPECT_TRUE(FewerRuns(sel, 2, 3));
+}
+
 // Point fetches (FetchRow) of scattered single rows on BIGINT and VARCHAR
 // (incl. overflow + NULL), across row-group boundaries.
 TEST_F(ColumnReaderTest, PointFetchRow) {

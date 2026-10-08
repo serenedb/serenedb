@@ -30,7 +30,7 @@ A column's trailing `WITH (...)` sets per-column **feature flags** controlling w
 | Flag | Default | Enables |
 | :--- | :--- | :--- |
 | `frequency` | `false` | Term frequency — required for [relevance scoring](../../indexes/inverted/ranking.md) |
-| `position` | `false` | Term positions — required for [phrase / proximity](../../indexes/inverted/full-text-search.md#phrase-search) queries |
+| `position` | `false` | Term positions — answer [phrase / proximity](../../indexes/inverted/full-text-search.md#phrase-search) queries from the index alone; without them a phrase needs the column's text in the index ([phrases without positions](../../indexes/inverted/full-text-search.md#phrases-without-positions)) |
 | `offset` | `false` | Character offsets — required for [highlighting](../../indexes/inverted/full-text-search.md#highlighting) |
 | `norm` | `false` | The length-normalization factor used by some scorers |
 

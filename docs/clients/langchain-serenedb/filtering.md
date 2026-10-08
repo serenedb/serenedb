@@ -268,7 +268,7 @@ Validation rules:
 | Non-integer or negative `slop` | `$phrase 'slop' must be a non-negative integer.` |
 | `slop` together with an interval gap | `$phrase 'slop' is incompatible with an interval [min, max] gap.` |
 
-Phrase matching needs positional information, so the column's dictionary must carry `position = true`.
+Phrase matching needs positional information: the column's dictionary carries `position = true`, or the index keeps the column's text, as every column of a search table and every `INCLUDE` column does ([phrases without positions](../../sql/indexes/inverted/full-text-search.md#phrases-without-positions)).
 
 ## Making filters index-covered {#pushdown}
 

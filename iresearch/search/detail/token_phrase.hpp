@@ -46,12 +46,6 @@ namespace irs {
 struct IndexReader;
 struct TermReader;
 
-enum class PhraseMatch : uint8_t {
-  Anchor,
-  Automaton,
-  Positions,
-};
-
 struct PhraseTokens {
   using Factory = std::function<std::shared_ptr<analysis::Tokenizer>()>;
 
@@ -116,19 +110,28 @@ struct CompiledPhrase {
     uint32_t length = 0;
   };
 
+  struct WordStat {
+    uint64_t docs = 0;
+    uint64_t freq = 0;
+  };
+
   CompiledPhrase(const ByPhraseOptions& phrase,
                  std::span<const std::vector<bstring>> expanded,
-                 const TermReader& reader,
-                 std::optional<PhraseMatch> match = std::nullopt);
+                 std::span<const WordStat> words);
 
   CompiledPhrase(const ByPhraseOptions& phrase, bytes_view word_separator,
-                 const IndexReader& index, field_id field,
-                 std::optional<PhraseMatch> match = std::nullopt);
+                 std::span<const WordStat> words);
 
   CompiledPhrase(CompiledPhrase&&) = delete;
   CompiledPhrase& operator=(CompiledPhrase&&) = delete;
 
   static bool Standalone(const ByPhraseOptions& phrase) noexcept;
+  static bool Anchored(const ByPhraseOptions& phrase) noexcept;
+  static std::vector<WordStat> WordStats(
+    const ByPhraseOptions& phrase, std::span<const TermReader* const> readers);
+  static std::vector<WordStat> WordStats(const ByPhraseOptions& phrase,
+                                         const IndexReader& index,
+                                         field_id field);
 
   bool Accepts(uint32_t slot, const duckdb::string_t& term) const;
   uint64_t MaskOf(const duckdb::string_t& term) const;
@@ -178,13 +181,12 @@ struct CompiledPhrase {
 
   void Init(const ByPhraseOptions& phrase,
             std::span<const std::vector<bstring>> expanded, bool predicates,
-            std::span<const TermReader* const> readers,
-            std::optional<PhraseMatch> match);
+            std::span<const WordStat> words);
   void AddPattern(uint32_t slot, const ByPhraseOptions::PhrasePart& part);
   void Index(std::span<const uint32_t> term_slots);
   void LayoutSlop();
   void LayoutAutomaton();
-  void PickAnchor(std::span<const TermReader* const> readers);
+  void PickAnchor(std::span<const WordStat> words);
 };
 
 class PhraseCheck final : public TokenConsumer {
@@ -196,7 +198,6 @@ class PhraseCheck final : public TokenConsumer {
 
   void Bind(duckdb::Vector& values, duckdb::idx_t count);
   bool Check(duckdb::idx_t row, PhraseVerdict& out);
-  bool Restarted() const noexcept { return _restarted; }
 
   void Prepare(duckdb::string_t) noexcept { _value_base = _last_pos; }
   void Discard() noexcept {}
@@ -289,8 +290,8 @@ class PhraseCheck final : public TokenConsumer {
   void Feed(Anchor& anchor, const TokenBatch& batch);
   bool Finish(Anchor& anchor, PhraseVerdict& out);
   bool Hit(Anchor& anchor, size_t at);
-  uint64_t Right(Anchor& anchor, uint32_t slot, size_t at);
-  uint64_t Left(Anchor& anchor, uint32_t slot, size_t at);
+  template<bool Right>
+  uint64_t Ways(Anchor& anchor, uint32_t slot, size_t at);
   bool Over(Anchor& anchor) noexcept;
 
   void Feed(Automaton& automaton, const TokenBatch& batch);
@@ -310,7 +311,6 @@ class PhraseCheck final : public TokenConsumer {
   bool _count;
   bool _done = false;
   bool _restart = false;
-  bool _restarted = false;
   uint32_t _last_pos = 0;
   uint32_t _value_base = 0;
   uint64_t _freq = 0;

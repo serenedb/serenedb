@@ -38,19 +38,50 @@ namespace irs {
 
 CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
                                std::span<const std::vector<bstring>> expanded,
-                               const TermReader& reader,
-                               std::optional<PhraseMatch> match)
+                               std::span<const WordStat> words)
   : slop{.max = phrase.slop()} {
-  const TermReader* readers[] = {&reader};
-  Init(phrase, expanded, false, readers, match);
+  Init(phrase, expanded, false, words);
 }
 
 CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
                                bytes_view word_separator,
-                               const IndexReader& index, field_id field,
-                               std::optional<PhraseMatch> match)
+                               std::span<const WordStat> words)
   : slop{.max = phrase.slop()}, separator{word_separator} {
   SDB_ASSERT(Standalone(phrase));
+  Init(phrase, {}, true, words);
+}
+
+bool CompiledPhrase::Anchored(const ByPhraseOptions& phrase) noexcept {
+  return phrase.slop() == 0 &&
+         (phrase.empty() ||
+          std::none_of(std::next(phrase.begin()), phrase.end(),
+                       [](const auto& info) { return info.offs_min == 0; }));
+}
+
+std::vector<CompiledPhrase::WordStat> CompiledPhrase::WordStats(
+  const ByPhraseOptions& phrase, std::span<const TermReader* const> readers) {
+  std::vector<WordStat> words;
+  if (!Anchored(phrase)) {
+    return words;
+  }
+  words.resize(phrase.size());
+  auto* stat = words.data();
+  for (const auto& info : phrase) {
+    if (const auto* word = std::get_if<ByTermOptions>(&info.part)) {
+      for (const auto* reader : readers) {
+        const auto meta = reader->Lookup(word->term);
+        stat->docs += meta.docs_count;
+        stat->freq += meta.freq;
+      }
+    }
+    ++stat;
+  }
+  return words;
+}
+
+std::vector<CompiledPhrase::WordStat> CompiledPhrase::WordStats(
+  const ByPhraseOptions& phrase, const IndexReader& index, field_id field) {
+  constexpr size_t kSampled = 8;
   std::vector<const TermReader*> readers;
   readers.reserve(index.size());
   for (const auto& segment : index) {
@@ -58,7 +89,13 @@ CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
       readers.push_back(reader);
     }
   }
-  Init(phrase, {}, true, readers, match);
+  if (readers.size() > kSampled) {
+    std::ranges::nth_element(
+      readers, readers.begin() + kSampled, std::ranges::greater{},
+      [](const TermReader* reader) { return reader->docs_count(); });
+    readers.resize(kSampled);
+  }
+  return WordStats(phrase, readers);
 }
 
 bool CompiledPhrase::Standalone(const ByPhraseOptions& phrase) noexcept {
@@ -85,14 +122,11 @@ bool CompiledPhrase::Standalone(const ByPhraseOptions& phrase) noexcept {
 
 void CompiledPhrase::Init(const ByPhraseOptions& phrase,
                           std::span<const std::vector<bstring>> expanded,
-                          bool predicates,
-                          std::span<const TermReader* const> readers,
-                          std::optional<PhraseMatch> match) {
+                          bool predicates, std::span<const WordStat> words) {
   const auto n = static_cast<uint32_t>(phrase.size());
   slots.resize(n);
   std::vector<uint32_t> term_slots;
   std::vector<std::optional<size_t>> word_of(n);
-  bool stacked = false;
   uint32_t slot = 0;
   const auto add = [&](bytes_view term) {
     terms.emplace_back(term);
@@ -101,7 +135,6 @@ void CompiledPhrase::Init(const ByPhraseOptions& phrase,
   for (const auto& info : phrase) {
     slots[slot].offs_min = info.offs_min;
     slots[slot].offs_max = info.offs_max;
-    stacked |= slot != 0 && info.offs_min == 0;
     switch (ByPhraseOptions::KindOf(info.part)) {
       case SlotKind::Term:
         word_of[slot] = terms.size();
@@ -132,20 +165,14 @@ void CompiledPhrase::Init(const ByPhraseOptions& phrase,
   }
   Index(term_slots);
 
-  if (slop.max != 0 || stacked) {
+  if (!Anchored(phrase)) {
     if (slop.max != 0 && n > 1) {
       LayoutSlop();
     }
     return;
   }
   LayoutAutomaton();
-  PickAnchor(readers);
-  if (match == PhraseMatch::Positions) {
-    anchor.reset();
-    automaton.reset();
-  } else if (match == PhraseMatch::Automaton && automaton) {
-    anchor.reset();
-  }
+  PickAnchor(words);
 }
 
 void CompiledPhrase::AddPattern(uint32_t slot,
@@ -298,7 +325,7 @@ void CompiledPhrase::LayoutAutomaton() {
   automaton = std::move(layout);
 }
 
-void CompiledPhrase::PickAnchor(std::span<const TermReader* const> readers) {
+void CompiledPhrase::PickAnchor(std::span<const WordStat> words) {
   constexpr auto kUnknown = std::numeric_limits<double>::max();
   double best = kUnknown;
   for (uint32_t k = 0; k != slots.size(); ++k) {
@@ -306,13 +333,7 @@ void CompiledPhrase::PickAnchor(std::span<const TermReader* const> readers) {
       continue;
     }
     const auto& word = *slots[k].word;
-    uint64_t docs = 0;
-    uint64_t freq = 0;
-    for (const auto* reader : readers) {
-      const auto meta = reader->Lookup(AsBytesView(word));
-      docs += meta.docs_count;
-      freq += meta.freq;
-    }
+    const auto [docs, freq] = k < words.size() ? words[k] : WordStat{};
     double cost = kUnknown;
     if (docs != 0) {
       cost = freq != 0 ? static_cast<double>(freq) / static_cast<double>(docs)
@@ -411,8 +432,7 @@ bool PhraseCheck::Check(duckdb::idx_t row, PhraseVerdict& out) {
   const auto values = Values(row);
   Start(_phrase->anchor.has_value());
   Analyze(values);
-  _restarted = Restart();
-  if (_restarted) {
+  if (Restart()) {
     Analyze(values);
   }
   return End(out);
@@ -574,71 +594,39 @@ bool PhraseCheck::Finish(Anchor&, PhraseVerdict& out) {
 
 bool PhraseCheck::Hit(Anchor& anchor, size_t at) {
   const auto slot = _phrase->anchor->slot;
-  if (const auto left = Left(anchor, slot, at)) {
-    _freq += left * Right(anchor, slot, at);
+  if (const auto left = Ways<false>(anchor, slot, at)) {
+    _freq += left * Ways<true>(anchor, slot, at);
   }
   _done |= !_count && _freq != 0;
   return _done;
 }
 
-uint64_t PhraseCheck::Right(Anchor& anchor, uint32_t slot, size_t at) {
+template<bool Right>
+uint64_t PhraseCheck::Ways(Anchor& anchor, uint32_t slot, size_t at) {
   const auto& phrase = *_phrase;
-  const auto next = slot + 1;
-  if (next == phrase.slots.size()) {
+  if (slot == (Right ? phrase.slots.size() - 1 : 0)) {
     return 1;
   }
-  const uint64_t pos = anchor.PosAt(at);
-  const auto from = pos + phrase.slots[next].offs_min;
-  const auto to = pos + phrase.slots[next].offs_max;
-  uint64_t ways = 0;
-  uint64_t accepted = 0;
-  for (auto j = at + 1; j < anchor.end; ++j) {
-    const uint64_t p = anchor.PosAt(j);
-    if (p > to) {
-      break;
-    }
-    if (Over(anchor)) {
-      return 0;
-    }
-    if (p < from || p == accepted || !phrase.Accepts(next, anchor.TermAt(j))) {
-      continue;
-    }
-    accepted = p;
-    ways += Right(anchor, next, j);
-    if (_restart) {
-      return 0;
-    }
-    if (!_count && ways != 0) {
-      return 1;
-    }
-  }
-  return ways;
-}
-
-uint64_t PhraseCheck::Left(Anchor& anchor, uint32_t slot, size_t at) {
-  const auto& phrase = *_phrase;
-  if (slot == 0) {
-    return 1;
-  }
-  const auto prev = slot - 1;
+  const auto other = Right ? slot + 1 : slot - 1;
+  const auto& gap = phrase.slots[Right ? other : slot];
   const uint64_t pos = anchor.PosAt(at);
   uint64_t ways = 0;
   uint64_t accepted = std::numeric_limits<uint64_t>::max();
-  for (auto j = at; j-- > anchor.carry_base;) {
+  for (auto j = at; Right ? ++j < anchor.end : j-- > anchor.carry_base;) {
     const uint64_t p = anchor.PosAt(j);
-    const auto distance = pos - p;
-    if (distance > phrase.slots[slot].offs_max) {
+    const auto distance = Right ? p - pos : pos - p;
+    if (distance > gap.offs_max) {
       break;
     }
     if (Over(anchor)) {
       return 0;
     }
-    if (distance < phrase.slots[slot].offs_min || p == accepted ||
-        !phrase.Accepts(prev, anchor.TermAt(j))) {
+    if (distance < gap.offs_min || p == accepted ||
+        !phrase.Accepts(other, anchor.TermAt(j))) {
       continue;
     }
     accepted = p;
-    ways += Left(anchor, prev, j);
+    ways += Ways<Right>(anchor, other, j);
     if (_restart) {
       return 0;
     }

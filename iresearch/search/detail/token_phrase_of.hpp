@@ -21,8 +21,7 @@
 #pragma once
 
 #include <algorithm>
-#include <limits>
-#include <memory>
+#include <optional>
 #include <span>
 #include <tuple>
 #include <type_traits>
@@ -47,7 +46,7 @@ class TokenPhraseSlots {
 
   struct Hit {
     doc_id_t doc;
-    PhraseVerdict verdict;
+    std::optional<PhraseVerdict> verdict;
   };
 
   template<typename ApproxArgs>
@@ -95,11 +94,16 @@ class TokenPhraseSlots {
 
   bool Match(doc_id_t doc) {
     if (_pos < _hits.size() && _hits[_pos].doc == doc) {
-      _verdict = _hits[_pos].verdict;
-    } else {
-      Hit hit{.doc = doc};
-      Check({&hit, 1});
-      _verdict = hit.verdict;
+      _verdict = VerdictAt(_pos);
+      return _verdict.freq != 0;
+    }
+    for (auto i = _pos; i < _hits.size(); ++i) {
+      VerdictAt(i);
+    }
+    const Hit hit{.doc = doc};
+    _verdict = {};
+    if (Gather({&hit, 1}) != 0) {
+      _check.Check(0, _verdict);
     }
     return _verdict.freq != 0;
   }
@@ -129,11 +133,22 @@ class TokenPhraseSlots {
       }
       _hits.push_back({.doc = doc});
     }
-    Check(_hits);
+    _rows = Gather(_hits);
     return first;
   }
 
-  void Check(std::span<Hit> hits) {
+  const PhraseVerdict& VerdictAt(size_t i) {
+    auto& verdict = _hits[i].verdict;
+    if (!verdict) {
+      verdict.emplace();
+      if (i < _rows) {
+        _check.Check(i, *verdict);
+      }
+    }
+    return *verdict;
+  }
+
+  size_t Gather(std::span<const Hit> hits) {
     SDB_ASSERT(hits.size() <= STANDARD_VECTOR_SIZE);
     auto n = hits.size();
     while (n != 0 &&
@@ -141,7 +156,7 @@ class TokenPhraseSlots {
       --n;
     }
     if (n == 0) {
-      return;
+      return 0;
     }
     const auto first = hits.front().doc;
     for (size_t i = 0; i != n; ++i) {
@@ -150,9 +165,7 @@ class TokenPhraseSlots {
     auto& out = _out.Reset();
     _column->GatherScatter(_state, first - doc_limits::min(), _sel, n, out, 0);
     _check.Bind(out, n);
-    for (size_t i = 0; i != n; ++i) {
-      _check.Check(i, hits[i].verdict);
-    }
+    return n;
   }
 
   Approx _approx;
@@ -165,6 +178,7 @@ class TokenPhraseSlots {
   PhraseVerdict _verdict;
   std::vector<Hit> _hits;
   size_t _pos = 0;
+  size_t _rows = 0;
   size_t _batch = 1;
   bool _end = false;
 };

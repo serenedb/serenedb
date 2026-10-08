@@ -26,6 +26,7 @@
 #include <cstring>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/main/database.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
@@ -41,6 +42,7 @@
 
 #include "iresearch/formats/column/codecs/numeric_decoder.hpp"
 #include "iresearch/formats/column/codecs/numeric_layout.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::codecs {
@@ -56,12 +58,22 @@ NumericHeader SegmentHeader(const_data_ptr_t base,
   return h;
 }
 
+FrameCache FrameCacheOf(duckdb::ColumnSegment& segment) {
+  const auto& block = segment.GetBlockHandle();
+  const auto& slot = static_cast<const ReadContext&>(block->GetBlockManager())
+                       .CacheSlotOf(block->BlockId());
+  if (slot.key.empty()) {
+    return {};
+  }
+  return {&segment.GetDatabase().GetObjectCache(), slot.key, slot.touched};
+}
+
 template<typename T>
 struct ScanState final : duckdb::SegmentScanState {
   ScanState(duckdb::ColumnSegment& segment, duckdb::BufferHandle handle_p)
     : handle{std::move(handle_p)},
       base{handle.Ptr() + segment.GetBlockOffset()},
-      frames{base, SegmentHeader(base, segment)} {}
+      frames{base, SegmentHeader(base, segment), FrameCacheOf(segment)} {}
 
   duckdb::BufferHandle handle;
   const_data_ptr_t base;
@@ -164,7 +176,8 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
   if (const auto block = segment.GetBlockHandle()->BlockId();
       cache.block != block) {
     const auto* base = handle.Ptr() + segment.GetBlockOffset();
-    cache.frames.emplace(base, SegmentHeader(base, segment));
+    cache.frames.emplace(base, SegmentHeader(base, segment),
+                         FrameCacheOf(segment));
     cache.block = block;
   }
   auto& frames = *cache.frames;

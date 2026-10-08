@@ -36,6 +36,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iresearch/formats/column/codecs/dictionary_cache.hpp>
 #include <iresearch/formats/column/codecs/numeric_layout.hpp>
 #include <iresearch/formats/column/codecs/string_layout.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
@@ -442,6 +443,59 @@ TEST_F(ColNumericCodecTest, CompactsClusteredTimestamps) {
     bytes += block.byte_size;
   }
   EXPECT_LT(bytes, kRows * 2);
+}
+
+TEST_F(ColNumericCodecTest, SparseReadsCacheDecodedFrames) {
+  constexpr uint64_t kRows = 60000;
+  const Gen clustered = [](uint64_t g) {
+    return static_cast<int64_t>(1'700'000'000'000'000LL + (g / 4) * 1000 +
+                                Mix(g / 4) % 3 * 100);
+  };
+  irs::MemoryDirectory dir{};
+  Write(dir, duckdb::LogicalType::BIGINT, {}, kRows, 65536, clustered);
+  const auto transforms = Transforms(dir);
+  ASSERT_TRUE(std::ranges::any_of(transforms, [](const auto& t) {
+    return t.ends_with("/zstd") || t.ends_with("/lz4");
+  }));
+  auto& cache = Db().GetObjectCache();
+  irs::ColReader r{dir, std::string{kSeg}, Db()};
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  const auto cached_frames = [&] {
+    size_t n = 0;
+    for (size_t b = 0; b < col->DataBlocks().size(); ++b) {
+      for (uint32_t f = 0; f < 256; ++f) {
+        n += cache.Get<irs::codecs::DecodedFrame>(irs::codecs::FrameCacheKey(
+               col->DictionaryCacheKey(b), f)) != nullptr;
+      }
+    }
+    return n;
+  };
+  const auto lookups = [&] {
+    irs::ColumnReader::PointReader cursor{r, *col};
+    duckdb::Vector out{duckdb::LogicalType::BIGINT, 1};
+    for (uint64_t g = 2501; g < kRows; g += 5003) {
+      duckdb::FlatVector::ValidityMutable(out).Reset();
+      ASSERT_TRUE(cursor.FetchRow(g, out, 0));
+      ExpectRow(out, 0, g, clustered, duckdb::LogicalType::BIGINT);
+    }
+  };
+  lookups();
+  EXPECT_EQ(cached_frames(), 0u);
+  {
+    auto state = col->InitScan(r.Ctx());
+    duckdb::Vector out{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      col->Scan(state, out,
+                std::min<uint64_t>(kRows - pos, STANDARD_VECTOR_SIZE));
+    }
+  }
+  EXPECT_EQ(cached_frames(), 0u);
+  lookups();
+  const auto admitted = cached_frames();
+  EXPECT_GT(admitted, 0u);
+  lookups();
+  EXPECT_EQ(cached_frames(), admitted);
 }
 
 TEST_F(ColNumericCodecTest, FiltersMatchTheValues) {

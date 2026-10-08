@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/dictionary_cache.hpp"
 #include "iresearch/formats/column/codecs/numeric_kernels.hpp"
 #include "iresearch/formats/column/codecs/numeric_layout.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -45,10 +46,12 @@ template<typename T>
 class FrameDecoder {
   using U = numeric::Bits<sizeof(T)>;
   static constexpr uint32_t kBurst = 32 / sizeof(T);
+  static constexpr uint32_t kNoFrame = std::numeric_limits<uint32_t>::max();
 
  public:
-  FrameDecoder(duckdb::const_data_ptr_t base, const NumericHeader& header)
-    : _base{base}, _h{header} {
+  FrameDecoder(duckdb::const_data_ptr_t base, const NumericHeader& header,
+               FrameCache cache = {})
+    : _base{base}, _h{header}, _cache{cache} {
     SDB_ENSURE(_h.width == sizeof(T), "numeric codec: width mismatch");
     if (_h.transform == NumericTransform::Ffor) {
       _per_frame = kFforFrameRows;
@@ -105,7 +108,7 @@ class FrameDecoder {
     if (_h.transform == NumericTransform::Ffor) {
       DecodeBlock(row);
     } else {
-      Decode(FrameOf(row));
+      Decode(FrameOf(row), row != _next);
     }
   }
 
@@ -197,12 +200,13 @@ class FrameDecoder {
     return m;
   }
 
-  void Decode(uint32_t f) {
+  void Decode(uint32_t f, bool sparse) {
     const auto m = Meta(f);
     const auto end = EndRow(f);
     const auto rows = static_cast<uint32_t>(end - m.frame.first_entry);
+    const auto cached = sparse ? f : kNoFrame;
     if (_h.transform == NumericTransform::Rle) {
-      LoadRuns(m, rows);
+      LoadRuns(m, rows, cached);
     } else if (_h.transform == NumericTransform::Raw && !_h.Shuffled() &&
                m.frame.comp_len == m.frame.raw_len) {
       _view = Data(m);
@@ -210,11 +214,12 @@ class FrameDecoder {
       if (_rows.size() < rows) {
         _rows.resize(rows);
       }
-      DecodeInto(m, rows, _rows.data());
+      DecodeInto(m, rows, _rows.data(), cached);
       _view = reinterpret_cast<const uint8_t*>(_rows.data());
     }
     _begin = m.frame.first_entry;
     _end = end;
+    _next = end;
   }
 
   uint64_t DecodeDirect(uint64_t row, uint64_t count, U* out) {
@@ -237,7 +242,8 @@ class FrameDecoder {
       return 0;
     }
     const auto rows = static_cast<uint32_t>(end - row);
-    DecodeInto(Meta(f), rows, out);
+    DecodeInto(Meta(f), rows, out, kNoFrame);
+    _next = end;
     return rows;
   }
 
@@ -245,9 +251,19 @@ class FrameDecoder {
     return _base + _h.off_data + m.frame.comp_off;
   }
 
-  const uint8_t* Inflated(const NumericFrameMeta& m, uint8_t* dst) {
+  const uint8_t* Inflated(const NumericFrameMeta& m, uint8_t* dst,
+                          uint32_t frame) {
     if (m.frame.comp_len == m.frame.raw_len) {
       return Data(m);
+    }
+    std::string key;
+    if (frame != kNoFrame && _cache.cache) {
+      key = FrameCacheKey(_cache.key, frame);
+      if (auto hit = _cache.cache->Get<DecodedFrame>(key);
+          hit && hit->Bytes().size() == m.frame.raw_len) {
+        _held = std::move(hit);
+        return _held->Bytes().data();
+      }
     }
     if (!dst) {
       if (_raw.size() < m.frame.raw_len) {
@@ -262,6 +278,13 @@ class FrameDecoder {
            : _zstd &&
                _zstd->Decompress(in, m.frame.comp_len, out, m.frame.raw_len);
     SDB_ENSURE(ok, "numeric codec: corrupted frame");
+    if (!key.empty() && Admitted() &&
+        _cache.cache->GetCurrentMemory() + m.frame.raw_len <=
+          _cache.cache->GetMaxMemory()) {
+      _cache.cache->Put(key,
+                        duckdb::make_shared_ptr<DecodedFrame>(
+                          std::vector<uint8_t>(dst, dst + m.frame.raw_len)));
+    }
     return dst;
   }
 
@@ -323,15 +346,16 @@ class FrameDecoder {
     _end = std::min<uint64_t>(first + numeric::kBlockValues, _h.row_count);
   }
 
-  void DecodeInto(const NumericFrameMeta& m, uint32_t rows, U* out) {
+  void DecodeInto(const NumericFrameMeta& m, uint32_t rows, U* out,
+                  uint32_t frame) {
     auto* bytes = reinterpret_cast<uint8_t*>(out);
     if (_h.transform == NumericTransform::Raw && !_h.Shuffled()) {
-      if (const auto* src = Inflated(m, bytes); src != bytes) {
+      if (const auto* src = Inflated(m, bytes, frame); src != bytes) {
         std::memcpy(out, src, m.frame.raw_len);
       }
       return;
     }
-    const auto* src = Inflated(m, nullptr);
+    const auto* src = Inflated(m, nullptr, frame);
     if (_h.Shuffled()) {
       if (_h.transform == NumericTransform::Raw) {
         numeric::Unshuffle(src, rows, _h.stored, bytes);
@@ -379,8 +403,16 @@ class FrameDecoder {
     }
   }
 
-  void LoadRuns(const NumericFrameMeta& m, uint32_t rows) {
-    const auto* src = Inflated(m, nullptr);
+  bool Admitted() noexcept {
+    if (_admit < 0) {
+      _admit = _cache.touched &&
+               _cache.touched->exchange(true, std::memory_order_relaxed);
+    }
+    return _admit == 1;
+  }
+
+  void LoadRuns(const NumericFrameMeta& m, uint32_t rows, uint32_t frame) {
+    const auto* src = Inflated(m, nullptr, frame);
     const uint32_t item = _h.stored + _h.run_width;
     SDB_ENSURE(m.frame.raw_len % item == 0 && m.frame.raw_len != 0,
                "numeric codec: corrupted runs");
@@ -417,9 +449,13 @@ class FrameDecoder {
 
   duckdb::const_data_ptr_t _base;
   NumericHeader _h;
+  FrameCache _cache;
+  duckdb::shared_ptr<DecodedFrame> _held;
+  int8_t _admit = -1;
   uint32_t _per_frame = 0;
   uint64_t _begin = 0;
   uint64_t _end = 0;
+  uint64_t _next = 0;
   const uint8_t* _view = nullptr;
   std::vector<U> _rows;
   std::vector<U> _run_values;

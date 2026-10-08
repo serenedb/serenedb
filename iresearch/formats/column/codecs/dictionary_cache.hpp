@@ -22,12 +22,15 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <atomic>
 #include <cstdint>
 #include <duckdb/common/optional_idx.hpp>
 #include <duckdb/common/vector/dictionary_vector.hpp>
 #include <duckdb/storage/object_cache.hpp>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace irs::codecs {
 
@@ -56,5 +59,34 @@ class DecodedDictionary final : public duckdb::ObjectCacheEntry {
 inline std::string DictionaryCacheKey(uint64_t scope, size_t block) {
   return absl::StrCat("col-dict:", scope, ":", block);
 }
+
+class DecodedFrame final : public duckdb::ObjectCacheEntry {
+ public:
+  static std::string ObjectType() { return "col-frame"; }
+
+  explicit DecodedFrame(std::vector<uint8_t> bytes) noexcept
+    : _bytes{std::move(bytes)} {}
+
+  std::string GetObjectType() final { return ObjectType(); }
+
+  duckdb::optional_idx GetEstimatedCacheMemory() const final {
+    return _bytes.size();
+  }
+
+  const std::vector<uint8_t>& Bytes() const noexcept { return _bytes; }
+
+ private:
+  std::vector<uint8_t> _bytes;
+};
+
+inline std::string FrameCacheKey(std::string_view segment, uint32_t frame) {
+  return absl::StrCat(segment, "#", frame);
+}
+
+struct FrameCache {
+  duckdb::ObjectCache* cache = nullptr;
+  std::string_view key;
+  std::atomic<bool>* touched = nullptr;
+};
 
 }  // namespace irs::codecs

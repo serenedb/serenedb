@@ -242,8 +242,7 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
     _array_size{_type.id() == duckdb::LogicalTypeId::ARRAY
                   ? duckdb::ArrayType::GetSize(_type)
                   : 0} {
-  if (_type.InternalType() == duckdb::PhysicalType::VARCHAR &&
-      !_segments.empty()) {
+  if (!_segments.empty()) {
     _touched = std::make_unique<std::atomic<bool>[]>(_segments.size());
   }
   auto stats = duckdb::BaseStatistics::CreateEmpty(
